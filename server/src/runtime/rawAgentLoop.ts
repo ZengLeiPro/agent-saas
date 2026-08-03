@@ -23,7 +23,7 @@ import {
   type PlatformEventInput,
 } from './types.js';
 import { canonicalToolInputDigest } from './canonicalToolInput.js';
-import { buildFailurePresentation, type ToolPresentation } from '../agent/toolPresentationBuilder.js';
+import { buildFailurePresentation, ToolExecutionError, type ToolPresentation } from '../agent/toolPresentationBuilder.js';
 export { canonicalToolInputDigest } from './canonicalToolInput.js';
 import type { InboundMessage, OutboundEvent } from '../types/index.js';
 import {
@@ -1954,6 +1954,7 @@ export class RawAgentLoop implements AgentLoop {
             content: outcome.result.content,
             ...(outcome.isError ? { isError: true } : {}),
             ...(outcome.result.presentation ? { presentation: outcome.result.presentation } : {}),
+            ...(outcome.result.metadata ? { metadata: outcome.result.metadata } : {}),
             context: args.context,
             messages: args.messages,
           });
@@ -1983,6 +1984,7 @@ export class RawAgentLoop implements AgentLoop {
         content: outcome.result.content,
         ...(outcome.isError ? { isError: true } : {}),
         ...(outcome.result.presentation ? { presentation: outcome.result.presentation } : {}),
+        ...(outcome.result.metadata ? { metadata: outcome.result.metadata } : {}),
         context: args.context,
         messages: args.messages,
       });
@@ -2029,6 +2031,7 @@ export class RawAgentLoop implements AgentLoop {
     context: RunContext;
     messages?: ModelChatMessage[];
     presentation?: ToolPresentation;
+    metadata?: Record<string, unknown>;
   }): AsyncIterable<OutboundEvent> {
     yield {
       type: 'tool_result',
@@ -2037,6 +2040,7 @@ export class RawAgentLoop implements AgentLoop {
       toolResult: args.content,
       ...(args.isError ? { isError: true } : {}),
       ...(args.presentation ? { toolPresentation: args.presentation } : {}),
+      ...(args.metadata ? { toolResultMetadata: args.metadata } : {}),
     };
     await this.append({
       type: 'tool_result',
@@ -2047,6 +2051,7 @@ export class RawAgentLoop implements AgentLoop {
       content: args.content,
       ...(args.isError ? { isError: true } : {}),
       ...(args.presentation ? { presentation: args.presentation } : {}),
+      ...(args.metadata ? { metadata: args.metadata } : {}),
     });
     // 模型面刻意不带 presentation：它是给人看的第二通道，混进 messages
     // 会平白消耗上下文，也会让模型误以为摘要是它自己写的
@@ -2137,6 +2142,7 @@ export class RawAgentLoop implements AgentLoop {
       content: outcome.result.content,
       ...(outcome.isError ? { isError: true } : {}),
       ...(outcome.result.presentation ? { presentation: outcome.result.presentation } : {}),
+      ...(outcome.result.metadata ? { metadata: outcome.result.metadata } : {}),
       context: resumeContext,
     });
 
@@ -2463,11 +2469,21 @@ export class RawAgentLoop implements AgentLoop {
         this.forceWebFetchSynthesis(err.reason, context);
       }
       if (err instanceof InteractionPendingWithoutInteractionHook) throw err;
+      // 失败也要有摘要与结构化事实。摘要在 toolRuntime 里已按截断前 metadata 造好
+      // 并随 ToolExecutionError 带上来，这里只负责不把它丢掉——此前这一跳是
+      // 全部失败调用（近 7 天 3,457 次）摘要覆盖率仅 0.2% 的唯一原因，
+      // approval-resume 分支（见 resolveApprovalDecision）早已是这么接的。
+      const presentation = buildFailurePresentation(call.name, input, err);
+      const metadata = err instanceof ToolExecutionError ? err.resultMetadata : undefined;
       return {
         call,
         descriptor,
         input,
-        result: { content: standardizeToolError(`tool error: ${err instanceof Error ? err.message : String(err)}`) },
+        result: {
+          content: standardizeToolError(`tool error: ${err instanceof Error ? err.message : String(err)}`),
+          ...(presentation ? { presentation } : {}),
+          ...(metadata ? { metadata } : {}),
+        },
         isError: true,
       };
     }
@@ -2526,6 +2542,7 @@ export class RawAgentLoop implements AgentLoop {
       // 否则退回入参侧规则并强制标 warn。客户看到「读取 差旅.md · 有异常」
       // 远好过一行「已执行，有异常」。
       const presentation = buildFailurePresentation(args.call.name, args.input, err);
+      const metadata = err instanceof ToolExecutionError ? err.resultMetadata : undefined;
       return {
         call: args.call,
         descriptor: args.descriptor,
@@ -2533,6 +2550,7 @@ export class RawAgentLoop implements AgentLoop {
         result: {
           content: standardizeToolError(`tool error: ${err instanceof Error ? err.message : String(err)}`),
           ...(presentation ? { presentation } : {}),
+          ...(metadata ? { metadata } : {}),
         },
         isError: true,
       };

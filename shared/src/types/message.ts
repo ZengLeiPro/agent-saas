@@ -1,4 +1,5 @@
 import type { ToolPresentation } from '../lib/toolPresentation';
+import type { ToolResultMetadata } from '../lib/toolResultMetadata';
 import type { PresentationBlock } from '../lib/presentation/types';
 import type { BusinessStepEventItem } from '../lib/extractTodos';
 
@@ -42,6 +43,11 @@ export type MessageItem =
       error?: string;
       /** 「给人看」摘要；有值时非 debug 视图也渲染，debug 视图额外叠加原始 payload */
       presentation?: ToolPresentation;
+      /**
+       * 结构化执行事实（exitCode / 字节数 / 耗时 …），已过 normalizeToolResultMetadata。
+       * 渲染层据此判定 ✓/✗——原值优先于从正文正则回捞的 `Exit code: N` 行。
+       */
+      toolMetadata?: ToolResultMetadata;
       /**
        * 默认展开摘要详情（来自 transcript block 的 defaultOpen）。
        * 真实会话的 tool_use 块 defaultOpen 恒为 false（parse.ts），

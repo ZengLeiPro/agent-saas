@@ -259,6 +259,8 @@ export interface OutboundEvent {
   toolResult?: string;
   /** 「给人看」摘要，与 toolResult 并存的第二通道 */
   toolPresentation?: ToolPresentation;
+  /** 截断前的结构化执行事实（exitCode / 字节数 / 耗时），给程序判定用的原值 */
+  toolResultMetadata?: Record<string, unknown>;
   isError?: boolean;
   invocationId?: string;
   status?: "success" | "error" | "cancelled";

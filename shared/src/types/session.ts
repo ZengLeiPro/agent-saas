@@ -278,6 +278,11 @@ export interface ApiTranscriptBlock {
    */
   presentation?: ToolPresentation;
   /**
+   * tool_use block：工具执行的结构化事实（exitCode / 字节数 / 耗时 …）。
+   * 类型为 unknown——同样来自不可信来源，权威校验器是 normalizeToolResultMetadata。
+   */
+  toolMetadata?: unknown;
+  /**
    * text block：附加呈现块。类型为 unknown——本字段来自不可信来源
    * （transcript 文件 / 演示剧本 / 工具产出），权威校验器是 normalizeDisplay。
    */

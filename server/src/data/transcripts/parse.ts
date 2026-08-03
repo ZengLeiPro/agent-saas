@@ -85,6 +85,13 @@ export interface TranscriptBlock {
    * 解析时按 tool_use_id 反向嫁接到对应的 tool_use block。
    */
   presentation?: unknown;
+  /**
+   * tool_use block：工具执行的结构化事实（exitCode / 字节数 / 耗时 …）。
+   *
+   * 与 presentation 同一条落盘与嫁接通道，类型同样刻意是 `unknown`——本文件是
+   * 不可信边界，权威校验器是 shared 的 `normalizeToolResultMetadata`。
+   */
+  toolMetadata?: unknown;
 }
 
 export interface ParsedTranscript {
@@ -933,10 +940,13 @@ async function parseTranscriptFileUncached(
             // 反向嫁接：presentation 写在 tool_result 行，但要挂到 tool_use block 上。
             // 刻意不写进 raw——raw 的语义是「给模型看的原始 payload」，
             // 混进去会在 debug 视图制造「模型也看到了摘要」的错觉。
-            if (block?.presentation !== undefined && toolUseId) {
+            if ((block?.presentation !== undefined || block?.metadata !== undefined) && toolUseId) {
               const target = toolIdToBlockIndex[toolUseId];
               const targetBlock = target === undefined ? undefined : blocks[target];
-              if (targetBlock) targetBlock.presentation = block.presentation;
+              if (targetBlock) {
+                if (block.presentation !== undefined) targetBlock.presentation = block.presentation;
+                if (block.metadata !== undefined) targetBlock.toolMetadata = block.metadata;
+              }
             }
 
             const toolResultBlock: TranscriptBlock = {
@@ -1693,6 +1703,13 @@ function estimateParsedTranscriptBytes(parsed: ParsedTranscript): number {
         chars += JSON.stringify(block.presentation).length;
       } catch {
         chars += 1024;
+      }
+    }
+    if (block.toolMetadata !== undefined) {
+      try {
+        chars += JSON.stringify(block.toolMetadata).length;
+      } catch {
+        chars += 256;
       }
     }
   }

@@ -661,6 +661,16 @@ export type PlatformEvent =
     isError?: boolean;
     /** 「给人看」摘要，与 content 并存的第二通道；不进入模型上下文 */
     presentation?: ToolPresentation;
+    /**
+     * 截断前的结构化执行事实（Shell 的 `exitCode`/`signal`/`durationMs`/字节数，
+     * Read/Write/Edit 的行数与字节数），白名单见 `extractToolResultMetadata`。
+     *
+     * 纯追加字段：旧事件没有它 → undefined，读取方一律要有 fallback。
+     * 存在理由：此前 exitCode 只以 `content` 里的 `Exit code: N` 文本行存活，
+     * 任何消费方都得正则回捞；本字段让它以原值参与判定与统计。
+     * 与 presentation 的分工：这里是给程序的原值，那里是给人的中文摘要。
+     */
+    metadata?: Record<string, unknown>;
   }
   | {
     id: string;

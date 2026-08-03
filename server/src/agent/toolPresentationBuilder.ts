@@ -546,7 +546,12 @@ export function buildToolPresentation(
  * 不存在」远好过看到一行「已执行，有异常」。
  */
 export class ToolExecutionError extends Error {
-  constructor(message: string, readonly presentation?: ToolPresentation) {
+  constructor(
+    message: string,
+    readonly presentation?: ToolPresentation,
+    /** 截断前的结构化事实（已过 extractToolResultMetadata 白名单），随失败事件落库 */
+    readonly resultMetadata?: Record<string, unknown>,
+  ) {
     super(message);
     this.name = 'ToolExecutionError';
   }
@@ -569,6 +574,57 @@ export function buildFailurePresentation(
   }
   const base = buildToolPresentation(toolName, toolInput);
   return base ? { ...base, status: 'warn' } : undefined;
+}
+
+/**
+ * 进 `tool_result` durable 事件的结构化元数据白名单。
+ *
+ * 为什么要有这一层：`metadata` 在 provider 手里是**截断前**的真实执行结果，
+ * 但落 durable 事件前必须收敛——事件是生产事实源，写进去的每个 key 都会被
+ * 长期读取，塞一整个 provider metadata 等于把内部实现细节固化成对外契约。
+ * 这张表只放「客户/排障都能直接用、且语义长期稳定」的字段。
+ *
+ * 与 presentation 的分工：presentation 是**给人看的中文摘要**（会随文案调整），
+ * metadata 是**给程序判定的原值**（退出码徽标、失败统计）。同一份原材料，
+ * 两个消费面，谁也不该从对方的文本里正则回捞。
+ */
+const RESULT_METADATA_FIELDS: Record<string, readonly string[]> = {
+  Shell: ['exitCode', 'signal', 'durationMs', 'stdoutBytes', 'stderrBytes', 'timedOut', 'aborted', 'outputExceeded'],
+  Read: ['linesRead', 'fileBytes', 'shownBytes', 'truncated', 'ranged'],
+  Write: ['bytesWritten'],
+  Edit: ['replacements', 'occurrences', 'bytesBefore', 'bytesAfter'],
+};
+
+/** metadata 里的字符串值上限——signal 之类的短枚举，超长即视为脏数据丢弃 */
+const RESULT_METADATA_TEXT_LIMIT = 120;
+
+/**
+ * 从 provider 的截断前 metadata 里挑出可长期落库的结构化事实。
+ *
+ * 只收标量（number/boolean/短 string）：durable 事件要能被 SQL 直接过滤统计，
+ * 嵌套对象会立刻退化成「又一段需要正则的文本」。未登记的工具返回 undefined，
+ * 与 presentation 同一条原则——宁可没有，不可编造。
+ */
+export function extractToolResultMetadata(
+  toolName: string,
+  metadata?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (!metadata) return undefined;
+  const fields = RESULT_METADATA_FIELDS[toolName];
+  if (!fields) return undefined;
+  const picked: Record<string, unknown> = {};
+  for (const key of fields) {
+    const value = metadata[key];
+    if (typeof value === 'number') {
+      if (Number.isFinite(value)) picked[key] = value;
+    } else if (typeof value === 'boolean') {
+      picked[key] = value;
+    } else if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed && trimmed.length <= RESULT_METADATA_TEXT_LIMIT) picked[key] = trimmed;
+    }
+  }
+  return Object.keys(picked).length > 0 ? picked : undefined;
 }
 
 /** 供覆盖率测试使用 */

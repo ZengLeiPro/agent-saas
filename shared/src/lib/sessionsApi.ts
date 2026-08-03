@@ -8,6 +8,7 @@ import type { AskUserAnswers } from '../types/message';
 import type { ApiSessionDetail, ApiTranscriptBlock } from '../types/session';
 import { resolveDisplayToolName } from './toolDisplay';
 import { normalizeToolPresentation, type DetailLine, type ToolPresentation } from './toolPresentation';
+import { normalizeToolResultMetadata } from './toolResultMetadata';
 import { normalizeDisplay } from './presentation/registry';
 
 // -- Interactive tool history restore --
@@ -325,6 +326,8 @@ function mapBlock(
       const resultText = block.toolId ? toolResultMap.get(block.toolId) : undefined;
       // 摘要来自不可信来源（transcript 文件 / 演示剧本），必须规范化后再入渲染层
       const presentation = normalizeToolPresentation(block.presentation);
+      // 结构化执行事实同一条通道、同一条不可信边界规则
+      const toolMetadata = normalizeToolResultMetadata(block.toolMetadata);
       if (block.toolName === "AskUserQuestion") {
         return tryConvertAskUser(block, resultText);
       }
@@ -389,6 +392,7 @@ function mapBlock(
             : {}),
         ...(resultText !== undefined ? { result: resultText, resultReady: true } : {}),
         ...(presentation ? { presentation } : {}),
+        ...(toolMetadata ? { toolMetadata } : {}),
         // 只有「带业务摘要」的块才允许默认展开——原始 payload 不因 defaultOpen 上主流。
         // 真实会话 parse.ts 对 tool_use 恒写 defaultOpen:false，此通道现阶段仅剧本使用。
         ...(presentation && block.defaultOpen ? { defaultExpanded: true } : {}),

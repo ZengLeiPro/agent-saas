@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { formatJson } from './types';
-import { parseToolResult, getToolDisplayInfo, type ToolPresentation } from '@agent/shared';
+import { parseToolResult, getToolDisplayInfo, toolResultExitCode, type ToolPresentation, type ToolResultMetadata } from '@agent/shared';
 import { PresentationDetail } from './PresentationDetail';
 import { Wrench, ChevronRight, CircleCheck, X } from "lucide-react";
 import { StatusIcons } from "@/lib/icons";
@@ -89,6 +89,8 @@ interface ToolBlockProps {
   error?: string;
   /** 「给人看」摘要。有值时展开态默认呈现它，原始 payload 退居 debug 视图。 */
   presentation?: ToolPresentation;
+  /** 结构化执行事实（exitCode 等）。有退出码时 ✓/✗ 判定优先用它。 */
+  toolMetadata?: ToolResultMetadata;
   /**
    * 是否呈现原始 payload。
    * 语义是「看不看得到原始数据」——无 presentation 时恒为真（否则展开将一片空白）。
@@ -99,6 +101,28 @@ interface ToolBlockProps {
    * 仅对带 presentation 的块生效——原始 payload 不因它上主流。
    */
   defaultExpanded?: boolean;
+}
+
+/**
+ * 用结构化事实校正技术终态。
+ *
+ * 平台合成的 `executionStatus`（activityDurations.ts）来自 invocation status +
+ * isError，是一条**转译过的**判定链；`metadata.exitCode` 是进程的原值。两者不
+ * 一致时以原值为准——这正是本字段存在的理由。
+ *
+ * 只做单向校正（非零退出码 → 有异常），不反向把已判失败的降级成成功：
+ * 退出码 0 并不等于这次调用成功（超时被杀、被中止、写产物失败都可能留下 0），
+ * 拿 0 去覆盖一个 failed 等于用一个较弱的信号抹掉一个较强的信号。
+ * 进行中/已取消同理不受退出码影响——它们描述的是生命周期而非结果。
+ */
+function resolveExecutionStatus(
+  status: ToolBlockProps["executionStatus"],
+  metadata?: ToolResultMetadata,
+): ToolBlockProps["executionStatus"] {
+  if (status === "pending" || status === "running" || status === "cancelled") return status;
+  const exitCode = toolResultExitCode(metadata);
+  if (exitCode !== undefined && exitCode !== 0) return "failed";
+  return status;
 }
 
 function getExecutionLabel(status?: ToolBlockProps["executionStatus"], resultReady?: boolean): string {
@@ -118,12 +142,13 @@ function getExecutionTone(status?: ToolBlockProps["executionStatus"], resultRead
   return "pending";
 }
 
-export function ToolBlock({ toolName, toolInput, streaming, result, resultReady, executionStatus, durationMs, lastProgress, error, presentation, debugMode = true, defaultExpanded = false }: ToolBlockProps) {
+export function ToolBlock({ toolName, toolInput, streaming, result, resultReady, executionStatus: rawExecutionStatus, durationMs, lastProgress, error, presentation, toolMetadata, debugMode = true, defaultExpanded = false }: ToolBlockProps) {
   // 折叠行已展示业务摘要标题，详情由用户按需展开，避免工具调用密集时刷屏；
   // 剧本标记 defaultOpen 的高价值执行块（且带摘要）首次挂载即展开。
   const [isExpanded, setIsExpanded] = useState(defaultExpanded && !!presentation);
   const showRaw = debugMode || !presentation;
 
+  const executionStatus = resolveExecutionStatus(rawExecutionStatus, toolMetadata);
   const formatted = useMemo(() => formatJson(toolInput), [toolInput]);
   const displayInfo = useMemo(() => getToolDisplayInfo(toolName, toolInput), [toolName, toolInput]);
   const duration = formatActivityDuration(durationMs);

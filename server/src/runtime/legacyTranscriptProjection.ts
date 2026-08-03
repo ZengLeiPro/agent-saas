@@ -105,6 +105,7 @@ function userToolResultLine(
   sessionId: string,
   isError = false,
   presentation?: ToolPresentation,
+  metadata?: Record<string, unknown>,
 ): string {
   return jsonl({
     type: 'user',
@@ -119,6 +120,9 @@ function userToolResultLine(
         // 取不到即 undefined —— 双向兼容，不需要 JSONL schema 版本号。
         // 解析侧按 tool_use_id 反向嫁接到 tool_use block（见 parse.ts）。
         ...(presentation ? { presentation } : {}),
+        // 同上，与 presentation 同一条嫁接通道；这一份是给程序判定的原值
+        // （exitCode 等），前端 ✓/✗ 徽标优先读它而不是从正文正则回捞。
+        ...(metadata ? { metadata } : {}),
       }],
     },
     sessionId,
@@ -215,7 +219,14 @@ export class LegacyTranscriptProjection {
         });
       }
       case 'tool_result':
-        return userToolResultLine(event.toolCallId, event.content, event.sessionId, event.isError, event.presentation);
+        return userToolResultLine(
+          event.toolCallId,
+          event.content,
+          event.sessionId,
+          event.isError,
+          event.presentation,
+          event.metadata,
+        );
       default:
         return null;
     }

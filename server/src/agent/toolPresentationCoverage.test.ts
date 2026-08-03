@@ -16,6 +16,7 @@ import {
   listPresentationRuleNames,
   listMetadataRuleNames,
   buildFailurePresentation,
+  extractToolResultMetadata,
   ToolExecutionError,
 } from './toolPresentationBuilder.js';
 
@@ -215,6 +216,59 @@ describe('连接器动作还原成业务语言', () => {
 
   it('形如 MCP 但结构不完整时不产出摘要', () => {
     expect(buildToolPresentation('mcp__onlyserver', {})).toBeUndefined();
+  });
+});
+
+describe('结构化事实（tool_result.metadata）', () => {
+  it('Shell 落退出码/信号/耗时/字节数——原值进事件，不再只以「Exit code: N」文本行存活', () => {
+    expect(extractToolResultMetadata('Shell', {
+      exitCode: 1,
+      signal: 'SIGTERM',
+      durationMs: 3210,
+      stdoutBytes: 12_698,
+      stderrBytes: 40,
+      timedOut: false,
+      aborted: false,
+      outputExceeded: true,
+    })).toEqual({
+      exitCode: 1,
+      signal: 'SIGTERM',
+      durationMs: 3210,
+      stdoutBytes: 12_698,
+      stderrBytes: 40,
+      timedOut: false,
+      aborted: false,
+      outputExceeded: true,
+    });
+  });
+
+  it('只收白名单键：路由信息、outputFiles 之类的内部细节不进 durable 事件', () => {
+    expect(extractToolResultMetadata('Shell', {
+      exitCode: 0,
+      handId: 'hand-9',
+      outputFiles: [{ path: 'tmp/x.txt' }],
+      workspaceId: 'w-1',
+    })).toEqual({ exitCode: 0 });
+  });
+
+  it('文件类工具落关键字段（行数/字节数/替换处数）', () => {
+    expect(extractToolResultMetadata('Read', { path: '/w/a.md', linesRead: 41, fileBytes: 18_600, truncated: false }))
+      .toEqual({ linesRead: 41, fileBytes: 18_600, truncated: false });
+    expect(extractToolResultMetadata('Write', { path: '/w/a.md', bytesWritten: 2458 }))
+      .toEqual({ bytesWritten: 2458 });
+    expect(extractToolResultMetadata('Edit', { path: '/w/a.ts', replacements: 1, occurrences: 7, bytesBefore: 1000, bytesAfter: 1128 }))
+      .toEqual({ replacements: 1, occurrences: 7, bytesBefore: 1000, bytesAfter: 1128 });
+  });
+
+  it('未登记的工具、空 metadata、全部字段落空时返回 undefined——宁可没有，不可编造', () => {
+    expect(extractToolResultMetadata('TodoWrite', { anything: 1 })).toBeUndefined();
+    expect(extractToolResultMetadata('Shell', undefined)).toBeUndefined();
+    expect(extractToolResultMetadata('Shell', { handId: 'h' })).toBeUndefined();
+  });
+
+  it('非有限数字与超长字符串被丢弃', () => {
+    expect(extractToolResultMetadata('Shell', { exitCode: 0, durationMs: Number.NaN, signal: 'x'.repeat(200) }))
+      .toEqual({ exitCode: 0 });
   });
 });
 

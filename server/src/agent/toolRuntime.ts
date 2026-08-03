@@ -8,7 +8,12 @@ import { promisify } from 'util';
 import { z } from 'zod';
 
 import type { AgentRunHooks } from './types.js';
-import { buildToolPresentation, ToolExecutionError, type ToolPresentation } from './toolPresentationBuilder.js';
+import {
+  buildToolPresentation,
+  extractToolResultMetadata,
+  ToolExecutionError,
+  type ToolPresentation,
+} from './toolPresentationBuilder.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
 import type {
   ToolInvocationRequest,
@@ -226,6 +231,12 @@ export interface ToolResult {
    * `PlatformToolRuntime.invoke` 按 toolPresentationBuilder 的规则兜底补齐。
    */
   presentation?: ToolPresentation;
+  /**
+   * 截断前的结构化执行事实（exitCode / 字节数 / 耗时 …），白名单见
+   * `extractToolResultMetadata`。与 presentation 的分工：这里是给程序判定的原值，
+   * presentation 是给人看的中文摘要。**不进入 messages**。
+   */
+  metadata?: Record<string, unknown>;
 }
 
 export interface ExecutionInvocationAudit {
@@ -1233,6 +1244,7 @@ class WorkspaceToolProvider implements ToolProvider {
       throw new ToolExecutionError(
         response.error,
         buildToolPresentation(call.toolId, parsedInput, undefined, response.metadata),
+        extractToolResultMetadata(call.toolId, response.metadata),
       );
     }
     if (reservedTaskId && this.backgroundTasks) {
@@ -1274,6 +1286,9 @@ class WorkspaceToolProvider implements ToolProvider {
     // 执行结果（Shell 的 exitCode/字节数/耗时、Write 的写入字节数），
     // 到了收口点只剩截断后的 content，再数就会静默错报。
     const presentation = buildToolPresentation(call.toolId, parsedInput, undefined, response.metadata);
+    // 同一份截断前 metadata 的第二个出口：白名单收敛后随 tool_result 事件落库，
+    // 让 exitCode 之类的事实以字段而非「Exit code: N」文本行的形态存活
+    const resultMetadata = extractToolResultMetadata(call.toolId, response.metadata);
     // 后台命令启动成功时在 brain 侧追加续读/取消引导：hand 端返回文案仍指向
     // 协议名 BashOutput/KillBash（ACS 零改动），但模型可见工具已收敛为
     // BackgroundTask——不在这里纠偏，模型会按 hand 文案调用已下线的工具名。
@@ -1281,9 +1296,14 @@ class WorkspaceToolProvider implements ToolProvider {
       return {
         content: `${response.content}\n\n续读输出用 BackgroundTask(action="output", task_id="${reservedTaskId}")，取消用 BackgroundTask(action="cancel", task_id="${reservedTaskId}")。`,
         ...(presentation ? { presentation } : {}),
+        ...(resultMetadata ? { metadata: resultMetadata } : {}),
       };
     }
-    return { content: response.content, ...(presentation ? { presentation } : {}) };
+    return {
+      content: response.content,
+      ...(presentation ? { presentation } : {}),
+      ...(resultMetadata ? { metadata: resultMetadata } : {}),
+    };
   }
 
   private notifyMemoryIndexIfNeeded(

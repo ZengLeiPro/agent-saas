@@ -1019,6 +1019,7 @@ export const MessageItem = memo(function MessageItem({
         lastProgress={message.lastProgress}
         error={message.error}
         {...(message.presentation ? { presentation: message.presentation } : {})}
+        {...(message.toolMetadata ? { toolMetadata: message.toolMetadata } : {})}
         {...(message.defaultExpanded ? { defaultExpanded: true } : {})}
         debugMode={debugMode}
       />

@@ -45,7 +45,7 @@ function toolCallEvent(): PlatformEvent {
   } as PlatformEvent;
 }
 
-function toolResultEvent(presentation?: unknown): PlatformEvent {
+function toolResultEvent(presentation?: unknown, metadata?: Record<string, unknown>): PlatformEvent {
   return {
     id: 'event-2',
     timestamp: new Date(2026, 6, 25, 21, 0, 1).toISOString(),
@@ -56,6 +56,7 @@ function toolResultEvent(presentation?: unknown): PlatformEvent {
     toolName: 'Read',
     content: '差旅管理办法正文……',
     ...(presentation ? { presentation } : {}),
+    ...(metadata ? { metadata } : {}),
   } as PlatformEvent;
 }
 
@@ -136,6 +137,39 @@ describe('工具摘要持久化闭环', () => {
     const parsed = await parseTranscriptFile(transcriptPath);
     expect(parsed.blocks.every((block) => block.kind !== 'tool_use')).toBe(true);
     expect(parsed.blocks.length).toBeGreaterThan(0);
+  });
+
+  it('metadata 走与 presentation 同一条落盘与嫁接通道，两者互不依赖', async () => {
+    const projection = new LegacyTranscriptProjection(transcriptPath);
+    await projection.project(toolCallEvent());
+    await projection.project(toolResultEvent(undefined, { exitCode: 127, durationMs: 210 }));
+
+    const parsed = await parseTranscriptFile(transcriptPath);
+    const toolUse = parsed.blocks.find((block) => block.kind === 'tool_use');
+    expect(toolUse!.toolMetadata).toEqual({ exitCode: 127, durationMs: 210 });
+    // 只带 metadata 时 presentation 这个 key 依然不出现——两条通道各自独立
+    expect('presentation' in toolUse!).toBe(false);
+  });
+
+  it('presentation 与 metadata 同时存在时各归各位', async () => {
+    const projection = new LegacyTranscriptProjection(transcriptPath);
+    await projection.project(toolCallEvent());
+    await projection.project(toolResultEvent({ title: '读取 差旅.md' }, { linesRead: 41, fileBytes: 18_600 }));
+
+    const parsed = await parseTranscriptFile(transcriptPath);
+    const toolUse = parsed.blocks.find((block) => block.kind === 'tool_use');
+    expect(toolUse!.presentation).toEqual({ title: '读取 差旅.md' });
+    expect(toolUse!.toolMetadata).toEqual({ linesRead: 41, fileBytes: 18_600 });
+  });
+
+  it('无 metadata 的事件：block 上整个 key 不出现（现状零破坏）', async () => {
+    const projection = new LegacyTranscriptProjection(transcriptPath);
+    await projection.project(toolCallEvent());
+    await projection.project(toolResultEvent({ title: '读取 差旅.md' }));
+
+    const parsed = await parseTranscriptFile(transcriptPath);
+    const toolUse = parsed.blocks.find((block) => block.kind === 'tool_use');
+    expect('toolMetadata' in toolUse!).toBe(false);
   });
 
   it('多个工具调用各自嫁接到自己的 tool_use，不串台', async () => {

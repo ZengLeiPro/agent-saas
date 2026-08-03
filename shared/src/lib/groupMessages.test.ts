@@ -308,3 +308,96 @@ describe('groupMessages sectioning（章节化）', () => {
     expect(result.every(item => item.type !== 'business_step_section')).toBe(true);
   });
 });
+
+describe('groupMessages 跨层矛盾角标（processAnomaly）', () => {
+  const opts = { sectioning: true };
+  const startPlan = () => businessTodo('todo-plan', [
+    { id: 'sync', kind: 'business', content: '同步钉钉待办', status: 'in_progress' },
+  ]);
+  const completeWith = (outcome?: Record<string, unknown>) => businessTodo('todo-done', [
+    {
+      id: 'sync', kind: 'business', content: '同步钉钉待办', status: 'completed',
+      ...(outcome ? { outcome } : {}),
+    },
+  ]);
+  const dwsTool = (id: string, status: 'ok' | 'warn') => tool(id, {
+    toolName: 'Shell',
+    presentation: { title: '钉钉 · 创建待办', status },
+  });
+
+  it('失败→重试成功→outcome ok：同类最后一次成功，不标（防误伤正常重试）', () => {
+    const result = groupMessages([
+      user('u'), startPlan(),
+      dwsTool('call-1', 'warn'),
+      dwsTool('call-2', 'ok'),
+      completeWith({ text: '已创建', tone: 'ok' }),
+    ], false, opts);
+    const section = result.at(-1) as BusinessStepSection;
+    expect(section.type).toBe('business_step_section');
+    expect(section.terminal?.kind).toBe('complete');
+    expect(section.processAnomaly).toBeUndefined();
+  });
+
+  it('最终失败→outcome ok：同类最后一次仍失败，标「过程有异常」', () => {
+    const result = groupMessages([
+      user('u'), startPlan(),
+      dwsTool('call-1', 'ok'),
+      dwsTool('call-2', 'warn'),
+      completeWith({ text: '已创建', tone: 'ok' }),
+    ], false, opts);
+    const section = result.at(-1) as BusinessStepSection;
+    expect(section.terminal?.kind).toBe('complete');
+    expect(section.processAnomaly).toBe(true);
+  });
+
+  it('completed 无 outcome（缺省干净绿）时最后一次失败同样标', () => {
+    const result = groupMessages([
+      user('u'), startPlan(),
+      dwsTool('call-1', 'warn'),
+      completeWith(),
+    ], false, opts);
+    expect((result.at(-1) as BusinessStepSection).processAnomaly).toBe(true);
+  });
+
+  it('模型已自认 warn/fail 时不重复标', () => {
+    const result = groupMessages([
+      user('u'), startPlan(),
+      dwsTool('call-1', 'warn'),
+      completeWith({ text: '部分失败', tone: 'warn' }),
+    ], false, opts);
+    expect((result.at(-1) as BusinessStepSection).processAnomaly).toBeUndefined();
+  });
+
+  it('不同类操作独立分组：A 类最后一次失败即命中，不被 B 类成功洗白', () => {
+    const result = groupMessages([
+      user('u'), startPlan(),
+      dwsTool('call-1', 'warn'),
+      tool('read-1', { toolName: 'Read', presentation: { title: '读取 result.md', status: 'ok' } }),
+      completeWith({ text: '已创建', tone: 'ok' }),
+    ], false, opts);
+    expect((result.at(-1) as BusinessStepSection).processAnomaly).toBe(true);
+  });
+
+  it('无 presentation.status 的调用不参与判定（宁缺毋滥）', () => {
+    const result = groupMessages([
+      user('u'), startPlan(),
+      tool('bare-1'),
+      completeWith({ text: '已创建', tone: 'ok' }),
+    ], false, opts);
+    expect((result.at(-1) as BusinessStepSection).processAnomaly).toBeUndefined();
+  });
+
+  it('非 complete 终态（blocked）不标——失败已有自己的语义色', () => {
+    const result = groupMessages([
+      user('u'), startPlan(),
+      dwsTool('call-1', 'warn'),
+      businessTodo('todo-block', [
+        { id: 'sync', kind: 'business', content: '同步钉钉待办', status: 'blocked',
+          outcome: { text: '未创建', tone: 'fail' } },
+      ]),
+    ], false, opts);
+    const section = result.at(-1) as BusinessStepSection;
+    expect(section.terminal?.kind).toBe('block');
+    expect(section.processAnomaly).toBeUndefined();
+  });
+});

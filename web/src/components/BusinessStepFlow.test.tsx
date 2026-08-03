@@ -310,4 +310,34 @@ describe("BusinessStepSectionView", () => {
     expect(screen.getByRole("region", { name: "业务步骤失败" })).toBeTruthy();
     expect(screen.getByText("税号校验失败，已终止")).toBeTruthy();
   });
+
+  it("processAnomaly 时在终态徽标旁渲染浅色「过程有异常」角标", () => {
+    const terminal = event({
+      kind: "complete",
+      todo: { id: "a", kind: "business", content: "同步钉钉待办", status: "completed", outcome: { text: "已创建", tone: "ok" } },
+    });
+    render(
+      <BusinessStepSectionView debugMode section={section({ terminal, processAnomaly: true })}>
+        {null}
+      </BusinessStepSectionView>,
+    );
+
+    expect(screen.getByText("已完成")).toBeTruthy();
+    expect(screen.getByText("过程有异常")).toBeTruthy();
+  });
+
+  it("无 processAnomaly 时不渲染角标", () => {
+    const terminal = event({
+      kind: "complete",
+      todo: { id: "a", kind: "business", content: "同步钉钉待办", status: "completed" },
+    });
+    render(
+      <BusinessStepSectionView debugMode section={section({ terminal })}>
+        {null}
+      </BusinessStepSectionView>,
+    );
+
+    expect(screen.queryByText("过程有异常")).toBeNull();
+  });
 });
+

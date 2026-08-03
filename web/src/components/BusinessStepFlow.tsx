@@ -362,7 +362,14 @@ export function BusinessStepSectionView({
             {titleLabel}
           </span>
           {terminalMeta ? (
-            <span className={activityStatusBadgeClass(terminalMeta.tone)}>{terminalMeta.label}</span>
+            <>
+              <span className={activityStatusBadgeClass(terminalMeta.tone)}>{terminalMeta.label}</span>
+              {section.processAnomaly ? (
+                // 跨层矛盾角标：平台事实（区间内同类操作最后一次仍失败）压过模型
+                // 干净完成叙事。浅色低重量，不改写模型文本。
+                <span className={activityStatusBadgeClass("warning", "opacity-75")}>过程有异常</span>
+              ) : null}
+            </>
           ) : isActive ? (
             <span className={activityStatusBadgeClass("active")}>进行中</span>
           ) : null}

@@ -16,6 +16,13 @@ export interface BusinessStepSection {
   items: RenderItem[];
   /** 进行中且 run 活跃（流末尾的开放节）。 */
   isActive: boolean;
+  /**
+   * 跨层矛盾（2026-08-03 任务 C）：步骤宣称干净完成（complete 且 outcome tone 非
+   * warn/fail），但区间内同类操作的**最后一次**调用平台事实仍是失败（presentation
+   * status=warn）。渲染层在终态徽标旁加浅色「过程有异常」角标，不改写模型文本。
+   * 失败→重试成功是正常模式，不触发（同类取最后一次）。
+   */
+  processAnomaly?: boolean;
 }
 
 export type AskUserAnswerValue = string | string[];

@@ -38,6 +38,47 @@ function sameStepKey(a: BusinessStepEventItem, b: BusinessStepEventItem): boolea
   return !!a.todo && !!b.todo && todoItemKey(a.todo) === todoItemKey(b.todo);
 }
 
+/**
+ * 跨层矛盾规则（2026-08-03 任务 C，曾磊拍板原则：平台事实压过模型叙事）。
+ *
+ * 触发条件（全部满足才标，宁缺毋滥）：
+ * - 步骤终态是 complete，且 outcome tone 不是模型自认的 warn/fail（缺省视为干净完成）；
+ * - 步骤区间内**同类操作的最后一次**调用 presentation.status 仍为 warn。
+ *
+ * 同类分组 key = presentation.title（连接器业务标题天然同类；Read/Write 标题含文件名，
+ * 同文件同类；普通 Shell 统一「执行命令」，最后一条命令失败仍谎报 ok 时命中）。
+ * 无 presentation.status 的调用不参与判定（旧数据/未接线，解析不确定就不产出）。
+ * 失败→重试成功是正常模式：同组最后一次成功即不标。
+ */
+function detectProcessAnomaly(section: BusinessStepSection): boolean {
+  const terminal = section.terminal;
+  if (!terminal || terminal.kind !== 'complete') return false;
+  const tone = terminal.todo?.outcome?.tone;
+  if (tone === 'warn' || tone === 'fail') return false;
+
+  const lastStatusByKey = new Map<string, string>();
+  const visitMessage = (item: MessageItem) => {
+    if (item.type !== 'tool_use') return;
+    if (item.toolName === 'TodoWrite') return;
+    const status = item.presentation?.status;
+    if (!status) return;
+    const key = item.presentation?.title || item.toolName;
+    lastStatusByKey.set(key, status);
+  };
+  for (const item of section.items) {
+    if (item.type === 'activity_group') {
+      for (const inner of item.items) visitMessage(inner);
+    } else if (item.type === 'tool_use') {
+      visitMessage(item);
+    }
+  }
+
+  for (const status of lastStatusByKey.values()) {
+    if (status === 'warn') return true;
+  }
+  return false;
+}
+
 /** Group flat message array into render units (pure function, O(n) single pass) */
 export function groupMessages(
   messages: MessageItem[],
@@ -72,6 +113,7 @@ export function groupMessages(
     currentSection = null;
     // 开放节（无终态）只有在流末尾且 run 仍活跃时才算「进行中」。
     section.isActive = !section.terminal && atStreamEnd && loading;
+    if (detectProcessAnomaly(section)) section.processAnomaly = true;
     result.push(section);
   };
 

@@ -4,11 +4,7 @@ import {
   type PlatformEvent,
   type PlatformEventInput,
 } from './types.js';
-import {
-  buildChatMessagesFromEvents,
-  truncateOldToolResults,
-  type ToolResultTruncationOptions,
-} from './legacyTranscriptProjection.js';
+import { buildChatMessagesFromEvents } from './legacyTranscriptProjection.js';
 
 export type ContextReconstructionPolicy =
   | { type: 'full_replay' }
@@ -20,11 +16,6 @@ export interface ContextProjectionOptions {
   sessionId: string;
   runId: string;
   policy?: ContextReconstructionPolicy;
-  /**
-   * 跨 run 历史回放时对较旧 tool_result 做截断（O2）。
-   * 默认开启；传 `{ enabled: false }` 显式禁用（如需要严格 full-replay 调试）。
-   */
-  toolResultTruncation?: ToolResultTruncationOptions;
 }
 
 export interface ContextProjection {
@@ -197,7 +188,6 @@ function formatCompactionContext(summary: string, trail: TrailItem[]): string {
  */
 export function buildContextProjection(allEvents: PlatformEvent[], options: ContextProjectionOptions): ContextProjection {
   const policy = options.policy ?? { type: 'full_replay' };
-  const truncate = (msgs: ModelChatMessage[]) => truncateOldToolResults(msgs, options.toolResultTruncation);
   const contextEvents = allEvents.filter((event) => !isInternalModelDiagnosticEvent(event));
   const { effectiveEvents: events, summaryMessages } = applyCompaction(contextEvents);
   const withRestoredMcpTools = (
@@ -225,7 +215,7 @@ export function buildContextProjection(allEvents: PlatformEvent[], options: Cont
   switch (policy.type) {
     case 'full_replay':
       {
-        const replayMessages = truncate(buildChatMessagesFromEvents(events));
+        const replayMessages = buildChatMessagesFromEvents(events);
       return {
         messages: withRestoredMcpTools(summaryMessages, replayMessages),
         policy: policy.type,
@@ -234,7 +224,7 @@ export function buildContextProjection(allEvents: PlatformEvent[], options: Cont
       }
     case 'recent_window': {
       const selectedEvents = lastN(events, policy.recentEvents ?? DEFAULT_RECENT_EVENTS);
-      const replayMessages = truncate(buildChatMessagesFromEvents(selectedEvents));
+      const replayMessages = buildChatMessagesFromEvents(selectedEvents);
       return {
         messages: withRestoredMcpTools(summaryMessages, replayMessages),
         policy: policy.type,
@@ -245,7 +235,7 @@ export function buildContextProjection(allEvents: PlatformEvent[], options: Cont
       const start = clampIndex(policy.start ?? 0, events.length);
       const end = clampIndex(policy.end ?? events.length, events.length);
       const selectedEvents = events.slice(Math.min(start, end), Math.max(start, end));
-      const replayMessages = truncate(buildChatMessagesFromEvents(selectedEvents));
+      const replayMessages = buildChatMessagesFromEvents(selectedEvents);
       return {
         messages: withRestoredMcpTools(summaryMessages, replayMessages),
         policy: policy.type,
@@ -259,7 +249,7 @@ export function buildContextProjection(allEvents: PlatformEvent[], options: Cont
       const retrievalMessage = matches.length > 0
         ? [{ role: 'user' as const, content: formatRetrievalMessage(policy.query, matches) }]
         : [];
-      const replayMessages = truncate(buildChatMessagesFromEvents(selectedEvents));
+      const replayMessages = buildChatMessagesFromEvents(selectedEvents);
       return {
         messages: withRestoredMcpTools([...summaryMessages, ...retrievalMessage], replayMessages),
         policy: policy.type,

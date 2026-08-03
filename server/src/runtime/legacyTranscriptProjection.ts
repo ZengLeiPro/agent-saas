@@ -15,10 +15,7 @@ import {
   pruneHistoricalImageContent,
 } from './imageAttachments.js';
 import {
-  REPLAY_RECENT_TOOL_RESULT_MAX_CHARS,
-  REPLAY_TOOL_RESULT_KEEP_RECENT,
-  REPLAY_TOOL_RESULT_MAX_CHARS,
-  truncateReplayToolResultContent,
+  projectToolResultContentForModel,
 } from './replayEventBounds.js';
 
 function jsonl(obj: unknown): string {
@@ -241,86 +238,6 @@ function parseToolArguments(raw: string): unknown {
   }
 }
 
-/**
- * 默认 tool_result 截断阈值：单条不超过 ~4K 字符（约 1.5K-2K token），
- * 超出部分用占位符接住，引导模型用 SessionContext 按 toolCallId 拉原文。
- */
-const DEFAULT_TOOL_RESULT_MAX_CHARS = REPLAY_TOOL_RESULT_MAX_CHARS;
-/**
- * 默认优先保留最近 N 条 tool 消息。N=8 大致覆盖最近 2-3 轮
- * 工具调用（一轮平均 2-4 个并行/串行 call）。
- */
-const DEFAULT_TOOL_RESULT_KEEP_RECENT = REPLAY_TOOL_RESULT_KEEP_RECENT;
-/** 最近工具结果也必须有单条上限，避免一次并行 Read 把下一轮请求直接撑爆。 */
-const DEFAULT_RECENT_TOOL_RESULT_MAX_CHARS = REPLAY_RECENT_TOOL_RESULT_MAX_CHARS;
-/** 单次模型请求中全部 tool_result 的累计字符预算。 */
-const DEFAULT_TOOL_RESULT_TOTAL_MAX_CHARS = 96_000;
-const TOOL_RESULT_PLACEHOLDER_MAX_CHARS = 160;
-
-export interface ToolResultTruncationOptions {
-  /** 关掉截断（测试 / 调试 / 显式 full_replay 时用）。默认开启。 */
-  enabled?: boolean;
-  /** 单条 tool 消息最大字符数。超长尾部用占位符替换。 */
-  maxChars?: number;
-  /** 末尾多少条 tool 消息使用较大的 recentMaxChars 上限。 */
-  keepRecent?: number;
-  /** 最近 keepRecent 条的单条字符上限。默认 16K。 */
-  recentMaxChars?: number;
-  /** 全部 tool 消息的累计字符上限。默认 96K。 */
-  maxTotalChars?: number;
-}
-
-/**
- * 给历史 messages 数组中"较旧的" tool 消息做就地截断。
- *
- * 设计原则：
- * - 只动 role='tool' 的消息，其它 role 完全不碰，前缀字节缓存语义不变。
- * - 最近 keepRecent 条 tool 使用更大的上限 — 模型刚做的工具调用，需要更多结果继续推理。
- * - 更早的 tool 消息只截掉超过 maxChars 的尾巴，前段照旧 + 显式占位符 +
- *   引导模型用 SessionContext 按 toolCallId 拉原文（如果需要）。
- *
- * 这是 O2 优化的核心：长 session 跨 run 重发历史时不再把 Read 整文件 /
- * grep 数千行 / Skill body 64K 反复打到 input_tokens 里。
- */
-export function truncateOldToolResults(
-  messages: ModelChatMessage[],
-  options: ToolResultTruncationOptions = {},
-): ModelChatMessage[] {
-  if (options.enabled === false) return messages;
-  const maxChars = options.maxChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS;
-  const keepRecent = options.keepRecent ?? DEFAULT_TOOL_RESULT_KEEP_RECENT;
-  const recentMaxChars = options.recentMaxChars ?? DEFAULT_RECENT_TOOL_RESULT_MAX_CHARS;
-  const maxTotalChars = options.maxTotalChars ?? DEFAULT_TOOL_RESULT_TOTAL_MAX_CHARS;
-
-  // 1) 标记每个 tool 消息的"从尾往前"的序号
-  const toolIndices: number[] = [];
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]!.role === 'tool') toolIndices.push(i);
-  }
-  // 2) 从最新往最旧分配累计预算。最近结果优先，但也不能无限大；较旧结果
-  // 保留头部和可检索指针。原文始终在 EventStore，不在模型请求里重复搬运。
-  const bounded = new Map<number, ModelChatMessage>();
-  let remainingTotal = Math.max(0, maxTotalChars);
-  for (let position = 0; position < toolIndices.length; position += 1) {
-    const idx = toolIndices[position]!;
-    const message = messages[idx]!;
-    if (message.role !== 'tool') continue;
-    const remainingMessages = toolIndices.length - position;
-    const placeholderReserve = Math.min(
-      TOOL_RESULT_PLACEHOLDER_MAX_CHARS,
-      Math.floor(remainingTotal / Math.max(1, remainingMessages)),
-    );
-    const availableNow = Math.max(0, remainingTotal - placeholderReserve * Math.max(0, remainingMessages - 1));
-    const perMessageLimit = position < keepRecent ? recentMaxChars : maxChars;
-    const budget = Math.min(perMessageLimit, availableNow);
-    const content = truncateReplayToolResultContent(message.content, budget, message.tool_call_id);
-    remainingTotal = Math.max(0, remainingTotal - content.length);
-    if (content !== message.content) bounded.set(idx, { ...message, content });
-  }
-  if (bounded.size === 0) return messages;
-  return messages.map((message, idx) => bounded.get(idx) ?? message);
-}
-
 export function buildChatMessagesFromEvents(events: PlatformEvent[]): ModelChatMessage[] {
   const messages: ModelChatMessage[] = [];
   const prunedImageEventIndices = pruneHistoricalImageContent(events);
@@ -394,7 +311,10 @@ export function buildChatMessagesFromEvents(events: PlatformEvent[]): ModelChatM
         messages.push({
           role: 'tool',
           tool_call_id: event.toolCallId,
-          content: event.content,
+          content: projectToolResultContentForModel(
+            event.modelContent ?? event.content,
+            event.toolCallId,
+          ),
         });
         break;
       default:

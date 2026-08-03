@@ -176,6 +176,25 @@ describe('runtime stage 2 primitives', () => {
     ]);
   });
 
+  it('FileEventStore usage projection excludes full and model-visible tool content', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'eventstore-usage-projection-'));
+    cleanupDirs.add(cwd);
+    const store = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    await store.append({
+      type: 'tool_result',
+      runId: 'run-1',
+      sessionId: 'session-1',
+      toolCallId: 'call-1',
+      toolName: 'Shell',
+      content: 'full-content',
+      modelContent: 'model-content',
+    });
+
+    const [projected] = await store.list('session-1', { projection: 'usage' });
+    expect(projected).not.toHaveProperty('content');
+    expect(projected).not.toHaveProperty('modelContent');
+  });
+
   it('RunStateTrackingEventStore 透传 list/listPage 查询参数', async () => {
     const list = vi.fn(async () => []);
     const listPage = vi.fn(async () => ({ events: [], hasMore: false }));

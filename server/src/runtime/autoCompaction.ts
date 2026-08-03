@@ -25,7 +25,7 @@ export interface AutoCompactionEvaluationInput {
   tenantId?: string;
   /** 该 session 的全量事件。 */
   events: PlatformEvent[];
-  /** context governor 等已确认的上下文压力：跳过被裁剪 usage，直接压缩。 */
+  /** context governor 等已确认的上下文压力：即使本轮 usage 尚未持久化也直接压缩。 */
   force?: boolean;
   forceReason?: string;
 }

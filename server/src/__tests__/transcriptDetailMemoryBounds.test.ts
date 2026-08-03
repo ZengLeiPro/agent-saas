@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   TRANSCRIPT_DETAIL_MESSAGE_MAX_CHARS,
+  TRANSCRIPT_DETAIL_OLD_TOOL_RESULT_MAX_CHARS,
   TRANSCRIPT_DETAIL_RAW_MAX_CHARS,
+  TRANSCRIPT_DETAIL_TOOL_RESULT_KEEP_RECENT,
+  TRANSCRIPT_DETAIL_TOOL_RESULT_MAX_CHARS,
   TRANSCRIPT_DETAIL_TOOL_INPUT_MAX_CHARS,
   TRANSCRIPT_JSON_PARSE_LINE_THRESHOLD_CHARS,
   TRANSCRIPT_STREAM_LINE_PREFIX_CHARS,
@@ -16,11 +19,6 @@ import {
   truncateTranscriptDetailText,
 } from '../data/transcripts/parse.js';
 import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../data/transcripts/projectKey.js';
-import {
-  REPLAY_RECENT_TOOL_RESULT_MAX_CHARS,
-  REPLAY_TOOL_RESULT_KEEP_RECENT,
-  REPLAY_TOOL_RESULT_MAX_CHARS,
-} from '../runtime/replayEventBounds.js';
 
 describe('会话详情内存边界', () => {
   let dir: string;
@@ -103,7 +101,7 @@ describe('会话详情内存边界', () => {
   });
 
   it('工具入参、raw 与结果按展示预算收口，最近结果仍获得较大窗口', async () => {
-    const resultCount = REPLAY_TOOL_RESULT_KEEP_RECENT + 4;
+    const resultCount = TRANSCRIPT_DETAIL_TOOL_RESULT_KEEP_RECENT + 4;
     const lines: string[] = [];
     for (let index = 0; index < resultCount; index += 1) {
       const toolId = `call-${index}`;
@@ -128,7 +126,7 @@ describe('会话详情内存边界', () => {
           content: [{
             type: 'tool_result',
             tool_use_id: toolId,
-            content: `${index}:${'r'.repeat(REPLAY_RECENT_TOOL_RESULT_MAX_CHARS * 2)}`,
+            content: `${index}:${'r'.repeat(TRANSCRIPT_DETAIL_TOOL_RESULT_MAX_CHARS * 2)}`,
           }],
         },
       }));
@@ -145,8 +143,8 @@ describe('会话详情内存边界', () => {
     expect(toolUses[0]?.content).toContain('会话详情已截断；原始记录未改动');
 
     expect(toolResults).toHaveLength(resultCount);
-    expect(toolResults.slice(0, 4).every((block) => block.content.length <= REPLAY_TOOL_RESULT_MAX_CHARS)).toBe(true);
-    expect(toolResults.slice(4).every((block) => block.content.length <= REPLAY_RECENT_TOOL_RESULT_MAX_CHARS)).toBe(true);
+    expect(toolResults.slice(0, 4).every((block) => block.content.length <= TRANSCRIPT_DETAIL_OLD_TOOL_RESULT_MAX_CHARS)).toBe(true);
+    expect(toolResults.slice(4).every((block) => block.content.length <= TRANSCRIPT_DETAIL_TOOL_RESULT_MAX_CHARS)).toBe(true);
     expect(toolResults.slice(0, 4).every((block) => block.raw === undefined)).toBe(true);
     expect(toolResults.slice(4).every((block) => (block.raw?.length ?? 0) <= TRANSCRIPT_DETAIL_RAW_MAX_CHARS)).toBe(true);
     expect(toolResults[0]?.content).toContain('SessionContext');

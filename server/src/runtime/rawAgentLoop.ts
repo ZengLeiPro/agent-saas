@@ -48,6 +48,7 @@ import {
   calibrateContextBreakdown,
 } from './contextBreakdown.js';
 import { governModelRequestMessages } from './contextGovernor.js';
+import { projectToolResultContentForModel } from './replayEventBounds.js';
 import {
   buildRuntimeReplayState,
   type RuntimeReplayState,
@@ -99,7 +100,7 @@ const WEB_FETCH_SYNTHESIS_PROMPT = [
 const CONTEXT_SYNTHESIS_PROMPT = [
   '[平台收束指令]',
   '本次任务的上下文已达到安全阈值。除 SessionContext（action=events|search|trace）外，不要调用其他工具。',
-  '若保留的上一轮答复仍不足以衔接当前任务，先用该只读会话工具检索事实源；随后基于当前上下文完成任务，并明确区分已核实事实、证据不足项与未完成项。',
+  '当前模型可见历史保持不变。若固定节选的工具结果不足，可先用该只读会话工具检索完整事实源；随后基于当前上下文完成任务，并明确区分已核实事实、证据不足项与未完成项。',
 ].join('\n');
 
 interface ReplaceableDraftRunState {
@@ -996,13 +997,13 @@ export class RawAgentLoop implements AgentLoop {
         );
         if (preflight.forceSynthesis) {
           this.forceSynthesis(
-            `上下文 ${preflight.triggerTokens} tokens 已达到模型阈值 ${preflight.thresholdTokens}; 已省略 ${preflight.droppedMessages} 条较早消息并断开 Responses 接力链`,
+            `上下文 ${preflight.triggerTokens} tokens 已达到模型阈值 ${preflight.thresholdTokens}; 模型可见历史保持不变，停止扩展工具调用并交给既有自动压缩判定`,
             context,
             CONTEXT_SYNTHESIS_PROMPT,
             true,
           );
-          // previous_response_id 会在上游重新带回已超窗的远端历史；本轮必须改用
-          // 受 context governor 约束的本地全量投影，成功后 usage 会重新锚定。
+          // previous_response_id 会在上游继续累计接近阈值的远端历史；本轮用未改写的
+          // 本地全量投影完成回答，随后交给既有 auto compact 判定是否建立摘要上下文。
           currentResponseId = undefined;
           if (!contextPressureForceReason) {
             const pressure: ContextPressureState = {
@@ -1795,6 +1796,7 @@ export class RawAgentLoop implements AgentLoop {
         sessionId: state.sessionId,
         toolCallId: state.toolCallId,
         toolName: state.toolName,
+        modelContent: projectToolResultContentForModel(content, state.toolCallId),
         content,
         isError: true,
       });
@@ -2033,6 +2035,7 @@ export class RawAgentLoop implements AgentLoop {
     presentation?: ToolPresentation;
     metadata?: Record<string, unknown>;
   }): AsyncIterable<OutboundEvent> {
+    const modelContent = projectToolResultContentForModel(args.content, args.call.id);
     yield {
       type: 'tool_result',
       toolId: args.call.id,
@@ -2048,6 +2051,7 @@ export class RawAgentLoop implements AgentLoop {
       sessionId: args.context.sessionId,
       toolCallId: args.call.id,
       toolName: args.call.name,
+      modelContent,
       content: args.content,
       ...(args.isError ? { isError: true } : {}),
       ...(args.presentation ? { presentation: args.presentation } : {}),
@@ -2058,7 +2062,7 @@ export class RawAgentLoop implements AgentLoop {
     args.messages?.push({
       role: 'tool',
       tool_call_id: args.call.id,
-      content: args.content,
+      content: modelContent,
     });
   }
 
@@ -2881,7 +2885,7 @@ export class RawAgentLoop implements AgentLoop {
         );
         if (preflight.forceSynthesis) {
           this.forceSynthesis(
-            `上下文 ${preflight.triggerTokens} tokens 已达到模型阈值 ${preflight.thresholdTokens}; 已省略 ${preflight.droppedMessages} 条较早消息并断开 Responses 接力链`,
+            `上下文 ${preflight.triggerTokens} tokens 已达到模型阈值 ${preflight.thresholdTokens}; 模型可见历史保持不变，停止扩展工具调用并交给既有自动压缩判定`,
             args.context,
             CONTEXT_SYNTHESIS_PROMPT,
             true,

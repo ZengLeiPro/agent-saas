@@ -10,7 +10,7 @@ import type { ModelChatMessage } from '../runtime/types.js';
 describe('context governor', () => {
   afterEach(() => configureModelPricing(undefined));
 
-  it('每轮都限制最新工具结果，不依赖跨 run 投影', () => {
+  it('请求前不再重写已经确定的模型可见历史', () => {
     const messages: ModelChatMessage[] = [
       { role: 'system', content: 'system' },
       { role: 'user', content: 'inspect files' },
@@ -19,12 +19,11 @@ describe('context governor', () => {
     ];
     const result = governModelRequestMessages(messages, 'unconfigured-model', 1);
     expect(result.forceSynthesis).toBe(false);
-    const last = result.messages.at(-1);
-    expect(last?.role).toBe('tool');
-    expect(last?.role === 'tool' ? last.content.length : Infinity).toBeLessThanOrEqual(16_000);
+    expect(result.messages).toBe(messages);
+    expect(result.messages).toEqual(messages);
   });
 
-  it('达到配置阈值时丢弃更早历史，但保留当前任务、上一轮结论与最近工具证据', () => {
+  it('达到配置阈值时只要求收束，不丢弃或改写历史', () => {
     configureModelPricing({
       groups: [{ models: [{ value: 'small-context-model', context_window: 1_000, auto_compact_threshold: 0.5 }] }],
     });
@@ -41,8 +40,9 @@ describe('context governor', () => {
     expect(estimateModelMessageTokens(messages)).toBeGreaterThan(500);
     const result = governModelRequestMessages(messages, 'small-context-model', 5);
     expect(result.forceSynthesis).toBe(true);
-    expect(result.droppedMessages).toBeGreaterThan(0);
-    expect(JSON.stringify(result.messages)).not.toContain('ancient question');
+    expect(result.droppedMessages).toBe(0);
+    expect(result.messages).toBe(messages);
+    expect(JSON.stringify(result.messages)).toContain('ancient question');
     expect(JSON.stringify(result.messages)).toContain('previous question');
     expect(JSON.stringify(result.messages)).toContain('previous conclusion');
     expect(JSON.stringify(result.messages)).toContain('current task');

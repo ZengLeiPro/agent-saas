@@ -9,12 +9,7 @@ import * as fs from "node:fs/promises";
 import * as readline from "node:readline";
 import { apiLogger } from "../../utils/logger.js";
 import { ContextTokenAccumulator } from "../../runtime/contextAccounting.js";
-import {
-  REPLAY_RECENT_TOOL_RESULT_MAX_CHARS,
-  REPLAY_TOOL_RESULT_KEEP_RECENT,
-  REPLAY_TOOL_RESULT_MAX_CHARS,
-  truncateReplayToolResultContent,
-} from "../../runtime/replayEventBounds.js";
+import { truncateReplayToolResultContent } from "../../runtime/replayEventBounds.js";
 import type { ModelResponseMode } from "../../runtime/types.js";
 import { computeCacheHitDenominatorTokens, computeUsageTotalTokens } from "../usage/pricing.js";
 import { assertAllowedTranscriptPath } from "./projectKey.js";
@@ -153,6 +148,9 @@ export const TRANSCRIPT_DETAIL_THINKING_MAX_CHARS = 128 * 1024;
 export const TRANSCRIPT_DETAIL_TOOL_INPUT_MAX_CHARS = 64 * 1024;
 export const TRANSCRIPT_DETAIL_RAW_MAX_CHARS = 16 * 1024;
 export const TRANSCRIPT_DETAIL_META_MAX_CHARS = 16 * 1024;
+export const TRANSCRIPT_DETAIL_TOOL_RESULT_MAX_CHARS = 16 * 1024;
+export const TRANSCRIPT_DETAIL_OLD_TOOL_RESULT_MAX_CHARS = 4_000;
+export const TRANSCRIPT_DETAIL_TOOL_RESULT_KEEP_RECENT = 8;
 
 export const TRANSCRIPT_JSON_PARSE_LINE_THRESHOLD_CHARS = 2 * 1024 * 1024;
 export const TRANSCRIPT_STREAM_LINE_PREFIX_CHARS = 64 * 1024;
@@ -933,7 +931,7 @@ async function parseTranscriptFileUncached(
             const toolName = toolUseId ? (toolIdToName[toolUseId] ?? "unknown") : undefined;
             const toolResultContent = truncateReplayToolResultContent(
               normalizeTextContent(block?.content, TRANSCRIPT_DETAIL_TOOL_INPUT_MAX_CHARS),
-              REPLAY_RECENT_TOOL_RESULT_MAX_CHARS,
+              TRANSCRIPT_DETAIL_TOOL_RESULT_MAX_CHARS,
               toolUseId || "unknown",
             );
 
@@ -967,12 +965,12 @@ async function parseTranscriptFileUncached(
             };
             blocks.push(toolResultBlock);
             recentToolResults.push(toolResultBlock);
-            if (recentToolResults.length > REPLAY_TOOL_RESULT_KEEP_RECENT) {
+            if (recentToolResults.length > TRANSCRIPT_DETAIL_TOOL_RESULT_KEEP_RECENT) {
               const older = recentToolResults.shift();
               if (older) {
                 older.content = truncateReplayToolResultContent(
                   older.content,
-                  REPLAY_TOOL_RESULT_MAX_CHARS,
+                  TRANSCRIPT_DETAIL_OLD_TOOL_RESULT_MAX_CHARS,
                   older.toolId || "unknown",
                 );
                 // raw 与 content 重复承载同一工具结果；旧结果保留可见节选即可。

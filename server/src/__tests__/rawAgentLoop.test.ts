@@ -21,10 +21,19 @@ import { buildContextProjection } from '../runtime/contextProjection.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
 import { RawAgentLoop } from '../runtime/rawAgentLoop.js';
+import { MODEL_TOOL_RESULT_MAX_CHARS } from '../runtime/replayEventBounds.js';
 import { SessionContextService, SessionToolProvider } from '../runtime/sessionContext.js';
 import { InMemoryToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import type { LatestResponseSessionState, ResponseSessionStatePatch, RunStore } from '../runtime/runStore.js';
-import type { ModelAdapter, ModelEvent, ModelRequest, ModelToolCall, QueuedInterjection, RunContext } from '../runtime/types.js';
+import type {
+  ModelAdapter,
+  ModelEvent,
+  ModelRequest,
+  ModelToolCall,
+  PlatformEvent,
+  QueuedInterjection,
+  RunContext,
+} from '../runtime/types.js';
 import type { OutboundEvent } from '../types/index.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { configureModelPricing } from '../data/usage/pricing.js';
@@ -560,6 +569,42 @@ class FailingAuditToolRuntime implements ToolRuntime {
   }
 }
 
+class RepeatedLongToolAdapter implements ModelAdapter {
+  calls = 0;
+  requests: ModelRequest[] = [];
+
+  async *stream(request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+    this.calls += 1;
+    this.requests.push(request);
+    if (this.calls <= 10) {
+      yield {
+        type: 'completed',
+        content: '',
+        toolCalls: [{
+          id: `call-long-${this.calls}`,
+          name: 'Write',
+          arguments: JSON.stringify({ path: `result-${this.calls}.txt`, content: 'ignored' }),
+        }],
+      };
+      return;
+    }
+    yield { type: 'text_delta', content: '完成' };
+    yield { type: 'completed', content: '完成', toolCalls: [] };
+  }
+}
+
+class LongResultToolRuntime implements ToolRuntime {
+  readonly content = `LONG_RESULT_START\n${'X'.repeat(30_000)}\nLONG_RESULT_END`;
+
+  list(): ToolDescriptor[] {
+    return [writeFileToolDescriptor];
+  }
+
+  async invoke<TInput>(_call: AuthorizedToolCall<TInput>, _context: ToolCallContext): Promise<ToolResult> {
+    return { content: this.content };
+  }
+}
+
 async function collect(stream: AsyncIterable<OutboundEvent>): Promise<OutboundEvent[]> {
   const events: OutboundEvent[] = [];
   for await (const event of stream) events.push(event);
@@ -574,6 +619,59 @@ describe('RawAgentLoop', () => {
       await rm(dir, { recursive: true, force: true });
     }
     cleanupDirs.clear();
+  });
+
+  it('工具结果原文持久化，但模型投影固定且不会随新结果追加而改写', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-stable-tool-prefix-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const adapter = new RepeatedLongToolAdapter();
+    const toolRuntime = new LongResultToolRuntime();
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-stable-tool-prefix'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime,
+    });
+
+    const outbound = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '连续执行十次' },
+        prompt: '连续执行十次',
+        instructions: '按要求调用工具。',
+        maxTurns: 12,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-stable-tool-prefix',
+        sessionId: 'session-stable-tool-prefix',
+        model: 'unconfigured-model',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
+        },
+        approvalPolicy: { autoApproveTools: true },
+      },
+    ));
+
+    expect(outbound.at(-1)).toEqual({ type: 'done' });
+    const firstToolContents = adapter.requests.slice(1).map((request) => {
+      const firstTool = request.messages.find((message) => message.role === 'tool');
+      return firstTool?.role === 'tool' ? firstTool.content : undefined;
+    });
+    expect(firstToolContents).toHaveLength(10);
+    expect(firstToolContents.every((content) => content === firstToolContents[0])).toBe(true);
+    expect(firstToolContents[0]).toHaveLength(MODEL_TOOL_RESULT_MAX_CHARS);
+    expect(firstToolContents[0]).toContain('SessionContext(action="trace") toolCallId=call-long-1');
+
+    const durableToolResults = (await eventStore.list('session-stable-tool-prefix'))
+      .filter((event): event is Extract<PlatformEvent, { type: 'tool_result' }> => event.type === 'tool_result');
+    expect(durableToolResults).toHaveLength(10);
+    expect(durableToolResults.every((event) => event.content === toolRuntime.content)).toBe(true);
+    expect(durableToolResults.every((event) => event.modelContent?.length === MODEL_TOOL_RESULT_MAX_CHARS)).toBe(true);
+    expect(durableToolResults[0]?.modelContent).toBe(firstToolContents[0]);
   });
 
   it('hands off only after the current tool-call batch is durably closed', async () => {

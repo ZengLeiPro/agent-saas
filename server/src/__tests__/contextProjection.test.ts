@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildContextProjection, extractUserMessageTrail, renderUserMessageTrail } from '../runtime/contextProjection.js';
-import { truncateOldToolResults } from '../runtime/legacyTranscriptProjection.js';
-import type { ModelChatMessage, PlatformEvent } from '../runtime/types.js';
+import { MODEL_TOOL_RESULT_MAX_CHARS } from '../runtime/replayEventBounds.js';
+import type { PlatformEvent } from '../runtime/types.js';
 
 function event(index: number, type: 'user_message' | 'assistant_message' = 'user_message'): PlatformEvent {
   return {
@@ -161,47 +161,36 @@ describe('context projection', () => {
     );
   });
 
-  it('truncates older tool results while keeping the most recent ones intact (O2)', () => {
-    const big = 'X'.repeat(8000);
-    const messages: ModelChatMessage[] = [];
-    // 10 个 tool 消息，每条 8000 字符。
-    for (let i = 0; i < 10; i++) {
-      messages.push({ role: 'tool', tool_call_id: `call-${i}`, content: big });
-    }
+  it('工具结果首次投影后保持稳定，追加事件不改写历史前缀', () => {
+    const toolResult = (index: number): PlatformEvent => ({
+      id: `tool-result-${index}`,
+      timestamp: new Date(2026, 0, 1, 0, 0, index).toISOString(),
+      type: 'tool_result',
+      runId: 'run-tools',
+      sessionId: 'session-1',
+      toolCallId: `call-${index}`,
+      toolName: 'Shell',
+      content: `${index}:${'X'.repeat(30_000)}`,
+    });
+    const firstEvents = [toolResult(0)];
+    const firstProjection = buildContextProjection(firstEvents, {
+      sessionId: 'session-1',
+      runId: 'run-tools',
+    });
+    const extendedProjection = buildContextProjection([
+      ...firstEvents,
+      ...Array.from({ length: 20 }, (_, index) => toolResult(index + 1)),
+    ], {
+      sessionId: 'session-1',
+      runId: 'run-tools',
+    });
 
-    const truncated = truncateOldToolResults(messages, { maxChars: 4000, keepRecent: 3 });
-
-    // 倒数 3 条保留原文；前 7 条被截断
-    expect(truncated.slice(-3).every((m) => m.role === 'tool' && m.content.length === 8000)).toBe(true);
-    expect(truncated.slice(0, -3).every((m) => m.role === 'tool' && m.content.length < 8000 && m.content.includes('已截断'))).toBe(true);
-    expect(truncated.slice(0, -3).every((m) => m.role === 'tool' && m.content.includes('call-'))).toBe(true);
-  });
-
-  it('truncation is disabled when explicit option says so', () => {
-    const big = 'X'.repeat(8000);
-    const messages: ModelChatMessage[] = Array.from({ length: 10 }, (_, i) => ({
-      role: 'tool' as const,
-      tool_call_id: `call-${i}`,
-      content: big,
-    }));
-    const passthrough = truncateOldToolResults(messages, { enabled: false });
-    expect(passthrough).toBe(messages); // 引用相等：未做任何 map
-  });
-
-  it('caps recent tool results individually and all tool results cumulatively', () => {
-    const messages: ModelChatMessage[] = Array.from({ length: 40 }, (_, i) => ({
-      role: 'tool' as const,
-      tool_call_id: `call-${i}`,
-      content: 'X'.repeat(30_000),
-    }));
-    const truncated = truncateOldToolResults(messages);
-    const toolChars = truncated.reduce((sum, message) => (
-      message.role === 'tool' ? sum + message.content.length : sum
-    ), 0);
-    expect(toolChars).toBeLessThanOrEqual(96_000);
-    const last = truncated.at(-1);
-    expect(last?.role === 'tool' ? last.content.length : Infinity).toBeLessThanOrEqual(16_000);
-    expect(truncated.every((message) => message.role !== 'tool' || message.content.length <= 16_000)).toBe(true);
+    expect(firstProjection.messages[0]?.role).toBe('tool');
+    expect(firstProjection.messages[0]?.role === 'tool'
+      ? firstProjection.messages[0].content.length
+      : Infinity).toBe(MODEL_TOOL_RESULT_MAX_CHARS);
+    expect(extendedProjection.messages.slice(0, firstProjection.messages.length))
+      .toEqual(firstProjection.messages);
   });
 
   it('supports retrieval augmented slices with a query summary and recent context', () => {

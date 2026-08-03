@@ -225,7 +225,7 @@ describe('AutoCompactionService（当前 run 内联判定）', () => {
     });
   });
 
-  it('context governor 压力可绕过裁剪后的低 usage 强制压缩', () => {
+  it('context governor 压力可绕过尚未落库的 usage 强制压缩', () => {
     expect(makeService().evaluate({
       ...evaluationInput,
       events: [],

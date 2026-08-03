@@ -4,11 +4,9 @@ import pg from 'pg';
 import type { EventAppendContext, EventListOptions, EventListPage, EventStore, PlatformEvent, PlatformEventInput } from './types.js';
 import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import {
-  REPLAY_RECENT_TOOL_RESULT_MAX_CHARS,
-  REPLAY_TOOL_RESULT_KEEP_RECENT,
+  LEGACY_MODEL_TOOL_RESULT_MAX_CHARS,
   REPLAY_TOOL_RESULT_MARKER_PREFIX,
   REPLAY_TOOL_RESULT_MARKER_SUFFIX,
-  REPLAY_TOOL_RESULT_MAX_CHARS,
 } from './replayEventBounds.js';
 
 const { Client, Pool } = pg;
@@ -253,7 +251,7 @@ export class PgEventStore implements EventStore {
     const includeTypes = [...new Set(options.includeTypes ?? [])];
     if (options.projection === 'usage') {
       const result = await this.pool.query<{ event_json: PlatformEvent }>(
-        `SELECT event_json - 'content' AS event_json
+        `SELECT event_json - 'content' - 'modelContent' AS event_json
          FROM ${this.eventsTable}
          WHERE session_id = $1
            AND ($2::boolean = false OR event_type = ANY($3::text[]))
@@ -265,53 +263,50 @@ export class PgEventStore implements EventStore {
     }
     if (options.replayMode === 'bounded') {
       const result = await this.pool.query<{ event_json: PlatformEvent }>(
-        `WITH ranked AS (
-           SELECT event_json,
-                  event_type,
-                  session_sequence,
-                  ROW_NUMBER() OVER (
-                    PARTITION BY event_type
-                    ORDER BY session_sequence DESC
-                  ) AS replay_type_rank
-           FROM ${this.eventsTable}
-           WHERE session_id = $1
-             AND ($2::boolean = false OR event_type = ANY($3::text[]))
-             AND event_type <> ALL($4::text[])
-         ), bounded AS (
-           SELECT event_json,
-                  event_type,
-                  session_sequence,
-                  CASE
-                    WHEN replay_type_rank <= $5 THEN $6::integer
-                    ELSE $7::integer
-                  END AS content_limit,
-                  $8::text || COALESCE(event_json ->> 'toolCallId', 'unknown') || $9::text AS marker
-           FROM ranked
-         )
-         SELECT CASE
+        `SELECT CASE
                   WHEN event_type <> 'tool_result'
                     OR jsonb_typeof(event_json -> 'content') <> 'string'
-                    OR char_length(event_json ->> 'content') <= content_limit
                   THEN event_json
-                  WHEN char_length(marker) >= content_limit
-                  THEN jsonb_set(event_json, '{content}', to_jsonb(left(marker, content_limit)), false)
+                  WHEN jsonb_typeof(event_json -> 'modelContent') = 'string'
+                  THEN jsonb_set(
+                    event_json - 'modelContent',
+                    '{content}',
+                    event_json -> 'modelContent',
+                    false
+                  )
+                  WHEN char_length(event_json ->> 'content') <= $5::integer
+                  THEN event_json
+                  WHEN char_length($6::text || COALESCE(event_json ->> 'toolCallId', 'unknown') || $7::text) >= $5::integer
+                  THEN jsonb_set(
+                    event_json,
+                    '{content}',
+                    to_jsonb(left($6::text || COALESCE(event_json ->> 'toolCallId', 'unknown') || $7::text, $5::integer)),
+                    false
+                  )
                   ELSE jsonb_set(
                     event_json,
                     '{content}',
-                    to_jsonb(left(event_json ->> 'content', content_limit - char_length(marker)) || marker),
+                    to_jsonb(
+                      left(
+                        event_json ->> 'content',
+                        $5::integer - char_length($6::text || COALESCE(event_json ->> 'toolCallId', 'unknown') || $7::text)
+                      )
+                      || $6::text || COALESCE(event_json ->> 'toolCallId', 'unknown') || $7::text
+                    ),
                     false
                   )
                 END AS event_json
-         FROM bounded
+         FROM ${this.eventsTable}
+         WHERE session_id = $1
+           AND ($2::boolean = false OR event_type = ANY($3::text[]))
+           AND event_type <> ALL($4::text[])
          ORDER BY session_sequence ASC`,
         [
           sessionId,
           includeTypes.length > 0,
           includeTypes,
           excludeTypes,
-          REPLAY_TOOL_RESULT_KEEP_RECENT,
-          REPLAY_RECENT_TOOL_RESULT_MAX_CHARS,
-          REPLAY_TOOL_RESULT_MAX_CHARS,
+          LEGACY_MODEL_TOOL_RESULT_MAX_CHARS,
           REPLAY_TOOL_RESULT_MARKER_PREFIX,
           REPLAY_TOOL_RESULT_MARKER_SUFFIX,
         ],
@@ -366,7 +361,7 @@ export class PgEventStore implements EventStore {
     const limit = options.limit && options.limit > 0 ? options.limit : 100;
     const excludeTypes = [...new Set(options.excludeTypes ?? [])];
     const eventJsonProjection = options.projection === 'usage'
-      ? "event_json - 'content'"
+      ? "event_json - 'content' - 'modelContent'"
       : 'event_json';
     const result = await this.pool.query<{ event_json: PlatformEvent; session_sequence: string }>(
       `SELECT ${eventJsonProjection} AS event_json, session_sequence

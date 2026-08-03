@@ -372,15 +372,15 @@ describe('PgEventStore notify coalescing', () => {
     });
 
     const lastQuery = pool.queries.at(-1);
-    expect(lastQuery?.text).toContain('ROW_NUMBER() OVER');
-    expect(lastQuery?.text).toContain("jsonb_set(event_json, '{content}'");
+    expect(lastQuery?.text).not.toContain('ROW_NUMBER() OVER');
+    expect(lastQuery?.text).toContain('jsonb_set(');
+    expect(lastQuery?.text).toContain("'{content}'");
+    expect(lastQuery?.text).toContain("event_json -> 'modelContent'");
     expect(lastQuery?.text).toContain("event_type <> 'tool_result'");
     expect(lastQuery?.params?.[0]).toBe('session-1');
     expect(lastQuery?.params?.[1]).toBe(false);
     expect(lastQuery?.params?.[3]).toEqual(['tool_output_delta']);
-    expect(lastQuery?.params?.[4]).toBe(8);
-    expect(lastQuery?.params?.[5]).toBe(16_000);
-    expect(lastQuery?.params?.[6]).toBe(4_000);
+    expect(lastQuery?.params?.[4]).toBe(4_000);
   });
 
   it('filters wake-state event types in SQL instead of loading the whole session', async () => {
@@ -410,7 +410,7 @@ describe('PgEventStore notify coalescing', () => {
     });
 
     let lastQuery = pool.queries.at(-1);
-    expect(lastQuery?.text).toContain("SELECT event_json - 'content' AS event_json");
+    expect(lastQuery?.text).toContain("SELECT event_json - 'content' - 'modelContent' AS event_json");
     expect(lastQuery?.text).toContain('event_type = ANY($3::text[])');
     expect(lastQuery?.params).toEqual([
       'session-1',
@@ -426,7 +426,7 @@ describe('PgEventStore notify coalescing', () => {
     });
 
     lastQuery = pool.queries.at(-1);
-    expect(lastQuery?.text).toContain("SELECT event_json - 'content' AS event_json, session_sequence");
+    expect(lastQuery?.text).toContain("SELECT event_json - 'content' - 'modelContent' AS event_json, session_sequence");
   });
 
   it('listPage 在 SQL 查询阶段排除内部事件', async () => {

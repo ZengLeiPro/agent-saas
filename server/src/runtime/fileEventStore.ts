@@ -7,8 +7,9 @@ import { boundReplayToolResultEvents } from './replayEventBounds.js';
 import type { EventAppendContext, EventListOptions, EventStore, PlatformEvent, PlatformEventInput } from './types.js';
 
 function projectUsageEvent(event: PlatformEvent): PlatformEvent {
-  const projected = { ...event } as PlatformEvent & { content?: unknown };
+  const projected = { ...event } as PlatformEvent & { content?: unknown; modelContent?: unknown };
   delete projected.content;
+  delete projected.modelContent;
   return projected;
 }
 

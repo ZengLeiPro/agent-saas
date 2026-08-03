@@ -4,6 +4,7 @@
  * Coverage:
  * - boot a temporary local Postgres container unless --connection-string is set
  * - PgEventStore init / appendBatch / list / listPage
+ * - bounded replay keeps immutable model tool-result projections while raw events preserve full content
  * - concurrent appends keep contiguous session-local sequence
  * - EventBackedApprovalStore state survives PgEventStore re-open
  * - loadRawRuntimeWakeState restores pending approval from PG-backed event log
@@ -28,6 +29,11 @@ import { PgRuntimeAuditQuery } from '../src/runtime/pgAuditQuery.js';
 import { PgEventStore } from '../src/runtime/pgEventStore.js';
 import { PgSessionLock, sessionIdToLockKey } from '../src/runtime/pgSessionLock.js';
 import { loadRawRuntimeWakeState } from '../src/runtime/rawRuntimeRunDispatch.js';
+import {
+  LEGACY_MODEL_TOOL_RESULT_MAX_CHARS,
+  MODEL_TOOL_RESULT_MAX_CHARS,
+  projectToolResultContentForModel,
+} from '../src/runtime/replayEventBounds.js';
 import type { RuntimeSessionRecord, SessionCatalog } from '../src/runtime/sessionCatalog.js';
 import type { PlatformEvent, PlatformEventInput } from '../src/runtime/types.js';
 
@@ -309,6 +315,66 @@ async function runVerify(connectionString: string): Promise<void> {
   assert(secondPage?.events.length === 1, 'second page length mismatch');
   assert(secondPage.hasMore === false, 'second page hasMore mismatch');
 
+  console.log('[step] PgEventStore immutable bounded tool-result replay');
+  const projectionSessionId = `session-projection-${randomUUID()}`;
+  const projectionRunId = `run-projection-${randomUUID()}`;
+  const legacyContent = 'L'.repeat(30_000);
+  const currentContent = 'C'.repeat(30_000);
+  const currentModelContent = projectToolResultContentForModel(currentContent, 'call-current');
+  await store.appendBatch?.([
+    {
+      type: 'tool_result',
+      runId: projectionRunId,
+      sessionId: projectionSessionId,
+      toolCallId: 'call-legacy',
+      name: 'Shell',
+      content: legacyContent,
+    },
+    {
+      type: 'tool_result',
+      runId: projectionRunId,
+      sessionId: projectionSessionId,
+      toolCallId: 'call-current',
+      name: 'Shell',
+      content: currentContent,
+      modelContent: currentModelContent,
+    },
+  ]);
+
+  const rawProjectionEvents = await store.list(projectionSessionId);
+  const rawLegacy = rawProjectionEvents[0];
+  const rawCurrent = rawProjectionEvents[1];
+  assert(rawLegacy?.type === 'tool_result' && rawLegacy.content === legacyContent, 'raw legacy tool result was mutated');
+  assert(rawCurrent?.type === 'tool_result' && rawCurrent.content === currentContent, 'raw current tool result was mutated');
+  assert(
+    rawCurrent?.type === 'tool_result' && rawCurrent.modelContent === currentModelContent,
+    'raw current tool result lost immutable modelContent',
+  );
+
+  const boundedProjectionEvents = await store.list(projectionSessionId, { replayMode: 'bounded' });
+  const boundedLegacy = boundedProjectionEvents[0];
+  const boundedCurrent = boundedProjectionEvents[1];
+  assert(
+    boundedLegacy?.type === 'tool_result'
+      && boundedLegacy.content.length === LEGACY_MODEL_TOOL_RESULT_MAX_CHARS,
+    `legacy bounded projection length mismatch: ${boundedLegacy?.type === 'tool_result' ? boundedLegacy.content.length : 'missing'}`,
+  );
+  assert(
+    boundedCurrent?.type === 'tool_result'
+      && boundedCurrent.content === currentModelContent
+      && boundedCurrent.content.length === MODEL_TOOL_RESULT_MAX_CHARS,
+    'current bounded projection did not replay immutable modelContent',
+  );
+  assert(
+    boundedCurrent?.type === 'tool_result' && !('modelContent' in boundedCurrent),
+    'bounded replay should expose projected content only',
+  );
+  const usageProjectionEvents = await store.list(projectionSessionId, { projection: 'usage' });
+  assert(
+    usageProjectionEvents.every((event) => !('content' in event) && !('modelContent' in event)),
+    'usage projection should exclude full and model-visible tool content',
+  );
+
   console.log('[step] PgEventStore concurrent append sequence');
   const batches = Array.from({ length: 8 }, (_, batchIndex) => (
     Array.from({ length: 3 }, (_, eventIndex) => makeEvent(sessionId, runId, 100 + batchIndex * 3 + eventIndex))
@@ -488,6 +554,7 @@ async function runVerify(connectionString: string): Promise<void> {
   const lockSessionA = `lock-session-a-${randomUUID()}`;
   const lockSessionB = `lock-session-b-${randomUUID()}`;
   const lockA = new PgSessionLock({ pool: reopened.pool });
+  await lockA.init();
 
   // 1) 不同 sessionId 应当互不干扰
   const handleA = await lockA.tryAcquire(lockSessionA);

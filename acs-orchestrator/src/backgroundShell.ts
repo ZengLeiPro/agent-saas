@@ -145,7 +145,8 @@ export async function startBackgroundShell(input: BackgroundShellStartInput): Pr
   await writeFile(join(taskDir, 'stderr.log'), '', { encoding: 'utf-8', mode: 0o600 });
 
   const spawnWorker = input.spawnWorker ?? spawn;
-  const worker = spawnWorker(resolveTsxBinary(), [resolveWorkerPath(), taskDir, input.taskId], {
+  const workerCommand = resolveWorkerCommand();
+  const worker = spawnWorker(workerCommand.bin, [workerCommand.workerPath, taskDir, input.taskId], {
     cwd: input.workspaceRoot,
     env: input.env,
     detached: true,
@@ -473,8 +474,18 @@ async function writeJsonAtomic(path: string, value: unknown, mode: number): Prom
   await rename(tempPath, path);
 }
 
-function resolveWorkerPath(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), 'backgroundShellWorker.ts');
+/**
+ * 2026-08-03 P3a：orchestrator 生产改为 esbuild bundle + `node dist/index.js`。
+ * bundle 运行时同目录存在 `backgroundShellWorker.js`（esbuild 第二 entry），
+ * 直接用 node 执行；源码/tsx 运行时保持原 `tsx backgroundShellWorker.ts` 路径。
+ */
+function resolveWorkerCommand(): { bin: string; workerPath: string } {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const bundledWorker = join(moduleDir, 'backgroundShellWorker.js');
+  if (existsSync(bundledWorker)) {
+    return { bin: process.execPath, workerPath: bundledWorker };
+  }
+  return { bin: resolveTsxBinary(), workerPath: join(moduleDir, 'backgroundShellWorker.ts') };
 }
 
 function resolveTsxBinary(): string {

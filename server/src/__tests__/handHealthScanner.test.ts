@@ -260,6 +260,54 @@ describe('HandHealthScanner (B4)', () => {
     expect(typeof (handStore.hands.get('h-retry')?.metadata.provision as any).nextAttemptAt).toBe('string');
   });
 
+  it('probes a shared endpoint once and fans the result out to all hands (2026-08-03 P0b)', async () => {
+    const handStore = new InMemoryHandStore();
+    // 生产形态：per-session hands 全部指向同一个 orchestrator endpoint。
+    for (let i = 0; i < 50; i++) {
+      handStore.hands.set(`h-${i}`, makeHand({ handId: `h-${i}`, status: i % 10 === 0 ? 'unhealthy' : 'ready' }));
+    }
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, fetchImpl });
+
+    const result = await scanner.scanOnce();
+
+    // 50 条 hand 只 probe 1 次（同 endpoint + 同 token 合并）
+    expect((fetchImpl as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(1);
+    expect(result.scanned).toBe(50);
+    // unhealthy 的 5 条全部恢复 ready
+    expect(result.flipped).toBe(5);
+    expect([...handStore.hands.values()].every((hand) => hand.status === 'ready')).toBe(true);
+  });
+
+  it('keeps distinct endpoints/tokens in separate probe groups (2026-08-03 P0b)', async () => {
+    const handStore = new InMemoryHandStore();
+    handStore.hands.set('h-a', makeHand({ handId: 'h-a', endpoint: 'http://hand-a.example' }));
+    handStore.hands.set('h-b', makeHand({ handId: 'h-b', endpoint: 'http://hand-b.example' }));
+    handStore.hands.set('h-a2', makeHand({
+      handId: 'h-a2',
+      endpoint: 'http://hand-a.example',
+      metadata: { tenantRemoteHandId: 'tenant-1' },
+    }));
+    const probed: string[] = [];
+    const fetchImpl = vi.fn(async (url: unknown, init?: RequestInit) => {
+      probed.push(`${String(url)} ${(init?.headers as Record<string, string> | undefined)?.authorization ?? ''}`);
+      return new Response(JSON.stringify({ status: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    const scanner = new HandHealthScanner({
+      unhealthyConfirmDelayMs: 1,
+      handStore,
+      fetchImpl,
+      defaultServerRemoteAuthToken: 'default-token',
+      resolveHandAuthToken: (hand) => (hand.metadata.tenantRemoteHandId ? 'tenant-token' : undefined),
+    });
+
+    await scanner.scanOnce();
+
+    // endpoint-a(default token) / endpoint-b(default token) / endpoint-a(tenant token) = 3 组
+    expect(probed).toHaveLength(3);
+    expect(new Set(probed).size).toBe(3);
+  });
+
   it('logs a warning and no-ops when HandStore lacks listByType', async () => {
     const partialStore: HandStore = {
       async register() { throw new Error('unused'); },

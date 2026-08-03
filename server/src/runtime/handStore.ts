@@ -7,6 +7,26 @@ type PgPool = InstanceType<typeof Pool>;
 
 export type HandStatus = 'provisioning' | 'ready' | 'unhealthy' | 'destroyed';
 
+/**
+ * 2026-08-03 CPU 治理 P1：server-remote hand 记录的默认租约时长。
+ *
+ * hands 是 per-session 记录（`${sessionId}:server-remote`），历史上从不回收，
+ * 生产累积 900+ 条（其中 29 条还指向 07-02 已拆除的旧 WireGuard 地址），是
+ * HandHealthScanner 全量扫描被放大的根源。register 是 upsert：活跃 session
+ * 每次 dispatch 都会刷新租约；到期后由 janitor 标 destroyed（软删），此后同
+ * session 再 dispatch 会通过 upsert 复活（status/lease 一并重置），无误杀风险。
+ */
+export const SERVER_REMOTE_HAND_LEASE_MS = 30 * 24 * 60 * 60_000;
+
+export interface HandLeaseSweepResult {
+  /** 存量无租约记录补租约的条数 */
+  backfilled: number;
+  /** 租约过期被标 destroyed 的条数 */
+  destroyed: number;
+  /** destroyed 超过保留期被物理删除的条数 */
+  purged: number;
+}
+
 export interface HandCapability {
   name: string;
   description: string;
@@ -109,6 +129,12 @@ export interface HandStore {
    * scanner runs every ~30s.
    */
   listByType?(type: ExecutionTargetKind, opts?: { status?: HandStatus }): Promise<HandRecord[]>;
+  /**
+   * 2026-08-03 P1：server-remote hand 租约巡检（backfill 存量租约 → 过期标
+   * destroyed → 超保留期物理清除）。幂等，可安全重复执行；只作用于
+   * type='server-remote'。
+   */
+  sweepLeases?(opts?: { leaseMs?: number; destroyedRetentionMs?: number }): Promise<HandLeaseSweepResult>;
 }
 
 export interface PgHandStoreOptions {
@@ -245,6 +271,40 @@ export class PgHandStore implements HandStore {
       [type],
     );
     return result.rows.map((r) => normalizeHandRecord(r.row_json));
+  }
+
+  async sweepLeases(opts?: { leaseMs?: number; destroyedRetentionMs?: number }): Promise<HandLeaseSweepResult> {
+    const leaseMs = Math.max(60_000, opts?.leaseMs ?? SERVER_REMOTE_HAND_LEASE_MS);
+    const retentionMs = Math.max(60_000, opts?.destroyedRetentionMs ?? 14 * 24 * 60 * 60_000);
+    // ① 存量补租约：以最后活动时间（updated_at 与 created_at 较新者）+ leaseMs
+    //    为准，让老僵尸按真实闲置时长自然到期，而不是从"现在"重新计时 30 天。
+    const backfill = await this.pool.query(
+      `UPDATE ${this.handsTable}
+       SET lease_expires_at = GREATEST(created_at, updated_at) + ($1 * interval '1 millisecond')
+       WHERE type = 'server-remote' AND lease_expires_at IS NULL AND status <> 'destroyed'`,
+      [leaseMs],
+    );
+    // ② 过期 → destroyed（软删，保留审计与 upsert 复活能力）
+    const destroy = await this.pool.query(
+      `UPDATE ${this.handsTable}
+       SET status = 'destroyed',
+           metadata = metadata || jsonb_build_object('destroyReason', 'lease_expired'),
+           updated_at = now()
+       WHERE type = 'server-remote' AND status IN ('provisioning', 'ready', 'unhealthy')
+         AND lease_expires_at IS NOT NULL AND lease_expires_at < now()`,
+    );
+    // ③ destroyed 超保留期 → 物理清除
+    const purge = await this.pool.query(
+      `DELETE FROM ${this.handsTable}
+       WHERE type = 'server-remote' AND status = 'destroyed'
+         AND updated_at < now() - ($1 * interval '1 millisecond')`,
+      [retentionMs],
+    );
+    return {
+      backfilled: backfill.rowCount ?? 0,
+      destroyed: destroy.rowCount ?? 0,
+      purged: purge.rowCount ?? 0,
+    };
   }
 }
 

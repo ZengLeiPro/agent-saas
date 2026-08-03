@@ -4,6 +4,7 @@ import { isIP } from 'node:net';
 
 import type { AcsOrchestratorConfig } from './config.js';
 import type { Kubectl } from './kubectl.js';
+import type { KubeApi } from './kubeApi.js';
 import type { SandboxRef } from './sandboxManager.js';
 
 export interface SnatEntry {
@@ -56,6 +57,7 @@ export class SnatManager {
     private readonly config: AcsOrchestratorConfig,
     private readonly kubectl: Kubectl,
     private readonly logger: { info(msg: string): void; warn(msg: string): void; error(msg: string): void },
+    private readonly kubeApi?: KubeApi | null,
   ) {}
 
   isEnabled(): boolean {
@@ -274,12 +276,17 @@ export class SnatManager {
         `${SANDBOX_SCOPE_LABEL}=${labelValue(ref.sandboxScopeId)}`,
       ] : []),
     ].join(',');
-    const result = await this.kubectl.run(['get', 'pod', '-l', selector, '-o', 'json'], {
-      timeoutMs: this.config.sandboxWaitTimeoutMs,
-    });
-    if (result.exitCode !== 0) throw new Error(`list Sandbox Pod 失败: ${result.stderr || result.stdout}`);
-    const body = JSON.parse(result.stdout || '{}') as { items?: Array<Record<string, unknown>> };
-    return (body.items ?? []).map((item) => {
+    // 2026-08-03 CPU 治理 P3b：REST 直连优先，失败回退 kubectl。
+    let items = await this.kubeApi?.listPodItems(selector) ?? null;
+    if (items === null) {
+      const result = await this.kubectl.run(['get', 'pod', '-l', selector, '-o', 'json'], {
+        timeoutMs: this.config.sandboxWaitTimeoutMs,
+      });
+      if (result.exitCode !== 0) throw new Error(`list Sandbox Pod 失败: ${result.stderr || result.stdout}`);
+      const body = JSON.parse(result.stdout || '{}') as { items?: Array<Record<string, unknown>> };
+      items = body.items ?? [];
+    }
+    return items.map((item) => {
       const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata as Record<string, unknown> : {};
       const status = item.status && typeof item.status === 'object' ? item.status as Record<string, unknown> : {};
       const name = typeof metadata.name === 'string' ? metadata.name : '';

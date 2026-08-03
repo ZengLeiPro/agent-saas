@@ -7,6 +7,8 @@ node_modules/
 # Build outputs
 dist/
 build/
+# acs-orchestrator bundle 运行时的工具描述副本（build 时从 server 拷贝）
+acs-orchestrator/descriptions/
 
 # Environment files
 .env

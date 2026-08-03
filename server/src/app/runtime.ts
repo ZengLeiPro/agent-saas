@@ -176,6 +176,7 @@ import { buildTenantScopedEnv } from '../agent/tenantEnv.js';
 import { ClientDaemonTransport } from '../runtime/clientDaemonTransport.js';
 import { ClientDaemonGateway } from '../runtime/clientDaemonGateway.js';
 import { HandHealthScanner } from '../runtime/handHealthScanner.js';
+import { HandLeaseJanitor } from '../runtime/handLeaseJanitor.js';
 import { PgSystemMetricsStore } from '../runtime/systemMetricsStore.js';
 import { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { PgAlertStateStore } from '../runtime/alertStateStore.js';
@@ -1023,6 +1024,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let runtimeSchedulerAutoWake = false;
   // B4: HandHealthScanner 仅 PG runtime 装配，shutdown 时 stop()。
   let handHealthScanner: HandHealthScanner | undefined;
+  // 2026-08-03 P1: server-remote hand 租约巡检（同 scanner 门槛装配）。
+  let handLeaseJanitor: HandLeaseJanitor | undefined;
   // A2: SecretVault 提前到 ClientDaemonGateway 之前，便于装配时按 vault ref 解析
   // clientDaemon.authTokenRef → plaintext，再用 setAuthToken 注入。提前到这里也让
   // MCP / tenant resolver / serverRemote 装配时共享同一个 vault 实例。
@@ -1477,6 +1480,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       setSessionMetaProjectionSink(undefined);
       clientDaemonGateway?.close();
       handHealthScanner?.stop();
+      handLeaseJanitor?.stop();
       systemMetricsCollector?.stop();
       alertNotifier?.stop();
       await runtimeScheduler?.stop();
@@ -3286,6 +3290,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       logger: serverLogger.child('HandHealth'),
     });
     handHealthScanner.start();
+    // 2026-08-03 P1：hands 租约巡检与 scanner 同门槛（仅 runtime-worker 单例）。
+    handLeaseJanitor = new HandLeaseJanitor({
+      handStore: pgHandStore,
+      logger: serverLogger.child('HandLeaseJanitor'),
+    });
+    handLeaseJanitor.start();
   }
 
   if (config.dingtalk?.enabled) {

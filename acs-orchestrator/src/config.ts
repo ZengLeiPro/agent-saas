@@ -41,6 +41,14 @@ export interface AcsOrchestratorConfig {
   sandboxWaitTimeoutMs: number;
   execTimeoutMs: number;
   /**
+   * 2026-08-03 CPU 治理 P0a：/health 深度检查（kubectl CRD/RBAC/namespace +
+   * Sandbox inventory + SNAT 查询）结果缓存时长。生产实测 HandHealthScanner
+   * 串行扫 900+ 条同 endpoint hands 会把 /health 打成 ~1 QPS，每次 fork ~7 个
+   * kubectl/aliyun 子进程 ≈ 0.86 核。缓存期内 /health 直接返回上次深检快照；
+   * draining / inflight / image 等部署门禁字段永远实时。0 = 关闭缓存。
+   */
+  healthDeepCacheMs: number;
+  /**
    * 2026-07-31 方案3-P0：Pod 注解 `image.alibabacloud.com/enable-image-cache`。
    * 开启后 ACS 自动按镜像名匹配最新可用 ImageCache（官方称拉取耗时缩短 90%+）；
    * 无匹配缓存时无副作用（回退正常拉取）。缓存本体由发版侧创建（acc OpenAPI
@@ -104,6 +112,12 @@ export interface AcsSnatConfig {
   maxManagedEntries: number;
   requestTimeoutMs: number;
   stabilizeAfterCreateMs: number;
+  /**
+   * 2026-08-03 CPU 治理 P2：SNAT 只读状态查询（aliyun CLI DescribeSnatTableEntries，
+   * 实测单次 fork 峰值 75% CPU）结果缓存时长。仅缓存展示型 status 快照；
+   * ensure/delete/cleanupOrphans 等有真实语义的路径不走缓存。0 = 关闭。
+   */
+  statusCacheMs: number;
 }
 
 /**
@@ -394,6 +408,7 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     memoryLimit: process.env.ACS_SANDBOX_MEMORY_LIMIT?.trim() || undefined,
     sandboxWaitTimeoutMs: readIntEnv('ACS_SANDBOX_WAIT_TIMEOUT_MS', 90_000, { min: 1_000, max: 600_000 }),
     execTimeoutMs: readIntEnv('ACS_EXEC_TIMEOUT_MS', 120_000, { min: 1_000, max: 600_000 }),
+    healthDeepCacheMs: readIntEnv('ACS_HEALTH_DEEP_CACHE_MS', 15_000, { min: 0, max: 300_000 }),
     imageCacheEnabled: readBoolEnv('ACS_SANDBOX_IMAGE_CACHE_ENABLED', true),
     skipProvisionOnSameRecipe: readBoolEnv('ACS_SKIP_PROVISION_ON_SAME_RECIPE', true),
     lifecycleEnabled: readBoolEnv('ACS_SANDBOX_LIFECYCLE_ENABLED', true),
@@ -422,6 +437,7 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
       maxManagedEntries: readIntEnv('ACS_SNAT_MAX_MANAGED_ENTRIES', 12, { min: 1, max: 200 }),
       requestTimeoutMs: readIntEnv('ACS_SNAT_REQUEST_TIMEOUT_MS', 20_000, { min: 1_000, max: 120_000 }),
       stabilizeAfterCreateMs: readIntEnv('ACS_SNAT_STABILIZE_AFTER_CREATE_MS', 8_000, { min: 0, max: 60_000 }),
+      statusCacheMs: readIntEnv('ACS_SNAT_STATUS_CACHE_MS', 20_000, { min: 0, max: 300_000 }),
     },
     // 默认全关；实际值由 server 下发的 runtime-config 覆盖（下方 applyRuntimeConfigPatch）
     egress: defaultEgressConfig(),

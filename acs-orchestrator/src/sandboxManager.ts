@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { AcsOrchestratorConfig } from './config.js';
 import type { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { Kubectl } from './kubectl.js';
+import type { KubeApi } from './kubeApi.js';
 import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './networkPolicyManager.js';
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
 import { SnatManager, type SnatCleanupReport, type SnatStatus } from './snatManager.js';
@@ -166,9 +167,10 @@ export class SandboxManager {
     private readonly kubectl: Kubectl,
     private readonly logger: { info(msg: string): void; warn(msg: string): void; error(msg: string): void },
     private readonly activeRegistry?: ActiveSandboxRegistry,
+    private readonly kubeApi?: KubeApi | null,
   ) {
     this.networkPolicyManager = new AcsNetworkPolicyManager(config, kubectl, logger);
-    this.snatManager = new SnatManager(config, kubectl, logger);
+    this.snatManager = new SnatManager(config, kubectl, logger, kubeApi);
   }
 
   ref(input: { workspaceId: string; sessionId: string; sandboxScopeId?: string; mountSubPath?: string }): SandboxRef {
@@ -362,11 +364,21 @@ export class SandboxManager {
     }
   }
 
+  private snatStatusCache: { at: number; value: SnatStatus } | null = null;
+
   async snatStatus(): Promise<SnatStatus> {
+    // 2026-08-03 CPU 治理 P2：展示型 SNAT 状态查询缓存（aliyun CLI fork 实测
+    // 单次峰值 75% CPU）。ensure/delete/cleanupOrphans 路径不经过本方法，不受影响。
+    const ttl = this.config.snat.statusCacheMs;
+    if (this.snatStatusCache && ttl > 0 && Date.now() - this.snatStatusCache.at < ttl) {
+      return this.snatStatusCache.value;
+    }
     const activeCidrs = this.snatManager.isEnabled()
       ? await this.snatManager.activeManagedPodCidrs()
       : undefined;
-    return await this.snatManager.status(activeCidrs);
+    const value = await this.snatManager.status(activeCidrs);
+    this.snatStatusCache = { at: Date.now(), value };
+    return value;
   }
 
   async cleanupOrphanSnat(): Promise<SnatCleanupReport> {
@@ -383,17 +395,24 @@ export class SandboxManager {
   }
 
   async listManagedSandboxes(): Promise<ManagedSandbox[]> {
-    const result = await this.kubectl.run([
-      'get',
-      this.config.sandboxKind.toLowerCase(),
-      '-l',
-      `app.kubernetes.io/managed-by=${MANAGED_BY_LABEL}`,
-      '-o',
-      'json',
-    ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
-    if (result.exitCode !== 0) throw new Error(`list managed Sandbox 失败: ${result.stderr || result.stdout}`);
-    const body = JSON.parse(result.stdout || '{}') as { items?: Array<Record<string, unknown>> };
-    return (body.items ?? []).map((item) => {
+    const labelSelector = `app.kubernetes.io/managed-by=${MANAGED_BY_LABEL}`;
+    // 2026-08-03 CPU 治理 P3b：优先 REST 直连（keepalive 连接池，零 fork）；
+    // API 层失败（null）回退 kubectl，行为最坏等于改造前。
+    let items = await this.kubeApi?.listSandboxItems(labelSelector) ?? null;
+    if (items === null) {
+      const result = await this.kubectl.run([
+        'get',
+        this.config.sandboxKind.toLowerCase(),
+        '-l',
+        labelSelector,
+        '-o',
+        'json',
+      ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
+      if (result.exitCode !== 0) throw new Error(`list managed Sandbox 失败: ${result.stderr || result.stdout}`);
+      const body = JSON.parse(result.stdout || '{}') as { items?: Array<Record<string, unknown>> };
+      items = body.items ?? [];
+    }
+    return items.map((item) => {
       const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata as Record<string, unknown> : {};
       const annotations = metadata.annotations && typeof metadata.annotations === 'object' ? metadata.annotations as Record<string, unknown> : {};
       const labels = metadata.labels && typeof metadata.labels === 'object' ? metadata.labels as Record<string, unknown> : {};

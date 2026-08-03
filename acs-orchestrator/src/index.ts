@@ -12,6 +12,7 @@ import {
 } from './config.js';
 import { AcsExecutor } from './executor.js';
 import { Kubectl } from './kubectl.js';
+import { KubeApi } from './kubeApi.js';
 import {
   MAX_BODY_BYTES,
   buildToolsResponse,
@@ -37,8 +38,9 @@ const logger = {
 };
 
 const kubectl = new Kubectl(config);
+const kubeApi = KubeApi.tryCreate(config, logger);
 const activeRegistry = new ActiveSandboxRegistry();
-const sandboxManager = new SandboxManager(config, kubectl, logger, activeRegistry);
+const sandboxManager = new SandboxManager(config, kubectl, logger, activeRegistry, kubeApi);
 const executor = new AcsExecutor(config, kubectl, sandboxManager, logger, activeRegistry);
 const provisioner = new Provisioner(config, kubectl, sandboxManager, () => executor.busySandboxNames(), activeRegistry);
 let lifecycleTimer: ReturnType<typeof setInterval> | null = null;
@@ -152,35 +154,94 @@ const server = createServer((req, res) => {
   res.end(JSON.stringify({ status: 'error', error: 'not found' }));
 });
 
-async function handleHealth(res: ServerResponse): Promise<void> {
+/**
+ * 2026-08-03 CPU 治理 P0a：/health 深度检查缓存。
+ *
+ * 生产实测：HandHealthScanner 串行扫 900+ 条同 endpoint 的 hands，把 /health
+ * 打成 ~1 QPS；旧实现每次串行 fork ~7 个 kubectl/aliyun 子进程（单次 1.1s+），
+ * 持续吃掉约 0.86 核。现在深检结果缓存 `healthDeepCacheMs`（默认 15s）并做
+ * in-flight 合流；缓存期内 /health 为纯内存响应。
+ *
+ * 不缓存的字段（CI 零停机部署门禁依赖，必须实时）：
+ * - `draining` / `inflight`：deploy 脚本轮询 inflight=0 才发 SIGTERM；
+ * - `image` / runtimeConfig 等来自 config 内存的字段本来就是实时值。
+ */
+interface DeepHealthSnapshot {
+  at: number;
+  ok: boolean;
+  checks: Record<string, unknown>;
+  sandboxes: unknown;
+  snat: unknown;
+}
+
+let deepHealthLast: DeepHealthSnapshot | null = null;
+let deepHealthInFlight: Promise<DeepHealthSnapshot> | null = null;
+
+async function checkCrdExists(crdName: string): Promise<boolean> {
+  const viaApi = await kubeApi?.crdExists(crdName);
+  if (typeof viaApi === 'boolean') return viaApi;
+  const result = await kubectl.run(['get', 'crd', crdName, '-o', 'name'], { timeoutMs: 5_000 });
+  return result.exitCode === 0;
+}
+
+async function checkNamespaceExists(namespace: string): Promise<boolean> {
+  const viaApi = await kubeApi?.namespaceExists(namespace);
+  if (typeof viaApi === 'boolean') return viaApi;
+  const result = await kubectl.run(['get', 'namespace', namespace, '-o', 'name'], { timeoutMs: 5_000 });
+  return result.exitCode === 0;
+}
+
+async function checkCanCreate(crdName: string): Promise<boolean> {
+  const viaApi = await kubeApi?.canCreate(crdName);
+  if (typeof viaApi === 'boolean') return viaApi;
+  const result = await kubectl.run(['auth', 'can-i', 'create', crdName], { timeoutMs: 5_000 });
+  return result.stdout.trim() === 'yes';
+}
+
+async function computeDeepHealth(): Promise<DeepHealthSnapshot> {
   const checks: Record<string, unknown> = {};
   let ok = true;
-  const crd = await kubectl.run(['get', 'crd', config.sandboxCrdName, '-o', 'name'], { timeoutMs: 5_000 });
-  checks.crd = crd.exitCode === 0 ? 'ok' : 'error';
-  if (crd.exitCode !== 0) ok = false;
-  const trafficPolicyCrd = await kubectl.run(['get', 'crd', config.trafficPolicyCrdName, '-o', 'name'], { timeoutMs: 5_000 });
-  checks.trafficPolicyCrd = trafficPolicyCrd.exitCode === 0 ? 'ok' : 'error';
-  if (trafficPolicyCrd.exitCode !== 0) ok = false;
-  const trafficPolicyAccess = await kubectl.run([
-    'auth',
-    'can-i',
-    'create',
-    config.trafficPolicyCrdName,
-  ], { timeoutMs: 5_000 });
-  checks.trafficPolicyRbac = trafficPolicyAccess.stdout.trim() === 'yes' ? 'ok' : 'error';
-  if (trafficPolicyAccess.stdout.trim() !== 'yes') ok = false;
-  const ns = await kubectl.run(['get', 'namespace', config.namespace, '-o', 'name'], { timeoutMs: 5_000 });
-  checks.namespace = ns.exitCode === 0 ? 'ok' : 'error';
-  if (ns.exitCode !== 0) ok = false;
-  let sandboxes: unknown;
-  let snat: unknown;
-  try {
-    sandboxes = await sandboxManager.inventorySummary();
-    snat = await sandboxManager.snatStatus();
-  } catch (err) {
+  // 各检查相互独立，并行执行（旧实现串行导致单次 /health 1.1s+）。
+  const [crdOk, trafficPolicyCrdOk, trafficPolicyRbacOk, namespaceOk, inventoryOutcome] = await Promise.all([
+    checkCrdExists(config.sandboxCrdName),
+    checkCrdExists(config.trafficPolicyCrdName),
+    checkCanCreate(config.trafficPolicyCrdName),
+    checkNamespaceExists(config.namespace),
+    (async () => {
+      try {
+        const sandboxes = await sandboxManager.inventorySummary();
+        const snat = await sandboxManager.snatStatus();
+        return { sandboxes, snat, error: undefined as string | undefined };
+      } catch (err) {
+        return { sandboxes: undefined, snat: undefined, error: err instanceof Error ? err.message : String(err) };
+      }
+    })(),
+  ]);
+  checks.crd = crdOk ? 'ok' : 'error';
+  checks.trafficPolicyCrd = trafficPolicyCrdOk ? 'ok' : 'error';
+  checks.trafficPolicyRbac = trafficPolicyRbacOk ? 'ok' : 'error';
+  checks.namespace = namespaceOk ? 'ok' : 'error';
+  if (!crdOk || !trafficPolicyCrdOk || !trafficPolicyRbacOk || !namespaceOk) ok = false;
+  if (inventoryOutcome.error !== undefined) {
     ok = false;
-    checks.sandboxes = err instanceof Error ? err.message : String(err);
+    checks.sandboxes = inventoryOutcome.error;
   }
+  return { at: Date.now(), ok, checks, sandboxes: inventoryOutcome.sandboxes, snat: inventoryOutcome.snat };
+}
+
+async function getDeepHealth(): Promise<DeepHealthSnapshot> {
+  const ttl = config.healthDeepCacheMs;
+  if (deepHealthLast && ttl > 0 && Date.now() - deepHealthLast.at < ttl) return deepHealthLast;
+  if (!deepHealthInFlight) {
+    deepHealthInFlight = computeDeepHealth().finally(() => { deepHealthInFlight = null; });
+  }
+  const snapshot = await deepHealthInFlight;
+  deepHealthLast = snapshot;
+  return snapshot;
+}
+
+async function handleHealth(res: ServerResponse): Promise<void> {
+  const { ok, checks, sandboxes, snat } = await getDeepHealth();
   return sendJson(res, ok ? 200 : 503, {
     status: ok ? 'ok' : 'unhealthy',
     // drain 期间 CI 脚本轮询 inflight,为 0 时才 SIGTERM

@@ -577,6 +577,13 @@ jobs:
             corepack prepare pnpm@10.18.3 --activate
           fi
           NODE_ENV=development pnpm install --frozen-lockfile --filter acs-orchestrator... --filter server... --filter shared...
+          # 2026-08-03 P3a：生产 orchestrator 改为 esbuild bundle + node dist 运行
+          # （`pnpm start` 已指向 dist/index.js）。build 失败即中止部署（set -e），
+          # 旧进程照常运行，无影响。
+          pnpm -F acs-orchestrator build
+          test -f "$APP_DIR/acs-orchestrator/dist/index.js"
+          test -f "$APP_DIR/acs-orchestrator/dist/backgroundShellWorker.js"
+          test -f "$APP_DIR/acs-orchestrator/descriptions/Edit.md"
 
           # ── 2. 备份并更新镜像 env（新进程拉起时生效）──
           test -f "$ENV_FILE"

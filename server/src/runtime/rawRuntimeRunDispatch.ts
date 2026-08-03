@@ -130,7 +130,7 @@ import {
 import type { ApprovalRecord, ApprovalStore, EventStore, ModelAttachmentRef, PlatformEvent, QueuedInterjection, RunContext } from './types.js';
 import type { RunRecord, RunStatus, RunStore } from './runStore.js';
 import { HandManager } from './handManager.js';
-import type { HandCapability, HandRecord, HandStore, WorkspaceRecipe } from './handStore.js';
+import { SERVER_REMOTE_HAND_LEASE_MS, type HandCapability, type HandRecord, type HandStore, type WorkspaceRecipe } from './handStore.js';
 import {
   createTenantRemoteHandAuthTokenResolver,
   selectTenantRemoteHandsForRegistration,
@@ -861,6 +861,11 @@ export async function ensureRuntimeHandRegistered(params: {
     endpoint: params.endpoint,
     capabilities,
     recipe,
+    // 2026-08-03 P1：per-session hand 记录挂租约。register 是 upsert，活跃
+    // session 每次 dispatch 自动续期；到期由 janitor 收敛（见 handStore.sweepLeases）。
+    ...(params.executionTarget === 'server-remote'
+      ? { leaseExpiresAt: new Date(Date.now() + SERVER_REMOTE_HAND_LEASE_MS) }
+      : {}),
     metadata: { registeredBy: 'rawRuntimeRunDispatch' },
   });
 
@@ -919,6 +924,9 @@ export async function ensureRuntimeHandRegistered(params: {
       endpoint: hand.baseUrl,
       capabilities: tenantRemoteHandCapabilities(hand, tools),
       recipe: tenantRecipe,
+      // 2026-08-03 P1：tenant hand 的 per-session 记录同样挂租约（配置本体在
+      // config/vault，不受影响；到期只回收这条 session 级记录）。
+      leaseExpiresAt: new Date(Date.now() + SERVER_REMOTE_HAND_LEASE_MS),
       metadata: {
         registeredBy: 'tenantRemoteHands',
         tenantRemoteHandId: hand.id,

@@ -376,11 +376,6 @@ export const MessageList = memo(function MessageList({
     setShowJumpToBottom((previous) => previous === !isNear ? previous : !isNear);
   }, [isNearBottomRef]);
 
-  const handleScroll = useCallback(() => {
-    syncNearBottomState();
-    scheduleViewportUpdate();
-  }, [scheduleViewportUpdate, syncNearBottomState]);
-
   const handleJumpToBottom = useCallback(() => {
     const el = internalContainerRef.current;
     if (!el) return;
@@ -406,8 +401,28 @@ export const MessageList = memo(function MessageList({
         firstKey: virtualLayout.keys[0],
       };
     }
+    // 只触发不等待：历史分页不能阻塞滚动处理或其他界面任务。
     void onLoadEarlier();
   }, [isLoadingEarlier, onLoadEarlier, virtualLayout]);
+
+  // 每次触顶只加载一页；离开顶部后才允许下一次触发，避免同一轮滚动重复请求。
+  const topLoadArmedRef = useRef(true);
+  useEffect(() => {
+    if (!hasMoreHistory) topLoadArmedRef.current = true;
+  }, [hasMoreHistory]);
+  const handleScroll = useCallback(() => {
+    const el = internalContainerRef.current;
+    if (el) {
+      if (el.scrollTop > 0) {
+        topLoadArmedRef.current = true;
+      } else if (topLoadArmedRef.current && hasMoreHistory && !isLoadingEarlier) {
+        topLoadArmedRef.current = false;
+        handleLoadEarlier();
+      }
+    }
+    syncNearBottomState();
+    scheduleViewportUpdate();
+  }, [handleLoadEarlier, hasMoreHistory, isLoadingEarlier, scheduleViewportUpdate, syncNearBottomState]);
 
   // Preserve a key-based visual anchor across prepend and asynchronous row remeasurement.
   const previousLayoutRef = useRef(virtualLayout);
@@ -598,16 +613,13 @@ export const MessageList = memo(function MessageList({
     >
       <div className="content-container flex flex-col gap-3 py-4">
         {!showCenterLoading && hasMoreHistory && (
-          <div className="flex justify-center pb-1">
-            <button
-              type="button"
-              onClick={handleLoadEarlier}
-              disabled={isLoadingEarlier}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isLoadingEarlier && <Loader2 className="size-3.5 animate-spin" />}
-              {isLoadingEarlier ? "正在加载" : "加载更早消息"}
-            </button>
+          <div className="flex h-[34px] shrink-0 items-center justify-center" aria-live="polite">
+            {isLoadingEarlier && (
+              <div role="status" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" />
+                <span>正在加载更早消息</span>
+              </div>
+            )}
           </div>
         )}
         {showCenterLoading ? (

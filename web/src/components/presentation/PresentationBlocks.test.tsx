@@ -69,12 +69,15 @@ describe('callout', () => {
 });
 
 describe('records', () => {
-  it('rows 布局渲染条目与标签', () => {
-    render(<PresentationBlocks blocks={[{
+  it('rows 布局按内容收缩，并渲染条目与标签', () => {
+    const { container } = render(<PresentationBlocks blocks={[{
       kind: 'records', layout: 'rows', title: '核对清单',
       items: [{ label: '发票抬头', value: '一致', tag: { tone: 'success', text: '通过' } }],
       footer: '共 1 项',
     }]} />);
+    const records = container.querySelector('[data-records-block]');
+    expect(records?.className).toContain('w-fit');
+    expect(records?.className).toContain('max-w-full');
     expect(screen.getByText('核对清单')).toBeTruthy();
     expect(screen.getByText('通过')).toBeTruthy();
     expect(screen.getByText('共 1 项')).toBeTruthy();

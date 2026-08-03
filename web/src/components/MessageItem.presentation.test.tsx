@@ -222,8 +222,8 @@ describe('PresentationDetail 排版变体', () => {
     expect(screen.getByText('Q4 前需完成 CE 认证')).toBeTruthy();
   });
 
-  it('字段网格渲染 2 列大字段，空值显示占位符', () => {
-    render(
+  it('字段网格渲染 2 列大字段，按内容收缩且空值显示占位符', () => {
+    const { container } = render(
       <PresentationDetail
         data={{
           title: 't',
@@ -231,6 +231,9 @@ describe('PresentationDetail 排版变体', () => {
         }}
       />,
     );
+    const fields = container.querySelector('[data-detail-fields]');
+    expect(fields?.className).toContain('w-fit');
+    expect(fields?.className).toContain('max-w-full');
     expect(screen.getByText('预算')).toBeTruthy();
     expect(screen.getByText('$120,000')).toBeTruthy();
     expect(screen.getByText('2026 Q4')).toBeTruthy();

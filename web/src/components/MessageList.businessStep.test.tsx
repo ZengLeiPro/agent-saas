@@ -80,7 +80,7 @@ describe("MessageList business step sections", () => {
 
     // 计划亮相块
     expect(screen.getByRole("region", { name: "业务计划" })).toBeTruthy();
-    // 第 1 步：完成节常显 outcome 并自动展开业务详情；内部过程不进入普通客户主流。
+    // 第 1 步：完成节常显 outcome 与业务详情；内部过程不进入普通客户主流。
     expect(screen.getByRole("region", { name: "业务步骤已完成" })).toBeTruthy();
     expect(screen.getByText("17/18 张通过，1 张退回")).toBeTruthy();
     expect(screen.getByText("订单资料完整")).toBeTruthy();
@@ -97,7 +97,8 @@ describe("MessageList business step sections", () => {
 
     expect(screen.queryByText(/过程 · 1 项/)).toBeNull();
     expect(screen.queryByText(/读取订单/)).toBeNull();
-    expect(screen.getByRole("button", { name: "业务详情" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "业务详情" })).toBeNull();
+    expect(screen.getByText("订单资料完整")).toBeTruthy();
   });
 
   it("renders activity groups inside open sections as static summaries outside debug mode", () => {

@@ -88,35 +88,31 @@ describe("visibleOutcomeStats（槽位去重）", () => {
     { label: "其他", value: "0" },
   ];
 
-  it("折叠态显示全部标签", () => {
-    expect(visibleOutcomeStats(stats, detail, false)).toEqual(stats);
-  });
-
-  it("展开态隐藏与详情行同键同值的中性标签", () => {
-    expect(visibleOutcomeStats(stats, detail, true)).toEqual([]);
+  it("隐藏与常显详情行同键同值的中性标签", () => {
+    expect(visibleOutcomeStats(stats, detail)).toEqual([]);
   });
 
   it("只隐藏命中的那几个，未命中的原样保留", () => {
     const mixed = [...stats, { label: "耗时", value: "42s" }];
-    expect(visibleOutcomeStats(mixed, detail, true)).toEqual([{ label: "耗时", value: "42s" }]);
+    expect(visibleOutcomeStats(mixed, detail)).toEqual([{ label: "耗时", value: "42s" }]);
   });
 
   it("判定类标签始终显示，哪怕详情里有同键同值的行", () => {
     const withVerdict = [{ label: "合规", value: "通过" }, { label: "文件夹", value: "15" }];
     const detailWithVerdict: DetailLine[] = [{ k: "合规", v: "通过" }, { k: "文件夹", v: "15" }];
-    expect(visibleOutcomeStats(withVerdict, detailWithVerdict, true)).toEqual([
+    expect(visibleOutcomeStats(withVerdict, detailWithVerdict)).toEqual([
       { label: "合规", value: "通过" },
     ]);
   });
 
   it("键相同但值不同不算重复——宁可少隐藏，不可误隐藏", () => {
-    expect(visibleOutcomeStats([{ label: "文件", value: "30" }], detail, true)).toEqual([
+    expect(visibleOutcomeStats([{ label: "文件", value: "30" }], detail)).toEqual([
       { label: "文件", value: "30" },
     ]);
   });
 
   it("值相同但键不同不算重复", () => {
-    expect(visibleOutcomeStats([{ label: "目录", value: "15" }], detail, true)).toEqual([
+    expect(visibleOutcomeStats([{ label: "目录", value: "15" }], detail)).toEqual([
       { label: "目录", value: "15" },
     ]);
   });
@@ -126,24 +122,24 @@ describe("visibleOutcomeStats（槽位去重）", () => {
       { label: " 文件夹 ", value: "１５" },
       { label: "文件", value: "3 个" },
     ];
-    expect(visibleOutcomeStats(noisy, detail, true)).toEqual([]);
+    expect(visibleOutcomeStats(noisy, detail)).toEqual([]);
   });
 
   it("单位剥离要求前面是数字：「文件」不会被剥成「文」", () => {
     const detailWord: DetailLine[] = [{ k: "类型", v: "文" }];
-    expect(visibleOutcomeStats([{ label: "类型", value: "文件" }], detailWord, true)).toEqual([
+    expect(visibleOutcomeStats([{ label: "类型", value: "文件" }], detailWord)).toEqual([
       { label: "类型", value: "文件" },
     ]);
   });
 
   it("详情里没有键值行时不隐藏任何标签", () => {
     const textOnly: DetailLine[] = ["共核验 12 项字段", { verdict: "pass", text: "资料完整" }];
-    expect(visibleOutcomeStats(stats, textOnly, true)).toEqual(stats);
-    expect(visibleOutcomeStats(stats, undefined, true)).toEqual(stats);
+    expect(visibleOutcomeStats(stats, textOnly)).toEqual(stats);
+    expect(visibleOutcomeStats(stats, undefined)).toEqual(stats);
   });
 
   it("无标签时返回空数组", () => {
-    expect(visibleOutcomeStats(undefined, detail, true)).toEqual([]);
-    expect(visibleOutcomeStats([], detail, true)).toEqual([]);
+    expect(visibleOutcomeStats(undefined, detail)).toEqual([]);
+    expect(visibleOutcomeStats([], detail)).toEqual([]);
   });
 });

@@ -158,7 +158,7 @@ function RecordRow({ item }: { item: RecordItem }) {
         <span className={cn("min-w-0 flex-1 text-sm", item.tone === "danger" && "line-through opacity-70", item.mono && "font-mono text-xs")}>
           {item.label}
         </span>
-        {item.value ? <span className={cn("shrink-0 text-sm text-muted-foreground", item.mono && "font-mono text-xs")}>{item.value}</span> : null}
+        {item.value ? <span className={cn("min-w-0 break-words text-right text-sm text-muted-foreground", item.mono && "font-mono text-xs")}>{item.value}</span> : null}
         {item.tag ? <span className={activityStatusBadgeClass(TONE_MAP[item.tag.tone])}>{item.tag.text}</span> : null}
         {expandable ? <ChevronRight className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")} /> : null}
       </button>
@@ -170,7 +170,7 @@ function RecordRow({ item }: { item: RecordItem }) {
 
 function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext }) {
   return (
-    <div className="my-1.5 rounded-md border border-border">
+    <div className="my-1.5 w-fit max-w-full overflow-hidden rounded-md border border-border" data-records-block>
       {block.title ? (
         <div className="border-b border-border bg-muted/30 px-3 py-1.5 text-sm font-medium">{block.title}</div>
       ) : null}
@@ -178,8 +178,8 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 p-3 sm:grid-cols-3">
           {block.items.map((item, i) => (
             <div key={i}>
-              <div className="truncate text-xs text-muted-foreground">{item.label}</div>
-              <div className={cn("truncate text-sm", item.mono && "font-mono text-xs", item.tone && activityStatusTextClass(TONE_MAP[item.tone]))}>
+              <div className="break-words text-xs text-muted-foreground">{item.label}</div>
+              <div className={cn("break-words text-sm", item.mono && "font-mono text-xs", item.tone && activityStatusTextClass(TONE_MAP[item.tone]))}>
                 {item.value ?? ""}
               </div>
             </div>

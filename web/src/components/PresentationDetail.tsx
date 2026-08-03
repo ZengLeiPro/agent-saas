@@ -176,10 +176,10 @@ function DetailRow({ line }: { line: DetailLine }) {
     // 字段网格（demo B11）：客户应当记住的硬字段。值刻意放大加粗、
     // 脱离 mono 排版——这是整条摘要里唯一允许「大字」的地方。
     return (
-      <div className="grid grid-cols-2 gap-1.5 py-0.5">
+      <div className="grid w-fit max-w-full grid-cols-2 gap-1.5 py-0.5" data-detail-fields>
         {line.fields.map((field, i) => (
-          <div key={i} className="rounded-md border border-border/60 bg-background px-2.5 py-1.5">
-            <div className="text-[11px] leading-4 text-muted-foreground">{field.k}</div>
+          <div key={i} className="min-w-0 rounded-md border border-border/60 bg-background px-2.5 py-1.5">
+            <div className="break-words text-[11px] leading-4 text-muted-foreground">{field.k}</div>
             <div className="break-words font-sans text-sm font-semibold leading-5 text-foreground">
               {field.v || "—"}
             </div>
@@ -269,7 +269,7 @@ export function PresentationDetail({
         className={cn(
           "mt-1 text-xs leading-relaxed",
           card
-            ? "divide-y divide-border/60 overflow-hidden rounded-md border border-border bg-card"
+            ? "w-fit max-w-full divide-y divide-border/60 overflow-hidden rounded-md border border-border bg-card"
             : "space-y-1 rounded-md px-3 py-2 font-mono",
           className,
         )}

@@ -2,7 +2,6 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   ChevronRight,
   CircleCheck,
-  CircleDashed,
   CircleX,
   Clock3,
   ListChecks,
@@ -30,7 +29,7 @@ import { statVerdict, visibleOutcomeStats, type OutcomeStat } from "./detailSema
 //   （活动组/工具块），无框 = 业务叙事」是刻意的视觉分层。
 // - 状态色只落在 icon 与小徽标上，容器一律融入背景。
 // - 归属感由缩进 + 极淡左竖线表达（timeline 语言），不靠边框。
-// - 步骤完成后常显标题、状态、outcome 与业务详情；调试过程仍按需展开。
+// - 步骤完成后常显标题、状态、outcome 与业务详情；只有调试过程按需展开。
 //   运行中的步骤保持展开。
 //
 // 内容纪律（08-03 二轮：样式对齐 demo + 槽位去重）：
@@ -38,8 +37,8 @@ import { statVerdict, visibleOutcomeStats, type OutcomeStat } from "./detailSema
 //   线，字段名灰、值深、关键值配主题强调色。去框只约束**步骤章节骨架**，
 //   内容块该是卡片就是卡片。
 // - 标签分两类：判定类（✓/✗/通过/失败）走绿红语义色，中性键值保持灰。
-// - 槽位去重是渲染层硬约束而非提示语约定：业务详情展开时，与详情键值行同键
-//   同值的中性标签隐藏；判定类标签任何时候都不隐藏。
+// - 槽位去重是渲染层硬约束而非提示语约定：与详情键值行同键同值的中性标签
+//   隐藏；判定类标签任何时候都不隐藏。
 // ---------------------------------------------------------------------------
 
 const TERMINAL_META: Partial<Record<BusinessStepEventItem["kind"], {
@@ -93,8 +92,8 @@ function StatChip({ stat }: { stat: OutcomeStat }) {
 }
 
 /**
- * 一句话业务结果：折叠态的信息主体。tone 修正语义色（完成但有例外 = 橙色警示）。
- * stats 由调用方按「业务详情是否展开」过滤后传入——同一组数字不在一屏里出现两遍。
+ * 一句话业务结果。tone 修正语义色（完成但有例外 = 橙色警示）。
+ * stats 由调用方按常显的业务详情过滤后传入——同一组数字不在一屏里出现两遍。
  */
 function OutcomeLine({ outcome, stats }: { outcome: TodoOutcome; stats: OutcomeStat[] }) {
   const meta = OUTCOME_TONE_META[outcome.tone ?? "ok"];
@@ -165,17 +164,13 @@ function DisclosureButton({
   );
 }
 
-function PlanTodoRow({ todo, isCurrent }: { todo: TodoItem; isCurrent: boolean }) {
+function PlanTodoRow({ todo, index }: { todo: TodoItem; index: number }) {
   const active = todo.status === "in_progress";
   return (
     <li className="flex items-start gap-2.5 py-1">
-      {todo.status === "completed" ? (
-        <CircleCheck className={activityStatusIconClass("success", "mt-0.5 size-3.5 shrink-0")} />
-      ) : active && isCurrent ? (
-        <Loader2 className={activityStatusIconClass("active", "mt-0.5 size-3.5 shrink-0 animate-spin")} />
-      ) : (
-        <CircleDashed className={activityStatusIconClass(active ? "active" : "neutral", "mt-0.5 size-3.5 shrink-0")} />
-      )}
+      <span className="min-w-4 shrink-0 text-right text-sm leading-5 tabular-nums text-muted-foreground">
+        {index}.
+      </span>
       <span
         className={cn(
           "min-w-0 flex-1 break-words text-sm leading-5",
@@ -197,13 +192,10 @@ function PlanBlock({ event }: { event: BusinessStepEventItem }) {
       <header className="flex items-center gap-2.5">
         <ListChecks className="size-4 shrink-0 text-primary" />
         <h3 className="text-sm font-medium text-foreground">业务计划</h3>
-        <span className="text-[11px] tabular-nums text-muted-foreground">
-          共 {event.stepCount ?? todos.length} 步
-        </span>
       </header>
       <ol className="ml-[7px] mt-2.5 border-l border-border/50 pl-5">
         {todos.map((todo, index) => (
-          <PlanTodoRow key={todo.id || `${index}-${todo.content}`} todo={todo} isCurrent={false} />
+          <PlanTodoRow key={todo.id || `${index}-${todo.content}`} todo={todo} index={index + 1} />
         ))}
       </ol>
     </section>
@@ -234,10 +226,8 @@ function StartRow({ event }: { event: BusinessStepEventItem }) {
 function TerminalBlock({ event }: { event: BusinessStepEventItem }) {
   const todo = event.todo;
   const meta = TERMINAL_META[event.kind];
-  const [summaryOpen, setSummaryOpen] = useState(true);
   if (!todo || !meta) return null;
   const { label, tone, Icon } = meta;
-  const hasSummary = hasStepSummaryBody(todo);
 
   return (
     <section className="my-6" aria-label={`业务步骤${label}`} data-business-step={event.id}>
@@ -253,15 +243,10 @@ function TerminalBlock({ event }: { event: BusinessStepEventItem }) {
         {todo.outcome ? (
           <OutcomeLine
             outcome={todo.outcome}
-            stats={visibleOutcomeStats(todo.outcome.stat, todo.detail, summaryOpen)}
+            stats={visibleOutcomeStats(todo.outcome.stat, todo.detail)}
           />
         ) : null}
-        {hasSummary ? (
-          <>
-            <DisclosureButton label="业务详情" open={summaryOpen} onToggle={() => setSummaryOpen((open) => !open)} />
-            {summaryOpen ? <StepSummaryBody todo={todo} /> : null}
-          </>
-        ) : null}
+        <StepSummaryBody todo={todo} />
       </div>
     </section>
   );
@@ -305,7 +290,7 @@ function countSectionProcessItems(section: BusinessStepSection): number {
 }
 
 /**
- * 业务步骤节：标题行 + outcome 常显；完成后业务详情默认展开，调试过程按需展开。
+ * 业务步骤节：标题行、outcome 与业务详情常显；调试过程按需展开。
  * children 由 MessageList 用完整消息渲染逻辑生成，本组件只提供节壳。
  */
 export function BusinessStepSectionView({
@@ -322,16 +307,13 @@ export function BusinessStepSectionView({
   const todo = terminal?.todo ?? start.todo;
   const processCount = countSectionProcessItems(section);
   const hasProcess = processCount > 0;
-  const hasSummary = !!terminal?.todo && hasStepSummaryBody(terminal.todo);
 
   const [processOpen, setProcessOpen] = useState(!terminal);
-  const [summaryOpen, setSummaryOpen] = useState(true);
-  // 步骤完成瞬间收起调试过程，但让业务详情直接可见。
+  // 步骤完成瞬间收起调试过程；业务详情始终直接可见。
   const terminalKey = terminal?.id ?? null;
   useEffect(() => {
     if (!terminalKey) return;
     setProcessOpen(false);
-    setSummaryOpen(true);
   }, [terminalKey]);
 
   if (!todo) return <>{children}</>;
@@ -381,26 +363,19 @@ export function BusinessStepSectionView({
         {terminal?.todo?.outcome ? (
           <OutcomeLine
             outcome={terminal.todo.outcome}
-            stats={visibleOutcomeStats(terminal.todo.outcome.stat, terminal.todo.detail, summaryOpen)}
+            stats={visibleOutcomeStats(terminal.todo.outcome.stat, terminal.todo.detail)}
           />
         ) : null}
 
-        {terminal && (hasSummary || (debugMode && hasProcess)) ? (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-            {hasSummary ? (
-              <DisclosureButton label="业务详情" open={summaryOpen} onToggle={() => setSummaryOpen((open) => !open)} />
-            ) : null}
-            {debugMode && hasProcess ? (
-              <DisclosureButton
-                label={<>过程 · {processCount} 项</>}
-                open={processOpen}
-                onToggle={() => setProcessOpen((open) => !open)}
-              />
-            ) : null}
-          </div>
+        {terminal && debugMode && hasProcess ? (
+          <DisclosureButton
+            label={<>过程 · {processCount} 项</>}
+            open={processOpen}
+            onToggle={() => setProcessOpen((open) => !open)}
+          />
         ) : null}
 
-        {terminal?.todo && summaryOpen ? <StepSummaryBody todo={terminal.todo} /> : null}
+        {terminal?.todo ? <StepSummaryBody todo={terminal.todo} /> : null}
         {terminal && debugMode && processOpen ? <div>{children}</div> : null}
         {!terminal && hasProcess ? <div>{children}</div> : null}
       </div>

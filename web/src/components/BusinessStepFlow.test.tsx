@@ -53,7 +53,9 @@ describe("BusinessStepFlow", () => {
     );
 
     expect(screen.getByRole("region", { name: "业务计划" })).toBeTruthy();
-    expect(screen.getByText("共 2 步")).toBeTruthy();
+    expect(screen.queryByText("共 2 步")).toBeNull();
+    expect(screen.getByText("1.")).toBeTruthy();
+    expect(screen.getByText("2.")).toBeTruthy();
     expect(screen.getByText("核验订单")).toBeTruthy();
     // 去框：计划块容器不允许四边框与状态色填充
     const region = screen.getByRole("region", { name: "业务计划" });
@@ -110,14 +112,11 @@ describe("BusinessStepFlow", () => {
     expect(screen.getByText("17/18 张通过，1 张税号过期退回")).toBeTruthy();
     expect(screen.getByText("通过")).toBeTruthy();
     expect(screen.getByText("17")).toBeTruthy();
-    // 业务详情默认展开，用户仍可按需收起。
-    const summaryToggle = screen.getByRole("button", { name: "业务详情" });
-    expect(summaryToggle.getAttribute("aria-expanded")).toBe("true");
+    // 业务详情直接展示，不增加标题或折叠层级。
+    expect(screen.queryByRole("button", { name: "业务详情" })).toBeNull();
+    expect(screen.queryByText("业务详情")).toBeNull();
     expect(screen.getByText("订单资料完整")).toBeTruthy();
     expect(screen.getByText("SO-1001")).toBeTruthy();
-    fireEvent.click(summaryToggle);
-    expect(screen.queryByText("订单资料完整")).toBeNull();
-    expect(screen.queryByText("SO-1001")).toBeNull();
     for (const sel of NO_FILL_SELECTORS) expect(container.querySelector(sel)).toBeNull();
   });
 
@@ -140,6 +139,9 @@ describe("BusinessStepFlow", () => {
 
     const card = container.querySelector(".divide-y.bg-card");
     expect(card).toBeTruthy();
+    // 白卡按内容收缩，但不超过业务消息的可用宽度。
+    expect(card!.className).toContain("w-fit");
+    expect(card!.className).toContain("max-w-full");
     // 白卡不用等宽排版，也不再用代码块底色
     expect(card!.className).not.toContain("font-mono");
     expect((card as HTMLElement).style.backgroundColor).toBe("");
@@ -177,7 +179,7 @@ describe("BusinessStepFlow", () => {
     expect(screen.getByText("退回").className).toContain("text-muted-foreground");
   });
 
-  it("hides duplicated neutral chips while 业务详情 is open, restores them once collapsed", () => {
+  it("hides neutral chips duplicated by the always-visible business details", () => {
     render(
       <BusinessStepFlow
         event={event({
@@ -202,21 +204,14 @@ describe("BusinessStepFlow", () => {
       />,
     );
 
-    // 默认展开：与详情行同键同值的中性标签隐藏，判定类与未重复的保留
-    const expanded = within(screen.getByTestId("outcome-stats"));
-    expect(expanded.queryByText("文件夹")).toBeNull();
-    expect(expanded.getByText("合规")).toBeTruthy();
-    expect(expanded.getByText("耗时")).toBeTruthy();
-    // 详情行里那份「文件夹 15」仍在，信息没丢，只是不再出现两遍
+    // 与详情行同键同值的中性标签隐藏，判定类与未重复的保留。
+    const stats = within(screen.getByTestId("outcome-stats"));
+    expect(stats.queryByText("文件夹")).toBeNull();
+    expect(stats.getByText("合规")).toBeTruthy();
+    expect(stats.getByText("耗时")).toBeTruthy();
+    // 详情行里那份「文件夹 15」仍在，信息没丢，只是不再出现两遍。
     expect(screen.getByText("15")).toBeTruthy();
-
-    // 收起业务详情：标签成为唯一的结构化信息位，全部显示
-    fireEvent.click(screen.getByRole("button", { name: "业务详情" }));
-    const collapsed = within(screen.getByTestId("outcome-stats"));
-    expect(collapsed.getByText("文件夹")).toBeTruthy();
-    expect(collapsed.getByText("15")).toBeTruthy();
-    expect(collapsed.getByText("合规")).toBeTruthy();
-    expect(collapsed.getByText("耗时")).toBeTruthy();
+    expect(screen.queryByText("业务详情")).toBeNull();
   });
 
   it("renders the lightweight update row", () => {
@@ -239,7 +234,7 @@ describe("BusinessStepSectionView", () => {
     expect(container.querySelector(".animate-spin")).toBeTruthy();
   });
 
-  it("expands business details and collapses debug process once terminal", () => {
+  it("shows business details directly and keeps the terminal debug process collapsed", () => {
     const terminal = event({
       kind: "complete",
       todo: {
@@ -259,17 +254,15 @@ describe("BusinessStepSectionView", () => {
       </BusinessStepSectionView>,
     );
 
-    // 业务详情自动展开，调试过程仍按需展开。
+    // 业务详情直接展示，调试过程仍按需展开。
     expect(screen.queryByTestId("process-content")).toBeNull();
     expect(screen.getByText(/过程 ·/)).toBeTruthy();
     expect(screen.getByText("全部通过")).toBeTruthy();
     expect(screen.getByText("共核验 12 项字段")).toBeTruthy();
     expect(screen.getByText("已完成")).toBeTruthy();
+    expect(screen.queryByText("业务详情")).toBeNull();
 
-    const summaryToggle = screen.getByRole("button", { name: "业务详情" });
     const processToggle = screen.getByRole("button", { name: /过程 ·/ });
-    expect(summaryToggle.getAttribute("aria-expanded")).toBe("true");
-    expect(summaryToggle.lastElementChild?.classList.contains("rotate-90")).toBe(true);
     expect(processToggle.lastElementChild?.classList.contains("lucide-chevron-right")).toBe(true);
 
     fireEvent.click(processToggle);

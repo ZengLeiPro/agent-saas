@@ -1602,6 +1602,20 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     setConnectorDictionary(null);
     serverLogger.warn(`connector dictionary load failed, using builtin: ${err instanceof Error ? err.message : String(err)}`);
   }
+  // 跨进程热更新（2026-08-03）：admin 保存只能刷新处理该请求的 Web/API 进程，
+  // 而 presentation 产出在独立的 Runtime Worker 进程（蓝绿解耦后 chat 走
+  // enqueue-only → scheduler wake）。没有这条定时刷新，「保存即热更新」对
+  // 会话执行进程永远无效，要等下次部署重启才生效。60s 从 PG 拉全量，
+  // 语义=「保存后 ≤60s 全进程生效」；词典只有个位数条目，成本可忽略。
+  // 单次读失败保留上一份内存词典（不回退 builtin），连续失败只影响新鲜度不影响可用性。
+  const connectorDictionaryRefreshTimer = setInterval(() => {
+    void connectorDictionaryStore!.listPlatform()
+      .then((entries) => setConnectorDictionary(entries))
+      .catch((err) => {
+        serverLogger.warn(`connector dictionary refresh failed, keeping last loaded copy: ${err instanceof Error ? err.message : String(err)}`);
+      });
+  }, 60_000);
+  connectorDictionaryRefreshTimer.unref();
   artifactStore ??= new InMemoryArtifactStore();
   const artifactConfig = config.artifact;
   let artifactBlobStore: ArtifactBlobStore;

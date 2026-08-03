@@ -11,6 +11,18 @@ export type TodoStatus =
   | "completed"
   | "failed";
 
+/**
+ * 一句话业务结果/现状。折叠视图里步骤只剩标题一行时，它是唯一的信息位：
+ * - text：业务结论（「17/18 通过，1 张退回」「等财务审批，截止明午」）；
+ * - tone：修正折叠行语义色——completed+warn = 完成但有例外，不允许干净绿勾掩盖；
+ * - stat：分流计数徽标（一致 61 / 差异 19 / 无法匹配 6）。
+ */
+export interface TodoOutcome {
+  text: string;
+  tone?: "ok" | "warn" | "fail";
+  stat?: Array<{ label: string; value: string }>;
+}
+
 export interface TodoItem {
   /** 稳定业务步骤 ID；旧 TodoWrite 快照可以不带。 */
   id?: string;
@@ -19,6 +31,7 @@ export interface TodoItem {
   content: string;
   status: TodoStatus;
   activeForm?: string;
+  outcome?: TodoOutcome;
   detail?: DetailLine[];
   /** TodoWrite 只接受无交互的 callout / records；审批继续走真实 interaction 通道。 */
   display?: PresentationBlock[];
@@ -29,6 +42,8 @@ export interface TodoItem {
 const TODO_WRITE_TOOL_NAME = "TodoWrite";
 const TODO_DETAIL_LIMIT = 60;
 const TODO_EVIDENCE_LIMIT = 20;
+const TODO_OUTCOME_TEXT_LIMIT = 120;
+const TODO_OUTCOME_STAT_LIMIT = 6;
 
 function isTodoStatus(status: unknown): status is TodoStatus {
   return status === "pending"
@@ -61,6 +76,35 @@ function normalizeTodoDisplay(raw: unknown): PresentationBlock[] | undefined {
   return safeBlocks.length ? safeBlocks : undefined;
 }
 
+function normalizeTodoOutcome(raw: unknown): TodoOutcome | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const outcome = raw as Record<string, unknown>;
+  const outcomeText = text(outcome.text, TODO_OUTCOME_TEXT_LIMIT);
+  if (!outcomeText) return undefined;
+
+  const tone = outcome.tone === "ok" || outcome.tone === "warn" || outcome.tone === "fail"
+    ? outcome.tone
+    : undefined;
+
+  const stat = Array.isArray(outcome.stat)
+    ? outcome.stat
+      .slice(0, TODO_OUTCOME_STAT_LIMIT)
+      .flatMap((item): Array<{ label: string; value: string }> => {
+        if (!item || typeof item !== "object") return [];
+        const entry = item as Record<string, unknown>;
+        const label = text(entry.label, 20);
+        const value = text(entry.value, 40);
+        return label && value ? [{ label, value }] : [];
+      })
+    : [];
+
+  return {
+    text: outcomeText,
+    ...(tone ? { tone } : {}),
+    ...(stat.length ? { stat } : {}),
+  };
+}
+
 function normalizeTodoItem(raw: unknown): TodoItem | null {
   if (!raw || typeof raw !== "object") return null;
   const todo = raw as Record<string, unknown>;
@@ -70,6 +114,7 @@ function normalizeTodoItem(raw: unknown): TodoItem | null {
   const id = text(todo.id, 100);
   const activeForm = text(todo.activeForm, 500);
   const kind = todo.kind === "business" || todo.kind === "task" ? todo.kind : undefined;
+  const outcome = normalizeTodoOutcome(todo.outcome);
 
   const detail = Array.isArray(todo.detail)
     ? todo.detail
@@ -93,6 +138,7 @@ function normalizeTodoItem(raw: unknown): TodoItem | null {
     content,
     status: todo.status,
     ...(activeForm ? { activeForm } : {}),
+    ...(outcome ? { outcome } : {}),
     ...(detail.length ? { detail } : {}),
     ...(display ? { display } : {}),
     ...(evidenceRefs.length ? { evidenceRefs } : {}),
@@ -191,13 +237,24 @@ const TERMINAL_KIND_BY_STATUS: Partial<Record<TodoStatus, BusinessStepEventKind>
   waiting: "wait",
 };
 
+const TERMINAL_EVENT_KINDS: ReadonlySet<BusinessStepEventKind> = new Set([
+  "complete", "fail", "block", "wait",
+]);
+
+/** 终态事件（complete/fail/block/wait）：章节化时封闭对应步骤节。 */
+export function isTerminalStepEvent(event: BusinessStepEventItem): boolean {
+  return TERMINAL_EVENT_KINDS.has(event.kind);
+}
+
 /**
  * 把 Business TodoWrite 快照序列差分成会话流内的业务步骤事件。
  *
  * 规则：
  * - 每个用户 Turn 内首个完整 business 快照 → `plan` 事件（计划亮相，不回放快照内已有状态）；
+ *   若首快照已有 in_progress 项，紧跟一条 `start` 事件——保证每个步骤都有自己的节标题，
+ *   章节化（groupMessages sectioning）才能把后续过程内容归进该步骤；
  * - 后续快照 vs 上一快照逐步骤 diff：
- *   `→completed/failed/blocked/waiting` → 终态事件（携带该步骤最终 detail/display/evidence），
+ *   `→completed/failed/blocked/waiting` → 终态事件（携带该步骤最终 outcome/detail/display/evidence），
  *   `→in_progress` → `start` 事件（首次开始与等待后继续同形）；
  * - 收尾事件排在开新事件之前（同一快照先结旧步、再开新步）；
  * - 仅结构增删且无任何状态转移时补一条轻量 `update`；
@@ -264,8 +321,24 @@ export function projectBusinessStepEvents(
         todos: businessTodos,
         stepCount,
       };
-      pushEvents(message.id, [planEvent]);
-      lastProgressEvent = planEvent;
+      const batch: BusinessStepEventItem[] = [planEvent];
+      if (activeTodo) {
+        const activeKey = todoItemKey(activeTodo);
+        const startEvent: BusinessStepEventItem = {
+          type: "business_step",
+          id: `bs-${message.id}-${activeKey}-start`,
+          anchorMessageId: message.id,
+          kind: "start",
+          todo: activeTodo,
+          stepIndex: indexByKey.get(activeKey),
+          stepCount,
+        };
+        batch.push(startEvent);
+        lastProgressEvent = startEvent;
+      } else {
+        lastProgressEvent = null;
+      }
+      pushEvents(message.id, batch);
       baseline = new Map(businessTodos.map((todo) => [todoItemKey(todo), todo]));
       continue;
     }
@@ -322,13 +395,13 @@ export function projectBusinessStepEvents(
     baseline = new Map(businessTodos.map((todo) => [todoItemKey(todo), todo]));
   }
 
-  if (loading && latestActiveKey && lastProgressEvent) {
-    const matchesActive = lastProgressEvent.kind === "plan"
-      ? lastProgressEvent.todos?.some(
-          (todo) => todo.status === "in_progress" && todoItemKey(todo) === latestActiveKey,
-        )
-      : lastProgressEvent.todo && todoItemKey(lastProgressEvent.todo) === latestActiveKey;
-    if (matchesActive) lastProgressEvent.isCurrent = true;
+  if (
+    loading
+    && latestActiveKey
+    && lastProgressEvent?.todo
+    && todoItemKey(lastProgressEvent.todo) === latestActiveKey
+  ) {
+    lastProgressEvent.isCurrent = true;
   }
 
   return { events, eventsByAnchor, hiddenMessageIds };

@@ -144,13 +144,14 @@ describe("extractLatestTodos", () => {
 });
 
 describe("projectBusinessStepEvents", () => {
-  it("emits a single plan event for the first complete business snapshot", () => {
+  it("emits plan followed by start for the first complete business snapshot", () => {
     const result = projectBusinessStepEvents([
       user("user-1"),
       todo("t1", todos([step("verify", "in_progress"), step("write", "pending")])),
     ], false);
 
-    expect(result.events).toHaveLength(1);
+    // 首快照有 in_progress 项：plan 亮相后紧跟该步骤的 start（章节化需要每步都有节标题）。
+    expect(result.events.map((event) => event.kind)).toEqual(["plan", "start"]);
     expect(result.events[0]).toMatchObject({
       type: "business_step",
       id: "bs-t1-plan",
@@ -162,8 +163,22 @@ describe("projectBusinessStepEvents", () => {
         { id: "write", status: "pending" },
       ],
     });
+    expect(result.events[1]).toMatchObject({
+      id: "bs-t1-id:verify-start",
+      kind: "start",
+      stepIndex: 1,
+      stepCount: 2,
+    });
     expect(result.hiddenMessageIds.has("t1")).toBe(true);
-    expect(result.eventsByAnchor.get("t1")).toHaveLength(1);
+    expect(result.eventsByAnchor.get("t1")).toHaveLength(2);
+  });
+
+  it("emits only plan when the first snapshot has no in-progress step", () => {
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("a", "pending"), step("b", "pending")])),
+    ], false);
+
+    expect(result.events.map((event) => event.kind)).toEqual(["plan"]);
   });
 
   it("emits closings before openings when a snapshot finishes one step and starts the next", () => {
@@ -253,7 +268,8 @@ describe("projectBusinessStepEvents", () => {
     ], false);
 
     const t3Events = result.eventsByAnchor.get("t3") ?? [];
-    expect(t3Events.map((event) => event.kind)).toEqual(["plan"]);
+    // 跨 Turn 首快照：plan 重新亮相 + 当前 in_progress 步骤的 start，不回放已完成步骤。
+    expect(t3Events.map((event) => event.kind)).toEqual(["plan", "start"]);
     expect(result.events.filter((event) => event.kind === "complete")).toHaveLength(1);
   });
 
@@ -283,30 +299,32 @@ describe("projectBusinessStepEvents", () => {
       todo("t2", todos([step("a", "in_progress")])),
     ], false);
 
-    expect((result.eventsByAnchor.get("t2") ?? []).map((event) => event.kind)).toEqual(["plan"]);
+    expect((result.eventsByAnchor.get("t2") ?? []).map((event) => event.kind)).toEqual(["plan", "start"]);
     expect(result.hiddenMessageIds.has("clear")).toBe(true);
   });
 
-  it("marks the latest in-progress start event as current while the run is active", () => {
+  it("marks only the latest start event as current while the run is active", () => {
     const messages = [
       todo("t1", todos([step("a", "in_progress"), step("b", "pending")])),
       todo("t2", todos([step("a", "completed"), step("b", "in_progress")])),
     ];
 
     const active = projectBusinessStepEvents(messages, true);
-    const startEvent = active.events.find((event) => event.kind === "start");
-    expect(startEvent?.isCurrent).toBe(true);
+    const startEvents = active.events.filter((event) => event.kind === "start");
+    expect(startEvents).toHaveLength(2);
+    expect(startEvents[0].isCurrent).toBeUndefined();
+    expect(startEvents[1].isCurrent).toBe(true);
 
     const idle = projectBusinessStepEvents(messages, false);
-    expect(idle.events.find((event) => event.kind === "start")?.isCurrent).toBeUndefined();
+    expect(idle.events.every((event) => event.isCurrent !== true)).toBe(true);
   });
 
-  it("marks the plan event as current when the first snapshot is still the latest", () => {
+  it("marks the first snapshot's start as current when it is still the latest", () => {
     const result = projectBusinessStepEvents([
       todo("t1", todos([step("a", "in_progress"), step("b", "pending")])),
     ], true);
 
-    expect(result.events[0]).toMatchObject({ kind: "plan", isCurrent: true });
+    expect(result.events[1]).toMatchObject({ kind: "start", isCurrent: true });
   });
 
   it("does not mark stale start events current after the step moved to waiting", () => {
@@ -326,7 +344,55 @@ describe("projectBusinessStepEvents", () => {
       todo("t3", todos([step("a", "in_progress")])),
     ], false);
 
-    expect(result.events.map((event) => event.kind)).toEqual(["plan", "wait", "start"]);
+    expect(result.events.map((event) => event.kind)).toEqual(["plan", "start", "wait", "start"]);
+  });
+
+  it("normalizes outcome and drops malformed entries", () => {
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("a", "in_progress")])),
+      todo("t2", todos([
+        step("a", "completed", {
+          outcome: {
+            text: "17/18 张通过，1 张税号过期退回",
+            tone: "warn",
+            stat: [
+              { label: "通过", value: "17" },
+              { label: "退回", value: "1" },
+              { label: "", value: "无效项被丢弃" },
+            ],
+            extra: "unknown field ignored",
+          },
+        }),
+      ])),
+    ], false);
+
+    const completeEvent = result.events.find((event) => event.kind === "complete");
+    expect(completeEvent?.todo?.outcome).toEqual({
+      text: "17/18 张通过，1 张税号过期退回",
+      tone: "warn",
+      stat: [
+        { label: "通过", value: "17" },
+        { label: "退回", value: "1" },
+      ],
+    });
+  });
+
+  it("drops outcome without text and invalid tone", () => {
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("a", "in_progress")])),
+      todo("t2", todos([
+        step("a", "completed", { outcome: { tone: "warn" } }),
+      ])),
+      todo("t3", todos([
+        step("a", "in_progress"),
+        step("b", "waiting", { outcome: { text: "等待审批", tone: "purple" } }),
+      ])),
+    ], false);
+
+    const completeEvent = result.events.find((event) => event.kind === "complete");
+    expect(completeEvent?.todo?.outcome).toBeUndefined();
+    const waitEvent = result.events.find((event) => event.kind === "wait");
+    expect(waitEvent?.todo?.outcome).toEqual({ text: "等待审批" });
   });
 
   it("does not emit events for regressions back to pending", () => {

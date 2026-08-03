@@ -177,11 +177,8 @@ export function TodoPanel({ messages, sessionId, runActive = false }: TodoPanelP
   return (
     <div className="relative z-0 mx-6 -mb-px">
       <div
-        className={cn(
-          "overflow-hidden rounded-t-lg rounded-b-none border bg-card text-sm shadow-sm transition-colors",
-          summary.allCompleted && "border-success/25 bg-success/5",
-          (summary.status === "blocked" || summary.status === "failed") && "border-destructive/25",
-        )}
+        // 视觉纪律：容器不承状态色（无整条绿/红填充），状态语义由 icon 与文字色表达。
+        className="overflow-hidden rounded-t-lg rounded-b-none border bg-card text-sm shadow-sm transition-colors"
         aria-live="polite"
       >
         <button

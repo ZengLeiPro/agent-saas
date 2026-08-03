@@ -124,6 +124,18 @@ export const todoWriteToolDescriptor: ToolDescriptor<TodoWriteInput> = {
           content: todoTextSchema,
           status: z.enum(['pending', 'in_progress', 'waiting', 'blocked', 'completed', 'failed']),
           activeForm: todoTextSchema.optional(),
+          // 折叠视图里步骤只剩标题一行，outcome 是唯一的信息位；
+          // 完成但有例外必须 tone:'warn'，不允许干净「已完成」掩盖例外。
+          outcome: z
+            .object({
+              text: z.string().min(1).max(120),
+              tone: z.enum(['ok', 'warn', 'fail']).optional(),
+              stat: z
+                .array(z.object({ label: z.string().min(1).max(20), value: z.string().min(1).max(40) }))
+                .max(6)
+                .optional(),
+            })
+            .optional(),
           detail: z.array(todoDetailLineSchema).max(60).optional(),
           display: z.array(todoDisplayBlockSchema).max(12).optional(),
           evidenceRefs: z.array(z.string().min(1).max(200)).max(20).optional(),

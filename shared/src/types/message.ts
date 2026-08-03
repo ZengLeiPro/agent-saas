@@ -2,6 +2,21 @@ import type { ToolPresentation } from '../lib/toolPresentation';
 import type { PresentationBlock } from '../lib/presentation/types';
 import type { BusinessStepEventItem } from '../lib/extractTodos';
 
+/**
+ * 业务步骤节：从步骤 start 事件到其终态事件之间的所有渲染单元，
+ * 按原时间顺序收编为一节（内容不搬运、不倒流，只加一层归属）。
+ * terminal 缺失 = 步骤仍在进行（或被打断）。
+ */
+export interface BusinessStepSection {
+  type: 'business_step_section';
+  id: string;
+  start: BusinessStepEventItem;
+  terminal?: BusinessStepEventItem;
+  items: RenderItem[];
+  /** 进行中且 run 活跃（流末尾的开放节）。 */
+  isActive: boolean;
+}
+
 export type AskUserAnswerValue = string | string[];
 export type AskUserAnswers = Record<string, AskUserAnswerValue>;
 export type SubagentStatus = "running" | "completed" | "failed" | "cancelled" | "timeout";
@@ -161,5 +176,5 @@ export interface ActivityGroup {
   isActive: boolean;
 }
 
-/** MessageList render unit = message | activity group | business step event */
-export type RenderItem = MessageItem | ActivityGroup | BusinessStepEventItem;
+/** MessageList render unit = message | activity group | business step event | business step section */
+export type RenderItem = MessageItem | ActivityGroup | BusinessStepEventItem | BusinessStepSection;

@@ -94,7 +94,7 @@ function StepSummaryBody({ todo }: { todo: TodoItem }) {
   const hasBody = !!todo.detail?.length || !!todo.display?.length || !!todo.evidenceRefs?.length;
   if (!hasBody) return null;
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
       {todo.detail?.length ? (
         <PresentationDetail data={{ title: "", detail: todo.detail }} />
       ) : null}
@@ -143,7 +143,7 @@ function PlanTodoRow({ todo, isCurrent }: { todo: TodoItem; isCurrent: boolean }
 function PlanBlock({ event }: { event: BusinessStepEventItem }) {
   const todos = event.todos ?? [];
   return (
-    <section className="my-2" aria-label="业务计划" data-business-step={event.id}>
+    <section className="my-4" aria-label="业务计划" data-business-step={event.id}>
       <header className="flex items-center gap-2">
         <ListChecks className="size-4 shrink-0 text-primary" />
         <h3 className="text-sm font-medium text-foreground">业务计划</h3>
@@ -151,7 +151,7 @@ function PlanBlock({ event }: { event: BusinessStepEventItem }) {
           共 {event.stepCount ?? todos.length} 步
         </span>
       </header>
-      <ol className="ml-[7px] mt-1 border-l border-border/50 pl-4">
+      <ol className="ml-[7px] mt-1.5 border-l border-border/50 pl-4">
         {todos.map((todo, index) => (
           <PlanTodoRow key={todo.id || `${index}-${todo.content}`} todo={todo} isCurrent={false} />
         ))}
@@ -166,7 +166,7 @@ function StartRow({ event }: { event: BusinessStepEventItem }) {
   if (!todo) return null;
   const label = event.isCurrent && todo.activeForm ? todo.activeForm : todo.content;
   return (
-    <div className="my-1 flex items-center gap-2 px-1 text-sm" data-business-step={event.id}>
+    <div className="my-1.5 flex items-center gap-2 px-1 text-sm" data-business-step={event.id}>
       {event.isCurrent ? (
         <Loader2 className={activityStatusIconClass("active", "size-3.5 shrink-0 animate-spin")} />
       ) : (
@@ -188,7 +188,7 @@ function TerminalBlock({ event }: { event: BusinessStepEventItem }) {
   const { label, tone, Icon } = meta;
 
   return (
-    <section className="my-2" aria-label={`业务步骤${label}`} data-business-step={event.id}>
+    <section className="my-4" aria-label={`业务步骤${label}`} data-business-step={event.id}>
       <header className="flex items-start gap-2">
         <Icon className={activityStatusIconClass(tone, "mt-0.5 size-4 shrink-0")} />
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
@@ -197,7 +197,7 @@ function TerminalBlock({ event }: { event: BusinessStepEventItem }) {
         </div>
         <StepBadge index={event.stepIndex} count={event.stepCount} />
       </header>
-      <div className="ml-[7px] mt-1.5 space-y-2 border-l border-border/50 pl-4">
+      <div className="ml-[7px] mt-2 space-y-2.5 border-l border-border/50 pl-4">
         {todo.outcome ? <OutcomeLine outcome={todo.outcome} /> : null}
         <StepSummaryBody todo={todo} />
       </div>
@@ -273,7 +273,7 @@ export function BusinessStepSectionView({
 
   return (
     <section
-      className="my-2"
+      className="my-4"
       aria-label={terminalMeta ? `业务步骤${terminalMeta.label}` : "业务步骤"}
       data-business-step-section={section.id}
     >
@@ -303,7 +303,7 @@ export function BusinessStepSectionView({
         <StepBadge index={terminal?.stepIndex ?? start.stepIndex} count={terminal?.stepCount ?? start.stepCount} />
       </header>
 
-      <div className="ml-[7px] mt-1.5 space-y-2 border-l border-border/50 pl-4">
+      <div className="ml-[7px] mt-2 space-y-2.5 border-l border-border/50 pl-4">
         {terminal?.todo?.outcome ? <OutcomeLine outcome={terminal.todo.outcome} /> : null}
 
         {hasProcess ? (
@@ -318,7 +318,7 @@ export function BusinessStepSectionView({
                 <ChevronRight className={cn("size-3.5 transition-transform", processOpen && "rotate-90")} />
                 过程 · {processCount} 项
               </button>
-              {processOpen ? <div className="mt-1.5">{children}</div> : null}
+              {processOpen ? <div className="mt-2">{children}</div> : null}
             </div>
           ) : (
             <div>{children}</div>

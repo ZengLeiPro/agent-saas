@@ -42,7 +42,7 @@ export function AgentActivityShell({
   className?: string;
 }) {
   return (
-    <div className={cn('my-1', className)}>
+    <div className={cn('my-2', className)}>
       <div className="flex items-center gap-1.5">
         <button
           type="button"
@@ -63,7 +63,7 @@ export function AgentActivityShell({
         {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
       </div>
       {expanded && children ? (
-        <div className="ml-[7px] mt-1 border-l border-border/50 py-0.5 pl-4">{children}</div>
+        <div className="ml-[7px] mt-1.5 border-l border-border/50 py-0.5 pl-4">{children}</div>
       ) : null}
     </div>
   );

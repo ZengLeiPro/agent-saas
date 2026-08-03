@@ -11,6 +11,10 @@
  * `CREATE TABLE IF NOT EXISTS` 放在 `init()` 里、外面套 advisory lock，随
  * server 启动执行（**部署链就是迁移链**，不存在需要人手跑的 migration 脚本）。
  *
+ * 列名是 `binary_name` 而不是 `binary`：`BINARY` 是 PG 保留字，裸用直接
+ * syntax error（2026-08-03 生产实测建表失败、静默回落内置种子）。TS 接口
+ * 仍叫 `binary`，只在 SQL/Row 边界换名。
+ *
  * ## tenantId 为什么现在就留着
  *
  * 租户级覆盖是可预见的下一步（不同客户装的连接器不同），但本版 UI 与查询
@@ -59,7 +63,7 @@ export interface ConnectorDictionaryStore {
 }
 
 interface Row {
-  binary: string;
+  binary_name: string;
   system_name: string;
   enabled: boolean;
   modules: unknown;
@@ -169,7 +173,7 @@ export function normalizeConnectorEntry(raw: unknown): ConnectorDictionaryEntry 
 
 function rowToRecord(row: Row): ConnectorDictionaryRecord {
   return {
-    binary: row.binary,
+    binary: row.binary_name,
     systemName: row.system_name,
     enabled: row.enabled,
     modules: (row.modules ?? {}) as Record<string, string>,
@@ -200,7 +204,7 @@ export class PgConnectorDictionaryStore implements ConnectorDictionaryStore {
         CREATE TABLE IF NOT EXISTS ${this.table} (
           id BIGSERIAL PRIMARY KEY,
           tenant_id TEXT,
-          binary TEXT NOT NULL,
+          binary_name TEXT NOT NULL,
           system_name TEXT NOT NULL,
           enabled BOOLEAN NOT NULL DEFAULT TRUE,
           modules JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -215,11 +219,11 @@ export class PgConnectorDictionaryStore implements ConnectorDictionaryStore {
       // 所以平台级必须用 partial index 才能真的挡住重复 binary
       await client.query(
         `CREATE UNIQUE INDEX IF NOT EXISTS ${this.table}_platform_binary_uniq
-         ON ${this.table} (binary) WHERE tenant_id IS NULL`,
+         ON ${this.table} (binary_name) WHERE tenant_id IS NULL`,
       );
       await client.query(
         `CREATE UNIQUE INDEX IF NOT EXISTS ${this.table}_tenant_binary_uniq
-         ON ${this.table} (tenant_id, binary) WHERE tenant_id IS NOT NULL`,
+         ON ${this.table} (tenant_id, binary_name) WHERE tenant_id IS NOT NULL`,
       );
       await this.seedBuiltin(client);
     } finally {
@@ -236,9 +240,9 @@ export class PgConnectorDictionaryStore implements ConnectorDictionaryStore {
     for (const entry of cloneBuiltinConnectorDictionary()) {
       await client.query(
         `INSERT INTO ${this.table}
-           (tenant_id, binary, system_name, enabled, modules, action_verbs, exclude_patterns, url_whitelist, updated_by)
+           (tenant_id, binary_name, system_name, enabled, modules, action_verbs, exclude_patterns, url_whitelist, updated_by)
          VALUES (NULL, $1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, 'bootstrap')
-         ON CONFLICT (binary) WHERE tenant_id IS NULL DO NOTHING`,
+         ON CONFLICT (binary_name) WHERE tenant_id IS NULL DO NOTHING`,
         [
           entry.binary,
           entry.systemName,
@@ -254,10 +258,10 @@ export class PgConnectorDictionaryStore implements ConnectorDictionaryStore {
 
   async listPlatform(): Promise<ConnectorDictionaryRecord[]> {
     const result = await this.pool.query<Row>(
-      `SELECT binary, system_name, enabled, modules, action_verbs, exclude_patterns, url_whitelist, updated_at, updated_by
+      `SELECT binary_name, system_name, enabled, modules, action_verbs, exclude_patterns, url_whitelist, updated_at, updated_by
        FROM ${this.table}
        WHERE tenant_id IS NULL
-       ORDER BY binary ASC`,
+       ORDER BY binary_name ASC`,
     );
     return result.rows.map(rowToRecord);
   }
@@ -265,9 +269,9 @@ export class PgConnectorDictionaryStore implements ConnectorDictionaryStore {
   async upsert(entry: ConnectorDictionaryEntry, actor: string): Promise<ConnectorDictionaryRecord> {
     const result = await this.pool.query<Row>(
       `INSERT INTO ${this.table}
-         (tenant_id, binary, system_name, enabled, modules, action_verbs, exclude_patterns, url_whitelist, updated_at, updated_by)
+         (tenant_id, binary_name, system_name, enabled, modules, action_verbs, exclude_patterns, url_whitelist, updated_at, updated_by)
        VALUES (NULL, $1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, NOW(), $8)
-       ON CONFLICT (binary) WHERE tenant_id IS NULL DO UPDATE SET
+       ON CONFLICT (binary_name) WHERE tenant_id IS NULL DO UPDATE SET
          system_name = EXCLUDED.system_name,
          enabled = EXCLUDED.enabled,
          modules = EXCLUDED.modules,
@@ -276,7 +280,7 @@ export class PgConnectorDictionaryStore implements ConnectorDictionaryStore {
          url_whitelist = EXCLUDED.url_whitelist,
          updated_at = NOW(),
          updated_by = EXCLUDED.updated_by
-       RETURNING binary, system_name, enabled, modules, action_verbs, exclude_patterns, url_whitelist, updated_at, updated_by`,
+       RETURNING binary_name, system_name, enabled, modules, action_verbs, exclude_patterns, url_whitelist, updated_at, updated_by`,
       [
         entry.binary,
         entry.systemName,
@@ -293,7 +297,7 @@ export class PgConnectorDictionaryStore implements ConnectorDictionaryStore {
 
   async remove(binary: string, _actor: string): Promise<boolean> {
     const result = await this.pool.query(
-      `DELETE FROM ${this.table} WHERE tenant_id IS NULL AND binary = $1`,
+      `DELETE FROM ${this.table} WHERE tenant_id IS NULL AND binary_name = $1`,
       [assertConnectorBinary(binary)],
     );
     return (result.rowCount ?? 0) > 0;

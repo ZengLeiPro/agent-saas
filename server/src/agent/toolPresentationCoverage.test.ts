@@ -246,7 +246,20 @@ describe('连接器回执（presentation.receipt）', () => {
     },
   });
 
-  it('识别成功 + 拿到对象 ID → 盖回执章，字段与链接进 detail', () => {
+  it('写操作识别成功 + 拿到对象 ID → 盖回执章，字段与链接进 detail', () => {
+    const result = buildToolPresentation(
+      'Shell',
+      { command: 'cd /w && dws todo create --title agent演示 --format json' },
+      undefined,
+      { exitCode: 0, durationMs: 820, stdoutBytes: connectorJson.length },
+      envelope(connectorJson),
+    );
+    expect(result?.receipt).toEqual({ id: '7632xxxxxxxx', system: '钉钉' });
+    expect(result?.detail).toContainEqual({ k: '链接', v: 'https://shanji.dingtalk.com/app/transcribes/7632xxxxxxxx' });
+    expect(result?.detail?.some((line) => typeof line === 'object' && 'fields' in line)).toBe(true);
+  });
+
+  it('读操作拿到对象 ID 也不盖章——查出来的对象不是本次改动的证明；字段照进 detail', () => {
     const result = buildToolPresentation(
       'Shell',
       { command: 'cd /w && dws minutes get --format json' },
@@ -254,8 +267,8 @@ describe('连接器回执（presentation.receipt）', () => {
       { exitCode: 0, durationMs: 820, stdoutBytes: connectorJson.length },
       envelope(connectorJson),
     );
-    expect(result?.receipt).toEqual({ id: '7632xxxxxxxx', system: '钉钉' });
-    expect(result?.detail).toContainEqual({ k: '链接', v: 'https://shanji.dingtalk.com/app/transcribes/7632xxxxxxxx' });
+    expect(result?.receipt).toBeUndefined();
+    expect(result?.status).toBe('ok');
     expect(result?.detail?.some((line) => typeof line === 'object' && 'fields' in line)).toBe(true);
   });
 

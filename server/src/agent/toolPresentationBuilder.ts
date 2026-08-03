@@ -247,10 +247,12 @@ const METADATA_RULES: Record<string, MetadataRule> = {
       if (facts.url) detail.push({ k: '链接', v: facts.url });
     }
 
-    // 回执只在「连接器识别成功 + 拿到对象 ID 或业务域名链接 + 回执没自报失败」
-    // 三条同时成立时才盖章。回执是系统盖的章，盖错一次比不盖一百次更贵。
+    // 回执只在「连接器识别成功 + 动作是写操作 + 拿到对象 ID 或业务域名链接 +
+    // 回执没自报失败」四条同时成立时才盖章。回执是系统盖的章，盖错一次比不盖
+    // 一百次更贵——查询类动作（get/list/status）拿到的 ID 是查出来的对象，
+    // 不是本次执行创建/改动的证明，盖上去就是把「看过」冒充成「做过」。
     const receiptId = facts && !facts.failed ? facts.objectId ?? facts.url : undefined;
-    const receipt = connector && receiptId && !technicallyFailed
+    const receipt = connector?.isWrite && receiptId && !technicallyFailed
       ? { id: receiptId, system: connector.system }
       : undefined;
 

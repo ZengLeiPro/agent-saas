@@ -173,7 +173,7 @@ export function SwipeDrawer({ open, onOpenChange, listPanel, detailPanel }: Swip
       {/* 详情面板：绝对定位，铺满容器 */}
       <div
         ref={detailRef}
-        className="absolute inset-0 flex flex-col bg-background"
+        className="absolute inset-0 flex flex-col bg-card"
         style={{
           transform: "translateX(0)",
           willChange: "transform",

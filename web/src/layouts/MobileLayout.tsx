@@ -197,7 +197,7 @@ export function MobileLayout(props: LayoutProps) {
   return (
     <>
       <header
-        className={cn("shrink-0 bg-background", previewFilePath && "border-b", sheetOpen && "hidden")}
+        className={cn("shrink-0 bg-card", previewFilePath && "border-b", sheetOpen && "hidden")}
         style={{ paddingTop: "var(--sat)" }}
         onClick={(e) => {
           if ((e.target as HTMLElement).closest("button, a, [role=button]")) return;

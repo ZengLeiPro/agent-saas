@@ -60,6 +60,8 @@ const ADMIN_ALWAYS_AUDITED: ReadonlySet<LoginEvent> = new Set<LoginEvent>([
   // 连接器映射词典同样只有平台管理员能改；它决定客户在工具行上看到什么，
   // 不留痕就没法回答「这条『钉钉 · 创建待办』是谁配出来的」
   'connector_dictionary_updated', 'connector_dictionary_deleted', 'connector_dictionary_reset',
+  // 租户级覆盖：组织管理员改的是本组织客户面的展示语义，同样必须留痕
+  'connector_dictionary_tenant_updated', 'connector_dictionary_tenant_deleted',
   // 顶层 Agent 调度并发改变全平台瞬时负载，必须记录 before/after
   'runtime_scheduler_capacity_updated',
 ]);

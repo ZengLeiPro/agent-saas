@@ -35,6 +35,8 @@ export type LoginEvent =
   | 'egress_config_updated'
   // 连接器映射词典：决定工具行如何把命令行还原成业务语言、哪些调用配得上回执章
   | 'connector_dictionary_updated' | 'connector_dictionary_deleted' | 'connector_dictionary_reset'
+  // 租户级词典覆盖（2026-08-04 任务 E）：组织管理员按 binary 整条覆盖平台条目
+  | 'connector_dictionary_tenant_updated' | 'connector_dictionary_tenant_deleted'
   // 顶层 Agent 调度并发：直接改变全平台瞬时负载与排队行为
   | 'runtime_scheduler_capacity_updated';
 

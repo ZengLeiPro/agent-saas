@@ -60,6 +60,14 @@ export interface ConnectorDictionaryStore {
   remove(binary: string, actor: string): Promise<boolean>;
   /** 重置为内置词典（删光平台级行后重新播种） */
   resetToBuiltin(actor: string): Promise<ConnectorDictionaryRecord[]>;
+  /** 某租户的覆盖条目（tenant_id = $1），按 binary 排序。2026-08-04 任务 E。 */
+  listTenant(tenantId: string): Promise<ConnectorDictionaryRecord[]>;
+  /** 租户覆盖整条 upsert；(tenant_id, binary) 唯一 */
+  upsertTenant(tenantId: string, entry: ConnectorDictionaryEntry, actor: string): Promise<ConnectorDictionaryRecord>;
+  /** 移除某租户的一条覆盖（回落平台条目）；返回是否真的删掉了 */
+  removeTenant(tenantId: string, binary: string, actor: string): Promise<boolean>;
+  /** 全部租户的覆盖条目（runtime 60s 刷新用），tenantId → entries */
+  listAllTenantOverrides(): Promise<Record<string, ConnectorDictionaryRecord[]>>;
 }
 
 interface Row {
@@ -86,6 +94,14 @@ export function assertConnectorBinary(binary: unknown): string {
   if (!trimmed) throw new Error('binary 不能为空');
   if (trimmed.length > MAX_BINARY_LENGTH) throw new Error(`binary 超过 ${MAX_BINARY_LENGTH} 字符`);
   if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) throw new Error('binary 只能包含字母、数字、点、下划线与连字符');
+  return trimmed;
+}
+
+/** tenant slug 形状与 runtime 目录扫描同一约束（小写字母开头，字母数字连字符） */
+export function assertConnectorTenantId(tenantId: unknown): string {
+  if (typeof tenantId !== 'string' || !tenantId.trim()) throw new Error('tenantId 不能为空');
+  const trimmed = tenantId.trim();
+  if (!/^[a-z][a-z0-9-]{0,30}$/.test(trimmed)) throw new Error('tenantId 形状非法');
   return trimmed;
 }
 
@@ -318,6 +334,73 @@ export class PgConnectorDictionaryStore implements ConnectorDictionaryStore {
     }
     return this.listPlatform();
   }
+
+  async listTenant(tenantId: string): Promise<ConnectorDictionaryRecord[]> {
+    const result = await this.pool.query<Row>(
+      `SELECT binary_name, system_name, enabled, modules, action_verbs, exclude_patterns, url_whitelist, updated_at, updated_by
+       FROM ${this.table}
+       WHERE tenant_id = $1
+       ORDER BY binary_name ASC`,
+      [assertConnectorTenantId(tenantId)],
+    );
+    return result.rows.map(rowToRecord);
+  }
+
+  async upsertTenant(
+    tenantId: string,
+    entry: ConnectorDictionaryEntry,
+    actor: string,
+  ): Promise<ConnectorDictionaryRecord> {
+    const result = await this.pool.query<Row>(
+      `INSERT INTO ${this.table}
+         (tenant_id, binary_name, system_name, enabled, modules, action_verbs, exclude_patterns, url_whitelist, updated_at, updated_by)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, NOW(), $9)
+       ON CONFLICT (tenant_id, binary_name) WHERE tenant_id IS NOT NULL DO UPDATE SET
+         system_name = EXCLUDED.system_name,
+         enabled = EXCLUDED.enabled,
+         modules = EXCLUDED.modules,
+         action_verbs = EXCLUDED.action_verbs,
+         exclude_patterns = EXCLUDED.exclude_patterns,
+         url_whitelist = EXCLUDED.url_whitelist,
+         updated_at = NOW(),
+         updated_by = EXCLUDED.updated_by
+       RETURNING binary_name, system_name, enabled, modules, action_verbs, exclude_patterns, url_whitelist, updated_at, updated_by`,
+      [
+        assertConnectorTenantId(tenantId),
+        entry.binary,
+        entry.systemName,
+        entry.enabled,
+        JSON.stringify(entry.modules),
+        JSON.stringify(entry.actionVerbs),
+        JSON.stringify(entry.excludePatterns),
+        JSON.stringify(entry.urlWhitelist),
+        actor,
+      ],
+    );
+    return rowToRecord(result.rows[0]!);
+  }
+
+  async removeTenant(tenantId: string, binary: string, _actor: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `DELETE FROM ${this.table} WHERE tenant_id = $1 AND binary_name = $2`,
+      [assertConnectorTenantId(tenantId), assertConnectorBinary(binary)],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async listAllTenantOverrides(): Promise<Record<string, ConnectorDictionaryRecord[]>> {
+    const result = await this.pool.query<Row & { tenant_id: string }>(
+      `SELECT tenant_id, binary_name, system_name, enabled, modules, action_verbs, exclude_patterns, url_whitelist, updated_at, updated_by
+       FROM ${this.table}
+       WHERE tenant_id IS NOT NULL
+       ORDER BY tenant_id ASC, binary_name ASC`,
+    );
+    const grouped: Record<string, ConnectorDictionaryRecord[]> = {};
+    for (const row of result.rows) {
+      (grouped[row.tenant_id] ??= []).push(rowToRecord(row));
+    }
+    return grouped;
+  }
 }
 
 /**
@@ -328,6 +411,8 @@ export class PgConnectorDictionaryStore implements ConnectorDictionaryStore {
  */
 export class InMemoryConnectorDictionaryStore implements ConnectorDictionaryStore {
   private entries = new Map<string, ConnectorDictionaryRecord>();
+  /** tenantId → (binary → record) */
+  private tenantEntries = new Map<string, Map<string, ConnectorDictionaryRecord>>();
 
   async init(): Promise<void> {
     if (this.entries.size > 0) return;
@@ -360,5 +445,45 @@ export class InMemoryConnectorDictionaryStore implements ConnectorDictionaryStor
     this.entries.clear();
     await this.init();
     return this.listPlatform();
+  }
+
+  async listTenant(tenantId: string): Promise<ConnectorDictionaryRecord[]> {
+    const bucket = this.tenantEntries.get(assertConnectorTenantId(tenantId));
+    if (!bucket) return [];
+    return [...bucket.values()]
+      .map((entry) => JSON.parse(JSON.stringify(entry)) as ConnectorDictionaryRecord)
+      .sort((a, b) => a.binary.localeCompare(b.binary));
+  }
+
+  async upsertTenant(
+    tenantId: string,
+    entry: ConnectorDictionaryEntry,
+    actor: string,
+  ): Promise<ConnectorDictionaryRecord> {
+    const key = assertConnectorTenantId(tenantId);
+    const record: ConnectorDictionaryRecord = {
+      ...JSON.parse(JSON.stringify(entry)) as ConnectorDictionaryEntry,
+      updatedAt: new Date().toISOString(),
+      updatedBy: actor,
+    };
+    const bucket = this.tenantEntries.get(key) ?? new Map<string, ConnectorDictionaryRecord>();
+    bucket.set(entry.binary, record);
+    this.tenantEntries.set(key, bucket);
+    return record;
+  }
+
+  async removeTenant(tenantId: string, binary: string, _actor: string): Promise<boolean> {
+    const bucket = this.tenantEntries.get(assertConnectorTenantId(tenantId));
+    if (!bucket) return false;
+    return bucket.delete(assertConnectorBinary(binary));
+  }
+
+  async listAllTenantOverrides(): Promise<Record<string, ConnectorDictionaryRecord[]>> {
+    const grouped: Record<string, ConnectorDictionaryRecord[]> = {};
+    for (const [tenantId] of this.tenantEntries) {
+      const list = await this.listTenant(tenantId);
+      if (list.length) grouped[tenantId] = list;
+    }
+    return grouped;
   }
 }

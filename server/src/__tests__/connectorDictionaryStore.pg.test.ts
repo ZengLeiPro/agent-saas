@@ -76,4 +76,65 @@ describePg('PgConnectorDictionaryStore contract', () => {
     expect(dws?.systemName).toBe('钉钉'); // upsert 过的「钉钉TEST」被重置回内置
     expect(reset.length).toBe(cloneBuiltinConnectorDictionary().length);
   });
+
+  // ── 2026-08-04 任务 E：租户级覆盖（partial unique index (tenant_id, binary_name)）──
+  it('upsertTenant 建覆盖：与平台条目隔离，同 tenant 同 binary 幂等更新', async () => {
+    const entry = {
+      binary: 'dws',
+      systemName: '钉钉租户版',
+      enabled: true,
+      modules: { todo: '客户待办' },
+      actionVerbs: { create: { name: '创建', write: true } },
+      excludePatterns: [],
+      urlWhitelist: [],
+    };
+    const first = await store!.upsertTenant('kaiyan', entry, 'org-admin');
+    expect(first.systemName).toBe('钉钉租户版');
+    // 同 (tenant, binary) 再 upsert → 更新而不是第二行（partial unique index 生效）
+    const second = await store!.upsertTenant('kaiyan', { ...entry, systemName: '钉钉租户v2' }, 'org-admin');
+    expect(second.systemName).toBe('钉钉租户v2');
+    const list = await store!.listTenant('kaiyan');
+    expect(list.filter((item) => item.binary === 'dws').length).toBe(1);
+    // 平台条目不受影响
+    const platformDws = (await store!.listPlatform()).find((item) => item.binary === 'dws');
+    expect(platformDws?.systemName).toBe('钉钉');
+  });
+
+  it('不同租户覆盖互相隔离；listAllTenantOverrides 按租户分组', async () => {
+    await store!.upsertTenant('wain', {
+      binary: 'dws',
+      systemName: '钉钉唯恩版',
+      enabled: true,
+      modules: {},
+      actionVerbs: {},
+      excludePatterns: [],
+      urlWhitelist: [],
+    }, 'org-admin');
+    const kaiyan = await store!.listTenant('kaiyan');
+    const wain = await store!.listTenant('wain');
+    expect(kaiyan.find((item) => item.binary === 'dws')?.systemName).toBe('钉钉租户v2');
+    expect(wain.find((item) => item.binary === 'dws')?.systemName).toBe('钉钉唯恩版');
+
+    const all = await store!.listAllTenantOverrides();
+    expect(all.kaiyan?.some((item) => item.binary === 'dws')).toBe(true);
+    expect(all.wain?.some((item) => item.binary === 'dws')).toBe(true);
+  });
+
+  it('removeTenant 只删覆盖不动平台；resetToBuiltin 不清租户覆盖', async () => {
+    await store!.resetToBuiltin('test-admin');
+    // reset 平台后，租户覆盖仍在
+    expect((await store!.listTenant('kaiyan')).some((item) => item.binary === 'dws')).toBe(true);
+
+    expect(await store!.removeTenant('kaiyan', 'dws', 'org-admin')).toBe(true);
+    expect(await store!.removeTenant('kaiyan', 'dws', 'org-admin')).toBe(false);
+    expect((await store!.listTenant('kaiyan')).some((item) => item.binary === 'dws')).toBe(false);
+    // 平台条目仍在
+    expect((await store!.listPlatform()).some((item) => item.binary === 'dws')).toBe(true);
+    // wain 的覆盖不受影响
+    expect((await store!.listTenant('wain')).some((item) => item.binary === 'dws')).toBe(true);
+  });
+
+  it('tenantId 形状校验拒绝非法值', async () => {
+    await expect(store!.listTenant('BAD_TENANT!')).rejects.toThrow('tenantId 形状非法');
+  });
 });

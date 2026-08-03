@@ -81,7 +81,7 @@ export function linesToList(text: string): string[] {
   return text.split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
-interface DraftState {
+export interface DraftState {
   systemName: string;
   enabled: boolean;
   modules: string;
@@ -90,7 +90,7 @@ interface DraftState {
   urlWhitelist: string;
 }
 
-function toDraft(entry: ConnectorDictionaryEntry): DraftState {
+export function toDraft(entry: ConnectorDictionaryEntry): DraftState {
   return {
     systemName: entry.systemName,
     enabled: entry.enabled,
@@ -101,7 +101,7 @@ function toDraft(entry: ConnectorDictionaryEntry): DraftState {
   };
 }
 
-function fromDraft(binary: string, draft: DraftState): ConnectorDictionaryEntry {
+export function fromDraft(binary: string, draft: DraftState): ConnectorDictionaryEntry {
   return {
     binary,
     systemName: draft.systemName.trim(),
@@ -113,7 +113,7 @@ function fromDraft(binary: string, draft: DraftState): ConnectorDictionaryEntry 
   };
 }
 
-function Field({ label, hint, children }: { label: string; hint: string; children: React.ReactNode }) {
+export function Field({ label, hint, children }: { label: string; hint: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
       <Label>{label}</Label>

@@ -65,6 +65,7 @@ import { createTenantRemoteHandsAdminRouter } from "../routes/tenantRemoteHandsA
 import { createRuntimeOperationsAdminRouter } from "../routes/runtimeOperationsAdmin.js";
 import { createToolControlsAdminRouter } from "../routes/toolControlsAdmin.js";
 import { createConnectorDictionaryAdminRouter } from "../routes/connectorDictionaryAdmin.js";
+import { createConnectorDictionaryOrgRouter } from "../routes/connectorDictionaryOrg.js";
 import { createImageGenPricingAdminRouter } from "../routes/imageGenPricingAdmin.js";
 import { createEgressConfigAdminRouter } from "../routes/egressConfigAdmin.js";
 import { createMemoryPollingAdminRouter } from "../routes/memoryPollingAdmin.js";
@@ -390,6 +391,13 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   app.use(
     "/api/admin/connector-dictionary",
     createConnectorDictionaryAdminRouter({
+      store: runtime.connectorDictionaryStore,
+    }),
+  );
+  // 租户级词典覆盖（2026-08-04 任务 E）：组织管理员按 binary 整条覆盖平台条目。
+  app.use(
+    "/api/org/connector-dictionary",
+    createConnectorDictionaryOrgRouter({
       store: runtime.connectorDictionaryStore,
     }),
   );

@@ -41,8 +41,9 @@ const SystemPromptsManagerPanel = lazy(() => import("@/components/SystemPromptsM
 const AgentRuntimeProfilesManagerPanel = lazy(() => import("@/components/AgentRuntimeProfilesManager"));
 const EgressConfigManagerPanel = lazy(() => import("@/components/EgressConfigManager"));
 const ConnectorDictionaryManagerPanel = lazy(() => import("@/components/ConnectorDictionaryManager"));
+const TenantConnectorDictionaryPanel = lazy(() => import("@/components/ConnectorDictionaryManager/TenantPanel"));
 
-export type TenantSection = "overview" | "users" | "skills" | "org-agents" | "mcp" | "usage" | "billing" | "files" | "qa" | "audit" | "settings" | "company" | "instructions";
+export type TenantSection = "overview" | "users" | "skills" | "org-agents" | "mcp" | "connector-dictionary" | "usage" | "billing" | "files" | "qa" | "audit" | "settings" | "company" | "instructions";
 export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "connector-dictionary" | "agent-profiles" | "system-prompts" | "memory-polling" | "global-mcp" | "skill-pool" | "egress" | "system";
 
 interface ShellButton<T extends string> {
@@ -57,6 +58,7 @@ const tenantSettingsSections: ShellButton<TenantSection>[] = [
   { id: "skills", label: "技能", icon: EntityIcons.skill },
   { id: "org-agents", label: "企业专家", icon: EntityIcons.expert },
   { id: "mcp", label: "连接器", icon: EntityIcons.connector },
+  { id: "connector-dictionary", label: "连接器映射", icon: EntityIcons.connector },
   { id: "billing", label: "计费", icon: EntityIcons.billing },
   { id: "files", label: "文件与数据", icon: EntityIcons.files },
   { id: "company", label: "公司信息", icon: EntityIcons.companyInfo },
@@ -1007,6 +1009,7 @@ export function TenantAdminShell({
     { id: "skills", node: renderSkills(effectiveTenantId, currentTenant?.name) },
     ...(renderOrgAgents ? [{ id: "org-agents" as TenantSection, node: renderOrgAgents(effectiveTenantId, currentTenant?.name) }] : []),
     { id: "mcp", node: renderMcp() },
+    { id: "connector-dictionary" as TenantSection, node: <TenantConnectorDictionaryPanel tenantId={effectiveTenantId} tenantName={currentTenant?.name} /> },
     { id: "billing", node: <TenantBillingPanel tenantId={effectiveTenantId} tenantName={currentTenant?.name} /> },
     { id: "files", node: renderFiles() },
     { id: "company", node: renderCompanyInfo(effectiveTenantId, currentTenant?.name) },

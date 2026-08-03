@@ -220,7 +220,7 @@ import {
   PgConnectorDictionaryStore,
   type ConnectorDictionaryStore,
 } from '../data/connectorDictionaryStore.js';
-import { setConnectorDictionary } from '../agent/toolPresentationBuilder.js';
+import { setConnectorDictionary, setTenantConnectorDictionaries } from '../agent/toolPresentationBuilder.js';
 import { UploadManager } from '../uploads/manager.js';
 
 // δ: skillsDispatchConfig.listForUser 的进程级 cache（configVersion 驱动失效），
@@ -1601,8 +1601,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   }
   // 启动时把词典推给摘要产出层。读失败不抛——`setConnectorDictionary(null)` 会
   // 回落内置种子，工具行摘要不会因为一张配置表而整体失灵。
+  // 2026-08-04 任务 E：同时加载租户覆盖（整条覆盖合并视图在 builder 侧预计算）。
   try {
     setConnectorDictionary(await connectorDictionaryStore.listPlatform());
+    setTenantConnectorDictionaries(await connectorDictionaryStore.listAllTenantOverrides());
   } catch (err) {
     setConnectorDictionary(null);
     serverLogger.warn(`connector dictionary load failed, using builtin: ${err instanceof Error ? err.message : String(err)}`);
@@ -1615,7 +1617,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 单次读失败保留上一份内存词典（不回退 builtin），连续失败只影响新鲜度不影响可用性。
   const connectorDictionaryRefreshTimer = setInterval(() => {
     void connectorDictionaryStore!.listPlatform()
-      .then((entries) => setConnectorDictionary(entries))
+      .then(async (entries) => {
+        setConnectorDictionary(entries);
+        setTenantConnectorDictionaries(await connectorDictionaryStore!.listAllTenantOverrides());
+      })
       .catch((err) => {
         serverLogger.warn(`connector dictionary refresh failed, keeping last loaded copy: ${err instanceof Error ? err.message : String(err)}`);
       });

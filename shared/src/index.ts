@@ -441,11 +441,15 @@ export {
   saveConnectorEntry,
   deleteConnectorEntry,
   resetConnectorDictionary,
+  fetchOrgConnectorDictionary,
+  saveOrgConnectorEntry,
+  deleteOrgConnectorOverride,
 } from "./lib/connectorDictionaryApi";
 export type {
   ConnectorActionVerb,
   ConnectorDictionaryEntry,
   ConnectorDictionaryResponse,
+  OrgConnectorDictionaryResponse,
 } from "./lib/connectorDictionaryApi";
 
 // Lib - platform signup config API

@@ -280,9 +280,11 @@ describe('registerRoutes', () => {
     //   + Agent 运行 Profile 平台管理 = 36
     //   + Codex 订阅连接管理 = 37
     //   + 连接器映射词典平台管理（2026-08-03）= 38
+    //   + 租户级词典覆盖组织管理（2026-08-04 任务 E）= 39
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(38);
+    expect(app.use).toHaveBeenCalledTimes(39);
+    expect(app.use).toHaveBeenCalledWith('/api/org/connector-dictionary', expect.any(Function));
     expect(app.use).toHaveBeenCalledWith('/api/admin/system-prompts', mocked.systemPromptsRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/agent-profiles', expect.any(Function));
     expect(app.use).toHaveBeenCalledWith('/api/admin/codex-subscription', expect.any(Function));

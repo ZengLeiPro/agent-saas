@@ -1243,7 +1243,7 @@ class WorkspaceToolProvider implements ToolProvider {
       // 等真实信号，丢掉它等于让客户在最该看清楚的时刻只看到一行「有异常」
       throw new ToolExecutionError(
         response.error,
-        buildToolPresentation(call.toolId, parsedInput, undefined, response.metadata, response.error),
+        buildToolPresentation(call.toolId, parsedInput, undefined, response.metadata, response.error, context.workspace.tenantId),
         extractToolResultMetadata(call.toolId, response.metadata),
       );
     }
@@ -1293,6 +1293,7 @@ class WorkspaceToolProvider implements ToolProvider {
       undefined,
       response.metadata,
       response.content,
+      context.workspace.tenantId,
     );
     // 同一份截断前 metadata 的第二个出口：白名单收敛后随 tool_result 事件落库，
     // 让 exitCode 之类的事实以字段而非「Exit code: N」文本行的形态存活
@@ -1612,7 +1613,9 @@ export class PlatformToolRuntime implements ToolRuntime {
       // 全仓唯一的工具执行收口点：builtin / MCP / Skill / hand / subagent / cron
       // 等所有 provider 都经过这里，故摘要兜底放在此处覆盖率最高。
       // provider 已自产的不覆盖——它拿得到截断前的原始数据，信息量更高。
-      const presentation = buildToolPresentation(call.toolId, call.input, result.presentation);
+      const presentation = buildToolPresentation(
+        call.toolId, call.input, result.presentation, undefined, undefined, context.workspace?.tenantId,
+      );
       return presentation ? { ...result, presentation } : result;
     }
     throw new Error(`Unknown tool: ${call.toolId}`);

@@ -136,13 +136,47 @@ function formatDuration(ms: number): string {
  */
 let activeConnectorDictionary: readonly ConnectorDictionaryEntry[] = BUILTIN_CONNECTOR_DICTIONARY;
 
+/**
+ * 租户级覆盖（2026-08-04 任务 E）。合并规则=**整条覆盖**：同 binary 的租户条目
+ * 完整替换平台条目（不做字段级 merge——半平台半租户的杂交条目没人能推理）；
+ * 租户新增的 binary 追加。合并视图在 set 时预计算，工具收口点零额外开销。
+ */
+let tenantConnectorOverrides: ReadonlyMap<string, readonly ConnectorDictionaryEntry[]> = new Map();
+let mergedConnectorViewByTenant: ReadonlyMap<string, readonly ConnectorDictionaryEntry[]> = new Map();
+
+function rebuildMergedConnectorViews(): void {
+  const merged = new Map<string, readonly ConnectorDictionaryEntry[]>();
+  for (const [tenantId, overrides] of tenantConnectorOverrides) {
+    if (!overrides.length) continue;
+    const byBinary = new Map(activeConnectorDictionary.map((entry) => [entry.binary, entry]));
+    for (const entry of overrides) byBinary.set(entry.binary, entry);
+    merged.set(tenantId, [...byBinary.values()]);
+  }
+  mergedConnectorViewByTenant = merged;
+}
+
 /** 平台管理保存后调用；传 null 表示回落内置词典 */
 export function setConnectorDictionary(dictionary: readonly ConnectorDictionaryEntry[] | null): void {
   activeConnectorDictionary = dictionary?.length ? dictionary : BUILTIN_CONNECTOR_DICTIONARY;
+  rebuildMergedConnectorViews();
+}
+
+/** 租户覆盖注册（tenantId → 覆盖条目）。整体替换语义；传 null 清空。 */
+export function setTenantConnectorDictionaries(
+  overrides: Record<string, readonly ConnectorDictionaryEntry[]> | null,
+): void {
+  tenantConnectorOverrides = new Map(Object.entries(overrides ?? {}));
+  rebuildMergedConnectorViews();
 }
 
 export function getConnectorDictionary(): readonly ConnectorDictionaryEntry[] {
   return activeConnectorDictionary;
+}
+
+/** 解析用词典：有租户覆盖走合并视图，否则平台词典。 */
+export function resolveConnectorDictionary(tenantId?: string): readonly ConnectorDictionaryEntry[] {
+  if (!tenantId) return activeConnectorDictionary;
+  return mergedConnectorViewByTenant.get(tenantId) ?? activeConnectorDictionary;
 }
 
 /** MCP server 名 → 客户读得懂的系统名。未登记的直接用原名，不硬凑。 */
@@ -159,9 +193,16 @@ const MCP_SYSTEM_NAMES: Record<string, string> = {
   'google-calendar': 'Google 日历',
 };
 
+/**
+ * buildToolPresentation 执行期间的解析租户。规则表（RULES/METADATA_RULES）全部
+ * 是同步函数，这个模块级变量只在 buildToolPresentation 的同步段内有值——
+ * 不跨 await、不逃逸，等价于把 tenantId 穿进每条规则但不用改 30 个规则签名。
+ */
+let currentParseTenantId: string | undefined;
+
 /** 从命令行里认出连接器动作；不是连接器命令时返回 null（绝不硬猜） */
-export function parseConnectorCommand(command: string): ConnectorCommand | null {
-  return parseConnectorCommandWith(command, activeConnectorDictionary);
+export function parseConnectorCommand(command: string, tenantId?: string): ConnectorCommand | null {
+  return parseConnectorCommandWith(command, resolveConnectorDictionary(tenantId ?? currentParseTenantId));
 }
 
 /**
@@ -515,6 +556,7 @@ export const PRESENTATION_TODO_BUDGET = 2;
  * @param existing provider 已自产的 presentation；有值时原样返回，不覆盖
  * @param metadata provider 在截断前自产的执行元数据
  * @param resultText 工具返回正文；仅用于连接器命令的 stdout 硬事实提取
+ * @param tenantId 会话租户；有租户词典覆盖时连接器解析走合并视图
  */
 export function buildToolPresentation(
   toolName: string,
@@ -522,10 +564,12 @@ export function buildToolPresentation(
   existing?: ToolPresentation,
   metadata?: Record<string, unknown>,
   resultText?: string,
+  tenantId?: string,
 ): ToolPresentation | undefined {
   // provider 在截断前自产的摘要信息量严格更高，规则不得覆盖
   if (existing) return existing;
   const input = parseInput(toolInput);
+  currentParseTenantId = tenantId;
   try {
     // metadata 来自截断前的真实执行结果，优先于只看入参的规则
     const metadataRule = METADATA_RULES[toolName];
@@ -540,6 +584,8 @@ export function buildToolPresentation(
   } catch {
     // 摘要是锦上添花，任何异常都不得影响工具执行结果本身
     return undefined;
+  } finally {
+    currentParseTenantId = undefined;
   }
 }
 
@@ -573,11 +619,12 @@ export function buildFailurePresentation(
   toolName: string,
   toolInput: unknown,
   error: unknown,
+  tenantId?: string,
 ): ToolPresentation | undefined {
   if (error instanceof ToolExecutionError && error.presentation) {
     return { ...error.presentation, status: error.presentation.status ?? 'warn' };
   }
-  const base = buildToolPresentation(toolName, toolInput);
+  const base = buildToolPresentation(toolName, toolInput, undefined, undefined, undefined, tenantId);
   return base ? { ...base, status: 'warn' } : undefined;
 }
 

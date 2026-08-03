@@ -2473,7 +2473,7 @@ export class RawAgentLoop implements AgentLoop {
       // 并随 ToolExecutionError 带上来，这里只负责不把它丢掉——此前这一跳是
       // 全部失败调用（近 7 天 3,457 次）摘要覆盖率仅 0.2% 的唯一原因，
       // approval-resume 分支（见 resolveApprovalDecision）早已是这么接的。
-      const presentation = buildFailurePresentation(call.name, input, err);
+      const presentation = buildFailurePresentation(call.name, input, err, resolveRunTenantId(context));
       const metadata = err instanceof ToolExecutionError ? err.resultMetadata : undefined;
       return {
         call,
@@ -2541,7 +2541,7 @@ export class RawAgentLoop implements AgentLoop {
       // 失败也要有摘要：优先用错误自带的（provider 按真实 metadata 产出），
       // 否则退回入参侧规则并强制标 warn。客户看到「读取 差旅.md · 有异常」
       // 远好过一行「已执行，有异常」。
-      const presentation = buildFailurePresentation(args.call.name, args.input, err);
+      const presentation = buildFailurePresentation(args.call.name, args.input, err, resolveRunTenantId(args.context));
       const metadata = err instanceof ToolExecutionError ? err.resultMetadata : undefined;
       return {
         call: args.call,

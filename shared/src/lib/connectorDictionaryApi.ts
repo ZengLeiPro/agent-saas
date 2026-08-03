@@ -65,3 +65,56 @@ export async function resetConnectorDictionary(): Promise<ConnectorDictionaryRes
     LABEL,
   );
 }
+
+// ── 租户级覆盖（2026-08-04 任务 E）────────────────────────────────────────────
+// 合并规则=租户条目按 binary 整条覆盖平台条目，不做字段级 merge。
+// 响应把两层分开返回，合并展示由 UI 决定。
+
+export interface OrgConnectorDictionaryResponse {
+  tenantId: string;
+  /** 平台级词典（组织侧只读基线） */
+  platform: ConnectorDictionaryEntry[];
+  /** 本租户的覆盖条目 */
+  overrides: ConnectorDictionaryEntry[];
+}
+
+const ORG_API_BASE = '/api/org/connector-dictionary';
+
+function orgQuery(tenantId?: string): string {
+  return tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
+}
+
+export async function fetchOrgConnectorDictionary(
+  tenantId?: string,
+): Promise<OrgConnectorDictionaryResponse> {
+  return parseJsonResponse<OrgConnectorDictionaryResponse>(
+    await authFetch(`${ORG_API_BASE}${orgQuery(tenantId)}`),
+    LABEL,
+  );
+}
+
+export async function saveOrgConnectorEntry(
+  entry: ConnectorDictionaryEntry,
+  tenantId?: string,
+): Promise<OrgConnectorDictionaryResponse> {
+  return parseJsonResponse<OrgConnectorDictionaryResponse>(
+    await authFetch(`${ORG_API_BASE}/${encodeURIComponent(entry.binary)}${orgQuery(tenantId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+    }),
+    LABEL,
+  );
+}
+
+export async function deleteOrgConnectorOverride(
+  binary: string,
+  tenantId?: string,
+): Promise<OrgConnectorDictionaryResponse> {
+  return parseJsonResponse<OrgConnectorDictionaryResponse>(
+    await authFetch(`${ORG_API_BASE}/${encodeURIComponent(binary)}${orgQuery(tenantId)}`, {
+      method: 'DELETE',
+    }),
+    LABEL,
+  );
+}

@@ -319,8 +319,8 @@ interface ActivityGroupBlockProps {
   isLast?: boolean;
   debugMode?: boolean;
   /**
-   * 业务步骤节内平铺：节的「过程 · N 项」折叠已是唯一收纳层，
-   * 不再套第二层「Agent 活动」折叠壳（消除双重折叠）。
+   * 调试模式下的业务步骤节内平铺：外层「过程 · N 项」是唯一收纳层。
+   * 非调试模式保留活动组折叠摘要，并锁定为不可展开。
    */
   flat?: boolean;
 }
@@ -352,7 +352,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
     return <ActivityItem item={items[0]} debugMode={debugMode} />;
   }
 
-  // 节内平铺：外层「过程」折叠是唯一收纳层，这里直接铺内容。
+  // 仅调试模式节内平铺：外层「过程」折叠是唯一收纳层，这里直接铺内容。
   if (flat) {
     return (
       <div className="flex flex-col gap-2.5 [&>*]:my-0">
@@ -386,7 +386,8 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
       title={summary.text}
       meta={meta}
       expanded={debugMode && isExpanded}
-      onToggle={debugMode ? () => setIsExpanded((value) => !value) : undefined}
+      disabled={!debugMode}
+      onToggle={() => setIsExpanded((value) => !value)}
     >
       <div className="flex flex-col gap-2.5 [&>*]:my-0">
         {items.map(item => (

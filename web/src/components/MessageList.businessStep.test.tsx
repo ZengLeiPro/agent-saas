@@ -93,13 +93,39 @@ describe("MessageList business step sections", () => {
     expect(screen.queryByText("TodoWrite")).toBeNull();
   });
 
-  it("keeps the completed process static when debug mode is disabled", () => {
+  it("keeps the completed process collapsed and disables expansion outside debug mode", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
 
     const processLabel = screen.getByText(/过程 · 1 项/);
-    expect(processLabel.closest("button")).toBeNull();
-    fireEvent.click(processLabel);
+    const button = processLabel.closest("button") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(button.querySelector(".lucide-chevron-right")).toBeTruthy();
+    fireEvent.click(button);
     expect(screen.queryByText(/读取订单/)).toBeNull();
+  });
+
+  it("keeps activity groups inside open sections collapsed and disabled outside debug mode", () => {
+    const withOpenActivity: MessageItem[] = [
+      ...messages(),
+      {
+        id: "open-section-tool",
+        type: "tool_use",
+        toolName: "Shell",
+        toolId: "open-section-tool",
+        toolInput: "{}",
+        executionStatus: "completed",
+        resultReady: true,
+        result: "ok",
+      },
+    ];
+    render(<MessageList messages={withOpenActivity} loading={false} debugModeOverride={false} />);
+
+    const summary = screen.getByText("已完成 1 项");
+    const button = summary.closest("button") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("Shell")).toBeNull();
   });
 
   it("re-expands the collapsed process in debug mode with full tool rendering", () => {

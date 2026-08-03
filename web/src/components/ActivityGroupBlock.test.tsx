@@ -101,11 +101,16 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     expect(screen.queryByText(/异常/)).toBeNull();
   });
 
-  it('关闭调试模式后使用静态摘要，不提供展开入口', () => {
-    render(<ActivityGroupBlock items={[failedTool]} isActive={false} debugMode={false} />);
+  it('关闭调试模式后保留原折叠态与摘要元信息，但禁用展开交互', () => {
+    render(<ActivityGroupBlock items={[{ ...failedTool, durationMs: 1200 }]} isActive={false} debugMode={false} />);
 
     const summary = screen.getByText(/已完成 1 项/);
-    expect(summary.closest('button')).toBeNull();
+    const button = summary.closest('button') as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(button.querySelector('.lucide-chevron-right')).toBeTruthy();
+    expect(screen.getByText(/1\.2s.*1 项/)).toBeTruthy();
+    fireEvent.click(button);
     expect(screen.queryByText('有异常')).toBeNull();
     expect(screen.queryByText(/已执行，有异常/)).toBeNull();
     expect(screen.queryByText(/exit 1/)).toBeNull();

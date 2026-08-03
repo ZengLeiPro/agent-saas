@@ -661,8 +661,8 @@ export const MessageList = memo(function MessageList({
                     isActive={sub.isActive}
                     isLast={sub.id === lastActivityGroupId}
                     debugMode={debugMode}
-                    // 节内平铺：节的「过程」折叠是唯一收纳层，不再套第二层折叠壳。
-                    flat={inSection}
+                    // 调试模式沿用节内平铺；普通用户保留活动组折叠摘要，但锁定为不可展开。
+                    flat={inSection && debugMode}
                   />
                 </ErrorBoundary>
               );

@@ -14,7 +14,7 @@ vi.mock("@agent/shared", async (importOriginal) => ({
   ...api,
 }));
 
-import { AliyunConnectorDrawer, useAliyunConnector } from "./AliyunConnector";
+import { AliyunConnectorDrawer, aliyunMatchesCatalog, useAliyunConnector } from "./AliyunConnector";
 
 function TestConnector() {
   const state = useAliyunConnector(true);
@@ -27,6 +27,14 @@ describe("AliyunConnector", () => {
     api.fetchAliyunConnection.mockResolvedValue({
       connection: { connectorId: "aliyun", status: "disconnected" },
     });
+  });
+
+  it("支持目录关键词和来源、启用状态筛选", () => {
+    expect(aliyunMatchesCatalog("aliyun", "all", false)).toBe(true);
+    expect(aliyunMatchesCatalog("ECS", "platform", false)).toBe(true);
+    expect(aliyunMatchesCatalog("aliyun", "enabled", false)).toBe(false);
+    expect(aliyunMatchesCatalog("阿里云", "enabled", true)).toBe(true);
+    expect(aliyunMatchesCatalog("github", "all", true)).toBe(false);
   });
 
   it("通过用户级 RAM Role 授权并且不回显源凭据", async () => {

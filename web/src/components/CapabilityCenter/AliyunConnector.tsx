@@ -94,6 +94,12 @@ function AliyunLogo() {
   );
 }
 
+export function aliyunMatchesCatalog(query: string, activeFilter: string, connected: boolean): boolean {
+  const normalized = query.trim().toLocaleLowerCase();
+  return (!normalized || "阿里云 aliyun alibaba cloud ecs vpc oss acr nas dns ram sts".includes(normalized))
+    && (activeFilter === "all" || activeFilter === "platform" || (activeFilter === "enabled" && connected));
+}
+
 export function AliyunConnectorCard({
   state,
   onOpenDetail,

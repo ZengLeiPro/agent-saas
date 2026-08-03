@@ -96,7 +96,12 @@ async function makeRig(): Promise<TestRig> {
     request: (path, init) => fetch(`${baseUrl}${path}`, init),
     close: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      rmSync(tmpRoot, { recursive: true, force: true });
+      rmSync(tmpRoot, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 20,
+      });
     },
   };
 }

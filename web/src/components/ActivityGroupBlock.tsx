@@ -135,7 +135,7 @@ function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
   };
 }
 
-function getGroupSummary(items: MessageItem[], isActive: boolean): GroupSummaryInfo {
+function getGroupSummary(items: MessageItem[], isActive: boolean, debugMode: boolean): GroupSummaryInfo {
   if (isActive) return getActiveGroupSummary(items);
 
   const cancelledCount = items.filter(item => (
@@ -151,9 +151,9 @@ function getGroupSummary(items: MessageItem[], isActive: boolean): GroupSummaryI
     };
   }
 
-  // 只保留工具明确提供的业务摘要；不再根据内部动作猜测折叠标题。
+  // 非调试视图只展示固定状态，不能把自动生成的工具标题误当成业务摘要。
   return {
-    text: getCompletedGroupTitle(items),
+    text: debugMode ? getCompletedGroupTitle(items) : '已运行',
     tone: 'success',
     durationMs: getActivityDurationMs(items),
     active: false,
@@ -211,13 +211,12 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
   // 折叠行已提供分组摘要，具体工具详情由用户按需展开，避免长会话默认铺满执行细节。
   const [isExpanded, setIsExpanded] = useState(false);
 
-  // 带业务摘要的单项本身已经是面向客户的活动卡，不能再套一层泛化的“Agent 活动”，
-  // 否则场景回放和真实会话都会把关键业务动作标题折叠掉。
-  if (items.length === 1 && hasPresentation(items[0])) {
+  // 调试视图允许单项摘要直接呈现；非调试视图必须经过固定状态分流，避免泄露工具标题。
+  if (debugMode && items.length === 1 && hasPresentation(items[0])) {
     return <ActivityItem item={items[0]} debugMode={debugMode} />;
   }
 
-  const summary = getGroupSummary(items, isActive);
+  const summary = getGroupSummary(items, isActive, debugMode);
   const state: AgentActivityState = summary.tone === 'active'
     ? 'running'
     : summary.tone === 'warning'

@@ -131,12 +131,13 @@ describe('ActivityGroupBlock 摘要不被整组吞掉', () => {
     expect(screen.queryByText(/rg -n selection/)).toBeNull();
   });
 
-  it('组内有摘要 + 非 debug：保留业务标题但渲染为静态行，详情不可见', () => {
+  it('组内有摘要 + 非 debug：统一显示固定完成状态，标题与详情均不可见', () => {
     const { container } = render(<ActivityGroupBlock items={[plainTool, richTool]} isActive={false} debugMode={false} />);
-    const groupSummary = screen.getByText('核对魏德米勒选型表');
+    const groupSummary = screen.getByText('已运行');
     expect(groupSummary.closest('button')).toBeNull();
     expect(groupSummary.closest('[aria-expanded]')).toBeNull();
     expect(container.querySelector('.lucide-chevron-right')).toBeNull();
+    expect(screen.queryByText('核对魏德米勒选型表')).toBeNull();
     expect(screen.queryByText('WDU 2.5')).toBeNull();
   });
 
@@ -161,9 +162,10 @@ describe('ActivityGroupBlock 摘要不被整组吞掉', () => {
     expect(screen.queryByText(/rg -n selection/)).toBeNull();
   });
 
-  it('单项分组带摘要 + 非 debug：直接渲染摘要，不套分组壳', () => {
+  it('单项分组带摘要 + 非 debug：仍统一显示固定完成状态', () => {
     render(<ActivityGroupBlock items={[richTool]} isActive={false} debugMode={false} />);
-    expect(screen.getByText('核对魏德米勒选型表')).toBeTruthy();
+    expect(screen.getByText('已运行')).toBeTruthy();
+    expect(screen.queryByText('核对魏德米勒选型表')).toBeNull();
   });
 });
 

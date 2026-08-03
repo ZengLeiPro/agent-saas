@@ -171,11 +171,9 @@ export function groupMessages(
       continue;
     }
 
-    if (msg.type === 'tool_use' && msg.presentation && msg.defaultExpanded) {
-      // 数据源（剧本 / 未来的服务端规则）用 defaultOpen 声明的高价值执行行，
-      // 是「AI 在动系统」的可见痕迹，不允许被活动分组吞成「已完成 N 条」。
-      // 判据不是「有没有摘要」——真实会话几乎所有工具都有摘要，全拆会刷屏；
-      // 而是「数据源是否点名它值得上主流」。真实会话 defaultOpen 恒 false（parse.ts），行为不变。
+    if (debugMode && msg.type === 'tool_use' && msg.presentation && msg.defaultExpanded) {
+      // 只有调试视图允许高价值执行行独立展示；非调试视图必须进入活动分组，
+      // 统一显示固定状态，不能用格式化摘要绕过过程信息隔离。
       flushGroup(false);
       sink().push(msg);
     } else if (ACTIVITY_TYPES.has(msg.type)) {

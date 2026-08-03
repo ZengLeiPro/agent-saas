@@ -52,12 +52,23 @@ describe('groupMessages', () => {
     expect(groupMessages([], false)).toEqual([]);
   });
 
-  it('defaultExpanded + presentation 的工具行独立成行，不进活动分组', () => {
+  it('非 debug 下 defaultExpanded + presentation 仍进入活动分组，不能绕过固定状态', () => {
     const hero = tool('hero', {
       presentation: { title: '写入 CRM 商机' },
       defaultExpanded: true,
     });
-    const result = groupMessages([thinking('t1'), hero, tool('after')], false);
+    const result = groupMessages([thinking('t1'), hero, tool('after')], false, { debugMode: false });
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe('activity_group');
+    expect((result[0] as ActivityGroup).items.map(i => i.id)).toEqual(['t1', 'hero', 'after']);
+  });
+
+  it('debug 下 defaultExpanded + presentation 的工具行仍独立成行', () => {
+    const hero = tool('hero', {
+      presentation: { title: '写入 CRM 商机' },
+      defaultExpanded: true,
+    });
+    const result = groupMessages([thinking('t1'), hero, tool('after')], false, { debugMode: true });
     expect(result.map(r => r.type)).toEqual(['activity_group', 'tool_use', 'activity_group']);
     expect((result[0] as ActivityGroup).items.map(i => i.id)).toEqual(['t1']);
     expect((result[1] as MessageItem).id).toBe('hero');

@@ -180,6 +180,34 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     expect(screen.queryByText(/exit 1/)).toBeNull();
   });
 
+  it('关闭调试模式后不展示工具自动生成的 presentation 标题', () => {
+    const technicalTool = {
+      ...failedTool,
+      id: 'technical-tool',
+      presentation: { title: '读取 CLAUDE.md' },
+    };
+    const { rerender } = render(<ActivityGroupBlock
+      items={[technicalTool]}
+      isActive={false}
+      debugMode={false}
+    />);
+
+    expect(screen.getByText('已运行')).toBeTruthy();
+    expect(screen.queryByText('读取 CLAUDE.md')).toBeNull();
+
+    rerender(<ActivityGroupBlock
+      items={[
+        technicalTool,
+        { ...technicalTool, id: 'technical-tool-2', presentation: { title: '执行命令' } },
+      ]}
+      isActive={false}
+      debugMode={false}
+    />);
+
+    expect(screen.getByText('已运行')).toBeTruthy();
+    expect(screen.queryByText(/读取 CLAUDE\.md|执行命令/)).toBeNull();
+  });
+
   it('调试模式始终保留活动组折叠层，展开后才显示组内动作', () => {
     render(<ActivityGroupBlock
       items={[

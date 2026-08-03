@@ -21,6 +21,13 @@ const user = (id: string, content: string): MessageItem => ({ id, type: 'user', 
 const file = (id: string): MessageItem => ({
   id, type: 'file_download', fileName: 'a.pdf', fileType: '', filePath: 'a.pdf', fileSize: 0,
 });
+const compaction = (id: string, summary: string, coveredEventCount: number): MessageItem => ({
+  id,
+  type: 'compaction',
+  status: 'done',
+  summary,
+  coveredEventCount,
+} as unknown as MessageItem);
 
 describe('mergeServerMessagesWithLocalTail', () => {
   it('本地无 text 消息时直接返回 server', () => {
@@ -64,6 +71,33 @@ describe('mergeServerMessagesWithLocalTail', () => {
     const server = [user('s0', 'q'), text('line-1', '答案')];
     const local = [user('u0', 'q'), text('msg-1', '答案')];
     expect(mergeServerMessagesWithLocalTail(server, local)).toBe(server);
+  });
+
+  it('服务端已投影同一次压缩时不再追加本地临时分界线', () => {
+    const server = [
+      user('line-1', '问题'),
+      text('line-2', '回答'),
+      compaction('line-3-compaction', '历史摘要', 42),
+    ];
+    const local = [
+      user('msg-1', '问题'),
+      text('msg-2', '回答'),
+      compaction('msg-3', '历史摘要', 42),
+    ];
+
+    expect(mergeServerMessagesWithLocalTail(server, local)).toBe(server);
+  });
+
+  it('不同的压缩分界线仍作为尚未投影的本地尾部保留', () => {
+    const server = [
+      user('line-1', '问题'),
+      text('line-2', '回答'),
+      compaction('line-3-compaction', '旧摘要', 40),
+    ];
+    const latest = compaction('msg-3', '新摘要', 48);
+    const local = [user('msg-1', '问题'), text('msg-2', '回答'), latest];
+
+    expect(mergeServerMessagesWithLocalTail(server, local)).toEqual([...server, latest]);
   });
 
   it('server 最后一条 text 扩展了本地流式前缀时不重复追加本地 text', () => {

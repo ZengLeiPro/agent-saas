@@ -1,5 +1,37 @@
 import type { MessageItem } from '../types/message';
 
+function compactionIdentity(message: MessageItem): string | null {
+  const candidate = message as unknown as {
+    type?: unknown;
+    status?: unknown;
+    summary?: unknown;
+    coveredEventCount?: unknown;
+  };
+  if (candidate.type !== 'compaction' || candidate.status === 'running') return null;
+
+  const summary = typeof candidate.summary === 'string' ? candidate.summary : null;
+  const coveredEventCount = typeof candidate.coveredEventCount === 'number'
+    ? candidate.coveredEventCount
+    : null;
+  if (summary === null && coveredEventCount === null) return null;
+  return JSON.stringify([summary, coveredEventCount]);
+}
+
+function appendUnprojectedLocalTail(server: MessageItem[], tail: MessageItem[]): MessageItem[] {
+  if (tail.length === 0) return server;
+
+  // compaction_status 会先生成本地临时分界线，随后 done 刷新又从 transcript 取得
+  // 同一条持久化分界线。二者 id 不同，不能沿用普通消息的 id 去重。
+  const projectedCompactions = new Set(
+    server.map(compactionIdentity).filter((identity): identity is string => identity !== null),
+  );
+  const unprojectedTail = tail.filter((message) => {
+    const identity = compactionIdentity(message);
+    return identity === null || !projectedCompactions.has(identity);
+  });
+  return unprojectedTail.length === 0 ? server : [...server, ...unprojectedTail];
+}
+
 /**
  * 合并服务端 transcript 消息列表与本地实时流式消息列表，保留本地尾部（若服务端尚未落盘）。
  *
@@ -48,7 +80,9 @@ export function mergeServerMessagesWithLocalTail(
   const inflightTailStart = inflightUserIdx >= 0 && !inflightUserProjected ? inflightUserIdx : -1;
 
   if (anchorIdx === -1) {
-    return inflightTailStart >= 0 ? [...server, ...local.slice(inflightTailStart)] : server;
+    return inflightTailStart >= 0
+      ? appendUnprojectedLocalTail(server, local.slice(inflightTailStart))
+      : server;
   }
 
   const anchor = local[anchorIdx];
@@ -61,7 +95,7 @@ export function mergeServerMessagesWithLocalTail(
     const tail = inflightTailStart >= 0 && inflightTailStart < anchorIdx
       ? local.slice(inflightTailStart)
       : localTailAfterAnchor;
-    return tail.length === 0 ? server : [...server, ...tail];
+    return appendUnprojectedLocalTail(server, tail);
   }
 
   // 只检查服务端最后一条 text，避免历史中的同文消息误吞当前回复。
@@ -78,15 +112,13 @@ export function mergeServerMessagesWithLocalTail(
   // 服务端已有锚点 text 时，锚点前的在途气泡必然先于该 text 被消费/投影（transcript
   // 顺序保证），只保留锚点后的本地尾部即可。
   if (lastServerTextContent?.startsWith(anchorContent)) {
-    return localTailAfterAnchor.length === 0
-      ? server
-      : [...server, ...localTailAfterAnchor];
+    return appendUnprojectedLocalTail(server, localTailAfterAnchor);
   }
 
   const startIdx = inflightTailStart >= 0 && inflightTailStart < anchorIdx
     ? inflightTailStart
     : anchorIdx;
-  return [...server, ...local.slice(startIdx)];
+  return appendUnprojectedLocalTail(server, local.slice(startIdx));
 }
 
 /**

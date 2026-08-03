@@ -20,6 +20,7 @@ import {
 } from "./activityStatusStyles";
 import { PresentationDetail } from "./PresentationDetail";
 import { PresentationBlocks } from "./presentation/PresentationBlocks";
+import { statVerdict, visibleOutcomeStats, type OutcomeStat } from "./detailSemantics";
 
 // ---------------------------------------------------------------------------
 // 业务步骤渲染（时间线性叙事 + 章节化）
@@ -31,6 +32,14 @@ import { PresentationBlocks } from "./presentation/PresentationBlocks";
 // - 归属感由缩进 + 极淡左竖线表达（timeline 语言），不靠边框。
 // - 节内过程（工具/思考/正文）在步骤完成后自动折叠为一行；outcome 与
 //   业务小结（detail/display/依据）常显——折的是过程，不折结论。
+//
+// 内容纪律（08-03 二轮：样式对齐 demo + 槽位去重）：
+// - 「业务详情」用白卡键值（PresentationDetail variant="card"）：白底 + 细行分隔
+//   线，字段名灰、值深、关键值配主题强调色。去框只约束**步骤章节骨架**，
+//   内容块该是卡片就是卡片。
+// - 标签分两类：判定类（✓/✗/通过/失败）走绿红语义色，中性键值保持灰。
+// - 槽位去重是渲染层硬约束而非提示语约定：业务详情展开时，与详情键值行同键
+//   同值的中性标签隐藏；判定类标签任何时候都不隐藏。
 // ---------------------------------------------------------------------------
 
 const TERMINAL_META: Partial<Record<BusinessStepEventItem["kind"], {
@@ -63,8 +72,31 @@ function StepBadge({ index, count }: { index?: number; count?: number }) {
   );
 }
 
-/** 一句话业务结果：折叠态的信息主体。tone 修正语义色（完成但有例外 = 橙色警示）。 */
-function OutcomeLine({ outcome }: { outcome: TodoOutcome }) {
+/**
+ * 分流计数徽标。判定类（✓/✗/通过/失败……）走绿红语义色，中性键值保持灰。
+ * 判别只看 value 且含数字即判中性，见 detailSemantics.statVerdict 的取舍说明。
+ */
+function StatChip({ stat }: { stat: OutcomeStat }) {
+  const verdict = statVerdict(stat);
+  if (verdict) {
+    return (
+      <span className={activityStatusBadgeClass(verdict === "pass" ? "success" : "danger")}>
+        {stat.label} <span className="font-medium">{stat.value}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="rounded border border-border/70 bg-muted/30 px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">
+      {stat.label} <span className="font-medium text-foreground">{stat.value}</span>
+    </span>
+  );
+}
+
+/**
+ * 一句话业务结果：折叠态的信息主体。tone 修正语义色（完成但有例外 = 橙色警示）。
+ * stats 由调用方按「业务详情是否展开」过滤后传入——同一组数字不在一屏里出现两遍。
+ */
+function OutcomeLine({ outcome, stats }: { outcome: TodoOutcome; stats: OutcomeStat[] }) {
   const meta = OUTCOME_TONE_META[outcome.tone ?? "ok"];
   const Icon = meta.Icon;
   return (
@@ -73,30 +105,57 @@ function OutcomeLine({ outcome }: { outcome: TodoOutcome }) {
         {Icon ? <Icon className={cn("mt-0.5 size-3.5 shrink-0", meta.iconClass)} /> : null}
         <span className="min-w-0 break-words">{outcome.text}</span>
       </p>
-      {outcome.stat?.length ? (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {outcome.stat.map((entry) => (
-            <span
-              key={`${entry.label}-${entry.value}`}
-              className="rounded border border-border/70 bg-muted/30 px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground"
-            >
-              {entry.label} <span className="font-medium text-foreground">{entry.value}</span>
-            </span>
-          ))}
+      {stats.length ? (
+        <div className="flex flex-wrap items-center gap-1.5" data-testid="outcome-stats">
+          {stats.map((entry) => <StatChip key={`${entry.label}-${entry.value}`} stat={entry} />)}
         </div>
       ) : null}
     </div>
   );
 }
 
-/** 终态小结正文：detail / display / 依据。 */
-function StepSummaryBody({ todo }: { todo: TodoItem }) {
+/**
+ * 终态小结的展开态。业务详情默认展开（折的是过程，不折结论），但可手动收起：
+ * 收起时标签重新变成唯一的结构化信息位，所以标签集合与这个状态联动。
+ */
+function useStepSummary(todo?: TodoItem) {
+  const [detailOpen, setDetailOpen] = useState(true);
+  return {
+    detailOpen,
+    toggleDetail: () => setDetailOpen((open) => !open),
+    stats: visibleOutcomeStats(todo?.outcome?.stat, todo?.detail, detailOpen),
+  };
+}
+
+/** 终态小结正文：业务详情（白卡键值，可折叠）/ display / 依据。 */
+function StepSummaryBody({
+  todo,
+  detailOpen,
+  onToggleDetail,
+}: {
+  todo: TodoItem;
+  detailOpen: boolean;
+  onToggleDetail: () => void;
+}) {
   const hasBody = !!todo.detail?.length || !!todo.display?.length || !!todo.evidenceRefs?.length;
   if (!hasBody) return null;
   return (
     <div className="space-y-2.5">
       {todo.detail?.length ? (
-        <PresentationDetail data={{ title: "", detail: todo.detail }} />
+        <div>
+          <button
+            type="button"
+            className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            aria-expanded={detailOpen}
+            onClick={onToggleDetail}
+          >
+            <ChevronRight className={cn("size-3.5 transition-transform", detailOpen && "rotate-90")} />
+            业务详情
+          </button>
+          {detailOpen ? (
+            <PresentationDetail data={{ title: "", detail: todo.detail }} variant="card" />
+          ) : null}
+        </div>
       ) : null}
       {todo.display?.length ? (
         <PresentationBlocks blocks={todo.display} ctx={{ readOnly: true }} />
@@ -184,6 +243,7 @@ function StartRow({ event }: { event: BusinessStepEventItem }) {
 function TerminalBlock({ event }: { event: BusinessStepEventItem }) {
   const todo = event.todo;
   const meta = TERMINAL_META[event.kind];
+  const { detailOpen, toggleDetail, stats } = useStepSummary(todo);
   if (!todo || !meta) return null;
   const { label, tone, Icon } = meta;
 
@@ -198,8 +258,8 @@ function TerminalBlock({ event }: { event: BusinessStepEventItem }) {
         <StepBadge index={event.stepIndex} count={event.stepCount} />
       </header>
       <div className="ml-[7px] mt-2 space-y-2.5 border-l border-border/50 pl-4">
-        {todo.outcome ? <OutcomeLine outcome={todo.outcome} /> : null}
-        <StepSummaryBody todo={todo} />
+        {todo.outcome ? <OutcomeLine outcome={todo.outcome} stats={stats} /> : null}
+        <StepSummaryBody todo={todo} detailOpen={detailOpen} onToggleDetail={toggleDetail} />
       </div>
     </section>
   );
@@ -269,6 +329,8 @@ export function BusinessStepSectionView({
     if (terminalKey) setProcessOpen(false);
   }, [terminalKey]);
 
+  const { detailOpen, toggleDetail, stats } = useStepSummary(terminal?.todo);
+
   if (!todo) return <>{children}</>;
 
   const titleLabel = !terminal && isActive && todo.activeForm ? todo.activeForm : todo.content;
@@ -306,7 +368,7 @@ export function BusinessStepSectionView({
       </header>
 
       <div className="ml-[7px] mt-2 space-y-2.5 border-l border-border/50 pl-4">
-        {terminal?.todo?.outcome ? <OutcomeLine outcome={terminal.todo.outcome} /> : null}
+        {terminal?.todo?.outcome ? <OutcomeLine outcome={terminal.todo.outcome} stats={stats} /> : null}
 
         {hasProcess ? (
           terminal ? (
@@ -331,7 +393,9 @@ export function BusinessStepSectionView({
           )
         ) : null}
 
-        {terminal?.todo ? <StepSummaryBody todo={terminal.todo} /> : null}
+        {terminal?.todo ? (
+          <StepSummaryBody todo={terminal.todo} detailOpen={detailOpen} onToggleDetail={toggleDetail} />
+        ) : null}
       </div>
     </section>
   );

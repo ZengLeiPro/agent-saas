@@ -1,6 +1,8 @@
+import { createContext, Fragment, useContext } from "react";
 import type { DetailLine, ToolPresentation } from "@agent/shared";
 import { Circle, CircleCheck, CircleX, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isEmphasisValue } from "./detailSemantics";
 import { activityStatusBadgeClass, activityStatusIconClass, activityStatusTextClass, type ActivityStatusTone } from "./activityStatusStyles";
 
 /**
@@ -13,6 +15,16 @@ import { activityStatusBadgeClass, activityStatusIconClass, activityStatusTextCl
  * 编号 15% / 判定行 5%），键值列用 grid 对齐而非全角空格填充——
  * 中文与西文混排时空格填充对不齐。
  */
+
+/**
+ * 两种排版皮：
+ * - "code"（默认）：工具执行摘要沿用的极淡蓝底等宽块，行为逐像素不变；
+ * - "card"：白卡键值（QoderWorker demo 的键值卡语言）——白底卡片 + 细行分隔线，
+ *   字段名灰色左列、值深色、关键值配主题强调色。业务步骤的「业务详情」用它。
+ */
+export type PresentationDetailVariant = "code" | "card";
+
+const VariantContext = createContext<PresentationDetailVariant>("code");
 
 const CIRCLED_DIGITS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
 
@@ -29,13 +41,29 @@ const STATUS_META: Record<NonNullable<ToolPresentation["status"]>, { label: stri
 };
 
 function KeyValueRow({ k, v, prefix }: { k: string; v: string; prefix?: string }) {
+  const variant = useContext(VariantContext);
+  const card = variant === "card";
   return (
-    <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3">
+    <div
+      className={cn(
+        "grid gap-x-3",
+        // 白卡：字段名列定宽感（最小 5em）让多行键值自然对齐，不靠等宽字体撑
+        card ? "grid-cols-[minmax(5em,auto)_minmax(0,1fr)] items-baseline" : "grid-cols-[auto_minmax(0,1fr)]",
+      )}
+    >
       <span className="flex gap-1.5 text-muted-foreground">
         {prefix ? <span className="select-none text-muted-foreground/60">{prefix}</span> : null}
         <span>{k}</span>
       </span>
-      <span className="break-words text-foreground">{v}</span>
+      <span
+        className={cn(
+          "break-words text-foreground",
+          card && "tabular-nums",
+          card && isEmphasisValue(v) && "font-medium text-primary",
+        )}
+      >
+        {v}
+      </span>
     </div>
   );
 }
@@ -46,6 +74,21 @@ const VERDICT_META: Record<"pass" | "fail" | "warn" | "pending", { tone: Activit
   warn: { tone: "warning", Icon: TriangleAlert },
   pending: { tone: "pending", Icon: Circle },
 };
+
+function SectionRow({ section }: { section: string }) {
+  const card = useContext(VariantContext) === "card";
+  // 白卡里行分隔线由容器统一提供，小节条不再自带下边框，否则出现双线
+  return (
+    <div
+      className={cn(
+        "font-medium text-muted-foreground",
+        card ? "text-[11px] leading-4" : "mt-1.5 border-b border-border/60 pb-0.5 first:mt-0",
+      )}
+    >
+      {section}
+    </div>
+  );
+}
 
 function DetailRow({ line }: { line: DetailLine }) {
   if (typeof line === "string") {
@@ -73,11 +116,7 @@ function DetailRow({ line }: { line: DetailLine }) {
     );
   }
   if ("section" in line) {
-    return (
-      <div className="mt-1.5 border-b border-border/60 pb-0.5 font-medium text-muted-foreground first:mt-0">
-        {line.section}
-      </div>
-    );
+    return <SectionRow section={line.section} />;
   }
   // warn 行不在此渲染：PresentationDetail 把连续 warn 聚合为 WarnGroup 橙底色块
   if ("insight" in line) {
@@ -209,49 +248,66 @@ export function PresentationDetail({
   data,
   className,
   hideStatus,
+  variant = "code",
 }: {
   data: ToolPresentation;
   className?: string;
   /** 调用方已在别处表达了状态时置真，避免同一条信息说两遍 */
   hideStatus?: boolean;
+  variant?: PresentationDetailVariant;
 }) {
   const statusMeta = !hideStatus && data.status ? STATUS_META[data.status] : null;
   const hasBody = (data.detail?.length ?? 0) > 0 || !!data.receipt || !!statusMeta;
   if (!hasBody) return null;
 
+  const card = variant === "card";
+  const groups = groupDetailLines(data.detail ?? []);
+
   return (
-    <div
-      className={cn(
-        "mt-1 space-y-1 rounded-md px-3 py-2 font-mono text-xs leading-relaxed",
-        className,
-      )}
-      style={{ backgroundColor: "hsl(var(--code-block-bg))" }}
-    >
-      {statusMeta && (
-        <div className="pb-0.5">
-          <span className={activityStatusBadgeClass(statusMeta.tone)}>{statusMeta.label}</span>
-        </div>
-      )}
+    <VariantContext.Provider value={variant}>
+      <div
+        className={cn(
+          "mt-1 text-xs leading-relaxed",
+          card
+            ? "divide-y divide-border/60 overflow-hidden rounded-md border border-border bg-card"
+            : "space-y-1 rounded-md px-3 py-2 font-mono",
+          className,
+        )}
+        style={card ? undefined : { backgroundColor: "hsl(var(--code-block-bg))" }}
+      >
+        {statusMeta && (
+          <div className={card ? "px-3 py-1.5" : "pb-0.5"}>
+            <span className={activityStatusBadgeClass(statusMeta.tone)}>{statusMeta.label}</span>
+          </div>
+        )}
 
-      {groupDetailLines(data.detail ?? []).map((group, i) =>
-        group.kind === "warnGroup"
-          ? <WarnGroup key={i} header={group.header} warns={group.warns} />
-          : <DetailRow key={i} line={group.line} />,
-      )}
+        {groups.map((group, i) => {
+          const body = group.kind === "warnGroup"
+            ? <WarnGroup header={group.header} warns={group.warns} />
+            : <DetailRow line={group.line} />;
+          // 白卡：每行自带内边距，行与行之间由容器的 divide 细线分隔
+          return card ? <div key={i} className="px-3 py-1.5">{body}</div> : <Fragment key={i}>{body}</Fragment>;
+        })}
 
-      {data.receipt && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border pt-1.5">
-          <span className="text-muted-foreground">回执</span>
-          <span className="text-foreground">{data.receipt.system}</span>
-          <span className="break-all text-foreground">{data.receipt.id}</span>
-          {data.receipt.readBack && (
-            <span className={cn("inline-flex items-center gap-1", activityStatusTextClass("success"))}>
-              <CircleCheck className="size-3" />
-              回读校验通过
-            </span>
-          )}
-        </div>
-      )}
-    </div>
+        {data.receipt && (
+          <div
+            className={cn(
+              "flex flex-wrap items-center gap-x-2 gap-y-1",
+              card ? "px-3 py-1.5" : "mt-1.5 border-t border-border pt-1.5",
+            )}
+          >
+            <span className="text-muted-foreground">回执</span>
+            <span className="text-foreground">{data.receipt.system}</span>
+            <span className="break-all text-foreground">{data.receipt.id}</span>
+            {data.receipt.readBack && (
+              <span className={cn("inline-flex items-center gap-1", activityStatusTextClass("success"))}>
+                <CircleCheck className="size-3" />
+                回读校验通过
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+    </VariantContext.Provider>
   );
 }

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { BusinessStepEventItem, BusinessStepSection } from "@agent/shared";
 
@@ -113,6 +113,102 @@ describe("BusinessStepFlow", () => {
     expect(screen.getByText("订单资料完整")).toBeTruthy();
     expect(screen.getByText("SO-1001")).toBeTruthy();
     for (const sel of NO_FILL_SELECTORS) expect(container.querySelector(sel)).toBeNull();
+  });
+
+  it("renders 业务详情 as a white key-value card, not the tinted code block", () => {
+    const { container } = render(
+      <BusinessStepFlow
+        event={event({
+          kind: "complete",
+          todo: {
+            id: "a",
+            kind: "business",
+            content: "盘点资料包",
+            status: "completed",
+            outcome: { text: "资料包盘点完成", tone: "ok" },
+            detail: [{ k: "文件夹", v: "15" }, { k: "负责人", v: "张三" }],
+          },
+        })}
+      />,
+    );
+
+    const card = container.querySelector(".divide-y.bg-card");
+    expect(card).toBeTruthy();
+    // 白卡不用等宽排版，也不再用代码块底色
+    expect(card!.className).not.toContain("font-mono");
+    expect((card as HTMLElement).style.backgroundColor).toBe("");
+    // 关键值（数字）走主题强调色，普通值保持深色
+    expect(screen.getByText("15").className).toContain("text-primary");
+    expect(screen.getByText("张三").className).not.toContain("text-primary");
+  });
+
+  it("colors verdict chips green/red and keeps counting chips neutral", () => {
+    render(
+      <BusinessStepFlow
+        event={event({
+          kind: "complete",
+          todo: {
+            id: "a",
+            kind: "business",
+            content: "合规校验",
+            status: "completed",
+            outcome: {
+              text: "合规校验完成",
+              tone: "warn",
+              stat: [
+                { label: "合规", value: "通过" },
+                { label: "税号", value: "未通过" },
+                { label: "退回", value: "1" },
+              ],
+            },
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("合规").className).toContain("text-success");
+    expect(screen.getByText("税号").className).toContain("text-destructive");
+    expect(screen.getByText("退回").className).toContain("text-muted-foreground");
+  });
+
+  it("hides neutral chips duplicated by 业务详情 rows, restores them when collapsed", () => {
+    render(
+      <BusinessStepFlow
+        event={event({
+          kind: "complete",
+          todo: {
+            id: "a",
+            kind: "business",
+            content: "盘点资料包",
+            status: "completed",
+            outcome: {
+              text: "资料包盘点完成",
+              tone: "ok",
+              stat: [
+                { label: "文件夹", value: "15" },
+                { label: "合规", value: "通过" },
+                { label: "耗时", value: "42s" },
+              ],
+            },
+            detail: [{ k: "文件夹", v: "15" }],
+          },
+        })}
+      />,
+    );
+
+    // 展开态（默认）：与详情行重复的中性标签隐藏，判定类与未重复的保留
+    const expanded = within(screen.getByTestId("outcome-stats"));
+    expect(expanded.queryByText("文件夹")).toBeNull();
+    expect(expanded.getByText("合规")).toBeTruthy();
+    expect(expanded.getByText("耗时")).toBeTruthy();
+    // 详情行里那份「文件夹 15」仍在，信息没丢，只是不再出现两遍
+    expect(screen.getByText("15")).toBeTruthy();
+
+    // 收起业务详情后标签重新成为唯一信息位，全部回来
+    fireEvent.click(screen.getByText("业务详情"));
+    const collapsed = within(screen.getByTestId("outcome-stats"));
+    expect(collapsed.getByText("文件夹")).toBeTruthy();
+    expect(collapsed.getByText("15")).toBeTruthy();
   });
 
   it("renders the lightweight update row", () => {

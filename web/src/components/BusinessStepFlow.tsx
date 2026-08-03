@@ -165,19 +165,12 @@ function DisclosureButton({
 }
 
 function PlanTodoRow({ todo, index }: { todo: TodoItem; index: number }) {
-  const active = todo.status === "in_progress";
   return (
     <li className="flex items-start gap-2.5 py-1">
       <span className="min-w-4 shrink-0 text-right text-sm leading-5 tabular-nums text-muted-foreground">
         {index}.
       </span>
-      <span
-        className={cn(
-          "min-w-0 flex-1 break-words text-sm leading-5",
-          todo.status === "completed" && "text-muted-foreground line-through opacity-75",
-          active ? "font-medium text-foreground" : "text-muted-foreground",
-        )}
-      >
+      <span className="min-w-0 flex-1 break-words text-sm leading-5 text-muted-foreground">
         {todo.content}
       </span>
     </li>

@@ -32,7 +32,15 @@ export type PresentationDetailLine =
   | { k: string; v: string }
   | { tree: '├' | '└'; k: string; v: string }
   | { no: number; text: string }
-  | { indent: number; text: string };
+  | { indent: number; text: string }
+  | { section: string }
+  | { warn: string }
+  | { insight: string; label?: string }
+  | { risk: 'high' | 'medium'; text: string; action?: string }
+  | { verdict: 'pass' | 'fail' | 'warn' | 'pending'; text: string; note?: string }
+  | { quote: string; source?: string }
+  | { original: string; translation?: string }
+  | { fields: Array<{ k: string; v: string }> };
 
 /** 与 shared 的 `ToolPresentation` 结构等价，见上方说明 */
 export interface ToolPresentation {
@@ -238,9 +246,9 @@ const METADATA_RULES: Record<string, MetadataRule> = {
     if (stdoutBytes !== undefined) detail.push({ tree: '├', k: '输出', v: formatBytes(stdoutBytes) });
     if (stderrBytes) detail.push({ tree: '├', k: '错误输出', v: formatBytes(stderrBytes) });
     if (durationMs !== undefined) detail.push({ tree: '└', k: '耗时', v: formatDuration(durationMs) });
-    if (metadata.outputExceeded === true) detail.push({ indent: 0, text: '⚠ 输出超出捕获上限，已截断' });
-    if (metadata.timedOut === true) detail.push({ indent: 0, text: '⚠ 执行超时' });
-    if (metadata.aborted === true) detail.push({ indent: 0, text: '⚠ 已被中止' });
+    if (metadata.outputExceeded === true) detail.push({ warn: '输出超出捕获上限，已截断' });
+    if (metadata.timedOut === true) detail.push({ warn: '执行超时' });
+    if (metadata.aborted === true) detail.push({ warn: '已被中止' });
 
     const failed = metadata.timedOut === true
       || metadata.aborted === true
@@ -286,7 +294,7 @@ const METADATA_RULES: Record<string, MetadataRule> = {
     if (fileBytes !== undefined) detail.push({ tree: '└', k: '文件大小', v: formatBytes(fileBytes) });
     if (truncated) {
       const shown = num(metadata.shownBytes);
-      detail.push({ indent: 0, text: shown !== undefined ? `⚠ 超出单次读取上限，仅返回前 ${formatBytes(shown)}` : '⚠ 内容已截断' });
+      detail.push({ warn: shown !== undefined ? `超出单次读取上限，仅返回前 ${formatBytes(shown)}` : '内容已截断' });
     }
 
     return {
@@ -304,7 +312,7 @@ const METADATA_RULES: Record<string, MetadataRule> = {
     if (provider) detail.push({ tree: '├', k: '来源', v: provider });
     const count = num(metadata.resultCount);
     if (count !== undefined) detail.push({ tree: '└', k: '命中', v: `${count} 条` });
-    if (metadata.truncated === true) detail.push({ indent: 0, text: '⚠ 结果过多，已截断' });
+    if (metadata.truncated === true) detail.push({ warn: '结果过多，已截断' });
     return { title: '联网检索', detail, status: 'ok' };
   },
 
@@ -328,7 +336,7 @@ const METADATA_RULES: Record<string, MetadataRule> = {
     }
     const tookMs = num(metadata.tookMs);
     if (tookMs !== undefined) detail.push({ tree: '└', k: '耗时', v: formatDuration(tookMs) });
-    if (metadata.truncated === true) detail.push({ indent: 0, text: '⚠ 正文超出上限，已截断' });
+    if (metadata.truncated === true) detail.push({ warn: '正文超出上限，已截断' });
     return { title: '读取网页', detail, status: metadata.truncated === true ? 'warn' : 'ok' };
   },
 

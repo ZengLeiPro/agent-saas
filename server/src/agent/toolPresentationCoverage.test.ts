@@ -91,11 +91,11 @@ describe('截断前 metadata 规则', () => {
 
   it('Shell 截断/超时/中止各自留下明确痕迹，不静默', () => {
     const truncated = buildToolPresentation('Shell', { command: 'x' }, undefined, { exitCode: 0, outputExceeded: true });
-    expect(truncated?.detail).toContainEqual({ indent: 0, text: '⚠ 输出超出捕获上限，已截断' });
+    expect(truncated?.detail).toContainEqual({ warn: '输出超出捕获上限，已截断' });
 
     const timedOut = buildToolPresentation('Shell', { command: 'x' }, undefined, { timedOut: true });
     expect(timedOut?.status).toBe('warn');
-    expect(timedOut?.detail).toContainEqual({ indent: 0, text: '⚠ 执行超时' });
+    expect(timedOut?.detail).toContainEqual({ warn: '执行超时' });
 
     const aborted = buildToolPresentation('Shell', { command: 'x' }, undefined, { aborted: true });
     expect(aborted?.status).toBe('warn');
@@ -141,7 +141,7 @@ describe('截断前 metadata 规则', () => {
       { path: 'big.log', fileBytes: 5_000_000, linesRead: 900, truncated: true, shownBytes: 131_072 },
     );
     expect(result?.status).toBe('warn');
-    expect(result?.detail).toContainEqual({ indent: 0, text: '⚠ 超出单次读取上限，仅返回前 128.0 KB' });
+    expect(result?.detail).toContainEqual({ warn: '超出单次读取上限，仅返回前 128.0 KB' });
   });
 
   it('Edit 写出实际替换处数；命中数与替换数不一致时两个都写', () => {

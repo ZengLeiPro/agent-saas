@@ -20,13 +20,50 @@ describe('ActivityGroupBlock 排版型活动行', () => {
 
     // 摘要即标题：泛化「Agent 活动」标题已删除
     expect(screen.queryByText('Agent 活动')).toBeNull();
-    expect(screen.getByText(/已完成 1 条/)).toBeTruthy();
+    // 无业务标题可列举时给最轻的一句话，且不落到英文工具名
+    expect(screen.getByText(/已完成 1 项/)).toBeTruthy();
+    expect(screen.queryByText(/Shell/)).toBeNull();
     expect(screen.queryByText('有异常')).toBeNull();
     // 排版型：无卡片容器（rounded/border/bg 壳已移除）
     expect(container.querySelector('.rounded-lg.border')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { expanded: false }));
     expect(screen.getAllByText('有异常').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('折叠行列举业务标题（presentation.title 优先，description 兜底），不再输出机器计数', () => {
+    render(<ActivityGroupBlock
+      items={[
+        { id: 'thinking', type: 'thinking', content: '先查待办', streaming: false },
+        {
+          id: 'tool-dws',
+          type: 'tool_use',
+          toolName: 'Shell',
+          toolInput: '{"command":"dws todo list"}',
+          toolId: 'call-dws',
+          executionStatus: 'completed',
+          resultReady: true,
+          result: 'ok',
+          presentation: { title: '钉钉 · 待办 list' },
+        },
+        {
+          id: 'tool-desc',
+          type: 'tool_use',
+          toolName: 'Shell',
+          toolInput: '{"command":"ls","description":"列出工作区文件"}',
+          toolId: 'call-desc',
+          executionStatus: 'completed',
+          resultReady: true,
+          result: 'ok',
+        },
+      ]}
+      isActive={false}
+      debugMode
+    />);
+
+    expect(screen.getByText(/钉钉 · 待办 list、列出工作区文件/)).toBeTruthy();
+    expect(screen.queryByText(/次思考/)).toBeNull();
+    expect(screen.queryByText(/个工具/)).toBeNull();
   });
 
   it('分组内一条失败不影响折叠行的正常完成展示，展开后显示具体异常', () => {
@@ -40,7 +77,8 @@ describe('ActivityGroupBlock 排版型活动行', () => {
       debugMode
     />);
 
-    const summary = screen.getByText(/已完成 2 条：1 次思考 · 1 个工具/);
+    // 无业务标题、含思考 → 「已思考」；异常不在折叠行暴露
+    const summary = screen.getByText('已思考');
     expect(screen.queryByText('有异常')).toBeNull();
     expect(screen.getByText(/1\.2s.*2 项/)).toBeTruthy();
 
@@ -66,7 +104,7 @@ describe('ActivityGroupBlock 排版型活动行', () => {
   it('关闭调试模式后使用静态摘要，不提供展开入口', () => {
     render(<ActivityGroupBlock items={[failedTool]} isActive={false} debugMode={false} />);
 
-    const summary = screen.getByText(/已完成 1 条/);
+    const summary = screen.getByText(/已完成 1 项/);
     expect(summary.closest('button')).toBeNull();
     expect(screen.queryByText('有异常')).toBeNull();
     expect(screen.queryByText(/已执行，有异常/)).toBeNull();
@@ -84,7 +122,7 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     />);
 
     expect(screen.queryByText('有异常')).toBeNull();
-    expect(screen.getByText(/已完成 2 条：1 次思考 · 1 个工具/)).toBeTruthy();
+    expect(screen.getByText('已思考')).toBeTruthy();
     expect(screen.queryByText(/exit 1/)).toBeNull();
   });
 
@@ -99,9 +137,9 @@ describe('ActivityGroupBlock 排版型活动行', () => {
       flat
     />);
 
-    // 无折叠行摘要，内容直接平铺（节的「过程」折叠是唯一收纳层）；
+    // 无折叠行摘要（组级 meta「N 项」不出现），内容直接平铺（节的「过程」折叠是唯一收纳层）；
     // ThinkingBlock / ToolBlock 保持各自的一级折叠行为。
-    expect(screen.queryByText(/已完成 2 条/)).toBeNull();
+    expect(screen.queryByText(/2 项/)).toBeNull();
     expect(screen.getAllByText(/有异常/).length).toBeGreaterThanOrEqual(1);
   });
 });

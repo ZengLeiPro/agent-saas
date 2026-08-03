@@ -30,10 +30,11 @@ function getSummary(item: MessageItem): SummaryInfo {
     case 'thinking':
       return { text: item.streaming ? '思考中...' : '已思考', truncateStart: false };
     case 'tool_use': {
+      // 业务标题（如「钉钉 · 待办 create」）优先于机器名（「Shell: dws todo …」）
       const info = getToolDisplayInfo(item.toolName, item.toolInput);
-      const label = info.detail ? `${info.name}: ${info.detail}` : info.name;
+      const label = item.presentation?.title ?? (info.detail ? `${info.name}: ${info.detail}` : info.name);
       const text = item.streaming ? `${label}...` : label;
-      return { text, truncateStart: info.detailTruncate === 'start' };
+      return { text, truncateStart: item.presentation?.title ? false : info.detailTruncate === 'start' };
     }
     case 'tool_result':
       return { text: `Result: ${item.toolName}`, truncateStart: false };
@@ -101,18 +102,40 @@ function getActiveItemIndex(items: MessageItem[]): number {
   return Math.max(0, items.length - 1);
 }
 
+/**
+ * 折叠行说「做了什么」，不说机器计数。
+ *
+ * 旧文案「已完成 12 条：5 次思考 · 7 个工具」全是 harness 词汇（条/思考/工具/项），
+ * demo 里没有一行这种语言（08-03 根因分析问题 2）。这里从组内工具的业务标题
+ * （presentation.title 优先，回退 getToolDisplayInfo）列举真实动作；
+ * 条数已在右侧 meta 的「N 项」里，标题区不再重复计数。
+ */
 function getCompletedBreakdown(items: MessageItem[]): string {
-  const thinkingCount = items.filter(item => item.type === 'thinking').length;
-  const toolCount = items.filter(item => item.type === 'tool_use').length;
-  const subagentCount = items.filter(item => item.type === 'subagent').length;
-  const parts = [
-    thinkingCount > 0 ? `${thinkingCount} 次思考` : '',
-    toolCount > 0 ? `${toolCount} 个工具` : '',
-    subagentCount > 0 ? `${subagentCount} 个子任务` : '',
-  ].filter(Boolean);
-  return parts.length > 0
-    ? `已完成 ${items.length} 条：${parts.join(' · ')}`
-    : `已完成 ${items.length} 条`;
+  const titles: string[] = [];
+  for (const item of items) {
+    let title: string | undefined;
+    if (item.type === 'tool_use') {
+      // 回退链刻意不落到英文工具名（Shell/Read）：宁可不列举也不说机器语言
+      title = item.presentation?.title || getToolDisplayInfo(item.toolName, item.toolInput).detail;
+    } else if (item.type === 'subagent') {
+      title = item.presentation?.title;
+    }
+    if (title && !titles.includes(title)) titles.push(title);
+  }
+  if (titles.length === 0) {
+    // 纯思考/状态组或全组无业务标题：给最轻的一句话，不数条数
+    return items.some(item => item.type === 'thinking') ? '已思考' : `已完成 ${items.length} 项`;
+  }
+  // 标题列举控制在一行以内：拼接超长就少列几个，剩余归入「等」
+  const MAX_CHARS = 42;
+  const shown: string[] = [];
+  for (const title of titles) {
+    const next = [...shown, title].join('、');
+    if (shown.length > 0 && next.length > MAX_CHARS) break;
+    shown.push(title);
+  }
+  const suffix = titles.length > shown.length ? ' 等' : '';
+  return `${shown.join('、')}${suffix}`;
 }
 
 function getActivityDurationMs(items: MessageItem[]): number | undefined {
@@ -179,18 +202,20 @@ function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
   }
 
   if (item.type === 'tool_use') {
+    // 业务标题（如「钉钉 · 待办 create」）优先于机器名（「Shell: dws todo …」）
     const info = getToolDisplayInfo(item.toolName, item.toolInput);
-    const label = info.detail ? `${info.name}: ${info.detail}` : info.name;
+    const label = item.presentation?.title ?? (info.detail ? `${info.name}: ${info.detail}` : info.name);
+    const truncateStart = item.presentation?.title ? false : info.detailTruncate === 'start';
     if (item.executionStatus === 'failed') {
-      return { text: `未成功：${label}`, truncateStart: info.detailTruncate === 'start', tone: 'warning', badge: '有异常', progress, active: false };
+      return { text: `未成功：${label}`, truncateStart, tone: 'warning', badge: '有异常', progress, active: false };
     }
     if (item.executionStatus === 'cancelled') {
-      return { text: `已取消：${label}`, truncateStart: info.detailTruncate === 'start', tone: 'neutral', badge: '已取消', progress, active: false };
+      return { text: `已取消：${label}`, truncateStart, tone: 'neutral', badge: '已取消', progress, active: false };
     }
     if (item.executionStatus === 'completed' || item.resultReady) {
-      return { text: `已完成：${label}`, truncateStart: info.detailTruncate === 'start', tone: 'success', badge: '已完成', progress, active: false };
+      return { text: `已完成：${label}`, truncateStart, tone: 'success', badge: '已完成', progress, active: false };
     }
-    return { text: `正在执行：${label}`, truncateStart: info.detailTruncate === 'start', tone: 'active', badge: '执行中', progress, active: true };
+    return { text: `正在执行：${label}`, truncateStart, tone: 'active', badge: '执行中', progress, active: true };
   }
 
   if (item.type === 'subagent') {

@@ -122,31 +122,35 @@ describe('ActivityGroupBlock 摘要不被整组吞掉', () => {
   const plainTool = { ...toolMessage(), id: 'tool-plain' } as MessageItemType;
   const richTool = { ...toolMessage(PRESENTATION), id: 'tool-rich' } as MessageItemType;
 
-  it('整组无摘要 + 非 debug：使用统一活动摘要且不泄露原始 payload', () => {
+  it('整组无摘要 + 非 debug：折叠行不落到英文工具名，且不泄露原始 payload', () => {
     render(<ActivityGroupBlock items={[plainTool, { ...plainTool, id: 'tool-plain-2' }]} isActive={false} debugMode={false} />);
     expect(screen.queryByText('核对魏德米勒选型表')).toBeNull();
-    expect(screen.getByText('已完成 2 条：2 个工具')).toBeTruthy();
+    expect(screen.getByText('已完成 2 项')).toBeTruthy();
+    expect(screen.queryByText(/Shell/)).toBeNull();
     expect(screen.queryByText(/rg -n selection/)).toBeNull();
   });
 
-  it('组内有摘要 + 非 debug：分组为静态摘要，无法展开工具详情', () => {
+  it('组内有摘要 + 非 debug：业务标题上浮到折叠行（静态、不可展开），详情不可见', () => {
     render(<ActivityGroupBlock items={[plainTool, richTool]} isActive={false} debugMode={false} />);
-    const groupSummary = screen.getByText('已完成 2 条：2 个工具');
+    // 折叠行直接说业务动作（08-03 根因分析问题 2：机器计数改为业务标题列举）
+    const groupSummary = screen.getByText('核对魏德米勒选型表');
     expect(groupSummary.closest('button')).toBeNull();
-    expect(screen.queryByText('核对魏德米勒选型表')).toBeNull();
     expect(screen.queryByText('WDU 2.5')).toBeNull();
   });
 
-  it('组内有摘要 + debug：可展开分组和工具详情', () => {
+  it('组内有摘要 + debug：折叠行为业务标题，可展开分组和工具详情', () => {
     render(<ActivityGroupBlock items={[plainTool, richTool]} isActive={false} debugMode />);
-    const groupSummary = screen.getByText('已完成 2 条：2 个工具');
+    const groupSummary = screen.getByText('核对魏德米勒选型表');
 
     fireEvent.click(groupSummary.closest('button')!);
 
-    const title = screen.getByText('核对魏德米勒选型表');
+    // 展开后组内的 ToolBlock 显示同名业务标题（此时页面上有两处）
+    const titles = screen.getAllByText('核对魏德米勒选型表');
+    expect(titles.length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText('WDU 2.5')).toBeNull();
 
-    fireEvent.click(title.closest('button')!);
+    const toolTitle = titles[titles.length - 1];
+    fireEvent.click(toolTitle.closest('button')!);
     expect(screen.getByText('WDU 2.5')).toBeTruthy();
   });
 

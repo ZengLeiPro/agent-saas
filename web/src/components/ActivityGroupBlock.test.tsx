@@ -63,14 +63,14 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     expect(screen.queryByText(/异常/)).toBeNull();
   });
 
-  it('关闭调试模式后仍使用统一外壳，折叠行不显示异常', () => {
+  it('关闭调试模式后使用静态摘要，不提供展开入口', () => {
     render(<ActivityGroupBlock items={[failedTool]} isActive={false} debugMode={false} />);
 
-    expect(screen.getByText(/已完成 1 条/)).toBeTruthy();
+    const summary = screen.getByText(/已完成 1 条/);
+    expect(summary.closest('button')).toBeNull();
     expect(screen.queryByText('有异常')).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { expanded: false }));
-    expect(screen.getByText(/已执行，有异常/)).toBeTruthy();
+    expect(screen.queryByText(/已执行，有异常/)).toBeNull();
+    expect(screen.queryByText(/exit 1/)).toBeNull();
   });
 
   it('关闭调试模式后分组折叠行保持正常完成展示，且不泄露内部细节', () => {

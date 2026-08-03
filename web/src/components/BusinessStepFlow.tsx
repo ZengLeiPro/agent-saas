@@ -249,9 +249,11 @@ function countSectionProcessItems(section: BusinessStepSection): number {
  */
 export function BusinessStepSectionView({
   section,
+  debugMode,
   children,
 }: {
   section: BusinessStepSection;
+  debugMode: boolean;
   children: ReactNode;
 }) {
   const { start, terminal, isActive } = section;
@@ -309,16 +311,20 @@ export function BusinessStepSectionView({
         {hasProcess ? (
           terminal ? (
             <div>
-              <button
-                type="button"
-                className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                aria-expanded={processOpen}
-                onClick={() => setProcessOpen((open) => !open)}
-              >
-                <ChevronRight className={cn("size-3.5 transition-transform", processOpen && "rotate-90")} />
-                过程 · {processCount} 项
-              </button>
-              {processOpen ? <div className="mt-2">{children}</div> : null}
+              {debugMode ? (
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  aria-expanded={processOpen}
+                  onClick={() => setProcessOpen((open) => !open)}
+                >
+                  <ChevronRight className={cn("size-3.5 transition-transform", processOpen && "rotate-90")} />
+                  过程 · {processCount} 项
+                </button>
+              ) : (
+                <div className="text-xs text-muted-foreground">过程 · {processCount} 项</div>
+              )}
+              {debugMode && processOpen ? <div className="mt-2">{children}</div> : null}
             </div>
           ) : (
             <div>{children}</div>

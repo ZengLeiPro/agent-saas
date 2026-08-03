@@ -636,7 +636,7 @@ export const MessageList = memo(function MessageList({
             if (sub.type === 'business_step_section') {
               return (
                 <ErrorBoundary key={sub.id} inline>
-                  <BusinessStepSectionView section={sub}>
+                  <BusinessStepSectionView section={sub} debugMode={debugMode}>
                     {sub.items.map((child) => renderFlowItem(child, true))}
                   </BusinessStepSectionView>
                 </ErrorBoundary>

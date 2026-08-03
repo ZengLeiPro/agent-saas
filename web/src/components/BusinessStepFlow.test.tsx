@@ -124,7 +124,7 @@ describe("BusinessStepFlow", () => {
 describe("BusinessStepSectionView", () => {
   it("shows activeForm title with spinner and expanded process while running", () => {
     const { container } = render(
-      <BusinessStepSectionView section={section({ isActive: true })}>
+      <BusinessStepSectionView debugMode section={section({ isActive: true })}>
         <div data-testid="process-content">工具活动内容</div>
       </BusinessStepSectionView>,
     );
@@ -150,7 +150,7 @@ describe("BusinessStepSectionView", () => {
       stepCount: 2,
     });
     render(
-      <BusinessStepSectionView section={section({ terminal })}>
+      <BusinessStepSectionView debugMode section={section({ terminal })}>
         <div data-testid="process-content">工具活动内容</div>
       </BusinessStepSectionView>,
     );
@@ -169,7 +169,7 @@ describe("BusinessStepSectionView", () => {
 
   it("renders interrupted open section without spinner or badge", () => {
     const { container } = render(
-      <BusinessStepSectionView section={section({ isActive: false })}>
+      <BusinessStepSectionView debugMode section={section({ isActive: false })}>
         <div data-testid="process-content">残留内容</div>
       </BusinessStepSectionView>,
     );
@@ -193,7 +193,7 @@ describe("BusinessStepSectionView", () => {
       },
     });
     render(
-      <BusinessStepSectionView section={section({ terminal })}>
+      <BusinessStepSectionView debugMode section={section({ terminal })}>
         {null}
       </BusinessStepSectionView>,
     );

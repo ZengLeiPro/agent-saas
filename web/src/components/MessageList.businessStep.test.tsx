@@ -93,10 +93,20 @@ describe("MessageList business step sections", () => {
     expect(screen.queryByText("TodoWrite")).toBeNull();
   });
 
-  it("re-expands the collapsed process on demand with full tool rendering", () => {
+  it("keeps the completed process static when debug mode is disabled", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
 
-    fireEvent.click(screen.getByText(/过程 · 1 项/));
+    const processLabel = screen.getByText(/过程 · 1 项/);
+    expect(processLabel.closest("button")).toBeNull();
+    fireEvent.click(processLabel);
+    expect(screen.queryByText(/读取订单/)).toBeNull();
+  });
+
+  it("re-expands the collapsed process in debug mode with full tool rendering", () => {
+    render(<MessageList messages={messages()} loading={false} debugModeOverride />);
+
+    // debug 视图会额外保留 TodoWrite 原始工具块，因此过程项数包含该工具。
+    fireEvent.click(screen.getByText(/过程 · 2 项/));
     // 展开后节内是完整的活动组渲染（非降级视图）
     expect(screen.getByText(/读取订单/)).toBeTruthy();
   });

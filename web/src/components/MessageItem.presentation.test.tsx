@@ -129,11 +129,17 @@ describe('ActivityGroupBlock 摘要不被整组吞掉', () => {
     expect(screen.queryByText(/rg -n selection/)).toBeNull();
   });
 
-  it('组内有摘要 + 非 debug：分组和工具详情均默认折叠', () => {
+  it('组内有摘要 + 非 debug：分组为静态摘要，无法展开工具详情', () => {
     render(<ActivityGroupBlock items={[plainTool, richTool]} isActive={false} debugMode={false} />);
     const groupSummary = screen.getByText('已完成 2 条：2 个工具');
+    expect(groupSummary.closest('button')).toBeNull();
     expect(screen.queryByText('核对魏德米勒选型表')).toBeNull();
     expect(screen.queryByText('WDU 2.5')).toBeNull();
+  });
+
+  it('组内有摘要 + debug：可展开分组和工具详情', () => {
+    render(<ActivityGroupBlock items={[plainTool, richTool]} isActive={false} debugMode />);
+    const groupSummary = screen.getByText('已完成 2 条：2 个工具');
 
     fireEvent.click(groupSummary.closest('button')!);
 

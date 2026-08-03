@@ -360,8 +360,8 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
       // 摘要即标题：「Agent 活动」这个泛化标题信息量为零，折叠行直接说发生了什么。
       title={summary.text}
       meta={meta}
-      expanded={isExpanded}
-      onToggle={() => setIsExpanded((value) => !value)}
+      expanded={debugMode && isExpanded}
+      onToggle={debugMode ? () => setIsExpanded((value) => !value) : undefined}
     >
       <div className="flex flex-col gap-2.5 [&>*]:my-0">
         {items.map(item => (

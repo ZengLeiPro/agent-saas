@@ -1243,7 +1243,7 @@ class WorkspaceToolProvider implements ToolProvider {
       // 等真实信号，丢掉它等于让客户在最该看清楚的时刻只看到一行「有异常」
       throw new ToolExecutionError(
         response.error,
-        buildToolPresentation(call.toolId, parsedInput, undefined, response.metadata),
+        buildToolPresentation(call.toolId, parsedInput, undefined, response.metadata, response.error),
         extractToolResultMetadata(call.toolId, response.metadata),
       );
     }
@@ -1285,7 +1285,15 @@ class WorkspaceToolProvider implements ToolProvider {
     // 在这里产出摘要而不是等收口点兜底：response.metadata 是**截断前**的真实
     // 执行结果（Shell 的 exitCode/字节数/耗时、Write 的写入字节数），
     // 到了收口点只剩截断后的 content，再数就会静默错报。
-    const presentation = buildToolPresentation(call.toolId, parsedInput, undefined, response.metadata);
+    // response.content 是 formatShellOutput 的信封（本地/远端 hand 同形态），
+    // 连接器命令的 stdout 段就从这里取——摘要产出时机能拿到的最接近一手的形态
+    const presentation = buildToolPresentation(
+      call.toolId,
+      parsedInput,
+      undefined,
+      response.metadata,
+      response.content,
+    );
     // 同一份截断前 metadata 的第二个出口：白名单收敛后随 tool_result 事件落库，
     // 让 exitCode 之类的事实以字段而非「Exit code: N」文本行的形态存活
     const resultMetadata = extractToolResultMetadata(call.toolId, response.metadata);

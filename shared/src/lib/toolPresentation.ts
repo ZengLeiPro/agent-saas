@@ -52,13 +52,19 @@ export type DetailLine =
    */
   | { fields: Array<{ k: string; v: string }> };
 
-/** 外部系统写操作回执。现阶段恒为 undefined，留给连接器回执批次。 */
+/**
+ * 外部系统回执。
+ *
+ * 产出方（2026-08-03 起）是服务端的连接器 stdout 硬提取：识别出连接器命令
+ * **且**从返回 JSON 里拿到对象 ID / 业务域名链接 **且**回执没自报失败时才盖章。
+ * 模型编不出这个字段——它来自工具返回值，不经过模型转译，这正是它的价值。
+ */
 export interface ToolReceipt {
-  /** 外部系统返回的单据/流程标识 */
+  /** 外部系统返回的单据/流程标识（或兜底的业务域名链接） */
   id: string;
   /** 目标系统名，如 "钉钉审批" */
   system: string;
-  /** 是否已写后回读校验通过。undefined = 未做回读 */
+  /** 是否已写后回读校验通过。undefined = 未做回读（真回读留给后续批次） */
   readBack?: boolean;
 }
 
@@ -83,6 +89,68 @@ export interface ToolPresentation {
 const DETAIL_LINE_LIMIT = 200;
 const TEXT_LIMIT = 500;
 const FIELD_GRID_LIMIT = 12;
+
+/**
+ * 回执字段的独立限额——比 detail 行严格得多，因为来源不同。
+ *
+ * detail 行的值大多来自平台自己的 metadata（字节数、路径）；回执的 id 直接
+ * 来自**外部系统 stdout**，是不可信内容。单据号不可能有 120 字符，系统名不可能
+ * 有 40 字符——放宽只会给注入与钓鱼留门。
+ */
+const RECEIPT_ID_LIMIT = 120;
+const RECEIPT_SYSTEM_LIMIT = 40;
+
+/**
+ * 回执 id 允许承载链接时的业务域名白名单。
+ *
+ * 与服务端 `connectorDictionary.ts` 的 `urlWhitelist` 是**两层**：那一层是可配置的
+ * 业务口径（运营可增删），这一层是不可配置的安全地板。回执会被渲染成「系统盖章」
+ * 的高可信位置，任何非业务域名的链接出现在这里都是钓鱼面。
+ * 服务端产出方优先用对象 ID 作 receipt.id，URL 只在没有 ID 时兜底，
+ * 所以这层地板在正常链路上几乎不会触发。
+ */
+const RECEIPT_URL_HOSTS = [
+  'alidocs.dingtalk.com',
+  'docs.dingtalk.com',
+  'shanji.dingtalk.com',
+  '*.feishu.cn',
+  '*.larksuite.com',
+];
+
+/** 控制字符与空白不该出现在单据号里，出现即视为脏数据 */
+const RECEIPT_ID_FORBIDDEN = /[\u0000-\u0020\u007f]/;
+
+function receiptHostAllowed(host: string): boolean {
+  const normalized = host.toLowerCase();
+  return RECEIPT_URL_HOSTS.some((pattern) => {
+    if (pattern.startsWith('*.')) {
+      return normalized.endsWith(pattern.slice(1)) || normalized === pattern.slice(2);
+    }
+    return normalized === pattern;
+  });
+}
+
+/**
+ * 回执 id 的白名单化。返回 null = 整条回执作废（宁可不盖章，不可盖错章）。
+ * 形如 URL 的值只放行 https 且域名在白名单内的；其余 scheme（javascript:/data:/file:）
+ * 一律拒绝。
+ */
+export function normalizeReceiptId(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > RECEIPT_ID_LIMIT) return null;
+  if (RECEIPT_ID_FORBIDDEN.test(trimmed)) return null;
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return trimmed;
+  // 带 scheme 的一律按 URL 严格校验
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:') return null;
+  return receiptHostAllowed(url.hostname) ? trimmed : null;
+}
 
 export function clampText(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -222,10 +290,15 @@ export function normalizeToolPresentation(raw: unknown, options?: { allowCustomH
   const panelBase = normalizeSystemPanel(input.panelBase, options?.allowCustomHtml === true);
   if (panelBase) result.panelBase = panelBase;
 
+  // 回执走独立的、更严的白名单化：id 来自外部系统 stdout（不可信内容），
+  // 而它被渲染在「系统盖章」的高可信位置——两者叠加就是注入与钓鱼的面。
   const receipt = input.receipt as Record<string, unknown> | undefined;
   if (receipt && typeof receipt === 'object') {
-    const id = clampText(receipt.id);
-    const system = clampText(receipt.system);
+    const id = normalizeReceiptId(receipt.id);
+    const rawSystem = clampText(receipt.system);
+    const system = rawSystem !== null && rawSystem.length <= RECEIPT_SYSTEM_LIMIT && !rawSystem.includes('://')
+      ? rawSystem
+      : null;
     if (id !== null && system !== null) {
       result.receipt = {
         id,

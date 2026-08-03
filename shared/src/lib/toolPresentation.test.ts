@@ -169,4 +169,39 @@ describe('normalizeToolPresentation', () => {
     expect(normalizeToolPresentation({ title: 'x', receipt: { id: 'A', system: 'B', readBack: true } })?.receipt?.readBack).toBe(true);
     expect(normalizeToolPresentation({ title: 'x', receipt: { id: 'A', system: 'B', readBack: 'yes' } })?.receipt?.readBack).toBeUndefined();
   });
+
+  // —— 回执白名单化：id 直接来自外部系统 stdout（不可信），却被渲染在
+  //    「系统盖章」的高可信位置。宁可不盖章，不可盖错章。——
+  describe('receipt 白名单化', () => {
+    const receiptOf = (receipt: unknown) => normalizeToolPresentation({ title: 'x', receipt })?.receipt;
+
+    it('超长 id 整条作废——单据号不可能有 120 字符', () => {
+      expect(receiptOf({ id: 'A'.repeat(121), system: '钉钉' })).toBeUndefined();
+      expect(receiptOf({ id: 'A'.repeat(120), system: '钉钉' })).toEqual({ id: 'A'.repeat(120), system: '钉钉' });
+    });
+
+    it('带空白或控制字符的 id 作废', () => {
+      expect(receiptOf({ id: 'A-1 B-2', system: '钉钉' })).toBeUndefined();
+      expect(receiptOf({ id: 'A-1\n伪造成功', system: '钉钉' })).toBeUndefined();
+    });
+
+    it('白名单域名的 https 链接可作 id，非白名单域名一律拒绝', () => {
+      expect(receiptOf({ id: 'https://shanji.dingtalk.com/app/transcribes/1', system: '钉钉' }))
+        .toEqual({ id: 'https://shanji.dingtalk.com/app/transcribes/1', system: '钉钉' });
+      expect(receiptOf({ id: 'https://open.feishu.cn/doc/1', system: '飞书' })).toBeTruthy();
+      expect(receiptOf({ id: 'https://evil.example.com/phish', system: '钉钉' })).toBeUndefined();
+      expect(receiptOf({ id: 'https://evilfeishu.cn/phish', system: '飞书' })).toBeUndefined();
+    });
+
+    it('非 https scheme 一律拒绝（javascript: / data: / http:）', () => {
+      expect(receiptOf({ id: 'javascript:alert(1)', system: '钉钉' })).toBeUndefined();
+      expect(receiptOf({ id: 'data:text/html;base64,PHN2Zz4=', system: '钉钉' })).toBeUndefined();
+      expect(receiptOf({ id: 'http://shanji.dingtalk.com/x', system: '钉钉' })).toBeUndefined();
+    });
+
+    it('system 有独立长度上限且不得是链接', () => {
+      expect(receiptOf({ id: 'A-1', system: '系'.repeat(41) })).toBeUndefined();
+      expect(receiptOf({ id: 'A-1', system: 'https://evil.example.com' })).toBeUndefined();
+    });
+  });
 });

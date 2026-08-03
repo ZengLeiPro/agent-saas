@@ -27,6 +27,17 @@
  * 并回退原始 payload，所以两边结构漂移不会导致崩溃，只会导致摘要不显示。
  * 修改本类型时必须同步 `shared/src/lib/toolPresentation.ts`。
  */
+import {
+  extractConnectorFacts,
+  extractStdoutSection,
+  parseConnectorCommand as parseConnectorCommandWith,
+  type ConnectorCommand,
+} from './connectorCommand.js';
+import {
+  BUILTIN_CONNECTOR_DICTIONARY,
+  type ConnectorDictionaryEntry,
+} from './connectorDictionary.js';
+
 export type PresentationDetailLine =
   | string
   | { k: string; v: string }
@@ -116,37 +127,23 @@ function formatDuration(ms: number): string {
 }
 
 /**
- * 连接器 CLI 识别。
+ * 生效的连接器映射词典。
  *
- * 客户在演示里看到的是「钉钉 · 创建待办」，真实会话里同一个动作是
- * `Shell · dws todo create ...`——落差就在这里（07-26 实机对比）。
- * 这张表把命令行还原成业务语言：系统 + 动作，命令本身退到第二行。
+ * 内置词典（`connectorDictionary.ts`）是**默认种子**；平台管理里配置过就用
+ * 配置的那份，保存即热更新（CLI 升级后运营改词典即可，不必发版）。
+ * 这里刻意用一个模块级可替换引用而不是每次查 DB：摘要产出在工具执行的
+ * 收口点上，多一次 IO 就是给每次工具调用加一次延迟。
  */
-const CONNECTOR_CLI: Record<string, { system: string; module?: Record<string, string> }> = {
-  dws: {
-    system: '钉钉',
-    module: {
-      calendar: '日历',
-      contact: '通讯录',
-      todo: '待办',
-      im: '群聊与消息',
-      approval: '审批',
-      attendance: '考勤',
-      report: '日志',
-      doc: '钉钉文档',
-      drive: '云盘',
-      sheet: '在线表格',
-      table: 'AI 表格',
-      kb: '知识库',
-      mail: '邮箱',
-      minutes: 'AI 听记',
-      auth: '授权',
-    },
-  },
-  lark: { system: '飞书' },
-  feishu: { system: '飞书' },
-  gog: { system: 'Google 工作区', module: { gmail: 'Gmail', drive: '云端硬盘', calendar: '日历', contacts: '通讯录' } },
-};
+let activeConnectorDictionary: readonly ConnectorDictionaryEntry[] = BUILTIN_CONNECTOR_DICTIONARY;
+
+/** 平台管理保存后调用；传 null 表示回落内置词典 */
+export function setConnectorDictionary(dictionary: readonly ConnectorDictionaryEntry[] | null): void {
+  activeConnectorDictionary = dictionary?.length ? dictionary : BUILTIN_CONNECTOR_DICTIONARY;
+}
+
+export function getConnectorDictionary(): readonly ConnectorDictionaryEntry[] {
+  return activeConnectorDictionary;
+}
 
 /** MCP server 名 → 客户读得懂的系统名。未登记的直接用原名，不硬凑。 */
 const MCP_SYSTEM_NAMES: Record<string, string> = {
@@ -162,26 +159,9 @@ const MCP_SYSTEM_NAMES: Record<string, string> = {
   'google-calendar': 'Google 日历',
 };
 
-interface ConnectorCommand {
-  system: string;
-  action: string;
-}
-
 /** 从命令行里认出连接器动作；不是连接器命令时返回 null（绝不硬猜） */
 export function parseConnectorCommand(command: string): ConnectorCommand | null {
-  const tokens = command.trim().split(/\s+/).filter(Boolean);
-  if (!tokens.length) return null;
-  // 允许 `npx dws ...` / `pnpm dws ...` 这类前缀
-  const start = tokens[0] === 'npx' || tokens[0] === 'pnpm' || tokens[0] === 'bunx' ? 1 : 0;
-  const binary = (tokens[start] ?? '').split('/').pop();
-  if (!binary) return null;
-  const entry = CONNECTOR_CLI[binary];
-  if (!entry) return null;
-  const sub = tokens.slice(start + 1).filter((token) => !token.startsWith('-'));
-  const moduleName = sub[0] ? entry.module?.[sub[0]] ?? sub[0] : undefined;
-  const verb = sub[1];
-  const action = [moduleName, verb].filter(Boolean).join(' · ');
-  return { system: entry.system, action: action || '命令行调用' };
+  return parseConnectorCommandWith(command, activeConnectorDictionary);
 }
 
 /**
@@ -224,10 +204,12 @@ type Rule = (input: Record<string, unknown>) => ToolPresentation | null;
 type MetadataRule = (
   input: Record<string, unknown>,
   metadata: Record<string, unknown>,
+  /** 工具返回正文（成功时是 content，失败时是 error）。只用于连接器 stdout 提取。 */
+  resultText?: string,
 ) => ToolPresentation | null;
 
 const METADATA_RULES: Record<string, MetadataRule> = {
-  Shell: (input, metadata) => {
+  Shell: (input, metadata, resultText) => {
     const command = str(input.command);
     if (!command) return null;
     const exitCode = num(metadata.exitCode);
@@ -236,7 +218,7 @@ const METADATA_RULES: Record<string, MetadataRule> = {
     const stderrBytes = num(metadata.stderrBytes);
     const durationMs = num(metadata.durationMs);
 
-    // 连接器命令先还原成业务语言：客户关心的是「钉钉 · 待办 create」，不是一行 shell
+    // 连接器命令先还原成业务语言：客户关心的是「钉钉 · 创建待办」，不是一行 shell
     const connector = parseConnectorCommand(command);
     const detail: PresentationDetailLine[] = connector
       ? [{ k: '系统', v: connector.system }, { k: '命令', v: briefCommand(command) }]
@@ -250,16 +232,34 @@ const METADATA_RULES: Record<string, MetadataRule> = {
     if (metadata.timedOut === true) detail.push({ warn: '执行超时' });
     if (metadata.aborted === true) detail.push({ warn: '已被中止' });
 
-    const failed = metadata.timedOut === true
+    const technicallyFailed = metadata.timedOut === true
       || metadata.aborted === true
       || (exitCode !== undefined && exitCode !== 0)
       || (exitCode === undefined && !!signal);
+
+    // 只对连接器命令扫 stdout：对任意 Shell 做同样的扫描会把 git sha、容器 id、
+    // 毫秒时间戳全当成「业务对象 ID」（生产样本 ID 样 token 精度极差）
+    const facts = connector && resultText
+      ? extractConnectorFacts(extractStdoutSection(resultText) ?? '', connector.entry)
+      : null;
+    if (facts) {
+      if (facts.fields.length) detail.push({ fields: facts.fields });
+      if (facts.url) detail.push({ k: '链接', v: facts.url });
+    }
+
+    // 回执只在「连接器识别成功 + 拿到对象 ID 或业务域名链接 + 回执没自报失败」
+    // 三条同时成立时才盖章。回执是系统盖的章，盖错一次比不盖一百次更贵。
+    const receiptId = facts && !facts.failed ? facts.objectId ?? facts.url : undefined;
+    const receipt = connector && receiptId && !technicallyFailed
+      ? { id: receiptId, system: connector.system }
+      : undefined;
 
     return {
       // description 是模型对本次执行的意图说明；没有它时，连接器命令仍能给出业务标题
       title: str(input.description) ?? (connector ? `${connector.system} · ${connector.action}` : '执行命令'),
       detail,
-      status: failed ? 'warn' : 'ok',
+      status: technicallyFailed || facts?.failed ? 'warn' : 'ok',
+      ...(receipt ? { receipt } : {}),
     };
   },
 
@@ -511,12 +511,15 @@ export const PRESENTATION_TODO_BUDGET = 2;
  * @param toolName 工具名（`ToolDescriptor.name`，非 id）
  * @param toolInput 原始入参（JSON 字符串或对象）
  * @param existing provider 已自产的 presentation；有值时原样返回，不覆盖
+ * @param metadata provider 在截断前自产的执行元数据
+ * @param resultText 工具返回正文；仅用于连接器命令的 stdout 硬事实提取
  */
 export function buildToolPresentation(
   toolName: string,
   toolInput: unknown,
   existing?: ToolPresentation,
   metadata?: Record<string, unknown>,
+  resultText?: string,
 ): ToolPresentation | undefined {
   // provider 在截断前自产的摘要信息量严格更高，规则不得覆盖
   if (existing) return existing;
@@ -525,7 +528,7 @@ export function buildToolPresentation(
     // metadata 来自截断前的真实执行结果，优先于只看入参的规则
     const metadataRule = METADATA_RULES[toolName];
     if (metadataRule && metadata) {
-      const fromMetadata = metadataRule(input, metadata);
+      const fromMetadata = metadataRule(input, metadata, resultText);
       if (fromMetadata) return fromMetadata;
     }
     const rule = RULES[toolName];

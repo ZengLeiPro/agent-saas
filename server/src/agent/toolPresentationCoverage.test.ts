@@ -177,9 +177,10 @@ describe('截断前 metadata 规则', () => {
 });
 
 describe('连接器动作还原成业务语言', () => {
-  it('dws 命令识别出系统与模块，标题不再是一行 shell', () => {
+  it('dws 命令识别出系统与模块，标题是业务语言而不是一行 shell', () => {
+    // 08-03 起动词也过词典：`create` → 「创建」，拼出的是客户读得懂的一句话
     const result = buildToolPresentation('Shell', { command: 'dws todo create --title 复核合同' });
-    expect(result?.title).toBe('钉钉 · 待办 · create');
+    expect(result?.title).toBe('钉钉 · 创建待办');
     expect(result?.detail?.[0]).toEqual({ k: '系统', v: '钉钉' });
   });
 
@@ -200,6 +201,17 @@ describe('连接器动作还原成业务语言', () => {
     expect(result?.detail?.[0]).toEqual({ k: '命令', v: 'rg -n foo /w' });
   });
 
+  it('cd 开头的复合命令也能还原业务语言——65% 的生产命令首词是 cd', () => {
+    const result = buildToolPresentation('Shell', { command: 'cd /w/projects/x && dws todo create --title 复核合同' });
+    expect(result?.title).toBe('钉钉 · 创建待办');
+  });
+
+  it('读 --help 不产出业务动作标题——把读文档渲染成「钉钉 · 待办」属语义造假', () => {
+    const result = buildToolPresentation('Shell', { command: 'cd /w && dws todo create --help' });
+    expect(result?.title).toBe('执行命令');
+    expect(result?.detail?.some((line) => typeof line === 'object' && 'k' in line && line.k === '系统')).toBe(false);
+  });
+
   it('MCP 工具显示「系统 · 动作」与关键入参，而不是 mcp__server__tool', () => {
     const result = buildToolPresentation('mcp__dingtalk__create_todo', {
       title: '复核出口证据',
@@ -216,6 +228,89 @@ describe('连接器动作还原成业务语言', () => {
 
   it('形如 MCP 但结构不完整时不产出摘要', () => {
     expect(buildToolPresentation('mcp__onlyserver', {})).toBeUndefined();
+  });
+});
+
+describe('连接器回执（presentation.receipt）', () => {
+  const envelope = (stdout: string): string =>
+    ['Exit code: 0', 'Output bytes: stdout=1 stderr=0', '', '[stdout]', stdout].join('\n');
+
+  const connectorJson = JSON.stringify({
+    dingOpenErrcode: 0,
+    errorMsg: 'ok',
+    success: true,
+    result: {
+      taskUuid: '7632xxxxxxxx',
+      title: 'agent演示',
+      url: 'https://shanji.dingtalk.com/app/transcribes/7632xxxxxxxx',
+    },
+  });
+
+  it('识别成功 + 拿到对象 ID → 盖回执章，字段与链接进 detail', () => {
+    const result = buildToolPresentation(
+      'Shell',
+      { command: 'cd /w && dws minutes get --format json' },
+      undefined,
+      { exitCode: 0, durationMs: 820, stdoutBytes: connectorJson.length },
+      envelope(connectorJson),
+    );
+    expect(result?.receipt).toEqual({ id: '7632xxxxxxxx', system: '钉钉' });
+    expect(result?.detail).toContainEqual({ k: '链接', v: 'https://shanji.dingtalk.com/app/transcribes/7632xxxxxxxx' });
+    expect(result?.detail?.some((line) => typeof line === 'object' && 'fields' in line)).toBe(true);
+  });
+
+  it('回执自报 success:false 时不盖章，并标 warn——技术成功但业务失败是合法组合', () => {
+    const failed = JSON.stringify({ success: false, errorMsg: '无权限', dingOpenErrcode: 88, id: 'x-1' });
+    const result = buildToolPresentation(
+      'Shell',
+      { command: 'dws todo create --title x' },
+      undefined,
+      { exitCode: 0, durationMs: 90 },
+      envelope(failed),
+    );
+    expect(result?.receipt).toBeUndefined();
+    expect(result?.status).toBe('warn');
+  });
+
+  it('退出码非零时不盖章——技术失败的执行不配有回执', () => {
+    const result = buildToolPresentation(
+      'Shell',
+      { command: 'dws todo create --title x' },
+      undefined,
+      { exitCode: 1, durationMs: 90 },
+      envelope(connectorJson),
+    );
+    expect(result?.receipt).toBeUndefined();
+  });
+
+  it('非连接器命令的 stdout 一律不扫描——git sha / 容器 id 不是业务对象', () => {
+    const result = buildToolPresentation(
+      'Shell',
+      { command: 'cd /w && git log -1 --format=%H' },
+      undefined,
+      { exitCode: 0 },
+      envelope('{"id":"3d223fb421befed7969546ea55967d00e881db79"}'),
+    );
+    expect(result?.receipt).toBeUndefined();
+    expect(result?.detail?.some((line) => typeof line === 'object' && 'fields' in line)).toBe(false);
+  });
+
+  it('stdout 是中文表格（72.3% 的 dws 调用）时不盖章、不产字段', () => {
+    const result = buildToolPresentation(
+      'Shell',
+      { command: 'dws todo task list' },
+      undefined,
+      { exitCode: 0 },
+      envelope('老板进度看板 10\nad3de871 订单数 STATISTICS'),
+    );
+    expect(result?.receipt).toBeUndefined();
+    expect(result?.status).toBe('ok');
+  });
+
+  it('没有返回正文时退回纯 metadata 摘要，不因缺 stdout 而失败', () => {
+    const result = buildToolPresentation('Shell', { command: 'dws todo create' }, undefined, { exitCode: 0 });
+    expect(result?.title).toBe('钉钉 · 创建待办');
+    expect(result?.receipt).toBeUndefined();
   });
 });
 

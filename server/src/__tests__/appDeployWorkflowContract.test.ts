@@ -1,0 +1,100 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+
+const repoRoot = resolve(process.cwd(), '..');
+const classifierPath = join(repoRoot, '.github/scripts/ecs-release-classify.sh');
+const workflowPath = join(repoRoot, '.github/workflows/ci.yml');
+const cleanupDirs = new Set<string>();
+
+async function classify(paths: string[]): Promise<Record<string, string>> {
+  const dir = await mkdtemp(join(tmpdir(), 'ecs-release-classifier-'));
+  cleanupDirs.add(dir);
+  const changedFiles = join(dir, 'changed-files.txt');
+  await writeFile(changedFiles, paths.length > 0 ? `${paths.join('\n')}\n` : '', 'utf-8');
+  const output = execFileSync('bash', [classifierPath, changedFiles], {
+    cwd: repoRoot,
+    encoding: 'utf-8',
+  });
+  return Object.fromEntries(output.trim().split('\n').map((line) => {
+    const separator = line.indexOf('=');
+    return [line.slice(0, separator), line.slice(separator + 1)];
+  }));
+}
+
+describe('App 生产部署门禁', () => {
+  afterEach(async () => {
+    for (const dir of cleanupDirs) await rm(dir, { recursive: true, force: true });
+    cleanupDirs.clear();
+  });
+
+  it('纯 Web、Mobile、文档与 Server 测试变更不要求滚动 ECS', async () => {
+    await expect(classify([
+      'web/src/App.tsx',
+      'web/src/App.test.tsx',
+      'mobile/app/index.tsx',
+      'docs/deployment.md',
+      'README.md',
+      'server/src/__tests__/runtimeWake.test.ts',
+      'scripts/deploy-recovery-web.sh',
+    ])).resolves.toMatchObject({
+      required: 'false',
+      reason: 'none',
+    });
+  });
+
+  it('Server、Shared、技能源、依赖、部署配置与未知路径都保守要求 ECS', async () => {
+    const result = await classify([
+      'web/src/App.tsx',
+      'server/src/index.ts',
+      'shared/src/types.ts',
+      'workspace-shared/.ky-agent/skills-pool/explore/SKILL.md',
+      'pnpm-lock.yaml',
+      'daemon-packaging/systemd/agent-saas-server@.service.template',
+      '.github/workflows/ci.yml',
+    ]);
+
+    expect(result.required).toBe('true');
+    expect(result.reason).toContain('server/src/index.ts');
+    expect(result.reason).toContain('shared/src/types.ts');
+    expect(result.reason).toContain('workspace-shared/.ky-agent/skills-pool/explore/SKILL.md');
+    expect(result.reason).toContain('.github/workflows/ci.yml');
+  });
+
+  it('生产已在目标 SHA 时允许跳过 ECS，由 Web 发布独立修复入口', async () => {
+    await expect(classify([])).resolves.toMatchObject({
+      required: 'false',
+      reason: 'none',
+      skipped: 'none',
+    });
+  });
+
+  it('按生产 active SHA 做累计 diff，失败时 fail-open，并保留强制 ECS 入口', async () => {
+    const workflow = await readFile(workflowPath, 'utf-8');
+    const planStart = workflow.indexOf('  deploy_plan:');
+    const ecsStart = workflow.indexOf('  deploy-ecs:');
+    const webStart = workflow.indexOf('  deploy-web-oss:');
+    const plan = workflow.slice(planStart, ecsStart);
+    const ecs = workflow.slice(ecsStart, webStart);
+    const web = workflow.slice(webStart);
+
+    expect(planStart).toBeGreaterThan(-1);
+    expect(ecsStart).toBeGreaterThan(planStart);
+    expect(webStart).toBeGreaterThan(ecsStart);
+    expect(workflow).toContain('force_ecs:');
+    expect(plan).toContain('root=/opt/agent-saas-app/color');
+    expect(plan).toContain('git merge-base --is-ancestor "$production_ecs_sha" "$GITHUB_SHA"');
+    expect(plan).toContain('git diff --name-only "$production_ecs_sha" "$GITHUB_SHA"');
+    expect(plan).toContain('bash .github/scripts/ecs-release-classify.sh');
+    expect(plan).toContain('proceeding with ECS deploy (fail-open)');
+    expect(plan).toContain('echo "ecs_required=true" >> "$GITHUB_OUTPUT"');
+    expect(ecs).toContain('needs: [build, deploy_plan]');
+    expect(ecs).toContain("needs.deploy_plan.outputs.ecs_required == 'true'");
+    expect(web).toContain('needs: [build, deploy_plan, deploy-ecs]');
+    expect(web).toContain('always() &&');
+    expect(web).toContain("needs.deploy_plan.outputs.ecs_required == 'false' && needs.deploy-ecs.result == 'skipped'");
+    expect(web).toContain("needs.deploy_plan.outputs.ecs_required == 'true' && needs.deploy-ecs.result == 'success'");
+  });
+});

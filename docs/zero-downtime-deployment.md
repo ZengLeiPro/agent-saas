@@ -110,8 +110,11 @@
 
 触发方式（ci.yml 头注释）：`push main` 只构建 + 测试 + 打包，**不部署生产**；
 发版走 `workflow_dispatch`（Actions 页面手动触发或 `gh workflow run ci.yml`）。
-`deploy-ecs` 与 `deploy-web-oss` 同为 dispatch-only；后端成功后才发布 OSS 和
-独立 recovery-web，保证版本一致且 Server release 不含前端文件。
+`deploy_plan` 会从 `/etc/agent-saas/active-color` 和 active 色 release symlink 读取生产
+ECS SHA，以该 SHA 到目标 SHA 的累计 diff 判断 ECS 是否必要。确认只有 Web、Mobile、
+文档或测试路径时，`deploy-ecs` 为 skipped，`deploy-web-oss` 直接发布 OSS 和独立
+recovery-web；存在 ECS 相关路径时，后端成功后才放行 Web。生产基线或分类不可用时
+fail-open 继续部署 ECS；`force_ecs=true` 可无条件重发。Server release 始终不含前端文件。
 
 整条手动发布 workflow 使用固定 concurrency group，`cancel-in-progress=false`：同一时间
 只允许一个批次从 build 走到 Web OSS 发布结束；普通 push CI 使用独立 `run_id`，不受

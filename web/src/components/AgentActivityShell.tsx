@@ -65,7 +65,9 @@ export function AgentActivityShell({
   );
 
   return (
-    <div className={cn('my-1.5', className)}>
+    // mb-3 而非对称 my：上方已有虚拟行距+行内留白+正文段距托底（~26px），
+    // 顶部再加 margin 会让折叠行「上远下近」失衡；下方 12px 补齐与正文的间距。
+    <div className={cn('mb-3', className)}>
       <div className="flex items-center gap-2">
         {disabled ? (
           <div className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left">{content}</div>

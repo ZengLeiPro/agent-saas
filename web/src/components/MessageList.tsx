@@ -8,6 +8,7 @@ import { ActivityGroupBlock } from './ActivityGroupBlock';
 import { BusinessStepFlow, BusinessStepSectionView } from './BusinessStepFlow';
 import { CompactionDivider } from './CompactionDivider';
 import { asCompactionItem } from '@/lib/compaction';
+import { cn } from '@/lib/utils';
 import {
   buildMessageVirtualLayout,
   findMessageRowAtOffset,
@@ -121,6 +122,17 @@ function getFirstTimestamp(items: RenderItem[]): number | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * 头像行只留 4px 下边距，正文靠自身 prose 段距（10px）补足呼吸感，
+ * 而活动组折叠行的 shell 已去掉顶部 margin（避免轮间双倍间距），
+ * 故仅当气泡首个可见项是活动组时补一层 pt，让两种开头视觉一致。
+ */
+function needsHeaderFlowGap(showHeader: boolean, items: RenderItem[]): boolean {
+  if (!showHeader) return false;
+  const first = items.find((sub) => sub.type !== 'file_download');
+  return first?.type === 'activity_group';
 }
 
 function getBubbleVirtualKey(item: BubbleRenderItem): string {
@@ -731,8 +743,10 @@ export const MessageList = memo(function MessageList({
                   <AiMessageHeader agentProfile={displayAgent} timestamp={timestamp} />
                 )}
                 {/* AI 连续多轮各占一个虚拟行，行距已由 MESSAGE_ROW_GAP 承担；
-                    行内留白收紧，避免与 AgentActivityShell margin 叠出双倍轮间距。 */}
-                <div className="py-0.5">
+                    行内留白收紧，避免与 AgentActivityShell margin 叠出双倍轮间距。
+                    紧跟头像的首个活动组没有 prose 段距托底（shell 已去顶部 margin），
+                    单独补 pt 让「头像→折叠行」与「头像→正文」两种开头对齐。 */}
+                <div className={cn('pb-0.5', needsHeaderFlowGap(showHeader, item.items) ? 'pt-2' : 'pt-0.5')}>
                   {item.items.map((sub) => {
                     // ai_bubble 顶层的 file_download 双重保险维持原语义：一律跳过。
                     if (sub.type === 'file_download') return null;
@@ -769,7 +783,7 @@ export const MessageList = memo(function MessageList({
                 {showHeader && (
                   <AiMessageHeader agentProfile={displayAgent} timestamp={undefined} />
                 )}
-                <div className="py-0.5">
+                <div className={cn('pb-0.5', showHeader ? 'pt-2' : 'pt-0.5')}>
                   <ErrorBoundary inline>
                     <ActivityGroupBlock items={item.items} isActive={item.isActive} isLast={item.id === lastActivityGroupId} debugMode={debugMode} />
                   </ErrorBoundary>

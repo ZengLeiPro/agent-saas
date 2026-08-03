@@ -376,11 +376,6 @@ export const MessageList = memo(function MessageList({
     setShowJumpToBottom((previous) => previous === !isNear ? previous : !isNear);
   }, [isNearBottomRef]);
 
-  const handleScroll = useCallback(() => {
-    syncNearBottomState();
-    scheduleViewportUpdate();
-  }, [scheduleViewportUpdate, syncNearBottomState]);
-
   const handleJumpToBottom = useCallback(() => {
     const el = internalContainerRef.current;
     if (!el) return;
@@ -406,8 +401,28 @@ export const MessageList = memo(function MessageList({
         firstKey: virtualLayout.keys[0],
       };
     }
+    // 只触发不等待：历史分页不能阻塞滚动处理或其他界面任务。
     void onLoadEarlier();
   }, [isLoadingEarlier, onLoadEarlier, virtualLayout]);
+
+  // 每次触顶只加载一页；离开顶部后才允许下一次触发，避免同一轮滚动重复请求。
+  const topLoadArmedRef = useRef(true);
+  useEffect(() => {
+    if (!hasMoreHistory) topLoadArmedRef.current = true;
+  }, [hasMoreHistory]);
+  const handleScroll = useCallback(() => {
+    const el = internalContainerRef.current;
+    if (el) {
+      if (el.scrollTop > 0) {
+        topLoadArmedRef.current = true;
+      } else if (topLoadArmedRef.current && hasMoreHistory && !isLoadingEarlier) {
+        topLoadArmedRef.current = false;
+        handleLoadEarlier();
+      }
+    }
+    syncNearBottomState();
+    scheduleViewportUpdate();
+  }, [handleLoadEarlier, hasMoreHistory, isLoadingEarlier, scheduleViewportUpdate, syncNearBottomState]);
 
   // Preserve a key-based visual anchor across prepend and asynchronous row remeasurement.
   const previousLayoutRef = useRef(virtualLayout);
@@ -598,16 +613,13 @@ export const MessageList = memo(function MessageList({
     >
       <div className="content-container flex flex-col gap-3 py-4">
         {!showCenterLoading && hasMoreHistory && (
-          <div className="flex justify-center pb-1">
-            <button
-              type="button"
-              onClick={handleLoadEarlier}
-              disabled={isLoadingEarlier}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isLoadingEarlier && <Loader2 className="size-3.5 animate-spin" />}
-              {isLoadingEarlier ? "正在加载" : "加载更早消息"}
-            </button>
+          <div className="flex h-[34px] shrink-0 items-center justify-center" aria-live="polite">
+            {isLoadingEarlier && (
+              <div role="status" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" />
+                <span>正在加载更早消息</span>
+              </div>
+            )}
           </div>
         )}
         {showCenterLoading ? (
@@ -632,12 +644,12 @@ export const MessageList = memo(function MessageList({
           const showHeader = headerItemIds.has(item.id);
 
           // AI 流内子项渲染：ai_bubble 内与业务步骤节内共用（节内过程 = 完整消息渲染，非降级视图）。
-          const renderFlowItem = (sub: RenderItem, inSection = false): React.ReactNode => {
+          const renderFlowItem = (sub: RenderItem): React.ReactNode => {
             if (sub.type === 'business_step_section') {
               return (
                 <ErrorBoundary key={sub.id} inline>
                   <BusinessStepSectionView section={sub} debugMode={debugMode}>
-                    {sub.items.map((child) => renderFlowItem(child, true))}
+                    {sub.items.map((child) => renderFlowItem(child))}
                   </BusinessStepSectionView>
                 </ErrorBoundary>
               );
@@ -661,8 +673,6 @@ export const MessageList = memo(function MessageList({
                     isActive={sub.isActive}
                     isLast={sub.id === lastActivityGroupId}
                     debugMode={debugMode}
-                    // 调试模式沿用节内平铺；普通用户保留活动组折叠摘要，但锁定为不可展开。
-                    flat={inSection && debugMode}
                   />
                 </ErrorBoundary>
               );

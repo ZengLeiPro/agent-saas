@@ -1,6 +1,5 @@
 import { useState, memo } from 'react';
 import { StatusIcons } from '@/lib/icons';
-import { getToolDisplayInfo } from '@agent/shared';
 import type { MessageItem } from './types';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolBlock, ToolResultBlock } from './ToolBlock';
@@ -9,71 +8,26 @@ import { RuntimeStatusBlock } from './RuntimeStatusBlock';
 import { AgentActivityShell, type AgentActivityState } from './AgentActivityShell';
 import { activityStatusIconClass, activityStatusTextClass, formatActivityDuration, type ActivityStatusTone } from './activityStatusStyles';
 
-interface SummaryInfo {
+interface GroupSummaryInfo {
   text: string;
-  truncateStart: boolean;
-}
-
-interface GroupSummaryInfo extends SummaryInfo {
   tone: ActivityStatusTone;
-  badge: string;
   durationMs?: number;
   progress?: string;
   active: boolean;
 }
 
-/** 根据最后一条消息生成摘要文字及截断方向 */
-function getSummary(item: MessageItem): SummaryInfo {
-  switch (item.type) {
-    case 'runtime_status':
-      return { text: item.content || '正在处理', truncateStart: false };
-    case 'thinking':
-      return { text: item.streaming ? '思考中...' : '已思考', truncateStart: false };
-    case 'tool_use': {
-      // 业务标题（如「钉钉 · 待办 create」）优先于机器名（「Shell: dws todo …」）
-      const info = getToolDisplayInfo(item.toolName, item.toolInput);
-      const label = item.presentation?.title ?? (info.detail ? `${info.name}: ${info.detail}` : info.name);
-      const text = item.streaming ? `${label}...` : label;
-      return { text, truncateStart: item.presentation?.title ? false : info.detailTruncate === 'start' };
-    }
-    case 'tool_result':
-      return { text: `Result: ${item.toolName}`, truncateStart: false };
-    case 'subagent':
-      return {
-        text: item.status === 'running'
-          ? `子任务 ${item.agentType}...`
-          : item.status === 'failed'
-            ? `子任务未完成：${item.agentType}`
-            : item.status === 'timeout'
-              ? `子任务超时：${item.agentType}`
-              : item.status === 'cancelled'
-                ? `子任务已取消：${item.agentType}`
-                : `子任务 ${item.agentType}`,
-        truncateStart: false,
-      };
-    default:
-      return { text: '', truncateStart: false };
-  }
-}
-
 function getRuntimeStatusLabel(status: Extract<MessageItem, { type: 'runtime_status' }>['status']): string {
   switch (status) {
-    case 'sending':
-      return '正在发送消息';
     case 'queued':
-      return '已进入队列';
+      return '排队中';
     case 'running':
-      return '正在思考';
-    case 'waiting_hand':
-      return '正在准备工作区';
+      return '思考中';
     case 'waiting_approval':
       return '等待授权';
     case 'waiting_user':
       return '等待补充信息';
-    case 'reconnecting':
-      return '正在恢复连接';
     default:
-      return '正在处理';
+      return '执行中';
   }
 }
 
@@ -102,42 +56,6 @@ function getActiveItemIndex(items: MessageItem[]): number {
   return Math.max(0, items.length - 1);
 }
 
-/**
- * 折叠行说「做了什么」，不说机器计数。
- *
- * 旧文案「已完成 12 条：5 次思考 · 7 个工具」全是 harness 词汇（条/思考/工具/项），
- * demo 里没有一行这种语言（08-03 根因分析问题 2）。这里从组内工具的业务标题
- * （presentation.title 优先，回退 getToolDisplayInfo）列举真实动作；
- * 条数已在右侧 meta 的「N 项」里，标题区不再重复计数。
- */
-function getCompletedBreakdown(items: MessageItem[]): string {
-  const titles: string[] = [];
-  for (const item of items) {
-    let title: string | undefined;
-    if (item.type === 'tool_use') {
-      // 回退链刻意不落到英文工具名（Shell/Read）：宁可不列举也不说机器语言
-      title = item.presentation?.title || getToolDisplayInfo(item.toolName, item.toolInput).detail;
-    } else if (item.type === 'subagent') {
-      title = item.presentation?.title;
-    }
-    if (title && !titles.includes(title)) titles.push(title);
-  }
-  if (titles.length === 0) {
-    // 纯思考/状态组或全组无业务标题：给最轻的一句话，不数条数
-    return items.some(item => item.type === 'thinking') ? '已思考' : `已完成 ${items.length} 项`;
-  }
-  // 标题列举控制在一行以内：拼接超长就少列几个，剩余归入「等」
-  const MAX_CHARS = 42;
-  const shown: string[] = [];
-  for (const title of titles) {
-    const next = [...shown, title].join('、');
-    if (shown.length > 0 && next.length > MAX_CHARS) break;
-    shown.push(title);
-  }
-  const suffix = titles.length > shown.length ? ' 等' : '';
-  return `${shown.join('、')}${suffix}`;
-}
-
 function getActivityDurationMs(items: MessageItem[]): number | undefined {
   let total = 0;
   let hasDuration = false;
@@ -154,6 +72,22 @@ function hasPresentation(item: MessageItem): boolean {
   return (item.type === 'tool_use' || item.type === 'tool_result' || item.type === 'subagent') && !!item.presentation;
 }
 
+function getCompletedGroupTitle(items: MessageItem[]): string {
+  const titles = items.flatMap((item) => (
+    (item.type === 'tool_use' || item.type === 'tool_result' || item.type === 'subagent') && item.presentation?.title
+      ? [item.presentation.title]
+      : []
+  )).filter((title, index, all) => all.indexOf(title) === index);
+  if (titles.length === 0) return '已运行';
+
+  const shown: string[] = [];
+  for (const title of titles) {
+    if (shown.length > 0 && [...shown, title].join('、').length > 42) break;
+    shown.push(title);
+  }
+  return `${shown.join('、')}${shown.length < titles.length ? ' 等' : ''}`;
+}
+
 function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
   const index = getActiveItemIndex(items);
   const item = items[index];
@@ -162,29 +96,23 @@ function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
   if (item.type === 'runtime_status') {
     if (item.status === 'waiting_approval' || item.status === 'waiting_user') {
       return {
-        text: item.content || getRuntimeStatusLabel(item.status),
-        truncateStart: false,
+        text: getRuntimeStatusLabel(item.status),
         tone: 'warning',
-        badge: '需处理',
         progress,
         active: false,
       };
     }
     if (item.status === 'queued') {
       return {
-        text: item.content || getRuntimeStatusLabel(item.status),
-        truncateStart: false,
+        text: getRuntimeStatusLabel(item.status),
         tone: 'pending',
-        badge: '排队中',
         progress,
         active: false,
       };
     }
     return {
-      text: item.content || getRuntimeStatusLabel(item.status),
-      truncateStart: false,
+      text: getRuntimeStatusLabel(item.status),
       tone: 'active',
-      badge: '处理中',
       progress,
       active: true,
     };
@@ -192,76 +120,23 @@ function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
 
   if (item.type === 'thinking') {
     return {
-      text: item.streaming ? '思考中...' : '已思考',
-      truncateStart: false,
-      tone: item.streaming ? 'active' : 'success',
-      badge: item.streaming ? '思考中' : '已完成',
+      text: '思考中',
+      tone: 'active',
       progress,
-      active: Boolean(item.streaming),
-    };
-  }
-
-  if (item.type === 'tool_use') {
-    // 业务标题（如「钉钉 · 待办 create」）优先于机器名（「Shell: dws todo …」）
-    const info = getToolDisplayInfo(item.toolName, item.toolInput);
-    const label = item.presentation?.title ?? (info.detail ? `${info.name}: ${info.detail}` : info.name);
-    const truncateStart = item.presentation?.title ? false : info.detailTruncate === 'start';
-    if (item.executionStatus === 'failed') {
-      return { text: `未成功：${label}`, truncateStart, tone: 'warning', badge: '有异常', progress, active: false };
-    }
-    if (item.executionStatus === 'cancelled') {
-      return { text: `已取消：${label}`, truncateStart, tone: 'neutral', badge: '已取消', progress, active: false };
-    }
-    if (item.executionStatus === 'completed' || item.resultReady) {
-      return { text: `已完成：${label}`, truncateStart, tone: 'success', badge: '已完成', progress, active: false };
-    }
-    return { text: `正在执行：${label}`, truncateStart, tone: 'active', badge: '执行中', progress, active: true };
-  }
-
-  if (item.type === 'subagent') {
-    if (item.status === 'failed') {
-      return { text: `子任务未完成：${item.agentType}`, truncateStart: false, tone: 'warning', badge: '有异常', progress, active: false };
-    }
-    if (item.status === 'timeout') {
-      return { text: `子任务超时：${item.agentType}`, truncateStart: false, tone: 'warning', badge: '超时', progress, active: false };
-    }
-    if (item.status === 'cancelled') {
-      return { text: `子任务已取消：${item.agentType}`, truncateStart: false, tone: 'neutral', badge: '已取消', progress, active: false };
-    }
-    return {
-      text: item.status === 'running' ? `子任务 ${item.agentType}...` : `子任务 ${item.agentType}`,
-      truncateStart: false,
-      tone: item.status === 'running' ? 'active' : 'success',
-      badge: item.status === 'running' ? '执行中' : '已完成',
-      progress,
-      active: item.status === 'running',
+      active: true,
     };
   }
 
   return {
-    ...getSummary(item),
+    text: '执行中',
     tone: 'active',
-    badge: '处理中',
     progress,
     active: true,
   };
 }
 
 function getGroupSummary(items: MessageItem[], isActive: boolean): GroupSummaryInfo {
-  if (isActive) {
-    const summary = getActiveGroupSummary(items);
-    if (summary.badge === '有异常' || summary.badge === '超时') {
-      return {
-        text: '正在处理',
-        truncateStart: false,
-        tone: 'active',
-        badge: '处理中',
-        progress: summary.progress,
-        active: true,
-      };
-    }
-    return summary;
-  }
+  if (isActive) return getActiveGroupSummary(items);
 
   const cancelledCount = items.filter(item => (
     (item.type === 'tool_use' && item.executionStatus === 'cancelled')
@@ -270,21 +145,16 @@ function getGroupSummary(items: MessageItem[], isActive: boolean): GroupSummaryI
   if (cancelledCount > 0) {
     return {
       text: `已取消 ${cancelledCount} 条 · 共 ${items.length} 条`,
-      truncateStart: false,
       tone: 'neutral',
-      badge: '已取消',
       durationMs: getActivityDurationMs(items),
       active: false,
     };
   }
 
-  // 单条异常不再让整个分组显示为「有异常」：分组外层按正常完成展示，
-  // 具体失败项在展开后的列表里各自标红，避免一条失败淹没其余正常记录。
+  // 只保留工具明确提供的业务摘要；不再根据内部动作猜测折叠标题。
   return {
-    text: getCompletedBreakdown(items),
-    truncateStart: false,
+    text: getCompletedGroupTitle(items),
     tone: 'success',
-    badge: '已完成',
     durationMs: getActivityDurationMs(items),
     active: false,
   };
@@ -318,18 +188,13 @@ interface ActivityGroupBlockProps {
   isActive: boolean;
   isLast?: boolean;
   debugMode?: boolean;
-  /**
-   * 调试模式下的业务步骤节内平铺：外层「过程 · N 项」是唯一收纳层。
-   * 非调试模式保留活动组折叠摘要，并锁定为不可展开。
-   */
-  flat?: boolean;
 }
 
 export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: { isActive?: boolean; durationMs?: number; hasIssue?: boolean }) {
   const duration = !isActive ? formatActivityDuration(durationMs) : null;
   const tone = isActive ? 'active' : hasIssue ? 'warning' : 'success';
   return (
-    <div className="my-0.5 flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
+    <div className="my-1 flex items-center gap-2 py-1 text-sm leading-5 text-muted-foreground">
       {isActive ? (
         <StatusIcons.running className={activityStatusIconClass("active", "size-3.5 shrink-0 animate-spin")} />
       ) : hasIssue ? (
@@ -342,7 +207,7 @@ export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: {
   );
 }
 
-export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isActive, debugMode = true, flat = false }: ActivityGroupBlockProps) {
+export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isActive, debugMode = true }: ActivityGroupBlockProps) {
   // 折叠行已提供分组摘要，具体工具详情由用户按需展开，避免长会话默认铺满执行细节。
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -350,17 +215,6 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
   // 否则场景回放和真实会话都会把关键业务动作标题折叠掉。
   if (items.length === 1 && hasPresentation(items[0])) {
     return <ActivityItem item={items[0]} debugMode={debugMode} />;
-  }
-
-  // 仅调试模式节内平铺：外层「过程」折叠是唯一收纳层，这里直接铺内容。
-  if (flat) {
-    return (
-      <div className="flex flex-col gap-2.5 [&>*]:my-0">
-        {items.map(item => (
-          <ActivityItem key={item.id} item={item} debugMode={debugMode} />
-        ))}
-      </div>
-    );
   }
 
   const summary = getGroupSummary(items, isActive);
@@ -389,7 +243,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
       disabled={!debugMode}
       onToggle={() => setIsExpanded((value) => !value)}
     >
-      <div className="flex flex-col gap-2.5 [&>*]:my-0">
+      <div className="flex flex-col gap-3 [&>*]:my-0">
         {items.map(item => (
           <ActivityItem key={item.id} item={item} debugMode={debugMode} />
         ))}

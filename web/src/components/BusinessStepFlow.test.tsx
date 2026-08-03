@@ -77,7 +77,7 @@ describe("BusinessStepFlow", () => {
     expect(screen.getByText("第 2/3 步")).toBeTruthy();
   });
 
-  it("renders the terminal block frameless with outcome, detail and evidence", () => {
+  it("renders the terminal block frameless with outcome and collapsible business details", () => {
     const { container } = render(
       <BusinessStepFlow
         event={event({
@@ -110,6 +110,10 @@ describe("BusinessStepFlow", () => {
     expect(screen.getByText("17/18 张通过，1 张税号过期退回")).toBeTruthy();
     expect(screen.getByText("通过")).toBeTruthy();
     expect(screen.getByText("17")).toBeTruthy();
+    // detail / evidence 不再与结论争夺首屏，只在用户需要时展开。
+    expect(screen.queryByText("订单资料完整")).toBeNull();
+    expect(screen.queryByText("SO-1001")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "业务详情" }));
     expect(screen.getByText("订单资料完整")).toBeTruthy();
     expect(screen.getByText("SO-1001")).toBeTruthy();
     for (const sel of NO_FILL_SELECTORS) expect(container.querySelector(sel)).toBeNull();
@@ -131,6 +135,8 @@ describe("BusinessStepFlow", () => {
         })}
       />,
     );
+
+    fireEvent.click(screen.getByRole("button", { name: "业务详情" }));
 
     const card = container.querySelector(".divide-y.bg-card");
     expect(card).toBeTruthy();
@@ -171,7 +177,7 @@ describe("BusinessStepFlow", () => {
     expect(screen.getByText("退回").className).toContain("text-muted-foreground");
   });
 
-  it("hides neutral chips duplicated by 业务详情 rows, restores them when collapsed", () => {
+  it("keeps every chip while 业务详情 is collapsed, hides the duplicated neutral ones once expanded", () => {
     render(
       <BusinessStepFlow
         event={event({
@@ -196,19 +202,21 @@ describe("BusinessStepFlow", () => {
       />,
     );
 
-    // 展开态（默认）：与详情行重复的中性标签隐藏，判定类与未重复的保留
+    // 折叠态（默认）：标签是唯一的结构化信息位，全部显示
+    const collapsed = within(screen.getByTestId("outcome-stats"));
+    expect(collapsed.getByText("文件夹")).toBeTruthy();
+    expect(collapsed.getByText("15")).toBeTruthy();
+    expect(collapsed.getByText("合规")).toBeTruthy();
+    expect(collapsed.getByText("耗时")).toBeTruthy();
+
+    // 展开业务详情：与详情行同键同值的中性标签隐藏，判定类与未重复的保留
+    fireEvent.click(screen.getByRole("button", { name: "业务详情" }));
     const expanded = within(screen.getByTestId("outcome-stats"));
     expect(expanded.queryByText("文件夹")).toBeNull();
     expect(expanded.getByText("合规")).toBeTruthy();
     expect(expanded.getByText("耗时")).toBeTruthy();
     // 详情行里那份「文件夹 15」仍在，信息没丢，只是不再出现两遍
     expect(screen.getByText("15")).toBeTruthy();
-
-    // 收起业务详情后标签重新成为唯一信息位，全部回来
-    fireEvent.click(screen.getByText("业务详情"));
-    const collapsed = within(screen.getByTestId("outcome-stats"));
-    expect(collapsed.getByText("文件夹")).toBeTruthy();
-    expect(collapsed.getByText("15")).toBeTruthy();
   });
 
   it("renders the lightweight update row", () => {
@@ -231,7 +239,7 @@ describe("BusinessStepSectionView", () => {
     expect(container.querySelector(".animate-spin")).toBeTruthy();
   });
 
-  it("collapses process but keeps outcome and summary visible once terminal", () => {
+  it("keeps only outcome visible and collapses business details and process once terminal", () => {
     const terminal = event({
       kind: "complete",
       todo: {
@@ -251,15 +259,21 @@ describe("BusinessStepSectionView", () => {
       </BusinessStepSectionView>,
     );
 
-    // 过程默认折叠为一行；outcome 与小结常显——折的是过程，不折结论。
+    // 首屏只有 outcome；业务详情和调试过程分别按需展开。
     expect(screen.queryByTestId("process-content")).toBeNull();
     expect(screen.getByText(/过程 ·/)).toBeTruthy();
     expect(screen.getByText("全部通过")).toBeTruthy();
-    expect(screen.getByText("共核验 12 项字段")).toBeTruthy();
+    expect(screen.queryByText("共核验 12 项字段")).toBeNull();
     expect(screen.getByText("已完成")).toBeTruthy();
 
-    // 点开过程
-    fireEvent.click(screen.getByText(/过程 ·/));
+    const summaryToggle = screen.getByRole("button", { name: "业务详情" });
+    const processToggle = screen.getByRole("button", { name: /过程 ·/ });
+    expect(summaryToggle.lastElementChild?.classList.contains("lucide-chevron-right")).toBe(true);
+    expect(processToggle.lastElementChild?.classList.contains("lucide-chevron-right")).toBe(true);
+
+    fireEvent.click(summaryToggle);
+    expect(screen.getByText("共核验 12 项字段")).toBeTruthy();
+    fireEvent.click(processToggle);
     expect(screen.getByTestId("process-content")).toBeTruthy();
   });
 

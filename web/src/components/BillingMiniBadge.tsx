@@ -34,6 +34,8 @@ interface MyMemberBudget {
 
 interface BillingMiniBadgeProps {
   sessionId?: string | null;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 function formatCredits(value: number): string {
@@ -123,11 +125,20 @@ function StatRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
+export function BillingMiniBadge({
+  sessionId,
+  open: controlledOpen,
+  onOpenChange,
+}: BillingMiniBadgeProps) {
   const [summary, setSummary] = useState<BillingSummary | null>(null);
   const [sessionSummary, setSessionSummary] = useState<SessionBillingSummary | null>(null);
   const [memberBudget, setMemberBudget] = useState<MyMemberBudget | null>(null);
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (controlledOpen === undefined) setInternalOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  };
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -188,7 +199,7 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
   useEffect(() => {
     if (!open) return;
     const handler = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false);
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) handleOpenChange(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -196,9 +207,9 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
 
   // 响应外部（侧边栏用户菜单「我的积分」入口）打开请求：挂载时消费 pending 标志，同时订阅后续请求。
   useEffect(() => {
-    if (consumePendingBillingBadgeOpen()) setOpen(true);
+    if (consumePendingBillingBadgeOpen()) handleOpenChange(true);
     const unsub = subscribeBillingBadgeOpen(() => {
-      if (consumePendingBillingBadgeOpen()) setOpen(true);
+      if (consumePendingBillingBadgeOpen()) handleOpenChange(true);
     });
     return unsub;
   }, []);
@@ -211,7 +222,7 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
     <div ref={containerRef} className="relative" onClick={(event) => event.stopPropagation()}>
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => handleOpenChange(!open)}
         className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium tabular-nums transition-colors ${BADGE_TONE_CLASS[tone]}`}
         title="组织积分余额"
       >

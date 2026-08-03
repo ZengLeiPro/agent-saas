@@ -15,23 +15,24 @@ const failedTool: Extract<MessageItem, { type: 'tool_use' }> = {
 };
 
 describe('ActivityGroupBlock 排版型活动行', () => {
-  it('折叠行为一行摘要（无标题无卡片），单条异常不在折叠行暴露，展开后可见', () => {
+  it('折叠行为统一的已运行摘要（无标题无卡片），单条异常不在折叠行暴露，展开后可见', () => {
     const { container } = render(<ActivityGroupBlock items={[failedTool]} isActive={false} debugMode />);
 
-    // 摘要即标题：泛化「Agent 活动」标题已删除
+    // 摘要即标题：泛化「Agent 活动」标题与具体执行动作均不进入折叠态
     expect(screen.queryByText('Agent 活动')).toBeNull();
-    // 无业务标题可列举时给最轻的一句话，且不落到英文工具名
-    expect(screen.getByText(/已完成 1 项/)).toBeTruthy();
+    expect(screen.getByText('已运行')).toBeTruthy();
     expect(screen.queryByText(/Shell/)).toBeNull();
     expect(screen.queryByText('有异常')).toBeNull();
     // 排版型：无卡片容器（rounded/border/bg 壳已移除）
     expect(container.querySelector('.rounded-lg.border')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    const toggle = screen.getByRole('button', { expanded: false });
+    expect(toggle.lastElementChild?.classList.contains('lucide-chevron-right')).toBe(true);
+    fireEvent.click(toggle);
     expect(screen.getAllByText('有异常').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('折叠行列举业务标题（presentation.title 优先，description 兜底），不再输出机器计数', () => {
+  it('多动作组只保留显式业务标题，不机械列举工具描述', () => {
     render(<ActivityGroupBlock
       items={[
         { id: 'thinking', type: 'thinking', content: '先查待办', streaming: false },
@@ -61,9 +62,8 @@ describe('ActivityGroupBlock 排版型活动行', () => {
       debugMode
     />);
 
-    expect(screen.getByText(/钉钉 · 待办 list、列出工作区文件/)).toBeTruthy();
-    expect(screen.queryByText(/次思考/)).toBeNull();
-    expect(screen.queryByText(/个工具/)).toBeNull();
+    expect(screen.getByText('钉钉 · 待办 list')).toBeTruthy();
+    expect(screen.queryByText(/列出工作区文件/)).toBeNull();
   });
 
   it('分组内一条失败不影响折叠行的正常完成展示，展开后显示具体异常', () => {
@@ -77,8 +77,8 @@ describe('ActivityGroupBlock 排版型活动行', () => {
       debugMode
     />);
 
-    // 无业务标题、含思考 → 「已思考」；异常不在折叠行暴露
-    const summary = screen.getByText('已思考');
+    // 完成态统一为「已运行」；异常不在折叠行暴露
+    const summary = screen.getByText('已运行');
     expect(screen.queryByText('有异常')).toBeNull();
     expect(screen.getByText(/1\.2s.*2 项/)).toBeTruthy();
 
@@ -97,20 +97,69 @@ describe('ActivityGroupBlock 排版型活动行', () => {
       debugMode
     />);
 
-    expect(screen.getByText(/正在处理/)).toBeTruthy();
+    expect(screen.getByText('执行中')).toBeTruthy();
     expect(screen.queryByText(/异常/)).toBeNull();
   });
 
-  it('关闭调试模式后保留原折叠态与摘要元信息，但禁用展开交互', () => {
-    render(<ActivityGroupBlock items={[{ ...failedTool, durationMs: 1200 }]} isActive={false} debugMode={false} />);
+  it('运行态只显示五种用户可理解的状态，不泄露具体执行内容', () => {
+    const { rerender } = render(<ActivityGroupBlock
+      items={[{ id: 'thinking', type: 'thinking', content: '分析具体实现', streaming: true }]}
+      isActive
+      debugMode={false}
+    />);
+    expect(screen.getByText('思考中')).toBeTruthy();
+    expect(screen.queryByText(/分析具体实现/)).toBeNull();
 
-    const summary = screen.getByText(/已完成 1 项/);
-    const button = summary.closest('button') as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    expect(button.getAttribute('aria-expanded')).toBe('false');
-    expect(button.querySelector('.lucide-chevron-right')).toBeTruthy();
-    expect(screen.getByText(/1\.2s.*1 项/)).toBeTruthy();
-    fireEvent.click(button);
+    rerender(<ActivityGroupBlock
+      items={[{
+        id: 'tool-running',
+        type: 'tool_use',
+        toolName: 'Shell',
+        toolInput: '{"command":"读取客户数据"}',
+        toolId: 'tool-running',
+        executionStatus: 'running',
+        resultReady: false,
+      }]}
+      isActive
+      debugMode={false}
+    />);
+    expect(screen.getByText('执行中')).toBeTruthy();
+    expect(screen.queryByText(/读取客户数据/)).toBeNull();
+
+    rerender(<ActivityGroupBlock
+      items={[{ id: 'queued', type: 'runtime_status', status: 'queued', content: '前方还有 3 个任务' }]}
+      isActive
+      debugMode={false}
+    />);
+    expect(screen.getByText('排队中')).toBeTruthy();
+    expect(screen.queryByText(/前方还有/)).toBeNull();
+
+    rerender(<ActivityGroupBlock
+      items={[{ id: 'approval', type: 'runtime_status', status: 'waiting_approval', content: '请授权 Shell' }]}
+      isActive
+      debugMode={false}
+    />);
+    expect(screen.getByText('等待授权')).toBeTruthy();
+    expect(screen.queryByText(/请授权 Shell/)).toBeNull();
+
+    rerender(<ActivityGroupBlock
+      items={[{ id: 'user', type: 'runtime_status', status: 'waiting_user', content: '请选择数据库' }]}
+      isActive
+      debugMode={false}
+    />);
+    expect(screen.getByText('等待补充信息')).toBeTruthy();
+    expect(screen.queryByText(/请选择数据库/)).toBeNull();
+  });
+
+  it('关闭调试模式后显示静态摘要，不渲染按钮、展开语义或 Chevron', () => {
+    const { container } = render(<ActivityGroupBlock items={[{ ...failedTool, durationMs: 1200 }]} isActive={false} debugMode={false} />);
+
+    const summary = screen.getByText('已运行');
+    const meta = screen.getByText('1.2s · 1 项');
+    expect(summary.closest('button')).toBeNull();
+    expect(summary.parentElement).toBe(meta.parentElement);
+    expect(container.querySelector('[aria-expanded]')).toBeNull();
+    expect(container.querySelector('.lucide-chevron-right')).toBeNull();
     expect(screen.queryByText('有异常')).toBeNull();
     expect(screen.queryByText(/已执行，有异常/)).toBeNull();
     expect(screen.queryByText(/exit 1/)).toBeNull();
@@ -127,11 +176,11 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     />);
 
     expect(screen.queryByText('有异常')).toBeNull();
-    expect(screen.getByText('已思考')).toBeTruthy();
+    expect(screen.getByText('已运行')).toBeTruthy();
     expect(screen.queryByText(/exit 1/)).toBeNull();
   });
 
-  it('flat 模式（业务步骤节内）直接平铺内容，无折叠壳', () => {
+  it('调试模式始终保留活动组折叠层，展开后才显示组内动作', () => {
     render(<ActivityGroupBlock
       items={[
         { id: 'thinking', type: 'thinking', content: '换一种方法', streaming: false },
@@ -139,12 +188,13 @@ describe('ActivityGroupBlock 排版型活动行', () => {
       ]}
       isActive={false}
       debugMode
-      flat
     />);
 
-    // 无折叠行摘要（组级 meta「N 项」不出现），内容直接平铺（节的「过程」折叠是唯一收纳层）；
-    // ThinkingBlock / ToolBlock 保持各自的一级折叠行为。
-    expect(screen.queryByText(/2 项/)).toBeNull();
+    const toggle = screen.getByRole('button', { name: /已运行.*2 项/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText(/有异常/)).toBeNull();
+
+    fireEvent.click(toggle);
     expect(screen.getAllByText(/有异常/).length).toBeGreaterThanOrEqual(1);
   });
 });

@@ -125,19 +125,18 @@ describe('ActivityGroupBlock 摘要不被整组吞掉', () => {
   it('整组无摘要 + 非 debug：折叠行不落到英文工具名，且不泄露原始 payload', () => {
     render(<ActivityGroupBlock items={[plainTool, { ...plainTool, id: 'tool-plain-2' }]} isActive={false} debugMode={false} />);
     expect(screen.queryByText('核对魏德米勒选型表')).toBeNull();
-    expect(screen.getByText('已完成 2 项')).toBeTruthy();
+    expect(screen.getByText('已运行')).toBeTruthy();
+    expect(screen.getByText('6.4s · 2 项')).toBeTruthy();
     expect(screen.queryByText(/Shell/)).toBeNull();
     expect(screen.queryByText(/rg -n selection/)).toBeNull();
   });
 
-  it('组内有摘要 + 非 debug：保留原折叠行并禁用展开，详情不可见', () => {
-    render(<ActivityGroupBlock items={[plainTool, richTool]} isActive={false} debugMode={false} />);
-    // 折叠行直接说业务动作（08-03 根因分析问题 2：机器计数改为业务标题列举）
+  it('组内有摘要 + 非 debug：保留业务标题但渲染为静态行，详情不可见', () => {
+    const { container } = render(<ActivityGroupBlock items={[plainTool, richTool]} isActive={false} debugMode={false} />);
     const groupSummary = screen.getByText('核对魏德米勒选型表');
-    const button = groupSummary.closest('button') as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    expect(button.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(button);
+    expect(groupSummary.closest('button')).toBeNull();
+    expect(groupSummary.closest('[aria-expanded]')).toBeNull();
+    expect(container.querySelector('.lucide-chevron-right')).toBeNull();
     expect(screen.queryByText('WDU 2.5')).toBeNull();
   });
 

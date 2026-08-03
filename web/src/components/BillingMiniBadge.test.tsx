@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BillingMiniBadge } from "./BillingMiniBadge";
+import { TokenUsageDisplay } from "./TokenUsageDisplay";
 import { authFetch } from "@/lib/authFetch";
 import { requestOpenBillingBadge } from "@/lib/billingBadgeBus";
 
@@ -19,6 +21,29 @@ const summary = {
   currentMonthCreditsUsed: 420,
   currentMonthRevenueYuan: 4.2,
 };
+
+function UsageCardsHost() {
+  const [activeCard, setActiveCard] = useState<"context" | "billing" | null>(null);
+  return (
+    <>
+      <TokenUsageDisplay
+        allowDetails
+        tokenUsage={null}
+        contextUsage={{ totalTokens: 100, categories: [], memoryFiles: [], mcpTools: [] }}
+        open={activeCard === "context"}
+        onOpenChange={(open) => {
+          setActiveCard((current) => open ? "context" : current === "context" ? null : current);
+        }}
+      />
+      <BillingMiniBadge
+        open={activeCard === "billing"}
+        onOpenChange={(open) => {
+          setActiveCard((current) => open ? "billing" : current === "billing" ? null : current);
+        }}
+      />
+    </>
+  );
+}
 
 describe("BillingMiniBadge", () => {
   beforeEach(() => {
@@ -85,6 +110,26 @@ describe("BillingMiniBadge", () => {
 
     expect(await screen.findByText("组织本月消耗")).toBeTruthy();
     expect(screen.getByText("个人预算数据暂不可用")).toBeTruthy();
+  });
+
+  it("打开积分卡片时关闭已展开的上下文卡片", async () => {
+    vi.mocked(authFetch).mockImplementation(async (input) => (
+      String(input) === "/api/billing/me/summary"
+        ? new Response(JSON.stringify({ summary }), { status: 200 })
+        : new Response(null, { status: 404 })
+    ));
+
+    render(<UsageCardsHost />);
+
+    await userEvent.click(screen.getByRole("button", { name: "100" }));
+    expect(screen.getByText("当前上下文")).toBeTruthy();
+
+    await userEvent.click(await screen.findByTitle("组织积分余额"));
+
+    expect(await screen.findByText("组织本月消耗")).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.queryByText("当前上下文")).toBeNull();
+    });
   });
 
   it("计费关闭时不显示入口", async () => {

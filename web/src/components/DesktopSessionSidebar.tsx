@@ -124,6 +124,11 @@ function formatBillingCredits(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+function formatDetailedBillingCredits(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
 function billingModeLabel(mode: string): string {
   switch (mode) {
     case "prepaid":
@@ -787,7 +792,7 @@ function SidebarUserMenuFooter({
                 <span className="mt-3 flex items-center gap-2 text-sm">
                   <EntityIcons.credits className="size-[18px]" aria-hidden="true" />
                   <span className="text-muted-foreground">可用积分</span>
-                  <span className="ml-auto text-lg font-semibold tabular-nums">{formatBillingCredits(visibleBillingSummary.balanceCredits)}</span>
+                  <span className="ml-auto text-lg font-semibold tabular-nums">{formatDetailedBillingCredits(visibleBillingSummary.balanceCredits)}</span>
                   <ChevronRight className="size-4 text-muted-foreground" />
                 </span>
               </button>

@@ -54,7 +54,14 @@ describe("BillingMiniBadge", () => {
     vi.mocked(authFetch).mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/api/billing/me/summary") {
-        return new Response(JSON.stringify({ summary }), { status: 200 });
+        return new Response(JSON.stringify({
+          summary: {
+            ...summary,
+            balanceCredits: 12_800.25,
+            reservedCredits: 10_080.5,
+            currentMonthCreditsUsed: 10_420.75,
+          },
+        }), { status: 200 });
       }
       if (url.includes("/api/billing/sessions/")) {
         return new Response(
@@ -72,8 +79,8 @@ describe("BillingMiniBadge", () => {
       if (url === "/api/billing/me/budget") {
         return new Response(JSON.stringify({
           budget: {
-            monthlyLimitCredits: 2000,
-            monthUsedCredits: 1500,
+            monthlyLimitCredits: 20_000.5,
+            monthUsedCredits: 15_000.25,
             usageRatioBps: 7500,
             status: "attention",
           },
@@ -90,7 +97,11 @@ describe("BillingMiniBadge", () => {
     expect(screen.getByText("已预留")).toBeTruthy();
     expect(screen.getByText("组织本月消耗")).toBeTruthy();
     expect(screen.getByText("我的本月用量")).toBeTruthy();
-    expect(screen.getByText("1,500")).toBeTruthy();
+    expect(screen.getByText("12,800.25")).toBeTruthy();
+    expect(screen.getByText("15,000.25")).toBeTruthy();
+    expect(screen.getByText("20,000.5")).toBeTruthy();
+    expect(screen.getByText("10,080.5")).toBeTruthy();
+    expect(screen.getByText("10,420.75")).toBeTruthy();
     expect(screen.getByText("75% · 需要关注")).toBeTruthy();
     expect(screen.getByText("当前会话（含 7 个子 Agent）")).toBeTruthy();
     expect(screen.getByText("2,737.58")).toBeTruthy();

@@ -77,14 +77,14 @@ describe('contextBreakdown', () => {
       descriptorsByName: descriptors,
     });
 
-    expect(snapshot.breakdown.categories.map((item) => item.key)).toEqual(expect.arrayContaining([
+    expect(snapshot.breakdown.categories.map((item) => item.key)).toEqual([
       'system_prompt',
+      'tool_definitions',
       'memory',
       'history',
       'current_user',
       'attachments',
-      'tool_definitions',
-    ]));
+    ]);
     expect(snapshot.breakdown.categories.find((item) => item.key === 'system_prompt')?.children).toHaveLength(2);
     expect(snapshot.breakdown.categories.find((item) => item.key === 'history')?.children?.map((item) => item.key)).toEqual(expect.arrayContaining([
       'history_user',

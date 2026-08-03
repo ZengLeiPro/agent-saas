@@ -113,6 +113,34 @@ describe("TokenUsageDisplay", () => {
                 }],
               },
               {
+                key: 'tool_definitions',
+                name: '工具定义',
+                tokens: 12_000,
+                color: '#6366F1',
+                accuracy: 'estimated',
+                children: [{
+                  key: 'tool:Read',
+                  name: 'Read',
+                  tokens: 12_000,
+                  color: '#6366F1',
+                  accuracy: 'estimated',
+                }],
+              },
+              {
+                key: 'history',
+                name: '历史消息',
+                tokens: 24_000,
+                color: '#06B6D4',
+                accuracy: 'estimated',
+                children: [{
+                  key: 'history_user',
+                  name: '历史用户消息',
+                  tokens: 24_000,
+                  color: '#3B82F6',
+                  accuracy: 'estimated',
+                }],
+              },
+              {
                 key: 'unattributed',
                 name: '协议及未归因开销',
                 tokens: 4_000,
@@ -139,9 +167,24 @@ describe("TokenUsageDisplay", () => {
     expect(screen.getByText("总量为 provider 实际值 · 构成按估算占比校准")).toBeTruthy();
     expect(screen.getByText("原始估算 60.0k / 校准总量 64.0k")).toBeTruthy();
     expect(screen.getByText("上下文构成")).toBeTruthy();
-    expect(screen.getByText("系统提示语")).toBeTruthy();
+    const systemHeading = screen.getByText("系统提示语");
+    const toolsHeading = screen.getByText("工具定义");
+    const historyHeading = screen.getByText("历史消息");
+    expect(systemHeading.compareDocumentPosition(toolsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(toolsHeading.compareDocumentPosition(historyHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getAllByText("校准估算").length).toBeGreaterThan(0);
+    expect(screen.queryByText("平台基础规则")).toBeNull();
+    expect(screen.queryByText("Read")).toBeNull();
+    expect(screen.queryByText("历史用户消息")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "展开系统提示语明细" }));
     expect(screen.getByText("平台基础规则")).toBeTruthy();
+    expect(screen.queryByText("Read")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "收起系统提示语明细" }));
+    expect(screen.queryByText("平台基础规则")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "展开工具定义明细" }));
+    expect(screen.getByText("Read")).toBeTruthy();
+
     expect(screen.getByText("协议及未归因开销")).toBeTruthy();
     expect(screen.getByText("累计模型用量")).toBeTruthy();
     expect(screen.getByText("思考")).toBeTruthy();

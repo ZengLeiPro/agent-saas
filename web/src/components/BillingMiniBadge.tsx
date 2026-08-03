@@ -45,7 +45,7 @@ function formatCredits(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
-function formatSessionCredits(value: number): string {
+function formatDetailedCredits(value: number): string {
   if (!Number.isFinite(value)) return "0";
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
@@ -244,7 +244,7 @@ export function BillingMiniBadge({
             </div>
             <div className="mt-3 flex items-baseline gap-2">
               <span className="text-2xl font-semibold leading-none tabular-nums">
-                {formatCredits(summary.balanceCredits)}
+                {formatDetailedCredits(summary.balanceCredits)}
               </span>
               <span className="text-xs text-muted-foreground">可用</span>
               {summary.lowBalance && (
@@ -275,10 +275,10 @@ export function BillingMiniBadge({
                   </div>
                 )}
                 <div className="mt-2.5 space-y-1.5 text-[13px]">
-                  <StatRow label="我的本月用量" value={formatCredits(memberBudget.monthUsedCredits)} />
+                  <StatRow label="我的本月用量" value={formatDetailedCredits(memberBudget.monthUsedCredits)} />
                   <StatRow
                     label="我的月度预算"
-                    value={memberBudget.monthlyLimitCredits === null ? "未设置" : formatCredits(memberBudget.monthlyLimitCredits)}
+                    value={memberBudget.monthlyLimitCredits === null ? "未设置" : formatDetailedCredits(memberBudget.monthlyLimitCredits)}
                   />
                 </div>
               </>
@@ -291,9 +291,9 @@ export function BillingMiniBadge({
             <div className="text-[13px] font-medium">公司共享积分池</div>
             <div className="mt-2.5 space-y-1.5 text-[13px]">
               {summary.reservedCredits > 0 && (
-                <StatRow label="已预留" value={formatCredits(summary.reservedCredits)} />
+                <StatRow label="已预留" value={formatDetailedCredits(summary.reservedCredits)} />
               )}
-              <StatRow label="组织本月消耗" value={formatCredits(summary.currentMonthCreditsUsed)} />
+              <StatRow label="组织本月消耗" value={formatDetailedCredits(summary.currentMonthCreditsUsed)} />
             </div>
           </div>
 
@@ -301,7 +301,7 @@ export function BillingMiniBadge({
             <div className="border-t border-border/60 px-3 py-3 text-[13px]">
               <StatRow
                 label={`当前会话${sessionSummary.childSessionCount ? `（含 ${sessionSummary.childSessionCount} 个子 Agent）` : ""}`}
-                value={formatSessionCredits(sessionSummary.creditsUsed)}
+                value={formatDetailedCredits(sessionSummary.creditsUsed)}
               />
             </div>
           )}

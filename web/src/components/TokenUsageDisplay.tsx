@@ -94,23 +94,53 @@ function StackedBar({ segments }: { segments: Array<{ key: string; name: string;
   );
 }
 
+function CategoryRow({ item, depth }: { item: ContextUsageCategory; depth: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasChildren = item.children?.some((child) => child.tokens > 0) ?? false;
+  const label = (
+    <>
+      <span className="size-2 shrink-0 rounded-sm" style={{ backgroundColor: item.color }} />
+      <span className="truncate" title={item.name}>{item.name}</span>
+      {hasChildren && (
+        <ChevronDown
+          className={`size-3.5 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
+          aria-hidden="true"
+        />
+      )}
+      {item.isDeferred && <span className="text-[9px]">deferred</span>}
+      <AccuracyBadge accuracy={item.accuracy} />
+    </>
+  );
+
+  return (
+    <div className="py-1">
+      <div className="flex items-center justify-between gap-2 text-[12px]">
+        {hasChildren ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            className="flex min-w-0 items-center gap-1.5 text-left text-muted-foreground"
+            aria-expanded={expanded}
+            aria-label={`${expanded ? '收起' : '展开'}${item.name}明细`}
+          >
+            {label}
+          </button>
+        ) : (
+          <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">{label}</span>
+        )}
+        <span className="shrink-0 font-mono tabular-nums">{formatTokenCount(item.tokens)}</span>
+      </div>
+      {hasChildren && expanded && <CategoryTree categories={item.children!} depth={depth + 1} />}
+    </div>
+  );
+}
+
 function CategoryTree({ categories, depth = 0 }: { categories: ContextUsageCategory[]; depth?: number }) {
   return (
     <div className={depth > 0 ? "ml-3 border-l border-border/60 pl-2" : ""}>
-      {categories.filter((item) => item.tokens > 0).map((item) => (
-        <div key={item.key} className="py-1">
-          <div className="flex items-center justify-between gap-2 text-[12px]">
-            <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
-              <span className="size-2 shrink-0 rounded-sm" style={{ backgroundColor: item.color }} />
-              <span className="truncate" title={item.name}>{item.name}</span>
-              {item.isDeferred && <span className="text-[9px]">deferred</span>}
-              <AccuracyBadge accuracy={item.accuracy} />
-            </span>
-            <span className="shrink-0 font-mono tabular-nums">{formatTokenCount(item.tokens)}</span>
-          </div>
-          {item.children?.length ? <CategoryTree categories={item.children} depth={depth + 1} /> : null}
-        </div>
-      ))}
+      {categories
+        .filter((item) => item.tokens > 0)
+        .map((item) => <CategoryRow key={item.key} item={item} depth={depth} />)}
     </div>
   );
 }

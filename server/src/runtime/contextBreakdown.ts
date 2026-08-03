@@ -207,11 +207,11 @@ export function buildContextBreakdownSnapshot(params: {
 
   const categories: ContextUsageCategory[] = [
     category('system_prompt', '系统提示语', systemTokens, COLORS.system, systemChildren),
+    ...(toolData.category ? [toolData.category] : []),
     category('memory', '长期记忆', memoryTokens, COLORS.memory),
     category('history', '历史消息', historyTokens, COLORS.assistant, historyChildren),
     category('current_user', '当前用户消息', currentTokens, COLORS.current),
     category('attachments', '附件与视觉输入', attachmentTokens, COLORS.attachment),
-    ...(toolData.category ? [toolData.category] : []),
   ].filter((item) => item.tokens > 0);
 
   const memoryFiles = memoryTokens > 0

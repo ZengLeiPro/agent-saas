@@ -29,8 +29,8 @@ import { PresentationBlocks } from "./presentation/PresentationBlocks";
 //   （活动组/工具块），无框 = 业务叙事」是刻意的视觉分层。
 // - 状态色只落在 icon 与小徽标上，容器一律融入背景。
 // - 归属感由缩进 + 极淡左竖线表达（timeline 语言），不靠边框。
-// - 节内过程（工具/思考/正文）在步骤完成后自动折叠为一行；outcome 与
-//   业务小结（detail/display/依据）常显——折的是过程，不折结论。
+// - 步骤完成后只常显标题、状态与 outcome；业务详情和调试过程按需展开，
+//   避免已完成步骤继续争夺视线。运行中的步骤保持展开。
 // ---------------------------------------------------------------------------
 
 const TERMINAL_META: Partial<Record<BusinessStepEventItem["kind"], {
@@ -68,8 +68,8 @@ function OutcomeLine({ outcome }: { outcome: TodoOutcome }) {
   const meta = OUTCOME_TONE_META[outcome.tone ?? "ok"];
   const Icon = meta.Icon;
   return (
-    <div className="space-y-1">
-      <p className={cn("flex items-start gap-1.5 text-sm leading-5", meta.textClass)}>
+    <div className="space-y-2">
+      <p className={cn("flex items-start gap-2 text-sm leading-6", meta.textClass)}>
         {Icon ? <Icon className={cn("mt-0.5 size-3.5 shrink-0", meta.iconClass)} /> : null}
         <span className="min-w-0 break-words">{outcome.text}</span>
       </p>
@@ -90,11 +90,14 @@ function OutcomeLine({ outcome }: { outcome: TodoOutcome }) {
 }
 
 /** 终态小结正文：detail / display / 依据。 */
+function hasStepSummaryBody(todo: TodoItem): boolean {
+  return !!todo.detail?.length || !!todo.display?.length || !!todo.evidenceRefs?.length;
+}
+
 function StepSummaryBody({ todo }: { todo: TodoItem }) {
-  const hasBody = !!todo.detail?.length || !!todo.display?.length || !!todo.evidenceRefs?.length;
-  if (!hasBody) return null;
+  if (!hasStepSummaryBody(todo)) return null;
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-3">
       {todo.detail?.length ? (
         <PresentationDetail data={{ title: "", detail: todo.detail }} />
       ) : null}
@@ -115,10 +118,32 @@ function StepSummaryBody({ todo }: { todo: TodoItem }) {
   );
 }
 
+function DisclosureButton({
+  label,
+  open,
+  onToggle,
+}: {
+  label: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="flex items-center gap-1 py-0.5 text-xs leading-5 text-muted-foreground transition-colors hover:text-foreground"
+      aria-expanded={open}
+      onClick={onToggle}
+    >
+      <ChevronRight className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
+      {label}
+    </button>
+  );
+}
+
 function PlanTodoRow({ todo, isCurrent }: { todo: TodoItem; isCurrent: boolean }) {
   const active = todo.status === "in_progress";
   return (
-    <li className="flex items-start gap-2 py-0.5">
+    <li className="flex items-start gap-2.5 py-1">
       {todo.status === "completed" ? (
         <CircleCheck className={activityStatusIconClass("success", "mt-0.5 size-3.5 shrink-0")} />
       ) : active && isCurrent ? (
@@ -143,15 +168,15 @@ function PlanTodoRow({ todo, isCurrent }: { todo: TodoItem; isCurrent: boolean }
 function PlanBlock({ event }: { event: BusinessStepEventItem }) {
   const todos = event.todos ?? [];
   return (
-    <section className="my-4" aria-label="业务计划" data-business-step={event.id}>
-      <header className="flex items-center gap-2">
+    <section className="my-6" aria-label="业务计划" data-business-step={event.id}>
+      <header className="flex items-center gap-2.5">
         <ListChecks className="size-4 shrink-0 text-primary" />
         <h3 className="text-sm font-medium text-foreground">业务计划</h3>
         <span className="text-[11px] tabular-nums text-muted-foreground">
           共 {event.stepCount ?? todos.length} 步
         </span>
       </header>
-      <ol className="ml-[7px] mt-1.5 border-l border-border/50 pl-4">
+      <ol className="ml-[7px] mt-2.5 border-l border-border/50 pl-5">
         {todos.map((todo, index) => (
           <PlanTodoRow key={todo.id || `${index}-${todo.content}`} todo={todo} isCurrent={false} />
         ))}
@@ -184,22 +209,29 @@ function StartRow({ event }: { event: BusinessStepEventItem }) {
 function TerminalBlock({ event }: { event: BusinessStepEventItem }) {
   const todo = event.todo;
   const meta = TERMINAL_META[event.kind];
+  const [summaryOpen, setSummaryOpen] = useState(false);
   if (!todo || !meta) return null;
   const { label, tone, Icon } = meta;
+  const hasSummary = hasStepSummaryBody(todo);
 
   return (
-    <section className="my-4" aria-label={`业务步骤${label}`} data-business-step={event.id}>
-      <header className="flex items-start gap-2">
+    <section className="my-6" aria-label={`业务步骤${label}`} data-business-step={event.id}>
+      <header className="flex items-start gap-2.5">
         <Icon className={activityStatusIconClass(tone, "mt-0.5 size-4 shrink-0")} />
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="break-words text-sm font-medium text-foreground">{todo.content}</span>
+          <span className="break-words text-sm font-medium leading-5 text-foreground">{todo.content}</span>
           <span className={activityStatusBadgeClass(tone)}>{label}</span>
         </div>
         <StepBadge index={event.stepIndex} count={event.stepCount} />
       </header>
-      <div className="ml-[7px] mt-2 space-y-2.5 border-l border-border/50 pl-4">
+      <div className="ml-[7px] mt-3 space-y-3 border-l border-border/50 pl-5">
         {todo.outcome ? <OutcomeLine outcome={todo.outcome} /> : null}
-        <StepSummaryBody todo={todo} />
+        {hasSummary ? (
+          <>
+            <DisclosureButton label="业务详情" open={summaryOpen} onToggle={() => setSummaryOpen((open) => !open)} />
+            {summaryOpen ? <StepSummaryBody todo={todo} /> : null}
+          </>
+        ) : null}
       </div>
     </section>
   );
@@ -243,8 +275,7 @@ function countSectionProcessItems(section: BusinessStepSection): number {
 }
 
 /**
- * 业务步骤节：标题行（步骤名 + 状态）+ 过程区（children，完成后自动折叠）
- * + 业务小结（outcome/detail/display/依据，常显）。
+ * 业务步骤节：标题行 + outcome 常显；完成后业务详情与调试过程分别按需展开。
  * children 由 MessageList 用完整消息渲染逻辑生成，本组件只提供节壳。
  */
 export function BusinessStepSectionView({
@@ -261,12 +292,16 @@ export function BusinessStepSectionView({
   const todo = terminal?.todo ?? start.todo;
   const processCount = countSectionProcessItems(section);
   const hasProcess = processCount > 0;
+  const hasSummary = !!terminal?.todo && hasStepSummaryBody(terminal.todo);
 
   const [processOpen, setProcessOpen] = useState(!terminal);
-  // 步骤完成瞬间自动折叠过程；折的是过程，outcome 与小结常显。
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  // 步骤完成瞬间收起过程和详情，只保留可独立理解的 outcome。
   const terminalKey = terminal?.id ?? null;
   useEffect(() => {
-    if (terminalKey) setProcessOpen(false);
+    if (!terminalKey) return;
+    setProcessOpen(false);
+    setSummaryOpen(false);
   }, [terminalKey]);
 
   if (!todo) return <>{children}</>;
@@ -275,11 +310,11 @@ export function BusinessStepSectionView({
 
   return (
     <section
-      className="my-4"
+      className="my-6"
       aria-label={terminalMeta ? `业务步骤${terminalMeta.label}` : "业务步骤"}
       data-business-step-section={section.id}
     >
-      <header className="flex items-start gap-2">
+      <header className="flex items-start gap-2.5">
         {terminalMeta ? (
           <terminalMeta.Icon className={activityStatusIconClass(terminalMeta.tone, "mt-0.5 size-4 shrink-0")} />
         ) : isActive ? (
@@ -290,7 +325,7 @@ export function BusinessStepSectionView({
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
           <span
             className={cn(
-              "break-words text-sm font-medium",
+              "break-words text-sm font-medium leading-5",
               terminal || isActive ? "text-foreground" : "text-muted-foreground",
             )}
           >
@@ -305,33 +340,27 @@ export function BusinessStepSectionView({
         <StepBadge index={terminal?.stepIndex ?? start.stepIndex} count={terminal?.stepCount ?? start.stepCount} />
       </header>
 
-      <div className="ml-[7px] mt-2 space-y-2.5 border-l border-border/50 pl-4">
+      <div className="ml-[7px] mt-3 space-y-3.5 border-l border-border/50 pl-5">
         {terminal?.todo?.outcome ? <OutcomeLine outcome={terminal.todo.outcome} /> : null}
 
-        {hasProcess ? (
-          terminal ? (
-            <div>
-              {debugMode ? (
-                <button
-                  type="button"
-                  className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                  aria-expanded={processOpen}
-                  onClick={() => setProcessOpen((open) => !open)}
-                >
-                  <ChevronRight className={cn("size-3.5 transition-transform", processOpen && "rotate-90")} />
-                  过程 · {processCount} 项
-                </button>
-              ) : (
-                <div className="text-xs text-muted-foreground">过程 · {processCount} 项</div>
-              )}
-              {debugMode && processOpen ? <div className="mt-2">{children}</div> : null}
-            </div>
-          ) : (
-            <div>{children}</div>
-          )
+        {terminal && (hasSummary || (debugMode && hasProcess)) ? (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            {hasSummary ? (
+              <DisclosureButton label="业务详情" open={summaryOpen} onToggle={() => setSummaryOpen((open) => !open)} />
+            ) : null}
+            {debugMode && hasProcess ? (
+              <DisclosureButton
+                label={<>过程 · {processCount} 项</>}
+                open={processOpen}
+                onToggle={() => setProcessOpen((open) => !open)}
+              />
+            ) : null}
+          </div>
         ) : null}
 
-        {terminal?.todo ? <StepSummaryBody todo={terminal.todo} /> : null}
+        {terminal?.todo && summaryOpen ? <StepSummaryBody todo={terminal.todo} /> : null}
+        {terminal && debugMode && processOpen ? <div>{children}</div> : null}
+        {!terminal && hasProcess ? <div>{children}</div> : null}
       </div>
     </section>
   );

@@ -199,7 +199,7 @@ export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: {
   const duration = !isActive ? formatActivityDuration(durationMs) : null;
   const tone = isActive ? 'active' : hasIssue ? 'warning' : 'success';
   return (
-    <div className="my-0.5 flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
+    <div className="my-1 flex items-center gap-2 py-1 text-sm leading-5 text-muted-foreground">
       {isActive ? (
         <StatusIcons.running className={activityStatusIconClass("active", "size-3.5 shrink-0 animate-spin")} />
       ) : hasIssue ? (
@@ -225,7 +225,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
   // 仅调试模式节内平铺：外层「过程」折叠是唯一收纳层，这里直接铺内容。
   if (flat) {
     return (
-      <div className="flex flex-col gap-2.5 [&>*]:my-0">
+      <div className="flex flex-col gap-3 [&>*]:my-0">
         {items.map(item => (
           <ActivityItem key={item.id} item={item} debugMode={debugMode} />
         ))}
@@ -259,7 +259,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
       disabled={!debugMode}
       onToggle={() => setIsExpanded((value) => !value)}
     >
-      <div className="flex flex-col gap-2.5 [&>*]:my-0">
+      <div className="flex flex-col gap-3 [&>*]:my-0">
         {items.map(item => (
           <ActivityItem key={item.id} item={item} debugMode={debugMode} />
         ))}

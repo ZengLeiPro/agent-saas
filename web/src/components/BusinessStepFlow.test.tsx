@@ -77,7 +77,7 @@ describe("BusinessStepFlow", () => {
     expect(screen.getByText("第 2/3 步")).toBeTruthy();
   });
 
-  it("renders the terminal block frameless with outcome, detail and evidence", () => {
+  it("renders the terminal block frameless with outcome and collapsible business details", () => {
     const { container } = render(
       <BusinessStepFlow
         event={event({
@@ -110,6 +110,10 @@ describe("BusinessStepFlow", () => {
     expect(screen.getByText("17/18 张通过，1 张税号过期退回")).toBeTruthy();
     expect(screen.getByText("通过")).toBeTruthy();
     expect(screen.getByText("17")).toBeTruthy();
+    // detail / evidence 不再与结论争夺首屏，只在用户需要时展开。
+    expect(screen.queryByText("订单资料完整")).toBeNull();
+    expect(screen.queryByText("SO-1001")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "业务详情" }));
     expect(screen.getByText("订单资料完整")).toBeTruthy();
     expect(screen.getByText("SO-1001")).toBeTruthy();
     for (const sel of NO_FILL_SELECTORS) expect(container.querySelector(sel)).toBeNull();
@@ -135,7 +139,7 @@ describe("BusinessStepSectionView", () => {
     expect(container.querySelector(".animate-spin")).toBeTruthy();
   });
 
-  it("collapses process but keeps outcome and summary visible once terminal", () => {
+  it("keeps only outcome visible and collapses business details and process once terminal", () => {
     const terminal = event({
       kind: "complete",
       todo: {
@@ -155,14 +159,15 @@ describe("BusinessStepSectionView", () => {
       </BusinessStepSectionView>,
     );
 
-    // 过程默认折叠为一行；outcome 与小结常显——折的是过程，不折结论。
+    // 首屏只有 outcome；业务详情和调试过程分别按需展开。
     expect(screen.queryByTestId("process-content")).toBeNull();
     expect(screen.getByText(/过程 ·/)).toBeTruthy();
     expect(screen.getByText("全部通过")).toBeTruthy();
-    expect(screen.getByText("共核验 12 项字段")).toBeTruthy();
+    expect(screen.queryByText("共核验 12 项字段")).toBeNull();
     expect(screen.getByText("已完成")).toBeTruthy();
 
-    // 点开过程
+    fireEvent.click(screen.getByRole("button", { name: "业务详情" }));
+    expect(screen.getByText("共核验 12 项字段")).toBeTruthy();
     fireEvent.click(screen.getByText(/过程 ·/));
     expect(screen.getByTestId("process-content")).toBeTruthy();
   });

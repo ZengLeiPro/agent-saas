@@ -51,7 +51,7 @@ export function AgentActivityShell({
       <StatusIcon state={state} />
       <span className="flex min-w-0 items-baseline gap-2">
         <span className={cn(
-          'min-w-0 truncate text-sm text-muted-foreground',
+          'min-w-0 truncate text-sm leading-5 text-muted-foreground',
           !disabled && 'transition-colors group-hover:text-foreground',
         )}>
           {title}
@@ -65,16 +65,16 @@ export function AgentActivityShell({
   );
 
   return (
-    <div className={cn('my-2', className)}>
-      <div className="flex items-center gap-1.5">
+    <div className={cn('my-3', className)}>
+      <div className="flex items-center gap-2">
         {disabled ? (
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 py-0.5 text-left">{content}</div>
+          <div className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left">{content}</div>
         ) : (
           <button
             type="button"
             onClick={onToggle}
             aria-expanded={expanded}
-            className="group flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 py-0.5 text-left"
+            className="group flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-1 text-left"
           >
             {content}
           </button>
@@ -82,7 +82,7 @@ export function AgentActivityShell({
         {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
       </div>
       {expanded && children ? (
-        <div className="ml-[7px] mt-1.5 border-l border-border/50 py-0.5 pl-4">{children}</div>
+        <div className="ml-[7px] mt-2.5 border-l border-border/50 py-1 pl-5">{children}</div>
       ) : null}
     </div>
   );

@@ -127,12 +127,12 @@ function SimpleTodoItem({ todo, runActive }: { todo: TodoItem; runActive: boolea
 
   return (
     <li className="flex min-h-7 items-start gap-2">
-      <TodoStatusIcon status={todo.status} runActive={runActive} className="mt-0.5 size-3.5" />
+      <TodoStatusIcon status={todo.status} runActive={runActive} className="mt-[3px] size-3.5" />
       <span
         className={cn(
-          "min-w-0 flex-1 break-words leading-6",
+          "min-w-0 flex-1 break-words leading-5",
           activityStatusTextClass(tone),
-          todo.status === "completed" && "line-through opacity-75",
+          todo.status === "completed" && "opacity-75",
           active && "font-medium",
         )}
         title={todo.content}

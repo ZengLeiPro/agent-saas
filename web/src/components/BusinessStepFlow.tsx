@@ -30,8 +30,8 @@ import { statVerdict, visibleOutcomeStats, type OutcomeStat } from "./detailSema
 //   （活动组/工具块），无框 = 业务叙事」是刻意的视觉分层。
 // - 状态色只落在 icon 与小徽标上，容器一律融入背景。
 // - 归属感由缩进 + 极淡左竖线表达（timeline 语言），不靠边框。
-// - 步骤完成后只常显标题、状态与 outcome；业务详情和调试过程按需展开，
-//   避免已完成步骤继续争夺视线。运行中的步骤保持展开。
+// - 步骤完成后常显标题、状态、outcome 与业务详情；调试过程仍按需展开。
+//   运行中的步骤保持展开。
 //
 // 内容纪律（08-03 二轮：样式对齐 demo + 槽位去重）：
 // - 「业务详情」用白卡键值（PresentationDetail variant="card"）：白底 + 细行分隔
@@ -234,7 +234,7 @@ function StartRow({ event }: { event: BusinessStepEventItem }) {
 function TerminalBlock({ event }: { event: BusinessStepEventItem }) {
   const todo = event.todo;
   const meta = TERMINAL_META[event.kind];
-  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(true);
   if (!todo || !meta) return null;
   const { label, tone, Icon } = meta;
   const hasSummary = hasStepSummaryBody(todo);
@@ -305,7 +305,7 @@ function countSectionProcessItems(section: BusinessStepSection): number {
 }
 
 /**
- * 业务步骤节：标题行 + outcome 常显；完成后业务详情与调试过程分别按需展开。
+ * 业务步骤节：标题行 + outcome 常显；完成后业务详情默认展开，调试过程按需展开。
  * children 由 MessageList 用完整消息渲染逻辑生成，本组件只提供节壳。
  */
 export function BusinessStepSectionView({
@@ -325,13 +325,13 @@ export function BusinessStepSectionView({
   const hasSummary = !!terminal?.todo && hasStepSummaryBody(terminal.todo);
 
   const [processOpen, setProcessOpen] = useState(!terminal);
-  const [summaryOpen, setSummaryOpen] = useState(false);
-  // 步骤完成瞬间收起过程和详情，只保留可独立理解的 outcome。
+  const [summaryOpen, setSummaryOpen] = useState(true);
+  // 步骤完成瞬间收起调试过程，但让业务详情直接可见。
   const terminalKey = terminal?.id ?? null;
   useEffect(() => {
     if (!terminalKey) return;
     setProcessOpen(false);
-    setSummaryOpen(false);
+    setSummaryOpen(true);
   }, [terminalKey]);
 
   if (!todo) return <>{children}</>;

@@ -38,6 +38,27 @@ describe("TodoPanel", () => {
     expect(panelSurface?.classList.contains("rounded-b-none")).toBe(true);
   });
 
+  it("keeps completed task text clean and vertically aligns it with the check icon", () => {
+    const completedMessage: MessageItem = {
+      id: "todo-completed",
+      type: "tool_use",
+      toolName: "TodoWrite",
+      toolId: "tool-completed",
+      toolInput: JSON.stringify({
+        todos: [{ content: "完成盘点", status: "completed" }],
+      }),
+    };
+    const { container } = render(<TodoPanel messages={[completedMessage]} runActive={false} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "展开任务清单" }));
+    const taskText = screen.getByText("完成盘点");
+    const taskIcon = container.querySelector("li svg");
+
+    expect(taskText.classList.contains("line-through")).toBe(false);
+    expect(taskText.classList.contains("leading-5")).toBe(true);
+    expect(taskIcon?.classList.contains("mt-[3px]")).toBe(true);
+  });
+
   it("points toward the action for the bottom-anchored panel", () => {
     render(<TodoPanel messages={[todoMessage()]} runActive />);
 

@@ -48,6 +48,15 @@ describe("ChatInput 布局", () => {
     expect(inputCard?.classList.contains("z-10")).toBe(true);
   });
 
+  it("为输入文字保留更舒展的上下间距", () => {
+    renderInput();
+
+    const textarea = screen.getByPlaceholderText("输入消息...");
+    expect(textarea.classList.contains("pt-3.5")).toBe(true);
+    expect(textarea.classList.contains("pb-2")).toBe(true);
+    expect(textarea.style.minHeight).toBe("56px");
+  });
+
   it("空输入时保留禁用的发送按钮", () => {
     renderInput();
 

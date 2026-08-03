@@ -386,6 +386,8 @@ export const MessageList = memo(function MessageList({
     anchorKey: string;
     screenOffset: number;
     firstKey?: string;
+    scrollTop: number;
+    scrollHeight: number;
   } | null>(null);
   const handleLoadEarlier = useCallback(() => {
     const el = internalContainerRef.current;
@@ -399,6 +401,8 @@ export const MessageList = memo(function MessageList({
         anchorKey,
         screenOffset: virtualLayout.offsets[anchorIndex] - localStart,
         firstKey: virtualLayout.keys[0],
+        scrollTop: el.scrollTop,
+        scrollHeight: el.scrollHeight,
       };
     }
     // 只触发不等待：历史分页不能阻塞滚动处理或其他界面任务。
@@ -441,12 +445,18 @@ export const MessageList = memo(function MessageList({
     } else if (previous !== virtualLayout && previous.keys.length > 0) {
       const pendingPrepend = prependScrollRef.current;
       const didPrepend = pendingPrepend
-        && pendingPrepend.firstKey !== virtualLayout.keys[0]
-        && virtualLayout.indexByKey.has(pendingPrepend.anchorKey);
+        && pendingPrepend.firstKey !== virtualLayout.keys[0];
       if (didPrepend) {
-        const nextIndex = virtualLayout.indexByKey.get(pendingPrepend.anchorKey)!;
-        const nextLocalStart = virtualLayout.offsets[nextIndex] - pendingPrepend.screenOffset;
-        el.scrollTop = body.offsetTop + nextLocalStart;
+        const nextIndex = virtualLayout.indexByKey.get(pendingPrepend.anchorKey);
+        if (nextIndex !== undefined) {
+          const nextLocalStart = virtualLayout.offsets[nextIndex] - pendingPrepend.screenOffset;
+          el.scrollTop = body.offsetTop + nextLocalStart;
+        } else {
+          // 长任务的连续工具活动会跨分页边界重新分组，导致原虚拟行 key 消失。
+          // 此时用实际新增滚动高度补偿，保持用户眼前的内容位置不变。
+          const addedHeight = el.scrollHeight - pendingPrepend.scrollHeight;
+          el.scrollTop = Math.max(0, pendingPrepend.scrollTop + addedHeight);
+        }
         prependScrollRef.current = null;
       } else {
         const previousLocalStart = Math.max(0, el.scrollTop - body.offsetTop);

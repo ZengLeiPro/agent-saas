@@ -42,7 +42,7 @@ interface ChatInputProps {
   attachedTopSlot?: React.ReactNode;
 }
 
-const MIN_HEIGHT = 52;
+const MIN_HEIGHT = 56;
 const MAX_HEIGHT = 200;
 
 function formatDuration(seconds: number): string {
@@ -374,7 +374,7 @@ export function ChatInput({
                 rows={1}
                 disabled={isDisabled}
                 className={cn(
-                  "w-full bg-transparent px-4 pt-3 pb-1 text-sm",
+                  "w-full bg-transparent px-4 pt-3.5 pb-2 text-sm",
                   "placeholder:text-muted-foreground/60",
                   "focus:outline-none",
                   "disabled:cursor-not-allowed disabled:text-foreground disabled:placeholder:text-muted-foreground/60",

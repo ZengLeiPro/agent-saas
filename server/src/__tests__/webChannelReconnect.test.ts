@@ -590,6 +590,78 @@ describe('WebChannel active stream reconnect', () => {
     expect((channel as any).eventBufferStore.isActive('session-live')).toBe(true);
   });
 
+  it('durable replay without a cursor is limited to the active run', async () => {
+    const channel = createChannel();
+    const ws = new FakeWebSocket();
+    const events = [
+      {
+        id: 'event-old-answer',
+        timestamp: new Date().toISOString(),
+        type: 'assistant_message',
+        sessionId: 'session-durable',
+        runId: 'run-old',
+        content: '不应再次出现的历史回答',
+        streamed: true,
+      },
+      {
+        id: 'event-current-answer',
+        timestamp: new Date().toISOString(),
+        type: 'assistant_message',
+        sessionId: 'session-durable',
+        runId: 'run-current',
+        content: '当前轮回答',
+        streamed: true,
+      },
+    ];
+    const listPage = vi.fn(async (_sessionId: string, options: { runId?: string }) => ({
+      events: options.runId ? events.filter((event) => event.runId === options.runId) : events,
+      hasMore: false,
+    }));
+
+    await (channel as any).replayDurableRuntimeEvents(
+      {
+        ws,
+        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        alive: true,
+        lastActivityAt: Date.now(),
+      },
+      'session-durable',
+      { listPage },
+      { lastEventId: 0, activeRunId: 'run-current' },
+    );
+
+    expect(listPage).toHaveBeenCalledWith('session-durable', {
+      afterCursor: undefined,
+      limit: 200,
+      runId: 'run-current',
+    });
+    expect(JSON.stringify(ws.sent)).toContain('当前轮回答');
+    expect(JSON.stringify(ws.sent)).not.toContain('不应再次出现的历史回答');
+  });
+
+  it('durable replay with a cursor remains session-wide after that cursor', async () => {
+    const channel = createChannel();
+    const ws = new FakeWebSocket();
+    const listPage = vi.fn(async () => ({ events: [], hasMore: false }));
+
+    await (channel as any).replayDurableRuntimeEvents(
+      {
+        ws,
+        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        alive: true,
+        lastActivityAt: Date.now(),
+      },
+      'session-durable',
+      { listPage },
+      { lastEventId: 12, lastEventCursor: '1581', activeRunId: 'run-current' },
+    );
+
+    expect(listPage).toHaveBeenCalledWith('session-durable', {
+      afterCursor: '1581',
+      limit: 200,
+    });
+  });
+
   it('serializes concurrent resume on the same ws so only one buffer listener survives', async () => {
     // 前端重连时两个 onStateChange 监听器会在同一 tick 各对当前会话发一次 resume。
     // 若 handleResumeAsync 并发在 await 处交错，会残留两个 EventBuffer listener，

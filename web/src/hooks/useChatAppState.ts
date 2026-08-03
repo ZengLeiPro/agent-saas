@@ -443,9 +443,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       | 'completed' | 'failed' | 'cancelled' | 'orphaned';
     streamId?: string;
     runId?: string;
-    /** 已成功接收的最大事件 id; resume 时作为增量起点 */
+    /** 当前 run 已成功接收的最大 EventBuffer id；新 run 必须重置 */
     lastEventId?: number;
-    /** 服务端时序游标, 与 lastEventId 配合, 跨进程兼容 */
+    /** 会话级 durable 时序游标；跨 run 保留，跨进程增量回放以它为准 */
     lastEventCursor?: string | null;
     /** 当前 WS 是否订阅着这条流（瞬时；不持久化语义） */
     attached: boolean;
@@ -680,7 +680,16 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           }
           snapshotStatus.set(item.sessionId, item.active);
           if (!item.active) {
-            activeRunsBySession.current.delete(item.sessionId);
+            const existing = activeRunsBySession.current.get(item.sessionId);
+            if (existing?.lastEventCursor) {
+              activeRunsBySession.current.set(item.sessionId, {
+                status: 'idle',
+                lastEventCursor: existing.lastEventCursor,
+                attached: false,
+              });
+            } else {
+              activeRunsBySession.current.delete(item.sessionId);
+            }
             continue;
           }
           const existing = activeRunsBySession.current.get(item.sessionId);
@@ -735,7 +744,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           streamId: null,
           runId: null,
           lastEventId: null,
-          lastEventCursor: null,
           attached: false,
         });
       }
@@ -744,7 +752,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         runIdRef.current = null;
         streamNonceRef.current += 1;
         lastEventIdRef.current = null;
-        lastEventCursorRef.current = null;
         finalizeRunningSubagents(msgRef.current);
         removeRuntimeStatusMessages(msgRef.current);
         setLoading(false);
@@ -1403,7 +1410,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       streamId: null,
       runId: null,
       lastEventId: null,
-      lastEventCursor: null,
       attached: false,
     });
 
@@ -1434,7 +1440,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     streamIdRef.current = null;
     runIdRef.current = null;
     lastEventIdRef.current = null;
-    lastEventCursorRef.current = null;
     setLoading(false);
     setStopping(false);
     sessionRef.current.setContextUsage(null);
@@ -1857,7 +1862,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
           wsUserMsgIndexRef.current = -1;
           lastEventIdRef.current = null;
-          lastEventCursorRef.current = null;
           wsAttachedRef.current = true;
           setLoading(true);
           dispatchConnection('connect');
@@ -1865,7 +1869,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
             action: 'resume',
             sessionId: data.sessionId,
             lastEventId: 0,
-            lastEventCursor: null,
+            lastEventCursor: lastEventCursorRef.current,
             skipReplay: false,
           });
         }
@@ -2287,7 +2291,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       wsLatestSessionIdRef.current = { value: activeSessionId };
       wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
       lastEventIdRef.current = null;
-      lastEventCursorRef.current = null;
       streamNonceRef.current += 1;
       wsAttachedRef.current = true;
     }
@@ -2406,7 +2409,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     wsLatestSessionIdRef.current = { value: activeSessionId };
     wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
     lastEventIdRef.current = null;
-        lastEventCursorRef.current = null;
     streamNonceRef.current += 1;
     wsAttachedRef.current = true;
     wsUserMsgIndexRef.current = -1;

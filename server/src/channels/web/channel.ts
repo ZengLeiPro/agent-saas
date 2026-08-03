@@ -1947,7 +1947,10 @@ export class WebChannel implements BaseChannel {
     if (!options.skipReplay) {
       const store = await this.getRuntimeEventStoreForSession(sessionId);
       if (store) {
-        await this.replayDurableRuntimeEvents(client, sessionId, store, options);
+        await this.replayDurableRuntimeEvents(client, sessionId, store, {
+          ...options,
+          activeRunId: activeRun.runId,
+        });
       }
     }
     const unsubscribe = this.eventBufferStore.subscribe(
@@ -1978,13 +1981,20 @@ export class WebChannel implements BaseChannel {
     client: WsClient,
     sessionId: string,
     store: EventStore,
-    options: { lastEventId?: number; lastEventCursor?: string },
+    options: { lastEventId?: number; lastEventCursor?: string; activeRunId: string },
   ): Promise<void> {
     let replayId = options.lastEventId ?? 0;
-    if (store.listPage && options.lastEventCursor !== undefined && options.lastEventCursor !== null) {
-      let cursor: string | undefined = options.lastEventCursor || undefined;
+    const hasDurableCursor = Boolean(options.lastEventCursor);
+    if (store.listPage) {
+      let cursor: string | undefined = hasDurableCursor ? options.lastEventCursor : undefined;
       while (true) {
-        const page = await store.listPage(sessionId, { afterCursor: cursor, limit: 200 });
+        const page = await store.listPage(sessionId, {
+          afterCursor: cursor,
+          limit: 200,
+          // durable cursor 是会话级游标；没有游标时绝不能从会话开头回放，
+          // 否则重连会把历次 Agent 回复全部追加到当前消息流。
+          ...(!hasDurableCursor ? { runId: options.activeRunId } : {}),
+        });
         for (const event of page.events) {
           const eventCursor = getDurableEventCursor(event);
           for (const data of projectRuntimePlatformEvent(event, { expandStreamed: true }).events) {
@@ -1997,7 +2007,12 @@ export class WebChannel implements BaseChannel {
       }
       return;
     }
-    const events = await store.list(sessionId);
+    // 兼容没有分页能力的自定义 EventStore，同样把最坏影响限制在当前 run。
+    const events = store.listByRun
+      ? await store.listByRun(sessionId, options.activeRunId)
+      : (await store.list(sessionId)).filter(
+          (event) => 'runId' in event && event.runId === options.activeRunId,
+        );
     for (const event of events) {
       const eventCursor = getDurableEventCursor(event);
       for (const data of projectRuntimePlatformEvent(event, { expandStreamed: true }).events) {

@@ -15,7 +15,7 @@
 import { describe, expect, it } from 'vitest';
 import { groupMessages } from './groupMessages';
 import type { BusinessStepEventItem } from './extractTodos';
-import type { MessageItem, ActivityGroup } from '../types/message';
+import type { MessageItem, ActivityGroup, BusinessStepSection } from '../types/message';
 
 const user = (id: string): MessageItem => ({ id, type: 'user', content: 'hi' });
 const text = (id: string): MessageItem => ({ id, type: 'text', content: 'answer' });
@@ -78,7 +78,7 @@ describe('groupMessages', () => {
     expect((result[0] as ActivityGroup).items.map(i => i.id)).toEqual(['t1', 'bare']);
   });
 
-  it('Business TodoWrite 差分成时间线事件：plan 在首快照位置，终态事件在后续快照位置', () => {
+  it('Business TodoWrite 差分成时间线事件：plan+start 在首快照位置，终态事件在后续快照位置', () => {
     const start = businessTodo('todo-start', [
       { id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' },
     ]);
@@ -93,15 +93,16 @@ describe('groupMessages', () => {
 
     const result = groupMessages([user('user-1'), start, read, update, text('answer')], false);
 
-    // 事件按时间线出现：plan（首快照位置）→ 工具活动组（不被吸收）→ complete（终态快照位置）→ 正文
+    // 扁平事件流（非 sectioning）：plan+start（首快照位置）→ 工具活动组（不被吸收）→ complete → 正文
     expect(result.map(item => item.type)).toEqual([
-      'user', 'business_step', 'activity_group', 'business_step', 'text',
+      'user', 'business_step', 'business_step', 'activity_group', 'business_step', 'text',
     ]);
     const plan = result[1] as BusinessStepEventItem;
     expect(plan).toMatchObject({ kind: 'plan', anchorMessageId: 'todo-start' });
-    const activity = result[2] as ActivityGroup;
+    expect(result[2]).toMatchObject({ kind: 'start' });
+    const activity = result[3] as ActivityGroup;
     expect(activity.items.map(i => i.id)).toEqual(['read-1']);
-    const complete = result[3] as BusinessStepEventItem;
+    const complete = result[4] as BusinessStepEventItem;
     expect(complete).toMatchObject({
       kind: 'complete',
       anchorMessageId: 'todo-update',
@@ -115,11 +116,11 @@ describe('groupMessages', () => {
     ]);
 
     const normal = groupMessages([snapshot], false);
-    expect(normal.map(item => item.type)).toEqual(['business_step']);
+    expect(normal.map(item => item.type)).toEqual(['business_step', 'business_step']);
 
     const debug = groupMessages([snapshot], false, { debugMode: true });
-    expect(debug.map(item => item.type)).toEqual(['business_step', 'activity_group']);
-    expect((debug[1] as ActivityGroup).items.map(i => i.id)).toEqual(['todo-1']);
+    expect(debug.map(item => item.type)).toEqual(['business_step', 'business_step', 'activity_group']);
+    expect((debug[2] as ActivityGroup).items.map(i => i.id)).toEqual(['todo-1']);
   });
 
   it('task-only TodoWrite 从主流隐藏且不产生事件（总览由 TodoPanel 承载）', () => {
@@ -139,9 +140,11 @@ describe('groupMessages', () => {
       [thinking('t1'), snapshot, thinking('t2'), tool('shell-1')],
       false,
     );
-    expect(result.map(item => item.type)).toEqual(['activity_group', 'business_step', 'activity_group']);
+    expect(result.map(item => item.type)).toEqual([
+      'activity_group', 'business_step', 'business_step', 'activity_group',
+    ]);
     expect((result[0] as ActivityGroup).items.map(i => i.id)).toEqual(['t1']);
-    expect((result[2] as ActivityGroup).items.map(i => i.id)).toEqual(['t2', 'shell-1']);
+    expect((result[3] as ActivityGroup).items.map(i => i.id)).toEqual(['t2', 'shell-1']);
   });
 
   it('只有非活动消息时不产生任何 activity_group', () => {
@@ -176,5 +179,132 @@ describe('groupMessages', () => {
   it('最后一组 + loading=false 且无流式项时 isActive=false', () => {
     const result = groupMessages([tool('a', { resultReady: true })], false);
     expect((result[0] as ActivityGroup).isActive).toBe(false);
+  });
+});
+
+describe('groupMessages sectioning（章节化）', () => {
+  const opts = { sectioning: true };
+  const twoStepPlan = () => businessTodo('todo-plan', [
+    { id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' },
+    { id: 'write', kind: 'business', content: '写入结果', status: 'pending' },
+  ]);
+  const finishFirstStartSecond = () => businessTodo('todo-next', [
+    {
+      id: 'verify', kind: 'business', content: '核验订单', status: 'completed',
+      outcome: { text: '17/18 张通过，1 张退回', tone: 'warn' },
+    },
+    { id: 'write', kind: 'business', content: '写入结果', status: 'in_progress' },
+  ]);
+
+  it('start→终态之间的内容按原时间顺序收编进步骤节，内容不搬运', () => {
+    const result = groupMessages([
+      user('user-1'),
+      twoStepPlan(),
+      thinking('th-1'),
+      tool('read-1', { toolName: 'Read', executionStatus: 'completed' }),
+      text('step1-note'),
+      finishFirstStartSecond(),
+      tool('shell-1', { toolName: 'Shell' }),
+      text('final-answer'),
+    ], false, opts);
+
+    // plan 在顶层；第 1 步节含（活动组+text），带 terminal；第 2 步节开放，含后续活动组与 text。
+    expect(result.map(item => item.type)).toEqual([
+      'user', 'business_step', 'business_step_section', 'business_step_section',
+    ]);
+    const section1 = result[2] as BusinessStepSection;
+    expect(section1.start).toMatchObject({ kind: 'start', todo: { id: 'verify' } });
+    expect(section1.terminal).toMatchObject({
+      kind: 'complete',
+      todo: { id: 'verify', outcome: { text: '17/18 张通过，1 张退回', tone: 'warn' } },
+    });
+    expect(section1.items.map(item => item.type)).toEqual(['activity_group', 'text']);
+    expect((section1.items[0] as ActivityGroup).items.map(i => i.id)).toEqual(['th-1', 'read-1']);
+
+    const section2 = result[3] as BusinessStepSection;
+    expect(section2.start).toMatchObject({ kind: 'start', todo: { id: 'write' } });
+    expect(section2.terminal).toBeUndefined();
+    expect(section2.items.map(item => item.type)).toEqual(['activity_group', 'text']);
+  });
+
+  it('开放节只有在流末尾且 run 活跃时才是 isActive', () => {
+    const messages = [
+      user('user-1'),
+      twoStepPlan(),
+      tool('read-1', { toolName: 'Read' }),
+    ];
+    const active = groupMessages(messages, true, opts);
+    const openSection = active.at(-1) as BusinessStepSection;
+    expect(openSection.type).toBe('business_step_section');
+    expect(openSection.isActive).toBe(true);
+
+    const idle = groupMessages(messages, false, opts);
+    expect((idle.at(-1) as BusinessStepSection).isActive).toBe(false);
+  });
+
+  it('用户消息封闭开放节（被打断的节 isActive=false）', () => {
+    const result = groupMessages([
+      user('user-1'),
+      twoStepPlan(),
+      tool('read-1', { toolName: 'Read' }),
+      user('user-2'),
+    ], true, opts);
+
+    expect(result.map(item => item.type)).toEqual([
+      'user', 'business_step', 'business_step_section', 'user',
+    ]);
+    expect((result[2] as BusinessStepSection).isActive).toBe(false);
+  });
+
+  it('终态封节后的内容留在节外（最终总结不被折进步骤）', () => {
+    const result = groupMessages([
+      user('user-1'),
+      businessTodo('todo-1', [
+        { id: 'only', kind: 'business', content: '唯一步骤', status: 'in_progress' },
+      ]),
+      tool('read-1', { toolName: 'Read' }),
+      businessTodo('todo-2', [
+        { id: 'only', kind: 'business', content: '唯一步骤', status: 'completed' },
+      ]),
+      text('final-summary'),
+    ], false, opts);
+
+    expect(result.map(item => item.type)).toEqual([
+      'user', 'business_step', 'business_step_section', 'text',
+    ]);
+    const section = result[2] as BusinessStepSection;
+    expect(section.terminal).toMatchObject({ kind: 'complete' });
+    expect(section.items.map(item => item.type)).toEqual(['activity_group']);
+  });
+
+  it('没有对应开放节的终态事件独立渲染（不吞其他步骤的节）', () => {
+    // waiting 步骤恢复前，另一个步骤被直接标完成：complete 与开放节 key 不匹配。
+    const result = groupMessages([
+      businessTodo('t1', [
+        { id: 'a', kind: 'business', content: 'A', status: 'in_progress' },
+        { id: 'b', kind: 'business', content: 'B', status: 'pending' },
+      ]),
+      businessTodo('t2', [
+        { id: 'a', kind: 'business', content: 'A', status: 'in_progress' },
+        { id: 'b', kind: 'business', content: 'B', status: 'completed' },
+      ]),
+    ], false, opts);
+
+    // b 的 complete 没有自己的节：A 节被封（无 terminal），complete 独立出现。
+    const types = result.map(item => item.type);
+    expect(types).toEqual(['business_step', 'business_step_section', 'business_step']);
+    expect((result[1] as BusinessStepSection).terminal).toBeUndefined();
+    expect(result[2]).toMatchObject({ kind: 'complete', todo: { id: 'b' } });
+  });
+
+  it('sectioning 关闭时保持扁平事件流（mobile 兼容）', () => {
+    const result = groupMessages([
+      user('user-1'),
+      twoStepPlan(),
+      tool('read-1', { toolName: 'Read' }),
+      finishFirstStartSecond(),
+    ], false);
+
+    expect(result.every(item => item.type !== 'business_step_section')).toBe(true);
   });
 });

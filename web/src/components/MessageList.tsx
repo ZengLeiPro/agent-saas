@@ -5,7 +5,7 @@ import { MessageItem as MessageItemType, type RenderItem } from './types';
 import { MessageItemWithDisplay as MessageItem } from './MessageItemWithDisplay';
 import type { TtsProps } from './MessageItem';
 import { ActivityGroupBlock } from './ActivityGroupBlock';
-import { BusinessStepFlow } from './BusinessStepFlow';
+import { BusinessStepFlow, BusinessStepSectionView } from './BusinessStepFlow';
 import { CompactionDivider } from './CompactionDivider';
 import { asCompactionItem } from '@/lib/compaction';
 import {
@@ -114,6 +114,10 @@ function getFirstTimestamp(items: RenderItem[]): number | undefined {
       for (const sub of item.items) {
         if ('timestamp' in sub && sub.timestamp) return sub.timestamp;
       }
+    }
+    if (item.type === 'business_step_section') {
+      const nested = getFirstTimestamp(item.items);
+      if (nested) return nested;
     }
   }
   return undefined;
@@ -265,7 +269,7 @@ export const MessageList = memo(function MessageList({
   const voicePlayer = useVoicePlayer();
   const { user } = useAuth();
   const debugMode = debugModeOverride ?? user?.debugMode === true;
-  const groupedMessages = useGroupedMessages(messages, loading, debugMode);
+  const groupedMessages = useGroupedMessages(messages, loading, { debugMode, sectioning: true });
   const bubbleItems = useMemo(() => groupIntoBubbles(groupedMessages), [groupedMessages]);
   const lastRenderIdx = bubbleItems.length - 1;
   const bubbleKeys = useMemo(() => bubbleItems.map(getBubbleVirtualKey), [bubbleItems]);
@@ -526,14 +530,29 @@ export const MessageList = memo(function MessageList({
   // 最后一个 activity_group 的 id（用于默认展开）
   const lastActivityGroupId = useMemo(() => {
     // Search through bubble items; activity_groups can be inside ai_bubble groups
+    // and business step sections (章节化后活动组可能嵌在步骤节内).
+    const findInList = (items: RenderItem[]): string | null => {
+      for (let j = items.length - 1; j >= 0; j--) {
+        const sub = items[j];
+        if (sub.type === 'activity_group') return sub.id;
+        if (sub.type === 'business_step_section') {
+          const nested = findInList(sub.items);
+          if (nested) return nested;
+        }
+      }
+      return null;
+    };
     for (let i = bubbleItems.length - 1; i >= 0; i--) {
       const item = bubbleItems[i];
       if (item.type === 'ai_bubble') {
-        for (let j = item.items.length - 1; j >= 0; j--) {
-          if (item.items[j].type === 'activity_group') return item.items[j].id;
-        }
+        const found = findInList(item.items);
+        if (found) return found;
       }
       if (item.type === 'activity_group') return item.id;
+      if (item.type === 'business_step_section') {
+        const found = findInList(item.items);
+        if (found) return found;
+      }
     }
     return null;
   }, [bubbleItems]);
@@ -611,6 +630,65 @@ export const MessageList = memo(function MessageList({
           >
           {visibleRows.map(({ item, key: virtualKey, index: ri, top }) => {
           const showHeader = headerItemIds.has(item.id);
+
+          // AI 流内子项渲染：ai_bubble 内与业务步骤节内共用（节内过程 = 完整消息渲染，非降级视图）。
+          const renderFlowItem = (sub: RenderItem): React.ReactNode => {
+            if (sub.type === 'business_step_section') {
+              return (
+                <ErrorBoundary key={sub.id} inline>
+                  <BusinessStepSectionView section={sub}>
+                    {sub.items.map((child) => renderFlowItem(child))}
+                  </BusinessStepSectionView>
+                </ErrorBoundary>
+              );
+            }
+            if (sub.type === 'business_step') {
+              return (
+                <ErrorBoundary key={sub.id} inline>
+                  <BusinessStepFlow event={sub} />
+                </ErrorBoundary>
+              );
+            }
+            // 双重保险:此层理论上不该出现 file_download。
+            // - [FILE] 内联(无 artifactId): MessageItem 在 text 内联展开,顶层跳过。
+            // - legacy artifact_created 卡片(有 artifactId): groupIntoBubbles 已独立提到顶层。
+            if (sub.type === 'file_download' && sub.artifactId) return null;
+            if (sub.type === 'activity_group') {
+              return (
+                <ErrorBoundary key={sub.id} inline>
+                  <ActivityGroupBlock items={sub.items} isActive={sub.isActive} isLast={sub.id === lastActivityGroupId} debugMode={debugMode} />
+                </ErrorBoundary>
+              );
+            }
+            const origIndex = msgIndexMap.get(sub.id) ?? 0;
+            const msgKey = `msg-${origIndex}`;
+            const ttsState = ttsStateMap?.[msgKey] || 'idle';
+            const ttsIsActive = tts?.activeKey === msgKey;
+            const voicePlayState = sub.type === 'user-voice'
+              ? voicePlayer.getState(`voice-msg-${sub.id}`)
+              : undefined;
+            return (
+              <ErrorBoundary key={sub.id} inline>
+                <MessageItem
+                  message={sub}
+                  index={origIndex}
+                  onPermissionResponse={onPermissionResponse}
+                  onAskUserResponse={onAskUserResponse}
+                  onRetry={onRetry}
+                  onFork={onFork}
+                  isFirstUser={false}
+                  isLoading={loading}
+                  tts={tts}
+                  ttsState={ttsState}
+                  ttsIsActive={ttsIsActive}
+                  voicePlayer={voicePlayer}
+                  voicePlayState={voicePlayState}
+                  debugMode={debugMode}
+                />
+              </ErrorBoundary>
+            );
+          };
+
           const rowContent = (() => {
 
           // --- AI Bubble Group ---
@@ -627,59 +705,17 @@ export const MessageList = memo(function MessageList({
                 )}
                 <div className="py-2">
                   {item.items.map((sub) => {
-                    if (sub.type === 'business_step') {
-                      return (
-                        <ErrorBoundary key={sub.id} inline>
-                          <BusinessStepFlow event={sub} />
-                        </ErrorBoundary>
-                      );
-                    }
-                    // 双重保险:此层理论上不该出现 file_download。
-                    // - [FILE] 内联(无 artifactId): groupIntoBubbles 已 continue 掉。
-                    // - legacy artifact_created 卡片(有 artifactId): groupIntoBubbles 已独立提到顶层。
+                    // ai_bubble 顶层的 file_download 双重保险维持原语义：一律跳过。
                     if (sub.type === 'file_download') return null;
-                    if (sub.type === 'activity_group') {
-                      return (
-                        <ErrorBoundary key={sub.id} inline>
-                          <ActivityGroupBlock items={sub.items} isActive={sub.isActive} isLast={sub.id === lastActivityGroupId} debugMode={debugMode} />
-                        </ErrorBoundary>
-                      );
-                    }
-                    const origIndex = msgIndexMap.get(sub.id) ?? 0;
-                    const msgKey = `msg-${origIndex}`;
-                    const ttsState = ttsStateMap?.[msgKey] || 'idle';
-                    const ttsIsActive = tts?.activeKey === msgKey;
-                    const voicePlayState = sub.type === 'user-voice'
-                      ? voicePlayer.getState(`voice-msg-${sub.id}`)
-                      : undefined;
-                    return (
-                      <ErrorBoundary key={sub.id} inline>
-                        <MessageItem
-                          message={sub}
-                          index={origIndex}
-                          onPermissionResponse={onPermissionResponse}
-                          onAskUserResponse={onAskUserResponse}
-                          onRetry={onRetry}
-                          onFork={onFork}
-                          isFirstUser={false}
-                          isLoading={loading}
-                          tts={tts}
-                          ttsState={ttsState}
-                          ttsIsActive={ttsIsActive}
-                          voicePlayer={voicePlayer}
-                          voicePlayState={voicePlayState}
-                          debugMode={debugMode}
-                        />
-                      </ErrorBoundary>
-                    );
+                    return renderFlowItem(sub);
                   })}
                 </div>
               </div>
             );
           }
 
-          // --- Standalone business_step (normally grouped into an AI bubble) ---
-          if (item.type === 'business_step') {
+          // --- Standalone business_step / section (normally grouped into an AI bubble) ---
+          if (item.type === 'business_step' || item.type === 'business_step_section') {
             return (
               <div
                 key={item.id}
@@ -690,9 +726,7 @@ export const MessageList = memo(function MessageList({
                   <AiMessageHeader agentProfile={displayAgent} timestamp={undefined} />
                 )}
                 <div className="py-2">
-                  <ErrorBoundary inline>
-                    <BusinessStepFlow event={item} />
-                  </ErrorBoundary>
+                  {renderFlowItem(item)}
                 </div>
               </div>
             );

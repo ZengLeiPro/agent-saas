@@ -6,6 +6,7 @@ export type {
   SubagentStatus,
   UploadedFile,
   ActivityGroup,
+  BusinessStepSection,
   RenderItem,
 } from "./message";
 export { ACTIVITY_TYPES } from "./message";

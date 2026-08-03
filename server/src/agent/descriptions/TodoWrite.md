@@ -7,10 +7,11 @@
 `status` 可用：`pending`、`in_progress`、`waiting`、`blocked`、`completed`、`failed`。仍在自动执行时保持恰好一项 `in_progress`；等待用户、业务阻断或失败时允许没有 `in_progress`。
 
 需要丰富展示真实业务阶段时，设置 `kind: "business"`，并为每项提供稳定且跨更新不变的 `id`。可选字段：
+- `outcome`：一句话业务结果/现状 `{text≤120字, tone?, stat?}`。用户可能完全折叠过程（看不到工具与思考），此时它是该步骤唯一可见的信息，必须自包含且带关键数字（如「17/18 张通过，1 张税号过期退回」）。`tone`：完成但有例外（漏记/差异/部分失败）必须 `"warn"`，彻底失败或不可信用 `"fail"`——不允许用干净的「已完成」掩盖例外。`stat`：分流计数徽标（如 一致 61 / 差异 19 / 无法匹配 6）。步骤转入 `in_progress` 之外的任何状态都应带 outcome（`waiting` 写清等谁、到什么时候）。
 - `detail`：结构化业务摘要行，用于字段、判定、缺口、风险、引用等；
 - `display`：只使用无交互的 `callout` / `records` 白名单块；
 - `evidenceRefs`：支撑该步骤的真实对象、来源或回执 ID。
-业务步骤按时间线呈现在会话流中：步骤转为 `in_progress` 时出现开始痕迹；转为 `completed`/`failed`/`blocked`/`waiting` 时，**该次快照携带的 `detail`/`display`/`evidenceRefs` 会作为这一步的业务小结展示**。因此把步骤置为终态的那次调用必须带上该步骤最终、完整的业务内容。
+业务步骤按时间线呈现在会话流中：步骤转为 `in_progress` 时出现开始痕迹；转为 `completed`/`failed`/`blocked`/`waiting` 时，**该次快照携带的 `outcome`/`detail`/`display`/`evidenceRefs` 会作为这一步的业务小结展示**。因此把步骤置为终态的那次调用必须带上该步骤最终、完整的业务内容。`content` 是稳定的步骤名，不要把结果写进 `content`，结果一律写 `outcome`。
 在每个步骤状态变化时更新一次快照即可；步骤进行中的普通工具调用不需要也不应该触发列表更新。
 执行中发现新信息导致计划变化时，应新增、删除、重排、拆分或合并步骤；未变化步骤保持原 `id`，不要机械坚持初始计划。
 审批和人工选择必须使用 AskUserQuestion / permission_request 等真实交互通道，不要在 Todo 中伪造按钮；没有真实依据时不得填写 evidenceRefs，也不得把步骤标成已确认。

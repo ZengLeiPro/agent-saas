@@ -35,6 +35,7 @@ export type {
   SubagentStatus,
   UploadedFile,
   ActivityGroup,
+  BusinessStepSection,
   RenderItem,
   SessionOwnerInfo,
   SessionParticipants,
@@ -320,6 +321,7 @@ export { mergeServerMessagesWithLocalTail, mergeSessionMessageDelta, mergeSessio
 export {
   extractLatestTodos,
   isBusinessTodo,
+  isTerminalStepEvent,
   projectBusinessStepEvents,
   todoItemKey,
 } from "./lib/extractTodos";
@@ -328,6 +330,7 @@ export type {
   BusinessStepEventKind,
   BusinessStepProjection,
   TodoItem,
+  TodoOutcome,
   TodoStatus,
 } from "./lib/extractTodos";
 
@@ -578,6 +581,7 @@ export {
 
 // Lib - message grouping (pure function)
 export { groupMessages } from "./lib/groupMessages";
+export type { GroupMessagesOptions } from "./lib/groupMessages";
 
 // Lib - WS event processor (pure functions)
 export {

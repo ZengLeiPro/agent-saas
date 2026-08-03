@@ -418,6 +418,23 @@ ENV LARKSUITE_CLI_CONFIG_DIR=/workspace/.lark-cli/config \
     LARKSUITE_CLI_DATA_DIR=/workspace/.lark-cli/data \
     LARKSUITE_CLI_NO_UPDATE_NOTIFIER=1 \
     LARKSUITE_CLI_NO_SKILLS_NOTIFIER=1
+# dws PATH 前置薄 wrapper（2026-08-03 方案 A）：业务动作子命令注入 --format json。
+# 默认 disable（KY_DWS_WRAPPER_ENABLE=1 才启用，经 wire env 按租户灰度）；
+# 真实 CLI 原样保留，wrapper fail-open。构建期 fake CLI 断言三分支，fail-fast。
+COPY scripts/dws-format-wrapper.sh /opt/ky-agent/wrappers/dws
+ENV PATH=/opt/ky-agent/wrappers:$PATH
+RUN chmod 0755 /opt/ky-agent/wrappers/dws \
+    && mkdir -p /tmp/wsmoke \
+    && printf '#!/bin/bash\necho "ARGS:$*"\n' > /tmp/wsmoke/dws \
+    && chmod +x /tmp/wsmoke/dws \
+    && out="$(PATH="/opt/ky-agent/wrappers:/tmp/wsmoke" KY_DWS_WRAPPER_ENABLE=1 /opt/ky-agent/wrappers/dws todo task create --title x)" \
+    && [ "$out" = "ARGS:todo task create --title x --format json" ] \
+    && out2="$(PATH="/opt/ky-agent/wrappers:/tmp/wsmoke" /opt/ky-agent/wrappers/dws todo task list)" \
+    && [ "$out2" = "ARGS:todo task list" ] \
+    && out3="$(PATH="/opt/ky-agent/wrappers:/tmp/wsmoke" KY_DWS_WRAPPER_ENABLE=1 /opt/ky-agent/wrappers/dws auth status)" \
+    && [ "$out3" = "ARGS:auth status" ] \
+    && rm -rf /tmp/wsmoke \
+    && KY_DWS_WRAPPER_ENABLE=1 dws --version
 RUN groupadd -f -g 20 dialout \
     && useradd -m -u 501 -g 20 -s /bin/bash agent \
     && mkdir -p /workspace /home/agent/.npm-global/bin /home/agent/.npm-global/lib /ms-playwright \

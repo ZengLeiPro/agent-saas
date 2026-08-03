@@ -18,6 +18,7 @@ import type { TenantStore } from '../data/tenants/store.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { resolveAzerothInjection } from '../integrations/azeroth/tokens.js';
+import { getTenantWireFlags } from './wireEnvFlags.js';
 import type { WorkspaceRef } from '../agent/toolRuntime.js';
 import { readTenantCompanyInfoSync } from '../data/tenants/companyInfo.js';
 import { readTenantInstructionsSync } from '../data/tenants/instructions.js';
@@ -1802,19 +1803,24 @@ function loadTenantInstructions(sharedDir: string, tenantId?: string): string {
  * 与 dispatch.ts:603 本地 SDK spawn 路径的 AZEROTH_TOKEN 注入并行——两者共用同一份
  * tokens.json 与 resolveAzerothInjection，一份配置同时生效于本地与远端 pod。
  *
- * 未命中（该 (tenantId, username) 没配 PAT）→ 返回空对象 → wire 不带 env →
+ * 未命中（该 (tenantId, username) 没配 PAT）→ 不带 AZEROTH env →
  * pod 内 CLI 报"未授权"，语义与本地 SDK 未配置时一致。
+ *
+ * 2026-08-03：另合并 per-tenant wire 行为开关（wireEnvFlags 严格白名单，如
+ * KY_DWS_WRAPPER_ENABLE）——非凭据、与 username 无关，故在 AZEROTH 注入之外独立生效。
  */
 export function buildTenantRemoteHandWireEnv(workspace: WorkspaceRef): Record<string, string> {
-  const username = workspace.username;
-  if (!username) return {};
   const tenantId = workspace.tenantId ?? DEFAULT_TENANT_ID;
-  const injection = resolveAzerothInjection(tenantId, username);
-  if (!injection) return {};
-  return {
-    AZEROTH_TOKEN: injection.token,
-    ...(injection.apiUrl ? { AZEROTH_API_URL: injection.apiUrl } : {}),
-  };
+  const env: Record<string, string> = getTenantWireFlags(tenantId);
+  const username = workspace.username;
+  if (username) {
+    const injection = resolveAzerothInjection(tenantId, username);
+    if (injection) {
+      env.AZEROTH_TOKEN = injection.token;
+      if (injection.apiUrl) env.AZEROTH_API_URL = injection.apiUrl;
+    }
+  }
+  return env;
 }
 
 export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig): AgentRunDispatch {

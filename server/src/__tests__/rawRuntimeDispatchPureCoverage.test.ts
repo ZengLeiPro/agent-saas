@@ -27,6 +27,7 @@ import type { RuntimeSessionRecord } from '../runtime/sessionCatalog.js';
 import type { ApprovalStore, EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 import type { RunRecord } from '../runtime/runStore.js';
 import { InMemoryToolInvocationStore } from '../runtime/toolInvocationStore.js';
+import { resetTenantWireFlagsForTest, setTenantWireFlags } from '../runtime/wireEnvFlags.js';
 import type { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
 
 // 最小可用 config（只放本组 helper 真消费的字段）
@@ -260,6 +261,50 @@ describe('buildTenantRemoteHandWireEnv', () => {
     await writeTokensConfig({ tenants: { wain: { tokens: { li: 'pat_wain_li' } } } });
     // kaiyan/huangyiping 在配置里不存在，且非 legacy 组织不回退 v1 → 空。
     expect(buildTenantRemoteHandWireEnv(workspace())).toEqual({});
+  });
+
+  // ── 2026-08-03：per-tenant wire 行为开关（wireEnvFlags）合并语义 ──
+  describe('wire 行为开关合并', () => {
+    afterEach(() => resetTenantWireFlagsForTest());
+
+    it('注册开关后，无 username 也按租户下发（开关与用户无关）', () => {
+      setTenantWireFlags({ kaiyan: { KY_DWS_WRAPPER_ENABLE: '1' } });
+      expect(buildTenantRemoteHandWireEnv(workspace({ username: undefined }))).toEqual({
+        KY_DWS_WRAPPER_ENABLE: '1',
+      });
+    });
+
+    it('开关与 AZEROTH 注入共存时合并返回', async () => {
+      setTenantWireFlags({ kaiyan: { KY_DWS_WRAPPER_ENABLE: '1' } });
+      await writeTokensConfig({ tenants: { kaiyan: { tokens: { huangyiping: 'pat_k' } } } });
+      expect(buildTenantRemoteHandWireEnv(workspace())).toEqual({
+        KY_DWS_WRAPPER_ENABLE: '1',
+        AZEROTH_TOKEN: 'pat_k',
+      });
+    });
+
+    it('其他租户的开关不串台', () => {
+      setTenantWireFlags({ wain: { KY_DWS_WRAPPER_ENABLE: '1' } });
+      expect(buildTenantRemoteHandWireEnv(workspace({ username: undefined }))).toEqual({});
+    });
+
+    it('白名单外的 tenantSharedEnv 变量绝不上 wire（凭据防线）', () => {
+      setTenantWireFlags({
+        kaiyan: {
+          KY_DWS_WRAPPER_ENABLE: '1',
+          DASHSCOPE_API_KEY: 'sk-leak',
+          SOME_TOKEN: 'leak',
+        },
+      });
+      expect(buildTenantRemoteHandWireEnv(workspace({ username: undefined }))).toEqual({
+        KY_DWS_WRAPPER_ENABLE: '1',
+      });
+    });
+
+    it('空值开关被剔除（wire pickHandEnv 本也会剔除空串）', () => {
+      setTenantWireFlags({ kaiyan: { KY_DWS_WRAPPER_ENABLE: '' } });
+      expect(buildTenantRemoteHandWireEnv(workspace({ username: undefined }))).toEqual({});
+    });
   });
 });
 

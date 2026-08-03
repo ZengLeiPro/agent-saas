@@ -195,7 +195,7 @@ jobs:
   build-deploy:
     name: ACR Cloud Build and Deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     needs: [changes, gate]
     concurrency:
       group: acs-production-deploy
@@ -357,7 +357,8 @@ jobs:
       # 首次实测踩坑）。因此 ACR 侧开启「代码变更自动构建」, push main 即自动
       # build; 本 job 只接受当前 main 的 exact SHA 镜像，禁止用后继镜像替代，
       # 避免 orchestrator 源码与 sandbox image 版本错配。ACR 若没有为本 SHA
-      # 创建记录，3 分钟内快速失败；记录已存在但仍在构建时最多等待 20 分钟。
+      # 创建记录，3 分钟内快速失败；记录进入队列后最多等待 20 分钟，开始
+      # 构建后另给 30 分钟，避免排队时间提前耗尽实际构建预算。
       - name: Wait for ACR auto-build of HEAD (poll every 30s)
         id: wait
         if: steps.necessity.outputs.deploy_needed == 'true'
@@ -366,14 +367,19 @@ jobs:
           : "${ALIYUN_AK:?Missing secret ALIYUN_ACCESS_KEY_ID}"
           : "${ALIYUN_SK:?Missing secret ALIYUN_ACCESS_KEY_SECRET}"
           SHA6="${GITHUB_SHA:0:6}"
-          MAX_POLLS=40
+          MAX_PENDING_POLLS=40
+          MAX_BUILDING_POLLS=60
           MAX_MISSING_POLLS=6
           MAX_QUERY_ERRORS=3
+          poll_index=0
+          pending_polls=0
+          building_polls=0
           missing_polls=0
           query_errors=0
           build_record_found=false
           echo "Looking for ACR build record with tag suffix -$SHA6 (HEAD $GITHUB_SHA) ..."
-          for i in $(seq 1 "$MAX_POLLS"); do
+          while true; do
+            poll_index=$((poll_index + 1))
             aliyun cr ListRepoBuildRecord \
               --mode AK --access-key-id "$ALIYUN_AK" --access-key-secret "$ALIYUN_SK" \
               --region "$ACR_REGION_ID" \
@@ -398,7 +404,7 @@ jobs:
             )
             bstatus=$(echo "$result" | cut -f1)
             btag=$(echo "$result" | cut -f2 -s)
-            echo "  [$i] $bstatus ${btag:-}"
+            echo "  [$poll_index] $bstatus ${btag:-}"
             case "$bstatus" in
               SUCCESS)
                 echo "image_tag=$btag" >> "$GITHUB_OUTPUT"
@@ -433,18 +439,35 @@ jobs:
                   exit 1
                 fi
                 ;;
-              *)
-                # BUILDING/PENDING 等真实记录已出现后，锁定 exact SHA 构建继续等待；
+              PENDING)
+                # 真实记录已出现后，锁定 exact SHA 构建继续等待；
                 # 后续 main 推进不影响本次代码与镜像仍使用同一个 GITHUB_SHA。
                 build_record_found=true
                 missing_polls=0
                 query_errors=0
+                pending_polls=$((pending_polls + 1))
+                if [ "$pending_polls" -ge "$MAX_PENDING_POLLS" ]; then
+                  echo "::error title=ACR build queue timeout::The exact SHA build remained PENDING for 20 minutes. Check the ACR build queue."
+                  exit 1
+                fi
+                ;;
+              BUILDING)
+                build_record_found=true
+                missing_polls=0
+                query_errors=0
+                building_polls=$((building_polls + 1))
+                if [ "$building_polls" -ge "$MAX_BUILDING_POLLS" ]; then
+                  echo "::error title=ACR build timeout::The exact SHA build remained BUILDING for 30 minutes. Check the ACR build logs."
+                  exit 1
+                fi
+                ;;
+              *)
+                echo "::error title=Unexpected ACR build status::The exact SHA build returned status '$bstatus'."
+                exit 1
                 ;;
             esac
             sleep 30
           done
-          echo "no SUCCESS build record for HEAD within 20min — 检查 ACR 构建日志" >&2
-          exit 1
 
       - name: Pack orchestrator release
         if: steps.necessity.outputs.deploy_needed == 'true'

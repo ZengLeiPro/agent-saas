@@ -42,9 +42,19 @@ describe('ACS deploy workflow contract', () => {
     expect(workflow).toContain('SHA6="${GITHUB_SHA:0:6}"');
     expect(workflow).toContain('MAX_MISSING_POLLS=6');
     expect(workflow).toContain('MAX_QUERY_ERRORS=3');
-    expect(workflow).toContain('MAX_POLLS=40');
     expect(workflow).toContain('tag.endswith(\'-\' + sha6)');
     expect(workflow).toContain('a later image will not be substituted');
     expect(workflow).not.toContain('for i in $(seq 1 60)');
+  });
+
+  it('为 ACR 排队和实际构建保留独立等待预算', () => {
+    expect(workflow).toContain('timeout-minutes: 75');
+    expect(workflow).toContain('MAX_PENDING_POLLS=40');
+    expect(workflow).toContain('MAX_BUILDING_POLLS=60');
+    expect(workflow).toContain('pending_polls=$((pending_polls + 1))');
+    expect(workflow).toContain('building_polls=$((building_polls + 1))');
+    expect(workflow).toContain('ACR build queue timeout');
+    expect(workflow).toContain('ACR build timeout');
+    expect(workflow).not.toContain('MAX_POLLS=40');
   });
 });

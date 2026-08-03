@@ -1,10 +1,11 @@
 # ============================================================================
-# CI/CD Pipeline: install → typecheck → test → build → deploy ECS（蓝绿零停机）
+# CI/CD Pipeline: install → typecheck → test → build → optional ECS → Web OSS
 # ============================================================================
 # 触发:
 #   - push to main: 只构建 + 测试 + 打包 artifact（不部署生产）
-#   - workflow_dispatch: 构建通过后部署生产（Actions 页面手动触发，
-#     或 `gh workflow run ci.yml`）
+#   - workflow_dispatch: 构建通过后按生产 active ECS SHA→目标 SHA 的累计差异
+#     决定是否部署 ECS，再发布 Web OSS（Actions 页面手动触发，
+#     或 `gh workflow run ci.yml`；`force_ecs=true` 可强制滚动 ECS）
 # 部署与发布解耦: 多 agent 共享仓库高频 push，push ≠ 上生产；
 # 想发版时手动触发一次 dispatch。
 # 蓝绿部署脚本: 读 /etc/agent-saas/active-color 定位 idle 色 → 解包新 release →
@@ -26,8 +27,13 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      force_ecs:
+        description: 'Force ECS deploy even when no ECS-relevant path changed since production'
+        type: boolean
+        default: false
 
-# 手动生产发布整条链（build → ECS → Web OSS）互斥；普通 push CI 使用 run_id
+# 手动生产发布整条链（build → optional ECS → Web OSS）互斥；普通 push CI 使用 run_id
 # 隔离，不互相排队。cancel-in-progress=false 保证正在发布的批次不会被新批次打断。
 # pull_request 也用 run_id 隔离，避免多 PR 同时跑时互相排队。
 concurrency:
@@ -170,14 +176,141 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  deploy_plan:
+    name: Plan production deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    outputs:
+      ecs_required: ${{ steps.plan.outputs.ecs_required }}
+      production_ecs_sha: ${{ steps.plan.outputs.production_ecs_sha }}
+
+    env:
+      ECS_HOST: ${{ secrets.ECS_HOST }}
+      ECS_USER: ${{ secrets.ECS_USER }}
+      ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          # 必须覆盖生产 active SHA 到目标 SHA 的累计差异，不能只看最后一个 commit。
+          fetch-depth: 0
+
+      - name: Configure SSH
+        run: |
+          : "${ECS_HOST:?Missing secret ECS_HOST}"
+          : "${ECS_USER:?Missing secret ECS_USER}"
+          : "${ECS_SSH_KEY:?Missing secret ECS_SSH_KEY}"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_deploy_key
+          chmod 600 ~/.ssh/ecs_deploy_key
+          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts \
+            || echo "::warning title=ECS deploy plan::ssh-keyscan failed; necessity gate will fail-open"
+
+      - name: Determine ECS deployment necessity
+        id: plan
+        env:
+          FORCE_ECS_DEPLOY: ${{ inputs.force_ecs }}
+        run: |
+          set -euo pipefail
+
+          fail_open() {
+            echo "::warning title=ECS necessity gate inconclusive::$1 — proceeding with ECS deploy (fail-open)."
+            echo "ecs_required=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### ECS deploy necessity gate"
+              echo
+              echo "- inconclusive: $1 — proceeded with ECS deploy (fail-open)"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+
+          if [ "${FORCE_ECS_DEPLOY:-false}" = "true" ]; then
+            echo "ecs_required=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### ECS deploy necessity gate"
+              echo
+              echo "- \`force_ecs=true\` — deploying ECS unconditionally"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          production_ecs_sha="$(ssh -i ~/.ssh/ecs_deploy_key \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            "$ECS_USER@$ECS_HOST" '
+              set -e
+              marker=/etc/agent-saas/active-color
+              root=/opt/agent-saas-app/color
+              [ -f "$marker" ] || exit 0
+              color=$(tr -d "[:space:]" < "$marker")
+              case "$color" in blue|green) ;; *) exit 0 ;; esac
+              target=$(readlink -f "$root/$color" 2>/dev/null || true)
+              [ -n "$target" ] && basename "$target"
+            ' 2>/dev/null || true)"
+
+          printf '%s' "$production_ecs_sha" | grep -Eq '^[0-9a-f]{40}$' \
+            || fail_open "cannot read a full active ECS release SHA"
+          git cat-file -e "$production_ecs_sha^{commit}" 2>/dev/null \
+            || fail_open "production ECS commit $production_ecs_sha is outside checkout history"
+          git merge-base --is-ancestor "$production_ecs_sha" "$GITHUB_SHA" \
+            || fail_open "production ECS commit $production_ecs_sha is not an ancestor of target"
+
+          echo "production_ecs_sha=$production_ecs_sha" >> "$GITHUB_OUTPUT"
+          if [ "$production_ecs_sha" = "$GITHUB_SHA" ]; then
+            echo "ecs_required=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### ECS deploy necessity gate"
+              echo
+              echo "- **ECS skipped**: production already runs target \`${production_ecs_sha:0:8}\`"
+              echo "- Web OSS may still publish or repair the same target independently"
+              echo "- override: \`gh workflow run ci.yml -f force_ecs=true\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          changed_files="$RUNNER_TEMP/ecs-prod-diff.txt"
+          git diff --name-only "$production_ecs_sha" "$GITHUB_SHA" > "$changed_files"
+          out="$RUNNER_TEMP/ecs-release-classification.out"
+          bash .github/scripts/ecs-release-classify.sh "$changed_files" > "$out" \
+            || fail_open "ecs-release-classify.sh failed"
+          cat "$out"
+
+          required="$(sed -n 's/^required=//p' "$out")"
+          reason="$(sed -n 's/^reason=//p' "$out")"
+          skipped="$(sed -n 's/^skipped=//p' "$out")"
+          case "$required" in true|false) ;; *) fail_open "classifier returned invalid required=$required" ;; esac
+          echo "ecs_required=$required" >> "$GITHUB_OUTPUT"
+
+          if [ "$required" = "true" ]; then
+            {
+              echo "### ECS deploy necessity gate"
+              echo
+              echo "- ECS deploy required since production \`${production_ecs_sha:0:8}\`"
+              echo "- ECS-relevant paths: $reason"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### ECS deploy necessity gate"
+              echo
+              echo "- **ECS skipped**: only Web/Mobile/docs/test paths changed since production \`${production_ecs_sha:0:8}\`"
+              echo "- non-ECS paths: $skipped"
+              echo "- Web OSS will publish without rolling Web/API or Runtime Worker"
+              echo "- override: \`gh workflow run ci.yml -f force_ecs=true\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   deploy-ecs:
     name: Deploy to ECS
     runs-on: ubuntu-latest
     # 覆盖构建打包 + Web/Runtime Worker 双蓝绿部署最坏路径
     timeout-minutes: 55
-    needs: build
-    # 生产部署只走手动触发（workflow_dispatch），push main 不再自动上生产
-    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    needs: [build, deploy_plan]
+    # 生产部署只走手动触发；确认生产以来仅有 Web/Mobile/docs/test 变更时跳过。
+    # 分类读取或解析失败由 deploy_plan fail-open 为 true，不得阻塞必要发布。
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.deploy_plan.outputs.ecs_required == 'true'
 
     env:
       ECS_HOST: ${{ secrets.ECS_HOST }}
@@ -1269,16 +1402,23 @@ jobs:
   # API/WS 走独立域名 api.agent.kaiyan.net（VITE_API_BASE 构建时注入）。
   # ECS 冷灾备使用同一份分域构建，但发布到独立 recovery-web 目录，
   # 不进入 Server release，也不由 Express 托管。
-  # 与 ECS 部署同为 dispatch-only，保证前后端版本一致发布。
+  # 与 ECS 部署同为 dispatch-only；ECS 有必要时必须先成功，无必要时可独立发布。
   # 上传顺序：先 hash 资源（immutable，只增不删，兼容在途会话的旧 chunk 懒加载）,
   # 后入口文件（no-cache），保证 index.html 引用的资源先就位。
   deploy-web-oss:
     name: Deploy Web to OSS
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # 串行于 ECS 部署之后：Server 上线成功才发布 Web，避免 ECS 失败时产生 Web 新/Server 旧版本错位
-    needs: deploy-ecs
-    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    # ECS 必要时要求其成功；确认无需 ECS 时，允许在 deploy-ecs skipped 后直接发布 OSS。
+    needs: [build, deploy_plan, deploy-ecs]
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      needs.build.result == 'success' &&
+      needs.deploy_plan.result == 'success' &&
+      ((needs.deploy_plan.outputs.ecs_required == 'false' && needs.deploy-ecs.result == 'skipped') ||
+       (needs.deploy_plan.outputs.ecs_required == 'true' && needs.deploy-ecs.result == 'success'))
 
     env:
       OSS_ACCESS_KEY_ID: ${{ secrets.OSS_WEB_DEPLOY_AK_ID }}

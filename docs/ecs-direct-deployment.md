@@ -39,7 +39,11 @@
 
 `.github/workflows/ci.yml`。`push main` 只构建 + 测试 + 打包，**不部署生产**；
 发版走 `workflow_dispatch`（Actions 页面手动触发或 `gh workflow run ci.yml`），
-`deploy-ecs` 先发布后端，成功后 `deploy-web-oss` 发布 OSS 与 ECS 冷灾备，保证前后端版本一致。
+`deploy_plan` 先读取生产 active ECS SHA，并对比到目标 SHA 的累计变更：确认只有
+`web/`、`mobile/`、文档或测试路径时跳过 `deploy-ecs`，直接由 `deploy-web-oss`
+发布 OSS 与 ECS 冷灾备；涉及 Server、Shared、技能源、依赖或部署配置时，仍先发布
+ECS，成功后才放行 Web。生产基线不可读、不是目标祖先或分类异常时一律 fail-open
+继续部署 ECS；需要无条件重发时使用 `gh workflow run ci.yml -f force_ecs=true`。
 
 `deploy-ecs` 蓝绿流程概要（远端脚本 13 步详解见[零停机部署](zero-downtime-deployment.md)）：
 

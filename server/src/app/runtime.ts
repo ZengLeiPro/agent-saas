@@ -65,7 +65,8 @@ import {
 import { recoverRunningToolInvocations } from '../runtime/toolInvocationRecovery.js';
 import { deliverPendingToolInvocationCancels, deliverToolInvocationCancel } from '../runtime/toolInvocationCancelDelivery.js';
 import { RuntimeScheduler } from '../runtime/scheduler.js';
-import { MemoryPressureGuard } from '../runtime/memoryPressureGuard.js';
+import { MemoryPressureGuard, type RuntimeAdmissionGuard } from '../runtime/memoryPressureGuard.js';
+import type { RuntimePerformanceWorkloadSnapshot } from '../runtime/runtimePerformanceSampler.js';
 import {
   effectiveMaxConcurrentRuns,
   PgRuntimeSchedulerConfigStore,
@@ -379,6 +380,8 @@ export interface AppRuntime {
   runtimeRunStore?: PgRunStore;
   /** PG 统一持久化的顶层 run 并发控制；平台运行态页读取并热更新。 */
   runtimeSchedulerCapacity?: RuntimeSchedulerCapacityController;
+  /** Runtime Worker结构化性能采样：合并本地Scheduler、PG队列和资源准入快照。 */
+  runtimePerformanceSnapshot?: () => Promise<RuntimePerformanceWorkloadSnapshot>;
   /** PG runtime session projection store（平台观测会话列表用；file backend 为 undefined）。 */
   runtimeSessionProjectionStore?: PgSessionProjectionStore;
   /** 用户维度会话未读状态真源。PG 后端持久化，file 后端落 runtime event。 */
@@ -1024,6 +1027,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let runtimeScheduler: RuntimeScheduler | undefined;
   let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined;
   let runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined;
+  let runtimeAdmissionGuard: RuntimeAdmissionGuard | undefined;
   let runtimeEventSubscriptionShutdown: (() => Promise<void>) | undefined;
   let cancelDeliveryRetryTimer: NodeJS.Timeout | undefined;
   let runtimeSchedulerAutoWake = false;
@@ -2462,6 +2466,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     const memoryPressureGuard = new MemoryPressureGuard({
       logger: serverLogger.child('MemoryPressureGuard'),
     });
+    runtimeAdmissionGuard = memoryPressureGuard;
     runtimeScheduler = new RuntimeScheduler({
       runStore: pgRunStore,
       eventStore: pgEventStore,
@@ -3348,6 +3353,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     }));
   }
 
+  const performanceScheduler = runtimeScheduler;
+  const performanceRunStore = pgRunStore;
+  const runtimePerformanceSnapshot = performanceScheduler && performanceRunStore
+    ? async (): Promise<RuntimePerformanceWorkloadSnapshot> => ({
+        scheduler: performanceScheduler.getPerformanceSnapshot(),
+        activeRuns: await performanceRunStore.getActiveCounts(),
+        ...(runtimeAdmissionGuard ? { admission: runtimeAdmissionGuard.getSnapshot() } : {}),
+      })
+    : undefined;
+
   return {
     config,
     processRole,
@@ -3420,6 +3435,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     runtimeAuditQuery,
     runtimeRunStore: pgRunStore,
     runtimeSchedulerCapacity,
+    runtimePerformanceSnapshot,
     runtimeSessionProjectionStore: pgSessionProjectionStore,
     sessionReadStateStore: sessionReadStateStore!,
     runtimeToolInvocationStore: pgToolInvocationStore,

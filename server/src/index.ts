@@ -13,6 +13,11 @@ import { startKbPreviewScheduler, type KbPreviewScheduler } from './kb/previewSc
 import { serverLogger, cronLogger } from './utils/logger.js';
 import { sessionCompression } from './middleware/sessionCompression.js';
 import { runtimeRunController } from './runtime/runController.js';
+import {
+  RuntimePerformanceSampler,
+  runtimePerformanceSamplerEnabled,
+  runtimePerformanceSamplerIntervalMs,
+} from './runtime/runtimePerformanceSampler.js';
 import { isTransientNetworkError } from './utils/transientNetworkError.js';
 
 type ProcessRole = 'all' | 'ws-only' | 'scheduler-only' | 'runtime-worker';
@@ -21,6 +26,7 @@ let runtime: AppRuntime | undefined;
 let cronService: CronService | null | undefined;
 let httpServer: Server | undefined;
 let kbPreviewScheduler: KbPreviewScheduler | undefined;
+let runtimePerformanceSampler: RuntimePerformanceSampler | undefined;
 
 const eventLoopDelayMonitor = monitorEventLoopDelay({ resolution: 20 });
 eventLoopDelayMonitor.enable();
@@ -87,6 +93,19 @@ async function startServer(): Promise<void> {
   writePidFile();
   runtime = await createRuntime({ processCwd: process.cwd(), processRole });
   serverLogger.info(`Process role: ${processRole}`);
+  if (
+    processRole === 'runtime-worker'
+    && runtime.runtimePerformanceSnapshot
+    && runtimePerformanceSamplerEnabled()
+  ) {
+    runtimePerformanceSampler = new RuntimePerformanceSampler({
+      getWorkloadSnapshot: runtime.runtimePerformanceSnapshot,
+      logger: serverLogger.child('RuntimePerformance'),
+      intervalMs: runtimePerformanceSamplerIntervalMs(),
+      eventLoopDelayMonitor,
+    });
+    runtimePerformanceSampler.start();
+  }
   // 技能物化与 HTTP/WS/cron 解耦；PG 按 release 隔离消费者，并用 workspace
   // advisory lock 防止蓝绿并发写同一用户目录。
   runtime.startSkillMaterializationCoordinator();
@@ -283,6 +302,7 @@ let shuttingDown = false;
 
 async function shutdownCleanup(): Promise<void> {
   try {
+    runtimePerformanceSampler?.stop();
     httpServer?.close();
     cronService?.stop();
     runtime?.notionAuthFlowShutdown?.();

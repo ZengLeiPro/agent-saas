@@ -15,6 +15,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage --maxWorkers=2 --coverage.processingConcurrency=2",
     "benchmark:long-transcript": "tsx src/scripts/benchmarkLongTranscript.ts",
+    "benchmark:runtime-worker": "tsx scripts/runtime-worker-load-test.mts",
+    "benchmark:runtime-worker:report": "tsx scripts/runtime-worker-perf-report.mts",
     "scenarios:lint": "tsx scripts/scenarios-lint.mjs",
     "scenarios:lint:fix": "tsx scripts/scenarios-lint.mjs --fix",
     "scenarios:sanitize-check": "tsx scripts/scenarios-sanitize-check.mjs",

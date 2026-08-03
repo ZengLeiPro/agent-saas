@@ -150,6 +150,52 @@ async function flushSchedulerMicrotasks(): Promise<void> {
 }
 
 describe('RuntimeScheduler', () => {
+  it('reports an in-flight workload snapshot without session or user identifiers', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    const wakeGate = deferred();
+    await runStore.upsertPending({
+      runId: 'run-performance-1',
+      sessionId: 'session-sensitive-1',
+      userId: 'user-sensitive-1',
+      channel: 'web',
+      model: 'test-model',
+      executionTarget: 'server-container',
+      metadata: { backgroundTask: true },
+    });
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-1',
+      maxConcurrentRuns: 16,
+      autoWake: true,
+      wake: async (_record, lease) => {
+        await wakeGate.promise;
+        await lease.release('completed', 'done');
+      },
+    });
+
+    await scheduler.tick();
+    await flushSchedulerMicrotasks();
+    const snapshot = scheduler.getPerformanceSnapshot(Date.now() + 1_000);
+
+    expect(snapshot).toMatchObject({
+      maxConcurrentRuns: 16,
+      inFlightRuns: 1,
+      inFlightBackgroundRuns: 1,
+      byRunClass: { background_agent: 1 },
+      byChannel: { web: 1 },
+      byExecutionTarget: { 'server-container': 1 },
+      byModel: { 'test-model': 1 },
+    });
+    expect(JSON.stringify(snapshot)).not.toContain('session-sensitive-1');
+    expect(JSON.stringify(snapshot)).not.toContain('user-sensitive-1');
+
+    wakeGate.resolve();
+    await flushSchedulerMicrotasks();
+    await scheduler.stop();
+  });
+
   it('cancels waiting approvals older than the configured timeout', async () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();

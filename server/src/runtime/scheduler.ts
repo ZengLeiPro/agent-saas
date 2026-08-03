@@ -55,6 +55,17 @@ export interface RuntimeSchedulerOptions {
   };
 }
 
+export interface RuntimeSchedulerPerformanceSnapshot {
+  maxConcurrentRuns: number;
+  inFlightRuns: number;
+  inFlightBackgroundRuns: number;
+  oldestInFlightAgeMs: number;
+  byRunClass: Record<string, number>;
+  byChannel: Record<string, number>;
+  byExecutionTarget: Record<string, number>;
+  byModel: Record<string, number>;
+}
+
 export class RuntimeScheduler {
   private readonly workerId: string;
   private readonly pollIntervalMs: number;
@@ -92,6 +103,24 @@ export class RuntimeScheduler {
       inFlightRuns: this.inFlightRuns.size,
       inFlightBackgroundRuns: [...this.inFlightRunRecords.values()]
         .filter((record) => isBackgroundTaskRun(record)).length,
+    };
+  }
+
+  getPerformanceSnapshot(nowMs = Date.now()): RuntimeSchedulerPerformanceSnapshot {
+    const records = [...this.inFlightRunRecords.values()];
+    const ages = records.map((record) => {
+      const startedAtMs = Date.parse(record.startedAt ?? record.requestedAt);
+      return Number.isFinite(startedAtMs) ? Math.max(0, nowMs - startedAtMs) : 0;
+    });
+    return {
+      maxConcurrentRuns: this.maxConcurrentRuns,
+      inFlightRuns: this.inFlightRuns.size,
+      inFlightBackgroundRuns: records.filter((record) => isBackgroundTaskRun(record)).length,
+      oldestInFlightAgeMs: ages.length > 0 ? Math.max(...ages) : 0,
+      byRunClass: countRecords(records, classifyRun),
+      byChannel: countRecords(records, (record) => record.channel || 'unknown'),
+      byExecutionTarget: countRecords(records, (record) => record.executionTarget || 'unknown'),
+      byModel: countRecords(records, (record) => record.model || 'unknown'),
     };
   }
 
@@ -477,4 +506,24 @@ export class RuntimeScheduler {
       },
     };
   }
+}
+
+function classifyRun(record: RunRecord): string {
+  if (isBackgroundCommandTaskRun(record)) return 'background_command';
+  if (isBackgroundAgentTaskRun(record)) return 'background_agent';
+  const toolProfile = record.metadata?.toolProfile;
+  if (toolProfile === 'memory_poll' || toolProfile === 'memory_consolidate') return String(toolProfile);
+  if (record.channel === 'cron') return 'cron';
+  return 'foreground';
+}
+
+function countRecords(
+  records: RunRecord[],
+  resolveKey: (record: RunRecord) => string,
+): Record<string, number> {
+  return records.reduce<Record<string, number>>((counts, record) => {
+    const key = resolveKey(record);
+    counts[key] = (counts[key] ?? 0) + 1;
+    return counts;
+  }, {});
 }

@@ -24,6 +24,9 @@ Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker
 Environment=AGENT_SAAS_PIDFILE=/run/agent-saas-runtime-worker-%i.pid
 Environment=AGENT_SAAS_READYFILE=/run/agent-saas-runtime-worker-%i.ready
 Environment=AGENT_SAAS_DRAIN_MARKER=/run/agent-saas-runtime-worker-%i.draining
+# 结构化性能采样写journald；容量压测时可临时把间隔下调到5000ms。
+Environment=AGENT_SAAS_RUNTIME_PERF_ENABLED=true
+Environment=AGENT_SAAS_RUNTIME_PERF_INTERVAL_MS=30000
 ExecCondition=/usr/bin/test ! -e /run/agent-saas-runtime-worker-%i.draining
 ExecStartPre=/usr/bin/rm -f /run/agent-saas-runtime-worker-%i.ready
 ExecStart=/usr/local/bin/pnpm start

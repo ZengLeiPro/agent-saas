@@ -14,6 +14,8 @@ interface TokenUsageDisplayProps {
   allowDetails?: boolean;
   messages?: MessageItem[];
   onOpenChildSession?: (sessionId: string) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 function DetailRow({ label, value }: { label: string; value: number | string }) {
@@ -146,8 +148,15 @@ export function TokenUsageDisplay({
   allowDetails = false,
   messages,
   onOpenChildSession,
+  open: controlledOpen,
+  onOpenChange,
 }: TokenUsageDisplayProps) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (controlledOpen === undefined) setInternalOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  };
   const childAgents = collectChildAgentResources(messages);
 
   const cumulativeTokens = tokenUsage
@@ -225,7 +234,7 @@ export function TokenUsageDisplay({
     : '累计消耗';
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       {allowDetails ? (
         <PopoverTrigger asChild>
           <button

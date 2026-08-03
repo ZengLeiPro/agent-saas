@@ -95,6 +95,13 @@ export function DesktopLayout(props: LayoutProps) {
   } = props;
 
   const { user: authUser, updatePreferences } = useAuth();
+  const [activeUsageCard, setActiveUsageCard] = useState<"context" | "billing" | null>(null);
+  const handleContextCardOpenChange = useCallback((open: boolean) => {
+    setActiveUsageCard((current) => open ? "context" : current === "context" ? null : current);
+  }, []);
+  const handleBillingCardOpenChange = useCallback((open: boolean) => {
+    setActiveUsageCard((current) => open ? "billing" : current === "billing" ? null : current);
+  }, []);
   const { config: roleKitConfig } = useRoleKitConfig();
   const roleKitV2Enabled = roleKitConfig.roleKitV2Enabled;
   const sidebarLayout = authUser?.preferences?.sidebarLayout ?? "double";
@@ -444,9 +451,15 @@ export function DesktopLayout(props: LayoutProps) {
                   allowDetails={modelList?.allowContextTokenDetails === true}
                   messages={messages}
                   onOpenChildSession={selectSession}
+                  open={activeUsageCard === "context"}
+                  onOpenChange={handleContextCardOpenChange}
                 />
               )}
-              <BillingMiniBadge sessionId={sessionId} />
+              <BillingMiniBadge
+                sessionId={sessionId}
+                open={activeUsageCard === "billing"}
+                onOpenChange={handleBillingCardOpenChange}
+              />
               <DisplaySettingsMenu
                 isLarge={chatFontLarge}
                 isWide={chatWidthWide}

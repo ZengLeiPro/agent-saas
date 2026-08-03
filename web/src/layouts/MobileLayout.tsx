@@ -79,6 +79,13 @@ export function MobileLayout(props: LayoutProps) {
   const authorizationModeEnabled = authUser?.preferences?.authorizationModeEnabled === true;
 
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [activeUsageCard, setActiveUsageCard] = useState<"context" | "billing" | null>(null);
+  const handleContextCardOpenChange = useCallback((open: boolean) => {
+    setActiveUsageCard((current) => open ? "context" : current === "context" ? null : current);
+  }, []);
+  const handleBillingCardOpenChange = useCallback((open: boolean) => {
+    setActiveUsageCard((current) => open ? "billing" : current === "billing" ? null : current);
+  }, []);
   const [activeWorkflow, setActiveWorkflow] = useState<WorkflowOnboardingContext | null>(null);
   const closeDrawer = useCallback(() => {
     setSheetOpen(false);
@@ -228,9 +235,15 @@ export function MobileLayout(props: LayoutProps) {
                   allowDetails={modelList?.allowContextTokenDetails === true}
                   messages={messages}
                   onOpenChildSession={selectSession}
+                  open={activeUsageCard === "context"}
+                  onOpenChange={handleContextCardOpenChange}
                 />
               )}
-              <BillingMiniBadge sessionId={sessionId} />
+              <BillingMiniBadge
+                sessionId={sessionId}
+                open={activeUsageCard === "billing"}
+                onOpenChange={handleBillingCardOpenChange}
+              />
               {ttsPlayer.available && (
                 <Button
                   variant="ghost"

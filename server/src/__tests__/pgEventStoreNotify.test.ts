@@ -83,7 +83,21 @@ const pgMock = vi.hoisted(() => {
             .filter((row) => row.session_id === sessionId)
             .filter((row) => !excludeTypes?.has(row.event_json.type))
             .sort((a, b) => Number(a.session_sequence) - Number(b.session_sequence))
-            .map((row) => ({ event_json: row.event_json })),
+            .map((row) => {
+              if (!text.includes('AS tool_content_prefix') || row.event_json.type !== 'tool_result') {
+                return { event_json: row.event_json };
+              }
+              const legacy = row.event_json as typeof row.event_json & { modelContent?: string };
+              const { content, modelContent: _modelContent, ...eventJson } = legacy;
+              const chars = Array.from(content);
+              return {
+                event_json: eventJson,
+                tool_content_prefix: chars.slice(0, Number(params?.[4])).join(''),
+                tool_content_suffix: chars.slice(-Number(params?.[5])).join(''),
+                tool_content_chars: chars.length,
+                tool_content_lines: content.split('\n').length,
+              };
+            }),
         };
       }
       // listPage（drainSession 用）：WHERE session_id = $1 AND session_sequence > $2 ORDER BY ... LIMIT $3
@@ -365,22 +379,38 @@ describe('PgEventStore notify coalescing', () => {
   it('bounds tool_result content inside PostgreSQL before replay rows enter Node', async () => {
     const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
     const pool = pgMock.MockPool.instances[0]!;
+    const longContent = Array.from({ length: 900 }, (_, index) => `line-${index + 1}:${'x'.repeat(20)}`).join('\n');
+    pool.listRows = [rangeRow({
+      id: 'event-tool-result',
+      timestamp: new Date(0).toISOString(),
+      sequence: 1,
+      type: 'tool_result',
+      runId: 'run-1',
+      sessionId: 'session-1',
+      toolCallId: 'call-long',
+      toolName: 'Shell',
+      content: longContent,
+    } as PlatformEvent & { sequence: number })];
 
-    await store.list('session-1', {
+    const events = await store.list('session-1', {
       replayMode: 'bounded',
       excludeTypes: ['tool_output_delta'],
     });
 
     const lastQuery = pool.queries.at(-1);
     expect(lastQuery?.text).not.toContain('ROW_NUMBER() OVER');
-    expect(lastQuery?.text).toContain('jsonb_set(');
-    expect(lastQuery?.text).toContain("'{content}'");
-    expect(lastQuery?.text).toContain("event_json -> 'modelContent'");
-    expect(lastQuery?.text).toContain("event_type <> 'tool_result'");
+    expect(lastQuery?.text).toContain("event_json - 'content' - 'modelContent'");
+    expect(lastQuery?.text).toContain("left(event_json ->> 'content', $5::integer)");
+    expect(lastQuery?.text).toContain("right(event_json ->> 'content', $6::integer)");
+    expect(lastQuery?.text).toContain("char_length(event_json ->> 'content')");
     expect(lastQuery?.params?.[0]).toBe('session-1');
     expect(lastQuery?.params?.[1]).toBe(false);
     expect(lastQuery?.params?.[3]).toEqual(['tool_output_delta']);
-    expect(lastQuery?.params?.[4]).toBe(4_000);
+    expect(lastQuery?.params?.[4]).toBe(8_000);
+    expect(lastQuery?.params?.[5]).toBe(6_000);
+    expect(events[0]?.type === 'tool_result' ? events[0].content : '').toContain('line-1:');
+    expect(events[0]?.type === 'tool_result' ? events[0].content : '').toContain('line-900:');
+    expect(events[0]).not.toHaveProperty('modelContent');
   });
 
   it('filters wake-state event types in SQL instead of loading the whole session', async () => {

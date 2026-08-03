@@ -311,10 +311,7 @@ export function buildChatMessagesFromEvents(events: PlatformEvent[]): ModelChatM
         messages.push({
           role: 'tool',
           tool_call_id: event.toolCallId,
-          content: projectToolResultContentForModel(
-            event.modelContent ?? event.content,
-            event.toolCallId,
-          ),
+          content: projectToolResultContentForModel(event.content, event.toolCallId),
         });
         break;
       default:

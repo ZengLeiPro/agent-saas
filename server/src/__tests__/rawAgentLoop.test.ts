@@ -663,15 +663,16 @@ describe('RawAgentLoop', () => {
     });
     expect(firstToolContents).toHaveLength(10);
     expect(firstToolContents.every((content) => content === firstToolContents[0])).toBe(true);
-    expect(firstToolContents[0]).toHaveLength(MODEL_TOOL_RESULT_MAX_CHARS);
-    expect(firstToolContents[0]).toContain('SessionContext(action="trace") toolCallId=call-long-1');
+    expect(Array.from(firstToolContents[0] ?? '')).toHaveLength(MODEL_TOOL_RESULT_MAX_CHARS);
+    expect(firstToolContents[0]).toContain('toolCallId="call-long-1"');
+    expect(firstToolContents[0]).toContain('startChar=2001');
+    expect(firstToolContents[0]).toContain('query="关键字"');
 
     const durableToolResults = (await eventStore.list('session-stable-tool-prefix'))
       .filter((event): event is Extract<PlatformEvent, { type: 'tool_result' }> => event.type === 'tool_result');
     expect(durableToolResults).toHaveLength(10);
     expect(durableToolResults.every((event) => event.content === toolRuntime.content)).toBe(true);
-    expect(durableToolResults.every((event) => event.modelContent?.length === MODEL_TOOL_RESULT_MAX_CHARS)).toBe(true);
-    expect(durableToolResults[0]?.modelContent).toBe(firstToolContents[0]);
+    expect(durableToolResults.every((event) => !('modelContent' in event))).toBe(true);
   });
 
   it('hands off only after the current tool-call batch is durably closed', async () => {

@@ -1796,7 +1796,6 @@ export class RawAgentLoop implements AgentLoop {
         sessionId: state.sessionId,
         toolCallId: state.toolCallId,
         toolName: state.toolName,
-        modelContent: projectToolResultContentForModel(content, state.toolCallId),
         content,
         isError: true,
       });
@@ -2035,7 +2034,7 @@ export class RawAgentLoop implements AgentLoop {
     presentation?: ToolPresentation;
     metadata?: Record<string, unknown>;
   }): AsyncIterable<OutboundEvent> {
-    const modelContent = projectToolResultContentForModel(args.content, args.call.id);
+    const projectedContent = projectToolResultContentForModel(args.content, args.call.id);
     yield {
       type: 'tool_result',
       toolId: args.call.id,
@@ -2051,7 +2050,6 @@ export class RawAgentLoop implements AgentLoop {
       sessionId: args.context.sessionId,
       toolCallId: args.call.id,
       toolName: args.call.name,
-      modelContent,
       content: args.content,
       ...(args.isError ? { isError: true } : {}),
       ...(args.presentation ? { presentation: args.presentation } : {}),
@@ -2062,7 +2060,7 @@ export class RawAgentLoop implements AgentLoop {
     args.messages?.push({
       role: 'tool',
       tool_call_id: args.call.id,
-      content: modelContent,
+      content: projectedContent,
     });
   }
 

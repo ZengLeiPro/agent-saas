@@ -657,12 +657,6 @@ export type PlatformEvent =
     sessionId: string;
     toolCallId: string;
     toolName: string;
-    /**
-     * 工具结果首次进入模型时的不可变投影。content 始终保留完整原文；本字段让
-     * 同一事件在重启、跨 run 与后续追加工具结果后仍按完全相同的字节进入 prompt。
-     * 旧事件没有本字段，bounded replay 使用固定 legacy 上限兼容。
-     */
-    modelContent?: string;
     content: string;
     isError?: boolean;
     /** 「给人看」摘要，与 content 并存的第二通道；不进入模型上下文 */

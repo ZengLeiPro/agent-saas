@@ -4,7 +4,7 @@
  * Coverage:
  * - boot a temporary local Postgres container unless --connection-string is set
  * - PgEventStore init / appendBatch / list / listPage
- * - bounded replay keeps immutable model tool-result projections while raw events preserve full content
+ * - bounded replay deterministically derives the same head/tail projection while raw events store content once
  * - concurrent appends keep contiguous session-local sequence
  * - EventBackedApprovalStore state survives PgEventStore re-open
  * - loadRawRuntimeWakeState restores pending approval from PG-backed event log
@@ -30,7 +30,6 @@ import { PgEventStore } from '../src/runtime/pgEventStore.js';
 import { PgSessionLock, sessionIdToLockKey } from '../src/runtime/pgSessionLock.js';
 import { loadRawRuntimeWakeState } from '../src/runtime/rawRuntimeRunDispatch.js';
 import {
-  LEGACY_MODEL_TOOL_RESULT_MAX_CHARS,
   MODEL_TOOL_RESULT_MAX_CHARS,
   projectToolResultContentForModel,
 } from '../src/runtime/replayEventBounds.js';
@@ -315,58 +314,74 @@ async function runVerify(connectionString: string): Promise<void> {
   assert(secondPage?.events.length === 1, 'second page length mismatch');
   assert(secondPage.hasMore === false, 'second page hasMore mismatch');
 
-  console.log('[step] PgEventStore immutable bounded tool-result replay');
+  console.log('[step] PgEventStore deterministic bounded tool-result replay');
   const projectionSessionId = `session-projection-${randomUUID()}`;
   const projectionRunId = `run-projection-${randomUUID()}`;
-  const legacyContent = 'L'.repeat(30_000);
-  const currentContent = 'C'.repeat(30_000);
-  const currentModelContent = projectToolResultContentForModel(currentContent, 'call-current');
+  const multilineContent = Array.from(
+    { length: 1_000 },
+    (_, index) => `line-${index + 1}:${'L'.repeat(24)}`,
+  ).join('\n');
+  const singleLineContent = `${'C'.repeat(20_000)}${'🙂'.repeat(10_000)}TAIL`;
   await store.appendBatch?.([
     {
       type: 'tool_result',
       runId: projectionRunId,
       sessionId: projectionSessionId,
-      toolCallId: 'call-legacy',
-      name: 'Shell',
-      content: legacyContent,
+      toolCallId: 'call-multiline',
+      toolName: 'Shell',
+      content: multilineContent,
     },
     {
       type: 'tool_result',
       runId: projectionRunId,
       sessionId: projectionSessionId,
-      toolCallId: 'call-current',
-      name: 'Shell',
-      content: currentContent,
-      modelContent: currentModelContent,
+      toolCallId: 'call-single-line',
+      toolName: 'Shell',
+      content: singleLineContent,
     },
   ]);
 
   const rawProjectionEvents = await store.list(projectionSessionId);
-  const rawLegacy = rawProjectionEvents[0];
-  const rawCurrent = rawProjectionEvents[1];
-  assert(rawLegacy?.type === 'tool_result' && rawLegacy.content === legacyContent, 'raw legacy tool result was mutated');
-  assert(rawCurrent?.type === 'tool_result' && rawCurrent.content === currentContent, 'raw current tool result was mutated');
+  const rawMultiline = rawProjectionEvents[0];
+  const rawSingleLine = rawProjectionEvents[1];
   assert(
-    rawCurrent?.type === 'tool_result' && rawCurrent.modelContent === currentModelContent,
-    'raw current tool result lost immutable modelContent',
+    rawMultiline?.type === 'tool_result' && rawMultiline.content === multilineContent,
+    'raw multiline tool result was mutated',
+  );
+  assert(
+    rawSingleLine?.type === 'tool_result' && rawSingleLine.content === singleLineContent,
+    'raw single-line tool result was mutated',
+  );
+  assert(
+    rawProjectionEvents.every((event) => !('modelContent' in event)),
+    'raw tool results should not duplicate content in modelContent',
   );
 
   const boundedProjectionEvents = await store.list(projectionSessionId, { replayMode: 'bounded' });
-  const boundedLegacy = boundedProjectionEvents[0];
-  const boundedCurrent = boundedProjectionEvents[1];
+  const boundedMultiline = boundedProjectionEvents[0];
+  const boundedSingleLine = boundedProjectionEvents[1];
+  const expectedMultiline = projectToolResultContentForModel(multilineContent, 'call-multiline');
+  const expectedSingleLine = projectToolResultContentForModel(singleLineContent, 'call-single-line');
   assert(
-    boundedLegacy?.type === 'tool_result'
-      && boundedLegacy.content.length === LEGACY_MODEL_TOOL_RESULT_MAX_CHARS,
-    `legacy bounded projection length mismatch: ${boundedLegacy?.type === 'tool_result' ? boundedLegacy.content.length : 'missing'}`,
+    boundedMultiline?.type === 'tool_result'
+      && boundedMultiline.content === expectedMultiline
+      && Array.from(boundedMultiline.content).length <= MODEL_TOOL_RESULT_MAX_CHARS
+      && boundedMultiline.content.includes('line-1:')
+      && boundedMultiline.content.includes('line-1000:')
+      && boundedMultiline.content.includes('startLine='),
+    'multiline bounded projection did not preserve deterministic line-aware head/tail content',
   );
   assert(
-    boundedCurrent?.type === 'tool_result'
-      && boundedCurrent.content === currentModelContent
-      && boundedCurrent.content.length === MODEL_TOOL_RESULT_MAX_CHARS,
-    'current bounded projection did not replay immutable modelContent',
+    boundedSingleLine?.type === 'tool_result'
+      && boundedSingleLine.content === expectedSingleLine
+      && Array.from(boundedSingleLine.content).length === MODEL_TOOL_RESULT_MAX_CHARS
+      && boundedSingleLine.content.endsWith('TAIL')
+      && boundedSingleLine.content.includes('startChar=2001')
+      && boundedSingleLine.content.includes('query="关键字"'),
+    'single-line bounded projection did not preserve deterministic character-aware head/tail content',
   );
   assert(
-    boundedCurrent?.type === 'tool_result' && !('modelContent' in boundedCurrent),
+    boundedProjectionEvents.every((event) => !('modelContent' in event)),
     'bounded replay should expose projected content only',
   );
   const usageProjectionEvents = await store.list(projectionSessionId, { projection: 'usage' });

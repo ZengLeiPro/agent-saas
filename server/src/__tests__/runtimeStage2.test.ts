@@ -176,7 +176,7 @@ describe('runtime stage 2 primitives', () => {
     ]);
   });
 
-  it('FileEventStore usage projection excludes full and model-visible tool content', async () => {
+  it('FileEventStore usage projection excludes full tool content', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'eventstore-usage-projection-'));
     cleanupDirs.add(cwd);
     const store = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
@@ -187,7 +187,6 @@ describe('runtime stage 2 primitives', () => {
       toolCallId: 'call-1',
       toolName: 'Shell',
       content: 'full-content',
-      modelContent: 'model-content',
     });
 
     const [projected] = await store.list('session-1', { projection: 'usage' });

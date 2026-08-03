@@ -66,6 +66,98 @@ describe('SessionContextService', () => {
     ]);
   });
 
+  it('trace 可按行、Unicode 字符和关键字读取同一条完整工具结果', async () => {
+    const { cwd, store } = await seedStore();
+    cleanupDirs.add(cwd);
+    const content = [
+      '第一行',
+      '第二行🙂',
+      '第三行包含 NEEDLE 与上下文',
+      '第四行',
+      '第五行再次出现 needle',
+      '第六行',
+    ].join('\n');
+    await store.append({
+      type: 'tool_result',
+      runId: 'run-1',
+      sessionId: 'session-1',
+      toolCallId: 'call-long',
+      toolName: 'Shell',
+      content,
+    });
+    const service = new SessionContextService(store);
+
+    const lines = await service.readToolTrace('session-1', 'call-long', { startLine: 2, lineCount: 2 });
+    expect(lines).toMatchObject({
+      mode: 'lines',
+      startLine: 2,
+      endLine: 3,
+      content: '第二行🙂\n第三行包含 NEEDLE 与上下文',
+      nextStartLine: 4,
+    });
+
+    const chars = await service.readToolTrace('session-1', 'call-long', { startChar: 5, charCount: 6 });
+    expect(chars).toMatchObject({
+      mode: 'characters',
+      startChar: 5,
+      endChar: 10,
+      content: '第二行🙂\n第',
+    });
+
+    const search = await service.readToolTrace('session-1', 'call-long', {
+      query: 'needle',
+      maxMatches: 10,
+      contextLines: 1,
+    });
+    expect(search).toMatchObject({
+      mode: 'search',
+      query: 'needle',
+      returnedMatches: 2,
+      totalMatches: 2,
+      hasMore: false,
+    });
+    expect(search.matches).toEqual(expect.arrayContaining([
+      expect.objectContaining({ line: 3, snippet: expect.stringContaining('第三行包含 NEEDLE') }),
+      expect.objectContaining({ line: 5, snippet: expect.stringContaining('第五行再次出现 needle') }),
+    ]));
+  });
+
+  it('trace 默认和单次读取都有硬边界，超长单行可继续按字符续读', async () => {
+    const { cwd, store } = await seedStore();
+    cleanupDirs.add(cwd);
+    await store.append({
+      type: 'tool_result',
+      runId: 'run-1',
+      sessionId: 'session-1',
+      toolCallId: 'call-single-line',
+      toolName: 'Shell',
+      content: '🙂'.repeat(20_000),
+    });
+    const service = new SessionContextService(store);
+
+    const first = await service.readToolTrace('session-1', 'call-single-line');
+    expect(first).toMatchObject({
+      mode: 'lines',
+      startLine: 1,
+      endLine: 1,
+      lineContentTruncated: true,
+      nextStartChar: 5_001,
+    });
+    expect(Array.from(String(first.content))).toHaveLength(5_000);
+
+    const second = await service.readToolTrace('session-1', 'call-single-line', {
+      startChar: 5_001,
+      charCount: 6_000,
+    });
+    expect(second).toMatchObject({
+      mode: 'characters',
+      startChar: 5_001,
+      endChar: 11_000,
+      nextStartChar: 11_001,
+    });
+    expect(Array.from(String(second.content))).toHaveLength(6_000);
+  });
+
   it('内部模型请求诊断不会暴露给 Session 工具读取或搜索', async () => {
     const { cwd, store } = await seedStore();
     cleanupDirs.add(cwd);
@@ -153,5 +245,16 @@ describe('SessionContextService', () => {
       authorization: { approved: true, source: 'policy_auto' },
     }, context);
     expect(result?.content).toContain('package content');
+
+    await expect(provider.invoke({
+      toolId: 'SessionContext',
+      input: {
+        action: 'trace',
+        toolCallId: 'call-1',
+        startLine: 1,
+        startChar: 1,
+      },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, context)).rejects.toThrow('三种读取模式只能选择一种');
   });
 });

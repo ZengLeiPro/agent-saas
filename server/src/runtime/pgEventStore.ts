@@ -4,9 +4,9 @@ import pg from 'pg';
 import type { EventAppendContext, EventListOptions, EventListPage, EventStore, PlatformEvent, PlatformEventInput } from './types.js';
 import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import {
-  LEGACY_MODEL_TOOL_RESULT_MAX_CHARS,
-  REPLAY_TOOL_RESULT_MARKER_PREFIX,
-  REPLAY_TOOL_RESULT_MARKER_SUFFIX,
+  projectToolResultSourceForModel,
+  TOOL_RESULT_PROJECTION_PREFIX_CHARS,
+  TOOL_RESULT_PROJECTION_SUFFIX_CHARS,
 } from './replayEventBounds.js';
 
 const { Client, Pool } = pg;
@@ -262,40 +262,44 @@ export class PgEventStore implements EventStore {
       return result.rows.map((row) => normalizeEventJson(row.event_json));
     }
     if (options.replayMode === 'bounded') {
-      const result = await this.pool.query<{ event_json: PlatformEvent }>(
+      const result = await this.pool.query<{
+        event_json: PlatformEvent;
+        tool_content_prefix: string | null;
+        tool_content_suffix: string | null;
+        tool_content_chars: string | number | null;
+        tool_content_lines: string | number | null;
+      }>(
         `SELECT CASE
-                  WHEN event_type <> 'tool_result'
-                    OR jsonb_typeof(event_json -> 'content') <> 'string'
-                  THEN event_json
-                  WHEN jsonb_typeof(event_json -> 'modelContent') = 'string'
-                  THEN jsonb_set(
-                    event_json - 'modelContent',
-                    '{content}',
-                    event_json -> 'modelContent',
-                    false
-                  )
-                  WHEN char_length(event_json ->> 'content') <= $5::integer
-                  THEN event_json
-                  WHEN char_length($6::text || COALESCE(event_json ->> 'toolCallId', 'unknown') || $7::text) >= $5::integer
-                  THEN jsonb_set(
-                    event_json,
-                    '{content}',
-                    to_jsonb(left($6::text || COALESCE(event_json ->> 'toolCallId', 'unknown') || $7::text, $5::integer)),
-                    false
-                  )
-                  ELSE jsonb_set(
-                    event_json,
-                    '{content}',
-                    to_jsonb(
-                      left(
-                        event_json ->> 'content',
-                        $5::integer - char_length($6::text || COALESCE(event_json ->> 'toolCallId', 'unknown') || $7::text)
-                      )
-                      || $6::text || COALESCE(event_json ->> 'toolCallId', 'unknown') || $7::text
-                    ),
-                    false
-                  )
-                END AS event_json
+                  WHEN event_type = 'tool_result'
+                    AND jsonb_typeof(event_json -> 'content') = 'string'
+                  THEN event_json - 'content' - 'modelContent'
+                  ELSE event_json
+                END AS event_json,
+                CASE
+                  WHEN event_type = 'tool_result'
+                    AND jsonb_typeof(event_json -> 'content') = 'string'
+                  THEN left(event_json ->> 'content', $5::integer)
+                  ELSE NULL
+                END AS tool_content_prefix,
+                CASE
+                  WHEN event_type = 'tool_result'
+                    AND jsonb_typeof(event_json -> 'content') = 'string'
+                  THEN right(event_json ->> 'content', $6::integer)
+                  ELSE NULL
+                END AS tool_content_suffix,
+                CASE
+                  WHEN event_type = 'tool_result'
+                    AND jsonb_typeof(event_json -> 'content') = 'string'
+                  THEN char_length(event_json ->> 'content')
+                  ELSE NULL
+                END AS tool_content_chars,
+                CASE
+                  WHEN event_type = 'tool_result'
+                    AND jsonb_typeof(event_json -> 'content') = 'string'
+                  THEN 1 + char_length(event_json ->> 'content')
+                    - char_length(replace(event_json ->> 'content', E'\\n', ''))
+                  ELSE NULL
+                END AS tool_content_lines
          FROM ${this.eventsTable}
          WHERE session_id = $1
            AND ($2::boolean = false OR event_type = ANY($3::text[]))
@@ -306,12 +310,31 @@ export class PgEventStore implements EventStore {
           includeTypes.length > 0,
           includeTypes,
           excludeTypes,
-          LEGACY_MODEL_TOOL_RESULT_MAX_CHARS,
-          REPLAY_TOOL_RESULT_MARKER_PREFIX,
-          REPLAY_TOOL_RESULT_MARKER_SUFFIX,
+          TOOL_RESULT_PROJECTION_PREFIX_CHARS,
+          TOOL_RESULT_PROJECTION_SUFFIX_CHARS,
         ],
       );
-      return result.rows.map((row) => normalizeEventJson(row.event_json));
+      return result.rows.map((row) => {
+        if (
+          typeof row.tool_content_prefix !== 'string'
+          || typeof row.tool_content_suffix !== 'string'
+          || row.tool_content_chars == null
+          || row.tool_content_lines == null
+        ) {
+          return normalizeEventJson(row.event_json);
+        }
+        const event = normalizeEventJson(row.event_json);
+        if (event.type !== 'tool_result') return event;
+        return {
+          ...event,
+          content: projectToolResultSourceForModel({
+            prefix: row.tool_content_prefix,
+            suffix: row.tool_content_suffix,
+            totalChars: Number(row.tool_content_chars),
+            totalLines: Number(row.tool_content_lines),
+          }, event.toolCallId),
+        };
+      });
     }
     if (includeTypes.length > 0) {
       const result = await this.pool.query<{ event_json: PlatformEvent }>(

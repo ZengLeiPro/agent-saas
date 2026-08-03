@@ -38,25 +38,31 @@ function section(partial: Partial<BusinessStepSection>): BusinessStepSection {
 const NO_FILL_SELECTORS = ["section.bg-success\\/5", "section.bg-warning\\/5", "section.bg-destructive\\/5"];
 
 describe("BusinessStepFlow", () => {
-  it("renders the plan block frameless with step statuses", () => {
+  it("renders the plan block frameless with uniform step typography", () => {
     const { container } = render(
       <BusinessStepFlow
         event={event({
           kind: "plan",
-          stepCount: 2,
+          stepCount: 3,
           todos: [
-            { id: "a", kind: "business", content: "核验订单", status: "in_progress" },
-            { id: "b", kind: "business", content: "写入结果", status: "pending" },
+            { id: "a", kind: "business", content: "读取订单", status: "completed" },
+            { id: "b", kind: "business", content: "核验订单", status: "in_progress" },
+            { id: "c", kind: "business", content: "写入结果", status: "pending" },
           ],
         })}
       />,
     );
 
     expect(screen.getByRole("region", { name: "业务计划" })).toBeTruthy();
-    expect(screen.queryByText("共 2 步")).toBeNull();
+    expect(screen.queryByText("共 3 步")).toBeNull();
     expect(screen.getByText("1.")).toBeTruthy();
     expect(screen.getByText("2.")).toBeTruthy();
-    expect(screen.getByText("核验订单")).toBeTruthy();
+    expect(screen.getByText("3.")).toBeTruthy();
+    const rows = ["读取订单", "核验订单", "写入结果"].map((label) => screen.getByText(label));
+    expect(new Set(rows.map((row) => row.className))).toHaveLength(1);
+    expect(rows[0].className).not.toContain("line-through");
+    expect(rows[0].className).not.toContain("font-medium");
+    expect(rows[0].className).not.toContain("opacity-");
     // 去框：计划块容器不允许四边框与状态色填充
     const region = screen.getByRole("region", { name: "业务计划" });
     expect(region.className).not.toContain("border ");

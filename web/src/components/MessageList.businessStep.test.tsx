@@ -75,31 +75,32 @@ function messages(): MessageItem[] {
 }
 
 describe("MessageList business step sections", () => {
-  it("renders plan, a compact completed section, and an open section", () => {
+  it("renders plan, a completed section with collapsed process, and an open section", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
 
     // 计划亮相块
     expect(screen.getByRole("region", { name: "业务计划" })).toBeTruthy();
-    // 第 1 步：完成节只常显 outcome；业务详情可展开，内部过程不进入普通客户主流。
+    // 第 1 步：完成节——outcome 常显、过程折叠为一行
     expect(screen.getByRole("region", { name: "业务步骤已完成" })).toBeTruthy();
     expect(screen.getByText("17/18 张通过，1 张退回")).toBeTruthy();
-    expect(screen.queryByText("订单资料完整")).toBeNull();
-    expect(screen.queryByText(/过程 · 1 项/)).toBeNull();
-    expect(screen.queryByText("读取订单")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "业务详情" }));
     expect(screen.getByText("订单资料完整")).toBeTruthy();
+    expect(screen.getByText(/过程 · 1 项/)).toBeTruthy();
+    // 折叠态下工具活动不可见
+    expect(screen.queryByText("读取订单")).toBeNull();
     // 第 2 步：开放节标题存在（plan 列表 + 节标题各一次）
     expect(screen.getAllByText("写入核验结果").length).toBeGreaterThanOrEqual(2);
     // TodoWrite 原始块隐藏
     expect(screen.queryByText("TodoWrite")).toBeNull();
   });
 
-  it("hides completed execution-process metadata outside debug mode", () => {
-    render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
+  it("renders the completed process as static text outside debug mode", () => {
+    const { container } = render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
 
-    expect(screen.queryByText(/过程 · 1 项/)).toBeNull();
+    const processLabel = screen.getByText(/过程 · 1 项/);
+    expect(processLabel.closest("button")).toBeNull();
+    expect(processLabel.closest("[aria-expanded]")).toBeNull();
+    expect(container.querySelector(".lucide-chevron-right")).toBeNull();
     expect(screen.queryByText(/读取订单/)).toBeNull();
-    expect(screen.getByRole("button", { name: "业务详情" })).toBeTruthy();
   });
 
   it("renders activity groups inside open sections as static summaries outside debug mode", () => {

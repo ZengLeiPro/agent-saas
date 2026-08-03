@@ -33,6 +33,8 @@ export type LoginEvent =
   | 'tool_controls_updated'
   // 网络出口：改变平台与容器的出站路径，属高敏配置
   | 'egress_config_updated'
+  // 连接器映射词典：决定工具行如何把命令行还原成业务语言、哪些调用配得上回执章
+  | 'connector_dictionary_updated' | 'connector_dictionary_deleted' | 'connector_dictionary_reset'
   // 顶层 Agent 调度并发：直接改变全平台瞬时负载与排队行为
   | 'runtime_scheduler_capacity_updated';
 

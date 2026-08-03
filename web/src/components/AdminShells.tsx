@@ -40,9 +40,10 @@ const TenantInstructionsPanel = lazy(() => import("@/components/TenantInstructio
 const SystemPromptsManagerPanel = lazy(() => import("@/components/SystemPromptsManager"));
 const AgentRuntimeProfilesManagerPanel = lazy(() => import("@/components/AgentRuntimeProfilesManager"));
 const EgressConfigManagerPanel = lazy(() => import("@/components/EgressConfigManager"));
+const ConnectorDictionaryManagerPanel = lazy(() => import("@/components/ConnectorDictionaryManager"));
 
 export type TenantSection = "overview" | "users" | "skills" | "org-agents" | "mcp" | "usage" | "billing" | "files" | "qa" | "audit" | "settings" | "company" | "instructions";
-export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "agent-profiles" | "system-prompts" | "memory-polling" | "global-mcp" | "skill-pool" | "egress" | "system";
+export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "connector-dictionary" | "agent-profiles" | "system-prompts" | "memory-polling" | "global-mcp" | "skill-pool" | "egress" | "system";
 
 interface ShellButton<T extends string> {
   id: T;
@@ -77,6 +78,7 @@ const platformSettingsSections: ShellButton<PlatformSection>[] = [
   { id: "billing", label: "计费", icon: EntityIcons.billing },
   { id: "remote-hands", label: "执行环境池", icon: EntityIcons.runtimePool },
   { id: "tool-controls", label: "工具开关", icon: EntityIcons.toolControls },
+  { id: "connector-dictionary", label: "连接器映射", icon: EntityIcons.connector },
   { id: "agent-profiles", label: "系统 Agent", icon: EntityIcons.runtimePool },
   { id: "system-prompts", label: "系统提示语", icon: EntityIcons.systemPrompts },
   { id: "memory-polling", label: "记忆轮询", icon: EntityIcons.memoryPolling },
@@ -1124,6 +1126,7 @@ export function PlatformAdminShell({
     { id: "billing", node: <PlatformBillingManager /> },
     { id: "remote-hands", node: renderRemoteHands() },
     { id: "tool-controls", node: renderToolControls() },
+    { id: "connector-dictionary", node: <ConnectorDictionaryManagerPanel /> },
     { id: "agent-profiles", node: <AgentRuntimeProfilesManagerPanel /> },
     { id: "system-prompts", node: <SystemPromptsManagerPanel /> },
     { id: "memory-polling", node: renderMemoryPolling() },

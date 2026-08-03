@@ -435,6 +435,19 @@ export type {
   WebToolsSearchConfig,
 } from "./lib/toolControlsApi";
 
+// Lib - platform connector dictionary API（连接器命令 → 业务语言的映射词典）
+export {
+  fetchConnectorDictionary,
+  saveConnectorEntry,
+  deleteConnectorEntry,
+  resetConnectorDictionary,
+} from "./lib/connectorDictionaryApi";
+export type {
+  ConnectorActionVerb,
+  ConnectorDictionaryEntry,
+  ConnectorDictionaryResponse,
+} from "./lib/connectorDictionaryApi";
+
 // Lib - platform signup config API
 export {
   fetchSignupConfig,

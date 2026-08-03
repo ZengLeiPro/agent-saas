@@ -64,6 +64,7 @@ import { createCodexSubscriptionAdminRouter } from "../routes/codexSubscriptionA
 import { createTenantRemoteHandsAdminRouter } from "../routes/tenantRemoteHandsAdmin.js";
 import { createRuntimeOperationsAdminRouter } from "../routes/runtimeOperationsAdmin.js";
 import { createToolControlsAdminRouter } from "../routes/toolControlsAdmin.js";
+import { createConnectorDictionaryAdminRouter } from "../routes/connectorDictionaryAdmin.js";
 import { createImageGenPricingAdminRouter } from "../routes/imageGenPricingAdmin.js";
 import { createEgressConfigAdminRouter } from "../routes/egressConfigAdmin.js";
 import { createMemoryPollingAdminRouter } from "../routes/memoryPollingAdmin.js";
@@ -382,6 +383,14 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       secretVault: runtime.secretVault,
       validateToolSettingsConfig: runtime.validateToolSettingsConfig,
       onToolSettingsUpdated: runtime.updateToolSettingsConfig,
+    }),
+  );
+  // 连接器映射词典（2026-08-03）：决定工具行怎么把命令行还原成业务语言、
+  // 哪些调用配得上回执章。保存即热更新，无需重启。
+  app.use(
+    "/api/admin/connector-dictionary",
+    createConnectorDictionaryAdminRouter({
+      store: runtime.connectorDictionaryStore,
     }),
   );
   app.use(

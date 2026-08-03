@@ -57,6 +57,9 @@ const ADMIN_ALWAYS_AUDITED: ReadonlySet<LoginEvent> = new Set<LoginEvent>([
   'tool_controls_updated',
   // 网络出口配置改变出站路径（代理/镜像源），同样只有平台管理员能做
   'egress_config_updated',
+  // 连接器映射词典同样只有平台管理员能改；它决定客户在工具行上看到什么，
+  // 不留痕就没法回答「这条『钉钉 · 创建待办』是谁配出来的」
+  'connector_dictionary_updated', 'connector_dictionary_deleted', 'connector_dictionary_reset',
   // 顶层 Agent 调度并发改变全平台瞬时负载，必须记录 before/after
   'runtime_scheduler_capacity_updated',
 ]);

@@ -213,6 +213,12 @@ import {
 } from '../data/agentProfiles/store.js';
 import type { AgentRuntimeProfileStore } from '../data/agentProfiles/types.js';
 import { AgentRuntimeProfileResolver } from '../runtime/agentProfiles.js';
+import {
+  InMemoryConnectorDictionaryStore,
+  PgConnectorDictionaryStore,
+  type ConnectorDictionaryStore,
+} from '../data/connectorDictionaryStore.js';
+import { setConnectorDictionary } from '../agent/toolPresentationBuilder.js';
 import { UploadManager } from '../uploads/manager.js';
 
 // δ: skillsDispatchConfig.listForUser 的进程级 cache（configVersion 驱动失效），
@@ -408,6 +414,8 @@ export interface AppRuntime {
   systemPromptRegistry: SystemPromptRegistry;
   /** 平台 Agent 运行 Profile；PG 为可写真源，file backend 仅提供内置只读兼容版本。 */
   agentRuntimeProfileStore: AgentRuntimeProfileStore;
+  /** 连接器映射词典：平台管理可改，保存即热更新工具行摘要的业务语言。 */
+  connectorDictionaryStore: ConnectorDictionaryStore;
   /** Artifact metadata/blob service for runtime-produced artifacts. */
   artifactService?: ArtifactService;
   /** 会话只读分享存储。 */
@@ -1002,6 +1010,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let artifactService: ArtifactService | undefined;
   let sessionShareStore: SessionShareStore | undefined;
   let agentRuntimeProfileStore: AgentRuntimeProfileStore | undefined;
+  let connectorDictionaryStore: ConnectorDictionaryStore | undefined;
   let artifactShutdown: (() => Promise<void>) | undefined;
   let billingService: BillingService | undefined;
   let billingAuditTimer: NodeJS.Timeout | undefined;
@@ -1141,6 +1150,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
     await pgAgentRuntimeProfileStore.init();
     agentRuntimeProfileStore = pgAgentRuntimeProfileStore;
+    try {
+      const pgConnectorDictionaryStore = new PgConnectorDictionaryStore(pgEventStore.pool, {
+        tablePrefix: config.runtimeEventStore.tablePrefix,
+      });
+      await pgConnectorDictionaryStore.init();
+      connectorDictionaryStore = pgConnectorDictionaryStore;
+    } catch (err) {
+      // 词典读不出来不该拖垮启动：运行时会回落内置默认种子，摘要照常产出，
+      // 只是平台管理里改的那份暂时不生效
+      connectorDictionaryStore = undefined;
+      serverLogger.warn(`PgConnectorDictionaryStore init failed, falling back to builtin dictionary: ${err instanceof Error ? err.message : String(err)}`);
+    }
     try {
       dwsConnectionStore = new PgDwsConnectionStore({
         pool: pgEventStore.pool,
@@ -1565,6 +1586,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     await agentRuntimeProfileStore.init();
   }
   const agentRuntimeProfileResolver = new AgentRuntimeProfileResolver(agentRuntimeProfileStore);
+  if (!connectorDictionaryStore) {
+    connectorDictionaryStore = new InMemoryConnectorDictionaryStore();
+    await connectorDictionaryStore.init();
+  }
+  // 启动时把词典推给摘要产出层。读失败不抛——`setConnectorDictionary(null)` 会
+  // 回落内置种子，工具行摘要不会因为一张配置表而整体失灵。
+  try {
+    setConnectorDictionary(await connectorDictionaryStore.listPlatform());
+  } catch (err) {
+    setConnectorDictionary(null);
+    serverLogger.warn(`connector dictionary load failed, using builtin: ${err instanceof Error ? err.message : String(err)}`);
+  }
   artifactStore ??= new InMemoryArtifactStore();
   const artifactConfig = config.artifact;
   let artifactBlobStore: ArtifactBlobStore;
@@ -3370,6 +3403,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     updateMemoryPollingConfig,
     systemPromptRegistry,
     agentRuntimeProfileStore,
+    connectorDictionaryStore,
     artifactService,
     sessionShareStore,
     artifactShutdown,

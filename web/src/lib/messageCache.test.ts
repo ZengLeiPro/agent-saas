@@ -5,6 +5,7 @@ import {
   clearSessionMessages,
   loadSessionMessages,
   prepareMessagesForCache,
+  restoreCachedMessages,
   saveSessionMessages,
 } from "./messageCache";
 
@@ -29,6 +30,34 @@ describe("messageCache 缓存快照", () => {
     expect(snapshot.map((message) => message.id)).toEqual(["m1", "m2"]);
     expect((snapshot[0] as Extract<MessageItem, { type: "user" }>).content).toBe("hello");
     expect(snapshot[1]).toMatchObject({ type: "text", streaming: false });
+  });
+});
+
+describe("restoreCachedMessages 读回规范化", () => {
+  it("遗留 pending 用户消息转 failed", () => {
+    const cached = [
+      { id: "m1", type: "user", content: "hi", status: "pending" },
+    ] as MessageItem[];
+    expect(restoreCachedMessages(cached)[0]).toMatchObject({ status: "failed" });
+  });
+
+  // 回归：2026-08-04 preserveTail 自我复制会把同 id 消息写进缓存，源头修复不清理存量。
+  it("按 id 去重，保留首次出现的位置", () => {
+    const cached = [
+      { id: "m1", type: "user", content: "开始做吧", status: "sent" },
+      { id: "m2", type: "text", content: "回答" },
+      { id: "m1", type: "user", content: "开始做吧", status: "sent" },
+      { id: "m1", type: "user", content: "开始做吧", status: "sent" },
+    ] as MessageItem[];
+    expect(restoreCachedMessages(cached).map((m) => m.id)).toEqual(["m1", "m2"]);
+  });
+
+  it("id 唯一时保持原样", () => {
+    const cached = [
+      { id: "m1", type: "user", content: "a", status: "sent" },
+      { id: "m2", type: "text", content: "b" },
+    ] as MessageItem[];
+    expect(restoreCachedMessages(cached).map((m) => m.id)).toEqual(["m1", "m2"]);
   });
 });
 

@@ -51,6 +51,29 @@ export function prepareMessagesForCache(messages: MessageItem[]): MessageItem[] 
     ));
 }
 
+/**
+ * 缓存快照读回时的规范化。
+ *
+ * 1. 遗留 pending 用户消息转 failed（上次发送未完成就关掉了页面）。
+ * 2. 按 id 去重：2026-08-04 前 sessionMerge 的 preserveTail 自我复制缺陷会把同 id
+ *    消息写进缓存，源头修复不清理已落盘的脏快照，这里让存量在下次读取时自愈。
+ *    保留首次出现的位置；正常快照 id 唯一，去重是 no-op。
+ */
+export function restoreCachedMessages(cached: MessageItem[]): MessageItem[] {
+  const seenIds = new Set<string>();
+  const restored: MessageItem[] = [];
+  for (const message of cached) {
+    if (seenIds.has(message.id)) continue;
+    seenIds.add(message.id);
+    restored.push(
+      message.type === "user" && message.status === "pending"
+        ? { ...message, status: "failed" as const }
+        : message,
+    );
+  }
+  return restored;
+}
+
 const cacheMetadata = new Map<string, SaveSessionMessagesOptions>();
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
@@ -186,10 +209,7 @@ export async function loadSessionMessageSnapshot(
       await db.delete(STORE_NAME, sessionId);
       return null;
     }
-    // 从缓存加载时，将遗留的 pending 状态转为 failed（上次发送未完成就关闭了页面）
-    const messages = entry.messages.map(m =>
-      m.type === 'user' && m.status === 'pending' ? { ...m, status: 'failed' as const } : m
-    );
+    const messages = restoreCachedMessages(entry.messages);
     const historyComplete = entry.historyComplete ?? entry.complete === true;
     const tailCursor = entry.tailCursor ?? (entry.complete ? entry.cursor : undefined);
     const oldestCursor = entry.oldestCursor ?? messages[0]?.id;

@@ -100,6 +100,23 @@ describe('mergeServerMessagesWithLocalTail', () => {
     expect(mergeServerMessagesWithLocalTail(server, local)).toEqual([...server, latest]);
   });
 
+  // 回归：2026-08-04 生产会话 b1c23712 用户气泡被复制 6 份。preserveTail 刷新路径
+  // 的 baseMessages 与 localMsgs 同源（useSession.ts:399 / :509），server 基底本就
+  // 含有本地尾部；run 因上游 429 失败时尾形恰为 [.., text, user]，锚点之后的用户
+  // 气泡每刷新一次就被原样复制一份，且沿用同一 id 撞坏列表虚拟 key。
+  it('server 基底与本地同源时不重复追加已投影的尾部', () => {
+    const local = [user('msg-0', '上一问'), text('msg-1', '上一答'), user('msg-2', '开始做吧')];
+    expect(mergeServerMessagesWithLocalTail(local, local)).toBe(local);
+  });
+
+  it('server 基底与本地同源时反复合并保持幂等', () => {
+    const local = [user('msg-0', '上一问'), text('msg-1', '上一答'), user('msg-2', '开始做吧')];
+    let merged = mergeServerMessagesWithLocalTail(local, local);
+    merged = mergeServerMessagesWithLocalTail(merged, merged);
+    merged = mergeServerMessagesWithLocalTail(merged, merged);
+    expect(merged).toEqual(local);
+  });
+
   it('server 最后一条 text 扩展了本地流式前缀时不重复追加本地 text', () => {
     const server = [user('s0', 'q'), text('line-1', 'abcdef')];
     const local = [user('u0', 'q'), text('msg-1', 'abc')];

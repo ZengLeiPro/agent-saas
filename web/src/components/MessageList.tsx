@@ -182,14 +182,17 @@ function getFirstTimestamp(items: RenderItem[]): number | undefined {
 }
 
 /**
- * 头像行只留 4px 下边距，正文靠自身 prose 段距（10px）补足呼吸感，
- * 而活动组折叠行的 shell 已去掉顶部 margin（避免轮间双倍间距），
- * 故仅当气泡首个可见项是活动组时补一层 pt，让两种开头视觉一致。
+ * 头像到首行统一留出 20px（一行 leading-5）：
+ * - 普通正文：header 4px + wrapper 6px + prose 首段 10px；
+ * - 活动状态：header 4px + wrapper 12px + shell 行内 4px。
+ * 其他首项沿用基础 2px padding，避免改变业务计划等独立节奏。
  */
-function needsHeaderFlowGap(showHeader: boolean, items: RenderItem[]): boolean {
-  if (!showHeader) return false;
+function headerFlowPaddingClass(showHeader: boolean, items: RenderItem[]): string {
+  if (!showHeader) return 'pt-0.5';
   const first = items.find((sub) => sub.type !== 'file_download');
-  return first?.type === 'activity_group';
+  if (first?.type === 'activity_group') return 'pt-3';
+  if (first?.type === 'text') return 'pt-1.5';
+  return 'pt-0.5';
 }
 
 function getBubbleVirtualKey(item: BubbleRenderItem): string {
@@ -863,10 +866,8 @@ export const MessageList = memo(function MessageList({
                   <AiMessageHeader agentProfile={displayAgent} timestamp={timestamp} />
                 )}
                 {/* AI 连续多轮各占一个虚拟行，行距已由 MESSAGE_ROW_GAP 承担；
-                    行内留白收紧，避免与 AgentActivityShell margin 叠出双倍轮间距。
-                    紧跟头像的首个活动组没有 prose 段距托底（shell 已去顶部 margin），
-                    单独补 pt 让「头像→折叠行」与「头像→正文」两种开头对齐。 */}
-                <div className={cn('pb-0.5', needsHeaderFlowGap(showHeader, item.items) ? 'pt-2' : 'pt-0.5')}>
+                    仅头像后的首个正文/活动状态做光学补偿，轮间仍保持紧凑。 */}
+                <div className={cn('pb-0.5', headerFlowPaddingClass(showHeader, item.items))}>
                   {item.items.map((sub) => {
                     // ai_bubble 顶层的 file_download 双重保险维持原语义：一律跳过。
                     if (sub.type === 'file_download') return null;
@@ -903,7 +904,7 @@ export const MessageList = memo(function MessageList({
                 {showHeader && (
                   <AiMessageHeader agentProfile={displayAgent} timestamp={undefined} />
                 )}
-                <div className={cn('pb-0.5', showHeader ? 'pt-2' : 'pt-0.5')}>
+                <div className={cn('pb-0.5', showHeader ? 'pt-3' : 'pt-0.5')}>
                   <ErrorBoundary inline>
                     <ActivityGroupBlock items={item.items} isActive={item.isActive} isLast={item.id === lastActivityGroupId} debugMode={debugMode} />
                   </ErrorBoundary>
@@ -1067,7 +1068,7 @@ export const MessageList = memo(function MessageList({
         {!showCenterLoading && showAgentLoading && (
           <div ref={lastMessageRef} className="flex flex-col">
             <AiMessageHeader agentProfile={displayAgent} timestamp={undefined} />
-            <div className="py-2">
+            <div className="pb-2 pt-3.5">
               <div className="flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
                 <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground/70" />
                 <span>正在思考</span>

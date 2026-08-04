@@ -87,6 +87,70 @@ function messages(): MessageItem[] {
   ];
 }
 
+describe("MessageList first Agent row spacing", () => {
+  it("gives the first Agent text line a 20px avatar gap", () => {
+    render(
+      <MessageList
+        messages={[
+          { id: "user-1", type: "user", content: "开始" },
+          { id: "agent-1", type: "text", content: "我先检查当前状态。" },
+        ]}
+        loading={false}
+        debugModeOverride={false}
+      />,
+    );
+
+    const spacingWrapper = screen.getByText("我先检查当前状态。").closest("div.pt-1\\.5");
+    expect(spacingWrapper).toBeTruthy();
+  });
+
+  it("gives the first activity status line the same 20px avatar gap", () => {
+    render(
+      <MessageList
+        messages={[
+          { id: "user-1", type: "user", content: "开始" },
+          {
+            id: "tool-1",
+            type: "tool_use",
+            toolName: "Shell",
+            toolId: "tool-1",
+            toolInput: "{}",
+            executionStatus: "completed",
+            resultReady: true,
+            result: "ok",
+          },
+        ]}
+        loading={false}
+        debugModeOverride={false}
+      />,
+    );
+
+    const shell = screen.getByText("已运行").closest("div.mb-3");
+    expect(shell?.parentElement?.className).toContain("pt-3");
+  });
+
+  it("gives the thinking placeholder the same 20px avatar gap", () => {
+    render(
+      <MessageList
+        messages={[{ id: "user-1", type: "user", content: "开始" }]}
+        loading
+        debugModeOverride={false}
+      />,
+    );
+
+    expect(screen.getByText("正在思考").parentElement?.parentElement?.className).toContain("pt-3.5");
+  });
+
+  it("does not change the independently tuned business plan spacing", () => {
+    render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
+
+    const plan = screen.getByRole("region", { name: "业务计划" });
+    expect(plan.parentElement?.className).toContain("pt-0.5");
+    expect(plan.parentElement?.className).not.toContain("pt-1.5");
+    expect(plan.parentElement?.className).not.toContain("pt-3");
+  });
+});
+
 describe("MessageList business step sections", () => {
   it("uses smart folding: completed sections collapse while the current section stays open", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);

@@ -1031,15 +1031,8 @@ export class RawAgentLoop implements AgentLoop {
         const allowSessionRecovery = forceSynthesis
           && this.forcedSynthesisAllowsSessionRecovery
           && requestTools.length > 0;
-        const governed = governModelRequestMessages(
-          messages,
-          context.model,
-          currentUserMessageIndex,
-          undefined,
-          context.modelRef,
-        );
-        const requestSystemIndex = governed.messages.findIndex((message) => message.role !== 'system');
-        const requestHistory = governed.messages.slice(Math.max(0, requestSystemIndex));
+        const requestSystemIndex = messages.findIndex((message) => message.role !== 'system');
+        const requestHistory = messages.slice(Math.max(0, requestSystemIndex));
         const requestCurrentUserMessage = requestHistory.at(-1);
         const requestCurrentUser = requestCurrentUserMessage?.role === 'user'
           ? requestCurrentUserMessage.content
@@ -1065,7 +1058,7 @@ export class RawAgentLoop implements AgentLoop {
         for await (const event of this.modelAdapter.stream({
           model: context.model,
           // Adapter 可能为诊断/重试保留 request 引用；传快照，避免本轮结束后的上下文追加反向污染已发送请求。
-          messages: [...governed.messages],
+          messages: [...messages],
           tools: requestTools,
           signal: context.signal,
           ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),
@@ -2897,14 +2890,7 @@ export class RawAgentLoop implements AgentLoop {
         const allowSessionRecovery = forceSynthesis
           && this.forcedSynthesisAllowsSessionRecovery
           && requestTools.length > 0;
-        const governed = governModelRequestMessages(
-          args.messages,
-          args.context.model,
-          currentUserMessageIndex,
-          undefined,
-          args.context.modelRef,
-        );
-        const requestHistory = governed.messages.filter((message) => message.role !== 'system');
+        const requestHistory = args.messages.filter((message) => message.role !== 'system');
         const currentUserMessage = requestHistory.at(-1);
         const contextSnapshot = buildContextBreakdownSnapshot({
           instructions: args.instructions,
@@ -2916,7 +2902,7 @@ export class RawAgentLoop implements AgentLoop {
         for await (const event of this.modelAdapter.stream({
           model: args.context.model,
           // Adapter 可能为诊断/重试保留 request 引用；传快照，避免本轮结束后的上下文追加反向污染已发送请求。
-          messages: [...governed.messages],
+          messages: [...args.messages],
           tools: requestTools,
           signal: args.context.signal,
           ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),

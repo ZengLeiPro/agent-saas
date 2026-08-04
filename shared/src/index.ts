@@ -64,6 +64,7 @@ export type {
   LoginCredentials,
   SmsLoginCredentials,
   SidebarLayoutPref,
+  BusinessStepDisplayMode,
   UserPreferences,
   TenantFeatureFlags,
   ModelItem,

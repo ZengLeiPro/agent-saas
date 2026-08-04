@@ -599,13 +599,18 @@ describe('PATCH /me/preferences', () => {
   it('200：增量合并落盘；未知键被 zod 剥离不落库', async () => {
     h.setCaller(h.users.wainUser);
     const first = await h.request('/api/auth/me/preferences',
-      jsonInit('PATCH', { sidebarLayout: 'double', industryHint: 'trade' }));
+      jsonInit('PATCH', {
+        sidebarLayout: 'double',
+        industryHint: 'trade',
+        businessStepDisplayMode: 'expanded',
+      }));
     expect(first.status).toBe(200);
     const firstBody = await first.json() as { preferences: Record<string, unknown> };
     // 建号默认偏好（authorizationModeEnabled: true 等）与本次增量合并共存
     expect(firstBody.preferences).toMatchObject({
       sidebarLayout: 'double',
       industryHint: 'trade',
+      businessStepDisplayMode: 'expanded',
       authorizationModeEnabled: true,
     });
 
@@ -614,12 +619,17 @@ describe('PATCH /me/preferences', () => {
       jsonInit('PATCH', { showSessionListAvatar: true, evil: 'x' }));
     expect(second.status).toBe(200);
     expect((await second.json() as { preferences: Record<string, unknown> }).preferences)
-      .toMatchObject({ sidebarLayout: 'double', showSessionListAvatar: true });
+      .toMatchObject({
+        sidebarLayout: 'double',
+        businessStepDisplayMode: 'expanded',
+        showSessionListAvatar: true,
+      });
 
     const record = h.userStore.findById(h.users.wainUser.id);
     expect(record?.preferences).toMatchObject({
       sidebarLayout: 'double',
       industryHint: 'trade',
+      businessStepDisplayMode: 'expanded',
       showSessionListAvatar: true,
     });
     expect('evil' in ((record?.preferences ?? {}) as Record<string, unknown>)).toBe(false);

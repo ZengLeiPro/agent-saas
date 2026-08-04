@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
+  ChevronDown,
   ChevronRight,
   CircleCheck,
   CircleX,
@@ -29,8 +30,8 @@ import { statVerdict, visibleOutcomeStats, type OutcomeStat } from "./detailSema
 //   （活动组/工具块），无框 = 业务叙事」是刻意的视觉分层。
 // - 状态色只落在 icon 与小徽标上，容器一律融入背景。
 // - 归属感由缩进 + 极淡左竖线表达（timeline 语言），不靠边框。
-// - 步骤完成后常显标题、状态、outcome 与业务详情；只有调试过程按需展开。
-//   运行中的步骤保持展开。
+// - 步骤折叠时只保留标题整行；展开后再呈现 outcome、业务详情与调试过程。
+//   默认状态由用户的业务步骤展示偏好决定。
 //
 // 内容纪律（08-03 二轮：样式对齐 demo + 槽位去重）：
 // - 「业务详情」用白卡键值（PresentationDetail variant="card"）：白底 + 细行分隔
@@ -65,7 +66,7 @@ const OUTCOME_TONE_META: Record<NonNullable<TodoOutcome["tone"]>, {
 function StepBadge({ index, count }: { index?: number; count?: number }) {
   if (!index || !count) return null;
   return (
-    <span className="ml-auto shrink-0 pl-2 text-[11px] tabular-nums text-muted-foreground/70">
+    <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/70">
       第 {index}/{count} 步
     </span>
   );
@@ -179,13 +180,30 @@ function PlanTodoRow({ todo, index }: { todo: TodoItem; index: number }) {
 }
 
 /** 计划亮相块：Turn 内首个业务快照。无框，融入背景。 */
-function PlanBlock({ event }: { event: BusinessStepEventItem }) {
+function PlanBlock({
+  event,
+  hasOpenStep,
+  onToggleAll,
+}: {
+  event: BusinessStepEventItem;
+  hasOpenStep?: boolean;
+  onToggleAll?: () => void;
+}) {
   const todos = event.todos ?? [];
   return (
     <section className="mb-6 mt-2" aria-label="业务计划" data-business-step={event.id}>
       <header className="flex items-center gap-2.5">
         <ListChecks className="size-4 shrink-0 text-primary" />
         <h3 className="text-sm font-medium text-foreground">业务计划</h3>
+        {todos.length > 1 && onToggleAll ? (
+          <button
+            type="button"
+            className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+            onClick={onToggleAll}
+          >
+            {hasOpenStep ? "全部收起" : "全部展开"}
+          </button>
+        ) : null}
       </header>
       <ol className="ml-[7px] mt-2.5 border-l border-border/50 pl-5">
         {todos.map((todo, index) => (
@@ -216,32 +234,59 @@ function StartRow({ event }: { event: BusinessStepEventItem }) {
   );
 }
 
-/** 终态块（无节归属时的扁平流渲染）。无框，左竖线归属。 */
-function TerminalBlock({ event }: { event: BusinessStepEventItem }) {
+/** 终态块（无节归属时的扁平流渲染）。默认折叠，保留可交互 fallback。 */
+function TerminalBlock({
+  event,
+  open,
+  onOpenChange,
+}: {
+  event: BusinessStepEventItem;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}) {
   const todo = event.todo;
   const meta = TERMINAL_META[event.kind];
+  const [localOpen, setLocalOpen] = useState(false);
   if (!todo || !meta) return null;
   const { label, tone, Icon } = meta;
+  const bodyOpen = open ?? localOpen;
+  const toggle = () => {
+    const next = !bodyOpen;
+    if (onOpenChange) onOpenChange(next);
+    else setLocalOpen(next);
+  };
 
   return (
     <section className="my-6" aria-label={`业务步骤${label}`} data-business-step={event.id}>
       <header className="flex items-start gap-2.5">
-        <Icon className={activityStatusIconClass(tone, "mt-0.5 size-4 shrink-0")} />
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+        <Icon className={activityStatusIconClass(tone, "mt-1 size-4 shrink-0")} />
+        <button
+          type="button"
+          className="inline-flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 py-0.5 text-left"
+          aria-expanded={bodyOpen}
+          onClick={toggle}
+        >
           <span className="break-words text-sm font-medium leading-5 text-foreground">{todo.content}</span>
+          <StepBadge index={event.stepIndex} count={event.stepCount} />
           <span className={activityStatusBadgeClass(tone)}>{label}</span>
-        </div>
-        <StepBadge index={event.stepIndex} count={event.stepCount} />
+          {bodyOpen ? (
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" data-testid="business-step-chevron-down" />
+          ) : (
+            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" data-testid="business-step-chevron-right" />
+          )}
+        </button>
       </header>
-      <div className="ml-[7px] mt-3 space-y-3 border-l border-border/50 pl-5">
-        {todo.outcome ? (
-          <OutcomeLine
-            outcome={todo.outcome}
-            stats={visibleOutcomeStats(todo.outcome.stat, todo.detail)}
-          />
-        ) : null}
-        <StepSummaryBody todo={todo} />
-      </div>
+      {bodyOpen ? (
+        <div className="ml-[7px] mt-3 space-y-3 border-l border-border/50 pl-5">
+          {todo.outcome ? (
+            <OutcomeLine
+              outcome={todo.outcome}
+              stats={visibleOutcomeStats(todo.outcome.stat, todo.detail)}
+            />
+          ) : null}
+          <StepSummaryBody todo={todo} />
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -256,10 +301,22 @@ function UpdateRow({ event }: { event: BusinessStepEventItem }) {
   );
 }
 
-export function BusinessStepFlow({ event }: { event: BusinessStepEventItem }) {
+export function BusinessStepFlow({
+  event,
+  open,
+  onOpenChange,
+  planHasOpenStep,
+  onTogglePlan,
+}: {
+  event: BusinessStepEventItem;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  planHasOpenStep?: boolean;
+  onTogglePlan?: () => void;
+}) {
   switch (event.kind) {
     case "plan":
-      return <PlanBlock event={event} />;
+      return <PlanBlock event={event} hasOpenStep={planHasOpenStep} onToggleAll={onTogglePlan} />;
     case "start":
       return <StartRow event={event} />;
     case "update":
@@ -268,7 +325,7 @@ export function BusinessStepFlow({ event }: { event: BusinessStepEventItem }) {
     case "fail":
     case "block":
     case "wait":
-      return <TerminalBlock event={event} />;
+      return <TerminalBlock event={event} open={open} onOpenChange={onOpenChange} />;
     default:
       return null;
   }
@@ -284,7 +341,7 @@ function countSectionProcessItems(section: BusinessStepSection): number {
 }
 
 /**
- * 业务步骤节：标题行、outcome 与业务详情常显；调试过程按需展开。
+ * 业务步骤节：折叠时只保留标题整行，展开后再呈现结果、详情与过程。
  * children 由 MessageList 用完整消息渲染逻辑生成，本组件只提供节壳。
  */
 export function BusinessStepSectionView({
@@ -292,15 +349,19 @@ export function BusinessStepSectionView({
   debugMode,
   children,
   systemActions,
+  open,
+  onOpenChange,
 }: {
   section: BusinessStepSection;
   debugMode: boolean;
   children: ReactNode;
   /**
-   * 外部系统写操作行（2026-08-04）。与 children 同源同组件，只是终态后
-   * 过程整体收起时这几条继续留着——「AI 动了客户自己的系统」要有据可查。
+   * 外部系统写操作行（2026-08-04）。与 children 同源同组件；步骤展开时继续
+   * 遵循既有留痕规则，整步折叠时则与其他正文一起隐藏。
    */
   systemActions?: ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const { start, terminal, isActive } = section;
   const terminalMeta = terminal ? TERMINAL_META[terminal.kind] : undefined;
@@ -308,17 +369,24 @@ export function BusinessStepSectionView({
   const processCount = countSectionProcessItems(section);
   const hasProcess = processCount > 0;
 
+  const [localOpen, setLocalOpen] = useState(!terminal);
   const [processOpen, setProcessOpen] = useState(!terminal);
-  // 步骤完成瞬间收起调试过程；业务详情始终直接可见。
+  const sectionOpen = open ?? localOpen;
   const terminalKey = terminal?.id ?? null;
   useEffect(() => {
     if (!terminalKey) return;
     setProcessOpen(false);
-  }, [terminalKey]);
+    if (open === undefined) setLocalOpen(false);
+  }, [open, terminalKey]);
 
   if (!todo) return <>{children}</>;
 
   const titleLabel = !terminal && isActive && todo.activeForm ? todo.activeForm : todo.content;
+  const toggleSection = () => {
+    const next = !sectionOpen;
+    if (onOpenChange) onOpenChange(next);
+    else setLocalOpen(next);
+  };
 
   return (
     <section
@@ -328,13 +396,18 @@ export function BusinessStepSectionView({
     >
       <header className="flex items-start gap-2.5">
         {terminalMeta ? (
-          <terminalMeta.Icon className={activityStatusIconClass(terminalMeta.tone, "mt-0.5 size-4 shrink-0")} />
+          <terminalMeta.Icon className={activityStatusIconClass(terminalMeta.tone, "mt-1 size-4 shrink-0")} />
         ) : isActive ? (
-          <Loader2 className={activityStatusIconClass("active", "mt-0.5 size-4 shrink-0 animate-spin")} />
+          <Loader2 className={activityStatusIconClass("active", "mt-1 size-4 shrink-0 animate-spin")} />
         ) : (
-          <Play className="mt-0.5 size-4 shrink-0 text-muted-foreground/60" />
+          <Play className="mt-1 size-4 shrink-0 text-muted-foreground/60" />
         )}
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+        <button
+          type="button"
+          className="inline-flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 py-0.5 text-left"
+          aria-expanded={sectionOpen}
+          onClick={toggleSection}
+        >
           <span
             className={cn(
               "break-words text-sm font-medium leading-5",
@@ -343,6 +416,7 @@ export function BusinessStepSectionView({
           >
             {titleLabel}
           </span>
+          <StepBadge index={terminal?.stepIndex ?? start.stepIndex} count={terminal?.stepCount ?? start.stepCount} />
           {terminalMeta ? (
             <>
               <span className={activityStatusBadgeClass(terminalMeta.tone)}>{terminalMeta.label}</span>
@@ -355,34 +429,40 @@ export function BusinessStepSectionView({
           ) : isActive ? (
             <span className={activityStatusBadgeClass("active")}>进行中</span>
           ) : null}
-        </div>
-        <StepBadge index={terminal?.stepIndex ?? start.stepIndex} count={terminal?.stepCount ?? start.stepCount} />
+          {sectionOpen ? (
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" data-testid="business-step-chevron-down" />
+          ) : (
+            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" data-testid="business-step-chevron-right" />
+          )}
+        </button>
       </header>
 
-      <div className="ml-[7px] mt-3 space-y-3.5 border-l border-border/50 pl-5">
-        {terminal?.todo?.outcome ? (
-          <OutcomeLine
-            outcome={terminal.todo.outcome}
-            stats={visibleOutcomeStats(terminal.todo.outcome.stat, terminal.todo.detail)}
-          />
-        ) : null}
+      {sectionOpen ? (
+        <div className="ml-[7px] mt-3 space-y-3.5 border-l border-border/50 pl-5">
+          {terminal?.todo?.outcome ? (
+            <OutcomeLine
+              outcome={terminal.todo.outcome}
+              stats={visibleOutcomeStats(terminal.todo.outcome.stat, terminal.todo.detail)}
+            />
+          ) : null}
 
-        {terminal && debugMode && hasProcess ? (
-          <DisclosureButton
-            label={<>过程 · {processCount} 项</>}
-            open={processOpen}
-            onToggle={() => setProcessOpen((open) => !open)}
-          />
-        ) : null}
+          {terminal && debugMode && hasProcess ? (
+            <DisclosureButton
+              label={<>过程 · {processCount} 项</>}
+              open={processOpen}
+              onToggle={() => setProcessOpen((value) => !value)}
+            />
+          ) : null}
 
-        {terminal?.todo ? <StepSummaryBody todo={terminal.todo} /> : null}
-        {terminal && debugMode && processOpen ? <div>{children}</div> : null}
-        {!terminal && hasProcess ? <div>{children}</div> : null}
-        {/* 终态且过程已收起时，动过外部系统的写操作行继续留着：客户看到的
-            「AI 动了我的钉钉 + 单据号」必须是平台盖的章，不能只剩模型自述的「依据」。
-            debug 展开态下 children 已包含这几行，不再重复渲染。 */}
-        {terminal && systemActions && !(debugMode && processOpen) ? <div>{systemActions}</div> : null}
-      </div>
+          {terminal?.todo ? <StepSummaryBody todo={terminal.todo} /> : null}
+          {terminal && debugMode && processOpen ? <div>{children}</div> : null}
+          {!terminal && hasProcess ? <div>{children}</div> : null}
+          {/* 终态且过程已收起时，动过外部系统的写操作行继续留着：客户看到的
+              「AI 动了我的钉钉 + 单据号」必须是平台盖的章，不能只剩模型自述的「依据」。
+              debug 展开态下 children 已包含这几行，不再重复渲染。 */}
+          {terminal && systemActions && !(debugMode && processOpen) ? <div>{systemActions}</div> : null}
+        </div>
+      ) : null}
     </section>
   );
 }

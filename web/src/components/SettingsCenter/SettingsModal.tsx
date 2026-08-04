@@ -36,7 +36,7 @@ import { authFetch } from "@/lib/authFetch";
 import { TOKEN_KEY } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { fetchAgentProfile, saveUserPreferences, updateAgentProfile, uploadAgentAvatar } from "@agent/shared";
-import type { AgentProfileDetail, ModelList, SidebarLayoutPref } from "@agent/shared";
+import type { AgentProfileDetail, BusinessStepDisplayMode, ModelList, SidebarLayoutPref } from "@agent/shared";
 import type { SettingsSectionConfig, SettingsSectionGroup, SettingsSectionId } from "@/types/settings";
 
 export const SETTINGS_SECTIONS: SettingsSectionConfig[] = [
@@ -180,14 +180,16 @@ function clearRunShellApprovalStorage() {
   }
 }
 
-function GeneralSection() {
+export function GeneralSection() {
   // 授权模式对所有用户开放（2026-07-02 起），每个用户自行切换。
   const { user, updatePreferences } = useAuth();
   const authorizationModeEnabled = user?.preferences?.authorizationModeEnabled === true;
   const preferredDefaultModel = user?.preferences?.defaultModel;
+  const businessStepDisplayMode = user?.preferences?.businessStepDisplayMode ?? "auto";
   const [modelList, setModelList] = useState<ModelList | null>(null);
   const [draftAuthorizationMode, setDraftAuthorizationMode] = useState(authorizationModeEnabled);
   const [draftDefaultModel, setDraftDefaultModel] = useState(preferredDefaultModel ?? "");
+  const [draftBusinessStepDisplayMode, setDraftBusinessStepDisplayMode] = useState<BusinessStepDisplayMode>(businessStepDisplayMode);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -212,16 +214,19 @@ function GeneralSection() {
   useEffect(() => {
     setDraftAuthorizationMode(authorizationModeEnabled);
     setDraftDefaultModel(modelList?.default ?? "");
+    setDraftBusinessStepDisplayMode(businessStepDisplayMode);
     setSaved(false);
-  }, [authorizationModeEnabled, modelList?.default]);
+  }, [authorizationModeEnabled, businessStepDisplayMode, modelList?.default]);
 
   const currentDefaultModel = modelList?.default ?? "";
   const hasChanges = draftAuthorizationMode !== authorizationModeEnabled
+    || draftBusinessStepDisplayMode !== businessStepDisplayMode
     || (!!draftDefaultModel && draftDefaultModel !== currentDefaultModel);
 
   const handleSave = useCallback(async () => {
     const next = {
       authorizationModeEnabled: draftAuthorizationMode,
+      businessStepDisplayMode: draftBusinessStepDisplayMode,
       ...(draftDefaultModel ? { defaultModel: draftDefaultModel } : {}),
     };
     setSaving(true);
@@ -241,13 +246,17 @@ function GeneralSection() {
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (error) {
-      updatePreferences({ authorizationModeEnabled, defaultModel: preferredDefaultModel });
+      updatePreferences({
+        authorizationModeEnabled,
+        businessStepDisplayMode,
+        defaultModel: preferredDefaultModel,
+      });
       setDraftDefaultModel(modelList?.default ?? "");
       window.alert(error instanceof Error ? error.message : "保存失败");
     } finally {
       setSaving(false);
     }
-  }, [authorizationModeEnabled, draftAuthorizationMode, draftDefaultModel, modelList?.default, preferredDefaultModel, updatePreferences]);
+  }, [authorizationModeEnabled, businessStepDisplayMode, draftAuthorizationMode, draftBusinessStepDisplayMode, draftDefaultModel, modelList?.default, preferredDefaultModel, updatePreferences]);
 
   return (
     <PlaceholderSection
@@ -284,6 +293,31 @@ function GeneralSection() {
                   </SelectItem>
                 );
               }))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center justify-between gap-4 border-t pt-4">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-foreground">业务步骤展示</div>
+            <div className="mt-1 text-sm leading-6 text-muted-foreground">
+              设置业务步骤的默认展开方式；会话内仍可临时展开或收起单项。
+            </div>
+          </div>
+          <Select
+            value={draftBusinessStepDisplayMode}
+            onValueChange={(value) => {
+              setDraftBusinessStepDisplayMode(value as BusinessStepDisplayMode);
+              setSaved(false);
+            }}
+            disabled={saving}
+          >
+            <SelectTrigger className="w-[180px] max-w-full" aria-label="业务步骤展示">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">智能折叠</SelectItem>
+              <SelectItem value="collapsed">始终折叠</SelectItem>
+              <SelectItem value="expanded">始终展开</SelectItem>
             </SelectContent>
           </Select>
         </div>

@@ -143,6 +143,7 @@ const changePasswordSchema = z.object({
 // PATCH /me/phone：仅保留清除手机号；绑定/更换手机号必须走验证码验证接口。
 const updatePreferencesSchema = z.object({
   sidebarLayout: z.enum(["double", "single"]).optional(),
+  businessStepDisplayMode: z.enum(["auto", "collapsed", "expanded"]).optional(),
   authorizationModeEnabled: z.boolean().optional(),
   showSessionListAvatar: z.boolean().optional(),
   defaultModel: z.string().min(1).optional(),

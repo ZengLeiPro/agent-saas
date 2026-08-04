@@ -1,6 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageItem } from "@agent/shared";
+
+const authState = vi.hoisted(() => ({ businessStepDisplayMode: "auto" }));
 
 beforeAll(() => {
   // jsdom 未实现 Range.getClientRects（MessageItem footer 行内测量用）；
@@ -13,7 +15,14 @@ beforeAll(() => {
 });
 
 vi.mock("@/contexts/AuthContext", () => ({
-  useAuth: () => ({ user: { id: "user-1", username: "tester", debugMode: false } }),
+  useAuth: () => ({
+    user: {
+      id: "user-1",
+      username: "tester",
+      debugMode: false,
+      preferences: { businessStepDisplayMode: authState.businessStepDisplayMode },
+    },
+  }),
 }));
 
 vi.mock("@/hooks/useVoicePlayer", () => ({
@@ -27,6 +36,10 @@ vi.mock("@/hooks/useVoicePlayer", () => ({
 }));
 
 import { MessageList } from "./MessageList";
+
+beforeEach(() => {
+  authState.businessStepDisplayMode = "auto";
+});
 
 function messages(): MessageItem[] {
   return [
@@ -75,29 +88,102 @@ function messages(): MessageItem[] {
 }
 
 describe("MessageList business step sections", () => {
-  it("renders plan, a compact completed section, and an open section", () => {
+  it("uses smart folding: completed sections collapse while the current section stays open", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
 
-    // 计划亮相块
     expect(screen.getByRole("region", { name: "业务计划" })).toBeTruthy();
-    // 第 1 步：完成节常显 outcome 与业务详情；内部过程不进入普通客户主流。
     expect(screen.getByRole("region", { name: "业务步骤已完成" })).toBeTruthy();
-    expect(screen.getByText("17/18 张通过，1 张退回")).toBeTruthy();
-    expect(screen.getByText("订单资料完整")).toBeTruthy();
+    const completedToggle = screen.getByRole("button", { name: /核验订单.*第 1\/2 步.*已完成/ });
+    const currentToggle = screen.getByRole("button", { name: /写入核验结果.*第 2\/2 步/ });
+    expect(completedToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(currentToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.queryByText("17/18 张通过，1 张退回")).toBeNull();
+    expect(screen.queryByText("订单资料完整")).toBeNull();
     expect(screen.queryByText(/过程 · 1 项/)).toBeNull();
     expect(screen.queryByText("读取订单")).toBeNull();
-    // 第 2 步：开放节标题存在（plan 列表 + 节标题各一次）
-    expect(screen.getAllByText("写入核验结果").length).toBeGreaterThanOrEqual(2);
-    // TodoWrite 原始块隐藏
     expect(screen.queryByText("TodoWrite")).toBeNull();
   });
 
-  it("hides completed execution-process metadata outside debug mode", () => {
+  it("reveals completed business details on title click without exposing debug metadata", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
 
+    fireEvent.click(screen.getByRole("button", { name: /核验订单.*已完成/ }));
     expect(screen.queryByText(/过程 · 1 项/)).toBeNull();
     expect(screen.queryByText(/读取订单/)).toBeNull();
     expect(screen.queryByRole("button", { name: "业务详情" })).toBeNull();
+    expect(screen.getByText("订单资料完整")).toBeTruthy();
+  });
+
+  it("places the batch control beside 业务计划 and applies it to every step in that plan", () => {
+    const withOpenActivity: MessageItem[] = [
+      ...messages(),
+      {
+        id: "open-section-tool",
+        type: "tool_use",
+        toolName: "Shell",
+        toolId: "open-section-tool",
+        toolInput: "{}",
+        executionStatus: "completed",
+        resultReady: true,
+        result: "ok",
+      },
+    ];
+    render(<MessageList messages={withOpenActivity} loading={false} debugModeOverride={false} />);
+
+    const planTitle = screen.getByText("业务计划");
+    const collapseAll = screen.getByRole("button", { name: "全部收起" });
+    expect(planTitle.nextElementSibling).toBe(collapseAll);
+    expect(screen.getByText("已运行")).toBeTruthy();
+
+    fireEvent.click(collapseAll);
+    expect(screen.getByRole("button", { name: "全部展开" })).toBeTruthy();
+    expect(screen.queryByText("已运行")).toBeNull();
+    expect(screen.queryByText("订单资料完整")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "全部展开" }));
+    expect(screen.getByText("已运行")).toBeTruthy();
+    expect(screen.getByText("订单资料完整")).toBeTruthy();
+  });
+
+  it("keeps plan-level controls working when progress text splits the workflow into multiple AI bubbles", () => {
+    const splitMessages = messages();
+    splitMessages.splice(2, 0, { id: "progress", type: "text", content: "先同步一下当前进度。" });
+    render(<MessageList messages={splitMessages} loading={false} debugModeOverride={false} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "全部收起" }));
+    expect(screen.getByRole("button", { name: "全部展开" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "全部展开" }));
+    expect(screen.getByText("订单资料完整")).toBeTruthy();
+  });
+
+  it("honors always-collapsed and always-expanded personal preferences", () => {
+    const withOpenActivity: MessageItem[] = [
+      ...messages(),
+      {
+        id: "open-section-tool",
+        type: "tool_use",
+        toolName: "Shell",
+        toolId: "open-section-tool",
+        toolInput: "{}",
+        executionStatus: "completed",
+        resultReady: true,
+        result: "ok",
+      },
+    ];
+
+    authState.businessStepDisplayMode = "collapsed";
+    const { unmount } = render(
+      <MessageList messages={withOpenActivity} loading={false} debugModeOverride={false} />,
+    );
+    expect(screen.getByRole("button", { name: "全部展开" })).toBeTruthy();
+    expect(screen.queryByText("已运行")).toBeNull();
+    expect(screen.queryByText("订单资料完整")).toBeNull();
+    unmount();
+
+    authState.businessStepDisplayMode = "expanded";
+    render(<MessageList messages={withOpenActivity} loading={false} debugModeOverride={false} />);
+    expect(screen.getByRole("button", { name: "全部收起" })).toBeTruthy();
+    expect(screen.getByText("已运行")).toBeTruthy();
     expect(screen.getByText("订单资料完整")).toBeTruthy();
   });
 
@@ -169,7 +255,8 @@ describe("MessageList business step sections", () => {
   it("keeps activity groups inside the expanded process in debug mode", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride />);
 
-    // debug 视图会额外保留 TodoWrite 原始工具块，因此过程项数包含该工具。
+    // 先展开已完成步骤；debug 视图会额外保留 TodoWrite 原始工具块，因此过程项数包含该工具。
+    fireEvent.click(screen.getByRole("button", { name: /核验订单.*已完成/ }));
     fireEvent.click(screen.getByRole("button", { name: /过程 · 2 项/ }));
 
     // 过程展开后先显示活动组摘要，而不是直接铺开组内命令。

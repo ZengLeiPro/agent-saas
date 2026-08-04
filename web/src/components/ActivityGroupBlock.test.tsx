@@ -32,6 +32,29 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     expect(screen.getAllByText('有异常').length).toBeGreaterThanOrEqual(1);
   });
 
+  it('单条业务摘要保留与普通活动壳一致的底部节奏', () => {
+    const presentedTool: Extract<MessageItem, { type: 'tool_use' }> = {
+      ...failedTool,
+      id: 'tool-presented',
+      executionStatus: 'completed',
+      result: 'ok',
+      presentation: { title: '钉钉 · 查询AI 表格' },
+    };
+    const { rerender } = render(
+      <ActivityGroupBlock items={[presentedTool]} isActive={false} debugMode />,
+    );
+
+    const title = screen.getByText('钉钉 · 查询AI 表格');
+    const spacingShell = title.closest('div.mb-3');
+    expect(spacingShell).toBeTruthy();
+    expect(spacingShell?.querySelector('div.my-0\\.5')).toBeTruthy();
+
+    rerender(
+      <ActivityGroupBlock items={[presentedTool]} isActive={false} debugMode className="mb-0" />,
+    );
+    expect(screen.getByText('钉钉 · 查询AI 表格').closest('div.mb-0')).toBeTruthy();
+  });
+
   it('多动作组只保留显式业务标题，不机械列举工具描述', () => {
     render(<ActivityGroupBlock
       items={[

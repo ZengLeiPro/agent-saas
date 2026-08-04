@@ -666,12 +666,18 @@ export const MessageList = memo(function MessageList({
           const showHeader = headerItemIds.has(item.id);
 
           // AI 流内子项渲染：ai_bubble 内与业务步骤节内共用（节内过程 = 完整消息渲染，非降级视图）。
-          const renderFlowItem = (sub: RenderItem): React.ReactNode => {
+          const renderFlowItem = (sub: RenderItem, inSection = false): React.ReactNode => {
             if (sub.type === 'business_step_section') {
+              // 系统动作行走与过程行完全相同的渲染路径（同一个 ToolBlock），
+              // 终态后由 section 决定留哪几条——一条事实一个组件，不做第二套呈现
+              const systemActionIds = new Set(sub.systemActionIds ?? []);
+              const systemActions = systemActionIds.size
+                ? sub.items.filter((child) => systemActionIds.has(child.id)).map((child) => renderFlowItem(child, true))
+                : null;
               return (
                 <ErrorBoundary key={sub.id} inline>
-                  <BusinessStepSectionView section={sub} debugMode={debugMode}>
-                    {sub.items.map((child) => renderFlowItem(child))}
+                  <BusinessStepSectionView section={sub} debugMode={debugMode} systemActions={systemActions}>
+                    {sub.items.map((child) => renderFlowItem(child, true))}
                   </BusinessStepSectionView>
                 </ErrorBoundary>
               );
@@ -695,6 +701,9 @@ export const MessageList = memo(function MessageList({
                     isActive={sub.isActive}
                     isLast={sub.id === lastActivityGroupId}
                     debugMode={debugMode}
+                    // 节内折叠行与正文是同 div 相邻兄弟，没有轮间结构底座；
+                    // shell 为轮间场景补的 mb-3 在此造成「上 23px/下 35px」失衡，归零后上下均 ~23px。
+                    className={inSection ? 'mb-0' : undefined}
                   />
                 </ErrorBoundary>
               );

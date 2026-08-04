@@ -123,6 +123,49 @@ describe("MessageList business step sections", () => {
     expect(screen.queryByText("Shell")).toBeNull();
   });
 
+  it("drops the shell bottom margin for activity groups inside sections but keeps it in flat flow", () => {
+    // 节内：折叠行与正文是同 div 相邻兄弟，shell 的轮间 mb-3 补偿必须归零，
+    // 否则「折叠行→下方内容」比「上方内容→折叠行」多出 12px（08-04 曾磊报告的失衡）。
+    const withOpenActivity: MessageItem[] = [
+      ...messages(),
+      {
+        id: "open-section-tool",
+        type: "tool_use",
+        toolName: "Shell",
+        toolId: "open-section-tool",
+        toolInput: "{}",
+        executionStatus: "completed",
+        resultReady: true,
+        result: "ok",
+      },
+    ];
+    const { unmount } = render(
+      <MessageList messages={withOpenActivity} loading={false} debugModeOverride={false} />,
+    );
+    const inSection = screen.getByText("已运行");
+    expect(inSection.closest("div.mb-0")).toBeTruthy();
+    expect(inSection.closest("div.mb-3")).toBeNull();
+    unmount();
+
+    // 轮间扁平流（无业务步骤节）：保持 mb-3 承担与下一虚拟行的间距补偿。
+    const flatFlow: MessageItem[] = [
+      { id: "user-1", type: "user", content: "查一下" },
+      {
+        id: "flat-tool",
+        type: "tool_use",
+        toolName: "Shell",
+        toolId: "flat-tool",
+        toolInput: "{}",
+        executionStatus: "completed",
+        resultReady: true,
+        result: "ok",
+      },
+    ];
+    render(<MessageList messages={flatFlow} loading={false} debugModeOverride={false} />);
+    const inFlat = screen.getByText("已运行");
+    expect(inFlat.closest("div.mb-3")).toBeTruthy();
+  });
+
   it("keeps activity groups inside the expanded process in debug mode", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride />);
 

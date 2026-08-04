@@ -143,7 +143,8 @@ function DetailRow({ line }: { line: DetailLine }) {
     const { tone, Icon } = VERDICT_META[line.verdict];
     return (
       <div className="flex items-start gap-1.5">
-        <Icon className={activityStatusIconClass(tone, "mt-0.5 size-3 shrink-0")} />
+        {/* text-xs leading-relaxed 行高 19.5px、icon 12px：mt-1(4px)≈(19.5-12)/2，与首行光学居中 */}
+        <Icon className={activityStatusIconClass(tone, "mt-1 size-3 shrink-0")} />
         <span className="min-w-0 break-words text-foreground">
           {line.text}
           {line.note ? <span className="text-muted-foreground">　{line.note}</span> : null}
@@ -236,7 +237,8 @@ function WarnGroup({ header, warns }: { header: string; warns: string[] }) {
       <div className={activityStatusTextClass("warning", "text-[11px] font-medium leading-4")}>{header}</div>
       {warns.map((warn, i) => (
         <div key={i} className="flex items-start gap-1.5">
-          <TriangleAlert className={activityStatusIconClass("warning", "mt-0.5 size-3 shrink-0")} />
+          {/* 同 verdict 行：leading-relaxed 19.5px 行高下 mt-1 才居中 */}
+          <TriangleAlert className={activityStatusIconClass("warning", "mt-1 size-3 shrink-0")} />
           <span className={activityStatusTextClass("warning", "break-words")}>{warn}</span>
         </div>
       ))}

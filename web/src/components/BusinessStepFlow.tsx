@@ -101,7 +101,8 @@ function OutcomeLine({ outcome, stats }: { outcome: TodoOutcome; stats: OutcomeS
   return (
     <div className="space-y-2">
       <p className={cn("flex items-start gap-2 text-sm leading-6", meta.textClass)}>
-        {Icon ? <Icon className={cn("mt-0.5 size-3.5 shrink-0", meta.iconClass)} /> : null}
+        {/* leading-6 行高 24px、icon 14px：mt=(24-14)/2=5px 才与首行文字光学居中 */}
+        {Icon ? <Icon className={cn("mt-[5px] size-3.5 shrink-0", meta.iconClass)} /> : null}
         <span className="min-w-0 break-words">{outcome.text}</span>
       </p>
       {stats.length ? (
@@ -290,10 +291,16 @@ export function BusinessStepSectionView({
   section,
   debugMode,
   children,
+  systemActions,
 }: {
   section: BusinessStepSection;
   debugMode: boolean;
   children: ReactNode;
+  /**
+   * 外部系统写操作行（2026-08-04）。与 children 同源同组件，只是终态后
+   * 过程整体收起时这几条继续留着——「AI 动了客户自己的系统」要有据可查。
+   */
+  systemActions?: ReactNode;
 }) {
   const { start, terminal, isActive } = section;
   const terminalMeta = terminal ? TERMINAL_META[terminal.kind] : undefined;
@@ -371,6 +378,10 @@ export function BusinessStepSectionView({
         {terminal?.todo ? <StepSummaryBody todo={terminal.todo} /> : null}
         {terminal && debugMode && processOpen ? <div>{children}</div> : null}
         {!terminal && hasProcess ? <div>{children}</div> : null}
+        {/* 终态且过程已收起时，动过外部系统的写操作行继续留着：客户看到的
+            「AI 动了我的钉钉 + 单据号」必须是平台盖的章，不能只剩模型自述的「依据」。
+            debug 展开态下 children 已包含这几行，不再重复渲染。 */}
+        {terminal && systemActions && !(debugMode && processOpen) ? <div>{systemActions}</div> : null}
       </div>
     </section>
   );

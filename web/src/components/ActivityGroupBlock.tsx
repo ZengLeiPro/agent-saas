@@ -188,6 +188,8 @@ interface ActivityGroupBlockProps {
   isActive: boolean;
   isLast?: boolean;
   debugMode?: boolean;
+  /** 透传给折叠行外壳。业务步骤节内传 mb-0 抵消轮间场景的 mb-3 补偿。 */
+  className?: string;
 }
 
 export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: { isActive?: boolean; durationMs?: number; hasIssue?: boolean }) {
@@ -207,7 +209,7 @@ export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: {
   );
 }
 
-export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isActive, debugMode = true }: ActivityGroupBlockProps) {
+export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isActive, debugMode = true, className }: ActivityGroupBlockProps) {
   // 折叠行已提供分组摘要，具体工具详情由用户按需展开，避免长会话默认铺满执行细节。
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -241,6 +243,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
       expanded={debugMode && isExpanded}
       disabled={!debugMode}
       onToggle={() => setIsExpanded((value) => !value)}
+      className={className}
     >
       <div className="flex flex-col gap-3 [&>*]:my-0">
         {items.map(item => (

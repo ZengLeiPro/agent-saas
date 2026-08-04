@@ -113,6 +113,26 @@ describe('连接器识别（生产真实命令形态）', () => {
       entry.binary === 'dws' ? { ...entry, enabled: false } : entry);
     expect(parseConnectorCommand('dws todo create', disabled)).toBeNull();
   });
+
+  // 2026-08-04：这批映射来自生产 60 天真实调用统计出的降级样本。缺映射不报错、
+  // 只把英文原词漏给客户看，所以必须由测试锁住——否则下次动 COMMON_ACTION_VERBS
+  // 或 dws 条目时会静默退化，而没有任何信号会告诉我们。
+  it.each([
+    ['dws chat message list-all --start x', '查询群聊与消息'],
+    ['dws chat message list-by-sender --sender-user-id x', '查询群聊与消息'],
+    ['dws chat conversation-info --user x', '查询群聊与消息'],
+    ['dws contact user get-self --format json', '查询通讯录'],
+    ['dws auth login', '登录授权'],
+    ['dws profile list --format json', '查询账号配置'],
+  ])('生产降级样本回归：%s → %s', (command, action) => {
+    expect(parse(command)).toMatchObject({ system: '钉钉', action });
+  });
+
+  it('补的查询类动词一律 write=false——查询不盖回执章', () => {
+    for (const cmd of ['dws chat message list-all', 'dws contact user get-self', 'dws auth login']) {
+      expect(parse(cmd)).toMatchObject({ isWrite: false });
+    }
+  });
 });
 
 describe('贪婪 JSON 片段扫描', () => {

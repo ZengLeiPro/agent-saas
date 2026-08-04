@@ -88,6 +88,14 @@ const COMMON_ACTION_VERBS: Record<string, ConnectorActionVerb> = {
   detail: { name: '查看', write: false },
   download: { name: '下载', write: false },
   export: { name: '导出', write: false },
+  // —— 2026-08-04 按生产真实调用补齐（60 天窗口的降级样本）——
+  // CLI 持续加子命令、词典不会自己跟上：漏掉的动词不报错，只是把英文原词漏给
+  // 客户看（「钉钉 · 群聊与消息 · list-all」）。补的依据是生产调用频次，
+  // 不是把 CLI 全部子命令搬进来。
+  'list-all': { name: '查询', write: false }, // dws chat message list-all（60 天 33 次）
+  'get-self': { name: '查询', write: false }, // dws contact user get-self（18 次）
+  login: { name: '登录', write: false }, // dws auth login（29 次）：建立会话不产生业务对象，不盖章
+  logout: { name: '登出', write: false }, // 与 login 同族，一并登记避免下次又降级
 };
 
 /** 读文档 / 探测版本这类调用不是业务动作，命中即不产出业务标题 */
@@ -137,8 +145,16 @@ export const BUILTIN_CONNECTOR_DICTIONARY: readonly ConnectorDictionaryEntry[] =
       mail: '邮箱',
       minutes: 'AI 听记',
       auth: '授权',
+      // 2026-08-04 补：生产高频但此前缺映射，标题里漏英文原词
+      aisearch: 'AI 搜问', // 官方 --help 原文；60 天有调用
+      profile: '账号配置', // dws profile list（60 天 20 次）。语义依据=生产实测返回账号/组织/凭证到期
     },
-    actionVerbs: { ...COMMON_ACTION_VERBS },
+    actionVerbs: {
+      ...COMMON_ACTION_VERBS,
+      // 钉钉 chat 特有子命令：通用动词表里放不下（其他 CLI 没有同名命令）
+      'conversation-info': { name: '查询', write: false },
+      'list-by-sender': { name: '查询', write: false },
+    },
     excludePatterns: [...COMMON_EXCLUDE_PATTERNS],
     urlWhitelist: [...DINGTALK_URL_HOSTS],
   },

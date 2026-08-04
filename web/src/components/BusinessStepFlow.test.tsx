@@ -340,3 +340,62 @@ describe("BusinessStepSectionView", () => {
   });
 });
 
+describe("BusinessStepSectionView 外部系统动作留痕", () => {
+  const terminal = () => event({
+    kind: "complete",
+    todo: { id: "a", kind: "business", content: "同步钉钉待办", status: "completed", outcome: { text: "已创建", tone: "ok" } },
+  });
+
+  it("终态且过程收起时，系统动作行继续渲染——平台盖的章不能只剩模型自述", () => {
+    render(
+      <BusinessStepSectionView
+        debugMode={false}
+        section={section({ terminal: terminal(), systemActionIds: ["w1"] })}
+        systemActions={<div>钉钉 · 创建待办</div>}
+      >
+        <div>过程细节</div>
+      </BusinessStepSectionView>,
+    );
+    expect(screen.getByText("钉钉 · 创建待办")).toBeTruthy();
+    // 非 debug 下过程整体仍收起，只有系统动作行例外
+    expect(screen.queryByText("过程细节")).toBeNull();
+  });
+
+  it("步骤进行中不重复渲染系统动作行——此时 children 已包含它", () => {
+    render(
+      <BusinessStepSectionView
+        debugMode={false}
+        section={section({ systemActionIds: ["w1"] })}
+        systemActions={<div>钉钉 · 创建待办</div>}
+      >
+        <div>钉钉 · 创建待办</div>
+      </BusinessStepSectionView>,
+    );
+    expect(screen.getAllByText("钉钉 · 创建待办")).toHaveLength(1);
+  });
+
+  it("debug 展开过程时不重复渲染——children 里已有这几行", () => {
+    render(
+      <BusinessStepSectionView
+        debugMode
+        section={section({ terminal: terminal(), systemActionIds: ["w1"] })}
+        systemActions={<div>钉钉 · 创建待办</div>}
+      >
+        <div>钉钉 · 创建待办</div>
+      </BusinessStepSectionView>,
+    );
+    // debug 终态默认收起过程 → 走系统动作行分支，仍只有一份
+    expect(screen.getAllByText("钉钉 · 创建待办")).toHaveLength(1);
+  });
+
+  it("无系统动作时不渲染空容器", () => {
+    const { container } = render(
+      <BusinessStepSectionView debugMode={false} section={section({ terminal: terminal() })}>
+        <div>过程细节</div>
+      </BusinessStepSectionView>,
+    );
+    expect(screen.queryByText("过程细节")).toBeNull();
+    expect(container.querySelectorAll("div").length).toBeGreaterThan(0);
+  });
+});
+

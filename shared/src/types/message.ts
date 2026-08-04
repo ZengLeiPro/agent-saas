@@ -23,6 +23,12 @@ export interface BusinessStepSection {
    * 失败→重试成功是正常模式，不触发（同类取最后一次）。
    */
   processAnomaly?: boolean;
+  /**
+   * 外部系统写操作行的 message id（2026-08-04 曾磊拍板）。步骤终态后过程整体收起，
+   * 但「AI 动了客户自己的系统」要留痕——渲染层按这些 id 从 items 里挑行继续渲染。
+   * 存 id 不存节点：items 由渲染层实例化，这里只表达「哪几条该留」。
+   */
+  systemActionIds?: string[];
 }
 
 export type AskUserAnswerValue = string | string[];

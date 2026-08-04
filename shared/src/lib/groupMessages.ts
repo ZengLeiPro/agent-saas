@@ -39,6 +39,31 @@ function sameStepKey(a: BusinessStepEventItem, b: BusinessStepEventItem): boolea
 }
 
 /**
+ * 外部系统动作行（2026-08-04 曾磊拍板）。
+ *
+ * 判据只认服务端打的 `presentation.connector` 标记，**不解析 title 字符串**——
+ * 「钉钉 · 创建待办」这种形态可以被模型的 description 伪造出来，标记不能。
+ */
+export function isConnectorActionItem(item: RenderItem): boolean {
+  return item.type === 'tool_use' && !!item.presentation?.connector;
+}
+
+/**
+ * 步骤终态后仍要留痕的外部系统写操作。
+ *
+ * 只留写操作：查询类看完即走（客户不需要「我查过了」的存档），写操作要有据可查。
+ * 不要求一定有 receipt——写操作失败或外部系统没返回单据号时，「动过但没拿到回执」
+ * 本身就是客户最该看见的事实，藏起来等于回到「失败糊弄」。
+ */
+function collectSystemActionIds(section: BusinessStepSection): string[] {
+  const ids: string[] = [];
+  for (const item of section.items) {
+    if (item.type === 'tool_use' && item.presentation?.connector?.write) ids.push(item.id);
+  }
+  return ids;
+}
+
+/**
  * 跨层矛盾规则（2026-08-03 任务 C，曾磊拍板原则：平台事实压过模型叙事）。
  *
  * 触发条件（全部满足才标，宁缺毋滥）：
@@ -114,6 +139,9 @@ export function groupMessages(
     // 开放节（无终态）只有在流末尾且 run 仍活跃时才算「进行中」。
     section.isActive = !section.terminal && atStreamEnd && loading;
     if (detectProcessAnomaly(section)) section.processAnomaly = true;
+    // 终态后过程整体收起，但动过外部系统的写操作要留痕（渲染层据此挑行渲染）
+    const systemActionIds = collectSystemActionIds(section);
+    if (systemActionIds.length > 0) section.systemActionIds = systemActionIds;
     result.push(section);
   };
 
@@ -171,7 +199,14 @@ export function groupMessages(
       continue;
     }
 
-    if (debugMode && msg.type === 'tool_use' && msg.presentation && msg.defaultExpanded) {
+    if (isConnectorActionItem(msg)) {
+      // 外部系统动作两种视图都独立成行（2026-08-04 曾磊拍板）：
+      // 「AI 动了客户自己的钉钉」不是技术噪音，恰恰是这条线要给客户看的东西。
+      // 与下一条 debug-only 规则的分工：那条判据是 defaultExpanded（模型说这行重要，
+      // 会被模型左右所以只给 debug）；这条判据是平台确定性识别出的连接器命令，客户可见。
+      flushGroup(false);
+      sink().push(msg);
+    } else if (debugMode && msg.type === 'tool_use' && msg.presentation && msg.defaultExpanded) {
       // 只有调试视图允许高价值执行行独立展示；非调试视图必须进入活动分组，
       // 统一显示固定状态，不能用格式化摘要绕过过程信息隔离。
       flushGroup(false);

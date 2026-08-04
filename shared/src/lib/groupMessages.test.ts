@@ -75,6 +75,23 @@ describe('groupMessages', () => {
     expect((result[2] as ActivityGroup).items.map(i => i.id)).toEqual(['after']);
   });
 
+  it('连接器动作行非 debug 也独立成行——「AI 动了客户的系统」不是技术噪音', () => {
+    const connectorCall = tool('dws1', {
+      presentation: { title: '钉钉 · 创建待办', connector: { system: '钉钉', write: true } },
+    });
+    const result = groupMessages([thinking('t1'), connectorCall, tool('after')], false, { debugMode: false });
+    expect(result.map(r => r.type)).toEqual(['activity_group', 'tool_use', 'activity_group']);
+    expect((result[1] as MessageItem).id).toBe('dws1');
+  });
+
+  it('连接器标记必须由服务端给：只有连接器样式标题、无 connector 字段时仍进活动分组', () => {
+    // 模型可以用 description 伪造出「钉钉 · 创建待办」这种标题，前端不认标题只认标记
+    const faked = tool('fake', { presentation: { title: '钉钉 · 创建待办' } });
+    const result = groupMessages([thinking('t1'), faked], false, { debugMode: false });
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe('activity_group');
+  });
+
   it('仅有 presentation（无 defaultExpanded）的工具行仍进活动分组——真实会话行为不变', () => {
     const covered = tool('covered', { presentation: { title: '读取文件' } });
     const result = groupMessages([thinking('t1'), covered], false);
@@ -410,5 +427,63 @@ describe('groupMessages 跨层矛盾角标（processAnomaly）', () => {
     const section = result.at(-1) as BusinessStepSection;
     expect(section.terminal?.kind).toBe('block');
     expect(section.processAnomaly).toBeUndefined();
+  });
+});
+
+describe('groupMessages 外部系统动作留痕（systemActionIds）', () => {
+  const opts = { sectioning: true };
+  const startPlan = () => businessTodo('todo-plan', [
+    { id: 'sync', kind: 'business', content: '同步钉钉待办', status: 'in_progress' },
+  ]);
+  const done = () => businessTodo('todo-done', [
+    { id: 'sync', kind: 'business', content: '同步钉钉待办', status: 'completed',
+      outcome: { text: '已创建', tone: 'ok' } },
+  ]);
+  const connectorTool = (id: string, write: boolean, status: 'ok' | 'warn' = 'ok') => tool(id, {
+    toolName: 'Shell',
+    presentation: {
+      title: write ? '钉钉 · 创建待办' : '钉钉 · 查询待办',
+      status,
+      connector: { system: '钉钉', write },
+    },
+  });
+
+  it('写操作留痕、查询不留——查询看完即走，写操作要有据可查', () => {
+    const result = groupMessages([
+      user('u'), startPlan(),
+      connectorTool('query-1', false),
+      connectorTool('write-1', true),
+      done(),
+    ], false, opts);
+    const section = result.at(-1) as BusinessStepSection;
+    expect(section.systemActionIds).toEqual(['write-1']);
+  });
+
+  it('写操作失败也留痕——「动过但没成」正是客户最该看见的事实', () => {
+    const result = groupMessages([
+      user('u'), startPlan(),
+      connectorTool('write-1', true, 'warn'),
+      done(),
+    ], false, opts);
+    expect((result.at(-1) as BusinessStepSection).systemActionIds).toEqual(['write-1']);
+  });
+
+  it('无连接器动作的步骤不带 systemActionIds（不给渲染层制造空容器）', () => {
+    const result = groupMessages([
+      user('u'), startPlan(),
+      tool('sh-1', { toolName: 'Shell', presentation: { title: '执行命令', status: 'ok' } }),
+      done(),
+    ], false, opts);
+    expect((result.at(-1) as BusinessStepSection).systemActionIds).toBeUndefined();
+  });
+
+  it('多次写操作按时间序全部留痕', () => {
+    const result = groupMessages([
+      user('u'), startPlan(),
+      connectorTool('write-1', true),
+      connectorTool('write-2', true),
+      done(),
+    ], false, opts);
+    expect((result.at(-1) as BusinessStepSection).systemActionIds).toEqual(['write-1', 'write-2']);
   });
 });

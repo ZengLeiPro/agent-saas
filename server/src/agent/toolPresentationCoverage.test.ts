@@ -259,6 +259,44 @@ describe('连接器回执（presentation.receipt）', () => {
     expect(result?.detail?.some((line) => typeof line === 'object' && 'fields' in line)).toBe(true);
   });
 
+  it('连接器命令打 connector 标记（写操作 write=true）——渲染层据此抽出单独成行', () => {
+    const result = buildToolPresentation(
+      'Shell',
+      { command: 'dws todo create --title x --format json' },
+      undefined,
+      { exitCode: 0 },
+      envelope(connectorJson),
+    );
+    expect(result?.connector).toEqual({ system: '钉钉', write: true });
+  });
+
+  it('连接器查询命令 write=false——终态后不留痕', () => {
+    const result = buildToolPresentation('Shell', { command: 'dws todo task list --format json' }, undefined, { exitCode: 0 });
+    expect(result?.connector).toEqual({ system: '钉钉', write: false });
+  });
+
+  it('写操作失败（非零退出码）仍打 connector 标记——「动过但没成」要给客户看', () => {
+    const result = buildToolPresentation('Shell', { command: 'dws todo create --title x' }, undefined, { exitCode: 1 });
+    expect(result?.connector).toEqual({ system: '钉钉', write: true });
+    expect(result?.receipt).toBeUndefined();
+    expect(result?.status).toBe('warn');
+  });
+
+  it('非连接器命令无 connector 标记——普通 Shell 不得升格成业务动作', () => {
+    const result = buildToolPresentation('Shell', { command: 'ls /tmp' }, undefined, { exitCode: 0 });
+    expect(result?.connector).toBeUndefined();
+  });
+
+  it('--help 不打标记——读文档不是动客户的系统', () => {
+    const result = buildToolPresentation('Shell', { command: 'dws todo create --help' }, undefined, { exitCode: 0 });
+    expect(result?.connector).toBeUndefined();
+  });
+
+  it('入参侧（无执行结果）同样打标记——运行中的连接器行就该独立可见', () => {
+    const result = buildToolPresentation('Shell', { command: 'dws todo create --title x' });
+    expect(result?.connector).toEqual({ system: '钉钉', write: true });
+  });
+
   it('读操作拿到对象 ID 也不盖章——查出来的对象不是本次改动的证明；字段照进 detail', () => {
     const result = buildToolPresentation(
       'Shell',

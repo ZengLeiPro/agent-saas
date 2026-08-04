@@ -59,6 +59,8 @@ export interface ToolPresentation {
   detail?: PresentationDetailLine[];
   status?: 'ok' | 'warn' | 'blocked' | 'waiting';
   receipt?: { id: string; system: string; readBack?: boolean };
+  /** 外部系统动作标记：渲染层据此把这条抽出活动分组单独成行（见 shared `ToolConnectorAction`） */
+  connector?: { system: string; write: boolean };
 }
 
 /** 规则覆盖状态。用于覆盖率断言，见 toolPresentationCoverage.test.ts */
@@ -303,6 +305,10 @@ const METADATA_RULES: Record<string, MetadataRule> = {
       detail,
       status: technicallyFailed || facts?.failed ? 'warn' : 'ok',
       ...(receipt ? { receipt } : {}),
+      // 动了外部系统的调用打标记：渲染层据此抽出单独成行（与 receipt 分工——
+      // receipt 是「拿到单据号」，connector 是「这次动了客户的系统」，
+      // 写操作失败或没返回 ID 时没有 receipt，但客户仍该看见 AI 动了他的钉钉）
+      ...(connector ? { connector: { system: connector.system, write: connector.isWrite } } : {}),
     };
   },
 
@@ -465,7 +471,13 @@ const RULES: Record<string, Rule> = {
     const detail: ToolPresentation['detail'] = connector
       ? [{ k: '系统', v: connector.system }, { k: '命令', v: briefCommand(command) }]
       : [{ k: '命令', v: briefCommand(command) }];
-    return { title: description ?? (connector ? `${connector.system} · ${connector.action}` : '执行命令'), detail };
+    return {
+      title: description ?? (connector ? `${connector.system} · ${connector.action}` : '执行命令'),
+      detail,
+      // 入参侧（尚未拿到执行结果）同样打标记：运行中的连接器行就该独立可见，
+      // 不能等结果回来才从活动组里跳出来
+      ...(connector ? { connector: { system: connector.system, write: connector.isWrite } } : {}),
+    };
   },
 
   WebSearch: (input) => {

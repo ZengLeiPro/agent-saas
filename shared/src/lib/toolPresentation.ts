@@ -68,6 +68,24 @@ export interface ToolReceipt {
   readBack?: boolean;
 }
 
+/**
+ * 外部系统动作标记（2026-08-04，曾磊拍板）。
+ *
+ * 存在理由：非 debug 视图把所有工具折叠成「已运行」（`2c7fb14`，避免技术噪音刷屏），
+ * 但「AI 正在动客户自己的系统」不是技术噪音，是这条产品线的核心可见性——
+ * 08-04 生产验收实测：折叠后客户看到的唯一「依据」来自模型自述，平台盖的章没人看得见。
+ * 有这个标记的工具行从活动分组里**抽出来单独成行**，并在步骤终态后保留写操作留痕。
+ *
+ * 必须由服务端确定性产出（`parseConnectorCommand` 已经知道答案），
+ * **前端不得靠 title 里的「 · 」分隔符猜**——猜会把普通命令误升格成业务动作。
+ */
+export interface ToolConnectorAction {
+  /** 目标系统名，如「钉钉」 */
+  system: string;
+  /** 是否写操作。决定步骤终态后是否留痕：查询看完即走，写操作要有据可查。 */
+  write: boolean;
+}
+
 export interface ToolPresentation {
   /** 业务语言的一句话，如「核对魏德米勒选型表」。为空时调用方回退 getToolDisplayInfo。 */
   title: string;
@@ -76,6 +94,8 @@ export interface ToolPresentation {
   /** 业务级状态，与 executionStatus（技术级）正交：技术成功但业务被拦截是合法组合。 */
   status?: 'ok' | 'warn' | 'blocked' | 'waiting';
   receipt?: ToolReceipt;
+  /** 外部系统动作标记：有值＝这条动了客户自己的系统，渲染层据此抽出单独成行 */
+  connector?: ToolConnectorAction;
   /**
    * 本次工具执行对右侧企业系统面板的增量。
    * 面板与 detail 同源——同一条摘要，detail 进会话流，panel 进右侧面板，
@@ -305,6 +325,17 @@ export function normalizeToolPresentation(raw: unknown, options?: { allowCustomH
         system,
         ...(typeof receipt.readBack === 'boolean' ? { readBack: receipt.readBack } : {}),
       };
+    }
+  }
+
+  // 连接器标记决定这条工具行要不要从活动分组里抽出来给客户看，
+  // 所以 system 走与 receipt.system 同一条长度/形状约束，write 必须显式布尔
+  // （缺省不猜读写——猜错会让查询动作在步骤终态后一直留痕）。
+  const connector = input.connector as Record<string, unknown> | undefined;
+  if (connector && typeof connector === 'object' && typeof connector.write === 'boolean') {
+    const rawSystem = clampText(connector.system);
+    if (rawSystem !== null && rawSystem.length <= RECEIPT_SYSTEM_LIMIT && !rawSystem.includes('://')) {
+      result.connector = { system: rawSystem, write: connector.write };
     }
   }
 

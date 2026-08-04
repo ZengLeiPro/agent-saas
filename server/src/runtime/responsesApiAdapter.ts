@@ -458,6 +458,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
       }
       const retryDelayMs = isRetryablePreStreamHttpError(
         attemptResponse.status,
+        providerError.code,
         providerError.message ?? text,
       )
         ? retryDelaysMs[transientRetryIndex]
@@ -1929,8 +1930,22 @@ function isInvalidEncryptedContent(status: number, code: string | undefined, mes
   return /invalid[_\s-]?encrypted[_\s-]?content/i.test(`${code ?? ''} ${message}`);
 }
 
-function isRetryablePreStreamHttpError(status: number, message: string): boolean {
+// 429 里额度/配额耗尽类：需要人工充值或扩配额才能恢复，重试只会连续撞同一堵墙。
+// 限流（RPM/TPM）、服务过载、模型加载中都不属于这一类，退避后通常可恢复。
+function isQuotaExhausted(code: string | undefined, message: string): boolean {
+  return /quota[_\s-]?exceeded|insufficient[_\s-]?quota|exhausted its free trial|额度(?:已)?(?:用尽|耗尽)/i
+    .test(`${code ?? ''} ${message}`);
+}
+
+function isRetryablePreStreamHttpError(
+  status: number,
+  code: string | undefined,
+  message: string,
+): boolean {
   if (status === 502 || status === 503 || status === 504) return true;
+  // 429 发流前被拒 = 上游未接单、不计费，退避重试只花时延不花钱；
+  // 覆盖 ServerOverloaded / ModelLoadingError / RPM·TPM 限流等可自愈形态。
+  if (status === 429) return !isQuotaExhausted(code, message);
   if (status !== 500) return false;
   return /\b(?:EOF|ECONNRESET|EPIPE|ETIMEDOUT)\b|socket hang up|connection (?:reset|closed)|unexpected end of file/i.test(message)
     || /stream error:\s*stream ID \d+;\s*PROTOCOL_ERROR;\s*received from peer/i.test(message);

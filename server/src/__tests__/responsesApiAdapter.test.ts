@@ -2020,6 +2020,64 @@ describe('ResponsesApiAdapter', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('发流前 429 ServerOverloaded 按退避重试', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          code: 'ServerOverloaded',
+          message: 'The service is currently unable to handle additional requests due to server overload.'
+            + ' Please retry later. Request id: 0217858484536230cea48c30fe52795b626c570501de4628911c1',
+        },
+      }), { status: 429 }))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '恢复成功' }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: { id: 'resp_recovered', status: 'completed', usage: { input_tokens: 8, output_tokens: 2 } },
+        }),
+      ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'kimi-k3', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events.at(-1)).toMatchObject({ type: 'completed', content: '恢复成功', modelRequestAttemptCount: 2 });
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      { attempt: 1, httpStatus: 429, errorCode: 'ServerOverloaded', willRetry: true },
+      { attempt: 2, outcome: 'completed' },
+    ]);
+  });
+
+  it('发流前 429 QuotaExceeded 不重试，直接失败', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        code: 'QuotaExceeded',
+        message: 'Your account [2100000000] has exhausted its free trial quota for the [kimi-k3] model',
+      },
+    }), { status: 429 }));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    await expect(collect(adapter.stream({
+      model: 'kimi-k3', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext))).rejects.toThrow('HTTP 429');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('显式配置后对发流前 EOF 快三次、慢两次，共重试五次', async () => {
     vi.useFakeTimers();
     let requestCount = 0;

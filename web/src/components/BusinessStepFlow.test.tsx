@@ -65,6 +65,9 @@ describe("BusinessStepFlow", () => {
     expect(rows[0].className).not.toContain("opacity-");
     // 去框：计划块容器不允许四边框与状态色填充
     const region = screen.getByRole("region", { name: "业务计划" });
+    expect(region.className).toContain("mt-2");
+    expect(region.className).toContain("mb-6");
+    expect(region.className).not.toContain("my-6");
     expect(region.className).not.toContain("border ");
     expect(region.className).not.toContain("rounded-lg");
     for (const sel of NO_FILL_SELECTORS) expect(container.querySelector(sel)).toBeNull();

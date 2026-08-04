@@ -1,11 +1,12 @@
 import { publicSessionShareFileUrl } from "@/lib/sessionShareApi";
 import { useState, useEffect, useMemo, lazy, Suspense, useCallback, useRef } from "react";
-import { ChevronLeft, Loader2, CircleAlert, X } from "lucide-react";
+import { ChevronLeft, Loader2, CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/authFetch";
 import { extractTextFromChildren, getCellMinWidthPx } from "@/lib/tableCellWidth";
 import { resolveImageSrc } from "@agent/shared";
 import { FilePreviewActions, printFilePreviewElement, useFilePreviewPrint } from "@/components/FilePreviewActions";
+import { ImageLightbox } from "@/components/ImageLightbox";
 
 /** 判断是否为外部 URL 或 data URI */
 function isExternalSrc(src: string): boolean {
@@ -40,23 +41,11 @@ function PreviewImage({ src, alt, owner, referrer }: { src: string; alt?: string
         onClick={() => setLightbox(true)}
       />
       {lightbox && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setLightbox(false)}
-        >
-          <button
-            onClick={() => setLightbox(false)}
-            className="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
-          >
-            <X className="size-5" />
-          </button>
-          <img
-            src={resolvedSrc}
-            alt={alt}
-            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
+        <ImageLightbox
+          src={resolvedSrc}
+          alt={alt ?? ''}
+          onClose={() => setLightbox(false)}
+        />
       )}
     </>
   );

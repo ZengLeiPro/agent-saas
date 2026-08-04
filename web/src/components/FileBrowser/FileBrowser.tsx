@@ -8,6 +8,7 @@ import type { FileEntry, FileSortKey, FileSortOrder } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+import { ImageLightbox } from "@/components/ImageLightbox";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -440,26 +441,11 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
       </Dialog>
 
       {imagePreview && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setImagePreview(null)}
-        >
-          <button
-            type="button"
-            onClick={() => setImagePreview(null)}
-            className="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
-            title="关闭"
-            aria-label="关闭预览"
-          >
-            <X className="size-5" />
-          </button>
-          <img
-            src={imagePreview.src}
-            alt={imagePreview.name}
-            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
-            onClick={(event) => event.stopPropagation()}
-          />
-        </div>
+        <ImageLightbox
+          src={imagePreview.src}
+          alt={imagePreview.name}
+          onClose={() => setImagePreview(null)}
+        />
       )}
     </div>
   );

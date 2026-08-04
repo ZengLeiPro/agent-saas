@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, memo, lazy, Suspense } from 'react';
-import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, Download, X, GitFork, Paperclip, ImageIcon, Mic, Ban, TriangleAlert } from 'lucide-react';
+import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, Download, GitFork, Paperclip, ImageIcon, Mic, Ban, TriangleAlert } from 'lucide-react';
 import { CATEGORY_ICON } from '@/lib/fileCategoryIcons';
 import { MessageItem as MessageItemType, formatFileSize } from './types';
 import type { AskUserAnswers } from '@agent/shared';
@@ -26,6 +26,7 @@ import type { Components } from 'react-markdown';
 import { EntityIcons } from '@/lib/icons';
 import { requestOpenBillingBadge } from '@/lib/billingBadgeBus';
 import { publicSessionShareFileUrl } from '@/lib/sessionShareApi';
+import { ImageLightbox } from './ImageLightbox';
 
 // react-markdown 懒加载：不阻塞首屏渲染，模块加载后立即可用
 const markdownPromise = import("react-markdown");
@@ -103,24 +104,11 @@ function AuthImage({ src, alt, owner }: { src: string; alt?: string; owner?: str
         onClick={() => setLightbox(true)}
       />
       {lightbox && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setLightbox(false)}
-        >
-          <button
-            onClick={() => setLightbox(false)}
-            className="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
-          >
-            <X className="size-5" />
-          </button>
-          <img
-            src={resolvedSrc}
-            alt={alt}
-            decoding="async"
-            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
+        <ImageLightbox
+          src={resolvedSrc}
+          alt={alt ?? ''}
+          onClose={() => setLightbox(false)}
+        />
       )}
     </>
   );
@@ -436,26 +424,11 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
         </div>
       </div>
       {previewSrc && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setPreviewSrc(null)}
-        >
-          <button
-            type="button"
-            onClick={() => setPreviewSrc(null)}
-            className="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
-            title="关闭"
-            aria-label="关闭预览"
-          >
-            <X className="size-5" />
-          </button>
-          <img
-            src={previewSrc}
-            alt={fileName}
-            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
+        <ImageLightbox
+          src={previewSrc}
+          alt={fileName}
+          onClose={() => setPreviewSrc(null)}
+        />
       )}
     </>
   );
@@ -515,26 +488,11 @@ function UserAttachmentChip({ att, filePreview }: {
         <span className="max-w-[200px] truncate">{att.name}</span>
       </span>
       {previewSrc && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setPreviewSrc(null)}
-        >
-          <button
-            type="button"
-            onClick={() => setPreviewSrc(null)}
-            className="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
-            title="关闭"
-            aria-label="关闭预览"
-          >
-            <X className="size-5" />
-          </button>
-          <img
-            src={previewSrc}
-            alt={att.name}
-            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
+        <ImageLightbox
+          src={previewSrc}
+          alt={att.name}
+          onClose={() => setPreviewSrc(null)}
+        />
       )}
     </>
   );

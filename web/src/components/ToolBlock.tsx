@@ -2,36 +2,11 @@ import { useState, useMemo } from "react";
 import { formatJson } from './types';
 import { parseToolResult, getToolDisplayInfo, toolResultExitCode, type ToolPresentation, type ToolResultMetadata } from '@agent/shared';
 import { PresentationDetail } from './PresentationDetail';
-import { Wrench, ChevronRight, CircleCheck, X } from "lucide-react";
+import { Wrench, ChevronRight, CircleCheck } from "lucide-react";
 import { StatusIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { activityStatusBadgeClass, activityStatusIconClass, formatActivityDuration, type ActivityStatusTone } from "./activityStatusStyles";
-
-// ============================================
-// Image Lightbox (shared)
-// ============================================
-
-function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-      onClick={onClose}
-    >
-      <button
-        onClick={onClose}
-        className="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
-      >
-        <X className="size-5" />
-      </button>
-      <img
-        src={src}
-        className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
-        onClick={(e) => e.stopPropagation()}
-        alt=""
-      />
-    </div>
-  );
-}
+import { ImageLightbox } from "./ImageLightbox";
 
 // ============================================
 // Result Content (shared between ToolBlock and ToolResultBlock)
@@ -64,7 +39,7 @@ function ResultContent({ result, toolName, standalone }: { result: string; toolN
           <pre className="mt-1 whitespace-pre-wrap break-words">{parsed.text}</pre>
         )}
         {lightboxSrc && (
-          <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
+          <ImageLightbox src={lightboxSrc} alt={`${toolName} result`} onClose={() => setLightboxSrc(null)} />
         )}
       </>
     );

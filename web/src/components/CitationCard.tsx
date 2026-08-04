@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { BookOpen, X } from 'lucide-react';
+import { BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useFilePreview } from '@/contexts/FilePreviewContext';
 import { buildKbPreviewPath, resolveKbFileSrc } from '@agent/shared';
 import { authFetch } from '@/lib/authFetch';
+import { ImageLightbox } from './ImageLightbox';
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif)$/i;
 const PDF_EXT_RE = /\.pdf$/i;
@@ -79,26 +80,11 @@ export function CitationCard({ doc, page, label }: { doc: string; page?: number;
         ) : null}
       </button>
       {lightboxSrc && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setLightboxSrc(null)}
-        >
-          <button
-            type="button"
-            onClick={() => setLightboxSrc(null)}
-            className="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
-            title="关闭"
-            aria-label="关闭预览"
-          >
-            <X className="size-5" />
-          </button>
-          <img
-            src={lightboxSrc}
-            alt={label}
-            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
+        <ImageLightbox
+          src={lightboxSrc}
+          alt={label}
+          onClose={() => setLightboxSrc(null)}
+        />
       )}
     </>
   );

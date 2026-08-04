@@ -95,8 +95,11 @@ describe('用户消息附件 chip', () => {
     await waitFor(() => {
       expect(screen.getByAltText('photo.png')).toBeTruthy();
     });
-    // 点击遮罩关闭
-    fireEvent.click(screen.getByRole('button', { name: '关闭预览' }));
+    const lightbox = screen.getByRole('dialog', { name: '预览图片：photo.png' });
+    expect(lightbox.parentElement).toBe(document.body);
+    expect(lightbox.className).toContain('z-[200]');
+    // 点击图片外的遮罩关闭
+    fireEvent.click(lightbox);
     expect(screen.queryByAltText('photo.png')).toBeNull();
   });
 

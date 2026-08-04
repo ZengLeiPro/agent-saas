@@ -12,6 +12,11 @@ vi.mock("@/lib/authFetch", () => ({
   ),
 }));
 
+vi.mock("@agent/shared", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@agent/shared")>(),
+  resolveImageSrc: vi.fn(() => new Promise<string>(() => {})),
+}));
+
 vi.mock("@/platform/webConfig", () => ({
   webConfig: {
     platform: "web",
@@ -47,7 +52,30 @@ describe("FilePreviewDialog", () => {
     expect(close.parentElement?.className).toContain("!shadow-xl");
     expect(close.parentElement?.className).toContain("outline-none");
     expect(close.parentElement?.className).toContain("h-[calc(100dvh-32px)]");
+    expect(close.parentElement?.className).toContain("z-[101]");
+    expect((close.parentElement as HTMLElement).style.top).toBe("50%");
     expect(close.parentElement?.className).not.toContain("900px");
+  });
+
+  it("视频预览点击弹窗外遮罩会关闭", () => {
+    const onClose = vi.fn();
+    render(
+      <FilePreviewDialog
+        open
+        filePath="assets/demo.mp4"
+        onClose={onClose}
+      />,
+    );
+
+    const content = screen.getByRole("dialog");
+    const overlay = Array.from(document.body.querySelectorAll<HTMLElement>('[data-state="open"]'))
+      .find((element) => element !== content && element.className.includes("inset-0"));
+    expect(overlay?.className).toContain("z-[100]");
+    expect(overlay?.className).toContain("bg-black/70");
+
+    fireEvent.pointerDown(overlay!);
+    fireEvent.click(overlay!);
+    expect(onClose).toHaveBeenCalled();
   });
 
   it("右侧预览栏提供返回弹窗预览的放大按钮", () => {

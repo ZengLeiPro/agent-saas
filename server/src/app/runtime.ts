@@ -17,7 +17,6 @@ import {
 import { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
 import { CodexResponsesWebSocketPool } from '../runtime/responses/codexResponsesWebSocketPool.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
-import { setTenantWireFlags } from '../runtime/wireEnvFlags.js';
 import {
   DuckDBRuntimeAuditQuery,
   EventStoreRuntimeAuditQuery,
@@ -679,10 +678,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   } catch (err) {
     serverLogger.warn(`Failed to scan tenant settings dirs: ${err}`);
   }
-
-  // 2026-08-03：tenantSharedEnv 中的平台行为开关（严格白名单，如 KY_DWS_WRAPPER_ENABLE）
-  // 注册给 wire env——server-remote ACS hand 不走 buildTenantScopedEnv，需经 wire 下发。
-  setTenantWireFlags(tenantSharedEnv);
 
   const uploadsDir = join(agentCwd, 'uploads');
   const uploadManager = new UploadManager({ agentCwd });

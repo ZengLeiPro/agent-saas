@@ -27,7 +27,6 @@ import type { RuntimeSessionRecord } from '../runtime/sessionCatalog.js';
 import type { ApprovalStore, EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 import type { RunRecord } from '../runtime/runStore.js';
 import { InMemoryToolInvocationStore } from '../runtime/toolInvocationStore.js';
-import { resetTenantWireFlagsForTest, setTenantWireFlags } from '../runtime/wireEnvFlags.js';
 import type { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
 
 // 最小可用 config（只放本组 helper 真消费的字段）
@@ -263,48 +262,16 @@ describe('buildTenantRemoteHandWireEnv', () => {
     expect(buildTenantRemoteHandWireEnv(workspace())).toEqual({});
   });
 
-  // ── 2026-08-03：per-tenant wire 行为开关（wireEnvFlags）合并语义 ──
-  describe('wire 行为开关合并', () => {
-    afterEach(() => resetTenantWireFlagsForTest());
+  // ── 2026-08-04：wire env 只带 AZEROTH 凭据（dws wrapper 撤销后移除行为开关通道）──
+  // 这条守卫锁的是「通道本身不存在」：tenantSharedEnv 里有 DASHSCOPE_API_KEY 这类密钥，
+  // 任何把它接上 wire 的改动都必须先让这条测试红掉，逼作者重新论证白名单与泄漏面。
+  it('无 username（AZEROTH 注入不适用）时 wire env 为空——不存在其他下发通道', () => {
+    expect(buildTenantRemoteHandWireEnv(workspace({ username: undefined }))).toEqual({});
+  });
 
-    it('注册开关后，无 username 也按租户下发（开关与用户无关）', () => {
-      setTenantWireFlags({ kaiyan: { KY_DWS_WRAPPER_ENABLE: '1' } });
-      expect(buildTenantRemoteHandWireEnv(workspace({ username: undefined }))).toEqual({
-        KY_DWS_WRAPPER_ENABLE: '1',
-      });
-    });
-
-    it('开关与 AZEROTH 注入共存时合并返回', async () => {
-      setTenantWireFlags({ kaiyan: { KY_DWS_WRAPPER_ENABLE: '1' } });
-      await writeTokensConfig({ tenants: { kaiyan: { tokens: { huangyiping: 'pat_k' } } } });
-      expect(buildTenantRemoteHandWireEnv(workspace())).toEqual({
-        KY_DWS_WRAPPER_ENABLE: '1',
-        AZEROTH_TOKEN: 'pat_k',
-      });
-    });
-
-    it('其他租户的开关不串台', () => {
-      setTenantWireFlags({ wain: { KY_DWS_WRAPPER_ENABLE: '1' } });
-      expect(buildTenantRemoteHandWireEnv(workspace({ username: undefined }))).toEqual({});
-    });
-
-    it('白名单外的 tenantSharedEnv 变量绝不上 wire（凭据防线）', () => {
-      setTenantWireFlags({
-        kaiyan: {
-          KY_DWS_WRAPPER_ENABLE: '1',
-          DASHSCOPE_API_KEY: 'sk-leak',
-          SOME_TOKEN: 'leak',
-        },
-      });
-      expect(buildTenantRemoteHandWireEnv(workspace({ username: undefined }))).toEqual({
-        KY_DWS_WRAPPER_ENABLE: '1',
-      });
-    });
-
-    it('空值开关被剔除（wire pickHandEnv 本也会剔除空串）', () => {
-      setTenantWireFlags({ kaiyan: { KY_DWS_WRAPPER_ENABLE: '' } });
-      expect(buildTenantRemoteHandWireEnv(workspace({ username: undefined }))).toEqual({});
-    });
+  it('有 AZEROTH 配置时也只出现凭据两键，不夹带任何平台变量', async () => {
+    await writeTokensConfig({ tenants: { kaiyan: { tokens: { huangyiping: 'pat_k' } } } });
+    expect(buildTenantRemoteHandWireEnv(workspace())).toEqual({ AZEROTH_TOKEN: 'pat_k' });
   });
 });
 

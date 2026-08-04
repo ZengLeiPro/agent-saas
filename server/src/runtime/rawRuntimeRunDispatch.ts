@@ -18,7 +18,6 @@ import type { TenantStore } from '../data/tenants/store.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { resolveAzerothInjection } from '../integrations/azeroth/tokens.js';
-import { getTenantWireFlags } from './wireEnvFlags.js';
 import type { WorkspaceRef } from '../agent/toolRuntime.js';
 import { readTenantCompanyInfoSync } from '../data/tenants/companyInfo.js';
 import { readTenantInstructionsSync } from '../data/tenants/instructions.js';
@@ -1806,12 +1805,14 @@ function loadTenantInstructions(sharedDir: string, tenantId?: string): string {
  * 未命中（该 (tenantId, username) 没配 PAT）→ 不带 AZEROTH env →
  * pod 内 CLI 报"未授权"，语义与本地 SDK 未配置时一致。
  *
- * 2026-08-03：另合并 per-tenant wire 行为开关（wireEnvFlags 严格白名单，如
- * KY_DWS_WRAPPER_ENABLE）——非凭据、与 username 无关，故在 AZEROTH 注入之外独立生效。
+ * wire env **只带 AZEROTH 凭据**：tenantSharedEnv 里的任何变量都不经这条通道下发。
+ * 08-03 曾为 dws wrapper 灰度开过一条「平台行为开关」白名单通道，08-04 wrapper 撤销
+ * 后一并移除——通道存在本身就是凭据泄漏面（tenantSharedEnv 里有 DASHSCOPE_API_KEY
+ * 这类密钥），没有真实使用者时不留。要再开必须重新论证并补白名单与回归。
  */
 export function buildTenantRemoteHandWireEnv(workspace: WorkspaceRef): Record<string, string> {
   const tenantId = workspace.tenantId ?? DEFAULT_TENANT_ID;
-  const env: Record<string, string> = getTenantWireFlags(tenantId);
+  const env: Record<string, string> = {};
   const username = workspace.username;
   if (username) {
     const injection = resolveAzerothInjection(tenantId, username);

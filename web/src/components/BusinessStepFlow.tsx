@@ -191,7 +191,7 @@ function PlanBlock({
 }) {
   const todos = event.todos ?? [];
   return (
-    <section className="mb-6 mt-2" aria-label="业务计划" data-business-step={event.id}>
+    <section className="mb-6 mt-1.5" aria-label="业务计划" data-business-step={event.id}>
       <header className="flex items-center gap-2.5">
         <ListChecks className="size-4 shrink-0 text-primary" />
         <h3 className="text-sm font-medium text-foreground">业务计划</h3>

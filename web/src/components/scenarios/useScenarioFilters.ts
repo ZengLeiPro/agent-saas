@@ -17,7 +17,8 @@ import {
 } from "./workflowUi";
 
 export function useScenarioFilters() {
-  const { activeIndustry, setActiveIndustry } = useIndustryFilter();
+  // 场景库整页是唯一带行业 chip 的入口，允许把 storage / preferences 初值反写进 URL
+  const { activeIndustry, setActiveIndustry } = useIndustryFilter({ syncUrlOnMount: true });
   const [activeOutcome, setActiveOutcome] = useState<OutcomeFilterValue>(OUTCOME_ALL);
   const [activeRole, setActiveRole] = useState<RoleFilterValue>(ROLE_ALL);
   const [activeVertical, setActiveVertical] = useState<VerticalFilterValue>(VERTICAL_ALL);

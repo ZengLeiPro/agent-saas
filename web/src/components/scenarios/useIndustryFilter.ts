@@ -4,6 +4,10 @@
  * 读取优先级：URL > localStorage > user.preferences.industryHint > "all"
  * 写入策略：只有用户主动 select 才同时写 URL + localStorage；从 URL 初始化不回写 localStorage
  * （避免分享链接污染本地偏好）。
+ *
+ * URL 回写只属于「页面上真的有行业筛选控件」的调用方（ScenariosPanel），由 `syncUrlOnMount`
+ * 显式开启。只读消费者（空会话推荐位、岗位包详情页）默认不写 URL——否则用户在完全看不到
+ * 行业 chip 的页面上，URL 也会凭本地偏好长出 ?industry=xxx 并被分享出去。
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { IndustryType } from "@agent/shared";
@@ -36,10 +40,14 @@ function readStorage(): IndustryType | null {
   }
 }
 
-export function useIndustryFilter(): {
+export function useIndustryFilter(options?: {
+  /** 初值来自 localStorage / preferences 时，是否把它反映到 URL 便于分享。默认 false。 */
+  syncUrlOnMount?: boolean;
+}): {
   activeIndustry: IndustryFilterValue;
   setActiveIndustry: (next: IndustryFilterValue) => void;
 } {
+  const syncUrlOnMount = options?.syncUrlOnMount === true;
   const { user } = useAuth();
   const url = useAdminUrlQuery();
   const urlIndustry = url.get("industry");
@@ -58,8 +66,9 @@ export function useIndustryFilter(): {
   const [activeIndustry, setActiveIndustryState] = useState<IndustryFilterValue>(initial);
 
   // 首次挂载时如果 URL 与 initial 一致就不需要 sync；如果初值来自 storage / preferences，
-  // 把它反映到 URL 便于分享。
+  // 把它反映到 URL 便于分享——仅限带筛选控件的调用方。
   useEffect(() => {
+    if (!syncUrlOnMount) return;
     if (activeIndustry !== INDUSTRY_ALL && urlIndustry !== activeIndustry) {
       url.set("industry", activeIndustry);
     }

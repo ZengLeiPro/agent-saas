@@ -336,6 +336,16 @@
       prose-li:my-1 prose-pre:my-2.5 prose-hr:my-3
       prose-p:leading-relaxed prose-li:leading-relaxed;
   }
+  /* 首末子元素 margin 归零（2026-08-04 统一节奏）：typography 经 @apply 展开后自带的
+     归零规则形如 `.prose-chat :where(.prose>:first-child)`，要求父元素带 .prose class，
+     而正文容器只有 .prose-chat——从未生效过。显式补上（:first-child 特异性 (0,2,0)
+     稳压 prose-p 修饰规则的 (0,1,0)），首末块间距完全交给外层容器 gap 承担。 */
+  .prose-chat > :first-child {
+    margin-top: 0;
+  }
+  .prose-chat > :last-child {
+    margin-bottom: 0;
+  }
   .prose-chat pre {
     background-color: hsl(var(--code-block-bg));
     color: hsl(var(--foreground));

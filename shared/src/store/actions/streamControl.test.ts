@@ -183,6 +183,41 @@ describe('subscribeToActiveStream', () => {
     expect(store.getState().loading).toBe(false);
   });
 
+  // 2026-08-04 P1 回归：lastEventId=0（非 null）且无 durable cursor 时，
+  // 旧判定 `lastEventId === null` 会发出 skipReplay:false，服务端据此从头全量
+  // 重放，叠加到已加载的 transcript 上造成整段重复（生产实测会话 7f4ff8d4）。
+  it('lastEventId=0 且无 cursor → 仍必须 skipReplay，避免全量重放重复', async () => {
+    const store = getChatStore();
+    store.setState({ loading: false, activeSessionId: 'a', lastEventId: 0, lastEventCursor: null });
+    authFetchMock.mockResolvedValue({ ok: true, json: async () => ({ active: true }) });
+
+    const p = subscribeToActiveStream('a');
+    await vi.advanceTimersByTimeAsync(60);
+
+    expect(wsEnsureSend).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'resume', sessionId: 'a', skipReplay: true,
+    }));
+
+    await vi.runAllTimersAsync();
+    await p;
+  });
+
+  it('有 durable cursor 时应请求增量 replay（不 skip）', async () => {
+    const store = getChatStore();
+    store.setState({ loading: false, activeSessionId: 'a', lastEventId: 0, lastEventCursor: '9911' });
+    authFetchMock.mockResolvedValue({ ok: true, json: async () => ({ active: true }) });
+
+    const p = subscribeToActiveStream('a');
+    await vi.advanceTimersByTimeAsync(60);
+
+    expect(wsEnsureSend).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'resume', sessionId: 'a', skipReplay: false, lastEventCursor: '9911',
+    }));
+
+    await vi.runAllTimersAsync();
+    await p;
+  });
+
   it('HTTP 检测有活跃流 → 乐观置 loading 并发 resume', async () => {
     const store = getChatStore();
     store.setState({ loading: false, activeSessionId: 'a', lastEventId: null });

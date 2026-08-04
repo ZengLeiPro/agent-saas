@@ -77,6 +77,13 @@ describe('WebChannel active stream reconnect', () => {
       sessionId: 'session-2',
     });
     (channel as any).eventBufferStore.create('session-2', 'admin-1');
+    // 客户端断线前已收到第 1 条（lastEventId=1），断线期间产生第 2 条。
+    // 2026-08-04：resume 语义收敛为"补齐游标之后的增量"；无游标的全量重放
+    // 已被禁止（见下方 no-cursor 用例），因此这里用真实增量场景断言。
+    (channel as any).eventBufferStore.push('session-2', JSON.stringify({
+      type: 'text',
+      content: 'already delivered before disconnect',
+    }));
     (channel as any).eventBufferStore.push('session-2', JSON.stringify({
       type: 'text',
       content: 'replayed',
@@ -89,7 +96,7 @@ describe('WebChannel active stream reconnect', () => {
         alive: true,
         lastActivityAt: Date.now(),
       },
-      { action: 'resume', sessionId: 'session-2', lastEventId: 0 },
+      { action: 'resume', sessionId: 'session-2', lastEventId: 1 },
     );
 
     expect(newWs.sent[0]).toEqual({
@@ -102,9 +109,11 @@ describe('WebChannel active stream reconnect', () => {
       },
     });
     expect(newWs.sent[1]).toEqual({
-      eventId: 1,
+      eventId: 2,
       data: { type: 'text', content: 'replayed' },
     });
+    // 已投递过的那条不得重发
+    expect(JSON.stringify(newWs.sent)).not.toContain('already delivered before disconnect');
     expect(onSpy).toHaveBeenCalledWith('close', expect.any(Function));
   });
 
@@ -152,6 +161,48 @@ describe('WebChannel active stream reconnect', () => {
       limit: 200,
     });
     expect(JSON.stringify(ws.sent)).not.toContain('already shown in transcript snapshot');
+  });
+
+  // 2026-08-04 P1 服务端兜底回归：客户端既无 buffer id 也无 durable cursor 时，
+  // "重放"没有起点，全量重放必然与其 transcript 快照重叠。生产实测（会话
+  // 7f4ff8d4）证明旧实现会把断线前已显示的文本再发一遍。
+  it('skips replay entirely when the client has neither a buffer id nor a durable cursor', async () => {
+    const channel = createChannel();
+    const ws = new FakeWebSocket();
+
+    (channel as any).activeStreams.set('stream-nc', {
+      controller: new AbortController(),
+      userId: 'admin-1',
+      ws: new FakeWebSocket(),
+      sessionId: 'session-nc',
+      runId: 'run-nc',
+    });
+    (channel as any).eventBufferStore.create('session-nc', 'admin-1');
+    (channel as any).eventBufferStore.push('session-nc', JSON.stringify({
+      type: 'text',
+      content: 'already rendered before the disconnect',
+    }));
+
+    const storeSpy = vi.spyOn(channel as any, 'getRuntimeEventStoreForSession');
+
+    (channel as any).handleResume(
+      {
+        ws,
+        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        alive: true,
+        lastActivityAt: Date.now(),
+      },
+      { action: 'resume', sessionId: 'session-nc', lastEventId: 0, lastEventCursor: null, skipReplay: false },
+    );
+    await (channel as any).resumeChains.get(ws);
+
+    // 仍要告知客户端流是活的（客户端据此刷新 transcript 并继续跟随）
+    expect(ws.sent[0]).toMatchObject({
+      data: { type: 'active_stream', sessionId: 'session-nc', active: true },
+    });
+    // 但绝不重放任何历史内容
+    expect(JSON.stringify(ws.sent)).not.toContain('already rendered before the disconnect');
+    expect(storeSpy).not.toHaveBeenCalled();
   });
 
   it('keeps resume subscription when scheduler session_init reuses an active buffer', () => {

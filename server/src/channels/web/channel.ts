@@ -1878,8 +1878,17 @@ export class WebChannel implements BaseChannel {
     // 只有 durable cursor 时（典型：刷新后 transcript 快照已含历史，随后断线重连），
     // 走 durable 增量重放；此时 getEventsAfter(sid, 0) 会把整个 buffer 全量重放，
     // 叠加到 transcript 快照上形成整段重复（实证 fc3bf95a）。
-    if (!skipReplay) {
-      const hasBufferCursor = typeof lastEventId === 'number' && lastEventId > 0;
+    // 无任何游标（buffer id 与 durable cursor 皆无）时，"重放"没有起点可言，
+    // 全量重放必然与客户端已持有的 transcript 快照重叠 —— 这是内容重复的服务端
+    // 侧根因，必须在此收口而不能只依赖客户端自觉（旧版本前端、mobile/shared store
+    // 都可能发出 lastEventId=0 + skipReplay:false）。此时只发 active_stream，
+    // 由客户端刷新 transcript 补齐，与 Web 前端无游标时的策略一致。
+    const hasBufferCursor = typeof lastEventId === 'number' && lastEventId > 0;
+    const hasAnyCursor = hasBufferCursor || Boolean(lastEventCursor);
+    if (!skipReplay && !hasAnyCursor) {
+      chatLogger.warn(`[resume] replay requested without any cursor session=${sid}; skipping full replay to avoid duplicate content`);
+    }
+    if (!skipReplay && hasAnyCursor) {
       if (!hasBufferCursor && lastEventCursor) {
         const store = await this.getRuntimeEventStoreForSession(sid);
         if (store) {

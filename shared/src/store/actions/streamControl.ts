@@ -136,7 +136,11 @@ export async function subscribeToActiveStream(targetSessionId: string): Promise<
   });
   store.getState().dispatchConnection('connect');
 
-  const shouldSkipReplay = state.lastEventId === null;
+  // 2026-08-04 P1：只看 lastEventId===null 会漏判 0（无有效 buffer 位置）。
+  // 无任何游标时请求 replay 等于"从头全量重放"，会叠加到已加载的 transcript 上
+  // 造成整段重复；与 Web 端 subscribeToActiveStream 的判定保持一致。
+  const shouldSkipReplay = (state.lastEventId === null || state.lastEventId === 0)
+    && !state.lastEventCursor;
 
   // 等待 active_stream 确认
   const handleActiveStream = (envelope: { data: unknown }) => {

@@ -189,7 +189,7 @@ interface ActivityGroupBlockProps {
   isActive: boolean;
   isLast?: boolean;
   debugMode?: boolean;
-  /** 透传给折叠行外壳。业务步骤节内传 mb-0 抵消轮间场景的 mb-3 补偿。 */
+  /** 透传给折叠行外壳（壳自身不带流向外边距，间距由容器 gap 统一承担）。 */
   className?: string;
 }
 
@@ -216,10 +216,10 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
 
   // 调试视图允许单项摘要直接呈现；非调试视图必须经过固定状态分流，避免泄露工具标题。
   if (debugMode && items.length === 1 && hasPresentation(items[0])) {
-    // 单条业务摘要虽直接展示 ToolBlock，也必须保留与普通活动壳一致的轮间节奏；
-    // 否则上一壳的 mb-3 与 ToolBlock 自身 my-0.5 会形成「上 12px / 下 2px」。
+    // 单条业务摘要直接展示 ToolBlock：壳不带外边距（统一节奏由容器 gap 承担），
+    // 仅归零 ToolBlock 自身的 my-0.5，保证与普通折叠行完全同节奏。
     return (
-      <div className={cn('mb-3', className)}>
+      <div className={cn('[&>*]:my-0', className)}>
         <ActivityItem item={items[0]} debugMode={debugMode} />
       </div>
     );

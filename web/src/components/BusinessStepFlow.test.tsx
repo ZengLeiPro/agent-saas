@@ -65,11 +65,10 @@ describe("BusinessStepFlow", () => {
     expect(rows[0].className).not.toContain("opacity-");
     // 去框：计划块容器不允许四边框与状态色填充
     const region = screen.getByRole("region", { name: "业务计划" });
-    // 头像头部 4px + 气泡内容 2px + 计划自身 6px = 统一的 12px 消息节奏。
-    expect(region.className).toContain("mt-1.5");
-    expect(region.className).toContain("mb-6");
-    expect(region.className).not.toContain("mt-2");
-    expect(region.className).not.toContain("my-6");
+    // 统一节奏（2026-08-04）：计划块不带任何流向 margin，块间距由容器 gap 承担
+    expect(region.className).not.toContain("mt-");
+    expect(region.className).not.toContain("mb-");
+    expect(region.className).not.toContain("my-");
     expect(region.className).not.toContain("border ");
     expect(region.className).not.toContain("rounded-lg");
     for (const sel of NO_FILL_SELECTORS) expect(container.querySelector(sel)).toBeNull();

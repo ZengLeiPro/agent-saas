@@ -191,7 +191,7 @@ function PlanBlock({
 }) {
   const todos = event.todos ?? [];
   return (
-    <section className="mb-6 mt-1.5" aria-label="业务计划" data-business-step={event.id}>
+    <section aria-label="业务计划" data-business-step={event.id}>
       <header className="flex items-center gap-2.5">
         <ListChecks className="size-4 shrink-0 text-primary" />
         <h3 className="text-sm font-medium text-foreground">业务计划</h3>
@@ -220,7 +220,7 @@ function StartRow({ event }: { event: BusinessStepEventItem }) {
   if (!todo) return null;
   const label = event.isCurrent && todo.activeForm ? todo.activeForm : todo.content;
   return (
-    <div className="my-1.5 flex items-center gap-2 px-1 text-sm" data-business-step={event.id}>
+    <div className="flex items-center gap-2 px-1 text-sm" data-business-step={event.id}>
       {event.isCurrent ? (
         <Loader2 className={activityStatusIconClass("active", "size-3.5 shrink-0 animate-spin")} />
       ) : (
@@ -257,7 +257,7 @@ function TerminalBlock({
   };
 
   return (
-    <section className="my-6" aria-label={`业务步骤${label}`} data-business-step={event.id}>
+    <section aria-label={`业务步骤${label}`} data-business-step={event.id}>
       <header className="flex items-start gap-2.5">
         <Icon className={activityStatusIconClass(tone, "mt-1 size-4 shrink-0")} />
         <button
@@ -277,7 +277,7 @@ function TerminalBlock({
         </button>
       </header>
       {bodyOpen ? (
-        <div className="ml-[7px] mt-3 space-y-3 border-l border-border/50 pl-5">
+        <div className="ml-[7px] mt-2.5 space-y-2.5 border-l border-border/50 pl-5">
           {todo.outcome ? (
             <OutcomeLine
               outcome={todo.outcome}
@@ -294,7 +294,7 @@ function TerminalBlock({
 /** 计划调整行：纯结构增删时的轻量痕迹。 */
 function UpdateRow({ event }: { event: BusinessStepEventItem }) {
   return (
-    <div className="my-1 flex items-center gap-2 px-1 text-xs text-muted-foreground" data-business-step={event.id}>
+    <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground" data-business-step={event.id}>
       <ListChecks className="size-3.5 shrink-0 text-muted-foreground/60" />
       <span>计划已调整 · 共 {event.stepCount ?? "-"} 步</span>
     </div>
@@ -390,7 +390,6 @@ export function BusinessStepSectionView({
 
   return (
     <section
-      className="my-6"
       aria-label={terminalMeta ? `业务步骤${terminalMeta.label}` : "业务步骤"}
       data-business-step-section={section.id}
     >
@@ -438,7 +437,7 @@ export function BusinessStepSectionView({
       </header>
 
       {sectionOpen ? (
-        <div className="ml-[7px] mt-3 space-y-3.5 border-l border-border/50 pl-5">
+        <div className="ml-[7px] mt-2.5 space-y-2.5 border-l border-border/50 pl-5">
           {terminal?.todo?.outcome ? (
             <OutcomeLine
               outcome={terminal.todo.outcome}
@@ -455,12 +454,13 @@ export function BusinessStepSectionView({
           ) : null}
 
           {terminal?.todo ? <StepSummaryBody todo={terminal.todo} /> : null}
-          {terminal && debugMode && processOpen ? <div>{children}</div> : null}
-          {!terminal && hasProcess ? <div>{children}</div> : null}
+          {/* 节内过程块之间与全局同节奏（10px）：子块自身不带流向 margin，由这层 gap 承担。 */}
+          {terminal && debugMode && processOpen ? <div className="flex flex-col gap-2.5">{children}</div> : null}
+          {!terminal && hasProcess ? <div className="flex flex-col gap-2.5">{children}</div> : null}
           {/* 终态且过程已收起时，动过外部系统的写操作行继续留着：客户看到的
               「AI 动了我的钉钉 + 单据号」必须是平台盖的章，不能只剩模型自述的「依据」。
               debug 展开态下 children 已包含这几行，不再重复渲染。 */}
-          {terminal && systemActions && !(debugMode && processOpen) ? <div>{systemActions}</div> : null}
+          {terminal && systemActions && !(debugMode && processOpen) ? <div className="flex flex-col gap-2.5">{systemActions}</div> : null}
         </div>
       ) : null}
     </section>

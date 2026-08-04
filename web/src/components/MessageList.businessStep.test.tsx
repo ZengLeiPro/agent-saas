@@ -104,7 +104,7 @@ describe("MessageList first Agent row spacing", () => {
     expect(spacingWrapper).toBeTruthy();
   });
 
-  it("gives the first activity status line the same 20px avatar gap", () => {
+  it("puts the first activity status line on the unified flow rhythm (no self margin)", () => {
     render(
       <MessageList
         messages={[
@@ -125,11 +125,13 @@ describe("MessageList first Agent row spacing", () => {
       />,
     );
 
-    const shell = screen.getByText("已运行").closest("div.mb-3");
-    expect(shell?.parentElement?.className).toContain("pt-3");
+    // 统一节奏（2026-08-04）：壳无 mb-3，bubble 内容层用 flex gap-2.5 + pt-1.5 统一承担间距
+    expect(screen.getByText("已运行").closest("div.mb-3")).toBeNull();
+    const wrapper = screen.getByText("已运行").closest("div.gap-2\\.5");
+    expect(wrapper?.className).toContain("pt-1.5");
   });
 
-  it("gives the thinking placeholder the same 20px avatar gap", () => {
+  it("gives the thinking placeholder the same unified header gap", () => {
     render(
       <MessageList
         messages={[{ id: "user-1", type: "user", content: "开始" }]}
@@ -138,16 +140,15 @@ describe("MessageList first Agent row spacing", () => {
       />,
     );
 
-    expect(screen.getByText("正在思考").parentElement?.parentElement?.className).toContain("pt-3.5");
+    expect(screen.getByText("正在思考").parentElement?.parentElement?.className).toContain("pt-1.5");
   });
 
-  it("does not change the independently tuned business plan spacing", () => {
+  it("keeps the business plan on the same unified flow rhythm", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
 
     const plan = screen.getByRole("region", { name: "业务计划" });
-    expect(plan.parentElement?.className).toContain("pt-0.5");
-    expect(plan.parentElement?.className).not.toContain("pt-1.5");
-    expect(plan.parentElement?.className).not.toContain("pt-3");
+    expect(plan.parentElement?.className).toContain("gap-2.5");
+    expect(plan.parentElement?.className).toContain("pt-1.5");
   });
 });
 
@@ -273,9 +274,9 @@ describe("MessageList business step sections", () => {
     expect(screen.queryByText("Shell")).toBeNull();
   });
 
-  it("drops the shell bottom margin for activity groups inside sections but keeps it in flat flow", () => {
-    // 节内：折叠行与正文是同 div 相邻兄弟，shell 的轮间 mb-3 补偿必须归零，
-    // 否则「折叠行→下方内容」比「上方内容→折叠行」多出 12px（08-04 曾磊报告的失衡）。
+  it("keeps activity group shells margin-free both inside sections and in flat flow", () => {
+    // 统一节奏（2026-08-04 曾磊拍板）：无论节内还是扁平流，壳都不带流向 margin，
+    // 块间距一律由容器 gap 承担——不再存在「轮内/轮间不同补偿」的分叉。
     const withOpenActivity: MessageItem[] = [
       ...messages(),
       {
@@ -293,11 +294,10 @@ describe("MessageList business step sections", () => {
       <MessageList messages={withOpenActivity} loading={false} debugModeOverride={false} />,
     );
     const inSection = screen.getByText("已运行");
-    expect(inSection.closest("div.mb-0")).toBeTruthy();
     expect(inSection.closest("div.mb-3")).toBeNull();
+    expect(inSection.closest("div.gap-2\\.5")).toBeTruthy();
     unmount();
 
-    // 轮间扁平流（无业务步骤节）：保持 mb-3 承担与下一虚拟行的间距补偿。
     const flatFlow: MessageItem[] = [
       { id: "user-1", type: "user", content: "查一下" },
       {
@@ -313,7 +313,8 @@ describe("MessageList business step sections", () => {
     ];
     render(<MessageList messages={flatFlow} loading={false} debugModeOverride={false} />);
     const inFlat = screen.getByText("已运行");
-    expect(inFlat.closest("div.mb-3")).toBeTruthy();
+    expect(inFlat.closest("div.mb-3")).toBeNull();
+    expect(inFlat.closest("div.gap-2\\.5")).toBeTruthy();
   });
 
   it("keeps activity groups inside the expanded process in debug mode", () => {

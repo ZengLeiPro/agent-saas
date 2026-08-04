@@ -32,7 +32,7 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     expect(screen.getAllByText('有异常').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('单条业务摘要保留与普通活动壳一致的底部节奏', () => {
+  it('单条业务摘要不带自有外边距，ToolBlock 自身 margin 被壳归零', () => {
     const presentedTool: Extract<MessageItem, { type: 'tool_use' }> = {
       ...failedTool,
       id: 'tool-presented',
@@ -45,14 +45,15 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     );
 
     const title = screen.getByText('钉钉 · 查询AI 表格');
-    const spacingShell = title.closest('div.mb-3');
-    expect(spacingShell).toBeTruthy();
-    expect(spacingShell?.querySelector('div.my-0\\.5')).toBeTruthy();
+    // 统一节奏（2026-08-04）：壳无 mb-3 等流向 margin，块间距由容器 gap 承担
+    expect(title.closest('div.mb-3')).toBeNull();
+    const spacingShell = title.closest('div.my-0\\.5')?.parentElement;
+    expect(spacingShell?.className).toContain('[&>*]:my-0');
 
     rerender(
-      <ActivityGroupBlock items={[presentedTool]} isActive={false} debugMode className="mb-0" />,
+      <ActivityGroupBlock items={[presentedTool]} isActive={false} debugMode className="custom-marker" />,
     );
-    expect(screen.getByText('钉钉 · 查询AI 表格').closest('div.mb-0')).toBeTruthy();
+    expect(screen.getByText('钉钉 · 查询AI 表格').closest('div.custom-marker')).toBeTruthy();
   });
 
   it('多动作组只保留显式业务标题，不机械列举工具描述', () => {

@@ -1,5 +1,6 @@
 export const DEFAULT_MESSAGE_ROW_HEIGHT = 160;
-export const MESSAGE_ROW_GAP = 12;
+/** 统一流内节奏（2026-08-04 曾磊拍板）：全部相邻块一律 10px 盒间，不分轮内/轮间。 */
+export const MESSAGE_ROW_GAP = 10;
 export const MESSAGE_VIRTUAL_OVERSCAN = 600;
 /** Hard cap for top-level message rows mounted at once. */
 export const MAX_RENDERED_MESSAGE_ROWS = 80;

@@ -182,18 +182,10 @@ function getFirstTimestamp(items: RenderItem[]): number | undefined {
 }
 
 /**
- * 头像到首行统一留出 20px（一行 leading-5）：
- * - 普通正文：header 4px + wrapper 6px + prose 首段 10px；
- * - 活动状态：header 4px + wrapper 12px + shell 行内 4px。
- * 其他首项沿用基础 2px padding，避免改变业务计划等独立节奏。
+ * 统一流内节奏（2026-08-04 曾磊拍板）：不再按首项类型做光学补偿，
+ * 头像 header（自带 mb 4px）+ pt-1.5 = 与流内块一致的 10px 盒间。
  */
-function headerFlowPaddingClass(showHeader: boolean, items: RenderItem[]): string {
-  if (!showHeader) return 'pt-0.5';
-  const first = items.find((sub) => sub.type !== 'file_download');
-  if (first?.type === 'activity_group') return 'pt-3';
-  if (first?.type === 'text') return 'pt-1.5';
-  return 'pt-0.5';
-}
+const HEADER_FLOW_PADDING_CLASS = 'pt-1.5';
 
 function getBubbleVirtualKey(item: BubbleRenderItem): string {
   const timestamp = item.type === 'ai_bubble'
@@ -735,7 +727,7 @@ export const MessageList = memo(function MessageList({
       className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain"
       style={{ overflowAnchor: 'none' }}
     >
-      <div className="content-container flex flex-col gap-3 py-4">
+      <div className="content-container flex flex-col gap-2.5 py-4">
         {!showCenterLoading && hasMoreHistory && (
           <div className="flex h-[34px] shrink-0 items-center justify-center" aria-live="polite">
             {isLoadingEarlier && (
@@ -768,13 +760,13 @@ export const MessageList = memo(function MessageList({
           const showHeader = headerItemIds.has(item.id);
 
           // AI 流内子项渲染：ai_bubble 内与业务步骤节内共用（节内过程 = 完整消息渲染，非降级视图）。
-          const renderFlowItem = (sub: RenderItem, inSection = false): React.ReactNode => {
+          const renderFlowItem = (sub: RenderItem): React.ReactNode => {
             if (sub.type === 'business_step_section') {
               // 系统动作行走与过程行完全相同的渲染路径（同一个 ToolBlock），
               // 终态后由 section 决定留哪几条——一条事实一个组件，不做第二套呈现
               const systemActionIds = new Set(sub.systemActionIds ?? []);
               const systemActions = systemActionIds.size
-                ? sub.items.filter((child) => systemActionIds.has(child.id)).map((child) => renderFlowItem(child, true))
+                ? sub.items.filter((child) => systemActionIds.has(child.id)).map((child) => renderFlowItem(child))
                 : null;
               const sectionOpen = isBusinessStepOpen(sub.id, !!sub.terminal);
               return (
@@ -786,7 +778,7 @@ export const MessageList = memo(function MessageList({
                     open={sectionOpen}
                     onOpenChange={(open) => setBusinessStepOpen(sub.id, open)}
                   >
-                    {sub.items.map((child) => renderFlowItem(child, true))}
+                    {sub.items.map((child) => renderFlowItem(child))}
                   </BusinessStepSectionView>
                 </ErrorBoundary>
               );
@@ -817,9 +809,6 @@ export const MessageList = memo(function MessageList({
                     isActive={sub.isActive}
                     isLast={sub.id === lastActivityGroupId}
                     debugMode={debugMode}
-                    // 节内折叠行与正文是同 div 相邻兄弟，没有轮间结构底座；
-                    // shell 为轮间场景补的 mb-3 在此造成「上 23px/下 35px」失衡，归零后上下均 ~23px。
-                    className={inSection ? 'mb-0' : undefined}
                   />
                 </ErrorBoundary>
               );
@@ -867,9 +856,9 @@ export const MessageList = memo(function MessageList({
                 {showHeader && (
                   <AiMessageHeader agentProfile={displayAgent} timestamp={timestamp} />
                 )}
-                {/* AI 连续多轮各占一个虚拟行，行距已由 MESSAGE_ROW_GAP 承担；
-                    仅头像后的首个正文/活动状态做光学补偿，轮间仍保持紧凑。 */}
-                <div className={cn('pb-0.5', headerFlowPaddingClass(showHeader, item.items))}>
+                {/* 统一节奏：bubble 内相邻块一律 gap-2.5（10px），与虚拟行 ROW_GAP 一致；
+                    元素自身不带流向 margin，间距只在这一层与 ROW_GAP 两处定义。 */}
+                <div className={cn('flex flex-col gap-2.5', showHeader && HEADER_FLOW_PADDING_CLASS)}>
                   {item.items.map((sub) => {
                     // ai_bubble 顶层的 file_download 双重保险维持原语义：一律跳过。
                     if (sub.type === 'file_download') return null;
@@ -891,7 +880,7 @@ export const MessageList = memo(function MessageList({
                 {showHeader && (
                   <AiMessageHeader agentProfile={displayAgent} timestamp={undefined} />
                 )}
-                <div className="py-0.5">
+                <div className={cn(showHeader && HEADER_FLOW_PADDING_CLASS)}>
                   {renderFlowItem(item)}
                 </div>
               </div>
@@ -906,7 +895,7 @@ export const MessageList = memo(function MessageList({
                 {showHeader && (
                   <AiMessageHeader agentProfile={displayAgent} timestamp={undefined} />
                 )}
-                <div className={cn('pb-0.5', showHeader ? 'pt-3' : 'pt-0.5')}>
+                <div className={cn(showHeader && HEADER_FLOW_PADDING_CLASS)}>
                   <ErrorBoundary inline>
                     <ActivityGroupBlock items={item.items} isActive={item.isActive} isLast={item.id === lastActivityGroupId} debugMode={debugMode} />
                   </ErrorBoundary>
@@ -1070,7 +1059,7 @@ export const MessageList = memo(function MessageList({
         {!showCenterLoading && showAgentLoading && (
           <div ref={lastMessageRef} className="flex flex-col">
             <AiMessageHeader agentProfile={displayAgent} timestamp={undefined} />
-            <div className="pb-2 pt-3.5">
+            <div className={cn('pb-2', HEADER_FLOW_PADDING_CLASS)}>
               <div className="flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
                 <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground/70" />
                 <span>正在思考</span>

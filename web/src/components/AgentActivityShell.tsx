@@ -65,9 +65,9 @@ export function AgentActivityShell({
   );
 
   return (
-    // mb-3 而非对称 my：上方已有虚拟行距+行内留白+正文段距托底（~26px），
-    // 顶部再加 margin 会让折叠行「上远下近」失衡；下方 12px 补齐与正文的间距。
-    <div className={cn('mb-3', className)}>
+    // 不带任何流向外边距（2026-08-04 统一节奏）：块间距一律由容器（ai_bubble 的
+    // flex gap / 虚拟行 ROW_GAP / 节内 gap）承担，元素自补 margin 是旧补偿体系的乱源。
+    <div className={className}>
       <div className="flex items-center gap-2">
         {disabled ? (
           <div className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left">{content}</div>

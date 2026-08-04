@@ -18,6 +18,7 @@ interface Scenario {
   description: string;
   setupMessages: string[];
   measuredMessage: string;
+  expectedResponse: string;
   allowedTools: string[];
 }
 
@@ -69,6 +70,8 @@ interface PendingTurn {
   clientMsgId: string;
   startedAtMs: number;
   allowedTools: Set<string>;
+  expectedResponse?: string;
+  responseText: string;
   sessionId?: string;
   streamId?: string;
   ackAtMs?: number;
@@ -92,6 +95,7 @@ const SCENARIOS: Record<Exclude<ScenarioName, 'mixed'>, Scenario> = {
     description: '纯模型短回复，隔离模型等待与基础调度成本',
     setupMessages: [],
     measuredMessage: '这是Runtime Worker容量探针。禁止调用任何工具，只回复：BENCH_MODEL_OK',
+    expectedResponse: 'BENCH_MODEL_OK',
     allowedTools: [],
   },
   'context-replay': {
@@ -102,6 +106,7 @@ const SCENARIOS: Record<Exclude<ScenarioName, 'mixed'>, Scenario> = {
       + deterministicPayload(index, 4_096)
     )),
     measuredMessage: '这是长上下文Runtime Worker容量探针。不要调用工具，只回复：BENCH_CONTEXT_OK',
+    expectedResponse: 'BENCH_CONTEXT_OK',
     allowedTools: [],
   },
   'tool-read': {
@@ -113,6 +118,7 @@ const SCENARIOS: Record<Exclude<ScenarioName, 'mixed'>, Scenario> = {
       '必须且只允许调用一次Read工具读取MEMORY.md前20行；无论文件是否存在，工具结束后只回复：BENCH_READ_OK。',
       '禁止调用其他工具，禁止修改任何文件。',
     ].join('\n'),
+    expectedResponse: 'BENCH_READ_OK',
     allowedTools: ['Read'],
   },
   'tool-shell': {
@@ -124,6 +130,7 @@ const SCENARIOS: Record<Exclude<ScenarioName, 'mixed'>, Scenario> = {
       '必须且只允许调用一次Shell，command精确为：printf BENCH_SHELL_OK，timeoutMs为30000，mode为foreground。',
       '禁止调用其他工具；命令结束后只回复：BENCH_SHELL_OK。',
     ].join('\n'),
+    expectedResponse: 'BENCH_SHELL_OK',
     allowedTools: ['Shell'],
   },
   subagent: {
@@ -135,6 +142,7 @@ const SCENARIOS: Record<Exclude<ScenarioName, 'mixed'>, Scenario> = {
       '必须且只允许调用一次Agent工具：mode=foreground、agent_type=general，子Agent只回复SUBAGENT_OK且不得调用任何工具。',
       '子Agent完成后只回复：BENCH_SUBAGENT_OK。',
     ].join('\n'),
+    expectedResponse: 'BENCH_SUBAGENT_OK',
     allowedTools: ['Agent'],
   },
 };
@@ -177,6 +185,7 @@ class BenchmarkSocket {
     model?: string;
     executionTarget?: string;
     allowedTools: string[];
+    expectedResponse?: string;
   }): Promise<TurnResult> {
     const clientMsgId = `worker-bench-${Date.now()}-${randomUUID().slice(0, 8)}`;
     return new Promise((resolveTurn) => {
@@ -185,7 +194,9 @@ class BenchmarkSocket {
         clientMsgId,
         startedAtMs,
         allowedTools: new Set(input.allowedTools),
+        ...(input.expectedResponse ? { expectedResponse: input.expectedResponse } : {}),
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+        responseText: '',
         textBytes: 0,
         toolCalls: {},
         approvals: 0,
@@ -238,7 +249,9 @@ class BenchmarkSocket {
     if (event.type === 'stream_id' && event.streamId) pending.streamId = event.streamId;
     if (isProgressEvent(event.type) && !pending.firstProgressAtMs) pending.firstProgressAtMs = now;
     if (event.type === 'text_delta') {
-      pending.textBytes += Buffer.byteLength(String(event.content ?? ''), 'utf8');
+      const content = String(event.content ?? '');
+      pending.responseText += content;
+      pending.textBytes += Buffer.byteLength(content, 'utf8');
     }
     if (event.type === 'tool_start' || event.type === 'tool_call') {
       const toolName = String(event.toolName ?? event.name ?? 'unknown');
@@ -253,7 +266,12 @@ class BenchmarkSocket {
       return;
     }
     if (event.type === 'done') {
-      this.finish(pending, event.error ? String(event.error) : undefined);
+      const eventError = event.error ? String(event.error) : undefined;
+      const responseError = !eventError && pending.expectedResponse
+        && pending.responseText.trim() !== pending.expectedResponse
+        ? `响应不匹配：expected=${pending.expectedResponse} actual=${JSON.stringify(pending.responseText.trim())}`
+        : undefined;
+      this.finish(pending, eventError ?? responseError);
     }
   }
 
@@ -382,6 +400,7 @@ async function main(): Promise<void> {
           model,
           executionTarget,
           allowedTools: scenario.allowedTools,
+          expectedResponse: scenario.expectedResponse,
         })));
         const completedAtMs = Date.now();
         tierTurns.push(...turns);

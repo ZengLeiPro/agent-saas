@@ -88,6 +88,17 @@ export interface ApiSessionDetail {
    * 旧 transcript（无 run_state_changed 事件）会缺省此字段,前端走 legacy 路径。
    */
   lastRunState?: ApiLastRunState;
+  /**
+   * 排队中的插话（2026-08-04 终态设计）：已被服务端受理为 steering、尚未被目标 run
+   * 消费的消息。不进 blocks（不是历史），前端刷新/切会话时据此重建输入框上方的队列区。
+   */
+  queuedMessages?: Array<{
+    sourceRunId: string;
+    clientMsgId?: string;
+    content: string;
+    attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+    acceptedAt: string;
+  }>;
 }
 
 /** Token usage statistics */

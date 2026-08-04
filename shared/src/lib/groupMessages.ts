@@ -199,6 +199,11 @@ export function groupMessages(
       continue;
     }
 
+    // 排队中的插话气泡不是叙事边界（2026-08-04 P2-7）：它还没被 Agent 看到，
+    // 不得把进行中的业务步骤节提前收口。终态设计下排队消息不进流，这里防御存量。
+    const isQueuedUserBubble = msg.type === 'user'
+      && (msg as Extract<MessageItem, { type: 'user' }>).status === 'queued';
+
     if (isConnectorActionItem(msg)) {
       // 外部系统动作两种视图都独立成行（2026-08-04 曾磊拍板）：
       // 「AI 动了客户自己的钉钉」不是技术噪音，恰恰是这条线要给客户看的东西。
@@ -213,6 +218,10 @@ export function groupMessages(
       sink().push(msg);
     } else if (ACTIVITY_TYPES.has(msg.type)) {
       currentGroup.push(msg);
+    } else if (isQueuedUserBubble) {
+      // 排队气泡独立渲染但不 closeSection：当前步骤继续保持进行中。
+      flushGroup(false);
+      sink().push(msg);
     } else if (SECTION_BREAKING_TYPES.has(msg.type)) {
       flushGroup(false);
       closeSection();

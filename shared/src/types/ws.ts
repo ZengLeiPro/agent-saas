@@ -32,7 +32,11 @@ export type ChatRejectReasonCode =
 
 export type WsEvent =
     | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string; queued?: boolean; targetRunId?: string; sessionId?: string }
-    | { type: 'interjection_applied'; sourceRunIds: string[]; clientMsgIds: string[] }
+    | { type: 'interjection_applied'; sourceRunIds: string[]; clientMsgIds: string[]; sessionId?: string }
+    // 插话队列区（2026-08-04 终态设计）：user scope 多端同步
+    | { type: 'steering_queued'; sessionId: string; sourceRunId: string; targetRunId: string; clientMsgId: string; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number }
+    | { type: 'steering_cancelled'; sessionId: string; sourceRunId: string; clientMsgId?: string; reason: string }
+    | { type: 'cancel_queued_result'; ok: boolean; sourceRunId: string; reason?: 'too_late' | 'not_found' | 'unsupported' | 'error' }
     | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number }
     | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
     | { type: 'session'; sessionId: string; client_msg_id?: string }
@@ -69,7 +73,7 @@ export type WsEvent =
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string }
     | { type: 'session_deleted'; sessionId: string }
     | { type: 'session_read_state_changed'; sessionId: string; hasUnreadAiReply: boolean }
-    | { type: 'user_message'; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number; client_msg_id?: string }
+    | { type: 'user_message'; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number; client_msg_id?: string; sessionId?: string }
     | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; reason?: string }
     | { type: 'groups_changed' }
     // ── SDK 0.2.112+ 新增事件 ──

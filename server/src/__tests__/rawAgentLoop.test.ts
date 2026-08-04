@@ -1440,7 +1440,10 @@ describe('RawAgentLoop', () => {
     expect(events.some((event) => event.type === 'interjection_applied')).toBe(false);
     expect(events.at(-1)).toEqual({ type: 'done' });
     expect(markApplied).not.toHaveBeenCalled();
-    expect(trySeal).not.toHaveBeenCalled();
+    // 2026-08-04 D-4：最后一轮（无轮次预算消费插话）也要尝试封口，让此后到达的
+    // 插话立即回退为独立 run，而不是滞留到本 run 终态。已有 pending 时 seal 返回
+    // false（无预算可消费），插话保持 pending 交给 durable 回退。
+    expect(trySeal).toHaveBeenCalledWith('target-final-fallback');
   });
 
   it('leaves interjections pending when the target aborts while loading them', async () => {

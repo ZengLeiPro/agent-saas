@@ -577,6 +577,12 @@ export class WebChannel implements BaseChannel {
         case 'abort':
           this.handleAbort(client, msg);
           break;
+        case 'cancel_queued':
+          void this.handleCancelQueued(client, msg).catch((err) => {
+            chatLogger.error(`[chat] cancel_queued failed: ${err instanceof Error ? err.message : String(err)}`);
+            this.wsSend(client.ws, { type: 'cancel_queued_result', ok: false, sourceRunId: msg.sourceRunId, reason: 'error' });
+          });
+          break;
         case 'approval_policy':
           void this.handleApprovalPolicy(client, msg);
           break;
@@ -983,6 +989,23 @@ export class WebChannel implements BaseChannel {
     }
     const sessionId = event.sessionId;
     if (!sessionId) return;
+    if (event.type === 'interjection_applied') {
+      // 插话吸收信号（2026-08-04 BUG-2 修复）：先做本地清理（web 进程持有插话
+      // source 的 activeStreams/幂等缓存；worker 进程此处天然 no-op），幂等可重入。
+      for (const [sourceStreamId, sourceEntry] of this.activeStreams) {
+        if (!sourceEntry.runId || !event.sourceRunIds.includes(sourceEntry.runId)) continue;
+        this.activeStreams.delete(sourceStreamId);
+        if (sourceEntry.clientMsgId) {
+          this.idempotencySet(sourceEntry.userId, sourceEntry.clientMsgId, 'done', sourceStreamId, {
+            sessionId: sourceEntry.sessionId,
+            runId: sourceEntry.runId,
+          });
+        }
+      }
+      // in-process run 的前端通知已由 yield 路径（handleRuntimeEvent）emitSession，
+      // 这里 return 防止 buffer 双写；跨进程（ws-only 收 NOTIFY）继续走通用投影推送。
+      if (this.inProcessOutboundRuns.has(event.runId)) return;
+    }
     const runId = 'runId' in event ? event.runId : undefined;
     if (runId && this.inProcessOutboundRuns.has(runId) && ![
       'assistant_tool_calls',
@@ -996,6 +1019,9 @@ export class WebChannel implements BaseChannel {
       // 因此 in-process run 也必须放行这两类。
       'subagent_started',
       'subagent_finished',
+      // 插话 user_message（2026-08-04）：loop 不 yield 用户消息，被吸收的插话进时间线
+      // 只能靠本投影（单进程与跨进程同理）；普通 user_message 在投影函数内已被过滤。
+      'user_message',
     ].includes(event.type)) return;
     const active = runId ? this.findActiveStreamByRunId(runId) : undefined;
     const streamId = active?.streamId ?? (runId ? runId : undefined);
@@ -1675,7 +1701,98 @@ export class WebChannel implements BaseChannel {
       runtimeRunController.abort(resolvedRunId, 'web_abort');
     }
     entry?.controller.abort('web_abort');
+    // 停止=全停（2026-08-04 终态设计）：目标 run 取消后，排队中的插话不允许在目标
+    // 终态后自动降级为独立 run「复活」。一并撤销并广播 steering_cancelled，
+    // 前端队列区把这些条目标为已取消（内容保留可重发）。
+    if (sessionId) {
+      await this.cancelPendingSteeringForSession(sessionId, 'aborted').catch((err) => {
+        chatLogger.warn(`[chat] cancel pending steering on abort failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
     this.wsSend(client.ws, { type: 'abort_ok', ...(resolvedStreamId ? { streamId: resolvedStreamId } : {}), ...(resolvedRunId ? { runId: resolvedRunId } : {}) });
+  }
+
+  /** 撤销一条仍在排队的插话（终态队列区的撤回按钮）。 */
+  private async handleCancelQueued(client: WsClient, msg: import('./wsTypes.js').WsCancelQueuedMessage): Promise<void> {
+    const runStore = this.config.enqueueRuntime?.runStore;
+    const sourceRunId = typeof msg.sourceRunId === 'string' ? msg.sourceRunId.trim() : '';
+    if (!runStore?.cancelPendingSteeringSourceRun || !sourceRunId) {
+      this.wsSend(client.ws, { type: 'cancel_queued_result', ok: false, sourceRunId, reason: 'unsupported' });
+      return;
+    }
+    const record = await runStore.get(sourceRunId);
+    if (!record) {
+      this.wsSend(client.ws, { type: 'cancel_queued_result', ok: false, sourceRunId, reason: 'not_found' });
+      return;
+    }
+    if (client.user && client.user.role !== 'admin' && record.userId && record.userId !== client.user.sub) {
+      this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+      return;
+    }
+    const result = await runStore.cancelPendingSteeringSourceRun(sourceRunId, 'user_withdrew');
+    if (result.ok) {
+      this.finalizeCancelledSteeringSource({
+        sourceRunId,
+        sessionId: result.sessionId ?? record.sessionId,
+        clientMsgId: result.clientMsgId,
+        userId: record.userId,
+        reason: 'user_withdrew',
+      });
+    }
+    this.wsSend(client.ws, {
+      type: 'cancel_queued_result',
+      ok: result.ok,
+      sourceRunId,
+      ...(result.reason ? { reason: result.reason } : {}),
+    });
+  }
+
+  /** abort 联动：撤销 session 内全部排队插话并广播。 */
+  private async cancelPendingSteeringForSession(sessionId: string, reason: string): Promise<void> {
+    const runStore = this.config.enqueueRuntime?.runStore;
+    if (!runStore?.listPendingSteeringBySession || !runStore.cancelPendingSteeringSourceRun) return;
+    const pending = await runStore.listPendingSteeringBySession(sessionId).catch(() => []);
+    for (const input of pending) {
+      const result = await runStore.cancelPendingSteeringSourceRun(input.sourceRunId, reason).catch(() => null);
+      if (result?.ok) {
+        this.finalizeCancelledSteeringSource({
+          sourceRunId: input.sourceRunId,
+          sessionId,
+          clientMsgId: result.clientMsgId,
+          userId: input.sourceRun.userId,
+          reason,
+        });
+      }
+    }
+  }
+
+  /** 撤销成功后的统一收尾：清 activeStreams/幂等缓存 + 多端广播 steering_cancelled。 */
+  private finalizeCancelledSteeringSource(input: {
+    sourceRunId: string;
+    sessionId: string;
+    clientMsgId?: string;
+    userId?: string;
+    reason: string;
+  }): void {
+    for (const [streamId, entry] of this.activeStreams) {
+      if (entry.runId !== input.sourceRunId) continue;
+      this.activeStreams.delete(streamId);
+      if (entry.clientMsgId) {
+        this.idempotencySet(entry.userId, entry.clientMsgId, 'done', streamId, {
+          sessionId: entry.sessionId,
+          runId: entry.runId,
+        });
+      }
+    }
+    if (input.userId && this.eventBus) {
+      this.eventBus.emitUser(input.userId, {
+        type: 'steering_cancelled',
+        sessionId: input.sessionId,
+        sourceRunId: input.sourceRunId,
+        ...(input.clientMsgId ? { clientMsgId: input.clientMsgId } : {}),
+        reason: input.reason,
+      });
+    }
   }
 
   private async handleApprovalPolicy(client: WsClient, msg: import('./wsTypes.js').WsApprovalPolicyMessage): Promise<void> {
@@ -2743,7 +2860,11 @@ export class WebChannel implements BaseChannel {
           ...(steeringTargetRunId ? { queued: true, targetRunId: steeringTargetRunId } : {}),
         });
         send({ type: 'session', sessionId: enqueueSessionId, client_msg_id: clientMsgId });
-        if (userDisplayContent || attachmentMeta) {
+        // steering 排队的消息尚未被消费，不进会话事件流（buffer 里的 user_message 会被
+        // 其他端/重连回放成一条普通「已发送」气泡，时间线交错且不可撤回——2026-08-04
+        // 终态设计改为：排队期间只存在于队列区（steering_queued 广播 + detail API 恢复），
+        // 被目标 run 吸收时由 durable user_message 投影进流。
+        if ((userDisplayContent || attachmentMeta) && !steeringTargetRunId) {
           this.eventBufferStore.push(enqueueSessionId, JSON.stringify({
             type: 'user_message',
             content: userDisplayContent,
@@ -2751,6 +2872,19 @@ export class WebChannel implements BaseChannel {
             timestamp: Date.now(),
             client_msg_id: clientMsgId,
           }));
+        }
+        if (user?.sub && this.eventBus && steeringTargetRunId) {
+          // 多端队列区同步：user scope 广播（含发起端，前端按 clientMsgId 幂等 upsert）。
+          this.eventBus.emitUser(user.sub, {
+            type: 'steering_queued',
+            sessionId: enqueueSessionId,
+            sourceRunId: enqueueRunId,
+            targetRunId: steeringTargetRunId,
+            clientMsgId,
+            content: userDisplayContent ?? resolvedMessage,
+            ...(attachmentMeta ? { attachments: attachmentMeta } : {}),
+            timestamp: Date.now(),
+          });
         }
         if (user?.sub && this.eventBus && !steeringTargetRunId) {
           this.eventBus.emitUser(user.sub, {
@@ -4231,6 +4365,37 @@ function projectRuntimePlatformEvent(
           toolId: event.toolCallId,
           content: event.content,
           invocationId: event.invocationId,
+        }],
+      };
+    case 'user_message':
+      // 只投影插话消息（2026-08-04 终态设计）：排队的插话被目标 run 吸收时，经此
+      // 分支进各端时间线（消费点=显示点）。普通 user_message 的显示由发起路径
+      //（本地气泡 + enqueue 时 buffer push）负责，重复投影会双写。
+      if (!event.interjectionSourceRunId) return { events: [] };
+      return {
+        events: [{
+          type: 'user_message',
+          sessionId: event.sessionId,
+          content: event.content,
+          ...(event.attachments?.length ? {
+            attachments: event.attachments.map((attachment) => ({
+              name: attachment.originalName,
+              isImage: attachment.isImage,
+              relativePath: attachment.relativePath,
+            })),
+          } : {}),
+          timestamp: Date.parse(event.timestamp) || Date.now(),
+          ...(event.clientMsgId ? { client_msg_id: event.clientMsgId } : {}),
+        }],
+      };
+    case 'interjection_applied':
+      // 跨进程「插话已吸收」通知（2026-08-04 BUG-2 修复）：前端据此清队列区/outbox。
+      return {
+        events: [{
+          type: 'interjection_applied',
+          sessionId: event.sessionId,
+          sourceRunIds: event.sourceRunIds,
+          clientMsgIds: event.clientMsgIds,
         }],
       };
     case 'tool_invocation_started':

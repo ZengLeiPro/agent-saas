@@ -11,6 +11,8 @@ import { MessageList } from "@/components/MessageList";
 import { FileUpload } from "@/components/FileUpload";
 import { ChatInput } from "@/components/ChatInput";
 import { AskUserPromptPanel } from "@/components/AskUserPromptPanel";
+import { QueuedMessageBar } from "@/components/QueuedMessageBar";
+import type { QueuedInterjection } from "@/hooks/useChatAppState";
 
 interface ChatTabContentProps {
   messages: MessageItem[];
@@ -61,6 +63,12 @@ interface ChatTabContentProps {
   onNewOrgAgentConversation?: () => void;
   /** 前往专家列表选择另一位专家。 */
   onSwitchOrgAgent?: () => void;
+  /** 插话队列区（2026-08-04 终态设计）：运行中发送的消息在输入框上方排队展示 */
+  queuedInterjections?: QueuedInterjection[];
+  onCancelQueuedInterjection?: (clientMsgId: string) => Promise<boolean>;
+  onEditQueuedInterjection?: (clientMsgId: string) => Promise<void>;
+  onResendQueuedInterjection?: (clientMsgId: string) => void;
+  onDismissQueuedInterjection?: (clientMsgId: string) => void;
 }
 
 export function OrgAgentComposerChip({
@@ -151,6 +159,11 @@ export function ChatTabContent({
   orgAgent,
   onNewOrgAgentConversation,
   onSwitchOrgAgent,
+  queuedInterjections,
+  onCancelQueuedInterjection,
+  onEditQueuedInterjection,
+  onResendQueuedInterjection,
+  onDismissQueuedInterjection,
 }: ChatTabContentProps) {
   const activeAskUser = useMemo(() => {
     if (readOnly) return null;
@@ -266,7 +279,7 @@ export function ChatTabContent({
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={onAutoApproveRunShellChange}
               onSendVoice={onSendVoice}
-              topSlot={(orgAgent || activeAskUser) ? (
+              topSlot={(orgAgent || activeAskUser || (queuedInterjections && queuedInterjections.length > 0)) ? (
                 <div className="space-y-2">
                   {orgAgent && (
                     <OrgAgentComposerChip
@@ -280,6 +293,17 @@ export function ChatTabContent({
                       key={activeAskUser.interactionId}
                       questions={activeAskUser.questions}
                       onSubmit={(answers) => onAskUserResponse?.(activeAskUser.interactionId, answers)}
+                    />
+                  )}
+                  {queuedInterjections && queuedInterjections.length > 0
+                    && onCancelQueuedInterjection && onEditQueuedInterjection
+                    && onResendQueuedInterjection && onDismissQueuedInterjection && (
+                    <QueuedMessageBar
+                      entries={queuedInterjections}
+                      onCancel={onCancelQueuedInterjection}
+                      onEdit={onEditQueuedInterjection}
+                      onResend={onResendQueuedInterjection}
+                      onDismiss={onDismissQueuedInterjection}
                     />
                   )}
                 </div>

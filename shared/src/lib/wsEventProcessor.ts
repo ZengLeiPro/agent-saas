@@ -94,11 +94,16 @@ export function upsertRuntimeStatusMessage(
   const msgs = msg.messagesRef.current;
   let idx = -1;
   for (let i = msgs.length - 1; i >= 0; i--) {
-    if (msgs[i].type === "runtime_status") {
+    const candidate = msgs[i];
+    if (candidate.type === "runtime_status") {
+      // 状态行按 runId 归属（2026-08-04）：双方 runId 都存在且不同时不得复用——
+      // 否则目标 run 的 running 会把插话的 queued 状态行原地覆盖成「正在思考」，
+      // 用户误以为排队消息已开始处理。归属不同就新建一条。
+      if (options.runId && candidate.runId && candidate.runId !== options.runId) break;
       idx = i;
       break;
     }
-    if (msgs[i].type === "text" || msgs[i].type === "thinking" || msgs[i].type === "tool_use") break;
+    if (candidate.type === "text" || candidate.type === "thinking" || candidate.type === "tool_use") break;
   }
   const patch = {
     status,
@@ -221,6 +226,21 @@ export interface WsProcessingContext {
   onChatRejected?: (clientMsgId: string, reasonCode: string, reason: string) => void;
   /** done 事件（可能带 error）时被调用，用于同步 outbox 终态 */
   onChatDone?: (clientMsgId: string | undefined, error: string | undefined) => void;
+  // ── 插话队列区（2026-08-04 终态设计）──
+  /** stream_id{queued:true} ACK：本地队列区条目确认排队成功并记录 sourceRunId。 */
+  onSteeringAckQueued?: (clientMsgId: string | undefined, sourceRunId: string | undefined, targetRunId: string | undefined) => void;
+  /** steering_queued 广播（user scope，多端）：按 clientMsgId 幂等 upsert 队列区。 */
+  onSteeringQueued?: (entry: Extract<WsEvent, { type: 'steering_queued' }>) => void;
+  /** steering_cancelled 广播：队列区条目标记已取消（abort 联动/其他端撤回）。 */
+  onSteeringCancelled?: (event: Extract<WsEvent, { type: 'steering_cancelled' }>) => void;
+  /**
+   * 非 queued 的 stream_id 命中队列区条目时（插话回退为独立 run 被接管执行）：
+   * 上层负责把条目移出队列区并在时间线末尾补 user 气泡，返回新气泡 index；
+   * 返回 null/undefined 表示 clientMsgId 不在队列区（走旧的气泡定位路径）。
+   */
+  onSteeringPromoted?: (clientMsgId: string | undefined, streamId: string, runId: string | undefined) => number | null | undefined;
+  /** 插话被消费进时间线（user_message 投影）：按 clientMsgId 清理队列区。 */
+  onUserMessageProjected?: (clientMsgId: string | undefined) => void;
 }
 
 /** 在消息数组里按 clientMsgId 查找 user / user-voice 消息的索引，找不到返回 -1 */
@@ -276,7 +296,15 @@ export function processWsEvent(
       const expectedSessionId = activeSessionId ?? latestSessionId.value;
       if (expectedSessionId && data.sessionId !== expectedSessionId) return;
     }
+    if (data.queued) {
+      // 插话排队 ACK（2026-08-04 终态设计）：消息在队列区（不进时间线），
+      // 只更新队列区条目状态并登记 sourceRunId（撤回按钮要用）。
+      ctx.onSteeringAckQueued?.(data.client_msg_id, data.runId, data.targetRunId);
+    }
     if (!data.queued) {
+      // 插话回退为独立 run 被接管：clientMsgId 若在队列区，由上层移入时间线并
+      // 返回新气泡 index（旧路径按气泡定位在终态设计下会落空、误绑当前 run 气泡）。
+      const promotedIdx = ctx.onSteeringPromoted?.(data.client_msg_id, data.streamId, data.runId);
       streamIdRef.current = data.streamId;
       if (ctx.runIdRef) ctx.runIdRef.current = data.runId ?? null;
       ctx.onStreamAttached?.(data.streamId, data.runId ?? null);
@@ -284,6 +312,10 @@ export function processWsEvent(
         streamId: data.streamId,
         ...(data.runId ? { runId: data.runId } : {}),
       });
+      if (typeof promotedIdx === "number" && promotedIdx >= 0) {
+        if (promotedIdx !== ctx.userMsgIndex) ctx.onActiveUserMsgIndexChange?.(promotedIdx);
+        return;
+      }
     }
     // 优先按 client_msg_id 精准定位（支持多条 pending 并发），回退到 userMsgIndex 兼容老路径
     const msgs = msg.messagesRef.current;
@@ -310,6 +342,10 @@ export function processWsEvent(
   }
 
   if (data.type === "interjection_applied") {
+    if (data.sessionId) {
+      const expectedSessionId = activeSessionId ?? latestSessionId.value;
+      if (expectedSessionId && data.sessionId !== expectedSessionId) return;
+    }
     const applied = new Set(data.clientMsgIds);
     for (let index = 0; index < msg.messagesRef.current.length; index += 1) {
       msg.updateMessageAt(index, (message) => (
@@ -325,6 +361,16 @@ export function processWsEvent(
     return;
   }
 
+  if (data.type === "steering_queued") {
+    ctx.onSteeringQueued?.(data);
+    return;
+  }
+
+  if (data.type === "steering_cancelled") {
+    ctx.onSteeringCancelled?.(data);
+    return;
+  }
+
   if (data.type === "chat_ack") {
     // 通知上层 outbox：服务端已接收
     ctx.onChatAck?.(data.client_msg_id);
@@ -332,9 +378,23 @@ export function processWsEvent(
   }
 
   if (data.type === "chat_rejected") {
+    // duplicate_inflight（2026-08-04 P2-9 配套）：重试复用原 clientMsgId 撞上
+    // 「服务端其实已处理完」——消息确实送达过，翻已发送而不是对着一条成功的消息报错。
+    if (data.reason_code === "duplicate_inflight") {
+      const dupIdx = findUserMsgIndexByClientId(msg.messagesRef.current, data.client_msg_id);
+      if (dupIdx >= 0) {
+        msg.updateMessageAt(dupIdx, (m) => (
+          (m.type === "user" || m.type === "user-voice")
+            ? { ...m, status: "sent" as const }
+            : m
+        ));
+      }
+      ctx.onChatRejected?.(data.client_msg_id, data.reason_code, data.reason);
+      return;
+    }
     removeRuntimeStatusMessages(msg);
-    const msgs = msg.messagesRef.current;
-    const idx = findUserMsgIndexByClientId(msgs, data.client_msg_id);
+    // 注意：必须在 removeRuntimeStatusMessages 之后再定位（它会改变数组索引）
+    const idx = findUserMsgIndexByClientId(msg.messagesRef.current, data.client_msg_id);
     if (idx >= 0) {
       msg.updateMessageAt(idx, (m) => {
         if (m.type === "user") {
@@ -351,6 +411,14 @@ export function processWsEvent(
   }
 
   if (data.type === "user_message") {
+    // 防串（2026-08-04）：插话 user_message 投影带 sessionId，未 attach 放行白名单
+    // 依赖这里兜底，串会话的投影不得进当前视图。
+    if (data.sessionId) {
+      const expectedSessionId = activeSessionId ?? latestSessionId.value;
+      if (expectedSessionId && data.sessionId !== expectedSessionId) return;
+    }
+    // 插话被消费进时间线：清理队列区同 clientMsgId 条目（多端一致的移除信号）。
+    ctx.onUserMessageProjected?.(data.client_msg_id);
     // 去重：优先按 client_msg_id（精准），回退 content（兼容老 transcript）
     const msgs = msg.messagesRef.current;
     const isDup = msgs.some(m => {
@@ -367,6 +435,7 @@ export function processWsEvent(
         ...(data.attachments ? { attachments: data.attachments } : {}),
         timestamp: data.timestamp,
         ...(data.client_msg_id ? { clientMsgId: data.client_msg_id } : {}),
+        status: "sent",
       });
     }
     return;

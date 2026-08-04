@@ -397,7 +397,9 @@ export const MessageList = memo(function MessageList({
 
   // Loading rows remain outside the virtualized bubble region, as before.
   const lastItem = bubbleItems[lastRenderIdx];
-  const showAgentLoading = loading && (!lastItem || (lastItem.type !== 'ai_bubble' && lastItem.type !== 'activity_group' && lastItem.type === 'user'));
+  // queued（排队插话）气泡不是「等待 AI 响应的最后一条消息」（2026-08-04 P2-8）：
+  // 它还没被 Agent 看到，其下渲染「正在思考」会与「已排队」自相矛盾。
+  const showAgentLoading = loading && (!lastItem || (lastItem.type !== 'ai_bubble' && lastItem.type !== 'activity_group' && lastItem.type === 'user' && lastItem.status !== 'queued'));
   const showCenterLoading = isLoadingMessages && messages.length === 0 && !loading;
   const showSyncLoading = isLoadingMessages && messages.length > 0 && !loading;
 

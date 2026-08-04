@@ -834,6 +834,21 @@ export type PlatformEvent =
   | {
     id: string;
     timestamp: string;
+    /**
+     * 插话已被目标 run 吸收（2026-08-04 BUG-2 修复）。durable 化的原因：生产是
+     * ws-only + runtime-worker 双进程，loop yield 的 OutboundEvent 在 worker 进程
+     * 没有 webRuntimeEventSink，「插话已应用」信号必须走 PG NOTIFY → 跨进程投影
+     * 才能到达 web 进程（清 activeStreams/幂等缓存 + 通知前端清队列区）。
+     */
+    type: 'interjection_applied';
+    runId: string;
+    sessionId: string;
+    sourceRunIds: string[];
+    clientMsgIds: string[];
+  }
+  | {
+    id: string;
+    timestamp: string;
     type: 'tool_invocation_started';
     runId: string;
     sessionId: string;

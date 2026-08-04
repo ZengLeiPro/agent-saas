@@ -104,6 +104,13 @@ export interface WsDetachMessage {
     action: 'detach';
 }
 
+/** 撤回一条仍在排队（未被目标 run 消费）的插话。 */
+export interface WsCancelQueuedMessage {
+    action: 'cancel_queued';
+    /** 插话 source run id（stream_id{queued:true} ACK 里的 runId）。 */
+    sourceRunId: string;
+}
+
 export interface WsPingMessage {
     action: 'ping';
     lastSeq?: number;
@@ -124,7 +131,8 @@ export type WsInboundMessage =
     | WsResumeMessage
     | WsDetachMessage
     | WsPingMessage
-    | WsSyncMessage;
+    | WsSyncMessage
+    | WsCancelQueuedMessage;
 
 // ── 下行消息（服务端 → 客户端）──────────────────────────────
 

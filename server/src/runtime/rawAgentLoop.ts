@@ -887,7 +887,19 @@ export class RawAgentLoop implements AgentLoop {
           interjectionSourceRunId: interjection.sourceRunId,
           ...(interjection.clientMsgId ? { clientMsgId: interjection.clientMsgId } : {}),
         });
-        await this.transcriptProjection.project(userMessageEvent);
+        // 去重集必须在 durable append 成功后立即登记（2026-08-04）：若随后的
+        // transcript project 抛错，下一轮 drain 不得重复 append 同一条 user_message。
+        recoveredInterjectionSourceRunIds.add(interjection.sourceRunId);
+        // project 失败只降级：durable user_message 已落库（真源），transcript 缺行可由
+        // 投影链补偿；消息必须继续进入本轮模型上下文，否则会被 claim 标 applied 却
+        // 从未被模型看到（静默丢失）。
+        try {
+          await this.transcriptProjection.project(userMessageEvent);
+        } catch (error) {
+          logger.warn(
+            `[run] interjection transcript project failed (degraded): run=${context.runId} source=${interjection.sourceRunId} error=${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
         messages.push({
           role: 'user',
           content: buildModelUserContent(
@@ -897,7 +909,6 @@ export class RawAgentLoop implements AgentLoop {
           ),
         });
         currentUserMessageIndex = messages.length - 1;
-        recoveredInterjectionSourceRunIds.add(interjection.sourceRunId);
       }
       return queued;
     };
@@ -960,7 +971,16 @@ export class RawAgentLoop implements AgentLoop {
           );
           return;
         }
-        const boundaryInterjections = await drainQueuedInterjections();
+        let boundaryInterjections: Awaited<ReturnType<typeof drainQueuedInterjections>> = [];
+        try {
+          boundaryInterjections = await drainQueuedInterjections();
+        } catch (error) {
+          if (context.signal?.aborted) throw error;
+          // BUG-8 降级：PG 抖动不打死 run；插话保持 pending，下一轮/终态回退自愈。
+          logger.warn(
+            `[run] steering drain failed at turn start (degraded): run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
         let boundaryInterjectionsClaimed = boundaryInterjections.length === 0;
         context.replaceableDraftRetryUsed = turn === 1 && restoredDraftRecoveryUsed;
         let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
@@ -1070,28 +1090,66 @@ export class RawAgentLoop implements AgentLoop {
           if (!boundaryInterjectionsClaimed) {
             boundaryInterjectionsClaimed = true;
             const requestedSourceRunIds = boundaryInterjections.map((interjection) => interjection.sourceRunId);
-            const appliedSourceRunIds = await this.runStore?.markSteeringInputsApplied?.(
-              context.runId,
-              requestedSourceRunIds,
-            ) ?? requestedSourceRunIds;
-            const appliedSourceRunIdSet = new Set(appliedSourceRunIds);
-            const appliedInterjections = boundaryInterjections.filter((interjection) => (
-              appliedSourceRunIdSet.has(interjection.sourceRunId)
-            ));
-            if (appliedInterjections.length !== boundaryInterjections.length) {
-              if (context.signal?.aborted) {
-                const reason = context.signal.reason;
-                throw reason instanceof Error ? reason : new Error(String(reason ?? 'run aborted'));
+            // 尽力 claim（2026-08-04 BUG-3/BUG-8 修复）：
+            // - 部分 claim 失败（source 在 drain→claim 窗口被撤回/janitor 改状态）不再抛
+            //   "steering target became inactive" 打死健康的目标 run——被撤回的条目消息
+            //   已进入本轮模型请求（撤回太晚，模型会响应它），只记录日志继续。
+            // - PG 抖动同理只降级：input 行保持 pending，下一轮 drain 会因
+            //   recoveredInterjectionSourceRunIds 去重跳过重复 append 并自动重试 claim。
+            let appliedInterjections = boundaryInterjections;
+            try {
+              const appliedSourceRunIds = await this.runStore?.markSteeringInputsApplied?.(
+                context.runId,
+                requestedSourceRunIds,
+              ) ?? requestedSourceRunIds;
+              const appliedSourceRunIdSet = new Set(appliedSourceRunIds);
+              appliedInterjections = boundaryInterjections.filter((interjection) => (
+                appliedSourceRunIdSet.has(interjection.sourceRunId)
+              ));
+              if (appliedInterjections.length !== boundaryInterjections.length) {
+                if (context.signal?.aborted) {
+                  const reason = context.signal.reason;
+                  throw reason instanceof Error ? reason : new Error(String(reason ?? 'run aborted'));
+                }
+                const missing = boundaryInterjections
+                  .filter((interjection) => !appliedSourceRunIdSet.has(interjection.sourceRunId))
+                  .map((interjection) => interjection.sourceRunId);
+                logger.warn(
+                  `[run] steering claim partial: run=${context.runId} unclaimed=${missing.join(',')} — 已跳过（可能被撤回），本轮继续`,
+                );
               }
-              throw new Error('steering target became inactive before the next model turn');
+            } catch (error) {
+              if (context.signal?.aborted) throw error;
+              // 未确认 claim 成功就不能对外宣告 applied（否则前端清队列区、durable 行
+              // 却仍 pending，目标终态后回退独立 run 会重复执行）。置空等下一轮重试。
+              appliedInterjections = [];
+              logger.warn(
+                `[run] steering claim failed (degraded, will retry next turn): run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
+              );
             }
-            yield {
-              type: 'interjection_applied',
-              sourceRunIds: appliedInterjections.map((interjection) => interjection.sourceRunId),
-              clientMsgIds: appliedInterjections.flatMap((interjection) => (
-                interjection.clientMsgId ? [interjection.clientMsgId] : []
-              )),
-            };
+            if (appliedInterjections.length > 0) {
+              const appliedPayload = {
+                sourceRunIds: appliedInterjections.map((interjection) => interjection.sourceRunId),
+                clientMsgIds: appliedInterjections.flatMap((interjection) => (
+                  interjection.clientMsgId ? [interjection.clientMsgId] : []
+                )),
+              };
+              // durable 化（BUG-2）：跨进程投影靠这条到达 web 进程；失败不阻断主流程
+              //（本进程 yield 路径仍工作，单进程部署不受影响）。
+              try {
+                await this.append({
+                  type: 'interjection_applied',
+                  runId: context.runId,
+                  sessionId: context.sessionId,
+                  ...appliedPayload,
+                });
+              } catch (error) {
+                logger.warn(
+                  `[run] durable interjection_applied append failed: run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
+                );
+              }
+              yield { type: 'interjection_applied', ...appliedPayload };
+            }
           }
           if (event.type === 'thinking_delta') {
             if (!thinkingStarted) {
@@ -1371,10 +1429,22 @@ export class RawAgentLoop implements AgentLoop {
             }
           }
           if (turn < turnLimit || inlineCompactionAttempted) {
-            let queuedInterjections = await drainQueuedInterjections();
-            if (queuedInterjections.length === 0 && this.runStore?.trySealSteeringInputWindow) {
-              const sealed = await this.runStore.trySealSteeringInputWindow(context.runId);
-              if (!sealed) queuedInterjections = await drainQueuedInterjections();
+            // BUG-8 降级（2026-08-04）：drain/seal 的 PG 抖动不允许把已经答完的 run
+            // 打成 failed——按「无插话」继续收尾；窗口留 open 时，目标终态后
+            // NOT EXISTS 条件自动失效，排队插话回退为独立 run 执行，不丢消息。
+            let queuedInterjections: Awaited<ReturnType<typeof drainQueuedInterjections>> = [];
+            try {
+              queuedInterjections = await drainQueuedInterjections();
+              if (queuedInterjections.length === 0 && this.runStore?.trySealSteeringInputWindow) {
+                const sealed = await this.runStore.trySealSteeringInputWindow(context.runId);
+                if (!sealed) queuedInterjections = await drainQueuedInterjections();
+              }
+            } catch (error) {
+              if (context.signal?.aborted) throw error;
+              logger.warn(
+                `[run] steering drain/seal failed at finish (degraded): run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
+              );
+              queuedInterjections = [];
             }
             if (queuedInterjections.length > 0) {
               // 压缩期间到达的消息必须仍是当前 run 的插话。即使原任务恰好耗尽
@@ -1384,6 +1454,19 @@ export class RawAgentLoop implements AgentLoop {
                 turnLimit = turn + input.maxTurns;
               }
               continue;
+            }
+          } else if (this.runStore?.trySealSteeringInputWindow) {
+            // D-4（2026-08-04）：最后一轮（turn === turnLimit 且未触发内联压缩）没有
+            // 轮次预算再消费插话，立即封口让此后到达的插话马上回退为独立 run，
+            // 而不是滞留到本 run 终态。seal 返回 false（已有 pending）时无预算可
+            // 消费，留给终态回退路径处理。
+            try {
+              await this.runStore.trySealSteeringInputWindow(context.runId);
+            } catch (error) {
+              if (context.signal?.aborted) throw error;
+              logger.warn(
+                `[run] steering final-turn seal failed (degraded): run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
+              );
             }
           }
           const modelUsage = buildModelUsage(context.model, totalUsage);
@@ -1487,7 +1570,14 @@ export class RawAgentLoop implements AgentLoop {
           context,
           messages,
         });
-        if (turn < turnLimit) await drainQueuedInterjections();
+        if (turn < turnLimit) {
+          await drainQueuedInterjections().catch((error) => {
+            if (context.signal?.aborted) throw error;
+            logger.warn(
+              `[run] steering drain failed after tools (degraded): run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
+        }
       }
 
       if (textStarted) {

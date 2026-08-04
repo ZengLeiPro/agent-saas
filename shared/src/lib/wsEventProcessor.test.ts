@@ -221,6 +221,22 @@ describe('辅助函数', () => {
     expect(ctrl.messages[0]).toMatchObject({ type: 'runtime_status', status: 'running', content: '正在思考' });
   });
 
+  it('upsertRuntimeStatusMessage：runId 归属不同的状态行不得原地覆盖（2026-08-04）', () => {
+    // 旧行为：目标 run 的 running 会把插话 run 的 queued 状态行覆盖成「正在思考」，
+    // 用户误以为排队消息已开始处理。归属不同必须新建一条。
+    const ctrl = makeController();
+    upsertRuntimeStatusMessage(ctrl, 'queued', { runId: 'interjection-run' });
+    upsertRuntimeStatusMessage(ctrl, 'running', { runId: 'target-run' });
+    expect(ctrl.messages).toHaveLength(2);
+    expect(ctrl.messages[0]).toMatchObject({ type: 'runtime_status', status: 'queued', runId: 'interjection-run' });
+    expect(ctrl.messages[1]).toMatchObject({ type: 'runtime_status', status: 'running', runId: 'target-run' });
+
+    // 同 runId 仍原地更新
+    upsertRuntimeStatusMessage(ctrl, 'waiting_hand', { runId: 'target-run' });
+    expect(ctrl.messages).toHaveLength(2);
+    expect(ctrl.messages[1]).toMatchObject({ type: 'runtime_status', status: 'waiting_hand', runId: 'target-run' });
+  });
+
   it('removeRuntimeStatusMessages：有 setMessages 时过滤掉 runtime_status', () => {
     const ctrl = makeController([
       { id: 'r', type: 'runtime_status', status: 'queued' },

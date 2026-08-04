@@ -143,7 +143,10 @@ describe('PgRunStore steering inbox', () => {
     expect(queries.at(-1)).toBe('COMMIT');
   });
 
-  it('claims a steering batch atomically when one source is no longer pending', async () => {
+  it('claims the still-pending subset when one source is no longer pending (best-effort, 2026-08-04)', async () => {
+    // 旧行为是 all-or-nothing：任一 source 在 drain→claim 窗口被撤回，整批返回空，
+    // loop 随即抛错把健康的目标 run 打成 failed（BUG-3）。新语义：只 claim 仍
+    // pending 的子集，被撤回的条目由调用方跳过。
     const queries: string[] = [];
     const client = {
       query: async (sql: string) => {
@@ -159,6 +162,9 @@ describe('PgRunStore steering inbox', () => {
             ],
           };
         }
+        if (sql.includes('UPDATE runtime_steering_inputs')) {
+          return { rows: [{ source_run_id: 'source-1' }] };
+        }
         return { rows: [] };
       },
       release: vi.fn(),
@@ -166,8 +172,9 @@ describe('PgRunStore steering inbox', () => {
     const store = new PgRunStore({ pool: { connect: async () => client } as any });
 
     await expect(store.markSteeringInputsApplied('target-run', ['source-1', 'source-2']))
-      .resolves.toEqual([]);
-    expect(queries.some((sql) => sql.includes('UPDATE runtime_steering_inputs'))).toBe(false);
+      .resolves.toEqual(['source-1']);
+    const claimSql = queries.find((sql) => sql.includes('UPDATE runtime_steering_inputs'));
+    expect(claimSql).toBeTruthy();
     expect(queries.at(-1)).toBe('COMMIT');
   });
 
@@ -210,5 +217,104 @@ describe('PgRunStore steering inbox', () => {
     await expect(store.trySealSteeringInputWindow('target-run')).resolves.toBe(false);
     expect(clientQueries.some((sql) => sql.includes("'steeringInputWindow', 'sealed'"))).toBe(false);
     expect(clientQueries.at(-1)).toBe('COMMIT');
+  });
+
+  it('excludes waiting_user / waiting_approval from steering target candidates (2026-08-04 BUG-1)', async () => {
+    // waiting_user 没有 loop 在跑也没有超时 janitor，插话挂上去会永久静默丢失；
+    // waiting_approval 只有 24h janitor（BUG-7）。两者都必须从候选目标移除，
+    // 此时插话应作为独立 run 直接执行。
+    const queries: string[] = [];
+    const now = new Date().toISOString();
+    const client = {
+      query: async (sql: string, params: unknown[] = []) => {
+        queries.push(sql.trim());
+        if (sql.includes('SELECT target.run_id')) return { rows: [] };
+        if (sql.includes('INSERT INTO runtime_runs')) {
+          return { rows: [{ row_json: {
+            run_id: 'run-1', session_id: 'session-1', status: 'pending',
+            requested_at: now, updated_at: now, metadata: JSON.parse(String(params[11])),
+          } }] };
+        }
+        return { rows: [] };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+    await store.enqueueSteeringAware({ runId: 'run-1', sessionId: 'session-1' });
+
+    const targetQuery = queries.find((sql) => sql.includes('SELECT target.run_id'));
+    expect(targetQuery).toBeTruthy();
+    expect(targetQuery).toContain(`('pending','running','waiting_hand')`);
+    expect(targetQuery).not.toContain('waiting_user');
+    expect(targetQuery).not.toContain('waiting_approval');
+  });
+
+  it('recovers legacy sources stuck behind waiting_user targets via listRecoverable (2026-08-04)', async () => {
+    // 存量自愈：NOT EXISTS 的目标状态条件同步收窄后，挂在 waiting_user 目标上的
+    // pending source 立即回到可恢复集合、作为独立 run 执行。
+    const pool = {
+      query: vi.fn(async (sql: string) => {
+        expect(sql).toContain(`AND target.status IN ('pending','running','waiting_hand')`);
+        expect(sql).not.toContain(`'waiting_user','waiting_hand'`);
+        return { rows: [] };
+      }),
+    };
+    const store = new PgRunStore({ pool: pool as any });
+    await store.listRecoverable();
+    expect(pool.query).toHaveBeenCalled();
+  });
+
+  it('cancels a pending steering source and rejects late withdrawal (2026-08-04 终态设计)', async () => {
+    // pending：撤回成功，input 行与 source run 都标 cancelled
+    const okQueries: string[] = [];
+    const okClient = {
+      query: async (sql: string) => {
+        okQueries.push(sql.trim());
+        if (sql.includes('SELECT status, session_id, metadata')) {
+          return { rows: [{ status: 'pending', session_id: 'session-1', metadata: { steeringState: 'pending', clientMsgId: 'c1' } }] };
+        }
+        if (sql.includes('UPDATE runtime_steering_inputs')) return { rowCount: 1, rows: [] };
+        return { rows: [] };
+      },
+      release: vi.fn(),
+    };
+    const okStore = new PgRunStore({ pool: { connect: async () => okClient } as any });
+    await expect(okStore.cancelPendingSteeringSourceRun('source-run'))
+      .resolves.toEqual({ ok: true, sessionId: 'session-1', clientMsgId: 'c1' });
+    expect(okQueries.some((sql) => sql.includes("state = 'cancelled'"))).toBe(true);
+    expect(okQueries.at(-1)).toBe('COMMIT');
+
+    // 已被 claim（input 行不再 pending）：too_late，绝不动 run 状态
+    const lateQueries: string[] = [];
+    const lateClient = {
+      query: async (sql: string) => {
+        lateQueries.push(sql.trim());
+        if (sql.includes('SELECT status, session_id, metadata')) {
+          return { rows: [{ status: 'pending', session_id: 'session-1', metadata: { steeringState: 'pending' } }] };
+        }
+        if (sql.includes('UPDATE runtime_steering_inputs')) return { rowCount: 0, rows: [] };
+        return { rows: [] };
+      },
+      release: vi.fn(),
+    };
+    const lateStore = new PgRunStore({ pool: { connect: async () => lateClient } as any });
+    await expect(lateStore.cancelPendingSteeringSourceRun('source-run'))
+      .resolves.toEqual({ ok: false, reason: 'too_late', sessionId: 'session-1' });
+    expect(lateQueries.some((sql) => sql.includes("status = 'cancelled'"))).toBe(false);
+    expect(lateQueries.at(-1)).toBe('ROLLBACK');
+  });
+
+  it('releases pending steering rows when the source run falls back to standalone execution (2026-08-04 BUG-5)', async () => {
+    const queries: string[] = [];
+    const pool = {
+      query: vi.fn(async (sql: string) => {
+        queries.push(sql.trim());
+        return { rows: [] };
+      }),
+    };
+    const store = new PgRunStore({ pool: pool as any });
+    await store.releasePendingSteeringForSourceRun('source-run');
+    expect(queries.some((sql) => sql.includes("SET state = 'released'"))).toBe(true);
+    expect(queries.some((sql) => sql.includes("'steeringState', 'released'"))).toBe(true);
   });
 });

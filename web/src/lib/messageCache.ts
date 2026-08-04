@@ -58,6 +58,10 @@ export function prepareMessagesForCache(messages: MessageItem[]): MessageItem[] 
  * 2. 按 id 去重：2026-08-04 前 sessionMerge 的 preserveTail 自我复制缺陷会把同 id
  *    消息写进缓存，源头修复不清理已落盘的脏快照，这里让存量在下次读取时自愈。
  *    保留首次出现的位置；正常快照 id 唯一，去重是 no-op。
+ * 3. 遗留 queued（排队插话）气泡直接丢弃（2026-08-04 P2-11）：其 outbox/ACK 上下文
+ *    随页面销毁，永远翻不了状态；终态设计下排队消息在队列区（detail API 恢复真态），
+ *    消息被消费后 transcript 投影会补上正式气泡，缓存里的 queued 只会造成
+ *    「永久已排队」残影或重复显示。
  */
 export function restoreCachedMessages(cached: MessageItem[]): MessageItem[] {
   const seenIds = new Set<string>();
@@ -65,6 +69,7 @@ export function restoreCachedMessages(cached: MessageItem[]): MessageItem[] {
   for (const message of cached) {
     if (seenIds.has(message.id)) continue;
     seenIds.add(message.id);
+    if (message.type === "user" && message.status === "queued") continue;
     restored.push(
       message.type === "user" && message.status === "pending"
         ? { ...message, status: "failed" as const }

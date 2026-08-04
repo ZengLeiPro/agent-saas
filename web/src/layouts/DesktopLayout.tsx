@@ -85,6 +85,7 @@ export function DesktopLayout(props: LayoutProps) {
     handlePermissionResponse, handleAskUserResponse,
     uploadedFiles, removeFile, input, uploading, uploadError, dismissUploadError, setInput,
     sendMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handlePaste, ttsProps, ttsStateMap, modelList,
+    queuedInterjections, cancelQueuedInterjection, editQueuedInterjection, resendQueuedInterjection, dismissQueuedInterjection,
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, expandFilePreview, closeFilePreview,
@@ -533,6 +534,11 @@ export function DesktopLayout(props: LayoutProps) {
               onSend={() => { void handleSendMessage(); }}
               onStop={stopGeneration}
               stopping={stopping}
+              queuedInterjections={queuedInterjections}
+              onCancelQueuedInterjection={cancelQueuedInterjection}
+              onEditQueuedInterjection={editQueuedInterjection}
+              onResendQueuedInterjection={resendQueuedInterjection}
+              onDismissQueuedInterjection={dismissQueuedInterjection}
               onFileSelect={(event) => { void handleFileSelect(event); }}
               onPaste={(event) => { void handlePaste(event); }}
               tts={ttsProps}

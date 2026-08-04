@@ -260,3 +260,40 @@ describe('mergeSessionMessageDelta', () => {
     ]);
   });
 });
+
+describe('mergeServerMessagesWithLocalTail — 锚点前 inflight 用户气泡（2026-08-04 P1-1）', () => {
+  it('服务端已投影锚点 text 时，锚点前的 pending/queued 用户气泡仍被保留', () => {
+    // steering 场景：插话气泡 push 进本地后，目标 run 继续产出 text 成为新锚点；
+    // 旧逻辑只保留锚点后的尾部，插话气泡被整条丢弃（done 归属校验随之失效）。
+    const queuedBubble: MessageItem = {
+      id: 'msg-queued', type: 'user', content: '插话消息', status: 'queued', clientMsgId: 'c-q',
+    };
+    const local = [
+      user('msg-1', '原始问题'),
+      text('msg-2', '第一段回复'),
+      queuedBubble,
+      text('msg-3', '第二段回复'),
+    ];
+    const server = [
+      user('line-1', '原始问题'),
+      text('line-2', '第一段回复'),
+      text('line-3', '第二段回复'),
+    ];
+    const merged = mergeServerMessagesWithLocalTail(server, local);
+    expect(merged.some((m) => m.id === 'msg-queued')).toBe(true);
+  });
+
+  it('锚点前 inflight 气泡与服务端最后一条 user 同内容时不重复保留', () => {
+    const local = [
+      user('msg-1', '同一句话'),
+      { id: 'msg-p', type: 'user', content: '同一句话', status: 'pending' } as MessageItem,
+      text('msg-2', '回复'),
+    ];
+    const server = [
+      user('line-1', '同一句话'),
+      text('line-2', '回复'),
+    ];
+    const merged = mergeServerMessagesWithLocalTail(server, local);
+    expect(merged.filter((m) => m.type === 'user')).toHaveLength(1);
+  });
+});

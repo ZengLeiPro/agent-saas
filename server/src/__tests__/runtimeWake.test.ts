@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   HIDDEN_WAKE_CONTINUE_PROMPT,
+  INTERJECTION_FALLBACK_PROMPT,
   WAKE_EVENT_LIST_TYPES,
   resolveSessionOwnerTenantId,
   resolveWakeSessionOwner,
@@ -237,11 +238,15 @@ describe('wakeRuntimeSession', () => {
     const decision = resolveWakePrompt(run, await eventStore.list(session.sessionId), session);
 
     expect(decision.recordUserMessage).toBe(false);
-    expect(decision.message.content).toBe(HIDDEN_WAKE_CONTINUE_PROMPT);
+    // 2026-08-04 BUG-4：插话回退 run（user_message 已 drain 但未 claim）不再用
+    // 「继续被中断的运行」提示——目标 run 多半是用户主动取消的，那个提示会让模型
+    // 接着做刚被取消的任务。改用明确指令：响应上下文中最后那条用户消息本身。
+    expect(decision.message.content).toBe(INTERJECTION_FALLBACK_PROMPT);
     expect(decision.message.metadata).toMatchObject({
       schedulerWake: true,
       originalRunId: run.runId,
       hiddenContinuation: true,
+      interjectionFallback: true,
     });
   });
 

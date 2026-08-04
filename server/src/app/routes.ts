@@ -277,6 +277,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       sessionProjectionStore: runtime.runtimeSessionProjectionStore,
       sessionReadStateStore: runtime.sessionReadStateStore,
       sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId),
+      listPendingSteeringBySession: runtime.runtimeRunStore?.listPendingSteeringBySession
+        ? (sessionId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId)
+        : undefined,
     }),
   );
   app.use(

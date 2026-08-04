@@ -117,10 +117,17 @@ export function mergeServerMessagesWithLocalTail(
   }
 
   // startsWith 同时覆盖全文相等；不做 trim/模糊匹配，避免误吞不同消息。
-  // 服务端已有锚点 text 时，锚点前的在途气泡必然先于该 text 被消费/投影（transcript
-  // 顺序保证），只保留锚点后的本地尾部即可。
+  // ⚠️「锚点前的在途气泡必然先于该 text 被投影」对 steering 插话不成立（2026-08-04
+  // P1-1 修复）：插话气泡 push 进本地数组后，目标 run 还会继续产出 text 成为新锚点，
+  // 而插话要等下一个 loop 边界才被消费——锚点前的 pending/queued 用户气泡必须保留，
+  // 否则 done 刷新会把它整条丢掉（接管 run 的 done 归属校验随之失效）。
   if (lastServerTextContent?.startsWith(anchorContent)) {
-    return appendUnprojectedLocalTail(server, localTailAfterAnchor);
+    const inflightBeforeAnchor = local.slice(0, anchorIdx).filter((m): m is Extract<MessageItem, { type: 'user' }> => (
+      m.type === 'user'
+      && (m.status === 'pending' || m.status === 'queued')
+      && m.content !== lastServerUserContent
+    ));
+    return appendUnprojectedLocalTail(server, [...inflightBeforeAnchor, ...localTailAfterAnchor]);
   }
 
   const startIdx = inflightTailStart >= 0 && inflightTailStart < anchorIdx

@@ -121,6 +121,14 @@ export interface SessionCallbacks {
     sessionId: string,
     lastRunState: NonNullable<ApiSessionDetail["lastRunState"]>,
   ) => void;
+  /**
+   * detail 加载后同步排队插话真源（2026-08-04 终态设计）：服务端仍在排队的插话
+   * 重建队列区；每次 detail 都调用（含空数组），本地已消费/取消的条目由上层合并策略保留。
+   */
+  onQueuedMessages?: (
+    sessionId: string,
+    queued: NonNullable<ApiSessionDetail["queuedMessages"]>,
+  ) => void;
 }
 
 export interface SessionState {
@@ -499,6 +507,7 @@ export function useSession(
             }
             cbRef.current.onLastRunState?.(id, lrs);
           }
+          cbRef.current.onQueuedMessages?.(id, data.queuedMessages ?? []);
 
           if (isStale()) return;
           // preserveTail：refresh 时服务端 transcript 可能尚未写入最后一条 assistant text，

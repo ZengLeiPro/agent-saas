@@ -11,6 +11,7 @@ import type { ConnectionState } from "@/hooks/useConnectionState";
 import type { AgentProfile, OrgAgentSummary, SessionParticipants } from "@agent/shared";
 import type { SettingsSectionId } from "@/types/settings";
 import type { AdminSettingsState, AdminSettingsTarget } from "@/lib/urlSync";
+import type { QueuedInterjection } from "@/hooks/useChatAppState";
 import type { PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
 
 export interface LayoutProps {
@@ -91,6 +92,12 @@ export interface LayoutProps {
   sendVoiceMessage: (wavBlob: Blob, durationMs: number) => Promise<void>;
   stopping: boolean;
   stopGeneration: () => void;
+  /** 插话队列区（2026-08-04 终态设计） */
+  queuedInterjections: QueuedInterjection[];
+  cancelQueuedInterjection: (clientMsgId: string) => Promise<boolean>;
+  editQueuedInterjection: (clientMsgId: string) => Promise<void>;
+  resendQueuedInterjection: (clientMsgId: string) => void;
+  dismissQueuedInterjection: (clientMsgId: string) => void;
   handleFileSelect: (event: ChangeEvent<HTMLInputElement>) => Promise<void>;
   handlePaste: (event: ClipboardEvent) => Promise<void>;
   ttsProps: TtsProps | undefined;

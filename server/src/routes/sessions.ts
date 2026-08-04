@@ -445,6 +445,15 @@ export interface SessionsRouterOptions {
    * 预热 ACS Sandbox，冷启动与打字/LLM 首轮并行。纯旁路，失败不影响会话打开。
    */
   sandboxWarmup?: (sessionId: string) => void;
+  /**
+   * 排队插话查询（2026-08-04 终态设计）：detail API 返回仍在排队（未被目标 run
+   * 消费）的插话消息，前端刷新/切会话时据此重建队列区。失败降级为空数组。
+   */
+  listPendingSteeringBySession?: (sessionId: string) => Promise<Array<{
+    sourceRunId: string;
+    sourceRun: { metadata?: Record<string, unknown> };
+    acceptedAt: string;
+  }>>;
 }
 
 interface ResolvedSessionPath {
@@ -908,6 +917,48 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     }
     const parseDurationMs = Date.now() - parseStartedAt;
     const lastRunState = await getLastRunState(detailEventStore, sessionId);
+    // 排队中的插话（2026-08-04 终态设计）：不进 transcript（尚未被消费），单独返回
+    // 供前端队列区恢复。content/attachments 从 source run 的 durable wakeMessage 取。
+    let queuedMessages: Array<{
+      sourceRunId: string;
+      clientMsgId?: string;
+      content: string;
+      attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+      acceptedAt: string;
+    }> = [];
+    if (options.listPendingSteeringBySession) {
+      try {
+        const pending = await options.listPendingSteeringBySession(sessionId);
+        queuedMessages = pending.flatMap((input) => {
+          const wakeMessage = input.sourceRun.metadata?.wakeMessage as
+            | { content?: unknown; attachments?: unknown }
+            | undefined;
+          if (!wakeMessage || typeof wakeMessage.content !== 'string') return [];
+          const clientMsgId = typeof input.sourceRun.metadata?.clientMsgId === 'string'
+            ? input.sourceRun.metadata.clientMsgId
+            : undefined;
+          const attachments = Array.isArray(wakeMessage.attachments)
+            ? (wakeMessage.attachments as Array<{ originalName?: unknown; isImage?: unknown; relativePath?: unknown }>)
+              .flatMap((attachment) => (typeof attachment?.originalName === 'string' ? [{
+                name: attachment.originalName,
+                ...(typeof attachment.isImage === 'boolean' ? { isImage: attachment.isImage } : {}),
+                ...(typeof attachment.relativePath === 'string' ? { relativePath: attachment.relativePath } : {}),
+              }] : []))
+            : [];
+          return [{
+            sourceRunId: input.sourceRunId,
+            ...(clientMsgId ? { clientMsgId } : {}),
+            content: wakeMessage.content,
+            ...(attachments.length ? { attachments } : {}),
+            acceptedAt: input.acceptedAt,
+          }];
+        });
+      } catch (err) {
+        apiLogger.warn(
+          `[sessions] queued steering lookup failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
 
     const owner = meta
       ? (() => {
@@ -957,6 +1008,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         ...(owner ? { owner } : {}),
         ...(source ? { source } : {}),
         ...(lastRunState ? { lastRunState } : {}),
+        ...(queuedMessages.length ? { queuedMessages } : {}),
       },
     };
   }

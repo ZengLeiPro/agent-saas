@@ -104,6 +104,12 @@ export interface WsSyncMessage {
     lastSeq: number;
 }
 
+/** 撤回一条仍在排队（未被目标 run 消费）的插话（2026-08-04 终态设计）。 */
+export interface WsCancelQueuedMessage {
+    action: 'cancel_queued';
+    sourceRunId: string;
+}
+
 export type WsOutboundMessage =
     | WsChatMessage
     | WsRespondMessage
@@ -112,7 +118,8 @@ export type WsOutboundMessage =
     | WsRunStatusMessage
     | WsResumeMessage
     | WsDetachMessage
-    | WsSyncMessage;
+    | WsSyncMessage
+    | WsCancelQueuedMessage;
 
 /** Inbound message envelope */
 export interface WsEnvelope {

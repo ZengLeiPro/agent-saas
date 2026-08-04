@@ -50,6 +50,8 @@ export const EVENT_SCOPE: Record<string, EventScope> = {
   user_message: 'session',
   done: 'session',
   error: 'session',
+  // 插话吸收通知（2026-08-04 终态设计）：进 EventBuffer 保证与流内容的顺序
+  interjection_applied: 'session',
 
   // ── user scope: 跨会话通知 ──
   session_deleted: 'user',
@@ -72,6 +74,9 @@ export const EVENT_SCOPE: Record<string, EventScope> = {
   session_status: 'user',
   stream_started: 'user',
   interaction_resolved: 'user',
+  // 插话队列区多端同步（2026-08-04 终态设计）
+  steering_queued: 'user',
+  steering_cancelled: 'user',
 
   // ── reply scope: 请求响应（直发不存储）──
   respond_ok: 'reply',
@@ -88,6 +93,8 @@ export const EVENT_SCOPE: Record<string, EventScope> = {
   // chat_ack / chat_rejected 仅反馈给发起方，不持久化、不跨设备
   chat_ack: 'reply',
   chat_rejected: 'reply',
+  // 撤回排队插话的请求响应（2026-08-04 终态设计）
+  cancel_queued_result: 'reply',
 };
 
 // ── 类型 ──────────────────────────────────────────────────

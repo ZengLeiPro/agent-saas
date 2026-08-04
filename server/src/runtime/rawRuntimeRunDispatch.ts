@@ -2255,7 +2255,12 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             for (const input of queued) {
               const wakeMessage = input.sourceRun.metadata?.wakeMessage;
               if (!isWakeMessage(wakeMessage)) {
-                throw new Error(`插话消息 ${input.sourceRunId} 缺少 durable wakeMessage`);
+                // 2026-08-04 BUG-8：坏数据不打死健康的目标 run。把坏行标 failed +
+                // 回收 steering 行，跳过继续处理其余插话。
+                logger.error(`插话消息 ${input.sourceRunId} 缺少 durable wakeMessage，已跳过并标记 failed`);
+                await config.runStore?.releasePendingSteeringForSourceRun?.(input.sourceRunId).catch(() => undefined);
+                await config.runStore?.markStatus(input.sourceRunId, 'failed', 'missing_wake_message').catch(() => undefined);
+                continue;
               }
               const queuedMessage: InboundMessage = {
                 channel: (wakeMessage.channel ?? 'web') as InboundMessage['channel'],
@@ -3306,12 +3311,38 @@ export async function wakeRuntimeSession(
   });
   const cancelRequested = events.some((event) => (
     event.type === 'run_cancel_requested'
-    && (event.runId === run.runId || (!event.runId && event.sessionId === run.sessionId))
+    && (
+      event.runId === run.runId
+      // legacy 无 runId 的取消事件按 session 匹配，但只对事件发生时已存在的 run 生效
+      //（2026-08-04 D-2 修复）：否则一条历史 cancel 会永久毒化该 session 之后的所有
+      // wake——包括插话回退 run 和全新消息，全部被静默取消。
+      || (
+        !event.runId
+        && event.sessionId === run.sessionId
+        && Date.parse(event.timestamp) > Date.parse(run.requestedAt)
+      )
+    )
   ));
   if (cancelRequested) {
     await options.lease?.release('cancelled', 'cancel_requested_before_wake');
     await appendRunStateChanged(eventStore, run.sessionId, run.runId, 'cancelled', run.status, 'cancel_requested_before_wake');
     return;
+  }
+
+  // steering 行回收（2026-08-04 BUG-5 修复）：本 run 是回退执行的插话 source 时，
+  // 把它自己的 pending steering 行标 released + 清 metadata。不回收的话：
+  // ① 它永远不能成为后续插话的 steering 目标（NOT EXISTS own_input pending 排除），
+  //    这条会话的插话功能事实性失效；② 幂等兜底会对早已终态的目标继续谎报 queued。
+  if (run.metadata?.steeringState === 'pending' && config.runStore?.releasePendingSteeringForSourceRun) {
+    try {
+      await config.runStore.releasePendingSteeringForSourceRun(run.runId);
+      run = { ...run, metadata: { ...run.metadata, steeringState: 'released' } };
+      delete (run.metadata as Record<string, unknown>).steeringTargetRunId;
+    } catch (error) {
+      logger.warn(
+        `steering release failed (degraded): run=${run.runId} error=${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   const resumeApprovalCandidate = isResumeApprovalMetadata(run.metadata?.resumeApproval) ? run.metadata.resumeApproval : null;
@@ -3329,12 +3360,19 @@ export async function wakeRuntimeSession(
     username: session.username || undefined,
   });
   const wakeToolProfile = normalizeToolProfile(run.metadata?.toolProfile);
+  // 挂起交互门禁按 runId 过滤（2026-08-04 BUG-1 二次伤害修复）：
+  // 只有「本 run 自己」的未决 approval/ask_user 才把 wake 降级为 waiting_*。
+  // 别的 run 挂着卡片时（用户不答、改发新消息），新 run/插话回退 run 必须照常执行；
+  // 原来的 session 级过滤会把它们也降成 waiting_user，而用户回答卡片只会 resume
+  // 原 run——被降级的 run 永久卡死，getActiveBySession 还一直把它当活跃 run，
+  // UI 永久「正在思考」。
   const pendingApproval = [...events].reverse().find((event): event is Extract<PlatformEvent, { type: 'approval_requested' }> => (
     event.type === 'approval_requested'
     && event.sessionId === run.sessionId
+    && event.runId === run.runId
   ));
   const pendingAskUser = buildPendingInteractionsFromEvents(events, run.sessionId)
-    .find((interaction) => interaction.type === 'ask_user');
+    .find((interaction) => interaction.type === 'ask_user' && interaction.runId === run.runId);
   if (!resumeApproval && !resumeInteraction && pendingApproval && !events.some((event) => (
     event.type === 'approval_resolved'
     && event.approvalId === pendingApproval.approvalId
@@ -3679,6 +3717,16 @@ export const WAKE_EVENT_LIST_TYPES = [
   'user_message_submitted',
 ] as const satisfies readonly PlatformEvent['type'][];
 
+/**
+ * 插话回退 run 的隐藏唤醒提示（2026-08-04 BUG-4）：user_message 已在上下文里
+ *（drain 时投影），只需指示模型响应它；明确禁止继续上一个（已取消的）任务。
+ */
+export const INTERJECTION_FALLBACK_PROMPT =
+  'The previous run in this session ended before it could address the latest user message. '
+  + 'That message is already present as the last user message in the durable session context. '
+  + 'Respond to that message now. If the previous run was cancelled, do NOT resume or continue its task '
+  + 'unless the message explicitly asks for it.';
+
 export const HIDDEN_WAKE_CONTINUE_PROMPT =
   'Continue the interrupted managed-agent run from the durable session context. '
   + 'Do not treat this as a new user request. Do not restart completed work; continue from the latest completed event.';
@@ -3692,13 +3740,40 @@ export function resolveWakePrompt(
   if (metadataMessage?.metadata?.hiddenContinuation === true) {
     return { message: restoreWakeMessage(run, events, session), recordUserMessage: false };
   }
-  const hasPersistedUserMessage = events.some((event) => (
+  const hasOwnPersistedUserMessage = events.some((event) => (
     event.type === 'user_message'
     && event.sessionId === run.sessionId
-    && (event.runId === run.runId || event.interjectionSourceRunId === run.runId)
+    && event.runId === run.runId
   ));
-  if (!hasPersistedUserMessage) {
+  const hasInterjectionPersistedUserMessage = events.some((event) => (
+    event.type === 'user_message'
+    && event.sessionId === run.sessionId
+    && event.interjectionSourceRunId === run.runId
+  ));
+  if (!hasOwnPersistedUserMessage && !hasInterjectionPersistedUserMessage) {
     return { message: restoreWakeMessage(run, events, session), recordUserMessage: true };
+  }
+  // 插话回退分支（2026-08-04 BUG-4 修复）：本 run 是被 drain 过（user_message 已投影）
+  // 但未被 claim 的插话 source——目标 run 在 drain→claim 窗口内被取消/终态。此时绝不能
+  // 用「继续被中断的运行」提示：目标 run 多半是用户主动喊停的，那个提示会让模型接着做
+  // 用户刚取消的任务。改用明确指令：响应上下文中最后那条用户消息本身。
+  if (!hasOwnPersistedUserMessage && hasInterjectionPersistedUserMessage) {
+    return {
+      message: {
+        channel: 'web',
+        chatId: run.sessionId,
+        content: INTERJECTION_FALLBACK_PROMPT,
+        senderId: session.userId ?? run.userId,
+        senderName: session.username,
+        metadata: {
+          schedulerWake: true,
+          originalRunId: run.runId,
+          hiddenContinuation: true,
+          interjectionFallback: true,
+        },
+      },
+      recordUserMessage: false,
+    };
   }
   return {
     message: {

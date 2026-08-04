@@ -17,12 +17,19 @@ export type RunStatus =
   | 'cancelled'
   | 'orphaned';
 
+/**
+ * 插话可以排队到的目标 run 状态（2026-08-04 收窄）。
+ * waiting_user / waiting_approval 被移出：这两个状态下没有 loop 在跑、也没有超时
+ * janitor 兜底（waiting_user 完全没有），插话挂上去等于永久静默丢失——用户不答
+ * AskUser 卡片/授权卡片时发的新消息，应作为独立 run 直接执行（session lock 已释放）。
+ */
 const ACTIVE_STEERING_TARGET_STATUSES: RunStatus[] = [
+  'pending',
   'running',
-  'waiting_approval',
-  'waiting_user',
   'waiting_hand',
 ];
+/** SQL IN 片段，与 ACTIVE_STEERING_TARGET_STATUSES 保持同步。 */
+const STEERING_TARGET_STATUS_SQL = `('pending','running','waiting_hand')`;
 
 export interface RunRecord {
   runId: string;
@@ -149,10 +156,23 @@ export interface SteeringInputRecord {
   sourceRunId: string;
   targetRunId: string;
   sessionId: string;
-  state: 'pending' | 'applied';
+  /**
+   * pending=排队中；applied=已被目标 run 吸收；released=source run 已回退为独立
+   * run 执行（行回收，防止 source 永远不能再当 steering 目标）；cancelled=用户撤回。
+   */
+  state: 'pending' | 'applied' | 'released' | 'cancelled';
   acceptedAt: string;
   appliedAt?: string;
   sourceRun: RunRecord;
+}
+
+/** 撤回排队插话的结果。 */
+export interface CancelSteeringResult {
+  ok: boolean;
+  /** too_late=已被目标 run 消费或 source 已非 pending；not_found=无此排队插话。 */
+  reason?: 'too_late' | 'not_found';
+  sessionId?: string;
+  clientMsgId?: string;
 }
 
 export interface RunStore {
@@ -164,6 +184,16 @@ export interface RunStore {
   markSteeringInputsApplied?(targetRunId: string, sourceRunIds: string[]): Promise<string[]>;
   /** 仅当没有待注入消息时封口；false 表示调用方应先消费刚到达的消息。 */
   trySealSteeringInputWindow?(targetRunId: string): Promise<boolean>;
+  /**
+   * source run 回退为独立 run 执行时回收它自己的 pending steering 行并清 metadata
+   * steeringState/steeringTargetRunId——否则它永远不能再成为 steering 目标，且幂等
+   * 兜底会对早已终态的目标继续谎报 queued。
+   */
+  releasePendingSteeringForSourceRun?(sourceRunId: string): Promise<void>;
+  /** 用户撤回一条仍在排队的插话：source run 标 cancelled + 行标 cancelled。 */
+  cancelPendingSteeringSourceRun?(sourceRunId: string, reason?: string): Promise<CancelSteeringResult>;
+  /** 会话内所有仍在排队的插话（供 detail API 恢复队列区 + abort 联动取消）。 */
+  listPendingSteeringBySession?(sessionId: string): Promise<SteeringInputRecord[]>;
   markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch?: Record<string, unknown>): Promise<RunRecord | null>;
   patchMetadata?(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null>;
   get(runId: string): Promise<RunRecord | null>;
@@ -385,7 +415,7 @@ export class PgRunStore implements RunStore {
         FROM ${this.runsTable} target
         WHERE target.session_id = $1
           AND target.run_id <> $2
-          AND target.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+          AND target.status IN ${STEERING_TARGET_STATUS_SQL}
           AND target.channel = 'web'
           AND target.model IS NOT DISTINCT FROM $3::text
           AND target.execution_target IS NOT DISTINCT FROM $4::text
@@ -399,8 +429,6 @@ export class PgRunStore implements RunStore {
         ORDER BY
           CASE target.status
             WHEN 'running' THEN 0
-            WHEN 'waiting_approval' THEN 0
-            WHEN 'waiting_user' THEN 0
             WHEN 'waiting_hand' THEN 0
             ELSE 1
           END,
@@ -457,6 +485,18 @@ export class PgRunStore implements RunStore {
       return normalizeRunRecord(result.rows[0]!.row_json);
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);
+      // 幂等兜底（2026-08-04 BUG-9）：跨进程并发重发同一 clientMsgId 时，进程内
+      // idempotencyCache 互不可见，两个进程都会走到 INSERT，后到者撞
+      // _active_idempotency_v2_idx 抛 23505。此时转查既有 run 返回幂等结果，
+      // 而不是让异常冒泡成 done{error}。
+      if (
+        input.idempotencyKey
+        && typeof error === 'object' && error !== null
+        && (error as { code?: string }).code === '23505'
+      ) {
+        const existing = await this.findByIdempotencyKey(input.userId, input.idempotencyKey);
+        if (existing) return existing;
+      }
       throw error;
     } finally {
       client.release();
@@ -528,10 +568,15 @@ export class PgRunStore implements RunStore {
           .filter((row) => row.status === 'pending')
           .map((row) => row.run_id),
       );
+      // 尽力 claim（2026-08-04 BUG-3 修复）：原实现 all-or-nothing——任一 source 在
+      // drain→claim 窗口内被取消（用户撤回/janitor），整批返回空，loop 随即抛
+      // "steering target became inactive" 把健康的目标 run 打成 failed。改为只 claim
+      // 仍 pending 的子集；被撤回的条目由调用方跳过（其消息可能已进入本轮模型请求，
+      // 撤回视为太晚，但绝不允许它拖死整个 run）。
       const claimableSourceRunIds = sourceRunIds.filter((sourceRunId) => (
         pendingSourceRunIdSet.has(sourceRunId)
       ));
-      if (claimableSourceRunIds.length !== sourceRunIds.length) {
+      if (claimableSourceRunIds.length === 0) {
         await client.query('COMMIT');
         return [];
       }
@@ -611,6 +656,107 @@ export class PgRunStore implements RunStore {
     } finally {
       client.release();
     }
+  }
+
+  async releasePendingSteeringForSourceRun(sourceRunId: string): Promise<void> {
+    await this.pool.query(`
+      UPDATE ${this.steeringInputsTable}
+      SET state = 'released'
+      WHERE source_run_id = $1 AND state = 'pending'
+    `, [sourceRunId]);
+    await this.pool.query(`
+      UPDATE ${this.runsTable}
+      SET metadata = (metadata - 'steeringTargetRunId')
+            || jsonb_build_object('steeringState', 'released'),
+          updated_at = $2
+      WHERE run_id = $1 AND metadata->>'steeringState' = 'pending'
+    `, [sourceRunId, new Date().toISOString()]);
+  }
+
+  async cancelPendingSteeringSourceRun(sourceRunId: string, reason = 'user_withdrew'): Promise<CancelSteeringResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const source = await client.query<{ status: RunStatus; session_id: string; metadata: Record<string, unknown> }>(`
+        SELECT status, session_id, metadata
+        FROM ${this.runsTable}
+        WHERE run_id = $1
+        FOR UPDATE
+      `, [sourceRunId]);
+      const row = source.rows[0];
+      const isSteeringSource = !!row && (
+        row.metadata?.steeringState !== undefined || row.metadata?.steeringTargetRunId !== undefined
+      );
+      if (!row || !isSteeringSource) {
+        await client.query('ROLLBACK');
+        return { ok: false, reason: 'not_found' };
+      }
+      const clientMsgId = typeof row.metadata?.clientMsgId === 'string' ? row.metadata.clientMsgId : undefined;
+      if (row.status !== 'pending' || row.metadata?.steeringState !== 'pending') {
+        await client.query('ROLLBACK');
+        return { ok: false, reason: 'too_late', sessionId: row.session_id, ...(clientMsgId ? { clientMsgId } : {}) };
+      }
+      const inputUpdate = await client.query(`
+        UPDATE ${this.steeringInputsTable}
+        SET state = 'cancelled'
+        WHERE source_run_id = $1 AND state = 'pending'
+      `, [sourceRunId]);
+      if (inputUpdate.rowCount === 0) {
+        // 行已被 claim（drain→claim 窗口）：消息已进入模型上下文，撤回太晚。
+        await client.query('ROLLBACK');
+        return { ok: false, reason: 'too_late', sessionId: row.session_id, ...(clientMsgId ? { clientMsgId } : {}) };
+      }
+      const now = new Date().toISOString();
+      await client.query(`
+        UPDATE ${this.runsTable}
+        SET status = 'cancelled',
+            status_reason = $2,
+            updated_at = $3,
+            completed_at = $3,
+            metadata = metadata || jsonb_build_object('steeringState', 'cancelled')
+        WHERE run_id = $1 AND status = 'pending'
+      `, [sourceRunId, reason, now]);
+      await client.query('COMMIT');
+      return { ok: true, sessionId: row.session_id, ...(clientMsgId ? { clientMsgId } : {}) };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listPendingSteeringBySession(sessionId: string): Promise<SteeringInputRecord[]> {
+    const result = await this.pool.query<{
+      input_id: string;
+      source_run_id: string;
+      target_run_id: string;
+      session_id: string;
+      state: 'pending' | 'applied' | 'released' | 'cancelled';
+      accepted_at: string | Date;
+      applied_at: string | Date | null;
+      row_json: RunRecord;
+    }>(`
+      SELECT input.input_id, input.source_run_id, input.target_run_id, input.session_id,
+             input.state, input.accepted_at, input.applied_at,
+             row_to_json(source.*) AS row_json
+      FROM ${this.steeringInputsTable} input
+      JOIN ${this.runsTable} source ON source.run_id = input.source_run_id
+      WHERE input.session_id = $1
+        AND input.state = 'pending'
+        AND source.status = 'pending'
+      ORDER BY input.sequence ASC
+    `, [sessionId]);
+    return result.rows.map((row) => ({
+      inputId: row.input_id,
+      sourceRunId: row.source_run_id,
+      targetRunId: row.target_run_id,
+      sessionId: row.session_id,
+      state: row.state,
+      acceptedAt: new Date(row.accepted_at).toISOString(),
+      ...(row.applied_at ? { appliedAt: new Date(row.applied_at).toISOString() } : {}),
+      sourceRun: normalizeRunRecord(row.row_json),
+    }));
   }
 
   async enqueueBackgroundTask(
@@ -856,7 +1002,7 @@ export class PgRunStore implements RunStore {
           JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
           WHERE input.source_run_id = run.run_id
             AND input.state = 'pending'
-            AND target.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+            AND target.status IN ('pending','running','waiting_hand')
             AND COALESCE(target.metadata->>'steeringInputWindow', 'open') = 'open'
         )
       ORDER BY
@@ -895,7 +1041,7 @@ export class PgRunStore implements RunStore {
           JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
           WHERE input.source_run_id = run.run_id
             AND input.state = 'pending'
-            AND target.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+            AND target.status IN ('pending','running','waiting_hand')
             AND COALESCE(target.metadata->>'steeringInputWindow', 'open') = 'open'
         )
     `);
@@ -971,7 +1117,7 @@ export class PgRunStore implements RunStore {
           JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
           WHERE input.source_run_id = run.run_id
             AND input.state = 'pending'
-            AND target.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+            AND target.status IN ('pending','running','waiting_hand')
             AND COALESCE(target.metadata->>'steeringInputWindow', 'open') = 'open'
         )
       ORDER BY run.updated_at ASC
@@ -1042,7 +1188,7 @@ export class PgRunStore implements RunStore {
           JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
           WHERE input.source_run_id = ${this.runsTable}.run_id
             AND input.state = 'pending'
-            AND target.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+            AND target.status IN ('pending','running','waiting_hand')
             AND COALESCE(target.metadata->>'steeringInputWindow', 'open') = 'open'
         )
       RETURNING row_to_json(${this.runsTable}.*) AS row_json

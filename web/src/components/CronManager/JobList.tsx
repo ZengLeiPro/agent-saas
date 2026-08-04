@@ -75,65 +75,6 @@ function formatNextRun(ms?: number) {
 }
 
 /**
- * 状态色点 + 文本：成功 / 运行中(呼吸) / 失败 / 跳过 / 禁用 / 待运行
- *
- * 一律走项目状态语义色（success / danger / info），不写 emerald / red 硬编码调色板——
- * 语义 token 的 -ink 已内含亮暗两套值，调用点不必再补 dark: 变体。
- * 「运行中」用 info 而非品牌蓝：品牌蓝只留给主 CTA、链接与选中导航。
- */
-function StatusPill({ job }: { job: CronJob }) {
-  if (job.state.runningAtMs) {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-info/15 px-2 py-0.5 text-[11px] font-semibold text-info-ink">
-        <span className="relative flex size-1.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-info opacity-70" />
-          <span className="relative inline-flex size-1.5 rounded-full bg-info" />
-        </span>
-        运行中
-      </span>
-    );
-  }
-  if (!job.enabled) {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-        <span className="size-1.5 rounded-full bg-muted-foreground/60" />
-        已禁用
-      </span>
-    );
-  }
-  switch (job.state.lastStatus) {
-    case "ok":
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-semibold text-success-ink">
-          <span className="size-1.5 rounded-full bg-success" />
-          成功
-        </span>
-      );
-    case "error":
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-danger/15 px-2 py-0.5 text-[11px] font-semibold text-danger-ink">
-          <span className="size-1.5 rounded-full bg-danger" />
-          失败
-        </span>
-      );
-    case "skipped":
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-          <span className="size-1.5 rounded-full bg-muted-foreground/60" />
-          跳过
-        </span>
-      );
-    default:
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-          <span className="size-1.5 rounded-full bg-muted-foreground/40" />
-          待运行
-        </span>
-      );
-  }
-}
-
-/**
  * 任务列表卡片。
  *
  * 卡片上只有两个可点区域：整卡（选中，右栏出详情）+ 右侧启停开关。
@@ -185,7 +126,7 @@ export function JobList({
               }
             }}
             className={cn(
-              "flex cursor-pointer items-start gap-3 py-3.5 pl-4 pr-3.5",
+              "relative cursor-pointer py-3.5 pl-4 pr-3.5",
               CAPABILITY_SURFACE,
               CAPABILITY_SURFACE_HOVER,
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
@@ -194,13 +135,10 @@ export function JobList({
             )}
           >
             {/* 停用的任务整块信息压暗，但开关本身保持正常对比度——它还能点 */}
-            <div className={cn("min-w-0 flex-1", !job.enabled && !isRunning && "opacity-60")}>
-              {/* 主行：任务名 + 状态 */}
-              <div className="flex min-w-0 items-center gap-2.5">
-                <span className="truncate text-[14.5px] font-semibold text-foreground">
-                  {job.name}
-                </span>
-                <StatusPill job={job} />
+            <div className={cn("min-w-0", !job.enabled && !isRunning && "opacity-60")}>
+              {/* 主行仅为右上角开关预留空间，后续内容保持全宽 */}
+              <div className={cn("truncate text-[14.5px] font-semibold text-foreground", manageable && "pr-12")}>
+                {job.name}
               </div>
 
               {/* 副行：调度 · 下次 · 模型 */}
@@ -238,7 +176,7 @@ export function JobList({
                 否则点开关会连带触发整卡的选中、空格键也会两个都触发 */}
             {manageable && (
               <div
-                className="shrink-0 pt-0.5"
+                className="absolute right-3.5 top-3.5"
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={(e) => e.stopPropagation()}
               >

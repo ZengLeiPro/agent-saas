@@ -54,6 +54,12 @@ describe("JobList", () => {
     expect(onToggle).not.toHaveBeenCalled();
   });
 
+  it("列表里不显示任务状态", () => {
+    renderList();
+
+    expect(screen.queryByText("成功")).toBeNull();
+  });
+
   it("列表里不再出现运行/编辑/删除等易误触操作", () => {
     renderList();
 

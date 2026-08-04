@@ -19,7 +19,7 @@ describe("messageCache 缓存快照", () => {
   it("剥离 system-error、结束 streaming，并与原可变数组解耦", () => {
     const messages = [
       { id: "m1", type: "user", content: "hello", status: "sent" },
-      { id: "error-1", type: "system-error", content: "Agent 开小差了" },
+      { id: "error-1", type: "system-error", content: "回复已中断" },
       { id: "m2", type: "text", content: "reply", streaming: true },
     ] as MessageItem[];
 

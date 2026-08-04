@@ -214,7 +214,7 @@ describe('GET /chat/interactions/pending owner-self access guard', () => {
     try {
       const { status, body } = await fetchPending(baseUrl, sessionId);
       expect(status).toBe(503);
-      expect(body).toEqual({ error: 'Agent 开小差了，请发送「继续」' });
+      expect(body).toEqual({ error: '暂时无法读取待处理交互' });
     } finally {
       await stopServer(server);
     }

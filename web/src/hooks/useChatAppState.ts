@@ -2609,10 +2609,25 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setPreviewFilePath(null);
   }, [session.sessionId]);
 
-  // ---- Retry failed message ----
-  // 语义：用户手动点击 retry → **生成新 clientMsgId**，不重用原 id（否则服务端幂等会直接返回旧结果）
-  // 传输层自动重试（ACK 超时）复用同 clientMsgId 的逻辑在 sendChatViaWs 内部（当前先不做自动重发）
+  // ---- Retry failed message / continue interrupted reply ----
+  // 运行时已经先做透明自动恢复；只有终态仍失败时才展示“继续生成”。点击后发送一条新的“继续”，
+  // 不重放原始请求，避免工具已产生副作用时重复执行。
   const retryMessage = useCallback((message: MessageItem) => {
+    if (message.type === 'system-error') {
+      if (message.severity === 'billing' || message.severity === 'cancelled' || loadingRef.current) return;
+      const msgs = msg.messagesRef.current;
+      const idx = msgs.findIndex(m => m.id === message.id);
+      if (idx >= 0) {
+        msgs.splice(idx, 1);
+        msg.setMessages([...msgs], { scrollToBottom: false });
+      }
+      setInput("");
+      void sendChatViaWs('继续', [], true);
+      return;
+    }
+
+    // 用户消息在 ACK / 网络发送阶段失败：生成新 clientMsgId 重试原消息，不能复用旧 id，
+    // 否则服务端幂等会直接返回旧结果。
     if (message.type !== 'user' || message.status !== 'failed') return;
     const msgs = msg.messagesRef.current;
     const idx = msgs.findIndex(m => m.id === message.id);

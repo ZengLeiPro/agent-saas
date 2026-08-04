@@ -125,7 +125,7 @@ describe("ScenariosPanel · industry chip 集成", () => {
   it("兼容回退只显示客户安全文案，不暴露校验或内部错误", () => {
     mocked.fallbackReason = "schema validation failed: upstream response invalid";
     renderPanel();
-    expect(screen.getByRole("status").textContent).toBe("当前显示兼容目录。Agent 开小差了，请发送「继续」。");
+    expect(screen.getByRole("status").textContent).toBe("当前显示兼容目录。");
     expect(document.body.textContent).not.toContain("schema");
     expect(document.body.textContent).not.toContain("upstream");
     expect(document.body.textContent).not.toContain("校验");

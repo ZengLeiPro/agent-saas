@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, memo, lazy, Suspense } from 'react';
-import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, Download, GitFork, Paperclip, ImageIcon, Mic, Ban, TriangleAlert } from 'lucide-react';
+import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, Download, GitFork, Paperclip, ImageIcon, Mic, Ban } from 'lucide-react';
 import { CATEGORY_ICON } from '@/lib/fileCategoryIcons';
 import { MessageItem as MessageItemType, formatFileSize } from './types';
 import type { AskUserAnswers } from '@agent/shared';
@@ -1072,18 +1072,29 @@ export const MessageItem = memo(function MessageItem({
       );
     }
 
-    // 会话级失败/取消提示。明显区别于 AI 文本：左侧色边 + 图标 + 不同底色。
-    // severity='cancelled' 用灰色（中性、用户主动），error 用红色。
     const isCancelled = message.severity === 'cancelled';
-    const containerCls = isCancelled
-      ? 'border-l-4 border-zinc-400 bg-zinc-50 text-zinc-700 dark:bg-zinc-800/40 dark:text-zinc-300 dark:border-zinc-500'
-      : 'border-l-4 border-red-500 bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200 dark:border-red-600';
+    if (!isCancelled) {
+      return (
+        <div className="flex items-center gap-2 px-1 py-1 text-xs text-muted-foreground" role="status">
+          <span className="whitespace-pre-wrap break-words">{message.content}</span>
+          {onRetry && !isLoading && (
+            <button
+              type="button"
+              onClick={() => onRetry(message)}
+              className="shrink-0 rounded-md px-2 py-1 font-medium text-foreground/75 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+            >
+              继续生成
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    // 用户主动停止是正常终态，保留中性提示且不提供续跑入口。
     return (
-      <div className={`px-3 py-2 rounded-r text-sm ${containerCls}`} role="alert">
+      <div className="rounded-r border-l-4 border-zinc-400 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-500 dark:bg-zinc-800/40 dark:text-zinc-300" role="status">
         <div className="flex items-start gap-2">
-          {isCancelled
-            ? <Ban aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-            : <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />}
+          <Ban aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
           <div className="flex-1 whitespace-pre-wrap break-words">{message.content}</div>
         </div>
       </div>

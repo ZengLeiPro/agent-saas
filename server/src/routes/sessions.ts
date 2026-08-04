@@ -1851,7 +1851,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         res.status(410).json({ error: "Share is not safe to publish" });
         return;
       }
-      res.status(500).json({ error: "Agent 开小差了，请发送「继续」" });
+      res.status(500).json({ error: "暂时无法读取分享内容" });
     }
   });
 
@@ -1930,7 +1930,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         res.status(422).json({ error: err.message, code: err.code });
         return;
       }
-      res.status(500).json({ error: "Agent 开小差了，请发送「继续」" });
+      res.status(500).json({ error: "暂时无法生成分享预览" });
     }
   });
 
@@ -2926,7 +2926,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         apiLogger.warn(
           `[sessions] pending interactions read failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
         );
-        res.status(503).json({ error: "Agent 开小差了，请发送「继续」" });
+        res.status(503).json({ error: "暂时无法读取待处理交互" });
       }
     },
   );

@@ -882,7 +882,8 @@ describe('processWsEvent - done 终态', () => {
 
     expect(ret).toBe('done');
     expect(hooks.onChatDone).toHaveBeenCalledWith('client-draft', 'boom');
-    expect(ctrl.messages[0]).toMatchObject({ status: 'failed' });
+    expect(ctrl.messages[0]).toMatchObject({ status: 'sent' });
+    expect(ctrl.messages[1]).toMatchObject({ type: 'text', content: '回复已中断' });
   });
 
   it('fallback source 接管后，按精确 client_msg_id 接受终态，不受旧 userMsgIndex 影响', () => {
@@ -930,7 +931,7 @@ describe('processWsEvent - done 终态', () => {
     expect(hooks.onChatDone).toHaveBeenCalledWith('c1', undefined);
   });
 
-  it('done 带普通 error：按 client_msg_id 把 user 翻 failed，failedReason 用通俗文案', () => {
+  it('done 带普通 error：用户消息保持 sent，只追加一条简短中断提示', () => {
     const ctrl = makeController([
       { id: 'u', type: 'user', content: 'hi', status: 'sent', clientMsgId: 'c1' },
     ]);
@@ -938,8 +939,9 @@ describe('processWsEvent - done 终态', () => {
     const ret = dispatch({ type: 'done', client_msg_id: 'c1', error: 'boom' }, ctx);
     expect(ret).toBe('done');
     const user = ctrl.messages[0] as Extract<MessageItem, { type: 'user' }>;
-    expect(user.status).toBe('failed');
-    expect(user.failedReason).toBe('Agent 开小差了，请发送「继续」');
+    expect(user.status).toBe('sent');
+    expect(user.failedReason).toBeUndefined();
+    expect(ctrl.messages[1]).toMatchObject({ type: 'text', content: '回复已中断' });
     expect(hooks.onChatDone).toHaveBeenCalledWith('c1', 'boom');
   });
 
@@ -962,7 +964,7 @@ describe('processWsEvent - done 终态', () => {
     const ctrl = makeController();
     const { ctx } = makeCtx(ctrl);
     dispatch({ type: 'done', error: 'boom' }, ctx);
-    expect(ctrl.messages[0]).toMatchObject({ type: 'text', content: 'Agent 开小差了，请发送「继续」' });
+    expect(ctrl.messages[0]).toMatchObject({ type: 'text', content: '回复已中断' });
   });
 
   it('同一 run 的失败终态重复到达时只处理一次，不污染更早的 user', () => {
@@ -978,9 +980,10 @@ describe('processWsEvent - done 终态', () => {
     dispatch({ type: 'done', runId: 'run-1', error: 'boom' }, ctx);
     dispatch({ type: 'done', runId: 'run-1', client_msg_id: 'c1', error: 'boom' }, ctx);
 
-    expect(ctrl.messages).toHaveLength(2);
+    expect(ctrl.messages).toHaveLength(3);
     expect(ctrl.messages[0]).toMatchObject({ id: 'old', status: 'sent' });
-    expect(ctrl.messages[1]).toMatchObject({ id: 'current', status: 'failed' });
+    expect(ctrl.messages[1]).toMatchObject({ id: 'current', status: 'sent' });
+    expect(ctrl.messages[2]).toMatchObject({ type: 'text', content: '回复已中断' });
     expect(hooks.onChatDone).toHaveBeenCalledTimes(2);
     expect(hooks.onChatDone).toHaveBeenLastCalledWith('c1', 'boom');
   });
@@ -998,7 +1001,7 @@ describe('processWsEvent - done 终态', () => {
     expect(ctrl.messages).toHaveLength(3);
     expect(ctrl.messages[0]).toMatchObject({ id: 'old-1', status: 'sent' });
     expect(ctrl.messages[1]).toMatchObject({ id: 'old-2', status: 'sent' });
-    expect(ctrl.messages[2]).toMatchObject({ type: 'text', content: 'Agent 开小差了，请发送「继续」' });
+    expect(ctrl.messages[2]).toMatchObject({ type: 'text', content: '回复已中断' });
   });
 });
 

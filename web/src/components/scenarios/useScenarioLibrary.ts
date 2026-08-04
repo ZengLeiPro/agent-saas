@@ -114,7 +114,7 @@ export function useScenarioLibrary(): UseScenarioLibraryResult {
             mode: wantsV3 ? "legacy-fallback" : "legacy",
             fallbackReason: wantsV3 ? "当前显示兼容目录" : null,
             loading: false,
-            error: "Agent 开小差了，请发送「继续」",
+            error: "任务模板暂时无法加载",
           });
         }
       });

@@ -214,7 +214,7 @@ describe('wsEventProcessor terminal errors', () => {
     }
   });
 
-  it('marks the current user message failed when done carries an error without client_msg_id', () => {
+  it('keeps the current user message sent and adds one interruption notice when done carries an error', () => {
     const { messages, ctx } = createTestRig([
       {
         id: 'user-1',
@@ -234,15 +234,15 @@ describe('wsEventProcessor terminal errors', () => {
     );
 
     expect(result).toBe('done');
-    expect(messages[0]).toMatchObject({
-      type: 'user',
-      status: 'failed',
-      // 用户侧通俗文案;原始 model error 留 server.log + PG runtime_events
-      failedReason: DEFAULT_RUNTIME_FAILURE_MESSAGE,
+    expect(messages[0]).toMatchObject({ type: 'user', status: 'sent' });
+    expect(messages[0]).not.toHaveProperty('failedReason');
+    expect(messages[1]).toMatchObject({
+      type: 'text',
+      content: DEFAULT_RUNTIME_FAILURE_MESSAGE,
     });
   });
 
-  it('uses the model request message only for model HTTP 5xx failures', () => {
+  it('uses the same low-noise interruption message for model HTTP 5xx failures', () => {
     const { messages, ctx } = createTestRig([
       {
         id: 'user-1',
@@ -264,10 +264,11 @@ describe('wsEventProcessor terminal errors', () => {
       'session-1',
     );
 
-    expect(messages[0]).toMatchObject({
-      type: 'user',
-      status: 'failed',
-      failedReason: '模型请求错误，请稍后重试',
+    expect(messages[0]).toMatchObject({ type: 'user', status: 'sent' });
+    expect(messages[0]).not.toHaveProperty('failedReason');
+    expect(messages[1]).toMatchObject({
+      type: 'text',
+      content: DEFAULT_RUNTIME_FAILURE_MESSAGE,
     });
   });
 
@@ -326,10 +327,11 @@ describe('wsEventProcessor terminal errors', () => {
       'session-1',
     );
 
-    expect(messages[0]).toMatchObject({
-      type: 'user',
-      status: 'failed',
-      failedReason: DEFAULT_RUNTIME_FAILURE_MESSAGE,
+    expect(messages[0]).toMatchObject({ type: 'user', status: 'sent' });
+    expect(messages[0]).not.toHaveProperty('failedReason');
+    expect(messages[1]).toMatchObject({
+      type: 'text',
+      content: DEFAULT_RUNTIME_FAILURE_MESSAGE,
     });
   });
 });

@@ -437,7 +437,7 @@ function LegacyScenariosPanel({
 
   return (
     <div className="w-full px-4 pb-4 sm:px-6 sm:pb-6 md:pt-6">
-      {fallbackReason ? <div role="status" className="mb-4 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-sm">当前显示兼容目录。Agent 开小差了，请发送「继续」。</div> : null}
+      {fallbackReason ? <div role="status" className="mb-4 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-sm">当前显示兼容目录。</div> : null}
       <div className="mb-4 flex items-start justify-between gap-3">
         <div><h1 className="text-xl font-semibold">任务模板</h1><p className="mt-1 text-sm text-muted-foreground">{fallbackReason ? "兼容目录仍按起手话术运行。" : "按岗位挑一个任务模板，点「试一试」即可预填起手话术，发送前仍可编辑。"}</p></div>
         {activeRole !== "all" && onOpenRoleDetail ? <Button variant="outline" size="sm" onClick={() => onOpenRoleDetail(activeRole)}>查看该岗详情</Button> : null}

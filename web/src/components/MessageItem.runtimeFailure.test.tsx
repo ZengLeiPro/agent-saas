@@ -1,0 +1,60 @@
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { MessageItem } from './MessageItem';
+import { FilePreviewProvider } from '@/contexts/FilePreviewContext';
+
+beforeAll(() => {
+  Range.prototype.getClientRects = () => ({
+    length: 0,
+    item: () => null,
+    [Symbol.iterator]: [][Symbol.iterator],
+  }) as unknown as DOMRectList;
+});
+
+describe('运行中断提示', () => {
+  it('使用低干扰状态并提供继续生成入口', () => {
+    const onRetry = vi.fn();
+    const message = {
+      id: 'runtime-failure-1',
+      type: 'system-error' as const,
+      severity: 'error' as const,
+      content: '回复已中断',
+    };
+
+    render(
+      <FilePreviewProvider value={{ openPreview: vi.fn() }}>
+        <MessageItem
+          index={0}
+          message={message}
+          onRetry={onRetry}
+        />
+      </FilePreviewProvider>,
+    );
+
+    expect(screen.getByRole('status').textContent).toContain('回复已中断');
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '继续生成' }));
+    expect(onRetry).toHaveBeenCalledWith(message);
+  });
+
+  it('已有回复在运行时不重复提供续跑入口', () => {
+    render(
+      <FilePreviewProvider value={{ openPreview: vi.fn() }}>
+        <MessageItem
+          index={0}
+          message={{
+            id: 'runtime-failure-2',
+            type: 'system-error',
+            severity: 'error',
+            content: '回复已中断',
+          }}
+          onRetry={vi.fn()}
+          isLoading
+        />
+      </FilePreviewProvider>,
+    );
+
+    expect(screen.queryByRole('button', { name: '继续生成' })).toBeNull();
+  });
+});

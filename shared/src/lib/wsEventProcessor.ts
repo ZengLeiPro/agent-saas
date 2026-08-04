@@ -837,17 +837,19 @@ export function processWsEvent(
           const owner = ctx.sessionOwnerRef?.current;
           msg.addMessage({ type: "text", content: userFacing, ...(owner ? { owner } : {}), timestamp: Date.now() });
         }
-      } else if (idx >= 0) {
-        msg.updateMessageAt(idx, (m) => {
-          if (m.type === "user") {
-            return { ...m, status: "failed" as const, failedReason: userFacing };
-          }
-          if (m.type === "user-voice") {
-            return { ...m, status: "failed" as const, failedReason: userFacing };
-          }
-          return m;
-        });
       } else {
+        // run 已接收用户消息，只是回复在自动恢复耗尽后中断；不要把用户气泡误标成“发送失败”。
+        if (idx >= 0) {
+          msg.updateMessageAt(idx, (m) => {
+            if (m.type === "user" || m.type === "user-voice") {
+              const next = { ...m, status: "sent" as const };
+              delete next.failedReason;
+              return next;
+            }
+            return m;
+          });
+        }
+        // 平台无关层只留一条简短文本兜底；Web 会升级为带“继续生成”的低干扰提示。
         const last = msg.messagesRef.current[msg.messagesRef.current.length - 1];
         if (!((last?.type === "text" || last?.type === "system-error") && last.content === userFacing)) {
           const owner = ctx.sessionOwnerRef?.current;

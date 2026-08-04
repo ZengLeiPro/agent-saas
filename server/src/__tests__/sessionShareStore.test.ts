@@ -100,25 +100,70 @@ describe('PgSessionShareStore', () => {
 });
 
 describe('session share public projection', () => {
-  it.each([
-    'Authorization: Basic dXNlcjpwYXNzd29yZA==',
-    `aws_access_key_id=${'AK' + 'IA'}IOSFODNN7EXAMPLE`,
-    'postgresql://tester:secret-password@example.com/test',
-    '密码：abcdef123456',
-    'token=abcdef123456',
-    '银行卡 6222021234567890123',
-    '联系邮箱 demo@example.com',
-  ])('敏感正文 fail closed：%s', (content) => {
-    expect(() => projectSessionShareSnapshot({
+  function projectContent(content: string, title = '用户'): string {
+    return projectSessionShareSnapshot({
       sessionId: 'sensitive-session',
       stats: { lines: 1, parsedLines: 1, parseErrors: 0 },
       blocks: [{
         id: 'prompt-1',
         kind: 'prompt',
-        title: '用户',
+        title,
         defaultOpen: true,
         content,
       }],
-    })).toThrow(/请先脱敏后再分享/);
+    }).blocks[0]!.content;
+  }
+
+  it.each([
+    ['Authorization: Basic dXNlcjpwYXNzd29yZA==', 'dXNlcjpwYXNzd29yZA=='],
+    [`aws_access_key_id=${'AK' + 'IA'}IOSFODNN7EXAMPLE`, `${'AK' + 'IA'}IOSFODNN7EXAMPLE`],
+    ['postgresql://tester:secret-password@example.com/test', 'secret-password'],
+    ['密码：Abcdef1234567890abc', 'Abcdef1234567890abc'],
+    ['token=Abcdef1234567890abc', 'Abcdef1234567890abc'],
+    ['Bearer AbCdEfGhIjKlMnOpQrStUvWxYz123456', 'AbCdEfGhIjKlMnOpQrStUvWxYz123456'],
+    ['eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1g', 'eyJhbGci'],
+  ])('凭据就地打码而不阻断：%s', (content, secret) => {
+    const projected = projectContent(content);
+    expect(projected).not.toContain(secret);
+    expect(projected).toContain('[已脱敏]');
+  });
+
+  it('私钥打码吃掉整个 PEM 块，不只是 BEGIN 行', () => {
+    const pem = [
+      '-----BEGIN PRIVATE KEY-----',
+      'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ',
+      '-----END PRIVATE KEY-----',
+    ].join('\n');
+    const projected = projectContent(`私钥如下：\n${pem}\n以上。`);
+    expect(projected).not.toContain('MIIEvQIBADAN');
+    expect(projected).toBe('私钥如下：\n[已脱敏]\n以上。');
+  });
+
+  it.each([
+    '请联系 13800138000',
+    '银行卡 6222021234567890123',
+    '联系邮箱 demo@example.com',
+    '身份证 350503198510281234',
+    '失败详情 requestId=req_01HXYZ',
+    '错误码：E_PROVIDER_502，HTTP 502',
+    '上游模型返回失败',
+    'token: 用于鉴权的凭证',
+    'skillsManagementSync 已完成',
+  ])('已收窄的规则不再改写正文：%s', (content) => {
+    expect(projectContent(content)).toBe(content);
+  });
+
+  it('标题同样走脱敏', () => {
+    expect(projectSessionShareSnapshot({
+      sessionId: 'sensitive-session',
+      stats: { lines: 1, parsedLines: 1, parseErrors: 0 },
+      blocks: [{
+        id: 'block-1',
+        kind: 'text',
+        title: '结果 token=Abcdef1234567890abc',
+        defaultOpen: true,
+        content: '正文',
+      }],
+    }).blocks[0]!.title).toBe('结果 token=[已脱敏]');
   });
 });

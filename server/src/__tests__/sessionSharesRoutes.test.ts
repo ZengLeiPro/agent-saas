@@ -295,8 +295,10 @@ describe('session share routes', () => {
     }
   });
 
-  it('正文包含凭据或个人敏感信息时拒绝创建匿名分享', async () => {
-    const { sessionId } = await writeSharedSession({ sensitiveContent: '请联系 13800138000' });
+  it('正文含凭据时打码放行，公开页读不到原值', async () => {
+    const { sessionId } = await writeSharedSession({
+      sensitiveContent: '密钥：Abcdef1234567890abc 请帮我查一下',
+    });
     const { server, baseUrl } = await startServer(agentCwd);
     try {
       const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
@@ -304,28 +306,30 @@ describe('session share routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirmPublicText: true, filePaths: [] }),
       });
-      expect(response.status).toBe(422);
-      await expect(response.json()).resolves.toMatchObject({ code: 'SESSION_SHARE_SENSITIVE_CONTENT' });
+      expect(response.status).toBe(200);
+      const token = ((await response.json()) as { url: string }).url.split('/').pop()!;
+
+      const publicResponse = await fetch(`${baseUrl}/api/share/sessions/${token}`);
+      expect(publicResponse.status).toBe(200);
+      const body = JSON.stringify(await publicResponse.json());
+      expect(body).not.toContain('Abcdef1234567890abc');
+      expect(body).toContain('[已脱敏]');
     } finally {
       await stopServer(server);
     }
   });
 
-  it('正文包含内部运行标识、真实错误码或技术归因时 fail closed', async () => {
-    const diagnosticContents = [
+  it('手机号、邮箱与内部诊断信息不再阻断分享', async () => {
+    const contents = [
+      '请联系 13800138000',
+      '联系邮箱 demo@example.com',
+      '银行卡 6222021234567890123',
       'runId=run_01HXYZ',
-      'request ID: req_01HXYZ',
-      'tenantId=tenant-kaiyan',
-      '错误码：E_PROVIDER_502',
-      'E_PROVIDER_502',
-      'PROVIDER_BAD_GATEWAY',
-      'UPSTREAM_TIMEOUT',
       '请求失败，HTTP 502',
-      'ERROR_GATEWAY_TIMEOUT',
       '上游模型返回失败',
     ];
     const sessions = await Promise.all(
-      diagnosticContents.map(async (sensitiveContent) => writeSharedSession({ sensitiveContent })),
+      contents.map(async (sensitiveContent) => writeSharedSession({ sensitiveContent })),
     );
     const { server, baseUrl } = await startServer(agentCwd);
     try {
@@ -335,28 +339,25 @@ describe('session share routes', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ confirmPublicText: true, filePaths: [] }),
         });
-        expect(response.status).toBe(422);
-        await expect(response.json()).resolves.toMatchObject({
-          code: 'SESSION_SHARE_SENSITIVE_CONTENT',
-        });
+        expect(response.status).toBe(200);
       }
     } finally {
       await stopServer(server);
     }
   });
 
-  it('旧快照的标题也必须经过诊断信息门禁', () => {
-    expect(() => deps.projectSessionShareSnapshot({
+  it('旧快照的标题同样走凭据脱敏', () => {
+    expect(deps.projectSessionShareSnapshot({
       sessionId: 'private-session',
       stats: { lines: 1, parsedLines: 1, parseErrors: 0 },
       blocks: [{
         id: 'block-1',
         kind: 'text',
-        title: '失败详情 requestId=req_01HXYZ',
+        title: '失败详情 token=Abcdef1234567890abc',
         defaultOpen: true,
         content: '请稍后重试',
       }],
-    })).toThrow('内部运行标识');
+    }).blocks[0]!.title).toBe('失败详情 token=[已脱敏]');
   });
 
   it('revokes an active public share', async () => {

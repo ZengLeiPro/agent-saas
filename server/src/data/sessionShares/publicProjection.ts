@@ -25,25 +25,51 @@ export class SessionShareProjectionError extends Error {
   }
 }
 
-const SENSITIVE_PUBLIC_SHARE_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
-  { label: '私钥', pattern: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i },
-  { label: 'Bearer 凭据', pattern: /\bBearer\s+[A-Za-z0-9._~+\/-]{16,}/i },
-  { label: 'Basic 凭据', pattern: /\bAuthorization\s*:\s*Basic\s+[A-Za-z0-9+/=]{8,}/i },
-  { label: 'API 凭据', pattern: /\b(?:sk|ghp|github_pat|glpat|npm_|xox[baprs]|AIza|LTAI|AKIA|ASIA)[-_A-Za-z0-9]{12,}\b/i },
-  { label: 'JWT', pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/ },
-  { label: '连接凭据', pattern: /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/[^:\s/@]+:[^@\s/]+@/i },
-  { label: '密码或 Token', pattern: /\b(?:password|passwd|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|token)\s*[:=：]\s*["']?[^\s,;'"，；]{6,}/i },
-  { label: '密码或 Token', pattern: /(?:密码|密钥|令牌)\s*[:=：]\s*[^\s,;，；]{6,}/ },
-  { label: '手机号', pattern: /(?<!\d)1[3-9]\d{9}(?!\d)/ },
-  { label: '身份证号', pattern: /(?<!\d)\d{17}[\dXx](?!\d)/ },
-  { label: '银行卡号', pattern: /(?<!\d)(?:\d[ -]?){16,19}(?!\d)/ },
-  { label: '电子邮箱', pattern: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i },
-  { label: '内部运行标识', pattern: /\b(?:run|request|tenant)[_\s-]?id\b/i },
-  { label: '内部错误码', pattern: /(?:错误码|错误代码|error[_\s-]?code|status[_\s-]?code)\s*[:=：]?\s*[A-Z0-9][A-Z0-9_.:-]{2,}/i },
-  { label: '内部错误码', pattern: /\bHTTP\s*[45]\d{2}\b/i },
-  { label: '内部错误码', pattern: /\b(?:ERR|ERROR)_[A-Z0-9_]{3,}\b/i },
-  { label: '内部错误码', pattern: /\b(?:E_[A-Z0-9_]{3,}|(?:PROVIDER|UPSTREAM|GATEWAY|MODEL|SERVICE)_[A-Z0-9_]{3,}|[A-Z0-9_]{3,}_(?:ERROR|FAILED|FAILURE|TIMEOUT|UNAVAILABLE|BAD_GATEWAY|RATE_LIMITED|OVERLOADED))\b/ },
-  { label: '技术归因', pattern: /上游(?:模型|服务|接口|系统|网关|API|提供商|厂商)/i },
+const REDACTED_PLACEHOLDER = '[已脱敏]';
+
+/**
+ * 匿名分享正文的凭据脱敏规则（2026-08-04 收窄）。
+ *
+ * 只保留「命中即等于凭据泄露」的强特征：手机号、身份证、银行卡、邮箱、内部
+ * 错误码与技术归因等弱规则误报率远高于收益，已整体移除。命中片段就地替换为
+ * [已脱敏]，不再整场阻断分享。
+ *
+ * 每条都必须覆盖凭据本体（而不只是它的标题行/前缀），否则打码会留下真值。
+ */
+const SENSITIVE_PUBLIC_SHARE_PATTERNS: Array<{ label: string; pattern: RegExp; replacement?: string }> = [
+  {
+    label: '私钥',
+    // 必须吃掉整个 PEM 块；缺 END 时兜底到文本末尾，宁可多脱敏也不留下私钥正文。
+    pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]*?(?:-----END[^\n]*-----|$)/gi,
+  },
+  { label: 'Bearer 凭据', pattern: /(\bBearer\s+)[A-Za-z0-9._~+\/-]{16,}/gi, replacement: `$1${REDACTED_PLACEHOLDER}` },
+  {
+    label: 'Basic 凭据',
+    pattern: /(\bAuthorization\s*:\s*Basic\s+)[A-Za-z0-9+/=]{8,}/gi,
+    replacement: `$1${REDACTED_PLACEHOLDER}`,
+  },
+  {
+    label: 'API 凭据',
+    // 前缀必须带原生分隔符，否则 \bsk[-_A-Za-z0-9]{12,} 会命中 skillsManagement 之类的普通标识符。
+    pattern: /\b(?:sk-|ghp_|gho_|ghu_|ghs_|github_pat_|glpat-|npm_|xox[baprs]-|AIza|LTAI|AKIA|ASIA)[-_A-Za-z0-9]{12,}\b/g,
+  },
+  { label: 'JWT', pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g },
+  {
+    label: '连接凭据',
+    pattern: /(\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/)[^:\s/@]+:[^@\s/]+@/gi,
+    replacement: `$1${REDACTED_PLACEHOLDER}@`,
+  },
+  {
+    label: '密码或 Token',
+    // 值必须像凭据：≥16 位、纯 ASCII 凭据字符且字母数字混合，避免命中中文说明文字。
+    pattern: /(\b(?:password|passwd|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|token)\s*[:=：]\s*)["']?(?=[A-Za-z0-9._+\/=-]*[A-Za-z])(?=[A-Za-z0-9._+\/=-]*\d)[A-Za-z0-9._+\/=-]{16,}["']?/gi,
+    replacement: `$1${REDACTED_PLACEHOLDER}`,
+  },
+  {
+    label: '密码或 Token',
+    pattern: /((?:密码|密钥|令牌)\s*[:=：]\s*)["']?(?=[A-Za-z0-9._+\/=-]*[A-Za-z])(?=[A-Za-z0-9._+\/=-]*\d)[A-Za-z0-9._+\/=-]{16,}["']?/g,
+    replacement: `$1${REDACTED_PLACEHOLDER}`,
+  },
 ];
 
 /** 分享附件只允许工作台规范目录中的显式相对路径。 */
@@ -56,9 +82,22 @@ export function normalizeSessionShareFilePath(value: string): string | null {
   return parts.join('/');
 }
 
-function assertPublicShareTextSafe(text: string): void {
-  const hit = SENSITIVE_PUBLIC_SHARE_PATTERNS.find(({ pattern }) => pattern.test(text));
-  if (hit) throw new SessionShareProjectionError(`会话包含${hit.label}，请先脱敏后再分享`);
+/** 把正文里的凭据就地替换为 [已脱敏]，其余内容原样保留。 */
+export function redactPublicShareText(text: string): string {
+  return SENSITIVE_PUBLIC_SHARE_PATTERNS.reduce(
+    (acc, { pattern, replacement }) => acc.replace(pattern, replacement ?? REDACTED_PLACEHOLDER),
+    text,
+  );
+}
+
+/**
+ * 附件文件名不能打码——它要和 relativePath 对应上，改写会让下载链路对不上号，
+ * 所以文件名保持 fail closed，命中就拒绝本次分享。
+ */
+function assertShareFileNameSafe(fileName: string): void {
+  if (redactPublicShareText(fileName) !== fileName) {
+    throw new SessionShareProjectionError('附件文件名包含凭据，请改名后再分享');
+  }
 }
 
 const INLINE_MARKDOWN_MEDIA_RE = /!\[[^\]]*\]\(\s*<?([^\s)>]+)>?(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/g;
@@ -121,13 +160,14 @@ function publicBlock(block: TranscriptBlock, selectedPaths: ReadonlySet<string>)
     })
     .filter((attachment): attachment is NonNullable<typeof attachment> => attachment !== null);
 
-  const content = filterInlineMarkdownMedia(filterFileMarkers(block.content, selectedPaths), selectedPaths);
-  assertPublicShareTextSafe(`${block.title ?? ''}\n${content}`);
+  const content = redactPublicShareText(
+    filterInlineMarkdownMedia(filterFileMarkers(block.content, selectedPaths), selectedPaths),
+  );
   return {
     id: block.id,
     ...(block.tsMs !== undefined ? { tsMs: block.tsMs } : {}),
     kind: block.kind,
-    title: block.title,
+    title: redactPublicShareText(block.title ?? ''),
     defaultOpen: false,
     content,
     ...(block.isError ? { isError: true } : {}),
@@ -185,7 +225,7 @@ export function projectSessionShareSnapshot(
   const allowedFiles = (snapshot.allowedFiles ?? collectSessionShareCandidateFiles(snapshot.blocks))
     .filter((file) => selectedPaths.has(file.relativePath))
     .map((file) => {
-      assertPublicShareTextSafe(file.fileName);
+      assertShareFileNameSafe(file.fileName);
       return {
         relativePath: file.relativePath,
         fileName: file.fileName,

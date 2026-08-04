@@ -101,9 +101,9 @@ describe("getSessionSharePreview", () => {
     authFetchMock.mockResolvedValue({
       ok: false,
       status: 422,
-      json: vi.fn().mockResolvedValue({ error: "会话包含手机号，请先脱敏后再分享" }),
+      json: vi.fn().mockResolvedValue({ error: "附件文件名包含凭据，请改名后再分享" }),
     });
-    await expect(getSessionSharePreview("s1")).rejects.toThrow("会话包含手机号，请先脱敏后再分享");
+    await expect(getSessionSharePreview("s1")).rejects.toThrow("附件文件名包含凭据，请改名后再分享");
   });
 });
 

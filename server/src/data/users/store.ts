@@ -141,6 +141,11 @@ export class UserStore {
     }
   }
 
+  /** 重新读取共享 users.json，供多进程后台执行器刷新用户状态。 */
+  reload(): void {
+    this.load();
+  }
+
   private async persist(): Promise<void> {
     const data: UsersFileData = { version: 1, users: this.users };
     mkdirSync(dirname(this.filePath), { recursive: true });

@@ -29,8 +29,10 @@ describe("cron service (every anchor)", () => {
     expect((job.schedule as any).anchorMs).toBe(0);
     expect(job.state.nextRunAtMs).toBe(10_000);
 
+    (service as any).started = true;
     now = 10_000;
     await (service as any).onTimer();
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
 
     const updated = await service.get(job.id);
     expect(updated?.state.lastStatus).toBe("ok");

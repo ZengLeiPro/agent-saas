@@ -100,6 +100,11 @@ export interface NotifyConfig {
 export interface CronJobState {
   nextRunAtMs?: number; // 下次执行时间
   runningAtMs?: number; // 正在执行的开始时间
+  runningRunId?: string; // 跨进程运行 claim token
+  runningDeadlineAtMs?: number; // claim 时冻结的 watchdog 截止时间
+  runningTimedOutAtMs?: number; // watchdog 已告警；保留 claim 防止旧执行与重试双跑
+  runningOwnerPid?: number; // claim 所属进程，用于崩溃后的同机回收
+  runningOwnerHostname?: string; // claim 所属主机；异地主机未知时 fail closed
   lastRunAtMs?: number; // 上次执行时间
   lastStatus?: "ok" | "error" | "skipped";
   lastError?: string; // 上次错误信息

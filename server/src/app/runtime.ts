@@ -2735,13 +2735,32 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 保持同一对象引用：平台管理热更新时原地同步，CronService 后续执行即可读到
   // 最新的回看窗口、轮数、超时和模型，不需要重启进程。
   const memoryPollRuntimeConfig: {
+    enabled?: boolean;
     lookbackHours?: number;
     maxTurns?: number;
     timeoutSeconds?: number;
     model?: string;
-  } = {};
+    isExecutionEnabled?: (tenantId: string, userId: string) => boolean;
+  } = {
+    isExecutionEnabled: (tenantId, userId) => {
+      try {
+        const persistedPolling = loadAppConfig(processCwd).memory?.polling;
+        if (persistedPolling?.enabled !== true || !userActivityService.available || !userStore || !tenantStore) {
+          return false;
+        }
+        userStore.reload();
+        tenantStore.reload();
+        const currentUser = userStore.findById(userId);
+        if (!currentUser || currentUser.disabled || currentUser.tenantId !== tenantId) return false;
+        return tenantStore.getSettings(tenantId)?.features?.memoryPollingEnabled === true;
+      } catch {
+        return false;
+      }
+    },
+  };
   const syncMemoryPollRuntimeConfig = (): void => {
     const polling = config.memory?.polling;
+    memoryPollRuntimeConfig.enabled = polling?.enabled === true && userActivityService.available;
     memoryPollRuntimeConfig.lookbackHours = polling?.lookbackHours;
     memoryPollRuntimeConfig.maxTurns = polling?.maxTurns;
     memoryPollRuntimeConfig.timeoutSeconds = polling?.timeoutSeconds;
@@ -2754,6 +2773,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     config: {
       cron: config.cron,
       server: config.server,
+      runtimeEventStore: config.runtimeEventStore,
     },
     agentCwd,
     sharedDir,
@@ -2892,12 +2912,20 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
 
   let cronLeadership: CronLeadership | undefined;
   let memoryPollReconcileTimer: ReturnType<typeof setInterval> | undefined;
+  let memoryPollConfigRefreshTimer: ReturnType<typeof setInterval> | undefined;
   let runMemoryPollReconcile: (() => Promise<void>) | undefined;
+  let refreshMemoryPollConfigFromDisk: (() => Promise<void>) | undefined;
+  let memoryPollReconcileQueue: Promise<void> = Promise.resolve();
+  let memoryPollLeadershipGeneration = 0;
+  let memoryPollConfigFingerprint = JSON.stringify(config.memory?.polling ?? null);
   if (enableSingletonWorkers && cronRuntime.service) {
     const cronService = cronRuntime.service;
     if (userStore) {
-      runMemoryPollReconcile = async (): Promise<void> => {
+      const reconcileMemoryPollOnce = async (expectedGeneration: number): Promise<void> => {
         try {
+          if (!cronLeadership?.isLeader() || expectedGeneration !== memoryPollLeadershipGeneration) return;
+          tenantStore?.reload();
+          userStore.reload();
           const memoryPollingConfig = config.memory?.polling;
           const existingJobs = await cronService.list({ includeDisabled: true });
           const plan = reconcileMemoryPollJobs({
@@ -2917,7 +2945,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
             nowMs: Date.now(),
           });
           if (plan.toCreate.length > 0 || plan.toUpdate.length > 0) {
-            await cronService.applySystemJobs(plan);
+            if (!cronLeadership?.isLeader() || expectedGeneration !== memoryPollLeadershipGeneration) return;
+            await cronService.applySystemJobs(plan, {
+              fence: () => cronLeadership?.isLeader() === true
+                && expectedGeneration === memoryPollLeadershipGeneration,
+            });
             serverLogger.info(
               `Memory poll reconcile: eligible=${plan.stats.eligibleUsers} created=${plan.stats.created} enabled=${plan.stats.enabled} disabled=${plan.stats.disabled} dupDisabled=${plan.stats.duplicatesDisabled} rescheduled=${plan.stats.rescheduled}`,
             );
@@ -2926,18 +2958,48 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           serverLogger.warn(`Memory poll reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       };
+      runMemoryPollReconcile = (): Promise<void> => {
+        const expectedGeneration = memoryPollLeadershipGeneration;
+        const execute = () => reconcileMemoryPollOnce(expectedGeneration);
+        const queued = memoryPollReconcileQueue.then(execute, execute);
+        memoryPollReconcileQueue = queued.catch(() => {});
+        return queued;
+      };
+      refreshMemoryPollConfigFromDisk = async (): Promise<void> => {
+        if (!cronLeadership?.isLeader()) return;
+        try {
+          const persistedPolling = loadAppConfig(processCwd).memory?.polling;
+          const fingerprint = JSON.stringify(persistedPolling ?? null);
+          if (fingerprint !== memoryPollConfigFingerprint) {
+            memoryPollConfigFingerprint = fingerprint;
+            config.memory = {
+              ...(config.memory ?? {}),
+              polling: persistedPolling,
+            };
+            syncMemoryPollRuntimeConfig();
+          }
+          // Reconcile even when the config fingerprint is unchanged: this is
+          // the bounded repair path for a former leader whose commit raced a
+          // leadership handoff after its last in-memory fence check.
+          await runMemoryPollReconcile?.();
+        } catch (err) {
+          serverLogger.warn(`Memory poll config refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      };
     }
     cronLeadership = new CronLeadership({
       connectionString: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.connectionString : undefined,
       // tablePrefix 参与锁名：共库多环境（CI/dev 指同一 PG）不互相抢锁
       lockName: `${config.runtimeEventStore?.backend === 'pg' ? (config.runtimeEventStore.tablePrefix ?? 'agent_saas') : 'agent_saas'}:cron-leader`,
       onAcquired: async () => {
+        memoryPollLeadershipGeneration += 1;
         await cronService.start();
         if (memoryConsolidationEngine) {
           await memoryConsolidationEngine.start().catch((err) => {
             serverLogger.warn(`MemoryConsolidationEngine start failed: ${err instanceof Error ? err.message : String(err)}`);
           });
         }
+        await refreshMemoryPollConfigFromDisk?.();
         if (runMemoryPollReconcile) {
           void runMemoryPollReconcile();
           if (!memoryPollReconcileTimer) {
@@ -2945,14 +3007,25 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
             memoryPollReconcileTimer.unref?.();
           }
         }
+        if (refreshMemoryPollConfigFromDisk && !memoryPollConfigRefreshTimer) {
+          memoryPollConfigRefreshTimer = setInterval(() => {
+            void refreshMemoryPollConfigFromDisk!();
+          }, 5_000);
+          memoryPollConfigRefreshTimer.unref?.();
+        }
       },
       onLost: (reason) => {
+        memoryPollLeadershipGeneration += 1;
         serverLogger.warn(`Cron leadership lost (${reason}); stopping local cron scheduling`);
         cronService.stop();
         memoryConsolidationEngine?.stop();
         if (memoryPollReconcileTimer) {
           clearInterval(memoryPollReconcileTimer);
           memoryPollReconcileTimer = undefined;
+        }
+        if (memoryPollConfigRefreshTimer) {
+          clearInterval(memoryPollConfigRefreshTimer);
+          memoryPollConfigRefreshTimer = undefined;
         }
       },
     });
@@ -2965,6 +3038,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ...(config.memory ?? {}),
       polling,
     };
+    memoryPollConfigFingerprint = JSON.stringify(polling);
     syncMemoryPollRuntimeConfig();
     if (cronLeadership?.isLeader()) {
       await runMemoryPollReconcile?.();
@@ -2976,6 +3050,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const beginRuntimeDrain = async (): Promise<void> => {
     if (runtimeDrainStarted) return;
     runtimeDrainStarted = true;
+    memoryPollLeadershipGeneration += 1;
     // 1. 停止定时采样并取消在途 du。否则旧 Worker 在等待 run 安全交棒时仍会
     //    继续扫描 NAS；若随后 OOM 重启，还会从头派生新一轮 du。
     systemMetricsCollector?.stop();
@@ -2983,6 +3058,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     if (memoryPollReconcileTimer) {
       clearInterval(memoryPollReconcileTimer);
       memoryPollReconcileTimer = undefined;
+    }
+    if (memoryPollConfigRefreshTimer) {
+      clearInterval(memoryPollConfigRefreshTimer);
+      memoryPollConfigRefreshTimer = undefined;
     }
     // 技能物化先停止 claim，并等待当前目录原子提交完成，再释放 leader。
     await skillMaterializationService?.stop();

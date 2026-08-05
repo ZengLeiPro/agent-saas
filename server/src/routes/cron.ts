@@ -113,6 +113,7 @@ export function createCronRouter(
 
   router.get("/status", async (_req: Request, res: Response) => {
     try {
+      await cronService.refresh();
       res.json(cronService.getStatus());
     } catch (err) {
       res.status(500).json({ error: String(err) });

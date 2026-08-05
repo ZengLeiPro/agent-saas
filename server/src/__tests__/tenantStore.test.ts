@@ -91,6 +91,21 @@ describe('TenantStore', () => {
       expect(s2.findById('wain')?.name).toBe('唯恩电气');
     });
 
+    it('reload 能读取另一进程写入的组织开关', async () => {
+      const writer = new TenantStore(storePath);
+      await writer.create({ id: 'kaiyan', name: '开沿', createdBy: 'system' });
+      const reader = new TenantStore(storePath);
+      expect(reader.getSettings('kaiyan')?.features.memoryPollingEnabled).toBe(false);
+
+      await writer.updateSettings('kaiyan', {
+        features: { memoryPollingEnabled: true },
+      });
+      expect(reader.getSettings('kaiyan')?.features.memoryPollingEnabled).toBe(false);
+
+      reader.reload();
+      expect(reader.getSettings('kaiyan')?.features.memoryPollingEnabled).toBe(true);
+    });
+
     it('文件不存在时初始化为空', () => {
       const store = new TenantStore(storePath);
       expect(store.count()).toBe(0);

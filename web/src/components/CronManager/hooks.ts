@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { authFetch } from "@/lib/authFetch";
-import { cronJobsPreload, cronStatusPreload } from "@/lib/preload";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import { parseJsonResponse } from "@agent/shared";
 import type { ModelList } from "@/types/models";
@@ -16,113 +15,129 @@ import type {
 const API_BASE = "/api/cron";
 const DINGTALK_API_BASE = "/api/dingtalk";
 
-// --- 模块级缓存 ---
-let cachedStatus: CronServiceStatus | null = null;
-let cachedJobs: CronJob[] | null = null;
-let cachedDingtalkSessions: DingtalkSessionSummary[] | null = null;
-let cachedModelList: ModelList | null = null;
-
-// preload promise 只消费一次
-let statusPreloadConsumed = false;
-let jobsPreloadConsumed = false;
-
-export function useCronStatus() {
-  const [status, setStatus] = useState<CronServiceStatus | null>(cachedStatus);
-  const [loading, setLoading] = useState(cachedStatus === null);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    try {
-      const res = await authFetch(`${API_BASE}/status`);
-      const data = await parseJsonResponse<CronServiceStatus>(res, "定时任务");
-      cachedStatus = data;
-      setStatus(data);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    // 有缓存则直接使用
-    if (cachedStatus) { setLoading(false); return; }
-
-    // 消费 preload（一次性）
-    if (!statusPreloadConsumed) {
-      statusPreloadConsumed = true;
-      cronStatusPreload.then((preloaded) => {
-        if (preloaded) {
-          cachedStatus = preloaded as CronServiceStatus;
-          setStatus(cachedStatus);
-          setLoading(false);
-        } else {
-          void refresh();
-        }
-      });
-    } else {
-      void refresh();
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // 注册 refreshBus
-  useEffect(() => {
-    registerRefresh("cronStatus", refresh);
-    return () => unregisterRefresh("cronStatus");
-  }, [refresh]);
-
-  return { status, loading, error, refresh };
-}
 
 function sortByNextRun(jobs: CronJob[]): CronJob[] {
   return [...jobs].sort((a, b) => (a.state.nextRunAtMs ?? Infinity) - (b.state.nextRunAtMs ?? Infinity));
 }
 
-export function useCronJobs() {
-  const [jobs, setJobs] = useState<CronJob[]>(cachedJobs ? sortByNextRun(cachedJobs) : []);
-  const [loading, setLoading] = useState(cachedJobs === null);
+async function fetchCronStatus(): Promise<CronServiceStatus> {
+  const res = await authFetch(`${API_BASE}/status`);
+  return parseJsonResponse<CronServiceStatus>(res, "定时任务");
+}
+
+async function fetchCronJobs(): Promise<CronJob[]> {
+  const res = await authFetch(`${API_BASE}/jobs?includeDisabled=true`);
+  const data = await parseJsonResponse<{ jobs?: CronJob[] }>(res, "定时任务");
+  return sortByNextRun(data.jobs || []);
+}
+
+async function fetchDingtalkSessions(): Promise<DingtalkSessionSummary[]> {
+  const res = await authFetch(`${DINGTALK_API_BASE}/sessions`);
+  const data = await parseJsonResponse<{ sessions?: DingtalkSessionSummary[] }>(res, "钉钉会话");
+  return data.sessions || [];
+}
+
+async function fetchModelList(): Promise<ModelList | null> {
+  const res = await authFetch("/api/models");
+  return res.ok ? await res.json() as ModelList : null;
+}
+
+/**
+ * Cron 数据的实例级请求管理：挂载和页面重新激活时刷新，同一实例的并发刷新复用请求。
+ * requestId 同时保证 StrictMode 重挂载等场景中的旧请求不能覆盖新结果。
+ */
+function useCronResource<T>(
+  load: () => Promise<T>,
+  initialValue: T,
+  refreshKey: "cronStatus" | "cronJobs" | "cronDingtalkSessions" | "cronModels",
+) {
+  const [value, setValue] = useState<T>(initialValue);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(false);
+  const inFlightRef = useRef<Promise<void> | null>(null);
+  const latestRequestIdRef = useRef(0);
+  const instanceId = useId();
+  const refreshBusKey = `${refreshKey}:${instanceId}`;
 
-  const refresh = useCallback(async () => {
-    try {
-      const res = await authFetch(`${API_BASE}/jobs?includeDisabled=true`);
-      const data = await parseJsonResponse<{ jobs?: CronJob[] }>(res, "定时任务");
-      const list = data.jobs || [];
-      cachedJobs = list;
-      setJobs(sortByNextRun(list));
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const refresh = useCallback((): Promise<void> => {
+    if (!mountedRef.current) return Promise.resolve();
+    if (inFlightRef.current) return inFlightRef.current;
 
-  useEffect(() => {
-    if (cachedJobs) { setLoading(false); return; }
-
-    if (!jobsPreloadConsumed) {
-      jobsPreloadConsumed = true;
-      cronJobsPreload.then((preloaded) => {
-        if (preloaded) {
-          cachedJobs = preloaded as CronJob[];
-          setJobs(sortByNextRun(cachedJobs));
+    const requestId = ++latestRequestIdRef.current;
+    const request = (async () => {
+      try {
+        const data = await load();
+        if (!mountedRef.current || requestId !== latestRequestIdRef.current) return;
+        setValue(data);
+        setError(null);
+      } catch (err) {
+        if (!mountedRef.current || requestId !== latestRequestIdRef.current) return;
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (mountedRef.current && requestId === latestRequestIdRef.current) {
           setLoading(false);
-        } else {
-          void refresh();
         }
-      });
-    } else {
-      void refresh();
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+      }
+    })();
 
-  // 注册 refreshBus
+    inFlightRef.current = request;
+    const clearInFlight = () => {
+      if (inFlightRef.current === request) inFlightRef.current = null;
+    };
+    void request.then(clearInFlight, clearInFlight);
+    return request;
+  }, [load]);
+
   useEffect(() => {
-    registerRefresh("cronJobs", refresh);
-    return () => unregisterRefresh("cronJobs");
+    mountedRef.current = true;
+    void refresh();
+
+    const refreshOnFocus = () => { void refresh(); };
+    const refreshOnVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+
+    window.addEventListener("focus", refreshOnFocus);
+    document.addEventListener("visibilitychange", refreshOnVisible);
+    return () => {
+      mountedRef.current = false;
+      latestRequestIdRef.current += 1;
+      inFlightRef.current = null;
+      window.removeEventListener("focus", refreshOnFocus);
+      document.removeEventListener("visibilitychange", refreshOnVisible);
+    };
   }, [refresh]);
+
+  useEffect(() => {
+    registerRefresh(refreshBusKey, refresh);
+    return () => unregisterRefresh(refreshBusKey);
+  }, [refresh, refreshBusKey]);
+
+  const refreshLatest = useCallback(async (): Promise<void> => {
+    const pending = inFlightRef.current;
+    if (pending) await pending;
+    await refresh();
+  }, [refresh]);
+
+  return { value, loading, error, refresh, refreshLatest };
+}
+
+export function useCronStatus() {
+  const { value: status, loading, error, refresh, refreshLatest } = useCronResource<CronServiceStatus | null>(
+    fetchCronStatus,
+    null,
+    "cronStatus",
+  );
+  return { status, loading, error, refresh, refreshLatest };
+}
+
+export function useCronJobs() {
+  const { value: jobs, loading, error, refresh, refreshLatest } = useCronResource<CronJob[]>(
+    fetchCronJobs,
+    [],
+    "cronJobs",
+  );
 
   const addJob = async (create: CronJobCreate) => {
     const res = await authFetch(`${API_BASE}/jobs`, {
@@ -131,7 +146,7 @@ export function useCronJobs() {
       body: JSON.stringify(create),
     });
     await parseJsonResponse(res, "定时任务");
-    await refresh();
+    await refreshLatest();
   };
 
   const updateJob = async (id: string, patch: CronJobPatch) => {
@@ -141,19 +156,19 @@ export function useCronJobs() {
       body: JSON.stringify(patch),
     });
     await parseJsonResponse(res, "定时任务");
-    await refresh();
+    await refreshLatest();
   };
 
   const deleteJob = async (id: string) => {
     const res = await authFetch(`${API_BASE}/jobs/${id}`, { method: "DELETE" });
     await parseJsonResponse(res, "定时任务");
-    await refresh();
+    await refreshLatest();
   };
 
   const runJob = async (id: string) => {
     const res = await authFetch(`${API_BASE}/jobs/${id}/run`, { method: "POST" });
     await parseJsonResponse(res, "定时任务");
-    await refresh();
+    await refreshLatest();
   };
 
   return { jobs, loading, error, refresh, addJob, updateJob, deleteJob, runJob };
@@ -171,76 +186,44 @@ export function useRunHistory(jobId: string | null) {
       return;
     }
 
+    let cancelled = false;
     setLoading(true);
     const limit = 200;
     authFetch(`${API_BASE}/jobs/${jobId}/runs?limit=${limit}`)
       .then((res) => parseJsonResponse<{ entries?: CronRunLogEntry[] }>(res, "定时任务"))
       .then((data) => {
+        if (cancelled) return;
         setEntries(data.entries || []);
         setError(null);
       })
       .catch((err) => {
+        if (cancelled) return;
         setEntries([]);
         setError(err instanceof Error ? err.message : String(err));
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
   }, [jobId]);
 
   return { entries, loading, error };
 }
 
 export function useDingtalkSessions() {
-  const [sessions, setSessions] = useState<DingtalkSessionSummary[]>(cachedDingtalkSessions ?? []);
-  const [loading, setLoading] = useState(cachedDingtalkSessions === null);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    try {
-      const res = await authFetch(`${DINGTALK_API_BASE}/sessions`);
-      const data = await parseJsonResponse<{ sessions?: DingtalkSessionSummary[] }>(
-        res,
-        "钉钉会话",
-      );
-      const list = data.sessions || [];
-      cachedDingtalkSessions = list;
-      setSessions(list);
-      setError(null);
-    } catch (err) {
-      setSessions([]);
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (cachedDingtalkSessions) { setLoading(false); return; }
-    void refresh();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
+  const { value: sessions, loading, error, refresh } = useCronResource<DingtalkSessionSummary[]>(
+    fetchDingtalkSessions,
+    [],
+    "cronDingtalkSessions",
+  );
   return { sessions, loading, error, refresh };
 }
 
 export function useModelList() {
-  const [modelList, setModelList] = useState<ModelList | null>(cachedModelList);
-
-  const refreshModels = useCallback(async () => {
-    const res = await authFetch("/api/models");
-    const data = res.ok ? await res.json() : null;
-    if (data) {
-      cachedModelList = data;
-      setModelList(data);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!cachedModelList) void refreshModels();
-  }, [refreshModels]);
-
-  useEffect(() => {
-    registerRefresh("cron-models", refreshModels);
-    return () => unregisterRefresh("cron-models");
-  }, [refreshModels]);
-
+  const { value: modelList } = useCronResource<ModelList | null>(
+    fetchModelList,
+    null,
+    "cronModels",
+  );
   return modelList;
 }

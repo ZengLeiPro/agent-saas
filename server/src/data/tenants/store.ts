@@ -118,6 +118,11 @@ export class TenantStore {
     }
   }
 
+  /** 重新读取共享 tenants.json，供多进程后台执行器刷新组织开关。 */
+  reload(): void {
+    this.load();
+  }
+
   private async persist(): Promise<void> {
     const data: TenantsFileData = { version: 1, tenants: this.tenants };
     mkdirSync(dirname(this.filePath), { recursive: true });

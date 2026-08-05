@@ -673,7 +673,12 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         },
         onUserTenantChanging: terminateAndRevokeUserConnectors,
         skillConfigStore: runtime.skillConfigStore,
-        onUserDeleting: terminateAndRevokeUserConnectors,
+        onUserDeleting: async (target) => {
+          await Promise.all([
+            terminateAndRevokeUserConnectors(target),
+            cronRuntime.service?.removeByOwners([target.id]),
+          ]);
+        },
         mcpOAuthService: runtime.mcpOAuthService,
         signupConfigStore: runtime.signupConfigStore,
         secretVault: runtime.secretVault,

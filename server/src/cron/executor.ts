@@ -29,6 +29,7 @@ import { buildMemoryPollPrompt, MEMORY_POLL_DEFAULTS } from "./memoryPoll.js";
 import { tryAcquireMemoryMaintenance, releaseMemoryMaintenance } from "../memory/maintenanceLock.js";
 
 export interface UserStoreLike {
+  reload?(): void;
   findById(id: string): {
     id: string;
     username: string;
@@ -76,10 +77,13 @@ export interface ExecutorOptions {
   userActivityService?: UserActivityService;
   /** memory_poll 系统任务的执行参数（config.memory.polling） */
   memoryPoll?: {
+    enabled?: boolean;
     lookbackHours?: number;
     maxTurns?: number;
     timeoutSeconds?: number;
     model?: string;
+    /** 真正启动 Agent 前从持久化配置复核平台/组织/用户三层开关。 */
+    isExecutionEnabled?: (tenantId: string, userId: string) => boolean | Promise<boolean>;
   };
   /**
    * L2 记忆整合桥（2026-07-29 职责剥离批次）：memory_poll 据此收敛职责——
@@ -97,6 +101,8 @@ export interface ExecuteResult {
   status: "ok" | "error" | "skipped";
   error?: string;
   output?: string;
+  /** 身份撤销或开关关闭等 fail-closed 结果不得继续触发外部通知。 */
+  suppressNotification?: boolean;
   sessionId?: string;
   transcriptPath?: string;
   /** 本次实际使用的模型引用（group/model），用于 run log 展示与会话恢复。 */
@@ -107,6 +113,23 @@ export async function executeJob(
   job: CronJob,
   opts: ExecutorOptions
 ): Promise<ExecuteResult> {
+  if (job.owner) {
+    opts.userStore?.reload?.();
+    const owner = opts.userStore?.findById(job.owner);
+    if (!owner || owner.disabled) {
+      return {
+        status: "error",
+        output: owner?.disabled ? "Job owner is disabled" : "Job owner does not exist",
+        suppressNotification: true,
+      };
+    }
+    opts.tenantStore?.reload?.();
+    const tenantAccess = checkTenantAccess(opts.tenantStore, owner.tenantId);
+    if (!tenantAccess.ok) {
+      return { status: "error", output: tenantAccess.message, suppressNotification: true };
+    }
+  }
+
   if (job.systemKind === "memory_poll") {
     return await executeMemoryPollJob(job, opts);
   }
@@ -139,9 +162,32 @@ async function executeMemoryPollJob(
   if (!job.owner || !opts.userStore) {
     return { status: "error", error: "memory_poll job 缺少 owner 或 userStore" };
   }
+  opts.userStore.reload?.();
   const owner = opts.userStore.findById(job.owner);
   if (!owner || owner.disabled) {
     return { status: "skipped", output: "memory_poll owner 不存在或已禁用" };
+  }
+  if (opts.memoryPoll?.enabled !== true) {
+    return { status: "skipped", output: "memory_poll 平台开关已关闭", suppressNotification: true };
+  }
+  if (!owner.tenantId || !opts.tenantStore) {
+    return {
+      status: "skipped",
+      output: "memory_poll 缺少组织配置，按关闭处理",
+      suppressNotification: true,
+    };
+  }
+  try {
+    opts.tenantStore.reload();
+    if (opts.tenantStore.getSettings(owner.tenantId)?.features?.memoryPollingEnabled !== true) {
+      return { status: "skipped", output: "memory_poll 组织开关已关闭", suppressNotification: true };
+    }
+  } catch {
+    return {
+      status: "skipped",
+      output: "memory_poll 组织配置读取失败，按关闭处理",
+      suppressNotification: true,
+    };
   }
 
   const lookbackHours = opts.memoryPoll?.lookbackHours ?? MEMORY_POLL_DEFAULTS.lookbackHours;
@@ -251,9 +297,16 @@ async function executeAgentTurn(
       }, timeoutMs)
     : null;
 
-  // 根据 job owner 解析 per-user cwd + 身份信息
+  // 根据 job owner 解析 per-user cwd + 身份信息。多进程部署下先刷新共享
+  // 用户/组织文件，避免后台任务使用另一个 Web 进程更新前的旧权限状态。
   let effectiveAgentCwd = opts.agentCwd;
+  opts.userStore?.reload?.();
+  opts.tenantStore?.reload?.();
   const owner = (job.owner && opts.userStore) ? opts.userStore.findById(job.owner) : undefined;
+  if (job.owner && !owner) {
+    if (timeout) clearTimeout(timeout);
+    return { status: 'error', output: 'Job owner does not exist' };
+  }
   if (owner?.disabled) {
     if (timeout) clearTimeout(timeout);
     return { status: 'error', output: 'Job owner is disabled' };
@@ -375,6 +428,43 @@ async function executeAgentTurn(
       ...(ctx.persona === false ? { skipPersona: true } : {}),
       ...(ctx.memory === false ? { skipMemory: true } : {}),
     } : {};
+
+    if (job.owner) {
+      opts.userStore?.reload?.();
+      opts.tenantStore?.reload?.();
+      const currentOwner = opts.userStore?.findById(job.owner);
+      const currentTenantAccess = checkTenantAccess(opts.tenantStore, currentOwner?.tenantId);
+      if (
+        !currentOwner
+        || currentOwner.disabled
+        || currentOwner.tenantId !== owner?.tenantId
+        || !currentTenantAccess.ok
+      ) {
+        return {
+          status: 'error',
+          output: currentTenantAccess.ok ? 'Job owner is unavailable' : currentTenantAccess.message,
+          suppressNotification: true,
+        };
+      }
+    }
+
+    if (job.systemKind === 'memory_poll') {
+      let stillEnabled = false;
+      try {
+        stillEnabled = !!owner?.tenantId
+          && !!opts.memoryPoll?.isExecutionEnabled
+          && await opts.memoryPoll.isExecutionEnabled(owner.tenantId, owner.id);
+      } catch {
+        stillEnabled = false;
+      }
+      if (!stillEnabled) {
+        return {
+          status: 'skipped',
+          output: 'memory_poll 开关已关闭，取消本次执行',
+          suppressNotification: true,
+        };
+      }
+    }
 
     const events = opts.runAgent(
       inbound,

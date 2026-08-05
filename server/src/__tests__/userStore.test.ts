@@ -29,6 +29,24 @@ describe("UserStore user ids", () => {
     expect(id).toHaveLength(14);
   });
 
+  it("reload reads a disabled flag written by another process", async () => {
+    const { store: writer, filePath } = await tempUserStore();
+    const user = await writer.create({
+      username: "reload-user",
+      password: "password123",
+      role: "user",
+      createdBy: "system",
+      tenantId: "kaiyan",
+    });
+    const reader = new UserStore(filePath);
+    expect(reader.findById(user.id)?.disabled).toBeUndefined();
+
+    await writer.setDisabled(user.id, true, "admin");
+    expect(reader.findById(user.id)?.disabled).toBeUndefined();
+    reader.reload();
+    expect(reader.findById(user.id)?.disabled).toBe(true);
+  });
+
   it("persists new users with compact ids", async () => {
     const { store, filePath } = await tempUserStore();
 

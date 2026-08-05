@@ -85,7 +85,13 @@ export function createMemoryPollingAdminRouter(
   router.use(requirePlatformAdmin);
 
   router.get('/', (_req, res) => {
-    res.json(pollingView(options.config));
+    try {
+      const configPath = getAppConfigPath(options.processCwd);
+      const persisted = parseAppConfig(parseJsonc(readFileSync(configPath, 'utf-8')));
+      res.json(pollingView(persisted));
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   router.put('/', async (req, res) => {

@@ -50,7 +50,7 @@ export function CronManager({
     [currentUserId],
   );
 
-  const { refresh: refreshStatus } = useCronStatus();
+  const { refreshLatest: refreshStatus } = useCronStatus();
   const { jobs: allJobs, addJob, updateJob, deleteJob, runJob } = useCronJobs();
 
   const jobs = useMemo(() => allJobs, [allJobs]);

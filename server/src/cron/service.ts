@@ -2,6 +2,7 @@
  * Cron 服务主类
  */
 import { randomUUID } from "crypto";
+import os from "os";
 import type {
   CronJob,
   CronJobCreate,
@@ -20,13 +21,25 @@ import {
 import { cronLogger } from "../utils/logger.js";
 
 const MAX_TIMEOUT_MS = 2147483647;
+const STORE_RELOAD_INTERVAL_MS = 1_500;
 const WATCHDOG_INTERVAL_MS = 60_000;
 const WATCHDOG_OVERTIME_MS = 180_000;  // 超过硬超时后的额外容忍时间
 const WATCHDOG_FALLBACK_TIMEOUT_MS = 6 * 3600_000;  // 无超时任务的兜底: 6h
 
+class ServiceTimeoutError extends Error {}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return !(typeof err === "object" && err !== null && "code" in err && err.code === "ESRCH");
+  }
+}
+
 function pTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), ms);
+    const timer = setTimeout(() => reject(new ServiceTimeoutError(message)), ms);
     timer.unref?.();
     promise.then(
       (v) => { clearTimeout(timer); resolve(v); },
@@ -39,6 +52,17 @@ function toFiniteInt(n: unknown): number | undefined {
   if (typeof n !== "number") return undefined;
   if (!Number.isFinite(n)) return undefined;
   return Math.floor(n);
+}
+
+function cloneJob(job: CronJob): CronJob {
+  return structuredClone(job);
+}
+
+function updatedAtAfterEdit(job: CronJob, candidateMs: number): number {
+  // updatedAtMs is also the optimistic concurrency marker captured by a run.
+  // Keep it strictly monotonic so multiple same-millisecond edits can never
+  // return to the run's claimed marker and let an old completion win.
+  return Math.max(candidateMs, job.updatedAtMs + 1);
 }
 
 /** CronSchedule 内容等价判断（applySystemJobs drift 检测用）。 */
@@ -119,10 +143,94 @@ function normalizeEverySchedule(job: Pick<CronJob, "enabled" | "schedule" | "sta
   return changed;
 }
 
+function normalizeStoredJob(job: CronJob, nowMs: number): boolean {
+  let changed = normalizeEverySchedule(job, nowMs);
+
+  const ownerPid = job.state.runningOwnerPid;
+  if (
+    job.state.runningAtMs != null
+    && job.state.runningOwnerHostname === os.hostname()
+    && Number.isInteger(ownerPid)
+    && ownerPid! > 0
+    && !isProcessAlive(ownerPid!)
+  ) {
+    delete job.state.runningAtMs;
+    delete job.state.runningRunId;
+    delete job.state.runningDeadlineAtMs;
+    delete job.state.runningTimedOutAtMs;
+    delete job.state.runningOwnerPid;
+    delete job.state.runningOwnerHostname;
+    changed = true;
+  }
+
+  // During the one-time mixed-version rollout an old process may clear the
+  // known runningAtMs field while preserving the new token fields. Such an
+  // orphan is not a live claim and must not block the task forever.
+  if (job.state.runningAtMs == null) {
+    if (job.state.runningRunId !== undefined) {
+      delete job.state.runningRunId;
+      changed = true;
+    }
+    if (job.state.runningDeadlineAtMs !== undefined) {
+      delete job.state.runningDeadlineAtMs;
+      changed = true;
+    }
+    if (job.state.runningTimedOutAtMs !== undefined) {
+      delete job.state.runningTimedOutAtMs;
+      changed = true;
+    }
+    if (job.state.runningOwnerPid !== undefined) {
+      delete job.state.runningOwnerPid;
+      changed = true;
+    }
+    if (job.state.runningOwnerHostname !== undefined) {
+      delete job.state.runningOwnerHostname;
+      changed = true;
+    }
+  }
+
+  if (job.enabled && job.state.nextRunAtMs === undefined) {
+    const nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
+    if (nextRunAtMs !== undefined) {
+      job.state.nextRunAtMs = nextRunAtMs;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+interface MutationOutcome<T> {
+  changed: boolean;
+  value: T;
+}
+
+export interface CronRunLease {
+  release(): Promise<void>;
+}
+
+interface ClaimedJob {
+  job: CronJob;
+  runId: string;
+  startedAtMs: number;
+  claimedUpdatedAtMs: number;
+  forced: boolean;
+  runLease?: CronRunLease;
+  releaseLeaseAfterSettlement?: boolean;
+}
+
 export interface CronServiceDeps {
   nowMs: () => number;
   loadJobs: () => Promise<CronJob[]>;
   saveJobs: (jobs: CronJob[]) => Promise<void>;
+  /**
+   * 生产 Store 的跨进程 read-modify-write 事务。未提供时保留旧测试
+   * harness 的单进程内存 + saveJobs 行为。
+   */
+  mutateJobs?: <T>(
+    mutator: (jobs: CronJob[]) => T | Promise<T>,
+  ) => Promise<{ jobs: CronJob[]; result: T }>;
+  /** PG 模式下的任务级 session advisory lock；进程崩溃时自动释放。 */
+  tryAcquireRunLease?: (jobId: string) => Promise<CronRunLease | null>;
   executeJob: (
     job: CronJob,
     hooks?: { onSessionId?: (sessionId: string, transcriptPath?: string) => void },
@@ -130,6 +238,7 @@ export interface CronServiceDeps {
     status: "ok" | "error" | "skipped";
     error?: string;
     output?: string;
+    suppressNotification?: boolean;
     sessionId?: string;
     transcriptPath?: string;
     modelRef?: string;
@@ -145,8 +254,14 @@ export class CronService {
   private deps: CronServiceDeps;
   private jobs: CronJob[] = [];
   private loaded = false;
+  private loading: Promise<void> | null = null;
+  private mutationQueue: Promise<void> = Promise.resolve();
+  private cacheGeneration = 0;
+  private lifecycleGeneration = 0;
   private enabled = true;
+  private started = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private reloadTimer: ReturnType<typeof setInterval> | null = null;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
 
@@ -158,8 +273,13 @@ export class CronService {
     // stop→start 可循环（cron leadership 失而复得时重启调度）：
     // stop() 置 enabled=false，armTimer 据此短路，必须先复位
     this.enabled = true;
+    this.lifecycleGeneration += 1;
     await this.ensureLoaded();
+    if (this.deps.mutateJobs) await this.refresh();
+    await this.recoverOrphanClaims();
+    this.started = true;
     this.armTimer();
+    this.startHotReload();
     this.startWatchdog();
     this.emit({ type: "statusChanged", status: this.getStatus() });
     cronLogger.info("Service started");
@@ -167,10 +287,13 @@ export class CronService {
 
   stop(): void {
     this.enabled = false;
+    this.started = false;
+    this.lifecycleGeneration += 1;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    this.stopHotReload();
     this.stopWatchdog();
     this.emit({ type: "statusChanged", status: this.getStatus() });
     cronLogger.info("Service stopped");
@@ -178,7 +301,7 @@ export class CronService {
 
   getStatus(): CronServiceStatus {
     const enabledJobs = this.jobs.filter((j) => j.enabled);
-    const runningJobs = this.jobs.filter((j) => j.state.runningAtMs);
+    const runningJobs = this.jobs.filter((j) => j.state.runningAtMs != null);
 
     return {
       enabled: this.enabled,
@@ -190,14 +313,48 @@ export class CronService {
     };
   }
 
+  /** 刷新生产 Store 快照；供同步路由在读取 getStatus() 前显式冷读。 */
+  async refresh(): Promise<void> {
+    await this.ensureLoaded();
+    if (!this.deps.mutateJobs) return;
+
+    const generation = this.cacheGeneration;
+    const jobs = await this.deps.loadJobs();
+    // A refresh started before a local transaction must not overwrite that
+    // transaction's newer committed snapshot when its read finishes late.
+    if (generation !== this.cacheGeneration) return;
+
+    const nowMs = this.deps.nowMs();
+    if (jobs.some((job) => normalizeStoredJob(job, nowMs))) {
+      const repair = await this.mutate((currentJobs): MutationOutcome<boolean> => {
+        let changed = false;
+        for (const job of currentJobs) {
+          if (normalizeStoredJob(job, nowMs)) changed = true;
+        }
+        return { changed, value: changed };
+      });
+      if (repair.changed) this.afterJobsChanged();
+      return;
+    }
+
+    const before = this.statusFingerprint();
+    this.replaceJobs(jobs);
+    this.armTimer();
+    if (before !== this.statusFingerprint()) {
+      this.emit({ type: "statusChanged", status: this.getStatus() });
+    }
+  }
+
   async list(opts?: { includeDisabled?: boolean }): Promise<CronJob[]> {
     await this.ensureLoaded();
+    if (this.deps.mutateJobs) await this.refresh();
     if (opts?.includeDisabled) return [...this.jobs];
     return this.jobs.filter((j) => j.enabled);
   }
 
   async get(id: string): Promise<CronJob | undefined> {
     await this.ensureLoaded();
+    if (this.deps.mutateJobs) await this.refresh();
     return this.jobs.find((j) => j.id === id);
   }
 
@@ -210,51 +367,60 @@ export class CronService {
    *   - name/description 元数据更新（本期未用；预留）
    * 保留 job.id、owner、payload、state（除 nextRunAtMs），不覆盖运行态数据。
    */
-  async applySystemJobs(plan: { toCreate: CronJob[]; toUpdate: CronJob[] }): Promise<void> {
-    await this.ensureLoaded();
-    let changed = false;
+  async applySystemJobs(
+    plan: { toCreate: CronJob[]; toUpdate: CronJob[] },
+    options?: { fence?: () => boolean },
+  ): Promise<void> {
     const nowMs = this.deps.nowMs();
-    for (const job of plan.toCreate) {
-      if (!job.systemKind) continue; // 本通道只接受系统任务
-      if (this.jobs.some((j) => j.id === job.id)) continue;
-      const next: CronJob = { ...job, state: { ...job.state } };
-      if (next.enabled) next.state.nextRunAtMs = computeJobNextRunAtMs(next, nowMs);
-      this.jobs.push(next);
-      changed = true;
-      cronLogger.info(`System job created: ${next.name} (${next.id}) owner=${next.owner}`);
-    }
-    for (const update of plan.toUpdate) {
-      const job = this.jobs.find((j) => j.id === update.id);
-      if (!job || !job.systemKind) continue;
-      const scheduleChanged = !isSameCronSchedule(job.schedule, update.schedule);
-      const enabledChanged = job.enabled !== update.enabled;
-      if (!scheduleChanged && !enabledChanged) continue;
-      if (scheduleChanged) job.schedule = update.schedule;
-      if (enabledChanged) job.enabled = update.enabled;
-      job.updatedAtMs = update.updatedAtMs ?? nowMs;
-      if (job.enabled) {
-        job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
-      } else {
-        delete job.state.nextRunAtMs;
+    const outcome = await this.mutate((jobs): MutationOutcome<string[]> => {
+      if (options?.fence && !options.fence()) {
+        return { changed: false, value: [] };
       }
-      changed = true;
-      if (scheduleChanged) {
-        const expr = update.schedule.kind === 'cron' ? update.schedule.expr : `${update.schedule.kind}`;
-        cronLogger.info(`System job rescheduled: ${job.name} (${job.id}) owner=${job.owner} → ${expr}`);
-      } else {
-        cronLogger.info(`System job ${job.enabled ? 'enabled' : 'disabled'}: ${job.name} (${job.id}) owner=${job.owner}`);
+      let changed = false;
+      const messages: string[] = [];
+      for (const job of plan.toCreate) {
+        if (!job.systemKind) continue;
+        if (jobs.some((existing) =>
+          existing.id === job.id
+          || (existing.systemKind === job.systemKind && existing.owner === job.owner)
+        )) continue;
+        const next = cloneJob(job);
+        if (next.enabled) next.state.nextRunAtMs = computeJobNextRunAtMs(next, nowMs);
+        jobs.push(next);
+        changed = true;
+        messages.push(`System job created: ${next.name} (${next.id}) owner=${next.owner}`);
       }
-    }
-    if (changed) {
-      await this.persist();
-      this.armTimer();
-      this.emit({ type: "statusChanged", status: this.getStatus() });
-    }
+      for (const update of plan.toUpdate) {
+        const job = jobs.find((j) => j.id === update.id);
+        if (!job || !job.systemKind) continue;
+        if (update.updatedAtMs <= job.updatedAtMs) continue;
+        const scheduleChanged = !isSameCronSchedule(job.schedule, update.schedule);
+        const enabledChanged = job.enabled !== update.enabled;
+        if (!scheduleChanged && !enabledChanged) continue;
+        if (scheduleChanged) job.schedule = cloneJob(update).schedule;
+        if (enabledChanged) job.enabled = update.enabled;
+        job.updatedAtMs = updatedAtAfterEdit(job, update.updatedAtMs ?? nowMs);
+        if (job.enabled) {
+          job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
+        } else {
+          delete job.state.nextRunAtMs;
+        }
+        changed = true;
+        if (scheduleChanged) {
+          const expr = update.schedule.kind === 'cron' ? update.schedule.expr : `${update.schedule.kind}`;
+          messages.push(`System job rescheduled: ${job.name} (${job.id}) owner=${job.owner} → ${expr}`);
+        } else {
+          messages.push(`System job ${job.enabled ? 'enabled' : 'disabled'}: ${job.name} (${job.id}) owner=${job.owner}`);
+        }
+      }
+      return { changed, value: messages };
+    });
+
+    for (const message of outcome.value) cronLogger.info(message);
+    if (outcome.changed) this.afterJobsChanged();
   }
 
   async add(create: CronJobCreate, context?: { owner?: string; ownerName?: string }): Promise<CronJob> {
-    await this.ensureLoaded();
-
     const nowMs = this.deps.nowMs();
     const createdEnabled = create.enabled ?? true;
     const schedule =
@@ -286,177 +452,197 @@ export class CronService {
       job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
     }
 
-    this.jobs.push(job);
-    await this.persist();
-    this.armTimer();
-    this.emit({ type: "statusChanged", status: this.getStatus() });
+    const outcome = await this.mutate((jobs): MutationOutcome<string> => {
+      jobs.push(job);
+      return { changed: true, value: job.id };
+    });
+    this.afterJobsChanged();
 
-    cronLogger.info(`Job added: ${job.name} (${job.id})`);
-    return job;
+    const added = this.jobs.find((candidate) => candidate.id === outcome.value) ?? job;
+    cronLogger.info(`Job added: ${added.name} (${added.id})`);
+    return added;
   }
 
   async update(id: string, patch: CronJobPatch): Promise<CronJob | undefined> {
-    await this.ensureLoaded();
-
-    const job = this.jobs.find((j) => j.id === id);
-    if (!job) return undefined;
-    if (job.systemKind) {
-      // 平台系统任务只能经 applySystemJobs（reconcile）变更——REST API 与
-      // CronManage 工具路径都会命中本 guard。
-      throw new Error("系统任务由平台管理，不能修改");
-    }
-
     const nowMs = this.deps.nowMs();
-    const wasEnabled = job.enabled;
-
-    if (patch.name !== undefined) job.name = patch.name.trim();
-    if (patch.description !== undefined) {
-      const nextDescription = patch.description.trim();
-      job.description = nextDescription || undefined;
-    }
-    if (patch.enabled !== undefined) job.enabled = patch.enabled;
-    if (patch.schedule !== undefined) {
-      if (patch.schedule.kind === "every") {
-        const incomingEveryMs = Math.max(1, Math.floor(patch.schedule.everyMs));
-        const existingEveryMs =
-          job.schedule.kind === "every" ? Math.max(1, Math.floor(job.schedule.everyMs)) : undefined;
-        const existingAnchor = job.schedule.kind === "every" ? job.schedule.anchorMs : undefined;
-
-        const enabling = patch.enabled === true && wasEnabled === false;
-        const shouldPreserveAnchor =
-          !enabling &&
-          existingEveryMs !== undefined &&
-          existingEveryMs === incomingEveryMs &&
-          typeof existingAnchor === "number" &&
-          Number.isFinite(existingAnchor);
-
-        job.schedule = {
-          ...patch.schedule,
-          everyMs: incomingEveryMs,
-          anchorMs:
-            patch.schedule.anchorMs ??
-            (shouldPreserveAnchor ? existingAnchor : job.enabled ? nowMs : undefined),
-        };
-      } else {
-        job.schedule = patch.schedule;
+    const outcome = await this.mutate((jobs): MutationOutcome<string | undefined> => {
+      const job = jobs.find((j) => j.id === id);
+      if (!job) return { changed: false, value: undefined };
+      if (job.systemKind) {
+        throw new Error("系统任务由平台管理，不能修改");
       }
-    } else if (patch.enabled === true && wasEnabled === false && job.schedule.kind === "every") {
-      // Enabling a legacy kind=every job without anchor: start the interval "from now" to match prior semantics.
-      job.schedule.anchorMs = job.schedule.anchorMs ?? nowMs;
-    }
-    if (patch.payload !== undefined) job.payload = mergeCronPayload(job.payload, patch.payload);
-    if (patch.notify !== undefined) job.notify = patch.notify;
 
-    job.updatedAtMs = nowMs;
+      const wasEnabled = job.enabled;
+      if (patch.name !== undefined) job.name = patch.name.trim();
+      if (patch.description !== undefined) {
+        const nextDescription = patch.description.trim();
+        job.description = nextDescription || undefined;
+      }
+      if (patch.enabled !== undefined) job.enabled = patch.enabled;
+      if (patch.schedule !== undefined) {
+        if (patch.schedule.kind === "every") {
+          const incomingEveryMs = Math.max(1, Math.floor(patch.schedule.everyMs));
+          const existingEveryMs =
+            job.schedule.kind === "every" ? Math.max(1, Math.floor(job.schedule.everyMs)) : undefined;
+          const existingAnchor = job.schedule.kind === "every" ? job.schedule.anchorMs : undefined;
 
-    if (job.enabled) {
-      job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
-    } else {
-      job.state.nextRunAtMs = undefined;
-    }
+          const enabling = patch.enabled === true && wasEnabled === false;
+          const shouldPreserveAnchor =
+            !enabling &&
+            existingEveryMs !== undefined &&
+            existingEveryMs === incomingEveryMs &&
+            typeof existingAnchor === "number" &&
+            Number.isFinite(existingAnchor);
 
-    await this.persist();
-    this.armTimer();
-    this.emit({ type: "statusChanged", status: this.getStatus() });
+          job.schedule = {
+            ...patch.schedule,
+            everyMs: incomingEveryMs,
+            anchorMs:
+              patch.schedule.anchorMs ??
+              (shouldPreserveAnchor ? existingAnchor : job.enabled ? nowMs : undefined),
+          };
+        } else {
+          job.schedule = patch.schedule;
+        }
+      } else if (patch.enabled === true && wasEnabled === false && job.schedule.kind === "every") {
+        job.schedule.anchorMs = job.schedule.anchorMs ?? nowMs;
+      }
+      if (patch.payload !== undefined) job.payload = mergeCronPayload(job.payload, patch.payload);
+      if (patch.notify !== undefined) job.notify = patch.notify;
 
-    cronLogger.info(`Job updated: ${job.name} (${job.id})`);
-    return job;
+      job.updatedAtMs = updatedAtAfterEdit(job, nowMs);
+      if (job.enabled) {
+        job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
+      } else {
+        job.state.nextRunAtMs = undefined;
+      }
+      return { changed: true, value: job.id };
+    });
+
+    if (!outcome.changed || !outcome.value) return undefined;
+    this.afterJobsChanged();
+    const updated = this.jobs.find((job) => job.id === outcome.value);
+    if (updated) cronLogger.info(`Job updated: ${updated.name} (${updated.id})`);
+    return updated;
   }
 
   async remove(id: string): Promise<boolean> {
-    await this.ensureLoaded();
+    const outcome = await this.mutate((jobs): MutationOutcome<{ id: string; name: string } | undefined> => {
+      const index = jobs.findIndex((j) => j.id === id);
+      if (index === -1) return { changed: false, value: undefined };
+      const job = jobs[index];
+      if (job.systemKind) throw new Error("系统任务由平台管理，不能删除");
+      jobs.splice(index, 1);
+      return { changed: true, value: { id: job.id, name: job.name } };
+    });
 
-    const index = this.jobs.findIndex((j) => j.id === id);
-    if (index === -1) return false;
-
-    const job = this.jobs[index];
-    if (job.systemKind) {
-      throw new Error("系统任务由平台管理，不能删除");
-    }
-    this.jobs.splice(index, 1);
-    await this.persist();
-    this.armTimer();
-    this.emit({ type: "statusChanged", status: this.getStatus() });
-
-    cronLogger.info(`Job removed: ${job.name} (${job.id})`);
+    if (!outcome.changed || !outcome.value) return false;
+    this.afterJobsChanged();
+    cronLogger.info(`Job removed: ${outcome.value.name} (${outcome.value.id})`);
     return true;
   }
 
   async removeByOwners(ownerIds: Iterable<string>): Promise<number> {
-    await this.ensureLoaded();
-
     const targets = new Set(ownerIds);
     if (targets.size === 0) return 0;
 
-    const before = this.jobs.length;
-    this.jobs = this.jobs.filter((job) => !job.owner || !targets.has(job.owner));
-    const removed = before - this.jobs.length;
-    if (removed === 0) return 0;
+    const outcome = await this.mutate((jobs): MutationOutcome<number> => {
+      const before = jobs.length;
+      const remaining = jobs.filter((job) => !job.owner || !targets.has(job.owner));
+      const removed = before - remaining.length;
+      if (removed === 0) return { changed: false, value: 0 };
+      jobs.splice(0, jobs.length, ...remaining);
+      return { changed: true, value: removed };
+    });
 
-    await this.persist();
-    this.armTimer();
-    this.emit({ type: "statusChanged", status: this.getStatus() });
-    cronLogger.info(`Removed ${removed} job(s) by owner cleanup`);
-    return removed;
+    if (!outcome.changed) return 0;
+    this.afterJobsChanged();
+    cronLogger.info(`Removed ${outcome.value} job(s) by owner cleanup`);
+    return outcome.value;
   }
 
   async runNow(id: string): Promise<{ ran: boolean; error?: string }> {
-    await this.ensureLoaded();
+    const claim = await this.claimJob(id, true);
+    if (claim.error) return { ran: false, error: claim.error };
 
-    const job = this.jobs.find((j) => j.id === id);
-    if (!job) return { ran: false, error: "Job not found" };
-    if (job.state.runningAtMs) return { ran: false, error: "Job is already running" };
-
-    // 立即标记为运行中，防止重复触发（executeJobInternal 内会覆盖为精确时间戳）
-    job.state.runningAtMs = this.deps.nowMs();
-    await this.persist();
-    this.emit({ type: "statusChanged", status: this.getStatus() });
-
-    // 后台执行，不阻塞 HTTP 响应
-    this.executeJobInternal(job, { forced: true })
-      .then(() => this.persist())
-      .then(() => {
-        this.armTimer();
-        this.emit({ type: "statusChanged", status: this.getStatus() });
-      })
-      .catch((err) => cronLogger.error("runNow background execution failed:", err));
-
+    void this.executeClaimedJob(claim.value!).catch((err) => {
+      cronLogger.error("runNow background execution failed:", err);
+    });
     return { ran: true };
   }
 
   private async ensureLoaded(): Promise<void> {
     if (this.loaded) return;
+    if (this.loading) return this.loading;
 
-    this.jobs = await this.deps.loadJobs();
-
-    const nowMs = this.deps.nowMs();
-    let dirty = false;
-    for (const job of this.jobs) {
-      if (normalizeEverySchedule(job, nowMs)) {
-        dirty = true;
-      }
-      // 清理陈旧的 runningAtMs：服务重启时不可能有任务还在运行
-      if (job.state.runningAtMs != null) {
-        job.state.runningAtMs = undefined;
-        if (job.enabled && job.state.nextRunAtMs === undefined) {
-          job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
+    this.loading = (async () => {
+      const nowMs = this.deps.nowMs();
+      if (this.deps.mutateJobs) {
+        const transaction = await this.deps.mutateJobs((jobs) => {
+          let dirty = false;
+          for (const job of jobs) {
+            if (normalizeStoredJob(job, nowMs)) dirty = true;
+          }
+          return dirty;
+        });
+        this.replaceJobs(transaction.jobs);
+      } else {
+        const jobs = await this.deps.loadJobs();
+        let dirty = false;
+        for (const job of jobs) {
+          if (normalizeStoredJob(job, nowMs)) dirty = true;
         }
-        dirty = true;
+        this.replaceJobs(jobs);
+        if (dirty) await this.deps.saveJobs(this.jobs);
       }
-      if (job.enabled && job.state.nextRunAtMs === undefined) {
-        job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
-      }
-    }
+      this.loaded = true;
+    })();
 
-    if (dirty) {
-      await this.persist();
+    try {
+      await this.loading;
+    } finally {
+      this.loading = null;
     }
-
-    this.loaded = true;
   }
 
-  private async persist(): Promise<void> {
-    await this.deps.saveJobs(this.jobs);
+  private async mutate<T>(
+    mutator: (jobs: CronJob[]) => MutationOutcome<T> | Promise<MutationOutcome<T>>,
+  ): Promise<MutationOutcome<T>> {
+    await this.ensureLoaded();
+
+    const previous = this.mutationQueue;
+    let release!: () => void;
+    this.mutationQueue = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+
+    try {
+      if (this.deps.mutateJobs) {
+        const transaction = await this.deps.mutateJobs(mutator);
+        this.replaceJobs(transaction.jobs);
+        return transaction.result;
+      }
+
+      const outcome = await mutator(this.jobs);
+      if (outcome.changed) await this.deps.saveJobs(this.jobs);
+      return outcome;
+    } finally {
+      release();
+    }
+  }
+
+  private replaceJobs(jobs: CronJob[]): void {
+    this.jobs = jobs;
+    this.cacheGeneration += 1;
+  }
+
+  private afterJobsChanged(): void {
+    this.armTimer();
+    this.emit({ type: "statusChanged", status: this.getStatus() });
+  }
+
+  private statusFingerprint(): string {
+    const status = this.getStatus();
+    return JSON.stringify(status);
   }
 
   private armTimer(): void {
@@ -465,7 +651,7 @@ export class CronService {
       this.timer = null;
     }
 
-    if (!this.enabled) return;
+    if (!this.enabled || !this.started) return;
 
     const nextAt = computeNextWakeAtMs(this.jobs);
     if (nextAt === undefined) return;
@@ -484,24 +670,187 @@ export class CronService {
   }
 
   private async onTimer(): Promise<void> {
-    if (this.running) return;
+    if (this.running || !this.enabled || !this.started) return;
     this.running = true;
+    const lifecycleGeneration = this.lifecycleGeneration;
 
     try {
       await this.ensureLoaded();
+      if (this.deps.mutateJobs) await this.refresh();
+      if (!this.enabled || !this.started || lifecycleGeneration !== this.lifecycleGeneration) return;
 
       const nowMs = this.deps.nowMs();
-      const dueJobs = findDueJobs(this.jobs, nowMs);
-
-      await Promise.allSettled(
-        dueJobs.map((job) => this.executeJobInternal(job, { forced: false }))
-      );
-
-      await this.persist();
+      const dueJobIds = findDueJobs(this.jobs, nowMs).map((job) => job.id);
+      const claims = await Promise.allSettled(dueJobIds.map((id) => this.claimJob(id, false)));
+      for (const result of claims) {
+        if (result.status !== "fulfilled" || !result.value.value) continue;
+        const claim = result.value.value;
+        if (!this.enabled || !this.started || lifecycleGeneration !== this.lifecycleGeneration) {
+          await this.releaseClaim(claim);
+          continue;
+        }
+        // A hanging timeoutSeconds=0 job must not hold the scheduler tick open.
+        // The persisted claim prevents duplicate execution; completion/watchdog
+        // re-arm scheduling independently.
+        void this.executeClaimedJob(claim).catch((err) => {
+          cronLogger.error("Scheduled cron execution failed:", err);
+        });
+      }
     } finally {
       this.running = false;
       this.armTimer();
       this.emit({ type: "statusChanged", status: this.getStatus() });
+    }
+  }
+
+  private async claimJob(
+    id: string,
+    forced: boolean,
+  ): Promise<{ value?: ClaimedJob; error?: string }> {
+    const startedAtMs = this.deps.nowMs();
+    const runId = `${startedAtMs}-${randomUUID()}`;
+    const runLease = this.deps.tryAcquireRunLease
+      ? await this.deps.tryAcquireRunLease(id)
+      : undefined;
+    if (this.deps.tryAcquireRunLease && !runLease) {
+      return { error: "Job is already running" };
+    }
+
+    let claimed = false;
+    try {
+      const outcome = await this.mutate((jobs): MutationOutcome<{ claim?: ClaimedJob; error?: string }> => {
+        if (!forced && (!this.enabled || !this.started)) {
+          return { changed: false, value: {} };
+        }
+        const job = jobs.find((candidate) => candidate.id === id);
+        if (!job) return { changed: false, value: { error: "Job not found" } };
+        if (job.state.runningAtMs != null || job.state.runningRunId != null) {
+          if (!runLease) {
+            return { changed: false, value: { error: "Job is already running" } };
+          }
+          // Holding the job-level PG lease proves the previous process no
+          // longer owns the execution (its PG session ended). Recover the
+          // durable orphan before creating the new claim.
+          delete job.state.runningAtMs;
+          delete job.state.runningRunId;
+          delete job.state.runningDeadlineAtMs;
+          delete job.state.runningTimedOutAtMs;
+          delete job.state.runningOwnerPid;
+          delete job.state.runningOwnerHostname;
+        }
+        if (!forced) {
+          const nextRunAtMs = job.state.nextRunAtMs;
+          if (!job.enabled || nextRunAtMs === undefined || nextRunAtMs > startedAtMs) {
+            return { changed: false, value: {} };
+          }
+        }
+
+        const claimedUpdatedAtMs = job.updatedAtMs;
+        job.state.runningAtMs = startedAtMs;
+        job.state.runningRunId = runId;
+        job.state.runningOwnerPid = process.pid;
+        job.state.runningOwnerHostname = os.hostname();
+        delete job.state.runningTimedOutAtMs;
+        const timeoutMs = this.getJobTimeoutSeconds(job) * 1000 || WATCHDOG_FALLBACK_TIMEOUT_MS;
+        job.state.runningDeadlineAtMs = startedAtMs + timeoutMs + WATCHDOG_OVERTIME_MS;
+        return {
+          changed: true,
+          value: {
+            claim: {
+              job: cloneJob(job),
+              runId,
+              startedAtMs,
+              claimedUpdatedAtMs,
+              forced,
+              runLease: runLease ?? undefined,
+            },
+          },
+        };
+      });
+
+      claimed = !!outcome.value.claim;
+      if (outcome.changed && forced) this.afterJobsChanged();
+      return { value: outcome.value.claim, error: outcome.value.error };
+    } finally {
+      if (!claimed) await runLease?.release().catch(() => {});
+    }
+  }
+
+  private async releaseClaim(claim: ClaimedJob): Promise<void> {
+    try {
+      const outcome = await this.mutate((jobs): MutationOutcome<boolean> => {
+        const job = jobs.find((candidate) => candidate.id === claim.job.id);
+        if (!job || job.state.runningRunId !== claim.runId) {
+          return { changed: false, value: false };
+        }
+        delete job.state.runningAtMs;
+        delete job.state.runningRunId;
+        delete job.state.runningDeadlineAtMs;
+        delete job.state.runningTimedOutAtMs;
+        delete job.state.runningOwnerPid;
+        delete job.state.runningOwnerHostname;
+        return { changed: true, value: true };
+      });
+      if (outcome.changed) this.afterJobsChanged();
+    } finally {
+      await claim.runLease?.release().catch(() => {});
+    }
+  }
+
+  private async releaseSettledTimedOutClaim(jobId: string, runId: string): Promise<void> {
+    const outcome = await this.mutate((jobs): MutationOutcome<boolean> => {
+      const job = jobs.find((candidate) => candidate.id === jobId);
+      if (
+        !job
+        || job.state.runningRunId !== runId
+        || job.state.runningTimedOutAtMs == null
+      ) {
+        return { changed: false, value: false };
+      }
+      delete job.state.runningAtMs;
+      delete job.state.runningRunId;
+      delete job.state.runningDeadlineAtMs;
+      delete job.state.runningTimedOutAtMs;
+      delete job.state.runningOwnerPid;
+      delete job.state.runningOwnerHostname;
+      return { changed: true, value: true };
+    });
+    if (outcome.changed) this.afterJobsChanged();
+  }
+
+  private async recoverOrphanClaims(): Promise<void> {
+    if (!this.deps.tryAcquireRunLease) return;
+    const candidates = this.jobs
+      .filter((job) => job.state.runningRunId != null)
+      .map((job) => ({ id: job.id, runId: job.state.runningRunId! }));
+
+    for (const candidate of candidates) {
+      let lease: CronRunLease | null = null;
+      try {
+        lease = await this.deps.tryAcquireRunLease(candidate.id);
+        if (!lease) continue;
+        const outcome = await this.mutate((jobs): MutationOutcome<boolean> => {
+          const job = jobs.find((current) => current.id === candidate.id);
+          if (!job || job.state.runningRunId !== candidate.runId) {
+            return { changed: false, value: false };
+          }
+          delete job.state.runningAtMs;
+          delete job.state.runningRunId;
+          delete job.state.runningDeadlineAtMs;
+          delete job.state.runningTimedOutAtMs;
+          delete job.state.runningOwnerPid;
+          delete job.state.runningOwnerHostname;
+          return { changed: true, value: true };
+        });
+        if (outcome.changed) {
+          cronLogger.warn(`Recovered orphan cron claim: ${candidate.id} (${candidate.runId})`);
+          this.afterJobsChanged();
+        }
+      } catch (err) {
+        cronLogger.error(`Failed to probe orphan cron claim ${candidate.id}:`, err);
+      } finally {
+        await lease?.release().catch(() => {});
+      }
     }
   }
 
@@ -512,21 +861,29 @@ export class CronService {
     return this.deps.defaultTimeoutSeconds ?? 1800;
   }
 
-  private async executeJobInternal(
-    job: CronJob,
-    opts: { forced: boolean }
-  ): Promise<void> {
-    const startedAt = this.deps.nowMs();
-    const runId = `${startedAt}-${randomUUID()}`;
-    job.state.runningAtMs = startedAt;
+  private async executeClaimedJob(claim: ClaimedJob): Promise<void> {
+    try {
+      await this.executeClaimedJobInternal(claim);
+    } finally {
+      if (!claim.releaseLeaseAfterSettlement) {
+        await claim.runLease?.release().catch(() => {});
+      }
+    }
+  }
+
+  private async executeClaimedJobInternal(claim: ClaimedJob): Promise<void> {
+    const { job, runId, startedAtMs, claimedUpdatedAtMs, forced } = claim;
     this.emit({ type: "started", jobId: job.id, jobName: job.name });
 
     let status: "ok" | "error" | "skipped" = "ok";
     let error: string | undefined;
+    let executionTimedOut = false;
     let output: string | undefined;
+    let suppressNotification = false;
     let sessionId: string | undefined;
     let transcriptPath: string | undefined;
     let model: string | undefined;
+    let ongoingExecution: ReturnType<CronServiceDeps["executeJob"]> | undefined;
 
     // 通过回调提前捕获 sessionId，确保 pTimeout 打断 promise 后仍可归组
     const onSessionId = (sid: string, tp?: string) => {
@@ -535,65 +892,113 @@ export class CronService {
     };
 
     try {
-      // 硬超时 = executor 超时 + 60s 安全余量
       const jobTimeoutSec = this.getJobTimeoutSeconds(job);
       const hardTimeoutMs = jobTimeoutSec > 0 ? (jobTimeoutSec + 60) * 1000 : 0;
-
+      ongoingExecution = this.deps.executeJob(job, { onSessionId });
       const result = hardTimeoutMs > 0
-        ? await pTimeout(this.deps.executeJob(job, { onSessionId }), hardTimeoutMs,
+        ? await pTimeout(ongoingExecution, hardTimeoutMs,
             `Service-level hard timeout after ${jobTimeoutSec + 60}s`)
-        : await this.deps.executeJob(job, { onSessionId });
+        : await ongoingExecution;
       status = result.status;
       error = result.error;
       output = result.output;
+      suppressNotification = result.suppressNotification === true;
       sessionId = result.sessionId;
       transcriptPath = result.transcriptPath;
       model = result.modelRef;
     } catch (err) {
       status = "error";
+      executionTimedOut = err instanceof ServiceTimeoutError;
       error = String(err);
     }
 
-    const endedAt = this.deps.nowMs();
-    const durationMs = Math.max(0, endedAt - startedAt);
-
-    job.state.runningAtMs = undefined;
-    job.state.lastRunAtMs = startedAt;
-    job.state.lastStatus = status;
-    job.state.lastError = error;
-    job.state.lastDurationMs = durationMs;
-    job.state.lastOutput = output?.substring(0, 500);
-
-    if (job.schedule.kind === "at") {
-      // 一次性任务：执行后不应再自动调度下一次（避免失败后 nextRunAtMs 仍在过去导致反复触发）
-      job.state.nextRunAtMs = undefined;
-      if (status === "ok") {
-        job.enabled = false;
+    const endedAtMs = this.deps.nowMs();
+    const durationMs = Math.max(0, endedAtMs - startedAtMs);
+    type CompletionResult = { job: CronJob | undefined; suppressFinalization: boolean };
+    const completion = await this.mutate((jobs): MutationOutcome<CompletionResult> => {
+      const current = jobs.find((candidate) => candidate.id === job.id);
+      if (!current || current.state.runningRunId !== runId) {
+        return {
+          changed: false,
+          value: { job: current ? cloneJob(current) : undefined, suppressFinalization: true },
+        };
       }
-    } else if (!opts.forced && job.enabled) {
-      job.state.nextRunAtMs = computeJobNextRunAtMs(job, endedAt);
+
+      if (current.state.runningTimedOutAtMs != null && !executionTimedOut) {
+        // The watchdog already finalized this run as timed out. A late executor
+        // result may only release its claim; it must not overwrite the error or
+        // produce a second run log, notification, or finished event.
+        delete current.state.runningAtMs;
+        delete current.state.runningRunId;
+        delete current.state.runningDeadlineAtMs;
+        delete current.state.runningTimedOutAtMs;
+        delete current.state.runningOwnerPid;
+        delete current.state.runningOwnerHostname;
+        return {
+          changed: true,
+          value: { job: cloneJob(current), suppressFinalization: true },
+        };
+      }
+
+      if (executionTimedOut) {
+        // pTimeout only stops waiting; it cannot prove the underlying executor
+        // stopped. Retain the claim and disable scheduling to prevent overlap.
+        current.state.runningTimedOutAtMs = endedAtMs;
+        current.enabled = false;
+        delete current.state.nextRunAtMs;
+      } else {
+        delete current.state.runningAtMs;
+        delete current.state.runningRunId;
+        delete current.state.runningDeadlineAtMs;
+        delete current.state.runningTimedOutAtMs;
+        delete current.state.runningOwnerPid;
+        delete current.state.runningOwnerHostname;
+      }
+      current.state.lastRunAtMs = startedAtMs;
+      current.state.lastStatus = status;
+      current.state.lastError = error;
+      current.state.lastDurationMs = durationMs;
+      current.state.lastOutput = output?.substring(0, 500);
+
+      // A user/system edit during execution owns the new enabled/schedule and
+      // nextRun state. Old completion may only release its matching claim.
+      if (!executionTimedOut && current.updatedAtMs === claimedUpdatedAtMs) {
+        if (current.schedule.kind === "at") {
+          current.state.nextRunAtMs = undefined;
+          if (status === "ok") current.enabled = false;
+        } else if (!forced && current.enabled) {
+          current.state.nextRunAtMs = computeJobNextRunAtMs(current, endedAtMs);
+        }
+      }
+      return {
+        changed: true,
+        value: { job: cloneJob(current), suppressFinalization: false },
+      };
+    });
+    if (completion.changed) this.afterJobsChanged();
+    if (completion.value.suppressFinalization) {
+      cronLogger.info(`Stale cron completion suppressed: ${job.name} (${job.id})`);
+      return;
+    }
+    if (executionTimedOut && ongoingExecution) {
+      claim.releaseLeaseAfterSettlement = true;
+      const releaseAfterSettlement = async () => {
+        try {
+          await this.releaseSettledTimedOutClaim(job.id, runId);
+        } finally {
+          await claim.runLease?.release().catch(() => {});
+        }
+      };
+      void ongoingExecution.then(releaseAfterSettlement, releaseAfterSettlement).catch((err) => {
+        cronLogger.error("Failed to release settled timed-out cron claim:", err);
+      });
     }
 
     model = model ?? (job.payload.kind === "agentTurn" ? job.payload.model : undefined);
-
-    await this.deps.appendRunLog({
-      runId,
-      startedAtMs: startedAt,
-      endedAtMs: endedAt,
-      jobId: job.id,
-      jobName: job.name,
-      status,
-      error,
-      sessionId,
-      transcriptPath,
-      model,
-      durationMs,
-    });
-
     const run: CronRunLogEntry = {
       runId,
-      startedAtMs: startedAt,
-      endedAtMs: endedAt,
+      startedAtMs,
+      endedAtMs,
       jobId: job.id,
       jobName: job.name,
       status,
@@ -603,9 +1008,11 @@ export class CronService {
       model,
       durationMs,
     };
+    await this.deps.appendRunLog(run);
 
-    if (this.deps.notify) {
-      await this.deps.notify({ job, run, output, error }).catch((e) => {
+    const notificationJob = completion.value.job ?? job;
+    if (this.deps.notify && !suppressNotification) {
+      await this.deps.notify({ job: notificationJob, run, output, error }).catch((e) => {
         cronLogger.error("Failed to send notification:", e);
       });
     }
@@ -634,6 +1041,24 @@ export class CronService {
     );
   }
 
+  private startHotReload(): void {
+    this.stopHotReload();
+    if (!this.deps.mutateJobs) return;
+    this.reloadTimer = setInterval(() => {
+      this.refresh().catch((err) => {
+        cronLogger.error("Cron store hot reload failed:", err);
+      });
+    }, STORE_RELOAD_INTERVAL_MS);
+    this.reloadTimer.unref?.();
+  }
+
+  private stopHotReload(): void {
+    if (this.reloadTimer) {
+      clearInterval(this.reloadTimer);
+      this.reloadTimer = null;
+    }
+  }
+
   private startWatchdog(): void {
     this.stopWatchdog();
     this.watchdogTimer = setInterval(() => {
@@ -652,59 +1077,73 @@ export class CronService {
   }
 
   private async checkStaleJobs(): Promise<void> {
+    await this.ensureLoaded();
+    if (this.deps.mutateJobs) await this.refresh();
+    await this.recoverOrphanClaims();
+
     const nowMs = this.deps.nowMs();
-    let cleaned = false;
+    const candidates = this.jobs
+      .filter((job) => job.state.runningAtMs != null && job.state.runningTimedOutAtMs == null)
+      .map((job) => {
+        const startedAtMs = job.state.runningAtMs!;
+        const fallbackDurationMs = (this.getJobTimeoutSeconds(job) * 1000 || WATCHDOG_FALLBACK_TIMEOUT_MS)
+          + WATCHDOG_OVERTIME_MS;
+        return {
+          id: job.id,
+          runningRunId: job.state.runningRunId,
+          startedAtMs,
+          deadlineAtMs: job.state.runningDeadlineAtMs ?? startedAtMs + fallbackDurationMs,
+        };
+      })
+      .filter((candidate) => nowMs > candidate.deadlineAtMs);
 
-    for (const job of this.jobs) {
-      if (job.state.runningAtMs == null) continue;
+    for (const candidate of candidates) {
+      const elapsed = nowMs - candidate.startedAtMs;
+      const deadlineSec = Math.round((candidate.deadlineAtMs - candidate.startedAtMs) / 1000);
+      const cleanup = await this.mutate((jobs): MutationOutcome<CronJob | undefined> => {
+        const job = jobs.find((current) => current.id === candidate.id);
+        if (
+          !job ||
+          job.state.runningAtMs !== candidate.startedAtMs ||
+          job.state.runningRunId !== candidate.runningRunId ||
+          job.state.runningTimedOutAtMs != null
+        ) {
+          return { changed: false, value: undefined };
+        }
 
-      const elapsed = nowMs - job.state.runningAtMs;
-      const jobTimeoutMs = this.getJobTimeoutSeconds(job) * 1000;
-      const effectiveTimeoutMs = jobTimeoutMs > 0 ? jobTimeoutMs : WATCHDOG_FALLBACK_TIMEOUT_MS;
-      const deadlineMs = effectiveTimeoutMs + WATCHDOG_OVERTIME_MS;
+        // Do not clear the claim: the underlying Promise may still be running
+        // and cannot be safely cancelled here. Disable future scheduling while
+        // retaining the token, otherwise a retry could overlap the old run.
+        job.state.runningTimedOutAtMs = nowMs;
+        job.enabled = false;
+        delete job.state.nextRunAtMs;
+        job.state.lastStatus = "error";
+        job.state.lastError = `Watchdog: exceeded ${deadlineSec}s deadline; disabled while original run is still active`;
+        job.state.lastDurationMs = elapsed;
+        return { changed: true, value: cloneJob(job) };
+      });
+      if (!cleanup.changed || !cleanup.value) continue;
 
-      if (elapsed <= deadlineMs) continue;
-
-      const deadlineSec = Math.round(deadlineMs / 1000);
+      const job = cleanup.value;
       cronLogger.warn(
-        `Watchdog: job "${job.name}" (${job.id}) exceeded ${deadlineSec}s deadline, force-cleaning`
+        `Watchdog: job "${job.name}" (${job.id}) exceeded ${deadlineSec}s deadline; disabled with claim retained`
       );
-
-      const startedAt = job.state.runningAtMs;
-      job.state.runningAtMs = undefined;
-      job.state.lastStatus = "error";
-      job.state.lastError = `Watchdog: exceeded ${deadlineSec}s deadline`;
-      job.state.lastDurationMs = elapsed;
-
-      if (job.enabled) {
-        job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
-      }
-
-      const runId = `${startedAt}-watchdog`;
-      await this.deps.appendRunLog({
+      const runId = `${candidate.startedAtMs}-watchdog`;
+      const run: CronRunLogEntry = {
         runId,
-        startedAtMs: startedAt,
+        startedAtMs: candidate.startedAtMs,
         endedAtMs: nowMs,
         jobId: job.id,
         jobName: job.name,
         status: "error",
         error: job.state.lastError,
         durationMs: elapsed,
-      }).catch((e) => {
+      };
+      await this.deps.appendRunLog(run).catch((e) => {
         cronLogger.error("Watchdog: failed to append run log:", e);
       });
 
       if (this.deps.notify) {
-        const run: CronRunLogEntry = {
-          runId,
-          startedAtMs: startedAt,
-          endedAtMs: nowMs,
-          jobId: job.id,
-          jobName: job.name,
-          status: "error",
-          error: job.state.lastError,
-          durationMs: elapsed,
-        };
         await this.deps.notify({ job, run, error: job.state.lastError }).catch((e) => {
           cronLogger.error("Watchdog: failed to send notification:", e);
         });
@@ -718,14 +1157,7 @@ export class CronService {
         error: job.state.lastError,
         durationMs: elapsed,
       });
-
-      cleaned = true;
-    }
-
-    if (cleaned) {
-      await this.persist();
-      this.armTimer();
-      this.emit({ type: "statusChanged", status: this.getStatus() });
+      this.afterJobsChanged();
     }
   }
 

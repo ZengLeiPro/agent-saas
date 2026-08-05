@@ -73,25 +73,9 @@ export const sessionsPreload: Promise<{ sessions: unknown[]; hasMore: boolean } 
     .catch(() => null);
 });
 
-// --- Cron / Users 延迟预取（auth 后等 2 秒再发起，避免与首屏请求竞争带宽） ---
+// --- Users 延迟预取（auth 后等 2 秒再发起，避免与首屏请求竞争带宽） ---
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-export const cronJobsPreload: Promise<unknown[] | null> = authPreload.then(async (result) => {
-  if (result.status === "unauthenticated" || result.status === "error") return null;
-  await delay(2000);
-  return fetch(apiUrl("/api/cron/jobs?includeDisabled=true"), { headers })
-    .then(async (r) => (r.ok ? ((await r.json()).jobs || []) : null))
-    .catch(() => null);
-});
-
-export const cronStatusPreload: Promise<unknown | null> = authPreload.then(async (result) => {
-  if (result.status === "unauthenticated" || result.status === "error") return null;
-  await delay(2000);
-  return fetch(apiUrl("/api/cron/status"), { headers })
-    .then((r) => (r.ok ? r.json() : null))
-    .catch(() => null);
-});
 
 export const usersPreload: Promise<unknown[] | null> = authPreload.then(async (result) => {
   if (result.status === "authenticated" && result.user.role === "admin") {

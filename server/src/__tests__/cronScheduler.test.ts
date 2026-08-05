@@ -129,8 +129,8 @@ describe("cron P0-5 concurrency guards", () => {
         appendRunLog: async () => {},
       });
 
-      // 并发两次 onTimer：第一次置 this.running=true 后进入 async ensureLoaded；
-      // 第二次因 this.running 已为 true 而短路直接返回（不会自己再 findDue+execute）。
+      // 模拟已启动的 scheduler；并发两次 onTimer 时第二次应被 running gate 拦截。
+      (service as any).started = true;
       const t1 = (service as any).onTimer();
       const t2 = (service as any).onTimer();
 

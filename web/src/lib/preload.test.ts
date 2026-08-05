@@ -5,11 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * 因此必须在 import 之前 stub 好 fetch / localStorage / webConfig，并用
  * vi.resetModules + 动态 import 保证每个用例拿到全新的模块级 promise。
  *
- * 只覆盖无 setTimeout 延迟、确定的首跳分支：
+ * 覆盖无 setTimeout 延迟、确定的首跳分支：
  * - authPreload 命中 200 → authenticated，且请求打到 /api/auth/me
  * - 401/非 5xx → unauthenticated；404 → no-auth
  * - sessionsPreload 依赖 authPreload 结果决定是否发起
- * 带随机 jitter 重试与 delay(2000) 的下游预取依赖真实时序，不做断言（见返回说明）。
+ * - Cron 不再导出或发起模块级预取，避免账号切换后复用陈旧数据
+ * 带随机 jitter 重试与 delay(2000) 的其他下游预取不做时序断言。
  */
 
 const BASE = "https://api.example.com";
@@ -102,5 +103,28 @@ describe("preload.sessionsPreload", () => {
     const mod = await import("./preload");
     await expect(mod.sessionsPreload).resolves.toBeNull();
     expect(fetchMock.mock.calls.some(([u]) => (u as string).includes("/api/sessions"))).toBe(false);
+  });
+});
+
+describe("preload Cron isolation", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    localStorage.clear();
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("不再暴露或发起 Cron 模块级预取", async () => {
+    const fetchMock = stubFetchByPath((p) => {
+      if (p.startsWith("/api/auth/me")) return { status: 200, body: authUser };
+      if (p.startsWith("/api/sessions")) return { status: 200, body: { sessions: [] } };
+      return { status: 200, body: {} };
+    });
+
+    const mod = await import("./preload");
+    await Promise.all([mod.authPreload, mod.sessionsPreload]);
+
+    expect(mod).not.toHaveProperty("cronJobsPreload");
+    expect(mod).not.toHaveProperty("cronStatusPreload");
+    expect(fetchMock.mock.calls.some(([url]) => (url as string).includes("/api/cron/"))).toBe(false);
   });
 });

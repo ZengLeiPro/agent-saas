@@ -100,6 +100,19 @@ describe('cron routes coverage', () => {
     await rm(runsDir, { recursive: true, force: true });
   });
 
+  it('GET /status 冷读时先加载最新任务快照', async () => {
+    const service = makeService(runsDir, [
+      makeJob({ id: 'job-1', name: '任务一', owner: OWNER.sub }),
+      makeJob({ id: 'job-2', name: '任务二', owner: OWNER.sub, enabled: false }),
+    ]);
+    const { server, baseUrl } = await startServer(service, runsDir, OWNER);
+    servers.push(server);
+
+    const statusRes = await fetch(`${baseUrl}/api/cron/status`);
+    expect(statusRes.status).toBe(200);
+    expect(await statusRes.json()).toMatchObject({ jobCount: 2, enabledJobCount: 1 });
+  });
+
   it('GET /status 返回服务状态；GET /jobs 只列自己的任务并隐藏他人系统任务', async () => {
     const service = makeService(runsDir, [
       makeJob({ id: 'job-1', name: '我的任务', owner: OWNER.sub }),

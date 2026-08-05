@@ -116,6 +116,44 @@ describe('cron executor', () => {
     );
   });
 
+  it('fails closed when a persisted owner no longer exists', async () => {
+    const result = await executeJob(createOwnedCronJob('must not run'), {
+      runAgent: (...args: any[]) => runAgentMock(...args),
+      agentCwd: '/tmp',
+      sharedDir: '/tmp/.shared',
+      userStore: {
+        reload: vi.fn(),
+        findById: vi.fn(() => undefined),
+      },
+    });
+
+    expect(result).toMatchObject({ status: 'error', output: 'Job owner does not exist' });
+    expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
+  it('applies owner fail-closed to systemEvent before payload dispatch', async () => {
+    const job: CronJob = {
+      ...createOwnedCronJob('unused'),
+      payload: { kind: 'systemEvent', text: 'must not notify' },
+    };
+    const result = await executeJob(job, {
+      runAgent: (...args: any[]) => runAgentMock(...args),
+      agentCwd: '/tmp',
+      sharedDir: '/tmp/.shared',
+      userStore: {
+        reload: vi.fn(),
+        findById: vi.fn(() => undefined),
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: 'error',
+      output: 'Job owner does not exist',
+      suppressNotification: true,
+    });
+    expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
   it('uses the owner tenant when resolving the implicit default model', async () => {
     runAgentMock.mockImplementation((_message: any, _context: any, _options: any, hooks: any) => (async function* () {
       await hooks?.onSessionStart?.('session-tenant-default', '/tmp/session-tenant-default.jsonl');

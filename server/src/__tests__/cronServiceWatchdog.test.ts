@@ -38,6 +38,7 @@ function makeHarness(opts: {
   executeJob?: CronServiceDeps["executeJob"];
   onSessionCreated?: CronServiceDeps["onSessionCreated"];
   defaultTimeoutSeconds?: number;
+  tryAcquireRunLease?: CronServiceDeps["tryAcquireRunLease"];
 } = {}): Harness {
   const clock = { now: 1_000_000 };
   const saved: CronJob[][] = [];
@@ -51,6 +52,7 @@ function makeHarness(opts: {
     saveJobs: async (jobs) => {
       saved.push(jobs.map((j) => ({ ...j })));
     },
+    tryAcquireRunLease: opts.tryAcquireRunLease,
     executeJob: opts.executeJob ?? (async () => ({ status: "ok", output: "done" })),
     appendRunLog: async (entry) => {
       runLogs.push(entry);
@@ -138,7 +140,28 @@ describe("cron service watchdog", () => {
     expect(h.events).toHaveLength(0);
   });
 
-  it("force-cleans a stuck enabled job past the deadline (full causal chain)", async () => {
+  it("freezes the watchdog deadline at claim time when timeout is edited during a run", async () => {
+    const h = makeHarness({ executeJob: hangingExecuteJob });
+    const job = await arrangeStuckJob(h, {
+      name: "timeout-edited",
+      schedule: { kind: "every", everyMs: 86_400_000 },
+      payload: { kind: "agentTurn", message: "do it", timeoutSeconds: 3600 },
+    });
+
+    await h.service.update(job.id, {
+      payload: { kind: "agentTurn", timeoutSeconds: 1 },
+    });
+    h.clear();
+    h.clock.now = 1_000_000 + 300_000;
+    await (h.service as any).checkStaleJobs();
+
+    const after = await h.service.get(job.id);
+    expect(after?.state.runningAtMs).toBe(1_000_000);
+    expect(after?.state.runningDeadlineAtMs).toBe(1_000_000 + 3_780_000);
+    expect(h.runLogs).toHaveLength(0);
+  });
+
+  it("disables a stuck job but retains its claim to prevent overlapping retry", async () => {
     const h = makeHarness({ executeJob: hangingExecuteJob });
     const job = await arrangeStuckJob(h, {
       name: "hung-agent",
@@ -149,17 +172,20 @@ describe("cron service watchdog", () => {
     h.clock.now = 1_780_001; // elapsed = 780_001 > deadline 780_000
     await (h.service as any).checkStaleJobs();
 
-    // 1) job 状态：清 runningAtMs、置 error、记录时长
+    // 1) 保留原运行 claim 并停用任务，避免旧 Promise 与重试并行。
     const after = await h.service.get(job.id);
-    expect(after?.state.runningAtMs).toBeUndefined();
+    expect(after?.state.runningAtMs).toBe(1_000_000);
+    expect(after?.state.runningRunId).toBeDefined();
+    expect(after?.state.runningTimedOutAtMs).toBe(1_780_001);
+    expect(after?.enabled).toBe(false);
     expect(after?.state.lastStatus).toBe("error");
-    expect(after?.state.lastError).toBe("Watchdog: exceeded 780s deadline");
+    expect(after?.state.lastError).toBe(
+      "Watchdog: exceeded 780s deadline; disabled while original run is still active",
+    );
     expect(after?.state.lastDurationMs).toBe(780_001);
-    // 已知行为：watchdog 不更新 lastRunAtMs（只有 executeJobInternal 会写）
     expect(after?.state.lastRunAtMs).toBeUndefined();
-
-    // 2) enabled job 重排 nextRun：anchor=1_000_000, every=86_400_000 → 87_400_000
-    expect(after?.state.nextRunAtMs).toBe(87_400_000);
+    expect(after?.state.nextRunAtMs).toBeUndefined();
+    expect(await h.service.runNow(job.id)).toEqual({ ran: false, error: "Job is already running" });
 
     // 3) run log：runId = `${startedAt}-watchdog`
     expect(h.runLogs).toEqual([
@@ -170,7 +196,7 @@ describe("cron service watchdog", () => {
         jobId: job.id,
         jobName: "hung-agent",
         status: "error",
-        error: "Watchdog: exceeded 780s deadline",
+        error: "Watchdog: exceeded 780s deadline; disabled while original run is still active",
         durationMs: 780_001,
       },
     ]);
@@ -179,7 +205,7 @@ describe("cron service watchdog", () => {
     expect(h.notifies).toHaveLength(1);
     expect(h.notifies[0].job.id).toBe(job.id);
     expect(h.notifies[0].run).toEqual(h.runLogs[0]);
-    expect(h.notifies[0].error).toBe("Watchdog: exceeded 780s deadline");
+    expect(h.notifies[0].error).toBe("Watchdog: exceeded 780s deadline; disabled while original run is still active");
     expect(h.notifies[0].output).toBeUndefined();
 
     // 5) persist 一次 + finished/statusChanged 事件（顺序：finished → statusChanged）
@@ -190,17 +216,54 @@ describe("cron service watchdog", () => {
       jobId: job.id,
       jobName: "hung-agent",
       status: "error",
-      error: "Watchdog: exceeded 780s deadline",
+      error: "Watchdog: exceeded 780s deadline; disabled while original run is still active",
       durationMs: 780_001,
     });
     expect(statusEvents(h.events)[0].status).toEqual({
       enabled: true,
       jobCount: 1,
-      enabledJobCount: 1,
-      nextWakeAtMs: 87_400_000,
-      runningJobId: undefined,
-      runningJobIds: undefined,
+      enabledJobCount: 0,
+      nextWakeAtMs: undefined,
+      runningJobId: job.id,
+      runningJobIds: [job.id],
     });
+  });
+
+  it("late watchdog completion only releases the claim and preserves the timeout result", async () => {
+    let resolveExecution!: (value: { status: "ok"; output: string }) => void;
+    const execution = new Promise<{ status: "ok"; output: string }>((resolve) => {
+      resolveExecution = resolve;
+    });
+    const h = makeHarness({ executeJob: () => execution });
+    const job = await arrangeStuckJob(h, {
+      name: "late-watchdog-result",
+      schedule: { kind: "every", everyMs: 86_400_000 },
+      payload: { kind: "agentTurn", message: "slow", timeoutSeconds: 0 },
+    });
+
+    h.clock.now = 1_000_000 + 21_780_001;
+    await (h.service as any).checkStaleJobs();
+    const timedOut = await h.service.get(job.id);
+    expect(timedOut?.state.runningTimedOutAtMs).toBe(h.clock.now);
+    expect(timedOut?.state.lastStatus).toBe("error");
+    expect(h.runLogs).toHaveLength(1);
+    expect(h.notifies).toHaveLength(1);
+
+    resolveExecution({ status: "ok", output: "late success" });
+    await flushMicrotasks();
+
+    const settled = await h.service.get(job.id);
+    expect(settled?.state.runningAtMs).toBeUndefined();
+    expect(settled?.state.runningRunId).toBeUndefined();
+    expect(settled?.state.runningTimedOutAtMs).toBeUndefined();
+    expect(settled?.enabled).toBe(false);
+    expect(settled?.state.lastStatus).toBe("error");
+    expect(settled?.state.lastError).toBe(
+      "Watchdog: exceeded 21780s deadline; disabled while original run is still active",
+    );
+    expect(h.runLogs).toHaveLength(1);
+    expect(h.notifies).toHaveLength(1);
+    expect(h.events.filter((event) => event.type === "finished")).toHaveLength(1);
   });
 
   it("falls back to 6h deadline when job timeoutSeconds=0 (no hard timeout)", async () => {
@@ -217,11 +280,15 @@ describe("cron service watchdog", () => {
     expect((await h.service.get(job.id))?.state.runningAtMs).toBe(1_000_000);
     expect(h.runLogs).toHaveLength(0);
 
-    h.clock.now = 1_000_000 + 21_780_001; // 超过边界 → 清理
+    h.clock.now = 1_000_000 + 21_780_001; // 超过边界 → 停用并保留 claim
     await (h.service as any).checkStaleJobs();
     const after = await h.service.get(job.id);
-    expect(after?.state.runningAtMs).toBeUndefined();
-    expect(after?.state.lastError).toBe("Watchdog: exceeded 21780s deadline");
+    expect(after?.state.runningAtMs).toBe(1_000_000);
+    expect(after?.state.runningTimedOutAtMs).toBe(h.clock.now);
+    expect(after?.enabled).toBe(false);
+    expect(after?.state.lastError).toBe(
+      "Watchdog: exceeded 21780s deadline; disabled while original run is still active",
+    );
     expect(h.runLogs).toHaveLength(1);
     expect(h.runLogs[0].runId).toBe("1000000-watchdog");
     expect(h.runLogs[0].durationMs).toBe(21_780_001);
@@ -245,10 +312,12 @@ describe("cron service watchdog", () => {
     await (h.service as any).checkStaleJobs();
 
     const after = await h.service.get(job.id);
-    expect(after?.state.runningAtMs).toBeUndefined();
+    expect(after?.state.runningAtMs).toBe(1_000_000);
+    expect(after?.state.runningTimedOutAtMs).toBe(1_240_001);
     expect(after?.state.lastStatus).toBe("error");
-    expect(after?.state.lastError).toBe("Watchdog: exceeded 240s deadline");
-    // disabled job 不重排 nextRun
+    expect(after?.state.lastError).toBe(
+      "Watchdog: exceeded 240s deadline; disabled while original run is still active",
+    );
     expect(after?.state.nextRunAtMs).toBeUndefined();
     expect(h.runLogs).toHaveLength(1);
     expect(h.runLogs[0].runId).toBe("1000000-watchdog");
@@ -269,21 +338,30 @@ describe("cron service watchdog", () => {
     await h.service.runNow(job.id);
     h.clear();
 
-    // 越过 deadline 后推进 60s：interval 触发 checkStaleJobs 完成清理
+    // 越过 deadline 后推进 60s：interval 触发告警、停用并保留 claim。
     h.clock.now = 1_780_001;
     await vi.advanceTimersByTimeAsync(60_000);
-    expect((await h.service.get(job.id))?.state.runningAtMs).toBeUndefined();
+    const timedOut = await h.service.get(job.id);
+    expect(timedOut?.state.runningAtMs).toBe(1_000_000);
+    expect(timedOut?.state.runningTimedOutAtMs).toBe(1_780_001);
+    expect(timedOut?.enabled).toBe(false);
     expect(h.runLogs).toHaveLength(1);
     expect(h.runLogs[0].runId).toBe("1000000-watchdog");
 
-    // 再次卡死后 stop()：即使远超 deadline 且推进多个 interval，也不再清理
-    await h.service.runNow(job.id);
-    expect((await h.service.get(job.id))?.state.runningAtMs).toBe(1_780_001);
+    // 新任务在 stop() 后即使远超 deadline，也不会被 watchdog 处理。
+    const second = await h.service.add({
+      name: "stopped-watchdog",
+      schedule: { kind: "every", everyMs: 86_400_000 },
+      payload: { kind: "agentTurn", message: "do it", timeoutSeconds: 600 },
+    });
+    await h.service.runNow(second.id);
+    expect((await h.service.get(second.id))?.state.runningAtMs).toBe(1_780_001);
+    h.clear();
     h.service.stop();
     h.clock.now = 1_780_001 + 780_002;
     await vi.advanceTimersByTimeAsync(180_000);
-    expect((await h.service.get(job.id))?.state.runningAtMs).toBe(1_780_001);
-    expect(h.runLogs).toHaveLength(1);
+    expect((await h.service.get(second.id))?.state.runningTimedOutAtMs).toBeUndefined();
+    expect(h.runLogs).toHaveLength(0);
   });
 });
 
@@ -328,7 +406,7 @@ describe("cron service start/stop lifecycle", () => {
     // endedAt=25_000，anchor=0 → 下一次对齐到 30_000
     expect(after?.state.nextRunAtMs).toBe(30_000);
 
-    expect(statusEvents(h.events).map((e) => e.status.enabled)).toEqual([true, false, true, true]);
+    expect(statusEvents(h.events).map((e) => e.status.enabled)).toEqual([true, false, true, true, true]);
   });
 });
 
@@ -397,17 +475,28 @@ describe("cron service normalizeEverySchedule (load-time backfill)", () => {
 });
 
 describe("cron service hard timeout (pTimeout)", () => {
-  it("rejects a hung execution with the exact timeout message and records the error run", async () => {
+  it("records a hard timeout while retaining the claim until the underlying execution stops", async () => {
     vi.useFakeTimers();
     const sessionCreated: Array<[string, string, string, string | undefined]> = [];
+    let leaseHeld = false;
+    const leaseReleased = vi.fn(async () => { leaseHeld = false; });
+    let resolveExecution!: (value: { status: "ok"; output: string }) => void;
+    const execution = new Promise<{ status: "ok"; output: string }>((resolve) => {
+      resolveExecution = resolve;
+    });
     const h = makeHarness({
       // 卡死前先通过 hook 上报 sessionId，验证 pTimeout 打断后仍可归组
       executeJob: (_job, hooks) => {
         hooks?.onSessionId?.("sess-123", "/tmp/transcript.jsonl");
-        return new Promise(() => {});
+        return execution;
       },
       onSessionCreated: async (jobId, jobName, sessionId, owner) => {
         sessionCreated.push([jobId, jobName, sessionId, owner]);
+      },
+      tryAcquireRunLease: async () => {
+        if (leaseHeld) return null;
+        leaseHeld = true;
+        return { release: leaseReleased };
       },
     });
     const job = await h.service.add(
@@ -429,13 +518,16 @@ describe("cron service hard timeout (pTimeout)", () => {
     await flushMicrotasks();
 
     const after = await h.service.get(job.id);
-    expect(after?.state.runningAtMs).toBeUndefined();
+    expect(after?.state.runningAtMs).toBe(1_000_000);
+    expect(after?.state.runningRunId).toBeDefined();
+    expect(after?.state.runningTimedOutAtMs).toBe(1_061_000);
     expect(after?.state.lastStatus).toBe("error");
     expect(after?.state.lastError).toBe("Error: Service-level hard timeout after 61s");
     expect(after?.state.lastDurationMs).toBe(61_000);
-    // kind=at 执行失败：不再调度下一次，但保持 enabled（成功才会自动禁用）
     expect(after?.state.nextRunAtMs).toBeUndefined();
-    expect(after?.enabled).toBe(true);
+    expect(after?.enabled).toBe(false);
+    expect(await h.service.runNow(job.id)).toEqual({ ran: false, error: "Job is already running" });
+    expect(leaseReleased).not.toHaveBeenCalled();
 
     expect(h.runLogs).toHaveLength(1);
     expect(h.runLogs[0]).toMatchObject({
@@ -467,5 +559,16 @@ describe("cron service hard timeout (pTimeout)", () => {
       owner: "user-1",
       output: undefined,
     });
+
+    resolveExecution({ status: "ok", output: "late success" });
+    await flushMicrotasks();
+    const settled = await h.service.get(job.id);
+    expect(settled?.state.runningAtMs).toBeUndefined();
+    expect(settled?.state.runningTimedOutAtMs).toBeUndefined();
+    expect(settled?.enabled).toBe(false);
+    expect(settled?.state.lastStatus).toBe("error");
+    expect(h.runLogs).toHaveLength(1);
+    expect(h.notifies).toHaveLength(1);
+    expect(leaseReleased).toHaveBeenCalledTimes(1);
   });
 });

@@ -584,10 +584,27 @@ describe('executor memory_poll', () => {
     available,
     hasActivity: vi.fn(async () => hasActivity),
   });
+  const enabledTenantStore = {
+    reload: vi.fn(),
+    findById: vi.fn(() => ({ id: 'kaiyan', name: 'Kaiyan', disabled: false })),
+    getSettings: vi.fn(() => ({ features: { memoryPollingEnabled: true } })),
+  };
+  const executeMemoryPollForTest = (opts: Parameters<typeof executeJob>[1]) => executeJob(
+    memoryPollJob(),
+    {
+      ...opts,
+      tenantStore: enabledTenantStore as never,
+      memoryPoll: {
+        enabled: true,
+        isExecutionEnabled: () => true,
+        ...opts.memoryPoll,
+      },
+    },
+  );
 
   it('48h 无活动 → skipped 且不起 run', async () => {
     const runAgent = vi.fn();
-    const result = await executeJob(memoryPollJob(), {
+    const result = await executeMemoryPollForTest({
       runAgent: runAgent as never,
       agentCwd: '/tmp',
       sharedDir: '/tmp/.shared',
@@ -600,7 +617,7 @@ describe('executor memory_poll', () => {
 
   it('预检数据源不可用 → skipped（fail-closed 不空跑）', async () => {
     const runAgent = vi.fn();
-    const result = await executeJob(memoryPollJob(), {
+    const result = await executeMemoryPollForTest({
       runAgent: runAgent as never,
       agentCwd: '/tmp',
       sharedDir: '/tmp/.shared',
@@ -611,10 +628,80 @@ describe('executor memory_poll', () => {
     expect(runAgent).not.toHaveBeenCalled();
   });
 
+  it('执行前平台开关已关闭 → skipped', async () => {
+    const runAgent = vi.fn();
+    const result = await executeMemoryPollForTest({
+      runAgent: runAgent as never,
+      agentCwd: '/tmp',
+      sharedDir: '/tmp/.shared',
+      userStore,
+      userActivityService: activity(true) as never,
+      memoryPoll: { enabled: false },
+    });
+    expect(result).toMatchObject({ status: 'skipped', output: 'memory_poll 平台开关已关闭' });
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it('执行前组织开关已关闭 → skipped', async () => {
+    const runAgent = vi.fn();
+    const result = await executeJob(memoryPollJob(), {
+      runAgent: runAgent as never,
+      agentCwd: '/tmp',
+      sharedDir: '/tmp/.shared',
+      userStore,
+      tenantStore: {
+        reload: vi.fn(),
+        findById: () => ({ id: 'kaiyan', name: 'Kaiyan', disabled: false }),
+        getSettings: () => ({ features: { memoryPollingEnabled: false } }),
+      } as never,
+      userActivityService: activity(true) as never,
+      memoryPoll: { enabled: true },
+    });
+    expect(result).toMatchObject({ status: 'skipped', output: 'memory_poll 组织开关已关闭' });
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it('活动预检期间关闭开关 → runAgent 前末端复核并取消', async () => {
+    let resolveActivity!: () => void;
+    let markActivityStarted!: () => void;
+    let enabled = true;
+    const activityStarted = new Promise<void>((resolve) => { markActivityStarted = resolve; });
+    const activityGate = new Promise<void>((resolve) => { resolveActivity = resolve; });
+    const runAgent = vi.fn();
+
+    const execution = executeMemoryPollForTest({
+      runAgent: runAgent as never,
+      agentCwd: '/tmp',
+      sharedDir: '/tmp/.shared',
+      userStore,
+      userActivityService: {
+        available: true,
+        hasActivity: vi.fn(async () => {
+          markActivityStarted();
+          await activityGate;
+          return true;
+        }),
+      } as never,
+      memoryPoll: {
+        enabled: true,
+        isExecutionEnabled: () => enabled,
+      },
+    });
+
+    await activityStarted;
+    enabled = false;
+    resolveActivity();
+    await expect(execution).resolves.toMatchObject({
+      status: 'skipped',
+      output: 'memory_poll 开关已关闭，取消本次执行',
+    });
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
   it('维护锁被占 → skipped', async () => {
     expect(tryAcquireMemoryMaintenance('kaiyan', 'u1')).toBe(true);
     const runAgent = vi.fn();
-    const result = await executeJob(memoryPollJob(), {
+    const result = await executeMemoryPollForTest({
       runAgent: runAgent as never,
       agentCwd: '/tmp',
       sharedDir: '/tmp/.shared',
@@ -637,7 +724,7 @@ describe('executor memory_poll', () => {
       yield { type: 'done' };
     })());
 
-    const result = await executeJob(memoryPollJob(), {
+    const result = await executeMemoryPollForTest({
       runAgent: runAgent as never,
       agentCwd: '/tmp',
       sharedDir: '/tmp/.shared',
@@ -683,7 +770,7 @@ describe('executor memory_poll', () => {
 
   it('租户开 L2 → prompt 走 v3 收敛分支（遗漏审计、不做主提取）', async () => {
     const capture: { message?: { content: string } } = {};
-    const result = await executeJob(memoryPollJob(), {
+    const result = await executeMemoryPollForTest({
       runAgent: okRunAgent(capture) as never,
       agentCwd: '/tmp',
       sharedDir: '/tmp/.shared',
@@ -699,7 +786,7 @@ describe('executor memory_poll', () => {
 
   it('租户未开 L2 → prompt 保持 legacy 分支（行为零漂移）', async () => {
     const capture: { message?: { content: string } } = {};
-    const result = await executeJob(memoryPollJob(), {
+    const result = await executeMemoryPollForTest({
       runAgent: okRunAgent(capture) as never,
       agentCwd: '/tmp',
       sharedDir: '/tmp/.shared',
@@ -714,7 +801,7 @@ describe('executor memory_poll', () => {
 
   it('tombstone 主题注入 prompt（与 L2 开关无关）', async () => {
     const capture: { message?: { content: string } } = {};
-    await executeJob(memoryPollJob(), {
+    await executeMemoryPollForTest({
       runAgent: okRunAgent(capture) as never,
       agentCwd: '/tmp',
       sharedDir: '/tmp/.shared',
@@ -728,7 +815,7 @@ describe('executor memory_poll', () => {
 
   it('PG commit lock 拿不到 → skipped 且释放进程内锁', async () => {
     const runAgent = vi.fn();
-    const result = await executeJob(memoryPollJob(), {
+    const result = await executeMemoryPollForTest({
       runAgent: runAgent as never,
       agentCwd: '/tmp',
       sharedDir: '/tmp/.shared',
@@ -745,7 +832,7 @@ describe('executor memory_poll', () => {
 
   it('run 结束后释放 PG commit lock', async () => {
     const release = vi.fn(async () => undefined);
-    await executeJob(memoryPollJob(), {
+    await executeMemoryPollForTest({
       runAgent: okRunAgent() as never,
       agentCwd: '/tmp',
       sharedDir: '/tmp/.shared',
@@ -760,7 +847,7 @@ describe('executor memory_poll', () => {
     const runAgent = vi.fn(() => (async function* () {
       yield { type: 'done' };
     })());
-    await executeJob(memoryPollJob(), {
+    await executeMemoryPollForTest({
       runAgent: runAgent as never,
       agentCwd: '/tmp',
       sharedDir: '/tmp/.shared',
@@ -822,6 +909,59 @@ describe('CronService system job guard', () => {
     const disabled = await service.get('sys-1');
     expect(disabled?.enabled).toBe(false);
     expect(disabled?.state.nextRunAtMs).toBeUndefined();
+  });
+
+  it('applySystemJobs 在 leadership fence 失效后不提交计划', async () => {
+    const { service } = makeService([]);
+    await service.applySystemJobs({
+      toCreate: [{ ...sysJob, id: 'fenced-create', state: {} }],
+      toUpdate: [],
+    }, { fence: () => false });
+
+    expect(await service.list({ includeDisabled: true })).toEqual([]);
+  });
+
+  it('applySystemJobs 按 owner + systemKind 防止并发计划创建重复任务', async () => {
+    const { service } = makeService([]);
+    await Promise.all([
+      service.applySystemJobs({
+        toCreate: [{ ...sysJob, id: 'sys-a', state: {} }],
+        toUpdate: [],
+      }),
+      service.applySystemJobs({
+        toCreate: [{ ...sysJob, id: 'sys-b', state: {} }],
+        toUpdate: [],
+      }),
+    ]);
+
+    const jobs = await service.list({ includeDisabled: true });
+    expect(jobs.filter((job) => job.systemKind === 'memory_poll' && job.owner === 'u1')).toHaveLength(1);
+  });
+
+  it('applySystemJobs 不允许延迟到达的旧计划覆盖新计划', async () => {
+    const { service } = makeService([{ ...sysJob, state: {} }]);
+    await service.applySystemJobs({
+      toCreate: [],
+      toUpdate: [{
+        ...sysJob,
+        schedule: { kind: 'cron', expr: '10 5 * * *', tz: 'Asia/Shanghai' },
+        updatedAtMs: 20_000,
+      }],
+    });
+    await service.applySystemJobs({
+      toCreate: [],
+      toUpdate: [{
+        ...sysJob,
+        schedule: { kind: 'cron', expr: '20 6 * * *', tz: 'Asia/Shanghai' },
+        updatedAtMs: 10_000,
+      }],
+    });
+
+    expect((await service.get('sys-1'))?.schedule).toEqual({
+      kind: 'cron',
+      expr: '10 5 * * *',
+      tz: 'Asia/Shanghai',
+    });
   });
 
   it('applySystemJobs 拒绝非系统任务混入', async () => {

@@ -12,7 +12,7 @@ interface CompactionDividerProps {
 /**
  * 上下文压缩渲染单元（非气泡）：
  * - running：状态条「正在压缩上下文…」，spinner 风格与现有 loading 一致
- * - done：水平分界线「── 已压缩 N 条历史消息 ──」+ 一行小字说明；
+ * - done：水平分界线「── 已压缩 N 条历史消息 ──」；
  *   debugMode 用户可展开查看摘要正文（与思考块的 code-preview 展示一致）
  */
 export function CompactionDivider({ item, debugMode }: CompactionDividerProps) {
@@ -54,9 +54,6 @@ export function CompactionDivider({ item, debugMode }: CompactionDividerProps) {
         </span>
         <div className="h-px flex-1 bg-border" aria-hidden="true" />
       </div>
-      <p className="text-center text-xs text-muted-foreground/70">
-        分界线以上的内容 AI 已不再直接记得，但原始记录完整保留、可随时检索
-      </p>
       {canExpand && expanded && (
         <pre className="code-preview mt-1">{item.summary}</pre>
       )}

@@ -109,7 +109,7 @@ const todoDisplayBlockSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('records'),
     layout: z.enum(['rows', 'grid', 'checklist']),
-    title: todoTextSchema.optional(),
+    title: z.string().min(1).max(80).describe('表格标题，必填。使用简短业务动作或结果名称，如“核对工作树状态”“已创建提交”。'),
     items: z.array(todoRecordItemSchema).min(1).max(100),
     footer: todoTextSchema.optional(),
   }),
@@ -120,6 +120,7 @@ export const todoWriteToolDescriptor: ToolDescriptor<TodoWriteInput> = {
   name: 'TodoWrite',
   displayName: 'Todo Write',
   description: loadToolDescription('TodoWrite'),
+  descriptionInvariants: ['每个 `records.title` 都必填'],
   schema: z.object({
     todos: z
       .array(

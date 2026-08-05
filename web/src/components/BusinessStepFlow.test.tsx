@@ -184,6 +184,37 @@ describe("BusinessStepFlow", () => {
     expect(screen.getByText("张三").className).not.toContain("text-primary");
   });
 
+  it("renders titled records cards inside a terminal business summary", () => {
+    const { container } = render(
+      <BusinessStepFlow
+        open
+        event={event({
+          kind: "complete",
+          todo: {
+            id: "a",
+            kind: "business",
+            content: "核对工作树",
+            status: "completed",
+            outcome: { text: "工作树核对完成", tone: "ok" },
+            display: [{
+              kind: "records",
+              layout: "rows",
+              title: "核对工作树状态",
+              items: [
+                { label: "工作树", value: "干净" },
+                { label: "远端", value: "已同步" },
+              ],
+            }],
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("核对工作树状态")).toBeTruthy();
+    expect(container.querySelector("[data-records-title]")?.className).toContain("bg-primary/5");
+    expect(container.querySelector("[data-records-block]")?.className).toContain("border-primary/20");
+  });
+
   it("colors verdict chips green/red and keeps counting chips neutral", () => {
     render(
       <BusinessStepFlow

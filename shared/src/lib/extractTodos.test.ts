@@ -96,7 +96,15 @@ describe("projectBusinessStepEvents", () => {
       todo("t2", todos([
         step("verify", "failed", {
           detail: [{ verdict: "fail", text: "税号校验失败" }],
-          display: [{ kind: "callout", tone: "warn", body: ["需要人工复核"] }],
+          display: [
+            { kind: "callout", tone: "warn", body: ["需要人工复核"] },
+            {
+              kind: "records",
+              layout: "rows",
+              title: "核对订单状态",
+              items: [{ label: "订单", value: "SO-1001" }],
+            },
+          ],
           evidenceRefs: ["SO-1001"],
         }),
       ])),
@@ -105,7 +113,15 @@ describe("projectBusinessStepEvents", () => {
     const failEvent = result.events.find((event) => event.kind === "fail");
     expect(failEvent?.todo).toMatchObject({
       detail: [{ verdict: "fail", text: "税号校验失败" }],
-      display: [{ kind: "callout", tone: "warn", body: ["需要人工复核"] }],
+      display: [
+        { kind: "callout", tone: "warn", body: ["需要人工复核"] },
+        {
+          kind: "records",
+          layout: "rows",
+          title: "核对订单状态",
+          items: [{ label: "订单", value: "SO-1001" }],
+        },
+      ],
       evidenceRefs: ["SO-1001"],
     });
   });

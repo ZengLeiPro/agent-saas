@@ -206,7 +206,7 @@ describe('BuiltinToolProvider — TodoWrite 协议', () => {
     })).toThrow();
   });
 
-  it('接受富业务步骤并拒绝 Todo 内伪造交互块', () => {
+  it('接受富业务步骤，要求 records 带标题，并拒绝 Todo 内伪造交互块', () => {
     const parsed = todoWriteToolDescriptor.schema.parse({
       todos: [{
         id: 'verify-order',
@@ -214,11 +214,33 @@ describe('BuiltinToolProvider — TodoWrite 协议', () => {
         content: '核验订单',
         status: 'blocked',
         detail: [{ verdict: 'fail', text: '原产地证已过期' }],
-        display: [{ kind: 'callout', tone: 'warn', body: ['当前不能放行'] }],
+        display: [
+          { kind: 'callout', tone: 'warn', body: ['当前不能放行'] },
+          {
+            kind: 'records',
+            layout: 'rows',
+            title: '核对订单状态',
+            items: [{ label: '订单', value: 'SO-1001' }],
+          },
+        ],
         evidenceRefs: ['SO-1001'],
       }],
     }) as { todos: Array<Record<string, unknown>> };
     expect(parsed.todos[0]).toMatchObject({ id: 'verify-order', kind: 'business', status: 'blocked' });
+
+    expect(() => todoWriteToolDescriptor.schema.parse({
+      todos: [{
+        id: 'untitled-records',
+        kind: 'business',
+        content: '核对订单',
+        status: 'completed',
+        display: [{
+          kind: 'records',
+          layout: 'rows',
+          items: [{ label: '订单', value: 'SO-1001' }],
+        }],
+      }],
+    })).toThrow();
 
     expect(() => todoWriteToolDescriptor.schema.parse({
       todos: [{

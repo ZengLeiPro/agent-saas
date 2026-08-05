@@ -126,6 +126,21 @@ describe("projectBusinessStepEvents", () => {
     });
   });
 
+  it("keeps legacy key-value detail cards readable for historical transcripts", () => {
+    const legacyDetail = [
+      { k: "工作树", v: "干净" },
+      { tree: "└", k: "远端", v: "已同步" },
+      { fields: [{ k: "提交", v: "2" }] },
+    ];
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("verify", "in_progress")])),
+      todo("t2", todos([step("verify", "completed", { detail: legacyDetail })])),
+    ], false);
+
+    const completeEvent = result.events.find((event) => event.kind === "complete");
+    expect(completeEvent?.todo?.detail).toEqual(legacyDetail);
+  });
+
   it("maps blocked and waiting transitions to block/wait events", () => {
     const result = projectBusinessStepEvents([
       todo("t1", todos([step("a", "in_progress"), step("b", "pending")])),

@@ -1,5 +1,5 @@
 import { memo, useState, type ComponentType } from "react";
-import { ChevronRight, Copy, ExternalLink, Wrench } from "lucide-react";
+import { ChevronRight, Copy, ExternalLink } from "lucide-react";
 import type {
   BlockAction,
   CalloutBlock,
@@ -149,7 +149,7 @@ function RecordRow({ item }: { item: RecordItem }) {
   const [open, setOpen] = useState(false);
   const expandable = !!item.detail?.length;
   return (
-    <div className={cn("px-4 py-1.5", item.tone === "warn" && "bg-warning/5")}>
+    <div className={cn("border-b border-border/60 px-4 py-2 last:border-b-0", item.tone === "warn" && "bg-warning/5")}>
       <button
         type="button"
         onClick={expandable ? () => setOpen((v) => !v) : undefined}
@@ -173,11 +173,10 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
     <div className="w-fit max-w-full overflow-hidden rounded-xl border border-primary/20 bg-card" data-records-block>
       {block.title ? (
         <div
-          className="flex items-center gap-2 border-b border-primary/15 bg-primary/5 px-4 py-2.5 text-sm font-semibold text-foreground"
+          className="border-b border-primary/15 bg-primary/5 px-4 py-2.5 text-sm font-semibold text-foreground"
           data-records-title
         >
-          <Wrench className="size-4 shrink-0 text-primary" aria-hidden="true" />
-          <span className="min-w-0 break-words">{block.title}</span>
+          <span className="break-words">{block.title}</span>
         </div>
       ) : null}
       {block.layout === "grid" ? (
@@ -192,7 +191,7 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
           ))}
         </div>
       ) : (
-        <div className="py-1.5">{block.items.map((item, i) => <RecordRow key={i} item={item} />)}</div>
+        <div>{block.items.map((item, i) => <RecordRow key={i} item={item} />)}</div>
       )}
       {block.footer ? <div className="border-t border-primary/10 px-4 py-2 text-xs text-muted-foreground">{block.footer}</div> : null}
       <div className="px-4 pb-2.5 empty:hidden">

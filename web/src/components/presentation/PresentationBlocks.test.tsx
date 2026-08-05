@@ -88,9 +88,11 @@ describe('records', () => {
     const title = container.querySelector('[data-records-title]');
     expect(title?.className).toContain('bg-primary/5');
     expect(title?.className).toContain('border-primary/15');
-    expect(title?.querySelector('svg')?.classList.contains('text-primary')).toBe(true);
+    expect(title?.querySelector('svg')).toBeNull();
     expect(screen.getByText('核对清单')).toBeTruthy();
-    expect(screen.getByText('发票抬头').className).toContain('text-muted-foreground');
+    const label = screen.getByText('发票抬头');
+    expect(label.className).toContain('text-muted-foreground');
+    expect(label.closest('div')?.className).toContain('border-b');
     expect(screen.getByText('一致').className).toContain('text-foreground');
     expect(screen.getByText('通过')).toBeTruthy();
     expect(screen.getByText('共 1 项')).toBeTruthy();

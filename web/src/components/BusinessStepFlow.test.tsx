@@ -149,7 +149,7 @@ describe("BusinessStepFlow", () => {
     for (const sel of NO_FILL_SELECTORS) expect(container.querySelector(sel)).toBeNull();
   });
 
-  it("renders 业务详情 as a white key-value card, not the tinted code block", () => {
+  it("keeps historical detail key-value cards renderable on the frontend", () => {
     const { container } = render(
       <BusinessStepFlow
         open

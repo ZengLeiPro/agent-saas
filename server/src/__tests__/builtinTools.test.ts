@@ -242,6 +242,22 @@ describe('BuiltinToolProvider — TodoWrite 协议', () => {
       }],
     })).toThrow();
 
+    for (const legacyDetail of [
+      { k: '工作树', v: '干净' },
+      { tree: '└', k: '远端', v: '已同步' },
+      { fields: [{ k: '提交', v: '2' }] },
+    ]) {
+      expect(() => todoWriteToolDescriptor.schema.parse({
+        todos: [{
+          id: 'legacy-detail-card',
+          kind: 'business',
+          content: '旧键值卡',
+          status: 'completed',
+          detail: [legacyDetail],
+        }],
+      })).toThrow();
+    }
+
     expect(() => todoWriteToolDescriptor.schema.parse({
       todos: [{
         id: 'fake-gate',

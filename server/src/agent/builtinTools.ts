@@ -66,10 +66,10 @@ type AskUserQuestionInput = {
 
 const todoTextSchema = z.string().min(1).max(500);
 const todoToneSchema = z.enum(['neutral', 'info', 'success', 'warn', 'danger', 'muted']);
+// TodoWrite 的新调用不再暴露旧键值卡结构（k/v、tree、fields）。
+// 历史 transcript 仍由 Shared 的 DetailLine 归一化与 Web 渲染负责兼容。
 const todoDetailLineSchema = z.union([
   todoTextSchema,
-  z.object({ tree: z.enum(['├', '└']), k: todoTextSchema, v: z.string().max(500) }),
-  z.object({ k: todoTextSchema, v: z.string().max(500) }),
   z.object({ no: z.number().int(), text: todoTextSchema }),
   z.object({ indent: z.number().int().min(0).max(6), text: todoTextSchema }),
   z.object({ section: todoTextSchema }),
@@ -79,9 +79,6 @@ const todoDetailLineSchema = z.union([
   z.object({ verdict: z.enum(['pass', 'fail', 'warn', 'pending']), text: todoTextSchema, note: todoTextSchema.optional() }),
   z.object({ quote: todoTextSchema, source: todoTextSchema.optional() }),
   z.object({ original: todoTextSchema, translation: todoTextSchema.optional() }),
-  z.object({
-    fields: z.array(z.object({ k: todoTextSchema, v: z.string().max(500) })).min(1).max(12),
-  }),
 ]);
 
 const todoRecordItemSchema = z.object({
@@ -120,7 +117,7 @@ export const todoWriteToolDescriptor: ToolDescriptor<TodoWriteInput> = {
   name: 'TodoWrite',
   displayName: 'Todo Write',
   description: loadToolDescription('TodoWrite'),
-  descriptionInvariants: ['每个 `records.title` 都必填'],
+  descriptionInvariants: ['每个 `records.title` 都必填', '新调用不接受 `k/v`、树形键值或字段网格'],
   schema: z.object({
     todos: z
       .array(

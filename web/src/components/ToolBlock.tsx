@@ -152,7 +152,9 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
         <span className="flex min-w-0 max-w-sm items-baseline overflow-hidden whitespace-nowrap">
           {presentation ? (
             // 摘要标题是业务语言，视觉权重高于机械拼出的 "工具名: 入参"
-            <span className="min-w-0 truncate text-foreground">{presentation.title}</span>
+            <span className="min-w-0 truncate text-foreground">
+              {presentation.connector ? `连接器 · ${presentation.title}` : presentation.title}
+            </span>
           ) : (
             <>
               <span className="shrink-0">{displayInfo.name}{displayInfo.detail ? ':' : ''}&nbsp;</span>
@@ -247,7 +249,11 @@ export function ToolResultBlock({ toolName, result, presentation, debugMode = tr
       >
         <StatusIcons.success className={activityStatusIconClass("success", "size-3.5 shrink-0")} />
         <span className={cn("min-w-0 truncate", presentation && "text-foreground")}>
-          {presentation ? presentation.title : `Result: ${toolName}`}
+          {presentation
+            ? presentation.connector
+              ? `连接器 · ${presentation.title}`
+              : presentation.title
+            : `Result: ${toolName}`}
         </span>
         <ChevronRight className={cn(
           "size-3.5 shrink-0 transition-transform",

@@ -96,6 +96,19 @@ describe('MessageItem 工具摘要分流', () => {
     expect(screen.queryByText(/rg -n selection/)).toBeNull();
   });
 
+  it('连接器动作在业务标题前显示“连接器 · ”前缀', () => {
+    renderMessage(
+      toolMessage({
+        title: '钉钉 · 查询AI 表格',
+        connector: { system: '钉钉', write: false },
+      }),
+      false,
+    );
+
+    expect(screen.getByText('连接器 · 钉钉 · 查询AI 表格')).toBeTruthy();
+    expect(screen.getByText('已完成 3.2s')).toBeTruthy();
+  });
+
   it('receipt 存在时折叠行即显示外部系统回执徽标', () => {
     renderMessage(
       toolMessage({ title: '发送报价单', receipt: { id: 'QT-2026-0729', system: '企业邮箱', readBack: true } }),

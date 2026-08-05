@@ -47,14 +47,17 @@ describe('渲染注册表', () => {
 });
 
 describe('callout', () => {
-  it('渲染标题、多段正文与依据行', () => {
-    render(<PresentationBlocks blocks={[{
+  it('渲染标题、多段正文与依据行，并由外层统一控制块间距', () => {
+    const { container } = render(<PresentationBlocks blocks={[{
       kind: 'callout', tone: 'warn', title: '发现 2 处不一致',
       body: ['第一段', '第二段'],
       detail: [{ k: '合同金额', v: '¥154,500' }],
     }]} />);
+    const callout = container.firstElementChild as HTMLElement;
+    expect(callout.className).not.toMatch(/\bm[by]-/);
     expect(screen.getByText('发现 2 处不一致')).toBeTruthy();
-    expect(screen.getByText('第二段')).toBeTruthy();
+    expect(screen.getByText('第二段').className).toContain('leading-5');
+    expect(screen.getByText('第二段').className).not.toContain('leading-relaxed');
     expect(screen.getByText('¥154,500')).toBeTruthy();
   });
 
@@ -78,6 +81,7 @@ describe('records', () => {
     const records = container.querySelector('[data-records-block]');
     expect(records?.className).toContain('w-fit');
     expect(records?.className).toContain('max-w-full');
+    expect(records?.className).not.toMatch(/\bm[by]-/);
     expect(screen.getByText('核对清单')).toBeTruthy();
     expect(screen.getByText('通过')).toBeTruthy();
     expect(screen.getByText('共 1 项')).toBeTruthy();
@@ -100,6 +104,12 @@ describe('gate 与动作按钮', () => {
     meta: [{ k: '目标系统', v: '钉钉审批' }],
     actions: [{ kind: 'primary', label: '批准', interactionId: 'i-1' }, { kind: 'danger', label: '拒绝', interactionId: 'i-1' }],
   };
+
+  it('正文使用 14px/20px 档位且根节点不补流向 margin', () => {
+    const { container } = render(<PresentationBlocks blocks={[gate]} />);
+    expect((container.firstElementChild as HTMLElement).className).not.toMatch(/\bm[by]-/);
+    expect(screen.getByText('该操作会写入外部系统').className).toContain('leading-5');
+  });
 
   it('有回写通道时按钮可点，回调带 interactionId', () => {
     const onAction = vi.fn();

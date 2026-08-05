@@ -32,7 +32,7 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     expect(screen.getAllByText('有异常').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('单条业务摘要不带自有外边距，ToolBlock 自身 margin 被壳归零', () => {
+  it('单条业务摘要与 ToolBlock 均不带自有流向 margin', () => {
     const presentedTool: Extract<MessageItem, { type: 'tool_use' }> = {
       ...failedTool,
       id: 'tool-presented',
@@ -47,8 +47,9 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     const title = screen.getByText('钉钉 · 查询AI 表格');
     // 统一节奏（2026-08-04）：壳无 mb-3 等流向 margin，块间距由容器 gap 承担
     expect(title.closest('div.mb-3')).toBeNull();
-    const spacingShell = title.closest('div.my-0\\.5')?.parentElement;
-    expect(spacingShell?.className).toContain('[&>*]:my-0');
+    const toolRoot = title.closest('button')?.parentElement;
+    expect(toolRoot?.className).not.toMatch(/\bm[tyb]-/);
+    expect(toolRoot?.parentElement?.className).toContain('[&>*]:my-0');
 
     rerender(
       <ActivityGroupBlock items={[presentedTool]} isActive={false} debugMode className="custom-marker" />,

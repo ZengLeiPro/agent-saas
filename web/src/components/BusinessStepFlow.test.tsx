@@ -137,7 +137,9 @@ describe("BusinessStepFlow", () => {
     fireEvent.click(titleToggle);
     expect(titleToggle.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByTestId("business-step-chevron-down")).toBeTruthy();
-    expect(screen.getByText("17/18 张通过，1 张税号过期退回")).toBeTruthy();
+    const outcome = screen.getByText("17/18 张通过，1 张税号过期退回");
+    expect(outcome.parentElement?.className).toContain("leading-5");
+    expect(outcome.parentElement?.className).not.toContain("leading-6");
     expect(screen.getByText("通过")).toBeTruthy();
     expect(screen.getByText("17")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "业务详情" })).toBeNull();
@@ -170,6 +172,10 @@ describe("BusinessStepFlow", () => {
     // 白卡按内容收缩，但不超过业务消息的可用宽度。
     expect(card!.className).toContain("w-fit");
     expect(card!.className).toContain("max-w-full");
+    expect(card!.className).toContain("font-sans");
+    expect(card!.className).toContain("text-sm");
+    expect(card!.className).toContain("leading-5");
+    expect(card!.className).toContain("mt-0");
     // 白卡不用等宽排版，也不再用代码块底色
     expect(card!.className).not.toContain("font-mono");
     expect((card as HTMLElement).style.backgroundColor).toBe("");

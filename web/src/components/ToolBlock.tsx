@@ -143,7 +143,7 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
           : <StatusIcons.pending className={activityStatusIconClass("pending", "size-3.5 shrink-0")} />;
 
   return (
-    <div className="my-0.5">
+    <div>
       <button
         onClick={() => setIsExpanded(v => !v)}
         className="flex max-w-full items-center gap-1.5 py-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
@@ -240,7 +240,7 @@ export function ToolResultBlock({ toolName, result, presentation, debugMode = tr
   const showRaw = debugMode || !presentation;
 
   return (
-    <div className="my-0.5">
+    <div>
       <button
         onClick={() => setIsExpanded(v => !v)}
         className="flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground"

@@ -369,11 +369,32 @@
     font-size: 1rem;
     line-height: 1.5rem;
   }
-
+  /* 非 Markdown 会话内容跟随大字体模式整体升一档：正文 16/24、辅助 14/20、
+     紧凑标签 12/16。限定在 MessageList，避免影响同级 header、输入框和其它 tab。 */
+  .chat-font-large .chat-message-content .text-sm {
+    font-size: 1rem;
+    line-height: 1.5rem;
+  }
+  .chat-font-large .chat-message-content .text-xs {
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+  }
+  .chat-font-large .chat-message-content .text-2xs {
+    font-size: 0.75rem;
+    line-height: 1rem;
+  }
+  .chat-font-large .chat-message-content .text-2xs.leading-none {
+    line-height: 1;
+  }
   /* 代码/工具内容预览区域 */
   .code-preview {
     @apply max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md p-3 text-xs text-muted-foreground;
     background-color: hsl(var(--code-block-bg));
+  }
+  /* 放在 @apply text-xs 之后，覆盖 Tailwind 展开的同权重大字体规则。 */
+  .chat-font-large .chat-message-content .code-preview {
+    font-size: 0.75rem;
+    line-height: 1rem;
   }
 }
 

@@ -69,7 +69,7 @@ export function SubagentBlock(props: SubagentBlockProps) {
             </div>
           )}
           {props.resultPreview && (
-            <div className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-background/70 px-2 py-1.5 leading-5 text-foreground/80">
+            <div className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-background/70 px-2 py-1.5 leading-4 text-foreground/80">
               {props.resultPreview}
             </div>
           )}

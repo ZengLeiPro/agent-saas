@@ -74,7 +74,7 @@ export function CitationCard({ doc, page, label }: { doc: string; page?: number;
         <BookOpen className="size-3.5 shrink-0 text-brand-600" />
         <span className="truncate">{label}</span>
         {page ? (
-          <span className="shrink-0 rounded bg-brand-50 px-1 py-0.5 text-[10px] font-semibold tabular-nums text-brand-600 dark:bg-brand-900/35 dark:text-brand-300">
+          <span className="shrink-0 rounded bg-brand-50 px-1 py-0.5 text-2xs font-semibold tabular-nums text-brand-600 dark:bg-brand-900/35 dark:text-brand-300">
             p.{page}
           </span>
         ) : null}

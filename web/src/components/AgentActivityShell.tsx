@@ -56,7 +56,7 @@ export function AgentActivityShell({
             <span className="text-muted-foreground/70">{' · '}{subtitle}</span>
           ) : null}
         </span>
-        {meta ? <span className="shrink-0 text-[11px] text-muted-foreground/70">{meta}</span> : null}
+        {meta ? <span className="shrink-0 text-2xs text-muted-foreground/70">{meta}</span> : null}
       </span>
       {!disabled ? (
         <ChevronRight className={cn('size-3.5 shrink-0 text-muted-foreground/60 transition-transform', expanded && 'rotate-90')} />

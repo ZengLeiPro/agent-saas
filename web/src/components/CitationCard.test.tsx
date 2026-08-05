@@ -39,6 +39,7 @@ describe('CitationCard', () => {
     );
     const button = screen.getByRole('button', { name: '引用：接插件选型 p.12' });
     expect((button as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText('p.12').className).toContain('text-2xs');
     fireEvent.click(button);
     expect(openPreview).toHaveBeenCalledTimes(1);
     expect(openPreview).toHaveBeenCalledWith('kb://catalog/接插件.pdf#page=12', undefined, { mode: 'side' });

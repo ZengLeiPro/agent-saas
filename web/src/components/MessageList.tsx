@@ -720,7 +720,7 @@ export const MessageList = memo(function MessageList({
   const displayAgent = sessionParticipants?.agent ?? agentProfile;
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div className="chat-message-content relative flex min-h-0 flex-1 flex-col">
     <div
       ref={setContainerRef}
       onScroll={showCenterLoading ? undefined : handleScroll}
@@ -913,7 +913,7 @@ export const MessageList = memo(function MessageList({
                 className="rounded-xl border border-border/70 bg-muted/40 px-4 py-3"
               >
                 <div className="text-xs font-semibold text-muted-foreground">{item.title}</div>
-                <div className="mt-1 whitespace-pre-wrap text-sm leading-6 text-foreground">{item.content}</div>
+                <div className="mt-1 whitespace-pre-wrap text-sm leading-5 text-foreground">{item.content}</div>
               </div>
             );
           }

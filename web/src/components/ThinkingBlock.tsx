@@ -15,7 +15,7 @@ export function ThinkingBlock({ content, streaming, durationMs }: ThinkingBlockP
   const tone = "neutral";
 
   return (
-    <div className="my-0.5">
+    <div>
       <button
         onClick={() => setIsExpanded(v => !v)}
         className="flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground"

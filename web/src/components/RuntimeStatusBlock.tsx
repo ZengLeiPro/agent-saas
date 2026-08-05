@@ -56,7 +56,7 @@ export function RuntimeStatusBlock({ status, content }: { status: RuntimeStatus;
           : <Loader2 className={activityStatusIconClass(tone, `${iconClass} animate-spin`)} />;
 
   return (
-    <div className="my-0.5 flex max-w-full items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
+    <div className="flex max-w-full items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
       {icon}
       <span className={activityStatusTextClass(tone, "min-w-0 truncate")}>{content || meta.label}</span>
     </div>

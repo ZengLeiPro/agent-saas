@@ -89,7 +89,7 @@ function messages(): MessageItem[] {
 
 describe("MessageList first Agent row spacing", () => {
   it("gives the first Agent text line a 20px avatar gap", () => {
-    render(
+    const { container } = render(
       <MessageList
         messages={[
           { id: "user-1", type: "user", content: "开始" },
@@ -100,6 +100,7 @@ describe("MessageList first Agent row spacing", () => {
       />,
     );
 
+    expect(container.firstElementChild?.className).toContain("chat-message-content");
     const spacingWrapper = screen.getByText("我先检查当前状态。").closest("div.pt-1\\.5");
     expect(spacingWrapper).toBeTruthy();
   });

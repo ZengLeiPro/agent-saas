@@ -45,7 +45,7 @@ export function activityStatusTextClass(tone: ActivityStatusTone, className?: st
 
 export function activityStatusBadgeClass(tone: ActivityStatusTone, className?: string) {
   return cn(
-    "shrink-0 rounded border px-1.5 py-0.5 text-[11px] leading-none",
+    "shrink-0 rounded border px-1.5 py-0.5 text-2xs leading-none",
     toneStyles[tone].badge,
     className,
   );

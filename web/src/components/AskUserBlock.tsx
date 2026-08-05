@@ -69,7 +69,7 @@ function QuestionSection({
           >
             <span className="text-xs font-medium">{opt.label}</span>
             {opt.description && (
-              <span className="block text-[11px] leading-tight opacity-60 mt-0.5">{opt.description}</span>
+              <span className="mt-0.5 block text-2xs leading-4 opacity-60">{opt.description}</span>
             )}
           </button>
         ))}
@@ -163,7 +163,7 @@ export function AskUserBlock({ questions, status, answers, onSubmit }: AskUserBl
   const isPending = status === "pending";
 
   return (
-    <div className="border-b border-border/60 pb-2 mb-1">
+    <div className="border-b border-border/60 pb-2">
       <div className="flex items-center gap-2 mb-2">
         <MessageCircleQuestion className="size-4 text-primary" />
         <span className="text-sm font-medium">Agent Question</span>

@@ -1058,7 +1058,7 @@ export const MessageItem = memo(function MessageItem({
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold">积分余额不足</div>
-              <div className="mt-1 text-sm leading-relaxed opacity-85">{message.content}</div>
+              <div className="mt-1 text-sm leading-5 opacity-85">{message.content}</div>
               <button
                 type="button"
                 onClick={requestOpenBillingBadge}

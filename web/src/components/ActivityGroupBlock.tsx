@@ -197,7 +197,7 @@ export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: {
   const duration = !isActive ? formatActivityDuration(durationMs) : null;
   const tone = isActive ? 'active' : hasIssue ? 'warning' : 'success';
   return (
-    <div className="my-1 flex items-center gap-2 py-1 text-sm leading-5 text-muted-foreground">
+    <div className="flex items-center gap-2 py-1 text-sm leading-5 text-muted-foreground">
       {isActive ? (
         <StatusIcons.running className={activityStatusIconClass("active", "size-3.5 shrink-0 animate-spin")} />
       ) : hasIssue ? (
@@ -216,8 +216,8 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
 
   // 调试视图允许单项摘要直接呈现；非调试视图必须经过固定状态分流，避免泄露工具标题。
   if (debugMode && items.length === 1 && hasPresentation(items[0])) {
-    // 单条业务摘要直接展示 ToolBlock：壳不带外边距（统一节奏由容器 gap 承担），
-    // 仅归零 ToolBlock 自身的 my-0.5，保证与普通折叠行完全同节奏。
+    // 单条业务摘要直接展示 ToolBlock：壳不带外边距，统一节奏只由容器 gap 承担。
+    // [&>*]:my-0 继续作为防御性约束，避免后续子组件重新引入流向 margin。
     return (
       <div className={cn('[&>*]:my-0', className)}>
         <ActivityItem item={items[0]} debugMode={debugMode} />

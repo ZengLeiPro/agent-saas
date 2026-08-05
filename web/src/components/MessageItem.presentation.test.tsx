@@ -303,6 +303,15 @@ describe('PresentationDetail 排版变体', () => {
     expect(screen.getByText('回读校验通过')).toBeTruthy();
   });
 
+  it('代码摘要固定使用 12px/16px 等宽档位', () => {
+    const { container } = render(<PresentationDetail data={{ title: 't', detail: ['摘要正文'] }} />);
+    const detail = container.firstElementChild as HTMLElement;
+    expect(detail.className).toContain('font-mono');
+    expect(detail.className).toContain('text-xs');
+    expect(detail.className).toContain('leading-4');
+    expect(detail.className).not.toContain('leading-relaxed');
+  });
+
   it('无任何内容时不渲染空壳', () => {
     const { container } = render(<PresentationDetail data={{ title: 't' }} />);
     expect(container.firstChild).toBeNull();

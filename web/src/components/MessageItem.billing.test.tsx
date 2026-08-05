@@ -35,6 +35,10 @@ describe('积分余额不足提示', () => {
     expect(screen.getByRole('status')).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByText('积分余额不足')).toBeTruthy();
+    const body = screen.getByText('当前组织积分余额不足，本次任务尚未开始。请补充积分或联系组织管理员调整额度后再试。');
+    expect(body.className).toContain('text-sm');
+    expect(body.className).toContain('leading-5');
+    expect(body.className).not.toContain('leading-relaxed');
 
     fireEvent.click(screen.getByRole('button', { name: '查看积分' }));
     expect(requestOpenBillingBadge).toHaveBeenCalledTimes(1);

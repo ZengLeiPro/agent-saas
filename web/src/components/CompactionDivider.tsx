@@ -20,7 +20,7 @@ export function CompactionDivider({ item, debugMode }: CompactionDividerProps) {
 
   if (item.status === 'running') {
     return (
-      <div className="my-1 flex items-center justify-center gap-1.5 py-0.5 text-sm text-muted-foreground">
+      <div className="flex items-center justify-center gap-1.5 py-0.5 text-sm text-muted-foreground">
         <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground/70" />
         <span>正在压缩上下文</span>
         <span className="animate-pulse">...</span>
@@ -34,7 +34,7 @@ export function CompactionDivider({ item, debugMode }: CompactionDividerProps) {
   const canExpand = debugMode === true && !!item.summary;
 
   return (
-    <div className="my-2 flex flex-col gap-1">
+    <div className="flex flex-col gap-1">
       <div className="flex items-center gap-3">
         <div className="h-px flex-1 bg-border" aria-hidden="true" />
         <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">

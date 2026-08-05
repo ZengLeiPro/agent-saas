@@ -133,7 +133,7 @@ export function UserVoiceMessage({
 
       {/* 时间戳 */}
       {timestamp && (
-        <span className="text-[10px] text-muted-foreground/60 mt-0.5">
+        <span className="mt-0.5 text-2xs text-muted-foreground/60">
           {new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </span>
       )}

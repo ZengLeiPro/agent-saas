@@ -82,7 +82,7 @@ function SectionRow({ section }: { section: string }) {
     <div
       className={cn(
         "font-medium text-muted-foreground",
-        card ? "text-[11px] leading-4" : "mt-1.5 border-b border-border/60 pb-0.5 first:mt-0",
+        card ? "text-2xs leading-4" : "mt-1.5 border-b border-border/60 pb-0.5 first:mt-0",
       )}
     >
       {section}
@@ -91,6 +91,7 @@ function SectionRow({ section }: { section: string }) {
 }
 
 function DetailRow({ line }: { line: DetailLine }) {
+  const card = useContext(VariantContext) === "card";
   if (typeof line === "string") {
     return <div className="break-words text-foreground">{line}</div>;
   }
@@ -143,8 +144,8 @@ function DetailRow({ line }: { line: DetailLine }) {
     const { tone, Icon } = VERDICT_META[line.verdict];
     return (
       <div className="flex items-start gap-1.5">
-        {/* text-xs leading-relaxed 行高 19.5px、icon 12px：mt-1(4px)≈(19.5-12)/2，与首行光学居中 */}
-        <Icon className={activityStatusIconClass(tone, "mt-1 size-3 shrink-0")} />
+        {/* 业务卡正文 14px/20px 用 mt-1；代码摘要 12px/16px 用 mt-0.5。 */}
+        <Icon className={activityStatusIconClass(tone, card ? "mt-1 size-3 shrink-0" : "mt-0.5 size-3 shrink-0")} />
         <span className="min-w-0 break-words text-foreground">
           {line.text}
           {line.note ? <span className="text-muted-foreground">　{line.note}</span> : null}
@@ -180,7 +181,7 @@ function DetailRow({ line }: { line: DetailLine }) {
       <div className="grid w-fit max-w-full grid-cols-2 gap-1.5 py-0.5" data-detail-fields>
         {line.fields.map((field, i) => (
           <div key={i} className="min-w-0 rounded-md border border-border/60 bg-background px-2.5 py-1.5">
-            <div className="break-words text-[11px] leading-4 text-muted-foreground">{field.k}</div>
+            <div className="break-words text-2xs leading-4 text-muted-foreground">{field.k}</div>
             <div className="break-words font-sans text-sm font-semibold leading-5 text-foreground">
               {field.v || "—"}
             </div>
@@ -232,13 +233,13 @@ export function groupDetailLines(detail: DetailLine[]): DetailGroup[] {
 }
 
 function WarnGroup({ header, warns }: { header: string; warns: string[] }) {
+  const card = useContext(VariantContext) === "card";
   return (
     <div className="space-y-1 rounded-md border border-warning/25 bg-warning/10 px-2.5 py-2">
-      <div className={activityStatusTextClass("warning", "text-[11px] font-medium leading-4")}>{header}</div>
+      <div className={activityStatusTextClass("warning", "text-2xs font-medium leading-4")}>{header}</div>
       {warns.map((warn, i) => (
         <div key={i} className="flex items-start gap-1.5">
-          {/* 同 verdict 行：leading-relaxed 19.5px 行高下 mt-1 才居中 */}
-          <TriangleAlert className={activityStatusIconClass("warning", "mt-1 size-3 shrink-0")} />
+          <TriangleAlert className={activityStatusIconClass("warning", card ? "mt-1 size-3 shrink-0" : "mt-0.5 size-3 shrink-0")} />
           <span className={activityStatusTextClass("warning", "break-words")}>{warn}</span>
         </div>
       ))}
@@ -269,10 +270,10 @@ export function PresentationDetail({
     <VariantContext.Provider value={variant}>
       <div
         className={cn(
-          "mt-1 text-xs leading-relaxed",
+          "mt-1",
           card
-            ? "w-fit max-w-full divide-y divide-border/60 overflow-hidden rounded-md border border-border bg-card"
-            : "space-y-1 rounded-md px-3 py-2 font-mono",
+            ? "w-fit max-w-full divide-y divide-border/60 overflow-hidden rounded-md border border-border bg-card font-sans text-sm leading-5"
+            : "space-y-1 rounded-md px-3 py-2 font-mono text-xs leading-4",
           className,
         )}
         style={card ? undefined : { backgroundColor: "hsl(var(--code-block-bg))" }}

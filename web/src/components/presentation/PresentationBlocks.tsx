@@ -112,7 +112,7 @@ function CalloutView({ block, ctx }: { block: CalloutBlock; ctx: BlockContext })
   return (
     <div
       className={cn(
-        "my-1.5 rounded-md border px-3 py-2",
+        "rounded-md border px-3 py-2",
         block.tone === "danger" && "border-destructive/30 bg-destructive/5",
         block.tone === "warn" && "border-warning/30 bg-warning/5",
         block.tone === "success" && "border-success/30 bg-success/5",
@@ -133,7 +133,7 @@ function CalloutView({ block, ctx }: { block: CalloutBlock; ctx: BlockContext })
       {!collapsed && (
         <>
           {block.body.map((line, i) => (
-            <p key={i} className={cn("whitespace-pre-wrap text-sm leading-relaxed", block.title && i === 0 && "mt-1")}>
+            <p key={i} className={cn("whitespace-pre-wrap text-sm leading-5", block.title && i === 0 && "mt-1")}>
               {line}
             </p>
           ))}
@@ -170,7 +170,7 @@ function RecordRow({ item }: { item: RecordItem }) {
 
 function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext }) {
   return (
-    <div className="my-1.5 w-fit max-w-full overflow-hidden rounded-md border border-border" data-records-block>
+    <div className="w-fit max-w-full overflow-hidden rounded-md border border-border" data-records-block>
       {block.title ? (
         <div className="border-b border-border bg-muted/30 px-3 py-1.5 text-sm font-medium">{block.title}</div>
       ) : null}
@@ -198,10 +198,10 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
 
 function GateView({ block, ctx }: { block: GateBlock; ctx: BlockContext }) {
   return (
-    <div className="my-1.5 rounded-md border border-warning/40 bg-warning/5 px-3 py-2">
+    <div className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2">
       <div className={cn("text-sm font-medium", activityStatusTextClass("warning"))}>{block.title}</div>
       {block.body?.map((line, i) => (
-        <p key={i} className="mt-1 whitespace-pre-wrap text-sm leading-relaxed">{line}</p>
+        <p key={i} className="mt-1 whitespace-pre-wrap text-sm leading-5">{line}</p>
       ))}
       {block.meta?.length ? (
         <div className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 font-mono text-xs">

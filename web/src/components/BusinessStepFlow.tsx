@@ -66,7 +66,7 @@ const OUTCOME_TONE_META: Record<NonNullable<TodoOutcome["tone"]>, {
 function StepBadge({ index, count }: { index?: number; count?: number }) {
   if (!index || !count) return null;
   return (
-    <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/70">
+    <span className="shrink-0 text-2xs tabular-nums text-muted-foreground/70">
       第 {index}/{count} 步
     </span>
   );
@@ -86,7 +86,7 @@ function StatChip({ stat }: { stat: OutcomeStat }) {
     );
   }
   return (
-    <span className="rounded border border-border/70 bg-muted/30 px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">
+    <span className="rounded border border-border/70 bg-muted/30 px-1.5 py-0.5 text-2xs leading-none text-muted-foreground">
       {stat.label} <span className="font-medium text-foreground">{stat.value}</span>
     </span>
   );
@@ -101,9 +101,9 @@ function OutcomeLine({ outcome, stats }: { outcome: TodoOutcome; stats: OutcomeS
   const Icon = meta.Icon;
   return (
     <div className="space-y-2">
-      <p className={cn("flex items-start gap-2 text-sm leading-6", meta.textClass)}>
-        {/* leading-6 行高 24px、icon 14px：mt=(24-14)/2=5px 才与首行文字光学居中 */}
-        {Icon ? <Icon className={cn("mt-[5px] size-3.5 shrink-0", meta.iconClass)} /> : null}
+      <p className={cn("flex items-start gap-2 text-sm leading-5", meta.textClass)}>
+        {/* 14px/20px 正文行高配 14px icon：mt=(20-14)/2=3px，与首行文字光学居中。 */}
+        {Icon ? <Icon className={cn("mt-[3px] size-3.5 shrink-0", meta.iconClass)} /> : null}
         <span className="min-w-0 break-words">{outcome.text}</span>
       </p>
       {stats.length ? (
@@ -125,7 +125,7 @@ function StepSummaryBody({ todo }: { todo: TodoItem }) {
   return (
     <div className="space-y-3">
       {todo.detail?.length ? (
-        <PresentationDetail data={{ title: "", detail: todo.detail }} variant="card" />
+        <PresentationDetail data={{ title: "", detail: todo.detail }} className="mt-0" variant="card" />
       ) : null}
       {todo.display?.length ? (
         <PresentationBlocks blocks={todo.display} ctx={{ readOnly: true }} />
@@ -156,7 +156,7 @@ function DisclosureButton({
   return (
     <button
       type="button"
-      className="flex items-center gap-1 py-0.5 text-xs leading-5 text-muted-foreground transition-colors hover:text-foreground"
+      className="flex items-center gap-1 py-0.5 text-xs leading-4 text-muted-foreground transition-colors hover:text-foreground"
       aria-expanded={open}
       onClick={onToggle}
     >

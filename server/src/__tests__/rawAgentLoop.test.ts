@@ -3270,6 +3270,7 @@ describe('RawAgentLoop', () => {
     state: LatestResponseSessionState | null,
     currentModel: string,
     priorContextTokens?: number,
+    priorModel = currentModel,
   ): Promise<{ adapter: ResponseIdTextAdapter; patches: Array<{ runId: string; patch: ResponseSessionStatePatch }> }> {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-relay-'));
     cleanupDirs.add(cwd);
@@ -3280,7 +3281,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-relay-1',
         sessionId: 'session-relay-1',
         content: 'prior response',
-        model: currentModel,
+        model: priorModel,
         usage: { inputTokens: priorContextTokens, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
         responseMode: 'full',
         responseChained: false,
@@ -3326,6 +3327,26 @@ describe('RawAgentLoop', () => {
       'glm-5.2',
     );
     expect(adapter.requests[0]?.previousResponseId).toBe('resp_prev');
+  });
+
+  it('切换模型后不把旧模型上下文账本套进新模型阈值', async () => {
+    configureModelPricing({
+      groups: [{
+        models: [{ value: 'gpt-small', context_window: 1_000, auto_compact_threshold: 0.5 }],
+      }],
+    });
+    try {
+      const { adapter } = await runRelayScenario(
+        { runId: 'run-relay-1', lastResponseId: 'resp_prev', lastResponseModel: 'glm-5.2' },
+        'gpt-small',
+        600,
+        'glm-5.2',
+      );
+      expect(adapter.requests[0]?.previousResponseId).toBeUndefined();
+      expect(JSON.stringify(adapter.requests[0]?.messages)).not.toContain('平台收束指令');
+    } finally {
+      configureModelPricing(undefined);
+    }
   });
 
   it('远端接力链达到上下文阈值时断链接力，保留上一轮答复并仅开放只读会话检索', async () => {

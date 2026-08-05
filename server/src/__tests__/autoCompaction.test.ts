@@ -119,6 +119,42 @@ describe('evaluateAutoCompaction（自动压缩判定）', () => {
     });
   });
 
+  it('切换模型时重置旧 response 链上下文，但保留累计用量统计', () => {
+    configureModelPricing({
+      groups: [
+        { models: [{ value: 'glm-5.2', context_window: 1_000_000, auto_compact_threshold: 0.8 }] },
+        { models: [{ value: 'gpt-5.6-sol', context_window: 272_000, auto_compact_threshold: 0.8 }] },
+      ],
+    });
+    const tracker = new RuntimeContextUsageTracker('gpt-5.6-sol', [
+      assistantEvent(0, 500_000, 10_000, { model: 'glm-5.2', responseChained: false }),
+      assistantEvent(1, 100_000, 14_975, {
+        model: 'glm-5.2',
+        responseChained: true,
+        cacheReadInputTokens: 50_000,
+      }),
+    ]);
+
+    expect(tracker.currentContextTokens).toBe(574_975);
+    expect(tracker.resetActiveContextIfModelChanged('gpt-5.6-sol')).toBe('glm-5.2');
+    expect(tracker.currentContextTokens).toBe(0);
+
+    const usage = tracker.record(
+      'gpt-5.6-sol',
+      { inputTokens: 64_329, outputTokens: 344 },
+      'full',
+      false,
+    );
+    expect(usage).toMatchObject({
+      totalTokens: 64_673,
+      maxTokens: 272_000,
+      usageTotals: {
+        inputTokens: 664_329,
+        outputTokens: 25_319,
+      },
+    });
+  });
+
   it('全量请求以最后一条 usage 重锚，不累计更早轮次', () => {
     const result = evaluateAutoCompaction({
       events: [

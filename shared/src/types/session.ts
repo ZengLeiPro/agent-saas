@@ -279,6 +279,10 @@ export interface ApiTranscriptBlock {
   isVoiceTranscript?: boolean;
   /** prompt block：用户消息携带的附件元数据（transcript user 行结构化字段） */
   attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+  /** prompt block：用户消息客户端幂等 ID。 */
+  clientMsgId?: string;
+  /** prompt block：插话来源 run ID，用于与服务端队列真源对账。 */
+  interjectionSourceRunId?: string;
   /** text block：门禁拒答气泡关联的 guardrail event id（员工申诉入口用） */
   guardrailEventId?: string;
   /** 演示剧本入口事件直接完整展示，不模拟 Agent 流式输出。 */

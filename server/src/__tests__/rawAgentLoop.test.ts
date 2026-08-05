@@ -1515,14 +1515,14 @@ describe('RawAgentLoop', () => {
         sourceRunId: 'source-run-1',
         clientMsgId: 'client-1',
         message: { channel: 'web', chatId: 'chat-1', content: '补充条件一' },
-        prompt: '补充条件一',
+        prompt: '[2026/08/05 周三 12:50] 补充条件一',
       },
       {
         inputId: 'input-2',
         sourceRunId: 'source-run-2',
         clientMsgId: 'client-2',
         message: { channel: 'web', chatId: 'chat-1', content: '补充条件二' },
-        prompt: '补充条件二',
+        prompt: '[2026/08/05 周三 12:51] 补充条件二',
       },
     ];
     const markApplied = vi.fn(async (_targetRunId: string, _sourceRunIds: string[]) => {
@@ -1573,13 +1573,23 @@ describe('RawAgentLoop', () => {
     expect(markApplied).toHaveBeenCalledWith('target-run', ['source-run-1', 'source-run-2']);
     expect(adapter.requests).toHaveLength(2);
     expect(adapter.requests[1]?.messages.filter((message) => message.role === 'user').slice(-2)).toEqual([
-      { role: 'user', content: '补充条件一' },
-      { role: 'user', content: '补充条件二' },
+      { role: 'user', content: '[2026/08/05 周三 12:50] 补充条件一' },
+      { role: 'user', content: '[2026/08/05 周三 12:51] 补充条件二' },
     ]);
     const runtimeEvents = await eventStore.list('session-interjection');
     expect(runtimeEvents.filter((event) => event.type === 'user_message')).toEqual(expect.arrayContaining([
-      expect.objectContaining({ interjectionSourceRunId: 'source-run-1', clientMsgId: 'client-1' }),
-      expect.objectContaining({ interjectionSourceRunId: 'source-run-2', clientMsgId: 'client-2' }),
+      expect.objectContaining({
+        content: '补充条件一',
+        modelContent: '[2026/08/05 周三 12:50] 补充条件一',
+        interjectionSourceRunId: 'source-run-1',
+        clientMsgId: 'client-1',
+      }),
+      expect.objectContaining({
+        content: '补充条件二',
+        modelContent: '[2026/08/05 周三 12:51] 补充条件二',
+        interjectionSourceRunId: 'source-run-2',
+        clientMsgId: 'client-2',
+      }),
     ]));
   });
 

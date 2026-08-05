@@ -64,6 +64,10 @@ export interface TranscriptBlock {
   isVoiceTranscript?: boolean;
   /** User prompt 携带的附件元数据（来自 transcript user 行顶层 attachments 字段） */
   attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+  /** 用户消息客户端幂等 ID；刷新后继续用于消息与队列精确对账。 */
+  clientMsgId?: string;
+  /** 插话来源 run ID；detail API 据此排除已经投影进时间线的 pending steering。 */
+  interjectionSourceRunId?: string;
   /** compaction block：被摘要替代的历史事件数 */
   coveredEventCount?: number;
   /** 门禁拒答合成 assistant 行关联的 guardrail event id（员工申诉入口用） */
@@ -919,6 +923,10 @@ async function parseTranscriptFileUncached(
     if (obj?.type === "user" && obj?.message?.content != null) {
       const content = obj.message.content;
       const userAttachments = parseUserAttachments(obj?.attachments);
+      const clientMsgId = typeof obj?.clientMsgId === "string" ? obj.clientMsgId : undefined;
+      const interjectionSourceRunId = typeof obj?.interjectionSourceRunId === "string"
+        ? obj.interjectionSourceRunId
+        : undefined;
       let attachmentsAttached = false;
       if (Array.isArray(content)) {
         let idx = 0;
@@ -1031,6 +1039,8 @@ async function parseTranscriptFileUncached(
               content: stripVoiceSttTag(promptText),
               ...(isVoiceTranscript ? { isVoiceTranscript: true } : {}),
               ...(attachHere ? { attachments: userAttachments } : {}),
+              ...(clientMsgId ? { clientMsgId } : {}),
+              ...(interjectionSourceRunId ? { interjectionSourceRunId } : {}),
             });
             continue;
           }
@@ -1090,6 +1100,8 @@ async function parseTranscriptFileUncached(
           content: stripVoiceSttTag(promptText),
           ...(isVoiceTranscript ? { isVoiceTranscript: true } : {}),
           ...(userAttachments ? { attachments: userAttachments } : {}),
+          ...(clientMsgId ? { clientMsgId } : {}),
+          ...(interjectionSourceRunId ? { interjectionSourceRunId } : {}),
         });
       }
       continue;

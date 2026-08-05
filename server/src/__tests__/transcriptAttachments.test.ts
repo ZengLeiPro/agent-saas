@@ -95,6 +95,28 @@ describe('transcript attachments round-trip', () => {
     expect(prompt?.attachments).toEqual([{ name: 'photo.png', isImage: true, relativePath: 'uploads/att-1/photo.png' }]);
   });
 
+  it('persists interjection identity for queue reconciliation after refresh', async () => {
+    const projection = new LegacyTranscriptProjection(transcriptPath);
+    await projection.project(userMessageEvent({
+      clientMsgId: 'client-interjection-1',
+      interjectionSourceRunId: 'source-run-1',
+    }));
+
+    const line = JSON.parse((await readFile(transcriptPath, 'utf-8')).trim());
+    expect(line).toMatchObject({
+      clientMsgId: 'client-interjection-1',
+      interjectionSourceRunId: 'source-run-1',
+    });
+
+    const parsed = await parseTranscriptFile(transcriptPath);
+    const prompt = parsed.blocks.find((block) => block.kind === 'prompt');
+    expect(prompt).toMatchObject({
+      content: '看下这份报价',
+      clientMsgId: 'client-interjection-1',
+      interjectionSourceRunId: 'source-run-1',
+    });
+  });
+
   it('keeps prompt blocks without attachments unchanged', async () => {
     const projection = new LegacyTranscriptProjection(transcriptPath);
     await projection.project(userMessageEvent());

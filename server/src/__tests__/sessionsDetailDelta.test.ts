@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSessionDetailPayload } from '../routes/sessions.js';
+import { buildSessionDetailPayload, filterProjectedQueuedMessages } from '../routes/sessions.js';
 import type { SessionShareSnapshot } from '../data/sessionShares/store.js';
 
 function snapshot(blockCount: number): SessionShareSnapshot {
@@ -17,6 +17,22 @@ function snapshot(blockCount: number): SessionShareSnapshot {
     })),
   };
 }
+
+describe('filterProjectedQueuedMessages', () => {
+  it('不把已经投影进时间线、但 steering 行仍短暂 pending 的消息恢复为排队态', () => {
+    const pending = [
+      { sourceRunId: 'source-consumed', content: '已经发送' },
+      { sourceRunId: 'source-pending', content: '仍在排队' },
+    ];
+
+    expect(filterProjectedQueuedMessages(pending, [
+      { interjectionSourceRunId: 'source-consumed' },
+      {},
+    ])).toEqual([
+      { sourceRunId: 'source-pending', content: '仍在排队' },
+    ]);
+  });
+});
 
 describe('buildSessionDetailPayload', () => {
   it('旧客户端未传 limit 时返回完整快照和最新 cursor', () => {

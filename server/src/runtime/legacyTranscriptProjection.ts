@@ -26,10 +26,13 @@ function userLine(
   content: string,
   sessionId: string,
   attachments?: ReadonlyArray<{ originalName: string; isImage: boolean; relativePath: string }>,
+  identity?: { clientMsgId?: string; interjectionSourceRunId?: string },
 ): string {
   return jsonl({
     type: 'user',
     message: { role: 'user', content },
+    ...(identity?.clientMsgId ? { clientMsgId: identity.clientMsgId } : {}),
+    ...(identity?.interjectionSourceRunId ? { interjectionSourceRunId: identity.interjectionSourceRunId } : {}),
     // 刷新后前端历史回放的附件展示来源（parse.ts → prompt block.attachments）。
     // relativePath 供前端点击预览/下载（走 /api/file 端点，workspace 内路径校验）；
     // 完整 ModelAttachmentRef 仍在 PG event store。
@@ -145,7 +148,10 @@ export class LegacyTranscriptProjection {
         // 系统命令替身（/compact 等）不进前端历史——压缩在 transcript 里由
         // compaction line（分界线）呈现，命令气泡本身不保留
         if (event.modelContent?.startsWith('[系统命令]')) return null;
-        return userLine(event.content, event.sessionId, event.attachments);
+        return userLine(event.content, event.sessionId, event.attachments, {
+          clientMsgId: event.clientMsgId,
+          interjectionSourceRunId: event.interjectionSourceRunId,
+        });
       case 'compaction':
         // v2：投影为压缩分界线。前端渲染分界线组件；摘要仅 debugMode 展开查看
         return jsonl({

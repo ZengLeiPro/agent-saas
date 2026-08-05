@@ -461,6 +461,20 @@ interface ResolvedSessionPath {
   hasTranscript: boolean;
 }
 
+/**
+ * steering 的 durable user_message 已进入 transcript 后，不再属于队列区。
+ * claim 与首个模型事件绑定，二者之间的短暂 pending 窗口不能让 detail API 复活该消息。
+ */
+export function filterProjectedQueuedMessages<T extends { sourceRunId: string }>(
+  pending: T[],
+  blocks: Array<{ interjectionSourceRunId?: string }>,
+): T[] {
+  const projectedSourceRunIds = new Set(
+    blocks.flatMap((block) => block.interjectionSourceRunId ? [block.interjectionSourceRunId] : []),
+  );
+  return pending.filter((input) => !projectedSourceRunIds.has(input.sourceRunId));
+}
+
 function reqTranscriptOwner(reqUser: Request["user"] | undefined): { tenantId?: string; userId?: string } | undefined {
   return reqUser ? { tenantId: reqUser.tenantId, userId: reqUser.sub } : undefined;
 }
@@ -928,7 +942,10 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     }> = [];
     if (options.listPendingSteeringBySession) {
       try {
-        const pending = await options.listPendingSteeringBySession(sessionId);
+        const pending = filterProjectedQueuedMessages(
+          await options.listPendingSteeringBySession(sessionId),
+          parsed.blocks,
+        );
         queuedMessages = pending.flatMap((input) => {
           const wakeMessage = input.sourceRun.metadata?.wakeMessage as
             | { content?: unknown; attachments?: unknown }

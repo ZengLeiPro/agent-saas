@@ -299,6 +299,7 @@ function mapBlock(
         id, type: "user", content: text,
         ...(attachments?.length ? { attachments } : {}),
         ...(parsed.isVoiceTranscript || block.isVoiceTranscript ? { isVoiceTranscript: true } : {}),
+        ...(block.clientMsgId ? { clientMsgId: block.clientMsgId } : {}),
         timestamp: block.tsMs,
       };
     }

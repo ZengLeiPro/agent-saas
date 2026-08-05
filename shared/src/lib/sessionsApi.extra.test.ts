@@ -282,6 +282,17 @@ describe('mapSessionDetailToMessages - tool_result 与 cron', () => {
     expect(msgs).toEqual([]);
   });
 
+  it('prompt 的 clientMsgId 在刷新映射后仍保留', () => {
+    const [msg] = mapSessionDetailToMessages(detail([
+      block({ id: 'p-client', kind: 'prompt', content: '已发送插话', clientMsgId: 'client-1' }),
+    ]));
+    expect(msg).toEqual(expect.objectContaining({
+      type: 'user',
+      content: '已发送插话',
+      clientMsgId: 'client-1',
+    }));
+  });
+
   it('cron 会话首条 user 消息 displayContent 被覆写为「正在执行「label」」', () => {
     const msgs = mapSessionDetailToMessages(detail(
       [block({ id: 'p1', kind: 'prompt', content: '原始任务提示' })],

@@ -48,6 +48,7 @@ export class RuntimeContextUsageTracker {
     hasUsage: false,
   };
 
+  private activeContextModel: string | undefined;
   private latestBreakdown: ContextUsageBreakdown | undefined;
   private latestMemoryFiles: ContextUsageData['memoryFiles'] = [];
   private latestMcpTools: ContextUsageData['mcpTools'] = [];
@@ -61,6 +62,7 @@ export class RuntimeContextUsageTracker {
       if (event.type === 'compaction') {
         this.contextAccumulator.reset();
         this.state.contextTokens = 0;
+        this.activeContextModel = undefined;
         continue;
       }
       if ((event.type === 'assistant_message' || event.type === 'assistant_tool_calls') && event.usage) {
@@ -110,6 +112,19 @@ export class RuntimeContextUsageTracker {
     return this.toContextUsage(model, lastRequest);
   }
 
+  /**
+   * 切换模型时，旧 provider response 链不会被新模型继续使用；首轮应等待新模型的
+   * full usage 重锚，不能把旧链 token 套进新模型阈值。累计用量/计费统计保持不变。
+   */
+  resetActiveContextIfModelChanged(model: string): string | undefined {
+    const previousModel = this.activeContextModel;
+    if (!previousModel || previousModel === model) return undefined;
+    this.contextAccumulator.reset();
+    this.state.contextTokens = 0;
+    this.activeContextModel = undefined;
+    return previousModel;
+  }
+
   /** 当前 Responses 接力链或全量请求的上下文 token 口径。 */
   get currentContextTokens(): number {
     return this.state.contextTokens;
@@ -145,6 +160,7 @@ export class RuntimeContextUsageTracker {
     this.state.hasUsage = true;
 
     this.state.contextTokens = this.contextAccumulator.apply(model, usage, responseMode, responseChained);
+    if (inputTokens > 0 || outputTokens > 0) this.activeContextModel = model;
 
     return {
       cacheReadTokens,

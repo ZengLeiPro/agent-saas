@@ -828,6 +828,13 @@ export class RawAgentLoop implements AgentLoop {
       recoveredEvents,
       context.modelRef,
     );
+    const previousContextModel = contextUsageTracker.resetActiveContextIfModelChanged(context.model);
+    if (previousContextModel) {
+      logger.info(
+        `[context-usage] reset active chain after model switch session=${context.sessionId} `
+        + `run=${context.runId} previousModel=${previousContextModel} currentModel=${context.model}`,
+      );
+    }
     let contextPressureForceReason: string | undefined;
     if (context.evaluateAutoCompaction && this.runStore?.get) {
       try {
@@ -2913,6 +2920,13 @@ export class RawAgentLoop implements AgentLoop {
       args.priorEvents,
       args.context.modelRef,
     );
+    const previousContextModel = contextUsageTracker.resetActiveContextIfModelChanged(args.context.model);
+    if (previousContextModel) {
+      logger.info(
+        `[context-usage] reset active chain after model switch session=${args.context.sessionId} `
+        + `run=${args.context.runId} previousModel=${previousContextModel} currentModel=${args.context.model}`,
+      );
+    }
 
     // RFC v1 P0.4：resume 路径同样接力 Responses API session state。
     const usesStoredResponseState = this.modelAdapter.capabilities?.responseState !== 'stateless';

@@ -258,7 +258,7 @@ export function UserFormDialog({
               <SelectTrigger>
                 <SelectValue placeholder="选择岗位，AI 同事按岗位为您准备场景" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[102]">
                 <SelectItem value={POSITION_EMPTY_VALUE}>暂不设置</SelectItem>
                 {positionOptions.map((p) => (
                   <SelectItem key={p} value={p}>
@@ -295,7 +295,7 @@ export function UserFormDialog({
                 <SelectTrigger>
                   <SelectValue placeholder="请选择组织" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="z-[102]">
                   {visibleTenants.map((tenant) => (
                     <SelectItem key={tenant.id} value={tenant.id} disabled={tenant.disabled}>
                       {tenant.name}（{tenant.id}{tenant.disabled ? "，已禁用" : ""}）
@@ -316,7 +316,7 @@ export function UserFormDialog({
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[102]">
                 <SelectItem value="admin">管理员</SelectItem>
                 <SelectItem value="user">用户</SelectItem>
               </SelectContent>

@@ -29,6 +29,9 @@ import type {
   SessionParticipants,
 } from '@agent/shared';
 
+const HISTORY_LOAD_TRIGGER_PX = 80;
+const HISTORY_LOAD_REARM_PX = 160;
+
 // ---------------------------------------------------------------------------
 // AI Bubble Grouping — mirrors mobile's groupIntoBubbles()
 // ---------------------------------------------------------------------------
@@ -515,17 +518,28 @@ export const MessageList = memo(function MessageList({
     void onLoadEarlier();
   }, [isLoadingEarlier, onLoadEarlier, virtualLayout]);
 
-  // 每次触顶只加载一页；离开顶部后才允许下一次触发，避免同一轮滚动重复请求。
+  // 接近顶部即加载，并用更大的离开阈值重新武装；避免触控/缩放产生的亚像素
+  // scrollTop 永远到不了精确 0，也避免同一轮顶部滚动重复请求。
   const topLoadArmedRef = useRef(true);
+  const underfilledPageKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!hasMoreHistory) topLoadArmedRef.current = true;
+    if (!hasMoreHistory) {
+      topLoadArmedRef.current = true;
+      underfilledPageKeyRef.current = null;
+    }
   }, [hasMoreHistory]);
   const handleScroll = useCallback(() => {
     const el = internalContainerRef.current;
     if (el) {
-      if (el.scrollTop > 0) {
+      if (el.scrollTop > HISTORY_LOAD_REARM_PX) {
         topLoadArmedRef.current = true;
-      } else if (topLoadArmedRef.current && hasMoreHistory && !isLoadingEarlier) {
+      }
+      if (
+        el.scrollTop <= HISTORY_LOAD_TRIGGER_PX &&
+        topLoadArmedRef.current &&
+        hasMoreHistory &&
+        !isLoadingEarlier
+      ) {
         topLoadArmedRef.current = false;
         handleLoadEarlier();
       }
@@ -533,6 +547,25 @@ export const MessageList = memo(function MessageList({
     syncNearBottomState();
     scheduleViewportUpdate();
   }, [handleLoadEarlier, hasMoreHistory, isLoadingEarlier, scheduleViewportUpdate, syncNearBottomState]);
+
+  // 历史不足一屏时不会产生 scroll 事件；按内容版本自动续页，直到可滚动或到达起点。
+  // 同一内容版本最多尝试一次，失败后保留顶部按钮供手动重试，避免网络错误触发死循环。
+  useEffect(() => {
+    const el = internalContainerRef.current;
+    if (
+      !el ||
+      !hasMoreHistory ||
+      isLoadingEarlier ||
+      el.clientHeight <= 0 ||
+      el.scrollHeight > el.clientHeight + HISTORY_LOAD_TRIGGER_PX
+    ) return;
+
+    const pageKey = `${messages[0]?.id ?? ''}:${messages.length}:${el.clientHeight}`;
+    if (underfilledPageKeyRef.current === pageKey) return;
+    underfilledPageKeyRef.current = pageKey;
+    topLoadArmedRef.current = false;
+    handleLoadEarlier();
+  }, [handleLoadEarlier, hasMoreHistory, isLoadingEarlier, messages]);
 
   // Preserve a key-based visual anchor across prepend and asynchronous row remeasurement.
   const previousLayoutRef = useRef(virtualLayout);
@@ -730,11 +763,19 @@ export const MessageList = memo(function MessageList({
       <div className="content-container flex flex-col gap-2.5 py-4">
         {!showCenterLoading && hasMoreHistory && (
           <div className="flex h-[34px] shrink-0 items-center justify-center" aria-live="polite">
-            {isLoadingEarlier && (
+            {isLoadingEarlier ? (
               <div role="status" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Loader2 className="size-3.5 animate-spin" />
                 <span>正在加载更早消息</span>
               </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleLoadEarlier}
+                className="rounded-full px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                加载更早消息
+              </button>
             )}
           </div>
         )}

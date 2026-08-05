@@ -32,7 +32,7 @@ const messages: MessageItem[] = [
 ];
 
 describe("MessageList 历史消息自动加载", () => {
-  it("每次滚动触顶只触发一页，离开顶部后可再次触发", () => {
+  it("每次滚动接近顶部只触发一页，明显离开后可再次触发", () => {
     const onLoadEarlier = vi.fn().mockResolvedValue(undefined);
     const scrollContainerRef = createRef<HTMLDivElement>();
 
@@ -52,17 +52,78 @@ describe("MessageList 历史消息自动加载", () => {
     fireEvent.scroll(container);
     expect(onLoadEarlier).not.toHaveBeenCalled();
 
-    container.scrollTop = 0;
+    container.scrollTop = 60;
     fireEvent.scroll(container);
     fireEvent.scroll(container);
     expect(onLoadEarlier).toHaveBeenCalledTimes(1);
 
-    container.scrollTop = 20;
+    // 先明显离开顶部完成重新武装，再次接近顶部才加载下一页。
+    container.scrollTop = 200;
     fireEvent.scroll(container);
-    container.scrollTop = 0;
+    container.scrollTop = 60;
     fireEvent.scroll(container);
     expect(onLoadEarlier).toHaveBeenCalledTimes(2);
-    expect(screen.queryByRole("button", { name: "加载更早消息" })).toBeNull();
+    expect(screen.getByRole("button", { name: "加载更早消息" })).toBeTruthy();
+  });
+
+  it("历史内容不足一屏时无需 scroll 事件也会自动续页，且同一内容只尝试一次", () => {
+    const onLoadEarlier = vi.fn().mockResolvedValue(undefined);
+    const scrollContainerRef = createRef<HTMLDivElement>();
+    const { rerender } = render(
+      <MessageList
+        messages={messages}
+        loading={false}
+        hasMoreHistory={false}
+        onLoadEarlier={onLoadEarlier}
+        scrollContainerRef={scrollContainerRef}
+        debugModeOverride={false}
+      />,
+    );
+
+    const container = scrollContainerRef.current!;
+    Object.defineProperty(container, "clientHeight", {
+      configurable: true,
+      value: 600,
+    });
+    Object.defineProperty(container, "scrollHeight", {
+      configurable: true,
+      value: 500,
+    });
+
+    rerender(
+      <MessageList
+        messages={messages}
+        loading={false}
+        hasMoreHistory
+        onLoadEarlier={onLoadEarlier}
+        scrollContainerRef={scrollContainerRef}
+        debugModeOverride={false}
+      />,
+    );
+    expect(onLoadEarlier).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <MessageList
+        messages={messages}
+        loading={false}
+        hasMoreHistory
+        isLoadingEarlier
+        onLoadEarlier={onLoadEarlier}
+        scrollContainerRef={scrollContainerRef}
+        debugModeOverride={false}
+      />,
+    );
+    rerender(
+      <MessageList
+        messages={messages}
+        loading={false}
+        hasMoreHistory
+        onLoadEarlier={onLoadEarlier}
+        scrollContainerRef={scrollContainerRef}
+        debugModeOverride={false}
+      />,
+    );
+    expect(onLoadEarlier).toHaveBeenCalledTimes(1);
   });
 
   it("长任务跨分页重新分组后仍保持当前视口位置", () => {

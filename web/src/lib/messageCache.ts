@@ -6,7 +6,9 @@ const DB_NAME = 'agentChatDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'messages';
 
-const MAX_CACHED_MESSAGES = 500;
+// transcript block 里工具调用占比很高，500 条对长任务常常只够几轮对话。
+// 虚拟列表已把实际挂载的 DOM 限制在 80 行，因此可多保留内存/IndexedDB 历史。
+const MAX_CACHED_MESSAGES = 2_000;
 
 const LS_CACHE_KEY_PREFIX = "agentChat.msgCache.";
 const LS_MIGRATED_FLAG = "agentChat.idbMigrated";

@@ -83,7 +83,7 @@ describe("useSession 跨会话详情请求隔离", () => {
 
     expect(callbacks.setMessages).toHaveBeenCalled();
     expect(result.current.sessionId).toBe("session-a");
-    expect(authFetchMock).toHaveBeenCalledWith(expect.stringContaining("limit=100"));
+    expect(authFetchMock).toHaveBeenCalledWith(expect.stringContaining("limit=200"));
   });
 
   it("首屏只取尾部一页，并能向前合并历史且去除边界重叠", async () => {
@@ -207,6 +207,79 @@ describe("useSession 跨会话详情请求隔离", () => {
     expect(beforeRequests).toBe(2);
     expect(currentMessages[0]?.id).toBe("line-100");
     expect(result.current.hasMoreHistory).toBe(false);
+  });
+
+  it("A 会话的慢历史请求不会阻塞 B 会话加载更早消息", async () => {
+    let currentMessages: ReturnType<NonNullable<SessionCallbacks["getMessages"]>> = [];
+    let releaseSessionA!: (response: Response) => void;
+    const pendingSessionA = new Promise<Response>((resolve) => {
+      releaseSessionA = resolve;
+    });
+    const callbacks = makeCallbacks();
+    callbacks.getMessages = () => currentMessages;
+    callbacks.setMessages = vi.fn((messages) => { currentMessages = messages; });
+
+    authFetchMock.mockImplementation((url: string) => {
+      if (url.includes("before=a-tail")) return pendingSessionA;
+      if (url.includes("before=b-tail")) {
+        return Promise.resolve(jsonResponse({
+          mode: "before",
+          blocks: [{ id: "b-old", kind: "prompt", content: "B 更早" }],
+          oldestCursor: "b-old",
+          cursor: "b-tail",
+          historyComplete: true,
+        }));
+      }
+      if (url.startsWith("/api/sessions/session-a?")) {
+        return Promise.resolve(jsonResponse({
+          mode: "full",
+          blocks: [{ id: "a-tail", kind: "text", content: "A 尾页" }],
+          oldestCursor: "a-tail",
+          cursor: "a-tail",
+          historyComplete: false,
+        }));
+      }
+      if (url.startsWith("/api/sessions/session-b?")) {
+        return Promise.resolve(jsonResponse({
+          mode: "full",
+          blocks: [{ id: "b-tail", kind: "text", content: "B 尾页" }],
+          oldestCursor: "b-tail",
+          cursor: "b-tail",
+          historyComplete: false,
+        }));
+      }
+      if (url.startsWith("/api/chat/interactions/pending")) {
+        return Promise.resolve(jsonResponse([]));
+      }
+      return Promise.resolve(jsonResponse({ sessions: [], hasMore: false }));
+    });
+
+    const { result } = renderHook(() => useSession(callbacks));
+    await act(async () => { await result.current.loadSessionDetail("session-a"); });
+
+    let sessionAEarlier!: Promise<void>;
+    act(() => { sessionAEarlier = result.current.loadEarlierMessages(); });
+
+    act(() => { result.current.selectSession("session-b"); });
+    await act(async () => { await result.current.loadDetailPromiseRef.current; });
+    await act(async () => { await result.current.loadEarlierMessages(); });
+
+    expect(authFetchMock.mock.calls.some(([url]) => String(url).includes("before=a-tail"))).toBe(true);
+    expect(authFetchMock.mock.calls.some(([url]) => String(url).includes("before=b-tail"))).toBe(true);
+    expect(currentMessages.map((message) => message.id)).toEqual(["b-old", "b-tail"]);
+    expect(result.current.isLoadingEarlier).toBe(false);
+
+    await act(async () => {
+      releaseSessionA(jsonResponse({
+        mode: "before",
+        blocks: [{ id: "a-old", kind: "prompt", content: "A 更早" }],
+        oldestCursor: "a-old",
+        cursor: "a-tail",
+        historyComplete: true,
+      }));
+      await sessionAEarlier;
+    });
+    expect(currentMessages.map((message) => message.id)).toEqual(["b-old", "b-tail"]);
   });
 
   it("历史 cursor 失效返回 full 时重置旧窗口而不是继续 prepend", async () => {

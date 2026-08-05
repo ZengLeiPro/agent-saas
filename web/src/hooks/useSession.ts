@@ -196,6 +196,7 @@ export interface SessionOptions {
 }
 
 const RECENT_LOCAL_SESSION_TTL_MS = 60_000;
+const SESSION_DETAIL_PAGE_SIZE = 200;
 
 // sessionsPreload 是模块级 Promise，只在页面加载时用当时的 token 拉了一次会话。
 // 首次挂载消费它可以省一次 waterfall；但账号 A 登出 → 账号 B 登录时 <App/> 会重新
@@ -237,7 +238,8 @@ export function useSession(
     tailCursor?: string;
     oldestCursor?: string;
   }>>(new Map());
-  const isLoadingEarlierRef = useRef(false);
+  // 历史分页锁按会话隔离：A 会话的慢请求不能卡住随后打开的 B 会话。
+  const loadingEarlierSessionIdsRef = useRef<Set<string>>(new Set());
 
   const deleteSessionId = deleteSessionIds[0] ?? null;
   const deleteSessionCount = deleteSessionIds.length;
@@ -433,7 +435,7 @@ export function useSession(
       try {
         const requestStartedAt = performance.now();
         const params = new URLSearchParams();
-        params.set("limit", "100");
+        params.set("limit", String(SESSION_DETAIL_PAGE_SIZE));
         if (opts?.silent) params.set("silent", "1");
         if (requestCursor) params.set("after", requestCursor);
         const serializedParams = params.toString();
@@ -588,21 +590,25 @@ export function useSession(
       !id ||
       !detailState?.oldestCursor ||
       detailState.historyComplete ||
-      isLoadingEarlierRef.current
+      loadingEarlierSessionIdsRef.current.has(id)
     ) return;
 
-    isLoadingEarlierRef.current = true;
+    loadingEarlierSessionIdsRef.current.add(id);
     setIsLoadingEarlier(true);
     try {
       const params = new URLSearchParams({
         before: detailState.oldestCursor,
-        limit: "100",
+        limit: String(SESSION_DETAIL_PAGE_SIZE),
         silent: "1",
       });
       const response = await authFetch(
         `/api/sessions/${encodeURIComponent(id)}?${params.toString()}`,
       );
-      if (!response.ok || sessionIdRef.current !== id) return;
+      if (!response.ok) {
+        console.error("加载更早消息失败:", response.status, response.statusText);
+        return;
+      }
+      if (sessionIdRef.current !== id) return;
       const data: ApiSessionDetail = await response.json();
       if (sessionIdRef.current !== id) return;
 
@@ -631,7 +637,7 @@ export function useSession(
     } catch (err) {
       console.error("加载更早消息失败:", err);
     } finally {
-      isLoadingEarlierRef.current = false;
+      loadingEarlierSessionIdsRef.current.delete(id);
       if (sessionIdRef.current === id) setIsLoadingEarlier(false);
     }
   }, [sessionOwner?.username]);

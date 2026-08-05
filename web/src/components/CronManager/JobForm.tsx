@@ -62,17 +62,27 @@ export function JobForm({
   const [cronExpr, setCronExpr] = useState("0 9 * * *");
   const [cronTz, setCronTz] = useState("Asia/Shanghai");
   const [atTime, setAtTime] = useState("");
-  const [payloadKind, setPayloadKind] = useState<CronPayload["kind"]>("agentTurn");
+  const [payloadKind, setPayloadKind] = useState<CronPayload["kind"]>(
+    () => initialJob?.payload.kind ?? "agentTurn",
+  );
   const [message, setMessage] = useState("");
   const [maxTurns, setMaxTurns] = useState("");
   const [timeoutSeconds, setTimeoutSeconds] = useState("1800");
-  const [model, setModel] = useState(MODEL_DEFAULT_VALUE);
+  const [model, setModel] = useState(() =>
+    initialJob?.payload.kind === "agentTurn"
+      ? initialJob.payload.model || MODEL_DEFAULT_VALUE
+      : MODEL_DEFAULT_VALUE,
+  );
   const [ctxSystemPrompt, setCtxSystemPrompt] = useState(true);
   const [ctxPersona, setCtxPersona] = useState(true);
   const [ctxMemory, setCtxMemory] = useState(true);
   const [notifyEnabled, setNotifyEnabled] = useState(false);
-  const [notifyChannel, setNotifyChannel] = useState<NotifyConfig["channel"]>("web");
-  const [dingtalkMode, setDingtalkMode] = useState<"session" | "user" | "chat">("session");
+  const [notifyChannel, setNotifyChannel] = useState<NotifyConfig["channel"]>(
+    () => initialJob?.notify?.channel ?? "web",
+  );
+  const [dingtalkMode, setDingtalkMode] = useState<"session" | "user" | "chat">(
+    () => initialJob?.notify?.dingtalk?.mode ?? "session",
+  );
   const [dingtalkConversationId, setDingtalkConversationId] = useState("");
   const [dingtalkUserId, setDingtalkUserId] = useState("");
   const [dingtalkChatId, setDingtalkChatId] = useState("");

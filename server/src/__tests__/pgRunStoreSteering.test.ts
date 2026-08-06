@@ -61,6 +61,29 @@ describe('PgRunStore steering inbox', () => {
     expect(steeringInsert?.params.slice(0, 3)).toEqual(['source-run', 'target-run', 'session-1']);
   });
 
+  it('rejects a chat accepted before the latest session stop', async () => {
+    const queries: string[] = [];
+    const client = {
+      query: async (sql: string) => {
+        queries.push(sql.trim());
+        if (sql.includes('SELECT stopped_at')) {
+          return { rows: [{ stopped_at: '2026-08-06T04:00:01.000Z' }] };
+        }
+        return { rows: [] };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    await expect(store.enqueueSteeringAware({
+      runId: 'late-source',
+      sessionId: 'session-stop-race',
+      metadata: { steeringAcceptedAt: '2026-08-06T04:00:00.000Z' },
+    })).rejects.toThrow('accepted before the latest session stop');
+    expect(queries.some((sql) => sql.includes('INSERT INTO runtime_runs'))).toBe(false);
+    expect(queries.at(-1)).toBe('ROLLBACK');
+  });
+
   it('creates a normal pending run when no open steering target exists', async () => {
     const queries: string[] = [];
     const now = new Date().toISOString();
@@ -88,6 +111,37 @@ describe('PgRunStore steering inbox', () => {
 
     expect(record.metadata?.steeringTargetRunId).toBeUndefined();
     expect(queries.some((sql) => sql.includes('INSERT INTO runtime_steering_inputs'))).toBe(false);
+  });
+
+  it('reserves ownership before durable append and supports idempotent recovery', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    const client = {
+      query: async (sql: string, params: unknown[] = []) => {
+        queries.push({ sql: sql.trim(), params });
+        if (sql.includes('SELECT status, metadata')) {
+          return { rows: [{ status: 'running', metadata: { steeringInputWindow: 'open' } }] };
+        }
+        if (sql.includes('SELECT run_id, status')) {
+          return { rows: [{ run_id: 'source-run', status: 'pending' }] };
+        }
+        if (sql.includes("SET state = 'reserved'")) {
+          return { rows: [{ source_run_id: 'source-run' }] };
+        }
+        if (sql.includes("AND state = 'reserved'")) {
+          return { rows: [{ source_run_id: 'source-run' }] };
+        }
+        return { rows: [] };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    await expect(store.reserveSteeringInputs('target-run', ['source-run']))
+      .resolves.toEqual(['source-run']);
+    const reserveQuery = queries.find(({ sql }) => sql.includes("SET state = 'reserved'"));
+    expect(reserveQuery?.sql).toContain("AND state = 'pending'");
+    expect(reserveQuery?.sql).toContain('$3::timestamptz');
+    expect(queries.at(-1)?.sql).toBe('COMMIT');
   });
 
   it('locks the target row and applies steering only while the target is active', async () => {
@@ -118,6 +172,11 @@ describe('PgRunStore steering inbox', () => {
       expect.stringContaining("status = 'completed'"),
       'COMMIT',
     ]));
+    const inboxUpdate = queries.find((sql) => sql.includes('UPDATE runtime_steering_inputs'));
+    const sourceUpdate = queries.find((sql) => sql.includes("status = 'completed'"));
+    expect(inboxUpdate).toContain("state = 'reserved'");
+    expect(inboxUpdate).toContain('$3::timestamptz');
+    expect(sourceUpdate).toContain("'steeringAppliedAt', $4::text");
   });
 
   it('does not absorb a source run cancelled before the model boundary claim', async () => {
@@ -302,6 +361,43 @@ describe('PgRunStore steering inbox', () => {
       .resolves.toEqual({ ok: false, reason: 'too_late', sessionId: 'session-1' });
     expect(lateQueries.some((sql) => sql.includes("status = 'cancelled'"))).toBe(false);
     expect(lateQueries.at(-1)).toBe('ROLLBACK');
+  });
+
+  it('atomically cancels pending and reserved inputs for stop-all', async () => {
+    const now = new Date().toISOString();
+    const queries: string[] = [];
+    const client = {
+      query: async (sql: string) => {
+        queries.push(sql.trim());
+        if (sql.includes('FOR UPDATE OF input, source')) {
+          return { rows: [{
+            input_id: 'input-reserved',
+            source_run_id: 'source-reserved',
+            target_run_id: 'target-run',
+            session_id: 'session-1',
+            state: 'reserved',
+            accepted_at: now,
+            reserved_at: now,
+            applied_at: null,
+            row_json: {
+              run_id: 'source-reserved', session_id: 'session-1', status: 'pending',
+              requested_at: now, updated_at: now, metadata: { clientMsgId: 'c-reserved' },
+            },
+          }] };
+        }
+        return { rows: [], rowCount: 1 };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    await expect(store.cancelSteeringBeforeDispatchBySession('session-1', 'aborted', 'target-run'))
+      .resolves.toEqual([expect.objectContaining({ sourceRunId: 'source-reserved', state: 'reserved' })]);
+    expect(queries.some((sql) => sql.includes('pg_advisory_xact_lock'))).toBe(true);
+    expect(queries.filter((sql) => sql.includes("state IN ('pending', 'reserved')"))).toHaveLength(2);
+    expect(queries.some((sql) => sql.includes("status = 'cancelled'"))).toBe(true);
+    expect(queries.some((sql) => sql.includes('run_id = $2'))).toBe(true);
+    expect(queries.at(-1)).toBe('COMMIT');
   });
 
   it('releases pending steering rows when the source run falls back to standalone execution (2026-08-04 BUG-5)', async () => {

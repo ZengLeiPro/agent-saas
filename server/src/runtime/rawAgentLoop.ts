@@ -907,33 +907,63 @@ export class RawAgentLoop implements AgentLoop {
     ];
     let currentUserMessageIndex = messages.length - 1;
     const manualCheckpointSourceRunIds = new Set<string>();
-    const recoveredInterjectionSourceRunIds = new Set(
+    const durableInterjectionSourceRunIds = new Set(
       recoveredEvents
         .filter((event): event is Extract<PlatformEvent, { type: 'user_message' }> => (
           event.type === 'user_message' && typeof event.interjectionSourceRunId === 'string'
         ))
         .map((event) => event.interjectionSourceRunId!),
     );
+    // recoveredEvents 已进入 contextProjection；新 append 的消息只有结算成功后才加入
+    // 当前内存 messages，避免 reserve/apply 失败时仍被模型看到。
+    const modelContextInterjectionSourceRunIds = new Set(durableInterjectionSourceRunIds);
+    let steeringAbsorptionDisabled = false;
+    const requestSteeringRecoveryHandoff = (reason: string) => {
+      steeringAbsorptionDisabled = true;
+      if (!context.drainHandoff) return;
+      context.drainHandoff.requested = true;
+      context.drainHandoff.reason = reason;
+      context.drainHandoff.requestedAt = new Date().toISOString();
+    };
     const drainQueuedInterjections = async () => {
-      // abort 感知：取消/失败中的 run 不得再吸收插话。否则 markSteeringInputsApplied
-      // 会把 source run 置为 completed（steered_into_run），而目标 run 随后在 abort 中
-      // 终结——插话既没被模型消费，也不再退化执行，消息丢失。跳过 drain 后 source 保持
-      // pending，目标终态后自然退化为独立 run。
-      if (context.signal?.aborted) return [];
+      if (context.signal?.aborted || steeringAbsorptionDisabled) return [];
       const queued = await context.loadQueuedInterjections?.() ?? [];
       if (queued.length === 0) return [];
-      // loadQueuedInterjections 含附件解析/图像理解（秒级慢路径），结束后、落库并标记
-      // applied 前必须再检查一次。
+      // 附件解析/图像理解可能是秒级慢路径；所有权必须在 durable append 和模型请求前取得。
       if (context.signal?.aborted) return [];
-      for (const interjection of queued) {
-        if (recoveredInterjectionSourceRunIds.has(interjection.sourceRunId)) continue;
+      const requestedSourceRunIds = queued.map((interjection) => interjection.sourceRunId);
+      let reservedInterjections = queued;
+      try {
+        const reservedSourceRunIds = await this.runStore?.reserveSteeringInputs?.(
+          context.runId,
+          requestedSourceRunIds,
+        ) ?? requestedSourceRunIds;
+        const reservedSourceRunIdSet = new Set(reservedSourceRunIds);
+        reservedInterjections = queued.filter((interjection) => (
+          reservedSourceRunIdSet.has(interjection.sourceRunId)
+        ));
+        if (reservedInterjections.length !== queued.length) {
+          const missing = queued
+            .filter((interjection) => !reservedSourceRunIdSet.has(interjection.sourceRunId))
+            .map((interjection) => interjection.sourceRunId);
+          logger.warn(`[run] steering reserve partial: run=${context.runId} unreserved=${missing.join(',')}`);
+        }
+      } catch (error) {
+        if (context.signal?.aborted) throw error;
+        requestSteeringRecoveryHandoff('steering_reserve_failed');
+        logger.warn(
+          `[run] steering reserve failed; handing off target run=${context.runId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return [];
+      }
+      if (reservedInterjections.length === 0 || context.signal?.aborted) return [];
+
+      for (const interjection of reservedInterjections) {
         if (isCompactCommand(interjection.message.content)) {
-          // 运行中的 /compact 是控制信号：在本 run 的下一个安全边界建立 checkpoint，
-          // 不把命令作为业务用户消息注入模型。source run 会随下一次模型事件被 claim。
-          recoveredInterjectionSourceRunIds.add(interjection.sourceRunId);
           manualCheckpointSourceRunIds.add(interjection.sourceRunId);
           continue;
         }
+        if (durableInterjectionSourceRunIds.has(interjection.sourceRunId)) continue;
         const userMessageEvent = await this.eventStore.append({
           type: 'user_message',
           runId: context.runId,
@@ -944,13 +974,11 @@ export class RawAgentLoop implements AgentLoop {
           ...(interjection.visionAnalysis ? { visionAnalysis: interjection.visionAnalysis } : {}),
           interjectionSourceRunId: interjection.sourceRunId,
           ...(interjection.clientMsgId ? { clientMsgId: interjection.clientMsgId } : {}),
+        }).catch((error) => {
+          requestSteeringRecoveryHandoff('steering_reserved_event_append_failed');
+          throw error;
         });
-        // 去重集必须在 durable append 成功后立即登记（2026-08-04）：若随后的
-        // transcript project 抛错，下一轮 drain 不得重复 append 同一条 user_message。
-        recoveredInterjectionSourceRunIds.add(interjection.sourceRunId);
-        // project 失败只降级：durable user_message 已落库（真源），transcript 缺行可由
-        // 投影链补偿；消息必须继续进入本轮模型上下文，否则会被 claim 标 applied 却
-        // 从未被模型看到（静默丢失）。
+        durableInterjectionSourceRunIds.add(interjection.sourceRunId);
         try {
           await this.transcriptProjection.project(userMessageEvent);
         } catch (error) {
@@ -958,6 +986,41 @@ export class RawAgentLoop implements AgentLoop {
             `[run] interjection transcript project failed (degraded): run=${context.runId} source=${interjection.sourceRunId} error=${error instanceof Error ? error.message : String(error)}`,
           );
         }
+      }
+
+      let appliedInterjections = reservedInterjections;
+      try {
+        const appliedSourceRunIds = await this.runStore?.markSteeringInputsApplied?.(
+          context.runId,
+          reservedInterjections.map((interjection) => interjection.sourceRunId),
+        ) ?? reservedInterjections.map((interjection) => interjection.sourceRunId);
+        const appliedSourceRunIdSet = new Set(appliedSourceRunIds);
+        appliedInterjections = reservedInterjections.filter((interjection) => (
+          appliedSourceRunIdSet.has(interjection.sourceRunId)
+        ));
+        if (appliedInterjections.length !== reservedInterjections.length) {
+          requestSteeringRecoveryHandoff('steering_reserved_apply_partial');
+          const missing = reservedInterjections
+            .filter((interjection) => !appliedSourceRunIdSet.has(interjection.sourceRunId))
+            .map((interjection) => interjection.sourceRunId);
+          logger.warn(
+            `[run] steering apply partial; absorption disabled for run=${context.runId} unapplied=${missing.join(',')}`,
+          );
+        }
+      } catch (error) {
+        if (context.signal?.aborted) throw error;
+        requestSteeringRecoveryHandoff('steering_reserved_apply_failed');
+        logger.warn(
+          `[run] steering apply failed; handing off target run=${context.runId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        throw error;
+      }
+
+      for (const interjection of appliedInterjections) {
+        if (
+          manualCheckpointSourceRunIds.has(interjection.sourceRunId)
+          || modelContextInterjectionSourceRunIds.has(interjection.sourceRunId)
+        ) continue;
         messages.push({
           role: 'user',
           content: buildModelUserContent(
@@ -967,8 +1030,32 @@ export class RawAgentLoop implements AgentLoop {
           ),
         });
         currentUserMessageIndex = messages.length - 1;
+        modelContextInterjectionSourceRunIds.add(interjection.sourceRunId);
       }
-      return queued;
+      return appliedInterjections;
+    };
+    const announceAppliedInterjections = async (
+      interjections: Awaited<ReturnType<typeof drainQueuedInterjections>>,
+    ): Promise<OutboundEvent> => {
+      const appliedPayload = {
+        sourceRunIds: interjections.map((interjection) => interjection.sourceRunId),
+        clientMsgIds: interjections.flatMap((interjection) => (
+          interjection.clientMsgId ? [interjection.clientMsgId] : []
+        )),
+      };
+      try {
+        await this.append({
+          type: 'interjection_applied',
+          runId: context.runId,
+          sessionId: context.sessionId,
+          ...appliedPayload,
+        });
+      } catch (error) {
+        logger.warn(
+          `[run] durable interjection_applied append failed: run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      return { type: 'interjection_applied', ...appliedPayload };
     };
 
     if (contextProjection.summaryEvent) await this.append(contextProjection.summaryEvent);
@@ -1011,6 +1098,8 @@ export class RawAgentLoop implements AgentLoop {
     let turnLimit = input.maxTurns;
     let thinkingOnlyContinuationUsed = false;
     let pendingTurnText = '';
+    // safe boundary 在上一轮收尾/工具后完成 reserve+apply 时，把通知归属带到下一模型轮次。
+    let carriedBoundaryInterjections: Awaited<ReturnType<typeof drainQueuedInterjections>> = [];
 
     // RFC v1 P0.4：跨 run 接力 Responses API session state。
     // 启动时查上一已完成 run 的 last_response_id（72h 内未过期），赋给本 run。
@@ -1029,17 +1118,25 @@ export class RawAgentLoop implements AgentLoop {
           );
           return;
         }
-        let boundaryInterjections: Awaited<ReturnType<typeof drainQueuedInterjections>> = [];
-        try {
-          boundaryInterjections = await drainQueuedInterjections();
-        } catch (error) {
-          if (context.signal?.aborted) throw error;
-          // BUG-8 降级：PG 抖动不打死 run；插话保持 pending，下一轮/终态回退自愈。
-          logger.warn(
-            `[run] steering drain failed at turn start (degraded): run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
-          );
+        let boundaryInterjections = carriedBoundaryInterjections;
+        carriedBoundaryInterjections = [];
+        if (boundaryInterjections.length === 0) {
+          try {
+            boundaryInterjections = await drainQueuedInterjections();
+          } catch (error) {
+            if (context.signal?.aborted) throw error;
+            logger.warn(
+              `[run] steering drain failed at turn start (degraded): run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
         }
-        let boundaryInterjectionsClaimed = boundaryInterjections.length === 0;
+        if (boundaryInterjections.length > 0) {
+          // reserve + durable append + apply 已完成，所有权真源已一致；无需再等待模型首事件。
+          // 立即通知 Web 清队列，避免 provider 在首事件前失败或部分 apply handoff 时
+          // 留下 live 幽灵条目。
+          yield await announceAppliedInterjections(boundaryInterjections);
+        }
+        if (context.drainHandoff?.requested) return;
         context.replaceableDraftRetryUsed = turn === 1 && restoredDraftRecoveryUsed;
         let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
         let turnContextUsage: OutboundEvent['contextUsage'] | null = null;
@@ -1313,73 +1410,6 @@ export class RawAgentLoop implements AgentLoop {
           ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),
           ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
         }, this.withModelRequestDiagnostics(context))) {
-          if (!boundaryInterjectionsClaimed && event.type === 'completed') {
-            assertSuccessfulModelTerminal(event);
-          }
-          if (!boundaryInterjectionsClaimed) {
-            boundaryInterjectionsClaimed = true;
-            const requestedSourceRunIds = boundaryInterjections.map((interjection) => interjection.sourceRunId);
-            // 尽力 claim（2026-08-04 BUG-3/BUG-8 修复）：
-            // - 部分 claim 失败（source 在 drain→claim 窗口被撤回/janitor 改状态）不再抛
-            //   "steering target became inactive" 打死健康的目标 run——被撤回的条目消息
-            //   已进入本轮模型请求（撤回太晚，模型会响应它），只记录日志继续。
-            // - PG 抖动同理只降级：input 行保持 pending，下一轮 drain 会因
-            //   recoveredInterjectionSourceRunIds 去重跳过重复 append 并自动重试 claim。
-            let appliedInterjections = boundaryInterjections;
-            try {
-              const appliedSourceRunIds = await this.runStore?.markSteeringInputsApplied?.(
-                context.runId,
-                requestedSourceRunIds,
-              ) ?? requestedSourceRunIds;
-              const appliedSourceRunIdSet = new Set(appliedSourceRunIds);
-              appliedInterjections = boundaryInterjections.filter((interjection) => (
-                appliedSourceRunIdSet.has(interjection.sourceRunId)
-              ));
-              if (appliedInterjections.length !== boundaryInterjections.length) {
-                if (context.signal?.aborted) {
-                  const reason = context.signal.reason;
-                  throw reason instanceof Error ? reason : new Error(String(reason ?? 'run aborted'));
-                }
-                const missing = boundaryInterjections
-                  .filter((interjection) => !appliedSourceRunIdSet.has(interjection.sourceRunId))
-                  .map((interjection) => interjection.sourceRunId);
-                logger.warn(
-                  `[run] steering claim partial: run=${context.runId} unclaimed=${missing.join(',')} — 已跳过（可能被撤回），本轮继续`,
-                );
-              }
-            } catch (error) {
-              if (context.signal?.aborted) throw error;
-              // 未确认 claim 成功就不能对外宣告 applied（否则前端清队列区、durable 行
-              // 却仍 pending，目标终态后回退独立 run 会重复执行）。置空等下一轮重试。
-              appliedInterjections = [];
-              logger.warn(
-                `[run] steering claim failed (degraded, will retry next turn): run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
-              );
-            }
-            if (appliedInterjections.length > 0) {
-              const appliedPayload = {
-                sourceRunIds: appliedInterjections.map((interjection) => interjection.sourceRunId),
-                clientMsgIds: appliedInterjections.flatMap((interjection) => (
-                  interjection.clientMsgId ? [interjection.clientMsgId] : []
-                )),
-              };
-              // durable 化（BUG-2）：跨进程投影靠这条到达 web 进程；失败不阻断主流程
-              //（本进程 yield 路径仍工作，单进程部署不受影响）。
-              try {
-                await this.append({
-                  type: 'interjection_applied',
-                  runId: context.runId,
-                  sessionId: context.sessionId,
-                  ...appliedPayload,
-                });
-              } catch (error) {
-                logger.warn(
-                  `[run] durable interjection_applied append failed: run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
-                );
-              }
-              yield { type: 'interjection_applied', ...appliedPayload };
-            }
-          }
           if (event.type === 'thinking_delta') {
             if (!thinkingStarted) {
               thinkingStarted = true;
@@ -1682,7 +1712,14 @@ export class RawAgentLoop implements AgentLoop {
               );
               queuedInterjections = [];
             }
+            if (context.drainHandoff?.requested) {
+              if (queuedInterjections.length > 0) {
+                yield await announceAppliedInterjections(queuedInterjections);
+              }
+              return;
+            }
             if (queuedInterjections.length > 0) {
+              carriedBoundaryInterjections = queuedInterjections;
               // 压缩期间到达的消息必须仍是当前 run 的插话。即使原任务恰好耗尽
               // maxTurns，也为这批插话重新开放一份完整轮次预算，避免压缩尾阶段
               // 人为制造“上一 run 已停、下一 run 尚未开始”的断层。
@@ -1807,12 +1844,20 @@ export class RawAgentLoop implements AgentLoop {
           messages,
         });
         if (turn < turnLimit) {
-          await drainQueuedInterjections().catch((error) => {
+          try {
+            carriedBoundaryInterjections = await drainQueuedInterjections();
+          } catch (error) {
             if (context.signal?.aborted) throw error;
             logger.warn(
               `[run] steering drain failed after tools (degraded): run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
             );
-          });
+          }
+          if (context.drainHandoff?.requested) {
+            if (carriedBoundaryInterjections.length > 0) {
+              yield await announceAppliedInterjections(carriedBoundaryInterjections);
+            }
+            return;
+          }
         }
       }
 

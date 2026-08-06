@@ -1267,7 +1267,210 @@ describe('RawAgentLoop', () => {
     expect(trySeal).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the source pending when cancellation happens before the next model event', async () => {
+  it('does not start an extra model turn when steering reservation permanently fails', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-steering-reserve-failure-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const adapter = new InterjectionAfterFinalAdapter();
+    const queued: QueuedInterjection[] = [{
+      inputId: 'input-reserve-failure',
+      sourceRunId: 'source-reserve-failure',
+      clientMsgId: 'client-reserve-failure',
+      message: { channel: 'web', chatId: 'chat-reserve-failure', content: '不会被重复执行' },
+      prompt: '不会被重复执行',
+    }];
+    let loadCalls = 0;
+    const reserve = vi.fn(async () => {
+      throw new Error('permanent reserve failure');
+    });
+    const markApplied = vi.fn(async () => ['source-reserve-failure']);
+    const drainHandoff = { requested: false };
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-steering-reserve-failure'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore: {
+        reserveSteeringInputs: reserve,
+        markSteeringInputsApplied: markApplied,
+        trySealSteeringInputWindow: vi.fn(async () => false),
+      } as unknown as RunStore,
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-reserve-failure', content: '先回答' },
+        prompt: '先回答',
+        instructions: '直接回答。',
+        maxTurns: 100,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'target-reserve-failure',
+        sessionId: 'session-steering-reserve-failure',
+        model: 'gpt-5.5',
+        cwd,
+        drainHandoff,
+        channelContext: { channel: 'web' },
+        loadQueuedInterjections: async () => {
+          loadCalls += 1;
+          return loadCalls === 1 ? [] : queued;
+        },
+      },
+    ));
+
+    expect(adapter.requests).toHaveLength(1);
+    expect(drainHandoff).toMatchObject({
+      requested: true,
+      reason: 'steering_reserve_failed',
+    });
+    expect(reserve).toHaveBeenCalledTimes(1);
+    expect(markApplied).not.toHaveBeenCalled();
+    expect(events.some((event) => event.type === 'interjection_applied')).toBe(false);
+    const durableEvents = await eventStore.list('session-steering-reserve-failure');
+    expect(durableEvents.some((event) => (
+      event.type === 'user_message' && event.interjectionSourceRunId === 'source-reserve-failure'
+    ))).toBe(false);
+    expect(durableEvents.some((event) => event.type === 'run_finished')).toBe(false);
+  });
+
+  it('announces the applied subset before handing off a partial steering apply', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-steering-partial-apply-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const adapter = new InterjectionAfterFinalAdapter();
+    const queued: QueuedInterjection[] = [
+      {
+        inputId: 'input-partial-1',
+        sourceRunId: 'source-partial-1',
+        clientMsgId: 'client-partial-1',
+        message: { channel: 'web', chatId: 'chat-partial-apply', content: '第一条补充' },
+        prompt: '第一条补充',
+      },
+      {
+        inputId: 'input-partial-2',
+        sourceRunId: 'source-partial-2',
+        clientMsgId: 'client-partial-2',
+        message: { channel: 'web', chatId: 'chat-partial-apply', content: '第二条补充' },
+        prompt: '第二条补充',
+      },
+    ];
+    let loadCalls = 0;
+    const drainHandoff = { requested: false };
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-steering-partial-apply'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore: {
+        reserveSteeringInputs: vi.fn(async (_targetRunId: string, sourceRunIds: string[]) => sourceRunIds),
+        markSteeringInputsApplied: vi.fn(async () => ['source-partial-1']),
+        trySealSteeringInputWindow: vi.fn(async () => false),
+      } as unknown as RunStore,
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-partial-apply', content: '先回答' },
+        prompt: '先回答',
+        instructions: '直接回答。',
+        maxTurns: 100,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'target-partial-apply',
+        sessionId: 'session-steering-partial-apply',
+        model: 'gpt-5.5',
+        cwd,
+        drainHandoff,
+        channelContext: { channel: 'web' },
+        loadQueuedInterjections: async () => {
+          loadCalls += 1;
+          return loadCalls === 1 ? [] : queued;
+        },
+      },
+    ));
+
+    expect(adapter.requests).toHaveLength(1);
+    expect(drainHandoff).toMatchObject({
+      requested: true,
+      reason: 'steering_reserved_apply_partial',
+    });
+    expect(events.filter((event) => event.type === 'interjection_applied')).toEqual([{
+      type: 'interjection_applied',
+      sourceRunIds: ['source-partial-1'],
+      clientMsgIds: ['client-partial-1'],
+    }]);
+    const durableEvents = await eventStore.list('session-steering-partial-apply');
+    expect(durableEvents.some((event) => event.type === 'run_finished')).toBe(false);
+  });
+
+  it('hands off the target without another model turn when apply fails after reserve', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-steering-apply-failure-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const adapter = new InterjectionAfterFinalAdapter();
+    const queued: QueuedInterjection[] = [{
+      inputId: 'input-apply-failure',
+      sourceRunId: 'source-apply-failure',
+      message: { channel: 'web', chatId: 'chat-apply-failure', content: '等待同一目标恢复' },
+      prompt: '等待同一目标恢复',
+    }];
+    let loadCalls = 0;
+    const drainHandoff = { requested: false };
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-steering-apply-failure'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore: {
+        reserveSteeringInputs: vi.fn(async (_targetRunId: string, sourceRunIds: string[]) => sourceRunIds),
+        markSteeringInputsApplied: vi.fn(async () => {
+          throw new Error('apply unavailable');
+        }),
+        trySealSteeringInputWindow: vi.fn(async () => false),
+      } as unknown as RunStore,
+    });
+
+    await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-apply-failure', content: '先回答' },
+        prompt: '先回答',
+        instructions: '直接回答。',
+        maxTurns: 100,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'target-apply-failure',
+        sessionId: 'session-steering-apply-failure',
+        model: 'gpt-5.5',
+        cwd,
+        drainHandoff,
+        channelContext: { channel: 'web' },
+        loadQueuedInterjections: async () => {
+          loadCalls += 1;
+          return loadCalls === 1 ? [] : queued;
+        },
+      },
+    ));
+
+    expect(adapter.requests).toHaveLength(1);
+    expect(drainHandoff).toMatchObject({
+      requested: true,
+      reason: 'steering_reserved_apply_failed',
+    });
+    const durableEvents = await eventStore.list('session-steering-apply-failure');
+    expect(durableEvents).toContainEqual(expect.objectContaining({
+      type: 'user_message',
+      interjectionSourceRunId: 'source-apply-failure',
+    }));
+    expect(durableEvents.some((event) => event.type === 'run_finished')).toBe(false);
+  });
+
+  it('owns the source before a model request that aborts before its first event', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-interjection-cancel-boundary-'));
     cleanupDirs.add(cwd);
     const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
@@ -1324,10 +1527,15 @@ describe('RawAgentLoop', () => {
       error: 'cancelled before interjection model event',
     });
     expect(adapter.calls).toBe(2);
-    expect(markApplied).not.toHaveBeenCalled();
+    expect(events).toContainEqual({
+      type: 'interjection_applied',
+      sourceRunIds: ['source-cancel-boundary'],
+      clientMsgIds: ['client-cancel-boundary'],
+    });
+    expect(markApplied).toHaveBeenCalledWith('target-cancel-boundary', ['source-cancel-boundary']);
   });
 
-  it('keeps the source pending when the next model turn fails before producing content', async () => {
+  it('owns the source before a model request that fails before producing content', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-interjection-failed-boundary-'));
     cleanupDirs.add(cwd);
     const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
@@ -1382,7 +1590,12 @@ describe('RawAgentLoop', () => {
       error: expect.stringContaining('max_output_tokens'),
     });
     expect(adapter.calls).toBe(2);
-    expect(markApplied).not.toHaveBeenCalled();
+    expect(events).toContainEqual({
+      type: 'interjection_applied',
+      sourceRunIds: ['source-failed-boundary'],
+      clientMsgIds: ['client-failed-boundary'],
+    });
+    expect(markApplied).toHaveBeenCalledWith('target-failed-boundary', ['source-failed-boundary']);
   });
 
   it('leaves a final-turn interjection pending for durable fallback when no next model turn exists', async () => {
@@ -3599,7 +3812,13 @@ describe('RawAgentLoop', () => {
       }
     }
     const adapter = new ManualCheckpointAdapter();
+    const ownershipTransitions: string[] = [];
+    const reserve = vi.fn(async (_runId: string, sourceRunIds: string[]) => {
+      ownershipTransitions.push('reserved');
+      return sourceRunIds;
+    });
     const markApplied = vi.fn(async (_runId: string, sourceRunIds: string[]) => {
+      ownershipTransitions.push('applied');
       queued = [];
       return sourceRunIds;
     });
@@ -3612,6 +3831,7 @@ describe('RawAgentLoop', () => {
       runStore: {
         get: vi.fn(async () => ({ status: 'running', metadata: {} })),
         patchMetadata: vi.fn(async () => null),
+        reserveSteeringInputs: reserve,
         markSteeringInputsApplied: markApplied,
         trySealSteeringInputWindow: vi.fn(async () => true),
         clearResponseSessionStateBySession: vi.fn(async () => 0),
@@ -3637,6 +3857,8 @@ describe('RawAgentLoop', () => {
     ));
 
     expect(adapter.requests).toHaveLength(2);
+    expect(ownershipTransitions).toEqual(['reserved', 'applied']);
+    expect(reserve).toHaveBeenCalledWith('run-manual-control', ['source-compact']);
     expect(JSON.stringify(adapter.requests[1]?.messages)).not.toContain('/compact');
     expect(JSON.stringify(adapter.requests[1]?.messages)).toContain('完成原任务');
     expect(markApplied).toHaveBeenCalledWith('run-manual-control', ['source-compact']);

@@ -1620,12 +1620,34 @@ export class WebChannel implements BaseChannel {
     return true;
   }
 
-  /** 处理 abort 消息（runId-first；streamId 仅兼容旧客户端） */
+  /** 处理 abort 消息（runId-first；streamId 仅兼容旧客户端）。
+   * 与同连接 chat 共用串行链，确保先收到的 chat 完成 durable enqueue 后再执行 stop-all。
+   */
   private handleAbort(client: WsClient, msg: WsAbortMessage): void {
-    void this.handleAbortAsync(client, msg).catch((err) => {
+    // legacy 直连路径的 chat tail 覆盖整段模型流，abort 必须立即执行，不能排队到流结束。
+    if (!this.config.enqueueRuntime) {
+      void this.handleAbortAsync(client, msg).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        chatLogger.warn(`abort failed: ${message}`);
+        this.wsSend(client.ws, { type: 'error', message });
+      });
+      return;
+    }
+    const previous = this.chatProcessingTails.get(client.ws) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(() => this.handleAbortAsync(client, msg));
+    this.chatProcessingTails.set(client.ws, next);
+    const cleanup = () => {
+      if (this.chatProcessingTails.get(client.ws) === next) {
+        this.chatProcessingTails.delete(client.ws);
+      }
+    };
+    void next.then(cleanup, (err) => {
       const message = err instanceof Error ? err.message : String(err);
       chatLogger.warn(`abort failed: ${message}`);
       this.wsSend(client.ws, { type: 'error', message });
+      cleanup();
     });
   }
 
@@ -1669,6 +1691,9 @@ export class WebChannel implements BaseChannel {
     }
 
     if (resolvedRunStatus && TERMINAL_RUN_STATUSES.has(resolvedRunStatus)) {
+      if (sessionId) {
+        await this.cancelPendingSteeringForSession(sessionId, 'aborted', resolvedRunId);
+      }
       this.wsSend(client.ws, { type: 'abort_ok', ...(resolvedStreamId ? { streamId: resolvedStreamId } : {}), ...(resolvedRunId ? { runId: resolvedRunId } : {}) });
       if (sessionId) {
         this.wsSend(client.ws, {
@@ -1690,6 +1715,11 @@ export class WebChannel implements BaseChannel {
       userId: client.user?.sub,
       reason: 'web_abort',
     });
+    // 先在 session advisory lock 内取消所有尚未 dispatch 的输入，再终结目标 run。
+    // 若该事务失败则 stop 整体失败，不能先把目标置终态、让 pending source 自动 fallback。
+    if (sessionId) {
+      await this.cancelPendingSteeringForSession(sessionId, 'aborted', resolvedRunId);
+    }
     if (resolvedRunId && this.config.enqueueRuntime?.runStore) {
       if (sessionId && this.config.enqueueRuntime.toolInvocationStore) {
         const runningInvocations = await this.config.enqueueRuntime.toolInvocationStore.listRunning(sessionId).catch(() => []);
@@ -1716,14 +1746,6 @@ export class WebChannel implements BaseChannel {
       runtimeRunController.abort(resolvedRunId, 'web_abort');
     }
     entry?.controller.abort('web_abort');
-    // 停止=全停（2026-08-04 终态设计）：目标 run 取消后，排队中的插话不允许在目标
-    // 终态后自动降级为独立 run「复活」。一并撤销并广播 steering_cancelled，
-    // 前端队列区把这些条目标为已取消（内容保留可重发）。
-    if (sessionId) {
-      await this.cancelPendingSteeringForSession(sessionId, 'aborted').catch((err) => {
-        chatLogger.warn(`[chat] cancel pending steering on abort failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
-    }
     this.wsSend(client.ws, { type: 'abort_ok', ...(resolvedStreamId ? { streamId: resolvedStreamId } : {}), ...(resolvedRunId ? { runId: resolvedRunId } : {}) });
   }
 
@@ -1763,21 +1785,41 @@ export class WebChannel implements BaseChannel {
   }
 
   /** abort 联动：撤销 session 内全部排队插话并广播。 */
-  private async cancelPendingSteeringForSession(sessionId: string, reason: string): Promise<void> {
+  private async cancelPendingSteeringForSession(
+    sessionId: string,
+    reason: string,
+    targetRunId?: string,
+  ): Promise<void> {
     const runStore = this.config.enqueueRuntime?.runStore;
-    if (!runStore?.listPendingSteeringBySession || !runStore.cancelPendingSteeringSourceRun) return;
-    const pending = await runStore.listPendingSteeringBySession(sessionId).catch(() => []);
-    for (const input of pending) {
-      const result = await runStore.cancelPendingSteeringSourceRun(input.sourceRunId, reason).catch(() => null);
-      if (result?.ok) {
+    if (!runStore) return;
+    if (runStore.cancelSteeringBeforeDispatchBySession) {
+      const cancelled = await runStore.cancelSteeringBeforeDispatchBySession(sessionId, reason, targetRunId);
+      for (const input of cancelled) {
+        const clientMsgId = typeof input.sourceRun.metadata?.clientMsgId === 'string'
+          ? input.sourceRun.metadata.clientMsgId
+          : undefined;
         this.finalizeCancelledSteeringSource({
           sourceRunId: input.sourceRunId,
           sessionId,
-          clientMsgId: result.clientMsgId,
+          ...(clientMsgId ? { clientMsgId } : {}),
           userId: input.sourceRun.userId,
           reason,
         });
       }
+      return;
+    }
+    if (!runStore.listPendingSteeringBySession || !runStore.cancelPendingSteeringSourceRun) return;
+    const pending = await runStore.listPendingSteeringBySession(sessionId);
+    for (const input of pending) {
+      const result = await runStore.cancelPendingSteeringSourceRun(input.sourceRunId, reason);
+      if (!result.ok) continue;
+      this.finalizeCancelledSteeringSource({
+        sourceRunId: input.sourceRunId,
+        sessionId,
+        ...(result.clientMsgId ? { clientMsgId: result.clientMsgId } : {}),
+        userId: input.sourceRun.userId,
+        reason,
+      });
     }
   }
 
@@ -2225,6 +2267,7 @@ export class WebChannel implements BaseChannel {
   // ── 核心聊天处理逻辑 ──────────────────────────────────
 
   private async processChatMessage(client: WsClient, msg: WsChatMessage): Promise<void> {
+    const steeringAcceptedAt = new Date().toISOString();
     const { message, sessionId, attachments, model, voiceFile } = msg;
     const ws = client.ws;
     const user = client.user;
@@ -2830,6 +2873,7 @@ export class WebChannel implements BaseChannel {
             transcriptPath: sessionRecord.transcriptPath,
             streamId,
             clientMsgId,
+            steeringAcceptedAt,
             ...(approvalPolicy ? { approvalPolicy } : {}),
             ...(guardrailMark ? { guardrail: guardrailMark } : {}),
             ...(context.replaceableDrafts ? { replaceableDrafts: true } : {}),

@@ -373,6 +373,20 @@ describe('SkillConfigStore removal & content hash & load', () => {
     expect(readFileSync(path, 'utf-8')).toBe(before);
   });
 
+  it('reload 读取其他进程落盘的最新用户选择', async () => {
+    const path = storePath();
+    const writer = new SkillConfigStore(path);
+    await writer.setUserSelectedSkills('alice', ['builtin']);
+    const runtimeWorker = new SkillConfigStore(path);
+
+    await writer.setUserSelectedSkills('alice', ['builtin', 'custom-skill']);
+    expect(runtimeWorker.getUserSelectedSkills('alice')).toEqual(['builtin']);
+
+    runtimeWorker.reload();
+    expect(runtimeWorker.getUserSelectedSkills('alice')).toEqual(['builtin', 'custom-skill']);
+    expect(runtimeWorker.getConfigVersion()).toBe(writer.getConfigVersion());
+  });
+
   it('syncWithPool 补全缺失条目（默认 visible）不覆盖已存在，返回新增数', async () => {
     const s = new SkillConfigStore(storePath());
     await s.setPlatformSkillConfigs({ existing: { enabled: false, exposure: 'all', tenantIds: [] } });

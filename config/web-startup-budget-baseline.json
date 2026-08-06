@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "metrics": {
+    "startupJsRequests": 1,
+    "startupCssRequests": 1,
+    "startupJsGzipBytes": 317493,
+    "startupCssGzipBytes": 32000,
+    "startupJsBrotliBytes": 251980,
+    "startupCssBrotliBytes": 25592,
+    "largestJsGzipBytes": 317493,
+    "largestCssGzipBytes": 32000,
+    "largestJsBrotliBytes": 251980,
+    "largestCssBrotliBytes": 25592,
+    "largestJs": "assets/index-DhpBE2nX.js",
+    "largestCss": "assets/index-CNNBs5Ba.css"
+  },
+  "tolerance": {
+    "requests": 0,
+    "bytes": 1024
+  },
+  "ceilings": {
+    "startupJsRequests": 20,
+    "startupCssRequests": 4,
+    "startupJsGzipBytes": 600000,
+    "startupCssGzipBytes": 120000,
+    "largestJsGzipBytes": 450000,
+    "largestCssGzipBytes": 120000
+  },
+  "reason": "Initial production OSS build measurement using index.html startup JS/CSS entries; gzip level 9 and Brotli quality 11.",
+  "updatedAt": "2026-08-05"
+}

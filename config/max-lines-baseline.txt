@@ -1,0 +1,55 @@
+# Source file ratchet baseline. Physical lines are CRLF-normalized; a final newline is not a line.
+# Thresholds: production=1000 (above production p95=821), test=800 (above test p95=667).
+# Generated/build/cache output is excluded because it is not maintained source.
+# Format: repo-relative-path max-lines scope
+# Existing over-threshold files are grandfathered; entries may only shrink or be pruned.
+
+acs-orchestrator/src/sandboxManager.test.ts	1772	test
+acs-orchestrator/src/sandboxManager.ts	1350	production
+server/src/__tests__/appConfig.test.ts	928	test
+server/src/__tests__/feishuTokenBroker.test.ts	813	test
+server/src/__tests__/memoryPoll.test.ts	928	test
+server/src/__tests__/rawAgentLoop.test.ts	3979	test
+server/src/__tests__/responsesApiAdapter.test.ts	2415	test
+server/src/__tests__/runtimeScheduler.test.ts	1141	test
+server/src/__tests__/runtimeTraceRoutes.test.ts	986	test
+server/src/__tests__/sessionsRoutesMetaOnly.test.ts	814	test
+server/src/__tests__/skillsRouterTenantIsolation.test.ts	1011	test
+server/src/__tests__/subagent.test.ts	848	test
+server/src/__tests__/toolRuntime.test.ts	1277	test
+server/src/__tests__/webChannelCoverage.test.ts	1795	test
+server/src/__tests__/webChannelExecutionTarget.test.ts	854	test
+server/src/__tests__/webChannelReconnect.test.ts	810	test
+server/src/__tests__/workflowLibraryV3.test.ts	1062	test
+server/src/__tests__/wsEventProcessor.test.ts	831	test
+server/src/agent/toolRuntime.ts	1781	production
+server/src/app/config.ts	1529	production
+server/src/app/runtime.ts	3500	production
+server/src/channels/web/channel.ts	4613	production
+server/src/data/billing/pgBillingStore.ts	1772	production
+server/src/data/transcripts/parse.ts	2019	production
+server/src/routes/auth.ts	1892	production
+server/src/routes/platformObservability.ts	1276	production
+server/src/routes/sessions.ts	3257	production
+server/src/routes/skills.ts	1491	production
+server/src/runtime/background/backgroundTaskService.ts	1108	production
+server/src/runtime/rawAgentLoop.ts	3568	production
+server/src/runtime/rawRuntimeRunDispatch.ts	3863	production
+server/src/runtime/responsesApiAdapter.ts	2094	production
+server/src/runtime/runStore.ts	1430	production
+server/src/runtime/types.ts	1193	production
+shared/src/lib/wsEventProcessor.test.ts	1174	test
+shared/src/lib/wsEventProcessor.ts	1109	production
+shared/src/schemas/workflowScenario.ts	1025	production
+web/src/components/AdminShells.tsx	1208	production
+web/src/components/BillingManager/index.tsx	2179	production
+web/src/components/DesktopSessionSidebar.tsx	2535	production
+web/src/components/MessageItem.tsx	1118	production
+web/src/components/MessageList.tsx	1135	production
+web/src/components/MobileSessionList.tsx	1050	production
+web/src/components/ModelManager/index.tsx	1366	production
+web/src/components/RuntimeOperationsManager/index.tsx	1219	production
+web/src/components/SettingsCenter/SettingsModal.tsx	1101	production
+web/src/components/TenantManager/index.tsx	1185	production
+web/src/hooks/useChatAppState.ts	3205	production
+web/src/hooks/useSession.ts	1146	production

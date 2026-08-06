@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSessionDetailPayload, filterProjectedQueuedMessages } from '../routes/sessions.js';
+import {
+  buildSessionDetailPayload,
+  filterProjectedQueuedMessages,
+  listDurablyProjectedInterjectionSourceRunIds,
+} from '../routes/sessions.js';
 import type { SessionShareSnapshot } from '../data/sessionShares/store.js';
+import type { EventStore } from '../runtime/types.js';
 
 function snapshot(blockCount: number): SessionShareSnapshot {
   return {
@@ -30,6 +35,35 @@ describe('filterProjectedQueuedMessages', () => {
       {},
     ])).toEqual([
       { sourceRunId: 'source-pending', content: '仍在排队' },
+    ]);
+  });
+
+  it('增量 transcript 窗口遗漏已发送插话时，以 durable user_message 阻止队列复活', async () => {
+    const pending = [
+      { sourceRunId: 'source-consumed', targetRunId: 'target-run', content: '已经发送' },
+      { sourceRunId: 'source-pending', targetRunId: 'target-run', content: '仍在排队' },
+    ];
+    const eventStore = {
+      list: async () => [],
+      listByRun: async () => [{
+        id: 'event-1',
+        timestamp: '2026-08-06T00:00:00.000Z',
+        type: 'user_message',
+        runId: 'target-run',
+        sessionId: 'session-1',
+        content: '已经发送',
+        interjectionSourceRunId: 'source-consumed',
+      }],
+    } as unknown as EventStore;
+
+    const durableProjected = await listDurablyProjectedInterjectionSourceRunIds(
+      eventStore,
+      'session-1',
+      pending,
+    );
+
+    expect(filterProjectedQueuedMessages(pending, [], durableProjected)).toEqual([
+      { sourceRunId: 'source-pending', targetRunId: 'target-run', content: '仍在排队' },
     ]);
   });
 });

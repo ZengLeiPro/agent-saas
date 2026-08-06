@@ -30,7 +30,8 @@ import { statVerdict, visibleOutcomeStats, type OutcomeStat } from "./detailSema
 //   （活动组/工具块），无框 = 业务叙事」是刻意的视觉分层。
 // - 状态色只落在 icon 与小徽标上，容器一律融入背景。
 // - 归属感由缩进 + 极淡左竖线表达（timeline 语言），不靠边框。
-// - 步骤折叠时只保留标题整行；展开后再呈现 outcome、业务详情与调试过程。
+// - 步骤折叠时只保留标题整行；展开后再呈现 outcome，以及同排的「过程 / 依据」
+//   折叠入口；入口控制的内容区都在下一行占满可用宽度。
 //   默认状态由用户的业务步骤展示偏好决定。
 //
 // 内容纪律（08-03 二轮：样式对齐 demo + 槽位去重）：
@@ -132,7 +133,6 @@ function StepSummaryBody({ todo }: { todo: TodoItem }) {
       ) : null}
       {todo.evidenceRefs?.length ? (
         <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-          <span>依据</span>
           {todo.evidenceRefs.map((ref) => (
             <span key={ref} className="rounded border border-border/70 bg-muted/30 px-1.5 py-0.5 font-mono">
               {ref}
@@ -247,8 +247,10 @@ function TerminalBlock({
   const todo = event.todo;
   const meta = TERMINAL_META[event.kind];
   const [localOpen, setLocalOpen] = useState(false);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   if (!todo || !meta) return null;
   const { label, tone, Icon } = meta;
+  const hasEvidence = hasStepSummaryBody(todo);
   const bodyOpen = open ?? localOpen;
   const toggle = () => {
     const next = !bodyOpen;
@@ -284,7 +286,20 @@ function TerminalBlock({
               stats={visibleOutcomeStats(todo.outcome.stat, todo.detail)}
             />
           ) : null}
-          <StepSummaryBody todo={todo} />
+          {hasEvidence ? (
+            <div className="grid grid-cols-1" data-business-step-disclosures>
+              <DisclosureButton
+                label="依据"
+                open={evidenceOpen}
+                onToggle={() => setEvidenceOpen((value) => !value)}
+              />
+            </div>
+          ) : null}
+          {hasEvidence && evidenceOpen ? (
+            <div data-business-step-panel="evidence">
+              <StepSummaryBody todo={todo} />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>
@@ -371,16 +386,20 @@ export function BusinessStepSectionView({
 
   const [localOpen, setLocalOpen] = useState(!terminal);
   const [processOpen, setProcessOpen] = useState(!terminal);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const sectionOpen = open ?? localOpen;
   const terminalKey = terminal?.id ?? null;
   useEffect(() => {
     if (!terminalKey) return;
     setProcessOpen(false);
+    setEvidenceOpen(false);
     if (open === undefined) setLocalOpen(false);
   }, [open, terminalKey]);
 
   if (!todo) return <>{children}</>;
 
+  const showProcessDisclosure = !!terminal && debugMode && hasProcess;
+  const showEvidenceDisclosure = !!terminal?.todo && hasStepSummaryBody(terminal.todo);
   const titleLabel = !terminal && isActive && todo.activeForm ? todo.activeForm : todo.content;
   const toggleSection = () => {
     const next = !sectionOpen;
@@ -445,17 +464,43 @@ export function BusinessStepSectionView({
             />
           ) : null}
 
-          {terminal && debugMode && hasProcess ? (
-            <DisclosureButton
-              label={<>过程 · {processCount} 项</>}
-              open={processOpen}
-              onToggle={() => setProcessOpen((value) => !value)}
-            />
+          {showProcessDisclosure || showEvidenceDisclosure ? (
+            <div
+              className={cn(
+                "grid gap-x-4 gap-y-2",
+                showProcessDisclosure && showEvidenceDisclosure ? "grid-cols-2" : "grid-cols-1",
+              )}
+              data-business-step-disclosures
+            >
+              {showProcessDisclosure ? (
+                <DisclosureButton
+                  label={<>过程 · {processCount} 项</>}
+                  open={processOpen}
+                  onToggle={() => setProcessOpen((value) => !value)}
+                />
+              ) : null}
+              {showEvidenceDisclosure ? (
+                <DisclosureButton
+                  label="依据"
+                  open={evidenceOpen}
+                  onToggle={() => setEvidenceOpen((value) => !value)}
+                />
+              ) : null}
+            </div>
           ) : null}
 
-          {terminal?.todo ? <StepSummaryBody todo={terminal.todo} /> : null}
+          {/* 两个入口只占同一行；各自内容都回到下一行并占满步骤正文宽度。 */}
+          {showProcessDisclosure && processOpen ? (
+            <div className="flex flex-col gap-2.5" data-business-step-panel="process">
+              {children}
+            </div>
+          ) : null}
+          {showEvidenceDisclosure && evidenceOpen ? (
+            <div data-business-step-panel="evidence">
+              <StepSummaryBody todo={todo} />
+            </div>
+          ) : null}
           {/* 节内过程块之间与全局同节奏（10px）：子块自身不带流向 margin，由这层 gap 承担。 */}
-          {terminal && debugMode && processOpen ? <div className="flex flex-col gap-2.5">{children}</div> : null}
           {!terminal && hasProcess ? <div className="flex flex-col gap-2.5">{children}</div> : null}
           {/* 终态且过程已收起时，动过外部系统的写操作行继续留着：客户看到的
               「AI 动了我的钉钉 + 单据号」必须是平台盖的章，不能只剩模型自述的「依据」。

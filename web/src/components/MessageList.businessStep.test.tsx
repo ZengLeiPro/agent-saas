@@ -170,13 +170,17 @@ describe("MessageList business step sections", () => {
     expect(screen.queryByText("TodoWrite")).toBeNull();
   });
 
-  it("reveals completed business details on title click without exposing debug metadata", () => {
+  it("keeps evidence collapsed after title click and reveals it independently", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
 
     fireEvent.click(screen.getByRole("button", { name: /核验订单.*已完成/ }));
     expect(screen.queryByText(/过程 · 1 项/)).toBeNull();
     expect(screen.queryByText(/读取订单/)).toBeNull();
     expect(screen.queryByRole("button", { name: "业务详情" })).toBeNull();
+    expect(screen.queryByText("订单资料完整")).toBeNull();
+    const evidenceToggle = screen.getByRole("button", { name: "依据" });
+    expect(evidenceToggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(evidenceToggle);
     expect(screen.getByText("订单资料完整")).toBeTruthy();
   });
 
@@ -208,6 +212,8 @@ describe("MessageList business step sections", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "全部展开" }));
     expect(screen.getByText("已运行")).toBeTruthy();
+    expect(screen.queryByText("订单资料完整")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "依据" }));
     expect(screen.getByText("订单资料完整")).toBeTruthy();
   });
 
@@ -219,6 +225,8 @@ describe("MessageList business step sections", () => {
     fireEvent.click(screen.getByRole("button", { name: "全部收起" }));
     expect(screen.getByRole("button", { name: "全部展开" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "全部展开" }));
+    expect(screen.queryByText("订单资料完整")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "依据" }));
     expect(screen.getByText("订单资料完整")).toBeTruthy();
   });
 
@@ -250,7 +258,8 @@ describe("MessageList business step sections", () => {
     render(<MessageList messages={withOpenActivity} loading={false} debugModeOverride={false} />);
     expect(screen.getByRole("button", { name: "全部收起" })).toBeTruthy();
     expect(screen.getByText("已运行")).toBeTruthy();
-    expect(screen.getByText("订单资料完整")).toBeTruthy();
+    expect(screen.queryByText("订单资料完整")).toBeNull();
+    expect(screen.getByRole("button", { name: "依据" }).getAttribute("aria-expanded")).toBe("false");
   });
 
   it("renders activity groups inside open sections as static summaries outside debug mode", () => {

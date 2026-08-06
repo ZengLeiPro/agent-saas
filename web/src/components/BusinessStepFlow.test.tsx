@@ -35,6 +35,14 @@ function section(partial: Partial<BusinessStepSection>): BusinessStepSection {
   };
 }
 
+function expandEvidence() {
+  const toggle = screen.getByRole("button", { name: "依据" });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  return toggle;
+}
+
 const NO_FILL_SELECTORS = ["section.bg-success\\/5", "section.bg-warning\\/5", "section.bg-destructive\\/5"];
 
 describe("BusinessStepFlow", () => {
@@ -144,6 +152,8 @@ describe("BusinessStepFlow", () => {
     expect(screen.getByText("17")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "业务详情" })).toBeNull();
     expect(screen.queryByText("业务详情")).toBeNull();
+    expect(screen.queryByText("订单资料完整")).toBeNull();
+    expandEvidence();
     expect(screen.getByText("订单资料完整")).toBeTruthy();
     expect(screen.getByText("SO-1001")).toBeTruthy();
     for (const sel of NO_FILL_SELECTORS) expect(container.querySelector(sel)).toBeNull();
@@ -167,6 +177,7 @@ describe("BusinessStepFlow", () => {
       />,
     );
 
+    expandEvidence();
     const card = container.querySelector(".divide-y.bg-card");
     expect(card).toBeTruthy();
     // 白卡按内容收缩，但不超过业务消息的可用宽度。
@@ -210,6 +221,7 @@ describe("BusinessStepFlow", () => {
       />,
     );
 
+    expandEvidence();
     expect(screen.getByText("核对工作树状态")).toBeTruthy();
     expect(container.querySelector("[data-records-title]")?.className).toContain("bg-primary/5");
     expect(container.querySelector("[data-records-block]")?.className).toContain("border-primary/20");
@@ -271,6 +283,7 @@ describe("BusinessStepFlow", () => {
       />,
     );
 
+    expandEvidence();
     // 与详情行同键同值的中性标签隐藏，判定类与未重复的保留。
     const stats = within(screen.getByTestId("outcome-stats"));
     expect(stats.queryByText("文件夹")).toBeNull();
@@ -331,12 +344,65 @@ describe("BusinessStepSectionView", () => {
     fireEvent.click(titleToggle);
     expect(screen.getByText(/过程 ·/)).toBeTruthy();
     expect(screen.getByText("全部通过")).toBeTruthy();
+    expect(screen.queryByText("共核验 12 项字段")).toBeNull();
+    expandEvidence();
     expect(screen.getByText("共核验 12 项字段")).toBeTruthy();
     expect(screen.queryByText("业务详情")).toBeNull();
 
     const processToggle = screen.getByRole("button", { name: /过程 ·/ });
     expect(processToggle.lastElementChild?.classList.contains("lucide-chevron-right")).toBe(true);
     fireEvent.click(processToggle);
+    expect(screen.getByTestId("process-content")).toBeTruthy();
+  });
+
+  it("places process and evidence controls on one row with full-width panels below", () => {
+    const terminal = event({
+      kind: "complete",
+      todo: {
+        id: "a",
+        kind: "business",
+        content: "核验订单",
+        status: "completed",
+        outcome: { text: "核验完成", tone: "ok" },
+        display: [{
+          kind: "records",
+          layout: "rows",
+          title: "核验依据",
+          items: [{ label: "订单", value: "SO-1001" }],
+        }],
+      },
+    });
+    const { container } = render(
+      <BusinessStepSectionView debugMode open section={section({ terminal })}>
+        <div data-testid="process-content">工具活动内容</div>
+      </BusinessStepSectionView>,
+    );
+
+    const controls = container.querySelector("[data-business-step-disclosures]") as HTMLElement;
+    expect(controls).toBeTruthy();
+    expect(controls.className).toContain("grid-cols-2");
+    const processToggle = within(controls).getByRole("button", { name: /过程 · 1 项/ });
+    const evidenceToggle = within(controls).getByRole("button", { name: "依据" });
+    expect(evidenceToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelector('[data-business-step-panel="evidence"]')).toBeNull();
+    expect(container.querySelector('[data-business-step-panel="process"]')).toBeNull();
+
+    fireEvent.click(processToggle);
+    const processPanel = container.querySelector('[data-business-step-panel="process"]') as HTMLElement;
+    expect(processPanel).toBeTruthy();
+    // 回归：过程面板必须紧跟双入口控制行，收起的依据不能留下表格占位。
+    expect(controls.nextElementSibling).toBe(processPanel);
+
+    fireEvent.click(evidenceToggle);
+    const evidencePanel = container.querySelector('[data-business-step-panel="evidence"]') as HTMLElement;
+    expect(evidencePanel).toBeTruthy();
+    expect(evidencePanel.querySelector("[data-records-block]")).toBeTruthy();
+    expect(controls.contains(evidencePanel)).toBe(false);
+    expect(processPanel.nextElementSibling).toBe(evidencePanel);
+    expect(processPanel.parentElement).toBe(evidencePanel.parentElement);
+
+    fireEvent.click(evidenceToggle);
+    expect(container.querySelector('[data-business-step-panel="evidence"]')).toBeNull();
     expect(screen.getByTestId("process-content")).toBeTruthy();
   });
 

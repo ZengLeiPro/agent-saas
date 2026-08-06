@@ -194,6 +194,43 @@ describe("BusinessStepFlow", () => {
     expect(screen.getByText("张三").className).not.toContain("text-primary");
   });
 
+  it("upgrades historical section-verdict groups to branded checklist records", () => {
+    const { container } = render(
+      <BusinessStepFlow
+        open
+        event={event({
+          kind: "complete",
+          todo: {
+            id: "a",
+            kind: "business",
+            content: "迁移两个需求看板",
+            status: "completed",
+            outcome: { text: "两表迁移完成", tone: "ok" },
+            detail: [
+              { section: "Azeroth 需求看板" },
+              { verdict: "pass", text: "字段迁移完成" },
+              { verdict: "warn", text: "存在一项差异", note: "等待复核" },
+              { section: "开沿 Agent 需求看板" },
+              { verdict: "fail", text: "回读失败" },
+              { verdict: "pending", text: "等待人工确认" },
+            ],
+          },
+        })}
+      />,
+    );
+
+    expect(container.querySelectorAll("[data-records-block]")).toHaveLength(2);
+    expect(container.querySelectorAll("[data-records-title]")).toHaveLength(2);
+    expect(screen.getByText("Azeroth 需求看板").parentElement?.className).toContain("bg-primary/5");
+    expect(screen.getByText("开沿 Agent 需求看板").parentElement?.className).toContain("bg-primary/5");
+    expect(screen.getByText("字段迁移完成").closest("button")?.querySelector("svg")?.classList.contains("text-success")).toBe(true);
+    expect(screen.getByText("存在一项差异").closest("button")?.querySelector("svg")?.classList.contains("text-warning")).toBe(true);
+    expect(screen.getByText("回读失败").closest("button")?.querySelector("svg")?.classList.contains("text-destructive")).toBe(true);
+    expect(screen.getByText("等待人工确认").closest("button")?.querySelector("svg")?.classList.contains("text-muted-foreground/70")).toBe(true);
+    expect(screen.getByText("等待复核")).toBeTruthy();
+    expect(container.querySelector(".divide-y.bg-card")).toBeNull();
+  });
+
   it("renders titled records cards inside a terminal business summary", () => {
     const { container } = render(
       <BusinessStepFlow

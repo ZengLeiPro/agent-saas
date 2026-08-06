@@ -10,7 +10,14 @@ import {
   Play,
   TriangleAlert,
 } from "lucide-react";
-import type { BusinessStepEventItem, BusinessStepSection, TodoItem, TodoOutcome } from "@agent/shared";
+import type {
+  BusinessStepEventItem,
+  BusinessStepSection,
+  DetailLine,
+  RecordsBlock,
+  TodoItem,
+  TodoOutcome,
+} from "@agent/shared";
 
 import { cn } from "@/lib/utils";
 import {
@@ -116,18 +123,88 @@ function OutcomeLine({ outcome, stats }: { outcome: TodoOutcome; stats: OutcomeS
   );
 }
 
-/** 终态常显小结：业务详情（白卡键值）与 display（表格、预警等）。 */
+const VERDICT_RECORD_TONE = {
+  pass: "success",
+  fail: "danger",
+  warn: "warn",
+  pending: "muted",
+} as const;
+
+type SectionDetailLine = Extract<DetailLine, { section: string }>;
+type VerdictDetailLine = Extract<DetailLine, { verdict: string }>;
+
+function isSectionDetailLine(line: DetailLine | undefined): line is SectionDetailLine {
+  return typeof line === "object" && line !== null && "section" in line;
+}
+
+function isVerdictDetailLine(line: DetailLine | undefined): line is VerdictDetailLine {
+  return typeof line === "object" && line !== null && "verdict" in line;
+}
+
+type StepDetailPart =
+  | { kind: "detail"; lines: DetailLine[] }
+  | { kind: "records"; block: RecordsBlock };
+
+/**
+ * 兼容已写入 transcript 的旧判定清单。只转换严格相邻的
+ * `section → verdict+`，标题与行语义都来自原数据；其他详情保持原位。
+ */
+function migrateLegacySectionVerdicts(detail: DetailLine[] | undefined): StepDetailPart[] {
+  if (!detail?.length) return [];
+  const parts: StepDetailPart[] = [];
+  let plainLines: DetailLine[] = [];
+  const flushPlainLines = () => {
+    if (!plainLines.length) return;
+    parts.push({ kind: "detail", lines: plainLines });
+    plainLines = [];
+  };
+
+  for (let index = 0; index < detail.length;) {
+    const section = detail[index];
+    if (!isSectionDetailLine(section) || !isVerdictDetailLine(detail[index + 1])) {
+      plainLines.push(section);
+      index += 1;
+      continue;
+    }
+
+    flushPlainLines();
+    index += 1;
+    const items: RecordsBlock["items"] = [];
+    while (true) {
+      const verdict = detail[index];
+      if (!isVerdictDetailLine(verdict)) break;
+      items.push({
+        label: verdict.text,
+        tone: VERDICT_RECORD_TONE[verdict.verdict],
+        ...(verdict.note ? { note: verdict.note } : {}),
+      });
+      index += 1;
+    }
+    parts.push({
+      kind: "records",
+      block: { kind: "records", layout: "checklist", title: section.section, items },
+    });
+  }
+
+  flushPlainLines();
+  return parts;
+}
+
+/** 终态常显小结：非表格详情与 display（表格、预警等）。 */
 function hasStepSummaryBody(todo: TodoItem): boolean {
   return !!todo.detail?.length || !!todo.display?.length;
 }
 
 function StepSummaryBody({ todo }: { todo: TodoItem }) {
   if (!hasStepSummaryBody(todo)) return null;
+  const detailParts = migrateLegacySectionVerdicts(todo.detail);
   return (
     <div className="space-y-3">
-      {todo.detail?.length ? (
-        <PresentationDetail data={{ title: "", detail: todo.detail }} className="mt-0" variant="card" />
-      ) : null}
+      {detailParts.map((part, index) => part.kind === "detail" ? (
+        <PresentationDetail key={index} data={{ title: "", detail: part.lines }} className="mt-0" variant="card" />
+      ) : (
+        <PresentationBlocks key={index} blocks={[part.block]} ctx={{ readOnly: true }} />
+      ))}
       {todo.display?.length ? (
         <PresentationBlocks blocks={todo.display} ctx={{ readOnly: true }} />
       ) : null}

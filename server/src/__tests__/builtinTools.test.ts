@@ -260,6 +260,48 @@ describe('BuiltinToolProvider — TodoWrite 协议', () => {
 
     expect(() => todoWriteToolDescriptor.schema.parse({
       todos: [{
+        id: 'sectioned-detail-card',
+        kind: 'business',
+        content: '分组判定清单',
+        status: 'completed',
+        detail: [{ section: 'Azeroth 需求看板' }, { verdict: 'pass', text: '字段迁移完成' }],
+      }],
+    })).toThrow();
+
+    expect(() => todoWriteToolDescriptor.schema.parse({
+      todos: [{
+        id: 'multiple-verdicts',
+        kind: 'business',
+        content: '多项判定清单',
+        status: 'completed',
+        detail: [
+          { verdict: 'pass', text: '字段迁移完成' },
+          { verdict: 'pass', text: '视图迁移完成' },
+        ],
+      }],
+    })).toThrow(/最多允许一条 verdict/);
+
+    expect(() => todoWriteToolDescriptor.schema.parse({
+      todos: [{
+        id: 'nested-section-detail',
+        kind: 'business',
+        content: '嵌套详情',
+        status: 'completed',
+        display: [{
+          kind: 'records',
+          layout: 'checklist',
+          title: 'Azeroth 需求看板',
+          items: [{
+            label: '字段迁移完成',
+            tone: 'success',
+            detail: [{ section: '回读结果' }, { verdict: 'pass', text: '静态检查通过' }],
+          }],
+        }],
+      }],
+    })).not.toThrow();
+
+    expect(() => todoWriteToolDescriptor.schema.parse({
+      todos: [{
         id: 'fake-gate',
         kind: 'business',
         content: '等待批准',

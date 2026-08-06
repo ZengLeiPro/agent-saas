@@ -98,6 +98,26 @@ describe('records', () => {
     expect(screen.getByText('共 1 项')).toBeTruthy();
   });
 
+  it('checklist 使用品牌色标题栏并按 tone 显示判定图标', () => {
+    const { container } = render(<PresentationBlocks blocks={[{
+      kind: 'records', layout: 'checklist', title: '需求看板验收',
+      items: [
+        { label: '字段迁移完成', tone: 'success' },
+        { label: '回读失败', tone: 'danger' },
+        { label: '存在差异', tone: 'warn' },
+        { label: '等待确认', tone: 'muted' },
+      ],
+    }]} />);
+
+    expect(container.querySelector('[data-records-title]')?.className).toContain('bg-primary/5');
+    expect(screen.getByText('字段迁移完成').className).toContain('text-foreground');
+    expect(screen.getByText('字段迁移完成').closest('button')?.querySelector('svg')?.classList.contains('text-success')).toBe(true);
+    expect(screen.getByText('回读失败').closest('button')?.querySelector('svg')?.classList.contains('text-destructive')).toBe(true);
+    expect(screen.getByText('回读失败').className).not.toContain('line-through');
+    expect(screen.getByText('存在差异').closest('button')?.querySelector('svg')?.classList.contains('text-warning')).toBe(true);
+    expect(screen.getByText('等待确认').closest('button')?.querySelector('svg')?.classList.contains('text-muted-foreground/70')).toBe(true);
+  });
+
   it('条目详情可展开', () => {
     render(<PresentationBlocks blocks={[{
       kind: 'records', layout: 'rows',

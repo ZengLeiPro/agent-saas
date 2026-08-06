@@ -116,9 +116,9 @@ function OutcomeLine({ outcome, stats }: { outcome: TodoOutcome; stats: OutcomeS
   );
 }
 
-/** 终态小结正文：业务详情（白卡键值）/ display / 依据。 */
+/** 终态常显小结：业务详情（白卡键值）与 display（表格、预警等）。 */
 function hasStepSummaryBody(todo: TodoItem): boolean {
-  return !!todo.detail?.length || !!todo.display?.length || !!todo.evidenceRefs?.length;
+  return !!todo.detail?.length || !!todo.display?.length;
 }
 
 function StepSummaryBody({ todo }: { todo: TodoItem }) {
@@ -131,15 +131,20 @@ function StepSummaryBody({ todo }: { todo: TodoItem }) {
       {todo.display?.length ? (
         <PresentationBlocks blocks={todo.display} ctx={{ readOnly: true }} />
       ) : null}
-      {todo.evidenceRefs?.length ? (
-        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-          {todo.evidenceRefs.map((ref) => (
-            <span key={ref} className="rounded border border-border/70 bg-muted/30 px-1.5 py-0.5 font-mono">
-              {ref}
-            </span>
-          ))}
-        </div>
-      ) : null}
+    </div>
+  );
+}
+
+/** 「依据」折叠区只承载短引用标签，不吞掉表格、预警等常显业务内容。 */
+function StepEvidenceBody({ todo }: { todo: TodoItem }) {
+  if (!todo.evidenceRefs?.length) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+      {todo.evidenceRefs.map((ref) => (
+        <span key={ref} className="rounded border border-border/70 bg-muted/30 px-1.5 py-0.5 font-mono">
+          {ref}
+        </span>
+      ))}
     </div>
   );
 }
@@ -250,7 +255,7 @@ function TerminalBlock({
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   if (!todo || !meta) return null;
   const { label, tone, Icon } = meta;
-  const hasEvidence = hasStepSummaryBody(todo);
+  const hasEvidence = !!todo.evidenceRefs?.length;
   const bodyOpen = open ?? localOpen;
   const toggle = () => {
     const next = !bodyOpen;
@@ -286,6 +291,7 @@ function TerminalBlock({
               stats={visibleOutcomeStats(todo.outcome.stat, todo.detail)}
             />
           ) : null}
+          <StepSummaryBody todo={todo} />
           {hasEvidence ? (
             <div className="grid grid-cols-1" data-business-step-disclosures>
               <DisclosureButton
@@ -297,7 +303,7 @@ function TerminalBlock({
           ) : null}
           {hasEvidence && evidenceOpen ? (
             <div data-business-step-panel="evidence">
-              <StepSummaryBody todo={todo} />
+              <StepEvidenceBody todo={todo} />
             </div>
           ) : null}
         </div>
@@ -399,12 +405,22 @@ export function BusinessStepSectionView({
   if (!todo) return <>{children}</>;
 
   const showProcessDisclosure = !!terminal && debugMode && hasProcess;
-  const showEvidenceDisclosure = !!terminal?.todo && hasStepSummaryBody(terminal.todo);
+  const showEvidenceDisclosure = !!terminal?.todo?.evidenceRefs?.length;
   const titleLabel = !terminal && isActive && todo.activeForm ? todo.activeForm : todo.content;
   const toggleSection = () => {
     const next = !sectionOpen;
     if (onOpenChange) onOpenChange(next);
     else setLocalOpen(next);
+  };
+  const toggleProcess = () => {
+    const next = !processOpen;
+    setProcessOpen(next);
+    if (next) setEvidenceOpen(false);
+  };
+  const toggleEvidence = () => {
+    const next = !evidenceOpen;
+    setEvidenceOpen(next);
+    if (next) setProcessOpen(false);
   };
 
   return (
@@ -463,33 +479,31 @@ export function BusinessStepSectionView({
               stats={visibleOutcomeStats(terminal.todo.outcome.stat, terminal.todo.detail)}
             />
           ) : null}
+          {terminal?.todo ? <StepSummaryBody todo={terminal.todo} /> : null}
 
           {showProcessDisclosure || showEvidenceDisclosure ? (
             <div
-              className={cn(
-                "grid gap-x-4 gap-y-2",
-                showProcessDisclosure && showEvidenceDisclosure ? "grid-cols-2" : "grid-cols-1",
-              )}
+              className="flex flex-wrap items-center gap-x-4 gap-y-2"
               data-business-step-disclosures
             >
               {showProcessDisclosure ? (
                 <DisclosureButton
                   label={<>过程 · {processCount} 项</>}
                   open={processOpen}
-                  onToggle={() => setProcessOpen((value) => !value)}
+                  onToggle={toggleProcess}
                 />
               ) : null}
               {showEvidenceDisclosure ? (
                 <DisclosureButton
                   label="依据"
                   open={evidenceOpen}
-                  onToggle={() => setEvidenceOpen((value) => !value)}
+                  onToggle={toggleEvidence}
                 />
               ) : null}
             </div>
           ) : null}
 
-          {/* 两个入口只占同一行；各自内容都回到下一行并占满步骤正文宽度。 */}
+          {/* 两个入口同排并互斥；当前内容回到下一行并占满步骤正文宽度。 */}
           {showProcessDisclosure && processOpen ? (
             <div className="flex flex-col gap-2.5" data-business-step-panel="process">
               {children}
@@ -497,7 +511,7 @@ export function BusinessStepSectionView({
           ) : null}
           {showEvidenceDisclosure && evidenceOpen ? (
             <div data-business-step-panel="evidence">
-              <StepSummaryBody todo={todo} />
+              <StepEvidenceBody todo={todo} />
             </div>
           ) : null}
           {/* 节内过程块之间与全局同节奏（10px）：子块自身不带流向 margin，由这层 gap 承担。 */}

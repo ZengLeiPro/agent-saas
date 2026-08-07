@@ -35,6 +35,9 @@ import { PgRunStore } from '../runtime/runStore.js';
 import { PgHandStore } from '../runtime/handStore.js';
 import { PgSessionProjectionStore } from '../runtime/sessionProjectionStore.js';
 import { MemoryConsolidationEngine } from '../memory/consolidation/engine.js';
+import { RetryableTaskboardService } from '../taskboard/retryableService.js';
+import { PgTaskboardStore } from '../taskboard/store.js';
+import type { TaskboardService } from '../taskboard/types.js';
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import { MEMORY_CONSOLIDATION_DEFAULTS, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
 import { MemoryCommandToolProvider } from '../agent/memoryCommandToolProvider.js';
@@ -357,6 +360,8 @@ export interface AppRuntime {
    * /api/appeals 与 /api/tenant/appeals 路由 503 → 前端隐藏入口）。
    */
   appealStore?: AppealStore;
+  /** 个人任务看板；仅 PG runtime backend 装配，初始化失败时返回 503 并在后续请求重试。 */
+  taskboardService?: TaskboardService;
   /**
    * 门禁模型配置链 getter（主 + fallback）。空数组 = 门禁模块未激活。
    * WebChannel 持有同一 getter——热更后取到的永远是最新链。
@@ -993,6 +998,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let guardrailEventStore: PgGuardrailEventStore | undefined;
   let messageFeedbackStore: PgMessageFeedbackStore | undefined;
   let appealStore: PgAppealStore | undefined;
+  let taskboardService: TaskboardService | undefined;
   let pgArtifactStore: PgArtifactStore | undefined;
   let systemMetricsStore: PgSystemMetricsStore | undefined;
   let systemMetricsCollector: SystemMetricsCollector | undefined;
@@ -1151,6 +1157,20 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       logger: serverLogger.child('PgEventStore'),
     });
     await pgEventStore.init();
+    try {
+      const store = new PgTaskboardStore({
+        pool: pgEventStore.pool,
+        tablePrefix: config.runtimeEventStore.tablePrefix,
+      });
+      const retryableService = new RetryableTaskboardService(store);
+      taskboardService = retryableService;
+      await retryableService.init().catch((err) => {
+        serverLogger.warn(`PgTaskboardStore init failed; requests return 503 until a later init retry succeeds: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    } catch (err) {
+      taskboardService = undefined;
+      serverLogger.warn(`PgTaskboardStore configuration invalid, taskboard routes degrade to 503: ${err instanceof Error ? err.message : String(err)}`);
+    }
     const pgAgentRuntimeProfileStore = new PgAgentRuntimeProfileStore({
       pool: pgEventStore.pool,
       tablePrefix: config.runtimeEventStore.tablePrefix,
@@ -3517,6 +3537,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     guardrailEventStore,
     messageFeedbackStore,
     appealStore,
+    taskboardService,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },
     agentOptionsConfig,

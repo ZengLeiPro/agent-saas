@@ -1,0 +1,160 @@
+import type { DragEvent } from "react";
+import {
+  TASKBOARD_STATUSES,
+  type TaskBoardStatus,
+  type TaskBoardTask,
+} from "@agent/shared";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { TaskCard } from "./TaskCard";
+import { STATUS_LABELS } from "./constants";
+
+interface TaskColumnsProps {
+  tasks: TaskBoardTask[];
+  readOnly: boolean;
+  desktopStatus: TaskBoardStatus | "all";
+  mobileStatus: TaskBoardStatus;
+  onMobileStatusChange: (status: TaskBoardStatus) => void;
+  onOpenTask: (task: TaskBoardTask) => void;
+  onMoveTask: (task: TaskBoardTask, direction: "up" | "down") => void;
+  onDragStart: (taskId: string) => void;
+  onDragEnd: () => void;
+  onDrop: (
+    status: TaskBoardStatus,
+    nextTaskId: string | undefined,
+    event: DragEvent<HTMLElement>,
+  ) => void;
+}
+
+function sortedTasks(tasks: TaskBoardTask[], status: TaskBoardStatus): TaskBoardTask[] {
+  return tasks
+    .filter((task) => task.status === status && !task.archivedAt)
+    .sort((left, right) => left.sortOrder - right.sortOrder);
+}
+
+export function TaskColumns({
+  tasks,
+  readOnly,
+  desktopStatus,
+  mobileStatus,
+  onMobileStatusChange,
+  onOpenTask,
+  onMoveTask,
+  onDragStart,
+  onDragEnd,
+  onDrop,
+}: TaskColumnsProps) {
+  const mobileTasks = sortedTasks(tasks, mobileStatus);
+
+  return (
+    <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="mb-3 md:hidden">
+        <Select value={mobileStatus} onValueChange={(value) => onMobileStatusChange(value as TaskBoardStatus)}>
+          <SelectTrigger aria-label="移动端状态"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {TASKBOARD_STATUSES.map((status) => (
+              <SelectItem key={status} value={status}>{STATUS_LABELS[status]}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div
+        data-testid="taskboard-columns"
+        aria-label="七态任务看板"
+        className="hidden h-full min-w-0 gap-3 overflow-x-auto pb-2 md:flex"
+      >
+        {TASKBOARD_STATUSES.map((status) => {
+          const columnTasks = desktopStatus === "all" || desktopStatus === status
+            ? sortedTasks(tasks, status)
+            : [];
+          return (
+            <section
+              key={status}
+              data-status={status}
+              aria-label={`${STATUS_LABELS[status]}列`}
+              className="flex h-full w-72 shrink-0 flex-col rounded-xl border bg-muted/30"
+              onDragOver={(event) => {
+                if (!readOnly) event.preventDefault();
+              }}
+              onDrop={(event) => {
+                if (!readOnly) onDrop(status, undefined, event);
+              }}
+            >
+              <header className="flex shrink-0 items-center justify-between border-b px-3 py-2.5">
+                <h3 className="text-sm font-semibold">{STATUS_LABELS[status]}</h3>
+                <span className="rounded-full bg-background px-2 py-0.5 text-xs text-muted-foreground">
+                  {columnTasks.length}
+                </span>
+              </header>
+              <div
+                className="min-h-24 flex-1 space-y-2 overflow-y-auto p-2"
+                onDragOver={(event) => {
+                  if (!readOnly) event.preventDefault();
+                }}
+                onDrop={(event) => {
+                  if (!readOnly) onDrop(status, undefined, event);
+                }}
+              >
+                {columnTasks.map((task, index) => (
+                  <TaskCard
+                    key={task.id}
+                    task={task}
+                    readOnly={readOnly}
+                    allowDrag
+                    canMoveUp={index > 0}
+                    canMoveDown={index < columnTasks.length - 1}
+                    onOpen={onOpenTask}
+                    onMoveUp={(current) => onMoveTask(current, "up")}
+                    onMoveDown={(current) => onMoveTask(current, "down")}
+                    onDragStart={onDragStart}
+                    onDragEnd={onDragEnd}
+                    onDropBefore={(nextTaskId, event) => onDrop(status, nextTaskId, event)}
+                  />
+                ))}
+                {columnTasks.length === 0 ? (
+                  <div className="flex h-20 items-center justify-center rounded-lg border border-dashed text-xs text-muted-foreground">
+                    暂无任务
+                  </div>
+                ) : null}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+
+      <section
+        data-testid="taskboard-mobile-list"
+        aria-label={`${STATUS_LABELS[mobileStatus]}任务列表`}
+        className="h-[calc(100%-3rem)] space-y-2 overflow-y-auto md:hidden"
+      >
+        {mobileTasks.map((task, index) => (
+          <TaskCard
+            key={task.id}
+            task={task}
+            readOnly={readOnly}
+            allowDrag={false}
+            canMoveUp={index > 0}
+            canMoveDown={index < mobileTasks.length - 1}
+            onOpen={onOpenTask}
+            onMoveUp={(current) => onMoveTask(current, "up")}
+            onMoveDown={(current) => onMoveTask(current, "down")}
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
+            onDropBefore={(nextTaskId, event) => onDrop(mobileStatus, nextTaskId, event)}
+          />
+        ))}
+        {mobileTasks.length === 0 ? (
+          <div className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
+            当前状态暂无任务
+          </div>
+        ) : null}
+      </section>
+    </div>
+  );
+}

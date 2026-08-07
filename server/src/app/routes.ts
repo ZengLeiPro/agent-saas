@@ -20,6 +20,7 @@ import {
   createHealthRouter,
   createUploadRouter,
   createCronRouter,
+  createTaskboardRouter,
   createSessionsRouter,
   createTtsRouter,
   createGroupsRouter,
@@ -468,6 +469,12 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       ),
     );
   }
+
+  app.use(
+    "/api/taskboard",
+    tenantFeatureGuard(runtime.tenantStore, "cronEnabled", "定时任务"),
+    createTaskboardRouter({ service: runtime.taskboardService }),
+  );
 
   // Token 用量统计（admin-only），数据由 b4187f00 引入的 business.sqlite 提供
   if (runtime.tokenUsageStore) {

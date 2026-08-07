@@ -134,6 +134,24 @@ export type {
   CronServiceStatus,
 } from "./cron";
 
+export {
+  TASKBOARD_STATUSES,
+  TASKBOARD_PRIORITIES,
+} from "./taskboard";
+export type {
+  TaskBoardStatus,
+  TaskBoardPriority,
+  TaskBoard,
+  TaskBoardTask,
+  TaskBoardComment,
+  TaskBoardCreateInput,
+  TaskBoardPatchInput,
+  TaskBoardTaskCreateInput,
+  TaskBoardTaskPatchInput,
+  TaskBoardTaskMoveInput,
+  TaskBoardCommentCreateInput,
+} from "./taskboard";
+
 export type {
   UserPermissions,
   PlatformCapability,

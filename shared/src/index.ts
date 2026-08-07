@@ -127,6 +127,17 @@ export type {
   CronJobPatch,
   CronRunLogEntry,
   CronServiceStatus,
+  TaskBoardStatus,
+  TaskBoardPriority,
+  TaskBoard,
+  TaskBoardTask,
+  TaskBoardComment,
+  TaskBoardCreateInput,
+  TaskBoardPatchInput,
+  TaskBoardTaskCreateInput,
+  TaskBoardTaskPatchInput,
+  TaskBoardTaskMoveInput,
+  TaskBoardCommentCreateInput,
   UserPermissions,
   PlatformCapability,
   PlatformCapabilityLimits,
@@ -197,7 +208,13 @@ export type {
   AliyunConnectionResponse,
   AliyunConnectInput,
 } from "./types/index";
-export { FILE_SORT_LABELS, PLATFORM_CAPABILITIES, buildScenarioPrompt } from "./types/index";
+export {
+  FILE_SORT_LABELS,
+  PLATFORM_CAPABILITIES,
+  TASKBOARD_STATUSES,
+  TASKBOARD_PRIORITIES,
+  buildScenarioPrompt,
+} from "./types/index";
 export { saveUserPreferences } from "./lib/preferencesApi";
 export { GLOBAL_TENANT_ID } from "./types/index";
 export {

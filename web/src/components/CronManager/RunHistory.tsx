@@ -1,5 +1,5 @@
 import type { CronRunLogEntry } from "./types";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Copy, FileText } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -58,11 +58,12 @@ type RunDetailsResponse = {
 
 interface RunHistoryProps {
   entries: CronRunLogEntry[];
+  active?: boolean;
   loading: boolean;
   error?: string | null;
 }
 
-export function RunHistory({ entries, loading, error }: RunHistoryProps) {
+export function RunHistory({ entries, active = true, loading, error }: RunHistoryProps) {
   const { user } = useAuth();
   // 仅当用户开启 debug 模式时，才允许点击行查看完整运行详情；否则只能看到这个列表。
   const debugMode = user?.debugMode === true;
@@ -76,9 +77,18 @@ export function RunHistory({ entries, loading, error }: RunHistoryProps) {
   const [showMeta, setShowMeta] = useState(true);
   const [onlyErrors, setOnlyErrors] = useState(false);
   const [openBlocks, setOpenBlocks] = useState<Set<string>>(new Set());
+  const detailsRequestRef = useRef(0);
 
   useEffect(() => {
-    if (!dialogOpen || !selected) return;
+    const requestId = ++detailsRequestRef.current;
+    if (!active || !dialogOpen || !selected) {
+      setDetailsLoading(false);
+      return;
+    }
+    if (details?.run.jobId === selected.jobId && details.run.runId === selected.runId) {
+      setDetailsLoading(false);
+      return;
+    }
 
     setDetails(null);
     setDetailsError(null);
@@ -90,19 +100,37 @@ export function RunHistory({ entries, loading, error }: RunHistoryProps) {
       return;
     }
 
+    const controller = new AbortController();
     setDetailsLoading(true);
-    authFetch(`/api/cron/jobs/${selected.jobId}/runs/${selected.runId}/details`)
+    authFetch(`/api/cron/jobs/${selected.jobId}/runs/${selected.runId}/details`, {
+      signal: controller.signal,
+    })
       .then((res) => parseJsonResponse<RunDetailsResponse>(res, "定时任务"))
       .then((data) => {
+        if (requestId !== detailsRequestRef.current) return;
         setDetails(data);
         setDetailsError(null);
       })
       .catch((e) => {
+        if (controller.signal.aborted || requestId !== detailsRequestRef.current) return;
         setDetails(null);
         setDetailsError(e instanceof Error ? e.message : String(e));
       })
-      .finally(() => setDetailsLoading(false));
-  }, [dialogOpen, selected]);
+      .finally(() => {
+        if (requestId === detailsRequestRef.current) setDetailsLoading(false);
+      });
+
+    return () => {
+      controller.abort();
+      if (requestId === detailsRequestRef.current) detailsRequestRef.current += 1;
+    };
+  }, [
+    active,
+    details?.run.jobId,
+    details?.run.runId,
+    dialogOpen,
+    selected,
+  ]);
 
   useEffect(() => {
     if (!details?.blocks) return;
@@ -242,7 +270,7 @@ export function RunHistory({ entries, loading, error }: RunHistoryProps) {
         </TableBody>
       </Table>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={active && dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[90vh] overflow-hidden sm:max-w-4xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">

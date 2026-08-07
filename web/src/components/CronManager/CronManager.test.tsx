@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CronManager } from "./index";
 
@@ -39,6 +39,15 @@ vi.mock("./JobForm", () => ({
   JobForm: () => <form id="cron-job-form" aria-label="定时任务表单" />,
 }));
 
+vi.mock("@/components/TaskBoard", () => ({
+  TaskBoardView: () => (
+    <div>
+      任务看板视图
+      <input aria-label="看板草稿" defaultValue="" />
+    </div>
+  ),
+}));
+
 function ExternalHeaderHarness() {
   const [target, setTarget] = useState<HTMLDivElement | null>(null);
 
@@ -51,6 +60,10 @@ function ExternalHeaderHarness() {
 }
 
 describe("CronManager 桌面布局", () => {
+  beforeEach(() => {
+    window.history.replaceState({}, "", "/cron");
+  });
+
   it("使用全局 Header 的唯一操作区，并在新建态原位切换操作", async () => {
     const user = userEvent.setup();
     const { container } = render(<ExternalHeaderHarness />);
@@ -75,5 +88,40 @@ describe("CronManager 桌面布局", () => {
     expect(within(header).getByRole("button", { name: "刷新" })).toBeTruthy();
     expect(within(header).getByRole("button", { name: "新建" })).toBeTruthy();
     expect(screen.queryByText("创建定时任务")).toBeNull();
+  });
+
+  it("在任务调度与任务看板间同步 query，并响应 URL 返回", async () => {
+    const user = userEvent.setup();
+    render(<CronManager />);
+
+    await user.click(screen.getByRole("tab", { name: "任务看板" }));
+    expect(window.location.pathname).toBe("/cron");
+    expect(window.location.search).toBe("?view=board");
+    expect(screen.getByText("任务看板视图")).toBeTruthy();
+
+    act(() => {
+      window.history.replaceState({}, "", "/cron");
+      window.dispatchEvent(new Event("popstate"));
+    });
+    expect(await screen.findByText("选择左侧任务查看运行历史")).toBeTruthy();
+    expect(window.location.search).toBe("");
+  });
+
+  it("切换二级视图保持已打开表单和看板草稿", async () => {
+    const user = userEvent.setup();
+    render(<CronManager />);
+
+    await user.click(screen.getByRole("button", { name: "新建" }));
+    expect(screen.getByText("创建定时任务")).toBeTruthy();
+
+    await user.click(screen.getByRole("tab", { name: "任务看板" }));
+    const draft = screen.getByRole("textbox", { name: "看板草稿" }) as HTMLInputElement;
+    await user.type(draft, "不要丢失");
+
+    await user.click(screen.getByRole("tab", { name: "任务调度" }));
+    expect(screen.getByText("创建定时任务")).toBeTruthy();
+
+    await user.click(screen.getByRole("tab", { name: "任务看板" }));
+    expect((screen.getByRole("textbox", { name: "看板草稿" }) as HTMLInputElement).value).toBe("不要丢失");
   });
 });

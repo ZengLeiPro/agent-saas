@@ -1,0 +1,254 @@
+import { Router, type Request, type RequestHandler, type Response } from 'express';
+import { z } from 'zod';
+
+import {
+  TASKBOARD_PRIORITIES,
+  TASKBOARD_STATUSES,
+} from '../../../shared/src/types/taskboard.js';
+import {
+  TaskboardConflictError,
+  TaskboardNotFoundError,
+  TaskboardValidationError,
+  type TaskboardIdentity,
+  type TaskboardService,
+} from '../taskboard/types.js';
+
+const boardCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().max(4_000).optional(),
+}).strict();
+
+const boardPatchSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  description: z.string().max(4_000).optional(),
+  expectedVersion: z.number().int().min(1),
+}).strict().refine(
+  (input) => input.name !== undefined || input.description !== undefined,
+  { message: 'At least one board field is required' },
+);
+
+const expectedVersionSchema = z.object({
+  expectedVersion: z.number().int().min(1),
+}).strict();
+
+const labelsSchema = z.array(z.string().trim().min(1).max(64)).max(20)
+  .transform((labels) => [...new Set(labels)]);
+const dueAtSchema = z.string().datetime({ offset: true });
+
+const taskCreateSchema = z.object({
+  title: z.string().trim().min(1).max(240),
+  description: z.string().max(20_000).optional(),
+  status: z.enum(TASKBOARD_STATUSES).optional(),
+  priority: z.enum(TASKBOARD_PRIORITIES).optional(),
+  labels: labelsSchema.optional(),
+  dueAt: dueAtSchema.optional(),
+}).strict();
+
+const taskPatchSchema = z.object({
+  title: z.string().trim().min(1).max(240).optional(),
+  description: z.string().max(20_000).optional(),
+  priority: z.enum(TASKBOARD_PRIORITIES).optional(),
+  labels: labelsSchema.optional(),
+  dueAt: dueAtSchema.nullable().optional(),
+  expectedVersion: z.number().int().min(1),
+}).strict().refine(
+  (input) => input.title !== undefined
+    || input.description !== undefined
+    || input.priority !== undefined
+    || input.labels !== undefined
+    || input.dueAt !== undefined,
+  { message: 'At least one task field is required' },
+);
+
+const taskMoveSchema = z.object({
+  status: z.enum(TASKBOARD_STATUSES),
+  previousTaskId: z.string().min(1).max(128).optional(),
+  nextTaskId: z.string().min(1).max(128).optional(),
+  expectedVersion: z.number().int().min(1),
+}).strict();
+
+const commentCreateSchema = z.object({
+  body: z.string().trim().min(1).max(20_000),
+}).strict();
+
+const boardsQuerySchema = z.object({
+  includeArchived: booleanQuerySchema(),
+}).strict();
+
+const tasksQuerySchema = z.object({
+  includeArchived: booleanQuerySchema(),
+  search: z.string().trim().max(500).optional(),
+  status: enumListQuerySchema(TASKBOARD_STATUSES),
+  priority: enumListQuerySchema(TASKBOARD_PRIORITIES),
+}).strict();
+
+export interface TaskboardRouterOptions {
+  service?: TaskboardService;
+}
+
+export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
+  const router = Router();
+
+  router.use((req, res, next) => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required', code: 'TASKBOARD_AUTH_REQUIRED' });
+      return;
+    }
+    if (!options.service) {
+      res.status(503).json({ error: 'Taskboard service unavailable', code: 'TASKBOARD_UNAVAILABLE' });
+      return;
+    }
+    next();
+  });
+
+  router.get('/boards', route(async (req, res) => {
+    const query = parseOrReply(boardsQuerySchema, req.query, res, 'query');
+    if (!query) return;
+    res.json(await options.service!.listBoards(identityFrom(req), query.includeArchived));
+  }));
+
+  router.post('/boards', route(async (req, res) => {
+    const input = parseOrReply(boardCreateSchema, req.body, res, 'body');
+    if (!input) return;
+    res.status(201).json(await options.service!.createBoard(identityFrom(req), input));
+  }));
+
+  router.patch('/boards/:id', route(async (req, res) => {
+    const input = parseOrReply(boardPatchSchema, req.body, res, 'body');
+    if (!input) return;
+    res.json(await options.service!.updateBoard(identityFrom(req), req.params.id, input));
+  }));
+
+  router.post('/boards/:id/archive', route(async (req, res) => {
+    const input = parseOrReply(expectedVersionSchema, req.body, res, 'body');
+    if (!input) return;
+    res.json(await options.service!.archiveBoard(identityFrom(req), req.params.id, input));
+  }));
+
+  router.post('/boards/:id/restore', route(async (req, res) => {
+    const input = parseOrReply(expectedVersionSchema, req.body, res, 'body');
+    if (!input) return;
+    res.json(await options.service!.restoreBoard(identityFrom(req), req.params.id, input));
+  }));
+
+  router.get('/boards/:boardId/tasks', route(async (req, res) => {
+    const query = parseOrReply(tasksQuerySchema, req.query, res, 'query');
+    if (!query) return;
+    res.json(await options.service!.listTasks(identityFrom(req), req.params.boardId, {
+      includeArchived: query.includeArchived,
+      ...(query.search ? { search: query.search } : {}),
+      ...(query.status?.length ? { statuses: query.status } : {}),
+      ...(query.priority?.length ? { priorities: query.priority } : {}),
+    }));
+  }));
+
+  router.post('/boards/:boardId/tasks', route(async (req, res) => {
+    const input = parseOrReply(taskCreateSchema, req.body, res, 'body');
+    if (!input) return;
+    res.status(201).json(await options.service!.createTask(identityFrom(req), req.params.boardId, input));
+  }));
+
+  router.get('/tasks/:id', route(async (req, res) => {
+    res.json(await options.service!.getTask(identityFrom(req), req.params.id));
+  }));
+
+  router.patch('/tasks/:id', route(async (req, res) => {
+    const input = parseOrReply(taskPatchSchema, req.body, res, 'body');
+    if (!input) return;
+    res.json(await options.service!.updateTask(identityFrom(req), req.params.id, input));
+  }));
+
+  router.post('/tasks/:id/move', route(async (req, res) => {
+    const input = parseOrReply(taskMoveSchema, req.body, res, 'body');
+    if (!input) return;
+    res.json(await options.service!.moveTask(identityFrom(req), req.params.id, input));
+  }));
+
+  router.post('/tasks/:id/archive', route(async (req, res) => {
+    const input = parseOrReply(expectedVersionSchema, req.body, res, 'body');
+    if (!input) return;
+    res.json(await options.service!.archiveTask(identityFrom(req), req.params.id, input));
+  }));
+
+  router.post('/tasks/:id/restore', route(async (req, res) => {
+    const input = parseOrReply(expectedVersionSchema, req.body, res, 'body');
+    if (!input) return;
+    res.json(await options.service!.restoreTask(identityFrom(req), req.params.id, input));
+  }));
+
+  router.get('/tasks/:id/comments', route(async (req, res) => {
+    res.json(await options.service!.listComments(identityFrom(req), req.params.id));
+  }));
+
+  router.post('/tasks/:id/comments', route(async (req, res) => {
+    const input = parseOrReply(commentCreateSchema, req.body, res, 'body');
+    if (!input) return;
+    res.status(201).json(await options.service!.createComment(identityFrom(req), req.params.id, input));
+  }));
+
+  return router;
+}
+
+function identityFrom(req: Request): TaskboardIdentity {
+  const user = req.user!;
+  return {
+    tenantId: user.tenantId,
+    ownerUserId: user.sub,
+    username: user.username,
+  };
+}
+
+function route(handler: (req: Request, res: Response) => Promise<void>): RequestHandler {
+  return (req, res) => {
+    void handler(req, res).catch((error) => sendError(res, error));
+  };
+}
+
+function sendError(res: Response, error: unknown): void {
+  if (error instanceof TaskboardConflictError) {
+    res.status(409).json({ error: error.message, code: error.code, current: error.current });
+    return;
+  }
+  if (error instanceof TaskboardNotFoundError) {
+    res.status(404).json({ error: error.message, code: error.code });
+    return;
+  }
+  if (error instanceof TaskboardValidationError) {
+    res.status(400).json({ error: error.message, code: error.code });
+    return;
+  }
+  res.status(503).json({ error: 'Taskboard database unavailable', code: 'TASKBOARD_UNAVAILABLE' });
+}
+
+function parseOrReply<T extends z.ZodType>(
+  schema: T,
+  value: unknown,
+  res: Response,
+  source: 'body' | 'query',
+): z.output<T> | null {
+  const parsed = schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  res.status(400).json({
+    error: `Invalid ${source}`,
+    code: 'TASKBOARD_INVALID_REQUEST',
+    issues: parsed.error.issues,
+  });
+  return null;
+}
+
+function booleanQuerySchema() {
+  return z.preprocess((value) => {
+    if (value === undefined) return false;
+    if (value === 'true' || value === true) return true;
+    if (value === 'false' || value === false) return false;
+    return value;
+  }, z.boolean());
+}
+
+function enumListQuerySchema<const T extends readonly [string, ...string[]]>(values: T) {
+  return z.preprocess((value) => {
+    if (value === undefined) return undefined;
+    const entries = Array.isArray(value) ? value : [value];
+    return entries.flatMap((entry) => typeof entry === 'string' ? entry.split(',') : [entry]);
+  }, z.array(z.enum(values)).max(values.length).optional());
+}

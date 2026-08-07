@@ -16,6 +16,7 @@ const mocked = vi.hoisted(() => {
   const userRoleRouter = { id: 'user-role-router' };
   const dingtalkRouter = { id: 'dingtalk-router' };
   const cronRouter = { id: 'cron-router' };
+  const taskboardRouter = { id: 'taskboard-router' };
   const groupsRouter = { id: 'groups-router' };
   const tenantRemoteHandsAdminRouter = { id: 'tenant-remote-hands-admin-router' };
   const runtimeOperationsAdminRouter = { id: 'runtime-operations-admin-router' };
@@ -48,6 +49,7 @@ const mocked = vi.hoisted(() => {
     userRoleRouter,
     dingtalkRouter,
     cronRouter,
+    taskboardRouter,
     groupsRouter,
     tenantRemoteHandsAdminRouter,
     runtimeOperationsAdminRouter,
@@ -78,6 +80,7 @@ const mocked = vi.hoisted(() => {
     createUserRoleRouter: vi.fn(() => userRoleRouter),
     createDingtalkSessionRouter: vi.fn(() => dingtalkRouter),
     createCronRouter: vi.fn(() => cronRouter),
+    createTaskboardRouter: vi.fn(() => taskboardRouter),
     createGroupsRouter: vi.fn(() => groupsRouter),
     createTenantRemoteHandsAdminRouter: vi.fn(() => tenantRemoteHandsAdminRouter),
     createRuntimeOperationsAdminRouter: vi.fn(() => runtimeOperationsAdminRouter),
@@ -109,6 +112,7 @@ vi.mock('../routes/index.js', () => ({
   createFeishuRouter: mocked.createFeishuRouter,
   createUserRoleRouter: mocked.createUserRoleRouter,
   createCronRouter: mocked.createCronRouter,
+  createTaskboardRouter: mocked.createTaskboardRouter,
   createGroupsRouter: mocked.createGroupsRouter,
   createPreviewRoutes: mocked.createPreviewRoutes,
 }));
@@ -175,6 +179,7 @@ describe('registerRoutes', () => {
     mocked.createUserRoleRouter.mockClear();
     mocked.createDingtalkSessionRouter.mockClear();
     mocked.createCronRouter.mockClear();
+    mocked.createTaskboardRouter.mockClear();
     mocked.createGroupsRouter.mockClear();
     mocked.createTenantRemoteHandsAdminRouter.mockClear();
     mocked.createRuntimeOperationsAdminRouter.mockClear();
@@ -281,9 +286,16 @@ describe('registerRoutes', () => {
     //   + Codex 订阅连接管理 = 37
     //   + 连接器映射词典平台管理（2026-08-03）= 38
     //   + 租户级词典覆盖组织管理（2026-08-04 任务 E）= 39
+    //   + 个人任务看板（复用 cronEnabled guard）= 40
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(39);
+    expect(app.use).toHaveBeenCalledTimes(40);
+    expect(mocked.createTaskboardRouter).toHaveBeenCalledWith({ service: undefined });
+    expect(app.use).toHaveBeenCalledWith(
+      '/api/taskboard',
+      expect.any(Function),
+      mocked.taskboardRouter,
+    );
     expect(app.use).toHaveBeenCalledWith('/api/org/connector-dictionary', expect.any(Function));
     expect(app.use).toHaveBeenCalledWith('/api/admin/system-prompts', mocked.systemPromptsRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/agent-profiles', expect.any(Function));

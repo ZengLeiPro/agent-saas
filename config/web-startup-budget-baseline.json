@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 317493,
-    "startupCssGzipBytes": 32000,
-    "startupJsBrotliBytes": 251980,
-    "startupCssBrotliBytes": 25592,
-    "largestJsGzipBytes": 317493,
-    "largestCssGzipBytes": 32000,
-    "largestJsBrotliBytes": 251980,
-    "largestCssBrotliBytes": 25592,
-    "largestJs": "assets/index-DhpBE2nX.js",
-    "largestCss": "assets/index-CNNBs5Ba.css"
+    "startupJsGzipBytes": 328649,
+    "startupCssGzipBytes": 32137,
+    "startupJsBrotliBytes": 261299,
+    "startupCssBrotliBytes": 25691,
+    "largestJsGzipBytes": 328649,
+    "largestCssGzipBytes": 32137,
+    "largestJsBrotliBytes": 261299,
+    "largestCssBrotliBytes": 25691,
+    "largestJs": "assets/index-ZGFHsnbT.js",
+    "largestCss": "assets/index-CzMwegkm.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "Initial production OSS build measurement using index.html startup JS/CSS entries; gzip level 9 and Brotli quality 11.",
-  "updatedAt": "2026-08-05"
+  "reason": "Rebaseline after integrating billing guardrails and intervening main changes; production build remains below absolute startup ceilings.",
+  "updatedAt": "2026-08-07"
 }

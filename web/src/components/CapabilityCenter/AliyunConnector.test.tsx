@@ -37,14 +37,14 @@ describe("AliyunConnector", () => {
     expect(aliyunMatchesCatalog("github", "all", true)).toBe(false);
   });
 
-  it("通过用户级 RAM Role 授权并且不回显源凭据", async () => {
+  it("通过 RAM 用户 AccessKey 授权并且不回显凭据", async () => {
     api.connectAliyun.mockResolvedValue({
       connection: {
         connectorId: "aliyun",
         status: "connected",
         accountId: "1234567890123456",
-        roleArn: "acs:ram::1234567890123456:role/agent-saas",
-        roleName: "agent-saas",
+        identityArn: "acs:ram::1234567890123456:user/agent-saas",
+        identityType: "RAMUser",
         regionId: "cn-shenzhen",
       },
     });
@@ -57,22 +57,19 @@ describe("AliyunConnector", () => {
     expect(secretInput.getAttribute("autocomplete")).toBe("new-password");
     expect(secretInput.getAttribute("data-1p-ignore")).toBe("true");
     fireEvent.change(secretInput, { target: { value: "source-secret" } });
-    fireEvent.change(screen.getByLabelText("RAM Role ARN"), {
-      target: { value: "acs:ram::1234567890123456:role/agent-saas" },
-    });
+    expect(screen.queryByLabelText("RAM Role ARN")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "连接阿里云" }));
 
     await waitFor(() => {
       expect(api.connectAliyun).toHaveBeenCalledWith({
         accessKeyId: "LTAItest",
         accessKeySecret: "source-secret",
-        roleArn: "acs:ram::1234567890123456:role/agent-saas",
         regionId: "cn-shenzhen",
       });
     });
     expect(await screen.findByText("1234567890123456")).toBeTruthy();
     expect(screen.queryByDisplayValue("LTAItest")).toBeNull();
     expect(screen.queryByDisplayValue("source-secret")).toBeNull();
-    expect(screen.getByText("已连接，运行环境将使用短期 STS")).toBeTruthy();
+    expect(screen.getByText("已连接，运行环境将使用该 RAM 用户权限")).toBeTruthy();
   });
 });

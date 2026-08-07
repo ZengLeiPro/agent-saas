@@ -18,9 +18,7 @@ const githubConnectSchema = z.object({
 const aliyunConnectSchema = z.object({
   accessKeyId: z.string().min(1).max(256),
   accessKeySecret: z.string().min(1).max(512),
-  roleArn: z.string().min(1).max(512),
   regionId: z.string().min(1).max(128),
-  externalId: z.string().max(1224).optional(),
 }).strict();
 
 export interface ConnectorsRouterDeps {

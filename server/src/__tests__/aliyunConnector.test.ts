@@ -5,14 +5,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   AliyunConnectorService,
-  type AliyunAssumeRole,
+  type AliyunValidateCredentials,
 } from '../connectors/aliyun.js';
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import { InMemorySecretVault } from '../security/secretVault.js';
 
 const roots: string[] = [];
 
-function createFixture(assumeRole?: AliyunAssumeRole) {
+function createFixture(validateCredentials?: AliyunValidateCredentials) {
   const root = mkdtempSync(join(tmpdir(), 'aliyun-connector-'));
   roots.push(root);
   const connectionFile = join(root, 'connections.json');
@@ -22,7 +22,7 @@ function createFixture(assumeRole?: AliyunAssumeRole) {
   const service = new AliyunConnectorService({
     connectionStore,
     vault,
-    assumeRole,
+    validateCredentials,
     onError: error => errors.push(error),
   });
   return { connectionFile, connectionStore, vault, service, errors };
@@ -32,19 +32,16 @@ const alice = { userId: 'user-1', username: 'alice', tenantId: 'tenant-a' };
 const input = {
   accessKeyId: 'LTAIexample',
   accessKeySecret: 'source-secret',
-  roleArn: 'acs:ram::1234567890123456:role/agent-saas',
   regionId: 'cn-shenzhen',
-  externalId: 'agent-saas-tenant-a',
+};
+const identity = {
+  accountId: '1234567890123456',
+  arn: 'acs:ram::1234567890123456:user/agent-saas',
+  identityType: 'RAMUser',
 };
 
-function temporaryCredentials() {
-  return {
-    accessKeyId: 'STS.access-key',
-    accessKeySecret: 'sts-secret',
-    securityToken: 'sts-token',
-    expiration: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-    assumedRoleArn: 'acs:ram::1234567890123456:role/agent-saas/agent-saas-user-1',
-  };
+function validCredentials() {
+  return vi.fn<AliyunValidateCredentials>().mockResolvedValue(identity);
 }
 
 afterEach(() => {
@@ -52,24 +49,24 @@ afterEach(() => {
 });
 
 describe('Aliyun native connector', () => {
-  it('stores source credentials only in Vault and injects cached run-scoped STS env', async () => {
-    const assumeRole = vi.fn<AliyunAssumeRole>().mockResolvedValue(temporaryCredentials());
-    const fixture = createFixture(assumeRole);
+  it('stores AccessKey only in Vault and injects user-scoped runtime env', async () => {
+    const validateCredentials = validCredentials();
+    const fixture = createFixture(validateCredentials);
 
     const connection = await fixture.service.connect(alice, input);
     expect(connection).toMatchObject({
       connectorId: 'aliyun',
       status: 'connected',
-      accountId: '1234567890123456',
-      roleName: 'agent-saas',
+      accountId: identity.accountId,
+      identityArn: identity.arn,
+      identityType: identity.identityType,
       regionId: 'cn-shenzhen',
     });
     const persisted = readFileSync(fixture.connectionFile, 'utf8');
     expect(persisted).not.toContain(input.accessKeyId);
     expect(persisted).not.toContain(input.accessKeySecret);
-    expect(persisted).not.toContain(input.externalId);
 
-    const credentialRef = fixture.connectionStore.get(alice.username, 'aliyun')?.credentialRefs.ram_role;
+    const credentialRef = fixture.connectionStore.get(alice.username, 'aliyun')?.credentialRefs.access_key;
     expect(credentialRef).toBeTruthy();
     await expect(fixture.vault.getSecret(credentialRef!, {
       actor: 'connector_proxy',
@@ -84,39 +81,26 @@ describe('Aliyun native connector', () => {
       scopes: ['secret:connector:read'],
     })).resolves.toContain(input.accessKeyId);
 
-    const [firstEnv, secondEnv] = await Promise.all([
-      fixture.service.resolveRuntimeEnv(alice),
-      fixture.service.resolveRuntimeEnv(alice),
-    ]);
-    expect(firstEnv).toEqual({
-      ALIBABA_CLOUD_ACCESS_KEY_ID: 'STS.access-key',
-      ALIBABA_CLOUD_ACCESS_KEY_SECRET: 'sts-secret',
-      ALIBABA_CLOUD_SECURITY_TOKEN: 'sts-token',
-      ALIBABA_CLOUD_REGION_ID: 'cn-shenzhen',
+    await expect(fixture.service.resolveRuntimeEnv(alice)).resolves.toEqual({
+      ALIBABA_CLOUD_ACCESS_KEY_ID: input.accessKeyId,
+      ALIBABA_CLOUD_ACCESS_KEY_SECRET: input.accessKeySecret,
+      ALIBABA_CLOUD_REGION_ID: input.regionId,
     });
-    expect(secondEnv).toEqual(firstEnv);
-    expect(assumeRole).toHaveBeenCalledTimes(2); // connect 验证一次，首次运行换取一次；第二次命中缓存
-    expect(assumeRole.mock.calls[1]?.[0]).toMatchObject({
-      roleArn: input.roleArn,
-      regionId: input.regionId,
-      externalId: input.externalId,
-    });
+    expect(validateCredentials).toHaveBeenCalledOnce();
+    expect(validateCredentials).toHaveBeenCalledWith(input);
   });
 
   it('does not expose credentials across immutable user or tenant boundaries', async () => {
-    const assumeRole = vi.fn<AliyunAssumeRole>().mockResolvedValue(temporaryCredentials());
-    const fixture = createFixture(assumeRole);
+    const fixture = createFixture(validCredentials());
     await fixture.service.connect(alice, input);
 
     await expect(fixture.service.resolveRuntimeEnv({ ...alice, userId: 'replacement-user' })).resolves.toEqual({});
     await expect(fixture.service.resolveRuntimeEnv({ ...alice, tenantId: 'tenant-b' })).resolves.toEqual({});
     expect(fixture.service.getConnection({ ...alice, userId: 'replacement-user' }).status).toBe('disconnected');
-    expect(assumeRole).toHaveBeenCalledTimes(1);
   });
 
-  it('revokes the Vault source credential and stops injection after disconnect', async () => {
-    const assumeRole = vi.fn<AliyunAssumeRole>().mockResolvedValue(temporaryCredentials());
-    const fixture = createFixture(assumeRole);
+  it('revokes the Vault AccessKey and stops injection after disconnect', async () => {
+    const fixture = createFixture(validCredentials());
     await fixture.service.connect(alice, input);
 
     const disconnected = await fixture.service.disconnect(alice);
@@ -125,9 +109,8 @@ describe('Aliyun native connector', () => {
     expect(fixture.connectionStore.get(alice.username, 'aliyun')?.pendingRevokeRefs).toBeUndefined();
   });
 
-  it('revokes a newly stored source credential when the connection record cannot be saved', async () => {
-    const assumeRole = vi.fn<AliyunAssumeRole>().mockResolvedValue(temporaryCredentials());
-    const fixture = createFixture(assumeRole);
+  it('revokes a newly stored AccessKey when the connection record cannot be saved', async () => {
+    const fixture = createFixture(validCredentials());
     const revoke = vi.spyOn(fixture.vault, 'revokeSecret');
     vi.spyOn(fixture.connectionStore, 'connect').mockRejectedValueOnce(new Error('disk unavailable'));
 
@@ -142,11 +125,11 @@ describe('Aliyun native connector', () => {
   it('serializes connect and disconnect mutations for the same immutable user', async () => {
     let releaseValidation!: () => void;
     const validationGate = new Promise<void>(resolve => { releaseValidation = resolve; });
-    const assumeRole = vi.fn<AliyunAssumeRole>().mockImplementation(async () => {
+    const validateCredentials = vi.fn<AliyunValidateCredentials>().mockImplementation(async () => {
       await validationGate;
-      return temporaryCredentials();
+      return identity;
     });
-    const fixture = createFixture(assumeRole);
+    const fixture = createFixture(validateCredentials);
 
     const connecting = fixture.service.connect(alice, input);
     await Promise.resolve();
@@ -158,22 +141,26 @@ describe('Aliyun native connector', () => {
     expect(fixture.service.getConnection(alice).status).toBe('disconnected');
   });
 
-  it('does not persist a connection when AssumeRole validation fails', async () => {
-    const fixture = createFixture(vi.fn<AliyunAssumeRole>().mockRejectedValue(new Error('Forbidden')));
-    await expect(fixture.service.connect(alice, input)).rejects.toThrow('Forbidden');
+  it('does not persist a connection when AccessKey validation fails', async () => {
+    const fixture = createFixture(vi.fn<AliyunValidateCredentials>().mockRejectedValue(new Error('InvalidAccessKeyId')));
+    await expect(fixture.service.connect(alice, input)).rejects.toThrow('InvalidAccessKeyId');
     expect(fixture.service.getConnection(alice).status).toBe('disconnected');
     expect(existsSync(fixture.connectionFile) ? readFileSync(fixture.connectionFile, 'utf8') : '').not.toContain(input.accessKeyId);
   });
 
-  it('fails closed when STS refresh fails', async () => {
-    const assumeRole = vi.fn<AliyunAssumeRole>()
-      .mockResolvedValueOnce(temporaryCredentials())
-      .mockRejectedValueOnce(new Error('STS unavailable'));
-    const fixture = createFixture(assumeRole);
+  it('fails closed when Vault resolution fails', async () => {
+    const fixture = createFixture(validCredentials());
     await fixture.service.connect(alice, input);
+    const credentialRef = fixture.connectionStore.get(alice.username, 'aliyun')?.credentialRefs.access_key;
+    await fixture.vault.revokeSecret(credentialRef!, {
+      actor: 'connector_proxy',
+      userId: alice.userId,
+      tenantId: alice.tenantId,
+      scopes: ['secret:connector:read'],
+    });
 
     await expect(fixture.service.resolveRuntimeEnv(alice)).resolves.toEqual({});
     expect(fixture.errors).toHaveLength(1);
-    expect(fixture.errors[0]?.message).toBe('STS unavailable');
+    expect(fixture.errors[0]?.message).toContain('secret revoked');
   });
 });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, Cloud, ExternalLink, Loader2, Plus, TriangleAlert } from "lucide-react";
+import { Check, Cloud, Loader2, Plus, TriangleAlert } from "lucide-react";
 import {
   connectAliyun,
   disconnectAliyun,
@@ -23,7 +23,7 @@ import {
 
 const DISCONNECTED: AliyunConnection = { connectorId: "aliyun", status: "disconnected" };
 const DEFAULT_REGION_ID = "cn-shenzhen";
-const DESCRIPTION = "使用官方 aliyun CLI 管理 ECS、VPC、OSS、ACR、NAS、DNS 与监控等阿里云资源。";
+const DESCRIPTION = "使用专用 RAM 用户的 AccessKey，通过官方 aliyun CLI 管理阿里云资源。";
 
 export interface AliyunConnectorState {
   connection: AliyunConnection;
@@ -161,36 +161,29 @@ export function AliyunConnectorDrawer({
   const [editing, setEditing] = useState(false);
   const [accessKeyId, setAccessKeyId] = useState("");
   const [accessKeySecret, setAccessKeySecret] = useState("");
-  const [roleArn, setRoleArn] = useState("");
   const [regionId, setRegionId] = useState(DEFAULT_REGION_ID);
-  const [externalId, setExternalId] = useState("");
 
   useEffect(() => {
     if (!open) {
       setAccessKeyId("");
       setAccessKeySecret("");
-      setExternalId("");
       setEditing(false);
       return;
     }
-    setRoleArn(state.connection.roleArn ?? "");
     setRegionId(state.connection.regionId ?? DEFAULT_REGION_ID);
     if (!connected) setEditing(true);
-  }, [connected, open, state.connection.regionId, state.connection.roleArn]);
+  }, [connected, open, state.connection.regionId]);
 
   const resetSecrets = () => {
     setAccessKeyId("");
     setAccessKeySecret("");
-    setExternalId("");
   };
 
   const submit = async () => {
     const ok = await state.connect({
       accessKeyId,
       accessKeySecret,
-      roleArn,
       regionId,
-      ...(externalId.trim() ? { externalId } : {}),
     });
     if (ok) {
       resetSecrets();
@@ -198,7 +191,7 @@ export function AliyunConnectorDrawer({
     }
   };
 
-  const canSubmit = Boolean(accessKeyId.trim() && accessKeySecret.trim() && roleArn.trim() && regionId.trim());
+  const canSubmit = Boolean(accessKeyId.trim() && accessKeySecret.trim() && regionId.trim());
 
   return (
     <CapabilityDetailDrawer open={open} onOpenChange={onOpenChange} title="阿里云" description={DESCRIPTION}>
@@ -207,7 +200,7 @@ export function AliyunConnectorDrawer({
         <div>
           <CapabilitySourceBadge source="platform" />
           <div className={cn("mt-1 text-xs font-medium", connected ? "text-success" : "text-muted-foreground")}>
-            {connected ? "已连接，运行环境将使用短期 STS" : "未连接"}
+            {connected ? "已连接，运行环境将使用该 RAM 用户权限" : "未连接"}
           </div>
         </div>
       </div>
@@ -215,7 +208,7 @@ export function AliyunConnectorDrawer({
       {connected && !editing ? (
         <div className="space-y-3 rounded-xl p-4 ring-1 ring-border/60">
           <div><div className="text-xs text-muted-foreground">云账号</div><div className="mt-1 font-medium">{state.connection.accountId}</div></div>
-          <div><div className="text-xs text-muted-foreground">RAM Role</div><div className="mt-1 break-all text-sm">{state.connection.roleArn}</div></div>
+          {state.connection.identityArn ? <div><div className="text-xs text-muted-foreground">认证身份</div><div className="mt-1 break-all text-sm">{state.connection.identityArn}</div></div> : null}
           <div><div className="text-xs text-muted-foreground">默认地域</div><div className="mt-1 text-sm">{state.connection.regionId}</div></div>
         </div>
       ) : null}
@@ -228,28 +221,17 @@ export function AliyunConnectorDrawer({
           </div>
           <div className="space-y-2">
             <Label htmlFor="aliyun-access-key-secret">AccessKey Secret</Label>
-            <Input id="aliyun-access-key-secret" name="aliyun-access-key-secret" type="password" autoComplete="new-password" passwordManager="ignore" value={accessKeySecret} onChange={(event) => setAccessKeySecret(event.target.value)} placeholder="仅用于换取短期 STS" />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="aliyun-role-arn">RAM Role ARN</Label>
-            <Input id="aliyun-role-arn" name="aliyun-role-arn" autoComplete="off" value={roleArn} onChange={(event) => setRoleArn(event.target.value)} placeholder="acs:ram::1234567890123456:role/agent-saas" />
+            <Input id="aliyun-access-key-secret" name="aliyun-access-key-secret" type="password" autoComplete="new-password" passwordManager="ignore" value={accessKeySecret} onChange={(event) => setAccessKeySecret(event.target.value)} placeholder="RAM 用户 AccessKey Secret" />
           </div>
           <div className="space-y-2">
             <Label htmlFor="aliyun-region-id">默认地域</Label>
             <Input id="aliyun-region-id" name="aliyun-region-id" autoComplete="off" value={regionId} onChange={(event) => setRegionId(event.target.value)} placeholder={DEFAULT_REGION_ID} />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="aliyun-external-id">External ID（可选）</Label>
-            <Input id="aliyun-external-id" name="aliyun-external-id" type="password" autoComplete="new-password" passwordManager="ignore" value={externalId} onChange={(event) => setExternalId(event.target.value)} />
-          </div>
-          <a href="https://help.aliyun.com/zh/ram/user-guide/assume-a-ram-role" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
-            配置 RAM Role 与 AssumeRole 权限 <ExternalLink className="size-3.5" />
-          </a>
         </div>
       ) : null}
 
       <div className={cn("p-3 text-sm text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}>
-        请使用仅具备 <code>sts:AssumeRole</code> 的专用 RAM 用户，不要填写主账号 AccessKey。源凭据只保存到个人 SecretVault；运行环境仅获得短期 STS，不会创建共享 <code>~/.aliyun/config.json</code>。
+        请使用按最小权限授权的专用 RAM 用户，不要填写主账号 AccessKey。凭据保存到个人 SecretVault，并仅注入你的运行环境；不会创建共享 <code>~/.aliyun/config.json</code>。
       </div>
 
       {state.error ? (

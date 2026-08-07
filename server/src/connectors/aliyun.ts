@@ -1,29 +1,24 @@
-import StsClient, { AssumeRoleRequest } from '@alicloud/sts20150401';
+import StsClient from '@alicloud/sts20150401';
 import { Config as OpenApiConfig } from '@alicloud/openapi-client';
 
 import type { SecretVault } from '../security/secretVault.js';
 import type { ConnectorConnectionRecord, ConnectorConnectionStore } from './connectionStore.js';
 
 export const ALIYUN_CONNECTOR_ID = 'aliyun';
-export const ALIYUN_RAM_CREDENTIAL_KEY = 'ram_role';
-const STS_DURATION_SECONDS = 3600;
-const STS_REFRESH_WINDOW_MS = 5 * 60 * 1000;
-const ROLE_ARN_PATTERN = /^acs:ram::(\d+):role\/([A-Za-z0-9+=,.@_-]{1,64})$/;
+export const ALIYUN_ACCESS_KEY_CREDENTIAL_KEY = 'access_key';
 const REGION_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
-const EXTERNAL_ID_PATTERN = /^[\w+=,.@:/_-]{2,1224}$/;
 
-interface AliyunRamRoleSecret {
+interface AliyunAccessKeySecret {
   accessKeyId: string;
   accessKeySecret: string;
-  externalId?: string;
 }
 
 export interface AliyunConnectionView {
   connectorId: 'aliyun';
   status: 'connected' | 'disconnected';
   accountId?: string;
-  roleArn?: string;
-  roleName?: string;
+  identityArn?: string;
+  identityType?: string;
   regionId?: string;
   connectedAt?: string;
   updatedAt?: string;
@@ -32,25 +27,18 @@ export interface AliyunConnectionView {
 export interface AliyunConnectInput {
   accessKeyId: string;
   accessKeySecret: string;
-  roleArn: string;
   regionId: string;
-  externalId?: string;
 }
 
-export interface AliyunTemporaryCredentials {
-  accessKeyId: string;
-  accessKeySecret: string;
-  securityToken: string;
-  expiration: string;
-  assumedRoleArn?: string;
+export interface AliyunIdentity {
+  accountId: string;
+  arn?: string;
+  identityType?: string;
 }
 
-export type AliyunAssumeRole = (input: AliyunConnectInput & {
-  roleSessionName: string;
-  durationSeconds: number;
-}) => Promise<AliyunTemporaryCredentials>;
+export type AliyunValidateCredentials = (input: AliyunConnectInput) => Promise<AliyunIdentity>;
 
-export function createAliyunAssumeRole(): AliyunAssumeRole {
+export function createAliyunValidateCredentials(): AliyunValidateCredentials {
   return async input => {
     const client = new StsClient(new OpenApiConfig({
       accessKeyId: input.accessKeyId,
@@ -58,22 +46,13 @@ export function createAliyunAssumeRole(): AliyunAssumeRole {
       regionId: input.regionId,
       endpoint: 'sts.aliyuncs.com',
     }));
-    const response = await client.assumeRole(new AssumeRoleRequest({
-      roleArn: input.roleArn,
-      roleSessionName: input.roleSessionName,
-      durationSeconds: input.durationSeconds,
-      ...(input.externalId ? { externalId: input.externalId } : {}),
-    }));
-    const credentials = response.body?.credentials;
-    if (!credentials?.accessKeyId || !credentials.accessKeySecret || !credentials.securityToken || !credentials.expiration) {
-      throw new Error('阿里云 STS 未返回完整临时凭据');
-    }
+    const response = await client.getCallerIdentity();
+    const identity = response.body;
+    if (!identity?.accountId) throw new Error('阿里云 STS 未返回账号信息');
     return {
-      accessKeyId: credentials.accessKeyId,
-      accessKeySecret: credentials.accessKeySecret,
-      securityToken: credentials.securityToken,
-      expiration: credentials.expiration,
-      assumedRoleArn: response.body?.assumedRoleUser?.arn,
+      accountId: identity.accountId,
+      ...(identity.arn ? { arn: identity.arn } : {}),
+      ...(identity.identityType ? { identityType: identity.identityType } : {}),
     };
   };
 }
@@ -83,8 +62,8 @@ export function toAliyunConnectionView(record?: ConnectorConnectionRecord): Aliy
     connectorId: ALIYUN_CONNECTOR_ID,
     status: record?.status ?? 'disconnected',
     accountId: record?.metadata?.accountId,
-    roleArn: record?.metadata?.roleArn,
-    roleName: record?.metadata?.roleName,
+    identityArn: record?.metadata?.identityArn,
+    identityType: record?.metadata?.identityType,
     regionId: record?.metadata?.regionId,
     connectedAt: record?.connectedAt,
     updatedAt: record?.updatedAt,
@@ -94,34 +73,27 @@ export function toAliyunConnectionView(record?: ConnectorConnectionRecord): Aliy
 function validateConnectInput(input: AliyunConnectInput): AliyunConnectInput {
   const accessKeyId = input.accessKeyId.trim();
   const accessKeySecret = input.accessKeySecret.trim();
-  const roleArn = input.roleArn.trim();
   const regionId = input.regionId.trim();
-  const externalId = input.externalId?.trim() || undefined;
   if (!accessKeyId || !accessKeySecret) throw new Error('AccessKey ID 和 AccessKey Secret 不能为空');
-  if (!ROLE_ARN_PATTERN.test(roleArn)) throw new Error('RAM Role ARN 格式不正确');
   if (!REGION_ID_PATTERN.test(regionId)) throw new Error('地域 ID 格式不正确');
-  if (externalId && !EXTERNAL_ID_PATTERN.test(externalId)) throw new Error('External ID 格式不正确');
-  return { accessKeyId, accessKeySecret, roleArn, regionId, externalId };
+  return { accessKeyId, accessKeySecret, regionId };
 }
 
-function roleMetadata(roleArn: string, regionId: string): Record<string, string> {
-  const match = ROLE_ARN_PATTERN.exec(roleArn);
-  if (!match) throw new Error('RAM Role ARN 格式不正确');
-  return { accountId: match[1]!, roleArn, roleName: match[2]!, regionId };
+function identityMetadata(identity: AliyunIdentity, regionId: string): Record<string, string> {
+  return {
+    accountId: identity.accountId,
+    ...(identity.arn ? { identityArn: identity.arn } : {}),
+    ...(identity.identityType ? { identityType: identity.identityType } : {}),
+    regionId,
+  };
 }
 
-function roleSessionName(userId: string): string {
-  const suffix = userId.replace(/[^A-Za-z0-9.@_-]/g, '-').slice(0, 48) || 'user';
-  return `agent-saas-${suffix}`.slice(0, 64);
-}
-
-function parseRamRoleSecret(value: string): AliyunRamRoleSecret {
-  const parsed = JSON.parse(value) as Partial<AliyunRamRoleSecret>;
+function parseAccessKeySecret(value: string): AliyunAccessKeySecret {
+  const parsed = JSON.parse(value) as Partial<AliyunAccessKeySecret>;
   if (!parsed.accessKeyId || !parsed.accessKeySecret) throw new Error('阿里云连接凭据不完整');
   return {
     accessKeyId: parsed.accessKeyId,
     accessKeySecret: parsed.accessKeySecret,
-    ...(parsed.externalId ? { externalId: parsed.externalId } : {}),
   };
 }
 
@@ -156,14 +128,12 @@ export async function revokePendingAliyunCredentials(input: {
 }
 
 export class AliyunConnectorService {
-  private readonly cache = new Map<string, { credentials: AliyunTemporaryCredentials; expiresAt: number }>();
-  private readonly inFlight = new Map<string, Promise<AliyunTemporaryCredentials>>();
   private readonly mutationTails = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: {
     connectionStore: ConnectorConnectionStore;
     vault: SecretVault;
-    assumeRole?: AliyunAssumeRole;
+    validateCredentials?: AliyunValidateCredentials;
     onError?: (error: Error) => void;
   }) {}
 
@@ -182,52 +152,45 @@ export class AliyunConnectorService {
     const release = await this.acquireMutation(context.userId);
     try {
       const input = validateConnectInput(rawInput);
-    const assumeRole = this.deps.assumeRole ?? createAliyunAssumeRole();
-    await assumeRole({
-      ...input,
-      roleSessionName: roleSessionName(context.userId),
-      durationSeconds: STS_DURATION_SECONDS,
-    });
+      const validateCredentials = this.deps.validateCredentials ?? createAliyunValidateCredentials();
+      const identity = await validateCredentials(input);
 
-    const current = this.deps.connectionStore.get(context.username, ALIYUN_CONNECTOR_ID);
-    const secret = await this.deps.vault.putSecret(
-      context.userId,
-      'connector',
-      JSON.stringify({
-        accessKeyId: input.accessKeyId,
-        accessKeySecret: input.accessKeySecret,
-        ...(input.externalId ? { externalId: input.externalId } : {}),
-      } satisfies AliyunRamRoleSecret),
-      { connectorId: ALIYUN_CONNECTOR_ID, roleArn: input.roleArn, regionId: input.regionId },
-    );
-    let record: ConnectorConnectionRecord;
-    try {
-      record = await this.deps.connectionStore.connect({
+      const secret = await this.deps.vault.putSecret(
+        context.userId,
+        'connector',
+        JSON.stringify({
+          accessKeyId: input.accessKeyId,
+          accessKeySecret: input.accessKeySecret,
+        } satisfies AliyunAccessKeySecret),
+        { connectorId: ALIYUN_CONNECTOR_ID, regionId: input.regionId },
+      );
+      let record: ConnectorConnectionRecord;
+      try {
+        record = await this.deps.connectionStore.connect({
+          username: context.username,
+          userId: context.userId,
+          tenantId: context.tenantId,
+          connectorId: ALIYUN_CONNECTOR_ID,
+          credentialRefs: { [ALIYUN_ACCESS_KEY_CREDENTIAL_KEY]: secret.id },
+          metadata: identityMetadata(identity, input.regionId),
+        });
+      } catch (error) {
+        await this.deps.vault.revokeSecret(secret.id, {
+          actor: 'connector_proxy',
+          userId: context.userId,
+          tenantId: context.tenantId,
+          scopes: ['secret:connector:read'],
+        }).catch(revokeError => {
+          this.deps.onError?.(revokeError instanceof Error ? revokeError : new Error(String(revokeError)));
+        });
+        throw error;
+      }
+      await revokePendingAliyunCredentials({
+        connectionStore: this.deps.connectionStore,
+        vault: this.deps.vault,
         username: context.username,
-        userId: context.userId,
-        tenantId: context.tenantId,
-        connectorId: ALIYUN_CONNECTOR_ID,
-        credentialRefs: { [ALIYUN_RAM_CREDENTIAL_KEY]: secret.id },
-        metadata: roleMetadata(input.roleArn, input.regionId),
+        onError: (error, ref) => this.deps.onError?.(new Error(`阿里云旧凭据撤销失败 ${ref}: ${error.message}`)),
       });
-    } catch (error) {
-      await this.deps.vault.revokeSecret(secret.id, {
-        actor: 'connector_proxy',
-        userId: context.userId,
-        tenantId: context.tenantId,
-        scopes: ['secret:connector:read'],
-      }).catch(revokeError => {
-        this.deps.onError?.(revokeError instanceof Error ? revokeError : new Error(String(revokeError)));
-      });
-      throw error;
-    }
-    if (current) this.clearCache(current);
-    await revokePendingAliyunCredentials({
-      connectionStore: this.deps.connectionStore,
-      vault: this.deps.vault,
-      username: context.username,
-      onError: (error, ref) => this.deps.onError?.(new Error(`阿里云旧凭据撤销失败 ${ref}: ${error.message}`)),
-    });
       return toAliyunConnectionView(record);
     } finally {
       release();
@@ -238,21 +201,20 @@ export class AliyunConnectorService {
     const release = await this.acquireMutation(context.userId);
     try {
       const current = this.deps.connectionStore.get(context.username, ALIYUN_CONNECTOR_ID);
-    if (!current || current.userId !== context.userId || current.tenantId !== context.tenantId) {
-      return toAliyunConnectionView(undefined);
-    }
-    const record = await this.deps.connectionStore.disconnect(
-      context.username,
-      ALIYUN_CONNECTOR_ID,
-      context.tenantId,
-    );
-    this.clearCache(current);
-    await revokePendingAliyunCredentials({
-      connectionStore: this.deps.connectionStore,
-      vault: this.deps.vault,
-      username: context.username,
-      onError: (error, ref) => this.deps.onError?.(new Error(`阿里云凭据撤销失败 ${ref}: ${error.message}`)),
-    });
+      if (!current || current.userId !== context.userId || current.tenantId !== context.tenantId) {
+        return toAliyunConnectionView(undefined);
+      }
+      const record = await this.deps.connectionStore.disconnect(
+        context.username,
+        ALIYUN_CONNECTOR_ID,
+        context.tenantId,
+      );
+      await revokePendingAliyunCredentials({
+        connectionStore: this.deps.connectionStore,
+        vault: this.deps.vault,
+        username: context.username,
+        onError: (error, ref) => this.deps.onError?.(new Error(`阿里云凭据撤销失败 ${ref}: ${error.message}`)),
+      });
       return toAliyunConnectionView(record);
     } finally {
       release();
@@ -264,33 +226,24 @@ export class AliyunConnectorService {
     const credentialRef = record?.status === 'connected'
       && record.userId === context.userId
       && record.tenantId === context.tenantId
-      ? record.credentialRefs[ALIYUN_RAM_CREDENTIAL_KEY]
+      ? record.credentialRefs[ALIYUN_ACCESS_KEY_CREDENTIAL_KEY]
       : undefined;
-    const roleArn = record?.metadata?.roleArn;
     const regionId = record?.metadata?.regionId;
-    if (!credentialRef || !roleArn || !regionId) return {};
+    if (!credentialRef || !regionId) return {};
 
     try {
-      const cacheKey = `${credentialRef}:${roleArn}:${regionId}`;
-      const cached = this.cache.get(cacheKey);
-      if (cached && cached.expiresAt - STS_REFRESH_WINDOW_MS > Date.now()) {
-        return this.toRuntimeEnv(cached.credentials, regionId);
-      }
-      let refresh = this.inFlight.get(cacheKey);
-      if (!refresh) {
-        refresh = this.refreshTemporaryCredentials({ context, credentialRef, roleArn, regionId });
-        this.inFlight.set(cacheKey, refresh);
-      }
-      let credentials: AliyunTemporaryCredentials;
-      try {
-        credentials = await refresh;
-      } finally {
-        if (this.inFlight.get(cacheKey) === refresh) this.inFlight.delete(cacheKey);
-      }
-      const expiresAt = Date.parse(credentials.expiration);
-      if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new Error('阿里云 STS 返回了无效过期时间');
-      this.cache.set(cacheKey, { credentials, expiresAt });
-      return this.toRuntimeEnv(credentials, regionId);
+      const rawSecret = await this.deps.vault.getSecret(credentialRef, {
+        actor: 'connector_proxy',
+        userId: context.userId,
+        tenantId: context.tenantId,
+        scopes: ['secret:connector:read'],
+      });
+      const credentials = parseAccessKeySecret(rawSecret);
+      return {
+        ALIBABA_CLOUD_ACCESS_KEY_ID: credentials.accessKeyId,
+        ALIBABA_CLOUD_ACCESS_KEY_SECRET: credentials.accessKeySecret,
+        ALIBABA_CLOUD_REGION_ID: regionId,
+      };
     } catch (error) {
       this.deps.onError?.(error instanceof Error ? error : new Error(String(error)));
       return {};
@@ -308,47 +261,5 @@ export class AliyunConnectorService {
       releaseCurrent();
       if (this.mutationTails.get(userId) === tail) this.mutationTails.delete(userId);
     };
-  }
-
-  private async refreshTemporaryCredentials(input: {
-    context: { userId: string; username: string; tenantId: string };
-    credentialRef: string;
-    roleArn: string;
-    regionId: string;
-  }): Promise<AliyunTemporaryCredentials> {
-    const rawSecret = await this.deps.vault.getSecret(input.credentialRef, {
-      actor: 'connector_proxy',
-      userId: input.context.userId,
-      tenantId: input.context.tenantId,
-      scopes: ['secret:connector:read'],
-    });
-    const secret = parseRamRoleSecret(rawSecret);
-    return (this.deps.assumeRole ?? createAliyunAssumeRole())({
-      ...secret,
-      roleArn: input.roleArn,
-      regionId: input.regionId,
-      roleSessionName: roleSessionName(input.context.userId),
-      durationSeconds: STS_DURATION_SECONDS,
-    });
-  }
-
-  private toRuntimeEnv(credentials: AliyunTemporaryCredentials, regionId: string): Record<string, string> {
-    return {
-      ALIBABA_CLOUD_ACCESS_KEY_ID: credentials.accessKeyId,
-      ALIBABA_CLOUD_ACCESS_KEY_SECRET: credentials.accessKeySecret,
-      ALIBABA_CLOUD_SECURITY_TOKEN: credentials.securityToken,
-      ALIBABA_CLOUD_REGION_ID: regionId,
-    };
-  }
-
-  private clearCache(record: ConnectorConnectionRecord): void {
-    const credentialRef = record.credentialRefs[ALIYUN_RAM_CREDENTIAL_KEY];
-    if (!credentialRef) return;
-    for (const key of this.cache.keys()) {
-      if (key.startsWith(`${credentialRef}:`)) this.cache.delete(key);
-    }
-    for (const key of this.inFlight.keys()) {
-      if (key.startsWith(`${credentialRef}:`)) this.inFlight.delete(key);
-    }
   }
 }

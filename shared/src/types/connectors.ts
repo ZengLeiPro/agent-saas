@@ -85,8 +85,8 @@ export interface AliyunConnection {
   connectorId: 'aliyun';
   status: 'connected' | 'disconnected';
   accountId?: string;
-  roleArn?: string;
-  roleName?: string;
+  identityArn?: string;
+  identityType?: string;
   regionId?: string;
   connectedAt?: string;
   updatedAt?: string;
@@ -99,7 +99,5 @@ export interface AliyunConnectionResponse {
 export interface AliyunConnectInput {
   accessKeyId: string;
   accessKeySecret: string;
-  roleArn: string;
   regionId: string;
-  externalId?: string;
 }

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { JwtPayload } from '../auth/types.js';
-import { AliyunConnectorService, type AliyunAssumeRole } from '../connectors/aliyun.js';
+import { AliyunConnectorService, type AliyunValidateCredentials } from '../connectors/aliyun.js';
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import { resolveGithubRuntimeEnv } from '../connectors/github.js';
 import { createConnectorsRouter } from '../routes/connectors.js';
@@ -31,11 +31,10 @@ async function createRig(): Promise<Rig> {
   const aliyunService = new AliyunConnectorService({
     connectionStore,
     vault: secretVault,
-    assumeRole: vi.fn<AliyunAssumeRole>().mockResolvedValue({
-      accessKeyId: 'STS.route',
-      accessKeySecret: 'sts-route-secret',
-      securityToken: 'sts-route-token',
-      expiration: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    validateCredentials: vi.fn<AliyunValidateCredentials>().mockResolvedValue({
+      accountId: '1234567890123456',
+      arn: 'acs:ram::1234567890123456:user/agent-saas',
+      identityType: 'RAMUser',
     }),
   });
   const app = express();
@@ -123,21 +122,20 @@ describe('native connectors routes', () => {
     expect((await rig.request('/api/connectors/github', json('POST', { token: 'not-a-token' }))).status).toBe(400);
   });
 
-  it('connects, reads and disconnects an Aliyun RAM Role without returning secrets', async () => {
+  it('connects, reads and disconnects an Aliyun AccessKey without returning secrets', async () => {
     const rig = await createRig();
     const connect = await rig.request('/api/connectors/aliyun', json('POST', {
       accessKeyId: 'LTAIroute',
       accessKeySecret: 'source-route-secret',
-      roleArn: 'acs:ram::1234567890123456:role/agent-saas',
       regionId: 'cn-shenzhen',
-      externalId: 'tenant-a',
     }));
     expect(connect.status).toBe(200);
     const connected = await connect.json() as { connection: Record<string, unknown> };
     expect(connected.connection).toMatchObject({
       status: 'connected',
       accountId: '1234567890123456',
-      roleName: 'agent-saas',
+      identityArn: 'acs:ram::1234567890123456:user/agent-saas',
+      identityType: 'RAMUser',
       regionId: 'cn-shenzhen',
     });
     expect(JSON.stringify(connected)).not.toContain('source-route-secret');

@@ -10,7 +10,7 @@ afterEach(() => {
 });
 
 describe('aliyun runtime wrapper', () => {
-  it('materializes a mode-0600 STS profile with the injected region and removes it after use', () => {
+  it('materializes a mode-0600 AK profile with the injected region and removes it after use', () => {
     const root = mkdtempSync(resolve(tmpdir(), 'aliyun-wrapper-'));
     roots.push(root);
     const fakeCli = resolve(root, 'aliyun-real');
@@ -26,7 +26,7 @@ node - "$config" <<'NODE'
 const fs = require('node:fs');
 const path = process.argv[2];
 const profile = JSON.parse(fs.readFileSync(path, 'utf8')).profiles[0];
-console.log(JSON.stringify({ path, mode: profile.mode, regionId: profile.region_id, hasCredentials: Boolean(profile.access_key_id && profile.access_key_secret && profile.sts_token), fileMode: fs.statSync(path).mode & 0o777 }));
+console.log(JSON.stringify({ path, mode: profile.mode, regionId: profile.region_id, hasCredentials: Boolean(profile.access_key_id && profile.access_key_secret), hasSecurityToken: Boolean(profile.sts_token), fileMode: fs.statSync(path).mode & 0o777 }));
 NODE
 `);
     chmodSync(fakeCli, 0o755);
@@ -38,9 +38,9 @@ NODE
         ...process.env,
         TMPDIR: root,
         ALIYUN_REAL_BIN: fakeCli,
-        ALIBABA_CLOUD_ACCESS_KEY_ID: 'STS.test',
+        ALIBABA_CLOUD_ACCESS_KEY_ID: 'LTAI.test',
         ALIBABA_CLOUD_ACCESS_KEY_SECRET: 'test-secret',
-        ALIBABA_CLOUD_SECURITY_TOKEN: 'test-token',
+        ALIBABA_CLOUD_SECURITY_TOKEN: '',
         ALIBABA_CLOUD_REGION_ID: 'cn-shenzhen',
         ALIBABA_CLOUD_IGNORE_PROFILE: 'TRUE',
       },
@@ -52,11 +52,18 @@ NODE
       mode: string;
       regionId: string;
       hasCredentials: boolean;
+      hasSecurityToken: boolean;
       fileMode: number;
     };
-    expect(output).toMatchObject({ mode: 'StsToken', regionId: 'cn-shenzhen', hasCredentials: true, fileMode: 0o600 });
+    expect(output).toMatchObject({
+      mode: 'AK',
+      regionId: 'cn-shenzhen',
+      hasCredentials: true,
+      hasSecurityToken: false,
+      fileMode: 0o600,
+    });
     expect(output.path).toMatch(/^\/proc\/self\/fd\/\d+$/);
     expect(readdirSync(root).sort()).toEqual(['aliyun-real']);
-    expect(readFileSync(wrapper, 'utf8')).not.toContain('STS.test');
+    expect(readFileSync(wrapper, 'utf8')).not.toContain('LTAI.test');
   });
 });

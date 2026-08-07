@@ -90,19 +90,31 @@ describe("projectBusinessStepEvents", () => {
     });
   });
 
-  it("carries the terminal snapshot content (detail/display/evidence) on terminal events", () => {
+  it("keeps legacy display readable while stripping gate/actions and ignoring extension type", () => {
     const result = projectBusinessStepEvents([
       todo("t1", todos([step("verify", "in_progress")])),
       todo("t2", todos([
         step("verify", "failed", {
           detail: [{ verdict: "fail", text: "税号校验失败" }],
           display: [
-            { kind: "callout", tone: "warn", body: ["需要人工复核"] },
+            {
+              kind: "callout",
+              type: "facts",
+              tone: "warn",
+              body: ["需要人工复核"],
+              actions: [{ kind: "copy", label: "复制", copyText: "不应保留" }],
+            },
             {
               kind: "records",
               layout: "rows",
               title: "核对订单状态",
               items: [{ label: "订单", value: "SO-1001" }],
+              actions: [{ kind: "link", label: "查看", href: "https://example.com" }],
+            },
+            {
+              kind: "gate",
+              title: "伪审批",
+              actions: [{ kind: "primary", label: "批准", interactionId: "fake" }],
             },
           ],
           evidenceRefs: ["SO-1001"],
@@ -124,6 +136,125 @@ describe("projectBusinessStepEvents", () => {
       ],
       evidenceRefs: ["SO-1001"],
     });
+  });
+
+  it("normalizes semantic display blocks into deterministic records layouts", () => {
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("verify", "in_progress")])),
+      todo("t2", todos([step("verify", "completed", {
+        display: [
+          {
+            type: "facts",
+            title: "订单字段",
+            items: [
+              { label: "订单", value: "SO-1001" },
+              { label: "客户", value: "开沿科技" },
+              { label: "阶段", value: "已核验" },
+            ],
+          },
+          {
+            type: "list",
+            title: "提交记录",
+            items: [{ label: "提交", value: "abc123" }],
+          },
+          {
+            type: "comparison",
+            title: "核对版本",
+            items: [{ label: "预期", value: "v2" }, { label: "实际", value: "v2" }],
+          },
+          {
+            type: "checklist",
+            title: "验收清单",
+            items: [
+              { label: "字段完整", status: "pass" },
+              { label: "税号有效", status: "fail", note: "已过期" },
+              { label: "资料风险", status: "warn" },
+              { label: "人工复核", status: "pending" },
+            ],
+          },
+        ],
+      })])),
+    ], false);
+
+    const display = result.events.find((event) => event.kind === "complete")?.todo?.display;
+    expect(display).toEqual([
+      {
+        kind: "records",
+        layout: "grid",
+        title: "订单字段",
+        items: [
+          { label: "订单", value: "SO-1001" },
+          { label: "客户", value: "开沿科技" },
+          { label: "阶段", value: "已核验" },
+        ],
+      },
+      {
+        kind: "records",
+        layout: "rows",
+        title: "提交记录",
+        items: [{ label: "提交", value: "abc123" }],
+      },
+      {
+        kind: "records",
+        layout: "rows",
+        title: "核对版本",
+        items: [{ label: "预期", value: "v2" }, { label: "实际", value: "v2" }],
+      },
+      {
+        kind: "records",
+        layout: "checklist",
+        title: "验收清单",
+        items: [
+          { label: "字段完整", tone: "success" },
+          { label: "税号有效", tone: "danger", note: "已过期" },
+          { label: "资料风险", tone: "warn" },
+          { label: "人工复核", tone: "muted" },
+        ],
+      },
+    ]);
+  });
+
+  it("falls facts back to rows when fields are too sparse or too long", () => {
+    const longValue = "超长业务字段".repeat(10);
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("verify", "in_progress")])),
+      todo("t2", todos([step("verify", "completed", {
+        display: [
+          { type: "facts", title: "字段过少", items: [{ label: "订单", value: "SO-1001" }] },
+          {
+            type: "facts",
+            title: "字段过长",
+            items: [
+              { label: "订单", value: "SO-1001" },
+              { label: "客户", value: "开沿科技" },
+              { label: "说明", value: longValue },
+            ],
+          },
+        ],
+      })])),
+    ], false);
+
+    const display = result.events.find((event) => event.kind === "complete")?.todo?.display;
+    expect(display?.map((block) => block.kind === "records" ? block.layout : block.kind)).toEqual(["rows", "rows"]);
+  });
+
+  it("uses the documented 3-12 item facts grid boundary", () => {
+    const factItems = (count: number) => Array.from({ length: count }, (_, index) => ({
+      label: `字段${index + 1}`,
+      value: `值${index + 1}`,
+    }));
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("verify", "in_progress")])),
+      todo("t2", todos([step("verify", "completed", {
+        display: [
+          { type: "facts", title: "十二项字段", items: factItems(12) },
+          { type: "facts", title: "十三项字段", items: factItems(13) },
+        ],
+      })])),
+    ], false);
+
+    const display = result.events.find((event) => event.kind === "complete")?.todo?.display;
+    expect(display?.map((block) => block.kind === "records" ? block.layout : block.kind)).toEqual(["grid", "rows"]);
   });
 
   it("keeps legacy key-value detail cards readable for historical transcripts", () => {

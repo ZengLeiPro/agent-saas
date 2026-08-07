@@ -33,7 +33,7 @@ export interface TodoItem {
   activeForm?: string;
   outcome?: TodoOutcome;
   detail?: DetailLine[];
-  /** TodoWrite 只接受无交互的 callout / records；审批继续走真实 interaction 通道。 */
+  /** 新调用提交语义展示块；读取侧统一归一为无交互 PresentationBlock。 */
   display?: PresentationBlock[];
   /** 引用真实事实、对象或回执的稳定标识。 */
   evidenceRefs?: string[];
@@ -61,18 +61,122 @@ function text(value: unknown, maxLength: number): string | undefined {
   return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
 }
 
-function normalizeTodoDisplay(raw: unknown): PresentationBlock[] | undefined {
-  const blocks = normalizeDisplay(raw);
-  if (!blocks) return undefined;
+const TODO_DISPLAY_LIMIT = 40;
+const TODO_FACTS_GRID_MIN = 3;
+const TODO_FACTS_GRID_MAX = 12;
+const TODO_FACT_LABEL_GRID_LIMIT = 16;
+const TODO_FACT_VALUE_GRID_LIMIT = 40;
 
-  const safeBlocks = blocks.flatMap((block): PresentationBlock[] => {
-    // Todo 只负责展示业务步骤。需要回写的 gate 必须绑定真实 ask_user / permission 流程，
-    // 不能让一段 TodoWrite 入参凭空制造可点击审批。
-    if (block.kind === "gate") return [];
-    const { actions: _actions, ...safeBlock } = block;
-    return [safeBlock];
+const CHECKLIST_TONE = {
+  pass: "success",
+  fail: "danger",
+  warn: "warn",
+  pending: "muted",
+} as const;
+
+type SemanticDisplayType = "facts" | "list" | "comparison" | "checklist";
+
+function isSemanticDisplayType(value: unknown): value is SemanticDisplayType {
+  return value === "facts" || value === "list" || value === "comparison" || value === "checklist";
+}
+
+function semanticRecordItem(raw: unknown, type: SemanticDisplayType): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const source = raw as Record<string, unknown>;
+  if (typeof source.label !== "string" || !source.label.trim()) return null;
+  if (type === "facts" && (typeof source.value !== "string" || !source.value.trim())) return null;
+
+  let tone: (typeof CHECKLIST_TONE)[keyof typeof CHECKLIST_TONE] | undefined;
+  if (type === "checklist") {
+    if (!(source.status === "pass" || source.status === "fail" || source.status === "warn" || source.status === "pending")) {
+      return null;
+    }
+    tone = CHECKLIST_TONE[source.status];
+  }
+
+  return {
+    label: source.label,
+    ...(source.value !== undefined ? { value: source.value } : {}),
+    ...(type !== "facts" && source.note !== undefined ? { note: source.note } : {}),
+    ...(type !== "facts" && source.detail !== undefined ? { detail: source.detail } : {}),
+    ...(tone ? { tone } : {}),
+  };
+}
+
+function factsFitGrid(block: Extract<PresentationBlock, { kind: "records" }>): boolean {
+  return block.items.length >= TODO_FACTS_GRID_MIN
+    && block.items.length <= TODO_FACTS_GRID_MAX
+    && block.items.every((item) => {
+      const value = item.value ?? "";
+      return !!value
+        && !item.tag
+        && !item.note
+        && !item.detail?.length
+        && !item.tone
+        && !item.label.includes("\n")
+        && !value.includes("\n")
+        && item.label.length <= TODO_FACT_LABEL_GRID_LIMIT
+        && value.length <= TODO_FACT_VALUE_GRID_LIMIT;
+    });
+}
+
+function normalizeSemanticTodoBlock(raw: Record<string, unknown>): PresentationBlock | null {
+  const type = raw.type;
+  if (!isSemanticDisplayType(type)) return null;
+  if (typeof raw.title !== "string" || !raw.title.trim() || !Array.isArray(raw.items)) return null;
+
+  const items = raw.items
+    .map((item) => semanticRecordItem(item, type))
+    .filter((item): item is Record<string, unknown> => item !== null);
+  if (!items.length) return null;
+
+  const normalized = normalizeDisplay([{
+    kind: "records",
+    layout: type === "checklist" ? "checklist" : "rows",
+    title: raw.title,
+    items,
+    ...(raw.footer !== undefined ? { footer: raw.footer } : {}),
+  }])?.[0];
+  if (!normalized || normalized.kind !== "records") return null;
+
+  if (type === "facts" && factsFitGrid(normalized)) {
+    return { ...normalized, layout: "grid" };
+  }
+  return normalized;
+}
+
+function stripTodoBlockActions(block: PresentationBlock): PresentationBlock | null {
+  // Todo 只负责展示业务步骤。需要回写的 gate 必须绑定真实 ask_user / permission 流程，
+  // 不能让一段 TodoWrite 入参凭空制造可点击审批。
+  if (block.kind === "gate") return null;
+  const { actions: _actions, ...safeBlock } = block;
+  return safeBlock;
+}
+
+function normalizeTodoDisplay(raw: unknown): PresentationBlock[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+
+  const blocks = raw.slice(0, TODO_DISPLAY_LIMIT).flatMap((item): PresentationBlock[] => {
+    if (!item || typeof item !== "object") return [];
+    const source = item as Record<string, unknown>;
+
+    // 历史 transcript 只读兼容优先：旧块可能带未知扩展字段，不能因碰巧存在 type 就误删。
+    if (source.kind === "callout" || source.kind === "records" || source.kind === "gate") {
+      const legacy = normalizeDisplay([source])?.[0];
+      return legacy ? [legacy] : [];
+    }
+
+    // 新 Tool 协议：Agent 只提交业务语义，shared 在进入渲染层前确定布局。
+    if (isSemanticDisplayType(source.type)) {
+      const block = normalizeSemanticTodoBlock(source);
+      return block ? [block] : [];
+    }
+    return [];
   });
 
+  const safeBlocks = blocks
+    .map(stripTodoBlockActions)
+    .filter((block): block is PresentationBlock => block !== null);
   return safeBlocks.length ? safeBlocks : undefined;
 }
 

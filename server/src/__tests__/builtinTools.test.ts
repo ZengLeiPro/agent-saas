@@ -206,7 +206,7 @@ describe('BuiltinToolProvider — TodoWrite 协议', () => {
     })).toThrow();
   });
 
-  it('接受富业务步骤，要求 records 带标题，并拒绝 Todo 内伪造交互块', () => {
+  it('接受语义展示块，并拒绝旧视觉协议与 Todo 内伪造交互块', () => {
     const parsed = todoWriteToolDescriptor.schema.parse({
       todos: [{
         id: 'verify-order',
@@ -215,12 +215,22 @@ describe('BuiltinToolProvider — TodoWrite 协议', () => {
         status: 'blocked',
         detail: [{ verdict: 'fail', text: '原产地证已过期' }],
         display: [
-          { kind: 'callout', tone: 'warn', body: ['当前不能放行'] },
           {
-            kind: 'records',
-            layout: 'rows',
+            type: 'facts',
             title: '核对订单状态',
-            items: [{ label: '订单', value: 'SO-1001' }],
+            items: [
+              { label: '订单', value: 'SO-1001' },
+              { label: '客户', value: '开沿科技' },
+              { label: '阶段', value: '待复核' },
+            ],
+          },
+          {
+            type: 'checklist',
+            title: '放行条件',
+            items: [
+              { label: '税号有效', status: 'pass' },
+              { label: '原产地证有效', status: 'fail', note: '证件已过期' },
+            ],
           },
         ],
         evidenceRefs: ['SO-1001'],
@@ -230,17 +240,68 @@ describe('BuiltinToolProvider — TodoWrite 协议', () => {
 
     expect(() => todoWriteToolDescriptor.schema.parse({
       todos: [{
-        id: 'untitled-records',
+        id: 'untitled-facts',
         kind: 'business',
         content: '核对订单',
         status: 'completed',
         display: [{
-          kind: 'records',
-          layout: 'rows',
+          type: 'facts',
           items: [{ label: '订单', value: 'SO-1001' }],
         }],
       }],
     })).toThrow();
+
+    for (const whitespaceBlock of [
+      { type: 'facts', title: '   ', items: [{ label: '订单', value: 'SO-1001' }] },
+      { type: 'facts', title: '订单字段', items: [{ label: '   ', value: 'SO-1001' }] },
+      { type: 'facts', title: '订单字段', items: [{ label: '订单', value: '   ' }] },
+    ]) {
+      expect(() => todoWriteToolDescriptor.schema.parse({
+        todos: [{
+          id: 'blank-semantic-field',
+          kind: 'business',
+          content: '拒绝空白语义字段',
+          status: 'completed',
+          display: [whitespaceBlock],
+        }],
+      })).toThrow();
+    }
+
+    for (const legacyBlock of [
+      { kind: 'callout', tone: 'warn', body: ['当前不能放行'] },
+      {
+        kind: 'records',
+        layout: 'rows',
+        title: '核对订单状态',
+        items: [{ label: '订单', value: 'SO-1001' }],
+      },
+    ]) {
+      expect(() => todoWriteToolDescriptor.schema.parse({
+        todos: [{
+          id: 'legacy-display',
+          kind: 'business',
+          content: '旧展示协议',
+          status: 'completed',
+          display: [legacyBlock],
+        }],
+      })).toThrow();
+    }
+
+    for (const visualField of [
+      { type: 'facts', title: '视觉布局', layout: 'grid', items: [{ label: '订单', value: 'SO-1001' }] },
+      { type: 'facts', title: '视觉字体', items: [{ label: '订单', value: 'SO-1001', mono: true }] },
+      { type: 'checklist', title: '视觉语气', items: [{ label: '订单有效', status: 'pass', tone: 'success' }] },
+    ]) {
+      expect(() => todoWriteToolDescriptor.schema.parse({
+        todos: [{
+          id: 'visual-field',
+          kind: 'business',
+          content: '拒绝视觉字段',
+          status: 'completed',
+          display: [visualField],
+        }],
+      })).toThrow();
+    }
 
     for (const legacyDetail of [
       { k: '工作树', v: '干净' },
@@ -288,12 +349,11 @@ describe('BuiltinToolProvider — TodoWrite 协议', () => {
         content: '嵌套详情',
         status: 'completed',
         display: [{
-          kind: 'records',
-          layout: 'checklist',
+          type: 'checklist',
           title: 'Azeroth 需求看板',
           items: [{
             label: '字段迁移完成',
-            tone: 'success',
+            status: 'pass',
             detail: [{ section: '回读结果' }, { verdict: 'pass', text: '静态检查通过' }],
           }],
         }],

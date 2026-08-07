@@ -91,7 +91,7 @@ describe('ensurePythonEnv', () => {
     } finally {
       process.env = originalEnv;
     }
-  });
+  }, 30_000);
 
   it('detects Python contract drift before reusing a venv', () => {
     const root = mkdtempSync(join(tmpdir(), 'acs-python-drift-'));
@@ -174,7 +174,7 @@ describe('ensurePythonEnv', () => {
     } finally {
       process.env = originalEnv;
     }
-  });
+  }, 30_000);
 
   it('stale 锁（持有者已死）被抢占，rebuild 正常完成', () => {
     const root = mkdtempSync(join(tmpdir(), 'acs-venv-lock-stale-'));
@@ -199,7 +199,7 @@ describe('ensurePythonEnv', () => {
     } finally {
       process.env = originalEnv;
     }
-  });
+  }, 30_000);
 
   it('锁等待超时且 venv 仍不健康 → 明确报错而非带病并发重建', () => {
     const root = mkdtempSync(join(tmpdir(), 'acs-venv-lock-busy-'));

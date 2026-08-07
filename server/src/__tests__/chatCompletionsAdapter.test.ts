@@ -426,11 +426,69 @@ describe('ChatCompletionsModelAdapter tool-call-repair', () => {
     });
   });
 
-  it('repair keeps unsupported DSML on the existing reject path', async () => {
-    await expect(run('repair', [
+  it('does not repair text when a malformed native tool-call frame was present', async () => {
+    const events = await run('repair', [
+      sse({ choices: [{ delta: { content: '[tool:Read] {"path":"text.txt"}' } }] }),
+      sse({ choices: [{ delta: { tool_calls: [{
+        index: 0,
+        id: 'native_invalid',
+        function: { arguments: '{}' },
+      }] }, finish_reason: 'tool_calls' }] }),
+      sse('[DONE]'),
+    ]);
+    expect(events.filter((event) => event.type === 'text_delta')).toEqual([]);
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      content: '',
+      toolCalls: [],
+    });
+  });
+
+  it('does not promote a complete candidate when EOF arrives before a terminal marker', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse({ choices: [{ delta: { content: '[tool:Read] {"path":"a.txt"}' } }] }),
+    ]));
+    const adapter = new ChatCompletionsModelAdapter(
+      { apiKey: 'k', baseUrl: 'https://example.invalid/v1' },
+      { toolCallRepair: 'repair' },
+    );
+    const seen: ModelEvent[] = [];
+    let error: unknown;
+    try {
+      for await (const event of adapter.stream({
+        model: 'test-model',
+        messages: [{ role: 'user', content: 'read' }],
+        tools: [tool],
+      }, context)) seen.push(event);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({ message: 'Chat Completions stream ended before a terminal marker.' });
+    expect(seen).toEqual([]);
+  });
+
+  it('keeps unsupported DSML on the reject path without leaking it in repair mode', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
       sse({ choices: [{ delta: { content: '<｜DSML｜tool_calls>x' }, finish_reason: 'stop' }] }),
       sse('[DONE]'),
-    ])).rejects.toThrow(/模型输出格式异常.*DSML/);
+    ]));
+    const adapter = new ChatCompletionsModelAdapter(
+      { apiKey: 'k', baseUrl: 'https://example.invalid/v1' },
+      { toolCallRepair: 'repair' },
+    );
+    const seen: ModelEvent[] = [];
+    let error: unknown;
+    try {
+      for await (const event of adapter.stream({
+        model: 'test-model',
+        messages: [{ role: 'user', content: 'read' }],
+        tools: [tool],
+      }, context)) seen.push(event);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({ message: expect.stringMatching(/模型输出格式异常.*DSML/) });
+    expect(seen).toEqual([]);
   });
 
   it('flushes a buffered partial marker before propagating a stream error', async () => {

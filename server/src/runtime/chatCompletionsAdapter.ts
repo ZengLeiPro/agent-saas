@@ -175,10 +175,18 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
     let usage: ModelUsage | undefined;
     let finishReason: string | undefined;
     const toolByIndex = new Map<number, ModelToolCall>();
-    const toolCallRepair = new ToolCallRepairStreamGate(this.providerOptions.toolCallRepair ?? 'off');
+    const toolCallRepairMode = this.providerOptions.toolCallRepair ?? 'off';
+    const toolCallRepair = new ToolCallRepairStreamGate(toolCallRepairMode);
+    const toolCallRepairRequestSeed = createHash('sha256').update(JSON.stringify({
+      runId: context.runId,
+      model: request.model,
+      messages: request.messages,
+      toolNames: request.tools.map((tool) => tool.name),
+    })).digest('hex');
     const decoder = new TextDecoder();
     const reader = response.body.getReader();
     let buffer = '';
+    let sawDone = false;
 
     try {
       while (true) {
@@ -190,7 +198,10 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
           const block = buffer.slice(0, boundary);
           buffer = buffer.slice(boundary + 2);
           for (const data of parseSseData(block)) {
-            if (data === '[DONE]') continue;
+            if (data === '[DONE]') {
+              sawDone = true;
+              continue;
+            }
             const event = JSON.parse(data) as Record<string, any>;
             if (event.usage) {
               usage = mergeUsage(usage, normalizeChatUsage(event.usage));
@@ -220,7 +231,10 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
       const tail = buffer.trim();
       if (tail) {
         for (const data of parseSseData(tail)) {
-          if (data === '[DONE]') continue;
+          if (data === '[DONE]') {
+            sawDone = true;
+            continue;
+          }
           const event = JSON.parse(data) as Record<string, any>;
           if (event.usage) usage = mergeUsage(usage, normalizeChatUsage(event.usage));
         }
@@ -251,6 +265,22 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
       throw new Error('模型输出格式异常（DSML 模板未被服务端解析），已中断本轮。');
     }
 
+    if (toolCallRepairMode === 'repair' && !sawDone && !finishReason) {
+      const incompleteRepair = toolCallRepair.finish({
+        text: content,
+        allowedToolNames: request.tools.map((tool) => tool.name),
+        nativeToolCallsPresent: toolByIndex.size > 0,
+        provider: toolCallRepairProviderLabel(context.modelRef),
+        model: request.model,
+        requestSeed: toolCallRepairRequestSeed,
+        streamComplete: false,
+      });
+      for (const visibleText of incompleteRepair.visibleText) {
+        yield { type: 'text_delta', content: visibleText };
+      }
+      throw new Error('Chat Completions stream ended before a terminal marker.');
+    }
+
     // C1 mojibake warn（与 ResponsesApiAdapter 对齐）；不记录正文 preview。
     {
       const moji = detectMojibake(content);
@@ -276,15 +306,10 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
     const repair = toolCallRepair.finish({
       text: content,
       allowedToolNames: request.tools.map((tool) => tool.name),
-      nativeToolCallsPresent: nativeToolCalls.length > 0,
+      nativeToolCallsPresent: rawToolCalls.length > 0,
       provider: toolCallRepairProviderLabel(context.modelRef),
       model: request.model,
-      requestSeed: createHash('sha256').update(JSON.stringify({
-        runId: context.runId,
-        model: request.model,
-        messages: request.messages,
-        toolNames: request.tools.map((tool) => tool.name),
-      })).digest('hex'),
+      requestSeed: toolCallRepairRequestSeed,
     });
     for (const visibleText of repair.visibleText) {
       yield { type: 'text_delta', content: visibleText };

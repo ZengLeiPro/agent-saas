@@ -537,6 +537,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
       arguments: string;
       namespace?: string;
     }>();
+    let sawNativeFunctionCall = false;
     const outputTextByPart = new Map<string, string>();
     const encryptedReasoningItems: ModelProviderContinuation['items'] = [];
     let pendingToolSearchPaths: string[] = [];
@@ -645,6 +646,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
             } else if (eventType === 'response.refusal.done') {
               if (typeof event.refusal === 'string') refusal = event.refusal;
             } else if (eventType === 'response.function_call_arguments.delta') {
+              sawNativeFunctionCall = true;
               const outputIndex: number = typeof event.output_index === 'number' ? event.output_index : 0;
               const delta = typeof event.delta === 'string' ? event.delta : '';
               const buf = functionCallArgsBuffer.get(outputIndex) ?? { call_id: '', name: '', arguments: '' };
@@ -653,6 +655,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
             } else if (eventType === 'response.output_item.added') {
               const item = event.item;
               if (item?.type === 'function_call') {
+                sawNativeFunctionCall = true;
                 const outputIndex: number = typeof event.output_index === 'number' ? event.output_index : 0;
                 const buf = functionCallArgsBuffer.get(outputIndex) ?? { call_id: '', name: '', arguments: '' };
                 if (typeof item.call_id === 'string') buf.call_id = item.call_id;
@@ -665,6 +668,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
               const item = event.item;
               const outputIndex: number = typeof event.output_index === 'number' ? event.output_index : 0;
               if (item?.type === 'function_call') {
+                sawNativeFunctionCall = true;
                 const buf = functionCallArgsBuffer.get(outputIndex) ?? { call_id: '', name: '', arguments: '' };
                 const callId = (typeof item.call_id === 'string' && item.call_id) || buf.call_id;
                 const name = (typeof item.name === 'string' && item.name) || buf.name;
@@ -724,6 +728,14 @@ export class ResponsesApiAdapter implements ModelAdapter {
               const canonicalOutputPresent = this.transport.capabilities.terminalOutput === 'canonical'
                 ? terminalOutputFieldPresent
                 : Array.isArray(respObj?.output) && respObj.output.length > 0;
+              if (Array.isArray(respObj?.output)
+                && respObj.output.some((item: unknown) => (
+                  item !== null
+                  && typeof item === 'object'
+                  && (item as Record<string, unknown>).type === 'function_call'
+                ))) {
+                sawNativeFunctionCall = true;
+              }
               const snapshot = parseCanonicalOutput(respObj?.output, canonicalOutputPresent);
               canonicalTextSuffix = reconcileTextSnapshot(content, snapshot.text, snapshot.present);
               if (snapshot.refusal) refusal = snapshot.refusal;
@@ -1110,7 +1122,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
     const repair = toolCallRepair.finish({
       text: content,
       allowedToolNames: request.tools.map((tool) => tool.name),
-      nativeToolCallsPresent: nativeToolCalls.length > 0,
+      nativeToolCallsPresent: sawNativeFunctionCall || nativeToolCalls.length > 0,
       provider: toolCallRepairProviderLabel(context.modelRef),
       model: request.model,
       requestSeed: `${context.runId}:${requestHistoryHash}:${requestToolsHash}`,

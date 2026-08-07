@@ -220,6 +220,32 @@ describe('ToolCallRepairStreamGate', () => {
     expect(finish(gate, text)).toMatchObject({ scrubbed: true, promotedToolCalls: [] });
   });
 
+  it('never promotes a complete payload when the provider stream lacks a terminal marker', () => {
+    const gate = new ToolCallRepairStreamGate('repair');
+    const text = '[tool:Read] {"path":"a"}';
+    expect(gate.push(text)).toEqual([]);
+    const result = gate.finish({
+      text,
+      allowedToolNames: ALLOWED,
+      nativeToolCallsPresent: false,
+      provider: 'test-provider',
+      model: 'test-model',
+      streamComplete: false,
+    });
+    expect(result).toMatchObject({
+      decision: { kind: 'rejected', outcome: 'incomplete' },
+      scrubbed: true,
+      promotedToolCalls: [],
+    });
+  });
+
+  it('scrubs a confirmed DSML prefix instead of leaking it on a later stream error', () => {
+    const gate = new ToolCallRepairStreamGate('repair');
+    expect(gate.push('< ｜')).toEqual([]);
+    expect(gate.push('DSML ｜ tool_calls>secret')).toEqual([]);
+    expect(gate.abort()).toEqual([]);
+  });
+
   it('releases a partial candidate on abort/error without changing text', () => {
     const gate = new ToolCallRepairStreamGate('repair');
     const partial = '[tool:Re';

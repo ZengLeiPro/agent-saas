@@ -2561,7 +2561,32 @@ describe('ResponsesApiAdapter tool-call-repair', () => {
     expect(events.at(-1)).not.toHaveProperty('responseStateReset');
   });
 
-  it('keeps unsupported DSML on the existing reject path in repair mode', async () => {
+  it('does not repair text when a malformed native function_call item was present', async () => {
+    const raw = '[tool:Read] {"path":"text.txt"}';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_native_invalid' } }),
+      sse('response.output_text.delta', { type: 'response.output_text.delta', delta: raw }),
+      sse('response.output_item.added', {
+        type: 'response.output_item.added',
+        output_index: 1,
+        item: { type: 'function_call', call_id: 'native_invalid', arguments: '{}' },
+      }),
+      sse('response.completed', {
+        type: 'response.completed',
+        response: { id: 'resp_native_invalid', status: 'completed' },
+      }),
+    ]));
+    const events = await collect(adapter('repair').stream(request(), repairContext));
+    expect(events.filter((event) => event.type === 'text_delta')).toEqual([]);
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      content: '',
+      toolCalls: [],
+      terminalStatus: 'completed',
+    });
+  });
+
+  it('keeps unsupported DSML on the reject path without leaking it in repair mode', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
       sse('response.created', { type: 'response.created', response: { id: 'resp_dsml_repair' } }),
       sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '<｜DSML｜tool_calls>x' }),
@@ -2570,8 +2595,15 @@ describe('ResponsesApiAdapter tool-call-repair', () => {
         response: { id: 'resp_dsml_repair', status: 'completed' },
       }),
     ]));
-    await expect(collect(adapter('repair').stream(request(), repairContext)))
-      .rejects.toThrow(/模型输出格式异常.*DSML/);
+    const seen: ModelEvent[] = [];
+    let error: unknown;
+    try {
+      for await (const event of adapter('repair').stream(request(), repairContext)) seen.push(event);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({ message: expect.stringMatching(/模型输出格式异常.*DSML/) });
+    expect(seen).toEqual([]);
   });
 
   it('flushes a buffered partial marker before propagating an unretried stream error', async () => {

@@ -418,19 +418,26 @@ export class ToolCallRepairStreamGate {
     if (this.mode !== 'repair' || this.state === 'passthrough') return [delta];
     if (this.state === 'suppressing') return [];
 
-    this.pending += delta;
-    this.pendingBytes += Buffer.byteLength(delta, 'utf8');
-    if (this.pendingBytes > this.maxPayloadBytes + MAX_STREAM_WRAPPER_BYTES) {
+    const deltaBytes = Buffer.byteLength(delta, 'utf8');
+    if (this.pendingBytes + deltaBytes > this.maxPayloadBytes + MAX_STREAM_WRAPPER_BYTES) {
       this.forcedOverCap = true;
       this.pending = '';
       this.state = 'suppressing';
       return [];
     }
+    this.pending += delta;
+    this.pendingBytes += deltaBytes;
 
     const first = skipWhitespace(this.pending, 0);
     const probe = this.pending.slice(first);
     if (!probe) return [];
-    if (couldBePotentialCallPrefix(probe)) {
+    const dsmlPrefix = classifyDsmlPrefix(probe);
+    if (dsmlPrefix === 'confirmed') {
+      this.pending = '';
+      this.state = 'suppressing';
+      return [];
+    }
+    if (dsmlPrefix === 'partial' || couldBePotentialCallPrefix(probe)) {
       this.state = 'candidate';
       return [];
     }
@@ -457,6 +464,8 @@ export class ToolCallRepairStreamGate {
     model: string;
     /** Stable fingerprint of this logical model request; never logged or used as a metric label. */
     requestSeed?: string;
+    /** False when the provider stream ended before its protocol terminal marker. */
+    streamComplete?: boolean;
   }): ToolCallRepairFinalization {
     if (this.mode === 'off') {
       return { decision: { kind: 'none', syntax: 'unknown' }, visibleText: [], promotedToolCalls: [], scrubbed: false };
@@ -464,7 +473,9 @@ export class ToolCallRepairStreamGate {
 
     const decision = this.forcedOverCap
       ? ({ kind: 'rejected', syntax: syntaxAt(params.text, skipWhitespace(params.text, 0)), outcome: 'rejected_over_cap' } as const)
-      : analyzeAssistantToolCallText(params.text, params.allowedToolNames, this.maxPayloadBytes);
+      : params.streamComplete === false && this.state !== 'passthrough'
+        ? ({ kind: 'rejected', syntax: syntaxAt(params.text, skipWhitespace(params.text, 0)), outcome: 'incomplete' } as const)
+        : analyzeAssistantToolCallText(params.text, params.allowedToolNames, this.maxPayloadBytes);
 
     if (decision.kind !== 'none') {
       recordToolCallRepairMetric({
@@ -541,6 +552,28 @@ export class ToolCallRepairStreamGate {
     this.pending = '';
     return { decision, visibleText: visible, promotedToolCalls: [], scrubbed: false };
   }
+}
+
+function classifyDsmlPrefix(value: string): 'none' | 'partial' | 'confirmed' {
+  let cursor = 0;
+  if (value[cursor] !== '<') return 'none';
+  cursor += 1;
+  cursor = skipWhitespace(value, cursor);
+  if (cursor >= value.length) return 'partial';
+  if (value[cursor] !== '|' && value[cursor] !== '｜') return 'none';
+  cursor += 1;
+  cursor = skipWhitespace(value, cursor);
+
+  const marker = 'dsml';
+  for (let index = 0; index < marker.length; index += 1) {
+    if (cursor >= value.length) return 'partial';
+    if (value[cursor]!.toLowerCase() !== marker[index]) return 'none';
+    cursor += 1;
+  }
+
+  cursor = skipWhitespace(value, cursor);
+  if (cursor >= value.length) return 'partial';
+  return value[cursor] === '|' || value[cursor] === '｜' ? 'confirmed' : 'none';
 }
 
 function couldBePotentialCallPrefix(value: string): boolean {

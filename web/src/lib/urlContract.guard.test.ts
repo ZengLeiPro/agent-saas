@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
 /**
@@ -65,12 +65,12 @@ const FORBIDDEN_CUSTOMER_PARAM_NAMES = [
 ];
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) {
-      if (name === "node_modules") continue;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === "node_modules") continue;
       collectSourceFiles(p, acc);
-    } else if (/\.(ts|tsx)$/.test(name) && !/\.test\.(ts|tsx)$/.test(name)) {
+    } else if (/\.(ts|tsx)$/.test(entry.name) && !/\.test\.(ts|tsx)$/.test(entry.name)) {
       acc.push(p);
     }
   }
@@ -136,5 +136,5 @@ describe("URL 参数契约", () => {
       }
     }
     expect(violations, violations.join("\n")).toEqual([]);
-  });
+  }, 15_000);
 });

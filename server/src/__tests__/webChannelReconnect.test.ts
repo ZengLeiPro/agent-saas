@@ -308,13 +308,13 @@ describe('WebChannel active stream reconnect', () => {
     emitReply: () => {},
   });
 
-  it('expands streamed aggregates for cross-process runs (delta no longer persisted)', () => {
+  it('expands streamed aggregates for cross-process runs without stream batches', () => {
     const channel = createChannel();
     // publishRuntimePlatformEvent 在 eventBus 未初始化（未 start()）时提前 return
     (channel as any).eventBus = fakeEventBus();
 
-    // 2026-07-03 起 assistant_stream_event 不落库：跨进程（非 inProcessOutboundRuns）
-    // 的 streamed 聚合行必须整块展开，否则 ws-only 进程/replay 丢正文
+    // 兼容没有 assistant_stream_event 的旧 run：跨进程（非 inProcessOutboundRuns）
+    // 的 streamed 聚合行仍必须整块展开，否则 ws-only 进程/replay 丢正文
     channel.publishRuntimePlatformEvent({
       id: 'evt-agg-1',
       timestamp: new Date().toISOString(),
@@ -331,6 +331,68 @@ describe('WebChannel active stream reconnect', () => {
     expect(datas).toEqual([
       { type: 'block_start', blockType: 'text' },
       { type: 'text', content: '跨进程正文' },
+      { type: 'block_end', blockType: 'text' },
+    ]);
+  });
+
+  it('projects persisted stream batches before the terminal aggregate without duplicating text', () => {
+    const channel = createChannel();
+    (channel as any).eventBus = fakeEventBus();
+    const base = {
+      timestamp: new Date().toISOString(),
+      runId: 'run-cross-stream-1',
+      sessionId: 'session-cross-stream-1',
+    };
+
+    for (const event of [
+      { ...base, id: 'evt-stream-start', type: 'assistant_stream_event', blockType: 'text', phase: 'start', draftId: 'draft-1' },
+      { ...base, id: 'evt-stream-delta-1', type: 'assistant_stream_event', blockType: 'text', phase: 'delta', content: '跨进程' },
+      { ...base, id: 'evt-stream-delta-2', type: 'assistant_stream_event', blockType: 'text', phase: 'delta', content: '流式正文' },
+      { ...base, id: 'evt-stream-aggregate', type: 'assistant_message', content: '跨进程流式正文', streamed: true },
+      { ...base, id: 'evt-stream-end', type: 'assistant_stream_event', blockType: 'text', phase: 'end' },
+      { ...base, id: 'evt-stream-commit', type: 'assistant_stream_event', phase: 'commit', draftId: 'draft-1' },
+    ]) {
+      channel.publishRuntimePlatformEvent(event as any);
+    }
+
+    const buffer = (channel as any).eventBufferStore.get('session-cross-stream-1');
+    expect(buffer).toBeDefined();
+    const datas = buffer.events.map((e: { data: string }) => JSON.parse(e.data));
+    expect(datas).toEqual([
+      { type: 'block_start', blockType: 'text', draftId: 'draft-1' },
+      { type: 'text', content: '跨进程' },
+      { type: 'text', content: '流式正文' },
+      { type: 'block_end', blockType: 'text' },
+      { type: 'draft_commit', draftId: 'draft-1' },
+    ]);
+  });
+
+  it('fills a missing relay tail from the durable aggregate before closing the block', () => {
+    const channel = createChannel();
+    (channel as any).eventBus = fakeEventBus();
+    const base = {
+      timestamp: new Date().toISOString(),
+      runId: 'run-cross-tail-1',
+      sessionId: 'session-cross-tail-1',
+    };
+
+    for (const event of [
+      { ...base, id: 'evt-tail-start', type: 'assistant_stream_event', blockType: 'text', phase: 'start' },
+      { ...base, id: 'evt-tail-delta', type: 'assistant_stream_event', blockType: 'text', phase: 'delta', content: '已实时送达' },
+      { ...base, id: 'evt-tail-aggregate', type: 'assistant_message', content: '已实时送达，终态补齐', streamed: true },
+      // RawAgentLoop 先 append 聚合行、再 yield text_end；relay 的最后一批可能晚于聚合行。
+      { ...base, id: 'evt-tail-late-delta', type: 'assistant_stream_event', blockType: 'text', phase: 'delta', content: '，终态补齐' },
+      { ...base, id: 'evt-tail-end', type: 'assistant_stream_event', blockType: 'text', phase: 'end' },
+    ]) {
+      channel.publishRuntimePlatformEvent(event as any);
+    }
+
+    const buffer = (channel as any).eventBufferStore.get('session-cross-tail-1');
+    const datas = buffer.events.map((e: { data: string }) => JSON.parse(e.data));
+    expect(datas).toEqual([
+      { type: 'block_start', blockType: 'text' },
+      { type: 'text', content: '已实时送达' },
+      { type: 'text', content: '，终态补齐' },
       { type: 'block_end', blockType: 'text' },
     ]);
   });
@@ -757,6 +819,43 @@ describe('WebChannel active stream reconnect', () => {
       afterCursor: '1581',
       limit: 200,
     });
+  });
+
+  it('prewarms stream state before a durable cursor so a new ws-only process replays only the missing suffix', async () => {
+    const channel = createChannel();
+    const ws = new FakeWebSocket();
+    const base = {
+      timestamp: new Date().toISOString(),
+      runId: 'run-cursor-stream',
+      sessionId: 'session-cursor-stream',
+    };
+    const priorEvents = [
+      { ...base, id: 'event-stream-start', sequence: '100', type: 'assistant_stream_event', blockType: 'text', phase: 'start' },
+      { ...base, id: 'event-stream-delta', sequence: '101', type: 'assistant_stream_event', blockType: 'text', phase: 'delta', content: '游标前正文' },
+      { ...base, id: 'event-stream-aggregate', sequence: '102', type: 'assistant_message', content: '游标前正文，补齐尾段', streamed: true },
+      { ...base, id: 'event-stream-end', sequence: '103', type: 'assistant_stream_event', blockType: 'text', phase: 'end' },
+    ];
+    const store = {
+      listByRun: vi.fn(async () => priorEvents),
+      listPage: vi.fn(async () => ({ events: priorEvents.slice(2), hasMore: false })),
+    };
+
+    await (channel as any).replayDurableRuntimeEvents(
+      {
+        ws,
+        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        alive: true,
+        lastActivityAt: Date.now(),
+      },
+      'session-cursor-stream',
+      store,
+      { lastEventId: 9, lastEventCursor: '101', activeRunId: 'run-cursor-stream' },
+    );
+
+    expect(ws.sent.map((entry) => (entry as { data: unknown }).data)).toEqual([
+      { type: 'text', content: '，补齐尾段' },
+      { type: 'block_end', blockType: 'text' },
+    ]);
   });
 
   it('serializes concurrent resume on the same ws so only one buffer listener survives', async () => {

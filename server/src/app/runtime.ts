@@ -69,6 +69,7 @@ import {
 import { recoverRunningToolInvocations } from '../runtime/toolInvocationRecovery.js';
 import { deliverPendingToolInvocationCancels, deliverToolInvocationCancel } from '../runtime/toolInvocationCancelDelivery.js';
 import { RuntimeScheduler } from '../runtime/scheduler.js';
+import { RuntimeOutboundStreamRelay } from '../runtime/runtimeOutboundStreamRelay.js';
 import { MemoryPressureGuard, type RuntimeAdmissionGuard } from '../runtime/memoryPressureGuard.js';
 import type { RuntimePerformanceWorkloadSnapshot } from '../runtime/runtimePerformanceSampler.js';
 import {
@@ -1155,7 +1156,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     userId?: string;
     clientMsgId?: string;
     event: import('../types/index.js').OutboundEvent;
-  }) => void) | undefined;
+  }) => void | Promise<void>) | undefined;
+  let runtimeOutboundStreamRelay: RuntimeOutboundStreamRelay | undefined;
   if (config.runtimeEventStore?.backend === 'pg') {
     pgEventStore = new PgEventStore({
       connectionString: config.runtimeEventStore.connectionString,
@@ -1164,6 +1166,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       logger: serverLogger.child('PgEventStore'),
     });
     await pgEventStore.init();
+    if (enableSchedulerWorker) {
+      runtimeOutboundStreamRelay = new RuntimeOutboundStreamRelay(pgEventStore, {
+        logger: serverLogger.child('RuntimeOutboundStreamRelay'),
+      });
+    }
     try {
       const store = new PgTaskboardStore({
         pool: pgEventStore.pool,
@@ -1518,6 +1525,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       alertNotifier?.stop();
       await taskboardExecutionCoordinator?.stop();
       await runtimeScheduler?.stop();
+      await runtimeOutboundStreamRelay?.flushAll();
       if (cancelDeliveryRetryTimer) clearInterval(cancelDeliveryRetryTimer);
       if (billingAuditTimer) clearInterval(billingAuditTimer);
       runtimeEventRetention?.stop();
@@ -2557,16 +2565,24 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         await wakeRuntimeSession(rawRuntimeConfig, wakeRecord, {
           lease,
           renewIntervalMs: config.runtimeScheduler?.renewIntervalMs,
-          onOutboundEvent: (event) => {
+          onOutboundEvent: async (event) => {
             const streamId = typeof record.metadata?.streamId === 'string' ? record.metadata.streamId : undefined;
             const clientMsgId = typeof record.metadata?.clientMsgId === 'string' ? record.metadata.clientMsgId : undefined;
-            webRuntimeEventSink?.({
+            if (webRuntimeEventSink) {
+              await webRuntimeEventSink({
+                sessionId: record.sessionId,
+                runId: record.runId,
+                streamId,
+                userId: record.userId,
+                clientMsgId,
+                event,
+              });
+              return;
+            }
+            await runtimeOutboundStreamRelay?.publish(event, {
               sessionId: record.sessionId,
               runId: record.runId,
-              streamId,
-              userId: record.userId,
-              clientMsgId,
-              event,
+              ...(tenantId ? { tenantId } : {}),
             });
           },
         });

@@ -617,15 +617,18 @@ export type PlatformEvent =
     id: string;
     timestamp: string;
     /**
-     * @deprecated 2026-07-03 起不再写入（逐 token delta 体积占全表 ~89% 且无复盘价值）。
-     * 类型保留用于读取存量历史数据；存量清理完成后可删除。
+     * Runtime Worker → ws-only 的有界批次流事件。
+     * 2026-07-03 停写的是逐 token 版本；跨进程部署仅按短窗口/字符上限聚合后写入，
+     * 供 PG NOTIFY live delivery 与 cursor replay，完整事实仍以聚合事件为准。
      */
     type: 'assistant_stream_event';
     runId: string;
     sessionId: string;
-    blockType: 'thinking' | 'text';
-    phase: 'start' | 'delta' | 'end';
+    blockType?: 'thinking' | 'text';
+    phase: 'start' | 'delta' | 'end' | 'reset' | 'commit';
     content?: string;
+    draftId?: string;
+    attempt?: number;
   }
   | {
     id: string;

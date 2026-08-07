@@ -17,12 +17,12 @@ import { activityStatusBadgeClass, activityStatusIconClass, activityStatusTextCl
  */
 
 /**
- * 两种排版皮：
- * - "code"（默认）：工具执行摘要沿用的极淡蓝底等宽块，行为逐像素不变；
- * - "card"：白卡键值（QoderWorker demo 的键值卡语言）——白底卡片 + 细行分隔线，
- *   字段名灰色左列、值深色、关键值配主题强调色。业务步骤的「业务详情」用它。
+ * 三种排版皮：
+ * - "code"（默认）：工具执行摘要沿用的极淡蓝底等宽块；
+ * - "card"：白卡键值——白底卡片 + 细行分隔线，供明确需要卡片语义的调用方使用；
+ * - "plain"：无框业务摘要，保留各 DetailLine 自身的判定、风险、警告等语义样式。
  */
-export type PresentationDetailVariant = "code" | "card";
+export type PresentationDetailVariant = "code" | "card" | "plain";
 
 const VariantContext = createContext<PresentationDetailVariant>("code");
 
@@ -76,13 +76,17 @@ const VERDICT_META: Record<"pass" | "fail" | "warn" | "pending", { tone: Activit
 };
 
 function SectionRow({ section }: { section: string }) {
-  const card = useContext(VariantContext) === "card";
-  // 白卡里行分隔线由容器统一提供，小节条不再自带下边框，否则出现双线
+  const variant = useContext(VariantContext);
+  // 白卡里行分隔线由容器统一提供；plain 只保留轻量小节文字，不补表格横线。
   return (
     <div
       className={cn(
         "font-medium text-muted-foreground",
-        card ? "text-2xs leading-4" : "mt-1.5 border-b border-border/60 pb-0.5 first:mt-0",
+        variant === "card"
+          ? "text-2xs leading-4"
+          : variant === "plain"
+            ? "mt-1.5 text-xs leading-4 first:mt-0"
+            : "mt-1.5 border-b border-border/60 pb-0.5 first:mt-0",
       )}
     >
       {section}
@@ -91,7 +95,7 @@ function SectionRow({ section }: { section: string }) {
 }
 
 function DetailRow({ line }: { line: DetailLine }) {
-  const card = useContext(VariantContext) === "card";
+  const businessText = useContext(VariantContext) !== "code";
   if (typeof line === "string") {
     return <div className="break-words text-foreground">{line}</div>;
   }
@@ -144,8 +148,8 @@ function DetailRow({ line }: { line: DetailLine }) {
     const { tone, Icon } = VERDICT_META[line.verdict];
     return (
       <div className="flex items-start gap-1.5">
-        {/* 业务卡正文 14px/20px 用 mt-1；代码摘要 12px/16px 用 mt-0.5。 */}
-        <Icon className={activityStatusIconClass(tone, card ? "mt-1 size-3 shrink-0" : "mt-0.5 size-3 shrink-0")} />
+        {/* 业务正文 14px/20px 用 mt-1；代码摘要 12px/16px 用 mt-0.5。 */}
+        <Icon className={activityStatusIconClass(tone, businessText ? "mt-1 size-3 shrink-0" : "mt-0.5 size-3 shrink-0")} />
         <span className="min-w-0 break-words text-foreground">
           {line.text}
           {line.note ? <span className="text-muted-foreground">　{line.note}</span> : null}
@@ -233,13 +237,13 @@ export function groupDetailLines(detail: DetailLine[]): DetailGroup[] {
 }
 
 function WarnGroup({ header, warns }: { header: string; warns: string[] }) {
-  const card = useContext(VariantContext) === "card";
+  const businessText = useContext(VariantContext) !== "code";
   return (
     <div className="space-y-1 rounded-md border border-warning/25 bg-warning/10 px-2.5 py-2">
       <div className={activityStatusTextClass("warning", "text-2xs font-medium leading-4")}>{header}</div>
       {warns.map((warn, i) => (
         <div key={i} className="flex items-start gap-1.5">
-          <TriangleAlert className={activityStatusIconClass("warning", card ? "mt-1 size-3 shrink-0" : "mt-0.5 size-3 shrink-0")} />
+          <TriangleAlert className={activityStatusIconClass("warning", businessText ? "mt-1 size-3 shrink-0" : "mt-0.5 size-3 shrink-0")} />
           <span className={activityStatusTextClass("warning", "break-words")}>{warn}</span>
         </div>
       ))}
@@ -264,6 +268,7 @@ export function PresentationDetail({
   if (!hasBody) return null;
 
   const card = variant === "card";
+  const plain = variant === "plain";
   const groups = groupDetailLines(data.detail ?? []);
 
   return (
@@ -273,13 +278,16 @@ export function PresentationDetail({
           "mt-1",
           card
             ? "w-fit max-w-full divide-y divide-border/60 overflow-hidden rounded-md border border-border bg-card font-sans text-sm leading-5"
-            : "space-y-1 rounded-md px-3 py-2 font-mono text-xs leading-4",
+            : plain
+              ? "space-y-2 font-sans text-sm leading-5"
+              : "space-y-1 rounded-md px-3 py-2 font-mono text-xs leading-4",
           className,
         )}
-        style={card ? undefined : { backgroundColor: "hsl(var(--code-block-bg))" }}
+        style={variant === "code" ? { backgroundColor: "hsl(var(--code-block-bg))" } : undefined}
+        data-presentation-detail-variant={variant}
       >
         {statusMeta && (
-          <div className={card ? "px-3 py-1.5" : "pb-0.5"}>
+          <div className={card ? "px-3 py-1.5" : plain ? undefined : "pb-0.5"}>
             <span className={activityStatusBadgeClass(statusMeta.tone)}>{statusMeta.label}</span>
           </div>
         )}
@@ -296,7 +304,11 @@ export function PresentationDetail({
           <div
             className={cn(
               "flex flex-wrap items-center gap-x-2 gap-y-1",
-              card ? "px-3 py-1.5" : "mt-1.5 border-t border-border pt-1.5",
+              card
+                ? "px-3 py-1.5"
+                : plain
+                  ? "mt-2 border-t border-border pt-2"
+                  : "mt-1.5 border-t border-border pt-1.5",
             )}
           >
             <span className="text-muted-foreground">回执</span>

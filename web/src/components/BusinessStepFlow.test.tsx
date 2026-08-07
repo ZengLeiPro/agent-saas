@@ -162,7 +162,7 @@ describe("BusinessStepFlow", () => {
     for (const sel of NO_FILL_SELECTORS) expect(container.querySelector(sel)).toBeNull();
   });
 
-  it("keeps historical detail key-value cards renderable on the frontend", () => {
+  it("keeps historical detail key-value lines readable without restoring the legacy card shell", () => {
     const { container } = render(
       <BusinessStepFlow
         open
@@ -180,21 +180,58 @@ describe("BusinessStepFlow", () => {
       />,
     );
 
-    const card = container.querySelector(".divide-y.bg-card");
-    expect(card).toBeTruthy();
-    // 白卡按内容收缩，但不超过业务消息的可用宽度。
-    expect(card!.className).toContain("w-fit");
-    expect(card!.className).toContain("max-w-full");
-    expect(card!.className).toContain("font-sans");
-    expect(card!.className).toContain("text-sm");
-    expect(card!.className).toContain("leading-5");
-    expect(card!.className).toContain("mt-0");
-    // 白卡不用等宽排版，也不再用代码块底色
-    expect(card!.className).not.toContain("font-mono");
-    expect((card as HTMLElement).style.backgroundColor).toBe("");
-    // 关键值（数字）走主题强调色，普通值保持深色
-    expect(screen.getByText("15").className).toContain("text-primary");
-    expect(screen.getByText("张三").className).not.toContain("text-primary");
+    const detail = container.querySelector('[data-presentation-detail-variant="plain"]') as HTMLElement;
+    expect(detail).toBeTruthy();
+    expect(detail.className).toContain("space-y-2");
+    expect(detail.className).toContain("font-sans");
+    expect(detail.className).toContain("text-sm");
+    expect(detail.className).toContain("leading-5");
+    expect(detail.className).toContain("mt-0");
+    expect(detail.className).not.toContain("divide-y");
+    expect(detail.className).not.toContain("bg-card");
+    expect(detail.className).not.toContain("rounded-md");
+    expect(detail.className).not.toContain("border");
+    expect(detail.className).not.toContain("font-mono");
+    expect(detail.style.backgroundColor).toBe("");
+    expect(screen.getByText("文件夹")).toBeTruthy();
+    expect(screen.getByText("15").className).not.toContain("text-primary");
+    expect(screen.getByText("张三")).toBeTruthy();
+  });
+
+  it("renders current top-level detail primitives frameless while preserving their own semantics", () => {
+    const { container } = render(
+      <BusinessStepFlow
+        open
+        event={event({
+          kind: "complete",
+          todo: {
+            id: "a",
+            kind: "business",
+            content: "核验资料",
+            status: "completed",
+            outcome: { text: "核验完成", tone: "warn" },
+            detail: [
+              "共核验 12 项字段",
+              { insight: "资料主体一致" },
+              { warn: "税号来源尚未确认" },
+              { risk: "medium", text: "存在回读延迟", action: "稍后复核" },
+              { verdict: "pass", text: "订单资料完整" },
+            ],
+          },
+        })}
+      />,
+    );
+
+    const detail = container.querySelector('[data-presentation-detail-variant="plain"]') as HTMLElement;
+    expect(detail).toBeTruthy();
+    expect(detail.className).not.toContain("border");
+    expect(detail.className).not.toContain("bg-card");
+    expect(detail.className).not.toContain("divide-y");
+    expect(screen.getByText("共核验 12 项字段")).toBeTruthy();
+    expect(screen.getByText("资料主体一致").parentElement?.className).toContain("border-primary");
+    expect(screen.getByText("税号来源尚未确认")).toBeTruthy();
+    expect(screen.getByText("存在回读延迟")).toBeTruthy();
+    expect(screen.getByText("订单资料完整")).toBeTruthy();
   });
 
   it("upgrades historical section-verdict groups to branded checklist records", () => {

@@ -42,11 +42,10 @@ import { statVerdict, visibleOutcomeStats, type OutcomeStat } from "./detailSema
 //   默认状态由用户的业务步骤展示偏好决定。
 //
 // 内容纪律（08-03 二轮：样式对齐 demo + 槽位去重）：
-// - 「业务详情」用白卡键值（PresentationDetail variant="card"）：白底 + 细行分隔
-//   线，字段名灰、值深、关键值配主题强调色。去框只约束**步骤章节骨架**，
-//   内容块该是卡片就是卡片。
+// - 顶层 detail 使用无框业务摘要（PresentationDetail variant="plain"）；判定、风险、
+//   警告等原语保留自身语义样式。真正的表格统一由带标题的 display.records 承载。
 // - 标签分两类：判定类（✓/✗/通过/失败）走绿红语义色，中性键值保持灰。
-// - 槽位去重是渲染层硬约束而非提示语约定：与详情键值行同键同值的中性标签
+// - 槽位去重是渲染层硬约束而非提示语约定：与历史详情键值行同键同值的中性标签
 //   隐藏；判定类标签任何时候都不隐藏。
 // ---------------------------------------------------------------------------
 
@@ -201,7 +200,7 @@ function StepSummaryBody({ todo }: { todo: TodoItem }) {
   return (
     <div className="space-y-3">
       {detailParts.map((part, index) => part.kind === "detail" ? (
-        <PresentationDetail key={index} data={{ title: "", detail: part.lines }} className="mt-0" variant="card" />
+        <PresentationDetail key={index} data={{ title: "", detail: part.lines }} className="mt-0" variant="plain" />
       ) : (
         <PresentationBlocks key={index} blocks={[part.block]} ctx={{ readOnly: true }} />
       ))}

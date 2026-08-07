@@ -38,6 +38,7 @@ describePg('PgTaskboardStore contract', () => {
   afterAll(async () => {
     if (!pool || !store) return;
     try {
+      await pool.query(`DROP TABLE IF EXISTS ${store.executionsTable}`);
       await pool.query(`DROP TABLE IF EXISTS ${store.commentsTable}`);
       await pool.query(`DROP TABLE IF EXISTS ${store.tasksTable}`);
       await pool.query(`DROP TABLE IF EXISTS ${store.boardsTable}`);
@@ -120,6 +121,70 @@ describePg('PgTaskboardStore contract', () => {
     await expect(store.createComment(alice, restoredTask.id, { body: '恢复后可评论' })).resolves.toMatchObject({
       body: '恢复后可评论',
     });
+  });
+
+  it('atomically claims one Agent execution, rereads comments, and finalizes idempotently', async () => {
+    const board = await store.createBoard(alice, { name: 'Agent 执行闭环' });
+    const task = await store.createTask(alice, board.id, { title: '执行我', status: 'todo' });
+    const claimed = await store.claimExecution(alice, task.id, {
+      expectedVersion: task.version,
+      executionId: 'execution-a',
+      runId: 'run-a',
+      sessionId: 'session-a',
+    });
+    expect(claimed.task).toMatchObject({ status: 'in_progress', version: task.version + 1 });
+    expect(claimed.execution).toMatchObject({ status: 'queued', runId: 'run-a', sessionId: 'session-a' });
+    expect(await store.listExecutions(alice, task.id)).toEqual([claimed.execution]);
+    await expect(store.listExecutions(admin, task.id)).rejects.toBeInstanceOf(TaskboardNotFoundError);
+
+    await store.createComment(alice, task.id, { body: '认领后补充的最新条件' });
+    const context = await store.getExecutionContextByRunId('run-a');
+    expect(context?.task.status).toBe('in_progress');
+    expect(context?.comments.at(-1)?.body).toBe('认领后补充的最新条件');
+    await expect(store.setExecutionStatus('run-a', 'waiting_user')).resolves.toMatchObject({
+      status: 'waiting_user',
+      startedAt: expect.any(String),
+    });
+
+    const completed = await store.completeExecution('run-a', {
+      status: 'succeeded',
+      commentBody: 'Agent 交付\n\n实现完成',
+    });
+    expect(completed?.task.status).toBe('in_review');
+    expect(completed?.execution).toMatchObject({ status: 'succeeded', finishedAt: expect.any(String) });
+    expect((await store.listComments(alice, task.id)).at(-1)).toMatchObject({
+      authorType: 'agent',
+      authorName: 'Agent',
+      body: 'Agent 交付\n\n实现完成',
+    });
+
+    const commentCount = (await store.listComments(alice, task.id)).length;
+    const duplicate = await store.completeExecution('run-a', {
+      status: 'failed',
+      error: 'late duplicate',
+      commentBody: '不应重复写入',
+    });
+    expect(duplicate?.execution.status).toBe('succeeded');
+    expect(await store.listComments(alice, task.id)).toHaveLength(commentCount);
+
+    const manuallyCorrected = await store.createTask(alice, board.id, { title: '人工纠正优先', status: 'todo' });
+    const secondClaim = await store.claimExecution(alice, manuallyCorrected.id, {
+      expectedVersion: manuallyCorrected.version,
+      executionId: 'execution-b',
+      runId: 'run-b',
+      sessionId: 'session-b',
+    });
+    const canceled = await store.moveTask(alice, manuallyCorrected.id, {
+      status: 'canceled',
+      expectedVersion: secondClaim.task.version,
+    });
+    const failed = await store.completeExecution('run-b', {
+      status: 'failed',
+      error: 'runtime failed',
+      commentBody: 'Agent 执行失败\n\nruntime failed',
+    });
+    expect(failed?.task).toMatchObject({ status: 'canceled', version: canceled.version });
+    expect(failed?.execution.status).toBe('failed');
   });
 
   it('serializes concurrent writes on the same board without a task/board lock-order deadlock', async () => {

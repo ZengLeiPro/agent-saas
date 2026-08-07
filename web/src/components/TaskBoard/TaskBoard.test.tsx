@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   addTask: vi.fn(),
   updateTask: vi.fn(),
   setArchived: vi.fn(),
+  executeTask: vi.fn(),
   optimisticMove: vi.fn(),
   syncTask: vi.fn(),
   addComment: vi.fn(async () => undefined),
@@ -42,6 +43,7 @@ vi.mock("./hooks", () => ({
     addTask: mocks.addTask,
     updateTask: mocks.updateTask,
     setArchived: mocks.setArchived,
+    executeTask: mocks.executeTask,
     optimisticMove: mocks.optimisticMove,
     syncTask: mocks.syncTask,
   }),
@@ -51,6 +53,12 @@ vi.mock("./hooks", () => ({
     error: null,
     refresh: vi.fn(),
     addComment: mocks.addComment,
+  }),
+  useTaskExecutions: () => ({
+    executions: [],
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
   }),
 }));
 

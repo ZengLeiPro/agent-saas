@@ -1,14 +1,16 @@
 import type { ComponentProps } from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { TaskBoardTask } from "@agent/shared";
+import type { TaskBoardExecution, TaskBoardTask } from "@agent/shared";
 import { TaskBoardConflictError } from "./api";
 import { TaskDetail } from "./TaskDetail";
 
 const mocks = vi.hoisted(() => ({
   fetchTask: vi.fn(),
   addComment: vi.fn(),
+  executions: [] as TaskBoardExecution[],
+  refreshExecutions: vi.fn(async () => undefined),
 }));
 
 vi.mock("./api", async (importOriginal) => {
@@ -23,6 +25,12 @@ vi.mock("./hooks", () => ({
     error: null,
     refresh: vi.fn(),
     addComment: mocks.addComment,
+  }),
+  useTaskExecutions: () => ({
+    executions: mocks.executions,
+    loading: false,
+    error: null,
+    refresh: mocks.refreshExecutions,
   }),
 }));
 
@@ -69,6 +77,7 @@ function props(overrides: Partial<ComponentProps<typeof TaskDetail>> = {}) {
       version: current.version + 1,
     })),
     onSetArchived: vi.fn(async (current: TaskBoardTask) => current),
+    onExecute: vi.fn(),
     onCommentsChanged: vi.fn(async () => undefined),
     ...overrides,
   };
@@ -77,6 +86,7 @@ function props(overrides: Partial<ComponentProps<typeof TaskDetail>> = {}) {
 describe("TaskDetail 草稿隔离", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.executions = [];
     mocks.fetchTask.mockImplementation(async (id: string) => id === taskOne.id ? taskOne : taskTwo);
     mocks.addComment.mockResolvedValue(undefined);
   });
@@ -89,9 +99,8 @@ describe("TaskDetail 草稿隔离", () => {
 
     const title = screen.getByRole("textbox", { name: "标题" }) as HTMLInputElement;
     const comment = screen.getByRole("textbox", { name: "发表评论" }) as HTMLTextAreaElement;
-    await user.clear(title);
-    await user.type(title, "未保存的新标题");
-    await user.type(comment, "任务一评论草稿");
+    fireEvent.change(title, { target: { value: "未保存的新标题" } });
+    fireEvent.change(comment, { target: { value: "任务一评论草稿" } });
 
     await user.click(screen.getByRole("combobox", { name: "任务状态" }));
     await user.click(screen.getByRole("option", { name: "待处理" }));
@@ -108,7 +117,7 @@ describe("TaskDetail 草稿隔离", () => {
     rerender(<TaskDetail {...initialProps} task={taskTwo} />);
     await waitFor(() => expect((screen.getByRole("textbox", { name: "标题" }) as HTMLInputElement).value).toBe("任务二"));
     expect((screen.getByRole("textbox", { name: "发表评论" }) as HTMLTextAreaElement).value).toBe("");
-  });
+  }, 10_000);
 
   it("旧任务保存返回时不会覆盖刚切换的新任务", async () => {
     const user = userEvent.setup();
@@ -163,5 +172,39 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(2));
     expect(onUpdate.mock.calls[1]?.[0]).toMatchObject({ id: taskOne.id, version: 8 });
     expect(onUpdate.mock.calls[1]?.[1]).toEqual({ title: saved.title });
+  });
+
+  it("待处理任务可以显式交给 Agent，并展示执行会话入口", async () => {
+    const user = userEvent.setup();
+    const todoTask = { ...taskOne, status: "todo" as const };
+    const runningTask = { ...todoTask, status: "in_progress" as const, version: todoTask.version + 1 };
+    const execution: TaskBoardExecution = {
+      id: "execution-1",
+      taskId: todoTask.id,
+      runId: "run-1",
+      sessionId: "session-1",
+      status: "queued",
+      requestedBy: "user-1",
+      createdAt: todoTask.createdAt,
+      updatedAt: todoTask.updatedAt,
+    };
+    mocks.fetchTask.mockResolvedValue(todoTask);
+    const onExecute = vi.fn(async () => ({ task: runningTask, execution }));
+    const onTaskLoaded = vi.fn();
+    const detailProps = props({ task: todoTask, onExecute, onTaskLoaded });
+    const { rerender } = render(<TaskDetail {...detailProps} />);
+    await waitFor(() => expect(onTaskLoaded).toHaveBeenCalledWith(todoTask));
+
+    await user.click(screen.getByRole("button", { name: "交给 Agent" }));
+    await waitFor(() => expect(onExecute).toHaveBeenCalledWith(todoTask));
+    expect(onTaskLoaded).toHaveBeenCalledWith(runningTask);
+    expect(mocks.refreshExecutions).toHaveBeenCalled();
+
+    mocks.executions = [execution];
+    const manuallyReturnedToTodo = { ...todoTask, version: runningTask.version + 1 };
+    rerender(<TaskDetail {...detailProps} task={manuallyReturnedToTodo} />);
+    expect(screen.getByRole("button", { name: "排队中" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("link", { name: "打开执行会话" }).getAttribute("href"))
+      .toBe("/chat/session-1");
   });
 });

@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   moveTask: vi.fn(),
   archiveTask: vi.fn(),
   restoreTask: vi.fn(),
+  executeTask: vi.fn(),
+  fetchExecutions: vi.fn(),
   fetchComments: vi.fn(),
   createComment: vi.fn(),
 }));
@@ -76,6 +78,7 @@ describe("任务看板 hooks 并发一致性", () => {
     vi.clearAllMocks();
     mocks.fetchBoards.mockResolvedValue([originalBoard]);
     mocks.fetchTasks.mockResolvedValue([originalTask]);
+    mocks.fetchExecutions.mockResolvedValue([]);
     mocks.fetchComments.mockResolvedValue([]);
   });
 
@@ -135,6 +138,31 @@ describe("任务看板 hooks 并发一致性", () => {
       await refreshPromise;
     });
     expect(result.current.tasks).toEqual([edited]);
+  });
+
+  it("显式交给 Agent 后同步 in_progress 任务和执行记录", async () => {
+    const running = { ...originalTask, status: "in_progress" as const, version: 8 };
+    const execution = {
+      id: "execution-1",
+      taskId: originalTask.id,
+      runId: "run-1",
+      sessionId: "session-1",
+      status: "queued" as const,
+      requestedBy: "user-1",
+      createdAt: originalTask.createdAt,
+      updatedAt: originalTask.updatedAt,
+    };
+    mocks.executeTask.mockResolvedValueOnce({ task: running, execution });
+    const { result } = renderHook(() => useBoardTasks(originalTask.boardId));
+    await waitFor(() => expect(result.current.tasks).toEqual([originalTask]));
+
+    await act(async () => {
+      const started = await result.current.executeTask(originalTask);
+      expect(started.execution).toEqual(execution);
+    });
+
+    expect(mocks.executeTask).toHaveBeenCalledWith(originalTask.id, originalTask.version);
+    expect(result.current.tasks).toEqual([running]);
   });
 
   it("写入失败也会重拉，不能因使旧 GET 失效而留下空任务列表", async () => {

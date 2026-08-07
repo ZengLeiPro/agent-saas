@@ -137,19 +137,24 @@ export type {
 export {
   TASKBOARD_STATUSES,
   TASKBOARD_PRIORITIES,
+  TASKBOARD_EXECUTION_STATUSES,
 } from "./taskboard";
 export type {
   TaskBoardStatus,
   TaskBoardPriority,
+  TaskBoardExecutionStatus,
   TaskBoard,
   TaskBoardTask,
   TaskBoardComment,
+  TaskBoardExecution,
+  TaskBoardExecutionStartResult,
   TaskBoardCreateInput,
   TaskBoardPatchInput,
   TaskBoardTaskCreateInput,
   TaskBoardTaskPatchInput,
   TaskBoardTaskMoveInput,
   TaskBoardCommentCreateInput,
+  TaskBoardExecutionStartInput,
 } from "./taskboard";
 
 export type {

@@ -3258,7 +3258,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       }
     };
     runtimeEventSubscriptionShutdown = await pgEventStore.subscribeAppended(async (event) => {
-      await taskboardExecutionCoordinator?.handleRuntimeEvent(event);
+      await taskboardExecutionCoordinator?.handleRuntimeEvent(event).catch((err) => {
+        serverLogger.warn(
+          `Taskboard runtime event projection failed: event=${event.type} error=${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
       if (event.type === 'tool_invocation_cancel_requested' && enableSchedulerWorker) {
         void deliverToolInvocationCancel({
           event,

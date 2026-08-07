@@ -1,4 +1,8 @@
-import type { TaskBoardPriority, TaskBoardStatus } from "@agent/shared";
+import type {
+  TaskBoardExecutionStatus,
+  TaskBoardPriority,
+  TaskBoardStatus,
+} from "@agent/shared";
 
 export const STATUS_LABELS: Record<TaskBoardStatus, string> = {
   backlog: "需求池",
@@ -16,6 +20,16 @@ export const PRIORITY_LABELS: Record<TaskBoardPriority, string> = {
   medium: "中",
   low: "低",
   none: "无",
+};
+
+export const EXECUTION_STATUS_LABELS: Record<TaskBoardExecutionStatus, string> = {
+  queued: "排队中",
+  running: "执行中",
+  waiting_user: "等待用户",
+  waiting_approval: "等待授权",
+  succeeded: "已交付",
+  failed: "执行失败",
+  cancelled: "已取消",
 };
 
 export const PRIORITY_CLASSES: Record<TaskBoardPriority, string> = {

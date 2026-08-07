@@ -3,6 +3,10 @@ import type {
   TaskBoardComment,
   TaskBoardCommentCreateInput,
   TaskBoardCreateInput,
+  TaskBoardExecution,
+  TaskBoardExecutionStartInput,
+  TaskBoardExecutionStartResult,
+  TaskBoardExecutionStatus,
   TaskBoardPatchInput,
   TaskBoardPriority,
   TaskBoardStatus,
@@ -16,6 +20,7 @@ export interface TaskboardIdentity {
   tenantId: string;
   ownerUserId: string;
   username: string;
+  userRole?: "admin" | "user";
 }
 
 export interface TaskboardTaskListFilter {
@@ -27,6 +32,52 @@ export interface TaskboardTaskListFilter {
 
 export interface TaskboardExpectedVersionInput {
   expectedVersion: number;
+}
+
+export interface TaskboardExecutionClaimInput extends TaskBoardExecutionStartInput {
+  executionId: string;
+  runId: string;
+  sessionId: string;
+}
+
+export interface TaskboardExecutionContext {
+  identity: TaskboardIdentity;
+  task: TaskBoardTask;
+  comments: TaskBoardComment[];
+  execution: TaskBoardExecution;
+}
+
+export interface TaskboardExecutionCompletionInput {
+  status: "succeeded" | "failed" | "cancelled";
+  commentBody: string;
+  error?: string;
+}
+
+export interface TaskboardExecutionStore {
+  listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]>;
+  claimExecution(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input: TaskboardExecutionClaimInput,
+  ): Promise<TaskBoardExecutionStartResult>;
+  getExecutionContextByRunId(runId: string): Promise<TaskboardExecutionContext | null>;
+  setExecutionStatus(
+    runId: string,
+    status: Extract<TaskBoardExecutionStatus, "running" | "waiting_user" | "waiting_approval">,
+  ): Promise<TaskBoardExecution | null>;
+  completeExecution(
+    runId: string,
+    input: TaskboardExecutionCompletionInput,
+  ): Promise<TaskBoardExecutionStartResult | null>;
+}
+
+export interface TaskboardExecutionService {
+  listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]>;
+  startExecution(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input: TaskBoardExecutionStartInput,
+  ): Promise<TaskBoardExecutionStartResult>;
 }
 
 export interface TaskboardService {
@@ -62,6 +113,14 @@ export class TaskboardValidationError extends Error {
   constructor(message: string, code = 'TASKBOARD_VALIDATION_ERROR') {
     super(message);
     this.code = code;
+  }
+}
+
+export class TaskboardExecutionUnavailableError extends Error {
+  readonly code = 'TASKBOARD_EXECUTION_UNAVAILABLE';
+
+  constructor(message = 'Taskboard Agent execution unavailable') {
+    super(message);
   }
 }
 

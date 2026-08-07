@@ -7,8 +7,10 @@ import {
 } from '../../../shared/src/types/taskboard.js';
 import {
   TaskboardConflictError,
+  TaskboardExecutionUnavailableError,
   TaskboardNotFoundError,
   TaskboardValidationError,
+  type TaskboardExecutionService,
   type TaskboardIdentity,
   type TaskboardService,
 } from '../taskboard/types.js';
@@ -84,6 +86,7 @@ const tasksQuerySchema = z.object({
 
 export interface TaskboardRouterOptions {
   service?: TaskboardService;
+  executionService?: TaskboardExecutionService;
 }
 
 export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
@@ -176,6 +179,34 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     res.json(await options.service!.restoreTask(identityFrom(req), req.params.id, input));
   }));
 
+  router.get('/tasks/:id/executions', route(async (req, res) => {
+    if (!options.executionService) {
+      res.status(503).json({
+        error: 'Taskboard Agent execution unavailable',
+        code: 'TASKBOARD_EXECUTION_UNAVAILABLE',
+      });
+      return;
+    }
+    res.json(await options.executionService.listExecutions(identityFrom(req), req.params.id));
+  }));
+
+  router.post('/tasks/:id/execute', route(async (req, res) => {
+    if (!options.executionService) {
+      res.status(503).json({
+        error: 'Taskboard Agent execution unavailable',
+        code: 'TASKBOARD_EXECUTION_UNAVAILABLE',
+      });
+      return;
+    }
+    const input = parseOrReply(expectedVersionSchema, req.body, res, 'body');
+    if (!input) return;
+    res.status(202).json(await options.executionService.startExecution(
+      identityFrom(req),
+      req.params.id,
+      input,
+    ));
+  }));
+
   router.get('/tasks/:id/comments', route(async (req, res) => {
     res.json(await options.service!.listComments(identityFrom(req), req.params.id));
   }));
@@ -195,6 +226,7 @@ function identityFrom(req: Request): TaskboardIdentity {
     tenantId: user.tenantId,
     ownerUserId: user.sub,
     username: user.username,
+    userRole: user.role,
   };
 }
 
@@ -215,6 +247,10 @@ function sendError(res: Response, error: unknown): void {
   }
   if (error instanceof TaskboardValidationError) {
     res.status(400).json({ error: error.message, code: error.code });
+    return;
+  }
+  if (error instanceof TaskboardExecutionUnavailableError) {
+    res.status(503).json({ error: error.message, code: error.code });
     return;
   }
   res.status(503).json({ error: 'Taskboard database unavailable', code: 'TASKBOARD_UNAVAILABLE' });

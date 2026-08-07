@@ -2,12 +2,13 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import {
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
+  type TaskBoardExecutionStartResult,
   type TaskBoardPriority,
   type TaskBoardStatus,
   type TaskBoardTask,
   type TaskBoardTaskPatchInput,
 } from "@agent/shared";
-import { Archive, ArchiveRestore, Send } from "lucide-react";
+import { Archive, ArchiveRestore, Bot, ExternalLink, LoaderCircle, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,13 +31,16 @@ import * as api from "./api";
 import {
   dateFromDueAt,
   dueAtFromDate,
+  EXECUTION_STATUS_LABELS,
   PRIORITY_LABELS,
   splitLabels,
   STATUS_LABELS,
 } from "./constants";
-import { useTaskComments } from "./hooks";
+import { useTaskComments, useTaskExecutions } from "./hooks";
 
 type TaskDraftField = "title" | "description" | "priority" | "labels" | "dueAt";
+
+const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
 
 interface TaskDetailProps {
   open: boolean;
@@ -51,6 +55,7 @@ interface TaskDetailProps {
   ) => Promise<TaskBoardTask>;
   onMove: (task: TaskBoardTask, status: TaskBoardStatus) => Promise<TaskBoardTask>;
   onSetArchived: (task: TaskBoardTask, archived: boolean) => Promise<TaskBoardTask>;
+  onExecute: (task: TaskBoardTask) => Promise<TaskBoardExecutionStartResult>;
   onCommentsChanged: () => Promise<void>;
 }
 
@@ -64,6 +69,7 @@ export function TaskDetail({
   onUpdate,
   onMove,
   onSetArchived,
+  onExecute,
   onCommentsChanged,
 }: TaskDetailProps) {
   const [currentTask, setCurrentTask] = useState<TaskBoardTask | null>(task);
@@ -78,9 +84,21 @@ export function TaskDetail({
   const draftTaskIdRef = useRef<string | null>(null);
   const dirtyFieldsRef = useRef<Set<TaskDraftField>>(new Set());
   const detailRequestRef = useRef(0);
+  const refreshedExecutionRef = useRef<string | null>(null);
 
-  const { comments, loading: commentsLoading, error: commentsError, addComment } =
-    useTaskComments(open && task ? task.id : null);
+  const {
+    comments,
+    loading: commentsLoading,
+    error: commentsError,
+    addComment,
+    refresh: refreshComments,
+  } = useTaskComments(open && task ? task.id : null);
+  const {
+    executions,
+    loading: executionsLoading,
+    error: executionsError,
+    refresh: refreshExecutions,
+  } = useTaskExecutions(open && task ? task.id : null, active && open);
 
   const hydrateDraft = useCallback((next: TaskBoardTask) => {
     draftTaskIdRef.current = next.id;
@@ -106,6 +124,7 @@ export function TaskDetail({
     setCurrentTask(task);
     if (switchedTask) {
       detailRequestRef.current += 1;
+      refreshedExecutionRef.current = null;
       setSaving(false);
     }
     if (!task) {
@@ -144,6 +163,33 @@ export function TaskDetail({
       detailRequestRef.current += 1;
     };
   }, [hydrateDraft, mergeServerDraft, open, onTaskLoaded, taskId]);
+
+  const latestExecution = executions[0];
+  const executionActive = latestExecution
+    ? ACTIVE_EXECUTION_STATUSES.has(latestExecution.status)
+    : false;
+  useEffect(() => {
+    if (
+      !open
+      || !taskId
+      || !latestExecution
+      || ACTIVE_EXECUTION_STATUSES.has(latestExecution.status)
+      || refreshedExecutionRef.current === latestExecution.id
+    ) return;
+    refreshedExecutionRef.current = latestExecution.id;
+    void Promise.all([api.fetchTask(taskId), refreshComments()])
+      .then(([next]) => {
+        if (taskId !== draftTaskIdRef.current) return;
+        setCurrentTask(next);
+        onTaskLoaded(next);
+        mergeServerDraft(next);
+      })
+      .catch((caught) => {
+        if (taskId === draftTaskIdRef.current) {
+          setError(caught instanceof Error ? caught.message : "刷新 Agent 交付结果失败");
+        }
+      });
+  }, [latestExecution, mergeServerDraft, onTaskLoaded, open, refreshComments, taskId]);
 
   const useConflictCurrent = (caught: unknown) => {
     if (caught instanceof api.TaskBoardConflictError && caught.current) {
@@ -235,6 +281,32 @@ export function TaskDetail({
     }
   };
 
+  const startAgentExecution = async () => {
+    if (!currentTask || readOnly || currentTask.status !== "todo" || executionActive) return;
+    if (dirtyFieldsRef.current.size > 0) {
+      setError("请先保存未提交的任务修改，再交给 Agent");
+      return;
+    }
+    const operationTask = currentTask;
+    const requestId = ++detailRequestRef.current;
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await onExecute(operationTask);
+      if (!isCurrentOperation(requestId, operationTask.id)) return;
+      setCurrentTask(result.task);
+      mergeServerDraft(result.task);
+      onTaskLoaded(result.task);
+      await refreshExecutions();
+    } catch (caught) {
+      if (!isCurrentOperation(requestId, operationTask.id)) return;
+      useConflictCurrent(caught);
+      setError(caught instanceof Error ? caught.message : "启动 Agent 执行失败");
+    } finally {
+      if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
+    }
+  };
+
   const submitComment = async (event: FormEvent) => {
     event.preventDefault();
     const body = commentBody.trim();
@@ -273,6 +345,56 @@ export function TaskDetail({
               </SheetDescription>
             </SheetHeader>
             <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+              <section aria-label="Agent 执行" className="mb-6 space-y-3 rounded-lg border bg-muted/20 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold">Agent 执行</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Agent 自验后只会进入待复核，由你确认是否完成。
+                    </p>
+                  </div>
+                  {!readOnly && currentTask.status === "todo" ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => void startAgentExecution()}
+                      disabled={saving || executionsLoading || executionActive}
+                    >
+                      {saving || executionActive ? <LoaderCircle className="animate-spin" /> : <Bot />}
+                      {executionActive && latestExecution
+                        ? EXECUTION_STATUS_LABELS[latestExecution.status]
+                        : "交给 Agent"}
+                    </Button>
+                  ) : null}
+                </div>
+                {executionsError ? <p role="alert" className="text-sm text-destructive">{executionsError}</p> : null}
+                {executionsLoading && executions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">正在加载执行记录...</p>
+                ) : null}
+                {latestExecution ? (
+                  <div className="space-y-2 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span>{EXECUTION_STATUS_LABELS[latestExecution.status]}</span>
+                      <time className="text-xs text-muted-foreground">
+                        {new Date(latestExecution.updatedAt).toLocaleString("zh-CN")}
+                      </time>
+                    </div>
+                    {latestExecution.error ? (
+                      <p className="whitespace-pre-wrap text-xs text-destructive">{latestExecution.error}</p>
+                    ) : null}
+                    <a
+                      href={`/chat/${encodeURIComponent(latestExecution.sessionId)}`}
+                      className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                    >
+                      打开执行会话
+                      <ExternalLink className="size-3" />
+                    </a>
+                  </div>
+                ) : !executionsLoading ? (
+                  <p className="text-sm text-muted-foreground">尚未交给 Agent 执行</p>
+                ) : null}
+              </section>
+
               <form className="space-y-4" onSubmit={save}>
                 <div className="space-y-2">
                   <Label htmlFor="task-detail-title">标题</Label>

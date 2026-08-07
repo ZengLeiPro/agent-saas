@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type {
   TaskBoard,
   TaskBoardComment,
+  TaskBoardExecution,
   TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import type { JwtPayload } from '../auth/types.js';
@@ -14,6 +15,7 @@ import {
   TaskboardConflictError,
   TaskboardNotFoundError,
   TaskboardValidationError,
+  type TaskboardExecutionService,
   type TaskboardIdentity,
   type TaskboardService,
   type TaskboardTaskListFilter,
@@ -58,6 +60,17 @@ const COMMENT: TaskBoardComment = {
   authorId: USER.sub,
   authorName: USER.username,
   version: 1,
+  createdAt: BOARD.createdAt,
+  updatedAt: BOARD.updatedAt,
+};
+
+const EXECUTION: TaskBoardExecution = {
+  id: 'execution-1',
+  taskId: TASK.id,
+  runId: 'run-1',
+  sessionId: 'session-1',
+  status: 'queued',
+  requestedBy: USER.sub,
   createdAt: BOARD.createdAt,
   updatedAt: BOARD.updatedAt,
 };
@@ -113,6 +126,7 @@ describe('Taskboard routes', () => {
       tenantId: USER.tenantId,
       ownerUserId: USER.sub,
       username: USER.username,
+      userRole: USER.role,
     });
     expect(captured.createBoards).toEqual([{ name: '研发事项', description: '首期' }]);
   });
@@ -144,6 +158,50 @@ describe('Taskboard routes', () => {
       statuses: ['todo', 'in_progress'],
       priorities: ['urgent', 'high'],
     }]);
+  });
+
+  it('lists execution history and accepts an explicit Agent execution request', async () => {
+    const executionService: TaskboardExecutionService = {
+      listExecutions: async () => [EXECUTION],
+      startExecution: async (identity, taskId, input) => {
+        expect(identity).toEqual({
+          tenantId: USER.tenantId,
+          ownerUserId: USER.sub,
+          username: USER.username,
+          userRole: USER.role,
+        });
+        expect(taskId).toBe(TASK.id);
+        expect(input).toEqual({ expectedVersion: TASK.version });
+        return {
+          task: { ...TASK, status: 'in_progress', version: TASK.version + 1 },
+          execution: EXECUTION,
+        };
+      },
+    };
+    const rig = await makeRig(
+      makeService({ identities: [], taskFilters: [], createBoards: [] }),
+      USER,
+      undefined,
+      executionService,
+    );
+
+    const listed = await rig.request(`/api/taskboard/tasks/${TASK.id}/executions`);
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual([EXECUTION]);
+
+    const started = await rig.request(`/api/taskboard/tasks/${TASK.id}/execute`, postJson({
+      expectedVersion: TASK.version,
+    }));
+    expect(started.status).toBe(202);
+    expect(await started.json()).toMatchObject({
+      task: { status: 'in_progress', version: TASK.version + 1 },
+      execution: { id: EXECUTION.id, status: 'queued' },
+    });
+
+    expect((await rig.request(`/api/taskboard/tasks/${TASK.id}/execute`, postJson({
+      expectedVersion: TASK.version,
+      cronJobId: 'forbidden',
+    }))).status).toBe(400);
   });
 
   it('maps not found, domain validation, CAS with current object, and database faults', async () => {
@@ -202,6 +260,7 @@ async function makeRig(
   service: TaskboardService | undefined,
   initialCaller: JwtPayload | null,
   captured: Captured = { identities: [], taskFilters: [], createBoards: [] },
+  executionService?: TaskboardExecutionService,
 ): Promise<Rig> {
   const app = express();
   app.use(express.json());
@@ -210,7 +269,7 @@ async function makeRig(
     req.user = caller ?? undefined;
     next();
   });
-  app.use('/api/taskboard', createTaskboardRouter({ service }));
+  app.use('/api/taskboard', createTaskboardRouter({ service, executionService }));
   const server: Server = await new Promise((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });

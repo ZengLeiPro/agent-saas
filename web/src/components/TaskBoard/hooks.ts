@@ -4,6 +4,7 @@ import type {
   TaskBoardComment,
   TaskBoardCommentCreateInput,
   TaskBoardCreateInput,
+  TaskBoardExecution,
   TaskBoardPatchInput,
   TaskBoardTask,
   TaskBoardTaskCreateInput,
@@ -289,6 +290,23 @@ export function useBoardTasks(boardId: string | null) {
     }
   };
 
+  const executeTask = async (task: TaskBoardTask) => {
+    const mutationBoardId = boardId;
+    invalidateRefresh();
+    try {
+      const result = await api.executeTask(task.id, task.version);
+      if (mountedRef.current && mutationBoardId === boardIdRef.current) {
+        invalidateRefresh();
+        syncTask(result.task);
+        setError(null);
+      }
+      return result;
+    } catch (caught) {
+      if (mountedRef.current) await recoverFailure(caught, mutationBoardId);
+      throw caught;
+    }
+  };
+
   const optimisticMove = async (
     task: TaskBoardTask,
     input: Omit<TaskBoardTaskMoveInput, "expectedVersion">,
@@ -324,9 +342,73 @@ export function useBoardTasks(boardId: string | null) {
     addTask,
     updateTask,
     setArchived,
+    executeTask,
     optimisticMove,
     syncTask,
   };
+}
+
+const ACTIVE_EXECUTION_STATUSES = new Set<TaskBoardExecution["status"]>([
+  "queued",
+  "running",
+  "waiting_user",
+  "waiting_approval",
+]);
+
+export function useTaskExecutions(taskId: string | null, active = true) {
+  const [executions, setExecutions] = useState<TaskBoardExecution[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const taskIdRef = useRef(taskId);
+  const requestRef = useRef(0);
+  taskIdRef.current = taskId;
+
+  const refresh = useCallback(async () => {
+    const requestId = ++requestRef.current;
+    const requestedTaskId = taskId;
+    if (!requestedTaskId || !active) {
+      setExecutions([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const next = await api.fetchExecutions(requestedTaskId);
+      if (requestId !== requestRef.current || requestedTaskId !== taskIdRef.current) return;
+      setExecutions(next);
+      setError(null);
+    } catch (caught) {
+      if (requestId !== requestRef.current || requestedTaskId !== taskIdRef.current) return;
+      setError(errorText(caught, "加载 Agent 执行记录失败"));
+    } finally {
+      if (requestId === requestRef.current && requestedTaskId === taskIdRef.current) {
+        setLoading(false);
+      }
+    }
+  }, [active, taskId]);
+
+  useEffect(() => {
+    requestRef.current += 1;
+    setExecutions([]);
+    setError(null);
+    setLoading(false);
+    void refresh();
+    return () => {
+      requestRef.current += 1;
+    };
+  }, [refresh]);
+
+  const latestStatus = executions[0]?.status;
+  useEffect(() => {
+    if (!active || !taskId || !latestStatus || !ACTIVE_EXECUTION_STATUSES.has(latestStatus)) return;
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 3_000);
+    return () => window.clearInterval(timer);
+  }, [active, latestStatus, refresh, taskId]);
+
+  return { executions, loading, error, refresh };
 }
 
 export function useTaskComments(taskId: string | null) {

@@ -82,6 +82,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     addTask,
     updateTask,
     setArchived,
+    executeTask,
     optimisticMove,
     syncTask,
   } = useBoardTasks(selectedBoard?.id ?? null);
@@ -367,6 +368,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         onUpdate={async (task, input) => updateTask(task, input)}
         onMove={moveFromDetail}
         onSetArchived={async (task, archived) => setArchived(task, archived)}
+        onExecute={executeTask}
         onCommentsChanged={refreshTasks}
       />
     </div>

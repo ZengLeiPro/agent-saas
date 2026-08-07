@@ -2,11 +2,14 @@ import { randomUUID } from 'node:crypto';
 import pg, { type PoolClient } from 'pg';
 
 import {
+  TASKBOARD_EXECUTION_STATUSES,
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
   type TaskBoard,
   type TaskBoardComment,
   type TaskBoardCreateInput,
+  type TaskBoardExecution,
+  type TaskBoardExecutionStartResult,
   type TaskBoardPatchInput,
   type TaskBoardTask,
   type TaskBoardTaskCreateInput,
@@ -17,6 +20,10 @@ import {
   TaskboardConflictError,
   TaskboardNotFoundError,
   TaskboardValidationError,
+  type TaskboardExecutionClaimInput,
+  type TaskboardExecutionCompletionInput,
+  type TaskboardExecutionContext,
+  type TaskboardExecutionStore,
   type TaskboardExpectedVersionInput,
   type TaskboardIdentity,
   type TaskboardService,
@@ -38,11 +45,12 @@ export interface PgTaskboardStoreOptions {
   tablePrefix?: string;
 }
 
-export class PgTaskboardStore implements TaskboardService {
+export class PgTaskboardStore implements TaskboardService, TaskboardExecutionStore {
   readonly pool: PgPool;
   readonly boardsTable: string;
   readonly tasksTable: string;
   readonly commentsTable: string;
+  readonly executionsTable: string;
 
   constructor(options: PgTaskboardStoreOptions) {
     const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime');
@@ -50,6 +58,7 @@ export class PgTaskboardStore implements TaskboardService {
     this.boardsTable = `${prefix}_taskboards`;
     this.tasksTable = `${prefix}_taskboard_tasks`;
     this.commentsTable = `${prefix}_taskboard_comments`;
+    this.executionsTable = `${prefix}_taskboard_execs`;
   }
 
   async init(): Promise<void> {
@@ -95,10 +104,34 @@ export class PgTaskboardStore implements TaskboardService {
           id TEXT PRIMARY KEY,
           task_id TEXT NOT NULL REFERENCES ${this.tasksTable}(id),
           body TEXT NOT NULL,
-          author_type TEXT NOT NULL DEFAULT 'user' CHECK (author_type = 'user'),
+          author_type TEXT NOT NULL DEFAULT 'user'
+            CHECK (author_type IN ('user', 'agent', 'system')),
           author_id TEXT NOT NULL,
           author_name TEXT NOT NULL,
           version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `);
+      await client.query(`
+        ALTER TABLE ${this.commentsTable}
+          DROP CONSTRAINT IF EXISTS ${this.commentsTable}_author_type_check;
+        ALTER TABLE ${this.commentsTable}
+          ADD CONSTRAINT ${this.commentsTable}_author_type_check
+          CHECK (author_type IN ('user', 'agent', 'system'))
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${this.executionsTable} (
+          id TEXT PRIMARY KEY,
+          task_id TEXT NOT NULL REFERENCES ${this.tasksTable}(id),
+          run_id TEXT NOT NULL UNIQUE,
+          session_id TEXT NOT NULL,
+          status TEXT NOT NULL
+            CHECK (status IN (${TASKBOARD_EXECUTION_STATUSES.map(quoteSqlLiteral).join(', ')})),
+          requested_by TEXT NOT NULL,
+          error TEXT,
+          started_at TIMESTAMPTZ,
+          finished_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
@@ -122,6 +155,15 @@ export class PgTaskboardStore implements TaskboardService {
       await client.query(
         `CREATE INDEX IF NOT EXISTS ${this.commentsTable}_task_idx `
         + `ON ${this.commentsTable} (task_id, created_at ASC)`,
+      );
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS ${this.executionsTable}_task_idx `
+        + `ON ${this.executionsTable} (task_id, created_at DESC)`,
+      );
+      await client.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS ${this.executionsTable}_active_uidx `
+        + `ON ${this.executionsTable} (task_id) `
+        + `WHERE status IN ('queued', 'running', 'waiting_user', 'waiting_approval')`,
       );
     } finally {
       await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
@@ -492,6 +534,219 @@ export class PgTaskboardStore implements TaskboardService {
     });
   }
 
+  async listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
+    await this.requireTask(this.pool, identity, taskId, false);
+    const result = await this.pool.query(
+      `SELECT e.*
+         FROM ${this.executionsTable} e
+         JOIN ${this.tasksTable} t ON t.id=e.task_id
+         JOIN ${this.boardsTable} b ON b.id=t.board_id
+        WHERE e.task_id=$1 AND b.tenant_id=$2 AND b.owner_user_id=$3
+        ORDER BY e.created_at DESC, e.id DESC
+        LIMIT 50`,
+      [taskId, identity.tenantId, identity.ownerUserId],
+    );
+    return result.rows.map(rowToExecution);
+  }
+
+  async claimExecution(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input: TaskboardExecutionClaimInput,
+  ): Promise<TaskBoardExecutionStartResult> {
+    return this.withTransaction(async (client) => {
+      const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
+      assertExpectedVersion(loaded.task, input.expectedVersion);
+      assertWritableTask(loaded.task, loaded.boardArchivedAt);
+      if (loaded.task.status !== 'todo') {
+        throw new TaskboardValidationError(
+          'Only todo tasks can be handed to Agent',
+          'TASKBOARD_EXECUTION_REQUIRES_TODO',
+        );
+      }
+      const active = await client.query(
+        `SELECT id FROM ${this.executionsTable}
+          WHERE task_id=$1 AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
+          LIMIT 1`,
+        [taskId],
+      );
+      if (active.rows[0]) {
+        throw new TaskboardValidationError(
+          'Task already has an active Agent execution',
+          'TASKBOARD_EXECUTION_ACTIVE',
+        );
+      }
+
+      const peers = await client.query(
+        `SELECT t.sort_order
+           FROM ${this.tasksTable} t
+           JOIN ${this.boardsTable} b ON b.id=t.board_id
+          WHERE t.board_id=$1 AND t.id<>$2 AND t.status='in_progress' AND t.archived_at IS NULL
+            AND b.tenant_id=$3 AND b.owner_user_id=$4
+          ORDER BY t.sort_order DESC, t.created_at DESC, t.id DESC
+          FOR UPDATE OF t`,
+        [loaded.task.boardId, taskId, identity.tenantId, identity.ownerUserId],
+      );
+      const lastSortOrder = peers.rows[0] ? Number(peers.rows[0].sort_order) : 0;
+      const sortOrder = Number.isFinite(lastSortOrder) ? lastSortOrder + DEFAULT_SORT_GAP : DEFAULT_SORT_GAP;
+
+      let execution: TaskBoardExecution;
+      try {
+        const inserted = await client.query(
+          `INSERT INTO ${this.executionsTable}
+             (id, task_id, run_id, session_id, status, requested_by)
+           VALUES ($1,$2,$3,$4,'queued',$5)
+           RETURNING *`,
+          [input.executionId, taskId, input.runId, input.sessionId, identity.ownerUserId],
+        );
+        execution = rowToExecution(inserted.rows[0]);
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          throw new TaskboardValidationError(
+            'Task already has an active Agent execution',
+            'TASKBOARD_EXECUTION_ACTIVE',
+          );
+        }
+        throw error;
+      }
+
+      await client.query(
+        `UPDATE ${this.tasksTable}
+            SET status='in_progress', sort_order=$2, version=version+1, updated_at=now()
+          WHERE id=$1`,
+        [taskId, sortOrder],
+      );
+      return {
+        task: await this.requireTask(client, identity, taskId, false),
+        execution,
+      };
+    });
+  }
+
+  async getExecutionContextByRunId(runId: string): Promise<TaskboardExecutionContext | null> {
+    const result = await this.pool.query(
+      `SELECT e.*, b.tenant_id, b.owner_user_id
+         FROM ${this.executionsTable} e
+         JOIN ${this.tasksTable} t ON t.id=e.task_id
+         JOIN ${this.boardsTable} b ON b.id=t.board_id
+        WHERE e.run_id=$1`,
+      [runId],
+    );
+    if (!result.rows[0]) return null;
+    const row = result.rows[0];
+    const identity: TaskboardIdentity = {
+      tenantId: String(row.tenant_id),
+      ownerUserId: String(row.owner_user_id),
+      username: '',
+    };
+    const execution = rowToExecution(row);
+    return {
+      identity,
+      task: await this.requireTask(this.pool, identity, execution.taskId, false),
+      comments: await this.listComments(identity, execution.taskId),
+      execution,
+    };
+  }
+
+  async setExecutionStatus(
+    runId: string,
+    status: 'running' | 'waiting_user' | 'waiting_approval',
+  ): Promise<TaskBoardExecution | null> {
+    const result = await this.pool.query(
+      `UPDATE ${this.executionsTable}
+          SET status=$2,
+              started_at=COALESCE(started_at, now()),
+              updated_at=now()
+        WHERE run_id=$1
+          AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
+        RETURNING *`,
+      [runId, status],
+    );
+    return result.rows[0] ? rowToExecution(result.rows[0]) : null;
+  }
+
+  async completeExecution(
+    runId: string,
+    input: TaskboardExecutionCompletionInput,
+  ): Promise<TaskBoardExecutionStartResult | null> {
+    const ownership = await this.pool.query(
+      `SELECT e.task_id, b.tenant_id, b.owner_user_id
+         FROM ${this.executionsTable} e
+         JOIN ${this.tasksTable} t ON t.id=e.task_id
+         JOIN ${this.boardsTable} b ON b.id=t.board_id
+        WHERE e.run_id=$1`,
+      [runId],
+    );
+    if (!ownership.rows[0]) return null;
+    const identity: TaskboardIdentity = {
+      tenantId: String(ownership.rows[0].tenant_id),
+      ownerUserId: String(ownership.rows[0].owner_user_id),
+      username: '',
+    };
+    const taskId = String(ownership.rows[0].task_id);
+
+    return this.withTransaction(async (client) => {
+      const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
+      const executionResult = await client.query(
+        `SELECT * FROM ${this.executionsTable} WHERE run_id=$1 FOR UPDATE`,
+        [runId],
+      );
+      if (!executionResult.rows[0]) return null;
+      const currentExecution = rowToExecution(executionResult.rows[0]);
+      if (isTerminalExecutionStatus(currentExecution.status)) {
+        return { task: loaded.task, execution: currentExecution };
+      }
+
+      const targetTaskStatus = input.status === 'succeeded' ? 'in_review' : 'blocked';
+      if (loaded.task.status === 'in_progress') {
+        const peers = await client.query(
+          `SELECT t.sort_order
+             FROM ${this.tasksTable} t
+             JOIN ${this.boardsTable} b ON b.id=t.board_id
+            WHERE t.board_id=$1 AND t.id<>$2 AND t.status=$3 AND t.archived_at IS NULL
+              AND b.tenant_id=$4 AND b.owner_user_id=$5
+            ORDER BY t.sort_order DESC, t.created_at DESC, t.id DESC
+            FOR UPDATE OF t`,
+          [loaded.task.boardId, taskId, targetTaskStatus, identity.tenantId, identity.ownerUserId],
+        );
+        const lastSortOrder = peers.rows[0] ? Number(peers.rows[0].sort_order) : 0;
+        const sortOrder = Number.isFinite(lastSortOrder) ? lastSortOrder + DEFAULT_SORT_GAP : DEFAULT_SORT_GAP;
+        await client.query(
+          `UPDATE ${this.tasksTable}
+              SET status=$2, sort_order=$3, version=version+1, updated_at=now()
+            WHERE id=$1`,
+          [taskId, targetTaskStatus, sortOrder],
+        );
+      }
+
+      const updated = await client.query(
+        `UPDATE ${this.executionsTable}
+            SET status=$2, error=$3, finished_at=now(), updated_at=now()
+          WHERE run_id=$1
+          RETURNING *`,
+        [runId, input.status, optionalText(input.error)],
+      );
+      const authorType = input.status === 'succeeded' ? 'agent' : 'system';
+      await client.query(
+        `INSERT INTO ${this.commentsTable}
+           (id, task_id, body, author_type, author_id, author_name, version)
+         VALUES ($1,$2,$3,$4,$5,$6,1)`,
+        [
+          randomUUID(),
+          taskId,
+          requireText(input.commentBody, 'Execution comment body'),
+          authorType,
+          currentExecution.id,
+          input.status === 'succeeded' ? 'Agent' : '系统',
+        ],
+      );
+      return {
+        task: await this.requireTask(client, identity, taskId, false),
+        execution: rowToExecution(updated.rows[0]),
+      };
+    });
+  }
+
   private async setTaskArchived(
     identity: TaskboardIdentity,
     taskId: string,
@@ -688,13 +943,33 @@ function rowToComment(row: Record<string, unknown>): TaskBoardComment {
     id: String(row.id),
     taskId: String(row.task_id),
     body: String(row.body),
-    authorType: 'user',
+    authorType: String(row.author_type) as TaskBoardComment['authorType'],
     authorId: String(row.author_id),
     authorName: String(row.author_name),
     version: Number(row.version),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
   };
+}
+
+function rowToExecution(row: Record<string, unknown>): TaskBoardExecution {
+  return {
+    id: String(row.id),
+    taskId: String(row.task_id),
+    runId: String(row.run_id),
+    sessionId: String(row.session_id),
+    status: String(row.status) as TaskBoardExecution['status'],
+    requestedBy: String(row.requested_by),
+    ...(row.error !== null && row.error !== undefined ? { error: String(row.error) } : {}),
+    ...(row.started_at ? { startedAt: toIso(row.started_at) } : {}),
+    ...(row.finished_at ? { finishedAt: toIso(row.finished_at) } : {}),
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+  };
+}
+
+function isTerminalExecutionStatus(status: TaskBoardExecution['status']): boolean {
+  return status === 'succeeded' || status === 'failed' || status === 'cancelled';
 }
 
 function assertActiveBoard(board: TaskBoard): void {

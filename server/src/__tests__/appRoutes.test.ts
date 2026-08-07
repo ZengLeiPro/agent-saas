@@ -290,7 +290,10 @@ describe('registerRoutes', () => {
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
     expect(app.use).toHaveBeenCalledTimes(40);
-    expect(mocked.createTaskboardRouter).toHaveBeenCalledWith({ service: undefined });
+    expect(mocked.createTaskboardRouter).toHaveBeenCalledWith({
+      service: undefined,
+      executionService: undefined,
+    });
     expect(app.use).toHaveBeenCalledWith(
       '/api/taskboard',
       expect.any(Function),

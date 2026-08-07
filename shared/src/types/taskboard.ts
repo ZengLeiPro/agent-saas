@@ -16,8 +16,19 @@ export const TASKBOARD_PRIORITIES = [
   "none",
 ] as const;
 
+export const TASKBOARD_EXECUTION_STATUSES = [
+  "queued",
+  "running",
+  "waiting_user",
+  "waiting_approval",
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const;
+
 export type TaskBoardStatus = (typeof TASKBOARD_STATUSES)[number];
 export type TaskBoardPriority = (typeof TASKBOARD_PRIORITIES)[number];
+export type TaskBoardExecutionStatus = (typeof TASKBOARD_EXECUTION_STATUSES)[number];
 
 export interface TaskBoard {
   id: string;
@@ -51,12 +62,31 @@ export interface TaskBoardComment {
   id: string;
   taskId: string;
   body: string;
-  authorType: "user";
+  authorType: "user" | "agent" | "system";
   authorId: string;
   authorName: string;
   version: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TaskBoardExecution {
+  id: string;
+  taskId: string;
+  runId: string;
+  sessionId: string;
+  status: TaskBoardExecutionStatus;
+  requestedBy: string;
+  error?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskBoardExecutionStartResult {
+  task: TaskBoardTask;
+  execution: TaskBoardExecution;
 }
 
 export interface TaskBoardCreateInput {
@@ -97,4 +127,8 @@ export interface TaskBoardTaskMoveInput {
 
 export interface TaskBoardCommentCreateInput {
   body: string;
+}
+
+export interface TaskBoardExecutionStartInput {
+  expectedVersion: number;
 }

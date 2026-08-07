@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskBoardTask } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
-import { patchTask, TaskBoardConflictError } from "./api";
+import { executeTask, patchTask, TaskBoardConflictError } from "./api";
 
 vi.mock("@/lib/authFetch", () => ({ authFetch: vi.fn() }));
 
@@ -23,6 +23,32 @@ const task: TaskBoardTask = {
 
 describe("任务看板 API 错误对象", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it("执行接口保留 task 与 execution 组合结果", async () => {
+    const result = {
+      task: { ...task, status: "in_progress", version: 6 },
+      execution: {
+        id: "execution-1",
+        taskId: task.id,
+        runId: "run-1",
+        sessionId: "session-1",
+        status: "queued",
+        requestedBy: "user-1",
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+      },
+    };
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify(result), {
+      status: 202,
+      headers: { "content-type": "application/json" },
+    }));
+
+    await expect(executeTask(task.id, task.version)).resolves.toEqual(result);
+    expect(authFetch).toHaveBeenCalledWith(
+      `/api/taskboard/tasks/${task.id}/execute`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ expectedVersion: task.version }) }),
+    );
+  });
 
   it("409 保留服务端 current，供 hooks 立即同步最新版本", async () => {
     vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify({

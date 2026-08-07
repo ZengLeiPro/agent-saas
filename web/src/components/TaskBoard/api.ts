@@ -4,6 +4,8 @@ import type {
   TaskBoardComment,
   TaskBoardCommentCreateInput,
   TaskBoardCreateInput,
+  TaskBoardExecution,
+  TaskBoardExecutionStartResult,
   TaskBoardPatchInput,
   TaskBoardTask,
   TaskBoardTaskCreateInput,
@@ -148,6 +150,22 @@ export async function restoreTask(id: string, expectedVersion: number): Promise<
     jsonRequest("POST", { expectedVersion }),
   );
   return parseEntity<TaskBoardTask>(response, "看板任务", "task");
+}
+
+export async function fetchExecutions(taskId: string): Promise<TaskBoardExecution[]> {
+  const response = await authFetch(`${API_BASE}/tasks/${encodeURIComponent(taskId)}/executions`);
+  return parseEntity<TaskBoardExecution[]>(response, "Agent 执行记录", "executions");
+}
+
+export async function executeTask(
+  taskId: string,
+  expectedVersion: number,
+): Promise<TaskBoardExecutionStartResult> {
+  const response = await authFetch(
+    `${API_BASE}/tasks/${encodeURIComponent(taskId)}/execute`,
+    jsonRequest("POST", { expectedVersion }),
+  );
+  return parseEntity<TaskBoardExecutionStartResult>(response, "Agent 执行", "result");
 }
 
 export async function fetchComments(taskId: string): Promise<TaskBoardComment[]> {

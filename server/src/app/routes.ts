@@ -473,7 +473,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   app.use(
     "/api/taskboard",
     tenantFeatureGuard(runtime.tenantStore, "cronEnabled", "定时任务"),
-    createTaskboardRouter({ service: runtime.taskboardService }),
+    createTaskboardRouter({
+      service: runtime.taskboardService,
+      executionService: runtime.taskboardExecutionService,
+    }),
   );
 
   // Token 用量统计（admin-only），数据由 b4187f00 引入的 business.sqlite 提供

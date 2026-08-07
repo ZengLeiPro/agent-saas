@@ -32,6 +32,7 @@ import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { TenantStore } from '../data/tenants/store.js';
 import { MAX_COMPANY_INFO_CHARS } from '../data/tenants/companyInfo.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
+import { resolveTenantMemoryFeatureStatus } from '../memory/effectiveStatus.js';
 import { createTenantsRouter } from '../routes/tenants.js';
 
 const PLATFORM_ADMIN: JwtPayload = { sub: 'u-platform', username: 'platform_admin', role: 'admin', tenantId: DEFAULT_TENANT_ID };
@@ -84,6 +85,13 @@ async function makeTestRig(): Promise<TestRig> {
     sharedDir,
     orgAgentStore,
     onTenantDisabled: id => { disabledCalls.push(id); },
+    resolveMemoryFeatureStatus: (tenantId) => resolveTenantMemoryFeatureStatus({
+      features: tenantStore.getSettings(tenantId)?.features,
+      platformPollingEnabled: true,
+      pollingRuntimeAvailable: true,
+      platformConsolidationEnabled: false,
+      consolidationRuntimeAvailable: true,
+    }),
   }));
 
   const server: Server = await new Promise(resolve => {
@@ -300,9 +308,22 @@ describe('tenants 路由治理（settings 越权守卫 + CRUD 权限矩阵）', 
         features: { ...BASE_FEATURES, memoryConsolidationEnabled: true, memoryWriteDelegationEnabled: true },
       });
       expect(res.status).toBe(200);
+      const patchBody = await res.json() as {
+        memoryFeatureStatus: Record<string, { configured: boolean; effective: boolean; blockedBy?: string }>;
+      };
       const after = h.tenantStore.getSettings('wain')!;
       expect(after.features.memoryConsolidationEnabled).toBe(true);
       expect(after.features.memoryWriteDelegationEnabled).toBe(true);
+      expect(patchBody.memoryFeatureStatus.memoryConsolidationEnabled).toEqual({
+        configured: true,
+        effective: false,
+        blockedBy: 'platform_disabled',
+      });
+
+      const get = await h.request('/api/tenants/wain/settings');
+      expect(get.status).toBe(200);
+      const getBody = await get.json() as typeof patchBody;
+      expect(getBody.memoryFeatureStatus).toEqual(patchBody.memoryFeatureStatus);
     });
 
     it('delegation 依赖 consolidation：只开 delegation → 400 且不落库', async () => {

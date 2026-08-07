@@ -234,7 +234,7 @@ async function executeMemoryPollJob(
     context: { persona: false, memory: false },
   };
 
-  // 用户级维护互斥：与会后记忆维护（memoryHook）共用锁，拿不到就下一轮再来
+  // 用户级维护互斥：与 L2 会话整合共用 fast-path 锁，拿不到就下一轮再来
   if (!tryAcquireMemoryMaintenance(owner.tenantId, owner.id)) {
     return { status: "skipped", output: "该用户已有记忆维护任务在进行，跳过本次轮询" };
   }

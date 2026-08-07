@@ -395,7 +395,7 @@ export class MemoryConsolidationEngine {
         return;
       }
 
-      // 同用户互斥：与 memory_poll/memoryHook 共用进程内锁（fast-path）；
+      // 同用户互斥：与 L3 memory_poll 共用进程内锁（fast-path）；
       // 文件级正确性由 MemoryCommit 内的 PG commit lock 保证。
       if (!tryAcquireMemoryMaintenance(state.tenantId, state.userId)) {
         await this.options.store.markFailed({

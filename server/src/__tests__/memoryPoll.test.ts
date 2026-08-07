@@ -9,7 +9,6 @@
  *  - cron executor memory_poll 分支：无活动跳过 / 预检 fail-closed / 锁互斥 /
  *    受限 options 注入 + 版本化提示语
  *  - CronService：系统任务 update/remove guard + applySystemJobs
- *  - memoryHook：身份必需 / per-user 冷却隔离 / 失败如实 + 短重试冷却 / 受限 options
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -32,7 +31,6 @@ import {
 } from '../data/sessions/access.js';
 import { executeJob } from '../cron/executor.js';
 import { CronService } from '../cron/service.js';
-import { createMemoryMaintenanceHook } from '../engine/memoryHook.js';
 import {
   resetMemoryMaintenanceLocks,
   tryAcquireMemoryMaintenance,
@@ -971,98 +969,5 @@ describe('CronService system job guard', () => {
       toUpdate: [],
     });
     expect(await service.get('normal-1')).toBeUndefined();
-  });
-});
-
-// ============================================
-// memoryHook
-// ============================================
-
-describe('memory maintenance hook（完整修复）', () => {
-  beforeEach(() => resetMemoryMaintenanceLocks());
-
-  const baseResult = { finalText: 'x'.repeat(600), hasError: false, hasTools: true };
-  const message = { channel: 'web', chatId: 'chat-1', content: '今天做了个决定' };
-  const contextFor = (userId: string) => ({
-    channel: 'web',
-    user: { id: userId, username: userId, role: 'user', tenantId: 'kaiyan' },
-  });
-
-  function makeHook(dispatchImpl?: () => AsyncGenerator<unknown>) {
-    const calls: Array<{ context: unknown; options: unknown }> = [];
-    const dispatch = vi.fn((_message: unknown, context: unknown, options: unknown) => {
-      calls.push({ context, options });
-      return (dispatchImpl ?? (async function* () { yield { type: 'done' }; }))();
-    });
-    const hook = createMemoryMaintenanceHook({
-      agentCwd: '/tmp/agent',
-      config: { enabled: true, minTextLength: 500, cooldownMinutes: 60 },
-      maintenanceDispatch: dispatch as never,
-    });
-    return { hook, dispatch, calls };
-  }
-
-  it('无身份不触发（旧实现会空跑然后被 raw runtime 拒绝）', async () => {
-    const { hook, dispatch } = makeHook();
-    await hook.afterRun(baseResult, message as never, { channel: 'web' } as never);
-    expect(dispatch).not.toHaveBeenCalled();
-  });
-
-  it('透传身份 + 受限 options', async () => {
-    const { hook, calls } = makeHook();
-    await hook.afterRun(baseResult, message as never, contextFor('u1') as never);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.context).toMatchObject({
-      channel: 'web',
-      user: { id: 'u1', tenantId: 'kaiyan' },
-    });
-    expect(calls[0]!.options).toMatchObject({
-      toolProfile: 'memory_poll',
-      approvalPolicy: { autoApproveTools: true },
-      executionTarget: 'server-remote',
-      persistSession: false,
-    });
-  });
-
-  it('冷却按用户隔离：u1 成功后 u2 仍可触发，u1 冷却期内不重复', async () => {
-    const { hook, dispatch } = makeHook();
-    await hook.afterRun(baseResult, message as never, contextFor('u1') as never);
-    await hook.afterRun(baseResult, message as never, contextFor('u1') as never);
-    expect(dispatch).toHaveBeenCalledTimes(1); // u1 第二次被冷却挡住
-    await hook.afterRun(baseResult, message as never, contextFor('u2') as never);
-    expect(dispatch).toHaveBeenCalledTimes(2); // u2 不受 u1 冷却影响
-  });
-
-  it('error 事件 → 失败如实 + 短重试冷却（不烧成功冷却窗口）', async () => {
-    const { hook, dispatch } = makeHook(async function* () {
-      yield { type: 'error', error: 'raw runtime 拒绝匿名访问' };
-    });
-    await hook.afterRun(baseResult, message as never, contextFor('u1') as never);
-    expect(dispatch).toHaveBeenCalledTimes(1);
-    // 失败后立即重试被 5 分钟重试冷却挡住
-    await hook.afterRun(baseResult, message as never, contextFor('u1') as never);
-    expect(dispatch).toHaveBeenCalledTimes(1);
-  });
-
-  it('维护锁被占（如记忆轮询进行中）→ 跳过', async () => {
-    expect(tryAcquireMemoryMaintenance('kaiyan', 'u1')).toBe(true);
-    const { hook, dispatch } = makeHook();
-    await hook.afterRun(baseResult, message as never, contextFor('u1') as never);
-    expect(dispatch).not.toHaveBeenCalled();
-  });
-
-  it('提示语只写当日文件、声明不改 MEMORY.md', async () => {
-    const captured: string[] = [];
-    const dispatch = vi.fn((msg: { content: string }) => {
-      captured.push(msg.content);
-      return (async function* () { yield { type: 'done' }; })();
-    });
-    const hook = createMemoryMaintenanceHook({
-      agentCwd: '/tmp/agent',
-      config: { enabled: true, minTextLength: 500, cooldownMinutes: 60 },
-      maintenanceDispatch: dispatch as never,
-    });
-    await hook.afterRun(baseResult, message as never, contextFor('u1') as never);
-    expect(captured[0]).toContain('不要改 MEMORY.md');
   });
 });

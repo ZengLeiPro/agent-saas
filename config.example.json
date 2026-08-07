@@ -269,11 +269,6 @@
       "enabled": true,
       "maxLines": 200
     },
-    "maintenance": {
-      "enabled": true,
-      "minTextLength": 500,
-      "cooldownMinutes": 30
-    },
     // 每日记忆轮询（2026-07-14 批次）：平台总开关 + 执行参数。
     // 开启后为「租户 features.memoryPollingEnabled=true」的每个有效用户
     // 自动预置一条 memory_poll 系统任务（每天 hour 点、分钟按 userId 散列）。

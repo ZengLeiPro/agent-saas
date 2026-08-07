@@ -160,6 +160,30 @@ describe('OpenAI-only model resolver', () => {
       .toEqual([]);
   });
 
+  it('maps tool_call_repair per group/model without enabling a global default', () => {
+    const withRepair: ModelsConfig = {
+      default: 'proxy/detect',
+      allowCrossGroupSwitch: false,
+      groups: [{
+        id: 'proxy',
+        name: 'Proxy',
+        tool_call_repair: 'detect',
+        models: [
+          { id: 'detect', name: 'Detect', value: 'model-detect' },
+          { id: 'repair', name: 'Repair', value: 'model-repair', tool_call_repair: 'repair' },
+        ],
+      }, {
+        id: 'safe-default',
+        name: 'Safe Default',
+        models: [{ id: 'off', name: 'Off', value: 'model-off' }],
+      }],
+    };
+
+    expect(resolveModelRef(withRepair, 'proxy/detect')?.providerOptions?.toolCallRepair).toBe('detect');
+    expect(resolveModelRef(withRepair, 'proxy/repair')?.providerOptions?.toolCallRepair).toBe('repair');
+    expect(resolveModelRef(withRepair, 'safe-default/off')?.providerOptions?.toolCallRepair).toBeUndefined();
+  });
+
   it('显式映射 MCP loading/capability，model 可覆盖 group 且不按名称推断', () => {
     const withMcpCapabilities: ModelsConfig = {
       default: 'openai/gpt',

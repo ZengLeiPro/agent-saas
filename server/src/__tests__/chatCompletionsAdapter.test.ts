@@ -326,3 +326,142 @@ describe('ChatCompletionsModelAdapter agent-plan defense (二轮加固)', () => 
     expect(body2.messages).toEqual(body1.messages);
   });
 });
+
+describe('ChatCompletionsModelAdapter tool-call-repair', () => {
+  const context = {
+    runId: 'repair-run',
+    sessionId: 'repair-session',
+    modelRef: 'proxy/test-model',
+    model: 'test-model',
+    cwd: '/tmp',
+    channelContext: { channel: 'web' as const },
+  };
+  const tool = {
+    id: 'Read',
+    name: 'Read',
+    description: 'read a file',
+    parameters: { type: 'object', properties: { path: { type: 'string' } } },
+  };
+
+  afterEach(() => vi.restoreAllMocks());
+
+  function run(mode: 'off' | 'detect' | 'repair', chunks: string[]) {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream(chunks));
+    const adapter = new ChatCompletionsModelAdapter(
+      { apiKey: 'k', baseUrl: 'https://example.invalid/v1' },
+      { toolCallRepair: mode },
+    );
+    return collect(adapter.stream({
+      model: 'test-model',
+      messages: [{ role: 'user', content: 'read' }],
+      tools: [tool],
+    }, context));
+  }
+
+  it.each(['off', 'detect'] as const)('%s preserves protocol text and never executes it', async (mode) => {
+    const raw = '[tool:Read] {"path":"a.txt"}';
+    const events = await run(mode, [
+      sse({ choices: [{ delta: { content: raw }, finish_reason: 'stop' }] }),
+      sse({ choices: [], usage: { prompt_tokens: 7, completion_tokens: 5 } }),
+      sse('[DONE]'),
+    ]);
+    expect(events).toEqual([
+      { type: 'text_delta', content: raw },
+      expect.objectContaining({
+        type: 'completed',
+        content: raw,
+        toolCalls: [],
+        finishReason: 'stop',
+        usage: expect.objectContaining({ inputTokens: 7, outputTokens: 5 }),
+      }),
+    ]);
+  });
+
+  it('repair buffers split markers, does not leak protocol text, and preserves terminal fields', async () => {
+    const events = await run('repair', [
+      sse({ choices: [{ delta: { content: '[' } }] }),
+      sse({ choices: [{ delta: { content: 'tool:Re' } }] }),
+      sse({ choices: [{ delta: { content: 'ad] {"path":"a.txt"}' }, finish_reason: 'tool_calls' }] }),
+      sse({ choices: [], usage: { prompt_tokens: 9, completion_tokens: 6 } }),
+      sse('[DONE]'),
+    ]);
+    expect(events.filter((event) => event.type === 'text_delta')).toEqual([]);
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      content: '',
+      finishReason: 'tool_calls',
+      usage: { inputTokens: 9, outputTokens: 6 },
+      toolCalls: [expect.objectContaining({ name: 'Read', arguments: '{"path":"a.txt"}' })],
+    });
+  });
+
+  it('repair preserves ordinary text delta order byte-for-byte', async () => {
+    const events = await run('repair', [
+      sse({ choices: [{ delta: { content: 'A' } }] }),
+      sse({ choices: [{ delta: { content: 'B' }, finish_reason: 'stop' }] }),
+      sse('[DONE]'),
+    ]);
+    expect(events).toEqual([
+      { type: 'text_delta', content: 'A' },
+      { type: 'text_delta', content: 'B' },
+      expect.objectContaining({ type: 'completed', content: 'AB', toolCalls: [] }),
+    ]);
+  });
+
+  it('native structured tool call remains authoritative over an equivalent text candidate', async () => {
+    const events = await run('repair', [
+      sse({ choices: [{ delta: { content: '[tool:Read] {"path":"text.txt"}' } }] }),
+      sse({ choices: [{ delta: { tool_calls: [{
+        index: 0,
+        id: 'native_call',
+        function: { name: 'Read', arguments: '{"path":"native.txt"}' },
+      }] }, finish_reason: 'tool_calls' }] }),
+      sse('[DONE]'),
+    ]);
+    expect(events.filter((event) => event.type === 'text_delta')).toEqual([]);
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      content: '',
+      toolCalls: [{ id: 'native_call', name: 'Read', arguments: '{"path":"native.txt"}' }],
+    });
+  });
+
+  it('repair keeps unsupported DSML on the existing reject path', async () => {
+    await expect(run('repair', [
+      sse({ choices: [{ delta: { content: '<｜DSML｜tool_calls>x' }, finish_reason: 'stop' }] }),
+      sse('[DONE]'),
+    ])).rejects.toThrow(/模型输出格式异常.*DSML/);
+  });
+
+  it('flushes a buffered partial marker before propagating a stream error', async () => {
+    const encoder = new TextEncoder();
+    let sent = false;
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(new ReadableStream({
+      pull(controller) {
+        if (!sent) {
+          sent = true;
+          controller.enqueue(encoder.encode(sse({ choices: [{ delta: { content: '[tool:Re' } }] })));
+          return;
+        }
+        controller.error(new Error('stream exploded'));
+      },
+    })));
+    const adapter = new ChatCompletionsModelAdapter(
+      { apiKey: 'k', baseUrl: 'https://example.invalid/v1' },
+      { toolCallRepair: 'repair' },
+    );
+    const seen: ModelEvent[] = [];
+    let error: unknown;
+    try {
+      for await (const event of adapter.stream({
+        model: 'test-model',
+        messages: [{ role: 'user', content: 'read' }],
+        tools: [tool],
+      }, context)) seen.push(event);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({ message: 'stream exploded' });
+    expect(seen).toEqual([{ type: 'text_delta', content: '[tool:Re' }]);
+  });
+});

@@ -41,6 +41,7 @@ import {
   unescapeDeepseekArguments,
 } from './agentPlanDefense.js';
 import { modelSupportsImage, readImagePartOrPlaceholder, toTextOnlyContent } from './imageAttachments.js';
+import { ToolCallRepairStreamGate, toolCallRepairProviderLabel } from './toolCallRepair.js';
 import { OpenAICompatibleResponsesTransport } from './responses/openAICompatibleResponsesTransport.js';
 import type {
   ProviderContinuationBinding,
@@ -525,6 +526,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
       type: 'text_delta' | 'thinking_delta';
       content: string;
     }> = [];
+    const toolCallRepair = new ToolCallRepairStreamGate(this.providerOptions.toolCallRepair ?? 'off');
     let hasDeliveredOutput = false;
 
     // function_call 在 stream 里按 output_index 累积；item 整体在 output_item.done 出现
@@ -600,11 +602,13 @@ export class ResponsesApiAdapter implements ModelAdapter {
                 const partKey = responseTextPartKey(event);
                 outputTextByPart.set(partKey, (outputTextByPart.get(partKey) ?? '') + delta);
                 content += delta;
-                if (commitOutputOnTerminal) {
-                  bufferedOutputEvents.push({ type: 'text_delta', content: delta });
-                } else {
-                  hasDeliveredOutput = true;
-                  yield { type: 'text_delta', content: delta };
+                for (const visibleDelta of toolCallRepair.push(delta)) {
+                  if (commitOutputOnTerminal) {
+                    bufferedOutputEvents.push({ type: 'text_delta', content: visibleDelta });
+                  } else {
+                    hasDeliveredOutput = true;
+                    yield { type: 'text_delta', content: visibleDelta };
+                  }
                 }
               }
             } else if (eventType === 'response.reasoning_summary_text.delta') {
@@ -627,11 +631,13 @@ export class ResponsesApiAdapter implements ModelAdapter {
               outputTextByPart.set(partKey, partContent + suffix);
               if (suffix) {
                 content += suffix;
-                if (commitOutputOnTerminal) {
-                  bufferedOutputEvents.push({ type: 'text_delta', content: suffix });
-                } else {
-                  hasDeliveredOutput = true;
-                  yield { type: 'text_delta', content: suffix };
+                for (const visibleDelta of toolCallRepair.push(suffix)) {
+                  if (commitOutputOnTerminal) {
+                    bufferedOutputEvents.push({ type: 'text_delta', content: visibleDelta });
+                  } else {
+                    hasDeliveredOutput = true;
+                    yield { type: 'text_delta', content: visibleDelta };
+                  }
                 }
               }
             } else if (eventType === 'response.refusal.delta') {
@@ -834,11 +840,13 @@ export class ResponsesApiAdapter implements ModelAdapter {
       await reader.cancel().catch(() => undefined);
       if (canonicalTextSuffix) {
         content += canonicalTextSuffix;
-        if (commitOutputOnTerminal) {
-          bufferedOutputEvents.push({ type: 'text_delta', content: canonicalTextSuffix });
-        } else {
-          hasDeliveredOutput = true;
-          yield { type: 'text_delta', content: canonicalTextSuffix };
+        for (const visibleDelta of toolCallRepair.push(canonicalTextSuffix)) {
+          if (commitOutputOnTerminal) {
+            bufferedOutputEvents.push({ type: 'text_delta', content: visibleDelta });
+          } else {
+            hasDeliveredOutput = true;
+            yield { type: 'text_delta', content: visibleDelta };
+          }
         }
       }
       streamReadSettled = true;
@@ -868,7 +876,19 @@ export class ResponsesApiAdapter implements ModelAdapter {
         ...(willRetry ? { willRetry: true } : {}),
       });
       streamReadSettled = true;
-      if (!willRetry) throw err;
+      if (!willRetry) {
+        // Preserve an incomplete candidate on an unretried Web/API error. Retryable attempts stay
+        // transactional and are replaced by the recursive attempt instead of leaking stale text.
+        for (const visibleDelta of toolCallRepair.abort()) {
+          if (commitOutputOnTerminal) {
+            bufferedOutputEvents.push({ type: 'text_delta', content: visibleDelta });
+          } else {
+            hasDeliveredOutput = true;
+            yield { type: 'text_delta', content: visibleDelta };
+          }
+        }
+        throw err;
+      }
       pendingStreamReadRetry = {
         delayMs: retryDelayMs,
         errorCode: classified.code,
@@ -1063,14 +1083,9 @@ export class ResponsesApiAdapter implements ModelAdapter {
     // 生产路径已固定每轮重发 tools 应零触发，但若火山 server 端 tool-parsing 退化
     // 仍可能再次出现。沉默透传 = 前端看到内部 token + agent 丢工具能力 = 双重故障。
     //
-    // 二轮加固：preview 写日志而非 throw message，避免内部 DSML token 字面暴露给用户。
-    // throw 一个对用户友好的 message 让 RawAgentLoop 转给前端。
+    // 日志只记录短错误码/模型元数据；DSML 正文可能包含工具参数或 Secret，绝不写 preview。
     if (detectDsmlLeak(content)) {
-      const preview = content.slice(0, 200).replace(/\n/g, '\\n');
-      const sessionLabel = context.sessionId ? context.sessionId.slice(0, 8) : '-';
-      logger.warn(
-        `DSML 泄漏到 output_text — model=${request.model} session=${sessionLabel} preview="${preview}"`,
-      );
+      logger.warn(`DSML leak rejected in Responses output_text model=${request.model}`);
       await activeAttempt.finished('provider_error', {
         errorCode: 'MODEL_OUTPUT_DSML_LEAK',
         errorMessage: 'Model output contained an unparsed DSML template',
@@ -1079,26 +1094,37 @@ export class ResponsesApiAdapter implements ModelAdapter {
       throw new Error('模型输出格式异常（DSML 模板未被服务端解析），已中断本轮。');
     }
 
-    // C1：mojibake 检测告警（仅 warn，不修复 — 历史观测但当前不可复现）。
-    // 命中 = server 把 UTF-8 字节按 Latin-1 reinterpret 再 UTF-8 编码，
-    // 检测特征 = `Ã` / `Â` + 任意字符连续序列 ≥ 2 次。
+    // C1：mojibake 检测告警（仅 warn，不修复；不记录正文 preview）。
     {
       const moji = detectMojibake(content);
       if (moji.hit) {
-        const preview = content.slice(0, 200).replace(/\n/g, '\\n');
-        logger.warn(
-          `Mojibake 检测命中 output_text — 可能是火山 server 字节处理回归。`
-          + `samples=${moji.sampleCount} model=${request.model} `
-          + `session=${context.sessionId?.slice(0, 8) ?? '-'} preview="${preview}"`,
-        );
+        logger.warn(`Mojibake detected in Responses output_text samples=${moji.sampleCount} model=${request.model}`);
       }
     }
 
     // D1：deepseek arguments 双层 escape 反转（仅在 providerOptions 标记开启的模型路径）。
     const toolCallsRaw = Array.from(toolCallsByIndex.values()).filter((c) => c.name);
-    const toolCalls = this.providerOptions.applyDeepseekArgumentUnescape
+    const nativeToolCalls = this.providerOptions.applyDeepseekArgumentUnescape
       ? toolCallsRaw.map((c) => ({ ...c, arguments: unescapeDeepseekArguments(c.arguments) }))
       : toolCallsRaw;
+    const repair = toolCallRepair.finish({
+      text: content,
+      allowedToolNames: request.tools.map((tool) => tool.name),
+      nativeToolCallsPresent: nativeToolCalls.length > 0,
+      provider: toolCallRepairProviderLabel(context.modelRef),
+      model: request.model,
+      requestSeed: `${context.runId}:${requestHistoryHash}:${requestToolsHash}`,
+    });
+    for (const visibleText of repair.visibleText) {
+      if (commitOutputOnTerminal) {
+        bufferedOutputEvents.push({ type: 'text_delta', content: visibleText });
+      } else {
+        hasDeliveredOutput = true;
+        yield { type: 'text_delta', content: visibleText };
+      }
+    }
+    const toolCalls = nativeToolCalls.length > 0 ? nativeToolCalls : repair.promotedToolCalls;
+    const completedContent = repair.scrubbed ? '' : content;
     const providerContinuation = encryptedReasoningItems.length > 0 && responseContinuationBinding
       ? {
         ...responseContinuationBinding,
@@ -1124,12 +1150,13 @@ export class ResponsesApiAdapter implements ModelAdapter {
 
     yield {
       type: 'completed',
-      content,
+      content: completedContent,
       toolCalls,
       ...(usage ? { usage } : {}),
       ...(finishReason ? { finishReason } : {}),
       terminalStatus: 'completed',
-      ...(responseId ? { responseId } : {}),
+      ...(responseId && repair.promotedToolCalls.length === 0 ? { responseId } : {}),
+      ...(repair.promotedToolCalls.length > 0 ? { responseStateReset: true } : {}),
       ...(typeof responseExpireAt === 'number' ? { responseExpireAt } : {}),
       ...(actualModel ? { actualModel } : {}),
       responseChained: usePrevious,

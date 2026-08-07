@@ -374,6 +374,11 @@ export type ModelEvent =
     actualModel?: string;
     /** 本次 Responses 请求是否实际使用 previous_response_id；降级全量重试时为 false。 */
     responseChained?: boolean;
+    /**
+     * 当前 provider response 不能继续作为 previous_response_id（例如普通文本被本地提升为
+     * function_call，provider 端状态并不存在该 call id）；RawAgentLoop 下一轮必须全量重放。
+     */
+    responseStateReset?: boolean;
     /** 比 responseChained 更完整：区分主动全量、接力与接力失败后的全量降级。 */
     responseMode?: ModelResponseMode;
     /** 本次请求最终成功前的 HTTP 尝试次数。 */

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ResponsesApiAdapter, RESPONSE_TTL_MS, MAX_OUTPUT_TOKENS_FLOOR } from '../runtime/responsesApiAdapter.js';
 import { ChatCompletionsModelAdapter } from '../runtime/chatCompletionsAdapter.js';
 import type { ModelEvent, ModelRequestDiagnostic } from '../runtime/types.js';
+import type { ResponsesTransport } from '../runtime/responses/responsesTransport.js';
 
 /** 构造一行 Responses API SSE 帧（含 event: + data:）。 */
 function sse(eventName: string, payload: unknown): string {
@@ -2411,5 +2412,268 @@ describe('ChatCompletionsModelAdapter cross-API 防御 (P0.3)', () => {
       }
     }
     await expect(consume()).rejects.toThrow(/does not support previous_response_id/);
+  });
+});
+
+describe('ResponsesApiAdapter tool-call-repair', () => {
+  const tool = {
+    id: 'Read',
+    name: 'Read',
+    description: 'read a file',
+    parameters: { type: 'object', properties: { path: { type: 'string' } } },
+  };
+  const repairContext = {
+    ...baseContext,
+    modelRef: 'proxy/gpt-5.6-sol',
+    model: 'gpt-5.6-sol',
+  };
+
+  afterEach(() => vi.restoreAllMocks());
+
+  function adapter(mode: 'off' | 'detect' | 'repair') {
+    return new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.example/v1' },
+      { protocol: 'responses', toolCallRepair: mode },
+    );
+  }
+
+  function request(previousResponseId?: string) {
+    return {
+      model: 'gpt-5.6-sol',
+      messages: [{ role: 'user' as const, content: 'read' }],
+      tools: [tool],
+      ...(previousResponseId ? { previousResponseId } : {}),
+    };
+  }
+
+  it.each(['off', 'detect'] as const)('%s leaves output_text, responseId, usage and terminal status unchanged', async (mode) => {
+    const raw = '[tool:Read] {"path":"a.txt"}';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_text' } }),
+      sse('response.output_text.delta', { type: 'response.output_text.delta', delta: raw }),
+      sse('response.completed', {
+        type: 'response.completed',
+        response: {
+          id: 'resp_text',
+          status: 'completed',
+          usage: { input_tokens: 11, output_tokens: 7 },
+        },
+      }),
+    ]));
+    const events = await collect(adapter(mode).stream(request(), repairContext));
+    expect(events).toEqual([
+      { type: 'text_delta', content: raw },
+      expect.objectContaining({
+        type: 'completed',
+        content: raw,
+        toolCalls: [],
+        responseId: 'resp_text',
+        usage: expect.objectContaining({ inputTokens: 11, outputTokens: 7 }),
+        terminalStatus: 'completed',
+      }),
+    ]);
+  });
+
+  it('promotes a safe final output_text candidate without leaking streamed protocol text', async () => {
+    const raw = '[tool:Read] {"path":"a.txt"}';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_repair' } }),
+      sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '[tool:' }),
+      sse('response.output_text.delta', { type: 'response.output_text.delta', delta: 'Read] {"path":"a.txt"}' }),
+      sse('response.completed', {
+        type: 'response.completed',
+        response: {
+          id: 'resp_repair',
+          status: 'completed',
+          output: [{ type: 'message', content: [{ type: 'output_text', text: raw }] }],
+          usage: { input_tokens: 13, output_tokens: 8 },
+        },
+      }),
+    ]));
+    const events = await collect(adapter('repair').stream(request(), repairContext));
+    expect(events.filter((event) => event.type === 'text_delta')).toEqual([]);
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      content: '',
+      toolCalls: [expect.objectContaining({ name: 'Read', arguments: '{"path":"a.txt"}' })],
+      usage: { inputTokens: 13, outputTokens: 8 },
+      terminalStatus: 'completed',
+      responseStateReset: true,
+    });
+    expect(events.at(-1)).not.toHaveProperty('responseId');
+  });
+
+  it('promotes a candidate completed only by terminal canonical reconciliation', async () => {
+    const raw = '[tool:Read] {"path":"canonical.txt"}';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_canonical_repair' } }),
+      sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '[tool:Read] {"path":' }),
+      sse('response.completed', {
+        type: 'response.completed',
+        response: {
+          id: 'resp_canonical_repair',
+          status: 'completed',
+          output: [{ type: 'message', content: [{ type: 'output_text', text: raw }] }],
+        },
+      }),
+    ]));
+    const events = await collect(adapter('repair').stream(request(), repairContext));
+    expect(events.filter((event) => event.type === 'text_delta')).toEqual([]);
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      content: '',
+      toolCalls: [expect.objectContaining({ name: 'Read', arguments: '{"path":"canonical.txt"}' })],
+    });
+  });
+
+  it('keeps a native function_call authoritative and retains response chaining metadata', async () => {
+    const raw = '[tool:Read] {"path":"text.txt"}';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_native' } }),
+      sse('response.output_text.delta', { type: 'response.output_text.delta', delta: raw }),
+      sse('response.output_item.done', {
+        type: 'response.output_item.done',
+        output_index: 1,
+        item: { type: 'function_call', call_id: 'native_call', name: 'Read', arguments: '{"path":"native.txt"}' },
+      }),
+      sse('response.completed', {
+        type: 'response.completed',
+        response: {
+          id: 'resp_native',
+          status: 'completed',
+          output: [
+            { type: 'message', content: [{ type: 'output_text', text: raw }] },
+            { type: 'function_call', call_id: 'native_call', name: 'Read', arguments: '{"path":"native.txt"}' },
+          ],
+        },
+      }),
+    ]));
+    const events = await collect(adapter('repair').stream(request('resp_prev'), repairContext));
+    expect(events.filter((event) => event.type === 'text_delta')).toEqual([]);
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      content: '',
+      toolCalls: [{ id: 'native_call', name: 'Read', arguments: '{"path":"native.txt"}' }],
+      responseId: 'resp_native',
+      responseChained: true,
+      responseMode: 'relay',
+    });
+    expect(events.at(-1)).not.toHaveProperty('responseStateReset');
+  });
+
+  it('keeps unsupported DSML on the existing reject path in repair mode', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_dsml_repair' } }),
+      sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '<｜DSML｜tool_calls>x' }),
+      sse('response.completed', {
+        type: 'response.completed',
+        response: { id: 'resp_dsml_repair', status: 'completed' },
+      }),
+    ]));
+    await expect(collect(adapter('repair').stream(request(), repairContext)))
+      .rejects.toThrow(/模型输出格式异常.*DSML/);
+  });
+
+  it('flushes a buffered partial marker before propagating an unretried stream error', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStreamError([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_partial_repair' } }),
+      sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '[tool:Re' }),
+    ], new Error('repair stream exploded')));
+    const seen: ModelEvent[] = [];
+    let error: unknown;
+    try {
+      for await (const event of adapter('repair').stream(request(), repairContext)) seen.push(event);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({ message: 'repair stream exploded' });
+    expect(seen).toEqual([{ type: 'text_delta', content: '[tool:Re' }]);
+  });
+
+  it('preserves encrypted reasoning continuation while promoting final output_text', async () => {
+    const binding = {
+      provider: 'openai_codex_subscription' as const,
+      issuer: 'https://issuer.example',
+      accountBindingHash: 'binding-hash',
+    };
+    const transport: ResponsesTransport = {
+      id: 'codex_subscription',
+      capabilities: {
+        responseState: 'stateless',
+        terminalOutput: 'canonical',
+        usageLookup: false,
+        responseDelete: false,
+        encryptedReasoning: true,
+        omitToolConfigurationWhenEmpty: false,
+        parallelToolCalls: true,
+        maxOutputTokens: true,
+      },
+      computePromptCacheKey: () => undefined,
+      getContinuationBinding: async () => binding,
+      execute: async () => ({
+        continuationBinding: binding,
+        response: responseStream([
+          sse('response.created', { type: 'response.created', response: { id: 'resp_encrypted_repair' } }),
+          sse('response.output_item.done', {
+            type: 'response.output_item.done',
+            output_index: 0,
+            item: { type: 'reasoning', encrypted_content: 'encrypted-payload', summary: [] },
+          }),
+          sse('response.output_text.delta', {
+            type: 'response.output_text.delta', delta: '[tool:Read] {"path":"secure.txt"}',
+          }),
+          sse('response.completed', {
+            type: 'response.completed',
+            response: { id: 'resp_encrypted_repair', status: 'completed', usage: { input_tokens: 5, output_tokens: 4 } },
+          }),
+        ]),
+      }),
+    };
+    const customAdapter = new ResponsesApiAdapter(
+      { apiKey: 'unused', baseUrl: 'https://unused.invalid' },
+      { protocol: 'responses', toolCallRepair: 'repair' },
+      transport,
+    );
+
+    const events = await collect(customAdapter.stream(request(), repairContext));
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      content: '',
+      toolCalls: [expect.objectContaining({ name: 'Read' })],
+      providerContinuation: {
+        ...binding,
+        items: [{ type: 'reasoning', encrypted_content: 'encrypted-payload', summary: [] }],
+      },
+      responseStateReset: true,
+    });
+  });
+
+  it('preserves cron bufferedOutputEvents while withholding a repair candidate until terminal', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_cron_repair' } }),
+      sse('response.reasoning_summary_text.delta', {
+        type: 'response.reasoning_summary_text.delta', delta: 'thinking',
+      }),
+      sse('response.output_text.delta', {
+        type: 'response.output_text.delta', delta: '[tool:Read] {"path":"cron.txt"}',
+      }),
+      sse('response.completed', {
+        type: 'response.completed',
+        response: { id: 'resp_cron_repair', status: 'completed', usage: { input_tokens: 4, output_tokens: 3 } },
+      }),
+    ]));
+    const events = await collect(adapter('repair').stream(request(), {
+      ...repairContext,
+      channelContext: { channel: 'cron' as const },
+    }));
+    expect(events).toEqual([
+      { type: 'thinking_delta', content: 'thinking' },
+      expect.objectContaining({
+        type: 'completed',
+        content: '',
+        toolCalls: [expect.objectContaining({ name: 'Read' })],
+        terminalStatus: 'completed',
+      }),
+    ]);
   });
 });

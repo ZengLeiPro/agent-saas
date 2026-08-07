@@ -20,6 +20,7 @@ import {
   unescapeDeepseekArguments,
 } from './agentPlanDefense.js';
 import { modelSupportsImage, readImagePartOrPlaceholder, toTextOnlyContent } from './imageAttachments.js';
+import { ToolCallRepairStreamGate, toolCallRepairProviderLabel } from './toolCallRepair.js';
 
 const logger = createLogger('Cache');
 const CHAT_COMPLETIONS_MAX_FETCH_ATTEMPTS = 3;
@@ -174,6 +175,7 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
     let usage: ModelUsage | undefined;
     let finishReason: string | undefined;
     const toolByIndex = new Map<number, ModelToolCall>();
+    const toolCallRepair = new ToolCallRepairStreamGate(this.providerOptions.toolCallRepair ?? 'off');
     const decoder = new TextDecoder();
     const reader = response.body.getReader();
     let buffer = '';
@@ -204,7 +206,9 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
             }
             if (typeof delta?.content === 'string' && delta.content) {
               content += delta.content;
-              yield { type: 'text_delta', content: delta.content };
+              for (const visibleDelta of toolCallRepair.push(delta.content)) {
+                yield { type: 'text_delta', content: visibleDelta };
+              }
             }
             for (const toolDelta of delta?.tool_calls ?? []) {
               mergeToolDelta(toolByIndex, toolDelta);
@@ -221,6 +225,13 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
           if (event.usage) usage = mergeUsage(usage, normalizeChatUsage(event.usage));
         }
       }
+    } catch (err) {
+      // A partial marker may be the only user-visible evidence before an abort/read/parse error.
+      // Release it unchanged so repair mode cannot permanently swallow an incomplete attempt.
+      for (const visibleDelta of toolCallRepair.abort()) {
+        yield { type: 'text_delta', content: visibleDelta };
+      }
+      throw err;
     } finally {
       reader.releaseLock();
     }
@@ -234,24 +245,18 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
       logger.info(`命中率 session=${sid} model=${request.model} input=${input} cached=${cached} hit=${hitPct}%`);
     }
 
-    // E3 DSML reject（与 ResponsesApiAdapter 对齐，二轮加固：preview 写日志不 throw）
+    // E3 DSML reject（与 ResponsesApiAdapter 对齐）。日志只记短元数据，协议正文可能含参数/Secret。
     if (detectDsmlLeak(content)) {
-      const preview = content.slice(0, 200).replace(/\n/g, '\\n');
-      const sessionLabel = context.sessionId ? context.sessionId.slice(0, 8) : '-';
-      logger.warn(
-        `DSML 泄漏到 chat completions content — model=${request.model} session=${sessionLabel} preview="${preview}"`,
-      );
+      logger.warn(`DSML leak rejected in chat completions model=${request.model}`);
       throw new Error('模型输出格式异常（DSML 模板未被服务端解析），已中断本轮。');
     }
 
-    // C1 mojibake warn（与 ResponsesApiAdapter 对齐）
+    // C1 mojibake warn（与 ResponsesApiAdapter 对齐）；不记录正文 preview。
     {
       const moji = detectMojibake(content);
       if (moji.hit) {
-        const preview = content.slice(0, 200).replace(/\n/g, '\\n');
         logger.warn(
-          `Mojibake 检测命中 chat completions content。samples=${moji.sampleCount} `
-          + `model=${request.model} session=${context.sessionId?.slice(0, 8) ?? '-'} preview="${preview}"`,
+          `Mojibake detected in chat completions samples=${moji.sampleCount} model=${request.model}`,
         );
       }
     }
@@ -265,13 +270,31 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
       );
     }
     // D1 deepseek arguments unescape（仅在 providerOptions 标记开启的模型路径）
-    const validToolCalls = this.providerOptions.applyDeepseekArgumentUnescape
+    const nativeToolCalls = this.providerOptions.applyDeepseekArgumentUnescape
       ? validToolCallsRaw.map((c) => ({ ...c, arguments: unescapeDeepseekArguments(c.arguments) }))
       : validToolCallsRaw;
+    const repair = toolCallRepair.finish({
+      text: content,
+      allowedToolNames: request.tools.map((tool) => tool.name),
+      nativeToolCallsPresent: nativeToolCalls.length > 0,
+      provider: toolCallRepairProviderLabel(context.modelRef),
+      model: request.model,
+      requestSeed: createHash('sha256').update(JSON.stringify({
+        runId: context.runId,
+        model: request.model,
+        messages: request.messages,
+        toolNames: request.tools.map((tool) => tool.name),
+      })).digest('hex'),
+    });
+    for (const visibleText of repair.visibleText) {
+      yield { type: 'text_delta', content: visibleText };
+    }
+    const validToolCalls = nativeToolCalls.length > 0 ? nativeToolCalls : repair.promotedToolCalls;
+    const completedContent = repair.scrubbed ? '' : content;
 
     yield {
       type: 'completed',
-      content,
+      content: completedContent,
       toolCalls: validToolCalls,
       ...(usage ? { usage } : {}),
       ...(finishReason ? { finishReason } : {}),

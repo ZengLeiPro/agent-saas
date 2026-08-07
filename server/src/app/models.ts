@@ -303,6 +303,7 @@ type ConfigProviderOptions = {
   /** 单轮最大输出 token 正式配置通道（替代 extraBody.max_output_tokens 覆盖）。 */
   max_output_tokens?: number;
   pre_stream_retry_delays_ms?: number[];
+  tool_call_repair?: 'off' | 'detect' | 'repair';
   // ── Responses API v1（RFC P0.5）配置层字段（snake_case 与 config.json 对齐） ──
   protocol?: 'chat_completions' | 'responses';
   responses_transport?: 'openai_compatible' | 'codex_subscription';
@@ -334,6 +335,7 @@ function resolveProviderOptions(
   const inputModalities = model.input_modalities ?? group.input_modalities;
   const maxOutputTokens = model.max_output_tokens ?? group.max_output_tokens;
   const preStreamRetryDelaysMs = model.pre_stream_retry_delays_ms ?? group.pre_stream_retry_delays_ms;
+  const toolCallRepair = model.tool_call_repair ?? group.tool_call_repair;
   // Responses 字段：model 级覆盖 group 级
   const protocol = model.protocol ?? group.protocol;
   const responsesTransport = model.responses_transport ?? group.responses_transport;
@@ -354,6 +356,7 @@ function resolveProviderOptions(
   if (inputModalities !== undefined) options.inputModalities = inputModalities;
   if (maxOutputTokens !== undefined) options.maxOutputTokens = maxOutputTokens;
   if (preStreamRetryDelaysMs !== undefined) options.preStreamRetryDelaysMs = preStreamRetryDelaysMs;
+  if (toolCallRepair !== undefined) options.toolCallRepair = toolCallRepair;
   if (protocol !== undefined) options.protocol = protocol;
   if (responsesTransport !== undefined) options.responsesTransport = responsesTransport;
   if (aliasActual !== undefined) options.aliasActual = aliasActual;

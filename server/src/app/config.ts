@@ -456,6 +456,11 @@ const modelProviderOptionsSchema = z.object({
    * 默认空（不重试），由需要容忍代理抖动的模型组显式开启。
    */
   pre_stream_retry_delays_ms: z.array(z.number().int().min(100).max(120_000)).max(10).optional(),
+  /**
+   * 普通 assistant 文本工具调用修复。默认 off；detect 只计数不改输出；repair 仅提升
+   * 完整、独立、命中本轮工具 allowlist 的候选。按 group/model 显式配置，不按名称推断。
+   */
+  tool_call_repair: z.enum(['off', 'detect', 'repair']).optional(),
 });
 
 /**

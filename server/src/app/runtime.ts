@@ -1724,6 +1724,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     }
     return {
       ensureReady(username: string | undefined, requiredSkillIds: readonly string[] = []): Promise<void> {
+        // ws-only 负责 Skill/User 管理接口，runtime-worker 负责会话执行；两者各自持有
+        // 文件 store 的内存副本。每次 dispatch 在物化与清单计算前重载共享配置，
+        // 否则用户刚导入并启用的自建 skill 要等 runtime-worker 重启后才会生效。
+        store.reload();
+        userStore?.reload();
         return skillMaterializationService?.ensureReady(username, requiredSkillIds, 'dispatch')
           ?? Promise.resolve();
       },

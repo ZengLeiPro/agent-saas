@@ -170,7 +170,7 @@ describe("MessageList business step sections", () => {
     expect(screen.queryByText("TodoWrite")).toBeNull();
   });
 
-  it("reveals completed business details on title click without exposing debug metadata", () => {
+  it("reveals constant business details on title click without exposing debug metadata", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
 
     fireEvent.click(screen.getByRole("button", { name: /核验订单.*已完成/ }));
@@ -178,6 +178,7 @@ describe("MessageList business step sections", () => {
     expect(screen.queryByText(/读取订单/)).toBeNull();
     expect(screen.queryByRole("button", { name: "业务详情" })).toBeNull();
     expect(screen.getByText("订单资料完整")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "依据" })).toBeNull();
   });
 
   it("places the batch control beside 业务计划 and applies it to every step in that plan", () => {
@@ -251,6 +252,7 @@ describe("MessageList business step sections", () => {
     expect(screen.getByRole("button", { name: "全部收起" })).toBeTruthy();
     expect(screen.getByText("已运行")).toBeTruthy();
     expect(screen.getByText("订单资料完整")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "依据" })).toBeNull();
   });
 
   it("renders activity groups inside open sections as static summaries outside debug mode", () => {

@@ -42,6 +42,11 @@ export class SkillConfigStore {
 
   // ── 读取 ───────────────────────────────────────────────
 
+  /** 重新读取共享 skills-config.json，供多进程 runtime-worker 获取 ws-only 的最新改动。 */
+  reload(): void {
+    this.load();
+  }
+
   getConfigVersion(): number {
     return this.data.configVersion;
   }
@@ -517,6 +522,7 @@ export class SkillConfigStore {
         tenants: parsed.tenants ?? {},
         users: parsed.users ?? {},
       };
+      this.loadFailed = false;
     } catch (err) {
       this.loadFailed = true;
       // ESM 环境使用 dynamic import 输出错误日志（异步但 loadFailed 已同步设置）

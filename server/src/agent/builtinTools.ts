@@ -66,22 +66,33 @@ type AskUserQuestionInput = {
 
 const todoTextSchema = z.string().min(1).max(500);
 const todoToneSchema = z.enum(['neutral', 'info', 'success', 'warn', 'danger', 'muted']);
-const todoDetailLineSchema = z.union([
+// TodoWrite 顶层 detail 只承载非表格摘要；section 会形成标题分组，必须改用 records。
+// 嵌套 detail 仍允许 section，历史 transcript 则由 Shared/Web 继续兼容。
+const todoSummaryDetailLineSchema = z.union([
   todoTextSchema,
-  z.object({ tree: z.enum(['├', '└']), k: todoTextSchema, v: z.string().max(500) }),
-  z.object({ k: todoTextSchema, v: z.string().max(500) }),
   z.object({ no: z.number().int(), text: todoTextSchema }),
   z.object({ indent: z.number().int().min(0).max(6), text: todoTextSchema }),
-  z.object({ section: todoTextSchema }),
   z.object({ warn: todoTextSchema }),
   z.object({ insight: todoTextSchema, label: todoTextSchema.optional() }),
   z.object({ risk: z.enum(['high', 'medium']), text: todoTextSchema, action: todoTextSchema.optional() }),
   z.object({ verdict: z.enum(['pass', 'fail', 'warn', 'pending']), text: todoTextSchema, note: todoTextSchema.optional() }),
   z.object({ quote: todoTextSchema, source: todoTextSchema.optional() }),
   z.object({ original: todoTextSchema, translation: todoTextSchema.optional() }),
-  z.object({
-    fields: z.array(z.object({ k: todoTextSchema, v: z.string().max(500) })).min(1).max(12),
-  }),
+]);
+
+const todoSummaryDetailSchema = z.array(todoSummaryDetailLineSchema).max(60).superRefine((lines, context) => {
+  const verdictCount = lines.filter((line) => typeof line === 'object' && line !== null && 'verdict' in line).length;
+  if (verdictCount > 1) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: '顶层 detail 最多允许一条 verdict；多项判定必须使用带 title 的 display.records checklist。',
+    });
+  }
+});
+
+const todoDetailLineSchema = z.union([
+  todoSummaryDetailLineSchema,
+  z.object({ section: todoTextSchema }),
 ]);
 
 const todoRecordItemSchema = z.object({
@@ -120,7 +131,11 @@ export const todoWriteToolDescriptor: ToolDescriptor<TodoWriteInput> = {
   name: 'TodoWrite',
   displayName: 'Todo Write',
   description: loadToolDescription('TodoWrite'),
-  descriptionInvariants: ['每个 `records.title` 都必填'],
+  descriptionInvariants: [
+    '每个 `records.title` 都必填',
+    '顶层 `detail` 不接受 `section`，且最多一条 `verdict`',
+    '不接受 `k/v`、树形键值或字段网格',
+  ],
   schema: z.object({
     todos: z
       .array(
@@ -142,7 +157,7 @@ export const todoWriteToolDescriptor: ToolDescriptor<TodoWriteInput> = {
                 .optional(),
             })
             .optional(),
-          detail: z.array(todoDetailLineSchema).max(60).optional(),
+          detail: todoSummaryDetailSchema.optional(),
           display: z.array(todoDisplayBlockSchema).max(12).optional(),
           evidenceRefs: z.array(z.string().min(1).max(200)).max(20).optional(),
         }),

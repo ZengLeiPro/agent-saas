@@ -35,6 +35,14 @@ function section(partial: Partial<BusinessStepSection>): BusinessStepSection {
   };
 }
 
+function expandEvidence() {
+  const toggle = screen.getByRole("button", { name: "依据" });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  return toggle;
+}
+
 const NO_FILL_SELECTORS = ["section.bg-success\\/5", "section.bg-warning\\/5", "section.bg-destructive\\/5"];
 
 describe("BusinessStepFlow", () => {
@@ -145,11 +153,13 @@ describe("BusinessStepFlow", () => {
     expect(screen.queryByRole("button", { name: "业务详情" })).toBeNull();
     expect(screen.queryByText("业务详情")).toBeNull();
     expect(screen.getByText("订单资料完整")).toBeTruthy();
+    expect(screen.queryByText("SO-1001")).toBeNull();
+    expandEvidence();
     expect(screen.getByText("SO-1001")).toBeTruthy();
     for (const sel of NO_FILL_SELECTORS) expect(container.querySelector(sel)).toBeNull();
   });
 
-  it("renders 业务详情 as a white key-value card, not the tinted code block", () => {
+  it("keeps historical detail key-value cards renderable on the frontend", () => {
     const { container } = render(
       <BusinessStepFlow
         open
@@ -182,6 +192,43 @@ describe("BusinessStepFlow", () => {
     // 关键值（数字）走主题强调色，普通值保持深色
     expect(screen.getByText("15").className).toContain("text-primary");
     expect(screen.getByText("张三").className).not.toContain("text-primary");
+  });
+
+  it("upgrades historical section-verdict groups to branded checklist records", () => {
+    const { container } = render(
+      <BusinessStepFlow
+        open
+        event={event({
+          kind: "complete",
+          todo: {
+            id: "a",
+            kind: "business",
+            content: "迁移两个需求看板",
+            status: "completed",
+            outcome: { text: "两表迁移完成", tone: "ok" },
+            detail: [
+              { section: "Azeroth 需求看板" },
+              { verdict: "pass", text: "字段迁移完成" },
+              { verdict: "warn", text: "存在一项差异", note: "等待复核" },
+              { section: "开沿 Agent 需求看板" },
+              { verdict: "fail", text: "回读失败" },
+              { verdict: "pending", text: "等待人工确认" },
+            ],
+          },
+        })}
+      />,
+    );
+
+    expect(container.querySelectorAll("[data-records-block]")).toHaveLength(2);
+    expect(container.querySelectorAll("[data-records-title]")).toHaveLength(2);
+    expect(screen.getByText("Azeroth 需求看板").parentElement?.className).toContain("bg-primary/5");
+    expect(screen.getByText("开沿 Agent 需求看板").parentElement?.className).toContain("bg-primary/5");
+    expect(screen.getByText("字段迁移完成").closest("button")?.querySelector("svg")?.classList.contains("text-success")).toBe(true);
+    expect(screen.getByText("存在一项差异").closest("button")?.querySelector("svg")?.classList.contains("text-warning")).toBe(true);
+    expect(screen.getByText("回读失败").closest("button")?.querySelector("svg")?.classList.contains("text-destructive")).toBe(true);
+    expect(screen.getByText("等待人工确认").closest("button")?.querySelector("svg")?.classList.contains("text-muted-foreground/70")).toBe(true);
+    expect(screen.getByText("等待复核")).toBeTruthy();
+    expect(container.querySelector(".divide-y.bg-card")).toBeNull();
   });
 
   it("renders titled records cards inside a terminal business summary", () => {
@@ -338,6 +385,76 @@ describe("BusinessStepSectionView", () => {
     expect(processToggle.lastElementChild?.classList.contains("lucide-chevron-right")).toBe(true);
     fireEvent.click(processToggle);
     expect(screen.getByTestId("process-content")).toBeTruthy();
+  });
+
+  it("keeps tables and warnings visible while process and evidence refs switch exclusively", () => {
+    const terminal = event({
+      kind: "complete",
+      todo: {
+        id: "a",
+        kind: "business",
+        content: "核验订单",
+        status: "completed",
+        outcome: { text: "核验完成", tone: "ok" },
+        display: [
+          {
+            kind: "records",
+            layout: "rows",
+            title: "核验依据",
+            items: [{ label: "订单", value: "已核验" }],
+          },
+          {
+            kind: "callout",
+            tone: "warn",
+            title: "税号预警",
+            body: ["发现 1 项异常"],
+          },
+        ],
+        evidenceRefs: ["evidence:SO-1001"],
+      },
+    });
+    const { container } = render(
+      <BusinessStepSectionView debugMode open section={section({ terminal })}>
+        <div data-testid="process-content">工具活动内容</div>
+      </BusinessStepSectionView>,
+    );
+
+    // 表格、预警属于常显业务小结，不受「依据」标签折叠状态影响。
+    expect(screen.getByText("核验依据")).toBeTruthy();
+    expect(screen.getByText("税号预警")).toBeTruthy();
+    expect(screen.getByText("发现 1 项异常")).toBeTruthy();
+    expect(screen.queryByText("evidence:SO-1001")).toBeNull();
+
+    const controls = container.querySelector("[data-business-step-disclosures]") as HTMLElement;
+    expect(controls).toBeTruthy();
+    expect(controls.className).toContain("flex");
+    expect(controls.className).not.toContain("grid-cols-2");
+    const processToggle = within(controls).getByRole("button", { name: /过程 · 1 项/ });
+    const evidenceToggle = within(controls).getByRole("button", { name: "依据" });
+    expect(processToggle.nextElementSibling).toBe(evidenceToggle);
+    expect(processToggle.className).not.toContain("flex-1");
+    expect(evidenceToggle.className).not.toContain("flex-1");
+
+    fireEvent.click(processToggle);
+    expect(screen.getByTestId("process-content")).toBeTruthy();
+    expect(processToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(evidenceToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(controls.nextElementSibling?.getAttribute("data-business-step-panel")).toBe("process");
+
+    fireEvent.click(evidenceToggle);
+    expect(screen.queryByTestId("process-content")).toBeNull();
+    expect(processToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(evidenceToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("evidence:SO-1001")).toBeTruthy();
+    expect(controls.nextElementSibling?.getAttribute("data-business-step-panel")).toBe("evidence");
+    expect(screen.getByText("核验依据")).toBeTruthy();
+    expect(screen.getByText("税号预警")).toBeTruthy();
+
+    fireEvent.click(processToggle);
+    expect(screen.getByTestId("process-content")).toBeTruthy();
+    expect(screen.queryByText("evidence:SO-1001")).toBeNull();
+    expect(processToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(evidenceToggle.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("renders interrupted open section without spinner or badge", () => {

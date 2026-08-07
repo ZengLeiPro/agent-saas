@@ -1,5 +1,5 @@
 import { memo, useState, type ComponentType } from "react";
-import { ChevronRight, Copy, ExternalLink, Wrench } from "lucide-react";
+import { ChevronRight, Circle, CircleCheck, CircleX, Copy, ExternalLink, TriangleAlert } from "lucide-react";
 import type {
   BlockAction,
   CalloutBlock,
@@ -14,7 +14,12 @@ import type {
 import { Button } from "@/components/ui/button";
 import { PresentationDetail } from "@/components/PresentationDetail";
 import { cn } from "@/lib/utils";
-import { activityStatusBadgeClass, activityStatusTextClass, type ActivityStatusTone } from "@/components/activityStatusStyles";
+import {
+  activityStatusBadgeClass,
+  activityStatusIconClass,
+  activityStatusTextClass,
+  type ActivityStatusTone,
+} from "@/components/activityStatusStyles";
 
 /**
  * 呈现块渲染层。
@@ -32,6 +37,15 @@ const TONE_MAP: Record<PresentationTone, ActivityStatusTone> = {
   warn: "warning",
   danger: "danger",
   muted: "pending",
+};
+
+const CHECKLIST_ICON_MAP: Record<PresentationTone, typeof Circle> = {
+  neutral: Circle,
+  info: Circle,
+  success: CircleCheck,
+  warn: TriangleAlert,
+  danger: CircleX,
+  muted: Circle,
 };
 
 /** 渲染上下文。回写通道缺省时按钮 disabled——不允许出现「点了没反应」的按钮。 */
@@ -145,17 +159,22 @@ function CalloutView({ block, ctx }: { block: CalloutBlock; ctx: BlockContext })
   );
 }
 
-function RecordRow({ item }: { item: RecordItem }) {
+function RecordRow({ item, checklist }: { item: RecordItem; checklist: boolean }) {
   const [open, setOpen] = useState(false);
   const expandable = !!item.detail?.length;
+  const itemTone = item.tone ?? "neutral";
+  const ChecklistIcon = CHECKLIST_ICON_MAP[itemTone];
   return (
-    <div className={cn("px-4 py-1.5", item.tone === "warn" && "bg-warning/5")}>
+    <div className={cn("border-b border-border/60 px-4 py-2 last:border-b-0", item.tone === "warn" && "bg-warning/5")}>
       <button
         type="button"
         onClick={expandable ? () => setOpen((v) => !v) : undefined}
         className={cn("flex w-full items-start gap-3 text-left", !expandable && "cursor-default")}
       >
-        <span className={cn("min-w-0 flex-1 text-sm text-muted-foreground", item.tone === "danger" && "line-through opacity-70", item.mono && "font-mono text-xs")}>
+        {checklist ? (
+          <ChecklistIcon className={activityStatusIconClass(TONE_MAP[itemTone], "mt-1 size-3 shrink-0")} aria-hidden="true" />
+        ) : null}
+        <span className={cn("min-w-0 flex-1 text-sm", checklist ? "text-foreground" : "text-muted-foreground", !checklist && item.tone === "danger" && "line-through opacity-70", item.mono && "font-mono text-xs")}>
           {item.label}
         </span>
         {item.value ? <span className={cn("min-w-0 break-words text-left text-sm text-foreground", item.mono && "font-mono text-xs")}>{item.value}</span> : null}
@@ -173,11 +192,10 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
     <div className="w-fit max-w-full overflow-hidden rounded-xl border border-primary/20 bg-card" data-records-block>
       {block.title ? (
         <div
-          className="flex items-center gap-2 border-b border-primary/15 bg-primary/5 px-4 py-2.5 text-sm font-semibold text-foreground"
+          className="border-b border-primary/15 bg-primary/5 px-4 py-2.5 text-sm font-semibold text-foreground"
           data-records-title
         >
-          <Wrench className="size-4 shrink-0 text-primary" aria-hidden="true" />
-          <span className="min-w-0 break-words">{block.title}</span>
+          <span className="break-words">{block.title}</span>
         </div>
       ) : null}
       {block.layout === "grid" ? (
@@ -192,7 +210,7 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
           ))}
         </div>
       ) : (
-        <div className="py-1.5">{block.items.map((item, i) => <RecordRow key={i} item={item} />)}</div>
+        <div>{block.items.map((item, i) => <RecordRow key={i} item={item} checklist={block.layout === "checklist"} />)}</div>
       )}
       {block.footer ? <div className="border-t border-primary/10 px-4 py-2 text-xs text-muted-foreground">{block.footer}</div> : null}
       <div className="px-4 pb-2.5 empty:hidden">

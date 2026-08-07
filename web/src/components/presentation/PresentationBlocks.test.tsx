@@ -88,12 +88,34 @@ describe('records', () => {
     const title = container.querySelector('[data-records-title]');
     expect(title?.className).toContain('bg-primary/5');
     expect(title?.className).toContain('border-primary/15');
-    expect(title?.querySelector('svg')?.classList.contains('text-primary')).toBe(true);
+    expect(title?.querySelector('svg')).toBeNull();
     expect(screen.getByText('核对清单')).toBeTruthy();
-    expect(screen.getByText('发票抬头').className).toContain('text-muted-foreground');
+    const label = screen.getByText('发票抬头');
+    expect(label.className).toContain('text-muted-foreground');
+    expect(label.closest('div')?.className).toContain('border-b');
     expect(screen.getByText('一致').className).toContain('text-foreground');
     expect(screen.getByText('通过')).toBeTruthy();
     expect(screen.getByText('共 1 项')).toBeTruthy();
+  });
+
+  it('checklist 使用品牌色标题栏并按 tone 显示判定图标', () => {
+    const { container } = render(<PresentationBlocks blocks={[{
+      kind: 'records', layout: 'checklist', title: '需求看板验收',
+      items: [
+        { label: '字段迁移完成', tone: 'success' },
+        { label: '回读失败', tone: 'danger' },
+        { label: '存在差异', tone: 'warn' },
+        { label: '等待确认', tone: 'muted' },
+      ],
+    }]} />);
+
+    expect(container.querySelector('[data-records-title]')?.className).toContain('bg-primary/5');
+    expect(screen.getByText('字段迁移完成').className).toContain('text-foreground');
+    expect(screen.getByText('字段迁移完成').closest('button')?.querySelector('svg')?.classList.contains('text-success')).toBe(true);
+    expect(screen.getByText('回读失败').closest('button')?.querySelector('svg')?.classList.contains('text-destructive')).toBe(true);
+    expect(screen.getByText('回读失败').className).not.toContain('line-through');
+    expect(screen.getByText('存在差异').closest('button')?.querySelector('svg')?.classList.contains('text-warning')).toBe(true);
+    expect(screen.getByText('等待确认').closest('button')?.querySelector('svg')?.classList.contains('text-muted-foreground/70')).toBe(true);
   });
 
   it('条目详情可展开', () => {

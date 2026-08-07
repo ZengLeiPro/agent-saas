@@ -329,7 +329,7 @@ describe('WebChannel active stream reconnect', () => {
     expect(buffer).toBeDefined();
     const datas = buffer.events.map((e: { data: string }) => JSON.parse(e.data));
     expect(datas).toEqual([
-      { type: 'block_start', blockType: 'text' },
+      { type: 'block_start', blockType: 'text', runId: 'run-cross-1' },
       { type: 'text', content: '跨进程正文' },
       { type: 'block_end', blockType: 'text' },
     ]);
@@ -528,7 +528,7 @@ describe('WebChannel active stream reconnect', () => {
     }
 
     expect(emitted).toEqual([
-      { type: 'block_start', blockType: 'text', draftId: 'draft-1' },
+      { type: 'block_start', blockType: 'text', runId: 'run-draft-1', draftId: 'draft-1' },
       { type: 'draft_reset', draftId: 'draft-1', attempt: 2 },
       { type: 'draft_commit', draftId: 'draft-1' },
     ]);

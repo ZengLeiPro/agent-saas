@@ -394,6 +394,15 @@ export type ModelEvent =
     terminalStatus?: ModelTerminalStatus;
     incompleteReason?: string;
     errorCode?: string;
+    /** Provider 结构化失败消息；只用于恢复判定和后台诊断，不直接展示给客户。 */
+    errorMessage?: string;
+    /** 本次 provider 请求与 attempt 的诊断关联键。 */
+    modelRequestId?: string;
+    attemptId?: string;
+    /** 本 attempt 已产生的模型输出项数量（正文、思考、tool call 等）。 */
+    emittedOutputCount?: number;
+    /** Responses HTTP 状态；流内终态通常为 200。 */
+    providerStatus?: number;
     /** Responses API 返回的 response.id（store=true 时存在），用于下一轮接力。 */
     responseId?: string;
     /** Responses API 返回的 response.expire_at（Unix epoch 秒）。 */
@@ -443,6 +452,22 @@ export interface ModelAdapterCapabilities {
 export interface ModelAdapter {
   readonly capabilities?: ModelAdapterCapabilities;
   stream(request: ModelRequest, context: RunContext): AsyncIterable<ModelEvent>;
+}
+
+/** 发流前 provider 失败的结构化错误；避免在 adapter 边界退化成不可审计字符串。 */
+export class ModelProviderError extends Error {
+  readonly name = 'ModelProviderError';
+
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string,
+    readonly modelRequestId: string,
+    readonly attemptId: string,
+    readonly emittedOutputCount: number,
+  ) {
+    super(message);
+  }
 }
 
 export interface AgentLoop {
@@ -499,6 +524,11 @@ export type PlatformEvent =
     /** 插话来源 run；用于崩溃恢复时识别已持久化但尚未结算的输入。 */
     interjectionSourceRunId?: string;
     clientMsgId?: string;
+    /** 平台自动生成的模型输入，不代表用户主动发送。 */
+    systemGenerated?: boolean;
+    recoveryKind?: 'invalid_prompt_rewind';
+    /** durable 事实保留，但不投影到用户 transcript/UI。 */
+    hiddenFromUserTranscript?: boolean;
   }
   | {
     id: string;
@@ -750,6 +780,25 @@ export type PlatformEvent =
      * 导致仅凭 sessionId 无法在审计中复盘失败原因。本字段补齐这条断链。
      */
     error?: string;
+  }
+  | {
+    id: string;
+    timestamp: string;
+    /** append-only 模型上下文回退；原始事件仍完整保留，只改变后续 prompt 投影。 */
+    type: 'context_rewind';
+    runId: string;
+    sessionId: string;
+    reason: 'invalid_prompt_request_blocked';
+    message: '自动回退上一工具交互并继续';
+    sourceModelRequestId: string;
+    sourceAttemptId: string;
+    excludedEventIds: string[];
+    excludedToolCallIds: string[];
+    /** 1-based session append order；PG 对应 session_sequence，File 对应 JSONL 顺序。 */
+    excludedStartSequence: number;
+    excludedEndSequence: number;
+    createdAt: string;
+    recoveryAttempt: 1;
   }
   | {
     id: string;

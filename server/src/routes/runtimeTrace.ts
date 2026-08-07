@@ -326,6 +326,25 @@ export function truncateTraceEvent(
  * 固定占位符让既有时间线 UI 仍能表达“这里发生过什么”，同时不泄露原始内容。
  */
 export function sanitizeTraceEvent(event: PlatformEvent): Record<string, unknown> {
+  if (event.type === 'context_rewind') {
+    return {
+      id: event.id,
+      type: event.type,
+      timestamp: event.timestamp,
+      sessionId: event.sessionId,
+      runId: event.runId,
+      reason: event.reason,
+      message: event.message,
+      sourceModelRequestId: event.sourceModelRequestId,
+      sourceAttemptId: event.sourceAttemptId,
+      excludedEventIds: event.excludedEventIds,
+      excludedToolCallIds: event.excludedToolCallIds,
+      excludedStartSequence: event.excludedStartSequence,
+      excludedEndSequence: event.excludedEndSequence,
+      recoveryAttempt: event.recoveryAttempt,
+      contentRedacted: true,
+    };
+  }
   const source = event as unknown as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   const safeKeys = [

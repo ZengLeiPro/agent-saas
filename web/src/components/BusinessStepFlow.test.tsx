@@ -97,7 +97,7 @@ describe("BusinessStepFlow", () => {
     expect(screen.getByText("第 2/3 步")).toBeTruthy();
   });
 
-  it("collapses terminal details by default and only toggles from the content-width title control", () => {
+  it("keeps terminal outcome visible while collapsing details, and only toggles from the content-width title control", () => {
     const { container } = render(
       <BusinessStepFlow
         event={event({
@@ -129,7 +129,11 @@ describe("BusinessStepFlow", () => {
     const header = region.querySelector("header")!;
     expect(titleToggle.getAttribute("aria-expanded")).toBe("false");
     expect(screen.getByTestId("business-step-chevron-right")).toBeTruthy();
-    expect(screen.queryByText("17/18 张通过，1 张税号过期退回")).toBeNull();
+    const collapsedOutcome = screen.getByText("17/18 张通过，1 张税号过期退回");
+    expect(collapsedOutcome.parentElement?.className).toContain("leading-5");
+    expect(within(screen.getByTestId("outcome-stats")).getByText("通过")).toBeTruthy();
+    expect(screen.queryByText("订单资料完整")).toBeNull();
+    expect(screen.queryByRole("button", { name: "依据" })).toBeNull();
 
     // 右侧空白属于 header 而不属于按钮，点击不应触发。
     expect(titleToggle.className).not.toContain("flex-1");
@@ -145,10 +149,9 @@ describe("BusinessStepFlow", () => {
     fireEvent.click(titleToggle);
     expect(titleToggle.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByTestId("business-step-chevron-down")).toBeTruthy();
-    const outcome = screen.getByText("17/18 张通过，1 张税号过期退回");
-    expect(outcome.parentElement?.className).toContain("leading-5");
-    expect(outcome.parentElement?.className).not.toContain("leading-6");
-    expect(screen.getByText("通过")).toBeTruthy();
+    expect(screen.getAllByText("17/18 张通过，1 张税号过期退回")).toHaveLength(1);
+    expect(collapsedOutcome.parentElement?.className).not.toContain("leading-6");
+    expect(within(screen.getByTestId("outcome-stats")).getByText("通过")).toBeTruthy();
     expect(screen.getByText("17")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "业务详情" })).toBeNull();
     expect(screen.queryByText("业务详情")).toBeNull();
@@ -348,7 +351,7 @@ describe("BusinessStepSectionView", () => {
     expect(container.querySelector(".animate-spin")).toBeTruthy();
   });
 
-  it("collapses the full terminal body, then exposes details with debug process still collapsed", () => {
+  it("keeps terminal outcome visible while details and debug process remain collapsed", () => {
     const terminal = event({
       kind: "complete",
       todo: {
@@ -356,7 +359,7 @@ describe("BusinessStepSectionView", () => {
         kind: "business",
         content: "核验订单",
         status: "completed",
-        outcome: { text: "全部通过", tone: "ok" },
+        outcome: { text: "全部通过", tone: "ok", stat: [{ label: "字段", value: "12" }] },
         detail: ["共核验 12 项字段"],
       },
       stepIndex: 1,
@@ -371,13 +374,14 @@ describe("BusinessStepSectionView", () => {
     const titleToggle = screen.getByRole("button", { name: /核验订单.*第 1\/2 步.*已完成/ });
     expect(titleToggle.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText(/过程 ·/)).toBeNull();
-    expect(screen.queryByText("全部通过")).toBeNull();
+    expect(screen.getByText("全部通过")).toBeTruthy();
+    expect(within(screen.getByTestId("outcome-stats")).getByText("字段")).toBeTruthy();
     expect(screen.queryByText("共核验 12 项字段")).toBeNull();
     expect(screen.getByText("已完成")).toBeTruthy();
 
     fireEvent.click(titleToggle);
     expect(screen.getByText(/过程 ·/)).toBeTruthy();
-    expect(screen.getByText("全部通过")).toBeTruthy();
+    expect(screen.getAllByText("全部通过")).toHaveLength(1);
     expect(screen.getByText("共核验 12 项字段")).toBeTruthy();
     expect(screen.queryByText("业务详情")).toBeNull();
 
@@ -528,7 +532,7 @@ describe("BusinessStepSectionView 外部系统动作留痕", () => {
     todo: { id: "a", kind: "business", content: "同步钉钉待办", status: "completed", outcome: { text: "已创建", tone: "ok" } },
   });
 
-  it("整步折叠时只留标题，展开后系统动作行继续留痕", () => {
+  it("终态折叠时 outcome 常显但系统动作隐藏，展开后系统动作行继续留痕", () => {
     render(
       <BusinessStepSectionView
         debugMode={false}
@@ -538,6 +542,7 @@ describe("BusinessStepSectionView 外部系统动作留痕", () => {
         <div>过程细节</div>
       </BusinessStepSectionView>,
     );
+    expect(screen.getByText("已创建")).toBeTruthy();
     expect(screen.queryByText("钉钉 · 创建待办")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /同步钉钉待办.*已完成/ }));
     expect(screen.getByText("钉钉 · 创建待办")).toBeTruthy();

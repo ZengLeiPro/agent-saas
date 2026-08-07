@@ -37,8 +37,8 @@ import { statVerdict, visibleOutcomeStats, type OutcomeStat } from "./detailSema
 //   （活动组/工具块），无框 = 业务叙事」是刻意的视觉分层。
 // - 状态色只落在 icon 与小徽标上，容器一律融入背景。
 // - 归属感由缩进 + 极淡左竖线表达（timeline 语言），不靠边框。
-// - 步骤折叠时只保留标题整行；展开后再呈现 outcome，以及同排的「过程 / 依据」
-//   折叠入口；入口控制的内容区都在下一行占满可用宽度。
+// - 终态步骤折叠时保留标题与 outcome；展开后再呈现 detail/display，以及同排的
+//   「过程 / 依据」折叠入口；入口控制的内容区都在下一行占满可用宽度。
 //   默认状态由用户的业务步骤展示偏好决定。
 //
 // 内容纪律（08-03 二轮：样式对齐 demo + 槽位去重）：
@@ -316,7 +316,7 @@ function StartRow({ event }: { event: BusinessStepEventItem }) {
   );
 }
 
-/** 终态块（无节归属时的扁平流渲染）。默认折叠，保留可交互 fallback。 */
+/** 终态块（无节归属时的扁平流渲染）。outcome 常显，扩展内容默认折叠。 */
 function TerminalBlock({
   event,
   open,
@@ -360,7 +360,7 @@ function TerminalBlock({
           )}
         </button>
       </header>
-      {bodyOpen ? (
+      {todo.outcome || bodyOpen ? (
         <div className="ml-[7px] mt-2.5 space-y-2.5 border-l border-border/50 pl-5">
           {todo.outcome ? (
             <OutcomeLine
@@ -368,20 +368,24 @@ function TerminalBlock({
               stats={visibleOutcomeStats(todo.outcome.stat, todo.detail)}
             />
           ) : null}
-          <StepSummaryBody todo={todo} />
-          {hasEvidence ? (
-            <div className="grid grid-cols-1" data-business-step-disclosures>
-              <DisclosureButton
-                label="依据"
-                open={evidenceOpen}
-                onToggle={() => setEvidenceOpen((value) => !value)}
-              />
-            </div>
-          ) : null}
-          {hasEvidence && evidenceOpen ? (
-            <div data-business-step-panel="evidence">
-              <StepEvidenceBody todo={todo} />
-            </div>
+          {bodyOpen ? (
+            <>
+              <StepSummaryBody todo={todo} />
+              {hasEvidence ? (
+                <div className="grid grid-cols-1" data-business-step-disclosures>
+                  <DisclosureButton
+                    label="依据"
+                    open={evidenceOpen}
+                    onToggle={() => setEvidenceOpen((value) => !value)}
+                  />
+                </div>
+              ) : null}
+              {hasEvidence && evidenceOpen ? (
+                <div data-business-step-panel="evidence">
+                  <StepEvidenceBody todo={todo} />
+                </div>
+              ) : null}
+            </>
           ) : null}
         </div>
       ) : null}
@@ -439,7 +443,7 @@ function countSectionProcessItems(section: BusinessStepSection): number {
 }
 
 /**
- * 业务步骤节：折叠时只保留标题整行，展开后再呈现结果、详情与过程。
+ * 业务步骤节：终态折叠时保留标题与 outcome，展开后再呈现详情与过程。
  * children 由 MessageList 用完整消息渲染逻辑生成，本组件只提供节壳。
  */
 export function BusinessStepSectionView({
@@ -548,7 +552,7 @@ export function BusinessStepSectionView({
         </button>
       </header>
 
-      {sectionOpen ? (
+      {terminal?.todo?.outcome || sectionOpen ? (
         <div className="ml-[7px] mt-2.5 space-y-2.5 border-l border-border/50 pl-5">
           {terminal?.todo?.outcome ? (
             <OutcomeLine
@@ -556,47 +560,51 @@ export function BusinessStepSectionView({
               stats={visibleOutcomeStats(terminal.todo.outcome.stat, terminal.todo.detail)}
             />
           ) : null}
-          {terminal?.todo ? <StepSummaryBody todo={terminal.todo} /> : null}
+          {sectionOpen ? (
+            <>
+              {terminal?.todo ? <StepSummaryBody todo={terminal.todo} /> : null}
 
-          {showProcessDisclosure || showEvidenceDisclosure ? (
-            <div
-              className="flex flex-wrap items-center gap-x-4 gap-y-2"
-              data-business-step-disclosures
-            >
-              {showProcessDisclosure ? (
-                <DisclosureButton
-                  label={<>过程 · {processCount} 项</>}
-                  open={processOpen}
-                  onToggle={toggleProcess}
-                />
+              {showProcessDisclosure || showEvidenceDisclosure ? (
+                <div
+                  className="flex flex-wrap items-center gap-x-4 gap-y-2"
+                  data-business-step-disclosures
+                >
+                  {showProcessDisclosure ? (
+                    <DisclosureButton
+                      label={<>过程 · {processCount} 项</>}
+                      open={processOpen}
+                      onToggle={toggleProcess}
+                    />
+                  ) : null}
+                  {showEvidenceDisclosure ? (
+                    <DisclosureButton
+                      label="依据"
+                      open={evidenceOpen}
+                      onToggle={toggleEvidence}
+                    />
+                  ) : null}
+                </div>
               ) : null}
-              {showEvidenceDisclosure ? (
-                <DisclosureButton
-                  label="依据"
-                  open={evidenceOpen}
-                  onToggle={toggleEvidence}
-                />
-              ) : null}
-            </div>
-          ) : null}
 
-          {/* 两个入口同排并互斥；当前内容回到下一行并占满步骤正文宽度。 */}
-          {showProcessDisclosure && processOpen ? (
-            <div className="flex flex-col gap-2.5" data-business-step-panel="process">
-              {children}
-            </div>
+              {/* 两个入口同排并互斥；当前内容回到下一行并占满步骤正文宽度。 */}
+              {showProcessDisclosure && processOpen ? (
+                <div className="flex flex-col gap-2.5" data-business-step-panel="process">
+                  {children}
+                </div>
+              ) : null}
+              {showEvidenceDisclosure && evidenceOpen ? (
+                <div data-business-step-panel="evidence">
+                  <StepEvidenceBody todo={todo} />
+                </div>
+              ) : null}
+              {/* 节内过程块之间与全局同节奏（10px）：子块自身不带流向 margin，由这层 gap 承担。 */}
+              {!terminal && hasProcess ? <div className="flex flex-col gap-2.5">{children}</div> : null}
+              {/* 终态且过程已收起时，动过外部系统的写操作行继续留着：客户看到的
+                  「AI 动了我的钉钉 + 单据号」必须是平台盖的章，不能只剩模型自述的「依据」。
+                  debug 展开态下 children 已包含这几行，不再重复渲染。 */}
+              {terminal && systemActions && !(debugMode && processOpen) ? <div className="flex flex-col gap-2.5">{systemActions}</div> : null}
+            </>
           ) : null}
-          {showEvidenceDisclosure && evidenceOpen ? (
-            <div data-business-step-panel="evidence">
-              <StepEvidenceBody todo={todo} />
-            </div>
-          ) : null}
-          {/* 节内过程块之间与全局同节奏（10px）：子块自身不带流向 margin，由这层 gap 承担。 */}
-          {!terminal && hasProcess ? <div className="flex flex-col gap-2.5">{children}</div> : null}
-          {/* 终态且过程已收起时，动过外部系统的写操作行继续留着：客户看到的
-              「AI 动了我的钉钉 + 单据号」必须是平台盖的章，不能只剩模型自述的「依据」。
-              debug 展开态下 children 已包含这几行，不再重复渲染。 */}
-          {terminal && systemActions && !(debugMode && processOpen) ? <div className="flex flex-col gap-2.5">{systemActions}</div> : null}
         </div>
       ) : null}
     </section>

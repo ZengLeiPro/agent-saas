@@ -102,6 +102,7 @@ export function TaskDialog({ open, active = true, onOpenChange, onCreate }: Task
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               placeholder="要完成什么？"
+              disabled={submitting}
               autoFocus
             />
           </div>
@@ -113,12 +114,17 @@ export function TaskDialog({ open, active = true, onOpenChange, onCreate }: Task
               onChange={(event) => setDescription(event.target.value)}
               placeholder="补充上下文和验收信息"
               rows={5}
+              disabled={submitting}
             />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>状态</Label>
-              <Select value={status} onValueChange={(value) => setStatus(value as TaskBoardStatus)}>
+              <Select
+                value={status}
+                onValueChange={(value) => setStatus(value as TaskBoardStatus)}
+                disabled={submitting}
+              >
                 <SelectTrigger aria-label="新任务状态"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {TASKBOARD_STATUSES.map((value) => (
@@ -129,7 +135,11 @@ export function TaskDialog({ open, active = true, onOpenChange, onCreate }: Task
             </div>
             <div className="space-y-2">
               <Label>优先级</Label>
-              <Select value={priority} onValueChange={(value) => setPriority(value as TaskBoardPriority)}>
+              <Select
+                value={priority}
+                onValueChange={(value) => setPriority(value as TaskBoardPriority)}
+                disabled={submitting}
+              >
                 <SelectTrigger aria-label="新任务优先级"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {TASKBOARD_PRIORITIES.map((value) => (
@@ -146,6 +156,7 @@ export function TaskDialog({ open, active = true, onOpenChange, onCreate }: Task
               value={labels}
               onChange={(event) => setLabels(event.target.value)}
               placeholder="多个标签用逗号分隔"
+              disabled={submitting}
             />
           </div>
           <div className="space-y-2">
@@ -155,6 +166,7 @@ export function TaskDialog({ open, active = true, onOpenChange, onCreate }: Task
               type="date"
               value={dueDate}
               onChange={(event) => setDueDate(event.target.value)}
+              disabled={submitting}
             />
           </div>
           {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}

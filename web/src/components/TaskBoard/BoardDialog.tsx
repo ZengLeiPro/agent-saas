@@ -118,6 +118,7 @@ export function BoardDialog({
                 setName(event.target.value);
               }}
               placeholder="例如：产品研发"
+              disabled={submitting}
               autoFocus
             />
           </div>
@@ -132,6 +133,7 @@ export function BoardDialog({
               }}
               placeholder="这个看板用于管理什么？"
               rows={4}
+              disabled={submitting}
             />
           </div>
           {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}

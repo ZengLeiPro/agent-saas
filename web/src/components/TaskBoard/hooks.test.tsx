@@ -209,4 +209,99 @@ describe("任务看板 hooks 并发一致性", () => {
     });
     expect(result.current.comments).toEqual([comment]);
   });
+
+  it("看板写入期间后发的慢 GET 不会覆盖写入结果", async () => {
+    const pendingPatch = deferred<TaskBoard>();
+    const staleFetch = deferred<TaskBoard[]>();
+    const edited = { ...originalBoard, name: "已保存的新名称", version: 3 };
+    mocks.patchBoard.mockReturnValueOnce(pendingPatch.promise);
+    const { result } = renderHook(() => useTaskBoards());
+    await waitFor(() => expect(result.current.boards).toEqual([originalBoard]));
+    mocks.fetchBoards.mockReturnValueOnce(staleFetch.promise);
+
+    let mutationPromise!: Promise<TaskBoard>;
+    act(() => {
+      mutationPromise = result.current.updateBoard(originalBoard.id, {
+        name: edited.name,
+        expectedVersion: originalBoard.version,
+      });
+    });
+    let refreshPromise!: Promise<void>;
+    act(() => {
+      refreshPromise = result.current.refresh();
+    });
+
+    await act(async () => {
+      pendingPatch.resolve(edited);
+      await mutationPromise;
+    });
+    expect(result.current.boards).toEqual([edited]);
+
+    await act(async () => {
+      staleFetch.resolve([originalBoard]);
+      await refreshPromise;
+    });
+    expect(result.current.boards).toEqual([edited]);
+  });
+
+  it("任务写入期间后发的慢 GET 不会覆盖写入结果", async () => {
+    const pendingPatch = deferred<TaskBoardTask>();
+    const staleFetch = deferred<TaskBoardTask[]>();
+    const edited = { ...originalTask, title: "已保存的新标题", version: 8 };
+    mocks.patchTask.mockReturnValueOnce(pendingPatch.promise);
+    const { result } = renderHook(() => useBoardTasks(originalTask.boardId));
+    await waitFor(() => expect(result.current.tasks).toEqual([originalTask]));
+    mocks.fetchTasks.mockReturnValueOnce(staleFetch.promise);
+
+    let mutationPromise!: Promise<TaskBoardTask>;
+    act(() => {
+      mutationPromise = result.current.updateTask(originalTask, { title: edited.title });
+    });
+    let refreshPromise!: Promise<void>;
+    act(() => {
+      refreshPromise = result.current.refresh();
+    });
+
+    await act(async () => {
+      pendingPatch.resolve(edited);
+      await mutationPromise;
+    });
+    expect(result.current.tasks).toEqual([edited]);
+
+    await act(async () => {
+      staleFetch.resolve([originalTask]);
+      await refreshPromise;
+    });
+    expect(result.current.tasks).toEqual([edited]);
+  });
+
+  it("评论写入期间后发的慢 GET 不会覆盖新评论", async () => {
+    const pendingCreate = deferred<TaskBoardComment>();
+    const staleFetch = deferred<TaskBoardComment[]>();
+    mocks.createComment.mockReturnValueOnce(pendingCreate.promise);
+    const { result } = renderHook(() => useTaskComments(originalTask.id));
+    await waitFor(() => expect(mocks.fetchComments).toHaveBeenCalledOnce());
+    mocks.fetchComments.mockReturnValueOnce(staleFetch.promise);
+
+    let mutationPromise!: Promise<TaskBoardComment>;
+    act(() => {
+      mutationPromise = result.current.addComment({ body: comment.body });
+    });
+    let refreshPromise!: Promise<void>;
+    act(() => {
+      refreshPromise = result.current.refresh();
+    });
+
+    await act(async () => {
+      pendingCreate.resolve(comment);
+      await mutationPromise;
+    });
+    expect(result.current.comments).toEqual([comment]);
+
+    await act(async () => {
+      staleFetch.resolve([]);
+      await refreshPromise;
+    });
+    expect(result.current.comments).toEqual([comment]);
+  });
 });

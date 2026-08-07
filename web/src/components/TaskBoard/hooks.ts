@@ -77,6 +77,7 @@ export function useTaskBoards() {
     try {
       const board = await api.createBoard(input);
       if (mountedRef.current) {
+        invalidateRefresh();
         setBoards((current) => [...current, board]);
         setError(null);
       }
@@ -92,6 +93,7 @@ export function useTaskBoards() {
     try {
       const board = await api.patchBoard(id, input);
       if (mountedRef.current) {
+        invalidateRefresh();
         replaceBoard(board);
         setError(null);
       }
@@ -107,6 +109,7 @@ export function useTaskBoards() {
     try {
       const next = await api.archiveBoard(board.id, board.version);
       if (mountedRef.current) {
+        invalidateRefresh();
         replaceBoard(next);
         setError(null);
       }
@@ -122,6 +125,7 @@ export function useTaskBoards() {
     try {
       const next = await api.restoreBoard(board.id, board.version);
       if (mountedRef.current) {
+        invalidateRefresh();
         replaceBoard(next);
         setError(null);
       }
@@ -234,7 +238,8 @@ export function useBoardTasks(boardId: string | null) {
     invalidateRefresh();
     try {
       const task = await api.createTask(mutationBoardId, input);
-      if (mutationBoardId === boardIdRef.current) {
+      if (mountedRef.current && mutationBoardId === boardIdRef.current) {
+        invalidateRefresh();
         syncTask(task);
         setError(null);
       }
@@ -253,7 +258,8 @@ export function useBoardTasks(boardId: string | null) {
     invalidateRefresh();
     try {
       const next = await api.patchTask(task.id, { ...input, expectedVersion: task.version });
-      if (mutationBoardId === boardIdRef.current) {
+      if (mountedRef.current && mutationBoardId === boardIdRef.current) {
+        invalidateRefresh();
         syncTask(next);
         setError(null);
       }
@@ -271,7 +277,8 @@ export function useBoardTasks(boardId: string | null) {
       const next = archived
         ? await api.archiveTask(task.id, task.version)
         : await api.restoreTask(task.id, task.version);
-      if (mutationBoardId === boardIdRef.current) {
+      if (mountedRef.current && mutationBoardId === boardIdRef.current) {
+        invalidateRefresh();
         syncTask(next);
         setError(null);
       }
@@ -294,7 +301,8 @@ export function useBoardTasks(boardId: string | null) {
     setTasks(optimisticTasks);
     try {
       const next = await api.moveTask(task.id, { ...input, expectedVersion: task.version });
-      if (mutationBoardId !== boardIdRef.current) return next;
+      if (!mountedRef.current || mutationBoardId !== boardIdRef.current) return next;
+      invalidateRefresh();
       syncTask(next);
       await refresh();
       return next;
@@ -373,6 +381,8 @@ export function useTaskComments(taskId: string | null) {
     try {
       const comment = await api.createComment(mutationTaskId, input);
       if (mutationTaskId === taskIdRef.current) {
+        requestRef.current += 1;
+        setLoading(false);
         setComments((current) => [...current, comment]);
         setError(null);
       }

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { TaskBoard } from "@agent/shared";
@@ -43,5 +43,37 @@ describe("BoardDialog 冲突重试", () => {
       name: "我的看板草稿",
       expectedVersion: 3,
     });
+  });
+
+  it("提交期间锁定全部表单控件，请求完成后再关闭", async () => {
+    const user = userEvent.setup();
+    let resolveUpdate!: () => void;
+    const onUpdate = vi.fn(() => new Promise<void>((resolve) => {
+      resolveUpdate = resolve;
+    }));
+    const onOpenChange = vi.fn();
+    render(
+      <BoardDialog
+        open
+        board={board}
+        onOpenChange={onOpenChange}
+        onCreate={vi.fn(async () => undefined)}
+        onUpdate={onUpdate}
+      />,
+    );
+
+    const name = screen.getByRole("textbox", { name: "名称" });
+    await user.type(name, "更新");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledOnce());
+
+    expect(name).toHaveProperty("disabled", true);
+    expect(screen.getByRole("textbox", { name: "说明" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "取消" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "保存中..." })).toHaveProperty("disabled", true);
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    resolveUpdate();
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 });

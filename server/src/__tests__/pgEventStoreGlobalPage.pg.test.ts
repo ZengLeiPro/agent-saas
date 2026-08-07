@@ -64,4 +64,41 @@ describePg('PgEventStore listGlobalPage/listSessionRange contract', () => {
     const rows = await store!.listSessionRange(SESSION, { fromExclusive: 2, toInclusive: 4 });
     expect(rows.map((r) => r.sessionSequence)).toEqual([3, 4]);
   });
+
+  it('context_rewind 与隐藏恢复输入以同一 appendBatch 连续追加且原事件不变', async () => {
+    const before = await store!.list(SESSION);
+    const appended = await store!.appendBatch([
+      {
+        type: 'context_rewind',
+        runId: 'r-recovery',
+        sessionId: SESSION,
+        reason: 'invalid_prompt_request_blocked',
+        message: '自动回退上一工具交互并继续',
+        sourceModelRequestId: 'request-1',
+        sourceAttemptId: 'attempt-1',
+        excludedEventIds: [before[2]!.id, before[3]!.id],
+        excludedToolCallIds: ['call-1'],
+        excludedStartSequence: 3,
+        excludedEndSequence: 4,
+        createdAt: '2026-08-07T01:00:00.000Z',
+        recoveryAttempt: 1,
+      },
+      {
+        type: 'user_message',
+        runId: 'r-recovery',
+        sessionId: SESSION,
+        content: '继续',
+        modelContent: '继续',
+        systemGenerated: true,
+        recoveryKind: 'invalid_prompt_rewind',
+        hiddenFromUserTranscript: true,
+      },
+    ], { tenantId: 't1' });
+    const after = await store!.list(SESSION);
+
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(appended.map((event) => event.type)).toEqual(['context_rewind', 'user_message']);
+    expect((appended[0] as unknown as { sequence: number }).sequence + 1)
+      .toBe((appended[1] as unknown as { sequence: number }).sequence);
+  });
 });

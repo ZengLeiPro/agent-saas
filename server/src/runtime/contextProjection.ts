@@ -28,6 +28,128 @@ export interface ContextProjection {
 const DEFAULT_RECENT_EVENTS = 80;
 const DEFAULT_MAX_MATCHES = 20;
 
+const MODEL_VISIBLE_EVENT_TYPES = new Set<PlatformEvent['type']>([
+  'memory_context',
+  'user_message',
+  'assistant_message',
+  'assistant_thinking',
+  'mcp_tools_loaded',
+  'assistant_tool_calls',
+  'tool_result',
+]);
+
+export interface CompleteToolInteractionUnit {
+  excludedEventIds: string[];
+  excludedToolCallIds: string[];
+  excludedStartSequence: number;
+  excludedEndSequence: number;
+}
+
+/**
+ * 只接受最后一个 assistant 输出确为完整工具 batch 的历史。
+ * thinking 以模型可见事件上的紧邻关系归属；batch 后必须先完整、且仅完整出现
+ * 其全部 tool_result，才允许跨过下一条 user/memory 输入。
+ */
+export function findLastCompleteToolInteractionUnit(
+  selectedEvents: PlatformEvent[],
+  orderedSessionEvents: PlatformEvent[] = selectedEvents,
+): CompleteToolInteractionUnit | null {
+  let batchIndex = -1;
+  for (let index = selectedEvents.length - 1; index >= 0; index -= 1) {
+    const event = selectedEvents[index]!;
+    if (event.type === 'assistant_message') return null;
+    if (event.type === 'assistant_tool_calls') {
+      batchIndex = index;
+      break;
+    }
+  }
+  if (batchIndex < 0) return null;
+
+  const batch = selectedEvents[batchIndex]!;
+  if (batch.type !== 'assistant_tool_calls' || batch.toolCalls.length === 0) return null;
+  const toolCallIds = batch.toolCalls.map((call) => call.id);
+  const expectedIds = new Set(toolCallIds);
+  if (expectedIds.size !== toolCallIds.length || toolCallIds.some((id) => !id)) return null;
+
+  const resultByToolCallId = new Map<string, Extract<PlatformEvent, { type: 'tool_result' }>>();
+  let boundaryIndex = selectedEvents.length;
+  for (let index = batchIndex + 1; index < selectedEvents.length; index += 1) {
+    const event = selectedEvents[index]!;
+    if (!MODEL_VISIBLE_EVENT_TYPES.has(event.type)) continue;
+    if (event.type === 'tool_result') {
+      if (!expectedIds.has(event.toolCallId) || resultByToolCallId.has(event.toolCallId)) return null;
+      resultByToolCallId.set(event.toolCallId, event);
+      continue;
+    }
+    if (event.type === 'user_message' || event.type === 'memory_context') {
+      boundaryIndex = index;
+      break;
+    }
+    return null;
+  }
+  if (resultByToolCallId.size !== expectedIds.size) return null;
+  if (selectedEvents.slice(boundaryIndex + 1).some((event) => (
+    event.type === 'tool_result' && expectedIds.has(event.toolCallId)
+  ))) return null;
+
+  const thinkingEvents: Extract<PlatformEvent, { type: 'assistant_thinking' }>[] = [];
+  for (let index = batchIndex - 1; index >= 0; index -= 1) {
+    const event = selectedEvents[index]!;
+    if (!MODEL_VISIBLE_EVENT_TYPES.has(event.type)) continue;
+    if (event.type === 'assistant_thinking' && event.runId === batch.runId) {
+      thinkingEvents.unshift(event);
+      continue;
+    }
+    break;
+  }
+
+  const excludedIds = new Set([
+    ...thinkingEvents.map((event) => event.id),
+    batch.id,
+    ...toolCallIds.map((id) => resultByToolCallId.get(id)!.id),
+  ]);
+  const orderedExcluded = orderedSessionEvents
+    .map((event, index) => ({
+      event,
+      sequence: typeof (event as PlatformEvent & { sequence?: unknown }).sequence === 'number'
+        ? (event as PlatformEvent & { sequence: number }).sequence
+        : index + 1,
+    }))
+    .filter(({ event }) => excludedIds.has(event.id));
+  if (orderedExcluded.length !== excludedIds.size) return null;
+
+  return {
+    excludedEventIds: orderedExcluded.map(({ event }) => event.id),
+    excludedToolCallIds: toolCallIds,
+    excludedStartSequence: orderedExcluded[0]!.sequence,
+    excludedEndSequence: orderedExcluded.at(-1)!.sequence,
+  };
+}
+
+const CONTEXT_REWIND_MODEL_NOTICE = [
+  '<platform-recovery>',
+  '平台因 provider 拒绝当前 replay，已从模型上下文中排除上一段完整工具交互并自动继续。',
+  '上一工具调用可能已经产生部分外部副作用；继续前必须先检查实际状态，禁止盲目重复写操作。',
+  '</platform-recovery>',
+].join('\n');
+
+function applyContextRewinds(events: PlatformEvent[]): {
+  effectiveEvents: PlatformEvent[];
+  recoveryMessages: ModelChatMessage[];
+} {
+  const excludedEventIds = new Set<string>();
+  const recoveryMessages: ModelChatMessage[] = [];
+  for (const event of events) {
+    if (event.type !== 'context_rewind') continue;
+    for (const eventId of event.excludedEventIds) excludedEventIds.add(eventId);
+    recoveryMessages.push({ role: 'system', content: CONTEXT_REWIND_MODEL_NOTICE });
+  }
+  return {
+    effectiveEvents: events.filter((event) => event.type !== 'context_rewind' && !excludedEventIds.has(event.id)),
+    recoveryMessages,
+  };
+}
+
 /** 用户消息轨迹：单条上限（头 + 尾，超出中间省略） */
 const TRAIL_ITEM_MAX_CHARS = 500;
 const TRAIL_ITEM_HEAD_CHARS = 400;
@@ -94,6 +216,7 @@ export function extractUserMessageTrail(compressed: PlatformEvent[]): TrailItem[
   const items: TrailItem[] = [];
   for (const event of compressed) {
     if (event.type !== 'user_message') continue;
+    if (event.hiddenFromUserTranscript) continue;
     if (event.modelContent?.startsWith(SYSTEM_COMMAND_MODEL_CONTENT_PREFIX)) continue;
     const content = event.content.trim();
     if (!content) continue;
@@ -188,8 +311,12 @@ function formatCompactionContext(summary: string, trail: TrailItem[]): string {
  */
 export function buildContextProjection(allEvents: PlatformEvent[], options: ContextProjectionOptions): ContextProjection {
   const policy = options.policy ?? { type: 'full_replay' };
-  const contextEvents = allEvents.filter((event) => !isInternalModelDiagnosticEvent(event));
-  const { effectiveEvents: events, summaryMessages } = applyCompaction(contextEvents);
+  const {
+    effectiveEvents: contextEvents,
+    recoveryMessages,
+  } = applyContextRewinds(allEvents.filter((event) => !isInternalModelDiagnosticEvent(event)));
+  const { effectiveEvents: events, summaryMessages: compactionMessages } = applyCompaction(contextEvents);
+  const summaryMessages = [...recoveryMessages, ...compactionMessages];
   const withRestoredMcpTools = (
     prefix: ModelChatMessage[],
     replayMessages: ModelChatMessage[],

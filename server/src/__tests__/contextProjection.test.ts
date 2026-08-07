@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildContextProjection, extractUserMessageTrail, renderUserMessageTrail } from '../runtime/contextProjection.js';
+import {
+  buildContextProjection,
+  extractUserMessageTrail,
+  findLastCompleteToolInteractionUnit,
+  renderUserMessageTrail,
+} from '../runtime/contextProjection.js';
 import { MODEL_TOOL_RESULT_MAX_CHARS } from '../runtime/replayEventBounds.js';
 import type { PlatformEvent } from '../runtime/types.js';
 
@@ -417,6 +422,86 @@ describe('compaction 切分（/compact 真实现）', () => {
     expect(projection.messages).toHaveLength(2);
     expect(projection.messages[0]?.content).toContain('摘要正文');
     expect(projection.messages[1]).toMatchObject({ role: 'user', content: 'user_message-3' });
+  });
+});
+
+describe('context_rewind 工具交互单元', () => {
+  const toolUnit = (): PlatformEvent[] => ([
+    { ...event(1), type: 'assistant_thinking', runId: 'run-tool', content: '先检查' } as PlatformEvent,
+    {
+      ...event(2),
+      type: 'assistant_tool_calls',
+      runId: 'run-tool',
+      content: '',
+      toolCalls: [
+        { id: 'call-a', name: 'Read', arguments: '{}' },
+        { id: 'call-b', name: 'Shell', arguments: '{}' },
+      ],
+    } as PlatformEvent,
+    { ...event(3), type: 'tool_result', runId: 'run-tool', toolCallId: 'call-a', toolName: 'Read', content: 'a' } as PlatformEvent,
+    { ...event(4), type: 'tool_result', runId: 'run-tool', toolCallId: 'call-b', toolName: 'Shell', content: 'b' } as PlatformEvent,
+  ]);
+
+  it('并行 tool call 整批定位并连同紧邻 thinking 排除', () => {
+    const events = [event(0), ...toolUnit(), event(5)];
+    const unit = findLastCompleteToolInteractionUnit(events, events);
+    expect(unit).toEqual({
+      excludedEventIds: ['event-1', 'event-2', 'event-3', 'event-4'],
+      excludedToolCallIds: ['call-a', 'call-b'],
+      excludedStartSequence: 2,
+      excludedEndSequence: 5,
+    });
+  });
+
+  it('投影只排除 marker 明确引用的事件，原始数组保持不变且隐藏恢复输入仍进模型', () => {
+    const originals = [event(0), ...toolUnit()];
+    const snapshot = JSON.stringify(originals);
+    const events = [
+      ...originals,
+      {
+        ...event(5),
+        type: 'context_rewind',
+        runId: 'run-recovery',
+        reason: 'invalid_prompt_request_blocked',
+        message: '自动回退上一工具交互并继续',
+        sourceModelRequestId: 'request-1',
+        sourceAttemptId: 'attempt-1',
+        excludedEventIds: ['event-1', 'event-2', 'event-3', 'event-4'],
+        excludedToolCallIds: ['call-a', 'call-b'],
+        excludedStartSequence: 2,
+        excludedEndSequence: 5,
+        createdAt: '2026-01-01T00:00:05.000Z',
+        recoveryAttempt: 1,
+      } as PlatformEvent,
+      {
+        ...event(6),
+        runId: 'run-recovery',
+        content: '继续',
+        modelContent: '继续',
+        systemGenerated: true,
+        recoveryKind: 'invalid_prompt_rewind',
+        hiddenFromUserTranscript: true,
+      } as PlatformEvent,
+    ];
+    const projection = buildContextProjection(events, { sessionId: 'session-1', runId: 'run-recovery' });
+
+    expect(projection.selectedEvents.map((item) => item.id)).toEqual(['event-0', 'event-6']);
+    expect(projection.messages).toEqual([
+      { role: 'system', content: expect.stringContaining('禁止盲目重复写操作') },
+      { role: 'user', content: 'user_message-0' },
+      { role: 'user', content: '继续' },
+    ]);
+    expect(JSON.stringify(originals)).toBe(snapshot);
+  });
+
+  it.each([
+    ['缺少并行结果', toolUnit().filter((item) => item.id !== 'event-4')],
+    ['重复 toolCallId', toolUnit().map((item) => item.id === 'event-4'
+      ? { ...item, toolCallId: 'call-a' } as PlatformEvent
+      : item)],
+    ['最后 assistant 轮为普通消息', [...toolUnit(), event(6, 'assistant_message')]],
+  ])('%s 时拒绝猜测截断范围', (_name, events) => {
+    expect(findLastCompleteToolInteractionUnit(events, events)).toBeNull();
   });
 });
 

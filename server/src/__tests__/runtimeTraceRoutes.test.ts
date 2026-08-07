@@ -719,6 +719,37 @@ describe('runtimeTrace 纯转换函数', () => {
     expect(JSON.stringify(out)).not.toContain('/tmp/');
   });
 
+  it('sanitizeTraceEvent：context_rewind 明确展示固定原因和排除范围', () => {
+    const out = sanitizeTraceEvent({
+      id: 'rewind-1',
+      timestamp: '2026-08-07T01:00:00.000Z',
+      type: 'context_rewind',
+      runId: 'run-rewind',
+      sessionId: 'session-rewind',
+      reason: 'invalid_prompt_request_blocked',
+      message: '自动回退上一工具交互并继续',
+      sourceModelRequestId: 'request-1',
+      sourceAttemptId: 'attempt-1',
+      excludedEventIds: ['thinking-1', 'calls-1', 'result-1'],
+      excludedToolCallIds: ['call-1'],
+      excludedStartSequence: 10,
+      excludedEndSequence: 12,
+      createdAt: '2026-08-07T01:00:00.000Z',
+      recoveryAttempt: 1,
+    });
+
+    expect(out).toMatchObject({
+      type: 'context_rewind',
+      reason: 'invalid_prompt_request_blocked',
+      message: '自动回退上一工具交互并继续',
+      excludedEventIds: ['thinking-1', 'calls-1', 'result-1'],
+      excludedToolCallIds: ['call-1'],
+      excludedStartSequence: 10,
+      excludedEndSequence: 12,
+      recoveryAttempt: 1,
+    });
+  });
+
   it('sanitizeTraceEvent：错误与原因只保留发生事实，不返回原文', () => {
     const out = sanitizeTraceEvent({
       id: 'evt-sensitive-error',

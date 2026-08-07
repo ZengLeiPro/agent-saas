@@ -25,6 +25,7 @@ import { MODEL_TOOL_RESULT_MAX_CHARS } from '../runtime/replayEventBounds.js';
 import { SessionContextService, SessionToolProvider } from '../runtime/sessionContext.js';
 import { InMemoryToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import type { LatestResponseSessionState, ResponseSessionStatePatch, RunStore } from '../runtime/runStore.js';
+import { ModelProviderError } from '../runtime/types.js';
 import type {
   ModelAdapter,
   ModelEvent,
@@ -605,6 +606,52 @@ class LongResultToolRuntime implements ToolRuntime {
   }
 }
 
+class InvalidPromptRecoveryAdapter implements ModelAdapter {
+  readonly capabilities = { responseState: 'stored' as const };
+  readonly requests: ModelRequest[] = [];
+
+  constructor(
+    private readonly failures: number,
+    private readonly failure: Partial<Extract<ModelEvent, { type: 'completed' }>> = {},
+    private readonly throwTypedError = false,
+    private readonly outputBeforeFailure?: 'text' | 'thinking',
+  ) {}
+
+  async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
+    this.requests.push(request);
+    if (this.requests.length <= this.failures) {
+      if (this.outputBeforeFailure === 'text') yield { type: 'text_delta', content: '部分正文' };
+      if (this.outputBeforeFailure === 'thinking') yield { type: 'thinking_delta', content: '部分思考' };
+      if (this.throwTypedError) {
+        throw new ModelProviderError(
+          'Responses API HTTP 400: Request blocked by provider',
+          400,
+          'invalid_prompt',
+          `request-${this.requests.length}`,
+          `attempt-${this.requests.length}`,
+          0,
+        );
+      }
+      yield {
+        type: 'completed',
+        content: '',
+        toolCalls: [],
+        terminalStatus: 'failed',
+        errorCode: 'invalid_prompt',
+        errorMessage: 'Request blocked by provider',
+        modelRequestId: `request-${this.requests.length}`,
+        attemptId: `attempt-${this.requests.length}`,
+        emittedOutputCount: 0,
+        providerStatus: 400,
+        ...this.failure,
+      };
+      return;
+    }
+    yield { type: 'text_delta', content: '恢复完成' };
+    yield { type: 'completed', content: '恢复完成', toolCalls: [], terminalStatus: 'completed' };
+  }
+}
+
 async function collect(stream: AsyncIterable<OutboundEvent>): Promise<OutboundEvent[]> {
   const events: OutboundEvent[] = [];
   for await (const event of stream) events.push(event);
@@ -619,6 +666,345 @@ describe('RawAgentLoop', () => {
       await rm(dir, { recursive: true, force: true });
     }
     cleanupDirs.clear();
+  });
+
+  async function seedCompleteParallelToolUnit(eventStore: FileEventStore, sessionId: string) {
+    return eventStore.appendBatch([
+      { type: 'user_message', runId: 'run-history', sessionId, content: '检查状态' },
+      { type: 'assistant_thinking', runId: 'run-history', sessionId, content: '先并行检查' },
+      {
+        type: 'assistant_tool_calls',
+        runId: 'run-history',
+        sessionId,
+        content: '',
+        toolCalls: [
+          { id: 'call-read', name: 'Read', arguments: '{"path":"a"}' },
+          { id: 'call-shell', name: 'Shell', arguments: '{"command":"check"}' },
+        ],
+        providerContinuation: {
+          provider: 'openai_codex_subscription',
+          issuer: 'issuer-1',
+          accountBindingHash: 'binding-1',
+          items: [{ type: 'reasoning', encrypted_content: 'opaque-secret' }],
+        },
+      },
+      { type: 'tool_result', runId: 'run-history', sessionId, toolCallId: 'call-read', toolName: 'Read', content: 'read-ok' },
+      { type: 'tool_result', runId: 'run-history', sessionId, toolCallId: 'call-shell', toolName: 'Shell', content: 'shell-ok' },
+    ]);
+  }
+
+  it('invalid_prompt Request blocked 零输出时排除最后完整工具单元并在同一 run 自动继续', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-context-rewind-'));
+    cleanupDirs.add(cwd);
+    const sessionId = 'session-context-rewind';
+    const runId = 'run-context-rewind';
+    const eventPath = join(cwd, 'session.runtime-events.jsonl');
+    const transcriptPath = join(cwd, 'session.jsonl');
+    const eventStore = new FileEventStore(eventPath);
+    const originals = await seedCompleteParallelToolUnit(eventStore, sessionId);
+    const originalSnapshot = JSON.stringify(originals);
+    const adapter = new InvalidPromptRecoveryAdapter(1, {}, true);
+    const clearResponseSessionStateBySession = vi.fn(async () => 1);
+    const runStore = {
+      findLatestResponseSessionStateBySession: async () => ({
+        runId: 'run-history',
+        lastResponseId: 'resp-previous',
+        lastResponseModel: 'gpt-5.6-sol',
+        lastResponseProfileDigest: 'profile-digest',
+      }),
+      clearResponseSessionStateBySession,
+    } as unknown as RunStore;
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
+      runStore,
+    });
+
+    const outbound = await collect(loop.run({
+      message: { channel: 'web', chatId: sessionId, content: '处理后续' },
+      prompt: '处理后续',
+      instructions: 'system instructions',
+      maxTurns: 1,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId,
+      sessionId,
+      model: 'gpt-5.6-sol',
+      profileConfigDigest: 'profile-digest',
+      cwd,
+      channelContext: { channel: 'web' },
+      approvalPolicy: { autoApproveTools: true },
+    }));
+
+    expect(outbound.at(-1)).toEqual({ type: 'done' });
+    expect(adapter.requests).toHaveLength(2);
+    expect(adapter.requests[0]?.previousResponseId).toBe('resp-previous');
+    expect(adapter.requests[1]?.previousResponseId).toBeUndefined();
+    expect(clearResponseSessionStateBySession).toHaveBeenCalledOnce();
+    const replay = adapter.requests[1]!.messages;
+    expect(replay.at(-1)).toEqual({ role: 'user', content: '继续' });
+    expect(replay.some((message) => message.role === 'system'
+      && message.content.includes('禁止盲目重复写操作'))).toBe(true);
+    expect(replay.some((message) => message.role === 'assistant' && message.tool_calls?.length)).toBe(false);
+    expect(replay.some((message) => message.role === 'tool')).toBe(false);
+    expect(replay.some((message) => message.role === 'assistant' && message.provider_continuation)).toBe(false);
+
+    const durable = await eventStore.list(sessionId);
+    expect(JSON.stringify(durable.slice(0, originals.length))).toBe(originalSnapshot);
+    const rewind = durable.find((item): item is Extract<PlatformEvent, { type: 'context_rewind' }> => (
+      item.type === 'context_rewind'
+    ));
+    expect(rewind).toMatchObject({
+      runId,
+      reason: 'invalid_prompt_request_blocked',
+      message: '自动回退上一工具交互并继续',
+      sourceModelRequestId: 'request-1',
+      sourceAttemptId: 'attempt-1',
+      excludedEventIds: originals.slice(1).map((item) => item.id),
+      excludedToolCallIds: ['call-read', 'call-shell'],
+      excludedStartSequence: 2,
+      excludedEndSequence: 5,
+      recoveryAttempt: 1,
+    });
+    expect(durable.filter((item) => item.type === 'context_rewind')).toHaveLength(1);
+    expect(durable.filter((item) => item.type === 'user_message'
+      && item.systemGenerated === true
+      && item.content === '继续')).toHaveLength(1);
+    expect(durable.filter((item) => item.type === 'run_finished')).toEqual([
+      expect.objectContaining({ subtype: 'success' }),
+    ]);
+    const sessionContextPage = await new SessionContextService(eventStore).getEvents(sessionId, { limit: 100 });
+    expect(sessionContextPage.events.slice(0, originals.length).map((item) => item.id))
+      .toEqual(originals.map((item) => item.id));
+    expect(await readFile(transcriptPath, 'utf-8')).not.toContain('"content":"继续"');
+  });
+
+  it('同一 run 第二次 Request blocked 不再截断并只返回客户继续提示', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-context-rewind-once-'));
+    cleanupDirs.add(cwd);
+    const sessionId = 'session-context-rewind-once';
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    await seedCompleteParallelToolUnit(eventStore, sessionId);
+    const adapter = new InvalidPromptRecoveryAdapter(2);
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+    });
+
+    const outbound = await collect(loop.run({
+      message: { channel: 'web', chatId: sessionId, content: '继续处理' },
+      prompt: '继续处理',
+      instructions: 'system instructions',
+      maxTurns: 1,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId: 'run-context-rewind-once',
+      sessionId,
+      model: 'gpt-5.6-sol',
+      cwd,
+      channelContext: { channel: 'web' },
+      approvalPolicy: { autoApproveTools: true },
+    }));
+
+    expect(adapter.requests).toHaveLength(2);
+    expect(outbound.at(-1)).toEqual({ type: 'error', error: 'Agent 开小差了，请发送「继续」' });
+    const durable = await eventStore.list(sessionId);
+    expect(durable.filter((item) => item.type === 'context_rewind')).toHaveLength(1);
+    expect(durable.filter((item) => item.type === 'user_message' && item.systemGenerated)).toHaveLength(1);
+    expect(durable.filter((item) => item.type === 'run_finished')).toEqual([
+      expect.objectContaining({ subtype: 'error', error: 'Agent 开小差了，请发送「继续」' }),
+    ]);
+  });
+
+  it('marker 写入后进程重启时 wake 不重复追加 marker 或“继续”', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-context-rewind-wake-'));
+    cleanupDirs.add(cwd);
+    const sessionId = 'session-context-rewind-wake';
+    const runId = 'run-context-rewind-wake';
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const originals = await seedCompleteParallelToolUnit(eventStore, sessionId);
+    await eventStore.appendBatch([
+      {
+        type: 'context_rewind',
+        runId,
+        sessionId,
+        reason: 'invalid_prompt_request_blocked',
+        message: '自动回退上一工具交互并继续',
+        sourceModelRequestId: 'request-before-crash',
+        sourceAttemptId: 'attempt-before-crash',
+        excludedEventIds: originals.slice(1).map((item) => item.id),
+        excludedToolCallIds: ['call-read', 'call-shell'],
+        excludedStartSequence: 2,
+        excludedEndSequence: 5,
+        createdAt: new Date().toISOString(),
+        recoveryAttempt: 1,
+      },
+      {
+        type: 'user_message',
+        runId,
+        sessionId,
+        content: '继续',
+        modelContent: '继续',
+        systemGenerated: true,
+        recoveryKind: 'invalid_prompt_rewind',
+        hiddenFromUserTranscript: true,
+      },
+    ]);
+    const adapter = new InvalidPromptRecoveryAdapter(0);
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+    });
+
+    const outbound = await collect(loop.run({
+      message: { channel: 'web', chatId: sessionId, content: 'hidden scheduler wake' },
+      prompt: 'hidden scheduler wake',
+      instructions: 'system instructions',
+      maxTurns: 1,
+      recordUserMessage: false,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId,
+      sessionId,
+      model: 'gpt-5.6-sol',
+      cwd,
+      channelContext: { channel: 'web' },
+      approvalPolicy: { autoApproveTools: true },
+    }));
+
+    expect(outbound.at(-1)).toEqual({ type: 'done' });
+    expect(adapter.requests).toHaveLength(1);
+    expect(adapter.requests[0]!.messages.filter((message) => (
+      message.role === 'user' && message.content === '继续'
+    ))).toHaveLength(1);
+    expect(JSON.stringify(adapter.requests[0]!.messages)).not.toContain('hidden scheduler wake');
+    const durable = await eventStore.list(sessionId);
+    expect(durable.filter((item) => item.type === 'context_rewind')).toHaveLength(1);
+    expect(durable.filter((item) => item.type === 'user_message' && item.systemGenerated)).toHaveLength(1);
+  });
+
+  it('resumeApproval 路径同样只恢复一次并在原 durable run 成功收尾', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-context-rewind-resume-'));
+    cleanupDirs.add(cwd);
+    await writeFile(join(cwd, 'seed.txt'), 'SEED_OK', 'utf-8');
+    const sessionId = 'session-context-rewind-resume';
+    const runId = 'run-context-rewind-resume';
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const approvalStore = new EventBackedApprovalStore(eventStore, sessionId);
+    await eventStore.appendBatch([
+      { type: 'user_message', runId, sessionId, content: '读取 seed.txt' },
+      {
+        type: 'assistant_tool_calls',
+        runId,
+        sessionId,
+        content: '',
+        toolCalls: [{ id: 'call-resume-read', name: 'Read', arguments: '{"path":"seed.txt"}' }],
+      },
+    ]);
+    const approval = await approvalStore.create({
+      sessionId,
+      runId,
+      toolCallId: 'call-resume-read',
+      toolId: 'Read',
+      toolName: 'Read',
+      input: { path: 'seed.txt' },
+    });
+    const adapter = new InvalidPromptRecoveryAdapter(1);
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore,
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+    });
+
+    const outbound = await collect(loop.resumeApproval({
+      approvalId: approval.id,
+      response: { allow: true, message: '批准读取' },
+      instructions: '读取后回答。',
+      maxTurns: 1,
+    }, {
+      runId,
+      sessionId,
+      model: 'gpt-5.6-sol',
+      cwd,
+      channelContext: { channel: 'web' },
+      approvalPolicy: { autoApproveTools: true },
+    }));
+
+    expect(adapter.requests).toHaveLength(2);
+    expect(adapter.requests[1]!.messages.at(-1)).toEqual({ role: 'user', content: '继续' });
+    expect(outbound.at(-1)).toEqual({ type: 'done' });
+    const durable = await eventStore.list(sessionId);
+    expect(durable.filter((item) => item.type === 'context_rewind')).toHaveLength(1);
+    expect(durable.filter((item) => item.type === 'run_finished')).toEqual([
+      expect.objectContaining({ subtype: 'success' }),
+    ]);
+  });
+
+  it.each([
+    ['其他 invalid_prompt', { errorMessage: 'Different validation error' }, true, undefined],
+    ['其他错误码', { errorCode: 'server_error' }, true, undefined],
+    ['已有模型正文输出', { emittedOutputCount: 1 }, true, 'text'],
+    ['已有模型 thinking 输出', { emittedOutputCount: 1 }, true, 'thinking'],
+    ['最后 assistant 轮不是工具交互', {}, false, undefined],
+  ] as const)('%s 不触发 context_rewind', async (_name, failure, completeHistory, outputBeforeFailure) => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-context-rewind-negative-'));
+    cleanupDirs.add(cwd);
+    const sessionId = `session-negative-${cleanupDirs.size}`;
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    if (completeHistory) {
+      await seedCompleteParallelToolUnit(eventStore, sessionId);
+    } else {
+      await eventStore.appendBatch([
+        { type: 'user_message', runId: 'run-history', sessionId, content: '检查状态' },
+        { type: 'assistant_message', runId: 'run-history', sessionId, content: '已检查' },
+      ]);
+    }
+    const adapter = new InvalidPromptRecoveryAdapter(1, failure, false, outputBeforeFailure);
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+    });
+    const outbound = await collect(loop.run({
+      message: { channel: 'web', chatId: sessionId, content: '继续处理' },
+      prompt: '继续处理',
+      instructions: 'system instructions',
+      maxTurns: 1,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId: `run-${sessionId}`,
+      sessionId,
+      model: 'gpt-5.6-sol',
+      cwd,
+      channelContext: { channel: 'web' },
+      approvalPolicy: { autoApproveTools: true },
+    }));
+    expect(adapter.requests).toHaveLength(1);
+    const durable = await eventStore.list(sessionId);
+    expect(durable.some((item) => item.type === 'context_rewind')).toBe(false);
+    if (outputBeforeFailure === 'text') {
+      expect(durable).toContainEqual(expect.objectContaining({
+        type: 'assistant_message',
+        content: '部分正文',
+        incomplete: true,
+      }));
+      expect(outbound.at(-1)).toEqual({
+        type: 'error',
+        error: 'Agent 开小差了，请发送「继续」；已保留本次未完成正文，可发送“继续”接着完成。',
+      });
+    }
+    if (outputBeforeFailure === 'thinking') {
+      expect(outbound).toContainEqual({ type: 'thinking_delta', content: '部分思考' });
+    }
   });
 
   it('工具结果原文持久化，但模型投影固定且不会随新结果追加而改写', async () => {

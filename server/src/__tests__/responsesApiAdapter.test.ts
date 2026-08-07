@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ResponsesApiAdapter, RESPONSE_TTL_MS, MAX_OUTPUT_TOKENS_FLOOR } from '../runtime/responsesApiAdapter.js';
 import { ChatCompletionsModelAdapter } from '../runtime/chatCompletionsAdapter.js';
-import type { ModelEvent, ModelRequestDiagnostic } from '../runtime/types.js';
+import { ModelProviderError, type ModelEvent, type ModelRequestDiagnostic } from '../runtime/types.js';
 
 /** 构造一行 Responses API SSE 帧（含 event: + data:）。 */
 function sse(eventName: string, payload: unknown): string {
@@ -329,6 +329,49 @@ describe('ResponsesApiAdapter', () => {
       tools: [],
     }, baseContext))).rejects.toThrow('Responses API HTTP 400');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('HTTP invalid_prompt 保留结构化 Request blocked 证据且不在 adapter 内重试', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"error":{"code":"invalid_prompt","message":"Request blocked by policy"}}', { status: 400 }),
+    );
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk-test', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+
+    let thrown: unknown;
+    try {
+      await collect(adapter.stream({
+        model: 'gpt-5.6-sol',
+        messages: [{ role: 'user', content: '继续' }],
+        tools: [],
+        previousResponseId: 'resp-old',
+      }, {
+        ...baseContext,
+        recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+      }));
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(ModelProviderError);
+    expect(thrown).toMatchObject({
+      status: 400,
+      code: 'invalid_prompt',
+      emittedOutputCount: 0,
+    });
+    expect((thrown as ModelProviderError).message).toContain('Request blocked');
+    expect((thrown as ModelProviderError).modelRequestId).toBeTruthy();
+    expect((thrown as ModelProviderError).attemptId).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(diagnostics.at(-1)).toMatchObject({
+      type: 'finished',
+      outcome: 'http_error',
+      errorCode: 'invalid_prompt',
+      errorMessage: 'Request blocked by policy',
+    });
   });
 
   it('SSE 解析 function_call 累积参数为完整 toolCalls', async () => {
@@ -841,6 +884,47 @@ describe('ResponsesApiAdapter', () => {
       errorCode: 'invalid_request_error',
       toolCalls: [],
     });
+  });
+
+  it.each([
+    ['零输出', [], 0],
+    ['已有正文', [sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '部分正文' })], 1],
+    ['已有 tool call', [sse('response.output_item.added', {
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: { type: 'function_call', call_id: 'call-1', name: 'Write', arguments: '{}' },
+    })], 1],
+    ['已有 hosted tool search', [sse('response.output_item.added', {
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: { type: 'tool_search_call', arguments: { paths: ['tools'] } },
+    })], 1],
+  ])('SSE invalid_prompt Request blocked 保留 %s 的输出计数', async (_name, outputFrames, expectedCount) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      ...outputFrames,
+      sse('response.error', {
+        type: 'response.error',
+        error: { code: 'invalid_prompt', message: 'Request blocked by policy' },
+      }),
+    ]));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+    const events = await collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext));
+
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      terminalStatus: 'failed',
+      errorCode: 'invalid_prompt',
+      errorMessage: 'Request blocked by policy',
+      emittedOutputCount: expectedCount,
+      providerStatus: 200,
+    });
+    expect((events.at(-1) as Extract<ModelEvent, { type: 'completed' }>).modelRequestId).toBeTruthy();
+    expect((events.at(-1) as Extract<ModelEvent, { type: 'completed' }>).attemptId).toBeTruthy();
   });
 
   it.each([

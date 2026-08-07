@@ -14,6 +14,7 @@
  * SSE 事件参考：assets/20260619/api-test/A4.sse + assets/20260620 round2 raw.jsonl。
  */
 
+import { ModelProviderError } from './types.js';
 import type {
   ModelAdapter,
   ModelChatMessage,
@@ -479,8 +480,13 @@ export class ResponsesApiAdapter implements ModelAdapter {
         await waitForRetry(retryDelayMs, requestSignal);
         continue;
       }
-      throw new Error(
+      throw new ModelProviderError(
         `Responses API HTTP ${attemptResponse.status}: ${providerError.message ?? 'upstream request failed'}`,
+        attemptResponse.status,
+        providerError.code ?? `HTTP_${attemptResponse.status}`,
+        modelRequestId,
+        attemptDiagnostics.attemptId,
+        0,
       );
     }
     if (!response || !activeAttempt) {
@@ -526,6 +532,15 @@ export class ResponsesApiAdapter implements ModelAdapter {
       content: string;
     }> = [];
     let hasDeliveredOutput = false;
+    let emittedOutputCount = 0;
+    const observedStructuredOutputs = new Set<string>();
+    const markStructuredOutput = (kind: string, outputIndex: number) => {
+      const key = `${kind}:${outputIndex}`;
+      if (observedStructuredOutputs.has(key)) return;
+      observedStructuredOutputs.add(key);
+      emittedOutputCount += 1;
+    };
+    const markToolCallOutput = (outputIndex: number) => markStructuredOutput('function_call', outputIndex);
 
     // function_call 在 stream 里按 output_index 累积；item 整体在 output_item.done 出现
     const toolCallsByIndex = new Map<number, ModelToolCall>();
@@ -597,6 +612,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
             } else if (eventType === 'response.output_text.delta') {
               const delta = typeof event.delta === 'string' ? event.delta : '';
               if (delta) {
+                emittedOutputCount += 1;
                 const partKey = responseTextPartKey(event);
                 outputTextByPart.set(partKey, (outputTextByPart.get(partKey) ?? '') + delta);
                 content += delta;
@@ -612,6 +628,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
               // 隐藏派（doubao/minimax）此事件不出现但 reasoning_tokens 仍计费
               const delta = typeof event.delta === 'string' ? event.delta : '';
               if (delta) {
+                emittedOutputCount += 1;
                 if (commitOutputOnTerminal) {
                   bufferedOutputEvents.push({ type: 'thinking_delta', content: delta });
                 } else {
@@ -626,6 +643,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
               const suffix = reconcileTextSnapshot(partContent, doneText);
               outputTextByPart.set(partKey, partContent + suffix);
               if (suffix) {
+                emittedOutputCount += 1;
                 content += suffix;
                 if (commitOutputOnTerminal) {
                   bufferedOutputEvents.push({ type: 'text_delta', content: suffix });
@@ -635,12 +653,19 @@ export class ResponsesApiAdapter implements ModelAdapter {
                 }
               }
             } else if (eventType === 'response.refusal.delta') {
-              if (typeof event.delta === 'string') refusal += event.delta;
+              if (typeof event.delta === 'string' && event.delta) {
+                emittedOutputCount += 1;
+                refusal += event.delta;
+              }
             } else if (eventType === 'response.refusal.done') {
-              if (typeof event.refusal === 'string') refusal = event.refusal;
+              if (typeof event.refusal === 'string' && event.refusal) {
+                if (!refusal) emittedOutputCount += 1;
+                refusal = event.refusal;
+              }
             } else if (eventType === 'response.function_call_arguments.delta') {
               const outputIndex: number = typeof event.output_index === 'number' ? event.output_index : 0;
               const delta = typeof event.delta === 'string' ? event.delta : '';
+              if (delta) markToolCallOutput(outputIndex);
               const buf = functionCallArgsBuffer.get(outputIndex) ?? { call_id: '', name: '', arguments: '' };
               buf.arguments += delta;
               functionCallArgsBuffer.set(outputIndex, buf);
@@ -648,17 +673,22 @@ export class ResponsesApiAdapter implements ModelAdapter {
               const item = event.item;
               if (item?.type === 'function_call') {
                 const outputIndex: number = typeof event.output_index === 'number' ? event.output_index : 0;
+                markToolCallOutput(outputIndex);
                 const buf = functionCallArgsBuffer.get(outputIndex) ?? { call_id: '', name: '', arguments: '' };
                 if (typeof item.call_id === 'string') buf.call_id = item.call_id;
                 if (typeof item.name === 'string') buf.name = item.name;
                 if (typeof item.arguments === 'string') buf.arguments = item.arguments;
                 if (typeof item.namespace === 'string') buf.namespace = item.namespace;
                 functionCallArgsBuffer.set(outputIndex, buf);
+              } else if (item?.type === 'tool_search_call' || item?.type === 'tool_search_output') {
+                const outputIndex: number = typeof event.output_index === 'number' ? event.output_index : 0;
+                markStructuredOutput(item.type, outputIndex);
               }
             } else if (eventType === 'response.output_item.done') {
               const item = event.item;
               const outputIndex: number = typeof event.output_index === 'number' ? event.output_index : 0;
               if (item?.type === 'function_call') {
+                markToolCallOutput(outputIndex);
                 const buf = functionCallArgsBuffer.get(outputIndex) ?? { call_id: '', name: '', arguments: '' };
                 const callId = (typeof item.call_id === 'string' && item.call_id) || buf.call_id;
                 const name = (typeof item.name === 'string' && item.name) || buf.name;
@@ -683,10 +713,12 @@ export class ResponsesApiAdapter implements ModelAdapter {
                   ...(Array.isArray(item.summary) ? { summary: item.summary } : {}),
                 });
               } else if (item?.type === 'tool_search_call') {
+                markStructuredOutput(item.type, outputIndex);
                 pendingToolSearchPaths = Array.isArray(item.arguments?.paths)
                   ? item.arguments.paths.filter((path: unknown): path is string => typeof path === 'string')
                   : [];
               } else if (item?.type === 'tool_search_output') {
+                markStructuredOutput(item.type, outputIndex);
                 toolSearchResults.push({
                   execution: item.execution === 'client' ? 'client' : 'server',
                   ...(typeof item.call_id === 'string' ? { callId: item.call_id } : {}),
@@ -833,6 +865,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
       // 不再等 EOF：终态就是协议边界，主动取消剩余 body，避免成功轮次被悬挂连接拖死。
       await reader.cancel().catch(() => undefined);
       if (canonicalTextSuffix) {
+        emittedOutputCount += 1;
         content += canonicalTextSuffix;
         if (commitOutputOnTerminal) {
           bufferedOutputEvents.push({ type: 'text_delta', content: canonicalTextSuffix });
@@ -1016,6 +1049,11 @@ export class ResponsesApiAdapter implements ModelAdapter {
         terminalStatus: failureStatus,
         ...(incompleteReason ? { incompleteReason } : {}),
         errorCode,
+        errorMessage,
+        modelRequestId,
+        attemptId: activeAttempt.attemptId,
+        emittedOutputCount,
+        providerStatus: response.status,
         responseChained: usePrevious,
         responseMode,
         modelRequestAttemptCount,

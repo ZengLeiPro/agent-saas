@@ -5,6 +5,7 @@ import type {
 } from '../agent/types.js';
 import {
   INTERNAL_MODEL_DIAGNOSTIC_EVENT_TYPES,
+  ModelProviderError,
   type ModelRequestDiagnostic,
   type AgentLoop,
   type ApprovalStore,
@@ -41,7 +42,11 @@ import { DefaultToolPolicy } from './toolPolicy.js';
 import { standardizeToolError } from './agentPlanDefense.js';
 import { LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
 import { buildModelUserContent } from './imageAttachments.js';
-import { buildContextProjection, type ContextReconstructionPolicy } from './contextProjection.js';
+import {
+  buildContextProjection,
+  findLastCompleteToolInteractionUnit,
+  type ContextReconstructionPolicy,
+} from './contextProjection.js';
 import { RuntimeContextUsageTracker } from './contextUsage.js';
 import {
   buildContextBreakdownSnapshot,
@@ -102,6 +107,8 @@ const CONTEXT_SYNTHESIS_PROMPT = [
   '本次任务的上下文已达到安全阈值。除 SessionContext（action=events|search|trace）外，不要调用其他工具。',
   '当前模型可见历史保持不变。若固定节选的工具结果不足，可先用该只读会话工具检索完整事实源；随后基于当前上下文完成任务，并明确区分已核实事实、证据不足项与未完成项。',
 ].join('\n');
+const INVALID_PROMPT_RECOVERY_INPUT = '继续';
+const INVALID_PROMPT_CUSTOMER_ERROR = 'Agent 开小差了，请发送「继续」';
 
 interface ReplaceableDraftRunState {
   draftId: string;
@@ -856,13 +863,23 @@ export class RawAgentLoop implements AgentLoop {
     const memoryMessage = input.memoryContext
       ? [{ role: 'user' as const, content: formatMemoryContext(input.memoryContext) }]
       : [];
-    const messages: ModelChatMessage[] = [
+    let contextRewindRecoveryUsed = recoveredEvents.some((event) => (
+      event.type === 'context_rewind' && event.runId === context.runId
+    ));
+    const omitWakeContinuation = contextRewindRecoveryUsed && input.recordUserMessage === false;
+    let messages: ModelChatMessage[] = [
       { role: 'system', content: input.instructions },
       ...memoryMessage,
       ...this.filterLoadedToolMessages(contextProjection.messages, tools),
-      { role: 'user', content: buildModelUserContent(input.prompt, input.attachments, input.visionAnalysis) },
+      ...(omitWakeContinuation
+        ? []
+        : [{
+          role: 'user' as const,
+          content: buildModelUserContent(input.prompt, input.attachments, input.visionAnalysis),
+        }]),
     ];
-    let currentUserMessageIndex = messages.length - 1;
+    if (contextRewindRecoveryUsed) clearProviderContinuations(messages);
+    let currentUserMessageIndex = findLastUserMessageIndex(messages);
     const recoveredInterjectionSourceRunIds = new Set(
       recoveredEvents
         .filter((event): event is Extract<PlatformEvent, { type: 'user_message' }> => (
@@ -966,7 +983,8 @@ export class RawAgentLoop implements AgentLoop {
     // ChatCompletionsAdapter 收到 previousResponseId 会抛错 — 所以 runStore 只在
     // 模型走 protocol="responses" 时才有意义；dispatcher 已按 protocol 路由 adapter。
     const usesStoredResponseState = this.modelAdapter.capabilities?.responseState !== 'stateless';
-    let currentResponseId = usesStoredResponseState
+    if (contextRewindRecoveryUsed) await this.clearResponseRelayState(context.sessionId, 'run wake');
+    let currentResponseId = usesStoredResponseState && !contextRewindRecoveryUsed
       ? await this.loadInitialResponseId(context.sessionId, context.model, context.profileConfigDigest)
       : undefined;
 
@@ -1082,17 +1100,27 @@ export class RawAgentLoop implements AgentLoop {
           tools: requestTools,
           descriptorsByName,
         });
-        for await (const event of this.modelAdapter.stream({
-          model: context.model,
-          // Adapter 可能为诊断/重试保留 request 引用；传快照，避免本轮结束后的上下文追加反向污染已发送请求。
-          messages: [...messages],
-          tools: requestTools,
-          signal: context.signal,
-          ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),
-          ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
-        }, this.withModelRequestDiagnostics(context))) {
+        let modelStreamError: unknown;
+        const modelEvents = captureModelStreamError(
+          this.modelAdapter.stream({
+            model: context.model,
+            // Adapter 可能为诊断/重试保留 request 引用；传快照，避免本轮结束后的上下文追加反向污染已发送请求。
+            messages: [...messages],
+            tools: requestTools,
+            signal: context.signal,
+            ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),
+            ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
+          }, this.withModelRequestDiagnostics(context)),
+          (error) => { modelStreamError = error; },
+        );
+        for await (const event of modelEvents) {
           if (!boundaryInterjectionsClaimed && event.type === 'completed') {
-            assertSuccessfulModelTerminal(event);
+            try {
+              assertSuccessfulModelTerminal(event);
+            } catch {
+              completed = event;
+              continue;
+            }
           }
           if (!boundaryInterjectionsClaimed) {
             boundaryInterjectionsClaimed = true;
@@ -1216,10 +1244,34 @@ export class RawAgentLoop implements AgentLoop {
           yield { type: 'thinking_end' };
         }
 
-        if (!completed) throw new Error('model stream completed without completion event');
-        if (completed.usage) {
-          totalUsage = mergeUsage(totalUsage, completed.usage);
+        if (completed?.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
+        const blockedFailure = getInvalidPromptRequestBlockedFailure(modelStreamError ?? completed);
+        if (
+          blockedFailure
+          && !contextRewindRecoveryUsed
+          && !turnText
+          && !turnThinking
+          && !pendingTurnText
+        ) {
+          const recovery = await this.buildInvalidPromptRecovery({
+            failure: blockedFailure,
+            context,
+            instructions: input.instructions,
+            tools,
+          });
+          if (recovery) {
+            contextRewindRecoveryUsed = true;
+            messages = recovery.messages;
+            currentUserMessageIndex = findLastUserMessageIndex(messages);
+            currentResponseId = undefined;
+            contextUsageTracker = new RuntimeContextUsageTracker(context.model, recovery.replayEvents, context.modelRef);
+            this.clearForcedSynthesis();
+            turn -= 1;
+            continue;
+          }
         }
+        if (modelStreamError) throw modelStreamError;
+        if (!completed) throw new Error('model stream completed without completion event');
         assertSuccessfulModelTerminal(completed);
         const projectedContextTokens = completed.usage
           ? contextUsageTracker.previewCurrentContextTokens(
@@ -1615,7 +1667,10 @@ export class RawAgentLoop implements AgentLoop {
         textStarted = false;
         yield { type: 'text_end' };
       }
-      const message = err instanceof Error ? err.message : String(err);
+      const diagnosticMessage = err instanceof Error ? err.message : String(err);
+      const message = isInvalidPromptRequestBlocked(err)
+        ? INVALID_PROMPT_CUSTOMER_ERROR
+        : diagnosticMessage;
       const modelUsage = buildModelUsage(context.model, totalUsage);
       if (pendingTurnText) {
         await this.append({
@@ -1652,7 +1707,10 @@ export class RawAgentLoop implements AgentLoop {
         resultText: finalText,
         ...(modelUsage ? { modelUsage } : {}),
       });
-      logger.error(`[run] failed session=${context.sessionId} turns=${turn}: ${surfacedMessage}`);
+      logger.error(
+        `[run] failed session=${context.sessionId} turns=${turn}: ${diagnosticMessage}`
+        + `${message !== diagnosticMessage ? ` (client=${message})` : ''}`,
+      );
       yield { type: 'error', error: surfacedMessage };
     }
   }
@@ -2915,7 +2973,7 @@ export class RawAgentLoop implements AgentLoop {
       restoredDraftRecoveryUsed = !canonicalCommitted;
       await this.persistReplaceableDraftState(args.context, null);
     }
-    const contextUsageTracker = new RuntimeContextUsageTracker(
+    let contextUsageTracker = new RuntimeContextUsageTracker(
       args.context.model,
       args.priorEvents,
       args.context.modelRef,
@@ -2929,8 +2987,13 @@ export class RawAgentLoop implements AgentLoop {
     }
 
     // RFC v1 P0.4：resume 路径同样接力 Responses API session state。
+    let contextRewindRecoveryUsed = args.priorEvents.some((event) => (
+      event.type === 'context_rewind' && event.runId === args.context.runId
+    ));
+    if (contextRewindRecoveryUsed) clearProviderContinuations(args.messages);
     const usesStoredResponseState = this.modelAdapter.capabilities?.responseState !== 'stateless';
-    let currentResponseId = usesStoredResponseState
+    if (contextRewindRecoveryUsed) await this.clearResponseRelayState(args.context.sessionId, 'resume wake');
+    let currentResponseId = usesStoredResponseState && !contextRewindRecoveryUsed
       ? await this.loadInitialResponseId(
         args.context.sessionId,
         args.context.model,
@@ -3003,15 +3066,20 @@ export class RawAgentLoop implements AgentLoop {
           tools: requestTools,
           descriptorsByName: args.descriptorsByName,
         });
-        for await (const event of this.modelAdapter.stream({
-          model: args.context.model,
-          // Adapter 可能为诊断/重试保留 request 引用；传快照，避免本轮结束后的上下文追加反向污染已发送请求。
-          messages: [...args.messages],
-          tools: requestTools,
-          signal: args.context.signal,
-          ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),
-          ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
-        }, this.withModelRequestDiagnostics(args.context))) {
+        let modelStreamError: unknown;
+        const modelEvents = captureModelStreamError(
+          this.modelAdapter.stream({
+            model: args.context.model,
+            // Adapter 可能为诊断/重试保留 request 引用；传快照，避免本轮结束后的上下文追加反向污染已发送请求。
+            messages: [...args.messages],
+            tools: requestTools,
+            signal: args.context.signal,
+            ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),
+            ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
+          }, this.withModelRequestDiagnostics(args.context)),
+          (error) => { modelStreamError = error; },
+        );
+        for await (const event of modelEvents) {
           if (event.type === 'thinking_delta') {
             if (!thinkingStarted) {
               thinkingStarted = true;
@@ -3070,10 +3138,38 @@ export class RawAgentLoop implements AgentLoop {
           yield { type: 'thinking_end' };
         }
 
-        if (!completed) throw new Error('model stream completed without completion event');
-        if (completed.usage) {
-          totalUsage = mergeUsage(totalUsage, completed.usage);
+        if (completed?.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
+        const blockedFailure = getInvalidPromptRequestBlockedFailure(modelStreamError ?? completed);
+        if (
+          blockedFailure
+          && !contextRewindRecoveryUsed
+          && !turnText
+          && !turnThinking
+          && !pendingTurnText
+        ) {
+          const recovery = await this.buildInvalidPromptRecovery({
+            failure: blockedFailure,
+            context: args.context,
+            instructions: args.instructions,
+            tools: args.tools,
+          });
+          if (recovery) {
+            contextRewindRecoveryUsed = true;
+            args.messages.splice(0, args.messages.length, ...recovery.messages);
+            currentUserMessageIndex = findLastUserMessageIndex(args.messages);
+            currentResponseId = undefined;
+            contextUsageTracker = new RuntimeContextUsageTracker(
+              args.context.model,
+              recovery.replayEvents,
+              args.context.modelRef,
+            );
+            this.clearForcedSynthesis();
+            turn -= 1;
+            continue;
+          }
         }
+        if (modelStreamError) throw modelStreamError;
+        if (!completed) throw new Error('model stream completed without completion event');
         assertSuccessfulModelTerminal(completed);
         const projectedContextTokens = completed.usage
           ? contextUsageTracker.previewCurrentContextTokens(
@@ -3330,7 +3426,10 @@ export class RawAgentLoop implements AgentLoop {
         textStarted = false;
         yield { type: 'text_end' };
       }
-      const message = err instanceof Error ? err.message : String(err);
+      const diagnosticMessage = err instanceof Error ? err.message : String(err);
+      const message = isInvalidPromptRequestBlocked(err)
+        ? INVALID_PROMPT_CUSTOMER_ERROR
+        : diagnosticMessage;
       const modelUsage = buildModelUsage(args.context.model, totalUsage);
       if (pendingTurnText) {
         await this.append({
@@ -3367,9 +3466,106 @@ export class RawAgentLoop implements AgentLoop {
         resultText: finalText,
         ...(modelUsage ? { modelUsage } : {}),
       });
-      logger.error(`[resume] failed session=${args.context.sessionId} turns=${turn}: ${surfacedMessage}`);
+      logger.error(
+        `[resume] failed session=${args.context.sessionId} turns=${turn}: ${diagnosticMessage}`
+        + `${message !== diagnosticMessage ? ` (client=${message})` : ''}`,
+      );
       yield { type: 'error', error: surfacedMessage };
     }
+  }
+
+  private async clearResponseRelayState(sessionId: string, source: string): Promise<void> {
+    if (!this.runStore?.clearResponseSessionStateBySession) return;
+    try {
+      const cleared = await this.runStore.clearResponseSessionStateBySession(sessionId);
+      logger.info(`[responses-chain] ${source} cleared ${cleared} relay state(s) session=${sessionId}`);
+    } catch (error) {
+      logger.warn(
+        `[responses-chain] ${source} failed to clear relay state session=${sessionId}: `
+        + `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private async buildInvalidPromptRecovery(args: {
+    failure: InvalidPromptRequestBlockedFailure;
+    context: RunContext;
+    instructions: string;
+    tools: ReturnType<typeof toModelToolDefinition>[];
+  }): Promise<{ messages: ModelChatMessage[]; replayEvents: PlatformEvent[] } | null> {
+    const allEvents = await this.eventStore.list(args.context.sessionId, { replayMode: 'bounded' });
+    if (allEvents.some((event) => event.type === 'context_rewind' && event.runId === args.context.runId)) {
+      return null;
+    }
+    const projection = buildContextProjection(allEvents, {
+      sessionId: args.context.sessionId,
+      runId: args.context.runId,
+      policy: this.contextPolicy,
+    });
+    const unit = findLastCompleteToolInteractionUnit(projection.selectedEvents, allEvents);
+    if (!unit) return null;
+
+    const createdAt = new Date().toISOString();
+    await this.appendBatch([
+      {
+        type: 'context_rewind',
+        runId: args.context.runId,
+        sessionId: args.context.sessionId,
+        reason: 'invalid_prompt_request_blocked',
+        message: '自动回退上一工具交互并继续',
+        sourceModelRequestId: args.failure.modelRequestId,
+        sourceAttemptId: args.failure.attemptId,
+        excludedEventIds: unit.excludedEventIds,
+        excludedToolCallIds: unit.excludedToolCallIds,
+        excludedStartSequence: unit.excludedStartSequence,
+        excludedEndSequence: unit.excludedEndSequence,
+        createdAt,
+        recoveryAttempt: 1,
+      },
+      {
+        type: 'user_message',
+        runId: args.context.runId,
+        sessionId: args.context.sessionId,
+        content: INVALID_PROMPT_RECOVERY_INPUT,
+        modelContent: INVALID_PROMPT_RECOVERY_INPUT,
+        systemGenerated: true,
+        recoveryKind: 'invalid_prompt_rewind',
+        hiddenFromUserTranscript: true,
+      },
+    ]);
+    await this.clearResponseRelayState(args.context.sessionId, 'context rewind');
+
+    const replayEvents = await this.eventStore.list(args.context.sessionId, {
+      excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+      replayMode: 'bounded',
+    });
+    const replayProjection = buildContextProjection(replayEvents, {
+      sessionId: args.context.sessionId,
+      runId: args.context.runId,
+      policy: this.contextPolicy,
+    });
+    const messages: ModelChatMessage[] = [
+      { role: 'system', content: args.instructions },
+      ...this.filterLoadedToolMessages(replayProjection.messages, args.tools),
+    ];
+    clearProviderContinuations(messages);
+    logger.warn(
+      `[run] 自动回退上一工具交互并继续 session=${args.context.sessionId} run=${args.context.runId} `
+      + `sequence=${unit.excludedStartSequence}-${unit.excludedEndSequence} `
+      + `toolCalls=${unit.excludedToolCallIds.join(',')}`,
+    );
+    return { messages, replayEvents };
+  }
+
+  private async appendBatch(events: PlatformEventInput[]): Promise<void> {
+    let storedEvents: PlatformEvent[];
+    if (this.eventStore.appendBatch) {
+      storedEvents = await this.eventStore.appendBatch(events);
+    } else {
+      storedEvents = [];
+      for (const event of events) storedEvents.push(await this.eventStore.append(event));
+    }
+    for (const stored of storedEvents) await this.transcriptProjection.project(stored);
   }
 
   private async append(event: Parameters<EventStore['append']>[0]): Promise<void> {
@@ -3385,8 +3581,68 @@ function isForcedDrainHandoff(context: RunContext): boolean {
   return message === 'server_drain_deadline';
 }
 
+async function* captureModelStreamError(
+  stream: AsyncIterable<ModelEvent>,
+  onError: (error: unknown) => void,
+): AsyncGenerator<ModelEvent> {
+  try {
+    yield* stream;
+  } catch (error) {
+    onError(error);
+  }
+}
+
+interface InvalidPromptRequestBlockedFailure {
+  modelRequestId: string;
+  attemptId: string;
+}
+
+function isInvalidPromptRequestBlocked(error: unknown): boolean {
+  if (error instanceof ModelProviderError) {
+    return error.code.toLowerCase() === 'invalid_prompt'
+      && error.message.toLowerCase().includes('request blocked');
+  }
+  return false;
+}
+
+function getInvalidPromptRequestBlockedFailure(error: unknown): InvalidPromptRequestBlockedFailure | null {
+  if (error instanceof ModelProviderError) {
+    if (!isInvalidPromptRequestBlocked(error) || error.emittedOutputCount !== 0) return null;
+    return { modelRequestId: error.modelRequestId, attemptId: error.attemptId };
+  }
+  if (!error || typeof error !== 'object' || (error as { type?: unknown }).type !== 'completed') return null;
+  const completed = error as Extract<ModelEvent, { type: 'completed' }>;
+  if (
+    completed.terminalStatus !== 'failed'
+    || completed.errorCode?.toLowerCase() !== 'invalid_prompt'
+    || !completed.errorMessage?.toLowerCase().includes('request blocked')
+    || completed.emittedOutputCount !== 0
+    || completed.content.length > 0
+    || completed.toolCalls.length > 0
+    || !completed.modelRequestId
+    || !completed.attemptId
+  ) return null;
+  return { modelRequestId: completed.modelRequestId, attemptId: completed.attemptId };
+}
+
 function assertSuccessfulModelTerminal(completed: Extract<ModelEvent, { type: 'completed' }>): void {
   if (completed.terminalStatus && completed.terminalStatus !== 'completed') {
+    if (
+      completed.errorCode
+      && completed.errorMessage
+      && completed.modelRequestId
+      && completed.attemptId
+      && completed.emittedOutputCount !== undefined
+    ) {
+      throw new ModelProviderError(
+        completed.errorMessage,
+        completed.providerStatus ?? 200,
+        completed.errorCode,
+        completed.modelRequestId,
+        completed.attemptId,
+        completed.emittedOutputCount,
+      );
+    }
     throw new Error(
       `model terminal rejected: status=${completed.terminalStatus}`
       + `${completed.incompleteReason ? ` reason=${completed.incompleteReason}` : ''}`

@@ -145,8 +145,9 @@ export class LegacyTranscriptProjection {
       case 'memory_context':
         return null;
       case 'user_message':
-        // 系统命令替身（/compact 等）不进前端历史——压缩在 transcript 里由
-        // compaction line（分界线）呈现，命令气泡本身不保留
+        // 系统命令替身（/compact 等）和平台自动恢复输入不进前端历史；两者仍
+        // 作为 durable 事实参与模型 replay，避免刷新/重启后语义漂移。
+        if (event.hiddenFromUserTranscript) return null;
         if (event.modelContent?.startsWith('[系统命令]')) return null;
         return userLine(event.content, event.sessionId, event.attachments, {
           clientMsgId: event.clientMsgId,

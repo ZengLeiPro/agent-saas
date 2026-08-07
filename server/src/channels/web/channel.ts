@@ -504,6 +504,8 @@ export class WebChannel implements BaseChannel {
   /** 中央事件总线（由 start() 创建） */
   private eventBus?: EventBus;
   private readonly inProcessOutboundRuns = new Set<string>();
+  /** 跨进程 durable stream batch 的逐 run 投影状态，用于终态全文补差而非重复展开。 */
+  private readonly crossProcessStreamStates = new Map<string, RuntimeStreamProjectionState>();
   /**
    * 跨进程终态投影去重：runId → 已发过 terminal 投影。
    *
@@ -1066,8 +1068,9 @@ export class WebChannel implements BaseChannel {
     const projection = projectRuntimePlatformEvent(event, {
       clientMsgId: activeEntry?.clientMsgId,
       // 同进程 run 的 live 内容已由直推（publishRuntimeOutboundEvent）送达，聚合行
-      // 不展开防重复；跨进程（ws-only）无直推，聚合行整块展开补内容。
+      // 不展开防重复；跨进程 durable batch 则由 streamStates 做前缀补差。
       expandStreamed: !(runId && this.inProcessOutboundRuns.has(runId)),
+      streamStates: this.crossProcessStreamStates,
     });
     // 空投影且非终态的背景事件（如 hand_health_changed / hand_provisioning_log）直接跳过:
     // 不允许它们为已结束的会话 create 一个永不 complete 的 active buffer。
@@ -1104,7 +1107,10 @@ export class WebChannel implements BaseChannel {
       if (activeEntry?.ws && this.wsActiveStream.get(activeEntry.ws) === streamId) {
         this.wsActiveStream.delete(activeEntry.ws);
       }
-      if (runId) this.inProcessOutboundRuns.delete(runId);
+      if (runId) {
+        this.inProcessOutboundRuns.delete(runId);
+        this.crossProcessStreamStates.delete(runId);
+      }
       if (activeEntry?.clientMsgId) {
         this.idempotencySet(
           activeEntry.userId,
@@ -2140,6 +2146,18 @@ export class WebChannel implements BaseChannel {
   ): Promise<void> {
     let replayId = options.lastEventId ?? 0;
     const hasDurableCursor = Boolean(options.lastEventCursor);
+    const streamStates = new Map<string, RuntimeStreamProjectionState>();
+    // 新 ws-only 实例可能在流进行到一半时接管：浏览器 cursor 之前的 batch 已在 DOM，
+    // 但本进程没有内存状态。只预热投影状态、不重发事件，后续聚合全文才能正确补差。
+    if (hasDurableCursor && options.lastEventCursor && store.listByRun) {
+      const priorRunEvents = await store.listByRun(sessionId, options.activeRunId);
+      for (const event of priorRunEvents) {
+        if (event.type !== 'assistant_stream_event') continue;
+        const eventCursor = getDurableEventCursor(event);
+        if (!eventCursor || !isDurableCursorAtOrBefore(eventCursor, options.lastEventCursor)) continue;
+        projectRuntimePlatformEvent(event, { expandStreamed: true, streamStates });
+      }
+    }
     if (store.listPage) {
       let cursor: string | undefined = hasDurableCursor ? options.lastEventCursor : undefined;
       while (true) {
@@ -2152,7 +2170,7 @@ export class WebChannel implements BaseChannel {
         });
         for (const event of page.events) {
           const eventCursor = getDurableEventCursor(event);
-          for (const data of projectRuntimePlatformEvent(event, { expandStreamed: true }).events) {
+          for (const data of projectRuntimePlatformEvent(event, { expandStreamed: true, streamStates }).events) {
             replayId += 1;
             this.wsSend(client.ws, data, replayId, eventCursor);
           }
@@ -2170,7 +2188,7 @@ export class WebChannel implements BaseChannel {
         );
     for (const event of events) {
       const eventCursor = getDurableEventCursor(event);
-      for (const data of projectRuntimePlatformEvent(event, { expandStreamed: true }).events) {
+      for (const data of projectRuntimePlatformEvent(event, { expandStreamed: true, streamStates }).events) {
         replayId += 1;
         if (replayId > (options.lastEventId ?? 0)) this.wsSend(client.ws, data, replayId, eventCursor);
       }
@@ -4345,19 +4363,98 @@ export class WebChannel implements BaseChannel {
   }
 }
 
+interface RuntimeStreamBlockProjectionState {
+  seen: boolean;
+  open: boolean;
+  /** 实际收到的 durable stream batch 拼接结果。 */
+  content: string;
+  /** 已投影给客户端的内容；终态补差可能暂时领先于 content。 */
+  projectedContent: string;
+  draftId?: string;
+}
+
+interface RuntimeStreamProjectionState {
+  text: RuntimeStreamBlockProjectionState;
+  thinking: RuntimeStreamBlockProjectionState;
+}
+
+function createRuntimeStreamProjectionState(): RuntimeStreamProjectionState {
+  return {
+    text: { seen: false, open: false, content: '', projectedContent: '' },
+    thinking: { seen: false, open: false, content: '', projectedContent: '' },
+  };
+}
+
+function getOrCreateRuntimeStreamProjectionState(
+  states: Map<string, RuntimeStreamProjectionState> | undefined,
+  runId: string,
+): RuntimeStreamProjectionState | undefined {
+  if (!states) return undefined;
+  const current = states.get(runId);
+  if (current) return current;
+  const created = createRuntimeStreamProjectionState();
+  states.set(runId, created);
+  return created;
+}
+
+function projectCompleteRuntimeBlock(
+  blockType: 'thinking' | 'text',
+  content: string,
+): object[] {
+  return [
+    { type: 'block_start', blockType },
+    { type: blockType === 'text' ? 'text' : 'thinking', content },
+    { type: 'block_end', blockType },
+  ];
+}
+
+function reconcileRuntimeStreamAggregate(
+  blockType: 'thinking' | 'text',
+  content: string,
+  state: RuntimeStreamBlockProjectionState,
+): object[] {
+  const deltaType = blockType === 'text' ? 'text' : 'thinking';
+  if (content.startsWith(state.content) && content.startsWith(state.projectedContent)) {
+    const suffix = content.slice(state.projectedContent.length);
+    state.projectedContent = content;
+    if (!suffix) return [];
+    return state.open
+      ? [{ type: deltaType, content: suffix }]
+      : projectCompleteRuntimeBlock(blockType, suffix);
+  }
+
+  const events: object[] = [];
+  if (state.draftId) {
+    events.push({ type: 'draft_reset', draftId: state.draftId });
+  }
+  if (state.open) {
+    events.push(
+      { type: 'block_start', blockType, ...(state.draftId ? { draftId: state.draftId } : {}) },
+      { type: deltaType, content },
+    );
+  } else {
+    events.push(...projectCompleteRuntimeBlock(blockType, content));
+  }
+  state.projectedContent = content;
+  return events;
+}
+
 function projectRuntimePlatformEvent(
   event: PlatformEvent,
   options: {
     clientMsgId?: string;
     /**
      * true = 展开 streamed 聚合行（assistant_thinking/message/tool_calls 的正文）。
-     * 2026-07-03 起 assistant_stream_event delta 不再落库，durable replay 与跨进程
-     * NOTIFY 路径的内容必须由聚合行整块补出；同进程直推已覆盖 live 的场景传 false
-     * 防止重复显示。
+     * 没有 durable stream batch 的旧数据整块展开；有 batch 时用 streamStates
+     * 对完整聚合行做前缀补差，兼顾 live、断线回放与中继尾段丢失兜底。
      */
     expandStreamed?: boolean;
+    streamStates?: Map<string, RuntimeStreamProjectionState>;
   } = {},
 ): { events: object[]; terminal?: boolean; sessionStatus?: 'completed' | 'failed' | 'cancelled'; terminalError?: string } {
+  const streamState = 'runId' in event && event.runId
+    ? options.streamStates?.get(event.runId)
+    : undefined;
   switch (event.type) {
     case 'tool_output_delta':
       return {
@@ -4468,34 +4565,93 @@ function projectRuntimePlatformEvent(
             : { value: event.input },
         }],
       };
-    // 'assistant_stream_event'：已停写（2026-07-03）。存量历史行走 default 分支忽略；
-    // replay 内容由下方 streamed 聚合行在 expandStreamed=true 时整块补出。
+    case 'assistant_stream_event': {
+      if (event.phase === 'reset') {
+        const state = getOrCreateRuntimeStreamProjectionState(options.streamStates, event.runId);
+        if (state) {
+          state.text = { seen: false, open: false, content: '', projectedContent: '' };
+          state.thinking = { seen: false, open: false, content: '', projectedContent: '' };
+        }
+        return event.draftId
+          ? { events: [{ type: 'draft_reset', draftId: event.draftId, ...(event.attempt !== undefined ? { attempt: event.attempt } : {}) }] }
+          : { events: [] };
+      }
+      if (event.phase === 'commit') {
+        return event.draftId
+          ? { events: [{ type: 'draft_commit', draftId: event.draftId }] }
+          : { events: [] };
+      }
+      if (!event.blockType) return { events: [] };
+      const state = getOrCreateRuntimeStreamProjectionState(options.streamStates, event.runId);
+      const block = state?.[event.blockType];
+      if (event.phase === 'start') {
+        if (block) {
+          block.seen = true;
+          block.open = true;
+          block.content = '';
+          block.projectedContent = '';
+          if (event.draftId) block.draftId = event.draftId;
+          else delete block.draftId;
+        }
+        return {
+          events: [{
+            type: 'block_start',
+            blockType: event.blockType,
+            ...(event.draftId ? { draftId: event.draftId } : {}),
+          }],
+        };
+      }
+      if (event.phase === 'delta') {
+        const content = event.content ?? '';
+        if (!content) return { events: [] };
+        const events: object[] = [];
+        if (block && !block.seen) {
+          block.seen = true;
+          block.open = true;
+          events.push({ type: 'block_start', blockType: event.blockType });
+        }
+        if (!block) {
+          events.push({ type: event.blockType === 'text' ? 'text' : 'thinking', content });
+          return { events };
+        }
+        block.content += content;
+        // assistant_message 可能先于 text_end relay 入库：终态补出的尾段会让
+        // projectedContent 暂时领先。迟到的 batch 若仍是其前缀，必须静默去重。
+        if (block.projectedContent.startsWith(block.content)) return { events };
+        const projectedDelta = block.content.startsWith(block.projectedContent)
+          ? block.content.slice(block.projectedContent.length)
+          : content;
+        block.projectedContent = block.content.startsWith(block.projectedContent)
+          ? block.content
+          : block.projectedContent + content;
+        if (projectedDelta) {
+          events.push({ type: event.blockType === 'text' ? 'text' : 'thinking', content: projectedDelta });
+        }
+        return { events };
+      }
+      if (block) block.open = false;
+      return { events: [{ type: 'block_end', blockType: event.blockType }] };
+    }
     case 'assistant_thinking':
       if (event.streamed && !options.expandStreamed) return { events: [] };
-      return event.content
-        ? { events: [
-            { type: 'block_start', blockType: 'thinking' },
-            { type: 'thinking', content: event.content },
-            { type: 'block_end', blockType: 'thinking' },
-          ] }
-        : { events: [] };
+      if (!event.content) return { events: [] };
+      return event.streamed && streamState?.thinking.seen
+        ? { events: reconcileRuntimeStreamAggregate('thinking', event.content, streamState.thinking) }
+        : { events: projectCompleteRuntimeBlock('thinking', event.content) };
     case 'assistant_message':
       if (event.streamed && !options.expandStreamed) return { events: [] };
-      return event.content
-        ? { events: [
-            { type: 'block_start', blockType: 'text' },
-            { type: 'text', content: event.content },
-            { type: 'block_end', blockType: 'text' },
-          ] }
-        : { events: [] };
+      if (!event.content) return { events: [] };
+      return event.streamed && streamState?.text.seen
+        ? { events: reconcileRuntimeStreamAggregate('text', event.content, streamState.text) }
+        : { events: projectCompleteRuntimeBlock('text', event.content) };
     case 'assistant_tool_calls': {
       const events: object[] = [];
       if (event.content && (!event.streamed || options.expandStreamed)) {
-        events.push(
-          { type: 'block_start', blockType: 'text' },
-          { type: 'text', content: event.content },
-          { type: 'block_end', blockType: 'text' },
-        );
+        events.push(...(
+          event.streamed && streamState?.text.seen
+            ? reconcileRuntimeStreamAggregate('text', event.content, streamState.text)
+            : projectCompleteRuntimeBlock('text', event.content)
+        ));
       }
       for (const call of event.toolCalls) {
         // 拥有独立卡片的工具不产生通用 tool_use 骨架，避免双条并存。
@@ -4615,6 +4771,14 @@ function projectRuntimePlatformEvent(
     }
     default:
       return { events: [] };
+  }
+}
+
+function isDurableCursorAtOrBefore(cursor: string, target: string): boolean {
+  try {
+    return BigInt(cursor) <= BigInt(target);
+  } catch {
+    return cursor === target;
   }
 }
 

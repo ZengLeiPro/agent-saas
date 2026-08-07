@@ -4,6 +4,7 @@ import { RuntimeEventRetention } from '../runtime/runtimeEventRetention.js';
 
 type RetentionCategory =
   | 'tool-delta'
+  | 'assistant-stream'
   | 'tool-stream-summary'
   | 'model-diagnostics'
   | 'model-request-finished'
@@ -68,6 +69,7 @@ describe('RuntimeEventRetention', () => {
     expect(result.billingWatermark).toBe('10');
     expect(result.maxGlobalSequence).toBe('11');
     expect(pool.categoryParams['tool-delta']?.[0]?.[1]).toBe('10');
+    expect(pool.categoryParams['assistant-stream']?.[0]?.[0]).toBe('10');
     expect(pool.categoryParams['tool-stream-summary']?.[0]?.[0]).toBe('10');
     expect(pool.categoryParams['model-diagnostics']?.[0]?.[1]).toBe('10');
     expect(pool.categoryParams['model-request-finished']?.[0]?.[0]).toBe('10');
@@ -94,6 +96,21 @@ describe('RuntimeEventRetention', () => {
       10,
       10_000,
     ]);
+  });
+
+  it('keeps assistant stream batches only through the terminal replay grace window', async () => {
+    const pool = new FakePool();
+    pool.billingWatermark = '99';
+    pool.maxGlobalSequence = '99';
+    const retention = createRetention(pool);
+
+    await retention.runOnce();
+
+    const sql = pool.queries.find((query) => query.includes('retention:assistant-stream')) ?? '';
+    expect(sql).toContain("e.event_type = 'assistant_stream_event'");
+    expect(sql).toContain("terminal.event_type = 'run_finished'");
+    expect(sql).toContain('FOR UPDATE OF e SKIP LOCKED');
+    expect(pool.categoryParams['assistant-stream']?.[0]).toEqual(['99', 10, 10_000]);
   });
 
   it('applies separate summary and model diagnostic TTLs without archive or manual vacuum', async () => {
@@ -123,6 +140,7 @@ describe('RuntimeEventRetention', () => {
     pool.maxGlobalSequence = '99';
     pool.deleteBatches = {
       'tool-delta': [2, 1],
+      'assistant-stream': [2],
       'tool-stream-summary': [3],
       'model-diagnostics': [4],
       'model-request-finished': [5],
@@ -132,9 +150,10 @@ describe('RuntimeEventRetention', () => {
 
     const result = await retention.runOnce();
 
-    expect(result.deleted).toBe(21);
+    expect(result.deleted).toBe(23);
     expect(result.deletedByCategory).toEqual({
       'tool-delta': 3,
+      'assistant-stream': 2,
       'tool-stream-summary': 3,
       'model-diagnostics': 4,
       'model-request-finished': 5,

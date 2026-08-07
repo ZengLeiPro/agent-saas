@@ -186,6 +186,34 @@ export class RuntimeEventRetention {
         params: [[...TOOL_DELTA_TYPES], watermark, this.terminalDeltaGraceMinutes, this.batchLimit],
       },
       {
+        name: 'assistant-stream',
+        deleteSql: `
+          /* retention:assistant-stream */
+          WITH candidates AS (
+            SELECT e.global_sequence
+            FROM ${this.eventsTable} e
+            WHERE e.event_type = 'assistant_stream_event'
+              AND e.global_sequence <= $1::bigint
+              AND e.timestamp < NOW() - ($2::int * INTERVAL '1 minute')
+              AND EXISTS (
+                SELECT 1
+                FROM ${this.eventsTable} terminal
+                WHERE terminal.session_id = e.session_id
+                  AND terminal.run_id IS NOT DISTINCT FROM e.run_id
+                  AND terminal.event_type = 'run_finished'
+                  AND terminal.timestamp < NOW() - ($2::int * INTERVAL '1 minute')
+              )
+            ORDER BY e.global_sequence ASC
+            FOR UPDATE OF e SKIP LOCKED
+            LIMIT $3
+          )
+          DELETE FROM ${this.eventsTable} e
+          USING candidates
+          WHERE e.global_sequence = candidates.global_sequence
+        `,
+        params: [watermark, this.terminalDeltaGraceMinutes, this.batchLimit],
+      },
+      {
         name: 'tool-stream-summary',
         deleteSql: `
           /* retention:tool-stream-summary */

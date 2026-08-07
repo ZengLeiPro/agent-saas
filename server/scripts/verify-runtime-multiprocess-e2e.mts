@@ -150,7 +150,13 @@ export async function runScenario(scenario: Scenario): Promise<void> {
       assert.ok(replayActive.some((e) => e.data?.type === 'active_stream' && e.data?.runId === runId), 'expected reconnect replay to bind active durable run');
       const replayDone = await collectUntil(replayWs, (events) => events.some((e) => e.data?.type === 'done'), 30_000);
       assert.ok(replayDone.some((e) => e.data?.type === 'tool_result' && String(e.data?.content ?? '').includes('MP_E2E_')), 'expected replay/live tool output from remote hand');
-      assert.ok(replayDone.some((e) => e.data?.type === 'text' && String(e.data?.content ?? '').includes('MULTIPROCESS_DONE')), 'expected final assistant text replayed through PG bridge');
+      const textEvents = replayDone.filter((e) => e.data?.type === 'text');
+      assert.deepEqual(
+        textEvents.map((e) => String(e.data?.content ?? '')),
+        ['MULTIPROCESS_', 'DONE'],
+        'expected multiple assistant text deltas before done instead of one terminal aggregate',
+      );
+      assert.ok(replayDone.some((e) => e.data?.type === 'text' && String(e.data?.content ?? '').includes('DONE')), 'expected final assistant text replayed through PG bridge');
     } else if (scenario === 'notify-drop' || scenario === 'db-unavailable') {
       // Chaos 场景：用一条 long-lived listener 累积事件，避免 collectUntil 切换间隙
       // 丢失（EventEmitter 同步派发，gap 期间 message 被丢弃）。第一次看到 tool_input
@@ -439,7 +445,7 @@ function createFakeOpenAI() {
       return;
     }
     for (const token of ['MULTIPROCESS_', 'DONE']) {
-      await sleep(80);
+      await sleep(150);
       sendSse(res, { choices: [{ delta: { content: token } }] });
     }
     sendSse(res, { choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 } });

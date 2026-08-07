@@ -1008,7 +1008,7 @@ export class RawAgentLoop implements AgentLoop {
           });
           draftStatePersisted = true;
         };
-        // 2026-07-03 起 assistant_stream_event delta 不再落库；UI 的"思考 Xs"
+        // RawAgentLoop 不逐 token 落 assistant_stream_event；多进程传输层仅写有界聚合批次。UI 的"思考 Xs"
         // 时长改由 assistant_thinking 聚合行的 durationMs 携带。
         let turnThinkingMs = 0;
         let thinkingSegmentStartedAt: number | undefined;
@@ -2964,7 +2964,7 @@ export class RawAgentLoop implements AgentLoop {
           });
           draftStatePersisted = true;
         };
-        // 2026-07-03 起 assistant_stream_event delta 不再落库；UI 的"思考 Xs"
+        // RawAgentLoop 不逐 token 落 assistant_stream_event；多进程传输层仅写有界聚合批次。UI 的"思考 Xs"
         // 时长改由 assistant_thinking 聚合行的 durationMs 携带。
         let turnThinkingMs = 0;
         let thinkingSegmentStartedAt: number | undefined;

@@ -90,6 +90,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check engineering ratchets
+        run: pnpm check:ratchets
+
       - name: Typecheck server
         run: pnpm -F server typecheck
 
@@ -133,6 +136,9 @@ jobs:
           VITE_API_BASE: https://api.agent.kaiyan.net
           VITE_WEB_ORIGIN: https://agent.kaiyan.net
         run: pnpm -F web build:oss
+
+      - name: Check Web startup resource ratchet
+        run: pnpm check:web-startup-budget -- --dist web/dist
 
       # 覆盖率报告不作为门禁，测试失败也应打印/上传能拿到的部分数据。
       - name: Report coverage summary

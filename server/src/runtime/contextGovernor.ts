@@ -8,14 +8,14 @@ export interface GovernedModelMessages {
   messages: ModelChatMessage[];
   triggerTokens: number;
   thresholdTokens?: number;
-  forceSynthesis: boolean;
+  shouldCompactBeforeRequest: boolean;
   droppedMessages: number;
 }
 
 /**
  * 请求前只判定上下文压力，不再改写 model-visible 历史。
  * tool_result 在首次进入消息数组时已经完成固定投影；达到阈值后由 RawAgentLoop
- * 停止扩展工具调用并在最终回答后交给现有 auto compact。
+ * 在下一次模型请求前建立 checkpoint，重建上下文后继续同一 run。
  *
  * 2026-08-04 起判定只用模型 API 返回的真实上下文口径（RuntimeContextUsageTracker，
  * provider usage 派生：全量重锚 / Responses relay 净新增累计），不再做字节估算——
@@ -40,7 +40,7 @@ export function governModelRequestMessages(
     messages,
     triggerTokens,
     ...(thresholdTokens ? { thresholdTokens } : {}),
-    forceSynthesis: Boolean(thresholdTokens && triggerTokens >= thresholdTokens),
+    shouldCompactBeforeRequest: Boolean(thresholdTokens && triggerTokens >= thresholdTokens),
     droppedMessages: 0,
   };
 }

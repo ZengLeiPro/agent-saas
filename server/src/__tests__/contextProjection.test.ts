@@ -405,6 +405,61 @@ describe('compaction 切分（/compact 真实现）', () => {
     expect(projection.messages[2]).toMatchObject({ role: 'assistant', content: 'assistant_message-3' });
   });
 
+  it('checkpoint 在 source run 未终态时激活续跑，终态后保留为 historical 因果记录', () => {
+    const checkpoint = {
+      id: 'checkpoint-1',
+      timestamp: '2026-08-07T05:00:03.000Z',
+      type: 'compaction',
+      runId: 'run-active',
+      sessionId: 'session-1',
+      summary: '已经读取配置，下一步修改代码。',
+      coveredEventCount: 2,
+      inline: true,
+      checkpoint: {
+        version: 1,
+        trigger: 'threshold',
+        sourceRunId: 'run-active',
+        targetTokens: 40_000,
+        summaryBudgetTokens: 8_000,
+        summaryObservedTokens: 100,
+        rawTailBudgetTokens: 20_000,
+        rawTailObservedTokens: 0,
+        fixedTokens: 12_000,
+        taskAnchors: [{
+          eventId: 'event-0',
+          timestamp: '2026-08-07T05:00:00.000Z',
+          text: '修复配置问题',
+          originalChars: 6,
+        }],
+      },
+    } as PlatformEvent;
+    const active = buildContextProjection([
+      { ...event(0), runId: 'run-active', content: '修复配置问题' } as PlatformEvent,
+      event(1, 'assistant_message'),
+      checkpoint,
+    ], { sessionId: 'session-1', runId: 'run-active' });
+    expect(active.messages[0]?.content).toContain('state="active"');
+    expect(active.messages[0]?.content).toContain('<resume-policy>');
+    expect(active.messages[0]?.content).toContain('修复配置问题');
+
+    const historical = buildContextProjection([
+      { ...event(0), runId: 'run-active', content: '修复配置问题' } as PlatformEvent,
+      event(1, 'assistant_message'),
+      checkpoint,
+      {
+        id: 'finish-1',
+        timestamp: '2026-08-07T05:00:04.000Z',
+        type: 'run_finished',
+        runId: 'run-active',
+        sessionId: 'session-1',
+        subtype: 'success',
+        numTurns: 3,
+      } as PlatformEvent,
+    ], { sessionId: 'session-1', runId: 'run-next' });
+    expect(historical.messages[0]?.content).toContain('state="historical"');
+    expect(historical.messages[0]?.content).not.toContain('<resume-policy>');
+  });
+
   it('cutoffEventId 指向不存在的事件时退化为以 compaction 自身为切分点', () => {
     const events = [
       event(0),
@@ -436,28 +491,28 @@ describe('用户消息轨迹（抽取式，非 LLM 转述）', () => {
     expect(trail.map((t) => t.content)).toEqual(['user_message-0', 'user_message-4']);
   });
 
-  it('单条超长保头保尾截断，并标注省略字数', () => {
+  it('单条超长保头保尾截断，并保留 eventId、原文字数和检索说明', () => {
     const long = `${'头'.repeat(450)}${'尾'.repeat(150)}`; // 600 字符
-    const rendered = renderUserMessageTrail([
-      { timestamp: new Date(2026, 5, 1, 10, 30).toISOString(), content: long },
-    ]);
+    const trail = extractUserMessageTrail([{ ...event(9), content: long } as PlatformEvent]);
+    const rendered = renderUserMessageTrail(trail);
     expect(rendered).toContain('<user-message-trail>');
-    expect(rendered).toContain('[06-01 10:30]');
-    expect(rendered).toContain('已省略 100 字'); // 600 - 400 - 100
-    // 尾部保留
+    expect(rendered).toContain('eventId=event-9');
+    expect(rendered).toContain('原文 600 字');
+    expect(rendered).toContain('已省略 100 字');
     expect(rendered).toContain('尾尾尾');
   });
 
-  it('总量超预算降级为「首条 + 最近若干条」并标注省略条数', () => {
-    const items = Array.from({ length: 40 }, (_, i) => ({
-      timestamp: new Date(2026, 0, 1, 0, i).toISOString(),
+  it('消息总量很大时仍逐条列出，不静默省略中间用户消息', () => {
+    const events = Array.from({ length: 40 }, (_, i) => ({
+      ...event(i),
       content: `消息${i}-${'x'.repeat(300)}`,
-    }));
-    const rendered = renderUserMessageTrail(items);
-    expect(rendered.length).toBeLessThan(9500); // 8000 预算 + 包装文本余量
-    expect(rendered).toContain('消息0-');       // 首条保留
-    expect(rendered).toContain('消息39-');      // 最新保留
-    expect(rendered).toMatch(/中间省略 \d+ 条用户消息/);
+    } as PlatformEvent));
+    const rendered = renderUserMessageTrail(extractUserMessageTrail(events));
+    for (let i = 0; i < 40; i += 1) {
+      expect(rendered).toContain(`eventId=event-${i}`);
+      expect(rendered).toContain(`消息${i}-`);
+    }
+    expect(rendered).not.toContain('中间省略');
   });
 
   it('空轨迹渲染为空字符串（摘要块不出现空 trail 段）', () => {

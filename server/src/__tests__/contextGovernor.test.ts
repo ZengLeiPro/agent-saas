@@ -15,7 +15,7 @@ describe('context governor', () => {
       { role: 'tool', tool_call_id: 'call-1', content: 'X'.repeat(300_000) },
     ];
     const result = governModelRequestMessages(messages, 'unconfigured-model', 1);
-    expect(result.forceSynthesis).toBe(false);
+    expect(result.shouldCompactBeforeRequest).toBe(false);
     expect(result.messages).toBe(messages);
     expect(result.messages).toEqual(messages);
   });
@@ -35,7 +35,7 @@ describe('context governor', () => {
       { role: 'tool', tool_call_id: 'call-2', content: 'recent evidence' },
     ];
     const result = governModelRequestMessages(messages, 'small-context-model', 5, 600);
-    expect(result.forceSynthesis).toBe(true);
+    expect(result.shouldCompactBeforeRequest).toBe(true);
     expect(result.triggerTokens).toBe(600);
     expect(result.droppedMessages).toBe(0);
     expect(result.messages).toBe(messages);
@@ -62,7 +62,7 @@ describe('context governor', () => {
       { role: 'tool', tool_call_id: 'call-1', content: 'const x = 1;\n'.repeat(50_000) },
     ];
     const result = governModelRequestMessages(messages, 'gpt-5.6-sol', 1, 129_072, 'codex/sol-high');
-    expect(result.forceSynthesis).toBe(false);
+    expect(result.shouldCompactBeforeRequest).toBe(false);
     expect(result.triggerTokens).toBe(129_072);
     expect(result.thresholdTokens).toBe(217_600);
   });
@@ -76,7 +76,7 @@ describe('context governor', () => {
       { role: 'user', content: 'X'.repeat(100_000) },
     ];
     const result = governModelRequestMessages(messages, 'small-context-model', 1, undefined);
-    expect(result.forceSynthesis).toBe(false);
+    expect(result.shouldCompactBeforeRequest).toBe(false);
     expect(result.triggerTokens).toBe(0);
   });
 
@@ -91,7 +91,7 @@ describe('context governor', () => {
       { role: 'tool', tool_call_id: 'call-1', content: 'small increment' },
     ];
     const result = governModelRequestMessages(messages, 'relay-model', 1, 8_500);
-    expect(result.forceSynthesis).toBe(true);
+    expect(result.shouldCompactBeforeRequest).toBe(true);
     expect(result.triggerTokens).toBe(8_500);
   });
 
@@ -121,13 +121,13 @@ describe('context governor', () => {
       1,
       303_666,
       'codex/sol-high',
-    ).forceSynthesis).toBe(false);
+    ).shouldCompactBeforeRequest).toBe(false);
     expect(governModelRequestMessages(
       messages,
       'gpt-5.6-sol',
       1,
       303_666,
       'kaiyan-llm/sol-high',
-    ).forceSynthesis).toBe(true);
+    ).shouldCompactBeforeRequest).toBe(true);
   });
 });

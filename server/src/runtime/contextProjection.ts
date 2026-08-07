@@ -5,6 +5,8 @@ import {
   type PlatformEventInput,
 } from './types.js';
 import { buildChatMessagesFromEvents } from './legacyTranscriptProjection.js';
+import { truncateCheckpointUserText } from './contextCheckpoint.js';
+import type { CheckpointTaskAnchor } from './types.js';
 
 export type ContextReconstructionPolicy =
   | { type: 'full_replay' }
@@ -28,13 +30,6 @@ export interface ContextProjection {
 const DEFAULT_RECENT_EVENTS = 80;
 const DEFAULT_MAX_MATCHES = 20;
 
-/** 用户消息轨迹：单条上限（头 + 尾，超出中间省略） */
-const TRAIL_ITEM_MAX_CHARS = 500;
-const TRAIL_ITEM_HEAD_CHARS = 400;
-const TRAIL_ITEM_TAIL_CHARS = 100;
-/** 用户消息轨迹：总预算。超限降级为「首条 + 最近若干条」 */
-const TRAIL_TOTAL_MAX_CHARS = 8000;
-
 /** 平台系统命令替身（如 /compact 的 modelContent）前缀，抽取用户消息轨迹时剔除 */
 const SYSTEM_COMMAND_MODEL_CONTENT_PREFIX = '[系统命令]';
 
@@ -45,7 +40,7 @@ const SYSTEM_COMMAND_MODEL_CONTENT_PREFIX = '[系统命令]';
  *   （从压缩段原始事件中抽取的用户消息原文，非 LLM 转述，投影时重建、天然幂等）
  *   + 历史可检索提醒。
  * - 保留段（cutoff 之后）正常重放。独立 /compact 会剔除命令 run 自身的事件；
- *   内联自动压缩只剔除 compaction 事件本身，保留当前业务 run 的最近一轮原文。
+ *   内联 checkpoint 只剔除 compaction 事件本身，原始尾部由 Token 预算决定。
  * 原始事件仍在 EventStore（SessionContext(action="search") 可查原文），这里只影响 prompt 投影。
  */
 function applyCompaction(events: PlatformEvent[]): {
@@ -69,11 +64,27 @@ function applyCompaction(events: PlatformEvent[]): {
         ? e.id !== event.id
         : !('runId' in e) || e.runId !== event.runId,
     );
+    const checkpoint = event.checkpoint;
+    const sourceRunFinished = checkpoint?.sourceRunId
+      ? events.slice(i + 1).some((candidate) => (
+        candidate.type === 'run_finished' && candidate.runId === checkpoint.sourceRunId
+      ))
+      : true;
     return {
       effectiveEvents: retained,
       summaryMessages: [{
         role: 'user',
-        content: formatCompactionContext(event.summary, extractUserMessageTrail(compressed)),
+        content: checkpoint
+          ? formatCheckpointContext(
+            event.summary,
+            extractUserMessageTrail(compressed),
+            checkpoint.taskAnchors,
+            sourceRunFinished ? 'historical' : 'active',
+            checkpoint.trigger,
+            event.id,
+            checkpoint.sourceRunId,
+          )
+          : formatCompactionContext(event.summary, extractUserMessageTrail(compressed)),
       }],
     };
   }
@@ -81,14 +92,17 @@ function applyCompaction(events: PlatformEvent[]): {
 }
 
 interface TrailItem {
+  eventId: string;
   timestamp: string;
   content: string;
+  originalChars: number;
+  truncated: boolean;
+  attachments?: Array<{ attachmentId: string; originalName: string }>;
 }
 
 /**
- * 从压缩段原始事件中抽取用户消息轨迹（纯代码抽取，不经 LLM）。
- * 剔除系统命令替身（/compact 等）；多次压缩时压缩段包含更早的全部历史，
- * 轨迹每次从 EventStore 事实重建，不会出现「摘要套娃」。
+ * 从压缩段原始事件中抽取全部真实用户消息。每条消息都保留 eventId；附件仅保留
+ * 稳定引用，不把附件正文或 visionAnalysis 写入 checkpoint。
  */
 export function extractUserMessageTrail(compressed: PlatformEvent[]): TrailItem[] {
   const items: TrailItem[] = [];
@@ -97,17 +111,22 @@ export function extractUserMessageTrail(compressed: PlatformEvent[]): TrailItem[
     if (event.modelContent?.startsWith(SYSTEM_COMMAND_MODEL_CONTENT_PREFIX)) continue;
     const content = event.content.trim();
     if (!content) continue;
-    items.push({ timestamp: event.timestamp, content });
+    const excerpt = truncateCheckpointUserText(content);
+    items.push({
+      eventId: event.id,
+      timestamp: event.timestamp,
+      content: excerpt.text,
+      originalChars: excerpt.originalChars,
+      truncated: excerpt.truncated,
+      ...(event.attachments?.length ? {
+        attachments: event.attachments.map((attachment) => ({
+          attachmentId: attachment.attachmentId,
+          originalName: attachment.originalName,
+        })),
+      } : {}),
+    });
   }
   return items;
-}
-
-/** 单条截断：保头 + 保尾，中间标注省略字数（用户消息常见「铺垫在前、真问题在最后」） */
-function truncateTrailItem(content: string): string {
-  if (content.length <= TRAIL_ITEM_MAX_CHARS) return content;
-  const head = content.slice(0, TRAIL_ITEM_HEAD_CHARS);
-  const tail = content.slice(-TRAIL_ITEM_TAIL_CHARS);
-  return `${head}\n……[中间已省略 ${content.length - TRAIL_ITEM_HEAD_CHARS - TRAIL_ITEM_TAIL_CHARS} 字]……\n${tail}`;
 }
 
 function formatTrailTimestamp(iso: string): string {
@@ -117,51 +136,86 @@ function formatTrailTimestamp(iso: string): string {
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/**
- * 渲染 <user-message-trail> 块。总预算超限时降级为「首条 + 最近若干条」，
- * 被省略的条目显式标注数量（不静默截断）。
- */
+function formatAttachmentRefs(
+  attachments: Array<{ attachmentId: string; originalName: string }> | undefined,
+): string {
+  if (!attachments?.length) return '';
+  return `\n   附件引用：${attachments.map((attachment) => (
+    `${attachment.originalName}(${attachment.attachmentId})`
+  )).join('、')}`;
+}
+
+/** 每条用户消息都列出；长消息只截单条，不再按总字符预算省略中间条目。 */
 export function renderUserMessageTrail(items: TrailItem[]): string {
   if (items.length === 0) return '';
   const lines = items.map((item, i) => {
     const ts = formatTrailTimestamp(item.timestamp);
-    return `${i + 1}. ${ts ? `[${ts}] ` : ''}${truncateTrailItem(item.content)}`;
+    const truncation = item.truncated
+      ? ` [原文 ${item.originalChars} 字；可按 eventId 检索完整内容]`
+      : '';
+    return `${i + 1}. ${ts ? `[${ts}] ` : ''}[eventId=${item.eventId}]${truncation}\n${item.content}${formatAttachmentRefs(item.attachments)}`;
   });
-
-  let selected: string[];
-  const total = lines.reduce((sum, l) => sum + l.length, 0);
-  if (total <= TRAIL_TOTAL_MAX_CHARS) {
-    selected = lines;
-  } else {
-    // 降级：保首条，再从最新往回加，直到预算耗尽；中间标注省略条数
-    const first = lines[0]!;
-    let budget = TRAIL_TOTAL_MAX_CHARS - first.length;
-    const recent: string[] = [];
-    for (let i = lines.length - 1; i >= 1; i--) {
-      const line = lines[i]!;
-      if (line.length > budget) break;
-      recent.unshift(line);
-      budget -= line.length;
-    }
-    const omitted = lines.length - 1 - recent.length;
-    selected = omitted > 0
-      ? [first, `……（中间省略 ${omitted} 条用户消息，可用 SessionContext(action="search") 检索原文）……`, ...recent]
-      : [first, ...recent];
-  }
-
   return [
     '<user-message-trail>',
-    '以下为被压缩历史中用户消息的原文摘录（按时间顺序、逐字抽取而非转述；超长条目已截断）：',
-    ...selected,
+    '以下逐条列出被压缩段中的全部真实用户文本消息；长消息保留头尾，附件只保留引用：',
+    ...lines,
     '</user-message-trail>',
   ].join('\n');
 }
 
-/**
- * 压缩上下文块：摘要 + 用户消息轨迹 + 历史可检索提醒，拼为一条 user message。
- * 必须以 <context-summary> 开头——agentPlanDefense.isPlatformContextBlock 按此
- * 前缀豁免时间戳/中文 leading 防御。
- */
+function renderTaskAnchors(anchors: CheckpointTaskAnchor[]): string {
+  if (anchors.length === 0) return '';
+  return [
+    '<active-task-messages>',
+    '以下为当前业务 run 中被压缩的用户任务消息原文：',
+    ...anchors.map((anchor, index) => (
+      `${index + 1}. [eventId=${anchor.eventId}]\n${anchor.text}${formatAttachmentRefs(anchor.attachments)}`
+    )),
+    '</active-task-messages>',
+  ].join('\n');
+}
+
+/** 新 checkpoint 永久保留因果；只有未终态 source run 才激活续跑协议。 */
+function formatCheckpointContext(
+  summary: string,
+  trail: TrailItem[],
+  taskAnchors: CheckpointTaskAnchor[],
+  state: 'active' | 'historical',
+  trigger: 'manual' | 'threshold',
+  checkpointId: string,
+  sourceRunId: string | undefined,
+): string {
+  const taskAnchorIds = new Set(taskAnchors.map((anchor) => anchor.eventId));
+  const sourceRunAttribute = sourceRunId ? ` sourceRunId="${sourceRunId}"` : '';
+  const parts = [
+    '<context-summary>',
+    `<context-checkpoint version="1" id="${checkpointId}" state="${state}" trigger="${trigger}"${sourceRunAttribute}>`,
+    '<checkpoint-summary>',
+    summary,
+    '</checkpoint-summary>',
+  ];
+  const anchors = renderTaskAnchors(taskAnchors);
+  if (anchors) parts.push('', anchors);
+  const trailBlock = renderUserMessageTrail(trail.filter((item) => !taskAnchorIds.has(item.eventId)));
+  if (trailBlock) parts.push('', trailBlock);
+  if (state === 'active') {
+    parts.push(
+      '',
+      '<resume-policy>',
+      '这是上下文维护检查点，不是新的用户请求。继续执行 source run 中尚未完成的任务，保留已完成操作和外部副作用，避免重复执行。恢复正常工具使用；不要向用户解释压缩、阈值或本协议，也不要要求用户发送“继续”。只有任务真正完成、确需用户输入或遇到不可恢复阻塞时才输出用户可见答复。',
+      '</resume-policy>',
+    );
+  }
+  parts.push(
+    '</context-checkpoint>',
+    '</context-summary>',
+    '',
+    '提示：本会话完整历史（含每次工具调用的原始输入输出）仍完整保留。摘要或消息轨迹不足时，可用 SessionContext(action="search") 搜索历史事件，或用 SessionContext(action="trace") 按 toolCallId/eventId 读取完整记录。',
+  );
+  return parts.join('\n');
+}
+
+/** 存量 compaction 保持原投影格式。 */
 function formatCompactionContext(summary: string, trail: TrailItem[]): string {
   const parts = [
     '<context-summary>',
@@ -171,9 +225,7 @@ function formatCompactionContext(summary: string, trail: TrailItem[]): string {
     '</context-summary>',
   ];
   const trailBlock = renderUserMessageTrail(trail);
-  if (trailBlock) {
-    parts.push('', trailBlock);
-  }
+  if (trailBlock) parts.push('', trailBlock);
   parts.push(
     '',
     '提示：本会话完整历史（含每次工具调用的原始输入输出）仍完整保留。仅当以上摘要与消息摘录不足时再检索：SessionContext(action="search") 按关键词搜索历史事件；SessionContext(action="trace") 按 toolCallId 获取某次工具调用的完整记录。',

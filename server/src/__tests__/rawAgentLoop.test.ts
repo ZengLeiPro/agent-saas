@@ -3359,7 +3359,7 @@ describe('RawAgentLoop', () => {
     }
   });
 
-  it('远端接力链达到上下文阈值时断链接力，保留上一轮答复并仅开放只读会话检索', async () => {
+  it('软阈值 checkpoint 不可用时继续正常接力，不提前收束或限制工具', async () => {
     configureModelPricing({
       groups: [{ models: [{ value: 'relay-small', context_window: 1_000, auto_compact_threshold: 0.5 }] }],
     });
@@ -3369,19 +3369,35 @@ describe('RawAgentLoop', () => {
         'relay-small',
         600,
       );
-      expect(adapter.requests[0]?.previousResponseId).toBeUndefined();
+      expect(adapter.requests[0]?.previousResponseId).toBe('resp_prev');
       expect(adapter.requests[0]?.toolChoice).toBeUndefined();
-      expect(adapter.requests[0]?.tools.map((tool) => tool.name).sort()).toEqual([
-        'SessionContext',
-      ]);
-      expect(JSON.stringify(adapter.requests[0]?.messages)).toContain('平台收束指令');
+      expect(adapter.requests[0]?.tools.map((tool) => tool.name)).toContain('SessionContext');
+      expect(JSON.stringify(adapter.requests[0]?.messages)).not.toContain('平台收束指令');
       expect(JSON.stringify(adapter.requests[0]?.messages)).toContain('prior response');
     } finally {
       configureModelPricing(undefined);
     }
   });
 
-  it('context governor 压力先持久化，再以内联自动压缩 forceReason 参与尾阶段判定', async () => {
+  it('checkpoint 不可用且达到 95% 硬阈值时才进入紧急收束', async () => {
+    configureModelPricing({
+      groups: [{ models: [{ value: 'relay-hard', context_window: 1_000, auto_compact_threshold: 0.5 }] }],
+    });
+    try {
+      const { adapter } = await runRelayScenario(
+        { runId: 'run-relay-1', lastResponseId: 'resp_prev', lastResponseModel: 'relay-hard' },
+        'relay-hard',
+        960,
+      );
+      expect(adapter.requests[0]?.previousResponseId).toBeUndefined();
+      expect(adapter.requests[0]?.tools.map((tool) => tool.name)).toEqual(['SessionContext']);
+      expect(JSON.stringify(adapter.requests[0]?.messages)).toContain('平台收束指令');
+    } finally {
+      configureModelPricing(undefined);
+    }
+  });
+
+  it('context governor 压力先持久化，再传入自动 checkpoint 判定', async () => {
     configureModelPricing({
       groups: [{ models: [{ value: 'pressure-small', context_window: 1_000, auto_compact_threshold: 0.5 }] }],
     });
@@ -3448,6 +3464,281 @@ describe('RawAgentLoop', () => {
     } finally {
       configureModelPricing(undefined);
     }
+  });
+
+  it('达到阈值时先建立 checkpoint，再以完整业务工具继续同一 run', async () => {
+    configureModelPricing({
+      groups: [{ models: [{ value: 'checkpoint-small', context_window: 1_000, auto_compact_threshold: 0.5 }] }],
+    });
+    try {
+      const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-pre-request-checkpoint-'));
+      cleanupDirs.add(cwd);
+      const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+      await eventStore.append({
+        type: 'user_message',
+        runId: 'run-old',
+        sessionId: 'session-checkpoint',
+        content: '先前任务',
+      });
+      await eventStore.append({
+        type: 'assistant_message',
+        runId: 'run-old',
+        sessionId: 'session-checkpoint',
+        content: '先前进度',
+        model: 'checkpoint-small',
+        usage: { inputTokens: 600, outputTokens: 1 },
+        responseMode: 'full',
+        responseChained: false,
+      });
+      class CheckpointThenContinueAdapter implements ModelAdapter {
+        requests: ModelRequest[] = [];
+        async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
+          this.requests.push(request);
+          const isCheckpoint = String(request.messages.at(-1)?.content).includes('上下文压缩');
+          const content = isCheckpoint ? '## 检查点\n当前任务尚未完成，下一步继续执行。' : '任务已自动续跑并完成。';
+          yield { type: 'text_delta', content };
+          yield {
+            type: 'completed',
+            content,
+            toolCalls: [],
+            usage: { inputTokens: 100, outputTokens: 10 },
+          };
+        }
+      }
+      const adapter = new CheckpointThenContinueAdapter();
+      const patchMetadata = vi.fn(async () => null);
+      const loop = new RawAgentLoop({
+        modelAdapter: adapter,
+        eventStore,
+        approvalStore: new EventBackedApprovalStore(eventStore, 'session-checkpoint'),
+        transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+        toolRuntime: new PlatformToolRuntime(),
+        runStore: {
+          get: vi.fn(async () => ({ status: 'running', metadata: {} })),
+          patchMetadata,
+          clearResponseSessionStateBySession: vi.fn(async () => 0),
+          findLatestResponseSessionStateBySession: vi.fn(async () => null),
+        } as unknown as RunStore,
+      });
+      let evaluations = 0;
+      const outbound = await collect(loop.run(
+        {
+          message: { channel: 'web', chatId: 'chat-checkpoint', content: '继续当前任务' },
+          prompt: '继续当前任务',
+          instructions: '正常系统指令',
+          maxTurns: 1,
+          connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+        },
+        {
+          runId: 'run-checkpoint',
+          sessionId: 'session-checkpoint',
+          model: 'checkpoint-small',
+          cwd,
+          channelContext: { channel: 'web' },
+          evaluateAutoCompaction: () => ({
+            shouldCompact: evaluations++ === 0,
+            reason: 'context_governor',
+          }),
+        },
+      ));
+
+      expect(adapter.requests).toHaveLength(2);
+      const continued = adapter.requests[1]!;
+      expect(continued.toolChoice).toBeUndefined();
+      expect(continued.tools.length).toBeGreaterThan(0);
+      expect(JSON.stringify(continued.messages)).toContain('<context-checkpoint');
+      expect(JSON.stringify(continued.messages)).toContain('state=\\"active\\"');
+      expect(JSON.stringify(continued.messages)).not.toContain('[平台收束指令]');
+      expect(outbound.map((event) => event.type)).toContain('compaction_start');
+      expect(outbound.map((event) => event.type)).toContain('compaction_end');
+      const events = await eventStore.list('session-checkpoint');
+      expect(events.filter((event) => event.type === 'run_finished')).toHaveLength(1);
+      expect(events.filter((event) => (
+        event.type === 'assistant_message' && event.runId === 'run-checkpoint'
+      ))).toEqual([expect.objectContaining({ content: '任务已自动续跑并完成。' })]);
+      expect(events.find((event) => event.type === 'compaction')).toMatchObject({
+        checkpoint: { version: 1, trigger: 'threshold', sourceRunId: 'run-checkpoint' },
+      });
+    } finally {
+      configureModelPricing(undefined);
+    }
+  });
+
+  it('运行中的 /compact 作为控制信号在安全边界压缩，不进入模型业务消息', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-manual-checkpoint-interjection-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    for (let i = 1; i <= 2; i++) {
+      await eventStore.append({
+        type: 'user_message',
+        runId: `run-old-${i}`,
+        sessionId: 'session-manual-control',
+        content: `历史问题 ${i}`,
+      });
+      await eventStore.append({
+        type: 'assistant_message',
+        runId: `run-old-${i}`,
+        sessionId: 'session-manual-control',
+        content: `历史回答 ${i}`,
+      });
+    }
+    let queued: QueuedInterjection[] = [{
+      inputId: 'input-compact',
+      sourceRunId: 'source-compact',
+      message: { channel: 'web', chatId: 'chat-manual-control', content: '/compact' },
+      prompt: '/compact',
+    }];
+    class ManualCheckpointAdapter implements ModelAdapter {
+      requests: ModelRequest[] = [];
+      async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
+        this.requests.push(request);
+        const isCheckpoint = String(request.messages.at(-1)?.content).includes('上下文压缩');
+        const content = isCheckpoint ? '手动检查点摘要。' : '原任务继续完成。';
+        yield { type: 'text_delta', content };
+        yield { type: 'completed', content, toolCalls: [] };
+      }
+    }
+    const adapter = new ManualCheckpointAdapter();
+    const markApplied = vi.fn(async (_runId: string, sourceRunIds: string[]) => {
+      queued = [];
+      return sourceRunIds;
+    });
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-manual-control'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore: {
+        get: vi.fn(async () => ({ status: 'running', metadata: {} })),
+        patchMetadata: vi.fn(async () => null),
+        markSteeringInputsApplied: markApplied,
+        trySealSteeringInputWindow: vi.fn(async () => true),
+        clearResponseSessionStateBySession: vi.fn(async () => 0),
+        findLatestResponseSessionStateBySession: vi.fn(async () => null),
+      } as unknown as RunStore,
+    });
+    await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-manual-control', content: '完成原任务' },
+        prompt: '完成原任务',
+        instructions: '正常系统指令',
+        maxTurns: 1,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-manual-control',
+        sessionId: 'session-manual-control',
+        model: 'unconfigured-model',
+        cwd,
+        channelContext: { channel: 'web' },
+        loadQueuedInterjections: async () => queued,
+      },
+    ));
+
+    expect(adapter.requests).toHaveLength(2);
+    expect(JSON.stringify(adapter.requests[1]?.messages)).not.toContain('/compact');
+    expect(JSON.stringify(adapter.requests[1]?.messages)).toContain('完成原任务');
+    expect(markApplied).toHaveBeenCalledWith('run-manual-control', ['source-compact']);
+    const events = await eventStore.list('session-manual-control');
+    expect(events.find((event) => event.type === 'compaction')).toMatchObject({
+      checkpoint: {
+        trigger: 'manual',
+        sourceRunId: 'run-manual-control',
+        controlSourceRunIds: ['source-compact'],
+      },
+    });
+    expect(events.some((event) => event.type === 'user_message' && event.content === '/compact')).toBe(false);
+  });
+
+  it('崩溃恢复时复用 active checkpoint 自动续跑，不重复压缩或重复追加用户消息', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-checkpoint-recovery-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const userEvent = await eventStore.append({
+      type: 'user_message',
+      runId: 'run-recover',
+      sessionId: 'session-recover',
+      content: '继续修复故障',
+    });
+    await eventStore.append({
+      type: 'assistant_message',
+      runId: 'run-recover',
+      sessionId: 'session-recover',
+      content: '已经定位根因，尚未完成修复。',
+    });
+    await eventStore.append({
+      type: 'compaction',
+      runId: 'run-recover',
+      sessionId: 'session-recover',
+      summary: '已经定位根因，下一步修改代码并验证。',
+      coveredEventCount: 2,
+      inline: true,
+      checkpoint: {
+        version: 1,
+        trigger: 'threshold',
+        sourceRunId: 'run-recover',
+        targetTokens: 40_000,
+        summaryBudgetTokens: 8_000,
+        summaryObservedTokens: 100,
+        rawTailBudgetTokens: 20_000,
+        rawTailObservedTokens: 0,
+        fixedTokens: 10_000,
+        taskAnchors: [{
+          eventId: userEvent.id,
+          timestamp: userEvent.timestamp,
+          text: '继续修复故障',
+          originalChars: 6,
+        }],
+      },
+    });
+    class RecoveryAdapter implements ModelAdapter {
+      requests: ModelRequest[] = [];
+      async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
+        this.requests.push(request);
+        yield { type: 'text_delta', content: '已恢复并完成修复。' };
+        yield { type: 'completed', content: '已恢复并完成修复。', toolCalls: [] };
+      }
+    }
+    const adapter = new RecoveryAdapter();
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-recover'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore: {
+        get: vi.fn(async () => ({ status: 'running', metadata: { contextPressure: { reason: 'context_governor', detectedAt: '2026-08-07T05:00:00.000Z', triggerTokens: 900, thresholdTokens: 800, droppedMessages: 0 } } })),
+        patchMetadata: vi.fn(async () => null),
+        findLatestResponseSessionStateBySession: vi.fn(async () => null),
+      } as unknown as RunStore,
+    });
+    await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-recover', content: '继续修复故障' },
+        prompt: '继续修复故障',
+        recordUserMessage: false,
+        instructions: '正常系统指令',
+        maxTurns: 1,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-recover',
+        sessionId: 'session-recover',
+        model: 'unconfigured-model',
+        cwd,
+        channelContext: { channel: 'web' },
+      },
+    ));
+
+    expect(adapter.requests).toHaveLength(1);
+    const serialized = JSON.stringify(adapter.requests[0]?.messages);
+    expect(serialized).toContain('state=\\"active\\"');
+    expect(serialized.match(/继续修复故障/g)).toHaveLength(1);
+    const events = await eventStore.list('session-recover');
+    expect(events.filter((event) => event.type === 'compaction')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'user_message')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'run_finished')).toHaveLength(1);
   });
 
   it('上一 run 模型不同时禁止接力（切模型后 response id 属于旧后端）', async () => {
@@ -3545,7 +3836,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     return { cwd, eventStore, loop, context, clearedSessions };
   }
 
-  /** 4 轮真实交互：仅最近 1 轮（D 方案）进保留窗口，前 3 轮（A/B/C 方案）进压缩段 */
+  /** 4 轮真实交互：统一 checkpoint planner 根据 Token 预算选择原始尾部，不再固定保留 1 轮。 */
   async function seedHistory(eventStore: FileEventStore) {
     await eventStore.append({ type: 'user_message', runId: 'run-old-1', sessionId: 'session-compact', content: '帮我分析 A 方案' });
     await eventStore.append({ type: 'assistant_message', runId: 'run-old-1', sessionId: 'session-compact', content: 'A 方案的结论是 X=42。' });
@@ -3573,7 +3864,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     expect(outbound.some((e) => e.type === 'text_delta' || e.type === 'thinking_delta')).toBe(false);
     const end = outbound.find((e) => e.type === 'compaction_end') as any;
     expect(end.compaction.summary).toContain('推荐 B');
-    expect(end.compaction.coveredEventCount).toBe(6); // 前 3 轮 = 6 条事件
+    expect(end.compaction.coveredEventCount).toBe(8); // 测试模型未配置窗口，保守压缩完整前缀
     expect(end.compaction.skipped).toBeUndefined();
 
     // 摘要请求保持缓存前缀友好：原 system + 待摘要历史 + 末尾压缩请求 user；
@@ -3582,13 +3873,13 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     const request = adapter.requests[0]!;
     expect(request.messages[0]).toEqual({ role: 'system', content: '你是开开，会话正常指令。' });
     expect(request.messages.at(-1)).toMatchObject({ role: 'user', content: expect.stringContaining('上下文压缩') });
-    expect(request.messages.at(-1)?.content).toContain('最近一轮未包含在本请求中');
+    expect(request.messages.at(-1)?.content).toContain('最近完整执行尾部');
     const requestContents = request.messages.map((m) => m.content);
     expect(requestContents).toContain('帮我分析 A 方案');
     expect(requestContents).toContain('再对比 B 方案');
     expect(requestContents).toContain('那 C 方案呢');
-    expect(requestContents).not.toContain('最后看下 D 方案');
-    expect(requestContents).not.toContain('D 方案与 B 接近，仍推荐 B。');
+    expect(requestContents).toContain('最后看下 D 方案');
+    expect(requestContents).toContain('D 方案与 B 接近，仍推荐 B。');
     expect(request.tools.length).toBeGreaterThan(0);
     expect(request.toolChoice).toBe('none');
     expect(request.previousResponseId).toBeUndefined();
@@ -3601,11 +3892,13 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
 
     const compaction = events.find((e) => e.type === 'compaction') as any;
     expect(compaction.summary).toContain('推荐 B');
-    expect(compaction.coveredEventCount).toBe(6);
-    // cutoff = 最后一条真实用户消息（'最后看下 D 方案'）
-    const cutoffEvent = events.find((e) => e.id === compaction.cutoffEventId) as any;
-    expect(cutoffEvent.type).toBe('user_message');
-    expect(cutoffEvent.content).toBe('最后看下 D 方案');
+    expect(compaction.coveredEventCount).toBe(8);
+    expect(compaction.cutoffEventId).toBeUndefined();
+    expect(compaction.checkpoint).toMatchObject({
+      version: 1,
+      trigger: 'manual',
+      taskAnchors: [],
+    });
 
     const userMessage = events.find((e) => e.type === 'user_message' && e.runId === 'run-compact-1') as any;
     expect(userMessage.content).toBe('/compact');
@@ -3618,26 +3911,23 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     // 接力链已按 session 清空
     expect(clearedSessions).toEqual(['session-compact']);
 
-    // 闭环：下一个 run 的投影 = summary(含轨迹) + 最近 1 轮的 2 条原文；compact run 自身事件不出现
+    // 闭环：下一个 run 的投影 = checkpoint summary + 全量用户轨迹；compact run 自身事件不出现
     const projection = buildContextProjection(await eventStore.list('session-compact'), {
       sessionId: 'session-compact',
       runId: 'run-next',
     });
-    expect(projection.messages).toHaveLength(3);
+    expect(projection.messages).toHaveLength(1);
     const summary = projection.messages[0]!;
     expect(summary).toMatchObject({ role: 'user' });
     expect(summary.content).toContain('<context-summary>');
     expect(summary.content).toContain('推荐 B');
-    // 轨迹：被压缩段的用户消息原文（抽取式），最近 1 轮不重复出现
+    // 轨迹：逐条列出被压缩段的全部真实用户消息，不静默省略。
     expect(summary.content).toContain('<user-message-trail>');
     expect(summary.content).toContain('帮我分析 A 方案');
     expect(summary.content).toContain('再对比 B 方案');
     expect(summary.content).toContain('那 C 方案呢');
-    expect(summary.content).not.toContain('最后看下 D 方案');
+    expect(summary.content).toContain('最后看下 D 方案');
     expect(summary.content).toContain('SessionContext');
-    // 最近 1 轮原文完整保留
-    expect(projection.messages[1]).toMatchObject({ role: 'user', content: '最后看下 D 方案' });
-    expect(projection.messages[2]).toMatchObject({ role: 'assistant', content: 'D 方案与 B 接近，仍推荐 B。' });
     expect(projection.messages.some((m) => typeof m.content === 'string' && m.content.includes('/compact'))).toBe(false);
   });
 
@@ -3680,8 +3970,8 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     expect((events.find((e) => e.type === 'run_finished') as any)?.subtype).toBe('success');
   });
 
-  it('仅 2 轮真实交互：压缩段少于最小消息数 → skipped', async () => {
-    const adapter = new SummaryAdapter(['不应被调用']);
+  it('仅 2 轮真实交互也使用统一 planner 建立 checkpoint', async () => {
+    const adapter = new SummaryAdapter(['两轮历史摘要。']);
     const { eventStore, loop, context } = await makeCompactHarness(adapter);
     await eventStore.append({ type: 'user_message', runId: 'run-old-1', sessionId: 'session-compact', content: '帮我分析 A 方案' });
     await eventStore.append({ type: 'assistant_message', runId: 'run-old-1', sessionId: 'session-compact', content: 'A 方案的结论是 X=42。' });
@@ -3693,10 +3983,11 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
       context,
     ));
 
-    expect(adapter.requests).toHaveLength(0);
+    expect(adapter.requests).toHaveLength(1);
     const end = outbound.find((e) => e.type === 'compaction_end') as any;
-    expect(end.compaction.skipped).toBe(true);
-    expect((await eventStore.list('session-compact')).some((e) => e.type === 'compaction')).toBe(false);
+    expect(end.compaction.skipped).toBeUndefined();
+    const checkpoint = (await eventStore.list('session-compact')).find((e) => e.type === 'compaction') as any;
+    expect(checkpoint.checkpoint).toMatchObject({ version: 1, trigger: 'manual' });
   });
 
   it('模型返回空摘要：run_finished error，无 compaction，防御性 modelContent 保证投影无裸 /compact', async () => {
@@ -3848,7 +4139,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     expect(adapter.requests).toHaveLength(3);
     expect(JSON.stringify(adapter.requests[2]?.messages)).toContain('## 自动摘要');
     expect(JSON.stringify(adapter.requests[2]?.messages)).toContain('完成当前任务');
-    expect(JSON.stringify(adapter.requests[2]?.messages)).toContain('上一条任务已经完成。');
+    expect(JSON.stringify(adapter.requests[2]?.messages)).toContain('<resume-policy>');
     expect(JSON.stringify(adapter.requests[2]?.messages)).toContain('压缩期间的新消息');
     expect(markApplied).toHaveBeenCalledWith('run-inline-auto', ['source-during-compact']);
     expect(forceReasons).toEqual(['context_governor', undefined]);

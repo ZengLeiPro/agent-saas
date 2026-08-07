@@ -6,6 +6,8 @@ packages:
   - hand-server
   - acs-orchestrator
 
+minimumReleaseAge: 2880
+
 onlyBuiltDependencies:
   - '@ffmpeg-installer/darwin-arm64'
   - bcrypt

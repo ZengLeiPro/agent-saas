@@ -39,11 +39,13 @@ ARG BASE_REGISTRY=docker.io/library
 FROM ${BASE_REGISTRY}/node:22-alpine AS deps
 WORKDIR /app
 
-# corepack 启用 pnpm；版本与 root package.json 的 packageManager 字段一致
-RUN corepack enable && corepack prepare pnpm@10.18.3 --activate
+# corepack 从 root package.json 获取 pnpm 版本，并校验 packageManager 的 SHA-512。
+COPY package.json ./
+RUN corepack enable \
+    && corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
 
 # 仅复制 package manifests 让 deps 层在源码变更时仍可缓存
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY server/package.json ./server/
 COPY hand-server/package.json ./hand-server/
 COPY acs-orchestrator/package.json ./acs-orchestrator/
@@ -177,12 +179,13 @@ COPY scripts/aliyun-runtime-wrapper.py /usr/local/bin/aliyun
 RUN chmod 0755 /usr/local/bin/aliyun \
     && aliyun version
 
+COPY package.json ./
 RUN corepack enable \
-    && corepack prepare pnpm@10.18.3 --activate \
+    && corepack prepare "$(node -p "require('./package.json').packageManager")" --activate \
     && corepack prepare yarn@1.22.22 --activate \
-    && corepack prepare pnpm@10.18.3 --activate
+    && corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
 
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY server/package.json ./server/
 COPY hand-server/package.json ./hand-server/
 COPY acs-orchestrator/package.json ./acs-orchestrator/
@@ -316,9 +319,11 @@ RUN python3 -m venv /tmp/pwcheck \
 # ─────────────────────────────────────────────────────────────
 FROM ${BASE_REGISTRY}/node:22-alpine AS web-build
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@10.18.3 --activate
+COPY package.json ./
+RUN corepack enable \
+    && corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
 
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY web/package.json ./web/
 COPY shared/package.json ./shared/
 COPY patches ./patches/
@@ -422,7 +427,7 @@ RUN groupadd -f -g 20 dialout \
     && useradd -m -u 501 -g 20 -s /bin/bash agent \
     && mkdir -p /workspace /home/agent/.npm-global/bin /home/agent/.npm-global/lib /ms-playwright \
     && chown -R 501:20 /home/agent /workspace \
-    && su agent -c 'corepack prepare yarn@1.22.22 --activate && corepack prepare pnpm@10.18.3 --activate'
+    && su agent -c 'cd /app && corepack prepare yarn@1.22.22 --activate && corepack prepare "$(node -p "require(\"./package.json\").packageManager")" --activate'
 WORKDIR /workspace
 
 CMD ["/bin/sh", "-c", "sleep infinity"]

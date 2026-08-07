@@ -784,7 +784,7 @@ jobs:
           log "prepare pnpm"
           if command -v corepack >/dev/null 2>&1; then
             corepack enable
-            corepack prepare pnpm@10.18.3 --activate
+            corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
           fi
           log "remote pnpm isolated install start"
           NODE_ENV=development pnpm --config.node-linker=isolated --config.allow-unused-patches=true install --frozen-lockfile --filter server... --filter shared...

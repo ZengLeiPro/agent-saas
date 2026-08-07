@@ -1,13 +1,16 @@
 /**
  * L2 记忆整合的 PG 持久层（2026-07-29 记忆写入职责剥离批次）。
  *
- * 四张表（随 store init 建，风格与 PgEventStore.init 一致：advisory lock 串行化）：
+ * 五张表（随 store init 建，风格与 PgEventStore.init 一致：advisory lock 串行化）：
  *   - <prefix>_memory_consolidation_consumers：全局扫描游标（正确性来源）。
+ *   - <prefix>_memory_consolidation_skips：永久缺失 projection 等 poison event 的隔离台账。
  *   - <prefix>_memory_consolidation_state：会话待办状态机（PK = tenant_id, session_id）。
  *   - <prefix>_memory_consolidation_runs：每个 (session, from, to] 范围的幂等 ledger。
  *   - <prefix>_memory_tombstones：「忘记」逻辑删除记录（L1 写入、L2/L3 提交前必查）。
  *
  * 并发不变量：
+ *   - boundary event 以 last_boundary_global_sequence fencing，迟到的旧 scanner 不能覆盖新状态；
+ *   - poison event 隔离与 consumer cursor 在同一 PG 事务提交；
  *   - claimDue 用 FOR UPDATE SKIP LOCKED，蓝绿双 worker 不会抢到同一 state；
  *   - runs.idempotency_key UNIQUE：同范围只有一份 ledger；
  *   - processed 只在 markApplied（applied/noop）里推进，且带 CHECK 约束；
@@ -88,6 +91,7 @@ export class PgMemoryConsolidationStore {
   }
 
   private get consumersTable(): string { return `${this.prefix}_memory_consolidation_consumers`; }
+  private get skipsTable(): string { return `${this.prefix}_memory_consolidation_skips`; }
   private get stateTable(): string { return `${this.prefix}_memory_consolidation_state`; }
   private get runsTable(): string { return `${this.prefix}_memory_consolidation_runs`; }
   private get tombstonesTable(): string { return `${this.prefix}_memory_tombstones`; }
@@ -103,6 +107,24 @@ export class PgMemoryConsolidationStore {
           last_global_sequence BIGINT NOT NULL DEFAULT 0,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${this.skipsTable} (
+          consumer_name TEXT NOT NULL,
+          global_sequence BIGINT NOT NULL,
+          tenant_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          event_timestamp TIMESTAMPTZ,
+          reason TEXT NOT NULL,
+          first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          skipped_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (consumer_name, global_sequence)
+        )
+      `);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS ${this.skipsTable}_tenant_idx
+        ON ${this.skipsTable} (tenant_id, skipped_at DESC)
       `);
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.stateTable} (
@@ -122,11 +144,16 @@ export class PgMemoryConsolidationStore {
           lease_owner TEXT,
           lease_expires_at TIMESTAMPTZ,
           prompt_version INTEGER,
+          last_boundary_global_sequence BIGINT NOT NULL DEFAULT 0,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY (tenant_id, session_id),
           CHECK (processed_session_sequence <= target_session_sequence)
         )
+      `);
+      await client.query(`
+        ALTER TABLE ${this.stateTable}
+        ADD COLUMN IF NOT EXISTS last_boundary_global_sequence BIGINT NOT NULL DEFAULT 0
       `);
       await client.query(`
         CREATE INDEX IF NOT EXISTS ${this.stateTable}_due_idx
@@ -224,16 +251,67 @@ export class PgMemoryConsolidationStore {
     );
   }
 
+  /**
+   * poison event 隔离与 consumer 推进必须在同一事务：不能留下「台账已写、
+   * cursor 未进」的崩溃缝。重复执行按 consumer + sequence 幂等。
+   */
+  async quarantineEnvelopeAndAdvanceCursor(input: {
+    consumerName: string;
+    globalSequence: number;
+    tenantId: string;
+    sessionId: string;
+    eventType: string;
+    eventTimestamp?: string;
+    reason: string;
+  }): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO ${this.skipsTable}
+           (consumer_name, global_sequence, tenant_id, session_id, event_type, event_timestamp, reason)
+         VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7)
+         ON CONFLICT (consumer_name, global_sequence) DO UPDATE SET
+           skipped_at = NOW(),
+           reason = EXCLUDED.reason`,
+        [
+          input.consumerName,
+          input.globalSequence,
+          input.tenantId,
+          input.sessionId,
+          input.eventType,
+          input.eventTimestamp ?? null,
+          input.reason,
+        ],
+      );
+      await client.query(
+        `INSERT INTO ${this.consumersTable} (consumer_name, last_global_sequence, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (consumer_name) DO UPDATE
+         SET last_global_sequence = GREATEST(${this.consumersTable}.last_global_sequence, EXCLUDED.last_global_sequence),
+             updated_at = NOW()`,
+        [input.consumerName, input.globalSequence],
+      );
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   // ── 会话状态机 ───────────────────────────────────────────────
 
   async applyRunStarted(input: {
     tenantId: string; userId: string; workspaceId: string; sessionId: string;
-    runId: string; at: string;
+    runId: string; at: string; globalSequence: number;
   }): Promise<void> {
     await this.pool.query(
       `INSERT INTO ${this.stateTable}
-         (tenant_id, user_id, workspace_id, session_id, active_run_ids, last_activity_at, status)
-       VALUES ($1, $2, $3, $4, jsonb_build_array($5::text), $6, 'idle')
+         (tenant_id, user_id, workspace_id, session_id, active_run_ids, last_activity_at,
+          status, last_boundary_global_sequence)
+       VALUES ($1, $2, $3, $4, jsonb_build_array($5::text), $6, 'idle', $7)
        ON CONFLICT (tenant_id, session_id) DO UPDATE SET
          active_run_ids = (
            SELECT COALESCE(jsonb_agg(DISTINCT value), '[]'::jsonb)
@@ -241,14 +319,19 @@ export class PgMemoryConsolidationStore {
          ),
          last_activity_at = GREATEST(COALESCE(${this.stateTable}.last_activity_at, $6), $6),
          due_at = NULL,
-         updated_at = NOW()`,
-      [input.tenantId, input.userId, input.workspaceId, input.sessionId, input.runId, input.at],
+         last_boundary_global_sequence = $7,
+         updated_at = NOW()
+       WHERE ${this.stateTable}.last_boundary_global_sequence < $7`,
+      [
+        input.tenantId, input.userId, input.workspaceId, input.sessionId,
+        input.runId, input.at, input.globalSequence,
+      ],
     );
   }
 
   async applyRunFinished(input: {
     tenantId: string; userId: string; workspaceId: string; sessionId: string;
-    runId: string; sessionSequence: number; at: string;
+    runId: string; sessionSequence: number; at: string; globalSequence: number;
     /** eligible=false（如 error run）时只清 active、不提高 target、不设 due */
     eligible: boolean;
     debounceMinutes: number;
@@ -257,8 +340,8 @@ export class PgMemoryConsolidationStore {
       await this.pool.query(
         `INSERT INTO ${this.stateTable}
            (tenant_id, user_id, workspace_id, session_id, target_session_sequence,
-            first_pending_at, due_at, last_activity_at, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $6::timestamptz + make_interval(mins => $7), $6, 'pending')
+            first_pending_at, due_at, last_activity_at, status, last_boundary_global_sequence)
+         VALUES ($1, $2, $3, $4, $5, $6, $6::timestamptz + make_interval(mins => $7), $6, 'pending', $9)
          ON CONFLICT (tenant_id, session_id) DO UPDATE SET
            active_run_ids = (
              SELECT COALESCE(jsonb_agg(value), '[]'::jsonb)
@@ -271,23 +354,36 @@ export class PgMemoryConsolidationStore {
            last_activity_at = GREATEST(COALESCE(${this.stateTable}.last_activity_at, $6), $6),
            status = CASE WHEN ${this.stateTable}.status IN ('blocked', 'throttled')
                          THEN ${this.stateTable}.status ELSE 'pending' END,
-           updated_at = NOW()`,
+           last_boundary_global_sequence = $9,
+           updated_at = NOW()
+         WHERE ${this.stateTable}.last_boundary_global_sequence < $9`,
         [
           input.tenantId, input.userId, input.workspaceId, input.sessionId,
-          input.sessionSequence, input.at, input.debounceMinutes, input.runId,
+          input.sessionSequence, input.at, input.debounceMinutes, input.runId, input.globalSequence,
         ],
       );
     } else {
+      // 即使对应 run_started 尚未落库，也先建立 sequence fence，防止旧 started
+      // 在蓝绿交接时迟到并把已结束会话重新置为 active。
       await this.pool.query(
-        `UPDATE ${this.stateTable} SET
+        `INSERT INTO ${this.stateTable}
+           (tenant_id, user_id, workspace_id, session_id, active_run_ids,
+            last_activity_at, status, last_boundary_global_sequence)
+         VALUES ($1, $2, $3, $4, '[]'::jsonb, $6, 'idle', $7)
+         ON CONFLICT (tenant_id, session_id) DO UPDATE SET
            active_run_ids = (
              SELECT COALESCE(jsonb_agg(value), '[]'::jsonb)
-             FROM jsonb_array_elements_text(active_run_ids) AS value
-             WHERE value <> $3
+             FROM jsonb_array_elements_text(${this.stateTable}.active_run_ids) AS value
+             WHERE value <> $5
            ),
+           last_activity_at = GREATEST(COALESCE(${this.stateTable}.last_activity_at, $6), $6),
+           last_boundary_global_sequence = $7,
            updated_at = NOW()
-         WHERE tenant_id = $1 AND session_id = $2`,
-        [input.tenantId, input.sessionId, input.runId],
+         WHERE ${this.stateTable}.last_boundary_global_sequence < $7`,
+        [
+          input.tenantId, input.userId, input.workspaceId, input.sessionId,
+          input.runId, input.at, input.globalSequence,
+        ],
       );
     }
   }

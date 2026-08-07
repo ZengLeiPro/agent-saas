@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Pool } from 'pg';
 
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import { CONSOLIDATION_RETRY_BACKOFF_MINUTES } from '../memory/consolidation/types.js';
@@ -17,6 +18,7 @@ const prefix = `mc_test_${randomUUID().replaceAll('-', '_').slice(0, 12)}`;
 const store = connectionString
   ? new PgMemoryConsolidationStore({ connectionString, tablePrefix: prefix })
   : null;
+const verificationPool = connectionString ? new Pool({ connectionString, max: 1 }) : null;
 
 const BASE = { tenantId: 't1', userId: 'u1', workspaceId: 'w1', sessionId: 's1' };
 const now = (): string => new Date().toISOString();
@@ -29,6 +31,7 @@ describePg('PgMemoryConsolidationStore contract', () => {
 
   afterAll(async () => {
     await store?.close();
+    await verificationPool?.end();
   });
 
   it('consumer cursor 单调推进，不倒退', async () => {
@@ -38,18 +41,86 @@ describePg('PgMemoryConsolidationStore contract', () => {
     expect(await store!.getConsumerCursor('c1')).toBe(100);
   });
 
+  it('poison event 隔离台账按 consumer + global sequence 幂等', async () => {
+    const input = {
+      consumerName: 'c1',
+      globalSequence: 101,
+      tenantId: 't1',
+      sessionId: 'missing-session',
+      eventType: 'run_started',
+      eventTimestamp: '2026-07-01T00:00:00.000Z',
+      reason: 'projection_missing_after_grace',
+    };
+    await store!.quarantineEnvelopeAndAdvanceCursor(input);
+    await store!.quarantineEnvelopeAndAdvanceCursor(input);
+
+    const result = await verificationPool!.query<{
+      consumer_name: string;
+      global_sequence: string;
+      reason: string;
+      first_seen_at: Date;
+      skipped_at: Date;
+    }>(
+      `SELECT consumer_name, global_sequence, reason, first_seen_at, skipped_at
+       FROM ${prefix}_memory_consolidation_skips
+       WHERE consumer_name = $1 AND global_sequence = $2`,
+      [input.consumerName, input.globalSequence],
+    );
+    expect(result.rowCount).toBe(1);
+    expect(result.rows[0]).toMatchObject({
+      consumer_name: 'c1',
+      global_sequence: '101',
+      reason: 'projection_missing_after_grace',
+    });
+    expect(result.rows[0]!.skipped_at.getTime()).toBeGreaterThanOrEqual(result.rows[0]!.first_seen_at.getTime());
+    expect(await store!.getConsumerCursor('c1')).toBe(101);
+  });
+
   it('run_started 清 due 并登记 active；eligible run_finished 提 target 并设 due', async () => {
-    await store!.applyRunStarted({ ...BASE, runId: 'r1', at: now() });
+    await store!.applyRunStarted({ ...BASE, runId: 'r1', at: now(), globalSequence: 10 });
     let state = await store!.getState(BASE.tenantId, BASE.sessionId);
     expect(state?.activeRunIds).toContain('r1');
     expect(state?.dueAt).toBeNull();
 
-    await store!.applyRunFinished({ ...BASE, runId: 'r1', sessionSequence: 40, at: now(), eligible: true, debounceMinutes: 10 });
+    await store!.applyRunFinished({
+      ...BASE, runId: 'r1', sessionSequence: 40, at: now(), globalSequence: 11,
+      eligible: true, debounceMinutes: 10,
+    });
     state = await store!.getState(BASE.tenantId, BASE.sessionId);
     expect(state?.activeRunIds).toEqual([]);
     expect(state?.targetSessionSequence).toBe(40);
     expect(state?.status).toBe('pending');
     expect(state?.dueAt).toBeTruthy();
+  });
+
+  it('boundary global sequence fencing：迟到的旧 started/finished 不能覆盖新状态', async () => {
+    const fenced = { ...BASE, sessionId: 's-fenced' };
+    await store!.applyRunFinished({
+      ...fenced, runId: 'r-old', sessionSequence: 60, at: now(), globalSequence: 200,
+      eligible: true, debounceMinutes: 10,
+    });
+    await store!.applyRunStarted({ ...fenced, runId: 'r-old', at: now(), globalSequence: 199 });
+    let state = await store!.getState(fenced.tenantId, fenced.sessionId);
+    expect(state?.activeRunIds).toEqual([]);
+    expect(state?.targetSessionSequence).toBe(60);
+
+    await store!.applyRunStarted({ ...fenced, runId: 'r-new', at: now(), globalSequence: 201 });
+    await store!.applyRunFinished({
+      ...fenced, runId: 'r-old', sessionSequence: 60, at: now(), globalSequence: 200,
+      eligible: true, debounceMinutes: 10,
+    });
+    state = await store!.getState(fenced.tenantId, fenced.sessionId);
+    expect(state?.activeRunIds).toEqual(['r-new']);
+    expect(state?.dueAt).toBeNull();
+
+    const ineligible = { ...BASE, sessionId: 's-fenced-ineligible' };
+    await store!.applyRunFinished({
+      ...ineligible, runId: 'r-error', sessionSequence: 1, at: now(), globalSequence: 300,
+      eligible: false, debounceMinutes: 10,
+    });
+    await store!.applyRunStarted({ ...ineligible, runId: 'r-error', at: now(), globalSequence: 299 });
+    state = await store!.getState(ineligible.tenantId, ineligible.sessionId);
+    expect(state?.activeRunIds).toEqual([]);
   });
 
   it('active run 存在时 claimDue 不取该会话；到期 + 无 active 才 claim', async () => {
@@ -89,7 +160,10 @@ describePg('PgMemoryConsolidationStore contract', () => {
   });
 
   it('markFailed 走退避；超过 maxRetries 转 blocked', async () => {
-    await store!.applyRunFinished({ ...BASE, runId: 'r2', sessionSequence: 50, at: now(), eligible: true, debounceMinutes: 10 });
+    await store!.applyRunFinished({
+      ...BASE, runId: 'r2', sessionSequence: 50, at: now(), globalSequence: 12,
+      eligible: true, debounceMinutes: 10,
+    });
     const r1 = await store!.markFailed({
       tenantId: BASE.tenantId, sessionId: BASE.sessionId, now: now(),
       backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: 1,

@@ -138,6 +138,10 @@ export function sliceEventsByBudget(input: {
 
 const CONSUMER_NAME = 'memory-consolidation-v1';
 const CONSOLIDATION_CHAT_PREFIX = 'memory-consolidate-';
+/** 新会话 projection 正常应很快出现；超过一小时仍缺失视为 poison event。 */
+export const MISSING_PROJECTION_GRACE_MS = 60 * 60_000;
+const MISSING_PROJECTION_WARN_INTERVAL_MS = 5 * 60_000;
+const MAX_EVENT_FUTURE_SKEW_MS = 5 * 60_000;
 /** L2/L3 自身与子 agent 会话绝不能再被提取（防自我喂养）。 */
 const EXCLUDED_CHANNELS = new Set(['cron']);
 
@@ -148,21 +152,29 @@ export class MemoryConsolidationEngine {
   private scanning = false;
   private working = false;
   private stopped = true;
+  private readonly missingProjectionWarnedAt = new Map<number, number>();
   private readonly workerId = `worker-${process.pid}-${randomUUID().slice(0, 8)}`;
 
   constructor(private readonly options: MemoryConsolidationEngineOptions) {}
 
   async start(): Promise<void> {
-    this.stopped = false;
     const config = this.options.getConfig();
     await this.options.store.init();
+    if (!config.enabled) {
+      this.stopped = true;
+      this.options.logger?.info('MemoryConsolidationEngine disabled by global config');
+      return;
+    }
+    this.stopped = false;
     this.scanTimer = setInterval(() => { void this.scanOnce(); }, config.scanIntervalMs);
     this.scanTimer.unref?.();
     this.workTimer = setInterval(() => { void this.workOnce(); }, Math.max(config.scanIntervalMs, 5_000));
     this.workTimer.unref?.();
     // throttled 状态每小时复核一次（跨 UTC 日界后配额刷新）
     this.reviveTimer = setInterval(() => {
-      void this.options.store.reviveThrottled(new Date().toISOString(), this.options.getConfig().debounceMinutes)
+      const current = this.options.getConfig();
+      if (!current.enabled) return;
+      void this.options.store.reviveThrottled(new Date().toISOString(), current.debounceMinutes)
         .catch((err) => this.options.logger?.warn(`consolidation reviveThrottled failed: ${message(err)}`));
     }, 3600_000);
     this.reviveTimer.unref?.();
@@ -191,6 +203,7 @@ export class MemoryConsolidationEngine {
     this.scanning = true;
     try {
       const config = this.options.getConfig();
+      if (!config.enabled) return;
       for (;;) {
         const cursor = await this.options.store.getConsumerCursor(CONSUMER_NAME);
         const page = await this.options.eventStore.listGlobalPage({
@@ -202,10 +215,12 @@ export class MemoryConsolidationEngine {
 
         let lastApplied = cursor;
         for (const envelope of page.events) {
+          if (this.stopped || !this.options.getConfig().enabled) return;
           const ok = await this.applyEnvelope(envelope, config);
+          if (this.stopped || !this.options.getConfig().enabled) return;
           if (!ok) {
-            // fail-closed（曾磊拍板的首版降级）：projection 暂缺时停在该
-            // sequence，不推进、不静默跳过；靠下一轮扫描重试 + warn 告警。
+            // projection 在宽限期内暂缺时 fail-closed；超过宽限期的 poison event
+            // 已由 applyEnvelope 先记隔离台账再返回 true，不会永久卡住 consumer。
             if (lastApplied > cursor) {
               await this.options.store.advanceConsumerCursor(CONSUMER_NAME, lastApplied);
             }
@@ -213,6 +228,7 @@ export class MemoryConsolidationEngine {
           }
           lastApplied = envelope.globalSequence;
         }
+        if (this.stopped || !this.options.getConfig().enabled) return;
         await this.options.store.advanceConsumerCursor(CONSUMER_NAME, lastApplied);
         if (!page.hasMore) return;
       }
@@ -229,15 +245,54 @@ export class MemoryConsolidationEngine {
     config: MemoryConsolidationResolvedConfig,
   ): Promise<boolean> {
     const event = envelope.event;
+    // 未开启租户按既定语义不回填历史；先于 projection 查询短路，避免其他租户的
+    // 历史孤儿事件阻塞已灰度租户的全局 consumer。
+    if (!this.options.isTenantEnabled(envelope.tenantId)) return true;
+
     const projection = await this.options.projectionStore.get(envelope.sessionId, { includeDeleted: true });
     if (!projection) {
-      // run_started 先于 projection 落库是正常时序；warn 并 fail-closed 等待。
+      const rawTimestamp = typeof event.timestamp === 'string' ? event.timestamp : undefined;
+      const eventAtMs = rawTimestamp ? Date.parse(rawTimestamp) : Number.NaN;
+      const now = Date.now();
+      const tooFarInFuture = Number.isFinite(eventAtMs) && eventAtMs - now > MAX_EVENT_FUTURE_SKEW_MS;
+      const withinGrace = Number.isFinite(eventAtMs)
+        && !tooFarInFuture
+        && now - eventAtMs < MISSING_PROJECTION_GRACE_MS;
+      if (withinGrace) {
+        const lastWarnedAt = this.missingProjectionWarnedAt.get(envelope.globalSequence) ?? 0;
+        if (now - lastWarnedAt >= MISSING_PROJECTION_WARN_INTERVAL_MS) {
+          this.missingProjectionWarnedAt.set(envelope.globalSequence, now);
+          this.options.logger?.warn(
+            `consolidation scanner: session projection missing for ${envelope.sessionId} (global_seq=${envelope.globalSequence}), holding cursor within grace window`,
+          );
+        }
+        return false;
+      }
+
+      const reason = !Number.isFinite(eventAtMs)
+        ? 'projection_missing_invalid_timestamp'
+        : tooFarInFuture
+          ? 'projection_missing_future_timestamp'
+          : 'projection_missing_after_grace';
+      // 隔离台账与 cursor 在 store 内同事务提交；进程崩溃时不会留下半套状态。
+      await this.options.store.quarantineEnvelopeAndAdvanceCursor({
+        consumerName: CONSUMER_NAME,
+        globalSequence: envelope.globalSequence,
+        tenantId: envelope.tenantId,
+        sessionId: envelope.sessionId,
+        eventType: event.type,
+        ...(rawTimestamp && Number.isFinite(eventAtMs) ? { eventTimestamp: rawTimestamp } : {}),
+        reason,
+      });
+      this.missingProjectionWarnedAt.delete(envelope.globalSequence);
       this.options.logger?.warn(
-        `consolidation scanner: session projection missing for ${envelope.sessionId} (global_seq=${envelope.globalSequence}), holding cursor`,
+        `consolidation scanner: quarantined event with missing projection session=${envelope.sessionId} global_seq=${envelope.globalSequence} reason=${reason}`,
       );
-      return false;
+      return true;
     }
-    // 跳过：非用户会话（subagent）、cron 系统会话（memory_poll 等）、隐藏维护会话、未开启租户。
+    this.missingProjectionWarnedAt.delete(envelope.globalSequence);
+
+    // 跳过：非用户会话（subagent）、cron 系统会话（memory_poll 等）、隐藏维护会话。
     // 2026-07-29 P1 修复：只处理 memoryPolicyVersion=v2 的会话——存量 v1 会话仍由
     // 主 Agent 按 v1 提示语自主写记忆，L2 若同时提取会造成双写；缺 pin 的旧会话
     // 一律视为 v1，不隐式接管。
@@ -248,8 +303,7 @@ export class MemoryConsolidationEngine {
       || (projection.channel !== undefined && EXCLUDED_CHANNELS.has(projection.channel))
       || envelope.sessionId.startsWith('memory-maint-')
       || envelope.sessionId.startsWith(CONSOLIDATION_CHAT_PREFIX)
-      || !projection.userId
-      || !this.options.isTenantEnabled(envelope.tenantId);
+      || !projection.userId;
     if (skip) return true;
 
     const user = this.options.userStore.findById(projection.userId!);
@@ -265,7 +319,7 @@ export class MemoryConsolidationEngine {
     const at = typeof event.timestamp === 'string' ? (event.timestamp as string) : new Date().toISOString();
 
     if (event.type === 'run_started') {
-      await this.options.store.applyRunStarted({ ...base, runId, at });
+      await this.options.store.applyRunStarted({ ...base, runId, at, globalSequence: envelope.globalSequence });
       return true;
     }
     if (event.type === 'run_finished') {
@@ -277,6 +331,7 @@ export class MemoryConsolidationEngine {
         ...base,
         runId,
         sessionSequence: envelope.sessionSequence,
+        globalSequence: envelope.globalSequence,
         at,
         eligible,
         debounceMinutes: config.debounceMinutes,
@@ -293,6 +348,7 @@ export class MemoryConsolidationEngine {
     this.working = true;
     try {
       const config = this.options.getConfig();
+      if (!config.enabled) return;
       const claimed = await this.options.store.claimDue({
         workerId: this.workerId,
         now: new Date().toISOString(),

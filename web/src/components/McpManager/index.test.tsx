@@ -141,7 +141,8 @@ describe("McpManager 连接器目录", () => {
 
     fireEvent.click(screen.getByText("阿里云"));
     expect(await screen.findByRole("dialog")).toBeTruthy();
-    expect(screen.getByLabelText("RAM Role ARN")).toBeTruthy();
+    expect(screen.getByLabelText("AccessKey ID")).toBeTruthy();
+    expect(screen.getByLabelText("AccessKey Secret")).toBeTruthy();
     expect(screen.getByRole("button", { name: "连接阿里云" })).toBeTruthy();
   });
 

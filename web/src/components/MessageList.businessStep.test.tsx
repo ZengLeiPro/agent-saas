@@ -163,7 +163,7 @@ describe("MessageList business step sections", () => {
     const currentToggle = screen.getByRole("button", { name: /写入核验结果.*第 2\/2 步/ });
     expect(completedToggle.getAttribute("aria-expanded")).toBe("false");
     expect(currentToggle.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.queryByText("17/18 张通过，1 张退回")).toBeNull();
+    expect(screen.getByText("17/18 张通过，1 张退回")).toBeTruthy();
     expect(screen.queryByText("订单资料完整")).toBeNull();
     expect(screen.queryByText(/过程 · 1 项/)).toBeNull();
     expect(screen.queryByText("读取订单")).toBeNull();

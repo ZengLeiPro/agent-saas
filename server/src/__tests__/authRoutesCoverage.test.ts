@@ -99,8 +99,8 @@ async function makeRig(): Promise<TestRig> {
       rmSync(tmpRoot, {
         recursive: true,
         force: true,
-        maxRetries: 10,
-        retryDelay: 20,
+        maxRetries: 20,
+        retryDelay: 50,
       });
     },
   };

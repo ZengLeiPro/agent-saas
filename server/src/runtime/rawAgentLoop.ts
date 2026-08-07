@@ -46,8 +46,17 @@ import { RuntimeContextUsageTracker } from './contextUsage.js';
 import {
   buildContextBreakdownSnapshot,
   calibrateContextBreakdown,
+  estimateContextTokens,
 } from './contextBreakdown.js';
 import { governModelRequestMessages } from './contextGovernor.js';
+import {
+  hasActiveCheckpointForRun,
+  planContextCheckpoint,
+} from './contextCheckpoint.js';
+import {
+  getModelAutoCompactThreshold,
+  getModelContextWindow,
+} from '../data/usage/pricing.js';
 import { projectToolResultContentForModel } from './replayEventBounds.js';
 import {
   buildRuntimeReplayState,
@@ -61,6 +70,7 @@ import type { RunStore } from './runStore.js';
 import { createLogger } from '../utils/logger.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { WebFetchCircuitOpenError } from '../agent/webToolProvider.js';
+import { isCompactCommand } from '../agent/prompt.js';
 import {
   buildMcpCapabilityDescription,
   buildMcpNamespaceName,
@@ -97,6 +107,8 @@ const WEB_FETCH_SYNTHESIS_PROMPT = [
   'WebFetch 已因持续高失败率熔断。停止继续扩散 URL，也不要再调用其他工具。',
   '请立即基于当前上下文中已经取得的材料完成任务；明确区分已核实事实、证据不足项与未完成项。',
 ].join('\n');
+const CONTEXT_EMERGENCY_THRESHOLD_RATIO = 0.95;
+
 const CONTEXT_SYNTHESIS_PROMPT = [
   '[平台收束指令]',
   '本次任务的上下文已达到安全阈值。除 SessionContext（action=events|search|trace）外，不要调用其他工具。',
@@ -178,8 +190,7 @@ export interface CompactInput {
   message: InboundMessage;
   /**
    * 会话的正常 system prompt。压缩调用沿用同一 system 与工具定义，并发送
-   * 「待压缩段」的本地全量投影；最近一轮不进入请求，由平台原文保留。
-   * 待压缩段仍是上一正常轮 prompt 的稳定前缀，可继续利用 provider prompt cache。
+   * checkpoint planner 选出的待压缩前缀；最近的完整执行尾部由平台原文保留。
    */
   instructions: string;
 }
@@ -200,6 +211,24 @@ interface CompactionOutcome {
   error?: string;
 }
 
+interface CompactionOptions {
+  inline: boolean;
+  trigger: 'manual' | 'threshold';
+  sourceRunId?: string;
+  controlSourceRunIds?: string[];
+  baseFixedTokens?: number;
+}
+
+function isEmergencyContextPressure(
+  triggerTokens: number,
+  model: string,
+  modelRef?: string,
+): boolean {
+  const contextWindow = getModelContextWindow(model, modelRef);
+  if (!contextWindow) return true;
+  return triggerTokens >= Math.floor(contextWindow * CONTEXT_EMERGENCY_THRESHOLD_RATIO);
+}
+
 function parseContextPressureState(value: unknown): ContextPressureState | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const state = value as Record<string, unknown>;
@@ -218,14 +247,15 @@ function parseContextPressureState(value: unknown): ContextPressureState | null 
  * 待压缩段末尾。
  */
 const COMPACTION_REQUEST_PROMPT = [
-  '请暂停当前任务。现在需要对下面提供的较早会话历史做一次上下文压缩：请生成一份忠实、信息密集的摘要，平台会将它与最近一轮原文一起用于后续对话。',
+  '请暂停当前任务。现在需要对上面提供的会话前缀执行上下文压缩，整理成可恢复的上下文检查点；平台会另外保留当前任务锚点、全部用户消息轨迹和最近完整执行尾部。',
   '要求：',
-  '- 只总结当前请求中提供的较早历史；最近一轮未包含在本请求中，由平台另行保留，不要推测或补写。',
-  '- 保留：任务目标与当前状态；重要事实与数据（数字/文件路径/命令/URL/代码要点）；已完成的工作及其产出位置；未完成的任务与下一步；用户明确表达的偏好与约束。',
-  '- 丢弃：寒暄、重复内容、已被纠正的中间尝试细节、冗长的工具原始输出（只留结论）。',
-  '- 无需逐字复述用户消息（系统会在摘要旁另行保留用户消息原文摘录），聚焦工作过程、结论与产出。',
-  '- 用 Markdown 分节输出，使用中文。',
-  '- 不要调用任何工具；只输出摘要正文，不要添加解释、开场白或结尾语。',
+  '- 只总结当前请求中提供的历史前缀；不要推测平台另行保留的原始尾部。',
+  '- 保留：任务目标与当前状态；重要事实与数据（数字/文件路径/命令/URL/代码要点）；已完成工作及产出位置；未完成事项与精确下一步；用户偏好与约束。',
+  '- 对已经发生的外部副作用（写文件、提交、发送、创建/修改外部对象等）记录对象、ID、回执和结果，明确禁止重复执行。',
+  '- 丢弃：寒暄、重复内容、已被纠正的中间尝试细节、冗长工具原始输出（只留结论与检索标识）。',
+  '- 无需逐字复述用户消息，平台会在摘要旁保留确定性用户消息轨迹。',
+  '- 固定使用以下 Markdown 章节：当前任务与约束、已完成工作、外部副作用与回执、当前代码/文件/测试状态、未完成事项、下一步动作、历史检索引用；没有内容写“无”。',
+  '- 使用中文；不要调用任何工具；只输出摘要正文，不要添加解释、开场白或结尾语。',
 ].join('\n');
 
 /**
@@ -243,27 +273,6 @@ const THINKING_ONLY_CONTINUATION_PROMPT = [
 
 /** 压缩段（保留窗口之前）投影后少于这个消息数不值得压缩，直接回复无需压缩 */
 const MIN_COMPACTABLE_MESSAGES = 4;
-
-/** 压缩时保留最近 N 轮真实用户交互的原文（不被摘要替代） */
-const RETAIN_RECENT_USER_TURNS = 1;
-
-/**
- * 计算压缩切分点：倒数第 RETAIN_RECENT_USER_TURNS 条真实用户消息的事件下标。
- * 该下标之前的事件进入压缩段，之后（含该条用户消息）保留原文。
- * 真实用户消息 = user_message 且 modelContent 不是系统命令替身（[系统命令] 前缀）。
- * 真实交互不足 N 轮时返回 0（无可压缩段）。
- */
-function findCompactionCutoffIndex(events: { type: string; modelContent?: string }[]): number {
-  let seen = 0;
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i]!;
-    if (event.type !== 'user_message') continue;
-    if (event.modelContent?.startsWith('[系统命令]')) continue;
-    seen++;
-    if (seen >= RETAIN_RECENT_USER_TURNS) return i;
-  }
-  return 0;
-}
 
 function findLastUserMessageIndex(messages: ModelChatMessage[]): number {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -848,6 +857,18 @@ export class RawAgentLoop implements AgentLoop {
       }
     }
     let autoCompactionSuppressed = false;
+    const activeRecoveredCheckpoint = hasActiveCheckpointForRun(recoveredEvents, context.runId);
+    if (activeRecoveredCheckpoint) {
+      contextPressureForceReason = undefined;
+      try {
+        await this.runStore?.patchMetadata?.(context.runId, { contextPressure: null });
+      } catch (err) {
+        logger.warn(
+          `[auto-compact] clear recovered checkpoint pressure failed session=${context.sessionId} `
+          + `run=${context.runId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
     const contextProjection = buildContextProjection(recoveredEvents, {
       sessionId: context.sessionId,
       runId: context.runId,
@@ -860,9 +881,12 @@ export class RawAgentLoop implements AgentLoop {
       { role: 'system', content: input.instructions },
       ...memoryMessage,
       ...this.filterLoadedToolMessages(contextProjection.messages, tools),
-      { role: 'user', content: buildModelUserContent(input.prompt, input.attachments, input.visionAnalysis) },
+      ...(!activeRecoveredCheckpoint
+        ? [{ role: 'user' as const, content: buildModelUserContent(input.prompt, input.attachments, input.visionAnalysis) }]
+        : []),
     ];
     let currentUserMessageIndex = messages.length - 1;
+    const manualCheckpointSourceRunIds = new Set<string>();
     const recoveredInterjectionSourceRunIds = new Set(
       recoveredEvents
         .filter((event): event is Extract<PlatformEvent, { type: 'user_message' }> => (
@@ -883,6 +907,13 @@ export class RawAgentLoop implements AgentLoop {
       if (context.signal?.aborted) return [];
       for (const interjection of queued) {
         if (recoveredInterjectionSourceRunIds.has(interjection.sourceRunId)) continue;
+        if (isCompactCommand(interjection.message.content)) {
+          // 运行中的 /compact 是控制信号：在本 run 的下一个安全边界建立 checkpoint，
+          // 不把命令作为业务用户消息注入模型。source run 会随下一次模型事件被 claim。
+          recoveredInterjectionSourceRunIds.add(interjection.sourceRunId);
+          manualCheckpointSourceRunIds.add(interjection.sourceRunId);
+          continue;
+        }
         const userMessageEvent = await this.eventStore.append({
           type: 'user_message',
           runId: context.runId,
@@ -1015,6 +1046,78 @@ export class RawAgentLoop implements AgentLoop {
         pendingTurnText = '';
 
         await this.assertNoOpenToolCallBatchesBeforeModel(context.sessionId);
+        if (manualCheckpointSourceRunIds.size > 0) {
+          const controlSourceRunIds = [...manualCheckpointSourceRunIds];
+          const checkpointEvents = await this.eventStore.list(context.sessionId, {
+            excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+            replayMode: 'bounded',
+          });
+          const alreadyCheckpointed = controlSourceRunIds.every((sourceRunId) => (
+            checkpointEvents.some((event) => (
+              event.type === 'compaction'
+              && event.checkpoint?.controlSourceRunIds?.includes(sourceRunId)
+            ))
+          ));
+          if (!alreadyCheckpointed) {
+            const outcome = yield* this.compactHistory(
+              { instructions: input.instructions },
+              context,
+              checkpointEvents,
+              {
+                inline: true,
+                trigger: 'manual',
+                sourceRunId: context.runId,
+                controlSourceRunIds,
+                baseFixedTokens: estimateContextTokens([
+                  input.instructions,
+                  input.memoryContext,
+                  tools,
+                ]),
+              },
+            );
+            if (outcome.usage) totalUsage = mergeUsage(totalUsage, outcome.usage);
+            if (outcome.status === 'aborted') {
+              const reason = context.signal?.reason;
+              throw reason instanceof Error ? reason : new Error(String(reason ?? 'run aborted'));
+            }
+            if (outcome.status === 'compacted') {
+              const compactedEvents = await this.eventStore.list(context.sessionId, {
+                excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+                replayMode: 'bounded',
+              });
+              const compactedProjection = buildContextProjection(compactedEvents, {
+                sessionId: context.sessionId,
+                runId: context.runId,
+                policy: this.contextPolicy,
+              });
+              messages.splice(
+                0,
+                messages.length,
+                { role: 'system', content: input.instructions },
+                ...memoryMessage,
+                ...this.filterLoadedToolMessages(compactedProjection.messages, tools),
+              );
+              currentUserMessageIndex = findLastUserMessageIndex(messages);
+              contextUsageTracker = new RuntimeContextUsageTracker(
+                context.model,
+                compactedEvents,
+                context.modelRef,
+              );
+              currentResponseId = undefined;
+              this.clearForcedSynthesis();
+            } else if (outcome.status === 'error') {
+              yield {
+                type: 'compaction_end',
+                compaction: {
+                  skipped: true,
+                  note: '手动压缩失败，已继续当前任务。',
+                  coveredEventCount: 0,
+                },
+              };
+            }
+          }
+          manualCheckpointSourceRunIds.clear();
+        }
         const preflight = governModelRequestMessages(
           messages,
           context.model,
@@ -1022,31 +1125,130 @@ export class RawAgentLoop implements AgentLoop {
           contextUsageTracker.currentContextTokens,
           context.modelRef,
         );
-        if (preflight.forceSynthesis) {
-          this.forceSynthesis(
-            `上下文 ${preflight.triggerTokens} tokens 已达到模型阈值 ${preflight.thresholdTokens}; 模型可见历史保持不变，停止扩展工具调用并交给既有自动压缩判定`,
-            context,
-            CONTEXT_SYNTHESIS_PROMPT,
-            true,
-          );
-          // previous_response_id 会在上游继续累计接近阈值的远端历史；本轮用未改写的
-          // 本地全量投影完成回答，随后交给既有 auto compact 判定是否建立摘要上下文。
-          currentResponseId = undefined;
-          if (!contextPressureForceReason) {
-            const pressure: ContextPressureState = {
-              reason: 'context_governor',
-              detectedAt: new Date().toISOString(),
-              triggerTokens: preflight.triggerTokens ?? 0,
-              thresholdTokens: preflight.thresholdTokens ?? 0,
-              droppedMessages: preflight.droppedMessages,
-            };
-            contextPressureForceReason = pressure.reason;
-            try {
-              await this.runStore?.patchMetadata?.(context.runId, { contextPressure: pressure });
-            } catch (err) {
+        if (preflight.shouldCompactBeforeRequest) {
+          const pressure: ContextPressureState = {
+            reason: 'context_governor',
+            detectedAt: new Date().toISOString(),
+            triggerTokens: preflight.triggerTokens ?? 0,
+            thresholdTokens: preflight.thresholdTokens ?? 0,
+            droppedMessages: preflight.droppedMessages,
+          };
+          contextPressureForceReason = pressure.reason;
+          try {
+            await this.runStore?.patchMetadata?.(context.runId, { contextPressure: pressure });
+          } catch (err) {
+            logger.warn(
+              `[auto-compact] persist context pressure failed session=${context.sessionId} run=${context.runId}: `
+              + `${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+
+          let checkpointSucceeded = false;
+          if (context.evaluateAutoCompaction && !autoCompactionSuppressed) {
+            const checkpointEvents = await this.eventStore.list(context.sessionId, {
+              excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+              replayMode: 'bounded',
+            });
+            const evaluation = context.evaluateAutoCompaction(checkpointEvents, pressure.reason);
+            if (evaluation.shouldCompact) {
+              logger.info(
+                `[auto-compact] pre-request checkpoint session=${context.sessionId} run=${context.runId} `
+                + `tokens=${preflight.triggerTokens}/${preflight.thresholdTokens}`,
+              );
+              const outcome = yield* this.compactHistory(
+                { instructions: input.instructions },
+                context,
+                checkpointEvents,
+                {
+                  inline: true,
+                  trigger: 'threshold',
+                  sourceRunId: context.runId,
+                  baseFixedTokens: estimateContextTokens([
+                    input.instructions,
+                    input.memoryContext,
+                    tools,
+                  ]),
+                },
+              );
+              if (outcome.usage) totalUsage = mergeUsage(totalUsage, outcome.usage);
+              if (outcome.status === 'aborted') {
+                const reason = context.signal?.reason;
+                throw reason instanceof Error ? reason : new Error(String(reason ?? 'run aborted'));
+              }
+              if (outcome.status === 'compacted') {
+                const compactedEvents = await this.eventStore.list(context.sessionId, {
+                  excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+                  replayMode: 'bounded',
+                });
+                const compactedProjection = buildContextProjection(compactedEvents, {
+                  sessionId: context.sessionId,
+                  runId: context.runId,
+                  policy: this.contextPolicy,
+                });
+                messages.splice(
+                  0,
+                  messages.length,
+                  { role: 'system', content: input.instructions },
+                  ...memoryMessage,
+                  ...this.filterLoadedToolMessages(compactedProjection.messages, tools),
+                );
+                currentUserMessageIndex = findLastUserMessageIndex(messages);
+                contextUsageTracker = new RuntimeContextUsageTracker(
+                  context.model,
+                  compactedEvents,
+                  context.modelRef,
+                );
+                currentResponseId = undefined;
+                this.clearForcedSynthesis();
+                contextPressureForceReason = undefined;
+                checkpointSucceeded = true;
+                try {
+                  await this.runStore?.patchMetadata?.(context.runId, {
+                    contextPressure: null,
+                    autoCompactedAt: new Date().toISOString(),
+                  });
+                } catch (err) {
+                  logger.warn(
+                    `[auto-compact] clear context pressure failed session=${context.sessionId} run=${context.runId}: `
+                    + `${err instanceof Error ? err.message : String(err)}`,
+                  );
+                }
+              } else {
+                autoCompactionSuppressed = true;
+                if (outcome.status === 'error') {
+                  logger.warn(
+                    `[auto-compact] pre-request checkpoint failed; continuing session=${context.sessionId} `
+                    + `run=${context.runId}: ${outcome.error ?? 'unknown error'}`,
+                  );
+                  yield {
+                    type: 'compaction_end',
+                    compaction: {
+                      skipped: true,
+                      note: '自动压缩失败，已继续当前会话。',
+                      coveredEventCount: 0,
+                    },
+                  };
+                }
+              }
+            } else if (!evaluation.shouldCompact) {
+              autoCompactionSuppressed = true;
+            }
+          }
+          if (!checkpointSucceeded) {
+            autoCompactionSuppressed = true;
+            if (isEmergencyContextPressure(preflight.triggerTokens, context.model, context.modelRef)) {
+              this.forceSynthesis(
+                `上下文 ${preflight.triggerTokens} tokens 已逼近模型硬窗口；自动 checkpoint 未能建立，进入紧急收束`,
+                context,
+                CONTEXT_SYNTHESIS_PROMPT,
+                true,
+              );
+              currentResponseId = undefined;
+            } else {
               logger.warn(
-                `[auto-compact] persist context pressure failed session=${context.sessionId} run=${context.runId}: `
-                + `${err instanceof Error ? err.message : String(err)}`,
+                `[auto-compact] soft checkpoint unavailable; continuing with normal tools `
+                + `session=${context.sessionId} run=${context.runId} `
+                + `tokens=${preflight.triggerTokens}/${preflight.thresholdTokens}`,
               );
             }
           }
@@ -1367,10 +1569,14 @@ export class RawAgentLoop implements AgentLoop {
                 + `reason=${evaluation.reason}`,
               );
               const outcome = yield* this.compactHistory(
-                { message: input.message, instructions: input.instructions },
+                { instructions: input.instructions },
                 context,
                 compactionEvents,
-                true,
+                {
+                  inline: true,
+                  trigger: 'threshold',
+                  sourceRunId: context.runId,
+                },
               );
               if (outcome.usage) totalUsage = mergeUsage(totalUsage, outcome.usage);
               if (outcome.status === 'aborted') {
@@ -1658,20 +1864,12 @@ export class RawAgentLoop implements AgentLoop {
   }
 
   /**
-   * /compact 真实现（2026-07-03；v2 黑箱化 + 保留窗口 + 用户消息轨迹）：
-   * 把「最近 RETAIN_RECENT_USER_TURNS 轮之前」的会话历史压缩成摘要。
-   *
-   * 事件落库顺序（顺序即语义，不可调换）：
-   *   run_started → user_message('/compact') → [清 Responses 接力链]
-   *   → compaction(带 cutoffEventId) → run_finished
-   * v2 起摘要不再落 assistant_message（摘要只存 compaction.summary，transcript
-   * 渲染为压缩分界线；钉钉等文本通道由 onResult resultText 收到简短确认）。
-   * 清接力链放在 compaction 之前：若清空失败则压缩整体宣告失败，不会出现
-   * 「投影已压缩但远端 response chain 仍带全量历史」的半生效状态。
-   *
-   * 对外事件流是黑箱：只发 compaction_start / compaction_end，不流式播放
-   * 模型的 thinking/text——压缩过程对用户不可见，摘要经 compaction_end 与
-   * transcript line 下发（前端 debugMode 决定是否提供展开查看）。
+   * 空闲态 /compact：与自动阈值触发复用同一个 checkpoint planner，仅 trigger
+   * 和命令 run 生命周期不同。事件顺序不可调换：
+   *   run_started → user_message('/compact') → 生成摘要 → 清 Responses 接力链
+   *   → compaction(checkpoint metadata + Token 预算切点) → run_finished
+   * 摘要不落 assistant_message；对外只发 compaction_start / compaction_end，
+   * 文本通道由 resultText 收到简短确认。若清接力链失败，checkpoint 不落库。
    */
   async *compact(input: CompactInput, context: RunContext): AsyncIterable<OutboundEvent> {
     const priorEvents = await this.eventStore.list(context.sessionId, {
@@ -1696,7 +1894,11 @@ export class RawAgentLoop implements AgentLoop {
       content: input.message.content,
       modelContent: COMPACT_COMMAND_MODEL_CONTENT,
     });
-    const outcome = yield* this.compactHistory(input, context, priorEvents, false);
+    const outcome = yield* this.compactHistory(input, context, priorEvents, {
+      inline: false,
+      trigger: 'manual',
+      controlSourceRunIds: [context.runId],
+    });
     const modelUsage = buildModelUsage(context.model, outcome.usage);
     if (outcome.status === 'compacted' || outcome.status === 'skipped') {
       await this.append({
@@ -1756,33 +1958,16 @@ export class RawAgentLoop implements AgentLoop {
   }
 
   private async *compactHistory(
-    input: CompactInput,
+    input: Pick<CompactInput, 'instructions'>,
     context: RunContext,
     priorEvents: PlatformEvent[],
-    inline: boolean,
+    options: CompactionOptions,
   ): AsyncGenerator<OutboundEvent, CompactionOutcome> {
     yield { type: 'compaction_start' };
-
-    // 切分点：倒数第 RETAIN_RECENT_USER_TURNS 条真实用户消息之前进入压缩段。
-    // 门槛按「压缩段」投影消息数判定——保留窗口内的消息本来就不会被压缩。
-    const cutIdx = findCompactionCutoffIndex(priorEvents);
-    const compressedProjection = buildContextProjection(priorEvents.slice(0, cutIdx), {
-      sessionId: context.sessionId,
-      runId: context.runId,
-      policy: this.contextPolicy,
-    });
-    const compressedMessages = compressedProjection.messages;
-    if (cutIdx <= 0 || compressedMessages.length < MIN_COMPACTABLE_MESSAGES) {
-      const note = '当前会话历史很短，无需压缩。';
-      yield { type: 'compaction_end', compaction: { skipped: true, note, coveredEventCount: 0 } };
-      return { status: 'skipped', numTurns: 0, resultText: note };
-    }
 
     let totalUsage: ModelUsage | undefined;
     let summaryText = '';
     try {
-      // 待压缩段固定用受控的本地全量投影，不能沿用 previous_response_id：触发压缩时
-      // 远端接力链通常已接近或超过窗口，继续接力会让“想压缩却压不动”。
       const workspace = this.workspaceProvider.resolve(context.channelContext, {
         cwd: context.cwd,
         sessionId: context.sessionId,
@@ -1800,18 +1985,57 @@ export class RawAgentLoop implements AgentLoop {
         hooks: context.hooks,
         signal: context.signal,
       }).map(toModelToolDefinition);
+      const configuredWindow = getModelContextWindow(context.model, context.modelRef);
+      const estimatedCurrentTokens = estimateContextTokens([
+        input.instructions,
+        tools,
+        buildContextProjection(priorEvents, {
+          sessionId: context.sessionId,
+          runId: context.runId,
+          policy: this.contextPolicy,
+        }).messages,
+      ]);
+      const contextWindow = configuredWindow ?? Math.max(1, estimatedCurrentTokens * 2);
+      const thresholdTokens = configuredWindow
+        ? Math.floor(configuredWindow * getModelAutoCompactThreshold(context.model, context.modelRef))
+        : Math.max(1, estimatedCurrentTokens);
+      const plan = planContextCheckpoint({
+        events: priorEvents,
+        contextWindow,
+        thresholdTokens,
+        baseFixedTokens: options.baseFixedTokens
+          ?? estimateContextTokens([input.instructions, tools]),
+        sourceRunId: options.sourceRunId,
+      });
+      const compressedProjection = buildContextProjection(
+        priorEvents.slice(0, plan.rawTailStartIndex),
+        {
+          sessionId: context.sessionId,
+          runId: context.runId,
+          policy: this.contextPolicy,
+        },
+      );
+      const compressedMessages = compressedProjection.messages;
+      const minimumMessages = options.trigger === 'threshold' ? 1 : MIN_COMPACTABLE_MESSAGES;
+      if (plan.coveredEventCount <= 0 || compressedMessages.length < minimumMessages) {
+        const note = '当前会话历史很短，无需压缩。';
+        yield { type: 'compaction_end', compaction: { skipped: true, note, coveredEventCount: 0 } };
+        return { status: 'skipped', numTurns: 0, resultText: note };
+      }
+
       const requestMessages: ModelChatMessage[] = [
         { role: 'system', content: input.instructions },
         ...compressedMessages,
         { role: 'user', content: COMPACTION_REQUEST_PROMPT },
       ];
       let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
-      // 黑箱消费：thinking 丢弃、text 静默累积，不向外 yield 流式内容
+      // 黑箱消费：thinking 丢弃、text 静默累积，不向外 yield 流式内容。
       for await (const event of this.modelAdapter.stream({
         model: context.model,
         messages: requestMessages,
         tools,
         toolChoice: 'none',
+        maxOutputTokens: plan.summaryBudgetTokens,
         signal: context.signal,
       }, this.withModelRequestDiagnostics(context))) {
         if (event.type === 'text_delta') {
@@ -1828,8 +2052,6 @@ export class RawAgentLoop implements AgentLoop {
       if (!summaryText && completed.content) summaryText = completed.content;
       if (!summaryText.trim()) throw new Error('compaction failed: model returned empty summary');
 
-      const coveredEventCount = cutIdx;
-      const cutoffEventId = priorEvents[cutIdx]!.id;
       if (this.runStore?.clearResponseSessionStateBySession) {
         const cleared = await this.runStore.clearResponseSessionStateBySession(context.sessionId);
         if (cleared > 0) {
@@ -1841,19 +2063,35 @@ export class RawAgentLoop implements AgentLoop {
         runId: context.runId,
         sessionId: context.sessionId,
         summary: summaryText.trim(),
-        coveredEventCount,
-        cutoffEventId,
-        ...(inline ? { inline: true } : {}),
+        coveredEventCount: plan.coveredEventCount,
+        ...(plan.rawTailStartEventId ? { cutoffEventId: plan.rawTailStartEventId } : {}),
+        ...(options.inline ? { inline: true } : {}),
+        checkpoint: {
+          version: plan.version,
+          trigger: options.trigger,
+          ...(options.sourceRunId ? { sourceRunId: options.sourceRunId } : {}),
+          ...(options.controlSourceRunIds?.length
+            ? { controlSourceRunIds: options.controlSourceRunIds }
+            : {}),
+          targetTokens: plan.targetTokens,
+          summaryBudgetTokens: plan.summaryBudgetTokens,
+          summaryObservedTokens: estimateContextTokens(summaryText.trim()),
+          rawTailBudgetTokens: plan.rawTailBudgetTokens,
+          rawTailObservedTokens: plan.rawTailObservedTokens,
+          fixedTokens: plan.fixedTokens,
+          taskAnchors: plan.taskAnchors,
+        },
       });
 
       logger.info(
-        `[compact] finished session=${context.sessionId} covered=${coveredEventCount} `
-        + `cutoff=${cutoffEventId} summaryChars=${summaryText.length} inline=${inline}`,
+        `[compact] checkpoint finished session=${context.sessionId} covered=${plan.coveredEventCount} `
+        + `retained=${priorEvents.length - plan.coveredEventCount} `
+        + `cutoff=${plan.rawTailStartEventId ?? 'compaction'} inline=${options.inline} trigger=${options.trigger}`,
       );
-      const resultText = `✅ 上下文已压缩：${coveredEventCount} 条较早历史事件已被摘要替代，最近 ${RETAIN_RECENT_USER_TURNS} 轮对话原文保留（完整记录仍可检索）。`;
+      const resultText = `✅ 上下文已压缩：${plan.coveredEventCount} 条较早事件已归纳，保留 ${priorEvents.length - plan.coveredEventCount} 条最近原始事件（完整记录仍可检索）。`;
       yield {
         type: 'compaction_end',
-        compaction: { summary: summaryText.trim(), coveredEventCount },
+        compaction: { summary: summaryText.trim(), coveredEventCount: plan.coveredEventCount },
       };
       return { status: 'compacted', numTurns: 1, resultText, ...(totalUsage ? { usage: totalUsage } : {}) };
     } catch (err) {
@@ -2915,11 +3153,12 @@ export class RawAgentLoop implements AgentLoop {
       restoredDraftRecoveryUsed = !canonicalCommitted;
       await this.persistReplaceableDraftState(args.context, null);
     }
-    const contextUsageTracker = new RuntimeContextUsageTracker(
+    let contextUsageTracker = new RuntimeContextUsageTracker(
       args.context.model,
       args.priorEvents,
       args.context.modelRef,
     );
+    let autoCompactionSuppressed = false;
     const previousContextModel = contextUsageTracker.resetActiveContextIfModelChanged(args.context.model);
     if (previousContextModel) {
       logger.info(
@@ -2978,14 +3217,110 @@ export class RawAgentLoop implements AgentLoop {
           contextUsageTracker.currentContextTokens,
           args.context.modelRef,
         );
-        if (preflight.forceSynthesis) {
-          this.forceSynthesis(
-            `上下文 ${preflight.triggerTokens} tokens 已达到模型阈值 ${preflight.thresholdTokens}; 模型可见历史保持不变，停止扩展工具调用并交给既有自动压缩判定`,
-            args.context,
-            CONTEXT_SYNTHESIS_PROMPT,
-            true,
-          );
-          currentResponseId = undefined;
+        if (preflight.shouldCompactBeforeRequest) {
+          let checkpointSucceeded = false;
+          if (args.context.evaluateAutoCompaction && !autoCompactionSuppressed) {
+            const checkpointEvents = await this.eventStore.list(args.context.sessionId, {
+              excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+              replayMode: 'bounded',
+            });
+            const evaluation = args.context.evaluateAutoCompaction(checkpointEvents, 'context_governor');
+            if (evaluation.shouldCompact) {
+              const outcome = yield* this.compactHistory(
+                { instructions: args.instructions },
+                args.context,
+                checkpointEvents,
+                {
+                  inline: true,
+                  trigger: 'threshold',
+                  sourceRunId: args.context.runId,
+                  baseFixedTokens: estimateContextTokens([args.instructions, args.tools]),
+                },
+              );
+              if (outcome.usage) totalUsage = mergeUsage(totalUsage, outcome.usage);
+              if (outcome.status === 'aborted') {
+                const reason = args.context.signal?.reason;
+                throw reason instanceof Error ? reason : new Error(String(reason ?? 'run aborted'));
+              }
+              if (outcome.status === 'compacted') {
+                const compactedEvents = await this.eventStore.list(args.context.sessionId, {
+                  excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+                  replayMode: 'bounded',
+                });
+                const compactedProjection = buildContextProjection(compactedEvents, {
+                  sessionId: args.context.sessionId,
+                  runId: args.context.runId,
+                  policy: this.contextPolicy,
+                });
+                args.messages.splice(
+                  0,
+                  args.messages.length,
+                  { role: 'system', content: args.instructions },
+                  ...this.filterLoadedToolMessages(compactedProjection.messages, args.tools),
+                );
+                currentUserMessageIndex = findLastUserMessageIndex(args.messages);
+                contextUsageTracker = new RuntimeContextUsageTracker(
+                  args.context.model,
+                  compactedEvents,
+                  args.context.modelRef,
+                );
+                currentResponseId = undefined;
+                this.clearForcedSynthesis();
+                checkpointSucceeded = true;
+                try {
+                  await this.runStore?.patchMetadata?.(args.context.runId, {
+                    contextPressure: null,
+                    autoCompactedAt: new Date().toISOString(),
+                  });
+                } catch (err) {
+                  logger.warn(
+                    `[auto-compact] clear resume context pressure failed session=${args.context.sessionId} `
+                    + `run=${args.context.runId}: ${err instanceof Error ? err.message : String(err)}`,
+                  );
+                }
+              } else {
+                autoCompactionSuppressed = true;
+                if (outcome.status === 'error') {
+                  logger.warn(
+                    `[auto-compact] resume checkpoint failed; continuing session=${args.context.sessionId} `
+                    + `run=${args.context.runId}: ${outcome.error ?? 'unknown error'}`,
+                  );
+                  yield {
+                    type: 'compaction_end',
+                    compaction: {
+                      skipped: true,
+                      note: '自动压缩失败，已继续当前会话。',
+                      coveredEventCount: 0,
+                    },
+                  };
+                }
+              }
+            } else if (!evaluation.shouldCompact) {
+              autoCompactionSuppressed = true;
+            }
+          }
+          if (!checkpointSucceeded) {
+            autoCompactionSuppressed = true;
+            if (isEmergencyContextPressure(
+              preflight.triggerTokens,
+              args.context.model,
+              args.context.modelRef,
+            )) {
+              this.forceSynthesis(
+                `上下文 ${preflight.triggerTokens} tokens 已逼近模型硬窗口；自动 checkpoint 未能建立，进入紧急收束`,
+                args.context,
+                CONTEXT_SYNTHESIS_PROMPT,
+                true,
+              );
+              currentResponseId = undefined;
+            } else {
+              logger.warn(
+                `[auto-compact] soft checkpoint unavailable during resume; continuing with normal tools `
+                + `session=${args.context.sessionId} run=${args.context.runId} `
+                + `tokens=${preflight.triggerTokens}/${preflight.thresholdTokens}`,
+              );
+            }
+          }
         }
         const forceSynthesis = this.prepareForcedSynthesis(args.messages);
         const requestTools = forceSynthesis && this.forcedSynthesisAllowsSessionRecovery

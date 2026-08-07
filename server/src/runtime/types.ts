@@ -275,6 +275,34 @@ export interface ModelVisionAnalysis {
   content: string;
 }
 
+/** checkpoint 中可恢复的用户任务锚点；不持久化附件正文或视觉分析。 */
+export interface CheckpointTaskAnchor {
+  eventId: string;
+  timestamp: string;
+  text: string;
+  originalChars: number;
+  attachments?: Array<{
+    attachmentId: string;
+    originalName: string;
+  }>;
+}
+
+export interface ContextCheckpointMetadata {
+  version: 1;
+  trigger: 'manual' | 'threshold';
+  /** 自动/运行中手动 checkpoint 固定为当前业务 run；空闲压缩可缺省。 */
+  sourceRunId?: string;
+  /** 触发运行中手动 checkpoint 的 steering source run；用于崩溃恢复去重。 */
+  controlSourceRunIds?: string[];
+  targetTokens: number;
+  summaryBudgetTokens: number;
+  summaryObservedTokens: number;
+  rawTailBudgetTokens: number;
+  rawTailObservedTokens: number;
+  fixedTokens: number;
+  taskAnchors: CheckpointTaskAnchor[];
+}
+
 export type ModelUserContentPart =
   | { type: 'text'; text: string }
   | {
@@ -741,8 +769,13 @@ export type PlatformEvent =
      * 由 compact() 计算为「倒数第 1 条真实用户消息」的事件 id。
      */
     cutoffEventId?: string;
-    /** true 表示压缩发生在当前业务 run 的尾阶段，而非独立 /compact 命令 run。 */
+    /** true 表示 checkpoint 属于当前业务 run，而非独立 /compact 命令 run。 */
     inline?: boolean;
+    /**
+     * 统一可恢复 checkpoint 元数据。缺失表示 v1/v2 存量 compaction，继续按旧格式投影。
+     * 原始事件从不删除；cutoffEventId 仅定义模型可见 raw tail 的起点。
+     */
+    checkpoint?: ContextCheckpointMetadata;
   }
   | {
     id: string;

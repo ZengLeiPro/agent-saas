@@ -37,7 +37,7 @@ export type SubagentStatus = "running" | "completed" | "failed" | "cancelled" | 
 
 export type MessageItem =
   | { id: string; type: "user"; content: string; displayContent?: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; isVoiceTranscript?: boolean; status?: 'pending' | 'queued' | 'sent' | 'failed'; timestamp?: number; clientMsgId?: string; failedReason?: string }
-  | { id: string; type: "text"; content: string; streaming?: boolean; draftId?: string; voiceMarkers?: Array<{ text: string; voice?: string; speed?: number }>; owner?: string; timestamp?: number; guardrailEventId?: string; display?: PresentationBlock[] }
+  | { id: string; type: "text"; content: string; streaming?: boolean; draftId?: string; runId?: string; finalOutput?: boolean; voiceMarkers?: Array<{ text: string; voice?: string; speed?: number }>; owner?: string; timestamp?: number; guardrailEventId?: string; display?: PresentationBlock[] }
   | { id: string; type: "system_event"; title: string; content: string; timestamp?: number }
   | { id: string; type: "thinking"; content: string; streaming?: boolean; draftId?: string; startedAt?: number; durationMs?: number }
   | {

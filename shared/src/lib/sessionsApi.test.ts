@@ -80,6 +80,31 @@ describe('AskUserQuestion history restore', () => {
   });
 });
 
+describe('最终输出历史恢复', () => {
+  it('把 Session API 的 runId/finalOutput 透传到 text 消息', () => {
+    const messages = mapSessionDetailToMessages({
+      sessionId: 's-final',
+      stats: { lines: 1, parsedLines: 1, parseErrors: 0 },
+      blocks: [{
+        id: 'final-block',
+        kind: 'text',
+        title: '输出',
+        defaultOpen: true,
+        content: '最终回答',
+        runId: 'run-final',
+        finalOutput: true,
+      }],
+    });
+
+    expect(messages).toEqual([expect.objectContaining({
+      type: 'text',
+      content: '最终回答',
+      runId: 'run-final',
+      finalOutput: true,
+    })]);
+  });
+});
+
 describe('子 Agent 摘要', () => {
   function agentBlocks(subagent?: Record<string, unknown>) {
     return {

@@ -183,6 +183,26 @@ export function finalizeStreamingMessages(msg: MessagesController): void {
   removeRuntimeStatusMessages(msg);
 }
 
+/** 成功终态到达后，只追认当前 Run 的最后一条非空文本。 */
+export function markFinalOutputMessage(
+  msg: MessagesController,
+  runId: string | undefined,
+  userMsgIndex: number,
+): void {
+  if (!runId && userMsgIndex < 0) return;
+  const messages = msg.messagesRef.current;
+  const lowerBound = runId ? 0 : userMsgIndex + 1;
+  for (let index = messages.length - 1; index >= lowerBound; index -= 1) {
+    const message = messages[index];
+    if (message.type !== 'text' || !message.content.trim()) continue;
+    if (runId && message.runId !== runId) continue;
+    msg.updateMessageAt(index, (current) => (
+      current.type === 'text' ? { ...current, finalOutput: true } : current
+    ));
+    return;
+  }
+}
+
 /** WS event processing context */
 export interface WsProcessingContext {
   msg: MessagesController;
@@ -524,6 +544,7 @@ export function processWsEvent(
         content: "",
         streaming: true,
         ...(data.draftId ? { draftId: data.draftId } : {}),
+        ...(data.runId ? { runId: data.runId } : {}),
         ...(owner ? { owner } : {}),
         timestamp: Date.now(),
       });
@@ -871,6 +892,16 @@ export function processWsEvent(
     block.currentBlockIndex = -1;
     block.currentBlockType = null;
     finalizeRunningSubagents(msg);
+    if (data.finalOutput && !data.error) {
+      const matchedUserMsgIndex = data.client_msg_id
+        ? findUserMsgIndexByClientId(msg.messagesRef.current, data.client_msg_id)
+        : -1;
+      markFinalOutputMessage(
+        msg,
+        data.runId,
+        matchedUserMsgIndex >= 0 ? matchedUserMsgIndex : ctx.userMsgIndex,
+      );
+    }
     // outbox 清理保持幂等；即使同一终态先从 durable 投影到达、后从 live 路径补到
     // client_msg_id，也必须允许上层消费后到的消息标识。
     ctx.onChatDone?.(data.client_msg_id, data.error);

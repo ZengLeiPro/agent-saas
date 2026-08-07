@@ -1172,3 +1172,48 @@ describe('processWsEvent - 语音 / 文件 / 错误 / 溢出', () => {
     expect((ctrl.messages[0] as Extract<MessageItem, { type: 'user-voice' }>).status).toBe('failed');
   });
 });
+
+describe('最终输出追认', () => {
+  it('block_start 把 runId 绑定到实时 text 消息', () => {
+    const ctrl = makeController();
+    const { ctx } = makeCtx(ctrl);
+    dispatch({ type: 'block_start', blockType: 'text', runId: 'run-1' }, ctx);
+    expect(ctrl.messages[0]).toMatchObject({ type: 'text', runId: 'run-1', streaming: true });
+  });
+
+  it('成功 done 只追认同 Run 最后一条文本', () => {
+    const ctrl = makeController([
+      { id: 'u', type: 'user', content: '开始', status: 'sent' },
+      { id: 'commentary', type: 'text', content: '我先检查', runId: 'run-1' },
+      { id: 'other', type: 'text', content: '别的 Run', runId: 'run-2' },
+      { id: 'final', type: 'text', content: '最终回答', runId: 'run-1', streaming: true },
+    ]);
+    const { ctx } = makeCtx(ctrl, { userMsgIndex: 0 });
+
+    dispatch({ type: 'done', runId: 'run-1', finalOutput: true }, ctx);
+
+    expect(ctrl.messages[1]).not.toHaveProperty('finalOutput');
+    expect(ctrl.messages[2]).not.toHaveProperty('finalOutput');
+    expect(ctrl.messages[3]).toMatchObject({ finalOutput: true, streaming: false });
+  });
+
+  it('失败 done 与无当前文本的成功 done 都不误标旧回答', () => {
+    const failedCtrl = makeController([
+      { id: 'old', type: 'text', content: '上一轮回答', finalOutput: false },
+      { id: 'u', type: 'user', content: '新问题', status: 'sent' },
+      { id: 'partial', type: 'text', content: '未完成', runId: 'run-2' },
+    ]);
+    const { ctx: failedCtx } = makeCtx(failedCtrl, { userMsgIndex: 1 });
+
+    dispatch({ type: 'done', runId: 'run-2', finalOutput: true, error: 'boom' }, failedCtx);
+    expect(failedCtrl.messages[2]).not.toHaveProperty('finalOutput');
+
+    const emptyCtrl = makeController([
+      { id: 'old', type: 'text', content: '上一轮回答', finalOutput: false },
+      { id: 'u', type: 'user', content: '只执行工具', status: 'sent' },
+    ]);
+    const { ctx: emptyCtx } = makeCtx(emptyCtrl, { userMsgIndex: 1 });
+    dispatch({ type: 'done', finalOutput: true }, emptyCtx);
+    expect(emptyCtrl.messages[0]).toMatchObject({ finalOutput: false });
+  });
+});

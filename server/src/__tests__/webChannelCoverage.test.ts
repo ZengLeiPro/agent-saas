@@ -786,7 +786,9 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       ]);
       expect(rig.ws.sent[2].data).toEqual({ type: 'session', sessionId, client_msg_id: 'cm-flow-1' });
       expect(rig.ws.sent[4].data).toEqual({ type: 'text', content: '你好，' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'done', client_msg_id: 'cm-flow-1' });
+      expect(rig.ws.sent.at(-1)?.data).toEqual({
+        type: 'done', client_msg_id: 'cm-flow-1', finalOutput: true,
+      });
 
       // 用户消息注入 EventBuffer（其他设备 resume 用）
       const buffer = (rig.channel as any).eventBufferStore.get(sessionId);
@@ -1348,7 +1350,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
 
       expect(rig.sessionEvents).toEqual([
         { type: 'session', sessionId, client_msg_id: 'cm-out-1' },
-        { type: 'block_start', blockType: 'text' },
+        { type: 'block_start', blockType: 'text', runId: 'run-out-1' },
         { type: 'text', content: 'A' },
         { type: 'block_end', blockType: 'text' },
         { type: 'block_start', blockType: 'thinking' },
@@ -1365,7 +1367,10 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         },
         { type: 'compaction_status', phase: 'started' },
         { type: 'compaction_status', phase: 'completed', compaction: { summary: 's', coveredEventCount: 3 } },
-        { type: 'done', sessionId, streamId: 'run-out-1', runId: 'run-out-1', client_msg_id: 'cm-out-1' },
+        {
+          type: 'done', sessionId, streamId: 'run-out-1', runId: 'run-out-1',
+          client_msg_id: 'cm-out-1', finalOutput: true,
+        },
       ]);
       // session_init → running；done → completed + session_updated；buffer 收口
       expect(rig.userEvents[0]).toEqual({
@@ -1375,6 +1380,25 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.userEvents).toContainEqual(expect.objectContaining({ type: 'session_updated', sessionId }));
       expect((rig.channel as any).eventBufferStore.isActive(sessionId)).toBe(false);
       expect((rig.channel as any).inProcessOutboundRuns.has('run-out-1')).toBe(false);
+    });
+
+    it('最终输出标记：实时文本绑定 runId，成功 done 追认 finalOutput', () => {
+      const rig = makeRig();
+      const sessionId = randomUUID();
+      const base = { sessionId, runId: 'run-final-live', userId: USER.sub, clientMsgId: 'cm-final-live' };
+
+      rig.channel.publishRuntimeOutboundEvent({ ...base, event: { type: 'session_init', sessionId } });
+      rig.channel.publishRuntimeOutboundEvent({ ...base, event: { type: 'text_start' } });
+      rig.channel.publishRuntimeOutboundEvent({ ...base, event: { type: 'text_delta', content: '最终回答' } });
+      rig.channel.publishRuntimeOutboundEvent({ ...base, event: { type: 'text_end' } });
+      rig.channel.publishRuntimeOutboundEvent({ ...base, event: { type: 'done' } });
+
+      expect(rig.sessionEvents).toContainEqual({
+        type: 'block_start', blockType: 'text', runId: 'run-final-live',
+      });
+      expect(rig.sessionEvents.at(-1)).toMatchObject({
+        type: 'done', runId: 'run-final-live', finalOutput: true,
+      });
     });
 
     it('error 事件：done 携带 error + session_status failed（带 reason），buffer 收口', () => {
@@ -1449,6 +1473,22 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         subtype: 'success', numTurns: 1,
       } as any);
       expect((rig.channel as any).eventBufferStore.get(successSession)).toBeUndefined();
+    });
+
+    it('最终输出标记：跨进程 completed 终态携带 finalOutput', () => {
+      const rig = makeRig();
+      const sessionId = randomUUID();
+
+      rig.channel.publishRuntimePlatformEvent({
+        id: 'evt-final-cross', timestamp: new Date().toISOString(),
+        type: 'run_state_changed', runId: 'run-final-cross', sessionId,
+        status: 'completed', previousStatus: 'running',
+      } as any);
+
+      const buffer = (rig.channel as any).eventBufferStore.get(sessionId);
+      expect(buffer.events.map((entry: { data: string }) => JSON.parse(entry.data))).toContainEqual({
+        type: 'done', sessionId, runId: 'run-final-cross', finalOutput: true,
+      });
     });
 
     it('run_state_changed(cancelled) 终态：正常结束流但不携带 error', () => {

@@ -698,6 +698,17 @@ function TextMessage({ message, onPreviewMd, onTtsPlay }: {
 
   const [assistMenuVisible, setAssistMenuVisible] = useState(false);
   const [assistAnchorTop, setAssistAnchorTop] = useState(0);
+  const finalOutputDivider = message.finalOutput ? (
+    <View
+      accessible={false}
+      testID="final-output-divider"
+      style={{
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: colors.border,
+        marginBottom: spacing.sm,
+      }}
+    />
+  ) : null;
 
   const assistMenuSections = useMemo<DropdownSection[]>(() => [{
     id: 's1',
@@ -733,6 +744,7 @@ function TextMessage({ message, onPreviewMd, onTtsPlay }: {
     const streamContent = hasFileMarkers ? stripFileMarkers(message.content) : message.content;
     return (
       <View style={styles.assistantBubble}>
+        {finalOutputDivider}
         <Markdown style={mdStyles} rules={rules}>{streamContent}</Markdown>
         <View style={styles.cursor} />
         {lightboxUri && (
@@ -748,6 +760,7 @@ function TextMessage({ message, onPreviewMd, onTtsPlay }: {
       <>
         <GestureDetector gesture={longPressGesture}>
           <View style={styles.assistantBubble}>
+            {finalOutputDivider}
             {segments.map((seg, i) =>
               seg.type === 'text' ? (
                 <Markdown key={i} style={mdStyles} rules={rules}>{seg.content}</Markdown>
@@ -776,6 +789,7 @@ function TextMessage({ message, onPreviewMd, onTtsPlay }: {
     <>
       <GestureDetector gesture={longPressGesture}>
         <View style={styles.assistantBubble}>
+          {finalOutputDivider}
           <Markdown style={mdStyles} rules={rules}>{message.content}</Markdown>
           {lightboxUri && (
             <ImageLightbox visible uri={lightboxUri} onClose={() => setLightboxUri(null)} />

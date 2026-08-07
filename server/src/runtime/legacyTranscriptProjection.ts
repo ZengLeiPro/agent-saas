@@ -65,6 +65,8 @@ function assistantLine(
     wireMode?: ModelWireMode;
     wireRequestBodyBytes?: number;
     wireFallbackReason?: string;
+    sourceEventId?: string;
+    runId?: string;
   } = {},
 ): string {
   const message: Record<string, unknown> = { role: 'assistant', content };
@@ -94,6 +96,8 @@ function assistantLine(
   return jsonl({
     type: 'assistant',
     message,
+    ...(extra.sourceEventId ? { sourceEventId: extra.sourceEventId } : {}),
+    ...(extra.runId ? { runId: extra.runId } : {}),
     sessionId,
     timestamp: new Date().toISOString(),
   });
@@ -166,6 +170,8 @@ export class LegacyTranscriptProjection {
           [{ type: 'text', text: event.content }],
           event.sessionId,
           {
+            sourceEventId: event.id,
+            runId: event.runId,
             ...(event.model ? { model: event.model } : {}),
             ...(event.usage ? { usage: event.usage } : {}),
             ...(event.responseMode ? { responseMode: event.responseMode } : {}),
@@ -204,6 +210,8 @@ export class LegacyTranscriptProjection {
           });
         }
         return assistantLine(content, event.sessionId, {
+          sourceEventId: event.id,
+          runId: event.runId,
           ...(event.model ? { model: event.model } : {}),
           ...(event.usage ? { usage: event.usage } : {}),
           ...(event.responseMode ? { responseMode: event.responseMode } : {}),

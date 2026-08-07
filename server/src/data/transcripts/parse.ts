@@ -70,6 +70,12 @@ export interface TranscriptBlock {
   interjectionSourceRunId?: string;
   /** compaction block：被摘要替代的历史事件数 */
   coveredEventCount?: number;
+  /** assistant 行对应的 runtime event id；用于按成功 Run 终态追认最终输出。 */
+  sourceEventId?: string;
+  /** assistant 行所属 runtime run id。 */
+  runId?: string;
+  /** text block 是否是所属 Run 成功终态的最终输出。 */
+  finalOutput?: boolean;
   /** 门禁拒答合成 assistant 行关联的 guardrail event id（员工申诉入口用） */
   guardrailEventId?: string;
   /**
@@ -823,6 +829,9 @@ async function parseTranscriptFileUncached(
       // 透传到 text block → 前端历史重建后申诉按钮拿真实 event id
       const guardrailEventId =
         typeof obj?.guardrailEventId === "string" ? obj.guardrailEventId : undefined;
+      const sourceEventId =
+        typeof obj?.sourceEventId === "string" ? obj.sourceEventId : undefined;
+      const runId = typeof obj?.runId === "string" ? obj.runId : undefined;
       if (Array.isArray(content)) {
         let idx = 0;
         for (const block of content) {
@@ -838,6 +847,8 @@ async function parseTranscriptFileUncached(
               content: typeof block.text === "string"
                 ? truncateTranscriptDetailText(block.text, TRANSCRIPT_DETAIL_MESSAGE_MAX_CHARS)
                 : formatJson(block, TRANSCRIPT_DETAIL_MESSAGE_MAX_CHARS),
+              ...(sourceEventId ? { sourceEventId } : {}),
+              ...(runId ? { runId } : {}),
               ...(guardrailEventId ? { guardrailEventId } : {}),
             });
             continue;

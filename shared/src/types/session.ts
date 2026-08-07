@@ -283,6 +283,12 @@ export interface ApiTranscriptBlock {
   clientMsgId?: string;
   /** prompt block：插话来源 run ID，用于与服务端队列真源对账。 */
   interjectionSourceRunId?: string;
+  /** text block：来源 runtime event id，用于由成功 Run 终态确定性追认最终输出。 */
+  sourceEventId?: string;
+  /** text block：所属 runtime run id；实时与历史使用同一关联语义。 */
+  runId?: string;
+  /** text block：该文本是所属 Run 成功终态的最终输出。 */
+  finalOutput?: boolean;
   /** text block：门禁拒答气泡关联的 guardrail event id（员工申诉入口用） */
   guardrailEventId?: string;
   /** 演示剧本入口事件直接完整展示，不模拟 Agent 流式输出。 */

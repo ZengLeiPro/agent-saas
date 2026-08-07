@@ -723,6 +723,7 @@ export class WebChannel implements BaseChannel {
         emitSession({
           type: 'block_start',
           blockType: 'text',
+          runId: input.runId,
           ...(input.event.draftId ? { draftId: input.event.draftId } : {}),
         });
         break;
@@ -871,6 +872,7 @@ export class WebChannel implements BaseChannel {
           streamId,
           runId: input.runId,
           client_msg_id: input.clientMsgId,
+          finalOutput: true,
         });
         const hasDeferredStream = Array.from(this.activeStreams.entries()).some(
           ([candidateStreamId, entry]) => (
@@ -4227,6 +4229,7 @@ export class WebChannel implements BaseChannel {
         send({
           type: 'done',
           ...(clientMsgId ? { client_msg_id: clientMsgId } : {}),
+          ...(!lastError && collectedAssistantText.trim() ? { finalOutput: true } : {}),
           ...(lastError ? { error: lastError } : {}),
         });
         // 更新幂等记录终态
@@ -4483,7 +4486,7 @@ function projectRuntimePlatformEvent(
       if (event.streamed && !options.expandStreamed) return { events: [] };
       return event.content
         ? { events: [
-            { type: 'block_start', blockType: 'text' },
+            { type: 'block_start', blockType: 'text', runId: event.runId },
             { type: 'text', content: event.content },
             { type: 'block_end', blockType: 'text' },
           ] }
@@ -4492,7 +4495,7 @@ function projectRuntimePlatformEvent(
       const events: object[] = [];
       if (event.content && (!event.streamed || options.expandStreamed)) {
         events.push(
-          { type: 'block_start', blockType: 'text' },
+          { type: 'block_start', blockType: 'text', runId: event.runId },
           { type: 'text', content: event.content },
           { type: 'block_end', blockType: 'text' },
         );
@@ -4570,6 +4573,7 @@ function projectRuntimePlatformEvent(
               sessionId: event.sessionId,
               runId: event.runId,
               ...(options.clientMsgId ? { client_msg_id: options.clientMsgId } : {}),
+              ...(event.status === 'completed' ? { finalOutput: true } : {}),
               ...(terminalError ? { error: terminalError } : {}),
             },
           ],

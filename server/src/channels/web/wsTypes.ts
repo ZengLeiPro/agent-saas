@@ -162,7 +162,7 @@ export type WsDownstreamEvent =
     | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number }
     | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
     | { type: 'session'; sessionId: string; client_msg_id?: string }
-    | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string; draftId?: string }
+    | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string; draftId?: string; runId?: string }
     | { type: 'draft_reset'; draftId: string; attempt?: number }
     | { type: 'draft_commit'; draftId: string }
     | { type: 'thinking'; content: string }
@@ -182,7 +182,7 @@ export type WsDownstreamEvent =
     | { type: 'title_updated'; sessionId: string; title: string }
     | { type: 'session_updated'; sessionId: string; preview?: string; updatedAtMs: number; title?: string; model?: string; username?: string; isNew?: boolean }
     | { type: 'buffer_overflow' }
-    | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string }
+    | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string; finalOutput?: boolean }
     | { type: 'error'; message: string }
     | { type: 'respond_error'; interactionId: string; error: string }
     | { type: 'respond_ok'; interactionId: string }

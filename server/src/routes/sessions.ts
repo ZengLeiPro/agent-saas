@@ -60,6 +60,10 @@ import {
   enrichTranscriptActivityDurations,
   listActivityDurationEvents,
 } from "../data/transcripts/activityDurations.js";
+import {
+  collectFinalOutputEventIds,
+  enrichTranscriptFinalOutputs,
+} from "../data/transcripts/finalOutput.js";
 import type { EventStore, PlatformEvent } from "../runtime/types.js";
 import { RuntimeContextUsageTracker } from "../runtime/contextUsage.js";
 import { buildPendingInteractionsFromEvents } from "../runtime/interactionProjection.js";
@@ -966,6 +970,21 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       } catch (err) {
         apiLogger.warn(
           `[sessions] activity enrichment failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    if (parsed.blocks.some((block) => block.kind === "text" && block.sourceEventId)) {
+      try {
+        const finalOutputEvents = await detailEventStore.list(sessionId, {
+          includeTypes: ["assistant_message", "run_finished"],
+        });
+        parsed = enrichTranscriptFinalOutputs(
+          parsed,
+          collectFinalOutputEventIds(finalOutputEvents),
+        );
+      } catch (err) {
+        apiLogger.warn(
+          `[sessions] final output enrichment failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }

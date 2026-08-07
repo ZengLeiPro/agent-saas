@@ -308,6 +308,8 @@ function mapBlock(
       const display = normalizeDisplay(block.display);
       return {
         id, type: "text", content: block.content, streaming: false,
+        ...(block.runId ? { runId: block.runId } : {}),
+        ...(block.finalOutput ? { finalOutput: true } : {}),
         ...(owner ? { owner } : {}),
         ...(block.guardrailEventId ? { guardrailEventId: block.guardrailEventId } : {}),
         ...(display ? { display } : {}),

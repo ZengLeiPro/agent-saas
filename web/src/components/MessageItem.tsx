@@ -828,6 +828,13 @@ export const MessageItem = memo(function MessageItem({
     return (
       <div className="flex justify-start">
         <div className="group relative w-full min-w-0">
+          {message.finalOutput ? (
+            <div
+              aria-hidden="true"
+              className="mb-3 border-t border-border/70"
+              data-testid="final-output-divider"
+            />
+          ) : null}
           <div
             ref={textContentRef}
             className={cn(

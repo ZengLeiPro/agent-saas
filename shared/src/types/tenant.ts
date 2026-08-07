@@ -37,6 +37,32 @@ export interface Tenant {
   settings?: TenantSettings;
 }
 
+export type TenantMemoryFeatureKey =
+  | "memoryPollingEnabled"
+  | "memoryConsolidationEnabled"
+  | "memoryWriteDelegationEnabled";
+
+export type TenantMemoryFeatureBlockedBy =
+  | "platform_disabled"
+  | "dependency_disabled"
+  | "runtime_unavailable";
+
+export interface TenantMemoryFeatureStatus {
+  /** 租户持久化开关值；与 effective 分开展示，避免“勾选=已运行”的假象。 */
+  configured: boolean;
+  /** 平台总开关、依赖与运行时能力均满足时才为 true。 */
+  effective: boolean;
+  blockedBy?: TenantMemoryFeatureBlockedBy;
+}
+
+export type TenantMemoryFeatureStatusMap = Record<TenantMemoryFeatureKey, TenantMemoryFeatureStatus>;
+
+export interface TenantSettingsResponse {
+  tenantId: string;
+  settings: TenantSettings;
+  memoryFeatureStatus?: TenantMemoryFeatureStatusMap;
+}
+
 export interface TenantSettings {
   features: {
     filesEnabled: boolean;

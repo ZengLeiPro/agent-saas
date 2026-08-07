@@ -12,8 +12,8 @@
  *   - Shell 是完整命令行能力，因此此 profile 不是只读或写入硬边界；执行器必须
  *     强制使用隔离的 ACS server-remote，不能落到 server-local。
  *
- * profile 由平台内部执行器设置（cron executor / memoryHook），随 run.metadata
- * 持久化；用户不能通过 API 指定。
+ * profile 由平台内部执行器设置（L2 consolidation / L3 cron executor），随
+ * run.metadata 持久化；用户不能通过 API 指定。
  */
 
 import { isAbsolute, join, relative, resolve } from 'node:path';

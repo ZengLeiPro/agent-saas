@@ -41,6 +41,7 @@ import { PgTaskboardStore } from '../taskboard/store.js';
 import type { TaskboardExecutionService, TaskboardService } from '../taskboard/types.js';
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import { MEMORY_CONSOLIDATION_DEFAULTS, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
+import { resolveTenantMemoryFeatureStatus } from '../memory/effectiveStatus.js';
 import { MemoryCommandToolProvider } from '../agent/memoryCommandToolProvider.js';
 import { MemoryCommitToolProvider } from '../agent/memoryCommitToolProvider.js';
 import {
@@ -83,7 +84,6 @@ import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
 import { SandboxWarmupService } from '../runtime/sandboxWarmup.js';
 import { createMiddlewareRunDispatch } from '../engine/dispatch.js';
 import { DispatchMetricsStore } from '../engine/metricsStore.js';
-import { createMemoryMaintenanceHook, withMemoryMaintenance } from '../engine/memoryHook.js';
 import { getPublicModelList, getTenantPublicModelList, isModelAllowedForTenant } from './models.js';
 import { ChannelManager } from '../channels/manager.js';
 import { WebChannel } from '../channels/web/channel.js';
@@ -320,6 +320,8 @@ export interface AppRuntime {
    * 启动期自动 ensure 平台根组织和开沿日常组织。
    */
   tenantStore?: TenantStore;
+  /** 租户记忆开关的配置态/实际生效态权威解析，供后台 API 展示。 */
+  getTenantMemoryFeatureStatus: (tenantId: string) => ReturnType<typeof resolveTenantMemoryFeatureStatus>;
   agentStore?: AgentStore;
   skillConfigStore?: SkillConfigStore;
   mcpConfigStore?: McpConfigStore;
@@ -2217,6 +2219,23 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       Object.entries(config.memory?.consolidation ?? {}).filter(([key, value]) => key !== 'enabled' && value !== undefined),
     ),
   });
+  const getTenantMemoryFeatureStatus = (tenantId: string) => {
+    let features;
+    try {
+      features = tenantStore?.getSettings(tenantId)?.features;
+    } catch {
+      features = undefined;
+    }
+    return resolveTenantMemoryFeatureStatus({
+      features,
+      platformPollingEnabled: config.memory?.polling?.enabled === true,
+      pollingRuntimeAvailable: userActivityService.available,
+      platformConsolidationEnabled: config.memory?.consolidation?.enabled === true,
+      consolidationRuntimeAvailable: Boolean(
+        memoryConsolidationStore && pgEventStore && pgSessionProjectionStore && userStore,
+      ),
+    });
+  };
 
   const codexCredentialManager = new CodexCredentialManager({
     vault: secretVault,
@@ -2245,21 +2264,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     // 记忆写入职责剥离（2026-07-29）：租户开关决定新会话是否 pin v2。
     // 平台级 memory.consolidation.enabled 未开时全量 v1（后台没人接管写入，
     // 绝不能先剥离主 Agent 的写入能力）。
-    memoryWriteDelegationEnabled: (tenantId) => {
-      if (!memoryConsolidationStore) return false;
-      if (config.memory?.consolidation?.enabled !== true) return false;
-      try {
-        if (!tenantId) return false;
-        const features = tenantStore?.getSettings(tenantId)?.features;
-        // 运行时双保险（2026-07-29 P0 修复）：即使存量配置里出现非法组合
-        // （delegation 开而 consolidation 关），也不 pin v2——剥离主 Agent
-        // 写入的前提是 L2 确实在接管。
-        return features?.memoryWriteDelegationEnabled === true
-          && features?.memoryConsolidationEnabled === true;
-      } catch {
-        return false;
-      }
-    },
+    memoryWriteDelegationEnabled: (tenantId) => tenantId
+      ? getTenantMemoryFeatureStatus(tenantId).memoryWriteDelegationEnabled.effective
+      : false,
     ...(memoryConsolidationStore ? {
       memoryControlProviders: [
         new MemoryCommandToolProvider({
@@ -2715,32 +2722,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     serverLogger.warn('Dispatch middleware pipeline is disabled, using direct run dispatch');
   }
 
-  // Memory maintenance hook：事件流结束后按策略触发记忆维护
-  const memoryMaintenanceEnabled = memoryEnabled && config.memory?.maintenance?.enabled === true;
-  const finalDispatch = memoryMaintenanceEnabled
-    ? withMemoryMaintenance(
-      billedRunDispatch,
-      createMemoryMaintenanceHook({
-        agentCwd,
-        config: {
-          enabled: true,
-          minTextLength: config.memory?.maintenance?.minTextLength ?? 500,
-          cooldownMinutes: config.memory?.maintenance?.cooldownMinutes ?? 60,
-        },
-        maintenanceDispatch: billedRunDispatch,
-        // L2 整合开启的租户旁路旧 hook（2026-07-29 职责剥离批次，防双写）
-        isTenantConsolidationEnabled: (tenantId) => {
-          if (config.memory?.consolidation?.enabled !== true) return false;
-          try {
-            return !!tenantId && tenantStore?.getSettings(tenantId)?.features?.memoryConsolidationEnabled === true;
-          } catch {
-            return false;
-          }
-        },
-        logger: serverLogger.child('Memory'),
-      }),
-    )
-    : billedRunDispatch;
+  // 旧 memory.maintenance hook 只包裹 Channel 直连 dispatch，PG Scheduler 主链从不经过，
+  // 生产配置 enabled=true 反而制造“已启用”的假象。会话增量由 L2 durable consumer 负责，
+  // 跨会话维护由 L3 memory_poll 负责；旧键仅保留一版配置兼容并明确告警。
+  if (config.memory?.maintenance?.enabled === true) {
+    serverLogger.warn('memory.maintenance is deprecated and ignored; use memory.consolidation + memory.polling');
+  }
+  const finalDispatch = billedRunDispatch;
 
   // Groups store：Web 与 Runtime Worker 共享文件，写操作必须锁内 reload→mutate→publish；
   // 读操作由 GroupStore 每次刷新，避免任一进程永久持有启动时旧快照。
@@ -2869,14 +2857,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     // + tombstone 注入。store 不可用（file 后端）时不传，L3 保持 legacy 行为。
     ...(memoryConsolidationStore ? {
       memoryConsolidationBridge: {
-        isTenantConsolidationEnabled: (tenantId: string | undefined) => {
-          if (config.memory?.consolidation?.enabled !== true) return false;
-          try {
-            return !!tenantId && tenantStore?.getSettings(tenantId)?.features?.memoryConsolidationEnabled === true;
-          } catch {
-            return false;
-          }
-        },
+        isTenantConsolidationEnabled: (tenantId: string | undefined) => tenantId
+          ? getTenantMemoryFeatureStatus(tenantId).memoryConsolidationEnabled.effective
+          : false,
         acquireCommitLock: (tenantId: string, userId: string, timeoutMs?: number) =>
           memoryConsolidationStore!.acquireCommitLock(tenantId, userId, timeoutMs),
         listForgottenSubjects: async (tenantId: string, userId: string) => {
@@ -2964,14 +2947,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
             : undefined;
         },
       },
-      isTenantEnabled: (tenantId) => {
-        if (config.memory?.consolidation?.enabled !== true) return false;
-        try {
-          return !!tenantId && tenantStore?.getSettings(tenantId)?.features?.memoryConsolidationEnabled === true;
-        } catch {
-          return false;
-        }
-      },
+      isTenantEnabled: (tenantId) =>
+        getTenantMemoryFeatureStatus(tenantId).memoryConsolidationEnabled.effective,
       dispatch: billedRunDispatch,
       agentCwd,
       getConfig: resolveMemoryConsolidationConfig,
@@ -3573,6 +3550,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         }
       : undefined,
     tenantStore,
+    getTenantMemoryFeatureStatus,
     agentStore,
     skillConfigStore,
     mcpConfigStore,

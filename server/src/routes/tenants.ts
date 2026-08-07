@@ -9,6 +9,7 @@ import { Router } from 'express';
 import type { Request } from 'express';
 import { z } from 'zod';
 
+import type { TenantMemoryFeatureStatusMap } from '../../../shared/src/types/tenant.js';
 import { isPlatformAdmin, requireAdmin, requirePlatformAdmin } from '../auth/middleware.js';
 import { auditLog } from '../data/login-logs/index.js';
 import { apiLogger } from '../utils/logger.js';
@@ -130,6 +131,8 @@ export interface CreateTenantsRouterOptions {
   sharedDir: string;
   /** 组织被禁用时的回调（断开 WS 连接 + 中止当前进程活跃流）。 */
   onTenantDisabled?: (tenantId: string) => void;
+  /** 记忆能力配置态/实际生效态；缺省仅用于路由单测和旧嵌入方兼容。 */
+  resolveMemoryFeatureStatus?: (tenantId: string) => TenantMemoryFeatureStatusMap;
   /** 组织删除时的全量清理实现，由 app runtime 注入完整依赖。 */
   deleteTenantResources?: (tenantId: string) => Promise<TenantDeletionReport>;
   /**
@@ -173,6 +176,7 @@ function buildInitialCompanyInfo(tenantName: string): string {
 export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
   const router = Router();
   const { tenantStore, sharedDir } = opts;
+  const memoryFeatureStatusFor = (tenantId: string) => opts.resolveMemoryFeatureStatus?.(tenantId);
 
   // GET /api/tenants — 列出所有组织（含 disabled）
   router.get('/', requirePlatformAdmin, (_req, res) => {
@@ -308,7 +312,11 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
       res.status(404).json({ error: '组织不存在' });
       return;
     }
-    res.json({ tenantId: req.params.id, settings });
+    res.json({
+      tenantId: req.params.id,
+      settings,
+      memoryFeatureStatus: memoryFeatureStatusFor(req.params.id),
+    });
   });
 
   // PATCH /api/tenants/:id/settings — 平台 admin 任意；组织 admin 仅自己
@@ -385,7 +393,11 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
     try {
       const settings = await tenantStore.updateSettings(req.params.id, parsed.data);
       auditLog(req, 'tenant_updated', `${req.params.id} → settings`);
-      res.json({ tenantId: req.params.id, settings });
+      res.json({
+        tenantId: req.params.id,
+        settings,
+        memoryFeatureStatus: memoryFeatureStatusFor(req.params.id),
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg === 'Tenant not found') {

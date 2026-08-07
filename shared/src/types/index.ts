@@ -172,6 +172,11 @@ export type {
   CreateTenantInput,
   UpdateTenantInput,
   TenantSettings,
+  TenantSettingsResponse,
+  TenantMemoryFeatureKey,
+  TenantMemoryFeatureBlockedBy,
+  TenantMemoryFeatureStatus,
+  TenantMemoryFeatureStatusMap,
 } from "./tenant";
 export {
   PLATFORM_TENANT_ID,

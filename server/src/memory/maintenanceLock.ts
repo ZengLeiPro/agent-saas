@@ -1,10 +1,9 @@
 /**
  * 用户级记忆维护锁（2026-07-14 记忆轮询批次）
  *
- * 每日记忆轮询（cron executor）与会后记忆维护（memoryHook）都会写同一用户的
- * memory 文件。两者并发时 Edit 的 read-modify-write 存在竞态——用 in-process
- * 互斥集合让同一用户同时只有一个维护性 run 在跑（跨进程场景由部署形态保证：
- * cron 只在 processRole=all 进程执行，会后 hook 也在同一进程）。
+ * L2 会话整合与 L3 每日记忆轮询都可能写同一用户的 memory 文件。本集合只做
+ * 同进程 fast-path，避免明知冲突仍启动模型；跨进程正确性由共用的 PG commit
+ * advisory lock 保证。
  *
  * 语义是 try-lock：拿不到就跳过本次维护（下一轮再来），绝不排队阻塞。
  */

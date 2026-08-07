@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { TenantListPanel } from "./index";
+import { memoryFeatureStatusLabel, TenantListPanel } from "./index";
 import type { Tenant, UserInfo } from "./types";
 
 const tenants: Tenant[] = [
@@ -60,5 +60,22 @@ describe("TenantListPanel", () => {
       fireEvent.click(screen.getByRole("button", { name: "保存排序" }));
     });
     expect(onReorder).toHaveBeenCalledWith(["wain", "pantheon", "acme"]);
+  });
+});
+
+describe("memoryFeatureStatusLabel", () => {
+  it("明确区分租户已开但平台总开关关闭", () => {
+    expect(memoryFeatureStatusLabel({
+      configured: true,
+      effective: false,
+      blockedBy: "platform_disabled",
+    }, true)).toBe("租户已开 · 未生效：平台总开关关闭");
+  });
+
+  it("实际生效与未保存改动使用不同文案", () => {
+    expect(memoryFeatureStatusLabel({ configured: true, effective: true }, true))
+      .toBe("租户已开 · 实际生效");
+    expect(memoryFeatureStatusLabel({ configured: true, effective: true }, false))
+      .toBe("待保存");
   });
 });

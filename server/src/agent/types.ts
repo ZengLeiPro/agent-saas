@@ -158,8 +158,8 @@ export interface AgentRunOptions {
   approvalPolicy?: ToolApprovalPolicyOptions;
   /**
    * Per-run 工具 profile（2026-07-14 记忆轮询批次）。'memory_poll' = 受限白名单
-   * （只读工具 + 路径受限的 Write/Edit），由平台内部执行器（cron executor /
-   * memoryHook）设置，随 run.metadata 持久化供 resume/wake 恢复；用户不能经
+   * （只读工具 + 路径受限的 Write/Edit），由平台内部执行器（L2 consolidation /
+   * L3 cron executor）设置，随 run.metadata 持久化供 resume/wake 恢复；用户不能经
    * API 指定。见 runtime/toolProfiles.ts。
    */
   toolProfile?: 'memory_poll' | 'memory_consolidate';

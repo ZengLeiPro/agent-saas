@@ -337,6 +337,7 @@ const memoryInjectContextSchema = z.object({
   maxLines: z.number().int().positive().optional(),
 });
 
+/** @deprecated 仅用于读取旧配置；运行时忽略。会话增量由 consolidation，跨会话维护由 polling 接管。 */
 const memoryMaintenanceSchema = z.object({
   enabled: z.boolean().optional(),
   minTextLength: z.number().int().positive().optional(),
@@ -1412,6 +1413,7 @@ export type ObservabilityConfig = z.infer<typeof observabilityConfigSchema>;
 export type SystemMonitorConfig = z.infer<typeof systemMonitorConfigSchema>;
 export type AlertingConfig = z.infer<typeof alertingConfigSchema>;
 export type MemoryInjectContextConfig = z.infer<typeof memoryInjectContextSchema>;
+/** @deprecated 旧配置兼容类型；运行时已不执行 maintenance hook。 */
 export type MemoryMaintenanceConfig = z.infer<typeof memoryMaintenanceSchema>;
 export type MemoryPollingConfig = z.infer<typeof memoryPollingSchema>;
 export type MemoryConfig = z.infer<typeof memoryConfigSchema>;

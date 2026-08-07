@@ -19,9 +19,3 @@ export type {
   AuditOptions,
   ObservabilityOptions,
 } from './types.js';
-export {
-  createMemoryMaintenanceHook,
-  withMemoryMaintenance,
-  type MemoryMaintenanceOptions,
-  type CreateMemoryHookOptions,
-} from './memoryHook.js';

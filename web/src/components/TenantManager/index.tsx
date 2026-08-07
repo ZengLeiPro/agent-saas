@@ -27,7 +27,15 @@ import { useUsers } from "@/components/UserManager/hooks";
 import type { UserInfo } from "@/components/UserManager/types";
 import { useTenants } from "./hooks";
 import { TenantFormDialog } from "./TenantFormDialog";
-import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS, type Tenant, type TenantSettings } from "./types";
+import {
+  DEFAULT_TENANT_ID,
+  DEFAULT_TENANT_SETTINGS,
+  type Tenant,
+  type TenantMemoryFeatureKey,
+  type TenantMemoryFeatureStatusMap,
+  type TenantSettings,
+  type TenantSettingsResponse,
+} from "./types";
 import type { ImageGenPlatformStatus } from "@/components/ToolControlsManager/ImageGenPricingCard";
 
 function cloneTenantSettings(settings: TenantSettings): TenantSettings {
@@ -339,6 +347,34 @@ const capabilityFeatureFields: Array<{ key: keyof TenantSettings["features"]; la
   { key: "imageGenEnabled", label: "AI 生图", description: "授予该组织使用平台托管 AI 生图的权限；默认关闭，按平台当前引擎定价扣积分。" },
 ];
 
+const tenantMemoryFeatureKeys = new Set<TenantMemoryFeatureKey>([
+  "memoryPollingEnabled",
+  "memoryConsolidationEnabled",
+  "memoryWriteDelegationEnabled",
+]);
+
+function isTenantMemoryFeatureKey(key: keyof TenantSettings["features"]): key is TenantMemoryFeatureKey {
+  return tenantMemoryFeatureKeys.has(key as TenantMemoryFeatureKey);
+}
+
+const memoryBlockedByLabels = {
+  platform_disabled: "平台总开关关闭",
+  dependency_disabled: "依赖能力未开启",
+  runtime_unavailable: "运行时依赖不可用",
+} as const;
+
+export function memoryFeatureStatusLabel(
+  status: TenantMemoryFeatureStatusMap[TenantMemoryFeatureKey] | undefined,
+  currentConfigured: boolean,
+): string | null {
+  if (!status) return null;
+  if (currentConfigured !== status.configured) return "待保存";
+  if (!status.configured) return "租户未开启";
+  if (status.effective) return "租户已开 · 实际生效";
+  const reason = status.blockedBy ? memoryBlockedByLabels[status.blockedBy] : "原因未知";
+  return `租户已开 · 未生效：${reason}`;
+}
+
 const quotaFields: Array<{ key: keyof TenantSettings["quotas"]; label: string; unit?: string }> = [
   { key: "maxUsers", label: "用户上限" },
   { key: "maxAdmins", label: "管理员上限" },
@@ -377,6 +413,8 @@ function TenantCapabilitiesPanel({
   const [saved, setSaved] = useState(false);
   const [imageGenStatus, setImageGenStatus] = useState<ImageGenPlatformStatus | null>(null);
   const [imageGenStatusError, setImageGenStatusError] = useState(false);
+  const [memoryFeatureStatus, setMemoryFeatureStatus] = useState<TenantMemoryFeatureStatusMap | undefined>();
+  const [memoryFeatureStatusError, setMemoryFeatureStatusError] = useState(false);
   const dirty = capabilitySnapshot(settings) !== capabilitySnapshot(baseline);
 
   useEffect(() => {
@@ -394,6 +432,31 @@ function TenantCapabilitiesPanel({
         if (!cancelled) {
           setImageGenStatus(null);
           setImageGenStatusError(true);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tenant.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setMemoryFeatureStatus(undefined);
+    setMemoryFeatureStatusError(false);
+    void (async () => {
+      try {
+        const response = await authFetch(`/api/tenants/${tenant.id}/settings`);
+        const body = await response.json().catch(() => ({})) as Partial<TenantSettingsResponse> & { error?: string };
+        if (!response.ok || !body.memoryFeatureStatus) {
+          throw new Error(body.error || `HTTP ${response.status}`);
+        }
+        if (!cancelled) {
+          setMemoryFeatureStatus(body.memoryFeatureStatus);
+          setMemoryFeatureStatusError(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setMemoryFeatureStatus(undefined);
+          setMemoryFeatureStatusError(true);
         }
       }
     })();
@@ -421,10 +484,10 @@ function TenantCapabilitiesPanel({
     setSaving(true);
     try {
       const latestRes = await authFetch(`/api/tenants/${tenant.id}/settings`);
-      const latestData = await latestRes.json().catch(() => ({}));
-      if (!latestRes.ok) throw new Error((latestData as { error?: string }).error || "加载最新组织设置失败");
+      const latestData = await latestRes.json().catch(() => ({})) as Partial<TenantSettingsResponse> & { error?: string };
+      if (!latestRes.ok || !latestData.settings) throw new Error(latestData.error || "加载最新组织设置失败");
 
-      const payload = cloneTenantSettings((latestData as { settings: TenantSettings }).settings);
+      const payload = cloneTenantSettings(latestData.settings);
       payload.features = { ...settings.features };
       payload.quotas = { ...settings.quotas };
       payload.personalization = { ...settings.personalization };
@@ -438,12 +501,14 @@ function TenantCapabilitiesPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ settings: payload }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data as { error?: string }).error || "保存能力与配额失败");
-      const next = cloneTenantSettings((data as { settings: TenantSettings }).settings);
+      const data = await res.json().catch(() => ({})) as Partial<TenantSettingsResponse> & { error?: string };
+      if (!res.ok || !data.settings) throw new Error(data.error || "保存能力与配额失败");
+      const next = cloneTenantSettings(data.settings);
       await onSaved?.();
       setSettings(next);
       setBaseline(cloneTenantSettings(next));
+      setMemoryFeatureStatus(data.memoryFeatureStatus);
+      setMemoryFeatureStatusError(!data.memoryFeatureStatus);
       setSaved(true);
       setError(null);
     } catch (err) {
@@ -489,11 +554,25 @@ function TenantCapabilitiesPanel({
           {capabilityFeatureFields.map(field => {
             const isImageGen = field.key === "imageGenEnabled";
             const tenantAuthorized = settings.features.imageGenEnabled === true;
+            const memoryKey = isTenantMemoryFeatureKey(field.key) ? field.key : undefined;
+            const memoryStatus = memoryKey ? memoryFeatureStatus?.[memoryKey] : undefined;
+            const memoryStatusLabel = memoryFeatureStatusLabel(
+              memoryStatus,
+              memoryKey ? settings.features[memoryKey] === true : false,
+            );
             return (
               <div key={field.key} className="flex items-start justify-between gap-4 rounded-xl border p-3">
                 <div>
                   <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
                     {field.label}
+                    {memoryKey && memoryStatusLabel && (
+                      <Badge variant={memoryStatus?.effective ? "secondary" : "outline"}>
+                        {memoryStatusLabel}
+                      </Badge>
+                    )}
+                    {memoryKey && memoryFeatureStatusError && (
+                      <Badge variant="outline">生效状态读取失败</Badge>
+                    )}
                     {isImageGen && imageGenStatus && (
                       <Badge variant={tenantAuthorized && imageGenStatus.available ? "secondary" : "outline"}>
                         {tenantAuthorized

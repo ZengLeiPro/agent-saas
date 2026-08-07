@@ -28,6 +28,12 @@ class MemoryRunStore implements RunStore {
     return record;
   }
 
+  async createPending(input: UpsertRunInput): Promise<{ record: RunRecord; created: boolean }> {
+    const existing = this.records.get(input.runId);
+    if (existing) return { record: existing, created: false };
+    return { record: await this.upsertPending(input), created: true };
+  }
+
   async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
     const record = this.records.get(runId);
     if (!record) return null;
@@ -150,6 +156,30 @@ async function flushSchedulerMicrotasks(): Promise<void> {
 }
 
 describe('RuntimeScheduler', () => {
+  it('create-only enqueue returns an existing waiting run without resuming it', async () => {
+    const runStore = new MemoryRunStore();
+    const input: UpsertRunInput = {
+      runId: 'run-create-only',
+      sessionId: 'session-create-only',
+      userId: 'user-1',
+      channel: 'taskboard',
+      model: 'test-model',
+      metadata: { taskboardExecution: true },
+    };
+    await runStore.upsertPending(input);
+    await runStore.markStatus(input.runId, 'waiting_user');
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore: new MemoryEventStore(),
+      workerId: 'worker-1',
+      autoWake: true,
+      wake: vi.fn(),
+    });
+
+    await expect(scheduler.enqueueCreateOnly(input)).resolves.toMatchObject({ status: 'waiting_user' });
+    await expect(runStore.get(input.runId)).resolves.toMatchObject({ status: 'waiting_user' });
+  });
+
   it('reports an in-flight workload snapshot without session or user identifiers', async () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();

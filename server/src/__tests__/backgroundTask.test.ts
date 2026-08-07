@@ -40,6 +40,9 @@ class MemoryEventStore implements EventStore {
 class MemorySessionCatalog implements SessionCatalog {
   records = new Map<string, RuntimeSessionRecord>();
   async upsert(record: RuntimeSessionRecord): Promise<void> { this.records.set(record.sessionId, record); }
+  async ensure(record: RuntimeSessionRecord): Promise<void> {
+    if (!this.records.has(record.sessionId)) this.records.set(record.sessionId, record);
+  }
   async get(sessionId: string): Promise<RuntimeSessionRecord | null> { return this.records.get(sessionId) ?? null; }
   async markStatus(sessionId: string, status: RuntimeSessionStatus): Promise<void> {
     const record = this.records.get(sessionId);

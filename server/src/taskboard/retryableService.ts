@@ -15,6 +15,8 @@ import type {
   TaskboardExecutionClaimInput,
   TaskboardExecutionCompletionInput,
   TaskboardExecutionContext,
+  TaskboardExecutionDispatch,
+  TaskboardExecutionReconcileCandidate,
   TaskboardExecutionStore,
   TaskboardExpectedVersionInput,
   TaskboardIdentity,
@@ -170,6 +172,38 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.getExecutionContextByRunId(runId);
   }
 
+  async claimExecutionDispatch(
+    runId: string | undefined,
+    leaseId: string,
+  ): Promise<TaskboardExecutionDispatch | null> {
+    await this.init();
+    return this.target.claimExecutionDispatch(runId, leaseId);
+  }
+
+  async markExecutionDispatchSucceeded(runId: string, leaseId: string): Promise<boolean> {
+    await this.init();
+    return this.target.markExecutionDispatchSucceeded(runId, leaseId);
+  }
+
+  async retryExecutionDispatch(
+    runId: string,
+    leaseId: string,
+    error: string,
+    delayMs: number,
+  ): Promise<boolean> {
+    await this.init();
+    return this.target.retryExecutionDispatch(runId, leaseId, error, delayMs);
+  }
+
+  async claimExecutionReconcileCandidates(
+    staleBefore: Date,
+    limit: number,
+    leaseId: string,
+  ): Promise<TaskboardExecutionReconcileCandidate[]> {
+    await this.init();
+    return this.target.claimExecutionReconcileCandidates(staleBefore, limit, leaseId);
+  }
+
   async setExecutionStatus(
     runId: string,
     status: "running" | "waiting_user" | "waiting_approval",
@@ -178,11 +212,29 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.setExecutionStatus(runId, status);
   }
 
+  async setExecutionStatusFromReconcile(
+    runId: string,
+    status: "running" | "waiting_user" | "waiting_approval",
+    leaseId: string,
+  ): Promise<TaskBoardExecution | null> {
+    await this.init();
+    return this.target.setExecutionStatusFromReconcile(runId, status, leaseId);
+  }
+
   async completeExecution(
     runId: string,
     input: TaskboardExecutionCompletionInput,
   ): Promise<TaskBoardExecutionStartResult | null> {
     await this.init();
     return this.target.completeExecution(runId, input);
+  }
+
+  async completeExecutionFromReconcile(
+    runId: string,
+    input: TaskboardExecutionCompletionInput,
+    leaseId: string,
+  ): Promise<TaskBoardExecutionStartResult | null> {
+    await this.init();
+    return this.target.completeExecutionFromReconcile(runId, input, leaseId);
   }
 }

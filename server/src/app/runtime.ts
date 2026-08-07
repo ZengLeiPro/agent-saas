@@ -1514,6 +1514,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       handLeaseJanitor?.stop();
       systemMetricsCollector?.stop();
       alertNotifier?.stop();
+      await taskboardExecutionCoordinator?.stop();
       await runtimeScheduler?.stop();
       if (cancelDeliveryRetryTimer) clearInterval(cancelDeliveryRetryTimer);
       if (billingAuditTimer) clearInterval(billingAuditTimer);
@@ -2520,7 +2521,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           return true;
         }
         : undefined,
-      beforeTick: () => rawRuntimeConfig.backgroundTasks!.reconcileWakeDeliveries(),
+      beforeTick: async () => {
+        taskboardExecutionCoordinator?.wakeReconciliation();
+        await rawRuntimeConfig.backgroundTasks!.reconcileWakeDeliveries();
+      },
       failInterruptedBackgroundTask: (record) => rawRuntimeConfig.backgroundTasks!.failInterrupted(record),
       failBackgroundTask: (record, message) => rawRuntimeConfig.backgroundTasks!.fail(record, message),
       handoffBackgroundCommand: (record) => rawRuntimeConfig.backgroundTasks!.handoffCommandMonitor(record),
@@ -2566,6 +2570,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       taskboardExecutionCoordinator = new TaskboardExecutionCoordinator({
         store: taskboardStoreService,
         scheduler: runtimeScheduler,
+        runStore: pgRunStore,
         sessionCatalog,
         eventStore: pgEventStore,
         agentCwd,
@@ -3159,8 +3164,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     }
     // 5. 释放 leadership → 新实例在一个重试周期（≤15s）内接管 cron
     await cronLeadership?.stop();
-    // 6. 停 scheduler：不再 claim 新 run，并等 in-flight run 结清
-    //    （scheduler.stop 幂等；后续 runtimeEventStoreShutdown 再调用是 no-op）
+    // 6. 先停任务看板恢复周期，避免 drain 期间继续 enqueue；再停 scheduler，
+    //    不再 claim 新 run 并等 in-flight run 结清（两者 stop 均幂等）。
+    await taskboardExecutionCoordinator?.stop();
     await runtimeScheduler?.stop();
   };
 

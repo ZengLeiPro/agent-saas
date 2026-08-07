@@ -15,6 +15,8 @@ import type {
   TaskBoardTaskMoveInput,
   TaskBoardTaskPatchInput,
 } from '../../../shared/src/types/taskboard.js';
+import type { UpsertRunInput } from '../runtime/runStore.js';
+import type { RuntimeSessionRecord } from '../runtime/sessionCatalog.js';
 
 export interface TaskboardIdentity {
   tenantId: string;
@@ -34,10 +36,39 @@ export interface TaskboardExpectedVersionInput {
   expectedVersion: number;
 }
 
+export interface TaskboardExecutionDispatchPayload {
+  version: 1;
+  session: RuntimeSessionRecord;
+  run: UpsertRunInput;
+}
+
 export interface TaskboardExecutionClaimInput extends TaskBoardExecutionStartInput {
   executionId: string;
   runId: string;
   sessionId: string;
+  dispatch: TaskboardExecutionDispatchPayload;
+}
+
+export interface TaskboardExecutionDispatch {
+  runId: string;
+  executionId: string;
+  outboxExecutionId: string;
+  taskId: string;
+  sessionId: string;
+  tenantId: string;
+  ownerUserId: string;
+  payload: TaskboardExecutionDispatchPayload;
+  attemptCount: number;
+  leaseId: string;
+}
+
+export interface TaskboardExecutionReconcileCandidate {
+  runId: string;
+  executionId: string;
+  sessionId: string;
+  executionStatus: TaskBoardExecutionStatus;
+  dispatchStatus?: 'pending' | 'dispatching' | 'dispatched';
+  leaseId: string;
 }
 
 export interface TaskboardExecutionContext {
@@ -61,13 +92,31 @@ export interface TaskboardExecutionStore {
     input: TaskboardExecutionClaimInput,
   ): Promise<TaskBoardExecutionStartResult>;
   getExecutionContextByRunId(runId: string): Promise<TaskboardExecutionContext | null>;
+  claimExecutionDispatch(runId: string | undefined, leaseId: string): Promise<TaskboardExecutionDispatch | null>;
+  markExecutionDispatchSucceeded(runId: string, leaseId: string): Promise<boolean>;
+  retryExecutionDispatch(runId: string, leaseId: string, error: string, delayMs: number): Promise<boolean>;
+  claimExecutionReconcileCandidates(
+    staleBefore: Date,
+    limit: number,
+    leaseId: string,
+  ): Promise<TaskboardExecutionReconcileCandidate[]>;
   setExecutionStatus(
     runId: string,
     status: Extract<TaskBoardExecutionStatus, "running" | "waiting_user" | "waiting_approval">,
   ): Promise<TaskBoardExecution | null>;
+  setExecutionStatusFromReconcile(
+    runId: string,
+    status: Extract<TaskBoardExecutionStatus, "running" | "waiting_user" | "waiting_approval">,
+    leaseId: string,
+  ): Promise<TaskBoardExecution | null>;
   completeExecution(
     runId: string,
     input: TaskboardExecutionCompletionInput,
+  ): Promise<TaskBoardExecutionStartResult | null>;
+  completeExecutionFromReconcile(
+    runId: string,
+    input: TaskboardExecutionCompletionInput,
+    leaseId: string,
   ): Promise<TaskBoardExecutionStartResult | null>;
 }
 

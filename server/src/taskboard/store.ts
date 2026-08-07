@@ -23,6 +23,8 @@ import {
   type TaskboardExecutionClaimInput,
   type TaskboardExecutionCompletionInput,
   type TaskboardExecutionContext,
+  type TaskboardExecutionDispatch,
+  type TaskboardExecutionReconcileCandidate,
   type TaskboardExecutionStore,
   type TaskboardExpectedVersionInput,
   type TaskboardIdentity,
@@ -51,6 +53,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   readonly tasksTable: string;
   readonly commentsTable: string;
   readonly executionsTable: string;
+  readonly executionOutboxTable: string;
 
   constructor(options: PgTaskboardStoreOptions) {
     const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime');
@@ -59,6 +62,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     this.tasksTable = `${prefix}_taskboard_tasks`;
     this.commentsTable = `${prefix}_taskboard_comments`;
     this.executionsTable = `${prefix}_taskboard_execs`;
+    this.executionOutboxTable = `${prefix}_taskboard_exec_outbox`;
   }
 
   async init(): Promise<void> {
@@ -132,6 +136,34 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           error TEXT,
           started_at TIMESTAMPTZ,
           finished_at TIMESTAMPTZ,
+          last_reconciled_at TIMESTAMPTZ,
+          reconcile_lease_id TEXT,
+          reconcile_lease_expires_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `);
+      await client.query(`
+        ALTER TABLE ${this.executionsTable}
+          ADD COLUMN IF NOT EXISTS last_reconciled_at TIMESTAMPTZ;
+        ALTER TABLE ${this.executionsTable}
+          ADD COLUMN IF NOT EXISTS reconcile_lease_id TEXT;
+        ALTER TABLE ${this.executionsTable}
+          ADD COLUMN IF NOT EXISTS reconcile_lease_expires_at TIMESTAMPTZ
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${this.executionOutboxTable} (
+          run_id TEXT PRIMARY KEY REFERENCES ${this.executionsTable}(run_id),
+          execution_id TEXT NOT NULL REFERENCES ${this.executionsTable}(id),
+          payload JSONB NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending', 'dispatching', 'dispatched')),
+          attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+          next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          lease_id TEXT,
+          lease_expires_at TIMESTAMPTZ,
+          last_error TEXT,
+          dispatched_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
@@ -159,6 +191,16 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       await client.query(
         `CREATE INDEX IF NOT EXISTS ${this.executionsTable}_task_idx `
         + `ON ${this.executionsTable} (task_id, created_at DESC)`,
+      );
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS ${this.executionsTable}_reconcile_v2_idx `
+        + `ON ${this.executionsTable} (COALESCE(last_reconciled_at, '-infinity'::timestamptz), updated_at, run_id) `
+        + `WHERE status IN ('queued', 'running', 'waiting_user', 'waiting_approval')`,
+      );
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS ${this.executionOutboxTable}_due_idx `
+        + `ON ${this.executionOutboxTable} (next_attempt_at, created_at) `
+        + `WHERE status IN ('pending', 'dispatching')`,
       );
       await client.query(
         `CREATE UNIQUE INDEX IF NOT EXISTS ${this.executionsTable}_active_uidx `
@@ -599,6 +641,12 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
            RETURNING *`,
           [input.executionId, taskId, input.runId, input.sessionId, identity.ownerUserId],
         );
+        await client.query(
+          `INSERT INTO ${this.executionOutboxTable}
+             (run_id, execution_id, payload)
+           VALUES ($1,$2,$3::jsonb)`,
+          [input.runId, input.executionId, JSON.stringify(input.dispatch)],
+        );
         execution = rowToExecution(inserted.rows[0]);
       } catch (error) {
         if (isUniqueViolation(error)) {
@@ -648,6 +696,154 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     };
   }
 
+  async claimExecutionDispatch(
+    runId: string | undefined,
+    leaseId: string,
+  ): Promise<TaskboardExecutionDispatch | null> {
+    const result = await this.pool.query(
+      `WITH candidate AS (
+         SELECT o.run_id
+           FROM ${this.executionOutboxTable} o
+           JOIN ${this.executionsTable} e ON e.run_id=o.run_id
+          WHERE ($2::text IS NULL OR o.run_id=$2)
+            AND e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
+            AND (
+              (o.status='pending' AND o.next_attempt_at <= now())
+              OR (o.status='dispatching' AND o.lease_expires_at <= now())
+            )
+          ORDER BY o.next_attempt_at, o.created_at, o.run_id
+          FOR UPDATE OF o SKIP LOCKED
+          LIMIT 1
+       ), claimed AS (
+         UPDATE ${this.executionOutboxTable} o
+            SET status='dispatching',
+                attempt_count=o.attempt_count+1,
+                lease_id=$1,
+                lease_expires_at=now() + interval '60 seconds',
+                updated_at=now()
+           FROM candidate c
+          WHERE o.run_id=c.run_id
+          RETURNING o.*
+       )
+       SELECT c.*, e.id AS actual_execution_id, e.task_id AS actual_task_id,
+              e.session_id AS actual_session_id, b.tenant_id, b.owner_user_id
+         FROM claimed c
+         JOIN ${this.executionsTable} e ON e.run_id=c.run_id
+         JOIN ${this.tasksTable} t ON t.id=e.task_id
+         JOIN ${this.boardsTable} b ON b.id=t.board_id`,
+      [leaseId, runId ?? null],
+    );
+    return result.rows[0] ? rowToExecutionDispatch(result.rows[0]) : null;
+  }
+
+  async markExecutionDispatchSucceeded(runId: string, leaseId: string): Promise<boolean> {
+    return this.withTransaction(async (client) => {
+      const executionResult = await client.query(
+        `SELECT status FROM ${this.executionsTable} WHERE run_id=$1 FOR UPDATE`,
+        [runId],
+      );
+      if (!executionResult.rows[0]) return false;
+      const dispatched = await client.query(
+        `UPDATE ${this.executionOutboxTable}
+            SET status='dispatched', lease_id=NULL, lease_expires_at=NULL,
+                last_error=NULL, dispatched_at=now(), updated_at=now()
+          WHERE run_id=$1 AND status='dispatching' AND lease_id=$2
+          RETURNING execution_id`,
+        [runId, leaseId],
+      );
+      if (!dispatched.rows[0]) return false;
+      if (!isTerminalExecutionStatus(String(executionResult.rows[0].status))) {
+        await client.query(
+          `UPDATE ${this.executionsTable} SET error=NULL, updated_at=now() WHERE run_id=$1`,
+          [runId],
+        );
+      }
+      return true;
+    });
+  }
+
+  async retryExecutionDispatch(
+    runId: string,
+    leaseId: string,
+    error: string,
+    delayMs: number,
+  ): Promise<boolean> {
+    return this.withTransaction(async (client) => {
+      const executionResult = await client.query(
+        `SELECT status FROM ${this.executionsTable} WHERE run_id=$1 FOR UPDATE`,
+        [runId],
+      );
+      if (!executionResult.rows[0]) return false;
+      if (isTerminalExecutionStatus(String(executionResult.rows[0].status))) {
+        await client.query(
+          `UPDATE ${this.executionOutboxTable}
+              SET status='dispatched', lease_id=NULL, lease_expires_at=NULL, updated_at=now()
+            WHERE run_id=$1 AND status='dispatching' AND lease_id=$2`,
+          [runId, leaseId],
+        );
+        return false;
+      }
+      const message = requireText(error, 'Dispatch error');
+      const retried = await client.query(
+        `UPDATE ${this.executionOutboxTable}
+            SET status='pending', lease_id=NULL, lease_expires_at=NULL,
+                next_attempt_at=now() + ($4::double precision * interval '1 millisecond'),
+                last_error=$3, updated_at=now()
+          WHERE run_id=$1 AND status='dispatching' AND lease_id=$2
+          RETURNING execution_id`,
+        [runId, leaseId, message, Math.max(0, Math.floor(delayMs))],
+      );
+      if (!retried.rows[0]) return false;
+      await client.query(
+        `UPDATE ${this.executionsTable} SET error=$2, updated_at=now() WHERE run_id=$1`,
+        [runId, message],
+      );
+      return true;
+    });
+  }
+
+  async claimExecutionReconcileCandidates(
+    staleBefore: Date,
+    limit: number,
+    leaseId: string,
+  ): Promise<TaskboardExecutionReconcileCandidate[]> {
+    const result = await this.pool.query(
+      `WITH candidates AS (
+         SELECT e.run_id
+           FROM ${this.executionsTable} e
+          WHERE e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
+            AND e.updated_at <= $1
+            AND (e.reconcile_lease_expires_at IS NULL OR e.reconcile_lease_expires_at <= now())
+          ORDER BY COALESCE(e.last_reconciled_at, '-infinity'::timestamptz), e.updated_at, e.run_id
+          FOR UPDATE SKIP LOCKED
+          LIMIT $2
+       ), claimed AS (
+         UPDATE ${this.executionsTable} e
+            SET last_reconciled_at=now(),
+                reconcile_lease_id=$3,
+                reconcile_lease_expires_at=now() + interval '30 seconds'
+           FROM candidates c
+          WHERE e.run_id=c.run_id
+          RETURNING e.run_id, e.id AS execution_id, e.session_id, e.status, e.reconcile_lease_id
+       )
+       SELECT c.run_id, c.execution_id, c.session_id, c.status, c.reconcile_lease_id,
+              o.status AS dispatch_status
+         FROM claimed c
+         LEFT JOIN ${this.executionOutboxTable} o ON o.run_id=c.run_id`,
+      [staleBefore, Math.max(1, Math.min(500, Math.floor(limit))), leaseId],
+    );
+    return result.rows.map((row) => ({
+      runId: String(row.run_id),
+      executionId: String(row.execution_id),
+      sessionId: String(row.session_id),
+      executionStatus: String(row.status) as TaskboardExecutionReconcileCandidate['executionStatus'],
+      leaseId: String(row.reconcile_lease_id),
+      ...(row.dispatch_status ? {
+        dispatchStatus: String(row.dispatch_status) as TaskboardExecutionReconcileCandidate['dispatchStatus'],
+      } : {}),
+    }));
+  }
+
   async setExecutionStatus(
     runId: string,
     status: 'running' | 'waiting_user' | 'waiting_approval',
@@ -656,7 +852,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       `UPDATE ${this.executionsTable}
           SET status=$2,
               started_at=COALESCE(started_at, now()),
-              updated_at=now()
+              updated_at=now(),
+              reconcile_lease_id=NULL,
+              reconcile_lease_expires_at=NULL
         WHERE run_id=$1
           AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
         RETURNING *`,
@@ -665,9 +863,45 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return result.rows[0] ? rowToExecution(result.rows[0]) : null;
   }
 
+  async setExecutionStatusFromReconcile(
+    runId: string,
+    status: 'running' | 'waiting_user' | 'waiting_approval',
+    leaseId: string,
+  ): Promise<TaskBoardExecution | null> {
+    const result = await this.pool.query(
+      `UPDATE ${this.executionsTable}
+          SET status=$2,
+              started_at=COALESCE(started_at, now()),
+              updated_at=now()
+        WHERE run_id=$1
+          AND reconcile_lease_id=$3
+          AND reconcile_lease_expires_at > now()
+          AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
+        RETURNING *`,
+      [runId, status, leaseId],
+    );
+    return result.rows[0] ? rowToExecution(result.rows[0]) : null;
+  }
+
   async completeExecution(
     runId: string,
     input: TaskboardExecutionCompletionInput,
+  ): Promise<TaskBoardExecutionStartResult | null> {
+    return this.completeExecutionInternal(runId, input);
+  }
+
+  async completeExecutionFromReconcile(
+    runId: string,
+    input: TaskboardExecutionCompletionInput,
+    leaseId: string,
+  ): Promise<TaskBoardExecutionStartResult | null> {
+    return this.completeExecutionInternal(runId, input, leaseId);
+  }
+
+  private async completeExecutionInternal(
+    runId: string,
+    input: TaskboardExecutionCompletionInput,
+    reconcileLeaseId?: string,
   ): Promise<TaskBoardExecutionStartResult | null> {
     const ownership = await this.pool.query(
       `SELECT e.task_id, b.tenant_id, b.owner_user_id
@@ -688,12 +922,24 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return this.withTransaction(async (client) => {
       const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
       const executionResult = await client.query(
-        `SELECT * FROM ${this.executionsTable} WHERE run_id=$1 FOR UPDATE`,
-        [runId],
+        `SELECT *,
+                ($2::text IS NULL OR (
+                  reconcile_lease_id=$2 AND reconcile_lease_expires_at > now()
+                )) AS reconcile_lease_valid
+           FROM ${this.executionsTable}
+          WHERE run_id=$1
+          FOR UPDATE`,
+        [runId, reconcileLeaseId ?? null],
       );
-      if (!executionResult.rows[0]) return null;
+      if (!executionResult.rows[0] || executionResult.rows[0].reconcile_lease_valid !== true) return null;
       const currentExecution = rowToExecution(executionResult.rows[0]);
       if (isTerminalExecutionStatus(currentExecution.status)) {
+        await client.query(
+          `UPDATE ${this.executionOutboxTable}
+              SET status='dispatched', lease_id=NULL, lease_expires_at=NULL, updated_at=now()
+            WHERE run_id=$1 AND status<>'dispatched'`,
+          [runId],
+        );
         return { task: loaded.task, execution: currentExecution };
       }
 
@@ -721,10 +967,17 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
 
       const updated = await client.query(
         `UPDATE ${this.executionsTable}
-            SET status=$2, error=$3, finished_at=now(), updated_at=now()
+            SET status=$2, error=$3, finished_at=now(), updated_at=now(),
+                reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL
           WHERE run_id=$1
           RETURNING *`,
         [runId, input.status, optionalText(input.error)],
+      );
+      await client.query(
+        `UPDATE ${this.executionOutboxTable}
+            SET status='dispatched', lease_id=NULL, lease_expires_at=NULL, updated_at=now()
+          WHERE run_id=$1 AND status<>'dispatched'`,
+        [runId],
       );
       const authorType = input.status === 'succeeded' ? 'agent' : 'system';
       await client.query(
@@ -968,7 +1221,25 @@ function rowToExecution(row: Record<string, unknown>): TaskBoardExecution {
   };
 }
 
-function isTerminalExecutionStatus(status: TaskBoardExecution['status']): boolean {
+function rowToExecutionDispatch(row: Record<string, unknown>): TaskboardExecutionDispatch {
+  if (typeof row.lease_id !== 'string' || !row.lease_id) {
+    throw new Error(`任务看板执行派发 lease 无效：${String(row.run_id)}`);
+  }
+  return {
+    runId: String(row.run_id),
+    executionId: String(row.actual_execution_id),
+    outboxExecutionId: String(row.execution_id),
+    taskId: String(row.actual_task_id),
+    sessionId: String(row.actual_session_id),
+    tenantId: String(row.tenant_id),
+    ownerUserId: String(row.owner_user_id),
+    payload: row.payload as TaskboardExecutionDispatch['payload'],
+    attemptCount: Number(row.attempt_count),
+    leaseId: row.lease_id,
+  };
+}
+
+function isTerminalExecutionStatus(status: string): boolean {
   return status === 'succeeded' || status === 'failed' || status === 'cancelled';
 }
 

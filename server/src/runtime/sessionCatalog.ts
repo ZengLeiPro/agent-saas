@@ -1,5 +1,11 @@
 import { getTranscriptPath, findTranscriptOrMetaPathBySessionId } from '../data/transcripts/store.js';
-import { readSessionMeta, writeSessionMeta, updateSessionMeta, type SessionMeta } from '../data/transcripts/meta.js';
+import {
+  readSessionMeta,
+  writeSessionMeta,
+  writeSessionMetaIfAbsent,
+  updateSessionMeta,
+  type SessionMeta,
+} from '../data/transcripts/meta.js';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
 import type { AgentProfileSessionBinding } from '../data/agentProfiles/types.js';
 
@@ -37,6 +43,7 @@ export interface RuntimeSessionRecord extends Partial<AgentProfileSessionBinding
 
 export interface SessionCatalog {
   upsert(record: RuntimeSessionRecord): Promise<void>;
+  ensure(record: RuntimeSessionRecord): Promise<void>;
   get(sessionId: string): Promise<RuntimeSessionRecord | null>;
   markStatus(sessionId: string, status: RuntimeSessionStatus): Promise<void>;
   findTranscriptPath(sessionId: string): Promise<string | null>;
@@ -55,7 +62,36 @@ export class FileSessionCatalog implements SessionCatalog {
 
   async upsert(record: RuntimeSessionRecord): Promise<void> {
     const existing = await readSessionMeta(record.transcriptPath);
-    const meta: SessionMeta = {
+    await writeSessionMeta(record.transcriptPath, this.toMeta(record, existing));
+  }
+
+  async ensure(record: RuntimeSessionRecord): Promise<void> {
+    await writeSessionMetaIfAbsent(record.transcriptPath, this.toMeta(record, null));
+  }
+
+  async get(sessionId: string): Promise<RuntimeSessionRecord | null> {
+    const transcriptPath = await this.findTranscriptPath(sessionId);
+    if (!transcriptPath) return null;
+    const meta = await readSessionMeta(transcriptPath);
+    if (!meta) return null;
+    return this.toRecord(sessionId, transcriptPath, meta);
+  }
+
+  async markStatus(sessionId: string, status: RuntimeSessionStatus): Promise<void> {
+    const transcriptPath = await this.findTranscriptPath(sessionId);
+    if (!transcriptPath) return;
+    await updateSessionMeta(transcriptPath, {
+      runtimeStatus: status,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  async findTranscriptPath(sessionId: string): Promise<string | null> {
+    return findTranscriptOrMetaPathBySessionId(sessionId);
+  }
+
+  private toMeta(record: RuntimeSessionRecord, existing: SessionMeta | null): SessionMeta {
+    return {
       ...(existing ?? {}),
       userId: record.userId,
       username: record.username,
@@ -82,29 +118,7 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(record.profileConfigDigest ? { profileConfigDigest: record.profileConfigDigest } : {}),
       ...(record.profileBindingKey ? { profileBindingKey: record.profileBindingKey } : {}),
       ...(record.profileResolution ? { profileResolution: record.profileResolution } : {}),
-    } as SessionMeta & { transcriptPath?: string };
-    await writeSessionMeta(record.transcriptPath, meta);
-  }
-
-  async get(sessionId: string): Promise<RuntimeSessionRecord | null> {
-    const transcriptPath = await this.findTranscriptPath(sessionId);
-    if (!transcriptPath) return null;
-    const meta = await readSessionMeta(transcriptPath);
-    if (!meta) return null;
-    return this.toRecord(sessionId, transcriptPath, meta);
-  }
-
-  async markStatus(sessionId: string, status: RuntimeSessionStatus): Promise<void> {
-    const transcriptPath = await this.findTranscriptPath(sessionId);
-    if (!transcriptPath) return;
-    await updateSessionMeta(transcriptPath, {
-      runtimeStatus: status,
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  async findTranscriptPath(sessionId: string): Promise<string | null> {
-    return findTranscriptOrMetaPathBySessionId(sessionId);
+    } as SessionMeta;
   }
 
   private toRecord(sessionId: string, transcriptPath: string, meta: SessionMeta): RuntimeSessionRecord {

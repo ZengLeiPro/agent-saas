@@ -18,6 +18,7 @@ import type { EventStore, PlatformEvent, PlatformEventInput } from '../runtime/t
 class MemorySessionCatalog implements SessionCatalog {
   constructor(private readonly session: RuntimeSessionRecord) {}
   async upsert(): Promise<void> {}
+  async ensure(): Promise<void> {}
   async get(sessionId: string): Promise<RuntimeSessionRecord | null> {
     return sessionId === this.session.sessionId ? this.session : null;
   }

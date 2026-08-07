@@ -1,4 +1,4 @@
-import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, rename, mkdir, link, unlink } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { isValidSessionId } from './projectKey.js';
@@ -139,6 +139,27 @@ async function withMetaLock<T>(metaPath: string, fn: () => Promise<T>): Promise<
 export async function writeSessionMeta(transcriptPath: string, meta: SessionMeta): Promise<void> {
   const metaPath = getMetaPath(transcriptPath);
   await withMetaLock(metaPath, () => persistSessionMeta(transcriptPath, meta));
+}
+
+/** 跨进程原子首写：完整临时文件通过 hard link 发布，已存在时绝不覆盖。 */
+export async function writeSessionMetaIfAbsent(
+  transcriptPath: string,
+  meta: SessionMeta,
+): Promise<boolean> {
+  const metaPath = getMetaPath(transcriptPath);
+  await mkdir(dirname(metaPath), { recursive: true });
+  const tmpPath = `${metaPath}.create.${randomBytes(4).toString('hex')}`;
+  await writeFile(tmpPath, JSON.stringify(meta, null, 2));
+  try {
+    await link(tmpPath, metaPath);
+    notifySessionMetaPersisted(transcriptPath, meta);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw error;
+  } finally {
+    await unlink(tmpPath).catch(() => undefined);
+  }
 }
 
 /**

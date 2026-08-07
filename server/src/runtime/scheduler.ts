@@ -145,6 +145,14 @@ export class RuntimeScheduler {
     return record;
   }
 
+  async enqueueCreateOnly(input: Parameters<RunStore['upsertPending']>[0]): Promise<RunRecord> {
+    const createPending = this.options.runStore.createPending?.bind(this.options.runStore);
+    if (!createPending) throw new Error('RunStore create-only enqueue unavailable');
+    const { record } = await createPending(input);
+    this.scheduleImmediateTick('enqueue-create-only');
+    return record;
+  }
+
   async start(): Promise<void> {
     if (this.timer) return;
     this.stopped = false;

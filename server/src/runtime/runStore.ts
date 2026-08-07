@@ -90,6 +90,13 @@ export interface UpsertRunInput {
   metadata?: Record<string, unknown>;
 }
 
+export class RunCreateConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RunCreateConflictError';
+  }
+}
+
 export interface EnqueueBackgroundTaskLimits {
   /** 单个父 run 最多派生多少个后台任务（含已完成）。 */
   perParentTotal: number;
@@ -178,6 +185,8 @@ export interface CancelSteeringResult {
 export interface RunStore {
   init?(): Promise<void>;
   upsertPending(input: UpsertRunInput): Promise<RunRecord>;
+  /** 仅首次创建；runId 已存在时原样返回，绝不把等待态恢复为 pending。 */
+  createPending?(input: UpsertRunInput): Promise<{ record: RunRecord; created: boolean }>;
   /** 原子创建 source run，并在同 session 有开放 run 时把它登记为插话输入。 */
   enqueueSteeringAware?(input: UpsertRunInput): Promise<RunRecord>;
   listPendingSteeringInputs?(targetRunId: string): Promise<SteeringInputRecord[]>;
@@ -400,6 +409,31 @@ export class PgRunStore implements RunStore {
       RETURNING row_to_json(${this.runsTable}.*) AS row_json
     `, [input.runId, input.sessionId, input.userId ?? null, input.tenantId ?? null, input.model ?? null, input.channel ?? null, now, input.idempotencyKey ?? null, input.executionTarget ?? null, input.workspaceId ?? null, input.sandboxScopeId ?? null, JSON.stringify(input.metadata ?? {})]);
     return normalizeRunRecord(result.rows[0]!.row_json);
+  }
+
+  async createPending(input: UpsertRunInput): Promise<{ record: RunRecord; created: boolean }> {
+    const now = new Date().toISOString();
+    let result: { rows: Array<{ row_json: RunRecord }> };
+    try {
+      result = await this.pool.query<{ row_json: RunRecord }>(`
+        INSERT INTO ${this.runsTable}
+          (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at, idempotency_key, execution_target, workspace_id, sandbox_scope_id, metadata)
+        VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12::jsonb)
+        ON CONFLICT (run_id) DO NOTHING
+        RETURNING row_to_json(${this.runsTable}.*) AS row_json
+      `, [input.runId, input.sessionId, input.userId ?? null, input.tenantId ?? null, input.model ?? null, input.channel ?? null, now, input.idempotencyKey ?? null, input.executionTarget ?? null, input.workspaceId ?? null, input.sandboxScopeId ?? null, JSON.stringify(input.metadata ?? {})]);
+    } catch (error) {
+      if ((error as { code?: unknown }).code === '23505') {
+        throw new RunCreateConflictError(`Run create-only idempotency conflict: ${input.runId}`);
+      }
+      throw error;
+    }
+    if (result.rows[0]) {
+      return { record: normalizeRunRecord(result.rows[0].row_json), created: true };
+    }
+    const existing = await this.get(input.runId);
+    if (!existing) throw new Error(`Run create-only conflict disappeared: ${input.runId}`);
+    return { record: existing, created: false };
   }
 
   async enqueueSteeringAware(input: UpsertRunInput): Promise<RunRecord> {

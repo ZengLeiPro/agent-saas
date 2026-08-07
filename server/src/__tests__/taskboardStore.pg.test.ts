@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { PgRunStore, RunCreateConflictError } from '../runtime/runStore.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import {
   TaskboardConflictError,
@@ -19,10 +20,36 @@ describePg('PgTaskboardStore contract', () => {
   const prefix = `tb_${randomUUID().replaceAll('-', '').slice(0, 18)}`;
   let pool: InstanceType<typeof Pool>;
   let store: PgTaskboardStore;
+  let runStore: PgRunStore;
 
   const alice: TaskboardIdentity = { tenantId: 'tenant-a', ownerUserId: 'alice-id', username: 'alice' };
   const aliceOtherTenant: TaskboardIdentity = { tenantId: 'tenant-b', ownerUserId: 'alice-id', username: 'alice' };
   const admin: TaskboardIdentity = { tenantId: 'tenant-a', ownerUserId: 'admin-id', username: 'admin' };
+
+  const dispatch = (executionId: string, runId: string, sessionId: string) => ({
+    version: 1 as const,
+    session: {
+      sessionId,
+      userId: alice.ownerUserId,
+      username: alice.username,
+      tenantId: alice.tenantId,
+      channel: 'web',
+      cwd: '/tmp/taskboard-test',
+      transcriptPath: `/tmp/taskboard-test/${sessionId}.jsonl`,
+      status: 'running' as const,
+      createdAt: '2026-08-07T00:00:00.000Z',
+      updatedAt: '2026-08-07T00:00:00.000Z',
+    },
+    run: {
+      runId,
+      sessionId,
+      userId: alice.ownerUserId,
+      tenantId: alice.tenantId,
+      channel: 'taskboard',
+      idempotencyKey: `taskboard-execution:${executionId}`,
+      metadata: { taskboardExecution: true, taskboardExecutionId: executionId },
+    },
+  });
 
   beforeAll(async () => {
     pool = new Pool({
@@ -31,17 +58,21 @@ describePg('PgTaskboardStore contract', () => {
       max: 12,
     });
     store = new PgTaskboardStore({ pool, tablePrefix: prefix });
+    runStore = new PgRunStore({ pool, tablePrefix: prefix });
     const peer = new PgTaskboardStore({ pool, tablePrefix: prefix });
-    await Promise.all([store.init(), peer.init()]);
+    await Promise.all([store.init(), peer.init(), runStore.init()]);
   }, 30_000);
 
   afterAll(async () => {
     if (!pool || !store) return;
     try {
+      await pool.query(`DROP TABLE IF EXISTS ${store.executionOutboxTable}`);
       await pool.query(`DROP TABLE IF EXISTS ${store.executionsTable}`);
       await pool.query(`DROP TABLE IF EXISTS ${store.commentsTable}`);
       await pool.query(`DROP TABLE IF EXISTS ${store.tasksTable}`);
       await pool.query(`DROP TABLE IF EXISTS ${store.boardsTable}`);
+      await pool.query(`DROP TABLE IF EXISTS ${runStore.steeringInputsTable}`);
+      await pool.query(`DROP TABLE IF EXISTS ${runStore.runsTable}`);
     } finally {
       await pool.end();
     }
@@ -131,11 +162,56 @@ describePg('PgTaskboardStore contract', () => {
       executionId: 'execution-a',
       runId: 'run-a',
       sessionId: 'session-a',
+      dispatch: dispatch('execution-a', 'run-a', 'session-a'),
     });
     expect(claimed.task).toMatchObject({ status: 'in_progress', version: task.version + 1 });
     expect(claimed.execution).toMatchObject({ status: 'queued', runId: 'run-a', sessionId: 'session-a' });
     expect(await store.listExecutions(alice, task.id)).toEqual([claimed.execution]);
     await expect(store.listExecutions(admin, task.id)).rejects.toBeInstanceOf(TaskboardNotFoundError);
+
+    const firstLease = await store.claimExecutionDispatch('run-a', 'lease-a');
+    expect(firstLease).toMatchObject({
+      runId: 'run-a',
+      executionId: 'execution-a',
+      attemptCount: 1,
+      leaseId: 'lease-a',
+      payload: { run: { runId: 'run-a' }, session: { sessionId: 'session-a' } },
+    });
+    await expect(store.claimExecutionDispatch('run-a', 'lease-other')).resolves.toBeNull();
+    await pool.query(
+      `UPDATE ${store.executionOutboxTable} SET lease_expires_at=now() - interval '1 second' WHERE run_id='run-a'`,
+    );
+    const expiredLease = await store.claimExecutionDispatch('run-a', 'lease-expired');
+    expect(expiredLease).toMatchObject({ attemptCount: 2, leaseId: 'lease-expired' });
+    await expect(store.retryExecutionDispatch('run-a', 'lease-a', 'stale worker error', 0)).resolves.toBe(false);
+    await expect(store.retryExecutionDispatch('run-a', 'lease-expired', 'temporary error', 0)).resolves.toBe(true);
+    const finalLease = await store.claimExecutionDispatch('run-a', 'lease-b');
+    expect(finalLease).toMatchObject({ attemptCount: 3, leaseId: 'lease-b' });
+    await expect(store.markExecutionDispatchSucceeded('run-a', 'lease-expired')).resolves.toBe(false);
+    await expect(store.markExecutionDispatchSucceeded('run-a', 'lease-b')).resolves.toBe(true);
+    expect((await store.listExecutions(alice, task.id))[0]).not.toHaveProperty('error');
+
+    const runtimeInput = {
+      runId: 'runtime-create-only',
+      sessionId: 'runtime-session',
+      userId: alice.ownerUserId,
+      tenantId: alice.tenantId,
+      channel: 'taskboard',
+      model: 'model-default',
+      idempotencyKey: 'taskboard-execution:runtime-create-only',
+      metadata: { taskboardExecution: true },
+    };
+    await expect(runStore.createPending(runtimeInput)).resolves.toMatchObject({ created: true });
+    await runStore.markStatus(runtimeInput.runId, 'waiting_user');
+    await expect(runStore.createPending(runtimeInput)).resolves.toMatchObject({
+      created: false,
+      record: { status: 'waiting_user' },
+    });
+    await expect(runStore.createPending({
+      ...runtimeInput,
+      runId: 'runtime-idempotency-conflict',
+      sessionId: 'runtime-conflict-session',
+    })).rejects.toBeInstanceOf(RunCreateConflictError);
 
     await store.createComment(alice, task.id, { body: '认领后补充的最新条件' });
     const context = await store.getExecutionContextByRunId('run-a');
@@ -173,7 +249,45 @@ describePg('PgTaskboardStore contract', () => {
       executionId: 'execution-b',
       runId: 'run-b',
       sessionId: 'session-b',
+      dispatch: dispatch('execution-b', 'run-b', 'session-b'),
     });
+    const reconcilePeer = await store.createTask(alice, board.id, { title: '对账轮转', status: 'todo' });
+    await store.claimExecution(alice, reconcilePeer.id, {
+      expectedVersion: reconcilePeer.version,
+      executionId: 'execution-c',
+      runId: 'run-c',
+      sessionId: 'session-c',
+      dispatch: dispatch('execution-c', 'run-c', 'session-c'),
+    });
+    const staleBefore = new Date(Date.now() + 1_000);
+    const firstCandidate = await store.claimExecutionReconcileCandidates(staleBefore, 1, 'reconcile-a');
+    const secondCandidate = await store.claimExecutionReconcileCandidates(staleBefore, 1, 'reconcile-b');
+    expect(new Set([...firstCandidate, ...secondCandidate].map((candidate) => candidate.runId)))
+      .toEqual(new Set(['run-b', 'run-c']));
+    expect([...firstCandidate, ...secondCandidate]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ executionStatus: 'queued', dispatchStatus: 'pending' }),
+    ]));
+    const originalRunBLease = [...firstCandidate, ...secondCandidate]
+      .find((candidate) => candidate.runId === 'run-b')!.leaseId;
+    const runCLease = [...firstCandidate, ...secondCandidate]
+      .find((candidate) => candidate.runId === 'run-c')!.leaseId;
+    await expect(store.setExecutionStatusFromReconcile('run-b', 'running', 'wrong-lease'))
+      .resolves.toBeNull();
+    await pool.query(
+      `UPDATE ${store.executionsTable}
+          SET reconcile_lease_expires_at=now() - interval '1 second'
+        WHERE run_id='run-b'`,
+    );
+    const reclaimed = await store.claimExecutionReconcileCandidates(staleBefore, 1, 'reconcile-c');
+    expect(reclaimed).toEqual([expect.objectContaining({ runId: 'run-b', leaseId: 'reconcile-c' })]);
+    await expect(store.setExecutionStatusFromReconcile('run-b', 'running', originalRunBLease))
+      .resolves.toBeNull();
+    await expect(store.setExecutionStatusFromReconcile('run-b', 'running', 'reconcile-c'))
+      .resolves.toMatchObject({ status: 'running' });
+    await expect(store.setExecutionStatus('run-b', 'waiting_user'))
+      .resolves.toMatchObject({ status: 'waiting_user' });
+    await expect(store.setExecutionStatusFromReconcile('run-b', 'running', 'reconcile-c'))
+      .resolves.toBeNull();
     const canceled = await store.moveTask(alice, manuallyCorrected.id, {
       status: 'canceled',
       expectedVersion: secondClaim.task.version,
@@ -185,6 +299,15 @@ describePg('PgTaskboardStore contract', () => {
     });
     expect(failed?.task).toMatchObject({ status: 'canceled', version: canceled.version });
     expect(failed?.execution.status).toBe('failed');
+    const runCCancel = {
+      status: 'cancelled' as const,
+      error: 'test cleanup',
+      commentBody: 'Agent 执行已取消\n\ntest cleanup',
+    };
+    await expect(store.completeExecutionFromReconcile('run-c', runCCancel, 'wrong-lease'))
+      .resolves.toBeNull();
+    await expect(store.completeExecutionFromReconcile('run-c', runCCancel, runCLease))
+      .resolves.toMatchObject({ execution: { status: 'cancelled' } });
   });
 
   it('serializes concurrent writes on the same board without a task/board lock-order deadlock', async () => {

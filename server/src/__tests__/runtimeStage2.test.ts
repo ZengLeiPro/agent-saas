@@ -28,6 +28,10 @@ class MemorySessionCatalog implements SessionCatalog {
     this.records.set(record.sessionId, record);
   }
 
+  async ensure(record: RuntimeSessionRecord): Promise<void> {
+    if (!this.records.has(record.sessionId)) this.records.set(record.sessionId, record);
+  }
+
   async get(sessionId: string): Promise<RuntimeSessionRecord | null> {
     return this.records.get(sessionId) ?? null;
   }

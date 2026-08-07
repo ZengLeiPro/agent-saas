@@ -53,4 +53,29 @@ describe('FileSessionCatalog', () => {
       status: 'running',
     });
   });
+
+  it('ensure only creates the first session meta and never regresses a terminal status', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'session-catalog-ensure-'));
+    cleanupDirs.add(cwd);
+    const sessionId = randomUUID();
+    const catalog = new FileSessionCatalog({ agentCwd: cwd });
+    const record = createRuntimeSessionRecord({
+      sessionId,
+      userId: 'user-1',
+      username: 'alice',
+      channel: 'web',
+      cwd,
+      status: 'running',
+    });
+    cleanupDirs.add(dirname(record.transcriptPath));
+
+    await Promise.all([catalog.ensure(record), catalog.ensure(record)]);
+    await catalog.markStatus(sessionId, 'finished');
+    await catalog.ensure({ ...record, username: 'stale-worker', status: 'running' });
+
+    await expect(catalog.get(sessionId)).resolves.toMatchObject({
+      username: 'alice',
+      status: 'finished',
+    });
+  });
 });

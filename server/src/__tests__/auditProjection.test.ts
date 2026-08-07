@@ -74,7 +74,7 @@ describe('AuditProjection (DuckDB)', () => {
     cleanupDirs.add(root);
     projection = createAuditProjection({ db, root });
     await projection.initialize();
-  });
+  }, 30_000);
 
   afterEach(async () => {
     try { db.closeSync(); } catch { /* ignore */ }

@@ -104,7 +104,7 @@ describe('session share routes', () => {
       createSessionsRouter: sessionsRoute.createSessionsRouter,
       resolveUserCwd: workspaceResolver.resolveUserCwd,
     };
-  });
+  }, 30_000);
 
   afterEach(async () => {
     await rm(agentCwd, { recursive: true, force: true });

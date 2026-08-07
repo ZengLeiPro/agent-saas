@@ -240,6 +240,29 @@ describe('generateTitleWithFallback', () => {
     expect(title).toBe('回落标题');
   });
 
+  it('计费授权拒绝向上抛出，不误当 provider 失败继续 fallback', async () => {
+    queueResponse('main', '不应调用');
+    queueResponse('fb', '不应回落');
+    const beforeModelCall = vi.fn(async () => { throw new Error('BILLING_RUN_LIMIT_EXCEEDED'); });
+
+    await expect(generateTitleWithFallback('u', 'a', [config('main'), config('fb')], undefined, undefined, {
+      beforeModelCall,
+    })).rejects.toThrow(/BILLING_RUN_LIMIT_EXCEEDED/);
+    expect(beforeModelCall).toHaveBeenCalledTimes(1);
+    expect(beforeModelCall).toHaveBeenCalledWith('main');
+  });
+
+  it('usage 入账失败向上抛出，不继续产生 fallback 成本', async () => {
+    queueResponse('main', '标题');
+    queueResponse('fb', '不应回落');
+    const onUsage = vi.fn(async () => { throw new Error('billing usage write failed'); });
+
+    await expect(generateTitleWithFallback('u', 'a', [config('main'), config('fb')], undefined, undefined, {
+      onUsage,
+    })).rejects.toThrow(/billing usage write failed/);
+    expect(onUsage).toHaveBeenCalledTimes(1);
+  });
+
   it('主和 fallback 全部返回空，最终 null', async () => {
     queueResponse('main', '');
     queueResponse('fb1', '');

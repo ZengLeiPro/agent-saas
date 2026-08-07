@@ -24,6 +24,7 @@ function basePolicy(overrides: Partial<TenantBillingPolicy> = {}): TenantBilling
     negativeLimitCreditsMicro: 0,
     lowBalanceThresholdCreditsMicro: 0,
     hardCapMode: 'stop_before_run',
+    maxRunCreditsMicro: 1000 * CREDIT_MICRO,
     showBalance: true,
     showUsageCredits: true,
     showCost: false,
@@ -39,7 +40,28 @@ function makeStore(input: {
   balanceCreditsMicro?: number;
   creditValueYuanMicro?: number;
 } = {}) {
-  const store = new PgBillingStore({ pool: {} as any });
+  const account = {
+    tenant_id: 'wain-test',
+    balance_micro: Math.trunc(input.balanceCreditsMicro ?? 1000 * CREDIT_MICRO),
+    reserved_micro: 0,
+    updated_at: '2026-07-15T00:00:00.000Z',
+  };
+  const client = {
+    query: vi.fn(async (sql: string) => {
+      if (/credit_accounts\s+a/i.test(sql) && /row_to_json/i.test(sql)) {
+        return { rows: [{ row_json: { ...account } }] };
+      }
+      if (/SELECT\s+user_id,\s*period_start/i.test(sql)) return { rows: [] };
+      if (/run_reservations\s+r/i.test(sql) && /row_to_json/i.test(sql)) return { rows: [] };
+      return { rows: [] };
+    }),
+    release: vi.fn(),
+  };
+  const pool = {
+    query: vi.fn(async () => ({ rows: [] })),
+    connect: vi.fn(async () => client),
+  };
+  const store = new PgBillingStore({ pool: pool as any });
   vi.spyOn(store, 'getTenantPolicy').mockResolvedValue(basePolicy(input.policy));
   vi.spyOn(store, 'getActivePricingVersion').mockResolvedValue({
     version: 'price-v1',
@@ -52,6 +74,14 @@ function makeStore(input: {
       createdAt: '2026-07-15T00:00:00.000Z',
       ...(args[1] as Record<string, unknown>),
     }));
+  vi.spyOn(store as any, 'ensureAccount').mockResolvedValue(undefined);
+  vi.spyOn(store, 'releaseRunReservation').mockResolvedValue(null);
+  vi.spyOn(store as any, 'listPendingRunUsage').mockImplementation(async (...args: unknown[]) => {
+    const [clientArg, tenantId, runId] = args as [unknown, string, string];
+    const rows = await store.listUsageEvents({ tenantId, runId, billable: true, limit: 10_000 });
+    const charged = await (store as any).listDebitedUsageEventIds(clientArg, tenantId, runId) as Set<string>;
+    return rows.filter((row) => !charged.has(row.id));
+  });
   vi.spyOn(store as any, 'withAccountLock').mockImplementation(async (...args: unknown[]) => {
     const fn = args[1] as (client: unknown, account: unknown) => Promise<unknown>;
     return fn({}, {
@@ -256,9 +286,16 @@ describe('PgBillingStore.adjustAccount', () => {
     expect(entry.revenueYuanMicro).toBe(0); // max(0, 负值)=0
   });
 
-  it('显式 idempotencyKey 命中已有条目时直接返回，不重复落账', async () => {
+  it('显式 idempotencyKey 命中相同调账指纹时直接返回，不重复落账', async () => {
     const { store, getByKey, insert } = makeStore();
-    const prior = { id: 'ledger-prior' } as any;
+    const prior = {
+      id: 'ledger-prior',
+      tenantId: 'wain-test',
+      type: 'grant',
+      creditsDeltaMicro: 10 * CREDIT_MICRO,
+      source: 'manual',
+      createdBy: 'admin',
+    } as any;
     getByKey.mockResolvedValue(prior);
 
     const entry = await store.adjustAccount({
@@ -269,6 +306,26 @@ describe('PgBillingStore.adjustAccount', () => {
       idempotencyKey: 'grant:fixed:key',
     });
     expect(entry).toBe(prior);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('相同 idempotencyKey 命中不同租户或金额时拒绝串账', async () => {
+    const { store, getByKey, insert } = makeStore();
+    getByKey.mockResolvedValue({
+      id: 'ledger-other',
+      tenantId: 'tenant-other',
+      type: 'grant',
+      creditsDeltaMicro: 99 * CREDIT_MICRO,
+      source: 'manual',
+    } as any);
+
+    await expect(store.adjustAccount({
+      tenantId: 'wain-test',
+      type: 'grant',
+      creditsDeltaMicro: 10 * CREDIT_MICRO,
+      actor: 'admin',
+      idempotencyKey: 'shared-client-key',
+    })).rejects.toMatchObject({ code: 'BILLING_IDEMPOTENCY_CONFLICT' });
     expect(insert).not.toHaveBeenCalled();
   });
 });

@@ -131,14 +131,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     const username = parentSession.username || identity?.username || context.workspace.username;
     const userId = parentSession.userId || identity?.id || context.workspace.userId;
 
-    if (tenantId) {
-      const billing = this.config.billingService?.();
-      if (billing) {
-        const allowed = await billing.assertTenantCanStartRun(tenantId);
-        if (!allowed.ok) throw new Error(`后台 Agent 派生被计费策略拒绝：${allowed.reason}`);
-      }
-    }
-
+    // 真正执行模型的是后续 child run；由 runSubagent 在拿到 childRunId 后原子预占。
+    // 此处不能用旧余额快照门禁，否则父 run 自己的 reservation 会误拒绝派生。
     const executionTarget = context.workspace.executionTarget;
     let boundProfile: BoundAgentRuntimeProfile | undefined;
     if (this.config.agentRuntimeProfileResolver) {

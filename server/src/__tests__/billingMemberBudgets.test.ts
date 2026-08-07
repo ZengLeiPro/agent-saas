@@ -100,7 +100,7 @@ describe('PgBillingStore 员工预算', () => {
     });
     expect(clientQuery.mock.calls.filter(([sql]) => String(sql).includes('pg_advisory_xact_lock'))).toHaveLength(2);
     const auditInsert = clientQuery.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO') && String(sql).includes('billing_member_budget_audit'));
-    expect(auditInsert?.[1]?.[8]).toBe('2026-08-01');
+    expect(auditInsert?.[1]?.[12]).toBe('2026-08-01');
     expect(clientQuery).toHaveBeenCalledWith('COMMIT');
     expect(release).toHaveBeenCalledTimes(1);
   });

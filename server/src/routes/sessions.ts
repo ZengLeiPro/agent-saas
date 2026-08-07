@@ -45,6 +45,7 @@ import {
 import type { GroupStore } from "../data/groups/index.js";
 import type { UserStore } from "../data/users/store.js";
 import type { TokenUsageStore } from "../data/usage/store.js";
+import type { BillingService } from "../data/billing/service.js";
 import {
   computeCacheHitDenominatorTokens,
   computeUsageTotalTokens,
@@ -417,6 +418,8 @@ export interface SessionsRouterOptions {
   getTitleSystemPrompt?: () => string;
   /** Token 用量统计 store，用于记录手动 auto-title 等基础设施模型调用 */
   tokenUsageStore?: TokenUsageStore;
+  /** PG Billing；手动 auto-title 使用独立 utility reservation。 */
+  billingService?: BillingService;
   /**
    * Runtime EventStore 解析函数。pending API 列出某 session 的 replay state
    * 需要它读事件流。
@@ -2590,30 +2593,46 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           return;
         }
 
-        const title = await generateTitleWithFallback(
-          userMessages[0],
-          assistantReplies[0] || "",
-          options.titleGeneratorConfigs,
-          userMessages[1],
-          assistantReplies[1],
-          {
-            systemPrompt: options.getTitleSystemPrompt?.(),
-            onUsage: (model, usage) => {
-              if (!options.tokenUsageStore || !req.user) return;
-              try {
-                options.tokenUsageStore.recordResult({
-                  username: req.user.username,
-                  tenantId: req.user.tenantId ?? DEFAULT_TENANT_ID,
-                  channel: "title",
-                  modelUsage: { [model]: usage },
-                  occurredAtMs: Date.now(),
-                });
-              } catch (err) {
-                console.warn(`[token-usage] auto-title record failed: ${err instanceof Error ? err.message : String(err)}`);
-              }
+        const utilityBilling = options.billingService && req.user
+          ? await options.billingService.beginUtilityModelRun({
+              tenantId: req.user.tenantId ?? DEFAULT_TENANT_ID,
+              userId: req.user.sub,
+              username: req.user.username,
+              sessionId,
+              channel: "title",
+            })
+          : undefined;
+        let title: string | null;
+        try {
+          title = await generateTitleWithFallback(
+            userMessages[0],
+            assistantReplies[0] || "",
+            options.titleGeneratorConfigs,
+            userMessages[1],
+            assistantReplies[1],
+            {
+              systemPrompt: options.getTitleSystemPrompt?.(),
+              beforeModelCall: () => utilityBilling?.beforeModelCall(),
+              onUsage: async (model, usage) => {
+                await utilityBilling?.recordUsage(model, usage);
+                if (!options.tokenUsageStore || !req.user) return;
+                try {
+                  options.tokenUsageStore.recordResult({
+                    username: req.user.username,
+                    tenantId: req.user.tenantId ?? DEFAULT_TENANT_ID,
+                    channel: "title",
+                    modelUsage: { [model]: usage },
+                    occurredAtMs: Date.now(),
+                  });
+                } catch (err) {
+                  console.warn(`[token-usage] auto-title record failed: ${err instanceof Error ? err.message : String(err)}`);
+                }
+              },
             },
-          },
-        );
+          );
+        } finally {
+          await utilityBilling?.finalize();
+        }
 
         if (!title) {
           // 上游模型抖动（超时/429/5xx 等）被 titleGenerator catch 后返回 null。

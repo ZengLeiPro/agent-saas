@@ -196,6 +196,26 @@ describe('checkTopicScope', () => {
     expect(createCalls().map((c) => c.model)).toEqual(['guard-main', 'guard-fallback']);
   });
 
+  it('计费授权拒绝向上抛出，不误当 provider 失败后 fail-open', async () => {
+    queueResponse('guard-main', { content: '{"verdict":"in_scope"}' });
+    const beforeModelCall = vi.fn(async () => { throw new Error('BILLING_RUN_LIMIT_EXCEEDED'); });
+
+    await expect(checkTopicScope(checkInput(), [MAIN, FALLBACK], { beforeModelCall }))
+      .rejects.toThrow(/BILLING_RUN_LIMIT_EXCEEDED/);
+    expect(beforeModelCall).toHaveBeenCalledTimes(1);
+    expect(createCalls()).toHaveLength(0);
+  });
+
+  it('usage 入账失败向上抛出，不继续 fallback 或 fail-open', async () => {
+    queueResponse('guard-main', { content: '{"verdict":"in_scope"}' });
+    const onUsage = vi.fn(async () => { throw new Error('billing usage write failed'); });
+
+    await expect(checkTopicScope(checkInput(), [MAIN, FALLBACK], { onUsage }))
+      .rejects.toThrow(/billing usage write failed/);
+    expect(onUsage).toHaveBeenCalledTimes(1);
+    expect(createCalls().map((call) => call.model)).toEqual(['guard-main']);
+  });
+
   it('全链失败（报错 + 不可解析）→ fail_open 且 source=fail_open', async () => {
     queueResponse('guard-main', new Error('upstream 500'));
     queueResponse('guard-fallback', { content: '我觉得这个问题不错，让我来回答你……' });

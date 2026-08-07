@@ -116,6 +116,8 @@ describe("enforcePlatformWritePolicy", () => {
     expect((await rig.request("DELETE", "/api/tenants/wain", {})).status).toBe(403);
     expect((await rig.request("PATCH", "/api/tenants/wain/status", {})).status).toBe(403);
     expect((await rig.request("POST", "/api/admin/billing/accounts/wain/adjust", {})).status).toBe(403);
+    expect((await rig.request("POST", "/api/admin/billing/ledger/debit-1/reverse", {})).status).toBe(403);
+    expect((await rig.request("PUT", "/api/admin/billing/member-budgets/u-1", {})).status).toBe(403);
     expect((await rig.request("POST", "/api/admin/system/storage/delete", {})).status).toBe(403);
     expect((await rig.request("PUT", "/api/admin/tool-controls", {})).status).toBe(403);
     expect(
@@ -253,6 +255,8 @@ describe("enforcePlatformWritePolicy", () => {
 
     expect((await rig.request("PATCH", "/api/auth/users/u-other", { password: "x" })).status).toBe(200);
     expect((await rig.request("POST", "/api/admin/billing/accounts/wain/adjust", {})).status).toBe(200);
+    expect((await rig.request("POST", "/api/admin/billing/ledger/debit-1/reverse", {})).status).toBe(200);
+    expect((await rig.request("PUT", "/api/admin/billing/member-budgets/u-1", {})).status).toBe(200);
     expect((await rig.request("POST", "/api/admin/usage/rebuild", {})).status).toBe(200);
     expect((await rig.request("GET", "/api/admin/billing/pricing-versions")).status).toBe(200);
     expect((await rig.request("PUT", "/api/admin/models", {})).status).toBe(403);

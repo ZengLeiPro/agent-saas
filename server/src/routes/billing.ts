@@ -18,6 +18,7 @@ import {
 import {
   BillingBudgetIdempotencyConflictError,
   BillingBudgetVersionConflictError,
+  BillingLedgerReversalConflictError,
   BillingPricingConflictError,
 } from '../data/billing/pgBillingStore.js';
 
@@ -127,6 +128,15 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
     if (!parsed.success) return res.status(400).json({ error: 'Invalid tenantId' });
     const body = policyPatchSchema.safeParse(req.body ?? {});
     if (!body.success) return res.status(400).json({ error: 'Invalid body', issues: body.error.issues });
+    const current = await billingService.store.getTenantPolicy(parsed.data);
+    const nextHardCapMode = body.data.hardCapMode ?? current.hardCapMode;
+    const nextMaxRunCreditsMicro = body.data.maxRunCreditsMicro === undefined
+      ? current.maxRunCreditsMicro
+      : body.data.maxRunCreditsMicro ?? undefined;
+    if (nextHardCapMode === 'stop_before_run'
+      && (nextMaxRunCreditsMicro === undefined || nextMaxRunCreditsMicro <= 0)) {
+      return res.status(400).json({ error: '启用积分硬封顶时必须配置正数的组织单 Run 上限' });
+    }
     const actor = req.user?.username ?? req.user?.sub ?? 'admin';
     const policy = await billingService.updateTenantPolicy(parsed.data, body.data, actor);
     res.json({ policy });
@@ -171,12 +181,27 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
         return res.status(403).json({ error: '单笔积分超过授权上限 ' + perTransaction });
       }
     }
+    const combinedNote = body.data.businessReference
+      ? '[依据:' + body.data.businessReference + '] ' + (body.data.note ?? '')
+      : body.data.note;
     const idempotencyKey = body.data.idempotencyKey
-      ? ['manual', 'admin', req.user!.sub, body.data.idempotencyKey].join(':')
+      ? ['manual', parsed.data, 'admin', req.user!.sub, body.data.idempotencyKey].join(':')
       : undefined;
     if (delegated && idempotencyKey) {
       const existing = await billingService.store.findLedgerByIdempotencyKey(idempotencyKey);
-      if (existing) return res.json({ entry: existing, idempotentReplay: true });
+      if (existing) {
+        const requestedType = body.data.type ?? 'adjustment';
+        if (
+          existing.tenantId !== parsed.data
+          || existing.type !== requestedType
+          || existing.creditsDeltaMicro !== Math.round(body.data.creditsDelta * CREDIT_MICRO)
+          || existing.createdBy !== req.user!.username
+          || (existing.note ?? undefined) !== (combinedNote ?? undefined)
+        ) {
+          return res.status(409).json({ error: '幂等键已被不同调账参数使用' });
+        }
+        return res.json({ entry: existing, idempotentReplay: true });
+      }
       const dayLimit = req.user!.platformCapabilityLimits!.billingMaxCreditsPerDay!;
       const usedToday = await billingService.store.sumManualPositiveCreditsByActorSince(
         req.user!.username,
@@ -189,17 +214,22 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
         });
       }
     }
-    const combinedNote = body.data.businessReference
-      ? '[依据:' + body.data.businessReference + '] ' + (body.data.note ?? '')
-      : body.data.note;
-    const entry = await billingService.adjustAccount({
-      tenantId: parsed.data,
-      creditsDelta: body.data.creditsDelta,
-      type: body.data.type,
-      note: combinedNote,
-      actor: req.user?.username ?? req.user?.sub ?? 'admin',
-      idempotencyKey,
-    });
+    let entry: BillingLedgerEntry;
+    try {
+      entry = await billingService.adjustAccount({
+        tenantId: parsed.data,
+        creditsDelta: body.data.creditsDelta,
+        type: body.data.type,
+        note: combinedNote,
+        actor: req.user?.username ?? req.user?.sub ?? 'admin',
+        idempotencyKey,
+      });
+    } catch (err) {
+      if ((err as { code?: string })?.code === 'BILLING_IDEMPOTENCY_CONFLICT') {
+        return res.status(409).json({ error: err instanceof Error ? err.message : '幂等键冲突' });
+      }
+      throw err;
+    }
     auditLog(req, 'billing_account_adjusted', JSON.stringify({
       tenantId: parsed.data,
       creditsDelta: body.data.creditsDelta,
@@ -220,6 +250,36 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
       }]).catch(() => undefined);
     }
     res.json({ entry });
+  });
+
+  router.post('/ledger/:ledgerId/reverse', requirePlatformAdmin, async (req: Request, res: Response) => {
+    if (!req.user || !hasPlatformCapability(req.user, 'billing.adjust')) {
+      return res.status(403).json({ error: '缺少平台计费管理权限' });
+    }
+    const body = ledgerReversalSchema.safeParse(req.body ?? {});
+    if (!body.success) return res.status(400).json({ error: 'Invalid body', issues: body.error.issues });
+    const ledgerId = String(req.params.ledgerId || '').trim();
+    if (!ledgerId) return res.status(400).json({ error: 'ledgerId 必填' });
+    try {
+      const entry = await billingService.reverseDebit({
+        tenantId: body.data.tenantId,
+        ledgerId,
+        idempotencyKey: `reversal:admin:${req.user.sub}:${body.data.idempotencyKey}`,
+        note: body.data.note,
+        actor: req.user.username,
+      });
+      auditLog(req, 'billing_debit_reversed', JSON.stringify({
+        tenantId: body.data.tenantId,
+        originalLedgerId: ledgerId,
+        reversalLedgerId: entry.id,
+      }));
+      res.json({ entry });
+    } catch (err) {
+      if (err instanceof BillingLedgerReversalConflictError) {
+        return res.status(409).json({ code: 'LEDGER_REVERSAL_CONFLICT', error: err.message });
+      }
+      throw err;
+    }
   });
 
   router.get('/ledger', async (req, res) => {
@@ -295,6 +355,9 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
     if (parsedTenantId && !parsedTenantId.success) return res.status(400).json({ error: 'tenantId 不合法' });
     const access = resolveTenantAccess(req, parsedTenantId?.data);
     if (!access.ok) return res.status(access.status).json({ error: access.error });
+    if (!access.platform && req.user?.role !== 'admin') {
+      return res.status(403).json({ error: '仅组织管理员可查看员工预算列表' });
+    }
     if (access.platform && (!req.user || !hasPlatformCapability(req.user, 'finance.read'))) {
       return res.status(403).json({ error: '缺少平台财务读取权限' });
     }
@@ -313,9 +376,12 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
       .map((user) => {
         const budget = formatMemberBudget(usageByUser.get(user.id) ?? {
           userId: user.id,
+          enforcementMode: 'notify' as const,
           active: true,
           version: 0,
           monthUsedCreditsMicro: 0,
+          monthReservedCreditsMicro: 0,
+          canStartRun: true,
         });
         const canManage = access.platform
           ? platformCanManage
@@ -338,7 +404,10 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
       summary: {
         tenantBalanceCredits: summary.balanceCredits,
         monthUsedCredits: overview.monthUsedCreditsMicro / CREDIT_MICRO,
+        monthReservedCredits: overview.monthReservedCreditsMicro / CREDIT_MICRO,
         budgetedUsers: members.filter((item) => item.monthlyLimitCredits !== null).length,
+        enforcedUsers: members.filter((item) => item.enforcementMode === 'stop_new_runs').length,
+        blockedUsers: members.filter((item) => !item.canStartRun).length,
         nearLimitUsers: members.filter((item) => item.status === 'warning').length,
         overLimitUsers: members.filter((item) => item.status === 'over').length,
         unattributedCredits: overview.unattributedCreditsMicro / CREDIT_MICRO,
@@ -354,6 +423,9 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
     if (parsedTenantId && !parsedTenantId.success) return res.status(400).json({ error: 'tenantId 不合法' });
     const access = resolveTenantAccess(req, parsedTenantId?.data);
     if (!access.ok) return res.status(access.status).json({ error: access.error });
+    if (!access.platform && req.user.role !== 'admin') {
+      return res.status(403).json({ error: '仅组织管理员可设置员工预算' });
+    }
     if (access.platform && !hasPlatformCapability(req.user, 'billing.adjust')) {
       return res.status(403).json({ error: '缺少平台计费管理权限' });
     }
@@ -374,11 +446,22 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
     if (monthlyLimitCreditsMicro !== undefined && !Number.isSafeInteger(monthlyLimitCreditsMicro)) {
       return res.status(400).json({ error: '预算金额超出安全范围' });
     }
+    const perRunLimitCreditsMicro = body.data.perRunLimitCredits === undefined
+      ? undefined
+      : body.data.perRunLimitCredits === null
+        ? null
+        : Math.round(body.data.perRunLimitCredits * CREDIT_MICRO);
+    if (perRunLimitCreditsMicro !== undefined && perRunLimitCreditsMicro !== null
+      && !Number.isSafeInteger(perRunLimitCreditsMicro)) {
+      return res.status(400).json({ error: '单 Run 上限超出安全范围' });
+    }
     try {
       const result = await billingService.store.upsertMemberBudget({
         tenantId: access.tenantId,
         userId: targetUser.id,
         ...(monthlyLimitCreditsMicro === undefined ? {} : { monthlyLimitCreditsMicro }),
+        ...(body.data.enforcementMode ? { enforcementMode: body.data.enforcementMode } : {}),
+        ...(perRunLimitCreditsMicro === undefined ? {} : { perRunLimitCreditsMicro }),
         expectedVersion: body.data.expectedVersion,
         idempotencyKey: body.data.idempotencyKey,
         note: body.data.note,
@@ -389,6 +472,8 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
         tenantId: access.tenantId,
         userId: targetUser.id,
         monthlyLimitCredits: body.data.monthlyLimitCredits,
+        enforcementMode: body.data.enforcementMode,
+        perRunLimitCredits: body.data.perRunLimitCredits,
         auditId: result.audit.id,
         replayed: result.replayed,
       }));
@@ -413,6 +498,9 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
     if (!query.success) return res.status(400).json({ error: 'Invalid query', issues: query.error.issues });
     const access = resolveTenantAccess(req, query.data.tenantId);
     if (!access.ok) return res.status(access.status).json({ error: access.error });
+    if (!access.platform && req.user?.role !== 'admin') {
+      return res.status(403).json({ error: '仅组织管理员可查看预算审计' });
+    }
     if (access.platform && (!req.user || !hasPlatformCapability(req.user, 'finance.read'))) {
       return res.status(403).json({ error: '缺少平台财务读取权限' });
     }
@@ -422,10 +510,18 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
       query.data.limit ?? 100,
     );
     res.json({
-      entries: entries.map(({ beforeLimitCreditsMicro, afterLimitCreditsMicro, ...entry }) => ({
+      entries: entries.map(({
+        beforeLimitCreditsMicro,
+        afterLimitCreditsMicro,
+        beforePerRunLimitCreditsMicro,
+        afterPerRunLimitCreditsMicro,
+        ...entry
+      }) => ({
         ...entry,
         beforeLimitCredits: beforeLimitCreditsMicro === undefined ? null : beforeLimitCreditsMicro / CREDIT_MICRO,
         afterLimitCredits: afterLimitCreditsMicro === undefined ? null : afterLimitCreditsMicro / CREDIT_MICRO,
+        beforePerRunLimitCredits: beforePerRunLimitCreditsMicro === undefined ? null : beforePerRunLimitCreditsMicro / CREDIT_MICRO,
+        afterPerRunLimitCredits: afterPerRunLimitCreditsMicro === undefined ? null : afterPerRunLimitCreditsMicro / CREDIT_MICRO,
       })),
     });
   });
@@ -471,9 +567,12 @@ export function createBillingRouter(options: BillingRouterOptions): Router {
     const overview = await billingService.store.getMemberBudgetOverview(req.user.tenantId, req.user.sub);
     const budget = overview.items[0] ?? {
       userId: req.user.sub,
+      enforcementMode: 'notify' as const,
       active: true,
       version: 0,
       monthUsedCreditsMicro: 0,
+      monthReservedCreditsMicro: 0,
+      canStartRun: true,
     };
     const { updatedBy: _updatedBy, ...memberBudget } = formatMemberBudget(budget);
     res.json({
@@ -488,12 +587,20 @@ export function createBillingRouter(options: BillingRouterOptions): Router {
 
   router.get('/sessions/:sessionId/summary', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (req.user.role !== 'admin'
+      && !await billingService.store.isSessionOwnedByUser(req.user.tenantId, req.params.sessionId, req.user.sub)) {
+      return res.status(404).json({ error: '会话不存在' });
+    }
     const summary = await billingService.getSessionSummary(req.user.tenantId, req.params.sessionId);
     res.json({ summary });
   });
 
   router.get('/sessions/:sessionId/ledger', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (req.user.role !== 'admin'
+      && !await billingService.store.isSessionOwnedByUser(req.user.tenantId, req.params.sessionId, req.user.sub)) {
+      return res.status(404).json({ error: '会话不存在' });
+    }
     const { entries } = await billingService.listLedgerForTenant(req.user.tenantId, {
       sessionId: req.params.sessionId,
       limit: 50,
@@ -521,6 +628,7 @@ const policyPatchSchema = z.object({
   lowBalanceThresholdCreditsMicro: z.number().int().min(0).optional(),
   // 2026-06-28：摘除 reserve_then_run，仅保留 none / stop_before_run
   hardCapMode: z.enum(['none', 'stop_before_run']).optional(),
+  maxRunCreditsMicro: z.number().int().min(1).nullable().optional(),
   showBalance: z.boolean().optional(),
   showUsageCredits: z.boolean().optional(),
   showCost: z.boolean().optional(),
@@ -549,9 +657,19 @@ const pricingVersionPatchSchema = z.object({
 
 const memberBudgetUpdateSchema = z.object({
   monthlyLimitCredits: z.number().finite().min(0).max(1_000_000_000).nullable(),
+  enforcementMode: z.enum(['notify', 'stop_new_runs']).optional(),
+  perRunLimitCredits: z.number().finite().positive().max(1_000_000_000).nullable().optional(),
   expectedVersion: z.number().int().min(0),
   idempotencyKey: z.string().trim().min(8).max(120).regex(/^[a-zA-Z0-9:_-]+$/),
   note: z.string().trim().min(2).max(200),
+}).superRefine((value, ctx) => {
+  if (value.enforcementMode !== 'stop_new_runs') return;
+  if (value.monthlyLimitCredits === null || value.monthlyLimitCredits <= 0) {
+    ctx.addIssue({ code: 'custom', path: ['monthlyLimitCredits'], message: '强制额度必须设置大于 0 的月额度' });
+  }
+  if (value.perRunLimitCredits === null || value.perRunLimitCredits === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['perRunLimitCredits'], message: '强制额度必须设置单 Run 上限' });
+  }
 });
 
 const memberBudgetAuditQuerySchema = z.object({
@@ -562,10 +680,16 @@ const memberBudgetAuditQuerySchema = z.object({
 
 const accountAdjustSchema = z.object({
   creditsDelta: z.number().finite(),
-  type: z.enum(['recharge', 'grant', 'refund', 'adjustment', 'expire', 'reversal']).optional(),
+  type: z.enum(['recharge', 'grant', 'refund', 'adjustment', 'expire']).optional(),
   note: z.string().trim().min(2).max(500).optional(),
   businessReference: z.string().trim().min(1).max(120).optional(),
   idempotencyKey: z.string().trim().min(8).max(120).regex(/^[a-zA-Z0-9:_-]+$/).optional(),
+});
+
+const ledgerReversalSchema = z.object({
+  tenantId: tenantIdSchema,
+  idempotencyKey: z.string().trim().min(8).max(120).regex(/^[a-zA-Z0-9:_-]+$/),
+  note: z.string().trim().min(2).max(500),
 });
 
 function beijingDayStartIso(now = new Date()): string {
@@ -622,15 +746,22 @@ function formatMemberBudget(item: BillingMemberBudgetUsage) {
     ? null
     : item.monthlyLimitCreditsMicro / CREDIT_MICRO;
   const monthUsedCredits = item.monthUsedCreditsMicro / CREDIT_MICRO;
+  const monthReservedCredits = item.monthReservedCreditsMicro / CREDIT_MICRO;
+  const committedMicro = item.monthUsedCreditsMicro + item.monthReservedCreditsMicro;
   const usageRatioBps = item.monthlyLimitCreditsMicro === undefined
     ? null
     : item.monthlyLimitCreditsMicro <= 0
-      ? (item.monthUsedCreditsMicro > 0 ? 10000 : 0)
-      : Math.round((item.monthUsedCreditsMicro / item.monthlyLimitCreditsMicro) * 10000);
+      ? (committedMicro > 0 ? 10000 : 0)
+      : Math.round((committedMicro / item.monthlyLimitCreditsMicro) * 10000);
   return {
     userId: item.userId,
     monthlyLimitCredits,
     monthUsedCredits,
+    monthReservedCredits,
+    remainingCredits: item.remainingCreditsMicro === undefined ? null : item.remainingCreditsMicro / CREDIT_MICRO,
+    enforcementMode: item.enforcementMode,
+    perRunLimitCredits: item.perRunLimitCreditsMicro === undefined ? null : item.perRunLimitCreditsMicro / CREDIT_MICRO,
+    canStartRun: item.canStartRun,
     usageRatioBps,
     status: budgetStatus(usageRatioBps),
     active: item.active,

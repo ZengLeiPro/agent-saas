@@ -191,11 +191,29 @@ interface ImageGenEngineRequest {
   quality?: 'low' | 'medium' | 'high' | 'auto';
   refImages: readonly RefImagePayload[];
   signal?: AbortSignal;
+  onImageGenerated?: (image: Buffer, index: number) => Promise<void>;
 }
 
 interface ImageGenEngineResult {
   images: Buffer[];
   revisedPrompt?: string;
+}
+
+class ImageBillingError extends Error {
+  constructor(cause: unknown) {
+    super(`生图成功但计费事实持久化失败：${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = 'ImageBillingError';
+  }
+}
+
+class PartialImageGenerationError extends Error {
+  constructor(
+    readonly result: ImageGenEngineResult,
+    readonly causeMessage: string,
+  ) {
+    super(`生图批次部分成功：${result.images.length} 张已生成；后续失败：${causeMessage}`);
+    this.name = 'PartialImageGenerationError';
+  }
 }
 
 interface ImageGenEngineDefinition {
@@ -248,9 +266,21 @@ const IMAGE_GEN_ENGINES: Record<ImageGenEngineId, ImageGenEngineDefinition> = {
         const images: Buffer[] = [];
         let revisedPrompt: string | undefined;
         for (let i = 0; i < request.count; i++) {
-          const single = await gptImage2RequestWithRetries(deps, request);
-          images.push(...single.images);
-          revisedPrompt = single.revisedPrompt ?? revisedPrompt;
+          try {
+            const single = await gptImage2RequestWithRetries(deps, request);
+            for (const image of single.images) {
+              await request.onImageGenerated?.(image, images.length);
+              images.push(image);
+            }
+            revisedPrompt = single.revisedPrompt ?? revisedPrompt;
+          } catch (err) {
+            if (err instanceof ImageBillingError) throw err;
+            if (images.length === 0) throw err;
+            throw new PartialImageGenerationError(
+              { images, ...(revisedPrompt ? { revisedPrompt } : {}) },
+              err instanceof Error ? err.message : String(err),
+            );
+          }
         }
         return { images, ...(revisedPrompt ? { revisedPrompt } : {}) };
       }),
@@ -269,9 +299,21 @@ const IMAGE_GEN_ENGINES: Record<ImageGenEngineId, ImageGenEngineDefinition> = {
       const images: Buffer[] = [];
       let revisedPrompt: string | undefined;
       for (let i = 0; i < request.count; i++) {
-        const single = await seedreamGenerate(deps, request);
-        images.push(...single.images);
-        revisedPrompt = single.revisedPrompt ?? revisedPrompt;
+        try {
+          const single = await seedreamGenerate(deps, request);
+          for (const image of single.images) {
+            await request.onImageGenerated?.(image, images.length);
+            images.push(image);
+          }
+          revisedPrompt = single.revisedPrompt ?? revisedPrompt;
+        } catch (err) {
+          if (err instanceof ImageBillingError) throw err;
+          if (images.length === 0) throw err;
+          throw new PartialImageGenerationError(
+            { images, ...(revisedPrompt ? { revisedPrompt } : {}) },
+            err instanceof Error ? err.message : String(err),
+          );
+        }
       }
       return { images, ...(revisedPrompt ? { revisedPrompt } : {}) };
     },
@@ -570,17 +612,41 @@ export class ImageGenToolProvider implements ToolProvider {
     const requestedCredits = pricing.creditsPerImage * count;
     const requestedCreditsMicro = Math.round(requestedCredits * CREDIT_MICRO);
 
-    // ① 工具内余额预检：run 级 preflight 不够——长 run 中途余额可能被烧穿。
-    //    不足返回工具错误（模型可见原因），run 不崩、不扣费。
+    // ① 固定费用先做 run 内原子 hold。没有 active run reservation 的兼容路径
+    //    仍执行原组织余额精确预检；任何失败都不会调用外部生图 API。
     const billing = this.options.billingService?.();
+    const runId = context.runId;
+    const billingInvocationKey = context.invocationId ?? context.toolCallId ?? randomUUID();
+    const requestedHoldKey = billing && tenantId && runId
+      ? `image_gen:${billingInvocationKey}`
+      : undefined;
+    let holdKey: string | undefined;
+    let holdHandedOff = false;
     let billed = false;
+    try {
     if (billing && tenantId) {
-      const allowed = await billing.assertTenantCanAffordFixedFee(tenantId, requestedCreditsMicro);
-      if (!allowed.ok) {
-        throw new Error(
-          `生图请求已拒绝（未扣费）：${allowed.reason} 本次需 ${requestedCredits} 积分`
-          + `（${engineId} 单价 ${pricing.creditsPerImage} 积分/张 × ${count} 张）。`,
-        );
+      if (requestedHoldKey && runId) {
+        const held = await billing.reserveFixedFeeHold({
+          tenantId,
+          runId,
+          holdKey: requestedHoldKey,
+          creditsMicro: requestedCreditsMicro,
+        });
+        if (!held.ok) {
+          throw new Error(
+            `生图请求已拒绝（未扣费）：${held.reason} 本次需 ${requestedCredits} 积分`
+            + `（${engineId} 单价 ${pricing.creditsPerImage} 积分/张 × ${count} 张）。`,
+          );
+        }
+        if (held.value) {
+          holdKey = requestedHoldKey;
+        } else {
+          const allowed = await billing.assertTenantCanAffordFixedFee(tenantId, requestedCreditsMicro);
+          if (!allowed.ok) throw new Error(`生图请求已拒绝（未扣费）：${allowed.reason} 本次需 ${requestedCredits} 积分。`);
+        }
+      } else {
+        const allowed = await billing.assertTenantCanAffordFixedFee(tenantId, requestedCreditsMicro);
+        if (!allowed.ok) throw new Error(`生图请求已拒绝（未扣费）：${allowed.reason} 本次需 ${requestedCredits} 积分。`);
       }
       billed = await billing.isTenantBillable(tenantId);
     }
@@ -588,55 +654,100 @@ export class ImageGenToolProvider implements ToolProvider {
     const refImages = await this.loadRefImages(input.refImages ?? [], context, engine);
     const aspectRatio: AspectRatio = input.aspectRatio ?? '1:1';
     const size = engine.mapSize(aspectRatio);
+    const recordGeneratedImage = async (_image: Buffer, index: number): Promise<void> => {
+      const imageHoldKey = index === 0 ? holdKey : undefined;
+      const event = {
+        type: 'metered_tool_usage' as const,
+        runId: context.runId ?? '',
+        sessionId: context.sessionId ?? context.workspace.sessionId ?? '',
+        toolId: generateImageToolDescriptor.id,
+        sku: `image_gen:${engineId}`,
+        quantity: 1,
+        unitCreditsMicro: Math.round(pricing.creditsPerImage * CREDIT_MICRO),
+        unitCostYuanMicro: Math.round(pricing.costYuanPerImage * YUAN_MICRO),
+        ...(imageHoldKey ? { holdKey: imageHoldKey } : {}),
+        billingChargeKey: imageHoldKey
+          ? `debit:tool:hold:v1:${imageHoldKey}`
+          : `debit:tool:direct:v1:${billingInvocationKey}:image:${index}`,
+        note: `${size} quality=${input.quality ?? 'default'} image=${index + 1}/${count}`
+          + `${refImages.length > 0 ? ` ref=${refImages.length}` : ''}`,
+      };
+      try {
+        if (this.options.appendPlatformEvent) {
+          try {
+            await this.options.appendPlatformEvent(event, tenantId ? { tenantId } : undefined);
+            if (imageHoldKey) holdHandedOff = true;
+            return;
+          } catch (err) {
+            if (!billing || !tenantId || !billed) throw err;
+            this.options.logger?.warn?.(`metered_tool_usage append failed; charging image directly: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+        if (billing && tenantId && billed) {
+          await billing.chargeFixedDebit({
+            tenantId,
+            ...(context.channelContext.user?.id ? { userId: context.channelContext.user.id } : {}),
+            ...(context.channelContext.user?.username ? { username: context.channelContext.user.username } : {}),
+            idempotencyKey: imageHoldKey
+              ? `debit:tool:hold:v1:${imageHoldKey}`
+              : `debit:tool:direct:v1:${billingInvocationKey}:image:${index}`,
+            source: 'tool:image_gen',
+            creditsMicro: Math.round(pricing.creditsPerImage * CREDIT_MICRO),
+            actualCostYuanMicro: Math.round(pricing.costYuanPerImage * YUAN_MICRO),
+            ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+            ...(runId ? { runId } : {}),
+            ...(imageHoldKey ? { holdKey: imageHoldKey } : {}),
+            note: `GenerateImage ${engineId} 第 ${index + 1}/${count} 张`,
+          });
+          if (imageHoldKey) holdHandedOff = true;
+        }
+      } catch (err) {
+        throw new ImageBillingError(err);
+      }
+    };
 
-    const result = await engine.generate(
-      {
-        connection,
-        fetchImpl: this.fetchImpl,
-        retryDelaysMs: this.retryDelaysMs,
-        logger: this.options.logger,
-      },
-      {
-        prompt: input.prompt,
-        count,
-        size,
-        quality: input.quality,
-        refImages,
-        signal: context.signal,
-      },
-    );
-
-    // ② 落盘：server 直写 NAS 固定子目录，路径由 server 生成（risk:'safe' 前提）。
-    const relPaths = await this.persistImages(result.images, context.workspace.root);
-
-    // ③ 生成成功才记账（失败不扣费）；实际扣费由 billing 投影消费该事件完成，
-    //    幂等键锚定事件 id，投影重跑/事件重放不会重复扣。
-    const chargedQuantity = result.images.length;
-    if (this.options.appendPlatformEvent) {
-      await this.options.appendPlatformEvent(
+    let partialWarning: string | undefined;
+    let result: ImageGenEngineResult;
+    try {
+      result = await engine.generate(
         {
-          type: 'metered_tool_usage',
-          runId: context.runId ?? '',
-          sessionId: context.sessionId ?? context.workspace.sessionId ?? '',
-          toolId: generateImageToolDescriptor.id,
-          sku: `image_gen:${engineId}`,
-          quantity: chargedQuantity,
-          unitCreditsMicro: Math.round(pricing.creditsPerImage * CREDIT_MICRO),
-          unitCostYuanMicro: Math.round(pricing.costYuanPerImage * YUAN_MICRO),
-          note: `${size} quality=${input.quality ?? 'default'}${refImages.length > 0 ? ` ref=${refImages.length}` : ''}`,
+          connection,
+          fetchImpl: this.fetchImpl,
+          retryDelaysMs: this.retryDelaysMs,
+          logger: this.options.logger,
         },
-        tenantId ? { tenantId } : undefined,
+        {
+          prompt: input.prompt,
+          count,
+          size,
+          quality: input.quality,
+          refImages,
+          signal: context.signal,
+          onImageGenerated: recordGeneratedImage,
+        },
       );
+    } catch (err) {
+      if (!(err instanceof PartialImageGenerationError) || err.result.images.length === 0) throw err;
+      result = err.result;
+      partialWarning = `请求 ${count} 张，实际成功 ${result.images.length} 张；后续生成失败：${err.causeMessage}`;
+      this.options.logger?.warn?.(partialWarning);
     }
 
+    // 每张图片在 provider 返回后已立即持久化计费事实；这里仅负责交付落盘。
+    const chargedQuantity = result.images.length;
+
+    // ③ 落盘：server 直写 NAS 固定子目录，路径由 server 生成（risk:'safe' 前提）。
+    const relPaths = await this.persistImages(result.images, context.workspace.root);
     const creditsCharged = billed ? pricing.creditsPerImage * chargedQuantity : 0;
     const payload = {
-      status: 'ok',
+      status: partialWarning ? 'partial' : 'ok',
       engine: engineId,
       images: relPaths,
       size,
       count: chargedQuantity,
+      requestedCount: count,
       creditsCharged,
+      ...(partialWarning ? { warning: partialWarning } : {}),
       ...(billed
         ? { pricingNote: `${pricing.creditsPerImage} 积分/张` }
         : { billingNote: '该组织未启用积分计费（内部/未开计费租户），本次未扣积分' }),
@@ -647,6 +758,14 @@ export class ImageGenToolProvider implements ToolProvider {
     // payload 里已有引擎/尺寸/张数/扣费的真实结果，直接复用作摘要来源
     const presentation = buildToolPresentation(call.toolId, call.input, undefined, payload as unknown as Record<string, unknown>);
     return { content: JSON.stringify(payload, null, 2), ...(presentation ? { presentation } : {}) };
+    } catch (err) {
+      if (billing && tenantId && runId && holdKey && !holdHandedOff) {
+        await billing.releaseFixedFeeHold({ tenantId, runId, holdKey }).catch((releaseErr) => {
+          this.options.logger?.warn?.(`release image billing hold failed: ${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}`);
+        });
+      }
+      throw err;
+    }
   }
 
   /** refImages 只收 workspace 相对路径；resolveAuthorizedPath + realpath 双重校验，拒 symlink 逃逸。 */

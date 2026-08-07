@@ -1530,6 +1530,37 @@ function resolveContextTenantId(
   return (context.sessionOwner ?? context.user)?.tenantId ?? existingSession?.tenantId;
 }
 
+async function authorizeBillingRunStart(
+  config: RawRuntimeRunDispatchConfig,
+  input: { tenantId?: string; userId?: string; username?: string; runId: string; sessionId?: string },
+): Promise<void> {
+  const billing = config.billingService?.();
+  if (!billing || !input.tenantId) return;
+  const decision = await billing.ensureRunReservation({
+    tenantId: input.tenantId,
+    ...(input.userId ? { userId: input.userId } : {}),
+    ...(input.username ? { username: input.username } : {}),
+    runId: input.runId,
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+  });
+  if (!decision.ok) throw new Error(`[${decision.code}] ${decision.reason}`);
+}
+
+function billingRunContextHooks(
+  config: RawRuntimeRunDispatchConfig,
+  tenantId: string | undefined,
+  runId: string,
+): Pick<RunContext, 'authorizeModelTurn'> {
+  const billing = config.billingService?.();
+  if (!billing || !tenantId) return {};
+  return {
+    authorizeModelTurn: async () => {
+      const decision = await billing.assertRunCanContinue(tenantId, runId);
+      if (!decision.ok) throw new Error(`[${decision.code}] ${decision.reason}`);
+    },
+  };
+}
+
 function resolveSessionOwnerRole(
   config: RawRuntimeRunDispatchConfig,
   session: RuntimeSessionRecord,
@@ -2224,6 +2255,13 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     });
 
     try {
+      await authorizeBillingRunStart(config, {
+        tenantId: sessionRecord.tenantId,
+        userId: sessionRecord.userId,
+        username: sessionRecord.username,
+        runId,
+        sessionId,
+      });
       const runContext: RunContext = {
         runId,
         sessionId,
@@ -2248,6 +2286,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         hooks,
         signal: abortController.signal,
         drainHandoff: options.runtimeDrainHandoff,
+        ...billingRunContextHooks(config, sessionRecord.tenantId, runId),
         ...(config.runStore?.listPendingSteeringInputs ? {
           loadQueuedInterjections: async () => {
             const queued = await config.runStore!.listPendingSteeringInputs!(runId);
@@ -2794,6 +2833,13 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     });
 
     try {
+      await authorizeBillingRunStart(config, {
+        tenantId: sessionRecord.tenantId,
+        userId: sessionRecord.userId,
+        username: sessionRecord.username,
+        runId: resumeRunId,
+        sessionId: request.sessionId,
+      });
       let loopError: string | undefined;
       for await (const event of loop.resumeApproval(
         {
@@ -2834,6 +2880,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           hooks: request.hooks,
           signal: abortController.signal,
           drainHandoff: request.runtimeDrainHandoff,
+          ...billingRunContextHooks(config, sessionRecord.tenantId, resumeRunId),
         },
       )) {
         if (event.type === 'error') loopError = event.error ?? 'approval resume failed';
@@ -3189,6 +3236,13 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     });
 
     try {
+      await authorizeBillingRunStart(config, {
+        tenantId: sessionRecord.tenantId,
+        userId: sessionRecord.userId,
+        username: sessionRecord.username,
+        runId: resumeRunId,
+        sessionId: request.sessionId,
+      });
       let loopError: string | undefined;
       for await (const event of loop.resumeInteraction(
         {
@@ -3229,6 +3283,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           hooks: request.hooks,
           signal: abortController.signal,
           drainHandoff: request.runtimeDrainHandoff,
+          ...billingRunContextHooks(config, sessionRecord.tenantId, resumeRunId),
         },
       )) {
         if (event.type === 'error') loopError = event.error ?? 'interaction resume failed';

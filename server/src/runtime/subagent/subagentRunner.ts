@@ -189,18 +189,9 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     assertAgentProfileExecutionTarget(boundProfile.version.config, executionTarget);
   }
 
-  // ── 闸门 1：billing hard cap 前置（D6，多租户特有——防 cap 停用后经子 agent 继续烧 token） ──
-  if (tenantId) {
-    const billing = config.billingService?.();
-    if (billing) {
-      const allowed = await billing.assertTenantCanStartRun(tenantId);
-      if (!allowed.ok) {
-        throw new Error(`子 agent 派生被计费策略拒绝：${allowed.reason}`);
-      }
-    }
-  }
-
-  // ── 闸门 2：模型白名单（关键不变量 3：显式传父 tenantId，不能沿用 dispatch 的单参调用） ──
+  // ── 闸门 1：模型白名单（关键不变量 3：显式传父 tenantId，不能沿用 dispatch 的单参调用） ──
+  // Billing 在 childRunId 落库后通过 ensureRunReservation 原子执行；旧余额快照
+  // 无法识别父 run 自身预占，会误拒绝合法子 Agent，因此不在派生前重复检查。
   const requestedRef = boundProfile?.version.config.model.strategy === 'fixed'
     ? boundProfile.version.config.model.modelRef
     : request.model?.trim() || undefined;
@@ -296,6 +287,22 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         // 刻意不写 wakeMessage：子 run 是父死子亡语义，绝不允许 scheduler 恢复重放
       },
     });
+    const billing = config.billingService?.();
+    if (billing && tenantId) {
+      const decision = await billing.ensureRunReservation({
+        tenantId,
+        userId,
+        username,
+        runId: childRunId,
+        sessionId: childSessionId,
+      });
+      if (!decision.ok) {
+        const reason = `[${decision.code}] ${decision.reason}`;
+        await markRunState(config.runStore, eventStore, childSessionId, childRunId, 'failed', reason).catch(() => undefined);
+        await sessionCatalog.markStatus(childSessionId, 'error').catch(() => undefined);
+        throw new Error(reason);
+      }
+    }
     // 占住 lease 让 scheduler 的 listRecoverable 不会把执行中的子 run 当孤儿捡走
     //（running + lease_expires_at 未过期 = 不可回收）。lease 时长覆盖硬超时 + 余量，
     // 短命 run 无需续租；进程崩溃后 lease 过期，由 wakeRuntimeSession 的 subagent
@@ -408,6 +415,12 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       approvalPolicy,
       hooks: childHooks,
       signal: combinedSignal,
+      ...(billing && tenantId ? {
+        authorizeModelTurn: async () => {
+          const decision = await billing.assertRunCanContinue(tenantId, childRunId);
+          if (!decision.ok) throw new Error(`[${decision.code}] ${decision.reason}`);
+        },
+      } : {}),
       ...(boundProfile ? {
         profileId: boundProfile.binding.profileId,
         profileVersionId: boundProfile.binding.profileVersionId,

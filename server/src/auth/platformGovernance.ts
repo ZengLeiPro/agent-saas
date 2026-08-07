@@ -233,7 +233,11 @@ function requiredWriteCapabilities(req: Request): PlatformCapability[] | null {
     return ["skill.platform.manage"];
   }
 
-  if (method === "POST" && /^\/admin\/billing\/accounts\/[^/]+\/adjust$/.test(path)) {
+  if (
+    (method === "POST" && /^\/admin\/billing\/accounts\/[^/]+\/adjust$/.test(path))
+    || (method === "POST" && /^\/admin\/billing\/ledger\/[^/]+\/reverse$/.test(path))
+    || (method === "PUT" && /^\/admin\/billing\/member-budgets\/[^/]+$/.test(path))
+  ) {
     return ["billing.adjust"];
   }
   if (method === "POST" && path === "/admin/billing/project-now") return ["runtime.operate"];

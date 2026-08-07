@@ -363,6 +363,9 @@ export class ResponsesApiAdapter implements ModelAdapter {
       requestInstructionsHash = prefixDiagnostics.instructionsHash;
       requestToolsHash = prefixDiagnostics.toolsHash;
       requestHistoryHash = prefixDiagnostics.historyHash;
+      // adapter 内部每个真实 transport attempt 都必须重新过计费门禁；
+      // RawAgentLoop 的轮级授权只是兼容其他 adapter，不能替代这里的逐请求授权。
+      await context.authorizeModelTurn?.();
       const attemptDiagnostics = new ResponsesAttemptDiagnostics(context, {
         modelRequestId,
         attempt,
@@ -1706,7 +1709,11 @@ class ResponsesAttemptDiagnostics {
       ...(this.tailHash ? { tailHash: this.tailHash } : {}),
       ...sanitizeFinishedPatch(patch),
     });
-    if (recorded) this.finishedOnce = true;
+    if (recorded) {
+      this.finishedOnce = true;
+    } else if (patch.usage) {
+      throw new Error('MODEL_USAGE_DIAGNOSTIC_PERSIST_FAILED: failed attempt usage was not persisted');
+    }
   }
 
   isFinished(): boolean {

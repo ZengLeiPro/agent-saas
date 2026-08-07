@@ -54,6 +54,7 @@ function fullPolicy(): TenantBillingPolicy {
     negativeLimitCreditsMicro: 0,
     lowBalanceThresholdCreditsMicro: 50_000_000,
     hardCapMode: 'stop_before_run',
+    maxRunCreditsMicro: 500_000_000,
     showBalance: true,
     showUsageCredits: true,
     showCost: true,
@@ -102,6 +103,7 @@ function makeFns() {
       ...(options?.includeInternalMetrics ? { actualCostYuan: 12.3 } : {}),
     })),
     adjustAccount: vi.fn(async (input: Record<string, unknown>) => ({ id: 'led-adj', ...input })),
+    reverseDebit: vi.fn(async (input: Record<string, unknown>) => ({ ...fullLedgerEntry(), ...input, id: 'led-reversal' })),
     listLedgerForTenant: vi.fn(async (_tenantId: string, _query: Record<string, unknown>) => ({
       entries: [fullLedgerEntry()],
       nextCursor: undefined as { createdAt: string; id: string } | undefined,
@@ -127,6 +129,7 @@ function makeFns() {
       listPricingVersions: vi.fn(async () => [{ version: 'price-v1', status: 'active', creditValueYuanMicro: 10_000 }]),
       getTenantPolicy: vi.fn(async () => fullPolicy()),
       listUsageEvents: vi.fn(async () => [{ id: 'ue-1', actualCostYuanMicro: 49_380 }]),
+      isSessionOwnedByUser: vi.fn(async () => true),
       findLedgerByIdempotencyKey: vi.fn(async () => null as BillingLedgerEntry | null),
       sumManualPositiveCreditsByActorSince: vi.fn(async () => 0),
       getMemberBudgetOverview: vi.fn(async (_tenantId: string, userId?: string) => ({
@@ -135,14 +138,20 @@ function makeFns() {
         periodStart: '2026-07-31T16:00:00.000Z',
         periodEnd: '2026-08-31T16:00:00.000Z',
         monthUsedCreditsMicro: 1_250_000_000,
+        monthReservedCreditsMicro: 100_000_000,
         unattributedCreditsMicro: 50_000_000,
         items: [
           {
             userId: userId ?? 'u-member',
             monthlyLimitCreditsMicro: 2_000_000_000,
+            enforcementMode: 'stop_new_runs' as const,
+            perRunLimitCreditsMicro: 500_000_000,
             active: true,
             version: 2,
             monthUsedCreditsMicro: 1_000_000_000,
+            monthReservedCreditsMicro: 100_000_000,
+            remainingCreditsMicro: 900_000_000,
+            canStartRun: true,
             lastUsedAt: '2026-08-01T01:00:00.000Z',
           },
         ],
@@ -151,9 +160,16 @@ function makeFns() {
         budget: {
           userId: String(input.userId),
           ...(input.monthlyLimitCreditsMicro === undefined ? {} : { monthlyLimitCreditsMicro: Number(input.monthlyLimitCreditsMicro) }),
+          enforcementMode: String(input.enforcementMode ?? 'notify'),
+          ...(input.perRunLimitCreditsMicro === undefined || input.perRunLimitCreditsMicro === null
+            ? {}
+            : { perRunLimitCreditsMicro: Number(input.perRunLimitCreditsMicro) }),
           active: true,
           version: Number(input.expectedVersion) + 1,
           monthUsedCreditsMicro: 1_000_000_000,
+          monthReservedCreditsMicro: 0,
+          remainingCreditsMicro: Number(input.monthlyLimitCreditsMicro ?? 0) - 1_000_000_000,
+          canStartRun: true,
         },
         audit: { id: 'budget-audit-1' },
         replayed: false,
@@ -287,6 +303,38 @@ describe('Billing 路由端点', () => {
       expect(policy.showCost).toBe(true);
       expect(policy.showGrossMargin).toBe(true);
       expect(rig.fns.store.getTenantPolicy).toHaveBeenCalledWith('wain');
+    });
+  });
+
+  describe('PATCH /tenants/:tenantId/policy', () => {
+    it('硬封顶必须保留或设置正数的组织单 Run 上限', async () => {
+      const rig = await newRig(PLATFORM_ADMIN);
+
+      const preserved = await rig.request('/api/admin/billing/tenants/wain/policy', {
+        method: 'PATCH',
+        body: { lowBalanceThresholdCreditsMicro: 60_000_000 },
+      });
+      expect(preserved.status).toBe(200);
+      expect(rig.fns.updateTenantPolicy).toHaveBeenCalledTimes(1);
+
+      const cleared = await rig.request('/api/admin/billing/tenants/wain/policy', {
+        method: 'PATCH',
+        body: { maxRunCreditsMicro: null },
+      });
+      expect(cleared.status).toBe(400);
+      expect((await cleared.json()).error).toContain('必须配置正数');
+      expect(rig.fns.updateTenantPolicy).toHaveBeenCalledTimes(1);
+
+      const configured = await rig.request('/api/admin/billing/tenants/wain/policy', {
+        method: 'PATCH',
+        body: { hardCapMode: 'stop_before_run', maxRunCreditsMicro: 900_000_000 },
+      });
+      expect(configured.status).toBe(200);
+      expect(rig.fns.updateTenantPolicy).toHaveBeenLastCalledWith(
+        'wain',
+        { hardCapMode: 'stop_before_run', maxRunCreditsMicro: 900_000_000 },
+        'admin',
+      );
     });
   });
 
@@ -457,7 +505,7 @@ describe('Billing 路由端点', () => {
       });
       expect(res.status).toBe(200);
       expect(rig.fns.store.findLedgerByIdempotencyKey).toHaveBeenCalledWith(
-        'manual:admin:u-operator:bank_20260720_01',
+        'manual:wain:admin:u-operator:bank_20260720_01',
       );
       expect(rig.fns.store.sumManualPositiveCreditsByActorSince).toHaveBeenCalledWith(
         'ops',
@@ -469,7 +517,7 @@ describe('Billing 路由端点', () => {
         type: 'recharge',
         note: '[依据:BANK-20260720-01] 客户打款到账',
         actor: 'ops',
-        idempotencyKey: 'manual:admin:u-operator:bank_20260720_01',
+        idempotencyKey: 'manual:wain:admin:u-operator:bank_20260720_01',
       });
     });
 
@@ -492,7 +540,15 @@ describe('Billing 路由端点', () => {
 
     it('委托管理员：同一防重标识直接回放，万神殿账户一律拒绝', async () => {
       const rig = await newRig(BILLING_OPERATOR);
-      rig.fns.store.findLedgerByIdempotencyKey.mockResolvedValueOnce(fullLedgerEntry());
+      rig.fns.store.findLedgerByIdempotencyKey.mockResolvedValueOnce({
+        ...fullLedgerEntry(),
+        tenantId: 'wain',
+        type: 'refund',
+        source: 'manual',
+        creditsDeltaMicro: 100_000_000,
+        createdBy: 'ops',
+        note: '[依据:REFUND-1] 退款退回',
+      });
       const body = {
         creditsDelta: 100,
         type: 'refund',
@@ -509,6 +565,35 @@ describe('Billing 路由端点', () => {
         method: 'POST', body,
       });
       expect(pantheon.status).toBe(403);
+    });
+  });
+
+  describe('POST /ledger/:ledgerId/reverse', () => {
+    it('平台计费管理员按原流水精确冲正，并使用稳定防重键', async () => {
+      const rig = await newRig(PLATFORM_ADMIN);
+      const res = await rig.request('/api/admin/billing/ledger/debit-1/reverse', {
+        method: 'POST',
+        body: { tenantId: 'wain', idempotencyKey: 'refund_case_0001', note: '客户退款' },
+      });
+      expect(res.status).toBe(200);
+      expect(rig.fns.reverseDebit).toHaveBeenCalledWith({
+        tenantId: 'wain',
+        ledgerId: 'debit-1',
+        idempotencyKey: 'reversal:admin:u-platform:refund_case_0001',
+        note: '客户退款',
+        actor: 'admin',
+      });
+    });
+
+    it('组织管理员不能冲正；缺少业务字段返回 400', async () => {
+      const rig = await newRig(WAIN_ADMIN);
+      expect((await rig.request('/api/admin/billing/ledger/debit-1/reverse', {
+        method: 'POST', body: { tenantId: 'wain', idempotencyKey: 'refund_case_0001', note: '客户退款' },
+      })).status).toBe(403);
+      rig.setCaller(PLATFORM_ADMIN);
+      expect((await rig.request('/api/admin/billing/ledger/debit-1/reverse', {
+        method: 'POST', body: { tenantId: 'wain' },
+      })).status).toBe(400);
     });
   });
 
@@ -644,6 +729,15 @@ describe('Billing 路由端点', () => {
       expect(entry).not.toHaveProperty('accountId');
       expect(entry).not.toHaveProperty('billingPolicyVersion');
     });
+
+    it('普通成员不能读取同组织其他人的会话账单', async () => {
+      const rig = await newRig(WAIN_MEMBER);
+      rig.fns.store.isSessionOwnedByUser.mockResolvedValue(false);
+      expect((await rig.request('/api/billing/sessions/other-session/summary')).status).toBe(404);
+      expect((await rig.request('/api/billing/sessions/other-session/ledger')).status).toBe(404);
+      expect(rig.fns.getSessionSummary).not.toHaveBeenCalled();
+      expect(rig.fns.listLedgerForTenant).not.toHaveBeenCalled();
+    });
   });
 
   describe('员工月度软预算', () => {
@@ -655,7 +749,10 @@ describe('Billing 路由端点', () => {
       expect(body.summary).toEqual({
         tenantBalanceCredits: 487.655,
         monthUsedCredits: 1250,
+        monthReservedCredits: 100,
         budgetedUsers: 1,
+        enforcedUsers: 1,
+        blockedUsers: 0,
         nearLimitUsers: 0,
         overLimitUsers: 0,
         unattributedCredits: 50,
@@ -664,7 +761,12 @@ describe('Billing 路由端点', () => {
       expect(body.items.find((item: { userId: string }) => item.userId === 'u-member')).toMatchObject({
         monthlyLimitCredits: 2000,
         monthUsedCredits: 1000,
-        usageRatioBps: 5000,
+        monthReservedCredits: 100,
+        remainingCredits: 900,
+        enforcementMode: 'stop_new_runs',
+        perRunLimitCredits: 500,
+        canStartRun: true,
+        usageRatioBps: 5500,
         status: 'normal',
         canManage: true,
       });
@@ -727,6 +829,17 @@ describe('Billing 路由端点', () => {
         status: 'normal',
       });
       expect(rig.fns.store.getMemberBudgetOverview).toHaveBeenLastCalledWith('wain', 'u-member');
+      expect((await rig.request('/api/admin/billing/member-budgets')).status).toBe(403);
+      expect((await rig.request('/api/admin/billing/member-budget-audit')).status).toBe(403);
+      expect((await rig.request('/api/admin/billing/member-budgets/u-peer', {
+        method: 'PUT',
+        body: {
+          monthlyLimitCredits: 1,
+          expectedVersion: 2,
+          idempotencyKey: 'budget:deny:member',
+          note: '恶意阻断',
+        },
+      })).status).toBe(403);
     });
 
     it('预算审计只允许读取当前组织', async () => {

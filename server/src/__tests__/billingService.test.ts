@@ -39,6 +39,20 @@ describe('BillingService hard cap guard', () => {
     await expect(service.assertTenantCanStartRun('kaiyan')).resolves.toEqual({ ok: true });
   });
 
+  it('fails closed when hard cap is enabled without an organization per-run limit', async () => {
+    const service = new BillingService({
+      store: fakeStore({
+        balanceCreditsMicro: 100 * CREDIT_MICRO,
+        policy: { hardCapMode: 'stop_before_run', maxRunCreditsMicro: undefined },
+      }),
+    });
+
+    await expect(service.assertTenantCanStartRun('wain-test')).resolves.toMatchObject({
+      ok: false,
+      code: 'BILLING_RUN_LIMIT_NOT_CONFIGURED',
+    });
+  });
+
   it('blocks prepaid tenants when hard cap is enabled and effective balance is empty', async () => {
     const service = new BillingService({
       store: fakeStore({
@@ -77,7 +91,7 @@ describe('BillingService hard cap guard', () => {
     await expect(blocked.assertTenantCanStartRun('trial')).resolves.toMatchObject({ ok: false });
   });
 
-  it('short-circuits dispatch when hard cap rejects the tenant', async () => {
+  it('defers hard-cap decisions to raw dispatch so Steering/resume are not rejected by their own reservation', async () => {
     const service = new BillingService({
       store: fakeStore({
         balanceCreditsMicro: 0,
@@ -97,8 +111,8 @@ describe('BillingService hard cap guard', () => {
       events.push(event);
     }
 
-    expect(dispatch).not.toHaveBeenCalled();
-    expect(events).toEqual([{ type: 'error', error: '组织积分余额不足，当前计费策略已启用硬封顶。' }]);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(events).toEqual([{ type: 'assistant_message', message: { role: 'assistant', content: 'should not run' } }]);
   });
 
   it('advances runtime_events projection watermark across non-billable events', async () => {
@@ -133,7 +147,7 @@ describe('BillingService hard cap guard', () => {
     expect(store.setProjectionState).toHaveBeenCalledWith('runtime_events', 2);
   });
 
-  it('settles billable usage when a run pauses for user interaction', async () => {
+  it('keeps reservation active when a run pauses for user interaction', async () => {
     const store = {
       getProjectionState: vi.fn(async () => 0),
       listUnprojectedRuntimeEvents: vi.fn(async () => [
@@ -174,12 +188,71 @@ describe('BillingService hard cap guard', () => {
 
     await expect(service.projectRuntimeEvents()).resolves.toMatchObject({
       usageEventsInserted: 1,
-      debitEntriesInserted: 1,
+      debitEntriesInserted: 0,
       lastProjectedSequence: 2,
     });
 
     expect(store.insertUsageEvent).toHaveBeenCalledTimes(1);
-    expect(store.settleRunDebit).toHaveBeenCalledWith('tenant-1', 'run-1');
+    expect(store.settleRunDebit).not.toHaveBeenCalled();
+  });
+
+  it('settles late usage after an earlier terminal event even when the usage row is an idempotent replay', async () => {
+    const store = {
+      getProjectionState: vi.fn(async () => 10),
+      listUnprojectedRuntimeEvents: vi.fn(async () => [{
+        globalSequence: 11,
+        eventId: 'late-usage',
+        eventType: 'assistant_message',
+        tenantId: 'tenant-1',
+        timestamp: '2026-07-07T00:10:00.000Z',
+        eventJson: {
+          type: 'assistant_message',
+          runId: 'run-terminal',
+          sessionId: 'session-1',
+          model: 'glm-5.2',
+          usage: { inputTokens: 1000, outputTokens: 100 },
+        },
+      }]),
+      insertUsageEvent: vi.fn(async () => null),
+      hasEarlierTerminalEvent: vi.fn(async () => true),
+      settleRunDebit: vi.fn(async () => ({ id: 'ledger-late' })),
+      setProjectionState: vi.fn(async () => undefined),
+    };
+    const service = new BillingService({ store: store as any });
+
+    await expect(service.projectRuntimeEvents()).resolves.toMatchObject({ usageEventsInserted: 0 });
+    expect(store.hasEarlierTerminalEvent).toHaveBeenCalledWith('tenant-1', 'run-terminal', 11);
+    expect(store.settleRunDebit).toHaveBeenCalledWith('tenant-1', 'run-terminal');
+  });
+
+  it('projects compaction usage even though compaction has no assistant message', async () => {
+    const store = {
+      getProjectionState: vi.fn(async () => 0),
+      listUnprojectedRuntimeEvents: vi.fn(async () => [{
+        globalSequence: 1,
+        eventId: 'compact-usage',
+        eventType: 'compaction_usage',
+        tenantId: 'tenant-1',
+        timestamp: '2026-07-07T00:00:00.000Z',
+        eventJson: {
+          type: 'compaction_usage',
+          runId: 'run-compact',
+          sessionId: 'session-1',
+          model: 'glm-5.2',
+          usage: { inputTokens: 2000, outputTokens: 200 },
+        },
+      }]),
+      insertUsageEvent: vi.fn(async () => ({ id: 'usage-compact' })),
+      hasEarlierTerminalEvent: vi.fn(async () => false),
+      setProjectionState: vi.fn(async () => undefined),
+    };
+    const service = new BillingService({ store: store as any });
+
+    await expect(service.projectRuntimeEvents()).resolves.toMatchObject({ usageEventsInserted: 1 });
+    expect(store.insertUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'run-compact',
+      modelValue: 'glm-5.2',
+    }));
   });
 
   it('projects independent image-understanding usage into the immutable billing ledger', async () => {
@@ -491,6 +564,65 @@ describe('BillingService hard cap guard', () => {
   });
 });
 
+describe('BillingService utility 模型 Run', () => {
+  function utilityStore(overrides: Record<string, unknown> = {}) {
+    return {
+      getProjectionState: vi.fn(async () => 0),
+      listUnprojectedRuntimeEvents: vi.fn(async () => []),
+      setProjectionState: vi.fn(async () => undefined),
+      ensureRunReservation: vi.fn(async () => ({ ok: true, value: {} })),
+      assertRunCanContinue: vi.fn(async () => ({ ok: true, value: {} })),
+      insertUsageEvent: vi.fn(async (input: Record<string, unknown>) => ({ id: 'usage-utility', ...input })),
+      settleRunDebit: vi.fn(async () => null),
+      ...overrides,
+    };
+  }
+
+  it('每个 fallback 调用前重检，逐次写 usage，最终只结算一次', async () => {
+    const store = utilityStore();
+    const service = new BillingService({ store: store as any });
+    const run = await service.beginUtilityModelRun({
+      tenantId: 'tenant-1', userId: 'user-1', username: 'alice', sessionId: 'session-1', channel: 'title',
+    });
+
+    await run.beforeModelCall();
+    await run.recordUsage('title-main', { inputTokens: 10, outputTokens: 2, apiRequestCount: 1 });
+    await run.beforeModelCall();
+    await run.recordUsage('title-fallback', { inputTokens: 8, outputTokens: 1, apiRequestCount: 1 });
+    await run.finalize();
+    await run.finalize();
+
+    expect(store.ensureRunReservation).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-1', userId: 'user-1', sessionId: 'session-1', runId: run.runId,
+    }));
+    expect(store.assertRunCanContinue).toHaveBeenCalledTimes(2);
+    expect(store.insertUsageEvent.mock.calls.map((call) => call[0])).toEqual([
+      expect.objectContaining({ modelValue: 'title-main', requestIndex: 1, runId: run.runId }),
+      expect.objectContaining({ modelValue: 'title-fallback', requestIndex: 2, runId: run.runId }),
+    ]);
+    expect(store.settleRunDebit).toHaveBeenCalledTimes(1);
+  });
+
+  it('reservation 或逐轮授权拒绝时阻止 utility 模型调用', async () => {
+    const deniedStart = utilityStore({
+      ensureRunReservation: vi.fn(async () => ({ ok: false, code: 'BILLING_ORG_BALANCE_EXHAUSTED', reason: '余额不足' })),
+    });
+    await expect(new BillingService({ store: deniedStart as any }).beginUtilityModelRun({
+      tenantId: 'tenant-1', username: 'alice', channel: 'guardrail',
+    })).rejects.toThrow(/BILLING_ORG_BALANCE_EXHAUSTED.*余额不足/);
+
+    const deniedTurn = utilityStore({
+      assertRunCanContinue: vi.fn(async () => ({ ok: false, code: 'BILLING_RUN_LIMIT_EXCEEDED', reason: 'Run 上限' })),
+    });
+    const run = await new BillingService({ store: deniedTurn as any }).beginUtilityModelRun({
+      tenantId: 'tenant-1', username: 'alice', channel: 'guardrail',
+    });
+    await expect(run.beforeModelCall()).rejects.toThrow(/BILLING_RUN_LIMIT_EXCEEDED.*Run 上限/);
+    await run.finalize();
+    expect(deniedTurn.insertUsageEvent).not.toHaveBeenCalled();
+  });
+});
+
 describe('PgBillingStore.chargeFixedDebit', () => {
   // 私有方法经 spy 隔离 PG：本组只验证 chargeFixedDebit 自身的守卫/幂等/落账语义，
   // SQL 层由集成环境覆盖。
@@ -636,6 +768,7 @@ function fakeStore(input: {
       negativeLimitCreditsMicro: 0,
       lowBalanceThresholdCreditsMicro: 0,
       hardCapMode: 'none',
+      maxRunCreditsMicro: 1000 * CREDIT_MICRO,
       showBalance: true,
       showUsageCredits: true,
       showCost: false,

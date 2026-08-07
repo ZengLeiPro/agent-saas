@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 
 import type {
   ModelAdapter,
@@ -166,6 +166,7 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
       model: request.model,
       sessionId: context.sessionId,
       signal,
+      authorizeModelTurn: context.authorizeModelTurn,
     });
     if (!response.body) {
       throw new Error('Chat Completions response body is empty.');
@@ -187,6 +188,32 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
     const reader = response.body.getReader();
     let buffer = '';
     let sawDone = false;
+    const modelRequestId = randomUUID();
+    const attemptId = randomUUID();
+    const requestStartedAt = Date.now();
+    const recordFailedUsage = async (
+      outcome: 'parse_error' | 'stream_error',
+      err: unknown,
+    ): Promise<void> => {
+      if (!usage || !context.recordModelRequestDiagnostic) return;
+      try {
+        const recorded = await context.recordModelRequestDiagnostic({
+          type: 'finished',
+          modelRequestId,
+          attemptId,
+          attempt: 1,
+          outcome,
+          durationMs: Date.now() - requestStartedAt,
+          errorMessage: err instanceof Error ? err.message : String(err),
+          usage,
+        });
+        if (recorded === false) {
+          throw new Error('MODEL_USAGE_DIAGNOSTIC_PERSIST_FAILED');
+        }
+      } catch (recordErr) {
+        throw new Error(`MODEL_USAGE_DIAGNOSTIC_PERSIST_FAILED: ${recordErr instanceof Error ? recordErr.message : String(recordErr)}`);
+      }
+    };
 
     try {
       while (true) {
@@ -245,6 +272,7 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
       for (const visibleDelta of toolCallRepair.abort()) {
         yield { type: 'text_delta', content: visibleDelta };
       }
+      await recordFailedUsage(err instanceof SyntaxError ? 'parse_error' : 'stream_error', err);
       throw err;
     } finally {
       reader.releaseLock();
@@ -262,7 +290,9 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
     // E3 DSML reject（与 ResponsesApiAdapter 对齐）。日志只记短元数据，协议正文可能含参数/Secret。
     if (detectDsmlLeak(content)) {
       logger.warn(`DSML leak rejected in chat completions model=${request.model}`);
-      throw new Error('模型输出格式异常（DSML 模板未被服务端解析），已中断本轮。');
+      const error = new Error('模型输出格式异常（DSML 模板未被服务端解析），已中断本轮。');
+      await recordFailedUsage('parse_error', error);
+      throw error;
     }
 
     if (toolCallRepairMode === 'repair' && !sawDone && !finishReason) {
@@ -278,7 +308,9 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
       for (const visibleText of incompleteRepair.visibleText) {
         yield { type: 'text_delta', content: visibleText };
       }
-      throw new Error('Chat Completions stream ended before a terminal marker.');
+      const error = new Error('Chat Completions stream ended before a terminal marker.');
+      await recordFailedUsage('stream_error', error);
+      throw error;
     }
 
     // C1 mojibake warn（与 ResponsesApiAdapter 对齐）；不记录正文 preview。
@@ -332,9 +364,15 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
 async function fetchChatCompletionsWithRetry(
   url: string,
   init: RequestInit,
-  context: { model: string; sessionId?: string; signal?: AbortSignal },
+  context: {
+    model: string;
+    sessionId?: string;
+    signal?: AbortSignal;
+    authorizeModelTurn?: () => Promise<void>;
+  },
 ): Promise<Response> {
   for (let attempt = 1; attempt <= CHAT_COMPLETIONS_MAX_FETCH_ATTEMPTS; attempt++) {
+    await context.authorizeModelTurn?.();
     let response: Response;
     try {
       response = await fetch(url, init);

@@ -123,6 +123,7 @@ describe('ChatCompletionsModelAdapter', () => {
       apiKey: 'sk-test',
       baseUrl: 'https://example.invalid/v1',
     }, {});
+    const authorizeModelTurn = vi.fn(async () => undefined);
 
     const events = await collect(adapter.stream({
       model: 'gpt-codex',
@@ -134,9 +135,11 @@ describe('ChatCompletionsModelAdapter', () => {
       model: 'gpt-codex',
       cwd: '/tmp/workspace',
       channelContext: { channel: 'web' },
+      authorizeModelTurn,
     }));
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(authorizeModelTurn).toHaveBeenCalledTimes(2);
     expect(events).toContainEqual({
       type: 'completed',
       content: '恢复',
@@ -274,16 +277,40 @@ describe('ChatCompletionsModelAdapter agent-plan defense (二轮加固)', () => 
     expect(body.messages[0].content).toBe('[2026/07/14 周二 04:33] hi');
   });
 
-  it('DSML 泄漏 throw user-friendly error (E3，preview 在日志)', async () => {
+  it('DSML 泄漏中断时把已返回 usage 写入失败诊断', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
       sse({ choices: [{ delta: { content: '<｜DSML｜tool_calls>x' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }),
       sse('[DONE]'),
     ]));
+    const recordModelRequestDiagnostic = vi.fn(async () => undefined);
     await expect(collect(adapter().stream({
       model: 'doubao-pro',
       messages: [{ role: 'user', content: 'echo' }],
       tools: [],
-    }, baseCtx))).rejects.toThrow(/模型输出格式异常.*DSML/);
+    }, { ...baseCtx, recordModelRequestDiagnostic }))).rejects.toThrow(/模型输出格式异常.*DSML/);
+    expect(recordModelRequestDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'finished',
+      outcome: 'parse_error',
+      usage: expect.objectContaining({ inputTokens: 1, outputTokens: 1 }),
+    }));
+  });
+
+  it('SSE 解析失败时把此前帧的 usage 写入失败诊断', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 2 } }),
+      'data: {not-json}\n\n',
+    ]));
+    const recordModelRequestDiagnostic = vi.fn(async () => undefined);
+    await expect(collect(adapter().stream({
+      model: 'doubao-pro',
+      messages: [{ role: 'user', content: 'echo' }],
+      tools: [],
+    }, { ...baseCtx, recordModelRequestDiagnostic }))).rejects.toThrow();
+    expect(recordModelRequestDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'finished',
+      outcome: 'parse_error',
+      usage: expect.objectContaining({ inputTokens: 5, outputTokens: 2 }),
+    }));
   });
 
   it('mojibake 检测命中触发 warn 不中断 (C1)', async () => {

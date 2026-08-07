@@ -1534,6 +1534,7 @@ describe('RawAgentLoop', () => {
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
     const eventStore = new FileEventStore(eventPath);
+    const authorizeModelTurn = vi.fn(async () => undefined);
     const loop = new RawAgentLoop({
       modelAdapter: new TextThenToolThenTextAdapter(),
       eventStore,
@@ -1559,9 +1560,11 @@ describe('RawAgentLoop', () => {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
         },
+        authorizeModelTurn,
       },
     ));
 
+    expect(authorizeModelTurn).toHaveBeenCalledTimes(2);
     expect(events.map((event) => event.type)).toEqual([
       'text_start',
       'text_delta',
@@ -4549,11 +4552,17 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     expect(request.toolChoice).toBe('none');
     expect(request.previousResponseId).toBeUndefined();
 
-    // 事件落库：run_started → user_message(替身) → compaction → run_finished；
-    // v2 起摘要不再落 assistant_message
+    // 事件落库：run_started → user_message(替身) → compaction_usage → compaction → run_finished；
+    // v2 起摘要不再落 assistant_message，usage 仍需独立进入 Billing 投影。
     const events = await eventStore.list('session-compact');
     const compactRunEvents = events.filter((e) => 'runId' in e && e.runId === 'run-compact-1');
-    expect(compactRunEvents.map((e) => e.type)).toEqual(['run_started', 'user_message', 'compaction', 'run_finished']);
+    expect(compactRunEvents.map((e) => e.type)).toEqual([
+      'run_started', 'user_message', 'compaction_usage', 'compaction', 'run_finished',
+    ]);
+    expect(events.find((e) => e.type === 'compaction_usage')).toMatchObject({
+      model: 'glm-5.2',
+      usage: { inputTokens: 500, outputTokens: 60 },
+    });
 
     const compaction = events.find((e) => e.type === 'compaction') as any;
     expect(compaction.summary).toContain('推荐 B');

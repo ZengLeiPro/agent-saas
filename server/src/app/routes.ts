@@ -271,6 +271,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       titleGeneratorConfigs: runtime.titleGeneratorConfigs,
       getTitleSystemPrompt: () => runtime.systemPromptRegistry.get('utility.title'),
       tokenUsageStore: runtime.tokenUsageStore,
+      billingService: runtime.billingService,
       getEventBus: webChannel ? () => webChannel.getEventBus() : undefined,
       runtimeEventStoreFor: runtime.runtimeEventStoreFor,
       resolveContextAccounting: (modelRef) => resolveContextAccountingFromModels(config.models, modelRef),
@@ -885,6 +886,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         createOrgAgentsRouter({
           orgAgentStore: runtime.orgAgentStore,
           orgAgentAvatarsDir: resolve(processCwd, "./data/org-agent-avatars"),
+          getGuardrailModelConfigs: runtime.getGuardrailModelConfigs,
+          billingService: runtime.billingService,
           onSkillAssignmentsChanged: runtime.skillConfigStore
             ? () => runtime.skillConfigStore!.touchConfigVersion()
             : undefined,

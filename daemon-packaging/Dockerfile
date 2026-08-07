@@ -2,12 +2,14 @@ FROM node:22-alpine
 
 WORKDIR /opt/agent-daemon
 
-# Install pnpm (kept lean — only what the daemon needs).
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Install the repository-authoritative pnpm version and verify its packageManager hash.
+COPY package.json ./
+RUN corepack enable \
+    && corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
 
 # Copy workspace files. The daemon depends on the same `server` package the
 # brain uses, so we copy the whole repo. CI / multi-stage builds can prune.
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+COPY pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY server/package.json ./server/package.json
 COPY hand-server/package.json ./hand-server/package.json
 

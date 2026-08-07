@@ -597,7 +597,7 @@ jobs:
           cd "$APP_DIR"
           if command -v corepack >/dev/null 2>&1; then
             corepack enable
-            corepack prepare pnpm@10.18.3 --activate
+            corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
           fi
           NODE_ENV=development pnpm install --frozen-lockfile --filter acs-orchestrator... --filter server... --filter shared...
           # 2026-08-03 P3a：生产 orchestrator 改为 esbuild bundle + node dist 运行

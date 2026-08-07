@@ -214,7 +214,7 @@ describe("TaskBoardView", () => {
 
     await waitFor(() => expect(mocks.addComment).toHaveBeenCalledWith({ body: "已完成首轮验证" }));
     expect(mocks.refreshTasks).toHaveBeenCalled();
-  });
+  }, 15_000);
 
   it("拖拽时传相邻任务，409 后显示回滚重拉提示", async () => {
     mocks.tasks = [

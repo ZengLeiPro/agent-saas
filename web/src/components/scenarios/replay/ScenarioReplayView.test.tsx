@@ -185,6 +185,19 @@ describe('右侧企业系统面板', () => {
     expect(screen.queryByText('确认问题范围与可用资料')).toBeNull();
   });
 
+  it('会话区与业务系统数据区是有间距的独立圆角卡片', () => {
+    renderReplay();
+    clickNext(1);
+    const conversation = document.querySelector('[data-scenario-replay-conversation]') as HTMLElement;
+    const panel = document.querySelector('[data-scenario-replay-panel]') as HTMLElement;
+    const divider = screen.getByRole('separator', { name: '调整右侧看板宽度' });
+
+    expect(conversation.className).toContain('rounded-xl');
+    expect(panel.className).toContain('rounded-xl');
+    expect(panel.className).not.toContain('border-l');
+    expect(divider.parentElement?.className).toContain('w-2.5');
+  });
+
   it('可拖拽调整宽度，双击恢复默认宽度', () => {
     renderReplay();
     clickNext(1);
@@ -203,14 +216,14 @@ describe('右侧企业系统面板', () => {
       toJSON: () => ({}),
     });
 
-    expect(panel.style.flexBasis).toBe('30%');
+    expect(panel.style.flexBasis).toBe('calc(30% - 5px)');
     fireEvent.mouseDown(divider, { clientX: 700 });
     fireEvent.mouseMove(window, { clientX: 300 });
     fireEvent.mouseUp(window);
-    expect(panel.style.flexBasis).toBe('50%');
+    expect(panel.style.flexBasis).toBe('calc(50% - 5px)');
 
     fireEvent.doubleClick(divider);
-    expect(panel.style.flexBasis).toBe('30%');
+    expect(panel.style.flexBasis).toBe('calc(30% - 5px)');
   });
 
   it('面板常驻于后续每一步', () => {

@@ -23,6 +23,10 @@ const UndoIcon = ActionIcons.undo;
 const DEFAULT_TYPEWRITER_INTERVAL_MS = 24;
 const TYPEWRITER_TARGET_TICKS = 120;
 
+// 与正式会话的主区域、文件预览和系统面板保持同一档浮动卡片表面。
+const REPLAY_FLOATING_PANEL_SURFACE =
+  "bg-card ring-1 ring-border/60 shadow-[0_2px_6px_rgba(15,23,42,0.05),0_10px_28px_-10px_rgba(15,23,42,0.10)]";
+
 function splitText(content: string): string[] {
   return Array.from(content);
 }
@@ -273,29 +277,31 @@ export function ScenarioReplayView({
   return (
     // h-full 而非 flex-1：父级 TabsContent 是普通块、不是 flex 容器，
     // flex-1 在那里不生效，会导致消息区高度塌陷、回放条被顶到页面上方
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-4 py-2">
-        <Button variant="ghost" size="sm" onClick={onExit} className="gap-1 px-2">
-          <ChevronLeft className="size-4" />
-          返回
-        </Button>
-        <h2 className="min-w-0 truncate text-sm font-medium">{script.title}</h2>
-        <Badge variant="secondary" className="ml-auto shrink-0 font-normal">
-          {script.mode === "hero" ? "完整业务闭环" : "快速体验"}
-        </Badge>
-      </div>
-
-      <div ref={rightOpen ? splitContainerRef : undefined} className="flex min-h-0 flex-1">
-        {/* 默认保持会话区更宽；右侧看板的拖拽交互与正式会话复用同一个 useResizePanel。 */}
-        <div
-          data-scenario-replay-conversation
-          className={cn("flex min-h-0 flex-col", rightOpen ? "min-w-0" : "w-full")}
-          style={rightOpen ? {
-            flexBasis: `${(1 - splitRatio) * 100}%`,
-            flexShrink: 0,
-            flexGrow: 0,
-          } : undefined}
-        >
+    <div ref={rightOpen ? splitContainerRef : undefined} className="flex h-full min-h-0 overflow-hidden">
+      {/* 默认保持会话区更宽；右侧看板的拖拽交互与正式会话复用同一个 useResizePanel。 */}
+      <div
+        data-scenario-replay-conversation
+        className={cn(
+          "flex min-h-0 flex-col overflow-hidden rounded-xl",
+          REPLAY_FLOATING_PANEL_SURFACE,
+          rightOpen ? "min-w-0" : "w-full",
+        )}
+        style={rightOpen ? {
+          flexBasis: `calc(${(1 - splitRatio) * 100}% - 5px)`,
+          flexShrink: 0,
+          flexGrow: 0,
+        } : undefined}
+      >
+        <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-4 py-2">
+          <Button variant="ghost" size="sm" onClick={onExit} className="gap-1 px-2">
+            <ChevronLeft className="size-4" />
+            返回
+          </Button>
+          <h2 className="min-w-0 truncate text-sm font-medium">{script.title}</h2>
+          <Badge variant="secondary" className="ml-auto shrink-0 font-normal">
+            {script.mode === "hero" ? "完整业务闭环" : "快速体验"}
+          </Badge>
+        </div>
           <FilePreviewProvider value={{ openPreview, downloadFile }}>
             <MessageList
               messages={messages}
@@ -383,18 +389,23 @@ export function ScenarioReplayView({
           </div>
         </div>
 
-        {rightOpen && (
-          <>
+      {rightOpen && (
+        <>
+          <div className="flex w-2.5 shrink-0 items-center justify-center">
             <ResizablePanelDivider
               label="调整右侧看板宽度"
               onMouseDown={onDividerMouseDown}
               onDoubleClick={onDividerDoubleClick}
             />
-            <div
-              data-scenario-replay-panel
-              className="flex min-h-0 shrink-0 flex-col border-l border-border/60"
-              style={{ flexBasis: `${splitRatio * 100}%`, flexGrow: 0, flexShrink: 0 }}
-            >
+          </div>
+          <div
+            data-scenario-replay-panel
+            className={cn(
+              "flex min-h-0 shrink-0 flex-col overflow-hidden rounded-xl",
+              REPLAY_FLOATING_PANEL_SURFACE,
+            )}
+            style={{ flexBasis: `calc(${splitRatio * 100}% - 5px)`, flexGrow: 0, flexShrink: 0 }}
+          >
               {/* 产物预览抢占面板：用户显式点击的意图压过自动跟随。
                   面板不卸载，只是被盖住，fold 状态与滚动位置都保留。 */}
               {artifactHtml ? (
@@ -411,8 +422,6 @@ export function ScenarioReplayView({
             </div>
           </>
         )}
-      </div>
-
     </div>
   );
 }

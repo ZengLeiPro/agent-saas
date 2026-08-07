@@ -97,6 +97,7 @@ export function DesktopLayout(props: LayoutProps) {
 
   const { user: authUser, updatePreferences } = useAuth();
   const [activeUsageCard, setActiveUsageCard] = useState<"context" | "billing" | null>(null);
+  const [capabilityReplayOpen, setCapabilityReplayOpen] = useState(false);
   const handleContextCardOpenChange = useCallback((open: boolean) => {
     setActiveUsageCard((current) => open ? "context" : current === "context" ? null : current);
   }, []);
@@ -122,9 +123,10 @@ export function DesktopLayout(props: LayoutProps) {
   const { snapshot: systemPanel, open: systemPanelOpen, selectView: selectSystemPanelView, dismiss: dismissSystemPanel } =
     useSystemPanelDock(messages, sessionId);
 
-  // 主会话、能力中心与定时任务走同一档浮动白框；其余管理类 tab 仍平铺在品牌底上。
+  const capabilityReplayActive = activeTab === "capabilities" && capabilityReplayOpen;
+  // 工作流回放自行渲染会话卡与系统数据卡；目录态仍由外层提供统一浮动白框。
   const contentPanelFloating =
-    activeTab === "chat" || activeTab === "capabilities" || activeTab === "cron";
+    activeTab === "chat" || (activeTab === "capabilities" && !capabilityReplayOpen) || activeTab === "cron";
 
   const sidePreviewOpen = !!previewFilePath && previewMode === "side";
   /**
@@ -370,15 +372,16 @@ export function DesktopLayout(props: LayoutProps) {
       >
         <div
           className={cn(
-            "flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl",
+            "flex min-h-0 min-w-0 flex-col overflow-hidden",
+            !capabilityReplayActive && "rounded-xl",
             contentPanelFloating && FLOATING_PANEL_SURFACE,
           )}
           style={showRightPanel
             ? { flexBasis: `calc(${(1 - splitRatio) * 100}% - 5px)`, flexShrink: 0, flexGrow: 0 }
             : { flex: 1 }}
         >
-        {/* 内容区 header */}
-        <header
+        {/* 具体工作流回放使用自己的标题栏，不再保留能力中心分类标签。 */}
+        {!capabilityReplayActive && <header
           className={cn(
             "flex shrink-0 items-center gap-3",
             activeTab === "capabilities" ? "h-14 px-6" : "h-12 px-4",
@@ -493,7 +496,7 @@ export function DesktopLayout(props: LayoutProps) {
               </Button>
             </div>
           )}
-        </header>
+        </header>}
 
         {!isOnline && (
           <div className="shrink-0 bg-warning px-4 py-1.5 text-center text-xs font-medium text-foreground">
@@ -577,6 +580,7 @@ export function DesktopLayout(props: LayoutProps) {
                 onStartWorkflow={handleStartWorkflow}
                 onRequestDiagnosis={handleStartWorkflow}
                 onWorkflowSelected={(scenario) => setActiveWorkflow({ scenario })}
+                onWorkflowReplayOpenChange={setCapabilityReplayOpen}
                 roleDetailId={roleDetailId}
                 onOpenRoleDetail={setRoleDetailId}
                 onCloseRoleDetail={() => setRoleDetailId(null)}

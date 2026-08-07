@@ -65,6 +65,7 @@ export interface ScenariosPanelProps {
   onConnectWorkflow?: (workflowId: string) => void;
   onRequestDiagnosis?: (message: string, scenario: CatalogScenarioPublic) => void;
   onWorkflowSelected?: (scenario: CatalogScenarioPublic) => void;
+  onReplayOpenChange?: (open: boolean) => void;
   roleDetailId?: string | null;
   onOpenRoleDetail?: (roleId: string) => void;
   onCloseRoleDetail?: () => void;
@@ -85,6 +86,11 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
   const [deferredNotice, setDeferredNotice] = useState<WorkflowLibraryPublicV3["deferredObjects"][number] | null>(null);
   const deepLinkConsumed = useRef(false);
   const userSelectedRole = useRef(false);
+
+  useEffect(() => {
+    props.onReplayOpenChange?.(replay !== null);
+  }, [props.onReplayOpenChange, replay]);
+  useEffect(() => () => props.onReplayOpenChange?.(false), [props.onReplayOpenChange]);
 
   const workflowLibrary = result.workflowLibrary ?? null;
   const roles = workflowLibrary?.roles ?? result.library?.roles ?? [];

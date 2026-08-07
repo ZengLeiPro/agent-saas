@@ -76,11 +76,14 @@ describe("ScenariosPanel V3", () => {
     });
     mocked.workflowLibrary = makeWorkflowLibrary([guided, makeWorkflowScenario("ordinary")]);
 
-    render(<ScenariosPanel onTryScenario={vi.fn()} />);
+    const onReplayOpenChange = vi.fn();
+    render(<ScenariosPanel onTryScenario={vi.fn()} onReplayOpenChange={onReplayOpenChange} />);
+    expect(onReplayOpenChange).toHaveBeenLastCalledWith(false);
     expect(screen.getByTestId("guided-presentations").children).toHaveLength(1);
     expect(screen.queryByTestId("workflow-catalog")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "看它如何完成" }));
+    expect(onReplayOpenChange).toHaveBeenLastCalledWith(true);
     expect(screen.getByRole("heading", { name: guided.title })).toBeTruthy();
     expect(screen.getByText("0 / 6")).toBeTruthy();
     expect(screen.getByText(/业务系统出现一条待处理事件/)).toBeTruthy();
@@ -90,6 +93,7 @@ describe("ScenariosPanel V3", () => {
     expect(screen.getByText("已运行")).toBeTruthy();
     expect(screen.queryByText("业务步骤 1")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    expect(onReplayOpenChange).toHaveBeenLastCalledWith(false);
 
     fireEvent.click(screen.getByRole("button", { name: "浏览全部 2 个工作场景" }));
     expect(screen.getByTestId("workflow-catalog").children).toHaveLength(2);

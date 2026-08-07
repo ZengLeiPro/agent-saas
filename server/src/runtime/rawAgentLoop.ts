@@ -595,6 +595,26 @@ export class RawAgentLoop implements AgentLoop {
     }
   }
 
+  /** Local tool-call repair creates a call id absent from provider-owned response state. */
+  private async clearResponseSessionStateForRepair(runId: string, sessionId: string): Promise<void> {
+    if (!this.runStore) return;
+    try {
+      if (this.runStore.clearResponseSessionStateBySession) {
+        await this.runStore.clearResponseSessionStateBySession(sessionId);
+      } else if (this.runStore.updateResponseSessionState) {
+        await this.runStore.updateResponseSessionState(runId, {
+          lastResponseId: null,
+          lastResponseExpireAt: null,
+          actualModelSeen: null,
+          lastResponseModel: null,
+          lastResponseProfileDigest: null,
+        });
+      }
+    } catch {
+      // State persistence is best-effort; in-memory currentResponseId is still cleared immediately.
+    }
+  }
+
   private async loadReplaceableDraftState(context: RunContext): Promise<ReplaceableDraftRunState | null> {
     if (!context.channelContext.replaceableDrafts || !this.runStore) return null;
     try {
@@ -1462,7 +1482,10 @@ export class RawAgentLoop implements AgentLoop {
 
         // RFC v1 P0.4：每轮持久化 Responses API session state。
         // currentResponseId 用于下一轮 turn 接力（同 run 内）；落库后跨 run 也能查回。
-        if (usesStoredResponseState && completed.responseId) {
+        if (usesStoredResponseState && completed.responseStateReset) {
+          currentResponseId = undefined;
+          await this.clearResponseSessionStateForRepair(context.runId, context.sessionId);
+        } else if (usesStoredResponseState && completed.responseId) {
           currentResponseId = completed.responseId;
           await this.persistResponseSessionState(context.runId, completed, context.model, context.profileConfigDigest);
         }
@@ -3448,7 +3471,10 @@ export class RawAgentLoop implements AgentLoop {
         }
 
         // RFC v1 P0.4：resume 路径同样持久化 last_response_id 等。
-        if (usesStoredResponseState && completed.responseId) {
+        if (usesStoredResponseState && completed.responseStateReset) {
+          currentResponseId = undefined;
+          await this.clearResponseSessionStateForRepair(args.context.runId, args.context.sessionId);
+        } else if (usesStoredResponseState && completed.responseId) {
           currentResponseId = completed.responseId;
           await this.persistResponseSessionState(
             args.context.runId,

@@ -189,6 +189,8 @@ export interface ModelProviderOptions {
    * 仅覆盖 fetch 网络错误、502/503/504，以及错误信息明确包含 EOF/连接断开的 HTTP 500。
    */
   preStreamRetryDelaysMs?: number[];
+  /** 普通 assistant 文本工具调用修复；默认 off，必须按 provider/model 显式开启。 */
+  toolCallRepair?: 'off' | 'detect' | 'repair';
   // ── Responses API v1（RFC P0.5）：仅 protocol="responses" 时生效 ──
   /** 协议路由，默认 chat_completions（保持现有行为）。 */
   protocol?: "chat_completions" | "responses";

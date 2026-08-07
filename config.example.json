@@ -16,6 +16,9 @@
         // "thinking": { "type": "enabled" },
         // "reasoning_effort": "high",
         // "extraBody": { "temperature": 1 },
+        // 普通 assistant 文本工具调用修复：off（默认）/ detect（只观测）/ repair（安全提升）。
+        // 必须按 provider/model 显式开启，生产不会全局自动 repair。
+        // "tool_call_repair": "detect",
         // 无状态 OpenAI 兼容代理（如 cli-proxy）走 Responses 协议时必须关闭有状态接力，
         // 否则工具调用后那一轮上游会报 "No tool call found for function call output"。
         // group 级开关，组内所有模型生效；model 级 disable_response_chaining 可单独覆盖。

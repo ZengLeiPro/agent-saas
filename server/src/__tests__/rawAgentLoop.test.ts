@@ -3765,6 +3765,63 @@ describe('RawAgentLoop', () => {
       patch: { lastResponseId: 'resp_new_run', lastResponseModel: 'glm-5.2' },
     });
   });
+
+  it('local repaired call invalidates stale provider response state before the next turn', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-repair-reset-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const requests: ModelRequest[] = [];
+    const clearedSessions: string[] = [];
+    const adapter: ModelAdapter = {
+      async *stream(request): AsyncIterable<ModelEvent> {
+        requests.push(request);
+        yield {
+          type: 'completed',
+          content: 'ok',
+          toolCalls: [],
+          responseStateReset: true,
+          responseChained: true,
+          responseMode: 'relay',
+        };
+      },
+    };
+    const runStore = {
+      findLatestResponseSessionStateBySession: async () => ({
+        runId: 'run-relay-old',
+        lastResponseId: 'resp_stale',
+        lastResponseModel: 'glm-5.2',
+      }),
+      clearResponseSessionStateBySession: async (sessionId: string) => {
+        clearedSessions.push(sessionId);
+        return 1;
+      },
+    } as unknown as RunStore;
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-repair-reset'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore,
+    });
+
+    await collect(loop.run({
+      message: { channel: 'web', chatId: 'chat-1', content: 'go' },
+      prompt: 'go',
+      instructions: 'continue',
+      maxTurns: 1,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId: 'run-repair-reset',
+      sessionId: 'session-repair-reset',
+      model: 'glm-5.2',
+      cwd,
+      channelContext: { channel: 'web' },
+    }));
+
+    expect(requests[0]?.previousResponseId).toBe('resp_stale');
+    expect(clearedSessions).toEqual(['session-repair-reset']);
+  });
 });
 
 describe('RawAgentLoop.compact（/compact 真实现）', () => {

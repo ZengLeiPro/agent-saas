@@ -46,6 +46,7 @@ export interface GuardrailCheckResult {
 export interface GuardrailCheckOptions {
   /** 单次模型调用超时（默认 6000ms） */
   timeoutMs?: number;
+  beforeModelCall?: (model: string) => void | Promise<void>;
   onUsage?: (model: string, usage: SdkResultModelUsage) => void | Promise<void>;
   /** 平台管理热更新后的系统提示语；缺省继续使用代码内置版本。 */
   systemPrompt?: string;
@@ -189,8 +190,13 @@ async function checkTopicScopeOnce(
 
   const client = new OpenAI({
     apiKey,
+    maxRetries: 0,
     ...(baseURL ? { baseURL } : {}),
   });
+
+  // 计费授权错误必须向上冒泡，不能被当作 provider 失败后继续 fallback。
+  await options.beforeModelCall?.(config.model);
+  let usageCallbackFailed = false;
 
   try {
     const result = await client.chat.completions.create({
@@ -205,13 +211,18 @@ async function checkTopicScopeOnce(
       n: 1,
     }, { signal: controller.signal });
     if (result.usage) {
-      await options.onUsage?.(config.model, {
-        inputTokens: result.usage.prompt_tokens ?? 0,
-        outputTokens: result.usage.completion_tokens ?? 0,
-        cacheReadInputTokens: result.usage.prompt_tokens_details?.cached_tokens ?? 0,
-        cacheCreationInputTokens: 0,
-        apiRequestCount: 1,
-      });
+      try {
+        await options.onUsage?.(config.model, {
+          inputTokens: result.usage.prompt_tokens ?? 0,
+          outputTokens: result.usage.completion_tokens ?? 0,
+          cacheReadInputTokens: result.usage.prompt_tokens_details?.cached_tokens ?? 0,
+          cacheCreationInputTokens: 0,
+          apiRequestCount: 1,
+        });
+      } catch (err) {
+        usageCallbackFailed = true;
+        throw err;
+      }
     }
     const choice = result.choices[0];
     const raw = choice?.message?.content ?? '';
@@ -225,6 +236,7 @@ async function checkTopicScopeOnce(
     }
     return parseVerdict(raw, config.model);
   } catch (err) {
+    if (usageCallbackFailed) throw err;
     const reason = err instanceof Error ? err.message : String(err);
     guardrailLogger.warn(`Guardrail check failed (model=${config.model}): ${reason}`);
     return null;

@@ -9,11 +9,19 @@ import {
   DEFAULT_TARGET_MARGIN_BPS,
   type BillingAuditSummary,
   type BillingCreditAccount,
+  type BillingDecisionCode,
+  type BillingFixedFeeHold,
+  type BillingFixedFeeHoldDecision,
   type BillingLedgerEntry,
   type BillingMemberBudgetAuditEntry,
+  type BillingMemberBudgetEnforcementMode,
   type BillingMemberBudgetOverview,
   type BillingMemberBudgetUsage,
   type BillingMode,
+  type BillingRunContinueDecision,
+  type BillingRunReservation,
+  type EnsureRunReservationDecision,
+  type EnsureRunReservationInput,
   type BillingPricingVersion,
   type BillingUsageEvent,
   type FixedDebitInput,
@@ -39,6 +47,7 @@ export interface BillingPolicyPatch {
   negativeLimitCreditsMicro?: number;
   lowBalanceThresholdCreditsMicro?: number;
   hardCapMode?: HardCapMode;
+  maxRunCreditsMicro?: number | null;
   showBalance?: boolean;
   showUsageCredits?: boolean;
   showCost?: boolean;
@@ -47,11 +56,15 @@ export interface BillingPolicyPatch {
 
 export class BillingBudgetVersionConflictError extends Error {}
 export class BillingBudgetIdempotencyConflictError extends Error {}
+export class BillingLedgerReversalConflictError extends Error {}
 
 export interface UpsertMemberBudgetInput {
   tenantId: string;
   userId: string;
   monthlyLimitCreditsMicro?: number;
+  enforcementMode?: BillingMemberBudgetEnforcementMode;
+  /** undefined=保留现值，null=清除单 Run 上限。 */
+  perRunLimitCreditsMicro?: number | null;
   expectedVersion: number;
   idempotencyKey: string;
   note: string;
@@ -100,6 +113,9 @@ export class PgBillingStore {
   readonly creditLedgerTable: string;
   readonly memberBudgetsTable: string;
   readonly memberBudgetAuditTable: string;
+  readonly memberPeriodAccountsTable: string;
+  readonly runReservationsTable: string;
+  readonly fixedFeeHoldsTable: string;
   readonly projectionStateTable: string;
   private readonly eventsTable?: string;
   private readonly runsTable?: string;
@@ -116,6 +132,9 @@ export class PgBillingStore {
     this.creditLedgerTable = `${prefix}_billing_credit_ledger`;
     this.memberBudgetsTable = `${prefix}_billing_member_budgets`;
     this.memberBudgetAuditTable = `${prefix}_billing_member_budget_audit`;
+    this.memberPeriodAccountsTable = `${prefix}_billing_member_period_accounts`;
+    this.runReservationsTable = `${prefix}_billing_run_reservations`;
+    this.fixedFeeHoldsTable = `${prefix}_billing_run_fixed_fee_holds`;
     this.projectionStateTable = `${prefix}_billing_projection_state`;
   }
 
@@ -183,6 +202,10 @@ export class PgBillingStore {
         )
       `);
       await client.query(`
+        ALTER TABLE ${this.tenantPoliciesTable}
+          ADD COLUMN IF NOT EXISTS max_run_credits_micro BIGINT
+      `);
+      await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.usageEventsTable} (
           id TEXT PRIMARY KEY,
           idempotency_key TEXT NOT NULL UNIQUE,
@@ -242,6 +265,7 @@ export class PgBillingStore {
           session_id TEXT,
           run_id TEXT,
           message_id TEXT,
+          reverses_ledger_id TEXT,
           credits_delta_micro BIGINT NOT NULL,
           balance_before_micro BIGINT NOT NULL,
           balance_after_micro BIGINT NOT NULL,
@@ -260,7 +284,8 @@ export class PgBillingStore {
       await client.query(`
         ALTER TABLE ${this.creditLedgerTable}
           ADD COLUMN IF NOT EXISTS user_id TEXT,
-          ADD COLUMN IF NOT EXISTS username_snapshot TEXT
+          ADD COLUMN IF NOT EXISTS username_snapshot TEXT,
+          ADD COLUMN IF NOT EXISTS reverses_ledger_id TEXT
       `);
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.memberBudgetsTable} (
@@ -276,6 +301,56 @@ export class PgBillingStore {
           updated_at TIMESTAMPTZ NOT NULL,
           PRIMARY KEY (tenant_id, user_id),
           CHECK (monthly_limit_micro IS NULL OR monthly_limit_micro >= 0)
+        )
+      `);
+      await client.query(`
+        ALTER TABLE ${this.memberBudgetsTable}
+          ADD COLUMN IF NOT EXISTS enforcement_mode TEXT NOT NULL DEFAULT 'notify',
+          ADD COLUMN IF NOT EXISTS per_run_limit_micro BIGINT
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${this.memberPeriodAccountsTable} (
+          tenant_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          period_start DATE NOT NULL,
+          used_micro BIGINT NOT NULL DEFAULT 0,
+          reserved_micro BIGINT NOT NULL DEFAULT 0,
+          updated_at TIMESTAMPTZ NOT NULL,
+          PRIMARY KEY (tenant_id, user_id, period_start),
+          CHECK (used_micro >= 0),
+          CHECK (reserved_micro >= 0)
+        )
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${this.runReservationsTable} (
+          tenant_id TEXT NOT NULL,
+          run_id TEXT NOT NULL,
+          user_id TEXT,
+          username_snapshot TEXT,
+          session_id TEXT,
+          period_start DATE NOT NULL,
+          granted_micro BIGINT NOT NULL,
+          remaining_micro BIGINT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TIMESTAMPTZ NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL,
+          released_at TIMESTAMPTZ,
+          PRIMARY KEY (tenant_id, run_id),
+          CHECK (granted_micro >= 0),
+          CHECK (remaining_micro >= 0)
+        )
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${this.fixedFeeHoldsTable} (
+          tenant_id TEXT NOT NULL,
+          run_id TEXT NOT NULL,
+          hold_key TEXT NOT NULL,
+          credits_micro BIGINT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TIMESTAMPTZ NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL,
+          PRIMARY KEY (tenant_id, run_id, hold_key),
+          CHECK (credits_micro >= 0)
         )
       `);
       await client.query(`
@@ -297,6 +372,13 @@ export class PgBillingStore {
         )
       `);
       await client.query(`
+        ALTER TABLE ${this.memberBudgetAuditTable}
+          ADD COLUMN IF NOT EXISTS before_enforcement_mode TEXT,
+          ADD COLUMN IF NOT EXISTS after_enforcement_mode TEXT,
+          ADD COLUMN IF NOT EXISTS before_per_run_limit_micro BIGINT,
+          ADD COLUMN IF NOT EXISTS after_per_run_limit_micro BIGINT
+      `);
+      await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.projectionStateTable} (
           key TEXT PRIMARY KEY,
           last_global_sequence BIGINT NOT NULL DEFAULT 0,
@@ -310,9 +392,13 @@ export class PgBillingStore {
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.creditLedgerTable}_tenant_created_idx ON ${this.creditLedgerTable} (tenant_id, created_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.creditLedgerTable}_run_idx ON ${this.creditLedgerTable} (run_id) WHERE run_id IS NOT NULL`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.creditLedgerTable}_tenant_user_created_idx ON ${this.creditLedgerTable} (tenant_id, user_id, created_at DESC) WHERE user_id IS NOT NULL`);
+      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${this.creditLedgerTable}_reverses_unique_idx ON ${this.creditLedgerTable} (reverses_ledger_id) WHERE reverses_ledger_id IS NOT NULL`);
       await client.query(`ALTER TABLE ${this.memberBudgetAuditTable} DROP CONSTRAINT IF EXISTS ${this.memberBudgetAuditTable}_idempotency_key_key`);
       await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${this.memberBudgetAuditTable}_tenant_idempotency_idx ON ${this.memberBudgetAuditTable} (tenant_id, idempotency_key)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.memberBudgetAuditTable}_tenant_user_created_idx ON ${this.memberBudgetAuditTable} (tenant_id, user_id, created_at DESC)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runReservationsTable}_active_updated_idx ON ${this.runReservationsTable} (updated_at) WHERE status = 'active'`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runReservationsTable}_member_period_idx ON ${this.runReservationsTable} (tenant_id, user_id, period_start) WHERE status = 'active'`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.fixedFeeHoldsTable}_active_run_idx ON ${this.fixedFeeHoldsTable} (tenant_id, run_id) WHERE status = 'active'`);
       await this.backfillLedgerUserAttribution(client);
       await this.ensureDefaultPricingVersion(client);
     } finally {
@@ -489,15 +575,20 @@ export class PgBillingStore {
       credits_charged_micro: string | null;
       gross_profit_yuan_micro: string | null;
     }>(`
+      WITH scoped AS (
+        SELECT l.*, COALESCE(original.created_at, l.created_at) AS effective_created_at
+        FROM ${this.creditLedgerTable} l
+        LEFT JOIN ${this.creditLedgerTable} original ON original.id = l.reverses_ledger_id
+        WHERE ($1::text IS NULL OR l.tenant_id = $1)
+          AND COALESCE(original.created_at, l.created_at) >= (NOW() - ($2::int * INTERVAL '1 day'))
+      )
       SELECT
-        to_char((created_at AT TIME ZONE 'Asia/Shanghai')::date, 'YYYY-MM-DD') AS day,
+        to_char((effective_created_at AT TIME ZONE 'Asia/Shanghai')::date, 'YYYY-MM-DD') AS day,
         COALESCE(SUM(CASE WHEN type='debit' THEN actual_cost_yuan_micro ELSE 0 END), 0) AS actual_cost_yuan_micro,
-        COALESCE(SUM(CASE WHEN type='debit' THEN revenue_yuan_micro ELSE 0 END), 0) AS revenue_yuan_micro,
-        COALESCE(SUM(CASE WHEN type='debit' THEN -credits_delta_micro ELSE 0 END), 0) AS credits_charged_micro,
-        COALESCE(SUM(CASE WHEN type='debit' THEN gross_profit_yuan_micro ELSE 0 END), 0) AS gross_profit_yuan_micro
-      FROM ${this.creditLedgerTable}
-      WHERE ($1::text IS NULL OR tenant_id = $1)
-        AND created_at >= (NOW() - ($2::int * INTERVAL '1 day'))
+        COALESCE(SUM(CASE WHEN type IN ('debit','reversal') THEN revenue_yuan_micro ELSE 0 END), 0) AS revenue_yuan_micro,
+        COALESCE(SUM(CASE WHEN type IN ('debit','reversal') THEN -credits_delta_micro ELSE 0 END), 0) AS credits_charged_micro,
+        COALESCE(SUM(CASE WHEN type IN ('debit','reversal') THEN gross_profit_yuan_micro ELSE 0 END), 0) AS gross_profit_yuan_micro
+      FROM scoped
       GROUP BY day
       ORDER BY day DESC
     `, [query.tenantId ?? null, days]);
@@ -529,6 +620,10 @@ export class PgBillingStore {
       updatedBy: actor,
       updatedAt: new Date().toISOString(),
     };
+    if (next.hardCapMode === 'stop_before_run'
+      && (next.maxRunCreditsMicro === undefined || next.maxRunCreditsMicro === null || next.maxRunCreditsMicro <= 0)) {
+      throw new Error('启用积分硬封顶时必须配置正数的组织单 Run 上限');
+    }
     await this.pool.query(`
       UPDATE ${this.tenantPoliciesTable}
       SET policy_version = $2,
@@ -546,7 +641,8 @@ export class PgBillingStore {
           show_cost = $14,
           show_gross_margin = $15,
           updated_by = $16,
-          updated_at = $17
+          updated_at = $17,
+          max_run_credits_micro = $18
       WHERE tenant_id = $1
     `, [
       tenantId,
@@ -566,6 +662,7 @@ export class PgBillingStore {
       next.showGrossMargin,
       next.updatedBy,
       next.updatedAt,
+      next.maxRunCreditsMicro ?? null,
     ]);
     return await this.getTenantPolicy(tenantId);
   }
@@ -581,7 +678,7 @@ export class PgBillingStore {
 
   async adjustAccount(input: {
     tenantId: string;
-    type: Extract<LedgerType, 'recharge' | 'grant' | 'refund' | 'adjustment' | 'expire' | 'reversal'>;
+    type: Extract<LedgerType, 'recharge' | 'grant' | 'refund' | 'adjustment' | 'expire'>;
     creditsDeltaMicro: number;
     note?: string;
     actor: string;
@@ -592,7 +689,21 @@ export class PgBillingStore {
     return await this.withAccountLock(input.tenantId, async (client, account) => {
       const idempotencyKey = input.idempotencyKey ?? `manual:${input.type}:${input.tenantId}:${randomUUID()}`;
       const existing = await this.getLedgerByIdempotencyKey(client, idempotencyKey);
-      if (existing) return existing;
+      if (existing) {
+        if (
+          existing.tenantId !== input.tenantId
+          || existing.type !== input.type
+          || existing.creditsDeltaMicro !== Math.trunc(input.creditsDeltaMicro)
+          || existing.source !== 'manual'
+          || existing.createdBy !== input.actor
+          || (existing.note ?? undefined) !== (input.note ?? undefined)
+        ) {
+          const conflict = new Error('幂等键已被不同租户或不同调账参数使用');
+          (conflict as Error & { code: string }).code = 'BILLING_IDEMPOTENCY_CONFLICT';
+          throw conflict;
+        }
+        return existing;
+      }
       const before = account.balanceCreditsMicro;
       const after = before + Math.trunc(input.creditsDeltaMicro);
       return await this.insertLedgerAndUpdateAccount(client, {
@@ -615,6 +726,104 @@ export class PgBillingStore {
         createdBy: input.actor,
       });
     });
+  }
+
+  async reverseDebit(input: {
+    tenantId: string;
+    ledgerId: string;
+    idempotencyKey: string;
+    note: string;
+    actor: string;
+  }): Promise<BillingLedgerEntry> {
+    await this.ensureAccount(input.tenantId);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const accountResult = await client.query<{ row_json: Record<string, unknown> }>(`
+        SELECT row_to_json(a.*) AS row_json FROM ${this.creditAccountsTable} a
+        WHERE tenant_id = $1 FOR UPDATE
+      `, [input.tenantId]);
+      const account = normalizeAccount(accountResult.rows[0]!.row_json);
+      const idempotent = await this.getLedgerByIdempotencyKey(client, input.idempotencyKey);
+      if (idempotent) {
+        if (idempotent.reversesLedgerId === input.ledgerId) {
+          await client.query('COMMIT');
+          return idempotent;
+        }
+        throw new BillingLedgerReversalConflictError('该防重标识已用于其他积分流水');
+      }
+      const originalResult = await client.query<{ row_json: Record<string, unknown> }>(`
+        SELECT row_to_json(l.*) AS row_json FROM ${this.creditLedgerTable} l
+        WHERE tenant_id = $1 AND id = $2 AND type = 'debit' FOR UPDATE
+      `, [input.tenantId, input.ledgerId]);
+      if (!originalResult.rows[0]) throw new BillingLedgerReversalConflictError('原扣费流水不存在或不是 debit');
+      const original = normalizeLedgerEntry(originalResult.rows[0].row_json);
+      const priorResult = await client.query<{ row_json: Record<string, unknown> }>(`
+        SELECT row_to_json(l.*) AS row_json FROM ${this.creditLedgerTable} l
+        WHERE tenant_id = $1 AND reverses_ledger_id = $2
+      `, [input.tenantId, input.ledgerId]);
+      if (priorResult.rows[0]) {
+        await client.query('COMMIT');
+        return normalizeLedgerEntry(priorResult.rows[0].row_json);
+      }
+      const credits = Math.max(0, -Math.trunc(original.creditsDeltaMicro));
+      if (credits <= 0) throw new BillingLedgerReversalConflictError('原流水没有可恢复的扣费积分');
+
+      let periodStart = beijingDateString(beijingMonthRange(new Date(original.createdAt)).start);
+      if (original.runId) {
+        const reservation = await client.query<{ period_start: string | Date }>(`
+          SELECT period_start FROM ${this.runReservationsTable}
+          WHERE tenant_id = $1 AND run_id = $2
+        `, [input.tenantId, original.runId]);
+        if (reservation.rows[0]?.period_start) periodStart = String(reservation.rows[0].period_start).slice(0, 10);
+      }
+      if (original.userId) {
+        await client.query(`SELECT 1 FROM ${this.memberBudgetsTable}
+          WHERE tenant_id = $1 AND user_id = $2 FOR UPDATE`, [input.tenantId, original.userId]);
+        await this.ensureMemberPeriodAccount(client, input.tenantId, original.userId, periodStart, new Date());
+        await client.query(`SELECT 1 FROM ${this.memberPeriodAccountsTable}
+          WHERE tenant_id = $1 AND user_id = $2 AND period_start = $3::date FOR UPDATE`,
+        [input.tenantId, original.userId, periodStart]);
+      }
+
+      const now = new Date().toISOString();
+      const before = account.balanceCreditsMicro;
+      const after = before + credits;
+      const revenue = -Math.max(0, original.revenueYuanMicro);
+      const inserted = await client.query<{ row_json: Record<string, unknown> }>(`
+        INSERT INTO ${this.creditLedgerTable}
+          (id, idempotency_key, tenant_id, account_id, type, source, related_usage_event_ids,
+           user_id, username_snapshot, session_id, run_id, message_id, reverses_ledger_id,
+           credits_delta_micro, balance_before_micro, balance_after_micro,
+           credit_value_yuan_micro, revenue_yuan_micro, actual_cost_yuan_micro, gross_profit_yuan_micro,
+           gross_margin_bps, pricing_version, billing_policy_version, note, created_by, created_at)
+        VALUES ($1,$2,$3,$4,'reversal','reversal',$5::text[],$6,$7,$8,$9,$10,$11,
+                $12,$13,$14,$15,$16,0,$16,NULL,$17,$18,$19,$20,$21)
+        RETURNING row_to_json(${this.creditLedgerTable}.*) AS row_json
+      `, [
+        randomUUID(), input.idempotencyKey, input.tenantId, input.tenantId,
+        original.relatedUsageEventIds, original.userId ?? null, original.usernameSnapshot ?? null,
+        original.sessionId ?? null, original.runId ?? null, original.messageId ?? null, original.id,
+        credits, before, after, original.creditValueYuanMicro, revenue,
+        original.pricingVersion, original.billingPolicyVersion, input.note, input.actor, now,
+      ]);
+      await client.query(`UPDATE ${this.creditAccountsTable}
+        SET balance_micro = $2, updated_at = $3 WHERE tenant_id = $1`,
+      [input.tenantId, after, now]);
+      if (original.userId) {
+        await client.query(`UPDATE ${this.memberPeriodAccountsTable}
+          SET used_micro = GREATEST(0, used_micro - $4), updated_at = $5
+          WHERE tenant_id = $1 AND user_id = $2 AND period_start = $3::date`,
+        [input.tenantId, original.userId, periodStart, credits, now]);
+      }
+      await client.query('COMMIT');
+      return normalizeLedgerEntry(inserted.rows[0]!.row_json);
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async findLedgerByIdempotencyKey(idempotencyKey: string): Promise<BillingLedgerEntry | null> {
@@ -714,65 +923,451 @@ export class PgBillingStore {
     return result.rows[0] ? normalizeUsageEvent(result.rows[0].row_json) : null;
   }
 
+  async ensureRunReservation(input: EnsureRunReservationInput): Promise<EnsureRunReservationDecision> {
+    const policy = await this.getTenantPolicy(input.tenantId);
+    if (!policy.billingEnabled || policy.billingMode === 'internal') return { ok: true, value: null };
+    if (policy.hardCapMode === 'stop_before_run'
+      && (policy.maxRunCreditsMicro === undefined || policy.maxRunCreditsMicro <= 0)) {
+      return billingDenied(
+        'BILLING_RUN_LIMIT_NOT_CONFIGURED',
+        '组织已启用积分硬封顶，但尚未配置正数的组织单 Run 上限；请先由平台管理员完成配置。',
+      );
+    }
+    await this.ensureAccount(input.tenantId);
+    const now = input.now ?? new Date();
+    const periodStart = beijingDateString(beijingMonthRange(now).start);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await this.lockRun(client, input.tenantId, input.runId);
+      const accountResult = await client.query<{ row_json: Record<string, unknown> }>(
+        `SELECT row_to_json(a.*) AS row_json FROM ${this.creditAccountsTable} a WHERE tenant_id = $1 FOR UPDATE`,
+        [input.tenantId],
+      );
+      const account = normalizeAccount(accountResult.rows[0]!.row_json);
+      let budget: Record<string, unknown> | undefined;
+      let periodAccount: Record<string, unknown> | undefined;
+      if (input.userId) {
+        const budgetResult = await client.query<{ row_json: Record<string, unknown> }>(`
+          SELECT row_to_json(b.*) AS row_json FROM ${this.memberBudgetsTable} b
+          WHERE tenant_id = $1 AND user_id = $2 FOR UPDATE
+        `, [input.tenantId, input.userId]);
+        budget = budgetResult.rows[0]?.row_json;
+        await this.ensureMemberPeriodAccount(client, input.tenantId, input.userId, periodStart, now);
+        const periodResult = await client.query<{ row_json: Record<string, unknown> }>(`
+          SELECT row_to_json(p.*) AS row_json FROM ${this.memberPeriodAccountsTable} p
+          WHERE tenant_id = $1 AND user_id = $2 AND period_start = $3::date FOR UPDATE
+        `, [input.tenantId, input.userId, periodStart]);
+        periodAccount = periodResult.rows[0]?.row_json;
+      }
+      const existingResult = await client.query<{ row_json: Record<string, unknown> }>(`
+        SELECT row_to_json(r.*) AS row_json FROM ${this.runReservationsTable} r
+        WHERE tenant_id = $1 AND run_id = $2 FOR UPDATE
+      `, [input.tenantId, input.runId]);
+      if (existingResult.rows[0]) {
+        const existing = normalizeRunReservation(existingResult.rows[0].row_json);
+        await client.query('COMMIT');
+        return existing.status === 'active'
+          ? { ok: true, value: existing }
+          : billingDenied('BILLING_RESERVATION_NOT_ACTIVE', '该运行的积分预占已结算或释放，不能继续发起模型请求。');
+      }
+
+      const availableOrg = Math.max(0, account.balanceCreditsMicro - account.reservedCreditsMicro
+        + (policy.allowNegativeBalance ? policy.negativeLimitCreditsMicro : 0));
+      const caps: Array<{ value: number; code: 'BILLING_ORG_BALANCE_EXHAUSTED' | 'BILLING_MEMBER_MONTHLY_LIMIT_EXCEEDED' | 'BILLING_MEMBER_PER_RUN_LIMIT_EXCEEDED' }> = [];
+      const enforcementMode = String(budget?.enforcement_mode ?? 'notify') as BillingMemberBudgetEnforcementMode;
+      const enforcesMemberBudget = !!input.userId && Boolean(budget?.active) && enforcementMode === 'stop_new_runs';
+      if (policy.hardCapMode === 'stop_before_run') {
+        caps.push({ value: availableOrg, code: 'BILLING_ORG_BALANCE_EXHAUSTED' });
+        caps.push({ value: policy.maxRunCreditsMicro!, code: 'BILLING_ORG_BALANCE_EXHAUSTED' });
+      }
+      if (enforcesMemberBudget) {
+        const monthlyRemaining = budget?.monthly_limit_micro === null || budget?.monthly_limit_micro === undefined
+          ? 0
+          : Math.max(0, Number(budget.monthly_limit_micro)
+              - Number(periodAccount?.used_micro ?? 0) - Number(periodAccount?.reserved_micro ?? 0));
+        const perRunLimit = budget?.per_run_limit_micro === null || budget?.per_run_limit_micro === undefined
+          ? 0
+          : Math.max(0, Number(budget.per_run_limit_micro));
+        caps.push({ value: monthlyRemaining, code: 'BILLING_MEMBER_MONTHLY_LIMIT_EXCEEDED' });
+        caps.push({ value: perRunLimit, code: 'BILLING_MEMBER_PER_RUN_LIMIT_EXCEEDED' });
+      }
+      if (caps.length === 0) {
+        const legacyAllowed = policy.hardCapMode === 'none' || legacyAvailable(account, policy) > 0;
+        if (!legacyAllowed) {
+          await client.query('ROLLBACK');
+          return billingDenied('BILLING_ORG_BALANCE_EXHAUSTED', '组织积分余额不足，当前计费策略已启用硬封顶。');
+        }
+        await client.query('COMMIT');
+        return { ok: true, value: null };
+      }
+      const grant = Math.trunc(Math.min(...caps.map((cap) => cap.value)));
+      if (grant <= 0) {
+        const failed = caps.find((cap) => cap.value <= 0) ?? caps[0]!;
+        await client.query('ROLLBACK');
+        const reason = failed.code === 'BILLING_MEMBER_MONTHLY_LIMIT_EXCEEDED'
+          ? '员工本月积分预算已用尽。'
+          : failed.code === 'BILLING_MEMBER_PER_RUN_LIMIT_EXCEEDED'
+            ? '员工单次运行积分上限为 0。'
+            : '组织积分余额不足，无法为本次运行预占积分。';
+        return billingDenied(failed.code, reason);
+      }
+      const timestamp = now.toISOString();
+      const inserted = await client.query<{ row_json: Record<string, unknown> }>(`
+        INSERT INTO ${this.runReservationsTable}
+          (tenant_id, run_id, user_id, username_snapshot, session_id, period_start,
+           granted_micro, remaining_micro, status, created_at, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6::date,$7,$7,'active',$8,$8)
+        RETURNING row_to_json(${this.runReservationsTable}.*) AS row_json
+      `, [input.tenantId, input.runId, input.userId ?? null, input.username ?? null,
+        input.sessionId ?? null, periodStart, grant, timestamp]);
+      await client.query(`UPDATE ${this.creditAccountsTable}
+        SET reserved_micro = reserved_micro + $2, updated_at = $3 WHERE tenant_id = $1`,
+      [input.tenantId, grant, timestamp]);
+      if (input.userId) {
+        await client.query(`UPDATE ${this.memberPeriodAccountsTable}
+          SET reserved_micro = reserved_micro + $4, updated_at = $5
+          WHERE tenant_id = $1 AND user_id = $2 AND period_start = $3::date`,
+        [input.tenantId, input.userId, periodStart, grant, timestamp]);
+      }
+      await client.query('COMMIT');
+      return { ok: true, value: normalizeRunReservation(inserted.rows[0]!.row_json) };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async assertRunCanContinue(tenantId: string, runId: string): Promise<BillingRunContinueDecision> {
+    const policy = await this.getTenantPolicy(tenantId);
+    if (!policy.billingEnabled || policy.billingMode === 'internal') {
+      return { ok: true, value: { reservation: null, pendingModelCreditsMicro: 0, activeFixedHoldsCreditsMicro: 0 } };
+    }
+    const pricing = await this.getActivePricingVersion();
+    await this.ensureAccount(tenantId);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await this.lockRun(client, tenantId, runId);
+      const accountResult = await client.query<{ row_json: Record<string, unknown> }>(
+        `SELECT row_to_json(a.*) AS row_json FROM ${this.creditAccountsTable} a WHERE tenant_id = $1 FOR UPDATE`, [tenantId]);
+      const account = normalizeAccount(accountResult.rows[0]!.row_json);
+      const reservationResult = await client.query<{ row_json: Record<string, unknown> }>(`
+        SELECT row_to_json(r.*) AS row_json FROM ${this.runReservationsTable} r
+        WHERE tenant_id = $1 AND run_id = $2 FOR UPDATE
+      `, [tenantId, runId]);
+      const reservation = reservationResult.rows[0] ? normalizeRunReservation(reservationResult.rows[0].row_json) : null;
+      if (reservation && reservation.status !== 'active') {
+        await client.query('COMMIT');
+        return billingDenied('BILLING_RESERVATION_NOT_ACTIVE', '该运行的积分预占已结算或释放，不能继续发起模型请求。');
+      }
+      if (!reservation) {
+        const allowed = policy.hardCapMode === 'none' || legacyAvailable(account, policy) > 0;
+        await client.query('COMMIT');
+        return allowed
+          ? { ok: true, value: { reservation: null, pendingModelCreditsMicro: 0, activeFixedHoldsCreditsMicro: 0 } }
+          : billingDenied('BILLING_ORG_BALANCE_EXHAUSTED', '组织积分余额不足，当前计费策略已启用硬封顶。');
+      }
+      const pending = await this.listPendingRunUsage(client, tenantId, runId);
+      const pendingCredits = creditsForUsage(pending, policy, pricing.creditValueYuanMicro);
+      const holds = await this.sumActiveFixedFeeHolds(client, tenantId, runId);
+      await client.query('COMMIT');
+      if (pendingCredits + holds >= reservation.remainingCreditsMicro) {
+        return billingDenied('BILLING_RUN_LIMIT_EXCEEDED', '本次运行已达到积分上限，不能继续发起模型请求。');
+      }
+      return { ok: true, value: { reservation, pendingModelCreditsMicro: pendingCredits, activeFixedHoldsCreditsMicro: holds } };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async reserveFixedFeeHold(input: { tenantId: string; runId: string; holdKey: string; creditsMicro: number }): Promise<BillingFixedFeeHoldDecision> {
+    const policy = await this.getTenantPolicy(input.tenantId);
+    const amount = roundUpCreditsMicro(Math.max(0, Math.trunc(input.creditsMicro)));
+    if (!policy.billingEnabled || policy.billingMode === 'internal' || amount <= 0) return { ok: true, value: null };
+    const pricing = await this.getActivePricingVersion();
+    await this.ensureAccount(input.tenantId);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await this.lockRun(client, input.tenantId, input.runId);
+      const accountResult = await client.query<{ row_json: Record<string, unknown> }>(
+        `SELECT row_to_json(a.*) AS row_json FROM ${this.creditAccountsTable} a WHERE tenant_id = $1 FOR UPDATE`, [input.tenantId]);
+      const account = normalizeAccount(accountResult.rows[0]!.row_json);
+      const reservationResult = await client.query<{ row_json: Record<string, unknown> }>(`
+        SELECT row_to_json(r.*) AS row_json FROM ${this.runReservationsTable} r
+        WHERE tenant_id = $1 AND run_id = $2 FOR UPDATE
+      `, [input.tenantId, input.runId]);
+      const reservation = reservationResult.rows[0] ? normalizeRunReservation(reservationResult.rows[0].row_json) : null;
+      const existingResult = await client.query<{ row_json: Record<string, unknown> }>(`
+        SELECT row_to_json(h.*) AS row_json FROM ${this.fixedFeeHoldsTable} h
+        WHERE tenant_id = $1 AND run_id = $2 AND hold_key = $3 FOR UPDATE
+      `, [input.tenantId, input.runId, input.holdKey]);
+      let releasedHold: BillingFixedFeeHold | undefined;
+      if (existingResult.rows[0]) {
+        const existing = normalizeFixedFeeHold(existingResult.rows[0].row_json);
+        if (existing.creditsMicro !== amount) {
+          await client.query('ROLLBACK');
+          return billingDenied('BILLING_HOLD_CONFLICT', '同一 holdKey 已用于不同的固定费用。');
+        }
+        if (existing.status === 'active') {
+          await client.query('COMMIT');
+          return { ok: true, value: existing };
+        }
+        if (existing.status === 'captured') {
+          await client.query('ROLLBACK');
+          return billingDenied('BILLING_HOLD_CONFLICT', '该固定费用已完成扣费，不能重复调用外部服务。');
+        }
+        releasedHold = existing;
+      }
+      if (!reservation || reservation.status !== 'active') {
+        const exactAvailable = legacyAvailable(account, policy);
+        await client.query('ROLLBACK');
+        return exactAvailable >= amount || policy.hardCapMode === 'none'
+          ? { ok: true, value: null }
+          : billingDenied('BILLING_ORG_BALANCE_EXHAUSTED', '组织积分余额不足，无法预留固定费用。');
+      }
+      const pending = await this.listPendingRunUsage(client, input.tenantId, input.runId);
+      const pendingCredits = creditsForUsage(pending, policy, pricing.creditValueYuanMicro);
+      const holds = await this.sumActiveFixedFeeHolds(client, input.tenantId, input.runId);
+      if (pendingCredits + holds + amount > reservation.remainingCreditsMicro) {
+        await client.query('ROLLBACK');
+        return billingDenied('BILLING_FIXED_FEE_LIMIT_EXCEEDED', '固定费用将超过本次运行的剩余积分上限。');
+      }
+      const timestamp = new Date().toISOString();
+      const held = releasedHold
+        ? await client.query<{ row_json: Record<string, unknown> }>(`
+            UPDATE ${this.fixedFeeHoldsTable}
+            SET status = 'active', updated_at = $4
+            WHERE tenant_id = $1 AND run_id = $2 AND hold_key = $3 AND status = 'released'
+            RETURNING row_to_json(${this.fixedFeeHoldsTable}.*) AS row_json
+          `, [input.tenantId, input.runId, input.holdKey, timestamp])
+        : await client.query<{ row_json: Record<string, unknown> }>(`
+            INSERT INTO ${this.fixedFeeHoldsTable}
+              (tenant_id, run_id, hold_key, credits_micro, status, created_at, updated_at)
+            VALUES ($1,$2,$3,$4,'active',$5,$5)
+            RETURNING row_to_json(${this.fixedFeeHoldsTable}.*) AS row_json
+          `, [input.tenantId, input.runId, input.holdKey, amount, timestamp]);
+      if (!held.rows[0]) throw new Error('固定费用 hold 状态已变化，请重试');
+      await client.query('COMMIT');
+      return { ok: true, value: normalizeFixedFeeHold(held.rows[0].row_json) };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async releaseFixedFeeHold(input: { tenantId: string; runId: string; holdKey: string }): Promise<BillingFixedFeeHold | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await this.lockRun(client, input.tenantId, input.runId);
+      const result = await client.query<{ row_json: Record<string, unknown> }>(`
+        UPDATE ${this.fixedFeeHoldsTable}
+        SET status = 'released', updated_at = $4
+        WHERE tenant_id = $1 AND run_id = $2 AND hold_key = $3 AND status = 'active'
+        RETURNING row_to_json(${this.fixedFeeHoldsTable}.*) AS row_json
+      `, [input.tenantId, input.runId, input.holdKey, new Date().toISOString()]);
+      if (!result.rows[0]) {
+        const existing = await client.query<{ row_json: Record<string, unknown> }>(`
+          SELECT row_to_json(h.*) AS row_json FROM ${this.fixedFeeHoldsTable} h
+          WHERE tenant_id = $1 AND run_id = $2 AND hold_key = $3
+        `, [input.tenantId, input.runId, input.holdKey]);
+        await client.query('COMMIT');
+        return existing.rows[0] ? normalizeFixedFeeHold(existing.rows[0].row_json) : null;
+      }
+      await client.query('COMMIT');
+      return normalizeFixedFeeHold(result.rows[0].row_json);
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async releaseRunReservation(tenantId: string, runId: string): Promise<BillingRunReservation | null> {
+    await this.ensureAccount(tenantId);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await this.lockRun(client, tenantId, runId);
+      await client.query(`SELECT 1 FROM ${this.creditAccountsTable} WHERE tenant_id = $1 FOR UPDATE`, [tenantId]);
+      const hint = await client.query<{ user_id: string | null; period_start: string | Date }>(`
+        SELECT user_id, period_start FROM ${this.runReservationsTable}
+        WHERE tenant_id = $1 AND run_id = $2`, [tenantId, runId]);
+      const userId = hint.rows[0]?.user_id ?? undefined;
+      const periodStart = hint.rows[0]?.period_start ? String(hint.rows[0].period_start).slice(0, 10) : undefined;
+      if (userId && periodStart) {
+        await client.query(`SELECT 1 FROM ${this.memberBudgetsTable} WHERE tenant_id = $1 AND user_id = $2 FOR UPDATE`, [tenantId, userId]);
+        await client.query(`SELECT 1 FROM ${this.memberPeriodAccountsTable}
+          WHERE tenant_id = $1 AND user_id = $2 AND period_start = $3::date FOR UPDATE`, [tenantId, userId, periodStart]);
+      }
+      const reservationResult = await client.query<{ row_json: Record<string, unknown> }>(`
+        SELECT row_to_json(r.*) AS row_json FROM ${this.runReservationsTable} r
+        WHERE tenant_id = $1 AND run_id = $2 FOR UPDATE`, [tenantId, runId]);
+      if (!reservationResult.rows[0]) {
+        await client.query('COMMIT');
+        return null;
+      }
+      const reservation = normalizeRunReservation(reservationResult.rows[0].row_json);
+      if (reservation.status !== 'active') {
+        await client.query('COMMIT');
+        return reservation;
+      }
+      await this.releaseReservationLocked(client, reservation, 'released');
+      const finalResult = await client.query<{ row_json: Record<string, unknown> }>(`
+        SELECT row_to_json(r.*) AS row_json FROM ${this.runReservationsTable} r
+        WHERE tenant_id = $1 AND run_id = $2`, [tenantId, runId]);
+      await client.query('COMMIT');
+      return normalizeRunReservation(finalResult.rows[0]!.row_json);
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async hasEarlierTerminalEvent(tenantId: string, runId: string, beforeGlobalSequence: number): Promise<boolean> {
+    if (!this.eventsTable) return false;
+    const result = await this.pool.query(`
+      SELECT 1 FROM ${this.eventsTable}
+      WHERE tenant_id = $1
+        AND event_json->>'runId' = $2
+        AND global_sequence < $3
+        AND (
+          event_type = 'run_finished'
+          OR (event_type = 'run_state_changed'
+            AND event_json->>'status' IN ('completed','failed','cancelled','orphaned'))
+        )
+      LIMIT 1
+    `, [tenantId, runId, beforeGlobalSequence]);
+    return result.rows.length > 0;
+  }
+
+  async listExpiredRunReservationCandidates(before: Date, limit = 100): Promise<BillingRunReservation[]> {
+    const result = await this.pool.query<{ row_json: Record<string, unknown> }>(`
+      SELECT row_to_json(r.*) AS row_json FROM ${this.runReservationsTable} r
+      WHERE status = 'active' AND updated_at < $1
+      ORDER BY updated_at ASC
+      LIMIT $2
+    `, [before.toISOString(), Math.max(1, Math.min(1000, Math.trunc(limit)))]);
+    return result.rows.map((row) => normalizeRunReservation(row.row_json));
+  }
+
+  async touchRunReservation(tenantId: string, runId: string): Promise<void> {
+    await this.pool.query(`
+      UPDATE ${this.runReservationsTable}
+      SET updated_at = $3
+      WHERE tenant_id = $1 AND run_id = $2 AND status = 'active'
+    `, [tenantId, runId, new Date().toISOString()]);
+  }
+
   async settleRunDebit(tenantId: string, runId: string): Promise<BillingLedgerEntry | null> {
     const policy = await this.getTenantPolicy(tenantId);
-    if (!policy.billingEnabled || policy.billingMode === 'internal') return null;
+    if (!policy.billingEnabled || policy.billingMode === 'internal') {
+      await this.releaseRunReservation(tenantId, runId);
+      return null;
+    }
     const pricing = await this.getActivePricingVersion();
-    const usageEvents = await this.listUsageEvents({ tenantId, runId, billable: true, limit: 500 });
-    if (usageEvents.length === 0) return null;
-    return await this.withAccountLock(tenantId, async (client, account) => {
-      const chargedUsageEventIds = await this.listDebitedUsageEventIds(client, tenantId, runId);
-      const pendingUsageEvents = usageEvents.filter((item) => !chargedUsageEventIds.has(item.id));
-      if (pendingUsageEvents.length === 0) return null;
-      const idempotencyKey = `debit:usage:v1:${runId}:${usageEventIdHash(pendingUsageEvents.map((item) => item.id))}`;
-      const existing = await this.getLedgerByIdempotencyKey(client, idempotencyKey);
-      if (existing) return existing;
-      const actualCostYuanMicro = pendingUsageEvents.reduce((sum, item) => sum + item.actualCostYuanMicro, 0);
-      const revenueYuanMicro = computeRevenueYuanMicro(actualCostYuanMicro, policy);
-      const creditsToChargeMicro = roundUpCreditsMicro(
-        Math.ceil((revenueYuanMicro * CREDIT_MICRO) / Math.max(1, pricing.creditValueYuanMicro)),
-      );
-      const before = account.balanceCreditsMicro;
-      const after = before - creditsToChargeMicro;
-      if (!policy.allowNegativeBalance && after < -policy.negativeLimitCreditsMicro) {
-        // 已发生的模型调用不能回滚；仍落账为负数，并在 audit 中暴露。preflight 才负责拦截新任务。
-        this.options.logger?.warn?.(`billing debit makes tenant negative: tenant=${tenantId} run=${runId} before=${before} debit=${creditsToChargeMicro}`);
+    await this.ensureAccount(tenantId);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await this.lockRun(client, tenantId, runId);
+      const accountResult = await client.query<{ row_json: Record<string, unknown> }>(
+        `SELECT row_to_json(a.*) AS row_json FROM ${this.creditAccountsTable} a WHERE tenant_id = $1 FOR UPDATE`, [tenantId]);
+      const account = normalizeAccount(accountResult.rows[0]!.row_json);
+      const hint = await client.query<{ user_id: string | null; period_start: string | Date }>(`
+        SELECT user_id, period_start FROM ${this.runReservationsTable}
+        WHERE tenant_id = $1 AND run_id = $2`, [tenantId, runId]);
+      const hintedUserId = hint.rows[0]?.user_id ?? undefined;
+      const hintedPeriodStart = hint.rows[0]?.period_start ? String(hint.rows[0].period_start).slice(0, 10) : undefined;
+      if (hintedUserId && hintedPeriodStart) {
+        await client.query(`SELECT 1 FROM ${this.memberBudgetsTable}
+          WHERE tenant_id = $1 AND user_id = $2 FOR UPDATE`, [tenantId, hintedUserId]);
+        await client.query(`SELECT 1 FROM ${this.memberPeriodAccountsTable}
+          WHERE tenant_id = $1 AND user_id = $2 AND period_start = $3::date FOR UPDATE`,
+        [tenantId, hintedUserId, hintedPeriodStart]);
       }
-      const grossProfitYuanMicro = revenueYuanMicro - actualCostYuanMicro;
-      const userIds = [...new Set(pendingUsageEvents.map((item) => item.userId).filter((item): item is string => !!item))];
-      const allUsageAttributed = pendingUsageEvents.every((item) => !!item.userId);
-      const userId = allUsageAttributed && userIds.length === 1 ? userIds[0] : undefined;
-      const usernameSnapshot = userId
-        ? pendingUsageEvents.find((item) => item.userId === userId)?.username
-        : undefined;
-      if (!userId && (userIds.length > 0 || pendingUsageEvents.some((item) => !item.userId))) {
-        this.options.logger?.warn?.(`billing run has ambiguous subjects: tenant=${tenantId} run=${runId} users=${userIds.join(',') || 'none'}`);
+      const reservationResult = await client.query<{ row_json: Record<string, unknown> }>(`
+        SELECT row_to_json(r.*) AS row_json FROM ${this.runReservationsTable} r
+        WHERE tenant_id = $1 AND run_id = $2 FOR UPDATE`, [tenantId, runId]);
+      const reservation = reservationResult.rows[0] ? normalizeRunReservation(reservationResult.rows[0].row_json) : null;
+      const pendingUsageEvents = await this.listPendingRunUsage(client, tenantId, runId);
+      let debit: BillingLedgerEntry | null = null;
+      let creditsToChargeMicro = 0;
+      let chargedUserId: string | undefined;
+      if (pendingUsageEvents.length > 0) {
+        const idempotencyKey = `debit:usage:v1:${runId}:${usageEventIdHash(pendingUsageEvents.map((item) => item.id))}`;
+        const existing = await this.getLedgerByIdempotencyKey(client, idempotencyKey);
+        if (existing) {
+          debit = existing;
+        } else {
+          const actualCostYuanMicro = pendingUsageEvents.reduce((sum, item) => sum + item.actualCostYuanMicro, 0);
+          const revenueYuanMicro = computeRevenueYuanMicro(actualCostYuanMicro, policy);
+          creditsToChargeMicro = roundUpCreditsMicro(
+            Math.ceil((revenueYuanMicro * CREDIT_MICRO) / Math.max(1, pricing.creditValueYuanMicro)),
+          );
+          const before = account.balanceCreditsMicro;
+          const after = before - creditsToChargeMicro;
+          if (!policy.allowNegativeBalance && after < -policy.negativeLimitCreditsMicro) {
+            this.options.logger?.warn?.(`billing debit makes tenant negative: tenant=${tenantId} run=${runId} before=${before} debit=${creditsToChargeMicro}`);
+          }
+          const grossProfitYuanMicro = revenueYuanMicro - actualCostYuanMicro;
+          const userIds = [...new Set(pendingUsageEvents.map((item) => item.userId).filter((item): item is string => !!item))];
+          const allUsageAttributed = pendingUsageEvents.every((item) => !!item.userId);
+          chargedUserId = reservation?.userId ?? (allUsageAttributed && userIds.length === 1 ? userIds[0] : undefined);
+          const usernameSnapshot = reservation?.usernameSnapshot ?? (chargedUserId
+            ? pendingUsageEvents.find((item) => item.userId === chargedUserId)?.username : undefined);
+          if (!chargedUserId && (userIds.length > 0 || pendingUsageEvents.some((item) => !item.userId))) {
+            this.options.logger?.warn?.(`billing run has ambiguous subjects: tenant=${tenantId} run=${runId} users=${userIds.join(',') || 'none'}`);
+          }
+          debit = await this.insertLedgerAndUpdateAccount(client, {
+            idempotencyKey, tenantId, accountId: tenantId, type: 'debit', source: 'usage_event',
+            relatedUsageEventIds: pendingUsageEvents.map((item) => item.id),
+            ...(chargedUserId ? { userId: chargedUserId } : {}),
+            ...(usernameSnapshot ? { usernameSnapshot } : {}),
+            sessionId: reservation?.sessionId ?? pendingUsageEvents[0]?.sessionId,
+            runId, creditsDeltaMicro: -creditsToChargeMicro,
+            balanceBeforeMicro: before, balanceAfterMicro: after,
+            creditValueYuanMicro: pricing.creditValueYuanMicro,
+            revenueYuanMicro, actualCostYuanMicro, grossProfitYuanMicro,
+            grossMarginBps: revenueYuanMicro > 0 ? Math.round((grossProfitYuanMicro / revenueYuanMicro) * 10_000) : undefined,
+            pricingVersion: pricing.version, billingPolicyVersion: policy.policyVersion,
+            note: `run usage debit (${pendingUsageEvents.length} usage event${pendingUsageEvents.length === 1 ? '' : 's'})`,
+            createdBy: 'system',
+          });
+        }
       }
-      return await this.insertLedgerAndUpdateAccount(client, {
-        idempotencyKey,
-        tenantId,
-        accountId: tenantId,
-        type: 'debit',
-        source: 'usage_event',
-        relatedUsageEventIds: pendingUsageEvents.map((item) => item.id),
-        ...(userId ? { userId } : {}),
-        ...(usernameSnapshot ? { usernameSnapshot } : {}),
-        sessionId: pendingUsageEvents[0]?.sessionId,
-        runId,
-        creditsDeltaMicro: -creditsToChargeMicro,
-        balanceBeforeMicro: before,
-        balanceAfterMicro: after,
-        creditValueYuanMicro: pricing.creditValueYuanMicro,
-        revenueYuanMicro,
-        actualCostYuanMicro,
-        grossProfitYuanMicro,
-        grossMarginBps: revenueYuanMicro > 0 ? Math.round((grossProfitYuanMicro / revenueYuanMicro) * 10_000) : undefined,
-        pricingVersion: pricing.version,
-        billingPolicyVersion: policy.policyVersion,
-        note: `run usage debit (${pendingUsageEvents.length} usage event${pendingUsageEvents.length === 1 ? '' : 's'})`,
-        createdBy: 'system',
-      });
-    });
+      if (creditsToChargeMicro > 0 && (reservation?.userId ?? chargedUserId)) {
+        const userId = reservation?.userId ?? chargedUserId!;
+        const periodStart = reservation?.periodStart.slice(0, 10) ?? beijingDateString(beijingMonthRange(new Date()).start);
+        await this.ensureMemberPeriodAccount(client, tenantId, userId, periodStart, new Date());
+        await client.query(`UPDATE ${this.memberPeriodAccountsTable}
+          SET used_micro = used_micro + $4, updated_at = $5
+          WHERE tenant_id = $1 AND user_id = $2 AND period_start = $3::date`,
+        [tenantId, userId, periodStart, creditsToChargeMicro, new Date().toISOString()]);
+      }
+      if (reservation?.status === 'active') {
+        await this.releaseReservationLocked(client, reservation, 'settled');
+      }
+      await client.query('COMMIT');
+      return debit;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   /**
@@ -792,6 +1387,7 @@ export class PgBillingStore {
     const creditsToChargeMicro = roundUpCreditsMicro(Math.max(0, Math.trunc(input.creditsMicro)));
     if (creditsToChargeMicro <= 0) return null;
     const pricing = await this.getActivePricingVersion();
+    if (input.runId) return await this.chargeRunFixedDebit(input, policy, pricing);
     return await this.withAccountLock(input.tenantId, async (client, account) => {
       const existing = await this.getLedgerByIdempotencyKey(client, input.idempotencyKey);
       if (existing) return existing;
@@ -978,13 +1574,19 @@ export class PgBillingStore {
       actual_cost_yuan_micro: string | null;
       gross_profit_yuan_micro: string | null;
     }>(`
+      WITH scoped AS (
+        SELECT l.*
+        FROM ${this.creditLedgerTable} l
+        LEFT JOIN ${this.creditLedgerTable} original ON original.id = l.reverses_ledger_id
+        WHERE l.tenant_id = $1
+          AND COALESCE(original.created_at, l.created_at) >= $2::timestamptz
+      )
       SELECT
-        COALESCE(SUM(CASE WHEN type = 'debit' THEN -credits_delta_micro ELSE 0 END), 0) AS credits_used_micro,
-        COALESCE(SUM(CASE WHEN type = 'debit' THEN revenue_yuan_micro ELSE 0 END), 0) AS revenue_yuan_micro,
+        COALESCE(SUM(CASE WHEN type IN ('debit','reversal') THEN -credits_delta_micro ELSE 0 END), 0) AS credits_used_micro,
+        COALESCE(SUM(CASE WHEN type IN ('debit','reversal') THEN revenue_yuan_micro ELSE 0 END), 0) AS revenue_yuan_micro,
         COALESCE(SUM(CASE WHEN type = 'debit' THEN actual_cost_yuan_micro ELSE 0 END), 0) AS actual_cost_yuan_micro,
-        COALESCE(SUM(CASE WHEN type = 'debit' THEN gross_profit_yuan_micro ELSE 0 END), 0) AS gross_profit_yuan_micro
-      FROM ${this.creditLedgerTable}
-      WHERE tenant_id = $1 AND created_at >= $2::timestamptz
+        COALESCE(SUM(CASE WHEN type IN ('debit','reversal') THEN gross_profit_yuan_micro ELSE 0 END), 0) AS gross_profit_yuan_micro
+      FROM scoped
     `, [tenantId, from]);
     const row = result.rows[0]!;
     const revenue = Number(row.revenue_yuan_micro ?? 0);
@@ -996,6 +1598,26 @@ export class PgBillingStore {
       grossProfitYuanMicro: profit,
       grossMarginBps: revenue > 0 ? Math.round((profit / revenue) * 10_000) : null,
     };
+  }
+
+  async isSessionOwnedByUser(tenantId: string, sessionId: string, userId: string): Promise<boolean> {
+    if (this.runsTable) {
+      const result = await this.pool.query(`
+        SELECT 1 FROM ${this.runsTable}
+        WHERE tenant_id = $1 AND session_id = $2 AND user_id = $3
+        LIMIT 1
+      `, [tenantId, sessionId, userId]);
+      return result.rows.length > 0;
+    }
+    const fallback = await this.pool.query(`
+      SELECT 1 FROM ${this.creditLedgerTable}
+      WHERE tenant_id = $1 AND session_id = $2 AND user_id = $3
+      UNION ALL
+      SELECT 1 FROM ${this.usageEventsTable}
+      WHERE tenant_id = $1 AND session_id = $2 AND user_id = $3
+      LIMIT 1
+    `, [tenantId, sessionId, userId]);
+    return fallback.rows.length > 0;
   }
 
   async getSessionTreeLedgerSummary(tenantId: string, rootSessionId: string): Promise<{
@@ -1026,8 +1648,8 @@ export class PgBillingStore {
     }>(`
       ${sessionTreeCte}
       SELECT
-        COALESCE(SUM(CASE WHEN l.type = 'debit' THEN GREATEST(-l.credits_delta_micro, 0) ELSE 0 END), 0)::text AS credits_used_micro,
-        COALESCE(SUM(CASE WHEN l.type = 'debit' THEN l.revenue_yuan_micro ELSE 0 END), 0)::text AS revenue_yuan_micro,
+        COALESCE(SUM(CASE WHEN l.type IN ('debit','reversal') THEN -l.credits_delta_micro ELSE 0 END), 0)::text AS credits_used_micro,
+        COALESCE(SUM(CASE WHEN l.type IN ('debit','reversal') THEN l.revenue_yuan_micro ELSE 0 END), 0)::text AS revenue_yuan_micro,
         COALESCE(SUM(CASE WHEN l.type = 'debit' THEN l.actual_cost_yuan_micro ELSE 0 END), 0)::text AS actual_cost_yuan_micro,
         (SELECT GREATEST(COUNT(*) - 1, 0)::text FROM session_tree) AS child_session_count
       FROM ${this.creditLedgerTable} l
@@ -1049,6 +1671,9 @@ export class PgBillingStore {
       await client.query('BEGIN');
       await client.query(`DELETE FROM ${this.memberBudgetAuditTable} WHERE tenant_id = $1`, [tenantId]);
       await client.query(`DELETE FROM ${this.memberBudgetsTable} WHERE tenant_id = $1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.fixedFeeHoldsTable} WHERE tenant_id = $1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.runReservationsTable} WHERE tenant_id = $1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.memberPeriodAccountsTable} WHERE tenant_id = $1`, [tenantId]);
       const creditLedger = await client.query(`DELETE FROM ${this.creditLedgerTable} WHERE tenant_id = $1`, [tenantId]);
       const usageEvents = await client.query(`DELETE FROM ${this.usageEventsTable} WHERE tenant_id = $1`, [tenantId]);
       const creditAccounts = await client.query(`DELETE FROM ${this.creditAccountsTable} WHERE tenant_id = $1`, [tenantId]);
@@ -1077,14 +1702,19 @@ export class PgBillingStore {
       credits_charged_micro: string | null;
       gross_profit_yuan_micro: string | null;
     }>(`
+      WITH scoped AS (
+        SELECT l.*
+        FROM ${this.creditLedgerTable} l
+        LEFT JOIN ${this.creditLedgerTable} original ON original.id = l.reverses_ledger_id
+        WHERE ($1::text IS NULL OR l.tenant_id = $1)
+          AND COALESCE(original.created_at, l.created_at) >= $2::timestamptz
+      )
       SELECT
         COALESCE(SUM(CASE WHEN type = 'debit' THEN actual_cost_yuan_micro ELSE 0 END), 0) AS actual_cost_yuan_micro,
-        COALESCE(SUM(CASE WHEN type = 'debit' THEN revenue_yuan_micro ELSE 0 END), 0) AS revenue_yuan_micro,
-        COALESCE(SUM(CASE WHEN type = 'debit' THEN -credits_delta_micro ELSE 0 END), 0) AS credits_charged_micro,
-        COALESCE(SUM(CASE WHEN type = 'debit' THEN gross_profit_yuan_micro ELSE 0 END), 0) AS gross_profit_yuan_micro
-      FROM ${this.creditLedgerTable}
-      WHERE ($1::text IS NULL OR tenant_id = $1)
-        AND created_at >= $2::timestamptz
+        COALESCE(SUM(CASE WHEN type IN ('debit','reversal') THEN revenue_yuan_micro ELSE 0 END), 0) AS revenue_yuan_micro,
+        COALESCE(SUM(CASE WHEN type IN ('debit','reversal') THEN -credits_delta_micro ELSE 0 END), 0) AS credits_charged_micro,
+        COALESCE(SUM(CASE WHEN type IN ('debit','reversal') THEN gross_profit_yuan_micro ELSE 0 END), 0) AS gross_profit_yuan_micro
+      FROM scoped
     `, [query.tenantId ?? null, since]);
     const unpriced = await this.pool.query<{ count: string }>(`
       SELECT COUNT(*) AS count
@@ -1095,12 +1725,13 @@ export class PgBillingStore {
         AND (input_tokens > 0 OR output_tokens > 0)
     `, [query.tenantId ?? null, since]);
     const lowBalance = await this.pool.query<{ tenant_id: string; balance_micro: string; low_balance_threshold_credits_micro: string }>(`
-      SELECT a.tenant_id, a.balance_micro, p.low_balance_threshold_credits_micro
+      SELECT a.tenant_id, (a.balance_micro - a.reserved_micro) AS balance_micro,
+             p.low_balance_threshold_credits_micro
       FROM ${this.creditAccountsTable} a
       JOIN ${this.tenantPoliciesTable} p ON p.tenant_id = a.tenant_id
       WHERE ($1::text IS NULL OR a.tenant_id = $1)
         AND p.low_balance_threshold_credits_micro > 0
-        AND a.balance_micro <= p.low_balance_threshold_credits_micro
+        AND (a.balance_micro - a.reserved_micro) <= p.low_balance_threshold_credits_micro
     `, [query.tenantId ?? null]);
     const row = ledger.rows[0]!;
     const revenue = Number(row.revenue_yuan_micro ?? 0);
@@ -1136,83 +1767,135 @@ export class PgBillingStore {
     const result = await this.pool.query<{
       user_id: string;
       monthly_limit_micro: string | number | null;
+      enforcement_mode: BillingMemberBudgetEnforcementMode | null;
+      per_run_limit_micro: string | number | null;
       active: boolean | null;
       version: string | number | null;
       month_used_micro: string | number | null;
+      month_reserved_micro: string | number | null;
       last_used_at: Date | string | null;
       updated_by: string | null;
       updated_at: Date | string | null;
     }>(`
       WITH budgets AS (
-        SELECT user_id, monthly_limit_micro, active, version, updated_by, updated_at
+        SELECT user_id, monthly_limit_micro, enforcement_mode, per_run_limit_micro,
+               active, version, updated_by, updated_at
         FROM ${this.memberBudgetsTable}
         WHERE tenant_id = $1
           AND ($4::text IS NULL OR user_id = $4)
       ), usage AS (
-        SELECT user_id,
-               COALESCE(SUM(GREATEST(0, -credits_delta_micro)), 0)::bigint AS month_used_micro,
-               MAX(created_at) AS last_used_at
-        FROM ${this.creditLedgerTable}
+        SELECT l.user_id,
+               GREATEST(0, COALESCE(SUM(CASE
+                 WHEN l.type = 'debit' THEN -l.credits_delta_micro
+                 WHEN l.type IN ('refund', 'reversal') THEN -l.credits_delta_micro
+                 ELSE 0 END), 0))::bigint AS month_used_micro,
+               MAX(l.created_at) FILTER (WHERE l.type = 'debit') AS last_used_at
+        FROM ${this.creditLedgerTable} l
+        LEFT JOIN ${this.creditLedgerTable} original ON original.id = l.reverses_ledger_id
+        WHERE l.tenant_id = $1
+          AND l.user_id IS NOT NULL
+          AND COALESCE(original.created_at, l.created_at) >= $2
+          AND COALESCE(original.created_at, l.created_at) < $3
+          AND ($4::text IS NULL OR l.user_id = $4)
+        GROUP BY l.user_id
+      ), reservations AS (
+        SELECT user_id, COALESCE(SUM(remaining_micro), 0)::bigint AS month_reserved_micro
+        FROM ${this.runReservationsTable}
         WHERE tenant_id = $1
-          AND type = 'debit'
+          AND status = 'active'
+          AND period_start = ($2 AT TIME ZONE 'Asia/Shanghai')::date
           AND user_id IS NOT NULL
-          AND created_at >= $2
-          AND created_at < $3
           AND ($4::text IS NULL OR user_id = $4)
         GROUP BY user_id
       )
-      SELECT COALESCE(b.user_id, u.user_id) AS user_id,
-             b.monthly_limit_micro,
-             b.active,
-             b.version,
+      SELECT COALESCE(b.user_id, u.user_id, r.user_id) AS user_id,
+             b.monthly_limit_micro, b.enforcement_mode, b.per_run_limit_micro,
+             b.active, b.version,
              COALESCE(u.month_used_micro, 0)::bigint AS month_used_micro,
-             u.last_used_at,
-             b.updated_by,
-             b.updated_at
+             COALESCE(r.month_reserved_micro, 0)::bigint AS month_reserved_micro,
+             u.last_used_at, b.updated_by, b.updated_at
       FROM budgets b
       FULL OUTER JOIN usage u ON u.user_id = b.user_id
-      ORDER BY COALESCE(u.month_used_micro, 0) DESC, COALESCE(b.user_id, u.user_id)
+      FULL OUTER JOIN reservations r ON r.user_id = COALESCE(b.user_id, u.user_id)
+      ORDER BY COALESCE(u.month_used_micro, 0) DESC, COALESCE(b.user_id, u.user_id, r.user_id)
     `, [tenantId, period.start, period.end, userId ?? null]);
     const aggregate = await this.pool.query<{
       month_used_micro: string | number;
+      month_reserved_micro: string | number;
       unattributed_micro: string | number;
     }>(`
-      SELECT COALESCE(SUM(GREATEST(0, -credits_delta_micro)), 0)::bigint AS month_used_micro,
-             COALESCE(SUM(CASE WHEN user_id IS NULL THEN GREATEST(0, -credits_delta_micro) ELSE 0 END), 0)::bigint AS unattributed_micro
-      FROM ${this.creditLedgerTable}
-      WHERE tenant_id = $1
-        AND type = 'debit'
-        AND created_at >= $2
-        AND created_at < $3
+      WITH scoped AS (
+        SELECT l.*
+        FROM ${this.creditLedgerTable} l
+        LEFT JOIN ${this.creditLedgerTable} original ON original.id = l.reverses_ledger_id
+        WHERE l.tenant_id = $1
+          AND COALESCE(original.created_at, l.created_at) >= $2
+          AND COALESCE(original.created_at, l.created_at) < $3
+      )
+      SELECT GREATEST(0, COALESCE(SUM(CASE
+               WHEN type = 'debit' THEN -credits_delta_micro
+               WHEN type IN ('refund', 'reversal') THEN -credits_delta_micro
+               ELSE 0 END), 0))::bigint AS month_used_micro,
+             GREATEST(0, COALESCE(SUM(CASE
+               WHEN user_id IS NULL AND type = 'debit' THEN -credits_delta_micro
+               WHEN user_id IS NULL AND type IN ('refund', 'reversal') THEN -credits_delta_micro
+               ELSE 0 END), 0))::bigint AS unattributed_micro,
+             COALESCE((SELECT SUM(remaining_micro) FROM ${this.runReservationsTable}
+               WHERE tenant_id = $1 AND status = 'active'
+                 AND period_start = ($2 AT TIME ZONE 'Asia/Shanghai')::date), 0)::bigint AS month_reserved_micro
+      FROM scoped
     `, [tenantId, period.start, period.end]);
+    const aggregateRow = aggregate.rows[0];
     return {
       tenantId,
       timezone: 'Asia/Shanghai',
       periodStart: period.start.toISOString(),
       periodEnd: period.end.toISOString(),
-      monthUsedCreditsMicro: Number(aggregate.rows[0]?.month_used_micro ?? 0),
-      unattributedCreditsMicro: Number(aggregate.rows[0]?.unattributed_micro ?? 0),
-      items: result.rows.map((row) => ({
-        userId: row.user_id,
-        ...(row.monthly_limit_micro === null ? {} : { monthlyLimitCreditsMicro: Number(row.monthly_limit_micro) }),
-        active: row.active ?? false,
-        version: Number(row.version ?? 0),
-        monthUsedCreditsMicro: Number(row.month_used_micro ?? 0),
-        ...(row.last_used_at ? { lastUsedAt: toIso(row.last_used_at) } : {}),
-        ...(row.updated_by ? { updatedBy: row.updated_by } : {}),
-        ...(row.updated_at ? { updatedAt: toIso(row.updated_at) } : {}),
-      })),
+      monthUsedCreditsMicro: Number(aggregateRow?.month_used_micro ?? 0),
+      monthReservedCreditsMicro: Number(aggregateRow?.month_reserved_micro ?? 0),
+      unattributedCreditsMicro: Number(aggregateRow?.unattributed_micro ?? 0),
+      items: result.rows.map((row) => {
+        const used = Number(row.month_used_micro ?? 0);
+        const reserved = Number(row.month_reserved_micro ?? 0);
+        const monthlyLimit = row.monthly_limit_micro === null ? undefined : Number(row.monthly_limit_micro);
+        const perRunLimit = row.per_run_limit_micro === null || row.per_run_limit_micro === undefined
+          ? undefined : Number(row.per_run_limit_micro);
+        const enforcementMode = row.enforcement_mode ?? 'notify';
+        const remaining = monthlyLimit === undefined ? undefined : Math.max(0, monthlyLimit - used - reserved);
+        return {
+          userId: row.user_id,
+          ...(monthlyLimit === undefined ? {} : { monthlyLimitCreditsMicro: monthlyLimit }),
+          enforcementMode,
+          ...(perRunLimit === undefined ? {} : { perRunLimitCreditsMicro: perRunLimit }),
+          active: row.active ?? false,
+          version: Number(row.version ?? 0),
+          monthUsedCreditsMicro: used,
+          monthReservedCreditsMicro: reserved,
+          ...(remaining === undefined ? {} : { remainingCreditsMicro: remaining }),
+          canStartRun: enforcementMode !== 'stop_new_runs' || row.active !== true
+            || (remaining !== undefined && remaining > 0 && perRunLimit !== undefined && perRunLimit > 0),
+          ...(row.last_used_at ? { lastUsedAt: toIso(row.last_used_at) } : {}),
+          ...(row.updated_by ? { updatedBy: row.updated_by } : {}),
+          ...(row.updated_at ? { updatedAt: toIso(row.updated_at) } : {}),
+        };
+      }),
     };
   }
 
   async upsertMemberBudget(input: UpsertMemberBudgetInput): Promise<UpsertMemberBudgetResult> {
     const now = input.now ?? new Date();
     const period = beijingMonthRange(now);
-    const monthlyLimit = input.monthlyLimitCreditsMicro === undefined ? null : Math.trunc(input.monthlyLimitCreditsMicro);
+    const monthlyLimit = input.monthlyLimitCreditsMicro === undefined ? null : Math.max(0, Math.trunc(input.monthlyLimitCreditsMicro));
+    let enforcementMode: BillingMemberBudgetEnforcementMode = input.enforcementMode ?? 'notify';
+    let perRunLimit: number | null = input.perRunLimitCreditsMicro === undefined || input.perRunLimitCreditsMicro === null
+      ? null
+      : Math.max(0, Math.trunc(input.perRunLimitCreditsMicro));
     const fingerprint = createHash('sha256').update(JSON.stringify({
       tenantId: input.tenantId,
       userId: input.userId,
       monthlyLimitCreditsMicro: monthlyLimit,
+      enforcementMode: input.enforcementMode ?? '__preserve__',
+      perRunLimitCreditsMicro: input.perRunLimitCreditsMicro === undefined ? '__preserve__' : input.perRunLimitCreditsMicro,
       note: input.note,
     })).digest('hex');
     const client = await this.pool.connect();
@@ -1246,16 +1929,27 @@ export class PgBillingStore {
         if (currentVersion !== input.expectedVersion) {
           throw new BillingBudgetVersionConflictError('预算已被其他管理员修改，请刷新后重试');
         }
+        enforcementMode = input.enforcementMode
+          ?? (String(currentRow?.enforcement_mode ?? 'notify') as BillingMemberBudgetEnforcementMode);
+        perRunLimit = input.perRunLimitCreditsMicro === undefined
+          ? (currentRow?.per_run_limit_micro === null || currentRow?.per_run_limit_micro === undefined
+              ? null
+              : Number(currentRow.per_run_limit_micro))
+          : input.perRunLimitCreditsMicro === null
+            ? null
+            : Math.max(0, Math.trunc(input.perRunLimitCreditsMicro));
         const createdAt = currentRow?.created_at ? toIso(currentRow.created_at) : now.toISOString();
         const createdBy = currentRow?.created_by ? String(currentRow.created_by) : input.actorUsername;
         const nextVersion = currentVersion + 1;
         await client.query(`
           INSERT INTO ${this.memberBudgetsTable}
-            (tenant_id, user_id, monthly_limit_micro, timezone, active, version,
-             created_by, created_at, updated_by, updated_at)
-          VALUES ($1,$2,$3,'Asia/Shanghai',true,$4,$5,$6,$7,$8)
+            (tenant_id, user_id, monthly_limit_micro, enforcement_mode, per_run_limit_micro,
+             timezone, active, version, created_by, created_at, updated_by, updated_at)
+          VALUES ($1,$2,$3,$4,$5,'Asia/Shanghai',true,$6,$7,$8,$9,$10)
           ON CONFLICT (tenant_id, user_id) DO UPDATE SET
             monthly_limit_micro = EXCLUDED.monthly_limit_micro,
+            enforcement_mode = EXCLUDED.enforcement_mode,
+            per_run_limit_micro = EXCLUDED.per_run_limit_micro,
             active = true,
             version = EXCLUDED.version,
             updated_by = EXCLUDED.updated_by,
@@ -1264,6 +1958,8 @@ export class PgBillingStore {
           input.tenantId,
           input.userId,
           monthlyLimit,
+          enforcementMode,
+          perRunLimit,
           nextVersion,
           createdBy,
           createdAt,
@@ -1274,9 +1970,12 @@ export class PgBillingStore {
         await client.query(`
           INSERT INTO ${this.memberBudgetAuditTable}
             (id, idempotency_key, request_fingerprint, tenant_id, user_id,
-             before_limit_micro, after_limit_micro, before_active, after_active,
+             before_limit_micro, after_limit_micro,
+             before_enforcement_mode, after_enforcement_mode,
+             before_per_run_limit_micro, after_per_run_limit_micro,
+             before_active, after_active,
              period_start, note, actor_user_id, actor_username, created_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true,$9,$10,$11,$12,$13)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,true,$13,$14,$15,$16,$17)
         `, [
           auditId,
           input.idempotencyKey,
@@ -1285,6 +1984,10 @@ export class PgBillingStore {
           input.userId,
           currentRow?.monthly_limit_micro ?? null,
           monthlyLimit,
+          currentRow?.enforcement_mode ?? 'notify',
+          enforcementMode,
+          currentRow?.per_run_limit_micro ?? null,
+          perRunLimit,
           Boolean(currentRow?.active ?? false),
           beijingDateString(period.start),
           input.note,
@@ -1301,6 +2004,12 @@ export class PgBillingStore {
             ? {}
             : { beforeLimitCreditsMicro: Number(currentRow.monthly_limit_micro) }),
           ...(monthlyLimit === null ? {} : { afterLimitCreditsMicro: monthlyLimit }),
+          beforeEnforcementMode: String(currentRow?.enforcement_mode ?? 'notify') as BillingMemberBudgetEnforcementMode,
+          afterEnforcementMode: enforcementMode,
+          ...(currentRow?.per_run_limit_micro === null || currentRow?.per_run_limit_micro === undefined
+            ? {}
+            : { beforePerRunLimitCreditsMicro: Number(currentRow.per_run_limit_micro) }),
+          ...(perRunLimit === null ? {} : { afterPerRunLimitCreditsMicro: perRunLimit }),
           beforeActive: Boolean(currentRow?.active ?? false),
           afterActive: true,
           periodStart: beijingDateString(period.start),
@@ -1321,8 +2030,12 @@ export class PgBillingStore {
     const budget = overview.items[0] ?? {
       userId: input.userId,
       active: true,
+      enforcementMode,
+      ...(perRunLimit === null ? {} : { perRunLimitCreditsMicro: perRunLimit }),
       version: replayed ? input.expectedVersion : input.expectedVersion + 1,
       monthUsedCreditsMicro: 0,
+      monthReservedCreditsMicro: 0,
+      canStartRun: true,
       ...(monthlyLimit === null ? {} : { monthlyLimitCreditsMicro: monthlyLimit }),
     };
     return { budget, audit, replayed };
@@ -1457,6 +2170,191 @@ export class PgBillingStore {
     return new Set(result.rows.map((row) => row.usage_event_id));
   }
 
+  private async lockRun(client: PgClient, tenantId: string, runId: string): Promise<void> {
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`billing-run:${tenantId}:${runId}`]);
+  }
+
+  private async ensureMemberPeriodAccount(
+    client: PgClient,
+    tenantId: string,
+    userId: string,
+    periodStart: string,
+    now: Date,
+  ): Promise<void> {
+    await client.query(`
+      INSERT INTO ${this.memberPeriodAccountsTable}
+        (tenant_id, user_id, period_start, used_micro, reserved_micro, updated_at)
+      SELECT $1, $2, $3::date,
+             GREATEST(0, COALESCE(SUM(CASE
+               WHEN l.type = 'debit' THEN -l.credits_delta_micro
+               WHEN l.type IN ('refund', 'reversal') THEN -l.credits_delta_micro
+               ELSE 0 END), 0))::bigint,
+             0, $4
+      FROM ${this.creditLedgerTable} l
+      LEFT JOIN ${this.creditLedgerTable} original ON original.id = l.reverses_ledger_id
+      WHERE l.tenant_id = $1 AND l.user_id = $2
+        AND COALESCE(original.created_at, l.created_at) >= ($3::date::timestamp AT TIME ZONE 'Asia/Shanghai')
+        AND COALESCE(original.created_at, l.created_at) < (($3::date + INTERVAL '1 month')::timestamp AT TIME ZONE 'Asia/Shanghai')
+      ON CONFLICT (tenant_id, user_id, period_start) DO NOTHING
+    `, [tenantId, userId, periodStart, now.toISOString()]);
+  }
+
+  private async listPendingRunUsage(client: PgClient, tenantId: string, runId: string): Promise<BillingUsageEvent[]> {
+    const charged = await this.listDebitedUsageEventIds(client, tenantId, runId);
+    const result = await client.query<{ row_json: Record<string, unknown> }>(`
+      SELECT row_to_json(u.*) AS row_json FROM ${this.usageEventsTable} u
+      WHERE tenant_id = $1 AND run_id = $2 AND billable = true
+      ORDER BY created_at ASC, id ASC
+    `, [tenantId, runId]);
+    return result.rows.map((row) => normalizeUsageEvent(row.row_json)).filter((row) => !charged.has(row.id));
+  }
+
+  private async sumActiveFixedFeeHolds(client: PgClient, tenantId: string, runId: string): Promise<number> {
+    const result = await client.query<{ total_micro: string | number }>(`
+      SELECT COALESCE(SUM(credits_micro), 0)::bigint AS total_micro
+      FROM ${this.fixedFeeHoldsTable}
+      WHERE tenant_id = $1 AND run_id = $2 AND status = 'active'
+    `, [tenantId, runId]);
+    return Number(result.rows[0]?.total_micro ?? 0);
+  }
+
+  private async releaseReservationLocked(
+    client: PgClient,
+    reservation: BillingRunReservation,
+    status: 'settled' | 'released',
+  ): Promise<void> {
+    const release = Math.max(0, Math.trunc(reservation.remainingCreditsMicro));
+    const now = new Date().toISOString();
+    await client.query(`UPDATE ${this.fixedFeeHoldsTable}
+      SET status = 'released', updated_at = $3
+      WHERE tenant_id = $1 AND run_id = $2 AND status = 'active'`,
+    [reservation.tenantId, reservation.runId, now]);
+    if (release > 0) {
+      await client.query(`UPDATE ${this.creditAccountsTable}
+        SET reserved_micro = GREATEST(0, reserved_micro - $2), updated_at = $3
+        WHERE tenant_id = $1`, [reservation.tenantId, release, now]);
+      if (reservation.userId) {
+        await client.query(`UPDATE ${this.memberPeriodAccountsTable}
+          SET reserved_micro = GREATEST(0, reserved_micro - $4), updated_at = $5
+          WHERE tenant_id = $1 AND user_id = $2 AND period_start = $3::date`,
+        [reservation.tenantId, reservation.userId, reservation.periodStart.slice(0, 10), release, now]);
+      }
+    }
+    await client.query(`UPDATE ${this.runReservationsTable}
+      SET remaining_micro = 0, status = $3, updated_at = $4, released_at = $4
+      WHERE tenant_id = $1 AND run_id = $2 AND status = 'active'`,
+    [reservation.tenantId, reservation.runId, status, now]);
+  }
+
+  private async chargeRunFixedDebit(
+    input: FixedDebitInput,
+    policy: TenantBillingPolicy,
+    pricing: BillingPricingVersion,
+  ): Promise<BillingLedgerEntry> {
+    const runId = input.runId!;
+    await this.ensureAccount(input.tenantId);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await this.lockRun(client, input.tenantId, runId);
+      const accountResult = await client.query<{ row_json: Record<string, unknown> }>(
+        `SELECT row_to_json(a.*) AS row_json FROM ${this.creditAccountsTable} a WHERE tenant_id = $1 FOR UPDATE`, [input.tenantId]);
+      const account = normalizeAccount(accountResult.rows[0]!.row_json);
+      const hint = await client.query<{ user_id: string | null; period_start: string | Date }>(`
+        SELECT user_id, period_start FROM ${this.runReservationsTable}
+        WHERE tenant_id = $1 AND run_id = $2`, [input.tenantId, runId]);
+      const hintedUserId = hint.rows[0]?.user_id ?? input.userId;
+      const hintedPeriod = hint.rows[0]?.period_start ? String(hint.rows[0].period_start).slice(0, 10)
+        : beijingDateString(beijingMonthRange(new Date()).start);
+      if (hintedUserId) {
+        await client.query(`SELECT 1 FROM ${this.memberBudgetsTable}
+          WHERE tenant_id = $1 AND user_id = $2 FOR UPDATE`, [input.tenantId, hintedUserId]);
+        await this.ensureMemberPeriodAccount(client, input.tenantId, hintedUserId, hintedPeriod, new Date());
+        await client.query(`SELECT 1 FROM ${this.memberPeriodAccountsTable}
+          WHERE tenant_id = $1 AND user_id = $2 AND period_start = $3::date FOR UPDATE`,
+        [input.tenantId, hintedUserId, hintedPeriod]);
+      }
+      const reservationResult = await client.query<{ row_json: Record<string, unknown> }>(`
+        SELECT row_to_json(r.*) AS row_json FROM ${this.runReservationsTable} r
+        WHERE tenant_id = $1 AND run_id = $2 FOR UPDATE`, [input.tenantId, runId]);
+      const reservation = reservationResult.rows[0] ? normalizeRunReservation(reservationResult.rows[0].row_json) : null;
+      const existing = await this.getLedgerByIdempotencyKey(client, input.idempotencyKey);
+      if (existing) {
+        await client.query('COMMIT');
+        return existing;
+      }
+      const credits = roundUpCreditsMicro(Math.max(0, Math.trunc(input.creditsMicro)));
+      if (input.holdKey) {
+        const holdResult = await client.query<{ row_json: Record<string, unknown> }>(`
+          SELECT row_to_json(h.*) AS row_json FROM ${this.fixedFeeHoldsTable} h
+          WHERE tenant_id = $1 AND run_id = $2 AND hold_key = $3 FOR UPDATE
+        `, [input.tenantId, runId, input.holdKey]);
+        const hold = holdResult.rows[0] ? normalizeFixedFeeHold(holdResult.rows[0].row_json) : null;
+        if (!hold || !['active', 'released'].includes(hold.status) || credits <= 0 || credits > hold.creditsMicro) {
+          throw new Error('固定费用 hold 不存在、已捕获或实际金额超过预留金额，拒绝扣费');
+        }
+        // durable metered_tool_usage 证明外部成本已发生；即使终态清理已先把 hold
+        // 标为 released，也必须允许补 capture，避免投影永久卡死和生图漏扣。
+        await client.query(`UPDATE ${this.fixedFeeHoldsTable}
+          SET status = 'captured', updated_at = $4
+          WHERE tenant_id = $1 AND run_id = $2 AND hold_key = $3 AND status IN ('active','released')`,
+        [input.tenantId, runId, input.holdKey, new Date().toISOString()]);
+      }
+      const before = account.balanceCreditsMicro;
+      const after = before - credits;
+      if (!policy.allowNegativeBalance && after < -policy.negativeLimitCreditsMicro) {
+        this.options.logger?.warn?.(`billing fixed debit makes tenant negative: tenant=${input.tenantId} source=${input.source} before=${before} debit=${credits}`);
+      }
+      const revenue = Math.trunc((credits * pricing.creditValueYuanMicro) / CREDIT_MICRO);
+      const actualCost = Math.max(0, Math.trunc(input.actualCostYuanMicro));
+      const grossProfit = revenue - actualCost;
+      const attributedUserId = reservation?.userId ?? input.userId;
+      const entry = await this.insertLedgerAndUpdateAccount(client, {
+        idempotencyKey: input.idempotencyKey, tenantId: input.tenantId, accountId: input.tenantId,
+        type: 'debit', source: input.source, relatedUsageEventIds: input.relatedUsageEventIds ?? [],
+        ...(attributedUserId ? { userId: attributedUserId } : {}),
+        ...(input.username ? { usernameSnapshot: input.username } : {}),
+        ...(input.sessionId ? { sessionId: input.sessionId } : {}), runId,
+        creditsDeltaMicro: -credits, balanceBeforeMicro: before, balanceAfterMicro: after,
+        creditValueYuanMicro: pricing.creditValueYuanMicro, revenueYuanMicro: revenue,
+        actualCostYuanMicro: actualCost, grossProfitYuanMicro: grossProfit,
+        ...(revenue > 0 ? { grossMarginBps: Math.round((grossProfit / revenue) * 10_000) } : {}),
+        pricingVersion: pricing.version, billingPolicyVersion: policy.policyVersion,
+        ...(input.note ? { note: input.note } : {}), createdBy: 'system',
+      });
+      if (attributedUserId) {
+        await client.query(`UPDATE ${this.memberPeriodAccountsTable}
+          SET used_micro = used_micro + $4, updated_at = $5
+          WHERE tenant_id = $1 AND user_id = $2 AND period_start = $3::date`,
+        [input.tenantId, attributedUserId, reservation?.periodStart.slice(0, 10) ?? hintedPeriod, credits, new Date().toISOString()]);
+      }
+      if (reservation?.status === 'active') {
+        const consumed = Math.min(credits, reservation.remainingCreditsMicro);
+        const timestamp = new Date().toISOString();
+        await client.query(`UPDATE ${this.creditAccountsTable}
+          SET reserved_micro = GREATEST(0, reserved_micro - $2), updated_at = $3 WHERE tenant_id = $1`,
+        [input.tenantId, consumed, timestamp]);
+        if (reservation.userId) {
+          await client.query(`UPDATE ${this.memberPeriodAccountsTable}
+            SET reserved_micro = GREATEST(0, reserved_micro - $4), updated_at = $5
+            WHERE tenant_id = $1 AND user_id = $2 AND period_start = $3::date`,
+          [input.tenantId, reservation.userId, reservation.periodStart.slice(0, 10), consumed, timestamp]);
+        }
+        await client.query(`UPDATE ${this.runReservationsTable}
+          SET remaining_micro = GREATEST(0, remaining_micro - $3), updated_at = $4
+          WHERE tenant_id = $1 AND run_id = $2 AND status = 'active'`,
+        [input.tenantId, runId, consumed, timestamp]);
+      }
+      await client.query('COMMIT');
+      return entry;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   private async insertLedgerAndUpdateAccount(client: PgClient, input: Omit<BillingLedgerEntry, 'id' | 'createdAt'>): Promise<BillingLedgerEntry> {
     const now = new Date().toISOString();
     const result = await client.query<{ row_json: Record<string, unknown> }>(`
@@ -1503,6 +2401,25 @@ export class PgBillingStore {
     );
     return normalizeLedgerEntry(result.rows[0]!.row_json);
   }
+}
+
+function billingDenied(code: BillingDecisionCode, reason: string): { ok: false; code: BillingDecisionCode; reason: string } {
+  return { ok: false, code, reason };
+}
+
+function legacyAvailable(account: BillingCreditAccount, policy: TenantBillingPolicy): number {
+  return account.balanceCreditsMicro - account.reservedCreditsMicro
+    + (policy.allowNegativeBalance ? policy.negativeLimitCreditsMicro : 0);
+}
+
+function creditsForUsage(
+  usageEvents: BillingUsageEvent[],
+  policy: TenantBillingPolicy,
+  creditValueYuanMicro: number,
+): number {
+  const actualCost = usageEvents.reduce((sum, item) => sum + item.actualCostYuanMicro, 0);
+  const revenue = computeRevenueYuanMicro(actualCost, policy);
+  return roundUpCreditsMicro(Math.ceil((revenue * CREDIT_MICRO) / Math.max(1, creditValueYuanMicro)));
 }
 
 function computeRevenueYuanMicro(actualCostYuanMicro: number, policy: TenantBillingPolicy): number {
@@ -1634,6 +2551,18 @@ function normalizeMemberBudgetAudit(row: Record<string, unknown>): BillingMember
     ...(row.after_limit_micro === null || row.after_limit_micro === undefined
       ? {}
       : { afterLimitCreditsMicro: Number(row.after_limit_micro) }),
+    ...(row.before_enforcement_mode
+      ? { beforeEnforcementMode: String(row.before_enforcement_mode) as BillingMemberBudgetEnforcementMode }
+      : {}),
+    ...(row.after_enforcement_mode
+      ? { afterEnforcementMode: String(row.after_enforcement_mode) as BillingMemberBudgetEnforcementMode }
+      : {}),
+    ...(row.before_per_run_limit_micro === null || row.before_per_run_limit_micro === undefined
+      ? {}
+      : { beforePerRunLimitCreditsMicro: Number(row.before_per_run_limit_micro) }),
+    ...(row.after_per_run_limit_micro === null || row.after_per_run_limit_micro === undefined
+      ? {}
+      : { afterPerRunLimitCreditsMicro: Number(row.after_per_run_limit_micro) }),
     beforeActive: Boolean(row.before_active),
     afterActive: Boolean(row.after_active),
     periodStart: String(row.period_start),
@@ -1678,11 +2607,43 @@ function normalizeTenantPolicy(row: Record<string, unknown>): TenantBillingPolic
     negativeLimitCreditsMicro: Number(row.negative_limit_credits_micro),
     lowBalanceThresholdCreditsMicro: Number(row.low_balance_threshold_credits_micro),
     hardCapMode,
+    ...(row.max_run_credits_micro === null || row.max_run_credits_micro === undefined
+      ? {}
+      : { maxRunCreditsMicro: Number(row.max_run_credits_micro) }),
     showBalance: Boolean(row.show_balance),
     showUsageCredits: Boolean(row.show_usage_credits),
     showCost: Boolean(row.show_cost),
     showGrossMargin: Boolean(row.show_gross_margin),
     updatedBy: String(row.updated_by),
+    updatedAt: toIso(row.updated_at),
+  };
+}
+
+function normalizeRunReservation(row: Record<string, unknown>): BillingRunReservation {
+  return {
+    tenantId: String(row.tenant_id),
+    runId: String(row.run_id),
+    ...(row.user_id ? { userId: String(row.user_id) } : {}),
+    ...(row.username_snapshot ? { usernameSnapshot: String(row.username_snapshot) } : {}),
+    ...(row.session_id ? { sessionId: String(row.session_id) } : {}),
+    periodStart: String(row.period_start),
+    grantedCreditsMicro: Number(row.granted_micro),
+    remainingCreditsMicro: Number(row.remaining_micro),
+    status: row.status as BillingRunReservation['status'],
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+    ...(row.released_at ? { releasedAt: toIso(row.released_at) } : {}),
+  };
+}
+
+function normalizeFixedFeeHold(row: Record<string, unknown>): BillingFixedFeeHold {
+  return {
+    tenantId: String(row.tenant_id),
+    runId: String(row.run_id),
+    holdKey: String(row.hold_key),
+    creditsMicro: Number(row.credits_micro),
+    status: row.status as BillingFixedFeeHold['status'],
+    createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
   };
 }
@@ -1749,6 +2710,7 @@ function normalizeLedgerEntry(row: Record<string, unknown>): BillingLedgerEntry 
     ...(row.session_id ? { sessionId: String(row.session_id) } : {}),
     ...(row.run_id ? { runId: String(row.run_id) } : {}),
     ...(row.message_id ? { messageId: String(row.message_id) } : {}),
+    ...(row.reverses_ledger_id ? { reversesLedgerId: String(row.reverses_ledger_id) } : {}),
     creditsDeltaMicro: Number(row.credits_delta_micro),
     balanceBeforeMicro: Number(row.balance_before_micro),
     balanceAfterMicro: Number(row.balance_after_micro),

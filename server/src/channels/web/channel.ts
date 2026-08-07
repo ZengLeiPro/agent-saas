@@ -42,6 +42,7 @@ import { resolveUserCwd } from '../../workspace/resolver.js';
 import { agentPath, resolveAgentPath } from '../../workspace/namespace.js';
 import type { UserStore } from '../../data/users/store.js';
 import type { TenantStore } from '../../data/tenants/store.js';
+import type { BillingService } from '../../data/billing/service.js';
 import type { UploadManager } from '../../uploads/manager.js';
 import { tenantAccessErrorMessage } from '../../data/tenants/access.js';
 import { speechToText, type SttConfig } from '../../integrations/stt/sttClient.js';
@@ -166,6 +167,8 @@ export interface WebChannelConfig {
   getIsDraining?: () => boolean;
   /** Token 用量统计 store（可选，注入失败时静默跳过统计） */
   tokenUsageStore?: TokenUsageStore;
+  /** PG Billing；getter 避免装配时序与 file backend 分支。 */
+  billingService?: () => BillingService | undefined;
   /** Tenant store for disabled-tenant hard-stop checks. */
   tenantStore?: TenantStore;
   /** Browser WebSocket Origin allowlist，复用 HTTP CORS origins。 */
@@ -2588,35 +2591,51 @@ export class WebChannel implements BaseChannel {
           const recentUserMessages = gateTranscriptPath
             ? await extractRecentUserMessages(gateTranscriptPath, this.config.guardrailOptions?.maxRecentRounds ?? 2)
             : [];
-          const check = await checkTopicScope(
-            {
-              message: guardText,
-              scopeDescription: guardrailConfig!.scopeDescription,
-              strictness: guardrailConfig!.strictness,
-              recentUserMessages,
-            },
-            guardrailConfigs,
-            {
-              timeoutMs: this.config.guardrailOptions?.timeoutMs,
-              systemPrompt: this.config.getGuardrailSystemPrompt?.(),
-              onUsage: async (usageModel, usage) => {
-                // 记账 channel='guardrail'（沿 title 先例，不进 PG credits）
-                const tokenStore = this.config.tokenUsageStore;
-                if (!tokenStore || !user) return;
-                try {
-                  tokenStore.recordResult({
-                    username: user.username,
-                    tenantId: user.tenantId ?? DEFAULT_TENANT_ID,
-                    channel: 'guardrail',
-                    modelUsage: { [usageModel]: usage },
-                    occurredAtMs: Date.now(),
-                  });
-                } catch (err) {
-                  chatLogger.warn(`[guardrail] usage record failed: ${err instanceof Error ? err.message : String(err)}`);
-                }
+          const billingService = this.config.billingService?.();
+          const utilityBilling = billingService && user
+            ? await billingService.beginUtilityModelRun({
+                tenantId: user.tenantId ?? DEFAULT_TENANT_ID,
+                ...(userIdentity?.id ? { userId: userIdentity.id } : {}),
+                username: user.username,
+                sessionId: validSessionId,
+                channel: 'guardrail',
+              })
+            : undefined;
+          let check: Awaited<ReturnType<typeof checkTopicScope>>;
+          try {
+            check = await checkTopicScope(
+              {
+                message: guardText,
+                scopeDescription: guardrailConfig!.scopeDescription,
+                strictness: guardrailConfig!.strictness,
+                recentUserMessages,
               },
-            },
-          );
+              guardrailConfigs,
+              {
+                timeoutMs: this.config.guardrailOptions?.timeoutMs,
+                systemPrompt: this.config.getGuardrailSystemPrompt?.(),
+                beforeModelCall: () => utilityBilling?.beforeModelCall(),
+                onUsage: async (usageModel, usage) => {
+                  await utilityBilling?.recordUsage(usageModel, usage);
+                  const tokenStore = this.config.tokenUsageStore;
+                  if (!tokenStore || !user) return;
+                  try {
+                    tokenStore.recordResult({
+                      username: user.username,
+                      tenantId: user.tenantId ?? DEFAULT_TENANT_ID,
+                      channel: 'guardrail',
+                      modelUsage: { [usageModel]: usage },
+                      occurredAtMs: Date.now(),
+                    });
+                  } catch (err) {
+                    chatLogger.warn(`[guardrail] usage record failed: ${err instanceof Error ? err.message : String(err)}`);
+                  }
+                },
+              },
+            );
+          } finally {
+            await utilityBilling?.finalize();
+          }
           if (check.verdict === 'off_topic') {
             if (guardrailMode === 'enforce') {
               // enforce：现有行为——合成拒答气泡、不启动主 Agent
@@ -3751,31 +3770,45 @@ export class WebChannel implements BaseChannel {
       const assistantReply = ctx?.assistantReplies[0] || fallbackAssistantReply;
       if (!userMessage) return null;
 
-      const title = await generateTitleWithFallback(
-        userMessage,
-        assistantReply,
-        titleConfigs,
-        ctx?.userMessages[1],
-        ctx?.assistantReplies[1],
-        {
-          systemPrompt: this.config.getTitleSystemPrompt?.(),
-          onUsage: (model, usage) => {
-            const tokenStore = this.config.tokenUsageStore;
-            if (!tokenStore) return;
-            try {
-              tokenStore.recordResult({
-                username: userInfo.username,
-                tenantId: userInfo.tenantId ?? DEFAULT_TENANT_ID,
-                channel: 'title',
-                modelUsage: { [model]: usage },
-                occurredAtMs: Date.now(),
-              });
-            } catch (err) {
-              chatLogger.warn(`[token-usage] title record failed: ${err instanceof Error ? err.message : String(err)}`);
-            }
+      const utilityBilling = await this.config.billingService?.()?.beginUtilityModelRun({
+        tenantId: userInfo.tenantId ?? DEFAULT_TENANT_ID,
+        userId: userInfo.id,
+        username: userInfo.username,
+        sessionId,
+        channel: 'title',
+      });
+      let title: string | null;
+      try {
+        title = await generateTitleWithFallback(
+          userMessage,
+          assistantReply,
+          titleConfigs,
+          ctx?.userMessages[1],
+          ctx?.assistantReplies[1],
+          {
+            systemPrompt: this.config.getTitleSystemPrompt?.(),
+            beforeModelCall: () => utilityBilling?.beforeModelCall(),
+            onUsage: async (model, usage) => {
+              await utilityBilling?.recordUsage(model, usage);
+              const tokenStore = this.config.tokenUsageStore;
+              if (!tokenStore) return;
+              try {
+                tokenStore.recordResult({
+                  username: userInfo.username,
+                  tenantId: userInfo.tenantId ?? DEFAULT_TENANT_ID,
+                  channel: 'title',
+                  modelUsage: { [model]: usage },
+                  occurredAtMs: Date.now(),
+                });
+              } catch (err) {
+                chatLogger.warn(`[token-usage] title record failed: ${err instanceof Error ? err.message : String(err)}`);
+              }
+            },
           },
-        },
-      );
+        );
+      } finally {
+        await utilityBilling?.finalize();
+      }
       if (title) {
         await updateSessionMeta(transcriptPath, { generatedTitle: title });
         chatLogger.info(`Generated title for session ${sessionId}: ${title}`);

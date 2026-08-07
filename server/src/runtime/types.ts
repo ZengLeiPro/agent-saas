@@ -61,6 +61,8 @@ export interface RunContext {
    * 写入失败不得反向打断模型请求。
    */
   recordModelRequestDiagnostic?: (event: ModelRequestDiagnostic) => Promise<boolean | void>;
+  /** 每次真正发起模型请求前执行计费重检；拒绝时抛错并由 loop 正常收尾。 */
+  authorizeModelTurn?: () => Promise<void>;
   /** 在模型轮边界读取本 run 尚未消费的 durable 插话消息。 */
   loadQueuedInterjections?: () => Promise<QueuedInterjection[]>;
   /**
@@ -482,6 +484,15 @@ export type PlatformEvent =
   | {
     id: string;
     timestamp: string;
+    type: 'compaction_usage';
+    runId: string;
+    sessionId: string;
+    model: string;
+    usage: ModelUsage;
+  }
+  | {
+    id: string;
+    timestamp: string;
     type: 'model_request_started';
     runId: string;
     sessionId: string;
@@ -525,6 +536,10 @@ export type PlatformEvent =
     unitCreditsMicro: number;
     /** 单件真实成本参考（micro-yuan/件），供毛利审计。 */
     unitCostYuanMicro: number;
+    /** run 内固定费用预占键；投影用它 capture hold 并稳定去重。 */
+    holdKey?: string;
+    /** 事件写入结果不确定时，投影与直接 fallback 共用的稳定扣费幂等键。 */
+    billingChargeKey?: string;
     /** 规格备注（尺寸/质量档位等），进 ledger note 与 raw_usage_json。 */
     note?: string;
   }

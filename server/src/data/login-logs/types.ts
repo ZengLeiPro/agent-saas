@@ -26,7 +26,7 @@ export type LoginEvent =
   | 'workspace_archived' | 'workspace_deleted'
   // 平台管理员能力治理：授权执行、拒绝与敏感检索留痕
   | 'platform_readonly_denied' | 'platform_capability_denied' | 'platform_privileged_action' | 'platform_user_search'
-  | 'billing_account_adjusted' | 'billing_member_budget_updated'
+  | 'billing_account_adjusted' | 'billing_debit_reversed' | 'billing_member_budget_updated'
   | 'runtime_profile_created' | 'runtime_profile_draft_updated' | 'runtime_profile_published'
   | 'runtime_profile_archived' | 'runtime_profile_copied' | 'runtime_profile_binding_updated'
   // 工具启停与描述覆盖：直接改变模型可见的工具契约，必须留痕

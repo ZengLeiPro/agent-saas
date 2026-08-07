@@ -267,6 +267,7 @@ describe('ResponsesApiAdapter', () => {
       { protocol: 'responses' },
     );
     const diagnostics: ModelRequestDiagnostic[] = [];
+    const authorizeModelTurn = vi.fn(async () => undefined);
 
     const events = await collect(adapter.stream({
       model: 'glm-5.2',
@@ -280,10 +281,12 @@ describe('ResponsesApiAdapter', () => {
       previousResponseId: 'resp_prev',
     }, {
       ...baseContext,
+      authorizeModelTurn,
       recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
     }));
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(authorizeModelTurn).toHaveBeenCalledTimes(2);
     // 第一次：接力请求（带 previous_response_id + 增量 input）
     const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
     expect(firstBody.previous_response_id).toBe('resp_prev');
@@ -1822,7 +1825,7 @@ describe('ResponsesApiAdapter', () => {
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
-  it('诊断落库失败不反向打断模型请求', async () => {
+  it('含 usage 的 finished 诊断落库失败时中止请求，防止漏计费', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
       sse('response.created', { type: 'response.created', response: { id: 'resp_diagnostic_failure' } }),
       sse('response.completed', {
@@ -1836,11 +1839,10 @@ describe('ResponsesApiAdapter', () => {
       { protocol: 'responses' },
     );
 
-    const events = await collect(adapter.stream({
+    await expect(collect(adapter.stream({
       model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
-    }, { ...baseContext, recordModelRequestDiagnostic: record }));
-
-    expect(events.at(-1)).toMatchObject({ type: 'completed', terminalStatus: 'completed' });
+    }, { ...baseContext, recordModelRequestDiagnostic: record })))
+      .rejects.toThrow(/MODEL_USAGE_DIAGNOSTIC_PERSIST_FAILED/);
     expect(record).toHaveBeenCalled();
   });
 

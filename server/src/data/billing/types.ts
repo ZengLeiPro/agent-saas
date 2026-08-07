@@ -20,7 +20,64 @@ export type BillingMode = 'prepaid' | 'postpaid' | 'trial' | 'internal';
  * 历史数据通过 `normalizeTenantPolicy` 兜底为 `stop_before_run`。
  */
 export type HardCapMode = 'none' | 'stop_before_run';
+export type BillingMemberBudgetEnforcementMode = 'notify' | 'stop_new_runs';
 export type LedgerType = 'recharge' | 'grant' | 'debit' | 'refund' | 'adjustment' | 'expire' | 'reversal' | 'reserve' | 'release';
+
+export type BillingDecisionCode =
+  | 'BILLING_ORG_BALANCE_EXHAUSTED'
+  | 'BILLING_RUN_LIMIT_NOT_CONFIGURED'
+  | 'BILLING_MEMBER_MONTHLY_LIMIT_EXCEEDED'
+  | 'BILLING_MEMBER_PER_RUN_LIMIT_EXCEEDED'
+  | 'BILLING_RUN_LIMIT_EXCEEDED'
+  | 'BILLING_FIXED_FEE_LIMIT_EXCEEDED'
+  | 'BILLING_RESERVATION_NOT_ACTIVE'
+  | 'BILLING_HOLD_CONFLICT';
+
+export type BillingDecision<T = undefined> =
+  | ({ ok: true } & (T extends undefined ? Record<string, never> : { value: T }))
+  | { ok: false; code: BillingDecisionCode; reason: string };
+
+export interface BillingRunReservation {
+  tenantId: string;
+  runId: string;
+  userId?: string;
+  usernameSnapshot?: string;
+  sessionId?: string;
+  periodStart: string;
+  grantedCreditsMicro: number;
+  remainingCreditsMicro: number;
+  status: 'active' | 'settled' | 'released';
+  createdAt: string;
+  updatedAt: string;
+  releasedAt?: string;
+}
+
+export interface BillingFixedFeeHold {
+  tenantId: string;
+  runId: string;
+  holdKey: string;
+  creditsMicro: number;
+  status: 'active' | 'captured' | 'released';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnsureRunReservationInput {
+  tenantId: string;
+  userId?: string;
+  username?: string;
+  runId: string;
+  sessionId?: string;
+  now?: Date;
+}
+
+export type EnsureRunReservationDecision = BillingDecision<BillingRunReservation | null>;
+export type BillingRunContinueDecision = BillingDecision<{
+  reservation: BillingRunReservation | null;
+  pendingModelCreditsMicro: number;
+  activeFixedHoldsCreditsMicro: number;
+}>;
+export type BillingFixedFeeHoldDecision = BillingDecision<BillingFixedFeeHold | null>;
 
 export interface BillingPricingVersion {
   version: string;
@@ -51,6 +108,8 @@ export interface TenantBillingPolicy {
   negativeLimitCreditsMicro: number;
   lowBalanceThresholdCreditsMicro: number;
   hardCapMode: HardCapMode;
+  /** 组织级单个 run 可预占上限；hardCapMode=stop_before_run 时必须配置为正数。 */
+  maxRunCreditsMicro?: number;
   showBalance: boolean;
   showUsageCredits: boolean;
   showCost: boolean;
@@ -116,6 +175,7 @@ export interface BillingLedgerEntry {
   sessionId?: string;
   runId?: string;
   messageId?: string;
+  reversesLedgerId?: string;
   creditsDeltaMicro: number;
   balanceBeforeMicro: number;
   balanceAfterMicro: number;
@@ -134,9 +194,14 @@ export interface BillingLedgerEntry {
 export interface BillingMemberBudgetUsage {
   userId: string;
   monthlyLimitCreditsMicro?: number;
+  enforcementMode: BillingMemberBudgetEnforcementMode;
+  perRunLimitCreditsMicro?: number;
   active: boolean;
   version: number;
   monthUsedCreditsMicro: number;
+  monthReservedCreditsMicro: number;
+  remainingCreditsMicro?: number;
+  canStartRun: boolean;
   lastUsedAt?: string;
   updatedBy?: string;
   updatedAt?: string;
@@ -148,6 +213,7 @@ export interface BillingMemberBudgetOverview {
   periodStart: string;
   periodEnd: string;
   monthUsedCreditsMicro: number;
+  monthReservedCreditsMicro: number;
   unattributedCreditsMicro: number;
   items: BillingMemberBudgetUsage[];
 }
@@ -159,6 +225,10 @@ export interface BillingMemberBudgetAuditEntry {
   userId: string;
   beforeLimitCreditsMicro?: number;
   afterLimitCreditsMicro?: number;
+  beforeEnforcementMode?: BillingMemberBudgetEnforcementMode;
+  afterEnforcementMode?: BillingMemberBudgetEnforcementMode;
+  beforePerRunLimitCreditsMicro?: number;
+  afterPerRunLimitCreditsMicro?: number;
   beforeActive: boolean;
   afterActive: boolean;
   periodStart: string;
@@ -263,5 +333,7 @@ export interface FixedDebitInput {
   relatedUsageEventIds?: string[];
   sessionId?: string;
   runId?: string;
+  /** 与 reserveFixedFeeHold 的 holdKey 对应；缺省保持旧调用兼容。 */
+  holdKey?: string;
   note?: string;
 }

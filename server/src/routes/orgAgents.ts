@@ -26,6 +26,7 @@ import {
   type GuardrailModelConfig,
 } from '../agent/guardrail.js';
 import type { GuardrailEventStore } from '../data/guardrail/pgGuardrailEventStore.js';
+import type { BillingService } from '../data/billing/service.js';
 import {
   computeOrgAgentUsageStats,
   type UsageStatsSessionReader,
@@ -39,6 +40,8 @@ export interface OrgAgentsRouterDeps {
   orgAgentAvatarsDir?: string;
   /** 门禁模型链（reuse WebChannel 用的 getter；未装配 → gate-preview 503） */
   getGuardrailModelConfigs?: () => GuardrailModelConfig[];
+  /** PG Billing；gate-preview 使用独立 utility reservation。 */
+  billingService?: BillingService;
   /** 使用统计派生数据源（未装配 → usage-stats 相关字段 0，不 503） */
   sessionProjectionStore?: UsageStatsSessionReader;
   guardrailEventStore?: GuardrailEventStore;
@@ -518,15 +521,32 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
     }
 
     try {
-      const check: GuardrailCheckResult = await scopeCheck(
-        {
-          message: parsed.data.testMessage,
-          scopeDescription,
-          strictness,
-          recentUserMessages: parsed.data.recentUserMessages ?? [],
-        },
-        guardrailConfigs,
-      );
+      const utilityBilling = deps.billingService
+        ? await deps.billingService.beginUtilityModelRun({
+            tenantId: record.tenantId,
+            userId: req.user!.sub,
+            username: req.user!.username,
+            channel: 'guardrail',
+          })
+        : undefined;
+      let check: GuardrailCheckResult;
+      try {
+        check = await scopeCheck(
+          {
+            message: parsed.data.testMessage,
+            scopeDescription,
+            strictness,
+            recentUserMessages: parsed.data.recentUserMessages ?? [],
+          },
+          guardrailConfigs,
+          {
+            beforeModelCall: () => utilityBilling?.beforeModelCall(),
+            onUsage: (model, usage) => utilityBilling?.recordUsage(model, usage),
+          },
+        );
+      } finally {
+        await utilityBilling?.finalize();
+      }
       // 三态 verdict → 前端友好字段
       // - inScope: 门禁判定"属于范围"（in_scope；uncertain 视为不明确 → false）
       // - confidence: 由 verdict + source 合成（当前门禁 prompt 未回吐置信度，只能语义映射）

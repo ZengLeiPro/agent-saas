@@ -81,7 +81,12 @@ describe("BillingMiniBadge", () => {
           budget: {
             monthlyLimitCredits: 20_000.5,
             monthUsedCredits: 15_000.25,
-            usageRatioBps: 7500,
+            monthReservedCredits: 1_000,
+            remainingCredits: 4_000.25,
+            enforcementMode: "stop_new_runs",
+            perRunLimitCredits: 2_500,
+            canStartRun: true,
+            usageRatioBps: 8000,
             status: "attention",
           },
         }), { status: 200 });
@@ -96,13 +101,16 @@ describe("BillingMiniBadge", () => {
     expect(screen.getByText("试用")).toBeTruthy();
     expect(screen.getByText("已预留")).toBeTruthy();
     expect(screen.getByText("组织本月消耗")).toBeTruthy();
-    expect(screen.getByText("我的本月用量")).toBeTruthy();
+    expect(screen.getByText("已结算用量")).toBeTruthy();
+    expect(screen.getAllByText("在途预占").length).toBeGreaterThan(0);
+    expect(screen.getByText("执行方式")).toBeTruthy();
+    expect(screen.getByText("超额停新任务")).toBeTruthy();
     expect(screen.getByText("12,800.25")).toBeTruthy();
     expect(screen.getByText("15,000.25")).toBeTruthy();
     expect(screen.getByText("20,000.5")).toBeTruthy();
     expect(screen.getByText("10,080.5")).toBeTruthy();
     expect(screen.getByText("10,420.75")).toBeTruthy();
-    expect(screen.getByText("75% · 需要关注")).toBeTruthy();
+    expect(screen.getByText("80% · 需要关注")).toBeTruthy();
     expect(screen.getByText("当前会话（含 7 个子 Agent）")).toBeTruthy();
     expect(screen.getByText("2,737.58")).toBeTruthy();
     expect(screen.queryByText(/员工预算仅用于提醒/)).toBeNull();

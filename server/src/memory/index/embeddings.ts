@@ -7,6 +7,7 @@
 
 import type { MemoryIndexConfig } from './types.js';
 import type { SdkResultModelUsage } from '../../agent/types.js';
+import type { BillingUtilityModelRun } from '../../data/billing/service.js';
 
 interface EmbeddingResponse {
   data: Array<{ embedding: number[] }>;
@@ -16,7 +17,15 @@ interface EmbeddingResponse {
   };
 }
 
+export class EmbeddingBillingError extends Error {
+  constructor(cause: unknown) {
+    super(`Embedding billing failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = 'EmbeddingBillingError';
+  }
+}
+
 export interface EmbeddingProviderOptions {
+  beginBillingRun?: () => Promise<BillingUtilityModelRun | undefined>;
   onUsage?: (model: string, usage: SdkResultModelUsage) => void | Promise<void>;
 }
 
@@ -45,19 +54,40 @@ export class EmbeddingProvider {
     // 改大会让大文件（chunks > 10）100% 失败被 catch 吞掉，导致索引大面积缺失。
     const batchSize = 10;
     const allEmbeddings: number[][] = [];
-
-    for (let i = 0; i < texts.length; i += batchSize) {
-      const batch = texts.slice(i, i + batchSize);
-      const embeddings = await this.embedBatch(batch);
-      allEmbeddings.push(...embeddings);
+    let billingRun: BillingUtilityModelRun | undefined;
+    try {
+      billingRun = await this.options.beginBillingRun?.();
+    } catch (err) {
+      throw new EmbeddingBillingError(err);
     }
 
-    return allEmbeddings;
+    try {
+      for (let i = 0; i < texts.length; i += batchSize) {
+        const batch = texts.slice(i, i + batchSize);
+        const embeddings = await this.embedBatch(batch, billingRun);
+        allEmbeddings.push(...embeddings);
+      }
+      return allEmbeddings;
+    } finally {
+      try {
+        await billingRun?.finalize();
+      } catch (err) {
+        throw new EmbeddingBillingError(err);
+      }
+    }
   }
 
   /** 单次批量请求 */
-  private async embedBatch(texts: string[]): Promise<number[][]> {
+  private async embedBatch(
+    texts: string[],
+    billingRun?: BillingUtilityModelRun,
+  ): Promise<number[][]> {
     const url = `${this.baseUrl}/v1/embeddings`;
+    try {
+      await billingRun?.beforeModelCall();
+    } catch (err) {
+      throw new EmbeddingBillingError(err);
+    }
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -79,13 +109,19 @@ export class EmbeddingProvider {
 
     const json = (await response.json()) as EmbeddingResponse;
     if (json.usage) {
-      await this.options.onUsage?.(this.model, {
+      const usage: SdkResultModelUsage = {
         inputTokens: json.usage.prompt_tokens ?? json.usage.total_tokens ?? 0,
         outputTokens: 0,
         cacheReadInputTokens: 0,
         cacheCreationInputTokens: 0,
         apiRequestCount: 1,
-      });
+      };
+      try {
+        await billingRun?.recordUsage(this.model, usage);
+      } catch (err) {
+        throw new EmbeddingBillingError(err);
+      }
+      await this.options.onUsage?.(this.model, usage);
     }
     // API 返回的 data 按 index 排序，但为安全起见按原始顺序返回
     return json.data.map((d) => d.embedding);

@@ -63,6 +63,15 @@ interface AccountRow {
   updated_at: string;
 }
 
+interface PeriodRow {
+  tenant_id: string;
+  user_id: string;
+  period_start: string;
+  used_micro: number;
+  reserved_micro: number;
+  updated_at: string;
+}
+
 /**
  * 每租户账户行的串行锁：模拟 SELECT ... FOR UPDATE 只有一个事务能持有，
  * 直到 COMMIT/ROLLBACK 才释放。这是 B2 闭合的核心——把它做成真实互斥，
@@ -94,6 +103,7 @@ class FakePg {
   usageEvents: UsageRow[] = [];
   ledger: LedgerRow[] = [];
   accounts = new Map<string, AccountRow>();
+  periods = new Map<string, PeriodRow>();
   private locks = new Map<string, RowLock>();
 
   private lockFor(tenantId: string): RowLock {
@@ -124,8 +134,9 @@ class FakePg {
         if (/^\s*BEGIN/i.test(sql)) return { rows: [] };
         if (/^\s*COMMIT/i.test(sql)) { release(); return { rows: [] }; }
         if (/^\s*ROLLBACK/i.test(sql)) { release(); return { rows: [] }; }
-        // SELECT ... FOR UPDATE：拿锁（模拟行锁阻塞）
-        if (/FOR UPDATE/i.test(sql)) {
+        // 这里只模拟组织账户行锁。reservation / period 行由同一事务中的
+        // account lock 串行化；若对每个 FOR UPDATE 重复拿同一把非重入锁会自锁。
+        if (/FOR UPDATE/i.test(sql) && /credit_accounts/i.test(sql)) {
           const tenantId = String(params[0]);
           await this.lockFor(tenantId).acquire();
           heldTenant = tenantId;
@@ -159,6 +170,10 @@ class FakePg {
       return { rows: acc ? [{ row_json: { ...acc } }] : [] };
     }
 
+    // reservation 兼容：旧并发测试没有创建 run reservation，查询应返回空集。
+    if (/FROM\s+\S*run_reservations/i.test(sql)) return { rows: [] };
+    if (/pg_advisory_xact_lock/i.test(sql)) return { rows: [] };
+
     // -- insertLedgerAndUpdateAccount UPDATE balance
     if (/UPDATE\s+\S*credit_accounts/i.test(sql)) {
       const tenantId = String(params[0]);
@@ -166,6 +181,37 @@ class FakePg {
       if (acc) {
         acc.balance_micro = Number(params[1]);
         acc.updated_at = String(params[2]);
+      }
+      return { rows: [] };
+    }
+
+    // -- reverseDebit: 按原 ledger id 查 debit / 查已有冲正。
+    if (/FROM\s+\S*credit_ledger\s+l\b/i.test(sql) && /\bid\s*=\s*\$2/i.test(sql) && /type\s*=\s*'debit'/i.test(sql)) {
+      const row = this.ledger.find((item) => item.tenant_id === params[0] && item.id === params[1] && item.type === 'debit');
+      return { rows: row ? [{ row_json: { ...row } }] : [] };
+    }
+    if (/FROM\s+\S*credit_ledger\s+l\b/i.test(sql) && /reverses_ledger_id\s*=\s*\$2/i.test(sql)) {
+      const row = this.ledger.find((item) => item.tenant_id === params[0] && item.reverses_ledger_id === params[1]);
+      return { rows: row ? [{ row_json: { ...row } }] : [] };
+    }
+
+    if (/SELECT\s+1\s+FROM\s+\S*member_budgets/i.test(sql)) return { rows: [] };
+    if (/INSERT INTO\s+\S*member_period_accounts/i.test(sql)) {
+      const key = `${params[0]}:${params[1]}:${params[2]}`;
+      if (!this.periods.has(key)) {
+        this.periods.set(key, {
+          tenant_id: String(params[0]), user_id: String(params[1]), period_start: String(params[2]),
+          used_micro: 0, reserved_micro: 0, updated_at: String(params[3]),
+        });
+      }
+      return { rows: [] };
+    }
+    if (/SELECT\s+1\s+FROM\s+\S*member_period_accounts/i.test(sql)) return { rows: [{ '?column?': 1 }] };
+    if (/UPDATE\s+\S*member_period_accounts/i.test(sql) && /used_micro\s*=\s*GREATEST\(0,\s*used_micro\s*-\s*\$4\)/i.test(sql)) {
+      const row = this.periods.get(`${params[0]}:${params[1]}:${params[2]}`);
+      if (row) {
+        row.used_micro = Math.max(0, row.used_micro - Number(params[3]));
+        row.updated_at = String(params[4]);
       }
       return { rows: [] };
     }
@@ -189,6 +235,28 @@ class FakePg {
         }
       }
       return { rows: [...ids].map((id) => ({ usage_event_id: id })) };
+    }
+
+    // -- reverseDebit 专用 reversal INSERT（比普通 ledger 多 reverses_ledger_id）。
+    if (/INSERT INTO\s+\S*credit_ledger/i.test(sql) && /reverses_ledger_id/i.test(sql)) {
+      const row: LedgerRow = {
+        id: String(params[0]), idempotency_key: String(params[1]), tenant_id: String(params[2]),
+        account_id: String(params[3]), type: 'reversal', source: 'reversal',
+        related_usage_event_ids: Array.isArray(params[4]) ? [...params[4] as string[]] : [],
+        user_id: params[5] == null ? null : String(params[5]),
+        username_snapshot: params[6] == null ? null : String(params[6]),
+        session_id: params[7] == null ? null : String(params[7]),
+        run_id: params[8] == null ? null : String(params[8]),
+        message_id: params[9] == null ? null : String(params[9]),
+        reverses_ledger_id: String(params[10]), credits_delta_micro: Number(params[11]),
+        balance_before_micro: Number(params[12]), balance_after_micro: Number(params[13]),
+        credit_value_yuan_micro: Number(params[14]), revenue_yuan_micro: Number(params[15]),
+        actual_cost_yuan_micro: 0, gross_profit_yuan_micro: Number(params[15]), gross_margin_bps: null,
+        pricing_version: String(params[16]), billing_policy_version: String(params[17]),
+        note: params[18] ?? null, created_by: params[19] ?? null, created_at: String(params[20]),
+      };
+      this.ledger.push(row);
+      return { rows: [{ row_json: { ...row } }] };
     }
 
     // -- insertLedgerAndUpdateAccount INSERT INTO ..._credit_ledger ... RETURNING row_to_json(...)
@@ -539,6 +607,60 @@ describe('B2 settleRunDebit 串行去重闭合（listDebitedUsageEventIds + 账�
     // e1 出现在两条 debit 的 related 里 → 被多扣。固化"去掉护栏即回归"。
     const debitLedgers = fake.ledger.filter((l) => l.type === 'debit' && l.source === 'usage_event');
     expect(debitLedgers.filter((l) => l.related_usage_event_ids.includes('e1'))).toHaveLength(2);
+  });
+});
+
+describe('退款/冲正恢复员工 allowance', () => {
+  it('完整冲正只执行一次，并按原扣费用户与原周期恢复 used_micro', async () => {
+    const fake = new FakePg();
+    const store = makeStore(fake, { startBalanceMicro: 700 * CREDIT_MICRO });
+    const original: LedgerRow = {
+      id: 'debit-original',
+      idempotency_key: 'debit:original',
+      tenant_id: 'wain-test',
+      account_id: 'wain-test',
+      type: 'debit',
+      source: 'usage_event',
+      related_usage_event_ids: ['usage-1'],
+      user_id: 'user-1',
+      username_snapshot: 'alice',
+      session_id: 'session-1',
+      run_id: null,
+      message_id: null,
+      credits_delta_micro: -300 * CREDIT_MICRO,
+      balance_before_micro: 1000 * CREDIT_MICRO,
+      balance_after_micro: 700 * CREDIT_MICRO,
+      credit_value_yuan_micro: 10_000,
+      revenue_yuan_micro: 3_000_000,
+      actual_cost_yuan_micro: 1_000_000,
+      gross_profit_yuan_micro: 2_000_000,
+      gross_margin_bps: 6667,
+      pricing_version: 'price-v1',
+      billing_policy_version: 'pol-v1',
+      note: '原扣费',
+      created_by: 'system',
+      created_at: '2026-08-07T00:00:00.000Z',
+    };
+    fake.ledger.push(original);
+    fake.periods.set('wain-test:user-1:2026-08-01', {
+      tenant_id: 'wain-test', user_id: 'user-1', period_start: '2026-08-01',
+      used_micro: 300 * CREDIT_MICRO, reserved_micro: 0, updated_at: '2026-08-07T00:00:00.000Z',
+    });
+
+    const first = await store.reverseDebit({
+      tenantId: 'wain-test', ledgerId: original.id, idempotencyKey: 'reversal:original',
+      note: '客户退款', actor: 'admin',
+    });
+    const replay = await store.reverseDebit({
+      tenantId: 'wain-test', ledgerId: original.id, idempotencyKey: 'reversal:original',
+      note: '客户退款', actor: 'admin',
+    });
+
+    expect(first.reversesLedgerId).toBe(original.id);
+    expect(replay.id).toBe(first.id);
+    expect(fake.accounts.get('wain-test')?.balance_micro).toBe(1000 * CREDIT_MICRO);
+    expect(fake.periods.get('wain-test:user-1:2026-08-01')?.used_micro).toBe(0);
+    expect(fake.ledger.filter((row) => row.type === 'reversal')).toHaveLength(1);
   });
 });
 

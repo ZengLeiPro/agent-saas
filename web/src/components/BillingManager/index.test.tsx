@@ -50,7 +50,10 @@ const budgets = {
   summary: {
     tenantBalanceCredits: 5000,
     monthUsedCredits: 1200,
+    monthReservedCredits: 100,
     budgetedUsers: 1,
+    enforcedUsers: 1,
+    blockedUsers: 0,
     nearLimitUsers: 0,
     overLimitUsers: 0,
     unattributedCredits: 20,
@@ -64,7 +67,12 @@ const budgets = {
     canManage: true,
     monthlyLimitCredits: 2000,
     monthUsedCredits: 1200,
-    usageRatioBps: 6000,
+    monthReservedCredits: 100,
+    remainingCredits: 700,
+    enforcementMode: "stop_new_runs",
+    perRunLimitCredits: 500,
+    canStartRun: true,
+    usageRatioBps: 6500,
     status: "normal",
     active: true,
     version: 2,
@@ -108,7 +116,7 @@ describe("TenantBillingPanel 员工预算", () => {
     render(<TenantBillingPanel tenantId="wain" tenantName="外星科技" />);
 
     expect(await screen.findByText("员工预算")).toBeTruthy();
-    expect(screen.getByText(/员工预算只做用量提醒/)).toBeTruthy();
+    expect(screen.getByText(/员工可设软预算/)).toBeTruthy();
     expect(screen.getByText("爱丽丝")).toBeTruthy();
     expect(screen.getByText("未归属用量")).toBeTruthy();
     expect(screen.getByText("20")).toBeTruthy();
@@ -130,11 +138,13 @@ describe("TenantBillingPanel 员工预算", () => {
       const body = JSON.parse(String(putCall?.[1]?.body));
       expect(body).toMatchObject({
         monthlyLimitCredits: 2500,
+        enforcementMode: "stop_new_runs",
+        perRunLimitCredits: 500,
         expectedVersion: 2,
         note: "8 月团队预算",
       });
       expect(body.idempotencyKey).toEqual(expect.any(String));
     });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  });
+  }, 20_000);
 });

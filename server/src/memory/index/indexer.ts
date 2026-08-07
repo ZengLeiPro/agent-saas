@@ -20,7 +20,7 @@ const require = createRequire(import.meta.url);
 
 import { ensureSchema, ensureVectorTable } from './schema.js';
 import { chunkMarkdown, hashText } from './chunker.js';
-import { EmbeddingProvider } from './embeddings.js';
+import { EmbeddingBillingError, EmbeddingProvider, type EmbeddingProviderOptions } from './embeddings.js';
 import {
   searchVector,
   searchKeyword,
@@ -69,12 +69,12 @@ export class MemoryIndexer {
     workspaceDir: string,
     config: MemoryIndexConfig,
     log?: LogFn,
-    opts?: { skipWatch?: boolean },
+    opts?: { skipWatch?: boolean; embeddingProvider?: EmbeddingProviderOptions },
   ) {
     this.workspaceDir = resolve(workspaceDir);
     this.config = config;
     this.log = log ?? (() => {});
-    this.provider = new EmbeddingProvider(config.embedding);
+    this.provider = new EmbeddingProvider(config.embedding, opts?.embeddingProvider);
 
     // DB 路径：{dbDir}/{workspace名}.sqlite
     const workspaceName = this.workspaceDir.split('/').pop() ?? 'default';
@@ -126,6 +126,7 @@ export class MemoryIndexer {
           );
         }
       } catch (e) {
+        if (e instanceof EmbeddingBillingError) throw e;
         this.log(`vector search error: ${e}`);
       }
     })();

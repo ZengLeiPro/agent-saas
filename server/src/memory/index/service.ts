@@ -10,8 +10,13 @@ import { resolve } from 'node:path';
 import { MemoryIndexer } from './indexer.js';
 import type { SyncIfStaleOptions } from './indexer.js';
 import type { MemoryIndexConfig } from './types.js';
+import type { BillingUtilityModelRun } from '../../data/billing/service.js';
 
 type LogFn = (msg: string) => void;
+
+export interface MemoryIndexServiceOptions {
+  beginEmbeddingBillingRun?: (workspaceDir: string) => Promise<BillingUtilityModelRun | undefined>;
+}
 
 export class MemoryIndexService {
   private readonly indexers = new Map<string, MemoryIndexer>();
@@ -20,7 +25,11 @@ export class MemoryIndexService {
   private readonly log: LogFn;
   private retired = false;
 
-  constructor(config: MemoryIndexConfig, log?: LogFn) {
+  constructor(
+    config: MemoryIndexConfig,
+    log?: LogFn,
+    private readonly options: MemoryIndexServiceOptions = {},
+  ) {
     this.config = config;
     this.log = log ?? (() => {});
   }
@@ -37,6 +46,11 @@ export class MemoryIndexService {
     this.log(`creating indexer for ${key}`);
     const indexer = new MemoryIndexer(key, this.config, this.log, {
       skipWatch: this.retired,
+      embeddingProvider: {
+        ...(this.options.beginEmbeddingBillingRun
+          ? { beginBillingRun: () => this.options.beginEmbeddingBillingRun!(key) }
+          : {}),
+      },
     });
     this.indexers.set(key, indexer);
     return indexer;

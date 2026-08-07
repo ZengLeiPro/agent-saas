@@ -462,6 +462,29 @@ export class RawAgentLoop implements AgentLoop {
     this.zombieToolCallTimeoutMs = resolveZombieToolCallTimeoutMs(options.zombieToolCallTimeoutMs);
   }
 
+  private async appendSemanticFailureUsage(
+    context: RunContext,
+    usage: ModelUsage | undefined,
+    errorCode: string,
+  ): Promise<void> {
+    if (!usage) return;
+    await this.append({
+      type: 'model_request_finished',
+      runId: context.runId,
+      sessionId: context.sessionId,
+      diagnostic: {
+        type: 'finished',
+        modelRequestId: randomUUID(),
+        attemptId: randomUUID(),
+        attempt: 1,
+        outcome: 'provider_error',
+        durationMs: 0,
+        errorCode,
+        usage,
+      },
+    });
+  }
+
   private withModelRequestDiagnostics(context: RunContext): RunContext {
     return {
       ...context,
@@ -1065,6 +1088,7 @@ export class RawAgentLoop implements AgentLoop {
           ? requestCurrentUserMessage.content
           : '';
         const requestHistoryMessages = requestHistory.slice(0, -1);
+        await context.authorizeModelTurn?.();
         const contextSnapshot = buildContextBreakdownSnapshot({
           instructionSections: input.instructionSections,
           instructions: input.instructions,
@@ -1278,6 +1302,7 @@ export class RawAgentLoop implements AgentLoop {
           }
           const assistantContent = completed.content || turnText;
           if (!assistantContent) {
+            await this.appendSemanticFailureUsage(context, completed.usage, 'semantic_empty_turn');
             if (turnThinking && !thinkingOnlyContinuationUsed) {
               thinkingOnlyContinuationUsed = true;
               messages.push({ role: 'user', content: THINKING_ONLY_CONTINUATION_PROMPT });
@@ -1806,6 +1831,7 @@ export class RawAgentLoop implements AgentLoop {
         { role: 'user', content: COMPACTION_REQUEST_PROMPT },
       ];
       let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
+      await context.authorizeModelTurn?.();
       // 黑箱消费：thinking 丢弃、text 静默累积，不向外 yield 流式内容
       for await (const event of this.modelAdapter.stream({
         model: context.model,
@@ -1825,6 +1851,16 @@ export class RawAgentLoop implements AgentLoop {
       if (!completed) throw new Error('model stream completed without completion event');
       if (completed.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
       assertSuccessfulModelTerminal(completed);
+      if (completed.usage) {
+        // 先落 usage 再做摘要语义校验：空摘要同样已产生上游成本。
+        await this.append({
+          type: 'compaction_usage',
+          runId: context.runId,
+          sessionId: context.sessionId,
+          model: context.model,
+          usage: completed.usage,
+        });
+      }
       if (!summaryText && completed.content) summaryText = completed.content;
       if (!summaryText.trim()) throw new Error('compaction failed: model returned empty summary');
 
@@ -2971,6 +3007,7 @@ export class RawAgentLoop implements AgentLoop {
         pendingTurnText = '';
 
         await this.assertNoOpenToolCallBatchesBeforeModel(args.context.sessionId);
+        await args.context.authorizeModelTurn?.();
         const preflight = governModelRequestMessages(
           args.messages,
           args.context.model,
@@ -3136,6 +3173,7 @@ export class RawAgentLoop implements AgentLoop {
           }
           const assistantContent = completed.content || turnText;
           if (!assistantContent) {
+            await this.appendSemanticFailureUsage(args.context, completed.usage, 'semantic_empty_turn');
             if (turnThinking && !thinkingOnlyContinuationUsed) {
               thinkingOnlyContinuationUsed = true;
               args.messages.push({ role: 'user', content: THINKING_ONLY_CONTINUATION_PROMPT });

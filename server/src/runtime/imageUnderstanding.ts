@@ -49,12 +49,17 @@ export async function analyzeImagesWithFallback(
       continue;
     }
 
+    // fallback 链中的每个候选都会产生真实模型成本；授权拒绝必须向上抛出，
+    // 不能被当成 provider 失败后继续尝试下一模型。
+    await context.authorizeModelTurn?.();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 30_000);
     timeout.unref?.();
     const abortFromParent = () => controller.abort();
     context.signal?.addEventListener('abort', abortFromParent, { once: true });
     let usage: ModelUsage | undefined;
+    let failedAttemptUsage: ModelUsage | undefined;
+    let attemptCallbackFailed = false;
     try {
       if (config.providerOptions?.responsesTransport === 'codex_subscription') {
         throw new Error('MODEL_TRANSPORT_UNSUPPORTED: 图片理解辅助路径不允许使用 Codex subscription');
@@ -87,6 +92,13 @@ export async function analyzeImagesWithFallback(
         ...context,
         model: config.model,
         signal: controller.signal,
+        // 图片理解发生在 RawAgentLoop 注入 diagnostic recorder 之前；在本地截获
+        // 失败 attempt usage，随后统一写 image_understanding 事件，避免重复投影。
+        recordModelRequestDiagnostic: async (diagnostic) => {
+          if (diagnostic.type === 'finished' && diagnostic.usage) {
+            failedAttemptUsage = diagnostic.usage;
+          }
+        },
       })) {
         if (event.type === 'text_delta') content += event.content;
         if (event.type === 'draft_reset') content = '';
@@ -97,13 +109,20 @@ export async function analyzeImagesWithFallback(
       }
       const normalized = content.trim();
       if (!normalized) throw new Error('图片理解模型返回空内容');
-      await options.onAttempt?.({ model: config.model, status: 'completed', usage });
+      try {
+        await options.onAttempt?.({ model: config.model, status: 'completed', usage });
+      } catch (err) {
+        attemptCallbackFailed = true;
+        throw err;
+      }
       return {
         model: config.model,
         attachmentIds: images.map((item) => item.attachmentId),
         content: normalized,
       };
     } catch (error) {
+      if (attemptCallbackFailed) throw error;
+      usage = usage ?? failedAttemptUsage;
       const message = controller.signal.aborted && !context.signal?.aborted
         ? '图片理解模型调用超时'
         : error instanceof Error ? error.message : String(error);

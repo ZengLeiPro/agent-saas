@@ -774,6 +774,15 @@ export type PlatformEvent =
   | {
     id: string;
     timestamp: string;
+    /** Cron 会话写入显式分组后的跨进程刷新信号。 */
+    type: 'session_group_changed';
+    sessionId: string;
+    userId: string;
+    groupId: string;
+  }
+  | {
+    id: string;
+    timestamp: string;
     type: 'run_lease_acquired';
     runId: string;
     sessionId: string;

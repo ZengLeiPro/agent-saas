@@ -1404,6 +1404,30 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
   // ════════════════════════════════════════════════════════════════════
 
   describe('publishRuntimePlatformEvent 补充', () => {
+    it('session_group_changed 跨进程刷新会话列表与分组', () => {
+      const rig = makeRig();
+      const sessionId = randomUUID();
+
+      rig.channel.publishRuntimePlatformEvent({
+        id: 'evt-group-1',
+        timestamp: new Date().toISOString(),
+        type: 'session_group_changed',
+        sessionId,
+        userId: USER.sub,
+        groupId: 'cron:job-1',
+      });
+
+      expect(rig.userEvents).toEqual([
+        {
+          type: 'session_updated',
+          sessionId,
+          updatedAtMs: expect.any(Number),
+          isNew: true,
+        },
+        { type: 'groups_changed' },
+      ]);
+    });
+
     it('非终态 run_state_changed 投影 lifecycle session_status；run_finished success 空投影跳过', () => {
       const rig = makeRig();
       const sessionId = randomUUID();

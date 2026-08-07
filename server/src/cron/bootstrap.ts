@@ -13,7 +13,7 @@ import type { TenantStore } from '../data/tenants/store.js';
 
 const { Client } = pg;
 
-async function withPgAdvisoryLock<T>(
+export async function withPgAdvisoryLock<T>(
   connectionString: string,
   lockName: string,
   operation: () => Promise<T>,
@@ -83,6 +83,14 @@ export interface CreateCronRuntimeOptions {
   resolveModel?: ExecutorOptions['resolveModel'];
   resolveDefaultModel?: ExecutorOptions['resolveDefaultModel'];
   groupStore?: GroupStore;
+  /** 分组已持久化后的跨进程通知钩子。 */
+  onSessionGrouped?: (event: {
+    jobId: string;
+    jobName: string;
+    sessionId: string;
+    groupId: string;
+    userId: string;
+  }) => Promise<void>;
   userStore?: UserStoreLike;
   tenantStore?: TenantStore;
   tokenUsageStore?: TokenUsageStore;
@@ -172,21 +180,19 @@ export function createCronRuntime(options: CreateCronRuntimeOptions): CronRuntim
     notify,
     onEvent: options.onEvent,
     onSessionCreated: options.groupStore ? async (jobId, jobName, sessionId, owner) => {
-      const gs = options.groupStore!;
-      const cronGroupId = `cron:${jobId}`;
-      const existing = gs.findByCronJobId(jobId);
-      if (existing) {
-        if (existing.name !== jobName) {
-          await gs.update(existing.id, { name: jobName });
-        }
-        await gs.addSessions(cronGroupId, [sessionId], existing.userId);
-      } else if (owner) {
-        await gs.create({
-          name: jobName,
-          kind: 'cron',
-          cronJobId: jobId,
-          sessionIds: [sessionId],
-          userId: owner,
+      const group = await options.groupStore!.addCronSession({
+        jobId,
+        jobName,
+        sessionId,
+        owner,
+      });
+      if (group) {
+        await options.onSessionGrouped?.({
+          jobId,
+          jobName,
+          sessionId,
+          groupId: group.id,
+          userId: group.userId,
         });
       }
     } : undefined,

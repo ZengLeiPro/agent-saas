@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, mkdirSync } from 'node:fs';
-import { writeFile, rename } from 'node:fs/promises';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { open, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type {
   SessionGroup,
@@ -13,12 +13,46 @@ import type {
 /** Callback to check whether a session transcript still exists */
 export type SessionExistsChecker = (sessionId: string) => Promise<boolean>;
 
+export interface GroupStoreOptions {
+  /** 生产 PG advisory lock；未提供时退化为跨进程文件锁。 */
+  withLock?: <T>(operation: () => Promise<T>) => Promise<T>;
+  lockTimeoutMs?: number;
+  lockRetryMs?: number;
+}
+
+interface MutationResult<T> {
+  changed: boolean;
+  value: T;
+}
+
+interface LocalLock {
+  handle: Awaited<ReturnType<typeof open>>;
+  token: string;
+}
+
+const DEFAULT_LOCK_TIMEOUT_MS = 10_000;
+const DEFAULT_LOCK_RETRY_MS = 20;
+
+function errorCode(err: unknown): string | undefined {
+  return typeof err === 'object' && err !== null && 'code' in err
+    ? String((err as { code?: unknown }).code)
+    : undefined;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export class GroupStore {
   private groups: SessionGroup[] = [];
-  private filePath: string;
+  private readonly filePath: string;
+  private readonly options: GroupStoreOptions;
+  private mutationQueue: Promise<void> = Promise.resolve();
+  private mutationActive = false;
 
-  constructor(filePath: string) {
+  constructor(filePath: string, options: GroupStoreOptions = {}) {
     this.filePath = filePath;
+    this.options = options;
     this.load();
   }
 
@@ -37,52 +71,131 @@ export class GroupStore {
     }
   }
 
+  private refreshForRead(): void {
+    // 同实例 mutation 已在锁内加载了最新快照；此时重新读旧文件会把尚未 publish
+    // 的本地改动覆盖回去。其他进程的读则始终从原子发布后的文件取真值。
+    if (!this.mutationActive) this.load();
+  }
+
   private async persist(): Promise<void> {
     const data: GroupsStoreFile = { version: 1, groups: this.groups };
     mkdirSync(dirname(this.filePath), { recursive: true });
-    const tempPath = `${this.filePath}.tmp`;
-    await writeFile(tempPath, JSON.stringify(data, null, 2));
-    await rename(tempPath, this.filePath);
+    const tempPath = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(tempPath, JSON.stringify(data, null, 2));
+      await rename(tempPath, this.filePath);
+    } finally {
+      await rm(tempPath, { force: true }).catch(() => undefined);
+    }
+  }
+
+  private async acquireLocalLock(): Promise<LocalLock> {
+    mkdirSync(dirname(this.filePath), { recursive: true });
+    const lockPath = `${this.filePath}.lock`;
+    const timeoutMs = Math.max(0, this.options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS);
+    const retryMs = Math.max(1, this.options.lockRetryMs ?? DEFAULT_LOCK_RETRY_MS);
+    const deadline = Date.now() + timeoutMs;
+    const token = randomUUID();
+
+    for (;;) {
+      let handle: Awaited<ReturnType<typeof open>> | undefined;
+      try {
+        handle = await open(lockPath, 'wx');
+        await handle.writeFile(token, 'utf-8');
+        return { handle, token };
+      } catch (err) {
+        await handle?.close().catch(() => undefined);
+        if (handle) await unlink(lockPath).catch(() => undefined);
+        if (errorCode(err) !== 'EEXIST') throw err;
+        if (Date.now() >= deadline) {
+          throw new Error(`Timed out acquiring groups store lock: ${lockPath}`);
+        }
+        await sleep(Math.min(retryMs, Math.max(1, deadline - Date.now())));
+      }
+    }
+  }
+
+  private async releaseLocalLock(lock: LocalLock): Promise<void> {
+    const lockPath = `${this.filePath}.lock`;
+    await lock.handle.close().catch(() => undefined);
+    try {
+      const currentToken = await readFile(lockPath, 'utf-8');
+      if (currentToken === lock.token) await unlink(lockPath);
+    } catch (err) {
+      if (errorCode(err) !== 'ENOENT') throw err;
+    }
+  }
+
+  private async mutate<T>(operation: () => MutationResult<T> | Promise<MutationResult<T>>): Promise<T> {
+    const execute = async (): Promise<T> => {
+      this.mutationActive = true;
+      try {
+        this.load();
+        const result = await operation();
+        if (result.changed) await this.persist();
+        return result.value;
+      } finally {
+        this.mutationActive = false;
+      }
+    };
+
+    const run = async (): Promise<T> => {
+      if (this.options.withLock) return this.options.withLock(execute);
+      const lock = await this.acquireLocalLock();
+      try {
+        return await execute();
+      } finally {
+        await this.releaseLocalLock(lock);
+      }
+    };
+
+    const queued = this.mutationQueue.then(run, run);
+    this.mutationQueue = queued.then(() => undefined, () => undefined);
+    return queued;
   }
 
   // --- Queries ---
 
   findById(id: string): SessionGroup | undefined {
+    this.refreshForRead();
     return this.groups.find(g => g.id === id);
   }
 
   listByUserId(userId: string): SessionGroup[] {
+    this.refreshForRead();
     return this.groups.filter(g => g.userId === userId);
   }
 
   listAll(): SessionGroup[] {
+    this.refreshForRead();
     return [...this.groups];
   }
 
   findByCronJobId(cronJobId: string): SessionGroup | undefined {
+    this.refreshForRead();
     return this.groups.find(g => g.kind === 'cron' && g.cronJobId === cronJobId);
   }
 
   // --- Mutations ---
 
   async create(input: CreateGroupInput): Promise<SessionGroup> {
-    const group = this.buildGroup(input);
-    this.groups.push(group);
-    await this.persist();
-    return group;
+    return this.mutate(() => {
+      const group = this.buildGroup(input);
+      this.groups.push(group);
+      return { changed: true, value: group };
+    });
   }
 
   /** Batch create: insert multiple groups with a single persist (used by migration) */
   async createBatch(inputs: CreateGroupInput[]): Promise<SessionGroup[]> {
-    const results = inputs.map(input => {
-      const group = this.buildGroup(input);
-      this.groups.push(group);
-      return group;
+    return this.mutate(() => {
+      const results = inputs.map(input => {
+        const group = this.buildGroup(input);
+        this.groups.push(group);
+        return group;
+      });
+      return { changed: results.length > 0, value: results };
     });
-    if (results.length > 0) {
-      await this.persist();
-    }
-    return results;
   }
 
   private buildGroup(input: CreateGroupInput): SessionGroup {
@@ -105,49 +218,78 @@ export class GroupStore {
   }
 
   async update(id: string, patch: UpdateGroupInput): Promise<SessionGroup | undefined> {
-    const group = this.findById(id);
-    if (!group) return undefined;
+    return this.mutate(() => {
+      const group = this.groups.find(candidate => candidate.id === id);
+      if (!group) return { changed: false, value: undefined };
 
-    if (patch.name !== undefined) group.name = patch.name.trim();
-    if (patch.sessionIds !== undefined) group.sessionIds = patch.sessionIds;
-    group.updatedAt = Date.now();
-
-    await this.persist();
-    return group;
+      if (patch.name !== undefined) group.name = patch.name.trim();
+      if (patch.sessionIds !== undefined) group.sessionIds = patch.sessionIds;
+      group.updatedAt = Date.now();
+      return { changed: true, value: group };
+    });
   }
 
   /** Internal update that can also change kind/cronJobId (used for cron detach) */
   async updateInternal(id: string, patch: InternalGroupPatch): Promise<SessionGroup | undefined> {
-    const group = this.findById(id);
-    if (!group) return undefined;
+    return this.mutate(() => {
+      const group = this.groups.find(candidate => candidate.id === id);
+      if (!group) return { changed: false, value: undefined };
 
-    if (patch.name !== undefined) group.name = patch.name.trim();
-    if (patch.sessionIds !== undefined) group.sessionIds = patch.sessionIds;
-    if (patch.kind !== undefined) group.kind = patch.kind;
-    if ('cronJobId' in patch) group.cronJobId = patch.cronJobId ?? undefined;
-    if (patch.userId !== undefined) group.userId = patch.userId;
-    group.updatedAt = Date.now();
-
-    await this.persist();
-    return group;
+      if (patch.name !== undefined) group.name = patch.name.trim();
+      if (patch.sessionIds !== undefined) group.sessionIds = patch.sessionIds;
+      if (patch.kind !== undefined) group.kind = patch.kind;
+      if ('cronJobId' in patch) group.cronJobId = patch.cronJobId ?? undefined;
+      if (patch.userId !== undefined) group.userId = patch.userId;
+      group.updatedAt = Date.now();
+      return { changed: true, value: group };
+    });
   }
 
   async delete(id: string): Promise<boolean> {
-    const index = this.groups.findIndex(g => g.id === id);
-    if (index === -1) return false;
-    this.groups.splice(index, 1);
-    await this.persist();
-    return true;
+    return this.mutate(() => {
+      const index = this.groups.findIndex(g => g.id === id);
+      if (index === -1) return { changed: false, value: false };
+      this.groups.splice(index, 1);
+      return { changed: true, value: true };
+    });
   }
 
   async deleteByUserIds(userIds: Iterable<string>): Promise<number> {
     const targets = new Set(userIds);
     if (targets.size === 0) return 0;
-    const before = this.groups.length;
-    this.groups = this.groups.filter(g => !targets.has(g.userId));
-    const deleted = before - this.groups.length;
-    if (deleted > 0) await this.persist();
-    return deleted;
+    return this.mutate(() => {
+      const before = this.groups.length;
+      this.groups = this.groups.filter(g => !targets.has(g.userId));
+      const deleted = before - this.groups.length;
+      return { changed: deleted > 0, value: deleted };
+    });
+  }
+
+  private addSessionsInMemory(
+    groupId: string,
+    sessionIds: string[],
+    userId: string,
+  ): SessionGroup | undefined {
+    const group = this.groups.find(candidate => candidate.id === groupId);
+    if (!group || group.userId !== userId) return undefined;
+
+    const sessionSet = new Set(sessionIds);
+    for (const other of this.groups) {
+      if (other.id === groupId || other.userId !== userId) continue;
+      const before = other.sessionIds.length;
+      other.sessionIds = other.sessionIds.filter(sid => !sessionSet.has(sid));
+      if (other.sessionIds.length !== before) other.updatedAt = Date.now();
+    }
+
+    const existing = new Set(group.sessionIds);
+    for (const sid of sessionIds) {
+      if (!existing.has(sid)) {
+        group.sessionIds.push(sid);
+        existing.add(sid);
+      }
+    }
+    group.updatedAt = Date.now();
+    return group;
   }
 
   /**
@@ -155,60 +297,69 @@ export class GroupStore {
    * Enforces single-group membership: removes these sessions from other groups of the same user first.
    */
   async addSessions(groupId: string, sessionIds: string[], userId: string): Promise<SessionGroup | undefined> {
-    const group = this.findById(groupId);
-    if (!group) return undefined;
-    if (group.userId !== userId) return undefined;
+    return this.mutate(() => {
+      const group = this.addSessionsInMemory(groupId, sessionIds, userId);
+      return { changed: !!group, value: group };
+    });
+  }
 
-    // Remove from other groups of this user
-    const sessionSet = new Set(sessionIds);
-    for (const other of this.groups) {
-      if (other.id === groupId || other.userId !== userId) continue;
-      const before = other.sessionIds.length;
-      other.sessionIds = other.sessionIds.filter(sid => !sessionSet.has(sid));
-      if (other.sessionIds.length !== before) {
-        other.updatedAt = Date.now();
+  /** Cron 创建会话后的原子 upsert，避免 find→create/add 跨进程竞态。 */
+  async addCronSession(input: {
+    jobId: string;
+    jobName: string;
+    sessionId: string;
+    owner?: string;
+  }): Promise<SessionGroup | undefined> {
+    return this.mutate(() => {
+      let group = this.groups.find(candidate => (
+        candidate.kind === 'cron' && candidate.cronJobId === input.jobId
+      ));
+
+      if (!group) {
+        if (!input.owner) return { changed: false, value: undefined };
+        group = this.buildGroup({
+          name: input.jobName,
+          kind: 'cron',
+          cronJobId: input.jobId,
+          sessionIds: [],
+          userId: input.owner,
+        });
+        this.groups.push(group);
+      } else if (group.name !== input.jobName.trim()) {
+        group.name = input.jobName.trim();
       }
-    }
 
-    // Add to target group (avoid duplicates)
-    const existing = new Set(group.sessionIds);
-    for (const sid of sessionIds) {
-      if (!existing.has(sid)) {
-        group.sessionIds.push(sid);
-      }
-    }
-    group.updatedAt = Date.now();
-
-    await this.persist();
-    return group;
+      const updated = this.addSessionsInMemory(group.id, [input.sessionId], group.userId);
+      return { changed: !!updated, value: updated };
+    });
   }
 
   async removeSessions(groupId: string, sessionIds: string[]): Promise<SessionGroup | undefined> {
-    const group = this.findById(groupId);
-    if (!group) return undefined;
+    return this.mutate(() => {
+      const group = this.groups.find(candidate => candidate.id === groupId);
+      if (!group) return { changed: false, value: undefined };
 
-    const removeSet = new Set(sessionIds);
-    group.sessionIds = group.sessionIds.filter(sid => !removeSet.has(sid));
-    group.updatedAt = Date.now();
-
-    await this.persist();
-    return group;
+      const removeSet = new Set(sessionIds);
+      group.sessionIds = group.sessionIds.filter(sid => !removeSet.has(sid));
+      group.updatedAt = Date.now();
+      return { changed: true, value: group };
+    });
   }
 
   /** Remove a session from all groups (called when a session is deleted) */
   async removeSessionFromAllGroups(sessionId: string): Promise<void> {
-    let changed = false;
-    for (const group of this.groups) {
-      const before = group.sessionIds.length;
-      group.sessionIds = group.sessionIds.filter(sid => sid !== sessionId);
-      if (group.sessionIds.length !== before) {
-        group.updatedAt = Date.now();
-        changed = true;
+    await this.mutate(() => {
+      let changed = false;
+      for (const group of this.groups) {
+        const before = group.sessionIds.length;
+        group.sessionIds = group.sessionIds.filter(sid => sid !== sessionId);
+        if (group.sessionIds.length !== before) {
+          group.updatedAt = Date.now();
+          changed = true;
+        }
       }
-    }
-    if (changed) {
-      await this.persist();
-    }
+      return { changed, value: undefined };
+    });
   }
 
   /**
@@ -216,35 +367,36 @@ export class GroupStore {
    * Runs once at boot to catch orphans from manual deletions or pre-groups-era removals.
    */
   async pruneOrphanedSessionIds(sessionExists: SessionExistsChecker): Promise<number> {
-    // Collect all unique sessionIds across groups
     const allIds = new Set<string>();
-    for (const group of this.groups) {
+    for (const group of this.listAll()) {
       for (const sid of group.sessionIds) allIds.add(sid);
     }
     if (allIds.size === 0) return 0;
 
-    // Check existence in parallel (batched)
     const dead = new Set<string>();
     const entries = [...allIds];
     const BATCH = 50;
     for (let i = 0; i < entries.length; i += BATCH) {
       const batch = entries.slice(i, i + BATCH);
       const results = await Promise.all(batch.map(async sid => ({ sid, exists: await sessionExists(sid) })));
-      for (const r of results) {
-        if (!r.exists) dead.add(r.sid);
+      for (const result of results) {
+        if (!result.exists) dead.add(result.sid);
       }
     }
     if (dead.size === 0) return 0;
 
-    // Remove dead sessionIds from all groups
-    for (const group of this.groups) {
-      const before = group.sessionIds.length;
-      group.sessionIds = group.sessionIds.filter(sid => !dead.has(sid));
-      if (group.sessionIds.length !== before) {
-        group.updatedAt = Date.now();
+    return this.mutate(() => {
+      let removed = 0;
+      for (const group of this.groups) {
+        const before = group.sessionIds.length;
+        group.sessionIds = group.sessionIds.filter(sid => !dead.has(sid));
+        const groupRemoved = before - group.sessionIds.length;
+        if (groupRemoved > 0) {
+          group.updatedAt = Date.now();
+          removed += groupRemoved;
+        }
       }
-    }
-    await this.persist();
-    return dead.size;
+      return { changed: removed > 0, value: removed > 0 ? dead.size : 0 };
+    });
   }
 }

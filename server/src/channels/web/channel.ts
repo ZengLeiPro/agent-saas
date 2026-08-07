@@ -970,6 +970,19 @@ export class WebChannel implements BaseChannel {
    */
   publishRuntimePlatformEvent(event: PlatformEvent): void {
     if (!this.eventBus) return;
+    if (event.type === 'session_group_changed') {
+      clearSessionsListCache();
+      // Cron 会话由 Worker 后台创建，Web 端通常还没有本地列表项；isNew 让客户端
+      // 主动刷新会话列表，groups_changed 则在分组落盘后刷新成员关系。
+      this.eventBus.emitDual(event.userId, event.sessionId, {
+        type: 'session_updated',
+        sessionId: event.sessionId,
+        updatedAtMs: Date.now(),
+        isNew: true,
+      });
+      this.eventBus.emitUser(event.userId, { type: 'groups_changed' });
+      return;
+    }
     if (event.type === 'session_read_state_changed') {
       clearSessionsListCache();
       this.eventBus.emitUser(event.userId, {

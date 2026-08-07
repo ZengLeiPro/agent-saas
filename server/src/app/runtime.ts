@@ -35,9 +35,10 @@ import { PgRunStore } from '../runtime/runStore.js';
 import { PgHandStore } from '../runtime/handStore.js';
 import { PgSessionProjectionStore } from '../runtime/sessionProjectionStore.js';
 import { MemoryConsolidationEngine } from '../memory/consolidation/engine.js';
+import { TaskboardExecutionCoordinator } from '../taskboard/executionService.js';
 import { RetryableTaskboardService } from '../taskboard/retryableService.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
-import type { TaskboardService } from '../taskboard/types.js';
+import type { TaskboardExecutionService, TaskboardService } from '../taskboard/types.js';
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import { MEMORY_CONSOLIDATION_DEFAULTS, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
 import { MemoryCommandToolProvider } from '../agent/memoryCommandToolProvider.js';
@@ -88,7 +89,7 @@ import { ChannelManager } from '../channels/manager.js';
 import { WebChannel } from '../channels/web/channel.js';
 import { DingtalkChannel } from '../channels/dingtalk/channel.js';
 import { createDingtalkDeps, type DingtalkDeps } from '../channels/dingtalk/factory.js';
-import { createCronRuntime, type CronRuntime } from '../cron/bootstrap.js';
+import { createCronRuntime, withPgAdvisoryLock, type CronRuntime } from '../cron/bootstrap.js';
 import { reconcileMemoryPollJobs, MEMORY_POLL_DEFAULTS } from '../cron/memoryPoll.js';
 import { UserActivityService } from '../runtime/userActivityService.js';
 import { createCronNotifier } from '../cron/notifier.js';
@@ -362,6 +363,8 @@ export interface AppRuntime {
   appealStore?: AppealStore;
   /** 个人任务看板；仅 PG runtime backend 装配，初始化失败时返回 503 并在后续请求重试。 */
   taskboardService?: TaskboardService;
+  /** 任务看板单任务 Agent 执行闭环；依赖 PG durable scheduler。 */
+  taskboardExecutionService?: TaskboardExecutionService;
   /**
    * 门禁模型配置链 getter（主 + fallback）。空数组 = 门禁模块未激活。
    * WebChannel 持有同一 getter——热更后取到的永远是最新链。
@@ -999,6 +1002,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let messageFeedbackStore: PgMessageFeedbackStore | undefined;
   let appealStore: PgAppealStore | undefined;
   let taskboardService: TaskboardService | undefined;
+  let taskboardStoreService: RetryableTaskboardService | undefined;
+  let taskboardExecutionCoordinator: TaskboardExecutionCoordinator | undefined;
   let pgArtifactStore: PgArtifactStore | undefined;
   let systemMetricsStore: PgSystemMetricsStore | undefined;
   let systemMetricsCollector: SystemMetricsCollector | undefined;
@@ -1164,11 +1169,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       });
       const retryableService = new RetryableTaskboardService(store);
       taskboardService = retryableService;
+      taskboardStoreService = retryableService;
       await retryableService.init().catch((err) => {
         serverLogger.warn(`PgTaskboardStore init failed; requests return 503 until a later init retry succeeds: ${err instanceof Error ? err.message : String(err)}`);
       });
     } catch (err) {
       taskboardService = undefined;
+      taskboardStoreService = undefined;
       serverLogger.warn(`PgTaskboardStore configuration invalid, taskboard routes degrade to 503: ${err instanceof Error ? err.message : String(err)}`);
     }
     const pgAgentRuntimeProfileStore = new PgAgentRuntimeProfileStore({
@@ -2533,7 +2540,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           const allowed = await billingService.assertTenantCanStartRun(tenantId);
           if (!allowed.ok) throw new Error(allowed.reason);
         }
-        await wakeRuntimeSession(rawRuntimeConfig, record, {
+        const wakeRecord = taskboardExecutionCoordinator
+          ? await taskboardExecutionCoordinator.prepareWake(record)
+          : record;
+        await wakeRuntimeSession(rawRuntimeConfig, wakeRecord, {
           lease,
           renewIntervalMs: config.runtimeScheduler?.renewIntervalMs,
           onOutboundEvent: (event) => {
@@ -2552,6 +2562,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       },
       logger: serverLogger.child('RuntimeScheduler'),
     });
+    if (taskboardStoreService && defaultModelResolver) {
+      taskboardExecutionCoordinator = new TaskboardExecutionCoordinator({
+        store: taskboardStoreService,
+        scheduler: runtimeScheduler,
+        sessionCatalog,
+        eventStore: pgEventStore,
+        agentCwd,
+        executionConfig,
+        resolveDefaultModel: defaultModelResolver,
+        logger: serverLogger.child('TaskboardExecution'),
+      });
+    }
     const getRuntimeSchedulerCapacitySnapshot = async () => {
       const persisted = await runtimeSchedulerConfigStore!.get();
       const effective = effectiveMaxConcurrentRuns(
@@ -2720,9 +2742,19 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     )
     : billedRunDispatch;
 
-  // Groups store
+  // Groups store：Web 与 Runtime Worker 共享文件，写操作必须锁内 reload→mutate→publish；
+  // 读操作由 GroupStore 每次刷新，避免任一进程永久持有启动时旧快照。
   const groupsFilePath = resolve(processCwd, './data/groups.json');
-  const groupStore = new GroupStore(groupsFilePath);
+  const groupsPgConfig = config.runtimeEventStore?.backend === 'pg'
+    ? config.runtimeEventStore
+    : undefined;
+  const groupStore = new GroupStore(groupsFilePath, groupsPgConfig ? {
+    withLock: <T>(operation: () => Promise<T>) => withPgAdvisoryLock(
+      groupsPgConfig.connectionString,
+      `${groupsPgConfig.tablePrefix ?? 'agent_saas'}:groups-store`,
+      operation,
+    ),
+  } : {});
   configureModelPricing(config.models);
 
   // Business SQLite：共享业务 db，当前承载 token 用量统计；
@@ -2810,6 +2842,21 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     resolveModel: modelResolver,
     resolveDefaultModel: defaultModelResolver,
     groupStore,
+    ...(pgEventStore ? {
+      onSessionGrouped: async (event: {
+        sessionId: string;
+        userId: string;
+        groupId: string;
+      }) => {
+        const tenantId = userStore?.findById(event.userId)?.tenantId;
+        await pgEventStore.append({
+          type: 'session_group_changed',
+          sessionId: event.sessionId,
+          userId: event.userId,
+          groupId: event.groupId,
+        }, tenantId ? { tenantId } : undefined);
+      },
+    } : {}),
     userStore,
     tenantStore,
     tokenUsageStore,
@@ -2861,27 +2908,27 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         return channels;
       },
     }),
-    // Cron 完成后通过 WS 推送 session_updated，使客户端列表实时更新
+    // 单进程部署直接推送；拆分部署由 session_group_changed durable event
+    // 经 PG NOTIFY 投到 ws-only 进程，且信号发生在分组成功落盘之后。
     onEvent: (event) => {
       if (event.type !== 'finished' || !event.sessionId || !event.owner) return;
       const webCh = channelManager.getChannel<WebChannel>('web');
       const eventBus = webCh?.getEventBus();
+      const sessionUpdated = {
+        type: 'session_updated',
+        sessionId: event.sessionId,
+        updatedAtMs: Date.now(),
+        preview: event.output,
+        isNew: true,
+      };
       if (eventBus) {
-        eventBus.emitUser(event.owner, {
-          type: 'session_updated',
-          sessionId: event.sessionId,
-          updatedAtMs: Date.now(),
-          preview: event.output,
-        });
+        eventBus.emitDual(event.owner, event.sessionId, sessionUpdated);
+        eventBus.emitUser(event.owner, { type: 'groups_changed' });
       } else {
         // fallback: 旧路径
         const wsServer = webCh?.getWsServer();
-        wsServer?.broadcastToUser(event.owner, {
-          type: 'session_updated',
-          sessionId: event.sessionId,
-          updatedAtMs: Date.now(),
-          preview: event.output,
-        });
+        wsServer?.broadcastToUser(event.owner, sessionUpdated);
+        wsServer?.broadcastToUser(event.owner, { type: 'groups_changed' });
       }
       clearSessionsListCache();
     },
@@ -3210,7 +3257,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         serverLogger.info(`Tool cancel delivery retry scan: scanned=${result.scanned} attempted=${result.attempted} results=${JSON.stringify(result.results)}`);
       }
     };
-    runtimeEventSubscriptionShutdown = await pgEventStore.subscribeAppended((event) => {
+    runtimeEventSubscriptionShutdown = await pgEventStore.subscribeAppended(async (event) => {
+      await taskboardExecutionCoordinator?.handleRuntimeEvent(event);
       if (event.type === 'tool_invocation_cancel_requested' && enableSchedulerWorker) {
         void deliverToolInvocationCancel({
           event,
@@ -3538,6 +3586,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     messageFeedbackStore,
     appealStore,
     taskboardService,
+    taskboardExecutionService: taskboardExecutionCoordinator,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },
     agentOptionsConfig,

@@ -29,6 +29,7 @@ function migrations(prefix: string): GovernanceMigration[] {
   const assignmentSets = `${prefix}_resource_assignment_sets`;
   const assignments = `${prefix}_resource_assignments`;
   const preferences = `${prefix}_user_resource_preferences`;
+  const runResolutionSnapshots = `${prefix}_run_resolution_snapshots`;
 
   return [
     {
@@ -242,6 +243,29 @@ function migrations(prefix: string): GovernanceMigration[] {
         )`,
         `CREATE INDEX IF NOT EXISTS ${preferences}_resource_idx
           ON ${preferences} (resource_type, resource_id, user_id)`,
+      ],
+    },
+    {
+      version: 5,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS ${runResolutionSnapshots} (
+          run_id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          tenant_id TEXT,
+          subject_type TEXT NOT NULL CHECK (subject_type IN ('human', 'service')),
+          subject_id TEXT NOT NULL,
+          access_decision_id TEXT NOT NULL,
+          enforcement_mode TEXT NOT NULL CHECK (enforcement_mode IN ('shadow', 'enforce')),
+          access_verdict TEXT NOT NULL CHECK (access_verdict IN ('allow', 'deny', 'conditional')),
+          readiness_ready BOOLEAN NOT NULL,
+          snapshot_digest TEXT NOT NULL,
+          snapshot_json JSONB NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`,
+        `CREATE INDEX IF NOT EXISTS ${runResolutionSnapshots}_tenant_created_idx
+          ON ${runResolutionSnapshots} (tenant_id, created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS ${runResolutionSnapshots}_decision_idx
+          ON ${runResolutionSnapshots} (access_decision_id)`,
       ],
     },
   ];

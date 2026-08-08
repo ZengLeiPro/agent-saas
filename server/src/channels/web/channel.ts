@@ -79,6 +79,7 @@ import {
   type ExecutionConfig,
 } from '../../runtime/executionConfig.js';
 import { createRuntimeSessionRecord, type SessionCatalog } from '../../runtime/sessionCatalog.js';
+import type { RunPreflightService } from '../../runtime/runPreflight.js';
 import { deriveStableWorkspaceId } from '../../runtime/workspaceIdentity.js';
 import type { RuntimeScheduler } from '../../runtime/scheduler.js';
 import type { RunStore } from '../../runtime/runStore.js';
@@ -232,6 +233,12 @@ export interface WebChannelConfig {
     toolInvocationStore?: ToolInvocationStore;
     enabled?: boolean;
   };
+  /**
+   * Governance Access/Run 统一 Preflight（shadow 阶段）。enqueue 前用同一
+   * evaluator 生成 AccessDecision + Readiness 并记录日志；shadow 模式不阻断
+   * legacy 门禁，仅产出对比证据，供切 V2 权威前的双跑核对。
+   */
+  runPreflight?: RunPreflightService;
 }
 
 /** 读取用户 workspace 内最近生成的 plan 文件内容。 */
@@ -2900,6 +2907,35 @@ export class WebChannel implements BaseChannel {
           clientMsgId,
           content: resolvedMessage,
         }, sessionRecord.tenantId);
+        // Governance shadow：enqueue 前用统一 evaluator 产出 AccessDecision/Readiness
+        // 对比证据。legacy adminExempt/audience 门禁仍是权威；shadow 失败只记日志。
+        if (this.config.runPreflight) {
+          try {
+            const preflight = await this.config.runPreflight.preflight({
+              phase: 'enqueue',
+              runId: enqueueRunId,
+              sessionId: enqueueSessionId,
+              ...(enqueueOwner?.id ? { userId: enqueueOwner.id } : {}),
+              ...(enqueueOwner?.tenantId ? { tenantId: enqueueOwner.tenantId } : {}),
+              ...(orgAgentId ? { orgAgentId } : {}),
+              modelRef: model,
+              // enqueue 侧不做计费扣减（wake 由 legacy billing 权威执行），避免双结算。
+              skipBilling: true,
+            });
+            if (preflight.shadowWouldBlock) {
+              chatLogger.warn(
+                `[governance-shadow] enqueue preflight would block run=${enqueueRunId} `
+                + `access=${preflight.accessDecision.reasonCode} layer=${preflight.accessDecision.decisiveLayer} `
+                + `blockers=${preflight.readiness.blockers.map(b => b.code).join(',') || 'none'}`,
+              );
+            }
+          } catch (error) {
+            chatLogger.warn(
+              `[governance-shadow] enqueue preflight unavailable (not blocking): run=${enqueueRunId} `
+              + `error=${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
         const enqueuedRun = await enqueueRuntime.scheduler.enqueue({
           runId: enqueueRunId,
           sessionId: enqueueSessionId,

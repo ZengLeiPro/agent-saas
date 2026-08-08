@@ -114,6 +114,20 @@ import { PgMembershipStore } from '../data/memberships/index.js';
 import { PgEntitlementStore } from '../data/entitlements/index.js';
 import { PgAssignmentStore } from '../data/assignments/index.js';
 import { GovernanceShadowProjectionScheduler } from '../governance/migrations/shadowProjectionScheduler.js';
+import { SubjectResolver } from '../governance/subject/resolver.js';
+import { AccessEvaluator } from '../governance/access/evaluator.js';
+import {
+  AssignmentPolicy,
+  EntitlementPolicy,
+  LongTermGrantPolicy,
+  PersonaPolicy,
+  PlatformInvariantPolicy,
+  RuntimeApprovalPolicy,
+  TenantPolicy,
+} from '../governance/access/policies/index.js';
+import { ReadinessEvaluator } from '../governance/readiness/evaluator.js';
+import { RunPreflightService } from '../runtime/runPreflight.js';
+import { PgRunResolutionSnapshotStore } from '../runtime/runResolutionSnapshotStore.js';
 import { MemoryIndexService } from '../memory/index/service.js';
 import type { MemoryIndexConfig } from '../memory/index/types.js';
 import { UserStore } from '../data/users/store.js';
@@ -1051,6 +1065,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let membershipStore: PgMembershipStore | undefined;
   let entitlementStore: PgEntitlementStore | undefined;
   let assignmentStore: PgAssignmentStore | undefined;
+  let runResolutionSnapshotStore: PgRunResolutionSnapshotStore | undefined;
+  let runPreflightService: RunPreflightService | undefined;
   let flushGovernanceShadowProjections: (() => Promise<void>) | undefined;
   const beginMemoryEmbeddingBillingRun = async (workspaceDir: string) => {
     if (!billingService) return undefined;
@@ -1262,6 +1278,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       platformTenantId: DEFAULT_TENANT_ID,
     });
     await assignmentStore.init();
+    runResolutionSnapshotStore = new PgRunResolutionSnapshotStore(
+      pgEventStore.pool,
+      config.runtimeEventStore.tablePrefix,
+    );
+    await runResolutionSnapshotStore.init();
     if (userStore && orgAgentStore && skillConfigStore) {
       try {
         const backfill = await assignmentStore.backfillLegacyAssignments({
@@ -2378,6 +2399,38 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     onGuardrailModelConfigsUpdated: (next) => { guardrailModelConfigs = next; },
   });
 
+  // Access/Run 阶段：统一 Subject → AccessDecision → Readiness → Preflight。
+  // 当前以 shadow enforcement 装配：同一 evaluator 在 Web enqueue 与 scheduler wake
+  // 双侧运行并落 Run Resolution Snapshot，但暂不阻断 legacy 门禁；切换 V2 权威
+  // 属于最终迁移门禁，见后端改造分析「渐进迁移与全量门禁」章节。
+  if (membershipStore && entitlementStore && assignmentStore && userStore && tenantStore && orgAgentStore) {
+    runPreflightService = new RunPreflightService({
+      enforcementMode: 'shadow',
+      subjectResolver: new SubjectResolver(userStore, membershipStore),
+      accessEvaluator: new AccessEvaluator([
+        new PlatformInvariantPolicy(),
+        new EntitlementPolicy(entitlementStore),
+        new PersonaPolicy(),
+        new TenantPolicy(entitlementStore),
+        new AssignmentPolicy(assignmentStore),
+        new LongTermGrantPolicy(),
+        new RuntimeApprovalPolicy(),
+      ]),
+      readinessEvaluator: new ReadinessEvaluator(),
+      sessionCatalog,
+      orgAgentStore,
+      tenantStore,
+      ...(billingService ? {
+        authorizeBilling: (input: { tenantId: string; userId?: string; runId: string }) =>
+          billingService!.authorizeRun(input),
+      } : {}),
+      ...(modelResolver ? {
+        isModelAvailable: (ref: string, tenantId?: string) => modelResolver(ref, tenantId) !== null,
+      } : {}),
+      logger: { warn: (message) => serverLogger.warn(message) },
+    });
+  }
+
   // 用户活动聚合（2026-07-14 记忆轮询批次）：PG 后端可用；file backend 下
   // available=false，UserActivityList 工具不挂载、memory_poll 预检 fail-closed。
   const userActivityService = new UserActivityService({
@@ -2726,6 +2779,37 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         const tenantId = record.tenantId ?? (record.userId ? userStore?.findById(record.userId)?.tenantId : undefined);
         const tenantAccessError = tenantAccessErrorMessage(tenantStore, tenantId);
         if (tenantAccessError) throw new Error(tenantAccessError);
+        // Governance shadow：claim/lease 后、模型调用前，用统一 evaluator 按最新
+        // Membership/Entitlement/Policy/Assignment 复核并落 Run Resolution Snapshot。
+        // shadow 模式下复核失败只记录日志，不阻断 legacy 门禁；快照写入失败同样降级
+        // （enforcer 切换时此分支必须 fail closed——见迁移门禁 TODO）。
+        if (runPreflightService && runResolutionSnapshotStore && !isBackgroundTaskRun(record)) {
+          try {
+            const preflight = await runPreflightService.preflight({
+              phase: 'wake',
+              runId: record.runId,
+              sessionId: record.sessionId,
+              ...(record.userId ? { userId: record.userId } : {}),
+              ...(tenantId ? { tenantId } : {}),
+              ...(record.model ? { modelRef: record.model } : {}),
+              // wake 回调下方仍由 legacy billing 权威计费门禁，避免 shadow 双结算。
+              skipBilling: true,
+            });
+            await runResolutionSnapshotStore.append(preflight.snapshot);
+            if (preflight.shadowWouldBlock) {
+              serverLogger.warn(
+                `[governance-shadow] wake preflight would block run=${record.runId} `
+                + `access=${preflight.accessDecision.reasonCode} layer=${preflight.accessDecision.decisiveLayer} `
+                + `blockers=${preflight.readiness.blockers.map(b => b.code).join(',') || 'none'}`,
+              );
+            }
+          } catch (error) {
+            serverLogger.warn(
+              `[governance-shadow] wake preflight unavailable (not blocking): run=${record.runId} `
+              + `error=${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
         // 普通 scheduler wake（Cron、审批恢复、后台结果交付）在这里按实际用量做启动门禁。
         // 后台任务包装 Run 本身不调模型：命令只监控 hand，Agent 由内部 child Run 独立检查。
         if (tenantId && billingService && !isBackgroundTaskRun(record)) {
@@ -3401,6 +3485,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         enabled: true,
       },
     } : {}),
+    ...(runPreflightService ? { runPreflight: runPreflightService } : {}),
   }, finalDispatch);
   // 同进程 stream bridge 只在持有 WS listener 的进程上有意义：'all' 模式由 scheduler 直接
   // 推到本地 WebChannel，scheduler-only 模式下根本没有 WS 客户端，bridge 是结构性 noop。

@@ -171,8 +171,15 @@ describe('image gen pricing admin router', () => {
       const onDisk = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(onDisk.imageGenTools.gptImage2).not.toHaveProperty('apiKey');
       expect(onDisk.imageGenTools.gptImage2.apiKeyRef).toMatch(/^[0-9a-f-]{36}$/);
-      await expect(secretVault.getSecret(onDisk.imageGenTools.gptImage2.apiKeyRef, { actor: 'admin' }))
-        .resolves.toBe('gpt-secret-value');
+      await expect(secretVault.getSecret(onDisk.imageGenTools.gptImage2.apiKeyRef, {
+        actor: 'admin',
+        scopes: ['secret:image_gen_tools:read'],
+      } as never)).rejects.toThrow(/unknown actor/);
+      await expect(secretVault.getSecret(onDisk.imageGenTools.gptImage2.apiKeyRef, {
+        actor: 'system',
+        userId: '__system__',
+        scopes: ['secret:image_gen_tools:read'],
+      })).resolves.toBe('gpt-secret-value');
       expect(runtimeConfig.imageGenTools?.gptImage2?.apiKeyRef).toBe(onDisk.imageGenTools.gptImage2.apiKeyRef);
       expect(validateImageGenToolsConfig).toHaveBeenCalledTimes(1);
       expect(onImageGenToolsUpdated).toHaveBeenCalledTimes(1);

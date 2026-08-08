@@ -179,7 +179,7 @@ describe('Aliyun native connector', () => {
       actor: 'connector_proxy',
       userId: alice.userId,
       tenantId: alice.tenantId,
-      scopes: ['secret:connector:read'],
+      scopes: ['secret:connector:revoke'],
     });
 
     await expect(fixture.service.resolveRuntimeEnv(alice)).resolves.toEqual({});

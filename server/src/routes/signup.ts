@@ -213,7 +213,11 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
     const ref = signupConfigStore.getSmsAccessKeySecretRef();
     if (ref && secretVault) {
       try {
-        return await secretVault.getSecret(ref, { actor: "system" });
+        return await secretVault.getSecret(ref, {
+          actor: "system",
+          userId: "signup_sms_service",
+          scopes: [`secret:${SMS_SECRET_VAULT_KIND}:read`],
+        });
       } catch (err) {
         // fail-closed：vault 解析失败按未配置处理（aliyun 通道会因缺 secret 关闭）
         apiLogger.warn(
@@ -714,6 +718,11 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
           SMS_SECRET_VAULT_OWNER,
           SMS_SECRET_VAULT_KIND,
           smsAccessKeySecret,
+          {
+            actor: "system",
+            userId: "signup_config_admin",
+            scopes: [`secret:${SMS_SECRET_VAULT_KIND}:write`],
+          },
           { updatedBy: req.user?.username ?? "platform-admin" },
         );
         secretRefPatch = ref.id;

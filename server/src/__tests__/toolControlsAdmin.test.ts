@@ -236,8 +236,11 @@ describe('tool controls admin router', () => {
       expect(written.webTools.search.apiKeyRef).toBe(body.webTools.search.apiKeyRef);
       expect(runtimeConfig.webTools?.search?.apiKey).toBeUndefined();
       expect(runtimeConfig.webTools?.search?.apiKeyRef).toBe(body.webTools.search.apiKeyRef);
-      await expect(secretVault.getSecret(body.webTools.search.apiKeyRef, { actor: 'system' }))
-        .resolves.toBe('tencent-wsa-secret');
+      await expect(secretVault.getSecret(body.webTools.search.apiKeyRef, {
+        actor: 'system',
+        userId: '__system__',
+        scopes: ['secret:web_tools:read'],
+      })).resolves.toBe('tencent-wsa-secret');
     }, { secretVault });
   });
 

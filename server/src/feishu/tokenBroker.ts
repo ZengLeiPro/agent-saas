@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import type { UserInfo } from '../data/users/types.js';
-import type { SecretVault, VaultCaller } from '../security/secretVault.js';
+import type { SecretVault, VaultCaller, VaultOperation } from '../security/secretVault.js';
 import type {
   FeishuAuthCheckResult,
   FeishuConnectionIdentity,
@@ -358,7 +358,7 @@ export class FeishuTokenBroker implements FeishuTokenBrokerLike {
           await this.options.connectionStore.markBrokerProviderRevoked!(identity, connection.profileId);
         }
         if (connection.tokenStatus !== 'revoked') {
-          await this.options.vault.revokeSecret(connection.tokenSecretRef!, vaultCaller(identity));
+          await this.options.vault.revokeSecret(connection.tokenSecretRef!, vaultCaller(identity, 'revoke'));
           await this.options.connectionStore.markBrokerRevoked!(identity, connection.profileId);
         }
       } catch (error) {
@@ -492,7 +492,7 @@ export class FeishuTokenBroker implements FeishuTokenBrokerLike {
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        await this.options.vault.rotateSecret(tokenSecretRef, JSON.stringify(bundle), vaultCaller(identity));
+        await this.options.vault.rotateSecret(tokenSecretRef, JSON.stringify(bundle), vaultCaller(identity, 'rotate'));
         return;
       } catch (error) {
         lastError = error;
@@ -535,11 +535,11 @@ export class FeishuTokenBroker implements FeishuTokenBrokerLike {
     let oldPlaintext: string | undefined;
     if (existing?.tokenSecretRef) {
       try {
-        oldPlaintext = await this.options.vault.getSecret(existing.tokenSecretRef, vaultCaller(identity));
+        oldPlaintext = await this.options.vault.getSecret(existing.tokenSecretRef, vaultCaller(identity, 'read'));
       } catch (error) {
         if (existing.connectionStatus !== 'disconnected') throw error;
         // 已失效连接允许重新授权，但必须先确认旧 ref 已撤销；Vault 故障则阻断，避免孤儿 token。
-        await this.options.vault.revokeSecret(existing.tokenSecretRef, vaultCaller(identity));
+        await this.options.vault.revokeSecret(existing.tokenSecretRef, vaultCaller(identity, 'revoke'));
       }
     }
     if (existing && existing.connectionStatus !== 'disconnected') {
@@ -570,24 +570,30 @@ export class FeishuTokenBroker implements FeishuTokenBrokerLike {
       await this.options.vault.rotateSecret(
         existing.tokenSecretRef,
         JSON.stringify(bundle),
-        vaultCaller(identity),
+        vaultCaller(identity, 'rotate'),
       );
       return login;
     }
-    const ref = await this.options.vault.putSecret(identity.userId, TOKEN_SECRET_KIND, JSON.stringify(bundle), {
-      secretId: bundle.secretId,
-      connector: CONNECTOR_ID,
-      tenantId: identity.tenantId,
-      userId: identity.userId,
-      username: identity.username,
-      appId: this.appId,
-    });
+    const ref = await this.options.vault.putSecret(
+      identity.userId,
+      TOKEN_SECRET_KIND,
+      JSON.stringify(bundle),
+      vaultCaller(identity, 'write'),
+      {
+        secretId: bundle.secretId,
+        connector: CONNECTOR_ID,
+        tenantId: identity.tenantId,
+        userId: identity.userId,
+        username: identity.username,
+        appId: this.appId,
+      },
+    );
     const login = { ...baseLogin, tokenSecretRef: ref.id };
     try {
       await this.options.connectionStore.upsertLogin(identity, login, this.now());
       return login;
     } catch (error) {
-      await this.options.vault.revokeSecret(ref.id, vaultCaller(identity)).catch(revokeError => this.report(revokeError));
+      await this.options.vault.revokeSecret(ref.id, vaultCaller(identity, 'revoke')).catch(revokeError => this.report(revokeError));
       throw error;
     }
   }
@@ -596,7 +602,7 @@ export class FeishuTokenBroker implements FeishuTokenBrokerLike {
     identity: FeishuConnectionIdentity,
     connection: FeishuConnectionRecord,
   ): Promise<FeishuTokenBundle> {
-    const plaintext = await this.options.vault.getSecret(connection.tokenSecretRef!, vaultCaller(identity));
+    const plaintext = await this.options.vault.getSecret(connection.tokenSecretRef!, vaultCaller(identity, 'read'));
     let parsed: unknown;
     try {
       parsed = JSON.parse(plaintext);
@@ -652,7 +658,7 @@ export class FeishuTokenBroker implements FeishuTokenBrokerLike {
       this.report(error);
     }
     try {
-      await this.options.vault.revokeSecret(connection.tokenSecretRef!, vaultCaller(identity));
+      await this.options.vault.revokeSecret(connection.tokenSecretRef!, vaultCaller(identity, 'revoke'));
     } catch (error) {
       this.report(error);
     }
@@ -786,16 +792,12 @@ function assertSameFeishuUser(expected: FeishuUserIdentity, actual: FeishuUserId
   }
 }
 
-function vaultCaller(identity: FeishuConnectionIdentity): VaultCaller {
+function vaultCaller(identity: FeishuConnectionIdentity, operation: VaultOperation): VaultCaller {
   return {
     actor: 'connector_proxy',
     userId: identity.userId,
     tenantId: identity.tenantId,
-    scopes: [
-      `secret:${TOKEN_SECRET_KIND}:read`,
-      `secret:${TOKEN_SECRET_KIND}:write`,
-      `secret:${TOKEN_SECRET_KIND}:revoke`,
-    ],
+    scopes: [`secret:${TOKEN_SECRET_KIND}:${operation}`],
   };
 }
 

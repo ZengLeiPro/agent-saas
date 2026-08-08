@@ -119,7 +119,7 @@ export async function revokePendingAliyunCredentials(input: {
           actor: 'connector_proxy',
           userId: record.userId,
           tenantId: record.tenantId,
-          scopes: ['secret:connector:read'],
+          scopes: ['secret:connector:revoke'],
         });
         await input.connectionStore.markCredentialRevoked(record.username, ALIYUN_CONNECTOR_ID, ref);
         revoked++;
@@ -166,6 +166,12 @@ export class AliyunConnectorService {
           accessKeyId: input.accessKeyId,
           accessKeySecret: input.accessKeySecret,
         } satisfies AliyunAccessKeySecret),
+        {
+          actor: 'connector_proxy',
+          userId: context.userId,
+          tenantId: context.tenantId,
+          scopes: ['secret:connector:write'],
+        },
         { connectorId: ALIYUN_CONNECTOR_ID, regionId: input.regionId },
       );
       let record: ConnectorConnectionRecord;
@@ -176,14 +182,14 @@ export class AliyunConnectorService {
           tenantId: context.tenantId,
           connectorId: ALIYUN_CONNECTOR_ID,
           credentialRefs: { [ALIYUN_ACCESS_KEY_CREDENTIAL_KEY]: secret.id },
-          metadata: identityMetadata(identity, input.regionId),
+          metadata: { ...identityMetadata(identity, input.regionId), credentialOwnerId: context.userId },
         });
       } catch (error) {
         await this.deps.vault.revokeSecret(secret.id, {
           actor: 'connector_proxy',
           userId: context.userId,
           tenantId: context.tenantId,
-          scopes: ['secret:connector:read'],
+          scopes: ['secret:connector:revoke'],
         }).catch(revokeError => {
           this.deps.onError?.(revokeError instanceof Error ? revokeError : new Error(String(revokeError)));
         });

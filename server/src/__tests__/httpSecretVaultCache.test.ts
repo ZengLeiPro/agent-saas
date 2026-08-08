@@ -18,7 +18,12 @@ function makeFetch(responder: (path: string, body: any) => unknown) {
   }) as unknown as typeof fetch;
 }
 
-const caller = { actor: 'system' as const, userId: '__system__', scopes: ['secret:*:read'] };
+const caller = {
+  actor: 'mcp_proxy' as const,
+  userId: 'alice',
+  tenantId: 'tenant-a',
+  scopes: ['secret:mcp:read', 'secret:mcp:rotate', 'secret:mcp:revoke'],
+};
 
 describe('HttpSecretVault cache (A3)', () => {
   it('caches getSecret plaintext within TTL and refetches after expiry', async () => {
@@ -73,7 +78,7 @@ describe('HttpSecretVault cache (A3)', () => {
         return { value: `v${resolveCount}` };
       }
       if (path === '/secrets/ref-a/rotate') {
-        return { id: 'ref-a', ownerId: 'u', kind: 'k', metadata: {}, createdAt: '', updatedAt: '' };
+        return { id: 'ref-a', ownerId: 'alice', kind: 'mcp', metadata: {}, createdAt: '', updatedAt: '' };
       }
       throw new Error(`unexpected path ${path}`);
     });

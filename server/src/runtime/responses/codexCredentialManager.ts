@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { SecretVault, VaultCaller } from '../../security/secretVault.js';
+import type { SecretVault, VaultCaller, VaultOperation } from '../../security/secretVault.js';
 import {
   CodexSubscriptionTelemetry,
   type CodexSubscriptionRuntimeStatus,
@@ -14,11 +14,13 @@ export const CODEX_DEVICE_VERIFICATION_URI = `${CODEX_AUTH_BASE_URL}/codex/devic
 
 const REFRESH_EARLY_MS = 5 * 60 * 1000;
 const CODEX_SECRET_KIND = 'codex_subscription_oauth';
-const SYSTEM_VAULT_CALLER = {
-  actor: 'system',
-  userId: '__system__',
-  scopes: [`secret:${CODEX_SECRET_KIND}:read`],
-} satisfies VaultCaller;
+function systemVaultCaller(operation: VaultOperation): VaultCaller {
+  return {
+    actor: 'system',
+    userId: '__system__',
+    scopes: [`secret:${CODEX_SECRET_KIND}:${operation}`],
+  };
+}
 
 export interface CodexSubscriptionRuntimeConfig {
   enabled?: boolean;
@@ -163,7 +165,7 @@ export class CodexCredentialManager {
     const serialized = JSON.stringify(bundle);
     if (existingRef) {
       const previous = await this.readBundle(existingRef).catch(() => undefined);
-      await this.options.vault.rotateSecret(existingRef, serialized, SYSTEM_VAULT_CALLER);
+      await this.options.vault.rotateSecret(existingRef, serialized, systemVaultCaller('rotate'));
       if (previous?.refreshToken && previous.refreshToken !== bundle.refreshToken) {
         await revokeCodexRefreshToken(
           previous.refreshToken,
@@ -172,9 +174,13 @@ export class CodexCredentialManager {
       }
       return { credentialRef: existingRef, bundle };
     }
-    const ref = await this.options.vault.putSecret('global', CODEX_SECRET_KIND, serialized, {
-      accountBindingHash: hashAccountBinding(accountId),
-    });
+    const ref = await this.options.vault.putSecret(
+      'global',
+      CODEX_SECRET_KIND,
+      serialized,
+      systemVaultCaller('write'),
+      { accountBindingHash: hashAccountBinding(accountId) },
+    );
     return { credentialRef: ref.id, bundle };
   }
 
@@ -189,7 +195,7 @@ export class CodexCredentialManager {
     } catch (error) {
       remoteWarning = `本地凭据已清理，但 OpenAI refresh token 远端撤销失败: ${compactOAuthError(error)}`;
     }
-    await this.options.vault.revokeSecret(credentialRef, SYSTEM_VAULT_CALLER);
+    await this.options.vault.revokeSecret(credentialRef, systemVaultCaller('revoke'));
     return remoteWarning ? { remoteWarning } : {};
   }
 
@@ -276,7 +282,7 @@ export class CodexCredentialManager {
         await this.options.vault.rotateSecret(
           credentialRef,
           JSON.stringify(next),
-          SYSTEM_VAULT_CALLER,
+          systemVaultCaller('rotate'),
         );
         this.telemetry.recordRefreshSuccess(next.generation);
         return next;
@@ -288,7 +294,7 @@ export class CodexCredentialManager {
   }
 
   private async readBundle(credentialRef: string): Promise<CodexTokenBundle> {
-    const raw = await this.options.vault.getSecret(credentialRef, SYSTEM_VAULT_CALLER);
+    const raw = await this.options.vault.getSecret(credentialRef, systemVaultCaller('read'));
     return parseTokenBundle(raw);
   }
 }

@@ -87,6 +87,21 @@ describe('native connectors routes', () => {
     expect(body.connection).toMatchObject({ status: 'connected' });
     expect(body.connection).not.toHaveProperty('credentialRefs');
     expect(body.connection).not.toHaveProperty('mcpEnabled');
+    const stored = rig.connectionStore.get('alice', 'github')!;
+    const tokenRef = stored.credentialRefs.token!;
+    expect(stored.metadata?.credentialOwnerId).toBe('user-1');
+    await expect(rig.secretVault.getSecret(tokenRef, {
+      actor: 'connector_proxy',
+      userId: 'user-1',
+      tenantId: 'tenant-a',
+      scopes: ['secret:connector:read'],
+    })).resolves.toBe('github_pat_route_test');
+    await expect(rig.secretVault.getSecret(tokenRef, {
+      actor: 'connector_proxy',
+      userId: 'alice',
+      tenantId: 'tenant-a',
+      scopes: ['secret:connector:read'],
+    })).rejects.toThrow(/user owner mismatch/);
 
     await expect(resolveGithubRuntimeEnv(
       { connectionStore: rig.connectionStore, vault: rig.secretVault },

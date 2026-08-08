@@ -1,6 +1,16 @@
 import type { SecretVault } from '../security/secretVault.js';
 import { ALIYUN_CONNECTOR_ID } from './aliyun.js';
-import type { ConnectorConnectionStore } from './connectionStore.js';
+import type { ConnectorConnectionRecord, ConnectorConnectionStore } from './connectionStore.js';
+import { NOTION_CONNECTOR_ID } from './notion.js';
+
+function vaultOwnerId(record: ConnectorConnectionRecord): string {
+  const explicitOwnerId = record.metadata?.credentialOwnerId;
+  if (typeof explicitOwnerId === 'string' && explicitOwnerId.length > 0) return explicitOwnerId;
+  if (record.connectorId === ALIYUN_CONNECTOR_ID || record.connectorId === NOTION_CONNECTOR_ID) {
+    return record.userId ?? record.username;
+  }
+  return record.username;
+}
 
 export async function revokeAllUserConnectorCredentials(input: {
   connectionStore: ConnectorConnectionStore;
@@ -20,9 +30,9 @@ export async function revokeAllUserConnectorCredentials(input: {
       try {
         await input.vault.revokeSecret(ref, {
           actor: 'connector_proxy',
-          userId: record.connectorId === ALIYUN_CONNECTOR_ID ? input.userId : input.username,
+          userId: vaultOwnerId(record),
           tenantId: input.tenantId,
-          scopes: ['secret:connector:read', 'secret:mcp:read'],
+          scopes: ['secret:connector:revoke'],
         });
         await input.connectionStore.markCredentialRevoked(input.username, record.connectorId, ref);
         revoked++;

@@ -435,7 +435,11 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     const ref = signupConfigStore?.getSmsAccessKeySecretRef();
     if (ref && secretVault) {
       try {
-        return await secretVault.getSecret(ref, { actor: "system" });
+        return await secretVault.getSecret(ref, {
+          actor: "system",
+          userId: "auth_sms_service",
+          scopes: ["secret:signup-sms:read"],
+        });
       } catch (err) {
         apiLogger.warn(
           `[auth:sms] 从 secretVault 读取 SMS Secret 失败（ref=${ref}）：${err instanceof Error ? err.message : String(err)}`,

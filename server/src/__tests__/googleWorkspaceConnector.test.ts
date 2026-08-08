@@ -69,6 +69,15 @@ describe('Google Workspace native connector', () => {
       accountEmail: 'alice@example.com',
       envAvailable: true,
     });
+    const stored = connectionStore.get('alice', 'google-workspace')!;
+    const tokenRef = stored.credentialRefs.oauth!;
+    expect(stored.metadata?.credentialOwnerId).toBe('user-1');
+    await expect(vault.getSecret(tokenRef, {
+      actor: 'connector_proxy',
+      userId: 'alice',
+      tenantId: 'tenant-a',
+      scopes: ['secret:connector:read'],
+    })).rejects.toThrow(/user owner mismatch/);
     await expect(resolveGoogleWorkspaceRuntimeEnv(service, {
       userId: 'user-1',
       username: 'alice',

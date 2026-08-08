@@ -35,9 +35,10 @@ describe('resolveSttRuntimeConfig', () => {
   it('从 SecretVault ref 解析三项凭据', async () => {
     const vault = new InMemorySecretVault();
     const owner = tenantOwnerId('kaiyan');
-    const dashscope = await vault.putSecret(owner, 'stt', 'dashscope-secret');
-    const accessKeyId = await vault.putSecret(owner, 'stt', 'oss-id-secret');
-    const accessKeySecret = await vault.putSecret(owner, 'stt', 'oss-key-secret');
+    const writer = { actor: 'system' as const, userId: '__system__', scopes: ['secret:stt:write'] };
+    const dashscope = await vault.putSecret(owner, 'stt', 'dashscope-secret', writer);
+    const accessKeyId = await vault.putSecret(owner, 'stt', 'oss-id-secret', writer);
+    const accessKeySecret = await vault.putSecret(owner, 'stt', 'oss-key-secret', writer);
 
     const resolved = await resolveSttRuntimeConfig({
       apiKeyRef: dashscope.id,

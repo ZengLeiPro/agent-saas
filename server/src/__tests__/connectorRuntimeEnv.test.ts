@@ -20,8 +20,18 @@ function makeStore(): McpConfigStore {
   return new McpConfigStore(join(root, 'mcp-config.json'));
 }
 
-const userCaller = { actor: 'mcp_proxy' as const, userId: 'alice', tenantId: 'tenant-a', scopes: ['secret:mcp:read'] };
-const adminCaller = { actor: 'admin' as const, userId: 'admin', tenantId: 'tenant-a', scopes: ['secret:mcp:write'] };
+const userCaller = {
+  actor: 'mcp_proxy' as const,
+  userId: 'alice',
+  tenantId: 'tenant-a',
+  scopes: ['secret:mcp:read', 'secret:mcp:write'],
+};
+const tenantWriter = {
+  actor: 'mcp_proxy' as const,
+  userId: 'admin',
+  tenantId: 'tenant-a',
+  scopes: ['secret:mcp:write'],
+};
 
 describe('resolveConnectorRuntimeEnv', () => {
   it('注入已启用连接器的 env secret 与额外 runtimeEnv', async () => {
@@ -62,8 +72,8 @@ describe('resolveConnectorRuntimeEnv', () => {
   it('支持 tenant/global secret，禁用连接器不注入', async () => {
     const store = makeStore();
     const vault = new InMemorySecretVault();
-    const tenantRef = await vault.putSecret(tenantOwnerId('tenant-a'), 'mcp', 'tenant_secret', adminCaller);
-    const globalRef = await vault.putSecret(GLOBAL_OWNER_ID, 'mcp', 'global_secret', { ...adminCaller, role: 'admin', scopes: ['secret:mcp:write', 'secret:global:write'] });
+    const tenantRef = await vault.putSecret(tenantOwnerId('tenant-a'), 'mcp', 'tenant_secret', tenantWriter);
+    const globalRef = await vault.putSecret(GLOBAL_OWNER_ID, 'mcp', 'global_secret', tenantWriter);
     await store.upsertServer({
       id: 'scoped',
       name: 'Scoped',

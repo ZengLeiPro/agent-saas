@@ -222,6 +222,11 @@ export function createEgressConfigAdminRouter(
           GLOBAL_OWNER_ID,
           EGRESS_SECRET_KIND,
           parsed.data.proxyCredential,
+          {
+            actor: 'system',
+            userId: 'egress_config_admin',
+            scopes: [`secret:${EGRESS_SECRET_KIND}:write`],
+          },
           { purpose: 'egress proxy credential' },
         );
         credentialRef = ref.id;

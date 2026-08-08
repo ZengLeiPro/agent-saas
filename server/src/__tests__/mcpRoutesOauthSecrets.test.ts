@@ -37,7 +37,7 @@ import type { JwtPayload } from '../auth/types.js';
 import type { UserStore } from '../data/users/store.js';
 import type { McpClientManager } from '../mcp/clientManager.js';
 import type { McpOAuthFinishResult, McpOAuthService, McpOAuthStartResult } from '../mcp/oauthService.js';
-import type { SecretRef, SecretVault } from '../security/secretVault.js';
+import type { SecretRef, SecretVault, VaultCaller } from '../security/secretVault.js';
 import { GLOBAL_OWNER_ID, tenantOwnerId } from '../security/secretVault.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 
@@ -71,10 +71,16 @@ function recordingManager(opts: { failEnsure?: boolean } = {}) {
 
 /** 记录所有 putSecret 调用（负向用例断言「未触碰 vault」，正向用例断言 ownerId/metadata） */
 class RecordingVault implements SecretVault {
-  puts: Array<{ ownerId: string; kind: string; value: string; metadata: Record<string, unknown> }> = [];
+  puts: Array<{ ownerId: string; kind: string; value: string; caller: VaultCaller; metadata: Record<string, unknown> }> = [];
   private seq = 0;
-  async putSecret(ownerId: string, kind: string, value: string, metadata: Record<string, unknown> = {}): Promise<SecretRef> {
-    this.puts.push({ ownerId, kind, value, metadata });
+  async putSecret(
+    ownerId: string,
+    kind: string,
+    value: string,
+    caller: VaultCaller,
+    metadata: Record<string, unknown> = {},
+  ): Promise<SecretRef> {
+    this.puts.push({ ownerId, kind, value, caller, metadata });
     const now = new Date().toISOString();
     return { id: `ref-${++this.seq}`, ownerId, kind, metadata, createdAt: now, updatedAt: now };
   }

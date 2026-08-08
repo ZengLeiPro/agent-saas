@@ -1896,7 +1896,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           actor: 'connector_proxy',
           userId: legacyConnection.username,
           tenantId: legacyConnection.tenantId,
-          scopes: ['secret:connector:read', 'secret:mcp:read'],
+          scopes: ['secret:connector:revoke', 'secret:mcp:revoke'],
         });
         await connectorConnectionStore.markCredentialRevoked(
           legacyConnection.username,
@@ -1916,10 +1916,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     await mcpConfigStore.clearUserSecretRef(username, GITHUB_CONNECTOR_ID, 'token');
     try {
       await secretVault.revokeSecret(legacyGithubRef, {
-        actor: 'admin',
-        userId: 'native-connector-v5-migration',
-        tenantId: '*',
-        scopes: ['secret:admin'],
+        actor: 'connector_proxy',
+        userId: username,
+        scopes: ['secret:connector:revoke', 'secret:mcp:revoke'],
       });
     } catch (error) {
       serverLogger.warn(
@@ -2007,7 +2006,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       egressProxyCredential = await secretVault.getSecret(ref, {
         actor: 'system',
         userId: '__system__',
-        scopes: ['secret:egress_proxy:read'],
+        scopes: ['secret:egress-proxy:read'],
       });
     } catch (err) {
       egressProxyCredential = undefined;

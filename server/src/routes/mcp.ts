@@ -436,12 +436,18 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     }
     const validationError = validateConnectorSecretValue(server, key, parsed.data.value);
     if (validationError) return res.status(400).json({ error: validationError });
-    const ref = await secretVault.putSecret(username, 'mcp', parsed.data.value, {
-      serverId,
-      key,
-      scope: requirement.scope,
+    const ref = await secretVault.putSecret(
       username,
-    });
+      'mcp',
+      parsed.data.value,
+      {
+        actor: 'mcp_proxy',
+        userId: username,
+        tenantId,
+        scopes: ['secret:mcp:write'],
+      },
+      { serverId, key, scope: requirement.scope, username },
+    );
     await store.setUserSecretRef(username, serverId, key, ref.id, tenantId);
     await manager.invalidateUser(username);
     auditLog(req, 'mcp_secret_bound', `${serverId}/${key}`);
@@ -625,12 +631,18 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
       ownerId = GLOBAL_OWNER_ID;
     }
 
-    const ref = await secretVault.putSecret(ownerId, 'mcp', parsed.data.value, {
-      serverId,
-      key,
-      scope: requirement.scope,
+    const ref = await secretVault.putSecret(
       ownerId,
-    });
+      'mcp',
+      parsed.data.value,
+      {
+        actor: 'mcp_proxy',
+        userId: req.user!.sub,
+        ...(requirement.scope === 'tenant' ? { tenantId: server.tenantId } : {}),
+        scopes: ['secret:mcp:write'],
+      },
+      { serverId, key, scope: requirement.scope, ownerId },
+    );
     await store.setServerSecretRef(serverId, key, ref.id);
     await Promise.all(userStore.listAll().map(u => manager.invalidateUser(u.username)));
     auditLog(req, 'mcp_secret_bound', `admin ${serverId}/${key} scope=${requirement.scope}`);

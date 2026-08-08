@@ -1,10 +1,12 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import StsClientModule from '@alicloud/sts20150401';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   AliyunConnectorService,
+  createAliyunValidateCredentials,
   type AliyunValidateCredentials,
 } from '../connectors/aliyun.js';
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
@@ -49,6 +51,27 @@ afterEach(() => {
 });
 
 describe('Aliyun native connector', () => {
+  it('constructs the CommonJS STS client under Node ESM', async () => {
+    const StsClient = (
+      StsClientModule as unknown as { default?: typeof StsClientModule }
+    ).default ?? StsClientModule;
+    const getCallerIdentity = vi.spyOn(StsClient.prototype, 'getCallerIdentity').mockResolvedValue({
+      body: {
+        accountId: identity.accountId,
+        arn: identity.arn,
+        identityType: identity.identityType,
+      },
+    } as never);
+
+    await expect(createAliyunValidateCredentials()(input)).resolves.toEqual({
+      accountId: identity.accountId,
+      arn: identity.arn,
+      identityType: identity.identityType,
+    });
+    expect(getCallerIdentity).toHaveBeenCalledOnce();
+    getCallerIdentity.mockRestore();
+  });
+
   it('stores AccessKey only in Vault and injects user-scoped runtime env', async () => {
     const validateCredentials = validCredentials();
     const fixture = createFixture(validateCredentials);

@@ -1,8 +1,12 @@
-import StsClient from '@alicloud/sts20150401';
+import StsClientModule from '@alicloud/sts20150401';
 import { Config as OpenApiConfig } from '@alicloud/openapi-client';
 
 import type { SecretVault } from '../security/secretVault.js';
 import type { ConnectorConnectionRecord, ConnectorConnectionStore } from './connectionStore.js';
+
+const StsClient = (
+  StsClientModule as unknown as { default?: typeof StsClientModule }
+).default ?? StsClientModule;
 
 export const ALIYUN_CONNECTOR_ID = 'aliyun';
 export const ALIYUN_ACCESS_KEY_CREDENTIAL_KEY = 'access_key';

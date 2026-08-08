@@ -33,6 +33,7 @@ import type { TenantStore } from "../data/tenants/store.js";
 import { DEFAULT_TENANT_SETTINGS } from "../data/tenants/types.js";
 import type { SkillConfigStore } from "../data/skills/store.js";
 import type { BillingService } from "../data/billing/service.js";
+import { CREDIT_MICRO } from "../data/billing/types.js";
 import type { OrgAgentStore } from "../data/orgAgents/store.js";
 import { seedOrgAgentTemplatesForTenant } from "../data/orgAgentTemplates.js";
 import {
@@ -262,7 +263,7 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
     const publicEnabled = enabled && Boolean(codeService);
     if (publicEnabled) {
       apiLogger.info(
-        `[signup] 自助注册运行态已构建 v${version} sms=${codeService!.sender.providerName} grantCredits=${cfg.grantCredits} models=${trialAllowedModels.join(",") || "(不限)"}`,
+        `[signup] 自助注册运行态已构建 v${version} sms=${codeService!.sender.providerName} grantCredits=${cfg.grantCredits} maxRunCredits=${cfg.maxRunCredits} models=${trialAllowedModels.join(",") || "(不限)"}`,
       );
     }
 
@@ -531,6 +532,7 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
             billingEnabled: true,
             billingMode: "trial",
             hardCapMode: "stop_before_run",
+            maxRunCreditsMicro: Math.round(rt.cfg.maxRunCredits * CREDIT_MICRO),
             showBalance: true,
             showUsageCredits: true,
           },
@@ -724,7 +726,7 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
         smsAccessKeySecretRef: secretRefPatch,
       });
       apiLogger.info(
-        `[signup] 注册配置已更新 by=${req.user?.username ?? "?"} enabled=${config.enabled} grantCredits=${config.grantCredits} smsProvider=${config.sms?.provider ?? "dev"}${secretRefPatch !== undefined ? " secret=updated" : ""}`,
+        `[signup] 注册配置已更新 by=${req.user?.username ?? "?"} enabled=${config.enabled} grantCredits=${config.grantCredits} maxRunCredits=${config.maxRunCredits} smsProvider=${config.sms?.provider ?? "dev"}${secretRefPatch !== undefined ? " secret=updated" : ""}`,
       );
       res.json(await buildAdminView());
     } catch (err) {

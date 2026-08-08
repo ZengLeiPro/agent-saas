@@ -30,7 +30,7 @@ function lastCall() {
 }
 
 const view: SignupConfigAdminView = {
-  config: { enabled: true, grantCredits: 100 },
+  config: { enabled: true, grantCredits: 100, maxRunCredits: 20 },
   publicEnabled: true,
   smsError: null,
   smsSecretConfigured: false,
@@ -61,7 +61,7 @@ describe('signupConfigApi', () => {
   describe('updateSignupConfig', () => {
     it('PUT，body 为整个 payload', async () => {
       const payload: UpdateSignupConfigRequest = {
-        config: { enabled: false, grantCredits: 0 },
+        config: { enabled: false, grantCredits: 100, maxRunCredits: 20 },
         smsAccessKeySecret: null,
       };
       mockAuthFetch.mockResolvedValue(jsonResponse(200, view));
@@ -76,7 +76,7 @@ describe('signupConfigApi', () => {
     it('非 2xx 抛错', async () => {
       mockAuthFetch.mockResolvedValue(jsonResponse(400, { error: '配置非法' }));
       await expect(
-        updateSignupConfig({ config: { enabled: true, grantCredits: 0 } }),
+        updateSignupConfig({ config: { enabled: true, grantCredits: 100, maxRunCredits: 20 } }),
       ).rejects.toThrow('配置非法');
     });
   });

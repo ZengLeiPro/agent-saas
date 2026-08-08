@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { TenantStore } from "../data/tenants/store.js";
 import { UserStore } from "../data/users/store.js";
 import type { BillingService } from "../data/billing/service.js";
+import { CREDIT_MICRO } from "../data/billing/types.js";
 import type { ModelsConfig, SelfSignupConfig } from "../app/config.js";
 import { createSignupRouters } from "../routes/signup.js";
 import { SignupConfigStore } from "../data/signupConfig.js";
@@ -66,6 +67,7 @@ const MODELS_CONFIG = {
 const SELF_SIGNUP: SelfSignupConfig = {
   enabled: true,
   grantCredits: 500,
+  maxRunCredits: 100,
 };
 
 const PHONE = "13800001111";
@@ -321,6 +323,7 @@ describe("signup router", () => {
         selfSignup: {
           enabled: true,
           grantCredits: 500,
+          maxRunCredits: 100,
           sms: {
             ...ALIYUN_SMS_LIMITS,
             accessKeyId: "ak-test",
@@ -346,7 +349,7 @@ describe("signup router", () => {
 
   it("未启用时 send-code/register 拒绝但 status 可用", async () => {
     h = await makeTestRig({
-      selfSignup: { enabled: false, grantCredits: 500 },
+      selfSignup: { enabled: false, grantCredits: 500, maxRunCredits: 100 },
     });
     expect((await h.request("/api/signup/status")).status).toBe(200);
     expect(
@@ -362,6 +365,7 @@ describe("signup router", () => {
       selfSignup: {
         enabled: true,
         grantCredits: 500,
+        maxRunCredits: 100,
         sms: {
           ...DEV_SMS_LIMITS,
           maxSendPerIpPerMinute: 1,
@@ -419,6 +423,7 @@ describe("signup router", () => {
       billingEnabled: true,
       billingMode: "trial",
       hardCapMode: "stop_before_run",
+      maxRunCreditsMicro: 100 * CREDIT_MICRO,
     });
     expect(h.billingCalls.grant).toMatchObject({
       tenantId: data.user.tenantId,
@@ -523,7 +528,7 @@ describe("signup router", () => {
 
   it("waitlist 留资：注册关闭时仍可提交，重复提交幂等返回 ok", async () => {
     h = await makeTestRig({
-      selfSignup: { enabled: false, grantCredits: 500 },
+      selfSignup: { enabled: false, grantCredits: 500, maxRunCredits: 100 },
     });
     // 注册关闭：send-code/register 均 403，但 waitlist 可用
     expect(
@@ -570,7 +575,7 @@ describe("signup dynamic config", () => {
   it("store 更新后无需重启即生效：开关翻转 + 赠分变化", async () => {
     // 起始 enabled=false
     h = await makeTestRig({
-      selfSignup: { enabled: false, grantCredits: 500 },
+      selfSignup: { enabled: false, grantCredits: 500, maxRunCredits: 100 },
       injectCodeService: true,
     });
     expect(await (await h.request("/api/signup/status")).json()).toEqual({
@@ -579,7 +584,7 @@ describe("signup dynamic config", () => {
 
     // 动态开启 + 改赠分（注入的 codeService 让 dev/capture 通道直接可用）
     await h.signupConfigStore.update(
-      { enabled: true, grantCredits: 800 },
+      { enabled: true, grantCredits: 800, maxRunCredits: 100 },
       { actor: "test-admin" },
     );
     expect(await (await h.request("/api/signup/status")).json()).toEqual({
@@ -593,10 +598,13 @@ describe("signup dynamic config", () => {
     });
     expect(res.status).toBe(201);
     expect(h.billingCalls.grant).toMatchObject({ creditsDelta: 800 });
+    expect(h.billingCalls.policy?.patch).toMatchObject({
+      maxRunCreditsMicro: 100 * CREDIT_MICRO,
+    });
 
     // 动态关闭：立即 403
     await h.signupConfigStore.update(
-      { enabled: false, grantCredits: 800 },
+      { enabled: false, grantCredits: 800, maxRunCredits: 100 },
       { actor: "test-admin" },
     );
     expect(
@@ -632,7 +640,7 @@ describe("signup admin config API", () => {
     const res = await h.adminRequest("GET");
     expect(res.status).toBe(200);
     const view = (await res.json()) as Record<string, unknown>;
-    expect(view.config).toMatchObject({ enabled: true, grantCredits: 500 });
+    expect(view.config).toMatchObject({ enabled: true, grantCredits: 500, maxRunCredits: 100 });
     expect(view.publicEnabled).toBe(true);
     expect(view.effectiveAllowedModels).toEqual(["test-group/test-model"]);
     expect(JSON.stringify(view)).not.toContain("accessKeySecret");
@@ -641,7 +649,7 @@ describe("signup admin config API", () => {
   it("PUT 更新配置立即生效；提交 SMS Secret 走 vault", async () => {
     h = await makeTestRig();
     const res = await h.adminRequest("PUT", {
-      config: { enabled: false, grantCredits: 1200 },
+      config: { enabled: false, grantCredits: 1200, maxRunCredits: 200 },
       smsAccessKeySecret: "sk-test-secret",
     });
     expect(res.status).toBe(200);
@@ -650,6 +658,7 @@ describe("signup admin config API", () => {
     expect(view.smsSecretConfigured).toBe(true);
     expect(view.smsSecretSource).toBe("vault");
     expect(h.signupConfigStore.getConfig().grantCredits).toBe(1200);
+    expect(h.signupConfigStore.getConfig().maxRunCredits).toBe(200);
     expect(h.signupConfigStore.getSmsAccessKeySecretRef()).toBeTruthy();
     // 公开端点同步生效
     expect(await (await h.request("/api/signup/status")).json()).toEqual({

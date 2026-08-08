@@ -664,6 +664,8 @@ export const selfSignupConfigSchema = z.object({
   enabled: z.boolean().default(false),
   /** 注册赠送积分数（试用额度，≠ 正式版套餐量） */
   grantCredits: z.number().positive().default(500),
+  /** 单个试用 Run 最多可消耗的积分；避免一个任务预占全部试用余额。 */
+  maxRunCredits: z.number().positive().default(100),
   /**
    * 试用租户模型白名单（"group/model" ref 列表）；首个作为默认模型。
    * 缺省 = 仅全局默认模型（config.models.default）。

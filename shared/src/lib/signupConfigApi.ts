@@ -33,6 +33,8 @@ export interface SignupConfig {
   enabled: boolean;
   /** 注册赠送积分数（试用额度） */
   grantCredits: number;
+  /** 单个试用 Run 的积分上限 */
+  maxRunCredits: number;
   /** 试用租户模型白名单（"group/model" ref）；缺省 = 仅全局默认模型 */
   allowedModels?: string[];
   /** 注册线索钉钉群机器人 webhook 完整 URL；缺省不推送 */

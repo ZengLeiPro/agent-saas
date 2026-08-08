@@ -82,6 +82,7 @@ interface SmsDraft {
 interface SignupDraft {
   enabled: boolean;
   grantCredits?: number;
+  maxRunCredits?: number;
   dingtalkLeadWebhook: string;
   sms: SmsDraft;
 }
@@ -91,6 +92,7 @@ function draftFromConfig(config: SignupConfig | null): SignupDraft {
   return {
     enabled: config?.enabled ?? false,
     grantCredits: config?.grantCredits,
+    maxRunCredits: config?.maxRunCredits,
     dingtalkLeadWebhook: config?.dingtalkLeadWebhook ?? "",
     sms: {
       provider: sms?.provider ?? DEFAULT_SMS.provider,
@@ -208,6 +210,13 @@ export function SignupConfigManager() {
       if (!Number.isFinite(grantCredits) || grantCredits <= 0) {
         throw new Error("注册赠送积分必须是正整数");
       }
+      const maxRunCredits = Number(draft.maxRunCredits);
+      if (!Number.isFinite(maxRunCredits) || maxRunCredits <= 0) {
+        throw new Error("试用单 Run 上限必须是正整数");
+      }
+      if (maxRunCredits > grantCredits) {
+        throw new Error("试用单 Run 上限不能超过注册赠送积分");
+      }
       const models = splitLines(allowedModelsText);
       const webhook = draft.dingtalkLeadWebhook.trim();
       const sms: SignupSmsConfig = {
@@ -225,6 +234,7 @@ export function SignupConfigManager() {
       const config: SignupConfig = {
         enabled: draft.enabled,
         grantCredits: Math.floor(grantCredits),
+        maxRunCredits: Math.floor(maxRunCredits),
         // 空数组 → undefined：缺省 = 仅使用全局默认模型
         ...(models.length > 0 ? { allowedModels: models } : {}),
         // 空字符串必须转 undefined：后端 zod .url() 会拒空串
@@ -338,6 +348,17 @@ export function SignupConfigManager() {
                   value={draft.grantCredits ?? ""}
                   onChange={(event) => updateDraft((current) => ({ ...current, grantCredits: numberOrUndefined(event.target.value) }))}
                 />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="signup-run-limit">试用单 Run 上限</Label>
+                <Input
+                  id="signup-run-limit"
+                  type="number"
+                  min={1}
+                  value={draft.maxRunCredits ?? ""}
+                  onChange={(event) => updateDraft((current) => ({ ...current, maxRunCredits: numberOrUndefined(event.target.value) }))}
+                />
+                <p className="text-xs text-muted-foreground">每个试用任务最多消耗的积分，不能超过注册赠送积分。</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="signup-dingtalk-webhook">注册线索钉钉群 Webhook</Label>

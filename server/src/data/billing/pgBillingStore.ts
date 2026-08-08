@@ -205,6 +205,26 @@ export class PgBillingStore {
         ALTER TABLE ${this.tenantPoliciesTable}
           ADD COLUMN IF NOT EXISTS max_run_credits_micro BIGINT
       `);
+      // 蓝绿升级门禁：旧版本允许 hard cap 没有单 Run 上限。新版本若直接切流，
+      // 这些组织会在模型调用前全量 fail-closed；必须先补数据，让新色 readiness
+      // 失败并保留旧色，而不是 health 绿、业务不可用。
+      const invalidRunLimits = await client.query<{ tenant_id: string }>(`
+        SELECT tenant_id
+        FROM ${this.tenantPoliciesTable}
+        WHERE billing_enabled = true
+          AND billing_mode <> 'internal'
+          AND hard_cap_mode = 'stop_before_run'
+          AND (max_run_credits_micro IS NULL OR max_run_credits_micro <= 0)
+        ORDER BY tenant_id
+        LIMIT 20
+      `);
+      if (invalidRunLimits.rows.length > 0) {
+        const tenantIds = invalidRunLimits.rows.map((row) => row.tenant_id).join(', ');
+        throw new Error(
+          `Billing policy upgrade blocked: hard-capped tenants missing max_run_credits_micro (${tenantIds}). `
+          + 'Configure a positive organization per-run limit before deploying this release.',
+        );
+      }
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.usageEventsTable} (
           id TEXT PRIMARY KEY,
@@ -775,7 +795,7 @@ export class PgBillingStore {
           SELECT period_start FROM ${this.runReservationsTable}
           WHERE tenant_id = $1 AND run_id = $2
         `, [input.tenantId, original.runId]);
-        if (reservation.rows[0]?.period_start) periodStart = String(reservation.rows[0].period_start).slice(0, 10);
+        if (reservation.rows[0]?.period_start) periodStart = normalizeDateOnly(reservation.rows[0].period_start);
       }
       if (original.userId) {
         await client.query(`SELECT 1 FROM ${this.memberBudgetsTable}
@@ -1204,7 +1224,7 @@ export class PgBillingStore {
         SELECT user_id, period_start FROM ${this.runReservationsTable}
         WHERE tenant_id = $1 AND run_id = $2`, [tenantId, runId]);
       const userId = hint.rows[0]?.user_id ?? undefined;
-      const periodStart = hint.rows[0]?.period_start ? String(hint.rows[0].period_start).slice(0, 10) : undefined;
+      const periodStart = hint.rows[0]?.period_start ? normalizeDateOnly(hint.rows[0].period_start) : undefined;
       if (userId && periodStart) {
         await client.query(`SELECT 1 FROM ${this.memberBudgetsTable} WHERE tenant_id = $1 AND user_id = $2 FOR UPDATE`, [tenantId, userId]);
         await client.query(`SELECT 1 FROM ${this.memberPeriodAccountsTable}
@@ -1290,7 +1310,7 @@ export class PgBillingStore {
         SELECT user_id, period_start FROM ${this.runReservationsTable}
         WHERE tenant_id = $1 AND run_id = $2`, [tenantId, runId]);
       const hintedUserId = hint.rows[0]?.user_id ?? undefined;
-      const hintedPeriodStart = hint.rows[0]?.period_start ? String(hint.rows[0].period_start).slice(0, 10) : undefined;
+      const hintedPeriodStart = hint.rows[0]?.period_start ? normalizeDateOnly(hint.rows[0].period_start) : undefined;
       if (hintedUserId && hintedPeriodStart) {
         await client.query(`SELECT 1 FROM ${this.memberBudgetsTable}
           WHERE tenant_id = $1 AND user_id = $2 FOR UPDATE`, [tenantId, hintedUserId]);
@@ -2264,7 +2284,7 @@ export class PgBillingStore {
         SELECT user_id, period_start FROM ${this.runReservationsTable}
         WHERE tenant_id = $1 AND run_id = $2`, [input.tenantId, runId]);
       const hintedUserId = hint.rows[0]?.user_id ?? input.userId;
-      const hintedPeriod = hint.rows[0]?.period_start ? String(hint.rows[0].period_start).slice(0, 10)
+      const hintedPeriod = hint.rows[0]?.period_start ? normalizeDateOnly(hint.rows[0].period_start)
         : beijingDateString(beijingMonthRange(new Date()).start);
       if (hintedUserId) {
         await client.query(`SELECT 1 FROM ${this.memberBudgetsTable}
@@ -2539,6 +2559,19 @@ function beijingDateString(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+/**
+ * PostgreSQL DATE 在不同 pg parser / 进程时区下可能返回 `YYYY-MM-DD` 或 Date。
+ * Date 使用本地年月日还原，避免 `toISOString()` 在 UTC+8 把月初退到上个月末。
+ */
+function normalizeDateOnly(value: unknown): string {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+  }
+  const matched = /^(\d{4}-\d{2}-\d{2})/.exec(String(value));
+  if (matched?.[1]) return matched[1];
+  throw new Error(`Invalid PostgreSQL DATE value: ${String(value)}`);
+}
+
 function normalizeMemberBudgetAudit(row: Record<string, unknown>): BillingMemberBudgetAuditEntry {
   return {
     id: String(row.id),
@@ -2565,7 +2598,7 @@ function normalizeMemberBudgetAudit(row: Record<string, unknown>): BillingMember
       : { afterPerRunLimitCreditsMicro: Number(row.after_per_run_limit_micro) }),
     beforeActive: Boolean(row.before_active),
     afterActive: Boolean(row.after_active),
-    periodStart: String(row.period_start),
+    periodStart: normalizeDateOnly(row.period_start),
     note: String(row.note),
     actorUserId: String(row.actor_user_id),
     actorUsername: String(row.actor_username),
@@ -2626,7 +2659,7 @@ function normalizeRunReservation(row: Record<string, unknown>): BillingRunReserv
     ...(row.user_id ? { userId: String(row.user_id) } : {}),
     ...(row.username_snapshot ? { usernameSnapshot: String(row.username_snapshot) } : {}),
     ...(row.session_id ? { sessionId: String(row.session_id) } : {}),
-    periodStart: String(row.period_start),
+    periodStart: normalizeDateOnly(row.period_start),
     grantedCreditsMicro: Number(row.granted_micro),
     remainingCreditsMicro: Number(row.remaining_micro),
     status: row.status as BillingRunReservation['status'],

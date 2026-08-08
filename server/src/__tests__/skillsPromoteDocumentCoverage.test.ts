@@ -1,30 +1,9 @@
 /**
- * skills 路由残余分支覆盖（routes/skills.ts）—— promote / custom document / resolveAdminTargetUser / safeName
- *
- * 分工（不与既有测试重复）：
- *   - skillsRouterTenantIsolation.test.ts：跨组织 403 主格局、pool 写权限、tenant 自有 skill 全流程
- *   - skillsRoutesCoverage.test.ts：requireAdmin/requirePlatformAdmin 403、pool document 读写、
- *     /me 自服务、/sync 空池 409、promote 的「Source user not found」404
- *   - platformGovernance.test.ts：平台管理员统一权限中间件（非本路由逻辑）
- *
- * 本文件补：
- *   1. POST /custom/:skillId/promote（skills.ts L651-682）：
- *      入参校验 400（非法 skillId / 缺 sourceUser / 非法 sourceUser）、
- *      源 skill 目录不存在 404、池已存在 409（且不覆盖池内容）、
- *      成功路径（递归复制落盘 + 源保留 + setPoolVisibility(true) 生效 + GET /pool 可见）
- *   2. GET/PUT /custom/:username/:skillId/document 拒绝矩阵（L686-736）：
- *      系统 pool skill → 400、组织自有 skill → 400（含 PUT 后文件未被改写的副作用断言）、
- *      非法 username/skillId → 400、目标 skill 不存在 404、happy path 读写落盘、
- *      name 与目录 ID 不一致 400
- *   3. resolveAdminTargetUser（L123-134）：目标用户不存在 404；
- *      跨租户目标同样 404 隐藏（修复后行为：与「不存在」同口径，不泄露用户名存在性）
- *   4. safeName（L51-54）：下划线/点开头等非法名在 promote 与 document 端点的 400 分支；
- *      下划线 id 的自建 skill 可通过 PUT document 编辑（修复后行为：allowName=skillId
- *      例外放行 name===目录 ID；其余仍执行小写/数字/连字符常规规则）
- *
- * rig 照抄 skillsRoutesCoverage.test.ts：真 express + app.listen(0) + 全局 fetch，
- * 认证伪造=中间件注入 req.user，setCaller 切换；mkdtempSync 真实临时目录种 skill；
- * afterEach server.close() + rmSync。
+ * 个人 Skill 治理残余分支覆盖：
+ * - 个人 Skill 直接提升到平台池在候选副本与审批链建成前 fail closed；
+ * - 旧管理员文档路径只允许 owner 本人；
+ * - 系统/组织 Skill 不能借个人路径改写；
+ * - 历史下划线 Skill ID 仍可由本人编辑。
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import express from 'express';
@@ -40,7 +19,7 @@ import type { SkillConfigStore } from '../data/skills/store.js';
 import type { JwtPayload } from '../auth/types.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 
-const PLATFORM_ADMIN: JwtPayload = { sub: 'u-platform', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID };
+const ALICE_PLATFORM_ADMIN: JwtPayload = { sub: 'u-ku', username: 'alice', role: 'admin', tenantId: DEFAULT_TENANT_ID };
 const PLATFORM_OPERATOR: JwtPayload = {
   sub: 'u-operator', username: 'platform_operator', role: 'admin', tenantId: DEFAULT_TENANT_ID,
   platformCapabilities: ['customer_config.manage'],
@@ -137,7 +116,7 @@ async function makeRig(): Promise<Rig> {
 
   const app = express();
   app.use(express.json());
-  let caller: JwtPayload | undefined = PLATFORM_ADMIN;
+  let caller: JwtPayload | undefined = ALICE_PLATFORM_ADMIN;
   app.use((req, _res, next) => { if (caller) req.user = caller; next(); });
   const skillConfigStore = fakeSkillConfigStore();
   app.use('/api/skills', createSkillsRouter({
@@ -171,68 +150,15 @@ describe('skills promote/document 残余分支覆盖', () => {
   afterEach(async () => { await h.close(); });
 
   // ============================================================
-  // POST /custom/:skillId/promote（skills.ts L651-682）
+  // POST /custom/:skillId/promote fail closed
   // ============================================================
   describe('POST /custom/:skillId/promote', () => {
-    it('入参校验：非法 skillId / 缺 sourceUser / 非法 sourceUser → 各自 400', async () => {
-      // safeName 拒绝下划线开头的 skillId（L652-653）
-      const badSkill = await h.request('/api/skills/custom/_bad/promote', jsonInit('POST', { sourceUser: 'alice' }));
-      expect(badSkill.status).toBe(400);
-      expect((await badSkill.json() as { error: string }).error).toBe('Invalid skillId');
-
-      // promoteSchema 校验失败（L654-656）
-      const missing = await h.request('/api/skills/custom/alice_custom/promote', jsonInit('POST', {}));
-      expect(missing.status).toBe(400);
-      expect((await missing.json() as { error: string }).error).toBe('sourceUser is required');
-
-      // safeName 拒绝点开头的 sourceUser（L659-660）
-      const badUser = await h.request('/api/skills/custom/alice_custom/promote', jsonInit('POST', { sourceUser: '.hidden' }));
-      expect(badUser.status).toBe(400);
-      expect((await badUser.json() as { error: string }).error).toBe('Invalid sourceUser');
-
-      // 副作用：全部被拒，pool 目录没有任何新落盘
-      expect(existsSync(join(h.poolDir, 'alice_custom'))).toBe(false);
-    });
-
-    it('源用户存在但其工作区无该 skill → 404', async () => {
-      const res = await h.request('/api/skills/custom/ghost-skill/promote', jsonInit('POST', { sourceUser: 'alice' }));
-      expect(res.status).toBe(404);
-      expect((await res.json() as { error: string }).error).toBe('用户 alice 的工作区中不存在技能“ghost-skill”');
-      expect(existsSync(join(h.poolDir, 'ghost-skill'))).toBe(false);
-    });
-
-    it('池中已存在同名 skill → 409，且池内容不被覆盖、visibility 不被写入', async () => {
-      // 给 alice 造一个与 pool 同名的自建目录，使 srcDir 存在、dstDir 也存在
-      mkdirSync(join(h.aliceSkillsDir, 'shared_skill'), { recursive: true });
-      writeFileSync(join(h.aliceSkillsDir, 'shared_skill', 'SKILL.md'), '---\nname: shared_skill\ndescription: hijack\n---\nhijack');
-
-      const res = await h.request('/api/skills/custom/shared_skill/promote', jsonInit('POST', { sourceUser: 'alice' }));
-      expect(res.status).toBe(409);
-      expect((await res.json() as { error: string }).error).toBe('技能“shared_skill”已存在于技能池');
-      // 池内原文档未被用户版本覆盖
-      expect(readFileSync(join(h.poolDir, 'shared_skill', 'SKILL.md'), 'utf-8')).toBe(POOL_SHARED_MD);
-      // setPoolVisibility 未被调用（fake store 初始为空表）
-      expect(h.skillConfigStore.getPoolVisibility()).not.toHaveProperty('shared_skill');
-    });
-
-    it('成功：200 + 目录（含嵌套文件）复制进 pool + 源保留 + setPoolVisibility(true) 生效', async () => {
+    it('候选副本与审批链未建成前一律 409，且不复制个人 Skill', async () => {
       const res = await h.request('/api/skills/custom/alice_custom/promote', jsonInit('POST', { sourceUser: 'alice' }));
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true });
-
-      // 落盘：SKILL.md 与嵌套 assets/note.txt 均按原内容复制
-      expect(readFileSync(join(h.poolDir, 'alice_custom', 'SKILL.md'), 'utf-8')).toBe(ALICE_CUSTOM_MD);
-      expect(readFileSync(join(h.poolDir, 'alice_custom', 'assets', 'note.txt'), 'utf-8')).toBe('nested asset');
-      // promote 是复制不是搬移：源用户目录保留
-      expect(existsSync(join(h.aliceSkillsDir, 'alice_custom', 'SKILL.md'))).toBe(true);
-      // 可见性配置副作用：setPoolVisibility({alice_custom: true}) 已生效
-      expect(h.skillConfigStore.getPoolVisibility()).toHaveProperty('alice_custom', true);
-
-      // 端到端：GET /pool 立即能看到新技能且 visible=true
-      const pool = await h.request('/api/skills/pool');
-      expect(pool.status).toBe(200);
-      const body = await pool.json() as { skills: { id: string; visible: boolean }[] };
-      expect(body.skills.find(s => s.id === 'alice_custom')?.visible).toBe(true);
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ code: 'PERSONAL_SKILL_SUBMISSION_REQUIRED' });
+      expect(existsSync(join(h.poolDir, 'alice_custom'))).toBe(false);
+      expect(h.skillConfigStore.getPoolVisibility()).not.toHaveProperty('alice_custom');
     });
   });
 
@@ -384,14 +310,13 @@ describe('skills promote/document 残余分支覆盖', () => {
       expect(readFileSync(join(h.aliceSkillsDir, 'editable-skill', 'SKILL.md'), 'utf-8')).toBe(EDITABLE_MD);
     });
 
-    it('平台管理员可通过技能接口管理客户与 pantheon 内部账号', async () => {
+    it('平台管理员也只能通过兼容路径访问自己的个人 Skill', async () => {
+      h.setCaller(ALICE_PLATFORM_ADMIN);
+      expect((await h.request('/api/skills/users/alice')).status).toBe(200);
+      expect((await h.request('/api/skills/users/admin')).status).toBe(403);
+
       h.setCaller(PLATFORM_OPERATOR);
-
-      const internal = await h.request('/api/skills/users/admin');
-      expect(internal.status).toBe(200);
-
-      const customer = await h.request('/api/skills/users/alice');
-      expect(customer.status).toBe(200);
+      expect((await h.request('/api/skills/users/alice')).status).toBe(403);
     });
   });
 });

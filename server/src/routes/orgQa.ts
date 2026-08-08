@@ -160,10 +160,12 @@ export function createOrgQaRouter(deps: OrgQaRouterDeps): Router {
     if (!isValidSessionId(sessionId)) {
       return res.status(400).json({ error: 'Invalid session id' });
     }
-    // 组织 admin 强制本租户；平台 admin 不限（防跨租户枚举：tenant 不符 → 404）
-    const tenantId = isPlatformAdmin(req.user!) ? undefined : req.user!.tenantId;
+    const parsed = queryTenantSchema.safeParse(req.query);
+    if (!parsed.success) return invalidQuery(res, parsed.error);
+    const access = resolveTenant(req, parsed.data.tenantId);
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
     try {
-      const record = await deps.sessionProjectionStore.get(sessionId, { tenantId, includeDeleted: true });
+      const record = await deps.sessionProjectionStore.get(sessionId, { tenantId: access.tenantId, includeDeleted: true });
       if (!record) return res.status(404).json({ error: 'Session not found' });
       // 质检台只暴露专职 Agent 会话（与列表口径一致）；个人会话同 404 防探测（2026-07 审查 F3）
       if (!record.metaJson?.orgAgentId) return res.status(404).json({ error: 'Session not found' });
@@ -262,7 +264,12 @@ function resolveTenant(
   requestedTenantId?: string,
 ): { ok: true; tenantId?: string } | { ok: false; status: number; error: string } {
   if (!req.user) return { ok: false, status: 401, error: 'Authentication required' };
-  if (isPlatformAdmin(req.user)) return { ok: true, tenantId: requestedTenantId };
+  if (isPlatformAdmin(req.user)) {
+    if (!requestedTenantId) {
+      return { ok: false, status: 400, error: '平台管理员必须显式指定 tenantId' };
+    }
+    return { ok: true, tenantId: requestedTenantId };
+  }
   if (requestedTenantId && requestedTenantId !== req.user.tenantId) {
     return { ok: false, status: 403, error: 'Tenant access denied' };
   }

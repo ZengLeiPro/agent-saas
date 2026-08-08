@@ -246,13 +246,13 @@ describe('skills routes coverage', () => {
     expect((await ok.json() as { ok: boolean }).ok).toBe(true);
   });
 
-  it('POST /custom/:username/:skillId/promote：源用户不存在 404', async () => {
+  it('POST /custom/:skillId/promote：提交流程未启用时 fail closed', async () => {
     h.setCaller(PLATFORM_ADMIN);
     const res = await h.request('/api/skills/custom/alice_custom/promote', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceUser: 'ghostuser' }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceUser: 'alice' }),
     });
-    expect(res.status).toBe(404);
-    expect((await res.json() as { error: string }).error).toBe('Source user not found');
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: 'PERSONAL_SKILL_SUBMISSION_REQUIRED' });
   });
 
   it('POST /sync：空技能池 → 409 拒绝同步', async () => {

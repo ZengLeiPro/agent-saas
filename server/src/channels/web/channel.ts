@@ -99,6 +99,20 @@ import {
  */
 const approvalResumeSemaphore = new Semaphore(8);
 
+/** 活动日志只保留操作元数据，禁止写入消息正文或摘要。 */
+export function buildChatMessageActivityDetail(
+  sessionId: string | undefined,
+  attachmentCount: number,
+  voiceDurationMs?: number,
+): string {
+  const parts = [
+    `session=${sessionId || 'new'}`,
+    `attachments=${attachmentCount}`,
+  ];
+  if (voiceDurationMs !== undefined) parts.push(`voice=${voiceDurationMs}ms`);
+  return parts.join(' | ');
+}
+
 function canViewContextUsageDetails(context: ChannelContext, tenantStore: TenantStore | undefined): boolean {
   return canViewContextUsageDetailsForUser(context.user, tenantStore);
 }
@@ -2822,15 +2836,6 @@ export class WebChannel implements BaseChannel {
     }
 
     if (user && user.role !== 'admin' && this.config.loginLogFilePath) {
-      const trimmed = resolvedMessage.trim();
-      const preview = trimmed.length > 80 ? `${trimmed.slice(0, 80)}...` : trimmed;
-      const detailParts = [
-        `session=${validSessionId || 'new'}`,
-        `attachments=${attachments?.length ?? 0}`,
-      ];
-      if (voiceFile) detailParts.push(`voice=${voiceFile.duration}ms`);
-      if (preview) detailParts.push(`preview=${preview}`);
-
       appendLoginLog({
         timestamp: new Date().toISOString(),
         event: 'chat_message_sent',
@@ -2839,7 +2844,7 @@ export class WebChannel implements BaseChannel {
         ip: client.ip || 'unknown',
         userAgent: client.userAgent || 'unknown',
         channel: detectLoginChannel(client.userAgent || ''),
-        detail: detailParts.join(' | '),
+        detail: buildChatMessageActivityDetail(validSessionId, attachments?.length ?? 0, voiceFile?.duration),
       }, this.config.loginLogFilePath).catch(() => {});
     }
 

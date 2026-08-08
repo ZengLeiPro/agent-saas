@@ -93,6 +93,7 @@ describe('/api/admin/qa routes', () => {
   let projection: ReturnType<typeof memoryProjection>;
 
   const orgAdminA: TestUser = { sub: 'admin-a', username: 'admin-a', role: 'admin', tenantId: 'tenant-a' };
+  const platformAdmin: TestUser = { sub: 'platform-admin', username: 'platform-admin', role: 'admin', tenantId: 'pantheon' };
 
   beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), 'org-qa-routes-test-'));
@@ -177,6 +178,28 @@ describe('/api/admin/qa routes', () => {
     } finally {
       await stopServer(bare.server);
     }
+  });
+
+  it('平台管理员必须显式指定 tenantId，且消息详情也按该组织守卫', async () => {
+    ({ server, baseUrl } = await startServer({
+      sessionProjectionStore: projection,
+      orgAgentStore,
+      resolveTranscriptPath: async () => null,
+    }, platformAdmin));
+
+    expect((await fetch(`${baseUrl}/api/admin/qa/sessions`)).status).toBe(400);
+    expect((await fetch(`${baseUrl}/api/admin/qa/sessions/${SESSION_A}/messages`)).status).toBe(400);
+    expect((await fetch(`${baseUrl}/api/admin/qa/guardrail-events`)).status).toBe(400);
+    expect((await fetch(`${baseUrl}/api/admin/qa/feedback`)).status).toBe(400);
+
+    const list = await fetch(`${baseUrl}/api/admin/qa/sessions?tenantId=tenant-a`);
+    expect(list.status).toBe(200);
+    expect(projection.lastListQuery?.tenantId).toBe('tenant-a');
+
+    const allowed = await fetch(`${baseUrl}/api/admin/qa/sessions/${SESSION_A}/messages?tenantId=tenant-a`);
+    expect(allowed.status).toBe(200);
+    const wrongTenant = await fetch(`${baseUrl}/api/admin/qa/sessions/${SESSION_B}/messages?tenantId=tenant-a`);
+    expect(wrongTenant.status).toBe(404);
   });
 
   it('同租户个人会话 sessionId 请求 messages → 404（F3：质检台仅限 org 会话，防个人会话探测）', async () => {

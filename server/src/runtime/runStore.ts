@@ -388,6 +388,8 @@ export class PgRunStore implements RunStore {
         await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'`);
       }
       await client.query(`UPDATE ${this.runsTable} SET sandbox_scope_id = metadata->>'sandboxScopeId' WHERE sandbox_scope_id IS NULL AND metadata ? 'sandboxScopeId'`);
+      // wakeMessage 是活跃 Run 的 durable 恢复载荷；Run 进入终态后已无恢复用途，启动时清理历史遗留正文。
+      await client.query(`UPDATE ${this.runsTable} SET metadata = metadata - 'wakeMessage' WHERE status IN ('completed','failed','cancelled','orphaned') AND metadata ? 'wakeMessage'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_tenant_idx ON ${this.runsTable} (tenant_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_user_idx ON ${this.runsTable} (user_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_sandbox_scope_idx ON ${this.runsTable} (sandbox_scope_id, updated_at DESC)`);
@@ -729,11 +731,11 @@ export class PgRunStore implements RunStore {
               completed_at = $3,
               worker_id = NULL,
               lease_expires_at = NULL,
-              metadata = metadata || jsonb_build_object(
+              metadata = (metadata || jsonb_build_object(
                 'steeringState', 'applied',
                 'steeringAppliedToRunId', $1,
                 'steeringAppliedAt', $4::text
-              )
+              )) - 'wakeMessage'
           WHERE run_id = ANY($2::text[]) AND status = 'pending'
         `, [targetRunId, appliedRunIds, now, now]);
       }
@@ -844,7 +846,7 @@ export class PgRunStore implements RunStore {
             status_reason = $2,
             updated_at = $3,
             completed_at = $3,
-            metadata = metadata || jsonb_build_object('steeringState', 'cancelled')
+            metadata = (metadata || jsonb_build_object('steeringState', 'cancelled')) - 'wakeMessage'
         WHERE run_id = $1 AND status = 'pending'
       `, [sourceRunId, reason, now]);
       await client.query('COMMIT');
@@ -911,7 +913,7 @@ export class PgRunStore implements RunStore {
               status_reason = $2,
               updated_at = $3::timestamptz,
               cancelled_at = $3::timestamptz,
-              metadata = metadata || jsonb_build_object('steeringState', 'cancelled')
+              metadata = (metadata || jsonb_build_object('steeringState', 'cancelled')) - 'wakeMessage'
           WHERE run_id = ANY($1::text[]) AND status = 'pending'
         `, [sourceRunIds, reason, now]);
       }
@@ -923,7 +925,8 @@ export class PgRunStore implements RunStore {
               updated_at = $4::timestamptz,
               cancelled_at = $4::timestamptz,
               worker_id = NULL,
-              lease_expires_at = NULL
+              lease_expires_at = NULL,
+              metadata = metadata - 'wakeMessage'
           WHERE session_id = $1
             AND run_id = $2
             AND status IN ${STEERING_TARGET_STATUS_SQL}
@@ -1170,7 +1173,11 @@ export class PgRunStore implements RunStore {
             completed_at = CASE WHEN $2 = 'completed' THEN $4 ELSE completed_at END,
             failed_at = CASE WHEN $2 = 'failed' THEN $4 ELSE failed_at END,
             cancelled_at = CASE WHEN $2 = 'cancelled' THEN $4 ELSE cancelled_at END,
-            metadata = metadata || $5::jsonb
+            metadata = CASE
+              WHEN $2::text IN ('completed','failed','cancelled','orphaned')
+                THEN (metadata || $5::jsonb) - 'wakeMessage'
+              ELSE metadata || $5::jsonb
+            END
         WHERE run_id = $1
           AND (status NOT IN ('completed','failed','cancelled','orphaned') OR status = $2)
         RETURNING row_to_json(${this.runsTable}.*) AS row_json
@@ -1391,7 +1398,7 @@ export class PgRunStore implements RunStore {
           cancelled_at = COALESCE(cancelled_at, $4),
           worker_id = NULL,
           lease_expires_at = NULL,
-          metadata = metadata || $5::jsonb
+          metadata = (metadata || $5::jsonb) - 'wakeMessage'
       WHERE run_id = $1
         AND status = 'waiting_approval'
         AND updated_at < $2::timestamptz
@@ -1608,7 +1615,13 @@ export class PgRunStore implements RunStore {
           updated_at = $5,
           completed_at = CASE WHEN $3 = 'completed' AND status NOT IN ('completed','failed','cancelled','orphaned') THEN $5 ELSE completed_at END,
           failed_at = CASE WHEN $3 = 'failed' AND status NOT IN ('completed','failed','cancelled','orphaned') THEN $5 ELSE failed_at END,
-          cancelled_at = CASE WHEN $3 = 'cancelled' AND status NOT IN ('completed','failed','cancelled','orphaned') THEN $5 ELSE cancelled_at END
+          cancelled_at = CASE WHEN $3 = 'cancelled' AND status NOT IN ('completed','failed','cancelled','orphaned') THEN $5 ELSE cancelled_at END,
+          metadata = CASE
+            WHEN status IN ('completed','failed','cancelled','orphaned')
+              OR $3::text IN ('completed','failed','cancelled','orphaned')
+              THEN metadata - 'wakeMessage'
+            ELSE metadata
+          END
       WHERE run_id = $1
         AND worker_id = $2
       RETURNING row_to_json(${this.runsTable}.*) AS row_json

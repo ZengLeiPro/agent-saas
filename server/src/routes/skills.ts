@@ -151,7 +151,11 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
   }
 
   async function getSelectableSkillIdsForUser(user: SkillUser): Promise<Set<string>> {
-    const allowed = new Set((await platformPoolSkillsForTenant(user.tenantId)).map(skill => skill.id));
+    const allowed = new Set(
+      (await platformPoolSkillsForTenant(user.tenantId))
+        .filter((skill) => skillConfigStore.isTenantSkillAvailableToUser(skill.id, user.tenantId, user.username))
+        .map((skill) => skill.id),
+    );
     for (const id of await getTenantOwnSkillIds(user.tenantId)) {
       if (skillConfigStore.isTenantOwnSkillAvailableToUser(user.tenantId, id, user.username)) allowed.add(id);
     }
@@ -173,24 +177,22 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
   }
 
   /**
-   * 跨组织访问 target user 校验（与 routes/mcp.ts resolveTargetUser、
-   * routes/agents.ts authorizeAgentAccess 同范式）。
-   * 平台管理员可跨组织；组织 admin 仅本组织用户；非 admin 调用方不应到达这里
-   * （路由用 requireAdmin 已挡住）。
+   * 兼容旧管理员路径，但个人 Skill 内容与选择只能访问调用者本人。
+   * owner 使用不可变 userId 判断；username 仅用于定位旧数据。
    */
   function resolveAdminTargetUser(req: Request, res: Response, username: string): UserRecord | null {
     const target = userStore.findByUsername(username);
-    if (!target) {
+    if (!target || !req.user) {
       res.status(404).json({ error: 'User not found' });
       return null;
     }
-    if (!isPlatformAdmin(req.user) && target.tenantId !== req.user?.tenantId) {
-      // 404 隐藏（与上面「目标不存在」同口径）：返回 403 会让组织 admin
-      // 借状态码差异（404=不存在 / 403=存在于他租户）探测跨租户用户名存在性
+    if (target.id === req.user.sub) return target;
+    if (!isPlatformAdmin(req.user) && target.tenantId !== req.user.tenantId) {
       res.status(404).json({ error: 'User not found' });
       return null;
     }
-    return target;
+    res.status(403).json({ error: '个人 Skill 仅允许本人访问' });
+    return null;
   }
 
   function resolveAdminTargetTenantId(req: Request, res: Response, tenantIdParam: string): string | null {
@@ -783,29 +785,17 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
 
   // ── Admin: Custom skill management ─────────────────────
 
-  /**
-   * GET /custom — 所有用户的自建 skill
-   * 多组织改造：platform admin 看全部用户；组织 admin 仅本组织用户。
-   */
+  /** GET /custom — 兼容旧管理员页面，但只返回调用者本人的自建 Skill。 */
   router.get('/custom', requireAdmin, async (req, res) => {
+    const caller = userStore.listAll().find((user) => user.id === req.user?.sub);
+    if (!caller) return res.status(404).json({ error: 'User not found' });
     try {
-      const platform = isPlatformAdmin(req.user);
-      const poolIds = await getKnownSystemSkillIds();
-      const ownIdsByTenant = new Map<string, Set<string>>();
-      const users: Record<string, any[]> = {};
-      for (const u of userStore.listAll()) {
-        if (!platform && u.tenantId !== req.user?.tenantId) continue;
-        const dir = getUserSkillsDir(u);
-        if (u.tenantId && !ownIdsByTenant.has(u.tenantId)) {
-          ownIdsByTenant.set(u.tenantId, await getTenantOwnSkillIds(u.tenantId));
-        }
-        const excluded = new Set([...poolIds, ...(u.tenantId ? ownIdsByTenant.get(u.tenantId)! : [])]);
-        const customSkills = await scanUserCustomSkillsAsync(dir, excluded);
-        if (customSkills.length > 0) {
-          users[u.username] = customSkills;
-        }
-      }
-      res.json({ users });
+      const excluded = new Set([
+        ...await getKnownSystemSkillIds(),
+        ...await getTenantOwnSkillIds(caller.tenantId),
+      ]);
+      const customSkills = await scanUserCustomSkillsAsync(getUserSkillsDir(caller), excluded);
+      res.json({ users: customSkills.length > 0 ? { [caller.username]: customSkills } : {} });
     } catch (err) {
       serverLogger.error(`GET /custom error: ${err}`);
       res.status(500).json({ error: '扫描自定义技能失败' });
@@ -813,52 +803,18 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
   });
 
   /**
-   * POST /custom/:skillId/promote — 把用户自建 skill 提升到全局 pool
-   * 多组织改造：promote 写 pool（平台资源），仅 platform admin。
-   * 源用户也必须存在 + 路径按其组织解析。
+   * 个人 Skill 不能直接提升到平台池。候选副本、审批与发布链建成前保持 fail closed，
+   * 避免管理员借“提升”读取或复制个人工作区内容。
    */
-  const promoteSchema = z.object({ sourceUser: z.string().min(1) });
-
-  router.post('/custom/:skillId/promote', requirePlatformAdmin, async (req, res) => {
+  router.post('/custom/:skillId/promote', requirePlatformAdmin, (req, res) => {
     if (!requirePlatformSkillManage(req, res)) return;
-    const skillId = safeName(req.params.skillId);
-    if (!skillId) return res.status(400).json({ error: 'Invalid skillId' });
-    const parsed = promoteSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: 'sourceUser is required' });
-    }
-
-    const sourceUsername = safeName(parsed.data.sourceUser);
-    if (!sourceUsername) return res.status(400).json({ error: 'Invalid sourceUser' });
-    const sourceUser = userStore.findByUsername(sourceUsername);
-    if (!sourceUser) return res.status(404).json({ error: 'Source user not found' });
-    const srcDir = join(getUserSkillsDir(sourceUser), skillId);
-    const dstDir = join(poolDir, skillId);
-
-    if (!existsSync(srcDir)) {
-      return res.status(404).json({ error: `用户 ${sourceUsername} 的工作区中不存在技能“${skillId}”` });
-    }
-    if (existsSync(dstDir)) {
-      return res.status(409).json({ error: `技能“${skillId}”已存在于技能池` });
-    }
-    const conflicts = (await findLowerScopeSkillConflicts(skillId)).filter(conflict => conflict !== `用户 ${sourceUsername}`);
-    if (conflicts.length > 0) {
-      return res.status(409).json({ error: `技能“${skillId}”与${conflicts.join('、')}的技能同名，请先处理冲突` });
-    }
-
-    try {
-      await cp(srcDir, dstDir, { recursive: true, dereference: false, errorOnExist: true });
-      await skillConfigStore.setPoolVisibility({ [skillId]: true });
-      auditLog(req, 'skill_promoted', `${skillId} from ${sourceUsername}`);
-      res.json({ ok: true });
-    } catch (err) {
-      serverLogger.error(`POST /custom/${skillId}/promote error: ${err}`);
-      res.status(500).json({ error: '发布技能失败' });
-    }
+    res.status(409).json({
+      error: '个人 Skill 提交流程尚未启用',
+      code: 'PERSONAL_SKILL_SUBMISSION_REQUIRED',
+    });
   });
 
-
-  /** GET /custom/:username/:skillId/document — 管理员读取用户自建 skill 文档 */
+  /** GET /custom/:username/:skillId/document — 兼容旧路径，仅允许读取自己的自建 Skill */
   router.get('/custom/:username/:skillId/document', requireAdmin, async (req, res) => {
     const usernameParam = safeName(req.params.username);
     const skillId = safeName(req.params.skillId);
@@ -884,7 +840,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     }
   });
 
-  /** PUT /custom/:username/:skillId/document — 管理员接管并写入用户自建 skill 文档 */
+  /** PUT /custom/:username/:skillId/document — 兼容旧路径，仅允许写入自己的自建 Skill */
   router.put('/custom/:username/:skillId/document', requireAdmin, async (req, res) => {
     const usernameParam = safeName(req.params.username);
     const skillId = safeName(req.params.skillId);
@@ -921,10 +877,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     }
   });
 
-  /**
-   * DELETE /custom/:username/:skillId — 删除用户自建 skill
-   * 多组织改造：platform admin 任意；组织 admin 仅本组织用户。
-   */
+  /** DELETE /custom/:username/:skillId — 兼容旧路径，仅允许删除自己的自建 Skill。 */
   router.delete('/custom/:username/:skillId', requireAdmin, async (req, res) => {
     const usernameParam = safeName(req.params.username);
     const skillId = safeName(req.params.skillId);
@@ -1166,50 +1119,14 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     }
   });
 
-  /** POST /tenants/:tenantId/promote — 把成员自建 skill 提升为组织自有 skill */
-  const tenantPromoteSchema = z.object({ skillId: z.string().min(1), sourceUser: z.string().min(1) });
-
-  router.post('/tenants/:tenantId/promote', requireAdmin, async (req, res) => {
+  /** 个人 Skill 到组织的候选副本与审批链建成前保持 fail closed。 */
+  router.post('/tenants/:tenantId/promote', requireAdmin, (req, res) => {
     const tenantId = resolveAdminTargetTenantId(req, res, req.params.tenantId);
     if (!tenantId) return;
-    const parsed = tenantPromoteSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'skillId and sourceUser are required' });
-    const skillId = safeName(parsed.data.skillId);
-    const sourceUsername = safeName(parsed.data.sourceUser);
-    if (!skillId || !sourceUsername) return res.status(400).json({ error: 'Invalid skillId or sourceUser' });
-    const sourceUser = userStore.findByUsername(sourceUsername);
-    if (!sourceUser) return res.status(404).json({ error: 'Source user not found' });
-    if (sourceUser.tenantId !== tenantId) return res.status(400).json({ error: 'Source user 不属于该组织' });
-
-    const srcDir = join(getUserSkillsDir(sourceUser), skillId);
-    if (!existsSync(srcDir)) {
-      return res.status(404).json({ error: `用户 ${sourceUsername} 的工作区中不存在技能“${skillId}”` });
-    }
-    if ((await getKnownSystemSkillIds()).has(skillId)) {
-      return res.status(409).json({ error: `技能“${skillId}”与平台技能同名` });
-    }
-    const dstDir = join(tenantSkillsDirFor(tenantId), skillId);
-    if (existsSync(dstDir)) {
-      return res.status(409).json({ error: `技能“${skillId}”已存在于组织技能中` });
-    }
-
-    try {
-      await mkdir(tenantSkillsDirFor(tenantId), { recursive: true });
-      await cp(srcDir, dstDir, { recursive: true, dereference: false, errorOnExist: true });
-      // 源用户的自建份将被组织份 shadow 并在下次 sync 中被系统接管；
-      // 自动为其勾选该 skill，避免「promote 后 skill 突然消失」
-      const selected = skillConfigStore.getUserSelectedSkills(sourceUsername);
-      if (!selected.includes(skillId)) {
-        await skillConfigStore.setUserSelectedSkills(sourceUsername, [...selected, skillId]);
-      } else {
-        await skillConfigStore.touchConfigVersion();
-      }
-      auditLog(req, 'skill_promoted_to_tenant', `${tenantId}/${skillId} from ${sourceUsername}`);
-      res.json({ ok: true });
-    } catch (err) {
-      serverLogger.error(`POST /tenants/${tenantId}/promote error: ${err}`);
-      res.status(500).json({ error: '发布技能到组织失败' });
-    }
+    res.status(409).json({
+      error: '个人 Skill 提交流程尚未启用',
+      code: 'PERSONAL_SKILL_SUBMISSION_REQUIRED',
+    });
   });
 
   /** POST /tenants/:tenantId/skills/:skillId/promote — 把组织自有 skill 提升到全局 pool（仅平台 admin） */
@@ -1381,10 +1298,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
 
   // ── Admin: View/edit other user ────────────────────────
 
-  /**
-   * GET /users/:username — 查看指定用户的 skill 状态
-   * 多组织改造：跨组织 admin 一律 403
-   */
+  /** GET /users/:username — 兼容旧路径，仅允许查看自己的 Skill 状态。 */
   router.get('/users/:username', requireAdmin, async (req, res) => {
     const usernameParam = safeName(req.params.username);
     if (!usernameParam) return res.status(400).json({ error: 'Invalid username' });
@@ -1398,10 +1312,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     }
   });
 
-  /**
-   * PUT /users/:username/selections — 更新指定用户的 skill 选择
-   * 多组织改造：跨组织 admin 一律 403
-   */
+  /** PUT /users/:username/selections — 兼容旧路径，仅允许更新自己的 Skill 选择。 */
   router.put('/users/:username/selections', requireAdmin, async (req, res) => {
     const usernameParam = safeName(req.params.username);
     if (!usernameParam) return res.status(400).json({ error: 'Invalid username' });

@@ -177,6 +177,7 @@ describe('PgRunStore steering inbox', () => {
     expect(inboxUpdate).toContain("state = 'reserved'");
     expect(inboxUpdate).toContain('$3::timestamptz');
     expect(sourceUpdate).toContain("'steeringAppliedAt', $4::text");
+    expect(sourceUpdate).toContain("- 'wakeMessage'");
   });
 
   it('does not absorb a source run cancelled before the model boundary claim', async () => {
@@ -341,6 +342,7 @@ describe('PgRunStore steering inbox', () => {
     await expect(okStore.cancelPendingSteeringSourceRun('source-run'))
       .resolves.toEqual({ ok: true, sessionId: 'session-1', clientMsgId: 'c1' });
     expect(okQueries.some((sql) => sql.includes("state = 'cancelled'"))).toBe(true);
+    expect(okQueries.find((sql) => sql.includes("status = 'cancelled'"))).toContain("- 'wakeMessage'");
     expect(okQueries.at(-1)).toBe('COMMIT');
 
     // 已被 claim（input 行不再 pending）：too_late，绝不动 run 状态
@@ -395,7 +397,9 @@ describe('PgRunStore steering inbox', () => {
       .resolves.toEqual([expect.objectContaining({ sourceRunId: 'source-reserved', state: 'reserved' })]);
     expect(queries.some((sql) => sql.includes('pg_advisory_xact_lock'))).toBe(true);
     expect(queries.filter((sql) => sql.includes("state IN ('pending', 'reserved')"))).toHaveLength(2);
-    expect(queries.some((sql) => sql.includes("status = 'cancelled'"))).toBe(true);
+    const cancelledRunQueries = queries.filter((sql) => sql.includes("status = 'cancelled'"));
+    expect(cancelledRunQueries).toHaveLength(2);
+    expect(cancelledRunQueries.every((sql) => sql.includes("- 'wakeMessage'"))).toBe(true);
     expect(queries.some((sql) => sql.includes('run_id = $2'))).toBe(true);
     expect(queries.at(-1)).toBe('COMMIT');
   });

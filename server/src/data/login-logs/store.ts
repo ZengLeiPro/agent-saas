@@ -84,8 +84,16 @@ export async function queryLoginLogs(
   const offset = Math.max(0, query.offset ?? 0);
 
   return {
-    entries: filtered.slice(offset, offset + limit),
+    entries: filtered.slice(offset, offset + limit).map(redactLegacyChatPreview),
     total: filtered.length,
+  };
+}
+
+function redactLegacyChatPreview(entry: LoginLogEntry): LoginLogEntry {
+  if (entry.event !== 'chat_message_sent' || !entry.detail?.includes('preview=')) return entry;
+  return {
+    ...entry,
+    detail: entry.detail.replace(/\s*\|\s*preview=[\s\S]*$/, ''),
   };
 }
 

@@ -19,7 +19,7 @@ import {
 } from "./useScenarioLibrary";
 import { matchIndustry, useIndustryFilter } from "./useIndustryFilter";
 import { friendlyDataDependency } from "./friendlyMappings";
-import { hasReplayScript } from "./replay/registry";
+import { hasReplayScript } from "./replay/availability";
 
 interface EmptyChatRecommendCardsProps {
   onTryScenario: (prompt: string, scenario: ScenarioItem) => void;

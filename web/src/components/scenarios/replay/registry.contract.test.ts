@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { HANDWRITTEN_REPLAY_SCENARIO_IDS } from "./availability";
 import { allReplayScripts } from "./registry";
 import type { ReplayScript, ReplayStep } from "./types";
 
@@ -33,10 +34,11 @@ function allText(script: ReplayScript): string {
 }
 
 describe("剧本注册表", () => {
-  it("至少有 4 个手写剧本，且 scenarioId 不重复", () => {
+  it("至少有 4 个手写剧本，且 scenarioId 不重复并与轻量可用性索引一致", () => {
     expect(scripts.length).toBeGreaterThanOrEqual(4);
     const ids = scripts.map((script) => script.scenarioId);
     expect(new Set(ids).size).toBe(ids.length);
+    expect(new Set(ids)).toEqual(new Set(HANDWRITTEN_REPLAY_SCENARIO_IDS));
   });
 });
 

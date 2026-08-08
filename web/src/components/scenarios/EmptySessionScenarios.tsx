@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER } from "@/components/CapabilityCenter/CatalogUi";
 import { useAuth } from "@/contexts/AuthContext";
 import { ScenarioCard } from "./ScenarioCard";
-import { hasReplayScript } from "./replay/registry";
+import { hasReplayScript } from "./replay/availability";
 import {
   matchRoleIdByPosition,
   pickRecommendedScenarios,

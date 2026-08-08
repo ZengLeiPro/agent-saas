@@ -26,9 +26,9 @@ import {
   ScenarioCard,
   ScenarioModeBadge,
   ScenarioRequireBadges,
-  WorkflowPresentationCard,
   WorkflowScenarioCard,
 } from "./ScenarioCard";
+import { WorkflowPresentationCard } from "./WorkflowPresentationCard";
 import {
   getReplayScript,
   hasReplayScript,

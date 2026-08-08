@@ -1,6 +1,6 @@
 export {
   allReplayScripts,
   getReplayScript,
-  hasReplayScript,
 } from './registry';
+export { hasReplayScript } from './availability';
 export type { ReplayScript, ReplayStep, SourceRegistration } from './types';

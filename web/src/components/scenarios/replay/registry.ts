@@ -35,14 +35,3 @@ export function getReplayScript(
 export function allReplayScripts(): ReplayScript[] {
   return SCRIPTS;
 }
-
-/**
- * 这个场景能不能「先看一遍它怎么干活」。
- *
- * 卡片 CTA 用它决定主按钮，而不是直接看 `scenario.presentation`——
- * 手写剧本同样要让卡片长出演示入口（07-26 实机走查：首屏推荐位只有
- * 「接入我的系统」，客户第一眼看到的三张卡点下去是配置页，不是演示）。
- */
-export function hasReplayScript(scenario: CatalogScenarioPublic): boolean {
-  return BY_SCENARIO_ID.has(scenario.id) || !!scenario.presentation;
-}

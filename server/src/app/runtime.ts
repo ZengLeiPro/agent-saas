@@ -112,6 +112,7 @@ import type { AppealStore } from '../data/appeals/index.js';
 import { PgGovernanceAuditStore, type GovernanceAuditStore } from '../data/governance-audit/index.js';
 import { PgMembershipStore } from '../data/memberships/index.js';
 import { PgEntitlementStore } from '../data/entitlements/index.js';
+import { PgAssignmentStore } from '../data/assignments/index.js';
 import { MemoryIndexService } from '../memory/index/service.js';
 import type { MemoryIndexConfig } from '../memory/index/types.js';
 import { UserStore } from '../data/users/store.js';
@@ -389,6 +390,8 @@ export interface AppRuntime {
   membershipStore?: PgMembershipStore;
   /** Entitlement 与 Tenant Policy 独立事实模型；M1 仅影子写与回填。 */
   entitlementStore?: PgEntitlementStore;
+  /** 组织资源 Assignment 与个人 Preference 独立事实模型；M1 仅影子写与回填。 */
+  assignmentStore?: PgAssignmentStore;
   /** 手动触发 token usage 全量回填（force=true）。未初始化 businessDb 时为 undefined */
   triggerTokenUsageRebuild?: () => Promise<unknown>;
   /** Runtime audit 读查询（按 sessionId/runId 投影 tool_audit）。 */
@@ -1044,6 +1047,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let governanceAuditStore: GovernanceAuditStore | undefined;
   let membershipStore: PgMembershipStore | undefined;
   let entitlementStore: PgEntitlementStore | undefined;
+  let assignmentStore: PgAssignmentStore | undefined;
   const beginMemoryEmbeddingBillingRun = async (workspaceDir: string) => {
     if (!billingService) return undefined;
     const rel = relative(agentCwd, resolve(workspaceDir));
@@ -1244,6 +1248,34 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       } catch (error) {
         serverLogger.warn(
           `Governance Entitlement shadow backfill failed; legacy authority remains active: `
+          + `${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    assignmentStore = new PgAssignmentStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+      platformTenantId: DEFAULT_TENANT_ID,
+    });
+    await assignmentStore.init();
+    if (userStore && orgAgentStore && skillConfigStore) {
+      try {
+        const backfill = await assignmentStore.backfillLegacyAssignments({
+          users: userStore.listAll(),
+          orgAgents: orgAgentStore.listAll(),
+          tenantSkillConfigs: skillConfigStore.getAllTenantConfigs(),
+          userSkillConfigs: skillConfigStore.getAllUserConfigs(),
+          projectedBy: 'system:governance-m1',
+          platformTenantId: DEFAULT_TENANT_ID,
+        });
+        serverLogger.info(
+          `Governance Assignment shadow backfill: sets=${backfill.resourceSetsProjected} `
+          + `assignments=${backfill.assignmentsProjected} preferences=${backfill.preferencesProjected} `
+          + `issues=${backfill.issuesRecorded}`,
+        );
+      } catch (error) {
+        serverLogger.warn(
+          `Governance Assignment shadow backfill failed; legacy authority remains active: `
           + `${error instanceof Error ? error.message : String(error)}`,
         );
       }
@@ -3681,6 +3713,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     governanceAuditStore,
     membershipStore,
     entitlementStore,
+    assignmentStore,
     runtimeAuditQuery,
     runtimeRunStore: pgRunStore,
     runtimeSchedulerCapacity,

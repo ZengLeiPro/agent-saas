@@ -26,6 +26,9 @@ function migrations(prefix: string): GovernanceMigration[] {
   const entitlementScopes = `${prefix}_entitlement_resource_scopes`;
   const entitlementItems = `${prefix}_entitlement_resource_items`;
   const policies = `${prefix}_tenant_policies`;
+  const assignmentSets = `${prefix}_resource_assignment_sets`;
+  const assignments = `${prefix}_resource_assignments`;
+  const preferences = `${prefix}_user_resource_preferences`;
 
   return [
     {
@@ -177,6 +180,68 @@ function migrations(prefix: string): GovernanceMigration[] {
         )`,
         `CREATE INDEX IF NOT EXISTS ${policies}_key_idx
           ON ${policies} (policy_key, tenant_id)`,
+      ],
+    },
+    {
+      version: 4,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS ${assignmentSets} (
+          tenant_id TEXT NOT NULL,
+          resource_type TEXT NOT NULL,
+          resource_id TEXT NOT NULL,
+          source TEXT NOT NULL CHECK (source IN ('legacy_projection', 'governance')),
+          version BIGINT NOT NULL DEFAULT 1 CHECK (version >= 1),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_by TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by TEXT NOT NULL,
+          PRIMARY KEY (tenant_id, resource_type, resource_id)
+        )`,
+        `CREATE TABLE IF NOT EXISTS ${assignments} (
+          assignment_id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL,
+          resource_type TEXT NOT NULL CHECK (
+            resource_type IN ('org_agent', 'skill', 'credential', 'environment_template', 'org_knowledge')
+          ),
+          resource_id TEXT NOT NULL,
+          assignee_type TEXT NOT NULL CHECK (
+            assignee_type IN ('everyone', 'user', 'directory_group', 'agent')
+          ),
+          assignee_id TEXT,
+          effect TEXT NOT NULL CHECK (effect IN ('allow', 'deny')),
+          origin TEXT NOT NULL CHECK (origin IN ('direct', 'migration', 'policy_default')),
+          version BIGINT NOT NULL DEFAULT 1 CHECK (version >= 1),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_by TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by TEXT NOT NULL,
+          FOREIGN KEY (tenant_id, resource_type, resource_id)
+            REFERENCES ${assignmentSets}(tenant_id, resource_type, resource_id)
+            ON DELETE CASCADE,
+          CHECK (
+            (assignee_type = 'everyone' AND assignee_id IS NULL)
+            OR (assignee_type <> 'everyone' AND assignee_id IS NOT NULL AND assignee_id <> '')
+          )
+        )`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS ${assignments}_identity_uidx
+          ON ${assignments} (
+            tenant_id, resource_type, resource_id, assignee_type, COALESCE(assignee_id, '')
+          )`,
+        `CREATE INDEX IF NOT EXISTS ${assignments}_assignee_idx
+          ON ${assignments} (tenant_id, assignee_type, assignee_id, resource_type)`,
+        `CREATE TABLE IF NOT EXISTS ${preferences} (
+          user_id TEXT NOT NULL,
+          resource_type TEXT NOT NULL,
+          resource_id TEXT NOT NULL,
+          enabled BOOLEAN NOT NULL,
+          source TEXT NOT NULL CHECK (source IN ('legacy_projection', 'user')),
+          version BIGINT NOT NULL DEFAULT 1 CHECK (version >= 1),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (user_id, resource_type, resource_id)
+        )`,
+        `CREATE INDEX IF NOT EXISTS ${preferences}_resource_idx
+          ON ${preferences} (resource_type, resource_id, user_id)`,
       ],
     },
   ];

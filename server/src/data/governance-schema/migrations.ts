@@ -22,6 +22,10 @@ function migrations(prefix: string): GovernanceMigration[] {
   const memberships = `${prefix}_tenant_memberships`;
   const platformAdmins = `${prefix}_platform_admins`;
   const issues = `${prefix}_governance_migration_issues`;
+  const entitlementSets = `${prefix}_tenant_entitlement_sets`;
+  const entitlementScopes = `${prefix}_entitlement_resource_scopes`;
+  const entitlementItems = `${prefix}_entitlement_resource_items`;
+  const policies = `${prefix}_tenant_policies`;
 
   return [
     {
@@ -112,6 +116,67 @@ function migrations(prefix: string): GovernanceMigration[] {
           ) WHERE status = 'open'`,
         `CREATE INDEX IF NOT EXISTS ${issues}_tenant_status_idx
           ON ${issues} (tenant_id, status, issue_type, created_at)`,
+      ],
+    },
+    {
+      version: 3,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS ${entitlementSets} (
+          tenant_id TEXT PRIMARY KEY,
+          source TEXT NOT NULL CHECK (source IN ('plan_default', 'platform_override', 'legacy_migrated')),
+          status TEXT NOT NULL CHECK (status IN ('trial', 'active', 'suspended', 'expired')),
+          effective_from TIMESTAMPTZ,
+          effective_to TIMESTAMPTZ,
+          limits_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+          version BIGINT NOT NULL DEFAULT 1 CHECK (version >= 1),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_by TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by TEXT NOT NULL,
+          update_reason TEXT NOT NULL
+        )`,
+        `CREATE INDEX IF NOT EXISTS ${entitlementSets}_status_idx
+          ON ${entitlementSets} (status, effective_to)`,
+        `CREATE TABLE IF NOT EXISTS ${entitlementScopes} (
+          tenant_id TEXT NOT NULL,
+          resource_type TEXT NOT NULL,
+          mode TEXT NOT NULL CHECK (mode IN ('all', 'selected')),
+          source TEXT NOT NULL CHECK (source IN ('legacy_projection', 'governance')),
+          version BIGINT NOT NULL DEFAULT 1 CHECK (version >= 1),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_by TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by TEXT NOT NULL,
+          PRIMARY KEY (tenant_id, resource_type)
+        )`,
+        `CREATE TABLE IF NOT EXISTS ${entitlementItems} (
+          tenant_id TEXT NOT NULL,
+          resource_type TEXT NOT NULL,
+          resource_id TEXT NOT NULL,
+          source TEXT NOT NULL CHECK (source IN ('legacy_projection', 'governance')),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_by TEXT NOT NULL,
+          PRIMARY KEY (tenant_id, resource_type, resource_id),
+          FOREIGN KEY (tenant_id, resource_type)
+            REFERENCES ${entitlementScopes}(tenant_id, resource_type)
+            ON DELETE CASCADE
+        )`,
+        `CREATE INDEX IF NOT EXISTS ${entitlementItems}_resource_idx
+          ON ${entitlementItems} (resource_type, resource_id, tenant_id)`,
+        `CREATE TABLE IF NOT EXISTS ${policies} (
+          tenant_id TEXT NOT NULL,
+          policy_key TEXT NOT NULL,
+          value_json JSONB NOT NULL,
+          source TEXT NOT NULL CHECK (source IN ('legacy_projection', 'governance')),
+          version BIGINT NOT NULL DEFAULT 1 CHECK (version >= 1),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_by TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by TEXT NOT NULL,
+          PRIMARY KEY (tenant_id, policy_key)
+        )`,
+        `CREATE INDEX IF NOT EXISTS ${policies}_key_idx
+          ON ${policies} (policy_key, tenant_id)`,
       ],
     },
   ];

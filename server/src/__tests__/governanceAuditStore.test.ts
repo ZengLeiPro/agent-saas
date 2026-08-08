@@ -70,6 +70,7 @@ describe('治理审计存储', () => {
     };
     const store = new PgGovernanceAuditStore({ pool: pool as never, tablePrefix: 'test' });
     await store.init();
+    const initQueryCount = queries.length;
     await store.append({
       correlationId: 'correlation-1',
       actorType: 'user',
@@ -85,8 +86,9 @@ describe('治理审计存储', () => {
     });
 
     expect(queries.some(item => item.sql.includes('test_governance_schema_versions'))).toBe(true);
-    expect(queries.at(-1)?.sql).toContain('INSERT INTO test_governance_audit_events');
-    expect(queries.every(item => !/\bUPDATE\b|\bDELETE\b/.test(item.sql))).toBe(true);
+    const appendQueries = queries.slice(initQueryCount);
+    expect(appendQueries.at(-1)?.sql).toContain('INSERT INTO test_governance_audit_events');
+    expect(appendQueries.every(item => !/\bUPDATE\b|\bDELETE\b/.test(item.sql))).toBe(true);
   });
 
   it('intent 存储不可用时统一包装为 fail-closed 错误', async () => {

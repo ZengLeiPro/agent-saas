@@ -261,6 +261,16 @@ export {
   projectWorkflowLibraryPublic,
   resolveScenarioSlug,
 } from "./security/projectWorkflowPublic";
+export {
+  workflowTraceEventV1Schema,
+  workflowTraceV1Schema,
+} from "./schemas/workflowTrace";
+export type {
+  WorkflowTraceAuthority,
+  WorkflowTraceEventV1,
+  WorkflowTraceGateRequestedEventV1,
+  WorkflowTraceV1,
+} from "./schemas/workflowTrace";
 export type { ResolvedScenarioSlug } from "./security/projectWorkflowPublic";
 export {
   cronWizardSubmitSchema,
@@ -362,6 +372,8 @@ export type {
   TodoOutcome,
   TodoStatus,
 } from "./lib/extractTodos";
+export { projectWorkflowTrace } from "./lib/workflowTraceProjector";
+export type { WorkflowTraceProjection } from "./lib/workflowTraceProjector";
 
 // Lib - groups API
 export {

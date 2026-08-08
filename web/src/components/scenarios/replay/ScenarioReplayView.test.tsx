@@ -10,6 +10,11 @@ import { ScenarioReplayView } from './ScenarioReplayView';
 import { knowledgeQaScript } from './knowledgeQaScript';
 import { deadlineWatchScript } from './deadlineWatchScript';
 import type { ReplayScript } from './types';
+import { makeWorkflowScenario } from '../workflowTestFixtures';
+import {
+  buildTechnicalInquiryTraceScript,
+  TECHNICAL_INQUIRY_TRACE_SCENARIO_ID,
+} from './technicalInquiryTraceScript';
 
 beforeAll(() => {
   Range.prototype.getClientRects = () => ({
@@ -278,6 +283,57 @@ describe('右侧企业系统面板', () => {
     fireEvent.click(screen.getByRole('button', { name: /系统实况/ }));
     expect(screen.queryByTitle('制度条款引用.html')).toBeNull();
     expect(screen.getByText('企业系统实况')).toBeTruthy();
+  });
+});
+
+describe('Workflow Trace V1 Hero', () => {
+  function traceScript() {
+    return buildTechnicalInquiryTraceScript(makeWorkflowScenario(TECHNICAL_INQUIRY_TRACE_SCENARIO_ID, {
+      workflowId: 'technical-inquiry-to-approved-quote-loop',
+      title: '复杂询价推进到批准报价和订单',
+      launch: {
+        sampleAvailable: false,
+        startMode: 'chat',
+        entry: { kind: 'business_event', content: '客户询价中的消息和附件规格不一致。' },
+        starterMessage: '请处理这条复杂询价。',
+      },
+    }));
+  }
+
+  it('首屏只显示业务事件，第一步后同时出现正式业务计划、步骤结果与系统面板', () => {
+    const script = traceScript();
+    render(<ScenarioReplayView script={script} onExit={vi.fn()} typewriterIntervalMs={0} />);
+
+    expect(screen.getByText('客户询价中的消息和附件规格不一致。')).toBeTruthy();
+    expect(screen.queryByText('业务计划')).toBeNull();
+    expect(screen.queryByText('企业系统实况')).toBeNull();
+
+    clickNext(1);
+    expect(screen.getByText('业务计划')).toBeTruthy();
+    expect(screen.getAllByText('先发现不能靠猜的规格冲突').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('发现 1 项关键规格冲突，已停止继续报价')).toBeTruthy();
+    expect(screen.getByText('企业系统实况')).toBeTruthy();
+    expect(screen.getByText('防护等级 IP65')).toBeTruthy();
+    expect(screen.getByText(/演示来源：询价资料库（不进入真实审计）/)).toBeTruthy();
+  });
+
+  it('Trace gate 退回不产生发送 effect，重新提交并批准后才继续', () => {
+    const script = traceScript();
+    render(<ScenarioReplayView script={script} onExit={vi.fn()} typewriterIntervalMs={0} />);
+    clickNext(2);
+
+    expect(screen.getByRole('button', { name: '需先批准' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: '确认发送澄清' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '退回修改' }));
+    expect(screen.getByText('澄清消息已退回，业务系统未写入')).toBeTruthy();
+    expect(screen.queryByText('澄清消息已模拟送达测试联系人。')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '重新提交审核' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认发送澄清' }));
+    expect(screen.getByText('3 / 8')).toBeTruthy();
+    expect(screen.getAllByText('客户答复后从原任务继续').length).toBeGreaterThanOrEqual(2);
+    fireEvent.click(screen.getByRole('button', { name: '沟通' }));
+    expect(screen.getByText('澄清消息已模拟送达测试联系人。')).toBeTruthy();
   });
 });
 

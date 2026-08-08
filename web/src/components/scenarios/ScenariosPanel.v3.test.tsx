@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScenariosPanel } from "./ScenariosPanel";
 import { makeWorkflowLibrary, makeWorkflowScenario, makeWorkflowSkin } from "./workflowTestFixtures";
 import { OUTCOME_OPTIONS } from "./workflowUi";
+import { TECHNICAL_INQUIRY_TRACE_SCENARIO_ID } from './replay/technicalInquiryTraceMeta';
 
 const mocked = vi.hoisted(() => ({ workflowLibrary: null as ReturnType<typeof makeWorkflowLibrary> | null }));
 
@@ -44,7 +45,7 @@ beforeEach(() => {
 });
 
 describe("ScenariosPanel V3", () => {
-  it("有引导演示时默认只展示精选工作现场，完整目录按需展开", () => {
+  it("有引导演示时默认只展示精选工作现场，完整目录按需展开", async () => {
     const guided = makeWorkflowScenario("guided", {
       featured: true,
       featuredOrder: 1,
@@ -83,8 +84,8 @@ describe("ScenariosPanel V3", () => {
     expect(screen.queryByTestId("workflow-catalog")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "看它如何完成" }));
+    expect(await screen.findByRole("heading", { name: guided.title }, { timeout: 5_000 })).toBeTruthy();
     expect(onReplayOpenChange).toHaveBeenLastCalledWith(true);
-    expect(screen.getByRole("heading", { name: guided.title })).toBeTruthy();
     expect(screen.getByText("0 / 6")).toBeTruthy();
     expect(screen.getByText(/业务系统出现一条待处理事件/)).toBeTruthy();
 
@@ -99,7 +100,73 @@ describe("ScenariosPanel V3", () => {
     expect(screen.getByTestId("workflow-catalog").children).toHaveLength(2);
   });
 
-  it("presentation 深链刷新后保持演示，退出后回到详情 URL", () => {
+  it('目标复杂询价场景点击后懒加载 Trace V1，而不是旧 presentation fallback', async () => {
+    const target = makeWorkflowScenario(TECHNICAL_INQUIRY_TRACE_SCENARIO_ID, {
+      featured: true,
+      launch: {
+        sampleAvailable: false,
+        startMode: 'chat',
+        entry: { kind: 'business_event', content: '客户询价中的消息和附件规格不一致。' },
+        starterMessage: '请处理这条复杂询价。',
+      },
+      presentation: {
+        version: 1,
+        dataLabel: '合成场景演示',
+        limitation: '演示数据均为虚构。',
+        chapters: [{
+          id: 'legacy-only',
+          title: '旧回放占位',
+          narration: '不应进入旧回放。',
+          result: '不应显示。',
+          interaction: { kind: 'next', label: '下一步' },
+          surface: { kind: 'crm_table', title: '旧面板', items: [{ label: '状态', value: '旧路径', state: 'neutral' }] },
+        }],
+      },
+    });
+    mocked.workflowLibrary = makeWorkflowLibrary([target]);
+    render(<ScenariosPanel onTryScenario={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '看它如何完成' }));
+    expect(await screen.findByText('0 / 8', {}, { timeout: 5_000 })).toBeTruthy();
+    expect(screen.queryByText('旧回放占位')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /下一步/ }));
+    expect(screen.getByText('业务计划')).toBeTruthy();
+  });
+
+  it('目标 Trace 尚在加载时切换场景，不会被迟到结果覆盖', async () => {
+    const chapter = {
+      id: 'one',
+      title: '单步回放',
+      narration: '展示业务动作。',
+      result: '状态已更新。',
+      interaction: { kind: 'next' as const, label: '下一步' },
+      surface: {
+        kind: 'crm_table' as const,
+        title: '客户关系系统',
+        items: [{ label: '状态', value: '已更新', state: 'success' as const }],
+      },
+    };
+    const target = makeWorkflowScenario(TECHNICAL_INQUIRY_TRACE_SCENARIO_ID, {
+      featured: true,
+      featuredOrder: 1,
+      presentation: { version: 1, dataLabel: '合成场景演示', limitation: '演示数据均为虚构。', chapters: [chapter] },
+    });
+    const ordinary = makeWorkflowScenario('ordinary-after-target', {
+      featured: true,
+      featuredOrder: 2,
+      presentation: { version: 1, dataLabel: '合成场景演示', limitation: '演示数据均为虚构。', chapters: [chapter] },
+    });
+    mocked.workflowLibrary = makeWorkflowLibrary([target, ordinary]);
+    render(<ScenariosPanel onTryScenario={vi.fn()} />);
+
+    const buttons = screen.getAllByRole('button', { name: '看它如何完成' });
+    fireEvent.click(buttons[0]!);
+    fireEvent.click(buttons[1]!);
+    expect(await screen.findByRole('heading', { name: ordinary.title }, { timeout: 5_000 })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole('heading', { name: target.title })).toBeNull());
+  });
+
+  it("presentation 深链刷新后保持演示，退出后回到详情 URL", async () => {
     const guided = makeWorkflowScenario("guided-deep-link", {
       featured: true,
       featuredOrder: 1,
@@ -126,7 +193,7 @@ describe("ScenariosPanel V3", () => {
 
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
 
-    expect(screen.getByRole("heading", { name: guided.title })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: guided.title }, { timeout: 5_000 })).toBeTruthy();
     expect(window.location.search).toContain("intent=presentation");
     fireEvent.click(screen.getByRole("button", { name: "返回" }));
     expect(window.location.search).toContain("intent=view");
@@ -186,7 +253,7 @@ describe("ScenariosPanel V3", () => {
     expect(document.body.textContent).not.toContain("designScore");
   });
 
-  it("旧 alias 的 skin/role view 进入真实详情且 canonical URL 不丢选择", () => {
+  it("旧 alias 的 skin/role view 进入真实详情且 canonical URL 不丢选择", async () => {
     const scenario = makeWorkflowScenario("industry-role", {
       roleIds: ["sales", "finance"],
       roleViewIds: ["view-sales", "view-finance"],
@@ -222,7 +289,7 @@ describe("ScenariosPanel V3", () => {
     };
     window.history.replaceState({}, "", "/capabilities/templates?scenario=legacy-export-quote&intent=view");
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
-    expect(screen.getByText("行业业务版本 · 外贸电子询价版本")).toBeTruthy();
+    expect(await screen.findByText("行业业务版本 · 外贸电子询价版本", {}, { timeout: 5_000 })).toBeTruthy();
     expect(screen.getByText("客户询价、报价版本与送达回执")).toBeTruthy();
     expect(screen.getByText("岗位视图 · 财务")).toBeTruthy();
     expect(screen.getByText("核对利润、账期与信用边界")).toBeTruthy();
@@ -233,7 +300,7 @@ describe("ScenariosPanel V3", () => {
     expect(params.get("roleId")).toBe("finance");
   });
 
-  it("当前行业与岗位筛选会选择对应 skin 和 role view，不只过滤卡片", () => {
+  it("当前行业与岗位筛选会选择对应 skin 和 role view，不只过滤卡片", async () => {
     const scenario = makeWorkflowScenario("filtered-detail", {
       roleIds: ["sales", "finance"],
       roleViewIds: ["view-finance"],
@@ -277,7 +344,7 @@ describe("ScenariosPanel V3", () => {
     fireEvent.click(screen.getByRole("tab", { name: "生产制造" }));
     fireEvent.click(screen.getByRole("tab", { name: "已有单体系统" }));
     fireEvent.click(screen.getByRole("button", { name: scenario.title }));
-    expect(screen.getByText("行业业务版本 · 生产制造版本")).toBeTruthy();
+    expect(await screen.findByText("行业业务版本 · 生产制造版本", {}, { timeout: 5_000 })).toBeTruthy();
     expect(screen.getByText("生产订单与交期承诺")).toBeTruthy();
     expect(screen.getByText("岗位视图 · 财务")).toBeTruthy();
     expect(screen.getByText("确认成本与信用风险")).toBeTruthy();

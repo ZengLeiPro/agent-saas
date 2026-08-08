@@ -1,4 +1,4 @@
-import type { ApiTranscriptBlock } from "@agent/shared";
+import type { ApiTranscriptBlock, WorkflowTraceEventV1 } from "@agent/shared";
 
 /**
  * 场景演示剧本。
@@ -17,6 +17,15 @@ export interface ReplayStep {
   caption: string;
   /** 本步新增的 transcript block（回放时累加，不替换） */
   blocks: ApiTranscriptBlock[];
+  /**
+   * Workflow Trace V1 回放事件。存在时会话与系统面板都由 Shared projector 生成；
+   * blocks 仅为旧剧本读取兼容，不再作为该步骤的新事实来源。
+   */
+  trace?: {
+    events: WorkflowTraceEventV1[];
+    approvedEvents?: WorkflowTraceEventV1[];
+    rejectedEvents?: WorkflowTraceEventV1[];
+  };
   /**
    * 本步需要有权人明确确认时使用。
    *
@@ -71,6 +80,8 @@ export interface ReplayScript {
   title: string;
   /** 推荐卡与回放头部使用；Hero 强调完整业务闭环，quick 是轻量即用体验。 */
   mode?: "hero" | "quick";
+  /** 首屏事件。仅 Trace V1 剧本使用；真实运行对应 EventStore 中同形事件。 */
+  traceEntryEvents?: WorkflowTraceEventV1[];
   steps: ReplayStep[];
   /**
    * 剧本内嵌的 HTML 产物，键为 [FILE] 标记里的 filePath。

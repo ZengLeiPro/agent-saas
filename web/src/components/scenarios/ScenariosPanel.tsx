@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RotateCcw } from "lucide-react";
 import {
   buildScenarioPrompt,
@@ -29,8 +29,12 @@ import {
   WorkflowPresentationCard,
   WorkflowScenarioCard,
 } from "./ScenarioCard";
-import { ScenarioDetailDialog } from "./ScenarioDetailDialog";
-import { getReplayScript, ScenarioReplayView, type ReplayScript } from "./replay";
+import {
+  getReplayScript,
+  hasReplayScript,
+  type ReplayScript,
+} from "./replay";
+import { TECHNICAL_INQUIRY_TRACE_SCENARIO_ID } from './replay/technicalInquiryTraceMeta';
 import { matchRoleIdByPosition, useScenarioLibrary } from "./useScenarioLibrary";
 import { RoleKitDetailPage } from "./RoleKitDetailPage";
 import { INDUSTRY_ALL, matchIndustry, type IndustryFilterValue } from "./useIndustryFilter";
@@ -55,6 +59,10 @@ const INDUSTRY_ORDER: IndustryType[] = [
   "manufacturing", "trade", "retail", "service", "export", "ecommerce",
 ];
 const INDUSTRY_CHIPS = INDUSTRY_ORDER.map((id) => ({ value: id, label: friendlyIndustry[id] }));
+const ScenarioReplayView = lazy(() => import('./replay/ScenarioReplayView')
+  .then((module) => ({ default: module.ScenarioReplayView })));
+const ScenarioDetailDialog = lazy(() => import('./ScenarioDetailDialog')
+  .then((module) => ({ default: module.ScenarioDetailDialog })));
 
 export interface ScenariosPanelProps {
   onTryScenario: (prompt: string, scenario: ScenarioItem) => void;
@@ -86,11 +94,13 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
   const [deferredNotice, setDeferredNotice] = useState<WorkflowLibraryPublicV3["deferredObjects"][number] | null>(null);
   const deepLinkConsumed = useRef(false);
   const userSelectedRole = useRef(false);
+  const replayRequest = useRef(0);
 
   useEffect(() => {
     props.onReplayOpenChange?.(replay !== null);
   }, [props.onReplayOpenChange, replay]);
   useEffect(() => () => props.onReplayOpenChange?.(false), [props.onReplayOpenChange]);
+  useEffect(() => () => { replayRequest.current += 1; }, []);
 
   const workflowLibrary = result.workflowLibrary ?? null;
   const roles = workflowLibrary?.roles ?? result.library?.roles ?? [];
@@ -104,9 +114,20 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
   }, [filters.activeRole, filters.setActiveRole, props.roleDetailId, roles, user?.position, user?.preferences?.activeRoleId]);
 
   const handleWorkflowAction = (action: WorkflowPrimaryAction, scenario: CatalogScenarioPublic) => {
+    const requestId = ++replayRequest.current;
     props.onWorkflowSelected?.(scenario);
     if (action === "presentation") {
-      // 静态剧本与 Workflow V3 presentation 统一走产品原生会话回放。
+      if (scenario.id === TECHNICAL_INQUIRY_TRACE_SCENARIO_ID) {
+        void import('./replay/technicalInquiryTraceScript')
+          .then(({ buildTechnicalInquiryTraceScript }) => {
+            if (replayRequest.current === requestId) setReplay(buildTechnicalInquiryTraceScript(scenario));
+          })
+          .catch(() => {
+            if (replayRequest.current === requestId) setDetail({ scenario });
+          });
+        return;
+      }
+      // 静态剧本与其他 Workflow V3 presentation 继续走原生会话回放。
       const script = getReplayScript(scenario.id, scenario);
       if (script) setReplay(script);
       else setDetail({ scenario });
@@ -226,7 +247,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
     || filters.activeBusinessModel !== BUSINESS_MODEL_ALL
     || filters.activeMaturity !== MATURITY_ALL;
   const presentationScenarios = workflowLibrary.scenarios
-    .filter((scenario) => !!getReplayScript(scenario.id, scenario))
+    .filter(hasReplayScript)
     .sort((left, right) => (left.featuredOrder ?? Number.MAX_SAFE_INTEGER) - (right.featuredOrder ?? Number.MAX_SAFE_INTEGER));
   const showFullCatalog = presentationScenarios.length === 0
     || catalogExpanded
@@ -235,12 +256,16 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
 
   // 回放接管整个主区：左侧会话栏在外层布局，不受影响
   if (replay) {
-    return <ScenarioReplayView script={replay} onExit={() => {
-      const params = new URLSearchParams(window.location.search);
-      params.set("intent", "view");
-      window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
-      setReplay(null);
-    }} />;
+    return (
+      <Suspense fallback={<div className="flex min-h-80 items-center justify-center"><Loader2 className="size-5 animate-spin" /></div>}>
+        <ScenarioReplayView script={replay} onExit={() => {
+          const params = new URLSearchParams(window.location.search);
+          params.set("intent", "view");
+          window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+          setReplay(null);
+        }} />
+      </Suspense>
+    );
   }
 
   return (
@@ -366,19 +391,23 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
         </div>
       )}
 
-      <ScenarioDetailDialog
-        scenario={detail?.scenario ?? null}
-        library={workflowLibrary}
-        vertical={filters.activeVertical}
-        businessModel={filters.activeBusinessModel}
-        maturity={filters.activeMaturity}
-        skinId={detail?.skinId}
-        roleViewId={detail?.roleViewId}
-        roleId={detail?.roleId ?? (filters.activeRole === ROLE_ALL ? null : filters.activeRole)}
-        open={!!detail}
-        onOpenChange={(open) => { if (!open) setDetail(null); }}
-        onPrimaryAction={handleWorkflowAction}
-      />
+      {detail ? (
+        <Suspense fallback={null}>
+          <ScenarioDetailDialog
+            scenario={detail.scenario}
+            library={workflowLibrary}
+            vertical={filters.activeVertical}
+            businessModel={filters.activeBusinessModel}
+            maturity={filters.activeMaturity}
+            skinId={detail.skinId}
+            roleViewId={detail.roleViewId}
+            roleId={detail.roleId ?? (filters.activeRole === ROLE_ALL ? null : filters.activeRole)}
+            open
+            onOpenChange={(open) => { if (!open) setDetail(null); }}
+            onPrimaryAction={handleWorkflowAction}
+          />
+        </Suspense>
+      ) : null}
       <Dialog open={!!deferredNotice} onOpenChange={(open) => { if (!open) setDeferredNotice(null); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>

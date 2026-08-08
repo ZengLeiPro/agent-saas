@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, RotateCcw, X } from "lucide-react";
-import { mapSessionDetailToMessages, type ApiSessionDetail, type ApiTranscriptBlock } from "@agent/shared";
+import {
+  mapSessionDetailToMessages,
+  projectWorkflowTrace,
+  type ApiSessionDetail,
+  type ApiTranscriptBlock,
+  type WorkflowTraceEventV1,
+  type WorkflowTraceGateRequestedEventV1,
+} from "@agent/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MessageList } from "@/components/MessageList";
@@ -51,6 +58,25 @@ function buildDetail(blocks: ApiTranscriptBlock[]): ApiSessionDetail {
     sessionId: "scenario-replay",
     stats: { lines: blocks.length, parsedLines: blocks.length, parseErrors: 0 },
     blocks,
+  };
+}
+
+type ReplayApproval = {
+  title: string;
+  description: string;
+  facts: Array<{ label: string; value: string }>;
+  approveLabel: string;
+  rejectLabel?: string;
+};
+
+function gateAsReplayApproval(gate?: WorkflowTraceGateRequestedEventV1): ReplayApproval | undefined {
+  if (!gate) return undefined;
+  return {
+    title: gate.title,
+    description: gate.description,
+    facts: gate.facts,
+    approveLabel: gate.approveLabel,
+    ...(gate.rejectLabel ? { rejectLabel: gate.rejectLabel } : {}),
   };
 }
 
@@ -107,6 +133,12 @@ export function ScenarioReplayView({
   const currentStepIndex = stepIndex - 1;
   const currentStep = currentStepIndex >= 0 ? script.steps[currentStepIndex] : undefined;
   const currentDecision = currentStepIndex >= 0 ? decisions[currentStepIndex] : undefined;
+  const traceMode = !!script.traceEntryEvents;
+  const currentTraceGate = currentStep?.trace?.events.find(
+    (event): event is WorkflowTraceGateRequestedEventV1 => event.type === "gate_requested",
+  );
+  const currentApproval = currentStep?.approval ?? gateAsReplayApproval(currentTraceGate);
+  const [traceViewOverride, setTraceViewOverride] = useState<string | null>(null);
 
   const visibleBlocks = useMemo(() => {
     if (stepIndex === 0) {
@@ -120,7 +152,23 @@ export function ScenarioReplayView({
     ]);
   }, [decisions, script, stepIndex]);
 
-  const typewriterEnabled = typewriterIntervalMs > 0;
+  const visibleTraceEvents = useMemo<WorkflowTraceEventV1[]>(() => {
+    if (!traceMode) return [];
+    const events = [...(script.traceEntryEvents ?? [])];
+    for (const [index, step] of script.steps.slice(0, stepIndex).entries()) {
+      if (!step.trace) continue;
+      events.push(...step.trace.events);
+      if (decisions[index] === "approved") events.push(...(step.trace.approvedEvents ?? []));
+      if (decisions[index] === "rejected") events.push(...(step.trace.rejectedEvents ?? []));
+    }
+    return events;
+  }, [decisions, script, stepIndex, traceMode]);
+  const traceProjection = useMemo(
+    () => traceMode ? projectWorkflowTrace(visibleTraceEvents) : null,
+    [traceMode, visibleTraceEvents],
+  );
+
+  const typewriterEnabled = !traceMode && typewriterIntervalMs > 0;
   const activeTextBlock = useMemo(() => {
     if (!typewriterEnabled) return null;
     for (const block of visibleBlocks) {
@@ -131,7 +179,7 @@ export function ScenarioReplayView({
     return null;
   }, [streamedTextLengths, typewriterEnabled, visibleBlocks]);
   const isStreaming = activeTextBlock !== null;
-  const gateBlocked = isStreaming || (!!currentStep?.approval && currentDecision !== "approved");
+  const gateBlocked = isStreaming || (!!currentApproval && currentDecision !== "approved");
 
   useEffect(() => {
     if (!activeTextBlock) return;
@@ -150,6 +198,7 @@ export function ScenarioReplayView({
   }, [activeTextBlock, streamedTextLengths, typewriterIntervalMs]);
 
   const messages = useMemo(() => {
+    if (traceProjection) return traceProjection.messages;
     const blocks = visibleBlocks.map((block) => {
       if (block.kind !== "text") return block;
       const characters = splitText(block.content);
@@ -180,10 +229,20 @@ export function ScenarioReplayView({
         ? { ...message, streaming: true }
         : message;
     });
-  }, [activeTextBlock?.id, streamedTextLengths, typewriterEnabled, visibleBlocks]);
+  }, [activeTextBlock?.id, streamedTextLengths, traceProjection, typewriterEnabled, visibleBlocks]);
 
-  // 面板从消息流 fold，与真实会话同一个 hook——面板没有独立数据通道
-  const { snapshot, selectView } = useSystemPanel(messages);
+  // Legacy 从 ToolPresentation fold；Trace V1 由同一语义事件前缀确定性生成完整快照。
+  const { snapshot: legacySnapshot, selectView: selectLegacyView } = useSystemPanel(messages);
+  const snapshot = useMemo(() => {
+    const traceSnapshot = traceProjection?.panel;
+    if (!traceSnapshot) return legacySnapshot;
+    if (!traceViewOverride || !traceSnapshot.views.some((view) => view.key === traceViewOverride)) return traceSnapshot;
+    return { ...traceSnapshot, activeView: traceViewOverride };
+  }, [legacySnapshot, traceProjection?.panel, traceViewOverride]);
+  const selectView = useCallback((key: string) => {
+    if (traceMode) setTraceViewOverride(key);
+    else selectLegacyView(key);
+  }, [selectLegacyView, traceMode]);
   const artifactHtml = artifact ? script.artifacts?.[artifact.path] : undefined;
   const rightOpen = !!snapshot || !!artifactHtml;
   const {
@@ -206,18 +265,19 @@ export function ScenarioReplayView({
     setDecisions({});
     setArtifact(null);
     setStreamedTextLengths({});
+    setTraceViewOverride(null);
   }, []);
 
   const approveCurrentStep = useCallback(() => {
-    if (isStreaming || !currentStep?.approval) return;
+    if (isStreaming || !currentApproval) return;
     setDecisions((current) => ({ ...current, [currentStepIndex]: "approved" }));
     setStepIndex((i) => Math.min(total, i + 1));
-  }, [currentStep?.approval, currentStepIndex, isStreaming, total]);
+  }, [currentApproval, currentStepIndex, isStreaming, total]);
 
   const rejectCurrentStep = useCallback(() => {
-    if (isStreaming || !currentStep?.approval) return;
+    if (isStreaming || !currentApproval) return;
     setDecisions((current) => ({ ...current, [currentStepIndex]: "rejected" }));
-  }, [currentStep?.approval, currentStepIndex, isStreaming]);
+  }, [currentApproval, currentStepIndex, isStreaming]);
 
   const reopenReview = useCallback(() => {
     setDecisions((current) => {
@@ -310,7 +370,7 @@ export function ScenarioReplayView({
               scrollContainerRef={scrollRef}
               debugModeOverride={false}
             />
-            {currentStep?.approval && currentDecision !== "approved" ? (
+            {currentApproval && currentDecision !== "approved" ? (
               <div className="shrink-0 border-t border-border/60 bg-warning-subtle px-4 py-3">
                 <div className="mx-auto max-w-3xl rounded-xl bg-card p-4 ring-1 ring-warning/25">
                   {currentDecision === "rejected" ? (
@@ -331,12 +391,12 @@ export function ScenarioReplayView({
                       <div className="flex items-start gap-2">
                         <ApprovalIcon className="mt-0.5 size-4 shrink-0 text-warning-ink" />
                         <div>
-                          <div className="text-sm font-medium">{currentStep.approval.title}</div>
-                          <p className="mt-1 text-xs leading-5 text-muted-foreground">{currentStep.approval.description}</p>
+                          <div className="text-sm font-medium">{currentApproval.title}</div>
+                          <p className="mt-1 text-xs leading-5 text-muted-foreground">{currentApproval.description}</p>
                         </div>
                       </div>
                       <dl className="mt-3 grid gap-2 sm:grid-cols-2">
-                        {currentStep.approval.facts.map((fact) => (
+                        {currentApproval.facts.map((fact) => (
                           <div key={`${fact.label}-${fact.value}`} className={cn("px-3 py-2", CAPABILITY_SUBTLE_SURFACE)}>
                             <dt className="text-xs text-muted-foreground">{fact.label}</dt>
                             <dd className="mt-0.5 text-sm font-medium">{fact.value}</dd>
@@ -345,11 +405,11 @@ export function ScenarioReplayView({
                       </dl>
                       <div className="mt-3 flex justify-end gap-2">
                         <Button type="button" variant="outline" size="sm" onClick={rejectCurrentStep} disabled={isStreaming}>
-                          {currentStep.approval.rejectLabel ?? "退回修改"}
+                          {currentApproval.rejectLabel ?? "退回修改"}
                         </Button>
                         <Button type="button" size="sm" className="gap-1" onClick={approveCurrentStep} disabled={isStreaming}>
                           <ApprovalSuccessIcon className="size-4" />
-                          {currentStep.approval.approveLabel}
+                          {currentApproval.approveLabel}
                         </Button>
                       </div>
                     </>

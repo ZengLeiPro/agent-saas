@@ -32,11 +32,10 @@ import {
 } from './types.js';
 import { computeCostMicro, getUsageAccountingMode, PRICING_VERSION } from '../usage/pricing.js';
 import { isInternalTenantId } from '../tenants/types.js';
-
+import { assertHardCapRunLimitsConfigured, normalizeDateOnly } from './pgBillingCompatibility.js';
 const { Pool } = pg;
 type PgPool = InstanceType<typeof Pool>;
 type PgClient = pg.PoolClient;
-
 export interface BillingPolicyPatch {
   billingEnabled?: boolean;
   billingMode?: BillingMode;
@@ -205,26 +204,7 @@ export class PgBillingStore {
         ALTER TABLE ${this.tenantPoliciesTable}
           ADD COLUMN IF NOT EXISTS max_run_credits_micro BIGINT
       `);
-      // 蓝绿升级门禁：旧版本允许 hard cap 没有单 Run 上限。新版本若直接切流，
-      // 这些组织会在模型调用前全量 fail-closed；必须先补数据，让新色 readiness
-      // 失败并保留旧色，而不是 health 绿、业务不可用。
-      const invalidRunLimits = await client.query<{ tenant_id: string }>(`
-        SELECT tenant_id
-        FROM ${this.tenantPoliciesTable}
-        WHERE billing_enabled = true
-          AND billing_mode <> 'internal'
-          AND hard_cap_mode = 'stop_before_run'
-          AND (max_run_credits_micro IS NULL OR max_run_credits_micro <= 0)
-        ORDER BY tenant_id
-        LIMIT 20
-      `);
-      if (invalidRunLimits.rows.length > 0) {
-        const tenantIds = invalidRunLimits.rows.map((row) => row.tenant_id).join(', ');
-        throw new Error(
-          `Billing policy upgrade blocked: hard-capped tenants missing max_run_credits_micro (${tenantIds}). `
-          + 'Configure a positive organization per-run limit before deploying this release.',
-        );
-      }
+      await assertHardCapRunLimitsConfigured(client, this.tenantPoliciesTable);
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.usageEventsTable} (
           id TEXT PRIMARY KEY,
@@ -2557,19 +2537,6 @@ function beijingDateString(date: Date): string {
   const month = parts.find((part) => part.type === 'month')?.value ?? '';
   const day = parts.find((part) => part.type === 'day')?.value ?? '';
   return `${year}-${month}-${day}`;
-}
-
-/**
- * PostgreSQL DATE 在不同 pg parser / 进程时区下可能返回 `YYYY-MM-DD` 或 Date。
- * Date 使用本地年月日还原，避免 `toISOString()` 在 UTC+8 把月初退到上个月末。
- */
-function normalizeDateOnly(value: unknown): string {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
-  }
-  const matched = /^(\d{4}-\d{2}-\d{2})/.exec(String(value));
-  if (matched?.[1]) return matched[1];
-  throw new Error(`Invalid PostgreSQL DATE value: ${String(value)}`);
 }
 
 function normalizeMemberBudgetAudit(row: Record<string, unknown>): BillingMemberBudgetAuditEntry {

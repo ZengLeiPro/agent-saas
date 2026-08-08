@@ -662,9 +662,8 @@ const selfSignupSmsSchema = z.object({
  */
 export const selfSignupConfigSchema = z.object({
   enabled: z.boolean().default(false),
-  /** 注册赠送积分数（试用额度，≠ 正式版套餐量） */
+  /** 注册赠送积分数（试用额度）及单个试用 Run 上限 */
   grantCredits: z.number().positive().default(500),
-  /** 单个试用 Run 最多可消耗的积分；避免一个任务预占全部试用余额。 */
   maxRunCredits: z.number().positive().default(100),
   /**
    * 试用租户模型白名单（"group/model" ref 列表）；首个作为默认模型。
@@ -675,7 +674,6 @@ export const selfSignupConfigSchema = z.object({
   dingtalkLeadWebhook: z.string().url().optional(),
   sms: selfSignupSmsSchema.optional(),
 });
-
 const authConfigSchema = z.object({
   enabled: z.boolean().default(false),
   jwtSecret: z.string().min(32),

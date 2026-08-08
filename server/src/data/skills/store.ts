@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { authLogger } from '../../utils/logger.js';
 import type {
   PlatformSkillConfig,
   PlatformSkillExposure,
@@ -26,6 +27,7 @@ export class SkillConfigStore {
    * 导致 configVersion 与磁盘脱钩、refreshUserWorkspace 触发全用户 syncSkills 风暴。
    */
   private mutationChain: Promise<unknown> = Promise.resolve();
+  private postPersistObserver?: () => void;
 
   constructor(filePath: string) {
     this.filePath = filePath;
@@ -45,6 +47,10 @@ export class SkillConfigStore {
   /** 重新读取共享 skills-config.json，供多进程 runtime-worker 获取 ws-only 的最新改动。 */
   reload(): void {
     this.load();
+  }
+
+  setPostPersistObserver(observer: (() => void) | undefined): void {
+    this.postPersistObserver = observer;
   }
 
   getConfigVersion(): number {
@@ -581,11 +587,21 @@ export class SkillConfigStore {
       await unlink(tmpPath).catch(() => {});
       throw err;
     }
+    this.notifyPostPersist();
   }
 
   private persistSync(): void {
     if (this.loadFailed) return;
     mkdirSync(dirname(this.filePath), { recursive: true });
     writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), { mode: 0o600 });
+    this.notifyPostPersist();
+  }
+
+  private notifyPostPersist(): void {
+    try {
+      this.postPersistObserver?.();
+    } catch (error) {
+      authLogger.warn(`Skill post-persist observer failed: ${error}`);
+    }
   }
 }

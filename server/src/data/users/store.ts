@@ -84,6 +84,7 @@ export interface UpdateUserInput {
 export class UserStore {
   private users: UserRecord[] = [];
   private filePath: string;
+  private postPersistObserver?: () => void;
 
   constructor(filePath: string) {
     this.filePath = filePath;
@@ -142,6 +143,10 @@ export class UserStore {
     this.load();
   }
 
+  setPostPersistObserver(observer: (() => void) | undefined): void {
+    this.postPersistObserver = observer;
+  }
+
   private async persist(): Promise<void> {
     const data: UsersFileData = { version: 1, users: this.users };
     mkdirSync(dirname(this.filePath), { recursive: true });
@@ -155,6 +160,11 @@ export class UserStore {
     } catch (err) {
       await unlink(tmpPath).catch(() => {});
       throw err;
+    }
+    try {
+      this.postPersistObserver?.();
+    } catch (error) {
+      authLogger.warn(`User post-persist observer failed: ${error}`);
     }
   }
 

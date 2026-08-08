@@ -113,6 +113,7 @@ import { PgGovernanceAuditStore, type GovernanceAuditStore } from '../data/gover
 import { PgMembershipStore } from '../data/memberships/index.js';
 import { PgEntitlementStore } from '../data/entitlements/index.js';
 import { PgAssignmentStore } from '../data/assignments/index.js';
+import { GovernanceShadowProjectionScheduler } from '../governance/migrations/shadowProjectionScheduler.js';
 import { MemoryIndexService } from '../memory/index/service.js';
 import type { MemoryIndexConfig } from '../memory/index/types.js';
 import { UserStore } from '../data/users/store.js';
@@ -392,6 +393,8 @@ export interface AppRuntime {
   entitlementStore?: PgEntitlementStore;
   /** 组织资源 Assignment 与个人 Preference 独立事实模型；M1 仅影子写与回填。 */
   assignmentStore?: PgAssignmentStore;
+  /** 等待当前已排队的 M1 治理影子投影完成，主要供测试和优雅停机。 */
+  flushGovernanceShadowProjections?: () => Promise<void>;
   /** 手动触发 token usage 全量回填（force=true）。未初始化 businessDb 时为 undefined */
   triggerTokenUsageRebuild?: () => Promise<unknown>;
   /** Runtime audit 读查询（按 sessionId/runId 投影 tool_audit）。 */
@@ -1048,6 +1051,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let membershipStore: PgMembershipStore | undefined;
   let entitlementStore: PgEntitlementStore | undefined;
   let assignmentStore: PgAssignmentStore | undefined;
+  let flushGovernanceShadowProjections: (() => Promise<void>) | undefined;
   const beginMemoryEmbeddingBillingRun = async (workspaceDir: string) => {
     if (!billingService) return undefined;
     const rel = relative(agentCwd, resolve(workspaceDir));
@@ -1279,6 +1283,54 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           + `${error instanceof Error ? error.message : String(error)}`,
         );
       }
+    }
+    if (userStore && tenantStore && orgAgentStore && skillConfigStore) {
+      const shadowScheduler = new GovernanceShadowProjectionScheduler({
+        membership: async () => {
+          await membershipStore!.backfillLegacyIdentities({
+            users: userStore!.listAll(),
+            tenants: tenantStore!.listAll(),
+            projectedBy: 'system:governance-shadow',
+            platformTenantId: DEFAULT_TENANT_ID,
+          });
+        },
+        entitlement: async () => {
+          await entitlementStore!.backfillLegacySettings({
+            tenants: tenantStore!.listAll(),
+            projectedBy: 'system:governance-shadow',
+            platformTenantId: DEFAULT_TENANT_ID,
+          });
+        },
+        assignment: async () => {
+          await assignmentStore!.backfillLegacyAssignments({
+            users: userStore!.listAll(),
+            orgAgents: orgAgentStore!.listAll(),
+            tenantSkillConfigs: skillConfigStore!.getAllTenantConfigs(),
+            userSkillConfigs: skillConfigStore!.getAllUserConfigs(),
+            projectedBy: 'system:governance-shadow',
+            platformTenantId: DEFAULT_TENANT_ID,
+          });
+        },
+      }, (name, error) => {
+        serverLogger.warn(
+          `Governance ${name} shadow projection failed; next mutation or restart will retry: `
+          + `${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+      const scheduleMembership = () => shadowScheduler.schedule('membership');
+      const scheduleEntitlement = () => shadowScheduler.schedule('entitlement');
+      const scheduleAssignment = () => shadowScheduler.schedule('assignment');
+      userStore.setPostPersistObserver(() => {
+        scheduleMembership();
+        scheduleAssignment();
+      });
+      tenantStore.setPostPersistObserver(() => {
+        scheduleMembership();
+        scheduleEntitlement();
+      });
+      orgAgentStore.setPostPersistObserver(scheduleAssignment);
+      skillConfigStore.setPostPersistObserver(scheduleAssignment);
+      flushGovernanceShadowProjections = () => shadowScheduler.flush();
     }
     if (enableSchedulerWorker) {
       runtimeOutboundStreamRelay = new RuntimeOutboundStreamRelay(pgEventStore, {
@@ -1645,6 +1697,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       runtimeEventRetention?.stop();
       await runtimeEventSubscriptionShutdown?.();
       await sessionLock?.close();
+      userStore?.setPostPersistObserver(undefined);
+      tenantStore?.setPostPersistObserver(undefined);
+      orgAgentStore?.setPostPersistObserver(undefined);
+      skillConfigStore?.setPostPersistObserver(undefined);
+      await flushGovernanceShadowProjections?.();
       await pgEventStore!.close();
     };
     serverLogger.info('Runtime EventStore initialized: backend=pg; durable RunStore + HandStore + RuntimeScheduler initialized');
@@ -3714,6 +3771,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     membershipStore,
     entitlementStore,
     assignmentStore,
+    flushGovernanceShadowProjections,
     runtimeAuditQuery,
     runtimeRunStore: pgRunStore,
     runtimeSchedulerCapacity,

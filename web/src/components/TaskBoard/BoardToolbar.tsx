@@ -75,7 +75,7 @@ export function BoardToolbar({
             ))}
           </SelectContent>
         </Select>
-        <DropdownMenu>
+        <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="icon" aria-label="看板管理">
               <MoreHorizontal />

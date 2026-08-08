@@ -191,6 +191,20 @@ describe("TaskBoardView", () => {
     expect(within(mobileList).getByRole("button", { name: "下移 TASK-1" })).toBeTruthy();
   });
 
+  it("从看板菜单关闭创建弹窗后，其他按钮仍可立即交互", async () => {
+    const user = userEvent.setup();
+    render(<TaskBoardView />);
+
+    await user.click(await screen.findByRole("button", { name: "看板管理" }));
+    await user.click(screen.getByRole("menuitem", { name: "创建看板" }));
+    expect(screen.getByRole("heading", { name: "创建看板" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "创建看板" })).toBeNull());
+
+    await user.click(screen.getByRole("button", { name: "新建任务" }));
+    expect(screen.getByRole("heading", { name: "新建任务" })).toBeTruthy();
+  });
+
   it("归档看板只读，关键写操作禁用且卡片不可拖拽", async () => {
     mocks.boards = [board("board-1", "已结束项目", true)];
     render(<TaskBoardView />);

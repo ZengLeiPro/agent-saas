@@ -3,7 +3,33 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { TaskDialog } from "./TaskDialog";
 
-describe("TaskDialog 提交锁定", () => {
+describe("TaskDialog 交互", () => {
+  it("下拉选项浮在弹窗之上，连续选择状态与优先级后可提交", async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn(async () => undefined);
+    render(
+      <TaskDialog
+        open
+        onOpenChange={vi.fn()}
+        onCreate={onCreate}
+      />,
+    );
+
+    await user.type(screen.getByRole("textbox", { name: "标题" }), "修复任务看板交互");
+    await user.click(screen.getByRole("combobox", { name: "新任务状态" }));
+    expect(screen.getByRole("listbox").className).toContain("z-[110]");
+    await user.click(screen.getByRole("option", { name: "待处理" }));
+    await user.click(screen.getByRole("combobox", { name: "新任务优先级" }));
+    await user.click(screen.getByRole("option", { name: "紧急" }));
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+      title: "修复任务看板交互",
+      status: "todo",
+      priority: "urgent",
+    })));
+  });
+
   it("提交期间锁定全部表单控件，请求完成后再关闭", async () => {
     const user = userEvent.setup();
     let resolveCreate!: () => void;

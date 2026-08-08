@@ -15,6 +15,7 @@ import {
   type BillingMemberBudgetUsage,
   type LedgerType,
 } from '../data/billing/types.js';
+import { committedMemberBudgetCreditsMicro } from '../data/billing/runReservationPolicy.js';
 import {
   BillingBudgetIdempotencyConflictError,
   BillingBudgetVersionConflictError,
@@ -675,7 +676,11 @@ function formatMemberBudget(item: BillingMemberBudgetUsage) {
     : item.monthlyLimitCreditsMicro / CREDIT_MICRO;
   const monthUsedCredits = item.monthUsedCreditsMicro / CREDIT_MICRO;
   const monthReservedCredits = item.monthReservedCreditsMicro / CREDIT_MICRO;
-  const committedMicro = item.monthUsedCreditsMicro + item.monthReservedCreditsMicro;
+  const committedMicro = committedMemberBudgetCreditsMicro(
+    item.monthUsedCreditsMicro,
+    item.monthReservedCreditsMicro,
+    item.enforcementMode,
+  );
   const usageRatioBps = item.monthlyLimitCreditsMicro === undefined
     ? null
     : item.monthlyLimitCreditsMicro <= 0

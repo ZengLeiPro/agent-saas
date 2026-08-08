@@ -33,6 +33,7 @@ import {
 import { computeCostMicro, getUsageAccountingMode, PRICING_VERSION } from '../usage/pricing.js';
 import { isInternalTenantId } from '../tenants/types.js';
 import { assertHardCapRunLimitsConfigured, normalizeDateOnly } from './pgBillingCompatibility.js';
+import { committedMemberBudgetCreditsMicro, initialRunReservationGrant, prepareRunReservationForFixedFee, prepareRunReservationForModel } from './runReservationPolicy.js';
 const { Pool } = pg;
 type PgPool = InstanceType<typeof Pool>;
 type PgClient = pg.PoolClient;
@@ -1001,7 +1002,7 @@ export class PgBillingStore {
         await client.query('COMMIT');
         return { ok: true, value: null };
       }
-      const grant = Math.trunc(Math.min(...caps.map((cap) => cap.value)));
+      const grant = initialRunReservationGrant(caps.map((cap) => cap.value));
       if (grant <= 0) {
         const failed = caps.find((cap) => cap.value <= 0) ?? caps[0]!;
         await client.query('ROLLBACK');
@@ -1073,11 +1074,11 @@ export class PgBillingStore {
       const pending = await this.listPendingRunUsage(client, tenantId, runId);
       const pendingCredits = creditsForUsage(pending, policy, pricing.creditValueYuanMicro);
       const holds = await this.sumActiveFixedFeeHolds(client, tenantId, runId);
+      const capacity = await prepareRunReservationForModel({ client, tables: this, account, policy, reservation,
+        pendingCreditsMicro: pendingCredits, activeHoldsCreditsMicro: holds });
       await client.query('COMMIT');
-      if (pendingCredits + holds >= reservation.remainingCreditsMicro) {
-        return billingDenied('BILLING_RUN_LIMIT_EXCEEDED', '本次运行已达到积分上限，不能继续发起模型请求。');
-      }
-      return { ok: true, value: { reservation, pendingModelCreditsMicro: pendingCredits, activeFixedHoldsCreditsMicro: holds } };
+      if (!capacity.ok) return capacity;
+      return { ok: true, value: { reservation: capacity.reservation, pendingModelCreditsMicro: pendingCredits, activeFixedHoldsCreditsMicro: holds } };
     } catch (err) {
       await client.query('ROLLBACK').catch(() => undefined);
       throw err;
@@ -1135,10 +1136,9 @@ export class PgBillingStore {
       const pending = await this.listPendingRunUsage(client, input.tenantId, input.runId);
       const pendingCredits = creditsForUsage(pending, policy, pricing.creditValueYuanMicro);
       const holds = await this.sumActiveFixedFeeHolds(client, input.tenantId, input.runId);
-      if (pendingCredits + holds + amount > reservation.remainingCreditsMicro) {
-        await client.query('ROLLBACK');
-        return billingDenied('BILLING_FIXED_FEE_LIMIT_EXCEEDED', '固定费用将超过本次运行的剩余积分上限。');
-      }
+      const capacity = await prepareRunReservationForFixedFee({ client, tables: this, account, policy, reservation,
+        requiredCreditsMicro: pendingCredits + holds + amount });
+      if (!capacity.ok) { await client.query('ROLLBACK'); return capacity; }
       const timestamp = new Date().toISOString();
       const held = releasedHold
         ? await client.query<{ row_json: Record<string, unknown> }>(`
@@ -1861,7 +1861,7 @@ export class PgBillingStore {
         const perRunLimit = row.per_run_limit_micro === null || row.per_run_limit_micro === undefined
           ? undefined : Number(row.per_run_limit_micro);
         const enforcementMode = row.enforcement_mode ?? 'notify';
-        const remaining = monthlyLimit === undefined ? undefined : Math.max(0, monthlyLimit - used - reserved);
+        const remaining = monthlyLimit === undefined ? undefined : Math.max(0, monthlyLimit - committedMemberBudgetCreditsMicro(used, reserved, enforcementMode));
         return {
           userId: row.user_id,
           ...(monthlyLimit === undefined ? {} : { monthlyLimitCreditsMicro: monthlyLimit }),

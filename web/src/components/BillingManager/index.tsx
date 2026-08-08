@@ -1805,10 +1805,10 @@ function MemberBudgetDialog({
     setConflict(false);
     attemptRef.current = null;
   }, [open, member]);
-
   const normalizedLimit = limitText.trim() === "" ? null : Number(limitText);
   const normalizedPerRunLimit = perRunLimitText.trim() === "" ? null : Number(perRunLimitText);
   const belowCommitted = member !== null
+    && enforcementMode === "stop_new_runs"
     && normalizedLimit !== null
     && Number.isFinite(normalizedLimit)
     && normalizedLimit < member.monthUsedCredits + member.monthReservedCredits;

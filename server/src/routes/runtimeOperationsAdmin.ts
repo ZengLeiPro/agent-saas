@@ -2,7 +2,7 @@ import { Router } from 'express';
 import pg from 'pg';
 
 import { requirePlatformAdmin } from '../auth/middleware.js';
-import { isSuperAdmin, requireSuperAdmin } from '../auth/platformGovernance.js';
+import { requireSuperAdmin } from '../auth/platformGovernance.js';
 import type { AppConfig } from '../app/config.js';
 import { auditLog } from '../data/login-logs/index.js';
 import { createTenantRemoteHandAuthTokenResolver } from '../runtime/tenantRemoteHandResolver.js';
@@ -304,7 +304,7 @@ export function createRuntimeOperationsAdminRouter(
         const snapshot = await options.runtimeSchedulerCapacity.getSnapshot();
         runtimeScheduler = {
           ...snapshot,
-          editable: snapshot.editable && isSuperAdmin(req.user),
+          editable: snapshot.editable,
         };
       } catch (error) {
         runtimeScheduler = {

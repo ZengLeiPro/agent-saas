@@ -36,14 +36,11 @@ interface AuthContextValue {
    * 后端 `requirePlatformAdmin` 是权威判定；前端只做入口可见性 gate。
    */
   isPlatformAdmin: boolean;
-  /** 平台超级管理员（默认仅 @admin，来自 /api/auth/me）；权威判定在服务端。 */
+  /** @deprecated 兼容旧组件；现在与 isPlatformAdmin 相同。 */
   isSuperAdmin: boolean;
-  /**
-   * 平台全局配置只读：非超级平台管理员即使拥有客户运营能力，也不能修改
-   * Secret、模型、价格、工具开关与其他平台级配置。
-   */
+  /** @deprecated 平台管理员已全部可写，固定为 false。 */
   platformReadOnly: boolean;
-  /** 平台运营能力判断；超级管理员始终返回 true。 */
+  /** 平台能力判断；所有平台管理员均返回 true。 */
   canPlatform: (capability: PlatformCapability) => boolean;
   /** 鉴权功能是否启用（后端未开启时为 false，此时无需登录） */
   authEnabled: boolean;
@@ -77,9 +74,8 @@ function normalizeAuthUser(user: AuthUser): AuthUser {
     username: user.username,
     role: user.role,
     tenantId: user.tenantId,
-    // 2026-07-18 平台管理员分层治理：后端 /auth/me 与登录响应下发 isSuperAdmin，
-    // 前端 platformReadOnly 判定必须依赖此字段——漏掉会导致 @admin 也被误判为只读。
-    isSuperAdmin: user.isSuperAdmin === true,
+    // 兼容旧客户端字段；平台管理员已不再按账号层级区分权限。
+    isSuperAdmin: user.role === "admin" && user.tenantId === DEFAULT_TENANT_ID,
     platformCapabilities: user.platformCapabilities ?? [],
     platformCapabilityLimits: user.platformCapabilityLimits,
     realName: user.realName,
@@ -212,11 +208,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser((prev) => prev ? { ...prev, preferences: { ...(prev.preferences ?? {}), ...preferences } } : prev);
   }, []);
 
-  const canPlatform = useCallback((capability: PlatformCapability) => {
-    if (user?.role !== "admin" || user.tenantId !== DEFAULT_TENANT_ID) return false;
-    if (user.isSuperAdmin === true) return true;
-    return (user.platformCapabilities ?? []).includes(capability);
-  }, [user]);
+  const canPlatform = useCallback((_capability: PlatformCapability) => (
+    user?.role === "admin" && user.tenantId === DEFAULT_TENANT_ID
+  ), [user]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -225,11 +219,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: user !== null,
       isAdmin: user?.role === "admin",
       isPlatformAdmin: user?.role === "admin" && user?.tenantId === DEFAULT_TENANT_ID,
-      isSuperAdmin: user?.isSuperAdmin === true,
-      platformReadOnly:
-        user?.role === "admin" &&
-        user?.tenantId === DEFAULT_TENANT_ID &&
-        user?.isSuperAdmin !== true,
+      isSuperAdmin: user?.role === "admin" && user?.tenantId === DEFAULT_TENANT_ID,
+      platformReadOnly: false,
       canPlatform,
       authEnabled,
       accounts,

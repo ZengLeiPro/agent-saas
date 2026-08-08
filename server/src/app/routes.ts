@@ -112,8 +112,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   // - 通道消息入口路由（如 /api/chat、/api/dingtalk/webhook）由各 Channel.start() 注册
   // - 控制面/查询类路由由 app 统一注册
 
-  // 平台管理员分层治理（2026-07-18）：auth middleware 之后、所有路由之前统一挂载。
-  // 非 super 的平台 admin（万神殿员工账号）对管理路径只读；详见 platformGovernance.ts。
+  // 兼容原权限治理挂载点；平台管理员现已统一为完整权限。
   app.use("/api", enforcePlatformWritePolicy);
   const {
     config,

@@ -491,7 +491,7 @@ describe('Billing 路由端点', () => {
       expect(forbidden.status).toBe(403);
     });
 
-    it('委托管理员：业务依据、防重标识、操作人和备注精确落流水', async () => {
+    it('平台管理员：业务依据、防重标识、操作人和备注精确落流水', async () => {
       const rig = await newRig(BILLING_OPERATOR);
       const res = await rig.request('/api/admin/billing/accounts/wain/adjust', {
         method: 'POST',
@@ -504,13 +504,6 @@ describe('Billing 路由端点', () => {
         },
       });
       expect(res.status).toBe(200);
-      expect(rig.fns.store.findLedgerByIdempotencyKey).toHaveBeenCalledWith(
-        'manual:wain:admin:u-operator:bank_20260720_01',
-      );
-      expect(rig.fns.store.sumManualPositiveCreditsByActorSince).toHaveBeenCalledWith(
-        'ops',
-        expect.any(String),
-      );
       expect(rig.fns.adjustAccount).toHaveBeenCalledWith({
         tenantId: 'wain',
         creditsDelta: 300,
@@ -521,34 +514,19 @@ describe('Billing 路由端点', () => {
       });
     });
 
-    it('委托管理员：拒绝扣减、缺业务依据、单笔超限和当日累计超限', async () => {
+    it('平台管理员不再受旧 capability 流水额度与操作类型限制', async () => {
       const rig = await newRig(BILLING_OPERATOR);
       const request = (body: Record<string, unknown>) => rig.request('/api/admin/billing/accounts/wain/adjust', {
         method: 'POST',
         body,
       });
-      const valid = {
-        type: 'grant', note: '补偿备注', businessReference: 'CASE-1', idempotencyKey: 'case_0001',
-      };
-      expect((await request({ ...valid, creditsDelta: -1 })).status).toBe(400);
-      expect((await request({ creditsDelta: 10, type: 'grant' })).status).toBe(400);
-      expect((await request({ ...valid, creditsDelta: 501 })).status).toBe(403);
-      rig.fns.store.sumManualPositiveCreditsByActorSince.mockResolvedValueOnce(800);
-      expect((await request({ ...valid, creditsDelta: 300 })).status).toBe(403);
-      expect(rig.fns.adjustAccount).not.toHaveBeenCalled();
+      expect((await request({ creditsDelta: -1, type: 'adjustment' })).status).toBe(200);
+      expect((await request({ creditsDelta: 501, type: 'grant' })).status).toBe(200);
+      expect(rig.fns.adjustAccount).toHaveBeenCalledTimes(2);
     });
 
-    it('委托管理员：同一防重标识直接回放，万神殿账户一律拒绝', async () => {
+    it('平台管理员可调整万神殿账户，防重标识交由计费服务处理', async () => {
       const rig = await newRig(BILLING_OPERATOR);
-      rig.fns.store.findLedgerByIdempotencyKey.mockResolvedValueOnce({
-        ...fullLedgerEntry(),
-        tenantId: 'wain',
-        type: 'refund',
-        source: 'manual',
-        creditsDeltaMicro: 100_000_000,
-        createdBy: 'ops',
-        note: '[依据:REFUND-1] 退款退回',
-      });
       const body = {
         creditsDelta: 100,
         type: 'refund',
@@ -556,15 +534,13 @@ describe('Billing 路由端点', () => {
         businessReference: 'REFUND-1',
         idempotencyKey: 'refund_0001',
       };
-      const replay = await rig.request('/api/admin/billing/accounts/wain/adjust', { method: 'POST', body });
-      expect(replay.status).toBe(200);
-      expect(await replay.json()).toMatchObject({ idempotentReplay: true });
-      expect(rig.fns.adjustAccount).not.toHaveBeenCalled();
-
+      const wain = await rig.request('/api/admin/billing/accounts/wain/adjust', { method: 'POST', body });
+      expect(wain.status).toBe(200);
       const pantheon = await rig.request(`/api/admin/billing/accounts/${DEFAULT_TENANT_ID}/adjust`, {
         method: 'POST', body,
       });
-      expect(pantheon.status).toBe(403);
+      expect(pantheon.status).toBe(200);
+      expect(rig.fns.adjustAccount).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -849,12 +825,8 @@ describe('Billing 路由端点', () => {
       expect((await rig.request('/api/admin/billing/member-budget-audit?tenantId=other-org')).status).toBe(403);
     });
 
-    it('平台委托账号读取员工预算和审计必须具备 finance.read', async () => {
+    it('平台管理员无需独立 finance.read capability 即可读取员工预算和审计', async () => {
       const rig = await newRig(BILLING_OPERATOR);
-      expect((await rig.request('/api/admin/billing/member-budgets?tenantId=wain')).status).toBe(403);
-      expect((await rig.request('/api/admin/billing/member-budget-audit?tenantId=wain')).status).toBe(403);
-
-      rig.setCaller({ ...BILLING_OPERATOR, platformCapabilities: ['finance.read'] });
       expect((await rig.request('/api/admin/billing/member-budgets?tenantId=wain')).status).toBe(200);
       expect((await rig.request('/api/admin/billing/member-budget-audit?tenantId=wain')).status).toBe(200);
     });

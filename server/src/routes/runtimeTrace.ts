@@ -37,7 +37,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 
 import { isPlatformAdmin } from '../auth/types.js';
-import { hasPlatformCapability, isSuperAdmin } from '../auth/platformGovernance.js';
+import { hasPlatformCapability } from '../auth/platformGovernance.js';
 import type { PlatformEvent } from '../runtime/types.js';
 import type { RunRecord } from '../runtime/runStore.js';
 import type { BillingUsageEvent } from '../data/billing/types.js';
@@ -322,8 +322,8 @@ export function truncateTraceEvent(
 }
 
 /**
- * 平台运营管理员只看可定位故障的事件骨架，不返回成员正文、思考、工具参数/结果或审批输入。
- * 固定占位符让既有时间线 UI 仍能表达“这里发生过什么”，同时不泄露原始内容。
+ * 将事件压缩为不含正文、思考、工具参数/结果或审批输入的诊断骨架。
+ * 保留为显式脱敏导出能力；平台管理员详情接口不再默认调用。
  */
 export function sanitizeTraceEvent(event: PlatformEvent): Record<string, unknown> {
   if (event.type === 'context_rewind') {
@@ -470,7 +470,6 @@ export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Route
         typeWhitelist ? typeWhitelist.has(event.type) : event.type !== 'assistant_stream_event'
       ));
       const billing = summarizeRunBilling(usageEvents);
-      const redactContent = scope.platform && !isSuperAdmin(req.user);
       const redactCost = scope.platform
         ? !hasPlatformCapability(req.user, 'finance.read')
         : orgCostRedacted;
@@ -479,10 +478,7 @@ export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Route
         sessionId: run.sessionId,
         run: pickRunSummary(run),
         billing: redactCost ? redactBillingSummary(billing) : billing,
-        events: filtered.map((event) => redactContent
-          ? sanitizeTraceEvent(event)
-          : truncateTraceEvent(event, maxContentLength)),
-        ...(redactContent ? { contentRedacted: true } : {}),
+        events: filtered.map((event) => truncateTraceEvent(event, maxContentLength)),
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

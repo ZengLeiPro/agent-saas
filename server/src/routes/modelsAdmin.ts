@@ -25,7 +25,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * 凭据脱敏（2026-07-18 平台管理员分层治理批次）：
+ * 凭据脱敏：
  * GET 不再返回分组 apiKey / memory embedding apiKey 明文（此前明文随响应回显到
  * 前端 password input，属于泄露面），改为 hasApiKey 布尔。PUT 侧配套「留空/缺失
  * = 保留现有」语义（restoreSecrets），与 toolControlsAdmin 的 vault 模式对齐。

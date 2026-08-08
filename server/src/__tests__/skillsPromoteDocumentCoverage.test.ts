@@ -384,12 +384,11 @@ describe('skills promote/document 残余分支覆盖', () => {
       expect(readFileSync(join(h.aliceSkillsDir, 'editable-skill', 'SKILL.md'), 'utf-8')).toBe(EDITABLE_MD);
     });
 
-    it('受委托平台管理员不能通过技能接口触达 pantheon 内部员工', async () => {
+    it('平台管理员可通过技能接口管理客户与 pantheon 内部账号', async () => {
       h.setCaller(PLATFORM_OPERATOR);
 
       const internal = await h.request('/api/skills/users/admin');
-      expect(internal.status).toBe(404);
-      expect((await internal.json() as { error: string }).error).toBe('User not found');
+      expect(internal.status).toBe(200);
 
       const customer = await h.request('/api/skills/users/alice');
       expect(customer.status).toBe(200);

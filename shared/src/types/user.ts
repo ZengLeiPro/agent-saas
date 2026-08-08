@@ -6,8 +6,8 @@ export interface UserPermissions {
 }
 
 /**
- * 平台运营能力。仅对 role=admin + tenantId=pantheon 的平台管理员生效；
- * 平台超级管理员不受该列表限制。
+ * 平台能力标识。保留用于 API 兼容与界面能力判断；
+ * role=admin + tenantId=pantheon 的平台管理员实际始终拥有全部能力。
  */
 export const PLATFORM_CAPABILITIES = [
   "tenant.manage",

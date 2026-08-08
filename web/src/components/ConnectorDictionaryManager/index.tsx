@@ -6,7 +6,7 @@
  * 词典硬编码在代码里意味着每次升级都要发版——放到这里之后保存即热更新。
  *
  * 交互与「工具开关」「网络出口」同惯例：左侧列表选中、右侧整条编辑、
- * 顶部刷新 + 保存；委托运营账号只读。
+ * 顶部刷新 + 保存；仅平台管理员可访问。
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Plus, RefreshCw, RotateCcw, Save, Trash2 } from "lucide-react";

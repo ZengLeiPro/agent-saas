@@ -61,7 +61,7 @@ describe("RuntimeOperationsManager", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
   });
 
-  it("平台超级管理员可修改顶层任务并发并热生效", async () => {
+  it("平台管理员可修改顶层任务并发并热生效", async () => {
     const user = userEvent.setup();
     render(<RuntimeOperationsManager />);
 

@@ -11,7 +11,6 @@ import {
 } from "../auth/middleware.js";
 import {
   getEffectivePlatformCapabilities,
-  hasPlatformCapability,
   isSuperAdmin,
   normalizePlatformCapabilities,
   requireSuperAdmin,
@@ -208,17 +207,6 @@ const updateUserSchema = z.object({
   platformCapabilities: z.array(platformCapabilitySchema).max(20).optional(),
   platformCapabilityLimits: platformCapabilityLimitsSchema,
 });
-
-function platformOperatorTargetError(
-  caller: JwtPayload | undefined,
-  target: Pick<UserRecord, "id" | "tenantId">,
-): string | null {
-  if (!caller || !isPlatformAdmin(caller) || isSuperAdmin(caller)) return null;
-  if (target.id === caller.sub) return null;
-  return target.tenantId === DEFAULT_TENANT_ID
-    ? "平台运营管理员不能管理万神殿账号"
-    : null;
-}
 
 function maskPhone(phone: string | undefined): string | undefined {
   if (!phone) return undefined;
@@ -424,7 +412,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         username: user.username,
         role: user.role,
         tenantId,
-        // 与 /me 同口径：登录响应即带 super 标记，避免前端在下一次 me 刷新前误判只读
+        // 兼容旧客户端字段；所有平台管理员均返回 true。
         isSuperAdmin: isSuperAdmin(authPayload),
         platformCapabilities: getEffectivePlatformCapabilities(authPayload),
         platformCapabilityLimits: user.platformCapabilityLimits,
@@ -948,8 +936,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       // /me handler 原先漏返。前端依赖此字段判断"当前组织"标签 / 是否平台 admin。
       // JWT payload 里有，所以直接透传 req.user.tenantId 即可。
       tenantId: req.user.tenantId,
-      // 平台管理员分层治理（2026-07-18）：前端据此渲染平台管理只读模式；权威判定
-      // 始终在服务端 enforcePlatformWritePolicy。
+      // 兼容旧客户端字段；所有平台管理员均返回 true。
       isSuperAdmin: isSuperAdmin(req.user),
       platformCapabilities: getEffectivePlatformCapabilities(req.user),
       platformCapabilityLimits: req.user.platformCapabilityLimits,
@@ -981,7 +968,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     const scoped = isPlatformAdmin(req.user)
       ? allUsers
       : allUsers.filter((u) => u.tenantId === req.user!.tenantId);
-    const canReadPii = isSuperAdmin(req.user);
+    const canReadPii = isPlatformAdmin(req.user);
     const users = scoped.map((u) => ({
       ...u,
       ...(isPlatformAdmin(req.user) && !canReadPii
@@ -1047,21 +1034,6 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       } else {
         // 组织 admin：忽略 body.tenantId
         effectiveTenantId = req.user!.tenantId || DEFAULT_TENANT_ID;
-      }
-      if (
-        isPlatformAdmin(req.user)
-        && !isSuperAdmin(req.user)
-        && effectiveTenantId === DEFAULT_TENANT_ID
-      ) {
-        res.status(403).json({ error: "平台运营管理员不能创建万神殿账号" });
-        return;
-      }
-      if (
-        (platformCapabilities !== undefined || platformCapabilityLimits !== undefined)
-        && !isSuperAdmin(req.user)
-      ) {
-        res.status(403).json({ error: "仅平台超级管理员可配置平台能力" });
-        return;
       }
       if (
         (platformCapabilities !== undefined || platformCapabilityLimits !== undefined)
@@ -1186,11 +1158,6 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         res.status(403).json({ error: peerAdminError });
         return;
       }
-      const platformTargetError = platformOperatorTargetError(req.user, target);
-      if (platformTargetError) {
-        res.status(403).json({ error: platformTargetError });
-        return;
-      }
       const destructiveSelfError = selfUpdateError(req.user, target, parsed.data);
       if (destructiveSelfError) {
         res.status(400).json({ error: destructiveSelfError });
@@ -1207,25 +1174,9 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         platformCapabilities,
         platformCapabilityLimits,
       } = parsed.data;
-      if (password && target.id !== req.user!.sub && isPlatformAdmin(req.user)
-        && !hasPlatformCapability(req.user, "credential.reset")) {
-        res.status(403).json({ error: "当前平台管理员未获授权：credential.reset" });
-        return;
-      }
-      if (
-        (platformCapabilities !== undefined || platformCapabilityLimits !== undefined)
-        && !isSuperAdmin(req.user)
-      ) {
-        res.status(403).json({ error: "仅平台超级管理员可配置平台能力" });
-        return;
-      }
       // tenantId 改动权限：仅平台 admin 可改；其他 role 入参被忽略
       let tenantIdUpdate: string | undefined;
       if (parsed.data.tenantId && isPlatformAdmin(req.user)) {
-        if (!isSuperAdmin(req.user) && parsed.data.tenantId !== target.tenantId) {
-          res.status(403).json({ error: "仅平台超级管理员可迁移用户组织归属" });
-          return;
-        }
         if (tenantStore) {
           const tenant = tenantStore.findById(parsed.data.tenantId);
           if (!tenant) {
@@ -1333,11 +1284,6 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         res.status(403).json({ error: peerAdminError });
         return;
       }
-      const platformTargetError = platformOperatorTargetError(req.user, target);
-      if (platformTargetError) {
-        res.status(403).json({ error: platformTargetError });
-        return;
-      }
       await deps.onUserDeleting?.(target);
       if (!deps.onUserDeleting) {
         await mcpOAuthService?.disconnectUser(target.username, target.tenantId);
@@ -1395,11 +1341,6 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       const peerAdminError = tenantAdminPeerAdminError(req.user, target);
       if (peerAdminError) {
         res.status(403).json({ error: peerAdminError });
-        return;
-      }
-      const platformTargetError = platformOperatorTargetError(req.user, target);
-      if (platformTargetError) {
-        res.status(403).json({ error: platformTargetError });
         return;
       }
       const user = await userStore.setDisabled(
@@ -1696,11 +1637,6 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         const peerAdminError = tenantAdminPeerAdminError(req.user, target);
         if (peerAdminError) {
           res.status(403).json({ error: peerAdminError });
-          return;
-        }
-        const platformTargetError = platformOperatorTargetError(req.user, target);
-        if (platformTargetError) {
-          res.status(403).json({ error: platformTargetError });
           return;
         }
         const file = req.file;

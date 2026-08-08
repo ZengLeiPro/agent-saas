@@ -3,7 +3,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { isPlatformAdmin } from '../auth/types.js';
 import { requirePlatformAdmin } from '../auth/middleware.js';
-import { hasPlatformCapability, isSuperAdmin } from '../auth/platformGovernance.js';
+import { hasPlatformCapability } from '../auth/platformGovernance.js';
 import { auditLog } from '../data/login-logs/index.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import type { AlertNotifier } from '../runtime/alertNotifier.js';
@@ -61,7 +61,7 @@ function resolveTenantAccess(req: Request, requestedTenantId?: string):
 
 export function createAdminBillingRouter(options: BillingRouterOptions): Router {
   const router = Router();
-  const { billingService, alertNotifier } = options;
+  const { billingService } = options;
 
   router.get('/pricing-versions', requirePlatformAdmin, async (_req, res) => {
     await billingService.ensureProjected();
@@ -158,62 +158,12 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
     if (!parsed.success) return res.status(400).json({ error: 'Invalid tenantId' });
     const body = accountAdjustSchema.safeParse(req.body ?? {});
     if (!body.success) return res.status(400).json({ error: 'Invalid body', issues: body.error.issues });
-    const delegated = !isSuperAdmin(req.user);
-    if (delegated) {
-      if (parsed.data === DEFAULT_TENANT_ID) {
-        return res.status(403).json({ error: '万神殿账户流水仅 @admin 可操作' });
-      }
-      if (body.data.creditsDelta <= 0) {
-        return res.status(400).json({ error: '委托管理员只能增加积分；扣减与冲正请由 @admin 执行' });
-      }
-      if (!['recharge', 'grant', 'refund'].includes(body.data.type ?? '')) {
-        return res.status(400).json({ error: '委托管理员仅可写入充值、赠送或退款流水' });
-      }
-      if (!body.data.note || !body.data.businessReference || !body.data.idempotencyKey) {
-        return res.status(400).json({ error: '委托管理员写入流水必须填写备注、业务依据和防重标识' });
-      }
-      const perTransaction = req.user?.platformCapabilityLimits?.billingMaxCreditsPerTransaction;
-      const perDay = req.user?.platformCapabilityLimits?.billingMaxCreditsPerDay;
-      if (!perTransaction || !perDay) {
-        return res.status(403).json({ error: '当前账号未配置积分流水额度，请联系 @admin' });
-      }
-      if (body.data.creditsDelta > perTransaction) {
-        return res.status(403).json({ error: '单笔积分超过授权上限 ' + perTransaction });
-      }
-    }
     const combinedNote = body.data.businessReference
       ? '[依据:' + body.data.businessReference + '] ' + (body.data.note ?? '')
       : body.data.note;
     const idempotencyKey = body.data.idempotencyKey
       ? ['manual', parsed.data, 'admin', req.user!.sub, body.data.idempotencyKey].join(':')
       : undefined;
-    if (delegated && idempotencyKey) {
-      const existing = await billingService.store.findLedgerByIdempotencyKey(idempotencyKey);
-      if (existing) {
-        const requestedType = body.data.type ?? 'adjustment';
-        if (
-          existing.tenantId !== parsed.data
-          || existing.type !== requestedType
-          || existing.creditsDeltaMicro !== Math.round(body.data.creditsDelta * CREDIT_MICRO)
-          || existing.createdBy !== req.user!.username
-          || (existing.note ?? undefined) !== (combinedNote ?? undefined)
-        ) {
-          return res.status(409).json({ error: '幂等键已被不同调账参数使用' });
-        }
-        return res.json({ entry: existing, idempotentReplay: true });
-      }
-      const dayLimit = req.user!.platformCapabilityLimits!.billingMaxCreditsPerDay!;
-      const usedToday = await billingService.store.sumManualPositiveCreditsByActorSince(
-        req.user!.username,
-        beijingDayStartIso(),
-      );
-      if (usedToday + body.data.creditsDelta > dayLimit) {
-        return res.status(403).json({
-          error: '今日累计积分将超过授权上限 ' + dayLimit,
-          usedToday,
-        });
-      }
-    }
     let entry: BillingLedgerEntry;
     try {
       entry = await billingService.adjustAccount({
@@ -237,18 +187,6 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
       businessReference: body.data.businessReference,
       ledgerId: entry.id,
     }));
-    if (delegated) {
-      void alertNotifier?.notifyExternal('delegated_billing', [{
-        kind: 'delegated_billing_adjustment',
-        severity: 'high',
-        title: req.user!.username + ' 为 ' + parsed.data + ' 增加 '
-          + body.data.creditsDelta + ' 积分（' + body.data.businessReference + '）',
-        occurredAt: entry.createdAt,
-        entityRef: { kind: 'tenant', id: parsed.data },
-        actions: ['核对业务依据与积分流水'],
-        dedupeKey: entry.id,
-      }]).catch(() => undefined);
-    }
     res.json({ entry });
   });
 
@@ -691,16 +629,6 @@ const ledgerReversalSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(120).regex(/^[a-zA-Z0-9:_-]+$/),
   note: z.string().trim().min(2).max(500),
 });
-
-function beijingDayStartIso(now = new Date()): string {
-  const beijing = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-  const startUtc = Date.UTC(
-    beijing.getUTCFullYear(),
-    beijing.getUTCMonth(),
-    beijing.getUTCDate(),
-  ) - 8 * 60 * 60 * 1000;
-  return new Date(startUtc).toISOString();
-}
 
 const ledgerTypeEnum = z.enum([
   'recharge', 'grant', 'debit', 'refund', 'adjustment', 'expire', 'reversal', 'reserve', 'release',

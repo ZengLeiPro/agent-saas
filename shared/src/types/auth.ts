@@ -41,9 +41,9 @@ export interface AuthUser {
    * 组织 admin = role==='admin' && tenantId !== DEFAULT_TENANT_ID
    */
   tenantId: string;
-  /** 平台超级管理员（默认仅 @admin）。 */
+  /** @deprecated 兼容旧客户端；平台管理员统一返回 true。 */
   isSuperAdmin?: boolean;
-  /** 非超级平台管理员的实时能力集；每次请求由服务端用户记录覆盖 JWT 旧值。 */
+  /** @deprecated 兼容旧客户端；平台管理员实际始终拥有完整能力集。 */
   platformCapabilities?: PlatformCapability[];
   platformCapabilityLimits?: PlatformCapabilityLimits;
   realName?: string;

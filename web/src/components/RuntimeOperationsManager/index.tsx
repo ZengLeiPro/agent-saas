@@ -684,7 +684,7 @@ export function RuntimeOperationsManager() {
                         ? "当前处于 dual 迁移阶段，有效并发固定为 4；切换到 lease 后开放修改。"
                         : schedulerCapacity.editable
                           ? `可配置范围 1-${schedulerCapacity.maxConfigurableConcurrentRuns}。`
-                          : "仅平台超级管理员可以修改。"}
+                          : "当前运行模式不允许修改。"}
                     </div>
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

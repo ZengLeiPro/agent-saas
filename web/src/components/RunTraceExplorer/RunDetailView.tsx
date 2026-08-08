@@ -285,7 +285,7 @@ export function RunDetailView({
       {breadcrumb}
       {data.contentRedacted && (
         <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-          当前为脱敏诊断视图：保留状态、耗时、Token、工具名称和错误骨架；成员正文、思考、工具参数与结果仅 @admin 可见。
+          当前为脱敏诊断视图：保留状态、耗时、Token、工具名称和错误骨架，原始内容未返回。
         </div>
       )}
 

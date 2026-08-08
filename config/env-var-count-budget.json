@@ -4,7 +4,7 @@
   "updatedAt": "2026-08-05",
   "domains": {
     "server": {
-      "budget": 48,
+      "budget": 47,
       "names": [
         "ACS_ALERT_INBOUND_TOKEN",
         "AGENT_AZEROTH_LEAD_SECRET",
@@ -52,8 +52,7 @@
         "OPENAI_MODEL",
         "PATH",
         "PORT",
-        "RUNTIME_PROCESS_ROLE",
-        "SUPER_ADMIN_USERNAMES"
+        "RUNTIME_PROCESS_ROLE"
       ]
     },
     "acs-orchestrator": {

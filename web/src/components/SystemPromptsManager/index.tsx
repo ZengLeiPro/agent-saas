@@ -151,7 +151,7 @@ export function SystemPromptsManager(): JSX.Element {
       />
 
       <div className="mb-3 rounded-md border border-brand-200 bg-brand-50 px-3 py-2 text-xs leading-5 text-brand-800">
-        保存后从下一次模型调用开始生效；正在生成中的调用不变。该配置影响全平台，仅超级管理员 @admin 可修改。
+        保存后从下一次模型调用开始生效；正在生成中的调用不变。该配置影响全平台，仅平台管理员可修改。
       </div>
 
       {message && (

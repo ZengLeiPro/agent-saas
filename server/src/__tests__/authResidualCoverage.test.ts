@@ -7,14 +7,12 @@
  *  - authRoutesCoverage.test.ts：密码登录 200/401/400/429、/me、GET|POST /users、
  *    /users/:id/status、/password、/activity、login-logs 非法 tenantId 400。
  *  - authTenantIsolation.test.ts：跨租户 403 隔离线 + /users/:id/avatar + login-logs 租户 scope。
- *  - platformGovernance.test.ts：requireSuperAdmin/enforcePlatformWritePolicy 中间件
- *    **本体**（探针 app），但没有测 auth 路由上的真实挂载——把 auth.ts 里
- *    DELETE /login-logs 的 requireSuperAdmin 换回 requireAdmin，它依然全绿。
+ *  - platformGovernance.test.ts：平台管理员统一权限兼容中间件本体（探针 app），
+ *    但没有测 auth 路由上的真实挂载。
  *
  * 本文件专补（按防回归价值排序）：
- *  1. DELETE /login-logs 的 requireSuperAdmin 门禁（07-18 从 requireAdmin 收紧；
- *     历史上组织 admin 可清全局审计日志，属跨租户写漏洞）：组织 admin/普通用户/匿名
- *     /非 super 平台 admin → 403 且日志未动；@admin → 200 清空 + before/excludeUsername 条件清理。
+ *  1. DELETE /login-logs 的平台管理员门禁：组织 admin/普通用户/匿名 → 403 且日志未动；
+ *     任意平台管理员 → 200 清空 + before/excludeUsername 条件清理。
  *  2. /me/phone/send-code、/me/phone/verify：401/格式 400/验证码错误/过期 400/
  *     verify 409 先于验证码校验/冷却 429/IP 频控 429/短信未配置 403。
  *  3. /me/preferences：401/400/200 合并落盘 + 未知键剥离。
@@ -92,9 +90,9 @@ interface RigOptions {
 
 interface TestRig {
   users: {
-    /** username='admin' + pantheon：默认 SUPER_ADMIN_USERNAMES 名单内的超管 */
+    /** pantheon 平台管理员 */
     superAdmin: UserInfo;
-    /** pantheon 普通员工 admin：平台 admin 但非 super */
+    /** 另一名 pantheon 平台管理员 */
     pantheonStaff: UserInfo;
     wainAdmin: UserInfo;
     /** 手机号 13800001111 已验证 */
@@ -247,14 +245,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('DELETE /login-logs：requireSuperAdmin 门禁（07-18 从 requireAdmin 收紧，防回归核心）', () => {
+describe('DELETE /login-logs：平台管理员门禁', () => {
   let h: TestRig;
   beforeEach(async () => { h = await makeRig(); });
   afterEach(async () => { await h.close(); });
 
-  it('组织 admin / 普通用户 / 匿名 → 403 SUPER_ADMIN_REQUIRED，且日志一条未删（含他租户日志）', async () => {
-    // 07-18 前该路由是 requireAdmin：wainAdmin（组织 admin）会被放行并清掉全局
-    // （含 acme 租户）的审计日志——本用例锁死收紧后的行为。
+  it('组织 admin / 普通用户 / 匿名 → 403 PLATFORM_ADMIN_REQUIRED，且日志一条未删（含他租户日志）', async () => {
+    // 组织管理员不能清理平台全局审计日志。
     await seedLog(h.loginLogFilePath, { username: 'wain_user', tenantId: 'wain' });
     await seedLog(h.loginLogFilePath, { username: 'acme_user', tenantId: 'acme' });
 
@@ -263,8 +260,8 @@ describe('DELETE /login-logs：requireSuperAdmin 门禁（07-18 从 requireAdmin
       const res = await h.request('/api/auth/login-logs', { method: 'DELETE' });
       expect(res.status).toBe(403);
       const body = await res.json() as { error: string; code: string };
-      expect(body.code).toBe('SUPER_ADMIN_REQUIRED');
-      expect(body.error).toContain('平台超级管理员');
+      expect(body.code).toBe('PLATFORM_ADMIN_REQUIRED');
+      expect(body.error).toContain('平台管理员');
     }
 
     // 落盘副作用断言：日志文件未被清空
@@ -272,19 +269,17 @@ describe('DELETE /login-logs：requireSuperAdmin 门禁（07-18 从 requireAdmin
     expect(after.total).toBe(2);
   });
 
-  it('非 super 的平台 admin（pantheon 员工）→ 403（路由级独立防线，不依赖 /api 层策略）', async () => {
-    // 生产还有 enforcePlatformWritePolicy 在 /api 层兜底；本 rig 故意不挂它，
-    // 证明 auth.ts 路由自身的 requireSuperAdmin 也能单独拦住万神殿普通员工。
+  it('任意平台管理员均可清空审计日志', async () => {
     await seedLog(h.loginLogFilePath, { username: 'wain_user' });
 
     h.setCaller(h.users.pantheonStaff);
     const res = await h.request('/api/auth/login-logs', { method: 'DELETE' });
-    expect(res.status).toBe(403);
-    expect((await res.json() as { code: string }).code).toBe('SUPER_ADMIN_REQUIRED');
-    expect((await queryLoginLogs({}, h.loginLogFilePath)).total).toBe(1);
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ deleted: 1 });
+    expect((await queryLoginLogs({}, h.loginLogFilePath)).total).toBe(0);
   });
 
-  it('平台超管（@admin）→ 200 全量清空，清空后 GET 总数为 0（行为闭环）', async () => {
+  it('平台管理员（@admin）→ 200 全量清空，清空后 GET 总数为 0（行为闭环）', async () => {
     await seedLog(h.loginLogFilePath, { username: 'u1' });
     await seedLog(h.loginLogFilePath, { username: 'u2' });
     await seedLog(h.loginLogFilePath, { username: 'u3', tenantId: 'acme' });
@@ -299,7 +294,7 @@ describe('DELETE /login-logs：requireSuperAdmin 门禁（07-18 从 requireAdmin
     expect((await get.json() as { total: number }).total).toBe(0);
   });
 
-  it('超管带 before + excludeUsername 条件清理：早于 before 且不在豁免名单的被删', async () => {
+  it('平台管理员带 before + excludeUsername 条件清理：早于 before 且不在豁免名单的被删', async () => {
     await seedLog(h.loginLogFilePath, {
       username: 'u_old', timestamp: '2020-05-05T00:00:00.000Z',
     });

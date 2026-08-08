@@ -172,7 +172,7 @@ export interface RunEventsResponse {
   run: RunSummary;
   billing: RunBillingSummary;
   events: TraceEvent[];
-  /** 平台运营管理员只收到事件骨架，不含正文、思考、工具参数与结果。 */
+  /** 服务端显式返回脱敏诊断事件时为 true。 */
   contentRedacted?: boolean;
 }
 

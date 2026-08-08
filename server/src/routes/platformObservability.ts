@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import type { AppConfig } from '../app/config.js';
 import { isPlatformAdmin } from '../auth/types.js';
-import { hasPlatformCapability, isSuperAdmin } from '../auth/platformGovernance.js';
+import { hasPlatformCapability } from '../auth/platformGovernance.js';
 import type { JwtPayload } from '../auth/types.js';
 import { USER_ID_PATTERN } from '../data/users/store.js';
 import type { UserInfo } from '../data/users/types.js';
@@ -233,7 +233,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
       users = users.filter((user) => compareDesc(user.updatedAt, user.id, cursor.updatedAt, cursor.id) > 0);
     }
     const page = users.slice(0, limit + 1);
-    const items = page.slice(0, limit).map((user) => sanitizeUser(user, isSuperAdmin(req.user)));
+    const items = page.slice(0, limit).map((user) => sanitizeUser(user, isPlatformAdmin(req.user)));
     const last = items[items.length - 1];
     res.json({
       items,
@@ -254,7 +254,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
         listSandboxes(options),
       ]);
       res.json({
-        user: sanitizeUser(user, isSuperAdmin(req.user)),
+        user: sanitizeUser(user, isPlatformAdmin(req.user)),
         sessions30d: sessions.sessions30d,
         runs30d: runs,
         ...(canReadFinance ? {

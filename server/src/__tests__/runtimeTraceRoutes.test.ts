@@ -354,19 +354,18 @@ describe('/api/admin/runtime/trace', () => {
       expect(other.status).toBe(200);
     });
 
-    it('委托平台管理员可看运行骨架，正文、工具参数和成本均脱敏', async () => {
+    it('任意平台管理员均可查看完整运行内容与成本', async () => {
       ({ server, baseUrl } = await startServer({ user: PLATFORM_OPERATOR }));
       const res = await fetch(`${baseUrl}/api/admin/runtime/trace/runs/${RUN_ID}/events`);
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.contentRedacted).toBe(true);
-      expect(body.billing.costRedacted).toBe(true);
-      expect(body.billing.totalCostYuan).toBeUndefined();
+      expect(body.contentRedacted).toBeUndefined();
+      expect(body.billing.costRedacted).toBeUndefined();
+      expect(body.billing.totalCostYuan).toBeDefined();
       const userMessage = body.events.find((event: { type: string }) => event.type === 'user_message');
-      expect(userMessage.content).toBe('（内容已脱敏）');
+      expect(userMessage.content).not.toBe('（内容已脱敏）');
       const toolCall = body.events.find((event: { type: string }) => event.type === 'assistant_tool_calls');
-      expect(toolCall.toolCalls[0].arguments).toBe('（参数已脱敏）');
-      expect(JSON.stringify(body)).not.toContain('/tmp/');
+      expect(toolCall.toolCalls[0].arguments).toContain('/tmp/');
     });
   });
 

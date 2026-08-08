@@ -1111,8 +1111,6 @@ export function PlatformAdminShell({
   settingsOnly?: boolean;
   headerControlsPlacement?: "inline" | "none";
 }) {
-  // 委托平台管理员：客户域操作按能力授权，平台全局配置仍仅 @admin 可写。
-  const { platformReadOnly } = useAuth();
   // mount-once-visited（与 TenantAdminShell 同模式）
   const [visitedPlatformSections, setVisitedPlatformSections] = useState<Set<PlatformSection>>(() =>
     settingsOpen ? new Set([settingsSection]) : new Set(),
@@ -1141,12 +1139,6 @@ export function PlatformAdminShell({
 
   const settingsContent = (
     <div className="flex h-full min-h-0 flex-col">
-      {/* 委托运营提示条 */}
-      {platformReadOnly && (
-        <div className="mb-3 shrink-0 rounded-md border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-          委托运营账号：客户与运维操作按授权开放；平台全局配置、原始会话内容和高风险删除仍需 @admin 执行。
-        </div>
-      )}
       <div className="min-h-0 flex-1">
         {platformSectionsToRender.map(({ id, node }) => {
           if (!visitedPlatformSections.has(id)) return null;

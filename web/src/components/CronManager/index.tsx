@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { navigateToHref } from "@/lib/urlSync";
 import { TaskBoardView } from "@/components/TaskBoard";
@@ -6,6 +7,8 @@ import { CronScheduleView } from "./CronScheduleView";
 
 interface CronManagerProps {
   onJobCountChange?: (enabled: number, total: number) => void;
+  /** 桌面端全局 Header 的二级导航区；undefined 时在页内渲染。 */
+  headerNavigationTarget?: HTMLElement | null;
   /** 桌面端全局 Header 的操作区；undefined 时由当前二级视图渲染页内 Header。 */
   headerActionsTarget?: HTMLElement | null;
 }
@@ -17,7 +20,7 @@ export function cronViewFromLocation(location: Pick<Location, "pathname" | "sear
   return new URLSearchParams(location.search).get("view") === "board" ? "board" : "schedule";
 }
 
-export function CronManager({ onJobCountChange, headerActionsTarget }: CronManagerProps) {
+export function CronManager({ onJobCountChange, headerNavigationTarget, headerActionsTarget }: CronManagerProps) {
   const [view, setView] = useState<CronView>(() => cronViewFromLocation());
   const [mountedViews, setMountedViews] = useState<Record<CronView, boolean>>(() => ({
     schedule: cronViewFromLocation() === "schedule",
@@ -41,16 +44,22 @@ export function CronManager({ onJobCountChange, headerActionsTarget }: CronManag
     navigateToHref(cronView === "board" ? "/cron?view=board" : "/cron");
   };
 
+  const navigation = (
+    <Tabs value={view} onValueChange={changeView}>
+      <TabsList className="h-9" aria-label="任务中心二级导航">
+        <TabsTrigger value="schedule">定时任务</TabsTrigger>
+        <TabsTrigger value="board">任务看板</TabsTrigger>
+      </TabsList>
+    </Tabs>
+  );
+
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
-      <div className="shrink-0 border-b border-border/60 px-4 pt-3 sm:px-6 sm:pt-4">
-        <Tabs value={view} onValueChange={changeView}>
-          <TabsList className="h-9" aria-label="定时任务二级导航">
-            <TabsTrigger value="schedule">任务调度</TabsTrigger>
-            <TabsTrigger value="board">任务看板</TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
+      {headerNavigationTarget === undefined ? (
+        <div className="shrink-0 border-b border-border/60 px-4 pt-3 sm:px-6 sm:pt-4">
+          {navigation}
+        </div>
+      ) : headerNavigationTarget ? createPortal(navigation, headerNavigationTarget) : null}
       <div className="min-h-0 flex-1 overflow-hidden">
         {mountedViews.schedule ? (
           <div className="h-full min-h-0" hidden={view !== "schedule"}>

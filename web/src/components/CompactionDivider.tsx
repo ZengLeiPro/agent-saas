@@ -12,8 +12,8 @@ interface CompactionDividerProps {
 /**
  * 上下文压缩渲染单元（非气泡）：
  * - running：状态条「正在压缩上下文…」，spinner 风格与现有 loading 一致
- * - done：水平分界线「── 已压缩 N 条历史消息 ──」；
- *   debugMode 用户可展开查看摘要正文（与思考块的 code-preview 展示一致）
+ * - done：普通模式仅显示水平分界线；
+ *   debugMode 用户可查看压缩条数，并展开摘要正文（与思考块的 code-preview 展示一致）
  */
 export function CompactionDivider({ item, debugMode }: CompactionDividerProps) {
   const [expanded, setExpanded] = useState(false);
@@ -28,10 +28,14 @@ export function CompactionDivider({ item, debugMode }: CompactionDividerProps) {
     );
   }
 
+  if (debugMode !== true) {
+    return <div className="h-px bg-border" aria-hidden="true" />;
+  }
+
   const label = typeof item.coveredEventCount === 'number' && item.coveredEventCount > 0
     ? `已压缩 ${item.coveredEventCount} 条历史消息`
     : '上下文已压缩';
-  const canExpand = debugMode === true && !!item.summary;
+  const canExpand = !!item.summary;
 
   return (
     <div className="flex flex-col gap-1">

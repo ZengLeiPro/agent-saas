@@ -156,19 +156,15 @@ export function DesktopLayout(props: LayoutProps) {
     });
   }, []);
 
-  // Cron 任务计数（由 CronManager 回报）
-  const [cronJobCount, setCronJobCount] = useState<{ enabled: number; total: number } | null>(null);
+  const [cronHeaderNavigationTarget, setCronHeaderNavigationTarget] = useState<HTMLDivElement | null>(null);
   const [cronHeaderActionsTarget, setCronHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
-  const handleCronJobCountChange = useCallback((enabled: number, total: number) => {
-    setCronJobCount({ enabled, total });
-  }, []);
 
   // Header 标题：根据 activeTab 动态显示
   const headerTitle = useMemo(() => {
     if (activeTab === "profile") return "我的 Agent";
     if (activeTab === "capabilities") return "能力中心";
     if (activeTab === "scenarios") return "任务模板";
-    if (activeTab === "cron") return "定时任务";
+    if (activeTab === "cron") return "任务中心";
     if (activeTab === "tenants") return "组织分析";
     if (activeTab === "tenant-admin") return "组织分析";
     if (activeTab === "platform-admin") return "平台分析";
@@ -405,7 +401,9 @@ export function DesktopLayout(props: LayoutProps) {
                 <PanelToggleIcon className="size-5" />
               </Button>
             )}
-            {activeTab === "capabilities" ? (
+            {activeTab === "cron" ? (
+              <div ref={setCronHeaderNavigationTarget} className="min-w-0" />
+            ) : activeTab === "capabilities" ? (
               <Tabs value={activeCapabilityTab} onValueChange={handleCapabilityTabChange} className="min-w-0">
                 <CapabilityTabsList
                   activeValue={activeCapabilityTab}
@@ -420,11 +418,6 @@ export function DesktopLayout(props: LayoutProps) {
                 {headerTitle}
               </div>
             ) : null}
-            {activeTab === "cron" && cronJobCount && (
-              <span className="text-xs text-muted-foreground">
-                ({cronJobCount.enabled}/{cronJobCount.total})
-              </span>
-            )}
           </div>
           {activeTab === "platform-admin" && (
             <PlatformAdminHeaderControls
@@ -594,7 +587,7 @@ export function DesktopLayout(props: LayoutProps) {
           <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "cron" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
               <CronManager
-                onJobCountChange={handleCronJobCountChange}
+                headerNavigationTarget={cronHeaderNavigationTarget}
                 headerActionsTarget={cronHeaderActionsTarget}
               />
             </Suspense>

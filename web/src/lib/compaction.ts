@@ -34,7 +34,7 @@ export interface CompactionStatusEvent {
 /**
  * web 本地消息 item：
  * - status='running'：消息流中的「正在压缩上下文…」状态条
- * - status='done'：「已压缩 N 条历史消息」分界线（debugMode 可展开摘要）
+ * - status='done'：普通模式仅显示分界线，debugMode 显示压缩条数并可展开摘要
  */
 export interface CompactionMessageItem {
   id: string;

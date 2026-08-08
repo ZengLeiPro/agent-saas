@@ -34,7 +34,7 @@ export interface SidebarNavItem {
 
 export const baseNavItems: SidebarNavItem[] = [
   { tab: "capabilities", label: "能力中心" },
-  { tab: "cron", label: "定时任务", personalAgentOnly: true },
+  { tab: "cron", label: "任务中心", personalAgentOnly: true },
 ];
 
 export function getSidebarNavItems({

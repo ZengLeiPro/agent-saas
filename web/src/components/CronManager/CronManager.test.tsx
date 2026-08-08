@@ -49,12 +49,17 @@ vi.mock("@/components/TaskBoard", () => ({
 }));
 
 function ExternalHeaderHarness() {
-  const [target, setTarget] = useState<HTMLDivElement | null>(null);
+  const [navigationTarget, setNavigationTarget] = useState<HTMLDivElement | null>(null);
+  const [actionsTarget, setActionsTarget] = useState<HTMLDivElement | null>(null);
 
   return (
     <>
-      <div ref={setTarget} data-testid="cron-header-actions" />
-      <CronManager headerActionsTarget={target} />
+      <div ref={setNavigationTarget} data-testid="cron-header-navigation" />
+      <div ref={setActionsTarget} data-testid="cron-header-actions" />
+      <CronManager
+        headerNavigationTarget={navigationTarget}
+        headerActionsTarget={actionsTarget}
+      />
     </>
   );
 }
@@ -67,8 +72,11 @@ describe("CronManager 桌面布局", () => {
   it("使用全局 Header 的唯一操作区，并在新建态原位切换操作", async () => {
     const user = userEvent.setup();
     const { container } = render(<ExternalHeaderHarness />);
+    const navigation = screen.getByTestId("cron-header-navigation");
     const header = screen.getByTestId("cron-header-actions");
 
+    expect(within(navigation).getByRole("tab", { name: "定时任务" })).toBeTruthy();
+    expect(within(navigation).getByRole("tab", { name: "任务看板" })).toBeTruthy();
     expect(within(header).getByRole("button", { name: "刷新" })).toBeTruthy();
     expect(within(header).getByRole("button", { name: "新建" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "定时任务" })).toBeNull();
@@ -90,7 +98,7 @@ describe("CronManager 桌面布局", () => {
     expect(screen.queryByText("创建定时任务")).toBeNull();
   });
 
-  it("在任务调度与任务看板间同步 query，并响应 URL 返回", async () => {
+  it("在定时任务与任务看板间同步 query，并响应 URL 返回", async () => {
     const user = userEvent.setup();
     render(<CronManager />);
 
@@ -118,7 +126,7 @@ describe("CronManager 桌面布局", () => {
     const draft = screen.getByRole("textbox", { name: "看板草稿" }) as HTMLInputElement;
     await user.type(draft, "不要丢失");
 
-    await user.click(screen.getByRole("tab", { name: "任务调度" }));
+    await user.click(screen.getByRole("tab", { name: "定时任务" }));
     expect(screen.getByText("创建定时任务")).toBeTruthy();
 
     await user.click(screen.getByRole("tab", { name: "任务看板" }));

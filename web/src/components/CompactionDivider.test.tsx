@@ -12,18 +12,19 @@ const item = {
 };
 
 describe('CompactionDivider', () => {
-  it('普通模式只显示压缩结果，不显示说明和摘要入口', () => {
-    render(<CompactionDivider item={item} debugMode={false} />);
+  it('普通模式只显示一条分隔线', () => {
+    const { container } = render(<CompactionDivider item={item} debugMode={false} />);
 
-    expect(screen.getByText('已压缩 42 条历史消息')).toBeTruthy();
+    expect(screen.queryByText('已压缩 42 条历史消息')).toBeNull();
     expect(screen.queryByText('查看摘要')).toBeNull();
-    expect(screen.queryByText(/分界线以上的内容/)).toBeNull();
     expect(screen.queryByText(item.summary)).toBeNull();
+    expect(container.querySelectorAll('[aria-hidden="true"]')).toHaveLength(1);
   });
 
-  it('调试模式可以展开查看摘要', () => {
+  it('调试模式显示压缩结果，并可以展开查看摘要', () => {
     render(<CompactionDivider item={item} debugMode />);
 
+    expect(screen.getByText('已压缩 42 条历史消息')).toBeTruthy();
     const toggle = screen.getByRole('button', { name: '查看摘要' });
     expect(screen.queryByText(item.summary)).toBeNull();
 

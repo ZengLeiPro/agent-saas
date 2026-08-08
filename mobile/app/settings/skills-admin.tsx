@@ -25,8 +25,7 @@ export default function SkillsAdminScreen() {
 
   // Admin guard
   const canManagePlatformSkills = user?.role === 'admin'
-    && user.tenantId === 'pantheon'
-    && (user.isSuperAdmin || user.platformCapabilities?.includes('skill.platform.manage'));
+    && user.tenantId === 'pantheon';
   useEffect(() => {
     if (user && !canManagePlatformSkills) router.replace('/(tabs)/settings');
   }, [user, router, canManagePlatformSkills]);

@@ -5,7 +5,7 @@
  *   - skillsRouterTenantIsolation.test.ts：跨组织 403 主格局、pool 写权限、tenant 自有 skill 全流程
  *   - skillsRoutesCoverage.test.ts：requireAdmin/requirePlatformAdmin 403、pool document 读写、
  *     /me 自服务、/sync 空池 409、promote 的「Source user not found」404
- *   - platformGovernance.test.ts：只读平台管理员治理中间件（非本路由逻辑）
+ *   - platformGovernance.test.ts：平台管理员统一权限中间件（非本路由逻辑）
  *
  * 本文件补：
  *   1. POST /custom/:skillId/promote（skills.ts L651-682）：

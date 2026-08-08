@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { JwtPayload } from "../auth/types.js";
+import { PLATFORM_CAPABILITIES } from "../../../shared/src/types/user.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import { TenantStore } from "../data/tenants/store.js";
 import { UserStore } from "../data/users/store.js";
@@ -339,7 +340,7 @@ describe("auth users router admin boundaries", () => {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        platformCapabilities: ["tenant.manage", "billing.adjust"],
+        platformCapabilities: PLATFORM_CAPABILITIES,
         platformCapabilityLimits: {
           billingMaxCreditsPerTransaction: 500,
           billingMaxCreditsPerDay: 2_000,
@@ -348,7 +349,7 @@ describe("auth users router admin boundaries", () => {
     });
     expect(configured.status).toBe(200);
     await expect(configured.json()).resolves.toMatchObject({
-      platformCapabilities: ["tenant.manage", "billing.adjust"],
+      platformCapabilities: PLATFORM_CAPABILITIES,
       platformCapabilityLimits: {
         billingMaxCreditsPerTransaction: 500,
         billingMaxCreditsPerDay: 2_000,

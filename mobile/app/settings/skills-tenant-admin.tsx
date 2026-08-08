@@ -47,8 +47,7 @@ export default function TenantSkillsAdminScreen() {
   const [editContent, setEditContent] = useState('');
 
   const canManageTenantSkills = user?.role === 'admin'
-    && user.tenantId !== 'pantheon'
-    && (user.isSuperAdmin || !user.platformCapabilities || user.platformCapabilities.includes('skill.tenant.manage'));
+    && user.tenantId !== 'pantheon';
   useEffect(() => {
     if (user && !canManageTenantSkills) router.replace('/(tabs)/settings');
   }, [canManageTenantSkills, router, user]);

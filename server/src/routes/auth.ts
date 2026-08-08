@@ -16,6 +16,7 @@ import {
   requireSuperAdmin,
 } from "../auth/platformGovernance.js";
 import type { JwtPayload } from "../auth/types.js";
+import { PLATFORM_CAPABILITIES } from "../../../shared/src/types/user.js";
 import { isModelAllowedForTenant } from "../app/models.js";
 import type { ModelsConfig } from "../types/index.js";
 import type { UserStore } from "../data/users/store.js";
@@ -92,15 +93,7 @@ const permissionsSchema = z
   })
   .optional();
 
-const platformCapabilitySchema = z.enum([
-  "tenant.manage",
-  "user.manage",
-  "customer_config.manage",
-  "billing.adjust",
-  "credential.reset",
-  "runtime.operate",
-  "finance.read",
-]);
+const platformCapabilitySchema = z.enum(PLATFORM_CAPABILITIES);
 
 const platformCapabilityLimitsSchema = z.object({
   billingMaxCreditsPerTransaction: z.number().positive().optional(),

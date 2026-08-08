@@ -52,7 +52,7 @@ async function withApp(username: string, tenantId: string, run: (baseUrl: string
 }
 
 describe('Agent Runtime Profiles admin authorization', () => {
-  it('allows delegated platform admins to read but rejects every write server-side', async () => {
+  it('allows every platform admin to read and write', async () => {
     await withApp('operator', DEFAULT_TENANT_ID, async (baseUrl, store) => {
       const read = await fetch(`${baseUrl}/api/admin/agent-profiles`);
       expect(read.status).toBe(200);
@@ -62,32 +62,31 @@ describe('Agent Runtime Profiles admin authorization', () => {
       expect(payload.platformTools.enabled).not.toContain('Shell');
       expect(payload.semantics.effectiveToolsDependOnRuntime).toBe(true);
       const mutations = [
-        ['POST', '/api/admin/agent-profiles', { profileKey: 'custom_profile', name: '测试' }],
-        ['PATCH', '/api/admin/agent-profiles/profile-1/draft', { expectedRevision: 1, name: '测试' }],
-        ['POST', '/api/admin/agent-profiles/profile-1/copy', { profileKey: 'custom_copy', name: '副本' }],
-        ['POST', '/api/admin/agent-profiles/profile-1/publish', { expectedRevision: 1 }],
-        ['POST', '/api/admin/agent-profiles/profile-1/archive', { expectedRevision: 1 }],
-        ['PUT', '/api/admin/agent-profiles/bindings/main', { profileId: 'profile-1' }],
+        ['POST', '/api/admin/agent-profiles', { profileKey: 'custom_profile', name: '测试' }, 201],
+        ['PATCH', '/api/admin/agent-profiles/profile-1/draft', { expectedRevision: 1, name: '测试' }, 200],
+        ['POST', '/api/admin/agent-profiles/profile-1/copy', { profileKey: 'custom_copy', name: '副本' }, 201],
+        ['POST', '/api/admin/agent-profiles/profile-1/publish', { expectedRevision: 1 }, 200],
+        ['POST', '/api/admin/agent-profiles/profile-1/archive', { expectedRevision: 1 }, 200],
+        ['PUT', '/api/admin/agent-profiles/bindings/main', { profileId: 'profile-1' }, 200],
       ] as const;
-      for (const [method, path, body] of mutations) {
+      for (const [method, path, body, expectedStatus] of mutations) {
         const response = await fetch(`${baseUrl}${path}`, {
           method,
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(body),
         });
-        expect(response.status, `${method} ${path}`).toBe(403);
-        expect((await response.json() as any).code).toBe('SUPER_ADMIN_REQUIRED');
+        expect(response.status, `${method} ${path}`).toBe(expectedStatus);
       }
-      expect(store.createProfile).not.toHaveBeenCalled();
-      expect(store.updateDraft).not.toHaveBeenCalled();
-      expect(store.copyProfile).not.toHaveBeenCalled();
-      expect(store.publish).not.toHaveBeenCalled();
-      expect(store.archive).not.toHaveBeenCalled();
-      expect(store.updateBinding).not.toHaveBeenCalled();
+      expect(store.createProfile).toHaveBeenCalledOnce();
+      expect(store.updateDraft).toHaveBeenCalledOnce();
+      expect(store.copyProfile).toHaveBeenCalledOnce();
+      expect(store.publish).toHaveBeenCalledOnce();
+      expect(store.archive).toHaveBeenCalledOnce();
+      expect(store.updateBinding).toHaveBeenCalledOnce();
     });
   });
 
-  it('allows @admin to create and bind while organization admins cannot read', async () => {
+  it('allows platform admins to create and bind while organization admins cannot read', async () => {
     await withApp('admin', DEFAULT_TENANT_ID, async (baseUrl, store) => {
       const created = await fetch(`${baseUrl}/api/admin/agent-profiles`, {
         method: 'POST',

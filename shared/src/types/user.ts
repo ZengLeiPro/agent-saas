@@ -6,7 +6,7 @@ export interface UserPermissions {
 }
 
 /**
- * 平台能力标识。保留用于 API 兼容与界面能力判断；
+ * 平台能力标识。保留用于旧 API 与客户端数据兼容；
  * role=admin + tenantId=pantheon 的平台管理员实际始终拥有全部能力。
  */
 export const PLATFORM_CAPABILITIES = [

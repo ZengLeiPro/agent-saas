@@ -80,16 +80,18 @@ describe('system prompts admin router', () => {
     });
   });
 
-  it('allows delegated platform admins to read but not modify prompts', async () => {
-    await withApp('operator', async ({ baseUrl }) => {
+  it('allows every platform admin to read and modify prompts', async () => {
+    await withApp('operator', async ({ baseUrl, configPath, registry }) => {
       expect((await fetch(`${baseUrl}/api/admin/system-prompts`)).status).toBe(200);
       const response = await fetch(`${baseUrl}/api/admin/system-prompts/main.static`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: '不应生效' }),
+        body: JSON.stringify({ content: '平台管理员提示语' }),
       });
-      expect(response.status).toBe(403);
-      expect((await response.json() as any).code).toBe('SUPER_ADMIN_REQUIRED');
+      expect(response.status).toBe(200);
+      expect(registry.get('main.static')).toBe('平台管理员提示语');
+      expect(JSON.parse(readFileSync(configPath, 'utf-8')).systemPrompts['main.static'])
+        .toBe('平台管理员提示语');
     });
   });
 });

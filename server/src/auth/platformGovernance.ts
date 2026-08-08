@@ -1,5 +1,8 @@
 import type { Request, Response, NextFunction } from "express";
-import type { PlatformCapability } from "../../../shared/src/types/user.js";
+import {
+  PLATFORM_CAPABILITIES,
+  type PlatformCapability,
+} from "../../../shared/src/types/user.js";
 import type { JwtPayload } from "./types.js";
 import { isPlatformAdmin } from "./types.js";
 
@@ -10,21 +13,6 @@ import { isPlatformAdmin } from "./types.js";
  * isSuperAdmin / requireSuperAdmin 保留为兼容别名，避免旧调用方和客户端协议同时破坏；
  * 它们不再区分用户名或账号层级。
  */
-
-const PLATFORM_CAPABILITIES: readonly PlatformCapability[] = [
-  "tenant.manage",
-  "user.manage",
-  "customer_config.manage",
-  "skill.platform.manage",
-  "skill.tenant.manage",
-  "skill.user.support",
-  "billing.adjust",
-  "credential.reset",
-  "runtime.operate",
-  "finance.read",
-  "workflow_demo.review",
-  "workflow_demo.publish",
-];
 
 const PLATFORM_CAPABILITY_SET = new Set<PlatformCapability>(PLATFORM_CAPABILITIES);
 

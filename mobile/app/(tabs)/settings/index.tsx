@@ -62,12 +62,8 @@ export default function SettingsScreen() {
   const tts = useTtsPlayer();
   const router = useRouter();
   const isAdmin = user?.role === "admin";
-  const canManagePlatformSkills = isAdmin
-    && user?.tenantId === "pantheon"
-    && (user.isSuperAdmin || user.platformCapabilities?.includes("skill.platform.manage"));
-  const canManageTenantSkills = isAdmin
-    && user?.tenantId !== "pantheon"
-    && (user?.isSuperAdmin || !user?.platformCapabilities || user.platformCapabilities.includes("skill.tenant.manage"));
+  const canManagePlatformSkills = isAdmin && user?.tenantId === "pantheon";
+  const canManageTenantSkills = isAdmin && user?.tenantId !== "pantheon";
   const tenantFeatures =
     user?.tenantFeatures ?? DEFAULT_TENANT_SETTINGS.features;
   const { level: fontSizeLevel, setLevel: setFontSizeLevel } = useFontSize();

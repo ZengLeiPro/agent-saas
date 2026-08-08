@@ -17,6 +17,7 @@ import {
   type TaskBoardTaskMoveInput,
   type TaskBoardTaskPatchInput,
 } from '../../../shared/src/types/taskboard.js';
+import { boardPromptMigrationSql, normalizeBoardPrompt, rowToBoard } from './boardFields.js';
 import {
   TaskboardConflictError,
   TaskboardNotFoundError,
@@ -86,17 +87,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       `);
-      await client.query(`
-        ALTER TABLE ${this.boardsTable}
-          ADD COLUMN IF NOT EXISTS prompt TEXT;
-        UPDATE ${this.boardsTable}
-          SET prompt=${quoteSqlLiteral(TASKBOARD_DEFAULT_PROMPT)}
-          WHERE prompt IS NULL;
-        ALTER TABLE ${this.boardsTable}
-          ALTER COLUMN prompt SET DEFAULT ${quoteSqlLiteral(TASKBOARD_DEFAULT_PROMPT)};
-        ALTER TABLE ${this.boardsTable}
-          ALTER COLUMN prompt SET NOT NULL
-      `);
+      await client.query(boardPromptMigrationSql(this.boardsTable));
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.tasksTable} (
           id TEXT PRIMARY KEY,
@@ -241,7 +232,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async createBoard(identity: TaskboardIdentity, input: TaskBoardCreateInput): Promise<TaskBoard> {
     const name = requireText(input.name, 'Board name');
     const description = optionalText(input.description);
-    const prompt = normalizePrompt(input.prompt ?? TASKBOARD_DEFAULT_PROMPT);
+    const prompt = normalizeBoardPrompt(input.prompt ?? TASKBOARD_DEFAULT_PROMPT);
     try {
       const result = await this.pool.query(
         `INSERT INTO ${this.boardsTable}
@@ -275,7 +266,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         assignments.push(`description=$${params.length}`);
       }
       if (input.prompt !== undefined) {
-        params.push(normalizePrompt(input.prompt));
+        params.push(normalizeBoardPrompt(input.prompt));
         assignments.push(`prompt=$${params.length}`);
       }
       try {
@@ -1176,21 +1167,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   }
 }
 
-function rowToBoard(row: Record<string, unknown>): TaskBoard {
-  return {
-    id: String(row.id),
-    name: String(row.name),
-    ...(row.description !== null && row.description !== undefined
-      ? { description: String(row.description) }
-      : {}),
-    prompt: String(row.prompt ?? TASKBOARD_DEFAULT_PROMPT),
-    version: Number(row.version),
-    ...(row.archived_at ? { archivedAt: toIso(row.archived_at) } : {}),
-    createdAt: toIso(row.created_at),
-    updatedAt: toIso(row.updated_at),
-  };
-}
-
 function rowToTask(row: Record<string, unknown>): TaskBoardTask {
   return {
     id: String(row.id),
@@ -1292,10 +1268,6 @@ function optionalText(value: string | undefined): string | null {
   if (value === undefined) return null;
   const normalized = value.trim();
   return normalized || null;
-}
-
-function normalizePrompt(value: string): string {
-  return value.trim();
 }
 
 function normalizeLabels(labels: string[] | undefined): string[] {

@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { EntityIcons } from "@/lib/icons";
 import { authFetch } from "@/lib/authFetch";
 import {
+  resolveBillingAllowance,
+  type MyMemberBudget as MemberBudgetAllowance,
+} from "@/hooks/useTenantBillingVisibility";
+import {
   consumePendingBillingBadgeOpen,
   subscribeBillingBadgeOpen,
 } from "@/lib/billingBadgeBus";
@@ -25,11 +29,9 @@ interface SessionBillingSummary {
 
 type MemberBudgetStatus = "unset" | "normal" | "attention" | "warning" | "over";
 
-interface MyMemberBudget {
-  monthlyLimitCredits: number | null;
+interface MyMemberBudget extends MemberBudgetAllowance {
   monthUsedCredits: number;
   monthReservedCredits: number;
-  remainingCredits: number | null;
   enforcementMode: "notify" | "stop_new_runs";
   perRunLimitCredits: number | null;
   canStartRun: boolean;
@@ -222,7 +224,8 @@ export function BillingMiniBadge({
   if (!summary || !summary.billingEnabled || summary.billingMode === "internal") return null;
 
   const tone = badgeTone(summary.lowBalance, memberBudget?.status, memberBudget?.canStartRun === false);
-  const availableCredits = summary.balanceCredits - summary.reservedCredits;
+  const allowance = resolveBillingAllowance(summary, memberBudget);
+  const allowanceLabel = allowance.source === "member" ? "个人剩余额度" : "组织可用积分";
 
   return (
     <div ref={containerRef} className="relative" onClick={(event) => event.stopPropagation()}>
@@ -230,10 +233,10 @@ export function BillingMiniBadge({
         type="button"
         onClick={() => handleOpenChange(!open)}
         className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium tabular-nums transition-colors ${BADGE_TONE_CLASS[tone]}`}
-        title="组织积分余额"
+        title={allowanceLabel}
       >
         <EntityIcons.credits className="size-4" aria-hidden="true" />
-        {formatCredits(availableCredits)}
+        {formatCredits(allowance.credits)}
       </button>
 
       {open && (
@@ -242,7 +245,7 @@ export function BillingMiniBadge({
             <div className="flex items-center justify-between gap-3">
               <span className="flex items-center gap-1.5 text-sm font-semibold">
                 <EntityIcons.credits className="size-[18px]" aria-hidden="true" />
-                积分余额
+                {allowanceLabel}
               </span>
               <span className="rounded-full bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground shadow-sm">
                 {billingModeLabel(summary.billingMode)}
@@ -250,9 +253,9 @@ export function BillingMiniBadge({
             </div>
             <div className="mt-3 flex items-baseline gap-2">
               <span className="text-2xl font-semibold leading-none tabular-nums">
-                {formatDetailedCredits(availableCredits)}
+                {formatDetailedCredits(allowance.credits)}
               </span>
-              <span className="text-xs text-muted-foreground">可用</span>
+              <span className="text-xs text-muted-foreground">{allowance.source === "member" ? "本月可用" : "可用"}</span>
               {summary.lowBalance && (
                 <span className="ml-auto rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-destructive">
                   余额较低

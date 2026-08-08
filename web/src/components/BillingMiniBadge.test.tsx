@@ -96,7 +96,7 @@ describe("BillingMiniBadge", () => {
 
     render(<BillingMiniBadge sessionId="session-1" />);
 
-    await userEvent.click(await screen.findByTitle("组织积分余额"));
+    await userEvent.click(await screen.findByTitle("个人剩余额度"));
 
     expect(screen.getByText("试用")).toBeTruthy();
     expect(screen.getByText("已预留")).toBeTruthy();
@@ -105,6 +105,8 @@ describe("BillingMiniBadge", () => {
     expect(screen.getAllByText("在途预占").length).toBeGreaterThan(0);
     expect(screen.getByText("执行方式")).toBeTruthy();
     expect(screen.getByText("超额停新任务")).toBeTruthy();
+    expect(screen.getByText("个人剩余额度")).toBeTruthy();
+    expect(screen.getAllByText("4,000.25").length).toBeGreaterThan(0);
     expect(screen.getByText("12,800.25")).toBeTruthy();
     expect(screen.getByText("15,000.25")).toBeTruthy();
     expect(screen.getByText("20,000.5")).toBeTruthy();
@@ -128,6 +130,7 @@ describe("BillingMiniBadge", () => {
     render(<BillingMiniBadge />);
 
     expect(await screen.findByText("组织本月消耗")).toBeTruthy();
+    expect(screen.getByText("组织可用积分")).toBeTruthy();
     expect(screen.getByText("个人预算数据暂不可用")).toBeTruthy();
   });
 
@@ -143,7 +146,7 @@ describe("BillingMiniBadge", () => {
     await userEvent.click(screen.getByRole("button", { name: "100" }));
     expect(screen.getByText("当前上下文")).toBeTruthy();
 
-    await userEvent.click(await screen.findByTitle("组织积分余额"));
+    await userEvent.click(await screen.findByTitle("组织可用积分"));
 
     expect(await screen.findByText("组织本月消耗")).toBeTruthy();
     await waitFor(() => {

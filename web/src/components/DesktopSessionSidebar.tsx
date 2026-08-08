@@ -59,7 +59,7 @@ import {
 } from "@agent/shared";
 import { useResizableWidth } from "@/hooks/useResizableWidth";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
-import { useTenantBillingSummary, type TenantBillingSummary } from "@/hooks/useTenantBillingVisibility";
+import { useTenantBillingAllowance, type BillingAllowance, type TenantBillingSummary } from "@/hooks/useTenantBillingVisibility";
 import { AddAccountDialog } from "@/components/AddAccountDialog";
 import { LogoutAccountDialog } from "@/components/LogoutAccountDialog";
 import { getAccountKey, type SavedAccountSummary } from "@/lib/savedAccounts";
@@ -629,6 +629,7 @@ interface SidebarUserMenuFooterProps {
   onOpenAdminSettings?: (target: AdminSettingsTarget) => void;
   onOpenBilling?: () => void;
   billingSummary: TenantBillingSummary | null;
+  billingAllowance: BillingAllowance | null;
   accounts: SavedAccountSummary[];
   switchAccount: (accountKey: string) => void;
 }
@@ -647,6 +648,7 @@ function SidebarUserMenuFooter({
   onOpenAdminSettings,
   onOpenBilling,
   billingSummary,
+  billingAllowance,
   accounts,
   switchAccount,
 }: SidebarUserMenuFooterProps) {
@@ -659,9 +661,6 @@ function SidebarUserMenuFooter({
   }, [showUserMenu]);
 
   const currentAccountKey = authUser ? getAccountKey(authUser) : null;
-  const visibleBillingSummary = billingSummary?.billingEnabled && billingSummary.billingMode !== "internal"
-    ? billingSummary
-    : null;
 
   return (
     <div className="px-1 py-1.5">
@@ -692,10 +691,10 @@ function SidebarUserMenuFooter({
           <span className="min-w-0 flex-1 truncate text-[13px] font-semibold leading-tight">
             {authUser ? authUser.realName || authUser.username : "未登录"}
           </span>
-          {visibleBillingSummary ? (
+          {billingAllowance && billingSummary ? (
             <span className="flex shrink-0 items-center gap-1 rounded-full border border-border/80 bg-background px-2 py-1 text-xs font-medium tabular-nums text-foreground shadow-sm">
               <EntityIcons.credits className="size-3.5" aria-hidden="true" />
-              {formatBillingCredits(visibleBillingSummary.balanceCredits)}
+              {formatBillingCredits(billingSummary.balanceCredits)}
             </span>
           ) : (
             <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground/60" />
@@ -777,7 +776,7 @@ function SidebarUserMenuFooter({
               )}
             </div>
 
-            {visibleBillingSummary && onOpenBilling && (
+            {billingSummary && billingAllowance && onOpenBilling && (
               <button
                 type="button"
                 className="mb-2 mt-1 w-full rounded-2xl border border-border/80 bg-muted/35 p-3 text-left transition-colors hover:bg-muted/60"
@@ -786,13 +785,13 @@ function SidebarUserMenuFooter({
                 <span className="flex items-center justify-between gap-3">
                   <span className="font-semibold">积分账户</span>
                   <span className="rounded-full bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-sm">
-                    {billingModeLabel(visibleBillingSummary.billingMode)}
+                    {billingModeLabel(billingSummary.billingMode)}
                   </span>
                 </span>
                 <span className="mt-3 flex items-center gap-2 text-sm">
                   <EntityIcons.credits className="size-[18px]" aria-hidden="true" />
-                  <span className="text-muted-foreground">可用积分</span>
-                  <span className="ml-auto text-lg font-semibold tabular-nums">{formatDetailedBillingCredits(visibleBillingSummary.balanceCredits)}</span>
+                  <span className="text-muted-foreground">{billingAllowance.source === "member" ? "个人剩余额度" : "组织可用积分"}</span>
+                  <span className="ml-auto text-lg font-semibold tabular-nums">{formatDetailedBillingCredits(billingAllowance.credits)}</span>
                   <ChevronRight className="size-4 text-muted-foreground" />
                 </span>
               </button>
@@ -1125,7 +1124,7 @@ export function DesktopSessionSidebar({
   personalAgentEnabled = true,
 }: DesktopSessionSidebarProps) {
   const { user: authUser, accounts, switchAccount, authEnabled } = useAuth();
-  const billingSummary = useTenantBillingSummary(authUser?.tenantId);
+  const { summary: billingSummary, allowance: billingAllowance } = useTenantBillingAllowance(authUser?.tenantId);
   const showBilling = billingSummary?.billingEnabled === true && billingSummary.billingMode !== "internal";
   // 会话列表头像开关：默认不显示（=== true 才显示），关闭时列表走紧凑单行布局
   const compactList = authUser?.preferences?.showSessionListAvatar !== true;
@@ -1951,6 +1950,7 @@ export function DesktopSessionSidebar({
             requestOpenBillingBadge();
           } : undefined}
           billingSummary={billingSummary}
+          billingAllowance={billingAllowance}
           accounts={accounts}
           switchAccount={switchAccount}
         />
@@ -2316,7 +2316,7 @@ export function DesktopSessionSidebar({
               (onPushTab ?? onTabChange)?.("chat");
               requestOpenBillingBadge();
             } : undefined}
-            billingSummary={billingSummary}
+            billingSummary={billingSummary} billingAllowance={billingAllowance}
             accounts={accounts}
             switchAccount={switchAccount}
           />

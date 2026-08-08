@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 
+import { PgGovernanceMigrationRunner, governanceTablePrefix } from '../governance-schema/index.js';
 import type {
   GovernanceAuditAppendInput,
   GovernanceAuditEvent,
@@ -10,15 +11,9 @@ import type {
 
 type PgPool = pg.Pool;
 
-const IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const SAFE_NAME_PATTERN = /^[a-zA-Z0-9_.:-]{1,120}$/;
 const FORBIDDEN_METADATA_KEY = /(secret|token|password|message|content|persona|memory|prompt|parameter|argument)/i;
-
-function safeIdentifier(value: string): string {
-  if (!IDENTIFIER_PATTERN.test(value)) throw new Error(`Invalid PostgreSQL identifier: ${value}`);
-  return value;
-}
 
 function assertShortText(label: string, value: string, max: number): void {
   if (!value.trim() || value.length > max || /[\u0000]/.test(value)) {
@@ -88,54 +83,16 @@ export class PgGovernanceAuditStore implements GovernanceAuditStore {
   readonly schemaVersionsTable: string;
 
   constructor(private readonly options: PgGovernanceAuditStoreOptions) {
-    const prefix = safeIdentifier(options.tablePrefix ?? 'runtime');
+    const prefix = governanceTablePrefix(options.tablePrefix);
     this.eventsTable = `${prefix}_governance_audit_events`;
     this.schemaVersionsTable = `${prefix}_governance_schema_versions`;
   }
 
   async init(): Promise<void> {
-    await this.options.pool.query(`
-      CREATE TABLE IF NOT EXISTS ${this.schemaVersionsTable} (
-        version INTEGER PRIMARY KEY,
-        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `);
-    await this.options.pool.query(`
-      CREATE TABLE IF NOT EXISTS ${this.eventsTable} (
-        sequence BIGSERIAL UNIQUE NOT NULL,
-        audit_id TEXT PRIMARY KEY,
-        correlation_id TEXT NOT NULL,
-        change_id TEXT,
-        actor_type TEXT NOT NULL,
-        actor_user_id TEXT NOT NULL,
-        actor_persona TEXT NOT NULL,
-        actor_tenant_id TEXT,
-        action TEXT NOT NULL,
-        target_type TEXT NOT NULL,
-        target_id TEXT NOT NULL,
-        target_tenant_id TEXT,
-        purpose TEXT NOT NULL,
-        reason TEXT,
-        before_digest TEXT,
-        after_digest TEXT,
-        result TEXT NOT NULL CHECK (result IN ('intent', 'succeeded', 'failed')),
-        occurred_at TIMESTAMPTZ NOT NULL,
-        metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb
-      )
-    `);
-    await this.options.pool.query(`
-      CREATE INDEX IF NOT EXISTS ${this.eventsTable}_correlation_idx
-      ON ${this.eventsTable} (correlation_id, sequence)
-    `);
-    await this.options.pool.query(`
-      CREATE INDEX IF NOT EXISTS ${this.eventsTable}_target_idx
-      ON ${this.eventsTable} (target_tenant_id, target_type, target_id, occurred_at DESC)
-    `);
-    await this.options.pool.query(`
-      INSERT INTO ${this.schemaVersionsTable} (version)
-      VALUES (1)
-      ON CONFLICT (version) DO NOTHING
-    `);
+    await new PgGovernanceMigrationRunner(
+      this.options.pool,
+      this.options.tablePrefix,
+    ).run();
   }
 
   async append(input: GovernanceAuditAppendInput): Promise<GovernanceAuditEvent> {

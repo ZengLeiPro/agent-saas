@@ -60,11 +60,13 @@ describe('治理审计存储', () => {
 
   it('PG store 使用独立 schema version 与仅追加 INSERT', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const query = async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, ...(params ? { params } : {}) });
+      return { rows: [], rowCount: 0 };
+    };
     const pool = {
-      query: async (sql: string, params?: unknown[]) => {
-        queries.push({ sql, ...(params ? { params } : {}) });
-        return { rows: [], rowCount: 0 };
-      },
+      query,
+      connect: async () => ({ query, release: () => undefined }),
     };
     const store = new PgGovernanceAuditStore({ pool: pool as never, tablePrefix: 'test' });
     await store.init();

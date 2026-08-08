@@ -110,6 +110,7 @@ import { PgMessageFeedbackStore } from '../data/feedback/store.js';
 import { PgAppealStore } from '../data/appeals/index.js';
 import type { AppealStore } from '../data/appeals/index.js';
 import { PgGovernanceAuditStore, type GovernanceAuditStore } from '../data/governance-audit/index.js';
+import { PgMembershipStore } from '../data/memberships/index.js';
 import { MemoryIndexService } from '../memory/index/service.js';
 import type { MemoryIndexConfig } from '../memory/index/types.js';
 import { UserStore } from '../data/users/store.js';
@@ -383,6 +384,8 @@ export interface AppRuntime {
   billingService?: BillingService;
   /** 独立、append-only 的治理审计；未装配时高风险变更必须 fail closed。 */
   governanceAuditStore?: GovernanceAuditStore;
+  /** Membership/Owner 与平台管理员独立事实模型；M1 仅影子写与回填。 */
+  membershipStore?: PgMembershipStore;
   /** 手动触发 token usage 全量回填（force=true）。未初始化 businessDb 时为 undefined */
   triggerTokenUsageRebuild?: () => Promise<unknown>;
   /** Runtime audit 读查询（按 sessionId/runId 投影 tool_audit）。 */
@@ -1036,6 +1039,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let artifactShutdown: (() => Promise<void>) | undefined;
   let billingService: BillingService | undefined;
   let governanceAuditStore: GovernanceAuditStore | undefined;
+  let membershipStore: PgMembershipStore | undefined;
   const beginMemoryEmbeddingBillingRun = async (workspaceDir: string) => {
     if (!billingService) return undefined;
     const rel = relative(agentCwd, resolve(workspaceDir));
@@ -1191,6 +1195,30 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
     await pgGovernanceAuditStore.init();
     governanceAuditStore = pgGovernanceAuditStore;
+    membershipStore = new PgMembershipStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await membershipStore.init();
+    if (userStore && tenantStore) {
+      try {
+        const backfill = await membershipStore.backfillLegacyIdentities({
+          users: userStore.listAll(),
+          tenants: tenantStore.listAll(),
+          projectedBy: 'system:governance-m1',
+          platformTenantId: DEFAULT_TENANT_ID,
+        });
+        serverLogger.info(
+          `Governance Membership shadow backfill: memberships=${backfill.membershipsProjected} `
+          + `platformAdmins=${backfill.platformAdminsProjected} issues=${backfill.issuesRecorded}`,
+        );
+      } catch (error) {
+        serverLogger.warn(
+          `Governance Membership shadow backfill failed; legacy authority remains active: `
+          + `${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     if (enableSchedulerWorker) {
       runtimeOutboundStreamRelay = new RuntimeOutboundStreamRelay(pgEventStore, {
         logger: serverLogger.child('RuntimeOutboundStreamRelay'),
@@ -3622,6 +3650,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tokenUsageStore,
     billingService,
     governanceAuditStore,
+    membershipStore,
     runtimeAuditQuery,
     runtimeRunStore: pgRunStore,
     runtimeSchedulerCapacity,

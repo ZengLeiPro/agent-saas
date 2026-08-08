@@ -32,12 +32,12 @@ import {
 
 // ── projectKey 纯逻辑 ──────────────────────────────────────────
 describe('transcripts/projectKey', () => {
-  it('isValidSessionId 接受 UUID 与 sub-<uuid>，拒绝非法格式', () => {
+  it('isValidSessionId 接受 UUID、sub-<uuid> 与 taskboard-<uuid>，拒绝非法格式', () => {
     expect(isValidSessionId('12345678-1234-1234-1234-123456789abc')).toBe(true);
     expect(isValidSessionId('sub-12345678-1234-1234-1234-123456789abc')).toBe(true);
+    expect(isValidSessionId('taskboard-12345678-1234-1234-1234-123456789abc')).toBe(true);
     expect(isValidSessionId('not-a-uuid')).toBe(false);
     expect(isValidSessionId('../evil')).toBe(false);
-    // 前缀必须恰好是 sub-，其它前缀不放行
     expect(isValidSessionId('xx-12345678-1234-1234-1234-123456789abc')).toBe(false);
   });
 

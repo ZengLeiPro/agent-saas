@@ -19,11 +19,11 @@ describe('FileSessionCatalog', () => {
     cleanupDirs.clear();
   });
 
-  it('restores sessions from meta before the legacy transcript exists', async () => {
+  it('restores taskboard sessions from meta before the legacy transcript exists', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'session-catalog-meta-'));
     cleanupDirs.add(cwd);
 
-    const sessionId = randomUUID();
+    const sessionId = `taskboard-${randomUUID()}`;
     const catalog = new FileSessionCatalog({ agentCwd: cwd });
     const record = createRuntimeSessionRecord({
       sessionId,

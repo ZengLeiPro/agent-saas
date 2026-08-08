@@ -30,11 +30,18 @@ import { dueAtFromDate, PRIORITY_LABELS, splitLabels, STATUS_LABELS } from "./co
 interface TaskDialogProps {
   open: boolean;
   active?: boolean;
+  initialStatus?: TaskBoardStatus;
   onOpenChange: (open: boolean) => void;
   onCreate: (input: TaskBoardTaskCreateInput) => Promise<void>;
 }
 
-export function TaskDialog({ open, active = true, onOpenChange, onCreate }: TaskDialogProps) {
+export function TaskDialog({
+  open,
+  active = true,
+  initialStatus = "backlog",
+  onOpenChange,
+  onCreate,
+}: TaskDialogProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<TaskBoardStatus>("backlog");
@@ -48,12 +55,12 @@ export function TaskDialog({ open, active = true, onOpenChange, onCreate }: Task
     if (!open) return;
     setTitle("");
     setDescription("");
-    setStatus("backlog");
+    setStatus(initialStatus);
     setPriority("none");
     setLabels("");
     setDueDate("");
     setError(null);
-  }, [open]);
+  }, [initialStatus, open]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();

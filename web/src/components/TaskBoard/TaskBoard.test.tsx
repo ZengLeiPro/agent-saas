@@ -170,6 +170,25 @@ describe("TaskBoardView", () => {
     expect(within(mobileList).queryByRole("button", { name: /打开任务 TASK-1/ })).toBeNull();
   });
 
+  it("每个状态列可快捷新建并预选该状态", async () => {
+    const user = userEvent.setup();
+    render(<TaskBoardView />);
+
+    const inProgressColumn = await screen.findByRole("region", { name: "进行中列" });
+    await user.click(within(inProgressColumn).getByRole("button", { name: "在进行中新建任务" }));
+
+    expect(screen.getByRole("heading", { name: "新建任务" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "新任务状态" }).textContent).toContain("进行中");
+
+    await user.type(screen.getByLabelText("标题"), "补充进行中任务");
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
+
+    await waitFor(() => expect(mocks.addTask).toHaveBeenCalledWith(expect.objectContaining({
+      title: "补充进行中任务",
+      status: "in_progress",
+    })));
+  });
+
   it("移动端与键盘可用上移下移调整列内顺序", async () => {
     mocks.tasks = [
       taskOne,

@@ -4,6 +4,8 @@ import {
   type TaskBoardStatus,
   type TaskBoardTask,
 } from "@agent/shared";
+import { Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -20,6 +22,7 @@ interface TaskColumnsProps {
   desktopStatus: TaskBoardStatus | "all";
   mobileStatus: TaskBoardStatus;
   onMobileStatusChange: (status: TaskBoardStatus) => void;
+  onCreateTask: (status: TaskBoardStatus) => void;
   onOpenTask: (task: TaskBoardTask) => void;
   onMoveTask: (task: TaskBoardTask, direction: "up" | "down") => void;
   onDragStart: (taskId: string) => void;
@@ -43,6 +46,7 @@ export function TaskColumns({
   desktopStatus,
   mobileStatus,
   onMobileStatusChange,
+  onCreateTask,
   onOpenTask,
   onMoveTask,
   onDragStart,
@@ -62,6 +66,18 @@ export function TaskColumns({
             ))}
           </SelectContent>
         </Select>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="mt-2 w-full"
+          disabled={readOnly}
+          aria-label={`在${STATUS_LABELS[mobileStatus]}新建任务`}
+          onClick={() => onCreateTask(mobileStatus)}
+        >
+          <Plus className="size-3.5" />
+          新建任务
+        </Button>
       </div>
 
       <div
@@ -92,6 +108,20 @@ export function TaskColumns({
                   {columnTasks.length}
                 </span>
               </header>
+              <div className="shrink-0 border-b p-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="w-full"
+                  disabled={readOnly}
+                  aria-label={`在${STATUS_LABELS[status]}新建任务`}
+                  onClick={() => onCreateTask(status)}
+                >
+                  <Plus className="size-3.5" />
+                  新建任务
+                </Button>
+              </div>
               <div
                 className="min-h-24 flex-1 space-y-2 overflow-y-auto p-2"
                 onDragOver={(event) => {

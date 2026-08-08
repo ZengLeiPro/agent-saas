@@ -89,6 +89,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
 
   const [boardDialogMode, setBoardDialogMode] = useState<BoardDialogMode>(null);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
+  const [taskDialogStatus, setTaskDialogStatus] = useState<TaskBoardStatus>("backlog");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -211,6 +212,11 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     void moveTaskTo(task, task.status, previousTaskId, nextTaskId).catch(() => undefined);
   }, [moveTaskTo, tasks, visibleTasks]);
 
+  const openTaskDialog = (status: TaskBoardStatus) => {
+    setTaskDialogStatus(status);
+    setTaskDialogOpen(true);
+  };
+
   const headerActions = (
     <>
       <Button size="sm" variant="outline" onClick={() => void refresh()}>
@@ -219,7 +225,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
       </Button>
       <Button
         size="sm"
-        onClick={() => setTaskDialogOpen(true)}
+        onClick={() => openTaskDialog("backlog")}
         disabled={!selectedBoard || !!selectedBoard.archivedAt}
       >
         <Plus className="size-3.5" />
@@ -290,6 +296,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
               desktopStatus={desktopStatus}
               mobileStatus={mobileStatus}
               onMobileStatusChange={setMobileStatus}
+              onCreateTask={openTaskDialog}
               onOpenTask={(task) => {
                 setSelectedTaskId(task.id);
                 setDetailOpen(true);
@@ -353,6 +360,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
       <TaskDialog
         active={active}
         open={taskDialogOpen}
+        initialStatus={taskDialogStatus}
         onOpenChange={setTaskDialogOpen}
         onCreate={async (input) => {
           await addTask(input);

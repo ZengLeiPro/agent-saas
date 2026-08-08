@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { TASKBOARD_DEFAULT_PROMPT } from '../../../shared/src/types/taskboard.js';
 import { PgRunStore, RunCreateConflictError } from '../runtime/runStore.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import {
@@ -101,6 +102,26 @@ describePg('PgTaskboardStore contract', () => {
       .rejects.toMatchObject({ code: 'TASKBOARD_BOARD_NAME_EXISTS' });
   });
 
+  it('stores the default board prompt and allows it to be customized', async () => {
+    const withDefault = await store.createBoard(alice, { name: '默认提示语' });
+    expect(withDefault.prompt).toBe(TASKBOARD_DEFAULT_PROMPT);
+
+    const customized = await store.updateBoard(alice, withDefault.id, {
+      prompt: '只处理当前任务，不修改无关文件。',
+      expectedVersion: withDefault.version,
+    });
+    expect(customized).toMatchObject({
+      prompt: '只处理当前任务，不修改无关文件。',
+      version: withDefault.version + 1,
+    });
+
+    const empty = await store.updateBoard(alice, withDefault.id, {
+      prompt: '',
+      expectedVersion: customized.version,
+    });
+    expect(empty.prompt).toBe('');
+  });
+
   it('allocates stable numbers, returns CAS current state, and makes archived boards/tasks read-only', async () => {
     const board = await store.createBoard(alice, { name: 'CAS 与归档' });
     const first = await store.createTask(alice, board.id, { title: '第一项' });
@@ -155,7 +176,10 @@ describePg('PgTaskboardStore contract', () => {
   });
 
   it('atomically claims one Agent execution, rereads comments, and finalizes idempotently', async () => {
-    const board = await store.createBoard(alice, { name: 'Agent 执行闭环' });
+    const board = await store.createBoard(alice, {
+      name: 'Agent 执行闭环',
+      prompt: '按本看板规范执行。',
+    });
     const task = await store.createTask(alice, board.id, { title: '执行我', status: 'todo' });
     const claimed = await store.claimExecution(alice, task.id, {
       expectedVersion: task.version,
@@ -216,6 +240,7 @@ describePg('PgTaskboardStore contract', () => {
     await store.createComment(alice, task.id, { body: '认领后补充的最新条件' });
     const context = await store.getExecutionContextByRunId('run-a');
     expect(context?.task.status).toBe('in_progress');
+    expect(context?.boardPrompt).toBe('按本看板规范执行。');
     expect(context?.comments.at(-1)?.body).toBe('认领后补充的最新条件');
     await expect(store.setExecutionStatus('run-a', 'waiting_user')).resolves.toMatchObject({
       status: 'waiting_user',

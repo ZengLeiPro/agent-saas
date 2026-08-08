@@ -82,6 +82,7 @@ function makeRig(overrides: Partial<TaskboardExecutionStore> = {}) {
     getExecutionContextByRunId: vi.fn(async (runId: string): Promise<TaskboardExecutionContext | null> => ({
       identity,
       task,
+      boardPrompt: '只修改与任务直接相关的文件。',
       comments: [comment],
       execution: execution({ runId }),
     })),
@@ -201,7 +202,10 @@ describe('TaskboardExecutionCoordinator', () => {
     expect(prepared.metadata.wakeMessage).toMatchObject({
       content: expect.stringContaining(task.title),
     });
-    expect((prepared.metadata.wakeMessage as { content: string }).content).toContain(comment.body);
+    const content = (prepared.metadata.wakeMessage as { content: string }).content;
+    expect(content).toContain(comment.body);
+    expect(content).toContain('看板提示语：\n只修改与任务直接相关的文件。');
+    expect(content).not.toContain('1. 直接完成任务，必要时使用可用工具；不要只给计划。');
   });
 
   it('wake 竞争到终态后立即停止，不再启动 Agent', async () => {

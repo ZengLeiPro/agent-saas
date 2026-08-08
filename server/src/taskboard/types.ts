@@ -74,6 +74,7 @@ export interface TaskboardExecutionReconcileCandidate {
 export interface TaskboardExecutionContext {
   identity: TaskboardIdentity;
   task: TaskBoardTask;
+  boardPrompt: string;
   comments: TaskBoardComment[];
   execution: TaskBoardExecution;
 }

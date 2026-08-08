@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { TASKBOARD_DEFAULT_PROMPT } from "@agent/shared";
 import type { TaskBoard, TaskBoardCreateInput, TaskBoardPatchInput } from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
-type BoardDraftField = "name" | "description";
+type BoardDraftField = "name" | "description" | "prompt";
 
 interface BoardDialogProps {
   open: boolean;
@@ -34,6 +35,7 @@ export function BoardDialog({
 }: BoardDialogProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [prompt, setPrompt] = useState(TASKBOARD_DEFAULT_PROMPT);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dirtyFieldsRef = useRef<Set<BoardDraftField>>(new Set());
@@ -51,12 +53,14 @@ export function BoardDialog({
       dirtyFieldsRef.current.clear();
       setName(board?.name ?? "");
       setDescription(board?.description ?? "");
+      setPrompt(board?.prompt ?? TASKBOARD_DEFAULT_PROMPT);
       setError(null);
       return;
     }
     if (!board) return;
     if (!dirtyFieldsRef.current.has("name")) setName(board.name);
     if (!dirtyFieldsRef.current.has("description")) setDescription(board.description ?? "");
+    if (!dirtyFieldsRef.current.has("prompt")) setPrompt(board.prompt);
   }, [board, open]);
 
   const submit = async (event: FormEvent) => {
@@ -77,11 +81,13 @@ export function BoardDialog({
         const input: TaskBoardPatchInput = { expectedVersion: board.version };
         if (dirtyFieldsRef.current.has("name")) input.name = normalizedName;
         if (dirtyFieldsRef.current.has("description")) input.description = description.trim();
+        if (dirtyFieldsRef.current.has("prompt")) input.prompt = prompt.trim();
         await onUpdate(board.id, input);
       } else {
         await onCreate({
           name: normalizedName,
           ...(description.trim() ? { description: description.trim() } : {}),
+          prompt: prompt.trim(),
         });
       }
       onOpenChange(false);
@@ -104,7 +110,7 @@ export function BoardDialog({
         <DialogHeader>
           <DialogTitle>{board ? "编辑看板" : "创建看板"}</DialogTitle>
           <DialogDescription>
-            {board ? "修改看板名称和说明。" : "为不同工作主题创建独立看板。"}
+            {board ? "修改看板名称、说明和提示语。" : "为不同工作主题创建独立看板和执行提示语。"}
           </DialogDescription>
         </DialogHeader>
         <form id="taskboard-board-form" className="space-y-4" onSubmit={submit}>
@@ -135,6 +141,23 @@ export function BoardDialog({
               rows={4}
               disabled={submitting}
             />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="taskboard-board-prompt">看板提示语</Label>
+            <Textarea
+              id="taskboard-board-prompt"
+              value={prompt}
+              onChange={(event) => {
+                dirtyFieldsRef.current.add("prompt");
+                setPrompt(event.target.value);
+              }}
+              placeholder="每个任务交给 Agent 执行时都会附带这段提示语"
+              rows={8}
+              disabled={submitting}
+            />
+            <p className="text-xs text-muted-foreground">
+              每次执行此看板中的任务时，都会传递当前提示语。
+            </p>
           </div>
           {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
         </form>

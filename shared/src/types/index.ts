@@ -140,6 +140,7 @@ export {
   TASKBOARD_STATUSES,
   TASKBOARD_PRIORITIES,
   TASKBOARD_EXECUTION_STATUSES,
+  TASKBOARD_DEFAULT_PROMPT,
 } from "./taskboard";
 export type {
   TaskBoardStatus,

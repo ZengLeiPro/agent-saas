@@ -18,14 +18,16 @@ import {
 const boardCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().max(4_000).optional(),
+  prompt: z.string().max(20_000).optional(),
 }).strict();
 
 const boardPatchSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   description: z.string().max(4_000).optional(),
+  prompt: z.string().max(20_000).optional(),
   expectedVersion: z.number().int().min(1),
 }).strict().refine(
-  (input) => input.name !== undefined || input.description !== undefined,
+  (input) => input.name !== undefined || input.description !== undefined || input.prompt !== undefined,
   { message: 'At least one board field is required' },
 );
 

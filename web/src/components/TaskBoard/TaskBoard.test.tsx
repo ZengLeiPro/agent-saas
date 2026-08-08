@@ -72,6 +72,7 @@ function board(id: string, name: string, archived = false): TaskBoard {
     id,
     name,
     description: `${name}说明`,
+    prompt: `${name}提示语`,
     version: 2,
     ...(archived ? { archivedAt: "2026-08-01T00:00:00.000Z" } : {}),
     createdAt: "2026-08-01T00:00:00.000Z",

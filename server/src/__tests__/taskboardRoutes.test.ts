@@ -31,6 +31,7 @@ const USER: JwtPayload = {
 const BOARD: TaskBoard = {
   id: 'board-1',
   name: '研发事项',
+  prompt: '执行看板任务',
   version: 1,
   createdAt: '2026-08-01T00:00:00.000Z',
   updatedAt: '2026-08-01T00:00:00.000Z',
@@ -120,6 +121,7 @@ describe('Taskboard routes', () => {
     const created = await rig.request('/api/taskboard/boards', postJson({
       name: '研发事项',
       description: '首期',
+      prompt: '只处理当前看板任务',
     }));
     expect(created.status).toBe(201);
     expect(captured.identities.at(-1)).toEqual({
@@ -128,7 +130,11 @@ describe('Taskboard routes', () => {
       username: USER.username,
       userRole: USER.role,
     });
-    expect(captured.createBoards).toEqual([{ name: '研发事项', description: '首期' }]);
+    expect(captured.createBoards).toEqual([{
+      name: '研发事项',
+      description: '首期',
+      prompt: '只处理当前看板任务',
+    }]);
   });
 
   it('strictly validates every mutation shape and parses search/status/priority filters', async () => {

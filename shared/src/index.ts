@@ -225,6 +225,7 @@ export {
   TASKBOARD_STATUSES,
   TASKBOARD_PRIORITIES,
   TASKBOARD_EXECUTION_STATUSES,
+  TASKBOARD_DEFAULT_PROMPT,
   buildScenarioPrompt,
 } from "./types/index";
 export { saveUserPreferences } from "./lib/preferencesApi";

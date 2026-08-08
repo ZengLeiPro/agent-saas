@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createOrgAgentsRouter, type OrgAgentsRouterDeps } from '../routes/orgAgents.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
+import { TenantStore } from '../data/tenants/store.js';
 import type { JwtPayload } from '../auth/types.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import type { UsageStatsSessionReader } from '../routes/orgAgentUsageStats.js';
@@ -40,6 +41,7 @@ const KAIYAN_ADMIN: JwtPayload = { sub: 'u-ka', username: 'kaiyan_admin', role: 
 
 interface TestRig {
   store: OrgAgentStore;
+  tenantStore: TenantStore;
   setCaller(caller: JwtPayload): void;
   request(path: string, init?: RequestInit): Promise<Response>;
   close(): Promise<void>;
@@ -48,11 +50,15 @@ interface TestRig {
 async function makeTestRig(overrides: Partial<OrgAgentsRouterDeps> = {}): Promise<TestRig> {
   const tmpRoot = mkdtempSync(join(tmpdir(), 'org-agents-routes-'));
   const store = new OrgAgentStore(join(tmpRoot, 'org-agents.json'));
+  const tenantStore = new TenantStore(join(tmpRoot, 'tenants.json'));
+  await tenantStore.ensureDefaultTenant();
+  await tenantStore.create({ id: 'wain', name: '唯恩', createdBy: 'system' });
+  await tenantStore.create({ id: 'kaiyan', name: '开沿', createdBy: 'system' });
   const app = express();
   app.use(express.json());
   let currentCaller: JwtPayload = PLATFORM_ADMIN;
   app.use((req, _res, next) => { req.user = currentCaller; next(); });
-  app.use('/api/org-agents', createOrgAgentsRouter({ orgAgentStore: store, ...overrides }));
+  app.use('/api/org-agents', createOrgAgentsRouter({ orgAgentStore: store, tenantStore, ...overrides }));
   const server: Server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
@@ -60,6 +66,7 @@ async function makeTestRig(overrides: Partial<OrgAgentsRouterDeps> = {}): Promis
   const baseUrl = typeof addr === 'object' && addr ? `http://127.0.0.1:${addr.port}` : '';
   return {
     store,
+    tenantStore,
     setCaller(c) { currentCaller = c; },
     request: (path, init) => fetch(`${baseUrl}${path}`, init),
     close: async () => {
@@ -187,6 +194,30 @@ describe('org-agents 路由权限', () => {
     const res2 = await h.request('/api/org-agents', postBody({ tenantId: 'kaiyan', name: '跨租户配置' }));
     expect(res2.status).toBe(201);
     expect((await res2.json() as OrgAgentRecord).tenantId).toBe('kaiyan');
+  });
+
+  it('平台 admin 创建时必须显式选择有效客户组织，且 pantheon 不承载组织 Agent', async () => {
+    h.setCaller(PLATFORM_ADMIN);
+
+    const missing = await h.request('/api/org-agents', postBody());
+    expect(missing.status).toBe(400);
+    await expect(missing.json()).resolves.toMatchObject({
+      error: '平台管理员创建组织 Agent 时必须显式指定 tenantId',
+    });
+
+    const root = await h.request('/api/org-agents', postBody({ tenantId: DEFAULT_TENANT_ID }));
+    expect(root.status).toBe(400);
+    await expect(root.json()).resolves.toMatchObject({ error: '万神殿不承载组织 Agent' });
+
+    const missingTenant = await h.request('/api/org-agents', postBody({ tenantId: 'ghost' }));
+    expect(missingTenant.status).toBe(400);
+    await expect(missingTenant.json()).resolves.toMatchObject({ error: 'tenantId "ghost" 不存在' });
+
+    await h.tenantStore.setDisabled('wain', true, PLATFORM_ADMIN.sub);
+    const disabled = await h.request('/api/org-agents', postBody({ tenantId: 'wain' }));
+    expect(disabled.status).toBe(400);
+    await expect(disabled.json()).resolves.toMatchObject({ error: 'tenantId "wain" 已禁用' });
+    expect(h.store.listAll()).toHaveLength(0);
   });
 
   it('组织 admin 跨租户读/改/删 403；普通用户未被指派 GET /:id 一律 404 防枚举', async () => {

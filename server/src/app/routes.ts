@@ -849,6 +849,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         "/api/org-agents",
         createOrgAgentsRouter({
           orgAgentStore: runtime.orgAgentStore,
+          tenantStore: runtime.tenantStore!,
           orgAgentAvatarsDir: resolve(processCwd, "./data/org-agent-avatars"),
           getGuardrailModelConfigs: runtime.getGuardrailModelConfigs,
           billingService: runtime.billingService,

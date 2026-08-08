@@ -186,7 +186,7 @@ describe('auth routes coverage', () => {
     expect(body.users.every((u) => u.tenantId === 'wain')).toBe(true);
   });
 
-  it('POST /users：用户名重复 409、tenant 不存在 400、组织 admin 忽略跨租户入参', async () => {
+  it('POST /users：平台必须显式选 tenant、pantheon 只收 admin、组织 admin 忽略跨租户入参', async () => {
     h.setCaller(h.users.platformAdmin);
     // 用户名重复 → 409
     const dup = await h.request('/api/auth/users', jsonInit('POST', {
@@ -201,6 +201,28 @@ describe('auth routes coverage', () => {
     }));
     expect(badTenant.status).toBe(400);
     expect((await badTenant.json() as { error: string }).error).toContain('不存在');
+
+    const missingTenant = await h.request('/api/auth/users', jsonInit('POST', {
+      username: 'newuser-no-tenant', password: 'password123',
+    }));
+    expect(missingTenant.status).toBe(400);
+    await expect(missingTenant.json()).resolves.toMatchObject({
+      error: '平台管理员创建账号时必须显式指定 tenantId',
+    });
+
+    const rootMember = await h.request('/api/auth/users', jsonInit('POST', {
+      username: 'root-member', password: 'password123', tenantId: DEFAULT_TENANT_ID,
+    }));
+    expect(rootMember.status).toBe(400);
+    await expect(rootMember.json()).resolves.toMatchObject({ error: '万神殿只允许创建平台管理员' });
+
+    const rootAdmin = await h.request('/api/auth/users', jsonInit('POST', {
+      username: 'root-admin', password: 'password123', tenantId: DEFAULT_TENANT_ID, role: 'admin',
+    }));
+    expect(rootAdmin.status).toBe(201);
+    await expect(rootAdmin.json()).resolves.toMatchObject({
+      username: 'root-admin', role: 'admin', tenantId: DEFAULT_TENANT_ID,
+    });
 
     // 组织 admin 建用户时 body.tenantId 被忽略，强制绑到调用方 tenant
     h.setCaller(h.users.wainAdmin);

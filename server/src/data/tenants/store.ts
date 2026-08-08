@@ -214,6 +214,9 @@ export class TenantStore {
     const tenant = this.tenants.find(t => t.id === id);
     if (!tenant) throw new Error('Tenant not found');
     if (input.name !== undefined) {
+      if (id === DEFAULT_TENANT_ID) {
+        throw new Error(`Cannot rename the default tenant "${DEFAULT_TENANT_ID}"`);
+      }
       const trimmed = input.name.trim();
       if (!trimmed) throw new Error('Tenant name cannot be empty');
       tenant.name = trimmed;

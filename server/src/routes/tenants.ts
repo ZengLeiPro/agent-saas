@@ -14,7 +14,7 @@ import { isPlatformAdmin, requireAdmin, requirePlatformAdmin } from '../auth/mid
 import { auditLog } from '../data/login-logs/index.js';
 import { apiLogger } from '../utils/logger.js';
 import type { TenantStore } from '../data/tenants/store.js';
-import { TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
+import { DEFAULT_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
 import type { TenantDeletionReport } from '../data/tenants/cleanup.js';
 import {
   MAX_COMPANY_INFO_CHARS,
@@ -529,6 +529,11 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
     const tenant = tenantStore.findById(req.params.id);
     if (!tenant) {
       res.status(404).json({ error: '组织不存在' });
+      return;
+    }
+    // 根租户不可删除，必须在调用任何跨存储清理器前 fail closed。
+    if (tenant.id === DEFAULT_TENANT_ID) {
+      res.status(409).json({ error: `Cannot delete the default tenant "${DEFAULT_TENANT_ID}"` });
       return;
     }
     if (!opts.deleteTenantResources) {

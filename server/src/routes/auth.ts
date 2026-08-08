@@ -1017,16 +1017,21 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         platformCapabilities,
         platformCapabilityLimits,
       } = parsed.data;
-      // tenantId 业务规则：
-      //   - 平台 admin 可指定任意已存在 tenant；省略默认为 platform admin 的 tenant
-      //   - 组织 admin 不能跨组织建用户，强制绑到调用方 tenantId（忽略入参）
+      // 平台管理员必须显式选择目标组织，避免漏传 tenantId 时把客户账号落入 pantheon。
+      // 组织管理员始终绑定自身组织，忽略 body.tenantId。
       let effectiveTenantId: string;
       if (isPlatformAdmin(req.user)) {
-        effectiveTenantId =
-          parsed.data.tenantId || req.user!.tenantId || DEFAULT_TENANT_ID;
+        if (!parsed.data.tenantId) {
+          res.status(400).json({ error: "平台管理员创建账号时必须显式指定 tenantId" });
+          return;
+        }
+        effectiveTenantId = parsed.data.tenantId;
       } else {
-        // 组织 admin：忽略 body.tenantId
-        effectiveTenantId = req.user!.tenantId || DEFAULT_TENANT_ID;
+        effectiveTenantId = req.user!.tenantId;
+      }
+      if (effectiveTenantId === DEFAULT_TENANT_ID && role !== "admin") {
+        res.status(400).json({ error: "万神殿只允许创建平台管理员" });
+        return;
       }
       if (
         (platformCapabilities !== undefined || platformCapabilityLimits !== undefined)
@@ -1167,28 +1172,19 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         platformCapabilities,
         platformCapabilityLimits,
       } = parsed.data;
-      // tenantId 改动权限：仅平台 admin 可改；其他 role 入参被忽略
-      let tenantIdUpdate: string | undefined;
-      if (parsed.data.tenantId && isPlatformAdmin(req.user)) {
-        if (tenantStore) {
-          const tenant = tenantStore.findById(parsed.data.tenantId);
-          if (!tenant) {
-            res
-              .status(400)
-              .json({ error: `tenantId "${parsed.data.tenantId}" 不存在` });
-            return;
-          }
-          if (tenant.disabled) {
-            res
-              .status(400)
-              .json({ error: `tenantId "${parsed.data.tenantId}" 已禁用` });
-            return;
-          }
-        }
-        tenantIdUpdate = parsed.data.tenantId;
+      // 跨组织转移会牵涉 Session、Memory、Workspace、Skill 与 Credential，
+      // 通用用户 PATCH 不再承担该动作；相同 tenantId 仅作为兼容 no-op 接受。
+      if (parsed.data.tenantId && parsed.data.tenantId !== target.tenantId) {
+        res.status(400).json({ error: "通用用户接口不支持跨组织迁移，请使用专用迁移流程" });
+        return;
       }
-      const effectiveUpdatedTenantId = tenantIdUpdate || target.tenantId;
+      const tenantIdUpdate: string | undefined = undefined;
+      const effectiveUpdatedTenantId = target.tenantId;
       const effectiveUpdatedRole = role || target.role;
+      if (effectiveUpdatedTenantId === DEFAULT_TENANT_ID && effectiveUpdatedRole !== "admin") {
+        res.status(400).json({ error: "万神殿只允许平台管理员" });
+        return;
+      }
       if (
         (platformCapabilities !== undefined || platformCapabilityLimits !== undefined)
         && (effectiveUpdatedTenantId !== DEFAULT_TENANT_ID || effectiveUpdatedRole !== "admin")
@@ -1217,9 +1213,6 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       if (policyError) {
         res.status(400).json({ error: policyError });
         return;
-      }
-      if (tenantIdUpdate && tenantIdUpdate !== target.tenantId) {
-        await deps.onUserTenantChanging?.(target);
       }
       const user = await userStore.update(req.params.id, {
         password,
@@ -1277,6 +1270,8 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         res.status(403).json({ error: peerAdminError });
         return;
       }
+      // 最后有效管理员保护必须先于 Connector/Cron 等清理副作用。
+      userStore.assertCanDelete(target.id);
       await deps.onUserDeleting?.(target);
       if (!deps.onUserDeleting) {
         await mcpOAuthService?.disconnectUser(target.username, target.tenantId);

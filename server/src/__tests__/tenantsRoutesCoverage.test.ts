@@ -186,6 +186,22 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
   let h: TestRig;
   afterEach(async () => { await h.close(); });
 
+  describe('PATCH /:id', () => {
+    it('平台管理员不能重命名 pantheon', async () => {
+      h = await makeTestRig();
+      h.setCaller(PLATFORM_ADMIN);
+      const res = await h.request(
+        `/api/tenants/${DEFAULT_TENANT_ID}`,
+        jsonInit('PATCH', { name: '客户组织' }),
+      );
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        error: `Cannot rename the default tenant "${DEFAULT_TENANT_ID}"`,
+      });
+      expect(h.tenantStore.findById(DEFAULT_TENANT_ID)?.name).toBe('万神殿');
+    });
+  });
+
   // -------------------------------------------------------------------------
   // DELETE /api/tenants/:id —— 此前无任何路由级测试
   // -------------------------------------------------------------------------
@@ -254,7 +270,7 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
       expect(h.tenantStore.count()).toBe(2);
     });
 
-    it('删默认租户被 store 拒绝 → 409，且不触发 onTenantDisabled', async () => {
+    it('删默认租户在路由层拒绝 → 409，且不触发清理器或 onTenantDisabled', async () => {
       h = await makeTestRig();
       h.setCaller(PLATFORM_ADMIN);
       const res = await h.request(
@@ -265,7 +281,7 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
       const body = await res.json() as { error: string };
       expect(body.error).toContain('Cannot delete');
       expect(h.tenantStore.findById(DEFAULT_TENANT_ID)).toBeTruthy(); // 未删成
-      expect(h.callOrder).toEqual([`deleter:${DEFAULT_TENANT_ID}`]);
+      expect(h.callOrder).toEqual([]);
     });
 
     it('清理器抛 "Tenant not found" → 404；抛普通错误 → 500 且组织仍在', async () => {

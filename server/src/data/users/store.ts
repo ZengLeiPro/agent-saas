@@ -52,12 +52,8 @@ export interface CreateUserInput {
   phoneVerifiedAt?: string;
   dingtalkStaffId?: string;
   debugMode?: boolean;
-  /**
-   * Tenant 归属。多组织改造 PR 2 起：未指定时默认归属平台根组织。
-   * 调用方（routes/auth.ts POST /users）负责按 platform_admin / tenant_admin 语义
-   * 校验 tenantId 合法性；store 层只保证字段存在。
-   */
-  tenantId?: string;
+  /** Tenant 归属。所有调用方都必须显式传入，不允许静默落入平台根组织。 */
+  tenantId: string;
   permissions?: UserPermissions;
   platformCapabilities?: PlatformCapability[];
   platformCapabilityLimits?: PlatformCapabilityLimits;
@@ -245,6 +241,12 @@ export class UserStore {
   }
 
   async create(input: CreateUserInput): Promise<UserInfo> {
+    if (!input.tenantId) {
+      throw new Error("tenantId is required");
+    }
+    if (input.tenantId === DEFAULT_TENANT_ID && input.role !== "admin") {
+      throw new Error(`Only platform admins may belong to tenant "${DEFAULT_TENANT_ID}"`);
+    }
     if (this.findByUsername(input.username)) {
       throw new Error("Username already exists");
     }
@@ -260,7 +262,7 @@ export class UserStore {
       username: input.username,
       passwordHash: await bcrypt.hash(input.password, BCRYPT_ROUNDS),
       role: input.role,
-      tenantId: input.tenantId || DEFAULT_TENANT_ID,
+      tenantId: input.tenantId,
       ...(input.realName ? { realName: input.realName } : {}),
       ...(input.position ? { position: input.position } : {}),
       ...(input.phone ? { phone: input.phone } : {}),
@@ -301,6 +303,9 @@ export class UserStore {
 
     const nextRole = input.role ?? user.role;
     const nextTenantId = input.tenantId || user.tenantId;
+    if (nextTenantId === DEFAULT_TENANT_ID && nextRole !== "admin") {
+      throw new Error(`Only platform admins may belong to tenant "${DEFAULT_TENANT_ID}"`);
+    }
     const removesActiveAdminFromTenant =
       user.role === "admin" &&
       !user.disabled &&
@@ -367,7 +372,7 @@ export class UserStore {
     return info;
   }
 
-  async delete(id: string): Promise<void> {
+  assertCanDelete(id: string): void {
     const user = this.findById(id);
     if (!user) throw new Error("User not found");
     if (
@@ -377,6 +382,10 @@ export class UserStore {
     ) {
       throw new Error("Cannot delete the last admin");
     }
+  }
+
+  async delete(id: string): Promise<void> {
+    this.assertCanDelete(id);
     this.users = this.users.filter((u) => u.id !== id);
     await this.persist();
   }

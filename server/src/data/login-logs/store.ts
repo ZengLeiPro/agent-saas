@@ -45,7 +45,7 @@ export async function queryLoginLogs(
     skill: ['skill_visibility_updated', 'skill_promoted', 'skill_custom_deleted', 'skill_tenant_selections_updated', 'skill_user_selections_updated', 'skill_document_updated'],
     mcp: ['mcp_server_updated', 'mcp_server_deleted', 'mcp_user_selections_updated', 'mcp_admin_user_selections_updated', 'mcp_secret_bound', 'mcp_secret_rotated', 'mcp_secret_deleted', 'mcp_oauth_connected', 'mcp_oauth_revoked'],
     tenant: ['tenant_created', 'tenant_updated', 'tenant_disabled', 'tenant_enabled', 'tenant_deleted'],
-    platform: ['platform_readonly_denied', 'platform_capability_denied', 'platform_privileged_action', 'platform_user_search', 'billing_account_adjusted', 'billing_member_budget_updated', 'runtime_profile_created', 'runtime_profile_draft_updated', 'runtime_profile_published', 'runtime_profile_archived', 'runtime_profile_copied', 'runtime_profile_binding_updated'],
+    platform: ['platform_readonly_denied', 'platform_capability_denied', 'platform_privileged_action', 'platform_user_search', 'billing_account_adjusted', 'billing_debit_reversed', 'billing_member_budget_updated', 'runtime_profile_created', 'runtime_profile_draft_updated', 'runtime_profile_published', 'runtime_profile_archived', 'runtime_profile_copied', 'runtime_profile_binding_updated'],
   };
 
   let filtered = all;
@@ -95,6 +95,35 @@ function redactLegacyChatPreview(entry: LoginLogEntry): LoginLogEntry {
     ...entry,
     detail: entry.detail.replace(/\s*\|\s*preview=[\s\S]*$/, ''),
   };
+}
+
+/** 启动期安全回填：只改写历史聊天 preview，保留未知/损坏行，不参与日志裁剪或清空。 */
+export async function redactLegacyChatPreviewsInFile(filePath: string): Promise<{ redacted: number }> {
+  let content: string;
+  try {
+    content = await fs.readFile(filePath, 'utf-8');
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') return { redacted: 0 };
+    throw err;
+  }
+  let redacted = 0;
+  const lines = content.split('\n').map(line => {
+    if (!line.trim()) return line;
+    try {
+      const entry = JSON.parse(line) as LoginLogEntry;
+      const next = redactLegacyChatPreview(entry);
+      if (next === entry) return line;
+      redacted++;
+      return JSON.stringify(next);
+    } catch {
+      return line;
+    }
+  });
+  if (redacted === 0) return { redacted: 0 };
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.redact.tmp`;
+  await fs.writeFile(tmpPath, lines.join('\n'), 'utf-8');
+  await fs.rename(tmpPath, filePath);
+  return { redacted };
 }
 
 // ---- Clear by username ----

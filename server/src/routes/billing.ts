@@ -5,6 +5,13 @@ import { isPlatformAdmin } from '../auth/types.js';
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import { hasPlatformCapability } from '../auth/platformGovernance.js';
 import { auditLog } from '../data/login-logs/index.js';
+import {
+  GovernanceAuditUnavailableError,
+  governanceDigest,
+  recordGovernanceIntent,
+  recordGovernanceOutcome,
+  type GovernanceAuditStore,
+} from '../data/governance-audit/index.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import type { AlertNotifier } from '../runtime/alertNotifier.js';
 import type { BillingService } from '../data/billing/service.js';
@@ -41,6 +48,7 @@ function encodeCursor(cursor: { createdAt: string; id: string }): string {
 export interface BillingRouterOptions {
   billingService: BillingService;
   alertNotifier?: Pick<AlertNotifier, 'notifyExternal'>;
+  governanceAuditStore?: GovernanceAuditStore;
 }
 
 const tenantIdSchema = z.string().min(2).max(31).regex(/^[a-z][a-z0-9-]{1,30}$/);
@@ -164,6 +172,28 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
     const idempotencyKey = body.data.idempotencyKey
       ? ['manual', parsed.data, 'admin', req.user!.sub, body.data.idempotencyKey].join(':')
       : undefined;
+    let intent;
+    try {
+      intent = await recordGovernanceIntent(options.governanceAuditStore, req.user!, {
+        action: 'billing.account.adjust',
+        targetType: 'billing_account',
+        targetId: parsed.data,
+        targetTenantId: parsed.data,
+        purpose: 'financial_adjustment',
+        ...(combinedNote ? { reason: combinedNote } : {}),
+        metadata: {
+          creditsDelta: body.data.creditsDelta,
+          ...(body.data.type ? { ledgerType: body.data.type } : {}),
+          ...(body.data.businessReference ? { businessReference: body.data.businessReference } : {}),
+        },
+      });
+    } catch (err) {
+      if (err instanceof GovernanceAuditUnavailableError) {
+        return res.status(503).json({ code: err.code, error: err.message });
+      }
+      throw err;
+    }
+
     let entry: BillingLedgerEntry;
     try {
       entry = await billingService.adjustAccount({
@@ -175,10 +205,28 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
         idempotencyKey,
       });
     } catch (err) {
+      await recordGovernanceOutcome(options.governanceAuditStore!, intent, 'failed', {
+        metadata: { errorCode: (err as { code?: string })?.code ?? 'BILLING_ADJUST_FAILED' },
+      }).catch(() => undefined);
       if ((err as { code?: string })?.code === 'BILLING_IDEMPOTENCY_CONFLICT') {
         return res.status(409).json({ error: err instanceof Error ? err.message : '幂等键冲突' });
       }
       throw err;
+    }
+
+    let outcome;
+    try {
+      outcome = await recordGovernanceOutcome(options.governanceAuditStore!, intent, 'succeeded', {
+        afterDigest: governanceDigest({ ledgerId: entry.id, tenantId: entry.tenantId, creditsDeltaMicro: entry.creditsDeltaMicro, type: entry.type }),
+        metadata: { ledgerId: entry.id },
+      });
+    } catch {
+      return res.status(500).json({
+        code: 'GOVERNANCE_AUDIT_OUTCOME_FAILED',
+        error: '账务已调整，但治理审计结果写入失败，请立即人工核对',
+        changed: true,
+        intentAuditId: intent.auditId,
+      });
     }
     auditLog(req, 'billing_account_adjusted', JSON.stringify({
       tenantId: parsed.data,
@@ -186,8 +234,9 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
       type: body.data.type,
       businessReference: body.data.businessReference,
       ledgerId: entry.id,
+      auditId: outcome.auditId,
     }));
-    res.json({ entry });
+    res.json({ entry, auditId: outcome.auditId });
   });
 
   router.post('/ledger/:ledgerId/reverse', requirePlatformAdmin, async (req: Request, res: Response) => {
@@ -198,26 +247,64 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
     if (!body.success) return res.status(400).json({ error: 'Invalid body', issues: body.error.issues });
     const ledgerId = String(req.params.ledgerId || '').trim();
     if (!ledgerId) return res.status(400).json({ error: 'ledgerId 必填' });
+    let intent;
     try {
-      const entry = await billingService.reverseDebit({
+      intent = await recordGovernanceIntent(options.governanceAuditStore, req.user, {
+        action: 'billing.debit.reverse',
+        targetType: 'billing_ledger',
+        targetId: ledgerId,
+        targetTenantId: body.data.tenantId,
+        purpose: 'financial_reversal',
+        reason: body.data.note,
+        metadata: { idempotencyKey: body.data.idempotencyKey },
+      });
+    } catch (err) {
+      if (err instanceof GovernanceAuditUnavailableError) {
+        return res.status(503).json({ code: err.code, error: err.message });
+      }
+      throw err;
+    }
+
+    let entry: BillingLedgerEntry;
+    try {
+      entry = await billingService.reverseDebit({
         tenantId: body.data.tenantId,
         ledgerId,
         idempotencyKey: `reversal:admin:${req.user.sub}:${body.data.idempotencyKey}`,
         note: body.data.note,
         actor: req.user.username,
       });
-      auditLog(req, 'billing_debit_reversed', JSON.stringify({
-        tenantId: body.data.tenantId,
-        originalLedgerId: ledgerId,
-        reversalLedgerId: entry.id,
-      }));
-      res.json({ entry });
     } catch (err) {
+      await recordGovernanceOutcome(options.governanceAuditStore!, intent, 'failed', {
+        metadata: { errorCode: err instanceof BillingLedgerReversalConflictError ? 'LEDGER_REVERSAL_CONFLICT' : 'BILLING_REVERSE_FAILED' },
+      }).catch(() => undefined);
       if (err instanceof BillingLedgerReversalConflictError) {
         return res.status(409).json({ code: 'LEDGER_REVERSAL_CONFLICT', error: err.message });
       }
       throw err;
     }
+
+    let outcome;
+    try {
+      outcome = await recordGovernanceOutcome(options.governanceAuditStore!, intent, 'succeeded', {
+        afterDigest: governanceDigest({ originalLedgerId: ledgerId, reversalLedgerId: entry.id }),
+        metadata: { reversalLedgerId: entry.id },
+      });
+    } catch {
+      return res.status(500).json({
+        code: 'GOVERNANCE_AUDIT_OUTCOME_FAILED',
+        error: '账务已冲正，但治理审计结果写入失败，请立即人工核对',
+        changed: true,
+        intentAuditId: intent.auditId,
+      });
+    }
+    auditLog(req, 'billing_debit_reversed', JSON.stringify({
+      tenantId: body.data.tenantId,
+      originalLedgerId: ledgerId,
+      reversalLedgerId: entry.id,
+      auditId: outcome.auditId,
+    }));
+    res.json({ entry, auditId: outcome.auditId });
   });
 
   router.get('/ledger', async (req, res) => {

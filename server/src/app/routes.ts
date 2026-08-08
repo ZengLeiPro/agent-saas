@@ -74,7 +74,7 @@ import { createAdminBillingRouter, createBillingRouter } from "../routes/billing
 import { createAzerothProxyRouter } from "../routes/azeroth-proxy.js";
 import { createDingtalkSessionRouter } from "../channels/dingtalk/protocol/sessionRouter.js";
 import type { WebChannel } from "../channels/web/channel.js";
-import { initAuditLog, clearLogsByUsername } from "../data/login-logs/index.js";
+import { initAuditLog, redactLegacyChatPreviewsInFile } from "../data/login-logs/index.js";
 import { configureModelPricing } from "../data/usage/pricing.js";
 import { configureImageGenPricing } from "../data/usage/imageGenPricing.js";
 
@@ -470,6 +470,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       createAdminBillingRouter({
         billingService: runtime.billingService,
         alertNotifier: runtime.alertNotifier,
+        governanceAuditStore: runtime.governanceAuditStore,
       }),
     );
   }
@@ -554,6 +555,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       systemMetricsCollector: runtime.systemMetricsCollector,
       alertNotifier: runtime.alertNotifier,
       userStore: runtime.userStore,
+      governanceAuditStore: runtime.governanceAuditStore,
     }),
   );
 
@@ -587,22 +589,12 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       config.auth.usersFile || "./data/users.json",
     );
     const avatarsDir = resolve(usersFilePath, "..", "avatars");
-    // 初始化审计日志单例，供所有路由使用
+    // 活动日志与治理审计分离。启动时绝不删除管理员历史；仅物理擦除旧聊天 preview。
     initAuditLog(loginLogFilePath);
-    // 清除所有 admin 用户的历史审计日志（一次性，顺序执行避免竞态）
+    void redactLegacyChatPreviewsInFile(loginLogFilePath).catch((error) => {
+      console.warn(`[audit] 历史聊天 preview 物理脱敏失败: ${error instanceof Error ? error.message : String(error)}`);
+    });
     const userStore = runtime.userStore;
-    // 修 P1 BUG #3 延伸（2026-06-21）：原 if (u.role === 'admin') 会把组织 admin
-    // 的 login logs 也清掉——组织 admin 的登录审计应保留给组织自己内部审计。
-    // 只清平台 admin（kaiyan 组织内的 admin）的旧日志。
-    (async () => {
-      for (const u of userStore.listAll()) {
-        if (u.role === "admin" && u.tenantId === DEFAULT_TENANT_ID) {
-          await clearLogsByUsername(loginLogFilePath, u.username).catch(
-            () => {},
-          );
-        }
-      }
-    })();
     const terminateAndRevokeUserConnectors = async (target: UserInfo) => {
       // 先中止活跃运行，避免外部连接器清理失败时用户继续持有已注入的短期凭据。
       runtimeRunController.abortByUser(target.id, 'user access revoked');
@@ -694,6 +686,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           resolveMemoryFeatureStatus: runtime.getTenantMemoryFeatureStatus,
           // ★ 2026-07-18 企业专家目录 MVP：新租户开通时 seed 3 个种子专家（disabled）
           orgAgentStore: runtime.orgAgentStore,
+          governanceAuditStore: runtime.governanceAuditStore,
           onTenantDisabled: webChannel
             ? (tenantId: string) => webChannel.disconnectTenant(tenantId)
             : undefined,

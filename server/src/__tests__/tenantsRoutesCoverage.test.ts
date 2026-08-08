@@ -48,6 +48,7 @@ import type { TenantRecord } from '../data/tenants/types.js';
 import { TenantStore } from '../data/tenants/store.js';
 import type { TenantDeletionReport } from '../data/tenants/cleanup.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
+import { InMemoryGovernanceAuditStore, type GovernanceAuditStore } from '../data/governance-audit/index.js';
 import { createTenantsRouter } from '../routes/tenants.js';
 
 const PLATFORM_ADMIN: JwtPayload = { sub: 'u-platform', username: 'platform_admin', role: 'admin', tenantId: DEFAULT_TENANT_ID };
@@ -104,6 +105,7 @@ interface RigOptions {
   withDeleter?: boolean;
   /** true 时 orgAgentStore 的落盘路径被目录占据 → persist 必失败（验证 seed 降级） */
   brokenOrgAgentStore?: boolean;
+  governanceAuditStore?: GovernanceAuditStore;
 }
 
 interface TestRig {
@@ -148,6 +150,7 @@ async function makeTestRig(opts: RigOptions = {}): Promise<TestRig> {
     tenantStore,
     sharedDir,
     orgAgentStore,
+    governanceAuditStore: opts.governanceAuditStore ?? new InMemoryGovernanceAuditStore(),
     onTenantDisabled: id => { callOrder.push(`disabled:${id}`); },
     ...(opts.withDeleter === false ? {} : {
       deleteTenantResources: async (tenantId: string) => {
@@ -250,6 +253,18 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
       await expect(res.json()).resolves.toMatchObject({ error: '当前服务未启用组织删除清理器' });
       expect(h.tenantStore.findById('acme')).toBeTruthy();
       expect(h.callOrder).toEqual([]); // 501 短路在回调之前
+    });
+
+    it('治理审计 intent 写入失败 → 503，且清理器和断连回调都不执行', async () => {
+      h = await makeTestRig({
+        governanceAuditStore: { append: async () => { throw new Error('pg unavailable'); } },
+      });
+      h.setCaller(PLATFORM_ADMIN);
+      const res = await h.request('/api/tenants/acme', jsonInit('DELETE', { confirm: 'acme' }));
+      expect(res.status).toBe(503);
+      await expect(res.json()).resolves.toMatchObject({ code: 'GOVERNANCE_AUDIT_UNAVAILABLE' });
+      expect(h.tenantStore.findById('acme')).toBeTruthy();
+      expect(h.callOrder).toEqual([]);
     });
 
     it('成功：200 {ok, report} 透传清理报告，清理成功后回调，store 落盘删除', async () => {

@@ -109,6 +109,7 @@ import { PgGuardrailEventStore } from '../data/guardrail/pgGuardrailEventStore.j
 import { PgMessageFeedbackStore } from '../data/feedback/store.js';
 import { PgAppealStore } from '../data/appeals/index.js';
 import type { AppealStore } from '../data/appeals/index.js';
+import { PgGovernanceAuditStore, type GovernanceAuditStore } from '../data/governance-audit/index.js';
 import { MemoryIndexService } from '../memory/index/service.js';
 import type { MemoryIndexConfig } from '../memory/index/types.js';
 import { UserStore } from '../data/users/store.js';
@@ -380,6 +381,8 @@ export interface AppRuntime {
   tokenUsageStore?: TokenUsageStore;
   /** PG-backed credit billing service. Undefined for file/runtime dev backends. */
   billingService?: BillingService;
+  /** 独立、append-only 的治理审计；未装配时高风险变更必须 fail closed。 */
+  governanceAuditStore?: GovernanceAuditStore;
   /** 手动触发 token usage 全量回填（force=true）。未初始化 businessDb 时为 undefined */
   triggerTokenUsageRebuild?: () => Promise<unknown>;
   /** Runtime audit 读查询（按 sessionId/runId 投影 tool_audit）。 */
@@ -1032,6 +1035,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let connectorDictionaryStore: ConnectorDictionaryStore | undefined;
   let artifactShutdown: (() => Promise<void>) | undefined;
   let billingService: BillingService | undefined;
+  let governanceAuditStore: GovernanceAuditStore | undefined;
   const beginMemoryEmbeddingBillingRun = async (workspaceDir: string) => {
     if (!billingService) return undefined;
     const rel = relative(agentCwd, resolve(workspaceDir));
@@ -1181,6 +1185,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       logger: serverLogger.child('PgEventStore'),
     });
     await pgEventStore.init();
+    const pgGovernanceAuditStore = new PgGovernanceAuditStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await pgGovernanceAuditStore.init();
+    governanceAuditStore = pgGovernanceAuditStore;
     if (enableSchedulerWorker) {
       runtimeOutboundStreamRelay = new RuntimeOutboundStreamRelay(pgEventStore, {
         logger: serverLogger.child('RuntimeOutboundStreamRelay'),
@@ -3612,6 +3622,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentOptionsConfig,
     tokenUsageStore,
     billingService,
+    governanceAuditStore,
     runtimeAuditQuery,
     runtimeRunStore: pgRunStore,
     runtimeSchedulerCapacity,

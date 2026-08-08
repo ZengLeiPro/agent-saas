@@ -599,7 +599,7 @@ export type PlatformEvent =
     unitCreditsMicro: number;
     /** 单件真实成本参考（micro-yuan/件），供毛利审计。 */
     unitCostYuanMicro: number;
-    /** run 内固定费用预占键；投影用它 capture hold 并稳定去重。 */
+    /** 仅兼容旧版已持久化事件；新事件不再生成固定费用预占键。 */
     holdKey?: string;
     /** 事件写入结果不确定时，投影与直接 fallback 共用的稳定扣费幂等键。 */
     billingChargeKey?: string;

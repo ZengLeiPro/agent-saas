@@ -33,7 +33,7 @@ describePg('Billing policy PostgreSQL 升级契约', () => {
     }
   });
 
-  it('旧硬封顶策略缺少单 Run 上限时阻止新色启动，补值后才能完成 init', async () => {
+  it('旧硬封顶策略缺少单 Run 上限时阻止启动，补值后才能完成 init', async () => {
     const policiesTable = `${prefix}_billing_tenant_policies`;
     await pool.query(`
       CREATE TABLE ${policiesTable} (
@@ -87,24 +87,65 @@ describePg('Billing policy PostgreSQL 升级契约', () => {
       actor: 'test',
       idempotencyKey: 'date-contract-grant',
     });
-    const reservation = await store.ensureRunReservation({
+    await expect(store.authorizeRun({
       tenantId: 'legacy-tenant',
       userId: 'user-1',
-      username: 'tester',
-      runId: 'date-contract-run',
-      sessionId: 'date-contract-session',
+      runId: 'allowance-run',
       now: new Date('2026-08-08T04:00:00.000Z'),
-    });
-    expect(reservation).toMatchObject({
-      ok: true,
-      value: { periodStart: '2026-08-01', status: 'active' },
-    });
-    await expect(store.settleRunDebit('legacy-tenant', 'date-contract-run')).resolves.toBeNull();
-    const settled = await pool.query<{ status: string; period_start: string }>(`
-      SELECT status, to_char(period_start, 'YYYY-MM-DD') AS period_start
-      FROM ${prefix}_billing_run_reservations
-      WHERE tenant_id = 'legacy-tenant' AND run_id = 'date-contract-run'
+    })).resolves.toEqual({ ok: true });
+  }, 30_000);
+
+  it('启动时清零旧预占并释放遗留 reservation / hold，新库不创建旧表', async () => {
+    const legacyPrefix = `${prefix}_legacy`;
+    const store = new PgBillingStore({ pool, tablePrefix: legacyPrefix });
+    await store.init();
+
+    const oldReservations = `${legacyPrefix}_billing_run_reservations`;
+    const oldHolds = `${legacyPrefix}_billing_run_fixed_fee_holds`;
+    const absent = await pool.query<{ reservations: string | null; holds: string | null }>(
+      'SELECT to_regclass($1) AS reservations, to_regclass($2) AS holds',
+      [oldReservations, oldHolds],
+    );
+    expect(absent.rows[0]).toEqual({ reservations: null, holds: null });
+    await pool.query(`
+      INSERT INTO ${legacyPrefix}_billing_credit_accounts
+        (tenant_id, balance_micro, reserved_micro, updated_at)
+      VALUES ('tenant-a', 1000000000, 800000000, NOW())
     `);
-    expect(settled.rows[0]).toEqual({ status: 'settled', period_start: '2026-08-01' });
+    await pool.query(`
+      INSERT INTO ${legacyPrefix}_billing_member_period_accounts
+        (tenant_id, user_id, period_start, used_micro, reserved_micro, updated_at)
+      VALUES ('tenant-a', 'user-a', CURRENT_DATE, 100000000, 300000000, NOW())
+    `);
+    await pool.query(`CREATE TABLE ${oldReservations} (
+      tenant_id TEXT, run_id TEXT, remaining_micro BIGINT, status TEXT,
+      updated_at TIMESTAMPTZ, released_at TIMESTAMPTZ
+    )`);
+    await pool.query(`CREATE TABLE ${oldHolds} (
+      tenant_id TEXT, run_id TEXT, hold_key TEXT, status TEXT, updated_at TIMESTAMPTZ
+    )`);
+    await pool.query(`INSERT INTO ${oldReservations}
+      VALUES ('tenant-a', 'run-a', 800000000, 'active', NOW(), NULL)`);
+    await pool.query(`INSERT INTO ${oldHolds}
+      VALUES ('tenant-a', 'run-a', 'hold-a', 'active', NOW())`);
+
+    await store.init();
+
+    const account = await pool.query<{ reserved_micro: string }>(
+      `SELECT reserved_micro FROM ${legacyPrefix}_billing_credit_accounts WHERE tenant_id = 'tenant-a'`,
+    );
+    const period = await pool.query<{ reserved_micro: string }>(
+      `SELECT reserved_micro FROM ${legacyPrefix}_billing_member_period_accounts WHERE tenant_id = 'tenant-a'`,
+    );
+    const reservation = await pool.query<{ remaining_micro: string; status: string }>(
+      `SELECT remaining_micro, status FROM ${oldReservations} WHERE run_id = 'run-a'`,
+    );
+    const hold = await pool.query<{ status: string }>(
+      `SELECT status FROM ${oldHolds} WHERE hold_key = 'hold-a'`,
+    );
+    expect(account.rows[0]).toEqual({ reserved_micro: '0' });
+    expect(period.rows[0]).toEqual({ reserved_micro: '0' });
+    expect(reservation.rows[0]).toEqual({ remaining_micro: '0', status: 'released' });
+    expect(hold.rows[0]).toEqual({ status: 'released' });
   }, 30_000);
 });

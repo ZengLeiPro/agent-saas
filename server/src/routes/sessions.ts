@@ -418,7 +418,7 @@ export interface SessionsRouterOptions {
   getTitleSystemPrompt?: () => string;
   /** Token 用量统计 store，用于记录手动 auto-title 等基础设施模型调用 */
   tokenUsageStore?: TokenUsageStore;
-  /** PG Billing；手动 auto-title 使用独立 utility reservation。 */
+  /** PG Billing；手动 auto-title 使用独立 Utility Run 的实际用量门禁。 */
   billingService?: BillingService;
   /**
    * Runtime EventStore 解析函数。pending API 列出某 session 的 replay state

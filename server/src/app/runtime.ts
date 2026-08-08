@@ -1043,7 +1043,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
   };
   let billingAuditTimer: NodeJS.Timeout | undefined;
-  let billingReservationJanitorTimer: NodeJS.Timeout | undefined;
   let runtimeEventRetention: RuntimeEventRetention | undefined;
   let runtimeScheduler: RuntimeScheduler | undefined;
   let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined;
@@ -1489,55 +1488,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         });
       }, 24 * 60 * 60 * 1000);
       billingAuditTimer.unref?.();
-      const sweepBillingReservations = async () => {
-        if (!pgRunStore) return;
-        const cutoff = new Date(Date.now() - 15 * 60_000);
-        const candidates = await billingService!.listExpiredRunReservationCandidates(cutoff, 200);
-        for (const reservation of candidates) {
-          try {
-          // Guardrail/标题使用无 RunStore 行的 synthetic utility run；崩溃恢复时
-          // 必须结算其已落 usage（无 usage 时 settle 会只释放），不能按普通孤儿直接 release。
-          if (reservation.runId.startsWith('utility-')) {
-            await billingService!.finalizeRunReservation(reservation.tenantId, reservation.runId);
-            continue;
-          }
-          let run: Awaited<ReturnType<typeof pgRunStore.get>>;
-          try {
-            run = await pgRunStore.get(reservation.runId);
-          } catch (err) {
-            billingLogger.warn(`Billing reservation sweep skipped after RunStore lookup failure: run=${reservation.runId} error=${err instanceof Error ? err.message : String(err)}`);
-            // 查询异常不能误释放，但也不能让同一批坏记录永久占住 oldest-200。
-            await billingService!.touchRunReservation(reservation.tenantId, reservation.runId);
-            continue;
-          }
-          if (!run) {
-            await billingService!.releaseRunReservation(reservation.tenantId, reservation.runId);
-            continue;
-          }
-          if (['completed', 'failed', 'cancelled', 'orphaned'].includes(run.status)) {
-            await billingService!.finalizeRunReservation(reservation.tenantId, reservation.runId);
-          } else {
-            // 把仍合法存活的 running/waiting reservation 移到队尾，避免固定 oldest-200
-            // 永久挡住后续 utility 或终态孤儿。
-            await billingService!.touchRunReservation(reservation.tenantId, reservation.runId);
-          }
-          } catch (err) {
-            billingLogger.warn(`Billing reservation candidate failed: run=${reservation.runId} error=${err instanceof Error ? err.message : String(err)}`);
-            await billingService!.touchRunReservation(reservation.tenantId, reservation.runId).catch(() => undefined);
-          }
-        }
-      };
-      void sweepBillingReservations().catch((err) => {
-        billingLogger.warn(`Billing reservation sweep failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
-      billingReservationJanitorTimer = setInterval(() => {
-        void sweepBillingReservations().catch((err) => {
-          billingLogger.warn(`Billing reservation sweep failed: ${err instanceof Error ? err.message : String(err)}`);
-        });
-      }, 5 * 60_000);
-      billingReservationJanitorTimer.unref?.();
     } else {
-      serverLogger.info(`Billing audit/reservation workers disabled for processRole=${processRole}`);
+      serverLogger.info(`Billing audit worker disabled for processRole=${processRole}`);
     }
     const retentionConfig = config.runtimeEventRetention;
     runtimeEventRetention = new RuntimeEventRetention({
@@ -1587,7 +1539,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       await runtimeOutboundStreamRelay?.flushAll();
       if (cancelDeliveryRetryTimer) clearInterval(cancelDeliveryRetryTimer);
       if (billingAuditTimer) clearInterval(billingAuditTimer);
-      if (billingReservationJanitorTimer) clearInterval(billingReservationJanitorTimer);
       runtimeEventRetention?.stop();
       await runtimeEventSubscriptionShutdown?.();
       await sessionLock?.close();
@@ -2622,16 +2573,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         const tenantId = record.tenantId ?? (record.userId ? userStore?.findById(record.userId)?.tenantId : undefined);
         const tenantAccessError = tenantAccessErrorMessage(tenantStore, tenantId);
         if (tenantAccessError) throw new Error(tenantAccessError);
-        // 普通 scheduler wake（Cron、审批恢复、后台结果交付）在这里预占。
-        // 后台任务包装 run 本身不调模型：命令只监控 hand，Agent 由内部 child run 独立预占。
+        // 普通 scheduler wake（Cron、审批恢复、后台结果交付）在这里按实际用量做启动门禁。
+        // 后台任务包装 Run 本身不调模型：命令只监控 hand，Agent 由内部 child Run 独立检查。
         if (tenantId && billingService && !isBackgroundTaskRun(record)) {
-          const user = record.userId ? userStore?.findById(record.userId) : undefined;
-          const allowed = await billingService.ensureRunReservation({
+          const allowed = await billingService.authorizeRun({
             tenantId,
             ...(record.userId ? { userId: record.userId } : {}),
-            ...(user?.username ? { username: user.username } : {}),
             runId: record.runId,
-            sessionId: record.sessionId,
           });
           if (!allowed.ok) throw new Error(`[${allowed.code}] ${allowed.reason}`);
         }
@@ -2797,8 +2745,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   };
   const billedResumeApprovalDispatch: typeof resumeApprovalDispatch = billingService
     ? async function* billingWrappedApprovalResumeDispatch(request) {
-      // resumeApprovalDispatch 内部按原 runId 幂等 ensure reservation；这里不能再用
-      // 旧的组织余额快照门禁，否则当前 run 自己的预占会把恢复请求反向拒绝。
+      // resumeApprovalDispatch 内部会按原 Run 做实际用量门禁；这里仅负责恢复后的投影。
       try {
         yield* tenantGuardedResumeApprovalDispatch(request);
       } finally {

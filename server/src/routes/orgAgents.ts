@@ -38,7 +38,7 @@ export interface OrgAgentsRouterDeps {
   orgAgentAvatarsDir?: string;
   /** 门禁模型链（reuse WebChannel 用的 getter；未装配 → gate-preview 503） */
   getGuardrailModelConfigs?: () => GuardrailModelConfig[];
-  /** PG Billing；gate-preview 使用独立 utility reservation。 */
+  /** PG Billing；gate-preview 使用独立 Utility Run 的实际用量门禁。 */
   billingService?: BillingService;
   /** 使用统计派生数据源（未装配 → usage-stats 相关字段 0，不 503） */
   sessionProjectionStore?: UsageStatsSessionReader;

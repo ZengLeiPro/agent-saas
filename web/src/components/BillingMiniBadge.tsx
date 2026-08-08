@@ -12,7 +12,6 @@ import {
 
 interface BillingSummary {
   balanceCredits: number;
-  reservedCredits: number;
   lowBalance: boolean;
   billingEnabled: boolean;
   billingMode: string;
@@ -31,7 +30,6 @@ type MemberBudgetStatus = "unset" | "normal" | "attention" | "warning" | "over";
 
 interface MyMemberBudget extends MemberBudgetAllowance {
   monthUsedCredits: number;
-  monthReservedCredits: number;
   enforcementMode: "notify" | "stop_new_runs";
   perRunLimitCredits: number | null;
   canStartRun: boolean;
@@ -269,7 +267,7 @@ export function BillingMiniBadge({
               <span className="text-[13px] font-medium">我的本月</span>
               {memberBudget && (
                 <span className={`text-[11px] font-medium tabular-nums ${budgetStatusClass(memberBudget.status)}`}>
-                  {memberBudget.canStartRun ? `${formatUsageRatio(memberBudget.usageRatioBps)} · ${budgetStatusLabel(memberBudget.status)}` : "新任务已停止"}
+                  {memberBudget.canStartRun ? `${formatUsageRatio(memberBudget.usageRatioBps)} · ${budgetStatusLabel(memberBudget.status)}` : "后续动作已停止"}
                 </span>
               )}
             </div>
@@ -285,9 +283,6 @@ export function BillingMiniBadge({
                 )}
                 <div className="mt-2.5 space-y-1.5 text-[13px]">
                   <StatRow label="已结算用量" value={formatDetailedCredits(memberBudget.monthUsedCredits)} />
-                  {memberBudget.monthReservedCredits > 0 && (
-                    <StatRow label="在途预占" value={formatDetailedCredits(memberBudget.monthReservedCredits)} />
-                  )}
                   <StatRow
                     label="我的月度额度"
                     value={memberBudget.monthlyLimitCredits === null ? "未设置" : formatDetailedCredits(memberBudget.monthlyLimitCredits)}
@@ -297,7 +292,7 @@ export function BillingMiniBadge({
                   )}
                   <StatRow
                     label="执行方式"
-                    value={memberBudget.enforcementMode === "stop_new_runs" ? "超额停新任务" : "仅提醒"}
+                    value={memberBudget.enforcementMode === "stop_new_runs" ? "超额停后续动作" : "仅提醒"}
                   />
                   {memberBudget.perRunLimitCredits !== null && (
                     <StatRow label="单 Run 上限" value={formatDetailedCredits(memberBudget.perRunLimitCredits)} />
@@ -313,9 +308,6 @@ export function BillingMiniBadge({
             <div className="text-[13px] font-medium">公司共享积分池</div>
             <div className="mt-2.5 space-y-1.5 text-[13px]">
               <StatRow label="总余额" value={formatDetailedCredits(summary.balanceCredits)} />
-              {summary.reservedCredits > 0 && (
-                <StatRow label="已预留" value={formatDetailedCredits(summary.reservedCredits)} />
-              )}
               <StatRow label="组织本月消耗" value={formatDetailedCredits(summary.currentMonthCreditsUsed)} />
             </div>
           </div>

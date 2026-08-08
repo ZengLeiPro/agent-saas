@@ -39,6 +39,12 @@ function makeStore(input: {
   policy?: Partial<TenantBillingPolicy>;
   balanceCreditsMicro?: number;
   creditValueYuanMicro?: number;
+  runUsedCreditsMicro?: number;
+  memberBudget?: {
+    monthUsedCreditsMicro: number;
+    monthlyLimitCreditsMicro: number;
+    perRunLimitCreditsMicro: number;
+  };
 } = {}) {
   const account = {
     tenant_id: 'wain-test',
@@ -52,7 +58,20 @@ function makeStore(input: {
         return { rows: [{ row_json: { ...account } }] };
       }
       if (/SELECT\s+user_id,\s*period_start/i.test(sql)) return { rows: [] };
-      if (/run_reservations\s+r/i.test(sql) && /row_to_json/i.test(sql)) return { rows: [] };
+      if (/AS used_micro/i.test(sql) && /run_id = \$2/i.test(sql)) {
+        return { rows: [{ used_micro: String(input.runUsedCreditsMicro ?? 0) }] };
+      }
+      if (/SELECT monthly_limit_micro, enforcement_mode, per_run_limit_micro, active/i.test(sql)) {
+        return { rows: input.memberBudget ? [{
+          monthly_limit_micro: String(input.memberBudget.monthlyLimitCreditsMicro),
+          enforcement_mode: 'stop_new_runs',
+          per_run_limit_micro: String(input.memberBudget.perRunLimitCreditsMicro),
+          active: true,
+        }] : [] };
+      }
+      if (/l\.user_id = \$2/i.test(sql) && /AS used_micro/i.test(sql)) {
+        return { rows: [{ used_micro: String(input.memberBudget?.monthUsedCreditsMicro ?? 0) }] };
+      }
       return { rows: [] };
     }),
     release: vi.fn(),
@@ -75,7 +94,6 @@ function makeStore(input: {
       ...(args[1] as Record<string, unknown>),
     }));
   vi.spyOn(store as any, 'ensureAccount').mockResolvedValue(undefined);
-  vi.spyOn(store, 'releaseRunReservation').mockResolvedValue(null);
   vi.spyOn(store as any, 'listPendingRunUsage').mockImplementation(async (...args: unknown[]) => {
     const [clientArg, tenantId, runId] = args as [unknown, string, string];
     const rows = await store.listUsageEvents({ tenantId, runId, billable: true, limit: 10_000 });
@@ -87,7 +105,6 @@ function makeStore(input: {
     return fn({}, {
       tenantId: 'wain-test',
       balanceCreditsMicro: Math.trunc(input.balanceCreditsMicro ?? 1000 * CREDIT_MICRO),
-      reservedCreditsMicro: 0,
       updatedAt: '2026-07-15T00:00:00.000Z',
     });
   });
@@ -127,6 +144,80 @@ function usageEvent(overrides: Partial<BillingUsageEvent> = {}): BillingUsageEve
     ...overrides,
   };
 }
+
+describe('PgBillingStore 遗留预占清理', () => {
+  it('旧表不存在时只清零兼容列，重复执行安全', async () => {
+    const client = {
+      query: vi.fn(async (sql: string) => /to_regclass/i.test(sql)
+        ? { rows: [{ reservations: null, holds: null }] }
+        : { rows: [] }),
+    };
+    const store = new PgBillingStore({ pool: {} as any });
+
+    await (store as any).clearLegacyReservations(client);
+    await (store as any).clearLegacyReservations(client);
+
+    expect(client.query.mock.calls.filter(([sql]) => /reserved_micro = 0/i.test(String(sql)))).toHaveLength(4);
+    expect(client.query.mock.calls.some(([sql]) => /remaining_micro = 0/i.test(String(sql)))).toBe(false);
+  });
+
+  it('旧表存在时将 active reservation 与 hold 标记为 released', async () => {
+    const client = {
+      query: vi.fn(async (sql: string) => /to_regclass/i.test(sql)
+        ? { rows: [{ reservations: 'billing_run_reservations', holds: 'billing_fixed_fee_holds' }] }
+        : { rows: [] }),
+    };
+    const store = new PgBillingStore({ pool: {} as any });
+
+    await (store as any).clearLegacyReservations(client);
+
+    expect(client.query.mock.calls.some(([sql]) => /remaining_micro = 0, status = 'released'/i.test(String(sql)))).toBe(true);
+    expect(client.query.mock.calls.some(([sql]) => /fixed_fee_holds[\s\S]*status = 'released'/i.test(String(sql)))).toBe(true);
+  });
+});
+
+describe('PgBillingStore 实际用量门禁', () => {
+  it('只看真实余额，不读取遗留 reserved_micro', async () => {
+    const { store } = makeStore({ balanceCreditsMicro: 0 });
+    await expect(store.authorizeRun({
+      tenantId: 'wain-test', runId: 'run-1',
+    })).resolves.toMatchObject({ ok: false, code: 'BILLING_ORG_BALANCE_EXHAUSTED' });
+  });
+
+  it('按 ledger 中该 Run 的实际累计拦截下一次模型调用', async () => {
+    const { store } = makeStore({ runUsedCreditsMicro: 1_000 * CREDIT_MICRO });
+    await expect(store.authorizeRun({
+      tenantId: 'wain-test', runId: 'run-1',
+    })).resolves.toMatchObject({ ok: false, code: 'BILLING_RUN_LIMIT_EXCEEDED' });
+  });
+
+  it('员工月额度直接读取 ledger 实际用量，不依赖 period account 快照', async () => {
+    const { store } = makeStore({
+      memberBudget: {
+        monthUsedCreditsMicro: 100 * CREDIT_MICRO,
+        monthlyLimitCreditsMicro: 100 * CREDIT_MICRO,
+        perRunLimitCreditsMicro: 500 * CREDIT_MICRO,
+      },
+    });
+    await expect(store.authorizeRun({
+      tenantId: 'wain-test', userId: 'user-alice', runId: 'run-1',
+      now: new Date('2026-08-08T00:00:00.000Z'),
+    })).resolves.toMatchObject({ ok: false, code: 'BILLING_MEMBER_MONTHLY_LIMIT_EXCEEDED' });
+  });
+
+  it('固定费用按即将发生金额预检，但不改变账户余额', async () => {
+    const { store } = makeStore({
+      balanceCreditsMicro: 400 * CREDIT_MICRO,
+      runUsedCreditsMicro: 700 * CREDIT_MICRO,
+    });
+    await expect(store.authorizeFixedFee({
+      tenantId: 'wain-test', runId: 'run-1', creditsMicro: 300 * CREDIT_MICRO,
+    })).resolves.toEqual({ ok: true });
+    await expect(store.authorizeFixedFee({
+      tenantId: 'wain-test', runId: 'run-1', creditsMicro: 401 * CREDIT_MICRO,
+    })).resolves.toMatchObject({ ok: false, code: 'BILLING_ORG_BALANCE_EXHAUSTED' });
+  });
+});
 
 describe('PgBillingStore.settleRunDebit', () => {
   it('cost-plus：按目标毛利倒推 revenue 并换算积分扣费', async () => {

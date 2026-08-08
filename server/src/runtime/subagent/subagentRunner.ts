@@ -190,7 +190,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   }
 
   // ── 闸门 1：模型白名单（关键不变量 3：显式传父 tenantId，不能沿用 dispatch 的单参调用） ──
-  // Billing 在 childRunId 落库后通过 ensureRunReservation 原子执行；旧余额快照
+  // Billing 在 childRunId 落库后按实际用量执行门禁；旧余额快照
   // 无法识别父 run 自身预占，会误拒绝合法子 Agent，因此不在派生前重复检查。
   const requestedRef = boundProfile?.version.config.model.strategy === 'fixed'
     ? boundProfile.version.config.model.modelRef
@@ -289,12 +289,10 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     });
     const billing = config.billingService?.();
     if (billing && tenantId) {
-      const decision = await billing.ensureRunReservation({
+      const decision = await billing.authorizeRun({
         tenantId,
         userId,
-        username,
         runId: childRunId,
-        sessionId: childSessionId,
       });
       if (!decision.ok) {
         const reason = `[${decision.code}] ${decision.reason}`;
@@ -417,7 +415,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       signal: combinedSignal,
       ...(billing && tenantId ? {
         authorizeModelTurn: async () => {
-          const decision = await billing.assertRunCanContinue(tenantId, childRunId);
+          const decision = await billing.authorizeRun({ tenantId, userId, runId: childRunId });
           if (!decision.ok) throw new Error(`[${decision.code}] ${decision.reason}`);
         },
       } : {}),

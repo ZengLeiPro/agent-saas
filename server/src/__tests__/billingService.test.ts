@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { BillingService } from '../data/billing/service.js';
-import { PgBillingStore } from '../data/billing/pgBillingStore.js';
 import { CREDIT_MICRO, type TenantBillingPolicy } from '../data/billing/types.js';
 
 describe('BillingService hard cap guard', () => {
@@ -53,11 +52,10 @@ describe('BillingService hard cap guard', () => {
     });
   });
 
-  it('blocks prepaid tenants when hard cap is enabled and effective balance is empty', async () => {
+  it('blocks prepaid tenants when hard cap is enabled and actual balance is empty', async () => {
     const service = new BillingService({
       store: fakeStore({
-        balanceCreditsMicro: 1 * CREDIT_MICRO,
-        reservedCreditsMicro: 1 * CREDIT_MICRO,
+        balanceCreditsMicro: 0,
         policy: { hardCapMode: 'stop_before_run', allowNegativeBalance: false },
       }),
     });
@@ -91,7 +89,33 @@ describe('BillingService hard cap guard', () => {
     await expect(blocked.assertTenantCanStartRun('trial')).resolves.toMatchObject({ ok: false });
   });
 
-  it('defers hard-cap decisions to raw dispatch so Steering/resume are not rejected by their own reservation', async () => {
+  it('下一计费动作前严格按“投影 → 结算上一用量 → 实际额度门禁”执行', async () => {
+    const order: string[] = [];
+    const store = {
+      getProjectionState: vi.fn(async () => 0),
+      listUnprojectedRuntimeEvents: vi.fn(async () => []),
+      setProjectionState: vi.fn(async () => undefined),
+      settleRunDebit: vi.fn(async () => { order.push('settle'); return null; }),
+      authorizeRun: vi.fn(async () => { order.push('authorize-run'); return { ok: true }; }),
+      authorizeFixedFee: vi.fn(async () => { order.push('authorize-fixed'); return { ok: true }; }),
+    };
+    const service = new BillingService({ store: store as any });
+    vi.spyOn(service, 'projectRuntimeEvents').mockImplementation(async () => {
+      order.push('project');
+      return { usageEventsInserted: 0, debitEntriesInserted: 0, lastProjectedSequence: 0 };
+    });
+
+    await service.authorizeRun({ tenantId: 'tenant-1', userId: 'user-1', runId: 'run-1' });
+    expect(order).toEqual(['project', 'settle', 'authorize-run']);
+
+    order.length = 0;
+    await service.authorizeFixedFee({
+      tenantId: 'tenant-1', userId: 'user-1', runId: 'run-1', creditsMicro: 400 * CREDIT_MICRO,
+    });
+    expect(order).toEqual(['project', 'settle', 'authorize-fixed']);
+  });
+
+  it('defers hard-cap decisions to raw dispatch so Steering/resume use the real Run context', async () => {
     const service = new BillingService({
       store: fakeStore({
         balanceCreditsMicro: 0,
@@ -113,6 +137,24 @@ describe('BillingService hard cap guard', () => {
 
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(events).toEqual([{ type: 'assistant_message', message: { role: 'assistant', content: 'should not run' } }]);
+  });
+
+  it('dispatch 抛错时仍异步触发实际用量投影', async () => {
+    const service = new BillingService({ store: fakeStore({ balanceCreditsMicro: 100 * CREDIT_MICRO }) });
+    const project = vi.spyOn(service, 'projectRuntimeEvents').mockResolvedValue({
+      usageEventsInserted: 0, debitEntriesInserted: 0, lastProjectedSequence: 0,
+    });
+    const dispatch = vi.fn(async function* () {
+      throw new Error('model failed');
+    });
+
+    await expect(async () => {
+      for await (const _event of service.wrapDispatch(dispatch)(
+        { type: 'message', content: 'hello' } as any,
+        { user: { tenantId: 'tenant-1' } } as any,
+      )) { /* no-op */ }
+    }).rejects.toThrow('model failed');
+    await vi.waitFor(() => expect(project).toHaveBeenCalledTimes(1));
   });
 
   it('advances runtime_events projection watermark across non-billable events', async () => {
@@ -147,7 +189,7 @@ describe('BillingService hard cap guard', () => {
     expect(store.setProjectionState).toHaveBeenCalledWith('runtime_events', 2);
   });
 
-  it('keeps reservation active when a run pauses for user interaction', async () => {
+  it('异步投影后立即结算实际用量，即使 Run 正等待用户交互', async () => {
     const store = {
       getProjectionState: vi.fn(async () => 0),
       listUnprojectedRuntimeEvents: vi.fn(async () => [
@@ -188,12 +230,12 @@ describe('BillingService hard cap guard', () => {
 
     await expect(service.projectRuntimeEvents()).resolves.toMatchObject({
       usageEventsInserted: 1,
-      debitEntriesInserted: 0,
+      debitEntriesInserted: 1,
       lastProjectedSequence: 2,
     });
 
     expect(store.insertUsageEvent).toHaveBeenCalledTimes(1);
-    expect(store.settleRunDebit).not.toHaveBeenCalled();
+    expect(store.settleRunDebit).toHaveBeenCalledWith('tenant-1', 'run-1');
   });
 
   it('settles late usage after an earlier terminal event even when the usage row is an idempotent replay', async () => {
@@ -214,14 +256,12 @@ describe('BillingService hard cap guard', () => {
         },
       }]),
       insertUsageEvent: vi.fn(async () => null),
-      hasEarlierTerminalEvent: vi.fn(async () => true),
       settleRunDebit: vi.fn(async () => ({ id: 'ledger-late' })),
       setProjectionState: vi.fn(async () => undefined),
     };
     const service = new BillingService({ store: store as any });
 
     await expect(service.projectRuntimeEvents()).resolves.toMatchObject({ usageEventsInserted: 0 });
-    expect(store.hasEarlierTerminalEvent).toHaveBeenCalledWith('tenant-1', 'run-terminal', 11);
     expect(store.settleRunDebit).toHaveBeenCalledWith('tenant-1', 'run-terminal');
   });
 
@@ -243,7 +283,7 @@ describe('BillingService hard cap guard', () => {
         },
       }]),
       insertUsageEvent: vi.fn(async () => ({ id: 'usage-compact' })),
-      hasEarlierTerminalEvent: vi.fn(async () => false),
+      settleRunDebit: vi.fn(async () => ({ id: 'ledger-compact' })),
       setProjectionState: vi.fn(async () => undefined),
     };
     const service = new BillingService({ store: store as any });
@@ -277,6 +317,7 @@ describe('BillingService hard cap guard', () => {
         },
       }]),
       insertUsageEvent: vi.fn(async () => ({ id: 'usage-vision' })),
+      settleRunDebit: vi.fn(async () => ({ id: 'ledger-vision' })),
       setProjectionState: vi.fn(async () => undefined),
     };
     const service = new BillingService({ store: store as any });
@@ -393,6 +434,7 @@ describe('BillingService hard cap guard', () => {
         },
       ]),
       insertUsageEvent: vi.fn(async () => ({ id: 'usage-success' })),
+      settleRunDebit: vi.fn(async () => ({ id: 'ledger-success' })),
       setProjectionState: vi.fn(async () => undefined),
     };
     const service = new BillingService({ store: store as any });
@@ -570,15 +612,14 @@ describe('BillingService utility 模型 Run', () => {
       getProjectionState: vi.fn(async () => 0),
       listUnprojectedRuntimeEvents: vi.fn(async () => []),
       setProjectionState: vi.fn(async () => undefined),
-      ensureRunReservation: vi.fn(async () => ({ ok: true, value: {} })),
-      assertRunCanContinue: vi.fn(async () => ({ ok: true, value: {} })),
+      authorizeRun: vi.fn(async () => ({ ok: true })),
       insertUsageEvent: vi.fn(async (input: Record<string, unknown>) => ({ id: 'usage-utility', ...input })),
       settleRunDebit: vi.fn(async () => null),
       ...overrides,
     };
   }
 
-  it('每个 fallback 调用前重检，逐次写 usage，最终只结算一次', async () => {
+  it('每个 fallback 调用前先结算上一调用并重检，逐次写 usage', async () => {
     const store = utilityStore();
     const service = new BillingService({ store: store as any });
     const run = await service.beginUtilityModelRun({
@@ -592,28 +633,29 @@ describe('BillingService utility 模型 Run', () => {
     await run.finalize();
     await run.finalize();
 
-    expect(store.ensureRunReservation).toHaveBeenCalledWith(expect.objectContaining({
-      tenantId: 'tenant-1', userId: 'user-1', sessionId: 'session-1', runId: run.runId,
+    expect(store.authorizeRun).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-1', userId: 'user-1', runId: run.runId,
     }));
-    expect(store.assertRunCanContinue).toHaveBeenCalledTimes(2);
+    expect(store.authorizeRun).toHaveBeenCalledTimes(3);
     expect(store.insertUsageEvent.mock.calls.map((call) => call[0])).toEqual([
       expect.objectContaining({ modelValue: 'title-main', requestIndex: 1, runId: run.runId }),
       expect.objectContaining({ modelValue: 'title-fallback', requestIndex: 2, runId: run.runId }),
     ]);
-    expect(store.settleRunDebit).toHaveBeenCalledTimes(1);
+    expect(store.settleRunDebit).toHaveBeenCalledTimes(4);
   });
 
-  it('reservation 或逐轮授权拒绝时阻止 utility 模型调用', async () => {
+  it('启动或逐轮实际用量门禁拒绝时阻止 utility 模型调用', async () => {
     const deniedStart = utilityStore({
-      ensureRunReservation: vi.fn(async () => ({ ok: false, code: 'BILLING_ORG_BALANCE_EXHAUSTED', reason: '余额不足' })),
+      authorizeRun: vi.fn(async () => ({ ok: false, code: 'BILLING_ORG_BALANCE_EXHAUSTED', reason: '余额不足' })),
     });
     await expect(new BillingService({ store: deniedStart as any }).beginUtilityModelRun({
       tenantId: 'tenant-1', username: 'alice', channel: 'guardrail',
     })).rejects.toThrow(/BILLING_ORG_BALANCE_EXHAUSTED.*余额不足/);
 
-    const deniedTurn = utilityStore({
-      assertRunCanContinue: vi.fn(async () => ({ ok: false, code: 'BILLING_RUN_LIMIT_EXCEEDED', reason: 'Run 上限' })),
-    });
+    const authorizeRun = vi.fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: false, code: 'BILLING_RUN_LIMIT_EXCEEDED', reason: 'Run 上限' });
+    const deniedTurn = utilityStore({ authorizeRun });
     const run = await new BillingService({ store: deniedTurn as any }).beginUtilityModelRun({
       tenantId: 'tenant-1', username: 'alice', channel: 'guardrail',
     });
@@ -623,137 +665,14 @@ describe('BillingService utility 模型 Run', () => {
   });
 });
 
-describe('PgBillingStore.chargeFixedDebit', () => {
-  // 私有方法经 spy 隔离 PG：本组只验证 chargeFixedDebit 自身的守卫/幂等/落账语义，
-  // SQL 层由集成环境覆盖。
-  function fixedDebitStore(input: {
-    policy?: Partial<TenantBillingPolicy>;
-    balanceCreditsMicro?: number;
-  } = {}) {
-    const store = new PgBillingStore({ pool: {} as any });
-    vi.spyOn(store, 'getTenantPolicy').mockResolvedValue({
-      tenantId: 'wain-test',
-      policyVersion: 'test',
-      billingEnabled: true,
-      pricingVersion: 'test',
-      billingMode: 'prepaid',
-      defaultTargetMarginBps: 6000,
-      organizationMultiplierBps: 10000,
-      allowNegativeBalance: false,
-      negativeLimitCreditsMicro: 0,
-      lowBalanceThresholdCreditsMicro: 0,
-      hardCapMode: 'stop_before_run',
-      showBalance: true,
-      showUsageCredits: true,
-      showCost: false,
-      showGrossMargin: false,
-      updatedBy: 'test',
-      updatedAt: '2026-07-15T00:00:00.000Z',
-      ...(input.policy ?? {}),
-    } as any);
-    vi.spyOn(store, 'getActivePricingVersion').mockResolvedValue({
-      version: 'test-v1',
-      creditValueYuanMicro: 10_000, // 0.01 元/积分
-    } as any);
-    const getByKey = vi.spyOn(store as any, 'getLedgerByIdempotencyKey').mockResolvedValue(null);
-    const insert = vi.spyOn(store as any, 'insertLedgerAndUpdateAccount')
-      .mockImplementation(async (...args: unknown[]) => ({
-        id: 'ledger-fixed-1',
-        createdAt: '2026-07-15T00:00:00.000Z',
-        ...(args[1] as Record<string, unknown>),
-      }));
-    const lock = vi.spyOn(store as any, 'withAccountLock')
-      .mockImplementation(async (...args: unknown[]) => {
-        const fn = args[1] as (client: unknown, account: unknown) => Promise<unknown>;
-        return fn({}, {
-          tenantId: 'wain-test',
-          balanceCreditsMicro: Math.trunc(input.balanceCreditsMicro ?? 1000 * CREDIT_MICRO),
-          reservedCreditsMicro: 0,
-          updatedAt: '2026-07-15T00:00:00.000Z',
-        });
-      });
-    return { store, getByKey, insert, lock };
-  }
-
-  const baseInput = {
-    tenantId: 'wain-test',
-    idempotencyKey: 'debit:tool:v1:event-image',
-    source: 'tool:image_gen',
-    creditsMicro: 800 * CREDIT_MICRO, // 400 积分/张 × 2 张
-    actualCostYuanMicro: 3_000_000,
-    relatedUsageEventIds: ['usage-img'],
-    note: 'GenerateImage image_gen:gpt-image-2 ×2',
-  };
-
-  it('exempts internal tenants: no ledger write at all', async () => {
-    const { store, insert, lock } = fixedDebitStore({ policy: { billingMode: 'internal' } });
-    await expect(store.chargeFixedDebit(baseInput)).resolves.toBeNull();
-    expect(lock).not.toHaveBeenCalled();
-    expect(insert).not.toHaveBeenCalled();
-  });
-
-  it('exempts billing-disabled tenants: no ledger write at all', async () => {
-    const { store, insert, lock } = fixedDebitStore({ policy: { billingEnabled: false } });
-    await expect(store.chargeFixedDebit(baseInput)).resolves.toBeNull();
-    expect(lock).not.toHaveBeenCalled();
-    expect(insert).not.toHaveBeenCalled();
-  });
-
-  it('writes a fixed-value debit with flat pricing (not cost-plus) on first charge', async () => {
-    const { store, insert } = fixedDebitStore({ balanceCreditsMicro: 1000 * CREDIT_MICRO });
-    const entry = await store.chargeFixedDebit(baseInput);
-    expect(entry).toMatchObject({
-      type: 'debit',
-      source: 'tool:image_gen',
-      idempotencyKey: 'debit:tool:v1:event-image',
-      creditsDeltaMicro: -800 * CREDIT_MICRO,
-      balanceBeforeMicro: 1000 * CREDIT_MICRO,
-      balanceAfterMicro: 200 * CREDIT_MICRO,
-      // 固定面值：revenue = 800 积分 × 0.01 元 = 8 元；毛利审计对生图同样生效
-      revenueYuanMicro: 8_000_000,
-      actualCostYuanMicro: 3_000_000,
-      grossProfitYuanMicro: 5_000_000,
-      relatedUsageEventIds: ['usage-img'],
-      pricingVersion: 'test-v1',
-    });
-    expect(insert).toHaveBeenCalledTimes(1);
-  });
-
-  it('is idempotent on replay: the anchored key returns the existing entry without a second insert', async () => {
-    // 投影重跑 / runtime_events 归档重放（rebuildFromJsonl）场景：
-    // 幂等键锚定 eventId → 第二次投影拿回首笔 ledger，绝不重复扣。
-    const { store, getByKey, insert } = fixedDebitStore();
-    const first = await store.chargeFixedDebit(baseInput);
-    expect(first).not.toBeNull();
-    expect(insert).toHaveBeenCalledTimes(1);
-
-    getByKey.mockResolvedValue(first);
-    const replay = await store.chargeFixedDebit(baseInput);
-    expect(replay).toBe(first);
-    expect(insert).toHaveBeenCalledTimes(1); // 无第二次落账
-  });
-
-  it('still charges into negative when generation already happened (warn, not throw)', async () => {
-    // 并发穿透容忍度与 token 路径一致：外部成本已发生，不回滚，事后由 audit 暴露。
-    const warn = vi.fn();
-    const { store } = fixedDebitStore({ balanceCreditsMicro: 100 * CREDIT_MICRO });
-    (store as any).options.logger = { warn };
-    const entry = await store.chargeFixedDebit(baseInput);
-    expect(entry).toMatchObject({ balanceAfterMicro: -700 * CREDIT_MICRO });
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('fixed debit makes tenant negative'));
-  });
-});
-
 function fakeStore(input: {
   balanceCreditsMicro: number;
-  reservedCreditsMicro?: number;
   policy?: Partial<TenantBillingPolicy>;
 }) {
   return {
     getAccount: vi.fn(async (tenantId: string) => ({
       tenantId,
       balanceCreditsMicro: Math.trunc(input.balanceCreditsMicro),
-      reservedCreditsMicro: Math.trunc(input.reservedCreditsMicro ?? 0),
       updatedAt: '2026-06-28T00:00:00.000Z',
     })),
     getTenantPolicy: vi.fn(async (tenantId: string) => ({

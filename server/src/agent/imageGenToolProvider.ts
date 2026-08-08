@@ -31,7 +31,7 @@ import type {
  * 且 'wx' flag 不覆盖已有文件。
  *
  * 计费三段式（防双重扣费见 billing/service.ts projectMeteredToolUsage）：
- *   ① 调 API 前 assertTenantCanAffordFixedFee 预检（不足返回工具错误，run 不崩）；
+ *   ① 调 API 前按组织余额、员工月用量与 Run 实际累计预检（不足返回工具错误，Run 不崩）；
  *   ② 生成成功后 append `metered_tool_usage` 事件（失败不扣费）；
  *   ③ 投影写 billable=false usage 行 + 独立固定 debit（幂等键锚定 eventId）。
  */
@@ -612,41 +612,27 @@ export class ImageGenToolProvider implements ToolProvider {
     const requestedCredits = pricing.creditsPerImage * count;
     const requestedCreditsMicro = Math.round(requestedCredits * CREDIT_MICRO);
 
-    // ① 固定费用先做 run 内原子 hold。没有 active run reservation 的兼容路径
-    //    仍执行原组织余额精确预检；任何失败都不会调用外部生图 API。
+    // 固定费用在调用外部服务前按实际余额、员工月用量与 Run 累计用量精确预检。
+    // 不占款；并发调用允许产生最后一次在途费用的有限超额。
     const billing = this.options.billingService?.();
     const runId = context.runId;
+    const userId = context.channelContext.user?.id ?? context.channelContext.sessionOwner?.id;
     const billingInvocationKey = context.invocationId ?? context.toolCallId ?? randomUUID();
-    const requestedHoldKey = billing && tenantId && runId
-      ? `image_gen:${billingInvocationKey}`
-      : undefined;
-    let holdKey: string | undefined;
-    let holdHandedOff = false;
     let billed = false;
-    try {
     if (billing && tenantId) {
-      if (requestedHoldKey && runId) {
-        const held = await billing.reserveFixedFeeHold({
-          tenantId,
-          runId,
-          holdKey: requestedHoldKey,
-          creditsMicro: requestedCreditsMicro,
-        });
-        if (!held.ok) {
-          throw new Error(
-            `生图请求已拒绝（未扣费）：${held.reason} 本次需 ${requestedCredits} 积分`
-            + `（${engineId} 单价 ${pricing.creditsPerImage} 积分/张 × ${count} 张）。`,
-          );
-        }
-        if (held.value) {
-          holdKey = requestedHoldKey;
-        } else {
-          const allowed = await billing.assertTenantCanAffordFixedFee(tenantId, requestedCreditsMicro);
-          if (!allowed.ok) throw new Error(`生图请求已拒绝（未扣费）：${allowed.reason} 本次需 ${requestedCredits} 积分。`);
-        }
-      } else {
-        const allowed = await billing.assertTenantCanAffordFixedFee(tenantId, requestedCreditsMicro);
-        if (!allowed.ok) throw new Error(`生图请求已拒绝（未扣费）：${allowed.reason} 本次需 ${requestedCredits} 积分。`);
+      const allowed = runId
+        ? await billing.authorizeFixedFee({
+            tenantId,
+            ...(userId ? { userId } : {}),
+            runId,
+            creditsMicro: requestedCreditsMicro,
+          })
+        : await billing.assertTenantCanAffordFixedFee(tenantId, requestedCreditsMicro);
+      if (!allowed.ok) {
+        throw new Error(
+          `生图请求已拒绝（未扣费）：${allowed.reason} 本次需 ${requestedCredits} 积分`
+          + `（${engineId} 单价 ${pricing.creditsPerImage} 积分/张 × ${count} 张）。`,
+        );
       }
       billed = await billing.isTenantBillable(tenantId);
     }
@@ -655,7 +641,6 @@ export class ImageGenToolProvider implements ToolProvider {
     const aspectRatio: AspectRatio = input.aspectRatio ?? '1:1';
     const size = engine.mapSize(aspectRatio);
     const recordGeneratedImage = async (_image: Buffer, index: number): Promise<void> => {
-      const imageHoldKey = index === 0 ? holdKey : undefined;
       const event = {
         type: 'metered_tool_usage' as const,
         runId: context.runId ?? '',
@@ -665,10 +650,7 @@ export class ImageGenToolProvider implements ToolProvider {
         quantity: 1,
         unitCreditsMicro: Math.round(pricing.creditsPerImage * CREDIT_MICRO),
         unitCostYuanMicro: Math.round(pricing.costYuanPerImage * YUAN_MICRO),
-        ...(imageHoldKey ? { holdKey: imageHoldKey } : {}),
-        billingChargeKey: imageHoldKey
-          ? `debit:tool:hold:v1:${imageHoldKey}`
-          : `debit:tool:direct:v1:${billingInvocationKey}:image:${index}`,
+        billingChargeKey: `debit:tool:direct:v1:${billingInvocationKey}:image:${index}`,
         note: `${size} quality=${input.quality ?? 'default'} image=${index + 1}/${count}`
           + `${refImages.length > 0 ? ` ref=${refImages.length}` : ''}`,
       };
@@ -676,7 +658,6 @@ export class ImageGenToolProvider implements ToolProvider {
         if (this.options.appendPlatformEvent) {
           try {
             await this.options.appendPlatformEvent(event, tenantId ? { tenantId } : undefined);
-            if (imageHoldKey) holdHandedOff = true;
             return;
           } catch (err) {
             if (!billing || !tenantId || !billed) throw err;
@@ -688,18 +669,14 @@ export class ImageGenToolProvider implements ToolProvider {
             tenantId,
             ...(context.channelContext.user?.id ? { userId: context.channelContext.user.id } : {}),
             ...(context.channelContext.user?.username ? { username: context.channelContext.user.username } : {}),
-            idempotencyKey: imageHoldKey
-              ? `debit:tool:hold:v1:${imageHoldKey}`
-              : `debit:tool:direct:v1:${billingInvocationKey}:image:${index}`,
+            idempotencyKey: `debit:tool:direct:v1:${billingInvocationKey}:image:${index}`,
             source: 'tool:image_gen',
             creditsMicro: Math.round(pricing.creditsPerImage * CREDIT_MICRO),
             actualCostYuanMicro: Math.round(pricing.costYuanPerImage * YUAN_MICRO),
             ...(context.sessionId ? { sessionId: context.sessionId } : {}),
             ...(runId ? { runId } : {}),
-            ...(imageHoldKey ? { holdKey: imageHoldKey } : {}),
             note: `GenerateImage ${engineId} 第 ${index + 1}/${count} 张`,
           });
-          if (imageHoldKey) holdHandedOff = true;
         }
       } catch (err) {
         throw new ImageBillingError(err);
@@ -758,14 +735,6 @@ export class ImageGenToolProvider implements ToolProvider {
     // payload 里已有引擎/尺寸/张数/扣费的真实结果，直接复用作摘要来源
     const presentation = buildToolPresentation(call.toolId, call.input, undefined, payload as unknown as Record<string, unknown>);
     return { content: JSON.stringify(payload, null, 2), ...(presentation ? { presentation } : {}) };
-    } catch (err) {
-      if (billing && tenantId && runId && holdKey && !holdHandedOff) {
-        await billing.releaseFixedFeeHold({ tenantId, runId, holdKey }).catch((releaseErr) => {
-          this.options.logger?.warn?.(`release image billing hold failed: ${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}`);
-        });
-      }
-      throw err;
-    }
   }
 
   /** refImages 只收 workspace 相对路径；resolveAuthorizedPath + realpath 双重校验，拒 symlink 逃逸。 */

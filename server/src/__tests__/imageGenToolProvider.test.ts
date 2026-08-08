@@ -57,13 +57,11 @@ function makeContext(workspaceRoot: string): ToolCallContext {
 function makeBillingService(overrides: Partial<{
   afford: { ok: true } | { ok: false; reason: string };
   billable: boolean;
-  holdless: boolean;
 }> = {}) {
   return {
-    reserveFixedFeeHold: vi.fn(async () => overrides.afford?.ok === false
-      ? { ok: false, code: 'BILLING_FIXED_FEE_LIMIT_EXCEEDED', reason: overrides.afford.reason }
-      : { ok: true, value: overrides.billable === false || overrides.holdless === true ? null : {} }),
-    releaseFixedFeeHold: vi.fn(async () => null),
+    authorizeFixedFee: vi.fn(async () => overrides.afford?.ok === false
+      ? { ok: false, code: 'BILLING_ORG_BALANCE_EXHAUSTED', reason: overrides.afford.reason }
+      : { ok: true }),
     chargeFixedDebit: vi.fn(async () => null),
     assertTenantCanAffordFixedFee: vi.fn(async () => overrides.afford ?? { ok: true }),
     isTenantBillable: vi.fn(async () => overrides.billable ?? true),
@@ -159,8 +157,8 @@ describe('ImageGenToolProvider', () => {
     const dateDir = payload.images[0].split('/')[2];
     expect(readdirSync(join(workspaceRoot, 'assets', 'generated', dateDir))).toHaveLength(1);
 
-    // 固定费用 hold 发生在生成之前，事件在成功之后
-    expect(billing.reserveFixedFeeHold).toHaveBeenCalledWith(expect.objectContaining({
+    // 固定费用门禁发生在生成之前，事件在成功之后
+    expect(billing.authorizeFixedFee).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'wain-test',
       runId: 'run-1',
       creditsMicro: 400_000_000,
@@ -213,14 +211,13 @@ describe('ImageGenToolProvider', () => {
       creditsCharged: 400,
     });
     expect(payload.warning).toMatch(/请求 2 张，实际成功 1 张/);
-    expect(billing.reserveFixedFeeHold).toHaveBeenCalledWith(expect.objectContaining({
+    expect(billing.authorizeFixedFee).toHaveBeenCalledWith(expect.objectContaining({
       creditsMicro: 800_000_000,
     }));
     expect(appendPlatformEvent).toHaveBeenCalledWith(
       expect.objectContaining({ quantity: 1, unitCreditsMicro: 400_000_000 }),
       { tenantId: 'wain-test' },
     );
-    expect(billing.releaseFixedFeeHold).not.toHaveBeenCalled();
   });
 
   it('fails closed on insufficient balance: no API call, no event, tool error mentions credits', async () => {
@@ -234,7 +231,7 @@ describe('ImageGenToolProvider', () => {
     expect(appendPlatformEvent).not.toHaveBeenCalled();
   });
 
-  it('releases an active hold when billability lookup fails before the external API call', async () => {
+  it('billability 查询失败时不调用外部 API', async () => {
     const billing = makeBillingService();
     billing.isTenantBillable.mockRejectedValueOnce(new Error('billing backend unavailable'));
     const { provider, fetchImpl } = makeProvider({ billingService: () => billing as any });
@@ -243,14 +240,10 @@ describe('ImageGenToolProvider', () => {
       provider.invoke(invokeInput({ prompt: 'a cat' }), makeContext(workspaceRoot)),
     ).rejects.toThrow(/billing backend unavailable/);
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(billing.releaseFixedFeeHold).toHaveBeenCalledWith(expect.objectContaining({
-      tenantId: 'wain-test',
-      runId: 'run-1',
-    }));
   });
 
-  it('无 active reservation 时不发送虚假 holdKey，投影走直接幂等扣费', async () => {
-    const billing = makeBillingService({ holdless: true });
+  it('固定费用事件不再携带 holdKey，投影走直接幂等扣费', async () => {
+    const billing = makeBillingService();
     const appendPlatformEvent = vi.fn(async () => undefined);
     const { provider } = makeProvider({
       billingService: () => billing as any,
@@ -263,7 +256,6 @@ describe('ImageGenToolProvider', () => {
       expect.not.objectContaining({ holdKey: expect.anything() }),
       { tenantId: 'wain-test' },
     );
-    expect(billing.releaseFixedFeeHold).not.toHaveBeenCalled();
   });
 
   it('does not charge internal / billing-disabled tenants but still records the event', async () => {
@@ -278,7 +270,7 @@ describe('ImageGenToolProvider', () => {
     expect(appendPlatformEvent).toHaveBeenCalledTimes(1);
   });
 
-  it('provider 成功后即使落盘失败也保留计费事实，不释放 hold', async () => {
+  it('provider 成功后即使落盘失败也保留计费事实', async () => {
     const billing = makeBillingService();
     const appendPlatformEvent = vi.fn(async () => undefined);
     const { provider } = makeProvider({
@@ -293,7 +285,6 @@ describe('ImageGenToolProvider', () => {
       expect.objectContaining({ type: 'metered_tool_usage', quantity: 1 }),
       { tenantId: 'wain-test' },
     );
-    expect(billing.releaseFixedFeeHold).not.toHaveBeenCalled();
   });
 
   it('retries gpt-image-2 on retryable failures then succeeds', async () => {
@@ -339,16 +330,12 @@ describe('ImageGenToolProvider', () => {
       calls++;
       return new Response(JSON.stringify({ error: { message: 'model unavailable' } }), { status: 500 });
     }) as unknown as typeof fetch;
-    const { provider, billing, appendPlatformEvent } = makeProvider({ fetchImpl });
+    const { provider, appendPlatformEvent } = makeProvider({ fetchImpl });
 
     await expect(
       provider.invoke(invokeInput({ prompt: 'a cat' }), makeContext(workspaceRoot)),
     ).rejects.toThrow(/model:"seedream"/);
     expect(calls).toBe(1);
-    expect(billing.releaseFixedFeeHold).toHaveBeenCalledWith(expect.objectContaining({
-      tenantId: 'wain-test',
-      runId: 'run-1',
-    }));
     expect(appendPlatformEvent).not.toHaveBeenCalled();
   });
 
@@ -408,7 +395,7 @@ describe('ImageGenToolProvider', () => {
     expect(appendPlatformEvent).toHaveBeenCalledTimes(2);
     expect(appendPlatformEvent).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ sku: 'image_gen:seedream', quantity: 1, unitCreditsMicro: 100_000_000, holdKey: expect.any(String) }),
+      expect.objectContaining({ sku: 'image_gen:seedream', quantity: 1, unitCreditsMicro: 100_000_000 }),
       { tenantId: 'wain-test' },
     );
     expect(appendPlatformEvent).toHaveBeenNthCalledWith(
@@ -458,7 +445,7 @@ describe('ImageGenToolProvider', () => {
 
     const result = await provider.invoke(invokeInput({ prompt: 'a cat' }), makeContext(workspaceRoot));
     expect(JSON.parse(result!.content).creditsCharged).toBe(250);
-    expect(billing.reserveFixedFeeHold).toHaveBeenCalledWith(expect.objectContaining({ creditsMicro: 250_000_000 }));
+    expect(billing.authorizeFixedFee).toHaveBeenCalledWith(expect.objectContaining({ creditsMicro: 250_000_000 }));
     expect(appendPlatformEvent).toHaveBeenCalledWith(
       expect.objectContaining({ unitCreditsMicro: 250_000_000, unitCostYuanMicro: 1_200_000 }),
       { tenantId: 'wain-test' },

@@ -7,15 +7,11 @@ import {
   CREDIT_MICRO,
   DEFAULT_CREDIT_VALUE_YUAN_MICRO,
   type BillingAuditSummary,
-  type BillingFixedFeeHold,
-  type BillingFixedFeeHoldDecision,
   type BillingLedgerEntry,
   type BillingProjectionResult,
-  type BillingRunContinueDecision,
-  type BillingRunReservation,
+  type BillingRunAllowanceDecision,
+  type BillingRunAllowanceInput,
   type BillingSummary,
-  type EnsureRunReservationDecision,
-  type EnsureRunReservationInput,
   type FixedDebitInput,
   type ProjectedRuntimeUsageInput,
 } from './types.js';
@@ -72,8 +68,10 @@ export class BillingService {
     let usageEventsInserted = 0;
     let debitEntriesInserted = 0;
     const rows = await this.options.store.listUnprojectedRuntimeEvents(limit);
+    const settledRunKeys = new Set<string>();
     for (const row of rows) {
       lastProjectedSequence = Math.max(lastProjectedSequence, row.globalSequence);
+      let projectedModelUsage = false;
       if (
         row.eventType === 'assistant_message'
         || row.eventType === 'assistant_tool_calls'
@@ -82,10 +80,20 @@ export class BillingService {
       ) {
         const inserted = await this.projectAssistantUsageEvent(row);
         if (inserted) usageEventsInserted++;
+        projectedModelUsage = true;
       }
       if (row.eventType === 'model_request_finished') {
         const inserted = await this.projectFailedModelUsageEvent(row);
         if (inserted) usageEventsInserted++;
+        projectedModelUsage = true;
+      }
+      if (projectedModelUsage) {
+        const runId = typeof row.eventJson.runId === 'string' ? row.eventJson.runId : undefined;
+        if (runId) {
+          const debit = await this.options.store.settleRunDebit(row.tenantId, runId);
+          if (debit) debitEntriesInserted++;
+          settledRunKeys.add(`${row.tenantId}\u0000${runId}`);
+        }
       }
       if (row.eventType === 'metered_tool_usage') {
         const projected = await this.projectMeteredToolUsage(row);
@@ -94,7 +102,7 @@ export class BillingService {
       }
       if (row.eventType === 'run_finished' || shouldSettleOnRunState(row.eventJson)) {
         const runId = typeof row.eventJson.runId === 'string' ? row.eventJson.runId : undefined;
-        if (runId) {
+        if (runId && !settledRunKeys.has(`${row.tenantId}\u0000${runId}`)) {
           const debit = await this.options.store.settleRunDebit(row.tenantId, runId);
           if (debit) debitEntriesInserted++;
         }
@@ -133,9 +141,8 @@ export class BillingService {
     return {
       tenantId,
       balanceCredits: account.balanceCreditsMicro / CREDIT_MICRO,
-      reservedCredits: account.reservedCreditsMicro / CREDIT_MICRO,
       lowBalance: policy.lowBalanceThresholdCreditsMicro > 0
-        && account.balanceCreditsMicro - account.reservedCreditsMicro <= policy.lowBalanceThresholdCreditsMicro,
+        && account.balanceCreditsMicro <= policy.lowBalanceThresholdCreditsMicro,
       billingEnabled: policy.billingEnabled,
       billingMode: policy.billingMode,
       pricingVersion: policy.pricingVersion,
@@ -244,14 +251,10 @@ export class BillingService {
     return audit;
   }
 
-  async ensureRunReservation(input: EnsureRunReservationInput): Promise<EnsureRunReservationDecision> {
+  async authorizeRun(input: BillingRunAllowanceInput): Promise<BillingRunAllowanceDecision> {
     await this.drainRuntimeProjection();
-    return await this.options.store.ensureRunReservation(input);
-  }
-
-  async assertRunCanContinue(tenantId: string, runId: string): Promise<BillingRunContinueDecision> {
-    await this.drainRuntimeProjection();
-    return await this.options.store.assertRunCanContinue(tenantId, runId);
+    await this.options.store.settleRunDebit(input.tenantId, input.runId);
+    return await this.options.store.authorizeRun(input);
   }
 
   async beginUtilityModelRun(input: {
@@ -262,14 +265,12 @@ export class BillingService {
     channel: 'guardrail' | 'title' | 'memory_embedding';
   }): Promise<BillingUtilityModelRun> {
     const runId = `utility-${input.channel}-${randomUUID()}`;
-    const reservation = await this.ensureRunReservation({
+    const initial = await this.authorizeRun({
       tenantId: input.tenantId,
       ...(input.userId ? { userId: input.userId } : {}),
-      username: input.username,
       runId,
-      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     });
-    if (!reservation.ok) throw new Error(`[${reservation.code}] ${reservation.reason}`);
+    if (!initial.ok) throw new Error(`[${initial.code}] ${initial.reason}`);
 
     let requestIndex = 0;
     let finalized = false;
@@ -298,7 +299,12 @@ export class BillingService {
       runId,
       beforeModelCall: async () => {
         requestIndex++;
-        const allowed = await this.assertRunCanContinue(input.tenantId, runId);
+        await flushPendingUsage();
+        const allowed = await this.authorizeRun({
+          tenantId: input.tenantId,
+          ...(input.userId ? { userId: input.userId } : {}),
+          runId,
+        });
         if (!allowed.ok) throw new Error(`[${allowed.code}] ${allowed.reason}`);
       },
       recordUsage: async (model, usage) => {
@@ -312,7 +318,6 @@ export class BillingService {
       },
       finalize: async () => {
         if (finalized) return;
-        // usage 未持久化时绝不能 settle/release reservation；调用方收到错误并停止 fallback。
         await flushPendingUsage();
         await this.options.store.settleRunDebit(input.tenantId, runId);
         finalized = true;
@@ -320,39 +325,16 @@ export class BillingService {
     };
   }
 
-  async reserveFixedFeeHold(input: {
-    tenantId: string;
-    runId: string;
-    holdKey: string;
-    creditsMicro: number;
-  }): Promise<BillingFixedFeeHoldDecision> {
+  async authorizeFixedFee(
+    input: BillingRunAllowanceInput & { creditsMicro: number },
+  ): Promise<BillingRunAllowanceDecision> {
     await this.drainRuntimeProjection();
-    return await this.options.store.reserveFixedFeeHold(input);
-  }
-
-  async releaseFixedFeeHold(input: { tenantId: string; runId: string; holdKey: string }): Promise<BillingFixedFeeHold | null> {
-    return await this.options.store.releaseFixedFeeHold(input);
+    await this.options.store.settleRunDebit(input.tenantId, input.runId);
+    return await this.options.store.authorizeFixedFee(input);
   }
 
   async chargeFixedDebit(input: FixedDebitInput): Promise<BillingLedgerEntry | null> {
     return await this.options.store.chargeFixedDebit(input);
-  }
-
-  async releaseRunReservation(tenantId: string, runId: string): Promise<BillingRunReservation | null> {
-    return await this.options.store.releaseRunReservation(tenantId, runId);
-  }
-
-  async finalizeRunReservation(tenantId: string, runId: string): Promise<BillingLedgerEntry | null> {
-    await this.drainRuntimeProjection();
-    return await this.options.store.settleRunDebit(tenantId, runId);
-  }
-
-  async listExpiredRunReservationCandidates(before: Date, limit = 100): Promise<BillingRunReservation[]> {
-    return await this.options.store.listExpiredRunReservationCandidates(before, limit);
-  }
-
-  async touchRunReservation(tenantId: string, runId: string): Promise<void> {
-    await this.options.store.touchRunReservation(tenantId, runId);
   }
 
   async assertTenantCanStartRun(tenantId: string): Promise<{ ok: true } | { ok: false; code: 'BILLING_ORG_BALANCE_EXHAUSTED' | 'BILLING_RUN_LIMIT_NOT_CONFIGURED'; reason: string }> {
@@ -368,7 +350,7 @@ export class BillingService {
         reason: '组织已启用积分硬封顶，但尚未配置正数的组织单 Run 上限。',
       };
     }
-    const effectiveAvailable = account.balanceCreditsMicro - account.reservedCreditsMicro;
+    const effectiveAvailable = account.balanceCreditsMicro;
     if (effectiveAvailable > 0) return { ok: true };
     if (policy.allowNegativeBalance && Math.abs(effectiveAvailable) < policy.negativeLimitCreditsMicro) return { ok: true };
     return { ok: false, code: 'BILLING_ORG_BALANCE_EXHAUSTED', reason: '组织积分余额不足，当前计费策略已启用硬封顶。' };
@@ -390,7 +372,7 @@ export class BillingService {
       this.options.store.getTenantPolicy(tenantId),
     ]);
     if (!policy.billingEnabled || policy.billingMode === 'internal' || policy.hardCapMode === 'none') return { ok: true };
-    const effectiveAvailable = account.balanceCreditsMicro - account.reservedCreditsMicro;
+    const effectiveAvailable = account.balanceCreditsMicro;
     if (effectiveAvailable >= required) return { ok: true };
     if (policy.allowNegativeBalance && required - effectiveAvailable < policy.negativeLimitCreditsMicro) return { ok: true };
     return { ok: false, reason: '组织积分余额不足，当前计费策略已启用硬封顶。' };
@@ -410,13 +392,16 @@ export class BillingService {
       options?: AgentRunOptions,
       hooks?: AgentRunHooks,
     ): AsyncGenerator<OutboundEvent> {
-      // 新 Run、Steering 与恢复路径都在 raw dispatch 内按真实 runId 做原子 reservation。
-      // 这里不能再用旧余额快照门禁：它无法识别当前 run 自己的 reserved，会误拒绝插话/恢复。
-      yield* dispatch(message, context, options, hooks);
-      // enqueue-only / scheduler 路径会异步落 runtime_events，这里 fire-and-forget 触发一次投影。
-      void this.projectRuntimeEvents().catch((err) => {
-        this.options.logger?.warn?.(`billing projection after dispatch failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      // 新 Run、Steering 与恢复路径都在 raw dispatch 内按真实 runId 检查实际用量。
+      // 每次真实模型请求前还会再次检查，避免只在任务起点判断。
+      try {
+        yield* dispatch(message, context, options, hooks);
+      } finally {
+        // enqueue-only、失败及 scheduler 路径都可能异步落 runtime_events；退出时统一触发一次投影。
+        void this.projectRuntimeEvents().catch((err) => {
+          this.options.logger?.warn?.(`billing projection after dispatch failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
     }.bind(this);
   }
 
@@ -501,14 +486,6 @@ export class BillingService {
       occurredAt: row.timestamp,
     };
     const inserted = await this.options.store.insertUsageEvent(input);
-    // 只有终态事件在全局事件序上确实早于本 usage，才属于迟到 usage。
-    // 不能只看 runs.status：投影积压时 DB 可能已终态，但同批较早的正常 usage
-    // 仍应等后续终态事件统一结算，避免提前释放 fixed-fee hold。
-    // 即使 usage 因崩溃重放而 ON CONFLICT，也要执行幂等补结算。
-    if (runId && !memoryPollExempt
-      && await this.options.store.hasEarlierTerminalEvent?.(row.tenantId, runId, row.globalSequence)) {
-      await this.options.store.settleRunDebit(row.tenantId, runId);
-    }
     return !!inserted;
   }
 
@@ -564,7 +541,6 @@ export class BillingService {
       relatedUsageEventIds: usage ? [usage.id] : [],
       ...(sessionId ? { sessionId } : {}),
       ...(runId ? { runId } : {}),
-      ...(holdKey ? { holdKey } : {}),
       note: `${toolId} ${sku} ×${quantity}${note ? ` (${note})` : ''}`,
     });
     return { usageInserted: !!usage, debitInserted: !!debit };
@@ -596,8 +572,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function shouldSettleOnRunState(event: Record<string, unknown>): boolean {
   if (event.type !== 'run_state_changed') return false;
-  // waiting_* 只是同一 run 的挂起点，reservation 必须保留给审批/AskUser/hand 恢复；
-  // 过早 settle 会让后续恢复绕过成员额度并失去原子预占。
   return event.status === 'completed'
     || event.status === 'failed'
     || event.status === 'cancelled'

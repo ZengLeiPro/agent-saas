@@ -1532,16 +1532,14 @@ function resolveContextTenantId(
 
 async function authorizeBillingRunStart(
   config: RawRuntimeRunDispatchConfig,
-  input: { tenantId?: string; userId?: string; username?: string; runId: string; sessionId?: string },
+  input: { tenantId?: string; userId?: string; runId: string },
 ): Promise<void> {
   const billing = config.billingService?.();
   if (!billing || !input.tenantId) return;
-  const decision = await billing.ensureRunReservation({
+  const decision = await billing.authorizeRun({
     tenantId: input.tenantId,
     ...(input.userId ? { userId: input.userId } : {}),
-    ...(input.username ? { username: input.username } : {}),
     runId: input.runId,
-    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
   });
   if (!decision.ok) throw new Error(`[${decision.code}] ${decision.reason}`);
 }
@@ -1549,13 +1547,18 @@ async function authorizeBillingRunStart(
 function billingRunContextHooks(
   config: RawRuntimeRunDispatchConfig,
   tenantId: string | undefined,
+  userId: string | undefined,
   runId: string,
 ): Pick<RunContext, 'authorizeModelTurn'> {
   const billing = config.billingService?.();
   if (!billing || !tenantId) return {};
   return {
     authorizeModelTurn: async () => {
-      const decision = await billing.assertRunCanContinue(tenantId, runId);
+      const decision = await billing.authorizeRun({
+        tenantId,
+        ...(userId ? { userId } : {}),
+        runId,
+      });
       if (!decision.ok) throw new Error(`[${decision.code}] ${decision.reason}`);
     },
   };
@@ -2258,9 +2261,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       await authorizeBillingRunStart(config, {
         tenantId: sessionRecord.tenantId,
         userId: sessionRecord.userId,
-        username: sessionRecord.username,
         runId,
-        sessionId,
       });
       const runContext: RunContext = {
         runId,
@@ -2286,7 +2287,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         hooks,
         signal: abortController.signal,
         drainHandoff: options.runtimeDrainHandoff,
-        ...billingRunContextHooks(config, sessionRecord.tenantId, runId),
+        ...billingRunContextHooks(config, sessionRecord.tenantId, sessionRecord.userId, runId),
         ...(config.runStore?.listPendingSteeringInputs ? {
           loadQueuedInterjections: async () => {
             const queued = await config.runStore!.listPendingSteeringInputs!(runId);
@@ -2836,9 +2837,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       await authorizeBillingRunStart(config, {
         tenantId: sessionRecord.tenantId,
         userId: sessionRecord.userId,
-        username: sessionRecord.username,
         runId: resumeRunId,
-        sessionId: request.sessionId,
       });
       let loopError: string | undefined;
       for await (const event of loop.resumeApproval(
@@ -2880,7 +2879,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           hooks: request.hooks,
           signal: abortController.signal,
           drainHandoff: request.runtimeDrainHandoff,
-          ...billingRunContextHooks(config, sessionRecord.tenantId, resumeRunId),
+          ...billingRunContextHooks(config, sessionRecord.tenantId, sessionRecord.userId, resumeRunId),
         },
       )) {
         if (event.type === 'error') loopError = event.error ?? 'approval resume failed';
@@ -3239,9 +3238,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       await authorizeBillingRunStart(config, {
         tenantId: sessionRecord.tenantId,
         userId: sessionRecord.userId,
-        username: sessionRecord.username,
         runId: resumeRunId,
-        sessionId: request.sessionId,
       });
       let loopError: string | undefined;
       for await (const event of loop.resumeInteraction(
@@ -3283,7 +3280,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           hooks: request.hooks,
           signal: abortController.signal,
           drainHandoff: request.runtimeDrainHandoff,
-          ...billingRunContextHooks(config, sessionRecord.tenantId, resumeRunId),
+          ...billingRunContextHooks(config, sessionRecord.tenantId, sessionRecord.userId, resumeRunId),
         },
       )) {
         if (event.type === 'error') loopError = event.error ?? 'interaction resume failed';

@@ -7,7 +7,7 @@
 acs-orchestrator/src/sandboxManager.test.ts	1772	test
 acs-orchestrator/src/sandboxManager.ts	1350	production
 server/src/__tests__/appConfig.test.ts	928	test
-server/src/__tests__/billingRouterEndpoints.test.ts	834	test
+server/src/__tests__/billingRouterEndpoints.test.ts	829	test
 server/src/__tests__/feishuTokenBroker.test.ts	813	test
 server/src/__tests__/memoryPoll.test.ts	973	test
 server/src/__tests__/rawAgentLoop.test.ts	4954	test
@@ -25,10 +25,10 @@ server/src/__tests__/workflowLibraryV3.test.ts	1062	test
 server/src/__tests__/wsEventProcessor.test.ts	831	test
 server/src/agent/toolRuntime.ts	1781	production
 server/src/app/config.ts	1536	production
-server/src/app/runtime.ts	3729	production
+server/src/app/runtime.ts	3676	production
 server/src/channels/web/channel.ts	4873	production
 server/src/cron/service.ts	1167	production
-server/src/data/billing/pgBillingStore.ts	2734	production
+server/src/data/billing/pgBillingStore.ts	2319	production
 server/src/data/transcripts/parse.ts	2042	production
 server/src/routes/auth.ts	1821	production
 server/src/routes/platformObservability.ts	1276	production
@@ -36,7 +36,7 @@ server/src/routes/sessions.ts	3359	production
 server/src/routes/skills.ts	1483	production
 server/src/runtime/background/backgroundTaskService.ts	1102	production
 server/src/runtime/rawAgentLoop.ts	4258	production
-server/src/runtime/rawRuntimeRunDispatch.ts	3918	production
+server/src/runtime/rawRuntimeRunDispatch.ts	3915	production
 server/src/runtime/responsesApiAdapter.ts	2178	production
 server/src/runtime/runStore.ts	1673	production
 server/src/runtime/types.ts	1307	production
@@ -45,7 +45,7 @@ shared/src/lib/wsEventProcessor.test.ts	1219	test
 shared/src/lib/wsEventProcessor.ts	1140	production
 shared/src/schemas/workflowScenario.ts	1025	production
 web/src/components/AdminShells.tsx	1200	production
-web/src/components/BillingManager/index.tsx	2270	production
+web/src/components/BillingManager/index.tsx	2258	production
 web/src/components/DesktopSessionSidebar.tsx	2535	production
 web/src/components/MessageItem.tsx	1125	production
 web/src/components/MessageList.tsx	1135	production

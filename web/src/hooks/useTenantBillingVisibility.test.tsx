@@ -60,7 +60,7 @@ describe("useTenantBillingVisibility", () => {
 
   it("设置个人预算时优先返回个人剩余额度", () => {
     expect(resolveBillingAllowance(
-      { balanceCredits: 5000, reservedCredits: 300, billingEnabled: true, billingMode: "prepaid" },
+      { balanceCredits: 5000, billingEnabled: true, billingMode: "prepaid" },
       { monthlyLimitCredits: 1000, remainingCredits: 240 },
     )).toEqual({ credits: 240, source: "member" });
   });
@@ -70,8 +70,8 @@ describe("useTenantBillingVisibility", () => {
     { monthlyLimitCredits: null, remainingCredits: null },
   ])("未设置个人预算时回退组织可用积分：%o", (budget) => {
     expect(resolveBillingAllowance(
-      { balanceCredits: 5000, reservedCredits: 300, billingEnabled: true, billingMode: "prepaid" },
+      { balanceCredits: 5000, billingEnabled: true, billingMode: "prepaid" },
       budget,
-    )).toEqual({ credits: 4700, source: "tenant" });
+    )).toEqual({ credits: 5000, source: "tenant" });
   });
 });

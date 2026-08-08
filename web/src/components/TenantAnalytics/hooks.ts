@@ -178,7 +178,6 @@ export function useTenantHealth(tenantId: string | undefined, days: number): Ten
 
 export interface TenantCreditsSummary {
   balanceCredits: number;
-  reservedCredits: number;
   lowBalance: boolean;
   billingEnabled: boolean;
   currentMonthCreditsUsed: number;

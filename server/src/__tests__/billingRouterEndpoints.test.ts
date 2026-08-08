@@ -138,7 +138,6 @@ function makeFns() {
         periodStart: '2026-07-31T16:00:00.000Z',
         periodEnd: '2026-08-31T16:00:00.000Z',
         monthUsedCreditsMicro: 1_250_000_000,
-        monthReservedCreditsMicro: 100_000_000,
         unattributedCreditsMicro: 50_000_000,
         items: [
           {
@@ -149,8 +148,7 @@ function makeFns() {
             active: true,
             version: 2,
             monthUsedCreditsMicro: 1_000_000_000,
-            monthReservedCreditsMicro: 100_000_000,
-            remainingCreditsMicro: 900_000_000,
+            remainingCreditsMicro: 1_000_000_000,
             canStartRun: true,
             lastUsedAt: '2026-08-01T01:00:00.000Z',
           },
@@ -167,7 +165,6 @@ function makeFns() {
           active: true,
           version: Number(input.expectedVersion) + 1,
           monthUsedCreditsMicro: 1_000_000_000,
-          monthReservedCreditsMicro: 0,
           remainingCreditsMicro: Number(input.monthlyLimitCreditsMicro ?? 0) - 1_000_000_000,
           canStartRun: true,
         },
@@ -725,7 +722,6 @@ describe('Billing 路由端点', () => {
       expect(body.summary).toEqual({
         tenantBalanceCredits: 487.655,
         monthUsedCredits: 1250,
-        monthReservedCredits: 100,
         budgetedUsers: 1,
         enforcedUsers: 1,
         blockedUsers: 0,
@@ -737,12 +733,11 @@ describe('Billing 路由端点', () => {
       expect(body.items.find((item: { userId: string }) => item.userId === 'u-member')).toMatchObject({
         monthlyLimitCredits: 2000,
         monthUsedCredits: 1000,
-        monthReservedCredits: 100,
-        remainingCredits: 900,
+        remainingCredits: 1000,
         enforcementMode: 'stop_new_runs',
         perRunLimitCredits: 500,
         canStartRun: true,
-        usageRatioBps: 5500,
+        usageRatioBps: 5000,
         status: 'normal',
         canManage: true,
       });

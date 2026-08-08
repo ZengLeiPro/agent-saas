@@ -15,7 +15,6 @@ import {
   type BillingMemberBudgetUsage,
   type LedgerType,
 } from '../data/billing/types.js';
-import { committedMemberBudgetCreditsMicro } from '../data/billing/runReservationPolicy.js';
 import {
   BillingBudgetIdempotencyConflictError,
   BillingBudgetVersionConflictError,
@@ -319,7 +318,6 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
           active: true,
           version: 0,
           monthUsedCreditsMicro: 0,
-          monthReservedCreditsMicro: 0,
           canStartRun: true,
         });
         const canManage = access.platform
@@ -343,7 +341,6 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
       summary: {
         tenantBalanceCredits: summary.balanceCredits,
         monthUsedCredits: overview.monthUsedCreditsMicro / CREDIT_MICRO,
-        monthReservedCredits: overview.monthReservedCreditsMicro / CREDIT_MICRO,
         budgetedUsers: members.filter((item) => item.monthlyLimitCredits !== null).length,
         enforcedUsers: members.filter((item) => item.enforcementMode === 'stop_new_runs').length,
         blockedUsers: members.filter((item) => !item.canStartRun).length,
@@ -510,7 +507,6 @@ export function createBillingRouter(options: BillingRouterOptions): Router {
       active: true,
       version: 0,
       monthUsedCreditsMicro: 0,
-      monthReservedCreditsMicro: 0,
       canStartRun: true,
     };
     const { updatedBy: _updatedBy, ...memberBudget } = formatMemberBudget(budget);
@@ -675,22 +671,15 @@ function formatMemberBudget(item: BillingMemberBudgetUsage) {
     ? null
     : item.monthlyLimitCreditsMicro / CREDIT_MICRO;
   const monthUsedCredits = item.monthUsedCreditsMicro / CREDIT_MICRO;
-  const monthReservedCredits = item.monthReservedCreditsMicro / CREDIT_MICRO;
-  const committedMicro = committedMemberBudgetCreditsMicro(
-    item.monthUsedCreditsMicro,
-    item.monthReservedCreditsMicro,
-    item.enforcementMode,
-  );
   const usageRatioBps = item.monthlyLimitCreditsMicro === undefined
     ? null
     : item.monthlyLimitCreditsMicro <= 0
-      ? (committedMicro > 0 ? 10000 : 0)
-      : Math.round((committedMicro / item.monthlyLimitCreditsMicro) * 10000);
+      ? (item.monthUsedCreditsMicro > 0 ? 10000 : 0)
+      : Math.round((item.monthUsedCreditsMicro / item.monthlyLimitCreditsMicro) * 10000);
   return {
     userId: item.userId,
     monthlyLimitCredits,
     monthUsedCredits,
-    monthReservedCredits,
     remainingCredits: item.remainingCreditsMicro === undefined ? null : item.remainingCreditsMicro / CREDIT_MICRO,
     enforcementMode: item.enforcementMode,
     perRunLimitCredits: item.perRunLimitCreditsMicro === undefined ? null : item.perRunLimitCreditsMicro / CREDIT_MICRO,

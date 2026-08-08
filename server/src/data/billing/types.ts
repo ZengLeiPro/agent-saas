@@ -12,12 +12,9 @@ export type BillingMode = 'prepaid' | 'postpaid' | 'trial' | 'internal';
 /**
  * 硬封顶模式。
  * - `none`：完全不挡
- * - `stop_before_run`：余额（含 reserve）不足且超出 negativeLimit 时拒绝新任务
+ * - `stop_before_run`：每次计费动作前按实际已结算用量检查额度，超额后停止后续动作
  *
- * 历史枚举值 `reserve_then_run` 自 2026-06-28 起从产品 UI 摘除：当时后端无 reserve/release
- * 实现，与 `stop_before_run` 行为完全等价，UI 暴露 = 假承诺。LedgerType `reserve|release`
- * 与 `reservedCreditsMicro` 字段保留，留给未来 P2 真正实装预留逻辑。
- * 历史数据通过 `normalizeTenantPolicy` 兜底为 `stop_before_run`。
+ * 历史枚举值 `reserve_then_run` 通过 `normalizeTenantPolicy` 兜底为 `stop_before_run`。
  */
 export type HardCapMode = 'none' | 'stop_before_run';
 export type BillingMemberBudgetEnforcementMode = 'notify' | 'stop_new_runs';
@@ -28,56 +25,18 @@ export type BillingDecisionCode =
   | 'BILLING_RUN_LIMIT_NOT_CONFIGURED'
   | 'BILLING_MEMBER_MONTHLY_LIMIT_EXCEEDED'
   | 'BILLING_MEMBER_PER_RUN_LIMIT_EXCEEDED'
-  | 'BILLING_RUN_LIMIT_EXCEEDED'
-  | 'BILLING_FIXED_FEE_LIMIT_EXCEEDED'
-  | 'BILLING_RESERVATION_NOT_ACTIVE'
-  | 'BILLING_HOLD_CONFLICT';
+  | 'BILLING_RUN_LIMIT_EXCEEDED';
 
-export type BillingDecision<T = undefined> =
-  | ({ ok: true } & (T extends undefined ? Record<string, never> : { value: T }))
-  | { ok: false; code: BillingDecisionCode; reason: string };
-
-export interface BillingRunReservation {
-  tenantId: string;
-  runId: string;
-  userId?: string;
-  usernameSnapshot?: string;
-  sessionId?: string;
-  periodStart: string;
-  grantedCreditsMicro: number;
-  remainingCreditsMicro: number;
-  status: 'active' | 'settled' | 'released';
-  createdAt: string;
-  updatedAt: string;
-  releasedAt?: string;
-}
-
-export interface BillingFixedFeeHold {
-  tenantId: string;
-  runId: string;
-  holdKey: string;
-  creditsMicro: number;
-  status: 'active' | 'captured' | 'released';
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface EnsureRunReservationInput {
+export interface BillingRunAllowanceInput {
   tenantId: string;
   userId?: string;
-  username?: string;
   runId: string;
-  sessionId?: string;
   now?: Date;
 }
 
-export type EnsureRunReservationDecision = BillingDecision<BillingRunReservation | null>;
-export type BillingRunContinueDecision = BillingDecision<{
-  reservation: BillingRunReservation | null;
-  pendingModelCreditsMicro: number;
-  activeFixedHoldsCreditsMicro: number;
-}>;
-export type BillingFixedFeeHoldDecision = BillingDecision<BillingFixedFeeHold | null>;
+export type BillingRunAllowanceDecision =
+  | { ok: true }
+  | { ok: false; code: BillingDecisionCode; reason: string };
 
 export interface BillingPricingVersion {
   version: string;
@@ -108,7 +67,7 @@ export interface TenantBillingPolicy {
   negativeLimitCreditsMicro: number;
   lowBalanceThresholdCreditsMicro: number;
   hardCapMode: HardCapMode;
-  /** 组织级单个 run 可预占上限；hardCapMode=stop_before_run 时必须配置为正数。 */
+  /** 组织级单个 Run 的实际累计用量上限；hardCapMode=stop_before_run 时必须配置为正数。 */
   maxRunCreditsMicro?: number;
   showBalance: boolean;
   showUsageCredits: boolean;
@@ -158,7 +117,6 @@ export interface BillingUsageEvent {
 export interface BillingCreditAccount {
   tenantId: string;
   balanceCreditsMicro: number;
-  reservedCreditsMicro: number;
   updatedAt: string;
 }
 
@@ -199,7 +157,6 @@ export interface BillingMemberBudgetUsage {
   active: boolean;
   version: number;
   monthUsedCreditsMicro: number;
-  monthReservedCreditsMicro: number;
   remainingCreditsMicro?: number;
   canStartRun: boolean;
   lastUsedAt?: string;
@@ -213,7 +170,6 @@ export interface BillingMemberBudgetOverview {
   periodStart: string;
   periodEnd: string;
   monthUsedCreditsMicro: number;
-  monthReservedCreditsMicro: number;
   unattributedCreditsMicro: number;
   items: BillingMemberBudgetUsage[];
 }
@@ -241,7 +197,6 @@ export interface BillingMemberBudgetAuditEntry {
 export interface BillingSummary {
   tenantId: string;
   balanceCredits: number;
-  reservedCredits: number;
   lowBalance: boolean;
   billingEnabled: boolean;
   billingMode: BillingMode;
@@ -333,7 +288,5 @@ export interface FixedDebitInput {
   relatedUsageEventIds?: string[];
   sessionId?: string;
   runId?: string;
-  /** 与 reserveFixedFeeHold 的 holdKey 对应；缺省保持旧调用兼容。 */
-  holdKey?: string;
   note?: string;
 }

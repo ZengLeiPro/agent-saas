@@ -325,11 +325,11 @@ describe('runSubagent', () => {
     expect(fixture.usageRecords).toHaveLength(1);
   });
 
-  it('billing hard cap 拒绝：child run 原子预占失败后停止模型调用', async () => {
+  it('billing hard cap 拒绝：child Run 实际用量门禁失败后停止模型调用', async () => {
     const fixture = await makeFixture({
       cleanupDirs,
       billingService: {
-        ensureRunReservation: async () => ({
+        authorizeRun: async () => ({
           ok: false,
           code: 'BILLING_ORG_BALANCE_EXHAUSTED',
           reason: '组织积分余额不足，当前计费策略已启用硬封顶。',

@@ -2,7 +2,7 @@ interface QueryClient {
   query<T extends Record<string, unknown>>(sql: string): Promise<{ rows: T[] }>;
 }
 
-/** 阻止新色在旧硬封顶策略缺少单 Run 上限时进入 readiness。 */
+/** 阻止旧硬封顶策略在缺少单 Run 上限时进入 readiness。 */
 export async function assertHardCapRunLimitsConfigured(
   client: QueryClient,
   tenantPoliciesTable: string,

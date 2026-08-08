@@ -4,7 +4,6 @@ import { authFetch } from "@/lib/authFetch";
 
 export interface TenantBillingSummary {
   balanceCredits: number;
-  reservedCredits: number;
   billingEnabled: boolean;
   billingMode: string;
 }
@@ -31,7 +30,6 @@ interface MemberBudgetState {
 
 const HIDDEN_BILLING_SUMMARY: TenantBillingSummary = {
   balanceCredits: 0,
-  reservedCredits: 0,
   billingEnabled: false,
   billingMode: "internal",
 };
@@ -43,7 +41,7 @@ export function resolveBillingAllowance(
   if (budget && budget.monthlyLimitCredits !== null && budget.remainingCredits !== null) {
     return { credits: budget.remainingCredits, source: "member" };
   }
-  return { credits: summary.balanceCredits - summary.reservedCredits, source: "tenant" };
+  return { credits: summary.balanceCredits, source: "tenant" };
 }
 
 export function useTenantBillingSummary(tenantId?: string | null): TenantBillingSummary | null {

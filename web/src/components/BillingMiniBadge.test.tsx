@@ -14,7 +14,6 @@ vi.mock("@/lib/authFetch", () => ({
 
 const summary = {
   balanceCredits: 1280,
-  reservedCredits: 80,
   lowBalance: false,
   billingEnabled: true,
   billingMode: "trial",
@@ -58,7 +57,6 @@ describe("BillingMiniBadge", () => {
           summary: {
             ...summary,
             balanceCredits: 12_800.25,
-            reservedCredits: 10_080.5,
             currentMonthCreditsUsed: 10_420.75,
           },
         }), { status: 200 });
@@ -81,12 +79,11 @@ describe("BillingMiniBadge", () => {
           budget: {
             monthlyLimitCredits: 20_000.5,
             monthUsedCredits: 15_000.25,
-            monthReservedCredits: 1_000,
-            remainingCredits: 4_000.25,
+            remainingCredits: 5_000.25,
             enforcementMode: "stop_new_runs",
             perRunLimitCredits: 2_500,
             canStartRun: true,
-            usageRatioBps: 8000,
+            usageRatioBps: 7500,
             status: "attention",
           },
         }), { status: 200 });
@@ -99,20 +96,17 @@ describe("BillingMiniBadge", () => {
     await userEvent.click(await screen.findByTitle("个人剩余额度"));
 
     expect(screen.getByText("试用")).toBeTruthy();
-    expect(screen.getByText("已预留")).toBeTruthy();
     expect(screen.getByText("组织本月消耗")).toBeTruthy();
     expect(screen.getByText("已结算用量")).toBeTruthy();
-    expect(screen.getAllByText("在途预占").length).toBeGreaterThan(0);
     expect(screen.getByText("执行方式")).toBeTruthy();
-    expect(screen.getByText("超额停新任务")).toBeTruthy();
+    expect(screen.getByText("超额停后续动作")).toBeTruthy();
     expect(screen.getByText("个人剩余额度")).toBeTruthy();
-    expect(screen.getAllByText("4,000.25").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("5,000.25").length).toBeGreaterThan(0);
     expect(screen.getByText("12,800.25")).toBeTruthy();
     expect(screen.getByText("15,000.25")).toBeTruthy();
     expect(screen.getByText("20,000.5")).toBeTruthy();
-    expect(screen.getByText("10,080.5")).toBeTruthy();
     expect(screen.getByText("10,420.75")).toBeTruthy();
-    expect(screen.getByText("80% · 需要关注")).toBeTruthy();
+    expect(screen.getByText("75% · 需要关注")).toBeTruthy();
     expect(screen.getByText("当前会话（含 7 个子 Agent）")).toBeTruthy();
     expect(screen.getByText("2,737.58")).toBeTruthy();
     expect(screen.queryByText(/员工预算仅用于提醒/)).toBeNull();
@@ -122,7 +116,7 @@ describe("BillingMiniBadge", () => {
   it("保留侧边栏入口触发展开面板的能力", async () => {
     vi.mocked(authFetch).mockImplementation(async (input) => (
       String(input) === "/api/billing/me/summary"
-        ? new Response(JSON.stringify({ summary: { ...summary, reservedCredits: 0 } }), { status: 200 })
+        ? new Response(JSON.stringify({ summary }), { status: 200 })
         : new Response(null, { status: 404 })
     ));
 

@@ -55,7 +55,6 @@ type PlatformTab = "overview" | "ledger" | "usage-events" | "pricing-versions" |
 interface BillingSummary {
   tenantId: string;
   balanceCredits: number;
-  reservedCredits: number;
   lowBalance: boolean;
   billingEnabled: boolean;
   billingMode: BillingMode;
@@ -181,7 +180,6 @@ interface MemberBudgetPeriod {
 interface MemberBudgetSummary {
   tenantBalanceCredits: number;
   monthUsedCredits: number;
-  monthReservedCredits: number;
   budgetedUsers: number;
   enforcedUsers: number;
   blockedUsers: number;
@@ -199,7 +197,6 @@ interface MemberBudgetItem {
   canManage: boolean;
   monthlyLimitCredits: number | null;
   monthUsedCredits: number;
-  monthReservedCredits: number;
   remainingCredits: number | null;
   enforcementMode: "notify" | "stop_new_runs";
   perRunLimitCredits: number | null;
@@ -335,7 +332,7 @@ function billingModeLabel(mode: BillingMode): string {
 }
 
 function hardCapLabel(mode: HardCapMode): string {
-  if (mode === "stop_before_run") return "余额不足拦截新任务";
+  if (mode === "stop_before_run") return "超额后停止后续计费动作";
   return "不封顶";
 }
 
@@ -507,12 +504,10 @@ function BillingOverview({
   audit?: BillingAuditSummary | null;
   readonly?: boolean;
 }) {
-  const reservedHint =
-    summary && summary.reservedCredits > 0 ? `已预留 ${formatCredits(summary.reservedCredits)}` : "组织共享积分池";
   return (
     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-      <MetricTile label="积分余额" value={summary ? formatCredits(summary.balanceCredits) : "-"} hint={reservedHint} />
-      <MetricTile label="本月消耗" value={summary ? formatCredits(summary.currentMonthCreditsUsed) : "-"} hint="按完成 run 聚合扣费" />
+      <MetricTile label="积分余额" value={summary ? formatCredits(summary.balanceCredits) : "-"} hint="组织共享积分池" />
+      <MetricTile label="本月消耗" value={summary ? formatCredits(summary.currentMonthCreditsUsed) : "-"} hint="按实际计费动作累计" />
       <MetricTile label="计费状态" value={summary?.billingEnabled ? billingModeLabel(summary.billingMode) : "未启用"} hint={summary?.pricingVersion || "billing disabled"} />
       <MetricTile
         label={readonly ? "本月应收" : "7 日毛利"}
@@ -876,7 +871,7 @@ export function PlatformBillingManager() {
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">不封顶</SelectItem>
-                        <SelectItem value="stop_before_run">余额不足拦截新任务</SelectItem>
+                        <SelectItem value="stop_before_run">超额后停止后续计费动作</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -890,7 +885,7 @@ export function PlatformBillingManager() {
                       onChange={(e) => patchDraft((s) => ({ ...s, maxRunCredits: e.target.value }))}
                       placeholder="启用硬封顶时必填"
                     />
-                    <p className="text-xs text-muted-foreground">启用硬封顶时用于原子预占，必须配置正数；未配置会阻止新 Run。</p>
+                    <p className="text-xs text-muted-foreground">启用硬封顶时作为单个 Run 的实际累计上限；未配置会停止后续计费动作。</p>
                   </div>
                   <div className="space-y-1.5">
                     <Label>价格版本</Label>
@@ -1807,11 +1802,11 @@ function MemberBudgetDialog({
   }, [open, member]);
   const normalizedLimit = limitText.trim() === "" ? null : Number(limitText);
   const normalizedPerRunLimit = perRunLimitText.trim() === "" ? null : Number(perRunLimitText);
-  const belowCommitted = member !== null
+  const belowUsed = member !== null
     && enforcementMode === "stop_new_runs"
     && normalizedLimit !== null
     && Number.isFinite(normalizedLimit)
-    && normalizedLimit < member.monthUsedCredits + member.monthReservedCredits;
+    && normalizedLimit < member.monthUsedCredits;
 
   const handleSubmit = async () => {
     if (!member) return;
@@ -1827,7 +1822,7 @@ function MemberBudgetDialog({
       return;
     }
     if (enforcementMode === "stop_new_runs" && (normalizedLimit === null || normalizedLimit <= 0 || normalizedPerRunLimit === null)) {
-      setError("启用“超额后停止新任务”时，必须同时设置大于 0 的月额度和单 Run 上限。");
+      setError("启用“超额后停止后续动作”时，必须同时设置大于 0 的月额度和单 Run 上限。");
       return;
     }
     const trimmedNote = note.trim();
@@ -1885,19 +1880,15 @@ function MemberBudgetDialog({
         <DialogHeader>
           <DialogTitle>设置员工预算</DialogTitle>
           <DialogDescription>
-            {member ? `${member.realName || member.username}（${member.username}）` : "员工"} · 共享组织积分池，可选择提醒或超额后停止新任务。
+            {member ? `${member.realName || member.username}（${member.username}）` : "员工"} · 共享组织积分池，可选择提醒或超额后停止后续计费动作。
           </DialogDescription>
         </DialogHeader>
         {member && (
           <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-3 rounded-lg border bg-muted/20 p-3 text-sm">
+            <div className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/20 p-3 text-sm">
               <div>
                 <div className="text-xs text-muted-foreground">本月已用</div>
                 <div className="mt-1 font-semibold tabular-nums">{formatCredits(member.monthUsedCredits)} 积分</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">在途预占</div>
-                <div className="mt-1 font-semibold tabular-nums">{formatCredits(member.monthReservedCredits)} 积分</div>
               </div>
               <div>
                 <div className="text-xs text-muted-foreground">当前预算</div>
@@ -1920,10 +1911,10 @@ function MemberBudgetDialog({
                 placeholder="留空表示未设置"
               />
               <p className="text-xs text-muted-foreground">预算按北京时间自然月统计，资产仍属于组织共享积分池。</p>
-              {belowCommitted && (
+              {belowUsed && (
                 <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
                   <CircleAlert className="mt-0.5 size-4 shrink-0" />
-                  <span>该额度低于员工本月已用量与在途预占之和；强制模式下保存后将立即停止其新任务。</span>
+                  <span>该额度低于员工本月实际用量；强制模式下保存后将停止其后续计费动作。</span>
                 </div>
               )}
             </div>
@@ -1934,7 +1925,7 @@ function MemberBudgetDialog({
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="notify">软预算，仅提醒</SelectItem>
-                    <SelectItem value="stop_new_runs">超额后停止新任务</SelectItem>
+                    <SelectItem value="stop_new_runs">超额后停止后续动作</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1954,7 +1945,7 @@ function MemberBudgetDialog({
               </div>
             </div>
             <p className="text-xs text-muted-foreground">
-              强制模式会原子预占月额度和组织余额；达到单 Run 上限后停止后续模型调用，已在途的一次调用可能产生少量超额。
+              强制模式会在每次计费动作前检查实际用量；达到额度后停止后续调用，已在途的一次调用可能产生少量超额。
             </p>
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-3">
@@ -2131,7 +2122,7 @@ export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string;
           </div>
           <div className="flex items-start gap-2 rounded-md border border-primary/15 bg-primary/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
             <CircleAlert className="mt-0.5 size-4 shrink-0 text-primary" />
-            <span>公司仍使用共享积分池，不形成个人钱包。员工可设软预算，也可启用“超额后停止新任务”；在途 Run 会先占用额度。</span>
+            <span>公司仍使用共享积分池，不形成个人钱包。员工可设软预算，也可启用“超额后停止后续计费动作”。</span>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -2154,14 +2145,13 @@ export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string;
           )}
           {budgetData ? (
             <>
-              <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
                 <MemberBudgetMetric label="共享池余额" value={formatCredits(budgetData.summary.tenantBalanceCredits)} hint="组织总余额" />
-                <MemberBudgetMetric label="员工本月用量" value={formatCredits(budgetData.summary.monthUsedCredits)} hint="已结算" />
-                <MemberBudgetMetric label="在途预占" value={formatCredits(budgetData.summary.monthReservedCredits)} hint="运行结束后释放差额" />
+                <MemberBudgetMetric label="员工本月用量" value={formatCredits(budgetData.summary.monthUsedCredits)} hint="实际已结算" />
                 <MemberBudgetMetric label="已设预算" value={`${budgetData.summary.budgetedUsers} 人`} hint={`共 ${budgetData.items.length} 人`} />
-                <MemberBudgetMetric label="强制额度" value={`${budgetData.summary.enforcedUsers} 人`} hint="超额停新任务" />
-                <MemberBudgetMetric label="当前已阻断" value={`${budgetData.summary.blockedUsers} 人`} hint="额度不可再预占" />
-                <MemberBudgetMetric label="临近预算" value={`${budgetData.summary.nearLimitUsers} 人`} hint="已用+预占达到 90%" />
+                <MemberBudgetMetric label="强制额度" value={`${budgetData.summary.enforcedUsers} 人`} hint="超额停后续动作" />
+                <MemberBudgetMetric label="当前已阻断" value={`${budgetData.summary.blockedUsers} 人`} hint="实际用量已达额度" />
+                <MemberBudgetMetric label="临近预算" value={`${budgetData.summary.nearLimitUsers} 人`} hint="实际用量达到 90%" />
                 <MemberBudgetMetric label="已超预算" value={`${budgetData.summary.overLimitUsers} 人`} hint="按各自执行方式处理" />
                 <MemberBudgetMetric label="未归属用量" value={formatCredits(budgetData.summary.unattributedCredits)} hint="无法关联到员工" />
               </div>
@@ -2172,7 +2162,6 @@ export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string;
                       <TableHead>员工</TableHead>
                       <TableHead>月度预算</TableHead>
                       <TableHead>本月已用</TableHead>
-                      <TableHead>在途预占</TableHead>
                       <TableHead>执行方式</TableHead>
                       <TableHead>使用率</TableHead>
                       <TableHead>状态</TableHead>
@@ -2199,9 +2188,8 @@ export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string;
                           <div className="font-mono tabular-nums">{formatCredits(member.monthUsedCredits)}</div>
                           {member.lastUsedAt && <div className="mt-0.5 text-[11px] text-muted-foreground">最近 {formatDateTime(member.lastUsedAt)}</div>}
                         </TableCell>
-                        <TableCell className="font-mono tabular-nums">{formatCredits(member.monthReservedCredits)}</TableCell>
                         <TableCell>
-                          <div>{member.enforcementMode === "stop_new_runs" ? "超额停新任务" : "仅提醒"}</div>
+                          <div>{member.enforcementMode === "stop_new_runs" ? "超额停后续动作" : "仅提醒"}</div>
                           {member.perRunLimitCredits !== null && (
                             <div className="mt-0.5 text-[11px] text-muted-foreground">单 Run {formatCredits(member.perRunLimitCredits)}</div>
                           )}
@@ -2213,7 +2201,7 @@ export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string;
                           <Badge variant="outline" className={memberBudgetStatusClass(member.status)}>
                             {memberBudgetStatusLabel(member.status)}
                           </Badge>
-                          {!member.canStartRun && <div className="mt-1 text-[11px] font-medium text-destructive">新任务已阻断</div>}
+                          {!member.canStartRun && <div className="mt-1 text-[11px] font-medium text-destructive">后续动作已阻断</div>}
                           {!member.active && <div className="mt-1 text-[11px] text-muted-foreground">预算未生效</div>}
                         </TableCell>
                         <TableCell className="text-right">

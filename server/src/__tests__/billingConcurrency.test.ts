@@ -134,8 +134,8 @@ class FakePg {
         if (/^\s*BEGIN/i.test(sql)) return { rows: [] };
         if (/^\s*COMMIT/i.test(sql)) { release(); return { rows: [] }; }
         if (/^\s*ROLLBACK/i.test(sql)) { release(); return { rows: [] }; }
-        // 这里只模拟组织账户行锁。reservation / period 行由同一事务中的
-        // account lock 串行化；若对每个 FOR UPDATE 重复拿同一把非重入锁会自锁。
+        // 这里只模拟组织账户行锁；同一事务内的 Run 与员工月用量更新由它串行化。
+        // 若对每个 FOR UPDATE 重复拿同一把非重入锁会自锁。
         if (/FOR UPDATE/i.test(sql) && /credit_accounts/i.test(sql)) {
           const tenantId = String(params[0]);
           await this.lockFor(tenantId).acquire();
@@ -170,8 +170,6 @@ class FakePg {
       return { rows: acc ? [{ row_json: { ...acc } }] : [] };
     }
 
-    // reservation 兼容：旧并发测试没有创建 run reservation，查询应返回空集。
-    if (/FROM\s+\S*run_reservations/i.test(sql)) return { rows: [] };
     if (/pg_advisory_xact_lock/i.test(sql)) return { rows: [] };
 
     // -- insertLedgerAndUpdateAccount UPDATE balance

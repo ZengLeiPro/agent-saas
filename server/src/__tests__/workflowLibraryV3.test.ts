@@ -18,7 +18,7 @@ import {
   WORKFLOW_LIBRARY_HERO_IDS,
   WorkflowLibraryError,
 } from "../data/scenarios/workflowLibrary.js";
-
+import { withHookScenarios } from "./workflowLibraryV3.hookFixture.js";
 const roleIds = Array.from({ length: 8 }, (_, index) => `role-${index + 1}`);
 
 function suffix(index: number): string {
@@ -358,53 +358,6 @@ function buildLibraryFixture(): Record<string, unknown> {
         : {}),
     },
   }));
-  // 钩子条目：同一 workflow 的第二张目录卡（一句话入口）。前 3 条挂 2 个岗位视图、
-  // 后 7 条挂 1 个，共 13 个指派，与 WORKFLOW_LIBRARY_EXPECTED_COUNTS 对齐。
-  const hookScenarios = Array.from({ length: 10 }, (_, index) => {
-    const workflow = workflows[6 + index] as { id: string; roleViews: Array<{ id: string }> };
-    return {
-      id: `catalog-hook-${suffix(index)}`,
-      workflowId: workflow.id,
-      roleViewIds: workflow.roleViews.slice(0, index < 3 ? 2 : 1).map((view) => view.id),
-      public: {
-        title: `一句话入口 ${index + 1}`,
-        value: "先给判断和理由，动作经确认后执行",
-        shortChain: ["你一句话", "跨系统分析", "经确认执行"],
-        roleIds: [roleIds[index % roleIds.length]],
-        industryTags: ["manufacturing"],
-        industryVerticals: ["all"],
-        businessModels: ["general"],
-        maturityLevels: ["integrated"],
-        goalTags: ["保交付"],
-        triggerBadge: "你一句话",
-        actionBadge: "会分析并经确认执行",
-        humanApprovalSummary: "写动作经本人确认",
-        detail: {
-          event: "你在对话框问一句",
-          reads: ["业务对象与企业规则"],
-          decides: "先排序并给理由",
-          acts: ["经确认创建跟进动作"],
-          approval: "写入前由本人确认",
-          beforeAfter: "从凭感觉到有依据",
-          followUp: "持续跟踪动作回执",
-          valueProof: "动作回执与系统回读",
-        },
-        launch: {
-          sampleAvailable: false,
-          inputHint: "直接看完整演示",
-          entry: {
-            kind: "business_event",
-            content: "相关业务对象出现待处理信号",
-          },
-        },
-      },
-      internal: {
-        enabled: true,
-        source: `catalog-hook-source-${suffix(index)}`,
-      },
-    };
-  });
-  catalogScenarios.push(...(hookScenarios as never[]));
   const demos = [
     {
       id: "demo-planned",
@@ -548,7 +501,7 @@ function buildLibraryFixture(): Record<string, unknown> {
       roleWelcomeMessage: `岗位 ${index + 1} 欢迎语`,
     })),
     workflows,
-    catalogScenarios,
+    catalogScenarios: withHookScenarios(catalogScenarios as never[], workflows as never[], suffix),
     deferredObjects,
     scenarioAliases,
     workflowAliases: [],

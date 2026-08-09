@@ -37,6 +37,11 @@ function migrations(prefix: string): GovernanceMigration[] {
   const environmentTemplates = `${prefix}_environment_templates`;
   const environmentTemplateVersions = `${prefix}_environment_template_versions`;
   const resourceReferences = `${prefix}_resource_references`;
+  const managedAgents = `${prefix}_managed_agents`;
+  const managedAgentVersions = `${prefix}_managed_agent_versions`;
+  const governedSkills = `${prefix}_governed_skills`;
+  const governedSkillVersions = `${prefix}_governed_skill_versions`;
+  const skillCandidates = `${prefix}_skill_candidates`;
 
   return [
     {
@@ -408,6 +413,112 @@ function migrations(prefix: string): GovernanceMigration[] {
           ON ${resourceReferences} (target_type, target_id, tenant_id)`,
         `CREATE INDEX IF NOT EXISTS ${resourceReferences}_source_idx
           ON ${resourceReferences} (source_type, source_id)`,
+      ],
+    },
+    {
+      version: 9,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS ${managedAgents} (
+          agent_id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('org_agent', 'personal_agent', 'agent_template')),
+          owner_user_id TEXT NOT NULL,
+          template_id TEXT,
+          status TEXT NOT NULL CHECK (status IN ('draft', 'enabled', 'disabled', 'archived')),
+          current_version_id TEXT,
+          revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_by TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by TEXT NOT NULL,
+          archived_at TIMESTAMPTZ,
+          archived_by TEXT
+        )`,
+        `CREATE TABLE IF NOT EXISTS ${managedAgentVersions} (
+          version_id TEXT PRIMARY KEY,
+          agent_id TEXT NOT NULL REFERENCES ${managedAgents}(agent_id),
+          version_number BIGINT NOT NULL CHECK (version_number >= 1),
+          definition_json JSONB NOT NULL,
+          digest TEXT NOT NULL,
+          published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          published_by TEXT NOT NULL,
+          UNIQUE (agent_id, version_number),
+          UNIQUE (agent_id, digest),
+          UNIQUE (agent_id, version_id)
+        )`,
+        `ALTER TABLE ${managedAgents}
+          ADD CONSTRAINT ${managedAgents}_current_version_fk
+          FOREIGN KEY (agent_id, current_version_id) REFERENCES ${managedAgentVersions}(agent_id, version_id)
+          DEFERRABLE INITIALLY DEFERRED`,
+        `CREATE INDEX IF NOT EXISTS ${managedAgents}_tenant_status_idx
+          ON ${managedAgents} (tenant_id, kind, status)`,
+        `CREATE INDEX IF NOT EXISTS ${managedAgents}_owner_idx
+          ON ${managedAgents} (owner_user_id, kind, status)`,
+      ],
+    },
+    {
+      version: 10,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS ${governedSkills} (
+          skill_id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL,
+          scope TEXT NOT NULL CHECK (scope IN ('platform', 'tenant', 'personal')),
+          owner_user_id TEXT,
+          status TEXT NOT NULL CHECK (status IN ('draft', 'published', 'retired')),
+          current_version_id TEXT,
+          revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_by TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by TEXT NOT NULL,
+          CHECK (scope <> 'personal' OR owner_user_id IS NOT NULL),
+          UNIQUE (tenant_id, skill_id)
+        )`,
+        `CREATE TABLE IF NOT EXISTS ${governedSkillVersions} (
+          version_id TEXT PRIMARY KEY,
+          skill_id TEXT NOT NULL REFERENCES ${governedSkills}(skill_id),
+          version_number BIGINT NOT NULL CHECK (version_number >= 1),
+          definition_json JSONB NOT NULL,
+          digest TEXT NOT NULL,
+          source_candidate_id TEXT,
+          published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          published_by TEXT NOT NULL,
+          UNIQUE (skill_id, version_number),
+          UNIQUE (skill_id, digest),
+          UNIQUE (skill_id, version_id)
+        )`,
+        `CREATE TABLE IF NOT EXISTS ${skillCandidates} (
+          candidate_id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL,
+          owner_user_id TEXT NOT NULL,
+          target_skill_id TEXT NOT NULL,
+          definition_json JSONB NOT NULL,
+          digest TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('draft', 'submitted', 'approved', 'rejected', 'published')),
+          revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+          submitted_at TIMESTAMPTZ,
+          reviewed_at TIMESTAMPTZ,
+          reviewed_by TEXT,
+          review_reason TEXT,
+          published_version_id TEXT REFERENCES ${governedSkillVersions}(version_id),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          FOREIGN KEY (tenant_id, target_skill_id) REFERENCES ${governedSkills}(tenant_id, skill_id)
+        )`,
+        `ALTER TABLE ${governedSkills}
+          ADD CONSTRAINT ${governedSkills}_current_version_fk
+          FOREIGN KEY (skill_id, current_version_id) REFERENCES ${governedSkillVersions}(skill_id, version_id)
+          DEFERRABLE INITIALLY DEFERRED`,
+        `ALTER TABLE ${governedSkillVersions}
+          ADD CONSTRAINT ${governedSkillVersions}_candidate_fk
+          FOREIGN KEY (source_candidate_id) REFERENCES ${skillCandidates}(candidate_id)
+          DEFERRABLE INITIALLY DEFERRED`,
+        `CREATE INDEX IF NOT EXISTS ${governedSkills}_tenant_status_idx
+          ON ${governedSkills} (tenant_id, scope, status)`,
+        `CREATE INDEX IF NOT EXISTS ${skillCandidates}_review_queue_idx
+          ON ${skillCandidates} (tenant_id, status, submitted_at)`,
+        `CREATE INDEX IF NOT EXISTS ${skillCandidates}_owner_idx
+          ON ${skillCandidates} (owner_user_id, status, updated_at)`,
       ],
     },
   ];

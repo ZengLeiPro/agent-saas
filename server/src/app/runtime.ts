@@ -117,6 +117,8 @@ import { GovernanceShadowProjectionScheduler } from '../governance/migrations/sh
 import { PgCredentialStore } from '../data/credentials/index.js';
 import { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
 import { PgEnvironmentStore } from '../data/environments/index.js';
+import { PgAgentResourceStore } from '../data/agentResources/index.js';
+import { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
 import { PgResourceReferenceStore } from '../data/resourceReferences/index.js';
 import { CredentialBroker } from '../runtime/credentialBroker.js';
 import { SubjectResolver } from '../governance/subject/resolver.js';
@@ -419,6 +421,10 @@ export interface AppRuntime {
   connectorCatalogStore?: PgConnectorCatalogStore;
   /** Execution Provider 与 Environment Template/Version 事实模型。 */
   environmentStore?: PgEnvironmentStore;
+  /** Org/Personal/Template Agent stable resource + immutable version。 */
+  agentResourceStore?: PgAgentResourceStore;
+  /** Platform/Tenant/Personal Skill stable resource、版本与候选审批链。 */
+  skillGovernanceStore?: PgSkillGovernanceStore;
   /** 跨领域 Resource Reference Index；退役/删除影响预览的权威来源。 */
   resourceReferenceStore?: PgResourceReferenceStore;
   /** Server-side Credential Broker；影子阶段用于 smoke 验证，尚未接入 connector 运行路径。 */
@@ -1084,6 +1090,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let credentialStore: PgCredentialStore | undefined;
   let connectorCatalogStore: PgConnectorCatalogStore | undefined;
   let environmentStore: PgEnvironmentStore | undefined;
+  let agentResourceStore: PgAgentResourceStore | undefined;
+  let skillGovernanceStore: PgSkillGovernanceStore | undefined;
   let resourceReferenceStore: PgResourceReferenceStore | undefined;
   let credentialBroker: CredentialBroker | undefined;
   let runResolutionSnapshotStore: PgRunResolutionSnapshotStore | undefined;
@@ -1319,6 +1327,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
     await environmentStore.init();
+    agentResourceStore = new PgAgentResourceStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await agentResourceStore.init();
+    skillGovernanceStore = new PgSkillGovernanceStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await skillGovernanceStore.init();
     resourceReferenceStore = new PgResourceReferenceStore({
       pool: pgEventStore.pool,
       tablePrefix: config.runtimeEventStore.tablePrefix,
@@ -3996,6 +4014,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     credentialStore,
     connectorCatalogStore,
     environmentStore,
+    agentResourceStore,
+    skillGovernanceStore,
     resourceReferenceStore,
     credentialBroker,
     flushGovernanceShadowProjections,

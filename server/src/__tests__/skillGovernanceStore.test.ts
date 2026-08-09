@@ -1,0 +1,192 @@
+import { describe, expect, it } from 'vitest';
+
+import { PgSkillGovernanceStore, assertGovernedSkillDefinitionSafe } from '../data/skillGovernance/index.js';
+
+const NOW = '2026-08-08T00:00:00.000Z';
+
+function resourceRow(overrides: Record<string, unknown> = {}) {
+  return {
+    skill_id: 'sales-helper', tenant_id: 'acme', scope: 'tenant', owner_user_id: null,
+    status: 'draft', current_version_id: null, revision: '1', created_at: NOW,
+    created_by: 'admin', updated_at: NOW, updated_by: 'admin', ...overrides,
+  };
+}
+
+function buildPool() {
+  const resources = new Map<string, Record<string, unknown>>();
+  const versions: Record<string, unknown>[] = [];
+  const candidates = new Map<string, Record<string, unknown>>();
+  const queries: string[] = [];
+  const query = async (sql: string, params: unknown[] = []) => {
+    queries.push(sql);
+    if (sql.includes('SELECT version FROM')) return { rows: [], rowCount: 0 };
+    if (sql.includes('INSERT INTO test_governed_skills') && sql.includes('RETURNING')) {
+      if (resources.has(String(params[0]))) return { rows: [], rowCount: 0 };
+      const row = resourceRow({
+        skill_id: params[0], tenant_id: params[1], scope: params[2], owner_user_id: params[3],
+        created_by: params[4], updated_by: params[4],
+      });
+      resources.set(String(params[0]), row);
+      return { rows: [row], rowCount: 1 };
+    }
+    if (sql.includes('FROM test_governed_skills') && /skill_id\s*=\s*\$1/.test(sql)) {
+      const row = resources.get(String(params[0]));
+      return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+    }
+    if (sql.includes('INSERT INTO test_skill_candidates') && sql.includes('RETURNING')) {
+      const row = {
+        candidate_id: params[0], tenant_id: params[1], owner_user_id: params[2], target_skill_id: params[3],
+        definition_json: JSON.parse(String(params[4])), digest: params[5], status: 'draft', revision: '1',
+        submitted_at: null, reviewed_at: null, reviewed_by: null, review_reason: null,
+        published_version_id: null, created_at: NOW, updated_at: NOW,
+      };
+      candidates.set(String(params[0]), row);
+      return { rows: [row], rowCount: 1 };
+    }
+    if (sql.includes('FROM test_skill_candidates') && /candidate_id\s*=\s*\$[12]/.test(sql)) {
+      const idIndex = sql.includes('tenant_id=$1') ? 1 : 0;
+      const row = candidates.get(String(params[idIndex]));
+      const visible = row && (!sql.includes('tenant_id=$1') || row.tenant_id === params[0]) ? row : undefined;
+      return { rows: visible ? [visible] : [], rowCount: visible ? 1 : 0 };
+    }
+    if (sql.includes('UPDATE test_skill_candidates') && sql.includes("SET status='submitted'")) {
+      const current = candidates.get(String(params[1]));
+      if (!current || current.tenant_id !== params[0] || current.owner_user_id !== params[2] || Number(current.revision) !== Number(params[3]) || current.status !== 'draft') return { rows: [], rowCount: 0 };
+      const row = { ...current, status: 'submitted', revision: String(Number(current.revision) + 1), submitted_at: NOW };
+      candidates.set(String(params[1]), row);
+      return { rows: [row], rowCount: 1 };
+    }
+    if (sql.includes('UPDATE test_skill_candidates') && sql.includes('reviewed_at=NOW()')) {
+      const current = candidates.get(String(params[1]));
+      if (!current || current.tenant_id !== params[0] || Number(current.revision) !== Number(params[5]) || current.status !== 'submitted') return { rows: [], rowCount: 0 };
+      const row = { ...current, status: params[2], revision: String(Number(current.revision) + 1), reviewed_at: NOW, reviewed_by: params[3], review_reason: params[4] };
+      candidates.set(String(params[1]), row);
+      return { rows: [row], rowCount: 1 };
+    }
+    if (sql.includes('FROM test_governed_skill_versions') && sql.includes('digest=$2')) {
+      const row = versions.find(item => item.skill_id === params[0] && item.digest === params[1]);
+      return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+    }
+    if (sql.includes('MAX(version_number)')) {
+      const max = versions.filter(item => item.skill_id === params[0]).reduce((n, item) => Math.max(n, Number(item.version_number)), 0);
+      return { rows: [{ next_version: String(max + 1) }], rowCount: 1 };
+    }
+    if (sql.includes('INSERT INTO test_governed_skill_versions') && sql.includes('RETURNING')) {
+      const row = {
+        version_id: params[0], skill_id: params[1], version_number: String(params[2]),
+        definition_json: JSON.parse(String(params[3])), digest: params[4], source_candidate_id: params[5],
+        published_at: NOW, published_by: params[6],
+      };
+      versions.push(row);
+      return { rows: [row], rowCount: 1 };
+    }
+    if (sql.includes('UPDATE test_governed_skills') && sql.includes("status='published'")) {
+      const current = resources.get(String(params[0]));
+      if (!current || Number(current.revision) !== Number(params[3])) return { rows: [], rowCount: 0 };
+      const row = { ...current, status: 'published', current_version_id: params[1], revision: String(Number(current.revision) + 1), updated_by: params[2] };
+      resources.set(String(params[0]), row);
+      return { rows: [row], rowCount: 1 };
+    }
+    if (sql.includes('UPDATE test_skill_candidates') && sql.includes("status='published'")) {
+      const current = candidates.get(String(params[1]));
+      if (!current || current.tenant_id !== params[0] || Number(current.revision) !== Number(params[3]) || current.status !== 'approved') return { rows: [], rowCount: 0 };
+      const row = { ...current, status: 'published', revision: String(Number(current.revision) + 1), published_version_id: params[2] };
+      candidates.set(String(params[1]), row);
+      return { rows: [row], rowCount: 1 };
+    }
+    if (sql.includes('UPDATE test_governed_skills') && sql.includes("status='retired'")) {
+      const current = resources.get(String(params[1]));
+      if (!current || current.tenant_id !== params[0] || Number(current.revision) !== Number(params[2]) || current.status === 'retired') return { rows: [], rowCount: 0 };
+      const row = { ...current, status: 'retired', revision: String(Number(current.revision) + 1), updated_by: params[3] };
+      resources.set(String(params[1]), row);
+      return { rows: [row], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
+  };
+  const pool = { query, connect: async () => ({ query, release: () => undefined }) };
+  return { pool: pool as never, resources, versions, candidates, queries };
+}
+
+const definition = {
+  name: '销售助手', description: '查询销售流程', contentRef: 'skill-content://sha256/abc',
+  entrypoint: 'SKILL.md', toolRequirements: ['WebSearch'],
+};
+
+describe('Governed Skill + Candidate 发布链', () => {
+  it('migration V10 创建 Skill、immutable Version 与候选审批表', async () => {
+    const { pool, queries } = buildPool();
+    const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
+    await store.init();
+    const sql = queries.join('\n');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_governed_skills');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_governed_skill_versions');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_skill_candidates');
+    expect(sql).toContain("status IN ('draft', 'submitted', 'approved', 'rejected', 'published')");
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(10);
+  });
+
+  it('personal Skill 强制 immutable owner；tenant Skill 建 stable ID', async () => {
+    const { pool } = buildPool();
+    const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
+    await expect(store.createResource({ skillId: 'personal-skill', tenantId: 'acme', scope: 'personal', createdBy: 'user-1' }))
+      .rejects.toMatchObject({ code: 'SKILL_PERSONAL_OWNER_REQUIRED' });
+    const created = await store.createResource({
+      skillId: 'sales-helper', tenantId: 'acme', scope: 'tenant', createdBy: 'admin',
+    });
+    expect(created).toMatchObject({ skillId: 'sales-helper', scope: 'tenant', status: 'draft', revision: 1 });
+  });
+
+  it('个人候选副本按 draft→submitted→approved→published，发布 immutable version', async () => {
+    const { pool, versions } = buildPool();
+    const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
+    await store.createResource({ skillId: 'sales-helper', tenantId: 'acme', scope: 'tenant', createdBy: 'admin' });
+    const candidate = await store.createCandidate({
+      tenantId: 'acme', ownerUserId: 'user-1', targetSkillId: 'sales-helper', definition,
+    });
+    const submitted = await store.submitCandidate('acme', candidate.candidateId, 'user-1', 1);
+    expect(submitted.status).toBe('submitted');
+    const approved = await store.reviewCandidate({
+      tenantId: 'acme', candidateId: candidate.candidateId, expectedRevision: 2, verdict: 'approved', reviewedBy: 'org-admin', reason: '通过测试',
+    });
+    expect(approved.status).toBe('approved');
+    const published = await store.publishApprovedCandidate({
+      tenantId: 'acme', candidateId: candidate.candidateId, expectedCandidateRevision: 3, expectedSkillRevision: 1, publishedBy: 'org-admin',
+    });
+    expect(published.candidate).toMatchObject({ status: 'published', revision: 4 });
+    expect(published.resource).toMatchObject({ status: 'published', revision: 2 });
+    expect(published.version).toMatchObject({ sourceCandidateId: candidate.candidateId, versionNumber: 1 });
+    expect(versions).toHaveLength(1);
+  });
+
+  it('候选目标 Skill 严格同租户，禁止跨租户提升', async () => {
+    const { pool } = buildPool();
+    const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
+    await store.createResource({ skillId: 'beta-skill', tenantId: 'beta', scope: 'tenant', createdBy: 'beta-admin' });
+    await expect(store.createCandidate({
+      tenantId: 'acme', ownerUserId: 'user-1', targetSkillId: 'beta-skill', definition,
+    })).rejects.toMatchObject({ code: 'SKILL_RESOURCE_TENANT_MISMATCH' });
+  });
+
+  it('候选 owner/version/状态错误均 fail closed', async () => {
+    const { pool } = buildPool();
+    const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
+    await store.createResource({ skillId: 'sales-helper', tenantId: 'acme', scope: 'tenant', createdBy: 'admin' });
+    const candidate = await store.createCandidate({ tenantId: 'acme', ownerUserId: 'user-1', targetSkillId: 'sales-helper', definition });
+    await expect(store.submitCandidate('acme', candidate.candidateId, 'user-2', 1))
+      .rejects.toMatchObject({ code: 'SKILL_CANDIDATE_OWNER_MISMATCH' });
+    await expect(store.reviewCandidate({
+      tenantId: 'acme', candidateId: candidate.candidateId, expectedRevision: 1, verdict: 'approved', reviewedBy: 'admin', reason: 'skip submit',
+    })).rejects.toMatchObject({ code: 'SKILL_CANDIDATE_INVALID_TRANSITION' });
+  });
+
+  it('Skill Definition 禁止 Secret/Credential/运行实例与消息正文', () => {
+    expect(() => assertGovernedSkillDefinitionSafe(definition)).not.toThrow();
+    for (const invalid of [
+      { secretRef: 'ref-1' }, { credentialId: 'cred-1' }, { api_key: 'key' }, { clientSecret: 'secret' },
+      { workspaceId: 'ws-1' }, { messageText: '正文' },
+    ]) {
+      expect(() => assertGovernedSkillDefinitionSafe(invalid))
+        .toThrowError(expect.objectContaining({ code: 'SKILL_DEFINITION_SENSITIVE' }));
+    }
+  });
+});

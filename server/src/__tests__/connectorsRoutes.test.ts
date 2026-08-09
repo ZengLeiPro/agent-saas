@@ -24,7 +24,9 @@ afterEach(async () => {
   await Promise.all(rigs.splice(0).map(rig => rig.close()));
 });
 
-async function createRig(): Promise<Rig> {
+async function createRig(options: {
+  legacyWriteGate?: { assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void> };
+} = {}): Promise<Rig> {
   const root = mkdtempSync(join(tmpdir(), 'connectors-route-'));
   const connectionStore = new ConnectorConnectionStore(join(root, 'connections.json'));
   const secretVault = new InMemorySecretVault();
@@ -48,7 +50,10 @@ async function createRig(): Promise<Rig> {
     } satisfies JwtPayload;
     next();
   });
-  app.use('/api/connectors', createConnectorsRouter({ connectionStore, secretVault, aliyunService }));
+  app.use('/api/connectors', createConnectorsRouter({
+    connectionStore, secretVault, aliyunService,
+    ...(options.legacyWriteGate ? { legacyWriteGate: options.legacyWriteGate } : {}),
+  }));
   const server: Server = await new Promise(resolve => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
   });
@@ -135,6 +140,18 @@ describe('native connectors routes', () => {
   it('rejects invalid tokens', async () => {
     const rig = await createRig();
     expect((await rig.request('/api/connectors/github', json('POST', { token: 'not-a-token' }))).status).toBe(400);
+  });
+
+  it('enforce 封闭 legacy Connector/Credential 写入口，但不影响读取', async () => {
+    const gate = {
+      assertLegacyWriteAllowed: vi.fn().mockRejectedValue(new Error('sealed')),
+    };
+    const rig = await createRig({ legacyWriteGate: gate });
+    expect((await rig.request('/api/connectors/github')).status).toBe(200);
+    const write = await rig.request('/api/connectors/github', json('POST', { token: 'github_pat_route_test' }));
+    expect(write.status).toBe(409);
+    expect(await write.json()).toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
+    expect(gate.assertLegacyWriteAllowed).toHaveBeenCalledWith({ actor: 'user', compatibilityProjection: false });
   });
 
   it('connects, reads and disconnects an Aliyun AccessKey without returning secrets', async () => {

@@ -17,6 +17,32 @@ export interface PgConnectorCatalogStoreOptions {
 }
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{1,63}$/;
+const FORBIDDEN_DEFINITION_KEYS = new Set([
+  'apikey', 'accesstoken', 'clientsecret', 'credential', 'credentialid',
+  'password', 'secret', 'secretref', 'token', 'refreshtoken',
+]);
+const SENSITIVE_VALUE_PATTERN = /(?:authorization\s*:\s*bearer|bearer\s+[a-z0-9._~-]{8,}|(?:token|secret|password|api[_-]?key)\s*(?:=|:)\s*\S+)/i;
+
+function assertNoSensitiveDefinition(value: unknown): void {
+  if (typeof value === 'string') {
+    if (SENSITIVE_VALUE_PATTERN.test(value)) {
+      throw new ConnectorCatalogInvariantError('CONNECTOR_DEFINITION_SENSITIVE');
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach(assertNoSensitiveDefinition);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (FORBIDDEN_DEFINITION_KEYS.has(normalized)) {
+      throw new ConnectorCatalogInvariantError('CONNECTOR_DEFINITION_SENSITIVE');
+    }
+    assertNoSensitiveDefinition(child);
+  }
+}
 
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -246,6 +272,8 @@ export class PgConnectorCatalogStore {
       || typeof input.definition !== 'object') {
       throw new ConnectorCatalogInvariantError('CONNECTOR_DEFINITION_INVALID');
     }
+    assertNoSensitiveDefinition(input.capabilitySchema);
+    assertNoSensitiveDefinition(input.definition);
   }
 
   private async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {

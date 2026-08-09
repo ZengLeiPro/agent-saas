@@ -103,7 +103,7 @@ describe('Governance Change Job', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_governance_change_jobs');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_governance_change_job_domains');
     expect(sql).toContain('UNIQUE (tenant_id, job_type, idempotency_key)');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(11);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(12);
   });
 
   it('同 idempotency key 返回同一 Job，不重复建立分域', async () => {

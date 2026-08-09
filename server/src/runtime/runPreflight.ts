@@ -47,6 +47,7 @@ export interface RunPreflightInput {
 export interface RunPreflightResult {
   proceed: boolean;
   enforcementMode: GovernanceEnforcementMode;
+  migrationControlRevision?: number;
   accessDecision: AccessDecision;
   readiness: ExecutionReadiness;
   snapshot: RunResolutionSnapshotDraft;
@@ -55,6 +56,8 @@ export interface RunPreflightResult {
 
 export interface RunPreflightServiceOptions {
   enforcementMode: GovernanceEnforcementMode;
+  resolveEnforcementMode?: () => Promise<GovernanceEnforcementMode>;
+  resolveEnforcementState?: () => Promise<{ mode: GovernanceEnforcementMode; revision: number }>;
   subjectResolver: SubjectResolver;
   accessEvaluator: AccessEvaluator;
   readinessEvaluator: ReadinessEvaluator;
@@ -84,7 +87,17 @@ interface ResolvedRunInput {
 export class RunPreflightService {
   constructor(private readonly options: RunPreflightServiceOptions) {}
 
+  async enforcementMode(): Promise<GovernanceEnforcementMode> {
+    return (await this.enforcementState()).mode;
+  }
+
   async preflight(input: RunPreflightInput): Promise<RunPreflightResult> {
+    return this.preflightStable(input, 0);
+  }
+
+  private async preflightStable(input: RunPreflightInput, retry: number): Promise<RunPreflightResult> {
+    const initialState = await this.enforcementState();
+    const enforcementMode = initialState.mode;
     const evaluatedAt = new Date();
     const session = await this.options.sessionCatalog.get(input.sessionId);
     const resolved = await this.resolveInput(input, session);
@@ -134,15 +147,31 @@ export class RunPreflightService {
       evaluatedAt,
     });
     const wouldBlock = decision.verdict !== 'allow' || !readiness.ready;
-    const proceed = this.options.enforcementMode === 'shadow' || !wouldBlock;
+    const finalState = await this.enforcementState();
+    const controlChanged = finalState.mode !== initialState.mode
+      || (finalState.revision !== undefined && finalState.revision !== initialState.revision);
+    if (controlChanged) {
+      if (retry >= 1) throw new Error('MIGRATION_CONTROL_CHANGED_DURING_PREFLIGHT');
+      return this.preflightStable(input, retry + 1);
+    }
+    const proceed = enforcementMode === 'shadow' || !wouldBlock;
     return {
       proceed,
-      enforcementMode: this.options.enforcementMode,
+      enforcementMode,
+      ...(initialState.revision !== undefined ? { migrationControlRevision: initialState.revision } : {}),
       accessDecision: decision,
       readiness,
-      shadowWouldBlock: this.options.enforcementMode === 'shadow' && wouldBlock,
-      snapshot: this.buildSnapshot(input, resolved, subject, decision, readiness, evaluatedAt),
+      shadowWouldBlock: enforcementMode === 'shadow' && wouldBlock,
+      snapshot: this.buildSnapshot(
+        input, resolved, subject, decision, readiness, evaluatedAt, enforcementMode, initialState.revision,
+      ),
     };
+  }
+
+  private async enforcementState(): Promise<{ mode: GovernanceEnforcementMode; revision?: number }> {
+    if (this.options.resolveEnforcementState) return this.options.resolveEnforcementState();
+    if (this.options.resolveEnforcementMode) return { mode: await this.options.resolveEnforcementMode() };
+    return { mode: this.options.enforcementMode };
   }
 
   private async resolveInput(input: RunPreflightInput, session: RuntimeSessionRecord | null): Promise<ResolvedRunInput> {
@@ -260,6 +289,8 @@ export class RunPreflightService {
     accessDecision: AccessDecision,
     readiness: ExecutionReadiness,
     evaluatedAt: Date,
+    enforcementMode: GovernanceEnforcementMode,
+    migrationControlRevision?: number,
   ): RunResolutionSnapshotDraft {
     const actor = subject.subjectType === 'human'
       ? {
@@ -293,7 +324,8 @@ export class RunPreflightService {
       runId: input.runId,
       sessionId: input.sessionId,
       tenantId: resolved.tenantId,
-      enforcementMode: this.options.enforcementMode,
+      enforcementMode,
+      ...(migrationControlRevision !== undefined ? { migrationControlRevision } : {}),
       actor,
       accessDecision,
       readiness,

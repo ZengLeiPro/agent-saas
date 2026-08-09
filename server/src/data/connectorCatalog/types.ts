@@ -37,7 +37,8 @@ export type ConnectorCatalogInvariantCode =
   | 'CONNECTOR_NOT_FOUND'
   | 'CONNECTOR_RETIRED'
   | 'CONNECTOR_VERSION_CONFLICT'
-  | 'CONNECTOR_DEFINITION_INVALID';
+  | 'CONNECTOR_DEFINITION_INVALID'
+  | 'CONNECTOR_DEFINITION_SENSITIVE';
 
 export class ConnectorCatalogInvariantError extends Error {
   constructor(readonly code: ConnectorCatalogInvariantCode) {

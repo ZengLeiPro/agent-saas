@@ -977,7 +977,7 @@ export async function ensureRuntimeHandRegistered(params: {
   }
 }
 
-async function appendResolvedRunSnapshot(input: {
+export async function appendResolvedRunSnapshot(input: {
   config: RawRuntimeRunDispatchConfig;
   runId: string;
   session: RuntimeSessionRecord;

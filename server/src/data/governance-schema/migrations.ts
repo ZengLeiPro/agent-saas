@@ -44,6 +44,9 @@ function migrations(prefix: string): GovernanceMigration[] {
   const skillCandidates = `${prefix}_skill_candidates`;
   const changeJobs = `${prefix}_governance_change_jobs`;
   const changeJobDomains = `${prefix}_governance_change_job_domains`;
+  const migrationControl = `${prefix}_governance_migration_control`;
+  const migrationDomains = `${prefix}_governance_migration_domains`;
+  const shadowDifferences = `${prefix}_governance_shadow_differences`;
 
   return [
     {
@@ -563,6 +566,59 @@ function migrations(prefix: string): GovernanceMigration[] {
           ON ${changeJobs} (status, next_retry_at, updated_at)`,
         `CREATE INDEX IF NOT EXISTS ${changeJobs}_tenant_idx
           ON ${changeJobs} (tenant_id, job_type, created_at)`,
+      ],
+    },
+    {
+      version: 12,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS ${migrationControl} (
+          control_id TEXT PRIMARY KEY CHECK (control_id='global'),
+          mode TEXT NOT NULL CHECK (mode IN ('shadow', 'enforce', 'rollback')),
+          write_authority TEXT NOT NULL CHECK (write_authority IN ('legacy', 'dual', 'governance')),
+          legacy_writes_sealed BOOLEAN NOT NULL DEFAULT FALSE,
+          compatibility_projection_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+          rollback_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+          revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by TEXT NOT NULL,
+          update_reason TEXT NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS ${migrationDomains} (
+          domain TEXT PRIMARY KEY,
+          status TEXT NOT NULL CHECK (status IN ('shadow', 'ready', 'enforced', 'rollback')),
+          compared_count BIGINT NOT NULL DEFAULT 0 CHECK (compared_count >= 0),
+          matched_count BIGINT NOT NULL DEFAULT 0 CHECK (matched_count >= 0),
+          difference_count BIGINT NOT NULL DEFAULT 0 CHECK (difference_count >= 0),
+          unresolved_blocking_count BIGINT NOT NULL DEFAULT 0 CHECK (unresolved_blocking_count >= 0),
+          revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+          last_compared_at TIMESTAMPTZ,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by TEXT NOT NULL,
+          CHECK (matched_count + difference_count = compared_count),
+          CHECK (unresolved_blocking_count <= difference_count)
+        )`,
+        `CREATE TABLE IF NOT EXISTS ${shadowDifferences} (
+          difference_id TEXT PRIMARY KEY,
+          domain TEXT NOT NULL REFERENCES ${migrationDomains}(domain),
+          tenant_scope TEXT NOT NULL DEFAULT '',
+          resource_type TEXT NOT NULL,
+          resource_id TEXT NOT NULL,
+          category TEXT NOT NULL CHECK (category IN (
+            'missing_legacy','missing_governance','value_mismatch','ambiguous_identity','comparison_error'
+          )),
+          legacy_digest TEXT,
+          governance_digest TEXT,
+          blocking BOOLEAN NOT NULL DEFAULT TRUE,
+          status TEXT NOT NULL CHECK (status IN ('open', 'accepted', 'resolved')),
+          first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          resolved_at TIMESTAMPTZ,
+          resolved_by TEXT,
+          resolution_reason TEXT,
+          UNIQUE (domain, tenant_scope, resource_type, resource_id, category)
+        )`,
+        `CREATE INDEX IF NOT EXISTS ${shadowDifferences}_blocking_idx
+          ON ${shadowDifferences} (status, blocking, domain, tenant_scope)`,
       ],
     },
   ];

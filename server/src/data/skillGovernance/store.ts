@@ -217,7 +217,7 @@ export class PgSkillGovernanceStore {
   }): Promise<SkillCandidate> {
     const result = await this.options.pool.query(`
       UPDATE ${this.candidatesTable}
-      SET status=$2,revision=revision+1,reviewed_at=NOW(),reviewed_by=$3,review_reason=$4,updated_at=NOW()
+      SET status=$3,revision=revision+1,reviewed_at=NOW(),reviewed_by=$4,review_reason=$5,updated_at=NOW()
       WHERE tenant_id=$1 AND candidate_id=$2 AND revision=$6 AND status='submitted' RETURNING *
     `, [input.tenantId, input.candidateId, input.verdict, input.reviewedBy, input.reason, input.expectedRevision]);
     if (result.rows[0]) return rowToCandidate(result.rows[0]);

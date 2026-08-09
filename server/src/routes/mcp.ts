@@ -21,6 +21,9 @@ export interface McpRouterDeps {
   oauthService?: McpOAuthService;
   /** Web 前端基址（前后端分域部署时必配，否则 OAuth 回调后会跳回 API 域）；未配置=回调 URL 同源 */
   webBaseUrl?: string;
+  legacyWriteGate?: {
+    assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
+  };
 }
 
 const riskSchema = z.enum(['read_only', 'workspace_write', 'external_write', 'credentialed_external_write'] satisfies [McpRiskLevel, ...McpRiskLevel[]]);
@@ -122,6 +125,20 @@ const diagnoseSchema = z.object({ force: z.boolean().optional() }).strict();
 export function createMcpRouter(deps: McpRouterDeps): Router {
   const router = Router();
   const { store, userStore, manager, agentCwd, secretVault, oauthService, webBaseUrl } = deps;
+  router.use(async (req, res, next) => {
+    const writesLegacyState = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)
+      || (req.method === 'GET' && req.path === '/oauth/callback');
+    if (!writesLegacyState || !deps.legacyWriteGate) return next();
+    try {
+      await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
+      next();
+    } catch {
+      res.status(409).json({
+        error: '旧版 MCP/Credential 写入口已封闭，请使用治理资源 API',
+        code: 'MIGRATION_LEGACY_WRITE_SEALED',
+      });
+    }
+  });
 
   function currentUsername(req: Request): string | null {
     return req.user?.username ?? null;

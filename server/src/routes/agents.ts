@@ -26,6 +26,9 @@ export interface AgentsRouterDeps {
   userStore: UserStore;
   skillConfigStore?: SkillConfigStore;
   getMemoryIndexService?: () => MemoryIndexService | null | undefined;
+  legacyWriteGate?: {
+    assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
+  };
 }
 
 const updateAgentSchema = z.object({
@@ -45,6 +48,20 @@ const memorySchema = z.object({
 export function createAgentsRouter(deps: AgentsRouterDeps): Router {
   const { agentStore, agentAvatarsDir, agentCwd, sharedDir, tenantSkillsRootDir, userStore, skillConfigStore } = deps;
   const router = Router();
+  router.use(async (req, res, next) => {
+    const isLegacyAgentWrite = req.method === 'PATCH'
+      || (req.method === 'POST' && req.path.endsWith('/avatar'));
+    if (!isLegacyAgentWrite || !deps.legacyWriteGate) return next();
+    try {
+      await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
+      next();
+    } catch {
+      res.status(409).json({
+        error: '旧版 Personal Agent 写入口已封闭，请使用治理资源 API',
+        code: 'MIGRATION_LEGACY_WRITE_SEALED',
+      });
+    }
+  });
   const displayName = (uname: string) => userStore.findByUsername(uname)?.realName || uname;
 
   function profileForUser(username: string): AgentProfileInfo {

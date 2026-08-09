@@ -120,6 +120,7 @@ import { PgEnvironmentStore } from '../data/environments/index.js';
 import { PgAgentResourceStore } from '../data/agentResources/index.js';
 import { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
 import { GovernanceChangePlanner, PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
+import { GovernanceShadowComparator, GovernanceWriteGate, PgGovernanceMigrationControlStore } from '../data/migrationControl/index.js';
 import { PgResourceReferenceStore } from '../data/resourceReferences/index.js';
 import { CredentialBroker } from '../runtime/credentialBroker.js';
 import { SubjectResolver } from '../governance/subject/resolver.js';
@@ -429,6 +430,9 @@ export interface AppRuntime {
   /** 可重试 Tenant/Delete/Retire/Revoke 治理 Change Job。 */
   governanceChangeJobStore?: PgGovernanceChangeJobStore;
   governanceChangePlanner?: GovernanceChangePlanner;
+  governanceMigrationControlStore?: PgGovernanceMigrationControlStore;
+  governanceWriteGate?: GovernanceWriteGate;
+  governanceShadowComparator?: GovernanceShadowComparator;
   /** 跨领域 Resource Reference Index；退役/删除影响预览的权威来源。 */
   resourceReferenceStore?: PgResourceReferenceStore;
   /** Server-side Credential Broker；影子阶段用于 smoke 验证，尚未接入 connector 运行路径。 */
@@ -1098,6 +1102,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let skillGovernanceStore: PgSkillGovernanceStore | undefined;
   let governanceChangeJobStore: PgGovernanceChangeJobStore | undefined;
   let governanceChangePlanner: GovernanceChangePlanner | undefined;
+  let governanceMigrationControlStore: PgGovernanceMigrationControlStore | undefined;
+  let governanceWriteGate: GovernanceWriteGate | undefined;
+  let governanceShadowComparator: GovernanceShadowComparator | undefined;
   let resourceReferenceStore: PgResourceReferenceStore | undefined;
   let credentialBroker: CredentialBroker | undefined;
   let runResolutionSnapshotStore: PgRunResolutionSnapshotStore | undefined;
@@ -1348,6 +1355,74 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
     await governanceChangeJobStore.init();
+    governanceMigrationControlStore = new PgGovernanceMigrationControlStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await governanceMigrationControlStore.init();
+    governanceWriteGate = new GovernanceWriteGate(governanceMigrationControlStore);
+    governanceShadowComparator = new GovernanceShadowComparator(governanceMigrationControlStore);
+    if (userStore && tenantStore && membershipStore) {
+      try {
+        let matchedCount = 0;
+        let differenceCount = 0;
+        for (const user of userStore.listAll()) {
+          const legacy = user.tenantId === DEFAULT_TENANT_ID
+            ? user.role === 'admin'
+              ? {
+                  userId: user.id,
+                  status: user.disabled ? 'disabled' : 'active',
+                }
+              : undefined
+            : {
+                tenantId: user.tenantId,
+                userId: user.id,
+                persona: user.role === 'admin' ? 'org_admin' : 'member',
+                status: user.disabled ? 'disabled' : 'active',
+              };
+          const governance = user.tenantId === DEFAULT_TENANT_ID
+            ? await membershipStore.getPlatformAdmin(user.id).then(projected => projected
+              ? { userId: projected.userId, status: projected.status }
+              : undefined)
+            : await membershipStore.getMembership(user.tenantId, user.id).then(projected => projected
+              ? {
+                  tenantId: projected.tenantId,
+                  userId: projected.userId,
+                  persona: projected.persona,
+                  status: projected.status,
+                }
+              : undefined);
+          const compared = await governanceShadowComparator.compare({
+            domain: 'membership',
+            tenantId: user.tenantId,
+            resourceType: user.tenantId === DEFAULT_TENANT_ID ? 'platform_admin' : 'membership',
+            resourceId: user.id,
+            legacy,
+            governance,
+            blocking: true,
+          });
+          if (compared.matched) matchedCount += 1;
+          else differenceCount += 1;
+        }
+        const membershipDomain = (await governanceMigrationControlStore.listDomains())
+          .find(domain => domain.domain === 'membership');
+        if (membershipDomain) {
+          await governanceMigrationControlStore.recordDomainSnapshot({
+            domain: 'membership',
+            expectedRevision: membershipDomain.revision,
+            comparedCount: matchedCount + differenceCount,
+            matchedCount,
+            differenceCount,
+            unresolvedBlockingCount: differenceCount,
+            updatedBy: 'system:shadow-auditor',
+          });
+        }
+      } catch (error) {
+        serverLogger.warn(
+          `Governance membership shadow comparison failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     resourceReferenceStore = new PgResourceReferenceStore({
       pool: pgEventStore.pool,
       tablePrefix: config.runtimeEventStore.tablePrefix,
@@ -2547,13 +2622,17 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     onGuardrailModelConfigsUpdated: (next) => { guardrailModelConfigs = next; },
   });
 
-  // Access/Run 阶段：统一 Subject → AccessDecision → Readiness → Preflight。
-  // 当前以 shadow enforcement 装配：同一 evaluator 在 Web enqueue 与 scheduler wake
-  // 双侧运行并落 Run Resolution Snapshot，但暂不阻断 legacy 门禁；切换 V2 权威
-  // 属于最终迁移门禁，见后端改造分析「渐进迁移与全量门禁」章节。
+  // Access/Run：统一 Subject → AccessDecision → Readiness → Preflight。
+  // 迁移控制动态切换 shadow/enforce；控制 revision 在评估前后复核并写入 Snapshot。
   if (membershipStore && entitlementStore && assignmentStore && userStore && tenantStore && orgAgentStore) {
     runPreflightService = new RunPreflightService({
       enforcementMode: 'shadow',
+      ...(governanceMigrationControlStore ? {
+        resolveEnforcementState: async () => {
+          const control = await governanceMigrationControlStore!.getControl();
+          return { mode: control.mode === 'enforce' ? 'enforce' : 'shadow', revision: control.revision };
+        },
+      } : {}),
       subjectResolver: new SubjectResolver(userStore, membershipStore),
       accessEvaluator: new AccessEvaluator([
         new PlatformInvariantPolicy(),
@@ -2930,10 +3009,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         const tenantId = record.tenantId ?? (record.userId ? userStore?.findById(record.userId)?.tenantId : undefined);
         const tenantAccessError = tenantAccessErrorMessage(tenantStore, tenantId);
         if (tenantAccessError) throw new Error(tenantAccessError);
-        // Governance shadow：claim/lease 后、模型调用前，用统一 evaluator 按最新
-        // Membership/Entitlement/Policy/Assignment 复核并落 Run Resolution Snapshot。
-        // shadow 模式下复核失败只记录日志，不阻断 legacy 门禁；快照写入失败同样降级
-        // （enforcer 切换时此分支必须 fail closed——见迁移门禁 TODO）。
+        // claim/lease 后、模型调用前，用统一 evaluator 按最新
+        // Membership/Entitlement/Policy/Assignment 复核。shadow 只记录 would-block，
+        // enforce 下访问拒绝或治理依赖不可用均 fail closed。
         if (runPreflightService && runResolutionSnapshotStore && !isBackgroundTaskRun(record)) {
           try {
             const executionProviderId = typeof record.metadata?.executionProviderId === 'string'
@@ -2967,7 +3045,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
               skipBilling: true,
             });
             // 最终 Snapshot 由 Raw Runtime 在 Environment Instance 解析后追加；
-            // scheduler 此处只做 claim 后的最新权限影子复核。
+            // scheduler 此处只做 claim 后的最新权限复核。
+            if (!preflight.proceed) {
+              throw new Error(
+                `[${preflight.accessDecision.reasonCode}] governance wake preflight blocked run ${record.runId}`,
+              );
+            }
             if (preflight.shadowWouldBlock) {
               serverLogger.warn(
                 `[governance-shadow] wake preflight would block run=${record.runId} `
@@ -2976,6 +3059,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
               );
             }
           } catch (error) {
+            const enforcing = await runPreflightService.enforcementMode()
+              .then(mode => mode === 'enforce')
+              .catch(() => true);
+            if (enforcing) throw error;
             serverLogger.warn(
               `[governance-shadow] wake preflight unavailable (not blocking): run=${record.runId} `
               + `error=${error instanceof Error ? error.message : String(error)}`,
@@ -4035,6 +4122,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     skillGovernanceStore,
     governanceChangeJobStore,
     governanceChangePlanner,
+    governanceMigrationControlStore,
+    governanceWriteGate,
+    governanceShadowComparator,
     resourceReferenceStore,
     credentialBroker,
     flushGovernanceShadowProjections,

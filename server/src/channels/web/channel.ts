@@ -2922,6 +2922,11 @@ export class WebChannel implements BaseChannel {
               // enqueue 侧不做计费扣减（wake 由 legacy billing 权威执行），避免双结算。
               skipBilling: true,
             });
+            if (!preflight.proceed) {
+              throw new Error(
+                `[${preflight.accessDecision.reasonCode}] governance enqueue preflight blocked`,
+              );
+            }
             if (preflight.shadowWouldBlock) {
               chatLogger.warn(
                 `[governance-shadow] enqueue preflight would block run=${enqueueRunId} `
@@ -2930,6 +2935,10 @@ export class WebChannel implements BaseChannel {
               );
             }
           } catch (error) {
+            const enforcing = await this.config.runPreflight.enforcementMode()
+              .then(mode => mode === 'enforce')
+              .catch(() => true);
+            if (enforcing) throw error;
             chatLogger.warn(
               `[governance-shadow] enqueue preflight unavailable (not blocking): run=${enqueueRunId} `
               + `error=${error instanceof Error ? error.message : String(error)}`,

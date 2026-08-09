@@ -150,6 +150,9 @@ export interface CreateTenantsRouterOptions {
    * 缺省时静默跳过 seed（保持向后兼容，不阻断租户创建）。
    */
   orgAgentStore?: OrgAgentStore;
+  legacyWriteGate?: {
+    assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
+  };
 }
 
 // company.md 体量上限：留 200k，与 MEMORY 对齐
@@ -184,6 +187,22 @@ function buildInitialCompanyInfo(tenantName: string): string {
 
 export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
   const router = Router();
+  router.use(async (req, res, next) => {
+    const createsTenant = req.method === 'POST' && req.path === '/';
+    const deletesTenant = req.method === 'DELETE' && /^\/[^/]+$/.test(req.path);
+    const changesGovernedState = req.method === 'PATCH'
+      && (/^\/[^/]+\/status$/.test(req.path) || /^\/[^/]+\/settings$/.test(req.path));
+    if (!(createsTenant || deletesTenant || changesGovernedState) || !opts.legacyWriteGate) return next();
+    try {
+      await opts.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
+      next();
+    } catch {
+      res.status(409).json({
+        error: '旧版 Tenant 治理写入口已封闭，请使用治理 API 或 Change Job',
+        code: 'MIGRATION_LEGACY_WRITE_SEALED',
+      });
+    }
+  });
   const { tenantStore, sharedDir } = opts;
   const memoryFeatureStatusFor = (tenantId: string) => opts.resolveMemoryFeatureStatus?.(tenantId);
 

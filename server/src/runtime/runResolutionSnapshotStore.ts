@@ -27,6 +27,7 @@ export interface RunResolutionSnapshotDraft {
   sessionId: string;
   tenantId?: string;
   enforcementMode: 'shadow' | 'enforce';
+  migrationControlRevision?: number;
   actor: {
     subjectType: 'human' | 'service';
     subjectId: string;

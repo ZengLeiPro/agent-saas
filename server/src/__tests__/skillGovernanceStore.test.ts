@@ -57,6 +57,9 @@ function buildPool() {
       return { rows: [row], rowCount: 1 };
     }
     if (sql.includes('UPDATE test_skill_candidates') && sql.includes('reviewed_at=NOW()')) {
+      expect(sql).toContain('SET status=$3');
+      expect(sql).toContain('reviewed_by=$4');
+      expect(sql).toContain('review_reason=$5');
       const current = candidates.get(String(params[1]));
       if (!current || current.tenant_id !== params[0] || Number(current.revision) !== Number(params[5]) || current.status !== 'submitted') return { rows: [], rowCount: 0 };
       const row = { ...current, status: params[2], revision: String(Number(current.revision) + 1), reviewed_at: NOW, reviewed_by: params[3], review_reason: params[4] };
@@ -122,7 +125,7 @@ describe('Governed Skill + Candidate 发布链', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_governed_skill_versions');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_skill_candidates');
     expect(sql).toContain("status IN ('draft', 'submitted', 'approved', 'rejected', 'published')");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(11);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(12);
   });
 
   it('personal Skill 强制 immutable owner；tenant Skill 建 stable ID', async () => {

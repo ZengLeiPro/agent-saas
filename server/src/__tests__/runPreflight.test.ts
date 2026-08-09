@@ -172,6 +172,8 @@ interface PreflightFixtureOverrides {
   billing?: { ok: boolean; code?: string; reason?: string };
   modelAvailable?: boolean;
   enforcementMode?: 'shadow' | 'enforce';
+  resolveEnforcementMode?: () => Promise<'shadow' | 'enforce'>;
+  resolveEnforcementState?: () => Promise<{ mode: 'shadow' | 'enforce'; revision: number }>;
   agentResourceStore?: {
     getForTenant: (tenantId: string, agentId: string) => Promise<any>;
     findPersonalByOwner: (tenantId: string, ownerUserId: string) => Promise<any>;
@@ -210,6 +212,8 @@ function buildService(overrides: PreflightFixtureOverrides = {}) {
 
   const service = new RunPreflightService({
     enforcementMode: overrides.enforcementMode ?? 'shadow',
+    ...(overrides.resolveEnforcementMode ? { resolveEnforcementMode: overrides.resolveEnforcementMode } : {}),
+    ...(overrides.resolveEnforcementState ? { resolveEnforcementState: overrides.resolveEnforcementState } : {}),
     subjectResolver: new SubjectResolver(userStore as never, membershipStore),
     accessEvaluator: new AccessEvaluator([
       new PlatformInvariantPolicy(),
@@ -320,6 +324,35 @@ describe('RunPreflightService shadow/enforce 行为', () => {
     expect(result.accessDecision.verdict).toBe('conditional');
   });
 
+  it('迁移控制动态切 enforce；控制依赖不可用时 preflight fail closed', async () => {
+    const enforced = buildService({
+      resolveEnforcementMode: async () => 'enforce',
+      assignmentSets: new Map([['oa-1', assignmentSetFor('oa-1', [])]]),
+    });
+    const result = await enforced.preflight({ ...baseInput, phase: 'wake' });
+    expect(result).toMatchObject({ proceed: false, enforcementMode: 'enforce' });
+    expect(result.snapshot.enforcementMode).toBe('enforce');
+
+    const unavailable = buildService({ resolveEnforcementMode: async () => { throw new Error('control down'); } });
+    await expect(unavailable.preflight(baseInput)).rejects.toThrow('control down');
+  });
+
+  it('shadow 评估期间切换 enforce 时自动重判，并固定最新 control revision', async () => {
+    const states = [
+      { mode: 'shadow' as const, revision: 1 },
+      { mode: 'enforce' as const, revision: 2 },
+      { mode: 'enforce' as const, revision: 2 },
+      { mode: 'enforce' as const, revision: 2 },
+    ];
+    const service = buildService({
+      resolveEnforcementState: async () => states.shift() ?? { mode: 'enforce', revision: 2 },
+      assignmentSets: new Map([['oa-1', assignmentSetFor('oa-1', [])]]),
+    });
+    const result = await service.preflight({ ...baseInput, phase: 'wake' });
+    expect(result).toMatchObject({ proceed: false, enforcementMode: 'enforce', migrationControlRevision: 2 });
+    expect(result.snapshot.migrationControlRevision).toBe(2);
+  });
+
   it('成员被禁用：wake 复核 SUBJECT_DISABLED 且 enforce 阻断', async () => {
     const service = buildService({
       enforcementMode: 'enforce',
@@ -389,7 +422,7 @@ describe('Run Resolution Snapshot 敏感内容围栏', () => {
     const queries: string[] = [];
     const query = async (sql: string) => {
       queries.push(sql);
-      if (sql.includes('SELECT version FROM')) return { rows: [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }] };
+      if (sql.includes('SELECT version FROM')) return { rows: [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }] };
       return { rows: [], rowCount: 0 };
     };
     const pool = { query, connect: async () => ({ query, release: () => undefined }) };

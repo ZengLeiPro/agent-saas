@@ -50,6 +50,9 @@ import { createSystemAdminRouter } from "../routes/systemAdmin.js";
 import { createInternalAcsAlertsRouter } from "../routes/internalAcsAlerts.js";
 import { RuntimeEfficiencyQuery } from "../runtime/efficiencyQuery.js";
 import { createSkillsRouter } from "../routes/skills.js";
+import { createGovernanceMigrationRouter } from '../routes/governanceMigration.js';
+import { createGovernanceResourcesRouter } from '../routes/governanceResources.js';
+import { createGovernanceAccessRouter } from '../routes/governanceAccess.js';
 import { createMcpRouter } from "../routes/mcp.js";
 import { createConnectorsRouter } from "../routes/connectors.js";
 import { createNotionRouter } from "../routes/notion.js";
@@ -650,6 +653,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         signupConfigStore: runtime.signupConfigStore,
         secretVault: runtime.secretVault,
         getModelsConfig: () => config.models,
+        legacyWriteGate: runtime.governanceWriteGate,
       }),
     );
     // 手机号自助注册试用（官网联动 MVP）。公开路径在 auth middleware PUBLIC_ROUTES
@@ -676,6 +680,50 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       app.use("/api/signup", signupRouters.publicRouter);
       app.use("/api/admin/signup-config", signupRouters.adminRouter);
     }
+    const executeTenantDeletion = runtime.tenantStore && runtime.userStore
+      ? (tenantId: string) => deleteTenantResources({
+        tenantId,
+        tenantStore: runtime.tenantStore!,
+        userStore: runtime.userStore!,
+        agentStore: runtime.agentStore,
+        skillConfigStore: runtime.skillConfigStore,
+        mcpConfigStore: runtime.mcpConfigStore,
+        connectorConnectionStore: runtime.connectorConnectionStore,
+        onUserDeleting: async (target) => {
+          await Promise.all([
+            runtime.dwsAuthFlowService?.revokeUser?.(target),
+            runtime.feishuAuthFlowService?.revokeUser?.(target),
+            runtime.notionAuthFlowService?.cancelUser?.(target.tenantId, target.id),
+          ]);
+          await runtime.googleWorkspaceOAuthService?.cancelUser(target.id);
+          await runtime.googleWorkspaceOAuthService?.disconnect(target.id, target.username, target.tenantId);
+          if (runtime.connectorConnectionStore && runtime.secretVault) {
+            await revokeAllUserConnectorCredentials({
+              connectionStore: runtime.connectorConnectionStore,
+              vault: runtime.secretVault,
+              userId: target.id,
+              username: target.username,
+              tenantId: target.tenantId,
+            });
+          }
+        },
+        mcpOAuthService: runtime.mcpOAuthService,
+        groupStore: runtime.groupStore,
+        cronService: runtime.cronRuntime.service,
+        tokenUsageStore: runtime.tokenUsageStore,
+        billingService: runtime.billingService,
+        runtimePgEventStore: runtime.runtimePgEventStore,
+        runtimeRunStore: runtime.runtimeRunStore,
+        runtimeSessionProjectionStore: runtime.runtimeSessionProjectionStore,
+        runtimeToolInvocationStore: runtime.runtimeToolInvocationStore,
+        runtimeHandStore: runtime.runtimeHandStore,
+        artifactService: runtime.artifactService,
+        agentCwd,
+        sharedDir,
+        tenantSkillsRootDir: runtime.tenantSkillsRootDir,
+        avatarsDir: resolve(processCwd, config.auth?.usersFile || './data/users.json', '..', 'avatars'),
+      })
+      : undefined;
     // Tenant management (admin-only CRUD；PR 1 仅元数据，不影响任何运行时行为)
     if (runtime.tenantStore) {
       app.use(
@@ -687,64 +735,59 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           // ★ 2026-07-18 企业专家目录 MVP：新租户开通时 seed 3 个种子专家（disabled）
           orgAgentStore: runtime.orgAgentStore,
           governanceAuditStore: runtime.governanceAuditStore,
+          legacyWriteGate: runtime.governanceWriteGate,
           onTenantDisabled: webChannel
             ? (tenantId: string) => webChannel.disconnectTenant(tenantId)
             : undefined,
-          deleteTenantResources: runtime.userStore
-            ? (tenantId: string) => deleteTenantResources({
-              tenantId,
-              tenantStore: runtime.tenantStore!,
-              userStore: runtime.userStore!,
-              agentStore: runtime.agentStore,
-              skillConfigStore: runtime.skillConfigStore,
-              mcpConfigStore: runtime.mcpConfigStore,
-              connectorConnectionStore: runtime.connectorConnectionStore,
-              onUserDeleting: async (target) => {
-                await Promise.all([
-                  runtime.dwsAuthFlowService?.revokeUser?.(target),
-                  runtime.feishuAuthFlowService?.revokeUser?.(target),
-                  runtime.notionAuthFlowService?.cancelUser?.(target.tenantId, target.id),
-                ]);
-                await runtime.googleWorkspaceOAuthService?.cancelUser(target.id);
-                await runtime.googleWorkspaceOAuthService?.disconnect(
-                  target.id,
-                  target.username,
-                  target.tenantId,
-                );
-                if (runtime.connectorConnectionStore && runtime.secretVault) {
-                  await revokeAllUserConnectorCredentials({
-                    connectionStore: runtime.connectorConnectionStore,
-                    vault: runtime.secretVault,
-                    userId: target.id,
-                    username: target.username,
-                    tenantId: target.tenantId,
-                  });
-                }
-              },
-              mcpOAuthService: runtime.mcpOAuthService,
-              groupStore: runtime.groupStore,
-              cronService: runtime.cronRuntime.service,
-              tokenUsageStore: runtime.tokenUsageStore,
-              billingService: runtime.billingService,
-              runtimePgEventStore: runtime.runtimePgEventStore,
-              runtimeRunStore: runtime.runtimeRunStore,
-              runtimeSessionProjectionStore: runtime.runtimeSessionProjectionStore,
-              runtimeToolInvocationStore: runtime.runtimeToolInvocationStore,
-              runtimeHandStore: runtime.runtimeHandStore,
-              artifactService: runtime.artifactService,
-              agentCwd,
-              sharedDir,
-              tenantSkillsRootDir: runtime.tenantSkillsRootDir,
-              avatarsDir: resolve(
-                processCwd,
-                config.auth?.usersFile || "./data/users.json",
-                "..",
-                "avatars",
-              ),
-            })
-            : undefined,
+          deleteTenantResources: executeTenantDeletion,
         }),
       );
+    }
+    if (
+      runtime.membershipStore
+      && runtime.entitlementStore
+      && runtime.assignmentStore
+      && runtime.governanceAuditStore
+    ) {
+      app.use('/api/governance/access', createGovernanceAccessRouter({
+        memberships: runtime.membershipStore,
+        entitlements: runtime.entitlementStore,
+        assignments: runtime.assignmentStore,
+        audit: runtime.governanceAuditStore,
+      }));
+    }
+    if (
+      runtime.membershipStore
+      && runtime.agentResourceStore
+      && runtime.skillGovernanceStore
+      && runtime.connectorCatalogStore
+      && runtime.credentialStore
+      && runtime.environmentStore
+      && runtime.governanceChangeJobStore
+      && runtime.governanceChangePlanner
+      && runtime.secretVault
+      && runtime.governanceAuditStore
+    ) {
+      app.use('/api/governance/resources', createGovernanceResourcesRouter({
+        memberships: runtime.membershipStore,
+        agents: runtime.agentResourceStore,
+        skills: runtime.skillGovernanceStore,
+        connectors: runtime.connectorCatalogStore,
+        credentials: runtime.credentialStore,
+        environments: runtime.environmentStore,
+        changeJobs: runtime.governanceChangeJobStore,
+        changePlanner: runtime.governanceChangePlanner,
+        ...(executeTenantDeletion ? { executeTenantDeletion: async (tenantId: string) => { await executeTenantDeletion(tenantId); } } : {}),
+        vault: runtime.secretVault,
+        audit: runtime.governanceAuditStore,
+      }));
+    }
+    if (runtime.governanceMigrationControlStore && runtime.membershipStore && runtime.governanceAuditStore) {
+      app.use('/api/governance/migration', createGovernanceMigrationRouter({
+        store: runtime.governanceMigrationControlStore,
+        memberships: runtime.membershipStore,
+        audit: runtime.governanceAuditStore,
+      }));
     }
     // Skill management
     if (runtime.skillConfigStore) {
@@ -761,6 +804,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           sharedDir,
           tenantSkillsRootDir: runtime.tenantSkillsRootDir,
           skillMaterialization: runtime.skillMaterialization,
+          legacyWriteGate: runtime.governanceWriteGate,
         }),
       );
     }
@@ -772,10 +816,11 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           connectionStore: runtime.connectorConnectionStore,
           secretVault: runtime.secretVault,
           aliyunService: runtime.aliyunConnectorService,
+          legacyWriteGate: runtime.governanceWriteGate,
         }),
       );
       app.use(
-        "/api/connectors",
+        "/api",
         createNotionRouter({
           connectionStore: runtime.connectorConnectionStore,
           authFlowService: runtime.notionAuthFlowService,
@@ -789,6 +834,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
             if (!runtime.disconnectNotionConnection) throw new Error('Notion 连接服务尚未配置');
             return await runtime.disconnectNotionConnection({ userId, username, tenantId });
           },
+          legacyWriteGate: runtime.governanceWriteGate,
         }),
       );
       app.use(
@@ -797,6 +843,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           oauthService: runtime.googleWorkspaceOAuthService,
           userStore: runtime.userStore,
           webBaseUrl: config.server?.webBaseUrl,
+          legacyWriteGate: runtime.governanceWriteGate,
         }),
       );
     }
@@ -816,6 +863,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           secretVault: runtime.secretVault,
           oauthService: runtime.mcpOAuthService,
           webBaseUrl: config.server?.webBaseUrl,
+          legacyWriteGate: runtime.governanceWriteGate,
         }),
       );
     }
@@ -833,6 +881,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           userStore: runtime.userStore!,
           skillConfigStore: runtime.skillConfigStore,
           getMemoryIndexService: runtime.getMemoryIndexService,
+          legacyWriteGate: runtime.governanceWriteGate,
         }),
       );
     }
@@ -846,6 +895,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           orgAgentAvatarsDir: resolve(processCwd, "./data/org-agent-avatars"),
           getGuardrailModelConfigs: runtime.getGuardrailModelConfigs,
           billingService: runtime.billingService,
+          legacyWriteGate: runtime.governanceWriteGate,
           onSkillAssignmentsChanged: runtime.skillConfigStore
             ? () => runtime.skillConfigStore!.touchConfigVersion()
             : undefined,

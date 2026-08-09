@@ -35,6 +35,9 @@ import {
 export interface OrgAgentsRouterDeps {
   orgAgentStore: OrgAgentStore;
   tenantStore: TenantStore;
+  legacyWriteGate?: {
+    assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
+  };
   /** allowedSkills/audience/enabled 变化后使 workspace manifest 失效。 */
   onSkillAssignmentsChanged?: () => Promise<void>;
   /** 图片头像落盘目录（缺省 ./data/org-agent-avatars，测试可不传） */
@@ -136,6 +139,20 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
   const { orgAgentStore } = deps;
   const avatarsDir = deps.orgAgentAvatarsDir ?? resolve(process.cwd(), './data/org-agent-avatars');
   const router = Router();
+
+  router.use(async (req, res, next) => {
+    const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+    if (!isMutation || req.path.endsWith('/gate-preview') || !deps.legacyWriteGate) return next();
+    try {
+      await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
+      next();
+    } catch {
+      res.status(409).json({
+        error: '旧版 Org Agent 写入口已封闭，请使用治理资源 API',
+        code: 'MIGRATION_LEGACY_WRITE_SEALED',
+      });
+    }
+  });
 
   // multer：文件名 = 记录 id + 原扩展名；目录 lazy 创建（避免测试环境目录副作用）
   const avatarStorage = multer.diskStorage({

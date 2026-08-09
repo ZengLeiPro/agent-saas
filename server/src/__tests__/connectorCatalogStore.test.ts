@@ -106,7 +106,7 @@ describe('Connector Catalog', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_connector_definition_versions');
     expect(sql).toContain("status TEXT NOT NULL CHECK (status IN ('draft', 'published', 'disabled', 'retired'))");
     expect(sql).toContain('UNIQUE (connector_id, version_number)');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(11);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(12);
   });
 
   it('publish 创建 immutable version、digest 与 currentVersionId', async () => {
@@ -179,5 +179,9 @@ describe('Connector Catalog', () => {
       .rejects.toMatchObject({ code: 'CONNECTOR_DEFINITION_INVALID' });
     await expect(store.publish({ ...githubInput, authMethods: [''] }))
       .rejects.toMatchObject({ code: 'CONNECTOR_DEFINITION_INVALID' });
+    await expect(store.publish({ ...githubInput, definition: { apiKey: 'plain-secret' } }))
+      .rejects.toMatchObject({ code: 'CONNECTOR_DEFINITION_SENSITIVE' });
+    await expect(store.publish({ ...githubInput, definition: { setup: 'Authorization: Bearer sensitive-value' } }))
+      .rejects.toMatchObject({ code: 'CONNECTOR_DEFINITION_SENSITIVE' });
   });
 });

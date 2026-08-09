@@ -43,6 +43,7 @@ import {
   createEventStoreForSession,
   createModelAdapterForProtocol,
   ensureRuntimeHandRegistered,
+  appendResolvedRunSnapshot,
   markRunState,
   resolveSessionCatalog,
   resolveTenantRemoteHandsSource,
@@ -250,6 +251,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       username,
       userRole: parentSession?.userRole ?? identity?.role,
       tenantId,
+      ...(parentSession?.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
       channel: parentContext.channelContext.channel,
       cwd: parentWorkspace.root,
       modelRef: refToResolve ?? model,
@@ -316,6 +318,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       executionTransportRegistry: params.executionTransportRegistry,
       executionTarget,
       sessionId: childSessionId,
+      runId: childRunId,
       workspaceId: parentWorkspace.id ?? childSessionId,
       workspaceMountSubPath: parentWorkspace.mountSubPath,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
@@ -326,6 +329,14 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       username,
       userTenantId: config.resolveUserTenantId?.({ userId, username }),
       logger: config.logger,
+    });
+    await appendResolvedRunSnapshot({
+      config,
+      runId: childRunId,
+      session: childRecord,
+      modelRef: refToResolve ?? model,
+      executionTarget,
+      hands: config.handStore ? await config.handStore.listBySession(childSessionId) : [],
     });
 
     // ── 工具集派生（关键不变量 5：白名单派生 + 无条件剥夺，见 buildSubagentToolRuntime） ──

@@ -51,6 +51,9 @@ export interface SkillsRouterDeps {
   sharedDir: string;
   tenantSkillsRootDir?: string;
   skillMaterialization?: SkillMaterializationCoordinator;
+  legacyWriteGate?: {
+    assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
+  };
 }
 
 export function createSkillsRouter(deps: SkillsRouterDeps): Router {
@@ -63,6 +66,20 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     skillMaterialization,
   } = deps;
   const router = Router();
+
+  router.use(async (req, res, next) => {
+    const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+    if (!isMutation || req.path === '/sync' || !deps.legacyWriteGate) return next();
+    try {
+      await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
+      next();
+    } catch {
+      res.status(409).json({
+        error: '旧版 Skill 写入口已封闭，请使用治理资源 API',
+        code: 'MIGRATION_LEGACY_WRITE_SEALED',
+      });
+    }
+  });
 
   const poolDir = resolveAgentPath(sharedDir, 'skills-pool');
   const skillUpload = multer({

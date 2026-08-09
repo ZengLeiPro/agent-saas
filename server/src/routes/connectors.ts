@@ -25,6 +25,9 @@ export interface ConnectorsRouterDeps {
   connectionStore: ConnectorConnectionStore;
   secretVault: SecretVault;
   aliyunService?: AliyunConnectorService;
+  legacyWriteGate?: {
+    assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
+  };
 }
 
 function authContext(req: Request): { userId: string; username: string; tenantId: string } | undefined {
@@ -41,6 +44,19 @@ function normalizeGithubToken(value: string): string | undefined {
 
 export function createConnectorsRouter(deps: ConnectorsRouterDeps): Router {
   const router = Router();
+
+  router.use(async (req, res, next) => {
+    if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) || !deps.legacyWriteGate) return next();
+    try {
+      await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
+      next();
+    } catch {
+      res.status(409).json({
+        error: '旧版 Connector/Credential 写入口已封闭，请使用治理资源 API',
+        code: 'MIGRATION_LEGACY_WRITE_SEALED',
+      });
+    }
+  });
 
   router.get('/github', (req, res) => {
     const auth = authContext(req);

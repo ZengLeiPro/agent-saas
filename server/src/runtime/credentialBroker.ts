@@ -75,6 +75,32 @@ export interface CredentialBrokerOptions {
 export class CredentialBroker {
   constructor(private readonly options: CredentialBrokerOptions) {}
 
+  async execute<T>(
+    request: CredentialBrokerRequest,
+    invoke: (credential: Readonly<ResolvedCredential>) => Promise<T>,
+  ): Promise<T> {
+    const credential = await this.resolve(request);
+    try {
+      const result = await invoke(credential);
+      await this.auditOrFail({
+        request,
+        credential: undefined,
+        result: 'succeeded',
+        reasonCode: 'CREDENTIAL_CALL_SUCCEEDED',
+      });
+      return result;
+    } catch (error) {
+      if (error instanceof CredentialBrokerError && error.code === 'CREDENTIAL_AUDIT_UNAVAILABLE') throw error;
+      await this.auditOrFail({
+        request,
+        credential: undefined,
+        result: 'failed',
+        reasonCode: 'CREDENTIAL_CALL_FAILED',
+      });
+      throw error;
+    }
+  }
+
   async resolve(request: CredentialBrokerRequest): Promise<ResolvedCredential> {
     let credential: GovernanceCredential | undefined;
     try {

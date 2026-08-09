@@ -330,6 +330,9 @@ export interface AuthRouterDeps {
    * 模型配置支持管理端热更新，不能在 Router 创建时捕获旧对象。
    */
   getModelsConfig?: () => ModelsConfig | undefined;
+  legacyWriteGate?: {
+    assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
+  };
 }
 
 function avatarUrl(
@@ -363,6 +366,24 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     getModelsConfig,
   } = deps;
   const router = Router();
+  router.use(async (req, res, next) => {
+    const usersMutation = req.path === '/users' && req.method === 'POST';
+    const userDelete = /^\/users\/[^/]+$/.test(req.path) && req.method === 'DELETE';
+    const identityPatch = /^\/users\/[^/]+$/.test(req.path)
+      && req.method === 'PATCH'
+      && (req.body?.role !== undefined || req.body?.tenantId !== undefined);
+    const statusPatch = /^\/users\/[^/]+\/status$/.test(req.path) && req.method === 'PATCH';
+    if (!(usersMutation || userDelete || identityPatch || statusPatch) || !deps.legacyWriteGate) return next();
+    try {
+      await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
+      next();
+    } catch {
+      res.status(409).json({
+        error: '旧版用户身份与 Membership 写入口已封闭，请使用治理 API',
+        code: 'MIGRATION_LEGACY_WRITE_SEALED',
+      });
+    }
+  });
 
   /** Resolve createdBy userId to username (fallback to raw value) */
   function resolveCreatedBy(createdBy: string | undefined): string {

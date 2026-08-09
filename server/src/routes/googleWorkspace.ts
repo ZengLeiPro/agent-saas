@@ -10,10 +10,28 @@ export interface GoogleWorkspaceRouterOptions {
   oauthService?: GoogleWorkspaceOAuthService;
   userStore?: Pick<UserStore, 'findById'>;
   webBaseUrl?: string;
+  legacyWriteGate?: {
+    assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
+  };
 }
 
 export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOptions): Router {
   const router = Router();
+
+  router.use(async (req, res, next) => {
+    const writesLegacyState = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)
+      || (req.method === 'GET' && req.path === '/oauth/callback');
+    if (!writesLegacyState || !options.legacyWriteGate) return next();
+    try {
+      await options.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
+      next();
+    } catch {
+      res.status(409).json({
+        error: '旧版 Google Workspace Credential 写入口已封闭，请重新从治理资源页发起连接',
+        code: 'MIGRATION_LEGACY_WRITE_SEALED',
+      });
+    }
+  });
 
   router.get('/google-workspace', (req, res) => {
     if (!req.user?.sub || !req.user.username || !req.user.tenantId) {

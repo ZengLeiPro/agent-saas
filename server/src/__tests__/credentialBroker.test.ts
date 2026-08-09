@@ -89,6 +89,20 @@ describe('CredentialBroker', () => {
     expect(audits).toEqual([{ result: 'succeeded', reasonCode: 'CREDENTIAL_RESOLVED', credentialId: 'cred-1' }]);
   });
 
+  it('execute 每次重验并只在 server-side callback 暂时提供 Secret，记录调用结果', async () => {
+    const { broker, calls, audits } = buildBroker(credential());
+    const result = await broker.execute(baseRequest, async resolved => ({
+      credentialId: resolved.credentialId,
+      receivedSecret: resolved.secret === 'secret-value',
+    }));
+    expect(result).toEqual({ credentialId: 'cred-1', receivedSecret: true });
+    expect(calls).toHaveLength(1);
+    expect(audits.map(item => item.reasonCode)).toEqual([
+      'CREDENTIAL_RESOLVED',
+      'CREDENTIAL_CALL_SUCCEEDED',
+    ]);
+  });
+
   it('MCP 是调用 channel，不是 Credential kind', async () => {
     const { broker, calls } = buildBroker(credential({ connectorId: 'internal-mcp' }));
     await broker.resolve({ ...baseRequest, connectorId: 'internal-mcp', channel: 'mcp' });

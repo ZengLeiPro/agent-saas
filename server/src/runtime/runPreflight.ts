@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
+import type { ManagedAgentResource, ManagedAgentVersion } from '../data/agentResources/types.js';
 import type { TenantRecord } from '../data/tenants/types.js';
 import type { AccessDecision, AccessEvaluationRequest } from '../governance/access/types.js';
 import { AccessEvaluator } from '../governance/access/evaluator.js';
@@ -17,6 +18,12 @@ interface OrgAgentReader {
 
 interface TenantReader {
   findById(id: string): TenantRecord | undefined;
+}
+
+interface AgentResourceReader {
+  getForTenant(tenantId: string, agentId: string): Promise<ManagedAgentResource | null>;
+  findPersonalByOwner(tenantId: string, ownerUserId: string): Promise<ManagedAgentResource | null>;
+  getVersion(versionId: string): Promise<ManagedAgentVersion | null>;
 }
 
 export interface RunPreflightInput {
@@ -53,6 +60,7 @@ export interface RunPreflightServiceOptions {
   readinessEvaluator: ReadinessEvaluator;
   sessionCatalog: Pick<SessionCatalog, 'get'>;
   orgAgentStore: OrgAgentReader;
+  agentResourceStore?: AgentResourceReader;
   tenantStore: TenantReader;
   authorizeBilling?: (input: { tenantId: string; userId?: string; runId: string }) => Promise<{
     ok: boolean;
@@ -63,13 +71,23 @@ export interface RunPreflightServiceOptions {
   logger?: { warn(message: string): void };
 }
 
+interface ResolvedRunInput {
+  userId: string;
+  tenantId: string;
+  orgAgent?: OrgAgentRecord;
+  orgAgentId?: string;
+  managedAgent?: ManagedAgentResource;
+  managedAgentVersion?: ManagedAgentVersion;
+  modelRef?: string;
+}
+
 export class RunPreflightService {
   constructor(private readonly options: RunPreflightServiceOptions) {}
 
   async preflight(input: RunPreflightInput): Promise<RunPreflightResult> {
     const evaluatedAt = new Date();
     const session = await this.options.sessionCatalog.get(input.sessionId);
-    const resolved = this.resolveInput(input, session);
+    const resolved = await this.resolveInput(input, session);
     let subject: SubjectContext;
     let decision: AccessDecision;
     try {
@@ -107,7 +125,9 @@ export class RunPreflightService {
       : undefined;
     const readiness = this.options.readinessEvaluator.evaluate({
       accessAllowed: decision.verdict === 'allow',
-      resourceEnabled: resolved.orgAgent?.enabled ?? true,
+      resourceEnabled: resolved.managedAgent
+        ? resolved.managedAgent.status === 'enabled'
+        : resolved.orgAgent?.enabled ?? true,
       modelRef: resolved.modelRef,
       modelAvailable,
       billingDecision,
@@ -125,31 +145,37 @@ export class RunPreflightService {
     };
   }
 
-  private resolveInput(input: RunPreflightInput, session: RuntimeSessionRecord | null): {
-    userId: string;
-    tenantId: string;
-    orgAgent?: OrgAgentRecord;
-    orgAgentId?: string;
-    modelRef?: string;
-  } {
+  private async resolveInput(input: RunPreflightInput, session: RuntimeSessionRecord | null): Promise<ResolvedRunInput> {
     const userId = input.userId ?? session?.userId;
     const tenantId = input.tenantId ?? session?.tenantId;
     if (!userId && !input.serviceSubject?.delegatedUserId) throw new Error('RUN_PREFLIGHT_USER_REQUIRED');
     if (!tenantId && !input.serviceSubject?.tenantId) throw new Error('RUN_PREFLIGHT_TENANT_REQUIRED');
+    const resolvedUserId = userId ?? input.serviceSubject!.delegatedUserId!;
+    const resolvedTenantId = tenantId ?? input.serviceSubject!.tenantId!;
     const orgAgentId = input.orgAgentId ?? session?.orgAgentId;
     const orgAgent = orgAgentId ? this.options.orgAgentStore.get(orgAgentId) : undefined;
+    const managedAgent = this.options.agentResourceStore
+      ? orgAgentId
+        ? await this.options.agentResourceStore.getForTenant(resolvedTenantId, orgAgentId)
+        : await this.options.agentResourceStore.findPersonalByOwner(resolvedTenantId, resolvedUserId)
+      : null;
+    const managedAgentVersion = managedAgent?.currentVersionId && this.options.agentResourceStore
+      ? await this.options.agentResourceStore.getVersion(managedAgent.currentVersionId)
+      : null;
     return {
-      userId: userId ?? input.serviceSubject!.delegatedUserId!,
-      tenantId: tenantId ?? input.serviceSubject!.tenantId!,
+      userId: resolvedUserId,
+      tenantId: resolvedTenantId,
       ...(orgAgentId ? { orgAgentId } : {}),
       ...(orgAgent ? { orgAgent } : {}),
+      ...(managedAgent ? { managedAgent } : {}),
+      ...(managedAgentVersion ? { managedAgentVersion } : {}),
       ...(input.modelRef ?? session?.modelRef ? { modelRef: input.modelRef ?? session!.modelRef } : {}),
     };
   }
 
   private buildAccessRequest(
     subject: SubjectContext,
-    resolved: ReturnType<RunPreflightService['resolveInput']>,
+    resolved: ResolvedRunInput,
     evaluatedAt: Date,
   ): AccessEvaluationRequest {
     if (resolved.orgAgentId) {
@@ -160,7 +186,9 @@ export class RunPreflightService {
           type: 'org_agent',
           id: resolved.orgAgentId,
           tenantId: resolved.orgAgent?.tenantId ?? resolved.tenantId,
-          enabled: resolved.orgAgent?.enabled ?? false,
+          enabled: resolved.managedAgent
+            ? resolved.managedAgent.status === 'enabled'
+            : resolved.orgAgent?.enabled ?? false,
           tenantStatus: this.tenantStatus(resolved.orgAgent?.tenantId ?? resolved.tenantId),
         },
         context: {
@@ -178,10 +206,10 @@ export class RunPreflightService {
       action: 'personal_agent.run',
       resource: {
         type: 'personal_agent',
-        id: resolved.userId,
+        id: resolved.managedAgent?.agentId ?? resolved.userId,
         tenantId: resolved.tenantId,
-        ownerUserId: resolved.userId,
-        enabled: true,
+        ownerUserId: resolved.managedAgent?.ownerUserId ?? resolved.userId,
+        enabled: resolved.managedAgent ? resolved.managedAgent.status === 'enabled' : true,
         tenantStatus: this.tenantStatus(resolved.tenantId),
       },
       context: {
@@ -198,7 +226,7 @@ export class RunPreflightService {
 
   private unavailableDecision(
     subject: SubjectContext,
-    resolved: ReturnType<RunPreflightService['resolveInput']>,
+    resolved: ResolvedRunInput,
     evaluatedAt: Date,
   ): AccessDecision {
     const orgAgentId = resolved.orgAgentId;
@@ -227,7 +255,7 @@ export class RunPreflightService {
 
   private buildSnapshot(
     input: RunPreflightInput,
-    resolved: ReturnType<RunPreflightService['resolveInput']>,
+    resolved: ResolvedRunInput,
     subject: SubjectContext,
     accessDecision: AccessDecision,
     readiness: ExecutionReadiness,
@@ -246,6 +274,21 @@ export class RunPreflightService {
           ...(subject.tenantId ? { tenantId: subject.tenantId } : {}),
           ...(subject.delegatedUserId ? { delegatedUserId: subject.delegatedUserId } : {}),
         };
+    const templateVersionId = typeof resolved.managedAgentVersion?.definition.templateVersionId === 'string'
+      ? resolved.managedAgentVersion.definition.templateVersionId
+      : undefined;
+    const versionedSkills = Array.isArray(resolved.managedAgentVersion?.definition.skills)
+      ? resolved.managedAgentVersion.definition.skills.flatMap(value => {
+          if (!value || typeof value !== 'object') return [];
+          const record = value as Record<string, unknown>;
+          if (typeof record.id !== 'string') return [];
+          return [{
+            id: record.id,
+            ...(typeof record.versionId === 'string' ? { versionId: record.versionId } : {}),
+            ...(typeof record.revision === 'number' ? { revision: record.revision } : {}),
+          }];
+        })
+      : undefined;
     return {
       runId: input.runId,
       sessionId: input.sessionId,
@@ -255,9 +298,31 @@ export class RunPreflightService {
       accessDecision,
       readiness,
       agent: resolved.orgAgentId
-        ? { type: 'org_agent', id: resolved.orgAgentId }
-        : { type: 'personal_agent', id: resolved.userId },
-      skills: (resolved.orgAgent?.allowedSkills ?? []).map(id => ({ id })),
+        ? {
+            type: 'org_agent', id: resolved.orgAgentId,
+            ...(resolved.managedAgent ? {
+              revision: resolved.managedAgent.revision,
+              ...(resolved.managedAgent.templateId ? { templateId: resolved.managedAgent.templateId } : {}),
+            } : {}),
+            ...(templateVersionId ? { templateVersionId } : {}),
+            ...(resolved.managedAgentVersion ? {
+              versionId: resolved.managedAgentVersion.versionId,
+              version: resolved.managedAgentVersion.versionNumber,
+            } : {}),
+          }
+        : {
+            type: 'personal_agent', id: resolved.managedAgent?.agentId ?? resolved.userId,
+            ...(resolved.managedAgent ? {
+              revision: resolved.managedAgent.revision,
+              ...(resolved.managedAgent.templateId ? { templateId: resolved.managedAgent.templateId } : {}),
+            } : {}),
+            ...(templateVersionId ? { templateVersionId } : {}),
+            ...(resolved.managedAgentVersion ? {
+              versionId: resolved.managedAgentVersion.versionId,
+              version: resolved.managedAgentVersion.versionNumber,
+            } : {}),
+          },
+      skills: versionedSkills ?? (resolved.orgAgent?.allowedSkills ?? []).map(id => ({ id })),
       connectors: [],
       credentialBindings: [],
       ...(input.environment ? {

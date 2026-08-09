@@ -98,6 +98,15 @@ export class PgAgentResourceStore {
     return result.rows[0] ? rowToResource(result.rows[0]) : null;
   }
 
+  async findPersonalByOwner(tenantId: string, ownerUserId: string): Promise<ManagedAgentResource | null> {
+    const result = await this.options.pool.query(`
+      SELECT * FROM ${this.resourcesTable}
+      WHERE tenant_id=$1 AND owner_user_id=$2 AND kind='personal_agent' AND status <> 'archived'
+      ORDER BY created_at, agent_id LIMIT 1
+    `, [tenantId, ownerUserId]);
+    return result.rows[0] ? rowToResource(result.rows[0]) : null;
+  }
+
   async getVersion(versionId: string): Promise<ManagedAgentVersion | null> {
     const result = await this.options.pool.query(`SELECT * FROM ${this.versionsTable} WHERE version_id=$1`, [versionId]);
     return result.rows[0] ? rowToVersion(result.rows[0]) : null;

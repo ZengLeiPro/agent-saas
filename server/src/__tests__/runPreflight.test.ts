@@ -172,6 +172,11 @@ interface PreflightFixtureOverrides {
   billing?: { ok: boolean; code?: string; reason?: string };
   modelAvailable?: boolean;
   enforcementMode?: 'shadow' | 'enforce';
+  agentResourceStore?: {
+    getForTenant: (tenantId: string, agentId: string) => Promise<any>;
+    findPersonalByOwner: (tenantId: string, ownerUserId: string) => Promise<any>;
+    getVersion: (versionId: string) => Promise<any>;
+  };
 }
 
 function buildService(overrides: PreflightFixtureOverrides = {}) {
@@ -218,6 +223,7 @@ function buildService(overrides: PreflightFixtureOverrides = {}) {
     readinessEvaluator: new ReadinessEvaluator(),
     sessionCatalog,
     orgAgentStore,
+    ...(overrides.agentResourceStore ? { agentResourceStore: overrides.agentResourceStore } : {}),
     tenantStore,
     ...(overrides.billing ? { authorizeBilling: async () => overrides.billing! } : {}),
     ...(overrides.modelAvailable !== undefined ? { isModelAvailable: () => overrides.modelAvailable! } : {}),
@@ -247,6 +253,32 @@ describe('RunPreflightService shadow/enforce 行为', () => {
     expect(result.snapshot.memoryScopes).toEqual([{ id: 'user:user-1' }]);
     expect(result.snapshot.model).toEqual({ id: 'gpt-test' });
     expect(result.snapshot.enforcementMode).toBe('shadow');
+  });
+
+  it('typed Agent/Skill 进入 Snapshot 时固定 revision、version 与 Template version', async () => {
+    const service = buildService({
+      agentResourceStore: {
+        getForTenant: async () => ({
+          agentId: 'oa-1', tenantId: 'tenant-1', kind: 'org_agent', ownerUserId: 'owner-1',
+          templateId: 'tpl-sales', status: 'enabled', currentVersionId: 'agentv-2', revision: 7,
+        }),
+        findPersonalByOwner: async () => null,
+        getVersion: async () => ({
+          versionId: 'agentv-2', agentId: 'oa-1', versionNumber: 2,
+          definition: {
+            templateVersionId: 'tplv-3',
+            skills: [{ id: 'skill-1', versionId: 'skillv-4', revision: 6 }],
+          },
+          digest: 'digest', publishedAt: NOW, publishedBy: 'admin',
+        }),
+      },
+    });
+    const result = await service.preflight(baseInput);
+    expect(result.snapshot.agent).toEqual({
+      type: 'org_agent', id: 'oa-1', revision: 7, versionId: 'agentv-2', version: 2,
+      templateId: 'tpl-sales', templateVersionId: 'tplv-3',
+    });
+    expect(result.snapshot.skills).toEqual([{ id: 'skill-1', versionId: 'skillv-4', revision: 6 }]);
   });
 
   it('wake 快照记录 Provider/Template/Instance/recipe digest，不含 Provider Secret', async () => {

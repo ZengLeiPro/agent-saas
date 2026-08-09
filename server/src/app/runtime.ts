@@ -2567,6 +2567,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       readinessEvaluator: new ReadinessEvaluator(),
       sessionCatalog,
       orgAgentStore,
+      ...(agentResourceStore ? { agentResourceStore } : {}),
       tenantStore,
       ...(billingService ? {
         authorizeBilling: (input: { tenantId: string; userId?: string; runId: string }) =>

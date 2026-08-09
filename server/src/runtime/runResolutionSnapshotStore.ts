@@ -7,9 +7,12 @@ import type { ExecutionReadiness } from '../governance/readiness/evaluator.js';
 export interface ResolvedResourceRef {
   id: string;
   version?: number;
+  versionId?: string;
   revision?: number;
   generation?: number;
   bindingId?: string;
+  templateId?: string;
+  templateVersionId?: string;
 }
 
 export interface ResolvedEnvironmentRef extends ResolvedResourceRef {

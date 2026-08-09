@@ -56,7 +56,7 @@ export function EmptySessionScenarios({ onTryScenario, onStartWorkflow, onViewAl
     };
     return (
       <div className="mx-auto w-full max-w-2xl pt-[12vh]">
-        <div className="mb-3 text-center text-sm text-muted-foreground">从业务结果开始：能直接体验的现在做，需要接入的先看清边界</div>
+        <div className="mb-3 text-center text-sm text-muted-foreground">先看虚构业务回放，理解 AI 同事如何把工作办完</div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {recommended.map((scenario) => {
             const canReplay = hasReplayScript(scenario);
@@ -72,18 +72,12 @@ export function EmptySessionScenarios({ onTryScenario, onStartWorkflow, onViewAl
                 <div className="text-xs text-muted-foreground">{scenario.readiness === "D0_CURRENT" ? "当前即用" : scenario.readiness === "D1_CONNECTOR" ? "标准接入" : "项目集成"}</div>
                 <div className="mt-2 text-sm font-semibold">{scenario.title}</div>
                 <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{scenario.value}</p>
-                {/* 空会话首屏是客户第一眼看到的东西：能演的场景先给「看它如何完成」，
-                    接入退为次选。否则第一次点击落到连接器配置页，客户还没看见价值就先被要求配系统。 */}
+                {/* 有回放的推荐卡只承担价值演示；真实试用与接入继续留在完整目录。 */}
                 <div className="mt-3 flex flex-wrap items-center gap-1.5">
                   {canReplay ? (
-                    <>
-                      <Button type="button" size="sm" className="h-7 px-2.5 text-xs" onClick={() => openCatalog(scenario, "presentation")}>
-                        看它如何完成
-                      </Button>
-                      <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" onClick={openOperational}>
-                        {scenario.cta.primary}
-                      </Button>
-                    </>
+                    <Button type="button" size="sm" className="h-7 px-2.5 text-xs" onClick={() => openCatalog(scenario, "presentation")}>
+                      看虚构回放
+                    </Button>
                   ) : (
                     <Button type="button" size="sm" className="h-7 px-2.5 text-xs" onClick={openOperational}>
                       {scenario.cta.primary}

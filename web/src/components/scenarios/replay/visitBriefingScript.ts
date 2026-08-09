@@ -1,4 +1,5 @@
 import type { SystemPanelSnapshot } from "@agent/shared";
+import { demoWorldFixture } from "./demoWorldFixture";
 import type { ReplayScript } from "./types";
 
 /**
@@ -49,9 +50,9 @@ const BRIEFING_HTML = `<!doctype html>
   <h2>一、这趟去解决什么</h2>
   <div class="kv">
     <span>主线</span><span>OPP-2026-0311 二期模具 ¥120 万，停在「方案已报」22 天</span>
-    <span>我方欠账</span><span>A02 样件测试报告，7-18 承诺 7-25 前给，逾期 15 天</span>
-    <span>关联客诉</span><span>NC-2026-0095 包装破损，8-01 受理，尚未闭环</span>
-    <span>来源</span><span>《本周客户推进清单》8-09 第 1 条 · 待办 TD-1181</span>
+    <span>我方欠账</span><span>${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}，承诺 ${demoWorldFixture.haichuanReport.promisedDate} 前给，截至 ${demoWorldFixture.demoDate.iso} 逾期 ${demoWorldFixture.haichuanReport.overdueDays} 天</span>
+    <span>关联客诉</span><span>${demoWorldFixture.openComplaint.id} ${demoWorldFixture.openComplaint.issue}，${demoWorldFixture.openComplaint.openedDate} 受理，已挂起 ${demoWorldFixture.openComplaint.suspendedDays} 天</span>
+    <span>来源</span><span>《本周客户推进清单》${demoWorldFixture.demoDate.short} 第 1 条 · 待办 TD-1181</span>
   </div>
 </div>
 
@@ -71,14 +72,14 @@ const BRIEFING_HTML = `<!doctype html>
     <tr><th>他会问</th><th>为什么会问</th><th>怎么答</th></tr>
     <tr><td>样件报告到底什么时候给</td><td>8-05 群里问过一次，我方未回</td><td class="warn">先认账，当面交纸质版，给出后续节点</td></tr>
     <tr><td>二期这个价还能不能再降</td><td>方案报出 22 天未动，价格是常见卡点</td><td>只给依据：一期单价 ¥1,860/套、整单折让 4.2%、二期量约 1,400 套；<b>底线由张明远现场定</b></td></tr>
-    <tr><td>包装破损那批怎么算</td><td>NC-2026-0095 挂了 8 天</td><td class="warn">只讲处理进度与时间点，不预设责任归属</td></tr>
+    <tr><td>包装破损那批怎么算</td><td>${demoWorldFixture.openComplaint.id} 挂起 ${demoWorldFixture.openComplaint.suspendedDays} 天</td><td class="warn">只讲处理进度与时间点，不预设责任归属</td></tr>
   </table>
 </div>
 
 <div class="box">
   <h2>四、明天带的东西</h2>
   <ul>
-    <li>A02 样件测试报告 纸质版 ×2（待办 TD-1191，8-10 08:30 前备好）</li>
+    <li>${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name} 纸质版 ×2（待办 TD-1191，8-10 08:30 前备好）</li>
     <li>一期履约一页纸：交期、验收、回款三行数据</li>
     <li>二期方案原件（7-18 已发版本，不带新报价）</li>
   </ul>
@@ -122,19 +123,19 @@ const CLIENT_VIEW_HTML = `<!doctype html>
   <div class="top"><span>企业 IM · 外部联系人</span><span>16:51</span></div>
   <div class="who">澜达精密 · 张明远<small>王志刚（海川机械 副总）的会话窗口</small></div>
   <div class="chat">
-    <div class="stamp">2026-08-09 16:42</div>
+    <div class="stamp">${demoWorldFixture.demoDate.iso} 16:42</div>
     <div class="msg">
       王总您好，我是澜达张明远。明天上午 10:30 我准时到贵司，主要两件事：
       <ol>
-        <li>把 A02 样件测试报告当面给您，之前拖了，抱歉；</li>
-        <li>同步 NC-2026-0095 包装那批的处理进度。</li>
+        <li>把 ${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}当面给您，之前拖了，抱歉；</li>
+        <li>同步 ${demoWorldFixture.openComplaint.id} 包装那批的处理进度。</li>
       </ol>
       会后如果方便，想看一下二期产线的节拍要求。
     </div>
     <div class="receipt">16:42 送达 · 16:51 已读</div>
     <div class="card">
       <b>拜访确认 · 2026-08-10 10:30</b>
-      <span>地点 海川机械 · 参与人 王志刚 / 张明远 · 携带 A02 样件测试报告</span>
+      <span>地点 海川机械 · 参与人 王志刚 / 张明远 · 携带 ${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}</span>
     </div>
   </div>
 </div>
@@ -272,10 +273,10 @@ export const visitBriefingScript: ReplayScript = {
               { op: "rowsSet", view: "timeline", rows: [
                 { id: "t-0428", text: "04-28 一期交付验收通过", sub: "承诺 4-25 / 实交 4-28，延期 3 天，一次验收通过", tone: "pass" },
                 { id: "t-0718a", text: "07-18 现场沟通 · 提交二期方案", sub: "OPP-2026-0311 ¥120 万，王志刚当场表示回去过会", tone: "info" },
-                { id: "t-0718b", text: "07-18 我方承诺 · 7-25 前提供 A02 样件测试报告", sub: "承诺人张明远，至今未提供", tone: "warn" },
+                { id: "t-0718b", text: `${demoWorldFixture.haichuanReport.promisedDate} 我方承诺 · 提供 ${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}`, sub: `截至 ${demoWorldFixture.demoDate.iso} 已逾期 ${demoWorldFixture.haichuanReport.overdueDays} 天`, tone: "warn" },
                 { id: "t-0725", text: "07-25 电话未接通", sub: "无留言记录", tone: "pending" },
                 { id: "t-0729", text: "07-29 消息跟进 · 无回复", sub: "内容为二期方案是否有反馈", tone: "pending" },
-                { id: "t-0801", text: "08-01 客诉 NC-2026-0095 受理", sub: "一期批次包装破损，状态：处理中", tone: "warn" },
+                { id: "t-0801", text: `${demoWorldFixture.openComplaint.openedDate} 客诉 ${demoWorldFixture.openComplaint.id} 受理`, sub: `一期批次${demoWorldFixture.openComplaint.issue}，状态：处理中`, tone: "warn" },
                 { id: "t-0805", text: "08-05 王志刚追问「样件报告还要多久」", sub: "我方未回复，已过 4 天", tone: "deny" },
                 { id: "t-0808", text: "08-08 约定 8-10 上午到访", sub: "地点海川机械，参与人王志刚", tone: "info" },
               ] },
@@ -324,20 +325,20 @@ export const visitBriefingScript: ReplayScript = {
             detail: [
               { verdict: "pass", text: "一期履约站得住", note: "延期 3 天 · 一次验收通过 · 6-27 回款结清 · 零质量客诉" },
               { verdict: "warn", text: "OPP-2026-0311 停留 22 天", note: "7-18 报方案后阶段未动一格，期间客户主动来过一次" },
-              { verdict: "fail", text: "A02 样件测试报告逾期 15 天", note: "7-18 现场承诺 7-25 前给，我方至今未提供" },
-              { verdict: "warn", text: "NC-2026-0095 挂 8 天未闭环", note: "包装破损，金额小，但对方是拍板人" },
+              { verdict: "fail", text: `${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}逾期 ${demoWorldFixture.haichuanReport.overdueDays} 天`, note: `${demoWorldFixture.haichuanReport.promisedDate} 承诺提供，截至 ${demoWorldFixture.demoDate.iso} 仍未兑现` },
+              { verdict: "warn", text: `${demoWorldFixture.openComplaint.id} 挂起 ${demoWorldFixture.openComplaint.suspendedDays} 天未闭环`, note: `${demoWorldFixture.openComplaint.issue}，金额小，但对方是拍板人` },
               { insight: "商机停滞的原因在我方，不在客户意愿", label: "结论" },
             ],
             status: "warn",
             panel: [
               { op: "focus", view: "timeline" },
               { op: "toolbar", view: "timeline", title: "沟通记录 · 海川机械", sub: "命中 2 条我方欠账" },
-              { op: "rowUpdate", view: "timeline", id: "t-0718b", set: { state: "hit", badge: { text: "逾期 15 天", tone: "deny" } } },
+              { op: "rowUpdate", view: "timeline", id: "t-0718b", set: { state: "hit", badge: { text: `逾期 ${demoWorldFixture.haichuanReport.overdueDays} 天`, tone: "deny" } } },
               { op: "rowUpdate", view: "timeline", id: "t-0805", set: { state: "hit", badge: { text: "未回复", tone: "deny" } } },
               { op: "rowUpdate", view: "timeline", id: "t-0801", set: { badge: { text: "未闭环", tone: "warn" } } },
               { op: "rowUpdate", view: "timeline", id: "t-0428", set: { badge: { text: "可主动讲", tone: "pass" } } },
               { op: "cellFlag", view: "crm", rowId: "c-opp", colKey: "state", tone: "warn", flag: "卡在我方" },
-              { op: "feedAppend", view: "audit", item: { id: "au-2", from: "AI 同事", time: "16:20:38", text: "回查我方历史承诺，发现 1 项到期未兑现（A02 样件测试报告）" } },
+              { op: "feedAppend", view: "audit", item: { id: "au-2", from: "AI 同事", time: "16:20:38", text: `回查我方历史承诺，发现 1 项到期未兑现（${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}）` } },
               { op: "toolbar", view: "audit", title: "本次会话的系统动作", sub: "2 条" },
             ],
           },
@@ -352,9 +353,9 @@ export const visitBriefingScript: ReplayScript = {
             "",
             "1. **一期履约站得住脚**。SO-2026-0418 承诺 4-25、实交 4-28，延期 3 天，验收一次通过，6-27 全额结清，交付后零质量客诉。这是明天唯一可以主动摆出来的东西。",
             "2. **二期停了 22 天，卡点在我们这边**。7-18 报完方案阶段就没动过，中间 8-05 王志刚在群里问「样件报告还要多久」，我方没回。不是客户没兴趣，是我们欠他东西。",
-            "3. **A02 样件测试报告逾期 15 天**。7-18 现场承诺 7-25 前给，到今天还没给。明天他大概率一开口就是这个，建议你先认，别等他提。",
+            `3. **${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}逾期 ${demoWorldFixture.haichuanReport.overdueDays} 天**。承诺 ${demoWorldFixture.haichuanReport.promisedDate} 前给，截至 ${demoWorldFixture.demoDate.iso} 还没给。明天他大概率一开口就是这个，建议你先认，别等他提。`,
             "",
-            "另外 NC-2026-0095 包装破损 8-01 受理，挂了 8 天还没闭环。金额不大，但明天坐对面的是拍板的人，这种事容易被当成态度问题。",
+            `另外 ${demoWorldFixture.openComplaint.id} ${demoWorldFixture.openComplaint.issue} ${demoWorldFixture.openComplaint.openedDate} 受理，挂起 ${demoWorldFixture.openComplaint.suspendedDays} 天还没闭环。金额不大，但明天坐对面的是拍板的人，这种事容易被当成态度问题。`,
           ].join("\n"),
         },
       ],
@@ -378,7 +379,7 @@ export const visitBriefingScript: ReplayScript = {
             detail: [
               { no: 1, text: "样件报告什么时候给 —— 依据：8-05 他已经问过一次，我方未回" },
               { no: 2, text: "二期这个价还能不能再降 —— 依据：方案报出 22 天未动，一期有 4.2% 折让先例" },
-              { no: 3, text: "包装破损那批怎么算 —— 依据：NC-2026-0095 受理 8 天仍在处理中" },
+              { no: 3, text: `包装破损那批怎么算 —— 依据：${demoWorldFixture.openComplaint.id} 挂起 ${demoWorldFixture.openComplaint.suspendedDays} 天仍在处理中` },
               { section: "价格问题的可用依据" },
               { tree: "├", k: "一期单价", v: "¥1,860/套 · 整单折让 4.2%" },
               { tree: "├", k: "二期估算量", v: "约 1,400 套，比一期多 46%" },
@@ -406,7 +407,7 @@ export const visitBriefingScript: ReplayScript = {
             "",
             "1. 「样件报告到底什么时候给？」——这是我方欠账，唯一站得住的答法是当面把纸质版交了，再给一个明确的后续节点，别再用「尽快」。",
             "2. 「二期这个价还能不能再降？」——我能给的只有依据：一期单价 ¥1,860/套、整单折让 4.2%、账期 60 天，二期量按 1,400 套估、比一期多 46%。**底线要你自己定**，我不替你拍——毛利明细在财务域，我没有读，也不该读。",
-            "3. 「包装破损那批怎么算？」——NC-2026-0095 还没闭环，质检复判结论没出。现场只讲进度和时间点，不认责任也不否认，一句话都别多说。",
+            `3. 「包装破损那批怎么算？」——${demoWorldFixture.openComplaint.id} 还没闭环，质检复判结论没出。现场只讲进度和时间点，不认责任也不否认，一句话都别多说。`,
             "",
             "第 1 条不解决，后面两条都不用谈——他现在对我们的信任缺口就在这。",
           ].join("\n"),
@@ -498,8 +499,8 @@ export const visitBriefingScript: ReplayScript = {
             title: "汇成一页纸拜访简报",
             detail: [
               { k: "结构", v: "去解决什么 / 可主动讲的三个数 / 预判三问 / 要带的东西 / 不替你决定的" },
-              { tree: "├", k: "引用", v: "《本周客户推进清单》8-09 第 1 条 · 待办 TD-1181" },
-              { tree: "├", k: "已标红", v: "A02 样件测试报告逾期 15 天" },
+              { tree: "├", k: "引用", v: `《本周客户推进清单》${demoWorldFixture.demoDate.short} 第 1 条 · 待办 TD-1181` },
+              { tree: "├", k: "已标红", v: `${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}逾期 ${demoWorldFixture.haichuanReport.overdueDays} 天` },
               { tree: "└", k: "留白", v: "二期降价底线、客诉责任归属，两处均未给结论" },
               { insight: "简报只是材料，没有写进任何业务系统", label: "范围" },
             ],
@@ -541,9 +542,9 @@ export const visitBriefingScript: ReplayScript = {
         title: "建 1 条待办 + 向客户发 1 条消息 · 需你确认",
         description: "待办写进待办中心，消息直接发到客户手上，两件都会离开我们自己的系统。确认前我不会动。",
         facts: [
-          { label: "待办", value: "8-10 08:30 前备好 A02 样件测试报告纸质版 ×2 · 责任人 张明远" },
+          { label: "待办", value: `8-10 08:30 前备好 ${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}纸质版 ×2 · 责任人 张明远` },
           { label: "发送对象", value: "王志刚（海川机械 副总）· 企业 IM 外部联系人" },
-          { label: "消息草稿", value: "王总您好，我是澜达张明远。明天上午 10:00 我准时到贵司，主要三件事：① 把 A02 样件测试报告当面给您，之前拖了，抱歉；② 同步 NC-2026-0095 包装那批的处理进度；③ 二期方案的报价我们还可以再谈谈。会后如果方便，想看一下二期产线的节拍要求。" },
+          { label: "消息草稿", value: `王总您好，我是澜达张明远。明天上午 10:00 我准时到贵司，主要三件事：① 把 ${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}当面给您，之前拖了，抱歉；② 同步 ${demoWorldFixture.openComplaint.id} 包装那批的处理进度；③ 二期方案的报价我们还可以再谈谈。会后如果方便，想看一下二期产线的节拍要求。` },
           { label: "不改什么", value: "商机阶段、订单、客诉状态一律不动" },
         ],
         approveLabel: "确认发出",
@@ -585,14 +586,14 @@ export const visitBriefingScript: ReplayScript = {
                   id: "d-todo",
                   from: "待办中心",
                   time: "16:42",
-                  text: "TD-1191 · 8-10 08:30 前备好 A02 样件测试报告纸质版 ×2",
+                  text: `TD-1191 · 8-10 08:30 前备好 ${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}纸质版 ×2`,
                   card: { title: "待办已创建", body: "责任人 张明远 · 关联 OPP-2026-0311", meta: [{ text: "回读通过", tone: "pass" }] },
                 } },
                 { op: "feedAppend", view: "dispatch", item: {
                   id: "d-msg",
                   from: "企业 IM",
                   time: "16:42",
-                  text: "已发给王志刚：明天 10:30 到访，带 A02 样件测试报告，同步 NC-2026-0095 进度",
+                  text: `已发给王志刚：明天 10:30 到访，带 ${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}，同步 ${demoWorldFixture.openComplaint.id} 进度`,
                   card: { title: "消息已送达", body: "价格相关表述已按你的要求删去", meta: [{ text: "16:42 送达", tone: "pass" }, { text: "16:51 已读", tone: "pass" }] },
                 } },
                 { op: "cellFlag", view: "crm", rowId: "c-follow", colKey: "state", tone: "pass", flag: "已回复" },

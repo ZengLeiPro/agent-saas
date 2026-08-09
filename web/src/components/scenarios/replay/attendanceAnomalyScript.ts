@@ -1,4 +1,5 @@
 import type { SystemPanelSnapshot } from "@agent/shared";
+import { demoWorldFixture } from "./demoWorldFixture";
 import type { ReplayScript } from "./types";
 
 /**
@@ -46,9 +47,9 @@ const HANDLE_SHEET_HTML = `<!doctype html>
   .screen p { margin: 0 0 6px; font-size: 13px; }
   .foot { margin-top: 14px; color: var(--muted); font-size: 12px; }
 </style></head><body>
-<div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span>考勤系统 / 今日异常处理单 / 2026-08-09</span></div>
+<div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span>考勤系统 / 今日异常处理单 / ${demoWorldFixture.demoDate.iso}</span></div>
 
-<h1>今日考勤异常处理单 · 2026-08-09</h1>
+<h1>今日考勤异常处理单 · ${demoWorldFixture.demoDate.iso}</h1>
 <p class="sub">澜达精密制造有限公司 · 人事 林悦 · 生成时间 09:06</p>
 
 <div class="stats">
@@ -65,7 +66,7 @@ const HANDLE_SHEET_HTML = `<!doctype html>
     <tr>
       <td>注塑二组<br>工号 P-2318 / P-2407</td>
       <td>8-07、8-08、8-09 连续 3 天无打卡记录</td>
-      <td class="deny">审批流内查无请假 / 调休 / 出差单据，工时也无补录；同组本周赶 SO-2026-1027 交付</td>
+      <td class="deny">审批流内查无请假 / 调休 / 出差单据，工时也无补录；同组本周赶 ${demoWorldFixture.deliveryOrder.id} 交付</td>
       <td>今日 18:00 前由排班负责人核实原因，性质未核实前不定性</td>
     </tr>
     <tr>
@@ -93,7 +94,7 @@ const HANDLE_SHEET_HTML = `<!doctype html>
   <div class="screen">
     <div class="who">吴国栋 · 待办中心 · 收到时看到的卡片</div>
     <p><b>核实注塑二组连续缺勤（8-09 18:00 前回填）</b></p>
-    <p>早班工号 P-2318、P-2407 于 8-07 至 8-09 连续 3 天无打卡，审批流内无任何请假 / 调休 / 出差单据。该组本周承接 SO-2026-1027 精密结构件赶工（8-15 交付，剩余 3,200 件），早班缺 2 人日产上限由 640 件降至 533 件。</p>
+    <p>早班工号 P-2318、P-2407 于 8-07 至 ${demoWorldFixture.demoDate.short} 连续 3 天无打卡，审批流内无任何请假 / 调休 / 出差单据。该组本周承接 ${demoWorldFixture.deliveryOrder.id} 精密结构件赶工（${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 交付，剩余 3,200 件），早班缺 2 人日产上限由 640 件降至 533 件。</p>
     <p>请核实两人实际情况并回填：① 是否已口头请假未补单；② 是否需要今日补员。缺勤性质以你核实结果为准，人事不预设结论。</p>
   </div>
   <div class="screen">
@@ -119,7 +120,7 @@ const PANEL_BASE: SystemPanelSnapshot = {
       key: "attendance",
       label: "考勤系统",
       winTitle: "考勤系统 · 今日异常",
-      toolbar: { title: "考勤系统 · 2026-08-09", sub: "尚未读取" },
+      toolbar: { title: `考勤系统 · ${demoWorldFixture.demoDate.iso}`, sub: "尚未读取" },
       widget: {
         kind: "table",
         cols: [
@@ -203,13 +204,13 @@ export const attendanceAnomalyScript: ReplayScript = {
           defaultOpen: true,
           toolName: "AttendanceQuery",
           toolId: "t-att",
-          content: JSON.stringify({ date: "2026-08-09", scope: "all" }),
+          content: JSON.stringify({ date: demoWorldFixture.demoDate.iso, scope: "all" }),
           executionStatus: "completed",
           durationMs: 780,
           presentation: {
             title: "读取今日考勤记录",
             detail: [
-              { k: "统计日期", v: "2026-08-09（周日排班日）" },
+              { k: "统计日期", v: `${demoWorldFixture.demoDate.iso}（周日排班日）` },
               { k: "应出勤", v: "318 人（在册 320，2 人产假）" },
               { tree: "├", k: "打卡完整", v: "291 人" },
               { tree: "└", k: "系统标记待确认", v: "27 条，尚未分拣" },
@@ -219,13 +220,13 @@ export const attendanceAnomalyScript: ReplayScript = {
             panelBase: PANEL_BASE,
             panel: [
               { op: "focus", view: "attendance" },
-              { op: "toolbar", view: "attendance", title: "考勤系统 · 2026-08-09", sub: "27 条待分拣" },
+              { op: "toolbar", view: "attendance", title: `考勤系统 · ${demoWorldFixture.demoDate.iso}`, sub: "27 条待分拣" },
               { op: "tableRowInsert", view: "attendance", row: { id: "at-2318", cells: { who: "工号 P-2318", dept: "注塑二组 · 早班", flag: "连续未打卡", state: "待分拣" } } },
               { op: "tableRowInsert", view: "attendance", row: { id: "at-2407", cells: { who: "工号 P-2407", dept: "注塑二组 · 早班", flag: "连续未打卡", state: "待分拣" } } },
               { op: "tableRowInsert", view: "attendance", row: { id: "at-zmy", cells: { who: "张明远", dept: "销售部 · 常白班", flag: "上午无打卡", state: "待分拣" } } },
               { op: "tableRowInsert", view: "attendance", row: { id: "at-1156", cells: { who: "工号 Q-1156", dept: "装配一组 · 两班倒", flag: "加班累计超阈", state: "待分拣" } } },
               { op: "tableRowInsert", view: "attendance", row: { id: "at-rest", cells: { who: "其余 23 条", dept: "全公司 9 个部门", flag: "迟到 / 重复刷卡 / 外勤偏差", state: "待分拣" } } },
-              { op: "feedAppend", view: "audit", item: { id: "au-1", from: "AI 同事", time: "09:02:11", text: "读取 2026-08-09 全公司考勤记录 318 条（只读）" } },
+              { op: "feedAppend", view: "audit", item: { id: "au-1", from: "AI 同事", time: "09:02:11", text: `读取 ${demoWorldFixture.demoDate.iso} 全公司考勤记录 318 条（只读）` } },
               { op: "toolbar", view: "audit", title: "本次会话的系统动作", sub: "1 条" },
             ],
           },
@@ -237,7 +238,7 @@ export const attendanceAnomalyScript: ReplayScript = {
           defaultOpen: false,
           toolName: "AttendanceQuery",
           toolId: "t-att",
-          content: "date=2026-08-09 due=318 complete=291 flagged=27",
+          content: `date=${demoWorldFixture.demoDate.iso} due=318 complete=291 flagged=27`,
         },
         {
           id: "a1-text",
@@ -260,7 +261,7 @@ export const attendanceAnomalyScript: ReplayScript = {
           defaultOpen: true,
           toolName: "AnomalyTriage",
           toolId: "t-triage",
-          content: JSON.stringify({ date: "2026-08-09", flagged: 27 }),
+          content: JSON.stringify({ date: demoWorldFixture.demoDate.iso, flagged: 27 }),
           executionStatus: "completed",
           durationMs: 1620,
           presentation: {
@@ -288,7 +289,7 @@ export const attendanceAnomalyScript: ReplayScript = {
                 { id: "ap-none", text: "注塑二组 2 人 · 8-07 至 8-09", sub: "请假 / 调休 / 出差 / 补录，四类单据全部查无", tone: "warn", state: "hit", badge: { text: "查无单据", tone: "deny" } },
                 { id: "ap-ot", text: "装配一组 Q-1156 · 加班已报备", sub: "单据合规，但累计时长超公司自定上限", tone: "pending", badge: { text: "提醒级", tone: "warn" } },
               ] },
-              { op: "toolbar", view: "attendance", title: "考勤系统 · 2026-08-09", sub: "自动对平 24 · 需人工 3" },
+              { op: "toolbar", view: "attendance", title: `考勤系统 · ${demoWorldFixture.demoDate.iso}`, sub: "自动对平 24 · 需人工 3" },
               { op: "tableRowUpdate", view: "attendance", id: "at-zmy", set: { cells: { state: "自动对平" }, tone: "pass" } },
               { op: "cellFlag", view: "attendance", rowId: "at-zmy", colKey: "state", tone: "pass", flag: "有出差单" },
               { op: "tableRowUpdate", view: "attendance", id: "at-rest", set: { cells: { state: "自动对平 23 条" }, tone: "pass" } },
@@ -336,7 +337,7 @@ export const attendanceAnomalyScript: ReplayScript = {
           defaultOpen: true,
           toolName: "ShiftAnalysis",
           toolId: "t-shift",
-          content: JSON.stringify({ team: "注塑二组", shift: "早班", date: "2026-08-09" }),
+          content: JSON.stringify({ team: "注塑二组", shift: "早班", date: demoWorldFixture.demoDate.iso }),
           executionStatus: "completed",
           durationMs: 1180,
           presentation: {
@@ -345,10 +346,10 @@ export const attendanceAnomalyScript: ReplayScript = {
               { fields: [
                 { k: "班组编制", v: "12 人 / 早班" },
                 { k: "今日在岗", v: "10 人" },
-                { k: "本周任务", v: "SO-2026-1027" },
-                { k: "交付日", v: "8-15" },
+                { k: "本周任务", v: demoWorldFixture.deliveryOrder.id },
+                { k: "交付日", v: demoWorldFixture.deliveryOrder.promisedDeliveryDate },
               ] },
-              { k: "订单", v: "恒岳重工 精密结构件 ¥86.4 万" },
+              { k: "订单", v: `${demoWorldFixture.deliveryOrder.customer} 精密结构件 ¥${demoWorldFixture.deliveryOrder.amountWan.toFixed(1)} 万` },
               { tree: "├", k: "剩余产量", v: "3,200 件 · 剩 5 个工作日" },
               { tree: "├", k: "需要日产", v: "640 件 / 天" },
               { tree: "└", k: "缺 2 人后日产上限", v: "533 件 / 天（-16.7%）" },
@@ -358,13 +359,13 @@ export const attendanceAnomalyScript: ReplayScript = {
             status: "warn",
             panel: [
               { op: "focus", view: "attendance" },
-              { op: "toolbar", view: "attendance", title: "考勤系统 · 注塑二组早班", sub: "编制 12 · 在岗 10 · 承接 SO-2026-1027" },
+              { op: "toolbar", view: "attendance", title: "考勤系统 · 注塑二组早班", sub: `编制 12 · 在岗 10 · 承接 ${demoWorldFixture.deliveryOrder.id}` },
               { op: "tableRowUpdate", view: "attendance", id: "at-2318", set: { cells: { flag: "8-07 至 8-09 连续 3 天" } } },
               { op: "tableRowUpdate", view: "attendance", id: "at-2407", set: { cells: { flag: "8-07 至 8-09 连续 3 天" } } },
               { op: "cellFlag", view: "attendance", rowId: "at-zmy", colKey: "state", tone: "info", flag: "已对平" },
               { op: "cellFlag", view: "attendance", rowId: "at-rest", colKey: "state", tone: "info", flag: "已对平" },
               { op: "pulse", view: "attendance", ids: ["at-2318", "at-2407"], kind: "hit" },
-              { op: "feedAppend", view: "audit", item: { id: "au-3", from: "AI 同事", time: "09:03:26", text: "关联注塑二组排班与在制订单 SO-2026-1027，评估缺勤对交付的影响（只读）" } },
+              { op: "feedAppend", view: "audit", item: { id: "au-3", from: "AI 同事", time: "09:03:26", text: `关联注塑二组排班与在制订单 ${demoWorldFixture.deliveryOrder.id}，评估缺勤对交付的影响（只读）` } },
               { op: "toolbar", view: "audit", title: "本次会话的系统动作", sub: "3 条" },
             ],
           },
@@ -375,7 +376,7 @@ export const attendanceAnomalyScript: ReplayScript = {
           title: "业务进展",
           defaultOpen: true,
           content: [
-            "这两个人缺得不巧。注塑二组早班编制 12 人，今天在岗 10 人；这个组本周承接的是 SO-2026-1027，恒岳重工的精密结构件，¥86.4 万，8-15 交付，还剩 3,200 件、5 个工作日，需要日产 640 件。",
+            `这两个人缺得不巧。注塑二组早班编制 12 人，今天在岗 10 人；这个组本周承接的是 ${demoWorldFixture.deliveryOrder.id}，${demoWorldFixture.deliveryOrder.customer}的精密结构件，¥${demoWorldFixture.deliveryOrder.amountWan.toFixed(1)} 万，${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 交付，还剩 3,200 件、5 个工作日，需要日产 640 件。`,
             "",
             "少 2 个人，早班日产上限只到 533 件。**单看缺勤不算急，单看订单也还追得上，两件事撞在一起才是风险**——这也是我建议今天就核实、别拖到下周一的唯一理由。",
             "",
@@ -464,7 +465,7 @@ export const attendanceAnomalyScript: ReplayScript = {
           defaultOpen: true,
           toolName: "DocBuild",
           toolId: "t-doc",
-          content: JSON.stringify({ doc: "今日考勤异常处理单", date: "2026-08-09" }),
+          content: JSON.stringify({ doc: "今日考勤异常处理单", date: demoWorldFixture.demoDate.iso }),
           executionStatus: "completed",
           durationMs: 1340,
           presentation: {
@@ -483,7 +484,7 @@ export const attendanceAnomalyScript: ReplayScript = {
                 id: "au-5",
                 from: "AI 同事",
                 time: "09:06:18",
-                text: "生成《今日考勤异常处理单 · 2026-08-09》，未向任何人发送",
+                text: `生成《今日考勤异常处理单 · ${demoWorldFixture.demoDate.iso}》，未向任何人发送`,
                 card: { title: "处理单已生成", body: "需处理 2 件 · 提醒 1 件 · 已对平 24 条依据留档", meta: [{ text: "可下载", tone: "info" }, { text: "尚未发送", tone: "pending" }] },
               } },
               { op: "toolbar", view: "audit", title: "本次会话的系统动作", sub: "5 条" },
@@ -636,7 +637,7 @@ export const attendanceAnomalyScript: ReplayScript = {
           defaultOpen: true,
           toolName: "ReadBack",
           toolId: "t-readback",
-          content: JSON.stringify({ date: "2026-08-09" }),
+          content: JSON.stringify({ date: demoWorldFixture.demoDate.iso }),
           executionStatus: "completed",
           durationMs: 920,
           presentation: {

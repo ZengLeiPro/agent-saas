@@ -134,7 +134,7 @@ export function EmptyChatRecommendCards({
     return (
       <div className="mx-auto w-full max-w-3xl pt-[10vh]">
         <div className="mb-4 flex items-end justify-between gap-3">
-          <div><div className="text-sm font-medium text-foreground">{roleName(workflowLibrary.roles, matchedRoleId)}工作流</div><div className="mt-1 text-sm text-muted-foreground">从真实业务事件开始，看到行动与完成证明。</div></div>
+          <div><div className="text-sm font-medium text-foreground">{roleName(workflowLibrary.roles, matchedRoleId)}工作流</div><div className="mt-1 text-sm text-muted-foreground">先看虚构业务回放，理解 AI 同事如何把工作办完。</div></div>
           <Button type="button" variant="ghost" size="sm" className="h-8 shrink-0 gap-1 text-xs" onClick={onViewAll}>查看目录<ArrowRight className="size-3.5" /></Button>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -152,17 +152,12 @@ export function EmptyChatRecommendCards({
                 <div className="text-[11px] font-medium text-muted-foreground">{isHookScenario(scenario) ? scenario.triggerBadge : `${scenario.primaryType === "CREATE" ? "产出成果" : scenario.primaryType === "WATCH" ? "持续巡检" : scenario.primaryType === "ACT" ? "会动系统" : "持续闭环"} · ${scenario.readiness === "D0_CURRENT" ? "当前即用" : scenario.readiness === "D1_CONNECTOR" ? "标准接入" : "项目集成"}`}</div>
                 <div className="mt-2 line-clamp-2 text-sm font-semibold leading-snug">{scenario.title}</div>
                 <p className="mt-2 line-clamp-3 text-sm leading-5 text-muted-foreground">{scenario.value}</p>
-                {/* 能看演示的场景，第一屏就给「看它如何完成」；接入是第二选择，不是唯一入口 */}
+                {/* 有回放的推荐卡只承担价值演示；真实试用与接入继续留在完整目录。 */}
                 <div className="mt-auto flex flex-wrap items-center justify-end gap-1.5 pt-3">
                   {canReplay ? (
-                    <>
-                      <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={openOperational}>
-                        {scenario.cta.primary}
-                      </Button>
-                      <Button type="button" size="sm" className="h-7 px-2.5 text-xs" onClick={() => openCatalog(scenario, "presentation")}>
-                        看它如何完成
-                      </Button>
-                    </>
+                    <Button type="button" size="sm" className="h-7 px-2.5 text-xs" onClick={() => openCatalog(scenario, "presentation")}>
+                      看虚构回放
+                    </Button>
                   ) : (
                     <Button type="button" size="sm" className="h-7 px-2.5 text-xs" onClick={openOperational}>
                       {scenario.cta.primary}

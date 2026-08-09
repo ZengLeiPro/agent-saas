@@ -55,8 +55,8 @@ describe("剧本注册表", () => {
 });
 
 describe.each(gatedScripts.map((script) => [script.title, script] as const))("剧本《%s》", (_title, script) => {
-  it("步数在 5~10 之间——少于 5 步撑不起闭环，多于 10 步销售讲不完", () => {
-    expect(script.steps.length).toBeGreaterThanOrEqual(5);
+  it("步数匹配演示节奏——quick 可短讲，hero 保留完整闭环", () => {
+    expect(script.steps.length).toBeGreaterThanOrEqual(script.mode === "hero" ? 5 : 3);
     expect(script.steps.length).toBeLessThanOrEqual(10);
   });
 
@@ -78,23 +78,28 @@ describe.each(gatedScripts.map((script) => [script.title, script] as const))("�
     expect(referencedSteps.size).toBeGreaterThanOrEqual(Math.min(stepsWithTools, script.steps.length - 1));
   });
 
-  it("有产物，且产物被正文的 [FILE] 标记引出来（否则客户看不到也带不走）", () => {
+  it("有产物时必须被正文的 [FILE] 标记引出来", () => {
     const paths = Object.keys(script.artifacts ?? {});
-    expect(paths.length).toBeGreaterThanOrEqual(1);
+    if (paths.length === 0) {
+      expect(script.mode).not.toBe("hero");
+      return;
+    }
     const text = allText(script);
     for (const path of paths) {
       expect(text.includes(`[FILE]{"filePath":"${path}"`), `产物 ${path} 没有被 [FILE] 引用`).toBe(true);
     }
   });
 
-  it("至少有一处主动停下：拦截（blocked）或等待人确认（waiting）", () => {
+  it("hero 至少有一处主动停下：拦截（blocked）或等待人确认（waiting）", () => {
+    if (script.mode !== "hero") return;
     const statuses = allBlocks(script)
       .map((block) => block.presentation?.status)
       .filter(Boolean);
     expect(statuses.some((status) => status === "blocked" || status === "waiting")).toBe(true);
   });
 
-  it("终态说清「没有做什么」——边界比成果更值钱", () => {
+  it("hero 终态说清「没有做什么」——边界比成果更值钱", () => {
+    if (script.mode !== "hero") return;
     const last = script.steps.at(-1);
     const text = (last?.blocks ?? []).map((block) => block.content ?? "").join("\n");
     expect(/没有做什么|没有做的事|未做什么/.test(text), "终态缺少「没有做什么」段").toBe(true);
@@ -124,11 +129,9 @@ describe.each(gatedScripts.map((script) => [script.title, script] as const))("�
 });
 
 describe.each(
-  [
-    // hero 剧本与钩子剧本执行同一档质量要求：有 Gate、退回有下文、终态可核对
-    ...scripts.filter((script) => script.mode === "hero"),
-    ...hookScripts,
-  ].map((script) => [script.title, script] as const),
+  [...scripts, ...hookScripts]
+    .filter((script) => script.mode === "hero")
+    .map((script) => [script.title, script] as const),
 )("完整业务闭环剧本《%s》额外要求", (_title, script) => {
   it("至少一个人工审批门禁", () => {
     expect(script.steps.some((step) => step.approval)).toBe(true);

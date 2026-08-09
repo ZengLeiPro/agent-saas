@@ -1,4 +1,5 @@
 import type { SystemPanelSnapshot } from "@agent/shared";
+import { demoWorldFixture } from "./demoWorldFixture";
 import type { ReplayScript } from "./types";
 
 /**
@@ -47,18 +48,18 @@ const DUNNING_LETTER_HTML = `<!doctype html>
   <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span>收件箱 · 顾云帆（蓝谷自动化 项目部）</span><span class="unread">未读 · 今天 10:41</span></div>
 
   <div class="head">
-    <h1>【对账函】AR-2026-0058 · 截至 2026-08-09 应收余额 ¥236,000.00</h1>
+    <h1>【对账函】AR-2026-0058 · 截至 ${demoWorldFixture.demoDate.iso} 应收余额 ¥236,000.00</h1>
     <div class="kv">
       <span>发件人</span><span>陈静 · 澜达精密制造有限公司 财务部</span>
       <span>收件人</span><span>顾云帆 · 蓝谷自动化 项目部</span>
       <span>抄送</span><span>张明远 · 澜达精密制造有限公司 销售部</span>
-      <span>时间</span><span>2026-08-09 10:41</span>
+      <span>时间</span><span>${demoWorldFixture.demoDate.iso} 10:41</span>
     </div>
   </div>
 
   <div class="body">
     <p>顾工，您好：</p>
-    <p>附上双方截至 2026-08-09 的往来对账，烦请核对确认。</p>
+    <p>附上双方截至 ${demoWorldFixture.demoDate.iso} 的往来对账，烦请核对确认。</p>
 
     <table>
       <tr><th>应收单</th><th>对应订单</th><th>开票日</th><th>到期日</th><th>金额</th><th>状态</th></tr>
@@ -177,14 +178,14 @@ export const receivablesChaseScript: ReplayScript = {
           defaultOpen: true,
           toolName: "ARLedgerQuery",
           toolId: "t-ar-ledger",
-          content: JSON.stringify({ ledger: "AR", status: "open", asOf: "2026-08-09" }),
+          content: JSON.stringify({ ledger: "AR", status: "open", asOf: demoWorldFixture.demoDate.iso }),
           executionStatus: "completed",
           durationMs: 920,
           presentation: {
             title: "读取应收台账未结款项",
             detail: [
-              { k: "统计口径", v: "截至 2026-08-09 · 已开票未收讫" },
-              { k: "未结笔数", v: "12 笔 · 合计 ¥168.2 万" },
+              { k: "统计口径", v: `截至 ${demoWorldFixture.demoDate.iso} · 已开票未收讫` },
+              { k: "未结笔数", v: `${demoWorldFixture.receivables.count} 笔 · 合计 ¥${demoWorldFixture.receivables.totalAmountWan.toFixed(1)} 万` },
               { tree: "├", k: "已逾期", v: "1 笔 · ¥23.6 万" },
               { tree: "├", k: "7 天内到期", v: "1 笔 · ¥12.0 万" },
               { tree: "└", k: "账期内", v: "10 笔 · ¥132.6 万" },
@@ -194,13 +195,13 @@ export const receivablesChaseScript: ReplayScript = {
             panelBase: PANEL_BASE,
             panel: [
               { op: "focus", view: "ar" },
-              { op: "toolbar", view: "ar", title: "应收台账 · 未结款项", sub: "12 笔 · ¥168.2 万 · 显示到期最近 5 笔" },
+              { op: "toolbar", view: "ar", title: "应收台账 · 未结款项", sub: `${demoWorldFixture.receivables.count} 笔 · ¥${demoWorldFixture.receivables.totalAmountWan.toFixed(1)} 万 · 显示到期最近 5 笔` },
               { op: "tableRowInsert", view: "ar", row: { id: "ar-0058", cells: { bill: "AR-2026-0058", cust: "蓝谷自动化", amt: "¥23.6 万", state: "07-22 到期" } } },
-              { op: "tableRowInsert", view: "ar", row: { id: "ar-0044", cells: { bill: "AR-2026-0044", cust: "恒岳重工", amt: "¥12.0 万", state: "08-12 到期" } } },
+              { op: "tableRowInsert", view: "ar", row: { id: "ar-0044", cells: { bill: "AR-2026-0044", cust: demoWorldFixture.deliveryOrder.customer, amt: "¥12.0 万", state: "08-12 到期" } } },
               { op: "tableRowInsert", view: "ar", row: { id: "ar-0051", cells: { bill: "AR-2026-0051", cust: "海川机械", amt: "¥8.4 万", state: "08-25 到期" } } },
               { op: "tableRowInsert", view: "ar", row: { id: "ar-0063", cells: { bill: "AR-2026-0063", cust: "启润电子", amt: "¥5.2 万", state: "08-28 到期" } } },
               { op: "tableRowInsert", view: "ar", row: { id: "ar-0037", cells: { bill: "AR-2026-0037", cust: "Feldmann GmbH", amt: "¥31.5 万", state: "09-10 到期" } } },
-              { op: "feedAppend", view: "audit", item: { id: "au-1", from: "AI 同事", time: "10:02:11", text: "读取应收台账 12 笔未结款项（只读），未修改任何账期或金额" } },
+              { op: "feedAppend", view: "audit", item: { id: "au-1", from: "AI 同事", time: "10:02:11", text: `读取应收台账 ${demoWorldFixture.receivables.count} 笔未结款项（只读），未修改任何账期或金额` } },
               { op: "toolbar", view: "audit", title: "本次会话的系统动作", sub: "1 条" },
             ],
           },
@@ -212,14 +213,14 @@ export const receivablesChaseScript: ReplayScript = {
           defaultOpen: false,
           toolName: "ARLedgerQuery",
           toolId: "t-ar-ledger",
-          content: "open=12 total=1682000 overdue=1 dueIn7d=1 asOf=2026-08-09",
+          content: `open=${demoWorldFixture.receivables.count} total=${demoWorldFixture.receivables.totalAmountCny} overdue=1 dueIn7d=1 asOf=${demoWorldFixture.demoDate.iso}`,
         },
         {
           id: "r1-text",
           kind: "text",
           title: "业务进展",
           defaultOpen: true,
-          content: "12 笔未结都拿到了。我按到期日、账龄和这家客户当前在谈的事情逐笔判一遍，再决定谁该催、催到哪一档。",
+          content: `${demoWorldFixture.receivables.count} 笔未结都拿到了。我按到期日、账龄和这家客户当前在谈的事情逐笔判一遍，再决定谁该催、催到哪一档。`,
         },
       ],
     },
@@ -241,12 +242,12 @@ export const receivablesChaseScript: ReplayScript = {
             title: "按账龄与客户在谈事项逐笔分档",
             detail: [
               { verdict: "fail", text: "AR-2026-0058 蓝谷自动化 ¥23.6 万", note: "账期 30 天，06-22 开票、07-22 到期，今天已逾期 18 天 · 该催" },
-              { verdict: "warn", text: "AR-2026-0044 恒岳重工 ¥12.0 万", note: "08-12 到期，还有 3 天 · 提醒级，不进催收" },
+              { verdict: "warn", text: `AR-2026-0044 ${demoWorldFixture.deliveryOrder.customer} ¥12.0 万`, note: "08-12 到期，还有 3 天 · 提醒级，不进催收" },
               { verdict: "pending", text: "AR-2026-0063 启润电子 ¥5.2 万", note: "08-28 到期在账期内，且 NC-2026-0092 客诉挂了 6 天未闭环 · 本轮不催" },
               { verdict: "pass", text: "AR-2026-0051 海川机械 ¥8.4 万", note: "08-25 到期，账期内 · 不动" },
               { verdict: "pass", text: "AR-2026-0037 Feldmann GmbH ¥31.5 万", note: "09-10 到期，账期内 · 不动" },
               { warn: "蓝谷这笔有口径冲突：同一家客户的 SO-2026-1033 二期结构件正在张明远手里谈，图纸确认中。财务单线发催款，会和销售正在推的事撞车。" },
-              { insight: "12 笔里只有 1 笔真的该催，1 笔只需提醒；其余 10 笔现在动只会消耗客户关系", label: "结论" },
+              { insight: `${demoWorldFixture.receivables.count} 笔里只有 1 笔真的该催，1 笔只需提醒；其余 10 笔现在动只会消耗客户关系`, label: "结论" },
             ],
             status: "warn",
             panel: [
@@ -269,8 +270,8 @@ export const receivablesChaseScript: ReplayScript = {
               } },
               { op: "rowInsert", view: "crm", row: {
                 id: "crm-hy",
-                text: "恒岳重工 · 郑海峰（采购部）",
-                sub: "负责人 赵一楠 · SO-2026-1027 交付中，08-15 交期",
+                text: `${demoWorldFixture.deliveryOrder.customer} · 郑海峰（采购部）`,
+                sub: `负责人 赵一楠 · ${demoWorldFixture.deliveryOrder.id} 交付中，${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 交期`,
                 tone: "info",
               } },
               { op: "rowInsert", view: "crm", row: {
@@ -281,7 +282,7 @@ export const receivablesChaseScript: ReplayScript = {
                 badge: { text: "客诉未结", tone: "warn" },
               } },
               { op: "toolbar", view: "crm", title: "CRM · 客户往来与在谈商机", sub: "3 家已核对" },
-              { op: "feedAppend", view: "audit", item: { id: "au-2", from: "AI 同事", time: "10:03:40", text: "12 笔应收逐笔分档：该催 1 · 提醒 1 · 不动 10；并核对 CRM 在谈商机与未结客诉" } },
+              { op: "feedAppend", view: "audit", item: { id: "au-2", from: "AI 同事", time: "10:03:40", text: `${demoWorldFixture.receivables.count} 笔应收逐笔分档：该催 1 · 提醒 1 · 不动 10；并核对 CRM 在谈商机与未结客诉` } },
               { op: "toolbar", view: "audit", title: "本次会话的系统动作", sub: "2 条" },
             ],
           },
@@ -295,7 +296,7 @@ export const receivablesChaseScript: ReplayScript = {
             "这一轮真正该催的只有一笔：",
             "",
             "1. **蓝谷自动化 AR-2026-0058 ¥23.6 万**，合同账期 30 天，06-22 开票、07-22 到期，今天 08-09，逾期 18 天。金额是本月未结里最大的一笔逾期，理由充分。",
-            "2. **恒岳重工 AR-2026-0044 ¥12.0 万** 08-12 才到期，还有 3 天，这笔发的是到期提醒，不是催款——恒岳的 SO-2026-1027 正卡在 08-15 交期上，这时候提钱容易被当成施压。",
+            `2. **${demoWorldFixture.deliveryOrder.customer} AR-2026-0044 ¥12.0 万** 08-12 才到期，还有 3 天，这笔发的是到期提醒，不是催款——恒岳的 ${demoWorldFixture.deliveryOrder.id} 正卡在 ${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 交期上，这时候提钱容易被当成施压。`,
             "",
             "另外三笔我建议现在别动，理由分开说：海川 08-25、Feldmann 09-10 都在账期内，提前催没有依据；启润 AR-2026-0063 虽然也在账期内，但它的 NC-2026-0092 客诉挂了 6 天还没闭环，客诉未了先催款，回款没催来、客诉先升级。",
             "",
@@ -596,7 +597,7 @@ export const receivablesChaseScript: ReplayScript = {
                   id: "mail-sent",
                   from: "陈静（财务）",
                   time: "10:41:06",
-                  text: "【对账函】AR-2026-0058 · 截至 2026-08-09 应收余额 ¥236,000.00",
+                  text: `【对账函】AR-2026-0058 · 截至 ${demoWorldFixture.demoDate.iso} 应收余额 ¥236,000.00`,
                   card: { title: "已送达 · 顾云帆（抄送 张明远）", body: "含对账明细、确认日 08-14、付款日 08-21，以及二期合作方案的当面沟通安排", meta: [{ text: "已送达", tone: "pass" }, { text: "含人工补充 1 句", tone: "info" }] },
                 } },
                 { op: "tableRowUpdate", view: "ar", id: "ar-0058", set: { cells: { state: "再催已发" }, tone: "pass" } },
@@ -604,7 +605,7 @@ export const receivablesChaseScript: ReplayScript = {
                 { op: "rowInsert", view: "crm", row: {
                   id: "crm-log",
                   text: "跟进记录 · AR-2026-0058 再催（对账函）",
-                  sub: "2026-08-09 10:41 陈静发出、张明远抄送 · 下一动作 08-14 核对客户确认",
+                  sub: `${demoWorldFixture.demoDate.iso} 10:41 陈静发出、张明远抄送 · 下一动作 08-14 核对客户确认`,
                   tone: "pass",
                   state: "hit",
                   badge: { text: "已写入", tone: "pass" },

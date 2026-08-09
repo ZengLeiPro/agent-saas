@@ -172,7 +172,7 @@ export function workflowCta(scenario: CatalogScenarioPublic): WorkflowCta {
   if (hasReplayScript(scenario)) {
     return {
       action: "presentation",
-      label: "看它如何完成",
+      label: "看虚构回放",
       secondaryLabel: operational.label,
       secondaryAction: operational.action,
     };

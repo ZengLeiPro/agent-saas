@@ -3,9 +3,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CAPABILITY_SURFACE_HOVER } from "@/components/CapabilityCenter/CatalogUi";
 import { cn } from "@/lib/utils";
-import { friendlyReadiness } from "./friendlyMappings";
 import { getReplayScript } from "./replay/registry";
-import { isHookScenario, workflowCta } from "./workflowUi";
+import { isHookScenario } from "./workflowUi";
 import type { WorkflowScenarioCardProps } from "./ScenarioCard";
 
 /** P0 引导演示入口：只讲业务结果和体验方式，不把完整 Workflow 规格塞回首屏。 */
@@ -13,7 +12,6 @@ export function WorkflowPresentationCard({
   scenario,
   onPrimaryAction,
 }: Pick<WorkflowScenarioCardProps, "scenario" | "onPrimaryAction">) {
-  const cta = workflowCta(scenario);
   // 会话式回放剧本优先：它的步数才是观众实际要按几次。
   const replayScript = getReplayScript(scenario.id, scenario);
   const chapterCount = replayScript?.steps.length ?? 0;
@@ -29,26 +27,16 @@ export function WorkflowPresentationCard({
           <MousePointerClick className="size-3" />
           {isHookScenario(scenario) ? scenario.triggerBadge : replayScript?.mode === "hero" ? "完整业务闭环" : "快速体验"}
         </Badge>
-        <Badge variant="outline" className="font-normal">{friendlyReadiness[scenario.readiness]}</Badge>
+        <Badge variant="outline" className="font-normal">虚构业务回放</Badge>
       </div>
       <h3 className="mt-4 text-lg font-semibold leading-snug text-foreground">{scenario.title}</h3>
       <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">{scenario.value}</p>
       <div className="mt-4 text-xs font-medium text-brand-700">
         {chapterCount > 0 ? `${chapterCount} 个业务步骤 · 右侧系统状态同步变化` : "一步一步看它怎么办完 · 右侧系统状态同步变化"}
       </div>
-      <div className="mt-auto flex flex-wrap items-center justify-end gap-2 pt-5">
-        {cta.secondaryAction && cta.secondaryLabel ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => onPrimaryAction(cta.secondaryAction!, scenario)}
-          >
-            {cta.secondaryLabel}
-          </Button>
-        ) : null}
+      <div className="mt-auto flex justify-end pt-5">
         <Button type="button" size="sm" onClick={() => onPrimaryAction("presentation", scenario)}>
-          看它如何完成
+          看虚构回放
         </Button>
       </div>
     </article>

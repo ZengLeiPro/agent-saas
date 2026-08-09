@@ -1,4 +1,5 @@
 import type { SystemPanelSnapshot } from "@agent/shared";
+import { demoWorldFixture } from "./demoWorldFixture";
 import type { ReplayScript } from "./types";
 
 /**
@@ -49,8 +50,8 @@ const MORNING_REPORT_HTML = `<!doctype html>
 </style></head><body>
 <div class="bar"><span class="tag">无人值守</span><span>每日 08:00 交付风险巡检 · 批次 DR-2026-0809 · 本轮无人工发起</span></div>
 
-<h1>交付风险晨报 · 2026-08-09</h1>
-<p class="sub">生成时间 2026-08-09 08:07 · 覆盖 17 张在途订单 · 下一轮巡检 2026-08-10 08:00</p>
+<h1>交付风险晨报 · ${demoWorldFixture.demoDate.iso}</h1>
+<p class="sub">生成时间 ${demoWorldFixture.demoDate.iso} 08:07 · 覆盖 ${demoWorldFixture.inTransitOrders.count} 张在途订单，合计 ¥${demoWorldFixture.inTransitOrders.totalAmountWan.toFixed(1)} 万 · 下一轮巡检 2026-08-10 08:00</p>
 
 <div class="stats">
   <div class="stat"><b class="deny">1</b><span>高危 · 已确定赶不上</span></div>
@@ -62,11 +63,11 @@ const MORNING_REPORT_HTML = `<!doctype html>
 <table>
   <tr><th>订单</th><th>客户 / 金额</th><th>承诺交期</th><th>风险</th><th>卡点</th></tr>
   <tr>
-    <td>SO-2026-1027<br><span class="note">精密结构件 2,400 件</span></td>
-    <td>恒岳重工<br><span class="note">￥864,000</span></td>
-    <td>2026-08-15</td>
+    <td>${demoWorldFixture.deliveryOrder.id}<br><span class="note">精密结构件 2,400 件</span></td>
+    <td>${demoWorldFixture.deliveryOrder.customer}<br><span class="note">￥${demoWorldFixture.deliveryOrder.amountCny.toLocaleString("en-US")}</span></td>
+    <td>${demoWorldFixture.deliveryOrder.promisedDeliveryDate}</td>
     <td class="deny">高危</td>
-    <td>精密轴承 6204-RS 缺 400 件；PO-2026-0886 口头承诺 8-12 到货，无发货单号</td>
+    <td>${demoWorldFixture.deliveryOrder.material.name} ${demoWorldFixture.deliveryOrder.material.model} 需求 ${demoWorldFixture.deliveryOrder.material.requiredQuantity} 件、缺口 ${demoWorldFixture.deliveryOrder.material.shortageQuantity} 件、现库 ${demoWorldFixture.deliveryOrder.material.stockQuantity}；PO-2026-0886 口头承诺 ${demoWorldFixture.deliveryOrder.material.supplierVerbalDeliveryDate} 到货，无发货单号</td>
   </tr>
   <tr>
     <td>SO-2026-1033<br><span class="note">注塑件 5,600 件</span></td>
@@ -99,13 +100,13 @@ const MORNING_REPORT_HTML = `<!doctype html>
 </table>
 
 <div class="box">
-  <h2>高危单倒推 · SO-2026-1027（恒岳重工）</h2>
+  <h2>高危单倒推 · ${demoWorldFixture.deliveryOrder.id}（${demoWorldFixture.deliveryOrder.customer}）</h2>
   <div class="chain">
-    <i>承诺交期 8-15</i><i>物流 1 天 → 8-14 发货</i><i>出货检验 1 天 → 8-13 完工</i><i>装配 3 天 → 8-10 上料</i><i class="hit">轴承承诺到货 8-12</i>
+    <i>承诺交期 ${demoWorldFixture.deliveryOrder.promisedDeliveryDate}</i><i>物流 1 天 → 8-14 发货</i><i>出货检验 1 天 → 8-13 完工</i><i>装配 ${demoWorldFixture.deliveryOrder.material.assemblyDays} 天 → 8-10 上料</i><i class="hit">轴承口头承诺到货 ${demoWorldFixture.deliveryOrder.material.supplierVerbalDeliveryDate}</i>
   </div>
   <ul>
-    <li><b>缺口 2 天</b>：最晚上料日 8-10，轴承最早 8-12 才到，按现有工艺路线完工日落在 8-17，比承诺交期晚 2 天。</li>
-    <li><b>到货承诺不成立</b>：PO-2026-0886 采购单上华矩传动 8-05 口头回复「8-12 到」，采购系统里没有发货单号、没有物流单号、没有发货照片，三样都没有的到货日不能当计划输入用。</li>
+    <li><b>缺口 2 天</b>：最晚上料日 8-10，轴承最早 ${demoWorldFixture.deliveryOrder.material.supplierVerbalDeliveryDate} 才到，按现有工艺路线完工日落在 8-17，比承诺交期晚 2 天。</li>
+    <li><b>到货承诺不成立</b>：PO-2026-0886 采购单上华矩传动 8-05 口头回复「${demoWorldFixture.deliveryOrder.material.supplierVerbalDeliveryDate} 到」，采购系统里没有发货单号、没有物流单号、没有发货照片，三样都没有的到货日不能当计划输入用。</li>
     <li><b>替代料未启用</b>：库内有替代型号 6204-2RS 共 120 件，但数量不够，且换型号须客户书面认可 —— 这两条都不是跟单岗能定的，本报告只列事实。</li>
   </ul>
 </div>
@@ -124,7 +125,7 @@ const MORNING_REPORT_HTML = `<!doctype html>
   <ul>
     <li><b>催货 PO-2026-0886</b> — 任务派给采购，要求 8-10 12:00 前拿到发货单号或明确的不能到货答复；拿不到即视同 8-12 不到货，按 8-17 完工重排。</li>
     <li><b>排产口径</b> — 补班或插单方案由生产计划出，未出方案前不向客户给任何新日期。</li>
-    <li><b>承诺交期</b> — 保持 2026-08-15 不变。改期须销售向客户取得书面确认后，由跟单在订单中心提交改期申请。</li>
+    <li><b>承诺交期</b> — 保持 ${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 不变。改期须销售向客户取得书面确认后，由跟单在订单中心提交改期申请。</li>
     <li><b>复查点</b> — 今日 14:00 查发货单号；2026-08-10 08:00 本巡检自动续查，仍无单号则升级给生产计划与销售。</li>
   </ul>
 </div>
@@ -243,7 +244,7 @@ export const deliveryRiskDailyScript: ReplayScript = {
             title: "扫描订单中心的在途订单",
             detail: [
               { k: "触发方式", v: "每日 08:00 排程 · 无人工介入" },
-              { k: "在途订单", v: "17 张 · 合计 ￥4,027,000" },
+              { k: "在途订单", v: `${demoWorldFixture.inTransitOrders.count} 张 · 合计 ¥${demoWorldFixture.inTransitOrders.totalAmountWan.toFixed(1)} 万` },
               { k: "交期在 14 天内", v: "6 张" },
               { tree: "├", k: "系统已标黄", v: "4 张（待逐张核实，标黄不等于有风险）" },
               { tree: "└", k: "上轮遗留", v: "0 张（08-08 批次已全部闭环）" },
@@ -252,14 +253,14 @@ export const deliveryRiskDailyScript: ReplayScript = {
             panelBase: PANEL_BASE,
             panel: [
               { op: "focus", view: "orders" },
-              { op: "toolbar", view: "orders", title: "在途订单 · 批次 DR-2026-0809", sub: "17 张在途 · 6 张 14 天内交付" },
-              { op: "tableRowInsert", view: "orders", row: { id: "so-1027", cells: { so: "SO-2026-1027", cust: "恒岳重工", due: "2026-08-15", risk: "待判定" } } },
+              { op: "toolbar", view: "orders", title: `在途订单 · 批次 DR-2026-${demoWorldFixture.demoDate.compact}`, sub: `${demoWorldFixture.inTransitOrders.count} 张在途 · 6 张 14 天内交付` },
+              { op: "tableRowInsert", view: "orders", row: { id: "so-1027", cells: { so: demoWorldFixture.deliveryOrder.id, cust: demoWorldFixture.deliveryOrder.customer, due: demoWorldFixture.deliveryOrder.promisedDeliveryDate, risk: "待判定" } } },
               { op: "tableRowInsert", view: "orders", row: { id: "so-1033", cells: { so: "SO-2026-1033", cust: "蓝谷自动化", due: "2026-08-22", risk: "待判定" } } },
               { op: "tableRowInsert", view: "orders", row: { id: "so-1041", cells: { so: "SO-2026-1041", cust: "启润电子", due: "2026-08-19", risk: "待判定" } } },
               { op: "tableRowInsert", view: "orders", row: { id: "so-1044", cells: { so: "SO-2026-1044", cust: "海川机械", due: "2026-08-26", risk: "待判定" } } },
               { op: "tableRowInsert", view: "orders", row: { id: "so-rest", cells: { so: "其余 13 张", cust: "多客户", due: "08-18 至 09-14", risk: "待判定" } } },
               { op: "pulse", view: "orders", ids: ["so-1027", "so-1033", "so-1041", "so-1044"], kind: "scan" },
-              { op: "feedAppend", view: "audit", item: { id: "ad-1", from: "AI 同事", time: "08:00:02", text: "排程触发巡检批次 DR-2026-0809，读取订单中心在途订单 17 张（只读）" } },
+              { op: "feedAppend", view: "audit", item: { id: "ad-1", from: "AI 同事", time: "08:00:02", text: `排程触发巡检批次 DR-2026-${demoWorldFixture.demoDate.compact}，读取订单中心在途订单 ${demoWorldFixture.inTransitOrders.count} 张（只读）` } },
               { op: "toolbar", view: "audit", title: "本轮巡检的系统动作", sub: "1 条" },
             ],
           },
@@ -278,7 +279,7 @@ export const deliveryRiskDailyScript: ReplayScript = {
           kind: "text",
           title: "业务进展",
           defaultOpen: true,
-          content: "17 张在途订单都拉出来了，其中 6 张交期在 14 天内。系统自己标黄了 4 张，我不直接用这个结果——标黄只看交期近不近，不看料到没到。接下来我按每张单的承诺交期往回倒推：物流、检验、装配各占几天，算出最晚上料日，再拿它和物料实际到货日比。",
+          content: `${demoWorldFixture.inTransitOrders.count} 张在途订单都拉出来了，其中 6 张交期在 14 天内。系统自己标黄了 4 张，我不直接用这个结果——标黄只看交期近不近，不看料到没到。接下来我按每张单的承诺交期往回倒推：物流、检验、装配各占几天，算出最晚上料日，再拿它和物料实际到货日比。`,
         },
       ],
     },
@@ -299,11 +300,11 @@ export const deliveryRiskDailyScript: ReplayScript = {
           presentation: {
             title: "按承诺交期倒推每张单的完工日",
             detail: [
-              { section: "判定结果 · 17 张" },
+              { section: `判定结果 · ${demoWorldFixture.inTransitOrders.count} 张` },
               {
                 risk: "high",
-                text: "SO-2026-1027 恒岳重工 ￥864,000 · 承诺交期 08-15",
-                action: "倒推最晚上料日 08-10；轴承 6204-RS 缺 400 件，最早到货 08-12，完工落在 08-17，晚 2 天",
+                text: `${demoWorldFixture.deliveryOrder.id} ${demoWorldFixture.deliveryOrder.customer} ￥${demoWorldFixture.deliveryOrder.amountCny.toLocaleString("en-US")} · 承诺交期 ${demoWorldFixture.deliveryOrder.promisedDeliveryDate}`,
+                action: `倒推最晚上料日 08-10；${demoWorldFixture.deliveryOrder.material.name} ${demoWorldFixture.deliveryOrder.material.model} 需求/缺口 ${demoWorldFixture.deliveryOrder.material.requiredQuantity} 件、现库 ${demoWorldFixture.deliveryOrder.material.stockQuantity}，口头承诺到货 ${demoWorldFixture.deliveryOrder.material.supplierVerbalDeliveryDate}，完工落在 08-17，晚 2 天`,
               },
               {
                 risk: "medium",
@@ -319,7 +320,7 @@ export const deliveryRiskDailyScript: ReplayScript = {
             panel: [
               { op: "focus", view: "orders" },
               { op: "toolbar", view: "orders", title: "在途订单 · 风险判定完成", sub: "高危 1 · 中危 1 · 正常 15" },
-              { op: "tableRowUpdate", view: "orders", id: "so-1027", set: { cells: { so: "SO-2026-1027", cust: "恒岳重工", due: "2026-08-15", risk: "高危 · 缺料" }, tone: "deny" } },
+              { op: "tableRowUpdate", view: "orders", id: "so-1027", set: { cells: { so: demoWorldFixture.deliveryOrder.id, cust: demoWorldFixture.deliveryOrder.customer, due: demoWorldFixture.deliveryOrder.promisedDeliveryDate, risk: "高危 · 缺料" }, tone: "deny" } },
               { op: "cellFlag", view: "orders", rowId: "so-1027", colKey: "risk", tone: "deny", flag: "晚 2 天" },
               { op: "tableRowUpdate", view: "orders", id: "so-1033", set: { cells: { so: "SO-2026-1033", cust: "蓝谷自动化", due: "2026-08-22", risk: "中危 · 待客户确认" }, tone: "warn" } },
               { op: "cellFlag", view: "orders", rowId: "so-1033", colKey: "risk", tone: "warn", flag: "拖 3 天" },
@@ -328,7 +329,7 @@ export const deliveryRiskDailyScript: ReplayScript = {
               { op: "tableRowUpdate", view: "orders", id: "so-1044", set: { cells: { so: "SO-2026-1044", cust: "海川机械", due: "2026-08-26", risk: "正常" }, tone: "pass" } },
               { op: "cellFlag", view: "orders", rowId: "so-1044", colKey: "risk", tone: "pass", flag: "误报" },
               { op: "tableRowUpdate", view: "orders", id: "so-rest", set: { cells: { so: "其余 13 张", cust: "多客户", due: "08-18 至 09-14", risk: "正常" }, tone: "pass" } },
-              { op: "feedAppend", view: "audit", item: { id: "ad-2", from: "AI 同事", time: "08:00:41", text: "倒推 17 张在途订单完工日：高危 1 · 中危 1 · 正常 15，其中 2 张系统标黄经核为误报" } },
+              { op: "feedAppend", view: "audit", item: { id: "ad-2", from: "AI 同事", time: "08:00:41", text: `倒推 ${demoWorldFixture.inTransitOrders.count} 张在途订单完工日：高危 1 · 中危 1 · 正常 15，其中 2 张系统标黄经核为误报` } },
               { op: "toolbar", view: "audit", title: "本轮巡检的系统动作", sub: "2 条" },
             ],
           },
@@ -341,7 +342,7 @@ export const deliveryRiskDailyScript: ReplayScript = {
           content: [
             "两张单要动，理由都摆在下面：",
             "",
-            "1. **SO-2026-1027 恒岳，赶不上**。承诺 08-15 交，往回扣：物流 1 天、出货检验 1 天、装配 3 天，最晚 08-10 就得上料。轴承 6204-RS 还缺 400 件，采购单上写的到货日是 08-12，比上料日晚 2 天，完工顺推到 08-17。",
+            `1. **${demoWorldFixture.deliveryOrder.id} ${demoWorldFixture.deliveryOrder.customer}，赶不上**。承诺 ${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 交，往回扣：物流 1 天、出货检验 1 天、装配 ${demoWorldFixture.deliveryOrder.material.assemblyDays} 天，最晚 08-10 就得上料。${demoWorldFixture.deliveryOrder.material.name} ${demoWorldFixture.deliveryOrder.material.model} 需求/缺口 ${demoWorldFixture.deliveryOrder.material.shortageQuantity} 件、现库 ${demoWorldFixture.deliveryOrder.material.stockQuantity}，采购单上的口头到货日是 ${demoWorldFixture.deliveryOrder.material.supplierVerbalDeliveryDate}，比上料日晚 2 天，完工顺推到 08-17。`,
             "2. **SO-2026-1033 蓝谷，还来得及**。图纸 08-04 发出去，说好 08-06 回，到今天拖了 3 天。排产锁定窗口在 08-12，今天催一句就行，不用惊动排产。",
             "",
             "另外 2 张系统标了黄的，我核过是误报：启润那张的在途料昨天已经到厂在检验，海川那张排产还前移了 2 天。这两张不用你管，我也不写进今天的动作里。",
@@ -360,26 +361,26 @@ export const deliveryRiskDailyScript: ReplayScript = {
           defaultOpen: true,
           toolName: "MaterialTrace",
           toolId: "t-material",
-          content: JSON.stringify({ order: "SO-2026-1027", item: "6204-RS", shortage: 400 }),
+          content: JSON.stringify({ order: demoWorldFixture.deliveryOrder.id, item: demoWorldFixture.deliveryOrder.material.model, shortage: demoWorldFixture.deliveryOrder.material.shortageQuantity }),
           executionStatus: "completed",
           durationMs: 1620,
           presentation: {
-            title: "追查 SO-2026-1027 的缺料在途情况",
+            title: `追查 ${demoWorldFixture.deliveryOrder.id} 的缺料在途情况`,
             detail: [
-              { k: "缺口物料", v: "精密轴承 6204-RS · 缺 400 件" },
-              { k: "在途采购单", v: "PO-2026-0886 · 华矩传动 · 400 件" },
-              { tree: "├", k: "采购单到货日", v: "填的是 08-12，来源是 08-05 电话口头回复" },
+              { k: "缺口物料", v: `${demoWorldFixture.deliveryOrder.material.name} ${demoWorldFixture.deliveryOrder.material.model} · 需求 ${demoWorldFixture.deliveryOrder.material.requiredQuantity} 件 · 缺口 ${demoWorldFixture.deliveryOrder.material.shortageQuantity} 件 · 现库 ${demoWorldFixture.deliveryOrder.material.stockQuantity}` },
+              { k: "在途采购单", v: `PO-2026-0886 · 华矩传动 · ${demoWorldFixture.deliveryOrder.material.shortageQuantity} 件` },
+              { tree: "├", k: "采购单到货日", v: `填的是 ${demoWorldFixture.deliveryOrder.material.supplierVerbalDeliveryDate}，来源是 08-05 电话口头回复` },
               { tree: "├", k: "发货单号", v: "无" },
               { tree: "└", k: "物流单号", v: "无" },
-              { warn: "没有发货单号、没有物流单号，08-12 这个日期眼下只是一句话，不能当排产输入用" },
+              { warn: `没有发货单号、没有物流单号，${demoWorldFixture.deliveryOrder.material.supplierVerbalDeliveryDate} 这个日期眼下只是一句话，不能当排产输入用` },
               { verdict: "pending", text: "替代型号 6204-2RS 库存 120 件", note: "数量不够，且换型号须客户书面认可 —— 这条不归我判，只登记" },
-              { insight: "按最坏情况准备：若 08-12 到货不成立，完工日还会继续后移", label: "判定" },
+              { insight: `按最坏情况准备：若 ${demoWorldFixture.deliveryOrder.material.supplierVerbalDeliveryDate} 到货不成立，完工日还会继续后移`, label: "判定" },
             ],
             status: "waiting",
             panel: [
               { op: "focus", view: "materials" },
-              { op: "toolbar", view: "materials", title: "缺口物料与在途采购 · SO-2026-1027", sub: "1 项缺口 · 到货依据不足" },
-              { op: "tableRowInsert", view: "materials", row: { id: "mt-6204", cells: { item: "精密轴承 6204-RS", need: "400 件", po: "PO-2026-0886 · 华矩传动", eta: "口头 08-12 · 无单号" }, tone: "deny", flags: { eta: { tone: "deny", flag: "无凭据" } } } },
+              { op: "toolbar", view: "materials", title: `缺口物料与在途采购 · ${demoWorldFixture.deliveryOrder.id}`, sub: "1 项缺口 · 到货依据不足" },
+              { op: "tableRowInsert", view: "materials", row: { id: "mt-6204", cells: { item: `${demoWorldFixture.deliveryOrder.material.name} ${demoWorldFixture.deliveryOrder.material.model}`, need: `需求 ${demoWorldFixture.deliveryOrder.material.requiredQuantity} · 现库 ${demoWorldFixture.deliveryOrder.material.stockQuantity} · 缺口 ${demoWorldFixture.deliveryOrder.material.shortageQuantity}`, po: "PO-2026-0886 · 华矩传动", eta: `口头 ${demoWorldFixture.deliveryOrder.material.supplierVerbalDeliveryDate} · 无单号` }, tone: "deny", flags: { eta: { tone: "deny", flag: "无凭据" } } } },
               { op: "tableRowInsert", view: "materials", row: { id: "mt-alt", cells: { item: "替代型号 6204-2RS", need: "库存 120 件", po: "无需采购", eta: "须客户书面认可" }, tone: "pending", flags: { eta: { tone: "warn", flag: "不归我判" } } } },
               { op: "pulse", view: "materials", ids: ["mt-6204"], kind: "hit" },
               { op: "cellFlag", view: "orders", rowId: "so-1027", colKey: "due", tone: "warn", flag: "完工预估 08-17" },
@@ -387,7 +388,7 @@ export const deliveryRiskDailyScript: ReplayScript = {
                 id: "ad-3",
                 from: "AI 同事",
                 time: "08:01:26",
-                text: "核对 PO-2026-0886 在途记录：无发货单号、无物流单号，到货日 08-12 缺少凭据",
+                text: `核对 PO-2026-0886 在途记录：无发货单号、无物流单号，到货日 ${demoWorldFixture.deliveryOrder.material.supplierVerbalDeliveryDate} 缺少凭据`,
                 card: { title: "到货承诺未证实", body: "口头承诺不写进排产输入；已挂今日 14:00 与明日 08:00 两个复查点", meta: [{ text: "未改任何日期", tone: "pass" }, { text: "已挂复查", tone: "info" }] },
               } },
               { op: "toolbar", view: "audit", title: "本轮巡检的系统动作", sub: "3 条" },
@@ -400,9 +401,9 @@ export const deliveryRiskDailyScript: ReplayScript = {
           title: "为什么我不认这个到货日",
           defaultOpen: true,
           content: [
-            "采购单上 08-12 这个日期，往回查只有一条 08-05 的电话记录，供应商那边没出发货单号、没有物流单号，仓库也没收到发货通知。**这三样都没有的到货日，我不写进排产输入**。",
+            `采购单上 ${demoWorldFixture.deliveryOrder.material.supplierVerbalDeliveryDate} 这个日期，往回查只有一条 08-05 的电话记录，供应商那边没出发货单号、没有物流单号，仓库也没收到发货通知。**这三样都没有的到货日，我不写进排产输入**。`,
             "",
-            "所以 08-17 这个完工预估，是按「08-12 真能到」算出来的最好情况。真到不了，还要继续往后移。",
+            `所以 08-17 这个完工预估，是按「${demoWorldFixture.deliveryOrder.material.supplierVerbalDeliveryDate} 真能到」算出来的最好情况。真到不了，还要继续往后移。`,
             "",
             "库里有替代型号 6204-2RS 共 120 件，数量不够，而且换型号要客户书面认可 —— 换不换是你和销售的事，我只把这条事实登记下来，不替你做主。",
           ].join("\n"),
@@ -418,7 +419,7 @@ export const deliveryRiskDailyScript: ReplayScript = {
           kind: "prompt",
           title: "用户消息",
           defaultOpen: true,
-          content: "那简单，你把 SO-2026-1027 的交期从 8-15 改成 8-18，风险不就没了吗？先改了再说。",
+          content: `那简单，你把 ${demoWorldFixture.deliveryOrder.id} 的交期从 ${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 改成 2026-08-18，风险不就没了吗？先改了再说。`,
         },
         {
           id: "dr4-tool",
@@ -427,13 +428,13 @@ export const deliveryRiskDailyScript: ReplayScript = {
           defaultOpen: true,
           toolName: "DueDateAmend",
           toolId: "t-amend",
-          content: JSON.stringify({ order: "SO-2026-1027", from: "2026-08-15", to: "2026-08-18" }),
+          content: JSON.stringify({ order: demoWorldFixture.deliveryOrder.id, from: demoWorldFixture.deliveryOrder.promisedDeliveryDate, to: "2026-08-18" }),
           executionStatus: "completed",
           durationMs: 240,
           presentation: {
             title: "承诺交期变更 · 权限判定",
             detail: [
-              { k: "请求动作", v: "改写 SO-2026-1027 承诺交期 08-15 → 08-18" },
+              { k: "请求动作", v: `改写 ${demoWorldFixture.deliveryOrder.id} 承诺交期 ${demoWorldFixture.deliveryOrder.promisedDeliveryDate} → 2026-08-18` },
               { k: "动作性质", v: "对客户的书面承诺变更" },
               { k: "本岗位授权", v: "跟单可标记风险，不可改承诺交期" },
               { verdict: "fail", text: "越权，按权限矩阵拒绝", note: "订单未做任何改动 · 拦截已记账" },
@@ -464,11 +465,11 @@ export const deliveryRiskDailyScript: ReplayScript = {
           title: "回复",
           defaultOpen: true,
           content: [
-            "**这个我不能改，也不会绕过去**。08-15 是写给客户的承诺日期，在系统里改掉它不等于风险没了，只等于客户还按 08-15 等货、我们自己的账变成了 08-18 —— 到时候更难收场。右侧权限矩阵里这一行是明确拒绝的，订单我一个字没动。",
+            `**这个我不能改，也不会绕过去**。${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 是写给客户的承诺日期，在系统里改掉它不等于风险没了，只等于客户还按 ${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 等货、我们自己的账变成了 2026-08-18 —— 到时候更难收场。右侧权限矩阵里这一行是明确拒绝的，订单我一个字没动。`,
             "",
             "要缓解风险，有两条正规路：",
             "",
-            "1. 先不改期：让生产计划出补班或插单方案，看能不能把装配的 3 天压到 2 天。能压下来，08-15 还保得住；",
+            `1. 先不改期：让生产计划出补班或插单方案，看能不能把装配的 ${demoWorldFixture.deliveryOrder.material.assemblyDays} 天压到 2 天。能压下来，${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 还保得住；`,
             "2. 确实要改期：由销售拿着缺料事实向客户说明并取得书面确认，然后你在订单中心提交改期申请，走完审批我再更新排产。",
             "",
             "我建议先走第 1 条 —— 今天离最晚上料日还有 1 天，方案出得来的话不必惊动客户。",
@@ -494,8 +495,8 @@ export const deliveryRiskDailyScript: ReplayScript = {
             title: "生成 08-09 交付风险晨报",
             detail: [
               { k: "产物", v: "交付风险晨报（HTML · 自包含）" },
-              { k: "覆盖", v: "17 张在途订单 · 风险 / 卡点 / 依据三列分开" },
-              { tree: "├", k: "高危", v: "SO-2026-1027 · 附倒推链与缺口 2 天的算法" },
+              { k: "覆盖", v: `${demoWorldFixture.inTransitOrders.count} 张在途订单 · 风险 / 卡点 / 依据三列分开` },
+              { tree: "├", k: "高危", v: `${demoWorldFixture.deliveryOrder.id} · 附倒推链与缺口 2 天的算法` },
               { tree: "├", k: "中危", v: "SO-2026-1033 · 附排产锁定窗口 08-12" },
               { tree: "└", k: "误报说明", v: "2 张系统标黄单，写明为什么不算风险" },
             ],
@@ -536,9 +537,9 @@ export const deliveryRiskDailyScript: ReplayScript = {
         title: "催货任务与风险预警 · 需跟单确认后才发出",
         description: "确认后才会派发催货任务、才会在项目群发预警。群里有客户方人员，对外口径由人定，AI 不自行发出。",
         facts: [
-          { label: "高危订单", value: "SO-2026-1027 · 恒岳重工 · ￥864,000 · 承诺交期 2026-08-15" },
+          { label: "高危订单", value: `${demoWorldFixture.deliveryOrder.id} · ${demoWorldFixture.deliveryOrder.customer} · ￥${demoWorldFixture.deliveryOrder.amountCny.toLocaleString("en-US")} · 承诺交期 ${demoWorldFixture.deliveryOrder.promisedDeliveryDate}` },
           { label: "消息一 · 催货", value: "发给 采购 刘志强：PO-2026-0886 缺发货单号，请 08-10 12:00 前给到单号或明确答复" },
-          { label: "消息二 · 预警", value: "发到 恒岳项目群：轴承到货存在 2 天缺口，完工预估 08-17，正在制定补班方案" },
+          { label: "消息二 · 预警", value: `发到 ${demoWorldFixture.deliveryOrder.customer}项目群：轴承到货存在 2 天缺口，完工预估 08-17，正在制定补班方案` },
           { label: "群成员", value: "本方 6 人 + 客户方 3 人（含采购部 郑海峰）" },
           { label: "AI 自动执行", value: "0 项 · 两条都停在这里等你" },
         ],
@@ -580,14 +581,14 @@ export const deliveryRiskDailyScript: ReplayScript = {
                   id: "im-po",
                   from: "AI 同事",
                   time: "08:22:14",
-                  text: "@刘志强 PO-2026-0886 精密轴承 6204-RS 400 件，采购单写 08-12 到货，但系统里没有发货单号和物流单号。",
-                  card: { title: "催货任务 TD-1207", body: "请 08-10 12:00 前给到发货单号，或明确答复到不了；这批料绑 SO-2026-1027，最晚上料日 08-10", meta: [{ text: "已送达", tone: "pass" }, { text: "08:23 已读", tone: "info" }] },
+                  text: `@刘志强 PO-2026-0886 ${demoWorldFixture.deliveryOrder.material.name} ${demoWorldFixture.deliveryOrder.material.model} ${demoWorldFixture.deliveryOrder.material.shortageQuantity} 件，采购单写 ${demoWorldFixture.deliveryOrder.material.supplierVerbalDeliveryDate} 到货，但系统里没有发货单号和物流单号。`,
+                  card: { title: "催货任务 TD-1207", body: `请 08-10 12:00 前给到发货单号，或明确答复到不了；这批料绑 ${demoWorldFixture.deliveryOrder.id}，最晚上料日 08-10`, meta: [{ text: "已送达", tone: "pass" }, { text: "08:23 已读", tone: "info" }] },
                 } },
                 { op: "feedAppend", view: "im", item: {
                   id: "im-wu",
                   from: "AI 同事",
                   time: "08:22:31",
-                  text: "@吴国栋 私聊：SO-2026-1027 轴承到货比最晚上料日晚 2 天，完工预估 08-17。想先跟你对齐补班或插单的可能，再决定要不要跟客户说。",
+                  text: `@吴国栋 私聊：${demoWorldFixture.deliveryOrder.id} 轴承到货比最晚上料日晚 2 天，完工预估 08-17。想先跟你对齐补班或插单的可能，再决定要不要跟客户说。`,
                   card: { title: "私聊 · 未进项目群", body: "按跟单要求改为先内部对齐；恒岳项目群本轮未发任何消息", meta: [{ text: "口径以人为准", tone: "info" }, { text: "群内 0 条", tone: "pass" }] },
                 } },
                 { op: "cellFlag", view: "materials", rowId: "mt-6204", colKey: "po", tone: "warn", flag: "已催 · 待回单号" },
@@ -640,7 +641,7 @@ export const deliveryRiskDailyScript: ReplayScript = {
                   from: "AI 同事",
                   time: "08:22:14",
                   text: "两条消息均未发出，停在审批点等待重新提交。",
-                  card: { title: "对外动作全部停住", body: "SO-2026-1027 的风险仍在，最晚上料日 08-10；明早 08:00 巡检会把这一单重新推给你", meta: [{ text: "零对外消息", tone: "pass" }, { text: "退回已记账", tone: "info" }] },
+                  card: { title: "对外动作全部停住", body: `${demoWorldFixture.deliveryOrder.id} 的风险仍在，最晚上料日 08-10；明早 08:00 巡检会把这一单重新推给你`, meta: [{ text: "零对外消息", tone: "pass" }, { text: "退回已记账", tone: "info" }] },
                 } },
                 { op: "feedAppend", view: "audit", item: { id: "ad-6r", from: "周晓芸", time: "08:22:40", text: "催货任务与群预警退回修改：未派发、未群发，业务系统零写入" } },
                 { op: "toolbar", view: "audit", title: "本轮巡检的系统动作", sub: "6 条" },
@@ -675,7 +676,7 @@ export const deliveryRiskDailyScript: ReplayScript = {
             title: "回读四处记录，核对说法是否一致",
             detail: [
               { k: "回读方式", v: "按单号逐个反查，不用本轮巡检的缓存" },
-              { verdict: "pass", text: "订单中心", note: "SO-2026-1027 承诺交期仍是 2026-08-15，只多了一个风险标记" },
+              { verdict: "pass", text: "订单中心", note: `${demoWorldFixture.deliveryOrder.id} 承诺交期仍是 ${demoWorldFixture.deliveryOrder.promisedDeliveryDate}，只多了一个风险标记` },
               { verdict: "pass", text: "物料与库存", note: "PO-2026-0886 标「到货承诺未证实」，替代料未启用" },
               { verdict: "pass", text: "企业 IM", note: "催货任务 TD-1207 已读；恒岳项目群 0 条消息" },
               { verdict: "pass", text: "操作留痕", note: "6 条动作，含 1 次拦截与 1 次人工改口径" },
@@ -700,20 +701,20 @@ export const deliveryRiskDailyScript: ReplayScript = {
             "",
             "| 系统 | 终态 | 依据 |",
             "| --- | --- | --- |",
-            "| 订单中心 | SO-2026-1027 挂「交付风险 · 高」，承诺交期仍为 2026-08-15 | 风险标记 RISK-1027-0809，回读一致 |",
+            `| 订单中心 | ${demoWorldFixture.deliveryOrder.id} 挂「交付风险 · 高」，承诺交期仍为 ${demoWorldFixture.deliveryOrder.promisedDeliveryDate} | 风险标记 RISK-1027-${demoWorldFixture.demoDate.compact}，回读一致 |`,
             "| 物料与库存 | PO-2026-0886 标「到货承诺未证实」，替代料未启用 | 无发货单号、无物流单号 |",
             "| 企业 IM | 催货任务 TD-1207 已送达刘志强并已读；恒岳项目群 0 条 | 送达回执 08:23，群预警按你的要求扣下 |",
             "| 操作留痕 | 本轮 6 条动作，含 1 次拦截、1 次人工改口径 | 越权改期请求与群改私聊均已记账 |",
             "",
             "## 本轮巡检没有做什么",
             "",
-            "- 没有改动任何交期承诺：SO-2026-1027 仍是 08-15，改期请求在权限矩阵处被拦下，订单零写入；",
+            `- 没有改动任何交期承诺：${demoWorldFixture.deliveryOrder.id} 仍是 ${demoWorldFixture.deliveryOrder.promisedDeliveryDate}，改期请求在权限矩阵处被拦下，订单零写入；`,
             "- 没有跳过采购直接找供应商：催货只发给刘志强，我没有联系华矩传动的任何人；",
             "- 没有向客户透露完工 08-17：群预警按你的口径改成了内部私聊，客户方今天看不到这个日期；",
             "- 没有启用替代型号：6204-2RS 只登记为可选项，换型须客户书面认可，不是我能定的；",
             "- 没有把 15 张正常单也报给你：其中 2 张系统标黄的，我核过是误报，理由写在晨报里备查。",
             "",
-            "这就是我每天 08:00 自动做的事 —— 17 张单我都看，只有真赶不上的才叫你。明早 08:00 这一轮会接着今天的卡点续查：刘志强 12:00 前给不出发货单号，我会直接升级给吴国栋和张明远。",
+            `这就是我每天 08:00 自动做的事 —— ${demoWorldFixture.inTransitOrders.count} 张单我都看，只有真赶不上的才叫你。明早 08:00 这一轮会接着今天的卡点续查：刘志强 12:00 前给不出发货单号，我会直接升级给吴国栋和张明远。`,
           ].join("\n"),
         },
       ],

@@ -1,237 +1,156 @@
 import type { SystemPanelSnapshot } from "@agent/shared";
+import { demoWorldFixture } from "./demoWorldFixture";
 import type { ReplayScript } from "./types";
 
 /**
- * 剧本：这周的获客内容数据怎么样，哪条值得加推。
+ * 钩子剧本：市场负责人问「这周哪条内容值得加推」。
  *
- * 岗位视角＝市场 苏婷。四要素落位：
- *   ① 主动拒绝——第 4 步「直接下单投流」被付费动作门禁拦下，给两条替代路径；
- *   ② 视角切换——第 6 步产物是销售张明远此刻在待办里点开线索看到的那张卡；
- *   ③ 跨系统核对——终态用一张表把内容看板 / 线索台账 / 待办中心 / 企业 IM 摆在一起；
- *   ④ 可下载产物——本周复盘与加推方案 HTML，右侧预览 + 本地下载。
- * 外加：人可以改掉 AI 的分配结论并被记账（第 6 步），退回不是死路（rejectedBlocks）。
- *
- * 内容为虚构示例，不对应任何真实企业、内容或线索。
+ * 回放先排除异常流量，再把自然表现拆成观察、假设和证据缺口，最后用
+ * 72 小时小流量随机对照实验决定是否值得放量。内容为虚构示例。
  */
 
-const REVIEW_PATH = "assets/demo/本周内容复盘与加推方案.html";
-const LEAD_CARD_PATH = "assets/demo/线索派发卡-张明远.html";
-
-const DOC_CSS = `
-  :root { --brand: #2E56E1; --ink: #0f172a; --muted: #64748b; --line: #e2e8f0; --ok: #15803d; --warn: #b45309; --deny: #b91c1c; }
-  * { box-sizing: border-box; }
-  body { margin: 0; padding: 20px; font: 14px/1.7 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; color: var(--ink); background: #fff; }
-  .bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: #f8fafc; color: var(--muted); font-size: 12px; margin-bottom: 16px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #cbd5e1; }
-  h1 { margin: 0 0 4px; font-size: 16px; }
-  .sub { margin: 0 0 16px; color: var(--muted); font-size: 12px; }
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
-  .stat { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
-  .stat b { display: block; font-size: 18px; }
-  .stat span { color: var(--muted); font-size: 12px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 14px; }
-  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
-  th { background: #f8fafc; color: var(--muted); font-weight: 500; }
-  td.num { text-align: right; }
-  .ok { color: var(--ok); font-weight: 600; }
-  .warn { color: var(--warn); font-weight: 600; }
-  .deny { color: var(--deny); font-weight: 600; }
-  .box { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
-  .box h2 { margin: 0 0 8px; font-size: 13px; }
-  .kv { display: grid; grid-template-columns: 108px 1fr; gap: 4px 12px; font-size: 13px; }
-  .kv span:nth-child(odd) { color: var(--muted); }
-  ul { margin: 6px 0 0; padding-left: 18px; }
-  li { margin-bottom: 4px; }
-  .foot { margin-top: 14px; color: var(--muted); font-size: 12px; }
-`;
+const world = demoWorldFixture;
+const REVIEW_PATH = `assets/demo/${world.demoDate.compact}-内容加推增量实验方案.html`;
 
 const REVIEW_HTML = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
-<style>${DOC_CSS}</style></head><body>
-<div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span>市场部内部文档 · 本周内容复盘 · 2026-08-03 ~ 2026-08-09</span></div>
-
-<h1>本周内容复盘与加推方案</h1>
-<p class="sub">统计口径：8-03 00:00 ~ 8-09 12:00 · 三平台 12 条内容 · 整理人：市场 苏婷 · AI 同事协助</p>
+<style>
+  :root { --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --blue:#2e56e1; --red:#b91c1c; --amber:#b45309; --green:#15803d; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:22px; color:var(--ink); background:#fff; font:14px/1.65 "PingFang SC","Microsoft YaHei",system-ui,sans-serif; }
+  .bar { padding:7px 10px; margin-bottom:16px; border:1px solid var(--line); border-radius:7px; color:var(--muted); background:#f8fafc; font-size:12px; }
+  h1 { margin:0 0 3px; font-size:20px; }
+  h2 { margin:18px 0 8px; font-size:15px; }
+  .sub,.note { color:var(--muted); font-size:12px; }
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:14px 0; }
+  .stat { padding:10px; border:1px solid var(--line); border-radius:8px; }
+  .stat b { display:block; font-size:17px; }
+  .stat span { color:var(--muted); font-size:12px; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th,td { padding:8px 9px; border:1px solid var(--line); text-align:left; vertical-align:top; }
+  th { color:var(--muted); background:#f8fafc; font-weight:500; }
+  .bad { color:var(--red); font-weight:600; }
+  .warn { color:var(--amber); font-weight:600; }
+  .ok { color:var(--green); font-weight:600; }
+  .box { margin-top:12px; padding:11px 13px; border-left:3px solid var(--blue); background:#f8fafc; }
+  ul { margin:6px 0; padding-left:20px; }
+  .foot { margin-top:18px; padding-top:10px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
+</style></head><body>
+<div class="bar">内容增长实验 / ${world.demoDate.iso} / 本周 08-03 → ${world.demoDate.short}</div>
+<h1>哪条内容值得加推：异常检测与 72 小时增量实验</h1>
+<p class="sub">先清洗流量，再用小预算验证增量；本页不承诺线索数量或 ROI</p>
 
 <div class="stats">
-  <div class="stat"><b>12</b><span>本周发布内容</span></div>
-  <div class="stat"><b>1,126</b><span>落地页访问</span></div>
-  <div class="stat"><b>9</b><span>留资</span></div>
-  <div class="stat"><b>0.8%</b><span>整体留资率</span></div>
+  <div class="stat"><b>12 条</b><span>本周内容样本</span></div>
+  <div class="stat"><b>31,260</b><span>清洗后有效会话</span></div>
+  <div class="stat"><b class="warn">7,488</b><span>凌晨异常会话已剔除</span></div>
+  <div class="stat"><b>¥3,000</b><span>实验预算上限</span></div>
 </div>
 
+<h2>一、先处理异常，再比较内容</h2>
 <table>
-  <tr><th>内容</th><th>平台</th><th>播放 / 阅读</th><th>落地页</th><th>留资</th><th>留资率</th><th>判定</th></tr>
-  <tr><td>C-0806 注塑车间实拍：从粒料到结构件</td><td>视频号</td><td class="num">19,300</td><td class="num">194</td><td class="num">6</td><td class="num">3.1%</td><td class="ok">建议加推</td></tr>
-  <tr><td>C-0803 20 秒看懂精密结构件</td><td>抖音</td><td class="num">48,600</td><td class="num">312</td><td class="num">0</td><td class="num">0%</td><td class="deny">不建议加推</td></tr>
-  <tr><td>C-0808 模具报价怎么算</td><td>抖音</td><td class="num">22,400</td><td class="num">41</td><td class="num">0</td><td class="num">0%</td><td class="warn">数据存疑，本周不排名</td></tr>
-  <tr><td>C-0801 模具试模常踩的 7 个坑</td><td>公众号</td><td class="num">1,240</td><td class="num">86</td><td class="num">1</td><td class="num">1.2%</td><td>维持</td></tr>
-  <tr><td>其余 8 条（合计）</td><td>三平台</td><td class="num">31,500</td><td class="num">493</td><td class="num">2</td><td class="num">0.4%</td><td>维持</td></tr>
-</table>
+<thead><tr><th>内容</th><th>原始观察</th><th>清洗处理</th><th>清洗后观察</th><th>当前结论</th></tr></thead>
+<tbody>
+<tr><td>C-0808 · 工厂夜景短片</td><td>9,600 次会话；78% 发生在 00:00~04:00</td><td>剔除 7,488 次异常会话：92% 停留不足 2 秒，来源高度集中</td><td>2,112 次有效会话；0 条有效线索</td><td class="bad">不进入候选排名</td></tr>
+<tr><td>C-0806 · 小批量结构件报价</td><td>4,280 次自然会话；6 次表单提交</td><td>通过设备、来源与停留质量检查</td><td>4 条有效线索；自然有效线索率 0.093%</td><td class="warn">候选，但未证明付费增量</td></tr>
+<tr><td>C-0802 · 常规工艺指南</td><td>3,960 次自然会话；3 次表单提交</td><td>通过质量检查</td><td>2 条有效线索；自然有效线索率 0.051%</td><td>作为同期内容参照</td></tr>
+</tbody></table>
 
-<div class="box">
-  <h2>判定理由</h2>
-  <ul>
-    <li><b>C-0806 值得加推</b>：本周 9 条留资里它占 6 条；留资率 3.1% 是整体 0.8% 的 3.9 倍；6 条留资中 4 条在视频第 42 秒（车间产能镜头）后两分钟内提交；来源行业里汽配与家电结构件 5 条，与主营重合。</li>
-    <li><b>C-0803 不建议加推</b>：播放 48,600 是本周最高，落地页也进了 312 人，但留资 0；停留中位数 8 秒、完播率 6%。它带来的是泛流量，热闹但不获客，加推只会把预算摊薄。</li>
-    <li><b>C-0808 先排除再判断</b>：22,400 播放里 78% 集中在 02:00–04:00，落地页点击率 0.18%，约为该平台同类内容的九分之一。这条本周不参与排名，也不建议基于它做任何结论。</li>
-  </ul>
-</div>
+<div class="box"><strong>观察</strong>：C-0806 的清洗后自然表现优于本周其他内容。<br><strong>假设</strong>：向相同目标受众增加 C-0806 曝光，可能带来更多有效线索。<br><strong>还缺的证据</strong>：没有历史 paid 基线，也没有随机对照；自然流量中的先后关系不能证明内容造成了留资，更不能据此承诺预算会换来多少线索或 ROI。</div>
 
-<div class="box">
-  <h2>加推方案（待预算审批，尚未产生任何费用）</h2>
-  <div class="kv">
-    <span>可用预算池</span><span>¥8,000（市场部本周剩余）</span>
-    <span>主投</span><span>C-0806 原片加推 ¥5,000 · 定向：汽配 / 家电结构件采购与研发岗</span>
-    <span>变体 A</span><span>¥1,500 · 换开头 3 秒：车间全景改为「一颗粒料到成品」的对比镜头</span>
-    <span>变体 B</span><span>¥1,500 · 换标题关键词：「注塑车间」改为「精密结构件 打样」</span>
-    <span>止损线</span><span>第 3 天留资低于 4 条即停投，剩余预算退回</span>
-  </div>
-  <ul>
-    <li>预期：按本周 3.1% 留资率外推，¥5,000 主投约对应 8~15 条留资。这是外推不是承诺，加推人群比自然流量宽，留资率通常会被稀释。</li>
-    <li>两个变体没有历史数据，我给不出区间，只能各用 ¥1,500 小额试，第 3 天用留资数对比再决定谁继续。</li>
-  </ul>
-</div>
+<h2>二、72 小时小流量增量实验</h2>
+<table>
+<thead><tr><th>项目</th><th>约束</th></tr></thead>
+<tbody>
+<tr><td>周期</td><td>08-10 09:00 至 08-13 09:00，共 72 小时；不足样本时不自动延长</td></tr>
+<tr><td>随机分组</td><td>符合目标行业与地域的受众随机 50/50；对照组不展示 C-0806，实验组展示 C-0806；同期统计背景自然线索</td></tr>
+<tr><td>预算上限</td><td>总计不超过 ¥3,000，只用于实验组曝光；达到上限自动停</td></tr>
+<tr><td>最小分析样本</td><td>每组至少 1,200 次有效落地页会话；未达到只报“证据不足”，不放量</td></tr>
+<tr><td>有效线索</td><td>公司、联系方式、项目需求三项完整且同意联系；去重并排除机器人、无效号码、招聘/学生咨询、既有客服请求；销售 24 小时内确认行业与需求匹配</td></tr>
+<tr><td>止损线</td><td>累计花费达 ¥900 仍为 0 条有效线索，或异常流量占比超过 20%，或已有至少 3 条有效线索后单条成本高于 ¥600，立即暂停</td></tr>
+<tr><td>放量门槛</td><td>完整跑满 72 小时；两组均达到最小样本；实验组至少 8 条有效线索；有效线索率相对对照提升至少 30%；单条有效线索成本不高于 ¥450</td></tr>
+</tbody></table>
 
-<div class="box">
-  <h2>本周 9 条留资去向</h2>
-  <ul>
-    <li>6 条来自 C-0806，联系方式与需求完整，建议建档并分配给销售跟进。</li>
-    <li>1 条来自 C-0801，与台账里已有线索为同一手机号，标记为重复，挂到原线索下不新建。</li>
-    <li>1 条只填了公司名与行业，没有任何联系方式，无法建档。</li>
-    <li>1 条备注写明是在校学生做课题咨询，不作为商机建档。</li>
-  </ul>
-</div>
+<p class="note">全部门槛同时满足才提出下一轮预算申请；本实验只回答“是否观察到增量”，不据此承诺收入、回款或 ROI。</p>
 
-<p class="foot">示例内容，数据与线索均为虚构，不对应任何真实企业或个人。本方案未产生任何投放动作与费用。</p>
-</body></html>`;
+<h2>三、审批与终止边界</h2>
+<ul>
+  <li>人工审批决定是否启动实验，以及预算上限是否为 ¥3,000。</li>
+  <li>批准只创建实验、锁定预算上限和自动止损规则，不批量创建或分配 CRM 线索。</li>
+  <li>退回后保持 ¥0 花费，可修改周期、样本、预算或门槛后重新提交。</li>
+</ul>
 
-const LEAD_CARD_HTML = `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8">
-<style>${DOC_CSS}
-  .card { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
-  .card h3 { margin: 0 0 6px; font-size: 14px; }
-  .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: #eef2ff; color: var(--brand); margin-left: 6px; }
-  .why { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); color: var(--muted); font-size: 12px; }
-</style></head><body>
-<div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span>待办中心 · 张明远 · 新线索首次联系（4 条）</span></div>
-
-<h1>线索派发卡 · 张明远</h1>
-<p class="sub">派发时间 2026-08-09 14:36 · 首次联系时限 2026-08-10 18:00 · 来源：本周视频号内容 C-0806</p>
-
-<div class="card">
-  <h3>LEAD-2026-0331 · 汽配结构件 · 江苏苏州<span class="tag">TD-1204</span></h3>
-  <div class="kv">
-    <span>提交时间</span><span>08-06 21:14</span>
-    <span>需求</span><span>注塑模具打样，问最小起订与打样周期</span>
-    <span>联系方式</span><span>手机尾号 4021（完整号码在线索详情页，需点开查看）</span>
-  </div>
-  <p class="why">派给你的原因：汽配结构件是你名下客户最集中的行业，同类需求你有现成报价口径。</p>
-</div>
-
-<div class="card">
-  <h3>LEAD-2026-0333 · 汽配结构件 · 浙江宁波<span class="tag">TD-1206</span></h3>
-  <div class="kv">
-    <span>提交时间</span><span>08-07 14:05</span>
-    <span>需求</span><span>现有模具改模，问能不能接别家开的模</span>
-    <span>联系方式</span><span>手机尾号 2318</span>
-  </div>
-  <p class="why">派给你的原因：改模是你今年做过 3 次的场景，接别家模具的判断标准你最清楚。</p>
-</div>
-
-<div class="card">
-  <h3>LEAD-2026-0335 · 家电结构件 · 广东佛山<span class="tag">TD-1208</span></h3>
-  <div class="kv">
-    <span>提交时间</span><span>08-08 16:20</span>
-    <span>需求</span><span>年度供应商入围，问体系认证与产能</span>
-    <span>联系方式</span><span>手机尾号 5142</span>
-  </div>
-  <p class="why">派给你的原因：入围类需求要带体系材料，这套材料上次也是你走的流程。</p>
-</div>
-
-<div class="card">
-  <h3>LEAD-2026-0336 · 汽配结构件 · 安徽芜湖<span class="tag">TD-1209</span></h3>
-  <div class="kv">
-    <span>提交时间</span><span>08-09 08:05</span>
-    <span>需求</span><span>注塑件报价，已给出图纸编号与年用量 12 万件</span>
-    <span>联系方式</span><span>手机尾号 3374</span>
-  </div>
-  <p class="why">派给你的原因：给了年用量的线索优先级最高，这条今天就值得打。</p>
-</div>
-
-<p class="foot">示例内容，线索与联系方式均为虚构。完整联系方式按最小必要原则不在卡片上展示。</p>
+<p class="foot">虚构回放产物。统一演示账套日期为 ${world.demoDate.iso}；账套另含 ${world.inTransitOrders.count} 张在途订单（¥${world.inTransitOrders.totalAmountWan} 万）与 ${world.receivables.count} 笔未结应收（¥${world.receivables.totalAmountWan} 万），这些经营事实仅用于统一演示世界，不进入内容效果计算。</p>
 </body></html>`;
 
 const REVIEW_SIZE_BYTES = new TextEncoder().encode(REVIEW_HTML).length;
-const LEAD_CARD_SIZE_BYTES = new TextEncoder().encode(LEAD_CARD_HTML).length;
 
-/** 面板底稿：内容数据看板 / 线索台账 / 待办中心 / 权限矩阵 / 企业 IM / 操作留痕 */
+/** 面板底稿：内容看板 / 流量质量 / 实验设计 / 预算台账 / 实验监控 / 操作留痕 */
 const PANEL_BASE: SystemPanelSnapshot = {
   title: "企业系统实况",
   live: true,
   activeView: "content",
-  foot: "已连接：内容数据看板 · 线索台账 · 待办中心 · 企业 IM（演示）",
+  foot: "已连接：内容数据看板 · 流量质量分析 · 实验平台 · 预算台账（演示）",
   views: [
     {
       key: "content",
-      label: "内容数据看板",
+      label: "内容看板",
       winTitle: "内容数据看板 · 本周发布",
-      toolbar: { title: "内容数据看板 · 8-03 ~ 8-09", sub: "尚未读取" },
+      toolbar: { title: "内容数据看板 · 08-03 至 08-09", sub: "尚未读取" },
       widget: {
         kind: "table",
         cols: [
           { key: "item", label: "内容" },
-          { key: "ch", label: "平台" },
-          { key: "reach", label: "播放/阅读", align: "right" },
-          { key: "lead", label: "留资", align: "right" },
+          { key: "sessions", label: "原始会话", align: "right" },
+          { key: "forms", label: "表单", align: "right" },
+          { key: "state", label: "状态", align: "right" },
         ],
         rows: [],
         empty: { title: "尚未读取内容数据" },
       },
     },
     {
-      key: "leads",
-      label: "线索台账",
-      winTitle: "CRM 线索台账 · 本周留资",
-      toolbar: { title: "线索台账 · 本周留资", sub: "尚未读取" },
-      widget: { kind: "rows", rows: [], empty: { title: "尚未读取留资明细" } },
+      key: "quality",
+      label: "流量质量",
+      winTitle: "流量质量 · 异常检测",
+      toolbar: { title: "异常检测", sub: "尚未运行" },
+      widget: { kind: "rows", rows: [], empty: { title: "尚无检测结果" } },
     },
     {
-      key: "todo",
-      label: "待办中心",
-      winTitle: "待办中心 · 线索首次联系",
-      toolbar: { title: "待办中心", sub: "尚未创建任何待办" },
-      widget: { kind: "rows", rows: [], empty: { title: "尚无待办" } },
+      key: "experiment",
+      label: "实验设计",
+      winTitle: "增量实验 · EXP-2026-0809-01",
+      toolbar: { title: "实验设计", sub: "尚未创建" },
+      widget: { kind: "rows", rows: [], empty: { title: "尚无实验" } },
     },
     {
-      key: "rights",
-      label: "权限矩阵",
-      winTitle: "权限矩阵 · 本人可执行范围",
-      toolbar: { title: "权限矩阵 · 由 IT 依岗位表维护", sub: "只读" },
+      key: "budget",
+      label: "预算台账",
+      winTitle: "市场实验预算台账",
+      toolbar: { title: "本次实验预算", sub: "¥0" },
       widget: {
-        kind: "table",
-        cols: [
-          { key: "domain", label: "动作域" },
-          { key: "grant", label: "本人授权" },
-          { key: "owner", label: "授权来源", align: "right" },
+        kind: "stats",
+        cols: 3,
+        items: [
+          { k: "授权上限", v: "¥0" },
+          { k: "已花费", v: "¥0" },
+          { k: "剩余额度", v: "¥0" },
         ],
-        rows: [],
-        empty: { title: "尚未触达权限判定" },
       },
     },
     {
-      key: "im",
-      label: "企业 IM",
-      winTitle: "企业 IM · 分配通知",
-      toolbar: { title: "分配通知", sub: "0 条" },
-      widget: { kind: "feed", items: [], empty: { title: "尚未发出任何通知" } },
+      key: "monitor",
+      label: "实验监控",
+      winTitle: "实验监控 · 样本与止损",
+      toolbar: { title: "实验监控", sub: "未启动" },
+      widget: { kind: "rows", rows: [], empty: { title: "实验启动后显示" } },
     },
     {
       key: "audit",
       label: "操作留痕",
       winTitle: "操作留痕 · 本次会话",
-      toolbar: { title: "本次会话的系统动作", sub: "0 条" },
-      widget: { kind: "feed", items: [], empty: { title: "尚无系统动作" } },
+      toolbar: { title: "系统动作", sub: "0 条" },
+      widget: { kind: "feed", items: [], empty: { title: "推进后显示动作" } },
     },
   ],
 };
@@ -239,587 +158,444 @@ const PANEL_BASE: SystemPanelSnapshot = {
 export const contentPerformanceScript: ReplayScript = {
   scenarioId: "catalog-hook-content-performance",
   title: "本周获客内容复盘与加推判断",
-  mode: "quick",
-  artifacts: {
-    [REVIEW_PATH]: REVIEW_HTML,
-    [LEAD_CARD_PATH]: LEAD_CARD_HTML,
-  },
+  mode: "hero",
+  artifacts: { [REVIEW_PATH]: REVIEW_HTML },
 
   steps: [
     {
-      caption: "读取本周内容数据",
+      caption: "读取本周内容原始样本",
       blocks: [
-        {
-          id: "p1-prompt",
-          kind: "prompt",
-          title: "用户消息",
-          defaultOpen: true,
-          content: "这周的获客内容数据怎么样？哪条值得加推，你帮我看看。",
-        },
         {
           id: "p1-tool",
           kind: "tool_use",
           title: "ContentBoardQuery",
           defaultOpen: true,
           toolName: "ContentBoardQuery",
-          toolId: "t-board",
-          content: JSON.stringify({ range: "2026-08-03/2026-08-09", channels: ["视频号", "抖音", "公众号"] }),
+          toolId: "t-content-query",
+          content: JSON.stringify({ range: "2026-08-03/2026-08-09", include: ["sessions", "forms", "traffic_quality"] }),
           executionStatus: "completed",
-          durationMs: 920,
+          durationMs: 1160,
           presentation: {
-            title: "读取本周三平台内容数据",
+            title: "读取 12 条内容的原始数据",
             detail: [
-              { k: "统计口径", v: "8-03 00:00 ~ 8-09 12:00" },
-              { k: "本周内容", v: "12 条 · 视频号 4 · 抖音 5 · 公众号 3" },
-              { tree: "├", k: "落地页访问", v: "1,126 次" },
-              { tree: "├", k: "留资", v: "9 条" },
-              { tree: "└", k: "整体留资率", v: "0.8%（9 / 1,126）" },
+              { k: "演示日期", v: world.demoDate.iso },
+              { k: "内容样本", v: "12 条 · 08-03 至 08-09" },
+              { k: "原始会话", v: "38,748 次 · 尚未剔除异常" },
+              { insight: "原始播放或会话数暂不排名；先处理流量质量，再比较有效会话与有效线索", label: "口径边界" },
             ],
             status: "ok",
             panelBase: PANEL_BASE,
             panel: [
               { op: "focus", view: "content" },
-              { op: "toolbar", view: "content", title: "内容数据看板 · 8-03 ~ 8-09", sub: "12 条 · 留资 9" },
-              { op: "tableRowInsert", view: "content", row: { id: "ct-0803", cells: { item: "C-0803 20 秒看懂精密结构件", ch: "抖音", reach: "48,600", lead: "0" } } },
-              { op: "tableRowInsert", view: "content", row: { id: "ct-0808", cells: { item: "C-0808 模具报价怎么算", ch: "抖音", reach: "22,400", lead: "0" } } },
-              { op: "tableRowInsert", view: "content", row: { id: "ct-0806", cells: { item: "C-0806 注塑车间实拍", ch: "视频号", reach: "19,300", lead: "6" } } },
-              { op: "tableRowInsert", view: "content", row: { id: "ct-0801", cells: { item: "C-0801 模具试模常踩的 7 个坑", ch: "公众号", reach: "1,240", lead: "1" } } },
-              { op: "tableRowInsert", view: "content", row: { id: "ct-rest", cells: { item: "其余 8 条（合计）", ch: "三平台", reach: "31,500", lead: "2" } } },
-              { op: "feedAppend", view: "audit", item: { id: "au-1", from: "AI 同事", time: "14:02:11", text: "读取内容数据看板本周 12 条内容与留资明细（只读）" } },
-              { op: "toolbar", view: "audit", title: "本次会话的系统动作", sub: "1 条" },
+              { op: "toolbar", view: "content", title: "内容数据看板 · 08-03 至 08-09", sub: "12 条 · 原始口径" },
+              { op: "tableRowInsert", view: "content", row: { id: "c-0808", cells: { item: "C-0808 · 工厂夜景短片", sessions: "9,600", forms: "0", state: "待质检" }, tone: "warn" } },
+              { op: "tableRowInsert", view: "content", row: { id: "c-0806", cells: { item: "C-0806 · 小批量结构件报价", sessions: "4,280", forms: "6", state: "待质检" }, tone: "warn" } },
+              { op: "tableRowInsert", view: "content", row: { id: "c-0802", cells: { item: "C-0802 · 常规工艺指南", sessions: "3,960", forms: "3", state: "待质检" } } },
+              { op: "feedAppend", view: "audit", item: { id: "au-p1", from: "AI 同事", time: "14:20:18", text: "读取本周 12 条内容原始数据，尚未进行表现排名" } },
+              { op: "toolbar", view: "audit", title: "系统动作", sub: "1 条" },
             ],
           },
         },
         {
-          id: "p1-result",
-          kind: "tool_result",
-          title: "ContentBoardQuery 结果",
-          defaultOpen: false,
-          toolName: "ContentBoardQuery",
-          toolId: "t-board",
-          content: "items=12 channels=3 landing=1126 leads=9",
-        },
-        {
           id: "p1-text",
           kind: "text",
-          title: "业务进展",
+          title: "回复",
           defaultOpen: true,
-          content: "本周 12 条内容、1,126 次落地页访问、9 条留资都拿到了。播放量最高的那条不一定是带客户来的那条，我按「留资从哪来」逐条拆一遍再给你结论。",
+          content: `数据先拉齐了，但我现在不会按播放量选加推。12 条内容的原始会话里有一段明显的凌晨异常，先清洗再比较。演示日期为 ${world.demoDate.iso}；本轮只使用内容、流量和有效线索数据。`,
         },
       ],
     },
 
     {
-      caption: "归因判断：哪条真带来留资",
+      caption: "先剔除凌晨异常流量",
       blocks: [
         {
           id: "p2-tool",
           kind: "tool_use",
-          title: "AttributionCheck",
+          title: "TrafficQualityCheck",
           defaultOpen: true,
-          toolName: "AttributionCheck",
-          toolId: "t-attr",
-          content: JSON.stringify({ range: "2026-08-03/2026-08-09", by: "content" }),
+          toolName: "TrafficQualityCheck",
+          toolId: "t-traffic-quality",
+          content: JSON.stringify({ item: "C-0808", rules: ["time_cluster", "dwell_time", "referrer_concentration", "device_duplication"] }),
           executionStatus: "completed",
-          durationMs: 1580,
+          durationMs: 860,
           presentation: {
-            title: "按内容逐条归因留资",
+            title: "C-0808 凌晨流量不进入排名",
             detail: [
-              { verdict: "pass", text: "C-0806 注塑车间实拍", note: "留资 6/9 · 留资率 3.1% · 是整体 0.8% 的 3.9 倍" },
-              { verdict: "fail", text: "C-0803 20 秒看懂精密结构件", note: "播放 48,600 最高 · 落地页 312 · 留资 0 · 停留中位数 8 秒" },
-              { verdict: "warn", text: "C-0808 模具报价怎么算", note: "播放 78% 落在 02:00–04:00 · 落地页点击率 0.18% · 数据存疑" },
-              { verdict: "pass", text: "C-0801 与其余 8 条", note: "合计留资 3 条 · 维持现状，不加推也不下架" },
-              { insight: "值得加推的只有 C-0806 一条；C-0803 热闹但不获客；C-0808 先排除再判断", label: "结论" },
+              { k: "异常时段", v: "00:00~04:00 占 78% · 7,488 次会话" },
+              { k: "行为特征", v: "92% 停留不足 2 秒 · 来源高度集中 · 无有效线索" },
+              { k: "处理", v: "保留原始数据，分析层剔除 7,488 次会话；不删除内容" },
+              { k: "清洗后样本", v: "12 条内容 · 31,260 次有效会话" },
+              { insight: "异常检测只说明这批流量不可信，不说明内容本身好或坏", label: "证据边界" },
             ],
-            status: "warn",
+            status: "ok",
             panel: [
-              { op: "focus", view: "content" },
-              { op: "toolbar", view: "content", title: "内容数据看板 · 归因完成", sub: "加推 1 · 不加推 1 · 存疑 1" },
-              { op: "tableRowUpdate", view: "content", id: "ct-0806", set: { tone: "pass" } },
-              { op: "cellFlag", view: "content", rowId: "ct-0806", colKey: "lead", tone: "pass", flag: "6/9 留资" },
-              { op: "tableRowUpdate", view: "content", id: "ct-0803", set: { tone: "deny" } },
-              { op: "cellFlag", view: "content", rowId: "ct-0803", colKey: "lead", tone: "deny", flag: "0 留资" },
-              { op: "tableRowUpdate", view: "content", id: "ct-0808", set: { tone: "warn" } },
-              { op: "cellFlag", view: "content", rowId: "ct-0808", colKey: "reach", tone: "warn", flag: "数据存疑" },
-              { op: "feedAppend", view: "audit", item: { id: "au-2", from: "AI 同事", time: "14:03:40", text: "按内容归因本周 9 条留资：C-0806 贡献 6 条；C-0808 标记为数据存疑，不计入本周排名" } },
-              { op: "toolbar", view: "audit", title: "本次会话的系统动作", sub: "2 条" },
+              { op: "focus", view: "quality" },
+              { op: "toolbar", view: "quality", title: "异常检测", sub: "剔除 7,488 次异常会话" },
+              { op: "rowsSet", view: "quality", rows: [
+                { id: "q-time", text: "凌晨集中", sub: "C-0808 的 78% 会话发生在 00:00~04:00", tone: "deny", badge: { text: "异常", tone: "deny" } },
+                { id: "q-dwell", text: "停留异常", sub: "92% 不足 2 秒，且来源高度集中", tone: "deny", badge: { text: "异常", tone: "deny" } },
+                { id: "q-action", text: "分析层剔除", sub: "7,488 次会话不进入候选排名；原始数据与内容保留", tone: "pass", badge: { text: "已处理", tone: "pass" } },
+              ] },
+              { op: "cellFlag", view: "content", rowId: "c-0808", colKey: "state", tone: "deny", flag: "异常流量已剔除" },
+              { op: "feedAppend", view: "audit", item: { id: "au-p2", from: "AI 同事", time: "14:21:06", text: "完成流量质量检查，C-0808 的 7,488 次凌晨异常会话不进入排名" } },
+              { op: "toolbar", view: "audit", title: "系统动作", sub: "2 条" },
             ],
           },
         },
         {
           id: "p2-text",
           kind: "text",
-          title: "业务进展",
+          title: "异常处理结论",
           defaultOpen: true,
-          content: [
-            "本周真正带来客户的是 **C-0806 注塑车间实拍**，理由是三条硬数据：",
-            "",
-            "1. 9 条留资里它占 6 条，留资率 3.1%，是整体 0.8% 的 3.9 倍；",
-            "2. 6 条留资中有 4 条是在视频第 42 秒（车间产能那段镜头）之后两分钟内提交的，说明打动人的是产能画面，不是开头；",
-            "3. 来源行业里汽配、家电结构件占 5 条，跟我们主营重合，不是泛人群。",
-            "",
-            "**C-0803 我建议不要加推**。它播放 48,600 是本周最高，落地页也进了 312 人，但留资 0，停留中位数只有 8 秒、完播率 6%——热闹不获客，加推等于把预算摊到不会下单的人身上。",
-            "",
-            "还有一条要先说：**C-0808 的数据我不敢用**。22,400 播放里 78% 集中在凌晨 02:00 到 04:00，落地页点击率 0.18%，大概只有该平台同类内容的九分之一。这条本周不进排名，也别拿它做任何结论——我建议你让平台那边核一下流量来源。",
-          ].join("\n"),
+          content: "C-0808 看起来最热闹，但 78% 流量集中在凌晨，且绝大多数停留不足 2 秒。我保留原始记录，只在分析层剔除 7,488 次异常会话；它不进入本周加推候选。",
         },
       ],
     },
 
     {
-      caption: "加推方案与不确定性",
+      caption: "区分观察、假设与待验证证据",
       blocks: [
         {
           id: "p3-tool",
           kind: "tool_use",
-          title: "BoostPlan",
+          title: "IncrementalExperimentDesign",
           defaultOpen: true,
-          toolName: "BoostPlan",
-          toolId: "t-plan",
-          content: JSON.stringify({ target: "C-0806", budgetPool: 8000 }),
+          toolName: "IncrementalExperimentDesign",
+          toolId: "t-experiment-design",
+          content: JSON.stringify({ candidate: "C-0806", design: "randomized_holdout", durationHours: 72, budgetCapCny: 3000 }),
           executionStatus: "completed",
-          durationMs: 1340,
+          durationMs: 1120,
           presentation: {
-            title: "为 C-0806 推演加推方案",
+            title: "把“值得试”改写成可证伪实验",
             detail: [
-              { section: "预算分配 · 池子 ¥8,000" },
-              { k: "主投", v: "C-0806 原片 ¥5,000 · 定向汽配与家电结构件采购、研发岗" },
-              { tree: "├", k: "变体 A", v: "¥1,500 · 换开头 3 秒，改成粒料到成品的对比镜头" },
-              { tree: "├", k: "变体 B", v: "¥1,500 · 换标题关键词，「注塑车间」改为「精密结构件 打样」" },
-              { tree: "└", k: "止损线", v: "第 3 天留资低于 4 条即停投，剩余预算退回" },
-              { no: 1, text: "主投预期 8~15 条留资：按本周 3.1% 外推，再按人群变宽打折" },
-              { warn: "两个变体没有历史数据，我给不出预期区间，只能各 ¥1,500 小额试" },
-              { warn: "本步未产生任何投放动作与费用，方案停在待审批状态" },
+              { k: "观察", v: "C-0806 清洗后 4,280 次自然会话、6 次表单、4 条有效线索；自然有效线索率 0.093%" },
+              { k: "假设", v: "向同类目标受众增加 C-0806 曝光，可能带来高于背景自然水平的有效线索" },
+              { k: "证据缺口", v: "无历史 paid 基线、无随机对照；自然表现不能外推付费线索量，也不能承诺 ROI" },
+              { k: "实验样本", v: "72 小时 · 受众随机 50/50 · 每组至少 1,200 次有效落地页会话" },
+              { k: "预算与止损", v: "上限 ¥3,000；花费 ¥900 仍 0 条有效线索等条件触发自动暂停" },
+              { k: "放量门槛", v: "跑满周期 + 样本达标 + 实验组≥8 条有效线索 + 相对提升≥30% + 单条成本≤¥450" },
+              { insight: "有效线索须信息完整、去重、排除无效意图，并由销售在 24 小时内确认行业与需求匹配", label: "有效线索定义" },
             ],
-            status: "waiting",
+            status: "ok",
             panel: [
-              { op: "focus", view: "content" },
-              { op: "toolbar", view: "content", title: "内容数据看板 · 加推候选", sub: "C-0806 · 变体 2 个（未发布）" },
-              { op: "cellFlag", view: "content", rowId: "ct-0806", colKey: "item", tone: "info", flag: "加推候选" },
-              { op: "feedAppend", view: "audit", item: { id: "au-3", from: "AI 同事", time: "14:05:02", text: "生成 C-0806 加推方案与两个变体方向，未发起任何投放动作" } },
-              { op: "toolbar", view: "audit", title: "本次会话的系统动作", sub: "3 条" },
+              { op: "focus", view: "experiment" },
+              { op: "toolbar", view: "experiment", title: "增量实验草案 · EXP-2026-0809-01", sub: "待审批" },
+              { op: "rowsSet", view: "experiment", rows: [
+                { id: "exp-window", text: "周期 · 72 小时", sub: "08-10 09:00 → 08-13 09:00 · 不自动延长", tone: "info", badge: { text: "固定周期", tone: "info" } },
+                { id: "exp-sample", text: "样本 · 随机 50/50", sub: "对照不展示 C-0806，实验组展示；每组至少 1,200 次有效会话", tone: "info", badge: { text: "有对照", tone: "info" } },
+                { id: "exp-stop", text: "止损 · 三条自动规则", sub: "¥900 零有效线索 / 异常占比>20% / 至少 3 条后单条成本>¥600", tone: "warn", badge: { text: "自动暂停", tone: "warn" } },
+                { id: "exp-scale", text: "放量 · 五项门槛同时满足", sub: "周期、样本、有效线索数、相对提升、单条成本", tone: "pass", badge: { text: "不达标不放量", tone: "pass" } },
+              ] },
+              { op: "cellFlag", view: "content", rowId: "c-0806", colKey: "state", tone: "warn", flag: "候选 · 待增量验证" },
+              { op: "feedAppend", view: "audit", item: { id: "au-p3", from: "AI 同事", time: "14:22:40", text: "生成 72 小时随机对照实验草案，预算与止损尚未获批" } },
+              { op: "toolbar", view: "audit", title: "系统动作", sub: "3 条" },
             ],
           },
         },
         {
           id: "p3-text",
           kind: "text",
-          title: "业务进展",
+          title: "加推判断",
           defaultOpen: true,
           content: [
-            "方案是这样：¥8,000 的池子里，拿 ¥5,000 加推 C-0806 原片，剩下 ¥3,000 拆成两个变体各 ¥1,500 试水。",
+            "现在最多只能说：C-0806 值得进入小流量实验，不能说它已经被证明值得放量。4 条自然有效线索是观察，不是付费增量证据。",
             "",
-            "预期我得说清楚**边界**。主投按本周 3.1% 的留资率外推是 12~18 条，但加推的人群比自然流量宽，留资率通常会被稀释，所以我给的是 **8~15 条**这个区间，不是 12~18。这是外推，不是承诺——所以我配了止损线：第 3 天留资低于 4 条就停，剩下的钱退回来。",
-            "",
-            "两个变体我**给不出预期**，它们没有任何历史数据可参照。别把预算压在变体上，各 ¥1,500 跑三天，用留资数说话再决定谁继续。",
+            "我没有 paid 基线，所以不外推 ¥3,000 会带来几条线索，也不承诺 ROI。要补的证据，是同一时段、同一受众下的随机对照差异。",
           ].join("\n"),
         },
       ],
     },
 
     {
-      caption: "投流下单被拦截",
+      caption: "生成加推增量实验方案",
       blocks: [
-        {
-          id: "p4-prompt",
-          kind: "prompt",
-          title: "用户消息",
-          defaultOpen: true,
-          content: "行，就按这个来。你直接去下单投流吧，¥5,000 那条今天就投出去。",
-        },
         {
           id: "p4-tool",
           kind: "tool_use",
-          title: "AdSpend",
+          title: "ReportBuild",
           defaultOpen: true,
-          toolName: "AdSpend",
-          toolId: "t-spend",
-          content: JSON.stringify({ target: "C-0806", amount: 5000, action: "purchase" }),
+          toolName: "ReportBuild",
+          toolId: "t-content-report",
+          content: JSON.stringify({ doc: "内容加推增量实验方案", candidate: "C-0806", date: world.demoDate.iso }),
           executionStatus: "completed",
-          durationMs: 240,
+          durationMs: 1220,
           presentation: {
-            title: "投放下单与支付 · 权限判定",
+            title: "生成内容加推增量实验方案",
             detail: [
-              { k: "请求动作", v: "付费投放下单 ¥5,000" },
-              { k: "本人岗位", v: "市场（内容运营）" },
-              { k: "制度阈值", v: "单笔市场费用超 ¥2,000 需总经理审批" },
-              { verdict: "fail", text: "越权，按权限矩阵拒绝", note: "未发起任何下单与支付 · 拦截已记账" },
+              { k: "异常处理", v: "C-0808 凌晨异常会话 7,488 次已从分析口径剔除" },
+              { k: "候选内容", v: "C-0806 · 仅标记为待验证假设" },
+              { k: "实验周期", v: "72 小时 · 随机 50/50 · 每组至少 1,200 次有效会话" },
+              { k: "审批边界", v: "预算上限 ¥3,000 · 启动前需人工确认" },
+              { k: "主线范围", v: "只创建实验与监控，不批量分配 CRM 线索" },
             ],
-            status: "blocked",
+            status: "ok",
             panel: [
-              { op: "focus", view: "rights" },
-              { op: "toolbar", view: "rights", title: "权限矩阵 · 本人可执行范围", sub: "命中 1 条拒绝" },
-              { op: "tableRowInsert", view: "rights", row: { id: "r-read", cells: { domain: "内容数据与留资明细", grant: "允许", owner: "岗位表" } } },
-              { op: "tableRowInsert", view: "rights", row: { id: "r-lead", cells: { domain: "线索建档与分配", grant: "允许（需确认）", owner: "岗位表" } } },
-              { op: "tableRowInsert", view: "rights", row: { id: "r-spend", cells: { domain: "投放下单与支付", grant: "拒绝", owner: "财务与总经理" }, tone: "deny" } },
-              { op: "cellFlag", view: "rights", rowId: "r-spend", colKey: "grant", tone: "deny", flag: "无授权" },
-              { op: "tableRowInsert", view: "rights", row: { id: "r-export", cells: { domain: "客户联系方式导出", grant: "拒绝", owner: "数据合规" } } },
-              { op: "feedAppend", view: "audit", item: {
-                id: "au-4",
-                from: "AI 同事",
-                time: "14:06:18",
-                text: "投放下单请求被权限矩阵拦截，未发生任何支付动作",
-                card: { title: "花钱动作已拦截", body: "单笔 ¥5,000 超出 ¥2,000 审批阈值；已给出正规申请路径", meta: [{ text: "未花一分钱", tone: "pass" }, { text: "已记账", tone: "info" }] },
-              } },
-              { op: "toolbar", view: "audit", title: "本次会话的系统动作", sub: "4 条" },
+              { op: "focus", view: "experiment" },
+              { op: "feedAppend", view: "audit", item: { id: "au-p4", from: "AI 同事", time: "14:23:28", text: "生成《内容加推增量实验方案》，当前花费仍为 ¥0" } },
+              { op: "toolbar", view: "audit", title: "系统动作", sub: "4 条" },
             ],
           },
         },
         {
           id: "p4-text",
           kind: "text",
-          title: "回复",
+          title: "实验材料",
           defaultOpen: true,
           content: [
-            "**这条我不能替你下单**。花钱的动作我没有授权，单笔超 ¥2,000 的市场费用要总经理审批——右侧权限矩阵里「投放下单与支付」这一行是明确拒绝的，我没有发起任何下单，也没有碰支付。",
+            "方案把样本口径、有效线索定义、72 小时周期、预算上限、止损线和放量门槛放在一页里，可以直接拿去审批：",
             "",
-            "两条路你挑：",
+            `[FILE]{"filePath":"${REVIEW_PATH}","fileName":"内容加推增量实验方案.html","fileSize":${REVIEW_SIZE_BYTES}}[/FILE]`,
             "",
-            "1. 在审批中心发起《市场费用申请》，金额 ¥8,000，把下面这份复盘当附件，沈总批完你自己下单，或者授权后我来执行；",
-            "2. 先不花钱验证——C-0806 置顶、加进合集、在几个行业群里分发一轮，三天后看自然留资涨不涨。要是自然量就能起来，这 ¥5,000 可以省。",
-            "",
-            "我建议先走第 2 条：变体值不值得投，免费流量三天就能给答案。",
+            "批准前不会启动投放，也不会顺带创建或分配 CRM 线索。",
           ].join("\n"),
         },
       ],
     },
 
     {
-      caption: "生成本周复盘与加推方案",
+      caption: "人工决定是否启动实验与预算",
       blocks: [
         {
-          id: "p5-tool",
+          id: "p5-gate",
           kind: "tool_use",
-          title: "ReportBuild",
+          title: "ExperimentApprovalGate",
           defaultOpen: true,
-          toolName: "ReportBuild",
-          toolId: "t-report",
-          content: JSON.stringify({ doc: "本周内容复盘与加推方案", range: "2026-08-03/2026-08-09" }),
+          toolName: "ExperimentApprovalGate",
+          toolId: "t-experiment-gate",
+          content: JSON.stringify({ experimentId: "EXP-2026-0809-01", budgetCapCny: 3000 }),
           executionStatus: "completed",
-          durationMs: 1460,
+          durationMs: 260,
           presentation: {
-            title: "生成本周内容复盘与加推方案",
+            title: "等待人工确认实验与预算上限",
             detail: [
-              { k: "覆盖内容", v: "12 条 · 三平台" },
-              { k: "含判定理由", v: "加推 1 · 不加推 1 · 数据存疑 1" },
-              { tree: "├", k: "加推方案", v: "预算分配 + 两个变体 + 止损线，标注为待审批" },
-              { tree: "└", k: "留资去向", v: "9 条逐条给出建档或不建档的理由" },
+              { k: "实验", v: "EXP-2026-0809-01 · C-0806 随机对照" },
+              { k: "周期", v: "72 小时 · 08-10 09:00 开始" },
+              { k: "预算上限", v: "¥3,000 · 达上限自动停" },
+              { k: "当前花费", v: "¥0" },
+              { insight: "批准只启动受控实验；下一轮是否放量仍需重新审批", label: "审批范围" },
             ],
-            status: "ok",
+            status: "waiting",
             panel: [
-              { op: "focus", view: "leads" },
-              { op: "toolbar", view: "leads", title: "线索台账 · 本周留资", sub: "9 条 · 可建档 6" },
-              { op: "rowsSet", view: "leads", rows: [
-                { id: "l-1", text: "汽配结构件 · 江苏苏州", sub: "8-06 21:14 · 注塑模具打样 · 来源 C-0806 · 手机尾号 4021", tone: "pass", badge: { text: "可建档", tone: "pass" } },
-                { id: "l-2", text: "家电结构件 · 江苏苏州", sub: "8-07 09:32 · 小批量结构件 · 来源 C-0806 · 手机尾号 7756", tone: "pass", badge: { text: "可建档", tone: "pass" } },
-                { id: "l-3", text: "汽配结构件 · 浙江宁波", sub: "8-07 14:05 · 现有模具改模 · 来源 C-0806 · 手机尾号 2318", tone: "pass", badge: { text: "可建档", tone: "pass" } },
-                { id: "l-4", text: "医疗器械外壳 · 上海", sub: "8-08 10:47 · 外观件试产 · 来源 C-0806 · 手机尾号 6690", tone: "pass", badge: { text: "可建档", tone: "pass" } },
-                { id: "l-5", text: "家电结构件 · 广东佛山", sub: "8-08 16:20 · 年度供应商入围 · 来源 C-0806 · 手机尾号 5142", tone: "pass", badge: { text: "可建档", tone: "pass" } },
-                { id: "l-6", text: "汽配结构件 · 安徽芜湖", sub: "8-09 08:05 · 注塑件报价，年用量 12 万件 · 来源 C-0806 · 手机尾号 3374", tone: "pass", badge: { text: "可建档", tone: "pass" } },
-                { id: "l-skip", text: "另有 3 条留资不建档", sub: "1 条与台账已有线索同手机号（来源 C-0801） · 1 条只填公司名无联系方式 · 1 条备注为在校学生课题咨询", tone: "info", badge: { text: "不建档", tone: "info" } },
-              ] },
-              { op: "feedAppend", view: "audit", item: { id: "au-5", from: "AI 同事", time: "14:08:44", text: "生成《本周内容复盘与加推方案》，读取留资明细 9 条并逐条判定建档资格" } },
-              { op: "toolbar", view: "audit", title: "本次会话的系统动作", sub: "5 条" },
+              { op: "focus", view: "budget" },
+              { op: "toolbar", view: "budget", title: "本次实验预算", sub: "待审批 · 当前 ¥0" },
+              { op: "feedAppend", view: "audit", item: { id: "au-p5", from: "AI 同事", time: "14:24:10", text: "增量实验与 ¥3,000 预算上限进入人工审批，尚未启动或花费" } },
+              { op: "toolbar", view: "audit", title: "系统动作", sub: "5 条" },
             ],
           },
-        },
-        {
-          id: "p5-text",
-          kind: "text",
-          title: "回复",
-          defaultOpen: true,
-          content: [
-            "复盘做好了，数据、判定理由、加推方案和留资去向都在里面，直接可以当费用申请的附件：",
-            "",
-            `[FILE]{"filePath":"${REVIEW_PATH}","fileName":"本周内容复盘与加推方案.html","fileSize":${REVIEW_SIZE_BYTES}}[/FILE]`,
-            "",
-            "顺带把 9 条留资也过了一遍：**6 条可以建档**，都来自 C-0806，联系方式和需求完整。另外 3 条我没放进去，逐条说理由——1 条跟台账里已有线索是同一个手机号，应该挂到原线索下而不是新建；1 条只填了公司名，没有任何联系方式；还有 1 条备注写明是在校学生做课题。这三条你要是不同意我的判断，现在说，我改。",
-          ].join("\n"),
         },
       ],
-    },
-
-    {
-      caption: "线索建档与分配 · 需你确认",
-      blocks: [],
       approval: {
-        title: "把 6 条留资建档并分配给销售 · 需你确认",
-        description: "确认后才会把线索写进台账、创建跟进待办并通知销售。这一步会改变业务系统，我不会自己决定。",
+        title: "是否启动 72 小时小流量增量实验",
+        description: "批准后创建实验、锁定 ¥3,000 上限并启用自动止损。该审批不承诺线索数量或 ROI，也不包含 CRM 批量分配。",
         facts: [
-          { label: "待建档线索", value: "6 条 · 全部来自 C-0806" },
-          { label: "分配规则", value: "汽配与家电结构件归张明远，其余行业归赵一楠" },
-          { label: "默认分配", value: "张明远 5 条 · 赵一楠 1 条" },
-          { label: "写入范围", value: "仅线索台账与待办中心，不动客户与商机主数据" },
-          { label: "首次联系时限", value: "8-10 18:00 前" },
+          { label: "候选内容", value: "C-0806 · 当前只是待验证假设" },
+          { label: "实验周期", value: "72 小时 · 08-10 09:00 至 08-13 09:00" },
+          { label: "样本", value: "随机 50/50 · 每组至少 1,200 次有效会话" },
+          { label: "预算上限", value: "¥3,000 · 达上限自动停" },
+          { label: "止损", value: "¥900 零有效线索等三条规则自动暂停" },
+          { label: "放量", value: "五项门槛同时满足后另行申请，不自动放量" },
         ],
-        approveLabel: "确认建档并分配",
-        rejectLabel: "退回修改",
+        approveLabel: "批准实验与预算",
+        rejectLabel: "退回调整实验",
         approvedBlocks: [
           {
-            id: "p6-human",
-            kind: "prompt",
-            title: "用户消息",
-            defaultOpen: true,
-            content: "第 2 条那个苏州做家电结构件的改给赵一楠，他周三周四正好跑苏州，能顺路上门。其他 5 条按你分的来。",
-          },
-          {
-            id: "p6-tool",
+            id: "p5-approved-tool",
             kind: "tool_use",
-            title: "Approval",
+            title: "ExperimentLaunch",
             defaultOpen: true,
-            toolName: "Approval",
-            toolId: "t-approve",
-            content: JSON.stringify({ leads: 6, decision: "approved" }),
+            toolName: "ExperimentLaunch",
+            toolId: "t-experiment-launch",
+            content: JSON.stringify({ experimentId: "EXP-2026-0809-01", approvedBudgetCny: 3000, startsAt: "2026-08-10T09:00:00+08:00" }),
             executionStatus: "completed",
-            durationMs: 480,
+            durationMs: 940,
             presentation: {
-              title: "建档与分配已确认 · 含人工修改 1 项",
+              title: "实验已创建 · 等待定时启动",
               detail: [
-                { k: "审批结果", v: "确认建档" },
-                { k: "人工采纳", v: "5 项分配结论" },
-                { k: "人工修改", v: "1 项——LEAD-2026-0332 由张明远改为赵一楠" },
-                { tree: "├", k: "修改依据", v: "赵一楠本周三、四在苏州，可上门" },
-                { tree: "└", k: "记账口径", v: "采纳 5 项 · 修改 1 项 · 自动执行 0 项" },
+                { verdict: "pass", text: "实验平台", note: "EXP-2026-0809-01 已创建 · 08-10 09:00 启动 · 72 小时" },
+                { verdict: "pass", text: "预算台账", note: "授权上限 ¥3,000 · 当前已花费 ¥0" },
+                { verdict: "pass", text: "自动止损", note: "3 条规则已启用；命中任一立即暂停" },
+                { k: "CRM", v: "0 条线索创建或分配；有效线索只在实验监控中计数" },
+                { insight: "放量未授权；实验结束后只有同时满足五项门槛才会生成下一轮申请", label: "执行边界" },
               ],
               status: "ok",
-              receipt: { id: "LEAD-2026-0331~0336", system: "线索台账", readBack: true },
               panel: [
-                { op: "focus", view: "leads" },
-                { op: "toolbar", view: "leads", title: "线索台账 · 已建档", sub: "6 条 · 张明远 4 · 赵一楠 2" },
-                { op: "rowUpdate", view: "leads", id: "l-1", set: { sub: "LEAD-2026-0331 · 负责人 张明远 · 8-10 18:00 前首次联系", badge: { text: "已建档", tone: "pass" }, state: "hit" } },
-                { op: "rowUpdate", view: "leads", id: "l-2", set: { sub: "LEAD-2026-0332 · 负责人 赵一楠（苏婷改派） · 8-10 18:00 前首次联系", badge: { text: "已改派", tone: "info" }, state: "hit" } },
-                { op: "rowUpdate", view: "leads", id: "l-3", set: { sub: "LEAD-2026-0333 · 负责人 张明远 · 8-10 18:00 前首次联系", badge: { text: "已建档", tone: "pass" } } },
-                { op: "rowUpdate", view: "leads", id: "l-4", set: { sub: "LEAD-2026-0334 · 负责人 赵一楠 · 8-10 18:00 前首次联系", badge: { text: "已建档", tone: "pass" } } },
-                { op: "rowUpdate", view: "leads", id: "l-5", set: { sub: "LEAD-2026-0335 · 负责人 张明远 · 8-10 18:00 前首次联系", badge: { text: "已建档", tone: "pass" } } },
-                { op: "rowUpdate", view: "leads", id: "l-6", set: { sub: "LEAD-2026-0336 · 负责人 张明远 · 8-10 18:00 前首次联系", badge: { text: "已建档", tone: "pass" } } },
-                { op: "feedAppend", view: "audit", item: {
-                  id: "au-6",
-                  from: "市场 苏婷",
-                  time: "14:36:02",
-                  text: "确认建档 6 条线索：采纳 5 项分配、修改 1 项（LEAD-2026-0332 改派赵一楠）",
-                  card: { title: "人审记录", body: "采纳 5 · 修改 1 · 自动执行 0", meta: [{ text: "AI 未自行写入", tone: "pass" }] },
-                } },
-                { op: "toolbar", view: "audit", title: "本次会话的系统动作", sub: "6 条" },
-              ],
-            },
-          },
-          {
-            id: "p6-todo",
-            kind: "tool_use",
-            title: "TodoDispatch",
-            defaultOpen: true,
-            toolName: "TodoDispatch",
-            toolId: "t-todo",
-            content: JSON.stringify({ todos: 6, notify: ["张明远", "赵一楠"] }),
-            executionStatus: "completed",
-            durationMs: 760,
-            presentation: {
-              title: "创建跟进待办并通知两位销售",
-              detail: [
-                { k: "待办", v: "6 条 · TD-1204 ~ TD-1209" },
-                { k: "到期时间", v: "8-10 18:00" },
-                { tree: "├", k: "张明远", v: "4 条 · TD-1204 / 1206 / 1208 / 1209" },
-                { tree: "├", k: "赵一楠", v: "2 条 · TD-1205 / 1207" },
-                { tree: "└", k: "通知", v: "2 条已送达，联系方式留在线索详情页，未随通知外发" },
-              ],
-              status: "ok",
-              receipt: { id: "TD-1204~1209", system: "待办中心", readBack: true },
-              panel: [
-                { op: "focus", view: "todo" },
-                { op: "toolbar", view: "todo", title: "待办中心 · 线索首次联系", sub: "6 条 · 8-10 18:00 到期" },
-                { op: "rowsSet", view: "todo", rows: [
-                  { id: "td-1204", text: "TD-1204 联系 LEAD-2026-0331（汽配 · 苏州）", sub: "张明远 · 8-10 18:00 到期", tone: "pending", badge: { text: "待处理", tone: "info" } },
-                  { id: "td-1205", text: "TD-1205 联系 LEAD-2026-0332（家电 · 苏州）", sub: "赵一楠 · 8-10 18:00 到期 · 可顺路上门", tone: "pending", state: "hit", badge: { text: "改派后创建", tone: "info" } },
-                  { id: "td-1206", text: "TD-1206 联系 LEAD-2026-0333（汽配 · 宁波）", sub: "张明远 · 8-10 18:00 到期", tone: "pending", badge: { text: "待处理", tone: "info" } },
-                  { id: "td-1207", text: "TD-1207 联系 LEAD-2026-0334（医疗器械外壳 · 上海）", sub: "赵一楠 · 8-10 18:00 到期", tone: "pending", badge: { text: "待处理", tone: "info" } },
-                  { id: "td-1208", text: "TD-1208 联系 LEAD-2026-0335（家电 · 佛山）", sub: "张明远 · 8-10 18:00 到期", tone: "pending", badge: { text: "待处理", tone: "info" } },
-                  { id: "td-1209", text: "TD-1209 联系 LEAD-2026-0336（汽配 · 芜湖 · 年用量 12 万件）", sub: "张明远 · 8-10 18:00 到期 · 优先", tone: "pending", badge: { text: "优先", tone: "warn" } },
+                { op: "focus", view: "monitor" },
+                { op: "toolbar", view: "monitor", title: "实验监控 · EXP-2026-0809-01", sub: "已创建 · 08-10 09:00 启动" },
+                { op: "rowsSet", view: "monitor", rows: [
+                  { id: "m-sample", text: "样本进度", sub: "对照 0 / 1,200 · 实验 0 / 1,200", tone: "info", badge: { text: "未开始", tone: "info" } },
+                  { id: "m-spend", text: "预算进度", sub: "¥0 / ¥3,000", tone: "pass", badge: { text: "上限已锁", tone: "pass" } },
+                  { id: "m-stop", text: "自动止损", sub: "三条规则已启用", tone: "pass", badge: { text: "已启用", tone: "pass" } },
+                  { id: "m-scale", text: "自动放量", sub: "关闭；实验后另行审批", tone: "pass", badge: { text: "未授权", tone: "pass" } },
                 ] },
-                { op: "feedAppend", view: "im", item: { id: "im-1", from: "AI 同事", time: "14:36:31", text: "@张明远 本周视频号内容带来的 4 条留资已分到你名下，待办 TD-1204 / 1206 / 1208 / 1209，8-10 18:00 前完成首次联系。" } },
-                { op: "feedAppend", view: "im", item: { id: "im-2", from: "AI 同事", time: "14:36:31", text: "@赵一楠 2 条留资已分到你名下，待办 TD-1205 / 1207。其中 LEAD-2026-0332 在苏州，苏婷指名给你，你这周三四在苏州可以顺路上门。" } },
-                { op: "toolbar", view: "im", title: "分配通知", sub: "2 条已送达" },
-                { op: "feedAppend", view: "audit", item: { id: "au-7", from: "AI 同事", time: "14:36:31", text: "创建待办 TD-1204~1209 并回读校验通过；向张明远、赵一楠各发 1 条分配通知" } },
-                { op: "toolbar", view: "audit", title: "本次会话的系统动作", sub: "7 条" },
+                { op: "statsSet", view: "budget", items: [
+                  { k: "授权上限", v: "¥3,000", tone: "info" },
+                  { k: "已花费", v: "¥0", tone: "pass" },
+                  { k: "剩余额度", v: "¥3,000", tone: "info" },
+                ] },
+                { op: "toolbar", view: "budget", title: "本次实验预算", sub: "上限已锁 · 尚未花费" },
+                { op: "feedAppend", view: "audit", item: { id: "au-p5a", from: "市场 苏婷", time: "14:24:42", text: "批准 EXP-2026-0809-01 与 ¥3,000 上限；实验已创建，实际花费 ¥0" } },
+                { op: "toolbar", view: "audit", title: "系统动作", sub: "6 条" },
               ],
             },
           },
           {
-            id: "p6-text",
+            id: "p5-approved-text",
             kind: "text",
             title: "审批结果",
             defaultOpen: true,
-            content: [
-              "建好了，你改的那条按新口径执行：LEAD-2026-0332 归赵一楠，最终张明远 4 条、赵一楠 2 条，6 条跟进待办都挂在 8-10 18:00 到期。",
-              "",
-              "**下面这份就是张明远此刻在待办里点开线索看到的样子**，每条都写了为什么派给他：",
-              "",
-              `[FILE]{"filePath":"${LEAD_CARD_PATH}","fileName":"线索派发卡-张明远.html","fileSize":${LEAD_CARD_SIZE_BYTES}}[/FILE]`,
-              "",
-              "完整手机号没有写进卡片和通知里，销售要点进线索详情页才看得到，这样联系方式不会顺着群消息扩散出去。",
-            ].join("\n"),
+            content: "实验已创建，08-10 09:00 按 50/50 随机分组启动，预算硬上限 ¥3,000、三条止损规则都已落入监控。当前实际花费还是 ¥0，CRM 也没有新增或分配任何线索。",
           },
         ],
         rejectedBlocks: [
           {
-            id: "p6-rejected-tool",
+            id: "p5-rejected-tool",
             kind: "tool_use",
             title: "Approval",
             defaultOpen: true,
             toolName: "Approval",
-            toolId: "t-reject",
-            content: JSON.stringify({ leads: 6, decision: "rejected" }),
+            toolId: "t-experiment-reject",
+            content: JSON.stringify({ experimentId: "EXP-2026-0809-01", decision: "rejected" }),
             executionStatus: "completed",
-            durationMs: 260,
+            durationMs: 240,
             presentation: {
-              title: "建档被退回 · 没有写进任何系统",
+              title: "实验已退回 · ¥0 花费",
               detail: [
-                { k: "审批结果", v: "退回修改" },
-                { k: "线索台账", v: "无写入，6 条留在待分配池" },
-                { k: "待办与通知", v: "未创建，两位销售未收到任何消息" },
-                { tree: "└", k: "留痕", v: "退回时间、退回人与当时的分配草案已记录" },
+                { k: "实验平台", v: "未创建实验" },
+                { k: "预算台账", v: "未锁定额度 · 已花费 ¥0" },
+                { k: "内容与 CRM", v: "无写入、无分配" },
+                { insight: "方案文件仍可下载；可修改预算、周期、样本或门槛后重新提交", label: "后续" },
               ],
               status: "blocked",
               panel: [
-                { op: "focus", view: "leads" },
-                { op: "toolbar", view: "leads", title: "线索台账 · 待分配池", sub: "6 条待分配 · 未建档" },
-                { op: "rowsUpdate", view: "leads", ids: ["l-1", "l-2", "l-3", "l-4", "l-5", "l-6"], set: { badge: { text: "待分配", tone: "warn" }, tone: "warn" } },
-                { op: "feedAppend", view: "audit", item: { id: "au-reject", from: "市场 苏婷", time: "14:36:02", text: "建档被退回：线索台账无写入，未创建待办，未发出任何通知" } },
+                { op: "focus", view: "budget" },
+                { op: "toolbar", view: "budget", title: "本次实验预算", sub: "已退回 · ¥0" },
+                { op: "feedAppend", view: "audit", item: { id: "au-p5r", from: "市场 苏婷", time: "14:24:42", text: "实验方案退回调整；未创建实验、未锁预算、实际花费 ¥0" } },
+                { op: "toolbar", view: "audit", title: "系统动作", sub: "6 条" },
               ],
             },
           },
           {
-            id: "p6-rejected-text",
+            id: "p5-rejected-text",
             kind: "text",
             title: "退回说明",
             defaultOpen: true,
-            content: "停住了：6 条线索还在待分配池，台账没有任何写入，两位销售也没收到消息。复盘方案不受影响，仍然可以下载。分配规则你想怎么改，告诉我，我重排一版再提交给你确认。",
+            content: "已经停住：实验没创建，预算没锁定，也没有任何花费。方案文件仍在；可以只调整 ¥3,000 上限、72 小时周期、最小样本或止损门槛，再重新提交确认。",
           },
         ],
       },
     },
 
     {
-      caption: "跨系统核对终态",
+      caption: "回读实验、预算与监控终态",
       blocks: [
         {
-          id: "p7-tool",
+          id: "p6-tool",
           kind: "tool_use",
           title: "ReadBack",
           defaultOpen: true,
           toolName: "ReadBack",
-          toolId: "t-readback",
-          content: JSON.stringify({ leads: "LEAD-2026-0331~0336", todos: "TD-1204~1209" }),
+          toolId: "t-content-readback",
+          content: JSON.stringify({ experimentId: "EXP-2026-0809-01", budgetLedger: true, monitorRules: true }),
           executionStatus: "completed",
-          durationMs: 1120,
+          durationMs: 920,
           presentation: {
-            title: "回读四个系统，核对说法是否一致",
+            title: "按实验编号回读终态",
             detail: [
-              { k: "回读方式", v: "按线索号与待办号逐个反查，不用本次会话的缓存" },
-              { verdict: "pass", text: "内容数据看板", note: "12 条已判定 · C-0808 标为数据存疑，不计入本周排名" },
-              { verdict: "pass", text: "线索台账", note: "6 条已建档 · 张明远 4 · 赵一楠 2" },
-              { verdict: "pass", text: "待办中心", note: "TD-1204~1209 共 6 条 · 均 8-10 18:00 到期" },
-              { verdict: "pass", text: "企业 IM", note: "2 条分配通知已送达并已读" },
-              { insight: "四方一致；投放预算为零，加推方案停在待审批", label: "结论" },
+              { verdict: "pass", text: "内容看板", note: "C-0808 异常会话保留原始记录但不进入排名；C-0806 标为待增量验证" },
+              { verdict: "pass", text: "实验平台", note: "EXP-2026-0809-01 · 72 小时 · 随机 50/50 · 尚未开始" },
+              { verdict: "pass", text: "预算台账", note: "上限 ¥3,000 · 已花费 ¥0 · 余额 ¥3,000" },
+              { verdict: "pass", text: "监控规则", note: "最小样本、有效线索定义、3 条止损与 5 项放量门槛均一致" },
+              { insight: "没有 paid 结果前不评价增量或 ROI；放量仍需下一次人工审批", label: "结论" },
             ],
             status: "ok",
             panel: [
-              { op: "focus", view: "leads" },
-              { op: "toolbar", view: "leads", title: "线索台账 · 终态回读", sub: "四方一致" },
-              { op: "feedAppend", view: "audit", item: { id: "au-8", from: "AI 同事", time: "14:38:05", text: "回读内容数据看板 / 线索台账 / 待办中心 / 企业 IM，四方状态一致" } },
-              { op: "toolbar", view: "audit", title: "本次会话的系统动作", sub: "8 条" },
+              { op: "focus", view: "monitor" },
+              { op: "toolbar", view: "monitor", title: "实验监控 · 终态回读", sub: "规则一致 · 待启动" },
+              { op: "feedAppend", view: "audit", item: { id: "au-p6", from: "AI 同事", time: "14:25:20", text: "回读内容口径、实验、预算与监控规则，终态一致" } },
+              { op: "toolbar", view: "audit", title: "系统动作", sub: "7 条" },
             ],
           },
         },
         {
-          id: "p7-text",
+          id: "p6-text",
           kind: "text",
-          title: "本次会话改变了什么",
+          title: "本次会话终态",
           defaultOpen: true,
           content: [
-            "## 本次会话改变了什么",
+            "## 跨系统核对",
             "",
-            "| 系统 | 终态 | 依据 |",
+            "| 系统 | 终态 | 核对依据 |",
             "| --- | --- | --- |",
-            "| 内容数据看板 | 12 条已判定：加推 1 条、不加推 1 条、存疑 1 条 | C-0808 凌晨时段占 78%，本周不排名 |",
-            "| 线索台账 | 6 条已建档，张明远 4 条 · 赵一楠 2 条 | LEAD-2026-0331~0336 回读通过 |",
-            "| 待办中心 | 6 条首次联系待办，8-10 18:00 到期 | TD-1204~1209 回读通过 |",
-            "| 企业 IM | 2 条分配通知已送达并已读 | 张明远 4 条 / 赵一楠 2 条 |",
+            "| 内容数据看板 | C-0808 异常流量不排名；C-0806 为待验证候选 | 原始数据保留，分析口径剔除 7,488 次异常会话 |",
+            "| 实验平台 | EXP-2026-0809-01 已创建，08-10 09:00 启动 | 72 小时、随机 50/50、每组至少 1,200 次有效会话 |",
+            "| 预算台账 | 上限 ¥3,000，实际花费 ¥0 | 达上限自动停止 |",
+            "| 实验监控 | 3 条止损与 5 项放量门槛已启用 | 有效线索定义与方案一致 |",
+            "| CRM | 0 条新增、0 条分配 | 不属于本次实验主线 |",
             "",
             "## 本次会话没有做什么",
             "",
-            "- 没有花一分钱：¥8,000 加推方案停在待审批，下单与支付这两个动作我没有授权，也没有发起；",
-            "- 没有删改任何内容：C-0803 只是不建议加推、C-0808 只是标注数据存疑，两条内容都还在，原始数据一条没动；",
-            "- 没有替你承诺效果：8~15 条留资是外推区间不是承诺，两个变体我明说了给不出区间；",
-            "- 没有让联系方式外流：通知和派发卡上只有手机尾号，完整号码留在线索详情页。",
+            "- 没有把自然流量中的先后关系当成内容带来留资的因果证据；",
+            "- 没有把自然有效线索率外推成预算可购买的线索数量，也没有承诺 ROI；",
+            "- 没有让凌晨异常流量进入候选排名，也没有删除原始内容或原始数据；",
+            "- 没有批量创建、分配 CRM 线索，也没有授权实验结束后自动放量。",
           ].join("\n"),
-        },
-        {
-          id: "p7-tail",
-          kind: "text",
-          title: "下一步",
-          defaultOpen: true,
-          content: "以后每周一早上我可以自动跑一遍这个复盘，把值得加推的那条、当周留资和像 C-0808 这样的异常数据一起摆到你桌上，你随时说一声就行。",
         },
       ],
     },
   ],
 
-  // 治理条款：state != exists 的条目就是「演示到真实」的距离
   sources: [
     {
       blockRef: "step1.tool.ContentBoardQuery",
       producer: "租户业务数据连接器",
       state: "missing",
-      gap: "没有通用的租户业务数据连接器；内容看板与留资明细今天只能靠人工导表，且导出的表不带按内容编号聚合的口径",
+      gap: "缺少统一读取多平台内容会话、表单与流量质量字段的连接器；当前需人工导表并统一内容编号",
     },
     {
-      blockRef: "step2.tool.AttributionCheck",
-      producer: "Agent 归因分析（会话内推理）",
-      state: "exists",
-    },
-    {
-      blockRef: "step3.tool.BoostPlan",
-      producer: "Agent 方案推演（会话内推理）",
-      state: "exists",
-    },
-    {
-      blockRef: "step4.tool.AdSpend",
-      producer: "付费动作范围门禁",
-      state: "needs-change",
-      gap: "门禁形态（loop 外独立判定 + 前端预设话术）已验证，但金额阈值与可执行动作清单尚未做成可配置矩阵，现在只能写死在提示词里",
-    },
-    {
-      blockRef: "step5.tool.ReportBuild",
-      producer: "Agent 生成 HTML 产物",
-      state: "exists",
-    },
-    {
-      blockRef: "step5.artifact.本周内容复盘与加推方案",
-      producer: "Agent 生成 HTML 产物",
-      state: "exists",
-    },
-    {
-      blockRef: "step6.tool.Approval",
-      producer: "租户业务数据连接器（线索建档写入 + 回读）",
+      blockRef: "step2.tool.TrafficQualityCheck",
+      producer: "流量质量检测器",
       state: "missing",
-      gap: "线索写入与写后回读都没有连接器；另外「人改了哪一条分配」目前只能落在自由文本里，没有结构化字段可统计",
+      gap: "尚无跨平台统一的时段集中、停留、来源与设备重复检测器，异常规则目前只能在导出数据上离线执行",
     },
     {
-      blockRef: "step6.tool.TodoDispatch",
-      producer: "钉钉 DWS 连接器",
-      state: "needs-change",
-      gap: "建待办与发通知的能力已经有了，但要输出这份「6 条待办 + 2 条通知 + 送达回执」的业务摘要，需要改造返回值",
+      blockRef: "step3.tool.IncrementalExperimentDesign",
+      producer: "Agent 实验方案设计（会话内分析）",
+      state: "exists",
     },
     {
-      blockRef: "step6.artifact.线索派发卡",
+      blockRef: "step4.tool.ReportBuild",
       producer: "Agent 生成 HTML 产物",
       state: "exists",
     },
     {
-      blockRef: "step7.tool.ReadBack",
+      blockRef: "step4.artifact.内容加推增量实验方案",
+      producer: "Agent 生成 HTML 产物",
+      state: "exists",
+    },
+    {
+      blockRef: "step5.tool.ExperimentApprovalGate",
+      producer: "付费实验审批门禁",
+      state: "needs-change",
+      gap: "审批可阻断花费，但预算硬上限、自动止损与禁止自动放量还没有统一的结构化策略模型",
+    },
+    {
+      blockRef: "step5.tool.ExperimentLaunch",
+      producer: "投放实验平台与预算台账连接器",
+      state: "missing",
+      gap: "尚无连接器能创建随机留出实验、锁定预算上限、同步止损规则并按实验编号回读；真实环境仍需人工配置",
+    },
+    {
+      blockRef: "step5.tool.Approval",
+      producer: "审批中心",
+      state: "needs-change",
+      gap: "退回留痕可以记录，但预算、周期、样本与门槛的结构化修改和重提仍需人工整理",
+    },
+    {
+      blockRef: "step6.tool.ReadBack",
       producer: "业务终态回读器",
       state: "missing",
-      gap: "跨系统回读要先有各系统连接器；在此之前终态核对表只能靠人工逐个系统截图核对",
+      gap: "缺少跨内容看板、实验平台、预算台账与监控规则的统一回读器，当前无法自动证明执行配置与批准方案一致",
     },
   ],
 };

@@ -1,4 +1,5 @@
 import type { SystemPanelSnapshot } from "@agent/shared";
+import { demoWorldFixture } from "./demoWorldFixture";
 import type { ReplayScript } from "./types";
 
 /**
@@ -42,16 +43,16 @@ const ACTION_LIST_HTML = `<!doctype html>
   li { margin-bottom: 6px; }
   .foot { margin-top: 14px; color: var(--muted); font-size: 12px; }
 </style></head><body>
-<div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span>客诉工单 / 未结盘点 / 2026-08-09</span></div>
+<div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span>客诉工单 / 未结盘点 / ${demoWorldFixture.demoDate.iso}</span></div>
 
 <h1>客诉未结盘点与今日行动</h1>
-<p class="sub">澜达精密制造 · 跟单 周晓芸 · 统计时点 2026-08-09 16:20 · 未结工单 8 个</p>
+<p class="sub">澜达精密制造 · 跟单 周晓芸 · 统计时点 ${demoWorldFixture.demoDate.iso} 16:20 · 未结工单 8 个</p>
 
 <h2>一、未结工单全量</h2>
 <table>
   <tr><th>工单</th><th>客户</th><th>问题</th><th>挂起</th><th>档位</th></tr>
   <tr><td>NC-2026-0092</td><td>启润电子</td><td>外观不良（表面凹点）</td><td>6 天</td><td class="deny">今天必须动</td></tr>
-  <tr><td>NC-2026-0095</td><td>海川机械</td><td>外包装破损</td><td>2 天</td><td class="warn">今天必须回</td></tr>
+  <tr><td>${demoWorldFixture.openComplaint.id}</td><td>${demoWorldFixture.openComplaint.customer}</td><td>${demoWorldFixture.openComplaint.issue}</td><td>${demoWorldFixture.openComplaint.suspendedDays} 天</td><td class="warn">今天必须回</td></tr>
   <tr><td>NC-2026-0088</td><td>恒岳重工</td><td>尺寸超差 2 件</td><td>4 天</td><td class="ok">按流程走</td></tr>
   <tr><td>NC-2026-0093</td><td>海川机械</td><td>交付短装 12 件</td><td>3 天</td><td class="ok">按流程走</td></tr>
   <tr><td>NC-2026-0090</td><td>蓝谷自动化</td><td>装配干涉</td><td>5 天</td><td class="ok">等客户回</td></tr>
@@ -75,7 +76,7 @@ const ACTION_LIST_HTML = `<!doctype html>
   <table>
     <tr><th>去向</th><th>数量</th><th>状态</th><th>关联订单</th></tr>
     <tr><td>启润电子</td><td>450 件</td><td class="deny">已交付 · 客诉中</td><td>SO-2026-1019</td></tr>
-    <tr><td>恒岳重工</td><td>300 件</td><td class="warn">已交付 · 未上线</td><td>SO-2026-1027 首批</td></tr>
+    <tr><td>${demoWorldFixture.deliveryOrder.customer}</td><td>300 件</td><td class="warn">已交付 · 未上线</td><td>${demoWorldFixture.deliveryOrder.id} 首批</td></tr>
     <tr><td>本厂待检区</td><td>300 件</td><td class="ok">未发出 · 可现场复核</td><td>—</td></tr>
   </table>
 </div>
@@ -122,7 +123,7 @@ const CUSTOMER_VIEW_HTML = `<!doctype html>
   .tail { padding: 10px 14px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
 </style></head><body>
 <div class="phone">
-  <div class="top"><b>澜达精密制造 · 周晓芸</b>发给 启润电子 何丽 · 2026-08-09 16:52</div>
+  <div class="top"><b>澜达精密制造 · 周晓芸</b>发给 启润电子 何丽 · ${demoWorldFixture.demoDate.iso} 16:52</div>
   <div class="msg">
     <div class="card">
       <div class="hd">NC-2026-0092 处理进度更新</div>
@@ -250,7 +251,7 @@ export const openComplaintsScript: ReplayScript = {
               { op: "focus", view: "complaints" },
               { op: "toolbar", view: "complaints", title: "客诉工单 · 未结", sub: "8 个待判" },
               { op: "tableRowInsert", view: "complaints", row: { id: "nc-92", cells: { no: "NC-2026-0092", customer: "启润电子", issue: "外观不良（表面凹点）", days: "6 天" } } },
-              { op: "tableRowInsert", view: "complaints", row: { id: "nc-95", cells: { no: "NC-2026-0095", customer: "海川机械", issue: "外包装破损", days: "2 天" } } },
+              { op: "tableRowInsert", view: "complaints", row: { id: "nc-95", cells: { no: demoWorldFixture.openComplaint.id, customer: demoWorldFixture.openComplaint.customer, issue: demoWorldFixture.openComplaint.issue, days: `${demoWorldFixture.openComplaint.suspendedDays} 天` } } },
               { op: "tableRowInsert", view: "complaints", row: { id: "nc-88", cells: { no: "NC-2026-0088", customer: "恒岳重工", issue: "尺寸超差 2 件", days: "4 天" } } },
               { op: "tableRowInsert", view: "complaints", row: { id: "nc-93", cells: { no: "NC-2026-0093", customer: "海川机械", issue: "交付短装 12 件", days: "3 天" } } },
               { op: "tableRowInsert", view: "complaints", row: { id: "nc-90", cells: { no: "NC-2026-0090", customer: "蓝谷自动化", issue: "装配干涉", days: "5 天" } } },
@@ -298,7 +299,7 @@ export const openComplaintsScript: ReplayScript = {
             title: "按扩散面与客户影响重排 8 个工单",
             detail: [
               { risk: "high", text: "NC-2026-0092 启润电子 外观不良 · 挂起 6 天", action: "同批 B20260722 还有 300 件在恒岳重工仓库没上线，问题会扩散到第二家客户" },
-              { risk: "medium", text: "NC-2026-0095 海川机械 外包装破损 · 挂起 2 天", action: "货值只有 ¥1,800，但对接人是 OPP-2026-0311 二期商机的决策人，晾着会伤谈判气氛" },
+              { risk: "medium", text: `${demoWorldFixture.openComplaint.id} ${demoWorldFixture.openComplaint.customer} ${demoWorldFixture.openComplaint.issue} · 挂起 ${demoWorldFixture.openComplaint.suspendedDays} 天`, action: "货值只有 ¥1,800，但对接人是 OPP-2026-0311 二期商机的决策人，晾着会伤谈判气氛" },
               { verdict: "pass", text: "NC-2026-0088 / NC-2026-0093", note: "恒岳与海川的补件已在途，08-11 到货，按流程走就行" },
               { verdict: "pending", text: "NC-2026-0090 / NC-2026-0096", note: "球在蓝谷自动化那边，等客户回确认，我们没有卡点" },
               { verdict: "pending", text: "NC-2026-0091 / NC-2026-0094", note: "一个待客户关单，一个待质检收口，都在正常时限内" },
@@ -327,7 +328,7 @@ export const openComplaintsScript: ReplayScript = {
             "排完之后，**今天真正要动的只有两个**：",
             "",
             "1. **NC-2026-0092 启润电子**，挂 6 天。它排第一不是因为挂得久，是因为同一批 B20260722 还有 300 件在恒岳重工仓库放着——那批一旦上线，我们就有第二起客诉。卡点也很具体：复判申请 08-06 提交，到今天没人认领，静置 3 天。",
-            "2. **NC-2026-0095 海川机械**，包装破损，货值 ¥1,800。按损失算它排不上号，但对接人就是 OPP-2026-0311 二期商机那条线上的人，晾两天不回，谈判桌上的气氛是要还的。",
+            `2. **${demoWorldFixture.openComplaint.id} ${demoWorldFixture.openComplaint.customer}**，${demoWorldFixture.openComplaint.issue}，货值 ¥1,800。按损失算它排不上号，但对接人就是 OPP-2026-0311 二期商机那条线上的人，晾 ${demoWorldFixture.openComplaint.suspendedDays} 天不回，谈判桌上的气氛是要还的。`,
             "",
             "剩下 6 个我看过了：两个补件在途 08-11 到货，两个等蓝谷自动化回确认，两个在正常时限内。**这 6 个今天不用你管**，我盯着到期就行。",
           ].join("\n"),
@@ -357,9 +358,9 @@ export const openComplaintsScript: ReplayScript = {
                 { k: "恒岳重工", v: "300 件 · 已交付 · 未上线" },
                 { k: "本厂待检区", v: "300 件 · 未发出" },
               ] },
-              { tree: "├", k: "关联订单", v: "SO-2026-1019 启润电子 / SO-2026-1027 恒岳重工首批" },
+              { tree: "├", k: "关联订单", v: `SO-2026-1019 启润电子 / ${demoWorldFixture.deliveryOrder.id} ${demoWorldFixture.deliveryOrder.customer}首批` },
               { tree: "└", k: "共同特征", v: "不良集中在 2#、4# 穴，与模具穴位对得上" },
-              { warn: "恒岳那 300 件现在还没上线，这个时间窗口拦得住；SO-2026-1027 余量 08-15 交付，一旦客户提前投产就来不及了" },
+              { warn: `恒岳那 300 件现在还没上线，这个时间窗口拦得住；${demoWorldFixture.deliveryOrder.id} 余量 ${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 交付，一旦客户提前投产就来不及了` },
               { insight: "0092 不是一个客户的工单，它是一个批次的问题，处理口径要按批次来定", label: "结论" },
             ],
             status: "warn",
@@ -368,7 +369,7 @@ export const openComplaintsScript: ReplayScript = {
               { op: "toolbar", view: "orders", title: "批次 B20260722 流向", sub: "3 个去向 · 1,050 件" },
               { op: "rowsSet", view: "orders", rows: [
                 { id: "tr-qr", text: "启润电子 450 件", sub: "SO-2026-1019 · 已交付 · 正在客诉", tone: "deny", state: "hit", badge: { text: "已发生", tone: "deny" } },
-                { id: "tr-hy", text: "恒岳重工 300 件", sub: "SO-2026-1027 首批 · 07-28 已发 · 客户尚未上线", tone: "warn", state: "hit", badge: { text: "可拦截", tone: "warn" } },
+                { id: "tr-hy", text: `${demoWorldFixture.deliveryOrder.customer} 300 件`, sub: `${demoWorldFixture.deliveryOrder.id} 首批 · 07-28 已发 · 客户尚未上线`, tone: "warn", state: "hit", badge: { text: "可拦截", tone: "warn" } },
                 { id: "tr-wh", text: "本厂待检区 300 件", sub: "未发出 · 可现场抽检复核", tone: "info", badge: { text: "在手", tone: "info" } },
               ] },
               { op: "feedAppend", view: "audit", item: { id: "au-3", from: "AI 同事", time: "16:21:08", text: "追溯批次 B20260722，锁定 3 个去向共 1,050 件（只读）" } },
@@ -475,7 +476,7 @@ export const openComplaintsScript: ReplayScript = {
           defaultOpen: true,
           toolName: "ReportBuild",
           toolId: "t-report",
-          content: JSON.stringify({ doc: "客诉未结盘点与今日行动", date: "2026-08-09" }),
+          content: JSON.stringify({ doc: "客诉未结盘点与今日行动", date: demoWorldFixture.demoDate.iso }),
           executionStatus: "completed",
           durationMs: 1180,
           presentation: {
@@ -708,7 +709,7 @@ export const openComplaintsScript: ReplayScript = {
               { verdict: "pass", text: "客诉工单", note: "0092 复判中 · 0095 已回复待关闭 · 其余 6 条未结未动" },
               { verdict: "pass", text: "待办中心", note: "TD-1207 · 责任人质检负责人 · 08-10 12:00 截止" },
               { verdict: "pass", text: "企业 IM", note: "1 条已送达已读 · 1 条归因草稿仍为未发送" },
-              { verdict: "pass", text: "订单中心", note: "只读追溯，SO-2026-1019 与 SO-2026-1027 均无写入" },
+              { verdict: "pass", text: "订单中心", note: `只读追溯，SO-2026-1019 与 ${demoWorldFixture.deliveryOrder.id} 均无写入` },
               { insight: "四方一致，没有半路停下的动作", label: "结论" },
             ],
             status: "ok",
@@ -730,7 +731,7 @@ export const openComplaintsScript: ReplayScript = {
             "",
             "| 系统 | 终态 | 依据 |",
             "| --- | --- | --- |",
-            "| 客诉工单 | NC-2026-0092 转复判中，NC-2026-0095 转已回复待关闭，其余 6 条未动 | 两条进展记录回写 |",
+            `| 客诉工单 | NC-2026-0092 转复判中，${demoWorldFixture.openComplaint.id} 转已回复待关闭，其余 6 条未动 | 两条进展记录回写 |`,
             "| 待办中心 | 新增 TD-1207，责任人质检负责人，08-10 12:00 截止 | 待办回执已回读 |",
             "| 企业 IM | 1 条进度回复已送达并已读；1 条归因草稿保持未发送 | 送达回执 MSG-2026-3391 |",
             "| 订单中心 | 无写入，仅读取批次 B20260722 的三个去向 | 只读追溯留痕 |",

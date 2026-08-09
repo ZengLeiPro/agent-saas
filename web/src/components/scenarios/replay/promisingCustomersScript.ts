@@ -1,15 +1,13 @@
 import type { SystemPanelSnapshot } from "@agent/shared";
+import { demoWorldFixture } from "./demoWorldFixture";
 import type { ReplayScript } from "./types";
 
 /**
  * 钩子场景 H1：分析一下我手上哪些客户最值得推进。
  *
- * 岗位视角＝销售张明远。骨架照 complianceGateScript 抄，四要素齐：
- *   ① 主动拒绝——第 4 步想看同事名下的客户，按权限矩阵拦下并给替代路径；
- *   ② 视角切换——产物里有一段「换到客户的位置看这 22 天」，不是我方自述；
- *   ③ 跨系统核对——终态一张表把 CRM / 待办中心 / 日程 / 留痕摆在一起；
- *   ④ 可下载产物——《本周客户推进清单》HTML，右侧预览 + 本地下载。
- * 外加：人改掉 AI 的一条待办并被记账（第 6 步），退回不是死路（rejectedBlocks）。
+ * 岗位视角＝销售张明远。核心价值不是给商机制造一个伪精确总分，
+ * 而是把金额、阶段停留、最近互动和我方未兑现承诺四维证据摊开，
+ * 排出本周推进顺序，并让销售修改后再创建待办。
  *
  * 内容为虚构示例，不对应任何真实企业、客户或商机。
  */
@@ -47,7 +45,7 @@ const PLAN_HTML = `<!doctype html>
 <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span>本周客户推进清单 · PLAN-0809-03</span></div>
 
 <h1>本周客户推进清单 · 张明远</h1>
-<p class="sub">编号 PLAN-0809-03 · 生成于 2026-08-09 · 覆盖名下 23 个在跟商机，合计 ¥473.0 万</p>
+<p class="sub">编号 PLAN-0809-03 · 生成于 ${demoWorldFixture.demoDate.iso} · 覆盖名下 23 个在跟商机，合计 ¥473.0 万</p>
 
 <table>
   <tr><th>优先级</th><th>商机</th><th>金额</th><th>为什么是现在</th><th>本周动作</th></tr>
@@ -55,14 +53,14 @@ const PLAN_HTML = `<!doctype html>
     <td class="rank">1</td>
     <td>OPP-2026-0311<br>海川机械 · 王志刚</td>
     <td>¥120.0 万</td>
-    <td class="warn">停在「方案已报」22 天，是该阶段正常周期的 2.2 倍；我方欠客户一份 7-02 承诺的样件测试报告，已 38 天</td>
+    <td class="warn">停在「方案已报」22 天，是该阶段正常周期的 2.2 倍；我方欠客户 ${demoWorldFixture.haichuanReport.promisedDate} 承诺的 ${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}，已逾期 ${demoWorldFixture.haichuanReport.overdueDays} 天</td>
     <td>先补交样件测试报告，再约二期方案面谈</td>
   </tr>
   <tr>
     <td class="rank">2</td>
-    <td>OPP-2026-0342<br>恒岳重工 · 郑海峰</td>
+    <td>OPP-2026-0342<br>${demoWorldFixture.deliveryOrder.customer} · 郑海峰</td>
     <td>¥68.0 万</td>
-    <td>SO-2026-1027 正在交付（8-15 交期），客户去年 8 月同期下过一次年度补单，复购窗口大概率在本月</td>
+    <td>${demoWorldFixture.deliveryOrder.id} 正在交付（${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 交期），客户去年 8 月同期下过一次年度补单，本月存在复购线索，但只有一个历史样本，仍需当面验证</td>
     <td>先跟生产计划确认产能窗口，交付稳住再谈复购</td>
   </tr>
   <tr>
@@ -79,8 +77,8 @@ const PLAN_HTML = `<!doctype html>
   <div class="tl">
     <div><b>07-18</b> 收到我方二期模具方案，报价 ¥120.0 万</div>
     <div><b>07-21</b> 回复「内部先评审」，此后无主动联系</div>
-    <div><b>07-02</b> 我方口头承诺补一份样件测试报告 —— <span class="warn">至今未收到</span></div>
-    <div><b>08-09</b> 他这边看到的事实：方案报了、承诺没兑现、22 天没人跟进</div>
+    <div><b>${demoWorldFixture.haichuanReport.promisedDate}</b> 我方承诺补一份 ${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name} —— <span class="warn">截至 ${demoWorldFixture.demoDate.iso} 已逾期 ${demoWorldFixture.haichuanReport.overdueDays} 天</span></div>
+    <div><b>${demoWorldFixture.demoDate.short}</b> 他这边看到的事实：方案报了、承诺没兑现、22 天没人跟进</div>
   </div>
   <p class="sub" style="margin:8px 0 0">这 22 天的沉默，未必是客户不想推，也可能是我们先停了。</p>
 </div>
@@ -88,13 +86,13 @@ const PLAN_HTML = `<!doctype html>
 <div class="box">
   <h2>话术要点</h2>
   <p><b>海川机械 · 王志刚</b></p>
-  <div class="say">开场先认账，不要先问进度：「王总，7 月答应您的样件测试报告我这边压住了，先给您补上。二期方案如果内部评审有卡点，我这周过去当面过一遍。」</div>
+  <div class="say">开场先认账，不要先问进度：「王总，答应您的 ${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}我这边压住了，先给您补上。二期方案如果内部评审有卡点，我这周过去当面过一遍。」</div>
   <ul>
     <li>先给东西，再要答复 —— 承诺没兑现之前追进度，只会把沉默拉长</li>
     <li>不主动提降价；对方若先提，只回「我带一期的实际交付数据过去一起看」</li>
   </ul>
-  <p style="margin-top:12px"><b>恒岳重工 · 郑海峰</b></p>
-  <div class="say">「郑工，SO-2026-1027 这批 8-15 准时交，我盯着。年度补单如果还是这个时间点走，我提前把产能排进去。」</div>
+  <p style="margin-top:12px"><b>${demoWorldFixture.deliveryOrder.customer} · 郑海峰</b></p>
+  <div class="say">「郑工，${demoWorldFixture.deliveryOrder.id} 这批 ${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 准时交，我盯着。年度补单如果还是这个时间点走，我提前把产能排进去。」</div>
   <ul><li>交付没稳之前不谈新单，谈了也不落地</li></ul>
   <p style="margin-top:12px"><b>蓝谷自动化 · 顾云帆</b></p>
   <div class="say">「顾工，新一轮配件方案我这边准备好了。财务那边 AR-2026-0058 还挂着 ¥23.6 万，我们一起把这笔理清楚，后面走流程会顺。」</div>
@@ -142,7 +140,7 @@ const PANEL_BASE: SystemPanelSnapshot = {
           { key: "cust", label: "客户" },
           { key: "opp", label: "商机 · 金额" },
           { key: "stage", label: "阶段 · 停留" },
-          { key: "score", label: "推进价值", align: "right" },
+          { key: "score", label: "四维判断", align: "right" },
         ],
         rows: [],
         empty: { title: "尚未读取客户与商机" },
@@ -213,7 +211,7 @@ export const promisingCustomersScript: ReplayScript = {
             detail: [
               { k: "范围", v: "张明远名下 · 23 个在跟商机" },
               { k: "合计金额", v: "¥473.0 万 · 均值 ¥20.6 万" },
-              { tree: "├", k: "交付中订单", v: "SO-2026-1027 恒岳重工 ¥86.4 万 · 8-15 交期" },
+              { tree: "├", k: "交付中订单", v: `${demoWorldFixture.deliveryOrder.id} ${demoWorldFixture.deliveryOrder.customer} ¥${demoWorldFixture.deliveryOrder.amountWan.toFixed(1)} 万 · ${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 交期` },
               { tree: "├", k: "停留超 20 天", v: "2 个 · OPP-2026-0311、OPP-2026-0290" },
               { tree: "└", k: "读取方式", v: "只读，未改动任何商机字段" },
             ],
@@ -223,7 +221,7 @@ export const promisingCustomersScript: ReplayScript = {
               { op: "focus", view: "crm" },
               { op: "toolbar", view: "crm", title: "CRM 客户与商机 · 张明远名下", sub: "23 个商机 · ¥473.0 万" },
               { op: "tableRowInsert", view: "crm", row: { id: "o-0311", cells: { cust: "海川机械 · 王志刚", opp: "OPP-2026-0311 · ¥120.0 万", stage: "方案已报 · 22 天", score: "—" } } },
-              { op: "tableRowInsert", view: "crm", row: { id: "o-0342", cells: { cust: "恒岳重工 · 郑海峰", opp: "OPP-2026-0342 · ¥68.0 万", stage: "需求确认 · 9 天", score: "—" } } },
+              { op: "tableRowInsert", view: "crm", row: { id: "o-0342", cells: { cust: `${demoWorldFixture.deliveryOrder.customer} · 郑海峰`, opp: "OPP-2026-0342 · ¥68.0 万", stage: "需求确认 · 9 天", score: "—" } } },
               { op: "tableRowInsert", view: "crm", row: { id: "o-0338", cells: { cust: "蓝谷自动化 · 顾云帆", opp: "OPP-2026-0338 · ¥45.0 万", stage: "商务谈判 · 6 天", score: "—" } } },
               { op: "tableRowInsert", view: "crm", row: { id: "o-0298", cells: { cust: "海川机械 · 王志刚", opp: "OPP-2026-0298 · ¥18.0 万", stage: "初步接触 · 12 天", score: "—" } } },
               { op: "tableRowInsert", view: "crm", row: { id: "o-0290", cells: { cust: "Feldmann GmbH · Stefan Feldmann", opp: "OPP-2026-0290 · ¥30.0 万", stage: "方案已报 · 41 天", score: "—" } } },
@@ -247,51 +245,51 @@ export const promisingCustomersScript: ReplayScript = {
           kind: "text",
           title: "业务进展",
           defaultOpen: true,
-          content: "名下 23 个商机都拿到了，合计 ¥473.0 万。我不按金额直接排——金额大不等于该现在推。下面用四个因子各自算分，算完把每一条的理由摆给你看。",
+          content: "名下 23 个商机都拿到了，合计 ¥473.0 万。我不按金额直接排——金额大不等于该现在推。下面把四个因子逐维摊开，不合成一个看似精确的成交分；排完把每一条的理由摆给你看。",
         },
       ],
     },
 
     {
-      caption: "四个因子逐维打分",
+      caption: "四个因子逐维画像",
       blocks: [
         {
           id: "p2-tool",
           kind: "tool_use",
-          title: "OpportunityScore",
+          title: "OpportunityEvidenceProfile",
           defaultOpen: true,
-          toolName: "OpportunityScore",
-          toolId: "t-score",
+          toolName: "OpportunityEvidenceProfile",
+          toolId: "t-profile",
           content: JSON.stringify({ owner: "张明远", factors: ["amount", "stage_idle", "last_touch", "open_promise"] }),
           executionStatus: "completed",
           durationMs: 1580,
           presentation: {
-            title: "按四个因子逐维打分",
+            title: "按四个因子逐维画像，不合成伪精确总分",
             detail: [
-              "四个因子各自独立算分，权重写在清单里，你随时可以改口径重算",
-              { tree: "├", k: "① 金额", v: "商机金额 ÷ 名下均值 ¥20.6 万" },
-              { tree: "├", k: "② 阶段停留", v: "停留天数 ÷ 该阶段正常周期（方案已报 = 10 天）" },
+              "四个因子逐维保留原始证据，只做高 / 中 / 低相对优先级，不把它冒充成交概率",
+              { tree: "├", k: "① 金额", v: "商机金额与名下均值 ¥20.6 万对照" },
+              { tree: "├", k: "② 阶段停留", v: "实际停留天数与该阶段正常周期对照（方案已报 = 10 天）" },
               { tree: "├", k: "③ 最近互动", v: "距最后一次有效沟通的天数，超 14 天开始扣分" },
               { tree: "└", k: "④ 承诺未兑现", v: "我方欠客户的事项，欠 1 项即进高优先" },
-              { no: 1, text: "OPP-2026-0311 海川机械 88 分 · 金额 5.8 倍均值 · 停留 2.2 倍周期 · 我方欠 1 项" },
-              { no: 2, text: "OPP-2026-0342 恒岳重工 74 分 · 金额 3.3 倍均值 · 停留在正常区间 · 交付中订单托底" },
-              { no: 3, text: "OPP-2026-0338 蓝谷自动化 69 分 · 阶段最靠后 · 但绑着一笔逾期 18 天的应收" },
-              { no: 4, text: "OPP-2026-0298 海川机械 41 分 · OPP-2026-0290 Feldmann GmbH 33 分 · 其余 18 个平均 28 分" },
-              { warn: "OPP-2026-0311 的扣分里有一条是我方原因：7-02 答应王志刚的样件测试报告，到今天 38 天没给出去" },
+              { no: 1, text: "OPP-2026-0311 海川机械 · 高优先：金额 5.8 倍均值 · 停留 2.2 倍周期 · 我方欠 1 项" },
+              { no: 2, text: `OPP-2026-0342 ${demoWorldFixture.deliveryOrder.customer} · 高优先：金额 3.3 倍均值 · 停留在正常区间 · 交付中订单托底` },
+              { no: 3, text: "OPP-2026-0338 蓝谷自动化 · 中优先：阶段最靠后 · 但绑着一笔逾期 18 天的应收" },
+              { no: 4, text: "低优先：OPP-2026-0298 会稀释海川主线；OPP-2026-0290 缺本月拿不出的认证材料；其余 18 个暂无线索要求本周优先" },
+              { warn: `OPP-2026-0311 的扣分里有一条是我方原因：${demoWorldFixture.haichuanReport.promisedDate} 答应王志刚的 ${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}，截至 ${demoWorldFixture.demoDate.iso} 已逾期 ${demoWorldFixture.haichuanReport.overdueDays} 天` },
             ],
             status: "warn",
             panel: [
               { op: "focus", view: "crm" },
-              { op: "toolbar", view: "crm", title: "CRM 客户与商机 · 已按四因子打分", sub: "23 个商机 · 最高 88 分" },
-              { op: "tableRowUpdate", view: "crm", id: "o-0311", set: { cells: { score: "88 分" } } },
+              { op: "toolbar", view: "crm", title: "CRM 客户与商机 · 已按四维证据分组", sub: "23 个商机 · 高 2 · 中 1 · 低 20" },
+              { op: "tableRowUpdate", view: "crm", id: "o-0311", set: { cells: { score: "高 · 先补欠账" } } },
               { op: "cellFlag", view: "crm", rowId: "o-0311", colKey: "score", tone: "warn", flag: "含我方欠项" },
-              { op: "tableRowUpdate", view: "crm", id: "o-0342", set: { cells: { score: "74 分" } } },
-              { op: "tableRowUpdate", view: "crm", id: "o-0338", set: { cells: { score: "69 分" } } },
+              { op: "tableRowUpdate", view: "crm", id: "o-0342", set: { cells: { score: "高 · 交付托底" } } },
+              { op: "tableRowUpdate", view: "crm", id: "o-0338", set: { cells: { score: "中 · 先协同财务" } } },
               { op: "cellFlag", view: "crm", rowId: "o-0338", colKey: "score", tone: "warn", flag: "绑逾期应收" },
-              { op: "tableRowUpdate", view: "crm", id: "o-0298", set: { cells: { score: "41 分" } } },
-              { op: "tableRowUpdate", view: "crm", id: "o-0290", set: { cells: { score: "33 分" } } },
-              { op: "tableRowUpdate", view: "crm", id: "o-rest", set: { cells: { score: "均 28 分" } } },
-              { op: "feedAppend", view: "audit", item: { id: "au-2", from: "AI 同事", time: "09:06:41", text: "按金额 / 阶段停留 / 最近互动 / 承诺未兑现四因子为 23 个商机打分" } },
+              { op: "tableRowUpdate", view: "crm", id: "o-0298", set: { cells: { score: "低 · 稀释主线" } } },
+              { op: "tableRowUpdate", view: "crm", id: "o-0290", set: { cells: { score: "低 · 材料不齐" } } },
+              { op: "tableRowUpdate", view: "crm", id: "o-rest", set: { cells: { score: "低 · 暂不优先" } } },
+              { op: "feedAppend", view: "audit", item: { id: "au-2", from: "AI 同事", time: "09:06:41", text: "按金额 / 阶段停留 / 最近互动 / 承诺未兑现四维证据为 23 个商机分组，未合成总分" } },
               { op: "toolbar", view: "audit", title: "本次会话的系统动作", sub: "2 条" },
             ],
           },
@@ -302,7 +300,7 @@ export const promisingCustomersScript: ReplayScript = {
           title: "业务进展",
           defaultOpen: true,
           content: [
-            "分数出来了，先说一条我自己查出来的事：**海川机械那 22 天的沉默，有一半是我们造成的**。7-02 你答应王志刚补一份样件测试报告，CRM 的承诺台账里这条还挂着未完成，到今天 38 天。",
+            `四维证据摊开后，先说一条我自己查出来的事：**海川机械这 22 天没有推进，至少有一项我方欠账在制造阻力**。${demoWorldFixture.haichuanReport.promisedDate} 你答应王志刚补一份 ${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}，CRM 的承诺台账里这条还挂着未完成，截至 ${demoWorldFixture.demoDate.iso} 已逾期 ${demoWorldFixture.haichuanReport.overdueDays} 天。`,
             "",
             "这条会直接改变本周的打法——追进度之前，得先把欠的东西给出去。",
           ].join("\n"),
@@ -327,9 +325,9 @@ export const promisingCustomersScript: ReplayScript = {
             title: "排出本周前三与建议放一放的两个",
             detail: [
               { no: 1, text: "OPP-2026-0311 海川机械 ¥120.0 万 · 本周第一优先" },
-              { indent: 1, text: "金额是名下最大一笔；停在「方案已报」22 天，是该阶段正常周期 10 天的 2.2 倍；我方还欠一份 7-02 承诺的样件测试报告" },
-              { no: 2, text: "OPP-2026-0342 恒岳重工 ¥68.0 万 · 第二优先" },
-              { indent: 1, text: "SO-2026-1027 正在交付，8-15 交期；去年 8 月同期客户下过一次年度补单，复购窗口可能就在本月" },
+              { indent: 1, text: `金额是名下最大一笔；停在「方案已报」22 天，是该阶段正常周期 10 天的 2.2 倍；我方还欠一份 ${demoWorldFixture.haichuanReport.promisedDate} 承诺的 ${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}` },
+              { no: 2, text: `OPP-2026-0342 ${demoWorldFixture.deliveryOrder.customer} ¥68.0 万 · 第二优先` },
+              { indent: 1, text: `${demoWorldFixture.deliveryOrder.id} 正在交付，${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 交期；去年 8 月同期客户下过一次年度补单，复购窗口可能就在本月` },
               { no: 3, text: "OPP-2026-0338 蓝谷自动化 ¥45.0 万 · 第三优先" },
               { indent: 1, text: "商机本身只停 6 天，健康；但 AR-2026-0058 ¥23.6 万逾期 18 天，回款不理清会先伤合作信任" },
               { insight: "两个建议先放一放：OPP-2026-0298（与二期同一决策人，会稀释主线）、OPP-2026-0290（卡在我方本月拿不出的认证材料）", label: "取舍" },
@@ -358,8 +356,8 @@ export const promisingCustomersScript: ReplayScript = {
           content: [
             "本周把力气按这个顺序放：",
             "",
-            "1. **海川机械 OPP-2026-0311**，¥120.0 万。理由不是它最大，是它最不该停：22 天卡在「方案已报」，而这个阶段的正常周期是 10 天；更关键的是我方欠着样件测试报告 38 天。先补交，再约面谈。",
-            "2. **恒岳重工 OPP-2026-0342**，¥68.0 万。SO-2026-1027 这批 8-15 交期正在交付，客户手上有你在履约的证据，这是谈复购最好的时机。",
+            `1. **海川机械 OPP-2026-0311**，¥120.0 万。理由不是它最大，是它最不该停：22 天卡在「方案已报」，而这个阶段的正常周期是 10 天；更关键的是我方欠着 ${demoWorldFixture.haichuanReport.code} ${demoWorldFixture.haichuanReport.name}，截至 ${demoWorldFixture.demoDate.iso} 已逾期 ${demoWorldFixture.haichuanReport.overdueDays} 天。先补交，再约面谈。`,
+            `2. **${demoWorldFixture.deliveryOrder.customer} OPP-2026-0342**，¥68.0 万。${demoWorldFixture.deliveryOrder.id} 这批 ${demoWorldFixture.deliveryOrder.promisedDeliveryDate} 交期正在交付，客户手上有你在履约的证据，这是谈复购最好的时机。`,
             "3. **蓝谷自动化 OPP-2026-0338**，¥45.0 万。商机本身很顺，问题在旁边：AR-2026-0058 ¥23.6 万逾期 18 天。回款不谈清楚就推新单，两件事都会拖。",
             "",
             "另外两个我建议这周先放一放：",
@@ -455,7 +453,7 @@ export const promisingCustomersScript: ReplayScript = {
           presentation: {
             title: "编排《本周客户推进清单》",
             detail: [
-              { k: "清单编号", v: "PLAN-0809-03 · 2026-08-09" },
+              { k: "清单编号", v: `PLAN-${demoWorldFixture.demoDate.compact}-03 · ${demoWorldFixture.demoDate.iso}` },
               { k: "覆盖", v: "前三优先 + 2 个建议放一放" },
               { tree: "├", k: "每条含", v: "为什么是现在 · 本周动作 · 话术要点" },
               { tree: "├", k: "特别一段", v: "换到王志刚的位置看这 22 天" },
@@ -538,7 +536,7 @@ export const promisingCustomersScript: ReplayScript = {
                 { op: "toolbar", view: "todo", title: "待办中心 · 张明远", sub: "本周 3 条跟进待办 · 已同步日程" },
                 { op: "rowsSet", view: "todo", rows: [
                   { id: "td-1181", text: "TD-1181 · 给王志刚发样件测试报告", sub: "8-10 09:30 前 · 拜访改约 8-12 周三 14:00", tone: "pass", state: "hit", badge: { text: "人工改期", tone: "warn" } },
-                  { id: "td-1182", text: "TD-1182 · 与吴国栋确认恒岳产能窗口", sub: "8-11 前 · 关联 SO-2026-1027 与 OPP-2026-0342", tone: "pass", badge: { text: "已创建", tone: "pass" } },
+                  { id: "td-1182", text: "TD-1182 · 与吴国栋确认恒岳产能窗口", sub: `8-11 前 · 关联 ${demoWorldFixture.deliveryOrder.id} 与 OPP-2026-0342`, tone: "pass", badge: { text: "已创建", tone: "pass" } },
                   { id: "td-1183", text: "TD-1183 · 与陈静对齐蓝谷回款口径", sub: "8-12 前 · 关联 AR-2026-0058", tone: "pass", badge: { text: "已创建", tone: "pass" } },
                   { id: "td-cal", text: "已同步到我的日程 · 3 个时间块", sub: "回执 CAL-0809-07 · 周三 14:00 为人工改期后的时间", tone: "info", badge: { text: "日程回执", tone: "info" } },
                 ] },
@@ -660,7 +658,7 @@ export const promisingCustomersScript: ReplayScript = {
           kind: "text",
           title: "下一步",
           defaultOpen: true,
-          content: "以后可以让我每周一早上自动跑一遍，把分数变化、新出现的停滞商机和我方欠客户的事直接推给你，随时说一声就行。",
+          content: "以后可以让我每周一早上自动跑一遍，把优先级变化、新出现的停滞商机和我方欠客户的事直接推给你，随时说一声就行。",
         },
       ],
     },
@@ -675,7 +673,7 @@ export const promisingCustomersScript: ReplayScript = {
       gap: "通用的租户业务数据连接器不存在；读 CRM 客户与商机目前只能走客户自建 API 或数据库只读账号，且都不产出业务语义摘要",
     },
     {
-      blockRef: "step2.tool.OpportunityScore",
+      blockRef: "step2.tool.OpportunityEvidenceProfile",
       producer: "租户业务数据连接器（互动记录与承诺台账）",
       state: "missing",
       gap: "四因子里的「最近互动」「承诺未兑现」需要沟通记录与承诺台账两张表；这两张表在多数租户的 CRM 里根本没落库，连接器之外还要先有数据口径",

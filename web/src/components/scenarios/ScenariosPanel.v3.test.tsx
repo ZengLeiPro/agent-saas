@@ -82,10 +82,12 @@ describe("ScenariosPanel V3", () => {
     expect(onReplayOpenChange).toHaveBeenLastCalledWith(false);
     expect(screen.getByTestId("guided-presentations").children).toHaveLength(1);
     expect(screen.queryByTestId("workflow-catalog")).toBeNull();
+    expect(screen.queryByRole("button", { name: guided.cta.primary })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "看它如何完成" }));
+    fireEvent.click(screen.getByRole("button", { name: "看虚构回放" }));
     expect(await screen.findByRole("heading", { name: guided.title }, { timeout: 5_000 })).toBeTruthy();
     expect(onReplayOpenChange).toHaveBeenLastCalledWith(true);
+    expect(screen.getByText("虚构回放 · 完整闭环")).toBeTruthy();
     expect(screen.getByText("0 / 6")).toBeTruthy();
     expect(screen.getByText(/业务系统出现一条待处理事件/)).toBeTruthy();
 
@@ -126,7 +128,7 @@ describe("ScenariosPanel V3", () => {
     mocked.workflowLibrary = makeWorkflowLibrary([target]);
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole('button', { name: '看它如何完成' }));
+    fireEvent.click(screen.getByRole('button', { name: '看虚构回放' }));
     expect(await screen.findByText('0 / 8', {}, { timeout: 5_000 })).toBeTruthy();
     expect(screen.queryByText('旧回放占位')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /下一步/ }));
@@ -159,7 +161,7 @@ describe("ScenariosPanel V3", () => {
     mocked.workflowLibrary = makeWorkflowLibrary([target, ordinary]);
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
 
-    const buttons = screen.getAllByRole('button', { name: '看它如何完成' });
+    const buttons = screen.getAllByRole('button', { name: '看虚构回放' });
     fireEvent.click(buttons[0]!);
     fireEvent.click(buttons[1]!);
     expect(await screen.findByRole('heading', { name: ordinary.title }, { timeout: 5_000 })).toBeTruthy();

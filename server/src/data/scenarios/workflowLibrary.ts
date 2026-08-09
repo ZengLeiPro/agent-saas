@@ -25,7 +25,7 @@ export const WORKFLOW_LIBRARY_EXPECTED_COUNTS = Object.freeze({
   workflows: 28,
   createWorkflows: 6,
   statefulWorkflows: 22,
-  catalogScenarios: 28,
+  catalogScenarios: 38,
   deferredObjects: 5,
   scenarioAliases: 53,
   catalogAliases: 47,
@@ -33,7 +33,7 @@ export const WORKFLOW_LIBRARY_EXPECTED_COUNTS = Object.freeze({
   legacyCompatibility: 53,
   skins: 82,
   roleViews: 111,
-  roleViewAssignments: 111,
+  roleViewAssignments: 124,
   heroes: 12,
 });
 

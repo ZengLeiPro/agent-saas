@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { HANDWRITTEN_REPLAY_SCENARIO_IDS } from "./availability";
-import { allReplayScripts } from "./registry";
+import { HANDWRITTEN_REPLAY_SCENARIO_IDS, HOOK_REPLAY_SCENARIO_IDS } from "./availability";
+import { allReplayScripts, hookReplayScenarioIds, loadHookReplayScript } from "./registry";
 import type { ReplayScript, ReplayStep } from "./types";
 
 /**
@@ -14,6 +14,11 @@ import type { ReplayScript, ReplayStep } from "./types";
  */
 
 const scripts = allReplayScripts();
+// 钩子剧本懒加载：契约门禁必须覆盖到它们，测试里全部装载
+const hookScripts = await Promise.all(
+  hookReplayScenarioIds().map((scenarioId) => loadHookReplayScript(scenarioId)!),
+);
+const gatedScripts = [...scripts, ...hookScripts];
 
 function toolBlocks(step: ReplayStep) {
   return step.blocks.filter((block) => block.kind === "tool_use");
@@ -40,9 +45,16 @@ describe("剧本注册表", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(ids)).toEqual(new Set(HANDWRITTEN_REPLAY_SCENARIO_IDS));
   });
+
+  it("钩子剧本懒加载表与轻量可用性索引一致，scenarioId 与装载键一一对应", () => {
+    expect(new Set(hookReplayScenarioIds())).toEqual(new Set(HOOK_REPLAY_SCENARIO_IDS));
+    const ids = hookScripts.map((script) => script.scenarioId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(new Set(ids)).toEqual(new Set(HOOK_REPLAY_SCENARIO_IDS));
+  });
 });
 
-describe.each(scripts.map((script) => [script.title, script] as const))("剧本《%s》", (_title, script) => {
+describe.each(gatedScripts.map((script) => [script.title, script] as const))("剧本《%s》", (_title, script) => {
   it("步数在 5~10 之间——少于 5 步撑不起闭环，多于 10 步销售讲不完", () => {
     expect(script.steps.length).toBeGreaterThanOrEqual(5);
     expect(script.steps.length).toBeLessThanOrEqual(10);
@@ -112,7 +124,11 @@ describe.each(scripts.map((script) => [script.title, script] as const))("剧本�
 });
 
 describe.each(
-  scripts.filter((script) => script.mode === "hero").map((script) => [script.title, script] as const),
+  [
+    // hero 剧本与钩子剧本执行同一档质量要求：有 Gate、退回有下文、终态可核对
+    ...scripts.filter((script) => script.mode === "hero"),
+    ...hookScripts,
+  ].map((script) => [script.title, script] as const),
 )("完整业务闭环剧本《%s》额外要求", (_title, script) => {
   it("至少一个人工审批门禁", () => {
     expect(script.steps.some((step) => step.approval)).toBe(true);

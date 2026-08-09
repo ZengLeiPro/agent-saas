@@ -209,6 +209,8 @@ describe("ScenariosPanel V3", () => {
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
     fireEvent.click(screen.getByRole("tab", { name: "追回款" }));
     fireEvent.click(screen.getByRole("tab", { name: "财务" }));
+    // 行业等次级筛选默认折叠，先展开「更多筛选」
+    fireEvent.click(screen.getByRole("button", { name: "更多筛选" }));
     fireEvent.click(screen.getByRole("tab", { name: "贸易" }));
     const count = screen.queryByTestId("workflow-catalog")?.children.length ?? 0;
     expect(count).toBeLessThan(28);
@@ -340,6 +342,8 @@ describe("ScenariosPanel V3", () => {
     };
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
     fireEvent.click(screen.getByRole("tab", { name: "财务" }));
+    // 垂直行业等次级筛选默认折叠，先展开「更多筛选」
+    fireEvent.click(screen.getByRole("button", { name: "更多筛选" }));
     fireEvent.click(screen.getByRole("tab", { name: "机械装备/自动化" }));
     fireEvent.click(screen.getByRole("tab", { name: "生产制造" }));
     fireEvent.click(screen.getByRole("tab", { name: "已有单体系统" }));

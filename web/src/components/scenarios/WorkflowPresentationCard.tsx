@@ -5,7 +5,7 @@ import { CAPABILITY_SURFACE_HOVER } from "@/components/CapabilityCenter/CatalogU
 import { cn } from "@/lib/utils";
 import { friendlyReadiness } from "./friendlyMappings";
 import { getReplayScript } from "./replay/registry";
-import { workflowCta } from "./workflowUi";
+import { isHookScenario, workflowCta } from "./workflowUi";
 import type { WorkflowScenarioCardProps } from "./ScenarioCard";
 
 /** P0 引导演示入口：只讲业务结果和体验方式，不把完整 Workflow 规格塞回首屏。 */
@@ -27,13 +27,15 @@ export function WorkflowPresentationCard({
       <div className="flex flex-wrap items-center gap-1.5">
         <Badge className="gap-1 bg-brand-50 font-normal text-brand-700 hover:bg-brand-50">
           <MousePointerClick className="size-3" />
-          {replayScript?.mode === "hero" ? "完整业务闭环" : "快速体验"}
+          {isHookScenario(scenario) ? scenario.triggerBadge : replayScript?.mode === "hero" ? "完整业务闭环" : "快速体验"}
         </Badge>
         <Badge variant="outline" className="font-normal">{friendlyReadiness[scenario.readiness]}</Badge>
       </div>
       <h3 className="mt-4 text-lg font-semibold leading-snug text-foreground">{scenario.title}</h3>
       <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">{scenario.value}</p>
-      <div className="mt-4 text-xs font-medium text-brand-700">{chapterCount} 个业务步骤 · 右侧系统状态同步变化</div>
+      <div className="mt-4 text-xs font-medium text-brand-700">
+        {chapterCount > 0 ? `${chapterCount} 个业务步骤 · 右侧系统状态同步变化` : "一步一步看它怎么办完 · 右侧系统状态同步变化"}
+      </div>
       <div className="mt-auto flex flex-wrap items-center justify-end gap-2 pt-5">
         {cta.secondaryAction && cta.secondaryLabel ? (
           <Button

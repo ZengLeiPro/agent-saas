@@ -32,6 +32,7 @@ import { WorkflowPresentationCard } from "./WorkflowPresentationCard";
 import {
   getReplayScript,
   hasReplayScript,
+  loadHookReplayScript,
   type ReplayScript,
 } from "./replay";
 import { TECHNICAL_INQUIRY_TRACE_SCENARIO_ID } from './replay/technicalInquiryTraceMeta';
@@ -42,6 +43,7 @@ import { useScenarioFilters } from "./useScenarioFilters";
 import { friendlyIndustry } from "./friendlyMappings";
 import {
   filterWorkflowScenarios,
+  isHookScenario,
   BUSINESS_MODEL_ALL,
   MATURITY_ALL,
   OUTCOME_ALL,
@@ -91,6 +93,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
   } | null>(null);
   const [replay, setReplay] = useState<ReplayScript | null>(null);
   const [catalogExpanded, setCatalogExpanded] = useState(false);
+  const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
   const [deferredNotice, setDeferredNotice] = useState<WorkflowLibraryPublicV3["deferredObjects"][number] | null>(null);
   const deepLinkConsumed = useRef(false);
   const userSelectedRole = useRef(false);
@@ -121,6 +124,18 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
         void import('./replay/technicalInquiryTraceScript')
           .then(({ buildTechnicalInquiryTraceScript }) => {
             if (replayRequest.current === requestId) setReplay(buildTechnicalInquiryTraceScript(scenario));
+          })
+          .catch(() => {
+            if (replayRequest.current === requestId) setDetail({ scenario });
+          });
+        return;
+      }
+      // 钩子剧本体积大，按需装载；失败回落到详情弹窗
+      const hookScript = loadHookReplayScript(scenario.id);
+      if (hookScript) {
+        void hookScript
+          .then((script) => {
+            if (replayRequest.current === requestId) setReplay(script);
           })
           .catch(() => {
             if (replayRequest.current === requestId) setDetail({ scenario });
@@ -226,14 +241,18 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
   }
   if (!workflowLibrary) return null;
 
-  const scenarios = filterWorkflowScenarios(workflowLibrary.scenarios, {
-    outcome: filters.activeOutcome,
-    role: filters.activeRole,
-    industry: filters.activeIndustry,
-    vertical: filters.activeVertical,
-    businessModel: filters.activeBusinessModel,
-    maturity: filters.activeMaturity,
-  });
+  // 钩子场景只在「用一句话开始」区出现；全部工作场景目录保持 28 条闭环工作流
+  const scenarios = filterWorkflowScenarios(
+    workflowLibrary.scenarios.filter((scenario) => !isHookScenario(scenario)),
+    {
+      outcome: filters.activeOutcome,
+      role: filters.activeRole,
+      industry: filters.activeIndustry,
+      vertical: filters.activeVertical,
+      businessModel: filters.activeBusinessModel,
+      maturity: filters.activeMaturity,
+    },
+  );
   const verticalOptions = sortedUnique(workflowLibrary.skins.flatMap((skin) => skin.industryVerticals));
   const businessModelOptions = sortedUnique(workflowLibrary.skins.flatMap((skin) => skin.businessModels));
   const maturityOptions = ["Excel/钉钉为主", "已有单体系统", "多系统已集成"] as const;
@@ -246,13 +265,21 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
     || filters.activeVertical !== VERTICAL_ALL
     || filters.activeBusinessModel !== BUSINESS_MODEL_ALL
     || filters.activeMaturity !== MATURITY_ALL;
+  // 钩子区按目录声明顺序展示；闭环演示区维持 featuredOrder 优先
+  const hookScenarios = workflowLibrary.scenarios.filter(isHookScenario);
   const presentationScenarios = workflowLibrary.scenarios
-    .filter(hasReplayScript)
+    .filter((scenario) => hasReplayScript(scenario) && !isHookScenario(scenario))
     .sort((left, right) => (left.featuredOrder ?? Number.MAX_SAFE_INTEGER) - (right.featuredOrder ?? Number.MAX_SAFE_INTEGER));
-  const showFullCatalog = presentationScenarios.length === 0
+  const hasRecommendedSections = hookScenarios.length > 0 || presentationScenarios.length > 0;
+  const showFullCatalog = !hasRecommendedSections
     || catalogExpanded
     || hasFilters
     || !!roleDetailName;
+  const secondaryFiltersActive = filters.activeIndustry !== INDUSTRY_ALL
+    || filters.activeVertical !== VERTICAL_ALL
+    || filters.activeBusinessModel !== BUSINESS_MODEL_ALL
+    || filters.activeMaturity !== MATURITY_ALL;
+  const showSecondaryFilters = moreFiltersOpen || secondaryFiltersActive;
 
   // 回放接管整个主区：左侧会话栏在外层布局，不受影响
   if (replay) {
@@ -274,22 +301,39 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
         <div>
           <h1 className="text-xl font-semibold">{roleDetailName ? `${roleDetailName} AI 同事工作流` : "AI 同事能帮你完成什么"}</h1>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            {presentationScenarios.length > 0 && !roleDetailName
-              ? "先挑一件真实工作，一步一步看它如何判断、行动并改变业务系统。"
-              : `从业务事件到系统终态，不只生成报告。默认目录共 ${workflowLibrary.scenarios.length} 个唯一工作流。`}
+            {hasRecommendedSections && !roleDetailName
+              ? "先从一句话开始，看它怎么读系统、给判断、经你确认后动手。"
+              : `从业务事件到系统终态，不只生成报告。默认目录共 ${scenarios.length} 个唯一工作流。`}
           </p>
         </div>
         {roleDetailName && props.onCloseRoleDetail ? <Button variant="outline" size="sm" onClick={props.onCloseRoleDetail}>返回目录</Button> : null}
       </div>
 
+      {hookScenarios.length > 0 && !roleDetailName ? (
+        <section aria-labelledby="hook-presentations-title" className="mb-8">
+          <div className="mb-3 flex items-end justify-between gap-3">
+            <div>
+              <h2 id="hook-presentations-title" className="font-semibold">用一句话开始</h2>
+              <p className="mt-1 text-xs text-muted-foreground">这些话以后你在对话框里直接说就行；点开先看 AI 同事怎么把它办完。</p>
+            </div>
+            <Badge variant="secondary">{hookScenarios.length} 句</Badge>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" data-testid="hook-presentations">
+            {hookScenarios.map((scenario) => (
+              <WorkflowPresentationCard key={scenario.id} scenario={scenario} onPrimaryAction={handleWorkflowAction} />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {presentationScenarios.length > 0 && !roleDetailName ? (
         <section aria-labelledby="guided-presentations-title">
           <div className="mb-3 flex items-end justify-between gap-3">
             <div>
-              <h2 id="guided-presentations-title" className="font-semibold">推荐先体验</h2>
+              <h2 id="guided-presentations-title" className="font-semibold">完整业务闭环演示</h2>
               <p className="mt-1 text-xs text-muted-foreground">演示数据均为虚构；每一步由你推进，不会修改真实系统。</p>
             </div>
-            <Badge variant="secondary">首批 {presentationScenarios.length} 个</Badge>
+            <Badge variant="secondary">{presentationScenarios.length} 个</Badge>
           </div>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" data-testid="guided-presentations">
             {presentationScenarios.map((scenario) => (
@@ -300,7 +344,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
       ) : null}
 
       {showFullCatalog ? <>
-      {presentationScenarios.length > 0 && !roleDetailName ? (
+      {hasRecommendedSections && !roleDetailName ? (
         <div className="mb-5 mt-8 flex items-center gap-3">
           <span className="h-px flex-1 bg-border" />
           <span className="text-xs font-medium text-muted-foreground">全部工作场景</span>
@@ -315,22 +359,37 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
         onValueChange={(value) => filters.setActiveOutcome(value as OutcomeFilterValue)}
         className="mb-4"
       />
-      <div className="mb-2 text-xs font-medium text-muted-foreground">岗位</div>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <span className="text-xs font-medium text-muted-foreground">岗位</span>
+        <div className="flex items-center gap-1">
+          {hasFilters ? (
+            <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={filters.clearFilters}>
+              <RotateCcw className="size-3" />清空筛选
+            </Button>
+          ) : null}
+          {!secondaryFiltersActive ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              aria-expanded={showSecondaryFilters}
+              onClick={() => setMoreFiltersOpen((value) => !value)}
+            >
+              {showSecondaryFilters ? "收起筛选" : "更多筛选"}
+            </Button>
+          ) : null}
+        </div>
+      </div>
       <CapabilityFilterTabs
         ariaLabel="按岗位筛选"
         options={[{ value: ROLE_ALL, label: "全部岗位" }, ...workflowLibrary.roles.map((role) => ({ value: role.id, label: role.name }))]}
         value={filters.activeRole}
         onValueChange={(value) => { userSelectedRole.current = true; filters.setActiveRole(value); }}
-        className="mb-4"
+        className={showSecondaryFilters ? "mb-4" : "mb-5"}
       />
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <span className="text-xs font-medium text-muted-foreground">业务入口</span>
-        {hasFilters ? (
-          <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={filters.clearFilters}>
-            <RotateCcw className="size-3" />清空筛选
-          </Button>
-        ) : null}
-      </div>
+      {showSecondaryFilters ? <>
+      <div className="mb-2 text-xs font-medium text-muted-foreground">业务入口</div>
       <CapabilityFilterTabs
         ariaLabel="按业务入口筛选"
         options={[{ value: INDUSTRY_ALL, label: "全部行业" }, ...INDUSTRY_CHIPS]}
@@ -362,6 +421,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
         onValueChange={(value) => filters.setActiveMaturity(value as MaturityFilterValue)}
         className="mb-5"
       />
+      </> : null}
 
       {scenarios.length === 0 ? (
         <div className={cn("py-14 text-center text-sm text-muted-foreground", CAPABILITY_EMPTY_SURFACE)}>
@@ -386,7 +446,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
       </> : (
         <div className="mt-6 flex justify-center">
           <Button type="button" variant="outline" onClick={() => setCatalogExpanded(true)}>
-            浏览全部 {workflowLibrary.scenarios.length} 个工作场景
+            浏览全部 {workflowLibrary.scenarios.length - hookScenarios.length} 个工作场景
           </Button>
         </div>
       )}

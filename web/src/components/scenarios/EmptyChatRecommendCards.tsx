@@ -20,6 +20,7 @@ import {
 import { matchIndustry, useIndustryFilter } from "./useIndustryFilter";
 import { friendlyDataDependency } from "./friendlyMappings";
 import { hasReplayScript } from "./replay/availability";
+import { isHookScenario } from "./workflowUi";
 
 interface EmptyChatRecommendCardsProps {
   onTryScenario: (prompt: string, scenario: ScenarioItem) => void;
@@ -109,7 +110,19 @@ export function EmptyChatRecommendCards({
       ? workflowLibrary.scenarios
       : workflowLibrary.scenarios.filter((scenario) => scenario.industryTags.includes(activeIndustry));
     const pool = industryFiltered.length > 0 ? industryFiltered : workflowLibrary.scenarios;
-    const cards = pickRecommendedWorkflowScenarios(pool, recommendationCount, matchedRoleId);
+    // 钩子场景（一句话入口）优先占位：先本岗位的钩子，再其他钩子，不够再用原推荐逻辑补齐
+    const hooks = pool.filter(isHookScenario);
+    const roleHooks = matchedRoleId
+      ? hooks.filter((scenario) => scenario.roleIds.includes(matchedRoleId))
+      : [];
+    const hookCards = [...roleHooks, ...hooks.filter((scenario) => !roleHooks.includes(scenario))]
+      .slice(0, recommendationCount);
+    const fallbackCards = pickRecommendedWorkflowScenarios(
+      pool.filter((scenario) => !isHookScenario(scenario)),
+      recommendationCount,
+      matchedRoleId,
+    );
+    const cards = [...hookCards, ...fallbackCards].slice(0, recommendationCount);
     const openCatalog = (scenario: CatalogScenarioPublic, intent: "view" | "run" | "connect" | "presentation") => {
       onViewAll();
       const params = new URLSearchParams(window.location.search);
@@ -136,7 +149,7 @@ export function EmptyChatRecommendCards({
                 key={scenario.id}
                 className={cn("flex min-h-[172px] flex-col p-4 text-left", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)}
               >
-                <div className="text-[11px] font-medium text-muted-foreground">{scenario.primaryType === "CREATE" ? "产出成果" : scenario.primaryType === "WATCH" ? "持续巡检" : scenario.primaryType === "ACT" ? "会动系统" : "持续闭环"} · {scenario.readiness === "D0_CURRENT" ? "当前即用" : scenario.readiness === "D1_CONNECTOR" ? "标准接入" : "项目集成"}</div>
+                <div className="text-[11px] font-medium text-muted-foreground">{isHookScenario(scenario) ? scenario.triggerBadge : `${scenario.primaryType === "CREATE" ? "产出成果" : scenario.primaryType === "WATCH" ? "持续巡检" : scenario.primaryType === "ACT" ? "会动系统" : "持续闭环"} · ${scenario.readiness === "D0_CURRENT" ? "当前即用" : scenario.readiness === "D1_CONNECTOR" ? "标准接入" : "项目集成"}`}</div>
                 <div className="mt-2 line-clamp-2 text-sm font-semibold leading-snug">{scenario.title}</div>
                 <p className="mt-2 line-clamp-3 text-sm leading-5 text-muted-foreground">{scenario.value}</p>
                 {/* 能看演示的场景，第一屏就给「看它如何完成」；接入是第二选择，不是唯一入口 */}

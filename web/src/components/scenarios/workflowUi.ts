@@ -56,6 +56,14 @@ export function filterWorkflowScenarios(
   return sortWorkflowScenarios(filtered);
 }
 
+/**
+ * 钩子场景：空白对话框里那句一句话入口对应的目录条目（08-09 批次）。
+ * 约定用 id 前缀识别；若未来需要更强语义，应提升为 schema 字段而不是扩散此判断。
+ */
+export function isHookScenario(scenario: Pick<CatalogScenarioPublic, "id">): boolean {
+  return scenario.id.startsWith("catalog-hook-");
+}
+
 /** Hero 仅决定目录优先级；客户面不消费设计评分或内部评审状态。 */
 export function sortWorkflowScenarios(
   scenarios: readonly CatalogScenarioPublic[],

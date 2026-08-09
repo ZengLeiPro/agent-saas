@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "workflowContractVersion": 2,
-  "updatedAt": "2026-07-31",
+  "updatedAt": "2026-08-09",
   "roles": [
     {
       "id": "boss",
@@ -10007,7 +10007,7 @@
           "objectLabels": [
             {
               "key": "business-object",
-            "label": "订单/订单行/承诺日期/BOM 版本/工单/缺料/库存/供应商承诺/替代料/检验/FAT/物流/风险事件"
+              "label": "订单/订单行/承诺日期/BOM 版本/工单/缺料/库存/供应商承诺/替代料/检验/FAT/物流/风险事件"
             }
           ],
           "ruleRefs": [
@@ -28149,7 +28149,7 @@
           "objectLabels": [
             {
               "key": "business-object",
-            "label": "客户/设备序列号/竣工版本/故障代码/日志、照片与视频/服务工单/备件/SLA/现场行动/遥测数据/客户确认/知识版本"
+              "label": "客户/设备序列号/竣工版本/故障代码/日志、照片与视频/服务工单/备件/SLA/现场行动/遥测数据/客户确认/知识版本"
             }
           ],
           "ruleRefs": [
@@ -38776,8 +38776,8 @@
         "view-lead-to-opportunity-loop-marketing"
       ],
       "public": {
-        "title": "新线索推进到有效商机",
-        "value": "把合法来源、去重、分配、受控触达与客户反馈追到 CRM 商机或有原因的培育/淘汰",
+        "title": "新线索来了，一条不落地跟到商机",
+        "value": "线索不去重、没人跟，错过的是成单窗口；从来源核验、分配到首次触达和客户反馈，一直追到 CRM 里有一条有证据的商机",
         "shortChain": [
           "接收业务事件",
           "读取权威状态",
@@ -38810,9 +38810,9 @@
           "找客户",
           "推进成交"
         ],
-        "triggerBadge": "业务对象变化、相关反馈到达或人工发起时",
+        "triggerBadge": "新线索进入时",
         "actionBadge": "会执行 · 会等待 · 会继续",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "对外触达和线索淘汰需销售确认",
         "detail": {
           "event": "业务对象变化、相关反馈到达或人工发起时",
           "reads": [
@@ -38854,16 +38854,39 @@
               "title": "先筛掉不能触达的线索",
               "narration": "AI 同事接收四条来源事件，先核对来源依据、退订状态和重复主体，不因线索看起来有价值就绕过合规规则。",
               "result": "两条进入主体复核，一条因缺少依据被阻断，一条保持退订抑制。",
-              "interaction": { "kind": "next", "label": "查看主体复核" },
+              "interaction": {
+                "kind": "next",
+                "label": "查看主体复核"
+              },
               "surface": {
                 "kind": "browser_panel",
                 "title": "线索入口",
                 "subtitle": "四条合成来源事件",
                 "items": [
-                  { "label": "展会扫码", "value": "来源与处理依据完整", "state": "success", "changed": true },
-                  { "label": "英文简称询盘", "value": "疑似同一企业，待复核", "state": "pending", "changed": true },
-                  { "label": "名单导入", "value": "缺少可验证处理依据，已阻断", "state": "warning", "changed": true },
-                  { "label": "退订联系人", "value": "保持停止触达", "state": "warning", "changed": true }
+                  {
+                    "label": "展会扫码",
+                    "value": "来源与处理依据完整",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "英文简称询盘",
+                    "value": "疑似同一企业，待复核",
+                    "state": "pending",
+                    "changed": true
+                  },
+                  {
+                    "label": "名单导入",
+                    "value": "缺少可验证处理依据，已阻断",
+                    "state": "warning",
+                    "changed": true
+                  },
+                  {
+                    "label": "退订联系人",
+                    "value": "保持停止触达",
+                    "state": "warning",
+                    "changed": true
+                  }
                 ]
               }
             },
@@ -38872,15 +38895,30 @@
               "title": "把重复主体交给有权人确认",
               "narration": "系统把公司名、域名、地址和反证放进同一复核任务，并给出唯一负责人候选；没有确认前不改客户主数据。",
               "result": "复核人确认两条来源属于同一企业，并批准分配给销售甲。",
-              "interaction": { "kind": "confirm", "label": "确认主体与负责人" },
+              "interaction": {
+                "kind": "confirm",
+                "label": "确认主体与负责人"
+              },
               "surface": {
                 "kind": "approval_card",
                 "title": "主体与归属复核",
                 "subtitle": "等待销售负责人确认",
                 "items": [
-                  { "label": "企业主体", "value": "澄海自动化（含英文简称）", "state": "active" },
-                  { "label": "支持证据", "value": "域名、地址与需求方向一致", "state": "success" },
-                  { "label": "负责人", "value": "销售甲", "state": "pending" }
+                  {
+                    "label": "企业主体",
+                    "value": "澄海自动化（含英文简称）",
+                    "state": "active"
+                  },
+                  {
+                    "label": "支持证据",
+                    "value": "域名、地址与需求方向一致",
+                    "state": "success"
+                  },
+                  {
+                    "label": "负责人",
+                    "value": "销售甲",
+                    "state": "pending"
+                  }
                 ]
               }
             },
@@ -38889,14 +38927,31 @@
               "title": "创建唯一线索并完成分配",
               "narration": "AI 同事合并重复来源，创建唯一线索，再按已批准的路由规则写入负责人；每次写入后都重新查询。",
               "result": "两条来源归入同一线索，负责人和分配版本均已回读确认。",
-              "interaction": { "kind": "next", "label": "准备首次触达" },
+              "interaction": {
+                "kind": "next",
+                "label": "准备首次触达"
+              },
               "surface": {
                 "kind": "crm_table",
                 "title": "客户关系系统 · 线索",
                 "items": [
-                  { "label": "澄海自动化", "value": "唯一线索 · 销售甲", "state": "success", "changed": true },
-                  { "label": "关联来源", "value": "展会扫码、英文简称询盘", "state": "active" },
-                  { "label": "当前状态", "value": "等待首次触达确认", "state": "pending", "changed": true }
+                  {
+                    "label": "澄海自动化",
+                    "value": "唯一线索 · 销售甲",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "关联来源",
+                    "value": "展会扫码、英文简称询盘",
+                    "state": "active"
+                  },
+                  {
+                    "label": "当前状态",
+                    "value": "等待首次触达确认",
+                    "state": "pending",
+                    "changed": true
+                  }
                 ]
               }
             },
@@ -38905,15 +38960,31 @@
               "title": "首次对外消息必须先确认",
               "narration": "AI 同事只用已核验事实生成一条最小澄清消息，并锁定接收人、测试渠道和发送窗口。内容发生变化后需要重新确认。",
               "result": "销售负责人确认当前消息版本，消息仍未发送。",
-              "interaction": { "kind": "confirm", "label": "确认并发送" },
+              "interaction": {
+                "kind": "confirm",
+                "label": "确认并发送"
+              },
               "surface": {
                 "kind": "mail_panel",
                 "title": "待确认消息",
                 "subtitle": "尚未对外发送",
                 "items": [
-                  { "label": "接收人", "value": "合成联系人甲", "state": "neutral" },
-                  { "label": "内容", "value": "确认节拍目标与技术交流时间", "state": "active" },
-                  { "label": "发送状态", "value": "等待确认", "state": "pending", "changed": true }
+                  {
+                    "label": "接收人",
+                    "value": "合成联系人甲",
+                    "state": "neutral"
+                  },
+                  {
+                    "label": "内容",
+                    "value": "确认节拍目标与技术交流时间",
+                    "state": "active"
+                  },
+                  {
+                    "label": "发送状态",
+                    "value": "等待确认",
+                    "state": "pending",
+                    "changed": true
+                  }
                 ]
               }
             },
@@ -38922,14 +38993,30 @@
               "title": "送达后持续等待客户回复",
               "narration": "获批消息只发送一次。客户回复到达后，AI 同事不相信通知摘要，而是重新读取完整会话、线索和抑制状态。",
               "result": "客户确认节拍目标、现场时间，并同意安排技术交流。",
-              "interaction": { "kind": "next", "label": "判断是否形成商机" },
+              "interaction": {
+                "kind": "next",
+                "label": "判断是否形成商机"
+              },
               "surface": {
                 "kind": "im_thread",
                 "title": "测试消息箱",
                 "items": [
-                  { "label": "销售甲", "value": "想进一步确认节拍目标，并安排一次技术交流。", "state": "active" },
-                  { "label": "客户", "value": "目标每分钟 45 件，下周二可现场沟通，同意技术交流。", "state": "success", "changed": true },
-                  { "label": "系统", "value": "回复已关联原线索，未重复外发", "state": "neutral" }
+                  {
+                    "label": "销售甲",
+                    "value": "想进一步确认节拍目标，并安排一次技术交流。",
+                    "state": "active"
+                  },
+                  {
+                    "label": "客户",
+                    "value": "目标每分钟 45 件，下周二可现场沟通，同意技术交流。",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "系统",
+                    "value": "回复已关联原线索，未重复外发",
+                    "state": "neutral"
+                  }
                 ]
               }
             },
@@ -38938,15 +39025,34 @@
               "title": "建商机前再做一次资格复核",
               "narration": "AI 同事把客户原话映射为需求、时间和下一步，但不擅自填写金额、概率或成交阶段，再由销售确认是否建立商机。",
               "result": "需求证据和技术交流下一步获批，可以创建有效商机。",
-              "interaction": { "kind": "confirm", "label": "批准建立商机" },
+              "interaction": {
+                "kind": "confirm",
+                "label": "批准建立商机"
+              },
               "surface": {
                 "kind": "approval_card",
                 "title": "资格与建商机复核",
                 "items": [
-                  { "label": "明确需求", "value": "产线节拍提升", "state": "success" },
-                  { "label": "明确时间", "value": "下周二现场交流", "state": "success" },
-                  { "label": "下一步", "value": "技术交流", "state": "active" },
-                  { "label": "金额与概率", "value": "未获证据，不填写", "state": "warning" }
+                  {
+                    "label": "明确需求",
+                    "value": "产线节拍提升",
+                    "state": "success"
+                  },
+                  {
+                    "label": "明确时间",
+                    "value": "下周二现场交流",
+                    "state": "success"
+                  },
+                  {
+                    "label": "下一步",
+                    "value": "技术交流",
+                    "state": "active"
+                  },
+                  {
+                    "label": "金额与概率",
+                    "value": "未获证据，不填写",
+                    "state": "warning"
+                  }
                 ]
               }
             },
@@ -38955,15 +39061,35 @@
               "title": "商机创建后重新查询终态",
               "narration": "AI 同事记录客户回复和下一步，创建唯一有效商机，并从客户关系系统重新查询负责人、阶段、关联关系和未决任务。",
               "result": "一个线索、一个商机、一次获批触达、两个保护性退出全部核对一致。",
-              "interaction": { "kind": "next", "label": "演示完成" },
+              "interaction": {
+                "kind": "next",
+                "label": "演示完成"
+              },
               "surface": {
                 "kind": "summary",
                 "title": "本次改变了什么",
                 "items": [
-                  { "label": "有效商机", "value": "已创建 · 下一步为技术交流", "state": "success", "changed": true },
-                  { "label": "负责人", "value": "销售甲", "state": "success" },
-                  { "label": "外发消息", "value": "仅 1 条，已确认并送达", "state": "success" },
-                  { "label": "受保护线索", "value": "阻断 1 条、抑制 1 条", "state": "success" }
+                  {
+                    "label": "有效商机",
+                    "value": "已创建 · 下一步为技术交流",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "负责人",
+                    "value": "销售甲",
+                    "state": "success"
+                  },
+                  {
+                    "label": "外发消息",
+                    "value": "仅 1 条，已确认并送达",
+                    "state": "success"
+                  },
+                  {
+                    "label": "受保护线索",
+                    "value": "阻断 1 条、抑制 1 条",
+                    "state": "success"
+                  }
                 ]
               }
             }
@@ -38996,8 +39122,8 @@
         "view-opportunity-commitment-progress-loop-cs"
       ],
       "public": {
-        "title": "每次客户沟通都落到共同下一步",
-        "value": "持续追双方承诺、负责人和期限，直到订单、合同或正式赢输暂停",
+        "title": "每个商机都有下一步，谁的承诺都不丢",
+        "value": "客户说下周答复，没人记就没了下文；每次沟通后把双方承诺、负责人和期限记档催办，直到签单或明确输赢",
         "shortChain": [
           "接收业务事件",
           "读取权威状态",
@@ -39032,9 +39158,9 @@
         "goalTags": [
           "推进成交"
         ],
-        "triggerBadge": "业务对象变化、相关反馈到达或人工发起时",
+        "triggerBadge": "客户沟通发生后",
         "actionBadge": "会执行 · 会等待 · 会继续",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "对客户的承诺与商机关闭需有权人确认",
         "detail": {
           "event": "业务对象变化、相关反馈到达或人工发起时",
           "reads": [
@@ -39079,8 +39205,8 @@
         "view-technical-inquiry-to-approved-quote-loop-production"
       ],
       "public": {
-        "title": "复杂询价推进到批准报价和订单",
-        "value": "让技术、利润、信用和交期冲突经过人审，唯一获批报价版本送达并回读客户接受与订单",
+        "title": "复杂询价，从澄清到获批报价一口气跟完",
+        "value": "规格冲突靠猜就会报错价；把需求澄清、成本交期、信用例外推到有权人批准，只发唯一有效版本并跟到订单",
         "shortChain": [
           "接收业务事件",
           "读取权威状态",
@@ -39125,9 +39251,9 @@
         "goalTags": [
           "推进成交"
         ],
-        "triggerBadge": "业务对象变化、相关反馈到达或人工发起时",
+        "triggerBadge": "收到复杂询价时",
         "actionBadge": "会执行 · 会等待 · 会继续",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "报价发出与订单创建须逐一批准",
         "detail": {
           "event": "业务对象变化、相关反馈到达或人工发起时",
           "reads": [
@@ -39167,15 +39293,35 @@
               "title": "先发现不能靠猜的规格冲突",
               "narration": "AI 同事同时读取客户消息、附件、既有商机和产品资料，发现消息写的是 IP67，附件却是 IP65，因此停止继续报价。",
               "result": "冲突被保留为两个独立来源，关键规格进入待澄清状态。",
-              "interaction": { "kind": "next", "label": "发起澄清" },
+              "interaction": {
+                "kind": "next",
+                "label": "发起澄清"
+              },
               "surface": {
                 "kind": "browser_panel",
                 "title": "询价资料核对",
                 "items": [
-                  { "label": "客户消息", "value": "防护等级 IP67", "state": "active" },
-                  { "label": "询价附件", "value": "防护等级 IP65", "state": "warning", "changed": true },
-                  { "label": "原型号库存", "value": "0 件", "state": "warning" },
-                  { "label": "替代型号库存", "value": "36 件", "state": "success" }
+                  {
+                    "label": "客户消息",
+                    "value": "防护等级 IP67",
+                    "state": "active"
+                  },
+                  {
+                    "label": "询价附件",
+                    "value": "防护等级 IP65",
+                    "state": "warning",
+                    "changed": true
+                  },
+                  {
+                    "label": "原型号库存",
+                    "value": "0 件",
+                    "state": "warning"
+                  },
+                  {
+                    "label": "替代型号库存",
+                    "value": "36 件",
+                    "state": "success"
+                  }
                 ]
               }
             },
@@ -39184,15 +39330,30 @@
               "title": "保存冲突版本，再发最小澄清问题",
               "narration": "AI 同事先保存包含来源的需求版本，再请销售确认澄清内容；没有获批前不会向客户发送消息。",
               "result": "销售批准后，澄清消息送达测试联系人并取得回执。",
-              "interaction": { "kind": "confirm", "label": "确认发送澄清" },
+              "interaction": {
+                "kind": "confirm",
+                "label": "确认发送澄清"
+              },
               "surface": {
                 "kind": "mail_panel",
                 "title": "待发送澄清",
                 "subtitle": "仅询问影响选型的三个问题",
                 "items": [
-                  { "label": "防护等级", "value": "请确认 IP65 或 IP67", "state": "pending" },
-                  { "label": "数量", "value": "请确认本次数量", "state": "pending" },
-                  { "label": "替代许可", "value": "是否接受认证兼容型号", "state": "pending" }
+                  {
+                    "label": "防护等级",
+                    "value": "请确认 IP65 或 IP67",
+                    "state": "pending"
+                  },
+                  {
+                    "label": "数量",
+                    "value": "请确认本次数量",
+                    "state": "pending"
+                  },
+                  {
+                    "label": "替代许可",
+                    "value": "是否接受认证兼容型号",
+                    "state": "pending"
+                  }
                 ]
               }
             },
@@ -39201,14 +39362,31 @@
               "title": "客户答复后从原任务继续",
               "narration": "流程在等待期间保持原关联关系。客户回复到达后，AI 同事重新读取原文，更新需求版本，同时保留旧版本可追溯。",
               "result": "需求锁定为 IP67、20 件，并允许认证兼容替代型号。",
-              "interaction": { "kind": "next", "label": "形成报价方案" },
+              "interaction": {
+                "kind": "next",
+                "label": "形成报价方案"
+              },
               "surface": {
                 "kind": "im_thread",
                 "title": "客户澄清会话",
                 "items": [
-                  { "label": "销售", "value": "请确认防护等级、数量以及是否接受兼容替代。", "state": "neutral" },
-                  { "label": "客户", "value": "需要 IP67，共 20 件，可接受认证兼容替代。", "state": "success", "changed": true },
-                  { "label": "需求版本", "value": "已更新，旧版本仍保留", "state": "active", "changed": true }
+                  {
+                    "label": "销售",
+                    "value": "请确认防护等级、数量以及是否接受兼容替代。",
+                    "state": "neutral"
+                  },
+                  {
+                    "label": "客户",
+                    "value": "需要 IP67，共 20 件，可接受认证兼容替代。",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "需求版本",
+                    "value": "已更新，旧版本仍保留",
+                    "state": "active",
+                    "changed": true
+                  }
                 ]
               }
             },
@@ -39217,15 +39395,35 @@
               "title": "根据最新事实生成报价草案",
               "narration": "AI 同事再次读取产品、价格和库存，解释替代差异；金额、税费、毛利和交期由确定性服务计算。",
               "result": "报价草案包含 20 件替代型号、含税金额、付款条件和交付日期。",
-              "interaction": { "kind": "next", "label": "提交组合审批" },
+              "interaction": {
+                "kind": "next",
+                "label": "提交组合审批"
+              },
               "surface": {
                 "kind": "erp_table",
                 "title": "报价草案",
                 "items": [
-                  { "label": "型号与数量", "value": "认证替代型号 × 20", "state": "success", "changed": true },
-                  { "label": "含税金额", "value": "¥22,600 · 税率 13%", "state": "active" },
-                  { "label": "付款条件", "value": "30% 预付 / 70% 发货前", "state": "neutral" },
-                  { "label": "交付日期", "value": "2026-08-18", "state": "neutral" }
+                  {
+                    "label": "型号与数量",
+                    "value": "认证替代型号 × 20",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "含税金额",
+                    "value": "¥22,600 · 税率 13%",
+                    "state": "active"
+                  },
+                  {
+                    "label": "付款条件",
+                    "value": "30% 预付 / 70% 发货前",
+                    "state": "neutral"
+                  },
+                  {
+                    "label": "交付日期",
+                    "value": "2026-08-18",
+                    "state": "neutral"
+                  }
                 ]
               }
             },
@@ -39234,15 +39432,34 @@
               "title": "技术、商业与交付一起确认",
               "narration": "报价版本绑定当前产品、价格和库存快照，分别等待技术、商业、交付与外发权限确认；任一关键事实变化都会让批准失效。",
               "result": "四项确认均通过，发送前重新读取的事实仍与获批版本一致。",
-              "interaction": { "kind": "confirm", "label": "批准当前报价版本" },
+              "interaction": {
+                "kind": "confirm",
+                "label": "批准当前报价版本"
+              },
               "surface": {
                 "kind": "approval_card",
                 "title": "报价组合审批",
                 "items": [
-                  { "label": "技术兼容", "value": "待技术负责人确认", "state": "pending" },
-                  { "label": "利润与价格", "value": "待商业负责人确认", "state": "pending" },
-                  { "label": "库存与交期", "value": "待交付负责人确认", "state": "pending" },
-                  { "label": "对外发送", "value": "待销售负责人确认", "state": "pending" }
+                  {
+                    "label": "技术兼容",
+                    "value": "待技术负责人确认",
+                    "state": "pending"
+                  },
+                  {
+                    "label": "利润与价格",
+                    "value": "待商业负责人确认",
+                    "state": "pending"
+                  },
+                  {
+                    "label": "库存与交期",
+                    "value": "待交付负责人确认",
+                    "state": "pending"
+                  },
+                  {
+                    "label": "对外发送",
+                    "value": "待销售负责人确认",
+                    "state": "pending"
+                  }
                 ]
               }
             },
@@ -39251,14 +39468,30 @@
               "title": "发送唯一获批版本并等待客户确认",
               "narration": "AI 同事只发送当前获批报价，保存送达回执并持续等待。客户确认后，重新读取原文和报价关联。",
               "result": "客户接受当前报价版本，金额、型号、付款与交期均无新增偏差。",
-              "interaction": { "kind": "next", "label": "创建销售订单" },
+              "interaction": {
+                "kind": "next",
+                "label": "创建销售订单"
+              },
               "surface": {
                 "kind": "mail_panel",
                 "title": "报价往来",
                 "items": [
-                  { "label": "已发送", "value": "获批报价版本 · ¥22,600", "state": "success" },
-                  { "label": "客户回复", "value": "确认接受当前报价及交付条件", "state": "success", "changed": true },
-                  { "label": "关联状态", "value": "回复已绑定唯一报价版本", "state": "active" }
+                  {
+                    "label": "已发送",
+                    "value": "获批报价版本 · ¥22,600",
+                    "state": "success"
+                  },
+                  {
+                    "label": "客户回复",
+                    "value": "确认接受当前报价及交付条件",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "关联状态",
+                    "value": "回复已绑定唯一报价版本",
+                    "state": "active"
+                  }
                 ]
               }
             },
@@ -39267,15 +39500,35 @@
               "title": "报价转订单前再次核对",
               "narration": "AI 同事发送前后都重读库存、价格和客户确认，生成订单草案；订单仍需有权人批准后才能正式提交。",
               "result": "订单内容与客户接受的报价完全一致，正式订单已写入并回读。",
-              "interaction": { "kind": "confirm", "label": "批准并提交订单" },
+              "interaction": {
+                "kind": "confirm",
+                "label": "批准并提交订单"
+              },
               "surface": {
                 "kind": "erp_table",
                 "title": "销售订单",
                 "items": [
-                  { "label": "订单状态", "value": "等待最终批准", "state": "pending", "changed": true },
-                  { "label": "型号与数量", "value": "认证替代型号 × 20", "state": "success" },
-                  { "label": "订单金额", "value": "¥22,600", "state": "success" },
-                  { "label": "交付日期", "value": "2026-08-18", "state": "success" }
+                  {
+                    "label": "订单状态",
+                    "value": "等待最终批准",
+                    "state": "pending",
+                    "changed": true
+                  },
+                  {
+                    "label": "型号与数量",
+                    "value": "认证替代型号 × 20",
+                    "state": "success"
+                  },
+                  {
+                    "label": "订单金额",
+                    "value": "¥22,600",
+                    "state": "success"
+                  },
+                  {
+                    "label": "交付日期",
+                    "value": "2026-08-18",
+                    "state": "success"
+                  }
                 ]
               }
             },
@@ -39284,15 +39537,36 @@
               "title": "最终复查报价、订单和商机",
               "narration": "AI 同事更新商机下一步，并再次查询报价送达、客户确认、订单内容和商机状态；重复执行不会再创建第二份订单。",
               "result": "唯一报价、唯一订单与商机下一步全部一致，没有未决审批或等待。",
-              "interaction": { "kind": "next", "label": "演示完成" },
+              "interaction": {
+                "kind": "next",
+                "label": "演示完成"
+              },
               "surface": {
                 "kind": "summary",
                 "title": "本次改变了什么",
                 "items": [
-                  { "label": "需求", "value": "规格冲突已澄清并保留版本", "state": "success" },
-                  { "label": "报价", "value": "唯一获批版本已送达并接受", "state": "success" },
-                  { "label": "订单", "value": "已提交并回读一致", "state": "success", "changed": true },
-                  { "label": "商机", "value": "下一步已更新为订单履约", "state": "success", "changed": true }
+                  {
+                    "label": "需求",
+                    "value": "规格冲突已澄清并保留版本",
+                    "state": "success"
+                  },
+                  {
+                    "label": "报价",
+                    "value": "唯一获批版本已送达并接受",
+                    "state": "success"
+                  },
+                  {
+                    "label": "订单",
+                    "value": "已提交并回读一致",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "商机",
+                    "value": "下一步已更新为订单履约",
+                    "state": "success",
+                    "changed": true
+                  }
                 ]
               }
             }
@@ -39325,8 +39599,8 @@
         "view-credit-exception-to-order-release-loop-finance"
       ],
       "public": {
-        "title": "信用异常订单安全放行",
-        "value": "规则先命中 暂缓，Agent 只处理异名回款、争议、担保和临时条件，经授权写回订单并验证",
+        "title": "信用卡住的订单，查清楚再安全放行",
+        "value": "规则先暂缓，只处理异名回款、争议与担保这类例外，经授权写回订单并回读验证，不放一单糊涂账",
         "shortChain": [
           "接收业务事件",
           "读取当前版本",
@@ -39364,9 +39638,9 @@
           "推进成交",
           "控风险"
         ],
-        "triggerBadge": "受控业务动作满足前置条件或需授权处理时",
+        "triggerBadge": "订单被信用规则暂缓时",
         "actionBadge": "会写系统 · 会回读验证",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "放行决定必须由授权人批准",
         "detail": {
           "event": "受控业务动作满足前置条件或需授权处理时",
           "reads": [
@@ -39412,8 +39686,8 @@
         "view-contract-sow-to-approved-baseline-loop-production"
       ],
       "public": {
-        "title": "合同承诺变成可执行项目基线",
-        "value": "把合同、SOW、报价和技术协议逐项映射为获批基线，冲突与未决条件持续阻断开工",
+        "title": "合同签了什么，项目就按什么开工",
+        "value": "合同承诺和项目执行两张皮，返工和扯皮都从这来；逐项映射成获批基线，条件没齐就一直拦着不开工",
         "shortChain": [
           "接收业务事件",
           "读取当前版本",
@@ -39450,9 +39724,9 @@
           "推进成交",
           "控风险"
         ],
-        "triggerBadge": "受控业务动作满足前置条件或需授权处理时",
+        "triggerBadge": "合同临签或已签时",
         "actionBadge": "会写系统 · 会回读验证",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "项目基线须有权人批准后生效",
         "detail": {
           "event": "受控业务动作满足前置条件或需授权处理时",
           "reads": [
@@ -39498,8 +39772,8 @@
         "view-controlled-version-release-loop-production"
       ],
       "public": {
-        "title": "批准版本真正进入所有执行系统",
-        "value": "新 版本 经影响分析和人审发布，旧版受控，下游引用逐系统回读一致",
+        "title": "新版本发布后，每个系统都换到位",
+        "value": "图纸换了产线还在用旧版就是事故；影响分析、人审发布、旧版受控，下游逐系统回读一致才算完",
         "shortChain": [
           "接收业务事件",
           "读取当前版本",
@@ -39545,9 +39819,9 @@
         "goalTags": [
           "保交付"
         ],
-        "triggerBadge": "受控业务动作满足前置条件或需授权处理时",
+        "triggerBadge": "版本变更申请时",
         "actionBadge": "会写系统 · 会回读验证",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "发布与旧版处置须审批",
         "detail": {
           "event": "受控业务动作满足前置条件或需授权处理时",
           "reads": [
@@ -39606,8 +39880,8 @@
         "view-order-delivery-defender-loop-production"
       ],
       "public": {
-        "title": "交付风险推进到恢复或获批改期",
-        "value": "绑定订单和里程碑，协调版本、物料、质量、物流与客户依赖，直到风险解除或正式升级",
+        "title": "交付窗口里的风险，解除或改期都有交代",
+        "value": "缺料、质量、物流哪个环节堵住都可能砸交期；把真实阻塞逐个推进到解除、获批改期或有证据的交付",
         "shortChain": [
           "接收业务事件",
           "读取权威状态",
@@ -39657,9 +39931,9 @@
         "goalTags": [
           "保交付"
         ],
-        "triggerBadge": "业务对象变化、相关反馈到达或人工发起时",
+        "triggerBadge": "订单进入交付窗口时",
         "actionBadge": "会执行 · 会等待 · 会继续",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "对客户改期承诺必须审批",
         "detail": {
           "event": "业务对象变化、相关反馈到达或人工发起时",
           "reads": [
@@ -39716,8 +39990,8 @@
         "view-client-evidence-readiness-loop-production"
       ],
       "public": {
-        "title": "客户资料齐套后解锁开工",
-        "value": "追客户资料、账号、现场与样品到 已接受 或 经批准不适用，门禁真实解除或按证据升级",
+        "title": "客户资料没齐套，就不让项目带病开工",
+        "value": "缺着资料开工，返工和延期最后都算我们的；逐项追到齐套或批准豁免，再由有权人解锁开工",
         "shortChain": [
           "按事件或周期巡检",
           "正常时静默",
@@ -39751,9 +40025,9 @@
         "goalTags": [
           "保交付"
         ],
-        "triggerBadge": "业务事件发生或观察周期到点时",
+        "triggerBadge": "工作包开工前",
         "actionBadge": "会静默巡检 · 异常时升级",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "开工门禁由有权人解锁",
         "detail": {
           "event": "业务事件发生或观察周期到点时",
           "reads": [
@@ -39799,8 +40073,8 @@
         "view-scope-change-margin-guard-loop-production"
       ],
       "public": {
-        "title": "新增需求先算清影响再改范围",
-        "value": "区分缺陷、澄清、原范围和新增请求，价款、工期、资源、验收获批后才重建基线",
+        "title": "客户加需求，先算清账再答应",
+        "value": "顺手加个功能吃掉的都是利润；区分缺陷、澄清和新增，价款工期获批后才改基线",
         "shortChain": [
           "接收业务事件",
           "读取权威状态",
@@ -39836,9 +40110,9 @@
         "goalTags": [
           "保交付"
         ],
-        "triggerBadge": "业务对象变化、相关反馈到达或人工发起时",
+        "triggerBadge": "收到变更请求时",
         "actionBadge": "会执行 · 会等待 · 会继续",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "价款与工期调整须有权人批准",
         "detail": {
           "event": "业务对象变化、相关反馈到达或人工发起时",
           "reads": [
@@ -39897,8 +40171,8 @@
         "view-acceptance-to-cash-loop-production"
       ],
       "public": {
-        "title": "验收、开票、回款与核销闭环",
-        "value": "从批准成果或货物签收追到验收、发票、应收、银行到账和核销一致",
+        "title": "干完的活，追到钱真的到账",
+        "value": "验收拖着、发票开不出、回款没人盯，利润就躺在应收里；从签收补证到银行到账核销，一路追完",
         "shortChain": [
           "接收业务事件",
           "读取权威状态",
@@ -39944,9 +40218,9 @@
         "goalTags": [
           "追回款"
         ],
-        "triggerBadge": "业务对象变化、相关反馈到达或人工发起时",
+        "triggerBadge": "履约成果签收后",
         "actionBadge": "会执行 · 会等待 · 会继续",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "开票与核销须财务确认",
         "detail": {
           "event": "业务对象变化、相关反馈到达或人工发起时",
           "reads": [
@@ -39986,14 +40260,31 @@
               "title": "交付完成不等于可以开票",
               "narration": "AI 同事读取合同、交付版本和开票条件，发现培训签字缺失，于是创建补证任务并等待；证据回来后才继续。",
               "result": "交付版本和培训签字均已回读，验收包达到首次提交条件。",
-              "interaction": { "kind": "next", "label": "提交验收包" },
+              "interaction": {
+                "kind": "next",
+                "label": "提交验收包"
+              },
               "surface": {
                 "kind": "task_list",
                 "title": "验收前置任务",
                 "items": [
-                  { "label": "交付版本", "value": "第 6 版 · 已完成", "state": "success" },
-                  { "label": "培训签字", "value": "已补齐并回读", "state": "success", "changed": true },
-                  { "label": "现金闭环案件", "value": "已建立，等待验收", "state": "active", "changed": true }
+                  {
+                    "label": "交付版本",
+                    "value": "第 6 版 · 已完成",
+                    "state": "success"
+                  },
+                  {
+                    "label": "培训签字",
+                    "value": "已补齐并回读",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "现金闭环案件",
+                    "value": "已建立，等待验收",
+                    "state": "active",
+                    "changed": true
+                  }
                 ]
               }
             },
@@ -40002,15 +40293,36 @@
               "title": "首次验收被退回，保留争议而不冒充成功",
               "narration": "验收包经确认后提交。客户指出序列号清单缺失，AI 同事保存原回执和争议金额，创建整改任务，不把“已提交”写成“已验收”。",
               "result": "争议已建立，整改责任和所需证据清晰，现金状态仍未成功。",
-              "interaction": { "kind": "confirm", "label": "确认首次提交" },
+              "interaction": {
+                "kind": "confirm",
+                "label": "确认首次提交"
+              },
               "surface": {
                 "kind": "approval_card",
                 "title": "验收争议",
                 "items": [
-                  { "label": "首次验收包", "value": "已提交，回执保留", "state": "neutral" },
-                  { "label": "客户意见", "value": "缺少序列号清单", "state": "warning", "changed": true },
-                  { "label": "未决金额", "value": "¥120,000", "state": "warning" },
-                  { "label": "整改任务", "value": "已创建", "state": "active", "changed": true }
+                  {
+                    "label": "首次验收包",
+                    "value": "已提交，回执保留",
+                    "state": "neutral"
+                  },
+                  {
+                    "label": "客户意见",
+                    "value": "缺少序列号清单",
+                    "state": "warning",
+                    "changed": true
+                  },
+                  {
+                    "label": "未决金额",
+                    "value": "¥120,000",
+                    "state": "warning"
+                  },
+                  {
+                    "label": "整改任务",
+                    "value": "已创建",
+                    "state": "active",
+                    "changed": true
+                  }
                 ]
               }
             },
@@ -40019,14 +40331,32 @@
               "title": "补证、重提并取得正式验收",
               "narration": "序列号证据补齐后，AI 同事重新核对交付版本，发起第二次提交确认；客户正式签章后，再独立读取验收对象和争议余额。",
               "result": "正式验收金额为 ¥120,000，原争议余额归零。",
-              "interaction": { "kind": "confirm", "label": "确认提交验收包第 2 版" },
+              "interaction": {
+                "kind": "confirm",
+                "label": "确认提交验收包第 2 版"
+              },
               "surface": {
                 "kind": "browser_panel",
                 "title": "客户验收门户",
                 "items": [
-                  { "label": "验收包第 2 版", "value": "已接收，替代首次提交", "state": "success", "changed": true },
-                  { "label": "正式验收", "value": "已签章 · ¥120,000", "state": "success", "changed": true },
-                  { "label": "争议余额", "value": "¥0", "state": "success", "changed": true }
+                  {
+                    "label": "验收包第 2 版",
+                    "value": "已接收，替代首次提交",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "正式验收",
+                    "value": "已签章 · ¥120,000",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "争议余额",
+                    "value": "¥0",
+                    "state": "success",
+                    "changed": true
+                  }
                 ]
               }
             },
@@ -40035,14 +40365,31 @@
               "title": "验收通过后才创建发票与应收",
               "narration": "AI 同事核对主体、金额和开票条件，由财务确认后调用发票与应收系统，并分别回读正式发票、应收余额和付款通知送达。",
               "result": "正式发票有效，应收 ¥120,000，付款信息已送达测试联系人。",
-              "interaction": { "kind": "confirm", "label": "批准开票并建立应收" },
+              "interaction": {
+                "kind": "confirm",
+                "label": "批准开票并建立应收"
+              },
               "surface": {
                 "kind": "finance_ledger",
                 "title": "财务系统",
                 "items": [
-                  { "label": "正式发票", "value": "有效 · ¥120,000", "state": "success", "changed": true },
-                  { "label": "应收余额", "value": "¥120,000", "state": "active", "changed": true },
-                  { "label": "付款通知", "value": "已确认并送达", "state": "success" }
+                  {
+                    "label": "正式发票",
+                    "value": "有效 · ¥120,000",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "应收余额",
+                    "value": "¥120,000",
+                    "state": "active",
+                    "changed": true
+                  },
+                  {
+                    "label": "付款通知",
+                    "value": "已确认并送达",
+                    "state": "success"
+                  }
                 ]
               }
             },
@@ -40051,14 +40398,31 @@
               "title": "客户承诺付款，但系统仍然等待银行事实",
               "narration": "客户回复两日内付款，AI 同事记录付款承诺并在到期日自动复查银行。没有匹配交易时，不把口头承诺冒充到账。",
               "result": "承诺已逾期，现金状态仍保持等待；随后第一笔 ¥70,000 来款被独立读取。",
-              "interaction": { "kind": "next", "label": "处理第一笔来款" },
+              "interaction": {
+                "kind": "next",
+                "label": "处理第一笔来款"
+              },
               "surface": {
                 "kind": "im_thread",
                 "title": "付款承诺与银行复查",
                 "items": [
-                  { "label": "客户", "value": "两日内支付 ¥120,000", "state": "neutral" },
-                  { "label": "承诺日复查", "value": "未发现匹配来款", "state": "warning", "changed": true },
-                  { "label": "第一笔银行来款", "value": "¥70,000 · 尚未分配", "state": "active", "changed": true }
+                  {
+                    "label": "客户",
+                    "value": "两日内支付 ¥120,000",
+                    "state": "neutral"
+                  },
+                  {
+                    "label": "承诺日复查",
+                    "value": "未发现匹配来款",
+                    "state": "warning",
+                    "changed": true
+                  },
+                  {
+                    "label": "第一笔银行来款",
+                    "value": "¥70,000 · 尚未分配",
+                    "state": "active",
+                    "changed": true
+                  }
                 ]
               }
             },
@@ -40067,15 +40431,37 @@
               "title": "第一笔来款核销后仍不能关闭",
               "narration": "AI 同事形成分配建议，财务确认后正式过账，随后分别回读银行分配、核销记录和应收余额。",
               "result": "第一笔 ¥70,000 已核销，应收仍剩 ¥50,000，案件保持开放。",
-              "interaction": { "kind": "confirm", "label": "批准第一笔核销" },
+              "interaction": {
+                "kind": "confirm",
+                "label": "批准第一笔核销"
+              },
               "surface": {
                 "kind": "finance_ledger",
                 "title": "应收与核销台账",
                 "items": [
-                  { "label": "第一笔来款", "value": "¥70,000 · 已分配", "state": "success", "changed": true },
-                  { "label": "累计核销", "value": "¥70,000", "state": "success", "changed": true },
-                  { "label": "剩余应收", "value": "¥50,000", "state": "warning", "changed": true },
-                  { "label": "案件状态", "value": "继续等待第二笔来款", "state": "active" }
+                  {
+                    "label": "第一笔来款",
+                    "value": "¥70,000 · 已分配",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "累计核销",
+                    "value": "¥70,000",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "剩余应收",
+                    "value": "¥50,000",
+                    "state": "warning",
+                    "changed": true
+                  },
+                  {
+                    "label": "案件状态",
+                    "value": "继续等待第二笔来款",
+                    "state": "active"
+                  }
                 ]
               }
             },
@@ -40084,15 +40470,37 @@
               "title": "第二笔到账后完成余额归零",
               "narration": "第二笔 ¥50,000 到达后，AI 同事重新核对币种、主体和剩余应收，再由财务确认核销；第一笔记录保持不可变。",
               "result": "两笔银行交易均已分配，应收余额归零，付款承诺转为已兑现。",
-              "interaction": { "kind": "confirm", "label": "批准第二笔核销" },
+              "interaction": {
+                "kind": "confirm",
+                "label": "批准第二笔核销"
+              },
               "surface": {
                 "kind": "finance_ledger",
                 "title": "最终核销",
                 "items": [
-                  { "label": "第二笔来款", "value": "¥50,000 · 已分配", "state": "success", "changed": true },
-                  { "label": "累计到账", "value": "¥120,000", "state": "success", "changed": true },
-                  { "label": "剩余应收", "value": "¥0", "state": "success", "changed": true },
-                  { "label": "付款承诺", "value": "已兑现并回读", "state": "success" }
+                  {
+                    "label": "第二笔来款",
+                    "value": "¥50,000 · 已分配",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "累计到账",
+                    "value": "¥120,000",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "剩余应收",
+                    "value": "¥0",
+                    "state": "success",
+                    "changed": true
+                  },
+                  {
+                    "label": "付款承诺",
+                    "value": "已兑现并回读",
+                    "state": "success"
+                  }
                 ]
               }
             },
@@ -40101,15 +40509,35 @@
               "title": "跨五类权威对象验证现金终态",
               "narration": "最终阶段重新读取验收、发票、应收、两笔银行交易和两条核销记录。只有金额守恒且没有未决争议、未分配来款或剩余应收，案件才关闭。",
               "result": "验收、开票、到账与核销一致，现金闭环案件正式关闭。",
-              "interaction": { "kind": "next", "label": "演示完成" },
+              "interaction": {
+                "kind": "next",
+                "label": "演示完成"
+              },
               "surface": {
                 "kind": "summary",
                 "title": "本次改变了什么",
                 "items": [
-                  { "label": "正式验收", "value": "¥120,000 · 已签章", "state": "success" },
-                  { "label": "正式发票", "value": "有效 · ¥120,000", "state": "success" },
-                  { "label": "银行到账", "value": "¥70,000 + ¥50,000", "state": "success" },
-                  { "label": "应收与核销", "value": "余额 ¥0 · 未分配 ¥0", "state": "success", "changed": true }
+                  {
+                    "label": "正式验收",
+                    "value": "¥120,000 · 已签章",
+                    "state": "success"
+                  },
+                  {
+                    "label": "正式发票",
+                    "value": "有效 · ¥120,000",
+                    "state": "success"
+                  },
+                  {
+                    "label": "银行到账",
+                    "value": "¥70,000 + ¥50,000",
+                    "state": "success"
+                  },
+                  {
+                    "label": "应收与核销",
+                    "value": "余额 ¥0 · 未分配 ¥0",
+                    "state": "success",
+                    "changed": true
+                  }
                 ]
               }
             }
@@ -40143,8 +40571,8 @@
         "view-settlement-reconciliation-to-cash-loop-cs"
       ],
       "public": {
-        "title": "平台与门店结算追到账务一致",
-        "value": "以 结算 批次 或班次为对象处理费项、扣款、申诉和 打款记录，回读银行、凭证与结算状态",
+        "title": "平台结算对不平的账，一笔一笔追平",
+        "value": "规则先对平大头，只接跨期、未知扣费和争议件，追到银行流水和结算状态一致",
         "shortChain": [
           "接收业务事件",
           "读取权威状态",
@@ -40184,9 +40612,9 @@
         "goalTags": [
           "追回款"
         ],
-        "triggerBadge": "业务对象变化、相关反馈到达或人工发起时",
+        "triggerBadge": "结算批次生成后",
         "actionBadge": "会执行 · 会等待 · 会继续",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "争议处理与调账须审批",
         "detail": {
           "event": "业务对象变化、相关反馈到达或人工发起时",
           "reads": [
@@ -40232,8 +40660,8 @@
         "view-inventory-rebalance-loop-production"
       ],
       "public": {
-        "title": "库存跨店跨仓调配并复查",
-        "value": "优化器给候选，Agent 处理权属与现场例外，经审写调拨或补货、追签收并验证改善",
+        "title": "这边压货那边断货，调一次就见效",
+        "value": "优化器给候选，人和现场例外交给 AI 同事处理，经审批调拨、追签收，最后验证库存真的改善",
         "shortChain": [
           "接收业务事件",
           "读取权威状态",
@@ -40268,9 +40696,9 @@
         "goalTags": [
           "控库存"
         ],
-        "triggerBadge": "业务对象变化、相关反馈到达或人工发起时",
+        "triggerBadge": "库存失衡预警时",
         "actionBadge": "会执行 · 会等待 · 会继续",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "调拨指令须审批后下发",
         "detail": {
           "event": "业务对象变化、相关反馈到达或人工发起时",
           "reads": [
@@ -40327,8 +40755,8 @@
         "view-supply-gap-closure-loop-production"
       ],
       "public": {
-        "title": "关键物料缺口追到合格可用",
-        "value": "持续追替代、调拨、采购、收货与质检，直到可用库存和生产或交付门禁一致",
+        "title": "关键物料的缺口，追到合格可用为止",
+        "value": "缺口发现晚一天，停线就多一天；询证、调拨、替代、催货多路并进，直到物料客观可用",
         "shortChain": [
           "接收业务事件",
           "读取权威状态",
@@ -40372,9 +40800,9 @@
           "保交付",
           "控库存"
         ],
-        "triggerBadge": "业务对象变化、相关反馈到达或人工发起时",
+        "triggerBadge": "物料缺口出现时",
         "actionBadge": "会执行 · 会等待 · 会继续",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "替代方案与紧急采购须批准",
         "detail": {
           "event": "业务对象变化、相关反馈到达或人工发起时",
           "reads": [
@@ -40419,8 +40847,8 @@
         "view-supplier-sourcing-to-approved-po-loop-production"
       ],
       "public": {
-        "title": "复杂采购走到供应商确认 PO",
-        "value": "非标需求经过准入、技术、商务和审批，唯一 PO 版本 获供应商确认并回读",
+        "title": "非标采购，走到供应商白纸黑字确认",
+        "value": "口头承诺的交期和价格都会变卦；准入、比价、偏差澄清、分权审批，追到唯一 PO 版本被供应商逐字段确认",
         "shortChain": [
           "接收业务事件",
           "读取权威状态",
@@ -40455,9 +40883,9 @@
         "goalTags": [
           "提人效"
         ],
-        "triggerBadge": "业务对象变化、相关反馈到达或人工发起时",
+        "triggerBadge": "获批请购进入寻源时",
         "actionBadge": "会执行 · 会等待 · 会继续",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "PO 签发须分权审批",
         "detail": {
           "event": "业务对象变化、相关反馈到达或人工发起时",
           "reads": [
@@ -40502,8 +40930,8 @@
         "view-payables-exception-to-payment-settlement-loop-finance"
       ],
       "public": {
-        "title": "收货发票异常追到安全付款",
-        "value": "规则先匹配，Agent 补语义证据、处理争议，经强审付款并核对银行与 AP，或保持正式 暂缓",
+        "title": "对不上的发票，查清再付款",
+        "value": "三单不符硬付就是损失，硬压就是伤供应商；规则先匹配，例外补证、争议处理，经强审批付款并核对到账",
         "shortChain": [
           "接收业务事件",
           "读取权威状态",
@@ -40539,9 +40967,9 @@
           "追回款",
           "控风险"
         ],
-        "triggerBadge": "业务对象变化、相关反馈到达或人工发起时",
+        "triggerBadge": "发票与单据不符时",
         "actionBadge": "会执行 · 会等待 · 会继续",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "付款执行须职责分离审批",
         "detail": {
           "event": "业务对象变化、相关反馈到达或人工发起时",
           "reads": [
@@ -40599,8 +41027,8 @@
         "view-compliance-evidence-gate-loop-production"
       ],
       "public": {
-        "title": "合规证据核齐并由有权人放行",
-        "value": "让证据与主体、产品、批次、用途和市场准确匹配，经专业审批后写 暂缓 或 放行 并回读",
+        "title": "证据没核齐，就不放行",
+        "value": "证书过期、批次对不上，出了门就是事故；证据与主体、批次、市场逐项匹配，专业审批后才写放行",
         "shortChain": [
           "接收业务事件",
           "读取当前版本",
@@ -40642,9 +41070,9 @@
         "goalTags": [
           "控风险"
         ],
-        "triggerBadge": "受控业务动作满足前置条件或需授权处理时",
+        "triggerBadge": "受控放行申请时",
         "actionBadge": "会写系统 · 会回读验证",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "放行由专业岗审批",
         "detail": {
           "event": "受控业务动作满足前置条件或需授权处理时",
           "reads": [
@@ -40690,8 +41118,8 @@
         "view-quality-nonconformance-loop-production"
       ],
       "public": {
-        "title": "质量异常先止损再复验放行",
-        "value": "从隔离影响范围、NCR/纠正与预防措施、返工到复验与授权放行，重复事件防重，复发可重开",
+        "title": "质量异常，先止损再放行",
+        "value": "先隔离影响范围，再追根因、返工复验，授权后放行；同类问题防重复，复发可重开",
         "shortChain": [
           "接收业务事件",
           "读取权威状态",
@@ -40739,9 +41167,9 @@
           "降客诉",
           "控风险"
         ],
-        "triggerBadge": "业务对象变化、相关反馈到达或人工发起时",
+        "triggerBadge": "质量异常上报时",
         "actionBadge": "会执行 · 会等待 · 会继续",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "处置与放行须质量岗批准",
         "detail": {
           "event": "业务对象变化、相关反馈到达或人工发起时",
           "reads": [
@@ -40801,8 +41229,8 @@
         "view-customer-issue-resolution-loop-production"
       ],
       "public": {
-        "title": "客户问题追到客观恢复和确认",
-        "value": "问题绑定订单、批次或资产，执行维修、退换、退款或更正，回读钱货工单与确认状态",
+        "title": "客户的问题，追到客户点头才算完",
+        "value": "投诉拖着不闭环，丢的是复购；绑定订单批次资产，推进维修退换赔付真实执行，拿到客户确认",
         "shortChain": [
           "接收业务事件",
           "读取权威状态",
@@ -40853,9 +41281,9 @@
         "goalTags": [
           "降客诉"
         ],
-        "triggerBadge": "业务对象变化、相关反馈到达或人工发起时",
+        "triggerBadge": "客户问题提出时",
         "actionBadge": "会执行 · 会等待 · 会继续",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "对外补救方案须审批",
         "detail": {
           "event": "业务对象变化、相关反馈到达或人工发起时",
           "reads": [
@@ -40913,8 +41341,8 @@
         "view-deadline-to-receipt-watch-production"
       ],
       "public": {
-        "title": "到期事项追到提交回执",
-        "value": "前置项齐套后按批准渠道提交，持续等待权威回执；无回执保持未完成并升级",
+        "title": "到期的事，交出去还要拿到回执",
+        "value": "证照、申报、续费，过期一次代价就不小；窗口内备齐材料按批准渠道提交，没拿到权威回执就不算完",
         "shortChain": [
           "按事件或周期巡检",
           "正常时静默",
@@ -40949,9 +41377,9 @@
         "goalTags": [
           "控风险"
         ],
-        "triggerBadge": "业务事件发生或观察周期到点时",
+        "triggerBadge": "每日窗口巡检",
         "actionBadge": "会静默巡检 · 异常时升级",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "续办口径与用印须有权人拍板",
         "detail": {
           "event": "业务事件发生或观察周期到点时",
           "reads": [
@@ -40995,8 +41423,8 @@
         "view-requisition-to-authorized-hire-loop-hr"
       ],
       "public": {
-        "title": "招聘需求追到授权录用和 Offer 回执",
-        "value": "从获批岗位、证据化筛选与人审决定追到 Offer 回执和唯一 待入职人员 对象",
+        "title": "招聘从批编制到 Offer 回执，一站跟完",
+        "value": "面试拖、审批散，好候选人就被别家签走；证据化筛选、协作面试、授权录用，追到唯一待入职对象",
         "shortChain": [
           "接收业务事件",
           "读取权威状态",
@@ -41025,9 +41453,9 @@
         "goalTags": [
           "提人效"
         ],
-        "triggerBadge": "业务对象变化、相关反馈到达或人工发起时",
+        "triggerBadge": "编制获批后",
         "actionBadge": "会执行 · 会等待 · 会继续",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "录用决定由人作出并审批",
         "detail": {
           "event": "业务对象变化、相关反馈到达或人工发起时",
           "reads": [
@@ -41072,8 +41500,8 @@
         "view-employee-lifecycle-transition-loop-production"
       ],
       "public": {
-        "title": "入转调离跨系统状态一次收口",
-        "value": "获批人事事件驱动 人事系统、IAM、资产、职责和交接，处理部分成功并逐系统回读",
+        "title": "入转调离，所有系统一次改干净",
+        "value": "离职了账号还在、调岗了权限没换，都是隐患；人事事件驱动各系统同版本收口，逐系统回读",
         "shortChain": [
           "接收业务事件",
           "读取权威状态",
@@ -41103,9 +41531,9 @@
         "goalTags": [
           "提人效"
         ],
-        "triggerBadge": "业务对象变化、相关反馈到达或人工发起时",
+        "triggerBadge": "人事事件获批后",
         "actionBadge": "会执行 · 会等待 · 会继续",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "生效时点与权限变更须批准",
         "detail": {
           "event": "业务对象变化、相关反馈到达或人工发起时",
           "reads": [
@@ -41167,8 +41595,8 @@
         "view-management-exception-closure-loop-production"
       ],
       "public": {
-        "title": "重大经营异常回到原业务对象闭环",
-        "value": "监测跨链重大异常，推动授权取舍并调用原 工作流，以原对象回读或正式风险接受关闭",
+        "title": "经营异常越过红线，一案一责追到闭环",
+        "value": "数据异常天天有，真正要管的是越过企业阈值那几件；建唯一责任案件，推动拍板并回到原业务对象闭环",
         "shortChain": [
           "按事件或周期巡检",
           "正常时静默",
@@ -41210,9 +41638,9 @@
         "goalTags": [
           "控风险"
         ],
-        "triggerBadge": "业务事件发生或观察周期到点时",
+        "triggerBadge": "经营阈值被突破时",
         "actionBadge": "会静默巡检 · 异常时升级",
-        "humanApprovalSummary": "高风险动作、对外承诺和关键业务状态变化需有权人确认",
+        "humanApprovalSummary": "跨域处置由有权人拍板",
         "detail": {
           "event": "业务事件发生或观察周期到点时",
           "reads": [
@@ -41270,8 +41698,8 @@
         "view-evidence-backed-research-create-procurement"
       ],
       "public": {
-        "title": "有证据的研究与决策材料",
-        "value": "统一竞品、政策、行业研究和决策简报，以来源、反证、未知项和批准成果为终点",
+        "title": "要一份查过来源的研究，不是拼贴文",
+        "value": "竞品、政策、行业判断，每个结论都有来源和反证，说不准的地方明说，拿去决策不心虚",
         "shortChain": [
           "读取获授权资料",
           "核验来源与版本",
@@ -41321,9 +41749,9 @@
           "找客户",
           "提人效"
         ],
-        "triggerBadge": "收到获授权的研究、准备、沟通或成果任务时",
+        "triggerBadge": "提出研究任务时",
         "actionBadge": "会生成并校验受控成果",
-        "humanApprovalSummary": "成果形成可自动；关键事实、专业结论与对外使用由有权人复核",
+        "humanApprovalSummary": "关键结论对外使用前须复核",
         "detail": {
           "event": "收到获授权的研究、准备、沟通或成果任务时",
           "reads": [
@@ -41368,8 +41796,8 @@
         "view-customer-visit-preparation-create-cs"
       ],
       "public": {
-        "title": "一页拉齐客户事实与拜访重点",
-        "value": "客户档案、销售拜访和老板见客共用事实底稿，只改变信息密度",
+        "title": "见客户前，两分钟拉齐所有事实",
+        "value": "历史沟通、未结订单、上次承诺，一页讲清；对方最可能问什么，提前给你要点",
         "shortChain": [
           "读取获授权资料",
           "核验来源与版本",
@@ -41406,9 +41834,9 @@
           "推进成交",
           "提人效"
         ],
-        "triggerBadge": "收到获授权的研究、准备、沟通或成果任务时",
+        "triggerBadge": "拜访安排确定时",
         "actionBadge": "会生成并校验受控成果",
-        "humanApprovalSummary": "成果形成可自动；关键事实、专业结论与对外使用由有权人复核",
+        "humanApprovalSummary": "简报可自动生成，承诺口径由你来定",
         "detail": {
           "event": "收到获授权的研究、准备、沟通或成果任务时",
           "reads": [
@@ -41454,8 +41882,8 @@
         "view-evidence-backed-communication-create-cs"
       ],
       "public": {
-        "title": "有出处、数字不走样的业务答复",
-        "value": "统一产品与制度问答、资料翻译及销售客服回复，保留来源版本、术语、数字 差异 和人审",
+        "title": "对外答复，有出处、数字不走样",
+        "value": "产品参数、制度条款，答错一个数就是事故；每句答复带来源版本，越权问题主动拦下",
         "shortChain": [
           "读取获授权资料",
           "核验来源与版本",
@@ -41500,9 +41928,9 @@
         "goalTags": [
           "提人效"
         ],
-        "triggerBadge": "收到获授权的研究、准备、沟通或成果任务时",
+        "triggerBadge": "收到问答或回复任务时",
         "actionBadge": "会生成并校验受控成果",
-        "humanApprovalSummary": "成果形成可自动；关键事实、专业结论与对外使用由有权人复核",
+        "humanApprovalSummary": "对外发送前须本人确认",
         "detail": {
           "event": "收到获授权的研究、准备、沟通或成果任务时",
           "reads": [
@@ -41547,8 +41975,8 @@
         "view-approved-content-asset-create-hr"
       ],
       "public": {
-        "title": "经批准的内容与视觉资产",
-        "value": "统一选题、脚本、内容改编、商品视觉和招聘内容，保留事实、授权、版本和批准状态",
+        "title": "内容资产，从选题到批准一条线",
+        "value": "选题、脚本、视觉，事实和授权都留档，批准状态清楚，不会发出去才发现用错素材",
         "shortChain": [
           "读取获授权资料",
           "核验来源与版本",
@@ -41583,9 +42011,9 @@
         "goalTags": [
           "提人效"
         ],
-        "triggerBadge": "收到获授权的研究、准备、沟通或成果任务时",
+        "triggerBadge": "内容任务发起时",
         "actionBadge": "会生成并校验受控成果",
-        "humanApprovalSummary": "成果形成可自动；关键事实、专业结论与对外使用由有权人复核",
+        "humanApprovalSummary": "对外发布前须审批",
         "detail": {
           "event": "收到获授权的研究、准备、沟通或成果任务时",
           "reads": [
@@ -41635,8 +42063,8 @@
         "view-meeting-action-record-create-production"
       ],
       "public": {
-        "title": "会议事实、决定与行动引用可追溯",
-        "value": "纪要是证据制品；需执行的承诺创建 动作引用 并进入原业务链",
+        "title": "会开完，结论和行动都能查有据",
+        "value": "纪要是证据，不是流水账；决议编号化、行动项进待办挂到业务对象，回头能追",
         "shortChain": [
           "读取获授权资料",
           "核验来源与版本",
@@ -41676,9 +42104,9 @@
         "goalTags": [
           "提人效"
         ],
-        "triggerBadge": "收到获授权的研究、准备、沟通或成果任务时",
+        "triggerBadge": "会议结束后",
         "actionBadge": "会生成并校验受控成果",
-        "humanApprovalSummary": "成果形成可自动；关键事实、专业结论与对外使用由有权人复核",
+        "humanApprovalSummary": "纪要下发前须主持人确认",
         "detail": {
           "event": "收到获授权的研究、准备、沟通或成果任务时",
           "reads": [
@@ -41724,8 +42152,8 @@
         "view-evidence-backed-deliverable-create-production"
       ],
       "public": {
-        "title": "有引用、有版本的专业成果",
-        "value": "统一销售方案和专业成果，保留来源、方法、版本、复核与交付，签发验收另走业务链",
+        "title": "拿得出手的专业成果，来源方法都齐",
+        "value": "方案、报告、交付物，留来源、留版本、留复核记录；签发和验收走对应业务链",
         "shortChain": [
           "读取获授权资料",
           "核验来源与版本",
@@ -41760,9 +42188,9 @@
         "goalTags": [
           "提人效"
         ],
-        "triggerBadge": "收到获授权的研究、准备、沟通或成果任务时",
+        "triggerBadge": "成果任务发起时",
         "actionBadge": "会生成并校验受控成果",
-        "humanApprovalSummary": "成果形成可自动；关键事实、专业结论与对外使用由有权人复核",
+        "humanApprovalSummary": "签发前须专业复核",
         "detail": {
           "event": "收到获授权的研究、准备、沟通或成果任务时",
           "reads": [
@@ -41796,6 +42224,741 @@
       "internal": {
         "enabled": true,
         "source": "assets/20260721/workflow-research/gate2-freeze-manifest.json"
+      }
+    },
+    {
+      "id": "catalog-hook-promising-customers",
+      "workflowId": "opportunity-commitment-progress-loop",
+      "roleViewIds": [
+        "view-opportunity-commitment-progress-loop-sales"
+      ],
+      "public": {
+        "title": "分析一下我手上哪些客户最值得推进",
+        "value": "23 个客户不知道先跟谁？按金额、停留天数、互动热度和未兑现承诺排出前三，讲清为什么，跟进待办一键建好",
+        "shortChain": [
+          "读你名下客户",
+          "四因子排序",
+          "给推进理由",
+          "经你确认建待办"
+        ],
+        "roleIds": [
+          "sales"
+        ],
+        "industryTags": [
+          "manufacturing",
+          "trade",
+          "service"
+        ],
+        "industryVerticals": [
+          "通用企业"
+        ],
+        "businessModels": [
+          "通用经营"
+        ],
+        "maturityLevels": [
+          "Excel/钉钉为主",
+          "已有单体系统",
+          "多系统已集成"
+        ],
+        "goalTags": [
+          "推进成交",
+          "找客户"
+        ],
+        "triggerBadge": "你一句话",
+        "actionBadge": "会分析 · 会排序 · 经确认建待办",
+        "humanApprovalSummary": "跟进待办写入前须你确认",
+        "detail": {
+          "event": "你在对话框问一句：哪些客户最值得推进",
+          "reads": [
+            "CRM 客户与商机",
+            "日程与待办",
+            "历史跟进记录"
+          ],
+          "decides": "按金额×阶段停留×最近互动×承诺兑现四因子排序，前三给理由，该放一放的也明说",
+          "acts": [
+            "生成本周推进清单",
+            "为前三客户创建跟进待办"
+          ],
+          "approval": "待办与日程写入前须本人确认",
+          "beforeAfter": "从凭感觉跟单，到每周有一张说得出理由的推进清单",
+          "followUp": "确认后待办进你的待办中心，附推进要点",
+          "valueProof": "推进清单可下载，待办有回执可回查"
+        },
+        "launch": {
+          "sampleAvailable": false,
+          "inputHint": "点「看它如何完成」直接看完整演示；数据为虚构示例",
+          "entry": {
+            "kind": "business_event",
+            "content": "CRM 提示：你名下商机 OPP-2026-0311 已在方案报出后停留 22 天，另有 3 个客户超两周无互动。"
+          }
+        }
+      },
+      "internal": {
+        "enabled": true,
+        "source": "assets/20260809/钩子场景剧本规格.md",
+        "salesPitch": "销售打开对话框最想点的一句话：不给报表，给判断和下一步"
+      }
+    },
+    {
+      "id": "catalog-hook-boss-top-risks",
+      "workflowId": "management-exception-closure-loop",
+      "roleViewIds": [
+        "view-management-exception-closure-loop-boss"
+      ],
+      "public": {
+        "title": "这个月经营上最该担心的三件事是什么",
+        "value": "报表天天有，判断没人给；跨订单、回款、客诉、人员把真正越线的三件挑出来，说清为什么是它们、该派给谁",
+        "shortChain": [
+          "跨域读经营数据",
+          "挑出真异常",
+          "讲清因果",
+          "经你确认发督办"
+        ],
+        "roleIds": [
+          "boss"
+        ],
+        "industryTags": [
+          "manufacturing",
+          "trade",
+          "service"
+        ],
+        "industryVerticals": [
+          "通用企业"
+        ],
+        "businessModels": [
+          "通用经营"
+        ],
+        "maturityLevels": [
+          "Excel/钉钉为主",
+          "已有单体系统",
+          "多系统已集成"
+        ],
+        "goalTags": [
+          "控风险",
+          "提人效"
+        ],
+        "triggerBadge": "每天 07:30 自动",
+        "actionBadge": "会巡检 · 会归因 · 经确认发督办",
+        "humanApprovalSummary": "督办发出前须你确认",
+        "detail": {
+          "event": "每天早晨自动巡检，或你随时问一句",
+          "reads": [
+            "订单与交付",
+            "应收台账",
+            "客诉工单",
+            "人员在岗"
+          ],
+          "decides": "只挑越过企业阈值的异常，逐条给因果链和建议动作，正常波动明确说不用管",
+          "acts": [
+            "生成经营风险一页纸",
+            "向责任人发督办待办"
+          ],
+          "approval": "督办内容与措辞经你逐条确认，可改可删",
+          "beforeAfter": "从看一堆报表自己找问题，到每天三件事带着因果和建议来找你",
+          "followUp": "责任人处理进展自动跟踪，逾期升级回你",
+          "valueProof": "风险页可下载，督办待办逐条有回执"
+        },
+        "launch": {
+          "sampleAvailable": false,
+          "inputHint": "点「看它如何完成」直接看完整演示；数据为虚构示例",
+          "entry": {
+            "kind": "scheduled_trigger",
+            "content": "每天 07:30 经营晨检定时任务触发，覆盖订单、应收、客诉、人员四个域。"
+          }
+        }
+      },
+      "internal": {
+        "enabled": true,
+        "source": "assets/20260809/钩子场景剧本规格.md",
+        "salesPitch": "老板版钩子：不是 BI 大屏，是带判断的三件事"
+      }
+    },
+    {
+      "id": "catalog-hook-visit-briefing",
+      "workflowId": "customer-visit-preparation-create",
+      "roleViewIds": [
+        "view-customer-visit-preparation-create-sales",
+        "view-customer-visit-preparation-create-boss"
+      ],
+      "public": {
+        "title": "明天要见海川机械的王总，帮我快速拉齐",
+        "value": "历史合作、停滞商机、我方没兑现的承诺、对方最可能问的三个问题，两分钟一页讲清，别在客户面前被问住",
+        "shortChain": [
+          "读客户全量事实",
+          "自查未兑现承诺",
+          "推断对方关注点",
+          "一页简报带走"
+        ],
+        "roleIds": [
+          "sales",
+          "boss"
+        ],
+        "industryTags": [
+          "manufacturing",
+          "trade",
+          "service"
+        ],
+        "industryVerticals": [
+          "通用企业"
+        ],
+        "businessModels": [
+          "通用经营"
+        ],
+        "maturityLevels": [
+          "Excel/钉钉为主",
+          "已有单体系统",
+          "多系统已集成"
+        ],
+        "goalTags": [
+          "推进成交"
+        ],
+        "triggerBadge": "你一句话",
+        "actionBadge": "会梳理 · 会推断 · 简报可下载",
+        "humanApprovalSummary": "拜访确认消息发送前须你确认",
+        "detail": {
+          "event": "拜访前你说一句要见谁",
+          "reads": [
+            "CRM 客户档案",
+            "历史沟通记录",
+            "订单与回款"
+          ],
+          "decides": "自查我方未兑现承诺并标红，推断对方最可能问的三个问题并给应对要点，谈判底线只给依据不替你定",
+          "acts": [
+            "生成一页拜访简报",
+            "把带样件报告加入明早待办",
+            "拟拜访确认消息"
+          ],
+          "approval": "对客户的消息发送前须你确认",
+          "beforeAfter": "从翻半小时聊天记录，到两分钟拿到一页带判断的简报",
+          "followUp": "拜访后跟进纪要可以接着让 AI 同事整理",
+          "valueProof": "简报可下载，待办与消息有回执"
+        },
+        "launch": {
+          "sampleAvailable": false,
+          "inputHint": "点「看它如何完成」直接看完整演示；数据为虚构示例",
+          "entry": {
+            "kind": "user_request",
+            "content": "明天要见海川机械的王总，帮我把历史合作、在谈商机和他最可能问的问题拉成一页。"
+          }
+        }
+      },
+      "internal": {
+        "enabled": true,
+        "source": "assets/20260809/钩子场景剧本规格.md",
+        "salesPitch": "见客前两分钟，销售和老板都用得上"
+      }
+    },
+    {
+      "id": "catalog-hook-delivery-risk-daily",
+      "workflowId": "order-delivery-defender-loop",
+      "roleViewIds": [
+        "view-order-delivery-defender-loop-cs",
+        "view-order-delivery-defender-loop-production"
+      ],
+      "public": {
+        "title": "每天 8 点，把今天有交付风险的订单挑出来",
+        "value": "17 个在途订单不用个个盯；缺料、拖签、无凭据的承诺自动排查，高危的给因果链，催办消息经你确认再发",
+        "shortChain": [
+          "每早自动巡检",
+          "倒排交期风险",
+          "识破不可信承诺",
+          "经你确认发催办"
+        ],
+        "roleIds": [
+          "cs",
+          "production"
+        ],
+        "industryTags": [
+          "manufacturing",
+          "trade"
+        ],
+        "industryVerticals": [
+          "通用企业"
+        ],
+        "businessModels": [
+          "通用经营"
+        ],
+        "maturityLevels": [
+          "Excel/钉钉为主",
+          "已有单体系统",
+          "多系统已集成"
+        ],
+        "goalTags": [
+          "保交付"
+        ],
+        "triggerBadge": "每天 08:00 自动",
+        "actionBadge": "会巡检 · 会倒排 · 经确认发催办",
+        "humanApprovalSummary": "催货与预警消息发出前须你确认",
+        "detail": {
+          "event": "每天 08:00 定时巡检自动开始",
+          "reads": [
+            "订单中心",
+            "物料与在途",
+            "项目群消息"
+          ],
+          "decides": "按交期倒排逐单判风险，供应商承诺无发货凭据视为不可信，高危单给完整因果链",
+          "acts": [
+            "生成交付风险晨报",
+            "给采购发催货任务",
+            "在项目群发风险预警"
+          ],
+          "approval": "所有对外消息与催办经你确认，可先私聊对齐再发群",
+          "beforeAfter": "从客户来催才发现风险，到每天 8 点风险清单主动到你手上",
+          "followUp": "风险解除或改期获批后自动销项",
+          "valueProof": "晨报可下载，催办与群消息有送达回执"
+        },
+        "launch": {
+          "sampleAvailable": false,
+          "inputHint": "点「看它如何完成」直接看完整演示；数据为虚构示例",
+          "entry": {
+            "kind": "business_event",
+            "content": "订单 SO-2026-1027 的关键物料在途承诺失去发货凭据，交付窗口触发风险告警。"
+          }
+        }
+      },
+      "internal": {
+        "enabled": true,
+        "source": "assets/20260809/钩子场景剧本规格.md",
+        "salesPitch": "定时巡检钩子：演示主动性，异常才叫人"
+      }
+    },
+    {
+      "id": "catalog-hook-receivables-chase",
+      "workflowId": "acceptance-to-cash-loop",
+      "roleViewIds": [
+        "view-acceptance-to-cash-loop-finance"
+      ],
+      "public": {
+        "title": "哪些应收该催了？帮我把催款话术也拟好",
+        "value": "12 笔应收分档排序，该催的给首催、再催、升级三档话术；正在谈新单的客户先和销售对齐口径，不把关系催僵",
+        "shortChain": [
+          "盘全部应收",
+          "分档定策略",
+          "拟三档话术",
+          "经审批后发函"
+        ],
+        "roleIds": [
+          "finance"
+        ],
+        "industryTags": [
+          "manufacturing",
+          "trade",
+          "service"
+        ],
+        "industryVerticals": [
+          "通用企业"
+        ],
+        "businessModels": [
+          "通用经营"
+        ],
+        "maturityLevels": [
+          "Excel/钉钉为主",
+          "已有单体系统",
+          "多系统已集成"
+        ],
+        "goalTags": [
+          "追回款"
+        ],
+        "triggerBadge": "你一句话",
+        "actionBadge": "会分档 · 会拟话术 · 经审批发函",
+        "humanApprovalSummary": "对外催款函必须审批后发出",
+        "detail": {
+          "event": "你问一句：哪些应收该催了",
+          "reads": [
+            "应收台账",
+            "CRM 商机状态",
+            "往来邮件"
+          ],
+          "decides": "按逾期天数×金额×客户关系分档，识别催收与在谈商机的冲突并提示先对齐口径，升级函不轻易建议",
+          "acts": [
+            "生成分档催款话术包",
+            "发对账函并抄送销售"
+          ],
+          "approval": "催款函发送必须经你确认并与销售对齐",
+          "beforeAfter": "从凭记忆催款，到每周一张分档清单加现成话术",
+          "followUp": "到账后自动核销提醒，未回应自动升级提示",
+          "valueProof": "话术包可下载，函件有送达回执"
+        },
+        "launch": {
+          "sampleAvailable": false,
+          "inputHint": "点「看它如何完成」直接看完整演示；数据为虚构示例",
+          "entry": {
+            "kind": "business_event",
+            "content": "应收台账刷新：AR-2026-0058 蓝谷自动化 ¥23.6 万逾期已达 18 天，且该客户有新商机在谈。"
+          }
+        }
+      },
+      "internal": {
+        "enabled": true,
+        "source": "assets/20260809/钩子场景剧本规格.md",
+        "salesPitch": "财务钩子：话术都拟好，只等你点头"
+      }
+    },
+    {
+      "id": "catalog-hook-material-shortage",
+      "workflowId": "supply-gap-closure-loop",
+      "roleViewIds": [
+        "view-supply-gap-closure-loop-procurement"
+      ],
+      "public": {
+        "title": "哪些物料再不催就要断料了",
+        "value": "库存、在途、未来两周需求一起倒排，真缺口给催货函和替代方案两条路的代价对比；系统误报也帮你排除",
+        "shortChain": [
+          "倒排真缺口",
+          "排除误报",
+          "给两条路代价",
+          "经审批发催货函"
+        ],
+        "roleIds": [
+          "procurement"
+        ],
+        "industryTags": [
+          "manufacturing"
+        ],
+        "industryVerticals": [
+          "通用企业"
+        ],
+        "businessModels": [
+          "通用经营"
+        ],
+        "maturityLevels": [
+          "Excel/钉钉为主",
+          "已有单体系统",
+          "多系统已集成"
+        ],
+        "goalTags": [
+          "控库存",
+          "保交付"
+        ],
+        "triggerBadge": "你一句话",
+        "actionBadge": "会倒排 · 会甄别 · 经审批发函",
+        "humanApprovalSummary": "对外催货函与替代启用须审批",
+        "detail": {
+          "event": "你问一句：哪些物料要断了",
+          "reads": [
+            "物料与库存台账",
+            "采购在途",
+            "未来两周生产需求"
+          ],
+          "decides": "安全库存击穿日倒排，无发货凭据的在途视为不可信；静态预警里的误报主动排除并说明",
+          "acts": [
+            "生成断料风险清单",
+            "向供应商发正式催货函",
+            "同步排产风险给生产计划"
+          ],
+          "approval": "催货函与替代方案启用经你审批",
+          "beforeAfter": "从断了料才救火，到提前一周看到真缺口和两条路的代价",
+          "followUp": "到货签收后自动销项，逾期未到自动升级",
+          "valueProof": "清单可下载，催货函有送达回执"
+        },
+        "launch": {
+          "sampleAvailable": false,
+          "inputHint": "点「看它如何完成」直接看完整演示；数据为虚构示例",
+          "entry": {
+            "kind": "business_event",
+            "content": "物料台账预警：精密轴承 6204-RS 可用库存将于 8-12 击穿安全线，绑定订单 SO-2026-1027。"
+          }
+        }
+      },
+      "internal": {
+        "enabled": true,
+        "source": "assets/20260809/钩子场景剧本规格.md",
+        "salesPitch": "采购钩子：不是预警列表，是甄别加两条路"
+      }
+    },
+    {
+      "id": "catalog-hook-open-complaints",
+      "workflowId": "customer-issue-resolution-loop",
+      "roleViewIds": [
+        "view-customer-issue-resolution-loop-cs"
+      ],
+      "public": {
+        "title": "今天还有哪些客诉没闭环",
+        "value": "8 个未结工单按险级排序，卡在哪一步、拖了几天、会不会扩散一眼看清；限时催办和进度回复经你确认再发",
+        "shortChain": [
+          "盘未结工单",
+          "险级排序",
+          "追溯扩散风险",
+          "经确认发催办"
+        ],
+        "roleIds": [
+          "cs"
+        ],
+        "industryTags": [
+          "manufacturing",
+          "trade",
+          "service"
+        ],
+        "industryVerticals": [
+          "通用企业"
+        ],
+        "businessModels": [
+          "通用经营"
+        ],
+        "maturityLevels": [
+          "Excel/钉钉为主",
+          "已有单体系统",
+          "多系统已集成"
+        ],
+        "goalTags": [
+          "降客诉"
+        ],
+        "triggerBadge": "你一句话",
+        "actionBadge": "会排序 · 会追溯 · 经确认发消息",
+        "humanApprovalSummary": "对外回复与内部催办须你确认",
+        "detail": {
+          "event": "你问一句：哪些客诉没闭环",
+          "reads": [
+            "客诉工单",
+            "订单与批次",
+            "群消息记录"
+          ],
+          "decides": "按拖延天数×客户等级×扩散风险排序，卡点归因到人；质检结论未出就不对外预设归因",
+          "acts": [
+            "生成未结盘点与今日行动",
+            "给质检发限时复判待办",
+            "给客户发进度回复"
+          ],
+          "approval": "对外回复与催办逐条经你确认",
+          "beforeAfter": "从工单越攒越多，到每天一张险级清单件件有下一步",
+          "followUp": "复判到期未回自动升级",
+          "valueProof": "盘点可下载，催办与回复有回执"
+        },
+        "launch": {
+          "sampleAvailable": false,
+          "inputHint": "点「看它如何完成」直接看完整演示；数据为虚构示例",
+          "entry": {
+            "kind": "business_event",
+            "content": "客诉工单 NC-2026-0092 已挂起 6 天，同批次产品存在流向第二家客户的扩散风险。"
+          }
+        }
+      },
+      "internal": {
+        "enabled": true,
+        "source": "assets/20260809/钩子场景剧本规格.md",
+        "salesPitch": "客服钩子：险级排序加限时催办"
+      }
+    },
+    {
+      "id": "catalog-hook-meeting-todos",
+      "workflowId": "meeting-action-record-create",
+      "roleViewIds": [
+        "view-meeting-action-record-create-boss",
+        "view-meeting-action-record-create-hr"
+      ],
+      "public": {
+        "title": "刚开完的经营会，把该办的事都盯起来",
+        "value": "47 分钟听记自动抽成结论、决议和行动项；没说清责任人和期限的主动交回给你补，确认后逐条进待办到期自动盯",
+        "shortChain": [
+          "读会议听记",
+          "抽三层结论",
+          "补齐缺口",
+          "经确认下发待办"
+        ],
+        "roleIds": [
+          "boss",
+          "hr"
+        ],
+        "industryTags": [
+          "manufacturing",
+          "trade",
+          "service"
+        ],
+        "industryVerticals": [
+          "通用企业"
+        ],
+        "businessModels": [
+          "通用经营"
+        ],
+        "maturityLevels": [
+          "Excel/钉钉为主",
+          "已有单体系统",
+          "多系统已集成"
+        ],
+        "goalTags": [
+          "提人效"
+        ],
+        "triggerBadge": "你一句话",
+        "actionBadge": "会抽取 · 会补缺 · 经确认下发",
+        "humanApprovalSummary": "纪要与待办下发前须确认",
+        "detail": {
+          "event": "会一结束你说一句：把该办的事盯起来",
+          "reads": [
+            "会议听记转写",
+            "待办中心",
+            "群名单"
+          ],
+          "decides": "事实、决议、行动项分层抽取；责任人或期限缺失的明确交回补齐，说好单聊的内容不进纪要",
+          "acts": [
+            "生成纪要与决议清单",
+            "批量创建待办分配到人",
+            "群发纪要"
+          ],
+          "approval": "下发前逐条经你确认，可改可删",
+          "beforeAfter": "从会后各记各的，到决议编号化、行动项到人到期",
+          "followUp": "到期前自动提醒，逾期升级给你",
+          "valueProof": "纪要可下载，待办逐条有回执"
+        },
+        "launch": {
+          "sampleAvailable": false,
+          "inputHint": "点「看它如何完成」直接看完整演示；数据为虚构示例",
+          "entry": {
+            "kind": "user_request",
+            "content": "把刚才经营会的听记整理成纪要，行动项分到人，下发前给我过目。"
+          }
+        }
+      },
+      "internal": {
+        "enabled": true,
+        "source": "assets/20260809/钩子场景剧本规格.md",
+        "salesPitch": "全员钩子：会议的钱花得值不值，看行动项闭不闭环"
+      }
+    },
+    {
+      "id": "catalog-hook-content-performance",
+      "workflowId": "approved-content-asset-create",
+      "roleViewIds": [
+        "view-approved-content-asset-create-marketing"
+      ],
+      "public": {
+        "title": "这周的获客内容数据怎么样，哪条值得加推",
+        "value": "12 条内容跨平台归因，留资率高的说清为什么值得加推，热闹不获客的点名不投；数据异常主动剔除再下结论",
+        "shortChain": [
+          "跨平台归因",
+          "识别真爆款",
+          "剔除异常数据",
+          "经确认建线索档"
+        ],
+        "roleIds": [
+          "marketing"
+        ],
+        "industryTags": [
+          "manufacturing",
+          "trade",
+          "service",
+          "ecommerce"
+        ],
+        "industryVerticals": [
+          "通用企业"
+        ],
+        "businessModels": [
+          "通用经营"
+        ],
+        "maturityLevels": [
+          "Excel/钉钉为主",
+          "已有单体系统",
+          "多系统已集成"
+        ],
+        "goalTags": [
+          "找客户"
+        ],
+        "triggerBadge": "你一句话",
+        "actionBadge": "会归因 · 会甄别 · 经确认建档",
+        "humanApprovalSummary": "付费投放与线索分配须确认",
+        "detail": {
+          "event": "你问一句：这周内容表现怎么样",
+          "reads": [
+            "内容数据看板",
+            "留资线索台账",
+            "历史投放记录"
+          ],
+          "decides": "以留资而非播放量归因，识别热闹不获客的条目并点名，疑似异常流量剔除后再判断",
+          "acts": [
+            "生成周复盘与加推方案",
+            "把留资线索建档进 CRM 并分配销售"
+          ],
+          "approval": "花钱投放不代办，线索分配经你确认",
+          "beforeAfter": "从凭播放量拍脑袋，到按留资归因决定加推",
+          "followUp": "加推后效果下周自动对比",
+          "valueProof": "复盘可下载，线索建档有回执"
+        },
+        "launch": {
+          "sampleAvailable": false,
+          "inputHint": "点「看它如何完成」直接看完整演示；数据为虚构示例",
+          "entry": {
+            "kind": "user_request",
+            "content": "把这周 12 条获客内容的数据拉出来对比一下，告诉我哪条值得加推、哪条别投了。"
+          }
+        }
+      },
+      "internal": {
+        "enabled": true,
+        "source": "assets/20260809/钩子场景剧本规格.md",
+        "salesPitch": "市场钩子：留资归因，不看热闹"
+      }
+    },
+    {
+      "id": "catalog-hook-attendance-anomaly",
+      "workflowId": "management-exception-closure-loop",
+      "roleViewIds": [
+        "view-management-exception-closure-loop-hr"
+      ],
+      "public": {
+        "title": "今天考勤有什么异常需要我处理",
+        "value": "318 人的考勤大多数异常自动对平不打扰你，真需要处理的三两件带着上下文来找你；病假明细这类隐私主动不看",
+        "shortChain": [
+          "全员自动分拣",
+          "误报自动对平",
+          "真异常给上下文",
+          "经确认发提醒"
+        ],
+        "roleIds": [
+          "hr"
+        ],
+        "industryTags": [
+          "manufacturing",
+          "trade",
+          "service"
+        ],
+        "industryVerticals": [
+          "通用企业"
+        ],
+        "businessModels": [
+          "通用经营"
+        ],
+        "maturityLevels": [
+          "Excel/钉钉为主",
+          "已有单体系统",
+          "多系统已集成"
+        ],
+        "goalTags": [
+          "提人效",
+          "控风险"
+        ],
+        "triggerBadge": "每天 09:00 自动",
+        "actionBadge": "会分拣 · 会对平 · 经确认发提醒",
+        "humanApprovalSummary": "核实与提醒消息须你确认",
+        "detail": {
+          "event": "每天 09:00 自动分拣，或你随时问",
+          "reads": [
+            "考勤系统",
+            "请假与出差审批",
+            "排班与产线任务"
+          ],
+          "decides": "打卡缺失先对审批单自动对平；连续缺勤叠加赶工期这类复合风险给完整上下文；病假病因坚持最小化不查看",
+          "acts": [
+            "生成今日异常处理单",
+            "给主管发核实待办",
+            "给超时加班员工发关怀提醒"
+          ],
+          "approval": "所有消息经你确认，群发可改私发",
+          "beforeAfter": "从每天人工翻考勤表，到只处理真异常",
+          "followUp": "全对平的日子不打扰你",
+          "valueProof": "处理单可下载，待办与提醒有回执"
+        },
+        "launch": {
+          "sampleAvailable": false,
+          "inputHint": "点「看它如何完成」直接看完整演示；数据为虚构示例",
+          "entry": {
+            "kind": "scheduled_trigger",
+            "content": "每天 09:00 考勤分拣定时任务触发，今日全员 318 人打卡数据就绪。"
+          }
+        }
+      },
+      "internal": {
+        "enabled": true,
+        "source": "assets/20260809/钩子场景剧本规格.md",
+        "salesPitch": "HR 钩子：判断力在于大多数异常不用人管"
       }
     }
   ],

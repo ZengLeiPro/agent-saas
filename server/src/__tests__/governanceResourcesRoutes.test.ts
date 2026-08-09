@@ -48,7 +48,7 @@ async function rig(input: {
     } as never,
     agents: { create: agentCreate } as never,
     skills: {} as never,
-    connectors: {} as never,
+    connectors: { get: vi.fn().mockResolvedValue({ connectorId: 'github', status: 'published' }) } as never,
     credentials: { create: credentialCreate } as never,
     environments: {} as never,
     changeJobs: {} as never,
@@ -108,6 +108,20 @@ describe('typed governance resource routes', () => {
     expect(test.agentCreate).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-a', ownerUserId: 'user-1', kind: 'personal_agent',
     }));
+  });
+
+  it('org_shared Credential 使用 tenant owner，获授权成员可由 Broker 按 tenant 读取', async () => {
+    const test = await rig({
+      user: { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' },
+    });
+    const response = await test.request('/api/governance/resources/credentials', json('POST', {
+      connectorId: 'github', kind: 'org_shared', purpose: 'shared automation',
+      secret: 'github_pat_shared_sensitive',
+    }));
+    expect(response.status).toBe(201);
+    expect(test.putSecret).toHaveBeenCalledWith(
+      'tenant:tenant-a', 'connector', 'github_pat_shared_sensitive', expect.any(Object), expect.any(Object),
+    );
   });
 
   it('Credential Secret 仅写 Vault，API 与治理记录响应不暴露 secretRef', async () => {

@@ -18,6 +18,7 @@ describe('GovernanceChangeJobWorker', () => {
       claim: vi.fn().mockResolvedValue({ ...job, status: 'running', revision: 2 }),
       listDomains: vi.fn().mockResolvedValue(domains),
       updateDomain: vi.fn().mockResolvedValue({}),
+      renewLease: vi.fn().mockResolvedValue(true),
       complete: vi.fn().mockResolvedValue({ ...job, status: 'succeeded', revision: 3 }),
       fail: vi.fn(),
     };
@@ -31,8 +32,36 @@ describe('GovernanceChangeJobWorker', () => {
     })).resolves.toMatchObject({ status: 'succeeded' });
     expect(calls).toEqual(['first', 'second']);
     expect(store.updateDomain).toHaveBeenCalledTimes(2);
-    expect(store.complete).toHaveBeenCalledWith('acme', 'job-1', 2, 'worker-1');
+    expect(store.complete).toHaveBeenCalledWith(
+      'acme', 'job-1', 2, expect.stringMatching(/^worker-1:/),
+    );
     expect(store.fail).not.toHaveBeenCalled();
+  });
+
+  it('回收租约过期的 running Job 后继续执行', async () => {
+    const running = { ...job, status: 'running', revision: 2 };
+    const recovered = { ...job, status: 'retry_wait', revision: 3 };
+    const store = {
+      get: vi.fn().mockResolvedValue(running),
+      recoverExpiredRunning: vi.fn().mockResolvedValue(recovered),
+      claim: vi.fn().mockResolvedValue({ ...job, status: 'running', revision: 4 }),
+      listDomains: vi.fn().mockResolvedValue([{ domain: 'first', status: 'pending', revision: 1 }]),
+      updateDomain: vi.fn().mockResolvedValue({}),
+      renewLease: vi.fn().mockResolvedValue(true),
+      complete: vi.fn().mockResolvedValue({ ...job, status: 'succeeded', revision: 5 }),
+      fail: vi.fn(),
+    };
+    const worker = new GovernanceChangeJobWorker({ store: store as never, workerId: 'worker-1', leaseMs: 1 });
+    await expect(worker.execute({
+      tenantId: 'acme', jobId: 'job-1', handlers: { first: async () => undefined },
+    })).resolves.toMatchObject({ status: 'succeeded' });
+    expect(store.recoverExpiredRunning).toHaveBeenCalledWith(
+      'acme', 'job-1', 1, expect.stringMatching(/^worker-1:/),
+    );
+    expect(store.claim).toHaveBeenCalledWith(
+      'acme', 'job-1', 3, expect.stringMatching(/^worker-1:/),
+    );
+    expect(store.claim.mock.calls[0][3]).toBe(store.recoverExpiredRunning.mock.calls[0][3]);
   });
 
   it('domain 失败记录失败计数并进入 retry_wait', async () => {
@@ -41,6 +70,7 @@ describe('GovernanceChangeJobWorker', () => {
       claim: vi.fn().mockResolvedValue({ ...job, status: 'running', revision: 2 }),
       listDomains: vi.fn().mockResolvedValue(domains),
       updateDomain: vi.fn().mockResolvedValue({}),
+      renewLease: vi.fn().mockResolvedValue(true),
       complete: vi.fn(),
       fail: vi.fn().mockResolvedValue({ ...job, status: 'retry_wait', revision: 3 }),
     };

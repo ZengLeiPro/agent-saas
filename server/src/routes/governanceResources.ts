@@ -9,9 +9,10 @@ import type { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
 import type { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
 import type { PgCredentialStore } from '../data/credentials/index.js';
 import type { PgEnvironmentStore } from '../data/environments/index.js';
-import type { SecretVault } from '../security/secretVault.js';
+import { GLOBAL_OWNER_ID, tenantOwnerId, type SecretVault } from '../security/secretVault.js';
 import { GovernanceChangeJobWorker, type GovernanceChangePlanner, type PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import type { PgMembershipStore } from '../data/memberships/index.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 
 const createAgentSchema = z.object({
   tenantId: z.string().min(2).max(64).optional(),
@@ -127,7 +128,8 @@ export function createGovernanceResourcesRouter(deps: {
   environments: PgEnvironmentStore;
   changeJobs: PgGovernanceChangeJobStore;
   changePlanner: GovernanceChangePlanner;
-  executeTenantDeletion?: (tenantId: string) => Promise<void>;
+  executeTenantDeletionDomain?: (tenantId: string, domain: string) => Promise<void>;
+  tenantExists?: (tenantId: string) => boolean;
   vault: SecretVault;
   audit: GovernanceAuditStore;
 }): Router {
@@ -464,6 +466,10 @@ export function createGovernanceResourcesRouter(deps: {
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
     if (parsed.data.kind === 'org_shared' && !canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
     if (parsed.data.kind === 'infrastructure' && personas.get(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
+    const connector = await deps.connectors.get(parsed.data.connectorId);
+    if (!connector || connector.status !== 'published') {
+      return res.status(409).json({ error: 'Connector unavailable', code: 'CONNECTOR_NOT_PUBLISHED' });
+    }
     const ownerUserId = parsed.data.kind === 'personal_grant' ? req.user!.sub : undefined;
     const custodianUserId = parsed.data.kind === 'org_shared' ? parsed.data.custodianUserId ?? req.user!.sub : undefined;
     const vaultCaller = {
@@ -472,10 +478,15 @@ export function createGovernanceResourcesRouter(deps: {
       tenantId,
       scopes: ['secret:connector:write'],
     };
+    const vaultOwnerId = parsed.data.kind === 'org_shared'
+      ? tenantOwnerId(tenantId)
+      : parsed.data.kind === 'infrastructure'
+        ? GLOBAL_OWNER_ID
+        : vaultCaller.userId;
     let secretRef: string | undefined;
     try {
       const secret = await deps.vault.putSecret(
-        vaultCaller.userId,
+        vaultOwnerId,
         'connector',
         parsed.data.secret,
         vaultCaller,
@@ -602,7 +613,16 @@ export function createGovernanceResourcesRouter(deps: {
     if (personas.get(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
     const parsed = tenantDeleteJobSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    if (!deps.executeTenantDeletion) return res.status(503).json({ error: 'Tenant deletion worker unavailable' });
+    if (parsed.data.tenantId === DEFAULT_TENANT_ID) {
+      return res.status(409).json({ error: 'Platform tenant cannot be deleted', code: 'DEFAULT_TENANT_PROTECTED' });
+    }
+    if (deps.tenantExists && !deps.tenantExists(parsed.data.tenantId)) {
+      const existing = await deps.changeJobs.findByIdempotency(
+        parsed.data.tenantId, 'tenant_delete', parsed.data.idempotencyKey,
+      );
+      if (!existing) return res.status(404).json({ error: 'Tenant not found', code: 'TENANT_NOT_FOUND' });
+    }
+    if (!deps.executeTenantDeletionDomain) return res.status(503).json({ error: 'Tenant deletion worker unavailable' });
     try {
       const result = await deps.changePlanner.createTenantDeletion({
         tenantId: parsed.data.tenantId,
@@ -610,20 +630,14 @@ export function createGovernanceResourcesRouter(deps: {
         requestedBy: req.user!.sub,
         reasonCode: parsed.data.reasonCode,
       });
-      const job = result.job.status === 'pending' || result.job.status === 'retry_wait'
+      const job = !['succeeded', 'failed'].includes(result.job.status)
         ? await changeJobWorker.execute({
             tenantId: parsed.data.tenantId,
             jobId: result.job.jobId,
-            handlers: {
-              sessions_runs: () => deps.executeTenantDeletion!(parsed.data.tenantId),
-              memory: async () => undefined,
-              assignments: async () => undefined,
-              agents_skills: async () => undefined,
-              credentials: async () => undefined,
-              memberships: async () => undefined,
-              tenant_configuration: async () => undefined,
-              audit_retention: async () => undefined,
-            },
+            handlers: Object.fromEntries([
+              'sessions_runs', 'memory', 'assignments', 'agents_skills', 'credentials',
+              'memberships', 'tenant_configuration', 'audit_retention',
+            ].map(domain => [domain, () => deps.executeTenantDeletionDomain!(parsed.data.tenantId, domain)])),
           })
         : result.job;
       res.status(result.created ? 201 : 200).json({ ...result, job });
@@ -667,7 +681,7 @@ export function createGovernanceResourcesRouter(deps: {
             throw new Error('RESOURCE_RETIREMENT_UNSUPPORTED');
         }
       };
-      const job = result.job.status === 'pending' || result.job.status === 'retry_wait'
+      const job = !['succeeded', 'failed'].includes(result.job.status)
         ? await changeJobWorker.execute({
             tenantId, jobId: result.job.jobId,
             handlers: {
@@ -696,7 +710,7 @@ export function createGovernanceResourcesRouter(deps: {
         request: { reasonCode: parsed.data.reasonCode, expectedVersion: parsed.data.expectedVersion },
         domains: ['credential_status', 'credential_assignments', 'credential_references'], createdBy: req.user!.sub,
       });
-      const job = result.job.status === 'pending' || result.job.status === 'retry_wait'
+      const job = !['succeeded', 'failed'].includes(result.job.status)
         ? await changeJobWorker.execute({
             tenantId, jobId: result.job.jobId,
             handlers: {

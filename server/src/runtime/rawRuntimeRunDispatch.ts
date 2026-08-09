@@ -837,6 +837,7 @@ export async function ensureRuntimeHandRegistered(params: {
   );
   const recipeDigest = createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
   const defaultHandId = `${params.sessionId}:${params.executionTarget}`;
+  let defaultProvisionFailure: string | undefined;
   if (transport && typeof (transport as { provision?: unknown }).provision === 'function') {
     const result = await (transport as unknown as { provision(recipe: { workspaceId: string }): Promise<{ status: 'ok' | 'error'; error?: string; metadata?: Record<string, unknown> }> }).provision(recipe);
     // B3: persist provisioning logs (workspace_ensure / setup_command#N / skipped
@@ -849,11 +850,12 @@ export async function ensureRuntimeHandRegistered(params: {
       metadata: result.metadata,
     });
     if (result.status === 'error') {
+      defaultProvisionFailure = result.error ?? 'hand provision failed';
       await params.eventStore.append({
         type: 'hand_failure',
         sessionId: params.sessionId,
         workspaceId: params.workspaceId,
-        error: result.error ?? 'hand provision failed',
+        error: defaultProvisionFailure,
         classifiedAs: 'unhealthy',
       });
     }
@@ -863,7 +865,7 @@ export async function ensureRuntimeHandRegistered(params: {
     sessionId: params.sessionId,
     workspaceId: params.workspaceId,
     type: params.executionTarget,
-    status: 'ready',
+    status: defaultProvisionFailure ? 'unhealthy' : 'ready',
     endpoint: params.endpoint,
     capabilities,
     recipe,
@@ -877,6 +879,9 @@ export async function ensureRuntimeHandRegistered(params: {
       : {}),
     metadata: { registeredBy: 'rawRuntimeRunDispatch' },
   });
+  if (defaultProvisionFailure) {
+    throw new Error(`HAND_PROVISION_FAILED:${defaultProvisionFailure}`);
+  }
 
   for (const hand of selectTenantRemoteHandsForRegistration(params.tenantRemoteHands, {
     userId: params.userId,

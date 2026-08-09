@@ -61,6 +61,7 @@ import { revokeAllUserConnectorCredentials } from "../connectors/lifecycle.js";
 import { runtimeRunController } from "../runtime/runController.js";
 import { createTenantsRouter } from "../routes/tenants.js";
 import { deleteTenantResources } from "../data/tenants/cleanup.js";
+import { GovernanceTenantCleanup, type TenantCleanupDomain } from '../data/changeJobs/index.js';
 import { createModelsAdminRouter } from "../routes/modelsAdmin.js";
 import { createCodexSubscriptionAdminRouter } from "../routes/codexSubscriptionAdmin.js";
 import { createTenantRemoteHandsAdminRouter } from "../routes/tenantRemoteHandsAdmin.js";
@@ -676,11 +677,12 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         skillConfigStore: runtime.skillConfigStore,
         // ★ 2026-07-18 企业专家目录 MVP：注册开通试用租户时 seed 3 个种子专家
         orgAgentStore: runtime.orgAgentStore,
+        legacyWriteGate: runtime.governanceWriteGate,
       });
       app.use("/api/signup", signupRouters.publicRouter);
       app.use("/api/admin/signup-config", signupRouters.adminRouter);
     }
-    const executeTenantDeletion = runtime.tenantStore && runtime.userStore
+    const executeLegacyTenantDeletion = runtime.tenantStore && runtime.userStore
       ? (tenantId: string) => deleteTenantResources({
         tenantId,
         tenantStore: runtime.tenantStore!,
@@ -724,6 +726,35 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         avatarsDir: resolve(processCwd, config.auth?.usersFile || './data/users.json', '..', 'avatars'),
       })
       : undefined;
+    const governanceTenantCleanup = runtime.runtimePgEventStore && runtime.secretVault
+      ? new GovernanceTenantCleanup({
+          pool: runtime.runtimePgEventStore.pool,
+          tablePrefix: config.runtimeEventStore?.backend === 'pg'
+            ? config.runtimeEventStore.tablePrefix
+            : undefined,
+          vault: runtime.secretVault,
+        })
+      : undefined;
+    const legacyTenantDeletionRuns = new Map<string, Promise<void>>();
+    const executeTenantDeletionDomain = executeLegacyTenantDeletion && governanceTenantCleanup
+      ? async (tenantId: string, domain: string): Promise<void> => {
+          if (domain === 'memory' || domain === 'sessions_runs') {
+            let run = legacyTenantDeletionRuns.get(tenantId);
+            if (!run) {
+              run = executeLegacyTenantDeletion(tenantId)
+                .then(() => undefined)
+                .catch(error => {
+                  if (error instanceof Error && error.message === 'Tenant not found') return;
+                  throw error;
+                });
+              legacyTenantDeletionRuns.set(tenantId, run);
+            }
+            await run;
+            return;
+          }
+          await governanceTenantCleanup.execute(tenantId, domain as TenantCleanupDomain);
+        }
+      : undefined;
     // Tenant management (admin-only CRUD；PR 1 仅元数据，不影响任何运行时行为)
     if (runtime.tenantStore) {
       app.use(
@@ -739,7 +770,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           onTenantDisabled: webChannel
             ? (tenantId: string) => webChannel.disconnectTenant(tenantId)
             : undefined,
-          deleteTenantResources: executeTenantDeletion,
+          deleteTenantResources: executeLegacyTenantDeletion,
         }),
       );
     }
@@ -777,7 +808,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         environments: runtime.environmentStore,
         changeJobs: runtime.governanceChangeJobStore,
         changePlanner: runtime.governanceChangePlanner,
-        ...(executeTenantDeletion ? { executeTenantDeletion: async (tenantId: string) => { await executeTenantDeletion(tenantId); } } : {}),
+        ...(executeTenantDeletionDomain ? { executeTenantDeletionDomain } : {}),
+        tenantExists: (tenantId: string) => Boolean(runtime.tenantStore?.findById(tenantId)),
         vault: runtime.secretVault,
         audit: runtime.governanceAuditStore,
       }));

@@ -127,7 +127,7 @@ describe('Governance Change Job', () => {
     for (const domain of created.domains) {
       await store.updateDomain({
         tenantId: 'acme', jobId: created.job.jobId, domain: domain.domain, expectedRevision: 1,
-        status: 'succeeded', totalCount: 3, completedCount: 3, failedCount: 0,
+        status: 'succeeded', totalCount: 3, completedCount: 3, failedCount: 0, workerId: 'worker-1',
       });
     }
     const completed = await store.complete('acme', created.job.jobId, running.revision, 'worker-1');

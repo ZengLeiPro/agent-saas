@@ -1289,6 +1289,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         );
       }
     }
+    if (config.auth?.enabled && config.auth.jwtSecret && userStore && tenantStore) {
+      authMiddleware = createAuthMiddleware(
+        config.auth.jwtSecret,
+        userStore,
+        tenantStore,
+        config.auth.tokenExpiresIn || '30d',
+        membershipStore,
+      );
+    }
     entitlementStore = new PgEntitlementStore({
       pool: pgEventStore.pool,
       tablePrefix: config.runtimeEventStore.tablePrefix,

@@ -74,6 +74,18 @@ export class PgGovernanceChangeJobStore {
     await new PgGovernanceMigrationRunner(this.options.pool, this.tablePrefix).run();
   }
 
+  async findByIdempotency(
+    tenantId: string,
+    jobType: GovernanceChangeJob['jobType'],
+    idempotencyKey: string,
+  ): Promise<GovernanceChangeJob | null> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.jobsTable} WHERE tenant_id=$1 AND job_type=$2 AND idempotency_key=$3`,
+      [tenantId, jobType, idempotencyKey],
+    );
+    return result.rows[0] ? rowToJob(result.rows[0]) : null;
+  }
+
   async get(tenantId: string, jobId: string): Promise<GovernanceChangeJob | null> {
     const result = await this.options.pool.query(
       `SELECT * FROM ${this.jobsTable} WHERE tenant_id=$1 AND job_id=$2`, [tenantId, jobId],
@@ -142,6 +154,23 @@ export class PgGovernanceChangeJobStore {
     });
   }
 
+  async recoverExpiredRunning(
+    tenantId: string,
+    jobId: string,
+    leaseMs: number,
+    workerId: string,
+  ): Promise<GovernanceChangeJob | null> {
+    const result = await this.options.pool.query(`
+      UPDATE ${this.jobsTable}
+      SET status='retry_wait',next_retry_at=NOW(),revision=revision+1,
+          updated_at=NOW(),updated_by=$4
+      WHERE tenant_id=$1 AND job_id=$2 AND status='running'
+        AND updated_at < NOW() - ($3 * INTERVAL '1 millisecond')
+      RETURNING *
+    `, [tenantId, jobId, leaseMs, workerId]);
+    return result.rows[0] ? rowToJob(result.rows[0]) : null;
+  }
+
   async claim(tenantId: string, jobId: string, expectedRevision: number, workerId: string): Promise<GovernanceChangeJob> {
     const result = await this.options.pool.query(`
       UPDATE ${this.jobsTable}
@@ -155,6 +184,15 @@ export class PgGovernanceChangeJobStore {
     return this.throwJobConflict(tenantId, jobId, expectedRevision);
   }
 
+  async renewLease(tenantId: string, jobId: string, workerId: string): Promise<boolean> {
+    const result = await this.options.pool.query(`
+      UPDATE ${this.jobsTable} SET updated_at=NOW()
+      WHERE tenant_id=$1 AND job_id=$2 AND status='running' AND updated_by=$3
+      RETURNING job_id
+    `, [tenantId, jobId, workerId]);
+    return Boolean(result.rows[0]);
+  }
+
   async updateDomain(input: {
     tenantId: string;
     jobId: string;
@@ -165,6 +203,7 @@ export class PgGovernanceChangeJobStore {
     completedCount: number;
     failedCount: number;
     errorCode?: string;
+    workerId: string;
   }): Promise<GovernanceChangeJobDomain> {
     if ([input.totalCount, input.completedCount, input.failedCount].some(value => !Number.isInteger(value) || value < 0)
       || input.completedCount + input.failedCount > input.totalCount) {
@@ -176,11 +215,11 @@ export class PgGovernanceChangeJobStore {
           revision=revision+1,updated_at=NOW()
       FROM ${this.jobsTable} j
       WHERE d.job_id=$2 AND d.domain=$3 AND d.revision=$9
-        AND j.job_id=d.job_id AND j.tenant_id=$1 AND j.status='running'
+        AND j.job_id=d.job_id AND j.tenant_id=$1 AND j.status='running' AND j.updated_by=$10
       RETURNING d.*
     `, [
       input.tenantId, input.jobId, input.domain, input.status, input.totalCount,
-      input.completedCount, input.failedCount, input.errorCode ?? null, input.expectedRevision,
+      input.completedCount, input.failedCount, input.errorCode ?? null, input.expectedRevision, input.workerId,
     ]);
     if (!result.rows[0]) throw new GovernanceChangeJobInvariantError('CHANGE_JOB_VERSION_CONFLICT');
     return rowToDomain(result.rows[0]);
@@ -199,7 +238,7 @@ export class PgGovernanceChangeJobStore {
       const result = await client.query(`
         UPDATE ${this.jobsTable}
         SET status='succeeded',revision=revision+1,completed_at=NOW(),updated_at=NOW(),updated_by=$4
-        WHERE tenant_id=$1 AND job_id=$2 AND revision=$3 AND status='running' RETURNING *
+        WHERE tenant_id=$1 AND job_id=$2 AND revision=$3 AND status='running' AND updated_by=$4 RETURNING *
       `, [tenantId, jobId, expectedRevision, completedBy]);
       if (!result.rows[0]) throw new GovernanceChangeJobInvariantError('CHANGE_JOB_VERSION_CONFLICT');
       return rowToJob(result.rows[0]);
@@ -219,7 +258,7 @@ export class PgGovernanceChangeJobStore {
     const result = await this.options.pool.query(`
       UPDATE ${this.jobsTable}
       SET status=$4,last_error_code=$5,next_retry_at=$6,revision=revision+1,updated_at=NOW(),updated_by=$7
-      WHERE tenant_id=$1 AND job_id=$2 AND revision=$3 AND status='running' RETURNING *
+      WHERE tenant_id=$1 AND job_id=$2 AND revision=$3 AND status='running' AND updated_by=$7 RETURNING *
     `, [
       input.tenantId, input.jobId, input.expectedRevision, retryAt ? 'retry_wait' : 'failed',
       input.errorCode, retryAt?.toISOString() ?? null, input.failedBy,

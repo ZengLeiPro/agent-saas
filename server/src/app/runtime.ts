@@ -121,6 +121,7 @@ import { PgResourceReferenceStore } from '../data/resourceReferences/index.js';
 import { CredentialBroker } from '../runtime/credentialBroker.js';
 import { SubjectResolver } from '../governance/subject/resolver.js';
 import { AccessEvaluator } from '../governance/access/evaluator.js';
+import { CredentialUseAuthorizer } from '../governance/access/credentialUseAuthorizer.js';
 import {
   AssignmentPolicy,
   EntitlementPolicy,
@@ -2149,8 +2150,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     onError: error => serverLogger.warn(`Pending Aliyun credential revoke skipped: ${error.message}`),
   });
   // P2 Credential Domain：legacy connector 连接投影为 governance credential（shadow）。
-  // 只读投影；connector 运行时仍走 legacy connection store，切换见迁移门禁。
-  if (credentialStore && userStore) {
+  // Broker 本身已按 AccessEvaluator + Credential Assignment 权威授权；connector
+  // 调用链切换到 Broker 仍由后续迁移门禁控制。
+  if (credentialStore && userStore && membershipStore && entitlementStore
+    && assignmentStore && tenantStore && governanceAuditStore) {
     try {
       const backfill = await credentialStore.backfillLegacyCredentials({
         users: userStore.listAll(),
@@ -2168,12 +2171,50 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         + `${error instanceof Error ? error.message : String(error)}`,
       );
     }
+    const credentialUseAuthorizer = new CredentialUseAuthorizer({
+      subjectResolver: new SubjectResolver(userStore, membershipStore),
+      accessEvaluator: new AccessEvaluator([
+        new PlatformInvariantPolicy(),
+        new EntitlementPolicy(entitlementStore),
+        new PersonaPolicy(),
+        new TenantPolicy(entitlementStore),
+        new AssignmentPolicy(assignmentStore),
+        new LongTermGrantPolicy(),
+        new RuntimeApprovalPolicy(),
+      ]),
+      tenantStore,
+    });
     credentialBroker = new CredentialBroker({
       credentialStore,
       vault: secretVault,
-      // P2 第一批仅允许 immutable owner 本人解析；组织共享凭据必须等 Credential
-      // Assignment 接入 AccessEvaluator 后才开放，绝不以同租户作为隐式授权。
-      authorizeUse: async (request, credential) => request.delegatedUserId === credential.ownerUserId,
+      authorizeUse: async (request, credential) => (
+        await credentialUseAuthorizer.authorize(request, credential)
+      ).allowed,
+      auditUse: async ({ request, credential, result, reasonCode }) => {
+        await governanceAuditStore!.append({
+          correlationId: request.correlationId,
+          actorType: 'service',
+          actorUserId: request.delegatedUserId,
+          actorPersona: 'service',
+          actorTenantId: request.tenantId,
+          action: 'credential.use',
+          targetType: 'credential',
+          targetId: request.credentialId,
+          targetTenantId: credential?.tenantId ?? request.tenantId,
+          purpose: request.purpose,
+          reason: reasonCode,
+          result,
+          metadata: {
+            serviceId: 'credential_broker',
+            agentId: request.agentId,
+            connectorId: request.connectorId,
+            channel: request.channel,
+            expectedGeneration: request.expectedGeneration,
+            actualGeneration: credential?.generation ?? null,
+            requiredScopes: (request.requiredScopes ?? []).join(','),
+          },
+        });
+      },
     });
   }
   const aliyunConnectorService = new AliyunConnectorService({

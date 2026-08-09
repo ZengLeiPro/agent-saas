@@ -33,8 +33,10 @@ function buildBroker(
   credentialValue: GovernanceCredential | null,
   vaultOverride?: Partial<SecretVault>,
   authorizeUse: () => Promise<boolean> = async () => true,
+  auditUse: () => Promise<void> = async () => undefined,
 ) {
   const calls: VaultCaller[] = [];
+  const audits: Array<{ result: string; reasonCode: string; credentialId?: string }> = [];
   const ref = { id: 'x', ownerId: 'user-1', kind: 'connector', metadata: {}, createdAt: NOW, updatedAt: NOW };
   const vault: SecretVault = {
     putSecret: async () => ref,
@@ -50,9 +52,17 @@ function buildBroker(
     credentialStore: { get: async () => credentialValue },
     vault,
     authorizeUse,
+    auditUse: async input => {
+      audits.push({
+        result: input.result,
+        reasonCode: input.reasonCode,
+        ...(input.credential ? { credentialId: input.credential.credentialId } : {}),
+      });
+      await auditUse();
+    },
     now: () => new Date(NOW),
   });
-  return { broker, calls };
+  return { broker, calls, audits };
 }
 
 const baseRequest = {
@@ -61,17 +71,22 @@ const baseRequest = {
   connectorId: 'github',
   channel: 'connector' as const,
   delegatedUserId: 'user-1',
+  agentId: 'agent-1',
+  expectedGeneration: 1,
+  requiredScopes: ['repository:read'],
+  correlationId: 'run-1:tool-1',
   purpose: 'tool_call',
 };
 
 describe('CredentialBroker', () => {
   it('active personal grant：重读并取一次 secret，返回 generation', async () => {
-    const { broker, calls } = buildBroker(credential());
+    const { broker, calls, audits } = buildBroker(credential());
     const resolved = await broker.resolve(baseRequest);
     expect(resolved).toMatchObject({ credentialId: 'cred-1', generation: 1, secret: 'secret-value' });
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ actor: 'connector_proxy', userId: 'user-1', tenantId: 'acme' });
     expect(calls[0].scopes).toEqual(['secret:connector:read']);
+    expect(audits).toEqual([{ result: 'succeeded', reasonCode: 'CREDENTIAL_RESOLVED', credentialId: 'cred-1' }]);
   });
 
   it('MCP 是调用 channel，不是 Credential kind', async () => {
@@ -99,7 +114,7 @@ describe('CredentialBroker', () => {
 
   it('rotation_due 可继续使用，但 generation 仍进入返回证据', async () => {
     const { broker } = buildBroker(credential({ status: 'rotation_due', generation: 4 }));
-    await expect(broker.resolve(baseRequest)).resolves.toMatchObject({ generation: 4 });
+    await expect(broker.resolve({ ...baseRequest, expectedGeneration: 4 })).resolves.toMatchObject({ generation: 4 });
   });
 
   it('跨租户与 connector mismatch 均拒绝', async () => {
@@ -119,6 +134,24 @@ describe('CredentialBroker', () => {
     const { broker, calls } = buildBroker(credential(), undefined, async () => false);
     await expect(broker.resolve(baseRequest)).rejects.toMatchObject({ code: 'CREDENTIAL_ACCESS_DENIED' });
     expect(calls).toHaveLength(0);
+  });
+
+  it('generation 与 scope 每次调用重验，旧 Run/越权 scope 不取 Secret', async () => {
+    const { broker: stale, calls: staleCalls } = buildBroker(credential({ generation: 2 }));
+    await expect(stale.resolve(baseRequest)).rejects.toMatchObject({ code: 'CREDENTIAL_GENERATION_MISMATCH' });
+    expect(staleCalls).toHaveLength(0);
+
+    const { broker: scopeDenied, calls: scopeCalls } = buildBroker(credential());
+    await expect(scopeDenied.resolve({ ...baseRequest, requiredScopes: ['repository:write'] }))
+      .rejects.toMatchObject({ code: 'CREDENTIAL_SCOPE_DENIED' });
+    expect(scopeCalls).toHaveLength(0);
+  });
+
+  it('脱敏 use audit 不可用时即使已取 Secret 也 fail closed，不向调用方返回', async () => {
+    const { broker } = buildBroker(credential(), undefined, async () => true, async () => {
+      throw new Error('audit down');
+    });
+    await expect(broker.resolve(baseRequest)).rejects.toMatchObject({ code: 'CREDENTIAL_AUDIT_UNAVAILABLE' });
   });
 
   it('credential 不存在与 Vault 故障均 fail closed', async () => {

@@ -25,7 +25,7 @@ server/src/__tests__/workflowLibraryV3.test.ts	1062	test
 server/src/__tests__/wsEventProcessor.test.ts	831	test
 server/src/agent/toolRuntime.ts	1781	production
 server/src/app/config.ts	1536	production
-server/src/app/runtime.ts	3676	production
+server/src/app/runtime.ts	3674	production
 server/src/channels/web/channel.ts	4873	production
 server/src/cron/service.ts	1167	production
 server/src/data/billing/pgBillingStore.ts	2319	production

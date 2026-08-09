@@ -99,7 +99,7 @@ import { createDingtalkNotifyChannel } from '../cron/notifyChannels/index.js';
 import { buildFollowupContext } from '../cron/followup.js';
 import { assertDevDatabaseSafety, loadAppConfig } from './config.js';
 import { resolveModelRef } from './models.js';
-import { createSharedConfigRefresher } from './sharedConfigRefresher.js';
+import { createModelResolvers } from './modelResolvers.js';
 import type { AgentOptionsConfig } from '../agent/options.js';
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
@@ -2212,44 +2212,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 生图 per-engine 定价注册表初始化；admin PUT /api/admin/image-gen-pricing 时热更。
   configureImageGenPricing(config.imageGenTools?.pricing);
 
-  // 跨进程配置刷新（2026-08-09 千问故障）：平台管理页由 ws-only 进程写 config.json /
-  // tenants.json，但 run 由 runtime-worker 执行。不在解析前对齐磁盘，新增模型就会
-  // 「下拉框能选、一发就报缺少 apiKey」，直到 worker 重启。
-  //
-  // 挂在 modelResolver 上而不是定时器上：这里是所有模型解析的唯一入口，能做到强一致
-  // 无延迟窗口；未变化时开销只是一次受节流保护的 statSync。
-  //
-  // titleGeneratorConfigs 不在此维护——它的消费方（routes/sessions.ts、web channel）
-  // 都只存在于 ws-only 进程，由那侧的 onModelsUpdated 负责。
-  const sharedConfigRefresher = createSharedConfigRefresher({
+  // 模型解析器：如果配置了 models，绑定到 RawRuntime / WebChannel / Cron。
+  // 解析前会对齐磁盘配置，让 runtime-worker 能感知 ws-only 进程的写入（见 modelResolvers.ts）。
+  const { modelResolver, defaultModelResolver } = createModelResolvers({
     config,
     processCwd,
-    target: {
-      updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },
-    },
     tenantStore,
     tenantsFilePath,
     logger: serverLogger,
+    onGuardrailModelConfigsUpdated: (next) => { guardrailModelConfigs = next; },
   });
-
-  // 模型解析器：如果配置了 models，绑定到 RawRuntime / WebChannel / Cron
-  const modelResolver = config.models
-    ? (ref: string, tenantId?: string) => {
-        sharedConfigRefresher.refreshIfChanged();
-        const tenantSettings = tenantId ? tenantStore?.getSettings(tenantId) : undefined;
-        if (!isModelAllowedForTenant(config.models!, tenantSettings, ref)) return null;
-        return resolveModelRef(config.models!, ref);
-      }
-    : undefined;
-  const defaultModelResolver = config.models
-    ? (tenantId?: string) => {
-        sharedConfigRefresher.refreshIfChanged();
-        const tenantSettings = tenantId ? tenantStore?.getSettings(tenantId) : undefined;
-        const ref = getTenantPublicModelList(config.models!, tenantSettings).default || config.models!.default;
-        const resolved = modelResolver?.(ref, tenantId);
-        return resolved ? { ref, ...resolved } : null;
-      }
-    : undefined;
 
   // 用户活动聚合（2026-07-14 记忆轮询批次）：PG 后端可用；file backend 下
   // available=false，UserActivityList 工具不挂载、memory_poll 预检 fail-closed。

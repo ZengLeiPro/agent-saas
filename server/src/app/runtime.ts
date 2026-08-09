@@ -119,6 +119,7 @@ import { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
 import { PgEnvironmentStore } from '../data/environments/index.js';
 import { PgAgentResourceStore } from '../data/agentResources/index.js';
 import { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
+import { GovernanceChangePlanner, PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import { PgResourceReferenceStore } from '../data/resourceReferences/index.js';
 import { CredentialBroker } from '../runtime/credentialBroker.js';
 import { SubjectResolver } from '../governance/subject/resolver.js';
@@ -425,6 +426,9 @@ export interface AppRuntime {
   agentResourceStore?: PgAgentResourceStore;
   /** Platform/Tenant/Personal Skill stable resource、版本与候选审批链。 */
   skillGovernanceStore?: PgSkillGovernanceStore;
+  /** 可重试 Tenant/Delete/Retire/Revoke 治理 Change Job。 */
+  governanceChangeJobStore?: PgGovernanceChangeJobStore;
+  governanceChangePlanner?: GovernanceChangePlanner;
   /** 跨领域 Resource Reference Index；退役/删除影响预览的权威来源。 */
   resourceReferenceStore?: PgResourceReferenceStore;
   /** Server-side Credential Broker；影子阶段用于 smoke 验证，尚未接入 connector 运行路径。 */
@@ -1092,6 +1096,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let environmentStore: PgEnvironmentStore | undefined;
   let agentResourceStore: PgAgentResourceStore | undefined;
   let skillGovernanceStore: PgSkillGovernanceStore | undefined;
+  let governanceChangeJobStore: PgGovernanceChangeJobStore | undefined;
+  let governanceChangePlanner: GovernanceChangePlanner | undefined;
   let resourceReferenceStore: PgResourceReferenceStore | undefined;
   let credentialBroker: CredentialBroker | undefined;
   let runResolutionSnapshotStore: PgRunResolutionSnapshotStore | undefined;
@@ -1337,11 +1343,21 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
     await skillGovernanceStore.init();
+    governanceChangeJobStore = new PgGovernanceChangeJobStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await governanceChangeJobStore.init();
     resourceReferenceStore = new PgResourceReferenceStore({
       pool: pgEventStore.pool,
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
     await resourceReferenceStore.init();
+    governanceChangePlanner = new GovernanceChangePlanner({
+      references: resourceReferenceStore,
+      credentials: credentialStore,
+      jobs: governanceChangeJobStore,
+    });
     runResolutionSnapshotStore = new PgRunResolutionSnapshotStore(
       pgEventStore.pool,
       config.runtimeEventStore.tablePrefix,
@@ -4016,6 +4032,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     environmentStore,
     agentResourceStore,
     skillGovernanceStore,
+    governanceChangeJobStore,
+    governanceChangePlanner,
     resourceReferenceStore,
     credentialBroker,
     flushGovernanceShadowProjections,

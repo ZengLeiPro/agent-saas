@@ -42,6 +42,8 @@ function migrations(prefix: string): GovernanceMigration[] {
   const governedSkills = `${prefix}_governed_skills`;
   const governedSkillVersions = `${prefix}_governed_skill_versions`;
   const skillCandidates = `${prefix}_skill_candidates`;
+  const changeJobs = `${prefix}_governance_change_jobs`;
+  const changeJobDomains = `${prefix}_governance_change_job_domains`;
 
   return [
     {
@@ -519,6 +521,48 @@ function migrations(prefix: string): GovernanceMigration[] {
           ON ${skillCandidates} (tenant_id, status, submitted_at)`,
         `CREATE INDEX IF NOT EXISTS ${skillCandidates}_owner_idx
           ON ${skillCandidates} (owner_user_id, status, updated_at)`,
+      ],
+    },
+    {
+      version: 11,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS ${changeJobs} (
+          job_id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL,
+          job_type TEXT NOT NULL CHECK (job_type IN ('tenant_delete', 'resource_retire', 'credential_revoke')),
+          target_type TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL,
+          request_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+          status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'retry_wait', 'succeeded', 'failed')),
+          revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+          attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
+          last_error_code TEXT,
+          next_retry_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_by TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by TEXT NOT NULL,
+          completed_at TIMESTAMPTZ,
+          UNIQUE (tenant_id, job_type, idempotency_key)
+        )`,
+        `CREATE TABLE IF NOT EXISTS ${changeJobDomains} (
+          job_id TEXT NOT NULL REFERENCES ${changeJobs}(job_id),
+          domain TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'succeeded', 'failed')),
+          total_count BIGINT NOT NULL DEFAULT 0 CHECK (total_count >= 0),
+          completed_count BIGINT NOT NULL DEFAULT 0 CHECK (completed_count >= 0),
+          failed_count BIGINT NOT NULL DEFAULT 0 CHECK (failed_count >= 0),
+          revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          last_error_code TEXT,
+          PRIMARY KEY (job_id, domain),
+          CHECK (completed_count + failed_count <= total_count)
+        )`,
+        `CREATE INDEX IF NOT EXISTS ${changeJobs}_claim_idx
+          ON ${changeJobs} (status, next_retry_at, updated_at)`,
+        `CREATE INDEX IF NOT EXISTS ${changeJobs}_tenant_idx
+          ON ${changeJobs} (tenant_id, job_type, created_at)`,
       ],
     },
   ];

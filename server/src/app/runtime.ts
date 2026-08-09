@@ -115,6 +115,9 @@ import { PgEntitlementStore } from '../data/entitlements/index.js';
 import { PgAssignmentStore } from '../data/assignments/index.js';
 import { GovernanceShadowProjectionScheduler } from '../governance/migrations/shadowProjectionScheduler.js';
 import { PgCredentialStore } from '../data/credentials/index.js';
+import { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
+import { PgEnvironmentStore } from '../data/environments/index.js';
+import { PgResourceReferenceStore } from '../data/resourceReferences/index.js';
 import { CredentialBroker } from '../runtime/credentialBroker.js';
 import { SubjectResolver } from '../governance/subject/resolver.js';
 import { AccessEvaluator } from '../governance/access/evaluator.js';
@@ -411,6 +414,12 @@ export interface AppRuntime {
   assignmentStore?: PgAssignmentStore;
   /** P2 Credential 治理事实模型；影子回填 legacy connector 连接，仅读取不拦截。 */
   credentialStore?: PgCredentialStore;
+  /** 版本化 Connector Catalog；与 Tool Presentation Dictionary 严格分离。 */
+  connectorCatalogStore?: PgConnectorCatalogStore;
+  /** Execution Provider 与 Environment Template/Version 事实模型。 */
+  environmentStore?: PgEnvironmentStore;
+  /** 跨领域 Resource Reference Index；退役/删除影响预览的权威来源。 */
+  resourceReferenceStore?: PgResourceReferenceStore;
   /** Server-side Credential Broker；影子阶段用于 smoke 验证，尚未接入 connector 运行路径。 */
   credentialBroker?: CredentialBroker;
   /** 等待当前已排队的 M1 治理影子投影完成，主要供测试和优雅停机。 */
@@ -1072,6 +1081,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let entitlementStore: PgEntitlementStore | undefined;
   let assignmentStore: PgAssignmentStore | undefined;
   let credentialStore: PgCredentialStore | undefined;
+  let connectorCatalogStore: PgConnectorCatalogStore | undefined;
+  let environmentStore: PgEnvironmentStore | undefined;
+  let resourceReferenceStore: PgResourceReferenceStore | undefined;
   let credentialBroker: CredentialBroker | undefined;
   let runResolutionSnapshotStore: PgRunResolutionSnapshotStore | undefined;
   let runPreflightService: RunPreflightService | undefined;
@@ -1291,6 +1303,26 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
     await credentialStore.init();
+    connectorCatalogStore = new PgConnectorCatalogStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await connectorCatalogStore.init();
+    const connectorCatalogBackfill = await connectorCatalogStore.ensureBuiltins('system:builtin-catalog');
+    serverLogger.info(
+      `Connector Catalog builtin registration: created=${connectorCatalogBackfill.created} `
+      + `unchanged=${connectorCatalogBackfill.unchanged}`,
+    );
+    environmentStore = new PgEnvironmentStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await environmentStore.init();
+    resourceReferenceStore = new PgResourceReferenceStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await resourceReferenceStore.init();
     runResolutionSnapshotStore = new PgRunResolutionSnapshotStore(
       pgEventStore.pool,
       config.runtimeEventStore.tablePrefix,
@@ -2648,6 +2680,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     mcpProxy,
     ...(pgEventStore ? { eventStoreFactory: () => pgEventStore } : {}),
     ...(pgRunStore ? { runStore: pgRunStore } : {}),
+    ...(runPreflightService ? { runPreflightService } : {}),
+    ...(runResolutionSnapshotStore ? { runResolutionSnapshotStore } : {}),
     ...(pgHandStore ? { handStore: pgHandStore } : {}),
     ...(pgToolInvocationStore ? { toolInvocationStore: pgToolInvocationStore } : {}),
     // /compact v2 自动压缩：在当前业务 run 的尾阶段内联执行；需要 PG runStore
@@ -2826,6 +2860,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         // （enforcer 切换时此分支必须 fail closed——见迁移门禁 TODO）。
         if (runPreflightService && runResolutionSnapshotStore && !isBackgroundTaskRun(record)) {
           try {
+            const executionProviderId = typeof record.metadata?.executionProviderId === 'string'
+              ? record.metadata.executionProviderId
+              : record.executionTarget;
+            const templateVersionId = typeof record.metadata?.environmentTemplateVersionId === 'string'
+              ? record.metadata.environmentTemplateVersionId
+              : undefined;
+            const instanceId = typeof record.metadata?.handId === 'string'
+              ? record.metadata.handId
+              : undefined;
+            const recipeDigest = typeof record.metadata?.recipeDigest === 'string'
+              ? record.metadata.recipeDigest
+              : undefined;
             const preflight = await runPreflightService.preflight({
               phase: 'wake',
               runId: record.runId,
@@ -2833,10 +2879,19 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
               ...(record.userId ? { userId: record.userId } : {}),
               ...(tenantId ? { tenantId } : {}),
               ...(record.model ? { modelRef: record.model } : {}),
+              ...(executionProviderId ? {
+                environment: {
+                  providerId: executionProviderId,
+                  ...(templateVersionId ? { templateVersionId } : {}),
+                  ...(instanceId ? { instanceId } : {}),
+                  ...(recipeDigest ? { recipeDigest } : {}),
+                },
+              } : {}),
               // wake 回调下方仍由 legacy billing 权威计费门禁，避免 shadow 双结算。
               skipBilling: true,
             });
-            await runResolutionSnapshotStore.append(preflight.snapshot);
+            // 最终 Snapshot 由 Raw Runtime 在 Environment Instance 解析后追加；
+            // scheduler 此处只做 claim 后的最新权限影子复核。
             if (preflight.shadowWouldBlock) {
               serverLogger.warn(
                 `[governance-shadow] wake preflight would block run=${record.runId} `
@@ -3898,6 +3953,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     entitlementStore,
     assignmentStore,
     credentialStore,
+    connectorCatalogStore,
+    environmentStore,
+    resourceReferenceStore,
     credentialBroker,
     flushGovernanceShadowProjections,
     runtimeAuditQuery,

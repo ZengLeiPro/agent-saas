@@ -249,6 +249,27 @@ describe('RunPreflightService shadow/enforce 行为', () => {
     expect(result.snapshot.enforcementMode).toBe('shadow');
   });
 
+  it('wake 快照记录 Provider/Template/Instance/recipe digest，不含 Provider Secret', async () => {
+    const result = await buildService().preflight({
+      ...baseInput,
+      phase: 'wake',
+      environment: {
+        providerId: 'acs',
+        templateVersionId: 'env-v2',
+        instanceId: 'hand-1',
+        recipeDigest: 'recipe-digest-1',
+      },
+    });
+    expect(result.snapshot.environment).toEqual({
+      id: 'hand-1',
+      providerId: 'acs',
+      templateVersionId: 'env-v2',
+      instanceId: 'hand-1',
+      recipeDigest: 'recipe-digest-1',
+    });
+    expect(JSON.stringify(result.snapshot.environment).toLowerCase()).not.toContain('secret');
+  });
+
   it('队列等待期间撤销 assignment：wake 复核 conditional，shadow 放行但打标 wouldBlock', async () => {
     const service = buildService({ assignmentSets: new Map([['oa-1', assignmentSetFor('oa-1', [])]]) });
     const result = await service.preflight({ ...baseInput, phase: 'wake' });
@@ -336,7 +357,7 @@ describe('Run Resolution Snapshot 敏感内容围栏', () => {
     const queries: string[] = [];
     const query = async (sql: string) => {
       queries.push(sql);
-      if (sql.includes('SELECT version FROM')) return { rows: [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 6 }] };
+      if (sql.includes('SELECT version FROM')) return { rows: [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 6 }, { version: 7 }, { version: 8 }] };
       return { rows: [], rowCount: 0 };
     };
     const pool = { query, connect: async () => ({ query, release: () => undefined }) };

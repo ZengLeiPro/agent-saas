@@ -12,6 +12,13 @@ export interface ResolvedResourceRef {
   bindingId?: string;
 }
 
+export interface ResolvedEnvironmentRef extends ResolvedResourceRef {
+  providerId: string;
+  templateVersionId?: string;
+  instanceId?: string;
+  recipeDigest?: string;
+}
+
 export interface RunResolutionSnapshotDraft {
   runId: string;
   sessionId: string;
@@ -30,7 +37,7 @@ export interface RunResolutionSnapshotDraft {
   skills: ResolvedResourceRef[];
   connectors: ResolvedResourceRef[];
   credentialBindings: ResolvedResourceRef[];
-  environment?: ResolvedResourceRef;
+  environment?: ResolvedEnvironmentRef;
   memoryScopes: ResolvedResourceRef[];
   model?: ResolvedResourceRef;
   resolvedAt: string;

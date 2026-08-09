@@ -74,6 +74,12 @@ export interface HandRecord {
   createdAt: string;
   updatedAt: string;
   leaseExpiresAt?: string;
+  /** Environment Instance 领域引用；均为不可变 ID/version，不含 Provider Secret。 */
+  providerId?: string;
+  templateVersionId?: string;
+  runId?: string;
+  recipeDigest?: string;
+  terminatedAt?: string;
   metadata: Record<string, unknown>;
 }
 
@@ -112,6 +118,11 @@ export interface RegisterHandInput {
   endpoint?: string;
   capabilities?: HandCapability[];
   leaseExpiresAt?: Date;
+  providerId?: string;
+  templateVersionId?: string;
+  runId?: string;
+  recipeDigest?: string;
+  terminatedAt?: Date;
   metadata?: Record<string, unknown>;
 }
 
@@ -169,6 +180,11 @@ export class PgHandStore implements HandStore {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         lease_expires_at TIMESTAMPTZ,
+        provider_id TEXT,
+        template_version_id TEXT,
+        run_id TEXT,
+        recipe_digest TEXT,
+        terminated_at TIMESTAMPTZ,
         metadata JSONB NOT NULL DEFAULT '{}'
       )
     `);
@@ -176,6 +192,11 @@ export class PgHandStore implements HandStore {
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_workspace_idx ON ${this.handsTable} (workspace_id)`);
     await this.pool.query(`ALTER TABLE ${this.handsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
     await this.pool.query(`ALTER TABLE ${this.handsTable} ADD COLUMN IF NOT EXISTS user_id TEXT`);
+    await this.pool.query(`ALTER TABLE ${this.handsTable} ADD COLUMN IF NOT EXISTS provider_id TEXT`);
+    await this.pool.query(`ALTER TABLE ${this.handsTable} ADD COLUMN IF NOT EXISTS template_version_id TEXT`);
+    await this.pool.query(`ALTER TABLE ${this.handsTable} ADD COLUMN IF NOT EXISTS run_id TEXT`);
+    await this.pool.query(`ALTER TABLE ${this.handsTable} ADD COLUMN IF NOT EXISTS recipe_digest TEXT`);
+    await this.pool.query(`ALTER TABLE ${this.handsTable} ADD COLUMN IF NOT EXISTS terminated_at TIMESTAMPTZ`);
     await this.pool.query(`
       UPDATE ${this.handsTable}
       SET tenant_id = split_part(substring(workspace_id from 4), '__', 1),
@@ -185,6 +206,9 @@ export class PgHandStore implements HandStore {
     `);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_tenant_idx ON ${this.handsTable} (tenant_id)`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_status_idx ON ${this.handsTable} (status)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_provider_idx ON ${this.handsTable} (provider_id, status)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_template_idx ON ${this.handsTable} (template_version_id)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_run_idx ON ${this.handsTable} (run_id)`);
   }
 
   async close(): Promise<void> { if (this.ownsPool) await this.pool.end(); }
@@ -193,8 +217,10 @@ export class PgHandStore implements HandStore {
     const owner = parseWorkspaceId(input.workspaceId);
     const result = await this.pool.query<{ row_json: unknown }>(`
       INSERT INTO ${this.handsTable}
-        (hand_id, session_id, workspace_id, tenant_id, user_id, type, status, endpoint, capabilities, lease_expires_at, metadata)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11::jsonb)
+        (hand_id, session_id, workspace_id, tenant_id, user_id, type, status, endpoint,
+         capabilities, lease_expires_at, provider_id, template_version_id, run_id,
+         recipe_digest, terminated_at, metadata)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16::jsonb)
       ON CONFLICT (hand_id) DO UPDATE SET
         session_id = EXCLUDED.session_id,
         workspace_id = EXCLUDED.workspace_id,
@@ -205,6 +231,11 @@ export class PgHandStore implements HandStore {
         endpoint = EXCLUDED.endpoint,
         capabilities = EXCLUDED.capabilities,
         lease_expires_at = EXCLUDED.lease_expires_at,
+        provider_id = EXCLUDED.provider_id,
+        template_version_id = EXCLUDED.template_version_id,
+        run_id = EXCLUDED.run_id,
+        recipe_digest = EXCLUDED.recipe_digest,
+        terminated_at = EXCLUDED.terminated_at,
         metadata = ${this.handsTable}.metadata || EXCLUDED.metadata,
         updated_at = now()
       RETURNING row_to_json(${this.handsTable}.*) AS row_json
@@ -219,6 +250,11 @@ export class PgHandStore implements HandStore {
       input.endpoint ?? null,
       JSON.stringify(input.capabilities ?? []),
       input.leaseExpiresAt?.toISOString() ?? null,
+      input.providerId ?? null,
+      input.templateVersionId ?? null,
+      input.runId ?? null,
+      input.recipeDigest ?? null,
+      input.terminatedAt?.toISOString() ?? null,
       JSON.stringify(input.metadata ?? {}),
     ]);
     return normalizeHandRecord(result.rows[0]!.row_json);
@@ -327,6 +363,11 @@ function normalizeHandRecord(raw: any): HandRecord {
     createdAt: new Date(raw.created_at ?? raw.createdAt).toISOString(),
     updatedAt: new Date(raw.updated_at ?? raw.updatedAt).toISOString(),
     leaseExpiresAt: raw.lease_expires_at ? new Date(raw.lease_expires_at).toISOString() : raw.leaseExpiresAt,
+    providerId: raw.provider_id ?? raw.providerId ?? undefined,
+    templateVersionId: raw.template_version_id ?? raw.templateVersionId ?? undefined,
+    runId: raw.run_id ?? raw.runId ?? undefined,
+    recipeDigest: raw.recipe_digest ?? raw.recipeDigest ?? undefined,
+    terminatedAt: raw.terminated_at ? new Date(raw.terminated_at).toISOString() : raw.terminatedAt,
     metadata: raw.metadata ?? {},
   };
 }

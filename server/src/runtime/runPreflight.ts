@@ -28,6 +28,12 @@ export interface RunPreflightInput {
   orgAgentId?: string;
   modelRef?: string;
   serviceSubject?: Omit<ServiceSubjectContext, 'subjectType'>;
+  environment?: {
+    providerId: string;
+    templateVersionId?: string;
+    instanceId?: string;
+    recipeDigest?: string;
+  };
   skipBilling?: boolean;
 }
 
@@ -254,6 +260,15 @@ export class RunPreflightService {
       skills: (resolved.orgAgent?.allowedSkills ?? []).map(id => ({ id })),
       connectors: [],
       credentialBindings: [],
+      ...(input.environment ? {
+        environment: {
+          id: input.environment.instanceId ?? input.environment.templateVersionId ?? input.environment.providerId,
+          providerId: input.environment.providerId,
+          ...(input.environment.templateVersionId ? { templateVersionId: input.environment.templateVersionId } : {}),
+          ...(input.environment.instanceId ? { instanceId: input.environment.instanceId } : {}),
+          ...(input.environment.recipeDigest ? { recipeDigest: input.environment.recipeDigest } : {}),
+        },
+      } : {}),
       memoryScopes: [{ id: `user:${resolved.userId}` }],
       ...(resolved.modelRef ? { model: { id: resolved.modelRef } } : {}),
       resolvedAt: evaluatedAt.toISOString(),

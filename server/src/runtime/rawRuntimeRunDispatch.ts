@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { mkdir } from 'fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'path';
 
@@ -14,6 +14,8 @@ import type { AgentStore } from '../data/agents/store.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 import type { BillingService } from '../data/billing/service.js';
+import type { RunPreflightService } from './runPreflight.js';
+import type { PgRunResolutionSnapshotStore } from './runResolutionSnapshotStore.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
@@ -443,6 +445,9 @@ export interface RawRuntimeRunDispatchConfig {
   approvalStoreFactory?: (session: RuntimeSessionRecord, eventStore: EventStore) => ApprovalStore;
   /** Durable run state backend. PG runtime wires PgRunStore here for P0 wake/recovery state. */
   runStore?: RunStore;
+  /** Governance wake-time revalidation；Raw Runtime 在 Environment 解析后写最终 Snapshot。 */
+  runPreflightService?: RunPreflightService;
+  runResolutionSnapshotStore?: Pick<PgRunResolutionSnapshotStore, 'append'>;
   /** Durable hand registry backend. PG runtime wires PgHandStore here for P1 hand lifecycle. */
   handStore?: HandStore;
   /** Durable tool invocation index. PG runtime wires PgToolInvocationStore for recovery. */
@@ -790,6 +795,7 @@ export async function ensureRuntimeHandRegistered(params: {
   executionTransportRegistry: ExecutionTransportRegistry;
   executionTarget: ExecutionTargetKind;
   sessionId: string;
+  runId?: string;
   workspaceId: string;
   workspaceMountSubPath?: string;
   endpoint?: string;
@@ -829,6 +835,7 @@ export async function ensureRuntimeHandRegistered(params: {
     params.sessionId,
     params.workspaceMountSubPath,
   );
+  const recipeDigest = createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
   const defaultHandId = `${params.sessionId}:${params.executionTarget}`;
   if (transport && typeof (transport as { provision?: unknown }).provision === 'function') {
     const result = await (transport as unknown as { provision(recipe: { workspaceId: string }): Promise<{ status: 'ok' | 'error'; error?: string; metadata?: Record<string, unknown> }> }).provision(recipe);
@@ -860,6 +867,9 @@ export async function ensureRuntimeHandRegistered(params: {
     endpoint: params.endpoint,
     capabilities,
     recipe,
+    providerId: params.executionTarget,
+    ...(params.runId ? { runId: params.runId } : {}),
+    recipeDigest,
     // 2026-08-03 P1：per-session hand 记录挂租约。register 是 upsert，活跃
     // session 每次 dispatch 自动续期；到期由 janitor 收敛（见 handStore.sweepLeases）。
     ...(params.executionTarget === 'server-remote'
@@ -914,6 +924,7 @@ export async function ensureRuntimeHandRegistered(params: {
     }
 
     const tenantRecipe = buildWorkspaceRecipe(remoteWorkspaceId, hand.recipe, params.sessionId, params.workspaceMountSubPath);
+    const tenantRecipeDigest = createHash('sha256').update(JSON.stringify(tenantRecipe)).digest('hex');
     await manager.provision({
       handId,
       sessionId: params.sessionId,
@@ -923,6 +934,9 @@ export async function ensureRuntimeHandRegistered(params: {
       endpoint: hand.baseUrl,
       capabilities: tenantRemoteHandCapabilities(hand, tools),
       recipe: tenantRecipe,
+      providerId: hand.id,
+      ...(params.runId ? { runId: params.runId } : {}),
+      recipeDigest: tenantRecipeDigest,
       // 2026-08-03 P1：tenant hand 的 per-session 记录同样挂租约（配置本体在
       // config/vault，不受影响；到期只回收这条 session 级记录）。
       leaseExpiresAt: new Date(Date.now() + SERVER_REMOTE_HAND_LEASE_MS),
@@ -960,6 +974,52 @@ export async function ensureRuntimeHandRegistered(params: {
         `tenant_hand_registered handId=${handId} source=${tokenSource}${tokenRef ? ` authTokenRef=${tokenRef}` : ''}`,
       );
     }
+  }
+}
+
+async function appendResolvedRunSnapshot(input: {
+  config: RawRuntimeRunDispatchConfig;
+  runId: string;
+  session: RuntimeSessionRecord;
+  modelRef?: string;
+  executionTarget: ExecutionTargetKind;
+  hands: HandRecord[];
+}): Promise<void> {
+  const { runPreflightService, runResolutionSnapshotStore } = input.config;
+  if (!runPreflightService || !runResolutionSnapshotStore) return;
+  const tenantHands = input.hands.filter(hand => hand.metadata?.registeredBy === 'tenantRemoteHands');
+  const tenantHandId = tenantHands.length === 1 ? tenantHands[0]?.handId : undefined;
+  const defaultHandId = `${input.session.sessionId}:${input.executionTarget}`;
+  const environment = input.hands.find(hand => hand.handId === (tenantHandId ?? defaultHandId));
+  const result = await runPreflightService.preflight({
+    phase: 'wake',
+    runId: input.runId,
+    sessionId: input.session.sessionId,
+    ...(input.session.userId ? { userId: input.session.userId } : {}),
+    ...(input.session.tenantId ? { tenantId: input.session.tenantId } : {}),
+    ...(input.session.orgAgentId ? { orgAgentId: input.session.orgAgentId } : {}),
+    ...(input.modelRef ? { modelRef: input.modelRef } : {}),
+    environment: {
+      providerId: environment?.providerId ?? input.executionTarget,
+      ...(environment?.templateVersionId ? { templateVersionId: environment.templateVersionId } : {}),
+      ...(environment?.handId ? { instanceId: environment.handId } : {}),
+      ...(environment?.recipeDigest ? { recipeDigest: environment.recipeDigest } : {}),
+    },
+    skipBilling: true,
+  });
+  if (!result.proceed) {
+    throw new Error(
+      `[${result.accessDecision.reasonCode}] governance preflight blocked run ${input.runId}`,
+    );
+  }
+  try {
+    await runResolutionSnapshotStore.append(result.snapshot);
+  } catch (error) {
+    if (result.enforcementMode === 'enforce') throw error;
+    input.config.logger?.warn(
+      `[governance-shadow] resolved snapshot unavailable (not blocking): run=${input.runId} `
+      + `error=${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -2162,6 +2222,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       executionTransportRegistry,
       executionTarget,
       sessionId,
+      runId,
       workspaceId: sessionRecord.workspaceId ?? sessionId,
       workspaceMountSubPath,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
@@ -2177,6 +2238,14 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       logger: config.logger,
     });
     const availableHands = config.handStore ? await config.handStore.listBySession(sessionId) : [];
+    await appendResolvedRunSnapshot({
+      config,
+      runId,
+      session: sessionRecord,
+      modelRef: sessionModelRef,
+      executionTarget,
+      hands: availableHands,
+    });
     const baseSkillFilter = composeSkillFilters(
       buildRuntimeSkillFilter(availableHands),
       buildImageGenSkillFilter(config, sessionRecord.tenantId),
@@ -2728,6 +2797,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       executionTransportRegistry,
       executionTarget,
       sessionId: request.sessionId,
+      runId: resumeRunId,
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
       workspaceMountSubPath,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
@@ -2743,6 +2813,14 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       logger: config.logger,
     });
     const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId) : [];
+    await appendResolvedRunSnapshot({
+      config,
+      runId: resumeRunId,
+      session: sessionRecord,
+      modelRef: sessionModelRef,
+      executionTarget,
+      hands: availableHands,
+    });
     const resumeBaseSkillFilter = composeSkillFilters(
       buildRuntimeSkillFilter(availableHands),
       buildImageGenSkillFilter(config, sessionRecord.tenantId),
@@ -3129,6 +3207,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       executionTransportRegistry,
       executionTarget,
       sessionId: request.sessionId,
+      runId: resumeRunId,
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
       workspaceMountSubPath,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
@@ -3144,6 +3223,14 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       logger: config.logger,
     });
     const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId) : [];
+    await appendResolvedRunSnapshot({
+      config,
+      runId: resumeRunId,
+      session: sessionRecord,
+      modelRef: sessionModelRef,
+      executionTarget,
+      hands: availableHands,
+    });
     const resumeBaseSkillFilter = composeSkillFilters(
       buildRuntimeSkillFilter(availableHands),
       buildImageGenSkillFilter(config, sessionRecord.tenantId),

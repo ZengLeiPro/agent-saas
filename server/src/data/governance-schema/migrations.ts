@@ -30,6 +30,7 @@ function migrations(prefix: string): GovernanceMigration[] {
   const assignments = `${prefix}_resource_assignments`;
   const preferences = `${prefix}_user_resource_preferences`;
   const runResolutionSnapshots = `${prefix}_run_resolution_snapshots`;
+  const credentials = `${prefix}_credentials`;
 
   return [
     {
@@ -266,6 +267,44 @@ function migrations(prefix: string): GovernanceMigration[] {
           ON ${runResolutionSnapshots} (tenant_id, created_at DESC)`,
         `CREATE INDEX IF NOT EXISTS ${runResolutionSnapshots}_decision_idx
           ON ${runResolutionSnapshots} (access_decision_id)`,
+      ],
+    },
+    {
+      version: 6,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS ${credentials} (
+          credential_id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL,
+          connector_id TEXT,
+          kind TEXT NOT NULL CHECK (kind IN ('org_shared', 'personal_grant', 'infrastructure')),
+          owner_user_id TEXT,
+          custodian_user_id TEXT,
+          owner_username TEXT,
+          alias TEXT,
+          purpose TEXT NOT NULL,
+          scope_summary_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+          status TEXT NOT NULL CHECK (
+            status IN ('active', 'rotation_due', 'expired', 'suspended', 'revoked', 'validation_failed')
+          ),
+          generation BIGINT NOT NULL DEFAULT 1 CHECK (generation >= 1),
+          secret_ref TEXT NOT NULL,
+          expires_at TIMESTAMPTZ,
+          last_validated_at TIMESTAMPTZ,
+          source TEXT NOT NULL CHECK (source IN ('legacy_projection', 'governance')),
+          version BIGINT NOT NULL DEFAULT 1 CHECK (version >= 1),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_by TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by TEXT NOT NULL,
+          CHECK (kind <> 'personal_grant' OR owner_user_id IS NOT NULL),
+          CHECK (kind <> 'org_shared' OR custodian_user_id IS NOT NULL)
+        )`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS ${credentials}_secret_ref_uidx
+          ON ${credentials} (secret_ref)`,
+        `CREATE INDEX IF NOT EXISTS ${credentials}_owner_idx
+          ON ${credentials} (tenant_id, owner_user_id, status)`,
+        `CREATE INDEX IF NOT EXISTS ${credentials}_connector_idx
+          ON ${credentials} (tenant_id, connector_id, status)`,
       ],
     },
   ];

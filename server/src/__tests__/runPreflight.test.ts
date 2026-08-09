@@ -336,7 +336,7 @@ describe('Run Resolution Snapshot 敏感内容围栏', () => {
     const queries: string[] = [];
     const query = async (sql: string) => {
       queries.push(sql);
-      if (sql.includes('SELECT version FROM')) return { rows: [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }] };
+      if (sql.includes('SELECT version FROM')) return { rows: [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 6 }] };
       return { rows: [], rowCount: 0 };
     };
     const pool = { query, connect: async () => ({ query, release: () => undefined }) };

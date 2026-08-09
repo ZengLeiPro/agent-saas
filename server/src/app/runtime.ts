@@ -114,6 +114,8 @@ import { PgMembershipStore } from '../data/memberships/index.js';
 import { PgEntitlementStore } from '../data/entitlements/index.js';
 import { PgAssignmentStore } from '../data/assignments/index.js';
 import { GovernanceShadowProjectionScheduler } from '../governance/migrations/shadowProjectionScheduler.js';
+import { PgCredentialStore } from '../data/credentials/index.js';
+import { CredentialBroker } from '../runtime/credentialBroker.js';
 import { SubjectResolver } from '../governance/subject/resolver.js';
 import { AccessEvaluator } from '../governance/access/evaluator.js';
 import {
@@ -407,6 +409,10 @@ export interface AppRuntime {
   entitlementStore?: PgEntitlementStore;
   /** 组织资源 Assignment 与个人 Preference 独立事实模型；M1 仅影子写与回填。 */
   assignmentStore?: PgAssignmentStore;
+  /** P2 Credential 治理事实模型；影子回填 legacy connector 连接，仅读取不拦截。 */
+  credentialStore?: PgCredentialStore;
+  /** Server-side Credential Broker；影子阶段用于 smoke 验证，尚未接入 connector 运行路径。 */
+  credentialBroker?: CredentialBroker;
   /** 等待当前已排队的 M1 治理影子投影完成，主要供测试和优雅停机。 */
   flushGovernanceShadowProjections?: () => Promise<void>;
   /** 手动触发 token usage 全量回填（force=true）。未初始化 businessDb 时为 undefined */
@@ -1065,6 +1071,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let membershipStore: PgMembershipStore | undefined;
   let entitlementStore: PgEntitlementStore | undefined;
   let assignmentStore: PgAssignmentStore | undefined;
+  let credentialStore: PgCredentialStore | undefined;
+  let credentialBroker: CredentialBroker | undefined;
   let runResolutionSnapshotStore: PgRunResolutionSnapshotStore | undefined;
   let runPreflightService: RunPreflightService | undefined;
   let flushGovernanceShadowProjections: (() => Promise<void>) | undefined;
@@ -1278,6 +1286,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       platformTenantId: DEFAULT_TENANT_ID,
     });
     await assignmentStore.init();
+    credentialStore = new PgCredentialStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await credentialStore.init();
     runResolutionSnapshotStore = new PgRunResolutionSnapshotStore(
       pgEventStore.pool,
       config.runtimeEventStore.tablePrefix,
@@ -2103,6 +2116,34 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     vault: secretVault,
     onError: error => serverLogger.warn(`Pending Aliyun credential revoke skipped: ${error.message}`),
   });
+  // P2 Credential Domain：legacy connector 连接投影为 governance credential（shadow）。
+  // 只读投影；connector 运行时仍走 legacy connection store，切换见迁移门禁。
+  if (credentialStore && userStore) {
+    try {
+      const backfill = await credentialStore.backfillLegacyCredentials({
+        users: userStore.listAll(),
+        connections: connectorConnectionStore.listAll(),
+        platformTenantId: DEFAULT_TENANT_ID,
+        projectedBy: 'system:governance-m1',
+      });
+      serverLogger.info(
+        `Governance Credential shadow backfill: credentials=${backfill.credentialsProjected} `
+        + `issues=${backfill.issuesRecorded}`,
+      );
+    } catch (error) {
+      serverLogger.warn(
+        `Governance Credential shadow backfill failed; legacy authority remains active: `
+        + `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    credentialBroker = new CredentialBroker({
+      credentialStore,
+      vault: secretVault,
+      // P2 第一批仅允许 immutable owner 本人解析；组织共享凭据必须等 Credential
+      // Assignment 接入 AccessEvaluator 后才开放，绝不以同租户作为隐式授权。
+      authorizeUse: async (request, credential) => request.delegatedUserId === credential.ownerUserId,
+    });
+  }
   const aliyunConnectorService = new AliyunConnectorService({
     connectionStore: connectorConnectionStore,
     vault: secretVault,
@@ -3856,6 +3897,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     membershipStore,
     entitlementStore,
     assignmentStore,
+    credentialStore,
+    credentialBroker,
     flushGovernanceShadowProjections,
     runtimeAuditQuery,
     runtimeRunStore: pgRunStore,

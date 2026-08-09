@@ -227,7 +227,7 @@ export class PgConnectorCatalogStore {
     for (const builtin of BUILTIN_CONNECTOR_DEFINITIONS) {
       const current = await this.get(builtin.connectorId);
       // 运维显式 disabled/retired 的 builtin 不能被启动回填重新激活。
-      if (current && current.status !== 'active') {
+      if (current && (current.status === 'disabled' || current.status === 'retired')) {
         unchanged += 1;
         continue;
       }

@@ -5,14 +5,12 @@ import type { Express, Request, Response } from "express";
 import type { AppRuntime } from "./runtime.js";
 import type { TenantStore } from "../data/tenants/store.js";
 import type { UserInfo } from "../data/users/types.js";
-import type { TitleGeneratorConfig } from "../agent/titleGenerator.js";
-import type { GuardrailModelConfig } from "../agent/guardrail.js";
 import {
   getPublicModelList,
   getUserPublicModelList,
   resolveContextAccountingFromModels,
-  resolveModelRef,
 } from "./models.js";
+import { applyModelsHotUpdate } from "./modelsHotUpdate.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import { enforcePlatformWritePolicy } from "../auth/platformGovernance.js";
 
@@ -309,44 +307,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       createModelsAdminRouter({
         processCwd,
         config,
+        // 热更新逻辑与 runtime-worker 侧共用同一实现（modelsHotUpdate.ts），
+        // 避免两个进程对同一份 config 产生不一致的内存状态。
         onModelsUpdated: (models) => {
-          configureModelPricing(models);
-          const merged = { ...models, default: models.default };
-          // 门禁链热更（放在 title 之前：title 的 early-return 不能吞掉门禁重建）。
-          // 主模型解析失败保留原链——避免热更瞬时把门禁打挂。
-          if (config.guardrail?.model) {
-            const nextGuardrail: GuardrailModelConfig[] = [];
-            const mainGuardrail = resolveModelRef(merged, config.guardrail.model);
-            if (mainGuardrail) {
-              nextGuardrail.push({
-                model: mainGuardrail.model,
-                connection: mainGuardrail.connection,
-              });
-              for (const ref of config.guardrail.fallbackModels ?? []) {
-                const fb = resolveModelRef(merged, ref);
-                if (fb) nextGuardrail.push({ model: fb.model, connection: fb.connection });
-              }
-              runtime.updateGuardrailModelConfigs(nextGuardrail);
-            }
-          }
-          // 模型列表热更新：重建 titleGenerator 配置链。
-          // resolveModelRef 找不到任一引用都保留原链——避免热更瞬时把功能打挂。
-          if (!config.titleGenerator?.model) return;
-          const next: TitleGeneratorConfig[] = [];
-          const resolvedMain = resolveModelRef(
-            merged,
-            config.titleGenerator.model,
-          );
-          if (!resolvedMain) return;
-          next.push({
-            model: resolvedMain.model,
-            connection: resolvedMain.connection,
-          });
-          for (const ref of config.titleGenerator.fallbackModels ?? []) {
-            const fb = resolveModelRef(merged, ref);
-            if (fb) next.push({ model: fb.model, connection: fb.connection });
-          }
-          runtime.titleGeneratorConfigs = next;
+          applyModelsHotUpdate({ config, target: runtime, models });
         },
         onMemoryIndexUpdated: runtime.updateMemoryIndexConfig,
       }),

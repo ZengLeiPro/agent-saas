@@ -99,6 +99,7 @@ import { createDingtalkNotifyChannel } from '../cron/notifyChannels/index.js';
 import { buildFollowupContext } from '../cron/followup.js';
 import { assertDevDatabaseSafety, loadAppConfig } from './config.js';
 import { resolveModelRef } from './models.js';
+import { createSharedConfigRefresher } from './sharedConfigRefresher.js';
 import type { AgentOptionsConfig } from '../agent/options.js';
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
@@ -786,6 +787,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // Auth 初始化（需要在 dispatch 之前，因为 agentStore 依赖 userStore）
   let userStore: UserStore | undefined;
   let tenantStore: TenantStore | undefined;
+  // 跨进程刷新用（见 sharedConfigRefresher）：runtime-worker 要能感知 ws-only
+  // 进程对 tenants.json 的改写，所以路径需要在这个 if 块之外可见。
+  let tenantsFilePath: string | undefined;
   let authMiddleware: ReturnType<typeof createAuthMiddleware> | undefined;
 
   if (config.auth?.enabled && config.auth.jwtSecret) {
@@ -794,7 +798,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
 
     // Tenant store 与 user store 共生命周期；tenants.json 放在 users.json 同目录。
     // 启动期保证平台根组织和开沿日常组织都始终存在。
-    const tenantsFilePath = join(dirname(usersFilePath), 'tenants.json');
+    tenantsFilePath = join(dirname(usersFilePath), 'tenants.json');
     tenantStore = new TenantStore(tenantsFilePath);
     await tenantStore.ensureDefaultTenant();
     await tenantStore.ensureKaiyanTenant();
@@ -2208,9 +2212,30 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 生图 per-engine 定价注册表初始化；admin PUT /api/admin/image-gen-pricing 时热更。
   configureImageGenPricing(config.imageGenTools?.pricing);
 
+  // 跨进程配置刷新（2026-08-09 千问故障）：平台管理页由 ws-only 进程写 config.json /
+  // tenants.json，但 run 由 runtime-worker 执行。不在解析前对齐磁盘，新增模型就会
+  // 「下拉框能选、一发就报缺少 apiKey」，直到 worker 重启。
+  //
+  // 挂在 modelResolver 上而不是定时器上：这里是所有模型解析的唯一入口，能做到强一致
+  // 无延迟窗口；未变化时开销只是一次受节流保护的 statSync。
+  //
+  // titleGeneratorConfigs 不在此维护——它的消费方（routes/sessions.ts、web channel）
+  // 都只存在于 ws-only 进程，由那侧的 onModelsUpdated 负责。
+  const sharedConfigRefresher = createSharedConfigRefresher({
+    config,
+    processCwd,
+    target: {
+      updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },
+    },
+    tenantStore,
+    tenantsFilePath,
+    logger: serverLogger,
+  });
+
   // 模型解析器：如果配置了 models，绑定到 RawRuntime / WebChannel / Cron
   const modelResolver = config.models
     ? (ref: string, tenantId?: string) => {
+        sharedConfigRefresher.refreshIfChanged();
         const tenantSettings = tenantId ? tenantStore?.getSettings(tenantId) : undefined;
         if (!isModelAllowedForTenant(config.models!, tenantSettings, ref)) return null;
         return resolveModelRef(config.models!, ref);
@@ -2218,6 +2243,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     : undefined;
   const defaultModelResolver = config.models
     ? (tenantId?: string) => {
+        sharedConfigRefresher.refreshIfChanged();
         const tenantSettings = tenantId ? tenantStore?.getSettings(tenantId) : undefined;
         const ref = getTenantPublicModelList(config.models!, tenantSettings).default || config.models!.default;
         const resolved = modelResolver?.(ref, tenantId);

@@ -14,12 +14,17 @@
  *
  * 模式对齐 authUsersRouter.test.ts：真实 UserStore/TenantStore + 真 express + listen(0) + 真 fetch。
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+vi.mock('../data/login-logs/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../data/login-logs/index.js')>();
+  return { ...actual, appendLoginLog: vi.fn().mockResolvedValue(undefined) };
+});
 
 import type { JwtPayload } from '../auth/types.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
@@ -50,6 +55,7 @@ async function makeRig(): Promise<TestRig> {
   await tenantStore.create({ id: 'wain', name: '唯恩', createdBy: 'system' });
 
   const userStore = new UserStore(join(tmpRoot, 'users.json'));
+  vi.spyOn(userStore, 'updateAppVersion').mockResolvedValue();
   const platformAdmin = await userStore.create({
     username: 'platform_admin', password: 'password123', role: 'admin',
     createdBy: 'system', tenantId: DEFAULT_TENANT_ID,
@@ -96,12 +102,7 @@ async function makeRig(): Promise<TestRig> {
     request: (path, init) => fetch(`${baseUrl}${path}`, init),
     close: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      rmSync(tmpRoot, {
-        recursive: true,
-        force: true,
-        maxRetries: 20,
-        retryDelay: 50,
-      });
+      rmSync(tmpRoot, { recursive: true, force: true });
     },
   };
 }

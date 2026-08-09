@@ -35,7 +35,7 @@ import { PgRunStore } from '../runtime/runStore.js';
 import { PgHandStore } from '../runtime/handStore.js';
 import { PgSessionProjectionStore } from '../runtime/sessionProjectionStore.js';
 import { MemoryConsolidationEngine } from '../memory/consolidation/engine.js';
-import { TaskboardExecutionCoordinator } from '../taskboard/executionService.js';
+import { TaskboardExecutionCoordinator, createTaskboardRuntimeOptions } from '../taskboard/executionService.js';
 import { RetryableTaskboardService } from '../taskboard/retryableService.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import type { TaskboardExecutionService, TaskboardService } from '../taskboard/types.js';
@@ -2620,26 +2620,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         eventStore: pgEventStore,
         agentCwd,
         executionConfig,
-        resolveDefaultModel: defaultModelResolver,
-        resolveModel: modelResolver
-          ? (ref, tenantId) => {
-              const resolved = modelResolver(ref, tenantId);
-              return resolved ? { ref } : null;
-            }
-          : undefined,
-        resolveUserDisplayName: (userId) => {
-          try {
-            userStore?.reload();
-          } catch (error) {
-            serverLogger.warn(
-              `Taskboard user display name reload failed: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          }
-          const user = userStore?.findById(userId);
-          if (!user) return undefined;
-          return user.realName ? `${user.realName} @${user.username}` : user.username;
-        },
-        timezone: config.server.timezone,
+        resolveDefaultModel: defaultModelResolver, ...createTaskboardRuntimeOptions({ modelResolver, userStore, timezone: config.server.timezone, logger: serverLogger }),
         logger: serverLogger.child('TaskboardExecution'),
       });
     }

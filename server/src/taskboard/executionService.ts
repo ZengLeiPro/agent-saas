@@ -19,6 +19,7 @@ import { deriveStableWorkspaceId } from '../runtime/workspaceIdentity.js';
 import { formatDateTime } from '../utils/timestamp.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import { TaskboardExecutionUnavailableError } from './types.js';
+export { createTaskboardRuntimeOptions } from './runtimeOptions.js';
 import type {
   TaskboardExecutionContext,
   TaskboardExecutionDispatch,

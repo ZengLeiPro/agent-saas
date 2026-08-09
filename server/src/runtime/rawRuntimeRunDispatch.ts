@@ -257,8 +257,7 @@ export function resolveRuntimeModelOptions(
   config: Pick<RawRuntimeRunDispatchConfig, 'modelResolver'>,
   requestedModel: string | undefined,
   explicitConnection?: { apiKey?: string; baseUrl?: string },
-  explicitProviderOptions?: ModelProviderOptions,
-  tenantId?: string,
+  explicitProviderOptions?: ModelProviderOptions, tenantId?: string,
 ): { model: string; modelConnection?: { apiKey?: string; baseUrl?: string }; modelProviderOptions?: ModelProviderOptions } {
   if (explicitConnection) {
     return {
@@ -1908,8 +1907,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       config,
       requestedModel,
       options.modelConnection ?? options.openaiAgentsConnection,
-      options.modelProviderOptions,
-      context.sessionOwner?.tenantId ?? context.user?.tenantId,
+      options.modelProviderOptions, context.sessionOwner?.tenantId ?? context.user?.tenantId,
     );
     let connection = modelConnection;
     let apiKey = connection?.apiKey || process.env.OPENAI_API_KEY;
@@ -2555,8 +2553,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       config,
       requestedModel,
       request.modelConnection,
-      request.modelProviderOptions,
-      request.context.sessionOwner?.tenantId ?? request.context.user?.tenantId,
+      request.modelProviderOptions, request.context.sessionOwner?.tenantId ?? request.context.user?.tenantId,
     );
     let apiKey = modelConnection?.apiKey || process.env.OPENAI_API_KEY;
     let baseUrl = modelConnection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
@@ -2947,8 +2944,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       config,
       requestedModel,
       request.modelConnection,
-      request.modelProviderOptions,
-      request.context.sessionOwner?.tenantId ?? request.context.user?.tenantId,
+      request.modelProviderOptions, request.context.sessionOwner?.tenantId ?? request.context.user?.tenantId,
     );
     let apiKey = modelConnection?.apiKey || process.env.OPENAI_API_KEY;
     let baseUrl = modelConnection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;

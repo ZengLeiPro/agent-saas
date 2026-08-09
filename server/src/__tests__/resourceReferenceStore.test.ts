@@ -11,7 +11,7 @@ function buildPool() {
     queries.push(sql);
     if (sql.includes('SELECT version FROM')) return { rows: [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }] };
     if (sql.includes('DELETE FROM test_resource_references')) {
-      rows = rows.filter(row => row.source_type !== params[0] || row.source_id !== params[1]);
+      rows = rows.filter(row => row.tenant_id !== params[0] || row.source_type !== params[1] || row.source_id !== params[2]);
       return { rows: [], rowCount: 1 };
     }
     if (sql.includes('INSERT INTO test_resource_references') && sql.includes('RETURNING')) {
@@ -23,12 +23,12 @@ function buildPool() {
       rows.push(row);
       return { rows: [row], rowCount: 1 };
     }
-    if (sql.includes('WHERE target_type=$1 AND target_id=$2')) {
-      const result = rows.filter(row => row.target_type === params[0] && row.target_id === params[1]);
+    if (sql.includes('target_type=$2 AND target_id=$3')) {
+      const result = rows.filter(row => row.tenant_id === params[0] && row.target_type === params[1] && row.target_id === params[2]);
       return { rows: result, rowCount: result.length };
     }
-    if (sql.includes('WHERE source_type=$1 AND source_id=$2')) {
-      const result = rows.filter(row => row.source_type === params[0] && row.source_id === params[1]);
+    if (sql.includes('source_type=$2 AND source_id=$3')) {
+      const result = rows.filter(row => row.tenant_id === params[0] && row.source_type === params[1] && row.source_id === params[2]);
       return { rows: result, rowCount: result.length };
     }
     return { rows: [], rowCount: 0 };
@@ -42,11 +42,11 @@ describe('Resource Reference Index', () => {
     const { pool, getRows } = buildPool();
     const store = new PgResourceReferenceStore({ pool, tablePrefix: 'test' });
     const result = await store.replaceSourceReferences({
-      sourceType: 'org_agent', sourceId: 'oa-1', sourceVersion: '3', updatedBy: 'admin',
+      tenantId: 'acme', sourceType: 'org_agent', sourceId: 'oa-1', sourceVersion: '3', updatedBy: 'admin',
       references: [
-        { tenantId: 'acme', targetType: 'skill', targetId: 'skill-1', targetVersion: '2', relation: 'uses' },
-        { tenantId: 'acme', targetType: 'skill', targetId: 'skill-1', targetVersion: '2', relation: 'uses' },
-        { tenantId: 'acme', targetType: 'connector', targetId: 'github', targetVersion: 'v1', relation: 'uses' },
+        { targetType: 'skill', targetId: 'skill-1', targetVersion: '2', relation: 'uses' },
+        { targetType: 'skill', targetId: 'skill-1', targetVersion: '2', relation: 'uses' },
+        { targetType: 'connector', targetId: 'github', targetVersion: 'v1', relation: 'uses' },
       ],
     });
     expect(result).toHaveLength(2);
@@ -54,15 +54,30 @@ describe('Resource Reference Index', () => {
     expect(result[0].sourceVersion).toBe('3');
   });
 
+  it('同名 source/target 严格按 tenant 隔离，替换不会跨租户删除', async () => {
+    const { pool } = buildPool();
+    const store = new PgResourceReferenceStore({ pool, tablePrefix: 'test' });
+    await store.replaceSourceReferences({
+      tenantId: 'acme', sourceType: 'org_agent', sourceId: 'oa-1', updatedBy: 'admin',
+      references: [{ targetType: 'skill', targetId: 'skill-1', relation: 'uses' }],
+    });
+    await store.replaceSourceReferences({
+      tenantId: 'beta', sourceType: 'org_agent', sourceId: 'oa-1', updatedBy: 'admin',
+      references: [{ targetType: 'skill', targetId: 'skill-1', relation: 'uses' }],
+    });
+    await expect(store.listReferencers('acme', 'skill', 'skill-1')).resolves.toHaveLength(1);
+    await expect(store.listReferencers('beta', 'skill', 'skill-1')).resolves.toHaveLength(1);
+  });
+
   it('自引用与空 ID/relation fail closed', async () => {
     const { pool } = buildPool();
     const store = new PgResourceReferenceStore({ pool, tablePrefix: 'test' });
     await expect(store.replaceSourceReferences({
-      sourceType: 'org_agent', sourceId: 'oa-1', updatedBy: 'admin',
+      tenantId: 'acme', sourceType: 'org_agent', sourceId: 'oa-1', updatedBy: 'admin',
       references: [{ targetType: 'org_agent', targetId: 'oa-1', relation: 'uses' }],
     })).rejects.toMatchObject({ code: 'RESOURCE_REFERENCE_INVALID' });
     await expect(store.replaceSourceReferences({
-      sourceType: '', sourceId: 'oa-1', updatedBy: 'admin', references: [],
+      tenantId: 'acme', sourceType: '', sourceId: 'oa-1', updatedBy: 'admin', references: [],
     })).rejects.toMatchObject({ code: 'RESOURCE_REFERENCE_INVALID' });
   });
 
@@ -70,23 +85,23 @@ describe('Resource Reference Index', () => {
     const { pool } = buildPool();
     const store = new PgResourceReferenceStore({ pool, tablePrefix: 'test' });
     await store.replaceSourceReferences({
-      sourceType: 'org_agent', sourceId: 'oa-1', updatedBy: 'admin',
+      tenantId: 'acme', sourceType: 'org_agent', sourceId: 'oa-1', updatedBy: 'admin',
       references: [{ targetType: 'environment_template', targetId: 'env-1', relation: 'default_environment' }],
     });
-    const impact = await store.previewRetirement('environment_template', 'env-1');
+    const impact = await store.previewRetirement('acme', 'environment_template', 'env-1');
     expect(impact).toMatchObject({ hardDeleteAllowed: false, referenceCount: 1 });
-    await expect(store.assertHardDeleteAllowed('environment_template', 'env-1'))
+    await expect(store.assertHardDeleteAllowed('acme', 'environment_template', 'env-1'))
       .rejects.toMatchObject({ code: 'RESOURCE_HARD_DELETE_BLOCKED' });
   });
 
   it('无引用允许硬删；listDependencies 提供依赖面', async () => {
     const { pool } = buildPool();
     const store = new PgResourceReferenceStore({ pool, tablePrefix: 'test' });
-    await expect(store.assertHardDeleteAllowed('skill', 'unused')).resolves.toBeUndefined();
+    await expect(store.assertHardDeleteAllowed('acme', 'skill', 'unused')).resolves.toBeUndefined();
     await store.replaceSourceReferences({
-      sourceType: 'org_agent', sourceId: 'oa-1', updatedBy: 'admin',
+      tenantId: 'acme', sourceType: 'org_agent', sourceId: 'oa-1', updatedBy: 'admin',
       references: [{ targetType: 'skill', targetId: 'skill-1', relation: 'uses' }],
     });
-    await expect(store.listDependencies('org_agent', 'oa-1')).resolves.toHaveLength(1);
+    await expect(store.listDependencies('acme', 'org_agent', 'oa-1')).resolves.toHaveLength(1);
   });
 });

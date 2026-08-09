@@ -1,6 +1,6 @@
 export interface ResourceReference {
   referenceId: string;
-  tenantId?: string;
+  tenantId: string;
   sourceType: string;
   sourceId: string;
   sourceVersion?: string;
@@ -13,7 +13,6 @@ export interface ResourceReference {
 }
 
 export interface ResourceReferenceInput {
-  tenantId?: string;
   targetType: string;
   targetId: string;
   targetVersion?: string;
@@ -21,6 +20,7 @@ export interface ResourceReferenceInput {
 }
 
 export interface ReplaceResourceReferencesInput {
+  tenantId: string;
   sourceType: string;
   sourceId: string;
   sourceVersion?: string;
@@ -29,6 +29,7 @@ export interface ReplaceResourceReferencesInput {
 }
 
 export interface ResourceRetirementImpact {
+  tenantId: string;
   targetType: string;
   targetId: string;
   hardDeleteAllowed: boolean;

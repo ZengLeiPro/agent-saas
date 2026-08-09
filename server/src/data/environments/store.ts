@@ -19,7 +19,7 @@ export interface PgEnvironmentStoreOptions {
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{1,63}$/;
 const FORBIDDEN_RECIPE_KEYS = new Set(['secret', 'secretref', 'token', 'password', 'credential', 'credentialid', 'instanceid', 'sessionid', 'workspaceid']);
-const SENSITIVE_COMMAND_PATTERN = /(?:token|secret|password|api[_-]?key)\s*=/i;
+const SENSITIVE_COMMAND_PATTERN = /(?:authorization\s*:\s*bearer|bearer\s+[a-z0-9._~-]{8,}|(?:token|secret|password|api[_-]?key)\s*(?:=|:)\s*\S+)/i;
 
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);

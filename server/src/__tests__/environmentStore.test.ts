@@ -155,11 +155,17 @@ describe('Environment Provider/Template/Instance 领域', () => {
       .toThrowError(expect.objectContaining({ code: 'ENVIRONMENT_RECIPE_SENSITIVE' }));
     const { pool } = buildPool();
     const store = new PgEnvironmentStore({ pool, tablePrefix: 'test' });
-    await expect(store.publishTemplate({
-      templateId: 'bad-template', name: 'bad',
-      recipe: { ...recipe, setupCommands: ['export API_TOKEN=abc'] },
-      publishedBy: 'admin',
-    })).rejects.toMatchObject({ code: 'ENVIRONMENT_RECIPE_SENSITIVE' });
+    for (const command of [
+      'export API_TOKEN=abc',
+      'curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature" https://api.example',
+      'tool --password:plaintext',
+    ]) {
+      await expect(store.publishTemplate({
+        templateId: 'bad-template', name: 'bad',
+        recipe: { ...recipe, setupCommands: [command] },
+        publishedBy: 'admin',
+      })).rejects.toMatchObject({ code: 'ENVIRONMENT_RECIPE_SENSITIVE' });
+    }
   });
 
   it('retired Template 终态不可重新发布，版本冲突 fail closed', async () => {

@@ -392,7 +392,7 @@ function migrations(prefix: string): GovernanceMigration[] {
           DEFERRABLE INITIALLY DEFERRED`,
         `CREATE TABLE IF NOT EXISTS ${resourceReferences} (
           reference_id TEXT PRIMARY KEY,
-          tenant_id TEXT,
+          tenant_id TEXT NOT NULL,
           source_type TEXT NOT NULL,
           source_id TEXT NOT NULL,
           source_version TEXT,
@@ -402,7 +402,7 @@ function migrations(prefix: string): GovernanceMigration[] {
           relation TEXT NOT NULL,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           created_by TEXT NOT NULL,
-          UNIQUE (source_type, source_id, target_type, target_id, relation)
+          UNIQUE (tenant_id, source_type, source_id, target_type, target_id, relation)
         )`,
         `CREATE INDEX IF NOT EXISTS ${resourceReferences}_target_idx
           ON ${resourceReferences} (target_type, target_id, tenant_id)`,

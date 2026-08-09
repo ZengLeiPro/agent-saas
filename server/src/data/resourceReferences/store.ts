@@ -17,7 +17,7 @@ export interface PgResourceReferenceStoreOptions {
 function rowToReference(row: Record<string, unknown>): ResourceReference {
   return {
     referenceId: String(row.reference_id),
-    ...(row.tenant_id ? { tenantId: String(row.tenant_id) } : {}),
+    tenantId: String(row.tenant_id),
     sourceType: String(row.source_type),
     sourceId: String(row.source_id),
     ...(row.source_version ? { sourceVersion: String(row.source_version) } : {}),
@@ -48,26 +48,26 @@ export class PgResourceReferenceStore {
     await new PgGovernanceMigrationRunner(this.options.pool, this.tablePrefix).run();
   }
 
-  async listReferencers(targetType: string, targetId: string): Promise<ResourceReference[]> {
+  async listReferencers(tenantId: string, targetType: string, targetId: string): Promise<ResourceReference[]> {
     const result = await this.options.pool.query(`
       SELECT * FROM ${this.referencesTable}
-      WHERE target_type=$1 AND target_id=$2
+      WHERE tenant_id=$1 AND target_type=$2 AND target_id=$3
       ORDER BY source_type, source_id, relation
-    `, [targetType, targetId]);
+    `, [tenantId, targetType, targetId]);
     return result.rows.map(rowToReference);
   }
 
-  async listDependencies(sourceType: string, sourceId: string): Promise<ResourceReference[]> {
+  async listDependencies(tenantId: string, sourceType: string, sourceId: string): Promise<ResourceReference[]> {
     const result = await this.options.pool.query(`
       SELECT * FROM ${this.referencesTable}
-      WHERE source_type=$1 AND source_id=$2
+      WHERE tenant_id=$1 AND source_type=$2 AND source_id=$3
       ORDER BY target_type, target_id, relation
-    `, [sourceType, sourceId]);
+    `, [tenantId, sourceType, sourceId]);
     return result.rows.map(rowToReference);
   }
 
   async replaceSourceReferences(input: ReplaceResourceReferencesInput): Promise<ResourceReference[]> {
-    if (!nonEmpty(input.sourceType) || !nonEmpty(input.sourceId)
+    if (!nonEmpty(input.tenantId) || !nonEmpty(input.sourceType) || !nonEmpty(input.sourceId)
       || input.references.some(reference => !nonEmpty(reference.targetType)
         || !nonEmpty(reference.targetId)
         || !nonEmpty(reference.relation)
@@ -81,11 +81,11 @@ export class PgResourceReferenceStore {
     }
     return this.withTransaction(async client => {
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
-        `resource-reference:${input.sourceType}:${input.sourceId}`,
+        `resource-reference:${input.tenantId}:${input.sourceType}:${input.sourceId}`,
       ]);
       await client.query(
-        `DELETE FROM ${this.referencesTable} WHERE source_type=$1 AND source_id=$2`,
-        [input.sourceType, input.sourceId],
+        `DELETE FROM ${this.referencesTable} WHERE tenant_id=$1 AND source_type=$2 AND source_id=$3`,
+        [input.tenantId, input.sourceType, input.sourceId],
       );
       const rows: ResourceReference[] = [];
       for (const reference of unique.values()) {
@@ -95,7 +95,7 @@ export class PgResourceReferenceStore {
             target_type,target_id,target_version,relation,created_by
           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *
         `, [
-          randomUUID(), reference.tenantId ?? null, input.sourceType, input.sourceId,
+          randomUUID(), input.tenantId, input.sourceType, input.sourceId,
           input.sourceVersion ?? null, reference.targetType, reference.targetId,
           reference.targetVersion ?? null, reference.relation, input.updatedBy,
         ]);
@@ -105,9 +105,10 @@ export class PgResourceReferenceStore {
     });
   }
 
-  async previewRetirement(targetType: string, targetId: string): Promise<ResourceRetirementImpact> {
-    const references = await this.listReferencers(targetType, targetId);
+  async previewRetirement(tenantId: string, targetType: string, targetId: string): Promise<ResourceRetirementImpact> {
+    const references = await this.listReferencers(tenantId, targetType, targetId);
     return {
+      tenantId,
       targetType,
       targetId,
       hardDeleteAllowed: references.length === 0,
@@ -116,8 +117,8 @@ export class PgResourceReferenceStore {
     };
   }
 
-  async assertHardDeleteAllowed(targetType: string, targetId: string): Promise<void> {
-    const impact = await this.previewRetirement(targetType, targetId);
+  async assertHardDeleteAllowed(tenantId: string, targetType: string, targetId: string): Promise<void> {
+    const impact = await this.previewRetirement(tenantId, targetType, targetId);
     if (!impact.hardDeleteAllowed) {
       throw new ResourceReferenceInvariantError('RESOURCE_HARD_DELETE_BLOCKED');
     }

@@ -987,7 +987,9 @@ async function appendResolvedRunSnapshot(input: {
 }): Promise<void> {
   const { runPreflightService, runResolutionSnapshotStore } = input.config;
   if (!runPreflightService || !runResolutionSnapshotStore) return;
-  const tenantHands = input.hands.filter(hand => hand.metadata?.registeredBy === 'tenantRemoteHands');
+  const tenantHands = input.hands.filter(hand => (
+    hand.status === 'ready' && hand.metadata?.registeredBy === 'tenantRemoteHands'
+  ));
   const tenantHandId = tenantHands.length === 1 ? tenantHands[0]?.handId : undefined;
   const defaultHandId = `${input.session.sessionId}:${input.executionTarget}`;
   const environment = input.hands.find(hand => hand.handId === (tenantHandId ?? defaultHandId));

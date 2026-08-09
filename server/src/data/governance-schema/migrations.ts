@@ -31,6 +31,12 @@ function migrations(prefix: string): GovernanceMigration[] {
   const preferences = `${prefix}_user_resource_preferences`;
   const runResolutionSnapshots = `${prefix}_run_resolution_snapshots`;
   const credentials = `${prefix}_credentials`;
+  const connectorDefinitions = `${prefix}_connector_definitions`;
+  const connectorVersions = `${prefix}_connector_definition_versions`;
+  const executionProviders = `${prefix}_execution_providers`;
+  const environmentTemplates = `${prefix}_environment_templates`;
+  const environmentTemplateVersions = `${prefix}_environment_template_versions`;
+  const resourceReferences = `${prefix}_resource_references`;
 
   return [
     {
@@ -305,6 +311,103 @@ function migrations(prefix: string): GovernanceMigration[] {
           ON ${credentials} (tenant_id, owner_user_id, status)`,
         `CREATE INDEX IF NOT EXISTS ${credentials}_connector_idx
           ON ${credentials} (tenant_id, connector_id, status)`,
+      ],
+    },
+    {
+      version: 7,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS ${connectorDefinitions} (
+          connector_id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('draft', 'published', 'disabled', 'retired')),
+          current_version_id TEXT,
+          auth_methods_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+          capability_schema_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+          version BIGINT NOT NULL DEFAULT 1 CHECK (version >= 1),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_by TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by TEXT NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS ${connectorVersions} (
+          version_id TEXT PRIMARY KEY,
+          connector_id TEXT NOT NULL REFERENCES ${connectorDefinitions}(connector_id),
+          version_number BIGINT NOT NULL CHECK (version_number >= 1),
+          definition_json JSONB NOT NULL,
+          digest TEXT NOT NULL,
+          published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          published_by TEXT NOT NULL,
+          UNIQUE (connector_id, version_number),
+          UNIQUE (connector_id, digest)
+        )`,
+        `ALTER TABLE ${connectorDefinitions}
+          ADD CONSTRAINT ${connectorDefinitions}_current_version_fk
+          FOREIGN KEY (current_version_id) REFERENCES ${connectorVersions}(version_id)
+          DEFERRABLE INITIALLY DEFERRED`,
+        `CREATE INDEX IF NOT EXISTS ${connectorDefinitions}_status_idx
+          ON ${connectorDefinitions} (status, connector_id)`,
+      ],
+    },
+    {
+      version: 8,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS ${executionProviders} (
+          provider_id TEXT PRIMARY KEY,
+          status TEXT NOT NULL CHECK (status IN ('enabled', 'draining', 'disabled')),
+          endpoint_ref TEXT NOT NULL,
+          network_policy_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+          infrastructure_credential_id TEXT,
+          rollout_policy_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+          revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_by TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by TEXT NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS ${environmentTemplates} (
+          template_id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('draft', 'published', 'retired')),
+          current_version_id TEXT,
+          revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_by TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by TEXT NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS ${environmentTemplateVersions} (
+          version_id TEXT PRIMARY KEY,
+          template_id TEXT NOT NULL REFERENCES ${environmentTemplates}(template_id),
+          version_number BIGINT NOT NULL CHECK (version_number >= 1),
+          recipe_json JSONB NOT NULL,
+          digest TEXT NOT NULL,
+          published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          published_by TEXT NOT NULL,
+          UNIQUE (template_id, version_number),
+          UNIQUE (template_id, digest)
+        )`,
+        `ALTER TABLE ${environmentTemplates}
+          ADD CONSTRAINT ${environmentTemplates}_current_version_fk
+          FOREIGN KEY (current_version_id) REFERENCES ${environmentTemplateVersions}(version_id)
+          DEFERRABLE INITIALLY DEFERRED`,
+        `CREATE TABLE IF NOT EXISTS ${resourceReferences} (
+          reference_id TEXT PRIMARY KEY,
+          tenant_id TEXT,
+          source_type TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          source_version TEXT,
+          target_type TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          target_version TEXT,
+          relation TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_by TEXT NOT NULL,
+          UNIQUE (source_type, source_id, target_type, target_id, relation)
+        )`,
+        `CREATE INDEX IF NOT EXISTS ${resourceReferences}_target_idx
+          ON ${resourceReferences} (target_type, target_id, tenant_id)`,
+        `CREATE INDEX IF NOT EXISTS ${resourceReferences}_source_idx
+          ON ${resourceReferences} (source_type, source_id)`,
       ],
     },
   ];

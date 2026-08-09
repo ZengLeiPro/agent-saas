@@ -17,44 +17,52 @@ function getWeekday(date: Date, timezone: string): string {
 }
 
 /**
+ * 格式化指定时间（含星期），与用户消息前置时间戳使用同一格式
+ * @param date 要格式化的时间
+ * @param timezone IANA 时区名称，默认 Asia/Shanghai
+ * @returns 格式化的时间戳，如 "2026/01/31 周五 15:30"
+ */
+export function formatDateTime(date: Date, timezone: string = DEFAULT_TIMEZONE): string {
+  try {
+    const datePart = date.toLocaleString('zh-CN', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour12: false,
+    });
+    const timePart = date.toLocaleString('zh-CN', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const weekday = getWeekday(date, timezone);
+    return `${datePart} ${weekday} ${timePart}`;
+  } catch {
+    const datePart = date.toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour12: false,
+    });
+    const timePart = date.toLocaleString('zh-CN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const weekday = getWeekday(date, DEFAULT_TIMEZONE);
+    return `${datePart} ${weekday} ${timePart}`;
+  }
+}
+
+/**
  * 格式化当前时间戳（含星期）
  * @param timezone IANA 时区名称，默认 Asia/Shanghai
  * @returns 格式化的时间戳，如 "2026/01/31 周五 15:30"
  */
 export function formatTimestamp(timezone: string = DEFAULT_TIMEZONE): string {
-  try {
-    const now = new Date();
-    const datePart = now.toLocaleString('zh-CN', {
-      timeZone: timezone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour12: false,
-    });
-    const timePart = now.toLocaleString('zh-CN', {
-      timeZone: timezone,
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    });
-    const weekday = getWeekday(now, timezone);
-    return `${datePart} ${weekday} ${timePart}`;
-  } catch {
-    const now = new Date();
-    const datePart = now.toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour12: false,
-    });
-    const timePart = now.toLocaleString('zh-CN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    });
-    const weekday = getWeekday(now, DEFAULT_TIMEZONE);
-    return `${datePart} ${weekday} ${timePart}`;
-  }
+  return formatDateTime(new Date(), timezone);
 }
 
 /**

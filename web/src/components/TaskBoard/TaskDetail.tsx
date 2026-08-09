@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import {
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
+  type ModelList,
   type TaskBoardExecutionStartResult,
   type TaskBoardPriority,
   type TaskBoardStatus,
@@ -36,9 +37,10 @@ import {
   splitLabels,
   STATUS_LABELS,
 } from "./constants";
+import { ModelSelect } from "./ModelSelect";
 import { useTaskComments, useTaskExecutions } from "./hooks";
 
-type TaskDraftField = "title" | "description" | "priority" | "labels" | "dueAt";
+type TaskDraftField = "title" | "description" | "priority" | "labels" | "dueAt" | "model";
 
 const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
 
@@ -47,6 +49,7 @@ interface TaskDetailProps {
   active?: boolean;
   task: TaskBoardTask | null;
   boardReadOnly: boolean;
+  modelList?: ModelList | null;
   onOpenChange: (open: boolean) => void;
   onTaskLoaded: (task: TaskBoardTask) => void;
   onUpdate: (
@@ -64,6 +67,7 @@ export function TaskDetail({
   active = true,
   task,
   boardReadOnly,
+  modelList = null,
   onOpenChange,
   onTaskLoaded,
   onUpdate,
@@ -78,6 +82,7 @@ export function TaskDetail({
   const [priority, setPriority] = useState<TaskBoardPriority>("none");
   const [labels, setLabels] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [model, setModel] = useState<string | null>(null);
   const [commentBody, setCommentBody] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,6 +113,7 @@ export function TaskDetail({
     setPriority(next.priority);
     setLabels(next.labels.join(", "));
     setDueDate(dateFromDueAt(next.dueAt));
+    setModel(next.model ?? null);
   }, []);
 
   const mergeServerDraft = useCallback((next: TaskBoardTask) => {
@@ -117,6 +123,7 @@ export function TaskDetail({
     if (!dirty.has("priority")) setPriority(next.priority);
     if (!dirty.has("labels")) setLabels(next.labels.join(", "));
     if (!dirty.has("dueAt")) setDueDate(dateFromDueAt(next.dueAt));
+    if (!dirty.has("model")) setModel(next.model ?? null);
   }, []);
 
   useEffect(() => {
@@ -220,6 +227,7 @@ export function TaskDetail({
     if (dirty.has("priority")) input.priority = priority;
     if (dirty.has("labels")) input.labels = splitLabels(labels);
     if (dirty.has("dueAt")) input.dueAt = dueDate ? dueAtFromDate(dueDate) : null;
+    if (dirty.has("model")) input.model = model;
 
     const operationTask = currentTask;
     const requestId = ++detailRequestRef.current;
@@ -481,6 +489,23 @@ export function TaskDetail({
                     }}
                     disabled={readOnly || saving}
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label>运行模型</Label>
+                  <ModelSelect
+                    modelList={modelList}
+                    value={model}
+                    onChange={(next) => {
+                      dirtyFieldsRef.current.add("model");
+                      setModel(next);
+                    }}
+                    inheritLabel="继承看板默认模型"
+                    ariaLabel="任务运行模型"
+                    disabled={readOnly || saving}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    交给 Agent 执行时使用的模型，未指定时继承看板默认模型。
+                  </p>
                 </div>
                 {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
                 <div className="flex flex-wrap gap-2">

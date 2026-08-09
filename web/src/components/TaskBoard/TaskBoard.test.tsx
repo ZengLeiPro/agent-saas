@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./hooks", () => ({
+  useTaskboardModelList: () => null,
   useTaskBoards: () => ({
     boards: mocks.boards,
     loading: false,

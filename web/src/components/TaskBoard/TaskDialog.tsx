@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import {
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
+  type ModelList,
   type TaskBoardPriority,
   type TaskBoardStatus,
   type TaskBoardTaskCreateInput,
@@ -26,11 +27,13 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { dueAtFromDate, PRIORITY_LABELS, splitLabels, STATUS_LABELS } from "./constants";
+import { ModelSelect } from "./ModelSelect";
 
 interface TaskDialogProps {
   open: boolean;
   active?: boolean;
   initialStatus?: TaskBoardStatus;
+  modelList?: ModelList | null;
   onOpenChange: (open: boolean) => void;
   onCreate: (input: TaskBoardTaskCreateInput) => Promise<void>;
 }
@@ -39,6 +42,7 @@ export function TaskDialog({
   open,
   active = true,
   initialStatus = "backlog",
+  modelList = null,
   onOpenChange,
   onCreate,
 }: TaskDialogProps) {
@@ -48,6 +52,7 @@ export function TaskDialog({
   const [priority, setPriority] = useState<TaskBoardPriority>("none");
   const [labels, setLabels] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [model, setModel] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,6 +64,7 @@ export function TaskDialog({
     setPriority("none");
     setLabels("");
     setDueDate("");
+    setModel(null);
     setError(null);
   }, [initialStatus, open]);
 
@@ -79,6 +85,7 @@ export function TaskDialog({
         priority,
         labels: splitLabels(labels),
         ...(dueAtFromDate(dueDate) ? { dueAt: dueAtFromDate(dueDate) } : {}),
+        ...(model ? { model } : {}),
       });
       onOpenChange(false);
     } catch (caught) {
@@ -173,6 +180,17 @@ export function TaskDialog({
               type="date"
               value={dueDate}
               onChange={(event) => setDueDate(event.target.value)}
+              disabled={submitting}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>运行模型</Label>
+            <ModelSelect
+              modelList={modelList}
+              value={model}
+              onChange={setModel}
+              inheritLabel="继承看板默认模型"
+              ariaLabel="任务运行模型"
               disabled={submitting}
             />
           </div>

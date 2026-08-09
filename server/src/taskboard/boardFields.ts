@@ -18,8 +18,21 @@ export function boardPromptMigrationSql(boardsTable: string): string {
   `;
 }
 
+export function boardModelMigrationSql(boardsTable: string): string {
+  return `
+    ALTER TABLE ${boardsTable}
+      ADD COLUMN IF NOT EXISTS model TEXT
+  `;
+}
+
 export function normalizeBoardPrompt(value: string): string {
   return value.trim();
+}
+
+/** 模型 ref： trim 后为空视为未设置（继承上级默认）。 */
+export function normalizeModel(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized || null;
 }
 
 export function rowToBoard(row: Record<string, unknown>): TaskBoard {
@@ -30,6 +43,9 @@ export function rowToBoard(row: Record<string, unknown>): TaskBoard {
       ? { description: String(row.description) }
       : {}),
     prompt: String(row.prompt ?? TASKBOARD_DEFAULT_PROMPT),
+    ...(row.model !== null && row.model !== undefined && String(row.model).trim()
+      ? { model: String(row.model) }
+      : {}),
     version: Number(row.version),
     ...(row.archived_at ? { archivedAt: toIso(row.archived_at) } : {}),
     createdAt: toIso(row.created_at),

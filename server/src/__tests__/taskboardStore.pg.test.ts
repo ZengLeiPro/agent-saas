@@ -122,6 +122,55 @@ describePg('PgTaskboardStore contract', () => {
     expect(empty.prompt).toBe('');
   });
 
+  it('stores board/task model overrides and exposes them through the execution model context', async () => {
+    const board = await store.createBoard(alice, { name: '模型继承', model: 'group-a/model-board' });
+    expect(board.model).toBe('group-a/model-board');
+
+    const task = await store.createTask(alice, board.id, { title: '模型任务', status: 'todo' });
+    expect(task.model).toBeUndefined();
+    expect(await store.getExecutionModelContext(alice, task.id)).toEqual({
+      boardModel: 'group-a/model-board',
+    });
+
+    const overridden = await store.updateTask(alice, task.id, {
+      model: 'group-a/model-task',
+      expectedVersion: task.version,
+    });
+    expect(overridden.model).toBe('group-a/model-task');
+    expect(await store.getExecutionModelContext(alice, task.id)).toEqual({
+      taskModel: 'group-a/model-task',
+      boardModel: 'group-a/model-board',
+    });
+
+    const inherited = await store.updateTask(alice, task.id, {
+      model: null,
+      expectedVersion: overridden.version,
+    });
+    expect(inherited.model).toBeUndefined();
+    expect(await store.getExecutionModelContext(alice, task.id)).toEqual({
+      boardModel: 'group-a/model-board',
+    });
+
+    const cleared = await store.updateBoard(alice, board.id, {
+      model: null,
+      expectedVersion: board.version,
+    });
+    expect(cleared.model).toBeUndefined();
+    expect(await store.getExecutionModelContext(alice, task.id)).toEqual({});
+
+    const executionId = randomUUID();
+    const runId = randomUUID();
+    const sessionId = randomUUID();
+    await expect(store.claimExecution(alice, task.id, {
+      expectedVersion: inherited.version,
+      executionId,
+      runId,
+      sessionId,
+      configuredModelRef: 'group-a/model-board',
+      dispatch: dispatch(executionId, runId, sessionId),
+    })).rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_MODEL_CHANGED' });
+  });
+
   it('allocates stable numbers, returns CAS current state, and makes archived boards/tasks read-only', async () => {
     const board = await store.createBoard(alice, { name: 'CAS 与归档' });
     const first = await store.createTask(alice, board.id, { title: '第一项' });
@@ -149,6 +198,10 @@ describePg('PgTaskboardStore contract', () => {
     const comment = await store.createComment(alice, first.id, { body: '人工评论' });
     expect(comment).toMatchObject({ authorId: alice.ownerUserId, authorName: alice.username, version: 1 });
     expect(await store.listComments(alice, first.id)).toHaveLength(1);
+    expect(await store.listComments(
+      { ...alice, displayName: '爱丽丝 @alice' },
+      first.id,
+    )).toEqual([expect.objectContaining({ authorName: '爱丽丝 @alice' })]);
     expect((await store.getTask(alice, first.id)).commentCount).toBe(1);
 
     const archivedTask = await store.archiveTask(alice, first.id, { expectedVersion: edited.version });

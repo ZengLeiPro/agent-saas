@@ -10,6 +10,7 @@ import type {
   TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import type { JwtPayload } from '../auth/types.js';
+import type { UserStore } from '../data/users/store.js';
 import { createTaskboardRouter } from '../routes/taskboard.js';
 import {
   TaskboardConflictError,
@@ -122,19 +123,54 @@ describe('Taskboard routes', () => {
       name: '研发事项',
       description: '首期',
       prompt: '只处理当前看板任务',
+      model: 'group-a/model-a',
     }));
     expect(created.status).toBe(201);
     expect(captured.identities.at(-1)).toEqual({
       tenantId: USER.tenantId,
       ownerUserId: USER.sub,
       username: USER.username,
+      displayName: USER.username,
       userRole: USER.role,
     });
     expect(captured.createBoards).toEqual([{
       name: '研发事项',
       description: '首期',
       prompt: '只处理当前看板任务',
+      model: 'group-a/model-a',
     }]);
+  });
+
+  it('parses model fields on board/task mutations and injects display name from userStore', async () => {
+    const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
+    const userStore = {
+      findById: (id: string) => (id === USER.sub ? { realName: '曾磊' } : undefined),
+    } as unknown as UserStore;
+    const rig = await makeRig(makeService(captured), USER, captured, undefined, userStore);
+
+    const patchedBoard = await rig.request('/api/taskboard/boards/board-1', patchJson({
+      model: null,
+      expectedVersion: 1,
+    }));
+    expect(patchedBoard.status).toBe(200);
+    expect(captured.identities.at(-1)).toEqual({
+      tenantId: USER.tenantId,
+      ownerUserId: USER.sub,
+      username: USER.username,
+      displayName: `曾磊 @${USER.username}`,
+      userRole: USER.role,
+    });
+
+    const createdTask = await rig.request('/api/taskboard/boards/board-1/tasks', postJson({
+      title: '新任务',
+      model: 'group-a/model-b',
+    }));
+    expect(createdTask.status).toBe(201);
+
+    expect((await rig.request('/api/taskboard/tasks/task-1', patchJson({
+      model: null,
+      expectedVersion: 1,
+    }))).status).toBe(200);
   });
 
   it('strictly validates every mutation shape and parses search/status/priority filters', async () => {
@@ -174,6 +210,7 @@ describe('Taskboard routes', () => {
           tenantId: USER.tenantId,
           ownerUserId: USER.sub,
           username: USER.username,
+          displayName: USER.username,
           userRole: USER.role,
         });
         expect(taskId).toBe(TASK.id);
@@ -267,6 +304,7 @@ async function makeRig(
   initialCaller: JwtPayload | null,
   captured: Captured = { identities: [], taskFilters: [], createBoards: [] },
   executionService?: TaskboardExecutionService,
+  userStore?: UserStore,
 ): Promise<Rig> {
   const app = express();
   app.use(express.json());
@@ -275,7 +313,7 @@ async function makeRig(
     req.user = caller ?? undefined;
     next();
   });
-  app.use('/api/taskboard', createTaskboardRouter({ service, executionService }));
+  app.use('/api/taskboard', createTaskboardRouter({ service, executionService, userStore }));
   const server: Server = await new Promise((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });

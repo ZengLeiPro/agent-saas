@@ -42,6 +42,8 @@ export interface TaskBoard {
   name: string;
   description?: string;
   prompt: string;
+  /** 看板默认模型 ref（groupId/modelId）；缺省时任务执行回落到组织默认模型。 */
+  model?: string;
   version: number;
   archivedAt?: string;
   createdAt: string;
@@ -59,6 +61,8 @@ export interface TaskBoardTask {
   labels: string[];
   sortOrder: number;
   dueAt?: string;
+  /** 任务级模型 ref；缺省时继承看板默认模型。 */
+  model?: string;
   commentCount: number;
   version: number;
   archivedAt?: string;
@@ -101,12 +105,15 @@ export interface TaskBoardCreateInput {
   name: string;
   description?: string;
   prompt?: string;
+  model?: string;
 }
 
 export interface TaskBoardPatchInput {
   name?: string;
   description?: string;
   prompt?: string;
+  /** null 表示清除看板默认模型，回落到组织默认模型。 */
+  model?: string | null;
   expectedVersion: number;
 }
 
@@ -117,6 +124,7 @@ export interface TaskBoardTaskCreateInput {
   priority?: TaskBoardPriority;
   labels?: string[];
   dueAt?: string;
+  model?: string;
 }
 
 export interface TaskBoardTaskPatchInput {
@@ -125,6 +133,8 @@ export interface TaskBoardTaskPatchInput {
   priority?: TaskBoardPriority;
   labels?: string[];
   dueAt?: string | null;
+  /** null 表示清除任务级模型，恢复继承看板默认模型。 */
+  model?: string | null;
   expectedVersion: number;
 }
 

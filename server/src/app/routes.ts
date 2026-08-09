@@ -440,6 +440,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     createTaskboardRouter({
       service: runtime.taskboardService,
       executionService: runtime.taskboardExecutionService,
+      userStore: runtime.userStore,
     }),
   );
 

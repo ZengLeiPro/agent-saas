@@ -11,7 +11,7 @@ import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHe
 import { TaskBoardConflictError } from "./api";
 import { BoardDialog } from "./BoardDialog";
 import { BoardToolbar } from "./BoardToolbar";
-import { useBoardTasks, useTaskBoards } from "./hooks";
+import { useBoardTasks, useTaskboardModelList, useTaskBoards } from "./hooks";
 import { TaskColumns } from "./TaskColumns";
 import { TaskDetail } from "./TaskDetail";
 import { TaskDialog } from "./TaskDialog";
@@ -86,6 +86,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     optimisticMove,
     syncTask,
   } = useBoardTasks(selectedBoard?.id ?? null);
+  const modelList = useTaskboardModelList();
 
   const [boardDialogMode, setBoardDialogMode] = useState<BoardDialogMode>(null);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
@@ -346,6 +347,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         active={active}
         open={boardDialogMode !== null}
         board={boardDialogMode === "edit" ? selectedBoard ?? undefined : undefined}
+        modelList={modelList}
         onOpenChange={(open) => {
           if (!open) setBoardDialogMode(null);
         }}
@@ -361,6 +363,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         active={active}
         open={taskDialogOpen}
         initialStatus={taskDialogStatus}
+        modelList={modelList}
         onOpenChange={setTaskDialogOpen}
         onCreate={async (input) => {
           await addTask(input);
@@ -371,6 +374,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         open={detailOpen}
         task={selectedTask}
         boardReadOnly={readOnly}
+        modelList={modelList}
         onOpenChange={setDetailOpen}
         onTaskLoaded={syncTask}
         onUpdate={async (task, input) => updateTask(task, input)}

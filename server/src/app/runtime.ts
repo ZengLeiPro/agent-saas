@@ -2621,6 +2621,25 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         agentCwd,
         executionConfig,
         resolveDefaultModel: defaultModelResolver,
+        resolveModel: modelResolver
+          ? (ref, tenantId) => {
+              const resolved = modelResolver(ref, tenantId);
+              return resolved ? { ref } : null;
+            }
+          : undefined,
+        resolveUserDisplayName: (userId) => {
+          try {
+            userStore?.reload();
+          } catch (error) {
+            serverLogger.warn(
+              `Taskboard user display name reload failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+          const user = userStore?.findById(userId);
+          if (!user) return undefined;
+          return user.realName ? `${user.realName} @${user.username}` : user.username;
+        },
+        timezone: config.server.timezone,
         logger: serverLogger.child('TaskboardExecution'),
       });
     }

@@ -1,6 +1,7 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
 
+import type { UserStore } from '../data/users/store.js';
 import {
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
@@ -19,15 +20,18 @@ const boardCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().max(4_000).optional(),
   prompt: z.string().max(20_000).optional(),
+  model: z.string().trim().min(1).max(256).optional(),
 }).strict();
 
 const boardPatchSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   description: z.string().max(4_000).optional(),
   prompt: z.string().max(20_000).optional(),
+  model: z.string().trim().min(1).max(256).nullish(),
   expectedVersion: z.number().int().min(1),
 }).strict().refine(
-  (input) => input.name !== undefined || input.description !== undefined || input.prompt !== undefined,
+  (input) => input.name !== undefined || input.description !== undefined
+    || input.prompt !== undefined || input.model !== undefined,
   { message: 'At least one board field is required' },
 );
 
@@ -46,6 +50,7 @@ const taskCreateSchema = z.object({
   priority: z.enum(TASKBOARD_PRIORITIES).optional(),
   labels: labelsSchema.optional(),
   dueAt: dueAtSchema.optional(),
+  model: z.string().trim().min(1).max(256).optional(),
 }).strict();
 
 const taskPatchSchema = z.object({
@@ -54,13 +59,15 @@ const taskPatchSchema = z.object({
   priority: z.enum(TASKBOARD_PRIORITIES).optional(),
   labels: labelsSchema.optional(),
   dueAt: dueAtSchema.nullable().optional(),
+  model: z.string().trim().min(1).max(256).nullish(),
   expectedVersion: z.number().int().min(1),
 }).strict().refine(
   (input) => input.title !== undefined
     || input.description !== undefined
     || input.priority !== undefined
     || input.labels !== undefined
-    || input.dueAt !== undefined,
+    || input.dueAt !== undefined
+    || input.model !== undefined,
   { message: 'At least one task field is required' },
 );
 
@@ -89,10 +96,13 @@ const tasksQuerySchema = z.object({
 export interface TaskboardRouterOptions {
   service?: TaskboardService;
   executionService?: TaskboardExecutionService;
+  /** 用于解析评论/执行提示词中的用户展示名（如「曾磊 @zenglei」）。 */
+  userStore?: UserStore;
 }
 
 export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   const router = Router();
+  const identityFrom = identityFactory(options);
 
   router.use((req, res, next) => {
     if (!req.user) {
@@ -222,13 +232,17 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   return router;
 }
 
-function identityFrom(req: Request): TaskboardIdentity {
-  const user = req.user!;
-  return {
-    tenantId: user.tenantId,
-    ownerUserId: user.sub,
-    username: user.username,
-    userRole: user.role,
+function identityFactory(options: TaskboardRouterOptions): (req: Request) => TaskboardIdentity {
+  return (req: Request) => {
+    const user = req.user!;
+    const realName = options.userStore?.findById(user.sub)?.realName;
+    return {
+      tenantId: user.tenantId,
+      ownerUserId: user.sub,
+      username: user.username,
+      displayName: realName ? `${realName} @${user.username}` : user.username,
+      userRole: user.role,
+    };
   };
 }
 

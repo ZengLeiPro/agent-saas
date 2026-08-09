@@ -2,7 +2,7 @@ import type { ComponentProps } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { TaskBoardExecution, TaskBoardTask } from "@agent/shared";
+import type { ModelList, TaskBoardExecution, TaskBoardTask } from "@agent/shared";
 import { TaskBoardConflictError } from "./api";
 import { TaskDetail } from "./TaskDetail";
 
@@ -54,6 +54,14 @@ function task(id: string, title: string, version = 3): TaskBoardTask {
 
 const taskOne = task("task-1", "任务一");
 const taskTwo = task("task-2", "任务二");
+const modelList: ModelList = {
+  groups: [{ id: "group-a", name: "模型组", models: [{ id: "model-c", name: "模型 C" }] }],
+  default: "group-a/model-c",
+  allowCrossGroupSwitch: true,
+  showGroupNames: true,
+  showContextTokens: true,
+  allowContextTokenDetails: false,
+};
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -172,6 +180,25 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(2));
     expect(onUpdate.mock.calls[1]?.[0]).toMatchObject({ id: taskOne.id, version: 8 });
     expect(onUpdate.mock.calls[1]?.[1]).toEqual({ title: saved.title });
+  });
+
+  it("任务详情可指定模型并保存任务级覆盖", async () => {
+    const user = userEvent.setup();
+    const onUpdate = vi.fn(async (current: TaskBoardTask) => ({
+      ...current,
+      model: "group-a/model-c",
+      version: current.version + 1,
+    }));
+    render(<TaskDetail {...props({ onUpdate })} modelList={modelList} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+
+    await user.click(screen.getByRole("combobox", { name: "任务运行模型" }));
+    await user.click(screen.getByRole("option", { name: "模型 C" }));
+    await user.click(screen.getByRole("button", { name: "保存任务" }));
+
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledWith(taskOne, {
+      model: "group-a/model-c",
+    }));
   });
 
   it("待处理任务可以显式交给 Agent，并展示执行会话入口", async () => {

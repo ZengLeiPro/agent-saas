@@ -17,7 +17,7 @@ import {
   type TaskBoardTaskMoveInput,
   type TaskBoardTaskPatchInput,
 } from '../../../shared/src/types/taskboard.js';
-import { boardPromptMigrationSql, normalizeBoardPrompt, rowToBoard } from './boardFields.js';
+import { boardModelMigrationSql, boardPromptMigrationSql, normalizeBoardPrompt, normalizeModel, rowToBoard } from './boardFields.js';
 import {
   TaskboardConflictError,
   TaskboardNotFoundError,
@@ -26,6 +26,7 @@ import {
   type TaskboardExecutionCompletionInput,
   type TaskboardExecutionContext,
   type TaskboardExecutionDispatch,
+  type TaskboardExecutionModelContext,
   type TaskboardExecutionReconcileCandidate,
   type TaskboardExecutionStore,
   type TaskboardExpectedVersionInput,
@@ -80,6 +81,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           name TEXT NOT NULL,
           description TEXT,
           prompt TEXT NOT NULL DEFAULT ${quoteSqlLiteral(TASKBOARD_DEFAULT_PROMPT)},
+          model TEXT,
           next_task_number INTEGER NOT NULL DEFAULT 1 CHECK (next_task_number >= 1),
           version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
           archived_at TIMESTAMPTZ,
@@ -88,6 +90,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         )
       `);
       await client.query(boardPromptMigrationSql(this.boardsTable));
+      await client.query(boardModelMigrationSql(this.boardsTable));
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.tasksTable} (
           id TEXT PRIMARY KEY,
@@ -100,12 +103,17 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           labels TEXT[] NOT NULL DEFAULT '{}',
           sort_order DOUBLE PRECISION NOT NULL,
           due_at TIMESTAMPTZ,
+          model TEXT,
           version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
           archived_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           UNIQUE (board_id, identifier)
         )
+      `);
+      await client.query(`
+        ALTER TABLE ${this.tasksTable}
+          ADD COLUMN IF NOT EXISTS model TEXT
       `);
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.commentsTable} (
@@ -219,7 +227,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
 
   async listBoards(identity: TaskboardIdentity, includeArchived = false): Promise<TaskBoard[]> {
     const result = await this.pool.query(
-      `SELECT id, name, description, prompt, version, archived_at, created_at, updated_at
+      `SELECT id, name, description, prompt, model, version, archived_at, created_at, updated_at
          FROM ${this.boardsTable}
         WHERE tenant_id=$1 AND owner_user_id=$2
           AND ($3::boolean OR archived_at IS NULL)
@@ -233,13 +241,14 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     const name = requireText(input.name, 'Board name');
     const description = optionalText(input.description);
     const prompt = normalizeBoardPrompt(input.prompt ?? TASKBOARD_DEFAULT_PROMPT);
+    const model = normalizeModel(input.model);
     try {
       const result = await this.pool.query(
         `INSERT INTO ${this.boardsTable}
-           (id, tenant_id, owner_user_id, name, description, prompt, next_task_number, version)
-         VALUES ($1,$2,$3,$4,$5,$6,1,1)
-         RETURNING id, name, description, prompt, version, archived_at, created_at, updated_at`,
-        [randomUUID(), identity.tenantId, identity.ownerUserId, name, description, prompt],
+           (id, tenant_id, owner_user_id, name, description, prompt, model, next_task_number, version)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,1,1)
+         RETURNING id, name, description, prompt, model, version, archived_at, created_at, updated_at`,
+        [randomUUID(), identity.tenantId, identity.ownerUserId, name, description, prompt, model],
       );
       return rowToBoard(result.rows[0]);
     } catch (error) {
@@ -252,7 +261,12 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       const current = await this.requireBoard(client, identity, boardId, true);
       assertExpectedVersion(current, input.expectedVersion);
       assertActiveBoard(current);
-      if (input.name === undefined && input.description === undefined && input.prompt === undefined) {
+      if (
+        input.name === undefined
+        && input.description === undefined
+        && input.prompt === undefined
+        && input.model === undefined
+      ) {
         throw new TaskboardValidationError('No board changes supplied');
       }
       const assignments = ['version=version+1', 'updated_at=now()'];
@@ -269,12 +283,16 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         params.push(normalizeBoardPrompt(input.prompt));
         assignments.push(`prompt=$${params.length}`);
       }
+      if (input.model !== undefined) {
+        params.push(normalizeModel(input.model));
+        assignments.push(`model=$${params.length}`);
+      }
       try {
         const result = await client.query(
           `UPDATE ${this.boardsTable}
               SET ${assignments.join(', ')}
             WHERE id=$1 AND tenant_id=$2 AND owner_user_id=$3
-            RETURNING id, name, description, prompt, version, archived_at, created_at, updated_at`,
+            RETURNING id, name, description, prompt, model, version, archived_at, created_at, updated_at`,
           params,
         );
         return rowToBoard(result.rows[0]);
@@ -297,7 +315,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         `UPDATE ${this.boardsTable}
             SET archived_at=now(), version=version+1, updated_at=now()
           WHERE id=$1 AND tenant_id=$2 AND owner_user_id=$3
-          RETURNING id, name, description, prompt, version, archived_at, created_at, updated_at`,
+          RETURNING id, name, description, prompt, model, version, archived_at, created_at, updated_at`,
         [boardId, identity.tenantId, identity.ownerUserId],
       );
       return rowToBoard(result.rows[0]);
@@ -320,7 +338,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           `UPDATE ${this.boardsTable}
               SET archived_at=NULL, version=version+1, updated_at=now()
             WHERE id=$1 AND tenant_id=$2 AND owner_user_id=$3
-            RETURNING id, name, description, prompt, version, archived_at, created_at, updated_at`,
+            RETURNING id, name, description, prompt, model, version, archived_at, created_at, updated_at`,
           [boardId, identity.tenantId, identity.ownerUserId],
         );
         return rowToBoard(result.rows[0]);
@@ -402,8 +420,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       const taskId = randomUUID();
       await client.query(
         `INSERT INTO ${this.tasksTable}
-           (id, board_id, identifier, title, description, status, priority, labels, sort_order, due_at, version)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1)`,
+           (id, board_id, identifier, title, description, status, priority, labels, sort_order, due_at, model, version)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1)`,
         [
           taskId,
           boardId,
@@ -415,6 +433,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           normalizeLabels(input.labels),
           sortOrder,
           input.dueAt ?? null,
+          normalizeModel(input.model),
         ],
       );
       return this.requireTask(client, identity, taskId, false);
@@ -440,6 +459,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         && input.priority === undefined
         && input.labels === undefined
         && input.dueAt === undefined
+        && input.model === undefined
       ) {
         throw new TaskboardValidationError('No task changes supplied');
       }
@@ -464,6 +484,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (input.dueAt !== undefined) {
         params.push(input.dueAt);
         assignments.push(`due_at=$${params.length}`);
+      }
+      if (input.model !== undefined) {
+        params.push(normalizeModel(input.model));
+        assignments.push(`model=$${params.length}`);
       }
       await client.query(
         `UPDATE ${this.tasksTable} t
@@ -563,7 +587,17 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         ORDER BY c.created_at, c.id`,
       [taskId, identity.tenantId, identity.ownerUserId],
     );
-    return result.rows.map(rowToComment);
+    return result.rows.map((row) => {
+      const comment = rowToComment(row);
+      if (
+        identity.displayName
+        && comment.authorType === 'user'
+        && comment.authorId === identity.ownerUserId
+      ) {
+        return { ...comment, authorName: identity.displayName };
+      }
+      return comment;
+    });
   }
 
   async createComment(
@@ -579,7 +613,13 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
            (id, task_id, body, author_type, author_id, author_name, version)
          VALUES ($1,$2,$3,'user',$4,$5,1)
          RETURNING *`,
-        [randomUUID(), taskId, requireText(input.body, 'Comment body'), identity.ownerUserId, identity.username],
+        [
+          randomUUID(),
+          taskId,
+          requireText(input.body, 'Comment body'),
+          identity.ownerUserId,
+          identity.displayName || identity.username,
+        ],
       );
       return rowToComment(result.rows[0]);
     });
@@ -600,6 +640,25 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return result.rows.map(rowToExecution);
   }
 
+  async getExecutionModelContext(
+    identity: TaskboardIdentity,
+    taskId: string,
+  ): Promise<TaskboardExecutionModelContext> {
+    const result = await this.pool.query(
+      `SELECT t.model AS task_model, b.model AS board_model
+         FROM ${this.tasksTable} t
+         JOIN ${this.boardsTable} b ON b.id=t.board_id
+        WHERE t.id=$1 AND b.tenant_id=$2 AND b.owner_user_id=$3`,
+      [taskId, identity.tenantId, identity.ownerUserId],
+    );
+    if (!result.rows[0]) throw new TaskboardNotFoundError('Task not found');
+    const row = result.rows[0];
+    return {
+      ...(row.task_model ? { taskModel: String(row.task_model) } : {}),
+      ...(row.board_model ? { boardModel: String(row.board_model) } : {}),
+    };
+  }
+
   async claimExecution(
     identity: TaskboardIdentity,
     taskId: string,
@@ -609,6 +668,13 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
       assertExpectedVersion(loaded.task, input.expectedVersion);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
+      const currentConfiguredModelRef = loaded.task.model ?? loaded.boardModel;
+      if (currentConfiguredModelRef !== input.configuredModelRef) {
+        throw new TaskboardValidationError(
+          '任务或看板的运行模型已变化，请重试',
+          'TASKBOARD_EXECUTION_MODEL_CHANGED',
+        );
+      }
       if (loaded.task.status !== 'todo') {
         throw new TaskboardValidationError(
           'Only todo tasks can be handed to Agent',
@@ -1088,7 +1154,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     forUpdate: boolean,
   ): Promise<TaskBoard> {
     const result = await db.query(
-      `SELECT id, name, description, prompt, version, archived_at, created_at, updated_at
+      `SELECT id, name, description, prompt, model, version, archived_at, created_at, updated_at
          FROM ${this.boardsTable}
         WHERE id=$1 AND tenant_id=$2 AND owner_user_id=$3
         ${forUpdate ? 'FOR UPDATE' : ''}`,
@@ -1112,7 +1178,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     identity: TaskboardIdentity,
     taskId: string,
     forUpdate: boolean,
-  ): Promise<{ task: TaskBoardTask; boardArchivedAt?: string }> {
+  ): Promise<{ task: TaskBoardTask; boardArchivedAt?: string; boardModel?: string }> {
     let lockedBoard: TaskBoard | undefined;
     if (forUpdate) {
       const ownership = await db.query(
@@ -1134,6 +1200,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     const result = await db.query(
       `SELECT t.*,
               b.archived_at AS board_archived_at,
+              b.model AS board_model,
               (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id) AS comment_count
          FROM ${this.tasksTable} t
          JOIN ${this.boardsTable} b ON b.id=t.board_id
@@ -1145,9 +1212,12 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     const row = result.rows[0];
     const boardArchivedAt = lockedBoard?.archivedAt
       ?? (row.board_archived_at ? toIso(row.board_archived_at) : undefined);
+    const boardModel = lockedBoard?.model
+      ?? (row.board_model ? String(row.board_model) : undefined);
     return {
       task: rowToTask(row),
       ...(boardArchivedAt ? { boardArchivedAt } : {}),
+      ...(boardModel ? { boardModel } : {}),
     };
   }
 
@@ -1179,6 +1249,9 @@ function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     labels: Array.isArray(row.labels) ? row.labels.map(String) : [],
     sortOrder: Number(row.sort_order),
     ...(row.due_at ? { dueAt: toIso(row.due_at) } : {}),
+    ...(row.model !== null && row.model !== undefined && String(row.model).trim()
+      ? { model: String(row.model) }
+      : {}),
     commentCount: Number(row.comment_count ?? 0),
     version: Number(row.version),
     ...(row.archived_at ? { archivedAt: toIso(row.archived_at) } : {}),

@@ -65,13 +65,17 @@ function execution(input: Partial<TaskBoardExecution> = {}): TaskBoardExecution 
   };
 }
 
-function makeRig(overrides: Partial<TaskboardExecutionStore> = {}) {
+function makeRig(
+  overrides: Partial<TaskboardExecutionStore> = {},
+  coordinatorOptions: Partial<ConstructorParameters<typeof TaskboardExecutionCoordinator>[0]> = {},
+) {
   const dispatches = new Map<string, {
     executionId: string;
     payload: Parameters<TaskboardExecutionStore['claimExecution']>[2]['dispatch'];
   }>();
   const store = {
     listExecutions: vi.fn(async () => []),
+    getExecutionModelContext: vi.fn(async () => ({})),
     claimExecution: vi.fn(async (_identity, _taskId, input) => {
       dispatches.set(input.runId, { executionId: input.executionId, payload: input.dispatch });
       return {
@@ -155,6 +159,7 @@ function makeRig(overrides: Partial<TaskboardExecutionStore> = {}) {
     agentCwd: '/agent-workspaces',
     executionConfig: createExecutionConfig({ tenantDefaultTarget: 'server-remote' }),
     resolveDefaultModel: () => ({ ref: 'model-default' }),
+    ...coordinatorOptions,
   });
   return { coordinator, store, scheduler, runStore, sessionCatalog, eventStore };
 }
@@ -187,7 +192,10 @@ describe('TaskboardExecutionCoordinator', () => {
   });
 
   it('wake 前重读最新任务和评论并生成执行提示词', async () => {
-    const rig = makeRig();
+    const rig = makeRig({}, {
+      resolveUserDisplayName: () => '爱丽丝 @alice',
+      timezone: 'Asia/Shanghai',
+    });
     const prepared = await rig.coordinator.prepareWake({
       runId: 'run-1',
       sessionId: 'session-1',
@@ -203,9 +211,31 @@ describe('TaskboardExecutionCoordinator', () => {
       content: expect.stringContaining(task.title),
     });
     const content = (prepared.metadata.wakeMessage as { content: string }).content;
+    expect(content.startsWith('看板提示语：\n只修改与任务直接相关的文件。')).toBe(true);
     expect(content).toContain(comment.body);
-    expect(content).toContain('看板提示语：\n只修改与任务直接相关的文件。');
     expect(content).not.toContain('1. 直接完成任务，必要时使用可用工具；不要只给计划。');
+    expect(content).not.toContain('你正在执行一条由用户明确交给 Agent 的任务看板任务。');
+    expect(content).not.toContain('执行前输入已从服务端重新读取');
+    // 评论时间戳使用与正常会话用户消息一致的格式（Asia/Shanghai）
+    expect(content).toContain('[2026/08/01 周六 09:00] 爱丽丝 @alice（user）');
+    expect(content).not.toContain('2026-08-01T01:00:00.000Z');
+  });
+
+  it('wake 时显式模型已被组织禁用则拒绝启动', async () => {
+    const resolveModel = vi.fn(() => null);
+    const rig = makeRig({}, { resolveModel });
+
+    await expect(rig.coordinator.prepareWake({
+      runId: 'run-1',
+      sessionId: 'session-1',
+      model: 'group-a/model-disabled',
+      status: 'pending',
+      requestedAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z',
+      metadata: { taskboardExecution: true, taskboardExecutionId: 'execution-1' },
+    })).rejects.toThrow('指定模型不可用：group-a/model-disabled');
+    expect(resolveModel).toHaveBeenCalledWith('group-a/model-disabled', identity.tenantId);
+    expect(rig.store.setExecutionStatus).not.toHaveBeenCalled();
   });
 
   it('wake 竞争到终态后立即停止，不再启动 Agent', async () => {
@@ -219,6 +249,71 @@ describe('TaskboardExecutionCoordinator', () => {
       updatedAt: '2026-08-01T00:00:00.000Z',
       metadata: { taskboardExecution: true, taskboardExecutionId: 'execution-1' },
     })).rejects.toThrow('任务看板执行已终止');
+  });
+
+  it('任务级模型优先于看板模型，看板模型优先于组织默认模型', async () => {
+    const resolveModel = vi.fn((ref: string) => ({ ref }));
+    const rig = makeRig(
+      {
+        getExecutionModelContext: vi.fn(async () => ({
+          taskModel: 'group-a/model-task',
+          boardModel: 'group-a/model-board',
+        })),
+      },
+      { resolveModel },
+    );
+    await rig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version });
+    expect(rig.store.claimExecution).toHaveBeenCalledWith(
+      identity,
+      task.id,
+      expect.objectContaining({ configuredModelRef: 'group-a/model-task' }),
+    );
+    expect(rig.sessionCatalog.ensure).toHaveBeenCalledWith(expect.objectContaining({
+      modelRef: 'group-a/model-task',
+    }));
+
+    const boardOnlyRig = makeRig(
+      {
+        getExecutionModelContext: vi.fn(async () => ({ boardModel: 'group-a/model-board' })),
+      },
+      { resolveModel },
+    );
+    await boardOnlyRig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version });
+    expect(boardOnlyRig.sessionCatalog.ensure).toHaveBeenCalledWith(expect.objectContaining({
+      modelRef: 'group-a/model-board',
+    }));
+  });
+
+  it('未指定模型时使用组织默认，显式模型不可用时拒绝执行', async () => {
+    const defaultRig = makeRig();
+    await defaultRig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version });
+    expect(defaultRig.sessionCatalog.ensure).toHaveBeenCalledWith(expect.objectContaining({
+      modelRef: 'model-default',
+    }));
+
+    const withoutResolver = makeRig({
+      getExecutionModelContext: vi.fn(async () => ({ boardModel: 'group-a/model-board' })),
+    });
+    await expect(withoutResolver.coordinator.startExecution(
+      identity,
+      task.id,
+      { expectedVersion: task.version },
+    )).rejects.toThrow('指定模型不可用：group-a/model-board');
+
+    const resolveModel = vi.fn(() => null);
+    const rejectedRig = makeRig(
+      {
+        getExecutionModelContext: vi.fn(async () => ({ boardModel: 'group-a/model-board' })),
+      },
+      { resolveModel },
+    );
+    await expect(rejectedRig.coordinator.startExecution(
+      identity,
+      task.id,
+      { expectedVersion: task.version },
+    )).rejects.toThrow('指定模型不可用：group-a/model-board');
+    expect(resolveModel).toHaveBeenCalledWith('group-a/model-board', identity.tenantId);
+    expect(rejectedRig.sessionCatalog.ensure).not.toHaveBeenCalled();
   });
 
   it('成功终态提取最终 assistant_message 作为待复核交付回执', async () => {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  ModelList,
   TaskBoard,
   TaskBoardComment,
   TaskBoardCommentCreateInput,
@@ -11,6 +12,7 @@ import type {
   TaskBoardTaskMoveInput,
   TaskBoardTaskPatchInput,
 } from "@agent/shared";
+import { authFetch } from "@/lib/authFetch";
 import * as api from "./api";
 
 function errorText(error: unknown, fallback: string): string {
@@ -476,4 +478,30 @@ export function useTaskComments(taskId: string | null) {
   };
 
   return { comments, loading, error, refresh, addComment };
+}
+
+/**
+ * 任务看板的模型列表：用于看板默认模型与任务级模型选择。
+ * 复用 /api/models（与正常会话、定时任务同一份租户可见模型清单）。
+ */
+export function useTaskboardModelList(): ModelList | null {
+  const [modelList, setModelList] = useState<ModelList | null>(null);
+  const requestRef = useRef(0);
+
+  useEffect(() => {
+    const requestId = ++requestRef.current;
+    authFetch("/api/models")
+      .then((response) => (response.ok ? response.json() as Promise<ModelList> : null))
+      .then((next) => {
+        if (requestId === requestRef.current && next) setModelList(next);
+      })
+      .catch(() => {
+        // 模型列表获取失败不阻塞看板操作，选择器自动隐藏。
+      });
+    return () => {
+      requestRef.current += 1;
+    };
+  }, []);
+
+  return modelList;
 }

@@ -2,8 +2,17 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { TASKBOARD_DEFAULT_PROMPT } from "@agent/shared";
-import type { TaskBoard } from "@agent/shared";
+import type { ModelList, TaskBoard } from "@agent/shared";
 import { BoardDialog } from "./BoardDialog";
+
+const modelList: ModelList = {
+  groups: [{ id: "group-a", name: "模型组", models: [{ id: "model-a", name: "模型 A" }] }],
+  default: "group-a/model-a",
+  allowCrossGroupSwitch: true,
+  showGroupNames: true,
+  showContextTokens: true,
+  allowContextTokenDetails: false,
+};
 
 const board: TaskBoard = {
   id: "board-1",
@@ -22,6 +31,7 @@ describe("BoardDialog", () => {
     render(
       <BoardDialog
         open
+        modelList={modelList}
         onOpenChange={vi.fn()}
         onCreate={onCreate}
         onUpdate={vi.fn(async () => undefined)}
@@ -33,11 +43,14 @@ describe("BoardDialog", () => {
     await user.clear(prompt);
     await user.type(prompt, "只处理当前任务，不修改无关文件。");
     await user.type(screen.getByRole("textbox", { name: "名称" }), "产品研发");
+    await user.click(screen.getByRole("combobox", { name: "看板运行模型" }));
+    await user.click(screen.getByRole("option", { name: "模型 A" }));
     await user.click(screen.getByRole("button", { name: "创建看板" }));
 
     expect(onCreate).toHaveBeenCalledWith({
       name: "产品研发",
       prompt: "只处理当前任务，不修改无关文件。",
+      model: "group-a/model-a",
     });
   });
 
@@ -72,6 +85,29 @@ describe("BoardDialog", () => {
     expect(onUpdate).toHaveBeenCalledWith(board.id, {
       name: "我的看板草稿",
       expectedVersion: 3,
+    });
+  });
+
+  it("编辑看板时可清除显式模型并恢复继承组织默认", async () => {
+    const user = userEvent.setup();
+    const onUpdate = vi.fn(async () => undefined);
+    render(
+      <BoardDialog
+        open
+        board={{ ...board, model: "group-a/model-a" }}
+        onOpenChange={vi.fn()}
+        onCreate={vi.fn(async () => undefined)}
+        onUpdate={onUpdate}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "看板运行模型" }));
+    await user.click(screen.getByRole("option", { name: "继承组织默认模型" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(onUpdate).toHaveBeenCalledWith(board.id, {
+      model: null,
+      expectedVersion: board.version,
     });
   });
 

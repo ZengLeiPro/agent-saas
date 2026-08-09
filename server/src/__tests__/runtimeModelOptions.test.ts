@@ -3,17 +3,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { resolveRuntimeModelOptions, resolveWakeModelRef } from '../runtime/rawRuntimeRunDispatch.js';
 
 describe('resolveRuntimeModelOptions', () => {
-  it('resolves a stored UI model ref into runtime model connection', () => {
-    const resolved = resolveRuntimeModelOptions({
-      modelResolver: (ref) => ref === 'openai-agents/kimi'
-        ? {
-            model: 'kimi-k2',
-            connection: { apiKey: 'sk-model-group', baseUrl: 'https://models.example/v1' },
-            providerOptions: { reasoningEffort: 'high' },
-          }
-        : null,
-    }, 'openai-agents/kimi');
+  it('resolves a stored UI model ref into runtime model connection with tenant scope', () => {
+    const modelResolver = vi.fn((ref: string) => ref === 'openai-agents/kimi'
+      ? {
+          model: 'kimi-k2',
+          connection: { apiKey: 'sk-model-group', baseUrl: 'https://models.example/v1' },
+          providerOptions: { reasoningEffort: 'high' as const },
+        }
+      : null);
+    const resolved = resolveRuntimeModelOptions(
+      { modelResolver },
+      'openai-agents/kimi',
+      undefined,
+      undefined,
+      'tenant-a',
+    );
 
+    expect(modelResolver).toHaveBeenCalledWith('openai-agents/kimi', 'tenant-a');
     expect(resolved).toEqual({
       model: 'kimi-k2',
       modelConnection: {
@@ -22,6 +28,16 @@ describe('resolveRuntimeModelOptions', () => {
       },
       modelProviderOptions: { reasoningEffort: 'high' },
     });
+  });
+
+  it('fails closed when a tenant-scoped model ref can no longer be resolved', () => {
+    expect(() => resolveRuntimeModelOptions(
+      { modelResolver: () => null },
+      'openai-agents/disabled',
+      undefined,
+      undefined,
+      'tenant-a',
+    )).toThrow('模型不可用：openai-agents/disabled');
   });
 
   it('keeps explicit modelConnection instead of resolving again', () => {

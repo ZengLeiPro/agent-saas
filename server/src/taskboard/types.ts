@@ -22,6 +22,8 @@ export interface TaskboardIdentity {
   tenantId: string;
   ownerUserId: string;
   username: string;
+  /** 展示用全名（如「曾磊 @zenglei」）；缺省时回退 username。 */
+  displayName?: string;
   userRole?: "admin" | "user";
 }
 
@@ -46,6 +48,8 @@ export interface TaskboardExecutionClaimInput extends TaskBoardExecutionStartInp
   executionId: string;
   runId: string;
   sessionId: string;
+  /** startExecution 读取到的任务/看板显式模型；claim 锁内复核，防止并发改模型。 */
+  configuredModelRef?: string;
   dispatch: TaskboardExecutionDispatchPayload;
 }
 
@@ -71,6 +75,11 @@ export interface TaskboardExecutionReconcileCandidate {
   leaseId: string;
 }
 
+export interface TaskboardExecutionModelContext {
+  taskModel?: string;
+  boardModel?: string;
+}
+
 export interface TaskboardExecutionContext {
   identity: TaskboardIdentity;
   task: TaskBoardTask;
@@ -87,6 +96,10 @@ export interface TaskboardExecutionCompletionInput {
 
 export interface TaskboardExecutionStore {
   listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]>;
+  getExecutionModelContext(
+    identity: TaskboardIdentity,
+    taskId: string,
+  ): Promise<TaskboardExecutionModelContext>;
   claimExecution(
     identity: TaskboardIdentity,
     taskId: string,

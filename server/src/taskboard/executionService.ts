@@ -16,6 +16,7 @@ import {
 } from '../runtime/sessionCatalog.js';
 import type { EventStore, PlatformEvent } from '../runtime/types.js';
 import { deriveStableWorkspaceId } from '../runtime/workspaceIdentity.js';
+import { formatDateTime } from '../utils/timestamp.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import { TaskboardExecutionUnavailableError } from './types.js';
 import type {
@@ -44,6 +45,12 @@ export interface TaskboardExecutionCoordinatorOptions {
   agentCwd: string;
   executionConfig: ExecutionConfig;
   resolveDefaultModel: (tenantId?: string) => DefaultModelResolution | null;
+  /** 按 ref 解析显式模型；解析失败时拒绝执行，避免静默使用错误模型。 */
+  resolveModel?: (ref: string, tenantId?: string) => { ref: string } | null;
+  /** 解析任务所有者的当前展示名，用于覆盖历史评论中存量账号名。 */
+  resolveUserDisplayName?: (userId: string) => string | undefined;
+  /** 执行提示词时间戳时区，默认 Asia/Shanghai。 */
+  timezone?: string;
   logger?: {
     info(message: string): void;
     warn(message: string): void;
@@ -83,8 +90,17 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     taskId: string,
     input: TaskBoardExecutionStartInput,
   ): Promise<TaskBoardExecutionStartResult> {
-    const model = this.options.resolveDefaultModel(identity.tenantId);
-    if (!model) throw new TaskboardExecutionUnavailableError('当前组织没有可用的默认模型');
+    const modelContext = await this.options.store.getExecutionModelContext(identity, taskId);
+    const explicitModelRef = modelContext.taskModel ?? modelContext.boardModel;
+    const model = explicitModelRef
+      ? this.options.resolveModel?.(explicitModelRef, identity.tenantId)
+      : this.options.resolveDefaultModel(identity.tenantId);
+    if (!model) {
+      const reason = explicitModelRef
+        ? `指定模型不可用：${explicitModelRef}`
+        : '当前组织没有可用的默认模型';
+      throw new TaskboardExecutionUnavailableError(reason);
+    }
     const executionDecision = resolveExecutionTarget({
       user: { role: identity.userRole, tenantId: identity.tenantId },
       config: this.options.executionConfig,
@@ -150,6 +166,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       executionId,
       sessionId,
       runId,
+      ...(explicitModelRef ? { configuredModelRef: explicitModelRef } : {}),
       dispatch: { version: 1, session, run },
     });
     await this.dispatchExecution(runId);
@@ -296,6 +313,14 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     if (isTerminalExecution(context.execution)) {
       throw new Error(`任务看板执行已终止：${context.execution.status}`);
     }
+    const persistedModelRef = record.model?.trim();
+    if (
+      persistedModelRef
+      && this.options.resolveModel
+      && !this.options.resolveModel(persistedModelRef, context.identity.tenantId)
+    ) {
+      throw new TaskboardExecutionUnavailableError(`指定模型不可用：${persistedModelRef}`);
+    }
     const started = await this.options.store.setExecutionStatus(record.runId, 'running');
     if (!started) {
       throw new Error(`任务看板执行已终止：${record.runId}`);
@@ -307,7 +332,11 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         wakeMessage: {
           channel: 'web',
           chatId: record.sessionId,
-          content: buildExecutionPrompt(context),
+          content: buildExecutionPrompt(
+            context,
+            this.options.timezone,
+            this.options.resolveUserDisplayName?.(context.identity.ownerUserId),
+          ),
           senderId: context.identity.ownerUserId,
           metadata: {
             taskboardExecution: true,
@@ -571,15 +600,25 @@ function isExecutionTarget(value: unknown): boolean {
     || value === 'client';
 }
 
-function buildExecutionPrompt(context: TaskboardExecutionContext): string {
+function buildExecutionPrompt(
+  context: TaskboardExecutionContext,
+  timezone?: string,
+  ownerDisplayName?: string,
+): string {
   const task = context.task;
   const recentComments = context.comments.slice(-50);
   const comments = recentComments.length > 0
-    ? recentComments.map(formatComment).join('\n\n')
+    ? recentComments.map((comment) => formatComment(
+        comment,
+        timezone,
+        comment.authorType === 'user' && comment.authorId === context.identity.ownerUserId
+          ? ownerDisplayName
+          : undefined,
+      )).join('\n\n')
     : '（暂无评论）';
   return [
-    '你正在执行一条由用户明确交给 Agent 的任务看板任务。',
-    '执行前输入已从服务端重新读取；以下任务和评论是当前最新事实。',
+    '看板提示语：',
+    context.boardPrompt || '（无）',
     '',
     `任务：${task.identifier} · ${task.title}`,
     `优先级：${task.priority}`,
@@ -591,14 +630,19 @@ function buildExecutionPrompt(context: TaskboardExecutionContext): string {
     '',
     `最近评论（${recentComments.length}/${context.comments.length}）：`,
     comments,
-    '',
-    '看板提示语：',
-    context.boardPrompt || '（无）',
   ].join('\n');
 }
 
-function formatComment(comment: TaskBoardComment): string {
-  return `[${comment.createdAt}] ${comment.authorName}（${comment.authorType}）\n${comment.body}`;
+function formatComment(
+  comment: TaskBoardComment,
+  timezone?: string,
+  currentAuthorName?: string,
+): string {
+  const createdAt = new Date(comment.createdAt);
+  const timestamp = Number.isNaN(createdAt.getTime())
+    ? comment.createdAt
+    : formatDateTime(createdAt, timezone);
+  return `[${timestamp}] ${currentAuthorName || comment.authorName}（${comment.authorType}）\n${comment.body}`;
 }
 
 function assertExecutionSession(execution: TaskBoardExecution, sessionId: string): void {

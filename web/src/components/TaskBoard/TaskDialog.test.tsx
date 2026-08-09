@@ -1,7 +1,17 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import type { ModelList } from "@agent/shared";
 import { TaskDialog } from "./TaskDialog";
+
+const modelList: ModelList = {
+  groups: [{ id: "group-a", name: "模型组", models: [{ id: "model-b", name: "模型 B" }] }],
+  default: "group-a/model-b",
+  allowCrossGroupSwitch: true,
+  showGroupNames: true,
+  showContextTokens: true,
+  allowContextTokenDetails: false,
+};
 
 describe("TaskDialog 交互", () => {
   it("下拉选项浮在弹窗之上，连续选择状态与优先级后可提交", async () => {
@@ -10,6 +20,7 @@ describe("TaskDialog 交互", () => {
     render(
       <TaskDialog
         open
+        modelList={modelList}
         onOpenChange={vi.fn()}
         onCreate={onCreate}
       />,
@@ -21,12 +32,15 @@ describe("TaskDialog 交互", () => {
     await user.click(screen.getByRole("option", { name: "待处理" }));
     await user.click(screen.getByRole("combobox", { name: "新任务优先级" }));
     await user.click(screen.getByRole("option", { name: "紧急" }));
+    await user.click(screen.getByRole("combobox", { name: "任务运行模型" }));
+    await user.click(screen.getByRole("option", { name: "模型 B" }));
     await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
       title: "修复任务看板交互",
       status: "todo",
       priority: "urgent",
+      model: "group-a/model-b",
     })));
   });
 

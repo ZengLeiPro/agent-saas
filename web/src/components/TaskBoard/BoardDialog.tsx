@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { TASKBOARD_DEFAULT_PROMPT } from "@agent/shared";
-import type { TaskBoard, TaskBoardCreateInput, TaskBoardPatchInput } from "@agent/shared";
+import type { ModelList, TaskBoard, TaskBoardCreateInput, TaskBoardPatchInput } from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,13 +13,15 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { ModelSelect } from "./ModelSelect";
 
-type BoardDraftField = "name" | "description" | "prompt";
+type BoardDraftField = "name" | "description" | "prompt" | "model";
 
 interface BoardDialogProps {
   open: boolean;
   active?: boolean;
   board?: TaskBoard;
+  modelList?: ModelList | null;
   onOpenChange: (open: boolean) => void;
   onCreate: (input: TaskBoardCreateInput) => Promise<void>;
   onUpdate: (id: string, input: TaskBoardPatchInput) => Promise<void>;
@@ -29,6 +31,7 @@ export function BoardDialog({
   open,
   active = true,
   board,
+  modelList = null,
   onOpenChange,
   onCreate,
   onUpdate,
@@ -36,6 +39,7 @@ export function BoardDialog({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [prompt, setPrompt] = useState(TASKBOARD_DEFAULT_PROMPT);
+  const [model, setModel] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dirtyFieldsRef = useRef<Set<BoardDraftField>>(new Set());
@@ -54,6 +58,7 @@ export function BoardDialog({
       setName(board?.name ?? "");
       setDescription(board?.description ?? "");
       setPrompt(board?.prompt ?? TASKBOARD_DEFAULT_PROMPT);
+      setModel(board?.model ?? null);
       setError(null);
       return;
     }
@@ -61,6 +66,7 @@ export function BoardDialog({
     if (!dirtyFieldsRef.current.has("name")) setName(board.name);
     if (!dirtyFieldsRef.current.has("description")) setDescription(board.description ?? "");
     if (!dirtyFieldsRef.current.has("prompt")) setPrompt(board.prompt);
+    if (!dirtyFieldsRef.current.has("model")) setModel(board.model ?? null);
   }, [board, open]);
 
   const submit = async (event: FormEvent) => {
@@ -82,12 +88,14 @@ export function BoardDialog({
         if (dirtyFieldsRef.current.has("name")) input.name = normalizedName;
         if (dirtyFieldsRef.current.has("description")) input.description = description.trim();
         if (dirtyFieldsRef.current.has("prompt")) input.prompt = prompt.trim();
+        if (dirtyFieldsRef.current.has("model")) input.model = model;
         await onUpdate(board.id, input);
       } else {
         await onCreate({
           name: normalizedName,
           ...(description.trim() ? { description: description.trim() } : {}),
           prompt: prompt.trim(),
+          ...(model ? { model } : {}),
         });
       }
       onOpenChange(false);
@@ -157,6 +165,23 @@ export function BoardDialog({
             />
             <p className="text-xs text-muted-foreground">
               每次执行此看板中的任务时，都会传递当前提示语。
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label>运行模型</Label>
+            <ModelSelect
+              modelList={modelList}
+              value={model}
+              onChange={(next) => {
+                dirtyFieldsRef.current.add("model");
+                setModel(next);
+              }}
+              inheritLabel="继承组织默认模型"
+              ariaLabel="看板运行模型"
+              disabled={submitting}
+            />
+            <p className="text-xs text-muted-foreground">
+              看板中任务的默认执行模型；任务也可以单独指定模型。
             </p>
           </div>
           {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}

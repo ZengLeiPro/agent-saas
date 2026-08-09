@@ -16,6 +16,7 @@ import type {
   TaskboardExecutionCompletionInput,
   TaskboardExecutionContext,
   TaskboardExecutionDispatch,
+  TaskboardExecutionModelContext,
   TaskboardExecutionReconcileCandidate,
   TaskboardExecutionStore,
   TaskboardExpectedVersionInput,
@@ -156,6 +157,14 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
   async listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
     await this.init();
     return this.target.listExecutions(identity, taskId);
+  }
+
+  async getExecutionModelContext(
+    identity: TaskboardIdentity,
+    taskId: string,
+  ): Promise<TaskboardExecutionModelContext> {
+    await this.init();
+    return this.target.getExecutionModelContext(identity, taskId);
   }
 
   async claimExecution(

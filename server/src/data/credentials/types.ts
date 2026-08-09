@@ -66,7 +66,8 @@ export type CredentialInvariantCode =
   | 'CREDENTIAL_KIND_INVALID'
   | 'CREDENTIAL_ALREADY_SUSPENDED'
   | 'CREDENTIAL_ALREADY_REVOKED'
-  | 'CREDENTIAL_REVOKED_NO_REUSE';
+  | 'CREDENTIAL_REVOKED_NO_REUSE'
+  | 'CREDENTIAL_GENERATION_INVALID';
 
 export class CredentialInvariantError extends Error {
   constructor(readonly code: CredentialInvariantCode) {

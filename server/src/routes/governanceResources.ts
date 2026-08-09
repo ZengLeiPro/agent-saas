@@ -13,6 +13,7 @@ import { GLOBAL_OWNER_ID, tenantOwnerId, type SecretVault } from '../security/se
 import { GovernanceChangeJobWorker, type GovernanceChangePlanner, type PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import type { PgMembershipStore } from '../data/memberships/index.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import type { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
 
 const createAgentSchema = z.object({
   tenantId: z.string().min(2).max(64).optional(),
@@ -78,6 +79,14 @@ const environmentTemplateSchema = z.object({
   recipe: z.record(z.string(), z.unknown()),
 }).strict();
 
+const userOffboardingJobSchema = z.object({
+  tenantId: z.string().min(2).max(64).optional(),
+  userId: z.string().min(1).max(128),
+  handoffTargetUserId: z.string().min(1).max(128),
+  idempotencyKey: z.string().min(8).max(200),
+  reasonCode: z.string().min(3).max(120),
+}).strict();
+
 const tenantDeleteJobSchema = z.object({
   tenantId: z.string().min(2).max(64),
   idempotencyKey: z.string().min(8).max(200),
@@ -130,6 +139,13 @@ export function createGovernanceResourcesRouter(deps: {
   changePlanner: GovernanceChangePlanner;
   executeTenantDeletionDomain?: (tenantId: string, domain: string) => Promise<void>;
   tenantExists?: (tenantId: string) => boolean;
+  resolveUserTenantId?: (userId: string) => string | undefined;
+  projectionOutbox?: PgGovernanceProjectionOutboxStore;
+  projectionReconciler?: GovernanceProjectionReconciler;
+  executeUserOffboarding?: (input: {
+    tenantId: string; userId: string; handoffTargetUserId: string;
+    idempotencyKey: string; requestedBy: string; reasonCode: string;
+  }) => Promise<unknown>;
   vault: SecretVault;
   audit: GovernanceAuditStore;
 }): Router {
@@ -204,7 +220,29 @@ export function createGovernanceResourcesRouter(deps: {
           ? { ...(body as Record<string, unknown>), auditId: event.auditId }
           : { data: body, auditId: event.auditId };
         sendJson(payload);
-      }).catch(() => {
+      }).catch(async () => {
+        if (deps.projectionOutbox) {
+          await deps.projectionOutbox.enqueue({
+            tenantId: requestedTenantId,
+            projector: 'audit_terminal',
+            idempotencyKey: `${correlationId}:${res.statusCode < 400 ? 'succeeded' : 'failed'}`,
+            payload: {
+              correlationId,
+              actorType: 'user',
+              actorUserId: user.sub,
+              actorPersona: personas.get(req)!,
+              actorTenantId: user.tenantId,
+              action: `governance.resource.${req.method.toLowerCase()}`,
+              targetType: 'governance_resource_api',
+              targetId: req.path,
+              targetTenantId: requestedTenantId,
+              purpose: 'typed resource mutation',
+              result: res.statusCode < 400 ? 'succeeded' : 'failed',
+              metadata: { statusCode: res.statusCode },
+            },
+          }).catch(() => undefined);
+          void deps.projectionReconciler?.reconcileOne();
+        }
         const payload = body && typeof body === 'object' && !Array.isArray(body)
           ? { ...(body as Record<string, unknown>), auditId: intentAuditId, auditCompletion: 'pending' }
           : { data: body, auditId: intentAuditId, auditCompletion: 'pending' };
@@ -606,6 +644,45 @@ export function createGovernanceResourcesRouter(deps: {
       res.json(await deps.changePlanner.previewCredentialChange(tenantId, req.params.credentialId, action));
     } catch (error) {
       res.status(404).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/change-jobs/user-offboarding', async (req, res) => {
+    if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
+    if (!deps.executeUserOffboarding) return res.status(503).json({ error: 'Offboarding worker unavailable' });
+    const parsed = userOffboardingJobSchema.safeParse(req.body);
+    if (!parsed.success || parsed.data.userId === parsed.data.handoffTargetUserId) {
+      return res.status(400).json({ error: 'Invalid body' });
+    }
+    const tenantId = tenantFor(req, parsed.success ? parsed.data.tenantId : undefined);
+    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
+    const [targetMembership, handoffMembership] = await Promise.all([
+      deps.memberships.getMembership(tenantId, parsed.data.userId),
+      deps.memberships.getMembership(tenantId, parsed.data.handoffTargetUserId),
+    ]);
+    if (!targetMembership) return res.status(404).json({ error: 'Target user not found in tenant' });
+    if (!handoffMembership || handoffMembership.status !== 'active') {
+      return res.status(409).json({ error: 'Active handoff target required' });
+    }
+    if (deps.resolveUserTenantId) {
+      const targetLegacyTenant = deps.resolveUserTenantId(parsed.data.userId);
+      const handoffLegacyTenant = deps.resolveUserTenantId(parsed.data.handoffTargetUserId);
+      if (targetLegacyTenant !== tenantId || handoffLegacyTenant !== tenantId) {
+        return res.status(409).json({ error: 'Governance and legacy tenant identity mismatch' });
+      }
+    }
+    try {
+      const result = await deps.executeUserOffboarding({
+        tenantId,
+        userId: parsed.data.userId,
+        handoffTargetUserId: parsed.data.handoffTargetUserId,
+        idempotencyKey: parsed.data.idempotencyKey,
+        reasonCode: parsed.data.reasonCode,
+        requestedBy: req.user!.sub,
+      });
+      res.status(202).json(result);
+    } catch (error) {
+      res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
 

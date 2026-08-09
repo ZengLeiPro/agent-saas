@@ -172,6 +172,8 @@ export class CredentialBroker {
     if (declared.includes('*') || scopeSummary['*'] === true) return true;
     return requiredScopes.every(scope => {
       if (declared.includes(scope)) return true;
+      const scopeParts = scope.split(':');
+      if (scopeParts.length > 1 && declared.includes(`${scopeParts[0]}:*`)) return true;
       const [resource, action] = scope.split(':', 2);
       const value = scopeSummary[scope] ?? scopeSummary[resource];
       return value === true

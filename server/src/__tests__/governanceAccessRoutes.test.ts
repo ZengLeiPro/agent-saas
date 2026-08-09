@@ -20,6 +20,7 @@ async function rig(input: {
   updateMembership?: ReturnType<typeof vi.fn>;
   replaceAssignments?: ReturnType<typeof vi.fn>;
   governancePersona?: 'org_admin' | 'member';
+  projectionEnqueue?: ReturnType<typeof vi.fn>;
 } = {}) {
   const auditAppend = input.auditAppend ?? vi.fn().mockResolvedValue({ auditId: 'audit-1' });
   const updateMembership = input.updateMembership ?? vi.fn().mockResolvedValue({
@@ -47,6 +48,10 @@ async function rig(input: {
     entitlements: {} as never,
     assignments: { replaceAssignments, listUserPreferences: vi.fn().mockResolvedValue([]) } as never,
     audit: { append: auditAppend } as never,
+    ...(input.projectionEnqueue ? {
+      projectionOutbox: { enqueue: input.projectionEnqueue } as never,
+      projectionReconciler: { reconcileOne: vi.fn().mockResolvedValue(null) } as never,
+    } : {}),
   }));
   const server: Server = await new Promise(resolve => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
@@ -86,6 +91,33 @@ describe('governance access routes', () => {
     }));
     expect(response.status).toBe(403);
     expect(test.replaceAssignments).not.toHaveBeenCalled();
+  });
+
+  it('Assignment mutation 返回 projection pending 回执并写 durable outbox', async () => {
+    const projectionEnqueue = vi.fn().mockResolvedValue({ outboxId: 'projection-1' });
+    const test = await rig({ projectionEnqueue });
+    const response = await test.request('/api/governance/access/assignments/skill/skill-1', json('PUT', {
+      expectedVersion: 1, assignments: [],
+    }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ compatibilityProjection: 'applied_with_projection_pending' });
+    expect(projectionEnqueue).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-a', projector: 'assignment', idempotencyKey: 'skill:skill-1:2',
+    }));
+  });
+
+  it('terminal audit 失败时回执标 pending，并把终态审计写入 durable outbox', async () => {
+    const auditAppend = vi.fn()
+      .mockResolvedValueOnce({ auditId: 'intent-1' })
+      .mockRejectedValueOnce(new Error('audit terminal down'));
+    const projectionEnqueue = vi.fn().mockResolvedValue({ outboxId: 'projection-1' });
+    const test = await rig({ auditAppend, projectionEnqueue });
+    const response = await test.request('/api/governance/access/memberships/user-2', json('PATCH', {
+      expectedVersion: 1, status: 'disabled',
+    }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ auditId: 'intent-1', auditCompletion: 'pending' });
+    expect(projectionEnqueue).toHaveBeenCalledWith(expect.objectContaining({ projector: 'audit_terminal' }));
   });
 
   it('审计 intent 失败时 Membership Store 不得执行', async () => {

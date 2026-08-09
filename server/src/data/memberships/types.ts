@@ -49,7 +49,8 @@ export type MembershipInvariantCode =
   | 'OWNER_MUST_BE_ORG_ADMIN'
   | 'LAST_EFFECTIVE_OWNER_PROTECTED'
   | 'LAST_PLATFORM_ADMIN_PROTECTED'
-  | 'PLATFORM_TENANT_MEMBERSHIP_FORBIDDEN';
+  | 'PLATFORM_TENANT_MEMBERSHIP_FORBIDDEN'
+  | 'MEMBERSHIP_IDENTITY_INVALID';
 
 export class MembershipInvariantError extends Error {
   constructor(readonly code: MembershipInvariantCode) {

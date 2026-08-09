@@ -57,6 +57,8 @@ export interface WorkspaceRecipe {
   mountSubPath?: string;
   repo?: { url: string; ref?: string; remote?: string };
   files?: Array<{ artifactId: string; path: string; url?: string; signedUrl?: string }>;
+  packages?: string[];
+  envKeys?: string[];
   setupCommands?: string[];
   resources?: { cpu?: string; memoryMb?: number; diskMb?: number; timeoutMs?: number };
 }

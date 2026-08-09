@@ -13,6 +13,7 @@ export interface ResolvedResourceRef {
   bindingId?: string;
   templateId?: string;
   templateVersionId?: string;
+  scopes?: string[];
 }
 
 export interface ResolvedEnvironmentRef extends ResolvedResourceRef {
@@ -118,7 +119,7 @@ export class PgRunResolutionSnapshotStore {
         access_decision_id, enforcement_mode, access_verdict, readiness_ready,
         snapshot_digest, snapshot_json
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
-      ON CONFLICT (run_id) DO NOTHING
+      ON CONFLICT (run_id,snapshot_digest) DO NOTHING
       RETURNING created_at
     `, [
       draft.runId,
@@ -136,14 +137,24 @@ export class PgRunResolutionSnapshotStore {
     if (inserted.rows[0]) {
       return { ...draft, digest, createdAt: new Date(inserted.rows[0].created_at as string | Date).toISOString() };
     }
-    const existing = await this.get(draft.runId);
-    if (!existing || existing.digest !== digest) throw new Error('RUN_SNAPSHOT_CONFLICT');
-    return existing;
+    const existingResult = await this.pool.query(
+      `SELECT snapshot_json, snapshot_digest, created_at FROM ${this.tableName}
+       WHERE run_id=$1 AND snapshot_digest=$2`,
+      [draft.runId, digest],
+    );
+    const existing = existingResult.rows[0];
+    if (!existing) throw new Error('RUN_SNAPSHOT_CONFLICT');
+    return {
+      ...(existing.snapshot_json as RunResolutionSnapshotDraft),
+      digest: String(existing.snapshot_digest),
+      createdAt: new Date(existing.created_at as string | Date).toISOString(),
+    };
   }
 
   async get(runId: string): Promise<RunResolutionSnapshot | null> {
     const result = await this.pool.query(
-      `SELECT snapshot_json, snapshot_digest, created_at FROM ${this.tableName} WHERE run_id = $1`,
+      `SELECT snapshot_json, snapshot_digest, created_at FROM ${this.tableName}
+       WHERE run_id = $1 ORDER BY snapshot_sequence DESC LIMIT 1`,
       [runId],
     );
     if (!result.rows[0]) return null;

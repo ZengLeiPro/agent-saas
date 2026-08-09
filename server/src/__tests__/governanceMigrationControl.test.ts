@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   GOVERNANCE_MIGRATION_DOMAINS,
@@ -107,7 +107,7 @@ function buildStatePool() {
 }
 
 describe('Governance Migration Control', () => {
-  it('migration V12 创建控制、分域与差异表', async () => {
+  it('migration V16 创建完整批次门禁、窄化内容 Grant 与多阶段 Run Snapshot', async () => {
     const queries: string[] = [];
     const query = async (sql: string) => {
       queries.push(sql);
@@ -121,7 +121,44 @@ describe('Governance Migration Control', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_governance_migration_control');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_governance_migration_domains');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_governance_shadow_differences');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(12);
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS last_batch_total');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS last_batch_at');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS target_type TEXT');
+    expect(sql).toContain("target_type IN ('session','guardrail_collection')");
+    expect(sql).toContain('ADD PRIMARY KEY (run_id,snapshot_digest)');
+    expect(sql).toContain('snapshot_sequence BIGSERIAL');
+    expect(sql).toContain('CREATE TRIGGER test_membership_projection_outbox');
+    expect(sql).toContain('CREATE TRIGGER test_platform_admin_projection_outbox');
+    expect(sql).toContain('CREATE TRIGGER test_assignment_projection_outbox');
+    expect(sql).toContain('CREATE TRIGGER test_assignment_delete_projection_outbox');
+    expect(sql).toContain('CREATE TRIGGER test_preference_projection_outbox');
+    expect(sql).toContain('CREATE TRIGGER test_entitlement_projection_outbox');
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(17);
+  });
+
+  it('tenantless shadow difference 使用同一空 tenant scope 自动 resolve', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ difference_id: 'diff-1' }], rowCount: 1 });
+    const store = new PgGovernanceMigrationControlStore({ pool: { query } as never, tablePrefix: 'test' });
+    await expect(store.resolveDifferencesForResource({
+      domain: 'assignment', resourceType: 'skill', resourceId: 'skill-1', resolvedBy: 'auditor',
+    })).resolves.toBe(1);
+    expect(query.mock.calls[0]?.[1]).toEqual(['assignment', '', 'skill', 'skill-1', 'auditor']);
+  });
+
+  it('单个 matching 比较不能把整个 Domain 提前标为 ready', async () => {
+    let updateSql = '';
+    const query = async (sql: string) => {
+      updateSql = sql;
+      return { rows: [domainRow('assignment', { compared_count: '1', matched_count: '1' })], rowCount: 1 };
+    };
+    const store = new PgGovernanceMigrationControlStore({
+      pool: { query, connect: async () => ({ query, release: () => undefined }) } as never,
+      tablePrefix: 'test',
+    });
+    const state = await store.incrementDomainComparison('assignment', true);
+    expect(state.status).toBe('shadow');
+    expect(updateSql).toContain("THEN 'shadow' ELSE d.status END");
+    expect(updateSql).not.toContain("THEN 'ready'");
   });
 
   it('canonical comparator 忽略 object key 顺序，相同不造差异', async () => {

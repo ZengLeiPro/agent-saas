@@ -555,7 +555,7 @@ describe('MCP routes: oauth callback/start/disconnect + admin secrets + oauthRed
   // ------------------------------------------------------------ admin diagnose
 
   describe('POST /admin/users/:username/diagnose', () => {
-    it('404 未知用户 / 403 跨组织 / 成功 ok:true / manager 失败降级 200 ok:false 且带 workspaceRoot', async () => {
+    it('404 未知用户 / 403 跨组织 / 合法管理员仍需 Governed Run 上下文', async () => {
       const r = await rig({ user: PLATFORM_ADMIN });
       expect((await r.request('/api/mcp/admin/users/ghost/diagnose', { method: 'POST' })).status).toBe(404);
 
@@ -564,20 +564,19 @@ describe('MCP routes: oauth callback/start/disconnect + admin secrets + oauthRed
 
       r.setUser(KAIYAN_ADMIN);
       const ok = await r.request('/api/mcp/admin/users/alice/diagnose', { method: 'POST' });
-      expect(ok.status).toBe(200);
-      const okBody = await ok.json() as { ok: boolean; workspaceRoot: string; toolCount: number };
-      expect(okBody.ok).toBe(true);
-      expect(okBody.toolCount).toBe(0);
-      expect(okBody.workspaceRoot).toContain('kaiyan');
+      expect(ok.status).toBe(409);
+      const okBody = await ok.json() as { ok: boolean; error: string; toolCount: number };
+      expect(okBody).toMatchObject({
+        ok: false, error: 'MCP_DIAGNOSE_REQUIRES_GOVERNED_RUN', toolCount: 0,
+      });
 
       const failRig = await rig({ user: PLATFORM_ADMIN, manager: recordingManager({ failEnsure: true }).manager });
       const fail = await failRig.request('/api/mcp/admin/users/alice/diagnose', { method: 'POST' });
-      expect(fail.status).toBe(200);
-      const failBody = await fail.json() as { ok: boolean; error: string; workspaceRoot: string; tools: unknown[] };
-      expect(failBody.ok).toBe(false);
-      expect(failBody.error).toContain('diagnose boom');
-      expect(failBody.workspaceRoot).toContain('kaiyan');
-      expect(failBody.tools).toEqual([]);
+      expect(fail.status).toBe(409);
+      const failBody = await fail.json() as { ok: boolean; error: string; tools: unknown[] };
+      expect(failBody).toMatchObject({
+        ok: false, error: 'MCP_DIAGNOSE_REQUIRES_GOVERNED_RUN', tools: [],
+      });
     });
   });
 

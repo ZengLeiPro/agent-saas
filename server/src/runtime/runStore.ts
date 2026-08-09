@@ -219,6 +219,7 @@ export interface RunStore {
   get(runId: string): Promise<RunRecord | null>;
   findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null>;
   getActiveBySession?(sessionId: string): Promise<RunRecord | null>;
+  cancelActiveByUser?(userId: string, reason: string): Promise<number>;
   getActiveCounts?(): Promise<ActiveRunCounts>;
   listBySession?(sessionId: string, options?: { limit?: number; beforeUpdatedAt?: string }): Promise<RunRecord[]>;
   listRecoverable(now?: Date): Promise<RunRecord[]>;
@@ -1206,6 +1207,24 @@ export class PgRunStore implements RunStore {
   async get(runId: string): Promise<RunRecord | null> {
     const result = await this.pool.query<{ row_json: RunRecord }>(`SELECT row_to_json(${this.runsTable}.*) AS row_json FROM ${this.runsTable} WHERE run_id = $1`, [runId]);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+  }
+
+  async cancelActiveByUser(userId: string, reason: string): Promise<number> {
+    const now = new Date().toISOString();
+    const result = await this.pool.query(`
+      UPDATE ${this.runsTable}
+      SET status='cancelled',
+          status_reason=$2,
+          cancelled_at=COALESCE(cancelled_at,$3::timestamptz),
+          updated_at=$3::timestamptz,
+          worker_id=NULL,
+          lease_expires_at=NULL,
+          metadata=(metadata || jsonb_build_object('cancelSource','user_offboarding')) - 'wakeMessage'
+      WHERE user_id=$1
+        AND status NOT IN ('completed','failed','cancelled','orphaned')
+      RETURNING run_id
+    `, [userId, reason, now]);
+    return result.rowCount ?? 0;
   }
 
   async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {

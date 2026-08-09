@@ -88,7 +88,7 @@ function policy(value: TenantPolicyRecord['value']): TenantPolicyRecord {
   };
 }
 
-function assignmentSet(assignments: Array<{ assigneeType: 'everyone' | 'user'; assigneeId?: string; effect: 'allow' | 'deny' }>): ResourceAssignmentSet {
+function assignmentSet(assignments: Array<{ assigneeType: 'everyone' | 'user' | 'directory_group' | 'agent'; assigneeId?: string; effect: 'allow' | 'deny' }>): ResourceAssignmentSet {
   return {
     tenantId: 'tenant-1',
     resourceType: 'org_agent',
@@ -331,6 +331,17 @@ describe('AccessEvaluator persona 与 assignment 矩阵', () => {
     expect(denied.verdict).toBe('deny');
     expect(denied.reasonCode).toBe('EXPLICIT_ASSIGNMENT_DENY');
     expect(denied.policySnapshot.assignmentVersion).toBe(13);
+  });
+
+  it('directory group 真源缺失时 fail closed，不得忽略 group deny', async () => {
+    const decision = await buildEvaluator({
+      assignmentSet: assignmentSet([
+        { assigneeType: 'everyone', effect: 'allow' },
+        { assigneeType: 'directory_group', assigneeId: 'dept-1', effect: 'deny' },
+      ]),
+    }).evaluate(orgAgentRunRequest());
+    expect(decision.verdict).toBe('deny');
+    expect(decision.reasonCode).toBe('ASSIGNMENT_GROUP_SUBJECT_UNRESOLVED');
   });
 
   it('assignment 命中 user allow 时放行并记录版本', async () => {

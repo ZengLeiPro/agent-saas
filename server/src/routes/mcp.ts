@@ -476,19 +476,14 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     if (!username) return res.status(401).json({ error: 'Authentication required' });
     const parsed = diagnoseSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json({ error: 'Invalid diagnose request', details: parsed.error.format() });
-    try {
-      if (parsed.data.force) await manager.invalidateUser(username);
-      const tools = await manager.ensureUser(username);
-      res.json(diagnosticPayload(username, tools));
-    } catch (err) {
-      res.status(200).json({
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        tools: [],
-        toolCount: 0,
-        connections: getConnectionStatuses(username),
-      });
-    }
+    if (parsed.data.force) await manager.invalidateUser(username);
+    res.status(409).json({
+      ok: false,
+      error: 'MCP_DIAGNOSE_REQUIRES_GOVERNED_RUN',
+      tools: [],
+      toolCount: 0,
+      connections: getConnectionStatuses(username),
+    });
   });
 
   router.put('/me/servers/:id', async (req, res) => {
@@ -669,21 +664,14 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
   router.post('/admin/users/:username/diagnose', requireAdmin, async (req, res) => {
     const user = resolveTargetUser(req, res, req.params.username);
     if (!user) return;
-    const workspaceRoot = resolveUserCwd(agentCwd, { id: user.id, username: user.username, role: user.role, tenantId: user.tenantId });
-    try {
-      await manager.invalidateUser(user.username);
-      const tools = await manager.ensureUser(user.username);
-      res.json(diagnosticPayload(user.username, tools, workspaceRoot));
-    } catch (err) {
-      res.status(200).json({
-        ok: false,
-        workspaceRoot,
-        error: err instanceof Error ? err.message : String(err),
-        tools: [],
-        toolCount: 0,
-        connections: getConnectionStatuses(user.username),
-      });
-    }
+    await manager.invalidateUser(user.username);
+    res.status(409).json({
+      ok: false,
+      error: 'MCP_DIAGNOSE_REQUIRES_GOVERNED_RUN',
+      tools: [],
+      toolCount: 0,
+      connections: getConnectionStatuses(user.username),
+    });
   });
 
   return router;

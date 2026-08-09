@@ -1,6 +1,7 @@
 export { PgGovernanceMigrationControlStore } from './store.js';
 export { GovernanceWriteGate } from './writeGate.js';
 export { GovernanceShadowComparator, governanceProjectionDigest } from './comparator.js';
+export { GovernanceDomainShadowAuditor, type GovernanceShadowComparison } from './auditor.js';
 export {
   GOVERNANCE_MIGRATION_DOMAINS,
   GovernanceMigrationControlInvariantError,

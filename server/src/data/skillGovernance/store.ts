@@ -106,9 +106,24 @@ export class PgSkillGovernanceStore {
     await new PgGovernanceMigrationRunner(this.options.pool, this.tablePrefix).run();
   }
 
+  async listPersonalByOwner(tenantId: string, ownerUserId: string): Promise<GovernedSkillResource[]> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.resourcesTable} WHERE tenant_id=$1 AND owner_user_id=$2 AND scope='personal' ORDER BY skill_id`,
+      [tenantId, ownerUserId],
+    );
+    return result.rows.map(rowToResource);
+  }
+
   async getResource(skillId: string): Promise<GovernedSkillResource | null> {
     const result = await this.options.pool.query(`SELECT * FROM ${this.resourcesTable} WHERE skill_id=$1`, [skillId]);
     return result.rows[0] ? rowToResource(result.rows[0]) : null;
+  }
+
+  async getVersion(versionId: string): Promise<GovernedSkillVersion | null> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.versionsTable} WHERE version_id=$1`, [versionId],
+    );
+    return result.rows[0] ? rowToVersion(result.rows[0]) : null;
   }
 
   async getCandidate(tenantId: string, candidateId: string): Promise<SkillCandidate | null> {

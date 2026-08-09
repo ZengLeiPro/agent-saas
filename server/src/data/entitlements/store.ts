@@ -91,6 +91,22 @@ export class PgEntitlementStore {
     return result.rows.map(rowToScope);
   }
 
+  async getProjectionSnapshot(tenantId: string): Promise<unknown | undefined> {
+    const [set, scopes, policies] = await Promise.all([
+      this.getEntitlementSet(tenantId), this.listResourceScopes(tenantId), this.getPolicies(tenantId),
+    ]);
+    if (!set) return undefined;
+    return {
+      status: set.status,
+      limits: set.limits,
+      scopes: scopes.map(scope => ({
+        resourceType: scope.resourceType, mode: scope.mode, resourceIds: [...scope.resourceIds].sort(),
+      })).sort((a, b) => a.resourceType.localeCompare(b.resourceType)),
+      policies: policies.map(policy => ({ policyKey: policy.policyKey, value: policy.value }))
+        .sort((a, b) => a.policyKey.localeCompare(b.policyKey)),
+    };
+  }
+
   async getPolicies(tenantId: string): Promise<TenantPolicy[]> {
     this.assertCustomerTenant(tenantId);
     const result = await this.options.pool.query(
@@ -374,6 +390,19 @@ export class PgEntitlementStore {
       client.release();
     }
   }
+}
+
+export function normalizeLegacyEntitlementSettings(settings: TenantSettings, disabled = false): unknown {
+  return {
+    status: disabled ? 'suspended' : 'active',
+    limits: numericLimits(settings),
+    scopes: legacyScopes(settings).map(scope => ({
+      resourceType: scope.resourceType, mode: scope.mode,
+      resourceIds: [...scope.resourceIds].sort(),
+    })).sort((a, b) => a.resourceType.localeCompare(b.resourceType)),
+    policies: legacyPolicies(settings).map(([policyKey, value]) => ({ policyKey, value }))
+      .sort((a, b) => a.policyKey.localeCompare(b.policyKey)),
+  };
 }
 
 function legacyScopes(settings: TenantSettings): Array<{

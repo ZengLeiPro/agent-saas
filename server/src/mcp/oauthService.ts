@@ -69,6 +69,7 @@ export interface McpOAuthServiceOptions {
   authFn?: AuthFunction;
   env?: NodeJS.ProcessEnv;
   userResolver?: (username: string) => { tenantId: string; disabled?: boolean } | undefined;
+  onSecretRotated?: (secretRef: string) => Promise<void>;
 }
 
 export class McpOAuthService {
@@ -367,6 +368,7 @@ export class McpOAuthService {
       if (!record) throw new Error('MCP OAuth connection no longer exists');
       if (record.secretRef) {
         await this.options.vault.rotateSecret(record.secretRef, JSON.stringify(next), vaultCaller(username, tenantId, 'rotate'));
+        await this.options.onSecretRotated?.(record.secretRef);
         return;
       }
       const ref = await this.options.vault.putSecret(

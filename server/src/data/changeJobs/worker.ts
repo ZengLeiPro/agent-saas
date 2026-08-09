@@ -33,7 +33,13 @@ export class GovernanceChangeJobWorker {
     const claimed = await this.options.store.claim(
       input.tenantId, input.jobId, current.revision, executionId,
     );
-    const domains = await this.options.store.listDomains(input.tenantId, input.jobId);
+    const storedDomains = await this.options.store.listDomains(input.tenantId, input.jobId);
+    const handlerOrder = new Map(Object.keys(input.handlers).map((domain, index) => [domain, index]));
+    const domains = [...storedDomains].sort((left, right) =>
+      (handlerOrder.get(left.domain) ?? Number.MAX_SAFE_INTEGER)
+      - (handlerOrder.get(right.domain) ?? Number.MAX_SAFE_INTEGER)
+      || left.domain.localeCompare(right.domain),
+    );
     try {
       for (const domain of domains) {
         if (domain.status === 'succeeded') continue;

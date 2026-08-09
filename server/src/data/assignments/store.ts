@@ -185,6 +185,81 @@ export class PgAssignmentStore {
     });
   }
 
+  async listEffectiveResourceIds(
+    tenantId: string,
+    userId: string,
+    resourceType: AssignmentResourceType,
+    agentId?: string,
+  ): Promise<Array<{ resourceId: string; bindingId: string; assignmentVersion: number }>> {
+    const unresolvedGroups = await this.options.pool.query(`
+      SELECT 1
+      FROM ${this.assignmentsTable}
+      WHERE tenant_id=$1 AND resource_type=$2 AND assignee_type='directory_group'
+      LIMIT 1
+    `, [tenantId, resourceType]);
+    if (unresolvedGroups.rows[0]) {
+      throw new AssignmentInvariantError('ASSIGNMENT_GROUP_SUBJECT_UNRESOLVED');
+    }
+    const result = await this.options.pool.query(`
+      SELECT s.resource_id,s.version AS assignment_version,
+             BOOL_OR(a.effect='allow') AS has_allow,
+             BOOL_OR(a.effect='deny') AS has_deny,
+             MIN(a.assignment_id) FILTER (WHERE a.effect='allow') AS binding_id
+      FROM ${this.assignmentSetsTable} s
+      JOIN ${this.assignmentsTable} a
+        ON a.tenant_id=s.tenant_id AND a.resource_type=s.resource_type AND a.resource_id=s.resource_id
+      WHERE s.tenant_id=$1 AND s.resource_type=$3
+        AND (
+          a.assignee_type='everyone'
+          OR (a.assignee_type='user' AND a.assignee_id=$2)
+          OR (a.assignee_type='agent' AND a.assignee_id=$4)
+        )
+      GROUP BY s.resource_id,s.version
+      HAVING BOOL_OR(a.effect='allow') AND NOT BOOL_OR(a.effect='deny')
+      ORDER BY s.resource_id
+    `, [tenantId, userId, resourceType, agentId ?? null]);
+    return result.rows.map(row => ({
+      resourceId: String(row.resource_id),
+      bindingId: String(row.binding_id),
+      assignmentVersion: Number(row.assignment_version),
+    }));
+  }
+
+  async offboardUser(tenantId: string, userId: string): Promise<{ assignmentsDeleted: number; preferencesDeleted: number }> {
+    if (!tenantId.trim() || !userId.trim()) throw new AssignmentInvariantError('ASSIGNMENT_INVALID');
+    return this.withTransaction(async client => {
+      const assignments = await client.query(
+        `DELETE FROM ${this.assignmentsTable} WHERE tenant_id=$1 AND assignee_type='user' AND assignee_id=$2 RETURNING assignment_id`,
+        [tenantId, userId],
+      );
+      const preferences = await client.query(
+        `DELETE FROM ${this.preferencesTable} WHERE user_id=$1 RETURNING user_id`, [userId],
+      );
+      return { assignmentsDeleted: assignments.rowCount ?? 0, preferencesDeleted: preferences.rowCount ?? 0 };
+    });
+  }
+
+  async backfillLegacyCredentialAssignments(input: {
+    credentials: Array<{ credentialId: string; tenantId: string; ownerUserId: string }>;
+    projectedBy: string;
+  }): Promise<{ resourceSetsProjected: number }> {
+    return this.withTransaction(async client => {
+      let resourceSetsProjected = 0;
+      for (const credential of input.credentials) {
+        const changed = await this.upsertLegacySet(
+          client,
+          credential.tenantId,
+          'credential',
+          credential.credentialId,
+          [{ assigneeType: 'user', assigneeId: credential.ownerUserId, effect: 'allow' }],
+          input.projectedBy,
+        );
+        if (changed) resourceSetsProjected += 1;
+      }
+      return { resourceSetsProjected };
+    });
+  }
+
   async listUserPreferences(userId: string): Promise<UserResourcePreference[]> {
     const result = await this.options.pool.query(
       `SELECT * FROM ${this.preferencesTable} WHERE user_id = $1 ORDER BY resource_type, resource_id`,
@@ -261,7 +336,12 @@ export class PgAssignmentStore {
 
       for (const [tenantId, config] of Object.entries(input.tenantSkillConfigs)) {
         if (tenantId === input.platformTenantId) continue;
-        const poolRules = config.skills ?? {};
+        const poolRules = {
+          ...Object.fromEntries((config.enabledSkills ?? []).map(skillId => [skillId, {
+            enabled: true, exposure: 'all' as const, usernames: [],
+          }])),
+          ...(config.skills ?? {}),
+        };
         const ownRules = config.ownSkills ?? {};
         const collisions = new Set(
           Object.keys(poolRules).filter(skillId => Object.hasOwn(ownRules, skillId)),
@@ -335,7 +415,10 @@ export class PgAssignmentStore {
           continue;
         }
         const selectedSkillIds = [...new Set(config.selectedSkills)];
+        const selectedResourceIds = selectedSkillIds.map(skillId =>
+          input.resolveSkillResourceId?.(user, skillId) ?? skillId);
         for (const skillId of selectedSkillIds) {
+          const resourceId = input.resolveSkillResourceId?.(user, skillId) ?? skillId;
           const result = await client.query(`
             INSERT INTO ${this.preferencesTable} (
               user_id, resource_type, resource_id, enabled, source
@@ -347,7 +430,7 @@ export class PgAssignmentStore {
             WHERE ${this.preferencesTable}.source = 'legacy_projection'
               AND ${this.preferencesTable}.enabled IS DISTINCT FROM TRUE
             RETURNING 1
-          `, [user.id, skillId]);
+          `, [user.id, resourceId]);
           if (result.rowCount) preferencesProjected += 1;
         }
         const disabled = await client.query(`
@@ -361,7 +444,7 @@ export class PgAssignmentStore {
             AND enabled = TRUE
             AND NOT (resource_id = ANY($2::text[]))
           RETURNING 1
-        `, [user.id, selectedSkillIds]);
+        `, [user.id, selectedResourceIds]);
         preferencesProjected += disabled.rowCount ?? 0;
       }
 

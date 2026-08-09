@@ -30,6 +30,10 @@ function rowToDomain(row: Record<string, unknown>): GovernanceMigrationDomainSta
     status: row.status as GovernanceMigrationDomainState['status'],
     comparedCount: Number(row.compared_count), matchedCount: Number(row.matched_count),
     differenceCount: Number(row.difference_count), unresolvedBlockingCount: Number(row.unresolved_blocking_count),
+    lastBatchTotal: Number(row.last_batch_total ?? 0),
+    lastBatchMatched: Number(row.last_batch_matched ?? 0),
+    lastBatchDifferences: Number(row.last_batch_differences ?? 0),
+    ...(row.last_batch_at ? { lastBatchAt: row.last_batch_at instanceof Date ? row.last_batch_at.toISOString() : String(row.last_batch_at) } : {}),
     revision: Number(row.revision),
     ...(row.last_compared_at ? { lastComparedAt: row.last_compared_at instanceof Date ? row.last_compared_at.toISOString() : String(row.last_compared_at) } : {}),
     updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
@@ -124,6 +128,27 @@ export class PgGovernanceMigrationControlStore {
     throw new GovernanceMigrationControlInvariantError('MIGRATION_CONTROL_INVALID_TRANSITION');
   }
 
+  async incrementDomainComparison(domain: GovernanceMigrationDomain, matched: boolean): Promise<GovernanceMigrationDomainState> {
+    const result = await this.options.pool.query(`
+      UPDATE ${this.domainsTable} d
+      SET compared_count=compared_count+1,
+          matched_count=matched_count+CASE WHEN $2 THEN 1 ELSE 0 END,
+          difference_count=difference_count+CASE WHEN $2 THEN 0 ELSE 1 END,
+          unresolved_blocking_count=(
+            SELECT COUNT(*) FROM ${this.differencesTable} x
+            WHERE x.domain=d.domain AND x.status='open' AND x.blocking=TRUE
+          ),
+          status=CASE WHEN NOT $2 OR EXISTS (
+            SELECT 1 FROM ${this.differencesTable} x
+            WHERE x.domain=d.domain AND x.status='open' AND x.blocking=TRUE
+          ) THEN 'shadow' ELSE d.status END,
+          revision=revision+1,last_compared_at=NOW(),updated_at=NOW(),updated_by='system:shadow-comparator'
+      WHERE d.domain=$1 RETURNING d.*
+    `, [domain, matched]);
+    if (!result.rows[0]) throw new GovernanceMigrationControlInvariantError('MIGRATION_CONTROL_NOT_FOUND');
+    return rowToDomain(result.rows[0]);
+  }
+
   async recordDomainSnapshot(input: {
     domain: GovernanceMigrationDomain;
     expectedRevision: number;
@@ -135,8 +160,7 @@ export class PgGovernanceMigrationControlStore {
   }): Promise<GovernanceMigrationDomainState> {
     const values = [input.comparedCount, input.matchedCount, input.differenceCount, input.unresolvedBlockingCount];
     if (values.some(value => !Number.isInteger(value) || value < 0)
-      || input.matchedCount + input.differenceCount !== input.comparedCount
-      || input.unresolvedBlockingCount > input.differenceCount) {
+      || input.matchedCount + input.differenceCount !== input.comparedCount) {
       throw new GovernanceMigrationControlInvariantError('MIGRATION_DOMAIN_NOT_READY');
     }
     const ready = input.comparedCount > 0
@@ -145,7 +169,8 @@ export class PgGovernanceMigrationControlStore {
     const result = await this.options.pool.query(`
       UPDATE ${this.domainsTable}
       SET status=$2,compared_count=$3,matched_count=$4,difference_count=$5,
-          unresolved_blocking_count=$6,revision=revision+1,last_compared_at=NOW(),
+          unresolved_blocking_count=$6,last_batch_total=$3,last_batch_matched=$4,
+          last_batch_differences=$5,last_batch_at=NOW(),revision=revision+1,last_compared_at=NOW(),
           updated_at=NOW(),updated_by=$7
       WHERE domain=$1 AND revision=$8 AND status IN ('shadow','ready') RETURNING *
     `, [
@@ -154,6 +179,22 @@ export class PgGovernanceMigrationControlStore {
     ]);
     if (!result.rows[0]) throw new GovernanceMigrationControlInvariantError('MIGRATION_DOMAIN_VERSION_CONFLICT');
     return rowToDomain(result.rows[0]);
+  }
+
+  async resolveDifferencesForResource(input: {
+    domain: GovernanceMigrationDomain;
+    tenantId?: string;
+    resourceType: string;
+    resourceId: string;
+    resolvedBy: string;
+  }): Promise<number> {
+    const result = await this.options.pool.query(`
+      UPDATE ${this.differencesTable}
+      SET status='resolved',resolved_at=NOW(),resolved_by=$5,resolution_reason='shadow_values_converged',last_seen_at=NOW()
+      WHERE domain=$1 AND tenant_scope=$2 AND resource_type=$3 AND resource_id=$4 AND status='open'
+      RETURNING difference_id
+    `, [input.domain, input.tenantId ?? '', input.resourceType, input.resourceId, input.resolvedBy]);
+    return result.rowCount ?? 0;
   }
 
   async recordDifference(input: {
@@ -182,6 +223,15 @@ export class PgGovernanceMigrationControlStore {
       input.category, input.legacyDigest ?? null, input.governanceDigest ?? null, input.blocking,
     ]);
     return rowToDifference(result.rows[0]);
+  }
+
+  async countOpenBlockingDifferences(domain: GovernanceMigrationDomain): Promise<number> {
+    const result = await this.options.pool.query(`
+      SELECT COUNT(*)::text AS total
+      FROM ${this.differencesTable}
+      WHERE domain=$1 AND status='open' AND blocking=TRUE
+    `, [domain]);
+    return Number(result.rows[0]?.total ?? 0);
   }
 
   async listDifferences(input: {

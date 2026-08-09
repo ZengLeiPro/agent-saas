@@ -1,4 +1,4 @@
-import { parseMcpToolKey, type McpClientManager } from './clientManager.js';
+import { parseMcpToolKey, type McpClientManager, type McpToolDescriptor } from './clientManager.js';
 import { CapabilityTokenService } from '../security/capabilityToken.js';
 import type { SecretVault } from '../security/secretVault.js';
 
@@ -6,6 +6,7 @@ export interface McpProxyInvokeInput {
   username: string | undefined;
   userId?: string;
   sessionId?: string;
+  runId?: string;
   toolKey: string;
   input: Record<string, unknown>;
 }
@@ -14,6 +15,22 @@ export interface McpProxyOptions {
   manager: McpClientManager;
   capabilityTokens?: CapabilityTokenService;
   vault?: SecretVault;
+  warmupWithCredential?: (input: {
+    username: string;
+    userId: string;
+    sessionId: string;
+    runId: string;
+  }) => Promise<McpToolDescriptor[]>;
+  executeWithCredential?: (input: {
+    username: string;
+    userId: string;
+    sessionId: string;
+    runId?: string;
+    serverName: string;
+    toolName: string;
+    toolKey: string;
+    input: Record<string, unknown>;
+  }) => Promise<string>;
   logger?: { info?: (message: string, meta?: Record<string, unknown>) => void };
 }
 
@@ -30,8 +47,20 @@ export class McpProxy {
     this.capabilityTokens = options.capabilityTokens ?? new CapabilityTokenService();
   }
 
-  async warmup(username: string | undefined) {
-    return this.options.manager.ensureUser(username);
+  async warmup(input: {
+    username?: string;
+    userId?: string;
+    sessionId?: string;
+    runId?: string;
+  }): Promise<McpToolDescriptor[]> {
+    if (!input.username || !input.userId || !input.sessionId || !input.runId
+      || !this.options.warmupWithCredential) return [];
+    return this.options.warmupWithCredential({
+      username: input.username,
+      userId: input.userId,
+      sessionId: input.sessionId,
+      runId: input.runId,
+    });
   }
 
   async invoke(input: McpProxyInvokeInput): Promise<string> {
@@ -59,6 +88,16 @@ export class McpProxy {
       toolName: parsed.toolName,
       expiresAt: capability.expiresAt,
     });
-    return this.options.manager.invoke(input.username, input.toolKey, input.input);
+    if (!this.options.executeWithCredential) throw new Error('CREDENTIAL_BROKER_UNAVAILABLE');
+    return this.options.executeWithCredential({
+      username: input.username,
+      userId,
+      sessionId,
+      ...(input.runId ? { runId: input.runId } : {}),
+      serverName: parsed.serverName,
+      toolName: parsed.toolName,
+      toolKey: input.toolKey,
+      input: input.input,
+    });
   }
 }

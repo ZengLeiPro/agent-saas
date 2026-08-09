@@ -9,7 +9,7 @@
  * advisory lock 串行化并发 init。
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import pg from 'pg';
 
 const { Pool } = pg;
@@ -127,7 +127,7 @@ export class PgGuardrailEventStore implements GuardrailEventStore {
         event.sessionId ?? null,
         event.clientMsgId ?? null,
         event.verdict,
-        event.messageText,
+        `[redacted:sha256:${createHash('sha256').update(event.messageText).digest('hex').slice(0, 16)}]`,
         event.model ?? null,
         event.latencyMs ?? null,
         event.confidence ?? null,

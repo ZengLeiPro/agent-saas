@@ -38,7 +38,7 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_entitlement_resource_scopes');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_entitlement_resource_items');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_tenant_policies');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(12);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(17);
   });
 
   it('pantheon 不进入客户 Entitlement/Policy API', async () => {

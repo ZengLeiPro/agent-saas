@@ -80,6 +80,7 @@ export interface LegacyAssignmentBackfillInput {
   userSkillConfigs: Record<string, UserSkillConfig>;
   platformTenantId: string;
   projectedBy: string;
+  resolveSkillResourceId?: (user: LegacyAssignmentUser, legacySkillId: string) => string;
 }
 
 export interface LegacyAssignmentBackfillResult {
@@ -94,7 +95,9 @@ export type AssignmentInvariantCode =
   | 'ASSIGNMENT_SET_NOT_FOUND'
   | 'ASSIGNMENT_SET_VERSION_CONFLICT'
   | 'INVALID_ASSIGNMENT_ASSIGNEE'
-  | 'PREFERENCE_VERSION_CONFLICT';
+  | 'PREFERENCE_VERSION_CONFLICT'
+  | 'ASSIGNMENT_GROUP_SUBJECT_UNRESOLVED'
+  | 'ASSIGNMENT_INVALID';
 
 export class AssignmentInvariantError extends Error {
   constructor(readonly code: AssignmentInvariantCode) {

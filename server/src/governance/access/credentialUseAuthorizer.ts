@@ -49,16 +49,14 @@ export class CredentialUseAuthorizer {
           resourceId: request.connectorId,
         },
         ...(credential.kind === 'org_shared'
-          ? {
-              tenantPolicyKey: 'credential.org_shared.allowed' as const,
-              assignment: {
-                required: true,
-                resourceType: 'credential' as const,
-                resourceId: credential.credentialId,
-                agentIds: [request.agentId],
-              },
-            }
+          ? { tenantPolicyKey: 'credential.org_shared.allowed' as const }
           : {}),
+        assignment: {
+          required: true,
+          resourceType: 'credential' as const,
+          resourceId: credential.credentialId,
+          agentIds: [request.agentId],
+        },
       },
     });
     return { allowed: decision.verdict === 'allow', decision };

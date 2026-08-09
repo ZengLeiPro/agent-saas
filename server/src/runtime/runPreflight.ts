@@ -8,7 +8,7 @@ import { ReadinessEvaluator, type ExecutionReadiness } from '../governance/readi
 import { SubjectResolver } from '../governance/subject/resolver.js';
 import type { ServiceSubjectContext, SubjectContext } from '../governance/subject/types.js';
 import type { RuntimeSessionRecord, SessionCatalog } from './sessionCatalog.js';
-import type { RunResolutionSnapshotDraft } from './runResolutionSnapshotStore.js';
+import type { ResolvedResourceRef, RunResolutionSnapshotDraft } from './runResolutionSnapshotStore.js';
 
 export type GovernanceEnforcementMode = 'shadow' | 'enforce';
 
@@ -60,10 +60,19 @@ export interface RunPreflightServiceOptions {
   resolveEnforcementState?: () => Promise<{ mode: GovernanceEnforcementMode; revision: number }>;
   subjectResolver: SubjectResolver;
   accessEvaluator: AccessEvaluator;
+  compareLegacyAccess?: (input: {
+    request: AccessEvaluationRequest;
+    governanceDecision: AccessDecision;
+  }) => Promise<void>;
   readinessEvaluator: ReadinessEvaluator;
   sessionCatalog: Pick<SessionCatalog, 'get'>;
   orgAgentStore: OrgAgentReader;
   agentResourceStore?: AgentResourceReader;
+  resolveTypedBindings?: (input: { tenantId: string; userId: string; agentId?: string }) => Promise<{
+    skills: ResolvedResourceRef[];
+    connectors: ResolvedResourceRef[];
+    credentialBindings: ResolvedResourceRef[];
+  }>;
   tenantStore: TenantReader;
   authorizeBilling?: (input: { tenantId: string; userId?: string; runId: string }) => Promise<{
     ok: boolean;
@@ -71,6 +80,10 @@ export interface RunPreflightServiceOptions {
     reason?: string;
   }>;
   isModelAvailable?: (modelRef: string, tenantId?: string) => boolean | Promise<boolean>;
+  isEnvironmentAvailable?: (
+    input: NonNullable<RunPreflightInput['environment']>,
+    context: { tenantId: string; userId: string; agentId?: string },
+  ) => Promise<boolean>;
   logger?: { warn(message: string): void };
 }
 
@@ -82,6 +95,11 @@ interface ResolvedRunInput {
   managedAgent?: ManagedAgentResource;
   managedAgentVersion?: ManagedAgentVersion;
   modelRef?: string;
+  typedBindings?: {
+    skills: ResolvedResourceRef[];
+    connectors: ResolvedResourceRef[];
+    credentialBindings: ResolvedResourceRef[];
+  };
 }
 
 export class RunPreflightService {
@@ -107,7 +125,13 @@ export class RunPreflightService {
       subject = input.serviceSubject
         ? this.options.subjectResolver.resolveService(input.serviceSubject)
         : await this.options.subjectResolver.resolveHuman(resolved.userId);
-      decision = await this.options.accessEvaluator.evaluate(this.buildAccessRequest(subject, resolved, evaluatedAt));
+      const accessRequest = this.buildAccessRequest(subject, resolved, evaluatedAt);
+      decision = await this.options.accessEvaluator.evaluate(accessRequest);
+      await this.options.compareLegacyAccess?.({ request: accessRequest, governanceDecision: decision }).catch(error => {
+        this.options.logger?.warn(
+          `Run preflight legacy comparison unavailable: run=${input.runId} error=${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
     } catch (error) {
       this.options.logger?.warn(
         `Run preflight access evaluation unavailable: run=${input.runId} error=${error instanceof Error ? error.message : String(error)}`,
@@ -136,6 +160,34 @@ export class RunPreflightService {
     const modelAvailable = resolved.modelRef && this.options.isModelAvailable
       ? await this.options.isModelAvailable(resolved.modelRef, resolved.tenantId)
       : undefined;
+    const requiredCredentialIds = Array.isArray(resolved.managedAgentVersion?.definition.credentials)
+      ? resolved.managedAgentVersion.definition.credentials.flatMap(value => {
+          if (typeof value === 'string') return [value];
+          if (value && typeof value === 'object' && typeof (value as Record<string, unknown>).id === 'string') {
+            return [String((value as Record<string, unknown>).id)];
+          }
+          return [];
+        })
+      : [];
+    const readinessCredentials = requiredCredentialIds.length > 0
+      ? requiredCredentialIds.map(id => {
+          const binding = resolved.typedBindings?.credentialBindings.find(item => item.id === id);
+          return { bindingId: binding?.bindingId ?? `required:${id}`, bound: Boolean(binding) };
+        })
+      : (resolved.typedBindings?.credentialBindings ?? []).map(item => ({
+          bindingId: item.bindingId ?? item.id, bound: true,
+        }));
+    const environmentAvailable = input.environment && this.options.isEnvironmentAvailable
+      ? await this.options.isEnvironmentAvailable(input.environment, {
+          tenantId: resolved.tenantId,
+          userId: resolved.userId,
+          ...(resolved.managedAgent?.agentId || resolved.orgAgentId
+            ? { agentId: resolved.managedAgent?.agentId ?? resolved.orgAgentId }
+            : {}),
+        })
+      : input.environment
+        ? Boolean(input.environment.instanceId || input.environment.templateVersionId)
+        : undefined;
     const readiness = this.options.readinessEvaluator.evaluate({
       accessAllowed: decision.verdict === 'allow',
       resourceEnabled: resolved.managedAgent
@@ -144,6 +196,14 @@ export class RunPreflightService {
       modelRef: resolved.modelRef,
       modelAvailable,
       billingDecision,
+      credentials: readinessCredentials,
+      ...(input.environment?.instanceId || input.environment?.templateVersionId ? {
+        environment: {
+          required: true,
+          available: environmentAvailable ?? false,
+          ref: input.environment.instanceId ?? input.environment.templateVersionId ?? input.environment.providerId,
+        },
+      } : {}),
       evaluatedAt,
     });
     const wouldBlock = decision.verdict !== 'allow' || !readiness.ready;
@@ -191,6 +251,15 @@ export class RunPreflightService {
     const managedAgentVersion = managedAgent?.currentVersionId && this.options.agentResourceStore
       ? await this.options.agentResourceStore.getVersion(managedAgent.currentVersionId)
       : null;
+    const typedBindings = this.options.resolveTypedBindings
+      ? await this.options.resolveTypedBindings({
+          tenantId: resolvedTenantId,
+          userId: resolvedUserId,
+          ...(managedAgent?.agentId || orgAgentId
+            ? { agentId: managedAgent?.agentId ?? orgAgentId }
+            : {}),
+        })
+      : undefined;
     return {
       userId: resolvedUserId,
       tenantId: resolvedTenantId,
@@ -198,6 +267,7 @@ export class RunPreflightService {
       ...(orgAgent ? { orgAgent } : {}),
       ...(managedAgent ? { managedAgent } : {}),
       ...(managedAgentVersion ? { managedAgentVersion } : {}),
+      ...(typedBindings ? { typedBindings } : {}),
       ...(input.modelRef ?? session?.modelRef ? { modelRef: input.modelRef ?? session!.modelRef } : {}),
     };
   }
@@ -354,9 +424,11 @@ export class RunPreflightService {
               version: resolved.managedAgentVersion.versionNumber,
             } : {}),
           },
-      skills: versionedSkills ?? (resolved.orgAgent?.allowedSkills ?? []).map(id => ({ id })),
-      connectors: [],
-      credentialBindings: [],
+      skills: resolved.typedBindings?.skills.length
+        ? resolved.typedBindings.skills
+        : versionedSkills ?? (resolved.orgAgent?.allowedSkills ?? []).map(id => ({ id })),
+      connectors: resolved.typedBindings?.connectors ?? [],
+      credentialBindings: resolved.typedBindings?.credentialBindings ?? [],
       ...(input.environment ? {
         environment: {
           id: input.environment.instanceId ?? input.environment.templateVersionId ?? input.environment.providerId,

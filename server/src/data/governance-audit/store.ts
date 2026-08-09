@@ -111,6 +111,7 @@ export class PgGovernanceAuditStore implements GovernanceAuditStore {
         $12, $13, $14, $15,
         $16, $17::timestamptz, $18::jsonb
       )
+      ON CONFLICT (audit_id) DO NOTHING
     `, [
       event.auditId,
       event.correlationId,

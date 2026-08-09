@@ -35,6 +35,45 @@ export class PgMembershipStore {
     await new PgGovernanceMigrationRunner(this.options.pool, this.tablePrefix).run();
   }
 
+  async offboardMembership(input: {
+    tenantId: string;
+    userId: string;
+    handoffTargetUserId: string;
+    updatedBy: string;
+  }): Promise<{ offboarded: TenantMembership; handoffTarget: TenantMembership }> {
+    if (!input.tenantId.trim() || !input.userId.trim() || !input.handoffTargetUserId.trim()
+      || input.userId === input.handoffTargetUserId) {
+      throw new MembershipInvariantError('MEMBERSHIP_IDENTITY_INVALID');
+    }
+    return this.withTransaction(async client => {
+      const result = await client.query(
+        `SELECT * FROM ${this.membershipsTable} WHERE tenant_id=$1 AND user_id IN ($2,$3) FOR UPDATE`,
+        [input.tenantId, input.userId, input.handoffTargetUserId],
+      );
+      const current = result.rows.find(row => String(row.user_id) === input.userId);
+      const target = result.rows.find(row => String(row.user_id) === input.handoffTargetUserId);
+      if (!current || !target || target.status !== 'active') {
+        throw new MembershipInvariantError('MEMBERSHIP_NOT_FOUND');
+      }
+      await client.query(`
+        UPDATE ${this.membershipsTable}
+        SET persona='org_admin',is_owner=TRUE,status='active',version=version+1,
+            updated_at=NOW(),updated_by=$4
+        WHERE tenant_id=$1 AND user_id=$3
+      `, [input.tenantId, input.userId, input.handoffTargetUserId, input.updatedBy]);
+      const offboarded = await client.query(`
+        UPDATE ${this.membershipsTable}
+        SET is_owner=FALSE,status='disabled',version=version+1,updated_at=NOW(),updated_by=$3
+        WHERE tenant_id=$1 AND user_id=$2 RETURNING *
+      `, [input.tenantId, input.userId, input.updatedBy]);
+      const handoff = await client.query(
+        `SELECT * FROM ${this.membershipsTable} WHERE tenant_id=$1 AND user_id=$2`,
+        [input.tenantId, input.handoffTargetUserId],
+      );
+      return { offboarded: rowToMembership(offboarded.rows[0]), handoffTarget: rowToMembership(handoff.rows[0]) };
+    });
+  }
+
   async getMembership(tenantId: string, userId: string): Promise<TenantMembership | null> {
     const result = await this.options.pool.query(
       `SELECT * FROM ${this.membershipsTable} WHERE tenant_id = $1 AND user_id = $2`,

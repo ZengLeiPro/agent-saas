@@ -20,6 +20,9 @@ async function rig(input: {
   agentCreate?: ReturnType<typeof vi.fn>;
   credentialCreate?: ReturnType<typeof vi.fn>;
   putSecret?: ReturnType<typeof vi.fn>;
+  executeUserOffboarding?: ReturnType<typeof vi.fn>;
+  projectionEnqueue?: ReturnType<typeof vi.fn>;
+  getMembership?: ReturnType<typeof vi.fn>;
 }) {
   const auditAppend = input.auditAppend ?? vi.fn().mockResolvedValue({});
   const agentCreate = input.agentCreate ?? vi.fn().mockImplementation(async value => ({
@@ -41,7 +44,7 @@ async function rig(input: {
   app.use('/api/governance/resources', createGovernanceResourcesRouter({
     memberships: {
       getPlatformAdmin: vi.fn().mockResolvedValue(null),
-      getMembership: vi.fn().mockResolvedValue({
+      getMembership: input.getMembership ?? vi.fn().mockResolvedValue({
         tenantId: 'tenant-a', userId: input.user?.sub ?? 'user-1',
         persona: (input.user?.role ?? 'user') === 'admin' ? 'org_admin' : 'member', status: 'active',
       }),
@@ -53,6 +56,11 @@ async function rig(input: {
     environments: {} as never,
     changeJobs: {} as never,
     changePlanner: {} as never,
+    ...(input.executeUserOffboarding ? { executeUserOffboarding: input.executeUserOffboarding as never } : {}),
+    ...(input.projectionEnqueue ? {
+      projectionOutbox: { enqueue: input.projectionEnqueue } as never,
+      projectionReconciler: { reconcileOne: vi.fn().mockResolvedValue(null) } as never,
+    } : {}),
     vault: { putSecret, revokeSecret: vi.fn().mockResolvedValue(undefined) } as never,
     audit: { append: auditAppend } as never,
   }));
@@ -84,13 +92,15 @@ describe('typed governance resource routes', () => {
     const auditAppend = vi.fn()
       .mockResolvedValueOnce({ auditId: 'intent-1' })
       .mockRejectedValueOnce(new Error('audit terminal down'));
-    const test = await rig({ auditAppend });
+    const projectionEnqueue = vi.fn().mockResolvedValue({ outboxId: 'audit-terminal-1' });
+    const test = await rig({ auditAppend, projectionEnqueue });
     const response = await test.request('/api/governance/resources/agents', json('POST', {
       kind: 'personal_agent', ownerUserId: 'user-1',
     }));
     expect(response.status).toBe(201);
     expect(await response.json()).toMatchObject({ auditId: 'intent-1', auditCompletion: 'pending' });
     expect(test.agentCreate).toHaveBeenCalledOnce();
+    expect(projectionEnqueue).toHaveBeenCalledWith(expect.objectContaining({ projector: 'audit_terminal' }));
   });
 
   it('个人 Agent owner 强制绑定当前用户，拒绝代他人创建', async () => {
@@ -108,6 +118,47 @@ describe('typed governance resource routes', () => {
     expect(test.agentCreate).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-a', ownerUserId: 'user-1', kind: 'personal_agent',
     }));
+  });
+
+  it('组织管理员可通过 HTTP 创建 durable user offboarding Change Job', async () => {
+    const executeUserOffboarding = vi.fn().mockResolvedValue({
+      job: { jobId: 'job-offboard-1', status: 'pending', jobType: 'user_offboarding' },
+      receipt: { status: 'accepted' },
+    });
+    const test = await rig({
+      user: { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' },
+      executeUserOffboarding,
+    });
+    const response = await test.request('/api/governance/resources/change-jobs/user-offboarding', json('POST', {
+      userId: 'user-leaving', handoffTargetUserId: 'user-owner',
+      idempotencyKey: 'offboard-20260809-1', reasonCode: 'employee_departure',
+    }));
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ job: { jobId: 'job-offboard-1' } });
+    expect(executeUserOffboarding).toHaveBeenCalledWith({
+      tenantId: 'tenant-a', userId: 'user-leaving', handoffTargetUserId: 'user-owner',
+      idempotencyKey: 'offboard-20260809-1', reasonCode: 'employee_departure', requestedBy: 'admin-1',
+    });
+  });
+
+  it('offboarding 在创建 Change Job 前拒绝跨租户目标或失效 handoff', async () => {
+    const executeUserOffboarding = vi.fn();
+    const getMembership = vi.fn(async (_tenantId: string, userId: string) =>
+      ['admin-1', 'user-owner'].includes(userId)
+        ? { tenantId: 'tenant-a', userId, persona: 'org_admin', status: 'active' }
+        : null,
+    );
+    const test = await rig({
+      user: { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' },
+      executeUserOffboarding,
+      getMembership,
+    });
+    const response = await test.request('/api/governance/resources/change-jobs/user-offboarding', json('POST', {
+      userId: 'user-from-other-tenant', handoffTargetUserId: 'user-owner',
+      idempotencyKey: 'offboard-cross-tenant', reasonCode: 'employee_departure',
+    }));
+    expect(response.status).toBe(404);
+    expect(executeUserOffboarding).not.toHaveBeenCalled();
   });
 
   it('org_shared Credential 使用 tenant owner，获授权成员可由 Broker 按 tenant 读取', async () => {

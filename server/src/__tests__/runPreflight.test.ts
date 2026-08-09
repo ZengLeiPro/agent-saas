@@ -174,6 +174,12 @@ interface PreflightFixtureOverrides {
   enforcementMode?: 'shadow' | 'enforce';
   resolveEnforcementMode?: () => Promise<'shadow' | 'enforce'>;
   resolveEnforcementState?: () => Promise<{ mode: 'shadow' | 'enforce'; revision: number }>;
+  resolveTypedBindings?: (input: any) => Promise<{
+    skills: any[];
+    connectors: any[];
+    credentialBindings: any[];
+  }>;
+  isEnvironmentAvailable?: (environment: any, context: any) => Promise<boolean>;
   agentResourceStore?: {
     getForTenant: (tenantId: string, agentId: string) => Promise<any>;
     findPersonalByOwner: (tenantId: string, ownerUserId: string) => Promise<any>;
@@ -228,6 +234,8 @@ function buildService(overrides: PreflightFixtureOverrides = {}) {
     sessionCatalog,
     orgAgentStore,
     ...(overrides.agentResourceStore ? { agentResourceStore: overrides.agentResourceStore } : {}),
+    ...(overrides.resolveTypedBindings ? { resolveTypedBindings: overrides.resolveTypedBindings } : {}),
+    ...(overrides.isEnvironmentAvailable ? { isEnvironmentAvailable: overrides.isEnvironmentAvailable } : {}),
     tenantStore,
     ...(overrides.billing ? { authorizeBilling: async () => overrides.billing! } : {}),
     ...(overrides.modelAvailable !== undefined ? { isModelAvailable: () => overrides.modelAvailable! } : {}),
@@ -283,6 +291,37 @@ describe('RunPreflightService shadow/enforce 行为', () => {
       templateId: 'tpl-sales', templateVersionId: 'tplv-3',
     });
     expect(result.snapshot.skills).toEqual([{ id: 'skill-1', versionId: 'skillv-4', revision: 6 }]);
+  });
+
+  it('typed Assignment 解析结果固定到 Run Snapshot，并进入 Credential readiness', async () => {
+    const result = await buildService({
+      resolveTypedBindings: async () => ({
+        skills: [{ id: 'skill-gov-1', versionId: 'sv-2', revision: 3, bindingId: 'as-skill' }],
+        connectors: [{ id: 'mcp-salesforce', versionId: 'cv-4', revision: 5 }],
+        credentialBindings: [{ id: 'cred-1', generation: 7, revision: 8, bindingId: 'as-cred' }],
+      }),
+    }).preflight(baseInput);
+    expect(result.snapshot.skills).toEqual([
+      { id: 'skill-gov-1', versionId: 'sv-2', revision: 3, bindingId: 'as-skill' },
+    ]);
+    expect(result.snapshot.connectors).toEqual([{ id: 'mcp-salesforce', versionId: 'cv-4', revision: 5 }]);
+    expect(result.snapshot.credentialBindings).toEqual([
+      { id: 'cred-1', generation: 7, revision: 8, bindingId: 'as-cred' },
+    ]);
+    expect(result.readiness.resolvedCredentialBindingIds).toEqual(['as-cred']);
+  });
+
+  it('Environment Instance 未 ready 时 enforce 阻断', async () => {
+    const result = await buildService({
+      enforcementMode: 'enforce',
+      isEnvironmentAvailable: async () => false,
+    }).preflight({
+      ...baseInput,
+      phase: 'wake',
+      environment: { providerId: 'acs', instanceId: 'instance-expired' },
+    });
+    expect(result.proceed).toBe(false);
+    expect(result.readiness.blockers).toContainEqual(expect.objectContaining({ code: 'ENVIRONMENT_UNAVAILABLE' }));
   });
 
   it('wake 快照记录 Provider/Template/Instance/recipe digest，不含 Provider Secret', async () => {
@@ -388,6 +427,40 @@ describe('RunPreflightService shadow/enforce 行为', () => {
     expect(result.snapshot.agent).toEqual({ type: 'personal_agent', id: 'user-1' });
   });
 
+  it('Personal Agent 的 typed binding 与 Environment Assignment 使用 immutable Agent ID', async () => {
+    let typedInput: any;
+    let environmentContext: any;
+    const service = buildService({
+      agentResourceStore: {
+        getForTenant: async () => null,
+        findPersonalByOwner: async () => ({
+          agentId: 'personal-agent-1', tenantId: 'tenant-1', kind: 'personal_agent',
+          ownerUserId: 'user-1', status: 'enabled', currentVersionId: 'pav-1', revision: 2,
+        }),
+        getVersion: async () => ({
+          versionId: 'pav-1', agentId: 'personal-agent-1', versionNumber: 1,
+          definition: {}, digest: 'digest', publishedAt: NOW, publishedBy: 'user-1',
+        }),
+      },
+      resolveTypedBindings: async input => {
+        typedInput = input;
+        return { skills: [], connectors: [], credentialBindings: [] };
+      },
+      isEnvironmentAvailable: async (_environment, context) => {
+        environmentContext = context;
+        return true;
+      },
+    });
+    const result = await service.preflight({
+      ...baseInput,
+      orgAgentId: undefined,
+      environment: { providerId: 'server-local', templateVersionId: 'env-v1' },
+    });
+    expect(result.proceed).toBe(true);
+    expect(typedInput.agentId).toBe('personal-agent-1');
+    expect(environmentContext.agentId).toBe('personal-agent-1');
+  });
+
   it('governance 数据缺失时生成 ACCESS_EVALUATION_UNAVAILABLE 决定，shadow 不阻断', async () => {
     const service = buildService({ membership: null });
     const result = await service.preflight(baseInput);
@@ -422,7 +495,7 @@ describe('Run Resolution Snapshot 敏感内容围栏', () => {
     const queries: string[] = [];
     const query = async (sql: string) => {
       queries.push(sql);
-      if (sql.includes('SELECT version FROM')) return { rows: [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }] };
+      if (sql.includes('SELECT version FROM')) return { rows: [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }] };
       return { rows: [], rowCount: 0 };
     };
     const pool = { query, connect: async () => ({ query, release: () => undefined }) };
@@ -436,6 +509,21 @@ describe('Run Resolution Snapshot 敏感内容围栏', () => {
     // append-only 合同：公开 API 只有 append/get/init
     expect(Object.getOwnPropertyNames(Object.getPrototypeOf(store)).sort())
       .toEqual(['append', 'constructor', 'get', 'init']);
+  });
+
+  it('同一 Run 允许追加多个 immutable wake Snapshot', async () => {
+    const query = async (sql: string) => {
+      if (sql.includes('INSERT INTO')) return { rows: [{ created_at: NOW }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    };
+    const store = new PgRunResolutionSnapshotStore({ query } as never, 'test');
+    const first = await store.append(cleanDraft);
+    const second = await store.append({
+      ...cleanDraft,
+      accessDecision: { id: 'decision-2', verdict: 'allow' } as never,
+      resolvedAt: '2026-08-08T00:01:00.000Z',
+    });
+    expect(first.digest).not.toBe(second.digest);
   });
 
   it.each([

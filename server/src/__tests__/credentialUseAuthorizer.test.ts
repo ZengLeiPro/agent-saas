@@ -56,7 +56,7 @@ describe('CredentialUseAuthorizer', () => {
     });
   });
 
-  it('personal_grant 绑定 immutable owner，不要求组织 Assignment', async () => {
+  it('personal_grant 同时绑定 immutable owner 与当前 Assignment', async () => {
     let evaluated: AccessEvaluationRequest | undefined;
     const authorizer = new CredentialUseAuthorizer({
       subjectResolver: { resolveService: input => ({ subjectType: 'service', ...input }) },
@@ -67,7 +67,9 @@ describe('CredentialUseAuthorizer', () => {
       kind: 'personal_grant', custodianUserId: undefined, ownerUserId: 'user-1',
     }));
     expect(evaluated?.resource.ownerUserId).toBe('user-1');
-    expect(evaluated?.context?.assignment).toBeUndefined();
+    expect(evaluated?.context?.assignment).toEqual({
+      required: true, resourceType: 'credential', resourceId: 'cred-1', agentIds: ['agent-1'],
+    });
     expect(evaluated?.context?.tenantPolicyKey).toBeUndefined();
   });
 

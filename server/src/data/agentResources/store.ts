@@ -98,6 +98,14 @@ export class PgAgentResourceStore {
     return result.rows[0] ? rowToResource(result.rows[0]) : null;
   }
 
+  async listPersonalByOwner(tenantId: string, ownerUserId: string): Promise<ManagedAgentResource[]> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.resourcesTable} WHERE tenant_id=$1 AND owner_user_id=$2 AND kind='personal_agent' ORDER BY agent_id`,
+      [tenantId, ownerUserId],
+    );
+    return result.rows.map(rowToResource);
+  }
+
   async findPersonalByOwner(tenantId: string, ownerUserId: string): Promise<ManagedAgentResource | null> {
     const result = await this.options.pool.query(`
       SELECT * FROM ${this.resourcesTable}

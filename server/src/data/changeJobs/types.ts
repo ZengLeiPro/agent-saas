@@ -1,4 +1,4 @@
-export type GovernanceChangeJobType = 'tenant_delete' | 'resource_retire' | 'credential_revoke';
+export type GovernanceChangeJobType = 'tenant_delete' | 'resource_retire' | 'credential_revoke' | 'user_offboarding';
 export type GovernanceChangeJobStatus = 'pending' | 'running' | 'retry_wait' | 'succeeded' | 'failed';
 export type GovernanceChangeDomainStatus = 'pending' | 'running' | 'succeeded' | 'failed';
 

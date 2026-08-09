@@ -135,6 +135,20 @@ export class PgCredentialStore {
     return result.rows.map(rowToCredential);
   }
 
+  async bumpGenerationBySecretRef(secretRef: string, updatedBy: string): Promise<GovernanceCredential | null> {
+    if (!secretRef.trim() || !updatedBy.trim()) throw new CredentialInvariantError('CREDENTIAL_GENERATION_INVALID');
+    const result = await this.options.pool.query(`
+      UPDATE ${this.credentialsTable}
+      SET generation = generation + 1,
+          version = version + 1,
+          updated_at = NOW(),
+          updated_by = $2
+      WHERE secret_ref = $1 AND status IN ('active','rotation_due')
+      RETURNING *
+    `, [secretRef, updatedBy]);
+    return result.rows[0] ? rowToCredential(result.rows[0]) : null;
+  }
+
   async updateStatus(credentialId: string, patch: CredentialStatusPatch): Promise<GovernanceCredential> {
     return this.withTransaction(async client => {
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`credential:${credentialId}`]);
@@ -236,11 +250,15 @@ export class PgCredentialStore {
             ) VALUES ($1,$2,$3,'personal_grant',$4,$5,$6,$7::jsonb,'active',1,$8,'legacy_projection',$9,$9)
             ON CONFLICT (secret_ref) DO UPDATE SET
               status = EXCLUDED.status,
+              scope_summary_json = EXCLUDED.scope_summary_json,
               version = ${this.credentialsTable}.version + 1,
               updated_at = NOW(),
               updated_by = EXCLUDED.updated_by
             WHERE ${this.credentialsTable}.source = 'legacy_projection'
-              AND ${this.credentialsTable}.status IS DISTINCT FROM EXCLUDED.status
+              AND (
+                ${this.credentialsTable}.status IS DISTINCT FROM EXCLUDED.status
+                OR ${this.credentialsTable}.scope_summary_json IS DISTINCT FROM EXCLUDED.scope_summary_json
+              )
           `, [
             randomUUID(),
             connection.tenantId,
@@ -248,7 +266,10 @@ export class PgCredentialStore {
             ownerUserId,
             ownerUsername ?? null,
             `legacy:${connection.connectorId}:${slot}`,
-            JSON.stringify({ legacyCapability: connection.capabilities?.mcp === true ? 'mcp' : 'connector' }),
+            JSON.stringify({
+              legacyCapability: connection.capabilities?.mcp === true ? 'mcp' : 'connector',
+              scopes: [`${connection.connectorId}:*`],
+            }),
             secretRef,
             input.projectedBy,
           ]);

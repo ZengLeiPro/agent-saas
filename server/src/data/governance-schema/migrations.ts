@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { PLATFORM_TENANT_ID } from '../tenants/types.js';
 
 export type GovernancePgPool = pg.Pool;
 
@@ -47,6 +48,10 @@ function migrations(prefix: string): GovernanceMigration[] {
   const migrationControl = `${prefix}_governance_migration_control`;
   const migrationDomains = `${prefix}_governance_migration_domains`;
   const shadowDifferences = `${prefix}_governance_shadow_differences`;
+  const contentAccessGrants = `${prefix}_content_access_grants`;
+  const projectionOutbox = `${prefix}_governance_projection_outbox`;
+  const environmentInstances = `${prefix}_environment_instances`;
+  const guardrailEvents = `${prefix}_guardrail_events`;
 
   return [
     {
@@ -277,6 +282,7 @@ function migrations(prefix: string): GovernanceMigration[] {
           readiness_ready BOOLEAN NOT NULL,
           snapshot_digest TEXT NOT NULL,
           snapshot_json JSONB NOT NULL,
+          snapshot_sequence BIGSERIAL UNIQUE NOT NULL,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )`,
         `CREATE INDEX IF NOT EXISTS ${runResolutionSnapshots}_tenant_created_idx
@@ -594,8 +600,7 @@ function migrations(prefix: string): GovernanceMigration[] {
           last_compared_at TIMESTAMPTZ,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_by TEXT NOT NULL,
-          CHECK (matched_count + difference_count = compared_count),
-          CHECK (unresolved_blocking_count <= difference_count)
+          CHECK (matched_count + difference_count = compared_count)
         )`,
         `CREATE TABLE IF NOT EXISTS ${shadowDifferences} (
           difference_id TEXT PRIMARY KEY,
@@ -619,6 +624,262 @@ function migrations(prefix: string): GovernanceMigration[] {
         )`,
         `CREATE INDEX IF NOT EXISTS ${shadowDifferences}_blocking_idx
           ON ${shadowDifferences} (status, blocking, domain, tenant_scope)`,
+      ],
+    },
+    {
+      version: 13,
+      statements: [
+        `ALTER TABLE ${changeJobs} DROP CONSTRAINT IF EXISTS ${changeJobs}_job_type_check`,
+        `ALTER TABLE ${changeJobs} ADD CONSTRAINT ${changeJobs}_job_type_check
+          CHECK (job_type IN ('tenant_delete', 'resource_retire', 'credential_revoke', 'user_offboarding'))`,
+        `CREATE TABLE IF NOT EXISTS ${contentAccessGrants} (
+          grant_id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL,
+          subject_user_id TEXT NOT NULL,
+          scopes TEXT[] NOT NULL,
+          purpose TEXT NOT NULL,
+          reason_code TEXT NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('active', 'revoked')),
+          revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+          created_by TEXT NOT NULL,
+          revoked_by TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CHECK (cardinality(scopes) > 0)
+        )`,
+        `CREATE INDEX IF NOT EXISTS ${contentAccessGrants}_authorize_idx
+          ON ${contentAccessGrants} (tenant_id, subject_user_id, status, expires_at)`,
+        `CREATE TABLE IF NOT EXISTS ${projectionOutbox} (
+          outbox_id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL,
+          projector TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL,
+          payload_json JSONB NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'retry_wait', 'succeeded', 'failed')),
+          attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
+          max_attempts INTEGER NOT NULL DEFAULT 8 CHECK (max_attempts >= 1),
+          lease_fence BIGINT NOT NULL DEFAULT 0 CHECK (lease_fence >= 0),
+          lease_owner TEXT,
+          lease_expires_at TIMESTAMPTZ,
+          next_attempt_at TIMESTAMPTZ,
+          last_error_code TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          completed_at TIMESTAMPTZ,
+          UNIQUE (tenant_id, projector, idempotency_key)
+        )`,
+        `CREATE INDEX IF NOT EXISTS ${projectionOutbox}_claim_idx
+          ON ${projectionOutbox} (status, next_attempt_at, lease_expires_at, created_at)`,
+        `CREATE TABLE IF NOT EXISTS ${environmentInstances} (
+          instance_id TEXT NOT NULL,
+          tenant_id TEXT NOT NULL,
+          provider_id TEXT NOT NULL REFERENCES ${executionProviders}(provider_id),
+          template_id TEXT NOT NULL REFERENCES ${environmentTemplates}(template_id),
+          template_version_id TEXT NOT NULL REFERENCES ${environmentTemplateVersions}(version_id),
+          hand_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('provisioning', 'ready', 'unhealthy', 'draining', 'retired')),
+          lease_expires_at TIMESTAMPTZ NOT NULL,
+          revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+          recipe_digest TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (tenant_id, instance_id),
+          UNIQUE (tenant_id, hand_id)
+        )`,
+        `CREATE INDEX IF NOT EXISTS ${environmentInstances}_lease_idx
+          ON ${environmentInstances} (tenant_id, status, lease_expires_at)`,
+        `DO $$ BEGIN
+          IF to_regclass('${guardrailEvents}') IS NOT NULL THEN
+            EXECUTE 'UPDATE ${guardrailEvents} SET message_text = ''[redacted:legacy]'' WHERE message_text NOT LIKE ''[redacted:%]''';
+          END IF;
+        END $$`,
+      ],
+    },
+    {
+      version: 14,
+      statements: [
+        `ALTER TABLE ${migrationDomains}
+          ADD COLUMN IF NOT EXISTS last_batch_total BIGINT NOT NULL DEFAULT 0 CHECK (last_batch_total >= 0)`,
+        `ALTER TABLE ${migrationDomains}
+          ADD COLUMN IF NOT EXISTS last_batch_matched BIGINT NOT NULL DEFAULT 0 CHECK (last_batch_matched >= 0)`,
+        `ALTER TABLE ${migrationDomains}
+          ADD COLUMN IF NOT EXISTS last_batch_differences BIGINT NOT NULL DEFAULT 0 CHECK (last_batch_differences >= 0)`,
+        `ALTER TABLE ${migrationDomains}
+          ADD COLUMN IF NOT EXISTS last_batch_at TIMESTAMPTZ`,
+      ],
+    },
+    {
+      version: 15,
+      statements: [
+        `ALTER TABLE ${contentAccessGrants} ADD COLUMN IF NOT EXISTS target_type TEXT`,
+        `ALTER TABLE ${contentAccessGrants} ADD COLUMN IF NOT EXISTS target_id TEXT`,
+        `UPDATE ${contentAccessGrants}
+          SET status='revoked',target_type='guardrail_collection',target_id=tenant_id
+          WHERE target_type IS NULL OR target_id IS NULL`,
+        `ALTER TABLE ${contentAccessGrants} ALTER COLUMN target_type SET NOT NULL`,
+        `ALTER TABLE ${contentAccessGrants} ALTER COLUMN target_id SET NOT NULL`,
+        `ALTER TABLE ${contentAccessGrants} DROP CONSTRAINT IF EXISTS ${contentAccessGrants}_target_type_check`,
+        `ALTER TABLE ${contentAccessGrants} ADD CONSTRAINT ${contentAccessGrants}_target_type_check
+          CHECK (target_type IN ('session','guardrail_collection'))`,
+        `CREATE INDEX IF NOT EXISTS ${contentAccessGrants}_target_idx
+          ON ${contentAccessGrants} (tenant_id,subject_user_id,target_type,target_id,status,expires_at)`,
+      ],
+    },
+    {
+      version: 16,
+      statements: [
+        `ALTER TABLE ${runResolutionSnapshots} ADD COLUMN IF NOT EXISTS snapshot_sequence BIGSERIAL`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS ${runResolutionSnapshots}_sequence_idx
+          ON ${runResolutionSnapshots} (snapshot_sequence)`,
+        `ALTER TABLE ${runResolutionSnapshots} DROP CONSTRAINT IF EXISTS ${runResolutionSnapshots}_pkey`,
+        `ALTER TABLE ${runResolutionSnapshots} ADD PRIMARY KEY (run_id,snapshot_digest)`,
+        `CREATE INDEX IF NOT EXISTS ${runResolutionSnapshots}_latest_idx ON ${runResolutionSnapshots} (run_id,snapshot_sequence DESC)`,
+      ],
+    },
+    {
+      version: 17,
+      statements: [
+        `DROP INDEX IF EXISTS ${runResolutionSnapshots}_latest_idx`,
+        `CREATE INDEX ${runResolutionSnapshots}_latest_idx
+          ON ${runResolutionSnapshots} (run_id,snapshot_sequence DESC)`,
+        `DO $$ DECLARE c RECORD; BEGIN
+          FOR c IN SELECT conname FROM pg_constraint
+            WHERE conrelid='${migrationDomains}'::regclass
+              AND contype='c'
+              AND pg_get_constraintdef(oid) LIKE '%unresolved_blocking_count%difference_count%'
+          LOOP EXECUTE format('ALTER TABLE ${migrationDomains} DROP CONSTRAINT %I', c.conname); END LOOP;
+        END $$`,
+        `CREATE OR REPLACE FUNCTION ${prefix}_enqueue_membership_projection() RETURNS trigger AS $$
+        BEGIN
+          INSERT INTO ${projectionOutbox} (
+            outbox_id,tenant_id,projector,idempotency_key,payload_json,status,
+            attempt,max_attempts,lease_fence,next_attempt_at,created_at,updated_at
+          ) VALUES (
+            'gpo-' || md5(clock_timestamp()::text || random()::text),
+            NEW.tenant_id,'membership',NEW.user_id || ':' || NEW.version,
+            jsonb_build_object('tenantId',NEW.tenant_id,'userId',NEW.user_id,'persona',NEW.persona,'status',NEW.status,'version',NEW.version),
+            'pending',0,8,0,NOW(),NOW(),NOW()
+          ) ON CONFLICT (tenant_id,projector,idempotency_key) DO NOTHING;
+          RETURN NEW;
+        END $$ LANGUAGE plpgsql`,
+        `DROP TRIGGER IF EXISTS ${prefix}_membership_projection_outbox ON ${memberships}`,
+        `CREATE TRIGGER ${prefix}_membership_projection_outbox
+          AFTER INSERT OR UPDATE ON ${memberships}
+          FOR EACH ROW EXECUTE FUNCTION ${prefix}_enqueue_membership_projection()`,
+        `CREATE OR REPLACE FUNCTION ${prefix}_enqueue_platform_admin_projection() RETURNS trigger AS $$
+        BEGIN
+          INSERT INTO ${projectionOutbox} (
+            outbox_id,tenant_id,projector,idempotency_key,payload_json,status,
+            attempt,max_attempts,lease_fence,next_attempt_at,created_at,updated_at
+          ) VALUES (
+            'gpo-' || md5(clock_timestamp()::text || random()::text),
+            '${PLATFORM_TENANT_ID}','platform_admin',NEW.user_id || ':' || NEW.version,
+            jsonb_build_object('tenantId','${PLATFORM_TENANT_ID}','userId',NEW.user_id,'version',NEW.version),
+            'pending',0,8,0,NOW(),NOW(),NOW()
+          ) ON CONFLICT (tenant_id,projector,idempotency_key) DO NOTHING;
+          RETURN NEW;
+        END $$ LANGUAGE plpgsql`,
+        `DROP TRIGGER IF EXISTS ${prefix}_platform_admin_projection_outbox ON ${platformAdmins}`,
+        `CREATE TRIGGER ${prefix}_platform_admin_projection_outbox
+          AFTER INSERT OR UPDATE ON ${platformAdmins}
+          FOR EACH ROW EXECUTE FUNCTION ${prefix}_enqueue_platform_admin_projection()`,
+        `CREATE OR REPLACE FUNCTION ${prefix}_enqueue_assignment_projection() RETURNS trigger AS $$
+        BEGIN
+          INSERT INTO ${projectionOutbox} (
+            outbox_id,tenant_id,projector,idempotency_key,payload_json,status,
+            attempt,max_attempts,lease_fence,next_attempt_at,created_at,updated_at
+          ) VALUES (
+            'gpo-' || md5(clock_timestamp()::text || random()::text),
+            NEW.tenant_id,'assignment',NEW.resource_type || ':' || NEW.resource_id || ':' || NEW.version,
+            jsonb_build_object('tenantId',NEW.tenant_id,'resourceType',NEW.resource_type,'resourceId',NEW.resource_id,'version',NEW.version),
+            'pending',0,8,0,NOW(),NOW(),NOW()
+          ) ON CONFLICT (tenant_id,projector,idempotency_key) DO NOTHING;
+          RETURN NEW;
+        END $$ LANGUAGE plpgsql`,
+        `DROP TRIGGER IF EXISTS ${prefix}_assignment_projection_outbox ON ${assignmentSets}`,
+        `CREATE TRIGGER ${prefix}_assignment_projection_outbox
+          AFTER INSERT OR UPDATE ON ${assignmentSets}
+          FOR EACH ROW EXECUTE FUNCTION ${prefix}_enqueue_assignment_projection()`,
+        `CREATE OR REPLACE FUNCTION ${prefix}_enqueue_assignment_row_delete_projection() RETURNS trigger AS $$
+        DECLARE set_version BIGINT;
+        BEGIN
+          SELECT version INTO set_version FROM ${assignmentSets}
+            WHERE tenant_id=OLD.tenant_id AND resource_type=OLD.resource_type AND resource_id=OLD.resource_id;
+          IF set_version IS NULL THEN RETURN OLD; END IF;
+          INSERT INTO ${projectionOutbox} (
+            outbox_id,tenant_id,projector,idempotency_key,payload_json,status,
+            attempt,max_attempts,lease_fence,next_attempt_at,created_at,updated_at
+          ) VALUES (
+            'gpo-' || md5(clock_timestamp()::text || random()::text),
+            OLD.tenant_id,'assignment',OLD.resource_type || ':' || OLD.resource_id || ':delete:' || OLD.assignment_id,
+            jsonb_build_object('tenantId',OLD.tenant_id,'resourceType',OLD.resource_type,'resourceId',OLD.resource_id,'version',set_version),
+            'pending',0,8,0,NOW(),NOW(),NOW()
+          ) ON CONFLICT (tenant_id,projector,idempotency_key) DO NOTHING;
+          RETURN OLD;
+        END $$ LANGUAGE plpgsql`,
+        `DROP TRIGGER IF EXISTS ${prefix}_assignment_delete_projection_outbox ON ${assignments}`,
+        `CREATE TRIGGER ${prefix}_assignment_delete_projection_outbox
+          AFTER DELETE ON ${assignments}
+          FOR EACH ROW EXECUTE FUNCTION ${prefix}_enqueue_assignment_row_delete_projection()`,
+        `CREATE OR REPLACE FUNCTION ${prefix}_enqueue_preference_projection() RETURNS trigger AS $$
+        DECLARE item RECORD; tenant_scope TEXT; item_version BIGINT;
+        BEGIN
+          item := CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+          SELECT tenant_id INTO tenant_scope FROM ${memberships} WHERE user_id=item.user_id;
+          IF tenant_scope IS NULL THEN RETURN item; END IF;
+          item_version := CASE WHEN TG_OP='DELETE' THEN item.version + 1 ELSE item.version END;
+          INSERT INTO ${projectionOutbox} (
+            outbox_id,tenant_id,projector,idempotency_key,payload_json,status,
+            attempt,max_attempts,lease_fence,next_attempt_at,created_at,updated_at
+          ) VALUES (
+            'gpo-' || md5(clock_timestamp()::text || random()::text),
+            tenant_scope,'preference',item.user_id || ':' || item.resource_type || ':' || item.resource_id || ':' || item_version,
+            jsonb_build_object('tenantId',tenant_scope,'userId',item.user_id,'resourceType',item.resource_type,'resourceId',item.resource_id,'version',item_version),
+            'pending',0,8,0,NOW(),NOW(),NOW()
+          ) ON CONFLICT (tenant_id,projector,idempotency_key) DO NOTHING;
+          RETURN item;
+        END $$ LANGUAGE plpgsql`,
+        `DROP TRIGGER IF EXISTS ${prefix}_preference_projection_outbox ON ${preferences}`,
+        `CREATE TRIGGER ${prefix}_preference_projection_outbox
+          AFTER INSERT OR UPDATE OR DELETE ON ${preferences}
+          FOR EACH ROW EXECUTE FUNCTION ${prefix}_enqueue_preference_projection()`,
+        `CREATE OR REPLACE FUNCTION ${prefix}_enqueue_tenant_settings_projection() RETURNS trigger AS $$
+        DECLARE item RECORD; source_name TEXT; source_key TEXT; tenant_scope TEXT; item_version BIGINT;
+        BEGIN
+          item := CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+          tenant_scope := item.tenant_id;
+          item_version := CASE WHEN TG_OP='DELETE' THEN item.version + 1 ELSE item.version END;
+          source_name := CASE
+            WHEN TG_TABLE_NAME='${entitlementSets}' THEN 'entitlement'
+            WHEN TG_TABLE_NAME='${entitlementScopes}' THEN 'scope'
+            ELSE 'policy' END;
+          source_key := CASE
+            WHEN source_name='entitlement' THEN 'entitlement:' || item_version
+            WHEN source_name='scope' THEN 'scope:' || item.resource_type || ':' || item_version
+            ELSE 'policy:' || item.policy_key || ':' || item_version END;
+          INSERT INTO ${projectionOutbox} (
+            outbox_id,tenant_id,projector,idempotency_key,payload_json,status,
+            attempt,max_attempts,lease_fence,next_attempt_at,created_at,updated_at
+          ) VALUES (
+            'gpo-' || md5(clock_timestamp()::text || random()::text),
+            tenant_scope,'tenant_settings',source_key,
+            jsonb_build_object('tenantId',tenant_scope,'source',source_name,'version',item_version),
+            'pending',0,8,0,NOW(),NOW(),NOW()
+          ) ON CONFLICT (tenant_id,projector,idempotency_key) DO NOTHING;
+          RETURN item;
+        END $$ LANGUAGE plpgsql`,
+        `DROP TRIGGER IF EXISTS ${prefix}_entitlement_projection_outbox ON ${entitlementSets}`,
+        `CREATE TRIGGER ${prefix}_entitlement_projection_outbox
+          AFTER INSERT OR UPDATE ON ${entitlementSets}
+          FOR EACH ROW EXECUTE FUNCTION ${prefix}_enqueue_tenant_settings_projection()`,
+        `DROP TRIGGER IF EXISTS ${prefix}_scope_projection_outbox ON ${entitlementScopes}`,
+        `CREATE TRIGGER ${prefix}_scope_projection_outbox
+          AFTER INSERT OR UPDATE OR DELETE ON ${entitlementScopes}
+          FOR EACH ROW EXECUTE FUNCTION ${prefix}_enqueue_tenant_settings_projection()`,
+        `DROP TRIGGER IF EXISTS ${prefix}_policy_projection_outbox ON ${policies}`,
+        `CREATE TRIGGER ${prefix}_policy_projection_outbox
+          AFTER INSERT OR UPDATE OR DELETE ON ${policies}
+          FOR EACH ROW EXECUTE FUNCTION ${prefix}_enqueue_tenant_settings_projection()`,
       ],
     },
   ];

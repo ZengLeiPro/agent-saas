@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { PgAssignmentStore, resolveAssignment } from '../data/assignments/index.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
@@ -73,7 +73,7 @@ describe('Resource Assignment 与 Personal Preference', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_resource_assignments');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_user_resource_preferences');
     expect(sql).toContain("assignee_type = 'everyone' AND assignee_id IS NULL");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(12);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(17);
   });
 
   it('legacy username 仅在同租户唯一命中时转 immutable userId；未解析 deny 记 issue 且不误授权同名账号', async () => {
@@ -152,6 +152,65 @@ describe('Resource Assignment 与 Personal Preference', () => {
       item.sql.includes('test_governance_migration_issues')
       && item.params?.[1] === 'preference_username_unresolved',
     )).toBe(true);
+  });
+
+  it('personal Skill preference 使用 immutable 映射 ID，Credential backfill 生成 owner Assignment', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const query = async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, ...(params ? { params } : {}) });
+      if (sql.includes('SELECT * FROM test_resource_assignment_sets')) return { rows: [], rowCount: 0 };
+      return { rows: [], rowCount: 1 };
+    };
+    const store = new PgAssignmentStore({
+      pool: { query, connect: async () => ({ query, release: () => undefined }) } as never,
+      tablePrefix: 'test',
+    });
+    await store.backfillLegacyAssignments({
+      platformTenantId: 'pantheon', projectedBy: 'system:governance-m1',
+      users: [{ id: 'user-bob', username: 'bob', tenantId: 'acme' }],
+      orgAgents: [], tenantSkillConfigs: {},
+      userSkillConfigs: { bob: { selectedSkills: ['my-private-skill'] } },
+      resolveSkillResourceId: (user, skillId) => `personal:${user.id}:${skillId}`,
+    });
+    expect(queries.some(item => item.sql.includes('INSERT INTO test_user_resource_preferences')
+      && item.params?.[1] === 'personal:user-bob:my-private-skill')).toBe(true);
+
+    queries.length = 0;
+    await store.backfillLegacyCredentialAssignments({
+      credentials: [{ credentialId: 'cred-1', tenantId: 'acme', ownerUserId: 'user-bob' }],
+      projectedBy: 'system:governance-m1',
+    });
+    expect(queries.some(item => item.sql.includes('INSERT INTO test_resource_assignments')
+      && item.params?.[2] === 'credential'
+      && item.params?.[3] === 'cred-1'
+      && item.params?.[5] === 'user-bob')).toBe(true);
+  });
+
+  it('effective binding 同时计算 user/everyone/agent，deny 优先；directory group 未解析时 fail closed', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const query = async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params });
+      if (sql.includes("assignee_type='directory_group'")) return { rows: [], rowCount: 0 };
+      return {
+        rows: [{ resource_id: 'skill-1', binding_id: 'assignment-1', assignment_version: 3 }],
+        rowCount: 1,
+      };
+    };
+    const store = new PgAssignmentStore({ pool: { query } as never, tablePrefix: 'test' });
+    await expect(store.listEffectiveResourceIds('acme', 'user-1', 'skill', 'agent-1')).resolves.toEqual([{
+      resourceId: 'skill-1', bindingId: 'assignment-1', assignmentVersion: 3,
+    }]);
+    const effectiveSql = queries[1].sql;
+    expect(effectiveSql).toContain("a.assignee_type='agent' AND a.assignee_id=$4");
+    expect(effectiveSql).toContain("NOT BOOL_OR(a.effect='deny')");
+    expect(queries[1].params).toEqual(['acme', 'user-1', 'skill', 'agent-1']);
+
+    const blocked = new PgAssignmentStore({
+      pool: { query: vi.fn().mockResolvedValue({ rows: [{ '?column?': 1 }], rowCount: 1 }) } as never,
+      tablePrefix: 'test',
+    });
+    await expect(blocked.listEffectiveResourceIds('acme', 'user-1', 'skill', 'agent-1'))
+      .rejects.toMatchObject({ code: 'ASSIGNMENT_GROUP_SUBJECT_UNRESOLVED' });
   });
 
   it('治理写以 AssignmentSet expectedVersion 原子替换，拒绝同一 assignee 的冲突规则', async () => {

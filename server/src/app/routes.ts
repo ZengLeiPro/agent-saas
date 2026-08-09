@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import express from "express";
 import type { Express, Request, Response } from "express";
@@ -61,7 +62,8 @@ import { revokeAllUserConnectorCredentials } from "../connectors/lifecycle.js";
 import { runtimeRunController } from "../runtime/runController.js";
 import { createTenantsRouter } from "../routes/tenants.js";
 import { deleteTenantResources } from "../data/tenants/cleanup.js";
-import { GovernanceTenantCleanup, type TenantCleanupDomain } from '../data/changeJobs/index.js';
+import { GovernanceChangeJobWorker, GovernanceTenantCleanup, type TenantCleanupDomain } from '../data/changeJobs/index.js';
+import { GovernanceOffboardingCoordinator } from '../data/offboarding/index.js';
 import { createModelsAdminRouter } from "../routes/modelsAdmin.js";
 import { createCodexSubscriptionAdminRouter } from "../routes/codexSubscriptionAdmin.js";
 import { createTenantRemoteHandsAdminRouter } from "../routes/tenantRemoteHandsAdmin.js";
@@ -529,6 +531,33 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       guardrailEventStore: runtime.guardrailEventStore,
       messageFeedbackStore: runtime.messageFeedbackStore,
       userStore: runtime.userStore,
+      authorizeAdminAccess: async input => {
+        if (!runtime.membershipStore) return false;
+        if (input.platformAdmin) {
+          return (await runtime.membershipStore.getPlatformAdmin(input.userId))?.status === 'active';
+        }
+        const membership = await runtime.membershipStore.getMembership(input.tenantId, input.userId);
+        return membership?.status === 'active' && membership.persona === 'org_admin';
+      },
+      authorizeContentAccess: runtime.contentAccessGrantStore
+        ? input => runtime.contentAccessGrantStore!.authorize(input)
+        : undefined,
+      auditContentAccess: runtime.governanceAuditStore
+        ? async input => (await runtime.governanceAuditStore!.append({
+            correlationId: `qa-read:${input.sessionId}:${randomUUID()}`,
+            actorType: 'user',
+            actorUserId: input.actorUserId,
+            actorPersona: input.actorPersona,
+            actorTenantId: input.actorTenantId,
+            action: 'session.content.qa_read',
+            targetType: 'session',
+            targetId: input.sessionId,
+            targetTenantId: input.tenantId,
+            purpose: 'organization agent quality review',
+            result: 'succeeded',
+            metadata: { scope: input.scope },
+          })).auditId
+        : undefined,
     }),
   );
 
@@ -587,6 +616,11 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     }),
   );
 
+  let executeUserOffboarding: ((input: {
+    tenantId: string; userId: string; handoffTargetUserId: string;
+    idempotencyKey: string; requestedBy: string; reasonCode: string;
+  }) => Promise<unknown>) | undefined;
+
   if (runtime.userStore && config.auth?.enabled) {
     const usersFilePath = resolve(
       processCwd,
@@ -626,6 +660,124 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         runtime.mcpOAuthService?.disconnectUser(target.username, target.tenantId),
       ]);
     };
+    if (
+      runtime.governanceChangeJobStore
+      && runtime.assignmentStore
+      && runtime.credentialStore
+      && runtime.membershipStore
+      && runtime.agentResourceStore
+      && runtime.skillGovernanceStore
+      && runtime.secretVault
+      && runtime.runtimeRunStore?.cancelActiveByUser
+    ) {
+      const offboarding = new GovernanceOffboardingCoordinator({
+        jobs: runtime.governanceChangeJobStore,
+        domains: {
+          runsSessions: { offboard: async context => {
+            const durableCancelled = await runtime.runtimeRunStore!.cancelActiveByUser!(
+              context.userId, 'user offboarding',
+            );
+            const localCancelled = runtimeRunController.abortByUser(context.userId, 'user offboarding');
+            webChannel?.disconnectUser(context.userId);
+            const count = Math.max(durableCancelled, localCancelled);
+            return { affectedCount: count, completedCount: count, unresolvedItems: [] };
+          } },
+          assignmentsPreferences: { offboard: async context => {
+            const result = await runtime.assignmentStore!.offboardUser(context.tenantId, context.userId);
+            const count = result.assignmentsDeleted + result.preferencesDeleted;
+            return { affectedCount: count, completedCount: count, unresolvedItems: [] };
+          } },
+          credentialsConnectors: { offboard: async context => {
+            const credentials = await runtime.credentialStore!.listForOwner(context.tenantId, context.userId);
+            let completed = 0;
+            for (const credential of credentials) {
+              if (credential.status !== 'revoked') {
+                await runtime.secretVault!.revokeSecret(credential.secretRef, {
+                  actor: 'connector_proxy', userId: context.userId, tenantId: context.tenantId,
+                  scopes: ['secret:connector:revoke'],
+                });
+                await runtime.credentialStore!.updateStatus(credential.credentialId, {
+                  status: 'revoked', expectedVersion: credential.version,
+                  updatedBy: context.requestedBy, updateReason: 'user_offboarding',
+                });
+              }
+              completed += 1;
+            }
+            const target = userStore.findById(context.userId);
+            if (target) await terminateAndRevokeUserConnectors(target);
+            return { affectedCount: credentials.length, completedCount: completed, unresolvedItems: [] };
+          } },
+          cronOwnership: { offboard: async context => {
+            await cronRuntime.service?.removeByOwners([context.userId]);
+            return { affectedCount: 1, completedCount: 1, unresolvedItems: [] };
+          } },
+          personalResources: { offboard: async context => {
+            const [agents, skills] = await Promise.all([
+              runtime.agentResourceStore!.listPersonalByOwner(context.tenantId, context.userId),
+              runtime.skillGovernanceStore!.listPersonalByOwner(context.tenantId, context.userId),
+            ]);
+            for (const agent of agents) {
+              if (agent.status !== 'archived') {
+                await runtime.agentResourceStore!.archive(context.tenantId, agent.agentId, agent.revision, context.requestedBy);
+              }
+            }
+            for (const skill of skills) {
+              if (skill.status !== 'retired') {
+                await runtime.skillGovernanceStore!.retire(context.tenantId, skill.skillId, skill.revision, context.requestedBy);
+              }
+            }
+            const count = agents.length + skills.length;
+            return { affectedCount: count, completedCount: count, unresolvedItems: [] };
+          } },
+          membership: { offboard: async context => {
+            const result = await runtime.membershipStore!.offboardMembership({
+              tenantId: context.tenantId,
+              userId: context.userId,
+              handoffTargetUserId: context.handoffTargetUserId,
+              updatedBy: context.requestedBy,
+            });
+            const legacyUser = runtime.userStore?.findById(context.userId);
+            if (!legacyUser || legacyUser.tenantId !== context.tenantId) {
+              throw new Error('OFFBOARDING_MEMBERSHIP_SUBJECT_MISMATCH');
+            }
+            if (!legacyUser.disabled) {
+              await runtime.userStore!.setDisabled(
+                context.userId, true, 'system:governance-offboarding',
+              );
+            }
+            if (runtime.governanceProjectionOutboxStore) {
+              await runtime.governanceProjectionOutboxStore.enqueue({
+                tenantId: context.tenantId,
+                projector: 'membership',
+                idempotencyKey: `${result.offboarded.userId}:${result.offboarded.version}`,
+                payload: {
+                  tenantId: context.tenantId, userId: result.offboarded.userId,
+                  persona: result.offboarded.persona, status: result.offboarded.status,
+                  version: result.offboarded.version,
+                },
+              });
+            }
+            return { affectedCount: 2, completedCount: 2, unresolvedItems: [] };
+          } },
+        },
+      });
+      const worker = new GovernanceChangeJobWorker({
+        store: runtime.governanceChangeJobStore,
+        workerId: 'governance-offboarding-route',
+      });
+      executeUserOffboarding = async input => {
+        const plan = await offboarding.createOrReuse(input);
+        const status = plan.job.status;
+        const job = status === 'succeeded' || status === 'failed'
+          ? plan.job
+          : await worker.execute({
+              tenantId: input.tenantId,
+              jobId: plan.job.jobId,
+              handlers: plan.domainHandlers,
+            });
+        return { created: plan.created, job };
+      };
+    }
     app.use(
       "/api/auth",
       createAuthRouter({
@@ -785,6 +937,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         entitlements: runtime.entitlementStore,
         assignments: runtime.assignmentStore,
         audit: runtime.governanceAuditStore,
+        contentAccess: runtime.contentAccessGrantStore,
+        projectionOutbox: runtime.governanceProjectionOutboxStore,
+        projectionReconciler: runtime.governanceProjectionReconciler,
       }));
     }
     if (
@@ -810,6 +965,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         changePlanner: runtime.governanceChangePlanner,
         ...(executeTenantDeletionDomain ? { executeTenantDeletionDomain } : {}),
         tenantExists: (tenantId: string) => Boolean(runtime.tenantStore?.findById(tenantId)),
+        resolveUserTenantId: (userId: string) => runtime.userStore?.findById(userId)?.tenantId,
+        executeUserOffboarding,
+        projectionOutbox: runtime.governanceProjectionOutboxStore,
+        projectionReconciler: runtime.governanceProjectionReconciler,
         vault: runtime.secretVault,
         audit: runtime.governanceAuditStore,
       }));

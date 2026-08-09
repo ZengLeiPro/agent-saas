@@ -15,6 +15,14 @@ export function governanceProjectionDigest(value: unknown): string {
 }
 
 interface DifferenceWriter {
+  countOpenBlockingDifferences?(domain: GovernanceMigrationDomain): Promise<number>;
+  resolveDifferencesForResource?(input: {
+    domain: GovernanceMigrationDomain;
+    tenantId?: string;
+    resourceType: string;
+    resourceId: string;
+    resolvedBy: string;
+  }): Promise<number>;
   recordDifference(input: {
     domain: GovernanceMigrationDomain;
     tenantId?: string;
@@ -30,6 +38,11 @@ interface DifferenceWriter {
 export class GovernanceShadowComparator {
   constructor(private readonly differences: DifferenceWriter) {}
 
+  async countOpenBlockingDifferences(domain: GovernanceMigrationDomain): Promise<number> {
+    if (!this.differences.countOpenBlockingDifferences) return 0;
+    return this.differences.countOpenBlockingDifferences(domain);
+  }
+
   async compare(input: {
     domain: GovernanceMigrationDomain;
     tenantId?: string;
@@ -41,7 +54,16 @@ export class GovernanceShadowComparator {
   }): Promise<{ matched: boolean; category?: GovernanceShadowDifference['category']; difference?: GovernanceShadowDifference }> {
     const legacyDigest = input.legacy === undefined ? undefined : governanceProjectionDigest(input.legacy);
     const governanceDigest = input.governance === undefined ? undefined : governanceProjectionDigest(input.governance);
-    if (legacyDigest && governanceDigest && legacyDigest === governanceDigest) return { matched: true };
+    if (legacyDigest && governanceDigest && legacyDigest === governanceDigest) {
+      await this.differences.resolveDifferencesForResource?.({
+        domain: input.domain,
+        ...(input.tenantId ? { tenantId: input.tenantId } : {}),
+        resourceType: input.resourceType,
+        resourceId: input.resourceId,
+        resolvedBy: 'system:shadow-comparator',
+      });
+      return { matched: true };
+    }
     const category: GovernanceShadowDifference['category'] = input.legacy === undefined
       ? 'missing_legacy'
       : input.governance === undefined

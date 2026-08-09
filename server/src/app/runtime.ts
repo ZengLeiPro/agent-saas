@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { readdir as readdirAsync } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'path';
@@ -111,7 +111,7 @@ import { PgAppealStore } from '../data/appeals/index.js';
 import type { AppealStore } from '../data/appeals/index.js';
 import { PgGovernanceAuditStore, type GovernanceAuditStore } from '../data/governance-audit/index.js';
 import { PgMembershipStore } from '../data/memberships/index.js';
-import { PgEntitlementStore } from '../data/entitlements/index.js';
+import { normalizeLegacyEntitlementSettings, PgEntitlementStore } from '../data/entitlements/index.js';
 import { PgAssignmentStore } from '../data/assignments/index.js';
 import { GovernanceShadowProjectionScheduler } from '../governance/migrations/shadowProjectionScheduler.js';
 import { PgCredentialStore } from '../data/credentials/index.js';
@@ -120,7 +120,9 @@ import { PgEnvironmentStore } from '../data/environments/index.js';
 import { PgAgentResourceStore } from '../data/agentResources/index.js';
 import { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
 import { GovernanceChangePlanner, PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
-import { GovernanceShadowComparator, GovernanceWriteGate, PgGovernanceMigrationControlStore } from '../data/migrationControl/index.js';
+import { PgContentAccessGrantStore } from '../data/contentAccess/index.js';
+import { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
+import { GovernanceDomainShadowAuditor, GovernanceShadowComparator, GovernanceWriteGate, PgGovernanceMigrationControlStore } from '../data/migrationControl/index.js';
 import { PgResourceReferenceStore } from '../data/resourceReferences/index.js';
 import { CredentialBroker } from '../runtime/credentialBroker.js';
 import { SubjectResolver } from '../governance/subject/resolver.js';
@@ -143,7 +145,7 @@ import type { MemoryIndexConfig } from '../memory/index/types.js';
 import { UserStore } from '../data/users/store.js';
 import type { UserInfo } from '../data/users/types.js';
 import { TenantStore } from '../data/tenants/store.js';
-import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
+import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS, LEGACY_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
 import { tenantAccessErrorMessage, wrapDispatchWithTenantAccess } from '../data/tenants/access.js';
 import { AgentStore } from '../data/agents/store.js';
 import { GroupStore } from '../data/groups/store.js';
@@ -157,18 +159,15 @@ import {
 import {
   GITHUB_CONNECTOR_ID,
   revokePendingGithubCredentials,
-  resolveGithubRuntimeEnv,
 } from '../connectors/github.js';
 import {
   GoogleWorkspaceOAuthService,
   PgGoogleWorkspaceOAuthStateStore,
-  resolveGoogleWorkspaceRuntimeEnv,
 } from '../connectors/googleWorkspace.js';
 import {
   connectNotionCredential,
   disconnectNotion,
   getLiveNotionConnection,
-  resolveNotionRuntimeEnv,
   type NotionConnectionView,
 } from '../connectors/notion.js';
 import { SignupConfigStore } from '../data/signupConfig.js';
@@ -200,7 +199,6 @@ import type { SkillEntry } from '../agent/skillToolProvider.js';
 import { McpClientManager } from '../mcp/clientManager.js';
 import { McpProxy } from '../mcp/proxy.js';
 import { McpOAuthService } from '../mcp/oauthService.js';
-import { resolveConnectorRuntimeEnv } from '../mcp/connectorRuntimeEnv.js';
 import { CapabilityTokenService } from '../security/capabilityToken.js';
 import { EncryptedFileSecretVault, HttpSecretVault, InMemorySecretVault, type SecretVault } from '../security/secretVault.js';
 import {
@@ -242,7 +240,6 @@ import {
   FeishuTokenBrokerLoginRunner,
   FeishuTokenBrokerStatusRunner,
 } from '../feishu/tokenBroker.js';
-import { resolveFeishuConnectorRunEnv } from '../runtime/connectorRunEnv.js';
 import { SystemPromptRegistry } from '../runtime/systemPrompts.js';
 import {
   InMemoryAgentRuntimeProfileStore,
@@ -433,6 +430,9 @@ export interface AppRuntime {
   governanceMigrationControlStore?: PgGovernanceMigrationControlStore;
   governanceWriteGate?: GovernanceWriteGate;
   governanceShadowComparator?: GovernanceShadowComparator;
+  contentAccessGrantStore?: PgContentAccessGrantStore;
+  governanceProjectionOutboxStore?: PgGovernanceProjectionOutboxStore;
+  governanceProjectionReconciler?: GovernanceProjectionReconciler;
   /** 跨领域 Resource Reference Index；退役/删除影响预览的权威来源。 */
   resourceReferenceStore?: PgResourceReferenceStore;
   /** Server-side Credential Broker；影子阶段用于 smoke 验证，尚未接入 connector 运行路径。 */
@@ -1100,11 +1100,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let environmentStore: PgEnvironmentStore | undefined;
   let agentResourceStore: PgAgentResourceStore | undefined;
   let skillGovernanceStore: PgSkillGovernanceStore | undefined;
+  let resolveLegacySkillResourceId = (_user: { id: string; tenantId: string }, skillId: string) => skillId;
   let governanceChangeJobStore: PgGovernanceChangeJobStore | undefined;
   let governanceChangePlanner: GovernanceChangePlanner | undefined;
   let governanceMigrationControlStore: PgGovernanceMigrationControlStore | undefined;
   let governanceWriteGate: GovernanceWriteGate | undefined;
   let governanceShadowComparator: GovernanceShadowComparator | undefined;
+  let contentAccessGrantStore: PgContentAccessGrantStore | undefined;
+  let governanceProjectionOutboxStore: PgGovernanceProjectionOutboxStore | undefined;
+  let governanceProjectionReconciler: GovernanceProjectionReconciler | undefined;
   let resourceReferenceStore: PgResourceReferenceStore | undefined;
   let credentialBroker: CredentialBroker | undefined;
   let runResolutionSnapshotStore: PgRunResolutionSnapshotStore | undefined;
@@ -1349,6 +1353,224 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
     await environmentStore.init();
+    for (const provider of [
+      { providerId: 'server-local', endpointRef: 'in-process', status: 'enabled' as const },
+      ...(config.serverRemote?.baseUrl
+        ? [{ providerId: 'server-remote', endpointRef: config.serverRemote.baseUrl, status: 'enabled' as const }]
+        : []),
+    ]) {
+      const current = await environmentStore.getProvider(provider.providerId);
+      await environmentStore.upsertProvider({
+        ...provider,
+        networkPolicy: {},
+        rolloutPolicy: { source: 'legacy_runtime_projection' },
+        updatedBy: 'system:governance-shadow',
+        ...(current ? { expectedRevision: current.revision } : {}),
+      });
+    }
+    contentAccessGrantStore = new PgContentAccessGrantStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await contentAccessGrantStore.init();
+    governanceProjectionOutboxStore = new PgGovernanceProjectionOutboxStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    governanceProjectionReconciler = new GovernanceProjectionReconciler({
+      store: governanceProjectionOutboxStore,
+      workerId: `runtime:${process.pid}`,
+      executeFenced: async (item, operation) => {
+        const payload = item.payload;
+        const target = typeof payload.userId === 'string'
+          ? payload.userId
+          : typeof payload.resourceId === 'string'
+            ? `${String(payload.resourceType ?? 'resource')}:${payload.resourceId}`
+            : typeof payload.policyKey === 'string'
+              ? payload.policyKey
+              : item.tenantId;
+        const fenceKey = `${item.tenantId}:${item.projector}:${target}`;
+        const client = await pgEventStore!.pool.connect();
+        await client.query('SELECT pg_advisory_lock(hashtext($1))', [fenceKey]);
+        try {
+          await operation();
+        } finally {
+          await client.query('SELECT pg_advisory_unlock(hashtext($1))', [fenceKey]).catch(() => undefined);
+          client.release();
+        }
+      },
+      projectors: {
+        audit_terminal: async (payload, outboxItem) => {
+          if (!governanceAuditStore) throw new Error('GOVERNANCE_AUDIT_UNAVAILABLE');
+          const result = payload.result === 'succeeded' ? 'succeeded' : payload.result === 'failed' ? 'failed' : undefined;
+          const actorPersona = ['platform_admin', 'org_admin', 'member', 'service'].includes(String(payload.actorPersona))
+            ? String(payload.actorPersona) as 'platform_admin' | 'org_admin' | 'member' | 'service'
+            : undefined;
+          if (!result || !actorPersona) throw new Error('GOVERNANCE_PROJECTION_INVALID');
+          const metadata = Object.fromEntries(Object.entries(
+            typeof payload.metadata === 'object' && payload.metadata ? payload.metadata : {},
+          ).filter(([, value]) => value === null || ['string', 'number', 'boolean'].includes(typeof value))) as Record<string, string | number | boolean | null>;
+          await governanceAuditStore.append({
+            auditId: `projection:${outboxItem.outboxId}`,
+            correlationId: String(payload.correlationId),
+            actorType: payload.actorType === 'service' ? 'service' : 'user',
+            actorUserId: String(payload.actorUserId),
+            actorPersona,
+            ...(typeof payload.actorTenantId === 'string' ? { actorTenantId: payload.actorTenantId } : {}),
+            action: String(payload.action),
+            targetType: String(payload.targetType),
+            targetId: String(payload.targetId),
+            ...(typeof payload.targetTenantId === 'string' ? { targetTenantId: payload.targetTenantId } : {}),
+            purpose: String(payload.purpose),
+            result,
+            metadata,
+          });
+        },
+        tenant_settings: async payload => {
+          const tenantId = typeof payload.tenantId === 'string' ? payload.tenantId : '';
+          const tenant = tenantStore?.findById(tenantId);
+          const snapshot = await entitlementStore?.getProjectionSnapshot(tenantId) as {
+            limits?: Record<string, number>;
+            scopes?: Array<{ resourceType: string; mode: string; resourceIds: string[] }>;
+            policies?: Array<{ policyKey: string; value: unknown }>;
+          } | undefined;
+          if (!tenant || !snapshot) throw new Error('GOVERNANCE_PROJECTION_INVALID');
+          const current = tenant.settings ?? DEFAULT_TENANT_SETTINGS;
+          const policy = new Map((snapshot.policies ?? []).map(item => [item.policyKey, item.value]));
+          const bool = (key: string, fallback: boolean) => {
+            const value = policy.get(key);
+            return typeof value === 'boolean' ? value : fallback;
+          };
+          const modelScope = snapshot.scopes?.find(scope => scope.resourceType === 'model');
+          await tenantStore!.updateSettings(tenantId, {
+            ...current,
+            features: {
+              ...current.features,
+              filesEnabled: bool('session.files.enabled', current.features.filesEnabled),
+              cronEnabled: bool('automation.cron.enabled', current.features.cronEnabled),
+              mcpEnabled: bool('connector.mcp.enabled', current.features.mcpEnabled),
+              customSkillsEnabled: bool('skill.custom.enabled', current.features.customSkillsEnabled),
+              debugModeAllowed: bool('runtime.debug_mode.allowed', current.features.debugModeAllowed),
+              autoCompactEnabled: bool('session.auto_compact.enabled', current.features.autoCompactEnabled),
+              personalAgentEnabled: bool('agent.personal.enabled', current.features.personalAgentEnabled ?? true),
+              kbEnabled: bool('knowledge.org.enabled', current.features.kbEnabled ?? false),
+              memoryPollingEnabled: bool('memory.polling.enabled', current.features.memoryPollingEnabled ?? false),
+              memoryPollChargesCredits: bool('memory.polling.billable', current.features.memoryPollChargesCredits ?? false),
+              memoryConsolidationEnabled: bool('memory.consolidation.enabled', current.features.memoryConsolidationEnabled ?? false),
+              memoryWriteDelegationEnabled: bool('memory.write_delegation.enabled', current.features.memoryWriteDelegationEnabled ?? false),
+              imageGenEnabled: bool('tool.image_gen.enabled', current.features.imageGenEnabled ?? false),
+            },
+            quotas: { ...current.quotas, ...(snapshot.limits ?? {}) },
+            models: {
+              ...current.models,
+              ...(modelScope?.mode === 'selected' ? { allowedModels: modelScope.resourceIds } : {}),
+              allowUserModelSwitch: bool('model.user_switch.allowed', current.models.allowUserModelSwitch),
+              showGroupNames: bool('model.group_names.visible', current.models.showGroupNames),
+              showContextTokens: bool('session.context_tokens.visible', current.models.showContextTokens ?? true),
+              allowContextTokenDetails: bool('session.context_token_details.allowed', current.models.allowContextTokenDetails ?? false),
+            },
+            mcp: {
+              ...current.mcp,
+              allowTenantServers: bool('connector.tenant_servers.allowed', current.mcp.allowTenantServers),
+              allowGlobalServers: bool('connector.global_servers.allowed', current.mcp.allowGlobalServers),
+            },
+            personalization: {
+              ...current.personalization,
+              firstDayGuideBarEnabled: bool('org.first_day_guide_bar.enabled', current.personalization.firstDayGuideBarEnabled),
+            },
+            security: {
+              ...current.security,
+              requireDingtalkBinding: bool('security.dingtalk_binding.required', current.security.requireDingtalkBinding),
+            },
+          });
+        },
+        assignment: async payload => {
+          const tenantId = typeof payload.tenantId === 'string' ? payload.tenantId : '';
+          const resourceType = typeof payload.resourceType === 'string' ? payload.resourceType : '';
+          const resourceId = typeof payload.resourceId === 'string' ? payload.resourceId : '';
+          const set = await assignmentStore?.getAssignmentSet(tenantId, resourceType as import('../data/assignments/types.js').AssignmentResourceType, resourceId);
+          if (!set) throw new Error('GOVERNANCE_PROJECTION_INVALID');
+          const everyone = set.assignments.find(item => item.assigneeType === 'everyone');
+          const userAssignments = set.assignments.filter(item => item.assigneeType === 'user' && item.assigneeId);
+          if (set.assignments.some(item => !['everyone', 'user'].includes(item.assigneeType))) {
+            throw new Error('GOVERNANCE_PROJECTION_UNSUPPORTED_ASSIGNEE');
+          }
+          const usernames = userAssignments.map(item => userStore?.findById(item.assigneeId!)?.username)
+            .filter((value): value is string => Boolean(value));
+          if (usernames.length !== userAssignments.length) throw new Error('GOVERNANCE_PROJECTION_IDENTITY_UNRESOLVED');
+          const allowUsers = userAssignments.filter(item => item.effect === 'allow').map(item => item.assigneeId);
+          const denyUsers = userAssignments.filter(item => item.effect === 'deny').map(item => item.assigneeId);
+          const exposure = everyone?.effect === 'allow'
+            ? (denyUsers.length > 0 ? 'deny_users' : 'all')
+            : 'allow_users';
+          const audienceUsernames = exposure === 'deny_users'
+            ? userAssignments.filter(item => item.effect === 'deny').map(item => userStore!.findById(item.assigneeId!)!.username)
+            : exposure === 'allow_users'
+              ? userAssignments.filter(item => item.effect === 'allow').map(item => userStore!.findById(item.assigneeId!)!.username)
+              : [];
+          if (resourceType === 'org_agent') {
+            const agent = orgAgentStore?.get(resourceId);
+            if (!agent || agent.tenantId !== tenantId) throw new Error('GOVERNANCE_PROJECTION_INVALID');
+            await orgAgentStore!.update(resourceId, {
+              audience: { exposure, usernames: audienceUsernames },
+            }, 'system:governance-projection');
+          } else if (resourceType === 'skill') {
+            const config = skillConfigStore?.getAllTenantConfigs()[tenantId];
+            const rule = { enabled: true, exposure, usernames: audienceUsernames } as const;
+            if (config?.ownSkills && Object.prototype.hasOwnProperty.call(config.ownSkills, resourceId)) {
+              await skillConfigStore!.setTenantOwnSkillRules(tenantId, { [resourceId]: rule });
+            } else {
+              await skillConfigStore!.setTenantSkillRules(tenantId, { [resourceId]: rule });
+            }
+          }
+          void allowUsers;
+        },
+        preference: async payload => {
+          const userId = typeof payload.userId === 'string' ? payload.userId : '';
+          const user = userStore?.findById(userId);
+          if (!user) throw new Error('GOVERNANCE_PROJECTION_INVALID');
+          const preferences = await assignmentStore?.listUserPreferences(userId) ?? [];
+          const selectedSkills: string[] = [];
+          for (const item of preferences.filter(entry => entry.resourceType === 'skill' && entry.enabled)) {
+            const resource = await skillGovernanceStore?.getResource(item.resourceId);
+            const version = resource?.currentVersionId
+              ? await skillGovernanceStore?.getVersion(resource.currentVersionId)
+              : null;
+            selectedSkills.push(typeof version?.definition.legacySkillId === 'string'
+              ? version.definition.legacySkillId
+              : item.resourceId);
+          }
+          await skillConfigStore?.setUserSelectedSkills(user.username, selectedSkills);
+        },
+        platform_admin: async payload => {
+          const userId = typeof payload.userId === 'string' ? payload.userId : '';
+          const platformAdmin = await membershipStore?.getPlatformAdmin(userId);
+          const user = userStore?.findById(userId);
+          if (!user || user.tenantId !== DEFAULT_TENANT_ID || !platformAdmin) {
+            throw new Error('GOVERNANCE_PROJECTION_INVALID');
+          }
+          const expectedRole = platformAdmin.status === 'active' ? 'admin' : 'user';
+          if (user.role !== expectedRole) {
+            await userStore!.update(userId, { role: expectedRole });
+          }
+        },
+        membership: async payload => {
+          const userId = typeof payload.userId === 'string' ? payload.userId : '';
+          const tenantId = typeof payload.tenantId === 'string' ? payload.tenantId : '';
+          const membership = await membershipStore?.getMembership(tenantId, userId);
+          const persona = membership?.persona;
+          const status = membership?.status;
+          const user = userStore?.findById(userId);
+          if (!user || user.tenantId !== tenantId || !persona || !status) throw new Error('GOVERNANCE_PROJECTION_INVALID');
+          if (tenantId !== DEFAULT_TENANT_ID) {
+            await userStore!.update(userId, { role: persona === 'org_admin' ? 'admin' : 'user' });
+          }
+          if (Boolean(user.disabled) !== (status === 'disabled')) {
+            await userStore!.setDisabled(userId, status === 'disabled', 'system:governance-projection');
+          }
+        },
+      },
+    });
     agentResourceStore = new PgAgentResourceStore({
       pool: pgEventStore.pool,
       tablePrefix: config.runtimeEventStore.tablePrefix,
@@ -1359,6 +1581,163 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
     await skillGovernanceStore.init();
+    if (orgAgentStore && userStore && tenantStore && skillConfigStore) {
+      const projectedBy = 'system:governance-shadow';
+      for (const legacyAgent of orgAgentStore.listAll()) {
+        let resource = await agentResourceStore.getForTenant(legacyAgent.tenantId, legacyAgent.id);
+        if (!resource) {
+          const owner = userStore.findById(legacyAgent.createdBy)
+            ?? userStore.findByUsername(legacyAgent.createdBy)
+            ?? userStore.listAll().find(user => user.tenantId === legacyAgent.tenantId && user.role === 'admin');
+          if (!owner) continue;
+          resource = await agentResourceStore.create({
+            agentId: legacyAgent.id,
+            tenantId: legacyAgent.tenantId,
+            kind: 'org_agent',
+            ownerUserId: owner.id,
+            createdBy: projectedBy,
+          });
+        }
+        if (resource.createdBy === projectedBy || resource.updatedBy === projectedBy) {
+          const published = await agentResourceStore.publishVersion({
+            tenantId: legacyAgent.tenantId,
+            agentId: legacyAgent.id,
+            expectedRevision: resource.revision,
+            definition: {
+              schemaVersion: 1,
+              name: legacyAgent.name,
+              description: legacyAgent.description,
+              instructions: legacyAgent.instructions,
+              skills: legacyAgent.allowedSkills.map(id => ({ id })),
+              knowledge: legacyAgent.allowedKnowledge ?? [],
+              guardrail: legacyAgent.guardrail,
+              source: 'legacy_projection',
+            },
+            publishedBy: projectedBy,
+          });
+          resource = published.resource;
+          const expectedStatus = legacyAgent.enabled ? 'enabled' : 'disabled';
+          if (resource.status !== expectedStatus && resource.status !== 'draft') {
+            await agentResourceStore.setStatus(
+              legacyAgent.tenantId, legacyAgent.id, expectedStatus, resource.revision, projectedBy,
+            );
+          }
+        }
+      }
+      for (const user of userStore.listAll().filter(item => item.tenantId !== DEFAULT_TENANT_ID)) {
+        const agentId = `personal_agent_${createHash('sha256')
+          .update(user.id)
+          .digest('hex')
+          .slice(0, 32)}`;
+        let resource = await agentResourceStore.findPersonalByOwner(user.tenantId, user.id)
+          ?? await agentResourceStore.getForTenant(user.tenantId, agentId);
+        if (resource?.status === 'archived') continue;
+        if (!resource) {
+          resource = await agentResourceStore.create({
+            agentId,
+            tenantId: user.tenantId,
+            kind: 'personal_agent',
+            ownerUserId: user.id,
+            createdBy: projectedBy,
+          });
+        }
+        if (resource.createdBy === projectedBy || resource.updatedBy === projectedBy) {
+          const published = await agentResourceStore.publishVersion({
+            tenantId: user.tenantId,
+            agentId: resource.agentId,
+            expectedRevision: resource.revision,
+            definition: { schemaVersion: 1, ownerUserId: user.id, source: 'legacy_projection' },
+            publishedBy: projectedBy,
+          });
+          resource = published.resource;
+          const expectedStatus = user.disabled ? 'disabled' : 'enabled';
+          if (resource.status !== expectedStatus && resource.status !== 'draft') {
+            await agentResourceStore.setStatus(
+              user.tenantId, resource.agentId, expectedStatus, resource.revision, projectedBy,
+            );
+          }
+        }
+      }
+      const tenantConfigs = skillConfigStore.getAllTenantConfigs();
+      resolveLegacySkillResourceId = (user, skillId) => {
+        const tenantConfig = tenantConfigs[user.tenantId];
+        const shared = Boolean(
+          tenantConfig?.enabledSkills?.includes(skillId)
+          || Object.prototype.hasOwnProperty.call(tenantConfig?.skills ?? {}, skillId)
+          || Object.prototype.hasOwnProperty.call(tenantConfig?.ownSkills ?? {}, skillId),
+        );
+        return shared ? skillId : `personal_${createHash('sha256')
+          .update(`${user.id}\0${skillId}`)
+          .digest('hex')
+          .slice(0, 32)}`;
+      };
+      const platformSkillIds = new Set<string>();
+      for (const configEntry of Object.values(tenantConfigs)) {
+        for (const id of configEntry.enabledSkills ?? []) platformSkillIds.add(id);
+        for (const id of Object.keys(configEntry.skills ?? {})) platformSkillIds.add(id);
+      }
+      const platformOwner = userStore.listAll().find(user => user.tenantId === DEFAULT_TENANT_ID && user.role === 'admin');
+      if (platformOwner) {
+        for (const skillId of platformSkillIds) {
+          let resource = await skillGovernanceStore.getResource(skillId);
+          if (!resource) {
+            resource = await skillGovernanceStore.createResource({
+              skillId, tenantId: DEFAULT_TENANT_ID, scope: 'platform',
+              createdBy: projectedBy,
+            });
+          }
+          if (resource.status === 'draft') {
+            await skillGovernanceStore.publishVersion({
+              tenantId: DEFAULT_TENANT_ID,
+              skillId,
+              expectedRevision: resource.revision,
+              definition: { schemaVersion: 1, legacySkillId: skillId, source: 'legacy_projection' },
+              publishedBy: projectedBy,
+            });
+          }
+        }
+      }
+      for (const [tenantId, configEntry] of Object.entries(tenantConfigs)) {
+        for (const skillId of Object.keys(configEntry.ownSkills ?? {})) {
+          let resource = await skillGovernanceStore.getResource(skillId);
+          if (resource && resource.tenantId !== tenantId) continue;
+          if (!resource) {
+            resource = await skillGovernanceStore.createResource({
+              skillId, tenantId, scope: 'tenant', createdBy: projectedBy,
+            });
+          }
+          if (resource.status === 'draft') {
+            await skillGovernanceStore.publishVersion({
+              tenantId, skillId, expectedRevision: resource.revision,
+              definition: { schemaVersion: 1, legacySkillId: skillId, source: 'legacy_projection' },
+              publishedBy: projectedBy,
+            });
+          }
+        }
+      }
+      for (const [username, userConfig] of Object.entries(skillConfigStore.getAllUserConfigs())) {
+        const user = userStore.findByUsername(username);
+        if (!user || user.tenantId === DEFAULT_TENANT_ID) continue;
+        for (const legacySkillId of new Set(userConfig.selectedSkills)) {
+          const skillId = resolveLegacySkillResourceId(user, legacySkillId);
+          if (skillId === legacySkillId) continue;
+          let resource = await skillGovernanceStore.getResource(skillId);
+          if (!resource) {
+            resource = await skillGovernanceStore.createResource({
+              skillId, tenantId: user.tenantId, scope: 'personal',
+              ownerUserId: user.id, createdBy: projectedBy,
+            });
+          }
+          if (resource.status === 'draft') {
+            await skillGovernanceStore.publishVersion({
+              tenantId: user.tenantId, skillId, expectedRevision: resource.revision,
+              definition: { schemaVersion: 1, legacySkillId, source: 'legacy_projection' },
+              publishedBy: projectedBy,
+            });
+          }
+        }
+      }
+    }
     governanceChangeJobStore = new PgGovernanceChangeJobStore({
       pool: pgEventStore.pool,
       tablePrefix: config.runtimeEventStore.tablePrefix,
@@ -1456,6 +1835,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           userSkillConfigs: skillConfigStore.getAllUserConfigs(),
           projectedBy: 'system:governance-m1',
           platformTenantId: DEFAULT_TENANT_ID,
+          resolveSkillResourceId: resolveLegacySkillResourceId,
         });
         serverLogger.info(
           `Governance Assignment shadow backfill: sets=${backfill.resourceSetsProjected} `
@@ -1494,6 +1874,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
             userSkillConfigs: skillConfigStore!.getAllUserConfigs(),
             projectedBy: 'system:governance-shadow',
             platformTenantId: DEFAULT_TENANT_ID,
+            resolveSkillResourceId: resolveLegacySkillResourceId,
           });
         },
       }, (name, error) => {
@@ -2048,6 +2429,28 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     signingSecret: artifactConfig?.signedUrlSecret ?? config.auth?.jwtSecret,
     defaultReadUrlTtlSeconds: artifactConfig?.readUrlTtlSeconds,
     maxBlobBytes: artifactConfig?.maxBlobBytes,
+    resolveSessionTenantId: async sessionId => (await sessionCatalog.get(sessionId))?.tenantId,
+    authorizeContentAccess: contentAccessGrantStore
+      ? input => contentAccessGrantStore!.authorize(input)
+      : undefined,
+    auditContentAccess: governanceAuditStore
+      ? async input => {
+          await governanceAuditStore!.append({
+            correlationId: `artifact-read:${input.sessionId}:${randomUUID()}`,
+            actorType: 'user',
+            actorUserId: input.subjectUserId,
+            actorPersona: 'platform_admin',
+            actorTenantId: DEFAULT_TENANT_ID,
+            action: 'session.content.session_export',
+            targetType: 'session_artifact',
+            targetId: input.sessionId,
+            targetTenantId: input.tenantId,
+            purpose: 'incident content export',
+            result: 'succeeded',
+            metadata: { scope: input.scope },
+          });
+        }
+      : undefined,
   });
   if (artifactConfig?.retentionDays && enableSingletonWorkers) {
     const runArtifactGc = async () => {
@@ -2279,15 +2682,260 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         platformTenantId: DEFAULT_TENANT_ID,
         projectedBy: 'system:governance-m1',
       });
+      const projectedCredentials = (await Promise.all(tenantStore.listAll().map(tenant =>
+        credentialStore!.listForTenant(tenant.id))))
+        .flat()
+        .flatMap(credential => {
+          const ownerUserId = credential.ownerUserId ?? credential.custodianUserId;
+          return ownerUserId && credential.source === 'legacy_projection'
+            ? [{ credentialId: credential.credentialId, tenantId: credential.tenantId, ownerUserId }]
+            : [];
+        });
+      const credentialAssignments = await assignmentStore!.backfillLegacyCredentialAssignments({
+        credentials: projectedCredentials,
+        projectedBy: 'system:governance-m1',
+      });
       serverLogger.info(
         `Governance Credential shadow backfill: credentials=${backfill.credentialsProjected} `
-        + `issues=${backfill.issuesRecorded}`,
+        + `assignments=${credentialAssignments.resourceSetsProjected} issues=${backfill.issuesRecorded}`,
       );
     } catch (error) {
       serverLogger.warn(
         `Governance Credential shadow backfill failed; legacy authority remains active: `
         + `${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+    if (governanceShadowComparator && governanceMigrationControlStore && tenantStore && orgAgentStore && skillConfigStore) {
+      const auditor = new GovernanceDomainShadowAuditor({
+        comparator: governanceShadowComparator,
+        states: governanceMigrationControlStore,
+      });
+      try {
+        const entitlementComparisons = await Promise.all(tenantStore.listAll()
+          .filter(tenant => tenant.id !== DEFAULT_TENANT_ID)
+          .map(async tenant => ({
+            tenantId: tenant.id,
+            resourceType: 'tenant',
+            resourceId: tenant.id,
+            legacy: normalizeLegacyEntitlementSettings(
+              tenant.settings ?? DEFAULT_TENANT_SETTINGS,
+              Boolean(tenant.disabled),
+            ),
+            governance: await entitlementStore!.getProjectionSnapshot(tenant.id),
+            blocking: true,
+          })));
+        await auditor.audit('entitlement_policy', entitlementComparisons);
+
+        const assignmentComparisons: Array<{
+          tenantId?: string; resourceType: string; resourceId: string;
+          legacy: unknown; governance: unknown | undefined; blocking: boolean;
+        }> = await Promise.all(orgAgentStore.listAll().map(async agent => {
+          const set = await assignmentStore!.getAssignmentSet(agent.tenantId, 'org_agent', agent.id);
+          const userIdFor = (username: string) => userStore?.findByUsername(username)?.id ?? `unresolved:${username}`;
+          const legacyAssignments = agent.audience.exposure === 'all'
+            ? [{ assigneeType: 'everyone', effect: 'allow' }]
+            : agent.audience.exposure === 'allow_users'
+              ? agent.audience.usernames.map(username => ({ assigneeType: 'user', assigneeId: userIdFor(username), effect: 'allow' }))
+              : [
+                  { assigneeType: 'everyone', effect: 'allow' },
+                  ...agent.audience.usernames.map(username => ({ assigneeType: 'user', assigneeId: userIdFor(username), effect: 'deny' })),
+                ];
+          const normalize = (items: Array<{ assigneeType: string; assigneeId?: string; effect: string }>) => items
+            .map(item => ({ assigneeType: item.assigneeType, assigneeId: item.assigneeId ?? null, effect: item.effect }))
+            .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+          return {
+            tenantId: agent.tenantId,
+            resourceType: 'org_agent',
+            resourceId: agent.id,
+            legacy: normalize(legacyAssignments),
+            governance: set ? normalize(set.assignments) : undefined,
+            blocking: true,
+          };
+        }));
+        for (const [tenantId, skillConfig] of Object.entries(skillConfigStore.getAllTenantConfigs())) {
+          const rules = {
+            ...Object.fromEntries((skillConfig.enabledSkills ?? []).map(skillId => [skillId, {
+              enabled: true, exposure: 'all' as const, usernames: [] as string[],
+            }])),
+            ...(skillConfig.skills ?? {}),
+            ...(skillConfig.ownSkills ?? {}),
+          };
+          const userIdFor = (username: string) => userStore?.findByUsername(username)?.id ?? `unresolved:${username}`;
+          for (const [skillId, rule] of Object.entries(rules)) {
+            const set = await assignmentStore!.getAssignmentSet(tenantId, 'skill', skillId);
+            const desired = !rule.enabled ? []
+              : rule.exposure === 'all'
+                ? [{ assigneeType: 'everyone', assigneeId: null, effect: 'allow' }]
+                : rule.exposure === 'allow_users'
+                  ? rule.usernames.map(username => ({
+                      assigneeType: 'user', assigneeId: userIdFor(username), effect: 'allow',
+                    }))
+                  : [
+                      { assigneeType: 'everyone', assigneeId: null, effect: 'allow' },
+                      ...rule.usernames.map(username => ({
+                        assigneeType: 'user', assigneeId: userIdFor(username), effect: 'deny',
+                      })),
+                    ];
+            const normalize = (items: Array<{ assigneeType: string; assigneeId?: string | null; effect: string }>) => items
+              .map(item => ({ assigneeType: item.assigneeType, assigneeId: item.assigneeId ?? null, effect: item.effect }))
+              .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+            assignmentComparisons.push({
+              tenantId, resourceType: 'skill', resourceId: skillId,
+              legacy: normalize(desired),
+              governance: set ? normalize(set.assignments) : undefined,
+              blocking: true,
+            });
+          }
+        }
+        for (const tenant of tenantStore.listAll()) {
+          for (const credential of await credentialStore!.listForTenant(tenant.id)) {
+            if (credential.source !== 'legacy_projection') continue;
+            const ownerUserId = credential.ownerUserId ?? credential.custodianUserId;
+            const set = await assignmentStore!.getAssignmentSet(tenant.id, 'credential', credential.credentialId);
+            assignmentComparisons.push({
+              tenantId: tenant.id,
+              resourceType: 'credential',
+              resourceId: credential.credentialId,
+              legacy: ownerUserId ? [{ assigneeType: 'user', assigneeId: ownerUserId, effect: 'allow' }] : [],
+              governance: set ? set.assignments.map(item => ({
+                assigneeType: item.assigneeType, assigneeId: item.assigneeId, effect: item.effect,
+              })) : undefined,
+              blocking: true,
+            });
+          }
+        }
+        for (const [username, userConfig] of Object.entries(skillConfigStore.getAllUserConfigs())) {
+          const user = userStore?.findByUsername(username);
+          if (!user || user.tenantId === DEFAULT_TENANT_ID) continue;
+          const preferences = await assignmentStore!.listUserPreferences(user.id);
+          assignmentComparisons.push({
+            tenantId: user.tenantId,
+            resourceType: 'skill_preference',
+            resourceId: user.id,
+            legacy: [...new Set(userConfig.selectedSkills.map(skillId =>
+              resolveLegacySkillResourceId(user, skillId)))].sort(),
+            governance: preferences
+              .filter(item => item.resourceType === 'skill' && item.enabled)
+              .map(item => item.resourceId)
+              .sort(),
+            blocking: true,
+          });
+        }
+        await auditor.audit('assignment', assignmentComparisons);
+
+        const agentSkillComparisons = [] as Array<{
+          tenantId?: string; resourceType: string; resourceId: string;
+          legacy: unknown; governance: unknown | undefined; blocking: boolean;
+        }>;
+        for (const agent of orgAgentStore.listAll()) {
+          const resource = await agentResourceStore?.getForTenant(agent.tenantId, agent.id);
+          agentSkillComparisons.push({
+            tenantId: agent.tenantId, resourceType: 'org_agent', resourceId: agent.id,
+            legacy: { tenantId: agent.tenantId, enabled: agent.enabled },
+            governance: resource ? { tenantId: resource.tenantId, enabled: resource.status === 'enabled' } : undefined,
+            blocking: true,
+          });
+        }
+        for (const user of userStore!.listAll().filter(item => item.tenantId !== DEFAULT_TENANT_ID)) {
+          const resource = await agentResourceStore?.findPersonalByOwner(user.tenantId, user.id);
+          agentSkillComparisons.push({
+            tenantId: user.tenantId,
+            resourceType: 'personal_agent',
+            resourceId: user.id,
+            legacy: { ownerUserId: user.id, enabled: !user.disabled },
+            governance: resource ? {
+              ownerUserId: resource.ownerUserId,
+              enabled: resource.status === 'enabled',
+            } : undefined,
+            blocking: true,
+          });
+        }
+        for (const [tenantId, skillConfig] of Object.entries(skillConfigStore.getAllTenantConfigs())) {
+          const skillIds = new Set([
+            ...(skillConfig.enabledSkills ?? []),
+            ...Object.keys(skillConfig.skills ?? {}),
+            ...Object.keys(skillConfig.ownSkills ?? {}),
+          ]);
+          for (const skillId of skillIds) {
+            const resource = await skillGovernanceStore?.getResource(skillId);
+            const resourceTenantId = Object.prototype.hasOwnProperty.call(skillConfig.ownSkills ?? {}, skillId)
+              ? tenantId
+              : DEFAULT_TENANT_ID;
+            agentSkillComparisons.push({
+              tenantId, resourceType: 'skill', resourceId: skillId,
+              legacy: { assignedTenantId: tenantId, resourceTenantId, skillId },
+              governance: resource ? {
+                assignedTenantId: tenantId, resourceTenantId: resource.tenantId, skillId: resource.skillId,
+              } : undefined,
+              blocking: true,
+            });
+          }
+        }
+        for (const [username, userConfig] of Object.entries(skillConfigStore.getAllUserConfigs())) {
+          const user = userStore?.findByUsername(username);
+          if (!user || user.tenantId === DEFAULT_TENANT_ID) continue;
+          for (const legacySkillId of new Set(userConfig.selectedSkills)) {
+            const skillId = resolveLegacySkillResourceId(user, legacySkillId);
+            if (skillId === legacySkillId) continue;
+            const resource = await skillGovernanceStore?.getResource(skillId);
+            const version = resource?.currentVersionId
+              ? await skillGovernanceStore?.getVersion(resource.currentVersionId)
+              : null;
+            agentSkillComparisons.push({
+              tenantId: user.tenantId, resourceType: 'personal_skill', resourceId: skillId,
+              legacy: { ownerUserId: user.id, legacySkillId },
+              governance: resource ? {
+                ownerUserId: resource.ownerUserId,
+                legacySkillId: version?.definition.legacySkillId,
+              } : undefined,
+              blocking: true,
+            });
+          }
+        }
+        await auditor.audit('agent_skill', agentSkillComparisons);
+
+        const credentialComparisons = [] as Array<{
+          tenantId?: string; resourceType: string; resourceId: string;
+          legacy: unknown; governance: unknown | undefined; blocking: boolean;
+        }>;
+        for (const connection of connectorConnectionStore.listAll()) {
+          if (connection.status !== 'connected') continue;
+          for (const [slot, secretRef] of Object.entries(connection.credentialRefs ?? {})) {
+            if (!secretRef) continue;
+            const credential = await credentialStore!.getBySecretRef(secretRef);
+            credentialComparisons.push({
+              tenantId: connection.tenantId,
+              resourceType: 'credential',
+              resourceId: `${connection.connectorId}:${connection.username}:${slot}`,
+              legacy: { connectorId: connection.connectorId, secretRef, status: 'active' },
+              governance: credential ? {
+                connectorId: credential.connectorId, secretRef: credential.secretRef, status: credential.status,
+              } : undefined,
+              blocking: true,
+            });
+          }
+        }
+        await auditor.audit('connector_credential', credentialComparisons);
+
+        const expectedProviders = [
+          { providerId: 'server-local', enabled: true },
+          ...(config.serverRemote?.baseUrl ? [{ providerId: 'server-remote', enabled: true }] : []),
+        ];
+        const environmentComparisons = await Promise.all(expectedProviders.map(async expected => {
+          const provider = await environmentStore?.getProvider(expected.providerId);
+          return {
+            resourceType: 'execution_provider', resourceId: expected.providerId,
+            legacy: expected,
+            governance: provider ? { providerId: provider.providerId, enabled: provider.status === 'enabled' } : undefined,
+            blocking: true,
+          };
+        }));
+        await auditor.audit('environment', environmentComparisons);
+      } catch (error) {
+        serverLogger.warn(
+          `Governance domain shadow audit failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
     const credentialUseAuthorizer = new CredentialUseAuthorizer({
       subjectResolver: new SubjectResolver(userStore, membershipStore),
@@ -2346,6 +2994,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     userResolver: username => {
       const user = userStore?.findByUsername(username);
       return user ? { tenantId: user.tenantId, disabled: user.disabled } : undefined;
+    },
+    onSecretRotated: async secretRef => {
+      await credentialStore?.bumpGenerationBySecretRef(secretRef, 'system:mcp-oauth-rotation');
     },
   });
   const legacyNativeMcpIds = new Set([
@@ -2487,73 +3138,139 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     manager: mcpClientManager,
     capabilityTokens: mcpCapabilityTokens,
     vault: secretVault,
+    warmupWithCredential: credentialBroker && credentialStore && assignmentStore
+      ? async ({ username, userId, sessionId, runId }) => {
+          const user = userStore?.findById(userId) ?? userStore?.findByUsername(username);
+          const snapshot = await runResolutionSnapshotStore?.get(runId);
+          if (!user || !snapshot
+            || snapshot.sessionId !== sessionId
+            || snapshot.actor.subjectId !== user.id
+            || snapshot.tenantId !== user.tenantId) {
+            throw new Error('RUN_SNAPSHOT_BINDING_MISMATCH');
+          }
+          const descriptors = [] as Awaited<ReturnType<McpClientManager['warmupBrokered']>>;
+          for (const connector of snapshot.connectors) {
+            const candidates = [] as Array<{
+              credential: NonNullable<Awaited<ReturnType<PgCredentialStore['get']>>>;
+              generation: number;
+              revision: number;
+              scopes: string[];
+            }>;
+            for (const binding of snapshot.credentialBindings) {
+              const credential = await credentialStore!.get(binding.id);
+              if (credential?.connectorId === connector.id
+                && binding.generation !== undefined
+                && binding.revision !== undefined) {
+                candidates.push({
+                  credential,
+                  generation: binding.generation,
+                  revision: binding.revision,
+                  scopes: binding.scopes ?? [],
+                });
+              }
+            }
+            if (candidates.length !== 1) {
+              throw new Error(candidates.length === 0 ? 'CREDENTIAL_NOT_BOUND' : 'CREDENTIAL_AMBIGUOUS');
+            }
+            const candidate = candidates[0];
+            if (candidate.credential.version !== candidate.revision) {
+              throw new Error('CREDENTIAL_REVISION_CHANGED');
+            }
+            if (!candidate.scopes.some(scope =>
+              scope === '*' || scope === `${connector.id}:*` || scope.startsWith(`${connector.id}:`),
+            )) {
+              throw new Error('CREDENTIAL_SCOPE_NOT_SNAPSHOTTED');
+            }
+            const tools = await credentialBroker!.execute({
+              credentialId: candidate.credential.credentialId,
+              tenantId: user.tenantId,
+              connectorId: connector.id,
+              channel: 'mcp',
+              delegatedUserId: user.id,
+              agentId: snapshot.agent.id,
+              expectedGeneration: candidate.generation,
+              correlationId: `mcp:${sessionId}:${connector.id}:list-tools:${randomUUID()}`,
+              purpose: `mcp list tools ${connector.id}`,
+            }, resolved => mcpClientManager.warmupBrokered(
+              username,
+              connector.id,
+              { secretRef: candidate.credential.secretRef, secret: resolved.secret },
+            ));
+            descriptors.push(...tools);
+          }
+          return descriptors;
+        }
+      : undefined,
+    executeWithCredential: credentialBroker && credentialStore && assignmentStore
+      ? async ({ username, userId, sessionId, runId, serverName, toolName, toolKey, input }) => {
+          const user = userStore?.findById(userId) ?? userStore?.findByUsername(username);
+          if (!user) throw new Error('CREDENTIAL_SUBJECT_NOT_FOUND');
+          const snapshot = runId ? await runResolutionSnapshotStore?.get(runId) : null;
+          if (!snapshot) throw new Error('RUN_SNAPSHOT_REQUIRED');
+          if (snapshot.sessionId !== sessionId
+            || snapshot.actor.subjectId !== user.id
+            || snapshot.tenantId !== user.tenantId
+            || !snapshot.connectors.some(connector => connector.id === serverName)) {
+            throw new Error('RUN_SNAPSHOT_BINDING_MISMATCH');
+          }
+          const candidates = [] as Array<{
+            credential: NonNullable<Awaited<ReturnType<PgCredentialStore['get']>>>;
+            expectedGeneration: number;
+            expectedRevision: number;
+            scopes: string[];
+          }>;
+          for (const binding of snapshot.credentialBindings) {
+            const credential = await credentialStore!.get(binding.id);
+            if (credential?.connectorId === serverName
+              && binding.generation !== undefined
+              && binding.revision !== undefined) {
+              candidates.push({
+                credential,
+                expectedGeneration: binding.generation,
+                expectedRevision: binding.revision,
+                scopes: binding.scopes ?? [],
+              });
+            }
+          }
+          if (candidates.length !== 1) {
+            throw new Error(candidates.length === 0 ? 'CREDENTIAL_NOT_BOUND' : 'CREDENTIAL_AMBIGUOUS');
+          }
+          const { credential, expectedGeneration, expectedRevision, scopes } = candidates[0];
+          if (credential.version !== expectedRevision) throw new Error('CREDENTIAL_REVISION_CHANGED');
+          const requiredScope = `${serverName}:${toolName}`;
+          if (!scopes.includes('*')
+            && !scopes.includes(requiredScope)
+            && !scopes.includes(`${serverName}:*`)) {
+            throw new Error('CREDENTIAL_SCOPE_NOT_SNAPSHOTTED');
+          }
+          return credentialBroker!.execute({
+            credentialId: credential.credentialId,
+            tenantId: user.tenantId,
+            connectorId: serverName,
+            channel: 'mcp',
+            delegatedUserId: user.id,
+            agentId: snapshot.agent.id,
+            expectedGeneration,
+            requiredScopes: [requiredScope],
+            correlationId: `mcp:${sessionId}:${serverName}:${toolName}:${randomUUID()}`,
+            purpose: `mcp tool ${serverName}/${toolName}`,
+          }, async resolved => mcpClientManager.invokeBrokered(
+            username,
+            toolKey,
+            input,
+            { secretRef: credential.secretRef, secret: resolved.secret },
+          ));
+        }
+      : undefined,
     logger: serverLogger.child('McpProxy'),
   });
   const mcpClientShutdown = () => mcpClientManager.shutdown();
-  const nativeMcpConnectorIds = new Set([
-    GITHUB_CONNECTOR_ID,
-    'notion',
-    'google_gmail',
-    'google_drive',
-    'google_calendar',
-    'google_chat',
-    'google_people',
-  ]);
-  const resolveRunScopedEnv = async (context: { userId: string; username: string; tenantId: string }) => {
-    const owner = userStore?.findByUsername(context.username);
-    const nativeContext = owner
-      ? (!owner.disabled && owner.id === context.userId && owner.tenantId === context.tenantId ? context : undefined)
-      : (!userStore ? context : undefined);
-    const [githubEnv, notionEnv, googleWorkspaceEnv, aliyunEnv, feishuEnv, mcpConnectorEnv] = await Promise.all([
-      nativeContext ? resolveGithubRuntimeEnv({
-        connectionStore: connectorConnectionStore,
-        vault: secretVault,
-        onError: error => serverLogger.warn(
-          `Native connector runtime env skipped: connector=${GITHUB_CONNECTOR_ID} reason=${error.message}`,
-        ),
-      }, nativeContext) : {},
-      nativeContext ? resolveNotionRuntimeEnv({
-        connectionStore: connectorConnectionStore,
-        vault: secretVault,
-        onError: error => serverLogger.warn(
-          `Native connector runtime env skipped: connector=notion reason=${error.message}`,
-        ),
-      }, nativeContext) : {},
-      nativeContext ? resolveGoogleWorkspaceRuntimeEnv(
-        googleWorkspaceOAuthService,
-        nativeContext,
-        error => serverLogger.warn(
-          `Native connector runtime env skipped: connector=google-workspace reason=${error.message}`,
-        ),
-      ) : {},
-      nativeContext ? aliyunConnectorService.resolveRuntimeEnv(nativeContext) : {},
-      nativeContext ? resolveFeishuConnectorRunEnv(
-        feishuTokenBroker,
-        nativeContext,
-        error => serverLogger.warn(
-          `Native connector runtime env skipped: connector=feishu reason=${error.message}`,
-        ),
-      ) : {},
-      resolveConnectorRuntimeEnv({
-        store: mcpConfigStore,
-        vault: secretVault,
-        oauthService: mcpOAuthService,
-        excludedServerIds: nativeMcpConnectorIds,
-        onError: (error, meta) => serverLogger.warn(
-          `MCP connector runtime env skipped: server=${meta.serverId} source=${meta.source} reason=${error.message}`,
-        ),
-      }, context),
-    ]);
-    return {
-      ...mcpConnectorEnv,
-      ...aliyunEnv,
-      ...feishuEnv,
-      ...googleWorkspaceEnv,
-      ...notionEnv,
-      ...githubEnv,
-      ...(resolvedSttRuntimeConfig.audioTranscribeEnvByTenant.get(context.tenantId) ?? {}),
-    };
-  };
+  // Governance security boundary: connector, OAuth, and tenant-level credentials are never
+  // materialized into the generic agent process or shell environment. Connector calls must use
+  // a server-side proxy/broker so revocation, generation, scope, and audit checks remain effective.
+  const resolveRunScopedEnv = async (_context: {
+    userId: string; username: string; tenantId: string;
+  }): Promise<Record<string, string>> => ({});
 
   const initialMemoryIndexService = createMemoryIndexService(
     processCwd,
@@ -2652,10 +3369,105 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         new LongTermGrantPolicy(),
         new RuntimeApprovalPolicy(),
       ]),
+      ...(governanceShadowComparator && governanceMigrationControlStore ? {
+        compareLegacyAccess: async ({ request, governanceDecision }) => {
+          const tenant = request.resource.tenantId ? tenantStore.findById(request.resource.tenantId) : undefined;
+          const subjectActive = request.subject.subjectType === 'human'
+            ? request.subject.accountStatus === 'active'
+            : true;
+          const sameTenant = !request.resource.tenantId || request.resource.tenantId === request.subject.tenantId;
+          const orgAgent = request.resource.type === 'org_agent' ? orgAgentStore.get(request.resource.id) : undefined;
+          const legacyAllowed = subjectActive
+            && sameTenant
+            && tenant?.disabled !== true
+            && request.resource.enabled !== false
+            && (!orgAgent || (orgAgent.tenantId === request.subject.tenantId && orgAgent.enabled));
+          const comparison = await governanceShadowComparator!.compare({
+            domain: 'run_snapshot',
+            tenantId: request.subject.tenantId,
+            resourceType: request.resource.type,
+            resourceId: request.resource.id,
+            legacy: { verdict: legacyAllowed ? 'allow' : 'deny' },
+            governance: { verdict: governanceDecision.verdict },
+            blocking: true,
+          });
+          await governanceMigrationControlStore!.incrementDomainComparison('run_snapshot', comparison.matched);
+        },
+      } : {}),
       readinessEvaluator: new ReadinessEvaluator(),
       sessionCatalog,
       orgAgentStore,
       ...(agentResourceStore ? { agentResourceStore } : {}),
+      ...(credentialStore && connectorCatalogStore && skillGovernanceStore ? {
+        resolveTypedBindings: async ({ tenantId, userId, agentId }) => {
+          const [skillBindings, credentialBindings, preferences] = await Promise.all([
+            assignmentStore.listEffectiveResourceIds(tenantId, userId, 'skill', agentId),
+            assignmentStore.listEffectiveResourceIds(tenantId, userId, 'credential', agentId),
+            assignmentStore.listUserPreferences(userId),
+          ]);
+          const disabledSkills = new Set(preferences
+            .filter(item => item.resourceType === 'skill' && !item.enabled)
+            .map(item => item.resourceId));
+          const effectiveSkillBindings = [...skillBindings];
+          const skills = [] as import('../runtime/runResolutionSnapshotStore.js').ResolvedResourceRef[];
+          for (const binding of effectiveSkillBindings.filter(item => !disabledSkills.has(item.resourceId))) {
+            const resource = await skillGovernanceStore!.getResource(binding.resourceId);
+            if (!resource || resource.status !== 'published') continue;
+            if (resource.scope === 'platform' && resource.tenantId !== DEFAULT_TENANT_ID) continue;
+            if (resource.scope === 'tenant' && resource.tenantId !== tenantId) continue;
+            if (resource.scope === 'personal'
+              && (resource.tenantId !== tenantId || resource.ownerUserId !== userId)) continue;
+            const version = resource.currentVersionId
+              ? await skillGovernanceStore!.getVersion(resource.currentVersionId)
+              : null;
+            skills.push({
+              id: resource.skillId, revision: resource.revision,
+              bindingId: binding.bindingId,
+              ...(version ? { versionId: version.versionId, version: version.versionNumber } : {}),
+            });
+          }
+          for (const preference of preferences.filter(item => item.resourceType === 'skill' && item.enabled)) {
+            if (skills.some(skill => skill.id === preference.resourceId)) continue;
+            const resource = await skillGovernanceStore!.getResource(preference.resourceId);
+            if (!resource || resource.status !== 'published' || resource.scope !== 'personal'
+              || resource.tenantId !== tenantId || resource.ownerUserId !== userId) continue;
+            const version = resource.currentVersionId
+              ? await skillGovernanceStore!.getVersion(resource.currentVersionId)
+              : null;
+            skills.push({
+              id: resource.skillId,
+              revision: resource.revision,
+              bindingId: `preference:${preference.userId}:${preference.resourceId}`,
+              ...(version ? { versionId: version.versionId, version: version.versionNumber } : {}),
+            });
+          }
+          const credentials = [] as import('../runtime/runResolutionSnapshotStore.js').ResolvedResourceRef[];
+          const connectorsById = new Map<string, import('../runtime/runResolutionSnapshotStore.js').ResolvedResourceRef>();
+          for (const binding of credentialBindings) {
+            const credential = await credentialStore!.get(binding.resourceId);
+            if (!credential || credential.tenantId !== tenantId
+              || !['active', 'rotation_due'].includes(credential.status)
+              || (credential.expiresAt && Date.parse(credential.expiresAt) <= Date.now())) continue;
+            credentials.push({
+              id: credential.credentialId, generation: credential.generation,
+              revision: credential.version, bindingId: binding.bindingId,
+              scopes: Array.isArray(credential.scopeSummary.scopes)
+                ? credential.scopeSummary.scopes.filter((scope): scope is string => typeof scope === 'string')
+                : [],
+            });
+            if (credential.connectorId) {
+              const connector = await connectorCatalogStore!.get(credential.connectorId);
+              if (connector?.status === 'published') {
+                connectorsById.set(connector.connectorId, {
+                  id: connector.connectorId, revision: connector.version,
+                  ...(connector.currentVersionId ? { versionId: connector.currentVersionId } : {}),
+                });
+              }
+            }
+          }
+          return { skills, connectors: [...connectorsById.values()], credentialBindings: credentials };
+        },
+      } : {}),
       tenantStore,
       ...(billingService ? {
         authorizeBilling: (input: { tenantId: string; userId?: string; runId: string }) =>
@@ -2663,6 +3475,34 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       } : {}),
       ...(modelResolver ? {
         isModelAvailable: (ref: string, tenantId?: string) => modelResolver(ref, tenantId) !== null,
+      } : {}),
+      ...(environmentStore ? {
+        isEnvironmentAvailable: async (environment: {
+          providerId: string; templateVersionId?: string; instanceId?: string; recipeDigest?: string;
+        }, context: { tenantId: string; userId: string; agentId?: string }) => {
+          const provider = await environmentStore!.getProvider(environment.providerId);
+          if (!provider || provider.status !== 'enabled') return false;
+          const effectiveTemplates = await assignmentStore.listEffectiveResourceIds(
+            context.tenantId, context.userId, 'environment_template', context.agentId,
+          );
+          const assignedTemplateIds = new Set(effectiveTemplates.map(item => item.resourceId));
+          if (environment.instanceId) {
+            const instance = await environmentStore!.getInstance(context.tenantId, environment.instanceId);
+            return Boolean(instance
+              && assignedTemplateIds.has(instance.templateId)
+              && instance.providerId === environment.providerId
+              && instance.status === 'ready'
+              && Date.parse(instance.leaseExpiresAt) > Date.now()
+              && (!environment.recipeDigest || instance.recipeDigest === environment.recipeDigest));
+          }
+          if (environment.templateVersionId) {
+            const version = await environmentStore!.getTemplateVersion(environment.templateVersionId);
+            if (!version || !assignedTemplateIds.has(version.templateId)) return false;
+            const template = await environmentStore!.getTemplate(version.templateId);
+            return template?.status === 'published';
+          }
+          return false;
+        },
       } : {}),
       logger: { warn: (message) => serverLogger.warn(message) },
     });
@@ -2758,6 +3598,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentStore,
     orgAgentStore,
     tenantStore,
+    environmentStore,
+    authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
+      const effectiveAgentId = agentId
+        ?? (await agentResourceStore?.findPersonalByOwner(tenantId, userId))?.agentId;
+      const bindings = await assignmentStore!.listEffectiveResourceIds(
+        tenantId, userId, 'environment_template', effectiveAgentId,
+      );
+      return bindings.some(binding => binding.resourceId === templateId);
+    },
     resolveUserRole: ({ userId, username }: { userId?: string; username?: string }) => {
       const user = userId
         ? userStore?.findById(userId)
@@ -3010,6 +3859,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       beforeTick: async () => {
         taskboardExecutionCoordinator?.wakeReconciliation();
         await rawRuntimeConfig.backgroundTasks!.reconcileWakeDeliveries();
+        await governanceProjectionReconciler?.reconcileBatch();
       },
       failInterruptedBackgroundTask: (record) => rawRuntimeConfig.backgroundTasks!.failInterrupted(record),
       failBackgroundTask: (record, message) => rawRuntimeConfig.backgroundTasks!.fail(record, message),
@@ -4134,6 +4984,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     governanceMigrationControlStore,
     governanceWriteGate,
     governanceShadowComparator,
+    contentAccessGrantStore,
+    governanceProjectionOutboxStore,
+    governanceProjectionReconciler,
     resourceReferenceStore,
     credentialBroker,
     flushGovernanceShadowProjections,

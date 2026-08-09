@@ -151,7 +151,7 @@ describe('Credential 治理事实模型', () => {
     expect(sql).toContain("status IN ('active', 'rotation_due', 'expired', 'suspended', 'revoked', 'validation_failed')");
     expect(sql).toContain("CHECK (kind <> 'personal_grant' OR owner_user_id IS NOT NULL)");
     expect(sql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS test_credentials_secret_ref_uidx');
-    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(12);
+    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(17);
   });
 
   it('create 强制 secretRef/owner/kind，重复 secretRef fail closed', async () => {

@@ -4,11 +4,17 @@ import type { PoolClient } from 'pg';
 import { PgGovernanceMigrationRunner, governanceTablePrefix, type GovernancePgPool } from '../governance-schema/index.js';
 import {
   EnvironmentInvariantError,
+  type CreateEnvironmentInstanceInput,
+  type EnvironmentInstance,
+  type EnvironmentInstanceStatus,
   type EnvironmentRecipe,
   type EnvironmentTemplate,
   type EnvironmentTemplateVersion,
   type ExecutionProvider,
   type PublishEnvironmentTemplateInput,
+  type RenewEnvironmentInstanceLeaseInput,
+  type TransitionEnvironmentInstanceInput,
+  type UpsertEnvironmentInstanceInput,
   type UpsertExecutionProviderInput,
 } from './types.js';
 
@@ -20,6 +26,13 @@ export interface PgEnvironmentStoreOptions {
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{1,63}$/;
 const FORBIDDEN_RECIPE_KEYS = new Set(['secret', 'secretref', 'token', 'password', 'credential', 'credentialid', 'instanceid', 'sessionid', 'workspaceid']);
 const SENSITIVE_COMMAND_PATTERN = /(?:authorization\s*:\s*bearer|bearer\s+[a-z0-9._~-]{8,}|(?:token|secret|password|api[_-]?key)\s*(?:=|:)\s*\S+)/i;
+const INSTANCE_TRANSITIONS: Readonly<Record<EnvironmentInstanceStatus, readonly EnvironmentInstanceStatus[]>> = {
+  provisioning: ['ready', 'unhealthy', 'draining'],
+  ready: ['unhealthy', 'draining'],
+  unhealthy: ['ready', 'draining'],
+  draining: ['retired'],
+  retired: [],
+};
 
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -103,10 +116,51 @@ function rowToTemplateVersion(row: Record<string, unknown>): EnvironmentTemplate
   };
 }
 
+function rowToInstance(row: Record<string, unknown>): EnvironmentInstance {
+  return {
+    instanceId: String(row.instance_id),
+    tenantId: String(row.tenant_id),
+    providerId: String(row.provider_id),
+    templateId: String(row.template_id),
+    templateVersionId: String(row.template_version_id),
+    handId: String(row.hand_id),
+    status: row.status as EnvironmentInstanceStatus,
+    leaseExpiresAt: row.lease_expires_at instanceof Date
+      ? row.lease_expires_at.toISOString()
+      : String(row.lease_expires_at),
+    revision: Number(row.revision),
+    recipeDigest: String(row.recipe_digest),
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+    updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
+  };
+}
+
+function validateInstanceIdentity(input: {
+  instanceId: string;
+  tenantId: string;
+  providerId: string;
+  templateId: string;
+  templateVersionId: string;
+  handId: string;
+  leaseExpiresAt: string;
+}): void {
+  if (!ID_PATTERN.test(input.instanceId)
+    || !input.tenantId.trim()
+    || !input.providerId.trim()
+    || !input.templateId.trim()
+    || !input.templateVersionId.trim()
+    || !input.handId.trim()
+    || !input.leaseExpiresAt.trim()
+    || Number.isNaN(Date.parse(input.leaseExpiresAt))) {
+    throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_INVALID');
+  }
+}
+
 export class PgEnvironmentStore {
   readonly providersTable: string;
   readonly templatesTable: string;
   readonly versionsTable: string;
+  readonly instancesTable: string;
   private readonly tablePrefix?: string;
 
   constructor(private readonly options: PgEnvironmentStoreOptions) {
@@ -115,6 +169,7 @@ export class PgEnvironmentStore {
     this.providersTable = `${prefix}_execution_providers`;
     this.templatesTable = `${prefix}_environment_templates`;
     this.versionsTable = `${prefix}_environment_template_versions`;
+    this.instancesTable = `${prefix}_environment_instances`;
   }
 
   async init(): Promise<void> {
@@ -163,6 +218,171 @@ export class PgEnvironmentStore {
       if (!result.rows[0]) throw new EnvironmentInvariantError('EXECUTION_PROVIDER_VERSION_CONFLICT');
       return rowToProvider(result.rows[0]);
     });
+  }
+
+  async create(input: CreateEnvironmentInstanceInput): Promise<EnvironmentInstance> {
+    const instanceId = input.instanceId ?? randomUUID();
+    const normalized = { ...input, instanceId };
+    validateInstanceIdentity(normalized);
+    return this.withTransaction(async client => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`environment-instance:${instanceId}`]);
+      return this.insertNewInstance(client, normalized, 'provisioning', 'ENVIRONMENT_INSTANCE_ALREADY_EXISTS');
+    });
+  }
+
+  async createInstance(input: CreateEnvironmentInstanceInput): Promise<EnvironmentInstance> {
+    return this.create(input);
+  }
+
+  async upsert(input: UpsertEnvironmentInstanceInput): Promise<EnvironmentInstance> {
+    validateInstanceIdentity(input);
+    return this.withTransaction(async client => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`environment-instance:${input.instanceId}`]);
+      const currentResult = await client.query(
+        `SELECT * FROM ${this.instancesTable} WHERE tenant_id=$1 AND instance_id=$2 FOR UPDATE`,
+        [input.tenantId, input.instanceId],
+      );
+      const current = currentResult.rows[0] ? rowToInstance(currentResult.rows[0]) : null;
+      if (!current) {
+        if (input.expectedRevision !== undefined) {
+          throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_VERSION_CONFLICT');
+        }
+        return this.insertNewInstance(client, input, input.status, 'ENVIRONMENT_INSTANCE_ALREADY_EXISTS');
+      }
+      if (input.expectedRevision === undefined || current.revision !== input.expectedRevision) {
+        throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_VERSION_CONFLICT');
+      }
+      if (current.providerId !== input.providerId
+        || current.templateId !== input.templateId
+        || current.templateVersionId !== input.templateVersionId
+        || current.handId !== input.handId) {
+        throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_INVALID');
+      }
+      if (input.recipeDigest !== undefined && current.recipeDigest !== input.recipeDigest) {
+        throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_RECIPE_DIGEST_MISMATCH');
+      }
+      if (input.status !== current.status && !INSTANCE_TRANSITIONS[current.status].includes(input.status)) {
+        throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_TRANSITION_INVALID');
+      }
+      const result = await client.query(`
+        UPDATE ${this.instancesTable}
+        SET status=$3,lease_expires_at=$4,revision=revision+1,updated_at=NOW()
+        WHERE tenant_id=$1 AND instance_id=$2 AND revision=$5 RETURNING *
+      `, [input.tenantId, input.instanceId, input.status, input.leaseExpiresAt, input.expectedRevision]);
+      if (!result.rows[0]) throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_VERSION_CONFLICT');
+      return rowToInstance(result.rows[0]);
+    });
+  }
+
+  async upsertInstance(input: UpsertEnvironmentInstanceInput): Promise<EnvironmentInstance> {
+    return this.upsert(input);
+  }
+
+  async get(tenantId: string, instanceId: string): Promise<EnvironmentInstance | null> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.instancesTable} WHERE tenant_id=$1 AND instance_id=$2`,
+      [tenantId, instanceId],
+    );
+    return result.rows[0] ? rowToInstance(result.rows[0]) : null;
+  }
+
+  async getInstance(tenantId: string, instanceId: string): Promise<EnvironmentInstance | null> {
+    return this.get(tenantId, instanceId);
+  }
+
+  async listForTenant(tenantId: string): Promise<EnvironmentInstance[]> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.instancesTable} WHERE tenant_id=$1 ORDER BY created_at,instance_id`,
+      [tenantId],
+    );
+    return result.rows.map(rowToInstance);
+  }
+
+  async renewLease(input: RenewEnvironmentInstanceLeaseInput): Promise<EnvironmentInstance>;
+  async renewLease(
+    tenantId: string,
+    instanceId: string,
+    leaseExpiresAt: string,
+    expectedRevision: number,
+  ): Promise<EnvironmentInstance>;
+  async renewLease(
+    inputOrTenantId: RenewEnvironmentInstanceLeaseInput | string,
+    instanceId?: string,
+    leaseExpiresAt?: string,
+    expectedRevision?: number,
+  ): Promise<EnvironmentInstance> {
+    const input: RenewEnvironmentInstanceLeaseInput = typeof inputOrTenantId === 'string'
+      ? { tenantId: inputOrTenantId, instanceId: instanceId ?? '', leaseExpiresAt: leaseExpiresAt ?? '', expectedRevision: expectedRevision ?? -1 }
+      : inputOrTenantId;
+    if (!input.tenantId.trim() || !input.instanceId.trim() || Number.isNaN(Date.parse(input.leaseExpiresAt))) {
+      throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_INVALID');
+    }
+    return this.withTransaction(async client => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`environment-instance:${input.instanceId}`]);
+      const currentResult = await client.query(
+        `SELECT * FROM ${this.instancesTable} WHERE tenant_id=$1 AND instance_id=$2 FOR UPDATE`,
+        [input.tenantId, input.instanceId],
+      );
+      if (!currentResult.rows[0]) throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_NOT_FOUND');
+      const current = rowToInstance(currentResult.rows[0]);
+      if (current.revision !== input.expectedRevision) {
+        throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_VERSION_CONFLICT');
+      }
+      if (current.status === 'retired') {
+        throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_TRANSITION_INVALID');
+      }
+      const result = await client.query(`
+        UPDATE ${this.instancesTable}
+        SET lease_expires_at=$3,revision=revision+1,updated_at=NOW()
+        WHERE tenant_id=$1 AND instance_id=$2 AND revision=$4 RETURNING *
+      `, [input.tenantId, input.instanceId, input.leaseExpiresAt, input.expectedRevision]);
+      if (!result.rows[0]) throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_VERSION_CONFLICT');
+      return rowToInstance(result.rows[0]);
+    });
+  }
+
+  async transition(input: TransitionEnvironmentInstanceInput): Promise<EnvironmentInstance>;
+  async transition(
+    tenantId: string,
+    instanceId: string,
+    status: EnvironmentInstanceStatus,
+    expectedRevision: number,
+  ): Promise<EnvironmentInstance>;
+  async transition(
+    inputOrTenantId: TransitionEnvironmentInstanceInput | string,
+    instanceId?: string,
+    status?: EnvironmentInstanceStatus,
+    expectedRevision?: number,
+  ): Promise<EnvironmentInstance> {
+    const input: TransitionEnvironmentInstanceInput = typeof inputOrTenantId === 'string'
+      ? { tenantId: inputOrTenantId, instanceId: instanceId ?? '', status: status ?? 'provisioning', expectedRevision: expectedRevision ?? -1 }
+      : inputOrTenantId;
+    return this.withTransaction(async client => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`environment-instance:${input.instanceId}`]);
+      const currentResult = await client.query(
+        `SELECT * FROM ${this.instancesTable} WHERE tenant_id=$1 AND instance_id=$2 FOR UPDATE`,
+        [input.tenantId, input.instanceId],
+      );
+      if (!currentResult.rows[0]) throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_NOT_FOUND');
+      const current = rowToInstance(currentResult.rows[0]);
+      if (current.revision !== input.expectedRevision) {
+        throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_VERSION_CONFLICT');
+      }
+      if (!INSTANCE_TRANSITIONS[current.status].includes(input.status)) {
+        throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_TRANSITION_INVALID');
+      }
+      const result = await client.query(`
+        UPDATE ${this.instancesTable}
+        SET status=$3,revision=revision+1,updated_at=NOW()
+        WHERE tenant_id=$1 AND instance_id=$2 AND revision=$4 RETURNING *
+      `, [input.tenantId, input.instanceId, input.status, input.expectedRevision]);
+      if (!result.rows[0]) throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_VERSION_CONFLICT');
+      return rowToInstance(result.rows[0]);
+    });
+  }
+
+  async transitionInstance(input: TransitionEnvironmentInstanceInput): Promise<EnvironmentInstance> {
+    return this.transition(input);
   }
 
   async getTemplate(templateId: string): Promise<EnvironmentTemplate | null> {
@@ -245,6 +465,58 @@ export class PgEnvironmentStore {
       if (!result.rows[0]) throw new EnvironmentInvariantError('ENVIRONMENT_TEMPLATE_VERSION_CONFLICT');
       return rowToTemplate(result.rows[0]);
     });
+  }
+
+  private async insertNewInstance(
+    client: PoolClient,
+    input: {
+      instanceId: string;
+      tenantId: string;
+      providerId: string;
+      templateId: string;
+      templateVersionId: string;
+      handId: string;
+      leaseExpiresAt: string;
+      recipeDigest?: string;
+    },
+    status: EnvironmentInstanceStatus,
+    duplicateCode: 'ENVIRONMENT_INSTANCE_ALREADY_EXISTS',
+  ): Promise<EnvironmentInstance> {
+    if (!Object.prototype.hasOwnProperty.call(INSTANCE_TRANSITIONS, status)) {
+      throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_INVALID');
+    }
+    const providerResult = await client.query(
+      `SELECT status FROM ${this.providersTable} WHERE provider_id = $1 FOR SHARE`,
+      [input.providerId],
+    );
+    if (!providerResult.rows[0] || providerResult.rows[0].status !== 'enabled') {
+      throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_PROVIDER_UNAVAILABLE');
+    }
+    const versionResult = await client.query(`
+      SELECT v.digest
+      FROM ${this.versionsTable} v
+      INNER JOIN ${this.templatesTable} t ON t.template_id=v.template_id
+      WHERE v.version_id=$1 AND v.template_id=$2 AND t.status='published'
+      FOR SHARE
+    `, [input.templateVersionId, input.templateId]);
+    if (!versionResult.rows[0]) {
+      throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_TEMPLATE_VERSION_INVALID');
+    }
+    const recipeDigest = String(versionResult.rows[0].digest);
+    if (input.recipeDigest !== undefined && input.recipeDigest !== recipeDigest) {
+      throw new EnvironmentInvariantError('ENVIRONMENT_INSTANCE_RECIPE_DIGEST_MISMATCH');
+    }
+    const result = await client.query(`
+      INSERT INTO ${this.instancesTable} (
+        instance_id,tenant_id,provider_id,template_id,template_version_id,hand_id,
+        status,lease_expires_at,revision,recipe_digest
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,$9)
+      ON CONFLICT DO NOTHING
+      RETURNING *
+    `, [input.instanceId, input.tenantId, input.providerId, input.templateId, input.templateVersionId,
+      input.handId, status, input.leaseExpiresAt, recipeDigest]);
+    if (!result.rows[0]) throw new EnvironmentInvariantError(duplicateCode);
+    return rowToInstance(result.rows[0]);
   }
 
   private async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {

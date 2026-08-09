@@ -826,7 +826,42 @@ export class RawAgentLoop implements AgentLoop {
     return this.restrictDeferredMcpDescriptors(descriptorsByName, loadedToolNames);
   }
 
+  private withDurableCancellation(context: RunContext): RunContext {
+    if (!this.runStore) return context;
+    const durableCancellation = new AbortController();
+    const watchedContext = {
+      ...context,
+      signal: context.signal
+        ? AbortSignal.any([context.signal, durableCancellation.signal])
+        : durableCancellation.signal,
+    };
+    let checking = false;
+    let timer: NodeJS.Timeout | undefined;
+    const checkDurableCancellation = async () => {
+      if (checking || durableCancellation.signal.aborted) return;
+      checking = true;
+      try {
+        const run = await this.runStore!.get(context.runId);
+        if (run?.status === 'cancelled') {
+          durableCancellation.abort(new Error(run.statusReason ?? 'run cancelled'));
+        }
+        if (!run || ['completed', 'failed', 'cancelled', 'orphaned'].includes(run.status)) {
+          if (timer) clearInterval(timer);
+        }
+      } catch {
+        // Transient control-plane reads do not abort a healthy run; the next poll retries.
+      } finally {
+        checking = false;
+      }
+    };
+    timer = setInterval(() => void checkDurableCancellation(), 500);
+    timer.unref?.();
+    void checkDurableCancellation();
+    return watchedContext;
+  }
+
   async *run(input: RunInput, context: RunContext): AsyncIterable<OutboundEvent> {
+    context = this.withDurableCancellation(context);
     const workspace = this.workspaceProvider.resolve(context.channelContext, {
       cwd: context.cwd,
       sessionId: context.sessionId,
@@ -2545,6 +2580,7 @@ export class RawAgentLoop implements AgentLoop {
   }
 
   async *resumeApproval(input: ResumeApprovalInput, context: RunContext): AsyncIterable<OutboundEvent> {
+    context = this.withDurableCancellation(context);
     const approval = await this.approvalStore.get(input.approvalId);
     if (!approval) {
       yield { type: 'error', error: `approval not found: ${input.approvalId}` };
@@ -2671,6 +2707,7 @@ export class RawAgentLoop implements AgentLoop {
   }
 
   async *resumeInteraction(input: ResumeInteractionInput, context: RunContext): AsyncIterable<OutboundEvent> {
+    context = this.withDurableCancellation(context);
     const priorEvents = await this.eventStore.list(context.sessionId, { replayMode: 'bounded' });
     const request = [...priorEvents].reverse().find((event): event is Extract<PlatformEvent, { type: 'interaction_requested' }> => (
       event.type === 'interaction_requested'

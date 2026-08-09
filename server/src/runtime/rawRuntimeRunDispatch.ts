@@ -17,6 +17,7 @@ import type { BillingService } from '../data/billing/service.js';
 import type { RunPreflightService } from './runPreflight.js';
 import type { PgRunResolutionSnapshotStore } from './runResolutionSnapshotStore.js';
 import type { TenantStore } from '../data/tenants/store.js';
+import type { PgEnvironmentStore } from '../data/environments/index.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { resolveAzerothInjection } from '../integrations/azeroth/tokens.js';
@@ -334,6 +335,13 @@ export interface RawRuntimeRunDispatchConfig {
   /** 公司级专职 Agent store。orgAgentId 会话解析限定提示语 + skill 白名单用；未配置时 orgAgentId 会话 fail-closed。 */
   orgAgentStore?: OrgAgentStore;
   tenantStore?: TenantStore;
+  environmentStore?: PgEnvironmentStore;
+  authorizeEnvironmentTemplate?: (input: {
+    tenantId: string;
+    userId: string;
+    agentId?: string;
+    templateId: string;
+  }) => Promise<boolean>;
   resolveUserRole?: (identity: { userId?: string; username?: string }) => 'admin' | 'user' | undefined;
   /**
    * 解析账户级「全部授权」偏好。所有入口（Web、钉钉、cron、scheduler wake、
@@ -802,6 +810,10 @@ export async function ensureRuntimeHandRegistered(params: {
   serverRemoteRecipe?: Partial<WorkspaceRecipe>;
   tenantRemoteHands?: TenantRemoteHandDispatchConfig[];
   tenantRemoteHandResolver?: TenantRemoteHandAuthTokenResolver;
+  environmentStore?: PgEnvironmentStore;
+  environmentTemplateVersionId?: string;
+  authorizeEnvironmentTemplate?: RawRuntimeRunDispatchConfig['authorizeEnvironmentTemplate'];
+  agentId?: string;
   userId?: string;
   username?: string;
   /**
@@ -829,14 +841,59 @@ export async function ensureRuntimeHandRegistered(params: {
     transportRegistry: params.executionTransportRegistry,
     eventStore: params.eventStore,
   });
-  const recipe = buildWorkspaceRecipe(
+  const defaultHandId = `${params.sessionId}:${params.executionTarget}`;
+  const currentEnvironmentInstance = params.environmentStore && params.userTenantId
+    ? await params.environmentStore.getInstance(params.userTenantId, defaultHandId)
+    : null;
+  if (currentEnvironmentInstance && params.environmentTemplateVersionId
+    && params.environmentTemplateVersionId !== currentEnvironmentInstance.templateVersionId) {
+    throw new Error('ENVIRONMENT_INSTANCE_TEMPLATE_VERSION_IMMUTABLE');
+  }
+  const effectiveTemplateVersionId = currentEnvironmentInstance?.templateVersionId
+    ?? params.environmentTemplateVersionId;
+  const baseRecipe = buildWorkspaceRecipe(
     params.workspaceId,
     params.executionTarget === 'server-remote' ? params.serverRemoteRecipe : undefined,
     params.sessionId,
     params.workspaceMountSubPath,
   );
-  const recipeDigest = createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
-  const defaultHandId = `${params.sessionId}:${params.executionTarget}`;
+  const environmentVersion = params.environmentStore && effectiveTemplateVersionId
+    ? await params.environmentStore.getTemplateVersion(effectiveTemplateVersionId)
+    : undefined;
+  if (effectiveTemplateVersionId && !environmentVersion) {
+    throw new Error('ENVIRONMENT_INSTANCE_TEMPLATE_VERSION_INVALID');
+  }
+  if (environmentVersion) {
+    const [provider, template] = await Promise.all([
+      params.environmentStore!.getProvider(params.executionTarget),
+      params.environmentStore!.getTemplate(environmentVersion.templateId),
+    ]);
+    if (!provider || provider.status !== 'enabled') throw new Error('ENVIRONMENT_PROVIDER_UNAVAILABLE');
+    if (!template || template.status !== 'published') throw new Error('ENVIRONMENT_TEMPLATE_UNAVAILABLE');
+    if (!params.userTenantId || !params.userId || !params.authorizeEnvironmentTemplate
+      || !await params.authorizeEnvironmentTemplate({
+        tenantId: params.userTenantId,
+        userId: params.userId,
+        ...(params.agentId ? { agentId: params.agentId } : {}),
+        templateId: environmentVersion.templateId,
+      })) {
+      throw new Error('ENVIRONMENT_TEMPLATE_ASSIGNMENT_REQUIRED');
+    }
+  }
+  const recipe: WorkspaceRecipe = environmentVersion
+    ? {
+        ...baseRecipe,
+        packages: [...environmentVersion.recipe.packages],
+        envKeys: [...environmentVersion.recipe.envKeys],
+        setupCommands: [
+          ...(baseRecipe.setupCommands ?? []),
+          ...environmentVersion.recipe.setupCommands,
+        ],
+        resources: { ...environmentVersion.recipe.resources },
+      }
+    : baseRecipe;
+  const recipeDigest = environmentVersion?.digest
+    ?? createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
   let defaultProvisionFailure: string | undefined;
   if (transport && typeof (transport as { provision?: unknown }).provision === 'function') {
     const result = await (transport as unknown as { provision(recipe: { workspaceId: string }): Promise<{ status: 'ok' | 'error'; error?: string; metadata?: Record<string, unknown> }> }).provision(recipe);
@@ -870,6 +927,7 @@ export async function ensureRuntimeHandRegistered(params: {
     capabilities,
     recipe,
     providerId: params.executionTarget,
+    ...(environmentVersion ? { templateVersionId: environmentVersion.versionId } : {}),
     ...(params.runId ? { runId: params.runId } : {}),
     recipeDigest,
     // 2026-08-03 P1：per-session hand 记录挂租约。register 是 upsert，活跃
@@ -879,6 +937,42 @@ export async function ensureRuntimeHandRegistered(params: {
       : {}),
     metadata: { registeredBy: 'rawRuntimeRunDispatch' },
   });
+  if (params.environmentStore && environmentVersion && params.userTenantId) {
+    const version = environmentVersion;
+    const leaseExpiresAt = new Date(Date.now() + SERVER_REMOTE_HAND_LEASE_MS).toISOString();
+    const current = currentEnvironmentInstance;
+    if (current) {
+      await params.environmentStore.upsert({
+        tenantId: params.userTenantId,
+        instanceId: defaultHandId,
+        providerId: params.executionTarget,
+        templateId: version.templateId,
+        templateVersionId: version.versionId,
+        handId: defaultHandId,
+        status: defaultProvisionFailure ? 'unhealthy' : 'ready',
+        leaseExpiresAt,
+        recipeDigest,
+        expectedRevision: current.revision,
+      });
+    } else {
+      const created = await params.environmentStore.create({
+        tenantId: params.userTenantId,
+        instanceId: defaultHandId,
+        providerId: params.executionTarget,
+        templateId: version.templateId,
+        templateVersionId: version.versionId,
+        handId: defaultHandId,
+        leaseExpiresAt,
+        recipeDigest,
+      });
+      await params.environmentStore.transition({
+        tenantId: params.userTenantId,
+        instanceId: created.instanceId,
+        status: defaultProvisionFailure ? 'unhealthy' : 'ready',
+        expectedRevision: created.revision,
+      });
+    }
+  }
   if (defaultProvisionFailure) {
     throw new Error(`HAND_PROVISION_FAILED:${defaultProvisionFailure}`);
   }
@@ -1332,6 +1426,7 @@ export async function collectRuntimeTooling(
   requiredSkillIds: readonly string[] = [],
   subagentDeps?: SubagentToolingDeps,
   preferredSkillIds: readonly string[] = [],
+  mcpWarmupContext?: { runId: string; sessionId: string; userId: string },
 ): Promise<{
   providers: ToolProvider[];
 }> {
@@ -1408,7 +1503,10 @@ export async function collectRuntimeTooling(
   if (config.mcpProxy || config.mcpClientManager) {
     const mcpProvider = new McpClientToolProvider(config.mcpProxy ?? config.mcpClientManager!);
     try {
-      await mcpProvider.warmup(username);
+      await mcpProvider.warmup({
+        username,
+        ...(mcpWarmupContext ?? {}),
+      });
     } catch {
       // MCP 预热失败只影响本轮 MCP tool schema，不阻断主路径。
     }
@@ -2236,6 +2334,12 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       serverRemoteRecipe: config.serverRemote?.recipe,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
+      environmentStore: config.environmentStore,
+      authorizeEnvironmentTemplate: config.authorizeEnvironmentTemplate,
+      agentId: sessionRecord.orgAgentId,
+      environmentTemplateVersionId: typeof message.metadata?.environmentTemplateVersionId === 'string'
+        ? message.metadata.environmentTemplateVersionId
+        : undefined,
       userId: identitySource?.id ?? existingSession?.userId,
       username: identitySource?.username ?? existingSession?.username,
       userTenantId: config.resolveUserTenantId?.({
@@ -2270,6 +2374,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       orgAgent?.allowedSkills ?? [],
       { executionTransportRegistry, tenantHandResolver },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
+      sessionRecord.userId ? { runId, sessionId, userId: sessionRecord.userId } : undefined,
     );
     const instructionSections = options.skipSystemPrompt
       ? [{ key: 'minimal', name: '最小系统提示语', content: config.getSystemPrompt?.('main.minimal') ?? MINIMAL_SYSTEM_PROMPT }]
@@ -2811,6 +2916,12 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       serverRemoteRecipe: config.serverRemote?.recipe,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
+      environmentStore: config.environmentStore,
+      authorizeEnvironmentTemplate: config.authorizeEnvironmentTemplate,
+      agentId: sessionRecord.orgAgentId,
+      environmentTemplateVersionId: (request as unknown as {
+        metadata?: { environmentTemplateVersionId?: string };
+      }).metadata?.environmentTemplateVersionId,
       userId: identitySource?.id ?? existingSession?.userId,
       username: identitySource?.username ?? existingSession?.username,
       userTenantId: config.resolveUserTenantId?.({
@@ -2849,6 +2960,9 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       orgAgent?.allowedSkills ?? [],
       { executionTransportRegistry, tenantHandResolver },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
+      sessionRecord.userId
+        ? { runId: resumeRunId, sessionId: request.sessionId, userId: sessionRecord.userId }
+        : undefined,
     );
     // 记忆写入策略：resume 只读会话 pin（v2 pin 仅真实用户新会话写入）。
     const memoryPolicyVersion: MemoryWritePolicyVersion = (resumeToolProfile || orgAgentId)
@@ -3221,6 +3335,12 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       serverRemoteRecipe: config.serverRemote?.recipe,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
+      environmentStore: config.environmentStore,
+      authorizeEnvironmentTemplate: config.authorizeEnvironmentTemplate,
+      agentId: sessionRecord.orgAgentId,
+      environmentTemplateVersionId: (request as unknown as {
+        metadata?: { environmentTemplateVersionId?: string };
+      }).metadata?.environmentTemplateVersionId,
       userId: identitySource?.id ?? existingSession?.userId,
       username: identitySource?.username ?? existingSession?.username,
       userTenantId: config.resolveUserTenantId?.({
@@ -3259,6 +3379,9 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       orgAgent?.allowedSkills ?? [],
       { executionTransportRegistry, tenantHandResolver },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
+      sessionRecord.userId
+        ? { runId: resumeRunId, sessionId: request.sessionId, userId: sessionRecord.userId }
+        : undefined,
     );
     // 记忆写入策略：resume 只读会话 pin（v2 pin 仅真实用户新会话写入）。
     const memoryPolicyVersion: MemoryWritePolicyVersion = (resumeToolProfile || orgAgentId)

@@ -21,10 +21,21 @@ function templateRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function instanceRow(overrides: Record<string, unknown> = {}) {
+  return {
+    instance_id: 'instance-1', tenant_id: 'acme', provider_id: 'acs', template_id: 'node-default',
+    template_version_id: 'version-1', hand_id: 'hand-1', status: 'provisioning',
+    lease_expires_at: '2026-08-08T01:00:00.000Z', revision: '1', recipe_digest: 'digest-1',
+    created_at: NOW, updated_at: NOW,
+    ...overrides,
+  };
+}
+
 function buildPool() {
   const providers = new Map<string, Record<string, unknown>>();
   const templates = new Map<string, Record<string, unknown>>();
   const versions: Record<string, unknown>[] = [];
+  const instances = new Map<string, Record<string, unknown>>();
   const queries: string[] = [];
   const query = async (sql: string, params: unknown[] = []) => {
     queries.push(sql);
@@ -90,10 +101,49 @@ function buildPool() {
       templates.set(String(params[0]), row);
       return { rows: [row], rowCount: 1 };
     }
+    if (sql.includes('FROM test_environment_template_versions v')) {
+      const version = versions.find(item => item.version_id === params[0] && item.template_id === params[1]);
+      const template = templates.get(String(params[1]));
+      const row = version && template?.status === 'published' ? { digest: version.digest } : undefined;
+      return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+    }
+    if (sql.includes('INSERT INTO test_environment_instances')) {
+      const key = `${String(params[1])}\u0000${String(params[0])}`;
+      const duplicate = [...instances.values()].some(row => row.instance_id === params[0] || row.hand_id === params[5]);
+      if (duplicate) return { rows: [], rowCount: 0 };
+      const row = instanceRow({
+        instance_id: params[0], tenant_id: params[1], provider_id: params[2], template_id: params[3],
+        template_version_id: params[4], hand_id: params[5], status: params[6], lease_expires_at: params[7],
+        recipe_digest: params[8],
+      });
+      instances.set(key, row);
+      return { rows: [row], rowCount: 1 };
+    }
+    if (sql.includes('FROM test_environment_instances') && sql.includes('tenant_id=$1 AND instance_id=$2')) {
+      const row = instances.get(`${String(params[0])}\u0000${String(params[1])}`);
+      return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+    }
+    if (sql.includes('FROM test_environment_instances') && sql.includes('WHERE tenant_id=$1')) {
+      const rows = [...instances.values()].filter(row => row.tenant_id === params[0]);
+      return { rows, rowCount: rows.length };
+    }
+    if (sql.includes('UPDATE test_environment_instances')) {
+      const key = `${String(params[0])}\u0000${String(params[1])}`;
+      const current = instances.get(key);
+      const expected = sql.includes('SET status=$3,lease_expires_at=$4') ? params[4] : params[3];
+      if (!current || Number(current.revision) !== Number(expected)) return { rows: [], rowCount: 0 };
+      const row = sql.includes('SET status=$3,lease_expires_at=$4')
+        ? { ...current, status: params[2], lease_expires_at: params[3], revision: String(Number(current.revision) + 1) }
+        : sql.includes('SET lease_expires_at=$3')
+          ? { ...current, lease_expires_at: params[2], revision: String(Number(current.revision) + 1) }
+          : { ...current, status: params[2], revision: String(Number(current.revision) + 1) };
+      instances.set(key, row);
+      return { rows: [row], rowCount: 1 };
+    }
     return { rows: [], rowCount: 0 };
   };
   const pool = { query, connect: async () => ({ query, release: () => undefined }) };
-  return { pool: pool as never, providers, templates, versions, queries };
+  return { pool: pool as never, providers, templates, versions, instances, queries };
 }
 
 const recipe = {
@@ -114,7 +164,7 @@ describe('Environment Provider/Template/Instance 领域', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_environment_template_versions');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_resource_references');
     expect(sql).toContain('infrastructure_credential_id TEXT');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(12);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(17);
   });
 
   it('Provider 新建与更新必须 expectedRevision，保存 credentialId 而非 Secret', async () => {
@@ -178,5 +228,97 @@ describe('Environment Provider/Template/Instance 领域', () => {
     expect(retired.status).toBe('retired');
     await expect(store.publishTemplate({ templateId: 'node-default', name: 'Node 默认环境', recipe, publishedBy: 'admin' }))
       .rejects.toMatchObject({ code: 'ENVIRONMENT_TEMPLATE_RETIRED' });
+  });
+
+  it('Instance create 固化版本 digest，只持久化白名单字段', async () => {
+    const { pool, providers, templates, versions } = buildPool();
+    providers.set('acs', providerRow());
+    templates.set('node-default', templateRow({ status: 'published', current_version_id: 'version-1' }));
+    versions.push({ version_id: 'version-1', template_id: 'node-default', digest: 'digest-1' });
+    const store = new PgEnvironmentStore({ pool, tablePrefix: 'test' });
+    const created = await store.create({
+      instanceId: 'instance-1', tenantId: 'acme', providerId: 'acs', templateId: 'node-default',
+      templateVersionId: 'version-1', handId: 'hand-1', leaseExpiresAt: '2026-08-08T01:00:00.000Z',
+      recipeDigest: 'digest-1',
+      ...({ secret: 'must-not-persist' } as Record<string, string>),
+    });
+    expect(created).toMatchObject({
+      instanceId: 'instance-1', tenantId: 'acme', providerId: 'acs', templateId: 'node-default',
+      templateVersionId: 'version-1', handId: 'hand-1', status: 'provisioning', revision: 1,
+      leaseExpiresAt: '2026-08-08T01:00:00.000Z', recipeDigest: 'digest-1', createdAt: NOW, updatedAt: NOW,
+    });
+    expect(Object.keys(created)).toEqual([
+      'instanceId', 'tenantId', 'providerId', 'templateId', 'templateVersionId', 'handId', 'status',
+      'leaseExpiresAt', 'revision', 'recipeDigest', 'createdAt', 'updatedAt',
+    ]);
+    expect(JSON.stringify(created)).not.toContain('must-not-persist');
+  });
+
+  it.each(['disabled', 'draining'] as const)('Provider %s 时 create/upsert 均禁止新 Instance', async status => {
+    const { pool, providers, templates, versions } = buildPool();
+    providers.set('acs', providerRow({ status }));
+    templates.set('node-default', templateRow({ status: 'published' }));
+    versions.push({ version_id: 'version-1', template_id: 'node-default', digest: 'digest-1' });
+    const store = new PgEnvironmentStore({ pool, tablePrefix: 'test' });
+    const base = {
+      tenantId: 'acme', providerId: 'acs', templateId: 'node-default', templateVersionId: 'version-1',
+      leaseExpiresAt: '2026-08-08T01:00:00.000Z', recipeDigest: 'digest-1',
+    };
+    await expect(store.create({ ...base, instanceId: 'instance-1', handId: 'hand-1' }))
+      .rejects.toMatchObject({ code: 'ENVIRONMENT_INSTANCE_PROVIDER_UNAVAILABLE' });
+    await expect(store.upsert({ ...base, instanceId: 'instance-2', handId: 'hand-2', status: 'provisioning' }))
+      .rejects.toMatchObject({ code: 'ENVIRONMENT_INSTANCE_PROVIDER_UNAVAILABLE' });
+  });
+
+  it('Instance template/version/digest 必须一致，tenant 读取边界 fail closed', async () => {
+    const { pool, providers, templates, versions } = buildPool();
+    providers.set('acs', providerRow());
+    templates.set('node-default', templateRow({ status: 'published' }));
+    versions.push({ version_id: 'version-1', template_id: 'node-default', digest: 'digest-1' });
+    const store = new PgEnvironmentStore({ pool, tablePrefix: 'test' });
+    const base = {
+      instanceId: 'instance-1', tenantId: 'acme', providerId: 'acs', templateVersionId: 'version-1',
+      handId: 'hand-1', leaseExpiresAt: '2026-08-08T01:00:00.000Z',
+    };
+    await expect(store.create({ ...base, templateId: 'other-template' }))
+      .rejects.toMatchObject({ code: 'ENVIRONMENT_INSTANCE_TEMPLATE_VERSION_INVALID' });
+    await expect(store.create({ ...base, templateId: 'node-default', recipeDigest: 'wrong-digest' }))
+      .rejects.toMatchObject({ code: 'ENVIRONMENT_INSTANCE_RECIPE_DIGEST_MISMATCH' });
+    await store.create({ ...base, templateId: 'node-default', recipeDigest: 'digest-1' });
+    expect(await store.get('other-tenant', 'instance-1')).toBeNull();
+    expect(await store.listForTenant('other-tenant')).toEqual([]);
+    expect(await store.listForTenant('acme')).toHaveLength(1);
+    await expect(store.transition({ tenantId: 'other-tenant', instanceId: 'instance-1', status: 'ready', expectedRevision: 1 }))
+      .rejects.toMatchObject({ code: 'ENVIRONMENT_INSTANCE_NOT_FOUND' });
+  });
+
+  it('Instance upsert/renewLease/transition 使用乐观 revision 并执行有向生命周期', async () => {
+    const { pool, providers, templates, versions } = buildPool();
+    providers.set('acs', providerRow());
+    templates.set('node-default', templateRow({ status: 'published' }));
+    versions.push({ version_id: 'version-1', template_id: 'node-default', digest: 'digest-1' });
+    const store = new PgEnvironmentStore({ pool, tablePrefix: 'test' });
+    const base = {
+      instanceId: 'instance-1', tenantId: 'acme', providerId: 'acs', templateId: 'node-default',
+      templateVersionId: 'version-1', handId: 'hand-1', leaseExpiresAt: '2026-08-08T01:00:00.000Z',
+      recipeDigest: 'digest-1',
+    };
+    await store.create(base);
+    const ready = await store.upsert({ ...base, status: 'ready', expectedRevision: 1 });
+    expect(ready).toMatchObject({ status: 'ready', revision: 2 });
+    await expect(store.renewLease({
+      tenantId: 'acme', instanceId: 'instance-1', leaseExpiresAt: '2026-08-08T02:00:00.000Z', expectedRevision: 1,
+    })).rejects.toMatchObject({ code: 'ENVIRONMENT_INSTANCE_VERSION_CONFLICT' });
+    const renewed = await store.renewLease({
+      tenantId: 'acme', instanceId: 'instance-1', leaseExpiresAt: '2026-08-08T02:00:00.000Z', expectedRevision: 2,
+    });
+    expect(renewed).toMatchObject({ leaseExpiresAt: '2026-08-08T02:00:00.000Z', revision: 3 });
+    await expect(store.transition({ tenantId: 'acme', instanceId: 'instance-1', status: 'provisioning', expectedRevision: 3 }))
+      .rejects.toMatchObject({ code: 'ENVIRONMENT_INSTANCE_TRANSITION_INVALID' });
+    const draining = await store.transition('acme', 'instance-1', 'draining', 3);
+    const retired = await store.transition('acme', 'instance-1', 'retired', draining.revision);
+    expect(retired).toMatchObject({ status: 'retired', revision: 5 });
+    await expect(store.renewLease('acme', 'instance-1', '2026-08-08T03:00:00.000Z', retired.revision))
+      .rejects.toMatchObject({ code: 'ENVIRONMENT_INSTANCE_TRANSITION_INVALID' });
   });
 });

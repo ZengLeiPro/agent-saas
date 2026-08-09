@@ -34,6 +34,10 @@ export interface GovernanceMigrationDomainState {
   matchedCount: number;
   differenceCount: number;
   unresolvedBlockingCount: number;
+  lastBatchTotal: number;
+  lastBatchMatched: number;
+  lastBatchDifferences: number;
+  lastBatchAt?: string;
   revision: number;
   lastComparedAt?: string;
   updatedAt: string;

@@ -26,6 +26,10 @@ export class AssignmentPolicy implements PolicyProvider {
     if (!subjectId) return this.deny('ASSIGNMENT_SUBJECT_REQUIRED');
     const set = await this.store.getAssignmentSet(tenantId, required.resourceType, required.resourceId);
     if (!set) return this.condition('ASSIGNMENT_REQUIRED', 'request_assignment');
+    if (set.assignments.some(item => item.assigneeType === 'directory_group')
+      && required.directoryGroupIds === undefined) {
+      return this.deny('ASSIGNMENT_GROUP_SUBJECT_UNRESOLVED', set.version);
+    }
     const resolution = resolveAssignment(set.assignments, {
       userId: subjectId,
       directoryGroupIds: required.directoryGroupIds,

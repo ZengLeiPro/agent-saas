@@ -161,23 +161,24 @@ describe('MCP routes coverage', () => {
     expect(start.status).toBe(503);
   });
 
-  it('POST /diagnose：成功返回 tools；ensureUser 抛错时降级为 200 ok:false', async () => {
+  it('POST /diagnose：无 Governed Run 上下文时 fail closed，不得直连 MCP', async () => {
     const okRig = await rig({ manager: fakeMcpManager([
       { serverName: 's', toolName: 't', description: 'd' } as McpToolDescriptor,
     ]) });
     const okRes = await okRig.request('/api/mcp/diagnose', { method: 'POST' });
-    expect(okRes.status).toBe(200);
-    const okBody = await okRes.json() as { ok: boolean; toolCount: number };
-    expect(okBody.ok).toBe(true);
-    expect(okBody.toolCount).toBe(1);
+    expect(okRes.status).toBe(409);
+    const okBody = await okRes.json() as { ok: boolean; error: string; toolCount: number };
+    expect(okBody).toMatchObject({
+      ok: false, error: 'MCP_DIAGNOSE_REQUIRES_GOVERNED_RUN', toolCount: 0,
+    });
 
     const failRig = await rig({ manager: fakeMcpManager([], true) });
     const failRes = await failRig.request('/api/mcp/diagnose', { method: 'POST' });
-    // 失败也返回 200（前端据 ok 字段判断）
-    expect(failRes.status).toBe(200);
+    expect(failRes.status).toBe(409);
     const failBody = await failRes.json() as { ok: boolean; error: string };
-    expect(failBody.ok).toBe(false);
-    expect(failBody.error).toContain('boom');
+    expect(failBody).toMatchObject({
+      ok: false, error: 'MCP_DIAGNOSE_REQUIRES_GOVERNED_RUN',
+    });
   });
 
   it('GET /me 暴露最近真实连接状态；force diagnose 会重新建连并按 server 返回错误', async () => {
@@ -218,7 +219,7 @@ describe('MCP routes coverage', () => {
     expect(invalidateUser).toHaveBeenCalledWith('alice');
     expect(diagnosedBody).toMatchObject({
       ok: false,
-      error: 'OAuth connection is not authorized for this user',
+      error: 'MCP_DIAGNOSE_REQUIRES_GOVERNED_RUN',
       connections: [{ serverName: 'srv1', status: 'error' }],
     });
   });

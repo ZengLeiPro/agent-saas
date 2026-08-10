@@ -413,10 +413,17 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     skipProvisionOnSameRecipe: readBoolEnv('ACS_SKIP_PROVISION_ON_SAME_RECIPE', true),
     lifecycleEnabled: readBoolEnv('ACS_SANDBOX_LIFECYCLE_ENABLED', true),
     sandboxCleanupIntervalMs: readIntEnv('ACS_SANDBOX_CLEANUP_INTERVAL_MS', 60_000, { min: 10_000, max: 24 * 60 * 60_000 }),
-    // 2026-07-31 曾磊拍板：idle pause 默认 5min -> 4h。ACS pause 后唤醒实测走
-    // 删除重建（35-110s，resume 快路径 7 天 0 命中），而 0.25C/0.5G Running 成本
-    // 仅约 ¥0.03/h；工作时段内保持 Running 直接消灭绝大多数冷启动等待。
-    sandboxIdlePauseMs: readIntEnv('ACS_SANDBOX_IDLE_PAUSE_MS', 4 * 60 * 60_000, { min: 0, max: 7 * 24 * 60 * 60_000 }),
+    // 2026-08-10 曾磊拍板：idle pause 4h -> 5min（推翻 07-31 的 5min -> 4h）。
+    //
+    // 07-31 改成 4h 的依据是「ACS pause 后唤醒走删除重建（35-110s），resume
+    // 快路径 7 天 0 命中」——该观测在今天已不成立。08-10 受控实测：pause 持续
+    // 5min 与 15min 后 resume 均为 **0 秒**，且 pod uid 前后完全一致，说明是
+    // 原 pod 恢复、走真正的快路径，而非删除重建。
+    //
+    // 配合 per-session Sandbox（A 方案）：pod 数从「每 workspace 1 个」变成
+    // 「每顶层会话组 1 个」，idle 窗口直接决定总 pod·h——4h 会让每个短会话都
+    // 拖 4 小时空转。既然唤醒零代价，窗口就该收紧。
+    sandboxIdlePauseMs: readIntEnv('ACS_SANDBOX_IDLE_PAUSE_MS', 5 * 60_000, { min: 0, max: 7 * 24 * 60 * 60_000 }),
     sandboxTtlMs: readIntEnv('ACS_SANDBOX_TTL_MS', 7 * 24 * 60 * 60_000, { min: 0, max: 30 * 24 * 60 * 60_000 }),
     sandboxCiTtlMs: readIntEnv('ACS_SANDBOX_CI_TTL_MS', 6 * 60 * 60_000, { min: 0, max: 30 * 24 * 60 * 60_000 }),
     sandboxOrphanGraceMs: readIntEnv('ACS_SANDBOX_ORPHAN_GRACE_MS', 30 * 60_000, { min: 0, max: 7 * 24 * 60 * 60_000 }),

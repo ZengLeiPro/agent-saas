@@ -38,7 +38,12 @@ export interface WorkspaceRecipe {
   repo?: { url: string; ref?: string; remote?: string };
   files?: Array<{ artifactId: string; path: string; url?: string; signedUrl?: string }>;
   setupCommands?: string[];
-  resources?: { timeoutMs?: number };
+  /**
+   * `cpu` / `memoryMb` 在 server 侧 WorkspaceRecipe 里早已存在但从未被 orchestrator
+   * 消费；2026-08-10 起接到真实 pod 规格上，用于 per-tenant/workspace 规格可配。
+   * 它们参与 provision 指纹，改规格会触发 pod 重建。
+   */
+  resources?: { timeoutMs?: number; cpu?: string; memoryMb?: number };
 }
 
 export interface ProvisioningLogEntry {
@@ -203,8 +208,17 @@ export function parseProvisionRecipe(body: unknown): { ok: true; value: Workspac
     if (setupCommands.length) recipe.setupCommands = setupCommands;
   }
   const resources = recipeRaw.resources;
-  if (resources && typeof resources === 'object' && typeof (resources as { timeoutMs?: unknown }).timeoutMs === 'number') {
-    recipe.resources = { timeoutMs: (resources as { timeoutMs: number }).timeoutMs };
+  if (resources && typeof resources === 'object') {
+    const raw = resources as { timeoutMs?: unknown; cpu?: unknown; memoryMb?: unknown };
+    const parsed: NonNullable<WorkspaceRecipe['resources']> = {};
+    if (typeof raw.timeoutMs === 'number') parsed.timeoutMs = raw.timeoutMs;
+    // 规格字段做严格校验：非法值一律忽略而不是报错，避免一个手滑的配置把
+    // 整个租户的会话卡在 provision 失败上——回落全局默认始终是可用的。
+    if (typeof raw.cpu === 'string' && /^\d+(\.\d+)?m?$/.test(raw.cpu.trim())) parsed.cpu = raw.cpu.trim();
+    if (typeof raw.memoryMb === 'number' && Number.isFinite(raw.memoryMb) && raw.memoryMb > 0) {
+      parsed.memoryMb = Math.floor(raw.memoryMb);
+    }
+    if (Object.keys(parsed).length) recipe.resources = parsed;
   }
   return { ok: true, value: recipe };
 }

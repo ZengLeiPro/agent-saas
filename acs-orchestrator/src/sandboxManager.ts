@@ -58,12 +58,26 @@ export interface ManagedSandboxInventory extends ManagedSandbox {
   effectiveTtlMs?: number;
 }
 
+/**
+ * 单个 Sandbox 的规格覆盖（2026-08-10，A 方案批次 3）。
+ * 未指定的字段回落到全局 env 默认值，因此可以只覆盖其中一项。
+ * 该对象参与 provision 指纹，改规格会触发 pod 重建——正是期望行为。
+ */
+export interface SandboxResourceOverride {
+  cpuRequest?: string;
+  memoryRequest?: string;
+  cpuLimit?: string;
+  memoryLimit?: string;
+}
+
 export interface SandboxRef {
   name: string;
   workspaceId: string;
   sessionId: string;
   sandboxScopeId: string;
   mountSubPath: string;
+  /** per-tenant/workspace 规格覆盖；缺省时用全局默认。 */
+  resources?: SandboxResourceOverride;
 }
 
 export interface SandboxCleanupReport {
@@ -173,7 +187,13 @@ export class SandboxManager {
     this.snatManager = new SnatManager(config, kubectl, logger, kubeApi);
   }
 
-  ref(input: { workspaceId: string; sessionId: string; sandboxScopeId?: string; mountSubPath?: string }): SandboxRef {
+  ref(input: {
+    workspaceId: string;
+    sessionId: string;
+    sandboxScopeId?: string;
+    mountSubPath?: string;
+    resources?: SandboxResourceOverride;
+  }): SandboxRef {
     const workspaceId = validateWorkspaceId(input.workspaceId);
     const sessionId = validateSessionId(input.sessionId);
     const sandboxScopeId = validateWorkspaceId(input.sandboxScopeId ?? workspaceId);
@@ -184,11 +204,18 @@ export class SandboxManager {
       sessionId,
       sandboxScopeId,
       mountSubPath,
+      ...(input.resources && Object.keys(input.resources).length ? { resources: input.resources } : {}),
     };
   }
 
   async ensureRunning(
-    input: { workspaceId: string; sessionId: string; sandboxScopeId?: string; mountSubPath?: string },
+    input: {
+      workspaceId: string;
+      sessionId: string;
+      sandboxScopeId?: string;
+      mountSubPath?: string;
+      resources?: SandboxResourceOverride;
+    },
     options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string } = {},
   ): Promise<SandboxRef> {
     const ref = this.ref(input);
@@ -1072,6 +1099,13 @@ export class SandboxManager {
 
   private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {
     const now = new Date().toISOString();
+    // per-tenant/workspace 规格覆盖（2026-08-10，批次 3）：逐字段回落全局默认，
+    // 因此调用方可以只覆盖其中一项（如只调大内存）。ref.resources 参与 provision
+    // 指纹，改规格会触发 pod 重建——这正是期望行为。
+    const effectiveCpuRequest = ref.resources?.cpuRequest ?? this.config.cpuRequest;
+    const effectiveMemoryRequest = ref.resources?.memoryRequest ?? this.config.memoryRequest;
+    const effectiveCpuLimit = ref.resources?.cpuLimit ?? this.config.cpuLimit;
+    const effectiveMemoryLimit = ref.resources?.memoryLimit ?? this.config.memoryLimit;
     const labels = {
       'app.kubernetes.io/name': APP_LABEL,
       'app.kubernetes.io/managed-by': MANAGED_BY_LABEL,
@@ -1128,8 +1162,11 @@ export class SandboxManager {
         // `--max-old-space-size=4096`，在 2GiB 容器上直接导致 cgroup oom_kill
         // （生产实测单个 pod 累计 10 次）。留 25% 给非堆内存（V8 元数据、
         // 原生模块、子进程），Agent 显式设置仍可覆盖本默认值。
-        ...(nodeHeapLimitMb(this.config.memoryLimit)
-          ? [{ name: 'NODE_OPTIONS', value: `--max-old-space-size=${nodeHeapLimitMb(this.config.memoryLimit)}` }]
+        // 堆上限跟随**本 Sandbox 实际生效的**内存规格，而非全局默认——
+        // per-tenant 覆盖后若仍按全局值算，大规格容器会白白浪费内存，
+        // 小规格容器则会重新引发 oom_kill。
+        ...(nodeHeapLimitMb(effectiveMemoryLimit)
+          ? [{ name: 'NODE_OPTIONS', value: `--max-old-space-size=${nodeHeapLimitMb(effectiveMemoryLimit)}` }]
           : []),
         // 出口代理与国内镜像源（2026-07-25）：由 server「网络出口」配置页下发。
         // 代理变量大小写各一份是刚需——curl/wget/git 与容器内 Chromium 只认小写，
@@ -1147,11 +1184,11 @@ export class SandboxManager {
       },
       resources: {
         requests: {
-          cpu: this.config.cpuRequest,
-          memory: this.config.memoryRequest,
+          cpu: effectiveCpuRequest,
+          memory: effectiveMemoryRequest,
         },
-        ...(this.config.cpuLimit || this.config.memoryLimit
-          ? { limits: { ...(this.config.cpuLimit ? { cpu: this.config.cpuLimit } : {}), ...(this.config.memoryLimit ? { memory: this.config.memoryLimit } : {}) } }
+        ...(effectiveCpuLimit || effectiveMemoryLimit
+          ? { limits: { ...(effectiveCpuLimit ? { cpu: effectiveCpuLimit } : {}), ...(effectiveMemoryLimit ? { memory: effectiveMemoryLimit } : {}) } }
           : {}),
       },
       ...(this.config.pvcName ? {

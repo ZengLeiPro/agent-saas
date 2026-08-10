@@ -225,3 +225,49 @@ function baseConfig(): AcsOrchestratorConfig {
     logLevel: 'info',
   };
 }
+
+describe('spawnRunner 命令构造（A 方案批次 3：预编译 sandboxRunner）', () => {
+  it('优先跑预编译产物，缺失时退回 tsx', async () => {
+    const ref: SandboxRef = {
+      name: 'as-active',
+      workspaceId: 'ws_kaiyan__u-1',
+      sandboxScopeId: 'ws_kaiyan__u-1__s_top',
+      sessionId: 'session-1',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    };
+    const child = fakeChild();
+    const sandboxManager = {
+      ref: () => ref,
+      ensureRunning: vi.fn(async () => ref),
+    } as unknown as SandboxManager;
+    const spawn = vi.fn(() => child);
+    const kubectl = { spawn } as unknown as Kubectl;
+    const executor = new AcsExecutor(baseConfig(), kubectl, sandboxManager, noopLogger);
+
+    const iterator = executor.executeStream({
+      toolName: 'Read',
+      input: { file_path: '/workspace/a.txt' },
+      context: {
+        invocationId: 'inv-precompiled',
+        workspace: {
+          id: ref.workspaceId,
+          sessionId: ref.sessionId,
+          sandboxScopeId: ref.sandboxScopeId,
+          mountSubPath: ref.mountSubPath,
+        },
+      },
+    }, { stream: true })[Symbol.asyncIterator]();
+    await iterator.next().catch(() => undefined);
+
+    expect(spawn).toHaveBeenCalled();
+    const firstCall = spawn.mock.calls[0] as unknown as [string[], unknown];
+    const args = firstCall[0];
+    const script = args.join(' ');
+    // 用 sh -c 做运行期存在性判断，而非把路径写死：蓝绿/回滚期间可能短暂跑到
+    // 不含预编译产物的旧镜像，此时必须能退回 tsx（宁可慢，不可不可用）。
+    expect(args).toContain('/bin/sh');
+    expect(script).toContain('dist/sandboxRunner.mjs');
+    expect(script).toContain('src/sandboxRunner.ts');
+    expect(script.indexOf('dist/sandboxRunner.mjs')).toBeLessThan(script.indexOf('node_modules/.bin/tsx'));
+  });
+});

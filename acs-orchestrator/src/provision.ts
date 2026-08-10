@@ -4,7 +4,7 @@ import type { AcsOrchestratorConfig } from './config.js';
 import type { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { Kubectl } from './kubectl.js';
 import type { ProvisioningLogEntry, SandboxRunnerFinalOutput, WorkspaceRecipe } from './protocol.js';
-import type { SandboxManager } from './sandboxManager.js';
+import type { SandboxManager, SandboxResourceOverride } from './sandboxManager.js';
 
 const SETUP_DEFAULT_TIMEOUT_MS = 60_000;
 const RUNTIME_BOOTSTRAP_TIMEOUT_MS = 360_000;
@@ -92,11 +92,13 @@ export class Provisioner {
     const activeKey = `provision:${recipe.sessionId}:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`;
     const releaseActive = this.activeRegistry?.acquire(plannedRef.name, activeKey);
     try {
+      const resourceOverride = sandboxResourceOverride(recipe, this.config);
       const ref = await this.sandboxManager.ensureRunning({
         workspaceId: recipe.workspaceId,
         sessionId: recipe.sessionId!,
         sandboxScopeId: recipe.sandboxScopeId,
         mountSubPath: recipe.mountSubPath,
+        ...(resourceOverride ? { resources: resourceOverride } : {}),
       }, {
         busySandboxNames: this.getBusySandboxNames(),
         activeKey,
@@ -367,4 +369,72 @@ function truncate(value: string, maxBytes: number): string {
   const buf = Buffer.from(value, 'utf-8');
   if (buf.length <= maxBytes) return value;
   return buf.slice(0, maxBytes).toString('utf-8') + `\n...[truncated ${buf.length - maxBytes} bytes]`;
+}
+
+/**
+ * 把 recipe 里既有但此前从未生效的 `resources.cpu` / `resources.memoryMb`
+ * 接到真实 pod 规格上（2026-08-10，A 方案批次 3：per-tenant 规格可配）。
+ *
+ * 这两个字段在 WorkspaceRecipe 里早就存在，但 orchestrator 只消费了 timeoutMs，
+ * 于是「不同租户不同规格」一直只能靠改全局 env。此处复用既有字段而非新增，
+ * 保持协议不变。
+ *
+ * request 必须同步收敛：k8s 要求 request ≤ limit，若只下调 limit 而保留全局
+ * request（如 500m/1Gi），把规格调到比全局 request 更小时 pod 会直接创建失败。
+ */
+export function sandboxResourceOverride(
+  recipe: WorkspaceRecipe,
+  config: AcsOrchestratorConfig,
+): SandboxResourceOverride | undefined {
+  const cpuLimit = typeof recipe.resources?.cpu === 'string' && recipe.resources.cpu.trim()
+    ? recipe.resources.cpu.trim()
+    : undefined;
+  const memoryMb = typeof recipe.resources?.memoryMb === 'number'
+    && Number.isFinite(recipe.resources.memoryMb)
+    && recipe.resources.memoryMb > 0
+    ? Math.floor(recipe.resources.memoryMb)
+    : undefined;
+  if (!cpuLimit && memoryMb === undefined) return undefined;
+
+  const override: SandboxResourceOverride = {};
+  if (cpuLimit) {
+    override.cpuLimit = cpuLimit;
+    const requested = parseCpuToMillis(config.cpuRequest);
+    const limit = parseCpuToMillis(cpuLimit);
+    if (requested !== undefined && limit !== undefined && requested > limit) {
+      override.cpuRequest = cpuLimit;
+    }
+  }
+  if (memoryMb !== undefined) {
+    override.memoryLimit = `${memoryMb}Mi`;
+    const requested = parseMemoryToMib(config.memoryRequest);
+    if (requested !== undefined && requested > memoryMb) {
+      override.memoryRequest = `${memoryMb}Mi`;
+    }
+  }
+  return override;
+}
+
+function parseCpuToMillis(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  const m = /^(\d+(?:\.\d+)?)(m?)$/.exec(trimmed);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return undefined;
+  return m[2] === 'm' ? n : n * 1000;
+}
+
+function parseMemoryToMib(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const m = /^(\d+(?:\.\d+)?)(Gi|Mi|G|M)?$/.exec(value.trim());
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return undefined;
+  switch (m[2]) {
+    case 'Gi': return n * 1024;
+    case 'G': return (n * 1_000_000_000) / (1024 * 1024);
+    case 'M': return (n * 1_000_000) / (1024 * 1024);
+    default: return n;
+  }
 }

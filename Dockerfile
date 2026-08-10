@@ -388,6 +388,23 @@ COPY shared ./shared
 COPY server ./server
 COPY acs-orchestrator ./acs-orchestrator
 
+# sandboxRunner 预编译（2026-08-10，A 方案批次 3）
+#
+# 每次工具调用都要在 pod 内起一次 sandboxRunner。此前走 `tsx src/sandboxRunner.ts`
+# 实时转译，pod 内实测启动到退出 **480~730ms**；预编译成单文件 ESM 后是 **68ms**，
+# 快 7~9 倍。这是全部工具调用共同的固定底噪——生产 Read/Edit/Write 的独占 P50
+# 齐聚 ~880ms，其中 400~600ms 就是它，挂载参数与 CPU 配额都治不到这一层。
+#
+# 产物必须自包含（--bundle）：pod 运行期不保证有完整 devDependencies。
+# node: 内置模块保持 external。构建失败即 fail-fast——绝不允许悄悄退回 tsx，
+# 否则会以「性能莫名回退」的形式出现，是最难定位的一类问题。
+RUN cd /app/acs-orchestrator \
+    && ./node_modules/.bin/esbuild src/sandboxRunner.ts \
+         --bundle --platform=node --format=esm --target=node20 \
+         --external:node:* \
+         --outfile=dist/sandboxRunner.mjs \
+    && test -s dist/sandboxRunner.mjs
+
 ENV NODE_ENV=production
 ENV ACS_WORKSPACE_PATH=/workspace
 ENV DOWNLOAD_DIR=/workspace/downloads

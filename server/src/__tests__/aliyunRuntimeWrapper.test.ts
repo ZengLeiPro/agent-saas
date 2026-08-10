@@ -9,7 +9,11 @@ afterEach(() => {
   while (roots.length > 0) rmSync(roots.pop()!, { recursive: true, force: true });
 });
 
-describe('aliyun runtime wrapper', () => {
+// wrapper 用 os.memfd_create 把 AK profile 只留在匿名内存里、从不落盘——这是
+// Linux-only 的系统调用，macOS 上 Python 的 os 模块没有该属性，本地跑必然
+// AttributeError 退出码 1。生产（ACS pod / ECS）与 CI runner 都是 Linux，
+// 故非 Linux 平台整体跳过，而不是让每个 macOS 开发者全量测试都挂一个红点。
+describe.skipIf(process.platform !== 'linux')('aliyun runtime wrapper', () => {
   it('materializes a mode-0600 AK profile with the injected region and removes it after use', () => {
     const root = mkdtempSync(resolve(tmpdir(), 'aliyun-wrapper-'));
     roots.push(root);

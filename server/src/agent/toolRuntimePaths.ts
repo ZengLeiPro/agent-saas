@@ -69,11 +69,6 @@ export function shellCommandMentionsMemoryPath(command: string): boolean {
     || /\/memory\/[^"'`\s;&|<>]*\.md($|[\s"'`);:&|>])/.test(command);
 }
 
-export function workspaceRelativeInputPath(cwd: string, inputPath: string): string {
-  const fullPath = resolveWorkspacePath(cwd, inputPath);
-  return relativeWorkspacePath(cwd, fullPath);
-}
-
 export function isExecutionTargetKind(value: unknown): value is ExecutionTargetKind {
   return value === 'server-local'
     || value === 'server-container'

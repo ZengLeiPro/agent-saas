@@ -42,6 +42,46 @@ describe('disabled tenant hard-stop guards', () => {
     expect(res.body).toEqual({ error: TENANT_DISABLED_MESSAGE, code: 'TENANT_DISABLED' });
   });
 
+  it('governance Membership 实时覆盖 legacy role，停用立即撤权', async () => {
+    const secret = 'governance-identity-secret';
+    const token = jwt.sign(
+      { sub: 'u-admin', username: 'admin', role: 'admin', tenantId: 'acme' },
+      secret,
+      { expiresIn: '1h' },
+    );
+    const membership: { persona: 'member' | 'org_admin'; status: 'active' | 'disabled' } = {
+      persona: 'member', status: 'active',
+    };
+    const middleware = createAuthMiddleware(
+      secret,
+      { findById: vi.fn(() => ({ id: 'u-admin', username: 'admin', role: 'admin', tenantId: 'acme' })) } as any,
+      { findById: vi.fn(() => ({ id: 'acme', name: 'Acme' })) } as any,
+      '30d',
+      {
+        getPlatformAdmin: vi.fn().mockResolvedValue(null),
+        getMembership: vi.fn().mockImplementation(async () => membership),
+      },
+    );
+    const req = {
+      method: 'GET', path: '/auth/me', headers: { authorization: `Bearer ${token}` }, query: {},
+    } as any;
+    const res = fakeResponse();
+    const next = vi.fn();
+    await middleware(req, res as any, next);
+    expect(next).toHaveBeenCalledOnce();
+    expect(req.user.role).toBe('user');
+
+    membership.status = 'disabled';
+    const deniedReq = {
+      method: 'GET', path: '/auth/me', headers: { authorization: `Bearer ${token}` }, query: {},
+    } as any;
+    const deniedRes = fakeResponse();
+    const deniedNext = vi.fn();
+    await middleware(deniedReq, deniedRes as any, deniedNext);
+    expect(deniedNext).not.toHaveBeenCalled();
+    expect(deniedRes.body).toMatchObject({ code: 'GOVERNANCE_MEMBERSHIP_INACTIVE' });
+  });
+
   it('dispatch wrapper short-circuits runs for disabled tenants', async () => {
     const dispatch = vi.fn(async function* () {
       yield { type: 'done' } as any;

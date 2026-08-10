@@ -197,8 +197,8 @@ describe('/api/admin/usage routes', () => {
   it('GET /by-user enrich realName', async () => {
     const userFile = join(mkdtempSync(join(tmpdir(), 'usage-userstore-')), 'users.json');
     const userStore = new UserStore(userFile);
-    await userStore.create({ username: 'admin', password: 'x'.repeat(8), role: 'admin', createdBy: 'system', realName: '曾磊' });
-    await userStore.create({ username: 'huangyp', password: 'x'.repeat(8), role: 'user', createdBy: 'system', realName: '黄艺萍' });
+    await userStore.create({ username: 'admin', password: 'x'.repeat(8), role: 'admin', tenantId: DEFAULT_TENANT_ID, createdBy: 'system', realName: '曾磊' });
+    await userStore.create({ username: 'huangyp', password: 'x'.repeat(8), role: 'user', tenantId: 'kaiyan', createdBy: 'system', realName: '黄艺萍' });
 
     const t = Date.parse('2026-05-15T08:00:00+08:00');
     store.recordResult({
@@ -209,7 +209,7 @@ describe('/api/admin/usage routes', () => {
     });
     store.recordResult({
       username: 'huangyp', channel: 'web',
-      tenantId: DEFAULT_TENANT_ID,
+      tenantId: 'kaiyan',
       modelUsage: { 'm': { inputTokens: 50, outputTokens: 30 } },
       occurredAtMs: t,
     });

@@ -17,6 +17,8 @@ import { z } from 'zod';
 import { isPlatformAdmin } from '../auth/middleware.js';
 import { auditLog } from '../data/login-logs/index.js';
 import { isAssignedToOrgAgent, type OrgAgentStore } from '../data/orgAgents/store.js';
+import type { TenantStore } from '../data/tenants/store.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import type { OrgAgentRecord, OrgAgentSummary } from '../data/orgAgents/types.js';
 import {
   checkTopicScope,
@@ -32,6 +34,10 @@ import {
 
 export interface OrgAgentsRouterDeps {
   orgAgentStore: OrgAgentStore;
+  tenantStore: TenantStore;
+  legacyWriteGate?: {
+    assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
+  };
   /** allowedSkills/audience/enabled 变化后使 workspace manifest 失效。 */
   onSkillAssignmentsChanged?: () => Promise<void>;
   /** 图片头像落盘目录（缺省 ./data/org-agent-avatars，测试可不传） */
@@ -133,6 +139,20 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
   const { orgAgentStore } = deps;
   const avatarsDir = deps.orgAgentAvatarsDir ?? resolve(process.cwd(), './data/org-agent-avatars');
   const router = Router();
+
+  router.use(async (req, res, next) => {
+    const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+    if (!isMutation || req.path.endsWith('/gate-preview') || !deps.legacyWriteGate) return next();
+    try {
+      await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
+      next();
+    } catch {
+      res.status(409).json({
+        error: '旧版 Org Agent 写入口已封闭，请使用治理资源 API',
+        code: 'MIGRATION_LEGACY_WRITE_SEALED',
+      });
+    }
+  });
 
   // multer：文件名 = 记录 id + 原扩展名；目录 lazy 创建（避免测试环境目录副作用）
   const avatarStorage = multer.diskStorage({
@@ -322,10 +342,25 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
       res.status(400).json({ error: parsed.error.message });
       return;
     }
-    // 组织 admin 强制归属自身租户（忽略伪造的 body.tenantId）；平台 admin 可指定，缺省落自身租户
-    const tenantId = isPlatformAdmin(user)
-      ? (parsed.data.tenantId || user.tenantId)
-      : user.tenantId;
+    // 组织管理员强制归属自身租户；平台管理员必须显式选择客户组织。
+    if (isPlatformAdmin(user) && !parsed.data.tenantId) {
+      res.status(400).json({ error: '平台管理员创建组织 Agent 时必须显式指定 tenantId' });
+      return;
+    }
+    const tenantId = isPlatformAdmin(user) ? parsed.data.tenantId! : user.tenantId;
+    if (tenantId === DEFAULT_TENANT_ID) {
+      res.status(400).json({ error: '万神殿不承载组织 Agent' });
+      return;
+    }
+    const tenant = deps.tenantStore.findById(tenantId);
+    if (!tenant) {
+      res.status(400).json({ error: `tenantId "${tenantId}" 不存在` });
+      return;
+    }
+    if (tenant.disabled) {
+      res.status(400).json({ error: `tenantId "${tenantId}" 已禁用` });
+      return;
+    }
     try {
       const record = await orgAgentStore.create({
         tenantId,

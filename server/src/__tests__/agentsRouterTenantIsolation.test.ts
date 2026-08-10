@@ -1,17 +1,8 @@
 /**
- * agents 路由多组织隔离测试（PR 8）
+ * 个人 Agent、Persona、Memory 所有权与组织列表边界测试。
  *
- * 核心修复：原 canAccess (`role === 'admin' || username === self`) 让任意组织 admin
- * 都能改其他组织用户的 PERSONA.md / MEMORY.md / 头像。这是严重越权。
- *
- * 覆盖：
- *   - PATCH /:username      跨组织 admin → 403
- *   - GET /:username        跨组织 admin → 403；返回路径按 target 组织解析
- *   - PUT /:username/persona  跨组织 admin → 403
- *   - PUT /:username/memory   跨组织 admin → 403
- *   - GET /                 platform admin 看全部；组织 admin 仅本组织
- *   - 普通用户改/读 self    OK
- *   - 普通用户改/读他人      403
+ * 个人内容一律 self-only，管理员没有代读代写旁路；owner 使用不可变 userId 判断。
+ * GET / 只返回公开 Agent 展示字段，管理员列表不得包含 personaPreview。
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -199,37 +190,32 @@ describe('agents 路由多组织隔离 (PR 8)', () => {
   });
 
   // ============================================================
-  // 同组织 admin / platform admin 正常路径
+  // 管理员不得旁路个人所有权
   // ============================================================
-  describe('同组织与 platform admin 正常路径', () => {
-    it('组织 admin (wain) GET 本组织用户 → 200', async () => {
+  describe('管理员访问他人个人内容', () => {
+    it('组织 admin 读取本组织成员 Agent → 403', async () => {
       h.setCaller(WAIN_ADMIN);
-      const res = await h.request('/api/agents/wain_user');
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(body.username).toBe('wain_user');
-      expect(body.persona).toContain('wain_user persona');
+      expect((await h.request('/api/agents/wain_user')).status).toBe(403);
+      expect((await h.request('/api/agents/wain_user/persona')).status).toBe(403);
     });
 
-    it('platform admin GET wain 用户 → 200 (跨组织允许)', async () => {
+    it('platform admin 跨组织读写成员 Memory → 403 且原文件不变', async () => {
       h.setCaller(PLATFORM_ADMIN);
-      const res = await h.request('/api/agents/wain_user');
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(body.persona).toContain('wain_user persona');
-    });
-
-    it('platform admin PUT wain 用户 memory → 200 + 写入路径按 target 组织解析', async () => {
-      h.setCaller(PLATFORM_ADMIN);
+      expect((await h.request('/api/agents/wain_user')).status).toBe(403);
       const res = await h.request('/api/agents/wain_user/memory', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: '# updated by platform admin' }),
       });
+      expect(res.status).toBe(403);
+      expect(readFileSync(join(h.agentCwd, 'wain', 'u-wu', 'MEMORY.md'), 'utf-8')).toBe('# wain_user memory');
+    });
+
+    it('管理员仍可读自己的 Persona', async () => {
+      h.setCaller(WAIN_ADMIN);
+      const res = await h.request('/api/agents/wain_admin/persona');
       expect(res.status).toBe(200);
-      // 路径修复验证：写入应在 <agentCwd>/wain/<userId>/MEMORY.md，不是 <agentCwd>/wain_user/MEMORY.md
-      const written = readFileSync(join(h.agentCwd, 'wain', 'u-wu', 'MEMORY.md'), 'utf-8');
-      expect(written).toBe('# updated by platform admin');
+      expect((await res.json()).content).toContain('wain_admin persona');
     });
   });
 
@@ -253,6 +239,21 @@ describe('agents 路由多组织隔离 (PR 8)', () => {
       expect(body.username).toBe('alice');
       expect(body.name).toBe('开开');
       expect(body.persona).toContain('alice persona');
+    });
+
+    it('owner 以不可变 userId 判断，伪造同名 username 仍拒绝', async () => {
+      h.setCaller({ ...KAIYAN_USER, sub: 'u-other' });
+      expect((await h.request('/api/agents/alice/persona')).status).toBe(403);
+    });
+
+    it('个人 profile 不再接受管理员配置字段', async () => {
+      h.setCaller(KAIYAN_USER);
+      const res = await h.request('/api/agents/alice', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allowedSkills: ['secret-skill'] }),
+      });
+      expect(res.status).toBe(400);
     });
 
     it('普通用户读他人 persona (同组织) → 403', async () => {
@@ -280,8 +281,10 @@ describe('agents 路由多组织隔离 (PR 8)', () => {
       h.setCaller(PLATFORM_ADMIN);
       const res = await h.request('/api/agents/');
       expect(res.status).toBe(200);
-      const body = await res.json() as { username: string }[];
+      const body = await res.json() as { username: string; personaPreview?: string; allowedSkills?: string[]; infoBoundary?: unknown }[];
       const usernames = body.map(p => p.username).sort();
+      expect(body.every(p => !('personaPreview' in p))).toBe(true);
+      expect(body.every(p => !('allowedSkills' in p) && !('infoBoundary' in p))).toBe(true);
       expect(usernames).toContain('admin');
       expect(usernames).toContain('alice');
       expect(usernames).toContain('wain_admin');

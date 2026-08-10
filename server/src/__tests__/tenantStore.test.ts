@@ -210,6 +210,14 @@ describe('TenantStore', () => {
       expect(reenabled.disabledBy).toBeUndefined();
     });
 
+    it('禁止 rename 默认组织', async () => {
+      const store = new TenantStore(storePath);
+      await store.ensureDefaultTenant();
+      await expect(store.update(DEFAULT_TENANT_ID, { name: '客户组织' }))
+        .rejects.toThrow(/Cannot rename the default tenant/);
+      expect(store.findById(DEFAULT_TENANT_ID)?.name).toBe('万神殿');
+    });
+
     it('禁止 disable 默认组织', async () => {
       const store = new TenantStore(storePath);
       await store.ensureDefaultTenant();

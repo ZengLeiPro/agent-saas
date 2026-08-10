@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
-import { generateUserId, USER_ID_PATTERN, UserStore } from "../data/users/store.js";
+import { generateUserId, USER_ID_PATTERN, UserStore, type CreateUserInput } from "../data/users/store.js";
 
 const cleanupRoots: string[] = [];
 
@@ -165,6 +165,29 @@ describe("UserStore phone uniqueness", () => {
     const updated = await store.update(user.id, { phone: "13900001111" });
     expect(updated.phone).toBe("13900001111");
     expect(updated.phoneVerifiedAt).toBeUndefined();
+  });
+});
+
+describe("UserStore tenant invariants", () => {
+  it("requires an explicit tenantId", async () => {
+    const { store } = await tempUserStore();
+    await expect(store.create({
+      username: "missing_tenant",
+      password: "password123",
+      role: "admin",
+      createdBy: "system",
+    } as CreateUserInput)).rejects.toThrow("tenantId is required");
+  });
+
+  it("does not allow a regular user in pantheon", async () => {
+    const { store } = await tempUserStore();
+    await expect(store.create({
+      username: "root_member",
+      password: "password123",
+      role: "user",
+      createdBy: "system",
+      tenantId: DEFAULT_TENANT_ID,
+    })).rejects.toThrow("Only platform admins may belong");
   });
 });
 

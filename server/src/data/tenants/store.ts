@@ -96,6 +96,7 @@ export interface UpdateTenantInput {
 export class TenantStore {
   private tenants: TenantRecord[] = [];
   private filePath: string;
+  private postPersistObserver?: () => void;
 
   constructor(filePath: string) {
     this.filePath = filePath;
@@ -123,6 +124,10 @@ export class TenantStore {
     this.load();
   }
 
+  setPostPersistObserver(observer: (() => void) | undefined): void {
+    this.postPersistObserver = observer;
+  }
+
   private async persist(): Promise<void> {
     const data: TenantsFileData = { version: 1, tenants: this.tenants };
     mkdirSync(dirname(this.filePath), { recursive: true });
@@ -133,6 +138,11 @@ export class TenantStore {
     } catch (err) {
       await unlink(tmpPath).catch(() => {});
       throw err;
+    }
+    try {
+      this.postPersistObserver?.();
+    } catch (error) {
+      authLogger.warn(`Tenant post-persist observer failed: ${error}`);
     }
   }
 
@@ -214,6 +224,9 @@ export class TenantStore {
     const tenant = this.tenants.find(t => t.id === id);
     if (!tenant) throw new Error('Tenant not found');
     if (input.name !== undefined) {
+      if (id === DEFAULT_TENANT_ID) {
+        throw new Error(`Cannot rename the default tenant "${DEFAULT_TENANT_ID}"`);
+      }
       const trimmed = input.name.trim();
       if (!trimmed) throw new Error('Tenant name cannot be empty');
       tenant.name = trimmed;

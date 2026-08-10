@@ -23,10 +23,26 @@ export interface NotionRouterOptions {
     tenantId: string,
   ) => Promise<unknown>;
   available: boolean;
+  legacyWriteGate?: {
+    assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
+  };
 }
 
 export function createNotionRouter(options: NotionRouterOptions): Router {
   const router = Router();
+
+  router.use(async (req, res, next) => {
+    if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) || !options.legacyWriteGate) return next();
+    try {
+      await options.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
+      next();
+    } catch {
+      res.status(409).json({
+        error: '旧版 Notion Credential 写入口已封闭，请使用治理资源 API',
+        code: 'MIGRATION_LEGACY_WRITE_SEALED',
+      });
+    }
+  });
 
   router.get('/connectors/notion', async (req, res) => {
     if (!req.user) {

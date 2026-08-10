@@ -8,6 +8,7 @@ import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { auditLog } from '../data/login-logs/index.js';
+import { InMemoryGovernanceAuditStore, type GovernanceAuditStore } from '../data/governance-audit/index.js';
 import type { UserStore } from '../data/users/store.js';
 import { createSystemAdminRouter } from '../routes/systemAdmin.js';
 import type { PgSystemMetricsStore, WorkspaceUsageRecord } from '../runtime/systemMetricsStore.js';
@@ -18,7 +19,7 @@ vi.mock('../data/login-logs/index.js', () => ({
 
 const PLATFORM_ADMIN_USER = { sub: 'admin1', role: 'admin', tenantId: 'pantheon' };
 
-async function startServer(options: { agentCwd: string; store: unknown; userStore?: unknown }) {
+async function startServer(options: { agentCwd: string; store: unknown; userStore?: unknown; governanceAuditStore?: GovernanceAuditStore }) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -29,6 +30,7 @@ async function startServer(options: { agentCwd: string; store: unknown; userStor
     agentCwd: options.agentCwd,
     systemMetricsStore: options.store as PgSystemMetricsStore,
     userStore: options.userStore as UserStore | undefined,
+    governanceAuditStore: options.governanceAuditStore ?? new InMemoryGovernanceAuditStore(),
   }));
   const server: Server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
@@ -175,6 +177,30 @@ describe('system admin workspace archive route', () => {
     expect(existsSync(sourceDir)).toBe(true);
     expect(store.deleteWorkspaceUsage).not.toHaveBeenCalled();
     expect(vi.mocked(auditLog)).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before workspace deletion when governance intent cannot be persisted', async () => {
+    const tmpRoot = await mkdtemp(join(tmpdir(), 'ws-delete-audit-'));
+    tmpRoots.push(tmpRoot);
+    const agentCwd = join(tmpRoot, 'workspaces');
+    const sourceDir = join(agentCwd, 'ghost', 'ky1');
+    await mkdir(sourceDir, { recursive: true });
+    const store = {
+      getWorkspaceUsage: vi.fn(async () => usageRecord()),
+      deleteWorkspaceUsage: vi.fn(async () => undefined),
+    };
+    const server = await startServer({
+      agentCwd,
+      store,
+      governanceAuditStore: { append: async () => { throw new Error('pg unavailable'); } },
+    });
+    servers.push(server);
+
+    const response = await server.deleteWorkspace({ path: 'ghost/ky1', confirm: 'ky1' });
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ code: 'GOVERNANCE_AUDIT_UNAVAILABLE' });
+    expect(existsSync(sourceDir)).toBe(true);
+    expect(store.deleteWorkspaceUsage).not.toHaveBeenCalled();
   });
 
   it('physically deletes a non-active workspace directory after confirmation', async () => {

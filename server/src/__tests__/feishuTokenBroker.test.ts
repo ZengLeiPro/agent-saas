@@ -22,6 +22,12 @@ const IDENTITY: FeishuConnectionIdentity = {
   userId: 'user-a',
   username: 'alice',
 };
+const TEST_VAULT_READER: VaultCaller = {
+  actor: 'connector_proxy',
+  userId: IDENTITY.userId,
+  tenantId: IDENTITY.tenantId,
+  scopes: ['secret:feishu_token_bundle:read'],
+};
 const USER: UserInfo = {
   id: IDENTITY.userId,
   tenantId: IDENTITY.tenantId,
@@ -37,8 +43,14 @@ class ProcessCachingVault implements SecretVault {
 
   constructor(private readonly backend: SecretVault) {}
 
-  putSecret(ownerId: string, kind: string, value: string, metadata?: Record<string, unknown>): Promise<SecretRef> {
-    return this.backend.putSecret(ownerId, kind, value, metadata);
+  putSecret(
+    ownerId: string,
+    kind: string,
+    value: string,
+    caller: VaultCaller,
+    metadata?: Record<string, unknown>,
+  ): Promise<SecretRef> {
+    return this.backend.putSecret(ownerId, kind, value, caller, metadata);
   }
 
   async getSecret(ref: SecretRef | string, caller: VaultCaller): Promise<string> {
@@ -238,7 +250,7 @@ describe('Feishu Token Broker', () => {
       actor: 'connector_proxy', userId: 'bob', tenantId: IDENTITY.tenantId,
       scopes: ['secret:feishu_token_bundle:read'],
     })).rejects.toThrow('access denied');
-    const bundle = JSON.parse(await vault.getSecret(row.tokenSecretRef!, { actor: 'system' })) as Record<string, unknown>;
+    const bundle = JSON.parse(await vault.getSecret(row.tokenSecretRef!, TEST_VAULT_READER)) as Record<string, unknown>;
     expect(bundle).toMatchObject({
       secretId: deterministicFeishuSecretId(IDENTITY),
       connector: 'feishu',
@@ -311,7 +323,7 @@ describe('Feishu Token Broker', () => {
     await expect(broker.ensureFresh(IDENTITY)).rejects.toMatchObject({ code: 'invalid_grant' } satisfies Partial<FeishuOAuthError>);
     expect(store.invalidateBroker).toHaveBeenCalledWith(IDENTITY, 'kaiyan-agent', 'invalid_grant');
     expect(store.rows[0]?.connectionStatus).toBe('disconnected');
-    await expect(vault.getSecret(ref, { actor: 'system' })).rejects.toThrow('revoked');
+    await expect(vault.getSecret(ref, TEST_VAULT_READER)).rejects.toThrow('revoked');
   });
 
   it('revokes provider token and Vault secret, leaving row deletion to auth service', async () => {
@@ -338,7 +350,7 @@ describe('Feishu Token Broker', () => {
     expect(new URLSearchParams(revokeBody).get('token')).toBe('rt-1');
     expect(new URLSearchParams(revokeBody).get('token_type_hint')).toBe('refresh_token');
     expect(store.removeForUser).not.toHaveBeenCalled();
-    await expect(vault.getSecret(ref, { actor: 'system' })).rejects.toThrow('revoked');
+    await expect(vault.getSecret(ref, TEST_VAULT_READER)).rejects.toThrow('revoked');
   });
 
   it('provider revoke 失败时保留 Vault secret 与连接引用', async () => {
@@ -358,7 +370,7 @@ describe('Feishu Token Broker', () => {
     const ref = store.rows[0]!.tokenSecretRef!;
 
     await expect(broker.revokeUser(IDENTITY)).rejects.toBeInstanceOf(Error);
-    await expect(vault.getSecret(ref, { actor: 'system' })).resolves.toContain('rt-1');
+    await expect(vault.getSecret(ref, TEST_VAULT_READER)).resolves.toContain('rt-1');
     expect(store.removeForUser).not.toHaveBeenCalled();
     expect(store.rows[0]?.tokenSecretRef).toBe(ref);
   });
@@ -419,7 +431,7 @@ describe('Feishu Token Broker', () => {
       accessToken: 'uat-fresh',
       refreshToken: 'rt-rotated',
     });
-    const plaintext = await vault.getSecret(store.rows[0]!.tokenSecretRef!, { actor: 'system' });
+    const plaintext = await vault.getSecret(store.rows[0]!.tokenSecretRef!, TEST_VAULT_READER);
     expect(JSON.parse(plaintext)).toMatchObject({ accessToken: 'uat-fresh', refreshToken: 'rt-rotated' });
   });
 
@@ -511,7 +523,7 @@ describe('Feishu Token Broker', () => {
     const store = mutableStore();
     const { broker: brokerA } = await authorize(fetchImpl, store, vaultA);
     const ref = store.rows[0]!.tokenSecretRef!;
-    await vaultB.getSecret(ref, { actor: 'system' });
+    await vaultB.getSecret(ref, TEST_VAULT_READER);
 
     await brokerA.ensureFresh(IDENTITY);
     const brokerB = new FeishuTokenBroker({
@@ -745,7 +757,7 @@ describe('Feishu Token Broker', () => {
     await expect(broker.authorize(IDENTITY, () => undefined)).rejects.toMatchObject({ code: 'app_mismatch' });
     expect(revokedToken).toBe('rt-new');
     expect(store.rows[0]).toMatchObject({ appId: 'cli_app', tokenSecretRef: oldRef });
-    await expect(vault.getSecret(oldRef, { actor: 'system' })).resolves.toContain('rt-old');
+    await expect(vault.getSecret(oldRef, TEST_VAULT_READER)).resolves.toContain('rt-old');
   });
 
   it('已有连接重新授权时 PG 写失败不会把 Vault 替换成随后撤销的新 token', async () => {
@@ -775,7 +787,7 @@ describe('Feishu Token Broker', () => {
 
     await expect(broker.authorize(IDENTITY, () => undefined)).rejects.toThrow('pg down');
     expect(revokedToken).toBe('rt-2');
-    await expect(vault.getSecret(ref, { actor: 'system' })).resolves.toContain('rt-1');
+    await expect(vault.getSecret(ref, TEST_VAULT_READER)).resolves.toContain('rt-1');
   });
 
   it('新连接写入 PG 失败时回收刚创建的 Vault secret', async () => {
@@ -808,6 +820,6 @@ describe('Feishu Token Broker', () => {
     expect(revokedProviderToken).toBe('rt-1');
     expect(revokeSecret).toHaveBeenCalledOnce();
     const ref = revokeSecret.mock.calls[0]?.[0] as string;
-    await expect(vault.getSecret(ref, { actor: 'system' })).rejects.toThrow('revoked');
+    await expect(vault.getSecret(ref, TEST_VAULT_READER)).rejects.toThrow('revoked');
   });
 });

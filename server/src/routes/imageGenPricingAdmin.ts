@@ -107,10 +107,17 @@ async function persistEngineCredentials(
     if (!engine?.apiKey) continue;
     if (!secretVault) throw new Error('SecretVault 未配置，不能保存生图 API Key');
     const { apiKey, ...safeEngine } = engine;
-    const ref = await secretVault.putSecret(GLOBAL_OWNER_ID, 'image_gen_tools', apiKey, {
-      engine: key,
-      purpose: 'image-generation',
-    });
+    const ref = await secretVault.putSecret(
+      GLOBAL_OWNER_ID,
+      'image_gen_tools',
+      apiKey,
+      {
+        actor: 'system',
+        userId: 'image_gen_config_admin',
+        scopes: ['secret:image_gen_tools:write'],
+      },
+      { engine: key, purpose: 'image-generation' },
+    );
     next[key] = { ...safeEngine, apiKeyRef: ref.id };
   }
   return next;

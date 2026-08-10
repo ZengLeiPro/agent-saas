@@ -62,6 +62,20 @@ export interface ArtifactServiceOptions {
   signingSecret?: string;
   defaultReadUrlTtlSeconds?: number;
   maxBlobBytes?: number;
+  resolveSessionTenantId?: (sessionId: string) => Promise<string | undefined>;
+  authorizeContentAccess?: (input: {
+    tenantId: string;
+    subjectUserId: string;
+    targetType: 'session';
+    targetId: string;
+    scope: 'session_export';
+  }) => Promise<boolean>;
+  auditContentAccess?: (input: {
+    tenantId: string;
+    subjectUserId: string;
+    sessionId: string;
+    scope: 'session_export';
+  }) => Promise<void>;
 }
 
 const DEFAULT_READ_URL_TTL_SECONDS = 15 * 60;
@@ -207,7 +221,28 @@ export class ArtifactService {
     // （截图、patch、log 都是会话产生的临时文件，跨组织读同样泄漏）。收紧到
     // platform admin。组织 admin 看自己 tenant 内的 artifact 走正常 session 校验。
     if (!user) return;
-    if (user.role === 'admin' && user.tenantId === DEFAULT_TENANT_ID) return;
+    if (user.role === 'admin' && user.tenantId === DEFAULT_TENANT_ID) {
+      const targetTenantId = await this.options.resolveSessionTenantId?.(sessionId);
+      const allowed = targetTenantId && this.options.authorizeContentAccess
+        ? await this.options.authorizeContentAccess({
+            tenantId: targetTenantId,
+            subjectUserId: user.sub,
+            targetType: 'session',
+            targetId: sessionId,
+            scope: 'session_export',
+          })
+        : false;
+      if (!allowed || !targetTenantId || !this.options.auditContentAccess) {
+        throw new ArtifactServiceError(404, 'Artifact not found');
+      }
+      await this.options.auditContentAccess({
+        tenantId: targetTenantId,
+        subjectUserId: user.sub,
+        sessionId,
+        scope: 'session_export',
+      });
+      return;
+    }
     // PR 7 P1-7：传 tenantId 让 resolveUserCwd 落对路径
     const userCwd = resolveUserCwd(this.options.agentCwd, {
       id: user.sub,

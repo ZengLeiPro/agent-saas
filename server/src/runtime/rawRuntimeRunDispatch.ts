@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { mkdir } from 'fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'path';
 
@@ -14,7 +14,10 @@ import type { AgentStore } from '../data/agents/store.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 import type { BillingService } from '../data/billing/service.js';
+import type { RunPreflightService } from './runPreflight.js';
+import type { PgRunResolutionSnapshotStore } from './runResolutionSnapshotStore.js';
 import type { TenantStore } from '../data/tenants/store.js';
+import type { PgEnvironmentStore } from '../data/environments/index.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { resolveAzerothInjection } from '../integrations/azeroth/tokens.js';
@@ -332,6 +335,13 @@ export interface RawRuntimeRunDispatchConfig {
   /** 公司级专职 Agent store。orgAgentId 会话解析限定提示语 + skill 白名单用；未配置时 orgAgentId 会话 fail-closed。 */
   orgAgentStore?: OrgAgentStore;
   tenantStore?: TenantStore;
+  environmentStore?: PgEnvironmentStore;
+  authorizeEnvironmentTemplate?: (input: {
+    tenantId: string;
+    userId: string;
+    agentId?: string;
+    templateId: string;
+  }) => Promise<boolean>;
   resolveUserRole?: (identity: { userId?: string; username?: string }) => 'admin' | 'user' | undefined;
   /**
    * 解析账户级「全部授权」偏好。所有入口（Web、钉钉、cron、scheduler wake、
@@ -443,6 +453,9 @@ export interface RawRuntimeRunDispatchConfig {
   approvalStoreFactory?: (session: RuntimeSessionRecord, eventStore: EventStore) => ApprovalStore;
   /** Durable run state backend. PG runtime wires PgRunStore here for P0 wake/recovery state. */
   runStore?: RunStore;
+  /** Governance wake-time revalidation；Raw Runtime 在 Environment 解析后写最终 Snapshot。 */
+  runPreflightService?: RunPreflightService;
+  runResolutionSnapshotStore?: Pick<PgRunResolutionSnapshotStore, 'append'>;
   /** Durable hand registry backend. PG runtime wires PgHandStore here for P1 hand lifecycle. */
   handStore?: HandStore;
   /** Durable tool invocation index. PG runtime wires PgToolInvocationStore for recovery. */
@@ -790,12 +803,17 @@ export async function ensureRuntimeHandRegistered(params: {
   executionTransportRegistry: ExecutionTransportRegistry;
   executionTarget: ExecutionTargetKind;
   sessionId: string;
+  runId?: string;
   workspaceId: string;
   workspaceMountSubPath?: string;
   endpoint?: string;
   serverRemoteRecipe?: Partial<WorkspaceRecipe>;
   tenantRemoteHands?: TenantRemoteHandDispatchConfig[];
   tenantRemoteHandResolver?: TenantRemoteHandAuthTokenResolver;
+  environmentStore?: PgEnvironmentStore;
+  environmentTemplateVersionId?: string;
+  authorizeEnvironmentTemplate?: RawRuntimeRunDispatchConfig['authorizeEnvironmentTemplate'];
+  agentId?: string;
   userId?: string;
   username?: string;
   /**
@@ -823,13 +841,60 @@ export async function ensureRuntimeHandRegistered(params: {
     transportRegistry: params.executionTransportRegistry,
     eventStore: params.eventStore,
   });
-  const recipe = buildWorkspaceRecipe(
+  const defaultHandId = `${params.sessionId}:${params.executionTarget}`;
+  const currentEnvironmentInstance = params.environmentStore && params.userTenantId
+    ? await params.environmentStore.getInstance(params.userTenantId, defaultHandId)
+    : null;
+  if (currentEnvironmentInstance && params.environmentTemplateVersionId
+    && params.environmentTemplateVersionId !== currentEnvironmentInstance.templateVersionId) {
+    throw new Error('ENVIRONMENT_INSTANCE_TEMPLATE_VERSION_IMMUTABLE');
+  }
+  const effectiveTemplateVersionId = currentEnvironmentInstance?.templateVersionId
+    ?? params.environmentTemplateVersionId;
+  const baseRecipe = buildWorkspaceRecipe(
     params.workspaceId,
     params.executionTarget === 'server-remote' ? params.serverRemoteRecipe : undefined,
     params.sessionId,
     params.workspaceMountSubPath,
   );
-  const defaultHandId = `${params.sessionId}:${params.executionTarget}`;
+  const environmentVersion = params.environmentStore && effectiveTemplateVersionId
+    ? await params.environmentStore.getTemplateVersion(effectiveTemplateVersionId)
+    : undefined;
+  if (effectiveTemplateVersionId && !environmentVersion) {
+    throw new Error('ENVIRONMENT_INSTANCE_TEMPLATE_VERSION_INVALID');
+  }
+  if (environmentVersion) {
+    const [provider, template] = await Promise.all([
+      params.environmentStore!.getProvider(params.executionTarget),
+      params.environmentStore!.getTemplate(environmentVersion.templateId),
+    ]);
+    if (!provider || provider.status !== 'enabled') throw new Error('ENVIRONMENT_PROVIDER_UNAVAILABLE');
+    if (!template || template.status !== 'published') throw new Error('ENVIRONMENT_TEMPLATE_UNAVAILABLE');
+    if (!params.userTenantId || !params.userId || !params.authorizeEnvironmentTemplate
+      || !await params.authorizeEnvironmentTemplate({
+        tenantId: params.userTenantId,
+        userId: params.userId,
+        ...(params.agentId ? { agentId: params.agentId } : {}),
+        templateId: environmentVersion.templateId,
+      })) {
+      throw new Error('ENVIRONMENT_TEMPLATE_ASSIGNMENT_REQUIRED');
+    }
+  }
+  const recipe: WorkspaceRecipe = environmentVersion
+    ? {
+        ...baseRecipe,
+        packages: [...environmentVersion.recipe.packages],
+        envKeys: [...environmentVersion.recipe.envKeys],
+        setupCommands: [
+          ...(baseRecipe.setupCommands ?? []),
+          ...environmentVersion.recipe.setupCommands,
+        ],
+        resources: { ...environmentVersion.recipe.resources },
+      }
+    : baseRecipe;
+  const recipeDigest = environmentVersion?.digest
+    ?? createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
+  let defaultProvisionFailure: string | undefined;
   if (transport && typeof (transport as { provision?: unknown }).provision === 'function') {
     const result = await (transport as unknown as { provision(recipe: { workspaceId: string }): Promise<{ status: 'ok' | 'error'; error?: string; metadata?: Record<string, unknown> }> }).provision(recipe);
     // B3: persist provisioning logs (workspace_ensure / setup_command#N / skipped
@@ -842,11 +907,12 @@ export async function ensureRuntimeHandRegistered(params: {
       metadata: result.metadata,
     });
     if (result.status === 'error') {
+      defaultProvisionFailure = result.error ?? 'hand provision failed';
       await params.eventStore.append({
         type: 'hand_failure',
         sessionId: params.sessionId,
         workspaceId: params.workspaceId,
-        error: result.error ?? 'hand provision failed',
+        error: defaultProvisionFailure,
         classifiedAs: 'unhealthy',
       });
     }
@@ -856,10 +922,14 @@ export async function ensureRuntimeHandRegistered(params: {
     sessionId: params.sessionId,
     workspaceId: params.workspaceId,
     type: params.executionTarget,
-    status: 'ready',
+    status: defaultProvisionFailure ? 'unhealthy' : 'ready',
     endpoint: params.endpoint,
     capabilities,
     recipe,
+    providerId: params.executionTarget,
+    ...(environmentVersion ? { templateVersionId: environmentVersion.versionId } : {}),
+    ...(params.runId ? { runId: params.runId } : {}),
+    recipeDigest,
     // 2026-08-03 P1：per-session hand 记录挂租约。register 是 upsert，活跃
     // session 每次 dispatch 自动续期；到期由 janitor 收敛（见 handStore.sweepLeases）。
     ...(params.executionTarget === 'server-remote'
@@ -867,6 +937,45 @@ export async function ensureRuntimeHandRegistered(params: {
       : {}),
     metadata: { registeredBy: 'rawRuntimeRunDispatch' },
   });
+  if (params.environmentStore && environmentVersion && params.userTenantId) {
+    const version = environmentVersion;
+    const leaseExpiresAt = new Date(Date.now() + SERVER_REMOTE_HAND_LEASE_MS).toISOString();
+    const current = currentEnvironmentInstance;
+    if (current) {
+      await params.environmentStore.upsert({
+        tenantId: params.userTenantId,
+        instanceId: defaultHandId,
+        providerId: params.executionTarget,
+        templateId: version.templateId,
+        templateVersionId: version.versionId,
+        handId: defaultHandId,
+        status: defaultProvisionFailure ? 'unhealthy' : 'ready',
+        leaseExpiresAt,
+        recipeDigest,
+        expectedRevision: current.revision,
+      });
+    } else {
+      const created = await params.environmentStore.create({
+        tenantId: params.userTenantId,
+        instanceId: defaultHandId,
+        providerId: params.executionTarget,
+        templateId: version.templateId,
+        templateVersionId: version.versionId,
+        handId: defaultHandId,
+        leaseExpiresAt,
+        recipeDigest,
+      });
+      await params.environmentStore.transition({
+        tenantId: params.userTenantId,
+        instanceId: created.instanceId,
+        status: defaultProvisionFailure ? 'unhealthy' : 'ready',
+        expectedRevision: created.revision,
+      });
+    }
+  }
+  if (defaultProvisionFailure) {
+    throw new Error(`HAND_PROVISION_FAILED:${defaultProvisionFailure}`);
+  }
 
   for (const hand of selectTenantRemoteHandsForRegistration(params.tenantRemoteHands, {
     userId: params.userId,
@@ -914,6 +1023,7 @@ export async function ensureRuntimeHandRegistered(params: {
     }
 
     const tenantRecipe = buildWorkspaceRecipe(remoteWorkspaceId, hand.recipe, params.sessionId, params.workspaceMountSubPath);
+    const tenantRecipeDigest = createHash('sha256').update(JSON.stringify(tenantRecipe)).digest('hex');
     await manager.provision({
       handId,
       sessionId: params.sessionId,
@@ -923,6 +1033,9 @@ export async function ensureRuntimeHandRegistered(params: {
       endpoint: hand.baseUrl,
       capabilities: tenantRemoteHandCapabilities(hand, tools),
       recipe: tenantRecipe,
+      providerId: hand.id,
+      ...(params.runId ? { runId: params.runId } : {}),
+      recipeDigest: tenantRecipeDigest,
       // 2026-08-03 P1：tenant hand 的 per-session 记录同样挂租约（配置本体在
       // config/vault，不受影响；到期只回收这条 session 级记录）。
       leaseExpiresAt: new Date(Date.now() + SERVER_REMOTE_HAND_LEASE_MS),
@@ -960,6 +1073,54 @@ export async function ensureRuntimeHandRegistered(params: {
         `tenant_hand_registered handId=${handId} source=${tokenSource}${tokenRef ? ` authTokenRef=${tokenRef}` : ''}`,
       );
     }
+  }
+}
+
+export async function appendResolvedRunSnapshot(input: {
+  config: RawRuntimeRunDispatchConfig;
+  runId: string;
+  session: RuntimeSessionRecord;
+  modelRef?: string;
+  executionTarget: ExecutionTargetKind;
+  hands: HandRecord[];
+}): Promise<void> {
+  const { runPreflightService, runResolutionSnapshotStore } = input.config;
+  if (!runPreflightService || !runResolutionSnapshotStore) return;
+  const tenantHands = input.hands.filter(hand => (
+    hand.status === 'ready' && hand.metadata?.registeredBy === 'tenantRemoteHands'
+  ));
+  const tenantHandId = tenantHands.length === 1 ? tenantHands[0]?.handId : undefined;
+  const defaultHandId = `${input.session.sessionId}:${input.executionTarget}`;
+  const environment = input.hands.find(hand => hand.handId === (tenantHandId ?? defaultHandId));
+  const result = await runPreflightService.preflight({
+    phase: 'wake',
+    runId: input.runId,
+    sessionId: input.session.sessionId,
+    ...(input.session.userId ? { userId: input.session.userId } : {}),
+    ...(input.session.tenantId ? { tenantId: input.session.tenantId } : {}),
+    ...(input.session.orgAgentId ? { orgAgentId: input.session.orgAgentId } : {}),
+    ...(input.modelRef ? { modelRef: input.modelRef } : {}),
+    environment: {
+      providerId: environment?.providerId ?? input.executionTarget,
+      ...(environment?.templateVersionId ? { templateVersionId: environment.templateVersionId } : {}),
+      ...(environment?.handId ? { instanceId: environment.handId } : {}),
+      ...(environment?.recipeDigest ? { recipeDigest: environment.recipeDigest } : {}),
+    },
+    skipBilling: true,
+  });
+  if (!result.proceed) {
+    throw new Error(
+      `[${result.accessDecision.reasonCode}] governance preflight blocked run ${input.runId}`,
+    );
+  }
+  try {
+    await runResolutionSnapshotStore.append(result.snapshot);
+  } catch (error) {
+    if (result.enforcementMode === 'enforce') throw error;
+    input.config.logger?.warn(
+      `[governance-shadow] resolved snapshot unavailable (not blocking): run=${input.runId} `
+      + `error=${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -1265,6 +1426,7 @@ export async function collectRuntimeTooling(
   requiredSkillIds: readonly string[] = [],
   subagentDeps?: SubagentToolingDeps,
   preferredSkillIds: readonly string[] = [],
+  mcpWarmupContext?: { runId: string; sessionId: string; userId: string },
 ): Promise<{
   providers: ToolProvider[];
 }> {
@@ -1341,7 +1503,10 @@ export async function collectRuntimeTooling(
   if (config.mcpProxy || config.mcpClientManager) {
     const mcpProvider = new McpClientToolProvider(config.mcpProxy ?? config.mcpClientManager!);
     try {
-      await mcpProvider.warmup(username);
+      await mcpProvider.warmup({
+        username,
+        ...(mcpWarmupContext ?? {}),
+      });
     } catch {
       // MCP 预热失败只影响本轮 MCP tool schema，不阻断主路径。
     }
@@ -2162,12 +2327,19 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       executionTransportRegistry,
       executionTarget,
       sessionId,
+      runId,
       workspaceId: sessionRecord.workspaceId ?? sessionId,
       workspaceMountSubPath,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
+      environmentStore: config.environmentStore,
+      authorizeEnvironmentTemplate: config.authorizeEnvironmentTemplate,
+      agentId: sessionRecord.orgAgentId,
+      environmentTemplateVersionId: typeof message.metadata?.environmentTemplateVersionId === 'string'
+        ? message.metadata.environmentTemplateVersionId
+        : undefined,
       userId: identitySource?.id ?? existingSession?.userId,
       username: identitySource?.username ?? existingSession?.username,
       userTenantId: config.resolveUserTenantId?.({
@@ -2177,6 +2349,14 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       logger: config.logger,
     });
     const availableHands = config.handStore ? await config.handStore.listBySession(sessionId) : [];
+    await appendResolvedRunSnapshot({
+      config,
+      runId,
+      session: sessionRecord,
+      modelRef: sessionModelRef,
+      executionTarget,
+      hands: availableHands,
+    });
     const baseSkillFilter = composeSkillFilters(
       buildRuntimeSkillFilter(availableHands),
       buildImageGenSkillFilter(config, sessionRecord.tenantId),
@@ -2194,6 +2374,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       orgAgent?.allowedSkills ?? [],
       { executionTransportRegistry, tenantHandResolver },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
+      sessionRecord.userId ? { runId, sessionId, userId: sessionRecord.userId } : undefined,
     );
     const instructionSections = options.skipSystemPrompt
       ? [{ key: 'minimal', name: '最小系统提示语', content: config.getSystemPrompt?.('main.minimal') ?? MINIMAL_SYSTEM_PROMPT }]
@@ -2728,12 +2909,19 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       executionTransportRegistry,
       executionTarget,
       sessionId: request.sessionId,
+      runId: resumeRunId,
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
       workspaceMountSubPath,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
+      environmentStore: config.environmentStore,
+      authorizeEnvironmentTemplate: config.authorizeEnvironmentTemplate,
+      agentId: sessionRecord.orgAgentId,
+      environmentTemplateVersionId: (request as unknown as {
+        metadata?: { environmentTemplateVersionId?: string };
+      }).metadata?.environmentTemplateVersionId,
       userId: identitySource?.id ?? existingSession?.userId,
       username: identitySource?.username ?? existingSession?.username,
       userTenantId: config.resolveUserTenantId?.({
@@ -2743,6 +2931,14 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       logger: config.logger,
     });
     const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId) : [];
+    await appendResolvedRunSnapshot({
+      config,
+      runId: resumeRunId,
+      session: sessionRecord,
+      modelRef: sessionModelRef,
+      executionTarget,
+      hands: availableHands,
+    });
     const resumeBaseSkillFilter = composeSkillFilters(
       buildRuntimeSkillFilter(availableHands),
       buildImageGenSkillFilter(config, sessionRecord.tenantId),
@@ -2764,6 +2960,9 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       orgAgent?.allowedSkills ?? [],
       { executionTransportRegistry, tenantHandResolver },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
+      sessionRecord.userId
+        ? { runId: resumeRunId, sessionId: request.sessionId, userId: sessionRecord.userId }
+        : undefined,
     );
     // 记忆写入策略：resume 只读会话 pin（v2 pin 仅真实用户新会话写入）。
     const memoryPolicyVersion: MemoryWritePolicyVersion = (resumeToolProfile || orgAgentId)
@@ -3129,12 +3328,19 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       executionTransportRegistry,
       executionTarget,
       sessionId: request.sessionId,
+      runId: resumeRunId,
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
       workspaceMountSubPath,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
+      environmentStore: config.environmentStore,
+      authorizeEnvironmentTemplate: config.authorizeEnvironmentTemplate,
+      agentId: sessionRecord.orgAgentId,
+      environmentTemplateVersionId: (request as unknown as {
+        metadata?: { environmentTemplateVersionId?: string };
+      }).metadata?.environmentTemplateVersionId,
       userId: identitySource?.id ?? existingSession?.userId,
       username: identitySource?.username ?? existingSession?.username,
       userTenantId: config.resolveUserTenantId?.({
@@ -3144,6 +3350,14 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       logger: config.logger,
     });
     const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId) : [];
+    await appendResolvedRunSnapshot({
+      config,
+      runId: resumeRunId,
+      session: sessionRecord,
+      modelRef: sessionModelRef,
+      executionTarget,
+      hands: availableHands,
+    });
     const resumeBaseSkillFilter = composeSkillFilters(
       buildRuntimeSkillFilter(availableHands),
       buildImageGenSkillFilter(config, sessionRecord.tenantId),
@@ -3165,6 +3379,9 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       orgAgent?.allowedSkills ?? [],
       { executionTransportRegistry, tenantHandResolver },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
+      sessionRecord.userId
+        ? { runId: resumeRunId, sessionId: request.sessionId, userId: sessionRecord.userId }
+        : undefined,
     );
     // 记忆写入策略：resume 只读会话 pin（v2 pin 仅真实用户新会话写入）。
     const memoryPolicyVersion: MemoryWritePolicyVersion = (resumeToolProfile || orgAgentId)

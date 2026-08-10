@@ -59,11 +59,16 @@ export class McpClientToolProvider implements ToolProvider {
   }
 
   /** dispatch 调用以预热 cache（并发安全：同一 username 多次调用幂等）。 */
-  async warmup(username: string | undefined): Promise<ToolDescriptor[]> {
-    if (!username) return [];
-    const tools = await this.proxy.warmup(username);
+  async warmup(input: {
+    username?: string;
+    userId?: string;
+    sessionId?: string;
+    runId?: string;
+  }): Promise<ToolDescriptor[]> {
+    if (!input.username) return [];
+    const tools = await this.proxy.warmup(input);
     const descriptors = tools.map(toDescriptor);
-    this.cache.set(username, descriptors);
+    this.cache.set(input.username, descriptors);
     return descriptors;
   }
 
@@ -73,7 +78,11 @@ export class McpClientToolProvider implements ToolProvider {
     const userId = resolveOwnerUserId(context);
     const sessionId = context.workspace.sessionId;
     const input = (call.input ?? {}) as Record<string, unknown>;
-    const content = await this.proxy.invoke({ username, userId, sessionId, toolKey: call.toolId, input });
+    const content = await this.proxy.invoke({
+      username, userId, sessionId,
+      ...(context.runId ? { runId: context.runId } : {}),
+      toolKey: call.toolId, input,
+    });
     const parsed = parseMcpToolKey(call.toolId);
     return {
       content: formatUntrustedMcpResult({

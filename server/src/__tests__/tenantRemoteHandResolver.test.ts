@@ -46,7 +46,11 @@ describe('tenantRemoteHandResolver', () => {
 
   it('resolves authTokenRef through the SecretVault using actor=system', async () => {
     const vault = new InMemorySecretVault();
-    const ref = await vault.putSecret('__system__', 'tenant_hand', 'vault-token-xyz');
+    const ref = await vault.putSecret('__system__', 'tenant_hand', 'vault-token-xyz', {
+      actor: 'system',
+      userId: '__system__',
+      scopes: ['secret:tenant_hand:write'],
+    });
     const callers: VaultCaller[] = [];
     const trackingVault: SecretVault = {
       putSecret: vault.putSecret.bind(vault),

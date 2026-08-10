@@ -92,10 +92,17 @@ export async function issueClientDaemonDeviceCredential(args: {
   const deviceId = (input.deviceId ?? randomUUID()).trim();
   if (!deviceId) throw new Error('issueClientDaemonDeviceCredential: deviceId 必须非空');
   const bearer = input.token ?? generateClientDaemonDeviceToken();
-  const ref = await args.vault.putSecret(deviceId, CLIENT_DAEMON_DEVICE_SECRET_KIND, bearer, {
-    purpose: 'client_daemon_bearer',
+  const ref = await args.vault.putSecret(
     deviceId,
-  });
+    CLIENT_DAEMON_DEVICE_SECRET_KIND,
+    bearer,
+    {
+      actor: 'system',
+      userId: '__system__',
+      scopes: ['secret:client_daemon_device:write'],
+    },
+    { purpose: 'client_daemon_bearer', deviceId },
+  );
   const device = await args.registry.register({
     deviceId,
     tokenVaultRef: ref.id,

@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Server } from 'node:http';
 
-import { createOrgQaRouter, type QaSessionProjectionReader } from '../routes/orgQa.js';
+import { createOrgQaRouter, maskQaBlocks, type QaSessionProjectionReader } from '../routes/orgQa.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { RuntimeSessionListQuery, RuntimeSessionProjectionRecord } from '../runtime/sessionProjectionStore.js';
 import type { SessionMeta } from '../data/transcripts/meta.js';
@@ -71,7 +71,10 @@ async function startServer(deps: Parameters<typeof createOrgQaRouter>[0], user: 
     (req as unknown as { user: TestUser }).user = user;
     next();
   });
-  app.use('/api/admin/qa', createOrgQaRouter(deps));
+  app.use('/api/admin/qa', createOrgQaRouter({
+    auditContentAccess: async () => 'audit-qa-1',
+    ...deps,
+  }));
   return new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => {
       const addr = s.address();
@@ -86,6 +89,22 @@ function stopServer(s: Server): Promise<void> {
 }
 
 describe('/api/admin/qa routes', () => {
+  it('QA blocks 在服务端遮罩 raw、tool IO 与附件路径', () => {
+    const blocks = maskQaBlocks([{
+      id: 'tool-1', kind: 'tool_use', title: 'Shell', defaultOpen: true,
+      content: '{"password":"sensitive"}', raw: '{"password":"sensitive"}',
+      toolName: 'Shell', presentation: { content: 'sensitive' }, toolMetadata: { input: 'sensitive' },
+      attachments: [{ name: 'report.pdf', relativePath: 'private/report.pdf' }],
+    }]);
+    expect(blocks[0]).toMatchObject({ content: '[已遮罩]', defaultOpen: false, toolName: 'Shell' });
+    expect(blocks[0]).not.toHaveProperty('raw');
+    expect(blocks[0]).not.toHaveProperty('presentation');
+    expect(blocks[0]).not.toHaveProperty('toolMetadata');
+    expect(blocks[0]?.attachments).toEqual([{ name: 'report.pdf' }]);
+    expect(JSON.stringify(blocks)).not.toContain('sensitive');
+    expect(JSON.stringify(blocks)).not.toContain('private/report.pdf');
+  });
+
   let dataDir: string;
   let server: Server | null = null;
   let baseUrl = '';
@@ -93,6 +112,7 @@ describe('/api/admin/qa routes', () => {
   let projection: ReturnType<typeof memoryProjection>;
 
   const orgAdminA: TestUser = { sub: 'admin-a', username: 'admin-a', role: 'admin', tenantId: 'tenant-a' };
+  const platformAdmin: TestUser = { sub: 'platform-admin', username: 'platform-admin', role: 'admin', tenantId: 'pantheon' };
 
   beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), 'org-qa-routes-test-'));
@@ -160,8 +180,9 @@ describe('/api/admin/qa routes', () => {
     // 同租户 messages 读通（transcript 缺失时空 blocks 兜底）
     const messages = await fetch(`${baseUrl}/api/admin/qa/sessions/${SESSION_A}/messages`);
     expect(messages.status).toBe(200);
-    const detail = await messages.json() as { sessionId: string; blocks: unknown[]; owner?: { userId: string } };
+    const detail = await messages.json() as { sessionId: string; auditId: string; blocks: unknown[]; owner?: { userId: string } };
     expect(detail.sessionId).toBe(SESSION_A);
+    expect(detail.auditId).toBe('audit-qa-1');
     expect(detail.blocks).toEqual([]);
     expect(detail.owner?.userId).toBe('u-tenant-a');
 
@@ -177,6 +198,39 @@ describe('/api/admin/qa routes', () => {
     } finally {
       await stopServer(bare.server);
     }
+  });
+
+  it('平台管理员必须显式指定 tenantId，且消息详情也按该组织守卫', async () => {
+    ({ server, baseUrl } = await startServer({
+      sessionProjectionStore: projection,
+      orgAgentStore,
+      resolveTranscriptPath: async () => null,
+      authorizeContentAccess: async () => true,
+    }, platformAdmin));
+
+    expect((await fetch(`${baseUrl}/api/admin/qa/sessions`)).status).toBe(400);
+    expect((await fetch(`${baseUrl}/api/admin/qa/sessions/${SESSION_A}/messages`)).status).toBe(400);
+    expect((await fetch(`${baseUrl}/api/admin/qa/guardrail-events`)).status).toBe(400);
+    expect((await fetch(`${baseUrl}/api/admin/qa/feedback`)).status).toBe(400);
+
+    const list = await fetch(`${baseUrl}/api/admin/qa/sessions?tenantId=tenant-a`);
+    expect(list.status).toBe(200);
+    expect(projection.lastListQuery?.tenantId).toBe('tenant-a');
+
+    const allowed = await fetch(`${baseUrl}/api/admin/qa/sessions/${SESSION_A}/messages?tenantId=tenant-a`);
+    expect(allowed.status).toBe(200);
+    const wrongTenant = await fetch(`${baseUrl}/api/admin/qa/sessions/${SESSION_B}/messages?tenantId=tenant-a`);
+    expect(wrongTenant.status).toBe(404);
+  });
+
+  it('JWT admin 角色仍需有效 Governance 管理员身份', async () => {
+    ({ server, baseUrl } = await startServer({
+      sessionProjectionStore: projection,
+      orgAgentStore,
+      authorizeAdminAccess: async () => false,
+    }, orgAdminA));
+    const response = await fetch(`${baseUrl}/api/admin/qa/sessions`);
+    expect(response.status).toBe(403);
   });
 
   it('同租户个人会话 sessionId 请求 messages → 404（F3：质检台仅限 org 会话，防个人会话探测）', async () => {

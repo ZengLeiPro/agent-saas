@@ -128,10 +128,17 @@ async function persistSearchCredential(
   if (!secretVault || !search?.apiKey) return settings;
 
   const { apiKey, ...safeSearch } = search;
-  const ref = await secretVault.putSecret(GLOBAL_OWNER_ID, 'web_tools', apiKey, {
-    provider: search.provider,
-    purpose: 'web-search',
-  });
+  const ref = await secretVault.putSecret(
+    GLOBAL_OWNER_ID,
+    'web_tools',
+    apiKey,
+    {
+      actor: 'system',
+      userId: 'tool_controls_admin',
+      scopes: ['secret:web_tools:write'],
+    },
+    { provider: search.provider, purpose: 'web-search' },
+  );
   return {
     ...settings,
     webTools: {

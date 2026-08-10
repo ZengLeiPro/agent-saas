@@ -48,6 +48,7 @@ import type { TenantRecord } from '../data/tenants/types.js';
 import { TenantStore } from '../data/tenants/store.js';
 import type { TenantDeletionReport } from '../data/tenants/cleanup.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
+import { InMemoryGovernanceAuditStore, type GovernanceAuditStore } from '../data/governance-audit/index.js';
 import { createTenantsRouter } from '../routes/tenants.js';
 
 const PLATFORM_ADMIN: JwtPayload = { sub: 'u-platform', username: 'platform_admin', role: 'admin', tenantId: DEFAULT_TENANT_ID };
@@ -104,6 +105,7 @@ interface RigOptions {
   withDeleter?: boolean;
   /** true 时 orgAgentStore 的落盘路径被目录占据 → persist 必失败（验证 seed 降级） */
   brokenOrgAgentStore?: boolean;
+  governanceAuditStore?: GovernanceAuditStore;
 }
 
 interface TestRig {
@@ -148,6 +150,7 @@ async function makeTestRig(opts: RigOptions = {}): Promise<TestRig> {
     tenantStore,
     sharedDir,
     orgAgentStore,
+    governanceAuditStore: opts.governanceAuditStore ?? new InMemoryGovernanceAuditStore(),
     onTenantDisabled: id => { callOrder.push(`disabled:${id}`); },
     ...(opts.withDeleter === false ? {} : {
       deleteTenantResources: async (tenantId: string) => {
@@ -185,6 +188,22 @@ function jsonInit(method: string, body: unknown): RequestInit {
 describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST 边界）', () => {
   let h: TestRig;
   afterEach(async () => { await h.close(); });
+
+  describe('PATCH /:id', () => {
+    it('平台管理员不能重命名 pantheon', async () => {
+      h = await makeTestRig();
+      h.setCaller(PLATFORM_ADMIN);
+      const res = await h.request(
+        `/api/tenants/${DEFAULT_TENANT_ID}`,
+        jsonInit('PATCH', { name: '客户组织' }),
+      );
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        error: `Cannot rename the default tenant "${DEFAULT_TENANT_ID}"`,
+      });
+      expect(h.tenantStore.findById(DEFAULT_TENANT_ID)?.name).toBe('万神殿');
+    });
+  });
 
   // -------------------------------------------------------------------------
   // DELETE /api/tenants/:id —— 此前无任何路由级测试
@@ -236,6 +255,18 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
       expect(h.callOrder).toEqual([]); // 501 短路在回调之前
     });
 
+    it('治理审计 intent 写入失败 → 503，且清理器和断连回调都不执行', async () => {
+      h = await makeTestRig({
+        governanceAuditStore: { append: async () => { throw new Error('pg unavailable'); } },
+      });
+      h.setCaller(PLATFORM_ADMIN);
+      const res = await h.request('/api/tenants/acme', jsonInit('DELETE', { confirm: 'acme' }));
+      expect(res.status).toBe(503);
+      await expect(res.json()).resolves.toMatchObject({ code: 'GOVERNANCE_AUDIT_UNAVAILABLE' });
+      expect(h.tenantStore.findById('acme')).toBeTruthy();
+      expect(h.callOrder).toEqual([]);
+    });
+
     it('成功：200 {ok, report} 透传清理报告，清理成功后回调，store 落盘删除', async () => {
       h = await makeTestRig();
       h.setCaller(PLATFORM_ADMIN);
@@ -254,7 +285,7 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
       expect(h.tenantStore.count()).toBe(2);
     });
 
-    it('删默认租户被 store 拒绝 → 409，且不触发 onTenantDisabled', async () => {
+    it('删默认租户在路由层拒绝 → 409，且不触发清理器或 onTenantDisabled', async () => {
       h = await makeTestRig();
       h.setCaller(PLATFORM_ADMIN);
       const res = await h.request(
@@ -265,7 +296,7 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
       const body = await res.json() as { error: string };
       expect(body.error).toContain('Cannot delete');
       expect(h.tenantStore.findById(DEFAULT_TENANT_ID)).toBeTruthy(); // 未删成
-      expect(h.callOrder).toEqual([`deleter:${DEFAULT_TENANT_ID}`]);
+      expect(h.callOrder).toEqual([]);
     });
 
     it('清理器抛 "Tenant not found" → 404；抛普通错误 → 500 且组织仍在', async () => {

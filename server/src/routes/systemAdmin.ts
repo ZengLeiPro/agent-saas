@@ -4,6 +4,13 @@ import { z } from 'zod';
 
 import { isPlatformAdmin } from '../auth/types.js';
 import { auditLog } from '../data/login-logs/index.js';
+import {
+  GovernanceAuditUnavailableError,
+  governanceDigest,
+  recordGovernanceIntent,
+  recordGovernanceOutcome,
+  type GovernanceAuditStore,
+} from '../data/governance-audit/index.js';
 import type { UserStore } from '../data/users/store.js';
 import type { AlertNotifier } from '../runtime/alertNotifier.js';
 import type { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
@@ -17,6 +24,7 @@ export interface SystemAdminRouterOptions {
   systemMetricsCollector?: SystemMetricsCollector;
   alertNotifier?: AlertNotifier;
   userStore?: UserStore;
+  governanceAuditStore?: GovernanceAuditStore;
 }
 
 type WorkspaceUsageResponseRecord = WorkspaceUsageRecord & {
@@ -159,28 +167,76 @@ export function createSystemAdminRouter(options: SystemAdminRouterOptions): Rout
       res.status(503).json({ error: 'System metrics store is not configured' });
       return;
     }
+    let usage: WorkspaceUsageRecord;
     try {
-      const usage = await store.getWorkspaceUsage(parsed.data.path);
-      if (!usage) {
+      const found = await store.getWorkspaceUsage(parsed.data.path);
+      if (!found) {
         res.status(404).json({ error: 'Workspace usage record not found; run a scan first' });
         return;
       }
-      if (!isWorkspaceScanFresh(usage.scannedAt)) {
+      if (!isWorkspaceScanFresh(found.scannedAt)) {
         res.status(409).json({ error: 'Workspace scan is stale; run a scan before deleting' });
         return;
       }
-      const result = await deleteWorkspace({
+      usage = found;
+    } catch (err) {
+      res.status(400).json({ error: errorMessage(err) });
+      return;
+    }
+
+    let intent;
+    try {
+      intent = await recordGovernanceIntent(options.governanceAuditStore, req.user!, {
+        action: 'workspace.delete',
+        targetType: 'workspace',
+        targetId: parsed.data.path,
+        targetTenantId: usage.tenantId,
+        purpose: 'storage_governance',
+        reason: 'confirmed_hard_delete',
+        beforeDigest: governanceDigest({ path: parsed.data.path, bytes: usage.bytes, scannedAt: usage.scannedAt }),
+      });
+    } catch (err) {
+      if (err instanceof GovernanceAuditUnavailableError) {
+        res.status(503).json({ code: err.code, error: err.message });
+        return;
+      }
+      throw err;
+    }
+
+    let result;
+    try {
+      result = await deleteWorkspace({
         agentCwd: options.agentCwd,
         path: parsed.data.path,
         confirm: parsed.data.confirm,
         usage,
       });
       await store.deleteWorkspaceUsage(parsed.data.path);
-      auditLog(req, 'workspace_deleted', `${parsed.data.path} (${result.bytes} bytes)`);
-      res.json({ ok: true, result });
     } catch (err) {
+      await recordGovernanceOutcome(options.governanceAuditStore!, intent, 'failed', {
+        metadata: { errorCode: 'WORKSPACE_DELETE_FAILED' },
+      }).catch(() => undefined);
       res.status(400).json({ error: errorMessage(err) });
+      return;
     }
+
+    let outcome;
+    try {
+      outcome = await recordGovernanceOutcome(options.governanceAuditStore!, intent, 'succeeded', {
+        afterDigest: governanceDigest({ deleted: true, bytes: result.bytes }),
+        metadata: { bytesDeleted: result.bytes },
+      });
+    } catch (err) {
+      res.status(500).json({
+        code: 'GOVERNANCE_AUDIT_OUTCOME_FAILED',
+        error: '工作区已删除，但治理审计结果写入失败，请立即人工核对',
+        changed: true,
+        intentAuditId: intent.auditId,
+      });
+      return;
+    }
+    auditLog(req, 'workspace_deleted', `${parsed.data.path} (${result.bytes} bytes)`);
+    res.json({ ok: true, result, auditId: outcome.auditId });
   });
 
   router.get('/alerts/status', async (_req, res) => {

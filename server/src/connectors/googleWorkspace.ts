@@ -2,8 +2,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { Pool as PgPool } from 'pg';
 
 import type { UserInfo } from '../data/users/types.js';
-import type { SecretVault } from '../security/secretVault.js';
-import type { ConnectorConnectionStore } from './connectionStore.js';
+import type { SecretVault, VaultOperation } from '../security/secretVault.js';
+import type { ConnectorConnectionRecord, ConnectorConnectionStore } from './connectionStore.js';
 
 export const GOOGLE_WORKSPACE_CONNECTOR_ID = 'google-workspace';
 export const GOOGLE_WORKSPACE_OAUTH_CREDENTIAL_KEY = 'oauth';
@@ -284,11 +284,12 @@ export class GoogleWorkspaceOAuthService {
     const metadata = await this.fetchAccountMetadata(bundle.accessToken);
     await this.assertUserActive(pending.user);
     const ref = await this.options.vault.putSecret(
-      pending.user.username,
+      pending.user.id,
       'connector',
       JSON.stringify(bundle),
+      vaultCaller(pending.user.id, pending.user.tenantId, 'write'),
       {
-        ownerId: pending.user.username,
+        ownerId: pending.user.id,
         tenantId: pending.user.tenantId,
         connectorId: GOOGLE_WORKSPACE_CONNECTOR_ID,
       },
@@ -301,7 +302,7 @@ export class GoogleWorkspaceOAuthService {
         tenantId: pending.user.tenantId,
         connectorId: GOOGLE_WORKSPACE_CONNECTOR_ID,
         credentialRefs: { [GOOGLE_WORKSPACE_OAUTH_CREDENTIAL_KEY]: ref.id },
-        metadata,
+        metadata: { ...metadata, credentialOwnerId: pending.user.id },
       });
       connected = true;
       await this.assertUserActive(pending.user);
@@ -317,7 +318,7 @@ export class GoogleWorkspaceOAuthService {
       }
       await this.options.vault.revokeSecret(
         ref.id,
-        vaultCaller(pending.user.username, pending.user.tenantId),
+        vaultCaller(pending.user.id, pending.user.tenantId, 'revoke'),
       ).catch(() => undefined);
       if (connected) await this.revokePending(pending.user.username);
       throw error;
@@ -345,14 +346,15 @@ export class GoogleWorkspaceOAuthService {
     if (!record || record.status !== 'connected' || record.userId !== userId || record.tenantId !== tenantId) return undefined;
     const ref = record.credentialRefs[GOOGLE_WORKSPACE_OAUTH_CREDENTIAL_KEY];
     if (!ref) return undefined;
-    const bundle = await this.readBundle(ref, username, tenantId);
+    const ownerId = credentialOwnerId(record);
+    const bundle = await this.readBundle(ref, ownerId, tenantId);
     if (bundle.expiresAt > Date.now() + ACCESS_TOKEN_REFRESH_SKEW_MS) return bundle.accessToken;
     if (!bundle.refreshToken) throw new Error('Google Workspace refresh token 不可用，请重新授权');
 
-    const key = `${tenantId}:${username}`;
+    const key = `${tenantId}:${userId}`;
     const existing = this.refreshes.get(key);
     if (existing) return await existing;
-    const refreshing = this.refreshAccessToken(ref, username, tenantId, bundle)
+    const refreshing = this.refreshAccessToken(ref, ownerId, tenantId, bundle)
       .finally(() => this.refreshes.delete(key));
     this.refreshes.set(key, refreshing);
     return await refreshing;
@@ -367,7 +369,7 @@ export class GoogleWorkspaceOAuthService {
     if (!record || record.userId !== userId || record.tenantId !== tenantId) return;
     const ref = record.credentialRefs[GOOGLE_WORKSPACE_OAUTH_CREDENTIAL_KEY];
     if (ref) {
-      const bundle = await this.readBundle(ref, username, tenantId);
+      const bundle = await this.readBundle(ref, credentialOwnerId(record), tenantId);
       const token = bundle.refreshToken || bundle.accessToken;
       const response = await this.fetchImpl('https://oauth2.googleapis.com/revoke', {
         method: 'POST',
@@ -384,7 +386,7 @@ export class GoogleWorkspaceOAuthService {
 
   private async refreshAccessToken(
     ref: string,
-    username: string,
+    ownerId: string,
     tenantId: string,
     current: GoogleTokenBundle,
   ): Promise<string> {
@@ -403,12 +405,12 @@ export class GoogleWorkspaceOAuthService {
     if (!response.ok || !refreshed) {
       throw new Error(`Google Workspace token refresh failed: ${safeOAuthError(tokenResponse)}`);
     }
-    await this.options.vault.rotateSecret(ref, JSON.stringify(refreshed), vaultCaller(username, tenantId));
+    await this.options.vault.rotateSecret(ref, JSON.stringify(refreshed), vaultCaller(ownerId, tenantId, 'rotate'));
     return refreshed.accessToken;
   }
 
-  private async readBundle(ref: string, username: string, tenantId: string): Promise<GoogleTokenBundle> {
-    const raw = await this.options.vault.getSecret(ref, vaultCaller(username, tenantId));
+  private async readBundle(ref: string, ownerId: string, tenantId: string): Promise<GoogleTokenBundle> {
+    const raw = await this.options.vault.getSecret(ref, vaultCaller(ownerId, tenantId, 'read'));
     const parsed = JSON.parse(raw) as Partial<GoogleTokenBundle>;
     if (!parsed.accessToken || typeof parsed.expiresAt !== 'number') {
       throw new Error('Google Workspace OAuth credential 格式无效');
@@ -453,7 +455,7 @@ export class GoogleWorkspaceOAuthService {
     if (!record) return;
     for (const ref of record.pendingRevokeRefs ?? []) {
       try {
-        await this.options.vault.revokeSecret(ref, vaultCaller(record.username, record.tenantId));
+        await this.options.vault.revokeSecret(ref, vaultCaller(credentialOwnerId(record), record.tenantId, 'revoke'));
         await this.options.connectionStore.markCredentialRevoked(
           record.username,
           GOOGLE_WORKSPACE_CONNECTOR_ID,
@@ -505,11 +507,16 @@ function sanitizeIdentifier(value: string): string {
   return normalized;
 }
 
-function vaultCaller(username: string, tenantId: string) {
+function credentialOwnerId(record: ConnectorConnectionRecord): string {
+  const ownerId = record.metadata?.credentialOwnerId;
+  return typeof ownerId === 'string' && ownerId.length > 0 ? ownerId : record.username;
+}
+
+function vaultCaller(ownerId: string, tenantId: string, operation: VaultOperation) {
   return {
     actor: 'connector_proxy' as const,
-    userId: username,
+    userId: ownerId,
     tenantId,
-    scopes: ['secret:connector:read', 'secret:mcp:read'],
+    scopes: [`secret:connector:${operation}`],
   };
 }

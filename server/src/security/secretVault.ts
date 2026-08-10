@@ -12,8 +12,10 @@ export interface SecretRef {
   revokedAt?: string;
 }
 
+export type VaultOperation = 'read' | 'write' | 'rotate' | 'revoke';
+
 export interface VaultCaller {
-  actor: 'system' | 'mcp_proxy' | 'connector_proxy' | 'git_proxy' | 'admin';
+  actor: 'system' | 'mcp_proxy' | 'connector_proxy' | 'git_proxy';
   userId?: string;
   /**
    * 调用方所属组织。用于 tenant-scope secret 的 ACL 校验：
@@ -43,7 +45,7 @@ export function parseTenantOwnerId(ownerId: string): string | null {
 }
 
 export interface SecretVault {
-  putSecret(ownerId: string, kind: string, value: string, metadata?: Record<string, unknown>): Promise<SecretRef>;
+  putSecret(ownerId: string, kind: string, value: string, caller: VaultCaller, metadata?: Record<string, unknown>): Promise<SecretRef>;
   getSecret(ref: SecretRef | string, caller: VaultCaller): Promise<string>;
   rotateSecret(ref: SecretRef | string, value: string, caller: VaultCaller): Promise<SecretRef>;
   revokeSecret(ref: SecretRef | string, caller: VaultCaller): Promise<void>;
@@ -64,7 +66,8 @@ interface StoredSecret extends SecretRef {
 export class InMemorySecretVault implements SecretVault {
   private readonly secrets = new Map<string, StoredSecret>();
 
-  async putSecret(ownerId: string, kind: string, value: string, metadata: Record<string, unknown> = {}): Promise<SecretRef> {
+  async putSecret(ownerId: string, kind: string, value: string, caller: VaultCaller, metadata: Record<string, unknown> = {}): Promise<SecretRef> {
+    assertAllowed({ ownerId, kind }, caller, 'write');
     const now = new Date().toISOString();
     const secret: StoredSecret = {
       id: randomUUID(),
@@ -82,13 +85,13 @@ export class InMemorySecretVault implements SecretVault {
   async getSecret(ref: SecretRef | string, caller: VaultCaller): Promise<string> {
     const secret = this.read(ref);
     if (secret.revokedAt) throw new Error(`secret revoked: ${secret.id}`);
-    if (!isAllowed(secret, caller)) throw new Error(`vault access denied for ${caller.actor}`);
+    assertAllowed(secret, caller, 'read');
     return secret.value;
   }
 
   async rotateSecret(ref: SecretRef | string, value: string, caller: VaultCaller): Promise<SecretRef> {
     const secret = this.read(ref);
-    if (!isAllowed(secret, caller)) throw new Error(`vault rotate denied for ${caller.actor}`);
+    assertAllowed(secret, caller, 'rotate');
     const updated: StoredSecret = { ...secret, value, updatedAt: new Date().toISOString(), revokedAt: undefined };
     this.secrets.set(secret.id, updated);
     return toRef(updated);
@@ -96,7 +99,7 @@ export class InMemorySecretVault implements SecretVault {
 
   async revokeSecret(ref: SecretRef | string, caller: VaultCaller): Promise<void> {
     const secret = this.read(ref);
-    if (!isAllowed(secret, caller)) throw new Error(`vault revoke denied for ${caller.actor}`);
+    assertAllowed(secret, caller, 'revoke');
     this.secrets.set(secret.id, { ...secret, revokedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
   }
 
@@ -108,25 +111,91 @@ export class InMemorySecretVault implements SecretVault {
   }
 }
 
-function isAllowed(secret: SecretRef, caller: VaultCaller): boolean {
-  if (caller.actor === 'admin' || caller.actor === 'system') return true;
-  // PR 11 多组织 secret scope ACL：
-  //   - tenant:<id>  → caller.tenantId === id
-  //   - global       → 任意 caller（仅在 actor 是 proxy 时通过）
-  //   - 其他 (user)  → caller.userId === ownerId（兼容裸 username 与 user:<x> 两种）
+const SYSTEM_INFRASTRUCTURE_PRINCIPALS: Readonly<Record<string, Partial<Record<VaultOperation, readonly string[]>>>> = {
+  client_daemon: { read: ['__system__'] },
+  client_daemon_device: { read: ['__system__'], write: ['__system__'] },
+  codex_subscription_oauth: {
+    read: ['__system__'],
+    write: ['__system__'],
+    rotate: ['__system__'],
+    revoke: ['__system__'],
+  },
+  'egress-proxy': { read: ['__system__'], write: ['egress_config_admin'] },
+  feishu_connector: { read: ['__system__'] },
+  image_gen_tools: { read: ['__system__'], write: ['image_gen_config_admin'] },
+  server_remote: { read: ['__system__'] },
+  'signup-sms': {
+    read: ['auth_sms_service', 'signup_sms_service'],
+    write: ['signup_config_admin'],
+  },
+  stt: { read: ['__system__'], write: ['__system__'] },
+  tenant_hand: { read: ['__system__'], write: ['__system__'] },
+  web_tools: { read: ['__system__'], write: ['tool_controls_admin'] },
+};
+
+function assertSystemInfrastructurePrincipal(
+  caller: VaultCaller,
+  kind: string,
+  operation: VaultOperation,
+): void {
+  const allowedPrincipals = SYSTEM_INFRASTRUCTURE_PRINCIPALS[kind]?.[operation];
+  if (!allowedPrincipals) {
+    throw new Error(`vault access denied (${operation}) for system: kind/operation not infrastructure allowlisted`);
+  }
+  if (!caller.userId || !allowedPrincipals.includes(caller.userId)) {
+    throw new Error(`vault access denied (${operation}) for system: service principal mismatch`);
+  }
+}
+
+function assertAllowed(
+  secret: Pick<SecretRef, 'ownerId' | 'kind'>,
+  caller: VaultCaller,
+  operation: VaultOperation,
+): void {
+  if (!['system', 'mcp_proxy', 'connector_proxy', 'git_proxy'].includes(caller.actor)) {
+    throw new Error(`vault access denied (${operation}): unknown actor`);
+  }
+  const requiredScope = `secret:${secret.kind}:${operation}`;
+  if (!(caller.scopes ?? []).includes(requiredScope)) {
+    throw new Error(`vault access denied (${operation}) for ${caller.actor}: missing ${requiredScope}`);
+  }
+
+  // M0 迁移兼容：system 仅保留固定基础设施 Secret kind、operation 与 Service Principal。
+  if (caller.actor === 'system') {
+    assertSystemInfrastructurePrincipal(caller, secret.kind, operation);
+    return;
+  }
+
   const tenant = parseTenantOwnerId(secret.ownerId);
-  const scopes = new Set(caller.scopes ?? []);
-  const hasScope = scopes.has(`secret:${secret.kind}:read`) || scopes.has('secret:*:read');
-  if (!hasScope) return false;
   if (tenant !== null) {
-    return !!caller.tenantId && caller.tenantId === tenant;
+    if (!caller.tenantId || caller.tenantId !== tenant) {
+      throw new Error(`vault access denied (${operation}) for ${caller.actor}: tenant owner mismatch`);
+    }
+    return;
   }
-  if (secret.ownerId === GLOBAL_OWNER_ID) {
-    return true; // global scope 对 proxy actor 全开（actor 已通过 scope 闸门收紧）
+  if (secret.ownerId === GLOBAL_OWNER_ID) return;
+  if (!caller.userId) {
+    throw new Error(`vault access denied (${operation}) for ${caller.actor}: user owner required`);
   }
-  if (!caller.userId) return false;
-  // user 兼容两种：裸 username（旧）或 user:<x>（如未来引入命名空间）
-  return caller.userId === secret.ownerId || `user:${caller.userId}` === secret.ownerId;
+  if (caller.userId !== secret.ownerId && `user:${caller.userId}` !== secret.ownerId) {
+    throw new Error(`vault access denied (${operation}) for ${caller.actor}: user owner mismatch`);
+  }
+}
+
+function assertCallerHasOperationScope(caller: VaultCaller, operation: VaultOperation): void {
+  if (!['system', 'mcp_proxy', 'connector_proxy', 'git_proxy'].includes(caller.actor)) {
+    throw new Error(`vault access denied (${operation}): unknown actor`);
+  }
+  const suffix = `:${operation}`;
+  const kinds = (caller.scopes ?? [])
+    .filter(scope => scope.startsWith('secret:') && scope.endsWith(suffix))
+    .map(scope => scope.slice('secret:'.length, -suffix.length));
+  if (kinds.length === 0 || kinds.some(kind => !/^[a-z0-9_-]+$/i.test(kind))) {
+    throw new Error(`vault access denied (${operation}) for ${caller.actor}: exact operation scope required`);
+  }
+  if (caller.actor === 'system') {
+    for (const kind of kinds) assertSystemInfrastructurePrincipal(caller, kind, operation);
+  }
 }
 
 function toRef(secret: StoredSecret): SecretRef {
@@ -154,7 +223,8 @@ export class EncryptedFileSecretVault implements SecretVault {
     this.key = createHash('sha256').update(encryptionKey).digest();
   }
 
-  async putSecret(ownerId: string, kind: string, value: string, metadata: Record<string, unknown> = {}): Promise<SecretRef> {
+  async putSecret(ownerId: string, kind: string, value: string, caller: VaultCaller, metadata: Record<string, unknown> = {}): Promise<SecretRef> {
+    assertAllowed({ ownerId, kind }, caller, 'write');
     return this.withWriteLock(async () => {
       const data = await this.load();
       const now = new Date().toISOString();
@@ -168,7 +238,7 @@ export class EncryptedFileSecretVault implements SecretVault {
   async getSecret(ref: SecretRef | string, caller: VaultCaller): Promise<string> {
     const secret = await this.read(ref);
     if (secret.revokedAt) throw new Error(`secret revoked: ${secret.id}`);
-    if (!isAllowed(secret, caller)) throw new Error(`vault access denied for ${caller.actor}`);
+    assertAllowed(secret, caller, 'read');
     return secret.value;
   }
 
@@ -178,7 +248,7 @@ export class EncryptedFileSecretVault implements SecretVault {
       const idx = data.secrets.findIndex((secret) => secret.id === refId(ref));
       if (idx < 0) throw new Error(`secret not found: ${refId(ref)}`);
       const current = data.secrets[idx]!;
-      if (!isAllowed(current, caller)) throw new Error(`vault rotate denied for ${caller.actor}`);
+      assertAllowed(current, caller, 'rotate');
       const updated: StoredSecret = { ...current, value, revokedAt: undefined, updatedAt: new Date().toISOString() };
       data.secrets[idx] = updated;
       await this.save(data);
@@ -192,7 +262,7 @@ export class EncryptedFileSecretVault implements SecretVault {
       const idx = data.secrets.findIndex((secret) => secret.id === refId(ref));
       if (idx < 0) throw new Error(`secret not found: ${refId(ref)}`);
       const current = data.secrets[idx]!;
-      if (!isAllowed(current, caller)) throw new Error(`vault revoke denied for ${caller.actor}`);
+      assertAllowed(current, caller, 'revoke');
       data.secrets[idx] = { ...current, revokedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
       await this.save(data);
     });
@@ -284,6 +354,7 @@ export class HttpSecretVault implements SecretVault {
   private readonly maxCacheEntries: number;
   private readonly nowMs: () => number;
   private readonly cache = new Map<string, CacheEntry>();
+  private readonly refs = new Map<string, SecretRef>();
 
   constructor(private readonly options: HttpSecretVaultOptions) {
     if (!options.authToken || options.authToken.length < 8) throw new Error('HttpSecretVault authToken is required');
@@ -301,29 +372,46 @@ export class HttpSecretVault implements SecretVault {
     this.nowMs = options.nowMs ?? (() => Date.now());
   }
 
-  putSecret(ownerId: string, kind: string, value: string, metadata: Record<string, unknown> = {}): Promise<SecretRef> {
-    return this.post<SecretRef>('/secrets', { ownerId, kind, value, metadata });
+  async putSecret(
+    ownerId: string,
+    kind: string,
+    value: string,
+    caller: VaultCaller,
+    metadata: Record<string, unknown> = {},
+  ): Promise<SecretRef> {
+    assertAllowed({ ownerId, kind }, caller, 'write');
+    const created = await this.post<SecretRef>('/secrets', { ownerId, kind, value, caller, metadata });
+    this.refs.set(created.id, created);
+    return created;
   }
 
   async getSecret(ref: SecretRef | string, caller: VaultCaller): Promise<string> {
     const id = refId(ref);
+    this.assertRemoteOperation(ref, caller, 'read');
     const cacheKey = this.cacheKey(id, caller);
     const cached = this.readCache(cacheKey);
     if (cached !== undefined) return cached;
-    const result = await this.post<{ value: string }>('/secrets/resolve', { ref: id, caller });
+    const result = await this.post<{ value: string; ref?: SecretRef }>('/secrets/resolve', { ref: id, caller });
+    if (result.ref) {
+      assertAllowed(result.ref, caller, 'read');
+      this.refs.set(result.ref.id, result.ref);
+    }
     this.writeCache(cacheKey, result.value);
     return result.value;
   }
 
   async rotateSecret(ref: SecretRef | string, value: string, caller: VaultCaller): Promise<SecretRef> {
     const id = refId(ref);
+    this.assertRemoteOperation(ref, caller, 'rotate');
     const updated = await this.post<SecretRef>(`/secrets/${encodeURIComponent(id)}/rotate`, { value, caller });
+    this.refs.set(updated.id, updated);
     this.invalidate(id);
     return updated;
   }
 
   async revokeSecret(ref: SecretRef | string, caller: VaultCaller): Promise<void> {
     const id = refId(ref);
+    this.assertRemoteOperation(ref, caller, 'revoke');
     await this.post(`/secrets/${encodeURIComponent(id)}/revoke`, { caller });
     this.invalidate(id);
   }
@@ -334,6 +422,16 @@ export class HttpSecretVault implements SecretVault {
    */
   invalidate(ref: SecretRef | string): void {
     this.invalidateCache(refId(ref));
+  }
+
+  private assertRemoteOperation(ref: SecretRef | string, caller: VaultCaller, operation: VaultOperation): void {
+    const known = typeof ref === 'string' ? this.refs.get(ref) : ref;
+    if (known) {
+      assertAllowed(known, caller, operation);
+      return;
+    }
+    // 旧 ref 的 owner/kind 只能由远端权威校验；本地先拒绝万能/错 operation scope。
+    assertCallerHasOperationScope(caller, operation);
   }
 
   private cacheKey(id: string, caller: VaultCaller): string {

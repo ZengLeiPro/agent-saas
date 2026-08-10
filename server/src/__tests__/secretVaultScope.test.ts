@@ -1,35 +1,24 @@
-/**
- * Secret Vault 多 scope ACL 测试（PR 11 tenant-scoped secret）
- *
- * 覆盖：
- *   - user scope (ownerId === username 或 user:<x>) → caller.userId 必须匹配
- *   - tenant scope (ownerId === tenant:<id>) → caller.tenantId 必须匹配
- *   - global scope (ownerId === 'global') → 任意 caller（在 proxy actor + scope 闸门下）
- *   - admin/system actor → 全部放行（管理路径不受 scope 约束）
- *   - revoke 后任何 caller 都拿不到
- */
-
 import { describe, expect, it } from 'vitest';
 import {
-  InMemorySecretVault,
   GLOBAL_OWNER_ID,
+  InMemorySecretVault,
   TENANT_OWNER_PREFIX,
-  tenantOwnerId,
   parseTenantOwnerId,
+  tenantOwnerId,
+  type VaultCaller,
+  type VaultOperation,
 } from '../security/secretVault.js';
-import type { VaultCaller } from '../security/secretVault.js';
 
-const proxyKaiyan = (username: string): VaultCaller => ({
+const proxy = (
+  userId: string,
+  tenantId: string,
+  operation: VaultOperation,
+  kind = 'mcp',
+): VaultCaller => ({
   actor: 'mcp_proxy',
-  userId: username,
-  tenantId: 'kaiyan',
-  scopes: ['secret:mcp:read'],
-});
-const proxyWain = (username: string): VaultCaller => ({
-  actor: 'mcp_proxy',
-  userId: username,
-  tenantId: 'wain',
-  scopes: ['secret:mcp:read'],
+  userId,
+  tenantId,
+  scopes: [`secret:${kind}:${operation}`],
 });
 
 describe('SecretVault ownerId helpers', () => {
@@ -42,109 +31,107 @@ describe('SecretVault ownerId helpers', () => {
   });
 });
 
-describe('InMemorySecretVault — user scope ACL', () => {
-  it('caller.userId 匹配裸 username ownerId → 通过', async () => {
-    const v = new InMemorySecretVault();
-    const ref = await v.putSecret('zengky', 'mcp', 'pat_xxx');
-    const value = await v.getSecret(ref, proxyKaiyan('zengky'));
-    expect(value).toBe('pat_xxx');
+describe('InMemorySecretVault operation ACL', () => {
+  it('putSecret 必须校验 write scope 与 owner', async () => {
+    const vault = new InMemorySecretVault();
+    await expect(vault.putSecret('alice', 'mcp', 'secret', proxy('alice', 'kaiyan', 'read')))
+      .rejects.toThrow(/missing secret:mcp:write/);
+    await expect(vault.putSecret('alice', 'mcp', 'secret', proxy('bob', 'kaiyan', 'write')))
+      .rejects.toThrow(/owner mismatch/);
+    await expect(vault.putSecret('alice', 'mcp', 'secret', proxy('alice', 'kaiyan', 'write')))
+      .resolves.toMatchObject({ ownerId: 'alice', kind: 'mcp' });
   });
 
-  it('caller.userId 不匹配 → vault access denied', async () => {
-    const v = new InMemorySecretVault();
-    const ref = await v.putSecret('alice', 'mcp', 'secret');
-    await expect(v.getSecret(ref, proxyKaiyan('bob'))).rejects.toThrow(/access denied/);
+  it('read/rotate/revoke 按 operation scope 分离，read scope 不能改写', async () => {
+    const vault = new InMemorySecretVault();
+    const ref = await vault.putSecret('alice', 'mcp', 'v1', proxy('alice', 'kaiyan', 'write'));
+    await expect(vault.getSecret(ref, proxy('alice', 'kaiyan', 'read'))).resolves.toBe('v1');
+    await expect(vault.rotateSecret(ref, 'v2', proxy('alice', 'kaiyan', 'read')))
+      .rejects.toThrow(/missing secret:mcp:rotate/);
+    await expect(vault.revokeSecret(ref, proxy('alice', 'kaiyan', 'read')))
+      .rejects.toThrow(/missing secret:mcp:revoke/);
+    await vault.rotateSecret(ref, 'v2', proxy('alice', 'kaiyan', 'rotate'));
+    await expect(vault.getSecret(ref, proxy('alice', 'kaiyan', 'read'))).resolves.toBe('v2');
+    await vault.revokeSecret(ref, proxy('alice', 'kaiyan', 'revoke'));
+    await expect(vault.getSecret(ref, proxy('alice', 'kaiyan', 'read'))).rejects.toThrow(/revoked/);
   });
 
-  it('caller 缺 scope → 拒', async () => {
-    const v = new InMemorySecretVault();
-    const ref = await v.putSecret('alice', 'mcp', 'secret');
-    await expect(
-      v.getSecret(ref, { actor: 'mcp_proxy', userId: 'alice', tenantId: 'kaiyan', scopes: [] }),
-    ).rejects.toThrow(/access denied/);
-  });
-
-  it('user:<username> 命名空间格式与裸 username 等价', async () => {
-    const v = new InMemorySecretVault();
-    const ref = await v.putSecret('user:alice', 'mcp', 'value-ns');
-    const value = await v.getSecret(ref, proxyKaiyan('alice'));
-    expect(value).toBe('value-ns');
-  });
-});
-
-describe('InMemorySecretVault — tenant scope ACL', () => {
-  it('同组织 caller → 通过（user A 拿 tenant kaiyan 的 secret，因为 A 属 kaiyan）', async () => {
-    const v = new InMemorySecretVault();
-    const ref = await v.putSecret(tenantOwnerId('kaiyan'), 'mcp', 'shared_tenant_pat');
-    const value = await v.getSecret(ref, proxyKaiyan('alice'));
-    expect(value).toBe('shared_tenant_pat');
-  });
-
-  it('同组织但不同 user → 通过（只要 tenantId 匹配，user 是谁不限）', async () => {
-    const v = new InMemorySecretVault();
-    const ref = await v.putSecret(tenantOwnerId('kaiyan'), 'mcp', 'tenant_shared');
-    const v1 = await v.getSecret(ref, proxyKaiyan('alice'));
-    const v2 = await v.getSecret(ref, proxyKaiyan('bob'));
-    expect(v1).toBe('tenant_shared');
-    expect(v2).toBe('tenant_shared');
-  });
-
-  it('跨组织 caller → 拒（wain user 拿 tenant:kaiyan 的 secret）', async () => {
-    const v = new InMemorySecretVault();
-    const ref = await v.putSecret(tenantOwnerId('kaiyan'), 'mcp', 'kaiyan_only');
-    await expect(v.getSecret(ref, proxyWain('wain_user'))).rejects.toThrow(/access denied/);
-  });
-
-  it('caller 没传 tenantId → 拒', async () => {
-    const v = new InMemorySecretVault();
-    const ref = await v.putSecret(tenantOwnerId('kaiyan'), 'mcp', 'x');
-    await expect(
-      v.getSecret(ref, { actor: 'mcp_proxy', userId: 'alice', scopes: ['secret:mcp:read'] }),
-    ).rejects.toThrow(/access denied/);
+  it('拒绝 wildcard scope，必须是 kind + operation 精确 scope', async () => {
+    const vault = new InMemorySecretVault();
+    await expect(vault.putSecret('alice', 'mcp', 'secret', {
+      actor: 'mcp_proxy',
+      userId: 'alice',
+      tenantId: 'kaiyan',
+      scopes: ['secret:*:write'],
+    })).rejects.toThrow(/missing secret:mcp:write/);
   });
 });
 
-describe('InMemorySecretVault — global scope ACL', () => {
-  it('任意组织的 proxy caller 都可读 global secret', async () => {
-    const v = new InMemorySecretVault();
-    const ref = await v.putSecret(GLOBAL_OWNER_ID, 'mcp', 'platform_shared');
-    const fromKaiyan = await v.getSecret(ref, proxyKaiyan('alice'));
-    const fromWain = await v.getSecret(ref, proxyWain('wain_user'));
-    expect(fromKaiyan).toBe('platform_shared');
-    expect(fromWain).toBe('platform_shared');
+describe('InMemorySecretVault owner scope ACL', () => {
+  it('user owner 只允许本人，兼容 user:<id> 命名空间', async () => {
+    const vault = new InMemorySecretVault();
+    const ref = await vault.putSecret('user:alice', 'mcp', 'personal', proxy('alice', 'kaiyan', 'write'));
+    await expect(vault.getSecret(ref, proxy('alice', 'kaiyan', 'read'))).resolves.toBe('personal');
+    await expect(vault.getSecret(ref, proxy('bob', 'kaiyan', 'read'))).rejects.toThrow(/owner mismatch/);
   });
 
-  it('global secret 仍受 scope 闸门约束（无 scope 时拒）', async () => {
-    const v = new InMemorySecretVault();
-    const ref = await v.putSecret(GLOBAL_OWNER_ID, 'mcp', 'x');
-    await expect(
-      v.getSecret(ref, { actor: 'mcp_proxy', userId: 'alice', tenantId: 'kaiyan', scopes: [] }),
-    ).rejects.toThrow(/access denied/);
+  it('tenant owner 允许同组织、拒绝跨组织或缺 tenantId', async () => {
+    const vault = new InMemorySecretVault();
+    const ref = await vault.putSecret(
+      tenantOwnerId('kaiyan'),
+      'mcp',
+      'shared',
+      proxy('admin', 'kaiyan', 'write'),
+    );
+    await expect(vault.getSecret(ref, proxy('alice', 'kaiyan', 'read'))).resolves.toBe('shared');
+    await expect(vault.getSecret(ref, proxy('bob', 'wain', 'read'))).rejects.toThrow(/tenant owner mismatch/);
+    await expect(vault.getSecret(ref, {
+      actor: 'mcp_proxy',
+      userId: 'alice',
+      scopes: ['secret:mcp:read'],
+    })).rejects.toThrow(/tenant owner mismatch/);
   });
-});
 
-describe('InMemorySecretVault — actor bypass', () => {
-  it('actor=admin → ACL 不约束（管理工具读任意 scope）', async () => {
-    const v = new InMemorySecretVault();
-    const ref = await v.putSecret(tenantOwnerId('kaiyan'), 'mcp', 'k_secret');
-    const value = await v.getSecret(ref, { actor: 'admin' });
-    expect(value).toBe('k_secret');
-  });
-
-  it('actor=system → 同上放行', async () => {
-    const v = new InMemorySecretVault();
-    const ref = await v.putSecret(GLOBAL_OWNER_ID, 'mcp', 'g_secret');
-    const value = await v.getSecret(ref, { actor: 'system' });
-    expect(value).toBe('g_secret');
+  it('global owner 对持有精确 scope 的 proxy 开放', async () => {
+    const vault = new InMemorySecretVault();
+    const ref = await vault.putSecret(GLOBAL_OWNER_ID, 'mcp', 'global', proxy('admin', 'kaiyan', 'write'));
+    await expect(vault.getSecret(ref, proxy('alice', 'kaiyan', 'read'))).resolves.toBe('global');
+    await expect(vault.getSecret(ref, proxy('bob', 'wain', 'read'))).resolves.toBe('global');
   });
 });
 
-describe('InMemorySecretVault — revoke', () => {
-  it('revoke 后任何 caller 都拿不到（即使 admin）', async () => {
-    const v = new InMemorySecretVault();
-    const ref = await v.putSecret(tenantOwnerId('kaiyan'), 'mcp', 'value');
-    await v.revokeSecret(ref, { actor: 'admin' });
-    await expect(v.getSecret(ref, proxyKaiyan('alice'))).rejects.toThrow(/revoked/);
-    await expect(v.getSecret(ref, { actor: 'admin' })).rejects.toThrow(/revoked/);
+describe('InMemorySecretVault actor boundary', () => {
+  it('admin actor 即使伪造精确 scope 也立即拒绝', async () => {
+    const vault = new InMemorySecretVault();
+    await expect(vault.putSecret(GLOBAL_OWNER_ID, 'web_tools', 'key', {
+      actor: 'admin',
+      scopes: ['secret:web_tools:write'],
+    } as never)).rejects.toThrow(/unknown actor/);
+  });
+
+  it('system 仅可访问基础设施 allowlist，仍需精确 operation scope', async () => {
+    const vault = new InMemorySecretVault();
+    const writer: VaultCaller = {
+      actor: 'system',
+      userId: 'tool_controls_admin',
+      scopes: ['secret:web_tools:write'],
+    };
+    const ref = await vault.putSecret(GLOBAL_OWNER_ID, 'web_tools', 'key', writer);
+    await expect(vault.getSecret(ref, {
+      actor: 'system',
+      userId: '__system__',
+      scopes: ['secret:web_tools:read'],
+    })).resolves.toBe('key');
+    await expect(vault.getSecret(ref, writer)).rejects.toThrow(/missing secret:web_tools:read/);
+    await expect(vault.getSecret(ref, {
+      actor: 'system',
+      userId: 'tool_controls_admin',
+      scopes: ['secret:web_tools:read'],
+    })).rejects.toThrow(/service principal mismatch/);
+    await expect(vault.putSecret(GLOBAL_OWNER_ID, 'mcp', 'forbidden', {
+      actor: 'system',
+      userId: '__system__',
+      scopes: ['secret:mcp:write'],
+    })).rejects.toThrow(/not infrastructure allowlisted/);
   });
 });

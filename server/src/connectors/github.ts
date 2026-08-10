@@ -11,6 +11,11 @@ export interface GithubConnectionView {
   updatedAt?: string;
 }
 
+function vaultOwnerId(record: ConnectorConnectionRecord): string {
+  const ownerId = record.metadata?.credentialOwnerId;
+  return typeof ownerId === 'string' && ownerId.length > 0 ? ownerId : record.username;
+}
+
 export function toGithubConnectionView(record?: ConnectorConnectionRecord): GithubConnectionView {
   return {
     connectorId: GITHUB_CONNECTOR_ID,
@@ -36,9 +41,9 @@ export async function revokePendingGithubCredentials(input: {
       try {
         await input.vault.revokeSecret(ref, {
           actor: 'connector_proxy',
-          userId: record.username,
+          userId: vaultOwnerId(record),
           tenantId: record.tenantId,
-          scopes: ['secret:connector:read', 'secret:mcp:read'],
+          scopes: ['secret:connector:revoke'],
         });
         await input.connectionStore.markCredentialRevoked(record.username, GITHUB_CONNECTOR_ID, ref);
         revoked++;
@@ -55,19 +60,21 @@ export async function resolveGithubRuntimeEnv(
   context: { userId: string; username: string; tenantId: string },
 ): Promise<Record<string, string>> {
   const connection = deps.connectionStore.get(context.username, GITHUB_CONNECTOR_ID);
-  const tokenRef = connection?.status === 'connected'
-    && connection.userId === context.userId
-    && connection.tenantId === context.tenantId
-    ? connection.credentialRefs[GITHUB_TOKEN_CREDENTIAL_KEY]
-    : undefined;
+  if (
+    !connection
+    || connection.status !== 'connected'
+    || connection.userId !== context.userId
+    || connection.tenantId !== context.tenantId
+  ) return {};
+  const tokenRef = connection.credentialRefs[GITHUB_TOKEN_CREDENTIAL_KEY];
   if (!tokenRef) return {};
 
   try {
     const token = await deps.vault.getSecret(tokenRef, {
       actor: 'connector_proxy',
-      userId: context.username,
+      userId: vaultOwnerId(connection),
       tenantId: context.tenantId,
-      scopes: ['secret:connector:read', 'secret:mcp:read'],
+      scopes: ['secret:connector:read'],
     });
     return token ? { GH_TOKEN: token, GITHUB_TOKEN: token } : {};
   } catch (error) {

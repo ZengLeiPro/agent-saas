@@ -92,6 +92,7 @@ async function makeTestRig(options?: {
   selfSignup?: SelfSignupConfig;
   failPolicy?: boolean;
   injectCodeService?: boolean;
+  legacyWritesSealed?: boolean;
 }): Promise<TestRig> {
   const tmpRoot = mkdtempSync(join(tmpdir(), "signup-router-"));
   const tenantStore = new TenantStore(join(tmpRoot, "tenants.json"));
@@ -131,6 +132,9 @@ async function makeTestRig(options?: {
     // rig 只决定是否注入 capture 通道
     codeService: options?.injectCodeService !== false
       ? new VerificationCodeService({ sender })
+      : undefined,
+    legacyWriteGate: options?.legacyWritesSealed
+      ? { assertLegacyWriteAllowed: async () => { throw new Error('MIGRATION_LEGACY_WRITE_SEALED'); } }
       : undefined,
   });
   app.use("/api/signup", routers.publicRouter);
@@ -312,6 +316,13 @@ describe("signup router", () => {
     const res = await h.request("/api/signup/status");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ enabled: true });
+  });
+
+  it('enforce 封旧写时公开注册 fail closed', async () => {
+    h = await makeTestRig({ legacyWritesSealed: true });
+    const res = await h.request('/api/signup/register', {});
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
   });
 
   it("aliyun provider 配置不齐时失败关闭，不回退 dev", async () => {

@@ -281,7 +281,7 @@ describe('PUT /admin/servers/:id/secrets/:key — 跨租户凭据隔离', () => 
       await expect(h.vault.getSecret(refId, mcpCaller('kaiyan'))).resolves.toBe(SECRET_VALUE);
 
       // 隔离（最关键）：别租户 wain caller 被拒
-      await expect(h.vault.getSecret(refId, mcpCaller('wain'))).rejects.toThrow(/access denied/);
+      await expect(h.vault.getSecret(refId, mcpCaller('wain'))).rejects.toThrow(/denied/);
     });
 
     it('缺 secret:mcp:read scope 的同租户 caller 也被拒（scope 闸门）', async () => {
@@ -291,7 +291,7 @@ describe('PUT /admin/servers/:id/secrets/:key — 跨租户凭据隔离', () => 
       const refId: string = (await res.json()).ref.id;
 
       const noScopeCaller: VaultCaller = { actor: 'mcp_proxy', userId: 'someuser', tenantId: 'kaiyan', scopes: [] };
-      await expect(h.vault.getSecret(refId, noScopeCaller)).rejects.toThrow(/access denied/);
+      await expect(h.vault.getSecret(refId, noScopeCaller)).rejects.toThrow(/denied/);
     });
 
     it('global-scope secret：wain caller 也能读回（验证 global 跨租户语义未被误伤）', async () => {

@@ -25,6 +25,7 @@ import type { BillingService } from '../data/billing/service.js';
 import type { BillingLedgerEntry, TenantBillingPolicy } from '../data/billing/types.js';
 import type { JwtPayload } from '../auth/types.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import { InMemoryGovernanceAuditStore, type GovernanceAuditStore } from '../data/governance-audit/index.js';
 
 const PLATFORM_ADMIN: JwtPayload = { sub: 'u-platform', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID };
 const BILLING_OPERATOR: JwtPayload = {
@@ -180,12 +181,13 @@ type Fns = ReturnType<typeof makeFns>;
 
 interface Rig {
   fns: Fns;
+  governanceAuditStore: GovernanceAuditStore;
   request(path: string, init?: { method?: string; body?: unknown }): Promise<Response>;
   setCaller(caller: JwtPayload | null): void;
   close(): Promise<void>;
 }
 
-async function makeRig(): Promise<Rig> {
+async function makeRig(governanceAuditStore: GovernanceAuditStore = new InMemoryGovernanceAuditStore()): Promise<Rig> {
   const fns = makeFns();
   const billingService = fns as unknown as BillingService;
   const app = express();
@@ -195,7 +197,7 @@ async function makeRig(): Promise<Rig> {
     if (currentCaller) req.user = currentCaller;
     next();
   });
-  app.use('/api/admin/billing', createAdminBillingRouter({ billingService }));
+  app.use('/api/admin/billing', createAdminBillingRouter({ billingService, governanceAuditStore }));
   app.use('/api/billing', createBillingRouter({ billingService }));
 
   const server: Server = await new Promise((resolve) => {
@@ -205,6 +207,7 @@ async function makeRig(): Promise<Rig> {
   const baseUrl = typeof addr === 'object' && addr ? `http://127.0.0.1:${addr.port}` : '';
   return {
     fns,
+    governanceAuditStore,
     request: (path, init) => fetch(`${baseUrl}${path}`, {
       method: init?.method ?? 'GET',
       headers: { 'content-type': 'application/json' },
@@ -222,8 +225,11 @@ describe('Billing 路由端点', () => {
     while (rigs.length > 0) await rigs.pop()!.close();
   });
 
-  async function newRig(caller: JwtPayload | null = PLATFORM_ADMIN): Promise<Rig> {
-    const rig = await makeRig();
+  async function newRig(
+    caller: JwtPayload | null = PLATFORM_ADMIN,
+    governanceAuditStore?: GovernanceAuditStore,
+  ): Promise<Rig> {
+    const rig = await makeRig(governanceAuditStore);
     rig.setCaller(caller);
     rigs.push(rig);
     return rig;
@@ -486,6 +492,18 @@ describe('Billing 路由端点', () => {
         method: 'POST', body: { creditsDelta: 100 },
       });
       expect(forbidden.status).toBe(403);
+    });
+
+    it('治理审计 intent 写入失败 → 503，账务服务不执行', async () => {
+      const rig = await newRig(PLATFORM_ADMIN, {
+        append: async () => { throw new Error('pg unavailable'); },
+      });
+      const res = await rig.request('/api/admin/billing/accounts/wain/adjust', {
+        method: 'POST', body: { creditsDelta: 100, type: 'grant' },
+      });
+      expect(res.status).toBe(503);
+      await expect(res.json()).resolves.toMatchObject({ code: 'GOVERNANCE_AUDIT_UNAVAILABLE' });
+      expect(rig.fns.adjustAccount).not.toHaveBeenCalled();
     });
 
     it('平台管理员：业务依据、防重标识、操作人和备注精确落流水', async () => {

@@ -30,6 +30,7 @@ import {
   findTranscriptPathBySessionId,
   isValidSessionId,
   parseTranscriptFile,
+  type TranscriptBlock,
 } from '../data/transcripts/index.js';
 import { auditLog } from '../data/login-logs/index.js';
 
@@ -79,21 +80,116 @@ export interface OrgQaRouterDeps {
   guardrailEventStore?: GuardrailEventStore;
   messageFeedbackStore?: MessageFeedbackStore;
   userStore?: UserStore;
+  authorizeAdminAccess?: (input: {
+    userId: string;
+    tenantId: string;
+    platformAdmin: boolean;
+  }) => Promise<boolean>;
+  authorizeContentAccess?: (input: {
+    tenantId: string;
+    subjectUserId: string;
+    targetType: 'session' | 'guardrail_collection';
+    targetId: string;
+    scope: 'qa_read' | 'guardrail_read';
+  }) => Promise<boolean>;
+  auditContentAccess?: (input: {
+    tenantId: string;
+    actorUserId: string;
+    actorTenantId: string;
+    actorPersona: 'platform_admin' | 'org_admin';
+    sessionId: string;
+    scope: 'qa_read';
+  }) => Promise<string>;
   /** 测试注入：按 sessionId 定位 transcript（默认全局扫描新 layout） */
   resolveTranscriptPath?: (sessionId: string) => Promise<string | null>;
+}
+
+export function maskQaBlocks(blocks: TranscriptBlock[]): TranscriptBlock[] {
+  return blocks.map(block => {
+    const attachments = block.attachments?.map(attachment => ({
+      name: attachment.name,
+      ...(attachment.isImage !== undefined ? { isImage: attachment.isImage } : {}),
+    }));
+    if (block.kind === 'tool_use' || block.kind === 'tool_result' || block.kind === 'thinking') {
+      return {
+        id: block.id,
+        ...(block.tsMs !== undefined ? { tsMs: block.tsMs } : {}),
+        kind: block.kind,
+        title: block.title,
+        defaultOpen: false,
+        content: '[已遮罩]',
+        ...(block.isError !== undefined ? { isError: block.isError } : {}),
+        ...(block.toolName ? { toolName: block.toolName } : {}),
+        ...(block.toolId ? { toolId: block.toolId } : {}),
+        ...(block.durationMs !== undefined ? { durationMs: block.durationMs } : {}),
+        ...(block.executionStatus ? { executionStatus: block.executionStatus } : {}),
+        ...(attachments ? { attachments } : {}),
+      };
+    }
+    const { raw: _raw, presentation: _presentation, toolMetadata: _toolMetadata, subagent, ...safe } = block;
+    return {
+      ...safe,
+      ...(attachments ? { attachments } : {}),
+      ...(subagent ? {
+        subagent: {
+          agentType: subagent.agentType,
+          description: subagent.description,
+          childSessionId: subagent.childSessionId,
+          childRunId: subagent.childRunId,
+          status: subagent.status,
+          ...(subagent.model ? { model: subagent.model } : {}),
+          ...(subagent.durationMs !== undefined ? { durationMs: subagent.durationMs } : {}),
+          ...(subagent.totalTokens !== undefined ? { totalTokens: subagent.totalTokens } : {}),
+          ...(subagent.toolUseCount !== undefined ? { toolUseCount: subagent.toolUseCount } : {}),
+          ...(subagent.turnCount !== undefined ? { turnCount: subagent.turnCount } : {}),
+        },
+      } : {}),
+    };
+  });
 }
 
 export function createOrgQaRouter(deps: OrgQaRouterDeps): Router {
   const router = Router();
   const resolveTranscriptPath = deps.resolveTranscriptPath ?? findTranscriptPathBySessionId;
 
-  router.use((req, res, next) => {
+  const requireContentGrant = async (
+    req: Request,
+    res: Response,
+    tenantId: string | undefined,
+    scope: 'qa_read' | 'guardrail_read',
+    targetType: 'session' | 'guardrail_collection',
+    targetId: string,
+  ): Promise<boolean> => {
+    if (!req.user || !isPlatformAdmin(req.user)) return true;
+    if (!tenantId || !deps.authorizeContentAccess) {
+      res.status(403).json({ error: 'Content Access Grant required', code: 'CONTENT_ACCESS_GRANT_REQUIRED' });
+      return false;
+    }
+    const allowed = await deps.authorizeContentAccess({
+      tenantId, subjectUserId: req.user.sub, targetType, targetId, scope,
+    });
+    if (!allowed) {
+      res.status(403).json({ error: 'Content Access Grant required', code: 'CONTENT_ACCESS_GRANT_REQUIRED' });
+      return false;
+    }
+    return true;
+  };
+
+  router.use(async (req, res, next) => {
     if (!req.user) {
       res.status(401).json({ error: 'Authentication required' });
       return;
     }
     if (req.user.role !== 'admin') {
       res.status(403).json({ error: 'Admin access required' });
+      return;
+    }
+    if (deps.authorizeAdminAccess && !await deps.authorizeAdminAccess({
+      userId: req.user.sub,
+      tenantId: req.user.tenantId,
+      platformAdmin: isPlatformAdmin(req.user),
+    })) {
+      res.status(403).json({ error: 'Active governance admin membership required' });
       return;
     }
     next();
@@ -160,10 +256,13 @@ export function createOrgQaRouter(deps: OrgQaRouterDeps): Router {
     if (!isValidSessionId(sessionId)) {
       return res.status(400).json({ error: 'Invalid session id' });
     }
-    // 组织 admin 强制本租户；平台 admin 不限（防跨租户枚举：tenant 不符 → 404）
-    const tenantId = isPlatformAdmin(req.user!) ? undefined : req.user!.tenantId;
+    const parsed = queryTenantSchema.safeParse(req.query);
+    if (!parsed.success) return invalidQuery(res, parsed.error);
+    const access = resolveTenant(req, parsed.data.tenantId);
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+    if (!await requireContentGrant(req, res, access.tenantId, 'qa_read', 'session', sessionId)) return;
     try {
-      const record = await deps.sessionProjectionStore.get(sessionId, { tenantId, includeDeleted: true });
+      const record = await deps.sessionProjectionStore.get(sessionId, { tenantId: access.tenantId, includeDeleted: true });
       if (!record) return res.status(404).json({ error: 'Session not found' });
       // 质检台只暴露专职 Agent 会话（与列表口径一致）；个人会话同 404 防探测（2026-07 审查 F3）
       if (!record.metaJson?.orgAgentId) return res.status(404).json({ error: 'Session not found' });
@@ -184,11 +283,23 @@ export function createOrgQaRouter(deps: OrgQaRouterDeps): Router {
           }
         : undefined;
 
+      if (!deps.auditContentAccess) {
+        return res.status(503).json({ error: 'Governance audit unavailable', code: 'GOVERNANCE_AUDIT_UNAVAILABLE' });
+      }
+      const auditId = await deps.auditContentAccess({
+        tenantId: access.tenantId!,
+        actorUserId: req.user!.sub,
+        actorTenantId: req.user!.tenantId,
+        actorPersona: isPlatformAdmin(req.user) ? 'platform_admin' : 'org_admin',
+        sessionId,
+        scope: 'qa_read',
+      });
       auditLog(req, 'qa_session_opened', sessionId);
       res.json({
         sessionId: parsed.sessionId ?? sessionId,
+        auditId,
         stats: parsed.stats,
-        blocks: parsed.blocks,
+        blocks: maskQaBlocks(parsed.blocks),
         ...(owner ? { owner } : {}),
       });
     } catch (err) {
@@ -208,6 +319,9 @@ export function createOrgQaRouter(deps: OrgQaRouterDeps): Router {
     if (!access.tenantId) {
       return res.status(400).json({ error: 'tenantId required' });
     }
+    if (!await requireContentGrant(
+      req, res, access.tenantId, 'guardrail_read', 'guardrail_collection', access.tenantId,
+    )) return;
     try {
       const result = await deps.guardrailEventStore.list({
         tenantId: access.tenantId,
@@ -219,7 +333,15 @@ export function createOrgQaRouter(deps: OrgQaRouterDeps): Router {
         offset: parsed.data.offset,
         limit: parsed.data.limit,
       });
-      res.json(result);
+      res.json({
+        ...result,
+        events: result.events.map(({ messageText, ...event }) => ({
+          ...event,
+          messageDigest: messageText.startsWith('[redacted:sha256:')
+            ? messageText.slice('[redacted:sha256:'.length, -1)
+            : 'legacy-redacted',
+        })),
+      });
     } catch (err) {
       res.status(500).json({ error: `Guardrail event query failed: ${errorMessage(err)}` });
     }
@@ -237,6 +359,9 @@ export function createOrgQaRouter(deps: OrgQaRouterDeps): Router {
     if (!access.tenantId) {
       return res.status(400).json({ error: 'tenantId required' });
     }
+    if (!await requireContentGrant(
+      req, res, access.tenantId, 'qa_read', 'guardrail_collection', access.tenantId,
+    )) return;
     try {
       const result = await deps.messageFeedbackStore.listByTenant({
         tenantId: access.tenantId,
@@ -247,7 +372,10 @@ export function createOrgQaRouter(deps: OrgQaRouterDeps): Router {
         offset: parsed.data.offset,
         limit: parsed.data.limit,
       });
-      res.json(result);
+      res.json({
+        ...result,
+        items: result.items.map(({ messageExcerpt: _messageExcerpt, ...item }) => item),
+      });
     } catch (err) {
       res.status(500).json({ error: `Feedback query failed: ${errorMessage(err)}` });
     }
@@ -262,7 +390,12 @@ function resolveTenant(
   requestedTenantId?: string,
 ): { ok: true; tenantId?: string } | { ok: false; status: number; error: string } {
   if (!req.user) return { ok: false, status: 401, error: 'Authentication required' };
-  if (isPlatformAdmin(req.user)) return { ok: true, tenantId: requestedTenantId };
+  if (isPlatformAdmin(req.user)) {
+    if (!requestedTenantId) {
+      return { ok: false, status: 400, error: '平台管理员必须显式指定 tenantId' };
+    }
+    return { ok: true, tenantId: requestedTenantId };
+  }
   if (requestedTenantId && requestedTenantId !== req.user.tenantId) {
     return { ok: false, status: 403, error: 'Tenant access denied' };
   }

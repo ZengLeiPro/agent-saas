@@ -28,9 +28,13 @@ describe('GitHub native connector', () => {
     const file = join(root, 'connections.json');
     const store = new ConnectorConnectionStore(file);
     const vault = new InMemorySecretVault();
-    const secret = await vault.putSecret('alice', 'connector', 'github_pat_secret', {
-      connectorId: 'github',
-    });
+    const secret = await vault.putSecret(
+      'alice',
+      'connector',
+      'github_pat_secret',
+      { actor: 'connector_proxy', userId: 'alice', tenantId: 'tenant-a', scopes: ['secret:connector:write'] },
+      { connectorId: 'github' },
+    );
     await store.connect({
       username: 'alice',
       userId: 'user-1',
@@ -56,8 +60,9 @@ describe('GitHub native connector', () => {
     const root = createRoot();
     const connections = new ConnectorConnectionStore(join(root, 'connections.json'));
     const vault = new InMemorySecretVault();
-    const oldSecret = await vault.putSecret('alice', 'connector', 'ghp_old', {});
-    const newSecret = await vault.putSecret('alice', 'connector', 'ghp_new', {});
+    const writer = { actor: 'connector_proxy' as const, userId: 'alice', tenantId: 'tenant-a', scopes: ['secret:connector:write'] };
+    const oldSecret = await vault.putSecret('alice', 'connector', 'ghp_old', writer);
+    const newSecret = await vault.putSecret('alice', 'connector', 'ghp_new', writer);
     await connections.connect({
       username: 'alice', userId: 'user-1', tenantId: 'tenant-a', connectorId: 'github', credentialRefs: { token: oldSecret.id },
     });

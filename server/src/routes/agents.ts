@@ -26,20 +26,15 @@ export interface AgentsRouterDeps {
   userStore: UserStore;
   skillConfigStore?: SkillConfigStore;
   getMemoryIndexService?: () => MemoryIndexService | null | undefined;
+  legacyWriteGate?: {
+    assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
+  };
 }
 
 const updateAgentSchema = z.object({
   name: z.string().min(1).max(50).optional(),
   signature: z.string().max(100).optional(),
-  avatar: z.string().max(200).optional(),
-  allowedSkills: z.array(z.string()).optional(),
-  infoBoundary: z.object({
-    ownWorkspace: z.boolean(),
-    sharedKnowledge: z.boolean(),
-    otherWorkspaces: z.boolean(),
-    codeRepos: z.boolean(),
-  }).optional(),
-});
+}).strict();
 
 const personaSchema = z.object({
   content: z.string().max(10000),
@@ -50,22 +45,23 @@ const memorySchema = z.object({
   content: z.string().max(200000),
 });
 
-// 用户可修改的字段
-const USER_EDITABLE_FIELDS = ['name', 'signature'] as const;
-
-function pick<T extends Record<string, unknown>>(obj: T, keys: readonly string[]): Partial<T> {
-  const result: Partial<T> = {};
-  for (const key of keys) {
-    if (key in obj) {
-      (result as Record<string, unknown>)[key] = obj[key as keyof T];
-    }
-  }
-  return result;
-}
-
 export function createAgentsRouter(deps: AgentsRouterDeps): Router {
   const { agentStore, agentAvatarsDir, agentCwd, sharedDir, tenantSkillsRootDir, userStore, skillConfigStore } = deps;
   const router = Router();
+  router.use(async (req, res, next) => {
+    const isLegacyAgentWrite = req.method === 'PATCH'
+      || (req.method === 'POST' && req.path.endsWith('/avatar'));
+    if (!isLegacyAgentWrite || !deps.legacyWriteGate) return next();
+    try {
+      await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
+      next();
+    } catch {
+      res.status(409).json({
+        error: '旧版 Personal Agent 写入口已封闭，请使用治理资源 API',
+        code: 'MIGRATION_LEGACY_WRITE_SEALED',
+      });
+    }
+  });
   const displayName = (uname: string) => userStore.findByUsername(uname)?.realName || uname;
 
   function profileForUser(username: string): AgentProfileInfo {
@@ -106,16 +102,10 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
   });
 
   /**
-   * 权限检查 + 跨组织防御 + 返回目标用户记录。三档结果：
-   *   - 401：未认证
-   *   - 404：目标用户不存在
-   *   - 403：非平台 admin 且 (target.tenantId !== caller.tenantId)；或非 admin 且非 self
-   *   - 200：返回 { caller, target }
-   *
-   * 修复点（PR 8）：原 canAccess 只查 `role === 'admin'`，任意组织 admin 都能
-   * 改其他组织用户的 PERSONA.md / MEMORY.md / 头像。这是严重越权。
+   * 个人 Agent、Persona 与 Memory 只允许本人访问。
+   * 使用不可变 userId 判断 owner，username 仅用于定位兼容旧数据。
    */
-  function authorizeAgentAccess(req: Request, res: Response, username: string): { caller: { username: string; role: string; tenantId: string }; target: UserRecord } | null {
+  function authorizeSelfAccess(req: Request, res: Response, username: string): { caller: { sub: string; username: string }; target: UserRecord } | null {
     const caller = req.user;
     if (!caller) {
       res.status(401).json({ error: 'Not authenticated' });
@@ -126,16 +116,8 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
       res.status(404).json({ error: 'User not found' });
       return null;
     }
-    if (caller.username === username) {
-      return { caller, target };
-    }
-    if (caller.role !== 'admin') {
-      res.status(403).json({ error: 'Forbidden' });
-      return null;
-    }
-    // admin 分支：platform admin 任意；组织 admin 仅本组织
-    if (!isPlatformAdmin(caller) && target.tenantId !== caller.tenantId) {
-      res.status(403).json({ error: '跨组织访问被拒绝' });
+    if (caller.sub !== target.id) {
+      res.status(403).json({ error: '个人 Agent 仅允许本人访问' });
       return null;
     }
     return { caller, target };
@@ -146,11 +128,8 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
     return resolveUserCwd(agentCwd, { id: target.id, username: target.username, role: target.role as 'admin' | 'user', tenantId: target.tenantId });
   }
 
-  // GET /api/agents — 列出当前调用者有权查看的 agent profile
-  // platform admin: 全部组织用户的完整数据（含 personaPreview, realName）
-  // 组织 admin: 仅本组织用户的完整数据
-  // 普通用户: 仅本组织用户的公开字段（name, signature, avatar）
-  // 注意：列表接口本身也是权限边界，不能把同一批 agent 原样返回给所有人。
+  // GET /api/agents — 列出可见用户的公开 Agent 展示字段。
+  // Persona/Memory 等个人内容不进入管理员列表；realName 仅供管理员做账号识别。
   router.get('/', async (req, res) => {
     const user = req.user;
     if (!user) {
@@ -168,17 +147,17 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
       });
 
       if (user.role === 'admin') {
-        const result = await Promise.all(visibleUsers.map(async (userRecord) => {
+        const result = visibleUsers.map((userRecord) => {
           const profile = profileForUser(userRecord.username);
-          const personaPath = join(targetUserCwd(userRecord), 'PERSONA.md');
-          let personaPreview: string | undefined;
-          try {
-            const content = await readFile(personaPath, 'utf-8');
-            const lines = content.trim().split('\n').filter(l => !l.startsWith('#') && !l.startsWith('>') && l.trim());
-            personaPreview = lines.slice(0, 3).join('\n').slice(0, 200);
-          } catch { /* ignore */ }
-          return { ...profile, personaPreview, realName: userRecord.realName };
-        }));
+          return {
+            username: profile.username,
+            name: profile.name,
+            signature: profile.signature,
+            avatar: profile.avatar,
+            avatarVersion: profile.avatarVersion,
+            realName: userRecord.realName,
+          };
+        });
         res.json(result);
       } else {
         // 普通用户：仅返回本组织真实用户对应 agent 的公开展示字段（不含 realName/personaPreview）。
@@ -230,7 +209,7 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
   // GET /api/agents/:username — 获取单个 profile + persona
   router.get('/:username', async (req, res) => {
     const { username } = req.params;
-    const auth = authorizeAgentAccess(req, res, username);
+    const auth = authorizeSelfAccess(req, res, username);
     if (!auth) return;
     const profile = profileForUser(username);
     // 读取 persona（路径按 target 组织解析，否则非默认组织用户永远读不到）
@@ -248,9 +227,8 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
   // PATCH /api/agents/:username — 更新 profile 字段
   router.patch('/:username', async (req, res) => {
     const { username } = req.params;
-    const auth = authorizeAgentAccess(req, res, username);
+    const auth = authorizeSelfAccess(req, res, username);
     if (!auth) return;
-    const { caller } = auth;
 
     const parsed = updateAgentSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -259,24 +237,10 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
     }
 
     try {
-      let data: Partial<typeof parsed.data>;
-      if (caller.username === username) {
-        // 自己：只允许 USER_EDITABLE_FIELDS
-        data = pick(parsed.data, USER_EDITABLE_FIELDS);
-      } else {
-        // admin（同组织或 platform）：允许所有字段
-        // authorizeAgentAccess 已确保非 self 时 caller 是合法 admin
-        data = parsed.data;
-      }
+      const data = parsed.data;
+      const result = await agentStore.set(username, data, auth.caller.username);
 
-      const result = await agentStore.set(username, data, caller.username);
-
-      // 审计：头像重置（avatar 设为 emoji 或空字符串，即非自定义图片）
-      if ('avatar' in data && (!data.avatar || !data.avatar.startsWith('agent-avatars/'))) {
-        auditLog(req as any, 'agent_avatar_reset', displayName(username));
-      }
-      // 审计：资料变更（name / signature / allowedSkills / infoBoundary）
-      const profileFields = ['name', 'signature', 'allowedSkills', 'infoBoundary'] as const;
+      const profileFields = ['name', 'signature'] as const;
       const changed = profileFields.filter(f => f in data);
       if (changed.length > 0) {
         auditLog(req as any, 'agent_profile_updated', `${displayName(username)}（${changed.join(', ')}）`);
@@ -288,8 +252,11 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
     }
   });
 
-  // POST /api/agents/:username/avatar — 上传头像
+  // POST /api/agents/:username/avatar — 上传头像；先鉴权再落盘
   router.post('/:username/avatar', (req, res, next) => {
+    if (!authorizeSelfAccess(req, res, req.params.username)) return;
+    next();
+  }, (req, res, next) => {
     avatarUpload.single('avatar')(req, res, (err: any) => {
       if (err) {
         if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
@@ -304,7 +271,7 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
     });
   }, async (req, res) => {
     const { username } = req.params;
-    const auth = authorizeAgentAccess(req, res, username);
+    const auth = authorizeSelfAccess(req, res, username);
     if (!auth) return;
 
     const file = req.file;
@@ -339,7 +306,7 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
   // GET /api/agents/:username/persona — 读取 PERSONA.md
   router.get('/:username/persona', async (req, res) => {
     const { username } = req.params;
-    const auth = authorizeAgentAccess(req, res, username);
+    const auth = authorizeSelfAccess(req, res, username);
     if (!auth) return;
 
     const personaPath = join(targetUserCwd(auth.target), 'PERSONA.md');
@@ -354,7 +321,7 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
   // PUT /api/agents/:username/persona — 写入 PERSONA.md
   router.put('/:username/persona', async (req, res) => {
     const { username } = req.params;
-    const auth = authorizeAgentAccess(req, res, username);
+    const auth = authorizeSelfAccess(req, res, username);
     if (!auth) return;
 
     const parsed = personaSchema.safeParse(req.body);
@@ -385,7 +352,7 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
   // GET /api/agents/:username/memory — 读取 MEMORY.md
   router.get('/:username/memory', async (req, res) => {
     const { username } = req.params;
-    const auth = authorizeAgentAccess(req, res, username);
+    const auth = authorizeSelfAccess(req, res, username);
     if (!auth) return;
 
     const memoryPath = join(targetUserCwd(auth.target), 'MEMORY.md');
@@ -400,7 +367,7 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
   // PUT /api/agents/:username/memory — 写入 MEMORY.md
   router.put('/:username/memory', async (req, res) => {
     const { username } = req.params;
-    const auth = authorizeAgentAccess(req, res, username);
+    const auth = authorizeSelfAccess(req, res, username);
     if (!auth) return;
 
     const parsed = memorySchema.safeParse(req.body);

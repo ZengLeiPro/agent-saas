@@ -169,6 +169,9 @@ export interface SignupRouterDeps {
   orgAgentStore?: OrgAgentStore;
   /** 测试注入：覆盖内部按配置构建的验证码服务（capture sender 拿真码） */
   codeService?: VerificationCodeService;
+  legacyWriteGate?: {
+    assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
+  };
 }
 
 export interface SignupRouters {
@@ -213,7 +216,11 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
     const ref = signupConfigStore.getSmsAccessKeySecretRef();
     if (ref && secretVault) {
       try {
-        return await secretVault.getSecret(ref, { actor: "system" });
+        return await secretVault.getSecret(ref, {
+          actor: "system",
+          userId: "signup_sms_service",
+          scopes: [`secret:${SMS_SECRET_VAULT_KIND}:read`],
+        });
       } catch (err) {
         // fail-closed：vault 解析失败按未配置处理（aliyun 通道会因缺 secret 关闭）
         apiLogger.warn(
@@ -305,6 +312,18 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
   // ---------------- 公开路由 ----------------
 
   const publicRouter = Router();
+  publicRouter.use('/register', async (_req, res, next) => {
+    if (!deps.legacyWriteGate) return next();
+    try {
+      await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
+      next();
+    } catch {
+      res.status(409).json({
+        error: '注册服务正在切换治理权威，请稍后重试',
+        code: 'MIGRATION_LEGACY_WRITE_SEALED',
+      });
+    }
+  });
 
   // GET /api/signup/status — 始终可访问，前端据此决定注册入口显隐
   publicRouter.get("/status", async (_req, res) => {
@@ -714,6 +733,11 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
           SMS_SECRET_VAULT_OWNER,
           SMS_SECRET_VAULT_KIND,
           smsAccessKeySecret,
+          {
+            actor: "system",
+            userId: "signup_config_admin",
+            scopes: [`secret:${SMS_SECRET_VAULT_KIND}:write`],
+          },
           { updatedBy: req.user?.username ?? "platform-admin" },
         );
         secretRefPatch = ref.id;

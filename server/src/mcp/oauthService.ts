@@ -20,7 +20,7 @@ import type {
 import { isServerVisibleToUser } from '../data/mcpConfig.js';
 import type { McpOAuthServerConfig } from './clientManager.js';
 import { assertSafeMcpUrl } from './clientManager.js';
-import type { SecretVault, VaultCaller } from '../security/secretVault.js';
+import type { SecretVault, VaultCaller, VaultOperation } from '../security/secretVault.js';
 
 const OAUTH_SECRET_KIND = 'mcp_oauth';
 const PENDING_TTL_MS = 10 * 60 * 1000;
@@ -69,6 +69,7 @@ export interface McpOAuthServiceOptions {
   authFn?: AuthFunction;
   env?: NodeJS.ProcessEnv;
   userResolver?: (username: string) => { tenantId: string; disabled?: boolean } | undefined;
+  onSecretRotated?: (secretRef: string) => Promise<void>;
 }
 
 export class McpOAuthService {
@@ -228,7 +229,7 @@ export class McpOAuthService {
     const record = this.options.store.getUserOAuthConnection(username, serverId);
     if (!record || record.tenantId !== tenantId) return;
     if (record.secretRef) {
-      await this.options.vault.revokeSecret(record.secretRef, vaultCaller(username, tenantId));
+      await this.options.vault.revokeSecret(record.secretRef, vaultCaller(username, tenantId, 'revoke'));
     }
     await this.options.store.deleteUserOAuthConnection(username, serverId);
   }
@@ -241,14 +242,14 @@ export class McpOAuthService {
   async revokeUserConnections(username: string, tenantId: string): Promise<void> {
     for (const record of this.options.store.listUserOAuthConnections(username)) {
       if (record.tenantId !== tenantId || !record.secretRef) continue;
-      await this.options.vault.revokeSecret(record.secretRef, vaultCaller(username, tenantId));
+      await this.options.vault.revokeSecret(record.secretRef, vaultCaller(username, tenantId, 'revoke'));
     }
   }
 
   async disconnectServerUsers(serverId: string): Promise<void> {
     for (const { username, connection } of this.options.store.listOAuthConnectionsForServer(serverId)) {
       if (connection.secretRef) {
-        await this.options.vault.revokeSecret(connection.secretRef, vaultCaller(username, connection.tenantId));
+        await this.options.vault.revokeSecret(connection.secretRef, vaultCaller(username, connection.tenantId, 'revoke'));
       }
       await this.options.store.deleteUserOAuthConnection(username, serverId);
     }
@@ -348,7 +349,7 @@ export class McpOAuthService {
   private async readBundle(username: string, tenantId: string, serverId: string): Promise<OAuthBundle> {
     const record = this.options.store.getUserOAuthConnection(username, serverId);
     if (!record?.secretRef) return {};
-    const raw = await this.options.vault.getSecret(record.secretRef, vaultCaller(username, tenantId));
+    const raw = await this.options.vault.getSecret(record.secretRef, vaultCaller(username, tenantId, 'read'));
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid MCP OAuth secret bundle');
     return parsed as OAuthBundle;
@@ -366,14 +367,17 @@ export class McpOAuthService {
       const record = this.options.store.getUserOAuthConnection(username, serverId);
       if (!record) throw new Error('MCP OAuth connection no longer exists');
       if (record.secretRef) {
-        await this.options.vault.rotateSecret(record.secretRef, JSON.stringify(next), vaultCaller(username, tenantId));
+        await this.options.vault.rotateSecret(record.secretRef, JSON.stringify(next), vaultCaller(username, tenantId, 'rotate'));
+        await this.options.onSecretRotated?.(record.secretRef);
         return;
       }
-      const ref = await this.options.vault.putSecret(username, OAUTH_SECRET_KIND, JSON.stringify(next), {
-        tenantId,
+      const ref = await this.options.vault.putSecret(
         username,
-        serverId,
-      });
+        OAUTH_SECRET_KIND,
+        JSON.stringify(next),
+        vaultCaller(username, tenantId, 'write'),
+        { tenantId, username, serverId },
+      );
       await this.options.store.setUserOAuthConnection(username, { ...record, secretRef: ref.id, updatedAt: new Date().toISOString() });
     });
   }
@@ -540,12 +544,12 @@ function sanitizeReturnTo(value: string): string {
   }
 }
 
-function vaultCaller(username: string, tenantId: string): VaultCaller {
+function vaultCaller(username: string, tenantId: string, operation: VaultOperation): VaultCaller {
   return {
     actor: 'mcp_proxy',
     userId: username,
     tenantId,
-    scopes: [`secret:${OAUTH_SECRET_KIND}:read`],
+    scopes: [`secret:${OAUTH_SECRET_KIND}:${operation}`],
   };
 }
 

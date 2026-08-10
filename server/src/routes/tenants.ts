@@ -12,9 +12,16 @@ import { z } from 'zod';
 import type { TenantMemoryFeatureStatusMap } from '../../../shared/src/types/tenant.js';
 import { isPlatformAdmin, requireAdmin, requirePlatformAdmin } from '../auth/middleware.js';
 import { auditLog } from '../data/login-logs/index.js';
+import {
+  GovernanceAuditUnavailableError,
+  governanceDigest,
+  recordGovernanceIntent,
+  recordGovernanceOutcome,
+  type GovernanceAuditStore,
+} from '../data/governance-audit/index.js';
 import { apiLogger } from '../utils/logger.js';
 import type { TenantStore } from '../data/tenants/store.js';
-import { TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
+import { DEFAULT_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
 import type { TenantDeletionReport } from '../data/tenants/cleanup.js';
 import {
   MAX_COMPANY_INFO_CHARS,
@@ -135,12 +142,17 @@ export interface CreateTenantsRouterOptions {
   resolveMemoryFeatureStatus?: (tenantId: string) => TenantMemoryFeatureStatusMap;
   /** 组织删除时的全量清理实现，由 app runtime 注入完整依赖。 */
   deleteTenantResources?: (tenantId: string) => Promise<TenantDeletionReport>;
+  /** 高风险组织删除的独立 append-only 治理审计；缺失时删除 fail closed。 */
+  governanceAuditStore?: GovernanceAuditStore;
   /**
    * ★ 新增（2026-07-18 企业专家目录 MVP）：orgAgentStore
    * 用于新租户开通时自动 seed 3 个种子专家模板（enabled=false，管理员启用）。
    * 缺省时静默跳过 seed（保持向后兼容，不阻断租户创建）。
    */
   orgAgentStore?: OrgAgentStore;
+  legacyWriteGate?: {
+    assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
+  };
 }
 
 // company.md 体量上限：留 200k，与 MEMORY 对齐
@@ -175,6 +187,22 @@ function buildInitialCompanyInfo(tenantName: string): string {
 
 export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
   const router = Router();
+  router.use(async (req, res, next) => {
+    const createsTenant = req.method === 'POST' && req.path === '/';
+    const deletesTenant = req.method === 'DELETE' && /^\/[^/]+$/.test(req.path);
+    const changesGovernedState = req.method === 'PATCH'
+      && (/^\/[^/]+\/status$/.test(req.path) || /^\/[^/]+\/settings$/.test(req.path));
+    if (!(createsTenant || deletesTenant || changesGovernedState) || !opts.legacyWriteGate) return next();
+    try {
+      await opts.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
+      next();
+    } catch {
+      res.status(409).json({
+        error: '旧版 Tenant 治理写入口已封闭，请使用治理 API 或 Change Job',
+        code: 'MIGRATION_LEGACY_WRITE_SEALED',
+      });
+    }
+  });
   const { tenantStore, sharedDir } = opts;
   const memoryFeatureStatusFor = (tenantId: string) => opts.resolveMemoryFeatureStatus?.(tenantId);
 
@@ -531,16 +559,42 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
       res.status(404).json({ error: '组织不存在' });
       return;
     }
+    // 根租户不可删除，必须在调用任何跨存储清理器前 fail closed。
+    if (tenant.id === DEFAULT_TENANT_ID) {
+      res.status(409).json({ error: `Cannot delete the default tenant "${DEFAULT_TENANT_ID}"` });
+      return;
+    }
     if (!opts.deleteTenantResources) {
       res.status(501).json({ error: '当前服务未启用组织删除清理器' });
       return;
     }
+    let intent;
     try {
-      const report = await opts.deleteTenantResources(tenant.id);
+      intent = await recordGovernanceIntent(opts.governanceAuditStore, req.user!, {
+        action: 'tenant.delete',
+        targetType: 'tenant',
+        targetId: tenant.id,
+        targetTenantId: tenant.id,
+        purpose: 'platform_governance',
+        reason: 'confirmed_hard_delete',
+        beforeDigest: governanceDigest({ id: tenant.id, name: tenant.name, disabled: tenant.disabled }),
+      });
+    } catch (err) {
+      if (err instanceof GovernanceAuditUnavailableError) {
+        res.status(503).json({ code: err.code, error: err.message });
+        return;
+      }
+      throw err;
+    }
+
+    let report: TenantDeletionReport;
+    try {
+      report = await opts.deleteTenantResources(tenant.id);
       opts.onTenantDisabled?.(tenant.id);
-      auditLog(req, 'tenant_deleted', `${tenant.id} (${tenant.name}) users=${report.usersDeleted}`);
-      res.json({ ok: true, report });
     } catch (err: unknown) {
+      await recordGovernanceOutcome(opts.governanceAuditStore!, intent, 'failed', {
+        metadata: { errorCode: 'TENANT_DELETE_FAILED' },
+      }).catch(error => apiLogger.error(`组织删除失败结果审计写入失败（tenant=${tenant.id}）: ${error instanceof Error ? error.message : String(error)}`));
       const msg = err instanceof Error ? err.message : String(err);
       if (msg === 'Tenant not found') {
         res.status(404).json({ error: '组织不存在' });
@@ -550,7 +604,30 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
         apiLogger.warn(`删除组织失败（tenant=${req.params.id}）: ${msg}`);
         res.status(500).json({ error: msg });
       }
+      return;
     }
+
+    let outcome;
+    try {
+      outcome = await recordGovernanceOutcome(opts.governanceAuditStore!, intent, 'succeeded', {
+        afterDigest: governanceDigest({ deleted: true, report }),
+        metadata: {
+          usersDeleted: report.usersDeleted,
+          agentProfilesDeleted: report.agentProfilesDeleted,
+        },
+      });
+    } catch (err) {
+      apiLogger.error(`组织删除成功但结果审计写入失败（tenant=${tenant.id}）: ${err instanceof Error ? err.message : String(err)}`);
+      res.status(500).json({
+        code: 'GOVERNANCE_AUDIT_OUTCOME_FAILED',
+        error: '组织已删除，但治理审计结果写入失败，请立即人工核对',
+        changed: true,
+        intentAuditId: intent.auditId,
+      });
+      return;
+    }
+    auditLog(req, 'tenant_deleted', `${tenant.id} (${tenant.name}) users=${report.usersDeleted}`);
+    res.json({ ok: true, report, auditId: outcome.auditId });
   });
 
   return router;

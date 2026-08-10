@@ -37,7 +37,7 @@ import type { JwtPayload } from '../auth/types.js';
 import type { UserStore } from '../data/users/store.js';
 import type { McpClientManager } from '../mcp/clientManager.js';
 import type { McpOAuthFinishResult, McpOAuthService, McpOAuthStartResult } from '../mcp/oauthService.js';
-import type { SecretRef, SecretVault } from '../security/secretVault.js';
+import type { SecretRef, SecretVault, VaultCaller } from '../security/secretVault.js';
 import { GLOBAL_OWNER_ID, tenantOwnerId } from '../security/secretVault.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 
@@ -71,10 +71,16 @@ function recordingManager(opts: { failEnsure?: boolean } = {}) {
 
 /** 记录所有 putSecret 调用（负向用例断言「未触碰 vault」，正向用例断言 ownerId/metadata） */
 class RecordingVault implements SecretVault {
-  puts: Array<{ ownerId: string; kind: string; value: string; metadata: Record<string, unknown> }> = [];
+  puts: Array<{ ownerId: string; kind: string; value: string; caller: VaultCaller; metadata: Record<string, unknown> }> = [];
   private seq = 0;
-  async putSecret(ownerId: string, kind: string, value: string, metadata: Record<string, unknown> = {}): Promise<SecretRef> {
-    this.puts.push({ ownerId, kind, value, metadata });
+  async putSecret(
+    ownerId: string,
+    kind: string,
+    value: string,
+    caller: VaultCaller,
+    metadata: Record<string, unknown> = {},
+  ): Promise<SecretRef> {
+    this.puts.push({ ownerId, kind, value, caller, metadata });
     const now = new Date().toISOString();
     return { id: `ref-${++this.seq}`, ownerId, kind, metadata, createdAt: now, updatedAt: now };
   }
@@ -549,7 +555,7 @@ describe('MCP routes: oauth callback/start/disconnect + admin secrets + oauthRed
   // ------------------------------------------------------------ admin diagnose
 
   describe('POST /admin/users/:username/diagnose', () => {
-    it('404 未知用户 / 403 跨组织 / 成功 ok:true / manager 失败降级 200 ok:false 且带 workspaceRoot', async () => {
+    it('404 未知用户 / 403 跨组织 / 合法管理员仍需 Governed Run 上下文', async () => {
       const r = await rig({ user: PLATFORM_ADMIN });
       expect((await r.request('/api/mcp/admin/users/ghost/diagnose', { method: 'POST' })).status).toBe(404);
 
@@ -558,20 +564,19 @@ describe('MCP routes: oauth callback/start/disconnect + admin secrets + oauthRed
 
       r.setUser(KAIYAN_ADMIN);
       const ok = await r.request('/api/mcp/admin/users/alice/diagnose', { method: 'POST' });
-      expect(ok.status).toBe(200);
-      const okBody = await ok.json() as { ok: boolean; workspaceRoot: string; toolCount: number };
-      expect(okBody.ok).toBe(true);
-      expect(okBody.toolCount).toBe(0);
-      expect(okBody.workspaceRoot).toContain('kaiyan');
+      expect(ok.status).toBe(409);
+      const okBody = await ok.json() as { ok: boolean; error: string; toolCount: number };
+      expect(okBody).toMatchObject({
+        ok: false, error: 'MCP_DIAGNOSE_REQUIRES_GOVERNED_RUN', toolCount: 0,
+      });
 
       const failRig = await rig({ user: PLATFORM_ADMIN, manager: recordingManager({ failEnsure: true }).manager });
       const fail = await failRig.request('/api/mcp/admin/users/alice/diagnose', { method: 'POST' });
-      expect(fail.status).toBe(200);
-      const failBody = await fail.json() as { ok: boolean; error: string; workspaceRoot: string; tools: unknown[] };
-      expect(failBody.ok).toBe(false);
-      expect(failBody.error).toContain('diagnose boom');
-      expect(failBody.workspaceRoot).toContain('kaiyan');
-      expect(failBody.tools).toEqual([]);
+      expect(fail.status).toBe(409);
+      const failBody = await fail.json() as { ok: boolean; error: string; tools: unknown[] };
+      expect(failBody).toMatchObject({
+        ok: false, error: 'MCP_DIAGNOSE_REQUIRES_GOVERNED_RUN', tools: [],
+      });
     });
   });
 

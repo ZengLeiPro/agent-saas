@@ -21,6 +21,9 @@ export interface McpRouterDeps {
   oauthService?: McpOAuthService;
   /** Web 前端基址（前后端分域部署时必配，否则 OAuth 回调后会跳回 API 域）；未配置=回调 URL 同源 */
   webBaseUrl?: string;
+  legacyWriteGate?: {
+    assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
+  };
 }
 
 const riskSchema = z.enum(['read_only', 'workspace_write', 'external_write', 'credentialed_external_write'] satisfies [McpRiskLevel, ...McpRiskLevel[]]);
@@ -122,6 +125,20 @@ const diagnoseSchema = z.object({ force: z.boolean().optional() }).strict();
 export function createMcpRouter(deps: McpRouterDeps): Router {
   const router = Router();
   const { store, userStore, manager, agentCwd, secretVault, oauthService, webBaseUrl } = deps;
+  router.use(async (req, res, next) => {
+    const writesLegacyState = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)
+      || (req.method === 'GET' && req.path === '/oauth/callback');
+    if (!writesLegacyState || !deps.legacyWriteGate) return next();
+    try {
+      await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
+      next();
+    } catch {
+      res.status(409).json({
+        error: '旧版 MCP/Credential 写入口已封闭，请使用治理资源 API',
+        code: 'MIGRATION_LEGACY_WRITE_SEALED',
+      });
+    }
+  });
 
   function currentUsername(req: Request): string | null {
     return req.user?.username ?? null;
@@ -436,12 +453,18 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     }
     const validationError = validateConnectorSecretValue(server, key, parsed.data.value);
     if (validationError) return res.status(400).json({ error: validationError });
-    const ref = await secretVault.putSecret(username, 'mcp', parsed.data.value, {
-      serverId,
-      key,
-      scope: requirement.scope,
+    const ref = await secretVault.putSecret(
       username,
-    });
+      'mcp',
+      parsed.data.value,
+      {
+        actor: 'mcp_proxy',
+        userId: username,
+        tenantId,
+        scopes: ['secret:mcp:write'],
+      },
+      { serverId, key, scope: requirement.scope, username },
+    );
     await store.setUserSecretRef(username, serverId, key, ref.id, tenantId);
     await manager.invalidateUser(username);
     auditLog(req, 'mcp_secret_bound', `${serverId}/${key}`);
@@ -453,19 +476,14 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     if (!username) return res.status(401).json({ error: 'Authentication required' });
     const parsed = diagnoseSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json({ error: 'Invalid diagnose request', details: parsed.error.format() });
-    try {
-      if (parsed.data.force) await manager.invalidateUser(username);
-      const tools = await manager.ensureUser(username);
-      res.json(diagnosticPayload(username, tools));
-    } catch (err) {
-      res.status(200).json({
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        tools: [],
-        toolCount: 0,
-        connections: getConnectionStatuses(username),
-      });
-    }
+    if (parsed.data.force) await manager.invalidateUser(username);
+    res.status(409).json({
+      ok: false,
+      error: 'MCP_DIAGNOSE_REQUIRES_GOVERNED_RUN',
+      tools: [],
+      toolCount: 0,
+      connections: getConnectionStatuses(username),
+    });
   });
 
   router.put('/me/servers/:id', async (req, res) => {
@@ -625,12 +643,18 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
       ownerId = GLOBAL_OWNER_ID;
     }
 
-    const ref = await secretVault.putSecret(ownerId, 'mcp', parsed.data.value, {
-      serverId,
-      key,
-      scope: requirement.scope,
+    const ref = await secretVault.putSecret(
       ownerId,
-    });
+      'mcp',
+      parsed.data.value,
+      {
+        actor: 'mcp_proxy',
+        userId: req.user!.sub,
+        ...(requirement.scope === 'tenant' ? { tenantId: server.tenantId } : {}),
+        scopes: ['secret:mcp:write'],
+      },
+      { serverId, key, scope: requirement.scope, ownerId },
+    );
     await store.setServerSecretRef(serverId, key, ref.id);
     await Promise.all(userStore.listAll().map(u => manager.invalidateUser(u.username)));
     auditLog(req, 'mcp_secret_bound', `admin ${serverId}/${key} scope=${requirement.scope}`);
@@ -640,21 +664,14 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
   router.post('/admin/users/:username/diagnose', requireAdmin, async (req, res) => {
     const user = resolveTargetUser(req, res, req.params.username);
     if (!user) return;
-    const workspaceRoot = resolveUserCwd(agentCwd, { id: user.id, username: user.username, role: user.role, tenantId: user.tenantId });
-    try {
-      await manager.invalidateUser(user.username);
-      const tools = await manager.ensureUser(user.username);
-      res.json(diagnosticPayload(user.username, tools, workspaceRoot));
-    } catch (err) {
-      res.status(200).json({
-        ok: false,
-        workspaceRoot,
-        error: err instanceof Error ? err.message : String(err),
-        tools: [],
-        toolCount: 0,
-        connections: getConnectionStatuses(user.username),
-      });
-    }
+    await manager.invalidateUser(user.username);
+    res.status(409).json({
+      ok: false,
+      error: 'MCP_DIAGNOSE_REQUIRES_GOVERNED_RUN',
+      tools: [],
+      toolCount: 0,
+      connections: getConnectionStatuses(user.username),
+    });
   });
 
   return router;

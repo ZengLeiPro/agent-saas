@@ -1,4 +1,4 @@
-import type { SecretVault } from '../security/secretVault.js';
+import type { SecretVault, VaultOperation } from '../security/secretVault.js';
 import type { ConnectorConnectionRecord, ConnectorConnectionStore } from './connectionStore.js';
 
 export const NOTION_CONNECTOR_ID = 'notion';
@@ -55,11 +55,17 @@ export async function connectNotionCredential(input: NotionConnectorDeps & {
   // 先向 Notion 验证，再写入 Vault；错误信息不包含 Authorization 或 provider body。
   const identity = await verifyNotionToken(token, input.fetchImpl);
   const now = new Date().toISOString();
-  const secret = await input.vault.putSecret(input.userId, 'notion_api_token', token, {
-    connectorId: NOTION_CONNECTOR_ID,
-    tenantId: input.tenantId,
-    userId: input.userId,
-  });
+  const secret = await input.vault.putSecret(
+    input.userId,
+    'notion_api_token',
+    token,
+    vaultCaller(input.userId, input.tenantId, 'write'),
+    {
+      connectorId: NOTION_CONNECTOR_ID,
+      tenantId: input.tenantId,
+      userId: input.userId,
+    },
+  );
   let record: ConnectorConnectionRecord;
   try {
     record = await input.connectionStore.connect({
@@ -74,10 +80,11 @@ export async function connectNotionCredential(input: NotionConnectorDeps & {
         connectedAt: now,
         notionVerificationStatus: 'connected',
         notionVerificationMessage: '',
+        credentialOwnerId: input.userId,
       },
     });
   } catch (error) {
-    await input.vault.revokeSecret(secret.id, vaultCaller(input.userId, input.tenantId)).catch(() => undefined);
+    await input.vault.revokeSecret(secret.id, vaultCaller(input.userId, input.tenantId, 'revoke')).catch(() => undefined);
     throw error;
   }
   await revokePendingRefs(input.vault, input.connectionStore, record, input.userId, input.tenantId);
@@ -101,7 +108,7 @@ export async function getLiveNotionConnection(input: NotionConnectorDeps & {
 
   let token: string;
   try {
-    token = await input.vault.getSecret(tokenRef, vaultCaller(input.userId, input.tenantId));
+    token = await input.vault.getSecret(tokenRef, vaultCaller(input.userId, input.tenantId, 'read'));
   } catch {
     const message = '本地凭据暂时无法读取，保留上次连接信息';
     await markNotionVerification(input.connectionStore, input.username, 'unavailable', message);
@@ -154,7 +161,7 @@ export async function resolveNotionRuntimeEnv(
   const tokenRef = connection.credentialRefs.token;
   if (!tokenRef) return {};
   try {
-    const token = await deps.vault.getSecret(tokenRef, vaultCaller(identity.userId, identity.tenantId));
+    const token = await deps.vault.getSecret(tokenRef, vaultCaller(identity.userId, identity.tenantId, 'read'));
     return { NOTION_API_TOKEN: token };
   } catch (error) {
     deps.onError?.(error instanceof Error ? error : new Error(String(error)));
@@ -183,7 +190,7 @@ export async function disconnectNotion(input: NotionConnectorDeps & {
   );
   for (const ref of disconnected.pendingRevokeRefs ?? []) {
     try {
-      await input.vault.revokeSecret(ref, vaultCaller(input.userId, input.tenantId));
+      await input.vault.revokeSecret(ref, vaultCaller(input.userId, input.tenantId, 'revoke'));
       await input.connectionStore.markCredentialRevoked(input.username, NOTION_CONNECTOR_ID, ref);
     } catch {
       // 本地连接已先断开；保留 pendingRevokeRefs，交由后续维护任务重试。
@@ -345,16 +352,12 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
-function vaultCaller(userId: string, tenantId: string) {
+function vaultCaller(userId: string, tenantId: string, operation: VaultOperation) {
   return {
     actor: 'connector_proxy' as const,
     userId,
     tenantId,
-    scopes: [
-      'secret:notion_api_token:read',
-      'secret:notion_api_token:write',
-      'secret:notion_api_token:revoke',
-    ],
+    scopes: [`secret:notion_api_token:${operation}`],
   };
 }
 
@@ -367,7 +370,7 @@ async function revokePendingRefs(
 ): Promise<void> {
   for (const ref of record.pendingRevokeRefs ?? []) {
     try {
-      await vault.revokeSecret(ref, vaultCaller(userId, tenantId));
+      await vault.revokeSecret(ref, vaultCaller(userId, tenantId, 'revoke'));
       await connectionStore.markCredentialRevoked(record.username, record.connectorId, ref);
     } catch {
       // 新连接已经生效；保留 pendingRevokeRefs 供维护任务重试。

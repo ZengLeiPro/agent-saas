@@ -37,8 +37,10 @@ interface TestRig {
     wainAdminB: UserInfo;
     wainUser: UserInfo;
   };
+  userStore: UserStore;
   sender: CaptureSender;
   tenantChanges: UserInfo[];
+  userDeletes: UserInfo[];
   setCaller(user: UserInfo): void;
   request(path: string, init?: RequestInit): Promise<Response>;
   close(): Promise<void>;
@@ -114,6 +116,7 @@ async function makeTestRig(): Promise<TestRig> {
   });
   const sender = new CaptureSender();
   const tenantChanges: UserInfo[] = [];
+  const userDeletes: UserInfo[] = [];
 
   const app = express();
   app.use(express.json());
@@ -135,6 +138,7 @@ async function makeTestRig(): Promise<TestRig> {
       sharedDir: join(tmpRoot, "shared"),
       loginCodeService: new VerificationCodeService({ sender, cooldownMs: 0 }),
       onUserTenantChanging: async user => { tenantChanges.push({ ...user }); },
+      onUserDeleting: async user => { userDeletes.push({ ...user }); },
     }),
   );
 
@@ -147,8 +151,10 @@ async function makeTestRig(): Promise<TestRig> {
 
   return {
     users: { superAdmin, platformAdmin, platformAdminB, wainAdminA, wainAdminB, wainUser },
+    userStore,
     sender,
     tenantChanges,
+    userDeletes,
     setCaller(user) {
       currentCaller = asCaller(user);
     },
@@ -254,6 +260,23 @@ describe("auth users router admin boundaries", () => {
     });
   });
 
+  it("删除最后有效管理员时先拒绝，不触发外部清理副作用", async () => {
+    await h.userStore.setDisabled(
+      h.users.wainAdminB.id,
+      true,
+      h.users.platformAdmin.id,
+    );
+    h.setCaller(h.users.platformAdmin);
+    const res = await h.request(`/api/auth/users/${h.users.wainAdminA.id}`, {
+      method: "DELETE",
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: "Cannot delete the last admin" });
+    expect(h.userDeletes).toHaveLength(0);
+    expect(h.userStore.findById(h.users.wainAdminA.id)).toBeTruthy();
+  });
+
   it("平台 admin 可以修改租户 admin", async () => {
     h.setCaller(h.users.platformAdmin);
     const res = await h.request(`/api/auth/users/${h.users.wainAdminB.id}`, {
@@ -269,7 +292,7 @@ describe("auth users router admin boundaries", () => {
     });
   });
 
-  it("跨租户迁移前先撤销用户在旧租户的连接器", async () => {
+  it("通用用户 PATCH 拒绝跨组织迁移，且不触发旧租户清理副作用", async () => {
     h.setCaller(h.users.superAdmin);
     const res = await h.request(`/api/auth/users/${h.users.wainUser.id}`, {
       method: "PATCH",
@@ -277,13 +300,23 @@ describe("auth users router admin boundaries", () => {
       body: JSON.stringify({ tenantId: "other" }),
     });
 
-    expect(res.status).toBe(200);
-    expect(h.tenantChanges).toHaveLength(1);
-    expect(h.tenantChanges[0]).toMatchObject({
-      id: h.users.wainUser.id,
-      tenantId: "wain",
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "通用用户接口不支持跨组织迁移，请使用专用迁移流程",
     });
-    await expect(res.json()).resolves.toMatchObject({ tenantId: "other" });
+    expect(h.tenantChanges).toHaveLength(0);
+  });
+
+  it("万神殿账号不能通过通用 PATCH 降级为普通成员", async () => {
+    h.setCaller(h.users.platformAdmin);
+    const res = await h.request(`/api/auth/users/${h.users.platformAdminB.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "user" }),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: "万神殿只允许平台管理员" });
   });
 
   it("平台管理员可管理客户账号和其他万神殿账号", async () => {

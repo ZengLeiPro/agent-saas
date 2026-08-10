@@ -44,6 +44,8 @@ import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/typ
 
 import { rejectPlaintextSecretMap } from '../security/secretHeuristics.js';
 import type { SecretVault } from '../security/secretVault.js';
+
+type McpSecretReader = Pick<SecretVault, 'getSecret'>;
 import type { Logger } from '../utils/logger.js';
 import { agentSettingsPath } from '../workspace/namespace.js';
 
@@ -139,7 +141,7 @@ export interface McpClientManagerOptions {
   retryDelaysMs?: number[];
   logger?: Logger;
   /** Optional vault used to resolve mcpServers.*.envSecretRefs/headerSecretRefs before connect. */
-  secretVault?: SecretVault;
+  secretVault?: McpSecretReader;
   /** Optional managed-config provider. Falls back to workspace .ky-agent/settings.json when omitted. */
   configProvider?: (username: string, workspaceRoot: string) => Promise<McpServersFileShape>;
   /** Optional user workspace resolver for tenant-aware layouts. */
@@ -264,7 +266,7 @@ export class McpClientManager {
   private readonly inflight = new Map<string, Promise<UserMcpEntry>>();
   private readonly options: Required<Omit<McpClientManagerOptions, 'logger' | 'secretVault' | 'configProvider' | 'workspaceResolver' | 'tenantResolver' | 'oauthProviderFactory'>> & {
     logger?: Logger;
-    secretVault?: SecretVault;
+    secretVault?: McpSecretReader;
     configProvider?: (username: string, workspaceRoot: string) => Promise<McpServersFileShape>;
     workspaceResolver?: (username: string) => string;
     tenantResolver?: (username: string) => string | undefined;
@@ -519,6 +521,75 @@ export class McpClientManager {
     }
   }
 
+  async warmupBrokered(
+    username: string,
+    serverName: string,
+    credential: { secretRef: string; secret: string },
+  ): Promise<McpToolDescriptor[]> {
+    const oneShot = await this.createBrokeredManager(username, serverName, credential);
+    try {
+      return await oneShot.ensureUser(username);
+    } finally {
+      await oneShot.shutdown();
+    }
+  }
+
+  async invokeBrokered(
+    username: string,
+    toolKey: string,
+    input: Record<string, unknown>,
+    credential: { secretRef: string; secret: string },
+  ): Promise<string> {
+    const parsed = parseMcpToolKey(toolKey);
+    if (!parsed) throw new Error(`MCP invoke: invalid tool key ${toolKey}`);
+    const oneShot = await this.createBrokeredManager(username, parsed.serverName, credential);
+    try {
+      return await oneShot.invoke(username, toolKey, input);
+    } finally {
+      await oneShot.shutdown();
+    }
+  }
+
+  private async createBrokeredManager(
+    username: string,
+    serverName: string,
+    credential: { secretRef: string; secret: string },
+  ): Promise<McpClientManager> {
+    const workspaceRoot = this.options.workspaceResolver
+      ? this.options.workspaceResolver(username)
+      : join(this.options.agentCwd, username);
+    const baseConfig = this.options.configProvider
+      ? await this.options.configProvider(username, workspaceRoot)
+      : await loadMcpServersConfig(workspaceRoot, this.options.logger);
+    const serverConfig = baseConfig.mcpServers?.[serverName];
+    if (!serverConfig) throw new Error(`MCP invoke: server ${serverName} not configured for ${username}`);
+    const configuredSecretRefs = 'command' in serverConfig
+      ? Object.values(serverConfig.envSecretRefs ?? {})
+      : Object.values(serverConfig.headerSecretRefs ?? {}).map(value =>
+          typeof value === 'string' ? value : value.ref,
+        );
+    if (!configuredSecretRefs.includes(credential.secretRef)) {
+      throw new Error('CREDENTIAL_SECRET_NOT_WIRED');
+    }
+    return new McpClientManager({
+      ...this.options,
+      failOnError: true,
+      oauthProviderFactory: undefined,
+      configProvider: async () => ({
+        mcpServers: { [serverName]: serverConfig },
+        ...(baseConfig.serverMetadata?.[serverName] ? {
+          serverMetadata: { [serverName]: baseConfig.serverMetadata[serverName] },
+        } : {}),
+      }),
+      secretVault: {
+        getSecret: async (secretId: string) => {
+          if (secretId !== credential.secretRef) throw new Error('CREDENTIAL_SECRET_REF_MISMATCH');
+          return credential.secret;
+        },
+      },
+    });
+  }
+
   getUserConnectionStatuses(username: string | undefined): McpServerConnectionStatus[] {
     if (!username) return [];
     const entry = this.entries.get(username);
@@ -624,7 +695,7 @@ async function resolveMcpServerSecrets(args: {
   tenantId?: string;
   serverName: string;
   config: McpServerConfig;
-  vault?: SecretVault;
+  vault?: McpSecretReader;
 }): Promise<McpServerConfig> {
   const { username, tenantId, serverName, config, vault } = args;
   // PR 11 多 scope secret：caller 加 tenantId，让 ownerId=tenant:<id>/global 的

@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { authLogger } from '../../utils/logger.js';
 import type { OrgAgentAudience, OrgAgentRecord, OrgAgentSummary, OrgAgentsFileData } from './types.js';
 
 export interface CreateOrgAgentInput {
@@ -62,10 +63,15 @@ export class OrgAgentStore {
   private filePath: string;
   /** 写队列尾（2026-07 审查 F6）：「内存变更 + persist」整体串行，防并发写 last-write-wins 丢更新 */
   private writeTail: Promise<void> = Promise.resolve();
+  private postPersistObserver?: () => void;
 
   constructor(filePath: string) {
     this.filePath = filePath;
     this.load();
+  }
+
+  setPostPersistObserver(observer: (() => void) | undefined): void {
+    this.postPersistObserver = observer;
   }
 
   /** 写操作入队：调用方 await 的是本次 op 的结果/异常；队列尾吞错避免一次失败卡死后续写 */
@@ -118,6 +124,11 @@ export class OrgAgentStore {
     } catch (err) {
       await unlink(tmpPath).catch(() => {});
       throw err;
+    }
+    try {
+      this.postPersistObserver?.();
+    } catch (error) {
+      authLogger.warn(`Org Agent post-persist observer failed: ${error}`);
     }
   }
 

@@ -34,7 +34,13 @@ describe('CapabilityTokenService', () => {
 describe('InMemorySecretVault', () => {
   it('returns only refs from putSecret and enforces caller scopes', async () => {
     const vault = new InMemorySecretVault();
-    const ref = await vault.putSecret('user-1', 'oauth', 'secret-token', { provider: 'demo' });
+    const ref = await vault.putSecret(
+      'user-1',
+      'oauth',
+      'secret-token',
+      { actor: 'mcp_proxy', userId: 'user-1', scopes: ['secret:oauth:write'] },
+      { provider: 'demo' },
+    );
 
     expect(ref).not.toHaveProperty('value');
     await expect(vault.getSecret(ref, { actor: 'mcp_proxy', userId: 'user-1', scopes: ['secret:oauth:read'] })).resolves.toBe('secret-token');
@@ -51,7 +57,12 @@ describe('EncryptedFileSecretVault', () => {
     try {
       const file = join(dir, 'vault.json');
       const vault = new EncryptedFileSecretVault(file, 'local-dev-key');
-      const ref = await vault.putSecret('user-1', 'mcp', 'super-secret-token');
+      const ref = await vault.putSecret(
+        'user-1',
+        'mcp',
+        'super-secret-token',
+        { actor: 'mcp_proxy', userId: 'user-1', scopes: ['secret:mcp:write'] },
+      );
       const raw = await readFile(file, 'utf-8');
       expect(raw).not.toContain('super-secret-token');
 

@@ -282,12 +282,11 @@ describe('PR 7 多组织隔离 - 必补测试', () => {
       });
     });
 
-    it('新建用户：不传 tenantId 默认平台根组织', async () => {
+    it('新建用户：不传 tenantId 时 fail closed，不再默认平台根组织', async () => {
       const store = new UserStore(usersFile);
-      const created = await store.create({
+      await expect(store.create({
         username: 'new_user', password: 'pwd123', role: 'user', createdBy: 'admin',
-      });
-      expect(created.tenantId).toBe(DEFAULT_TENANT_ID);
+      } as Parameters<UserStore['create']>[0])).rejects.toThrow('tenantId is required');
     });
 
     it('新建用户：显式传 tenantId 落对', async () => {

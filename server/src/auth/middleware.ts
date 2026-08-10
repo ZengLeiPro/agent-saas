@@ -6,6 +6,7 @@ import { isPlatformAdmin } from "./types.js";
 import type { UserStore } from "../data/users/store.js";
 import type { TenantStore } from "../data/tenants/store.js";
 import { checkTenantAccess } from "../data/tenants/access.js";
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { getEffectivePlatformCapabilities } from "./platformGovernance.js";
 
 export { isPlatformAdmin } from "./types.js";
@@ -57,10 +58,14 @@ export function createAuthMiddleware(
   userStore?: UserStore,
   tenantStore?: TenantStore,
   tokenExpiresIn?: string,
+  governanceIdentity?: {
+    getMembership(tenantId: string, userId: string): Promise<{ persona: 'member' | 'org_admin'; status: 'active' | 'disabled' } | null>;
+    getPlatformAdmin(userId: string): Promise<{ status: 'active' | 'disabled' } | null>;
+  },
 ) {
   const expiresIn = tokenExpiresIn || "30d";
 
-  return (req: Request, res: Response, next: NextFunction): void => {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     if (isPublicRoute(req)) {
       next();
       return;
@@ -112,6 +117,24 @@ export function createAuthMiddleware(
           return;
         }
         payload.tenantId = record.tenantId;
+        if (governanceIdentity) {
+          const platformAdmin = await governanceIdentity.getPlatformAdmin(record.id);
+          if (platformAdmin?.status === 'active') {
+            payload.role = 'admin';
+          } else {
+            const membership = await governanceIdentity.getMembership(record.tenantId, record.id);
+            if (!membership || membership.status !== 'active') {
+              res.status(403).json({
+                error: '治理 Membership 已停用或不存在',
+                code: 'GOVERNANCE_MEMBERSHIP_INACTIVE',
+              });
+              return;
+            }
+            payload.role = membership.persona === 'org_admin' && record.tenantId !== DEFAULT_TENANT_ID
+              ? 'admin'
+              : 'user';
+          }
+        }
         // 平台能力不信任 JWT 存量声明：每次请求都从用户记录实时覆盖，授权与撤权立即生效。
         payload.platformCapabilities = record.platformCapabilities;
         payload.platformCapabilityLimits = record.platformCapabilityLimits;
@@ -133,7 +156,7 @@ export function createAuthMiddleware(
               {
                 sub: record.id,
                 username: record.username,
-                role: record.role,
+                role: payload.role,
                 tenantId: payload.tenantId,
               },
               jwtSecret,
@@ -145,8 +168,12 @@ export function createAuthMiddleware(
       }
       req.user = payload;
       next();
-    } catch {
-      res.status(401).json({ error: "Invalid or expired token" });
+    } catch (error) {
+      if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {
+        res.status(401).json({ error: "Invalid or expired token" });
+        return;
+      }
+      res.status(503).json({ error: '治理身份服务不可用', code: 'GOVERNANCE_IDENTITY_UNAVAILABLE' });
     }
   };
 }

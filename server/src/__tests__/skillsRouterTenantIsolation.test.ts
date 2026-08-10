@@ -1,15 +1,7 @@
 /**
- * skills 路由多组织隔离测试（PR 9）
- *
- * 修复焦点：
- *   1. pool 写操作 (PATCH /pool/visibility, PUT /pool/:id/document,
- *      POST /custom/:id/promote) 改 requirePlatformAdmin —— 防止组织 admin
- *      改动平台共享的 skill 池（会影响所有组织用户）
- *   2. /custom 列表 / DELETE /custom/:u/:id / GET PUT /users/:u/... /
- *      POST /sync ?username= 都加跨组织校验（组织 admin 仅本组织用户）
- *   3. getUserSkillsDir(username) 改为 getUserSkillsDir(user) 用
- *      resolveUserCwd 解析——物理路径使用 tenantId/userId，非 kaiyan 组织用户读不到自建
- *      skill / 写到错路径
+ * Skill 平台池、组织池与个人所有权边界测试。
+ * 个人 Skill 内容和选择 self-only；直接提升到组织或平台在提交审批链建成前 fail closed。
+ * 组织管理员仍可治理组织 Skill 与成员可用范围，但不能代读、代改成员个人 Skill。
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -65,6 +57,7 @@ function userRecord(id: string, username: string, role: 'admin' | 'user', tenant
 
 function fakeUserStore(): UserStore {
   const users: UserRecord[] = [
+    userRecord('u-platform', 'admin', 'admin', DEFAULT_TENANT_ID),
     userRecord('u-ka', 'zengky', 'admin', 'kaiyan'),
     userRecord('u-ku', 'alice', 'user', 'kaiyan'),
     userRecord('u-wa', 'wain_admin', 'admin', 'wain'),
@@ -459,15 +452,16 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       expect(body.skills[0]?.enabled).toBe(true);
     });
 
-    it('组织 admin 可关闭本租户 skill，用户列表与保存选择都会被租户开关过滤', async () => {
-      h.setCaller(WAIN_ADMIN);
-      let res = await h.request('/api/skills/users/wain_user/selections', {
+    it('组织 admin 可关闭本租户 skill，成员列表与本人保存选择都会被租户开关过滤', async () => {
+      h.setCaller(WAIN_USER);
+      let res = await h.request('/api/skills/me/selections', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ selectedSkills: ['shared_skill'] }),
       });
       expect(res.status).toBe(200);
 
+      h.setCaller(WAIN_ADMIN);
       res = await h.request('/api/skills/tenants/wain/pool/selections', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -480,20 +474,18 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       const tenantBody = await res.json() as { skills: { id: string; enabled: boolean }[] };
       expect(tenantBody.skills.find(s => s.id === 'shared_skill')?.enabled).toBe(false);
 
-      res = await h.request('/api/skills/users/wain_user');
+      h.setCaller(WAIN_USER);
+      res = await h.request('/api/skills/me');
       expect(res.status).toBe(200);
-      const userBody = await res.json() as { poolSkills: { id: string }[] };
-      expect(userBody.poolSkills.map(s => s.id)).not.toContain('shared_skill');
+      expect((await res.json() as { poolSkills: { id: string }[] }).poolSkills.map(s => s.id)).not.toContain('shared_skill');
 
-      res = await h.request('/api/skills/users/wain_user/selections', {
+      res = await h.request('/api/skills/me/selections', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ selectedSkills: ['shared_skill'] }),
       });
       expect(res.status).toBe(200);
-      res = await h.request('/api/skills/users/wain_user');
-      const userBodyAfterSave = await res.json() as { poolSkills: { id: string; selected: boolean }[] };
-      expect(userBodyAfterSave.poolSkills.map(s => s.id)).not.toContain('shared_skill');
+      expect(h.skillConfigStore.getUserSelectedSkills('wain_user')).not.toContain('shared_skill');
     });
 
     it('组织 admin 不能修改其他租户；platform admin 可以修改任意租户', async () => {
@@ -574,50 +566,33 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
   });
 
   // ============================================================
-  // /custom 列表 + DELETE 跨组织防御
+  // /custom 个人所有权
   // ============================================================
-  describe('Custom 列表与删除按组织隔离', () => {
-    it('组织 admin (wain) GET /custom → 仅本组织用户的自建 skill', async () => {
+  describe('Custom 列表与删除 self-only', () => {
+    it('管理员 GET /custom 不枚举本组织或全平台其他用户', async () => {
+      for (const caller of [WAIN_ADMIN, PLATFORM_ADMIN]) {
+        h.setCaller(caller);
+        const res = await h.request('/api/skills/custom');
+        expect(res.status).toBe(200);
+        expect((await res.json() as { users: Record<string, unknown[]> }).users).toEqual({});
+      }
+    });
+
+    it('管理员不能删除同组织或跨组织成员的个人 Skill', async () => {
       h.setCaller(WAIN_ADMIN);
-      const res = await h.request('/api/skills/custom');
-      expect(res.status).toBe(200);
-      const body = await res.json() as { users: Record<string, unknown[]> };
-      expect(Object.keys(body.users)).toEqual(['wain_user']);
-      expect(body.users).not.toHaveProperty('alice');
+      expect((await h.request('/api/skills/custom/wain_user/wain_user_custom', { method: 'DELETE' })).status).toBe(403);
+      expect((await h.request('/api/skills/custom/alice/alice_custom', { method: 'DELETE' })).status).toBe(404);
+      expect(existsSync(join(h.userSkillsDir('wain_user'), 'wain_user_custom'))).toBe(true);
     });
 
-    it('platform admin GET /custom → 看全部用户的自建 skill', async () => {
-      h.setCaller(PLATFORM_ADMIN);
-      const res = await h.request('/api/skills/custom');
-      expect(res.status).toBe(200);
-      const body = await res.json() as { users: Record<string, unknown[]> };
-      expect(Object.keys(body.users).sort()).toEqual(['alice', 'wain_user']);
-    });
-
-    it('GET /custom 不把已从 pool 删除但仍在配置历史中的系统 skill 误判为自建', async () => {
-      await h.skillConfigStore.setPoolVisibility({ old_system: true });
-      const staleDir = join(h.agentCwd, 'kaiyan', 'u-ku', '.ky-agent', 'skills', 'old_system');
-      mkdirSync(staleDir, { recursive: true });
-      writeFileSync(join(staleDir, 'SKILL.md'), '---\nname: old_system\ndescription: stale\n---\nx');
-
-      h.setCaller(PLATFORM_ADMIN);
-      const res = await h.request('/api/skills/custom');
-      expect(res.status).toBe(200);
-      const body = await res.json() as { users: Record<string, { id: string }[]> };
-      expect(body.users.alice?.map(s => s.id)).toContain('alice_custom');
-      expect(body.users.alice?.map(s => s.id)).not.toContain('old_system');
-    });
-
-    it('组织 admin (wain) DELETE /custom/alice/:id (跨组织) → 404 隐藏', async () => {
+    it('管理员可通过兼容路径删除自己的个人 Skill', async () => {
+      const ownDir = join(h.userSkillsDir('wain_admin'), 'own-custom');
+      mkdirSync(ownDir, { recursive: true });
+      writeFileSync(join(ownDir, 'SKILL.md'), '---\nname: own-custom\ndescription: own\n---\nx');
       h.setCaller(WAIN_ADMIN);
-      const res = await h.request('/api/skills/custom/alice/alice_custom', { method: 'DELETE' });
-      expect(res.status).toBe(404);
-    });
-
-    it('组织 admin (wain) DELETE /custom/wain_user/:id (本组织) → 200', async () => {
-      h.setCaller(WAIN_ADMIN);
-      const res = await h.request('/api/skills/custom/wain_user/wain_user_custom', { method: 'DELETE' });
+      const res = await h.request('/api/skills/custom/wain_admin/own-custom', { method: 'DELETE' });
       expect(res.status).toBe(200);
+      expect(existsSync(ownDir)).toBe(false);
     });
   });
 
@@ -641,19 +616,19 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       expect(res.status).toBe(404);
     });
 
-    it('组织 admin (wain) GET /users/wain_user (本组织) → 200', async () => {
+    it('组织 admin GET 本组织成员仍按个人所有权拒绝', async () => {
       h.setCaller(WAIN_ADMIN);
-      const res = await h.request('/api/skills/users/wain_user');
-      expect(res.status).toBe(200);
-      const body = await res.json() as { customSkills: { id: string }[] };
-      // 路径修复验证：tenant/userId 路径正确解析 → 能扫到 wain_user_custom
-      expect(body.customSkills.map(s => s.id)).toContain('wain_user_custom');
+      expect((await h.request('/api/skills/users/wain_user')).status).toBe(403);
     });
 
-    it('platform admin GET /users/wain_user (跨组织) → 200', async () => {
+    it('platform admin GET 跨组织成员仍按个人所有权拒绝', async () => {
       h.setCaller(PLATFORM_ADMIN);
-      const res = await h.request('/api/skills/users/wain_user');
-      expect(res.status).toBe(200);
+      expect((await h.request('/api/skills/users/wain_user')).status).toBe(403);
+    });
+
+    it('管理员可通过兼容路径查看自己的 Skill 状态', async () => {
+      h.setCaller(WAIN_ADMIN);
+      expect((await h.request('/api/skills/users/wain_admin')).status).toBe(200);
     });
   });
 
@@ -872,23 +847,22 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       expect(h.skillConfigStore.getUserSelectedSkills('alice')).not.toContain('selectable');
     });
 
-    it('管理员代改用户选择保留平台、组织与个人三层合法 skill', async () => {
-      h.setCaller(WAIN_ADMIN);
-      await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: skillUploadBody('team-selected') });
-
+    it('管理员不能代改成员个人 Skill 选择', async () => {
       h.setCaller(WAIN_USER);
-      await h.request('/api/skills/me/import', { method: 'POST', body: skillUploadBody('personal-selected') });
+      await h.request('/api/skills/me/selections', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedSkills: ['shared_skill'] }),
+      });
 
       h.setCaller(WAIN_ADMIN);
       const res = await h.request('/api/skills/users/wain_user/selections', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selectedSkills: ['shared_skill', 'team-selected', 'personal-selected'] }),
+        body: JSON.stringify({ selectedSkills: [] }),
       });
-      expect(res.status).toBe(200);
-      expect(h.skillConfigStore.getUserSelectedSkills('wain_user')).toEqual(
-        expect.arrayContaining(['shared_skill', 'team-selected', 'personal-selected']),
-      );
+      expect(res.status).toBe(403);
+      expect(h.skillConfigStore.getUserSelectedSkills('wain_user')).toContain('shared_skill');
     });
 
     it('用户本人可读写自己的 SKILL.md，不能借接口编辑组织 skill', async () => {
@@ -930,24 +904,16 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       expect(denied.status).toBe(403);
     });
 
-    it('POST /tenants/:id/promote：本组织成员 skill → 组织；跨组织源用户 → 400', async () => {
+    it('POST /tenants/:id/promote：候选副本与审批链未建成前 fail closed', async () => {
       h.setCaller(WAIN_ADMIN);
-      const ok = await h.request('/api/skills/tenants/wain/promote', {
+      const res = await h.request('/api/skills/tenants/wain/promote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ skillId: 'wain_user_custom', sourceUser: 'wain_user' }),
       });
-      expect(ok.status).toBe(200);
-      expect(existsSync(tenantSkillDir('wain', 'wain_user_custom'))).toBe(true);
-      // 源用户自动勾选，promote 后 skill 不消失
-      expect(h.skillConfigStore.getUserSelectedSkills('wain_user')).toContain('wain_user_custom');
-
-      const crossTenant = await h.request('/api/skills/tenants/wain/promote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ skillId: 'alice_custom', sourceUser: 'alice' }),
-      });
-      expect(crossTenant.status).toBe(400);
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ code: 'PERSONAL_SKILL_SUBMISSION_REQUIRED' });
+      expect(existsSync(tenantSkillDir('wain', 'wain_user_custom'))).toBe(false);
     });
 
     it('POST /tenants/:id/skills/:skillId/promote → pool：组织 admin 403；平台 admin 200', async () => {

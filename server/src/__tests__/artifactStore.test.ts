@@ -51,6 +51,32 @@ describe('LocalArtifactBlobStore', () => {
     }
   });
 
+  it('platform admin 读取跨组织 artifact 必须持有 session_export Grant', async () => {
+    const blobRoot = await mkdtemp(path.join(os.tmpdir(), 'artifact-blob-'));
+    try {
+      let grantActive = false;
+      const service = new ArtifactService({
+        artifactStore: new InMemoryArtifactStore(),
+        blobStore: new LocalArtifactBlobStore({ rootDir: blobRoot }),
+        agentCwd: blobRoot,
+        resolveSessionTenantId: async () => 'tenant-customer',
+        authorizeContentAccess: async input => grantActive
+          && input.tenantId === 'tenant-customer'
+          && input.scope === 'session_export',
+        auditContentAccess: async () => undefined,
+      });
+      const artifact = await service.createFromBytes({ sessionId: 'session-customer', data: 'sensitive' });
+      const platformAdmin = { sub: 'platform-admin', username: 'root', role: 'admin' as const, tenantId: 'pantheon' };
+      await expect(service.getForUser(artifact.artifactId, platformAdmin)).rejects.toThrow('Artifact not found');
+      grantActive = true;
+      await expect(service.getForUser(artifact.artifactId, platformAdmin)).resolves.toEqual(artifact);
+      grantActive = false;
+      await expect(service.getForUser(artifact.artifactId, platformAdmin)).rejects.toThrow('Artifact not found');
+    } finally {
+      await rm(blobRoot, { recursive: true, force: true });
+    }
+  });
+
   it('CreateArtifact registers a workspace file through the artifact service', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'artifact-tool-'));
     const blobRoot = await mkdtemp(path.join(os.tmpdir(), 'artifact-blob-'));

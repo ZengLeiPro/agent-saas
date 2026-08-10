@@ -255,6 +255,31 @@ describe('runSubagent', () => {
     cleanupDirs.clear();
   });
 
+  it('child run 在模型调用前执行治理 preflight，enforce 拒绝时 fail closed', async () => {
+    const fixture = await makeFixture({ cleanupDirs });
+    const preflight = vi.fn().mockResolvedValue({
+      proceed: false,
+      enforcementMode: 'enforce',
+      accessDecision: { reasonCode: 'SUBJECT_DISABLED' },
+      snapshot: { runId: 'child' },
+    });
+    const append = vi.fn();
+    fixture.config.runPreflightService = { preflight } as never;
+    fixture.config.runResolutionSnapshotStore = { append } as never;
+    const modelAdapterFactory = vi.fn(() => new TextOnlyAdapter());
+    await expect(runSubagent({
+      ...runnerDeps(fixture),
+      parentProviders: [createBuiltinTools()],
+      agentType: SUBAGENT_TYPES.general,
+      request: { description: '治理拒绝', prompt: '不应执行', includeCompanyInfo: false },
+      limiter: new SubagentLimiter(),
+      modelAdapterFactory,
+    })).rejects.toThrow('SUBJECT_DISABLED');
+    expect(preflight).toHaveBeenCalledWith(expect.objectContaining({ phase: 'wake' }));
+    expect(append).not.toHaveBeenCalled();
+    expect(modelAdapterFactory).not.toHaveBeenCalled();
+  });
+
   it('completed：结果文本回传、usage 落 channel=subagent、子事件不进父 store、catalog 记 kind=subagent', async () => {
     const fixture = await makeFixture({ cleanupDirs });
     fixture.parentContext.env = {

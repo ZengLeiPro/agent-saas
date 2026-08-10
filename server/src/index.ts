@@ -75,11 +75,18 @@ function removeReadyFile(): void {
   } catch { /* 不存在或不可删，忽略 */ }
 }
 
-function writeDrainMarker(): void {
+function writeDrainMarker(snapshot?: {
+  activeStreams: number;
+  activeUploads: number;
+  runtimeQuiesced: boolean;
+}): void {
   const drainMarker = process.env.AGENT_SAAS_DRAIN_MARKER;
   if (!drainMarker) return;
   try {
-    fs.writeFileSync(drainMarker, `${process.pid}\n`, 'utf-8');
+    const body = snapshot
+      ? JSON.stringify({ pid: process.pid, ...snapshot })
+      : String(process.pid);
+    fs.writeFileSync(drainMarker, `${body}\n`, 'utf-8');
   } catch (err) {
     serverLogger.error(`Failed to write drain marker ${drainMarker}: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -417,6 +424,7 @@ process.on('SIGUSR2', () => {
   const drainPoll = setInterval(() => {
     const active = runtime?.channelManager.getActiveStreamCount() ?? 0;
     const activeUploads = runtime?.uploadManager.getActiveUploadCount() ?? 0;
+    writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced });
     serverLogger.info(`Drain: ${active} active stream(s), ${activeUploads} active upload(s) remaining, runtimeQuiesced=${runtimeQuiesced}`);
     if (active === 0 && activeUploads === 0 && runtimeQuiesced) {
       clearInterval(drainPoll);

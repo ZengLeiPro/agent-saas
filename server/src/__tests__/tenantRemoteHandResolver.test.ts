@@ -80,6 +80,22 @@ describe('tenantRemoteHandResolver', () => {
     expect(handToken).toBe('vault-token-xyz');
   });
 
+  it('reads production-compatible tenant-hand vault refs', async () => {
+    const vault = new InMemorySecretVault();
+    const ref = await vault.putSecret('__system__', 'tenant-hand', 'hyphenated-vault-token', {
+      actor: 'system',
+      userId: '__system__',
+      scopes: ['secret:tenant-hand:write'],
+    });
+    const resolver = createTenantRemoteHandAuthTokenResolver({
+      tenantRemoteHands: [{ ...baseEntry, authTokenRef: ref.id }],
+      vault,
+    });
+
+    await expect(resolver.resolveForHand(buildHand({ tenantRemoteHandId: 'tenant-ecs' })))
+      .resolves.toBe('hyphenated-vault-token');
+  });
+
   it('throws when an entry uses authTokenRef but no vault is configured', async () => {
     const resolver = createTenantRemoteHandAuthTokenResolver({
       tenantRemoteHands: [{ ...baseEntry, authTokenRef: 'missing-vault' }],

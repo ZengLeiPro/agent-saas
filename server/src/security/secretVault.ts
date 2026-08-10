@@ -129,6 +129,7 @@ const SYSTEM_INFRASTRUCTURE_PRINCIPALS: Readonly<Record<string, Partial<Record<V
     write: ['signup_config_admin'],
   },
   stt: { read: ['__system__'], write: ['__system__'] },
+  'tenant-hand': { read: ['__system__'], write: ['__system__'] },
   tenant_hand: { read: ['__system__'], write: ['__system__'] },
   web_tools: { read: ['__system__'], write: ['tool_controls_admin'] },
 };

@@ -822,6 +822,15 @@ jobs:
                   try { console.log(Number(JSON.parse(process.argv[1]).activeUploads ?? 0)); }
                   catch { console.log(-1); }
                 ' "$IDLE_DRAIN_BODY")
+                if [ "$IDLE_ACTIVE_UPLOADS" -eq -1 ]; then
+                  IDLE_DRAIN_MARKER="/run/${SERVICE_NAME}-${IDLE}.draining"
+                  IDLE_DRAIN_SNAPSHOT=$(cat "$IDLE_DRAIN_MARKER" 2>/dev/null || true)
+                  IDLE_ACTIVE_UPLOADS=$(node -e '
+                    try { console.log(Number(JSON.parse(process.argv[1]).activeUploads ?? -1)); }
+                    catch { console.log(-1); }
+                  ' "$IDLE_DRAIN_SNAPSHOT")
+                  log "idle drain endpoint unavailable; marker snapshot reports activeUploads=$IDLE_ACTIVE_UPLOADS"
+                fi
                 if [ "$IDLE_ACTIVE_UPLOADS" -ne 0 ]; then
                   log "ERROR: idle unit still has activeUploads=$IDLE_ACTIVE_UPLOADS after 600s; refusing to interrupt or overwrite it"
                   exit 1
@@ -1207,6 +1216,14 @@ jobs:
                 else
                   log "ERROR: failed to signal runtime worker candidate after readiness failure: color=$WORKER_IDLE pid=$worker_pid"
                 fi
+              fi
+              old_app_pidfile="/run/${SERVICE_NAME}-${ACTIVE}.pid"
+              old_app_pid=$(cat "$old_app_pidfile" 2>/dev/null || true)
+              if [ -n "$old_app_pid" ] && kill -0 "$old_app_pid" 2>/dev/null \
+                && kill -USR2 "$old_app_pid" 2>/dev/null; then
+                log "old app drain signal sent after runtime worker readiness failure: color=$ACTIVE pid=$old_app_pid"
+              else
+                log "ERROR: failed to signal old app after runtime worker readiness failure: color=$ACTIVE pid=${old_app_pid:-missing}"
               fi
               WORKER_FAILED_WAITED=0
               while [ "$WORKER_FAILED_WAITED" -lt 60 ] \

@@ -96,7 +96,8 @@ export interface TenantRemoteHandAuthTokenResolver {
 const VAULT_CALLER = {
   actor: 'system' as const,
   userId: '__system__',
-  scopes: ['secret:tenant_hand:read'],
+  // 生产存量 ref 使用 tenant-hand；tenant_hand 是早期代码口径，读取期双兼容。
+  scopes: ['secret:tenant_hand:read', 'secret:tenant-hand:read'],
 };
 
 function findEntryById(

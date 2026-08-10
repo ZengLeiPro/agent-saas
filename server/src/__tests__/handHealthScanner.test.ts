@@ -308,6 +308,66 @@ describe('HandHealthScanner (B4)', () => {
     expect(new Set(probed).size).toBe(3);
   });
 
+  it('isolates auth token resolution failures to the affected hand', async () => {
+    const handStore = new InMemoryHandStore();
+    handStore.hands.set('h-missing-secret', makeHand({
+      handId: 'h-missing-secret',
+      endpoint: 'http://missing-secret.example',
+      metadata: { tenantRemoteHandId: 'tenant-missing-secret' },
+    }));
+    handStore.hands.set('h-healthy', makeHand({
+      handId: 'h-healthy',
+      endpoint: 'http://healthy.example',
+    }));
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+    const warn = vi.fn();
+    const scanner = new HandHealthScanner({
+      unhealthyConfirmDelayMs: 1,
+      handStore,
+      fetchImpl,
+      resolveHandAuthToken: async (hand) => {
+        if (hand.handId === 'h-missing-secret') throw new Error('vault lookup failed');
+        return undefined;
+      },
+      logger: { info: () => undefined, warn, error: () => undefined },
+    });
+
+    const result = await scanner.scanOnce();
+
+    expect(result).toEqual({ scanned: 2, flipped: 0 });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(String((fetchImpl as any).mock.calls[0]?.[0])).toContain('healthy.example/health');
+    expect(handStore.hands.get('h-missing-secret')?.status).toBe('ready');
+    expect(warn).toHaveBeenCalledWith(
+      'HandHealthScanner: auth token unavailable for handId=h-missing-secret; skipping probe',
+    );
+  });
+
+  it('contains unexpected scheduled scan failures instead of leaking an unhandled rejection', async () => {
+    vi.useFakeTimers();
+    try {
+      const handStore = new InMemoryHandStore();
+      handStore.listByType = vi.fn(async () => { throw new Error('store unavailable'); });
+      const error = vi.fn();
+      const scanner = new HandHealthScanner({
+        intervalMs: 10,
+        handStore,
+        logger: { info: () => undefined, warn: () => undefined, error },
+      });
+
+      scanner.start();
+      await vi.advanceTimersByTimeAsync(10);
+      scanner.stop();
+
+      expect(error).toHaveBeenCalledWith('HandHealthScanner scan failed: store unavailable');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('logs a warning and no-ops when HandStore lacks listByType', async () => {
     const partialStore: HandStore = {
       async register() { throw new Error('unused'); },

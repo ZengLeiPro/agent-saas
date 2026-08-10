@@ -59,6 +59,7 @@ describe('Runtime Worker 生产部署契约', () => {
       'utf-8',
     );
     const workflow = await readFile(join(repoRoot, '.github/workflows/ci.yml'), 'utf-8');
+    const serverEntry = await readFile(join(repoRoot, 'server/src/index.ts'), 'utf-8');
 
     expect(webUnit).toContain('Environment=AGENT_SAAS_PROCESS_ROLE=ws-only');
     expect(workerUnit).toContain('Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker');
@@ -95,7 +96,10 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(readinessFailureEnd).toBeGreaterThan(readinessFailureStart);
     expect(readinessFailureBlock).toContain('kill -USR2 "$worker_pid"');
     expect(readinessFailureBlock).toContain('runtime worker candidate drain signal sent after readiness failure');
+    expect(readinessFailureBlock).toContain('old app drain signal sent after runtime worker readiness failure');
     expect(readinessFailureBlock).toContain('runtime worker idle target restored after readiness failure');
     expect(readinessFailureBlock).not.toContain('systemctl stop');
+    expect(workflow).toContain('idle drain endpoint unavailable; marker snapshot reports activeUploads=');
+    expect(serverEntry).toContain('writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced })');
   });
 });

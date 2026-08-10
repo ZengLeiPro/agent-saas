@@ -910,6 +910,7 @@ jobs:
           # ── 6. 启动 idle 色 + ready 门禁（180s）──
           # enable --now：候选色先具备开机自启；切流成功后立即 disable 旧色，
           # 避免整机重启时两色同时启动并争用启动期 PG 锁。
+          rm -f "/run/${SERVICE_NAME}-${IDLE}.pid" "/run/${SERVICE_NAME}-${IDLE}.draining"
           log "start idle unit: ${SERVICE_NAME}@${IDLE} (port $IDLE_PORT)"
           systemctl enable --now "${SERVICE_NAME}@${IDLE}"
 

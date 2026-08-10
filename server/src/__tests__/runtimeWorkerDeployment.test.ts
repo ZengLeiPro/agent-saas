@@ -62,6 +62,8 @@ describe('Runtime Worker 生产部署契约', () => {
     const serverEntry = await readFile(join(repoRoot, 'server/src/index.ts'), 'utf-8');
 
     expect(webUnit).toContain('Environment=AGENT_SAAS_PROCESS_ROLE=ws-only');
+    expect(webUnit).toContain('AGENT_SAAS_DRAIN_MARKER=/run/agent-saas-server-%i.draining');
+    expect(webUnit).toContain('ExecCondition=/usr/bin/test ! -e /run/agent-saas-server-%i.draining');
     expect(workerUnit).toContain('Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker');
     expect(workerUnit).toContain('AGENT_SAAS_PIDFILE=/run/agent-saas-runtime-worker-%i.pid');
     expect(workerUnit).toContain('AGENT_SAAS_READYFILE=/run/agent-saas-runtime-worker-%i.ready');
@@ -100,6 +102,7 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(readinessFailureBlock).toContain('runtime worker idle target restored after readiness failure');
     expect(readinessFailureBlock).not.toContain('systemctl stop');
     expect(workflow).toContain('idle drain endpoint unavailable; marker snapshot reports activeUploads=');
+    expect(workflow).toContain('rm -f "/run/${SERVICE_NAME}-${IDLE}.pid" "/run/${SERVICE_NAME}-${IDLE}.draining"');
     expect(serverEntry).toContain('writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced })');
   });
 });

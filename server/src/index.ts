@@ -377,7 +377,7 @@ let isDraining = false;
 process.on('SIGUSR2', () => {
   if (isDraining || shuttingDown) return;
   isDraining = true;
-  // Worker 进入 drain 后可能仍在等待长 run 的安全交棒。先写 /run marker，配合
+  // 进程进入 drain 后可能仍在等待长 run 的安全交棒。先写 /run marker，配合
   // systemd ExecCondition 阻止它被 cgroup/global OOM 杀死后按 Restart=on-failure
   // 复活并丢失 drain 状态。下一次显式蓝绿启动由部署脚本清除此 marker。
   writeDrainMarker();

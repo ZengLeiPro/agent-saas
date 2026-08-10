@@ -40,6 +40,13 @@ import { MemorySearchToolProvider } from './memorySearchToolProvider.js';
 import { persistShellOutputFiles } from './shellOutputFiles.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
 import {
+  memoryPathFromSuccessfulTool,
+  parseToolInput,
+  relativeWorkspacePath,
+  resolveWorkspacePath,
+  shellCommandMentionsMemoryPath,
+} from './toolRuntimePaths.js';
+import {
   DEFAULT_SHELL_TIMEOUT_MS,
   DEFAULT_BACKGROUND_SHELL_TIMEOUT_MS,
   MAX_BACKGROUND_SHELL_TIMEOUT_MS,
@@ -1700,85 +1707,10 @@ export function applyToolDescriptionOverride(
   return { ...descriptor, description: nextDescription };
 }
 
-function parseToolInput<TInput>(descriptor: ToolDescriptor<TInput>, input: unknown): TInput {
-  return descriptor.schema.parse(input) as TInput;
-}
-
 export { hasMemorySearchTool } from './memorySearchToolProvider.js';
 
-function isInside(baseDir: string, candidate: string): boolean {
-  const rel = relative(baseDir, candidate);
-  return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
-}
-
-function resolveWorkspacePath(cwd: string, inputPath: string): string {
-  const fullPath = isAbsolute(inputPath) ? resolve(inputPath) : resolve(cwd, inputPath);
-  if (!isInside(cwd, fullPath)) {
-    throw new Error(`Access denied: path outside workspace (${inputPath})`);
-  }
-  return fullPath;
-}
-
-function relativeWorkspacePath(cwd: string, fullPath: string): string {
-  const rel = relative(cwd, fullPath);
-  return (rel || '.').replace(/\\/g, '/');
-}
-
-function memoryPathFromSuccessfulTool(
-  toolId: string,
-  input: unknown,
-  workspace: WorkspaceRef,
-  response: Extract<ToolInvocationResponse, { status: 'success' }>,
-): string | null {
-  if (toolId !== 'Write' && toolId !== 'Edit') return null;
-  const metadataPath = typeof response.metadata?.path === 'string'
-    ? response.metadata.path
-    : undefined;
-  const inputPath = input && typeof input === 'object'
-    ? (input as { path?: unknown; file_path?: unknown }).path ?? (input as { file_path?: unknown }).file_path
-    : undefined;
-  const candidate = metadataPath ?? (typeof inputPath === 'string' ? inputPath : undefined);
-  if (!candidate) return null;
-  const relPath = normalizeWorkspaceRelativePath(workspace.root, candidate);
-  return relPath && isMemorySourcePath(relPath) ? relPath : null;
-}
-
-function normalizeWorkspaceRelativePath(workspaceRoot: string, candidate: string): string | null {
-  try {
-    const fullPath = isAbsolute(candidate)
-      ? resolve(candidate)
-      : resolve(workspaceRoot, candidate);
-    if (!isInside(workspaceRoot, fullPath)) return null;
-    return relativeWorkspacePath(workspaceRoot, fullPath);
-  } catch {
-    return null;
-  }
-}
-
-function isMemorySourcePath(relPath: string): boolean {
-  const normalized = relPath.replace(/\\/g, '/');
-  return normalized === 'MEMORY.md'
-    || (normalized.startsWith('memory/') && normalized.endsWith('.md'));
-}
-
-function shellCommandMentionsMemoryPath(command: string): boolean {
-  return /(^|[\s"'`=;:&|(<])(?:\.\/)?MEMORY\.md($|[\s"'`);:&|>])/.test(command)
-    || /(^|[\s"'`=;:&|(<])(?:\.\/)?memory\/[^"'`\s;&|<>]*\.md($|[\s"'`);:&|>])/.test(command)
-    || /\/MEMORY\.md($|[\s"'`);:&|>])/.test(command)
-    || /\/memory\/[^"'`\s;&|<>]*\.md($|[\s"'`);:&|>])/.test(command);
-}
-
-function workspaceRelativeInputPath(cwd: string, inputPath: string): string {
-  const fullPath = resolveWorkspacePath(cwd, inputPath);
-  return relativeWorkspacePath(cwd, fullPath);
-}
-
-export function isExecutionTargetKind(value: unknown): value is ExecutionTargetKind {
-  return value === 'server-local'
-    || value === 'server-container'
-    || value === 'server-remote'
-    || value === 'client';
-}
+// 路径解析与记忆判定纯函数已迁至 ./toolRuntimePaths.ts，这里按既有 import 路径继续对外转发。
+export { isExecutionTargetKind } from './toolRuntimePaths.js';
 
 
 async function consumeToolStream(

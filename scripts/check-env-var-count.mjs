@@ -119,6 +119,10 @@ export function parseEnvBaseline(text, source = BASELINE_PATH) {
 export function evaluateEnv({ collection, baseline, baseBaseline = null, prune = false }) {
   const errors = [];
   const changes = [];
+  // 相对 merge-base 写了新的显式理由 ＝ 经过审阅的扩张，与 web startup ratchet 同一套语义。
+  // 环境变量数量在持续加功能的运行时里必然增长，纯棘轮会把「新配置项」变成不可能事件；
+  // 但扩张必须在 baseline 里留下一条新理由，未写理由的增长依旧阻断。
+  const reasoned = Boolean(baseBaseline) && baseline.reason !== baseBaseline.reason;
   for (const domain of DOMAINS) {
     const actual = collection.domains[domain];
     const entry = baseline.domains[domain];
@@ -129,12 +133,16 @@ export function evaluateEnv({ collection, baseline, baseBaseline = null, prune =
     if (added.length) errors.push(`${domain} added: ${added.join(', ')}`);
     if (removed.length) changes.push(`${domain} removed: ${removed.join(', ')}`);
     if (removed.length && !prune) errors.push(`${domain} stale: ${removed.join(', ')}; run --prune`);
-    if (baseBaseline) {
+    if (baseBaseline && !reasoned) {
       const baseEntry = baseBaseline.domains[domain];
       const baseNames = new Set(baseEntry.names);
       const expanded = entry.names.filter((name) => !baseNames.has(name));
-      if (entry.budget > baseEntry.budget) errors.push(`${domain} budget expanded ${entry.budget} > merge-base ${baseEntry.budget}`);
-      if (expanded.length) errors.push(`${domain} baseline added names vs merge-base: ${expanded.join(', ')}`);
+      if (entry.budget > baseEntry.budget) {
+        errors.push(`${domain} budget expanded ${entry.budget} > merge-base ${baseEntry.budget} without a new explicit reason`);
+      }
+      if (expanded.length) {
+        errors.push(`${domain} baseline added names vs merge-base without a new explicit reason: ${expanded.join(', ')}`);
+      }
     }
   }
   return { errors, changes };
@@ -151,9 +159,11 @@ export function runEnvRatchet(root = process.cwd(), argv = []) {
   const staged = argv.includes('--staged');
   const prune = argv.includes('--prune');
   const init = argv.includes('--init');
+  const update = argv.includes('--update-baseline');
   const reason = optionValue(argv, '--reason');
-  if (init && prune) throw new Error('--init and --prune are separate operations');
+  if ([init, prune, update].filter(Boolean).length > 1) throw new Error('--init, --prune and --update-baseline are separate operations');
   if (init && staged) throw new Error('--init snapshots the working tree; stage the generated baseline afterward');
+  if (update && staged) throw new Error('--update-baseline snapshots the working tree; stage the generated baseline afterward');
   const baselineFile = path.join(root, BASELINE_PATH);
   const collection = collectEnvNames(root, { staged });
 
@@ -166,6 +176,13 @@ export function runEnvRatchet(root = process.cwd(), argv = []) {
   }
 
   const baseline = baselineFrom(root, staged);
+  if (update) {
+    if (!reason) throw new Error('--update-baseline requires --reason (state why each new environment variable is necessary)');
+    if (reason.trim() === baseline.reason.trim()) throw new Error('--update-baseline requires a reason distinct from the recorded one');
+    fs.writeFileSync(baselineFile, `${JSON.stringify(snapshotEnv(collection, reason), null, 2)}\n`);
+    return { message: `Updated ${BASELINE_PATH} with explicit reason`, collection, changes: [] };
+  }
+
   const resolvedBase = resolveBase(root, optionValue(argv, '--base'));
   const baseText = readFileAtCommit(root, resolvedBase.sha, BASELINE_PATH);
   const baseBaseline = baseText === null ? null : parseEnvBaseline(baseText, `${resolvedBase.sha}:${BASELINE_PATH}`);

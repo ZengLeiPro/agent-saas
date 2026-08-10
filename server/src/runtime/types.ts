@@ -1,5 +1,6 @@
 import type { ContextUsageBreakdown } from '../types/index.js';
-import type { ExecutionInvocationAudit, ToolDescriptor, ToolResult } from '../agent/toolRuntime.js';
+import type { ApprovalDecision } from './approvalTypes.js';
+import type { ExecutionInvocationAudit } from '../agent/toolRuntime.js';
 import type { ToolPresentation } from '../agent/toolPresentationBuilder.js';
 import type { ToolAuthorization, ToolRisk, ExecutionTargetKind } from '../agent/toolRuntime.js';
 import type {
@@ -1260,53 +1261,14 @@ export interface EventStore {
   getById?(eventId: string): Promise<PlatformEvent | null>;
 }
 
-export type ApprovalDecision = 'approved' | 'rejected' | 'timeout';
-
-export interface ApprovalRequest {
-  sessionId: string;
-  runId: string;
-  toolCallId: string;
-  toolId: string;
-  toolName: string;
-  displayName?: string;
-  executionTarget?: ExecutionTargetKind;
-  input: unknown;
-}
-
-export interface ApprovalRecord extends ApprovalRequest {
-  id: string;
-  status: 'pending' | ApprovalDecision;
-  createdAt: string;
-  resolvedAt?: string;
-  message?: string;
-}
-
-export interface ApprovalStore {
-  create(request: ApprovalRequest): Promise<ApprovalRecord>;
-  resolve(id: string, decision: ApprovalDecision, message?: string): Promise<void>;
-  resolvePending(id: string, decision: ApprovalDecision, message?: string): Promise<ApprovalRecord | null>;
-  get(id: string): Promise<ApprovalRecord | null>;
-  list(sessionId?: string): Promise<ApprovalRecord[]>;
-  listPending(sessionId?: string): Promise<ApprovalRecord[]>;
-}
-
-export type ToolPolicyDecision =
-  | { type: 'allow' }
-  | { type: 'requires_approval'; reason: string };
-
-export interface ToolPolicy {
-  decide(descriptor: ToolDescriptor, input: unknown, context: RunContext): Promise<ToolPolicyDecision>;
-}
-
-export interface AuthorizedToolCall {
-  toolId: string;
-  input: unknown;
-}
-
-export interface ToolExecutionOutcome {
-  call: ModelToolCall;
-  descriptor?: ToolDescriptor;
-  input: unknown;
-  result: ToolResult;
-  isError?: boolean;
-}
+// 审批与工具策略类型已迁至 ./approvalTypes.ts，这里按既有 import 路径继续对外转发。
+export type {
+  ApprovalDecision,
+  ApprovalRequest,
+  ApprovalRecord,
+  ApprovalStore,
+  ToolPolicyDecision,
+  ToolPolicy,
+  AuthorizedToolCall,
+  ToolExecutionOutcome,
+} from './approvalTypes.js';

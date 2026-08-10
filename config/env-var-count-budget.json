@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reason": "Initial repository measurement: distinct static production references by runtime domain; tests, fixtures, generated, build and cache output excluded.",
-  "updatedAt": "2026-08-05",
+  "reason": "shared-cidr SNAT 模式（2026-08-10 per-session Sandbox A 方案）需要 ACS_SNAT_SHARED_CIDR 声明托管 pod 网段；该模式把 SNAT 条目数与 pod 数解耦，无法由既有变量派生。",
+  "updatedAt": "2026-08-10",
   "domains": {
     "server": {
       "budget": 47,
@@ -56,7 +56,7 @@
       ]
     },
     "acs-orchestrator": {
-      "budget": 39,
+      "budget": 40,
       "names": [
         "ACS_ALERT_WEBHOOK_BEARER_TOKEN",
         "ACS_ALERT_WEBHOOK_URL",
@@ -86,6 +86,7 @@
         "ACS_SNAT_IP",
         "ACS_SNAT_MODE",
         "ACS_SNAT_REGION_ID",
+        "ACS_SNAT_SHARED_CIDR",
         "ACS_SNAT_TABLE_ID",
         "ACS_TRAFFIC_POLICY_CRD_NAME",
         "ACS_TSX_BIN",

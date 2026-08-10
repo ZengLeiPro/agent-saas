@@ -5,7 +5,7 @@
 # Existing over-threshold files are grandfathered; entries may only shrink or be pruned.
 
 acs-orchestrator/src/sandboxManager.test.ts	1772	test
-acs-orchestrator/src/sandboxManager.ts	1350	production
+acs-orchestrator/src/sandboxManager.ts	1266	production
 server/src/__tests__/appConfig.test.ts	928	test
 server/src/__tests__/billingRouterEndpoints.test.ts	822	test
 server/src/__tests__/feishuTokenBroker.test.ts	809	test
@@ -23,9 +23,9 @@ server/src/__tests__/webChannelExecutionTarget.test.ts	854	test
 server/src/__tests__/webChannelReconnect.test.ts	909	test
 server/src/__tests__/workflowLibraryV3.test.ts	1062	test
 server/src/__tests__/wsEventProcessor.test.ts	831	test
-server/src/agent/toolRuntime.ts	1781	production
+server/src/agent/toolRuntime.ts	1726	production
 server/src/app/config.ts	1536	production
-server/src/app/runtime.ts	3491	production
+server/src/app/runtime.ts	3231	production
 server/src/channels/web/channel.ts	4500	production
 server/src/cron/service.ts	1167	production
 server/src/data/billing/pgBillingStore.ts	2319	production
@@ -34,12 +34,12 @@ server/src/routes/auth.ts	1812	production
 server/src/routes/platformObservability.ts	1276	production
 server/src/routes/sessions.ts	3359	production
 server/src/routes/skills.ts	1411	production
-server/src/runtime/background/backgroundTaskService.ts	1102	production
-server/src/runtime/rawAgentLoop.ts	4254	production
-server/src/runtime/rawRuntimeRunDispatch.ts	3653	production
+server/src/runtime/background/backgroundTaskService.ts	1009	production
+server/src/runtime/rawAgentLoop.ts	4059	production
+server/src/runtime/rawRuntimeRunDispatch.ts	3534	production
 server/src/runtime/responsesApiAdapter.ts	2178	production
 server/src/runtime/runStore.ts	1670	production
-server/src/runtime/types.ts	1307	production
+server/src/runtime/types.ts	1274	production
 server/src/taskboard/store.ts	1270	production
 shared/src/lib/wsEventProcessor.test.ts	1219	test
 shared/src/lib/wsEventProcessor.ts	1140	production

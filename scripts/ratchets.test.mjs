@@ -178,6 +178,18 @@ test('env ratchet blocks additions, requires stale deletion prune, and rejects b
   assert.match(evaluateEnv({ collection: empty, baseline: withOld, baseBaseline: baseline, prune: true }).errors.join('\n'), /budget expanded|baseline added/u);
 });
 
+test('env baseline grows only when the recorded reason is new', () => {
+  const empty = { domains: Object.fromEntries(DOMAINS.map((domain) => [domain, new Set()])), dynamic: [] };
+  const collection = { domains: Object.fromEntries(DOMAINS.map((domain) => [domain, new Set()])), dynamic: [] };
+  collection.domains.server.add('NEW_NAME');
+  const baseBaseline = envBaseline(empty);
+  const grown = envBaseline(collection);
+
+  assert.equal(grown.reason, baseBaseline.reason);
+  assert.match(evaluateEnv({ collection, baseline: grown, baseBaseline }).errors.join('\n'), /without a new explicit reason/u);
+  assert.equal(evaluateEnv({ collection, baseline: { ...grown, reason: 'reviewed: one new name is required' }, baseBaseline }).errors.length, 0);
+});
+
 test('web startup entry parsing ignores lazy chunks and handles attribute order/query strings', () => {
   const assets = startupAssets(`
     <link href="/assets/main.css?v=1" media="all" rel="stylesheet">

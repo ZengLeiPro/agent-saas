@@ -5,7 +5,6 @@ import type {
 } from '../agent/types.js';
 import {
   INTERNAL_MODEL_DIAGNOSTIC_EVENT_TYPES,
-  ModelProviderError,
   type ModelRequestDiagnostic,
   type AgentLoop,
   type ApprovalStore,
@@ -77,12 +76,31 @@ import { resolveRunTenantId, withDurableRunCancellation } from './runContextGove
 import { WebFetchCircuitOpenError } from '../agent/webToolProvider.js';
 import { isCompactCommand } from '../agent/prompt.js';
 import {
-  buildMcpCapabilityDescription,
   buildMcpNamespaceName,
   resolveLoadedMcpTools,
   resolveSessionMcpTools,
   type EffectiveMcpLoadingMode,
 } from './mcpToolLoading.js';
+// 模块级 helper 已迁至 ./rawAgentLoopHelpers.ts，本文件内部继续按原符号名使用。
+import {
+  assertSuccessfulModelTerminal,
+  buildModelUsage,
+  classifyHandFailure,
+  clearProviderContinuations,
+  formatAskUserQuestionResult,
+  formatMemoryContext,
+  getInvalidPromptRequestBlockedFailure,
+  isForcedDrainHandoff,
+  isInvalidPromptRequestBlocked,
+  isParallelSafeAgentCall,
+  mergeUsage,
+  parseToolArguments,
+  resolveZombieToolCallTimeoutMs,
+  toModelToolDefinition,
+  toOutboundInteractionEvent,
+  unavailableToolMessage,
+  type InvalidPromptRequestBlockedFailure,
+} from './rawAgentLoopHelpers.js';
 
 /**
  * RawAgentLoop 自身原本完全依赖 EventStore 留痕,不打 logger 日志。
@@ -4008,13 +4026,6 @@ export class RawAgentLoop implements AgentLoop {
   }
 }
 
-function isForcedDrainHandoff(context: RunContext): boolean {
-  if (!context.drainHandoff?.requested || !context.signal?.aborted) return false;
-  const reason = context.signal.reason;
-  const message = reason instanceof Error ? reason.message : String(reason ?? '');
-  return message === 'server_drain_deadline';
-}
-
 async function* captureModelStreamError(
   stream: AsyncIterable<ModelEvent>,
   onError: (error: unknown) => void,
@@ -4023,70 +4034,6 @@ async function* captureModelStreamError(
     yield* stream;
   } catch (error) {
     onError(error);
-  }
-}
-
-interface InvalidPromptRequestBlockedFailure {
-  modelRequestId: string;
-  attemptId: string;
-}
-
-function isInvalidPromptRequestBlocked(error: unknown): boolean {
-  if (error instanceof ModelProviderError) {
-    return error.code.toLowerCase() === 'invalid_prompt'
-      && error.message.toLowerCase().includes('request blocked');
-  }
-  return false;
-}
-
-function getInvalidPromptRequestBlockedFailure(error: unknown): InvalidPromptRequestBlockedFailure | null {
-  if (error instanceof ModelProviderError) {
-    if (!isInvalidPromptRequestBlocked(error) || error.emittedOutputCount !== 0) return null;
-    return { modelRequestId: error.modelRequestId, attemptId: error.attemptId };
-  }
-  if (!error || typeof error !== 'object' || (error as { type?: unknown }).type !== 'completed') return null;
-  const completed = error as Extract<ModelEvent, { type: 'completed' }>;
-  if (
-    completed.terminalStatus !== 'failed'
-    || completed.errorCode?.toLowerCase() !== 'invalid_prompt'
-    || !completed.errorMessage?.toLowerCase().includes('request blocked')
-    || completed.emittedOutputCount !== 0
-    || completed.content.length > 0
-    || completed.toolCalls.length > 0
-    || !completed.modelRequestId
-    || !completed.attemptId
-  ) return null;
-  return { modelRequestId: completed.modelRequestId, attemptId: completed.attemptId };
-}
-
-function assertSuccessfulModelTerminal(completed: Extract<ModelEvent, { type: 'completed' }>): void {
-  if (completed.terminalStatus && completed.terminalStatus !== 'completed') {
-    if (
-      completed.errorCode
-      && completed.errorMessage
-      && completed.modelRequestId
-      && completed.attemptId
-      && completed.emittedOutputCount !== undefined
-    ) {
-      throw new ModelProviderError(
-        completed.errorMessage,
-        completed.providerStatus ?? 200,
-        completed.errorCode,
-        completed.modelRequestId,
-        completed.attemptId,
-        completed.emittedOutputCount,
-      );
-    }
-    throw new Error(
-      `model terminal rejected: status=${completed.terminalStatus}`
-      + `${completed.incompleteReason ? ` reason=${completed.incompleteReason}` : ''}`
-      + `${completed.errorCode ? ` code=${completed.errorCode}` : ''}`,
-    );
-  }
-  if (completed.finishReason === 'length' || completed.finishReason === 'content_filter') {
-    throw new Error(
-      `model output truncated: finish_reason=${completed.finishReason} (可能丢失了 tool_call,不应作为正常结束)`,
-    );
   }
 }
 
@@ -4109,150 +4056,4 @@ class InteractionPendingWithoutInteractionHook extends Error {
     super(`interaction pending without interaction hook: ${event.interactionId}`);
     this.name = 'InteractionPendingWithoutInteractionHook';
   }
-}
-
-/**
- * 并行窗准入判定（子 agent P1）：只有名为 Agent 且 risk:'safe'、免审批的工具才可并行。
- * 三重条件而非只看名字——防未来有人注册同名高危工具时静默进入并行路径。
- */
-function isParallelSafeAgentCall(
-  call: ModelToolCall,
-  descriptorsByName: Map<string, ToolDescriptor>,
-): boolean {
-  const descriptor = descriptorsByName.get(call.name);
-  return !!descriptor
-    && descriptor.name === 'Agent'
-    && descriptor.risk === 'safe'
-    && descriptor.approvalMode === 'never';
-}
-
-function toOutboundInteractionEvent(event: InteractionEvent): OutboundEvent {
-  return {
-    type: event.type,
-    interactionId: event.interactionId,
-    toolId: event.toolId,
-    toolName: event.toolName,
-    displayName: event.displayName,
-    toolInput: event.toolInput,
-    questions: event.questions,
-  };
-}
-
-function toModelToolDefinition(descriptor: ToolDescriptor) {
-  // 优先用 descriptor 显式提供的 JSON Schema（MCP 工具透传 server inputSchema），
-  // fallback 到 zod schema 自动转换。clone 避免下游 mutate 共享引用——MCP
-  // descriptor 是 long-lived cache，删 $schema 字段会跨调用残留。
-  const schema = descriptor.parametersJsonSchema
-    ? { ...descriptor.parametersJsonSchema }
-    : (descriptor.schema.toJSONSchema() as Record<string, unknown>);
-  delete schema.$schema;
-  return {
-    id: descriptor.id,
-    name: descriptor.name,
-    description: descriptor.description,
-    parameters: schema,
-    ...(descriptor.mcp ? {
-      mcpServer: {
-        serverName: descriptor.mcp.serverName,
-        namespace: buildMcpNamespaceName(descriptor.mcp.serverName),
-        displayName: descriptor.mcp.serverDisplayName,
-        description: buildMcpCapabilityDescription({
-          serverName: descriptor.mcp.serverName,
-          displayName: descriptor.mcp.serverDisplayName,
-          description: descriptor.mcp.serverDescription,
-        }),
-      },
-    } : {}),
-  };
-}
-
-function unavailableToolMessage(toolName: string): string {
-  if (toolName.startsWith('mcp__')) {
-    return `MCP tool unavailable: ${toolName}（当前授权/租户策略/全局开关不允许，或该工具 schema 已变化；请重新授权或新建会话后重试）`;
-  }
-  return `tool unavailable: ${toolName}（不在本轮可用工具集中）`;
-}
-
-function parseToolArguments(raw: string): unknown {
-  try {
-    return raw ? JSON.parse(raw) : {};
-  } catch (err) {
-    return { __raw: raw, __parseError: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-function formatAskUserQuestionResult(response: InteractionResponse): string {
-  return JSON.stringify(
-    {
-      answers: response.answers ?? {},
-      message: response.message,
-      schemaNote: 'For questions with multiSelect=true, the answer may be a comma-separated list.',
-    },
-    null,
-    2,
-  );
-}
-
-function formatMemoryContext(memoryContext: string): string {
-  return `<memory-context>\n[长期记忆]\n${memoryContext}\n</memory-context>`;
-}
-
-function clearProviderContinuations(messages: ModelChatMessage[]): void {
-  for (const message of messages) {
-    if (message.role === 'assistant' && message.provider_continuation) {
-      delete message.provider_continuation;
-    }
-  }
-}
-
-function mergeUsage(a: ModelUsage | undefined, b: ModelUsage): ModelUsage {
-  return {
-    inputTokens: (a?.inputTokens ?? 0) + (b.inputTokens ?? 0),
-    outputTokens: (a?.outputTokens ?? 0) + (b.outputTokens ?? 0),
-    cacheReadInputTokens: (a?.cacheReadInputTokens ?? 0) + (b.cacheReadInputTokens ?? 0),
-    cacheCreationInputTokens: (a?.cacheCreationInputTokens ?? 0) + (b.cacheCreationInputTokens ?? 0),
-    apiRequestCount: (a?.apiRequestCount ?? 0) + (b.apiRequestCount ?? 1),
-  };
-}
-
-function buildModelUsage(model: string, usage: ModelUsage | undefined) {
-  if (!usage) return undefined;
-  if ((usage.inputTokens ?? 0) <= 0 && (usage.outputTokens ?? 0) <= 0) return undefined;
-  return {
-    [model]: {
-      inputTokens: usage.inputTokens ?? 0,
-      outputTokens: usage.outputTokens ?? 0,
-      cacheReadInputTokens: usage.cacheReadInputTokens ?? 0,
-      cacheCreationInputTokens: usage.cacheCreationInputTokens ?? 0,
-      apiRequestCount: Math.max(1, usage.apiRequestCount ?? 1),
-    },
-  };
-}
-
-
-const DEFAULT_ZOMBIE_TOOL_CALL_TIMEOUT_MS = 600_000;
-
-/**
- * 优先级：constructor option > env > 默认 600s。仅接受 >=0 的有限数字，否则回退默认。
- * 06-24 引入：与 describeBlockingToolCall 的 zombie 判定配合，应对 SIGKILL 残留。
- */
-function resolveZombieToolCallTimeoutMs(optionValue?: number): number {
-  if (typeof optionValue === 'number' && Number.isFinite(optionValue) && optionValue >= 0) {
-    return optionValue;
-  }
-  const envRaw = process.env.AGENT_SAAS_ZOMBIE_TOOL_CALL_TIMEOUT_MS;
-  if (envRaw) {
-    const parsed = Number.parseInt(envRaw, 10);
-    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
-  }
-  return DEFAULT_ZOMBIE_TOOL_CALL_TIMEOUT_MS;
-}
-
-function classifyHandFailure(message: string): 'auth' | 'timeout' | 'network' | 'unhealthy' | 'unknown' {
-  const lower = message.toLowerCase();
-  if (lower.includes('鉴权') || lower.includes('unauthorized') || lower.includes('forbidden') || lower.includes('401') || lower.includes('403')) return 'auth';
-  if (lower.includes('超时') || lower.includes('timeout') || lower.includes('timed out')) return 'timeout';
-  if (lower.includes('fetch') || lower.includes('econn') || lower.includes('network') || lower.includes('http')) return 'network';
-  if (lower.includes('health') || lower.includes('unhealthy')) return 'unhealthy';
-  return 'unknown';
 }

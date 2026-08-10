@@ -398,12 +398,32 @@ COPY acs-orchestrator ./acs-orchestrator
 # 产物必须自包含（--bundle）：pod 运行期不保证有完整 devDependencies。
 # node: 内置模块保持 external。构建失败即 fail-fast——绝不允许悄悄退回 tsx，
 # 否则会以「性能莫名回退」的形式出现，是最难定位的一类问题。
+#
+# ⚠️ 2026-08-11 修首次部署失败（ACS run 31414376889）：以下三点缺一即崩。
+#
+# 1) createRequire banner —— 入口经 ServerLocalExecutionProvider 间接依赖 pg（CJS），
+#    其 require('events') 在 ESM 产物里落到 esbuild 的 __require shim 上，直接抛
+#    `Dynamic require of "events" is not supported`，runner 启动即死。
+#    acs-orchestrator/package.json 的主 bundle 一直带这个 banner，这里漏抄了。
+# 2) descriptions 备一份到产物的 module-relative 位置 —— descriptionLoader 以
+#    `dirname(import.meta.url)/../descriptions` 为首选基准。走 tsx 时它是未打包的
+#    独立模块，基准是 server/src/agent/tools/ → 正好命中 server/src/agent/descriptions；
+#    一旦打包进 acs-orchestrator/dist/sandboxRunner.mjs，基准变成 acs-orchestrator/dist/，
+#    而 fallback 的 cwd 在运行期是 /workspace，两条路径都落空 → tool_description_missing。
+# 3) 真实执行校验取代 `test -s` —— 坏产物「存在且非空」，既骗过旧校验，也骗过
+#    executor 里同样是 `[ -s ...mjs ]` 的 fallback 判据，于是「宁可慢不可不可用」的
+#    退回 tsx 设计永远不触发，实际变成「一定不可用」。喂空输入断言 runner 能吐出
+#    结构化 final 响应，可一次覆盖 require 崩溃、descriptions 缺失与启动链路回归。
 RUN cd /app/acs-orchestrator \
     && ./node_modules/.bin/esbuild src/sandboxRunner.ts \
          --bundle --platform=node --format=esm --target=node20 \
-         --external:node:* \
+         --external:node:* --external:pg-native \
+         --banner:js="import { createRequire as __kyCreateRequire } from 'node:module'; const require = __kyCreateRequire(import.meta.url);" \
          --outfile=dist/sandboxRunner.mjs \
-    && test -s dist/sandboxRunner.mjs
+    && rm -rf descriptions \
+    && cp -R /app/server/src/agent/descriptions descriptions \
+    && test -s descriptions/Edit.md \
+    && echo '{}' | node dist/sandboxRunner.mjs | grep -q '"kind":"final"'
 
 ENV NODE_ENV=production
 ENV ACS_WORKSPACE_PATH=/workspace

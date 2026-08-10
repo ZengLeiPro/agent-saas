@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 292986,
-    "startupCssGzipBytes": 32148,
-    "startupJsBrotliBytes": 233978,
-    "startupCssBrotliBytes": 25757,
-    "largestJsGzipBytes": 292986,
-    "largestCssGzipBytes": 32148,
-    "largestJsBrotliBytes": 233978,
-    "largestCssBrotliBytes": 25757,
-    "largestJs": "assets/index-rEiJxo4s.js",
-    "largestCss": "assets/index-eLV9U2f1.css"
+    "startupJsGzipBytes": 298863,
+    "startupCssGzipBytes": 32221,
+    "startupJsBrotliBytes": 238090,
+    "startupCssBrotliBytes": 25788,
+    "largestJsGzipBytes": 298863,
+    "largestCssGzipBytes": 32221,
+    "largestJsBrotliBytes": 238090,
+    "largestCssBrotliBytes": 25788,
+    "largestJs": "assets/index-7844IZlN.js",
+    "largestCss": "assets/index-C81B70Ue.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "Lazy-load full scenario replay scripts outside the startup bundle; keep only lightweight replay availability metadata on initial chat surfaces.",
-  "updatedAt": "2026-08-08"
+  "reason": "三级治理稳定路由与八页个人设置需在首屏解析深链；治理控制台和 Zod DTO 已拆出启动链后保留 5.9 KiB gzip 增量",
+  "updatedAt": "2026-08-10"
 }

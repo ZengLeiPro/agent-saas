@@ -121,12 +121,13 @@ jobs:
           pnpm -F server exec vitest run
           src/__tests__/sessionShareStore.pg.test.ts
 
-      - name: Verify governance V17 PostgreSQL upgrade and rollback
+      - name: Verify governance PostgreSQL contracts explicitly
         env:
           TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
         run: >-
           pnpm -F server exec vitest run
           src/__tests__/governanceSchemaMigration.pg.test.ts
+          src/__tests__/governanceProjectionPool.pg.test.ts
 
       - name: Check Web API domain boundary
         run: pnpm -F web check:api-boundary
@@ -1196,6 +1197,36 @@ jobs:
             if [ "$WORKER_READY" -ne 1 ]; then
               log "ERROR: runtime worker candidate failed readiness after Web cutover"
               journalctl -u "${WORKER_SERVICE}@${WORKER_IDLE}" -n 160 --no-pager || true
+              systemctl disable "${WORKER_SERVICE}@${WORKER_IDLE}"
+              worker_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" 2>/dev/null || true)
+              worker_drain_marker="/run/agent-saas-runtime-worker-${WORKER_IDLE}.draining"
+              install -m 0644 /dev/null "$worker_drain_marker"
+              if [ -n "$worker_pid" ] && kill -0 "$worker_pid" 2>/dev/null; then
+                if kill -USR2 "$worker_pid" 2>/dev/null; then
+                  log "runtime worker candidate drain signal sent after readiness failure: color=$WORKER_IDLE pid=$worker_pid"
+                else
+                  log "ERROR: failed to signal runtime worker candidate after readiness failure: color=$WORKER_IDLE pid=$worker_pid"
+                fi
+              fi
+              WORKER_FAILED_WAITED=0
+              while [ "$WORKER_FAILED_WAITED" -lt 60 ] \
+                && systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}"; do
+                sleep 5
+                WORKER_FAILED_WAITED=$((WORKER_FAILED_WAITED + 5))
+              done
+              if systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}"; then
+                log "ERROR: failed runtime worker candidate still draining after 60s; no force-stop issued"
+                exit 1
+              fi
+              if [ -n "$PREV_WORKER_IDLE_TARGET" ]; then
+                ln -sfn "$PREV_WORKER_IDLE_TARGET" "$WORKER_DIR/$WORKER_IDLE"
+              else
+                rm -f "$WORKER_DIR/$WORKER_IDLE"
+              fi
+              rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" \
+                "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready" \
+                "$worker_drain_marker"
+              log "runtime worker idle target restored after readiness failure: color=$WORKER_IDLE target=${PREV_WORKER_IDLE_TARGET:-<none>}"
               exit 1
             fi
             log "runtime worker candidate ready: color=$WORKER_IDLE pid=$worker_pid waited=${WORKER_READY_WAITED}s"

@@ -88,5 +88,14 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(workflow).toContain('runtime worker drain restart guard armed');
     expect(workflow).toContain('"/run/agent-saas-runtime-worker-${WORKER_IDLE}.draining"');
     expect(workflow).toContain('nginx.service.d/agent-saas-nas.conf');
+    const readinessFailureStart = workflow.indexOf('ERROR: runtime worker candidate failed readiness after Web cutover');
+    const readinessFailureEnd = workflow.indexOf('runtime worker candidate ready:', readinessFailureStart);
+    const readinessFailureBlock = workflow.slice(readinessFailureStart, readinessFailureEnd);
+    expect(readinessFailureStart).toBeGreaterThan(-1);
+    expect(readinessFailureEnd).toBeGreaterThan(readinessFailureStart);
+    expect(readinessFailureBlock).toContain('kill -USR2 "$worker_pid"');
+    expect(readinessFailureBlock).toContain('runtime worker candidate drain signal sent after readiness failure');
+    expect(readinessFailureBlock).toContain('runtime worker idle target restored after readiness failure');
+    expect(readinessFailureBlock).not.toContain('systemctl stop');
   });
 });

@@ -189,11 +189,15 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
               : item.tenantId;
         const fenceKey = `${item.tenantId}:${item.projector}:${target}`;
         const client = await pgEventStore!.pool.connect();
-        await client.query('SELECT pg_advisory_lock(hashtext($1))', [fenceKey]);
+        let locked = false;
         try {
+          await client.query('SELECT pg_advisory_lock(hashtext($1))', [fenceKey]);
+          locked = true;
           await operation();
         } finally {
-          await client.query('SELECT pg_advisory_unlock(hashtext($1))', [fenceKey]).catch(() => undefined);
+          if (locked) {
+            await client.query('SELECT pg_advisory_unlock(hashtext($1))', [fenceKey]).catch(() => undefined);
+          }
           client.release();
         }
       },

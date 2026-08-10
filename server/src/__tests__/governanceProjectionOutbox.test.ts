@@ -126,6 +126,43 @@ describe('PgGovernanceProjectionOutboxStore', () => {
 });
 
 describe('GovernanceProjectionReconciler', () => {
+  it('批处理逐条 claim 和投影，避免 fence 连接耗尽共享连接池', async () => {
+    const first = {
+      outboxId: 'gpo-1', tenantId: 'acme', projector: 'assignment',
+      idempotencyKey: 'skill:s1:1', payload: { resourceType: 'skill', resourceId: 's1' },
+      status: 'running' as const, attempt: 1, maxAttempts: 8, leaseFence: 1,
+      leaseOwner: 'worker-a', leaseExpiresAt: '2026-08-09T10:01:00.000Z',
+      createdAt: '2026-08-09T10:00:00.000Z', updatedAt: '2026-08-09T10:00:00.000Z',
+    };
+    const second = { ...first, outboxId: 'gpo-2', idempotencyKey: 'skill:s2:1' };
+    const order: string[] = [];
+    const store = {
+      enqueue: vi.fn(),
+      claim: vi.fn()
+        .mockImplementationOnce(async () => { order.push('claim-1'); return [first]; })
+        .mockImplementationOnce(async () => { order.push('claim-2'); return [second]; }),
+      renewLease: vi.fn().mockResolvedValue(true),
+      complete: vi.fn().mockImplementation(async (lease) => {
+        order.push(`complete-${lease.outboxId}`);
+        return { ...(lease.outboxId === first.outboxId ? first : second), status: 'succeeded' as const };
+      }),
+      fail: vi.fn(),
+    };
+    const reconciler = new GovernanceProjectionReconciler({
+      store,
+      projectors: { assignment: async (_payload, item) => { order.push(`project-${item.outboxId}`); } },
+      workerId: 'worker-a',
+    });
+
+    await expect(reconciler.reconcileBatch(2)).resolves.toHaveLength(2);
+    expect(order).toEqual([
+      'claim-1', 'project-gpo-1', 'complete-gpo-1',
+      'claim-2', 'project-gpo-2', 'complete-gpo-2',
+    ]);
+    expect(store.claim).toHaveBeenNthCalledWith(1, expect.objectContaining({ limit: 1 }));
+    expect(store.claim).toHaveBeenNthCalledWith(2, expect.objectContaining({ limit: 1 }));
+  });
+
   it('projector 副作用通过 target fence 包裹后才允许 complete', async () => {
     const claimed = {
       outboxId: 'gpo-1', tenantId: 'acme', projector: 'assignment',

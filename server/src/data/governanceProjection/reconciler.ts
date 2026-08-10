@@ -67,12 +67,17 @@ export class GovernanceProjectionReconciler {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
       throw new Error('GOVERNANCE_PROJECTION_INVALID');
     }
-    const claimed = await this.options.store.claim({
-      leaseOwner: this.leaseOwner,
-      leaseMs: this.leaseMs,
-      limit,
-    });
-    return Promise.all(claimed.map(item => this.execute(item)));
+    const reconciled: GovernanceProjectionOutboxItem[] = [];
+    for (let index = 0; index < limit; index += 1) {
+      const claimed = await this.options.store.claim({
+        leaseOwner: this.leaseOwner,
+        leaseMs: this.leaseMs,
+        limit: 1,
+      });
+      if (!claimed[0]) break;
+      reconciled.push(await this.execute(claimed[0]));
+    }
+    return reconciled;
   }
 
   private async execute(item: GovernanceProjectionOutboxItem): Promise<GovernanceProjectionOutboxItem> {

@@ -214,9 +214,20 @@ export class SnatManager {
       && !(sharedEntryName && entry.name === sharedEntryName)
     ));
     const deleted: string[] = [];
+    // 逐条容错：同一张 SNAT 表的操作在阿里云侧是串行的，发布瞬间与 pod 退休流程
+    // 并发时单条删除可能瞬时失败。孤儿清理本就是尽力而为——一条删不掉不该中断其余
+    // 条目，更不该顺着调用链把 provision 打挂（2026-08-11）。残留条目会在下一轮
+    // lifecycle 循环里重新被识别为孤儿并重试。
     for (const entry of orphans) {
-      await this.deleteEntry(entry.id);
-      deleted.push(entry.id);
+      try {
+        await this.deleteEntry(entry.id);
+        deleted.push(entry.id);
+      } catch (err) {
+        this.logger.warn(
+          `snat_orphan_delete_failed id=${entry.id} sourceCidr=${entry.sourceCidr} `
+          + `reason=${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
     if (deleted.length) {
       this.logger.warn(`snat_orphan_cleanup deleted=${deleted.length} orphanCidrs=${orphans.map((entry) => entry.sourceCidr).join(',')}`);

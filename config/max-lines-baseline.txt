@@ -5,7 +5,7 @@
 # Existing over-threshold files are grandfathered; entries may only shrink or be pruned.
 
 acs-orchestrator/src/sandboxManager.test.ts	1772	test
-acs-orchestrator/src/sandboxManager.ts	1266	production
+acs-orchestrator/src/sandboxManager.ts	1256	production
 server/src/__tests__/appConfig.test.ts	928	test
 server/src/__tests__/billingRouterEndpoints.test.ts	822	test
 server/src/__tests__/feishuTokenBroker.test.ts	809	test

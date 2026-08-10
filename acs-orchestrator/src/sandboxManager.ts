@@ -11,8 +11,10 @@ import {
   type ManagedSandbox,
   type ManagedSandboxInventory,
   type SandboxStatus,
+  type EnsureTiming,
   BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION,
   acsNetworkPolicyMode,
+  createEnsureTiming,
   backgroundShellProtectionFromStatus,
   brokenPausedStateReason,
   brokenSandboxStateReason,
@@ -44,11 +46,6 @@ export {
   nodeHeapLimitMb,
   pausedConditionLastTransition,
 } from './sandboxState.js';
-
-interface EnsureTiming {
-  step<T>(stepName: string, fn: () => Promise<T>): Promise<T>;
-  finish(path: string, status: 'ok' | 'error'): void;
-}
 
 /**
  * 单个 Sandbox 的规格覆盖（2026-08-10，A 方案批次 3）。
@@ -230,7 +227,7 @@ export class SandboxManager {
     ref: SandboxRef,
     options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string } = {},
   ): Promise<SandboxRef> {
-    const timing = this.createEnsureTiming(ref.name);
+    const timing = createEnsureTiming(ref.name, this.logger);
     let path = 'unknown';
     let status: 'ok' | 'error' = 'error';
     try {
@@ -961,10 +958,24 @@ export class SandboxManager {
     if (this.config.lifecycleEnabled) {
       const protectedSandboxes = new Set(busySandboxNames ?? []);
       protectedSandboxes.add(currentSandboxName);
-      const report = await this.cleanupSandboxes({ busySandboxNames: protectedSandboxes });
-      if (report.paused.length || report.deleted.length) {
+      // 2026-08-11：回收是「尽力而为的维护动作」，绝不能让用户的 provision 陪葬。
+      // 生产实证（ACS run 31440440098）：发布瞬间 startup 的 stale-image 退休流程
+      // 与本次 provision 并发操作同一批 Sandbox / 同一张 SNAT 表，回收链路里任意
+      // 一次 kubectl / 阿里云调用失败就会顺着 ensureCapacity 冒泡，把整个 provision
+      // 打成 500——恰好每次发布都撞上，表现为「只有部署时才失败」。
+      // 回收失败的真实后果只是配额没腾出来，而配额是否足够由下面的硬检查负责；
+      // 因此这里吞掉异常并留证，把判定权交给唯一有资格阻断的那道检查。
+      try {
+        const report = await this.cleanupSandboxes({ busySandboxNames: protectedSandboxes });
+        if (report.paused.length || report.deleted.length) {
+          this.logger.warn(
+            `sandbox_capacity_reclaimed current=${currentSandboxName} paused=${report.paused.length} deleted=${report.deleted.length}`,
+          );
+        }
+      } catch (err) {
         this.logger.warn(
-          `sandbox_capacity_reclaimed current=${currentSandboxName} paused=${report.paused.length} deleted=${report.deleted.length}`,
+          `sandbox_capacity_cleanup_failed current=${currentSandboxName} `
+          + `reason=${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -1065,27 +1076,6 @@ export class SandboxManager {
         timeoutMs: this.config.sandboxWaitTimeoutMs,
       })),
     ]);
-  }
-
-  private createEnsureTiming(name: string): EnsureTiming {
-    const startedAt = Date.now();
-    const steps: string[] = [];
-    return {
-      step: async <T>(stepName: string, fn: () => Promise<T>): Promise<T> => {
-        const stepStartedAt = Date.now();
-        try {
-          const result = await fn();
-          steps.push(`${stepName}:${Date.now() - stepStartedAt}`);
-          return result;
-        } catch (err) {
-          steps.push(`${stepName}:error:${Date.now() - stepStartedAt}`);
-          throw err;
-        }
-      },
-      finish: (path: string, status: 'ok' | 'error') => {
-        this.logger.info(`sandbox_ensure_timing sandbox=${name} path=${path} status=${status} totalMs=${Date.now() - startedAt} steps=${steps.join(',')}`);
-      },
-    };
   }
 
   private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {

@@ -184,3 +184,46 @@ export function isRunningCostPhase(phase: string | undefined): boolean {
 export function acsNetworkPolicyMode(mode: string): string {
   return mode === 'isolated' ? 'network-policy' : 'traffic-policy';
 }
+
+/** ensureRunning 各阶段的计时/留证句柄。 */
+export interface EnsureTiming {
+  step<T>(stepName: string, fn: () => Promise<T>): Promise<T>;
+  finish(path: string, status: 'ok' | 'error'): void;
+}
+
+interface EnsureTimingLogger {
+  info(message: string): void;
+  warn(message: string): void;
+}
+
+/**
+ * 创建一次 ensureRunning 的计时器。只依赖 logger，不依赖 SandboxManager 状态。
+ *
+ * 失败分支除了记 `step:error:ms`，还必须留下异常原因：2026-08-11 生产 provision
+ * 失败时 journal 里只有 `ensureCapacity:error:884`、没有任何 reason，导致根因完全
+ * 无法定位（ACS run 31440440098）。异常照常上抛，这里只补一条可检索的日志。
+ */
+export function createEnsureTiming(name: string, logger: EnsureTimingLogger): EnsureTiming {
+  const startedAt = Date.now();
+  const steps: string[] = [];
+  return {
+    step: async <T>(stepName: string, fn: () => Promise<T>): Promise<T> => {
+      const stepStartedAt = Date.now();
+      try {
+        const result = await fn();
+        steps.push(`${stepName}:${Date.now() - stepStartedAt}`);
+        return result;
+      } catch (err) {
+        steps.push(`${stepName}:error:${Date.now() - stepStartedAt}`);
+        logger.warn(
+          `sandbox_ensure_step_failed sandbox=${name} step=${stepName} `
+          + `reason=${err instanceof Error ? err.message : String(err)}`,
+        );
+        throw err;
+      }
+    },
+    finish: (path: string, status: 'ok' | 'error') => {
+      logger.info(`sandbox_ensure_timing sandbox=${name} path=${path} status=${status} totalMs=${Date.now() - startedAt} steps=${steps.join(',')}`);
+    },
+  };
+}

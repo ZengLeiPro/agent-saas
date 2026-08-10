@@ -248,6 +248,11 @@ if (args[1] === 'CreateSnatEntry') {
 }
 if (args[1] === 'DeleteSnatEntry') {
   const id = arg('--SnatEntryId');
+  // 测试钩子：模拟阿里云侧「同一 SNAT 表同时只允许一个操作」造成的瞬时删除失败。
+  if ((state.failDeleteIds || []).includes(id)) {
+    console.error('IncorrectSnatEntryStatus: another operation is in progress');
+    process.exit(1);
+  }
   state.entries = state.entries.filter((entry) => entry.SnatEntryId !== id);
   fs.writeFileSync(statePath, JSON.stringify(state));
   console.log(JSON.stringify({ RequestId: 'ok' }));
@@ -357,3 +362,30 @@ function baseConfig(aliyunCliPath: string): AcsOrchestratorConfig {
     logLevel: 'info',
   };
 }
+
+describe('SnatManager · 孤儿清理逐条容错（2026-08-11）', () => {
+  it('单条删除失败不中断其余条目，也不把异常抛给调用方', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'acs-snat-orphan-fail-'));
+    const statePath = join(root, 'state.json');
+    const logPath = join(root, 'calls.log');
+    writeFileSync(statePath, JSON.stringify({
+      entries: [
+        { SnatEntryId: 'snat-1', SnatEntryName: 'agent-saas-acs-a', SourceCIDR: '172.16.179.11/32', SnatIp: '120.0.0.1', Status: 'Available' },
+        { SnatEntryId: 'snat-2', SnatEntryName: 'agent-saas-acs-b', SourceCIDR: '172.16.179.12/32', SnatIp: '120.0.0.1', Status: 'Available' },
+      ],
+      failDeleteIds: ['snat-1'],
+    }), 'utf-8');
+    const cliPath = writeFakeAliyun(root, statePath, logPath);
+    const warns: string[] = [];
+    const logger = { info() {}, warn(message: string) { warns.push(message); }, error() {} };
+    const manager = new SnatManager(baseConfig(cliPath), podKubectl('172.16.179.99'), logger);
+
+    // 两条都是孤儿（活跃集合为空），第一条删除被模拟为瞬时失败。
+    const report = await manager.cleanupOrphans(new Set());
+
+    expect(report.deleted).toEqual(['snat-2']);
+    expect(warns.some((m) => m.includes('snat_orphan_delete_failed') && m.includes('snat-1'))).toBe(true);
+    const remaining = JSON.parse(readFileSync(statePath, 'utf-8')).entries as Array<{ SnatEntryId: string }>;
+    expect(remaining.map((entry) => entry.SnatEntryId)).toEqual(['snat-1']);
+  });
+});

@@ -15,18 +15,13 @@ import {
   FeishuTokenBrokerLoginRunner,
 } from '../feishu/tokenBroker.js';
 import type { UserInfo } from '../data/users/types.js';
+import { TEST_VAULT_READER, jsonResponse, oauth } from './helpers/feishuTokenBrokerTestFixtures.js';
 
 const NOW = new Date('2026-08-01T00:00:00.000Z');
 const IDENTITY: FeishuConnectionIdentity = {
   tenantId: 'tenant-a',
   userId: 'user-a',
   username: 'alice',
-};
-const TEST_VAULT_READER: VaultCaller = {
-  actor: 'connector_proxy',
-  userId: IDENTITY.userId,
-  tenantId: IDENTITY.tenantId,
-  scopes: ['secret:feishu_token_bundle:read'],
 };
 const USER: UserInfo = {
   id: IDENTITY.userId,
@@ -76,17 +71,6 @@ class ProcessCachingVault implements SecretVault {
   invalidate(ref: SecretRef | string): void {
     this.cache.delete(typeof ref === 'string' ? ref : ref.id);
   }
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
-function oauth(fetchImpl: typeof fetch): FeishuOAuthClient {
-  return new FeishuOAuthClient({ appId: 'cli_app', appSecret: 'server-only-secret', fetchImpl });
 }
 
 function mutableStore(): FeishuConnectionStore & { rows: FeishuConnectionRecord[] } {

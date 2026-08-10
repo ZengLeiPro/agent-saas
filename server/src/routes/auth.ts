@@ -53,6 +53,8 @@ import { apiLogger } from "../utils/logger.js";
 import { resolveUserCwd, ensureUserWorkspace } from "../workspace/resolver.js";
 import { softDeleteUserResources } from "../data/users/cleanup.js";
 import type { McpOAuthService } from "../mcp/oauthService.js";
+import { ALLOWED_AVATAR_TYPES, buildAvatarUrl } from './authAvatar.js';
+import { createLegacyAuthWriteGate, type LegacyAuthWriteGateDeps } from './authLegacyWriteGate.js';
 
 // ---- Zod schemas ----
 
@@ -290,7 +292,7 @@ function checkLoginRate(ip: string): { allowed: boolean; retryAfter?: number } {
 
 // ---- Router ----
 
-export interface AuthRouterDeps {
+export interface AuthRouterDeps extends LegacyAuthWriteGateDeps {
   userStore: UserStore;
   /**
    * Tenant store。PR 2 起 createUser/updateUser 在分配 tenantId 时校验存在性。
@@ -330,22 +332,8 @@ export interface AuthRouterDeps {
    * 模型配置支持管理端热更新，不能在 Router 创建时捕获旧对象。
    */
   getModelsConfig?: () => ModelsConfig | undefined;
-  legacyWriteGate?: {
-    assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
-  };
 }
 
-function avatarUrl(
-  userId: string,
-  avatar?: string,
-  avatarVersion?: number,
-): string | undefined {
-  if (!avatar) return undefined;
-  const base = `/api/auth/avatar/${userId}`;
-  return avatarVersion ? `${base}?v=${avatarVersion}` : base;
-}
-
-const ALLOWED_AVATAR_TYPES = ["image/png", "image/jpeg", "image/webp"];
 
 export function createAuthRouter(deps: AuthRouterDeps): Router {
   const {
@@ -366,24 +354,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     getModelsConfig,
   } = deps;
   const router = Router();
-  router.use(async (req, res, next) => {
-    const usersMutation = req.path === '/users' && req.method === 'POST';
-    const userDelete = /^\/users\/[^/]+$/.test(req.path) && req.method === 'DELETE';
-    const identityPatch = /^\/users\/[^/]+$/.test(req.path)
-      && req.method === 'PATCH'
-      && (req.body?.role !== undefined || req.body?.tenantId !== undefined);
-    const statusPatch = /^\/users\/[^/]+\/status$/.test(req.path) && req.method === 'PATCH';
-    if (!(usersMutation || userDelete || identityPatch || statusPatch) || !deps.legacyWriteGate) return next();
-    try {
-      await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
-      next();
-    } catch {
-      res.status(409).json({
-        error: '旧版用户身份与 Membership 写入口已封闭，请使用治理 API',
-        code: 'MIGRATION_LEGACY_WRITE_SEALED',
-      });
-    }
-  });
+  router.use(createLegacyAuthWriteGate(deps.legacyWriteGate));
 
   /** Resolve createdBy userId to username (fallback to raw value) */
   function resolveCreatedBy(createdBy: string | undefined): string {
@@ -434,7 +405,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         position: user.position,
         phone: user.phone,
         phoneVerifiedAt: user.phoneVerifiedAt,
-        avatar: avatarUrl(user.id, user.avatar, user.avatarVersion),
+        avatar: buildAvatarUrl(user.id, user.avatar, user.avatarVersion),
         avatarVersion: user.avatarVersion,
         debugMode: user.debugMode === true,
         tenantFeatures: tenantFeatures(tenantId),
@@ -958,7 +929,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       isSuperAdmin: isSuperAdmin(req.user),
       platformCapabilities: getEffectivePlatformCapabilities(req.user),
       platformCapabilityLimits: req.user.platformCapabilityLimits,
-      avatar: avatarUrl(req.user.sub, record?.avatar, record?.avatarVersion),
+      avatar: buildAvatarUrl(req.user.sub, record?.avatar, record?.avatarVersion),
       avatarVersion: record?.avatarVersion,
       debugMode: record?.debugMode === true,
       realName: record?.realName,
@@ -1003,7 +974,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
             }),
           }
         : {}),
-      avatar: avatarUrl(u.id, u.avatar, u.avatarVersion),
+      avatar: buildAvatarUrl(u.id, u.avatar, u.avatarVersion),
       createdBy: resolveCreatedBy(u.createdBy),
       disabledBy: u.disabledBy ? resolveCreatedBy(u.disabledBy) : undefined,
     }));
@@ -1141,7 +1112,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       auditLog(req, "user_created", `${username} (${role})`);
       res.status(201).json({
         ...user,
-        avatar: avatarUrl(user.id, user.avatar, user.avatarVersion),
+        avatar: buildAvatarUrl(user.id, user.avatar, user.avatarVersion),
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1256,7 +1227,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       auditLog(req, "user_updated", user.username);
       res.json({
         ...user,
-        avatar: avatarUrl(user.id, user.avatar, user.avatarVersion),
+        avatar: buildAvatarUrl(user.id, user.avatar, user.avatarVersion),
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1367,7 +1338,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       }
       res.json({
         ...user,
-        avatar: avatarUrl(user.id, user.avatar, user.avatarVersion),
+        avatar: buildAvatarUrl(user.id, user.avatar, user.avatarVersion),
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

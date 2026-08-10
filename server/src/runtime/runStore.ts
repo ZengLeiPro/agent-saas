@@ -1,6 +1,7 @@
 import pg from 'pg';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
 import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
+import { cancelActiveRunsByUser, releaseRunLease } from './runTerminalLifecycle.js';
 
 const { Pool } = pg;
 
@@ -1210,21 +1211,7 @@ export class PgRunStore implements RunStore {
   }
 
   async cancelActiveByUser(userId: string, reason: string): Promise<number> {
-    const now = new Date().toISOString();
-    const result = await this.pool.query(`
-      UPDATE ${this.runsTable}
-      SET status='cancelled',
-          status_reason=$2,
-          cancelled_at=COALESCE(cancelled_at,$3::timestamptz),
-          updated_at=$3::timestamptz,
-          worker_id=NULL,
-          lease_expires_at=NULL,
-          metadata=(metadata || jsonb_build_object('cancelSource','user_offboarding')) - 'wakeMessage'
-      WHERE user_id=$1
-        AND status NOT IN ('completed','failed','cancelled','orphaned')
-      RETURNING run_id
-    `, [userId, reason, now]);
-    return result.rowCount ?? 0;
+    return cancelActiveRunsByUser(this, userId, reason);
   }
 
   async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
@@ -1618,35 +1605,13 @@ export class PgRunStore implements RunStore {
   }
 
   async releaseLease(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string): Promise<RunRecord | null> {
-    const now = new Date().toISOString();
-    // 门禁加固（2026-06-22）：terminal 状态是 sink。lease 持有者 release 时仍无条件
-    // 清 worker_id / lease_expires_at（保证 lease 被正确释放），但若 run 已是 terminal
-    // 则 status / status_reason / 终态时间戳保持不变，不被 finalStatus 降级或改写。
-    // CASE 里的 status IN (...) 引用的是 UPDATE 前的旧值（PG 语义）。
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
-      UPDATE ${this.runsTable}
-      SET status = CASE WHEN status IN ('completed','failed','cancelled','orphaned')
-                        THEN status ELSE COALESCE($3, status) END,
-          status_reason = CASE WHEN status IN ('completed','failed','cancelled','orphaned')
-                        THEN status_reason ELSE COALESCE($4, status_reason) END,
-          worker_id = NULL,
-          lease_expires_at = NULL,
-          updated_at = $5,
-          completed_at = CASE WHEN $3 = 'completed' AND status NOT IN ('completed','failed','cancelled','orphaned') THEN $5 ELSE completed_at END,
-          failed_at = CASE WHEN $3 = 'failed' AND status NOT IN ('completed','failed','cancelled','orphaned') THEN $5 ELSE failed_at END,
-          cancelled_at = CASE WHEN $3 = 'cancelled' AND status NOT IN ('completed','failed','cancelled','orphaned') THEN $5 ELSE cancelled_at END,
-          metadata = CASE
-            WHEN status IN ('completed','failed','cancelled','orphaned')
-              OR $3::text IN ('completed','failed','cancelled','orphaned')
-              THEN metadata - 'wakeMessage'
-            ELSE metadata
-          END
-      WHERE run_id = $1
-        AND worker_id = $2
-      RETURNING row_to_json(${this.runsTable}.*) AS row_json
-    `, [runId, workerId, finalStatus ?? null, reason ?? null, now]);
-    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+    return releaseRunLease({
+      pool: this.pool,
+      runsTable: this.runsTable,
+      normalizeRunRecord,
+    }, runId, workerId, finalStatus, reason);
   }
+
 }
 
 function sanitizeIdentifier(value: string): string {

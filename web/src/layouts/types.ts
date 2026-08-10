@@ -13,6 +13,7 @@ import type { SettingsSectionId } from "@/types/settings";
 import type { AdminSettingsState, AdminSettingsTarget } from "@/lib/urlSync";
 import type { QueuedInterjection } from "@/hooks/useChatAppState";
 import type { PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
+import type { GovernanceRouteState } from "@/lib/governanceNavigation";
 
 export interface LayoutProps {
   // 会话导航
@@ -41,6 +42,7 @@ export interface LayoutProps {
   compactSession: () => Promise<void>;
   isLoadingSessions: boolean;
   activeTab: AppTab;
+  governanceRoute: GovernanceRouteState | null;
   platformAdminSection: PlatformAdminSection;
   platformAdminEntityId: string | null;
   /** 组织分析当前页签（来自 URL 路径，刷新/分享可保留） */

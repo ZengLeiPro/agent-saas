@@ -1,25 +1,41 @@
 import type { AppTab } from '@/types/sidebar';
-import type { SettingsSectionId } from '@/types/settings';
+import type { CanonicalSettingsSectionId, SettingsSectionInput } from '@/types/settings';
+import {
+  buildGovernanceUrl,
+  governanceRoute,
+  parseGovernanceUrl,
+  type GovernanceRouteState,
+} from '@/lib/governanceNavigation';
 import { maybeNavigateWithUpdate } from '@/lib/swUpdate';
 
 /**
  * 用 Record 穷举而非字面量数组：往 SettingsSectionId 加成员却漏配这里时，
  * TS 会直接报缺失属性，避免新 section 被静默 fallback 到 account。
  */
-const SETTINGS_SECTION_ID_MAP: Record<SettingsSectionId, true> = {
-  'account': true,
-  'general': true,
-  'personalization': true,
-  'all-agents': true,
-  'memory': true,
-  'skills': true,
-  'mcp': true,
-  'files': true,
-  'storage': true,
-  'data': true,
+const SETTINGS_SECTION_ID_MAP: Record<CanonicalSettingsSectionId, true> = {
+  'account-security': true,
+  'my-agent': true,
+  'chat-model': true,
+  'appearance-layout': true,
+  'my-permissions': true,
+  'connections': true,
+  'files-storage': true,
+  'trash': true,
 };
 
 const SETTINGS_SECTION_IDS: ReadonlySet<string> = new Set(Object.keys(SETTINGS_SECTION_ID_MAP));
+const LEGACY_SETTINGS_SECTION_MAP: Readonly<Record<string, CanonicalSettingsSectionId>> = {
+  account: 'account-security',
+  general: 'chat-model',
+  personalization: 'appearance-layout',
+  'all-agents': 'my-agent',
+  memory: 'my-agent',
+  skills: 'my-permissions',
+  mcp: 'connections',
+  files: 'files-storage',
+  storage: 'files-storage',
+  data: 'trash',
+};
 
 /** 组织管理 modal 的合法 section（与 AdminShells.tenantSettingsSections 对齐） */
 const TENANT_ADMIN_SETTINGS_SECTIONS: ReadonlySet<string> = new Set([
@@ -99,7 +115,7 @@ export function normalizeAdminSettingsSection(target: AdminSettingsTarget, secti
 export interface ParsedUrlState {
   tab: AppTab;
   sessionId: string | null;
-  settingsSection: SettingsSectionId | null;
+  settingsSection: CanonicalSettingsSectionId | null;
   /** 平台管理主分区，与 settings modal section 分离 */
   adminSection: PlatformAdminSection | null;
   adminEntityId: string | null;
@@ -107,12 +123,61 @@ export interface ParsedUrlState {
   tenantAdminSection: TenantAdminSection | null;
   /** 命中 admin settings modal 路径时填充；否则为 null */
   adminSettings: AdminSettingsState | null;
+  /** V2 治理控制台/个人设置的稳定路由；非治理页面为 null。 */
+  governanceRoute: GovernanceRouteState | null;
   /** 旧 URL 或非法分区的纯函数 canonical 结果，由调用方统一 replaceState */
   canonicalPath: string | null;
 }
 
-export function normalizeSettingsSection(section?: string | null): SettingsSectionId {
-  return SETTINGS_SECTION_IDS.has(section || '') ? (section as SettingsSectionId) : 'account';
+const SETTINGS_ROUTE_BY_SECTION: Record<CanonicalSettingsSectionId, { routeId: string }> = {
+  'account-security': { routeId: 'settings.personal.account-security' },
+  'my-agent': { routeId: 'settings.personal.my-agent' },
+  'chat-model': { routeId: 'settings.preferences.chat-model' },
+  'appearance-layout': { routeId: 'settings.preferences.appearance-layout' },
+  'my-permissions': { routeId: 'settings.access.my-permissions' },
+  connections: { routeId: 'settings.access.connections' },
+  'files-storage': { routeId: 'settings.data.files-storage' },
+  trash: { routeId: 'settings.data.trash' },
+};
+
+const SETTINGS_SECTION_BY_ROUTE: Readonly<Record<string, CanonicalSettingsSectionId>> = {
+  'settings.personal.account-security': 'account-security',
+  'settings.personal.my-agent': 'my-agent',
+  'settings.preferences.chat-model': 'chat-model',
+  'settings.preferences.appearance-layout': 'appearance-layout',
+  'settings.access.my-permissions': 'my-permissions',
+  'settings.access.connections': 'connections',
+  'settings.data.files-storage': 'files-storage',
+  'settings.data.trash': 'trash',
+};
+
+const PLATFORM_SECTION_BY_ROUTE: Readonly<Record<string, PlatformAdminSection>> = {
+  'platform.overview.overview': 'overview',
+  'platform.org-business.tenants': 'tenants',
+  'platform.org-business.users': 'users',
+  'platform.runtime.sessions': 'sessions',
+  'platform.runtime.runs': 'runs',
+  'platform.runtime.environments': 'sandboxes',
+  'platform.runtime.infra': 'infra',
+  'platform.runtime.efficiency': 'efficiency',
+  'platform.governance.audit': 'audit',
+};
+
+const TENANT_SECTION_BY_ROUTE: Readonly<Record<string, TenantAdminSection>> = {
+  'organization.overview.overview': 'overview',
+  'organization.governance.usage': 'usage',
+  'organization.governance.qa': 'qa',
+  'organization.governance.audit': 'audit',
+};
+
+export function normalizeSettingsSection(section?: string | null): CanonicalSettingsSectionId {
+  if (SETTINGS_SECTION_IDS.has(section || '')) return section as CanonicalSettingsSectionId;
+  return LEGACY_SETTINGS_SECTION_MAP[section || ''] ?? 'account-security';
+}
+
+export function governanceSettingsRoute(section: SettingsSectionInput): GovernanceRouteState {
+  const target = SETTINGS_ROUTE_BY_SECTION[normalizeSettingsSection(section)];
+  return governanceRoute(target.routeId, section === 'memory' ? { tab: 'memory' } : {});
 }
 
 export function isSettingsPath(pathname = window.location.pathname): boolean {
@@ -286,18 +351,48 @@ export function preserveScopeSearch(options: { omit?: readonly string[]; search?
     : preserveSearchKeys(keys, options.search);
 }
 
-function parsed(state: Omit<ParsedUrlState, 'adminSection' | 'adminEntityId' | 'tenantAdminSection' | 'canonicalPath'> & Partial<Pick<ParsedUrlState, 'adminSection' | 'adminEntityId' | 'tenantAdminSection' | 'canonicalPath'>>): ParsedUrlState {
+function parsed(state: Omit<ParsedUrlState, 'adminSection' | 'adminEntityId' | 'tenantAdminSection' | 'governanceRoute' | 'canonicalPath'> & Partial<Pick<ParsedUrlState, 'adminSection' | 'adminEntityId' | 'tenantAdminSection' | 'governanceRoute' | 'canonicalPath'>>): ParsedUrlState {
   return {
     ...state,
     adminSection: state.adminSection ?? null,
     adminEntityId: state.adminEntityId ?? null,
     tenantAdminSection: state.tenantAdminSection ?? null,
+    governanceRoute: state.governanceRoute ?? null,
     canonicalPath: state.canonicalPath ?? null,
   };
 }
 
 /** 解析 pathname → URL state；search 只由 platform-admin 路由读取，常规 buildUrl 仍只管理 pathname */
 export function parseUrl(pathname = window.location.pathname, search = window.location.search): ParsedUrlState {
+  const governance = parseGovernanceUrl(`${pathname}${search}`);
+  if (governance.kind === 'route') {
+    const route = governance.route;
+    if (route.area === 'platform') {
+      return parsed({
+        tab: 'platform-admin', sessionId: null, settingsSection: null, adminSettings: null,
+        adminSection: PLATFORM_SECTION_BY_ROUTE[route.routeId] ?? 'overview',
+        adminEntityId: route.entityId,
+        governanceRoute: route,
+        canonicalPath: governance.canonicalPath,
+      });
+    }
+    if (route.area === 'organization') {
+      return parsed({
+        tab: 'tenant-admin', sessionId: null, settingsSection: null, adminSettings: null,
+        tenantAdminSection: TENANT_SECTION_BY_ROUTE[route.routeId] ?? 'overview',
+        governanceRoute: route,
+        canonicalPath: governance.canonicalPath,
+      });
+    }
+    return parsed({
+      tab: 'chat', sessionId: null,
+      settingsSection: SETTINGS_SECTION_BY_ROUTE[route.routeId] ?? 'account-security',
+      adminSettings: null,
+      governanceRoute: route,
+      canonicalPath: governance.canonicalPath,
+    });
+  }
+
   const platformAdmin = parsePlatformAdminPath(pathname, search);
   if (platformAdmin) {
     return parsed({
@@ -348,7 +443,7 @@ export function parseUrl(pathname = window.location.pathname, search = window.lo
     return parsed({ tab: 'chat', sessionId: id || null, settingsSection: null, adminSettings: null });
   }
   if (pathname === '/cron') return parsed({ tab: 'cron', sessionId: null, settingsSection: null, adminSettings: null });
-  if (pathname === '/files') return parsed({ tab: 'chat', sessionId: null, settingsSection: 'files', adminSettings: null });
+  if (pathname === '/files') return parsed({ tab: 'chat', sessionId: null, settingsSection: 'files-storage', adminSettings: null, canonicalPath: '/settings/files-storage' });
   if (pathname === '/profile') return parsed({ tab: 'profile', sessionId: null, settingsSection: null, adminSettings: null });
   if (pathname === '/capabilities' || pathname === '/capabilities/templates' || pathname === '/capabilities/experts' || pathname === '/capabilities/skills' || pathname === '/capabilities/connectors') {
     return parsed({ tab: 'capabilities', sessionId: null, settingsSection: null, adminSettings: null });
@@ -388,8 +483,56 @@ export function buildUrl(tab: AppTab, sessionId: string | null): string {
   return '/';
 }
 
-export function buildSettingsUrl(section: SettingsSectionId): string {
-  return `/settings/${encodeURIComponent(normalizeSettingsSection(section))}`;
+export function buildSettingsUrl(section: SettingsSectionInput): string {
+  return buildGovernanceUrl(governanceSettingsRoute(section));
+}
+
+const PERSONAL_SETTINGS_HISTORY_KEY = '__personalSettingsV2';
+
+export interface PersonalSettingsHistoryState {
+  source: string;
+  depth: number;
+}
+
+export function readPersonalSettingsHistoryState(state: unknown = window.history.state): PersonalSettingsHistoryState | null {
+  if (!state || typeof state !== 'object') return null;
+  const value = (state as Record<string, unknown>)[PERSONAL_SETTINGS_HISTORY_KEY];
+  if (!value || typeof value !== 'object') return null;
+  const source = (value as Record<string, unknown>).source;
+  const depth = (value as Record<string, unknown>).depth;
+  return typeof source === 'string' && source.startsWith('/') && typeof depth === 'number' && depth > 0
+    ? { source, depth }
+    : null;
+}
+
+function settingsHistoryState(navigation?: PersonalSettingsHistoryState): Record<string, unknown> {
+  return navigation ? { [PERSONAL_SETTINGS_HISTORY_KEY]: navigation } : {};
+}
+
+/** Close every settings history leaf in one move; direct links are replaced, never pushed. */
+export function closePersonalSettingsHistory(fallbackUrl: string): 'back' | 'replace' {
+  const current = readPersonalSettingsHistoryState();
+  if (current) {
+    window.history.go(-current.depth);
+    return 'back';
+  }
+  window.history.replaceState({}, '', fallbackUrl);
+  return 'replace';
+}
+
+export function pushSettingsRoute(route: GovernanceRouteState, navigation?: PersonalSettingsHistoryState): void {
+  const next = buildGovernanceUrl(route);
+  if (`${window.location.pathname}${window.location.search}` !== next) {
+    if (maybeNavigateWithUpdate(next)) return;
+    window.history.pushState(settingsHistoryState(navigation), '', next);
+  }
+}
+
+export function replaceSettingsRoute(route: GovernanceRouteState, navigation?: PersonalSettingsHistoryState): void {
+  const next = buildGovernanceUrl(route);
+  if (`${window.location.pathname}${window.location.search}` !== next) {
+    window.history.replaceState(settingsHistoryState(navigation), '', next);
+  }
 }
 
 /** pushState（创建历史记录，用于用户主动操作） */
@@ -426,19 +569,12 @@ export function replacePlatformAdminUrl(state: { section?: PlatformAdminSection 
   }
 }
 
-export function pushSettingsUrl(section: SettingsSectionId): void {
-  const next = buildSettingsUrl(section);
-  if (window.location.pathname !== next) {
-    if (maybeNavigateWithUpdate(next)) return;
-    window.history.pushState({}, '', next);
-  }
+export function pushSettingsUrl(section: SettingsSectionInput, navigation?: PersonalSettingsHistoryState): void {
+  pushSettingsRoute(governanceSettingsRoute(section), navigation);
 }
 
-export function replaceSettingsUrl(section: SettingsSectionId): void {
-  const next = buildSettingsUrl(section);
-  if (window.location.pathname !== next) {
-    window.history.replaceState({}, '', next);
-  }
+export function replaceSettingsUrl(section: SettingsSectionInput, navigation?: PersonalSettingsHistoryState): void {
+  replaceSettingsRoute(governanceSettingsRoute(section), navigation);
 }
 
 export function buildAdminSettingsUrl(target: AdminSettingsTarget, section?: string | null): string {
@@ -477,6 +613,22 @@ export function replaceTenantAdminUrl(state: { section?: TenantAdminSection | nu
   }
 }
 
+/** V2 治理 route 写入 history；页面 Shell 接线前不会替代现有 UI route state。 */
+export function pushGovernanceUrl(state: GovernanceRouteState): void {
+  const next = buildGovernanceUrl(state);
+  if (`${window.location.pathname}${window.location.search}` !== next) {
+    if (maybeNavigateWithUpdate(next)) return;
+    window.history.pushState({}, '', next);
+  }
+}
+
+export function replaceGovernanceUrl(state: GovernanceRouteState): void {
+  const next = buildGovernanceUrl(state);
+  if (`${window.location.pathname}${window.location.search}` !== next) {
+    window.history.replaceState({}, '', next);
+  }
+}
+
 // ───────────────────────── 「土制路由」的唯一派发点 ─────────────────────────
 //
 // 没有前端 router，`window.history.pushState` 不会触发 popstate，因此每一处程序化跳转
@@ -489,6 +641,24 @@ export function replaceTenantAdminUrl(state: { section?: TenantAdminSection | nu
 /** push URL 之后通知所有 URL 订阅者重新解析（pushState 不触发 popstate） */
 function notifyRouteChange(): void {
   window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+/** V2 治理 route 跳转（push + 通知）；前进/后退继续由同一 popstate 通道重解析。 */
+export function navigateGovernance(state: GovernanceRouteState, options: { replace?: boolean } = {}): void {
+  if (options.replace) replaceGovernanceUrl(state);
+  else pushGovernanceUrl(state);
+  notifyRouteChange();
+}
+
+/** 个人设置页内导航：继承来源并累计深度，关闭时可一次返回来源而不在后退中重开。 */
+export function navigateSettingsRoute(state: GovernanceRouteState, options: { replace?: boolean } = {}): void {
+  const current = readPersonalSettingsHistoryState();
+  const navigation = current
+    ? { source: current.source, depth: options.replace ? current.depth : current.depth + 1 }
+    : undefined;
+  if (options.replace) replaceSettingsRoute(state, navigation);
+  else pushSettingsRoute(state, navigation);
+  notifyRouteChange();
 }
 
 /** platform-admin section / entity 跳转（push + 通知） */

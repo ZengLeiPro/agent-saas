@@ -58,6 +58,21 @@ describe('治理审计存储', () => {
     })).rejects.toThrow(/Unsafe governance audit metadata key/);
   });
 
+  it('按组织作用域和时间倒序查询治理事件', async () => {
+    const store = new InMemoryGovernanceAuditStore();
+    const base = {
+      correlationId: 'correlation-1', actorType: 'user' as const, actorUserId: 'user-1',
+      actorPersona: 'platform_admin' as const, action: 'membership.update', targetType: 'membership',
+      purpose: 'identity_governance', result: 'succeeded' as const, metadata: {},
+    };
+    await store.append({ ...base, targetId: 'member-a', targetTenantId: 'acme', occurredAt: '2026-08-08T00:00:00.000Z' });
+    await store.append({ ...base, targetId: 'member-b', targetTenantId: 'beta', occurredAt: '2026-08-09T00:00:00.000Z' });
+    await store.append({ ...base, targetId: 'member-c', targetTenantId: 'acme', occurredAt: '2026-08-10T00:00:00.000Z' });
+
+    await expect(store.list({ targetTenantId: 'acme', before: '2026-08-10T12:00:00.000Z', limit: 10 }))
+      .resolves.toMatchObject([{ targetId: 'member-c' }, { targetId: 'member-a' }]);
+  });
+
   it('PG store 使用独立 schema version 与仅追加 INSERT', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const query = async (sql: string, params?: unknown[]) => {

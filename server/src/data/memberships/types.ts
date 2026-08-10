@@ -33,6 +33,11 @@ export interface MembershipIdentityPatch {
   status?: GovernanceIdentityStatus;
   expectedVersion: number;
   updatedBy: string;
+  authorization: {
+    kind: 'tenant_member' | 'platform_recovery';
+    actorTenantId: string;
+    reason?: string;
+  };
 }
 
 export interface PlatformAdminPatch {
@@ -50,6 +55,8 @@ export type MembershipInvariantCode =
   | 'LAST_EFFECTIVE_OWNER_PROTECTED'
   | 'LAST_PLATFORM_ADMIN_PROTECTED'
   | 'PLATFORM_TENANT_MEMBERSHIP_FORBIDDEN'
+  | 'MEMBERSHIP_CHANGE_FORBIDDEN'
+  | 'PLATFORM_RECOVERY_SCOPE_REQUIRED'
   | 'MEMBERSHIP_IDENTITY_INVALID';
 
 export class MembershipInvariantError extends Error {

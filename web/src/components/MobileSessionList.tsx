@@ -1,6 +1,6 @@
 import { apiUrl, resolveApiAssetUrl } from "../lib/apiBase";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Loader2, LogOut, User, ChevronRight, ChevronLeft, FolderClosed, Camera, Lock, Settings2, UserCog } from "lucide-react";
+import { Plus, Loader2, LogOut, User, ChevronRight, ChevronLeft, FolderClosed, Camera, Lock, UserCog } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import { SwipeableRow } from "@/components/mobile/SwipeableRow";
 import type { SwipeAction } from "@/components/mobile/SwipeableRow";
@@ -83,7 +83,6 @@ export function MobileSessionList({
   onTabChange,
   onPushTab,
   onOpenSettings,
-  onOpenAdminSettings,
   isAdmin = false,
   onClose,
   renderCronManager,
@@ -669,7 +668,7 @@ export function MobileSessionList({
                     onClick={() => { setShowUserMenu(false); onClose(); onOpenSettings?.("account"); }}
                   >
                     <UserCog className="size-3.5" />
-                    账户设置
+                    个人设置
                   </button>
                   <button
                     type="button"
@@ -696,16 +695,8 @@ export function MobileSessionList({
                         className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
                         onClick={() => { setShowUserMenu(false); onClose(); (onPushTab ?? onTabChange)?.("tenant-admin"); }}
                       >
-                        <EntityIcons.analytics className="size-3.5" />
-                        组织分析
-                      </button>
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
-                        onClick={() => { setShowUserMenu(false); onClose(); onOpenAdminSettings?.("tenant"); }}
-                      >
-                        <Settings2 className="size-3.5" />
-                        组织管理
+                        <EntityIcons.org className="size-3.5" />
+                        组织控制台
                       </button>
                     </>
                   )}
@@ -717,16 +708,8 @@ export function MobileSessionList({
                         className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
                         onClick={() => { setShowUserMenu(false); onClose(); (onPushTab ?? onTabChange)?.("platform-admin"); }}
                       >
-                        <EntityIcons.analytics className="size-3.5" />
-                        平台分析
-                      </button>
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
-                        onClick={() => { setShowUserMenu(false); onClose(); onOpenAdminSettings?.("platform"); }}
-                      >
-                        <Settings2 className="size-3.5" />
-                        平台管理
+                        <EntityIcons.admin className="size-3.5" />
+                        平台控制台
                       </button>
                     </>
                   )}

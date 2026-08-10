@@ -28,6 +28,13 @@ export type GovernanceAuditAppendInput = Omit<GovernanceAuditEvent, 'auditId' | 
   occurredAt?: string;
 };
 
+export interface GovernanceAuditQuery {
+  targetTenantId?: string;
+  before?: string;
+  limit: number;
+}
+
 export interface GovernanceAuditStore {
   append(input: GovernanceAuditAppendInput): Promise<GovernanceAuditEvent>;
+  list?(query: GovernanceAuditQuery): Promise<GovernanceAuditEvent[]>;
 }

@@ -54,6 +54,7 @@ import { createSkillsRouter } from "../routes/skills.js";
 import { createGovernanceMigrationRouter } from '../routes/governanceMigration.js';
 import { createGovernanceResourcesRouter } from '../routes/governanceResources.js';
 import { createGovernanceAccessRouter } from '../routes/governanceAccess.js';
+import { createGovernanceUiRouter } from '../routes/governanceUi.js';
 import { createMcpRouter } from "../routes/mcp.js";
 import { createConnectorsRouter } from "../routes/connectors.js";
 import { createNotionRouter } from "../routes/notion.js";
@@ -812,6 +813,19 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         }),
       );
     }
+    app.use(createGovernanceUiRouter({
+      users: runtime.userStore,
+      tenants: runtime.tenantStore,
+      memberships: runtime.membershipStore,
+      entitlements: runtime.entitlementStore,
+      assignments: runtime.assignmentStore,
+      agents: runtime.agentResourceStore,
+      skills: runtime.skillGovernanceStore,
+      connectors: runtime.connectorCatalogStore,
+      credentials: runtime.credentialStore,
+      environments: runtime.environmentStore,
+      audit: runtime.governanceAuditStore,
+    }));
     if (
       runtime.membershipStore
       && runtime.entitlementStore
@@ -826,6 +840,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         contentAccess: runtime.contentAccessGrantStore,
         projectionOutbox: runtime.governanceProjectionOutboxStore,
         projectionReconciler: runtime.governanceProjectionReconciler,
+        membershipPreviewSecret: config.auth.jwtSecret,
       }));
     }
     if (

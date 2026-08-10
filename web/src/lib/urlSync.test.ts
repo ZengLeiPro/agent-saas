@@ -12,49 +12,51 @@ describe("platform admin url sync", () => {
       tab: "platform-admin",
       adminSection: "overview",
       adminEntityId: null,
-      canonicalPath: null,
+      canonicalPath: "/platform-console/overview/overview",
     });
 
     expect(parseUrl("/platform-admin/runs/run_123", "?status=failed")).toMatchObject({
       tab: "platform-admin",
       adminSection: "runs",
       adminEntityId: "run_123",
-      canonicalPath: null,
+      canonicalPath: "/platform-console/runtime/runs/run_123?status=failed",
     });
 
     expect(parseUrl("/platform-admin/infra")).toMatchObject({
       tab: "platform-admin",
       adminSection: "infra",
       adminEntityId: null,
-      canonicalPath: null,
+      canonicalPath: "/platform-console/runtime/infra",
     });
   });
 
-  it("keeps platform settings modal routes separate from admin sections", () => {
+  it("canonicalizes legacy platform settings routes into V2 console leaves", () => {
     expect(parseUrl("/platform-admin/settings/signup")).toMatchObject({
       tab: "platform-admin",
-      adminSection: null,
-      adminSettings: { target: "platform", section: "signup" },
-      canonicalPath: null,
+      adminSection: "overview",
+      adminSettings: null,
+      canonicalPath: "/platform-console/org-business/signup",
     });
 
     expect(parseUrl("/platform-admin/settings/memory-polling")).toMatchObject({
       tab: "platform-admin",
-      adminSection: null,
-      adminSettings: { target: "platform", section: "memory-polling" },
-      canonicalPath: null,
+      adminSection: "overview",
+      adminSettings: null,
+      canonicalPath: "/platform-console/governance/memory-policy",
     });
     expect(buildAdminSettingsUrl("platform", "memory-polling"))
       .toBe("/platform-admin/settings/memory-polling");
     expect(parseUrl("/platform-admin/settings/system-prompts")).toMatchObject({
       tab: "platform-admin",
-      adminSection: null,
-      adminSettings: { target: "platform", section: "system-prompts" },
+      adminSection: "overview",
+      adminSettings: null,
+      canonicalPath: "/platform-console/governance/system-prompts",
     });
     expect(parseUrl("/platform-admin/settings/agent-profiles")).toMatchObject({
       tab: "platform-admin",
-      adminSection: null,
-      adminSettings: { target: "platform", section: "agent-profiles" },
+      adminSection: "overview",
+      adminSettings: null,
+      canonicalPath: "/platform-console/governance/system-settings",
     });
   });
 
@@ -63,14 +65,14 @@ describe("platform admin url sync", () => {
       tab: "platform-admin",
       adminSection: "runs",
       adminSettings: null,
-      canonicalPath: "/platform-admin/runs?q=abc",
+      canonicalPath: "/platform-console/runtime/runs?q=abc",
     });
 
     expect(parseUrl("/platform-admin/settings/runtime")).toMatchObject({
       tab: "platform-admin",
       adminSection: "sandboxes",
       adminSettings: null,
-      canonicalPath: "/platform-admin/sandboxes",
+      canonicalPath: "/platform-console/runtime/environments",
     });
   });
 
@@ -100,12 +102,12 @@ describe("能力中心 URL", () => {
     expect(buildUrl("capabilities", null)).toBe("/capabilities");
   });
 
-  it("旧 Skills、MCP 与所有 Agent 入口收敛到对应能力标签", () => {
-    expect(parseUrl("/settings/skills")).toMatchObject({ tab: "capabilities", canonicalPath: "/capabilities/skills" });
-    for (const path of ["/settings/mcp", "/mcp"]) {
-      expect(parseUrl(path)).toMatchObject({ tab: "capabilities", canonicalPath: "/capabilities/connectors" });
-    }
-    for (const path of ["/agents", "/all-agents", "/settings/all-agents"]) {
+  it("个人设置旧路径进入 V2 独立页面，产品级旧入口仍收敛到能力中心", () => {
+    expect(parseUrl("/settings/skills")).toMatchObject({ tab: "chat", canonicalPath: "/settings/my-permissions" });
+    expect(parseUrl("/settings/mcp")).toMatchObject({ tab: "chat", canonicalPath: "/settings/connections" });
+    expect(parseUrl("/settings/all-agents")).toMatchObject({ tab: "chat", canonicalPath: "/settings/my-agent" });
+    expect(parseUrl("/mcp")).toMatchObject({ tab: "capabilities", canonicalPath: "/capabilities/connectors" });
+    for (const path of ["/agents", "/all-agents"]) {
       expect(parseUrl(path)).toMatchObject({ tab: "capabilities", canonicalPath: "/capabilities/experts" });
     }
   });

@@ -5,7 +5,7 @@ import type { ApiSessionListItem, TokenUsage } from "@/lib/sessionsApi";
 import type { AskUserAnswers, ContextUsageData, NotificationData, MemoryRecallData, PluginInstallData } from "@agent/shared";
 import type { ModelList } from "@/types/models";
 import type { AppTab } from "@/types/sidebar";
-import type { SettingsSectionId } from "@/types/settings";
+import type { CanonicalSettingsSectionId, SettingsSectionId } from "@/types/settings";
 import type { WsEvent } from "@/types/ws";
 import type { WsEnvelope, WsResumeMessage } from "@/lib/wsClient";
 import { wsClient } from "@/lib/wsClient";
@@ -30,10 +30,13 @@ import {
   createCompactionRunningItem,
 } from "@/lib/compaction";
 import type { CompactionMessageItem, CompactionStatusEvent } from "@/lib/compaction";
-import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, pushSettingsUrl, replaceSettingsUrl, pushAdminSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, normalizeAdminSettingsSection, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl, buildTenantAdminUrl, pushTenantAdminUrl, replaceTenantAdminUrl, normalizeTenantAdminSection, preserveScopeSearch, preserveSearchKeys, TENANT_ADMIN_SCOPE_KEYS } from "@/lib/urlSync";
+import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, replaceSettingsUrl, pushAdminSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, normalizeAdminSettingsSection, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl, buildTenantAdminUrl, pushTenantAdminUrl, replaceTenantAdminUrl, normalizeTenantAdminSection, preserveScopeSearch, preserveSearchKeys, TENANT_ADMIN_SCOPE_KEYS, pushGovernanceUrl, replaceGovernanceUrl } from "@/lib/urlSync";
+import { buildGovernanceUrl, governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
 import { registerUpdateGuard, registerBeforeReloadHook, maybeReloadOnPopstate } from "@/lib/swUpdate";
+import { clearRunShellApprovalStorage, runShellApprovalStorageKey } from "@/lib/runShellApprovalStorage";
 import type { AdminSettingsState, AdminSettingsTarget, PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
 import { useMessages } from "@/hooks/useMessages";
+import { usePersonalSettingsNavigation } from "@/hooks/usePersonalSettingsNavigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSession } from "@/hooks/useSession";
 import { useFileUpload } from "@/hooks/useFileUpload";
@@ -49,7 +52,6 @@ import {
   type WsProcessingContext,
   type WsBlockState,
 } from '@agent/shared';
-
 /**
  * resume 去重闸门：重连时本 hook 有两个 onStateChange('connected') 监听器会各对当前会话
  * 发一次 resume（#1 连接管理、#2 subscribeToActiveStream）。重复 resume 会让服务端二次回放
@@ -60,7 +62,6 @@ import {
 const RESUME_DEDUP_MS = 2000;
 let _lastResumeSessionId = '';
 let _lastResumeAt = 0;
-
 function sendResumeDeduped(payload: WsResumeMessage): Promise<boolean> {
   const now = Date.now();
   if (_lastResumeSessionId === payload.sessionId && now - _lastResumeAt < RESUME_DEDUP_MS) {
@@ -72,19 +73,6 @@ function sendResumeDeduped(payload: WsResumeMessage): Promise<boolean> {
   _lastResumeAt = now;
   return wsClient.ensureConnectedSend(payload);
 }
-
-const RUN_SHELL_APPROVAL_STORAGE_PREFIX = 'agentChat.autoApproveRunShell.';
-const runShellApprovalStorageKey = (sessionId: string) => `${RUN_SHELL_APPROVAL_STORAGE_PREFIX}${sessionId}`;
-
-function clearRunShellApprovalStorage() {
-  for (let i = localStorage.length - 1; i >= 0; i--) {
-    const key = localStorage.key(i);
-    if (key?.startsWith(RUN_SHELL_APPROVAL_STORAGE_PREFIX)) {
-      localStorage.removeItem(key);
-    }
-  }
-}
-
 /** 插话队列区条目（2026-08-04 终态设计）：排队中的消息不进时间线。 */
 export interface QueuedInterjection {
   clientMsgId: string;
@@ -107,12 +95,14 @@ export interface ChatAppState {
   sessionId: string | null;
   sessions: ApiSessionListItem[];
   activeTab: AppTab;
+  /** 当前 V2 治理/设置稳定路由；保持 AppTab 外部合同不变。 */
+  governanceRoute: GovernanceRouteState | null;
   platformAdminSection: PlatformAdminSection;
   platformAdminEntityId: string | null;
   /** 组织分析当前页签（进路径，可分享/刷新保留） */
   tenantAdminSection: TenantAdminSection;
   settingsOpen: boolean;
-  settingsSection: SettingsSectionId;
+  settingsSection: CanonicalSettingsSectionId;
   uploadedFiles: UploadedFile[];
   uploading: boolean;
   uploadError: string | null;
@@ -424,15 +414,18 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     };
   }, [clearPluginInstallTimer]);
   const [activeTab, setActiveTabRaw] = useState<AppTab>(urlState.tab);
+  const [governanceRouteState, setGovernanceRouteRaw] = useState<GovernanceRouteState | null>(urlState.governanceRoute);
   const [platformAdminSection, setPlatformAdminSectionRaw] = useState<PlatformAdminSection>(urlState.adminSection ?? 'overview');
   const [platformAdminEntityId, setPlatformAdminEntityIdRaw] = useState<string | null>(urlState.adminEntityId);
   const [tenantAdminSection, setTenantAdminSectionRaw] = useState<TenantAdminSection>(urlState.tenantAdminSection ?? 'overview');
   const [pendingCanonicalPath, setPendingCanonicalPath] = useState<string | null>(urlState.canonicalPath);
   const [settingsOpen, setSettingsOpen] = useState(() => urlState.settingsSection !== null);
-  const [settingsSection, setSettingsSectionRaw] = useState<SettingsSectionId>(urlState.settingsSection ?? 'account');
+  const [settingsSection, setSettingsSectionRaw] = useState<CanonicalSettingsSectionId>(urlState.settingsSection ?? 'account-security');
   const [adminSettings, setAdminSettingsRaw] = useState<AdminSettingsState | null>(() => urlState.adminSettings);
   const activeTabRef = useRef<AppTab>(activeTab);
   activeTabRef.current = activeTab;
+  const governanceRouteRef = useRef<GovernanceRouteState | null>(governanceRouteState);
+  governanceRouteRef.current = governanceRouteState;
   const platformAdminRouteRef = useRef<{ section: PlatformAdminSection; entityId: string | null }>({
     section: platformAdminSection,
     entityId: platformAdminEntityId,
@@ -1111,13 +1104,18 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setAdminSettingsRaw(null);
     setActiveTabRaw(tab);
     if (tab === 'platform-admin') {
+      const next = governanceRoute('platform.overview.overview');
+      setGovernanceRouteRaw(next);
       setPlatformAdminSectionRaw('overview');
       setPlatformAdminEntityIdRaw(null);
-      replacePlatformAdminUrl({ section: 'overview' });
+      replaceGovernanceUrl(next);
     } else if (tab === 'tenant-admin') {
-      // 组织分析页签在路径里，进入时保留上一次的页签（URL 跟随 state，而不是把 state 打回第一个 tab）
-      replaceTenantAdminUrl({ section: tenantAdminSectionRef.current, search: preserveSearchKeys(TENANT_ADMIN_SCOPE_KEYS) });
+      const current = governanceRouteRef.current?.area === 'organization' ? governanceRouteRef.current : null;
+      const next = current ?? governanceRoute('organization.overview.overview');
+      setGovernanceRouteRaw(next);
+      replaceGovernanceUrl(next);
     } else {
+      setGovernanceRouteRaw(null);
       replaceUrl(tab, tab === 'chat' ? immediateSessionIdRef.current : null);
     }
     // 上报非 chat/profile 的 tab 切换（profile 由 AgentProfile 组件自行上报）
@@ -1131,13 +1129,18 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setAdminSettingsRaw(null);
     setActiveTabRaw(tab);
     if (tab === 'platform-admin') {
+      const next = governanceRoute('platform.overview.overview');
+      setGovernanceRouteRaw(next);
       setPlatformAdminSectionRaw('overview');
       setPlatformAdminEntityIdRaw(null);
-      // 作用域筛选（组织/用户）跨页面粘连，section 私有筛选丢弃
-      pushPlatformAdminUrl({ section: 'overview', search: preserveScopeSearch() });
+      pushGovernanceUrl(next);
     } else if (tab === 'tenant-admin') {
-      pushTenantAdminUrl({ section: tenantAdminSectionRef.current, search: preserveSearchKeys(TENANT_ADMIN_SCOPE_KEYS) });
+      const current = governanceRouteRef.current?.area === 'organization' ? governanceRouteRef.current : null;
+      const next = current ?? governanceRoute('organization.overview.overview');
+      setGovernanceRouteRaw(next);
+      pushGovernanceUrl(next);
     } else {
+      setGovernanceRouteRaw(null);
       pushUrl(tab, tab === 'chat' ? immediateSessionIdRef.current : null);
     }
     const label = TAB_LABELS[tab];
@@ -1167,29 +1170,16 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     pushTenantAdminUrl({ section: next, search: preserveSearchKeys(TENANT_ADMIN_SCOPE_KEYS) });
   }, []);
 
-  const openSettings = useCallback((section: SettingsSectionId = 'account') => {
-    setAdminSettingsRaw(null);
-    setSettingsOpen(true);
-    setSettingsSectionRaw(section);
-    pushSettingsUrl(section);
-  }, []);
-
-  const closeSettings = useCallback(() => {
-    setSettingsOpen(false);
-    if (activeTabRef.current === 'platform-admin') {
-      pushPlatformAdminUrl(platformAdminRouteRef.current);
-    } else if (activeTabRef.current === 'tenant-admin') {
-      pushTenantAdminUrl({ section: tenantAdminSectionRef.current, search: preserveSearchKeys(TENANT_ADMIN_SCOPE_KEYS) });
-    } else {
-      pushUrl(activeTabRef.current, activeTabRef.current === 'chat' ? immediateSessionIdRef.current : null);
-    }
-  }, []);
-
-  const setSettingsSection = useCallback((section: SettingsSectionId) => {
-    setSettingsOpen(true);
-    setSettingsSectionRaw(section);
-    pushSettingsUrl(section);
-  }, []);
+  const { openSettings, closeSettings, setSettingsSection } = usePersonalSettingsNavigation({
+    getActiveTab: () => activeTabRef.current,
+    getPlatformRoute: () => platformAdminRouteRef.current,
+    getTenantSection: () => tenantAdminSectionRef.current,
+    getSessionId: () => immediateSessionIdRef.current,
+    openState: (section, route) => {
+      setAdminSettingsRaw(null); setGovernanceRouteRaw(route); setSettingsOpen(true); setSettingsSectionRaw(section);
+    },
+    closeState: () => { setSettingsOpen(false); setGovernanceRouteRaw(null); },
+  });
 
   const openAdminSettings = useCallback((target: AdminSettingsTarget, section?: string) => {
     // user settings modal 互斥关闭；不要切 activeTab，避免关闭管理弹窗后把用户留在组织/平台分析页。
@@ -1338,8 +1328,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         adminEntityId: urlAdminEntityId,
         tenantAdminSection: urlTenantAdminSection,
         adminSettings: urlAdminSettings,
+        governanceRoute: urlGovernanceRoute,
         canonicalPath,
       } = parseUrl();
+      setGovernanceRouteRaw(urlGovernanceRoute);
       setPendingCanonicalPath(canonicalPath);
       if (urlAdminSettings) {
         // admin settings modal 路径：activeTab 同步到 admin frame，modal 打开到对应 section
@@ -1392,6 +1384,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       activeTab,
       activeTab === 'chat' ? session.sessionId : null,
     );
+    if (governanceRouteState) {
+      const governanceUrl = buildGovernanceUrl(governanceRouteState);
+      if (governanceUrl !== `${window.location.pathname}${window.location.search}`) {
+        replaceGovernanceUrl(governanceRouteState);
+      }
+      return;
+    }
     if (adminSettings) {
       const adminUrl = buildAdminSettingsUrl(adminSettings.target, adminSettings.section);
       if (adminUrl !== window.location.pathname) {
@@ -1432,7 +1431,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       immediateSessionIdRef.current = session.sessionId;
       replaceUrl(activeTab, activeTab === 'chat' ? session.sessionId : null);
     }
-  }, [session.sessionId, activeTab, settingsOpen, settingsSection, adminSettings, platformAdminSection, platformAdminEntityId, tenantAdminSection, pendingCanonicalPath]);
+  }, [session.sessionId, activeTab, settingsOpen, settingsSection, adminSettings, governanceRouteState, platformAdminSection, platformAdminEntityId, tenantAdminSection, pendingCanonicalPath]);
 
   // ---- Loading watchdog：超时保护，防止 done 事件丢失时 loading 永久锁定 ----
   const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3061,6 +3060,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     sessionId: session.sessionId,
     sessions: session.sessions,
     activeTab,
+    governanceRoute: governanceRouteState,
     platformAdminSection,
     platformAdminEntityId,
     tenantAdminSection,

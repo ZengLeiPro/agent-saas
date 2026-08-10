@@ -27,6 +27,7 @@ import { ExpertWelcome } from "@/components/experts/ExpertWelcome";
 import type { LayoutProps } from "./types";
 import type { ScenarioItem } from "@agent/shared";
 
+const GovernanceConsole = lazy(() => import("@/components/GovernanceConsole").then(m => ({ default: m.GovernanceConsole })));
 const CronManager = lazy(() => import("@/components/CronManager").then(m => ({ default: m.CronManager })));
 const UserManager = lazy(() => import("@/components/UserManager").then(m => ({ default: m.UserManager })));
 const TenantManager = lazy(() => import("@/components/TenantManager").then(m => ({ default: m.TenantManager })));
@@ -48,6 +49,7 @@ const CapabilityCenterPanel = lazy(() => import("@/components/CapabilityCenter")
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 const TenantAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.TenantAdminShell })));
 const CompanyInfoSectionPanel = lazy(() => import("@/components/CompanyInfoEditor").then(m => ({ default: m.CompanyInfoSection })));
+const OrgAgentManagerPanel = lazy(() => import("@/components/OrgAgentManager").then(m => ({ default: m.OrgAgentManager })));
 const PlatformAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.PlatformAdminShell })));
 
 const SuspenseFallback = (
@@ -59,7 +61,7 @@ const SuspenseFallback = (
 export function MobileLayout(props: LayoutProps) {
   const {
     sidebarSessions, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, renameSession, autoTitleSession,
-    isLoadingSessions, activeTab, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
+    isLoadingSessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
     messages, loading, isLoadingMessages, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
@@ -194,6 +196,60 @@ export function MobileLayout(props: LayoutProps) {
       root.style.height = "";
     };
   }, []);
+
+  if (activeTab === "tenant-admin" && governanceRoute?.area === "organization") {
+    return (
+      <Suspense fallback={SuspenseFallback}>
+        <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")}>
+          <TenantAdminShell
+            renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
+            renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
+            renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
+            renderMcp={() => <McpAdminCatalogPanel />}
+            renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
+            renderFiles={() => <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
+            renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
+            renderAutomation={() => <CronManager />}
+            settingsOpen={false}
+            settingsSection="users"
+            onSettingsSectionChange={() => undefined}
+            onSettingsClose={() => undefined}
+            governanceRoute={governanceRoute}
+            governanceContentOnly
+          />
+        </GovernanceConsole>
+      </Suspense>
+    );
+  }
+
+  if (activeTab === "platform-admin" && governanceRoute?.area === "platform") {
+    return (
+      <Suspense fallback={SuspenseFallback}>
+        <GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")}>
+          <PlatformAdminShell
+            renderTenants={() => <TenantManager />}
+            renderSignupConfig={() => <SignupConfigManagerPanel />}
+            renderModels={() => <ModelManagerPanel />}
+            renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
+            renderToolControls={() => <ToolControlsManagerPanel />}
+            renderMemoryPolling={() => <MemoryPollingManagerPanel />}
+            renderMcp={() => <McpAdminCatalogPanel />}
+            renderSkills={() => <SkillManagerPanel mode="platform" />}
+            renderEfficiency={() => <EfficiencyViewPanel />}
+            activeSection={platformAdminSection}
+            entityId={platformAdminEntityId}
+            onSectionChange={setPlatformAdminRoute}
+            settingsOpen={false}
+            settingsSection="tenants"
+            onSettingsSectionChange={() => undefined}
+            onSettingsClose={() => undefined}
+            governanceRoute={governanceRoute}
+            governanceContentOnly
+          />
+        </GovernanceConsole>
+      </Suspense>
+    );
+  }
 
   return (
     <>

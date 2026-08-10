@@ -6,6 +6,7 @@ import type {
   GovernanceAuditAppendInput,
   GovernanceAuditEvent,
   GovernanceAuditMetadata,
+  GovernanceAuditQuery,
   GovernanceAuditStore,
 } from './types.js';
 
@@ -71,6 +72,15 @@ export class InMemoryGovernanceAuditStore implements GovernanceAuditStore {
     this.events.push(event);
     return { ...event, metadata: { ...event.metadata } };
   }
+
+  async list(query: GovernanceAuditQuery): Promise<GovernanceAuditEvent[]> {
+    return this.events
+      .filter(event => !query.targetTenantId || event.targetTenantId === query.targetTenantId)
+      .filter(event => !query.before || event.occurredAt < query.before)
+      .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || b.auditId.localeCompare(a.auditId))
+      .slice(0, query.limit)
+      .map(event => ({ ...event, metadata: { ...event.metadata } }));
+  }
 }
 
 export interface PgGovernanceAuditStoreOptions {
@@ -134,4 +144,51 @@ export class PgGovernanceAuditStore implements GovernanceAuditStore {
     ]);
     return event;
   }
+
+  async list(query: GovernanceAuditQuery): Promise<GovernanceAuditEvent[]> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (query.targetTenantId) {
+      params.push(query.targetTenantId);
+      conditions.push(`target_tenant_id = $${params.length}`);
+    }
+    if (query.before) {
+      params.push(query.before);
+      conditions.push(`occurred_at < $${params.length}::timestamptz`);
+    }
+    params.push(query.limit);
+    const result = await this.options.pool.query(`
+      SELECT * FROM ${this.eventsTable}
+      ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
+      ORDER BY occurred_at DESC, audit_id DESC
+      LIMIT $${params.length}
+    `, params);
+    return result.rows.map(rowToAuditEvent);
+  }
+}
+
+function rowToAuditEvent(row: Record<string, unknown>): GovernanceAuditEvent {
+  const occurredAt = row.occurred_at;
+  return {
+    auditId: String(row.audit_id),
+    correlationId: String(row.correlation_id),
+    ...(row.change_id ? { changeId: String(row.change_id) } : {}),
+    actorType: row.actor_type as GovernanceAuditEvent['actorType'],
+    actorUserId: String(row.actor_user_id),
+    actorPersona: row.actor_persona as GovernanceAuditEvent['actorPersona'],
+    ...(row.actor_tenant_id ? { actorTenantId: String(row.actor_tenant_id) } : {}),
+    action: String(row.action),
+    targetType: String(row.target_type),
+    targetId: String(row.target_id),
+    ...(row.target_tenant_id ? { targetTenantId: String(row.target_tenant_id) } : {}),
+    purpose: String(row.purpose),
+    ...(row.reason ? { reason: String(row.reason) } : {}),
+    ...(row.before_digest ? { beforeDigest: String(row.before_digest) } : {}),
+    ...(row.after_digest ? { afterDigest: String(row.after_digest) } : {}),
+    result: row.result as GovernanceAuditEvent['result'],
+    occurredAt: occurredAt instanceof Date ? occurredAt.toISOString() : String(occurredAt),
+    metadata: (row.metadata_json && typeof row.metadata_json === 'object'
+      ? row.metadata_json
+      : {}) as GovernanceAuditMetadata,
+  };
 }

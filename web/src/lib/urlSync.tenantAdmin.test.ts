@@ -115,7 +115,7 @@ describe("parseUrl 的 tenantAdminSection", () => {
       tab: "tenant-admin",
       tenantAdminSection: "usage",
       adminSettings: null,
-      canonicalPath: null,
+      canonicalPath: "/tenant-admin/governance/usage?usageRange=90d",
     });
   });
 
@@ -129,16 +129,17 @@ describe("parseUrl 的 tenantAdminSection", () => {
   it("组织管理弹窗路径不被当成分析页签", () => {
     expect(parseUrl("/tenant-admin/settings/billing")).toMatchObject({
       tab: "tenant-admin",
-      tenantAdminSection: null,
-      adminSettings: { target: "tenant", section: "billing" },
+      tenantAdminSection: "usage",
+      adminSettings: null,
+      canonicalPath: "/tenant-admin/governance/usage",
     });
   });
 
-  it("旧链接 /usage 落 usage 页签并给 canonical", () => {
+  it("旧链接 /usage 落 usage 叶子并 canonical 到 V2", () => {
     expect(parseUrl("/usage")).toMatchObject({
       tab: "tenant-admin",
       tenantAdminSection: "usage",
-      canonicalPath: "/tenant-admin/usage",
+      canonicalPath: "/tenant-admin/governance/usage",
     });
   });
 

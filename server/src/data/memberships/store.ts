@@ -98,6 +98,13 @@ export class PgMembershipStore {
     return result.rows[0] ? rowToPlatformAdmin(result.rows[0]) : null;
   }
 
+  async listPlatformAdmins(): Promise<PlatformAdmin[]> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.platformAdminsTable} ORDER BY created_at, user_id`,
+    );
+    return result.rows.map(rowToPlatformAdmin);
+  }
+
   async updateMembershipIdentity(
     tenantId: string,
     userId: string,
@@ -123,6 +130,44 @@ export class PgMembershipStore {
       const status = patch.status ?? current.status;
       if (isOwner && persona !== 'org_admin') {
         throw new MembershipInvariantError('OWNER_MUST_BE_ORG_ADMIN');
+      }
+
+      if (patch.authorization.kind === 'platform_recovery') {
+        const platformActor = await client.query(
+          `SELECT status FROM ${this.platformAdminsTable} WHERE user_id = $1 FOR UPDATE`,
+          [patch.updatedBy],
+        );
+        const explicitCustomerScope = patch.authorization.actorTenantId !== tenantId;
+        const hasReason = Boolean(patch.authorization.reason?.trim());
+        const recoveryOnly = persona === 'org_admin' && isOwner && status === 'active'
+          && patch.persona !== 'member' && patch.isOwner !== false && patch.status !== 'disabled';
+        if (platformActor.rows[0]?.status !== 'active' || !explicitCustomerScope || !hasReason || !recoveryOnly) {
+          throw new MembershipInvariantError('PLATFORM_RECOVERY_SCOPE_REQUIRED');
+        }
+      } else {
+        let actor = current;
+        if (patch.updatedBy !== userId) {
+          const actorResult = await client.query(
+            `SELECT * FROM ${this.membershipsTable}
+             WHERE tenant_id = $1 AND user_id = $2
+             FOR UPDATE`,
+            [tenantId, patch.updatedBy],
+          );
+          if (!actorResult.rows[0]) throw new MembershipInvariantError('MEMBERSHIP_CHANGE_FORBIDDEN');
+          actor = rowToMembership(actorResult.rows[0]);
+        }
+        if (patch.authorization.actorTenantId !== tenantId
+          || actor.status !== 'active' || actor.persona !== 'org_admin') {
+          throw new MembershipInvariantError('MEMBERSHIP_CHANGE_FORBIDDEN');
+        }
+        if (!actor.isOwner) {
+          const changesAdminIdentity = persona !== current.persona || isOwner !== current.isOwner;
+          const changesPeerAdminStatus = status !== current.status
+            && (current.persona === 'org_admin' || current.isOwner);
+          if (changesAdminIdentity || changesPeerAdminStatus) {
+            throw new MembershipInvariantError('MEMBERSHIP_CHANGE_FORBIDDEN');
+          }
+        }
       }
 
       const willBeEffectiveOwner = isOwner && persona === 'org_admin' && status === 'active';

@@ -13,6 +13,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      "@agent/shared/lib/governanceApi": fileURLToPath(new URL("../shared/src/lib/governanceApi.ts", import.meta.url)),
+      "@agent/shared/types/governance": fileURLToPath(new URL("../shared/src/types/governance.ts", import.meta.url)),
       "@agent/shared": fileURLToPath(new URL("../shared/src/index.ts", import.meta.url)),
       "virtual:pwa-register": fileURLToPath(new URL("./src/test/pwaRegisterMock.ts", import.meta.url)),
       "react/jsx-dev-runtime": hoistedReactJsxDevRuntime,

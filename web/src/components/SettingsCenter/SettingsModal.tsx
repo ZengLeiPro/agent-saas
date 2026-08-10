@@ -1,18 +1,14 @@
 import { apiUrl, resolveApiAssetUrl } from "../../lib/apiBase";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, Suspense, type ReactNode } from "react";
 import {
-  Brain,
   ChevronLeft,
   Lock,
   Loader2,
   LogOut,
-  Palette,
   Save,
   Settings2,
-  User,
   X,
 } from "lucide-react";
-import { EntityIcons } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -27,32 +23,32 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SettingsPanelHeader, SettingsPanelHeaderStickyProvider } from "@/components/SettingsCenter/SettingsPanelHeader";
-import { AttachmentStorageSection } from "@/components/SettingsCenter/AttachmentStorageSection";
 import { AgentAvatar } from "@/components/AgentAvatar";
+import {
+  ConnectionsSection,
+  FilesStorageSection,
+  MyAgentSection,
+  MyPermissionsSection,
+} from "@/components/PersonalSettings/V2Sections";
+import {
+  SettingsDirtyBoundary,
+  restoreSettingsDraft,
+  useSettingsDirtyEntry,
+  type SettingsDirtyController,
+} from "@/components/PersonalSettings/dirtyRegistry";
 import { AgentDocEditor } from "@/components/AgentProfile/AgentDocEditor";
 import { TrashView } from "@/components/chat/TrashView";
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
 import { TOKEN_KEY } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { normalizeSettingsSection } from "@/lib/urlSync";
 import { fetchAgentProfile, saveUserPreferences, updateAgentProfile, uploadAgentAvatar } from "@agent/shared";
 import type { AgentProfileDetail, BusinessStepDisplayMode, ModelList, SidebarLayoutPref } from "@agent/shared";
-import type { SettingsSectionConfig, SettingsSectionGroup, SettingsSectionId } from "@/types/settings";
+import type { CanonicalSettingsSectionId, SettingsSectionId } from "@/types/settings";
+import { SETTINGS_GROUP_LABELS, SETTINGS_SECTIONS } from "@/components/SettingsCenter/settingsConfig";
 
-export const SETTINGS_SECTIONS: SettingsSectionConfig[] = [
-  { id: "account", label: "账户", description: "账号资料、安全和登录状态。", group: "account", icon: User },
-  { id: "general", label: "通用", description: "界面、语言、声音和基础偏好。", group: "account", icon: Settings2 },
-  { id: "personalization", label: "个性化", description: "侧边栏、会话列表和界面偏好。", group: "account", icon: Palette },
-  { id: "memory", label: "记忆", description: "查看和编辑 Agent 长期记忆（MEMORY.md）。", group: "features", icon: Brain },
-  { id: "files", label: "文件", description: "浏览个人工作区文件和预览内容。", group: "features", icon: EntityIcons.files },
-  { id: "storage", label: "附件存储", description: "查看附件用量并清理未发送文件。", group: "features", icon: EntityIcons.files },
-  { id: "data", label: "回收站", description: "查看已删除会话，必要时进行恢复或彻底清理。", group: "features", icon: EntityIcons.trash },
-];
-
-const GROUP_LABELS: Record<SettingsSectionGroup, string> = {
-  account: "账户",
-  features: "功能",
-};
+export { SETTINGS_SECTIONS } from "@/components/SettingsCenter/settingsConfig";
 
 const SETTINGS_NAV_ITEM_SELECTED =
   "relative bg-brand-accent-soft text-foreground font-semibold " +
@@ -61,12 +57,6 @@ const SETTINGS_NAV_ITEM_SELECTED =
 const SETTINGS_NAV_ITEM_UNSELECTED =
   "text-muted-foreground hover:bg-muted/60 hover:text-foreground";
 const RUN_SHELL_APPROVAL_STORAGE_PREFIX = "agentChat.autoApproveRunShell.";
-
-function canAccess(section: SettingsSectionConfig, isAdmin: boolean, isPlatformAdmin: boolean) {
-  if (section.platformAdminOnly) return isPlatformAdmin;
-  if (section.adminOnly) return isAdmin;
-  return true;
-}
 
 function initials(name?: string) {
   return (name || "U").trim().slice(0, 1).toUpperCase();
@@ -186,10 +176,14 @@ export function GeneralSection() {
   const authorizationModeEnabled = user?.preferences?.authorizationModeEnabled === true;
   const preferredDefaultModel = user?.preferences?.defaultModel;
   const businessStepDisplayMode = user?.preferences?.businessStepDisplayMode ?? "auto";
+  const recoveredDraft = useRef(restoreSettingsDraft<{
+    defaultModel?: string;
+    businessStepDisplayMode?: BusinessStepDisplayMode;
+  }>("chat-model"));
   const [modelList, setModelList] = useState<ModelList | null>(null);
   const [draftAuthorizationMode, setDraftAuthorizationMode] = useState(authorizationModeEnabled);
-  const [draftDefaultModel, setDraftDefaultModel] = useState(preferredDefaultModel ?? "");
-  const [draftBusinessStepDisplayMode, setDraftBusinessStepDisplayMode] = useState<BusinessStepDisplayMode>(businessStepDisplayMode);
+  const [draftDefaultModel, setDraftDefaultModel] = useState(recoveredDraft.current?.defaultModel ?? preferredDefaultModel ?? "");
+  const [draftBusinessStepDisplayMode, setDraftBusinessStepDisplayMode] = useState<BusinessStepDisplayMode>(recoveredDraft.current?.businessStepDisplayMode ?? businessStepDisplayMode);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -203,7 +197,6 @@ export function GeneralSection() {
       .then((data) => {
         if (cancelled) return;
         setModelList(data);
-        setDraftDefaultModel(data.default);
       })
       .catch(() => {
         if (!cancelled) setModelList(null);
@@ -213,10 +206,16 @@ export function GeneralSection() {
 
   useEffect(() => {
     setDraftAuthorizationMode(authorizationModeEnabled);
-    setDraftDefaultModel(modelList?.default ?? "");
-    setDraftBusinessStepDisplayMode(businessStepDisplayMode);
+    if (recoveredDraft.current && modelList) {
+      setDraftDefaultModel(recoveredDraft.current.defaultModel ?? modelList.default);
+      setDraftBusinessStepDisplayMode(recoveredDraft.current.businessStepDisplayMode ?? businessStepDisplayMode);
+      recoveredDraft.current = null;
+    } else if (!recoveredDraft.current) {
+      setDraftDefaultModel(modelList?.default ?? "");
+      setDraftBusinessStepDisplayMode(businessStepDisplayMode);
+    }
     setSaved(false);
-  }, [authorizationModeEnabled, businessStepDisplayMode, modelList?.default]);
+  }, [authorizationModeEnabled, businessStepDisplayMode, modelList]);
 
   const currentDefaultModel = modelList?.default ?? "";
   const hasChanges = draftAuthorizationMode !== authorizationModeEnabled
@@ -253,19 +252,39 @@ export function GeneralSection() {
       });
       setDraftDefaultModel(modelList?.default ?? "");
       window.alert(error instanceof Error ? error.message : "保存失败");
+      throw error;
     } finally {
       setSaving(false);
     }
   }, [authorizationModeEnabled, businessStepDisplayMode, draftAuthorizationMode, draftBusinessStepDisplayMode, draftDefaultModel, modelList?.default, preferredDefaultModel, updatePreferences]);
 
+  const discardDraft = useCallback(() => {
+    setDraftAuthorizationMode(authorizationModeEnabled);
+    setDraftDefaultModel(modelList?.default ?? "");
+    setDraftBusinessStepDisplayMode(businessStepDisplayMode);
+    setSaved(false);
+  }, [authorizationModeEnabled, businessStepDisplayMode, modelList?.default]);
+
+  useSettingsDirtyEntry({
+    id: "chat-model",
+    label: "对话与模型",
+    dirty: hasChanges,
+    save: handleSave,
+    discard: discardDraft,
+    draft: {
+      defaultModel: draftDefaultModel,
+      businessStepDisplayMode: draftBusinessStepDisplayMode,
+    },
+  });
+
   return (
     <PlaceholderSection
-      title="通用"
-      description="管理界面显示、语言、声音与常用交互偏好。"
+      title="对话与模型"
+      description="管理新会话默认模型与对话中的展示偏好。"
       actions={(
         <>
           {saved && <span className="text-sm text-success">已保存</span>}
-          <Button onClick={() => { void handleSave(); }} disabled={saving || !hasChanges}>
+          <Button onClick={() => { void handleSave().catch(() => undefined); }} disabled={saving || !hasChanges}>
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
             保存
           </Button>
@@ -320,23 +339,6 @@ export function GeneralSection() {
               <SelectItem value="expanded">始终展开</SelectItem>
             </SelectContent>
           </Select>
-        </div>
-        <div className="flex items-center justify-between gap-4 border-t pt-4">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-foreground">授权模式</div>
-            <div className="mt-1 text-sm leading-6 text-muted-foreground">
-              开启后所有会话默认自动批准工具授权，输入框不再显示授权开关；需要你回答的问题仍会暂停等待。
-            </div>
-          </div>
-          <Switch
-            checked={draftAuthorizationMode}
-            disabled={saving}
-            onCheckedChange={(checked) => {
-              setDraftAuthorizationMode(checked);
-              setSaved(false);
-            }}
-            aria-label="授权模式"
-          />
         </div>
       </div>
     </PlaceholderSection>
@@ -824,9 +826,17 @@ export interface SettingsModalProps {
   personalAgentEnabled?: boolean;
 }
 
-export function SettingsModal({
+export function SettingsModal(props: SettingsModalProps) {
+  return (
+    <SettingsDirtyBoundary>
+      {(dirtyController) => <SettingsModalInner {...props} dirtyController={dirtyController} />}
+    </SettingsDirtyBoundary>
+  );
+}
+
+function SettingsModalInner({
   open,
-  section,
+  section: sectionInput,
   onSectionChange,
   onClose,
   renderMemory,
@@ -835,21 +845,28 @@ export function SettingsModal({
   sidebarLayout = "double",
   onSidebarLayoutChange,
   personalAgentEnabled = true,
-}: SettingsModalProps) {
-  const { user, isAdmin, isPlatformAdmin, updateAvatar, updatePreferences } = useAuth();
+  dirtyController,
+}: SettingsModalProps & { dirtyController: SettingsDirtyController }) {
+  const section = normalizeSettingsSection(sectionInput);
+  const { user, updateAvatar, updatePreferences } = useAuth();
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
-  const [draftSidebarLayout, setDraftSidebarLayout] = useState<SidebarLayoutPref>(sidebarLayout);
   const showSessionListAvatar = user?.preferences?.showSessionListAvatar === true;
-  const [draftShowSessionListAvatar, setDraftShowSessionListAvatar] = useState(showSessionListAvatar);
   const [personalizationSaving, setPersonalizationSaving] = useState(false);
   const [personalizationSaved, setPersonalizationSaved] = useState(false);
   const [, startSectionTransition] = useTransition();
 
-  const handleSectionChange = useCallback((id: SettingsSectionId) => {
-    startSectionTransition(() => onSectionChange(id));
-  }, [onSectionChange]);
+  const handleSectionChange = useCallback((id: CanonicalSettingsSectionId) => {
+    if (id === section) return;
+    dirtyController.requestNavigation(() => {
+      startSectionTransition(() => onSectionChange(id));
+    });
+  }, [dirtyController, onSectionChange, section]);
+
+  const handleClose = useCallback(() => {
+    dirtyController.requestNavigation(onClose);
+  }, [dirtyController, onClose]);
 
   // 移动端（<md）两级导航：菜单页 ⇄ 内容页。桌面不受影响（max-md 类不生效）。
   const [mobileView, setMobileView] = useState<"menu" | "content">("menu");
@@ -858,67 +875,43 @@ export function SettingsModal({
   }, [open]);
 
   const visibleSections = useMemo(
-    () => SETTINGS_SECTIONS.filter((item) => {
-      if (!canAccess(item, isAdmin, isPlatformAdmin)) return false;
-      if (personalAgentEnabled) return true;
-      return item.id !== "memory";
-    }),
-    [isAdmin, isPlatformAdmin, personalAgentEnabled],
+    () => SETTINGS_SECTIONS.filter((item) => personalAgentEnabled || item.id !== "my-agent"),
+    [personalAgentEnabled],
   );
-
-  useEffect(() => {
-    if (open) {
-      setDraftSidebarLayout(sidebarLayout);
-      setDraftShowSessionListAvatar(showSessionListAvatar);
-      setPersonalizationSaved(false);
-    }
-  }, [open, sidebarLayout, showSessionListAvatar]);
 
   useEffect(() => {
     if (!open) return;
     if (!visibleSections.some(item => item.id === section)) {
-      onSectionChange("account");
+      onSectionChange("account-security");
     }
   }, [open, section, visibleSections, onSectionChange]);
 
   // mount-once-visited：访问过的 section 保留在 DOM 中，避免切换时 panel
   // unmount/mount + 重新拉数据导致的"刷新"闪烁。modal 关闭时整体 unmount，
   // visited 跟着重置。
-  const [visited, setVisited] = useState<Set<SettingsSectionId>>(() => new Set([section]));
+  const [visited, setVisited] = useState<Set<CanonicalSettingsSectionId>>(() => new Set([section]));
   useEffect(() => {
     if (!open) return;
     setVisited(prev => (prev.has(section) ? prev : new Set(prev).add(section)));
   }, [open, section]);
 
-  const personalizationDirty =
-    draftSidebarLayout !== sidebarLayout ||
-    draftShowSessionListAvatar !== showSessionListAvatar;
-
-  const handleSavePersonalization = useCallback(async () => {
+  const handleShowSessionListAvatarChange = useCallback(async (nextValue: boolean) => {
     setPersonalizationSaving(true);
     setPersonalizationSaved(false);
+    updatePreferences({ showSessionListAvatar: nextValue });
     try {
-      if (draftSidebarLayout !== sidebarLayout) {
-        onSidebarLayoutChange?.(draftSidebarLayout);
-      }
-      if (draftShowSessionListAvatar !== showSessionListAvatar) {
-        const next = { showSessionListAvatar: draftShowSessionListAvatar };
-        updatePreferences(next);
-        const saved = await saveUserPreferences(next);
-        if (!saved) {
-          updatePreferences({ showSessionListAvatar });
-          throw new Error("保存失败");
-        }
-        updatePreferences(saved);
-      }
+      const saved = await saveUserPreferences({ showSessionListAvatar: nextValue });
+      if (!saved) throw new Error("保存失败");
+      updatePreferences(saved);
       setPersonalizationSaved(true);
       window.setTimeout(() => setPersonalizationSaved(false), 2000);
     } catch (error) {
+      updatePreferences({ showSessionListAvatar });
       window.alert(error instanceof Error ? error.message : "保存失败");
     } finally {
       setPersonalizationSaving(false);
     }
-  }, [draftSidebarLayout, sidebarLayout, onSidebarLayoutChange, draftShowSessionListAvatar, showSessionListAvatar, updatePreferences]);
+  }, [showSessionListAvatar, updatePreferences]);
 
   const handleAvatarUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -951,7 +944,7 @@ export function SettingsModal({
   if (!open) return null;
 
   const activeConfig = visibleSections.find(item => item.id === section) ?? visibleSections[0] ?? SETTINGS_SECTIONS[0];
-  const grouped = (["account", "features"] as const).map(group => ({
+  const grouped = (["personal", "preferences", "access", "data"] as const).map(group => ({
     group,
     items: visibleSections.filter(item => item.group === group),
   })).filter(group => group.items.length > 0);
@@ -960,44 +953,42 @@ export function SettingsModal({
   // 避免「切换面板→拉数据→渲染→切回→再次重置→再拉数据」式闪烁。
   // visited.has(id) 守门，未访问过的 section 不预先 mount，避免一打开 modal 就
   // 把所有 panel 的数据请求一齐发出。
-  const sectionsToRender: { id: SettingsSectionId; node: ReactNode }[] = [
+  const sectionsToRender: { id: CanonicalSettingsSectionId; node: ReactNode }[] = [
     {
-      id: "account",
-      node: <AccountSection avatarInputRef={avatarInputRef} avatarUploading={avatarUploading} onAvatarUpload={handleAvatarUpload} onChangePassword={() => setShowPasswordDialog(true)} showAgentSettings={personalAgentEnabled} />,
+      id: "account-security",
+      node: <AccountSection avatarInputRef={avatarInputRef} avatarUploading={avatarUploading} onAvatarUpload={handleAvatarUpload} onChangePassword={() => setShowPasswordDialog(true)} showAgentSettings={false} />,
     },
     {
-      id: "general",
-      node: <GeneralSection />,
+      id: "my-agent",
+      node: (
+        <MyAgentSection
+          renderMemory={renderMemory}
+          renderProfile={(openPersona) => <AgentAccountSection onOpenPersona={openPersona} />}
+        />
+      ),
     },
+    { id: "chat-model", node: <GeneralSection /> },
     {
-      id: "personalization",
+      id: "appearance-layout",
       node: (
         <PlaceholderSection
-          title="个性化"
+          title="外观与布局"
           description="配置侧边栏、会话列表和其他界面偏好。"
-          actions={(
-            <>
-              {personalizationSaved && <span className="text-sm text-success">已保存</span>}
-              <Button onClick={() => { void handleSavePersonalization(); }} disabled={personalizationSaving || !personalizationDirty}>
-                {personalizationSaving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                保存
-              </Button>
-            </>
-          )}
+          actions={<span className="text-sm text-muted-foreground">{personalizationSaving ? "保存中…" : personalizationSaved ? "已保存" : "更改即时保存"}</span>}
         >
           <div className="space-y-6">
-            <SidebarLayoutPreference value={draftSidebarLayout} onChange={(next) => { setDraftSidebarLayout(next); setPersonalizationSaved(false); }} />
-            <SessionListAvatarPreference value={draftShowSessionListAvatar} disabled={personalizationSaving} onChange={(next) => { setDraftShowSessionListAvatar(next); setPersonalizationSaved(false); }} />
+            <SidebarLayoutPreference value={sidebarLayout} onChange={(next) => { onSidebarLayoutChange?.(next); setPersonalizationSaved(true); }} />
+            <SessionListAvatarPreference value={showSessionListAvatar} disabled={personalizationSaving} onChange={(next) => { void handleShowSessionListAvatarChange(next); }} />
           </div>
         </PlaceholderSection>
       ),
     },
-    { id: "memory", node: renderMemory?.() ?? null },
-    { id: "files", node: renderFiles?.() ?? null },
-    { id: "storage", node: <AttachmentStorageSection /> },
+    { id: "my-permissions", node: <MyPermissionsSection /> },
+    { id: "connections", node: <ConnectionsSection /> },
+    { id: "files-storage", node: <FilesStorageSection renderFiles={renderFiles} /> },
     {
-      id: "data",
-      node: renderTrash?.() ?? <TrashView onClose={onClose} showHeader={false} />,
+      id: "trash",
+      node: renderTrash?.() ?? <TrashView onClose={handleClose} showHeader={false} />,
     },
   ];
 
@@ -1018,7 +1009,7 @@ export function SettingsModal({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 backdrop-blur-sm md:p-8" role="dialog" aria-modal="true" aria-label="设置" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 backdrop-blur-sm md:p-8" role="dialog" aria-modal="true" aria-label="设置" onClick={handleClose}>
       <div className="flex h-full w-full overflow-hidden bg-background pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-2xl md:h-[min(920px,calc(100vh-96px))] md:w-[min(1184px,calc(100vw-64px))] md:rounded-3xl md:border md:pb-0 md:pt-0" onClick={(event) => event.stopPropagation()}>
         <aside className={cn("flex w-full shrink-0 flex-col bg-muted/20 p-3 md:w-40 md:border-r", mobileView === "content" && "max-md:hidden")}>
           <div className="mb-4 flex items-center gap-2.5 px-1">
@@ -1029,14 +1020,14 @@ export function SettingsModal({
               <div className="truncate text-sm font-semibold">{user?.realName || user?.username || "未登录"}</div>
               <div className="truncate text-xs text-muted-foreground">个人</div>
             </div>
-            <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground md:hidden" onClick={onClose} aria-label="关闭设置">
+            <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground md:hidden" onClick={handleClose} aria-label="关闭设置">
               <X className="size-5" />
             </button>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto pr-1">
             {grouped.map(group => (
               <div key={group.group} className="mb-4">
-                <div className="mb-1 px-2 text-xs font-medium text-muted-foreground">{GROUP_LABELS[group.group]}</div>
+                <div className="mb-1 px-2 text-xs font-medium text-muted-foreground">{SETTINGS_GROUP_LABELS[group.group]}</div>
                 <div className="space-y-1">
                   {group.items.map(item => {
                     const Icon = item.icon;
@@ -1075,11 +1066,11 @@ export function SettingsModal({
               </button>
               <span className="truncate text-sm font-semibold">{activeConfig.label}</span>
             </div>
-            <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onClose} aria-label="关闭设置">
+            <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={handleClose} aria-label="关闭设置">
               <X className="size-5" />
             </button>
           </div>
-          <button type="button" className="absolute right-5 top-5 z-30 rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground max-md:hidden" onClick={onClose} aria-label="关闭设置">
+          <button type="button" className="absolute right-5 top-5 z-30 rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground max-md:hidden" onClick={handleClose} aria-label="关闭设置">
             <X className="size-5" />
           </button>
           <div className="min-h-0 flex-1 overflow-hidden p-4 pb-2 pt-3 md:p-8 md:pb-4 md:pt-5">

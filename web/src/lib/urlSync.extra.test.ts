@@ -22,17 +22,17 @@ import {
 } from "@/lib/urlSync";
 
 describe("normalizeSettingsSection", () => {
-  it("合法 section 原样返回", () => {
-    expect(normalizeSettingsSection("memory")).toBe("memory");
-    expect(normalizeSettingsSection("files")).toBe("files");
-    // 附件存储曾漏配白名单被静默回退到 account
-    expect(normalizeSettingsSection("storage")).toBe("storage");
+  it("V2 section 原样返回，旧 section 映射到 V2 页面", () => {
+    expect(normalizeSettingsSection("my-agent")).toBe("my-agent");
+    expect(normalizeSettingsSection("memory")).toBe("my-agent");
+    expect(normalizeSettingsSection("files")).toBe("files-storage");
+    expect(normalizeSettingsSection("storage")).toBe("files-storage");
   });
-  it("非法 / 空值回退 account", () => {
-    expect(normalizeSettingsSection("cron")).toBe("account");
-    expect(normalizeSettingsSection("nope")).toBe("account");
-    expect(normalizeSettingsSection(null)).toBe("account");
-    expect(normalizeSettingsSection(undefined)).toBe("account");
+  it("非法 / 空值回退 account-security", () => {
+    expect(normalizeSettingsSection("cron")).toBe("account-security");
+    expect(normalizeSettingsSection("nope")).toBe("account-security");
+    expect(normalizeSettingsSection(null)).toBe("account-security");
+    expect(normalizeSettingsSection(undefined)).toBe("account-security");
   });
 });
 
@@ -66,8 +66,8 @@ describe("isSettingsPath", () => {
 
 describe("buildSettingsUrl / buildAdminSettingsUrl", () => {
   it("settings section 编码", () => {
-    expect(buildSettingsUrl("files")).toBe("/settings/files");
-    expect(buildSettingsUrl("storage")).toBe("/settings/storage");
+    expect(buildSettingsUrl("files")).toBe("/settings/files-storage");
+    expect(buildSettingsUrl("storage")).toBe("/settings/files-storage");
   });
   it("admin settings 前缀区分 tenant / platform", () => {
     expect(buildAdminSettingsUrl("tenant", "billing")).toBe("/tenant-admin/settings/billing");
@@ -127,18 +127,21 @@ describe("parseUrl 常规路径分支", () => {
   it("tenant-admin settings modal 路径", () => {
     expect(parseUrl("/tenant-admin/settings/billing")).toMatchObject({
       tab: "tenant-admin",
-      adminSettings: { target: "tenant", section: "billing" },
+      adminSettings: null,
+      tenantAdminSection: "usage",
+      canonicalPath: "/tenant-admin/governance/usage",
     });
-    // 无 section 段回退默认 users
+    // 无 section 段 canonical 到成员叶子
     expect(parseUrl("/tenant-admin/settings")).toMatchObject({
-      adminSettings: { target: "tenant", section: "users" },
+      adminSettings: null,
+      canonicalPath: "/tenant-admin/members/list",
     });
   });
 
   it("settings 根与子 section", () => {
-    expect(parseUrl("/settings")).toMatchObject({ tab: "chat", settingsSection: "account" });
-    expect(parseUrl("/settings/memory")).toMatchObject({ tab: "chat", settingsSection: "memory" });
-    expect(parseUrl("/settings/storage")).toMatchObject({ tab: "chat", settingsSection: "storage" });
+    expect(parseUrl("/settings")).toMatchObject({ tab: "chat", settingsSection: "account-security" });
+    expect(parseUrl("/settings/memory")).toMatchObject({ tab: "chat", settingsSection: "my-agent", canonicalPath: "/settings/my-agent?tab=memory" });
+    expect(parseUrl("/settings/storage")).toMatchObject({ tab: "chat", settingsSection: "files-storage", canonicalPath: "/settings/files-storage" });
     expect(parseUrl("/settings/cron")).toMatchObject({ tab: "cron", canonicalPath: "/cron" });
   });
 
@@ -149,7 +152,7 @@ describe("parseUrl 常规路径分支", () => {
 
   it("cron 走一级页面，files 走 settings modal", () => {
     expect(parseUrl("/cron")).toMatchObject({ tab: "cron", settingsSection: null });
-    expect(parseUrl("/files")).toMatchObject({ tab: "chat", settingsSection: "files" });
+    expect(parseUrl("/files")).toMatchObject({ tab: "chat", settingsSection: "files-storage", canonicalPath: "/settings/files-storage" });
   });
 
   it("profile / trash / templates", () => {
@@ -207,11 +210,11 @@ describe("pushUrl / replaceUrl 写入 history（jsdom）", () => {
   it("pushSettingsUrl / replaceSettingsUrl", () => {
     const push = vi.spyOn(window.history, "pushState");
     pushSettingsUrl("files");
-    expect(push).toHaveBeenCalledWith({}, "", "/settings/files");
+    expect(push).toHaveBeenCalledWith({}, "", "/settings/files-storage");
 
     const replace = vi.spyOn(window.history, "replaceState");
     replaceSettingsUrl("memory");
-    expect(replace).toHaveBeenCalledWith({}, "", "/settings/memory");
+    expect(replace).toHaveBeenCalledWith({}, "", "/settings/my-agent?tab=memory");
   });
 
   // origin 变量仅用于文档说明测试运行在 localhost，无需断言

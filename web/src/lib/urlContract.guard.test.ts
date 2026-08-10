@@ -28,8 +28,9 @@ const URL_PARAM_CONTRACT: Record<string, string[]> = {
   ],
   "components/UsageDashboard/EfficiencyView.tsx": ["effDays"],
   // ── 双受众（平台运维 + 组织管理员共用同一面板） ──
-  "components/AdminShells.tsx": [
-    "auditType", "auditChannel", "auditUser", "auditOrg", "auditFrom", "auditTo", "org",
+  "components/AdminShells.tsx": ["org"],
+  "components/GovernanceAuditPanel.tsx": [
+    "auditType", "auditChannel", "auditUser", "auditOrg", "auditFrom", "auditTo",
   ],
   // ── tenant-admin（客户视图，参数名必须业务可读） ──
   "components/UsageDashboard/index.tsx": [

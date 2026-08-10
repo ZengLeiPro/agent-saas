@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import { PanelToggleIcon } from "@/components/icons/PanelToggleIcon";
+import { getGovernanceUserMenuEntries } from "@/lib/governanceUserMenu";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { RenameSessionDialog } from "@/components/chat/RenameSessionDialog";
 import { DeleteGroupDialog } from "@/components/chat/DeleteGroupDialog";
@@ -645,7 +646,6 @@ function SidebarUserMenuFooter({
   isPlatformAdmin,
   onOpenSettings,
   onNavigateAdminTab,
-  onOpenAdminSettings,
   onOpenBilling,
   billingSummary,
   billingAllowance,
@@ -798,37 +798,25 @@ function SidebarUserMenuFooter({
             )}
 
             <div className={USER_MENU_SECTION}>
-              <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenSettings?.("account"); }}>
-                <UserCog className="size-5" />
-                个人设置
-              </button>
+              {getGovernanceUserMenuEntries({ isAdmin, isPlatformAdmin }).map((entry) => {
+                const Icon = entry.id === "settings" ? UserCog : entry.id === "organization" ? EntityIcons.org : EntityIcons.admin;
+                return (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className={USER_MENU_ITEM}
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      if (entry.id === "settings") onOpenSettings?.("account");
+                      else onNavigateAdminTab?.(entry.id === "organization" ? "tenant-admin" : "platform-admin");
+                    }}
+                  >
+                    <Icon className="size-5" />
+                    {entry.label}
+                  </button>
+                );
+              })}
             </div>
-
-            {isAdmin && (
-              <div className={USER_MENU_SECTION}>
-                <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onNavigateAdminTab?.("tenant-admin"); }}>
-                  <EntityIcons.analytics className="size-5" />
-                  组织分析
-                </button>
-                <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenAdminSettings?.("tenant"); }}>
-                  <Settings2 className="size-5" />
-                  组织管理
-                </button>
-              </div>
-            )}
-
-            {isPlatformAdmin && (
-              <div className={USER_MENU_SECTION}>
-                <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onNavigateAdminTab?.("platform-admin"); }}>
-                  <EntityIcons.analytics className="size-5" />
-                  平台分析
-                </button>
-                <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenAdminSettings?.("platform"); }}>
-                  <Settings2 className="size-5" />
-                  平台管理
-                </button>
-              </div>
-            )}
 
             <div className={USER_MENU_SECTION}>
               <button type="button" className={cn(USER_MENU_ITEM, "text-destructive hover:bg-destructive/10")} onClick={() => { setShowUserMenu(false); setShowLogoutDialog(true); }}>

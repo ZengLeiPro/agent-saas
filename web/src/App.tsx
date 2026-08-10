@@ -66,7 +66,7 @@ function App() {
   );
 
   const {
-    messages, input, loading, sessionId, sessions, activeTab, platformAdminSection, platformAdminEntityId, tenantAdminSection, settingsOpen, settingsSection,
+    messages, input, loading, sessionId, sessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, settingsOpen, settingsSection,
     uploadedFiles, uploading, uploadError, dismissUploadError, isDragging, isLoadingSessions, isLoadingMessages,
     hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
     deleteSessionId, deleteSessionCount, lastMessageRef, scrollContainerRef, isNearBottomRef,
@@ -195,7 +195,7 @@ function App() {
 
   const layoutProps: LayoutProps = {
     sidebarSessions, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, confirmDeleteSessions, renameSession, autoTitleSession, compactSession,
-    isLoadingSessions, activeTab, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
+    isLoadingSessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
     messages, loading, isLoadingMessages, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,

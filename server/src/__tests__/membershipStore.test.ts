@@ -122,13 +122,40 @@ describe('Membership/Owner 治理事实模型', () => {
     await expect(store.updateMembershipIdentity('acme', 'user-owner', {
       isOwner: false,
       expectedVersion: 3,
-      updatedBy: 'platform-1',
+      updatedBy: 'user-owner',
+      authorization: { kind: 'tenant_member', actorTenantId: 'acme' },
     })).rejects.toMatchObject({
       code: 'LAST_EFFECTIVE_OWNER_PROTECTED',
     });
 
     expect(queries.some(sql => sql.includes('pg_advisory_xact_lock'))).toBe(true);
     expect(queries.some(sql => sql.includes('FOR UPDATE'))).toBe(true);
+    expect(queries).toContain('ROLLBACK');
+    expect(queries.some(sql => sql.includes('UPDATE test_tenant_memberships'))).toBe(false);
+  });
+
+  it('事务内拒绝普通 org_admin 修改同级管理员状态', async () => {
+    const queries: string[] = [];
+    const query = async (sql: string, params?: unknown[]) => {
+      queries.push(sql);
+      if (sql.includes('SELECT * FROM test_tenant_memberships')) {
+        if (params?.[1] === 'admin-1') {
+          return { rows: [membershipRow({ user_id: 'admin-1', is_owner: false })], rowCount: 1 };
+        }
+        return { rows: [membershipRow({ user_id: 'admin-2', is_owner: false })], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    };
+    const pool = { query, connect: async () => ({ query, release: () => undefined }) };
+    const store = new PgMembershipStore({ pool: pool as never, tablePrefix: 'test' });
+
+    await expect(store.updateMembershipIdentity('acme', 'admin-2', {
+      status: 'disabled',
+      expectedVersion: 3,
+      updatedBy: 'admin-1',
+      authorization: { kind: 'tenant_member', actorTenantId: 'acme' },
+    })).rejects.toMatchObject({ code: 'MEMBERSHIP_CHANGE_FORBIDDEN' });
+
     expect(queries).toContain('ROLLBACK');
     expect(queries.some(sql => sql.includes('UPDATE test_tenant_memberships'))).toBe(false);
   });
@@ -188,7 +215,8 @@ describe('Membership/Owner 治理事实模型', () => {
     const updated = await store.updateMembershipIdentity('acme', 'user-owner', {
       isOwner: false,
       expectedVersion: 3,
-      updatedBy: 'platform-1',
+      updatedBy: 'user-owner',
+      authorization: { kind: 'tenant_member', actorTenantId: 'acme' },
     });
     expect(updated).toMatchObject({ isOwner: false, version: 4, source: 'governance' });
   });

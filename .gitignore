@@ -34,8 +34,9 @@ dingtalk-sessions.json
 # 防止 git add -A 误提交进生产源码目录。命名约定：__test_*.md
 server/src/agent/descriptions/__test_*.md
 
-# Logs
+# Logs and temporary outputs
 logs/
+/tmp/
 *.log
 npm-debug.log*
 

@@ -1336,6 +1336,14 @@ jobs:
               try { console.log(Number(JSON.parse(process.argv[1]).activeUploads ?? 0)); }
               catch { console.log(-1); }
             ' "$TARGET_DRAIN_BODY")
+            if [ "$TARGET_ACTIVE_UPLOADS" -eq -1 ]; then
+              TARGET_DRAIN_SNAPSHOT=$(cat "/run/${SERVICE}-${OTHER}.draining" 2>/dev/null || true)
+              TARGET_ACTIVE_UPLOADS=$(node -e '
+                try { console.log(Number(JSON.parse(process.argv[1]).activeUploads ?? -1)); }
+                catch { console.log(-1); }
+              ' "$TARGET_DRAIN_SNAPSHOT")
+              log "rollback drain endpoint unavailable; marker snapshot reports activeUploads=$TARGET_ACTIVE_UPLOADS"
+            fi
             if [ "$TARGET_ACTIVE_UPLOADS" -ne 0 ]; then
               log "rollback refused: target $OTHER is draining with activeUploads=$TARGET_ACTIVE_UPLOADS; wait for upload completion"
               exit 1
@@ -1351,6 +1359,7 @@ jobs:
           fi
           log "slow path: color/$OTHER -> $PREV, start $SERVICE@$OTHER"
           ln -sfn "$PREV" "$ROOT/color/$OTHER"
+          rm -f "/run/${SERVICE}-${OTHER}.pid" "/run/${SERVICE}-${OTHER}.draining"
           systemctl start "$SERVICE@$OTHER"
           for _ in $(seq 1 180); do
             if curl -fsS -m 5 "http://127.0.0.1:$OTHER_PORT/api/healthz/ready" >/dev/null 2>&1; then

@@ -103,6 +103,8 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(readinessFailureBlock).not.toContain('systemctl stop');
     expect(workflow).toContain('idle drain endpoint unavailable; marker snapshot reports activeUploads=');
     expect(workflow).toContain('rm -f "/run/${SERVICE_NAME}-${IDLE}.pid" "/run/${SERVICE_NAME}-${IDLE}.draining"');
+    expect(workflow).toContain('rollback drain endpoint unavailable; marker snapshot reports activeUploads=');
+    expect(workflow).toContain('rm -f "/run/${SERVICE}-${OTHER}.pid" "/run/${SERVICE}-${OTHER}.draining"');
     expect(serverEntry).toContain('writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced })');
   });
 });

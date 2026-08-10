@@ -844,19 +844,20 @@ function migrations(prefix: string): GovernanceMigration[] {
           AFTER INSERT OR UPDATE OR DELETE ON ${preferences}
           FOR EACH ROW EXECUTE FUNCTION ${prefix}_enqueue_preference_projection()`,
         `CREATE OR REPLACE FUNCTION ${prefix}_enqueue_tenant_settings_projection() RETURNS trigger AS $$
-        DECLARE item RECORD; source_name TEXT; source_key TEXT; tenant_scope TEXT; item_version BIGINT;
+        DECLARE item RECORD; item_json JSONB; source_name TEXT; source_key TEXT; tenant_scope TEXT; item_version BIGINT;
         BEGIN
           item := CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
-          tenant_scope := item.tenant_id;
-          item_version := CASE WHEN TG_OP='DELETE' THEN item.version + 1 ELSE item.version END;
+          item_json := to_jsonb(item);
+          tenant_scope := item_json->>'tenant_id';
+          item_version := (item_json->>'version')::BIGINT + CASE WHEN TG_OP='DELETE' THEN 1 ELSE 0 END;
           source_name := CASE
             WHEN TG_TABLE_NAME='${entitlementSets}' THEN 'entitlement'
             WHEN TG_TABLE_NAME='${entitlementScopes}' THEN 'scope'
             ELSE 'policy' END;
           source_key := CASE
             WHEN source_name='entitlement' THEN 'entitlement:' || item_version
-            WHEN source_name='scope' THEN 'scope:' || item.resource_type || ':' || item_version
-            ELSE 'policy:' || item.policy_key || ':' || item_version END;
+            WHEN source_name='scope' THEN 'scope:' || (item_json->>'resource_type') || ':' || item_version
+            ELSE 'policy:' || (item_json->>'policy_key') || ':' || item_version END;
           INSERT INTO ${projectionOutbox} (
             outbox_id,tenant_id,projector,idempotency_key,payload_json,status,
             attempt,max_attempts,lease_fence,next_attempt_at,created_at,updated_at

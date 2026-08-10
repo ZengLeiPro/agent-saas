@@ -35,6 +35,17 @@ export interface RuntimeGovernanceStoreDeps {
   skillConfigStore?: SkillConfigStore;
 }
 
+const PERSONAL_SKILL_RESOURCE_ID_PATTERN = /^personal_[a-f0-9]{32}$/;
+
+export function resolveLegacySkillIdForPreferenceProjection(
+  resourceId: string,
+  definition?: Record<string, unknown>,
+): string | undefined {
+  const legacySkillId = definition?.legacySkillId;
+  if (typeof legacySkillId === 'string' && legacySkillId.length > 0) return legacySkillId;
+  return PERSONAL_SKILL_RESOURCE_ID_PATTERN.test(resourceId) ? undefined : resourceId;
+}
+
 /** Initializes durable governance stores in the same fail-closed order as runtime bootstrap. */
 export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceStoreDeps) {
   const { pgEventStore, tablePrefix, config, userStore, tenantStore, orgAgentStore, skillConfigStore } = deps;
@@ -338,9 +349,11 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
             const version = resource?.currentVersionId
               ? await skillGovernanceStore?.getVersion(resource.currentVersionId)
               : null;
-            selectedSkills.push(typeof version?.definition.legacySkillId === 'string'
-              ? version.definition.legacySkillId
-              : item.resourceId);
+            const legacySkillId = resolveLegacySkillIdForPreferenceProjection(
+              item.resourceId,
+              version?.definition,
+            );
+            if (legacySkillId) selectedSkills.push(legacySkillId);
           }
           await skillConfigStore?.setUserSelectedSkills(user.username, selectedSkills);
         },

@@ -376,12 +376,13 @@ export function DesktopLayout(props: LayoutProps) {
             ? { flexBasis: `calc(${(1 - splitRatio) * 100}% - 5px)`, flexShrink: 0, flexGrow: 0 }
             : { flex: 1 }}
         >
-        {/* 具体工作流回放使用自己的标题栏，不再保留能力中心分类标签。 */}
-        {!capabilityReplayActive && <header
+        {/* Header 内含任务中心的 portal 宿主，只隐藏不卸载，避免切页时与 portal 清理竞争。 */}
+        <header
           className={cn(
             "flex shrink-0 items-center gap-3",
             activeTab === "capabilities" ? "h-14 px-6" : "h-12 px-4",
             contentPanelFloating ? "bg-card" : "bg-background",
+            capabilityReplayActive && "hidden",
           )}
           onClick={(e) => {
             if ((e.target as HTMLElement).closest("button, a, input, textarea, select, [role=button]")) return;
@@ -401,9 +402,11 @@ export function DesktopLayout(props: LayoutProps) {
                 <PanelToggleIcon className="size-5" />
               </Button>
             )}
-            {activeTab === "cron" ? (
-              <div ref={setCronHeaderNavigationTarget} className="min-w-0" />
-            ) : activeTab === "capabilities" ? (
+            <div
+              ref={setCronHeaderNavigationTarget}
+              className={cn("min-w-0", activeTab !== "cron" && "hidden")}
+            />
+            {activeTab === "capabilities" ? (
               <Tabs value={activeCapabilityTab} onValueChange={handleCapabilityTabChange} className="min-w-0">
                 <CapabilityTabsList
                   activeValue={activeCapabilityTab}
@@ -411,7 +414,8 @@ export function DesktopLayout(props: LayoutProps) {
                   className="w-[30rem] max-w-[min(30rem,calc(100vw-24rem))]"
                 />
               </Tabs>
-            ) : activeTab !== "tenants" &&
+            ) : activeTab !== "cron" &&
+              activeTab !== "tenants" &&
               activeTab !== "tenant-admin" &&
               activeTab !== "platform-admin" ? (
               <div className="min-w-0 flex-1 truncate text-base font-semibold">
@@ -433,12 +437,13 @@ export function DesktopLayout(props: LayoutProps) {
               className="min-w-0 flex-1"
             />
           )}
-          {activeTab === "cron" && (
-            <div
-              ref={setCronHeaderActionsTarget}
-              className="ml-auto flex shrink-0 items-center gap-2"
-            />
-          )}
+          <div
+            ref={setCronHeaderActionsTarget}
+            className={cn(
+              "ml-auto shrink-0 items-center gap-2",
+              activeTab === "cron" ? "flex" : "hidden",
+            )}
+          />
           {activeTab === "chat" && (
             <div className="ml-auto flex shrink-0 items-center gap-2">
               {modelList?.showContextTokens !== false && (
@@ -489,7 +494,7 @@ export function DesktopLayout(props: LayoutProps) {
               </Button>
             </div>
           )}
-        </header>}
+        </header>
 
         {!isOnline && (
           <div className="shrink-0 bg-warning px-4 py-1.5 text-center text-xs font-medium text-foreground">

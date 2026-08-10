@@ -60,14 +60,13 @@ describe("个人设置 dirty registry", () => {
     expect(onNavigate).toHaveBeenCalledTimes(1);
   });
 
-  it("非 Secret 草稿可恢复，Secret 永不持久化", () => {
-    persistSettingsDraft("normal", { token: "not-a-secret-field" });
+  it("非 Secret 草稿可恢复，敏感字段与 Secret 草稿永不持久化", () => {
+    persistSettingsDraft("normal", { displayName: "可恢复", token: "never-store", nested: { accessToken: "never-store", note: "保留" } });
     persistSettingsDraft("secret", { password: "never-store" }, { secret: true });
 
-    expect(restoreSettingsDraft("normal")).toEqual({ token: "not-a-secret-field" });
+    expect(restoreSettingsDraft("normal")).toEqual({ displayName: "可恢复", nested: { note: "保留" } });
     expect(restoreSettingsDraft("secret", { secret: true })).toBeNull();
     expect([...Array(sessionStorage.length)].map((_, index) => sessionStorage.key(index)).join("\n"))
       .not.toContain("secret");
   });
 });
-

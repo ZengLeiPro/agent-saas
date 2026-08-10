@@ -47,10 +47,23 @@ function draftKey(id: string): string {
   return `${DRAFT_PREFIX}${id}`;
 }
 
+const SENSITIVE_DRAFT_KEYS = new Set([
+  "secret", "secretref", "clientsecret", "password", "apikey", "token", "accesstoken",
+  "refreshtoken", "idtoken", "authtoken", "bearertoken", "verifier",
+]);
+
+function scrubSensitiveDraftFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(scrubSensitiveDraftFields);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([key]) => !SENSITIVE_DRAFT_KEYS.has(key.replace(/[_-]/g, "").toLowerCase()))
+    .map(([key, item]) => [key, scrubSensitiveDraftFields(item)]));
+}
+
 export function persistSettingsDraft(id: string, draft: unknown, options: { secret?: boolean } = {}): void {
   if (options.secret || typeof window === "undefined") return;
   try {
-    window.sessionStorage.setItem(draftKey(id), JSON.stringify(draft));
+    window.sessionStorage.setItem(draftKey(id), JSON.stringify(scrubSensitiveDraftFields(draft)));
   } catch {
     // Draft recovery is best effort and must never block settings editing.
   }

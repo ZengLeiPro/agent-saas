@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { parseIpv4Cidr } from './cidr.js';
 import {
   DEFAULT_CODING_HAND_NETWORK_POLICY,
   parseNetworkPolicyFromEnv,
@@ -100,7 +101,16 @@ export interface AcsRuntimeCapabilities {
   pythonBasePackages: boolean;
 }
 
-export type AcsSnatMode = 'disabled' | 'probe-only' | 'per-sandbox';
+/**
+ * - `per-sandbox`：每个 Sandbox pod 一条 `<podIp>/32` SNAT 条目（2026-08-10 前的唯一模式）。
+ * - `shared-cidr`：整个 pod 网段共用一条条目（2026-08-10 新增，配套 per-session Sandbox）。
+ *   pod 数与 SNAT 条目彻底解耦，且新 pod 不再需要建条目 → 省掉每次 8s 的传播等待。
+ *   核查依据：per-pod 无任何隔离语义（所有条目指向同一 SnatIp），网络策略走
+ *   TrafficPolicy CRD 与 SNAT 正交；生产 pod 7 天实测全部落在同一 /24，
+ *   而 ECS 在另一 /24 且各自持公网 IP 不经 SNAT。详见
+ *   `assets/20260810/acs-a/03-SNAT网段共享可行性核查.md`。
+ */
+export type AcsSnatMode = 'disabled' | 'probe-only' | 'per-sandbox' | 'shared-cidr';
 
 export interface AcsSnatConfig {
   mode: AcsSnatMode;
@@ -109,6 +119,11 @@ export interface AcsSnatConfig {
   snatTableId?: string;
   snatIp?: string;
   entryNamePrefix: string;
+  /**
+   * `shared-cidr` 模式下托管的 pod 网段（如 `172.16.179.0/24`）。
+   * 必须只覆盖 ACS pod，不能把 ECS 等自带公网 IP 的资源圈进来。
+   */
+  sharedCidr?: string;
   maxManagedEntries: number;
   requestTimeoutMs: number;
   stabilizeAfterCreateMs: number;
@@ -202,7 +217,7 @@ function readRuntimeCapabilities(): AcsRuntimeCapabilities {
 
 function readSnatMode(): AcsSnatMode {
   const raw = process.env.ACS_SNAT_MODE?.trim() || 'disabled';
-  if (raw === 'disabled' || raw === 'probe-only' || raw === 'per-sandbox') return raw;
+  if (raw === 'disabled' || raw === 'probe-only' || raw === 'per-sandbox' || raw === 'shared-cidr') return raw;
   throw new Error(`ACS_SNAT_MODE 非法: ${raw}`);
 }
 
@@ -375,8 +390,13 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
   const snatRegionId = process.env.ACS_SNAT_REGION_ID?.trim() || undefined;
   const snatTableId = process.env.ACS_SNAT_TABLE_ID?.trim() || undefined;
   const snatIp = process.env.ACS_SNAT_IP?.trim() || undefined;
+  const snatSharedCidr = process.env.ACS_SNAT_SHARED_CIDR?.trim() || undefined;
   if (snatMode !== 'disabled' && (!snatRegionId || !snatTableId || !snatIp)) {
     throw new Error('ACS_SNAT_MODE 启用时必须配置 ACS_SNAT_REGION_ID / ACS_SNAT_TABLE_ID / ACS_SNAT_IP');
+  }
+  if (snatMode === 'shared-cidr') {
+    if (!snatSharedCidr) throw new Error('ACS_SNAT_MODE=shared-cidr 时必须配置 ACS_SNAT_SHARED_CIDR');
+    if (!parseIpv4Cidr(snatSharedCidr)) throw new Error(`ACS_SNAT_SHARED_CIDR 非法: ${snatSharedCidr}`);
   }
   const base: AcsOrchestratorConfig = {
     port: readIntEnv('ACS_ORCH_PORT', 3300, { min: 1, max: 65_535 }),
@@ -430,8 +450,17 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     // 宽限默认 5min：正常 pause 收敛 <2min（生产实测），5min 足以避开瞬态；
     // 且必须小于发布门禁的等待窗口（acs-sandbox.yml 5.5 段 8min），否则门禁等不到自愈。
     sandboxBrokenRecycleGraceMs: readIntEnv('ACS_SANDBOX_BROKEN_RECYCLE_GRACE_MS', 5 * 60_000, { min: 0, max: 24 * 60 * 60_000 }),
-    maxRunningSandboxes: readIntEnv('ACS_SANDBOX_MAX_RUNNING', 8, { min: 0, max: 1_000 }),
-    warnRunningSandboxes: readIntEnv('ACS_SANDBOX_WARN_RUNNING', 6, { min: 0, max: 1_000 }),
+    // 2026-08-10 曾磊拍板：不设业务使用配额，只保留高位全局安全阀 + 钉钉告警，
+    // 用途是挡住 bug 风暴（如 07-28 一个 agent fan-out 9 个孙 agent 那类），
+    // 而不是限制正常使用。旧默认 8/6 是 per-workspace 时代的值，per-session 下
+    // 一个用户开 9 个会话就会撞顶。
+    //
+    // ⚠️ 前置条件：该值必须与 SNAT 能力匹配。`per-sandbox` 模式下每 pod 一条
+    // SNAT 条目、超限直接 throw 且无降级，故高位安全阀只在 `shared-cidr`
+    // （条目恒为 1~2 条）下才真正可用。maxRunning 超限走 LRU pause 腾位、
+    // 有优雅降级，是应该先撞上的那道墙。
+    maxRunningSandboxes: readIntEnv('ACS_SANDBOX_MAX_RUNNING', 200, { min: 0, max: 1_000 }),
+    warnRunningSandboxes: readIntEnv('ACS_SANDBOX_WARN_RUNNING', 150, { min: 0, max: 1_000 }),
     drainDeadlineMs: readIntEnv('ACS_ORCH_DRAIN_DEADLINE_MS', 120_000, { min: 1_000, max: 24 * 60 * 60_000 }),
     networkPolicy: parseNetworkPolicyFromEnv(process.env, 'ACS_NETWORK_POLICY', DEFAULT_CODING_HAND_NETWORK_POLICY),
     snat: {
@@ -440,6 +469,7 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
       ...(snatRegionId ? { regionId: snatRegionId } : {}),
       ...(snatTableId ? { snatTableId } : {}),
       ...(snatIp ? { snatIp } : {}),
+      ...(snatSharedCidr ? { sharedCidr: parseIpv4Cidr(snatSharedCidr)!.canonical } : {}),
       entryNamePrefix: process.env.ACS_SNAT_ENTRY_NAME_PREFIX?.trim() || 'agent-saas-acs',
       maxManagedEntries: readIntEnv('ACS_SNAT_MAX_MANAGED_ENTRIES', 12, { min: 1, max: 200 }),
       requestTimeoutMs: readIntEnv('ACS_SNAT_REQUEST_TIMEOUT_MS', 20_000, { min: 1_000, max: 120_000 }),

@@ -2084,6 +2084,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           : undefined;
       return user?.tenantId;
     },
+    // 预 provision（2026-08-10，A 方案批次 2）：首跑建好 session record 后异步拉起
+    // Sandbox。与「打开会话页」共用同一个 service，因此复用其 per-scope 节流，
+    // 两条路径同时触发也只会真正发一次。
+    sandboxWarmup: (sessionId: string) => sandboxWarmupService.fireForSession(sessionId),
     defaultMaxTurns: config.agent.maxTurns,
     resolveUserMaxTurns: ({ userId, username }: { userId?: string; username?: string }) => {
       const user = userId

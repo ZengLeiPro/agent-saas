@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 
+import { ipv4InCidr } from './cidr.js';
 import type { AcsOrchestratorConfig } from './config.js';
 import type { Kubectl } from './kubectl.js';
 import type { KubeApi } from './kubeApi.js';
@@ -64,17 +65,25 @@ export class SnatManager {
     return this.config.snat.mode !== 'disabled';
   }
 
+  private isSharedCidrMode(): boolean {
+    return this.config.snat.mode === 'shared-cidr';
+  }
+
   shouldAttachToSandbox(): boolean {
-    return this.config.snat.mode === 'per-sandbox' && this.config.networkPolicy.mode === 'public-egress';
+    return (this.config.snat.mode === 'per-sandbox' || this.isSharedCidrMode())
+      && this.config.networkPolicy.mode === 'public-egress';
   }
 
   shouldAttachToProbe(): boolean {
-    return (this.config.snat.mode === 'probe-only' || this.config.snat.mode === 'per-sandbox')
+    return (this.config.snat.mode === 'probe-only'
+      || this.config.snat.mode === 'per-sandbox'
+      || this.isSharedCidrMode())
       && this.config.networkPolicy.mode === 'public-egress';
   }
 
   async ensureForSandbox(ref: SandboxRef): Promise<SnatEntry | null> {
     if (!this.shouldAttachToSandbox()) return null;
+    if (this.isSharedCidrMode()) return await this.ensureSharedCidrEntry();
     return await this.ensureForRef(ref);
   }
 
@@ -89,13 +98,76 @@ export class SnatManager {
     while (Date.now() < deadline) {
       try {
         const podIp = await this.findPodIp(ref);
-        if (podIp) return await this.ensureForPodIp(ref, podIp);
+        if (podIp) {
+          if (!this.isSharedCidrMode()) return await this.ensureForPodIp(ref, podIp);
+          // shared-cidr 安全兜底：网段共享建立在「pod IP 必落在托管网段内」这一
+          // 观测之上（生产 7 天实测全部同 /24），但 ACS 并未对分配范围作出保证。
+          // 一旦某个 pod 落到网段外，共享条目覆盖不到它 → **静默断网**，且极难排查。
+          // 故此处逐 pod 校验，越界即回退 per-pod 建条目并告警，绝不放任。
+          if (ipv4InCidr(podIp, this.config.snat.sharedCidr)) {
+            return await this.ensureSharedCidrEntry();
+          }
+          this.logger.error(
+            `snat_pod_ip_outside_shared_cidr sandbox=${ref.name} podIp=${podIp} `
+            + `sharedCidr=${this.config.snat.sharedCidr} action=fallback_per_pod`,
+          );
+          return await this.ensureForPodIp(ref, podIp);
+        }
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err);
       }
       await sleep(pollIntervalMs);
     }
     throw new Error(`未找到 Sandbox Pod IP: ${ref.name}${lastError ? ` lastError=${lastError}` : ''}`);
+  }
+
+  /** 托管网段的固定条目名——与 per-pod 条目共用前缀，故同样被 `managed` 识别。 */
+  sharedCidrEntryName(): string {
+    const prefix = safeSnatNamePrefix(this.config.snat.entryNamePrefix);
+    return `${prefix}-shared-cidr`.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 128);
+  }
+
+  /**
+   * 确保网段条目存在。幂等：已存在直接返回，不重复创建。
+   * 与 per-pod 的关键差异——**它与 pod 生命周期无关**，因此新 pod 不再需要
+   * 建条目，也就不再有 8 秒传播等待。
+   */
+  private async ensureSharedCidrEntry(): Promise<SnatEntry> {
+    this.assertRequiredConfig();
+    const sourceCidr = this.config.snat.sharedCidr;
+    if (!sourceCidr) throw new Error('shared-cidr 模式缺少 sharedCidr 配置');
+    const snatIp = this.config.snat.snatIp!;
+    const existing = (await this.listEntries(sourceCidr))
+      .find((entry) => entry.sourceCidr === sourceCidr && entry.snatIp.split(',').includes(snatIp));
+    if (existing) return existing;
+
+    const name = this.sharedCidrEntryName();
+    const result = await this.runAliyun([
+      'vpc', 'CreateSnatEntry',
+      '--RegionId', this.config.snat.regionId!,
+      '--SnatTableId', this.config.snat.snatTableId!,
+      '--SourceCIDR', sourceCidr,
+      '--SnatIp', snatIp,
+      '--SnatEntryName', name,
+      '--ClientToken', createSnatClientToken(),
+    ]);
+    if (result.exitCode !== 0) throw new Error(`CreateSnatEntry(shared) 失败: ${result.stderr || result.stdout}`);
+    this.logger.warn(`snat_shared_cidr_created sourceCidr=${sourceCidr} snatIp=${snatIp}`);
+    if (this.config.snat.stabilizeAfterCreateMs > 0) {
+      const stabilizeMs = this.config.snat.stabilizeAfterCreateMs;
+      void sleep(stabilizeMs).then(() => {
+        this.logger.info(`snat_stabilized shared=true ms=${stabilizeMs}`);
+      });
+    }
+    const created = (await this.listEntries(sourceCidr))
+      .find((entry) => entry.sourceCidr === sourceCidr && entry.name === name);
+    return created ?? {
+      id: parseJsonObject(result.stdout)?.SnatEntryId ? String(parseJsonObject(result.stdout)?.SnatEntryId) : '',
+      name,
+      sourceCidr,
+      snatIp,
+      managed: true,
+    };
   }
 
   async ensureForProbe(ref: SandboxRef): Promise<SnatEntry | null> {
@@ -105,6 +177,9 @@ export class SnatManager {
 
   async deleteForSandboxName(sandboxName: string): Promise<string[]> {
     if (!this.isEnabled() || !this.hasRequiredConfig()) return [];
+    // shared-cidr 下条目为全体 pod 共用，删单个 Sandbox 绝不能连带删除它，
+    // 否则会一次性掐断所有 pod 的公网出口。仍按名字清理该 Sandbox 可能遗留的
+    // per-pod 条目（模式切换前建的、或越界回退产生的）。
     const name = this.entryNameForSandboxName(sandboxName);
     const entries = (await this.listEntries()).filter((entry) => entry.managed && entry.name === name);
     const deleted: string[] = [];
@@ -127,9 +202,16 @@ export class SnatManager {
     const managed = entries.filter((entry) => entry.managed);
     const unexpected = entries.filter((entry) => !entry.managed);
     const retainedEntryNames = options.retainedEntryNames ?? new Set<string>();
+    // ⚠️ 共享网段条目的 sourceCidr 是网段而非某个 podIp/32，永远不会出现在
+    // activeSourceCidrs（那是活跃 pod IP 集合）里，若不显式豁免就会被当孤儿删掉——
+    // 后果是全体 pod 同时断网。这里按「网段 + 固定条目名」双重豁免。
+    const sharedCidr = this.isSharedCidrMode() ? this.config.snat.sharedCidr : undefined;
+    const sharedEntryName = this.isSharedCidrMode() ? this.sharedCidrEntryName() : undefined;
     const orphans = managed.filter((entry) => (
       !activeSourceCidrs.has(entry.sourceCidr)
       && !retainedEntryNames.has(entry.name)
+      && !(sharedCidr && entry.sourceCidr === sharedCidr)
+      && !(sharedEntryName && entry.name === sharedEntryName)
     ));
     const deleted: string[] = [];
     for (const entry of orphans) {

@@ -359,6 +359,12 @@ export interface RawRuntimeRunDispatchConfig {
    * auto-attach policy. Return `undefined` when the user has no tenant assignment.
    */
   resolveUserTenantId?: (identity: { userId?: string; username?: string }) => string | undefined;
+  /**
+   * 预 provision 钩子（2026-08-10）：首跑创建 session record 后异步拉起 Sandbox，
+   * 让 pod 冷启动与模型首个 token 重叠。fire-and-forget，实现方自带节流与失败静默。
+   * 未配置时行为与改造前一致（首个工具调用时才拉起）。
+   */
+  sandboxWarmup?: (sessionId: string) => void;
   userOverrides?: UserOverrides;
   /** Raw runtime server-local host-path guard uses dispatch.sandbox denyRead templates. */
   dispatch?: Pick<DispatchConfig, 'sandbox'>;
@@ -1795,6 +1801,15 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       mountSubPath: workspaceMountSubPath,
       topLevelSessionId: sessionId,
     });
+    // 预 provision（2026-08-10，A 方案批次 2）：session record 落库后立即异步拉起
+    // Sandbox，让 pod 冷启动与模型首个 token 的思考时间重叠。
+    //
+    // 为什么不能复用「打开会话页」那条既有预热路径：那条要求 sessionCatalog 里已有
+    // record，全新会话必然被 skip（sandboxWarmup 明确「record 不存在时跳过，绝不
+    // 自行推导身份映射」）。而 per-session Sandbox 下**每个新会话组都是一次冷启动**，
+    // 实测新 pod 的 WaitForWorkspaceReady 7 次全部打满 30s——正是要消除的首屏等待。
+    // fire-and-forget：内部自带 per-scope 节流与失败静默，不阻塞、不影响本次 run。
+    config.sandboxWarmup?.(sessionId);
     await hooks?.onSessionStart?.(sessionId, transcriptPath);
     yield { type: 'session_init', sessionId };
 
@@ -1855,6 +1870,10 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       runId,
       workspaceId: sessionRecord.workspaceId ?? sessionId,
       workspaceMountSubPath,
+      // 必须与上方 deriveSandboxScopeId 同源：hand recipe 里的 scope 在工具执行时
+      // 优先于 RunContext（toolRuntime.ts 命中 hand 后用 recipe 覆盖），漏传会让
+      // per-session 静默退化回 workspace 级共享。
+      topLevelSessionId: sessionId,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
@@ -2440,6 +2459,8 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       runId: resumeRunId,
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
       workspaceMountSubPath,
+      // 同上：resume 路径也必须与 deriveSandboxScopeId 同源，否则恢复后会换 pod。
+      topLevelSessionId: request.sessionId,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
@@ -2862,6 +2883,8 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       runId: resumeRunId,
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
       workspaceMountSubPath,
+      // 同上：resume 路径也必须与 deriveSandboxScopeId 同源，否则恢复后会换 pod。
+      topLevelSessionId: request.sessionId,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),

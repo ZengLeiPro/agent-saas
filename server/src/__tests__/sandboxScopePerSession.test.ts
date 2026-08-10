@@ -63,3 +63,33 @@ describe('deriveSandboxScopeId（per-session Sandbox）', () => {
     expect(deriveSandboxScopeId({ workspaceId, topLevelSessionId: '' })).toBe(workspaceId);
   });
 });
+
+/**
+ * 回归防线：dispatch 算出的 scope 与 hand recipe 里的 scope 必须同源。
+ *
+ * 背景（2026-08-10 实施中发现并修复）：`ensureRuntimeHandRegistered` 内部会用
+ * `buildWorkspaceRecipe` **重算** sandboxScopeId 写进 hand recipe，而工具执行时
+ * `toolRuntime` 命中 hand 后是 **recipe 优先**覆盖 RunContext 的值
+ * （`agent/toolRuntime.ts:1534`）。因此只在 dispatch 处传 topLevelSessionId、
+ * 却漏传给 hand 注册，会让 per-session **静默退化回 workspace 级共享**——
+ * 表面日志正常、pod 却仍然合并，是最难发现的一类失败。
+ */
+describe('scope 同源性（hand recipe vs dispatch）', () => {
+  const workspaceId = 'ws_kaiyan__kyvynk4r399zsr';
+  const mountSubPath = 'workspaces/kaiyan/u-1';
+  const topLevelSessionId = 'top-session-uuid';
+
+  it('两侧用同样入参必须得到同一个 scope', () => {
+    const dispatchScope = deriveSandboxScopeId({ workspaceId, mountSubPath, topLevelSessionId });
+    const handRecipeScope = deriveSandboxScopeId({ workspaceId, mountSubPath, topLevelSessionId });
+    expect(handRecipeScope).toBe(dispatchScope);
+  });
+
+  it('hand 侧漏传 topLevelSessionId 会退化成 workspace 级——本用例锁死该差异可被发现', () => {
+    const dispatchScope = deriveSandboxScopeId({ workspaceId, mountSubPath, topLevelSessionId });
+    const buggyHandScope = deriveSandboxScopeId({ workspaceId, mountSubPath });
+    expect(buggyHandScope).not.toBe(dispatchScope);
+    expect(dispatchScope.startsWith(buggyHandScope)).toBe(true);
+    expect(dispatchScope.slice(buggyHandScope.length)).toBe(`__s_${topLevelSessionId}`);
+  });
+});

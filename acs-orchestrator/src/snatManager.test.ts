@@ -7,6 +7,78 @@ import type { AcsOrchestratorConfig } from './config.js';
 import type { Kubectl, KubectlResult } from './kubectl.js';
 import { SnatManager } from './snatManager.js';
 
+describe('SnatManager · shared-cidr 模式（2026-08-10）', () => {
+  const SHARED = '172.16.179.0/24';
+  function sharedConfig(cliPath: string): AcsOrchestratorConfig {
+    const base = baseConfig(cliPath);
+    return { ...base, snat: { ...base.snat, mode: 'shared-cidr', sharedCidr: SHARED } };
+  }
+  function setup(name: string, entries: unknown[] = []) {
+    const root = mkdtempSync(join(tmpdir(), name));
+    const statePath = join(root, 'state.json');
+    const logPath = join(root, 'calls.log');
+    writeFileSync(statePath, JSON.stringify({ entries }), 'utf-8');
+    return { root, statePath, logPath, cliPath: writeFakeAliyun(root, statePath, logPath) };
+  }
+  const ref = (n: string) => ({
+    name: n, workspaceId: 'ws-1', sandboxScopeId: 'ws-1__s_top', sessionId: 'top', mountSubPath: 'ws-1',
+  });
+
+  it('多个 pod 只建一条网段条目，且不再逐 pod 创建', async () => {
+    const { statePath, logPath, cliPath } = setup('acs-snat-shared-');
+    const m1 = new SnatManager(sharedConfig(cliPath), podKubectl('172.16.179.204'), noopLogger);
+    const m2 = new SnatManager(sharedConfig(cliPath), podKubectl('172.16.179.212'), noopLogger);
+
+    const a = await m1.ensureForSandboxWhenPodReady(ref('as-pod-a'), { timeoutMs: 2_000, pollIntervalMs: 10 });
+    const b = await m2.ensureForSandboxWhenPodReady(ref('as-pod-b'), { timeoutMs: 2_000, pollIntervalMs: 10 });
+
+    expect(a?.sourceCidr).toBe(SHARED);
+    expect(b?.sourceCidr).toBe(SHARED);
+    expect((readFileSync(logPath, 'utf-8').match(/CreateSnatEntry/g) ?? []).length).toBe(1);
+    expect(JSON.parse(readFileSync(statePath, 'utf-8')).entries).toHaveLength(1);
+  });
+
+  it('pod IP 落在网段外时回退 per-pod 并告警，绝不静默断网', async () => {
+    const { logPath, cliPath } = setup('acs-snat-outside-');
+    const errors: string[] = [];
+    const logger = { info() {}, warn() {}, error(msg: string) { errors.push(msg); } };
+    const manager = new SnatManager(sharedConfig(cliPath), podKubectl('172.16.180.9'), logger);
+
+    const entry = await manager.ensureForSandboxWhenPodReady(ref('as-pod-outside'), { timeoutMs: 2_000, pollIntervalMs: 10 });
+
+    expect(entry?.sourceCidr).toBe('172.16.180.9/32');
+    expect(errors.some((m) => m.includes('snat_pod_ip_outside_shared_cidr'))).toBe(true);
+    expect((readFileSync(logPath, 'utf-8').match(/CreateSnatEntry/g) ?? []).length).toBe(1);
+  });
+
+  it('孤儿清理必须豁免网段条目，否则会一次掐断全体 pod 出网', async () => {
+    const { statePath, cliPath } = setup('acs-snat-shared-cleanup-', [
+      { SnatEntryId: 'snat-shared', SnatEntryName: 'agent-saas-acs-shared-cidr', SourceCIDR: SHARED, SnatIp: '120.77.218.94', Status: 'Available' },
+      { SnatEntryId: 'snat-stale-pod', SnatEntryName: 'agent-saas-acs-as-old', SourceCIDR: '172.16.179.99/32', SnatIp: '120.77.218.94', Status: 'Available' },
+    ]);
+    const manager = new SnatManager(sharedConfig(cliPath), podKubectl('172.16.179.204'), noopLogger);
+
+    // 活跃 pod IP 集合里不含网段本身——这正是不豁免就会误删的情形
+    const report = await manager.cleanupOrphans(new Set(['172.16.179.204/32']));
+
+    expect(report.deleted).toEqual(['snat-stale-pod']);
+    const left = JSON.parse(readFileSync(statePath, 'utf-8')).entries.map((e: { SnatEntryId: string }) => e.SnatEntryId);
+    expect(left).toContain('snat-shared');
+  });
+
+  it('删除单个 Sandbox 不得连带删掉共享条目', async () => {
+    const { statePath, cliPath } = setup('acs-snat-shared-del-', [
+      { SnatEntryId: 'snat-shared', SnatEntryName: 'agent-saas-acs-shared-cidr', SourceCIDR: SHARED, SnatIp: '120.77.218.94', Status: 'Available' },
+    ]);
+    const manager = new SnatManager(sharedConfig(cliPath), podKubectl('172.16.179.204'), noopLogger);
+
+    const deleted = await manager.deleteForSandboxName('as-pod-a');
+
+    expect(deleted).toEqual([]);
+    expect(JSON.parse(readFileSync(statePath, 'utf-8')).entries).toHaveLength(1);
+  });
+});
+
 describe('SnatManager', () => {
   it('creates one /32 SNAT entry for a probe sandbox and reuses existing entries', async () => {
     const root = mkdtempSync(join(tmpdir(), 'acs-snat-test-'));

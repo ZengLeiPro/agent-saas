@@ -63,7 +63,7 @@ describe("Workflow V3 UI 纯契约", () => {
     });
     expect(workflowCta(scenario)).toEqual({
       action: "presentation",
-      label: "看虚构回放",
+      label: "看演示",
       secondaryLabel: "接入我的系统",
       secondaryAction: "connector",
     });

@@ -36,7 +36,7 @@ export function WorkflowPresentationCard({
       </div>
       <div className="mt-auto flex justify-end pt-5">
         <Button type="button" size="sm" onClick={() => onPrimaryAction("presentation", scenario)}>
-          看虚构回放
+          看演示
         </Button>
       </div>
     </article>

@@ -66,7 +66,10 @@ describe('SandboxWarmupService', () => {
       workspaceId: 'ws-kaiyan-u1',
       sessionId: 'sess-1',
       // cwd=/data/mount/workspaces/kaiyan/u-1 相对 mountRoot=/data/mount → workspaces/kaiyan/u-1
-      sandboxScopeId: 'ws-kaiyan-u1__workspaces_kaiyan_u-1',
+      // per-session Sandbox（2026-08-10）：预热只对顶层会话触发，故组键＝自身 sessionId。
+      // 这个值必须与 rawRuntimeRunDispatch 顶层路径算出的 scope 逐字相同，
+      // 否则会预热到一个稍后根本不会被用到的 pod。
+      sandboxScopeId: 'ws-kaiyan-u1__workspaces_kaiyan_u-1__s_sess-1',
       mountSubPath: 'workspaces/kaiyan/u-1',
     });
   });

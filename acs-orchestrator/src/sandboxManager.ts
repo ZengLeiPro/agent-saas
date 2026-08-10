@@ -1124,6 +1124,13 @@ export class SandboxManager {
         { name: 'TZ', value: SANDBOX_TIMEZONE },
         { name: 'LANG', value: 'C.UTF-8' },
         { name: 'LC_ALL', value: 'C.UTF-8' },
+        // Node 堆上限按容器内存规格推导（2026-08-10）。此前 Agent 惯用
+        // `--max-old-space-size=4096`，在 2GiB 容器上直接导致 cgroup oom_kill
+        // （生产实测单个 pod 累计 10 次）。留 25% 给非堆内存（V8 元数据、
+        // 原生模块、子进程），Agent 显式设置仍可覆盖本默认值。
+        ...(nodeHeapLimitMb(this.config.memoryLimit)
+          ? [{ name: 'NODE_OPTIONS', value: `--max-old-space-size=${nodeHeapLimitMb(this.config.memoryLimit)}` }]
+          : []),
         // 出口代理与国内镜像源（2026-07-25）：由 server「网络出口」配置页下发。
         // 代理变量大小写各一份是刚需——curl/wget/git 与容器内 Chromium 只认小写，
         // Go 二进制（gh/aliyun/dws/lark-cli）优先读大写。未启用时这里为空数组。
@@ -1243,6 +1250,25 @@ export function isCiSandboxName(name: string): boolean {
 
 function labelValue(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 40);
+}
+
+/**
+ * 由容器内存 limit 推导 Node 堆上限（MiB），留 25% 给非堆内存。
+ * 解析失败或未配置时返回 undefined（不注入 NODE_OPTIONS，保持既有行为）。
+ */
+export function nodeHeapLimitMb(memoryLimit: string | undefined): number | undefined {
+  if (!memoryLimit) return undefined;
+  const m = /^(\d+(?:\.\d+)?)(Gi|Mi|G|M)?$/.exec(memoryLimit.trim());
+  if (!m) return undefined;
+  const value = Number(m[1]);
+  if (!Number.isFinite(value) || value <= 0) return undefined;
+  const unit = m[2] ?? 'Mi';
+  const mib = unit === 'Gi' ? value * 1024
+    : unit === 'G' ? (value * 1_000_000_000) / (1024 * 1024)
+    : unit === 'M' ? (value * 1_000_000) / (1024 * 1024)
+    : value;
+  const heap = Math.floor(mib * 0.75);
+  return heap >= 256 ? heap : undefined;
 }
 
 function stringValue(value: unknown): string | undefined {

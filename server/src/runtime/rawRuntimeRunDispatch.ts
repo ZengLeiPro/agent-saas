@@ -1788,9 +1788,12 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     }
     await sessionCatalog.upsert(sessionRecord);
     const workspaceMountSubPath = deriveWorkspaceMountSubPath({ agentCwd: config.agentCwd, cwd });
+    // per-session Sandbox：本路径是顶层会话（交互/cron/taskboard 均在此创建），
+    // 故顶层组键＝自身 sessionId。子 Agent 与后台任务不走这里，它们继承父值。
     const sandboxScopeId = deriveSandboxScopeId({
       workspaceId: sessionRecord.workspaceId ?? sessionId,
       mountSubPath: workspaceMountSubPath,
+      topLevelSessionId: sessionId,
     });
     await hooks?.onSessionStart?.(sessionId, transcriptPath);
     yield { type: 'session_init', sessionId };
@@ -1972,6 +1975,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         model,
         cwd,
         workspaceId: sessionRecord.workspaceId ?? sessionId,
+        topLevelSessionId: sessionId,
         sandboxScopeId,
         mountSubPath: workspaceMountSubPath,
         tenantId: sessionRecord.tenantId,
@@ -2393,9 +2397,11 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     }
     await sessionCatalog.upsert(sessionRecord);
     const workspaceMountSubPath = deriveWorkspaceMountSubPath({ agentCwd: config.agentCwd, cwd });
+    // per-session Sandbox：resume 路径复用原顶层会话 ID，保证 resume 后仍落回同一 pod。
     const sandboxScopeId = deriveSandboxScopeId({
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
       mountSubPath: workspaceMountSubPath,
+      topLevelSessionId: request.sessionId,
     });
 
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
@@ -2582,6 +2588,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           model,
           cwd,
           workspaceId: sessionRecord.workspaceId ?? request.sessionId,
+          topLevelSessionId: request.sessionId,
           sandboxScopeId,
           mountSubPath: workspaceMountSubPath,
           tenantId: sessionRecord.tenantId,
@@ -2796,9 +2803,11 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     }
     await sessionCatalog.upsert(sessionRecord);
     const workspaceMountSubPath = deriveWorkspaceMountSubPath({ agentCwd: config.agentCwd, cwd });
+    // per-session Sandbox：resume 路径复用原顶层会话 ID，保证 resume 后仍落回同一 pod。
     const sandboxScopeId = deriveSandboxScopeId({
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
       mountSubPath: workspaceMountSubPath,
+      topLevelSessionId: request.sessionId,
     });
 
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
@@ -3001,6 +3010,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           model,
           cwd,
           workspaceId: sessionRecord.workspaceId ?? request.sessionId,
+          topLevelSessionId: request.sessionId,
           sandboxScopeId,
           mountSubPath: workspaceMountSubPath,
           tenantId: sessionRecord.tenantId,

@@ -116,6 +116,13 @@ export interface WorkspaceRef {
    */
   tenantId?: string;
   sessionId?: string;
+  /**
+   * 顶层会话 ID（per-session Sandbox，2026-08-10 A 方案）。顶层会话＝自身 sessionId；
+   * 子 Agent / 孙 Agent / 后台任务**原样继承父值**，因此「父 + 全部后代」恒定落在
+   * 同一 sandboxScopeId → 同一 pod（决策 7），无需查库回溯父子链。
+   * 缺省时 sandbox 归属退回 workspace 级共享（旧行为，安全 fallback）。
+   */
+  topLevelSessionId?: string;
   sandboxScopeId?: string;
   mountSubPath?: string;
   executionTarget: ExecutionTargetKind;
@@ -287,6 +294,8 @@ export interface WorkspaceProvider {
   resolve(context: ChannelContext, args: {
     cwd: string;
     sessionId?: string;
+    /** 顶层会话组键（per-session Sandbox）。缺省时实现方回落 sessionId。 */
+    topLevelSessionId?: string;
     workspaceId?: string;
     sandboxScopeId?: string;
     mountSubPath?: string;
@@ -506,6 +515,7 @@ export class LocalWorkspaceProvider implements WorkspaceProvider {
   resolve(context: ChannelContext, args: {
     cwd: string;
     sessionId?: string;
+    topLevelSessionId?: string;
     workspaceId?: string;
     sandboxScopeId?: string;
     mountSubPath?: string;
@@ -527,6 +537,9 @@ export class LocalWorkspaceProvider implements WorkspaceProvider {
       username: identity?.username,
       ...(tenantId ? { tenantId } : {}),
       sessionId: args.sessionId,
+      // 顶层会话组归属：显式传入优先；缺省时退回自身 sessionId（顶层会话的自然语义）。
+      // 子 Agent 路径由调用方显式传入父的 topLevelSessionId，故不会误取子会话 ID。
+      topLevelSessionId: args.topLevelSessionId ?? args.sessionId,
       sandboxScopeId: args.sandboxScopeId,
       mountSubPath: args.mountSubPath,
       executionTarget: args.executionTarget ?? this.defaultExecutionTarget,

@@ -36,6 +36,11 @@ export interface RunContext {
   model: string;
   cwd: string;
   workspaceId?: string;
+  /**
+   * 顶层会话 ID（per-session Sandbox，2026-08-10 A 方案）。顶层会话＝自身 sessionId；
+   * 子 Agent / 后台任务继承父值以保证「父 + 全部后代」同 pod（决策 7）。
+   */
+  topLevelSessionId?: string;
   sandboxScopeId?: string;
   mountSubPath?: string;
   tenantId?: string;

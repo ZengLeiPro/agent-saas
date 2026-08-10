@@ -85,8 +85,11 @@ export class SandboxWarmupService {
     const workspaceId = record.workspaceId ?? sessionId;
     const mountSubPath = entry.recipe?.mountSubPath
       ?? deriveWorkspaceMountSubPath({ agentCwd: this.options.agentCwd, cwd: record.cwd });
+    // 预热只对顶层会话触发（上方已 `record.kind === 'subagent'` 提前返回），
+    // 故顶层组键＝该会话自身 sessionId，与 dispatch 路径算出的 scope 一致，
+    // 保证预热的正是这个会话组稍后真正要用的那个 pod。
     const sandboxScopeId = entry.recipe?.sandboxScopeId
-      ?? deriveSandboxScopeId({ workspaceId, mountSubPath });
+      ?? deriveSandboxScopeId({ workspaceId, mountSubPath, topLevelSessionId: sessionId });
 
     const scopeKey = `${entry.id}:${sandboxScopeId}`;
     const now = Date.now();

@@ -824,6 +824,7 @@ export class RawAgentLoop implements AgentLoop {
     const workspace = this.workspaceProvider.resolve(context.channelContext, {
       cwd: context.cwd,
       sessionId: context.sessionId,
+      topLevelSessionId: context.topLevelSessionId,
       workspaceId: context.workspaceId,
       sandboxScopeId: context.sandboxScopeId,
       mountSubPath: context.mountSubPath,
@@ -2106,6 +2107,7 @@ export class RawAgentLoop implements AgentLoop {
       const workspace = this.workspaceProvider.resolve(context.channelContext, {
         cwd: context.cwd,
         sessionId: context.sessionId,
+        topLevelSessionId: context.topLevelSessionId,
         workspaceId: context.workspaceId,
         sandboxScopeId: context.sandboxScopeId,
         mountSubPath: context.mountSubPath,
@@ -2579,6 +2581,7 @@ export class RawAgentLoop implements AgentLoop {
     const workspace = this.workspaceProvider.resolve(resumeContext.channelContext, {
       cwd: resumeContext.cwd,
       sessionId: resumeContext.sessionId,
+      topLevelSessionId: resumeContext.topLevelSessionId,
       workspaceId: resumeContext.workspaceId,
       sandboxScopeId: resumeContext.sandboxScopeId,
       mountSubPath: resumeContext.mountSubPath,
@@ -2719,6 +2722,7 @@ export class RawAgentLoop implements AgentLoop {
     const workspace = this.workspaceProvider.resolve(context.channelContext, {
       cwd: context.cwd,
       sessionId: context.sessionId,
+      topLevelSessionId: context.topLevelSessionId,
       workspaceId: context.workspaceId,
       sandboxScopeId: context.sandboxScopeId,
       mountSubPath: context.mountSubPath,

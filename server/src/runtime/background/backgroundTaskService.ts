@@ -46,6 +46,13 @@ const CANCEL_POLL_MS = 2_000;
 interface CommonBackgroundTaskMetadata {
   parentRunId: string;
   parentSessionId: string;
+  /**
+   * 顶层会话 ID（per-session Sandbox，决策 7）。
+   * ⚠️ 不能用 `parentSessionId` 代替：后台任务存在三层套娃
+   * （顶层 → bg task 的 `sub-` 会话 → 其内部再派生的 subagent `sub-` 会话），
+   * 在 execute 阶段 `parentSessionId` 指向的是中间层而非顶层。
+   */
+  topLevelSessionId?: string;
   parentToolCallId: string;
   description: string;
   modelRef: string;
@@ -197,6 +204,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         backgroundTaskVersion: 1,
         parentRunId,
         parentSessionId,
+        topLevelSessionId: context.workspace.topLevelSessionId ?? parentSessionId,
         parentToolCallId: toolCallId,
         description: request.description,
         prompt: request.prompt,
@@ -288,6 +296,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           backgroundTaskVersion: 2,
           parentRunId,
           parentSessionId,
+          topLevelSessionId: context.workspace.topLevelSessionId ?? parentSessionId,
           parentToolCallId: toolCallId,
           description: `后台命令：${commandPreview}`,
           commandHash: createHash('sha256').update(request.command).digest('hex'),
@@ -424,6 +433,10 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           username: taskSession.username,
           tenantId: taskSession.tenantId,
           sessionId: record.sessionId,
+          // ⚠️ 三层套娃的关键修正：此处 record.sessionId 是 bg task 自己的 `sub-` 会话，
+          // 下游 runSubagent 会用 `parentWorkspace.topLevelSessionId ?? parentSessionId`，
+          // 若不显式带上顶层组键就会取到中间层，导致后台任务另开一个 pod。
+          topLevelSessionId: metadata.topLevelSessionId ?? metadata.parentSessionId,
           executionTarget: record.executionTarget ?? taskSession.executionTarget ?? 'server-container',
           ...(metadata.mountSubPath ? { mountSubPath: metadata.mountSubPath } : {}),
           ...(metadata.sandboxScopeId ? { sandboxScopeId: metadata.sandboxScopeId } : {}),
@@ -898,6 +911,9 @@ function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMetadata 
   const common: CommonBackgroundTaskMetadata = {
     parentRunId,
     parentSessionId,
+    // 改造前入队的存量任务没有该字段，回落 parentSessionId：这些记录本就按
+    // workspace 级 scope 运行（其 metadata.sandboxScopeId 已固化），语义不变。
+    topLevelSessionId: metadataString(value, 'topLevelSessionId') ?? parentSessionId,
     parentToolCallId,
     description,
     modelRef,

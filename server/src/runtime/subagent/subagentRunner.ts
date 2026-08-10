@@ -321,6 +321,9 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       runId: childRunId,
       workspaceId: parentWorkspace.id ?? childSessionId,
       workspaceMountSubPath: parentWorkspace.mountSubPath,
+      // 决策 7：hand recipe 会重算 sandboxScopeId，必须把顶层组键一并透传，
+      // 否则子 Agent 的 hand 会落到 workspace 级 scope 而与父会话分到两个 pod。
+      topLevelSessionId: parentWorkspace.topLevelSessionId ?? parentSessionId,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
@@ -414,6 +417,10 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       model,
       cwd: parentWorkspace.root,
       workspaceId: parentWorkspace.id ?? childSessionId,
+      // per-session Sandbox（决策 7）：顶层组键原样继承父值——父自己若是顶层则
+      // 其 topLevelSessionId 即自身；若父本身是子 Agent，则该值已是祖先顶层，
+      // 于是孙/曾孙 Agent 天然递归到同一顶层，无需查库回溯。
+      topLevelSessionId: parentWorkspace.topLevelSessionId ?? parentSessionId,
       sandboxScopeId: parentWorkspace.sandboxScopeId,
       mountSubPath: parentWorkspace.mountSubPath,
       tenantId,

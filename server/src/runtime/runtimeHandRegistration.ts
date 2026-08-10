@@ -18,8 +18,36 @@ import {
 import type { EventStore } from './types.js';
 import type { RawRuntimeRunDispatchConfig, TenantRemoteHandDispatchConfig } from './rawRuntimeRunDispatch.js';
 
-export function deriveSandboxScopeId(input: { workspaceId: string; mountSubPath?: string }): string {
-  return input.mountSubPath ? `${input.workspaceId}__${input.mountSubPath.replace(/[^A-Za-z0-9_-]+/g, '_')}` : input.workspaceId;
+/**
+ * Sandbox 归属键。决定「哪些执行流共享同一个 ACS Sandbox pod」。
+ *
+ * - 不传 `topLevelSessionId`：退回 workspace 级共享（2026-08-10 之前的行为）。
+ *   这是**故意保留的安全 fallback**——任何拿不到顶层会话的旧路径/异常路径都落回
+ *   旧语义，绝不允许因缺参而滑向「每次调用一个孤儿 pod」。
+ * - 传了：顶层会话组独享 pod（per-session Sandbox，A 方案）。子 Agent / 孙 Agent /
+ *   后台任务通过继承父 `WorkspaceRef.topLevelSessionId` 落到同一个 scope，因此
+ *   「父 + 其全部后代」始终同 pod（决策 7）。
+ *
+ * 决策 7 的现行依据（2026-08-10 双 pod 实测后更换，旧「负缓存」理由已作废）：
+ *   ① 跨 pod 时文件属性（size/mtime）最长 600s 不刷新，实测 120s 仍旧值，
+ *      而 `lookupcache=positive` 只能修目录项缓存、修不了属性缓存；父子链恰是
+ *      最容易触发增量构建（tsc --incremental / vitest 缓存）误判的组合。
+ *   ② 同 pod 共享内核页缓存，后代读父读过的文件是热的。
+ *   ③ pod 数 = 顶层会话组数而非会话数，避免 fan-out 打爆 SNAT 条目上限。
+ *
+ * scope 值无长度上限：k8s label 存 sha256 前 40 位，CR 名走 hash16 + 截断前缀
+ * （见 acs-orchestrator/src/sandboxName.ts），故可安全拼接 UUID。
+ */
+export function deriveSandboxScopeId(input: {
+  workspaceId: string;
+  mountSubPath?: string;
+  topLevelSessionId?: string;
+}): string {
+  const base = input.mountSubPath
+    ? `${input.workspaceId}__${input.mountSubPath.replace(/[^A-Za-z0-9_-]+/g, '_')}`
+    : input.workspaceId;
+  if (!input.topLevelSessionId) return base;
+  return `${base}__s_${input.topLevelSessionId.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
 }
 
 function buildWorkspaceRecipe(
@@ -27,12 +55,14 @@ function buildWorkspaceRecipe(
   override?: Partial<WorkspaceRecipe>,
   sessionId?: string,
   mountSubPath?: string,
+  topLevelSessionId?: string,
 ): WorkspaceRecipe {
   const effectiveMountSubPath = override?.mountSubPath ?? mountSubPath;
   return {
     ...(override ?? {}),
     workspaceId,
-    sandboxScopeId: override?.sandboxScopeId ?? deriveSandboxScopeId({ workspaceId, mountSubPath: effectiveMountSubPath }),
+    sandboxScopeId: override?.sandboxScopeId
+      ?? deriveSandboxScopeId({ workspaceId, mountSubPath: effectiveMountSubPath, topLevelSessionId }),
     ...(sessionId ? { sessionId } : {}),
     ...(!override?.mountSubPath && mountSubPath ? { mountSubPath } : {}),
   };
@@ -47,6 +77,12 @@ export async function ensureRuntimeHandRegistered(params: {
   runId?: string;
   workspaceId: string;
   workspaceMountSubPath?: string;
+  /**
+   * 顶层会话 ID（per-session Sandbox 的归属键）。顶层会话传自己的 sessionId；
+   * 子 Agent / 后台任务传**递归到顶层**的那个 ID，从而与父会话落在同一 pod（决策 7）。
+   * 缺省时 `deriveSandboxScopeId` 退回 workspace 级共享，是安全 fallback。
+   */
+  topLevelSessionId?: string;
   endpoint?: string;
   serverRemoteRecipe?: Partial<WorkspaceRecipe>;
   tenantRemoteHands?: TenantRemoteHandDispatchConfig[];
@@ -97,6 +133,7 @@ export async function ensureRuntimeHandRegistered(params: {
     params.executionTarget === 'server-remote' ? params.serverRemoteRecipe : undefined,
     params.sessionId,
     params.workspaceMountSubPath,
+    params.topLevelSessionId,
   );
   const environmentVersion = params.environmentStore && effectiveTemplateVersionId
     ? await params.environmentStore.getTemplateVersion(effectiveTemplateVersionId)
@@ -263,7 +300,13 @@ export async function ensureRuntimeHandRegistered(params: {
       });
     }
 
-    const tenantRecipe = buildWorkspaceRecipe(remoteWorkspaceId, hand.recipe, params.sessionId, params.workspaceMountSubPath);
+    const tenantRecipe = buildWorkspaceRecipe(
+      remoteWorkspaceId,
+      hand.recipe,
+      params.sessionId,
+      params.workspaceMountSubPath,
+      params.topLevelSessionId,
+    );
     const tenantRecipeDigest = createHash('sha256').update(JSON.stringify(tenantRecipe)).digest('hex');
     await manager.provision({
       handId,

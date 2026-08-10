@@ -618,6 +618,25 @@ jobs:
             printf '\nACS_SANDBOX_IMAGE=%s\n' "$IMAGE" >> "$ENV_FILE"
           fi
 
+          # ── 2b. apply 仓库声明的运行参数（2026-08-10）──
+          # 此前规格 / SNAT / 生命周期这些值只存在于 ECS 上手写的 env：没有版本
+          # 控制、没有审计、改错只能人肉回滚。现在改参数 = 改
+          # acs-orchestrator/config/production.env 并走 CI，git log 即变更史、
+          # git revert 即回滚，CI 日志留下「哪个值从 A 变成 B」。
+          #
+          # 逐键 upsert：只动声明过的键，token 等敏感项与主机相关路径原样保留。
+          # 脚本对敏感键与 ACS_SANDBOX_IMAGE 有硬拒绝，写入后还会断言原有键无丢失。
+          # 上面已备份到 $ENV_BAK，此处不重复备份。失败即中止部署（set -e），
+          # 此时旧进程仍带旧 env 运行，不受影响。
+          DESIRED_ENV="$APP_DIR/acs-orchestrator/config/production.env"
+          if [ -f "$DESIRED_ENV" ]; then
+            python3 "$APP_DIR/scripts/apply-orchestrator-env.py" \
+              --desired "$DESIRED_ENV" \
+              --target "$ENV_FILE"
+          else
+            echo "WARN: 未找到 $DESIRED_ENV，跳过声明式 env apply"
+          fi
+
           # ── 3. Drain 旧进程: SIGUSR2 → 排空 inflight 后自退 →
           #      systemd Restart=always 5s 后自动拉起新代码+新 env ──
           # 2026-07-15 修复：SIGUSR2 必须送达注册了 handler 的 node 本体。

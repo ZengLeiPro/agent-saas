@@ -239,8 +239,9 @@ export interface MemoryRecallData {
   memories: Array<{ path: string; scope: 'personal' | 'team'; content?: string }>;
 }
 
-/** Format token count to compact string: 1234 -> "1.2k", 1234567 -> "1.2M" */
+/** Format token count to compact string: 1234 -> "1.2k", 1234567 -> "1.2M", 1234567890 -> "1.2B" */
 export function formatTokenCount(count: number): string {
+  if (count >= 1_000_000_000) return `${(count / 1_000_000_000).toFixed(1)}B`;
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
   if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
   return String(count);

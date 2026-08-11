@@ -236,6 +236,32 @@ describe("TokenUsageDisplay", () => {
     expect(onOpenChildSession).toHaveBeenCalledWith('child-session');
   });
 
+  it("uses B for billion-scale cumulative usage in the expanded details", async () => {
+    render(
+      <TokenUsageDisplay
+        allowDetails
+        contextUsage={{
+          totalTokens: 100_000,
+          categories: [],
+          memoryFiles: [],
+          mcpTools: [],
+        }}
+        tokenUsage={{
+          contextTokens: 100_000,
+          totalInputTokens: 1_000_000_000,
+          totalCacheReadTokens: 0,
+          totalCacheCreationTokens: 0,
+          totalOutputTokens: 234_567_890,
+          subagentTotalTokens: 0,
+          totalTokens: 1_234_567_890,
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /^100\.0k$/ }));
+    expect(screen.getAllByText("1.2B").length).toBeGreaterThan(0);
+  });
+
   it("renders a non-interactive value when tenant policy disables details", () => {
     render(
       <TokenUsageDisplay

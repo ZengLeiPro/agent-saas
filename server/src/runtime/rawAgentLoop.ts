@@ -92,7 +92,7 @@ import {
   getInvalidPromptRequestBlockedFailure,
   isForcedDrainHandoff,
   isInvalidPromptRequestBlocked,
-  isParallelSafeAgentCall,
+  isParallelSafeToolCall,
   mergeUsage,
   parseToolArguments,
   resolveZombieToolCallTimeoutMs,
@@ -2393,19 +2393,21 @@ export class RawAgentLoop implements AgentLoop {
   }
 
   /**
-   * 执行一个 batch 的工具调用。默认严格串行；唯一例外是**连续 ≥2 个 Agent 工具调用**
-   * 组成的段做并行 fan-out（子 agent P1，2026-07-06）：
-   *   - 仅限 Agent：它 risk:'safe' + approvalMode:'never'，policy 恒 allow——审批挂起
-   *     是通过抛异常中止本 generator 实现的，任何可能触发审批/交互的工具进 Promise.all
-   *     都会让并发兄弟变成孤儿，因此并行窗只对免审批的 Agent 开放。
+   * 执行一个 batch 的工具调用。默认严格串行；连续 ≥2 个声明并发安全的工具调用
+   * 组成一段并行 fan-out：
+   *   - 审批挂起是通过抛异常中止本 generator 实现的，任何可能触发审批/交互的工具
+   *     进入 Promise.all 都会让并发兄弟变成孤儿，因此并行窗只接受 descriptor
+   *     显式 opt-in 且
+   *     risk=safe、approvalMode=never 的工具；未声明工具（包括 MCP）默认串行。
    *   - 顺序契约不变：tool_use 块先按原 toolCalls 顺序全部 yield，执行完成后
    *     tool_result 三件套（yield + eventStore append + messages.push）仍按原顺序逐个
    *     进行——模型协议要求 tool_result 顺序稳定。并发期间 durable 的
    *     tool_invocation_* 事件会交错落库，replay/recovery 按 toolCallId 建 Map
    *     （runtime/replay.ts）不依赖跨 call 顺序，已核实安全。
-   *   - 并发额度由 subagentLimits 的 per-run 信号量在 runner 内排队，本层不限流。
-   *   - abort：父 signal 经 ToolCallContext 传导给每个并发子 agent，级联取消。
-   * 单个 Agent 调用（段长 1）仍走下方串行分支，行为与既有路径逐字节一致。
+   *   - Agent 的并发额度仍由 subagentLimits 信号量控制；其他 opt-in 工具由
+   *     模型单批 toolCalls 数量自然限定，本层不另设重复限流。
+   *   - abort：父 signal 经 ToolCallContext 传导给每个并发工具，级联取消。
+   * 单个并发安全调用（段长 1）仍走下方串行分支，行为与既有路径一致。
    */
   private async *drainToolCalls(args: {
     calls: ModelToolCall[];
@@ -2420,7 +2422,7 @@ export class RawAgentLoop implements AgentLoop {
       let segmentEnd = index;
       while (
         segmentEnd < calls.length
-        && isParallelSafeAgentCall(calls[segmentEnd]!, args.descriptorsByName)
+        && isParallelSafeToolCall(calls[segmentEnd]!, args.descriptorsByName)
       ) {
         segmentEnd += 1;
       }
@@ -2428,8 +2430,8 @@ export class RawAgentLoop implements AgentLoop {
       if (segmentEnd - index >= 2) {
         const segment = calls.slice(index, segmentEnd);
         for (const call of segment) {
-          // Agent 是 safe 工具，policy 恒 allow → shouldEmit 恒 true；仍走同一判定
-          // 入口保持与串行分支的行为对称。
+          // 准入工具的 policy 恒 allow → shouldEmit 恒 true；仍走同一判定入口，
+          // 保持与串行分支的行为对称。
           if (await this.shouldEmitToolUseBeforeExecution(call, args.descriptorsByName, args.context)) {
             yield { type: 'tool_start', toolId: call.id, toolName: call.name };
             yield { type: 'tool_input_delta', toolId: call.id, toolName: call.name, partialJson: call.arguments };

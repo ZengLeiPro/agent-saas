@@ -98,16 +98,19 @@ export function assertSuccessfulModelTerminal(completed: Extract<ModelEvent, { t
 }
 
 /**
- * 并行窗准入判定（子 agent P1）：只有名为 Agent 且 risk:'safe'、免审批的工具才可并行。
- * 三重条件而非只看名字——防未来有人注册同名高危工具时静默进入并行路径。
+ * 并行窗准入判定：工具必须显式 opt-in，且当前 descriptor 仍是 safe + 免审批。
+ *
+ * concurrency 是工具作者对“调用间无顺序依赖”的声明；risk / approvalMode 是
+ * 运行时防御，避免后续风险分档调整后仍静默进入并行路径。未声明的动态工具
+ * （包括 MCP）默认串行。
  */
-export function isParallelSafeAgentCall(
+export function isParallelSafeToolCall(
   call: ModelToolCall,
   descriptorsByName: Map<string, ToolDescriptor>,
 ): boolean {
   const descriptor = descriptorsByName.get(call.name);
   return !!descriptor
-    && descriptor.name === 'Agent'
+    && descriptor.concurrency === 'parallel'
     && descriptor.risk === 'safe'
     && descriptor.approvalMode === 'never';
 }

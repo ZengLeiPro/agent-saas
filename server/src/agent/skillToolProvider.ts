@@ -69,6 +69,7 @@ export const skillToolDescriptor: ToolDescriptor<SkillInput> = {
   }),
   risk: 'safe',
   approvalMode: 'never',
+  concurrency: 'parallel',
   auditCategory: 'skill.invoke',
   category: 'skill',
   label: '调用技能',

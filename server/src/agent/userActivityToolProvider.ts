@@ -39,6 +39,7 @@ export const userActivityListToolDescriptor: ToolDescriptor<UserActivityListInpu
   }),
   risk: 'safe',
   approvalMode: 'never',
+  concurrency: 'parallel',
   auditCategory: 'memory.activity',
   category: 'memory',
   label: '查看用户近期活动',

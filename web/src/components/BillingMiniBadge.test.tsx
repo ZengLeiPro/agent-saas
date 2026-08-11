@@ -35,6 +35,7 @@ function UsageCardsHost() {
         }}
       />
       <BillingMiniBadge
+        isAdmin={false}
         open={activeCard === "billing"}
         onOpenChange={(open) => {
           setActiveCard((current) => open ? "billing" : current === "billing" ? null : current);
@@ -91,16 +92,18 @@ describe("BillingMiniBadge", () => {
       return new Response(null, { status: 404 });
     });
 
-    render(<BillingMiniBadge sessionId="session-1" />);
+    render(<BillingMiniBadge isAdmin sessionId="session-1" />);
 
     await userEvent.click(await screen.findByTitle("个人剩余额度"));
 
     expect(screen.getByText("试用")).toBeTruthy();
     expect(screen.getByText("组织本月消耗")).toBeTruthy();
     expect(screen.getByText("已结算用量")).toBeTruthy();
-    expect(screen.getByText("执行方式")).toBeTruthy();
-    expect(screen.getByText("超额停后续动作")).toBeTruthy();
     expect(screen.getByText("个人剩余额度")).toBeTruthy();
+    expect(screen.queryByText("可用额度")).toBeNull();
+    expect(screen.queryByText("执行方式")).toBeNull();
+    expect(screen.queryByText("超额停后续动作")).toBeNull();
+    expect(screen.queryByText("单 Run 上限")).toBeNull();
     expect(screen.getAllByText("5,000.25").length).toBeGreaterThan(0);
     expect(screen.getByText("12,800.25")).toBeTruthy();
     expect(screen.getByText("15,000.25")).toBeTruthy();
@@ -113,7 +116,7 @@ describe("BillingMiniBadge", () => {
     expect(screen.queryByText(/每日刷新|免费积分|300/)).toBeNull();
   });
 
-  it("保留侧边栏入口触发展开面板的能力", async () => {
+  it("普通用户通过侧边栏展开面板时隐藏公司共享积分池", async () => {
     vi.mocked(authFetch).mockImplementation(async (input) => (
       String(input) === "/api/billing/me/summary"
         ? new Response(JSON.stringify({ summary }), { status: 200 })
@@ -121,11 +124,12 @@ describe("BillingMiniBadge", () => {
     ));
 
     requestOpenBillingBadge();
-    render(<BillingMiniBadge />);
+    render(<BillingMiniBadge isAdmin={false} />);
 
-    expect(await screen.findByText("组织本月消耗")).toBeTruthy();
-    expect(screen.getByText("组织可用积分")).toBeTruthy();
+    expect(await screen.findByText("组织可用积分")).toBeTruthy();
     expect(screen.getByText("个人预算数据暂不可用")).toBeTruthy();
+    expect(screen.queryByText("公司共享积分池")).toBeNull();
+    expect(screen.queryByText("组织本月消耗")).toBeNull();
   });
 
   it("打开积分卡片时关闭已展开的上下文卡片", async () => {
@@ -142,7 +146,7 @@ describe("BillingMiniBadge", () => {
 
     await userEvent.click(await screen.findByTitle("组织可用积分"));
 
-    expect(await screen.findByText("组织本月消耗")).toBeTruthy();
+    expect(await screen.findByText("个人预算数据暂不可用")).toBeTruthy();
     await waitFor(() => {
       expect(screen.queryByText("当前上下文")).toBeNull();
     });
@@ -158,7 +162,7 @@ describe("BillingMiniBadge", () => {
         : new Response(null, { status: 404 })
     ));
 
-    const { container } = render(<BillingMiniBadge />);
+    const { container } = render(<BillingMiniBadge isAdmin={false} />);
 
     await waitFor(() => {
       expect(authFetch).toHaveBeenCalledWith("/api/billing/me/summary");

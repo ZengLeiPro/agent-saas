@@ -513,6 +513,7 @@ export function DesktopLayout(props: LayoutProps) {
                 />
               )}
               <BillingMiniBadge
+                isAdmin={isAdmin}
                 sessionId={sessionId}
                 open={activeUsageCard === "billing"}
                 onOpenChange={handleBillingCardOpenChange}

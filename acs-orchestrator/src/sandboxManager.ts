@@ -662,7 +662,7 @@ export class SandboxManager {
         }
       }
       // 07-05：CI 临时 sandbox（as-ws-ci-* 前缀）走短 TTL（sandboxCiTtlMs，默认 6h）。
-      // CI 场景一次性使用无复用价值，不该跟用户会话共享 7 天 TTL。
+      // CI 场景一次性使用无复用价值，不该跟用户会话共享普通 24h TTL。
       // sandboxCiTtlMs=0 表示关闭这条特殊路径，退回普通 TTL。
       const isCiSandbox = isCiSandboxName(sandbox.name);
       const effectiveTtlMs = isCiSandbox && this.config.sandboxCiTtlMs > 0

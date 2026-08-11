@@ -43,10 +43,11 @@ import { createRuntimeSessionRecord, FileSessionCatalog } from '../runtime/sessi
 import { AgentToolProvider } from '../runtime/subagent/agentToolProvider.js';
 import { SUBAGENT_TYPES } from '../runtime/subagent/agentTypes.js';
 import {
+  SUBAGENT_GLOBAL_MAX_CONCURRENCY,
   SUBAGENT_HARD_TIMEOUT_MS,
   SUBAGENT_MAX_TURNS,
+  SUBAGENT_PER_RUN_MAX_CONCURRENCY,
   SubagentLimiter,
-  SubagentLimitError,
 } from '../runtime/subagent/subagentLimits.js';
 import { runSubagent, type SubagentOutcome } from '../runtime/subagent/subagentRunner.js';
 import { createTenantRemoteHandAuthTokenResolver } from '../runtime/tenantRemoteHandResolver.js';
@@ -175,21 +176,16 @@ async function collect(stream: AsyncIterable<OutboundEvent>): Promise<OutboundEv
 // ────────────────────────── 测试 ──────────────────────────
 
 describe('SubagentLimiter', () => {
-  it('单 run 总数超限立即硬拒绝，不排队', async () => {
-    const limiter = new SubagentLimiter({ perRunMaxTotal: 2, perRunMaxConcurrency: 4 });
-    const a = await limiter.acquire('run-1');
-    const b = await limiter.acquire('run-1');
-    await expect(limiter.acquire('run-1')).rejects.toThrow(SubagentLimitError);
-    a.release();
-    b.release();
-    // 释放并发不回退总数：总数是「本 run 已派生数」而非「在飞数」
-    await expect(limiter.acquire('run-1')).rejects.toThrow(/总数已达上限/);
-    // 其他 run 不受影响
-    (await limiter.acquire('run-2')).release();
+  it('单 run 累计派生次数不限，完成后可继续派生', async () => {
+    const limiter = new SubagentLimiter({ perRunMaxConcurrency: 2 });
+    for (let i = 0; i < 20; i += 1) {
+      const slot = await limiter.acquire('run-1');
+      slot.release();
+    }
   });
 
   it('并发满时排队等待，release 后放行；等待可被 signal 中断', async () => {
-    const limiter = new SubagentLimiter({ perRunMaxConcurrency: 1, perRunMaxTotal: 10 });
+    const limiter = new SubagentLimiter({ perRunMaxConcurrency: 1 });
     const first = await limiter.acquire('run-1');
     let secondAcquired = false;
     const second = limiter.acquire('run-1').then((slot) => { secondAcquired = true; return slot; });
@@ -205,6 +201,24 @@ describe('SubagentLimiter', () => {
     abortController.abort();
     await expect(waiting).rejects.toThrow(/取消/);
     third.release();
+  });
+
+  it('同一 run 的排队调用不占用进程槽，其他 run 可公平进入', async () => {
+    const limiter = new SubagentLimiter({ globalMaxConcurrency: 1, perRunMaxConcurrency: 1 });
+    const first = await limiter.acquire('run-1');
+    let sameRunAcquired = false;
+    let otherRunAcquired = false;
+    const sameRun = limiter.acquire('run-1').then((slot) => { sameRunAcquired = true; return slot; });
+    const otherRun = limiter.acquire('run-2').then((slot) => { otherRunAcquired = true; return slot; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    first.release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(otherRunAcquired).toBe(true);
+    expect(sameRunAcquired).toBe(false);
+
+    (await otherRun).release();
+    (await sameRun).release();
   });
 });
 
@@ -292,23 +306,6 @@ describe('runSubagent', () => {
     const childRecord = await fixture.config.sessionCatalog!.get(outcome.childSessionId);
     expect(childRecord?.kind).toBe('subagent');
     expect(childRecord?.tenantId).toBe(fixture.tenantId);
-  });
-
-  it('限额闸门：单 run 总数超限抛 SubagentLimitError', async () => {
-    const fixture = await makeFixture({ cleanupDirs });
-    const limiter = new SubagentLimiter({ perRunMaxTotal: 1 });
-    const base = {
-      ...runnerDeps(fixture),
-      parentProviders: [] as ToolProvider[],
-      agentType: SUBAGENT_TYPES.general,
-      request: { description: 't', prompt: 'p', includeCompanyInfo: false },
-      limiter,
-      modelAdapterFactory: () => new TextOnlyAdapter(),
-    };
-    await runSubagent(base);
-    await expect(runSubagent(base)).rejects.toThrow(/总数已达上限/);
-    // 拒绝路径不产生 usage 记账
-    expect(fixture.usageRecords).toHaveLength(1);
   });
 
   it('billing hard cap 拒绝：child Run 实际用量门禁失败后停止模型调用', async () => {
@@ -530,14 +527,16 @@ describe('AgentToolProvider', () => {
     expect(descriptor!.name).toBe('Agent');
     expect(descriptor!.risk).toBe('safe');
     expect(descriptor!.approvalMode).toBe('never');
-    expect(descriptor!.description).toContain('10 个子 agent');
-    expect(descriptor!.description).toContain('并行 4 个');
+    expect(descriptor!.description).toContain('累计派生次数不限');
+    expect(descriptor!.description).toContain(`并行 ${SUBAGENT_PER_RUN_MAX_CONCURRENCY} 个`);
     expect(descriptor!.description).toContain(`${SUBAGENT_MAX_TURNS} 轮`);
     expect(descriptor!.description).toContain(`${SUBAGENT_HARD_TIMEOUT_MS / 60_000} 分钟`);
     expect(descriptor!.description).toContain('general');
     expect(descriptor!.description).toContain('explore');
     expect(SUBAGENT_TYPES.general.maxTurns).toBe(SUBAGENT_MAX_TURNS);
     expect(SUBAGENT_TYPES.explore.maxTurns).toBe(SUBAGENT_MAX_TURNS);
+    expect(SUBAGENT_PER_RUN_MAX_CONCURRENCY).toBe(6);
+    expect(SUBAGENT_GLOBAL_MAX_CONCURRENCY).toBe(30);
     expect(SUBAGENT_MAX_TURNS).toBe(200);
   });
 

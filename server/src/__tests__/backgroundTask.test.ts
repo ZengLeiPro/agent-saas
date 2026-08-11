@@ -574,7 +574,7 @@ describe('PgRunStore background task quota transaction', () => {
       query: async (sql: string) => {
         queries.push(sql.trim());
         if (sql.includes('COUNT(*) FILTER')) {
-          return { rows: [{ parent_total: '0', parent_active: '0', tenant_active: '0' }] };
+          return { rows: [{ parent_active: '0', tenant_active: '0' }] };
         }
         if (sql.includes('INSERT INTO runtime_runs')) {
           const now = new Date().toISOString();
@@ -601,23 +601,24 @@ describe('PgRunStore background task quota transaction', () => {
       userId: 'user-1',
       tenantId: 'tenant-1',
       metadata: { backgroundTask: true, parentRunId: 'parent-1', parentSessionId: 'session-1' },
-    }, { perParentTotal: 10, perParentActive: 4, perTenantActive: 4 });
+    }, { perParentActive: 4, perTenantActive: 4 });
 
     expect(record.runId).toBe('bg-pg-1');
     expect(queries[0]).toBe('BEGIN');
     expect(queries[1]).toContain('pg_advisory_xact_lock');
     expect(queries[2]).toContain('COUNT(*) FILTER');
+    expect(queries[2]).not.toContain('AS parent_total');
     expect(queries[3]).toContain('INSERT INTO runtime_runs');
     expect(queries[4]).toBe('COMMIT');
   });
 
-  it('rolls back without inserting when the per-parent total limit is reached', async () => {
+  it('rolls back without inserting when the per-parent active limit is reached', async () => {
     const queries: string[] = [];
     const client = {
       query: async (sql: string) => {
         queries.push(sql.trim());
         if (sql.includes('COUNT(*) FILTER')) {
-          return { rows: [{ parent_total: '10', parent_active: '0', tenant_active: '0' }] };
+          return { rows: [{ parent_active: '4', tenant_active: '0' }] };
         }
         return { rows: [] };
       },
@@ -630,7 +631,7 @@ describe('PgRunStore background task quota transaction', () => {
       sessionId: 'sub-pg-limit',
       tenantId: 'tenant-1',
       metadata: { backgroundTask: true, parentRunId: 'parent-1', parentSessionId: 'session-1' },
-    }, { perParentTotal: 10, perParentActive: 4, perTenantActive: 4 }))
+    }, { perParentActive: 4, perTenantActive: 4 }))
       .rejects.toBeInstanceOf(BackgroundTaskLimitError);
     expect(queries.some((sql) => sql.includes('INSERT INTO runtime_runs'))).toBe(false);
     expect(queries.at(-1)).toBe('ROLLBACK');

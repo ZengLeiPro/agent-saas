@@ -44,7 +44,6 @@ import {
   SUBAGENT_HARD_TIMEOUT_MS,
   SUBAGENT_MAX_TURNS,
   SUBAGENT_PER_RUN_MAX_CONCURRENCY,
-  SUBAGENT_PER_RUN_MAX_TOTAL,
   SUBAGENT_RESULT_MAX_CHARS,
   type SubagentLimiter,
 } from './subagentLimits.js';
@@ -352,7 +351,6 @@ function renderAgentToolDescription(): string {
     .join('；');
   return loadToolDescription('Agent')
     .replace('{{AGENT_TYPES}}', typeList)
-    .replace('{{PER_RUN_TOTAL}}', String(SUBAGENT_PER_RUN_MAX_TOTAL))
     .replace('{{PER_RUN_CONCURRENCY}}', String(SUBAGENT_PER_RUN_MAX_CONCURRENCY))
     .replace('{{MAX_TURNS}}', String(SUBAGENT_MAX_TURNS))
     .replace('{{TIMEOUT_MINUTES}}', String(Math.round(SUBAGENT_HARD_TIMEOUT_MS / 60_000)));

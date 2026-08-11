@@ -2403,7 +2403,7 @@ export class RawAgentLoop implements AgentLoop {
    *     进行——模型协议要求 tool_result 顺序稳定。并发期间 durable 的
    *     tool_invocation_* 事件会交错落库，replay/recovery 按 toolCallId 建 Map
    *     （runtime/replay.ts）不依赖跨 call 顺序，已核实安全。
-   *   - 并发额度由 subagentLimits 的 per-run 信号量（4）在 runner 内排队，本层不限流。
+   *   - 并发额度由 subagentLimits 的 per-run 信号量在 runner 内排队，本层不限流。
    *   - abort：父 signal 经 ToolCallContext 传导给每个并发子 agent，级联取消。
    * 单个 Agent 调用（段长 1）仍走下方串行分支，行为与既有路径逐字节一致。
    */

@@ -99,8 +99,6 @@ export class RunCreateConflictError extends Error {
 }
 
 export interface EnqueueBackgroundTaskLimits {
-  /** 单个父 run 最多派生多少个后台任务（含已完成）。 */
-  perParentTotal: number;
   /** 单个父 run 同时处于 pending/running 的后台任务上限。 */
   perParentActive: number;
   /** 单租户同时处于 pending/running 的后台任务上限。 */
@@ -1003,12 +1001,10 @@ export class PgRunStore implements RunStore {
       // 后台任务创建频率低，用单一事务锁换取多 brain 下明确的硬配额语义。
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${this.runsTable}:background-task-quota`]);
       const counts = await client.query<{
-        parent_total: string | number;
         parent_active: string | number;
         tenant_active: string | number;
       }>(`
         SELECT
-          COUNT(*) FILTER (WHERE metadata->>'parentRunId' = $1) AS parent_total,
           COUNT(*) FILTER (
             WHERE metadata->>'parentRunId' = $1
               AND status IN ('pending','running')
@@ -1021,12 +1017,8 @@ export class PgRunStore implements RunStore {
         WHERE metadata->>'backgroundTask' = 'true'
       `, [parentRunId, tenantId]);
       const row = counts.rows[0];
-      const parentTotal = parseCount(row?.parent_total);
       const parentActive = parseCount(row?.parent_active);
       const tenantActive = parseCount(row?.tenant_active);
-      if (parentTotal >= limits.perParentTotal) {
-        throw new BackgroundTaskLimitError(`本次运行的后台任务总数已达上限 ${limits.perParentTotal}`);
-      }
       if (parentActive >= limits.perParentActive) {
         throw new BackgroundTaskLimitError(`本次运行同时活跃的后台任务已达上限 ${limits.perParentActive}`);
       }

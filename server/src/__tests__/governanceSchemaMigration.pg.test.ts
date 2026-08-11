@@ -101,6 +101,9 @@ describePg('Governance Schema V18 PostgreSQL 升级、约束与事务回滚', ()
     ]);
     await pool.query(`INSERT INTO ${prefix}_directory_groups (group_id,tenant_id,source,display_name,status) VALUES ('g-a','tenant-a','governance','A','active')`);
     await expect(pool.query(`INSERT INTO ${prefix}_directory_group_members (tenant_id,group_id,user_id,source) VALUES ('tenant-b','g-a','user-a','governance')`)).rejects.toThrow();
+    await pool.query(`INSERT INTO ${prefix}_tenant_memberships
+      (tenant_id,user_id,persona,is_owner,status,source,version,created_by,updated_by)
+      VALUES ('tenant-a','user-a','org_admin',TRUE,'active','governance',1,'admin','admin')`);
     await pool.query(`INSERT INTO ${prefix}_oauth_grants (grant_id,tenant_id,subject_user_id,provider,status,approved_at) VALUES ('grant-a','tenant-a','user-a','google','active',NOW())`);
     await expect(pool.query(`INSERT INTO ${prefix}_oauth_approval_records (approval_id,grant_id,tenant_id,subject_user_id,action,purpose,actor_user_id) VALUES ('approval-bad','grant-a','tenant-b','user-a','approved','test','user-a')`)).rejects.toThrow();
 
@@ -122,10 +125,6 @@ describePg('Governance Schema V18 PostgreSQL 升级、约束与事务回滚', ()
     expect(triggers.rows.map(row => row.tgname)).toEqual([...expectedTriggers].sort());
 
     await pool.query(`
-      INSERT INTO ${prefix}_tenant_memberships
-        (tenant_id,user_id,persona,is_owner,status,source,version,created_by,updated_by)
-      VALUES ('tenant-a','user-a','org_admin',TRUE,'active','governance',1,'admin','admin');
-
       INSERT INTO ${prefix}_platform_admins
         (user_id,status,source,version,created_by,updated_by)
       VALUES ('platform-user','active','governance',1,'admin','admin');
@@ -264,13 +263,14 @@ describePg('Governance Schema V18 PostgreSQL 升级、约束与事务回滚', ()
       [`${v18Prefix}_directory_groups`, `${v18Prefix}_oauth_grants`],
     );
     expect(v18Tables.rows[0]).toEqual({ directory: null, oauth: null });
-    const jobs = `${v18Prefix}_governance_change_job_domains`;
+    const jobs = `${v18Prefix}_governance_change_jobs`;
+    const jobDomains = `${v18Prefix}_governance_change_job_domains`;
     const assignments = `${v18Prefix}_resource_assignments`;
     const assignmentSets = `${v18Prefix}_resource_assignment_sets`;
     const unresolvedBefore = await pool.query<{ count: string }>(`
       SELECT COUNT(*)::text AS count FROM information_schema.columns
       WHERE table_schema=current_schema() AND table_name=$1 AND column_name='unresolved_items_json'
-    `, [jobs]);
+    `, [jobDomains]);
     expect(Number(unresolvedBefore.rows[0]?.count)).toBe(0);
     await expect(pool.query(`INSERT INTO ${jobs}
       (job_id,tenant_id,job_type,target_type,target_id,idempotency_key,status,created_by,updated_by)
@@ -293,7 +293,7 @@ describePg('Governance Schema V18 PostgreSQL 升级、约束与事务回滚', ()
     const unresolvedAfter = await pool.query<{ is_nullable: string; column_default: string }>(`
       SELECT is_nullable,column_default FROM information_schema.columns
       WHERE table_schema=current_schema() AND table_name=$1 AND column_name='unresolved_items_json'
-    `, [jobs]);
+    `, [jobDomains]);
     expect(unresolvedAfter.rows[0]?.is_nullable).toBe('NO');
     expect(unresolvedAfter.rows[0]?.column_default).toContain('[]');
     await expect(pool.query(`INSERT INTO ${jobs}

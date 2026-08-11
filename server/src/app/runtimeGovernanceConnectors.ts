@@ -34,16 +34,19 @@ import {
 import { McpConfigStore } from '../data/mcpConfig.js';
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import { AliyunConnectorService, revokePendingAliyunCredentials } from '../connectors/aliyun.js';
-import { GITHUB_CONNECTOR_ID, revokePendingGithubCredentials } from '../connectors/github.js';
-import { GoogleWorkspaceOAuthService, PgGoogleWorkspaceOAuthStateStore } from '../connectors/googleWorkspace.js';
-import { connectNotionCredential, disconnectNotion, getLiveNotionConnection, type NotionConnectionView } from '../connectors/notion.js';
+import { GITHUB_CONNECTOR_ID, resolveGithubRuntimeEnv, revokePendingGithubCredentials } from '../connectors/github.js';
+import { GoogleWorkspaceOAuthService, PgGoogleWorkspaceOAuthStateStore, resolveGoogleWorkspaceRuntimeEnv } from '../connectors/googleWorkspace.js';
+import { connectNotionCredential, disconnectNotion, getLiveNotionConnection, resolveNotionRuntimeEnv, type NotionConnectionView } from '../connectors/notion.js';
 import { SignupConfigStore } from '../data/signupConfig.js';
 import { EgressConfigStore } from '../data/egressConfig.js';
 import { EgressDispatcherRegistry, createEgressFetch, createEgressWebSocketConnector } from '../runtime/egressDispatcher.js';
 import type { EgressConfig } from '../runtime/egressPolicy.js';
+import { resolveFeishuConnectorRunEnv } from '../runtime/connectorRunEnv.js';
+import type { FeishuTokenBroker } from '../feishu/tokenBroker.js';
 import { McpClientManager } from '../mcp/clientManager.js';
 import { McpProxy } from '../mcp/proxy.js';
 import { McpOAuthService } from '../mcp/oauthService.js';
+import { resolveConnectorRuntimeEnv } from '../mcp/connectorRuntimeEnv.js';
 import { CapabilityTokenService } from '../security/capabilityToken.js';
 import type { SecretVault } from '../security/secretVault.js';
 import { CodexResponsesWebSocketPool } from '../runtime/responses/codexResponsesWebSocketPool.js';
@@ -54,6 +57,8 @@ export interface RuntimeGovernanceConnectorDeps {
   agentCwd: string;
   config: AppConfig;
   secretVault: SecretVault;
+  getFeishuTokenBroker?: () => FeishuTokenBroker | undefined;
+  tenantRunEnvByTenant?: ReadonlyMap<string, Readonly<Record<string, string>>>;
   userStore?: UserStore;
   tenantStore?: TenantStore;
   orgAgentStore?: OrgAgentStore;
@@ -76,7 +81,8 @@ export interface RuntimeGovernanceConnectorDeps {
 /** Initializes connector credentials, governance shadow audits, MCP, and egress in strict startup order. */
 export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGovernanceConnectorDeps) {
   const {
-    processCwd, agentCwd, config, secretVault, userStore, tenantStore, orgAgentStore, skillConfigStore,
+    processCwd, agentCwd, config, secretVault, getFeishuTokenBroker, tenantRunEnvByTenant,
+    userStore, tenantStore, orgAgentStore, skillConfigStore,
     pgEventStore, membershipStore, entitlementStore, assignmentStore, credentialStore,
     agentResourceStore, environmentStore, skillGovernanceStore, governanceAuditStore,
     governanceMigrationControlStore, governanceShadowComparator, runResolutionSnapshotStore,
@@ -746,12 +752,68 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
     logger: serverLogger.child('McpProxy'),
   });
   const mcpClientShutdown = () => mcpClientManager.shutdown();
-  // Governance security boundary: connector, OAuth, and tenant-level credentials are never
-  // materialized into the generic agent process or shell environment. Connector calls must use
-  // a server-side proxy/broker so revocation, generation, scope, and audit checks remain effective.
-  const resolveRunScopedEnv = async (_context: {
+  // 能力中心连接器是用户级 CLI-first 能力：用户授权后，标准 env 只注入其
+  // 自己的隔离运行环境。MCP 的服务端 broker 仍负责工具调用；这里只导出模板
+  // 显式声明的 runtimeEnv，供 CLI/SDK/脚本直接使用。
+  const resolveRunScopedEnv = async (context: {
     userId: string; username: string; tenantId: string;
-  }): Promise<Record<string, string>> => ({});
+  }): Promise<Record<string, string>> => {
+    const owner = userStore?.findByUsername(context.username);
+    const ownedContext = owner
+      ? (!owner.disabled && owner.id === context.userId && owner.tenantId === context.tenantId ? context : undefined)
+      : (!userStore ? context : undefined);
+    if (!ownedContext) return {};
+
+    const [githubEnv, notionEnv, googleWorkspaceEnv, aliyunEnv, feishuEnv, mcpConnectorEnv] = await Promise.all([
+      resolveGithubRuntimeEnv({
+        connectionStore: connectorConnectionStore,
+        vault: secretVault,
+        onError: error => serverLogger.warn(
+          `Native connector runtime env skipped: connector=${GITHUB_CONNECTOR_ID} reason=${error.message}`,
+        ),
+      }, ownedContext),
+      resolveNotionRuntimeEnv({
+        connectionStore: connectorConnectionStore,
+        vault: secretVault,
+        onError: error => serverLogger.warn(
+          `Native connector runtime env skipped: connector=notion reason=${error.message}`,
+        ),
+      }, ownedContext),
+      resolveGoogleWorkspaceRuntimeEnv(
+        googleWorkspaceOAuthService,
+        ownedContext,
+        error => serverLogger.warn(
+          `Native connector runtime env skipped: connector=google-workspace reason=${error.message}`,
+        ),
+      ),
+      aliyunConnectorService.resolveRuntimeEnv(ownedContext),
+      resolveFeishuConnectorRunEnv(
+        getFeishuTokenBroker?.(),
+        ownedContext,
+        error => serverLogger.warn(
+          `Native connector runtime env skipped: connector=feishu reason=${error.message}`,
+        ),
+      ),
+      resolveConnectorRuntimeEnv({
+        store: mcpConfigStore,
+        vault: secretVault,
+        oauthService: mcpOAuthService,
+        excludedServerIds: legacyNativeMcpIds,
+        onError: (error, meta) => serverLogger.warn(
+          `MCP connector runtime env skipped: server=${meta.serverId} source=${meta.source} reason=${error.message}`,
+        ),
+      }, ownedContext),
+    ]);
+    return {
+      ...mcpConnectorEnv,
+      ...aliyunEnv,
+      ...feishuEnv,
+      ...googleWorkspaceEnv,
+      ...notionEnv,
+      ...githubEnv,
+      ...(tenantRunEnvByTenant?.get(context.tenantId) ?? {}),
+    };
+  };
 
 
   return {

@@ -1,4 +1,4 @@
-import { readFile, readdir, lstat, unlink, rm } from "fs/promises";
+import { readFile, readdir, lstat, realpath, unlink, rm } from "fs/promises";
 import { createReadStream, type Stats } from "fs";
 import { resolve, extname, basename, dirname, join, relative, sep } from "path";
 import { Router, type Request } from "express";
@@ -227,13 +227,20 @@ export function createFileRouter(options: FileRouterOptions): Router {
         return;
       }
 
-      const fileStat = await lstat(absolutePath);
+      let fileStat = await lstat(absolutePath);
       if (fileStat.isSymbolicLink()) {
         res
           .status(403)
           .json({ error: "Access denied: symbolic links not allowed" });
         return;
       }
+      const realPath = await realpath(absolutePath);
+      if (!resolveFileRoutePath(realPath, userCwd, user?.username)) {
+        res.status(403).json({ error: "Access denied: symbolic link escapes authorized directories" });
+        return;
+      }
+      absolutePath = realPath;
+      fileStat = await lstat(absolutePath);
       if (!fileStat.isFile()) {
         res.status(400).json({ error: "Not a file" });
         return;
@@ -333,6 +340,13 @@ export function createFileRouter(options: FileRouterOptions): Router {
           .json({ error: "Access denied: symbolic links not allowed" });
         return;
       }
+      const realPath = await realpath(absolutePath);
+      if (!resolveFileRoutePath(realPath, userCwd, effectiveUsername)) {
+        res.status(403).json({ error: "Access denied: symbolic link escapes authorized directories" });
+        return;
+      }
+      absolutePath = realPath;
+      stats = await lstat(absolutePath);
       if (!stats.isFile()) {
         res.status(400).json({ error: "Not a file" });
         return;

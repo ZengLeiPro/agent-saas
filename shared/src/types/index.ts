@@ -149,6 +149,8 @@ export type {
   TaskBoardExecutionStatus,
   TaskBoardVisibility,
   TaskBoard,
+  TaskBoardAttachment,
+  TaskBoardUploadAttachment,
   TaskBoardTask,
   TaskBoardComment,
   TaskBoardExecution,

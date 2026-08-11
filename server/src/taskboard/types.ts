@@ -1,5 +1,6 @@
 import type {
   TaskBoard,
+  TaskBoardAttachment,
   TaskBoardComment,
   TaskBoardCommentCreateInput,
   TaskBoardCreateInput,
@@ -94,6 +95,7 @@ export interface TaskboardExecutionContext {
 export interface TaskboardExecutionCompletionInput {
   status: "succeeded" | "failed" | "cancelled";
   commentBody: string;
+  attachments?: TaskBoardAttachment[];
   error?: string;
 }
 

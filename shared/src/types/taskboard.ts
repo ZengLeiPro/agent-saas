@@ -56,12 +56,27 @@ export interface TaskBoard {
   updatedAt: string;
 }
 
+export interface TaskBoardAttachment {
+  /** 上传接口生成的附件标识；Agent 生成的工作区文件没有此字段。 */
+  attachmentId?: string;
+  originalName: string;
+  relativePath: string;
+  size: number;
+  mimeType: string;
+  isImage: boolean;
+}
+
+export interface TaskBoardUploadAttachment extends TaskBoardAttachment {
+  attachmentId: string;
+}
+
 export interface TaskBoardTask {
   id: string;
   boardId: string;
   identifier: string;
   title: string;
   description: string;
+  attachments?: TaskBoardAttachment[];
   status: TaskBoardStatus;
   priority: TaskBoardPriority;
   labels: string[];
@@ -80,6 +95,7 @@ export interface TaskBoardComment {
   id: string;
   taskId: string;
   body: string;
+  attachments?: TaskBoardAttachment[];
   authorType: "user" | "agent" | "system";
   authorId: string;
   authorName: string;
@@ -128,6 +144,7 @@ export interface TaskBoardPatchInput {
 export interface TaskBoardTaskCreateInput {
   title: string;
   description?: string;
+  attachments?: TaskBoardUploadAttachment[];
   status?: TaskBoardStatus;
   priority?: TaskBoardPriority;
   labels?: string[];
@@ -138,6 +155,7 @@ export interface TaskBoardTaskCreateInput {
 export interface TaskBoardTaskPatchInput {
   title?: string;
   description?: string;
+  attachments?: TaskBoardUploadAttachment[];
   priority?: TaskBoardPriority;
   labels?: string[];
   dueAt?: string | null;
@@ -155,6 +173,7 @@ export interface TaskBoardTaskMoveInput {
 
 export interface TaskBoardCommentCreateInput {
   body: string;
+  attachments?: TaskBoardUploadAttachment[];
 }
 
 export interface TaskBoardExecutionStartInput {

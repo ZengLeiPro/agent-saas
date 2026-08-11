@@ -266,6 +266,42 @@ export class UploadManager {
     else this.metrics.failedRequests += 1;
   }
 
+  async resolveAttachments(
+    userCwd: string,
+    attachmentIds: readonly string[],
+  ): Promise<UploadedFileInfo[]> {
+    this.knownUserCwds.add(userCwd);
+    return this.withUserMutation(userCwd, async () => {
+      const resolved: UploadedFileInfo[] = [];
+      for (const attachmentId of attachmentIds) {
+        if (!ATTACHMENT_ID_RE.test(attachmentId)) throw new Error('Invalid attachment id');
+        const statePath = this.statePath(userCwd, attachmentId);
+        let state: AttachmentState;
+        try {
+          state = JSON.parse(await readFile(statePath, 'utf8')) as AttachmentState;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            throw new Error(`Attachment not found: ${attachmentId}`);
+          }
+          throw error;
+        }
+        if (state.attachmentId !== attachmentId || basename(state.filename) !== state.filename) {
+          throw new Error(`Invalid attachment state: ${attachmentId}`);
+        }
+        await stat(join(userCwd, state.relativePath));
+        resolved.push({
+          attachmentId,
+          originalName: state.originalName,
+          relativePath: state.relativePath,
+          size: state.size,
+          mimeType: state.mimeType,
+          isImage: isSupportedImage(state.mimeType),
+        });
+      }
+      return resolved;
+    });
+  }
+
   async markReferenced(
     userCwd: string,
     attachments: readonly UploadedFileInfo[],
@@ -534,6 +570,13 @@ export class UploadManager {
 
 function appendUnique(values: string[] | undefined, value: string): string[] {
   return values?.includes(value) ? values : [...(values ?? []), value];
+}
+
+function isSupportedImage(mimeType: string): boolean {
+  return mimeType === 'image/png'
+    || mimeType === 'image/jpeg'
+    || mimeType === 'image/gif'
+    || mimeType === 'image/webp';
 }
 
 function isWithin(candidate: string, root: string): boolean {

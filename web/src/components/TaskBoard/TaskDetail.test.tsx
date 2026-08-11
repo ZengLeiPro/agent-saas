@@ -11,7 +11,10 @@ const mocks = vi.hoisted(() => ({
   addComment: vi.fn(),
   executions: [] as TaskBoardExecution[],
   refreshExecutions: vi.fn(async () => undefined),
+  authFetch: vi.fn(),
 }));
+
+vi.mock("@/lib/authFetch", () => ({ authFetch: mocks.authFetch }));
 
 vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
@@ -198,6 +201,36 @@ describe("TaskDetail 草稿隔离", () => {
 
     await waitFor(() => expect(onUpdate).toHaveBeenCalledWith(taskOne, {
       model: "group-a/model-c",
+    }));
+  });
+
+  it("评论可只上传附件后发表", async () => {
+    const user = userEvent.setup();
+    const uploaded = {
+      attachmentId: "44444444-4444-4444-8444-444444444444",
+      originalName: "复核记录.pdf",
+      relativePath: "uploads/复核记录.pdf",
+      size: 6,
+      mimeType: "application/pdf",
+      isImage: false,
+    };
+    mocks.authFetch.mockResolvedValue(new Response(JSON.stringify({ success: true, files: [uploaded] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    render(<TaskDetail {...props()} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+
+    const pickers = screen.getAllByLabelText("选择附件");
+    fireEvent.change(pickers[1], {
+      target: { files: [new File(["record"], uploaded.originalName, { type: uploaded.mimeType })] },
+    });
+    await waitFor(() => expect(screen.getByText(uploaded.originalName)).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "发表" }));
+
+    await waitFor(() => expect(mocks.addComment).toHaveBeenCalledWith({
+      body: "",
+      attachments: [uploaded],
     }));
   });
 

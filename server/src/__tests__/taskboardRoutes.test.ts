@@ -11,7 +11,7 @@ import type {
 } from '../../../shared/src/types/taskboard.js';
 import type { JwtPayload } from '../auth/types.js';
 import type { UserStore } from '../data/users/store.js';
-import { createTaskboardRouter } from '../routes/taskboard.js';
+import { createTaskboardRouter, type TaskboardRouterOptions } from '../routes/taskboard.js';
 import {
   TaskboardConflictError,
   TaskboardNotFoundError,
@@ -252,6 +252,44 @@ describe('Taskboard routes', () => {
     }))).status).toBe(400);
   });
 
+  it('评论可仅携带附件，并使用服务端解析出的可信元数据', async () => {
+    const service = makeService({ identities: [], taskFilters: [], createBoards: [] });
+    let received: unknown;
+    service.createComment = async (_identity, _taskId, input) => {
+      received = input;
+      return { ...COMMENT, body: input.body, attachments: input.attachments };
+    };
+    const attachmentId = '11111111-1111-4111-8111-111111111111';
+    const canonical = {
+      attachmentId,
+      originalName: '现场图.png',
+      relativePath: 'uploads/111_现场图.png',
+      size: 123,
+      mimeType: 'image/png',
+      isImage: true,
+    };
+    const uploadManager = {
+      resolveAttachments: async (_userCwd: string, ids: readonly string[]) => {
+        expect(ids).toEqual([attachmentId]);
+        return [canonical];
+      },
+      markReferenced: async () => undefined,
+    } as unknown as TaskboardRouterOptions['uploadManager'];
+    const rig = await makeRig(service, USER, undefined, undefined, undefined, {
+      agentCwd: '/agent',
+      uploadManager,
+    });
+
+    const response = await rig.request(`/api/taskboard/tasks/${TASK.id}/comments`, postJson({
+      body: '',
+      attachments: [{ ...canonical, originalName: '伪造名称.exe', relativePath: '../../etc/passwd' }],
+    }));
+
+    expect(response.status).toBe(201);
+    expect(received).toEqual({ body: '', attachments: [canonical] });
+    expect(await response.json()).toMatchObject({ attachments: [canonical] });
+  });
+
   it('maps not found, domain validation, CAS with current object, and database faults', async () => {
     const service = makeService({ identities: [], taskFilters: [], createBoards: [] });
     service.getTask = async () => { throw new TaskboardNotFoundError('Task not found'); };
@@ -310,6 +348,7 @@ async function makeRig(
   captured: Captured = { identities: [], taskFilters: [], createBoards: [] },
   executionService?: TaskboardExecutionService,
   userStore?: UserStore,
+  routerOptions: Partial<TaskboardRouterOptions> = {},
 ): Promise<Rig> {
   const app = express();
   app.use(express.json());
@@ -318,7 +357,12 @@ async function makeRig(
     req.user = caller ?? undefined;
     next();
   });
-  app.use('/api/taskboard', createTaskboardRouter({ service, executionService, userStore }));
+  app.use('/api/taskboard', createTaskboardRouter({
+    service,
+    executionService,
+    userStore,
+    ...routerOptions,
+  }));
   const server: Server = await new Promise((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });

@@ -294,6 +294,9 @@ describe('registerRoutes', () => {
     expect(mocked.createTaskboardRouter).toHaveBeenCalledWith({
       service: undefined,
       executionService: undefined,
+      userStore: undefined,
+      agentCwd: '/agent',
+      uploadManager: runtime.uploadManager,
     });
     expect(app.use).toHaveBeenCalledWith(
       '/api/taskboard',

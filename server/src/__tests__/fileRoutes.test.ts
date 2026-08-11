@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -103,6 +103,28 @@ describe("/api/file/download referrer fallback", () => {
     );
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("IMAGE_BYTES");
+  });
+
+  it("拒绝通过父目录符号链接读取工作区外文件", async () => {
+    const outside = join(tempRoots[0], "outside");
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, "secret.txt"), "SECRET");
+    symlinkSync(outside, join(userCwd, "assets", "escape"));
+    ({ server, baseUrl } = await startServer({
+      sub: "u1",
+      username: "zengky",
+      role: "user",
+    }));
+
+    const download = await fetch(
+      `${baseUrl}/api/file/download?path=${encodeURIComponent("assets/escape/secret.txt")}`,
+    );
+    expect(download.status).toBe(403);
+
+    const preview = await fetch(
+      `${baseUrl}/api/file/read?path=${encodeURIComponent("assets/escape/secret.txt")}`,
+    );
+    expect(preview.status).toBe(403);
   });
 
   it("普通媒体使用私有短缓存并支持 ETag/Last-Modified 条件请求", async () => {

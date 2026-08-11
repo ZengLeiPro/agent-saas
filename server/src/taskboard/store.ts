@@ -8,6 +8,7 @@ import {
   TASKBOARD_STATUSES,
   type TaskBoard,
   type TaskBoardComment,
+  type TaskBoardCommentCreateInput,
   type TaskBoardCreateInput,
   type TaskBoardExecution,
   type TaskBoardExecutionStartResult,
@@ -34,6 +35,7 @@ import {
   isTerminalExecutionStatus,
   isUniqueViolation,
   mapActiveBoardNameError,
+  normalizeAttachments,
   normalizeLabels,
   quoteSqlLiteral,
   optionalText,
@@ -128,6 +130,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           identifier TEXT NOT NULL,
           title TEXT NOT NULL,
           description TEXT NOT NULL DEFAULT '',
+          attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
           status TEXT NOT NULL CHECK (status IN (${TASKBOARD_STATUSES.map(quoteSqlLiteral).join(', ')})),
           priority TEXT NOT NULL DEFAULT 'none' CHECK (priority IN (${TASKBOARD_PRIORITIES.map(quoteSqlLiteral).join(', ')})),
           labels TEXT[] NOT NULL DEFAULT '{}',
@@ -142,14 +145,15 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         )
       `);
       await client.query(`
-        ALTER TABLE ${this.tasksTable}
-          ADD COLUMN IF NOT EXISTS model TEXT
+        ALTER TABLE ${this.tasksTable} ADD COLUMN IF NOT EXISTS model TEXT;
+        ALTER TABLE ${this.tasksTable} ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb
       `);
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.commentsTable} (
           id TEXT PRIMARY KEY,
           task_id TEXT NOT NULL REFERENCES ${this.tasksTable}(id),
           body TEXT NOT NULL,
+          attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
           author_type TEXT NOT NULL DEFAULT 'user'
             CHECK (author_type IN ('user', 'agent', 'system')),
           author_id TEXT NOT NULL,
@@ -160,6 +164,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         )
       `);
       await client.query(`
+        ALTER TABLE ${this.commentsTable} ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb;
         ALTER TABLE ${this.commentsTable}
           DROP CONSTRAINT IF EXISTS ${this.commentsTable}_author_type_check;
         ALTER TABLE ${this.commentsTable}
@@ -470,14 +475,15 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       const taskId = randomUUID();
       await client.query(
         `INSERT INTO ${this.tasksTable}
-           (id, board_id, identifier, title, description, status, priority, labels, sort_order, due_at, model, version)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1)`,
+           (id, board_id, identifier, title, description, attachments, status, priority, labels, sort_order, due_at, model, version)
+         VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,1)`,
         [
           taskId,
           boardId,
           `TASK-${taskNumber}`,
           requireText(input.title, 'Task title'),
           input.description ?? '',
+          JSON.stringify(normalizeAttachments(input.attachments)),
           status,
           input.priority ?? 'none',
           normalizeLabels(input.labels),
@@ -506,6 +512,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (
         input.title === undefined
         && input.description === undefined
+        && input.attachments === undefined
         && input.priority === undefined
         && input.labels === undefined
         && input.dueAt === undefined
@@ -522,6 +529,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (input.description !== undefined) {
         params.push(input.description);
         assignments.push(`description=$${params.length}`);
+      }
+      if (input.attachments !== undefined) {
+        params.push(JSON.stringify(normalizeAttachments(input.attachments)));
+        assignments.push(`attachments=$${params.length}::jsonb`);
       }
       if (input.priority !== undefined) {
         params.push(input.priority);
@@ -640,26 +651,20 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return result.rows.map((row) => applyCommentAuthorDisplayName(rowToComment(row), identity));
   }
 
-  async createComment(
-    identity: TaskboardIdentity,
-    taskId: string,
-    input: { body: string },
-  ): Promise<TaskBoardComment> {
+  async createComment(identity: TaskboardIdentity, taskId: string, input: TaskBoardCommentCreateInput): Promise<TaskBoardComment> {
     return this.withTransaction(async (client) => {
       const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
+      const body = input.body.trim();
+      const attachments = normalizeAttachments(input.attachments);
+      if (!body && attachments.length === 0) throw new TaskboardValidationError('Comment body or attachment is required');
       const result = await client.query(
         `INSERT INTO ${this.commentsTable}
-           (id, task_id, body, author_type, author_id, author_name, version)
-         VALUES ($1,$2,$3,'user',$4,$5,1)
+           (id, task_id, body, attachments, author_type, author_id, author_name, version)
+         VALUES ($1,$2,$3,$4::jsonb,'user',$5,$6,1)
          RETURNING *`,
-        [
-          randomUUID(),
-          taskId,
-          requireText(input.body, 'Comment body'),
-          identity.ownerUserId,
-          identity.displayName || identity.username,
-        ],
+        [randomUUID(), taskId, body, JSON.stringify(attachments), identity.ownerUserId,
+          identity.displayName || identity.username],
       );
       return rowToComment(result.rows[0]);
     });
@@ -1084,16 +1089,11 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       const authorType = input.status === 'succeeded' ? 'agent' : 'system';
       await client.query(
         `INSERT INTO ${this.commentsTable}
-           (id, task_id, body, author_type, author_id, author_name, version)
-         VALUES ($1,$2,$3,$4,$5,$6,1)`,
-        [
-          randomUUID(),
-          taskId,
-          requireText(input.commentBody, 'Execution comment body'),
-          authorType,
-          currentExecution.id,
-          input.status === 'succeeded' ? 'Agent' : '系统',
-        ],
+           (id, task_id, body, attachments, author_type, author_id, author_name, version)
+         VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,1)`,
+        [randomUUID(), taskId, requireText(input.commentBody, 'Execution comment body'),
+          JSON.stringify(normalizeAttachments(input.attachments)), authorType, currentExecution.id,
+          input.status === 'succeeded' ? 'Agent' : '系统'],
       );
       return {
         task: await this.requireTask(client, identity, taskId, false),

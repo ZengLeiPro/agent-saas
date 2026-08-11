@@ -1,5 +1,6 @@
 import {
   type TaskBoard,
+  type TaskBoardAttachment,
   type TaskBoardComment,
   type TaskBoardExecution,
   type TaskBoardTask,
@@ -20,6 +21,7 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     identifier: String(row.identifier),
     title: String(row.title),
     description: String(row.description ?? ''),
+    attachments: normalizeAttachments(row.attachments),
     status: String(row.status) as TaskBoardTask['status'],
     priority: String(row.priority) as TaskBoardTask['priority'],
     labels: Array.isArray(row.labels) ? row.labels.map(String) : [],
@@ -41,6 +43,7 @@ export function rowToComment(row: Record<string, unknown>): TaskBoardComment {
     id: String(row.id),
     taskId: String(row.task_id),
     body: String(row.body),
+    attachments: normalizeAttachments(row.attachments),
     authorType: String(row.author_type) as TaskBoardComment['authorType'],
     authorId: String(row.author_id),
     authorName: String(row.author_name),
@@ -121,6 +124,29 @@ export function optionalText(value: string | undefined): string | null {
 
 export function normalizeLabels(labels: string[] | undefined): string[] {
   return [...new Set((labels ?? []).map((label) => label.trim()).filter(Boolean))];
+}
+
+export function normalizeAttachments(value: unknown): TaskBoardAttachment[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const attachment = entry as Record<string, unknown>;
+    const originalName = typeof attachment.originalName === 'string' ? attachment.originalName.trim() : '';
+    const relativePath = typeof attachment.relativePath === 'string' ? attachment.relativePath.trim() : '';
+    if (!originalName || !relativePath) return [];
+    return [{
+      ...(typeof attachment.attachmentId === 'string' && attachment.attachmentId
+        ? { attachmentId: attachment.attachmentId }
+        : {}),
+      originalName,
+      relativePath,
+      size: Number.isFinite(Number(attachment.size)) ? Math.max(0, Number(attachment.size)) : 0,
+      mimeType: typeof attachment.mimeType === 'string' && attachment.mimeType
+        ? attachment.mimeType
+        : 'application/octet-stream',
+      isImage: attachment.isImage === true,
+    }];
+  });
 }
 
 export function toIso(value: unknown): string {

@@ -102,6 +102,46 @@ describePg('PgTaskboardStore contract', () => {
       .rejects.toMatchObject({ code: 'TASKBOARD_BOARD_NAME_EXISTS' });
   });
 
+  it('shares organization boards with all tenant members while keeping board ownership and execution owner stable', async () => {
+    const board = await store.createBoard(alice, {
+      name: '组织协作',
+      visibility: 'organization',
+    });
+    expect(board).toMatchObject({
+      visibility: 'organization',
+      ownerUserId: alice.ownerUserId,
+      canManage: true,
+    });
+    expect(await store.listBoards(admin)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: board.id, visibility: 'organization', canManage: false }),
+    ]));
+    expect((await store.listBoards(aliceOtherTenant)).map((item) => item.id)).not.toContain(board.id);
+    await expect(store.updateBoard(admin, board.id, {
+      name: '越权修改',
+      expectedVersion: board.version,
+    })).rejects.toBeInstanceOf(TaskboardNotFoundError);
+
+    const task = await store.createTask(admin, board.id, { title: '组织成员创建', status: 'todo' });
+    const updated = await store.updateTask(alice, task.id, {
+      title: '创建者修改',
+      expectedVersion: task.version,
+    });
+    await expect(store.createComment(admin, task.id, { body: '组织成员评论' }))
+      .resolves.toMatchObject({ authorId: admin.ownerUserId });
+    expect(await store.getExecutionModelContext(admin, task.id)).toMatchObject({
+      boardOwnerUserId: alice.ownerUserId,
+    });
+    const archived = await store.archiveTask(admin, task.id, { expectedVersion: updated.version });
+    const restored = await store.restoreTask(admin, task.id, { expectedVersion: archived.version });
+    expect(restored).not.toHaveProperty('archivedAt');
+    await expect(store.getTask(aliceOtherTenant, task.id)).rejects.toBeInstanceOf(TaskboardNotFoundError);
+
+    await expect(store.createBoard(admin, {
+      name: board.name,
+      visibility: 'organization',
+    })).rejects.toMatchObject({ code: 'TASKBOARD_BOARD_NAME_EXISTS' });
+  });
+
   it('stores the default board prompt and allows it to be customized', async () => {
     const withDefault = await store.createBoard(alice, { name: '默认提示语' });
     expect(withDefault.prompt).toBe(TASKBOARD_DEFAULT_PROMPT);
@@ -167,6 +207,7 @@ describePg('PgTaskboardStore contract', () => {
       runId,
       sessionId,
       configuredModelRef: 'group-a/model-board',
+      executionOwnerUserId: alice.ownerUserId,
       dispatch: dispatch(executionId, runId, sessionId),
     })).rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_MODEL_CHANGED' });
   });
@@ -239,6 +280,7 @@ describePg('PgTaskboardStore contract', () => {
       executionId: 'execution-a',
       runId: 'run-a',
       sessionId: 'session-a',
+      executionOwnerUserId: alice.ownerUserId,
       dispatch: dispatch('execution-a', 'run-a', 'session-a'),
     });
     expect(claimed.task).toMatchObject({ status: 'in_progress', version: task.version + 1 });
@@ -327,6 +369,7 @@ describePg('PgTaskboardStore contract', () => {
       executionId: 'execution-b',
       runId: 'run-b',
       sessionId: 'session-b',
+      executionOwnerUserId: alice.ownerUserId,
       dispatch: dispatch('execution-b', 'run-b', 'session-b'),
     });
     const reconcilePeer = await store.createTask(alice, board.id, { title: '对账轮转', status: 'todo' });
@@ -335,6 +378,7 @@ describePg('PgTaskboardStore contract', () => {
       executionId: 'execution-c',
       runId: 'run-c',
       sessionId: 'session-c',
+      executionOwnerUserId: alice.ownerUserId,
       dispatch: dispatch('execution-c', 'run-c', 'session-c'),
     });
     const staleBefore = new Date(Date.now() + 1_000);

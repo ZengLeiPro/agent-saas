@@ -18,6 +18,9 @@ const board: TaskBoard = {
   id: "board-1",
   name: "研发事项",
   description: "服务端说明",
+  visibility: "personal",
+  ownerUserId: "user-1",
+  canManage: true,
   prompt: "服务端提示语",
   version: 2,
   createdAt: "2026-08-01T00:00:00.000Z",
@@ -40,6 +43,9 @@ describe("BoardDialog", () => {
 
     const prompt = screen.getByRole("textbox", { name: "看板提示语" }) as HTMLTextAreaElement;
     expect(prompt.value).toBe(TASKBOARD_DEFAULT_PROMPT);
+    expect(screen.getByRole("combobox", { name: "看板可见范围" }).textContent).toContain("个人");
+    await user.click(screen.getByRole("combobox", { name: "看板可见范围" }));
+    await user.click(screen.getByRole("option", { name: "组织" }));
     await user.clear(prompt);
     await user.type(prompt, "只处理当前任务，不修改无关文件。");
     await user.type(screen.getByRole("textbox", { name: "名称" }), "产品研发");
@@ -51,6 +57,7 @@ describe("BoardDialog", () => {
       name: "产品研发",
       prompt: "只处理当前任务，不修改无关文件。",
       model: "group-a/model-a",
+      visibility: "organization",
     });
   });
 

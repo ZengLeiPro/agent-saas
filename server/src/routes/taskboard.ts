@@ -5,6 +5,7 @@ import type { UserStore } from '../data/users/store.js';
 import {
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
+  TASKBOARD_VISIBILITIES,
 } from '../../../shared/src/types/taskboard.js';
 import {
   TaskboardConflictError,
@@ -21,6 +22,7 @@ const boardCreateSchema = z.object({
   description: z.string().max(4_000).optional(),
   prompt: z.string().max(20_000).optional(),
   model: z.string().trim().min(1).max(256).optional(),
+  visibility: z.enum(TASKBOARD_VISIBILITIES).optional(),
 }).strict();
 
 const boardPatchSchema = z.object({
@@ -28,10 +30,11 @@ const boardPatchSchema = z.object({
   description: z.string().max(4_000).optional(),
   prompt: z.string().max(20_000).optional(),
   model: z.string().trim().min(1).max(256).nullish(),
+  visibility: z.enum(TASKBOARD_VISIBILITIES).optional(),
   expectedVersion: z.number().int().min(1),
 }).strict().refine(
   (input) => input.name !== undefined || input.description !== undefined
-    || input.prompt !== undefined || input.model !== undefined,
+    || input.prompt !== undefined || input.model !== undefined || input.visibility !== undefined,
   { message: 'At least one board field is required' },
 );
 

@@ -50,6 +50,8 @@ export interface TaskboardExecutionClaimInput extends TaskBoardExecutionStartInp
   sessionId: string;
   /** startExecution 读取到的任务/看板显式模型；claim 锁内复核，防止并发改模型。 */
   configuredModelRef?: string;
+  /** Agent 实际继承的看板创建者；claim 锁内复核，防止错误使用发起者上下文。 */
+  executionOwnerUserId: string;
   dispatch: TaskboardExecutionDispatchPayload;
 }
 
@@ -78,6 +80,7 @@ export interface TaskboardExecutionReconcileCandidate {
 export interface TaskboardExecutionModelContext {
   taskModel?: string;
   boardModel?: string;
+  boardOwnerUserId: string;
 }
 
 export interface TaskboardExecutionContext {

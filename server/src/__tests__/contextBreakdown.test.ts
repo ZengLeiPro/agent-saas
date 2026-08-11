@@ -99,6 +99,20 @@ describe('contextBreakdown', () => {
     expect(snapshot.breakdown.estimatedTokens).toBeGreaterThan(estimateContextTokens('fallback'));
   });
 
+  it('纯文本消息不虚增附件与视觉输入 token', () => {
+    const snapshot = buildContextBreakdownSnapshot({
+      instructions: '系统规则',
+      historyMessages: [{ role: 'user', content: [{ type: 'text', text: '历史问题' }] }],
+      currentUserContent: [{ type: 'text', text: '当前问题' }],
+      tools: [],
+      descriptorsByName: new Map(),
+    });
+
+    expect(snapshot.breakdown.categories.find((item) => item.key === 'attachments')).toBeUndefined();
+    expect(snapshot.breakdown.categories.find((item) => item.key === 'history')?.children
+      ?.find((item) => item.key === 'history_attachments')).toBeUndefined();
+  });
+
   it('按估算占比将分项校准到 provider 当前上下文总量', () => {
     const base = {
       method: 'utf8_bytes_v1' as const,

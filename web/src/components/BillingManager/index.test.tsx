@@ -117,6 +117,8 @@ describe("TenantBillingPanel 员工预算", () => {
     expect(screen.getByText("爱丽丝")).toBeTruthy();
     expect(screen.getByText("未归属用量")).toBeTruthy();
     expect(screen.getByText("20")).toBeTruthy();
+    expect(screen.queryByText("本月应收")).toBeNull();
+    expect(screen.queryByText("按积分折算的客户侧金额")).toBeNull();
   });
 
   it("设置预算时发送版本号、幂等键和备注", async () => {

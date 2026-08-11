@@ -60,6 +60,7 @@ import {
   type UsageDateArgs,
 } from "./hooks";
 import { buildModelSlices, countActiveEnabledUsers, rangeToStatsWindow, todayBeijingDate, windowCaption } from "./metrics";
+import { filterModelsForViewer } from "./modelVisibility";
 
 interface OverviewSectionProps {
   tenantId: string;
@@ -248,13 +249,13 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
     [trendPoints],
   );
 
-  // 模型占比：按对话轮次 + 租户显示名（不暴露底层模型 ID）
+  // 模型占比：组织管理员隐藏内部高级/旗舰档位，其他模型仍走租户显示名。
   const modelSlices = useMemo(
-    () => buildModelSlices(usage.byModel?.models ?? [], {
+    () => buildModelSlices(filterModelsForViewer(usage.byModel?.models ?? [], isPlatformAdmin), {
       getValue: model => model.totalTurns,
       getLabel: model => labelFor(model.model),
     }),
-    [usage.byModel, labelFor],
+    [usage.byModel, isPlatformAdmin, labelFor],
   );
 
   const topUsers = useMemo(

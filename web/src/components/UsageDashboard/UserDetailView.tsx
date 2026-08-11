@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
+import { filterModelsForViewer } from "@/components/TenantAnalytics/modelVisibility";
 import { formatChannel } from "@/components/PlatformAdmin/displayText";
 
 import { usageApi } from "./api";
@@ -40,6 +41,7 @@ interface Props {
   onRangeChange: (v: RangeValue, c?: CustomRange) => void;
   onFamilyChange: (v: ModelFamily | "all") => void;
   onBack: () => void;
+  isPlatformAdmin: boolean;
   /**
    * 面包屑的祖先层级（不含当前用户本身）。改造前这里只有一个「返回列表」按钮，
    * 用户不知道自己在哪一层，也无法一步跳回更上层。
@@ -57,6 +59,7 @@ export function UserDetailView({
   onRangeChange,
   onFamilyChange,
   onBack,
+  isPlatformAdmin,
   breadcrumb,
 }: Props) {
   // 折算成 API 参数：自定义走 from/to，否则走 range；family 始终透传
@@ -104,6 +107,11 @@ export function UserDetailView({
   useEffect(() => {
     void load();
   }, [load]);
+
+  const visibleModels = useMemo(
+    () => filterModelsForViewer(byModel?.models ?? [], isPlatformAdmin),
+    [byModel, isPlatformAdmin],
+  );
 
   // 聚合用户期间总计（直接由 trend 累加，省一次 overview 请求）
   const totals = useMemo(() => {
@@ -225,9 +233,9 @@ export function UserDetailView({
                 <CardTitle>模型分布</CardTitle>
               </CardHeader>
               <CardContent>
-                {byModel && byModel.models.length > 0 ? (
+                {visibleModels.length > 0 ? (
                   <ProportionBars
-                    rows={byModel.models.map((m) => ({
+                    rows={visibleModels.map((m) => ({
                       label: labelFor(m.model),
                       tokens: m.totalTokens,
                       cost: m.totalCostUsd,

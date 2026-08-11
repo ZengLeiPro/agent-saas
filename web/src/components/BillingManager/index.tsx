@@ -498,24 +498,27 @@ function LedgerTable({ entries, readonly = false, onDrillRun }: {
 }
 
 function BillingOverview({
-  summary, audit, readonly = false,
+  summary, audit, readonly = false, hideReceivable = false,
 }: {
   summary: BillingSummary | null;
   audit?: BillingAuditSummary | null;
   readonly?: boolean;
+  hideReceivable?: boolean;
 }) {
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+    <div className={cn("grid gap-3 md:grid-cols-2", hideReceivable ? "xl:grid-cols-3" : "xl:grid-cols-4")}>
       <MetricTile label="积分余额" value={summary ? formatCredits(summary.balanceCredits) : "-"} hint="组织共享积分池" />
       <MetricTile label="本月消耗" value={summary ? formatCredits(summary.currentMonthCreditsUsed) : "-"} hint="按实际计费动作累计" />
       <MetricTile label="计费状态" value={summary?.billingEnabled ? billingModeLabel(summary.billingMode) : "未启用"} hint={summary?.pricingVersion || "billing disabled"} />
-      <MetricTile
-        label={readonly ? "本月应收" : "7 日毛利"}
-        value={readonly
-          ? (summary ? `¥${summary.currentMonthRevenueYuan.toFixed(2)}` : "-")
-          : formatPercentBps(audit?.grossMarginBps ?? summary?.currentMonthGrossMarginBps)}
-        hint={readonly ? "按积分折算的客户侧金额" : "仅平台管理员可见"}
-      />
+      {!hideReceivable && (
+        <MetricTile
+          label={readonly ? "本月应收" : "7 日毛利"}
+          value={readonly
+            ? (summary ? `¥${summary.currentMonthRevenueYuan.toFixed(2)}` : "-")
+            : formatPercentBps(audit?.grossMarginBps ?? summary?.currentMonthGrossMarginBps)}
+          hint={readonly ? "按积分折算的客户侧金额" : "仅平台管理员可见"}
+        />
+      )}
     </div>
   );
 }
@@ -2104,7 +2107,7 @@ export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string;
           )}
         </CardContent>
       </Card>
-      <BillingOverview summary={state.summary} readonly />
+      <BillingOverview summary={state.summary} readonly hideReceivable />
       {!state.summary?.billingEnabled ? (
         <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
           平台尚未为本组织启用积分计费。启用前，聊天页不会显示积分余额，也不会产生客户侧扣费流水。

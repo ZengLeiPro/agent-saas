@@ -66,6 +66,19 @@ describe('SnatManager · shared-cidr 模式（2026-08-10）', () => {
     expect(left).toContain('snat-shared');
   });
 
+  it('状态统计与孤儿清理使用同一 shared-cidr 豁免语义', async () => {
+    const { cliPath } = setup('acs-snat-shared-status-', [
+      { SnatEntryId: 'snat-shared', SnatEntryName: 'agent-saas-acs-shared-cidr', SourceCIDR: SHARED, SnatIp: '120.77.218.94', Status: 'Available' },
+      { SnatEntryId: 'snat-stale-pod', SnatEntryName: 'agent-saas-acs-as-old', SourceCIDR: '172.16.179.99/32', SnatIp: '120.77.218.94', Status: 'Available' },
+    ]);
+    const manager = new SnatManager(sharedConfig(cliPath), podKubectl('172.16.179.204'), noopLogger);
+
+    const status = await manager.status(new Set(['172.16.179.204/32']));
+
+    expect(status.managedCount).toBe(2);
+    expect(status.orphanCount).toBe(1);
+  });
+
   it('删除单个 Sandbox 不得连带删掉共享条目', async () => {
     const { statePath, cliPath } = setup('acs-snat-shared-del-', [
       { SnatEntryId: 'snat-shared', SnatEntryName: 'agent-saas-acs-shared-cidr', SourceCIDR: SHARED, SnatIp: '120.77.218.94', Status: 'Available' },

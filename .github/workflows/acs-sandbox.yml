@@ -25,6 +25,9 @@ on:
       - 'pnpm-workspace.yaml'
       - '.github/workflows/acs-sandbox.yml'
       - '.github/scripts/acs-classify.sh'
+      - 'scripts/apply-orchestrator-env.py'
+      - 'scripts/acs-verify-per-session.py'
+      - 'scripts/test_acs_operational_scripts.py'
   workflow_dispatch:
     inputs:
       force:
@@ -149,6 +152,9 @@ jobs:
       - name: Test orchestrator
         run: pnpm -F acs-orchestrator test
 
+      - name: Test ACS operational scripts
+        run: python3 -m unittest scripts/test_acs_operational_scripts.py
+
   # ── 方案 C（2026-07-04 曾磊拍板）: 镜像构建全部在阿里云 ACR EE 源码构建完成 ──
   # GitHub Actions 只做两件事:
   #   gate: typecheck + test（push/dispatch 都跑, 代码门禁）
@@ -191,6 +197,9 @@ jobs:
 
       - name: Test orchestrator
         run: pnpm -F acs-orchestrator test
+
+      - name: Test ACS operational scripts
+        run: python3 -m unittest scripts/test_acs_operational_scripts.py
 
   build-deploy:
     name: ACR Cloud Build and Deploy
@@ -612,6 +621,14 @@ jobs:
           test -f "$ENV_FILE"
           ENV_BAK="${ENV_FILE}.bak.${GITHUB_RUN_ID}-${GITHUB_SHA:0:7}"
           cp "$ENV_FILE" "$ENV_BAK"
+          RUNTIME_CONFIG_FILE="$(grep '^ACS_ORCH_RUNTIME_CONFIG_FILE=' "$ENV_FILE" | head -n1 | cut -d= -f2- || true)"
+          case "$RUNTIME_CONFIG_FILE" in
+            /*) ;;
+            *) echo "ACS_ORCH_RUNTIME_CONFIG_FILE 缺失或不是绝对路径，拒绝部署: $RUNTIME_CONFIG_FILE" >&2; exit 1 ;;
+          esac
+          test -f "$RUNTIME_CONFIG_FILE"
+          RUNTIME_CONFIG_BAK="${RUNTIME_CONFIG_FILE}.bak.${GITHUB_RUN_ID}-${GITHUB_SHA:0:7}"
+          cp "$RUNTIME_CONFIG_FILE" "$RUNTIME_CONFIG_BAK"
           if grep -q '^ACS_SANDBOX_IMAGE=' "$ENV_FILE"; then
             sed -i "s|^ACS_SANDBOX_IMAGE=.*|ACS_SANDBOX_IMAGE=${IMAGE}|" "$ENV_FILE"
           else
@@ -624,17 +641,20 @@ jobs:
           # acs-orchestrator/config/production.env 并走 CI，git log 即变更史、
           # git revert 即回滚，CI 日志留下「哪个值从 A 变成 B」。
           #
-          # 逐键 upsert：只动声明过的键，token 等敏感项与主机相关路径原样保留。
+          # 逐键 upsert：只动声明过的键，token 等敏感项与主机相关路径原样保留；
+          # 同时把配额类声明同步进 runtime JSON，避免旧的管理端持久值在启动时反向覆盖 env。
           # 脚本对敏感键与 ACS_SANDBOX_IMAGE 有硬拒绝，写入后还会断言原有键无丢失。
-          # 上面已备份到 $ENV_BAK，此处不重复备份。失败即中止部署（set -e），
+          # 上面已备份 env/runtime JSON，此处不重复备份。失败即中止部署（set -e），
           # 此时旧进程仍带旧 env 运行，不受影响。
           DESIRED_ENV="$APP_DIR/acs-orchestrator/config/production.env"
           if [ -f "$DESIRED_ENV" ]; then
             python3 "$APP_DIR/scripts/apply-orchestrator-env.py" \
               --desired "$DESIRED_ENV" \
-              --target "$ENV_FILE"
+              --target "$ENV_FILE" \
+              --runtime-config-target "$RUNTIME_CONFIG_FILE"
           else
-            echo "WARN: 未找到 $DESIRED_ENV，跳过声明式 env apply"
+            echo "未找到声明式运行配置 $DESIRED_ENV，拒绝部署" >&2
+            exit 1
           fi
 
           # ── 3. Drain 旧进程: SIGUSR2 → 排空 inflight 后自退 →
@@ -694,8 +714,9 @@ jobs:
           done
 
           rollback() {
-            echo "ROLLING BACK env to previous image..."
+            echo "ROLLING BACK env and runtime config..."
             cp "$ENV_BAK" "$ENV_FILE"
+            cp "$RUNTIME_CONFIG_BAK" "$RUNTIME_CONFIG_FILE"
             systemctl restart "$ACS_SERVICE_NAME"
             for _ in $(seq 1 60); do
               if curl -fsS -m 5 http://127.0.0.1:3400/health >/dev/null 2>&1; then
@@ -714,6 +735,28 @@ jobs:
             rollback
             exit 1
           fi
+
+          EXPECTED_MAX_RUNNING="$(grep '^ACS_SANDBOX_MAX_RUNNING=' "$DESIRED_ENV" | head -n1 | cut -d= -f2-)"
+          EXPECTED_WARN_RUNNING="$(grep '^ACS_SANDBOX_WARN_RUNNING=' "$DESIRED_ENV" | head -n1 | cut -d= -f2-)"
+          if ! EXPECTED_MAX_RUNNING="$EXPECTED_MAX_RUNNING" EXPECTED_WARN_RUNNING="$EXPECTED_WARN_RUNNING" node <<'NODE'
+          const fs = require('node:fs');
+          const health = JSON.parse(fs.readFileSync('/tmp/acs-health.json', 'utf8'));
+          const actual = health.runtimeConfig || {};
+          const expectedMax = Number(process.env.EXPECTED_MAX_RUNNING);
+          const expectedWarn = Number(process.env.EXPECTED_WARN_RUNNING);
+          if (actual.maxRunningSandboxes !== expectedMax || actual.warnRunningSandboxes !== expectedWarn) {
+            console.error(
+              `runtime config mismatch: expected=${expectedMax}/${expectedWarn} `
+              + `actual=${actual.maxRunningSandboxes}/${actual.warnRunningSandboxes}`,
+            );
+            process.exit(1);
+          }
+          NODE
+          then
+            rollback
+            exit 1
+          fi
+          echo "runtime config gate passed: max=$EXPECTED_MAX_RUNNING warn=$EXPECTED_WARN_RUNNING"
 
           # ── 5. Smoke: provision + execute 真实拉新镜像跑通 ──
           set -a

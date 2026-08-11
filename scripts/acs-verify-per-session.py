@@ -15,13 +15,11 @@ per-session 上线后语义变了，因此**必须分两个层次**统计：
 说明瓶颈从 CPU 争抢转移到了存储侧（NAS 吞吐），不能误读成改造无效。
 """
 import argparse
-import json
 import os
-import re
 import subprocess
 import sys
 from collections import defaultdict
-from datetime import datetime
+from typing import Optional
 
 # 不落 pod / 容器型工具：计入并发度会重复统计
 CONTAINER_TOOLS = {
@@ -32,6 +30,9 @@ CONTAINER_TOOLS = {
 FIXED_COST_TOOLS = ('Read', 'Edit', 'Write')
 ACCEPTANCE_TARGET_CROSS_GROUP = 1.2   # 跨组并发2+/独占，靶 <1.2×
 ACCEPTANCE_TARGET_IN_GROUP = 1.5      # 组内 typecheck，靶 ≤1.5×
+MIN_SOLO_SAMPLES = 5
+# 正式验收必须有足够的跨组并发样本；低于 100 只能报方向，不得输出“达标”。
+MIN_CONCURRENT_SAMPLES = 100
 
 
 def query(dsn: str, sql: str) -> list[dict]:
@@ -54,6 +55,44 @@ def pct(values, p):
     return vs[max(0, min(len(vs) - 1, int(round((p / 100) * (len(vs) - 1)))))]
 
 
+def build_sql(since: str, until: Optional[str]) -> str:
+    until_clause = f"AND e.timestamp < timestamp with time zone '{until}+08'" if until else ''
+    return f"""
+    WITH scoped AS (
+      SELECT DISTINCT ON (r.session_id)
+             r.session_id, r.sandbox_scope_id AS scope
+      FROM runtime_runs r
+      WHERE r.sandbox_scope_id IS NOT NULL
+      ORDER BY r.session_id, r.updated_at DESC
+    ),
+    st AS (
+      SELECT e.session_id, e.timestamp AS ts,
+             e.event_json->>'invocationId' AS inv,
+             e.event_json->>'toolName' AS tool
+      FROM runtime_events e
+      WHERE e.event_type = 'tool_invocation_started'
+        AND e.timestamp >= timestamp with time zone '{since}+08' {until_clause}
+    ),
+    cp AS (
+      SELECT e.event_json->>'invocationId' AS inv,
+             e.timestamp AS ts,
+             (e.event_json->>'durationMs')::bigint AS dur
+      FROM runtime_events e
+      WHERE e.event_type = 'tool_invocation_completed'
+        AND e.timestamp >= timestamp with time zone '{since}+08' {until_clause}
+        AND e.event_json->>'durationMs' ~ '^[0-9]+$'
+    )
+    SELECT st.session_id, COALESCE(scoped.scope, 'unknown'), st.tool,
+           EXTRACT(EPOCH FROM st.ts), EXTRACT(EPOCH FROM cp.ts), cp.dur
+    FROM st JOIN cp ON cp.inv = st.inv
+    LEFT JOIN scoped ON scoped.session_id = st.session_id
+    """
+
+
+def acceptance_sample_ready(solo: list[int], concurrent: list[int]) -> bool:
+    return len(solo) >= MIN_SOLO_SAMPLES and len(concurrent) >= MIN_CONCURRENT_SAMPLES
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--since', required=True, help="起始时间，如 '2026-08-11 00:00'")
@@ -65,39 +104,9 @@ def main() -> int:
         print('缺少 DSN：用 --dsn 或设置 ACS_RUNTIME_DSN', file=sys.stderr)
         return 2
 
-    until = f"AND e.timestamp < timestamp with time zone '{args.until}+08'" if args.until else ''
     # scope 直接取自 runtime_runs.sandbox_scope_id —— per-session 后它就是「会话组」
     # 标识，比从事件里推导父子关系可靠得多。
-    sql = f"""
-    WITH scoped AS (
-      SELECT DISTINCT ON (r.session_id)
-             r.session_id, r.sandbox_scope_id AS scope
-      FROM runtime_runs r
-      WHERE r.sandbox_scope_id IS NOT NULL
-      ORDER BY r.session_id, r.created_at DESC
-    ),
-    st AS (
-      SELECT e.session_id, e.timestamp AS ts,
-             e.event_json->>'invocationId' AS inv,
-             e.event_json->>'toolName' AS tool
-      FROM runtime_events e
-      WHERE e.event_type = 'tool_invocation_started'
-        AND e.timestamp >= timestamp with time zone '{args.since}+08' {until}
-    ),
-    cp AS (
-      SELECT e.event_json->>'invocationId' AS inv,
-             e.timestamp AS ts,
-             (e.event_json->>'durationMs')::bigint AS dur
-      FROM runtime_events e
-      WHERE e.event_type = 'tool_invocation_completed'
-        AND e.timestamp >= timestamp with time zone '{args.since}+08' {until}
-        AND e.event_json->>'durationMs' ~ '^[0-9]+$'
-    )
-    SELECT st.session_id, COALESCE(scoped.scope, 'unknown'), st.tool,
-           EXTRACT(EPOCH FROM st.ts), EXTRACT(EPOCH FROM cp.ts), cp.dur
-    FROM st JOIN cp ON cp.inv = st.inv
-    LEFT JOIN scoped ON scoped.session_id = st.session_id
-    """
+    sql = build_sql(args.since, args.until)
     rows = query(args.dsn, sql)
     calls = []
     for session, scope, tool, start, end, dur in rows:
@@ -148,11 +157,16 @@ def main() -> int:
     print('\n══ 主指标：跨组并发惩罚（不同会话组各占各 pod，理论无争抢）══')
     print(f"{'工具':<10}{'独占 n':>8}{'独占 P50':>10}{'并发2+ n':>10}{'并发2+ P50':>12}{'倍数':>9}  判定")
     verdict_all = []
+    insufficient_tools = []
     for tool in FIXED_COST_TOOLS:
         solo = [c['dur'] for c in calls if c['tool'] == tool and c['bucket'] == '独占']
         hi = [c['dur'] for c in calls if c['tool'] == tool and c['bucket'] == '并发2+']
-        if len(solo) < 5 or len(hi) < 5:
-            print(f'{tool:<10}{len(solo):>8}{"-":>10}{len(hi):>10}{"-":>12}{"样本不足":>9}')
+        if not acceptance_sample_ready(solo, hi):
+            insufficient_tools.append(tool)
+            solo_p50 = str(pct(solo, 50)) if solo else '-'
+            hi_p50 = str(pct(hi, 50)) if hi else '-'
+            detail = f'样本不足（独占≥{MIN_SOLO_SAMPLES}、并发2+≥{MIN_CONCURRENT_SAMPLES}）'
+            print(f'{tool:<10}{len(solo):>8}{solo_p50:>10}{len(hi):>10}{hi_p50:>12}{"-":>9}  {detail}')
             continue
         ratio = pct(hi, 50) / pct(solo, 50)
         ok = ratio < ACCEPTANCE_TARGET_CROSS_GROUP
@@ -198,7 +212,13 @@ def main() -> int:
     if not verdict_all:
         print('  样本不足，不下结论。建议跑满一个完整工作日后复测。')
         return 1
-    print('  主指标全部达标 ✅' if all(verdict_all) else '  主指标未全部达标 ❌ —— 按分桶数据定位，不要直接回滚')
+    if not all(verdict_all):
+        print('  已达样本门槛的主指标存在未达标项 ❌ —— 按分桶数据定位，不要直接回滚')
+        return 1
+    if insufficient_tools:
+        print(f'  已达样本门槛的主指标达标；{", ".join(insufficient_tools)} 样本不足，暂不宣称全量验收通过。')
+        return 1
+    print('  主指标全部达标 ✅')
     return 0
 
 

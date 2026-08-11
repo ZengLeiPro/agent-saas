@@ -127,6 +127,11 @@ export class SnatManager {
     return `${prefix}-shared-cidr`.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 128);
   }
 
+  private isSharedCidrEntry(entry: SnatEntry): boolean {
+    if (!this.isSharedCidrMode()) return false;
+    return entry.sourceCidr === this.config.snat.sharedCidr || entry.name === this.sharedCidrEntryName();
+  }
+
   /**
    * 确保网段条目存在。幂等：已存在直接返回，不重复创建。
    * 与 per-pod 的关键差异——**它与 pod 生命周期无关**，因此新 pod 不再需要
@@ -205,13 +210,10 @@ export class SnatManager {
     // ⚠️ 共享网段条目的 sourceCidr 是网段而非某个 podIp/32，永远不会出现在
     // activeSourceCidrs（那是活跃 pod IP 集合）里，若不显式豁免就会被当孤儿删掉——
     // 后果是全体 pod 同时断网。这里按「网段 + 固定条目名」双重豁免。
-    const sharedCidr = this.isSharedCidrMode() ? this.config.snat.sharedCidr : undefined;
-    const sharedEntryName = this.isSharedCidrMode() ? this.sharedCidrEntryName() : undefined;
     const orphans = managed.filter((entry) => (
       !activeSourceCidrs.has(entry.sourceCidr)
       && !retainedEntryNames.has(entry.name)
-      && !(sharedCidr && entry.sourceCidr === sharedCidr)
-      && !(sharedEntryName && entry.name === sharedEntryName)
+      && !this.isSharedCidrEntry(entry)
     ));
     const deleted: string[] = [];
     // 逐条容错：同一张 SNAT 表的操作在阿里云侧是串行的，发布瞬间与 pod 退休流程
@@ -251,7 +253,9 @@ export class SnatManager {
       const managed = entries.filter((entry) => entry.managed);
       const unexpected = entries.filter((entry) => !entry.managed);
       const orphanCount = activeSourceCidrs
-        ? managed.filter((entry) => !activeSourceCidrs.has(entry.sourceCidr)).length
+        ? managed.filter((entry) => (
+          !activeSourceCidrs.has(entry.sourceCidr) && !this.isSharedCidrEntry(entry)
+        )).length
         : 0;
       return {
         enabled: true,

@@ -73,7 +73,7 @@ is_publish_path() {
       ;;
   esac
   case "$1" in
-    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/workflows/acs-sandbox.yml|.github/scripts/acs-classify.sh)
+    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/workflows/acs-sandbox.yml|.github/scripts/acs-classify.sh|scripts/apply-orchestrator-env.py)
       return 0
       ;;
     acs-orchestrator/*|patches/*|server/package.json|server/src/data/tenants/types.ts)
@@ -94,7 +94,7 @@ is_publish_path() {
 
 is_contract_check_path() {
   case "$1" in
-    server/src/runtime/rawAgentLoop.ts|server/src/runtime/rawRuntimeRunDispatch.ts|acs-orchestrator/*.test.ts)
+    server/src/runtime/rawAgentLoop.ts|server/src/runtime/rawRuntimeRunDispatch.ts|acs-orchestrator/*.test.ts|scripts/acs-verify-per-session.py|scripts/test_acs_operational_scripts.py)
       return 0
       ;;
   esac

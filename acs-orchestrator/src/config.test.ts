@@ -124,7 +124,7 @@ describe('ACS runtime config', () => {
     process.env.ACS_SANDBOX_IMAGE = 'registry.example.com/agent-saas/acs-sandbox:test';
     delete process.env.ACS_SANDBOX_TTL_MS;
     try {
-      expect(loadConfigFromEnv().sandboxTtlMs).toBe(24 * 60 * 60_000);
+      expect(loadConfigFromEnv().sandboxTtlMs).toBe(2 * 60 * 60_000);
     } finally {
       process.env = originalEnv;
     }
@@ -136,7 +136,7 @@ describe('ACS runtime config', () => {
     process.env.ACS_SANDBOX_IMAGE = 'registry.example.com/agent-saas/acs-sandbox:test';
     delete process.env.ACS_SANDBOX_CI_TTL_MS;
     try {
-      expect(loadConfigFromEnv().sandboxCiTtlMs).toBe(6 * 60 * 60_000);
+      expect(loadConfigFromEnv().sandboxCiTtlMs).toBe(60 * 60_000);
     } finally {
       process.env = originalEnv;
     }
@@ -147,8 +147,8 @@ describe('ACS runtime config', () => {
     process.env.ACS_ORCH_AUTH_TOKEN = 'orchestrator-token';
     process.env.ACS_SANDBOX_IMAGE = 'registry.example.com/agent-saas/acs-sandbox:test';
     try {
-      process.env.ACS_SANDBOX_CI_TTL_MS = '3600000';
-      expect(loadConfigFromEnv().sandboxCiTtlMs).toBe(3_600_000);
+      process.env.ACS_SANDBOX_CI_TTL_MS = '1800000';
+      expect(loadConfigFromEnv().sandboxCiTtlMs).toBe(1_800_000);
       process.env.ACS_SANDBOX_CI_TTL_MS = '0';
       expect(loadConfigFromEnv().sandboxCiTtlMs).toBe(0);
     } finally {

@@ -661,8 +661,8 @@ export class SandboxManager {
           continue;
         }
       }
-      // 07-05：CI 临时 sandbox（as-ws-ci-* 前缀）走短 TTL（sandboxCiTtlMs，默认 6h）。
-      // CI 场景一次性使用无复用价值，不该跟用户会话共享普通 24h TTL。
+      // CI 临时 sandbox（as-ws-ci-* 前缀）走短 TTL（sandboxCiTtlMs，默认 1h）。
+      // 正常 workflow EXIT 会立即删除；这里只兜底 cleanup trap / 控制面异常泄漏。
       // sandboxCiTtlMs=0 表示关闭这条特殊路径，退回普通 TTL。
       const isCiSandbox = isCiSandboxName(sandbox.name);
       const effectiveTtlMs = isCiSandbox && this.config.sandboxCiTtlMs > 0

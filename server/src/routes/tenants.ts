@@ -193,6 +193,13 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
     const changesGovernedState = req.method === 'PATCH'
       && (/^\/[^/]+\/status$/.test(req.path) || /^\/[^/]+\/settings$/.test(req.path));
     if (!(createsTenant || deletesTenant || changesGovernedState) || !opts.legacyWriteGate) return next();
+    if (deletesTenant || changesGovernedState) {
+      res.status(409).json({
+        error: '旧版 Tenant 治理写入口已封闭，请使用治理 API 或 Change Job',
+        code: 'MIGRATION_LEGACY_WRITE_SEALED',
+      });
+      return;
+    }
     try {
       await opts.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
       next();

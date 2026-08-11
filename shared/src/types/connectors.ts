@@ -79,6 +79,11 @@ export interface GoogleWorkspaceConnectionResponse {
 export interface GoogleWorkspaceOAuthStartResponse {
   authorizationUrl: string;
   state: string;
+  requestedScopes: string[];
+  purpose: string;
+  riskLevel: 'high';
+  dataDestination: string;
+  revokeMethod: string;
 }
 
 export interface AliyunConnection {

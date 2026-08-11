@@ -98,6 +98,40 @@ export class PgAgentResourceStore {
     return result.rows[0] ? rowToResource(result.rows[0]) : null;
   }
 
+  async listByKind(kind: ManagedAgentResource['kind'], tenantId?: string): Promise<ManagedAgentResource[]> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.resourcesTable} WHERE kind=$1 AND ($2::text IS NULL OR tenant_id=$2) ORDER BY tenant_id,agent_id`,
+      [kind, tenantId ?? null],
+    );
+    return result.rows.map(rowToResource);
+  }
+
+  async listByOwner(tenantId: string, ownerUserId: string): Promise<ManagedAgentResource[]> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.resourcesTable} WHERE tenant_id=$1 AND owner_user_id=$2 ORDER BY kind,agent_id`,
+      [tenantId, ownerUserId],
+    );
+    return result.rows.map(rowToResource);
+  }
+
+  async transferOwnership(
+    tenantId: string,
+    agentId: string,
+    expectedRevision: number,
+    ownerUserId: string,
+    updatedBy: string,
+  ): Promise<ManagedAgentResource> {
+    const result = await this.options.pool.query(
+      `UPDATE ${this.resourcesTable}
+       SET owner_user_id=$4,revision=revision+1,updated_at=NOW(),updated_by=$5
+       WHERE tenant_id=$1 AND agent_id=$2 AND revision=$3 AND status<>'archived'
+       RETURNING *`,
+      [tenantId, agentId, expectedRevision, ownerUserId, updatedBy],
+    );
+    if (!result.rows[0]) throw new AgentResourceInvariantError('AGENT_RESOURCE_VERSION_CONFLICT');
+    return rowToResource(result.rows[0]);
+  }
+
   async listPersonalByOwner(tenantId: string, ownerUserId: string): Promise<ManagedAgentResource[]> {
     const result = await this.options.pool.query(
       `SELECT * FROM ${this.resourcesTable} WHERE tenant_id=$1 AND owner_user_id=$2 AND kind='personal_agent' ORDER BY agent_id`,

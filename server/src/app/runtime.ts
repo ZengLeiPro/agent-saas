@@ -83,7 +83,7 @@ import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
 import { SandboxWarmupService } from '../runtime/sandboxWarmup.js';
 import { createMiddlewareRunDispatch } from '../engine/dispatch.js';
 import { DispatchMetricsStore } from '../engine/metricsStore.js';
-import { getPublicModelList } from './models.js';
+import { getPublicModelList, resolveModelRef } from './models.js';
 import { ChannelManager } from '../channels/manager.js';
 import { WebChannel } from '../channels/web/channel.js';
 import { DingtalkChannel } from '../channels/dingtalk/channel.js';
@@ -96,7 +96,6 @@ import type { NotifyChannel } from '../cron/notifyChannel.js';
 import { createDingtalkNotifyChannel } from '../cron/notifyChannels/index.js';
 import { buildFollowupContext } from '../cron/followup.js';
 import { assertDevDatabaseSafety, loadAppConfig } from './config.js';
-import { resolveModelRef } from './models.js';
 import { createModelResolvers } from './modelResolvers.js';
 import type { AgentOptionsConfig } from '../agent/options.js';
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
@@ -110,6 +109,8 @@ import type { GovernanceAuditStore } from '../data/governance-audit/index.js';
 import { PgMembershipStore } from '../data/memberships/index.js';
 import { PgEntitlementStore } from '../data/entitlements/index.js';
 import { PgAssignmentStore } from '../data/assignments/index.js';
+import { PgDirectoryGroupStore } from '../data/directoryGroups/index.js';
+import { PgOAuthGrantStore } from '../data/oauthGrants/index.js';
 import { PgCredentialStore } from '../data/credentials/index.js';
 import { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
 import { PgEnvironmentStore } from '../data/environments/index.js';
@@ -722,7 +723,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let governanceAuditStore: GovernanceAuditStore | undefined;
   let membershipStore: PgMembershipStore | undefined;
   let entitlementStore: PgEntitlementStore | undefined;
-  let assignmentStore: PgAssignmentStore | undefined;
+  let directoryGroupStore: PgDirectoryGroupStore | undefined; let oauthGrantStore: PgOAuthGrantStore | undefined; let assignmentStore: PgAssignmentStore | undefined;
   let credentialStore: PgCredentialStore | undefined;
   let connectorCatalogStore: PgConnectorCatalogStore | undefined;
   let environmentStore: PgEnvironmentStore | undefined;
@@ -809,7 +810,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       governanceAuditStore,
       membershipStore,
       entitlementStore,
-      assignmentStore,
+      directoryGroupStore, oauthGrantStore, assignmentStore,
       credentialStore,
       connectorCatalogStore,
       environmentStore,
@@ -1567,11 +1568,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     config,
     secretVault,
     userStore,
-    tenantStore,
-    orgAgentStore,
+    tenantStore, orgAgentStore,
     skillConfigStore,
     pgEventStore,
-    membershipStore,
+    membershipStore, oauthGrantStore, governanceChangeJobStore,
     entitlementStore,
     assignmentStore,
     credentialStore,
@@ -1668,7 +1668,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     userStore,
     tenantStore,
     orgAgentStore,
-    membershipStore,
+    membershipStore, governanceChangeJobStore,
     entitlementStore,
     assignmentStore,
     credentialStore,
@@ -3152,7 +3152,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     governanceAuditStore,
     membershipStore,
     entitlementStore,
-    assignmentStore,
+    directoryGroupStore, oauthGrantStore, assignmentStore,
     credentialStore,
     connectorCatalogStore,
     environmentStore,

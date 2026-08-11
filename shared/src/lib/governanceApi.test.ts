@@ -6,6 +6,7 @@ import { authFetch } from './authFetch';
 import {
   evaluateAccess,
   fetchEffectiveResources,
+  fetchMyGovernanceSummary,
   governanceAccessApi,
   GovernanceApiError,
   preflightExecution,
@@ -81,6 +82,64 @@ describe('governanceApi fail closed', () => {
     await expect(governanceAccessApi.getEntitlements()).rejects.toMatchObject({
       code: 'INVALID_GOVERNANCE_RESPONSE',
     });
+  });
+
+  it('OAuth Grant DTO 结构漂移时 fail closed，而不是把假类型交给页面', async () => {
+    mockAuthFetch.mockResolvedValue(jsonResponse({ grants: [{ grantId: 'g-1', status: 'active', token: 'forbidden' }] }));
+    await expect(governanceAccessApi.listOAuthGrants()).rejects.toMatchObject({
+      code: 'INVALID_GOVERNANCE_RESPONSE',
+    });
+  });
+
+  it('接受治理写中间件补齐 auditId/changeId 的 OAuth 撤销预览真实回执', async () => {
+    const envelope = {
+      previewId: `ogpv1.${'a'.repeat(64)}`,
+      baselineDigest: 'b'.repeat(64),
+      expiresAt: '2026-08-10T08:00:00.000Z',
+      impact: {
+        provider: 'google', connectorId: 'google-workspace', action: 'revoke', immediatelyUnavailable: true,
+        newRuns: 'blocked', reversible: false, effectiveMode: 'immediate', affectedAgents: [],
+        affectedAutomations: [], brokenReferences: [], blockers: [], warnings: ['DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE'],
+        currentVersion: 1, nextVersion: 2,
+      },
+      changeId: 'preview-intent',
+      auditId: 'preview-terminal',
+    };
+    mockAuthFetch.mockResolvedValue(jsonResponse(envelope));
+    await expect(governanceAccessApi.previewOAuthGrantRevocation('grant-1', '用户主动撤销长期账号授权')).resolves.toEqual(envelope);
+  });
+
+  it('接受终态审计转 durable outbox 时带 auditCompletion=pending 的 OAuth 撤销真实回执', async () => {
+    const envelope = {
+      grantId: 'grant-1', status: 'revoked', version: 2,
+      changeId: 'commit-intent', auditId: 'commit-intent', auditCompletion: 'pending',
+    };
+    mockAuthFetch.mockResolvedValue(jsonResponse(envelope));
+    await expect(governanceAccessApi.revokeOAuthGrant('grant-1', {
+      reason: '用户主动撤销长期账号授权',
+      previewId: `ogpv1.${'a'.repeat(64)}`,
+      baselineDigest: 'b'.repeat(64),
+      expiresAt: '2026-08-10T08:00:00.000Z',
+    })).resolves.toEqual(envelope);
+  });
+
+  it('OAuth 撤销回执仍为 strict schema，拒绝中间件合同外字段', async () => {
+    mockAuthFetch.mockResolvedValue(jsonResponse({
+      grantId: 'grant-1', status: 'revoked', version: 2,
+      changeId: 'commit-intent', auditId: 'commit-terminal', unexpected: true,
+    }));
+    await expect(governanceAccessApi.revokeOAuthGrant('grant-1', {})).rejects.toMatchObject({
+      code: 'INVALID_GOVERNANCE_RESPONSE',
+    });
+  });
+
+  it('本人治理摘要只接受服务端权威 Persona 与站内桌面路径', async () => {
+    mockAuthFetch.mockResolvedValue(jsonResponse({
+      persona: 'org_admin', label: '组织管理员', desktopPath: '/organization-console/overview/overview',
+      attention: { status: 'desktop_required' },
+    }));
+    await expect(fetchMyGovernanceSummary()).resolves.toMatchObject({ persona: 'org_admin' });
+    expect(mockAuthFetch).toHaveBeenCalledWith('/api/me/governance-summary', undefined);
   });
 
   it('成功 envelope 解包 data 后再校验 schema', async () => {

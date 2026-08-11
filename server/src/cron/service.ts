@@ -19,51 +19,13 @@ import {
   findDueJobs,
 } from "./scheduler.js";
 import { cronLogger } from "../utils/logger.js";
+import { cloneJob, isProcessAlive, pTimeout, ServiceTimeoutError, toFiniteInt, transferCronJobOwner, updatedAtAfterEdit } from "./serviceUtils.js";
 
 const MAX_TIMEOUT_MS = 2147483647;
 const STORE_RELOAD_INTERVAL_MS = 1_500;
 const WATCHDOG_INTERVAL_MS = 60_000;
 const WATCHDOG_OVERTIME_MS = 180_000;  // 超过硬超时后的额外容忍时间
 const WATCHDOG_FALLBACK_TIMEOUT_MS = 6 * 3600_000;  // 无超时任务的兜底: 6h
-
-class ServiceTimeoutError extends Error {}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return !(typeof err === "object" && err !== null && "code" in err && err.code === "ESRCH");
-  }
-}
-
-function pTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new ServiceTimeoutError(message)), ms);
-    timer.unref?.();
-    promise.then(
-      (v) => { clearTimeout(timer); resolve(v); },
-      (e) => { clearTimeout(timer); reject(e); }
-    );
-  });
-}
-
-function toFiniteInt(n: unknown): number | undefined {
-  if (typeof n !== "number") return undefined;
-  if (!Number.isFinite(n)) return undefined;
-  return Math.floor(n);
-}
-
-function cloneJob(job: CronJob): CronJob {
-  return structuredClone(job);
-}
-
-function updatedAtAfterEdit(job: CronJob, candidateMs: number): number {
-  // updatedAtMs is also the optimistic concurrency marker captured by a run.
-  // Keep it strictly monotonic so multiple same-millisecond edits can never
-  // return to the run's claimed marker and let an old completion win.
-  return Math.max(candidateMs, job.updatedAtMs + 1);
-}
 
 /** CronSchedule 内容等价判断（applySystemJobs drift 检测用）。 */
 function isSameCronSchedule(a: CronJob['schedule'], b: CronJob['schedule']): boolean {
@@ -524,6 +486,15 @@ export class CronService {
     const updated = this.jobs.find((job) => job.id === outcome.value);
     if (updated) cronLogger.info(`Job updated: ${updated.name} (${updated.id})`);
     return updated;
+  }
+
+  async transferOwner(id: string, expectedOwner: string, owner: string, ownerName?: string): Promise<CronJob | undefined> {
+    const outcome = await this.mutate(jobs => transferCronJobOwner(jobs, {
+      id, expectedOwner, owner, ownerName, nowMs: this.deps.nowMs(),
+    }));
+    if (!outcome.changed || !outcome.value) return undefined;
+    this.afterJobsChanged();
+    return this.jobs.find(job => job.id === outcome.value);
   }
 
   async remove(id: string): Promise<boolean> {

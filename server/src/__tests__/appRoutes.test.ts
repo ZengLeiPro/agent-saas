@@ -160,7 +160,7 @@ vi.mock('../auth/middleware.js', () => ({
   requirePlatformAdmin: vi.fn((_req: unknown, _res: unknown, next: () => void) => next()),
 }));
 
-import { registerRoutes } from '../app/routes.js';
+import { activeOffboardingWriteFence, registerRoutes } from '../app/routes.js';
 
 describe('registerRoutes', () => {
   beforeEach(() => {
@@ -287,9 +287,10 @@ describe('registerRoutes', () => {
     //   + 连接器映射词典平台管理（2026-08-03）= 38
     //   + 租户级词典覆盖组织管理（2026-08-04 任务 E）= 39
     //   + 个人任务看板（复用 cronEnabled guard）= 40
+    //   + 活跃离职流程 API 写入围栏 = 41
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(40);
+    expect(app.use).toHaveBeenCalledTimes(41);
     expect(mocked.createTaskboardRouter).toHaveBeenCalledWith({
       service: undefined,
       executionService: undefined,
@@ -371,5 +372,24 @@ describe('registerRoutes', () => {
     expect(mocked.createCronRouter).toHaveBeenCalledWith(cronService, '/runs', runtime.groupStore);
     // base routes + cron
     expect(app.use).toHaveBeenCalledWith('/api/cron', mocked.cronRouter);
+  });
+});
+
+describe('activeOffboardingWriteFence', () => {
+  it('活跃离职流程阻止该用户继续写入 API，读取请求仍放行', async () => {
+    const findActiveForTarget = vi.fn().mockResolvedValue({ jobId: 'job-1' });
+    const middleware = activeOffboardingWriteFence({ governanceChangeJobStore: { findActiveForTarget } } as any);
+    const status = vi.fn().mockReturnThis();
+    const json = vi.fn();
+    const next = vi.fn();
+    const user = { sub: 'user-1', tenantId: 'tenant-a' };
+
+    await middleware({ method: 'POST', user } as any, { status, json } as any, next);
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({ code: 'USER_OFFBOARDING_ACTIVE' }));
+    expect(next).not.toHaveBeenCalled();
+
+    await middleware({ method: 'GET', user } as any, { status, json } as any, next);
+    expect(next).toHaveBeenCalledTimes(1);
   });
 });

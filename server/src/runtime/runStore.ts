@@ -2,6 +2,7 @@ import pg from 'pg';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
 import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import { cancelActiveRunsByUser, releaseRunLease } from './runTerminalLifecycle.js';
+import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL } from './runStatusPolicy.js';
 
 const { Pool } = pg;
 
@@ -17,20 +18,6 @@ export type RunStatus =
   | 'failed'
   | 'cancelled'
   | 'orphaned';
-
-/**
- * 插话可以排队到的目标 run 状态（2026-08-04 收窄）。
- * waiting_user / waiting_approval 被移出：这两个状态下没有 loop 在跑、也没有超时
- * janitor 兜底（waiting_user 完全没有），插话挂上去等于永久静默丢失——用户不答
- * AskUser 卡片/授权卡片时发的新消息，应作为独立 run 直接执行（session lock 已释放）。
- */
-const ACTIVE_STEERING_TARGET_STATUSES: RunStatus[] = [
-  'pending',
-  'running',
-  'waiting_hand',
-];
-/** SQL IN 片段，与 ACTIVE_STEERING_TARGET_STATUSES 保持同步。 */
-const STEERING_TARGET_STATUS_SQL = `('pending','running','waiting_hand')`;
 
 export interface RunRecord {
   runId: string;
@@ -219,6 +206,7 @@ export interface RunStore {
   findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null>;
   getActiveBySession?(sessionId: string): Promise<RunRecord | null>;
   cancelActiveByUser?(userId: string, reason: string): Promise<number>;
+  listActiveByUser?(userId: string): Promise<RunRecord[]>;
   getActiveCounts?(): Promise<ActiveRunCounts>;
   listBySession?(sessionId: string, options?: { limit?: number; beforeUpdatedAt?: string }): Promise<RunRecord[]>;
   listRecoverable(now?: Date): Promise<RunRecord[]>;
@@ -1204,6 +1192,15 @@ export class PgRunStore implements RunStore {
 
   async cancelActiveByUser(userId: string, reason: string): Promise<number> {
     return cancelActiveRunsByUser(this, userId, reason);
+  }
+
+  async listActiveByUser(userId: string): Promise<RunRecord[]> {
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      SELECT row_to_json(run.*) AS row_json FROM ${this.runsTable} run
+      WHERE user_id=$1 AND status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+      ORDER BY updated_at,run_id
+    `, [userId]);
+    return result.rows.map(row => normalizeRunRecord(row.row_json));
   }
 
   async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {

@@ -235,6 +235,12 @@ describe('mcpApi', () => {
       expect(init.body).toBe(JSON.stringify({ returnTo: '/back' }));
     });
 
+    it('原生端授权启动时附带设备绑定 ID', async () => {
+      mockAuthFetch.mockResolvedValue(ok({ status: 'pending', authorizationUrl: 'https://x' }));
+      await startMyMcpOAuth('srv1', '/', 'native-device-123');
+      expect(lastCall().init.body).toBe(JSON.stringify({ returnTo: '/', nativeDeviceId: 'native-device-123' }));
+    });
+
     it('非 2xx 抛「连接器授权启动失败」', async () => {
       mockAuthFetch.mockResolvedValue(fail(500));
       await expect(startMyMcpOAuth('s', '/b')).rejects.toThrow('连接器授权启动失败: 500');

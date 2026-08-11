@@ -31,7 +31,10 @@ function buildPool() {
     }
     if (sql.includes('FROM test_governed_skills') && /skill_id\s*=\s*\$1/.test(sql)) {
       const row = resources.get(String(params[0]));
-      return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+      const sameTenant = !sql.includes('tenant_id=$2') || row?.tenant_id === params[1];
+      const eligibleScope = !sql.includes("scope<>'personal'") || row?.scope !== 'personal';
+      const visible = row && sameTenant && eligibleScope ? row : undefined;
+      return { rows: visible ? [visible] : [], rowCount: visible ? 1 : 0 };
     }
     if (sql.includes('INSERT INTO test_skill_candidates') && sql.includes('RETURNING')) {
       const row = {
@@ -125,7 +128,7 @@ describe('Governed Skill + Candidate 发布链', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_governed_skill_versions');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_skill_candidates');
     expect(sql).toContain("status IN ('draft', 'submitted', 'approved', 'rejected', 'published')");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(17);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(18);
   });
 
   it('personal Skill 强制 immutable owner；tenant Skill 建 stable ID', async () => {
@@ -140,7 +143,7 @@ describe('Governed Skill + Candidate 发布链', () => {
   });
 
   it('个人候选副本按 draft→submitted→approved→published，发布 immutable version', async () => {
-    const { pool, versions } = buildPool();
+    const { pool, versions, queries } = buildPool();
     const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
     await store.createResource({ skillId: 'sales-helper', tenantId: 'acme', scope: 'tenant', createdBy: 'admin' });
     const candidate = await store.createCandidate({
@@ -159,6 +162,12 @@ describe('Governed Skill + Candidate 发布链', () => {
     expect(published.resource).toMatchObject({ status: 'published', revision: 2 });
     expect(published.version).toMatchObject({ sourceCandidateId: candidate.candidateId, versionNumber: 1 });
     expect(versions).toHaveLength(1);
+    const guardedCandidateUpdates = queries.filter(sql =>
+      sql.includes('UPDATE test_skill_candidates') && !sql.includes("status='published'"));
+    expect(guardedCandidateUpdates).toHaveLength(2);
+    expect(guardedCandidateUpdates.every(sql => sql.includes("target.scope<>'personal'"))).toBe(true);
+    expect(queries.some(sql => sql.includes('INSERT INTO test_skill_candidates') && sql.includes("target.scope<>'personal'"))).toBe(true);
+    expect(queries.some(sql => sql.includes("scope<>'personal' FOR UPDATE"))).toBe(true);
   });
 
   it('候选目标 Skill 严格同租户，禁止跨租户提升', async () => {
@@ -168,6 +177,42 @@ describe('Governed Skill + Candidate 发布链', () => {
     await expect(store.createCandidate({
       tenantId: 'acme', ownerUserId: 'user-1', targetSkillId: 'beta-skill', definition,
     })).rejects.toMatchObject({ code: 'SKILL_RESOURCE_TENANT_MISMATCH' });
+  });
+
+  it('personal Skill candidate create/submit/review/publish 在 Store 层全部 fail closed', async () => {
+    const { pool, resources, candidates, versions } = buildPool();
+    const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
+    await store.createResource({
+      skillId: 'personal-skill', tenantId: 'acme', scope: 'personal', ownerUserId: 'user-1', createdBy: 'user-1',
+    });
+    await expect(store.createCandidate({
+      tenantId: 'acme', ownerUserId: 'user-1', targetSkillId: 'personal-skill', definition,
+    })).rejects.toMatchObject({ code: 'SKILL_RESOURCE_NOT_FOUND' });
+    expect(candidates.size).toBe(0);
+
+    const candidateId = 'skillc-personal';
+    const candidateRow = {
+      candidate_id: candidateId, tenant_id: 'acme', owner_user_id: 'user-1', target_skill_id: 'personal-skill',
+      definition_json: definition, digest: 'untrusted', status: 'draft', revision: '1',
+      submitted_at: null, reviewed_at: null, reviewed_by: null, review_reason: null,
+      published_version_id: null, created_at: NOW, updated_at: NOW,
+    };
+    candidates.set(candidateId, candidateRow);
+    await expect(store.submitCandidate('acme', candidateId, 'user-1', 1))
+      .rejects.toMatchObject({ code: 'SKILL_RESOURCE_NOT_FOUND' });
+
+    candidates.set(candidateId, { ...candidateRow, status: 'submitted', revision: '2' });
+    await expect(store.reviewCandidate({
+      tenantId: 'acme', candidateId, expectedRevision: 2, verdict: 'approved', reviewedBy: 'admin', reason: 'no',
+    })).rejects.toMatchObject({ code: 'SKILL_RESOURCE_NOT_FOUND' });
+
+    candidates.set(candidateId, { ...candidateRow, status: 'approved', revision: '3' });
+    await expect(store.publishApprovedCandidate({
+      tenantId: 'acme', candidateId, expectedCandidateRevision: 3, expectedSkillRevision: 1, publishedBy: 'admin',
+    })).rejects.toMatchObject({ code: 'SKILL_RESOURCE_NOT_FOUND' });
+    expect(resources.get('personal-skill')).toMatchObject({ status: 'draft', revision: '1' });
+    expect(candidates.get(candidateId)).toMatchObject({ status: 'approved', revision: '3' });
+    expect(versions).toHaveLength(0);
   });
 
   it('候选 owner/version/状态错误均 fail closed', async () => {

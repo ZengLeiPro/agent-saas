@@ -25,6 +25,10 @@ export function relativeWorkspacePath(cwd: string, fullPath: string): string {
   return (rel || '.').replace(/\\/g, '/');
 }
 
+export function workspaceRelativeInputPath(cwd: string, inputPath: string): string {
+  return relativeWorkspacePath(cwd, resolveWorkspacePath(cwd, inputPath));
+}
+
 export function memoryPathFromSuccessfulTool(
   toolId: string,
   input: unknown,

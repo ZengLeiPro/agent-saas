@@ -133,7 +133,7 @@ describe('Governance Migration Control', () => {
     expect(sql).toContain('CREATE TRIGGER test_assignment_delete_projection_outbox');
     expect(sql).toContain('CREATE TRIGGER test_preference_projection_outbox');
     expect(sql).toContain('CREATE TRIGGER test_entitlement_projection_outbox');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(17);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(18);
   });
 
   it('tenantless shadow difference 使用同一空 tenant scope 自动 resolve', async () => {
@@ -238,7 +238,7 @@ describe('Governance Migration Control', () => {
       .resolves.toMatchObject({ mode: 'enforce' });
   });
 
-  it('revision 冲突拒绝覆盖控制状态，enforce 可显式回滚并恢复 legacy 写', async () => {
+  it('revision 冲突拒绝覆盖控制状态，回滚到 shadow 后用户 legacy 写仍保持封口', async () => {
     const { pool } = buildStatePool();
     const store = new PgGovernanceMigrationControlStore({ pool, tablePrefix: 'test' });
     await expect(store.updateSettings({
@@ -251,7 +251,7 @@ describe('Governance Migration Control', () => {
       compatibilityProjectionEnabled: true, rollbackEnabled: true,
       revision: 3, updatedAt: NOW, updatedBy: 'admin', updateReason: 'rollback',
     }) });
-    await expect(rollbackGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false })).resolves.toBeUndefined();
+    await expect(rollbackGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false })).rejects.toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
     await expect(rollbackGate.enforcementMode()).resolves.toBe('shadow');
   });
 

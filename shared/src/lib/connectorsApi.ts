@@ -64,9 +64,13 @@ export async function fetchGoogleWorkspaceConnection(): Promise<GoogleWorkspaceC
   );
 }
 
-export async function startGoogleWorkspaceOAuth(): Promise<GoogleWorkspaceOAuthStartResponse> {
+export async function startGoogleWorkspaceOAuth(nativeDeviceId?: string): Promise<GoogleWorkspaceOAuthStartResponse> {
   return jsonOrError(await authFetch('/api/connectors/google-workspace/oauth/start', {
     method: 'POST',
+    ...(nativeDeviceId ? {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nativeDeviceId }),
+    } : {}),
   }), '启动 Google Workspace 授权失败');
 }
 

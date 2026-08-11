@@ -6,6 +6,8 @@ import { PgGovernanceAuditStore, type GovernanceAuditStore } from '../data/gover
 import { PgMembershipStore } from '../data/memberships/index.js';
 import { normalizeLegacyEntitlementSettings, PgEntitlementStore } from '../data/entitlements/index.js';
 import { PgAssignmentStore } from '../data/assignments/index.js';
+import { PgDirectoryGroupStore } from '../data/directoryGroups/index.js';
+import { PgOAuthGrantStore } from '../data/oauthGrants/index.js';
 import { GovernanceShadowProjectionScheduler } from '../governance/migrations/shadowProjectionScheduler.js';
 import { PgCredentialStore } from '../data/credentials/index.js';
 import { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
@@ -53,6 +55,8 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
   let governanceAuditStore: GovernanceAuditStore | undefined;
   let membershipStore: PgMembershipStore | undefined;
   let entitlementStore: PgEntitlementStore | undefined;
+  let directoryGroupStore: PgDirectoryGroupStore | undefined;
+  let oauthGrantStore: PgOAuthGrantStore | undefined;
   let assignmentStore: PgAssignmentStore | undefined;
   let credentialStore: PgCredentialStore | undefined;
   let connectorCatalogStore: PgConnectorCatalogStore | undefined;
@@ -136,6 +140,14 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
         );
       }
     }
+    directoryGroupStore = new PgDirectoryGroupStore({
+      pool: pgEventStore.pool,
+      tablePrefix: tablePrefix,
+      validateMember: async (tenantId, userId) => (await membershipStore!.getMembership(tenantId, userId))?.status === 'active',
+    });
+    await directoryGroupStore.init();
+    oauthGrantStore = new PgOAuthGrantStore({ pool: pgEventStore.pool, tablePrefix });
+    await oauthGrantStore.init();
     assignmentStore = new PgAssignmentStore({
       pool: pgEventStore.pool,
       tablePrefix: tablePrefix,
@@ -226,6 +238,7 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
           await governanceAuditStore.append({
             auditId: `projection:${outboxItem.outboxId}`,
             correlationId: String(payload.correlationId),
+            ...(typeof payload.changeId === 'string' ? { changeId: payload.changeId } : {}),
             actorType: payload.actorType === 'service' ? 'service' : 'user',
             actorUserId: String(payload.actorUserId),
             actorPersona,
@@ -719,6 +732,8 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
     governanceAuditStore,
     membershipStore,
     entitlementStore,
+    directoryGroupStore,
+    oauthGrantStore,
     assignmentStore,
     credentialStore,
     connectorCatalogStore,

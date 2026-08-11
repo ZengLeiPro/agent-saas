@@ -45,6 +45,12 @@ export interface McpOAuthSummary {
 export interface McpOAuthStartResult {
   status: 'pending' | 'connected';
   authorizationUrl?: string;
+  scopeSummary?: string[];
+  requestedScopes?: string[];
+  purpose?: string;
+  riskLevel?: 'high';
+  dataDestination?: string;
+  revokeMethod?: string;
 }
 
 export interface McpOAuthFinishResult {
@@ -54,6 +60,7 @@ export interface McpOAuthFinishResult {
   tenantId: string;
   redirectUrl: string;
   returnTo: string;
+  scopeSummary?: string[];
   error?: string;
 }
 
@@ -68,7 +75,10 @@ export interface McpOAuthServiceOptions {
   vault: SecretVault;
   authFn?: AuthFunction;
   env?: NodeJS.ProcessEnv;
-  userResolver?: (username: string) => { tenantId: string; disabled?: boolean } | undefined;
+  userResolver?: (username: string) => { id?: string; tenantId: string; disabled?: boolean } | undefined;
+  authorizeSubject?: (userId: string, tenantId: string) => Promise<boolean>;
+  authorizeGrant?: (grantId: string, userId: string, tenantId: string) => Promise<boolean>;
+  authorizeConnect?: (userId: string, tenantId: string, connectorId: string) => Promise<boolean>;
   onSecretRotated?: (secretRef: string) => Promise<void>;
 }
 
@@ -99,32 +109,49 @@ export class McpOAuthService {
 
   async start(args: {
     username: string;
+    userId?: string;
     tenantId: string;
     server: ManagedMcpServer;
     redirectUrl: string;
     returnTo: string;
   }): Promise<McpOAuthStartResult> {
     const { username, tenantId, server } = args;
+    if (args.userId && this.options.authorizeSubject
+      && !await this.options.authorizeSubject(args.userId, tenantId)) throw new Error('OAuth subject is not active');
+    if (!args.userId || !this.options.authorizeConnect
+      || !await this.options.authorizeConnect(args.userId, tenantId, server.id)) {
+      throw new Error('Connector assignment is unavailable');
+    }
     if (!isServerVisibleToUser(server, username, tenantId)) throw new Error('MCP server not found');
     const oauth = oauthConfigOf(server);
     if (!oauth || !isHttpServer(server)) throw new Error('This MCP server does not support OAuth');
     assertSafeMcpUrl(server.config.url);
     this.assertPlatformConfigured(oauth);
+    const requestedScopes = [...new Set((oauth.scopes ?? []).map(scope => scope.trim()).filter(Boolean))].sort();
+    if (requestedScopes.length === 0) throw new Error('MCP OAuth requested scope authority is unavailable');
 
     const previous = this.options.store.getUserOAuthConnection(username, server.id);
-    if (previous?.status === 'connected' && previous.secretRef) return { status: 'connected' };
+    if (previous?.status === 'connected' && previous.secretRef) {
+      if (!previous.grantedScopes?.length) throw new Error('OAuth granted scope evidence is unavailable');
+      if (previous.grantedScopes.some(scope => !requestedScopes.includes(scope))) {
+        throw new Error('OAuth granted scope exceeds the connector allowlist');
+      }
+      return { status: 'connected', scopeSummary: [...new Set(previous.grantedScopes)].sort() };
+    }
 
     const now = new Date();
     const state = randomBytes(32).toString('base64url');
     const record: McpOAuthConnectionRecord = {
       serverId: server.id,
       tenantId,
+      ...(args.userId ? { userId: args.userId } : {}),
       status: 'pending',
       secretRef: previous?.secretRef,
       pendingState: state,
       pendingExpiresAt: new Date(now.getTime() + PENDING_TTL_MS).toISOString(),
       redirectUrl: args.redirectUrl,
       returnTo: sanitizeReturnTo(args.returnTo),
+      requestedScopes,
       updatedAt: now.toISOString(),
     };
     await this.options.store.setUserOAuthConnection(username, record);
@@ -133,15 +160,29 @@ export class McpOAuthService {
     try {
       const result = await this.authFn(provider, {
         serverUrl: server.config.url,
-        ...(oauth.scopes?.length ? { scope: oauth.scopes.join(' ') } : {}),
+        scope: requestedScopes.join(' '),
       });
       if (result === 'AUTHORIZED') {
-        await this.markConnected(username, record);
-        return { status: 'connected' };
+        const tokenScope = (await this.readBundle(username, tenantId, server.id)).tokens?.scope;
+        const scopeSummary = typeof tokenScope === 'string'
+          ? [...new Set(tokenScope.split(/\s+/).map(scope => scope.trim()).filter(Boolean))].sort()
+          : [];
+        if (scopeSummary.length === 0) throw new Error('OAuth granted scope evidence is unavailable');
+        if (scopeSummary.some(scope => !requestedScopes.includes(scope))) {
+          throw new Error('OAuth granted scope exceeds the signed request');
+        }
+        await this.markConnected(username, record, scopeSummary);
+        return { status: 'connected', scopeSummary };
       }
       const authorizationUrl = provider.authorizationUrl;
       if (!authorizationUrl) throw new Error('OAuth provider did not return an authorization URL');
-      return { status: 'pending', authorizationUrl };
+      return {
+        status: 'pending', authorizationUrl, requestedScopes,
+        purpose: `仅在本人获指派且组织已授权的 Agent Run 中调用 ${server.name}`,
+        riskLevel: 'high',
+        dataDestination: `请求数据发送至 ${new URL(server.config.url).origin}，运行结果进入当前 Agent Run`,
+        revokeMethod: '可在连接与授权页经影响预览撤销；撤销后新 Run 立即不可用',
+      };
     } catch (error) {
       await this.markError(username, record, errorMessage(error));
       throw error;
@@ -170,8 +211,21 @@ export class McpOAuthService {
     await this.options.store.setUserOAuthConnection(username, consumed);
 
     const user = this.options.userResolver?.(username);
-    if (this.options.userResolver && (!user || user.disabled || user.tenantId !== connection.tenantId)) {
+    if (this.options.userResolver && (!user || user.disabled || user.tenantId !== connection.tenantId
+      || (connection.userId !== undefined && user.id !== connection.userId))) {
       const message = 'User or tenant changed during OAuth authorization';
+      await this.markError(username, consumed, message);
+      return { ok: false, ...baseResult, error: message };
+    }
+    if (connection.userId && this.options.authorizeSubject
+      && !await this.options.authorizeSubject(connection.userId, connection.tenantId)) {
+      const message = 'OAuth subject is not active';
+      await this.markError(username, consumed, message);
+      return { ok: false, ...baseResult, error: message };
+    }
+    if (!connection.userId || !this.options.authorizeConnect
+      || !await this.options.authorizeConnect(connection.userId, connection.tenantId, connection.serverId)) {
+      const message = 'Connector assignment is unavailable';
       await this.markError(username, consumed, message);
       return { ok: false, ...baseResult, error: message };
     }
@@ -202,6 +256,11 @@ export class McpOAuthService {
 
     try {
       this.assertPlatformConfigured(oauth);
+      const requestedScopes = [...new Set((consumed.requestedScopes ?? []).map(scope => scope.trim()).filter(Boolean))].sort();
+      const connectorScopes = new Set((oauth.scopes ?? []).map(scope => scope.trim()).filter(Boolean));
+      if (requestedScopes.length === 0 || requestedScopes.some(scope => !connectorScopes.has(scope))) {
+        throw new Error('OAuth signed scope request is unavailable or no longer allowed');
+      }
       const provider = this.createProvider({
         username,
         tenantId: connection.tenantId,
@@ -213,11 +272,27 @@ export class McpOAuthService {
       const result = await this.authFn(provider, {
         serverUrl: server.config.url,
         authorizationCode: args.code,
-        ...(oauth.scopes?.length ? { scope: oauth.scopes.join(' ') } : {}),
+        scope: requestedScopes.join(' '),
       });
       if (result !== 'AUTHORIZED') throw new Error('OAuth token exchange did not complete');
-      await this.markConnected(username, consumed);
-      return { ok: true, ...baseResult };
+      if (consumed.userId && this.options.authorizeSubject
+        && !await this.options.authorizeSubject(consumed.userId, consumed.tenantId)) {
+        throw new Error('OAuth subject is not active');
+      }
+      if (!consumed.userId || !this.options.authorizeConnect
+        || !await this.options.authorizeConnect(consumed.userId, consumed.tenantId, consumed.serverId)) {
+        throw new Error('Connector assignment is unavailable');
+      }
+      const tokenScope = (await this.readBundle(username, consumed.tenantId, consumed.serverId)).tokens?.scope;
+      const scopeSummary = typeof tokenScope === 'string'
+        ? [...new Set(tokenScope.split(/\s+/).map(scope => scope.trim()).filter(Boolean))].sort()
+        : [];
+      if (scopeSummary.length === 0) throw new Error('OAuth granted scope evidence is unavailable');
+      if (scopeSummary.some(scope => !requestedScopes.includes(scope))) {
+        throw new Error('OAuth granted scope exceeds the signed request');
+      }
+      await this.markConnected(username, consumed, scopeSummary);
+      return { ok: true, ...baseResult, scopeSummary };
     } catch (error) {
       const message = errorMessage(error);
       await this.markError(username, consumed, message);
@@ -265,6 +340,15 @@ export class McpOAuthService {
     const oauth = server ? oauthConfigOf(server) : undefined;
     const record = this.options.store.getUserOAuthConnection(args.username, args.serverName);
     if (!server || !oauth || !record?.secretRef || record.status !== 'connected' || !isHttpServer(server)) return undefined;
+    const currentUser = this.options.userResolver?.(args.username);
+    if (record.userId !== undefined && currentUser?.id !== record.userId) return undefined;
+    if (record.userId && this.options.authorizeSubject
+      && !await this.options.authorizeSubject(record.userId, args.tenantId)) return undefined;
+    if (!record.userId || !this.options.authorizeGrant) return undefined;
+    const grantId = `mcp:${args.tenantId}:${record.userId}:${server.id}`;
+    if (!await this.options.authorizeGrant(grantId, record.userId, args.tenantId)) return undefined;
+    if (!this.options.authorizeConnect
+      || !await this.options.authorizeConnect(record.userId, args.tenantId, server.id)) return undefined;
     if (record.tenantId !== args.tenantId || !isServerVisibleToUser(server, args.username, args.tenantId)) return undefined;
     return this.createProvider({
       username: args.username,
@@ -382,7 +466,7 @@ export class McpOAuthService {
     });
   }
 
-  private async markConnected(username: string, record: McpOAuthConnectionRecord): Promise<void> {
+  private async markConnected(username: string, record: McpOAuthConnectionRecord, grantedScopes: string[]): Promise<void> {
     const latest = this.options.store.getUserOAuthConnection(username, record.serverId) ?? record;
     const now = new Date().toISOString();
     await this.options.store.setUserOAuthConnection(username, {
@@ -391,6 +475,7 @@ export class McpOAuthService {
       pendingState: undefined,
       pendingExpiresAt: undefined,
       connectedAt: latest.connectedAt ?? now,
+      grantedScopes,
       updatedAt: now,
       lastError: undefined,
     });

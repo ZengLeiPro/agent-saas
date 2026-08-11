@@ -221,6 +221,22 @@ describe('authoritative governance UI routes', () => {
     expect(await partial.json()).toMatchObject({ code: 'EFFECTIVE_RESOURCES_PARTIAL' });
   });
 
+  it('本人治理摘要由服务端 Membership 权威返回 Persona 与桌面续办路径', async () => {
+    const member = await rig();
+    const memberResponse = await member('/api/me/governance-summary');
+    expect(memberResponse.status).toBe(200);
+    expect(await memberResponse.json()).toEqual({
+      persona: 'member', label: '普通成员', desktopPath: '/settings/my-agent', attention: { status: 'none' },
+    });
+
+    const platform = await rig({ jwt: { sub: 'platform-1', username: 'root', tenantId: 'pantheon', role: 'admin' } });
+    const platformResponse = await platform('/api/me/governance-summary');
+    expect(platformResponse.status).toBe(200);
+    expect(await platformResponse.json()).toMatchObject({
+      persona: 'platform_admin', desktopPath: '/platform-console/overview/overview', attention: { status: 'desktop_required' },
+    });
+  });
+
   it('依赖或审计不可用时返回 503 并 fail closed', async () => {
     const app = express();
     app.use(express.json());

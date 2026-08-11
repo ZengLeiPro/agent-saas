@@ -225,6 +225,34 @@ export class PgSessionProjectionStore {
     return result.rows[0] ? rowToRuntimeSessionProjectionRecord(result.rows[0].row_json) : null;
   }
 
+  async markRetainedForOffboarding(tenantId: string, userId: string, jobId: string): Promise<number> {
+    const result = await this.pool.query(
+      `UPDATE ${this.sessionsTable} SET meta_json=meta_json || jsonb_build_object(
+         'governanceRetention',jsonb_build_object('mode','retain_and_disable','jobId',$3,'retainedAt',NOW())
+       ) WHERE tenant_id=$1 AND user_id=$2 AND deleted_at IS NULL`,
+      [tenantId, userId, jobId],
+    );
+    return result.rowCount ?? 0;
+  }
+
+  async listSnapshotsByUser(tenantId: string, userId: string): Promise<Array<{ id: string; version: string }>> {
+    const result = await this.pool.query<{ session_id: string; updated_at: string }>(
+      `SELECT session_id,updated_at::text FROM ${this.sessionsTable}
+       WHERE tenant_id=$1 AND user_id=$2 AND deleted_at IS NULL ORDER BY session_id`,
+      [tenantId, userId],
+    );
+    return result.rows.map(row => ({ id: row.session_id, version: row.updated_at }));
+  }
+
+  async listIdsByUser(tenantId: string, userId: string): Promise<string[]> {
+    const result = await this.pool.query<{ session_id: string }>(
+      `SELECT session_id FROM ${this.sessionsTable}
+       WHERE tenant_id=$1 AND user_id=$2 AND deleted_at IS NULL ORDER BY session_id`,
+      [tenantId, userId],
+    );
+    return result.rows.map(row => row.session_id);
+  }
+
   async list(query: RuntimeSessionListQuery = {}): Promise<RuntimeSessionListResult> {
     const limit = Math.min(Math.max(query.limit ?? 50, 1), 100);
     const params: unknown[] = [];

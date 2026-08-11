@@ -59,6 +59,7 @@ export interface RunPreflightServiceOptions {
   resolveEnforcementMode?: () => Promise<GovernanceEnforcementMode>;
   resolveEnforcementState?: () => Promise<{ mode: GovernanceEnforcementMode; revision: number }>;
   subjectResolver: SubjectResolver;
+  isSubjectFenced?: (tenantId: string, userId: string) => Promise<boolean>;
   accessEvaluator: AccessEvaluator;
   compareLegacyAccess?: (input: {
     request: AccessEvaluationRequest;
@@ -122,6 +123,9 @@ export class RunPreflightService {
     let subject: SubjectContext;
     let decision: AccessDecision;
     try {
+      if (!input.serviceSubject && await this.options.isSubjectFenced?.(resolved.tenantId, resolved.userId)) {
+        throw new Error('GOVERNANCE_SUBJECT_OFFBOARDING');
+      }
       subject = input.serviceSubject
         ? this.options.subjectResolver.resolveService(input.serviceSubject)
         : await this.options.subjectResolver.resolveHuman(resolved.userId);

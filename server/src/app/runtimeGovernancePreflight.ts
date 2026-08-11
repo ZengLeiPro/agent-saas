@@ -4,6 +4,7 @@ import { TenantStore } from '../data/tenants/store.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
 import { PgMembershipStore } from '../data/memberships/index.js';
+import { PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import { PgEntitlementStore } from '../data/entitlements/index.js';
 import { PgAssignmentStore } from '../data/assignments/index.js';
 import { PgCredentialStore } from '../data/credentials/index.js';
@@ -36,6 +37,7 @@ export interface RuntimeGovernancePreflightDeps {
   tenantStore?: TenantStore;
   orgAgentStore?: OrgAgentStore;
   membershipStore?: PgMembershipStore;
+  governanceChangeJobStore?: PgGovernanceChangeJobStore;
   entitlementStore?: PgEntitlementStore;
   assignmentStore?: PgAssignmentStore;
   credentialStore?: PgCredentialStore;
@@ -53,7 +55,7 @@ export interface RuntimeGovernancePreflightDeps {
 /** Builds the run preflight chain only when every mandatory governance authority is available. */
 export function initializeRuntimeGovernancePreflight(deps: RuntimeGovernancePreflightDeps) {
   const {
-    sessionCatalog, userStore, tenantStore, orgAgentStore, membershipStore, entitlementStore,
+    sessionCatalog, userStore, tenantStore, orgAgentStore, membershipStore, governanceChangeJobStore, entitlementStore,
     assignmentStore, credentialStore, connectorCatalogStore, environmentStore, agentResourceStore,
     skillGovernanceStore, governanceMigrationControlStore, governanceShadowComparator,
     runResolutionSnapshotStore, billingService, modelResolver,
@@ -62,7 +64,7 @@ export function initializeRuntimeGovernancePreflight(deps: RuntimeGovernancePref
 
   // Access/Run：统一 Subject → AccessDecision → Readiness → Preflight。
   // 迁移控制动态切换 shadow/enforce；控制 revision 在评估前后复核并写入 Snapshot。
-  if (membershipStore && entitlementStore && assignmentStore && userStore && tenantStore && orgAgentStore) {
+  if (membershipStore && governanceChangeJobStore && entitlementStore && assignmentStore && userStore && tenantStore && orgAgentStore) {
     runPreflightService = new RunPreflightService({
       enforcementMode: 'shadow',
       ...(governanceMigrationControlStore ? {
@@ -72,6 +74,9 @@ export function initializeRuntimeGovernancePreflight(deps: RuntimeGovernancePref
         },
       } : {}),
       subjectResolver: new SubjectResolver(userStore, membershipStore),
+      isSubjectFenced: async (tenantId, userId) => Boolean(
+        await governanceChangeJobStore.findActiveForTarget(tenantId, 'user_offboarding', 'user', userId),
+      ),
       accessEvaluator: new AccessEvaluator([
         new PlatformInvariantPolicy(),
         new EntitlementPolicy(entitlementStore),

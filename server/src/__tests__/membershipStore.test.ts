@@ -40,8 +40,8 @@ describe('Membership/Owner 治理事实模型', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_platform_admins');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_governance_migration_issues');
     expect(sql).toContain("CHECK (NOT is_owner OR persona = 'org_admin')");
-    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(17);
-    expect(queries.filter(item => item.sql === 'COMMIT')).toHaveLength(17);
+    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(18);
+    expect(queries.filter(item => item.sql === 'COMMIT')).toHaveLength(18);
   });
 
   it('legacy backfill 把 pantheon admin 与客户 Membership 分离；唯一 active admin 确定为 Owner，多 admin 只记问题不猜', async () => {

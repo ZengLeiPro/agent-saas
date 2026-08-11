@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { KeyRound, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 
 import { AgentDocEditor } from "@/components/AgentProfile/AgentDocEditor";
@@ -7,15 +7,14 @@ import { PermissionWhyPanel } from "@/components/Governance/PermissionWhyPanel";
 import { AttachmentStorageSection } from "@/components/SettingsCenter/AttachmentStorageSection";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffectiveResources } from "@/hooks/useEffectiveResources";
 import { navigateSettingsRoute } from "@/lib/urlSync";
 import { EntityIcons } from "@/lib/icons";
 import { governanceRoute, parseGovernanceUrl } from "@/lib/governanceNavigation";
-import { fetchMyMcp, saveUserPreferences } from "@agent/shared";
-import type { MyMcpResponse } from "@agent/shared";
+import { startGoogleWorkspaceOAuth, type GoogleWorkspaceOAuthStartResponse } from "@agent/shared";
+import { governanceAccessApi, type OAuthGrantResponse, type OAuthRevocationPreview, type OAuthRevocationResult } from "@agent/shared/lib/governanceApi";
 import type { MyAgentSettingsTab } from "@/types/settings";
 
 function readMyAgentTab(): MyAgentSettingsTab {
@@ -88,29 +87,36 @@ export function MyPermissionsSection() {
   );
 }
 
-function connectionStatusLabel(status?: string): string {
-  if (status === "connected") return "已连接（旧连接）";
-  if (status === "pending") return "授权处理中（旧连接）";
-  if (status === "error") return "连接异常（旧连接）";
-  return "未连接";
-}
+type OAuthGrantView = OAuthGrantResponse['grants'][number];
+const grantStatusLabel: Record<OAuthGrantView['status'], string> = {
+  active: "已连接", expired: "需重连", revoked: "已撤销", error: "需重连",
+};
+const approvalActionLabel: Record<OAuthGrantView['approvals'][number]['action'], string> = {
+  approved: "已批准", revoked: "已撤销", expired: "已过期", refreshed: "已刷新",
+};
 
 export function ConnectionsSection() {
-  const { user, updatePreferences } = useAuth();
-  const [connections, setConnections] = useState<MyMcpResponse | null>(null);
+  const [grants, setGrants] = useState<OAuthGrantView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [savingApproval, setSavingApproval] = useState(false);
-  const authorizationModeEnabled = user?.preferences?.authorizationModeEnabled === true;
+  const [revokingGrantId, setRevokingGrantId] = useState<string | null>(null);
+  const [revocationPreview, setRevocationPreview] = useState<{ grant: OAuthGrantView; value: OAuthRevocationPreview } | null>(null);
+  const [revocationReceipt, setRevocationReceipt] = useState<OAuthRevocationResult | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const [connectingGoogle, setConnectingGoogle] = useState(false);
+  const [googleAuthorizationUrl, setGoogleAuthorizationUrl] = useState<string | null>(null);
+  const [googleConnectPreview, setGoogleConnectPreview] = useState<GoogleWorkspaceOAuthStartResponse | null>(null);
+  const googlePopup = useRef<Window | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setConnections(await fetchMyMcp());
+      const response = await governanceAccessApi.listOAuthGrants();
+      setGrants(response.grants);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "读取旧连接失败");
-      setConnections(null);
+      setError(cause instanceof Error ? cause.message : "读取 OAuth Grant 失败");
+      setGrants([]);
     } finally {
       setLoading(false);
     }
@@ -118,24 +124,104 @@ export function ConnectionsSection() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const updateRuntimeApproval = useCallback(async (checked: boolean) => {
-    setSavingApproval(true);
+  useEffect(() => {
+    const listener = (event: MessageEvent) => {
+      if (!googlePopup.current || event.source !== googlePopup.current) return;
+      const result = event.data as { type?: string; connectorId?: string; ok?: boolean; message?: string };
+      if (result.type !== "connector-oauth-result" || result.connectorId !== "google-workspace") return;
+      googlePopup.current = null;
+      setConnectingGoogle(false);
+      setGoogleAuthorizationUrl(null);
+      if (!result.ok) {
+        setMutationError(result.message || "Google Workspace 授权失败");
+        return;
+      }
+      void load();
+    };
+    window.addEventListener("message", listener);
+    return () => window.removeEventListener("message", listener);
+  }, [load]);
+
+  const connectGoogle = useCallback(async () => {
+    setConnectingGoogle(true);
+    setMutationError(null);
+    setGoogleAuthorizationUrl(null);
     try {
-      const saved = await saveUserPreferences({ authorizationModeEnabled: checked });
-      if (!saved) throw new Error("保存失败");
-      updatePreferences(saved);
+      const started = await startGoogleWorkspaceOAuth();
+      const authorizationUrl = new URL(started.authorizationUrl);
+      if (authorizationUrl.protocol !== "https:") throw new Error("OAuth authorization URL 必须使用 HTTPS");
+      if (!started.requestedScopes.length || !started.purpose || !started.dataDestination || !started.revokeMethod) {
+        throw new Error("OAuth scope 预览权威不可用");
+      }
+      setGoogleConnectPreview({ ...started, authorizationUrl: authorizationUrl.toString() });
     } catch (cause) {
-      window.alert(cause instanceof Error ? cause.message : "保存失败");
+      setMutationError(cause instanceof Error ? cause.message : "Google Workspace 授权预览失败");
     } finally {
-      setSavingApproval(false);
+      setConnectingGoogle(false);
     }
-  }, [updatePreferences]);
+  }, []);
 
-  const legacyOauthConnections = useMemo(
-    () => connections?.servers.filter((server) => server.oauth) ?? [],
-    [connections],
-  );
+  const confirmGoogleConnect = useCallback(() => {
+    if (!googleConnectPreview) return;
+    const popup = window.open("", "google-workspace-governance-oauth", "popup,width=560,height=720");
+    googlePopup.current = popup;
+    if (!popup) {
+      setGoogleAuthorizationUrl(googleConnectPreview.authorizationUrl);
+      return;
+    }
+    popup.location.href = googleConnectPreview.authorizationUrl;
+    setGoogleConnectPreview(null);
+  }, [googleConnectPreview]);
 
+  const cancelGoogleConnect = useCallback(() => {
+    if (googlePopup.current && !googlePopup.current.closed) googlePopup.current.close();
+    googlePopup.current = null;
+    setConnectingGoogle(false);
+    setGoogleAuthorizationUrl(null);
+    setGoogleConnectPreview(null);
+  }, []);
+
+  const revokeGrant = useCallback(async (grant: OAuthGrantView) => {
+    setRevokingGrantId(grant.grantId);
+    setRevocationReceipt(null);
+    setMutationError(null);
+    try {
+      const value = await governanceAccessApi.previewOAuthGrantRevocation(grant.grantId, "用户主动撤销长期账号授权");
+      setRevocationPreview({ grant, value });
+    } catch (cause) {
+      setMutationError(cause instanceof Error ? cause.message : "撤销授权预览失败");
+    } finally {
+      setRevokingGrantId(null);
+    }
+  }, []);
+
+  const confirmRevocation = useCallback(async () => {
+    if (!revocationPreview) return;
+    if (Date.parse(revocationPreview.value.expiresAt) <= Date.now() || revocationPreview.value.impact.blockers.length > 0) {
+      setMutationError("预览已过期或存在阻断项，请重新生成。");
+      setRevocationPreview(null);
+      return;
+    }
+    const grantId = revocationPreview.grant.grantId;
+    setRevokingGrantId(grantId);
+    setMutationError(null);
+    try {
+      const receipt = await governanceAccessApi.revokeOAuthGrant(grantId, {
+        reason: "用户主动撤销长期账号授权", previewId: revocationPreview.value.previewId,
+        baselineDigest: revocationPreview.value.baselineDigest, expiresAt: revocationPreview.value.expiresAt,
+      });
+      setRevocationReceipt(receipt);
+      setRevocationPreview(null);
+      await load();
+    } catch (cause) {
+      setMutationError(cause instanceof Error ? cause.message : "撤销授权失败");
+    } finally {
+      setRevokingGrantId(null);
+    }
+  }, [load, revocationPreview]);
+
+  const googleGrant = grants.find(grant => grant.provider === "google" && grant.status !== "revoked");
+  const hasActiveGoogleGrant = googleGrant?.status === "active";
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SettingsPanelHeader title="连接与授权" description="长期账号授权与单次运行时工具批准是两类独立能力，不互相冒充。" />
@@ -145,22 +231,63 @@ export function ConnectionsSection() {
             <KeyRound className="mt-0.5 size-5 text-muted-foreground" />
             <div className="min-w-0 flex-1">
               <h2 id="long-term-authorizations" className="font-semibold">长期账号授权</h2>
-              <p className="mt-1 text-sm text-muted-foreground">新版 OAuth Grant API 尚未提供。以下旧连接仅只读展示，尚未迁移到权威长期授权模型；本页不会发起、撤销或伪造授权成功。</p>
+              <p className="mt-1 text-sm text-muted-foreground">仅展示治理 OAuth Grant 与批准记录；Token、Secret 和外部账号标识不进入页面 DTO。</p>
             </div>
             <Button type="button" size="sm" variant="outline" onClick={() => { void load(); }} disabled={loading}>{loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}刷新</Button>
           </div>
+          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border p-3 text-sm">
+            <div className="min-w-0 flex-1"><div className="font-medium">Google Workspace</div><div className="text-xs text-muted-foreground">{hasActiveGoogleGrant ? "已存在受治理的长期授权" : googleGrant ? `当前状态：${grantStatusLabel[googleGrant.status]}，请重新连接` : "通过 Google 官方页面授权；回调成功后重新读取 OAuth Grant。"}</div></div>
+            {!hasActiveGoogleGrant ? <Button type="button" size="sm" onClick={() => { void connectGoogle(); }} disabled={connectingGoogle}>{connectingGoogle ? <Loader2 className="size-4 animate-spin" /> : null}{googleGrant ? "重新连接" : "连接"}</Button> : null}
+            {connectingGoogle ? <Button type="button" size="sm" variant="outline" onClick={cancelGoogleConnect}>取消授权</Button> : null}
+          </div>
+          {googleConnectPreview ? <div className="mt-3 space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4 text-sm" aria-labelledby="google-connect-preview-title">
+            <div id="google-connect-preview-title" className="font-semibold">确认 Google Workspace 授权范围</div>
+            <div>{googleConnectPreview.purpose}</div>
+            <div className="text-xs"><strong>风险：</strong>高影响长期授权 · <strong>数据去向：</strong>{googleConnectPreview.dataDestination}</div>
+            <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">{googleConnectPreview.requestedScopes.map(scope => <li key={scope}>{scope}</li>)}</ul>
+            <div className="text-xs text-muted-foreground">{googleConnectPreview.revokeMethod}。授权信息由 Google 展示并确认；Token 不进入治理页面。</div>
+            <div className="flex justify-end gap-2"><Button type="button" size="sm" variant="outline" onClick={cancelGoogleConnect}>取消</Button><Button type="button" size="sm" onClick={confirmGoogleConnect}>前往 Google 授权</Button></div>
+          </div> : null}
+          {googleAuthorizationUrl ? <div className="mt-3 rounded-lg border border-amber-500/30 p-3 text-sm" role="alert">浏览器阻止了授权弹窗。<a className="ml-1 underline" href={googleAuthorizationUrl}>在当前页继续授权</a></div> : null}
           {error ? <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive" role="alert">{error}</div> : null}
+          {mutationError ? <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive" role="alert">{mutationError}</div> : null}
+          {revocationPreview ? (
+            <div className="mt-4 space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4 text-sm" role="region" aria-labelledby="oauth-revoke-title">
+              <div id="oauth-revoke-title" className="font-semibold">确认撤销 {revocationPreview.grant.connectorId ?? revocationPreview.grant.provider}</div>
+              <div>立即阻止新 Run 使用该授权；外部撤销失败时进入后台重试，不会恢复本地调用。</div>
+              <div className="grid gap-1 text-xs text-muted-foreground">
+                <span>版本：v{revocationPreview.value.impact.currentVersion} → v{revocationPreview.value.impact.nextVersion}</span>
+                <span>生效方式：{revocationPreview.value.impact.effectiveMode} · {revocationPreview.value.impact.reversible ? "可逆" : "不可逆"}</span>
+                <span>基线：{revocationPreview.value.baselineDigest.slice(0, 12)}… · 有效期至 {new Date(revocationPreview.value.expiresAt).toLocaleString()}</span>
+                <span>受影响 Agent：{revocationPreview.value.impact.affectedAgents.join("、") || "权威未返回具体对象"}</span>
+                <span>受影响自动化：{revocationPreview.value.impact.affectedAutomations.join("、") || "权威未返回具体对象"}</span>
+              </div>
+              {revocationPreview.value.impact.warnings.length ? <div className="rounded-lg border border-amber-500/30 p-2 text-xs">影响清单尚不完整：{revocationPreview.value.impact.warnings.join("、")}</div> : null}
+              {revocationPreview.value.impact.blockers.length ? <div className="rounded-lg border border-destructive/30 p-2 text-xs text-destructive">阻断：{revocationPreview.value.impact.blockers.join("、")}</div> : null}
+              <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setRevocationPreview(null)} disabled={Boolean(revokingGrantId)}>取消</Button><Button type="button" variant="destructive" onClick={() => { void confirmRevocation(); }} disabled={Boolean(revokingGrantId) || revocationPreview.value.impact.blockers.length > 0 || Date.parse(revocationPreview.value.expiresAt) <= Date.now()}>确认撤销</Button></div>
+            </div>
+          ) : null}
+          {revocationReceipt ? (
+            <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm" role="status">
+              <div className="font-medium">OAuth 授权撤销回执</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                状态：{revocationReceipt.status} · Change ID：{revocationReceipt.changeId} · Audit ID：{revocationReceipt.auditId}
+                {revocationReceipt.auditCompletion === "pending" ? " · 审计终态：pending" : ""}
+              </div>
+            </div>
+          ) : null}
           {!loading && !error ? (
-            legacyOauthConnections.length ? (
+            grants.length ? (
               <ul className="mt-4 divide-y rounded-xl border">
-                {legacyOauthConnections.map((server) => (
-                  <li key={server.id} className="flex items-center justify-between gap-3 p-3 text-sm">
-                    <div><div className="font-medium">{server.name}</div><div className="text-xs text-muted-foreground">{server.oauth?.provider}</div></div>
-                    <span className="rounded-full bg-muted px-2 py-1 text-xs">{connectionStatusLabel(server.oauth?.status)}</span>
+                {grants.map((grant) => (
+                  <li key={grant.grantId} className="space-y-3 p-3 text-sm">
+                    <div className="flex items-center justify-between gap-3"><div><div className="font-medium">{grant.connectorId ?? grant.provider}</div><div className="text-xs text-muted-foreground">{grant.provider} · Grant v{grant.version}</div></div><div className="flex items-center gap-2"><span className="rounded-full bg-muted px-2 py-1 text-xs">{grantStatusLabel[grant.status]}</span>{grant.status === "active" || grant.status === "error" ? <Button type="button" size="sm" variant="outline" onClick={() => { void revokeGrant(grant); }} disabled={revokingGrantId === grant.grantId}>{revokingGrantId === grant.grantId ? <Loader2 className="size-4 animate-spin" /> : grant.status === "error" ? "重试撤销" : "撤销授权"}</Button> : null}</div></div>
+                    <div className="text-xs text-muted-foreground">范围：{grant.scopeSummary.join("、") || "未声明"} · 批准于 {new Date(grant.approvedAt).toLocaleString()}</div>
+                    {grant.approvals.length ? <ul className="space-y-1 rounded-lg bg-muted/50 p-2 text-xs">{grant.approvals.map(approval => <li key={approval.approvalId}>{approvalActionLabel[approval.action]} · {approval.purpose} · {new Date(approval.occurredAt).toLocaleString()}</li>)}</ul> : null}
                   </li>
                 ))}
               </ul>
-            ) : <p className="mt-4 text-sm text-muted-foreground">没有可只读展示的旧 OAuth 连接。</p>
+            ) : <div className="mt-4 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">没有治理 OAuth Grant。连接入口在完成 Entitlement、Assignment 与 scope 预检合同前保持关闭，不会回退到旧 OAuth 写入口。</div>
           ) : null}
         </section>
 
@@ -169,13 +296,13 @@ export function ConnectionsSection() {
             <EntityIcons.admin className="mt-0.5 size-5 text-muted-foreground" />
             <div className="min-w-0 flex-1">
               <h2 id="runtime-tool-approval" className="font-semibold">运行时工具批准</h2>
-              <p className="mt-1 text-sm text-muted-foreground">只影响会话运行时是否自动批准工具，不创建长期账号授权。偏好变更即时保存。</p>
+              <p className="mt-1 text-sm text-muted-foreground">当前权威 Runtime Approval API 尚未提供，所有工具保持“每次询问”；旧全局偏好开关不再作为治理批准能力。</p>
             </div>
-            <Switch checked={authorizationModeEnabled} onCheckedChange={(checked) => { void updateRuntimeApproval(checked); }} disabled={savingApproval} aria-label="自动批准运行时工具" />
+            <span className="rounded-full border bg-muted px-3 py-1 text-xs">每次询问</span>
           </div>
           <div className="mt-4 flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
             <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-            <span>当前没有运行时批准记录查询 API，因此这里只管理批准偏好，不展示虚构的批准历史。</span>
+            <span>需等待后端按工具类别返回上层策略、允许范围、风险、版本和 allowedActions 后才能开启自动批准。</span>
           </div>
         </section>
       </div>
@@ -184,14 +311,14 @@ export function ConnectionsSection() {
 }
 
 export function FilesStorageSection({ renderFiles }: { renderFiles?: () => ReactNode }) {
-  const [tab, setTab] = useState<"files" | "storage">("files");
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="mb-3 flex gap-2" role="tablist" aria-label="文件与存储">
-        <Button type="button" size="sm" variant={tab === "files" ? "default" : "outline"} onClick={() => setTab("files")}>文件</Button>
-        <Button type="button" size="sm" variant={tab === "storage" ? "default" : "outline"} onClick={() => setTab("storage")}>存储用量</Button>
-      </div>
-      <div className="min-h-0 flex-1">{tab === "files" ? renderFiles?.() ?? null : <AttachmentStorageSection />}</div>
-    </div>
+    <Tabs defaultValue="files" className="flex h-full min-h-0 flex-col">
+      <TabsList className="mb-3 w-fit" aria-label="文件与存储">
+        <TabsTrigger value="files">文件</TabsTrigger>
+        <TabsTrigger value="storage">存储用量</TabsTrigger>
+      </TabsList>
+      <TabsContent value="files" className="min-h-0 flex-1">{renderFiles?.() ?? null}</TabsContent>
+      <TabsContent value="storage" className="min-h-0 flex-1"><AttachmentStorageSection /></TabsContent>
+    </Tabs>
   );
 }

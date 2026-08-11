@@ -15,6 +15,7 @@ import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 import type { BillingService } from '../data/billing/service.js';
 import type { RunPreflightService } from './runPreflight.js';
+import { resolveEffectiveMaxTurns } from './maxTurnsPolicy.js';
 import type { PgRunResolutionSnapshotStore } from './runResolutionSnapshotStore.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import type { PgEnvironmentStore } from '../data/environments/index.js';
@@ -647,21 +648,6 @@ export interface WakeRuntimeSessionOptions {
 
 const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
 
-
-function normalizePositiveInt(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
-}
-
-function resolveEffectiveMaxTurns(
-  config: RawRuntimeRunDispatchConfig,
-  requested: unknown,
-  identity: { userId?: string; username?: string },
-): number {
-  const requestedMaxTurns = normalizePositiveInt(requested);
-  const defaultMaxTurns = normalizePositiveInt(config.defaultMaxTurns) ?? 20;
-  const userMaxTurns = normalizePositiveInt(config.resolveUserMaxTurns?.(identity));
-  return Math.min(requestedMaxTurns ?? defaultMaxTurns, userMaxTurns ?? Infinity);
-}
 
 export function resolveSessionCatalog(config: RawRuntimeRunDispatchConfig): SessionCatalog {
   return config.sessionCatalog ?? new FileSessionCatalog({ agentCwd: config.agentCwd });

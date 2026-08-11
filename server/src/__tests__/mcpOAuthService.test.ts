@@ -26,7 +26,7 @@ async function fixture() {
     config: {
       type: 'streamable-http',
       url: 'https://example.com/mcp',
-      oauth: { provider: 'notion' },
+      oauth: { provider: 'notion', scopes: ['notes.read', 'notes.write'] },
     },
   });
   await store.upsertServer({
@@ -73,14 +73,20 @@ describe('McpOAuthService', () => {
       }
       expect(options.authorizationCode).toBe('authorization-code');
       await expect(provider.codeVerifier()).resolves.toBe('pkce-verifier');
-      await provider.saveTokens({ access_token: 'user-access-token', refresh_token: 'user-refresh-token', token_type: 'bearer' });
+      await provider.saveTokens({ access_token: 'user-access-token', refresh_token: 'user-refresh-token', token_type: 'bearer', scope: 'notes.read notes.write' });
       return 'AUTHORIZED' as const;
     });
-    const service = new McpOAuthService({ store, vault, authFn });
+    const service = new McpOAuthService({
+      store, vault, authFn,
+      userResolver: username => ({ id: `user-${username}`, tenantId: 'kaiyan' }),
+      authorizeGrant: async () => true,
+      authorizeConnect: async () => true,
+    });
     const server = store.getServer('notion')!;
 
     const started = await service.start({
       username: 'alice',
+      userId: 'user-alice',
       tenantId: 'kaiyan',
       server,
       redirectUrl: 'https://agent.example.com/api/mcp/oauth/callback',
@@ -94,7 +100,7 @@ describe('McpOAuthService', () => {
     expect(await readFile(configPath, 'utf-8')).not.toContain('user-access-token');
 
     const finished = await service.finish({ state: pending.pendingState!, code: 'authorization-code' });
-    expect(finished?.ok).toBe(true);
+    expect(finished).toMatchObject({ ok: true, scopeSummary: ['notes.read', 'notes.write'] });
     expect(store.getUserOAuthConnection('alice', 'notion')?.status).toBe('connected');
     expect(await readFile(configPath, 'utf-8')).not.toContain('user-access-token');
     await expect(service.finish({ state: pending.pendingState!, code: 'replay' })).resolves.toBeUndefined();
@@ -113,13 +119,18 @@ describe('McpOAuthService', () => {
         await provider.redirectToAuthorization(new URL(`https://auth.example.com/?state=${await provider.state?.()}`));
         return 'REDIRECT' as const;
       }
-      await provider.saveTokens({ access_token: `token-${options.authorizationCode}`, token_type: 'bearer' });
+      await provider.saveTokens({ access_token: `token-${options.authorizationCode}`, token_type: 'bearer', scope: 'notes.read' });
       return 'AUTHORIZED' as const;
     };
-    const service = new McpOAuthService({ store, vault, authFn });
+    const service = new McpOAuthService({
+      store, vault, authFn,
+      userResolver: username => ({ id: `user-${username}`, tenantId: 'kaiyan' }),
+      authorizeGrant: async () => true,
+      authorizeConnect: async () => true,
+    });
     const server = store.getServer('notion')!;
     for (const username of ['alice', 'bob']) {
-      await service.start({ username, tenantId: 'kaiyan', server, redirectUrl: 'https://agent.example.com/api/mcp/oauth/callback', returnTo: '/' });
+      await service.start({ username, userId: `user-${username}`, tenantId: 'kaiyan', server, redirectUrl: 'https://agent.example.com/api/mcp/oauth/callback', returnTo: '/' });
       const state = store.getUserOAuthConnection(username, 'notion')!.pendingState!;
       await service.finish({ state, code: username });
     }
@@ -133,7 +144,7 @@ describe('McpOAuthService', () => {
 
   it('Google 预设在平台 OAuth client 未配置时 fail closed', async () => {
     const { store, vault } = await fixture();
-    const service = new McpOAuthService({ store, vault, env: {} });
+    const service = new McpOAuthService({ store, vault, env: {}, authorizeConnect: async () => true });
     const server = store.getServer('google_drive')!;
     expect(service.summary('alice', server)).toMatchObject({
       provider: 'google-workspace',
@@ -143,6 +154,7 @@ describe('McpOAuthService', () => {
     });
     await expect(service.start({
       username: 'alice',
+      userId: 'user-alice',
       tenantId: 'kaiyan',
       server,
       redirectUrl: 'https://agent.example.com/api/mcp/oauth/callback',
@@ -159,23 +171,66 @@ describe('McpOAuthService', () => {
         await provider.redirectToAuthorization(new URL(`https://auth.example.com/?state=${await provider.state?.()}`));
         return 'REDIRECT' as const;
       }
-      await provider.saveTokens({ access_token: 'must-not-be-saved', token_type: 'bearer' });
+      await provider.saveTokens({ access_token: 'must-not-be-saved', token_type: 'bearer', scope: 'notes.read' });
       return 'AUTHORIZED' as const;
     });
     const service = new McpOAuthService({
       store,
       vault,
       authFn,
-      userResolver: () => ({ tenantId: 'wain' }),
+      userResolver: () => ({ id: 'user-1', tenantId: 'wain' }),
+      authorizeConnect: async () => true,
     });
     const server = store.getServer('notion')!;
-    await service.start({ username: 'alice', tenantId: 'kaiyan', server, redirectUrl: 'https://agent.example.com/api/mcp/oauth/callback', returnTo: '/' });
+    await service.start({ username: 'alice', userId: 'user-1', tenantId: 'kaiyan', server, redirectUrl: 'https://agent.example.com/api/mcp/oauth/callback', returnTo: '/' });
     const state = store.getUserOAuthConnection('alice', 'notion')!.pendingState!;
 
     const result = await service.finish({ state, code: 'code' });
     expect(result).toMatchObject({ ok: false, tenantId: 'kaiyan' });
     expect(store.getUserOAuthConnection('alice', 'notion')?.status).toBe('error');
     expect(authFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('immutable userId 与 active subject authority 阻止同名账号替换、offboarding 与旧连接复用', async () => {
+    const { store, vault } = await fixture();
+    let currentId = 'user-old';
+    let active = true;
+    let grantActive = true;
+    const authFn = vi.fn(async (provider, options) => {
+      if (!options.authorizationCode) {
+        await provider.saveCodeVerifier('verifier');
+        await provider.redirectToAuthorization(new URL(`https://auth.example.com/?state=${await provider.state?.()}`));
+        return 'REDIRECT' as const;
+      }
+      await provider.saveTokens({ access_token: 'subject-token', token_type: 'bearer', scope: 'notes.read' });
+      return 'AUTHORIZED' as const;
+    });
+    const service = new McpOAuthService({
+      store, vault, authFn,
+      userResolver: () => ({ id: currentId, tenantId: 'kaiyan' }),
+      authorizeSubject: async userId => active && userId === 'user-old',
+      authorizeGrant: async (_grantId, userId) => grantActive && userId === 'user-old',
+      authorizeConnect: async () => true,
+    });
+    const server = store.getServer('notion')!;
+    await service.start({ username: 'alice', userId: 'user-old', tenantId: 'kaiyan', server, redirectUrl: 'https://agent.example.com/api/mcp/oauth/callback', returnTo: '/' });
+    const replacedState = store.getUserOAuthConnection('alice', 'notion')!.pendingState!;
+    currentId = 'user-new';
+    await expect(service.finish({ state: replacedState, code: 'code' })).resolves.toMatchObject({ ok: false });
+    expect(authFn).toHaveBeenCalledTimes(1);
+
+    currentId = 'user-old';
+    await service.start({ username: 'alice', userId: 'user-old', tenantId: 'kaiyan', server, redirectUrl: 'https://agent.example.com/api/mcp/oauth/callback', returnTo: '/' });
+    const validState = store.getUserOAuthConnection('alice', 'notion')!.pendingState!;
+    await expect(service.finish({ state: validState, code: 'code' })).resolves.toMatchObject({ ok: true });
+    await expect(service.runtimeProvider({ username: 'alice', tenantId: 'kaiyan', serverName: 'notion' })).resolves.toBeDefined();
+    grantActive = false;
+    await expect(service.runtimeProvider({ username: 'alice', tenantId: 'kaiyan', serverName: 'notion' })).resolves.toBeUndefined();
+    grantActive = true;
+    currentId = 'user-new';
+    await expect(service.runtimeProvider({ username: 'alice', tenantId: 'kaiyan', serverName: 'notion' })).resolves.toBeUndefined();
+    active = false;
+    await expect(service.start({ username: 'alice', userId: 'user-old', tenantId: 'kaiyan', server, redirectUrl: 'https://agent.example.com/api/mcp/oauth/callback', returnTo: '/' })).rejects.toThrow('OAuth subject is not active');
   });
 
   it('v5 不再安装能力中心内置 MCP preset，也不覆盖管理员自建服务', async () => {

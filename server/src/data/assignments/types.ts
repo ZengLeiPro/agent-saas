@@ -6,7 +6,8 @@ export type AssignmentResourceType =
   | 'skill'
   | 'credential'
   | 'environment_template'
-  | 'org_knowledge';
+  | 'org_knowledge'
+  | 'connector';
 export type AssignmentAssigneeType = 'everyone' | 'user' | 'directory_group' | 'agent';
 export type AssignmentEffect = 'allow' | 'deny';
 export type AssignmentOrigin = 'direct' | 'migration' | 'policy_default';

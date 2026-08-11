@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { PLATFORM_TENANT_ID } from '../tenants/types.js';
+import { governanceV18Statements } from './v18Migration.js';
 
 export type GovernancePgPool = pg.Pool;
 
@@ -40,18 +41,15 @@ function migrations(prefix: string): GovernanceMigration[] {
   const resourceReferences = `${prefix}_resource_references`;
   const managedAgents = `${prefix}_managed_agents`;
   const managedAgentVersions = `${prefix}_managed_agent_versions`;
-  const governedSkills = `${prefix}_governed_skills`;
-  const governedSkillVersions = `${prefix}_governed_skill_versions`;
-  const skillCandidates = `${prefix}_skill_candidates`;
-  const changeJobs = `${prefix}_governance_change_jobs`;
-  const changeJobDomains = `${prefix}_governance_change_job_domains`;
-  const migrationControl = `${prefix}_governance_migration_control`;
-  const migrationDomains = `${prefix}_governance_migration_domains`;
+  const governedSkills = `${prefix}_governed_skills`, governedSkillVersions = `${prefix}_governed_skill_versions`, skillCandidates = `${prefix}_skill_candidates`;
+  const changeJobs = `${prefix}_governance_change_jobs`, changeJobDomains = `${prefix}_governance_change_job_domains`;
+  const migrationControl = `${prefix}_governance_migration_control`, migrationDomains = `${prefix}_governance_migration_domains`;
   const shadowDifferences = `${prefix}_governance_shadow_differences`;
-  const contentAccessGrants = `${prefix}_content_access_grants`;
-  const projectionOutbox = `${prefix}_governance_projection_outbox`;
-  const environmentInstances = `${prefix}_environment_instances`;
-  const guardrailEvents = `${prefix}_guardrail_events`;
+  const contentAccessGrants = `${prefix}_content_access_grants`, projectionOutbox = `${prefix}_governance_projection_outbox`;
+  const environmentInstances = `${prefix}_environment_instances`, guardrailEvents = `${prefix}_guardrail_events`;
+  const directoryGroups = `${prefix}_directory_groups`, directoryGroupMembers = `${prefix}_directory_group_members`;
+  const oauthGrants = `${prefix}_oauth_grants`, oauthApprovalRecords = `${prefix}_oauth_approval_records`;
+  const nativeOAuthHandoffs = `${prefix}_native_oauth_handoffs`;
 
   return [
     {
@@ -882,6 +880,13 @@ function migrations(prefix: string): GovernanceMigration[] {
           AFTER INSERT OR UPDATE OR DELETE ON ${policies}
           FOR EACH ROW EXECUTE FUNCTION ${prefix}_enqueue_tenant_settings_projection()`,
       ],
+    },
+    {
+      version: 18,
+      statements: governanceV18Statements({
+        prefix, changeJobs, changeJobDomains, assignments, directoryGroups, directoryGroupMembers, memberships,
+        oauthGrants, oauthApprovalRecords, nativeOAuthHandoffs,
+      }),
     },
   ];
 }

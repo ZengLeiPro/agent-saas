@@ -13,16 +13,16 @@ const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const GOOGLE_USERINFO_ENDPOINT = 'https://openidconnect.googleapis.com/v1/userinfo';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1_000;
 const ACCESS_TOKEN_REFRESH_SKEW_MS = 60 * 1_000;
-const GOOGLE_WORKSPACE_SCOPES = [
+export const GOOGLE_WORKSPACE_SCOPES = [
   'openid',
   'email',
   'profile',
-  'https://www.googleapis.com/auth/gmail.modify',
-  'https://www.googleapis.com/auth/drive',
-  'https://www.googleapis.com/auth/calendar',
-  'https://www.googleapis.com/auth/chat.messages',
-  'https://www.googleapis.com/auth/chat.spaces',
-  'https://www.googleapis.com/auth/contacts',
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/chat.messages.readonly',
+  'https://www.googleapis.com/auth/chat.spaces.readonly',
+  'https://www.googleapis.com/auth/contacts.readonly',
 ];
 
 export interface GoogleWorkspaceOAuthUser {
@@ -35,6 +35,7 @@ export interface GoogleWorkspacePendingOAuthState {
   state: string;
   codeVerifier: string;
   redirectUri: string;
+  requestedScopes: string[];
   user: GoogleWorkspaceOAuthUser;
   expiresAt: number;
 }
@@ -97,6 +98,7 @@ export class PgGoogleWorkspaceOAuthStateStore implements GoogleWorkspaceOAuthSta
         state TEXT PRIMARY KEY,
         code_verifier TEXT NOT NULL,
         redirect_uri TEXT NOT NULL,
+        requested_scopes_json JSONB NOT NULL DEFAULT '[]'::jsonb,
         user_id TEXT,
         user_json JSONB NOT NULL,
         expires_at TIMESTAMPTZ NOT NULL,
@@ -104,6 +106,7 @@ export class PgGoogleWorkspaceOAuthStateStore implements GoogleWorkspaceOAuthSta
       )
     `);
     await this.pool.query(`ALTER TABLE ${this.table} ADD COLUMN IF NOT EXISTS user_id TEXT`);
+    await this.pool.query(`ALTER TABLE ${this.table} ADD COLUMN IF NOT EXISTS requested_scopes_json JSONB NOT NULL DEFAULT '[]'::jsonb`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.table}_expires_idx ON ${this.table}(expires_at)`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.table}_user_idx ON ${this.table}(user_id)`);
     await this.pool.query(`
@@ -117,11 +120,12 @@ export class PgGoogleWorkspaceOAuthStateStore implements GoogleWorkspaceOAuthSta
   async put(record: GoogleWorkspacePendingOAuthState): Promise<void> {
     await this.pool.query(`DELETE FROM ${this.table} WHERE expires_at <= NOW()`);
     await this.pool.query(`
-      INSERT INTO ${this.table} (state, code_verifier, redirect_uri, user_id, user_json, expires_at)
-      VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+      INSERT INTO ${this.table} (state, code_verifier, redirect_uri, requested_scopes_json, user_id, user_json, expires_at)
+      VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb, $7)
       ON CONFLICT (state) DO UPDATE SET
         code_verifier = EXCLUDED.code_verifier,
         redirect_uri = EXCLUDED.redirect_uri,
+        requested_scopes_json = EXCLUDED.requested_scopes_json,
         user_id = EXCLUDED.user_id,
         user_json = EXCLUDED.user_json,
         expires_at = EXCLUDED.expires_at
@@ -129,6 +133,7 @@ export class PgGoogleWorkspaceOAuthStateStore implements GoogleWorkspaceOAuthSta
       record.state,
       record.codeVerifier,
       record.redirectUri,
+      JSON.stringify(record.requestedScopes),
       record.user.id,
       JSON.stringify(record.user),
       new Date(record.expiresAt),
@@ -140,12 +145,13 @@ export class PgGoogleWorkspaceOAuthStateStore implements GoogleWorkspaceOAuthSta
       state: string;
       code_verifier: string;
       redirect_uri: string;
+      requested_scopes_json: string[];
       user_json: GoogleWorkspaceOAuthUser;
       expires_at: Date | string;
     }>(`
       DELETE FROM ${this.table}
       WHERE state = $1 AND expires_at > NOW()
-      RETURNING state, code_verifier, redirect_uri, user_json, expires_at
+      RETURNING state, code_verifier, redirect_uri, requested_scopes_json, user_json, expires_at
     `, [state]);
     const row = result.rows[0];
     if (!row) return undefined;
@@ -153,6 +159,7 @@ export class PgGoogleWorkspaceOAuthStateStore implements GoogleWorkspaceOAuthSta
       state: row.state,
       codeVerifier: row.code_verifier,
       redirectUri: row.redirect_uri,
+      requestedScopes: row.requested_scopes_json,
       user: row.user_json,
       expiresAt: new Date(row.expires_at).getTime(),
     };
@@ -214,6 +221,9 @@ export interface GoogleWorkspaceOAuthServiceOptions {
   vault: SecretVault;
   stateStore?: GoogleWorkspaceOAuthStateStore;
   userResolver?: (userId: string) => UserInfo | undefined;
+  authorizeSubject?: (userId: string, tenantId: string) => Promise<boolean>;
+  authorizeGrant?: (grantId: string, userId: string, tenantId: string) => Promise<boolean>;
+  authorizeConnect?: (userId: string, tenantId: string) => Promise<boolean>;
   fetchImpl?: typeof fetch;
   logger?: {
     warn(message: string): void;
@@ -230,7 +240,14 @@ export class GoogleWorkspaceOAuthService {
     this.stateStore = options.stateStore ?? new InMemoryGoogleWorkspaceOAuthStateStore();
   }
 
-  async startAuthorization(user: UserInfo, redirectUri: string): Promise<{ authorizationUrl: string; state: string }> {
+  async startAuthorization(user: UserInfo, redirectUri: string): Promise<{
+    authorizationUrl: string; state: string; requestedScopes: string[]; purpose: string;
+    riskLevel: 'high'; dataDestination: string; revokeMethod: string;
+  }> {
+    await this.assertUserActive({ id: user.id, username: user.username, tenantId: user.tenantId });
+    if (!this.options.authorizeConnect || !await this.options.authorizeConnect(user.id, user.tenantId)) {
+      throw new Error('Google Workspace connector assignment is unavailable');
+    }
     await this.stateStore.unblockUser(user.id);
     const state = randomBytes(24).toString('base64url');
     const codeVerifier = randomBytes(48).toString('base64url');
@@ -239,6 +256,7 @@ export class GoogleWorkspaceOAuthService {
       state,
       codeVerifier,
       redirectUri,
+      requestedScopes: [...GOOGLE_WORKSPACE_SCOPES],
       user: { id: user.id, username: user.username, tenantId: user.tenantId },
       expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
     });
@@ -253,15 +271,29 @@ export class GoogleWorkspaceOAuthService {
     url.searchParams.set('code_challenge_method', 'S256');
     url.searchParams.set('access_type', 'offline');
     url.searchParams.set('prompt', 'consent');
-    url.searchParams.set('include_granted_scopes', 'true');
-    return { authorizationUrl: url.toString(), state };
+    url.searchParams.set('include_granted_scopes', 'false');
+    return {
+      authorizationUrl: url.toString(), state,
+      requestedScopes: [...GOOGLE_WORKSPACE_SCOPES],
+      purpose: '仅在本人获指派且组织已授权的 Agent Run 中调用 Gmail、Drive、Calendar、Chat 与 Contacts',
+      riskLevel: 'high',
+      dataDestination: '请求数据发送至 Google Workspace API；运行结果进入当前 Agent Run',
+      revokeMethod: '可在连接与授权页经影响预览撤销；撤销后新 Run 立即不可用',
+    };
   }
 
-  async finishAuthorization(input: { state: string; code: string; redirectUri: string }): Promise<{ user: GoogleWorkspaceOAuthUser }> {
+  async rejectAuthorization(state: string): Promise<boolean> {
+    return Boolean(await this.stateStore.consume(state));
+  }
+
+  async finishAuthorization(input: { state: string; code: string; redirectUri: string }): Promise<{ user: GoogleWorkspaceOAuthUser; scopeSummary: string[] }> {
     const pending = await this.stateStore.consume(input.state);
     if (!pending) throw new Error('Google Workspace OAuth state 已过期');
     if (pending.redirectUri !== input.redirectUri) throw new Error('Google Workspace OAuth redirect_uri 不匹配');
     await this.assertUserActive(pending.user);
+    if (!this.options.authorizeConnect || !await this.options.authorizeConnect(pending.user.id, pending.user.tenantId)) {
+      throw new Error('Google Workspace connector assignment is unavailable');
+    }
 
     const response = await this.fetchImpl(GOOGLE_TOKEN_ENDPOINT, {
       method: 'POST',
@@ -279,6 +311,12 @@ export class GoogleWorkspaceOAuthService {
     const bundle = tokenBundleFromResponse(tokenResponse);
     if (!response.ok || !bundle) {
       throw new Error(`Google Workspace token exchange failed: ${safeOAuthError(tokenResponse)}`);
+    }
+    if (!tokenResponse.scope?.trim()) throw new Error('Google Workspace granted scope evidence is unavailable');
+    const scopeSummary = [...new Set(tokenResponse.scope.split(/\s+/).map(scope => scope.trim()).filter(Boolean))].sort();
+    const requestedScopes = new Set(pending.requestedScopes);
+    if (requestedScopes.size === 0 || scopeSummary.some(scope => !requestedScopes.has(scope))) {
+      throw new Error('Google Workspace granted scope exceeds the signed request');
     }
 
     const metadata = await this.fetchAccountMetadata(bundle.accessToken);
@@ -302,12 +340,12 @@ export class GoogleWorkspaceOAuthService {
         tenantId: pending.user.tenantId,
         connectorId: GOOGLE_WORKSPACE_CONNECTOR_ID,
         credentialRefs: { [GOOGLE_WORKSPACE_OAUTH_CREDENTIAL_KEY]: ref.id },
-        metadata: { ...metadata, credentialOwnerId: pending.user.id },
+        metadata: { ...metadata, credentialOwnerId: pending.user.id, grantedScopes: scopeSummary.join(' ') },
       });
       connected = true;
       await this.assertUserActive(pending.user);
       await this.revokePending(pending.user.username);
-      return { user: pending.user };
+      return { user: pending.user, scopeSummary };
     } catch (error) {
       if (connected) {
         await this.options.connectionStore.disconnect(
@@ -344,6 +382,10 @@ export class GoogleWorkspaceOAuthService {
   async accessToken(userId: string, username: string, tenantId: string): Promise<string | undefined> {
     const record = this.options.connectionStore.get(username, GOOGLE_WORKSPACE_CONNECTOR_ID);
     if (!record || record.status !== 'connected' || record.userId !== userId || record.tenantId !== tenantId) return undefined;
+    if (this.options.authorizeSubject && !await this.options.authorizeSubject(userId, tenantId)) return undefined;
+    const grantId = `google-workspace:${tenantId}:${userId}`;
+    if (!this.options.authorizeGrant || !await this.options.authorizeGrant(grantId, userId, tenantId)) return undefined;
+    if (!this.options.authorizeConnect || !await this.options.authorizeConnect(userId, tenantId)) return undefined;
     const ref = record.credentialRefs[GOOGLE_WORKSPACE_OAUTH_CREDENTIAL_KEY];
     if (!ref) return undefined;
     const ownerId = credentialOwnerId(record);
@@ -420,6 +462,10 @@ export class GoogleWorkspaceOAuthService {
 
   private async assertUserActive(user: GoogleWorkspaceOAuthUser): Promise<void> {
     if (await this.stateStore.isUserBlocked(user.id)) {
+      throw new Error('Google Workspace 授权用户已失效');
+    }
+    if (this.options.authorizeSubject
+      && !await this.options.authorizeSubject(user.id, user.tenantId)) {
       throw new Error('Google Workspace 授权用户已失效');
     }
     const currentUser = this.options.userResolver?.(user.id);

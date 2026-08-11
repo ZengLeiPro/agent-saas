@@ -127,6 +127,34 @@ export class PgCredentialStore {
     return result.rows.map(rowToCredential);
   }
 
+  async listForCustodian(tenantId: string, custodianUserId: string): Promise<GovernanceCredential[]> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.credentialsTable}
+       WHERE tenant_id=$1 AND custodian_user_id=$2 AND kind='org_shared'
+       ORDER BY created_at,credential_id`,
+      [tenantId, custodianUserId],
+    );
+    return result.rows.map(rowToCredential);
+  }
+
+  async transferCustodian(
+    tenantId: string,
+    credentialId: string,
+    expectedVersion: number,
+    custodianUserId: string,
+    updatedBy: string,
+  ): Promise<GovernanceCredential> {
+    const result = await this.options.pool.query(
+      `UPDATE ${this.credentialsTable}
+       SET custodian_user_id=$4,version=version+1,updated_at=NOW(),updated_by=$5
+       WHERE tenant_id=$1 AND credential_id=$2 AND version=$3 AND kind='org_shared' AND status<>'revoked'
+       RETURNING *`,
+      [tenantId, credentialId, expectedVersion, custodianUserId, updatedBy],
+    );
+    if (!result.rows[0]) throw new CredentialInvariantError('CREDENTIAL_VERSION_CONFLICT');
+    return rowToCredential(result.rows[0]);
+  }
+
   async listForTenant(tenantId: string): Promise<GovernanceCredential[]> {
     const result = await this.options.pool.query(
       `SELECT * FROM ${this.credentialsTable} WHERE tenant_id = $1 ORDER BY created_at, credential_id`,

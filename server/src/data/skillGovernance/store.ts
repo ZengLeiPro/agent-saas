@@ -106,12 +106,37 @@ export class PgSkillGovernanceStore {
     await new PgGovernanceMigrationRunner(this.options.pool, this.tablePrefix).run();
   }
 
+  async listPublishedPlatform(): Promise<GovernedSkillResource[]> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.resourcesTable} WHERE scope='platform' AND status='published' ORDER BY skill_id`,
+    );
+    return result.rows.map(rowToResource);
+  }
+
   async listPersonalByOwner(tenantId: string, ownerUserId: string): Promise<GovernedSkillResource[]> {
     const result = await this.options.pool.query(
       `SELECT * FROM ${this.resourcesTable} WHERE tenant_id=$1 AND owner_user_id=$2 AND scope='personal' ORDER BY skill_id`,
       [tenantId, ownerUserId],
     );
     return result.rows.map(rowToResource);
+  }
+
+  async transferPersonalOwnership(
+    tenantId: string,
+    skillId: string,
+    expectedRevision: number,
+    ownerUserId: string,
+    updatedBy: string,
+  ): Promise<GovernedSkillResource> {
+    const result = await this.options.pool.query(
+      `UPDATE ${this.resourcesTable}
+       SET owner_user_id=$4,revision=revision+1,updated_at=NOW(),updated_by=$5
+       WHERE tenant_id=$1 AND skill_id=$2 AND revision=$3 AND scope='personal' AND status<>'retired'
+       RETURNING *`,
+      [tenantId, skillId, expectedRevision, ownerUserId, updatedBy],
+    );
+    if (!result.rows[0]) throw new SkillGovernanceInvariantError('SKILL_RESOURCE_VERSION_CONFLICT');
+    return rowToResource(result.rows[0]);
   }
 
   async getResource(skillId: string): Promise<GovernedSkillResource | null> {
@@ -190,15 +215,22 @@ export class PgSkillGovernanceStore {
     if (target.tenantId !== input.tenantId) {
       throw new SkillGovernanceInvariantError('SKILL_RESOURCE_TENANT_MISMATCH');
     }
+    if (target.scope === 'personal') throw new SkillGovernanceInvariantError('SKILL_RESOURCE_NOT_FOUND');
     if (target.status === 'retired') throw new SkillGovernanceInvariantError('SKILL_RESOURCE_RETIRED');
     const result = await this.options.pool.query(`
       INSERT INTO ${this.candidatesTable} (
         candidate_id,tenant_id,owner_user_id,target_skill_id,definition_json,digest,status
-      ) VALUES ($1,$2,$3,$4,$5::jsonb,$6,'draft') RETURNING *
+      )
+      SELECT $1,$2,$3,$4,$5::jsonb,$6,'draft'
+      FROM ${this.resourcesTable} target
+      WHERE target.skill_id=$4 AND target.tenant_id=$2
+        AND target.scope<>'personal' AND target.status<>'retired'
+      RETURNING *
     `, [
       `skillc-${randomUUID()}`, input.tenantId, input.ownerUserId, input.targetSkillId,
       JSON.stringify(input.definition), digestDefinition(input.definition),
     ]);
+    if (!result.rows[0]) throw new SkillGovernanceInvariantError('SKILL_RESOURCE_NOT_FOUND');
     return rowToCandidate(result.rows[0]);
   }
 
@@ -208,15 +240,19 @@ export class PgSkillGovernanceStore {
     ownerUserId: string,
     expectedRevision: number,
   ): Promise<SkillCandidate> {
+    const current = await this.getEligibleCandidate(tenantId, candidateId);
     const result = await this.options.pool.query(`
       UPDATE ${this.candidatesTable}
       SET status='submitted',revision=revision+1,submitted_at=NOW(),updated_at=NOW()
       WHERE tenant_id=$1 AND candidate_id=$2 AND owner_user_id=$3 AND revision=$4 AND status='draft'
+        AND EXISTS (
+          SELECT 1 FROM ${this.resourcesTable} target
+          WHERE target.skill_id=${this.candidatesTable}.target_skill_id
+            AND target.tenant_id=$1 AND target.scope<>'personal'
+        )
       RETURNING *
     `, [tenantId, candidateId, ownerUserId, expectedRevision]);
     if (result.rows[0]) return rowToCandidate(result.rows[0]);
-    const current = await this.getCandidate(tenantId, candidateId);
-    if (!current) throw new SkillGovernanceInvariantError('SKILL_CANDIDATE_NOT_FOUND');
     if (current.ownerUserId !== ownerUserId) throw new SkillGovernanceInvariantError('SKILL_CANDIDATE_OWNER_MISMATCH');
     if (current.revision !== expectedRevision) throw new SkillGovernanceInvariantError('SKILL_CANDIDATE_VERSION_CONFLICT');
     throw new SkillGovernanceInvariantError('SKILL_CANDIDATE_INVALID_TRANSITION');
@@ -230,14 +266,19 @@ export class PgSkillGovernanceStore {
     reviewedBy: string;
     reason: string;
   }): Promise<SkillCandidate> {
+    const current = await this.getEligibleCandidate(input.tenantId, input.candidateId);
     const result = await this.options.pool.query(`
       UPDATE ${this.candidatesTable}
       SET status=$3,revision=revision+1,reviewed_at=NOW(),reviewed_by=$4,review_reason=$5,updated_at=NOW()
-      WHERE tenant_id=$1 AND candidate_id=$2 AND revision=$6 AND status='submitted' RETURNING *
+      WHERE tenant_id=$1 AND candidate_id=$2 AND revision=$6 AND status='submitted'
+        AND EXISTS (
+          SELECT 1 FROM ${this.resourcesTable} target
+          WHERE target.skill_id=${this.candidatesTable}.target_skill_id
+            AND target.tenant_id=$1 AND target.scope<>'personal'
+        )
+      RETURNING *
     `, [input.tenantId, input.candidateId, input.verdict, input.reviewedBy, input.reason, input.expectedRevision]);
     if (result.rows[0]) return rowToCandidate(result.rows[0]);
-    const current = await this.getCandidate(input.tenantId, input.candidateId);
-    if (!current) throw new SkillGovernanceInvariantError('SKILL_CANDIDATE_NOT_FOUND');
     if (current.revision !== input.expectedRevision) throw new SkillGovernanceInvariantError('SKILL_CANDIDATE_VERSION_CONFLICT');
     throw new SkillGovernanceInvariantError('SKILL_CANDIDATE_INVALID_TRANSITION');
   }
@@ -256,6 +297,12 @@ export class PgSkillGovernanceStore {
       );
       if (!candidateResult.rows[0]) throw new SkillGovernanceInvariantError('SKILL_CANDIDATE_NOT_FOUND');
       const candidate = rowToCandidate(candidateResult.rows[0]);
+      const targetResult = await client.query(
+        `SELECT * FROM ${this.resourcesTable}
+         WHERE skill_id=$1 AND tenant_id=$2 AND scope<>'personal' FOR UPDATE`,
+        [candidate.targetSkillId, candidate.tenantId],
+      );
+      if (!targetResult.rows[0]) throw new SkillGovernanceInvariantError('SKILL_RESOURCE_NOT_FOUND');
       if (candidate.revision !== input.expectedCandidateRevision) {
         throw new SkillGovernanceInvariantError('SKILL_CANDIDATE_VERSION_CONFLICT');
       }
@@ -281,6 +328,16 @@ export class PgSkillGovernanceStore {
       if (!updatedCandidate.rows[0]) throw new SkillGovernanceInvariantError('SKILL_CANDIDATE_VERSION_CONFLICT');
       return { candidate: rowToCandidate(updatedCandidate.rows[0]), resource: published.resource, version: published.version };
     });
+  }
+
+  private async getEligibleCandidate(tenantId: string, candidateId: string): Promise<SkillCandidate> {
+    const candidate = await this.getCandidate(tenantId, candidateId);
+    if (!candidate) throw new SkillGovernanceInvariantError('SKILL_CANDIDATE_NOT_FOUND');
+    const target = await this.getResource(candidate.targetSkillId);
+    if (!target || target.tenantId !== tenantId || target.scope === 'personal') {
+      throw new SkillGovernanceInvariantError('SKILL_RESOURCE_NOT_FOUND');
+    }
+    return candidate;
   }
 
   async retire(tenantId: string, skillId: string, expectedRevision: number, retiredBy: string): Promise<GovernedSkillResource> {

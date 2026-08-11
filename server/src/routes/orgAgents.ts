@@ -123,6 +123,15 @@ const gatePreviewBodySchema = z.object({
   recentUserMessages: z.array(z.string().max(2000)).max(3).optional(),
 });
 
+function toPlatformMetadata(record: OrgAgentRecord) {
+  return {
+    id: record.id,
+    tenantId: record.tenantId,
+    enabled: record.enabled,
+    updatedAt: record.updatedAt,
+  };
+}
+
 function toSummary(record: OrgAgentRecord): OrgAgentSummary {
   return {
     id: record.id,
@@ -235,7 +244,7 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
         const records = tenantFilter
           ? orgAgentStore.listByTenant(tenantFilter)
           : orgAgentStore.listAll();
-        res.json(records);
+        res.json(records.map(toPlatformMetadata));
         return;
       }
       if (user.role === 'admin') {
@@ -392,7 +401,11 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
         res.status(404).json({ error: '企业专家不存在' });
         return;
       }
-      if (!isPlatformAdmin(user) && record.tenantId !== user.tenantId) {
+      if (isPlatformAdmin(user)) {
+        res.json(toPlatformMetadata(record));
+        return;
+      }
+      if (record.tenantId !== user.tenantId) {
         res.status(403).json({ error: '跨组织访问被拒绝' });
         return;
       }

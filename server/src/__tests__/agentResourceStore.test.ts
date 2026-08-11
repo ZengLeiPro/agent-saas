@@ -97,7 +97,7 @@ describe('Typed Agent Resource', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_managed_agent_versions');
     expect(sql).toContain("kind IN ('org_agent', 'personal_agent', 'agent_template')");
     expect(sql).toContain("status IN ('draft', 'enabled', 'disabled', 'archived')");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(17);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(18);
   });
 
   it.each(['org_agent', 'personal_agent', 'agent_template'] as const)('%s 创建时保存 immutable owner', async kind => {

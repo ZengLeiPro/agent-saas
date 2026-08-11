@@ -76,6 +76,8 @@ export type McpOAuthConnectionStatus = 'pending' | 'connected' | 'error';
 export interface McpOAuthConnectionRecord {
   serverId: string;
   tenantId: string;
+  /** 不可变主体 ID；旧记录缺失时不得按同名 username 推断归属。 */
+  userId?: string;
   status: McpOAuthConnectionStatus;
   secretRef?: string;
   pendingState?: string;
@@ -83,6 +85,8 @@ export interface McpOAuthConnectionRecord {
   redirectUrl: string;
   returnTo: string;
   connectedAt?: string;
+  requestedScopes?: string[];
+  grantedScopes?: string[];
   updatedAt: string;
   lastError?: string;
 }

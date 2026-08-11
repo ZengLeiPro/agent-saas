@@ -82,6 +82,26 @@ export function createGovernanceUiRouter(deps: GovernanceUiRouterDeps): Router {
     }
   });
 
+  router.get('/api/me/governance-summary', async (req, res) => {
+    if (!req.user) return res.status(401).json({ code: 'UNAUTHORIZED', message: '未登录' });
+    if (!deps.memberships) return res.status(503).json({ code: 'GOVERNANCE_DEPENDENCY_UNAVAILABLE', message: '治理权威依赖不可用' });
+    try {
+      const platformAdmin = await deps.memberships.getPlatformAdmin(req.user.sub);
+      if (platformAdmin?.status === 'active') {
+        return res.json({ persona: 'platform_admin', label: '平台管理员', desktopPath: '/platform-console/overview/overview', attention: { status: 'desktop_required' } });
+      }
+      const membership = await deps.memberships.getMembership(req.user.tenantId, req.user.sub);
+      if (!membership || membership.status !== 'active') {
+        return res.status(403).json({ code: 'GOVERNANCE_MEMBERSHIP_INACTIVE', message: '治理成员身份不可用' });
+      }
+      return res.json(membership.persona === 'org_admin'
+        ? { persona: 'org_admin', label: '组织管理员', desktopPath: '/organization-console/overview/overview', attention: { status: 'desktop_required' } }
+        : { persona: 'member', label: '普通成员', desktopPath: '/settings/my-agent', attention: { status: 'none' } });
+    } catch {
+      return res.status(503).json({ code: 'GOVERNANCE_DEPENDENCY_UNAVAILABLE', message: '治理权威依赖不可用' });
+    }
+  });
+
   router.get('/api/me/effective-resources', async (req, res) => {
     if (!req.user) return res.status(401).json({ code: 'UNAUTHORIZED', message: '未登录' });
     if (!service) return res.status(503).json({ code: 'GOVERNANCE_DEPENDENCY_UNAVAILABLE', message: '治理权威依赖不可用' });

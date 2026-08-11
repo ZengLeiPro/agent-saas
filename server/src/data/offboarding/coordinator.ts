@@ -1,3 +1,4 @@
+import { governanceDigest } from '../governance-audit/index.js';
 import {
   GOVERNANCE_OFFBOARDING_DOMAINS,
   GovernanceOffboardingError,
@@ -9,6 +10,7 @@ import {
   type GovernanceOffboardingDomainContext,
   type GovernanceOffboardingDomainExecutor,
   type GovernanceOffboardingDomainResult,
+  type GovernanceOffboardingManifest,
   type GovernanceOffboardingPlan,
   type GovernanceOffboardingRetentionPolicy,
   type GovernanceOffboardingWorkerHandlerMap,
@@ -26,6 +28,13 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function assertManifest(manifest: GovernanceOffboardingManifest): void {
+  if (!manifest || !hasText(manifest.baselineDigest) || !asRecord(manifest.baseline)
+    || governanceDigest(manifest.baseline) !== manifest.baselineDigest) {
+    throw new GovernanceOffboardingError('OFFBOARDING_MANIFEST_INVALID');
+  }
+}
+
 function assertInput(input: CreateGovernanceOffboardingInput): void {
   if (![input.tenantId, input.userId, input.handoffTargetUserId, input.idempotencyKey, input.requestedBy, input.reasonCode]
     .every(hasText)
@@ -33,6 +42,40 @@ function assertInput(input: CreateGovernanceOffboardingInput): void {
     || (input.retentionPolicy !== undefined && input.retentionPolicy !== DEFAULT_RETENTION_POLICY)) {
     throw new GovernanceOffboardingError('OFFBOARDING_INVALID_REQUEST');
   }
+  assertManifest(input.manifest);
+}
+
+function requestManifest(job: GovernanceOffboardingChangeJob): GovernanceOffboardingManifest {
+  const raw = asRecord(job.request.manifest);
+  const baseline = raw ? asRecord(raw.baseline) : undefined;
+  const manifest = raw && baseline && typeof raw.baselineDigest === 'string'
+    ? { baselineDigest: raw.baselineDigest, baseline }
+    : undefined;
+  if (!manifest) throw new GovernanceOffboardingError('OFFBOARDING_MANIFEST_INVALID');
+  assertManifest(manifest);
+  return manifest;
+}
+
+function requestIdentity(job: GovernanceOffboardingChangeJob): {
+  handoffTargetUserId: string;
+  reasonCode: string;
+  retentionPolicy: GovernanceOffboardingRetentionPolicy;
+  manifest: GovernanceOffboardingManifest;
+} {
+  const handoffTarget = asRecord(job.request.handoffTarget);
+  if (job.jobType !== 'user_offboarding' || job.targetType !== 'user'
+    || job.request.action !== 'user_offboarding'
+    || job.request.retentionPolicy !== DEFAULT_RETENTION_POLICY
+    || handoffTarget?.type !== 'user' || typeof handoffTarget.userId !== 'string'
+    || typeof job.request.reasonCode !== 'string') {
+    throw new GovernanceOffboardingError('OFFBOARDING_CHANGE_JOB_MISMATCH');
+  }
+  return {
+    handoffTargetUserId: handoffTarget.userId,
+    reasonCode: job.request.reasonCode,
+    retentionPolicy: DEFAULT_RETENTION_POLICY,
+    manifest: requestManifest(job),
+  };
 }
 
 function assertReusableJob(
@@ -40,24 +83,18 @@ function assertReusableJob(
   input: CreateGovernanceOffboardingInput,
   retentionPolicy: GovernanceOffboardingRetentionPolicy,
 ): void {
-  const handoffTarget = asRecord(job.request.handoffTarget);
-  if (job.tenantId !== input.tenantId
-    || job.jobType !== 'user_offboarding'
-    || job.targetType !== 'user'
-    || job.targetId !== input.userId
+  const identity = requestIdentity(job);
+  if (job.tenantId !== input.tenantId || job.targetId !== input.userId
     || job.idempotencyKey !== input.idempotencyKey
-    || job.request.action !== 'user_offboarding'
-    || job.request.retentionPolicy !== retentionPolicy
-    || handoffTarget?.type !== 'user'
-    || handoffTarget.userId !== input.handoffTargetUserId) {
+    || identity.retentionPolicy !== retentionPolicy
+    || identity.handoffTargetUserId !== input.handoffTargetUserId
+    || identity.reasonCode !== input.reasonCode
+    || governanceDigest(identity.manifest) !== governanceDigest(input.manifest)) {
     throw new GovernanceOffboardingError('OFFBOARDING_CHANGE_JOB_MISMATCH');
   }
 }
 
-function assertDomainResult(
-  domain: GovernanceOffboardingDomain,
-  result: GovernanceOffboardingDomainResult,
-): void {
+function assertDomainResult(domain: GovernanceOffboardingDomain, result: GovernanceOffboardingDomainResult): void {
   if (!result || typeof result !== 'object'
     || !Number.isInteger(result.affectedCount) || result.affectedCount < 0
     || !Number.isInteger(result.completedCount) || result.completedCount < 0
@@ -78,11 +115,12 @@ export class GovernanceOffboardingCoordinator {
     assertInput(input);
     const retentionPolicy = input.retentionPolicy ?? DEFAULT_RETENTION_POLICY;
     const request: Record<string, unknown> = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       action: 'user_offboarding',
       reasonCode: input.reasonCode,
       retentionPolicy,
       handoffTarget: { type: 'user', userId: input.handoffTargetUserId },
+      manifest: input.manifest,
     };
     const { job, created } = await this.options.jobs.create({
       tenantId: input.tenantId,
@@ -95,33 +133,39 @@ export class GovernanceOffboardingCoordinator {
       createdBy: input.requestedBy,
     });
     assertReusableJob(job, input, retentionPolicy);
-
     return {
       job,
       created,
-      domainHandlers: this.buildDomainHandlers(input, job, retentionPolicy),
+      domainHandlers: this.buildDomainHandlers(job, input.requestedBy),
     };
   }
 
+  resume(job: GovernanceOffboardingChangeJob, requestedBy: string): GovernanceOffboardingPlan {
+    if (!hasText(requestedBy)) throw new GovernanceOffboardingError('OFFBOARDING_INVALID_REQUEST');
+    requestIdentity(job);
+    return { job, created: false, domainHandlers: this.buildDomainHandlers(job, requestedBy) };
+  }
+
   private buildDomainHandlers(
-    input: CreateGovernanceOffboardingInput,
     job: GovernanceOffboardingChangeJob,
-    retentionPolicy: GovernanceOffboardingRetentionPolicy,
+    requestedBy: string,
   ): GovernanceOffboardingWorkerHandlerMap {
+    const identity = requestIdentity(job);
     return Object.fromEntries(GOVERNANCE_OFFBOARDING_DOMAINS.map(domain => [
       domain,
-      async (): Promise<void> => {
+      async (): Promise<GovernanceOffboardingDomainResult> => {
         const executor = this.executorFor(domain);
         const context: GovernanceOffboardingDomainContext = {
-          tenantId: input.tenantId,
-          userId: input.userId,
-          handoffTargetUserId: input.handoffTargetUserId,
-          retentionPolicy,
-          requestedBy: input.requestedBy,
+          tenantId: job.tenantId,
+          userId: job.targetId,
+          handoffTargetUserId: identity.handoffTargetUserId,
+          retentionPolicy: identity.retentionPolicy,
+          requestedBy,
           jobId: job.jobId,
-          jobIdempotencyKey: input.idempotencyKey,
-          operationIdempotencyKey: `${input.idempotencyKey}:${domain}`,
+          jobIdempotencyKey: job.idempotencyKey,
+          operationIdempotencyKey: `${job.jobId}:${domain}:v1`,
           domain,
+          manifest: identity.manifest,
         };
         let result: GovernanceOffboardingDomainResult;
         try {
@@ -131,13 +175,7 @@ export class GovernanceOffboardingCoordinator {
           throw new GovernanceOffboardingError('OFFBOARDING_DOMAIN_FAILED', domain, [], { cause: error });
         }
         assertDomainResult(domain, result);
-        if (result.unresolvedItems.length > 0) {
-          throw new GovernanceOffboardingError(
-            'OFFBOARDING_UNRESOLVED_ITEMS',
-            domain,
-            [...result.unresolvedItems],
-          );
-        }
+        return result;
       },
     ])) as GovernanceOffboardingWorkerHandlerMap;
   }

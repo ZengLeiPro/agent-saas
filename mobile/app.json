@@ -23,6 +23,9 @@
       "entitlements": {
         "keychain-access-groups": [
           "$(AppIdentifierPrefix)group.com.agentsaas.mobile.share"
+        ],
+        "com.apple.developer.associated-domains": [
+          "applinks:kaiyan.net"
         ]
       },
       "infoPlist": {
@@ -43,6 +46,14 @@
     },
     "android": {
       "package": "com.agentsaas.mobile",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [{ "scheme": "https", "host": "kaiyan.net", "pathPrefix": "/oauth/callback" }],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
       "permissions": [
         "RECORD_AUDIO",
         "CAMERA",

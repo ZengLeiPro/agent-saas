@@ -73,7 +73,7 @@ describe('Resource Assignment 与 Personal Preference', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_resource_assignments');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_user_resource_preferences');
     expect(sql).toContain("assignee_type = 'everyone' AND assignee_id IS NULL");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(17);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(18);
   });
 
   it('legacy username 仅在同租户唯一命中时转 immutable userId；未解析 deny 记 issue 且不误授权同名账号', async () => {
@@ -190,7 +190,7 @@ describe('Resource Assignment 与 Personal Preference', () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const query = async (sql: string, params?: unknown[]) => {
       queries.push({ sql, params });
-      if (sql.includes("assignee_type='directory_group'")) return { rows: [], rowCount: 0 };
+      if (sql.includes('SELECT 1') && sql.includes("assignee_type='directory_group'")) return { rows: [], rowCount: 0 };
       return {
         rows: [{ resource_id: 'skill-1', binding_id: 'assignment-1', assignment_version: 3 }],
         rowCount: 1,
@@ -198,12 +198,28 @@ describe('Resource Assignment 与 Personal Preference', () => {
     };
     const store = new PgAssignmentStore({ pool: { query } as never, tablePrefix: 'test' });
     await expect(store.listEffectiveResourceIds('acme', 'user-1', 'skill', 'agent-1')).resolves.toEqual([{
-      resourceId: 'skill-1', bindingId: 'assignment-1', assignmentVersion: 3,
+      resourceId: 'skill-1', bindingId: 'assignment-1', assignmentVersion: 3, finalEffect: 'allow', bindings: [],
     }]);
     const effectiveSql = queries[1].sql;
     expect(effectiveSql).toContain("a.assignee_type='agent' AND a.assignee_id=$4");
     expect(effectiveSql).toContain("NOT BOOL_OR(a.effect='deny')");
-    expect(queries[1].params).toEqual(['acme', 'user-1', 'skill', 'agent-1']);
+    expect(effectiveSql).toContain("a.assignee_type='directory_group' AND a.assignee_id=ANY($5::text[])");
+    expect(queries[1].params).toEqual(['acme', 'user-1', 'skill', 'agent-1', []]);
+
+    const resolvedQueries: unknown[][] = [];
+    const resolved = new PgAssignmentStore({
+      pool: { query: vi.fn().mockImplementation(async (sql: string, params: unknown[]) => {
+        if (sql.includes('SELECT 1')) return { rows: [{ found: 1 }], rowCount: 1 };
+        resolvedQueries.push(params);
+        return { rows: [{ resource_id: 'skill-1', binding_id: 'group-binding', assignment_version: 4 }], rowCount: 1 };
+      }) } as never,
+      tablePrefix: 'test',
+      resolveDirectoryGroupIds: vi.fn().mockResolvedValue(['group-local-1']),
+    });
+    await expect(resolved.listEffectiveResourceIds('acme', 'user-1', 'skill')).resolves.toEqual([{
+      resourceId: 'skill-1', bindingId: 'group-binding', assignmentVersion: 4, finalEffect: 'allow', bindings: [],
+    }]);
+    expect(resolvedQueries[0]?.[4]).toEqual(['group-local-1']);
 
     const blocked = new PgAssignmentStore({
       pool: { query: vi.fn().mockResolvedValue({ rows: [{ '?column?': 1 }], rowCount: 1 }) } as never,
@@ -211,6 +227,27 @@ describe('Resource Assignment 与 Personal Preference', () => {
     });
     await expect(blocked.listEffectiveResourceIds('acme', 'user-1', 'skill', 'agent-1'))
       .rejects.toMatchObject({ code: 'ASSIGNMENT_GROUP_SUBJECT_UNRESOLVED' });
+  });
+
+  it('expectedVersion=0 原子创建新的 Assignment Set', async () => {
+    const query = vi.fn().mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT * FROM test_resource_assignment_sets')) return { rows: [], rowCount: 0 };
+      if (sql.includes('INSERT INTO test_resource_assignment_sets')) {
+        return { rows: [assignmentSetRow({ source: 'governance', version: 1, updated_by: 'admin-1' })], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const client = { query, release: vi.fn() };
+    const store = new PgAssignmentStore({
+      pool: { connect: vi.fn().mockResolvedValue(client) } as never,
+      tablePrefix: 'test',
+    });
+    await expect(store.replaceAssignments('acme', 'org_agent', 'oa-1', [], 0, 'admin-1'))
+      .resolves.toMatchObject({ version: 1, assignments: [] });
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO test_resource_assignment_sets'), [
+      'acme', 'org_agent', 'oa-1', 'admin-1',
+    ]);
+    expect(query).toHaveBeenCalledWith('COMMIT');
   });
 
   it('治理写以 AssignmentSet expectedVersion 原子替换，拒绝同一 assignee 的冲突规则', async () => {

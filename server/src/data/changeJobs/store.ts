@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 import { PgGovernanceMigrationRunner, governanceTablePrefix, type GovernancePgPool } from '../governance-schema/index.js';
+import { governanceDigest } from '../governance-audit/index.js';
 import {
   GovernanceChangeJobInvariantError,
   type GovernanceChangeJob,
@@ -49,9 +50,16 @@ function rowToJob(row: Record<string, unknown>): GovernanceChangeJob {
 }
 
 function rowToDomain(row: Record<string, unknown>): GovernanceChangeJobDomain {
+  const unresolved = Array.isArray(row.unresolved_items_json) ? row.unresolved_items_json : [];
   return {
     jobId: String(row.job_id), domain: String(row.domain), status: row.status as GovernanceChangeJobDomain['status'],
     totalCount: Number(row.total_count), completedCount: Number(row.completed_count), failedCount: Number(row.failed_count),
+    unresolvedItems: unresolved.map(item => ({
+      itemType: String((item as Record<string, unknown>).itemType),
+      itemId: String((item as Record<string, unknown>).itemId),
+      reasonCode: String((item as Record<string, unknown>).reasonCode),
+      retryable: (item as Record<string, unknown>).retryable === true,
+    })),
     revision: Number(row.revision),
     updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
     ...(row.last_error_code ? { lastErrorCode: String(row.last_error_code) } : {}),
@@ -93,6 +101,33 @@ export class PgGovernanceChangeJobStore {
     return result.rows[0] ? rowToJob(result.rows[0]) : null;
   }
 
+  async listDue(jobType: GovernanceChangeJobType, limit = 25): Promise<GovernanceChangeJob[]> {
+    const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.jobsTable}
+       WHERE job_type=$1 AND (status='pending' OR (status='retry_wait' AND next_retry_at<=NOW()))
+       ORDER BY COALESCE(next_retry_at,created_at),created_at LIMIT $2`,
+      [jobType, safeLimit],
+    );
+    return result.rows.map(rowToJob);
+  }
+
+  async findActiveForTarget(
+    tenantId: string,
+    jobType: GovernanceChangeJobType,
+    targetType: string,
+    targetId: string,
+  ): Promise<GovernanceChangeJob | null> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.jobsTable}
+       WHERE tenant_id=$1 AND job_type=$2 AND target_type=$3 AND target_id=$4
+         AND status IN ('pending','running','retry_wait')
+       ORDER BY created_at LIMIT 1`,
+      [tenantId, jobType, targetType, targetId],
+    );
+    return result.rows[0] ? rowToJob(result.rows[0]) : null;
+  }
+
   async listDomains(tenantId: string, jobId: string): Promise<GovernanceChangeJobDomain[]> {
     const result = await this.options.pool.query(`
       SELECT d.* FROM ${this.domainsTable} d
@@ -123,7 +158,7 @@ export class PgGovernanceChangeJobStore {
         INSERT INTO ${this.jobsTable} (
           job_id,tenant_id,job_type,target_type,target_id,idempotency_key,request_json,status,created_by,updated_by
         ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,'pending',$8,$8)
-        ON CONFLICT (tenant_id,job_type,idempotency_key) DO NOTHING RETURNING *
+        ON CONFLICT DO NOTHING RETURNING *
       `, [
         jobId, input.tenantId, input.jobType, input.targetType, input.targetId,
         input.idempotencyKey, JSON.stringify(input.request ?? {}), input.createdBy,
@@ -144,13 +179,32 @@ export class PgGovernanceChangeJobStore {
           SELECT * FROM ${this.jobsTable}
           WHERE tenant_id=$1 AND job_type=$2 AND idempotency_key=$3
         `, [input.tenantId, input.jobType, input.idempotencyKey]);
-        if (!existing.rows[0]) throw new GovernanceChangeJobInvariantError('CHANGE_JOB_NOT_FOUND');
+        if (!existing.rows[0]) {
+          const activeTarget = await client.query(`
+            SELECT job_id FROM ${this.jobsTable}
+            WHERE tenant_id=$1 AND job_type=$2 AND target_type=$3 AND target_id=$4
+              AND status IN ('pending','running','retry_wait')
+          `, [input.tenantId, input.jobType, input.targetType, input.targetId]);
+          if (activeTarget.rows[0]) throw new GovernanceChangeJobInvariantError('CHANGE_JOB_TARGET_BUSY');
+          throw new GovernanceChangeJobInvariantError('CHANGE_JOB_NOT_FOUND');
+        }
         job = rowToJob(existing.rows[0]);
       }
       const domains = await client.query(
         `SELECT * FROM ${this.domainsTable} WHERE job_id=$1 ORDER BY domain`, [job.jobId],
       );
-      return { job, domains: domains.rows.map(rowToDomain), created };
+      const domainRecords = domains.rows.map(rowToDomain);
+      if (!created) {
+        const requestedDomains = [...new Set(input.domains)].sort();
+        const existingDomains = domainRecords.map(item => item.domain).sort();
+        const identityMatches = job.targetType === input.targetType
+          && job.targetId === input.targetId
+          && job.createdBy === input.createdBy
+          && governanceDigest(job.request) === governanceDigest(input.request ?? {})
+          && governanceDigest(existingDomains) === governanceDigest(requestedDomains);
+        if (!identityMatches) throw new GovernanceChangeJobInvariantError('IDEMPOTENCY_KEY_REUSE_CONFLICT');
+      }
+      return { job, domains: domainRecords, created };
     });
   }
 
@@ -202,6 +256,7 @@ export class PgGovernanceChangeJobStore {
     totalCount: number;
     completedCount: number;
     failedCount: number;
+    unresolvedItems?: GovernanceChangeJobDomain['unresolvedItems'];
     errorCode?: string;
     workerId: string;
   }): Promise<GovernanceChangeJobDomain> {
@@ -212,14 +267,15 @@ export class PgGovernanceChangeJobStore {
     const result = await this.options.pool.query(`
       UPDATE ${this.domainsTable} d
       SET status=$4,total_count=$5,completed_count=$6,failed_count=$7,last_error_code=$8,
-          revision=revision+1,updated_at=NOW()
+          unresolved_items_json=$9::jsonb,revision=revision+1,updated_at=NOW()
       FROM ${this.jobsTable} j
-      WHERE d.job_id=$2 AND d.domain=$3 AND d.revision=$9
-        AND j.job_id=d.job_id AND j.tenant_id=$1 AND j.status='running' AND j.updated_by=$10
+      WHERE d.job_id=$2 AND d.domain=$3 AND d.revision=$10
+        AND j.job_id=d.job_id AND j.tenant_id=$1 AND j.status='running' AND j.updated_by=$11
       RETURNING d.*
     `, [
       input.tenantId, input.jobId, input.domain, input.status, input.totalCount,
-      input.completedCount, input.failedCount, input.errorCode ?? null, input.expectedRevision, input.workerId,
+      input.completedCount, input.failedCount, input.errorCode ?? null,
+      JSON.stringify(input.unresolvedItems ?? []), input.expectedRevision, input.workerId,
     ]);
     if (!result.rows[0]) throw new GovernanceChangeJobInvariantError('CHANGE_JOB_VERSION_CONFLICT');
     return rowToDomain(result.rows[0]);
@@ -232,7 +288,8 @@ export class PgGovernanceChangeJobStore {
       );
       if (domains.rows.length === 0 || domains.rows.some(row => row.status !== 'succeeded'
         || Number(row.completed_count) + Number(row.failed_count) !== Number(row.total_count)
-        || Number(row.failed_count) !== 0)) {
+        || Number(row.failed_count) !== 0
+        || (Array.isArray(row.unresolved_items_json) && row.unresolved_items_json.length > 0))) {
         throw new GovernanceChangeJobInvariantError('CHANGE_JOB_INCOMPLETE');
       }
       const result = await client.query(`
@@ -252,19 +309,68 @@ export class PgGovernanceChangeJobStore {
     errorCode: string;
     failedBy: string;
     retryAt?: string;
+    terminalStatus?: 'partial' | 'failed';
   }): Promise<GovernanceChangeJob> {
     const retryAt = input.retryAt ? new Date(input.retryAt) : undefined;
     if (retryAt && Number.isNaN(retryAt.getTime())) throw new GovernanceChangeJobInvariantError('CHANGE_JOB_INVALID');
+    const status = retryAt ? 'retry_wait' : (input.terminalStatus ?? 'failed');
     const result = await this.options.pool.query(`
       UPDATE ${this.jobsTable}
-      SET status=$4,last_error_code=$5,next_retry_at=$6,revision=revision+1,updated_at=NOW(),updated_by=$7
+      SET status=$4,last_error_code=$5,next_retry_at=$6,revision=revision+1,updated_at=NOW(),updated_by=$7,
+          completed_at=CASE WHEN $4 IN ('partial','failed') THEN NOW() ELSE NULL END
       WHERE tenant_id=$1 AND job_id=$2 AND revision=$3 AND status='running' AND updated_by=$7 RETURNING *
     `, [
-      input.tenantId, input.jobId, input.expectedRevision, retryAt ? 'retry_wait' : 'failed',
+      input.tenantId, input.jobId, input.expectedRevision, status,
       input.errorCode, retryAt?.toISOString() ?? null, input.failedBy,
     ]);
     if (result.rows[0]) return rowToJob(result.rows[0]);
     return this.throwJobConflict(input.tenantId, input.jobId, input.expectedRevision);
+  }
+
+  async retryNow(
+    tenantId: string,
+    jobId: string,
+    expectedRevision: number,
+    requestedBy: string,
+  ): Promise<GovernanceChangeJob> {
+    return this.withTransaction(async client => {
+      const currentResult = await client.query(
+        `SELECT * FROM ${this.jobsTable} WHERE tenant_id=$1 AND job_id=$2 FOR UPDATE`,
+        [tenantId, jobId],
+      );
+      if (!currentResult.rows[0]) throw new GovernanceChangeJobInvariantError('CHANGE_JOB_NOT_FOUND');
+      const current = rowToJob(currentResult.rows[0]);
+      if (current.revision !== expectedRevision) throw new GovernanceChangeJobInvariantError('CHANGE_JOB_VERSION_CONFLICT');
+      if (!['retry_wait', 'partial', 'failed'].includes(current.status)) {
+        throw new GovernanceChangeJobInvariantError('CHANGE_JOB_INVALID_TRANSITION');
+      }
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        `change-job-target:${tenantId}:${current.jobType}:${current.targetType}:${current.targetId}`,
+      ]);
+      const active = await client.query(`
+        SELECT job_id FROM ${this.jobsTable}
+        WHERE tenant_id=$1 AND job_type=$2 AND target_type=$3 AND target_id=$4 AND job_id<>$5
+          AND status IN ('pending','running','retry_wait')
+        LIMIT 1
+      `, [tenantId, current.jobType, current.targetType, current.targetId, jobId]);
+      if (active.rows[0]) throw new GovernanceChangeJobInvariantError('CHANGE_JOB_TARGET_BUSY');
+      try {
+        const result = await client.query(`
+          UPDATE ${this.jobsTable}
+          SET status='retry_wait',next_retry_at=NOW(),completed_at=NULL,
+              revision=revision+1,updated_at=NOW(),updated_by=$4
+          WHERE tenant_id=$1 AND job_id=$2 AND revision=$3 AND status IN ('retry_wait','partial','failed')
+          RETURNING *
+        `, [tenantId, jobId, expectedRevision, requestedBy]);
+        if (result.rows[0]) return rowToJob(result.rows[0]);
+      } catch (error) {
+        if ((error as { code?: string }).code === '23505') {
+          throw new GovernanceChangeJobInvariantError('CHANGE_JOB_TARGET_BUSY');
+        }
+        throw error;
+      }
+      throw new GovernanceChangeJobInvariantError('CHANGE_JOB_VERSION_CONFLICT');
+    });
   }
 
   private async throwJobConflict(tenantId: string, jobId: string, expectedRevision: number): Promise<never> {

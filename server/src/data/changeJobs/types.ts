@@ -1,6 +1,19 @@
 export type GovernanceChangeJobType = 'tenant_delete' | 'resource_retire' | 'credential_revoke' | 'user_offboarding';
-export type GovernanceChangeJobStatus = 'pending' | 'running' | 'retry_wait' | 'succeeded' | 'failed';
+export type GovernanceChangeJobStatus = 'pending' | 'running' | 'retry_wait' | 'succeeded' | 'partial' | 'failed';
 export type GovernanceChangeDomainStatus = 'pending' | 'running' | 'succeeded' | 'failed';
+
+export interface GovernanceChangeJobUnresolvedItem {
+  itemType: string;
+  itemId: string;
+  reasonCode: string;
+  retryable: boolean;
+}
+
+export interface GovernanceChangeDomainExecutionResult {
+  affectedCount: number;
+  completedCount: number;
+  unresolvedItems: readonly GovernanceChangeJobUnresolvedItem[];
+}
 
 export interface GovernanceChangeJob {
   jobId: string;
@@ -29,6 +42,7 @@ export interface GovernanceChangeJobDomain {
   totalCount: number;
   completedCount: number;
   failedCount: number;
+  unresolvedItems: GovernanceChangeJobUnresolvedItem[];
   revision: number;
   updatedAt: string;
   lastErrorCode?: string;
@@ -40,7 +54,9 @@ export type GovernanceChangeJobInvariantCode =
   | 'CHANGE_JOB_VERSION_CONFLICT'
   | 'CHANGE_JOB_INVALID_TRANSITION'
   | 'CHANGE_JOB_INCOMPLETE'
-  | 'CHANGE_JOB_REQUEST_SENSITIVE';
+  | 'CHANGE_JOB_REQUEST_SENSITIVE'
+  | 'CHANGE_JOB_TARGET_BUSY'
+  | 'IDEMPOTENCY_KEY_REUSE_CONFLICT';
 
 export class GovernanceChangeJobInvariantError extends Error {
   constructor(readonly code: GovernanceChangeJobInvariantCode) {

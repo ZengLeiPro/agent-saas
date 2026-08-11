@@ -21,7 +21,7 @@
  *   - oauthRedirectUrl：非 localhost 未配置 env → throw；env 非 HTTPS / path
  *     错误 / 带 query → throw；localhost 同源默认值；合法 env 透传
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
 import { request as httpRequest } from 'node:http';
@@ -134,6 +134,7 @@ function finishResult(overrides: Partial<McpOAuthFinishResult> = {}): McpOAuthFi
     tenantId: 'kaiyan',
     redirectUrl: 'https://api.example.com/api/mcp/oauth/callback',
     returnTo: '/',
+    scopeSummary: ['notes.read'],
     ...overrides,
   };
 }
@@ -143,6 +144,9 @@ interface RigOptions {
   oauth?: FakeOAuth;
   webBaseUrl?: string;
   manager?: McpClientManager;
+  recordOAuthGrant?: McpRouterDeps['recordOAuthGrant'];
+  revokeOAuthGrant?: McpRouterDeps['revokeOAuthGrant'];
+  nativeOAuthHandoff?: McpRouterDeps['nativeOAuthHandoff'];
   /** null = 匿名请求；缺省 = ALICE */
   user?: JwtPayload | null;
 }
@@ -174,6 +178,9 @@ async function makeRig(opts: RigOptions = {}): Promise<Rig> {
     secretVault: opts.vault,
     oauthService: opts.oauth?.service,
     webBaseUrl: opts.webBaseUrl,
+    recordOAuthGrant: opts.recordOAuthGrant ?? (async () => undefined),
+    revokeOAuthGrant: opts.revokeOAuthGrant ?? (async () => undefined),
+    ...(opts.nativeOAuthHandoff ? { nativeOAuthHandoff: opts.nativeOAuthHandoff } : {}),
   };
   app.use('/api/mcp', createMcpRouter(deps));
   const server: Server = await new Promise(resolve => {
@@ -282,6 +289,64 @@ describe('MCP routes: oauth callback/start/disconnect + admin secrets + oauthRed
       const crashed = await r.request('/api/mcp/oauth/callback?state=boom');
       expect(crashed.status).toBe(500);
       expect(await crashed.text()).toContain('OAuth callback failed');
+    });
+
+    it('授权成功后写入不含 token 与外部账号标识的 OAuth Grant 投影', async () => {
+      const oauth = fakeOAuthService();
+      const recordOAuthGrant = vi.fn(async () => undefined);
+      const r = await rig({ oauth, recordOAuthGrant, user: null });
+      oauth.finishImpl = async () => finishResult();
+
+      const res = await r.request('/api/mcp/oauth/callback?state=s&code=c', { redirect: 'manual' });
+      expect(res.status).toBe(200);
+      expect(recordOAuthGrant).toHaveBeenCalledWith(expect.objectContaining({
+        tenantId: 'kaiyan', subjectUserId: 'u-alice', provider: 'mcp:srv1',
+        connectorId: 'srv1', status: 'active', action: 'approved',
+      }));
+      expect(JSON.stringify(recordOAuthGrant.mock.calls)).not.toMatch(/token|secret|external.*account/i);
+    });
+
+    it('Grant 已生效后 native handoff delivery 失败返回 202，不撤销 Grant 或降级写 failed handoff', async () => {
+      const oauth = fakeOAuthService();
+      oauth.finishImpl = async () => finishResult();
+      const recordOAuthGrant = vi.fn(async () => undefined);
+      const complete = vi.fn().mockRejectedValue(new Error('delivery commit outcome unknown'));
+      const r = await rig({
+        oauth, recordOAuthGrant, user: null,
+        nativeOAuthHandoff: { complete } as never,
+      });
+
+      const res = await r.request('/api/mcp/oauth/callback?state=s&code=c', { redirect: 'manual' });
+      expect(res.status).toBe(202);
+      expect(await res.text()).toContain('App 回跳交付暂时失败');
+      expect(recordOAuthGrant).toHaveBeenCalledTimes(1);
+      expect(oauth.disconnectCalls).toEqual([]);
+      expect(complete).toHaveBeenCalledWith('s', { status: 'succeeded' });
+    });
+
+    it('重复 callback 不写第二次 Grant，也不把 handoff 降级为 failed', async () => {
+      const oauth = fakeOAuthService();
+      oauth.finishImpl = async () => undefined;
+      const recordOAuthGrant = vi.fn(async () => undefined);
+      const complete = vi.fn();
+      const r = await rig({ oauth, recordOAuthGrant, user: null, nativeOAuthHandoff: { complete } as never });
+      const res = await r.request('/api/mcp/oauth/callback?state=used&code=c', { redirect: 'manual' });
+      expect(res.status).toBe(400);
+      expect(recordOAuthGrant).not.toHaveBeenCalled();
+      expect(complete).not.toHaveBeenCalled();
+    });
+
+    it('OAuth Grant 投影失败时撤销刚写入的 OAuth 凭据并返回失败', async () => {
+      const oauth = fakeOAuthService();
+      const r = await rig({
+        oauth, user: null,
+        recordOAuthGrant: async () => { throw new Error('projection unavailable'); },
+      });
+      oauth.finishImpl = async () => finishResult();
+
+      const res = await r.request('/api/mcp/oauth/callback?state=s&code=c', { redirect: 'manual' });
+      expect(res.status).toBe(500);
+      expect(oauth.disconnectCalls).toContainEqual(['alice', 'kaiyan', 'srv1']);
     });
 
     it('open-redirect 防御：绝对 URL / 协议相对 / 非 / 开头的 returnTo 一律强制回 /', async () => {
@@ -428,24 +493,18 @@ describe('MCP routes: oauth callback/start/disconnect + admin secrets + oauthRed
   });
 
   describe('DELETE /me/servers/:serverId/oauth', () => {
-    it('oauthService 未装配 503 / 不可见 404 / 成功断开并移出 enabledServers', async () => {
-      const noOauth = await rig();
-      expect((await noOauth.request('/api/mcp/me/servers/srv1/oauth', { method: 'DELETE' })).status).toBe(503);
-
+    it('旧 DELETE 入口始终封闭，必须使用签名 OAuth Grant 撤销', async () => {
       const oauth = fakeOAuthService();
       const { manager, invalidated } = recordingManager();
       const r = await rig({ oauth, manager });
-      expect((await r.request('/api/mcp/me/servers/ghost/oauth', { method: 'DELETE' })).status).toBe(404);
-
       await seedServer(r.store, 'srv1', 'kaiyan');
-      await seedServer(r.store, 'srv2', 'kaiyan');
-      await r.store.setUserEnabledServers('alice', ['srv1', 'srv2'], 'kaiyan');
+      await r.store.setUserEnabledServers('alice', ['srv1'], 'kaiyan');
       const res = await r.request('/api/mcp/me/servers/srv1/oauth', { method: 'DELETE' });
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true });
-      expect(oauth.disconnectCalls).toEqual([['alice', 'kaiyan', 'srv1']]);
-      expect(r.store.getUserConfig('alice').enabledServers).toEqual(['srv2']);
-      expect(invalidated).toContain('alice');
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ code: 'OAUTH_GRANT_SIGNED_REVOCATION_REQUIRED' });
+      expect(oauth.disconnectCalls).toEqual([]);
+      expect(r.store.getUserConfig('alice').enabledServers).toEqual(['srv1']);
+      expect(invalidated).toEqual([]);
     });
   });
 

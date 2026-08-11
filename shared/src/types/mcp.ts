@@ -64,6 +64,11 @@ export interface McpServerSummary {
 export interface McpOAuthStartResponse {
   status: 'pending' | 'connected';
   authorizationUrl?: string;
+  requestedScopes?: string[];
+  purpose?: string;
+  riskLevel?: 'high';
+  dataDestination?: string;
+  revokeMethod?: string;
 }
 
 export interface MyMcpResponse {

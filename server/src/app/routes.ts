@@ -4,6 +4,7 @@ import express from "express";
 import type { Express, Request, Response } from "express";
 
 import type { AppRuntime } from "./runtime.js";
+import { registerGovernanceRoutes } from './governanceRoutes.js';
 import type { TenantStore } from "../data/tenants/store.js";
 import type { UserInfo } from "../data/users/types.js";
 import {
@@ -52,19 +53,17 @@ import { createInternalAcsAlertsRouter } from "../routes/internalAcsAlerts.js";
 import { RuntimeEfficiencyQuery } from "../runtime/efficiencyQuery.js";
 import { createSkillsRouter } from "../routes/skills.js";
 import { createGovernanceMigrationRouter } from '../routes/governanceMigration.js';
-import { createGovernanceResourcesRouter } from '../routes/governanceResources.js';
-import { createGovernanceAccessRouter } from '../routes/governanceAccess.js';
-import { createGovernanceUiRouter } from '../routes/governanceUi.js';
 import { createMcpRouter } from "../routes/mcp.js";
 import { createConnectorsRouter } from "../routes/connectors.js";
 import { createNotionRouter } from "../routes/notion.js";
 import { createGoogleWorkspaceRouter } from "../routes/googleWorkspace.js";
 import { revokeAllUserConnectorCredentials } from "../connectors/lifecycle.js";
+import { createNativeOAuthHandoffRouter, NativeOAuthHandoffStore } from '../connectors/nativeOAuthHandoff.js';
 import { runtimeRunController } from "../runtime/runController.js";
 import { createTenantsRouter } from "../routes/tenants.js";
 import { deleteTenantResources } from "../data/tenants/cleanup.js";
-import { GovernanceTenantCleanup, type TenantCleanupDomain } from '../data/changeJobs/index.js';
-import { createGovernanceOffboardingExecutor, type ExecuteUserOffboarding } from './governanceOffboarding.js';
+import { createGovernanceOffboardingExecutor, createSafeCronOffboardingExecutor, type ExecuteUserOffboarding } from './governanceOffboarding.js';
+import { archivePersonalWorkspace } from './governancePersonalDataRetention.js';
 import { createModelsAdminRouter } from "../routes/modelsAdmin.js";
 import { createCodexSubscriptionAdminRouter } from "../routes/codexSubscriptionAdmin.js";
 import { createTenantRemoteHandsAdminRouter } from "../routes/tenantRemoteHandsAdmin.js";
@@ -84,6 +83,25 @@ import type { WebChannel } from "../channels/web/channel.js";
 import { initAuditLog, redactLegacyChatPreviewsInFile } from "../data/login-logs/index.js";
 import { configureModelPricing } from "../data/usage/pricing.js";
 import { configureImageGenPricing } from "../data/usage/imageGenPricing.js";
+
+export function activeOffboardingWriteFence(runtime: AppRuntime) {
+  return async (req: Request, res: Response, next: express.NextFunction): Promise<void> => {
+    if (!req.user || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+    if (!runtime.governanceChangeJobStore) return next();
+    try {
+      const job = await runtime.governanceChangeJobStore.findActiveForTarget(
+        req.user.tenantId, 'user_offboarding', 'user', req.user.sub,
+      );
+      if (job) {
+        res.status(409).json({ error: 'User offboarding is in progress', code: 'USER_OFFBOARDING_ACTIVE' });
+        return;
+      }
+      next();
+    } catch {
+      res.status(503).json({ error: 'Offboarding authority unavailable', code: 'OFFBOARDING_AUTHORITY_UNAVAILABLE' });
+    }
+  };
+}
 
 function tenantFeatureGuard(
   tenantStore: TenantStore | undefined,
@@ -131,6 +149,14 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   } = runtime;
   const processCwd = runtime.processCwd || runtime.agentCwd || process.cwd();
   const loginLogFilePath = resolve(processCwd, "./data/login-logs.jsonl");
+  const legacyWriteGate = runtime.governanceWriteGate ?? {
+    assertLegacyWriteAllowed: async () => { throw new Error('MIGRATION_LEGACY_WRITE_SEALED'); },
+    enforcementMode: async () => 'enforce' as const,
+  };
+  const nativeOAuthHandoff = runtime.oauthGrantStore
+    ? new NativeOAuthHandoffStore(runtime.oauthGrantStore, 'https://kaiyan.net/oauth/callback')
+    : undefined;
+  if (nativeOAuthHandoff) app.use('/api/connectors', createNativeOAuthHandoffRouter(nativeOAuthHandoff));
 
   const { channelManager } = runtime;
   app.use(
@@ -146,6 +172,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getSkillsWarmupStatus: () => runtime.getSkillsWarmupStatus(),
     }),
   );
+  app.use('/api', activeOffboardingWriteFence(runtime));
   // App update: version check + APK download
   const mobileDir = resolve(processCwd, "../mobile");
   app.use("/api", createAppUpdateRouter({ mobileDir }));
@@ -639,31 +666,75 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         userId: target.id,
         username: target.username,
         tenantId: target.tenantId,
-      }).catch(() => undefined);
-      await Promise.allSettled([
-        runtime.connectorConnectionStore && runtime.secretVault
-          ? revokeAllUserConnectorCredentials({
-              connectionStore: runtime.connectorConnectionStore,
-              vault: runtime.secretVault,
-              userId: target.id,
-              username: target.username,
-              tenantId: target.tenantId,
-            })
-          : undefined,
-        runtime.dwsAuthFlowService?.revokeUser?.(target),
-        runtime.feishuAuthFlowService?.revokeUser?.(target),
-        runtime.notionAuthFlowService?.cancelUser?.(target.tenantId, target.id),
-        runtime.googleWorkspaceOAuthService?.cancelUser(target.id),
-        runtime.googleWorkspaceOAuthService?.disconnect(target.id, target.username, target.tenantId),
-        runtime.mcpOAuthService?.disconnectUser(target.username, target.tenantId),
-      ]);
+      });
+      await runtime.googleWorkspaceOAuthService?.cancelUser(target.id);
+      await runtime.googleWorkspaceOAuthService?.disconnect(target.id, target.username, target.tenantId);
+      await runtime.mcpOAuthService?.disconnectUser(target.username, target.tenantId);
+      await runtime.dwsAuthFlowService?.revokeUser?.(target);
+      await runtime.feishuAuthFlowService?.revokeUser?.(target);
+      await runtime.notionAuthFlowService?.cancelUser?.(target.tenantId, target.id);
+      // Provider-specific revoke must finish before generic local Secret cleanup.
+      if (runtime.connectorConnectionStore && runtime.secretVault) {
+        await revokeAllUserConnectorCredentials({
+          connectionStore: runtime.connectorConnectionStore,
+          vault: runtime.secretVault,
+          userId: target.id,
+          username: target.username,
+          tenantId: target.tenantId,
+        });
+      }
     };
     executeUserOffboarding = createGovernanceOffboardingExecutor({
       runtime,
       userStore,
       terminateAndRevokeUserConnectors,
       disconnectWebUser: userId => webChannel?.disconnectUser(userId),
-      removeCronByOwners: ownerIds => cronRuntime.service?.removeByOwners(ownerIds) ?? Promise.resolve(),
+      listCronIdsByOwner: async userId => (await cronRuntime.service?.list({ includeDisabled: true }) ?? []).filter(job => job.owner === userId).map(job => job.id),
+      ...(runtime.runtimeSessionProjectionStore ? {
+        listActiveSessionIdsByUser: async (tenantId: string, userId: string) =>
+          (await runtime.runtimeSessionProjectionStore!.listSnapshotsByUser(tenantId, userId)).map(item => item.id),
+      } : {}),
+      ...(runtime.connectorConnectionStore && runtime.mcpConfigStore ? {
+        listExternalConnectionIdsByUser: async (tenantId: string, userId: string) => {
+          const user = userStore.findById(userId);
+          if (!user || user.tenantId !== tenantId) throw new Error('OFFBOARDING_CONNECTOR_SUBJECT_MISMATCH');
+          const native = runtime.connectorConnectionStore!.listForUser(user.username)
+            .filter(item => item.userId === userId && item.tenantId === tenantId && item.status === 'connected')
+            .map(item => `connector:${item.connectorId}`);
+          const mcp = runtime.mcpConfigStore!.listUserOAuthConnections(user.username)
+            .filter(item => item.userId === userId && item.tenantId === tenantId && item.status === 'connected')
+            .map(item => `mcp:${item.serverId}`);
+          return [...native, ...mcp].sort();
+        },
+      } : {}),
+      ...(cronRuntime.service ? { executeCronOffboarding: createSafeCronOffboardingExecutor({
+        get: async cronId => {
+          const job = (await cronRuntime.service!.list({ includeDisabled: true })).find(item => item.id === cronId);
+          return job ? {
+            id: job.id, ownerUserId: job.owner, enabled: job.enabled,
+            running: Boolean(job.state.runningRunId), systemManaged: Boolean(job.systemKind),
+          } : null;
+        },
+        disable: async cronId => { await cronRuntime.service!.update(cronId, { enabled: false }); },
+        stop: async cronId => {
+          const job = (await cronRuntime.service!.list({ includeDisabled: true })).find(item => item.id === cronId);
+          if (job?.state.runningRunId) throw new Error('CRON_RUN_ACTIVE_STOP_UNSUPPORTED');
+        },
+        transfer: async (cronId, targetUserId) => {
+          const current = (await cronRuntime.service!.list({ includeDisabled: true })).find(item => item.id === cronId);
+          if (!current?.owner) throw new Error('CRON_OWNER_AUTHORITY_UNAVAILABLE');
+          await cronRuntime.service!.transferOwner(cronId, current.owner, targetUserId, userStore.findById(targetUserId)?.username);
+        },
+      }) } : {}),
+      ...(runtime.runtimeSessionProjectionStore ? {
+        retainSessions: (tenantId: string, userId: string, jobId: string) =>
+          runtime.runtimeSessionProjectionStore!.markRetainedForOffboarding(tenantId, userId, jobId),
+      } : {}),
+      archivePersonalWorkspace: async (tenantId, userId, jobId, relativePaths) => {
+        const user = userStore.findById(userId);
+        if (!user || user.tenantId !== tenantId) throw new Error('OFFBOARDING_PERSONAL_DATA_SUBJECT_MISMATCH');
+        return archivePersonalWorkspace(agentCwd, user, jobId, relativePaths);
+      },
     });
     app.use(
       "/api/auth",
@@ -693,7 +764,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         signupConfigStore: runtime.signupConfigStore,
         secretVault: runtime.secretVault,
         getModelsConfig: () => config.models,
-        legacyWriteGate: runtime.governanceWriteGate,
+        legacyWriteGate,
       }),
     );
     // 手机号自助注册试用（官网联动 MVP）。公开路径在 auth middleware PUBLIC_ROUTES
@@ -716,7 +787,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         skillConfigStore: runtime.skillConfigStore,
         // ★ 2026-07-18 企业专家目录 MVP：注册开通试用租户时 seed 3 个种子专家
         orgAgentStore: runtime.orgAgentStore,
-        legacyWriteGate: runtime.governanceWriteGate,
+        legacyWriteGate,
       });
       app.use("/api/signup", signupRouters.publicRouter);
       app.use("/api/admin/signup-config", signupRouters.adminRouter);
@@ -765,35 +836,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         avatarsDir: resolve(processCwd, config.auth?.usersFile || './data/users.json', '..', 'avatars'),
       })
       : undefined;
-    const governanceTenantCleanup = runtime.runtimePgEventStore && runtime.secretVault
-      ? new GovernanceTenantCleanup({
-          pool: runtime.runtimePgEventStore.pool,
-          tablePrefix: config.runtimeEventStore?.backend === 'pg'
-            ? config.runtimeEventStore.tablePrefix
-            : undefined,
-          vault: runtime.secretVault,
-        })
-      : undefined;
-    const legacyTenantDeletionRuns = new Map<string, Promise<void>>();
-    const executeTenantDeletionDomain = executeLegacyTenantDeletion && governanceTenantCleanup
-      ? async (tenantId: string, domain: string): Promise<void> => {
-          if (domain === 'memory' || domain === 'sessions_runs') {
-            let run = legacyTenantDeletionRuns.get(tenantId);
-            if (!run) {
-              run = executeLegacyTenantDeletion(tenantId)
-                .then(() => undefined)
-                .catch(error => {
-                  if (error instanceof Error && error.message === 'Tenant not found') return;
-                  throw error;
-                });
-              legacyTenantDeletionRuns.set(tenantId, run);
-            }
-            await run;
-            return;
-          }
-          await governanceTenantCleanup.execute(tenantId, domain as TenantCleanupDomain);
-        }
-      : undefined;
     // Tenant management (admin-only CRUD；PR 1 仅元数据，不影响任何运行时行为)
     if (runtime.tenantStore) {
       app.use(
@@ -805,7 +847,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           // ★ 2026-07-18 企业专家目录 MVP：新租户开通时 seed 3 个种子专家（disabled）
           orgAgentStore: runtime.orgAgentStore,
           governanceAuditStore: runtime.governanceAuditStore,
-          legacyWriteGate: runtime.governanceWriteGate,
+          legacyWriteGate,
           onTenantDisabled: webChannel
             ? (tenantId: string) => webChannel.disconnectTenant(tenantId)
             : undefined,
@@ -813,67 +855,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         }),
       );
     }
-    app.use(createGovernanceUiRouter({
-      users: runtime.userStore,
-      tenants: runtime.tenantStore,
-      memberships: runtime.membershipStore,
-      entitlements: runtime.entitlementStore,
-      assignments: runtime.assignmentStore,
-      agents: runtime.agentResourceStore,
-      skills: runtime.skillGovernanceStore,
-      connectors: runtime.connectorCatalogStore,
-      credentials: runtime.credentialStore,
-      environments: runtime.environmentStore,
-      audit: runtime.governanceAuditStore,
-    }));
-    if (
-      runtime.membershipStore
-      && runtime.entitlementStore
-      && runtime.assignmentStore
-      && runtime.governanceAuditStore
-    ) {
-      app.use('/api/governance/access', createGovernanceAccessRouter({
-        memberships: runtime.membershipStore,
-        entitlements: runtime.entitlementStore,
-        assignments: runtime.assignmentStore,
-        audit: runtime.governanceAuditStore,
-        contentAccess: runtime.contentAccessGrantStore,
-        projectionOutbox: runtime.governanceProjectionOutboxStore,
-        projectionReconciler: runtime.governanceProjectionReconciler,
-        membershipPreviewSecret: config.auth.jwtSecret,
-      }));
-    }
-    if (
-      runtime.membershipStore
-      && runtime.agentResourceStore
-      && runtime.skillGovernanceStore
-      && runtime.connectorCatalogStore
-      && runtime.credentialStore
-      && runtime.environmentStore
-      && runtime.governanceChangeJobStore
-      && runtime.governanceChangePlanner
-      && runtime.secretVault
-      && runtime.governanceAuditStore
-    ) {
-      app.use('/api/governance/resources', createGovernanceResourcesRouter({
-        memberships: runtime.membershipStore,
-        agents: runtime.agentResourceStore,
-        skills: runtime.skillGovernanceStore,
-        connectors: runtime.connectorCatalogStore,
-        credentials: runtime.credentialStore,
-        environments: runtime.environmentStore,
-        changeJobs: runtime.governanceChangeJobStore,
-        changePlanner: runtime.governanceChangePlanner,
-        ...(executeTenantDeletionDomain ? { executeTenantDeletionDomain } : {}),
-        tenantExists: (tenantId: string) => Boolean(runtime.tenantStore?.findById(tenantId)),
-        resolveUserTenantId: (userId: string) => runtime.userStore?.findById(userId)?.tenantId,
-        executeUserOffboarding,
-        projectionOutbox: runtime.governanceProjectionOutboxStore,
-        projectionReconciler: runtime.governanceProjectionReconciler,
-        vault: runtime.secretVault,
-        audit: runtime.governanceAuditStore,
-      }));
-    }
+    registerGovernanceRoutes(app, runtime, { webChannel, executeUserOffboarding });
     if (runtime.governanceMigrationControlStore && runtime.membershipStore && runtime.governanceAuditStore) {
       app.use('/api/governance/migration', createGovernanceMigrationRouter({
         store: runtime.governanceMigrationControlStore,
@@ -896,7 +878,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           sharedDir,
           tenantSkillsRootDir: runtime.tenantSkillsRootDir,
           skillMaterialization: runtime.skillMaterialization,
-          legacyWriteGate: runtime.governanceWriteGate,
+          legacyWriteGate,
         }),
       );
     }
@@ -908,7 +890,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           connectionStore: runtime.connectorConnectionStore,
           secretVault: runtime.secretVault,
           aliyunService: runtime.aliyunConnectorService,
-          legacyWriteGate: runtime.governanceWriteGate,
+          legacyWriteGate,
         }),
       );
       app.use(
@@ -926,16 +908,17 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
             if (!runtime.disconnectNotionConnection) throw new Error('Notion 连接服务尚未配置');
             return await runtime.disconnectNotionConnection({ userId, username, tenantId });
           },
-          legacyWriteGate: runtime.governanceWriteGate,
+          legacyWriteGate,
         }),
       );
       app.use(
         "/api/connectors",
         createGoogleWorkspaceRouter({
-          oauthService: runtime.googleWorkspaceOAuthService,
+          oauthService: runtime.googleWorkspaceOAuthService, ...(runtime.oauthGrantStore ? { recordOAuthGrant: (input: Parameters<typeof runtime.oauthGrantStore.recordProjection>[0]) => runtime.oauthGrantStore!.recordProjection(input), revokeOAuthGrant: (input: Parameters<typeof runtime.oauthGrantStore.recordRevocation>[0]) => runtime.oauthGrantStore!.recordRevocation(input) } : {}),
           userStore: runtime.userStore,
           webBaseUrl: config.server?.webBaseUrl,
-          legacyWriteGate: runtime.governanceWriteGate,
+          nativeOAuthHandoff,
+          legacyWriteGate,
         }),
       );
     }
@@ -953,9 +936,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           manager: runtime.mcpClientManager,
           agentCwd,
           secretVault: runtime.secretVault,
-          oauthService: runtime.mcpOAuthService,
+          oauthService: runtime.mcpOAuthService, ...(runtime.oauthGrantStore ? { recordOAuthGrant: (input: Parameters<typeof runtime.oauthGrantStore.recordProjection>[0]) => runtime.oauthGrantStore!.recordProjection(input), revokeOAuthGrant: (input: Parameters<typeof runtime.oauthGrantStore.recordRevocation>[0]) => runtime.oauthGrantStore!.recordRevocation(input) } : {}),
           webBaseUrl: config.server?.webBaseUrl,
-          legacyWriteGate: runtime.governanceWriteGate,
+          nativeOAuthHandoff,
+          legacyWriteGate,
         }),
       );
     }
@@ -973,7 +957,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           userStore: runtime.userStore!,
           skillConfigStore: runtime.skillConfigStore,
           getMemoryIndexService: runtime.getMemoryIndexService,
-          legacyWriteGate: runtime.governanceWriteGate,
+          legacyWriteGate,
         }),
       );
     }
@@ -987,7 +971,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           orgAgentAvatarsDir: resolve(processCwd, "./data/org-agent-avatars"),
           getGuardrailModelConfigs: runtime.getGuardrailModelConfigs,
           billingService: runtime.billingService,
-          legacyWriteGate: runtime.governanceWriteGate,
+          legacyWriteGate,
           onSkillAssignmentsChanged: runtime.skillConfigStore
             ? () => runtime.skillConfigStore!.touchConfigVersion()
             : undefined,

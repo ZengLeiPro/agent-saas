@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { createSafeCronOffboardingExecutor } from '../app/governanceOffboarding.js';
+import { governanceDigest } from '../data/governance-audit/index.js';
 import {
   GOVERNANCE_OFFBOARDING_DOMAINS,
   GovernanceOffboardingCoordinator,
@@ -16,6 +18,7 @@ const input = {
   idempotencyKey: 'offboard:acme:departing-user:v1',
   requestedBy: 'org-admin',
   reasonCode: 'employment_ended',
+  manifest: { baselineDigest: governanceDigest({ inventory: 'fixed' }), baseline: { inventory: 'fixed' } },
 };
 
 function successfulExecutor(): GovernanceOffboardingDomainExecutor {
@@ -75,17 +78,20 @@ describe('GovernanceOffboardingCoordinator', () => {
       createdBy: 'org-admin',
       domains: [...GOVERNANCE_OFFBOARDING_DOMAINS],
       request: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         action: 'user_offboarding',
         reasonCode: 'employment_ended',
         retentionPolicy: 'retain_and_disable',
         handoffTarget: { type: 'user', userId: 'new-owner' },
+        manifest: input.manifest,
       },
     });
     expect(Object.keys(plan.domainHandlers)).toEqual([...GOVERNANCE_OFFBOARDING_DOMAINS]);
 
     for (const domain of GOVERNANCE_OFFBOARDING_DOMAINS) {
-      await expect(plan.domainHandlers[domain]()).resolves.toBeUndefined();
+      await expect(plan.domainHandlers[domain]()).resolves.toMatchObject({
+        affectedCount: 1, completedCount: 1, unresolvedItems: [],
+      });
     }
 
     const executors = Object.values(domains) as GovernanceOffboardingDomainExecutor[];
@@ -94,7 +100,8 @@ describe('GovernanceOffboardingCoordinator', () => {
       retentionPolicy: 'retain_and_disable',
       handoffTargetUserId: 'new-owner',
       jobId: 'job-offboarding-1',
-      operationIdempotencyKey: `${input.idempotencyKey}:personal_resources`,
+      operationIdempotencyKey: 'job-offboarding-1:personal_resources:v1',
+      manifest: input.manifest,
     }));
   });
 
@@ -118,10 +125,9 @@ describe('GovernanceOffboardingCoordinator', () => {
     });
     const plan = await coordinator.createOrReuse(input);
 
-    await expect(plan.domainHandlers.credentials_connectors()).rejects.toMatchObject({
-      code: 'OFFBOARDING_UNRESOLVED_ITEMS',
-      message: 'OFFBOARDING_UNRESOLVED_ITEMS',
-      domain: 'credentials_connectors',
+    await expect(plan.domainHandlers.credentials_connectors()).resolves.toEqual({
+      affectedCount: 2,
+      completedCount: 1,
       unresolvedItems: [unresolved],
     });
   });
@@ -179,15 +185,15 @@ describe('GovernanceOffboardingCoordinator', () => {
     });
 
     const firstPlan = await coordinator.createOrReuse(input);
-    await expect(firstPlan.domainHandlers.membership()).rejects.toBeInstanceOf(GovernanceOffboardingError);
+    await expect(firstPlan.domainHandlers.membership()).resolves.toMatchObject({ completedCount: 0 });
     const retryPlan = await coordinator.createOrReuse(input);
-    await expect(retryPlan.domainHandlers.membership()).resolves.toBeUndefined();
+    await expect(retryPlan.domainHandlers.membership()).resolves.toMatchObject({ completedCount: 1 });
 
     expect(firstPlan.created).toBe(false);
     expect(retryPlan.job.jobId).toBe(firstPlan.job.jobId);
     expect(seenOperationKeys).toEqual([
-      `${input.idempotencyKey}:membership`,
-      `${input.idempotencyKey}:membership`,
+      'job-offboarding-1:membership:v1',
+      'job-offboarding-1:membership:v1',
     ]);
     expect(jobs.create).toHaveBeenCalledTimes(2);
   });
@@ -213,5 +219,26 @@ describe('GovernanceOffboardingCoordinator', () => {
     await expect(mismatched.createOrReuse(input)).rejects.toMatchObject({
       code: 'OFFBOARDING_CHANGE_JOB_MISMATCH',
     });
+  });
+
+  it('Cron executor 先 disable fence、再 stop、最后 transfer，并使用稳定 operation id', async () => {
+    const calls: string[] = [];
+    const executor = createSafeCronOffboardingExecutor({
+      get: vi.fn().mockResolvedValue({
+        id: 'cron-1', ownerUserId: 'departing-user', enabled: true, running: true,
+      }),
+      disable: vi.fn(async (id, operationId) => { calls.push(`disable:${id}:${operationId}`); }),
+      stop: vi.fn(async (id, operationId) => { calls.push(`stop:${id}:${operationId}`); }),
+      transfer: vi.fn(async (id, target, operationId) => { calls.push(`transfer:${id}:${target}:${operationId}`); }),
+    });
+    await expect(executor({
+      cronIds: ['cron-1'], departingUserId: 'departing-user', handoffTargetUserId: 'new-owner',
+      operationIdempotencyKey: 'job-1:cron_ownership:v1',
+    })).resolves.toEqual({ affectedCount: 1, completedCount: 1, unresolvedItems: [] });
+    expect(calls).toEqual([
+      'disable:cron-1:job-1:cron_ownership:v1:cron-1:disable',
+      'stop:cron-1:job-1:cron_ownership:v1:cron-1:stop',
+      'transfer:cron-1:new-owner:job-1:cron_ownership:v1:cron-1:transfer',
+    ]);
   });
 });

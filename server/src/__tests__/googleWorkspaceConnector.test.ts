@@ -39,16 +39,20 @@ describe('Google Workspace native connector', () => {
         refresh_token: 'refresh-1',
         expires_in: 3600,
         token_type: 'Bearer',
+        scope: 'openid https://www.googleapis.com/auth/drive.readonly',
       }), { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         email: 'alice@example.com',
         sub: 'google-user-1',
       }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    let grantActive = true;
     const service = new GoogleWorkspaceOAuthService({
       clientId: 'client-id',
       clientSecret: 'client-secret',
       connectionStore,
       vault,
+      authorizeGrant: async () => grantActive,
+      authorizeConnect: async () => true,
       fetchImpl,
     });
 
@@ -56,13 +60,14 @@ describe('Google Workspace native connector', () => {
     const authorizationUrl = new URL(started.authorizationUrl);
     expect(authorizationUrl.hostname).toBe('accounts.google.com');
     expect(authorizationUrl.searchParams.get('access_type')).toBe('offline');
-    expect(authorizationUrl.searchParams.get('scope')).toContain('gmail.modify');
+    expect(authorizationUrl.searchParams.get('scope')).toContain('gmail.readonly');
 
-    await service.finishAuthorization({
+    const finished = await service.finishAuthorization({
       state: started.state,
       code: 'oauth-code',
       redirectUri: 'https://agent.example.com/api/connectors/oauth/callback',
     });
+    expect(finished.scopeSummary).toEqual(['https://www.googleapis.com/auth/drive.readonly', 'openid']);
 
     expect(service.connectionView('user-1', 'alice', 'tenant-a')).toMatchObject({
       status: 'connected',
@@ -83,6 +88,11 @@ describe('Google Workspace native connector', () => {
       username: 'alice',
       tenantId: 'tenant-a',
     })).resolves.toEqual({ GOOGLE_WORKSPACE_CLI_TOKEN: 'access-1' });
+    grantActive = false;
+    await expect(resolveGoogleWorkspaceRuntimeEnv(service, {
+      userId: 'user-1', username: 'alice', tenantId: 'tenant-a',
+    })).resolves.toEqual({});
+    grantActive = true;
     await expect(resolveGoogleWorkspaceRuntimeEnv(service, {
       userId: 'user-2',
       username: 'bob',
@@ -104,14 +114,14 @@ describe('Google Workspace native connector', () => {
     const vault = new InMemorySecretVault();
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        access_token: 'access-1', refresh_token: 'refresh-1', expires_in: 3600,
+        access_token: 'access-1', refresh_token: 'refresh-1', expires_in: 3600, scope: 'openid',
       }), { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ email: 'alice@example.com' }), {
         status: 200, headers: { 'content-type': 'application/json' },
       }))
       .mockResolvedValueOnce(new Response('provider unavailable', { status: 503 }));
     const service = new GoogleWorkspaceOAuthService({
-      clientId: 'client-id', clientSecret: 'client-secret', connectionStore, vault, fetchImpl,
+      clientId: 'client-id', clientSecret: 'client-secret', connectionStore, vault, authorizeConnect: async () => true, fetchImpl,
     });
     const started = await service.startAuthorization(user(), 'https://agent.example.com/api/connectors/oauth/callback');
     await service.finishAuthorization({
@@ -130,16 +140,16 @@ describe('Google Workspace native connector', () => {
     const stateStore = new InMemoryGoogleWorkspaceOAuthStateStore();
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        access_token: 'shared-access', refresh_token: 'shared-refresh', expires_in: 3600,
+        access_token: 'shared-access', refresh_token: 'shared-refresh', expires_in: 3600, scope: 'openid',
       }), { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ email: 'alice@example.com' }), {
         status: 200, headers: { 'content-type': 'application/json' },
       }));
     const serviceA = new GoogleWorkspaceOAuthService({
-      clientId: 'client-id', clientSecret: 'client-secret', connectionStore, vault, stateStore, fetchImpl,
+      clientId: 'client-id', clientSecret: 'client-secret', connectionStore, vault, stateStore, authorizeConnect: async () => true, fetchImpl,
     });
     const serviceB = new GoogleWorkspaceOAuthService({
-      clientId: 'client-id', clientSecret: 'client-secret', connectionStore, vault, stateStore, fetchImpl,
+      clientId: 'client-id', clientSecret: 'client-secret', connectionStore, vault, stateStore, authorizeConnect: async () => true, fetchImpl,
     });
     const started = await serviceA.startAuthorization(user(), 'https://agent.example.com/api/connectors/oauth/callback');
 
@@ -158,6 +168,7 @@ describe('Google Workspace native connector', () => {
       clientSecret: 'client-secret',
       connectionStore: new ConnectorConnectionStore(join(root, 'connections.json')),
       vault: new InMemorySecretVault(),
+      authorizeConnect: async () => true,
       fetchImpl: vi.fn<typeof fetch>(),
     });
     const started = await service.startAuthorization(user(), 'https://agent.example.com/api/connectors/oauth/callback');
@@ -181,6 +192,7 @@ describe('Google Workspace native connector', () => {
       connectionStore: new ConnectorConnectionStore(join(root, 'connections.json')),
       vault: new InMemorySecretVault(),
       userResolver: () => currentUser,
+      authorizeConnect: async () => true,
       fetchImpl,
     });
     const started = await service.startAuthorization(user(), 'https://agent.example.com/api/connectors/oauth/callback');
@@ -194,6 +206,32 @@ describe('Google Workspace native connector', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('active membership 与 offboarding authority 在交换 token 前 fail closed', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'google-workspace-'));
+    roots.push(root);
+    let active = true;
+    const fetchImpl = vi.fn<typeof fetch>();
+    const service = new GoogleWorkspaceOAuthService({
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      connectionStore: new ConnectorConnectionStore(join(root, 'connections.json')),
+      vault: new InMemorySecretVault(),
+      userResolver: () => user(),
+      authorizeSubject: async () => active,
+      authorizeConnect: async () => true,
+      fetchImpl,
+    });
+    const started = await service.startAuthorization(user(), 'https://agent.example.com/api/connectors/oauth/callback');
+    active = false;
+    await expect(service.finishAuthorization({
+      state: started.state,
+      code: 'oauth-code',
+      redirectUri: 'https://agent.example.com/api/connectors/oauth/callback',
+    })).rejects.toThrow('授权用户已失效');
+    expect(fetchImpl).not.toHaveBeenCalled();
+    await expect(service.startAuthorization(user(), 'https://agent.example.com/api/connectors/oauth/callback')).rejects.toThrow('授权用户已失效');
+  });
+
   it('rejects mismatched redirects and consumes OAuth state once', async () => {
     const root = mkdtempSync(join(tmpdir(), 'google-workspace-'));
     roots.push(root);
@@ -202,6 +240,7 @@ describe('Google Workspace native connector', () => {
       clientSecret: 'client-secret',
       connectionStore: new ConnectorConnectionStore(join(root, 'connections.json')),
       vault: new InMemorySecretVault(),
+      authorizeConnect: async () => true,
       fetchImpl: vi.fn<typeof fetch>(),
     });
     const started = await service.startAuthorization(user(), 'https://agent.example.com/api/connectors/oauth/callback');

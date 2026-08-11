@@ -1,3 +1,5 @@
+import type { GovernanceChangeDomainExecutionResult } from '../changeJobs/types.js';
+
 export const GOVERNANCE_OFFBOARDING_DOMAINS = [
   'runs_sessions',
   'assignments_preferences',
@@ -17,10 +19,13 @@ export interface GovernanceOffboardingUnresolvedItem {
   retryable: boolean;
 }
 
-export interface GovernanceOffboardingDomainResult {
-  affectedCount: number;
-  completedCount: number;
+export interface GovernanceOffboardingDomainResult extends GovernanceChangeDomainExecutionResult {
   unresolvedItems: readonly GovernanceOffboardingUnresolvedItem[];
+}
+
+export interface GovernanceOffboardingManifest {
+  baselineDigest: string;
+  baseline: Record<string, unknown>;
 }
 
 export interface GovernanceOffboardingDomainContext {
@@ -33,6 +38,7 @@ export interface GovernanceOffboardingDomainContext {
   jobIdempotencyKey: string;
   operationIdempotencyKey: string;
   domain: GovernanceOffboardingDomain;
+  manifest: GovernanceOffboardingManifest;
 }
 
 export interface GovernanceOffboardingDomainExecutor {
@@ -57,6 +63,8 @@ export interface GovernanceOffboardingChangeJob {
   idempotencyKey: string;
   request: Record<string, unknown>;
   status?: string;
+  revision?: number;
+  createdBy?: string;
 }
 
 export interface GovernanceOffboardingChangeJobCreator {
@@ -79,10 +87,14 @@ export interface CreateGovernanceOffboardingInput {
   idempotencyKey: string;
   requestedBy: string;
   reasonCode: string;
+  manifest: GovernanceOffboardingManifest;
   retentionPolicy?: GovernanceOffboardingRetentionPolicy;
 }
 
-export type GovernanceOffboardingWorkerHandlerMap = Record<GovernanceOffboardingDomain, () => Promise<void>>;
+export type GovernanceOffboardingWorkerHandlerMap = Record<
+  GovernanceOffboardingDomain,
+  () => Promise<GovernanceOffboardingDomainResult>
+>;
 
 export interface GovernanceOffboardingPlan {
   job: GovernanceOffboardingChangeJob;
@@ -93,6 +105,7 @@ export interface GovernanceOffboardingPlan {
 export type GovernanceOffboardingErrorCode =
   | 'OFFBOARDING_INVALID_REQUEST'
   | 'OFFBOARDING_CHANGE_JOB_MISMATCH'
+  | 'OFFBOARDING_MANIFEST_INVALID'
   | 'OFFBOARDING_INVALID_DOMAIN_RESULT'
   | 'OFFBOARDING_UNRESOLVED_ITEMS'
   | 'OFFBOARDING_DOMAIN_FAILED';

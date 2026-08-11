@@ -22,6 +22,7 @@ export interface PgAssignmentStoreOptions {
   pool: GovernancePgPool;
   tablePrefix?: string;
   platformTenantId?: string;
+  resolveDirectoryGroupIds?: (tenantId: string, userId: string) => Promise<string[]>;
 }
 
 type DesiredAssignment = {
@@ -91,21 +92,33 @@ export class PgAssignmentStore {
          FOR UPDATE`,
         [tenantId, resourceType, resourceId],
       );
-      if (!current.rows[0]) throw new AssignmentInvariantError('ASSIGNMENT_SET_NOT_FOUND');
-      if (Number(current.rows[0].version) !== expectedVersion) {
-        throw new AssignmentInvariantError('ASSIGNMENT_SET_VERSION_CONFLICT');
-      }
-      const setResult = await client.query(`
-        UPDATE ${this.assignmentSetsTable}
-        SET source = 'governance',
-            version = version + 1,
-            updated_at = NOW(),
-            updated_by = $4
-        WHERE tenant_id = $1 AND resource_type = $2 AND resource_id = $3 AND version = $5
-        RETURNING *
-      `, [tenantId, resourceType, resourceId, updatedBy, expectedVersion]);
-      if (!setResult.rows[0]) {
-        throw new AssignmentInvariantError('ASSIGNMENT_SET_VERSION_CONFLICT');
+      let setResult;
+      if (!current.rows[0]) {
+        if (expectedVersion !== 0) {
+          throw new AssignmentInvariantError('ASSIGNMENT_SET_VERSION_CONFLICT');
+        }
+        setResult = await client.query(`
+          INSERT INTO ${this.assignmentSetsTable} (
+            tenant_id,resource_type,resource_id,source,version,created_by,updated_by
+          ) VALUES ($1,$2,$3,'governance',1,$4,$4)
+          RETURNING *
+        `, [tenantId, resourceType, resourceId, updatedBy]);
+      } else {
+        if (Number(current.rows[0].version) !== expectedVersion) {
+          throw new AssignmentInvariantError('ASSIGNMENT_SET_VERSION_CONFLICT');
+        }
+        setResult = await client.query(`
+          UPDATE ${this.assignmentSetsTable}
+          SET source = 'governance',
+              version = version + 1,
+              updated_at = NOW(),
+              updated_by = $4
+          WHERE tenant_id = $1 AND resource_type = $2 AND resource_id = $3 AND version = $5
+          RETURNING *
+        `, [tenantId, resourceType, resourceId, updatedBy, expectedVersion]);
+        if (!setResult.rows[0]) {
+          throw new AssignmentInvariantError('ASSIGNMENT_SET_VERSION_CONFLICT');
+        }
       }
       await client.query(
         `DELETE FROM ${this.assignmentsTable}
@@ -190,21 +203,32 @@ export class PgAssignmentStore {
     userId: string,
     resourceType: AssignmentResourceType,
     agentId?: string,
-  ): Promise<Array<{ resourceId: string; bindingId: string; assignmentVersion: number }>> {
+  ): Promise<Array<{
+    resourceId: string; bindingId: string; assignmentVersion: number; finalEffect: 'allow';
+    bindings: Array<{ assignmentId: string; assigneeType: string; assigneeId?: string; effect: string; origin: string }>;
+  }>> {
     const unresolvedGroups = await this.options.pool.query(`
       SELECT 1
       FROM ${this.assignmentsTable}
       WHERE tenant_id=$1 AND resource_type=$2 AND assignee_type='directory_group'
       LIMIT 1
     `, [tenantId, resourceType]);
+    let directoryGroupIds: string[] = [];
     if (unresolvedGroups.rows[0]) {
-      throw new AssignmentInvariantError('ASSIGNMENT_GROUP_SUBJECT_UNRESOLVED');
+      if (!this.options.resolveDirectoryGroupIds) {
+        throw new AssignmentInvariantError('ASSIGNMENT_GROUP_SUBJECT_UNRESOLVED');
+      }
+      directoryGroupIds = await this.options.resolveDirectoryGroupIds(tenantId, userId);
     }
     const result = await this.options.pool.query(`
       SELECT s.resource_id,s.version AS assignment_version,
              BOOL_OR(a.effect='allow') AS has_allow,
              BOOL_OR(a.effect='deny') AS has_deny,
-             MIN(a.assignment_id) FILTER (WHERE a.effect='allow') AS binding_id
+             MIN(a.assignment_id) FILTER (WHERE a.effect='allow') AS binding_id,
+             JSON_AGG(JSON_BUILD_OBJECT(
+               'assignmentId',a.assignment_id,'assigneeType',a.assignee_type,'assigneeId',a.assignee_id,
+               'effect',a.effect,'origin',a.origin
+             ) ORDER BY a.assignment_id) AS bindings
       FROM ${this.assignmentSetsTable} s
       JOIN ${this.assignmentsTable} a
         ON a.tenant_id=s.tenant_id AND a.resource_type=s.resource_type AND a.resource_id=s.resource_id
@@ -213,15 +237,24 @@ export class PgAssignmentStore {
           a.assignee_type='everyone'
           OR (a.assignee_type='user' AND a.assignee_id=$2)
           OR (a.assignee_type='agent' AND a.assignee_id=$4)
+          OR (a.assignee_type='directory_group' AND a.assignee_id=ANY($5::text[]))
         )
       GROUP BY s.resource_id,s.version
       HAVING BOOL_OR(a.effect='allow') AND NOT BOOL_OR(a.effect='deny')
       ORDER BY s.resource_id
-    `, [tenantId, userId, resourceType, agentId ?? null]);
+    `, [tenantId, userId, resourceType, agentId ?? null, directoryGroupIds]);
     return result.rows.map(row => ({
       resourceId: String(row.resource_id),
       bindingId: String(row.binding_id),
       assignmentVersion: Number(row.assignment_version),
+      finalEffect: 'allow' as const,
+      bindings: (Array.isArray(row.bindings) ? row.bindings : []).map((binding: Record<string, unknown>) => ({
+        assignmentId: String(binding.assignmentId),
+        assigneeType: String(binding.assigneeType),
+        ...(binding.assigneeId ? { assigneeId: String(binding.assigneeId) } : {}),
+        effect: String(binding.effect),
+        origin: String(binding.origin),
+      })),
     }));
   }
 

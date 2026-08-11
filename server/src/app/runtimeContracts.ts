@@ -33,6 +33,8 @@ import type { AppealStore } from '../data/appeals/index.js';
 import type { GovernanceAuditStore } from '../data/governance-audit/index.js';
 import type { PgMembershipStore } from '../data/memberships/index.js';
 import type { PgEntitlementStore } from '../data/entitlements/index.js';
+import type { PgDirectoryGroupStore } from '../data/directoryGroups/index.js';
+import type { PgOAuthGrantStore } from '../data/oauthGrants/index.js';
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { PgCredentialStore } from '../data/credentials/index.js';
 import type { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
@@ -235,6 +237,10 @@ export interface AppRuntime {
   membershipStore?: PgMembershipStore;
   /** Entitlement 与 Tenant Policy 独立事实模型；M1 仅影子写与回填。 */
   entitlementStore?: PgEntitlementStore;
+  /** 钉钉目录群组投影；无生产 projector 时 Assignment 必须 fail closed。 */
+  directoryGroupStore?: PgDirectoryGroupStore;
+  /** 用户 OAuth Grant、撤销状态机与 native handoff 权威。 */
+  oauthGrantStore?: PgOAuthGrantStore;
   /** 组织资源 Assignment 与个人 Preference 独立事实模型；M1 仅影子写与回填。 */
   assignmentStore?: PgAssignmentStore;
   /** P2 Credential 治理事实模型；影子回填 legacy connector 连接，仅读取不拦截。 */

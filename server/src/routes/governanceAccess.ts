@@ -4,13 +4,21 @@ import type { Request } from 'express';
 import { z } from 'zod';
 
 import type { PgAssignmentStore } from '../data/assignments/index.js';
+import type { BillingMemberBudgetOverview } from '../data/billing/types.js';
 import type { AssignmentResourceType } from '../data/assignments/types.js';
 import type { PgEntitlementStore } from '../data/entitlements/index.js';
-import type { EntitlementResourceType, TenantPolicyKey } from '../data/entitlements/types.js';
+import type { EntitlementResourceType } from '../data/entitlements/types.js';
 import { governanceDigest, type GovernanceAuditStore } from '../data/governance-audit/index.js';
 import { MembershipInvariantError, type MembershipIdentityPatch, type PgMembershipStore, type TenantMembership } from '../data/memberships/index.js';
 import type { PgContentAccessGrantStore } from '../data/contentAccess/index.js';
+import type { PgOAuthGrantStore } from '../data/oauthGrants/index.js';
+import type { OAuthGrant } from '../data/oauthGrants/types.js';
 import type { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
+import { registerGovernanceTenantLifecycleRoutes } from './governanceTenantLifecycleRoutes.js';
+import { registerGovernanceEntitlementRoutes } from './governanceEntitlementRoutes.js';
+import { registerGovernanceOAuthGrantRoutes } from './governanceOAuthGrantRoutes.js';
+import { entitlementDependencyImpact, oauthDependencyImpact, tenantDependencyImpact,
+  type GovernanceDependencyImpactResolver } from './governanceImpactAuthority.js';
 
 const membershipMutationShape = {
   expectedVersion: z.number().int().positive(),
@@ -30,35 +38,22 @@ const platformAdminPatchSchema = z.object({
   expectedVersion: z.number().int().positive(),
   status: z.enum(['active', 'disabled']),
 }).strict();
-const entitlementPatchSchema = z.object({
-  expectedVersion: z.number().int().positive(),
-  status: z.enum(['trial', 'active', 'suspended', 'expired']).optional(),
-  effectiveFrom: z.string().datetime().nullable().optional(),
-  effectiveTo: z.string().datetime().nullable().optional(),
-  limits: z.record(z.string(), z.number().finite().nonnegative()).optional(),
-  reason: z.string().min(3).max(500),
-}).strict();
-const scopePatchSchema = z.object({
-  expectedVersion: z.number().int().positive(),
-  mode: z.enum(['all', 'selected']),
-  resourceIds: z.array(z.string().min(1).max(200)).max(1000),
-}).strict();
-const policyPatchSchema = z.object({
-  expectedVersion: z.number().int().positive(),
-  value: z.union([
-    z.boolean(), z.string().max(500), z.number().finite(), z.null(),
-    z.array(z.string().max(200)).max(1000),
-    z.record(z.string(), z.union([z.boolean(), z.string().max(500), z.number().finite(), z.null()])),
-  ]),
-}).strict();
-const assignmentPatchSchema = z.object({
-  expectedVersion: z.number().int().positive(),
+const assignmentResourceTypeSchema = z.enum(['org_agent', 'skill', 'credential', 'environment_template', 'org_knowledge', 'connector']);
+const assignmentMutationShape = {
+  expectedVersion: z.number().int().nonnegative(),
   assignments: z.array(z.object({
     assigneeType: z.enum(['everyone', 'user', 'directory_group', 'agent']),
     assigneeId: z.string().min(1).max(200).optional(),
     effect: z.enum(['allow', 'deny']),
     origin: z.enum(['direct', 'policy_default']).optional(),
   }).strict()).max(5000),
+};
+const assignmentPreviewSchema = z.object(assignmentMutationShape).strict();
+const assignmentPatchSchema = z.object({
+  ...assignmentMutationShape,
+  previewId: z.string().regex(/^apv1\.[a-f0-9]{64}$/),
+  baselineDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  expiresAt: z.string().datetime({ offset: true }),
 }).strict();
 const contentGrantSchema = z.object({
   tenantId: z.string().min(2).max(64).optional(),
@@ -86,7 +81,19 @@ const preferenceSchema = z.object({
 }).strict();
 
 type MembershipMutation = z.infer<typeof membershipPreviewSchema>;
+type AssignmentMutation = z.infer<typeof assignmentPreviewSchema>;
 type GovernancePersona = 'platform_admin' | 'org_admin' | 'member';
+type MembershipActionId = 'promote_admin' | 'demote_member' | 'grant_owner' | 'revoke_owner' | 'disable' | 'restore' | 'recover_owner';
+interface MembershipAllowedAction {
+  id: MembershipActionId;
+  label: string;
+  change: Pick<MembershipMutation, 'persona' | 'isOwner' | 'status'>;
+  requiresReason: boolean;
+}
+
+const ASSIGNMENT_RESOURCE_TYPES: readonly AssignmentResourceType[] = [
+  'org_agent', 'skill', 'credential', 'environment_template', 'org_knowledge', 'connector',
+];
 
 function membershipBaseline(membership: TenantMembership): Record<string, unknown> {
   return {
@@ -109,6 +116,26 @@ function membershipChange(mutation: MembershipMutation): Record<string, unknown>
   };
 }
 
+function assignmentBaseline(
+  tenantId: string,
+  resourceType: string,
+  resourceId: string,
+  assignmentSet: Awaited<ReturnType<PgAssignmentStore['getAssignmentSet']>>,
+): Record<string, unknown> {
+  return assignmentSet ? {
+    tenantId,
+    resourceType,
+    resourceId,
+    version: assignmentSet.version,
+    assignments: assignmentSet.assignments.map(item => ({
+      assigneeType: item.assigneeType,
+      ...(item.assigneeId ? { assigneeId: item.assigneeId } : {}),
+      effect: item.effect,
+      origin: item.origin,
+    })),
+  } : { tenantId, resourceType, resourceId, version: 0, assignments: [] };
+}
+
 function previewSignature(secret: string, input: Record<string, unknown>): string {
   return createHmac('sha256', secret).update(governanceDigest(input)).digest('hex');
 }
@@ -129,6 +156,40 @@ export function createGovernanceAccessRouter(deps: {
   memberships: PgMembershipStore;
   entitlements: PgEntitlementStore;
   assignments: PgAssignmentStore;
+  changeJobs?: { findActiveForTarget(
+    tenantId: string, jobType: 'user_offboarding', targetType: 'user', targetId: string,
+  ): Promise<unknown | null> };
+  oauthGrants?: PgOAuthGrantStore;
+  reconcileOAuthGrants?: (tenantId: string, subjectUserId: string) => Promise<void>;
+  revokeOAuthGrant?: (grant: OAuthGrant, user: NonNullable<Request['user']>) => Promise<void>;
+  directoryGroups?: {
+    getGroup(tenantId: string, groupId: string): Promise<{ groupId: string; status: 'active' | 'disabled' } | null>;
+    listGroups(tenantId: string): Promise<unknown[]>;
+    getAssignmentSnapshot(tenantId: string, groupId: string): Promise<{
+      memberUserIds: string[]; digest: string; fresh: boolean;
+    } | null>;
+  };
+  resolveAssignmentResource?: (
+    tenantId: string,
+    resourceType: AssignmentResourceType,
+    resourceId: string,
+  ) => Promise<'valid' | 'not_found' | 'unavailable'>;
+  resolveEntitlementResource?: (
+    resourceType: EntitlementResourceType,
+    resourceId: string,
+  ) => Promise<{ status: 'valid'; version: number } | { status: 'not_found' | 'unavailable' }>;
+  listEntitlementResources?: (
+    resourceType: EntitlementResourceType,
+  ) => Promise<{ status: 'valid'; items: Array<{ resourceId: string; version: number }> } | { status: 'unavailable' }>;
+  resolveDependencyImpact?: GovernanceDependencyImpactResolver;
+  getPlatformAdminProfile?: (userId: string) => { username: string; displayName: string; accountStatus: 'active' | 'disabled' } | null;
+  getMemberProfile?: (tenantId: string, userId: string) => {
+    userId: string; username: string; displayName: string; position?: string;
+    accountStatus: 'active' | 'disabled'; dingtalkBound: boolean; createdAt: string; updatedAt: string;
+  } | null;
+  getMemberBudgetOverview?: (tenantId: string, userId: string) => Promise<BillingMemberBudgetOverview>;
+  getTenantLifecycle?: (tenantId: string) => { id: string; disabled?: boolean; updatedAt: string } | undefined;
+  setTenantDisabled?: (tenantId: string, disabled: boolean, actorUserId: string) => Promise<{ id: string; disabled?: boolean; updatedAt: string }>;
   audit: GovernanceAuditStore;
   contentAccess?: PgContentAccessGrantStore;
   projectionOutbox?: PgGovernanceProjectionOutboxStore;
@@ -153,6 +214,76 @@ export function createGovernanceAccessRouter(deps: {
     if (personas.get(req) === 'platform_admin') return requested ?? req.user?.tenantId ?? null;
     if (!req.user?.tenantId || (requested && requested !== req.user.tenantId)) return null;
     return req.user.tenantId;
+  };
+  const assignmentSubjectError = async (
+    tenantId: string,
+    assignments: AssignmentMutation['assignments'],
+  ): Promise<{ status: number; body: { error: string; code: string } } | null> => {
+    for (const assignment of assignments) {
+      if (assignment.assigneeType === 'user') {
+        const subject = await deps.memberships.getMembership(tenantId, assignment.assigneeId!);
+        if (!subject || subject.status !== 'active') {
+          return { status: 409, body: { error: 'Active same-tenant membership required', code: 'ASSIGNMENT_USER_SUBJECT_INVALID' } };
+        }
+        if (!deps.changeJobs) {
+          return { status: 503, body: { error: 'Offboarding authority unavailable', code: 'OFFBOARDING_AUTHORITY_UNAVAILABLE' } };
+        }
+        if (await deps.changeJobs.findActiveForTarget(tenantId, 'user_offboarding', 'user', assignment.assigneeId!)) {
+          return { status: 409, body: { error: 'Assignment subject offboarding is active', code: 'ASSIGNMENT_SUBJECT_OFFBOARDING_ACTIVE' } };
+        }
+      }
+      if (assignment.assigneeType === 'directory_group') {
+        if (!deps.directoryGroups) {
+          return { status: 503, body: { error: 'Directory group authority unavailable', code: 'DIRECTORY_GROUP_AUTHORITY_UNAVAILABLE' } };
+        }
+        const group = await deps.directoryGroups.getAssignmentSnapshot(tenantId, assignment.assigneeId!);
+        if (!group) {
+          return { status: 409, body: { error: 'Active same-tenant directory group required', code: 'ASSIGNMENT_GROUP_SUBJECT_INVALID' } };
+        }
+        if (!group.fresh) {
+          return { status: 503, body: { error: 'Directory group projection is stale', code: 'DIRECTORY_GROUP_AUTHORITY_STALE' } };
+        }
+      }
+    }
+    return null;
+  };
+  const assignmentDirectorySnapshot = async (
+    tenantId: string,
+    assignments: AssignmentMutation['assignments'],
+  ): Promise<Record<string, unknown>> => {
+    const includesEveryone = assignments.some(item => item.assigneeType === 'everyone');
+    const activeMemberships = includesEveryone
+      ? (await deps.memberships.listMemberships(tenantId))
+          .filter(item => item.status === 'active')
+          .map(item => ({ userId: item.userId, version: item.version })).sort((a, b) => a.userId.localeCompare(b.userId))
+      : [];
+    const groupIds = [...new Set(assignments
+      .filter(item => item.assigneeType === 'directory_group')
+      .map(item => item.assigneeId!))].sort();
+    const groups = [];
+    for (const groupId of groupIds) {
+      const snapshot = await deps.directoryGroups?.getAssignmentSnapshot(tenantId, groupId);
+      if (!snapshot || !snapshot.fresh) throw new Error('DIRECTORY_GROUP_AUTHORITY_STALE');
+      groups.push({ groupId, digest: snapshot.digest, memberUserIds: snapshot.memberUserIds });
+    }
+    return { activeMemberships, groups };
+  };
+  const assignmentResourceError = async (
+    tenantId: string,
+    resourceType: AssignmentResourceType,
+    resourceId: string,
+  ): Promise<{ status: number; body: { error: string; code: string } } | null> => {
+    if (!deps.resolveAssignmentResource) {
+      return { status: 503, body: { error: 'Assignment resource authority unavailable', code: 'ASSIGNMENT_RESOURCE_AUTHORITY_UNAVAILABLE' } };
+    }
+    const result = await deps.resolveAssignmentResource(tenantId, resourceType, resourceId);
+    if (result === 'unavailable') {
+      return { status: 503, body: { error: 'Assignment resource authority unavailable', code: 'ASSIGNMENT_RESOURCE_AUTHORITY_UNAVAILABLE' } };
+    }
+    if (result === 'not_found') {
+      return { status: 409, body: { error: 'Same-tenant assignment resource required', code: 'ASSIGNMENT_RESOURCE_INVALID' } };
+    }
+    return null;
   };
   const authorizeMembershipMutation = (
     req: Request,
@@ -187,6 +318,42 @@ export function createGovernanceAccessRouter(deps: {
     return { kind: 'tenant_member', actorTenantId: req.user!.tenantId };
   };
 
+  const membershipActionsFor = (
+    req: Request,
+    tenantId: string,
+    target: TenantMembership,
+  ): MembershipAllowedAction[] => {
+    if (personas.get(req) === 'platform_admin') {
+      if (tenantId === req.user!.tenantId
+        || (target.persona === 'org_admin' && target.isOwner && target.status === 'active')) return [];
+      return [{
+        id: 'recover_owner', label: '恢复为 Owner',
+        change: { persona: 'org_admin', isOwner: true, status: 'active' }, requiresReason: true,
+      }];
+    }
+    const actor = actorMemberships.get(req);
+    if (!actor || actor.persona !== 'org_admin' || actor.status !== 'active' || actor.userId === target.userId) return [];
+    const actions: MembershipAllowedAction[] = [];
+    if (actor.isOwner) {
+      if (target.persona === 'member') {
+        actions.push({ id: 'promote_admin', label: '设为组织管理员', change: { persona: 'org_admin' }, requiresReason: false });
+      } else if (target.isOwner) {
+        actions.push({ id: 'revoke_owner', label: '撤销 Owner', change: { isOwner: false }, requiresReason: false });
+      } else {
+        actions.push(
+          { id: 'grant_owner', label: '授予 Owner', change: { isOwner: true }, requiresReason: false },
+          { id: 'demote_member', label: '降为成员', change: { persona: 'member' }, requiresReason: false },
+        );
+      }
+    }
+    if (target.persona === 'member' || actor.isOwner) {
+      actions.push(target.status === 'active'
+        ? { id: 'disable', label: '停用账号', change: { status: 'disabled' }, requiresReason: false }
+        : { id: 'restore', label: '恢复账号', change: { status: 'active' }, requiresReason: false });
+    }
+    return actions;
+  };
+
   router.use(async (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const platformAdmin = await deps.memberships.getPlatformAdmin(req.user.sub);
@@ -206,9 +373,11 @@ export function createGovernanceAccessRouter(deps: {
   router.use(async (req, res, next) => {
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
     const user = req.user!;
-    const requestedTenantId = typeof req.query.tenantId === 'string'
-      ? req.query.tenantId
-      : typeof req.body?.tenantId === 'string' ? req.body.tenantId : user.tenantId;
+    const requestedTenantId = personas.get(req) === 'platform_admin'
+      ? (typeof req.query.tenantId === 'string'
+          ? req.query.tenantId
+          : typeof req.body?.tenantId === 'string' ? req.body.tenantId : user.tenantId)
+      : user.tenantId;
     const correlationId = `governance-access:${randomUUID()}`;
     const actorPersona = personas.get(req)!;
     const auditReason = typeof req.body?.reason === 'string' ? req.body.reason : undefined;
@@ -239,12 +408,14 @@ export function createGovernanceAccessRouter(deps: {
         result: res.statusCode < 400 ? 'succeeded' : 'failed', metadata: { statusCode: res.statusCode },
       }).then(event => {
         const payload = body && typeof body === 'object' && !Array.isArray(body)
-          ? { ...(body as Record<string, unknown>), auditId: event.auditId }
-          : { data: body, auditId: event.auditId };
+          ? { effectiveAt: event.occurredAt, ...(body as Record<string, unknown>), changeId: intentAuditId, auditId: event.auditId }
+          : { data: body, changeId: intentAuditId, auditId: event.auditId, effectiveAt: event.occurredAt };
         sendJson(payload);
       }).catch(async () => {
-        if (deps.projectionOutbox) {
-          await deps.projectionOutbox.enqueue({
+        let auditProjectionId: string | undefined;
+        try {
+          if (!deps.projectionOutbox) throw new Error('GOVERNANCE_AUDIT_OUTBOX_UNAVAILABLE');
+          const projection = await deps.projectionOutbox.enqueue({
             tenantId: requestedTenantId,
             projector: 'audit_terminal',
             idempotencyKey: `${correlationId}:${res.statusCode < 400 ? 'succeeded' : 'failed'}`,
@@ -263,11 +434,23 @@ export function createGovernanceAccessRouter(deps: {
               result: res.statusCode < 400 ? 'succeeded' : 'failed',
               metadata: { statusCode: res.statusCode },
             },
-          }).catch(() => undefined);
+          });
+          auditProjectionId = projection.outboxId;
+        } catch {
+          const changed = (body && typeof body === 'object' && !Array.isArray(body)
+            && (body as Record<string, unknown>).changed === true) || res.statusCode < 400;
+          res.statusCode = 500;
+          sendJson({
+            code: 'GOVERNANCE_AUDIT_TERMINAL_NOT_DURABLE',
+            error: changed ? '变更已执行，但终态审计未能持久化' : '请求失败且终态审计未能持久化',
+            changed,
+            auditId: intentAuditId,
+          });
+          return;
         }
         const payload = body && typeof body === 'object' && !Array.isArray(body)
-          ? { ...(body as Record<string, unknown>), auditId: intentAuditId, auditCompletion: 'pending' }
-          : { data: body, auditId: intentAuditId, auditCompletion: 'pending' };
+          ? { ...(body as Record<string, unknown>), changeId: intentAuditId, auditId: intentAuditId, auditCompletion: 'pending', auditProjectionId }
+          : { data: body, changeId: intentAuditId, auditId: intentAuditId, auditCompletion: 'pending', auditProjectionId };
         sendJson(payload);
       });
       return res;
@@ -284,11 +467,72 @@ export function createGovernanceAccessRouter(deps: {
     res.json(projection);
   });
 
+  router.get('/oauth-grants', async (req, res) => {
+    if (!deps.oauthGrants) {
+      return res.status(503).json({ error: 'OAuth grant authority unavailable', code: 'OAUTH_GRANT_AUTHORITY_UNAVAILABLE' });
+    }
+    const tenantId = tenantFor(req);
+    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
+    await deps.reconcileOAuthGrants?.(tenantId, req.user!.sub);
+    return res.json({ grants: await deps.oauthGrants.listForSubject(tenantId, req.user!.sub) });
+  });
+
   router.get('/memberships', async (req, res) => {
     if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
     const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    res.json({ memberships: await deps.memberships.listMemberships(tenantId) });
+    const memberships = await deps.memberships.listMemberships(tenantId);
+    res.json({ memberships: memberships.map(membership => ({
+      ...membership,
+      directoryProfile: deps.getMemberProfile?.(tenantId, membership.userId) ?? null,
+      allowedActions: membershipActionsFor(req, tenantId, membership),
+    })) });
+  });
+
+  router.get('/memberships/:userId/details', async (req, res) => {
+    if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
+    const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
+    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
+    const membership = await deps.memberships.getMembership(tenantId, req.params.userId);
+    if (!membership) return res.status(404).json({ error: 'Membership not found' });
+    const profile = deps.getMemberProfile?.(tenantId, membership.userId);
+    if (!profile) return res.status(503).json({ error: 'Member directory authority unavailable', code: 'MEMBER_DIRECTORY_AUTHORITY_UNAVAILABLE' });
+    try {
+      const assignments = await Promise.all(ASSIGNMENT_RESOURCE_TYPES.map(async resourceType => ({
+        resourceType,
+        resources: await deps.assignments.listEffectiveResourceIds(tenantId, membership.userId, resourceType),
+      })));
+      const usagePolicy = deps.getMemberBudgetOverview
+        ? await deps.getMemberBudgetOverview(tenantId, membership.userId).catch(() => ({ status: 'unavailable' }))
+        : { status: 'unavailable' };
+      const recentAudit = deps.audit.list
+        ? (await deps.audit.list({ targetTenantId: tenantId, limit: 100 }))
+          .filter(event => event.targetId.includes(`/memberships/${membership.userId}`))
+        : [];
+      res.json({
+        profile,
+        identity: { ...membership, allowedActions: membershipActionsFor(req, tenantId, membership) },
+        accessSummary: {
+          effectivePersona: membership.persona,
+          owner: membership.isOwner,
+          accountStatus: membership.status,
+          decision: membership.status === 'active' ? 'eligible' : 'denied',
+          why: [
+            { source: 'membership', effect: membership.status === 'active' ? 'allow' : 'deny', version: membership.version },
+            ...(membership.isOwner ? [{ source: 'organization_owner_invariant', effect: 'allow', version: membership.version }] : []),
+          ],
+        },
+        assignments,
+        usagePolicy,
+        recentAudit: { events: recentAudit, coverage: 'recent_membership_endpoint_events', limit: 100 },
+        snapshot: { membershipVersion: membership.version, generatedAt: now().toISOString() },
+      });
+    } catch (error) {
+      res.status(503).json({
+        error: 'Membership assignment projection unavailable',
+        code: error instanceof Error ? error.message : 'ASSIGNMENT_PROJECTION_UNAVAILABLE',
+      });
+    }
   });
 
   router.post('/memberships/:userId/preview', async (req, res) => {
@@ -327,6 +571,17 @@ export function createGovernanceAccessRouter(deps: {
         baselineDigest,
         expiresAt,
         expectedVersion: parsed.data.expectedVersion,
+        impact: {
+          from: { persona: current.persona, isOwner: current.isOwner, status: current.status },
+          to: {
+            persona: parsed.data.persona ?? current.persona,
+            isOwner: parsed.data.isOwner ?? current.isOwner,
+            status: parsed.data.status ?? current.status,
+          },
+          blockers: [],
+          reversible: true,
+          effectiveMode: deps.projectionOutbox ? 'source_immediate_projection_pending' : 'source_immediate',
+        },
         changeId: res.locals.governanceChangeId,
       });
     } catch (error) {
@@ -347,6 +602,7 @@ export function createGovernanceAccessRouter(deps: {
     }
     const tenantId = tenantFor(req, requestedTenantId);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
+    let mutationApplied = false;
     try {
       const { previewId, baselineDigest, expiresAt, reason, ...change } = parsed.data;
       if (Date.parse(expiresAt) <= now().getTime()) {
@@ -385,6 +641,7 @@ export function createGovernanceAccessRouter(deps: {
         updatedBy: req.user!.sub,
         authorization,
       });
+      mutationApplied = true;
       let projectionId: string | undefined;
       if (deps.projectionOutbox) {
         const projection = await deps.projectionOutbox.enqueue({
@@ -412,6 +669,15 @@ export function createGovernanceAccessRouter(deps: {
         ...(projectionId ? { projectionId } : {}),
       });
     } catch (error) {
+      if (mutationApplied) {
+        res.status(500).json({
+          error: 'Membership 已更新，但兼容投影未能持久化',
+          code: 'GOVERNANCE_PROJECTION_NOT_DURABLE',
+          changed: true,
+          changeId: res.locals.governanceChangeId,
+        });
+        return;
+      }
       res.status(membershipErrorStatus(error)).json({
         error: error instanceof Error ? error.message : String(error),
         ...(error instanceof MembershipInvariantError ? { code: error.code } : {}),
@@ -421,20 +687,20 @@ export function createGovernanceAccessRouter(deps: {
 
   router.get('/platform-admins', async (req, res) => {
     if (personas.get(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
-    res.json({ platformAdmins: await deps.memberships.listPlatformAdmins() });
+    const platformAdmins = await deps.memberships.listPlatformAdmins();
+    res.json({ platformAdmins: platformAdmins.map(item => ({
+      ...item, directoryProfile: deps.getPlatformAdminProfile?.(item.userId) ?? null,
+    })) });
   });
 
   router.patch('/platform-admins/:userId', async (req, res) => {
     if (personas.get(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
     const parsed = platformAdminPatchSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    try {
-      res.json(await deps.memberships.updatePlatformAdmin(req.params.userId, {
-        ...parsed.data, updatedBy: req.user!.sub,
-      }));
-    } catch (error) {
-      res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
-    }
+    return res.status(503).json({
+      error: 'Signed Platform Admin status authority unavailable',
+      code: 'GOVERNANCE_PREVIEW_AUTHORITY_UNAVAILABLE',
+    });
   });
 
   router.get('/audit-events', async (req, res) => {
@@ -457,97 +723,60 @@ export function createGovernanceAccessRouter(deps: {
     res.json({ events, nextBefore: events.length === parsed.data.limit ? events.at(-1)?.occurredAt : undefined });
   });
 
-  router.get('/entitlements', async (req, res) => {
-    if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
-    const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
-    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    const [entitlement, scopes, policies] = await Promise.all([
-      deps.entitlements.getEntitlementSet(tenantId),
-      deps.entitlements.listResourceScopes(tenantId),
-      deps.entitlements.getPolicies(tenantId),
-    ]);
-    res.json({ entitlement, scopes, policies });
+  if (deps.oauthGrants) {
+    registerGovernanceOAuthGrantRoutes({
+      router,
+      grants: deps.oauthGrants,
+      secret: deps.membershipPreviewSecret,
+      previewTtlMs,
+      now,
+      tenantFor: req => tenantFor(req),
+      ...(deps.revokeOAuthGrant ? { revokeExternal: deps.revokeOAuthGrant } : {}),
+      ...(deps.resolveDependencyImpact ? { dependencyImpact: (grant: OAuthGrant) => oauthDependencyImpact(deps.resolveDependencyImpact!, grant) } : {}),
+    });
+  }
+
+  registerGovernanceTenantLifecycleRoutes({
+    router,
+    secret: deps.membershipPreviewSecret,
+    previewTtlMs,
+    now,
+    personaFor: req => personas.get(req),
+    ...(deps.getTenantLifecycle ? { getTenant: deps.getTenantLifecycle } : {}),
+    ...(deps.setTenantDisabled ? { setTenantDisabled: deps.setTenantDisabled } : {}),
+    ...(deps.resolveDependencyImpact ? { dependencyImpact: (tenantId: string) => tenantDependencyImpact(deps.resolveDependencyImpact!, tenantId) } : {}),
   });
 
-  router.patch('/entitlements', async (req, res) => {
-    if (personas.get(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
-    const parsed = entitlementPatchSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
-    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    try {
-      const { reason, ...patch } = parsed.data;
-      const entitlement = await deps.entitlements.updateEntitlementSet(tenantId, {
-        ...patch, updatedBy: req.user!.sub, updateReason: reason,
-      });
-      let projectionId: string | undefined;
-      if (deps.projectionOutbox) {
-        const projection = await deps.projectionOutbox.enqueue({
-          tenantId, projector: 'tenant_settings',
-          idempotencyKey: `entitlement:${entitlement.version}`,
-          payload: { tenantId, source: 'entitlement', version: entitlement.version },
-        });
-        projectionId = projection.outboxId;
-        void deps.projectionReconciler?.reconcileOne();
-      }
-      res.json({ ...entitlement, compatibilityProjection: deps.projectionOutbox ? 'applied_with_projection_pending' : 'not_configured', ...(projectionId ? { projectionId } : {}) });
-    } catch (error) {
-      res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
+  router.get('/directory-groups', async (req, res) => {
+    const tenantId = tenantFor(req, req.query.tenantId as string | undefined);
+    if (!tenantId || personas.get(req) !== 'org_admin') return res.status(403).json({ error: 'Organization admin required' });
+    if (!deps.directoryGroups) {
+      return res.status(503).json({ error: 'Directory group authority unavailable', code: 'DIRECTORY_GROUP_AUTHORITY_UNAVAILABLE' });
     }
+    return res.json({ tenantId, groups: await deps.directoryGroups.listGroups(tenantId) });
   });
 
-  router.put('/entitlement-scopes/:resourceType', async (req, res) => {
-    if (personas.get(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
-    const parsed = scopePatchSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
-    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    try {
-      const scope = await deps.entitlements.replaceResourceScope(
-        tenantId, req.params.resourceType as EntitlementResourceType,
-        { ...parsed.data, updatedBy: req.user!.sub },
-      );
-      let projectionId: string | undefined;
-      if (deps.projectionOutbox) {
-        const projection = await deps.projectionOutbox.enqueue({
-          tenantId, projector: 'tenant_settings',
-          idempotencyKey: `scope:${scope.resourceType}:${scope.version}`,
-          payload: { tenantId, source: 'scope', resourceType: scope.resourceType, version: scope.version },
-        });
-        projectionId = projection.outboxId;
-        void deps.projectionReconciler?.reconcileOne();
-      }
-      res.json({ ...scope, compatibilityProjection: deps.projectionOutbox ? 'applied_with_projection_pending' : 'not_configured', ...(projectionId ? { projectionId } : {}) });
-    } catch (error) {
-      res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
-    }
+  registerGovernanceEntitlementRoutes({
+    router,
+    entitlements: deps.entitlements,
+    secret: deps.membershipPreviewSecret,
+    previewTtlMs,
+    now,
+    personaFor: req => personas.get(req),
+    tenantFor,
+    ...(deps.resolveEntitlementResource ? { resolveResource: deps.resolveEntitlementResource } : {}),
+    ...(deps.listEntitlementResources ? { listResources: deps.listEntitlementResources } : {}),
+    ...(deps.resolveDependencyImpact ? { dependencyImpact: input => entitlementDependencyImpact(deps.resolveDependencyImpact!, input) } : {}),
+    ...(deps.projectionOutbox ? { projectionOutbox: deps.projectionOutbox } : {}),
+    ...(deps.projectionReconciler ? { projectionReconciler: deps.projectionReconciler } : {}),
   });
 
-  router.put('/policies/:policyKey', async (req, res) => {
-    if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
-    const parsed = policyPatchSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
-    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    try {
-      const policy = await deps.entitlements.updatePolicy(
-        tenantId, req.params.policyKey as TenantPolicyKey,
-        parsed.data.value, parsed.data.expectedVersion, req.user!.sub,
-      );
-      let projectionId: string | undefined;
-      if (deps.projectionOutbox) {
-        const projection = await deps.projectionOutbox.enqueue({
-          tenantId, projector: 'tenant_settings',
-          idempotencyKey: `policy:${policy.policyKey}:${policy.version}`,
-          payload: { tenantId, source: 'policy', policyKey: policy.policyKey, version: policy.version },
-        });
-        projectionId = projection.outboxId;
-        void deps.projectionReconciler?.reconcileOne();
-      }
-      res.json({ ...policy, compatibilityProjection: deps.projectionOutbox ? 'applied_with_projection_pending' : 'not_configured', ...(projectionId ? { projectionId } : {}) });
-    } catch (error) {
-      res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
-    }
+  router.put('/policies/:policyKey', (req, res) => {
+    if (personas.get(req) !== 'org_admin') return res.status(403).json({ error: 'Organization admin required' });
+    return res.status(503).json({
+      error: 'Signed policy preview authority unavailable',
+      code: 'POLICY_PREVIEW_AUTHORITY_UNAVAILABLE',
+    });
   });
 
   router.get('/assignments/:resourceType/:resourceId', async (req, res) => {
@@ -561,31 +790,136 @@ export function createGovernanceAccessRouter(deps: {
     res.json(assignmentSet);
   });
 
-  router.put('/assignments/:resourceType/:resourceId', async (req, res) => {
-    if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
-    const parsed = assignmentPatchSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
+  router.post('/assignments/:resourceType/:resourceId/preview', async (req, res) => {
+    if (personas.get(req) !== 'org_admin') return res.status(403).json({ error: 'Organization admin required' });
+    const resourceType = assignmentResourceTypeSchema.safeParse(req.params.resourceType);
+    const parsed = assignmentPreviewSchema.safeParse(req.body);
+    if (!resourceType.success || !parsed.success) return res.status(400).json({ error: 'Invalid body' });
     const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
+    const resourceError = await assignmentResourceError(tenantId, resourceType.data, req.params.resourceId);
+    if (resourceError) return res.status(resourceError.status).json(resourceError.body);
+    const subjectError = await assignmentSubjectError(tenantId, parsed.data.assignments);
+    if (subjectError) return res.status(subjectError.status).json(subjectError.body);
+    const current = await deps.assignments.getAssignmentSet(tenantId, resourceType.data, req.params.resourceId);
+    const currentVersion = current?.version ?? 0;
+    if (currentVersion !== parsed.data.expectedVersion) {
+      return res.status(409).json({ error: 'Assignment baseline version changed', code: 'ASSIGNMENT_PREVIEW_BASELINE_CONFLICT' });
+    }
+    let directorySnapshot: Record<string, unknown>;
+    try {
+      directorySnapshot = await assignmentDirectorySnapshot(tenantId, parsed.data.assignments);
+    } catch {
+      return res.status(503).json({ error: 'Directory authority unavailable or stale', code: 'DIRECTORY_GROUP_AUTHORITY_STALE' });
+    }
+    const baselineDigest = governanceDigest({
+      assignment: assignmentBaseline(tenantId, resourceType.data, req.params.resourceId, current),
+      directorySnapshot,
+    });
+    const expiresAt = new Date(now().getTime() + previewTtlMs).toISOString();
+    const signatureInput = {
+      version: 1,
+      actorUserId: req.user!.sub,
+      actorTenantId: req.user!.tenantId,
+      tenantId,
+      resourceType: resourceType.data,
+      resourceId: req.params.resourceId,
+      expectedVersion: parsed.data.expectedVersion,
+      baselineDigest,
+      expiresAt,
+      changeDigest: governanceDigest(parsed.data),
+    };
+    return res.json({
+      previewId: `apv1.${previewSignature(deps.membershipPreviewSecret, signatureInput)}`,
+      baselineDigest,
+      expiresAt,
+      expectedVersion: parsed.data.expectedVersion,
+      impact: { assignmentCount: parsed.data.assignments.length, createsAssignmentSet: current === null },
+      changeId: res.locals.governanceChangeId,
+    });
+  });
+
+  router.put('/assignments/:resourceType/:resourceId', async (req, res) => {
+    if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
+    if (personas.get(req) === 'platform_admin') {
+      return res.status(403).json({ error: 'Platform administrators cannot mutate customer assignments', code: 'PLATFORM_ASSIGNMENT_WRITE_FORBIDDEN' });
+    }
+    const resourceType = assignmentResourceTypeSchema.safeParse(req.params.resourceType);
+    const parsed = assignmentPatchSchema.safeParse(req.body);
+    if (!resourceType.success || !parsed.success) return res.status(400).json({ error: 'Invalid body' });
+    const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
+    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
+    const { previewId, baselineDigest, expiresAt, ...mutation } = parsed.data;
+    if (Date.parse(expiresAt) <= now().getTime()) {
+      return res.status(409).json({ error: 'Assignment preview expired', code: 'ASSIGNMENT_PREVIEW_EXPIRED' });
+    }
+    const expectedPreviewId = `apv1.${previewSignature(deps.membershipPreviewSecret, {
+      version: 1,
+      actorUserId: req.user!.sub,
+      actorTenantId: req.user!.tenantId,
+      tenantId,
+      resourceType: resourceType.data,
+      resourceId: req.params.resourceId,
+      expectedVersion: mutation.expectedVersion,
+      baselineDigest,
+      expiresAt,
+      changeDigest: governanceDigest(mutation),
+    })}`;
+    if (!previewMatches(previewId, expectedPreviewId)) {
+      return res.status(409).json({ error: 'Assignment preview invalid', code: 'ASSIGNMENT_PREVIEW_INVALID' });
+    }
+    const current = await deps.assignments.getAssignmentSet(tenantId, resourceType.data, req.params.resourceId);
+    let directorySnapshot: Record<string, unknown>;
+    try {
+      directorySnapshot = await assignmentDirectorySnapshot(tenantId, mutation.assignments);
+    } catch {
+      return res.status(503).json({ error: 'Directory authority unavailable or stale', code: 'DIRECTORY_GROUP_AUTHORITY_STALE' });
+    }
+    const currentBaselineDigest = governanceDigest({
+      assignment: assignmentBaseline(tenantId, resourceType.data, req.params.resourceId, current),
+      directorySnapshot,
+    });
+    if ((current?.version ?? 0) !== mutation.expectedVersion || currentBaselineDigest !== baselineDigest) {
+      return res.status(409).json({ error: 'Assignment preview baseline changed', code: 'ASSIGNMENT_PREVIEW_BASELINE_CONFLICT' });
+    }
+    const resourceError = await assignmentResourceError(tenantId, resourceType.data, req.params.resourceId);
+    if (resourceError) return res.status(resourceError.status).json(resourceError.body);
+    const subjectError = await assignmentSubjectError(tenantId, mutation.assignments);
+    if (subjectError) return res.status(subjectError.status).json(subjectError.body);
     try {
       const assignmentSet = await deps.assignments.replaceAssignments(
-        tenantId, req.params.resourceType as AssignmentResourceType, req.params.resourceId,
-        parsed.data.assignments, parsed.data.expectedVersion, req.user!.sub,
+        tenantId, resourceType.data, req.params.resourceId,
+        mutation.assignments, mutation.expectedVersion, req.user!.sub,
       );
       let projectionId: string | undefined;
       if (deps.projectionOutbox) {
-        const projection = await deps.projectionOutbox.enqueue({
-          tenantId, projector: 'assignment',
-          idempotencyKey: `${assignmentSet.resourceType}:${assignmentSet.resourceId}:${assignmentSet.version}`,
-          payload: {
-            tenantId, resourceType: assignmentSet.resourceType,
-            resourceId: assignmentSet.resourceId, version: assignmentSet.version,
-          },
-        });
-        projectionId = projection.outboxId;
-        void deps.projectionReconciler?.reconcileOne();
+        try {
+          const projection = await deps.projectionOutbox.enqueue({
+            tenantId, projector: 'assignment',
+            idempotencyKey: `${assignmentSet.resourceType}:${assignmentSet.resourceId}:${assignmentSet.version}`,
+            payload: {
+              tenantId, resourceType: assignmentSet.resourceType,
+              resourceId: assignmentSet.resourceId, version: assignmentSet.version,
+            },
+          });
+          projectionId = projection.outboxId;
+          void deps.projectionReconciler?.reconcileOne();
+        } catch {
+          return res.status(500).json({
+            error: 'Assignment 已更新，但兼容投影未能持久化',
+            code: 'GOVERNANCE_PROJECTION_NOT_DURABLE', changed: true,
+            changeId: res.locals.governanceChangeId,
+          });
+        }
       }
-      res.json({ ...assignmentSet, compatibilityProjection: deps.projectionOutbox ? 'applied_with_projection_pending' : 'not_configured', ...(projectionId ? { projectionId } : {}) });
+      res.json({
+        ...assignmentSet,
+        changeId: res.locals.governanceChangeId,
+        effectiveAt: assignmentSet.updatedAt ?? now().toISOString(),
+        projectionStatus: deps.projectionOutbox ? 'pending' : 'not_configured',
+        compatibilityProjection: deps.projectionOutbox ? 'applied_with_projection_pending' : 'not_configured',
+        ...(projectionId ? { projectionId } : {}),
+      });
     } catch (error) {
       res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -613,21 +947,10 @@ export function createGovernanceAccessRouter(deps: {
     if (!subject || subject.status !== 'active') {
       return res.status(409).json({ error: 'Active platform administrator required' });
     }
-    try {
-      res.status(201).json(await deps.contentAccess.create({
-        tenantId,
-        subjectUserId: parsed.data.subjectUserId,
-        targetType: parsed.data.targetType,
-        targetId: parsed.data.targetId,
-        scopes: parsed.data.scopes,
-        purpose: parsed.data.purpose,
-        reasonCode: parsed.data.reasonCode,
-        expiresAt: parsed.data.expiresAt,
-        createdBy: req.user!.sub,
-      }));
-    } catch (error) {
-      res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
-    }
+    return res.status(503).json({
+      error: 'Signed Content Access Grant authority unavailable',
+      code: 'GOVERNANCE_PREVIEW_AUTHORITY_UNAVAILABLE',
+    });
   });
 
   router.post('/content-grants/:grantId/revoke', async (req, res) => {
@@ -639,14 +962,10 @@ export function createGovernanceAccessRouter(deps: {
     if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
     const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    try {
-      res.json(await deps.contentAccess.revoke({
-        tenantId, grantId: req.params.grantId, expectedRevision: parsed.data.expectedRevision,
-        revokedBy: req.user!.sub,
-      }));
-    } catch (error) {
-      res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
-    }
+    return res.status(503).json({
+      error: 'Signed Content Access Grant revocation authority unavailable',
+      code: 'GOVERNANCE_PREVIEW_AUTHORITY_UNAVAILABLE',
+    });
   });
 
   router.get('/preferences', async (req, res) => {

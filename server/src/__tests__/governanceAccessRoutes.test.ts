@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { JwtPayload } from '../auth/types.js';
 import { MembershipInvariantError, type TenantMembership } from '../data/memberships/index.js';
+import type { OAuthGrant } from '../data/oauthGrants/types.js';
 import { createGovernanceAccessRouter } from '../routes/governanceAccess.js';
 
 const PREVIEW_SECRET = 'governance-membership-preview-test-secret-2026';
@@ -39,12 +40,29 @@ async function rig(input: {
   user?: JwtPayload;
   actor?: TenantMembership;
   target?: TenantMembership;
+  memberships?: TenantMembership[];
   getMembership?: ReturnType<typeof vi.fn>;
   auditAppend?: ReturnType<typeof vi.fn>;
   auditList?: ReturnType<typeof vi.fn>;
   updateMembership?: ReturnType<typeof vi.fn>;
   replaceAssignments?: ReturnType<typeof vi.fn>;
+  getAssignmentSet?: ReturnType<typeof vi.fn>;
+  listEffectiveResources?: ReturnType<typeof vi.fn>;
+  resolveAssignmentResource?: (tenantId: string, resourceType: string, resourceId: string) => Promise<'valid' | 'not_found' | 'unavailable'>;
+  resolveEntitlementResource?: (resourceType: string, resourceId: string) => Promise<{ status: 'valid'; version: number } | { status: 'not_found' | 'unavailable' }>;
+  listEntitlementResources?: (resourceType: string) => Promise<{ status: 'valid'; items: Array<{ resourceId: string; version: number }> } | { status: 'unavailable' }>;
+  oauthGrants?: { listForSubject(tenantId: string, subjectUserId: string): Promise<unknown[]>; getForSubject?: ReturnType<typeof vi.fn>; markRevocationPending?: ReturnType<typeof vi.fn>; markProviderRevoking?: ReturnType<typeof vi.fn>; markProviderRevoked?: ReturnType<typeof vi.fn>; markRevocationRetry?: ReturnType<typeof vi.fn>; recordRevocation?: ReturnType<typeof vi.fn> };
+  revokeOAuthGrant?: (grant: OAuthGrant, user: JwtPayload) => Promise<void>;
+  tenantLifecycle?: { id: string; disabled?: boolean; updatedAt: string };
+  setTenantDisabled?: (
+    tenantId: string, disabled: boolean, actorUserId: string,
+  ) => Promise<{ id: string; disabled?: boolean; updatedAt: string }>;
+  directoryGroups?: {
+    getGroup(tenantId: string, groupId: string): Promise<{ groupId: string; status: 'active' | 'disabled' } | null>;
+    listGroups(tenantId: string): Promise<unknown[]>;
+  };
   platformAdmin?: boolean;
+  activeOffboardingUserId?: string;
   projectionEnqueue?: ReturnType<typeof vi.fn>;
   now?: () => Date;
 } = {}) {
@@ -77,9 +95,31 @@ async function rig(input: {
     if (userId === target.userId) return target;
     return null;
   });
+  const getAssignmentSet = input.getAssignmentSet ?? vi.fn().mockResolvedValue({
+    tenantId: 'tenant-a', resourceType: 'skill', resourceId: 'skill-1', source: 'governance',
+    version: 1, assignments: [], createdAt: NOW, createdBy: 'admin-1', updatedAt: NOW, updatedBy: 'admin-1',
+  });
   const replaceAssignments = input.replaceAssignments ?? vi.fn().mockResolvedValue({
     tenantId: 'tenant-a', resourceType: 'skill', resourceId: 'skill-1', version: 2, assignments: [],
   });
+  const listEffectiveResources = input.listEffectiveResources ?? vi.fn().mockResolvedValue([]);
+  const entitlement = {
+    tenantId: 'tenant-a', source: 'governance', status: 'active', limits: {}, version: 1,
+    createdAt: NOW, createdBy: 'platform-1', updatedAt: NOW, updatedBy: 'platform-1',
+  };
+  const scope = {
+    tenantId: 'tenant-a', resourceType: 'skill', mode: 'all', resourceIds: [], source: 'governance',
+    version: 1, createdAt: NOW, createdBy: 'platform-1', updatedAt: NOW, updatedBy: 'platform-1',
+  };
+  const updateEntitlement = vi.fn().mockResolvedValue({ ...entitlement, status: 'suspended', version: 2 });
+  const replaceScope = vi.fn().mockResolvedValue({ ...scope, mode: 'selected', resourceIds: ['skill-1'], version: 2 });
+  let tenantLifecycle = input.tenantLifecycle ?? { id: 'tenant-a', updatedAt: NOW };
+  const setTenantDisabled = vi.fn(input.setTenantDisabled ?? (async (
+    tenantId: string, disabled: boolean,
+  ) => {
+    tenantLifecycle = { id: tenantId, ...(disabled ? { disabled: true } : {}), updatedAt: '2026-08-10T09:02:00.000Z' };
+    return tenantLifecycle;
+  }));
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -93,10 +133,45 @@ async function rig(input: {
       } : null),
       getMembership,
       updateMembershipIdentity: updateMembership,
-      listMemberships: vi.fn().mockResolvedValue([]),
+      listMemberships: vi.fn().mockResolvedValue(input.memberships ?? [actor, target]),
     } as never,
-    entitlements: {} as never,
-    assignments: { replaceAssignments, listUserPreferences: vi.fn().mockResolvedValue([]) } as never,
+    entitlements: {
+      getEntitlementSet: vi.fn().mockResolvedValue(entitlement),
+      listResourceScopes: vi.fn().mockResolvedValue([scope]),
+      getPolicies: vi.fn().mockResolvedValue([]),
+      updateEntitlementSet: updateEntitlement,
+      replaceResourceScope: replaceScope,
+    } as never,
+    assignments: {
+      getAssignmentSet,
+      replaceAssignments,
+      listUserPreferences: vi.fn().mockResolvedValue([]),
+      listEffectiveResourceIds: listEffectiveResources,
+    } as never,
+    changeJobs: { findActiveForTarget: vi.fn().mockImplementation(async (
+      _tenantId: string, _jobType: string, _targetType: string, userId: string,
+    ) => userId === input.activeOffboardingUserId ? { jobId: 'offboarding-1' } : null) },
+    ...(input.directoryGroups ? { directoryGroups: {
+      ...input.directoryGroups,
+      getAssignmentSnapshot: async (tenantId: string, groupId: string) => {
+        const group = await input.directoryGroups!.getGroup(tenantId, groupId);
+        return group ? { memberUserIds: [], digest: `snapshot:${groupId}`, fresh: true } : null;
+      },
+    } } : {}),
+    ...(input.oauthGrants ? { oauthGrants: input.oauthGrants as never } : {}),
+    ...(input.revokeOAuthGrant ? { revokeOAuthGrant: input.revokeOAuthGrant } : {}),
+    resolveAssignmentResource: input.resolveAssignmentResource ?? (async () => 'valid'),
+    resolveEntitlementResource: input.resolveEntitlementResource ?? (async () => ({ status: 'valid', version: 1 })),
+    listEntitlementResources: input.listEntitlementResources ?? (async () => ({ status: 'valid', items: [{ resourceId: 'skill-1', version: 1 }] })),
+    resolveDependencyImpact: async () => ({
+      affectedResources: [], blockers: [], affectedAgents: [], affectedAutomations: [], brokenReferences: [],
+    }),
+    getMemberProfile: (tenantId, userId) => tenantId === target.tenantId && userId === target.userId ? {
+      userId, username: 'member', displayName: '测试成员', accountStatus: 'active', dingtalkBound: false,
+      createdAt: NOW, updatedAt: NOW,
+    } : null,
+    getTenantLifecycle: tenantId => tenantId === tenantLifecycle.id ? tenantLifecycle : undefined,
+    setTenantDisabled,
     audit: { append: auditAppend, ...(input.auditList ? { list: input.auditList } : {}) } as never,
     membershipPreviewSecret: PREVIEW_SECRET,
     ...(input.now ? { now: input.now } : {}),
@@ -114,7 +189,12 @@ async function rig(input: {
   return {
     request: (path: string, init?: RequestInit) => fetch(`${base}${path}`, init),
     updateMembership,
+    getAssignmentSet,
     replaceAssignments,
+    listEffectiveResources,
+    setTenantDisabled,
+    updateEntitlement,
+    replaceScope,
     getMembership,
   };
 }
@@ -133,6 +213,19 @@ async function createPreview(
   return await response.json() as Record<string, unknown>;
 }
 
+async function createAssignmentPreview(
+  test: Awaited<ReturnType<typeof rig>>,
+  change: Record<string, unknown>,
+  query = '',
+): Promise<Record<string, unknown>> {
+  const response = await test.request(
+    `/api/governance/access/assignments/skill/skill-1/preview${query}`,
+    json('POST', change),
+  );
+  expect(response.status).toBe(200);
+  return await response.json() as Record<string, unknown>;
+}
+
 function commitBody(change: Record<string, unknown>, preview: Record<string, unknown>): Record<string, unknown> {
   return {
     ...change,
@@ -143,6 +236,134 @@ function commitBody(change: Record<string, unknown>, preview: Record<string, unk
 }
 
 describe('governance access routes', () => {
+  it('个人 OAuth Grant 只按当前 tenant/user 查询权威批准记录', async () => {
+    const listForSubject = vi.fn().mockResolvedValue([{
+      grantId: 'grant-1', provider: 'github', status: 'active', scopeSummary: ['repo:read'], approvals: [],
+    }]);
+    const test = await rig({ oauthGrants: { listForSubject } });
+    const response = await test.request('/api/governance/access/oauth-grants');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ grants: [{ grantId: 'grant-1', provider: 'github' }] });
+    expect(listForSubject).toHaveBeenCalledWith('tenant-a', 'admin-1');
+  });
+
+  it('Membership 列表由后端返回动作，普通管理员不能获得身份治理动作', async () => {
+    const target = membership({ userId: 'user-2', persona: 'member' });
+    const test = await rig({ memberships: [target] });
+    const response = await test.request('/api/governance/access/memberships');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ memberships: [{
+      userId: 'user-2',
+      allowedActions: [{ id: 'disable', change: { status: 'disabled' } }],
+    }] });
+  });
+
+  it('Owner 与平台恢复动作均由服务端作用域授权生成', async () => {
+    const target = membership({ userId: 'user-2', persona: 'org_admin' });
+    const owner = await rig({
+      actor: membership({ userId: 'admin-1', persona: 'org_admin', isOwner: true }),
+      memberships: [target],
+    });
+    const ownerResponse = await owner.request('/api/governance/access/memberships');
+    expect((await ownerResponse.json()).memberships[0].allowedActions.map((item: { id: string }) => item.id))
+      .toEqual(['grant_owner', 'demote_member', 'disable']);
+
+    const platform = await rig({
+      user: { sub: 'platform-1', username: 'platform', tenantId: 'pantheon', role: 'admin' },
+      platformAdmin: true,
+      memberships: [target],
+    });
+    const platformResponse = await platform.request('/api/governance/access/memberships?tenantId=tenant-a');
+    expect(await platformResponse.json()).toMatchObject({ memberships: [{
+      allowedActions: [{ id: 'recover_owner', requiresReason: true }],
+    }] });
+  });
+
+  it('成员详情按六类资源返回权威 Assignment 聚合，解析失败则整体 fail closed', async () => {
+    const listEffectiveResources = vi.fn().mockImplementation(async (
+      _tenantId: string, _userId: string, resourceType: string,
+    ) => resourceType === 'skill' ? [{
+      resourceId: 'skill-1', bindingId: 'binding-1', assignmentVersion: 2, finalEffect: 'allow',
+      bindings: [{ assignmentId: 'binding-1', assigneeType: 'user', assigneeId: 'user-2', effect: 'allow', origin: 'direct' }],
+    }] : []);
+    const test = await rig({ listEffectiveResources });
+    const response = await test.request('/api/governance/access/memberships/user-2/details');
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      profile: { userId: 'user-2', displayName: '测试成员', accountStatus: 'active' },
+      identity: { userId: 'user-2' },
+      accessSummary: { effectivePersona: 'member', decision: 'eligible', why: [{ source: 'membership', effect: 'allow' }] },
+      snapshot: { membershipVersion: 1 },
+    });
+    expect(body.assignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        resourceType: 'skill',
+        resources: expect.arrayContaining([expect.objectContaining({ resourceId: 'skill-1' })]),
+      }),
+    ]));
+    expect(listEffectiveResources).toHaveBeenCalledTimes(6);
+
+    const failed = await rig({ listEffectiveResources: vi.fn().mockRejectedValue(new Error('ASSIGNMENT_GROUP_SUBJECT_UNRESOLVED')) });
+    const failedResponse = await failed.request('/api/governance/access/memberships/user-2/details');
+    expect(failedResponse.status).toBe(503);
+    expect(await failedResponse.json()).toMatchObject({ code: 'ASSIGNMENT_GROUP_SUBJECT_UNRESOLVED' });
+  });
+
+  it('平台组织生命周期动作由后端返回，并强制 preview baseline 后提交', async () => {
+    const test = await rig({
+      user: { sub: 'platform-1', username: 'platform', tenantId: 'pantheon', role: 'admin' },
+      platformAdmin: true,
+    });
+    const lifecycle = await test.request('/api/governance/access/tenant-lifecycle?tenantId=tenant-a');
+    expect(await lifecycle.json()).toMatchObject({
+      status: 'active', allowedActions: [{ id: 'suspend', action: 'suspend', requiresReason: true }],
+    });
+    const change = { action: 'suspend', reason: 'customer security incident' };
+    const previewResponse = await test.request(
+      '/api/governance/access/tenant-lifecycle/preview?tenantId=tenant-a', json('POST', change),
+    );
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json() as Record<string, unknown>;
+    const committed = await test.request(
+      '/api/governance/access/tenant-lifecycle?tenantId=tenant-a',
+      json('POST', commitBody(change, preview)),
+    );
+    expect(committed.status).toBe(200);
+    expect(await committed.json()).toMatchObject({ tenantId: 'tenant-a', status: 'suspended' });
+    expect(test.setTenantDisabled).toHaveBeenCalledWith('tenant-a', true, 'platform-1');
+  });
+
+  it('Entitlement 与 Scope 写入统一绑定 previewId 和 baselineDigest', async () => {
+    const test = await rig({
+      user: { sub: 'platform-1', username: 'platform', tenantId: 'pantheon', role: 'admin' },
+      platformAdmin: true,
+    });
+    const entitlementChange = { expectedVersion: 1, status: 'suspended', reason: 'contract suspended' };
+    const entitlementPreviewResponse = await test.request(
+      '/api/governance/access/entitlements/preview?tenantId=tenant-a', json('POST', entitlementChange),
+    );
+    const entitlementPreview = await entitlementPreviewResponse.json() as Record<string, unknown>;
+    const entitlementCommit = await test.request(
+      '/api/governance/access/entitlements?tenantId=tenant-a',
+      json('PATCH', commitBody(entitlementChange, entitlementPreview)),
+    );
+    expect(entitlementCommit.status).toBe(200);
+    expect(test.updateEntitlement).toHaveBeenCalledWith('tenant-a', expect.objectContaining({ expectedVersion: 1, status: 'suspended' }));
+
+    const scopeChange = { expectedVersion: 1, mode: 'selected', resourceIds: ['skill-1'] };
+    const scopePreviewResponse = await test.request(
+      '/api/governance/access/entitlement-scopes/skill/preview?tenantId=tenant-a', json('POST', scopeChange),
+    );
+    const scopePreview = await scopePreviewResponse.json() as Record<string, unknown>;
+    const scopeCommit = await test.request(
+      '/api/governance/access/entitlement-scopes/skill?tenantId=tenant-a',
+      json('PUT', commitBody(scopeChange, scopePreview)),
+    );
+    expect(scopeCommit.status).toBe(200);
+    expect(test.replaceScope).toHaveBeenCalledWith('tenant-a', 'skill', expect.objectContaining({ expectedVersion: 1, mode: 'selected' }));
+  });
+
   it('普通 org_admin 不能提升成员或修改同级管理员状态', async () => {
     const promote = await rig();
     const promoteResponse = await promote.request(
@@ -246,6 +467,78 @@ describe('governance access routes', () => {
     expect(test.updateMembership).not.toHaveBeenCalled();
   });
 
+  it('个人 OAuth Grant 撤销严格执行签名 preview→真实断开→revoked 投影', async () => {
+    const grant = {
+      grantId: 'grant-1', tenantId: 'tenant-a', subjectUserId: 'admin-1', provider: 'google', connectorId: 'google-workspace',
+      status: 'active', scopeSummary: ['drive.readonly'], approvedAt: NOW, version: 1, approvals: [],
+    };
+    const getForSubject = vi.fn().mockResolvedValue(grant);
+    const markRevocationPending = vi.fn().mockResolvedValue({ ...grant, status: 'error', version: 2 });
+    const markProviderRevoking = vi.fn().mockResolvedValue({ ...grant, status: 'error', revocationStage: 'provider_revoking', version: 3 });
+    const markProviderRevoked = vi.fn().mockResolvedValue({ ...grant, status: 'error', revocationStage: 'provider_revoked', version: 4 });
+    const markRevocationRetry = vi.fn();
+    const recordRevocation = vi.fn().mockResolvedValue({ ...grant, status: 'revoked', version: 5 });
+    const revokeOAuthGrant = vi.fn().mockResolvedValue(undefined);
+    const test = await rig({
+      oauthGrants: { listForSubject: vi.fn().mockResolvedValue([grant]), getForSubject, markRevocationPending, markProviderRevoking, markProviderRevoked, markRevocationRetry, recordRevocation },
+      revokeOAuthGrant,
+    });
+    const reason = '用户主动撤销长期账号授权';
+    const previewResponse = await test.request('/api/governance/access/oauth-grants/grant-1/revoke/preview', json('POST', { reason }));
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json() as Record<string, unknown>;
+    const commit = await test.request('/api/governance/access/oauth-grants/grant-1/revoke', json('POST', {
+      reason, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt,
+    }));
+    expect(commit.status).toBe(200);
+    await expect(commit.json()).resolves.toMatchObject({ grantId: 'grant-1', status: 'revoked', version: 5 });
+    expect(markRevocationPending).toHaveBeenCalledWith(expect.objectContaining({ grantId: 'grant-1' }));
+    expect(markProviderRevoking).toHaveBeenCalledWith(expect.objectContaining({ grantId: 'grant-1' }));
+    expect(revokeOAuthGrant).toHaveBeenCalledWith(grant, expect.objectContaining({ sub: 'admin-1' }));
+    expect(markProviderRevoked).toHaveBeenCalledWith(expect.objectContaining({ grantId: 'grant-1' }));
+    expect(recordRevocation).toHaveBeenCalledWith(expect.objectContaining({ grantId: 'grant-1', actorUserId: 'admin-1' }));
+  });
+
+  it('Scope all 模式也必须绑定完整目录，authority 缺失或目录漂移时 fail closed', async () => {
+    const unavailable = await rig({ platformAdmin: true, listEntitlementResources: async () => ({ status: 'unavailable' }) });
+    const change = { expectedVersion: 1, mode: 'all', resourceIds: [] };
+    expect((await unavailable.request(
+      '/api/governance/access/entitlement-scopes/skill/preview?tenantId=tenant-a', json('POST', change),
+    )).status).toBe(503);
+
+    const listEntitlementResources = vi.fn()
+      .mockResolvedValueOnce({ status: 'valid', items: [{ resourceId: 'skill-1', version: 1 }] })
+      .mockResolvedValueOnce({ status: 'valid', items: [{ resourceId: 'skill-1', version: 2 }] });
+    const test = await rig({ platformAdmin: true, listEntitlementResources });
+    const previewResponse = await test.request(
+      '/api/governance/access/entitlement-scopes/skill/preview?tenantId=tenant-a', json('POST', change),
+    );
+    const preview = await previewResponse.json() as Record<string, unknown>;
+    const commit = await test.request(
+      '/api/governance/access/entitlement-scopes/skill?tenantId=tenant-a', json('PUT', commitBody(change, preview)),
+    );
+    expect(commit.status).toBe(409);
+    await expect(commit.json()).resolves.toMatchObject({ code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
+  });
+
+  it('Scope 预览后目录资源版本变化时提交必须 409', async () => {
+    const resolveEntitlementResource = vi.fn()
+      .mockResolvedValueOnce({ status: 'valid', version: 1 })
+      .mockResolvedValueOnce({ status: 'valid', version: 2 });
+    const test = await rig({ platformAdmin: true, resolveEntitlementResource });
+    const change = { expectedVersion: 1, mode: 'selected', resourceIds: ['skill-1'] };
+    const previewResponse = await test.request(
+      '/api/governance/access/entitlement-scopes/skill/preview?tenantId=tenant-a', json('POST', change),
+    );
+    const preview = await previewResponse.json() as Record<string, unknown>;
+    const commit = await test.request(
+      '/api/governance/access/entitlement-scopes/skill?tenantId=tenant-a',
+      json('PUT', commitBody(change, preview)),
+    );
+    expect(commit.status).toBe(409);
+    await expect(commit.json()).resolves.toMatchObject({ code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
+  });
+
   it('跨租户被拒；platform admin 仅可在显式客户 tenant scope 带 reason 恢复 Owner', async () => {
     const org = await rig();
     const denied = await org.request(
@@ -296,17 +589,100 @@ describe('governance access routes', () => {
     expect(test.replaceAssignments).not.toHaveBeenCalled();
   });
 
+  it('Assignment 写入校验同租户成员和目录群组，平台管理员默认禁止代写', async () => {
+    const invalidResource = await rig({ resolveAssignmentResource: async () => 'not_found' });
+    const resourceResponse = await invalidResource.request(
+      '/api/governance/access/assignments/skill/cross-tenant/preview',
+      json('POST', { expectedVersion: 1, assignments: [] }),
+    );
+    expect(resourceResponse.status).toBe(409);
+    expect(await resourceResponse.json()).toMatchObject({ code: 'ASSIGNMENT_RESOURCE_INVALID' });
+
+    const invalidUser = await rig();
+    const userResponse = await invalidUser.request('/api/governance/access/assignments/skill/skill-1/preview', json('POST', {
+      expectedVersion: 1,
+      assignments: [{ assigneeType: 'user', assigneeId: 'unknown', effect: 'allow' }],
+    }));
+    expect(userResponse.status).toBe(409);
+    expect(await userResponse.json()).toMatchObject({ code: 'ASSIGNMENT_USER_SUBJECT_INVALID' });
+
+    const offboardingUser = await rig({ activeOffboardingUserId: 'user-2' });
+    const offboardingResponse = await offboardingUser.request('/api/governance/access/assignments/skill/skill-1/preview', json('POST', {
+      expectedVersion: 1,
+      assignments: [{ assigneeType: 'user', assigneeId: 'user-2', effect: 'allow' }],
+    }));
+    expect(offboardingResponse.status).toBe(409);
+    expect(await offboardingResponse.json()).toMatchObject({ code: 'ASSIGNMENT_SUBJECT_OFFBOARDING_ACTIVE' });
+
+    const directoryGroups = {
+      getGroup: vi.fn(async () => ({ groupId: 'group-1', status: 'active' as const })),
+      listGroups: vi.fn(async () => []),
+    };
+    const validGroup = await rig({ directoryGroups });
+    const groupChange = {
+      expectedVersion: 1,
+      assignments: [{ assigneeType: 'directory_group', assigneeId: 'group-1', effect: 'allow' }],
+    };
+    const groupPreview = await createAssignmentPreview(validGroup, groupChange);
+    const groupResponse = await validGroup.request(
+      '/api/governance/access/assignments/skill/skill-1',
+      json('PUT', commitBody(groupChange, groupPreview)),
+    );
+    expect(groupResponse.status).toBe(200);
+    expect(directoryGroups.getGroup).toHaveBeenCalledWith('tenant-a', 'group-1');
+
+    const platform = await rig({
+      user: { sub: 'platform-1', username: 'platform', tenantId: 'pantheon', role: 'admin' },
+      platformAdmin: true,
+    });
+    const platformResponse = await platform.request(
+      '/api/governance/access/assignments/skill/skill-1?tenantId=tenant-a',
+      json('PUT', { expectedVersion: 1, assignments: [] }),
+    );
+    expect(platformResponse.status).toBe(403);
+    expect(await platformResponse.json()).toMatchObject({ code: 'PLATFORM_ASSIGNMENT_WRITE_FORBIDDEN' });
+  });
+
   it('Assignment mutation 返回 projection pending 回执并写 durable outbox', async () => {
     const projectionEnqueue = vi.fn().mockResolvedValue({ outboxId: 'projection-1' });
     const test = await rig({ projectionEnqueue });
-    const response = await test.request('/api/governance/access/assignments/skill/skill-1', json('PUT', {
-      expectedVersion: 1, assignments: [],
-    }));
+    const change = { expectedVersion: 1, assignments: [] };
+    const preview = await createAssignmentPreview(test, change);
+    const response = await test.request(
+      '/api/governance/access/assignments/skill/skill-1',
+      json('PUT', commitBody(change, preview)),
+    );
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ compatibilityProjection: 'applied_with_projection_pending' });
     expect(projectionEnqueue).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-a', projector: 'assignment', idempotencyKey: 'skill:skill-1:2',
     }));
+  });
+
+  it('Assignment Set 支持 expectedVersion=0 创建，commit 强制绑定 preview baseline', async () => {
+    const getAssignmentSet = vi.fn().mockResolvedValue(null);
+    const replaceAssignments = vi.fn().mockResolvedValue({
+      tenantId: 'tenant-a', resourceType: 'skill', resourceId: 'skill-1', version: 1, assignments: [],
+    });
+    const test = await rig({ getAssignmentSet, replaceAssignments });
+    const change = { expectedVersion: 0, assignments: [] };
+    const preview = await createAssignmentPreview(test, change);
+    expect(preview).toMatchObject({ impact: { assignmentCount: 0, createsAssignmentSet: true } });
+
+    const tampered = await test.request(
+      '/api/governance/access/assignments/skill/skill-1',
+      json('PUT', { ...commitBody(change, preview), assignments: [{ assigneeType: 'everyone', effect: 'allow' }] }),
+    );
+    expect(tampered.status).toBe(409);
+    expect(await tampered.json()).toMatchObject({ code: 'ASSIGNMENT_PREVIEW_INVALID' });
+    expect(replaceAssignments).not.toHaveBeenCalled();
+
+    const committed = await test.request(
+      '/api/governance/access/assignments/skill/skill-1',
+      json('PUT', commitBody(change, preview)),
+    );
+    expect(committed.status).toBe(200);
+    expect(replaceAssignments).toHaveBeenCalledWith('tenant-a', 'skill', 'skill-1', [], 0, 'admin-1');
   });
 
   it('terminal audit 失败时回执标 pending，并把终态审计写入 durable outbox', async () => {
@@ -329,9 +705,29 @@ describe('governance access routes', () => {
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
-      auditId: 'commit-intent', changeId: 'commit-intent', auditCompletion: 'pending',
+      auditId: 'commit-intent', changeId: 'commit-intent', auditCompletion: 'pending', auditProjectionId: 'projection-1',
     });
     expect(projectionEnqueue).toHaveBeenCalledWith(expect.objectContaining({ projector: 'audit_terminal' }));
+  });
+
+  it('terminal audit 与 outbox 同时失败时不虚报 pending，并明确返回 changed=true', async () => {
+    const auditAppend = vi.fn()
+      .mockResolvedValueOnce({ auditId: 'preview-intent' })
+      .mockResolvedValueOnce({ auditId: 'preview-terminal' })
+      .mockResolvedValueOnce({ auditId: 'commit-intent' })
+      .mockRejectedValueOnce(new Error('audit terminal down'));
+    const test = await rig({
+      actor: membership({ userId: 'admin-1', persona: 'org_admin', isOwner: true }),
+      auditAppend,
+      projectionEnqueue: vi.fn().mockRejectedValue(new Error('outbox down')),
+    });
+    const change = { expectedVersion: 1, status: 'disabled' };
+    const preview = await createPreview(test, 'user-2', change);
+    const response = await test.request('/api/governance/access/memberships/user-2', json('PATCH', commitBody(change, preview)));
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'GOVERNANCE_AUDIT_TERMINAL_NOT_DURABLE', changed: true, auditId: 'commit-intent',
+    });
   });
 
   it('组织管理员只能查询本组织治理审计', async () => {

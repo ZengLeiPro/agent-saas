@@ -7,6 +7,7 @@ import {
   ScrollView,
   Switch,
   Alert,
+  Linking,
 } from "react-native";
 import { Image } from "expo-image";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -39,6 +40,7 @@ import {
   reportActivity,
 } from "@agent/shared";
 import type { AgentProfile } from "@agent/shared";
+import { fetchMyGovernanceSummary, type MyGovernanceSummary } from "@agent/shared/lib/governanceApi";
 import { showTextPrompt } from "../../../src/lib/prompt";
 
 const APP_VERSION = Constants.expoConfig?.version ?? "0.0.0";
@@ -61,9 +63,6 @@ export default function SettingsScreen() {
   const { user, logout } = useAuth();
   const tts = useTtsPlayer();
   const router = useRouter();
-  const isAdmin = user?.role === "admin";
-  const canManagePlatformSkills = isAdmin && user?.tenantId === "pantheon";
-  const canManageTenantSkills = isAdmin && user?.tenantId !== "pantheon";
   const tenantFeatures =
     user?.tenantFeatures ?? DEFAULT_TENANT_SETTINGS.features;
   const { level: fontSizeLevel, setLevel: setFontSizeLevel } = useFontSize();
@@ -79,12 +78,17 @@ export default function SettingsScreen() {
   );
 
   const [agentProfile, setAgentProfile] = useState<AgentProfile | null>(null);
+  const [governanceSummary, setGovernanceSummary] = useState<MyGovernanceSummary | null>(null);
   useEffect(() => {
     if (!user?.username) return;
     fetchAgentProfile(user.username)
       .then(setAgentProfile)
       .catch(() => {});
   }, [user?.username]);
+  useEffect(() => {
+    if (!user) return;
+    fetchMyGovernanceSummary().then(setGovernanceSummary).catch(() => setGovernanceSummary(null));
+  }, [user]);
 
   const initial = (user?.username || "U").charAt(0).toUpperCase();
   const avatarUri = user?.avatar
@@ -272,6 +276,13 @@ export default function SettingsScreen() {
         setLanActiveState(isLanActive());
       },
     });
+  };
+
+  const openGovernanceDesktop = async () => {
+    if (!governanceSummary) return;
+    const target = new URL(governanceSummary.desktopPath, mobileConfig.getBaseUrl()).toString();
+    try { await Linking.openURL(target); }
+    catch { Alert.alert("无法打开桌面控制台", target); }
   };
 
   const handleLogout = () => {
@@ -470,62 +481,32 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Admin Section */}
-        {isAdmin && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>管理</Text>
-            <View style={styles.card}>
-              <TouchableOpacity
-                style={[styles.row, styles.rowBorder]}
-                onPress={() => router.push("/settings/users")}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.rowLabel}>用户管理</Text>
-                <ChevronRight
-                  size={16}
-                  color={colors.mutedForeground}
-                  strokeWidth={2}
-                />
-              </TouchableOpacity>
-              {tenantFeatures.customSkillsEnabled && canManageTenantSkills && (
-                <TouchableOpacity
-                  style={[styles.row, styles.rowBorder]}
-                  onPress={() => router.push("/settings/skills-tenant-admin")}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.rowLabel}>组织技能管理</Text>
-                  <ChevronRight size={16} color={colors.mutedForeground} strokeWidth={2} />
-                </TouchableOpacity>
-              )}
-              {tenantFeatures.customSkillsEnabled && canManagePlatformSkills && (
-                <TouchableOpacity
-                  style={[styles.row, styles.rowBorder]}
-                  onPress={() => router.push("/settings/skills-admin")}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.rowLabel}>平台技能管理</Text>
-                  <ChevronRight
-                    size={16}
-                    color={colors.mutedForeground}
-                    strokeWidth={2}
-                  />
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity
-                style={[styles.row, styles.rowBorder]}
-                onPress={() => router.push("/settings/audit-log")}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.rowLabel}>操作日志</Text>
-                <ChevronRight
-                  size={16}
-                  color={colors.mutedForeground}
-                  strokeWidth={2}
-                />
-              </TouchableOpacity>
+        {/* V2 Personal Governance */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>个人治理</Text>
+          <View style={styles.card}>
+            <TouchableOpacity style={[styles.row, styles.rowBorder]} onPress={() => router.push("/settings/my-permissions")} activeOpacity={0.7}>
+              <Text style={styles.rowLabel}>我的权限</Text>
+              <ChevronRight size={16} color={colors.mutedForeground} strokeWidth={2} />
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.row, styles.rowBorder]} onPress={() => router.push("/settings/connections")} activeOpacity={0.7}>
+              <Text style={styles.rowLabel}>连接与授权</Text>
+              <View style={styles.rowRight}><Text style={styles.rowValue}>Google Workspace 与 MCP</Text><ChevronRight size={16} color={colors.mutedForeground} strokeWidth={2} /></View>
+            </TouchableOpacity>
+            <View style={[styles.row, styles.rowBorder]}>
+              <Text style={styles.rowLabel}>文件与存储</Text>
+              <Text style={styles.rowValue}>只读迁移态</Text>
             </View>
+            <View style={[styles.row, governanceSummary?.persona !== "member" && styles.rowBorder]}>
+              <Text style={styles.rowLabel}>治理身份</Text>
+              <Text style={styles.rowValue}>{governanceSummary?.label ?? "权威摘要不可用"}</Text>
+            </View>
+            {governanceSummary?.persona !== "member" && governanceSummary ? <TouchableOpacity style={styles.row} onPress={() => { void openGovernanceDesktop(); }} activeOpacity={0.7}>
+              <Text style={styles.rowLabel}>管理待办与异常</Text>
+              <View style={styles.rowRight}><Text style={styles.rowValue}>在桌面控制台继续</Text><ChevronRight size={16} color={colors.mutedForeground} strokeWidth={2} /></View>
+            </TouchableOpacity> : null}
           </View>
-        )}
+        </View>
 
         {/* Logout */}
         <View style={styles.section}>

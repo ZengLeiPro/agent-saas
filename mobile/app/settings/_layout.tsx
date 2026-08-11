@@ -20,6 +20,8 @@ export default function SettingsDetailLayout() {
         headerShadowVisible: false,
       }}
     >
+      <Stack.Screen name="my-permissions" options={{ title: "我的权限" }} />
+      <Stack.Screen name="connections" options={{ title: "连接与授权" }} />
       <Stack.Screen name="users" options={{ title: "用户管理" }} />
       <Stack.Screen name="user-detail" options={{ title: "用户详情" }} />
       <Stack.Screen name="audit-log" />

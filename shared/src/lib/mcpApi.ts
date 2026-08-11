@@ -113,11 +113,15 @@ export async function deleteMyMcpServer(id: string): Promise<void> {
   }
 }
 
-export async function startMyMcpOAuth(serverId: string, returnTo: string): Promise<McpOAuthStartResponse> {
+export async function startMyMcpOAuth(
+  serverId: string,
+  returnTo: string,
+  nativeDeviceId?: string,
+): Promise<McpOAuthStartResponse> {
   return jsonOrError(await authFetch(`/api/mcp/me/servers/${encodeURIComponent(serverId)}/oauth/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ returnTo }),
+    body: JSON.stringify({ returnTo, ...(nativeDeviceId ? { nativeDeviceId } : {}) }),
   }), '连接器授权启动失败');
 }
 

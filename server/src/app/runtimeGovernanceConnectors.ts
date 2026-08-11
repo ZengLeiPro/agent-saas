@@ -9,6 +9,8 @@ import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS } from '../data/tenants/type
 import { OrgAgentStore } from '../data/orgAgents/store.js';
 import { SkillConfigStore } from '../data/skills/index.js';
 import { PgMembershipStore } from '../data/memberships/index.js';
+import { PgOAuthGrantStore } from '../data/oauthGrants/index.js';
+import { PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import { normalizeLegacyEntitlementSettings, PgEntitlementStore } from '../data/entitlements/index.js';
 import { PgAssignmentStore } from '../data/assignments/index.js';
 import { PgCredentialStore } from '../data/credentials/index.js';
@@ -60,6 +62,8 @@ export interface RuntimeGovernanceConnectorDeps {
   skillConfigStore?: SkillConfigStore;
   pgEventStore?: PgEventStore;
   membershipStore?: PgMembershipStore;
+  oauthGrantStore?: PgOAuthGrantStore;
+  governanceChangeJobStore?: PgGovernanceChangeJobStore;
   entitlementStore?: PgEntitlementStore;
   assignmentStore?: PgAssignmentStore;
   credentialStore?: PgCredentialStore;
@@ -77,7 +81,7 @@ export interface RuntimeGovernanceConnectorDeps {
 export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGovernanceConnectorDeps) {
   const {
     processCwd, agentCwd, config, secretVault, userStore, tenantStore, orgAgentStore, skillConfigStore,
-    pgEventStore, membershipStore, entitlementStore, assignmentStore, credentialStore,
+    pgEventStore, membershipStore, oauthGrantStore, governanceChangeJobStore, entitlementStore, assignmentStore, credentialStore,
     agentResourceStore, environmentStore, skillGovernanceStore, governanceAuditStore,
     governanceMigrationControlStore, governanceShadowComparator, runResolutionSnapshotStore,
     resolveLegacySkillResourceId,
@@ -469,13 +473,47 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
     vault: secretVault,
     onError: error => serverLogger.warn(`Aliyun connector runtime env skipped: ${error.message}`),
   });
+  const authorizeOAuthSubject = async (userId: string, tenantId: string): Promise<boolean> => {
+    const user = userStore?.findById(userId);
+    if (!user || user.disabled || user.tenantId !== tenantId || tenantStore?.findById(tenantId)?.disabled) return false;
+    if (!membershipStore || !governanceChangeJobStore) return false;
+    const membership = await membershipStore.getMembership(tenantId, userId);
+    if (!membership || membership.status !== 'active') return false;
+    return !await governanceChangeJobStore.findActiveForTarget(tenantId, 'user_offboarding', 'user', userId);
+  };
+  const authorizeOAuthGrant = async (grantId: string, userId: string, tenantId: string): Promise<boolean> => {
+    if (!oauthGrantStore) return false;
+    const grant = await oauthGrantStore.getForSubject(tenantId, userId, grantId);
+    return grant?.status === 'active'
+      && !grant.revocationStage
+      && (!grant.expiresAt || new Date(grant.expiresAt).getTime() > Date.now());
+  };
+  const authorizeConnectorAssignment = async (userId: string, tenantId: string, connectorId: string): Promise<boolean> => {
+    if (!assignmentStore || !entitlementStore) return false;
+    try {
+      const [resources, entitlement, scopes] = await Promise.all([
+        assignmentStore.listEffectiveResourceIds(tenantId, userId, 'connector'),
+        entitlementStore.getEntitlementSet(tenantId),
+        entitlementStore.listResourceScopes(tenantId),
+      ]);
+      const connectorScope = scopes.find(scope => scope.resourceType === 'connector');
+      const entitled = entitlement?.status === 'active' && Boolean(connectorScope)
+        && (connectorScope!.mode === 'all' || connectorScope!.resourceIds.includes(connectorId));
+      return entitled && resources.some(item => item.resourceId === connectorId);
+    } catch {
+      return false;
+    }
+  };
   const mcpOAuthService = new McpOAuthService({
     store: mcpConfigStore,
     vault: secretVault,
     userResolver: username => {
       const user = userStore?.findByUsername(username);
-      return user ? { tenantId: user.tenantId, disabled: user.disabled } : undefined;
+      return user ? { id: user.id, tenantId: user.tenantId, disabled: user.disabled } : undefined;
     },
+    authorizeSubject: authorizeOAuthSubject,
+    authorizeGrant: authorizeOAuthGrant,
+    authorizeConnect: authorizeConnectorAssignment,
     onSecretRotated: async secretRef => {
       await credentialStore?.bumpGenerationBySecretRef(secretRef, 'system:mcp-oauth-rotation');
     },
@@ -579,6 +617,9 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       vault: secretVault,
       stateStore: googleWorkspaceOAuthStateStore,
       userResolver: userId => userStore?.findById(userId),
+      authorizeSubject: authorizeOAuthSubject,
+      authorizeGrant: authorizeOAuthGrant,
+      authorizeConnect: (userId, tenantId) => authorizeConnectorAssignment(userId, tenantId, 'google-workspace'),
       logger: serverLogger.child('GoogleWorkspaceConnector'),
       fetchImpl: egressFetch,
     });

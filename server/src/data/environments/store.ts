@@ -385,6 +385,13 @@ export class PgEnvironmentStore {
     return this.transition(input);
   }
 
+  async listTemplates(): Promise<EnvironmentTemplate[]> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.templatesTable} ORDER BY name,template_id`,
+    );
+    return result.rows.map(rowToTemplate);
+  }
+
   async getTemplate(templateId: string): Promise<EnvironmentTemplate | null> {
     const result = await this.options.pool.query(
       `SELECT * FROM ${this.templatesTable} WHERE template_id = $1`, [templateId],

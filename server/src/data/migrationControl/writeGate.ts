@@ -12,7 +12,6 @@ export class GovernanceWriteGate {
     compatibilityProjection: boolean;
   }): Promise<void> {
     const control = await this.controls.getControl();
-    if (control.mode !== 'enforce' || !control.legacyWritesSealed) return;
     if (input.actor === 'service' && input.compatibilityProjection
       && control.compatibilityProjectionEnabled) return;
     throw new GovernanceMigrationControlInvariantError('MIGRATION_LEGACY_WRITE_SEALED');

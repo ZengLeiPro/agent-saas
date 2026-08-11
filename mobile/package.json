@@ -10,7 +10,8 @@
     "build:ios": "./scripts/build.sh ios",
     "build:android": "./scripts/build.sh android",
     "build:ios:only": "./scripts/build.sh ios --build",
-    "submit:ios": "./scripts/build.sh ios --submit"
+    "submit:ios": "./scripts/build.sh ios --submit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@agent/shared": "workspace:*",
@@ -55,7 +56,8 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vitest": "^4.0.18"
   },
   "private": true
 }

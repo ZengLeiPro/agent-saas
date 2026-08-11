@@ -11,6 +11,7 @@ import { resolveUserCwd } from '../workspace/resolver.js';
 import { auditLog } from '../data/login-logs/index.js';
 import type { SecretVault } from '../security/secretVault.js';
 import type { McpOAuthService } from '../mcp/oauthService.js';
+import type { NativeOAuthHandoffStore } from '../connectors/nativeOAuthHandoff.js';
 
 export interface McpRouterDeps {
   store: McpConfigStore;
@@ -19,8 +20,17 @@ export interface McpRouterDeps {
   agentCwd: string;
   secretVault?: SecretVault;
   oauthService?: McpOAuthService;
+  nativeOAuthHandoff?: NativeOAuthHandoffStore;
   /** Web 前端基址（前后端分域部署时必配，否则 OAuth 回调后会跳回 API 域）；未配置=回调 URL 同源 */
   webBaseUrl?: string;
+  recordOAuthGrant?: (input: {
+    grantId: string; tenantId: string; subjectUserId: string; provider: string; connectorId: string;
+    status: 'active'; scopeSummary: string[]; approvedAt: string;
+    action: 'approved'; purpose: string; actorUserId: string;
+  }) => Promise<unknown>;
+  revokeOAuthGrant?: (input: {
+    grantId: string; tenantId: string; subjectUserId: string; purpose: string; actorUserId: string;
+  }) => Promise<unknown>;
   legacyWriteGate?: {
     assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
   };
@@ -119,15 +129,19 @@ function validateConnectorSecretValue(server: ManagedMcpServer, key: string, val
   if (looksLikeGithubPat && token.length >= 30) return undefined;
   return 'GitHub Token 格式不正确，请粘贴以 ghp_ 或 github_pat_ 开头的 Personal Access Token（可省略 Bearer 前缀）';
 }
-const oauthStartSchema = z.object({ returnTo: z.string().min(1).max(4000).optional() }).strict();
+const oauthStartSchema = z.object({
+  returnTo: z.string().min(1).max(4000).optional(),
+  nativeDeviceId: z.string().regex(/^[A-Za-z0-9._:-]{8,200}$/).optional(),
+}).strict();
 const diagnoseSchema = z.object({ force: z.boolean().optional() }).strict();
 
 export function createMcpRouter(deps: McpRouterDeps): Router {
   const router = Router();
   const { store, userStore, manager, agentCwd, secretVault, oauthService, webBaseUrl } = deps;
   router.use(async (req, res, next) => {
-    const writesLegacyState = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)
-      || (req.method === 'GET' && req.path === '/oauth/callback');
+    const governedOAuthFlow = (req.method === 'GET' && req.path === '/oauth/callback')
+      || (req.method === 'POST' && /^\/me\/servers\/[^/]+\/oauth\/start$/.test(req.path));
+    const writesLegacyState = !governedOAuthFlow && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
     if (!writesLegacyState || !deps.legacyWriteGate) return next();
     try {
       await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
@@ -290,9 +304,9 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
   /** OAuth provider 的浏览器回调：只凭一次性 state 取回用户上下文，不依赖登录 cookie。 */
   router.get('/oauth/callback', async (req, res) => {
     if (!oauthService) return res.status(503).send('MCP OAuth is not configured');
+    const state = stringQuery(req.query.state, 1000);
+    if (!state) return res.status(400).send('Missing OAuth state');
     try {
-      const state = stringQuery(req.query.state, 1000);
-      if (!state) return res.status(400).send('Missing OAuth state');
       const result = await oauthService.finish({
         state,
         code: stringQuery(req.query.code, 20000),
@@ -306,17 +320,54 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
         await store.setUserEnabledServers(result.username, enabled, currentTenantId);
       } else {
         const authorizedUser = userStore.findByUsername(result.username);
-        if (authorizedUser) {
-          req.user = {
-            sub: authorizedUser.id,
-            username: authorizedUser.username,
-            role: authorizedUser.role,
+        if (!authorizedUser || !deps.recordOAuthGrant) {
+          await oauthService.disconnect(result.username, result.tenantId, result.serverId);
+          throw new Error('OAuth Grant authority unavailable');
+        }
+        req.user = {
+          sub: authorizedUser.id,
+          username: authorizedUser.username,
+          role: authorizedUser.role,
+          tenantId: authorizedUser.tenantId,
+        };
+        auditLog(req, 'mcp_oauth_connected', result.serverId);
+        const scopeSummary = result.scopeSummary ?? [];
+        if (scopeSummary.length === 0) throw new Error('OAuth granted scope evidence is unavailable');
+        try {
+          await deps.recordOAuthGrant({
+            grantId: `mcp:${authorizedUser.tenantId}:${authorizedUser.id}:${result.serverId}`,
             tenantId: authorizedUser.tenantId,
-          };
-          auditLog(req, 'mcp_oauth_connected', result.serverId);
+            subjectUserId: authorizedUser.id,
+            provider: `mcp:${result.serverId}`,
+            connectorId: result.serverId,
+            status: 'active',
+            scopeSummary,
+            approvedAt: new Date().toISOString(),
+            action: 'approved',
+            purpose: 'mcp_oauth_connect',
+            actorUserId: authorizedUser.id,
+          });
+        } catch (error) {
+          await oauthService.disconnect(authorizedUser.username, authorizedUser.tenantId, result.serverId);
+          throw error;
         }
       }
       await manager.invalidateUser(result.username);
+      let nativeRedirect: string | null | undefined;
+      try {
+        nativeRedirect = await deps.nativeOAuthHandoff?.complete(state, {
+          status: result.ok ? 'succeeded' : 'failed',
+          ...(!result.ok ? { errorCode: 'OAUTH_AUTHORIZATION_FAILED' } : {}),
+        });
+      } catch {
+        if (result.ok) {
+          return res.status(202).type('html').send(
+            '<!doctype html><meta charset="utf-8"><p>连接器授权已成功，但 App 回跳交付暂时失败；请返回 App 的连接与授权页面刷新状态。</p>',
+          );
+        }
+        throw new Error('OAuth native handoff delivery failed');
+      }
+      if (nativeRedirect) return res.redirect(302, nativeRedirect);
       // returnTo 只接受站内相对路径（拒绝绝对 URL / 协议相对 //，防 open redirect）；
       // 反斜杠必须一并拒绝：WHATWG URL 会把 '\' 归一化为 '/'，'/\evil.com' 解析即协议相对跳出站外
       // 基址优先 webBaseUrl（前后端分域时回 web 域），否则退回回调 URL 同源（单域部署）
@@ -350,6 +401,10 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
 })();</script></body></html>`;
       res.status(200).type('html').send(html);
     } catch {
+      const nativeRedirect = await deps.nativeOAuthHandoff?.complete(state, {
+        status: 'failed', errorCode: 'OAUTH_CALLBACK_FAILED',
+      }).catch(() => null);
+      if (nativeRedirect) return res.redirect(302, nativeRedirect);
       res.status(500).send('OAuth callback failed; return to the connector settings and retry');
     }
   });
@@ -366,18 +421,50 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     const tenantId = currentTenantId(req);
     if (!username || !tenantId) return res.status(401).json({ error: 'Authentication required' });
     if (!oauthService) return res.status(503).json({ error: 'MCP OAuth is not configured' });
+    if (!deps.recordOAuthGrant) return res.status(503).json({ error: 'OAuth Grant authority unavailable' });
     const parsed = oauthStartSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json({ error: 'Invalid OAuth start request', details: parsed.error.format() });
+    if (parsed.data.nativeDeviceId && !deps.nativeOAuthHandoff) {
+      return res.status(503).json({ error: 'Native OAuth handoff is not configured', code: 'NATIVE_OAUTH_HANDOFF_UNAVAILABLE' });
+    }
     const server = store.getServer(req.params.serverId);
     if (!server || !isServerVisibleToUser(server, username, tenantId)) return res.status(404).json({ error: 'MCP server not found' });
     try {
       const result = await oauthService.start({
         username,
+        userId: req.user!.sub,
         tenantId,
         server,
         redirectUrl: oauthRedirectUrl(req),
-        returnTo: parsed.data.returnTo ?? '/',
+        returnTo: parsed.data.nativeDeviceId ? '/' : parsed.data.returnTo ?? '/',
       });
+      if (result.status === 'connected') {
+        if (!result.scopeSummary?.length) throw new Error('OAuth granted scope evidence is unavailable');
+        try {
+          await deps.recordOAuthGrant({
+            grantId: `mcp:${tenantId}:${req.user!.sub}:${server.id}`,
+            tenantId, subjectUserId: req.user!.sub, provider: `mcp:${server.id}`, connectorId: server.id,
+            status: 'active', scopeSummary: result.scopeSummary, approvedAt: new Date().toISOString(),
+            action: 'approved', purpose: 'mcp_oauth_connect', actorUserId: req.user!.sub,
+          });
+        } catch (error) {
+          await oauthService.disconnect(username, tenantId, server.id);
+          throw error;
+        }
+      }
+      if (parsed.data.nativeDeviceId && result.status === 'pending') {
+        const state = store.getUserOAuthConnection(username, server.id)?.pendingState;
+        if (!state) throw new Error('Native OAuth state unavailable');
+        try {
+          await deps.nativeOAuthHandoff!.begin({
+            providerState: state, userId: req.user!.sub, tenantId,
+            connectorId: server.id, deviceId: parsed.data.nativeDeviceId,
+          });
+        } catch (error) {
+          await oauthService.disconnect(username, tenantId, server.id);
+          throw error;
+        }
+      }
       const enabled = store.getUserConfig(username).enabledServers;
       if (!enabled.includes(server.id)) {
         await store.setUserEnabledServers(username, [...enabled, server.id], tenantId);
@@ -389,19 +476,14 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     }
   });
 
-  router.delete('/me/servers/:serverId/oauth', async (req, res) => {
+  router.delete('/me/servers/:serverId/oauth', (req, res) => {
     const username = currentUsername(req);
     const tenantId = currentTenantId(req);
-    if (!username || !tenantId) return res.status(401).json({ error: 'Authentication required' });
-    if (!oauthService) return res.status(503).json({ error: 'MCP OAuth is not configured' });
-    const server = store.getServer(req.params.serverId);
-    if (!server || !isServerVisibleToUser(server, username, tenantId)) return res.status(404).json({ error: 'MCP server not found' });
-    await oauthService.disconnect(username, tenantId, server.id);
-    const enabled = store.getUserConfig(username).enabledServers.filter(id => id !== server.id);
-    await store.setUserEnabledServers(username, enabled, tenantId);
-    await manager.invalidateUser(username);
-    auditLog(req, 'mcp_oauth_revoked', server.id);
-    res.json({ ok: true });
+    if (!username || !tenantId || !req.user) return res.status(401).json({ error: 'Authentication required' });
+    return res.status(503).json({
+      error: 'Use the signed OAuth Grant revocation flow',
+      code: 'OAUTH_GRANT_SIGNED_REVOCATION_REQUIRED',
+    });
   });
 
   router.put('/me/selections', async (req, res) => {

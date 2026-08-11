@@ -63,7 +63,8 @@ export interface AcsOrchestratorConfig {
   sandboxTtlMs: number;
   /**
    * 07-05：CI 临时 sandbox（名字以 `as-ws-ci-` 开头）走的短 TTL，覆盖 sandboxTtlMs。
-   * CI sandbox 用完一次就没有复用价值，不该占普通 24h TTL 慢慢过期。默认 6h。
+   * CI sandbox 用完一次就没有复用价值，workflow 正常退出会立即删除；默认 1h
+   * 只用于 cleanup trap / 进程 / 控制面异常时的泄漏兜底。
    * 设为 0 = 关闭这条特殊路径，回退到普通 sandboxTtlMs。
    */
   sandboxCiTtlMs: number;
@@ -444,10 +445,12 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     // 「每顶层会话组 1 个」，idle 窗口直接决定总 pod·h——4h 会让每个短会话都
     // 拖 4 小时空转。既然唤醒零代价，窗口就该收紧。
     sandboxIdlePauseMs: readIntEnv('ACS_SANDBOX_IDLE_PAUSE_MS', 5 * 60_000, { min: 0, max: 7 * 24 * 60 * 60_000 }),
-    // 2026-08-11 曾磊拍板：per-session 后每个历史会话都会留下独立休眠盘；
-    // 过去 60 天真实复用 99.6% 发生在 24h 内，故普通/Taskboard TTL 由 7d 收紧为 24h。
-    sandboxTtlMs: readIntEnv('ACS_SANDBOX_TTL_MS', 24 * 60 * 60_000, { min: 0, max: 30 * 24 * 60 * 60_000 }),
-    sandboxCiTtlMs: readIntEnv('ACS_SANDBOX_CI_TTL_MS', 6 * 60 * 60_000, { min: 0, max: 30 * 24 * 60 * 60_000 }),
+    // 2026-08-12 曾磊拍板：per-session 后每天十几到几十个新会话会各自留下休眠盘，
+    // 不能只按已复用会话的 24h 命中率定 TTL。过去 30 天全量模拟中 2h 仍保住
+    // 92.0% 复用，同时把平均保留库存从 16.19 降至 2.34，故普通/Taskboard 改为 2h。
+    sandboxTtlMs: readIntEnv('ACS_SANDBOX_TTL_MS', 2 * 60 * 60_000, { min: 0, max: 30 * 24 * 60 * 60_000 }),
+    // CI 正常路径由 workflow EXIT trap 即时删除；1h 只兜底异常泄漏。
+    sandboxCiTtlMs: readIntEnv('ACS_SANDBOX_CI_TTL_MS', 60 * 60_000, { min: 0, max: 30 * 24 * 60 * 60_000 }),
     sandboxOrphanGraceMs: readIntEnv('ACS_SANDBOX_ORPHAN_GRACE_MS', 30 * 60_000, { min: 0, max: 7 * 24 * 60 * 60_000 }),
     // 宽限默认 5min：正常 pause 收敛 <2min（生产实测），5min 足以避开瞬态；
     // 且必须小于发布门禁的等待窗口（acs-sandbox.yml 5.5 段 8min），否则门禁等不到自愈。

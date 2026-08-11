@@ -30,14 +30,13 @@ type MemberBudgetStatus = "unset" | "normal" | "attention" | "warning" | "over";
 
 interface MyMemberBudget extends MemberBudgetAllowance {
   monthUsedCredits: number;
-  enforcementMode: "notify" | "stop_new_runs";
-  perRunLimitCredits: number | null;
   canStartRun: boolean;
   usageRatioBps: number | null;
   status: MemberBudgetStatus;
 }
 
 interface BillingMiniBadgeProps {
+  isAdmin: boolean;
   sessionId?: string | null;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -131,6 +130,7 @@ function StatRow({ label, value }: { label: string; value: string }) {
 }
 
 export function BillingMiniBadge({
+  isAdmin,
   sessionId,
   open: controlledOpen,
   onOpenChange,
@@ -287,16 +287,6 @@ export function BillingMiniBadge({
                     label="我的月度额度"
                     value={memberBudget.monthlyLimitCredits === null ? "未设置" : formatDetailedCredits(memberBudget.monthlyLimitCredits)}
                   />
-                  {memberBudget.remainingCredits !== null && (
-                    <StatRow label="可用额度" value={formatDetailedCredits(memberBudget.remainingCredits)} />
-                  )}
-                  <StatRow
-                    label="执行方式"
-                    value={memberBudget.enforcementMode === "stop_new_runs" ? "超额停后续动作" : "仅提醒"}
-                  />
-                  {memberBudget.perRunLimitCredits !== null && (
-                    <StatRow label="单 Run 上限" value={formatDetailedCredits(memberBudget.perRunLimitCredits)} />
-                  )}
                 </div>
               </>
             ) : (
@@ -304,13 +294,15 @@ export function BillingMiniBadge({
             )}
           </div>
 
-          <div className="border-t border-border/60 px-3 py-3">
-            <div className="text-[13px] font-medium">公司共享积分池</div>
-            <div className="mt-2.5 space-y-1.5 text-[13px]">
-              <StatRow label="总余额" value={formatDetailedCredits(summary.balanceCredits)} />
-              <StatRow label="组织本月消耗" value={formatDetailedCredits(summary.currentMonthCreditsUsed)} />
+          {isAdmin && (
+            <div className="border-t border-border/60 px-3 py-3">
+              <div className="text-[13px] font-medium">公司共享积分池</div>
+              <div className="mt-2.5 space-y-1.5 text-[13px]">
+                <StatRow label="总余额" value={formatDetailedCredits(summary.balanceCredits)} />
+                <StatRow label="组织本月消耗" value={formatDetailedCredits(summary.currentMonthCreditsUsed)} />
+              </div>
             </div>
-          </div>
+          )}
 
           {sessionSummary && (
             <div className="border-t border-border/60 px-3 py-3 text-[13px]">

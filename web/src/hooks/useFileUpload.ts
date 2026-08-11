@@ -55,16 +55,26 @@ export function useFileUpload(
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const generationRef = useRef(0);
+  const nextUploadIdRef = useRef(0);
+  const activeUploadsRef = useRef(new Map<number, number>());
+
+  const refreshUploading = useCallback(() => {
+    const currentGeneration = generationRef.current;
+    setUploading([...activeUploadsRef.current.values()].some((generation) => generation === currentGeneration));
+  }, []);
 
   const dismissUploadError = useCallback(() => {
     setUploadError(null);
   }, []);
 
   const replaceFiles = useCallback((files: UploadedFile[]) => {
+    generationRef.current += 1;
     setUploadedFiles((previous) => {
       revokeFilePreviews(previous);
       return files;
     });
+    setUploading(false);
     setUploadError(null);
     setIsDragging(false);
   }, []);
@@ -79,6 +89,7 @@ export function useFileUpload(
   // Cleanup previews on unmount
   useEffect(() => {
     return () => {
+      generationRef.current += 1;
       revokeFilePreviews(uploadedFilesRef.current);
     };
   }, []);
@@ -93,7 +104,10 @@ export function useFileUpload(
       return;
     }
 
-    setUploading(true);
+    const generation = generationRef.current;
+    const uploadId = ++nextUploadIdRef.current;
+    activeUploadsRef.current.set(uploadId, generation);
+    refreshUploading();
     setUploadError(null);
 
     try {
@@ -116,6 +130,7 @@ export function useFileUpload(
       if (!data.success) {
         throw new Error(data.error || "Upload failed");
       }
+      if (generation !== generationRef.current) return;
 
       const uploadedWithPreviews = data.files.map((file: UploadedFile, index: number) => {
         const sourceFile = files[index];
@@ -132,13 +147,16 @@ export function useFileUpload(
       console.log("Files uploaded:", data.files);
     } catch (error) {
       console.error("Upload error:", error);
-      setUploadError(
-        "上传失败：" + (error instanceof Error ? error.message : "未知错误"),
-      );
+      if (generation === generationRef.current) {
+        setUploadError(
+          "上传失败：" + (error instanceof Error ? error.message : "未知错误"),
+        );
+      }
     } finally {
-      setUploading(false);
+      activeUploadsRef.current.delete(uploadId);
+      refreshUploading();
     }
-  }, []);
+  }, [refreshUploading]);
 
   const handleFileSelect = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const fileList = event.target.files;
@@ -251,6 +269,9 @@ export function useFileUpload(
   }, [activeTab, uploadFiles]);
 
   const clearFiles = useCallback(() => {
+    generationRef.current += 1;
+    setUploading(false);
+    setUploadError(null);
     setUploadedFiles((previous) => {
       revokeFilePreviews(previous);
       return [];
@@ -258,6 +279,9 @@ export function useFileUpload(
   }, []);
 
   const consumeFiles = useCallback((): UploadedFile[] => {
+    generationRef.current += 1;
+    setUploading(false);
+    setUploadError(null);
     const current = uploadedFilesRef.current;
     setUploadedFiles([]);
     // Note: we do NOT revoke previews here since caller may still need them briefly

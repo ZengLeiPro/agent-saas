@@ -131,6 +131,8 @@ export type {
   TaskBoardPriority,
   TaskBoardExecutionStatus,
   TaskBoard,
+  TaskBoardAttachment,
+  TaskBoardUploadAttachment,
   TaskBoardTask,
   TaskBoardComment,
   TaskBoardExecution,

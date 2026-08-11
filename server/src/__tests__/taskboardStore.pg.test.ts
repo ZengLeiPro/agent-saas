@@ -173,9 +173,18 @@ describePg('PgTaskboardStore contract', () => {
 
   it('allocates stable numbers, returns CAS current state, and makes archived boards/tasks read-only', async () => {
     const board = await store.createBoard(alice, { name: 'CAS 与归档' });
-    const first = await store.createTask(alice, board.id, { title: '第一项' });
+    const taskAttachment = {
+      attachmentId: randomUUID(),
+      originalName: '需求.png',
+      relativePath: 'uploads/需求.png',
+      size: 123,
+      mimeType: 'image/png',
+      isImage: true,
+    };
+    const first = await store.createTask(alice, board.id, { title: '第一项', attachments: [taskAttachment] });
     const second = await store.createTask(alice, board.id, { title: '第二项' });
     expect([first.identifier, second.identifier]).toEqual(['TASK-1', 'TASK-2']);
+    expect(first.attachments).toEqual([taskAttachment]);
     expect(second.sortOrder).toBeGreaterThan(first.sortOrder);
 
     const edited = await store.updateTask(alice, first.id, {
@@ -195,8 +204,15 @@ describePg('PgTaskboardStore contract', () => {
       });
     }
 
-    const comment = await store.createComment(alice, first.id, { body: '人工评论' });
-    expect(comment).toMatchObject({ authorId: alice.ownerUserId, authorName: alice.username, version: 1 });
+    const commentAttachment = { ...taskAttachment, attachmentId: randomUUID(), originalName: '验收.mp4', isImage: false };
+    const comment = await store.createComment(alice, first.id, { body: '', attachments: [commentAttachment] });
+    expect(comment).toMatchObject({
+      body: '',
+      attachments: [commentAttachment],
+      authorId: alice.ownerUserId,
+      authorName: alice.username,
+      version: 1,
+    });
     expect(await store.listComments(alice, first.id)).toHaveLength(1);
     expect(await store.listComments(
       { ...alice, displayName: '爱丽丝 @alice' },

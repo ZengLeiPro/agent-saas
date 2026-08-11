@@ -28,6 +28,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import { useFileUpload } from "@/hooks/useFileUpload";
 import * as api from "./api";
 import {
   dateFromDueAt,
@@ -38,9 +39,10 @@ import {
   STATUS_LABELS,
 } from "./constants";
 import { ModelSelect } from "./ModelSelect";
+import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from "./TaskAttachments";
 import { useTaskComments, useTaskExecutions } from "./hooks";
 
-type TaskDraftField = "title" | "description" | "priority" | "labels" | "dueAt" | "model";
+type TaskDraftField = "title" | "description" | "attachments" | "priority" | "labels" | "dueAt" | "model";
 
 const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
 
@@ -86,6 +88,8 @@ export function TaskDetail({
   const [commentBody, setCommentBody] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const taskAttachments = useFileUpload("taskboard");
+  const commentAttachments = useFileUpload("taskboard");
   const draftTaskIdRef = useRef<string | null>(null);
   const dirtyFieldsRef = useRef<Set<TaskDraftField>>(new Set());
   const detailRequestRef = useRef(0);
@@ -110,21 +114,23 @@ export function TaskDetail({
     dirtyFieldsRef.current.clear();
     setTitle(next.title);
     setDescription(next.description);
+    taskAttachments.replaceFiles(next.attachments ?? []);
     setPriority(next.priority);
     setLabels(next.labels.join(", "));
     setDueDate(dateFromDueAt(next.dueAt));
     setModel(next.model ?? null);
-  }, []);
+  }, [taskAttachments.replaceFiles]);
 
   const mergeServerDraft = useCallback((next: TaskBoardTask) => {
     const dirty = dirtyFieldsRef.current;
     if (!dirty.has("title")) setTitle(next.title);
     if (!dirty.has("description")) setDescription(next.description);
+    if (!dirty.has("attachments")) taskAttachments.replaceFiles(next.attachments ?? []);
     if (!dirty.has("priority")) setPriority(next.priority);
     if (!dirty.has("labels")) setLabels(next.labels.join(", "));
     if (!dirty.has("dueAt")) setDueDate(dateFromDueAt(next.dueAt));
     if (!dirty.has("model")) setModel(next.model ?? null);
-  }, []);
+  }, [taskAttachments.replaceFiles]);
 
   useEffect(() => {
     const switchedTask = task?.id !== draftTaskIdRef.current;
@@ -138,16 +144,25 @@ export function TaskDetail({
       draftTaskIdRef.current = null;
       dirtyFieldsRef.current.clear();
       setCommentBody("");
+      taskAttachments.clearFiles();
+      commentAttachments.clearFiles();
       return;
     }
     if (switchedTask) {
       hydrateDraft(task);
       setCommentBody("");
+      commentAttachments.clearFiles();
       setError(null);
     } else {
       mergeServerDraft(task);
     }
-  }, [hydrateDraft, mergeServerDraft, task]);
+  }, [
+    commentAttachments.clearFiles,
+    hydrateDraft,
+    mergeServerDraft,
+    task,
+    taskAttachments.clearFiles,
+  ]);
 
   const taskId = task?.id ?? null;
   useEffect(() => {
@@ -215,6 +230,10 @@ export function TaskDetail({
   const save = async (event: FormEvent) => {
     event.preventDefault();
     if (!currentTask || readOnly) return;
+    if (taskAttachments.uploading) {
+      setError("请等待附件上传完成");
+      return;
+    }
     if (!title.trim()) {
       setError("请输入任务标题");
       return;
@@ -224,6 +243,7 @@ export function TaskDetail({
     const input: Omit<TaskBoardTaskPatchInput, "expectedVersion"> = {};
     if (dirty.has("title")) input.title = title.trim();
     if (dirty.has("description")) input.description = description.trim();
+    if (dirty.has("attachments")) input.attachments = toTaskBoardAttachments(taskAttachments.uploadedFiles);
     if (dirty.has("priority")) input.priority = priority;
     if (dirty.has("labels")) input.labels = splitLabels(labels);
     if (dirty.has("dueAt")) input.dueAt = dueDate ? dueAtFromDate(dueDate) : null;
@@ -318,14 +338,26 @@ export function TaskDetail({
   const submitComment = async (event: FormEvent) => {
     event.preventDefault();
     const body = commentBody.trim();
-    if (!body || !currentTask || readOnly) return;
+    if ((!body && commentAttachments.uploadedFiles.length === 0) || !currentTask || readOnly) return;
+    if (commentAttachments.uploading) {
+      setError("请等待附件上传完成");
+      return;
+    }
     const operationTask = currentTask;
     const requestId = ++detailRequestRef.current;
     setSaving(true);
     setError(null);
     try {
-      await addComment({ body });
-      if (isCurrentOperation(requestId, operationTask.id)) setCommentBody("");
+      await addComment({
+        body,
+        ...(commentAttachments.uploadedFiles.length
+          ? { attachments: toTaskBoardAttachments(commentAttachments.uploadedFiles) }
+          : {}),
+      });
+      if (isCurrentOperation(requestId, operationTask.id)) {
+        setCommentBody("");
+        commentAttachments.clearFiles();
+      }
       await onCommentsChanged();
     } catch (caught) {
       if (!isCurrentOperation(requestId, operationTask.id)) return;
@@ -427,7 +459,20 @@ export function TaskDetail({
                     }}
                     rows={7}
                     disabled={readOnly || saving}
+                    onPaste={(event) => {
+                      if (event.clipboardData.files.length > 0) dirtyFieldsRef.current.add("attachments");
+                      void taskAttachments.handlePaste(event);
+                    }}
                   />
+                  {readOnly ? (
+                    <TaskAttachmentList attachments={taskAttachments.uploadedFiles} />
+                  ) : (
+                    <TaskAttachmentField
+                      upload={taskAttachments}
+                      disabled={saving}
+                      onFilesChanged={() => dirtyFieldsRef.current.add("attachments")}
+                    />
+                  )}
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
@@ -509,7 +554,7 @@ export function TaskDetail({
                 </div>
                 {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
                 <div className="flex flex-wrap gap-2">
-                  {!readOnly ? <Button type="submit" disabled={saving}>保存任务</Button> : null}
+                  {!readOnly ? <Button type="submit" disabled={saving || taskAttachments.uploading}>保存任务</Button> : null}
                   {!boardReadOnly ? (
                     <Button
                       type="button"
@@ -536,7 +581,10 @@ export function TaskDetail({
                       <span>{comment.authorName}</span>
                       <time>{new Date(comment.createdAt).toLocaleString("zh-CN")}</time>
                     </div>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6">{comment.body}</p>
+                    {comment.body ? (
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6">{comment.body}</p>
+                    ) : null}
+                    <TaskAttachmentList attachments={comment.attachments ?? []} />
                   </article>
                 ))}
                 {!commentsLoading && comments.length === 0 ? (
@@ -551,8 +599,15 @@ export function TaskDetail({
                     placeholder={readOnly ? "只读状态不可发表评论" : "补充进展、上下文或复核意见"}
                     rows={3}
                     disabled={readOnly || saving}
+                    onPaste={(event) => void commentAttachments.handlePaste(event)}
                   />
-                  <Button type="submit" size="sm" disabled={readOnly || saving || !commentBody.trim()}>
+                  {!readOnly ? <TaskAttachmentField upload={commentAttachments} disabled={saving} /> : null}
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={readOnly || saving || commentAttachments.uploading
+                      || (!commentBody.trim() && commentAttachments.uploadedFiles.length === 0)}
+                  >
                     <Send />
                     发表
                   </Button>

@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { realpath, stat } from 'node:fs/promises';
+import { extname } from 'node:path';
 
+import { splitByMessageMarkers } from '../../../shared/src/lib/markers.js';
 import type {
+  TaskBoardAttachment,
   TaskBoardComment,
   TaskBoardExecution,
   TaskBoardExecutionStartInput,
@@ -18,6 +22,7 @@ import type { EventStore, PlatformEvent } from '../runtime/types.js';
 import { deriveStableWorkspaceId } from '../runtime/workspaceIdentity.js';
 import { formatDateTime } from '../utils/timestamp.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
+import { isInside, resolveWorkspacePath, relativeWorkspacePath } from '../agent/toolRuntimePaths.js';
 import { TaskboardExecutionUnavailableError } from './types.js';
 export { createTaskboardRuntimeOptions } from './runtimeOptions.js';
 import type {
@@ -390,9 +395,17 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       : await this.options.eventStore.list(sessionId);
     const output = finalAssistantText(events, runId, sessionId)
       || 'Agent 执行完成，但没有返回文本交付。';
+    const userCwd = resolveUserCwd(this.options.agentCwd, {
+      id: context.identity.ownerUserId,
+      username: context.identity.username,
+      role: context.identity.userRole ?? 'user',
+      tenantId: context.identity.tenantId,
+    });
+    const attachments = await extractAgentAttachments(output, userCwd);
     const completion = {
       status: 'succeeded' as const,
-      commentBody: limitComment(`Agent 交付\n\n${output}`),
+      commentBody: limitComment(`Agent 交付\n\n${stripFileMarkers(output)}`),
+      ...(attachments.length ? { attachments } : {}),
     };
     if (reconcileLeaseId) {
       await this.options.store.completeExecutionFromReconcile(runId, completion, reconcileLeaseId);
@@ -629,6 +642,9 @@ function buildExecutionPrompt(
     '任务正文：',
     task.description || '（无正文）',
     '',
+    '任务附件：',
+    formatAttachments(task.attachments ?? []),
+    '',
     `最近评论（${recentComments.length}/${context.comments.length}）：`,
     comments,
   ].join('\n');
@@ -643,13 +659,83 @@ function formatComment(
   const timestamp = Number.isNaN(createdAt.getTime())
     ? comment.createdAt
     : formatDateTime(createdAt, timezone);
-  return `[${timestamp}] ${currentAuthorName || comment.authorName}（${comment.authorType}）\n${comment.body}`;
+  const attachments = comment.attachments?.length
+    ? `\n附件：\n${formatAttachments(comment.attachments)}`
+    : '';
+  return `[${timestamp}] ${currentAuthorName || comment.authorName}（${comment.authorType}）\n${comment.body || '（无文字）'}${attachments}`;
+}
+
+function formatAttachments(attachments: readonly TaskBoardAttachment[]): string {
+  if (attachments.length === 0) return '（无附件）';
+  return attachments.map((attachment) => `- ${attachment.originalName}：${attachment.relativePath}`).join('\n');
 }
 
 function assertExecutionSession(execution: TaskBoardExecution, sessionId: string): void {
   if (execution.sessionId !== sessionId) {
     throw new Error(`Runtime session 与任务看板 Execution 不匹配：run=${execution.runId}`);
   }
+}
+
+async function extractAgentAttachments(output: string, userCwd: string): Promise<TaskBoardAttachment[]> {
+  let realUserCwd: string;
+  try {
+    realUserCwd = await realpath(userCwd);
+  } catch {
+    return [];
+  }
+  const paths = [...new Set(splitByMessageMarkers(output)
+    .filter((segment): segment is Extract<ReturnType<typeof splitByMessageMarkers>[number], { type: 'file' }> => (
+      segment.type === 'file' && Boolean(segment.filePath)
+    ))
+    .map((segment) => segment.filePath))]
+    .slice(0, 50);
+  const attachments = await Promise.all(paths.map(async (filePath): Promise<TaskBoardAttachment | null> => {
+    try {
+      const absolutePath = resolveWorkspacePath(userCwd, filePath);
+      const realFilePath = await realpath(absolutePath);
+      if (!isInside(realUserCwd, realFilePath)) return null;
+      const fileStat = await stat(realFilePath);
+      if (!fileStat.isFile()) return null;
+      const relativePath = relativeWorkspacePath(userCwd, absolutePath);
+      const originalName = relativePath.split('/').pop() || relativePath;
+      const mimeType = mimeTypeFromName(originalName);
+      return {
+        originalName,
+        relativePath,
+        size: fileStat.size,
+        mimeType,
+        isImage: mimeType.startsWith('image/'),
+      };
+    } catch {
+      return null;
+    }
+  }));
+  return attachments.filter((attachment): attachment is TaskBoardAttachment => attachment !== null);
+}
+
+function stripFileMarkers(output: string): string {
+  return output.replace(/\[FILE\]\{.*?\}\[\/FILE\]/g, '').trim();
+}
+
+function mimeTypeFromName(fileName: string): string {
+  const extension = extname(fileName).toLowerCase();
+  const types: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.mp4': 'video/mp4',
+    '.webm': 'video/webm',
+    '.mov': 'video/quicktime',
+    '.pdf': 'application/pdf',
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.csv': 'text/csv',
+    '.json': 'application/json',
+    '.zip': 'application/zip',
+  };
+  return types[extension] ?? 'application/octet-stream';
 }
 
 function finalAssistantText(events: PlatformEvent[], runId: string, sessionId: string): string {

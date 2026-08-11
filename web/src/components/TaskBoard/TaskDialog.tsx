@@ -26,8 +26,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useFileUpload } from "@/hooks/useFileUpload";
 import { dueAtFromDate, PRIORITY_LABELS, splitLabels, STATUS_LABELS } from "./constants";
 import { ModelSelect } from "./ModelSelect";
+import { TaskAttachmentField, toTaskBoardAttachments } from "./TaskAttachments";
 
 interface TaskDialogProps {
   open: boolean;
@@ -55,6 +57,7 @@ export function TaskDialog({
   const [model, setModel] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const attachments = useFileUpload("taskboard");
 
   useEffect(() => {
     if (!open) return;
@@ -66,11 +69,16 @@ export function TaskDialog({
     setDueDate("");
     setModel(null);
     setError(null);
-  }, [initialStatus, open]);
+    attachments.clearFiles();
+  }, [attachments.clearFiles, initialStatus, open]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const normalizedTitle = title.trim();
+    if (attachments.uploading) {
+      setError("请等待附件上传完成");
+      return;
+    }
     if (!normalizedTitle) {
       setError("请输入任务标题");
       return;
@@ -81,6 +89,9 @@ export function TaskDialog({
       await onCreate({
         title: normalizedTitle,
         description: description.trim(),
+        ...(attachments.uploadedFiles.length
+          ? { attachments: toTaskBoardAttachments(attachments.uploadedFiles) }
+          : {}),
         status,
         priority,
         labels: splitLabels(labels),
@@ -129,7 +140,9 @@ export function TaskDialog({
               placeholder="补充上下文和验收信息"
               rows={5}
               disabled={submitting}
+              onPaste={(event) => void attachments.handlePaste(event)}
             />
+            <TaskAttachmentField upload={attachments} disabled={submitting} />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
@@ -200,7 +213,7 @@ export function TaskDialog({
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
             取消
           </Button>
-          <Button type="submit" form="taskboard-task-form" disabled={submitting}>
+          <Button type="submit" form="taskboard-task-form" disabled={submitting || attachments.uploading}>
             {submitting ? "创建中..." : "创建任务"}
           </Button>
         </DialogFooter>

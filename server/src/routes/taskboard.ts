@@ -2,9 +2,13 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import { z } from 'zod';
 
 import type { UserStore } from '../data/users/store.js';
+import type { UploadManager } from '../uploads/manager.js';
+import { resolveUserCwd } from '../workspace/resolver.js';
 import {
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
+  type TaskBoardAttachment,
+  type TaskBoardUploadAttachment,
 } from '../../../shared/src/types/taskboard.js';
 import {
   TaskboardConflictError,
@@ -42,10 +46,20 @@ const expectedVersionSchema = z.object({
 const labelsSchema = z.array(z.string().trim().min(1).max(64)).max(20)
   .transform((labels) => [...new Set(labels)]);
 const dueAtSchema = z.string().datetime({ offset: true });
+const attachmentSchema = z.object({
+  attachmentId: z.string().uuid(),
+  originalName: z.string().min(1).max(512),
+  relativePath: z.string().min(1).max(2_000),
+  size: z.number().int().min(0),
+  mimeType: z.string().min(1).max(256),
+  isImage: z.boolean(),
+}).strict();
+const attachmentsSchema = z.array(attachmentSchema).max(50);
 
 const taskCreateSchema = z.object({
   title: z.string().trim().min(1).max(240),
   description: z.string().max(20_000).optional(),
+  attachments: attachmentsSchema.optional(),
   status: z.enum(TASKBOARD_STATUSES).optional(),
   priority: z.enum(TASKBOARD_PRIORITIES).optional(),
   labels: labelsSchema.optional(),
@@ -56,6 +70,7 @@ const taskCreateSchema = z.object({
 const taskPatchSchema = z.object({
   title: z.string().trim().min(1).max(240).optional(),
   description: z.string().max(20_000).optional(),
+  attachments: attachmentsSchema.optional(),
   priority: z.enum(TASKBOARD_PRIORITIES).optional(),
   labels: labelsSchema.optional(),
   dueAt: dueAtSchema.nullable().optional(),
@@ -64,6 +79,7 @@ const taskPatchSchema = z.object({
 }).strict().refine(
   (input) => input.title !== undefined
     || input.description !== undefined
+    || input.attachments !== undefined
     || input.priority !== undefined
     || input.labels !== undefined
     || input.dueAt !== undefined
@@ -79,8 +95,12 @@ const taskMoveSchema = z.object({
 }).strict();
 
 const commentCreateSchema = z.object({
-  body: z.string().trim().min(1).max(20_000),
-}).strict();
+  body: z.string().trim().max(20_000).default(''),
+  attachments: attachmentsSchema.optional(),
+}).strict().refine(
+  (input) => input.body.length > 0 || Boolean(input.attachments?.length),
+  { message: 'Comment body or attachment is required' },
+);
 
 const boardsQuerySchema = z.object({
   includeArchived: booleanQuerySchema(),
@@ -98,6 +118,9 @@ export interface TaskboardRouterOptions {
   executionService?: TaskboardExecutionService;
   /** 用于解析评论/执行提示词中的用户展示名（如「曾磊 @zenglei」）。 */
   userStore?: UserStore;
+  /** 将上传暂存附件解析为当前用户工作区中的可信附件。 */
+  agentCwd?: string;
+  uploadManager?: UploadManager;
 }
 
 export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
@@ -160,7 +183,13 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   router.post('/boards/:boardId/tasks', route(async (req, res) => {
     const input = parseOrReply(taskCreateSchema, req.body, res, 'body');
     if (!input) return;
-    res.status(201).json(await options.service!.createTask(identityFrom(req), req.params.boardId, input));
+    const attachments = await resolveRequestAttachments(options, req, input.attachments);
+    const task = await options.service!.createTask(identityFrom(req), req.params.boardId, {
+      ...input,
+      ...(attachments ? { attachments } : {}),
+    });
+    await markRequestAttachments(options, req, attachments);
+    res.status(201).json(task);
   }));
 
   router.get('/tasks/:id', route(async (req, res) => {
@@ -170,7 +199,13 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   router.patch('/tasks/:id', route(async (req, res) => {
     const input = parseOrReply(taskPatchSchema, req.body, res, 'body');
     if (!input) return;
-    res.json(await options.service!.updateTask(identityFrom(req), req.params.id, input));
+    const attachments = await resolveRequestAttachments(options, req, input.attachments);
+    const task = await options.service!.updateTask(identityFrom(req), req.params.id, {
+      ...input,
+      ...(attachments ? { attachments } : {}),
+    });
+    await markRequestAttachments(options, req, attachments);
+    res.json(task);
   }));
 
   router.post('/tasks/:id/move', route(async (req, res) => {
@@ -226,10 +261,62 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   router.post('/tasks/:id/comments', route(async (req, res) => {
     const input = parseOrReply(commentCreateSchema, req.body, res, 'body');
     if (!input) return;
-    res.status(201).json(await options.service!.createComment(identityFrom(req), req.params.id, input));
+    const attachments = await resolveRequestAttachments(options, req, input.attachments);
+    const comment = await options.service!.createComment(identityFrom(req), req.params.id, {
+      ...input,
+      ...(attachments ? { attachments } : {}),
+    });
+    await markRequestAttachments(options, req, attachments);
+    res.status(201).json(comment);
   }));
 
   return router;
+}
+
+async function resolveRequestAttachments(
+  options: TaskboardRouterOptions,
+  req: Request,
+  attachments: z.output<typeof attachmentsSchema> | undefined,
+): Promise<TaskBoardUploadAttachment[] | undefined> {
+  if (attachments === undefined) return undefined;
+  if (attachments.length === 0) return [];
+  const userCwd = requestUserCwd(options, req);
+  try {
+    const resolved = await options.uploadManager!.resolveAttachments(
+      userCwd,
+      attachments.map((attachment) => attachment.attachmentId),
+    );
+    return resolved.map((attachment, index) => ({
+      ...attachment,
+      attachmentId: attachment.attachmentId ?? attachments[index]!.attachmentId,
+    }));
+  } catch (error) {
+    throw new TaskboardValidationError(
+      error instanceof Error ? error.message : 'Invalid attachment',
+      'TASKBOARD_INVALID_ATTACHMENT',
+    );
+  }
+}
+
+async function markRequestAttachments(
+  options: TaskboardRouterOptions,
+  req: Request,
+  attachments: TaskBoardAttachment[] | undefined,
+): Promise<void> {
+  if (!attachments?.length) return;
+  await options.uploadManager!.markReferenced(requestUserCwd(options, req), attachments, {});
+}
+
+function requestUserCwd(options: TaskboardRouterOptions, req: Request): string {
+  if (!options.agentCwd || !options.uploadManager || !req.user) {
+    throw new TaskboardValidationError('Taskboard attachment upload unavailable');
+  }
+  return resolveUserCwd(options.agentCwd, {
+    id: req.user.sub,
+    username: req.user.username,
+    role: req.user.role,
+    tenantId: req.user.tenantId,
+  });
 }
 
 function identityFactory(options: TaskboardRouterOptions): (req: Request) => TaskboardIdentity {

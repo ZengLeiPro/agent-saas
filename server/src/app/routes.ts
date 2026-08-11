@@ -475,6 +475,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       service: runtime.taskboardService,
       executionService: runtime.taskboardExecutionService,
       userStore: runtime.userStore,
+      agentCwd,
+      uploadManager: runtime.uploadManager,
     }),
   );
 

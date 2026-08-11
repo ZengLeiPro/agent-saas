@@ -51,6 +51,7 @@ export function FileUpload({
               {formatFileSize(file.size)}
             </span>
             <Button
+              type="button"
               variant="ghost"
               size="icon"
               className="size-7"
@@ -82,6 +83,7 @@ export function FileUpload({
             </span>
             {onDismissError && (
               <Button
+                type="button"
                 variant="ghost"
                 size="icon"
                 className="size-7 text-destructive hover:text-destructive"

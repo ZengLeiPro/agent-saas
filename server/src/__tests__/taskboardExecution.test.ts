@@ -1,3 +1,7 @@
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -29,6 +33,14 @@ const task: TaskBoardTask = {
   identifier: 'TASK-1',
   title: '实现执行闭环',
   description: '使用最新任务内容',
+  attachments: [{
+    attachmentId: '11111111-1111-4111-8111-111111111111',
+    originalName: '需求图.png',
+    relativePath: 'uploads/需求图.png',
+    size: 1024,
+    mimeType: 'image/png',
+    isImage: true,
+  }],
   status: 'todo',
   priority: 'high',
   labels: ['agent'],
@@ -43,6 +55,14 @@ const comment: TaskBoardComment = {
   id: 'comment-1',
   taskId: task.id,
   body: '以评论里的验收条件为准',
+  attachments: [{
+    attachmentId: '22222222-2222-4222-8222-222222222222',
+    originalName: '验收视频.mp4',
+    relativePath: 'uploads/验收视频.mp4',
+    size: 2048,
+    mimeType: 'video/mp4',
+    isImage: false,
+  }],
   authorType: 'user',
   authorId: identity.ownerUserId,
   authorName: identity.username,
@@ -213,6 +233,8 @@ describe('TaskboardExecutionCoordinator', () => {
     const content = (prepared.metadata.wakeMessage as { content: string }).content;
     expect(content.startsWith('看板提示语：\n只修改与任务直接相关的文件。')).toBe(true);
     expect(content).toContain(comment.body);
+    expect(content).toContain('- 需求图.png：uploads/需求图.png');
+    expect(content).toContain('- 验收视频.mp4：uploads/验收视频.mp4');
     expect(content).not.toContain('1. 直接完成任务，必要时使用可用工具；不要只给计划。');
     expect(content).not.toContain('你正在执行一条由用户明确交给 Agent 的任务看板任务。');
     expect(content).not.toContain('执行前输入已从服务端重新读取');
@@ -355,6 +377,52 @@ describe('TaskboardExecutionCoordinator', () => {
       status: 'succeeded',
       commentBody: 'Agent 交付\n\n已实现并完成自验',
     });
+  });
+
+  it('Agent 交付中的文件卡会成为 Agent 评论附件', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'taskboard-attachments-'));
+    const userCwd = join(root, identity.tenantId, identity.ownerUserId);
+    await mkdir(join(userCwd, 'assets'), { recursive: true });
+    await writeFile(join(userCwd, 'assets', '交付报告.pdf'), 'report');
+    try {
+      const completeExecution = vi.fn(async () => ({
+        task: { ...task, status: 'in_review' as const },
+        execution: execution({ status: 'succeeded' }),
+      }));
+      const rig = makeRig({ completeExecution }, { agentCwd: root });
+      vi.mocked(rig.eventStore.listByRun!).mockResolvedValue([{
+        id: 'event-file',
+        timestamp: '2026-08-01T03:00:00.000Z',
+        type: 'assistant_message',
+        runId: 'run-1',
+        sessionId: 'session-1',
+        content: '请查收。\n[FILE]{"filePath":"assets/交付报告.pdf"}[/FILE]',
+      } as PlatformEvent]);
+
+      await rig.coordinator.handleRuntimeEvent({
+        id: 'event-finished',
+        timestamp: '2026-08-01T03:01:00.000Z',
+        type: 'run_finished',
+        runId: 'run-1',
+        sessionId: 'session-1',
+        subtype: 'success',
+        numTurns: 2,
+      } as PlatformEvent);
+
+      expect(completeExecution).toHaveBeenCalledWith('run-1', {
+        status: 'succeeded',
+        commentBody: 'Agent 交付\n\n请查收。',
+        attachments: [{
+          originalName: '交付报告.pdf',
+          relativePath: 'assets/交付报告.pdf',
+          size: 6,
+          mimeType: 'application/pdf',
+          isImage: false,
+        }],
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('入队失败时保留 queued 执行并登记 outbox 重试，不提前写失败终态', async () => {

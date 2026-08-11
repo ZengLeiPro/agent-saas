@@ -25,6 +25,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { csvFilename, exportCsv, type CsvColumn } from "@/components/PlatformAdmin/common/exportCsv";
 import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
 import { rangeToStatsWindow, todayBeijingDate } from "@/components/TenantAnalytics/metrics";
+import { filterModelsForViewer } from "@/components/TenantAnalytics/modelVisibility";
 
 import { usageApi } from "./api";
 import type {
@@ -152,7 +153,17 @@ interface DateArgs {
   family?: ModelFamily;
 }
 
-function ModelBar({ user, dateArgs, labelFor }: { user: string; dateArgs: DateArgs; labelFor?: (modelId: string) => string }) {
+function ModelBar({
+  user,
+  dateArgs,
+  labelFor,
+  isPlatformAdmin,
+}: {
+  user: string;
+  dateArgs: DateArgs;
+  labelFor?: (modelId: string) => string;
+  isPlatformAdmin: boolean;
+}) {
   const [data, setData] = useState<ByModelResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -188,16 +199,17 @@ function ModelBar({ user, dateArgs, labelFor }: { user: string; dateArgs: DateAr
     );
   }
   if (error) return <div className="py-2 text-xs text-destructive">{error}</div>;
-  if (!data || data.models.length === 0) {
+  const visibleModels = filterModelsForViewer(data?.models ?? [], isPlatformAdmin);
+  if (visibleModels.length === 0) {
     return <div className="py-2 text-xs text-muted-foreground">无模型数据</div>;
   }
 
-  const maxTokens = Math.max(...data.models.map((m) => m.totalTokens), 1);
-  const showCost = data.costRedacted !== true;
+  const maxTokens = Math.max(...visibleModels.map((m) => m.totalTokens), 1);
+  const showCost = data?.costRedacted !== true;
 
   return (
     <div className="space-y-1.5 pl-4">
-      {data.models.map((m) => (
+      {visibleModels.map((m) => (
         <div key={m.model} className="flex items-center gap-3 text-xs">
           <div className={cn("w-48 truncate", showCost && "font-mono")} title={labelFor ? labelFor(m.model) : m.model}>
             {labelFor ? labelFor(m.model) : m.model}
@@ -329,6 +341,7 @@ function UserRankTable({
   onSelectUser,
   simplified = false,
   labelFor,
+  isPlatformAdmin,
 }: {
   users: UserAggregate[];
   dateArgs: DateArgs;
@@ -336,6 +349,7 @@ function UserRankTable({
   /** 客户简化视图：隐藏成本与缓存工程列（后端已剥离成本字段） */
   simplified?: boolean;
   labelFor?: (modelId: string) => string;
+  isPlatformAdmin: boolean;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   // 排序也进 URL：分享「按成本从高到低的排行」链接时，对方看到的必须是同一个排序
@@ -424,7 +438,12 @@ function UserRankTable({
               {isOpen && (
                 <TableRow>
                   <TableCell colSpan={simplified ? 7 : 11} className="bg-muted/30">
-                    <ModelBar user={u.username} dateArgs={dateArgs} labelFor={labelFor} />
+                    <ModelBar
+                      user={u.username}
+                      dateArgs={dateArgs}
+                      labelFor={labelFor}
+                      isPlatformAdmin={isPlatformAdmin}
+                    />
                   </TableCell>
                 </TableRow>
               )}
@@ -791,6 +810,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
               onSelectUser={(user) => setSelectedUsername(user.username)}
               simplified={simplified}
               labelFor={labelFor}
+              isPlatformAdmin={isPlatformAdmin}
             />
           ) : loading ? (
             <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
@@ -814,6 +834,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
           onFamilyChange={setFamily}
           onBack={() => setSelectedUsername(null)}
           breadcrumb={[scopeLabel, "Token 用量"]}
+          isPlatformAdmin={isPlatformAdmin}
         />
       )}
     </div>

@@ -56,6 +56,7 @@ function category(
 }
 
 function contentTokens(content: ModelUserContent): number {
+  if (Array.isArray(content) && content.length === 0) return 0;
   return estimateContextTokens(content);
 }
 
@@ -201,7 +202,7 @@ export function buildContextBreakdownSnapshot(params: {
     ? params.currentUserContent.filter((part) => part.type !== 'text')
     : [];
   const currentTokens = contentTokens(currentTextContent);
-  const attachmentTokens = estimateContextTokens(currentAttachmentContent)
+  const attachmentTokens = contentTokens(currentAttachmentContent)
     + (params.attachmentCount ? estimateContextTokens({ attachmentCount: params.attachmentCount }) : 0);
   const toolData = buildToolCategories(params.tools, params.descriptorsByName);
 

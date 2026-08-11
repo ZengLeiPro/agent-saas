@@ -1542,7 +1542,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       },
     };
   })();
-
   const {
     mcpConfigStore,
     connectorConnectionStore,
@@ -1567,6 +1566,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentCwd,
     config,
     secretVault,
+    getFeishuTokenBroker: () => feishuTokenBroker,
+    tenantRunEnvByTenant: resolvedSttRuntimeConfig.audioTranscribeEnvByTenant,
     userStore,
     tenantStore, orgAgentStore,
     skillConfigStore,
@@ -1586,7 +1587,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   });
   googleWorkspaceOAuthService = initializedGoogleWorkspaceOAuthService;
   credentialBroker = initializedCredentialBroker;
-
   const initialMemoryIndexService = createMemoryIndexService(
     processCwd,
     config.memory?.index,

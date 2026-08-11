@@ -55,8 +55,17 @@ describe('ScenarioReplayView', () => {
 
     clickNext(1);
     expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
-    expect(screen.getByText('已运行')).toBeTruthy();
+    expect(screen.getByText('员工提问已完成并形成可回读结果')).toBeTruthy();
     expect(screen.queryByText('确认问题范围与可用资料')).toBeNull();
+  });
+
+  it('旧版回放同样走真实业务步骤投影，并展示终态摘要', () => {
+    renderReplay();
+    expect(screen.queryByText('业务计划')).toBeNull();
+
+    clickNext(1);
+    expect(screen.getByText('业务计划')).toBeTruthy();
+    expect(screen.getByText('员工提问已完成并形成可回读结果')).toBeTruthy();
   });
 
   it('定时工作流首屏显示触发事件，推进后才展示执行动作', () => {
@@ -65,7 +74,7 @@ describe('ScenarioReplayView', () => {
     expect(screen.queryByText('扫描到期事项台账')).toBeNull();
 
     clickNext(1);
-    expect(screen.getByText('已运行')).toBeTruthy();
+    expect(screen.getByText('07:00 排程自己起手已完成并形成可回读结果')).toBeTruthy();
     expect(screen.queryByText('扫描到期事项台账')).toBeNull();
   });
 
@@ -123,12 +132,12 @@ describe('ScenarioReplayView', () => {
     renderReplay();
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
     clickNext(1);
-    expect(screen.getByText('已运行')).toBeTruthy();
+    expect(screen.getByText('员工提问已完成并形成可回读结果')).toBeTruthy();
     clickNext(1);
-    // 第一步的用户消息仍在；非调试视图中的工具动作统一收敛到固定状态。
+    // 第一步的用户消息和业务结果仍在；工具过程默认收进可展开的业务步骤。
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
-    expect(screen.queryByText(/已完成 .*个工具/)).toBeNull();
-    expect(screen.getByText('已运行')).toBeTruthy();
+    expect(screen.getByText('员工提问已完成并形成可回读结果')).toBeTruthy();
+    expect(screen.getByText('检索制度库已完成并形成可回读结果')).toBeTruthy();
     expect(screen.queryByText('检索企业制度库')).toBeNull();
   });
 
@@ -186,7 +195,7 @@ describe('右侧企业系统面板', () => {
     expect(screen.queryByText('企业系统实况')).toBeNull();
     clickNext(1);
     expect(screen.getByText('企业系统实况')).toBeTruthy();
-    expect(screen.getByText('已运行')).toBeTruthy();
+    expect(screen.getByText('员工提问已完成并形成可回读结果')).toBeTruthy();
     expect(screen.queryByText('确认问题范围与可用资料')).toBeNull();
   });
 

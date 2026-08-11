@@ -84,7 +84,7 @@ describe("ScenariosPanel V3", () => {
     expect(screen.queryByTestId("workflow-catalog")).toBeNull();
     expect(screen.queryByRole("button", { name: guided.cta.primary })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "看虚构回放" }));
+    fireEvent.click(screen.getByRole("button", { name: "看演示" }));
     expect(await screen.findByRole("heading", { name: guided.title }, { timeout: 5_000 })).toBeTruthy();
     expect(onReplayOpenChange).toHaveBeenLastCalledWith(true);
     expect(screen.getByText("虚构回放 · 完整闭环")).toBeTruthy();
@@ -128,7 +128,7 @@ describe("ScenariosPanel V3", () => {
     mocked.workflowLibrary = makeWorkflowLibrary([target]);
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole('button', { name: '看虚构回放' }));
+    fireEvent.click(screen.getByRole('button', { name: '看演示' }));
     expect(await screen.findByText('0 / 8', {}, { timeout: 5_000 })).toBeTruthy();
     expect(screen.queryByText('旧回放占位')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /下一步/ }));
@@ -161,7 +161,7 @@ describe("ScenariosPanel V3", () => {
     mocked.workflowLibrary = makeWorkflowLibrary([target, ordinary]);
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
 
-    const buttons = screen.getAllByRole('button', { name: '看虚构回放' });
+    const buttons = screen.getAllByRole('button', { name: '看演示' });
     fireEvent.click(buttons[0]!);
     fireEvent.click(buttons[1]!);
     expect(await screen.findByRole('heading', { name: ordinary.title }, { timeout: 5_000 })).toBeTruthy();

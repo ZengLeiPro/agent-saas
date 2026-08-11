@@ -259,8 +259,8 @@ export interface WsProcessingContext {
    * 返回 null/undefined 表示 clientMsgId 不在队列区（走旧的气泡定位路径）。
    */
   onSteeringPromoted?: (clientMsgId: string | undefined, streamId: string, runId: string | undefined) => number | null | undefined;
-  /** 插话被消费进时间线（user_message 投影）：按 clientMsgId 清理队列区。 */
-  onUserMessageProjected?: (clientMsgId: string | undefined) => void;
+  /** 插话被消费进时间线（user_message 投影）：按 clientMsgId/sourceRunId 清理队列区并阻止旧状态复活。 */
+  onUserMessageProjected?: (clientMsgId: string | undefined, sourceRunId: string | undefined) => void;
 }
 
 /** 在消息数组里按 clientMsgId 查找 user / user-voice 消息的索引，找不到返回 -1 */
@@ -438,7 +438,7 @@ export function processWsEvent(
       if (expectedSessionId && data.sessionId !== expectedSessionId) return;
     }
     // 插话被消费进时间线：清理队列区同 clientMsgId 条目（多端一致的移除信号）。
-    ctx.onUserMessageProjected?.(data.client_msg_id);
+    ctx.onUserMessageProjected?.(data.client_msg_id, data.sourceRunId);
     // 去重：优先按 client_msg_id（精准），回退 content（兼容老 transcript）
     const msgs = msg.messagesRef.current;
     const isDup = msgs.some(m => {

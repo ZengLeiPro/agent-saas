@@ -135,6 +135,7 @@ export function projectRuntimePlatformEvent(
             })),
           } : {}),
           timestamp: Date.parse(event.timestamp) || Date.now(),
+          sourceRunId: event.interjectionSourceRunId,
           ...(event.clientMsgId ? { client_msg_id: event.clientMsgId } : {}),
         }],
       };

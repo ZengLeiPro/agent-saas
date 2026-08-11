@@ -152,10 +152,7 @@ function makeCtx(
   return { ctx, hooks };
 }
 
-function freshBlock(): WsBlockState {
-  return { currentBlockIndex: -1, currentBlockType: null };
-}
-
+function freshBlock(): WsBlockState { return { currentBlockIndex: -1, currentBlockType: null }; }
 /** 便捷：以默认 block/latestSessionId/activeSessionId 派发一条事件 */
 function dispatch(
   data: WsEvent,
@@ -1142,9 +1139,7 @@ describe('processWsEvent - 语音 / 文件 / 错误 / 溢出', () => {
   });
 
   it('voice(standalone) 已有 voice 消息时追加 marker', () => {
-    const ctrl = makeController([
-      { id: 'v', type: 'voice', voiceMarkers: [{ text: '第一句' }] },
-    ]);
+    const ctrl = makeController([{ id: 'v', type: 'voice', voiceMarkers: [{ text: '第一句' }] }]);
     const { ctx, hooks } = makeCtx(ctrl);
     dispatch({ type: 'voice', text: '第二句', standalone: true }, ctx);
     expect(ctrl.messages).toHaveLength(1);
@@ -1163,9 +1158,7 @@ describe('processWsEvent - 语音 / 文件 / 错误 / 溢出', () => {
   });
 
   it('voice_transcribed：把转写中的 user-voice 落成 sent 并写文本', () => {
-    const ctrl = makeController([
-      { id: 'v', type: 'user-voice', audioUrl: 'u', duration: 2, status: 'transcribing' },
-    ]);
+    const ctrl = makeController([{ id: 'v', type: 'user-voice', audioUrl: 'u', duration: 2, status: 'transcribing' }]);
     const { ctx } = makeCtx(ctrl);
     dispatch({ type: 'voice_transcribed', text: '识别结果' }, ctx);
     const v = ctrl.messages[0] as Extract<MessageItem, { type: 'user-voice' }>;
@@ -1174,15 +1167,12 @@ describe('processWsEvent - 语音 / 文件 / 错误 / 溢出', () => {
   });
 
   it('voice_transcribed(error)：状态落 failed', () => {
-    const ctrl = makeController([
-      { id: 'v', type: 'user-voice', audioUrl: 'u', duration: 2, status: 'uploading' },
-    ]);
+    const ctrl = makeController([{ id: 'v', type: 'user-voice', audioUrl: 'u', duration: 2, status: 'uploading' }]);
     const { ctx } = makeCtx(ctrl);
     dispatch({ type: 'voice_transcribed', text: '', error: true }, ctx);
     expect((ctrl.messages[0] as Extract<MessageItem, { type: 'user-voice' }>).status).toBe('failed');
   });
 });
-
 describe('最终输出追认', () => {
   it('block_start 把 runId 绑定到实时 text 消息', () => {
     const ctrl = makeController();

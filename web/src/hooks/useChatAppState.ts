@@ -32,8 +32,11 @@ import {
 import type { CompactionMessageItem, CompactionStatusEvent } from "@/lib/compaction";
 import {
   InterjectionConsumptionRegistry,
+  reconcileQueuedInterjections,
   removeConsumedInterjections,
 } from "@/lib/interjectionConsumption";
+import type { QueuedInterjection } from "@/lib/interjectionConsumption";
+export type { QueuedInterjection } from "@/lib/interjectionConsumption";
 import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, replaceSettingsUrl, pushAdminSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, normalizeAdminSettingsSection, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl, buildTenantAdminUrl, pushTenantAdminUrl, replaceTenantAdminUrl, normalizeTenantAdminSection, preserveScopeSearch, preserveSearchKeys, TENANT_ADMIN_SCOPE_KEYS, pushGovernanceUrl, replaceGovernanceUrl } from "@/lib/urlSync";
 import { buildGovernanceUrl, governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
 import { registerUpdateGuard, registerBeforeReloadHook, maybeReloadOnPopstate } from "@/lib/swUpdate";
@@ -77,21 +80,6 @@ function sendResumeDeduped(payload: WsResumeMessage): Promise<boolean> {
   _lastResumeAt = now;
   return wsClient.ensureConnectedSend(payload);
 }
-/** 插话队列区条目（2026-08-04 终态设计）：排队中的消息不进时间线。 */
-export interface QueuedInterjection {
-  clientMsgId: string;
-  /** 服务端 steering source run id（stream_id{queued} ACK 后可用，撤回要用） */
-  sourceRunId?: string;
-  targetRunId?: string;
-  content: string;
-  attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
-  /** sending=已发出等 ACK；queued=服务端已受理排队；cancelled=已撤销（可重发）；failed=发送失败（可重发） */
-  status: 'sending' | 'queued' | 'cancelled' | 'failed';
-  /** cancelled/failed 的原因说明 */
-  reason?: string;
-  createdAt: number;
-}
-
 export interface ChatAppState {
   messages: MessageItem[];
   input: string;
@@ -525,6 +513,19 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     [],
   );
 
+  // Detail 快照与消费标记的对账保持稳定引用，供 session callbacks 复用。
+  const reconcileServerInterjections = useCallback(
+    (serverQueued: NonNullable<ApiSessionDetail["queuedMessages"]>) => {
+      mutateQueuedInterjections(
+        (prev) => reconcileQueuedInterjections(
+          prev,
+          serverQueued,
+          consumedInterjectionsRef.current,
+        ),
+      );
+    },
+    [mutateQueuedInterjections],
+  );
   const voiceCallbackRef = useRef(options?.onVoiceEvent);
   voiceCallbackRef.current = options?.onVoiceEvent;
 
@@ -886,34 +887,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     onQueuedMessages: (sessionId: string, serverQueued: NonNullable<ApiSessionDetail["queuedMessages"]>) => {
       const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
       if (!sid || sessionId !== sid) return;
-      mutateQueuedInterjections((prev) => {
-        const serverEntries: QueuedInterjection[] = serverQueued
-          .filter((q) => !consumedInterjectionsRef.current.has({
-            clientMsgId: q.clientMsgId,
-            sourceRunId: q.sourceRunId,
-          }))
-          .map((q) => {
-            const local = prev.find((e) => (
-              (q.clientMsgId && e.clientMsgId === q.clientMsgId) || e.sourceRunId === q.sourceRunId
-            ));
-            return {
-              clientMsgId: q.clientMsgId ?? q.sourceRunId,
-              sourceRunId: q.sourceRunId,
-              content: q.content,
-              ...(q.attachments?.length ? { attachments: q.attachments } : {}),
-              status: 'queued' as const,
-              createdAt: local?.createdAt ?? (Date.parse(q.acceptedAt) || Date.now()),
-            };
-          });
-        const serverIds = new Set(serverEntries.map((e) => e.clientMsgId));
-        const keepLocal = prev.filter((e) => (
-          !serverIds.has(e.clientMsgId)
-          && (e.status === 'sending' || e.status === 'cancelled' || e.status === 'failed')
-        ));
-        return [...serverEntries, ...keepLocal].sort((a, b) => a.createdAt - b.createdAt);
-      });
+      reconcileServerInterjections(serverQueued);
     },
-  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, mutateQueuedInterjections]);
+  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections]);
 
   const session = useSession(sessionCallbacks, { initialSessionId: urlState.sessionId });
   const markingReadSessionIdsRef = useRef(new Set<string>());

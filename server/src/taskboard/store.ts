@@ -29,17 +29,24 @@ import {
   assertActiveBoard,
   assertExpectedVersion,
   assertWritableTask,
+  assertExecutionConfiguration,
+  applyCommentAuthorDisplayName,
   isTerminalExecutionStatus,
   isUniqueViolation,
   mapActiveBoardNameError,
   normalizeLabels,
+  quoteSqlLiteral,
   optionalText,
   requireText,
   rowToComment,
+  rowToExecutionModelContext,
+  rowToExecutionReconcileCandidate,
   rowToExecution,
   rowToExecutionDispatch,
   rowToTask,
+  sanitizeIdentifier,
   toIso,
+  validateMoveNeighbors,
 } from './storeHelpers.js';
 import {
   TaskboardNotFoundError,
@@ -62,10 +69,8 @@ type PgPool = InstanceType<typeof Pool>;
 
 const DEFAULT_SORT_GAP = 1024;
 const MIN_SORT_GAP = 1e-7;
-const POSTGRES_IDENTIFIER_MAX_BYTES = 63;
-const LONGEST_TASKBOARD_IDENTIFIER_SUFFIX = '_taskboard_tasks_board_id_identifier_key';
-export const TASKBOARD_TABLE_PREFIX_MAX_LENGTH =
-  POSTGRES_IDENTIFIER_MAX_BYTES - LONGEST_TASKBOARD_IDENTIFIER_SUFFIX.length;
+
+export { TASKBOARD_TABLE_PREFIX_MAX_LENGTH } from './storeHelpers.js';
 
 export interface PgTaskboardStoreOptions {
   pool: PgPool;
@@ -576,7 +581,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         id: String(row.id),
         sortOrder: Number(row.sort_order),
       }));
-      this.validateMoveNeighbors(peers, input.previousTaskId, input.nextTaskId);
+      validateMoveNeighbors(peers, input.previousTaskId, input.nextTaskId);
 
       let previous = input.previousTaskId ? peers.find((peer) => peer.id === input.previousTaskId) : undefined;
       let next = input.nextTaskId ? peers.find((peer) => peer.id === input.nextTaskId) : undefined;
@@ -632,17 +637,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         ORDER BY c.created_at, c.id`,
       [taskId, identity.tenantId, identity.ownerUserId],
     );
-    return result.rows.map((row) => {
-      const comment = rowToComment(row);
-      if (
-        identity.displayName
-        && comment.authorType === 'user'
-        && comment.authorId === identity.ownerUserId
-      ) {
-        return { ...comment, authorName: identity.displayName };
-      }
-      return comment;
-    });
+    return result.rows.map((row) => applyCommentAuthorDisplayName(rowToComment(row), identity));
   }
 
   async createComment(
@@ -697,12 +692,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       [taskId, identity.tenantId, identity.ownerUserId],
     );
     if (!result.rows[0]) throw new TaskboardNotFoundError('Task not found');
-    const row = result.rows[0];
-    return {
-      ...(row.task_model ? { taskModel: String(row.task_model) } : {}),
-      ...(row.board_model ? { boardModel: String(row.board_model) } : {}),
-      boardOwnerUserId: String(row.board_owner_user_id),
-    };
+    return rowToExecutionModelContext(result.rows[0]);
   }
 
   async claimExecution(
@@ -714,19 +704,12 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
       assertExpectedVersion(loaded.task, input.expectedVersion);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
-      const currentConfiguredModelRef = loaded.task.model ?? loaded.boardModel;
-      if (currentConfiguredModelRef !== input.configuredModelRef) {
-        throw new TaskboardValidationError(
-          '任务或看板的运行模型已变化，请重试',
-          'TASKBOARD_EXECUTION_MODEL_CHANGED',
-        );
-      }
-      if (loaded.boardOwnerUserId !== input.executionOwnerUserId) {
-        throw new TaskboardValidationError(
-          '任务执行上下文与看板创建者不一致，请重试',
-          'TASKBOARD_EXECUTION_OWNER_CHANGED',
-        );
-      }
+      assertExecutionConfiguration(
+        loaded.task.model ?? loaded.boardModel,
+        input.configuredModelRef,
+        loaded.boardOwnerUserId,
+        input.executionOwnerUserId,
+      );
       if (loaded.task.status !== 'todo') {
         throw new TaskboardValidationError(
           'Only todo tasks can be handed to Agent',
@@ -960,16 +943,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
          LEFT JOIN ${this.executionOutboxTable} o ON o.run_id=c.run_id`,
       [staleBefore, Math.max(1, Math.min(500, Math.floor(limit))), leaseId],
     );
-    return result.rows.map((row) => ({
-      runId: String(row.run_id),
-      executionId: String(row.execution_id),
-      sessionId: String(row.session_id),
-      executionStatus: String(row.status) as TaskboardExecutionReconcileCandidate['executionStatus'],
-      leaseId: String(row.reconcile_lease_id),
-      ...(row.dispatch_status ? {
-        dispatchStatus: String(row.dispatch_status) as TaskboardExecutionReconcileCandidate['dispatchStatus'],
-      } : {}),
-    }));
+    return result.rows.map(rowToExecutionReconcileCandidate);
   }
 
   async setExecutionStatus(
@@ -1177,28 +1151,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     }
   }
 
-  private validateMoveNeighbors(
-    peers: Array<{ id: string; sortOrder: number }>,
-    previousTaskId?: string,
-    nextTaskId?: string,
-  ): void {
-    const previousIndex = previousTaskId ? peers.findIndex((peer) => peer.id === previousTaskId) : -1;
-    const nextIndex = nextTaskId ? peers.findIndex((peer) => peer.id === nextTaskId) : -1;
-    if ((previousTaskId && previousIndex < 0) || (nextTaskId && nextIndex < 0)) {
-      throw new TaskboardValidationError('Move neighbor is not an active task in the target column', 'TASKBOARD_INVALID_MOVE');
-    }
-    const valid = previousTaskId && nextTaskId
-      ? nextIndex === previousIndex + 1
-      : previousTaskId
-        ? previousIndex === peers.length - 1
-        : nextTaskId
-          ? nextIndex === 0
-          : peers.length === 0;
-    if (!valid) {
-      throw new TaskboardValidationError('Move neighbors are stale or not adjacent', 'TASKBOARD_INVALID_MOVE');
-    }
-  }
-
   private requireBoard(
     db: PgPool | PoolClient,
     identity: TaskboardIdentity,
@@ -1315,21 +1267,4 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       client.release();
     }
   }
-}
-
-
-function sanitizeIdentifier(value: string): string {
-  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) {
-    throw new Error(`Invalid PostgreSQL identifier: ${value}`);
-  }
-  if (Buffer.byteLength(value, 'utf8') > TASKBOARD_TABLE_PREFIX_MAX_LENGTH) {
-    throw new Error(
-      `PostgreSQL table prefix is too long for taskboard identifiers: max ${TASKBOARD_TABLE_PREFIX_MAX_LENGTH} bytes`,
-    );
-  }
-  return value;
-}
-
-function quoteSqlLiteral(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`;
 }

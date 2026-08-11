@@ -1,6 +1,23 @@
+import type { ApiSessionDetail } from "@/lib/sessionsApi";
+
 export interface InterjectionIdentity {
   clientMsgId?: string;
   sourceRunId?: string;
+}
+
+/** 插话队列区条目（2026-08-04 终态设计）：排队中的消息不进时间线。 */
+export interface QueuedInterjection {
+  clientMsgId: string;
+  /** 服务端 steering source run id（stream_id{queued} ACK 后可用，撤回要用） */
+  sourceRunId?: string;
+  targetRunId?: string;
+  content: string;
+  attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+  /** sending=已发出等 ACK；queued=服务端已受理排队；cancelled=已撤销（可重发）；failed=发送失败（可重发） */
+  status: 'sending' | 'queued' | 'cancelled' | 'failed';
+  /** cancelled/failed 的原因说明 */
+  reason?: string;
+  createdAt: number;
 }
 
 /**
@@ -31,6 +48,35 @@ export class InterjectionConsumptionRegistry {
     this.clientMsgIds.clear();
     this.sourceRunIds.clear();
   }
+}
+
+export function reconcileQueuedInterjections(
+  entries: QueuedInterjection[],
+  serverQueued: NonNullable<ApiSessionDetail["queuedMessages"]>,
+  consumed: InterjectionConsumptionRegistry,
+): QueuedInterjection[] {
+  const serverEntries = serverQueued
+    .filter((entry) => !consumed.has(entry))
+    .map((entry) => {
+      const local = entries.find((candidate) => (
+        (entry.clientMsgId && candidate.clientMsgId === entry.clientMsgId)
+        || candidate.sourceRunId === entry.sourceRunId
+      ));
+      return {
+        clientMsgId: entry.clientMsgId ?? entry.sourceRunId,
+        sourceRunId: entry.sourceRunId,
+        content: entry.content,
+        ...(entry.attachments?.length ? { attachments: entry.attachments } : {}),
+        status: 'queued' as const,
+        createdAt: local?.createdAt ?? (Date.parse(entry.acceptedAt) || Date.now()),
+      };
+    });
+  const serverIds = new Set(serverEntries.map((entry) => entry.clientMsgId));
+  const keepLocal = entries.filter((entry) => (
+    !serverIds.has(entry.clientMsgId)
+    && (entry.status === 'sending' || entry.status === 'cancelled' || entry.status === 'failed')
+  ));
+  return [...serverEntries, ...keepLocal].sort((a, b) => a.createdAt - b.createdAt);
 }
 
 /** 无命中时保留原数组引用，避免重复投影触发队列栏和消息区无意义重渲染。 */

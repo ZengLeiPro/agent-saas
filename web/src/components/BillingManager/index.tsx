@@ -236,10 +236,7 @@ type Notice =
   | null;
 
 // ----- 工具函数 -----
-
-function toCredits(micro: number): number {
-  return micro / CREDIT_MICRO;
-}
+function toCredits(micro: number): number { return micro / CREDIT_MICRO; }
 
 function creditsToMicro(value: string): number {
   const parsed = Number(value);

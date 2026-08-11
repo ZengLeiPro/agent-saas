@@ -131,7 +131,6 @@ const WEB_FETCH_SYNTHESIS_PROMPT = [
   '请立即基于当前上下文中已经取得的材料完成任务；明确区分已核实事实、证据不足项与未完成项。',
 ].join('\n');
 const CONTEXT_EMERGENCY_THRESHOLD_RATIO = 0.95;
-
 const CONTEXT_SYNTHESIS_PROMPT = [
   '[平台收束指令]',
   '本次任务的上下文已达到安全阈值。除 SessionContext（action=events|search|trace）外，不要调用其他工具。',
@@ -139,7 +138,6 @@ const CONTEXT_SYNTHESIS_PROMPT = [
 ].join('\n');
 const INVALID_PROMPT_RECOVERY_INPUT = '继续';
 const INVALID_PROMPT_CUSTOMER_ERROR = 'Agent 开小差了，请发送「继续」';
-
 interface ReplaceableDraftRunState {
   draftId: string;
   recoveryUsed: boolean;

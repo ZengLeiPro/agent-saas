@@ -36,6 +36,7 @@ import type { ChannelContext } from '../types/index.js';
 import type { ToolControlsConfig } from '../app/config.js';
 import type { BackgroundTaskRuntime } from '../runtime/background/backgroundTaskRuntime.js';
 import { ContainerExecutionProvider } from './containerExecutionProvider.js';
+import { resolveRemoteHandAuthToken, resolveRemoteHandInvokeTimeoutMs } from './handMetadata.js';
 import { MemorySearchToolProvider } from './memorySearchToolProvider.js';
 import { persistShellOutputFiles } from './shellOutputFiles.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
@@ -1576,16 +1577,6 @@ class WorkspaceToolProvider implements ToolProvider {
     }
     return { transport: this.executionTransportRegistry.get(context.workspace.executionTarget) };
   }
-}
-
-function resolveRemoteHandAuthToken(metadata: Record<string, unknown>): string | undefined {
-  const value = metadata.serverRemoteAuthToken ?? metadata.authToken;
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-function resolveRemoteHandInvokeTimeoutMs(metadata: Record<string, unknown>): number | undefined {
-  const value = metadata.invokeTimeoutMs ?? metadata.serverRemoteInvokeTimeoutMs;
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function recipeMountSubPath(recipe: unknown): string | undefined {

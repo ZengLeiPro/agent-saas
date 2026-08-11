@@ -1145,7 +1145,6 @@ export function DesktopSessionSidebar({
   const sessionSearch = useSessionSearch(sessionSearchQuery);
   const isSessionSearchActive = sessionSearchQuery.trim().length > 0;
   const highlightedSessionId = activeTab === "chat" ? activeSessionId : null;
-
   // 分组重命名/删除状态
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [renameGroupId, setRenameGroupId] = useState<string | null>(null);

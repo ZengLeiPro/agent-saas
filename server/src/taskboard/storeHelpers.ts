@@ -7,6 +7,9 @@ import {
 import {
   TaskboardConflictError,
   type TaskboardExecutionDispatch,
+  type TaskboardExecutionModelContext,
+  type TaskboardExecutionReconcileCandidate,
+  type TaskboardIdentity,
   TaskboardValidationError,
 } from './types.js';
 
@@ -137,4 +140,107 @@ export function mapActiveBoardNameError(error: unknown): unknown {
 
 export function isUniqueViolation(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && (error as { code?: unknown }).code === '23505');
+}
+
+const POSTGRES_IDENTIFIER_MAX_BYTES = 63;
+const LONGEST_TASKBOARD_IDENTIFIER_SUFFIX = '_taskboard_tasks_board_id_identifier_key';
+export const TASKBOARD_TABLE_PREFIX_MAX_LENGTH =
+  POSTGRES_IDENTIFIER_MAX_BYTES - LONGEST_TASKBOARD_IDENTIFIER_SUFFIX.length;
+
+export function sanitizeIdentifier(value: string): string {
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) {
+    throw new Error(`Invalid PostgreSQL identifier: ${value}`);
+  }
+  if (Buffer.byteLength(value, 'utf8') > TASKBOARD_TABLE_PREFIX_MAX_LENGTH) {
+    throw new Error(
+      `PostgreSQL table prefix is too long for taskboard identifiers: max ${TASKBOARD_TABLE_PREFIX_MAX_LENGTH} bytes`,
+    );
+  }
+  return value;
+}
+
+export function quoteSqlLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+
+export function assertExecutionConfiguration(
+  currentModelRef: string | undefined,
+  requestedModelRef: string | undefined,
+  currentOwnerUserId: string,
+  requestedOwnerUserId: string,
+): void {
+  if (currentModelRef !== requestedModelRef) {
+    throw new TaskboardValidationError(
+      '任务或看板的运行模型已变化，请重试',
+      'TASKBOARD_EXECUTION_MODEL_CHANGED',
+    );
+  }
+  if (currentOwnerUserId !== requestedOwnerUserId) {
+    throw new TaskboardValidationError(
+      '任务执行上下文与看板创建者不一致，请重试',
+      'TASKBOARD_EXECUTION_OWNER_CHANGED',
+    );
+  }
+}
+
+export function validateMoveNeighbors(
+  peers: Array<{ id: string; sortOrder: number }>,
+  previousTaskId?: string,
+  nextTaskId?: string,
+): void {
+  const previousIndex = previousTaskId ? peers.findIndex((peer) => peer.id === previousTaskId) : -1;
+  const nextIndex = nextTaskId ? peers.findIndex((peer) => peer.id === nextTaskId) : -1;
+  if ((previousTaskId && previousIndex < 0) || (nextTaskId && nextIndex < 0)) {
+    throw new TaskboardValidationError('Move neighbor is not an active task in the target column', 'TASKBOARD_INVALID_MOVE');
+  }
+  const valid = previousTaskId && nextTaskId
+    ? nextIndex === previousIndex + 1
+    : previousTaskId
+      ? previousIndex === peers.length - 1
+      : nextTaskId
+        ? nextIndex === 0
+        : peers.length === 0;
+  if (!valid) {
+    throw new TaskboardValidationError('Move neighbors are stale or not adjacent', 'TASKBOARD_INVALID_MOVE');
+  }
+}
+
+export function applyCommentAuthorDisplayName(
+  comment: TaskBoardComment,
+  identity: TaskboardIdentity,
+): TaskBoardComment {
+  if (
+    identity.displayName
+    && comment.authorType === 'user'
+    && comment.authorId === identity.ownerUserId
+  ) {
+    return { ...comment, authorName: identity.displayName };
+  }
+  return comment;
+}
+
+export function rowToExecutionModelContext(
+  row: Record<string, unknown>,
+): TaskboardExecutionModelContext {
+  return {
+    ...(row.task_model ? { taskModel: String(row.task_model) } : {}),
+    ...(row.board_model ? { boardModel: String(row.board_model) } : {}),
+    boardOwnerUserId: String(row.board_owner_user_id),
+  };
+}
+
+export function rowToExecutionReconcileCandidate(
+  row: Record<string, unknown>,
+): TaskboardExecutionReconcileCandidate {
+  return {
+    runId: String(row.run_id),
+    executionId: String(row.execution_id),
+    sessionId: String(row.session_id),
+    executionStatus: String(row.status) as TaskboardExecutionReconcileCandidate['executionStatus'],
+    leaseId: String(row.reconcile_lease_id),
+    ...(row.dispatch_status ? {
+      dispatchStatus: String(row.dispatch_status) as TaskboardExecutionReconcileCandidate['dispatchStatus'],
+    } : {}),
+  };
 }

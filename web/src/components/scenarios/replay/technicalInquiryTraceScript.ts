@@ -226,7 +226,7 @@ const steps: ReplayStep[] = [
           stepId: 'resume-with-customer-answer',
           status: 'completed',
           outcome: { text: '需求已锁定为 IP67、20 件，并允许认证兼容替代型号' },
-          display: [{ type: 'facts', title: '锁定需求版本', items: [{ label: '防护等级', value: 'IP67' }, { label: '数量', value: '20 件' }, { label: '替代许可', value: '允许' }] }],
+          display: [{ type: 'list', title: '已确认需求清单', items: [{ label: '防护等级', value: 'IP67', note: '以客户最新答复为准' }, { label: '数量', value: '20 件' }, { label: '替代许可', value: '允许认证兼容型号' }] }],
           evidenceRefs: ['simulation:MSG-SIM-2026-03', 'simulation:REQ-SIM-V2'],
         },
       ],

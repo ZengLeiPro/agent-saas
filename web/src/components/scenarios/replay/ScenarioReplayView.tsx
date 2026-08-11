@@ -21,6 +21,7 @@ import { ActionIcons, EntityIcons, StatusIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { CAPABILITY_SUBTLE_SURFACE, CAPABILITY_SURFACE } from "@/components/CapabilityCenter/CatalogUi";
 import type { ReplayScript } from "./types";
+import { buildLegacyReplayBlocks } from "./legacyTaskDemo";
 
 const ApprovalIcon = EntityIcons.admin;
 const ApprovalSuccessIcon = StatusIcons.success;
@@ -141,16 +142,15 @@ export function ScenarioReplayView({
   const [traceViewOverride, setTraceViewOverride] = useState<string | null>(null);
 
   const visibleBlocks = useMemo(() => {
-    if (stepIndex === 0) {
-      return script.steps[0]?.blocks.slice(0, 1) ?? [];
-    }
+    if (!traceMode) return buildLegacyReplayBlocks(script, stepIndex, decisions);
+    if (stepIndex === 0) return script.steps[0]?.blocks.slice(0, 1) ?? [];
     return script.steps.slice(0, stepIndex).flatMap((step, index) => [
       ...step.blocks,
       ...(decisions[index] === "approved" ? step.approval?.approvedBlocks ?? [] : []),
       // 退回同样有下文：客户要看到"退回之后系统怎么处理"，而不是一个死按钮
       ...(decisions[index] === "rejected" ? step.approval?.rejectedBlocks ?? [] : []),
     ]);
-  }, [decisions, script, stepIndex]);
+  }, [decisions, script, stepIndex, traceMode]);
 
   const visibleTraceEvents = useMemo<WorkflowTraceEventV1[]>(() => {
     if (!traceMode) return [];

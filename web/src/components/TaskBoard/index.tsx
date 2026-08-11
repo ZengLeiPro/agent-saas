@@ -242,7 +242,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
       {headerActionsTarget === undefined ? (
         <SettingsPanelHeader
           title="任务看板"
-          description="人工管理个人工作事项，不会自动执行或驱动定时任务。"
+          description="管理个人或组织工作事项；组织看板内所有成员都可维护任务。"
           actions={headerActions}
         />
       ) : headerActionsTarget ? createPortal(headerActions, headerActionsTarget) : null}
@@ -253,7 +253,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         <div className="flex flex-1 items-center justify-center">
           <div className="max-w-sm rounded-xl border border-dashed px-8 py-12 text-center">
             <h2 className="text-lg font-semibold">还没有任务看板</h2>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">先创建一个个人看板，再记录和推进工作事项。</p>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">先创建个人或组织看板，再记录和推进工作事项。</p>
             {boardsError ? <p role="alert" className="mt-3 text-sm text-destructive">{boardsError}</p> : null}
             <Button className="mt-5" onClick={() => setBoardDialogMode("create")}>
               <Plus />创建看板

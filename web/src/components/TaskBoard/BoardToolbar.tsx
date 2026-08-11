@@ -70,7 +70,7 @@ export function BoardToolbar({
           <SelectContent>
             {boards.map((item) => (
               <SelectItem key={item.id} value={item.id}>
-                {item.name}{item.archivedAt ? "（已归档）" : ""}
+                {item.name}{item.visibility === "organization" ? "（组织）" : "（个人）"}{item.archivedAt ? "（已归档）" : ""}
               </SelectItem>
             ))}
           </SelectContent>
@@ -86,16 +86,17 @@ export function BoardToolbar({
             <DropdownMenuItem onSelect={onCreateBoard}>
               <Plus />创建看板
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={readOnly} onSelect={onEditBoard}>
-              编辑名称和说明
+            <DropdownMenuItem disabled={readOnly || !board.canManage} onSelect={onEditBoard}>
+              编辑看板设置
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             {readOnly ? (
-              <DropdownMenuItem onSelect={onRestoreBoard}>
+              <DropdownMenuItem disabled={!board.canManage} onSelect={onRestoreBoard}>
                 <ArchiveRestore />恢复看板
               </DropdownMenuItem>
             ) : (
               <DropdownMenuItem
+                disabled={!board.canManage}
                 className="text-destructive focus:text-destructive"
                 onSelect={onArchiveBoard}
               >
@@ -137,9 +138,12 @@ export function BoardToolbar({
           </Select>
         </div>
       </div>
-      {board.description ? (
-        <p className="truncate text-xs text-muted-foreground">{board.description}</p>
-      ) : null}
+      <p className="truncate text-xs text-muted-foreground">
+        {board.visibility === "organization"
+          ? `组织看板 · ${board.canManage ? "你创建的" : "由其他成员创建"} · 全员可管理任务`
+          : "个人看板"}
+        {board.description ? ` · ${board.description}` : ""}
+      </p>
       {readOnly ? (
         <div role="status" className="rounded-lg border border-amber-300/50 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
           此看板已归档，当前只读；恢复后才能新建、编辑、移动任务或发表评论。

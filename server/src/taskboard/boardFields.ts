@@ -25,6 +25,18 @@ export function boardModelMigrationSql(boardsTable: string): string {
   `;
 }
 
+export function boardVisibilityMigrationSql(boardsTable: string): string {
+  return `
+    ALTER TABLE ${boardsTable}
+      ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'personal';
+    ALTER TABLE ${boardsTable}
+      DROP CONSTRAINT IF EXISTS ${boardsTable}_visibility_check;
+    ALTER TABLE ${boardsTable}
+      ADD CONSTRAINT ${boardsTable}_visibility_check
+      CHECK (visibility IN ('personal', 'organization'))
+  `;
+}
+
 export function normalizeBoardPrompt(value: string): string {
   return value.trim();
 }
@@ -35,13 +47,17 @@ export function normalizeModel(value: string | null | undefined): string | null 
   return normalized || null;
 }
 
-export function rowToBoard(row: Record<string, unknown>): TaskBoard {
+export function rowToBoard(row: Record<string, unknown>, currentUserId: string): TaskBoard {
+  const ownerUserId = String(row.owner_user_id);
   return {
     id: String(row.id),
     name: String(row.name),
     ...(row.description !== null && row.description !== undefined
       ? { description: String(row.description) }
       : {}),
+    visibility: row.visibility === 'organization' ? 'organization' : 'personal',
+    ownerUserId,
+    canManage: ownerUserId === currentUserId,
     prompt: String(row.prompt ?? TASKBOARD_DEFAULT_PROMPT),
     ...(row.model !== null && row.model !== undefined && String(row.model).trim()
       ? { model: String(row.model) }

@@ -130,6 +130,7 @@ export type {
   TaskBoardStatus,
   TaskBoardPriority,
   TaskBoardExecutionStatus,
+  TaskBoardVisibility,
   TaskBoard,
   TaskBoardTask,
   TaskBoardComment,
@@ -225,6 +226,7 @@ export {
   TASKBOARD_STATUSES,
   TASKBOARD_PRIORITIES,
   TASKBOARD_EXECUTION_STATUSES,
+  TASKBOARD_VISIBILITIES,
   TASKBOARD_DEFAULT_PROMPT,
   buildScenarioPrompt,
 } from "./types/index";

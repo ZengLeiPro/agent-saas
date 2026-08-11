@@ -73,6 +73,9 @@ function board(id: string, name: string, archived = false): TaskBoard {
     id,
     name,
     description: `${name}说明`,
+    visibility: "personal",
+    ownerUserId: "user-1",
+    canManage: true,
     prompt: `${name}提示语`,
     version: 2,
     ...(archived ? { archivedAt: "2026-08-01T00:00:00.000Z" } : {}),
@@ -141,8 +144,8 @@ describe("TaskBoardView", () => {
     expect(screen.getAllByRole("region", { name: /列$/ })).toHaveLength(7);
 
     await user.click(screen.getByRole("combobox", { name: "选择看板" }));
-    expect(screen.getByRole("option", { name: "产品研发" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "市场事项" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "产品研发（个人）" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "市场事项（个人）" })).toBeTruthy();
     await user.keyboard("{Escape}");
 
     await user.type(screen.getByRole("textbox", { name: "搜索任务" }), "前端");
@@ -224,6 +227,23 @@ describe("TaskBoardView", () => {
 
     await user.click(screen.getByRole("button", { name: "新建任务" }));
     expect(screen.getByRole("heading", { name: "新建任务" })).toBeTruthy();
+  });
+
+  it("组织看板成员可管理任务，但不能修改创建者的看板设置", async () => {
+    const user = userEvent.setup();
+    mocks.boards = [{
+      ...board("board-1", "组织协作"),
+      visibility: "organization",
+      canManage: false,
+      ownerUserId: "owner-1",
+    }];
+    render(<TaskBoardView />);
+
+    expect(await screen.findByText(/组织看板 · 由其他成员创建 · 全员可管理任务/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "新建任务" }) as HTMLButtonElement).disabled).toBe(false);
+    await user.click(screen.getByRole("button", { name: "看板管理" }));
+    expect(screen.getByRole("menuitem", { name: "编辑看板设置" }).getAttribute("data-disabled")).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "归档看板" }).getAttribute("data-disabled")).not.toBeNull();
   });
 
   it("归档看板只读，关键写操作禁用且卡片不可拖拽", async () => {

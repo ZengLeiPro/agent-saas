@@ -32,6 +32,9 @@ const USER: JwtPayload = {
 const BOARD: TaskBoard = {
   id: 'board-1',
   name: '研发事项',
+  visibility: 'personal',
+  ownerUserId: USER.sub,
+  canManage: true,
   prompt: '执行看板任务',
   version: 1,
   createdAt: '2026-08-01T00:00:00.000Z',
@@ -124,6 +127,7 @@ describe('Taskboard routes', () => {
       description: '首期',
       prompt: '只处理当前看板任务',
       model: 'group-a/model-a',
+      visibility: 'organization',
     }));
     expect(created.status).toBe(201);
     expect(captured.identities.at(-1)).toEqual({
@@ -138,6 +142,7 @@ describe('Taskboard routes', () => {
       description: '首期',
       prompt: '只处理当前看板任务',
       model: 'group-a/model-a',
+      visibility: 'organization',
     }]);
   });
 

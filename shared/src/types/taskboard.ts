@@ -26,6 +26,8 @@ export const TASKBOARD_EXECUTION_STATUSES = [
   "cancelled",
 ] as const;
 
+export const TASKBOARD_VISIBILITIES = ["personal", "organization"] as const;
+
 export const TASKBOARD_DEFAULT_PROMPT = [
   "1. 直接完成任务，必要时使用可用工具；不要只给计划。",
   "2. 尊重当前工作区与安全边界，不 push、不部署、不对外发送，除非任务正文明确授权。",
@@ -36,11 +38,15 @@ export const TASKBOARD_DEFAULT_PROMPT = [
 export type TaskBoardStatus = (typeof TASKBOARD_STATUSES)[number];
 export type TaskBoardPriority = (typeof TASKBOARD_PRIORITIES)[number];
 export type TaskBoardExecutionStatus = (typeof TASKBOARD_EXECUTION_STATUSES)[number];
+export type TaskBoardVisibility = (typeof TASKBOARD_VISIBILITIES)[number];
 
 export interface TaskBoard {
   id: string;
   name: string;
   description?: string;
+  visibility: TaskBoardVisibility;
+  ownerUserId: string;
+  canManage: boolean;
   prompt: string;
   /** 看板默认模型 ref（groupId/modelId）；缺省时任务执行回落到组织默认模型。 */
   model?: string;
@@ -106,6 +112,7 @@ export interface TaskBoardCreateInput {
   description?: string;
   prompt?: string;
   model?: string;
+  visibility?: TaskBoardVisibility;
 }
 
 export interface TaskBoardPatchInput {
@@ -114,6 +121,7 @@ export interface TaskBoardPatchInput {
   prompt?: string;
   /** null 表示清除看板默认模型，回落到组织默认模型。 */
   model?: string | null;
+  visibility?: TaskBoardVisibility;
   expectedVersion: number;
 }
 

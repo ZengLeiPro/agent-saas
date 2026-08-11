@@ -40,6 +40,9 @@ function deferred<T>() {
 const originalBoard: TaskBoard = {
   id: "board-1",
   name: "研发事项",
+  visibility: "personal",
+  ownerUserId: "user-1",
+  canManage: true,
   prompt: "执行看板任务",
   version: 2,
   createdAt: "2026-08-01T00:00:00.000Z",

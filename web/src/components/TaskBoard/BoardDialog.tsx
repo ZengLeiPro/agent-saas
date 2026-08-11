@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { TASKBOARD_DEFAULT_PROMPT } from "@agent/shared";
-import type { ModelList, TaskBoard, TaskBoardCreateInput, TaskBoardPatchInput } from "@agent/shared";
+import type {
+  ModelList,
+  TaskBoard,
+  TaskBoardCreateInput,
+  TaskBoardPatchInput,
+  TaskBoardVisibility,
+} from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -12,10 +18,17 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ModelSelect } from "./ModelSelect";
 
-type BoardDraftField = "name" | "description" | "prompt" | "model";
+type BoardDraftField = "name" | "description" | "prompt" | "model" | "visibility";
 
 interface BoardDialogProps {
   open: boolean;
@@ -40,6 +53,7 @@ export function BoardDialog({
   const [description, setDescription] = useState("");
   const [prompt, setPrompt] = useState(TASKBOARD_DEFAULT_PROMPT);
   const [model, setModel] = useState<string | null>(null);
+  const [visibility, setVisibility] = useState<TaskBoardVisibility>("personal");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dirtyFieldsRef = useRef<Set<BoardDraftField>>(new Set());
@@ -59,6 +73,7 @@ export function BoardDialog({
       setDescription(board?.description ?? "");
       setPrompt(board?.prompt ?? TASKBOARD_DEFAULT_PROMPT);
       setModel(board?.model ?? null);
+      setVisibility(board?.visibility ?? "personal");
       setError(null);
       return;
     }
@@ -67,6 +82,7 @@ export function BoardDialog({
     if (!dirtyFieldsRef.current.has("description")) setDescription(board.description ?? "");
     if (!dirtyFieldsRef.current.has("prompt")) setPrompt(board.prompt);
     if (!dirtyFieldsRef.current.has("model")) setModel(board.model ?? null);
+    if (!dirtyFieldsRef.current.has("visibility")) setVisibility(board.visibility);
   }, [board, open]);
 
   const submit = async (event: FormEvent) => {
@@ -89,6 +105,7 @@ export function BoardDialog({
         if (dirtyFieldsRef.current.has("description")) input.description = description.trim();
         if (dirtyFieldsRef.current.has("prompt")) input.prompt = prompt.trim();
         if (dirtyFieldsRef.current.has("model")) input.model = model;
+        if (dirtyFieldsRef.current.has("visibility")) input.visibility = visibility;
         await onUpdate(board.id, input);
       } else {
         await onCreate({
@@ -96,6 +113,7 @@ export function BoardDialog({
           ...(description.trim() ? { description: description.trim() } : {}),
           prompt: prompt.trim(),
           ...(model ? { model } : {}),
+          visibility,
         });
       }
       onOpenChange(false);
@@ -118,7 +136,7 @@ export function BoardDialog({
         <DialogHeader>
           <DialogTitle>{board ? "编辑看板" : "创建看板"}</DialogTitle>
           <DialogDescription>
-            {board ? "修改看板名称、说明和提示语。" : "为不同工作主题创建独立看板和执行提示语。"}
+            {board ? "修改看板名称、可见范围、说明和提示语。" : "创建个人或组织看板，并配置执行提示语。"}
           </DialogDescription>
         </DialogHeader>
         <form id="taskboard-board-form" className="space-y-4" onSubmit={submit}>
@@ -149,6 +167,30 @@ export function BoardDialog({
               rows={4}
               disabled={submitting}
             />
+          </div>
+          <div className="space-y-2">
+            <Label>可见范围</Label>
+            <Select
+              value={visibility}
+              onValueChange={(value) => {
+                dirtyFieldsRef.current.add("visibility");
+                setVisibility(value as TaskBoardVisibility);
+              }}
+              disabled={submitting}
+            >
+              <SelectTrigger aria-label="看板可见范围">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="personal">个人</SelectItem>
+                <SelectItem value="organization">组织</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {visibility === "organization"
+                ? "组织内所有成员都能查看并管理此看板中的任务；Agent 仍继承看板创建者的上下文。"
+                : "仅自己可查看和管理此看板。"}
+            </p>
           </div>
           <div className="space-y-2">
             <Label htmlFor="taskboard-board-prompt">看板提示语</Label>

@@ -48,6 +48,8 @@ export interface TaskboardExecutionCoordinatorOptions {
   resolveDefaultModel: (tenantId?: string) => DefaultModelResolution | null;
   /** 按 ref 解析显式模型；解析失败时拒绝执行，避免静默使用错误模型。 */
   resolveModel?: (ref: string, tenantId?: string) => { ref: string } | null;
+  /** 解析看板创建者的当前账号上下文；组织看板仍以创建者身份运行。 */
+  resolveOwnerIdentity?: (userId: string) => TaskboardIdentity | undefined;
   /** 解析任务所有者的当前展示名，用于覆盖历史评论中存量账号名。 */
   resolveUserDisplayName?: (userId: string) => string | undefined;
   /** 执行提示词时间戳时区，默认 Asia/Shanghai。 */
@@ -92,10 +94,16 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     input: TaskBoardExecutionStartInput,
   ): Promise<TaskBoardExecutionStartResult> {
     const modelContext = await this.options.store.getExecutionModelContext(identity, taskId);
+    const executionIdentity = modelContext.boardOwnerUserId === identity.ownerUserId
+      ? identity
+      : this.options.resolveOwnerIdentity?.(modelContext.boardOwnerUserId);
+    if (!executionIdentity || executionIdentity.tenantId !== identity.tenantId) {
+      throw new TaskboardExecutionUnavailableError('看板创建者账号不可用，无法继承其运行上下文');
+    }
     const explicitModelRef = modelContext.taskModel ?? modelContext.boardModel;
     const model = explicitModelRef
-      ? this.options.resolveModel?.(explicitModelRef, identity.tenantId)
-      : this.options.resolveDefaultModel(identity.tenantId);
+      ? this.options.resolveModel?.(explicitModelRef, executionIdentity.tenantId)
+      : this.options.resolveDefaultModel(executionIdentity.tenantId);
     if (!model) {
       const reason = explicitModelRef
         ? `指定模型不可用：${explicitModelRef}`
@@ -103,7 +111,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       throw new TaskboardExecutionUnavailableError(reason);
     }
     const executionDecision = resolveExecutionTarget({
-      user: { role: identity.userRole, tenantId: identity.tenantId },
+      user: { role: executionIdentity.userRole, tenantId: executionIdentity.tenantId },
       config: this.options.executionConfig,
     });
     if (!executionDecision.ok) throw new TaskboardExecutionUnavailableError(executionDecision.reason);
@@ -112,19 +120,19 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     const sessionId = `taskboard-${randomUUID()}`;
     const runId = `taskboard-${Date.now()}-${randomUUID()}`;
     const workspaceUser = {
-      id: identity.ownerUserId,
-      username: identity.username,
-      role: identity.userRole ?? 'user' as const,
-      tenantId: identity.tenantId,
+      id: executionIdentity.ownerUserId,
+      username: executionIdentity.username,
+      role: executionIdentity.userRole ?? 'user' as const,
+      tenantId: executionIdentity.tenantId,
     };
     const cwd = resolveUserCwd(this.options.agentCwd, workspaceUser);
     const workspaceId = deriveStableWorkspaceId(workspaceUser, sessionId);
     const session = createRuntimeSessionRecord({
       sessionId,
-      userId: identity.ownerUserId,
-      username: identity.username,
-      userRole: identity.userRole,
-      tenantId: identity.tenantId,
+      userId: executionIdentity.ownerUserId,
+      username: executionIdentity.username,
+      userRole: executionIdentity.userRole,
+      tenantId: executionIdentity.tenantId,
       channel: 'web',
       cwd,
       modelRef: model.ref,
@@ -135,8 +143,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     const run = {
       runId,
       sessionId,
-      userId: identity.ownerUserId,
-      tenantId: identity.tenantId,
+      userId: executionIdentity.ownerUserId,
+      tenantId: executionIdentity.tenantId,
       model: model.ref,
       channel: 'taskboard',
       idempotencyKey: `taskboard-execution:${executionId}`,
@@ -152,8 +160,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
           channel: 'web',
           chatId: sessionId,
           content: '正在读取任务看板中的最新任务与评论。',
-          senderId: identity.ownerUserId,
-          senderName: identity.username,
+          senderId: executionIdentity.ownerUserId,
+          senderName: executionIdentity.username,
           metadata: {
             taskboardExecution: true,
             taskboardExecutionId: executionId,
@@ -168,6 +176,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       sessionId,
       runId,
       ...(explicitModelRef ? { configuredModelRef: explicitModelRef } : {}),
+      executionOwnerUserId: executionIdentity.ownerUserId,
       dispatch: { version: 1, session, run },
     });
     await this.dispatchExecution(runId);

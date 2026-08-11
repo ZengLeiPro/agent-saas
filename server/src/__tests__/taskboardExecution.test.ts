@@ -75,7 +75,7 @@ function makeRig(
   }>();
   const store = {
     listExecutions: vi.fn(async () => []),
-    getExecutionModelContext: vi.fn(async () => ({})),
+    getExecutionModelContext: vi.fn(async () => ({ boardOwnerUserId: identity.ownerUserId })),
     claimExecution: vi.fn(async (_identity, _taskId, input) => {
       dispatches.set(input.runId, { executionId: input.executionId, payload: input.dispatch });
       return {
@@ -191,6 +191,57 @@ describe('TaskboardExecutionCoordinator', () => {
     }));
   });
 
+  it('组织成员发起任务时仍以看板创建者上下文运行', async () => {
+    const member: TaskboardIdentity = {
+      tenantId: identity.tenantId,
+      ownerUserId: 'user-2',
+      username: 'bob',
+      userRole: 'user',
+    };
+    const resolveOwnerIdentity = vi.fn(() => identity);
+    const rig = makeRig({
+      getExecutionModelContext: vi.fn(async () => ({ boardOwnerUserId: identity.ownerUserId })),
+    }, { resolveOwnerIdentity });
+
+    await rig.coordinator.startExecution(member, task.id, { expectedVersion: task.version });
+
+    expect(resolveOwnerIdentity).toHaveBeenCalledWith(identity.ownerUserId);
+    expect(rig.store.claimExecution).toHaveBeenCalledWith(
+      member,
+      task.id,
+      expect.objectContaining({ executionOwnerUserId: identity.ownerUserId }),
+    );
+    expect(rig.sessionCatalog.ensure).toHaveBeenCalledWith(expect.objectContaining({
+      userId: identity.ownerUserId,
+      username: identity.username,
+      workspaceId: `ws_${identity.tenantId}__${identity.ownerUserId}`,
+    }));
+    expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledWith(expect.objectContaining({
+      userId: identity.ownerUserId,
+      tenantId: identity.tenantId,
+    }));
+  });
+
+  it('组织看板创建者账号不可用时拒绝使用发起者上下文兜底', async () => {
+    const member: TaskboardIdentity = {
+      tenantId: identity.tenantId,
+      ownerUserId: 'user-2',
+      username: 'bob',
+      userRole: 'user',
+    };
+    const rig = makeRig({
+      getExecutionModelContext: vi.fn(async () => ({ boardOwnerUserId: identity.ownerUserId })),
+    });
+
+    await expect(rig.coordinator.startExecution(
+      member,
+      task.id,
+      { expectedVersion: task.version },
+    )).rejects.toThrow('看板创建者账号不可用');
+    expect(rig.store.claimExecution).not.toHaveBeenCalled();
+    expect(rig.sessionCatalog.ensure).not.toHaveBeenCalled();
+  });
+
   it('wake 前重读最新任务和评论并生成执行提示词', async () => {
     const rig = makeRig({}, {
       resolveUserDisplayName: () => '爱丽丝 @alice',
@@ -258,6 +309,7 @@ describe('TaskboardExecutionCoordinator', () => {
         getExecutionModelContext: vi.fn(async () => ({
           taskModel: 'group-a/model-task',
           boardModel: 'group-a/model-board',
+          boardOwnerUserId: identity.ownerUserId,
         })),
       },
       { resolveModel },
@@ -274,7 +326,10 @@ describe('TaskboardExecutionCoordinator', () => {
 
     const boardOnlyRig = makeRig(
       {
-        getExecutionModelContext: vi.fn(async () => ({ boardModel: 'group-a/model-board' })),
+        getExecutionModelContext: vi.fn(async () => ({
+          boardModel: 'group-a/model-board',
+          boardOwnerUserId: identity.ownerUserId,
+        })),
       },
       { resolveModel },
     );
@@ -292,7 +347,10 @@ describe('TaskboardExecutionCoordinator', () => {
     }));
 
     const withoutResolver = makeRig({
-      getExecutionModelContext: vi.fn(async () => ({ boardModel: 'group-a/model-board' })),
+      getExecutionModelContext: vi.fn(async () => ({
+          boardModel: 'group-a/model-board',
+          boardOwnerUserId: identity.ownerUserId,
+        })),
     });
     await expect(withoutResolver.coordinator.startExecution(
       identity,
@@ -303,7 +361,10 @@ describe('TaskboardExecutionCoordinator', () => {
     const resolveModel = vi.fn(() => null);
     const rejectedRig = makeRig(
       {
-        getExecutionModelContext: vi.fn(async () => ({ boardModel: 'group-a/model-board' })),
+        getExecutionModelContext: vi.fn(async () => ({
+          boardModel: 'group-a/model-board',
+          boardOwnerUserId: identity.ownerUserId,
+        })),
       },
       { resolveModel },
     );

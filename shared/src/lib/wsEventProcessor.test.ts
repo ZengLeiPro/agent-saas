@@ -62,6 +62,7 @@ function makeController(initial: MessageItem[] = []): FakeController {
 interface CtxHooks {
   onChatAck: Mock<(clientMsgId: string) => void>;
   onInterjectionApplied: Mock<(sourceRunIds: string[], clientMsgIds: string[]) => void>;
+  onUserMessageProjected: Mock<(clientMsgId: string | undefined, sourceRunId: string | undefined) => void>;
   onActiveUserMsgIndexChange: Mock<(index: number) => void>;
   onStreamAttached: Mock<(streamId: string, runId: string | null) => void>;
   onChatRejected: Mock<(clientMsgId: string, reasonCode: string, reason: string) => void>;
@@ -95,6 +96,7 @@ function makeCtx(
   const hooks: CtxHooks = {
     onChatAck: vi.fn<(clientMsgId: string) => void>(),
     onInterjectionApplied: vi.fn<(sourceRunIds: string[], clientMsgIds: string[]) => void>(),
+    onUserMessageProjected: vi.fn<(clientMsgId: string | undefined, sourceRunId: string | undefined) => void>(),
     onActiveUserMsgIndexChange: vi.fn<(index: number) => void>(),
     onStreamAttached: vi.fn<(streamId: string, runId: string | null) => void>(),
     onChatRejected: vi.fn<(clientMsgId: string, reasonCode: string, reason: string) => void>(),
@@ -139,6 +141,7 @@ function makeCtx(
     userMsgIndex: -1,
     onChatAck: hooks.onChatAck,
     onInterjectionApplied: hooks.onInterjectionApplied,
+    onUserMessageProjected: hooks.onUserMessageProjected,
     onActiveUserMsgIndexChange: hooks.onActiveUserMsgIndexChange,
     onStreamAttached: hooks.onStreamAttached,
     onChatRejected: hooks.onChatRejected,
@@ -453,12 +456,19 @@ describe('processWsEvent - 连接与消息生命周期', () => {
     expect(hooks.onChatRejected).toHaveBeenCalledWith('c1', 'session_locked', '会话锁定');
   });
 
-  it('user_message：正常新增；client_msg_id 相同则去重', () => {
+  it('user_message：正常新增并透传消费身份；client_msg_id 相同则去重', () => {
     const ctrl = makeController();
-    const { ctx } = makeCtx(ctrl);
-    dispatch({ type: 'user_message', content: 'hello', timestamp: 100, client_msg_id: 'c1' }, ctx);
+    const { ctx, hooks } = makeCtx(ctrl);
+    dispatch({
+      type: 'user_message',
+      content: 'hello',
+      timestamp: 100,
+      client_msg_id: 'c1',
+      sourceRunId: 'source-1',
+    }, ctx);
     expect(ctrl.messages).toHaveLength(1);
     expect(ctrl.messages[0]).toMatchObject({ type: 'user', content: 'hello', clientMsgId: 'c1' });
+    expect(hooks.onUserMessageProjected).toHaveBeenCalledWith('c1', 'source-1');
 
     // 相同 client_msg_id → 去重，不新增
     dispatch({ type: 'user_message', content: 'hello-again', timestamp: 200, client_msg_id: 'c1' }, ctx);

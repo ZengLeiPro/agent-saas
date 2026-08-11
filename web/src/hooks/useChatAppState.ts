@@ -30,6 +30,10 @@ import {
   createCompactionRunningItem,
 } from "@/lib/compaction";
 import type { CompactionMessageItem, CompactionStatusEvent } from "@/lib/compaction";
+import {
+  InterjectionConsumptionRegistry,
+  removeConsumedInterjections,
+} from "@/lib/interjectionConsumption";
 import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, replaceSettingsUrl, pushAdminSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, normalizeAdminSettingsSection, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl, buildTenantAdminUrl, pushTenantAdminUrl, replaceTenantAdminUrl, normalizeTenantAdminSection, preserveScopeSearch, preserveSearchKeys, TENANT_ADMIN_SCOPE_KEYS, pushGovernanceUrl, replaceGovernanceUrl } from "@/lib/urlSync";
 import { buildGovernanceUrl, governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
 import { registerUpdateGuard, registerBeforeReloadHook, maybeReloadOnPopstate } from "@/lib/swUpdate";
@@ -510,10 +514,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   //（user_message 投影）或回退接管（非 queued stream_id）时才进时间线。
   const [queuedInterjections, setQueuedInterjectionsState] = useState<QueuedInterjection[]>([]);
   const queuedInterjectionsRef = useRef<QueuedInterjection[]>([]);
+  const consumedInterjectionsRef = useRef(new InterjectionConsumptionRegistry());
   const mutateQueuedInterjections = useCallback(
     (updater: (prev: QueuedInterjection[]) => QueuedInterjection[]) => {
-      queuedInterjectionsRef.current = updater(queuedInterjectionsRef.current);
-      setQueuedInterjectionsState(queuedInterjectionsRef.current);
+      const next = updater(queuedInterjectionsRef.current);
+      if (next === queuedInterjectionsRef.current) return;
+      queuedInterjectionsRef.current = next;
+      setQueuedInterjectionsState(next);
     },
     [],
   );
@@ -858,6 +865,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     // 清所有 ACK 超时定时器
     for (const t of ackTimersRef.current.values()) clearTimeout(t);
     ackTimersRef.current.clear();
+    consumedInterjectionsRef.current.clear();
     mutateQueuedInterjections(() => []);
     // 通知服务端解除 wsActiveStream 绑定（buffer 仍保留,resume 时可用 cursor 增量回放）
     wsClient.send({ action: 'detach' });
@@ -879,19 +887,24 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
       if (!sid || sessionId !== sid) return;
       mutateQueuedInterjections((prev) => {
-        const serverEntries: QueuedInterjection[] = serverQueued.map((q) => {
-          const local = prev.find((e) => (
-            (q.clientMsgId && e.clientMsgId === q.clientMsgId) || e.sourceRunId === q.sourceRunId
-          ));
-          return {
-            clientMsgId: q.clientMsgId ?? q.sourceRunId,
+        const serverEntries: QueuedInterjection[] = serverQueued
+          .filter((q) => !consumedInterjectionsRef.current.has({
+            clientMsgId: q.clientMsgId,
             sourceRunId: q.sourceRunId,
-            content: q.content,
-            ...(q.attachments?.length ? { attachments: q.attachments } : {}),
-            status: 'queued' as const,
-            createdAt: local?.createdAt ?? (Date.parse(q.acceptedAt) || Date.now()),
-          };
-        });
+          }))
+          .map((q) => {
+            const local = prev.find((e) => (
+              (q.clientMsgId && e.clientMsgId === q.clientMsgId) || e.sourceRunId === q.sourceRunId
+            ));
+            return {
+              clientMsgId: q.clientMsgId ?? q.sourceRunId,
+              sourceRunId: q.sourceRunId,
+              content: q.content,
+              ...(q.attachments?.length ? { attachments: q.attachments } : {}),
+              status: 'queued' as const,
+              createdAt: local?.createdAt ?? (Date.parse(q.acceptedAt) || Date.now()),
+            };
+          });
         const serverIds = new Set(serverEntries.map((e) => e.clientMsgId));
         const keepLocal = prev.filter((e) => (
           !serverIds.has(e.clientMsgId)
@@ -2101,22 +2114,21 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         },
         onInterjectionApplied: (sourceRunIds, clientMsgIds) => {
           const applied = new Set(clientMsgIds);
+          const appliedRuns = new Set(sourceRunIds);
+          consumedInterjectionsRef.current.markMany(clientMsgIds, sourceRunIds);
           outboxRef.current = outboxRef.current.filter((entry) => !applied.has(entry.clientMsgId));
           for (const clientMsgId of clientMsgIds) {
             const timer = ackTimersRef.current.get(clientMsgId);
             if (timer) clearTimeout(timer);
             ackTimersRef.current.delete(clientMsgId);
           }
-          // 队列区：被吸收的插话移除（气泡由 user_message 投影事件补进时间线）
-          const appliedRuns = new Set(sourceRunIds);
-          mutateQueuedInterjections((prev) => prev.filter((entry) => (
-            !applied.has(entry.clientMsgId)
-            && !(entry.sourceRunId && appliedRuns.has(entry.sourceRunId))
-          )));
+          // 队列区：被吸收的插话移除（气泡由 user_message 投影事件补进时间线）。
+          // 消费标记还会拦截稍晚到达的 queued 广播/旧 detail 快照，避免队列栏反复复活。
+          mutateQueuedInterjections((prev) => removeConsumedInterjections(prev, applied, appliedRuns));
         },
         // ── 插话队列区（2026-08-04 终态设计）──
         onSteeringAckQueued: (clientMsgId, sourceRunId, targetRunId) => {
-          if (!clientMsgId) return;
+          if (!clientMsgId || consumedInterjectionsRef.current.has({ clientMsgId, sourceRunId })) return;
           mutateQueuedInterjections((prev) => prev.map((entry) => (
             entry.clientMsgId === clientMsgId
               ? {
@@ -2131,7 +2143,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         onSteeringQueued: (event) => {
           // user scope 多端广播：只处理当前会话；其他会话靠 detail API 恢复
           const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
-          if (!sid || event.sessionId !== sid) return;
+          if (
+            !sid
+            || event.sessionId !== sid
+            || consumedInterjectionsRef.current.has({
+              clientMsgId: event.clientMsgId,
+              sourceRunId: event.sourceRunId,
+            })
+          ) return;
           mutateQueuedInterjections((prev) => {
             const existing = prev.find((entry) => entry.clientMsgId === event.clientMsgId);
             if (existing) {
@@ -2183,9 +2202,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           msgRef.current.triggerScroll();
           return index;
         },
-        onUserMessageProjected: (clientMsgId) => {
-          if (!clientMsgId) return;
-          mutateQueuedInterjections((prev) => prev.filter((entry) => entry.clientMsgId !== clientMsgId));
+        onUserMessageProjected: (clientMsgId, sourceRunId) => {
+          if (!clientMsgId && !sourceRunId) return;
+          consumedInterjectionsRef.current.mark({ clientMsgId, sourceRunId });
+          mutateQueuedInterjections((prev) => removeConsumedInterjections(
+            prev,
+            new Set(clientMsgId ? [clientMsgId] : []),
+            new Set(sourceRunId ? [sourceRunId] : []),
+          ));
         },
         onChatRejected: (clientMsgId, reasonCode, reason) => {
           // 服务端拒绝：清 ACK 定时器、从 outbox 移除；bubble 已在 wsEventProcessor 翻 failed

@@ -98,6 +98,7 @@ export class AgentToolProvider implements ToolProvider {
       schema: agentToolSchema,
       risk: 'safe',
       approvalMode: 'never',
+      concurrency: 'parallel',
       auditCategory: 'agent.subagent',
       category: 'core',
       label: '子 Agent 调度',

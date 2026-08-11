@@ -188,6 +188,14 @@ export interface ToolDescriptor<TInput = unknown> {
   parametersJsonSchema?: Record<string, unknown>;
   risk: ToolRisk;
   approvalMode: ToolApprovalMode;
+  /**
+   * 同一模型响应中的相邻工具调用是否可与其他 opt-in 工具并行执行。
+   *
+   * 缺省为串行。只有无顺序依赖、无交互且可安全重叠执行的工具才可声明
+   * `parallel`；运行时还会额外要求 risk=safe、approvalMode=never，避免配置
+   * 漂移把写操作或审批操作静默放入并行窗。
+   */
+  concurrency?: 'parallel';
   auditCategory: string;
   /**
    * 内建工具的 admin UI 分组。缺省视为 MCP / 动态工具，admin 面板归入兜底分组。
@@ -383,6 +391,7 @@ export const readFileToolDescriptor: ToolDescriptor<{ path: string; offset?: num
   }),
   risk: 'safe',
   approvalMode: 'never',
+  concurrency: 'parallel',
   auditCategory: 'filesystem.read',
   category: 'workspace',
   label: '读取文件',

@@ -275,6 +275,7 @@ export const sessionContextToolDescriptor: ToolDescriptor<SessionContextInput> =
   schema: sessionContextSchema,
   risk: 'safe',
   approvalMode: 'never',
+  concurrency: 'parallel',
   auditCategory: 'session.context',
   category: 'session',
   label: '会话历史检索',

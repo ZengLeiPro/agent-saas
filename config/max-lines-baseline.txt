@@ -22,7 +22,7 @@ server/src/__tests__/webChannelExecutionTarget.test.ts	854	test
 server/src/__tests__/webChannelReconnect.test.ts	909	test
 server/src/__tests__/workflowLibraryV3.test.ts	1062	test
 server/src/__tests__/wsEventProcessor.test.ts	831	test
-server/src/agent/toolRuntime.ts	1726	production
+server/src/agent/toolRuntime.ts	1725	production
 server/src/app/config.ts	1536	production
 server/src/app/runtime.ts	3231	production
 server/src/channels/web/channel.ts	4500	production

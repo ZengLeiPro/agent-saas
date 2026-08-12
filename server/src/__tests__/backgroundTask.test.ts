@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { createDefaultExecutionTransportRegistry, type ToolCallContext } from '../agent/toolRuntime.js';
+import {
+  createDefaultExecutionTransportRegistry,
+  PlatformToolRuntime,
+  type ToolCallContext,
+} from '../agent/toolRuntime.js';
 import { DurableBackgroundTaskService, escapeXml } from '../runtime/background/backgroundTaskService.js';
 import type {
   ListBackgroundTasksOptions,
@@ -216,6 +220,55 @@ function fixture(): {
 }
 
 describe('DurableBackgroundTaskService', () => {
+  it('reserves background Shell with the effective tenant remote workspace', async () => {
+    const invoke = vi.fn(async () => ({
+      status: 'success' as const,
+      content: JSON.stringify({ taskId: 'shell-bg-effective', status: 'starting' }),
+    }));
+    const registry = createDefaultExecutionTransportRegistry();
+    registry.register('server-remote', { listInternalTools: () => [], invoke });
+    const hand = {
+      handId: 'parent-session-1:agent-saas-acs',
+      sessionId: 'parent-session-1',
+      workspaceId: 'parent-session-1',
+      type: 'server-remote' as const,
+      status: 'ready' as const,
+      capabilities: [],
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+      metadata: { tenantRemoteHandId: 'agent-saas-acs' },
+    };
+    const reserveCommand = vi.fn(async () => ({ taskId: 'shell-bg-effective', status: 'starting' as const }));
+    const activateCommand = vi.fn(async () => undefined);
+    const runtime = new PlatformToolRuntime({
+      executionTransportRegistry: registry,
+      handStore: {
+        get: async () => hand,
+        listBySession: async () => [hand],
+        listByWorkspace: async () => [hand],
+      } as never,
+      backgroundTasks: {
+        reserveCommand,
+        activateCommand,
+        failCommandStart: vi.fn(async () => undefined),
+      } as never,
+    });
+    const context = commandContext();
+    context.workspace.executionTarget = 'server-container';
+
+    await runtime.invoke({
+      toolId: 'Shell',
+      input: { command: 'sleep 60', mode: 'background' },
+      authorization: { approved: true, source: 'human_approval' },
+    }, context);
+
+    const effectiveContext = expect.objectContaining({
+      workspace: expect.objectContaining({ executionTarget: 'server-remote' }),
+    });
+    expect(reserveCommand).toHaveBeenCalledWith(effectiveContext, expect.objectContaining({ command: 'sleep 60' }));
+    expect(activateCommand).toHaveBeenCalledWith(effectiveContext, 'shell-bg-effective');
+  });
+
   it('persists a hidden task session/run and emits background_task_started', async () => {
     const { service, runStore, sessionCatalog, eventStore } = fixture();
     const context: ToolCallContext = {
@@ -427,13 +480,17 @@ describe('DurableBackgroundTaskService', () => {
     );
   });
 
-  it('reserves, activates and monitors a durable background command without replaying it', async () => {
+  it('restores the parent tenant hand and monitors a durable command after service reconstruction', async () => {
     const base = fixture();
-    const invocations: Array<{ toolName: string; input: unknown }> = [];
+    const invocations: Array<{ toolName: string; input: unknown; sessionId?: string }> = [];
     const transport: ExecutionTransport = {
       listInternalTools: () => [],
       invoke: async (request) => {
-        invocations.push({ toolName: request.toolName, input: request.input });
+        invocations.push({
+          toolName: request.toolName,
+          input: request.input,
+          sessionId: request.context.workspace.sessionId,
+        });
         return {
           status: 'success',
           content: JSON.stringify({
@@ -449,6 +506,23 @@ describe('DurableBackgroundTaskService', () => {
       },
     };
     base.config.executionTransportRegistry!.register('server-remote', transport);
+    const parentHand = {
+      handId: 'parent-session-1:agent-saas-acs',
+      sessionId: 'parent-session-1',
+      workspaceId: 'parent-session-1',
+      type: 'server-remote' as const,
+      status: 'ready' as const,
+      capabilities: [],
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+      metadata: { tenantRemoteHandId: 'agent-saas-acs' },
+    };
+    const listBySession = vi.fn(async (sessionId: string) => sessionId === parentHand.sessionId ? [parentHand] : []);
+    base.config.handStore = {
+      get: async (handId: string) => handId === parentHand.handId ? parentHand : null,
+      listBySession,
+      listByWorkspace: async () => [parentHand],
+    } as never;
     const context = commandContext();
     const reservation = await base.service.reserveCommand(context, {
       command: 'pnpm build',
@@ -459,13 +533,20 @@ describe('DurableBackgroundTaskService', () => {
       backgroundTaskType: 'command',
       backgroundTaskReady: false,
       commandPreview: 'pnpm build',
+      parentSessionId: 'parent-session-1',
       wakeState: 'none',
     });
 
     await base.service.activateCommand(context, reservation.taskId);
     expect(base.runStore.records.get(reservation.taskId)?.metadata).toMatchObject({ backgroundTaskReady: true });
-    await base.service.execute(base.runStore.records.get(reservation.taskId)!);
-    expect(invocations).toEqual([expect.objectContaining({ toolName: 'BashOutput' })]);
+    const reconstructedService = new DurableBackgroundTaskService(base.config);
+    await reconstructedService.execute(base.runStore.records.get(reservation.taskId)!);
+    expect(invocations).toEqual([expect.objectContaining({
+      toolName: 'BashOutput',
+      sessionId: 'parent-session-1',
+    })]);
+    expect(listBySession).toHaveBeenCalledWith('parent-session-1');
+    expect(listBySession).not.toHaveBeenCalledWith(reserved.sessionId);
     expect(base.runStore.records.get(reservation.taskId)).toMatchObject({
       status: 'completed',
       statusReason: undefined,
@@ -476,13 +557,13 @@ describe('DurableBackgroundTaskService', () => {
     });
   });
 
-  it('cancels the ACS process when cancelling a durable background command', async () => {
+  it('restores the parent tenant hand when cancelling a durable background command', async () => {
     const base = fixture();
-    const invocations: string[] = [];
+    const invocations: Array<{ toolName: string; sessionId?: string }> = [];
     base.config.executionTransportRegistry!.register('server-remote', {
       listInternalTools: () => [],
       invoke: async (request) => {
-        invocations.push(request.toolName);
+        invocations.push({ toolName: request.toolName, sessionId: request.context.workspace.sessionId });
         return {
           status: 'success',
           content: JSON.stringify({
@@ -496,12 +577,29 @@ describe('DurableBackgroundTaskService', () => {
         };
       },
     });
+    const parentHand = {
+      handId: 'parent-session-1:agent-saas-acs',
+      sessionId: 'parent-session-1',
+      workspaceId: 'parent-session-1',
+      type: 'server-remote' as const,
+      status: 'ready' as const,
+      capabilities: [],
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+      metadata: { tenantRemoteHandId: 'agent-saas-acs' },
+    };
+    base.config.handStore = {
+      get: async (handId: string) => handId === parentHand.handId ? parentHand : null,
+      listBySession: async (sessionId: string) => sessionId === parentHand.sessionId ? [parentHand] : [],
+      listByWorkspace: async () => [parentHand],
+    } as never;
     const context = commandContext();
     const reservation = await base.service.reserveCommand(context, { command: 'sleep 60', timeoutMs: 60_000 });
     await base.service.activateCommand(context, reservation.taskId);
 
-    const cancelled = await base.service.cancel(context, reservation.taskId);
-    expect(invocations).toEqual(['KillBash']);
+    const reconstructedService = new DurableBackgroundTaskService(base.config);
+    const cancelled = await reconstructedService.cancel(context, reservation.taskId);
+    expect(invocations).toEqual([{ toolName: 'KillBash', sessionId: 'parent-session-1' }]);
     expect(cancelled).toMatchObject({ status: 'cancelled', metadata: { wakeState: 'pending' } });
   });
 

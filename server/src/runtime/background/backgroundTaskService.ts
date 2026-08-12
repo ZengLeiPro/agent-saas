@@ -752,12 +752,15 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
   ): Promise<{ content: string }> {
     const executionRegistry = this.config.executionTransportRegistry;
     const tenantHandResolver = this.config.tenantRemoteHandResolver;
-    if (!executionRegistry || !tenantHandResolver) {
-      throw new Error('后台命令缺少 executionTransportRegistry/tenantHandResolver 装配。');
-    }
-    const taskSession = await resolveSessionCatalog(this.config).get(record.sessionId);
+    if (!executionRegistry || !tenantHandResolver) throw new Error(
+      '后台命令缺少 executionTransportRegistry/tenantHandResolver 装配。',
+    );
+    const sessionCatalog = resolveSessionCatalog(this.config);
+    const taskSession = await sessionCatalog.get(record.sessionId);
+    const parentSession = await sessionCatalog.get(metadata.parentSessionId); // durable 子任务无 hand，恢复父 hand
     if (!taskSession) throw new Error(`后台命令 session 不存在：${record.sessionId}`);
-    const identity = sessionIdentity(taskSession);
+    if (!parentSession) throw new Error(`后台命令父 session 不存在：${metadata.parentSessionId}`);
+    const identity = sessionIdentity(parentSession);
     const runtime = new PlatformToolRuntime({
       executionTransportRegistry: executionRegistry,
       handStore: this.config.handStore,
@@ -770,7 +773,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     }, {
       channelContext: {
         channel: metadata.parentChannel,
-        resumeSessionId: record.sessionId,
+        resumeSessionId: metadata.parentSessionId,
         sessionOwner: identity,
         targetCwd: metadata.cwd,
         ...(metadata.timezone ? { timezone: metadata.timezone } : {}),
@@ -778,17 +781,14 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       workspace: {
         id: metadata.workspaceId,
         root: metadata.cwd,
-        userId: taskSession.userId,
-        username: taskSession.username,
-        tenantId: taskSession.tenantId,
-        sessionId: record.sessionId,
+        userId: parentSession.userId, username: parentSession.username, tenantId: parentSession.tenantId,
+        sessionId: metadata.parentSessionId, topLevelSessionId: metadata.topLevelSessionId ?? metadata.parentSessionId,
         executionTarget: record.executionTarget ?? taskSession.executionTarget ?? 'server-remote',
         ...(metadata.mountSubPath ? { mountSubPath: metadata.mountSubPath } : {}),
         ...(metadata.sandboxScopeId ? { sandboxScopeId: metadata.sandboxScopeId } : {}),
         ...(metadata.sandboxPolicy ? { sandboxPolicy: metadata.sandboxPolicy } : {}),
       },
-      sessionId: record.sessionId,
-      runId: record.runId,
+      sessionId: metadata.parentSessionId, runId: record.runId,
       toolCallId: `${toolId}-${record.runId}`,
       signal,
     });

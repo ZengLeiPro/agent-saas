@@ -47,6 +47,9 @@ importers:
 
   acs-orchestrator:
     dependencies:
+      '@napi-rs/canvas':
+        specifier: 0.1.80
+        version: 0.1.80
       server:
         specifier: workspace:*
         version: link:../server

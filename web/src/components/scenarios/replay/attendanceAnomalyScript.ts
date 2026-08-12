@@ -195,7 +195,7 @@ export const attendanceAnomalyScript: ReplayScript = {
           kind: "prompt",
           title: "用户消息",
           defaultOpen: true,
-          content: "今天考勤有什么异常需要我处理？",
+          content: "今天考勤有啥异常？",
         },
         {
           id: "a1-tool",

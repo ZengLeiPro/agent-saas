@@ -124,7 +124,7 @@ export const knowledgeQaScript: ReplayScript = {
           kind: "prompt",
           title: "用户消息",
           defaultOpen: true,
-          content: "我下周去上海出差三天，住宿能报多少？发票有什么要求吗？",
+          content: "去上海出差，住宿能报多少？",
         },
         {
           // 首屏就要让客户看见「它接到了哪些系统」——空白首屏是实机走查抓到的问题

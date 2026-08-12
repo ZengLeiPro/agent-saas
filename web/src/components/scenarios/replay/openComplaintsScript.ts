@@ -225,7 +225,7 @@ export const openComplaintsScript: ReplayScript = {
           kind: "prompt",
           title: "用户消息",
           defaultOpen: true,
-          content: "今天还有哪些客诉没闭环？帮我盘一遍，别让哪个客户一直等着我们。",
+          content: "还有哪些客诉没闭环？",
         },
         {
           id: "oc1-tool",

@@ -139,7 +139,7 @@ export const meetingTodosScript: ReplayScript = {
           kind: "prompt",
           title: "用户消息",
           defaultOpen: true,
-          content: "今天经营会的决议已经确认了，不用再整理一份纪要。把该追的事情建起来，缺责任人或期限就交给我补，然后持续盯到完成或升级。",
+          content: "把经营会的决议建成待办，缺信息再问我。",
         },
         {
           id: "mt1-tool",

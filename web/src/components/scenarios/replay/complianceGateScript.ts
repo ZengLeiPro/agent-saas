@@ -146,7 +146,7 @@ export const complianceGateScript: ReplayScript = {
           kind: "prompt",
           title: "用户消息",
           defaultOpen: true,
-          content: "下周要发一批 X7 控制器去德国，客户催着要合规文件。帮我看看证据齐不齐、能不能放行。",
+          content: "这批 X7 发德国，合规材料齐了吗？",
         },
         {
           id: "c1-tool",

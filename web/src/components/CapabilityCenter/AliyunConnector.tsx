@@ -9,16 +9,14 @@ import {
 } from "@agent/shared";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import {
   CAPABILITY_SUBTLE_SURFACE,
-  CAPABILITY_SURFACE,
-  CAPABILITY_SURFACE_HOVER,
   CapabilityDetailDrawer,
   CapabilitySourceBadge,
+  ConnectorCatalogCard,
 } from "./CatalogUi";
 
 const DISCONNECTED: AliyunConnection = { connectorId: "aliyun", status: "disconnected" };
@@ -110,41 +108,21 @@ export function AliyunConnectorCard({
   const connected = state.connection.status === "connected";
   const busy = state.loading || state.saving;
   return (
-    <Card
-      className={cn("group cursor-pointer border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)}
-      onClick={onOpenDetail}
-    >
-      <CardContent className="flex min-h-36 items-start gap-4 p-5">
-        <AliyunLogo />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="font-semibold">阿里云</div>
-              <div className="mt-1 flex items-center gap-2">
-                <CapabilitySourceBadge source="platform" />
-                <span className={cn("text-xs font-medium", connected ? "text-success" : "text-muted-foreground")}>
-                  {busy ? "检测中" : connected ? "已连接" : "未连接"}
-                </span>
-              </div>
-            </div>
-            <button
-              type="button"
-              aria-label={connected ? "查看阿里云连接" : "连接阿里云"}
-              className={cn(
-                "flex size-8 items-center justify-center rounded-lg border",
-                connected ? "border-transparent bg-success text-success-foreground" : "bg-muted/40 text-muted-foreground",
-              )}
-              onClick={(event) => { event.stopPropagation(); onOpenDetail(); }}
-              disabled={busy}
-            >
-              {busy ? <Loader2 className="size-4 animate-spin" /> : connected ? <Check className="size-4" /> : <Plus className="size-4" />}
-            </button>
-          </div>
-          <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{DESCRIPTION}</p>
-          <div className="mt-3 text-xs text-muted-foreground">官方 CLI：aliyun</div>
-        </div>
-      </CardContent>
-    </Card>
+    <ConnectorCatalogCard
+      name="阿里云"
+      logo={<AliyunLogo />}
+      source="platform"
+      statusLabel={busy ? "检测中" : connected ? "已连接" : "未连接"}
+      statusClassName={connected ? "text-success" : "text-muted-foreground"}
+      description={DESCRIPTION}
+      metadata="官方 CLI：aliyun"
+      onOpenDetail={onOpenDetail}
+      actionLabel={connected ? "查看阿里云连接" : "配置阿里云连接"}
+      actionIcon={busy ? <Loader2 className="size-4 animate-spin" /> : connected ? <Check className="size-4" /> : <Plus className="size-4" />}
+      actionTone={connected ? "success" : "default"}
+      actionDisabled={busy}
+      onAction={onOpenDetail}
+    />
   );
 }
 

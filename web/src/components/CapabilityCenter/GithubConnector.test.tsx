@@ -31,6 +31,10 @@ describe("GithubConnector", () => {
 
     render(<GithubConnector />);
 
+    expect(await screen.findByRole("button", { name: "查看 GitHub 详情" })).toBeTruthy();
+    expect(screen.queryByLabelText("Personal Access Token")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "配置 GitHub" }));
+
     const tokenInput = await screen.findByLabelText("Personal Access Token");
     fireEvent.change(tokenInput, { target: { value: "github_pat_test" } });
     fireEvent.click(screen.getByRole("button", { name: "连接 GitHub" }));
@@ -38,7 +42,9 @@ describe("GithubConnector", () => {
     await waitFor(() => {
       expect(api.connectGithub).toHaveBeenCalledWith({ token: "github_pat_test" });
     });
-    expect(await screen.findByText("已连接")).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getAllByText("已连接")).toHaveLength(2);
+    });
     expect(screen.queryByRole("switch")).toBeNull();
   });
 
@@ -48,6 +54,7 @@ describe("GithubConnector", () => {
     });
 
     render(<GithubConnector />);
+    fireEvent.click(await screen.findByRole("button", { name: "查看 GitHub" }));
     fireEvent.click(await screen.findByRole("button", { name: "更新凭据" }));
 
     const tokenInput = screen.getByLabelText("Personal Access Token");

@@ -8,14 +8,12 @@ import {
   startNotionAuthSession,
 } from "@agent/shared";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import {
   CapabilityDetailDrawer,
   CapabilitySourceBadge,
+  ConnectorCatalogCard,
   CAPABILITY_SUBTLE_SURFACE,
-  CAPABILITY_SURFACE,
-  CAPABILITY_SURFACE_HOVER,
 } from "./CatalogUi";
 
 interface NotionConnectorState {
@@ -171,24 +169,24 @@ export function NotionConnectorCard({ state, onOpenDetail }: { state: NotionConn
   const connected = status === "connected";
   const busy = state.loading || state.connecting || state.session?.status === "starting" || state.session?.status === "awaiting_user";
   return (
-    <Card className={cn("group cursor-pointer border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)} onClick={onOpenDetail}>
-      <CardContent className="flex min-h-36 items-start gap-4 p-5">
-        <NotionLogo />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="font-semibold">Notion</div>
-              <div className="mt-1 flex items-center gap-2"><CapabilitySourceBadge source="platform" /><span className={cn("text-xs font-medium", connected ? "text-success" : status === "invalid" ? "text-destructive" : "text-muted-foreground")}>{busy ? "等待授权" : statusLabel(status)}</span></div>
-            </div>
-            <button type="button" className={cn("flex size-8 items-center justify-center rounded-lg border", linked ? "border-transparent bg-success text-success-foreground" : "bg-muted/40 text-muted-foreground")} onClick={(event) => { event.stopPropagation(); if (linked) onOpenDetail(); else void state.start(); }} disabled={busy}>
-              {busy ? <Loader2 className="size-4 animate-spin" /> : linked ? <Check className="size-4" /> : <Plus className="size-4" />}
-            </button>
-          </div>
-          <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{DESCRIPTION}</p>
-          <div className="mt-3 truncate text-xs text-muted-foreground">{state.connection?.workspaceName ? `工作区：${state.connection.workspaceName}` : "官方 CLI：ntn"}</div>
-        </div>
-      </CardContent>
-    </Card>
+    <ConnectorCatalogCard
+      name="Notion"
+      logo={<NotionLogo />}
+      source="platform"
+      statusLabel={busy ? "等待授权" : statusLabel(status)}
+      statusClassName={connected ? "text-success" : status === "invalid" ? "text-destructive" : "text-muted-foreground"}
+      description={DESCRIPTION}
+      metadata={state.connection?.workspaceName ? `工作区：${state.connection.workspaceName}` : "官方 CLI：ntn"}
+      onOpenDetail={onOpenDetail}
+      actionLabel={status === "invalid" ? "修复 Notion 连接" : linked ? "查看 Notion" : "连接 Notion"}
+      actionIcon={busy ? <Loader2 className="size-4 animate-spin" /> : status === "invalid" ? <TriangleAlert className="size-4" /> : linked ? <Check className="size-4" /> : <Plus className="size-4" />}
+      actionTone={status === "invalid" ? "danger" : linked ? "success" : "default"}
+      actionDisabled={busy}
+      onAction={() => {
+        if (linked) onOpenDetail();
+        else void state.start();
+      }}
+    />
   );
 }
 

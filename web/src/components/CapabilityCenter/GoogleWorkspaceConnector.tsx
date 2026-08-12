@@ -7,14 +7,12 @@ import {
   startGoogleWorkspaceOAuth,
 } from "@agent/shared";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import {
   CapabilityDetailDrawer,
   CapabilitySourceBadge,
+  ConnectorCatalogCard,
   CAPABILITY_SUBTLE_SURFACE,
-  CAPABILITY_SURFACE,
-  CAPABILITY_SURFACE_HOVER,
 } from "./CatalogUi";
 
 interface GoogleWorkspaceConnectorState {
@@ -119,21 +117,25 @@ export function GoogleWorkspaceConnectorCard({ state, onOpenDetail }: { state: G
   const connected = state.connection?.status === "connected";
   const busy = state.loading || state.connecting;
   return (
-    <Card className={cn("group cursor-pointer border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)} onClick={onOpenDetail}>
-      <CardContent className="flex min-h-36 items-start gap-4 p-5">
-        <GoogleWorkspaceLogo />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <div><div className="font-semibold">Google Workspace</div><div className="mt-1 flex items-center gap-2"><CapabilitySourceBadge source="platform" /><span className={cn("text-xs font-medium", connected ? "text-success" : "text-muted-foreground")}>{busy ? "授权中" : connected ? "已连接" : state.available ? "未连接" : "未配置"}</span></div></div>
-            <button type="button" className={cn("flex size-8 items-center justify-center rounded-lg border", connected ? "border-transparent bg-success text-success-foreground" : "bg-muted/40 text-muted-foreground")} onClick={(event) => { event.stopPropagation(); if (connected) onOpenDetail(); else void state.connect(); }} disabled={busy || !state.available}>
-              {busy ? <Loader2 className="size-4 animate-spin" /> : connected ? <Check className="size-4" /> : <Plus className="size-4" />}
-            </button>
-          </div>
-          <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{DESCRIPTION}</p>
-          <div className="mt-3 text-xs text-muted-foreground">官方 CLI：gws</div>
-        </div>
-      </CardContent>
-    </Card>
+    <ConnectorCatalogCard
+      name="Google Workspace"
+      logo={<GoogleWorkspaceLogo />}
+      source="platform"
+      statusLabel={busy ? "授权中" : connected ? "已连接" : state.available ? "未连接" : "未配置"}
+      statusClassName={connected ? "text-success" : "text-muted-foreground"}
+      description={DESCRIPTION}
+      metadata="官方 CLI：gws"
+      onOpenDetail={onOpenDetail}
+      actionLabel={connected ? "查看 Google Workspace" : "连接 Google Workspace"}
+      actionIcon={busy ? <Loader2 className="size-4 animate-spin" /> : connected ? <Check className="size-4" /> : <Plus className="size-4" />}
+      actionTone={connected ? "success" : "default"}
+      actionDisabled={busy || !state.available}
+      actionTitle={!state.available ? "管理员尚未配置 Google OAuth" : undefined}
+      onAction={() => {
+        if (connected) onOpenDetail();
+        else void state.connect();
+      }}
+    />
   );
 }
 

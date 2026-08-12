@@ -12,7 +12,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, CircleCheck, ExternalLink, Loader2, Plus, TriangleAlert, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
 import { cn } from "@/lib/utils";
@@ -20,9 +19,8 @@ import {
   CapabilityDetailDrawer,
   CapabilitySourceBadge,
   CatalogHeader,
+  ConnectorCatalogCard,
   CAPABILITY_SUBTLE_SURFACE,
-  CAPABILITY_SURFACE,
-  CAPABILITY_SURFACE_HOVER,
 } from "./CatalogUi";
 import { writeDingtalkAuthorizingPopup } from "./dingtalkAuthorizingPopup";
 import dingtalkIcon from "@/assets/connector-brands/dingtalk.svg";
@@ -320,57 +318,24 @@ export function DingtalkConnectorCard({
   const busy = dws.authInProgress || dws.connecting;
   const actionLabel = dws.hasConnected && !dws.needsReconnect ? "查看 钉钉" : "连接 钉钉";
   return (
-    <Card
-      className={cn("group cursor-pointer border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)}
-      onClick={onOpenDetail}
-      onKeyDown={(event) => {
-        if ((event.target as HTMLElement).closest("button")) return;
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onOpenDetail();
-        }
+    <ConnectorCatalogCard
+      name="钉钉"
+      logo={<DingtalkBrandLogo />}
+      source="platform"
+      statusLabel={status.label}
+      statusClassName={status.className}
+      description={DINGTALK_DESCRIPTION}
+      metadata="官方 CLI：dws · 支持多组织 profile"
+      onOpenDetail={onOpenDetail}
+      actionLabel={actionLabel}
+      actionIcon={busy ? <Loader2 className="size-4 animate-spin" /> : dws.hasConnected && !dws.needsReconnect ? <Check className="size-4" strokeWidth={2.5} /> : <Plus className="size-4" />}
+      actionTone={dws.hasConnected && !dws.needsReconnect ? "success" : "default"}
+      actionDisabled={busy || dws.authServiceUnavailable}
+      onAction={() => {
+        if (dws.hasConnected && !dws.needsReconnect) onOpenDetail();
+        else void dws.startConnection();
       }}
-      role="button"
-      tabIndex={0}
-    >
-      <CardContent className="flex min-h-36 items-start gap-4 p-5">
-        <DingtalkBrandLogo />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="truncate font-semibold">钉钉</div>
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                <CapabilitySourceBadge source="platform" />
-                <span className={`text-xs font-medium ${status.className}`}>{status.label}</span>
-              </div>
-            </div>
-            <button
-              type="button"
-              className={cn(
-                "flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
-                dws.hasConnected && !dws.needsReconnect
-                  ? "border-transparent bg-success text-success-foreground hover:bg-success/85"
-                  : "bg-muted/40 text-muted-foreground hover:border-success/40 hover:bg-success/10 hover:text-success",
-              )}
-              disabled={busy || dws.authServiceUnavailable}
-              aria-label={actionLabel}
-              onClick={(event) => {
-                event.stopPropagation();
-                if (dws.hasConnected && !dws.needsReconnect) {
-                  onOpenDetail();
-                } else {
-                  void dws.startConnection();
-                }
-              }}
-            >
-              {busy ? <Loader2 className="size-4 animate-spin" /> : dws.hasConnected && !dws.needsReconnect ? <Check className="size-4" strokeWidth={2.5} /> : <Plus className="size-4" />}
-            </button>
-          </div>
-          <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{DINGTALK_DESCRIPTION}</p>
-          <div className="mt-3 text-xs text-muted-foreground">官方 CLI：dws · 支持多组织 profile</div>
-        </div>
-      </CardContent>
-    </Card>
+    />
   );
 }
 

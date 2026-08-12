@@ -40,11 +40,11 @@ import {
   CatalogHeader,
   CapabilityDetailDrawer,
   CapabilitySourceBadge,
+  ConnectorCatalogCard,
   CatalogToolbar,
   CAPABILITY_EMPTY_SURFACE,
   CAPABILITY_SUBTLE_SURFACE,
   CAPABILITY_SURFACE,
-  CAPABILITY_SURFACE_HOVER,
   type CapabilitySource,
 } from "@/components/CapabilityCenter/CatalogUi";
 import {
@@ -610,70 +610,40 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                 const connectionFailed = selected && server.connection?.status === "error";
                 const connectionReady = selected && server.connection?.status === "connected";
                 return (
-                  <Card
+                  <ConnectorCatalogCard
                     key={server.id}
-                    className={cn("group cursor-pointer border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)}
-                    onClick={() => setDetailServerId(server.id)}
-                    onKeyDown={(event) => {
-                      if ((event.target as HTMLElement).closest("button")) return;
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
+                    name={server.name}
+                    logo={<ConnectorBrandLogo server={server} />}
+                    source={source}
+                    statusLabel={status.label}
+                    statusClassName={status.className}
+                    description={server.description || "暂无连接器说明"}
+                    metadata={`MCP · ${server.transport === "stdio" ? "本地服务" : "远程服务"} · 点击查看配置`}
+                    onOpenDetail={() => setDetailServerId(server.id)}
+                    actionLabel={selected ? `查看 ${server.name}` : oauthReady && !missingSecrets ? `启用 ${server.name}` : `配置 ${server.name}`}
+                    actionIcon={pendingServerId === server.id || connectionChecking
+                      ? <Loader2 className="size-4 animate-spin" />
+                      : connectionFailed
+                        ? <TriangleAlert className="size-4" />
+                        : selected
+                          ? <Check className="size-4" strokeWidth={2.5} />
+                          : <Plus className="size-4" />}
+                    actionTone={connectionFailed ? "danger" : connectionReady ? "success" : "default"}
+                    actionDisabled={saving || diagnosing || (!!server.oauth && !server.oauth.platformConfigured)}
+                    actionTitle={server.oauth && !server.oauth.platformConfigured ? "平台管理员尚未完成授权配置，暂不可连接" : undefined}
+                    onAction={() => {
+                      if (selected) {
                         setDetailServerId(server.id);
+                      } else if (!oauthReady) {
+                        setPendingServerId(server.id);
+                        void connectOAuth(server.id).finally(() => setPendingServerId(null));
+                      } else if (missingSecrets) {
+                        setDetailServerId(server.id);
+                      } else {
+                        void toggleServer(server, true);
                       }
                     }}
-                    role="button"
-                    tabIndex={0}
-                  >
-                    <CardContent className="flex min-h-36 items-start gap-4 p-5">
-                      <ConnectorBrandLogo server={server} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="truncate font-semibold">{server.name}</div>
-                            <div className="mt-1 flex flex-wrap items-center gap-2">
-                              <CapabilitySourceBadge source={source} />
-                              <span className={`text-xs font-medium ${status.className}`}>{status.label}</span>
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            className={cn(
-                              "flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
-                              connectionReady
-                                ? "border-transparent bg-success text-success-foreground hover:bg-success/85"
-                                : connectionFailed
-                                  ? "border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/15"
-                                : "bg-muted/40 text-muted-foreground hover:border-success/40 hover:bg-success/10 hover:text-success",
-                            )}
-                            disabled={saving || diagnosing || (!!server.oauth && !server.oauth.platformConfigured)}
-                            title={server.oauth && !server.oauth.platformConfigured ? "平台管理员尚未完成授权配置，暂不可连接" : undefined}
-                            aria-label={oauthReady && !missingSecrets ? `${selected ? "停用" : "启用"} ${server.name}` : `配置 ${server.name}`}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (!oauthReady) {
-                                setPendingServerId(server.id);
-                                void connectOAuth(server.id).finally(() => setPendingServerId(null));
-                              } else if (missingSecrets) {
-                                setDetailServerId(server.id);
-                              } else {
-                                void toggleServer(server, !selected);
-                              }
-                            }}
-                          >
-                            {pendingServerId === server.id || connectionChecking
-                              ? <Loader2 className="size-4 animate-spin" />
-                              : connectionFailed
-                                ? <TriangleAlert className="size-4" />
-                                : selected
-                                  ? <Check className="size-4" strokeWidth={2.5} />
-                                  : <Plus className="size-4" />}
-                          </button>
-                        </div>
-                        <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{server.description || "暂无连接器说明"}</p>
-                        <div className="mt-3 text-xs text-muted-foreground">点击查看权限与账号配置</div>
-                      </div>
-                    </CardContent>
-                  </Card>
+                  />
                 );
               })}
             </div>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Check, ExternalLink, Loader2, Link2Off, Plus, RefreshCw, Save, Stethoscope, Trash2, TriangleAlert } from "lucide-react";
+import { Check, ExternalLink, Loader2, Link2Off, Plus, RefreshCw, Save, Stethoscope, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
@@ -121,7 +121,7 @@ function connectorStatus(server: McpServerSummary, checking = false): { label: s
   if ((server.secretRequirements ?? []).some((requirement) => requirement.required !== false && !requirement.configured)) {
     return { label: "待配置", className: "text-amber-700 dark:text-amber-300" };
   }
-  if (!server.enabled) return { label: "可启用", className: "text-muted-foreground" };
+  if (!server.enabled) return { label: "已暂停", className: "text-muted-foreground" };
   if (checking) return { label: "检测中", className: "text-brand-600" };
   if (server.connection?.status === "connected") {
     return {
@@ -493,16 +493,16 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
     });
   }, [activeFilter, connectorServers, query]);
   // 六个官方 CLI 原生连接器计入「全部 / 已启用 / 平台提供」的计数。
-  const notionConnected = notion.connection?.status === "connected";
-  const googleWorkspaceConnected = googleWorkspace.connection?.status === "connected";
-  const aliyunConnected = aliyun.connection.status === "connected";
+  const notionConnected = notion.connection?.status === "connected" && notion.connection.runtimeEnabled;
+  const googleWorkspaceConnected = googleWorkspace.connection?.status === "connected" && googleWorkspace.connection.runtimeEnabled;
+  const aliyunConnected = aliyun.connection.status === "connected" && aliyun.connection.runtimeEnabled;
   const connectorFilters = useMemo(() => [
     { value: "all" as const, label: "全部", count: connectorServers.length + 6 },
-    { value: "enabled" as const, label: "已启用", count: enabledCount + (githubConnected ? 1 : 0) + (dws.hasConnected ? 1 : 0) + (feishu.hasConnected ? 1 : 0) + (notionConnected ? 1 : 0) + (googleWorkspaceConnected ? 1 : 0) + (aliyunConnected ? 1 : 0) },
+    { value: "enabled" as const, label: "已启用", count: enabledCount + (githubConnected ? 1 : 0) + (dws.hasConnected && dws.runtimeEnabled ? 1 : 0) + (feishu.hasConnected && feishu.runtimeEnabled ? 1 : 0) + (notionConnected ? 1 : 0) + (googleWorkspaceConnected ? 1 : 0) + (aliyunConnected ? 1 : 0) },
     { value: "platform" as const, label: "平台提供", count: connectorServers.filter((server) => connectorSource(server) === "platform").length + 6 },
     { value: "organization" as const, label: "组织提供", count: connectorServers.filter((server) => connectorSource(server) === "organization").length },
     { value: "personal" as const, label: "我创建的", count: connectorServers.filter((server) => connectorSource(server) === "personal").length },
-  ], [aliyunConnected, connectorServers, dws.hasConnected, enabledCount, feishu.hasConnected, githubConnected, googleWorkspaceConnected, notionConnected]);
+  ], [aliyunConnected, connectorServers, dws.hasConnected, dws.runtimeEnabled, enabledCount, feishu.hasConnected, feishu.runtimeEnabled, githubConnected, googleWorkspaceConnected, notionConnected]);
   const githubMatchesQuery = !query.trim()
     || "github git gh sdk 仓库 issue pull request".includes(query.trim().toLocaleLowerCase());
   const showGithubCard = githubMatchesQuery && (
@@ -608,7 +608,6 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                 const connectionChecking = diagnosing && selected && oauthReady && !missingSecrets;
                 const status = connectorStatus(server, connectionChecking);
                 const connectionFailed = selected && server.connection?.status === "error";
-                const connectionReady = selected && server.connection?.status === "connected";
                 return (
                   <ConnectorCatalogCard
                     key={server.id}
@@ -620,20 +619,16 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                     description={server.description || "暂无连接器说明"}
                     metadata={`MCP · ${server.transport === "stdio" ? "本地服务" : "远程服务"} · 点击查看配置`}
                     onOpenDetail={() => setDetailServerId(server.id)}
-                    actionLabel={selected ? `查看 ${server.name}` : oauthReady && !missingSecrets ? `启用 ${server.name}` : `配置 ${server.name}`}
+                    actionLabel={selected ? "暂停" : "连接"}
                     actionIcon={pendingServerId === server.id || connectionChecking
                       ? <Loader2 className="size-4 animate-spin" />
-                      : connectionFailed
-                        ? <TriangleAlert className="size-4" />
-                        : selected
-                          ? <Check className="size-4" strokeWidth={2.5} />
-                          : <Plus className="size-4" />}
-                    actionTone={connectionFailed ? "danger" : connectionReady ? "success" : "default"}
+                      : undefined}
+                    actionTone={connectionFailed ? "danger" : selected ? "success" : "default"}
                     actionDisabled={saving || diagnosing || (!!server.oauth && !server.oauth.platformConfigured)}
                     actionTitle={server.oauth && !server.oauth.platformConfigured ? "平台管理员尚未完成授权配置，暂不可连接" : undefined}
                     onAction={() => {
                       if (selected) {
-                        setDetailServerId(server.id);
+                        void toggleServer(server, false);
                       } else if (!oauthReady) {
                         setPendingServerId(server.id);
                         void connectOAuth(server.id).finally(() => setPendingServerId(null));

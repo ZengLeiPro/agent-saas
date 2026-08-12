@@ -18,6 +18,19 @@ async function jsonOrError<T>(res: Response, fallback: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export type NativeRuntimeConnectorId = 'github' | 'dws' | 'feishu' | 'notion' | 'google-workspace' | 'aliyun';
+
+export async function setNativeConnectorRuntimeEnabled(
+  connectorId: NativeRuntimeConnectorId,
+  runtimeEnabled: boolean,
+): Promise<{ connectorId: NativeRuntimeConnectorId; runtimeEnabled: boolean }> {
+  return jsonOrError(await authFetch(`/api/connectors/${connectorId}/runtime`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ runtimeEnabled }),
+  }), runtimeEnabled ? '恢复连接器失败' : '暂停连接器失败');
+}
+
 export async function fetchGithubConnection(): Promise<GithubConnectionResponse> {
   return jsonOrError(await authFetch('/api/connectors/github'), '读取 GitHub 连接失败');
 }

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, CircleAlert, CircleCheck, ExternalLink, Github, Loader2, Plus } from "lucide-react";
+import { CircleAlert, CircleCheck, ExternalLink, Github, Loader2 } from "lucide-react";
 import {
   connectGithub,
   disconnectGithub,
   fetchGithubConnection,
+  setNativeConnectorRuntimeEnabled,
   type GithubConnection,
 } from "@agent/shared";
 
@@ -22,6 +23,7 @@ import {
 const DISCONNECTED: GithubConnection = {
   connectorId: "github",
   status: "disconnected",
+  runtimeEnabled: true,
 };
 
 const DESCRIPTION = "授权后，原生 Git、gh、SDK 和 Shell 在当前用户运行环境中直接可用。";
@@ -61,8 +63,8 @@ export function GithubConnector({
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    if (!loading) onConnectionChange?.(connection.status === "connected");
-  }, [connection.status, loading, onConnectionChange]);
+    if (!loading) onConnectionChange?.(connection.status === "connected" && connection.runtimeEnabled !== false);
+  }, [connection.runtimeEnabled, connection.status, loading, onConnectionChange]);
 
   const saveCredential = async () => {
     if (!token.trim()) return;
@@ -96,8 +98,27 @@ export function GithubConnector({
     }
   };
 
+  const toggleRuntime = async () => {
+    if (connection.status !== "connected") {
+      setDetailOpen(true);
+      return;
+    }
+    setSaving(true);
+    setError(undefined);
+    try {
+      const result = await setNativeConnectorRuntimeEnabled("github", !connection.runtimeEnabled);
+      setConnection((current) => ({ ...current, runtimeEnabled: result.runtimeEnabled }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "GitHub 状态更新失败");
+      setDetailOpen(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const connected = connection.status === "connected";
-  const statusLabel = loading ? "检测中" : connected ? "已连接" : "未连接";
+  const runtimeEnabled = connection.runtimeEnabled !== false;
+  const statusLabel = loading ? "检测中" : connected ? runtimeEnabled ? "已连接" : "已暂停" : "未连接";
 
   return (
     <>
@@ -106,15 +127,15 @@ export function GithubConnector({
         logo={<GithubLogo />}
         source="platform"
         statusLabel={statusLabel}
-        statusClassName={connected ? "text-success" : "text-muted-foreground"}
+        statusClassName={connected && runtimeEnabled ? "text-success" : "text-muted-foreground"}
         description={DESCRIPTION}
         metadata="原生 Git · 官方 CLI：gh"
         onOpenDetail={() => setDetailOpen(true)}
-        actionLabel={connected ? "查看 GitHub" : "配置 GitHub"}
-        actionIcon={loading ? <Loader2 className="size-4 animate-spin" /> : connected ? <Check className="size-4" strokeWidth={2.5} /> : <Plus className="size-4" />}
-        actionTone={connected ? "success" : "default"}
-        actionDisabled={loading}
-        onAction={() => setDetailOpen(true)}
+        actionLabel={connected ? runtimeEnabled ? "暂停" : "恢复" : "连接"}
+        actionIcon={loading || saving ? <Loader2 className="size-4 animate-spin" /> : undefined}
+        actionTone={connected && runtimeEnabled ? "success" : "default"}
+        actionDisabled={loading || saving}
+        onAction={() => { void toggleRuntime(); }}
       />
 
       <CapabilityDetailDrawer
@@ -133,8 +154,8 @@ export function GithubConnector({
           <GithubLogo />
           <div>
             <CapabilitySourceBadge source="platform" />
-            <div className={cn("mt-1 flex items-center gap-1 text-xs font-medium", connected ? "text-success" : "text-muted-foreground")}>
-              {connected ? <CircleCheck className="size-3.5" /> : null}
+            <div className={cn("mt-1 flex items-center gap-1 text-xs font-medium", connected && runtimeEnabled ? "text-success" : "text-muted-foreground")}>
+              {connected && runtimeEnabled ? <CircleCheck className="size-3.5" /> : null}
               {statusLabel}
             </div>
           </div>

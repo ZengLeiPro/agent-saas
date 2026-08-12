@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   fetchGithubConnection: vi.fn(),
   connectGithub: vi.fn(),
   disconnectGithub: vi.fn(),
+  setNativeConnectorRuntimeEnabled: vi.fn(),
 }));
 
 vi.mock("@agent/shared", async (importOriginal) => ({
@@ -33,7 +34,7 @@ describe("GithubConnector", () => {
 
     expect(await screen.findByRole("button", { name: "查看 GitHub 详情" })).toBeTruthy();
     expect(screen.queryByLabelText("Personal Access Token")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "配置 GitHub" }));
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
 
     const tokenInput = await screen.findByLabelText("Personal Access Token");
     fireEvent.change(tokenInput, { target: { value: "github_pat_test" } });
@@ -48,13 +49,32 @@ describe("GithubConnector", () => {
     expect(screen.queryByRole("switch")).toBeNull();
   });
 
+  it("暂停时保留授权并把卡片操作切换为恢复", async () => {
+    api.fetchGithubConnection.mockResolvedValue({
+      connection: { connectorId: "github", status: "connected", runtimeEnabled: true },
+    });
+    api.setNativeConnectorRuntimeEnabled.mockResolvedValue({
+      connectorId: "github",
+      runtimeEnabled: false,
+    });
+
+    render(<GithubConnector />);
+    fireEvent.click(await screen.findByRole("button", { name: "暂停" }));
+
+    await waitFor(() => {
+      expect(api.setNativeConnectorRuntimeEnabled).toHaveBeenCalledWith("github", false);
+    });
+    expect(await screen.findByRole("button", { name: "恢复" })).toBeTruthy();
+    expect(api.disconnectGithub).not.toHaveBeenCalled();
+  });
+
   it("更新凭据时把 Token 标记为新密码，避免浏览器联动填充目录搜索框", async () => {
     api.fetchGithubConnection.mockResolvedValue({
       connection: { connectorId: "github", status: "connected" },
     });
 
     render(<GithubConnector />);
-    fireEvent.click(await screen.findByRole("button", { name: "查看 GitHub" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看 GitHub 详情" }));
     fireEvent.click(await screen.findByRole("button", { name: "更新凭据" }));
 
     const tokenInput = screen.getByLabelText("Personal Access Token");

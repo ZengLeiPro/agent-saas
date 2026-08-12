@@ -1,6 +1,7 @@
 export interface GithubConnection {
   connectorId: 'github';
   status: 'connected' | 'disconnected';
+  runtimeEnabled: boolean;
   connectedAt?: string;
   updatedAt?: string;
 }
@@ -30,6 +31,7 @@ export type NotionConnectionStatus = 'connected' | 'invalid' | 'unavailable' | '
 export interface NotionConnection {
   connectorId: 'notion';
   status: NotionConnectionStatus;
+  runtimeEnabled: boolean;
   workspaceId?: string;
   workspaceName?: string;
   identity?: {
@@ -64,6 +66,7 @@ export interface NotionAuthSessionResponse {
 export interface GoogleWorkspaceConnection {
   connectorId: 'google-workspace';
   status: 'connected' | 'disconnected';
+  runtimeEnabled: boolean;
   accountEmail?: string;
   connectedAt?: string;
   updatedAt?: string;
@@ -89,6 +92,7 @@ export interface GoogleWorkspaceOAuthStartResponse {
 export interface AliyunConnection {
   connectorId: 'aliyun';
   status: 'connected' | 'disconnected';
+  runtimeEnabled: boolean;
   accountId?: string;
   identityArn?: string;
   identityType?: string;

@@ -24,9 +24,11 @@ export interface ConnectorConnectionRecord {
 interface ConnectorConnectionFile {
   version: 1;
   users: Record<string, Record<string, ConnectorConnectionRecord>>;
+  /** 用户主动暂停的运行时连接器；未记录时默认启用，避免升级后意外停用现有授权。 */
+  runtimeEnabled: Record<string, Record<string, boolean>>;
 }
 
-const EMPTY_FILE: ConnectorConnectionFile = { version: 1, users: {} };
+const EMPTY_FILE: ConnectorConnectionFile = { version: 1, users: {}, runtimeEnabled: {} };
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -56,6 +58,19 @@ export class ConnectorConnectionStore {
 
   listAll(): ConnectorConnectionRecord[] {
     return clone(Object.values(this.data.users).flatMap(connections => Object.values(connections)));
+  }
+
+  isRuntimeEnabled(username: string, connectorId: string): boolean {
+    return this.data.runtimeEnabled[username]?.[connectorId] !== false;
+  }
+
+  async setRuntimeEnabled(username: string, connectorId: string, enabled: boolean): Promise<void> {
+    await this.mutate(() => {
+      this.data.runtimeEnabled[username] = {
+        ...(this.data.runtimeEnabled[username] ?? {}),
+        [connectorId]: enabled,
+      };
+    });
   }
 
   async connect(input: {
@@ -191,9 +206,14 @@ export class ConnectorConnectionStore {
   async removeUserData(username: string): Promise<boolean> {
     let removed = false;
     await this.mutate(() => {
-      if (!(username in this.data.users)) return;
-      delete this.data.users[username];
-      removed = true;
+      if (username in this.data.users) {
+        delete this.data.users[username];
+        removed = true;
+      }
+      if (username in this.data.runtimeEnabled) {
+        delete this.data.runtimeEnabled[username];
+        removed = true;
+      }
     });
     return removed;
   }
@@ -203,7 +223,13 @@ export class ConnectorConnectionStore {
     try {
       const parsed = JSON.parse(readFileSync(this.filePath, 'utf8')) as Partial<ConnectorConnectionFile>;
       if (parsed.version !== 1 || !parsed.users || typeof parsed.users !== 'object') return clone(EMPTY_FILE);
-      return { version: 1, users: parsed.users };
+      return {
+        version: 1,
+        users: parsed.users,
+        runtimeEnabled: parsed.runtimeEnabled && typeof parsed.runtimeEnabled === 'object'
+          ? parsed.runtimeEnabled
+          : {},
+      };
     } catch {
       return clone(EMPTY_FILE);
     }

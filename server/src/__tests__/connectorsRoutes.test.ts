@@ -120,6 +120,38 @@ describe('native connectors routes', () => {
     expect(legacyMcpToggle.status).toBe(410);
   });
 
+  it('pauses and resumes GitHub without deleting or rotating its credential', async () => {
+    const rig = await createRig();
+    expect((await rig.request('/api/connectors/github', json('POST', {
+      token: 'github_pat_pause_test',
+    }))).status).toBe(200);
+    const credentialRef = rig.connectionStore.get('alice', 'github')!.credentialRefs.token;
+
+    const pause = await rig.request('/api/connectors/github/runtime', json('PATCH', { runtimeEnabled: false }));
+    expect(pause.status).toBe(200);
+    expect(await pause.json()).toEqual({ connectorId: 'github', runtimeEnabled: false });
+    expect(rig.connectionStore.get('alice', 'github')).toMatchObject({
+      status: 'connected',
+      credentialRefs: { token: credentialRef },
+    });
+    expect(await rig.request('/api/connectors/github').then(response => response.json())).toMatchObject({
+      connection: { status: 'connected', runtimeEnabled: false },
+    });
+    await expect(resolveGithubRuntimeEnv(
+      { connectionStore: rig.connectionStore, vault: rig.secretVault },
+      { userId: 'user-1', username: 'alice', tenantId: 'tenant-a' },
+    )).resolves.toEqual({});
+
+    expect((await rig.request('/api/connectors/github/runtime', json('PATCH', { runtimeEnabled: true }))).status).toBe(200);
+    await expect(resolveGithubRuntimeEnv(
+      { connectionStore: rig.connectionStore, vault: rig.secretVault },
+      { userId: 'user-1', username: 'alice', tenantId: 'tenant-a' },
+    )).resolves.toEqual({
+      GH_TOKEN: 'github_pat_pause_test',
+      GITHUB_TOKEN: 'github_pat_pause_test',
+    });
+  });
+
   it('disconnects and revokes the active credential', async () => {
     const rig = await createRig();
     expect((await rig.request('/api/connectors/github', json('PUT', {
@@ -148,6 +180,8 @@ describe('native connectors routes', () => {
     };
     const rig = await createRig({ legacyWriteGate: gate });
     expect((await rig.request('/api/connectors/github')).status).toBe(200);
+    const pause = await rig.request('/api/connectors/github/runtime', json('PATCH', { runtimeEnabled: false }));
+    expect(pause.status).toBe(200);
     const write = await rig.request('/api/connectors/github', json('POST', { token: 'github_pat_route_test' }));
     expect(write.status).toBe(409);
     expect(await write.json()).toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });

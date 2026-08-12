@@ -1,6 +1,7 @@
 /** 飞书官方 lark-cli 连接器；与 MCP 目录同 grid 展示，但拥有独立授权/保活数据流。 */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, CircleCheck, ExternalLink, Loader2, Plus, TriangleAlert, Unplug } from "lucide-react";
+import { CircleCheck, ExternalLink, Loader2, TriangleAlert, Unplug } from "lucide-react";
+import { setNativeConnectorRuntimeEnabled } from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
@@ -45,9 +46,12 @@ export interface FeishuConnectionsState {
   authInProgress: boolean;
   needsReconnect: boolean;
   hasConnected: boolean;
+  runtimeEnabled: boolean;
+  runtimeSaving: boolean;
   connectLabel: string;
   disconnecting: boolean;
   startConnection: () => Promise<void>;
+  setRuntimeEnabled: (enabled: boolean) => Promise<void>;
   cancelAuthorization: () => Promise<void>;
   disconnectConnection: () => Promise<void>;
   reopenAuthorizationPage: (url: string) => void;
@@ -62,6 +66,8 @@ export function useFeishuConnections(enabled = true): FeishuConnectionsState {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authServiceAvailable, setAuthServiceAvailable] = useState<boolean | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [runtimeEnabled, setRuntimeEnabledState] = useState(true);
+  const [runtimeSaving, setRuntimeSaving] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [popupBlocked, setPopupBlocked] = useState(false);
   const authorizationPopupRef = useRef<Window | null>(null);
@@ -73,9 +79,10 @@ export function useFeishuConnections(enabled = true): FeishuConnectionsState {
     setError(null);
     try {
       const response = await authFetch("/api/feishu/connections");
-      const data = await response.json().catch(() => ({})) as { connections?: FeishuConnectionView[]; error?: string };
+      const data = await response.json().catch(() => ({})) as { connections?: FeishuConnectionView[]; runtimeEnabled?: boolean; error?: string };
       if (!response.ok) throw new Error(data.error || "飞书连接状态读取失败");
       setConnections(data.connections ?? []);
+      setRuntimeEnabledState(data.runtimeEnabled ?? true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "飞书连接状态读取失败");
     } finally {
@@ -138,6 +145,19 @@ export function useFeishuConnections(enabled = true): FeishuConnectionsState {
       setConnecting(false);
     }
   }, [authServiceAvailable, reopenAuthorizationPage]);
+
+  const setRuntimeEnabled = useCallback(async (nextEnabled: boolean) => {
+    setRuntimeSaving(true);
+    setAuthError(null);
+    try {
+      await setNativeConnectorRuntimeEnabled("feishu", nextEnabled);
+      setRuntimeEnabledState(nextEnabled);
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "飞书状态更新失败");
+    } finally {
+      setRuntimeSaving(false);
+    }
+  }, []);
 
   const cancelAuthorization = useCallback(async () => {
     setConnecting(true);
@@ -230,9 +250,12 @@ export function useFeishuConnections(enabled = true): FeishuConnectionsState {
     authInProgress,
     needsReconnect,
     hasConnected,
+    runtimeEnabled,
+    runtimeSaving,
     connectLabel,
     disconnecting,
     startConnection,
+    setRuntimeEnabled,
     cancelAuthorization,
     disconnectConnection,
     reopenAuthorizationPage,
@@ -246,6 +269,7 @@ export function feishuConnectorStatus(state: FeishuConnectionsState): { label: s
   if (state.needsReconnect) return { label: "需重连", className: "text-destructive" };
   if (state.connections.some((item) => item.status === "error")) return { label: "重试中", className: "text-warning-ink" };
   if (state.connections.some((item) => item.status === "pending")) return { label: "检测中", className: "text-info-ink" };
+  if (state.hasConnected && !state.runtimeEnabled) return { label: "已暂停", className: "text-muted-foreground" };
   if (state.hasConnected) return { label: "已连接", className: "text-success" };
   return { label: "未连接", className: "text-muted-foreground" };
 }
@@ -255,7 +279,7 @@ export function feishuMatchesCatalog(query: string, activeFilter: string, state:
   const matchesQuery = !normalized || "飞书 feishu lark 飞书连接 lark-cli".includes(normalized);
   const matchesFilter = activeFilter === "all"
     || activeFilter === "platform"
-    || (activeFilter === "enabled" && state.hasConnected);
+    || (activeFilter === "enabled" && state.hasConnected && state.runtimeEnabled);
   return matchesQuery && matchesFilter;
 }
 
@@ -271,7 +295,8 @@ const DESCRIPTION = "连接飞书账号，让 Agent 使用文档、知识库、�
 
 export function FeishuConnectorCard({ state, onOpenDetail }: { state: FeishuConnectionsState; onOpenDetail: () => void }) {
   const status = feishuConnectorStatus(state);
-  const busy = state.authInProgress || state.connecting;
+  const busy = state.authInProgress || state.connecting || state.runtimeSaving;
+  const connected = state.hasConnected && !state.needsReconnect;
   return (
     <ConnectorCatalogCard
       name="飞书"
@@ -282,12 +307,12 @@ export function FeishuConnectorCard({ state, onOpenDetail }: { state: FeishuConn
       description={DESCRIPTION}
       metadata="官方 CLI：lark-cli"
       onOpenDetail={onOpenDetail}
-      actionLabel={state.needsReconnect ? "重新连接 飞书" : state.hasConnected ? "查看 飞书" : "连接 飞书"}
-      actionIcon={busy ? <Loader2 className="size-4 animate-spin" /> : state.hasConnected && !state.needsReconnect ? <Check className="size-4" strokeWidth={2.5} /> : <Plus className="size-4" />}
-      actionTone={state.hasConnected && !state.needsReconnect ? "success" : "default"}
+      actionLabel={connected ? state.runtimeEnabled ? "暂停" : "恢复" : "连接"}
+      actionIcon={busy ? <Loader2 className="size-4 animate-spin" /> : undefined}
+      actionTone={connected && state.runtimeEnabled ? "success" : "default"}
       actionDisabled={busy || state.authServiceUnavailable}
       onAction={() => {
-        if (state.hasConnected && !state.needsReconnect) onOpenDetail();
+        if (connected) void state.setRuntimeEnabled(!state.runtimeEnabled);
         else void state.startConnection();
       }}
     />

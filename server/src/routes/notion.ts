@@ -59,7 +59,13 @@ export function createNotionRouter(options: NotionRouterOptions): Router {
         username: req.user.username,
         tenantId: req.user.tenantId,
       });
-      res.json({ available: true, connection });
+      res.json({
+        available: true,
+        connection: {
+          ...connection,
+          runtimeEnabled: options.connectionStore.isRuntimeEnabled(req.user.username, 'notion'),
+        },
+      });
     } catch {
       res.status(503).json({ error: 'Notion 连接状态暂时不可用' });
     }
@@ -138,6 +144,7 @@ function disconnectedView(): NotionConnectionView {
   return {
     connectorId: 'notion',
     status: 'disconnected',
+    runtimeEnabled: true,
     disconnectNotice: NOTION_LOCAL_DISCONNECT_NOTICE,
   };
 }

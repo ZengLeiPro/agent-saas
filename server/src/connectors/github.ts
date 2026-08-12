@@ -7,6 +7,7 @@ export const GITHUB_TOKEN_CREDENTIAL_KEY = 'token';
 export interface GithubConnectionView {
   connectorId: 'github';
   status: 'connected' | 'disconnected';
+  runtimeEnabled: boolean;
   connectedAt?: string;
   updatedAt?: string;
 }
@@ -16,10 +17,14 @@ function vaultOwnerId(record: ConnectorConnectionRecord): string {
   return typeof ownerId === 'string' && ownerId.length > 0 ? ownerId : record.username;
 }
 
-export function toGithubConnectionView(record?: ConnectorConnectionRecord): GithubConnectionView {
+export function toGithubConnectionView(
+  record?: ConnectorConnectionRecord,
+  runtimeEnabled = true,
+): GithubConnectionView {
   return {
     connectorId: GITHUB_CONNECTOR_ID,
     status: record?.status ?? 'disconnected',
+    runtimeEnabled,
     connectedAt: record?.connectedAt,
     updatedAt: record?.updatedAt,
   };
@@ -63,6 +68,7 @@ export async function resolveGithubRuntimeEnv(
   if (
     !connection
     || connection.status !== 'connected'
+    || !deps.connectionStore.isRuntimeEnabled(context.username, GITHUB_CONNECTOR_ID)
     || connection.userId !== context.userId
     || connection.tenantId !== context.tenantId
   ) return {};

@@ -3,6 +3,7 @@ import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -102,7 +103,7 @@ export function ConnectorCatalogCard({
   metadata: ReactNode;
   onOpenDetail: () => void;
   actionLabel: string;
-  actionIcon: ReactNode;
+  actionIcon?: ReactNode;
   onAction: () => void;
   actionTone?: ConnectorCardActionTone;
   actionDisabled?: boolean;
@@ -130,22 +131,21 @@ export function ConnectorCatalogCard({
       <CardContent className="flex min-h-44 items-start gap-4 p-5">
         {logo}
         <div className="flex min-w-0 flex-1 self-stretch flex-col">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="truncate font-semibold">{name}</div>
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                <CapabilitySourceBadge source={source} />
-                <span className={cn("text-xs font-medium", statusClassName)}>{statusLabel}</span>
-              </div>
+          <div className="min-w-0">
+            <div className="truncate font-semibold">{name}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <CapabilitySourceBadge source={source} />
+              <span className={cn("text-xs font-medium", statusClassName)}>{statusLabel}</span>
             </div>
-            <button
+          </div>
+          <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{description}</p>
+          <div className="mt-auto flex items-end justify-between gap-3 pt-3">
+            <div className="min-w-0 truncate text-xs text-muted-foreground">{metadata}</div>
+            <Button
               type="button"
-              className={cn(
-                "flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                actionTone === "success" && "border-transparent bg-success text-success-foreground hover:bg-success/85",
-                actionTone === "danger" && "border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/15",
-                actionTone === "default" && "bg-muted/40 text-muted-foreground hover:border-success/40 hover:bg-success/10 hover:text-success",
-              )}
+              size="sm"
+              variant={actionTone === "danger" ? "destructive" : actionTone === "success" ? "outline" : "default"}
+              className="h-8 shrink-0 px-3"
               disabled={actionDisabled}
               title={actionTitle}
               aria-label={actionLabel}
@@ -155,10 +155,9 @@ export function ConnectorCatalogCard({
               }}
             >
               {actionIcon}
-            </button>
+              {actionLabel}
+            </Button>
           </div>
-          <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{description}</p>
-          <div className="mt-auto truncate pt-3 text-xs text-muted-foreground">{metadata}</div>
         </div>
       </CardContent>
     </Card>

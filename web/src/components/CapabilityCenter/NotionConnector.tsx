@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BookOpenText, Check, ExternalLink, Loader2, Plus, TriangleAlert } from "lucide-react";
+import { BookOpenText, ExternalLink, Loader2, TriangleAlert } from "lucide-react";
 import type { ConnectorAuthSession, NotionConnection } from "@agent/shared";
 import {
   disconnectNotion,
   fetchNotionAuthSession,
   fetchNotionConnection,
+  setNativeConnectorRuntimeEnabled,
   startNotionAuthSession,
 } from "@agent/shared";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ interface NotionConnectorState {
   error: string | null;
   popupBlocked: boolean;
   start: () => Promise<void>;
+  setRuntimeEnabled: (enabled: boolean) => Promise<void>;
   disconnect: () => Promise<void>;
   reopen: () => void;
 }
@@ -93,6 +95,19 @@ export function useNotionConnector(enabled = true): NotionConnectorState {
     }
   }, []);
 
+  const setRuntimeEnabled = useCallback(async (runtimeEnabled: boolean) => {
+    setConnecting(true);
+    setError(null);
+    try {
+      await setNativeConnectorRuntimeEnabled("notion", runtimeEnabled);
+      setConnection((current) => current ? { ...current, runtimeEnabled } : current);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Notion 状态更新失败");
+    } finally {
+      setConnecting(false);
+    }
+  }, []);
+
   const disconnect = useCallback(async () => {
     setConnecting(true);
     setError(null);
@@ -140,7 +155,7 @@ export function useNotionConnector(enabled = true): NotionConnectorState {
     openedUrlRef.current = url;
   }, [session]);
 
-  return { connection, session, loading, connecting, error, popupBlocked, start, disconnect, reopen };
+  return { connection, session, loading, connecting, error, popupBlocked, start, setRuntimeEnabled, disconnect, reopen };
 }
 
 const DESCRIPTION = "使用 Notion 官方 ntn CLI 搜索、读取和维护页面、数据库与评论。";
@@ -167,23 +182,26 @@ export function NotionConnectorCard({ state, onOpenDetail }: { state: NotionConn
   const status = state.connection?.status;
   const linked = Boolean(status && status !== "disconnected");
   const connected = status === "connected";
+  const runtimeEnabled = state.connection?.runtimeEnabled ?? true;
   const busy = state.loading || state.connecting || state.session?.status === "starting" || state.session?.status === "awaiting_user";
+  const paused = linked && status !== "invalid" && !runtimeEnabled;
   return (
     <ConnectorCatalogCard
       name="Notion"
       logo={<NotionLogo />}
       source="platform"
-      statusLabel={busy ? "等待授权" : statusLabel(status)}
-      statusClassName={connected ? "text-success" : status === "invalid" ? "text-destructive" : "text-muted-foreground"}
+      statusLabel={busy ? "等待授权" : paused ? "已暂停" : statusLabel(status)}
+      statusClassName={connected && runtimeEnabled ? "text-success" : status === "invalid" ? "text-destructive" : "text-muted-foreground"}
       description={DESCRIPTION}
       metadata={state.connection?.workspaceName ? `工作区：${state.connection.workspaceName}` : "官方 CLI：ntn"}
       onOpenDetail={onOpenDetail}
-      actionLabel={status === "invalid" ? "修复 Notion 连接" : linked ? "查看 Notion" : "连接 Notion"}
-      actionIcon={busy ? <Loader2 className="size-4 animate-spin" /> : status === "invalid" ? <TriangleAlert className="size-4" /> : linked ? <Check className="size-4" /> : <Plus className="size-4" />}
-      actionTone={status === "invalid" ? "danger" : linked ? "success" : "default"}
+      actionLabel={linked && status !== "invalid" ? runtimeEnabled ? "暂停" : "恢复" : "连接"}
+      actionIcon={busy ? <Loader2 className="size-4 animate-spin" /> : undefined}
+      actionTone={status === "invalid" ? "danger" : linked && runtimeEnabled ? "success" : "default"}
       actionDisabled={busy}
       onAction={() => {
-        if (linked) onOpenDetail();
+        if (status === "invalid") void state.start();
+        else if (linked) void state.setRuntimeEnabled(!runtimeEnabled);
         else void state.start();
       }}
     />
@@ -194,10 +212,11 @@ export function NotionConnectorDrawer({ open, onOpenChange, state }: { open: boo
   const status = state.connection?.status;
   const linked = Boolean(status && status !== "disconnected");
   const connected = status === "connected";
+  const runtimeEnabled = state.connection?.runtimeEnabled ?? true;
   const identity = state.connection?.identity;
   return (
     <CapabilityDetailDrawer open={open} onOpenChange={onOpenChange} title="Notion" description={DESCRIPTION}>
-      <div className="flex items-center gap-3"><NotionLogo /><div><CapabilitySourceBadge source="platform" /><div className={cn("mt-1 text-xs font-medium", connected ? "text-success" : status === "invalid" ? "text-destructive" : "text-muted-foreground")}>{statusLabel(status)}{connected ? "，运行环境可用" : ""}</div></div></div>
+      <div className="flex items-center gap-3"><NotionLogo /><div><CapabilitySourceBadge source="platform" /><div className={cn("mt-1 text-xs font-medium", connected && runtimeEnabled ? "text-success" : status === "invalid" ? "text-destructive" : "text-muted-foreground")}>{connected && !runtimeEnabled ? "已暂停，授权仍保留" : `${statusLabel(status)}${connected ? "，运行环境可用" : ""}`}</div></div></div>
       <div className={cn("space-y-1 p-3 text-sm text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}>
         {state.connection?.workspaceName ? <div>工作区：<span className="text-foreground">{state.connection.workspaceName}</span>{state.connection.workspaceId ? <span className="ml-1 text-xs">({state.connection.workspaceId})</span> : null}</div> : null}
         {identity ? <div>身份：<span className="text-foreground">{identity.name || identity.email || identity.id}</span> · {identity.type === "person" ? "Person" : "Bot"}</div> : null}

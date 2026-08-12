@@ -2,15 +2,16 @@
  * 钉钉连接（DWS device flow）在能力中心「连接器」目录里的一等卡片。
  *
  * 钉钉不是 MCP server：它是「一个用户 × N 个组织 profile」的平台内置连接，
- * token 落用户 workspace 的 .dws/，服务端逐 profile 守活，没有启用/停用概念——
- * 连接即生效。因此不进入 McpManager 的 servers 数据流，而是以独立
+ * token 落用户 workspace 的 .dws/，服务端逐 profile 守活；暂停仅切断运行时使用，
+ * 不删除授权。因此不进入 McpManager 的 servers 数据流，而是以独立
  * hook + 卡片 + 详情抽屉的形式与 MCP 连接器同 grid 融合渲染。
  *
  * 逻辑自 SettingsCenter/SettingsModal.tsx 的 DwsConnectionsSection 平移
  * （原「设置 → 账户 → 钉钉连接」入口已下线）。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, CircleCheck, ExternalLink, Loader2, Plus, TriangleAlert, Unplug } from "lucide-react";
+import { CircleCheck, ExternalLink, Loader2, TriangleAlert, Unplug } from "lucide-react";
+import { setNativeConnectorRuntimeEnabled } from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
@@ -60,9 +61,12 @@ export interface DwsConnectionsState {
   authInProgress: boolean;
   needsReconnect: boolean;
   hasConnected: boolean;
+  runtimeEnabled: boolean;
+  runtimeSaving: boolean;
   connectLabel: string;
   disconnectingProfileId: string | null;
   startConnection: () => Promise<void>;
+  setRuntimeEnabled: (enabled: boolean) => Promise<void>;
   cancelAuthorization: () => Promise<void>;
   disconnectConnection: (profileId: string) => Promise<void>;
   reopenAuthorizationPage: (url: string) => void;
@@ -81,6 +85,8 @@ export function useDwsConnections(enabled = true): DwsConnectionsState {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authServiceAvailable, setAuthServiceAvailable] = useState<boolean | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [runtimeEnabled, setRuntimeEnabledState] = useState(true);
+  const [runtimeSaving, setRuntimeSaving] = useState(false);
   const [disconnectingProfileId, setDisconnectingProfileId] = useState<string | null>(null);
   const [popupBlocked, setPopupBlocked] = useState(false);
   const authorizationPopupRef = useRef<Window | null>(null);
@@ -92,9 +98,10 @@ export function useDwsConnections(enabled = true): DwsConnectionsState {
     setError(null);
     try {
       const response = await authFetch("/api/dws/connections");
-      const data = await response.json().catch(() => ({})) as { connections?: DwsConnectionView[]; error?: string };
+      const data = await response.json().catch(() => ({})) as { connections?: DwsConnectionView[]; runtimeEnabled?: boolean; error?: string };
       if (!response.ok) throw new Error(data.error || "钉钉连接状态读取失败");
       setConnections(data.connections ?? []);
+      setRuntimeEnabledState(data.runtimeEnabled ?? true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "钉钉连接状态读取失败");
     } finally {
@@ -162,6 +169,19 @@ export function useDwsConnections(enabled = true): DwsConnectionsState {
       setConnecting(false);
     }
   }, [authServiceAvailable, reopenAuthorizationPage]);
+
+  const setRuntimeEnabled = useCallback(async (nextEnabled: boolean) => {
+    setRuntimeSaving(true);
+    setAuthError(null);
+    try {
+      await setNativeConnectorRuntimeEnabled("dws", nextEnabled);
+      setRuntimeEnabledState(nextEnabled);
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "钉钉状态更新失败");
+    } finally {
+      setRuntimeSaving(false);
+    }
+  }, []);
 
   const cancelAuthorization = useCallback(async () => {
     setConnecting(true);
@@ -255,9 +275,12 @@ export function useDwsConnections(enabled = true): DwsConnectionsState {
     authInProgress,
     needsReconnect,
     hasConnected,
+    runtimeEnabled,
+    runtimeSaving,
     connectLabel,
     disconnectingProfileId,
     startConnection,
+    setRuntimeEnabled,
     cancelAuthorization,
     disconnectConnection,
     reopenAuthorizationPage,
@@ -274,6 +297,9 @@ export function dingtalkConnectorStatus(dws: DwsConnectionsState): { label: stri
   if (dws.connections.some((connection) => connection.status === "pending")) {
     return { label: "检测中", className: "text-info-ink" };
   }
+  if (dws.hasConnected && !dws.runtimeEnabled) {
+    return { label: "已暂停", className: "text-muted-foreground" };
+  }
   if (dws.hasConnected) {
     const count = dws.connections.filter((connection) => connection.status === "connected").length;
     return { label: count > 1 ? `已连接 ${count} 个组织` : "已连接", className: "text-success" };
@@ -287,7 +313,7 @@ export function dingtalkMatchesCatalog(query: string, activeFilter: string, dws:
   const matchesQuery = !normalized || "钉钉 dingtalk 钉钉连接 dws".includes(normalized);
   const matchesFilter = activeFilter === "all"
     || activeFilter === "platform"
-    || (activeFilter === "enabled" && dws.hasConnected);
+    || (activeFilter === "enabled" && dws.hasConnected && dws.runtimeEnabled);
   return matchesQuery && matchesFilter;
 }
 
@@ -315,8 +341,9 @@ export function DingtalkConnectorCard({
   onOpenDetail: () => void;
 }) {
   const status = dingtalkConnectorStatus(dws);
-  const busy = dws.authInProgress || dws.connecting;
-  const actionLabel = dws.hasConnected && !dws.needsReconnect ? "查看 钉钉" : "连接 钉钉";
+  const busy = dws.authInProgress || dws.connecting || dws.runtimeSaving;
+  const connected = dws.hasConnected && !dws.needsReconnect;
+  const actionLabel = connected ? dws.runtimeEnabled ? "暂停" : "恢复" : "连接";
   return (
     <ConnectorCatalogCard
       name="钉钉"
@@ -328,11 +355,11 @@ export function DingtalkConnectorCard({
       metadata="官方 CLI：dws · 支持多组织 profile"
       onOpenDetail={onOpenDetail}
       actionLabel={actionLabel}
-      actionIcon={busy ? <Loader2 className="size-4 animate-spin" /> : dws.hasConnected && !dws.needsReconnect ? <Check className="size-4" strokeWidth={2.5} /> : <Plus className="size-4" />}
-      actionTone={dws.hasConnected && !dws.needsReconnect ? "success" : "default"}
+      actionIcon={busy ? <Loader2 className="size-4 animate-spin" /> : undefined}
+      actionTone={connected && dws.runtimeEnabled ? "success" : "default"}
       actionDisabled={busy || dws.authServiceUnavailable}
       onAction={() => {
-        if (dws.hasConnected && !dws.needsReconnect) onOpenDetail();
+        if (connected) void dws.setRuntimeEnabled(!dws.runtimeEnabled);
         else void dws.startConnection();
       }}
     />

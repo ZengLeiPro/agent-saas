@@ -20,6 +20,7 @@ interface AliyunAccessKeySecret {
 export interface AliyunConnectionView {
   connectorId: 'aliyun';
   status: 'connected' | 'disconnected';
+  runtimeEnabled: boolean;
   accountId?: string;
   identityArn?: string;
   identityType?: string;
@@ -61,10 +62,14 @@ export function createAliyunValidateCredentials(): AliyunValidateCredentials {
   };
 }
 
-export function toAliyunConnectionView(record?: ConnectorConnectionRecord): AliyunConnectionView {
+export function toAliyunConnectionView(
+  record?: ConnectorConnectionRecord,
+  runtimeEnabled = true,
+): AliyunConnectionView {
   return {
     connectorId: ALIYUN_CONNECTOR_ID,
     status: record?.status ?? 'disconnected',
+    runtimeEnabled,
     accountId: record?.metadata?.accountId,
     identityArn: record?.metadata?.identityArn,
     identityType: record?.metadata?.identityType,
@@ -146,7 +151,10 @@ export class AliyunConnectorService {
     if (!record || record.userId !== context.userId || record.tenantId !== context.tenantId) {
       return toAliyunConnectionView(undefined);
     }
-    return toAliyunConnectionView(record);
+    return toAliyunConnectionView(
+      record,
+      this.deps.connectionStore.isRuntimeEnabled(context.username, ALIYUN_CONNECTOR_ID),
+    );
   }
 
   async connect(
@@ -201,7 +209,8 @@ export class AliyunConnectorService {
         username: context.username,
         onError: (error, ref) => this.deps.onError?.(new Error(`阿里云旧凭据撤销失败 ${ref}: ${error.message}`)),
       });
-      return toAliyunConnectionView(record);
+      await this.deps.connectionStore.setRuntimeEnabled(context.username, ALIYUN_CONNECTOR_ID, true);
+      return toAliyunConnectionView(record, true);
     } finally {
       release();
     }
@@ -234,6 +243,7 @@ export class AliyunConnectorService {
   async resolveRuntimeEnv(context: { userId: string; username: string; tenantId: string }): Promise<Record<string, string>> {
     const record = this.deps.connectionStore.get(context.username, ALIYUN_CONNECTOR_ID);
     const credentialRef = record?.status === 'connected'
+      && this.deps.connectionStore.isRuntimeEnabled(context.username, ALIYUN_CONNECTOR_ID)
       && record.userId === context.userId
       && record.tenantId === context.tenantId
       ? record.credentialRefs[ALIYUN_ACCESS_KEY_CREDENTIAL_KEY]

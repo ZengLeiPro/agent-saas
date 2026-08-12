@@ -108,7 +108,8 @@ describe("McpManager 连接器目录", () => {
     expect(allFilter.className).toContain("bg-primary");
     expect(allFilter.getAttribute("aria-selected")).toBe("true");
 
-    fireEvent.click(screen.getByRole("button", { name: "启用 通达信" }));
+    const stockCard = screen.getByRole("button", { name: "查看 通达信 详情" });
+    fireEvent.click(within(stockCard).getByRole("button", { name: "连接" }));
     await waitFor(() => {
       expect(updateSelections).toHaveBeenCalledWith(["stock", "crm"]);
     });

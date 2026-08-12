@@ -2,6 +2,8 @@ import { resolve } from 'path';
 
 import { buildIsolatedGitCredentialEnv } from '../security/gitCredentialIsolation.js';
 import type { FeishuTokenBrokerLike } from '../feishu/tokenBroker.js';
+import type { ConnectorConnectionStore } from '../connectors/connectionStore.js';
+import { pausedWorkspaceCliEnv } from '../connectors/runtimeState.js';
 
 export interface ConnectorRuntimeIdentity {
   userId: string;
@@ -13,11 +15,24 @@ export interface ConnectorRuntimeEnvResolverConfig {
   resolveConnectorRuntimeEnv?: (identity: ConnectorRuntimeIdentity) => Promise<Record<string, string>>;
 }
 
+export function resolveDwsConnectorRunEnv(
+  connectionStore: ConnectorConnectionStore,
+  identity: ConnectorRuntimeIdentity,
+): Record<string, string> {
+  return connectionStore.isRuntimeEnabled(identity.username, 'dws')
+    ? {}
+    : pausedWorkspaceCliEnv('dws', identity.userId);
+}
+
 export async function resolveFeishuConnectorRunEnv(
   broker: FeishuTokenBrokerLike | undefined,
   identity: ConnectorRuntimeIdentity,
   onError?: (error: Error) => void,
+  connectionStore?: ConnectorConnectionStore,
 ): Promise<Record<string, string>> {
+  if (connectionStore && !connectionStore.isRuntimeEnabled(identity.username, 'feishu')) {
+    return pausedWorkspaceCliEnv('feishu', identity.userId);
+  }
   if (!broker) return {};
   try {
     const token = await broker.ensureFresh(identity);

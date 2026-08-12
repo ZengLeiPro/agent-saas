@@ -37,13 +37,14 @@ import { McpConfigStore } from '../data/mcpConfig.js';
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import { AliyunConnectorService, revokePendingAliyunCredentials } from '../connectors/aliyun.js';
 import { GITHUB_CONNECTOR_ID, resolveGithubRuntimeEnv, revokePendingGithubCredentials } from '../connectors/github.js';
+import { applyNativeConnectorRuntimeState } from '../connectors/runtimeState.js';
 import { GoogleWorkspaceOAuthService, PgGoogleWorkspaceOAuthStateStore, resolveGoogleWorkspaceRuntimeEnv } from '../connectors/googleWorkspace.js';
 import { connectNotionCredential, disconnectNotion, getLiveNotionConnection, resolveNotionRuntimeEnv, type NotionConnectionView } from '../connectors/notion.js';
 import { SignupConfigStore } from '../data/signupConfig.js';
 import { EgressConfigStore } from '../data/egressConfig.js';
 import { EgressDispatcherRegistry, createEgressFetch, createEgressWebSocketConnector } from '../runtime/egressDispatcher.js';
 import type { EgressConfig } from '../runtime/egressPolicy.js';
-import { resolveFeishuConnectorRunEnv } from '../runtime/connectorRunEnv.js';
+import { resolveDwsConnectorRunEnv, resolveFeishuConnectorRunEnv } from '../runtime/connectorRunEnv.js';
 import type { FeishuTokenBroker } from '../feishu/tokenBroker.js';
 import { McpClientManager } from '../mcp/clientManager.js';
 import { McpProxy } from '../mcp/proxy.js';
@@ -805,7 +806,7 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       : (!userStore ? context : undefined);
     if (!ownedContext) return {};
 
-    const [githubEnv, notionEnv, googleWorkspaceEnv, aliyunEnv, feishuEnv, mcpConnectorEnv] = await Promise.all([
+    const [githubEnv, notionEnv, googleWorkspaceEnv, aliyunEnv, dwsEnv, feishuEnv, mcpConnectorEnv] = await Promise.all([
       resolveGithubRuntimeEnv({
         connectionStore: connectorConnectionStore,
         vault: secretVault,
@@ -828,12 +829,14 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
         ),
       ),
       aliyunConnectorService.resolveRuntimeEnv(ownedContext),
+      resolveDwsConnectorRunEnv(connectorConnectionStore, ownedContext),
       resolveFeishuConnectorRunEnv(
         getFeishuTokenBroker?.(),
         ownedContext,
         error => serverLogger.warn(
           `Native connector runtime env skipped: connector=feishu reason=${error.message}`,
         ),
+        connectorConnectionStore,
       ),
       resolveConnectorRuntimeEnv({
         store: mcpConfigStore,
@@ -845,15 +848,16 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
         ),
       }, ownedContext),
     ]);
-    return {
+    return applyNativeConnectorRuntimeState(connectorConnectionStore, ownedContext, {
       ...mcpConnectorEnv,
       ...aliyunEnv,
+      ...dwsEnv,
       ...feishuEnv,
       ...googleWorkspaceEnv,
       ...notionEnv,
       ...githubEnv,
       ...(tenantRunEnvByTenant?.get(context.tenantId) ?? {}),
-    };
+    });
   };
 
 

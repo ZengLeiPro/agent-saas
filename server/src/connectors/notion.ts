@@ -13,6 +13,7 @@ type NotionIdentityType = 'person' | 'bot';
 export interface NotionConnectionView {
   connectorId: typeof NOTION_CONNECTOR_ID;
   status: NotionConnectionStatus;
+  runtimeEnabled: boolean;
   workspaceName?: string;
   identity?: {
     id: string;
@@ -88,6 +89,7 @@ export async function connectNotionCredential(input: NotionConnectorDeps & {
     throw error;
   }
   await revokePendingRefs(input.vault, input.connectionStore, record, input.userId, input.tenantId);
+  await input.connectionStore.setRuntimeEnabled(input.username, NOTION_CONNECTOR_ID, true);
   return viewFromRecord(record, 'connected');
 }
 
@@ -157,6 +159,7 @@ export async function resolveNotionRuntimeEnv(
 ): Promise<Record<string, string>> {
   const connection = ownedRecord(deps.connectionStore, identity.username, identity.userId, identity.tenantId);
   if (!connection || connection.status !== 'connected') return {};
+  if (!deps.connectionStore.isRuntimeEnabled(identity.username, NOTION_CONNECTOR_ID)) return {};
   if (connection.metadata?.notionVerificationStatus === 'invalid') return {};
   const tokenRef = connection.credentialRefs.token;
   if (!tokenRef) return {};
@@ -299,6 +302,7 @@ function viewFromRecord(
   return {
     connectorId: NOTION_CONNECTOR_ID,
     status,
+    runtimeEnabled: true,
     disconnectNotice: NOTION_LOCAL_DISCONNECT_NOTICE,
     ...(workspaceName ? { workspaceName } : {}),
     ...(identity ? { identity } : {}),
@@ -313,6 +317,7 @@ function disconnectedView(): NotionConnectionView {
   return {
     connectorId: NOTION_CONNECTOR_ID,
     status: 'disconnected',
+    runtimeEnabled: true,
     disconnectNotice: NOTION_LOCAL_DISCONNECT_NOTICE,
   };
 }

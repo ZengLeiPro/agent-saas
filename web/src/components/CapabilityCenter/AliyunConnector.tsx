@@ -1,27 +1,26 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, Cloud, Loader2, Plus, TriangleAlert } from "lucide-react";
+import { Cloud, Loader2, TriangleAlert } from "lucide-react";
 import {
   connectAliyun,
   disconnectAliyun,
   fetchAliyunConnection,
+  setNativeConnectorRuntimeEnabled,
   type AliyunConnectInput,
   type AliyunConnection,
 } from "@agent/shared";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import {
   CAPABILITY_SUBTLE_SURFACE,
-  CAPABILITY_SURFACE,
-  CAPABILITY_SURFACE_HOVER,
   CapabilityDetailDrawer,
   CapabilitySourceBadge,
+  ConnectorCatalogCard,
 } from "./CatalogUi";
 
-const DISCONNECTED: AliyunConnection = { connectorId: "aliyun", status: "disconnected" };
+const DISCONNECTED: AliyunConnection = { connectorId: "aliyun", status: "disconnected", runtimeEnabled: true };
 const DEFAULT_REGION_ID = "cn-shenzhen";
 const DESCRIPTION = "使用专用 RAM 用户的 AccessKey，通过官方 aliyun CLI 管理阿里云资源。";
 
@@ -31,6 +30,7 @@ export interface AliyunConnectorState {
   saving: boolean;
   error?: string;
   connect: (input: AliyunConnectInput) => Promise<boolean>;
+  setRuntimeEnabled: (enabled: boolean) => Promise<void>;
   disconnect: () => Promise<void>;
 }
 
@@ -69,8 +69,21 @@ export function useAliyunConnector(enabled = true): AliyunConnectorState {
     }
   }, []);
 
+  const setRuntimeEnabled = useCallback(async (runtimeEnabled: boolean) => {
+    setSaving(true);
+    setError(undefined);
+    try {
+      await setNativeConnectorRuntimeEnabled("aliyun", runtimeEnabled);
+      setConnection((current) => ({ ...current, runtimeEnabled }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "阿里云状态更新失败");
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
   const disconnect = useCallback(async () => {
-    if (!window.confirm("确定断开阿里云？后续运行将不再注入阿里云 STS 凭据。")) return;
+    if (!window.confirm("确定断开阿里云？后续运行将不再注入阿里云凭据。")) return;
     setSaving(true);
     setError(undefined);
     try {
@@ -83,7 +96,7 @@ export function useAliyunConnector(enabled = true): AliyunConnectorState {
     }
   }, []);
 
-  return { connection, loading, saving, error, connect, disconnect };
+  return { connection, loading, saving, error, connect, setRuntimeEnabled, disconnect };
 }
 
 function AliyunLogo() {
@@ -108,43 +121,27 @@ export function AliyunConnectorCard({
   onOpenDetail: () => void;
 }) {
   const connected = state.connection.status === "connected";
+  const runtimeEnabled = state.connection.runtimeEnabled !== false;
   const busy = state.loading || state.saving;
   return (
-    <Card
-      className={cn("group cursor-pointer border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)}
-      onClick={onOpenDetail}
-    >
-      <CardContent className="flex min-h-36 items-start gap-4 p-5">
-        <AliyunLogo />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="font-semibold">阿里云</div>
-              <div className="mt-1 flex items-center gap-2">
-                <CapabilitySourceBadge source="platform" />
-                <span className={cn("text-xs font-medium", connected ? "text-success" : "text-muted-foreground")}>
-                  {busy ? "检测中" : connected ? "已连接" : "未连接"}
-                </span>
-              </div>
-            </div>
-            <button
-              type="button"
-              aria-label={connected ? "查看阿里云连接" : "连接阿里云"}
-              className={cn(
-                "flex size-8 items-center justify-center rounded-lg border",
-                connected ? "border-transparent bg-success text-success-foreground" : "bg-muted/40 text-muted-foreground",
-              )}
-              onClick={(event) => { event.stopPropagation(); onOpenDetail(); }}
-              disabled={busy}
-            >
-              {busy ? <Loader2 className="size-4 animate-spin" /> : connected ? <Check className="size-4" /> : <Plus className="size-4" />}
-            </button>
-          </div>
-          <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{DESCRIPTION}</p>
-          <div className="mt-3 text-xs text-muted-foreground">官方 CLI：aliyun</div>
-        </div>
-      </CardContent>
-    </Card>
+    <ConnectorCatalogCard
+      name="阿里云"
+      logo={<AliyunLogo />}
+      source="platform"
+      statusLabel={busy ? "检测中" : connected ? runtimeEnabled ? "已连接" : "已暂停" : "未连接"}
+      statusClassName={connected && runtimeEnabled ? "text-success" : "text-muted-foreground"}
+      description={DESCRIPTION}
+      metadata="官方 CLI：aliyun"
+      onOpenDetail={onOpenDetail}
+      actionLabel={connected ? runtimeEnabled ? "暂停" : "恢复" : "连接"}
+      actionIcon={busy ? <Loader2 className="size-4 animate-spin" /> : undefined}
+      actionTone={connected && runtimeEnabled ? "success" : "default"}
+      actionDisabled={busy}
+      onAction={() => {
+        if (connected) void state.setRuntimeEnabled(!runtimeEnabled);
+        else onOpenDetail();
+      }}
+    />
   );
 }
 
@@ -158,6 +155,7 @@ export function AliyunConnectorDrawer({
   state: AliyunConnectorState;
 }) {
   const connected = state.connection.status === "connected";
+  const runtimeEnabled = state.connection.runtimeEnabled !== false;
   const [editing, setEditing] = useState(false);
   const [accessKeyId, setAccessKeyId] = useState("");
   const [accessKeySecret, setAccessKeySecret] = useState("");
@@ -199,8 +197,8 @@ export function AliyunConnectorDrawer({
         <AliyunLogo />
         <div>
           <CapabilitySourceBadge source="platform" />
-          <div className={cn("mt-1 text-xs font-medium", connected ? "text-success" : "text-muted-foreground")}>
-            {connected ? "已连接，运行环境将使用该 RAM 用户权限" : "未连接"}
+          <div className={cn("mt-1 text-xs font-medium", connected && runtimeEnabled ? "text-success" : "text-muted-foreground")}>
+            {connected ? runtimeEnabled ? "已连接，运行环境将使用该 RAM 用户权限" : "已暂停，凭据仍保留" : "未连接"}
           </div>
         </div>
       </div>

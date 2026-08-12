@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { SecretVault } from '../security/secretVault.js';
 import type { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import type { AliyunConnectorService } from '../connectors/aliyun.js';
+import { isNativeRuntimeConnectorId } from '../connectors/runtimeState.js';
 import {
   GITHUB_CONNECTOR_ID,
   GITHUB_TOKEN_CREDENTIAL_KEY,
@@ -19,6 +20,10 @@ const aliyunConnectSchema = z.object({
   accessKeyId: z.string().min(1).max(256),
   accessKeySecret: z.string().min(1).max(512),
   regionId: z.string().min(1).max(128),
+}).strict();
+
+const runtimeStateSchema = z.object({
+  runtimeEnabled: z.boolean(),
 }).strict();
 
 export interface ConnectorsRouterDeps {
@@ -46,6 +51,7 @@ export function createConnectorsRouter(deps: ConnectorsRouterDeps): Router {
   const router = Router();
 
   router.use(async (req, res, next) => {
+    if (req.method === 'PATCH' && req.path.endsWith('/runtime')) return next();
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) || !deps.legacyWriteGate) return next();
     try {
       await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
@@ -58,12 +64,30 @@ export function createConnectorsRouter(deps: ConnectorsRouterDeps): Router {
     }
   });
 
+  router.patch('/:connectorId/runtime', async (req, res) => {
+    const auth = authContext(req);
+    if (!auth) return res.status(401).json({ error: 'Authentication required' });
+    const connectorId = req.params.connectorId;
+    if (!isNativeRuntimeConnectorId(connectorId)) {
+      return res.status(404).json({ error: '连接器不存在' });
+    }
+    const parsed = runtimeStateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() });
+    await deps.connectionStore.setRuntimeEnabled(auth.username, connectorId, parsed.data.runtimeEnabled);
+    return res.json({ connectorId, runtimeEnabled: parsed.data.runtimeEnabled });
+  });
+
   router.get('/github', (req, res) => {
     const auth = authContext(req);
     if (!auth) return res.status(401).json({ error: 'Authentication required' });
     const record = deps.connectionStore.get(auth.username, GITHUB_CONNECTOR_ID);
     const owned = record?.userId === auth.userId && record.tenantId === auth.tenantId ? record : undefined;
-    res.json({ connection: toGithubConnectionView(owned) });
+    res.json({
+      connection: toGithubConnectionView(
+        owned,
+        deps.connectionStore.isRuntimeEnabled(auth.username, GITHUB_CONNECTOR_ID),
+      ),
+    });
   });
 
   const connectGithub = async (req: Request, res: Response) => {
@@ -107,7 +131,8 @@ export function createConnectorsRouter(deps: ConnectorsRouterDeps): Router {
         vault: deps.secretVault,
         username: auth.username,
       });
-      return res.json({ connection: toGithubConnectionView(connection) });
+      await deps.connectionStore.setRuntimeEnabled(auth.username, GITHUB_CONNECTOR_ID, true);
+      return res.json({ connection: toGithubConnectionView(connection, true) });
     } catch {
       await deps.secretVault.revokeSecret(secret.id, {
         actor: 'connector_proxy',

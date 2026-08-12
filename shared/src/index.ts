@@ -742,6 +742,8 @@ export {
 } from "./lib/mcpApi";
 
 export {
+  setNativeConnectorRuntimeEnabled,
+  type NativeRuntimeConnectorId,
   fetchGithubConnection,
   connectGithub,
   disconnectGithub,

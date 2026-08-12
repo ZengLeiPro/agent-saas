@@ -1,17 +1,16 @@
 /** 飞书官方 lark-cli 连接器；与 MCP 目录同 grid 展示，但拥有独立授权/保活数据流。 */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, CircleCheck, ExternalLink, Loader2, Plus, TriangleAlert, Unplug } from "lucide-react";
+import { CircleCheck, ExternalLink, Loader2, TriangleAlert, Unplug } from "lucide-react";
+import { setNativeConnectorRuntimeEnabled } from "@agent/shared";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
 import { cn } from "@/lib/utils";
 import {
   CapabilityDetailDrawer,
   CapabilitySourceBadge,
+  ConnectorCatalogCard,
   CAPABILITY_SUBTLE_SURFACE,
-  CAPABILITY_SURFACE,
-  CAPABILITY_SURFACE_HOVER,
 } from "./CatalogUi";
 import { writeFeishuAuthorizingPopup } from "./feishuAuthorizingPopup";
 
@@ -47,9 +46,12 @@ export interface FeishuConnectionsState {
   authInProgress: boolean;
   needsReconnect: boolean;
   hasConnected: boolean;
+  runtimeEnabled: boolean;
+  runtimeSaving: boolean;
   connectLabel: string;
   disconnecting: boolean;
   startConnection: () => Promise<void>;
+  setRuntimeEnabled: (enabled: boolean) => Promise<void>;
   cancelAuthorization: () => Promise<void>;
   disconnectConnection: () => Promise<void>;
   reopenAuthorizationPage: (url: string) => void;
@@ -64,6 +66,8 @@ export function useFeishuConnections(enabled = true): FeishuConnectionsState {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authServiceAvailable, setAuthServiceAvailable] = useState<boolean | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [runtimeEnabled, setRuntimeEnabledState] = useState(true);
+  const [runtimeSaving, setRuntimeSaving] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [popupBlocked, setPopupBlocked] = useState(false);
   const authorizationPopupRef = useRef<Window | null>(null);
@@ -75,9 +79,10 @@ export function useFeishuConnections(enabled = true): FeishuConnectionsState {
     setError(null);
     try {
       const response = await authFetch("/api/feishu/connections");
-      const data = await response.json().catch(() => ({})) as { connections?: FeishuConnectionView[]; error?: string };
+      const data = await response.json().catch(() => ({})) as { connections?: FeishuConnectionView[]; runtimeEnabled?: boolean; error?: string };
       if (!response.ok) throw new Error(data.error || "飞书连接状态读取失败");
       setConnections(data.connections ?? []);
+      setRuntimeEnabledState(data.runtimeEnabled ?? true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "飞书连接状态读取失败");
     } finally {
@@ -140,6 +145,19 @@ export function useFeishuConnections(enabled = true): FeishuConnectionsState {
       setConnecting(false);
     }
   }, [authServiceAvailable, reopenAuthorizationPage]);
+
+  const setRuntimeEnabled = useCallback(async (nextEnabled: boolean) => {
+    setRuntimeSaving(true);
+    setAuthError(null);
+    try {
+      await setNativeConnectorRuntimeEnabled("feishu", nextEnabled);
+      setRuntimeEnabledState(nextEnabled);
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "飞书状态更新失败");
+    } finally {
+      setRuntimeSaving(false);
+    }
+  }, []);
 
   const cancelAuthorization = useCallback(async () => {
     setConnecting(true);
@@ -232,9 +250,12 @@ export function useFeishuConnections(enabled = true): FeishuConnectionsState {
     authInProgress,
     needsReconnect,
     hasConnected,
+    runtimeEnabled,
+    runtimeSaving,
     connectLabel,
     disconnecting,
     startConnection,
+    setRuntimeEnabled,
     cancelAuthorization,
     disconnectConnection,
     reopenAuthorizationPage,
@@ -248,6 +269,7 @@ export function feishuConnectorStatus(state: FeishuConnectionsState): { label: s
   if (state.needsReconnect) return { label: "需重连", className: "text-destructive" };
   if (state.connections.some((item) => item.status === "error")) return { label: "重试中", className: "text-warning-ink" };
   if (state.connections.some((item) => item.status === "pending")) return { label: "检测中", className: "text-info-ink" };
+  if (state.hasConnected && !state.runtimeEnabled) return { label: "已暂停", className: "text-muted-foreground" };
   if (state.hasConnected) return { label: "已连接", className: "text-success" };
   return { label: "未连接", className: "text-muted-foreground" };
 }
@@ -257,7 +279,7 @@ export function feishuMatchesCatalog(query: string, activeFilter: string, state:
   const matchesQuery = !normalized || "飞书 feishu lark 飞书连接 lark-cli".includes(normalized);
   const matchesFilter = activeFilter === "all"
     || activeFilter === "platform"
-    || (activeFilter === "enabled" && state.hasConnected);
+    || (activeFilter === "enabled" && state.hasConnected && state.runtimeEnabled);
   return matchesQuery && matchesFilter;
 }
 
@@ -273,53 +295,27 @@ const DESCRIPTION = "连接飞书账号，让 Agent 使用文档、知识库、�
 
 export function FeishuConnectorCard({ state, onOpenDetail }: { state: FeishuConnectionsState; onOpenDetail: () => void }) {
   const status = feishuConnectorStatus(state);
-  const busy = state.authInProgress || state.connecting;
+  const busy = state.authInProgress || state.connecting || state.runtimeSaving;
+  const connected = state.hasConnected && !state.needsReconnect;
   return (
-    <Card
-      className={cn("group cursor-pointer border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)}
-      onClick={onOpenDetail}
-      onKeyDown={(event) => {
-        if ((event.target as HTMLElement).closest("button")) return;
-        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpenDetail(); }
+    <ConnectorCatalogCard
+      name="飞书"
+      logo={<FeishuBrandLogo />}
+      source="platform"
+      statusLabel={status.label}
+      statusClassName={status.className}
+      description={DESCRIPTION}
+      metadata="官方 CLI：lark-cli"
+      onOpenDetail={onOpenDetail}
+      actionLabel={connected ? state.runtimeEnabled ? "暂停" : "恢复" : "连接"}
+      actionIcon={busy ? <Loader2 className="size-4 animate-spin" /> : undefined}
+      actionTone={connected && state.runtimeEnabled ? "success" : "default"}
+      actionDisabled={busy || state.authServiceUnavailable}
+      onAction={() => {
+        if (connected) void state.setRuntimeEnabled(!state.runtimeEnabled);
+        else void state.startConnection();
       }}
-      role="button"
-      tabIndex={0}
-    >
-      <CardContent className="flex min-h-36 items-start gap-4 p-5">
-        <FeishuBrandLogo />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="truncate font-semibold">飞书</div>
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                <CapabilitySourceBadge source="platform" />
-                <span className={`text-xs font-medium ${status.className}`}>{status.label}</span>
-              </div>
-            </div>
-            <button
-              type="button"
-              className={cn(
-                "flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
-                state.hasConnected && !state.needsReconnect
-                  ? "border-transparent bg-success text-success-foreground hover:bg-success/85"
-                  : "bg-muted/40 text-muted-foreground hover:border-success/40 hover:bg-success/10 hover:text-success",
-              )}
-              disabled={busy || state.authServiceUnavailable}
-              aria-label={state.hasConnected ? "查看 飞书" : "连接 飞书"}
-              onClick={(event) => {
-                event.stopPropagation();
-                if (state.hasConnected && !state.needsReconnect) onOpenDetail();
-                else void state.startConnection();
-              }}
-            >
-              {busy ? <Loader2 className="size-4 animate-spin" /> : state.hasConnected && !state.needsReconnect ? <Check className="size-4" strokeWidth={2.5} /> : <Plus className="size-4" />}
-            </button>
-          </div>
-          <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{DESCRIPTION}</p>
-          <div className="mt-3 text-xs text-muted-foreground">官方 CLI：lark-cli</div>
-        </div>
-      </CardContent>
-    </Card>
+    />
   );
 }
 

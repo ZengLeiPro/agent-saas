@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -71,6 +73,94 @@ export function CapabilityLogo({
     >
       {children ?? label.trim().slice(0, 1).toUpperCase()}
     </span>
+  );
+}
+
+export type ConnectorCardActionTone = "default" | "success" | "danger";
+
+export function ConnectorCatalogCard({
+  name,
+  logo,
+  source,
+  statusLabel,
+  statusClassName,
+  description,
+  metadata,
+  onOpenDetail,
+  actionLabel,
+  actionIcon,
+  onAction,
+  actionTone = "default",
+  actionDisabled = false,
+  actionTitle,
+}: {
+  name: string;
+  logo: ReactNode;
+  source: CapabilitySource;
+  statusLabel: string;
+  statusClassName: string;
+  description: string;
+  metadata: ReactNode;
+  onOpenDetail: () => void;
+  actionLabel: string;
+  actionIcon?: ReactNode;
+  onAction: () => void;
+  actionTone?: ConnectorCardActionTone;
+  actionDisabled?: boolean;
+  actionTitle?: string;
+}) {
+  return (
+    <Card
+      className={cn(
+        "group h-full cursor-pointer border-0 shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2",
+        CAPABILITY_SURFACE,
+        CAPABILITY_SURFACE_HOVER,
+      )}
+      onClick={onOpenDetail}
+      onKeyDown={(event) => {
+        if ((event.target as HTMLElement).closest("button")) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpenDetail();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-label={`查看 ${name} 详情`}
+    >
+      <CardContent className="flex min-h-44 items-start gap-4 p-5">
+        {logo}
+        <div className="flex min-w-0 flex-1 self-stretch flex-col">
+          <div className="min-w-0">
+            <div className="truncate font-semibold">{name}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <CapabilitySourceBadge source={source} />
+              <span className={cn("text-xs font-medium", statusClassName)}>{statusLabel}</span>
+            </div>
+          </div>
+          <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{description}</p>
+          <div className="mt-auto flex items-end justify-between gap-3 pt-3">
+            <div className="min-w-0 truncate text-xs text-muted-foreground">{metadata}</div>
+            <Button
+              type="button"
+              size="sm"
+              variant={actionTone === "danger" ? "destructive" : actionTone === "success" ? "outline" : "default"}
+              className="h-8 shrink-0 px-3"
+              disabled={actionDisabled}
+              title={actionTitle}
+              aria-label={actionLabel}
+              onClick={(event) => {
+                event.stopPropagation();
+                onAction();
+              }}
+            >
+              {actionIcon}
+              {actionLabel}
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

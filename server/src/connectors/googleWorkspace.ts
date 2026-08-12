@@ -207,6 +207,7 @@ interface GoogleTokenResponse {
 export interface GoogleWorkspaceConnectionView {
   connectorId: typeof GOOGLE_WORKSPACE_CONNECTOR_ID;
   status: 'connected' | 'disconnected';
+  runtimeEnabled: boolean;
   accountEmail?: string;
   connectedAt?: string;
   updatedAt?: string;
@@ -343,6 +344,11 @@ export class GoogleWorkspaceOAuthService {
         metadata: { ...metadata, credentialOwnerId: pending.user.id, grantedScopes: scopeSummary.join(' ') },
       });
       connected = true;
+      await this.options.connectionStore.setRuntimeEnabled(
+        pending.user.username,
+        GOOGLE_WORKSPACE_CONNECTOR_ID,
+        true,
+      );
       await this.assertUserActive(pending.user);
       await this.revokePending(pending.user.username);
       return { user: pending.user, scopeSummary };
@@ -368,20 +374,23 @@ export class GoogleWorkspaceOAuthService {
     const connected = record?.status === 'connected'
       && record.userId === userId
       && record.tenantId === tenantId;
+    const runtimeEnabled = this.options.connectionStore.isRuntimeEnabled(username, GOOGLE_WORKSPACE_CONNECTOR_ID);
     return {
       connectorId: GOOGLE_WORKSPACE_CONNECTOR_ID,
       status: connected ? 'connected' : 'disconnected',
+      runtimeEnabled,
       accountEmail: connected ? record?.metadata?.accountEmail : undefined,
       connectedAt: connected ? record?.connectedAt : undefined,
       updatedAt: record?.updatedAt,
       cliCommand: 'gws',
-      envAvailable: connected,
+      envAvailable: connected && runtimeEnabled,
     };
   }
 
   async accessToken(userId: string, username: string, tenantId: string): Promise<string | undefined> {
     const record = this.options.connectionStore.get(username, GOOGLE_WORKSPACE_CONNECTOR_ID);
     if (!record || record.status !== 'connected' || record.userId !== userId || record.tenantId !== tenantId) return undefined;
+    if (!this.options.connectionStore.isRuntimeEnabled(username, GOOGLE_WORKSPACE_CONNECTOR_ID)) return undefined;
     if (this.options.authorizeSubject && !await this.options.authorizeSubject(userId, tenantId)) return undefined;
     const grantId = `google-workspace:${tenantId}:${userId}`;
     if (!this.options.authorizeGrant || !await this.options.authorizeGrant(grantId, userId, tenantId)) return undefined;

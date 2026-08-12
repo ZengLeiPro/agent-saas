@@ -1,20 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Loader2, Plus, TriangleAlert } from "lucide-react";
+import { Loader2, TriangleAlert } from "lucide-react";
 import type { GoogleWorkspaceConnection } from "@agent/shared";
 import {
   disconnectGoogleWorkspace,
   fetchGoogleWorkspaceConnection,
+  setNativeConnectorRuntimeEnabled,
   startGoogleWorkspaceOAuth,
 } from "@agent/shared";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import {
   CapabilityDetailDrawer,
   CapabilitySourceBadge,
+  ConnectorCatalogCard,
   CAPABILITY_SUBTLE_SURFACE,
-  CAPABILITY_SURFACE,
-  CAPABILITY_SURFACE_HOVER,
 } from "./CatalogUi";
 
 interface GoogleWorkspaceConnectorState {
@@ -24,6 +23,7 @@ interface GoogleWorkspaceConnectorState {
   connecting: boolean;
   error: string | null;
   connect: () => Promise<void>;
+  setRuntimeEnabled: (enabled: boolean) => Promise<void>;
   disconnect: () => Promise<void>;
 }
 
@@ -57,6 +57,19 @@ export function useGoogleWorkspaceConnector(enabled = true): GoogleWorkspaceConn
     } catch (err) {
       if (popup && !popup.closed) popup.close();
       setError(err instanceof Error ? err.message : "Google Workspace 授权启动失败");
+      setConnecting(false);
+    }
+  }, []);
+
+  const setRuntimeEnabled = useCallback(async (runtimeEnabled: boolean) => {
+    setConnecting(true);
+    setError(null);
+    try {
+      await setNativeConnectorRuntimeEnabled("google-workspace", runtimeEnabled);
+      setConnection((current) => current ? { ...current, runtimeEnabled, envAvailable: runtimeEnabled } : current);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Google Workspace 状态更新失败");
+    } finally {
       setConnecting(false);
     }
   }, []);
@@ -100,7 +113,7 @@ export function useGoogleWorkspaceConnector(enabled = true): GoogleWorkspaceConn
     return () => window.removeEventListener("message", listener);
   }, [enabled, load]);
 
-  return { connection, available, loading, connecting, error, connect, disconnect };
+  return { connection, available, loading, connecting, error, connect, setRuntimeEnabled, disconnect };
 }
 
 const DESCRIPTION = "使用 Google 官方 gws CLI 操作 Gmail、Drive、Calendar、Chat 和 Contacts。";
@@ -117,31 +130,37 @@ export function googleWorkspaceMatchesCatalog(query: string, activeFilter: strin
 
 export function GoogleWorkspaceConnectorCard({ state, onOpenDetail }: { state: GoogleWorkspaceConnectorState; onOpenDetail: () => void }) {
   const connected = state.connection?.status === "connected";
+  const runtimeEnabled = state.connection?.runtimeEnabled ?? true;
   const busy = state.loading || state.connecting;
   return (
-    <Card className={cn("group cursor-pointer border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)} onClick={onOpenDetail}>
-      <CardContent className="flex min-h-36 items-start gap-4 p-5">
-        <GoogleWorkspaceLogo />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <div><div className="font-semibold">Google Workspace</div><div className="mt-1 flex items-center gap-2"><CapabilitySourceBadge source="platform" /><span className={cn("text-xs font-medium", connected ? "text-success" : "text-muted-foreground")}>{busy ? "授权中" : connected ? "已连接" : state.available ? "未连接" : "未配置"}</span></div></div>
-            <button type="button" className={cn("flex size-8 items-center justify-center rounded-lg border", connected ? "border-transparent bg-success text-success-foreground" : "bg-muted/40 text-muted-foreground")} onClick={(event) => { event.stopPropagation(); if (connected) onOpenDetail(); else void state.connect(); }} disabled={busy || !state.available}>
-              {busy ? <Loader2 className="size-4 animate-spin" /> : connected ? <Check className="size-4" /> : <Plus className="size-4" />}
-            </button>
-          </div>
-          <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{DESCRIPTION}</p>
-          <div className="mt-3 text-xs text-muted-foreground">官方 CLI：gws</div>
-        </div>
-      </CardContent>
-    </Card>
+    <ConnectorCatalogCard
+      name="Google Workspace"
+      logo={<GoogleWorkspaceLogo />}
+      source="platform"
+      statusLabel={busy ? "授权中" : connected ? runtimeEnabled ? "已连接" : "已暂停" : state.available ? "未连接" : "未配置"}
+      statusClassName={connected && runtimeEnabled ? "text-success" : "text-muted-foreground"}
+      description={DESCRIPTION}
+      metadata="官方 CLI：gws"
+      onOpenDetail={onOpenDetail}
+      actionLabel={connected ? runtimeEnabled ? "暂停" : "恢复" : "连接"}
+      actionIcon={busy ? <Loader2 className="size-4 animate-spin" /> : undefined}
+      actionTone={connected && runtimeEnabled ? "success" : "default"}
+      actionDisabled={busy || !state.available}
+      actionTitle={!state.available ? "管理员尚未配置 Google OAuth" : undefined}
+      onAction={() => {
+        if (connected) void state.setRuntimeEnabled(!runtimeEnabled);
+        else void state.connect();
+      }}
+    />
   );
 }
 
 export function GoogleWorkspaceConnectorDrawer({ open, onOpenChange, state }: { open: boolean; onOpenChange: (open: boolean) => void; state: GoogleWorkspaceConnectorState }) {
   const connected = state.connection?.status === "connected";
+  const runtimeEnabled = state.connection?.runtimeEnabled ?? true;
   return (
     <CapabilityDetailDrawer open={open} onOpenChange={onOpenChange} title="Google Workspace" description={DESCRIPTION}>
-      <div className="flex items-center gap-3"><GoogleWorkspaceLogo /><div><CapabilitySourceBadge source="platform" /><div className={cn("mt-1 text-xs font-medium", connected ? "text-success" : "text-muted-foreground")}>{connected ? "已连接，运行环境可用" : state.available ? "未连接" : "管理员尚未配置 OAuth"}</div></div></div>
+      <div className="flex items-center gap-3"><GoogleWorkspaceLogo /><div><CapabilitySourceBadge source="platform" /><div className={cn("mt-1 text-xs font-medium", connected && runtimeEnabled ? "text-success" : "text-muted-foreground")}>{connected ? runtimeEnabled ? "已连接，运行环境可用" : "已暂停，授权仍保留" : state.available ? "未连接" : "管理员尚未配置 OAuth"}</div></div></div>
       {state.connection?.accountEmail ? <div className="rounded-xl p-3 text-sm ring-1 ring-border/60"><div className="text-xs text-muted-foreground">Google 账号</div><div className="mt-1 font-medium">{state.connection.accountEmail}</div></div> : null}
       <div className={cn("p-3 text-sm text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}>授权后，平台按运行实时刷新 access token，并注入 <code>GOOGLE_WORKSPACE_CLI_TOKEN</code>。一个账号即可使用 Gmail、Drive、Calendar、Chat 与 Contacts。</div>
       {state.error ? <div className="flex gap-2 rounded-xl bg-destructive/10 p-3 text-sm text-destructive"><TriangleAlert className="mt-0.5 size-4" />{state.error}</div> : null}

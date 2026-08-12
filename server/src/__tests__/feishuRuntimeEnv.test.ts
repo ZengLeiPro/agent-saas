@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { resolveFeishuConnectorRunEnv } from '../runtime/connectorRunEnv.js';
+import { resolveDwsConnectorRunEnv, resolveFeishuConnectorRunEnv } from '../runtime/connectorRunEnv.js';
+import type { ConnectorConnectionStore } from '../connectors/connectionStore.js';
+import { applyNativeConnectorRuntimeState } from '../connectors/runtimeState.js';
 import { isHandEnvAllowed, pickHandEnv } from '../runtime/handEnvAllowlist.js';
 
 describe('Feishu broker runtime env', () => {
@@ -37,9 +39,52 @@ describe('Feishu broker runtime env', () => {
     expect(first).not.toHaveProperty('LARKSUITE_CLI_APP_SECRET');
   });
 
-  it('allowlists only the two Lark runtime variables and rejects secrets', () => {
+  it('keeps workspace credentials but isolates both CLIs while paused', async () => {
+    const disabledStore = {
+      isRuntimeEnabled: vi.fn(() => false),
+    } as unknown as ConnectorConnectionStore;
+    const identity = { tenantId: 'tenant-a', userId: 'user-a', username: 'alice' };
+    const broker = { ensureFresh: vi.fn(), verify: vi.fn() };
+
+    await expect(resolveFeishuConnectorRunEnv(broker, identity, undefined, disabledStore)).resolves.toEqual({
+      LARKSUITE_CLI_CONFIG_DIR: '/tmp/agent-saas-paused/user-a/lark/config',
+      LARKSUITE_CLI_DATA_DIR: '/tmp/agent-saas-paused/user-a/lark/data',
+    });
+    expect(broker.ensureFresh).not.toHaveBeenCalled();
+    expect(resolveDwsConnectorRunEnv(disabledStore, identity)).toEqual({
+      DWS_CONFIG_DIR: '/tmp/agent-saas-paused/user-a/dws/config',
+    });
+  });
+
+  it('applies pause masks after tenant env so credentials cannot be merged back', () => {
+    const enabled = new Set(['notion']);
+    const store = {
+      isRuntimeEnabled: vi.fn((_username: string, connectorId: string) => enabled.has(connectorId)),
+    } as unknown as ConnectorConnectionStore;
+
+    expect(applyNativeConnectorRuntimeState(store, { userId: 'user-a', username: 'alice' }, {
+      GH_TOKEN: 'tenant-github',
+      GITHUB_TOKEN: 'tenant-github',
+      NOTION_API_TOKEN: 'tenant-notion',
+      GOOGLE_WORKSPACE_CLI_TOKEN: 'tenant-google',
+      ALIBABA_CLOUD_ACCESS_KEY_ID: 'tenant-ak',
+      ALIBABA_CLOUD_ACCESS_KEY_SECRET: 'tenant-sk',
+      LARKSUITE_CLI_APP_ID: 'tenant-app',
+      LARKSUITE_CLI_USER_ACCESS_TOKEN: 'tenant-user-token',
+      DWS_CONFIG_DIR: '/workspace/.dws/config',
+    })).toEqual({
+      NOTION_API_TOKEN: 'tenant-notion',
+      DWS_CONFIG_DIR: '/tmp/agent-saas-paused/user-a/dws/config',
+      LARKSUITE_CLI_CONFIG_DIR: '/tmp/agent-saas-paused/user-a/lark/config',
+      LARKSUITE_CLI_DATA_DIR: '/tmp/agent-saas-paused/user-a/lark/data',
+    });
+  });
+
+  it('allowlists Lark runtime tokens and paused config overrides but rejects secrets', () => {
     expect(isHandEnvAllowed('LARKSUITE_CLI_APP_ID')).toBe(true);
     expect(isHandEnvAllowed('LARKSUITE_CLI_USER_ACCESS_TOKEN')).toBe(true);
+    expect(isHandEnvAllowed('LARKSUITE_CLI_CONFIG_DIR')).toBe(true);
+    expect(isHandEnvAllowed('LARKSUITE_CLI_DATA_DIR')).toBe(true);
     for (const key of [
       'LARKSUITE_CLI_APP_SECRET',
       'LARKSUITE_CLI_REFRESH_TOKEN',

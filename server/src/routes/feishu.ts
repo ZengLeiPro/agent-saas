@@ -4,9 +4,11 @@ import type { UserStore } from '../data/users/store.js';
 import type { FeishuAuthFlowServiceLike } from '../feishu/authFlow.js';
 import type { FeishuAuthSessionRecord } from '../feishu/authStore.js';
 import type { FeishuConnectionRecord, FeishuConnectionStore } from '../feishu/store.js';
+import type { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 
 export interface FeishuRouterOptions {
   connectionStore?: FeishuConnectionStore;
+  connectorConnectionStore?: ConnectorConnectionStore;
   authFlowService?: FeishuAuthFlowServiceLike;
   userStore?: Pick<UserStore, 'findById'>;
 }
@@ -25,7 +27,10 @@ export function createFeishuRouter(options: FeishuRouterOptions): Router {
     }
     try {
       const rows = await options.connectionStore.listForUser(req.user.tenantId, req.user.sub);
-      res.json({ connections: rows.map(toPublicConnection) });
+      res.json({
+        connections: rows.map(toPublicConnection),
+        runtimeEnabled: options.connectorConnectionStore?.isRuntimeEnabled(req.user.username, 'feishu') ?? true,
+      });
     } catch {
       res.status(503).json({ error: '飞书连接状态读取失败' });
     }
@@ -63,6 +68,7 @@ export function createFeishuRouter(options: FeishuRouterOptions): Router {
       return;
     }
     try {
+      await options.connectorConnectionStore?.setRuntimeEnabled(req.user.username, 'feishu', true);
       const session = await options.authFlowService.start(user);
       res.status(202).json({ session: toPublicAuthSession(session) });
     } catch {
@@ -104,7 +110,10 @@ export function createFeishuRouter(options: FeishuRouterOptions): Router {
     try {
       await options.authFlowService.revokeUser(user);
       const rows = await options.connectionStore.listForUser(req.user.tenantId, req.user.sub);
-      res.json({ connections: rows.map(toPublicConnection) });
+      res.json({
+        connections: rows.map(toPublicConnection),
+        runtimeEnabled: options.connectorConnectionStore?.isRuntimeEnabled(req.user.username, 'feishu') ?? true,
+      });
     } catch {
       res.status(503).json({ error: '飞书断开失败，请稍后重试' });
     }

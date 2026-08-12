@@ -240,6 +240,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   // access/refresh token 始终由 DWS 保存在该用户的 NAS workspace 内。
   app.use("/api", createDwsRouter({
     connectionStore: runtime.dwsConnectionStore,
+    connectorConnectionStore: runtime.connectorConnectionStore,
     authFlowService: runtime.dwsAuthFlowService,
     userStore: runtime.userStore,
   }));
@@ -248,6 +249,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   // 加密 keychain 始终保存在其独立 NAS workspace 的 .lark-cli/ 内。
   app.use("/api", createFeishuRouter({
     connectionStore: runtime.feishuConnectionStore,
+    connectorConnectionStore: runtime.connectorConnectionStore,
     authFlowService: runtime.feishuAuthFlowService,
     userStore: runtime.userStore,
   }));

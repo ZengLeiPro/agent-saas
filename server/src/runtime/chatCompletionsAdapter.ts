@@ -76,28 +76,50 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
     // adapter 不得读取当前时钟改写历史，否则 full replay 的 prompt prefix 会失稳。
     // 平台注入上下文块只保留 escape；与 ResponsesApiAdapter 对齐。
     const sessionIdShort = context.sessionId ? context.sessionId.slice(0, 8) : undefined;
-    const defendedMessages = await Promise.all(request.messages
+    const defendedMessages = (await Promise.all(request.messages
       .filter((message) => message.role !== 'additional_tools')
-      .map(async (message) => {
+      .map(async (message): Promise<Array<Record<string, unknown>>> => {
       if (message.role === 'assistant' && message.tool_calls) {
-        return {
+        return [{
           ...message,
           tool_calls: message.tool_calls.map((call) => ({
             id: call.id,
             type: call.type,
             function: call.function,
           })),
-        };
+        }];
       }
-      if (message.role !== 'user') return message;
+      if (message.role === 'tool' && message.images?.length) {
+        const visualContent: Array<Record<string, unknown>> = [];
+        if (!modelSupportsImage(this.providerOptions.inputModalities)) {
+          visualContent.push({
+            type: 'text',
+            text: defendUserMessageText('[Read 返回了图片，但当前模型未启用视觉输入，无法查看图片内容。]', sessionIdShort),
+          });
+        } else {
+          for (const image of message.images) {
+            const dataUrl = await readImagePartOrPlaceholder(context.cwd, image);
+            if (typeof dataUrl !== 'string') {
+              visualContent.push({ type: 'text', text: defendUserMessageText(dataUrl.placeholder, sessionIdShort) });
+              continue;
+            }
+            visualContent.push({
+              type: 'image_url',
+              image_url: { url: dataUrl, detail: image.detail },
+            });
+          }
+        }
+        return [message, { role: 'user', content: visualContent }];
+      }
+      if (message.role !== 'user') return [message];
       if (typeof message.content === 'string') {
-        return { ...message, content: defendUserMessageText(message.content, sessionIdShort) };
+        return [{ ...message, content: defendUserMessageText(message.content, sessionIdShort) }];
       }
       if (!modelSupportsImage(this.providerOptions.inputModalities)) {
-        return {
+        return [{
           ...message,
           content: defendUserMessageText(toTextOnlyContent(message.content), sessionIdShort),
-        };
+        }];
       }
       const content: Array<Record<string, unknown>> = [];
       for (const part of message.content) {
@@ -119,8 +141,8 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
           },
         });
       }
-      return { ...message, content };
-      }));
+      return [{ ...message, content }];
+      }))).flat();
 
     const body = {
       model: request.model,

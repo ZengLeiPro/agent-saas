@@ -2447,7 +2447,7 @@ export class RawAgentLoop implements AgentLoop {
           yield* this.appendToolResult({
             call: segment[i]!,
             content: outcome.result.content,
-            ...(outcome.isError ? { isError: true } : {}),
+            ...(outcome.isError ? { isError: true } : {}), ...(outcome.result.modelImages?.length ? { modelImages: outcome.result.modelImages } : {}),
             ...(outcome.result.presentation ? { presentation: outcome.result.presentation } : {}),
             ...(outcome.result.metadata ? { metadata: outcome.result.metadata } : {}),
             context: args.context,
@@ -2477,7 +2477,7 @@ export class RawAgentLoop implements AgentLoop {
       yield* this.appendToolResult({
         call,
         content: outcome.result.content,
-        ...(outcome.isError ? { isError: true } : {}),
+        ...(outcome.isError ? { isError: true } : {}), ...(outcome.result.modelImages?.length ? { modelImages: outcome.result.modelImages } : {}),
         ...(outcome.result.presentation ? { presentation: outcome.result.presentation } : {}),
         ...(outcome.result.metadata ? { metadata: outcome.result.metadata } : {}),
         context: args.context,
@@ -2526,7 +2526,7 @@ export class RawAgentLoop implements AgentLoop {
     context: RunContext;
     messages?: ModelChatMessage[];
     presentation?: ToolPresentation;
-    metadata?: Record<string, unknown>;
+    metadata?: Record<string, unknown>; modelImages?: Extract<ModelChatMessage, { role: 'tool' }>['images'];
   }): AsyncIterable<OutboundEvent> {
     const projectedContent = projectToolResultContentForModel(args.content, args.call.id);
     yield {
@@ -2545,7 +2545,7 @@ export class RawAgentLoop implements AgentLoop {
       toolCallId: args.call.id,
       toolName: args.call.name,
       content: args.content,
-      ...(args.isError ? { isError: true } : {}),
+      ...(args.isError ? { isError: true } : {}), ...(args.modelImages?.length ? { modelImages: args.modelImages } : {}),
       ...(args.presentation ? { presentation: args.presentation } : {}),
       ...(args.metadata ? { metadata: args.metadata } : {}),
     });
@@ -2554,7 +2554,7 @@ export class RawAgentLoop implements AgentLoop {
     args.messages?.push({
       role: 'tool',
       tool_call_id: args.call.id,
-      content: projectedContent,
+      content: projectedContent, ...(args.modelImages?.length ? { images: args.modelImages } : {}),
     });
   }
 
@@ -2638,7 +2638,7 @@ export class RawAgentLoop implements AgentLoop {
     yield* this.appendToolResult({
       call,
       content: outcome.result.content,
-      ...(outcome.isError ? { isError: true } : {}),
+      ...(outcome.isError ? { isError: true } : {}), ...(outcome.result.modelImages?.length ? { modelImages: outcome.result.modelImages } : {}),
       ...(outcome.result.presentation ? { presentation: outcome.result.presentation } : {}),
       ...(outcome.result.metadata ? { metadata: outcome.result.metadata } : {}),
       context: resumeContext,

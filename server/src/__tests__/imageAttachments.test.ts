@@ -239,6 +239,72 @@ describe('图片附件 P1', () => {
     expect(body.input[0].content[0].image_url).toMatch(/^data:image\/png;base64,/);
   });
 
+  it('Read 工具图片在 Chat Completions 与 Responses 中作为视觉输入紧跟工具结果', async () => {
+    const fixture = await createUploadedPng();
+    const attachments = await resolveFixtureAttachments(fixture);
+    const image = imagePartOf(buildModelUserContent('unused', attachments));
+    const messages = [
+      {
+        role: 'assistant' as const,
+        content: null,
+        tool_calls: [{
+          id: 'call-read-image',
+          type: 'function' as const,
+          function: { name: 'Read', arguments: '{"path":"界面.png"}' },
+        }],
+      },
+      {
+        role: 'tool' as const,
+        tool_call_id: 'call-read-image',
+        content: 'Read image 界面.png (image/png). The image is attached as visual input.',
+        images: [image],
+      },
+    ];
+    const context = {
+      runId: 'run-tool-image',
+      sessionId: 'session-tool-image',
+      model: 'vision-model',
+      cwd: fixture.cwd,
+      channelContext: { channel: 'web' as const },
+    };
+
+    const chatFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      chatSse({ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }),
+      chatSse('[DONE]'),
+    ]));
+    await collect(new ChatCompletionsModelAdapter(
+      { apiKey: 'k', baseUrl: 'https://example.invalid/v1' },
+      { inputModalities: ['text', 'image'] },
+    ).stream({ model: 'vision-model', messages, tools: [] }, context));
+    const chatBody = JSON.parse(String((chatFetch.mock.calls[0]?.[1] as RequestInit).body));
+    expect(chatBody.messages.map((message: { role: string }) => message.role)).toEqual(['assistant', 'tool', 'user']);
+    expect(chatBody.messages[2].content[0].image_url.url).toMatch(/^data:image\/png;base64,/);
+    chatFetch.mockRestore();
+
+    const responsesFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      responsesSse('response.created', { response: { id: 'resp_tool_image', model: 'vision-model' } }),
+      responsesSse('response.output_text.delta', { delta: 'ok' }),
+      responsesSse('response.completed', {
+        response: {
+          id: 'resp_tool_image',
+          model: 'vision-model',
+          status: 'completed',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      }),
+      'data: [DONE]\n\n',
+    ]));
+    await collect(new ResponsesApiAdapter(
+      { apiKey: 'k', baseUrl: 'https://example.invalid/v1' },
+      { protocol: 'responses', inputModalities: ['text', 'image'] },
+    ).stream({ model: 'vision-model', messages, tools: [] }, context));
+    const responsesBody = JSON.parse(String((responsesFetch.mock.calls[0]?.[1] as RequestInit).body));
+    expect(responsesBody.input.map((item: { type: string }) => item.type))
+      .toEqual(['function_call', 'function_call_output', 'message']);
+    expect(responsesBody.input[2].content[0]).toMatchObject({ type: 'input_image', detail: 'high' });
+    expect(responsesBody.input[2].content[0].image_url).toMatch(/^data:image\/png;base64,/);
+  });
+
   it('主模型不支持图片时，独立视觉链跳过无能力模型并记录成功尝试', async () => {
     const fixture = await createUploadedPng();
     const attachments = await resolveInboundAttachments([{

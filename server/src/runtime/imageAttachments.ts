@@ -149,12 +149,51 @@ export function buildModelUserContent(
   return parts;
 }
 
+export async function materializeToolImage(input: {
+  cwd: string;
+  source: Buffer;
+  displayName: string;
+}): Promise<Extract<ModelUserContentPart, { type: 'image_attachment' }>> {
+  if (input.source.byteLength > MAX_IMAGE_SOURCE_BYTES) {
+    throw new Error('Read: image exceeds the 20MB source limit');
+  }
+  const detectedMime = detectImageMime(input.source);
+  if (!detectedMime) {
+    throw new Error('Read: file is not a valid supported PNG, JPEG, GIF, or WebP image');
+  }
+  let normalized: Awaited<ReturnType<typeof normalizeImage>>;
+  try {
+    normalized = await normalizeImage(input.source, detectedMime, input.cwd);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Read: cannot prepare image for the model (${message.replace(/^UPLOAD_REJECTED:\s*/, '')})`);
+  }
+  return {
+    type: 'image_attachment',
+    attachmentId: randomUUID(),
+    displayName: safeDisplayName(input.displayName),
+    relativePath: normalized.relativePath,
+    mimeType: normalized.mimeType,
+    sizeBytes: normalized.sizeBytes,
+    width: normalized.width,
+    height: normalized.height,
+    detail: 'high',
+  };
+}
+
 export function pruneHistoricalImageContent(
-  events: readonly { type: string; attachments?: ModelAttachmentRef[] }[],
+  events: readonly {
+    type: string;
+    attachments?: ModelAttachmentRef[];
+    modelImages?: Array<Extract<ModelUserContentPart, { type: 'image_attachment' }>>;
+  }[],
 ): Set<number> {
   const imageTurnIndices = events
     .map((event, index) => ({ event, index }))
-    .filter(({ event }) => event.type === 'user_message' && event.attachments?.some((item) => item.isImage))
+    .filter(({ event }) => (
+      (event.type === 'user_message' && event.attachments?.some((item) => item.isImage))
+      || (event.type === 'tool_result' && (event.modelImages?.length ?? 0) > 0)
+    ))
     .map(({ index }) => index);
   return new Set(imageTurnIndices.slice(0, Math.max(0, imageTurnIndices.length - RETAIN_IMAGE_TURNS)));
 }

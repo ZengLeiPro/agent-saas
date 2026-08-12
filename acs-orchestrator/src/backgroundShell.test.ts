@@ -1,11 +1,11 @@
-import { mkdtemp } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { spawn } from 'node:child_process';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   getBackgroundShellOutput,
@@ -45,6 +45,26 @@ describe('background shell runtime', () => {
       env: process.env,
     });
     expect(idempotent.status).toBe('completed');
+  });
+
+  it('preserves the injected PATH instead of resetting it through a login shell', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-path-'));
+    const bin = join(root, 'bin');
+    await mkdir(bin);
+    const executable = join(bin, 'task21-path-probe');
+    await writeFile(executable, '#!/bin/sh\nprintf path-preserved', 'utf8');
+    await chmod(executable, 0o755);
+    const taskId = `shell-bg-test-${randomUUID()}`;
+    await startBackgroundShell({
+      workspaceRoot: root,
+      taskId,
+      command: 'task21-path-probe',
+      timeoutMs: 5_000,
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    });
+
+    const completed = await waitForTerminal(root, taskId);
+    expect(completed).toMatchObject({ status: 'completed', stdout: 'path-preserved' });
   });
 
   it('cancels the worker and its child process group', async () => {
@@ -100,6 +120,69 @@ describe('background shell runtime', () => {
     const failed = await getBackgroundShellOutput({ workspaceRoot: root, taskId });
     expect(failed.status).toBe('failed');
     expect(failed.error).toContain('worker failed to start');
+  });
+
+  it('terminates a live worker before recording startup timeout as failed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-start-timeout-'));
+    const taskId = `shell-bg-test-${randomUUID()}`;
+    const kill = vi.fn((signal: NodeJS.Signals) => {
+      child.signalCode = signal;
+      queueMicrotask(() => child.emit('exit', null, signal));
+      return true;
+    });
+    const child = Object.assign(new EventEmitter(), {
+      exitCode: null as number | null,
+      signalCode: null as NodeJS.Signals | null,
+      kill,
+      unref: vi.fn(),
+    });
+    const spawnWorker = (() => {
+      queueMicrotask(() => child.emit('spawn'));
+      return child;
+    }) as unknown as typeof spawn;
+
+    await expect(startBackgroundShell({
+      workspaceRoot: root,
+      taskId,
+      command: 'printf never-runs',
+      timeoutMs: 5_000,
+      workerStartTimeoutMs: 50,
+      env: process.env,
+      spawnWorker,
+    })).rejects.toThrow('worker did not reach running within 50ms');
+
+    expect(kill).toHaveBeenCalledWith('SIGTERM');
+    const failed = await getBackgroundShellOutput({ workspaceRoot: root, taskId });
+    expect(failed.status).toBe('failed');
+    expect(failed.error).toContain('worker did not reach running within 50ms');
+  });
+
+  it('does not acknowledge a spawned worker that exits before consuming the launch', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-early-exit-'));
+    const taskId = `shell-bg-test-${randomUUID()}`;
+    const spawnWorker = (() => {
+      const child = Object.assign(new EventEmitter(), { exitCode: null as number | null, signalCode: null });
+      queueMicrotask(() => {
+        child.emit('spawn');
+        child.exitCode = 1;
+        child.emit('exit', 1, null);
+      });
+      return child;
+    }) as unknown as typeof spawn;
+
+    await expect(startBackgroundShell({
+      workspaceRoot: root,
+      taskId,
+      command: 'printf never-runs',
+      timeoutMs: 5_000,
+      env: process.env,
+      spawnWorker,
+    })).rejects.toThrow('worker exited before running');
+
+    const failed = await getBackgroundShellOutput({ workspaceRoot: root, taskId });
+    expect(failed.status).toBe('failed');
+    expect(failed.startedAt).toBeUndefined();
+    expect(failed.error).toContain('worker exited before running');
   });
 });
 

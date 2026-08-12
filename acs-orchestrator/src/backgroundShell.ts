@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import {
   mkdir,
@@ -18,6 +18,7 @@ export const MAX_BACKGROUND_SHELL_TIMEOUT_MS = 24 * 60 * 60_000;
 export const MAX_BACKGROUND_SHELL_OUTPUT_BYTES = 16 * 1024 * 1024;
 export const MAX_BACKGROUND_SHELL_READ_BYTES = 64 * 1024;
 
+const BACKGROUND_SHELL_WORKER_START_TIMEOUT_MS = 10_000;
 const TASK_ID_PATTERN = /^shell-bg-[A-Za-z0-9-]{8,160}$/;
 const TASK_ROOT_SEGMENTS = ['.ky-agent', 'runtime', 'background-shell', 'tasks'] as const;
 const TERMINAL_STATUSES = new Set<BackgroundShellStatus>([
@@ -73,6 +74,8 @@ export interface BackgroundShellStartInput {
   env: Record<string, string | undefined>;
   spawnWorker?: typeof spawn;
   now?: () => Date;
+  /** 测试注入；生产固定使用 10 秒启动确认窗口。 */
+  workerStartTimeoutMs?: number;
 }
 
 export interface BackgroundShellOutputInput {
@@ -157,11 +160,21 @@ export async function startBackgroundShell(input: BackgroundShellStartInput): Pr
       worker.once('spawn', resolve);
       worker.once('error', reject);
     });
+    // spawn 只证明内核创建了进程；入口文件缺失时 Node 会在随后几毫秒退出。
+    // 等 worker 消费 launch.json 并写出 running/终态后才向 brain 返回成功。
+    await waitForBackgroundShellWorkerStart(
+      taskDir,
+      worker,
+      input.workerStartTimeoutMs ?? BACKGROUND_SHELL_WORKER_START_TIMEOUT_MS,
+    );
   } catch (err) {
+    // 先收敛 worker，再落 terminal state。反过来会出现 state=failed 但 worker
+    // 随后继续派生命令的无保护窗口，Sandbox lifecycle 已撤销而进程仍存活。
+    await terminateUnacknowledgedWorker(worker);
     const failedAt = new Date().toISOString();
     await writeJsonAtomic(join(taskDir, 'launch.json'), { consumedAt: failedAt } satisfies BackgroundShellLaunch, 0o600);
     await writeBackgroundShellState(taskDir, {
-      ...state,
+      ...(await readBackgroundShellState(taskDir).catch(() => state)),
       status: 'failed',
       completedAt: failedAt,
       updatedAt: failedAt,
@@ -171,6 +184,48 @@ export async function startBackgroundShell(input: BackgroundShellStartInput): Pr
   }
   worker.unref();
   return await getBackgroundShellOutput({ workspaceRoot: input.workspaceRoot, taskId: input.taskId });
+}
+
+async function terminateUnacknowledgedWorker(worker: ChildProcess): Promise<void> {
+  if (worker.exitCode !== null || worker.signalCode !== null) return;
+  if (typeof worker.kill !== 'function') return;
+  worker.kill('SIGTERM');
+  const deadline = Date.now() + 7_000;
+  while (worker.exitCode === null && worker.signalCode === null && Date.now() < deadline) {
+    await sleep(25);
+  }
+  if (worker.exitCode === null && worker.signalCode === null) worker.kill('SIGKILL');
+  worker.unref?.();
+}
+
+async function waitForBackgroundShellWorkerStart(
+  taskDir: string,
+  worker: ChildProcess,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let exit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  const onExit = (code: number | null, signal: NodeJS.Signals | null) => { exit = { code, signal }; };
+  worker.once('exit', onExit);
+  try {
+    while (Date.now() < deadline) {
+      const current = await readBackgroundShellState(taskDir);
+      if (current.status === 'running' || (isBackgroundShellTerminal(current.status) && current.startedAt)) return;
+      if (isBackgroundShellTerminal(current.status)) {
+        throw new Error(current.error ?? `worker reached ${current.status} before running`);
+      }
+      const observedExit = exit ?? (worker.exitCode !== null || worker.signalCode !== null
+        ? { code: worker.exitCode, signal: worker.signalCode }
+        : undefined);
+      if (observedExit) {
+        throw new Error(`worker exited before running (code=${observedExit.code ?? observedExit.signal ?? 'unknown'})`);
+      }
+      await sleep(25);
+    }
+    throw new Error(`worker did not reach running within ${timeoutMs}ms`);
+  } finally {
+    worker.off('exit', onExit);
+  }
 }
 
 export async function getBackgroundShellOutput(input: BackgroundShellOutputInput): Promise<BackgroundShellOutput> {

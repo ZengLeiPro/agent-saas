@@ -420,9 +420,14 @@ RUN cd /app/acs-orchestrator \
          --external:node:* --external:pg-native \
          --banner:js="import { createRequire as __kyCreateRequire } from 'node:module'; const require = __kyCreateRequire(import.meta.url);" \
          --outfile=dist/sandboxRunner.mjs \
+    && ./node_modules/.bin/esbuild src/backgroundShellWorker.ts \
+         --bundle --platform=node --format=esm --target=node20 \
+         --external:node:* \
+         --outfile=dist/backgroundShellWorker.js \
     && rm -rf descriptions \
     && cp -R /app/server/src/agent/descriptions descriptions \
     && test -s descriptions/Edit.md \
+    && test -s dist/backgroundShellWorker.js \
     && echo '{}' | node dist/sandboxRunner.mjs | grep -q '"kind":"final"'
 
 ENV NODE_ENV=production

@@ -20,12 +20,34 @@ async function main(): Promise<void> {
   const command = await consumeBackgroundShellLaunch(taskDir);
   const initial = await readBackgroundShellState(taskDir);
   const startedAt = new Date().toISOString();
-  const child = spawn('/bin/sh', ['-lc', command], {
+  let childPid: number | undefined;
+  let earlyStopSignal: NodeJS.Signals | undefined;
+  const handleEarlyStop = (signal: NodeJS.Signals) => {
+    earlyStopSignal = signal;
+    if (!childPid) return;
+    try { process.kill(-childPid, signal === 'SIGINT' ? 'SIGTERM' : signal); } catch { /* child not started/already exited */ }
+  };
+  const earlySigterm = () => handleEarlyStop('SIGTERM');
+  const earlySigint = () => handleEarlyStop('SIGINT');
+  const earlySighup = () => handleEarlyStop('SIGHUP');
+  // 注册必须早于 child spawn：starter 握手失败会立即 SIGTERM worker，不能留下
+  // “child 已派生、正式 cancel handler 尚未注册”的孤儿窗口。
+  process.once('SIGTERM', earlySigterm);
+  process.once('SIGINT', earlySigint);
+  process.once('SIGHUP', earlySighup);
+  // 与前台 ServerLocalExecutionProvider 的 shell:true 语义一致，不能使用 login shell。
+  // Debian /bin/sh -l 会重置 PATH，导致 sandboxRunner 注入的 workspace venv、CLI
+  // 与凭据环境在后台命令中消失（browser lease 会退回无 playwright 的系统 Python）。
+  const child = spawn('/bin/sh', ['-c', command], {
     cwd: process.cwd(),
     env: { ...process.env, KY_BACKGROUND_SHELL_TASK_ID: taskId },
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  childPid = child.pid;
+  if (earlyStopSignal && childPid) {
+    try { process.kill(-childPid, earlyStopSignal === 'SIGINT' ? 'SIGTERM' : earlyStopSignal); } catch { /* already exited */ }
+  }
   let spawnError: string | undefined;
   const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
     child.once('close', (code, signal) => resolve({ code, signal }));
@@ -89,9 +111,13 @@ async function main(): Promise<void> {
     terminateChild('SIGTERM');
     scheduleForceKill();
   };
+  process.off('SIGTERM', earlySigterm);
+  process.off('SIGINT', earlySigint);
+  process.off('SIGHUP', earlySighup);
   process.once('SIGTERM', cancel);
   process.once('SIGINT', cancel);
   process.once('SIGHUP', cancel);
+  if (earlyStopSignal) cancel();
   const timeout = setTimeout(() => {
     if (settled || cancelled) return;
     timedOut = true;

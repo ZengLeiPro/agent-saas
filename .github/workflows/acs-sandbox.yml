@@ -26,6 +26,7 @@ on:
       - '.github/workflows/acs-sandbox.yml'
       - '.github/scripts/acs-classify.sh'
       - 'scripts/apply-orchestrator-env.py'
+      - 'scripts/acs-browser-lease-e2e.mjs'
       - 'scripts/acs-verify-per-session.py'
       - 'scripts/test_acs_operational_scripts.py'
   workflow_dispatch:
@@ -789,10 +790,26 @@ jobs:
             fi
           fi
 
+          if [ "$SMOKE_OK" = "true" ]; then
+            if ! ACS_ORCH_URL='http://127.0.0.1:3400' \
+              ACS_ORCH_AUTH_TOKEN="$ACS_ORCH_AUTH_TOKEN" \
+              ACS_SMOKE_WORKSPACE_ID="$SMOKE_WS" \
+              ACS_SMOKE_SESSION_ID="$SMOKE_SESSION" \
+              ACS_SMOKE_MOUNT_SUBPATH="$SMOKE_MOUNT" \
+              ACS_SMOKE_WORKSPACE_DIR="$SMOKE_WORKSPACE_DIR" \
+              ACS_APP_DIR="$APP_DIR" \
+              GITHUB_RUN_ID="$GITHUB_RUN_ID" \
+              node "$APP_DIR/scripts/acs-browser-lease-e2e.mjs" \
+              >/tmp/acs-browser-lease-e2e.log 2>&1; then
+              SMOKE_OK=false
+            fi
+          fi
+
           if [ "$SMOKE_OK" != "true" ]; then
             echo "SMOKE FAILED — dumping diagnostics" >&2
             cat /tmp/acs-provision.json 2>/dev/null || true
             cat /tmp/acs-execute.json 2>/dev/null || true
+            cat /tmp/acs-browser-lease-e2e.log 2>/dev/null || true
             if command -v kubectl >/dev/null 2>&1; then
               if [ -n "${ACS_KUBECONFIG:-}" ]; then KCFG_ARGS="--kubeconfig ${ACS_KUBECONFIG}"; else KCFG_ARGS=""; fi
               # imagePullSecret 401 是历史高发根因(2026-06-29), events 里最直观

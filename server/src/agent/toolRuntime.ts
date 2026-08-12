@@ -676,7 +676,6 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
     }
   }
 
-
   async *executeStream(request: ToolInvocationRequest): import('../runtime/handProtocol.js').ToolInvocationStream {
     if (request.toolName !== 'Shell') {
       yield { type: 'completed', response: await this.execute(request) };
@@ -1197,7 +1196,6 @@ class WorkspaceToolProvider implements ToolProvider {
         throw new Error('Tool Shell requires prior authorization.');
       }
     }
-
     const shellInput = call.toolId === 'Shell' && parsedInput && typeof parsedInput === 'object'
       ? parsedInput as { command: string; mode?: 'foreground' | 'background'; timeoutMs?: number }
       : undefined;
@@ -1206,10 +1204,12 @@ class WorkspaceToolProvider implements ToolProvider {
       && workspaceForHand.executionTarget !== 'server-remote') {
       throw new Error(`${call.toolId} 的后台命令能力仅支持 ACS server-remote 隔离运行时。`);
     }
+    // durable 命令必须持久化自动选择的 remote workspace，不能记录会话默认 container。
+    const effectiveContext = workspaceForHand === context.workspace ? context : { ...context, workspace: workspaceForHand };
     let reservedTaskId: string | undefined;
     if (isBackgroundShellStart) {
       if (!this.backgroundTasks) throw new Error('Shell(mode=background) 需要 PG durable background runtime。');
-      const reservation = await this.backgroundTasks.reserveCommand(context, {
+      const reservation = await this.backgroundTasks.reserveCommand(effectiveContext, {
         command: shellInput.command,
         timeoutMs: shellInput.timeoutMs ?? DEFAULT_BACKGROUND_SHELL_TIMEOUT_MS,
       });
@@ -1249,7 +1249,7 @@ class WorkspaceToolProvider implements ToolProvider {
       if (reservedTaskId && this.backgroundTasks) {
         await killReservedBackgroundShell();
         await this.backgroundTasks.failCommandStart(
-          context,
+          effectiveContext,
           reservedTaskId,
           err instanceof Error ? err.message : String(err),
         ).catch(() => undefined);
@@ -1267,7 +1267,7 @@ class WorkspaceToolProvider implements ToolProvider {
     if (response.status === 'error') {
       if (reservedTaskId && this.backgroundTasks) {
         await killReservedBackgroundShell();
-        await this.backgroundTasks.failCommandStart(context, reservedTaskId, response.error).catch(() => undefined);
+        await this.backgroundTasks.failCommandStart(effectiveContext, reservedTaskId, response.error).catch(() => undefined);
       }
       // 失败路径同样带上摘要：error 分支的 metadata 里有 exitCode/timedOut/aborted
       // 等真实信号，丢掉它等于让客户在最该看清楚的时刻只看到一行「有异常」
@@ -1279,11 +1279,11 @@ class WorkspaceToolProvider implements ToolProvider {
     }
     if (reservedTaskId && this.backgroundTasks) {
       try {
-        await this.backgroundTasks.activateCommand(context, reservedTaskId);
+        await this.backgroundTasks.activateCommand(effectiveContext, reservedTaskId);
       } catch (err) {
         await killReservedBackgroundShell();
         await this.backgroundTasks.failCommandStart(
-          context,
+          effectiveContext,
           reservedTaskId,
           err instanceof Error ? err.message : String(err),
         ).catch(() => undefined);
@@ -1711,7 +1711,6 @@ export { hasMemorySearchTool } from './memorySearchToolProvider.js';
 
 // 路径解析与记忆判定纯函数已迁至 ./toolRuntimePaths.ts，这里按既有 import 路径继续对外转发。
 export { isExecutionTargetKind } from './toolRuntimePaths.js';
-
 
 async function consumeToolStream(
   stream: import('../runtime/handProtocol.js').ToolInvocationStream,

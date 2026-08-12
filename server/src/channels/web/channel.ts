@@ -723,6 +723,15 @@ export class WebChannel implements BaseChannel {
         this.eventBufferStore.create(input.sessionId, input.userId);
         emitSession({ type: 'session', sessionId: input.event.sessionId ?? input.sessionId, ...(input.clientMsgId ? { client_msg_id: input.clientMsgId } : {}) });
         if (input.userId) {
+          // 后台 Runtime 没有浏览器发起连接；必须像 enqueue-only 路径一样广播
+          // stream_started，让正在查看该会话的 Web 页面主动 resume EventBuffer。
+          // 否则 ask_user 等 session scope 事件只会留在 buffer，直到切会话或刷新才恢复。
+          this.eventBus.emitUser(input.userId, {
+            type: 'stream_started',
+            sessionId: input.sessionId,
+            streamId,
+            runId: input.runId,
+          }, activeEntry?.ws);
           this.eventBus.emitUser(input.userId, {
             type: 'session_status',
             sessionId: input.sessionId,

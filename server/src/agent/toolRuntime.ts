@@ -69,7 +69,7 @@ import {
   workspaceArtifactPreparedContent,
   type WorkspaceArtifactPayload,
 } from './workspaceHandTools.js';
-
+import { materializeReadToolImage, tryReadWorkspaceImage } from './readImageTool.js';
 const exec = promisify(execCb);
 
 const MEMORY_SHELL_MAYBE_CHANGED_INTERVAL_MS = 120_000;
@@ -244,9 +244,8 @@ export interface ToolDescriptor<TInput = unknown> {
    */
   descriptionInvariants?: readonly string[];
 }
-
 export interface ToolResult {
-  content: string;
+  content: string; modelImages?: Array<Extract<import('../runtime/types.js').ModelUserContentPart, { type: 'image_attachment' }>>;
   /**
    * 「给人看」摘要。与 content（给模型看的原始输出）并存，**不进入 messages**。
    *
@@ -715,7 +714,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
     if (!fileStat.isFile()) throw new Error(`Read: path is not a file (${path})`);
     const relPath = relativeWorkspacePath(workspace.root, fullPath);
     const countLines = (text: string): number => (text ? text.split('\n').length : 0);
-
+    const imageResult = await tryReadWorkspaceImage({ fullPath, relPath, fileSize: fileStat.size, ...options }); if (imageResult) return imageResult;
     if (options.offset !== undefined || options.limit !== undefined) {
       const content = await readLineRange(fullPath, relPath, {
         offset: options.offset ?? 1,
@@ -1312,6 +1311,7 @@ class WorkspaceToolProvider implements ToolProvider {
         }, null, 2),
       };
     }
+    const modelImages = call.toolId === readFileToolDescriptor.id ? await materializeReadToolImage(response, context.workspace.root) : undefined;
     // 在这里产出摘要而不是等收口点兜底：response.metadata 是**截断前**的真实
     // 执行结果（Shell 的 exitCode/字节数/耗时、Write 的写入字节数），
     // 到了收口点只剩截断后的 content，再数就会静默错报。
@@ -1339,7 +1339,7 @@ class WorkspaceToolProvider implements ToolProvider {
       };
     }
     return {
-      content: response.content,
+      content: response.content, ...(modelImages ? { modelImages } : {}),
       ...(presentation ? { presentation } : {}),
       ...(resultMetadata ? { metadata: resultMetadata } : {}),
     };

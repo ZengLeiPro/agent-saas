@@ -9,6 +9,8 @@ import type { ToolDescriptor, ToolResult, WorkspaceRef } from './toolRuntime.js'
 
 export const MAX_EDIT_FILE_BYTES = 1_000_000;
 export const MAX_ARTIFACT_PAYLOAD_BYTES = 16 * 1024 * 1024;
+export const MAX_READ_IMAGE_SOURCE_BYTES = 20 * 1024 * 1024;
+export const WORKSPACE_READ_IMAGE_PAYLOAD_METADATA_KEY = 'readImagePayload';
 
 const EDIT_DENY_PATTERNS: RegExp[] = [
   /(^|\/)\.ky-agent\/settings\.json$/i,
@@ -43,6 +45,35 @@ export type WorkspaceArtifactPayload = {
   kind?: ArtifactKind;
   mimeType?: string;
 };
+
+export type WorkspaceReadImagePayload = {
+  sourcePath: string;
+  fileName: string;
+  sizeBytes: number;
+  dataBase64: string;
+  mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+};
+
+export function detectWorkspaceImageMime(
+  bytes: Buffer,
+): WorkspaceReadImagePayload['mimeType'] | undefined {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+    return 'image/png';
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  const signature = bytes.subarray(0, 6).toString('ascii');
+  if (signature === 'GIF87a' || signature === 'GIF89a') return 'image/gif';
+  if (
+    bytes.length >= 12
+    && bytes.subarray(0, 4).toString('ascii') === 'RIFF'
+    && bytes.subarray(8, 12).toString('ascii') === 'WEBP'
+  ) {
+    return 'image/webp';
+  }
+  return undefined;
+}
 
 type PathGuard = (fullPath: string) => void;
 
@@ -177,6 +208,10 @@ export function workspaceArtifactPreparedContent(payload: WorkspaceArtifactPaylo
     fileName: payload.fileName,
     sizeBytes: payload.sizeBytes,
   }, null, 2);
+}
+
+export function workspaceReadImagePreparedContent(payload: WorkspaceReadImagePayload): string {
+  return `Read image ${payload.sourcePath} (${payload.mimeType}, ${payload.sizeBytes} bytes). The image is attached as visual input.`;
 }
 
 function resolveInsideWorkspace(cwd: string, inputPath: string): string {

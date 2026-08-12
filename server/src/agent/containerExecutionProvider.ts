@@ -13,7 +13,9 @@ import type {
 import { WORKSPACE_HAND_TOOLS } from './toolRuntime.js';
 import {
   MAX_ARTIFACT_PAYLOAD_BYTES,
+  MAX_READ_IMAGE_SOURCE_BYTES,
   WORKSPACE_ARTIFACT_PAYLOAD_METADATA_KEY,
+  WORKSPACE_READ_IMAGE_PAYLOAD_METADATA_KEY,
 } from './workspaceHandTools.js';
 import { persistShellOutputFiles } from './shellOutputFiles.js';
 import {
@@ -42,7 +44,9 @@ import {
 
 const execFile = promisify(execFileCb);
 
-const MAX_CONTAINER_HELPER_OUTPUT = Math.ceil(MAX_ARTIFACT_PAYLOAD_BYTES * 1.4) + 64 * 1024;
+const MAX_CONTAINER_HELPER_OUTPUT = Math.ceil(
+  Math.max(MAX_ARTIFACT_PAYLOAD_BYTES, MAX_READ_IMAGE_SOURCE_BYTES) * 1.4,
+) + 64 * 1024;
 const DEFAULT_CONTAINER_IMAGE = 'node:22-bookworm-slim';
 const DEFAULT_CONTAINER_FILE_HELPER_TIMEOUT_MS = 30_000;
 const DEFAULT_CONTAINER_SHELL_TIMEOUT_MS = DEFAULT_SHELL_TIMEOUT_MS;
@@ -152,8 +156,13 @@ export class ContainerExecutionProvider implements ExecutionProvider {
             path: workspaceRelativeInputPath(workspace.root, args.path),
             offset: args.offset,
             limit: args.limit,
-          }, audit);
-          return { status: 'success', content: result.content, audit };
+          }, audit, { stdoutLimit: MAX_CONTAINER_HELPER_OUTPUT });
+          return {
+            status: 'success',
+            content: result.content,
+            audit,
+            ...(result.metadata ? { metadata: result.metadata } : {}),
+          };
         }
         case 'Write': {
           const args = input as { path: string; content: string };
@@ -338,7 +347,7 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     request: Record<string, unknown> & { op: string },
     audit: ExecutionInvocationAudit[],
     options: { stdoutLimit?: number } = {},
-  ): Promise<{ content: string }> {
+  ): Promise<{ content: string; metadata?: Record<string, unknown> }> {
     const result = await this.runDocker(workspace, ['node', '-e', CONTAINER_FILE_HELPER_SCRIPT], {
       operation: request.op,
       input: JSON.stringify(request),
@@ -346,16 +355,24 @@ export class ContainerExecutionProvider implements ExecutionProvider {
       stdoutLimit: options.stdoutLimit ?? MAX_FILE_BYTES + 4096,
       stderrLimit: 16 * 1024,
     }, audit);
-    let parsed: { ok?: boolean; content?: string; error?: string };
+    let parsed: { ok?: boolean; content?: string; error?: string; metadata?: Record<string, unknown> };
     try {
-      parsed = JSON.parse(result.stdout.trim() || '{}') as { ok?: boolean; content?: string; error?: string };
+      parsed = JSON.parse(result.stdout.trim() || '{}') as {
+        ok?: boolean;
+        content?: string;
+        error?: string;
+        metadata?: Record<string, unknown>;
+      };
     } catch (err) {
       throw new Error(`Container helper returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
     }
     if (!parsed.ok) {
       throw new Error(parsed.error || 'Container helper failed');
     }
-    return { content: parsed.content ?? '' };
+    return {
+      content: parsed.content ?? '',
+      ...(parsed.metadata ? { metadata: parsed.metadata } : {}),
+    };
   }
 
   private async runDocker(
@@ -637,6 +654,8 @@ const maxReadLines = ${MAX_READ_LINES};
 const maxReadOutputBytes = ${MAX_READ_OUTPUT_BYTES};
 const maxEditFileBytes = 1000000;
 const maxArtifactPayloadBytes = ${MAX_ARTIFACT_PAYLOAD_BYTES};
+const maxReadImageSourceBytes = ${MAX_READ_IMAGE_SOURCE_BYTES};
+const readImagePayloadMetadataKey = ${JSON.stringify(WORKSPACE_READ_IMAGE_PAYLOAD_METADATA_KEY)};
 const editDenyPatterns = [/(^|\\/)\\.ky-agent\\/settings\\.json$/i, /(^|\\/)\\.claude\\/settings\\.json$/i, /(^|\\/)\\.env(\\..+)?$/i, /(^|\\/)\\.npmrc$/i, /(^|\\/)\\.netrc$/i, /(^|\\/)\\.ssh\\//i, /(^|\\/)\\.git\\//i];
 function isInside(baseDir, candidate) {
   const rel = path.relative(baseDir, candidate);
@@ -666,15 +685,26 @@ async function readStdin() {
   for await (const chunk of process.stdin) raw += chunk;
   return raw;
 }
-async function readFilePrefix(fullPath, maxBytes) {
+async function readFileBufferPrefix(fullPath, maxBytes) {
   const handle = await fs.open(fullPath, 'r');
   try {
     const buffer = Buffer.alloc(maxBytes);
     const result = await handle.read(buffer, 0, maxBytes, 0);
-    return buffer.toString('utf-8', 0, result.bytesRead);
+    return buffer.subarray(0, result.bytesRead);
   } finally {
     await handle.close();
   }
+}
+async function readFilePrefix(fullPath, maxBytes) {
+  return (await readFileBufferPrefix(fullPath, maxBytes)).toString('utf-8');
+}
+function detectImageMime(bytes) {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png';
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  const signature = bytes.subarray(0, 6).toString('ascii');
+  if (signature === 'GIF87a' || signature === 'GIF89a') return 'image/gif';
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  return undefined;
 }
 async function readLineRange(fullPath, relPath, options) {
   const offset = Math.max(1, Math.trunc(Number(options.offset || 1)));
@@ -736,6 +766,34 @@ async function readLineRange(fullPath, relPath, options) {
       const st = await fs.stat(fullPath);
       if (!st.isFile()) throw new Error('Read: path is not a file (' + request.path + ')');
       const relPath = relativeWorkspacePath(fullPath);
+      const imageMime = detectImageMime(await readFileBufferPrefix(fullPath, 32));
+      if (imageMime) {
+        if (request.offset !== undefined || request.limit !== undefined) {
+          throw new Error('Read: offset/limit are only valid for text files, not images');
+        }
+        if (st.size > maxReadImageSourceBytes) {
+          throw new Error('Read: image too large (' + st.size + 'B > ' + maxReadImageSourceBytes + 'B)');
+        }
+        const data = await fs.readFile(fullPath);
+        const payload = {
+          sourcePath: relPath,
+          fileName: path.basename(fullPath),
+          sizeBytes: data.byteLength,
+          dataBase64: data.toString('base64'),
+          mimeType: imageMime
+        };
+        process.stdout.write(JSON.stringify({
+          ok: true,
+          content: 'Read image ' + relPath + ' (' + imageMime + ', ' + data.byteLength + ' bytes). The image is attached as visual input.',
+          metadata: {
+            path: relPath,
+            fileBytes: st.size,
+            mimeType: imageMime,
+            [readImagePayloadMetadataKey]: payload
+          }
+        }));
+        return;
+      }
       if (request.offset !== undefined || request.limit !== undefined) {
         process.stdout.write(JSON.stringify({ ok: true, content: await readLineRange(fullPath, relPath, request) }));
         return;

@@ -390,9 +390,8 @@ export type ModelChatMessage =
     /** Opaque provider state replayed only by the matching issuer/account transport. */
     provider_continuation?: ModelProviderContinuation;
   }
-  | { role: 'tool'; tool_call_id: string; content: string }
+  | { role: 'tool'; tool_call_id: string; content: string; images?: Array<Extract<ModelUserContentPart, { type: 'image_attachment' }>> }
   | { role: 'additional_tools'; tools: ModelToolDefinition[]; content?: undefined };
-
 export interface ModelRequest {
   model: string;
   messages: ModelChatMessage[];
@@ -773,6 +772,7 @@ export type PlatformEvent =
     toolName: string;
     content: string;
     isError?: boolean;
+    modelImages?: Array<Extract<ModelUserContentPart, { type: 'image_attachment' }>>;
     /** 「给人看」摘要，与 content 并存的第二通道；不进入模型上下文 */
     presentation?: ToolPresentation;
     /**

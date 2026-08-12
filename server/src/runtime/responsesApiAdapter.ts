@@ -44,6 +44,7 @@ import {
 import { resolveModelOutputTransactionMode } from './modelOutputTransaction.js';
 import { modelSupportsImage, readImagePartOrPlaceholder, toTextOnlyContent } from './imageAttachments.js';
 import { ToolCallRepairStreamGate, toolCallRepairProviderLabel } from './toolCallRepair.js';
+import { buildResponsesToolImageItems } from './responsesToolImages.js';
 import { OpenAICompatibleResponsesTransport } from './responses/openAICompatibleResponsesTransport.js';
 import {
   ResponsesTransportStreamError,
@@ -51,7 +52,6 @@ import {
   type ResponsesTransport,
   type ResponsesTransportStreamDiagnostic,
 } from './responses/responsesTransport.js';
-
 function computeRequestInputPrefixHash(body: Record<string, unknown>): string {
   const input = Array.isArray(body.input) ? body.input.slice(0, 8) : [];
   return createHash('sha256').update(JSON.stringify({
@@ -1365,11 +1365,11 @@ export class ResponsesApiAdapter implements ModelAdapter {
           call_id: m.tool_call_id,
           output: m.content,
         });
+        items.push(...await buildResponsesToolImageItems({ message: m, cwd, sessionIdShort, inputModalities: this.providerOptions.inputModalities }));
       }
     }
     return items;
   }
-
   /**
    * 首轮全量 input 构造：system 走 instructions，其余按 ChatMessage → Responses input items 转换。
    * user content 走确定性 defendUserMessageText（A3/B2 injection escape + B4 长英文中文 leading；
@@ -1442,6 +1442,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
           call_id: m.tool_call_id,
           output: m.content,
         });
+        items.push(...await buildResponsesToolImageItems({ message: m, cwd, sessionIdShort, inputModalities: this.providerOptions.inputModalities }));
       } else if (m.role === 'additional_tools' && allowAdditionalTools) {
         items.push({
           type: 'additional_tools',
@@ -1455,7 +1456,6 @@ export class ResponsesApiAdapter implements ModelAdapter {
       input: items,
     };
   }
-
   private async buildUserContent(
     content: Extract<ModelChatMessage, { role: 'user' }>['content'],
     cwd: string,

@@ -80,7 +80,9 @@ function buildHistoryCategories(messages: ModelChatMessage[]): ContextUsageCateg
       continue;
     }
     if (message.role === 'tool') {
-      toolResultTokens += estimateContextTokens(message);
+      const { images, ...toolMessage } = message;
+      toolResultTokens += estimateContextTokens(toolMessage);
+      attachmentTokens += contentTokens(images ?? []);
       continue;
     }
     if (message.role === 'additional_tools') {

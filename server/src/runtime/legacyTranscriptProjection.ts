@@ -326,7 +326,14 @@ export function buildChatMessagesFromEvents(events: PlatformEvent[]): ModelChatM
         messages.push({
           role: 'tool',
           tool_call_id: event.toolCallId,
-          content: projectToolResultContentForModel(event.content, event.toolCallId),
+          content: `${projectToolResultContentForModel(event.content, event.toolCallId)}${
+            prunedImageEventIndices.has(eventIndex) && event.modelImages?.length
+              ? '\n[历史工具图片已从活跃视觉上下文移除；如任务必须重新查看，请再次调用 Read。]'
+              : ''
+          }`,
+          ...(!prunedImageEventIndices.has(eventIndex) && event.modelImages?.length
+            ? { images: event.modelImages.map((image) => ({ ...image, historical: true })) }
+            : {}),
         });
         break;
       default:

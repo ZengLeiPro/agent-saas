@@ -72,7 +72,7 @@ describe('callout', () => {
 });
 
 describe('records', () => {
-  it('rows 布局按内容收缩，并使用品牌色标题栏与清晰卡片边界', () => {
+  it('rows 布局使用可横向滚动的稳定列宽，并保留品牌色标题栏与清晰卡片边界', () => {
     const { container } = render(<PresentationBlocks blocks={[{
       kind: 'records', layout: 'rows', title: '核对清单',
       items: [{ label: '发票抬头', value: '一致', tag: { tone: 'success', text: '通过' } }],
@@ -81,9 +81,13 @@ describe('records', () => {
     const records = container.querySelector('[data-records-block]');
     expect(records?.className).toContain('w-fit');
     expect(records?.className).toContain('max-w-full');
+    expect(records?.className).toContain('overflow-x-auto');
     expect(records?.className).toContain('rounded-xl');
     expect(records?.className).toContain('border-primary/20');
     expect(records?.className).not.toMatch(/\bm[by]-/);
+    expect(records?.getAttribute('tabindex')).toBe('0');
+    expect(records?.getAttribute('aria-label')).toBe('核对清单，可横向滚动');
+    expect(records?.firstElementChild?.className).toContain('min-w-[32rem]');
 
     const title = container.querySelector('[data-records-title]');
     expect(title?.className).toContain('bg-primary/5');
@@ -93,7 +97,12 @@ describe('records', () => {
     const label = screen.getByText('发票抬头');
     expect(label.className).toContain('text-muted-foreground');
     expect(label.closest('div')?.className).toContain('border-b');
-    expect(screen.getByText('一致').className).toContain('text-foreground');
+    const row = label.closest('button');
+    expect(row?.className).toContain('grid');
+    expect(row?.className).toContain('grid-cols-[minmax(10rem,1fr)_minmax(16rem,2fr)_auto_auto]');
+    const value = screen.getByText('一致');
+    expect(value.className).toContain('text-foreground');
+    expect(value.className).toContain('text-left');
     expect(screen.getByText('通过')).toBeTruthy();
     expect(screen.getByText('共 1 项')).toBeTruthy();
   });

@@ -159,7 +159,15 @@ function CalloutView({ block, ctx }: { block: CalloutBlock; ctx: BlockContext })
   );
 }
 
-function RecordRow({ item, checklist }: { item: RecordItem; checklist: boolean }) {
+function RecordRow({
+  item,
+  checklist,
+  showValueColumn,
+}: {
+  item: RecordItem;
+  checklist: boolean;
+  showValueColumn: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const expandable = !!item.detail?.length;
   const itemTone = item.tone ?? "neutral";
@@ -169,15 +177,29 @@ function RecordRow({ item, checklist }: { item: RecordItem; checklist: boolean }
       <button
         type="button"
         onClick={expandable ? () => setOpen((v) => !v) : undefined}
-        className={cn("flex w-full items-start gap-3 text-left", !expandable && "cursor-default")}
+        className={cn(
+          "grid w-full items-start gap-3 text-left",
+          checklist
+            ? showValueColumn
+              ? "grid-cols-[auto_minmax(10rem,1fr)_minmax(16rem,2fr)_auto_auto]"
+              : "grid-cols-[auto_minmax(16rem,1fr)_auto_auto]"
+            : showValueColumn
+              ? "grid-cols-[minmax(10rem,1fr)_minmax(16rem,2fr)_auto_auto]"
+              : "grid-cols-[minmax(16rem,1fr)_auto_auto]",
+          !expandable && "cursor-default",
+        )}
       >
         {checklist ? (
           <ChecklistIcon className={activityStatusIconClass(TONE_MAP[itemTone], "mt-1 size-3 shrink-0")} aria-hidden="true" />
         ) : null}
-        <span className={cn("min-w-0 flex-1 text-sm", checklist ? "text-foreground" : "text-muted-foreground", !checklist && item.tone === "danger" && "line-through opacity-70", item.mono && "font-mono text-xs")}>
+        <span className={cn("min-w-0 break-words text-sm", checklist ? "text-foreground" : "text-muted-foreground", !checklist && item.tone === "danger" && "line-through opacity-70", item.mono && "font-mono text-xs")}>
           {item.label}
         </span>
-        {item.value ? <span className={cn("min-w-0 break-words text-left text-sm text-foreground", item.mono && "font-mono text-xs")}>{item.value}</span> : null}
+        {showValueColumn ? (
+          <span className={cn("min-w-0 break-words text-left text-sm text-foreground", item.mono && "font-mono text-xs")}>
+            {item.value ?? ""}
+          </span>
+        ) : null}
         {item.tag ? <span className={activityStatusBadgeClass(TONE_MAP[item.tag.tone])}>{item.tag.text}</span> : null}
         {expandable ? <ChevronRight className={cn("mt-0.5 size-3.5 shrink-0 transition-transform", open && "rotate-90")} /> : null}
       </button>
@@ -188,33 +210,51 @@ function RecordRow({ item, checklist }: { item: RecordItem; checklist: boolean }
 }
 
 function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext }) {
+  const tabular = block.layout !== "grid";
+  const showValueColumn = tabular && block.items.some((item) => item.value !== undefined && item.value !== "");
   return (
-    <div className="w-fit max-w-full overflow-hidden rounded-xl border border-primary/20 bg-card" data-records-block>
-      {block.title ? (
-        <div
-          className="border-b border-primary/15 bg-primary/5 px-4 py-2.5 text-sm font-semibold text-foreground"
-          data-records-title
-        >
-          <span className="break-words">{block.title}</span>
-        </div>
-      ) : null}
-      {block.layout === "grid" ? (
-        <div className="grid grid-cols-2 gap-x-5 gap-y-2 p-4 sm:grid-cols-3">
-          {block.items.map((item, i) => (
-            <div key={i}>
-              <div className="break-words text-xs text-muted-foreground">{item.label}</div>
-              <div className={cn("break-words text-sm", item.mono && "font-mono text-xs", item.tone && activityStatusTextClass(TONE_MAP[item.tone]))}>
-                {item.value ?? ""}
+    <div
+      className="w-fit max-w-full overflow-x-auto rounded-xl border border-primary/20 bg-card"
+      data-records-block
+      tabIndex={tabular ? 0 : undefined}
+      aria-label={tabular ? `${block.title ?? "数据表格"}，可横向滚动` : undefined}
+    >
+      <div className={cn(tabular && "min-w-[32rem]")}>
+        {block.title ? (
+          <div
+            className="border-b border-primary/15 bg-primary/5 px-4 py-2.5 text-sm font-semibold text-foreground"
+            data-records-title
+          >
+            <span className="break-words">{block.title}</span>
+          </div>
+        ) : null}
+        {block.layout === "grid" ? (
+          <div className="grid grid-cols-2 gap-x-5 gap-y-2 p-4 sm:grid-cols-3">
+            {block.items.map((item, i) => (
+              <div key={i}>
+                <div className="break-words text-xs text-muted-foreground">{item.label}</div>
+                <div className={cn("break-words text-sm", item.mono && "font-mono text-xs", item.tone && activityStatusTextClass(TONE_MAP[item.tone]))}>
+                  {item.value ?? ""}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+        ) : (
+          <div>
+            {block.items.map((item, i) => (
+              <RecordRow
+                key={i}
+                item={item}
+                checklist={block.layout === "checklist"}
+                showValueColumn={showValueColumn}
+              />
+            ))}
+          </div>
+        )}
+        {block.footer ? <div className="border-t border-primary/10 px-4 py-2 text-xs text-muted-foreground">{block.footer}</div> : null}
+        <div className="px-4 pb-2.5 empty:hidden">
+          <Actions actions={block.actions} ctx={ctx} />
         </div>
-      ) : (
-        <div>{block.items.map((item, i) => <RecordRow key={i} item={item} checklist={block.layout === "checklist"} />)}</div>
-      )}
-      {block.footer ? <div className="border-t border-primary/10 px-4 py-2 text-xs text-muted-foreground">{block.footer}</div> : null}
-      <div className="px-4 pb-2.5 empty:hidden">
-        <Actions actions={block.actions} ctx={ctx} />
       </div>
     </div>
   );

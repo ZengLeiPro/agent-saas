@@ -1324,6 +1324,53 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect((channel as any).eventBufferStore.get(sessionId)).toBeUndefined();
     });
 
+    it('后台运行在 ask_user 前广播 stream_started，当前会话可及时订阅提问事件', () => {
+      const rig = makeRig();
+      const sessionId = randomUUID();
+      const base = { sessionId, runId: 'run-ask-live', userId: USER.sub };
+
+      rig.channel.publishRuntimeOutboundEvent({
+        ...base,
+        event: { type: 'session_init', sessionId },
+      });
+      rig.channel.publishRuntimeOutboundEvent({
+        ...base,
+        event: {
+          type: 'ask_user',
+          interactionId: 'interaction-ask-live',
+          questions: [{
+            question: '是否继续？',
+            header: '确认',
+            options: [
+              { label: '继续', description: '继续执行' },
+              { label: '停止', description: '停止执行' },
+            ],
+            multiSelect: false,
+          }],
+        },
+      });
+
+      expect(rig.userEvents.slice(0, 2)).toEqual([
+        {
+          type: 'stream_started',
+          sessionId,
+          streamId: 'run-ask-live',
+          runId: 'run-ask-live',
+        },
+        {
+          type: 'session_status',
+          sessionId,
+          status: 'running',
+          streamId: 'run-ask-live',
+          runId: 'run-ask-live',
+        },
+      ]);
+      expect(rig.sessionEvents.at(-1)).toMatchObject({
+        type: 'ask_user',
+        interactionId: 'interaction-ask-live',
+      });
+    });
+
     it('全事件类型映射：session/text/thinking/tool/交互/compaction → 前端事件；done 收口终态', () => {
       const rig = makeRig();
       const sessionId = randomUUID();
@@ -1372,10 +1419,15 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
           client_msg_id: 'cm-out-1', finalOutput: true,
         },
       ]);
-      // session_init → running；done → completed + session_updated；buffer 收口
-      expect(rig.userEvents[0]).toEqual({
-        type: 'session_status', sessionId, status: 'running', streamId: 'run-out-1', runId: 'run-out-1',
-      });
+      // session_init → stream_started + running；done → completed + session_updated；buffer 收口
+      expect(rig.userEvents.slice(0, 2)).toEqual([
+        {
+          type: 'stream_started', sessionId, streamId: 'run-out-1', runId: 'run-out-1',
+        },
+        {
+          type: 'session_status', sessionId, status: 'running', streamId: 'run-out-1', runId: 'run-out-1',
+        },
+      ]);
       expect(rig.userEvents).toContainEqual(expect.objectContaining({ type: 'session_status', status: 'completed' }));
       expect(rig.userEvents).toContainEqual(expect.objectContaining({ type: 'session_updated', sessionId }));
       expect((rig.channel as any).eventBufferStore.isActive(sessionId)).toBe(false);

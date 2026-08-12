@@ -67,7 +67,7 @@ interface ShellButton<T extends string> {
 const tenantSettingsSections: ShellButton<TenantSection>[] = [
   { id: "users", label: "成员", icon: EntityIcons.members },
   { id: "skills", label: "技能", icon: EntityIcons.skill },
-  { id: "org-agents", label: "企业专家", icon: EntityIcons.expert },
+  { id: "org-agents", label: "组织智能体", icon: EntityIcons.expert },
   { id: "mcp", label: "连接器", icon: EntityIcons.connector },
   { id: "connector-dictionary", label: "连接器映射", icon: EntityIcons.connector },
   { id: "billing", label: "计费", icon: EntityIcons.billing },
@@ -92,7 +92,7 @@ const platformSettingsSections: ShellButton<PlatformSection>[] = [
   { id: "remote-hands", label: "执行环境池", icon: EntityIcons.runtimePool },
   { id: "tool-controls", label: "工具开关", icon: EntityIcons.toolControls },
   { id: "connector-dictionary", label: "连接器映射", icon: EntityIcons.connector },
-  { id: "agent-profiles", label: "系统 Agent", icon: EntityIcons.runtimePool },
+  { id: "agent-profiles", label: "系统智能体", icon: EntityIcons.runtimePool },
   { id: "system-prompts", label: "系统提示语", icon: EntityIcons.systemPrompts },
   { id: "memory-polling", label: "记忆轮询", icon: EntityIcons.memoryPolling },
   { id: "global-mcp", label: "全局 MCP", icon: EntityIcons.connector },
@@ -720,17 +720,17 @@ export function TenantAdminShell({
       case "organization.members.offboarding":
         return <OrganizationOffboardingPage tenantId={effectiveTenantId} />;
       case "organization.agents.org-agents":
-        return renderOrgAgents ? renderOrgAgents(effectiveTenantId, currentTenant?.name) : <GovernanceCapabilityNotice title="组织 Agent" />;
+        return renderOrgAgents ? renderOrgAgents(effectiveTenantId, currentTenant?.name) : <GovernanceCapabilityNotice title="组织智能体" />;
       case "organization.agents.skills":
         return renderSkills(effectiveTenantId, currentTenant?.name);
       case "organization.agents.connectors":
         return <OrganizationCredentialsPage tenantId={effectiveTenantId} />;
       case "organization.agents.memory-knowledge":
-        return <OrganizationGovernancePlaceholder title="Memory 与知识" detail="治理资源列表接口尚未提供，不能用个人 Memory 或旧知识列表代替。" />;
+        return <OrganizationGovernancePlaceholder title="记忆与知识" detail="治理资源列表接口尚未提供，不能用个人记忆或旧知识列表代替。" />;
       case "organization.agents.model-tools":
-        return <OrganizationPoliciesPage tenantId={effectiveTenantId} />;
+        return <TenantSettingsPanel tenantId={effectiveTenantId} />;
       case "organization.agents.environments":
-        return <OrganizationGovernancePlaceholder title="Environment 可用范围" detail="Environment Template 目录列表与可用范围选择器尚未接入。" />;
+        return <OrganizationGovernancePlaceholder title="环境可用范围" detail="环境模板目录列表与可用范围选择器尚未接入。" />;
       case "organization.agents.files-data":
         return renderFiles();
       case "organization.governance.automation":
@@ -746,9 +746,8 @@ export function TenantAdminShell({
       case "organization.settings.rules":
         return <TenantInstructionsPanel tenantId={effectiveTenantId} tenantName={currentTenant?.name} />;
       case "organization.settings.brand":
-        return <OrganizationGovernancePlaceholder title="品牌" detail="组织品牌设置仍在旧大表单中，尚未拆成治理独立写合同。" />;
       case "organization.settings.security":
-        return <OrganizationGovernancePlaceholder title="登录与安全" detail="签名预览、并发基线与审计回执合同尚未闭合；旧 Tenant 设置写入口已封闭。" />;
+        return <TenantSettingsPanel tenantId={effectiveTenantId} />;
       default:
         return <GovernanceCapabilityNotice title="该治理能力" />;
     }
@@ -906,7 +905,7 @@ export function PlatformAdminShell({
       case "platform.resource-center.environment-templates":
         return <PlatformTemplateCatalogPage kind="environment" />;
       case "platform.resource-center.models":
-        return <GovernanceCapabilityNotice title="Model 目录" mode="readonly" />;
+        return renderModels();
       case "platform.resource-center.skills":
         return renderSkills();
       case "platform.resource-center.connectors":
@@ -918,9 +917,9 @@ export function PlatformAdminShell({
       case "platform.runtime.runs":
         return <RunTraceExplorer runId={governanceRoute.entityId} onRunIdChange={(next) => navigateGovernance(makeGovernanceRoute("platform.runtime.runs", { entityId: next }))} />;
       case "platform.runtime.execution-providers":
-        return <GovernanceCapabilityNotice title="Execution Provider" mode="readonly" />;
+        return renderRemoteHands();
       case "platform.runtime.environments":
-        return <GovernanceCapabilityNotice title="Environment Instance" mode="readonly" />;
+        return <SandboxesPage sandboxName={governanceRoute.entityId} />;
       case "platform.runtime.infra":
         return <InfraPage />;
       case "platform.runtime.efficiency":
@@ -928,13 +927,13 @@ export function PlatformAdminShell({
       case "platform.governance.audit":
         return <GovernanceChangeAuditPage />;
       case "platform.governance.network-security":
-        return <GovernanceCapabilityNotice title="网络安全" mode="readonly" />;
+        return <EgressConfigManagerPanel />;
       case "platform.governance.system-prompts":
-        return <GovernanceCapabilityNotice title="系统提示语" mode="readonly" />;
+        return <SystemPromptsManagerPanel />;
       case "platform.governance.memory-policy":
-        return <GovernanceCapabilityNotice title="Memory Policy" mode="readonly" />;
+        return renderMemoryPolling();
       case "platform.governance.system-settings":
-        return <GovernanceCapabilityNotice title="系统设置" mode="readonly" />;
+        return <SystemSettingsPanel />;
       default:
         return <GovernanceCapabilityNotice title="该治理能力" />;
     }

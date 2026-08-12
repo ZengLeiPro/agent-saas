@@ -32,6 +32,13 @@ vi.mock("@/contexts/AuthContext", () => ({
 vi.mock("@/components/TenantManager/hooks", () => ({
   useTenants: () => ({ tenants: [{ id: "acme", name: "Acme" }] }),
 }));
+vi.mock("@/components/PlatformAdmin/pages", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/PlatformAdmin/pages")>();
+  return { ...actual, SandboxesPage: ({ sandboxName }: { sandboxName?: string | null }) => <div>环境实例 {sandboxName ?? "列表"}</div> };
+});
+vi.mock("@/components/EgressConfigManager", () => ({ default: () => <div>网络与安全管理器</div> }));
+vi.mock("@/components/SystemPromptsManager", () => ({ default: () => <div>系统提示语管理器</div> }));
+vi.mock("@/components/PlatformAdmin/SystemSettingsPanel", () => ({ SystemSettingsPanel: () => <div>系统配置管理器</div> }));
 
 const commonTenantProps = {
   renderSkills: () => <div>复用 SkillManager</div>,
@@ -60,53 +67,21 @@ describe("AdminShells V2 内容适配", () => {
     expect(screen.queryByText("复用 UserManager")).toBeNull();
   });
 
-  it("平台 Model 叶子在治理写合同未闭合时保持只读", () => {
-    render(
-      <PlatformAdminShell
-        renderTenants={() => <div>复用 TenantManager</div>}
-        renderModels={() => <div>复用 ModelManager</div>}
-        renderRemoteHands={() => <div>复用 ExecutionProvider</div>}
-        renderToolControls={() => <div>复用 ToolControls</div>}
-        renderMemoryPolling={() => <div>复用 MemoryPolicy</div>}
-        renderMcp={() => <div>复用 Connector Catalog</div>}
-        renderSkills={() => <div>复用 SkillManager</div>}
-        renderEfficiency={() => <div>复用 Efficiency</div>}
-        activeSection="overview"
-        entityId={null}
-        onSectionChange={() => undefined}
-        settingsOpen={false}
-        settingsSection="tenants"
-        onSettingsSectionChange={() => undefined}
-        onSettingsClose={() => undefined}
-        governanceRoute={governanceRoute("platform.resource-center.models")}
-        governanceContentOnly
-      />,
-    );
-    expect(screen.getByText("Model 目录")).toBeTruthy();
-    expect(screen.getByText("只读")).toBeTruthy();
-    expect(screen.queryByText("复用 ModelManager")).not.toBeTruthy();
-  });
-
   it.each([
-    ["platform.runtime.execution-providers", "Execution Provider"],
-    ["platform.runtime.environments", "Environment Instance"],
-    ["platform.governance.network-security", "网络安全"],
-    ["platform.governance.system-prompts", "系统提示语"],
-    ["platform.governance.memory-policy", "Memory Policy"],
-    ["platform.governance.system-settings", "系统设置"],
-  ])("平台 V2 叶子 %s 在写合同未闭合时只挂只读提示", (routeId, title) => {
-    const renderRemoteHands = vi.fn(() => <div>旧 Execution Provider 写组件</div>);
-    const renderMemoryPolling = vi.fn(() => <div>旧 Memory Policy 写组件</div>);
+    ["platform.resource-center.models", "模型管理器"],
+    ["platform.runtime.execution-providers", "执行提供方管理器"],
+    ["platform.governance.memory-policy", "记忆策略管理器"],
+  ])("平台控制台叶子 %s 挂载已有真实管理器", (routeId, expected) => {
     render(
       <PlatformAdminShell
-        renderTenants={() => <div>旧 Tenant 写组件</div>}
-        renderModels={() => <div>旧 Model 写组件</div>}
-        renderRemoteHands={renderRemoteHands}
-        renderToolControls={() => <div>旧 Tool 写组件</div>}
-        renderMemoryPolling={renderMemoryPolling}
-        renderMcp={() => <div>旧 Connector 写组件</div>}
-        renderSkills={() => <div>旧 Skill 写组件</div>}
-        renderEfficiency={() => <div>旧 Efficiency 写组件</div>}
+        renderTenants={() => <div>组织管理器</div>}
+        renderModels={() => <div>模型管理器</div>}
+        renderRemoteHands={() => <div>执行提供方管理器</div>}
+        renderToolControls={() => <div>工具管理器</div>}
+        renderMemoryPolling={() => <div>记忆策略管理器</div>}
+        renderMcp={() => <div>连接器管理器</div>}
+        renderSkills={() => <div>技能管理器</div>}
+        renderEfficiency={() => <div>效率分析</div>}
         activeSection="overview"
         entityId={null}
         onSectionChange={() => undefined}
@@ -118,13 +93,39 @@ describe("AdminShells V2 内容适配", () => {
         governanceContentOnly
       />,
     );
-    expect(screen.getByText(title)).toBeTruthy();
-    expect(screen.getByText("只读")).toBeTruthy();
-    expect(renderRemoteHands).not.toHaveBeenCalled();
-    expect(renderMemoryPolling).not.toHaveBeenCalled();
-    expect(screen.queryByText(/旧 .*写组件/)).toBeNull();
-    expect(screen.queryByText(/authTokenRef/i)).toBeNull();
-    expect(screen.queryByLabelText(/token/i)).toBeNull();
+    expect(screen.getByText(expected)).toBeTruthy();
+    expect(screen.queryByText("只读")).toBeNull();
+  });
+
+  it.each([
+    ["platform.runtime.environments", "环境实例 列表"],
+    ["platform.governance.network-security", "网络与安全管理器"],
+    ["platform.governance.system-prompts", "系统提示语管理器"],
+    ["platform.governance.system-settings", "系统配置管理器"],
+  ])("平台控制台叶子 %s 挂载可用页面", async (routeId, expected) => {
+    render(
+      <PlatformAdminShell
+        renderTenants={() => <div />}
+        renderModels={() => <div />}
+        renderRemoteHands={() => <div />}
+        renderToolControls={() => <div />}
+        renderMemoryPolling={() => <div />}
+        renderMcp={() => <div />}
+        renderSkills={() => <div />}
+        renderEfficiency={() => <div />}
+        activeSection="overview"
+        entityId={null}
+        onSectionChange={() => undefined}
+        settingsOpen={false}
+        settingsSection="tenants"
+        onSettingsSectionChange={() => undefined}
+        onSettingsClose={() => undefined}
+        governanceRoute={governanceRoute(routeId)}
+        governanceContentOnly
+      />,
+    );
+    expect(await screen.findByText(expected)).toBeTruthy();
+    expect(screen.queryByText("只读")).toBeNull();
   });
 
   it("平台 Agent Template 叶子读取治理模板目录", async () => {

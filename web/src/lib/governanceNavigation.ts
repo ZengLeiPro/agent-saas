@@ -70,20 +70,20 @@ const platformWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
   },
   {
     id: "resource-center", label: "资源中心", routes: [
-      route("platform", "resource-center", "agent-templates", "Agent Template", ["platform-console", "resource-center", "agent-templates"], { entity: "optional" }),
-      route("platform", "resource-center", "models", "Model", ["platform-console", "resource-center", "models"], { entity: "optional" }),
-      route("platform", "resource-center", "skills", "Skill", ["platform-console", "resource-center", "skills"], { entity: "optional" }),
-      route("platform", "resource-center", "connectors", "Connector", ["platform-console", "resource-center", "connectors"], { entity: "optional" }),
-      route("platform", "resource-center", "environment-templates", "Environment Template", ["platform-console", "resource-center", "environment-templates"], { entity: "optional" }),
-      route("platform", "resource-center", "tools", "Tool Catalog 与全局策略", ["platform-console", "resource-center", "tools"], { entity: "optional" }),
+      route("platform", "resource-center", "agent-templates", "智能体模板", ["platform-console", "resource-center", "agent-templates"], { entity: "optional" }),
+      route("platform", "resource-center", "models", "模型", ["platform-console", "resource-center", "models"], { entity: "optional" }),
+      route("platform", "resource-center", "skills", "技能", ["platform-console", "resource-center", "skills"], { entity: "optional" }),
+      route("platform", "resource-center", "connectors", "连接器", ["platform-console", "resource-center", "connectors"], { entity: "optional" }),
+      route("platform", "resource-center", "environment-templates", "环境模板", ["platform-console", "resource-center", "environment-templates"], { entity: "optional" }),
+      route("platform", "resource-center", "tools", "工具目录与全局策略", ["platform-console", "resource-center", "tools"], { entity: "optional" }),
     ],
   },
   {
     id: "runtime", label: "运行与可观测", routes: [
-      route("platform", "runtime", "sessions", "Session", ["platform-console", "runtime", "sessions"], { entity: "optional" }),
-      route("platform", "runtime", "runs", "Run", ["platform-console", "runtime", "runs"], { entity: "optional" }),
-      route("platform", "runtime", "execution-providers", "Execution Provider", ["platform-console", "runtime", "execution-providers"], { entity: "optional" }),
-      route("platform", "runtime", "environments", "Sandbox / Environment Instance", ["platform-console", "runtime", "environments"], { entity: "optional" }),
+      route("platform", "runtime", "sessions", "会话", ["platform-console", "runtime", "sessions"], { entity: "optional" }),
+      route("platform", "runtime", "runs", "运行", ["platform-console", "runtime", "runs"], { entity: "optional" }),
+      route("platform", "runtime", "execution-providers", "执行提供方", ["platform-console", "runtime", "execution-providers"], { entity: "optional" }),
+      route("platform", "runtime", "environments", "沙箱与环境实例", ["platform-console", "runtime", "environments"], { entity: "optional" }),
       route("platform", "runtime", "infra", "系统资源", ["platform-console", "runtime", "infra"]),
       route("platform", "runtime", "efficiency", "执行效率", ["platform-console", "runtime", "efficiency"]),
     ],
@@ -93,7 +93,7 @@ const platformWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
       route("platform", "governance", "audit", "操作记录", ["platform-console", "governance", "audit"], { entity: "optional" }),
       route("platform", "governance", "network-security", "网络与安全", ["platform-console", "governance", "network-security"]),
       route("platform", "governance", "system-prompts", "系统提示语", ["platform-console", "governance", "system-prompts"]),
-      route("platform", "governance", "memory-policy", "Memory 策略", ["platform-console", "governance", "memory-policy"]),
+      route("platform", "governance", "memory-policy", "记忆策略", ["platform-console", "governance", "memory-policy"]),
       route("platform", "governance", "system-settings", "系统配置", ["platform-console", "governance", "system-settings"]),
     ],
   },
@@ -108,7 +108,7 @@ const organizationWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
   {
     id: "members", label: "成员与权限", routes: [
       route("organization", "members", "list", "成员", ["tenant-admin", "members", "list"]),
-      route("organization", "members", "owners", "组织 Owner 与管理员", ["tenant-admin", "members", "owners"]),
+      route("organization", "members", "owners", "组织所有者与管理员", ["tenant-admin", "members", "owners"]),
       route("organization", "members", "policies", "权限策略", ["tenant-admin", "members", "policies"]),
       route("organization", "members", "groups", "部门/群组", ["tenant-admin", "members", "groups"]),
       route("organization", "members", "offboarding", "离职撤权与资源交接", ["tenant-admin", "members", "offboarding"], { entity: "optional" }),
@@ -122,28 +122,28 @@ const organizationWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
     ],
   },
   {
-    id: "agents", label: "Agent 资源", routes: [
-      route("organization", "agents", "org-agents", "组织 Agent", ["tenant-admin", "agents", "org-agents"], { entity: "optional" }),
-      route("organization", "agents", "skills", "Skill", ["tenant-admin", "agents", "skills"], { entity: "optional" }),
-      route("organization", "agents", "connectors", "Connector 与 Credential", ["tenant-admin", "agents", "connectors"], { entity: "optional" }),
-      route("organization", "agents", "memory-knowledge", "Memory 与知识", ["tenant-admin", "agents", "memory-knowledge"], { entity: "optional" }),
+    id: "agents", label: "智能体资源", routes: [
+      route("organization", "agents", "org-agents", "组织智能体", ["tenant-admin", "agents", "org-agents"], { entity: "optional" }),
+      route("organization", "agents", "skills", "技能", ["tenant-admin", "agents", "skills"], { entity: "optional" }),
+      route("organization", "agents", "connectors", "连接器与凭据", ["tenant-admin", "agents", "connectors"], { entity: "optional" }),
+      route("organization", "agents", "memory-knowledge", "记忆与知识", ["tenant-admin", "agents", "memory-knowledge"], { entity: "optional" }),
       route("organization", "agents", "files-data", "文件与数据", ["tenant-admin", "agents", "files-data"]),
-      route("organization", "agents", "model-tools", "Model 与 Tool 策略", ["tenant-admin", "agents", "model-tools"]),
-      route("organization", "agents", "environments", "Environment 可用范围", ["tenant-admin", "agents", "environments"], { entity: "optional" }),
+      route("organization", "agents", "model-tools", "模型与工具策略", ["tenant-admin", "agents", "model-tools"]),
+      route("organization", "agents", "environments", "环境可用范围", ["tenant-admin", "agents", "environments"], { entity: "optional" }),
     ],
   },
   {
     id: "governance", label: "运行与治理", routes: [
       route("organization", "governance", "automation", "自动化任务", ["tenant-admin", "governance", "automation"], { entity: "optional" }),
       route("organization", "governance", "usage", "用量、预算与计费", ["tenant-admin", "governance", "usage"]),
-      route("organization", "governance", "qa", "Session 质检", ["tenant-admin", "governance", "qa"], { entity: "optional" }),
+      route("organization", "governance", "qa", "会话质检", ["tenant-admin", "governance", "qa"], { entity: "optional" }),
       route("organization", "governance", "audit", "操作记录", ["tenant-admin", "governance", "audit"], { entity: "optional" }),
     ],
   },
   {
     id: "settings", label: "组织设置", routes: [
       route("organization", "settings", "profile", "组织资料", ["tenant-admin", "settings", "profile"]),
-      route("organization", "settings", "rules", "Agent 规则", ["tenant-admin", "settings", "rules"]),
+      route("organization", "settings", "rules", "智能体规则", ["tenant-admin", "settings", "rules"]),
       route("organization", "settings", "brand", "品牌", ["tenant-admin", "settings", "brand"]),
       route("organization", "settings", "security", "登录与安全", ["tenant-admin", "settings", "security"]),
     ],

@@ -1024,7 +1024,7 @@ export function ModelManager() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label>Embedding Model</Label>
+                        <Label>嵌入模型</Label>
                         <Input
                           value={memoryIndex.embedding.model}
                           onChange={(e) => updateMemoryEmbedding({ model: e.target.value })}
@@ -1032,7 +1032,7 @@ export function ModelManager() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label>Dimensions</Label>
+                        <Label>维度</Label>
                         <Input
                           type="number"
                           min="1"
@@ -1084,7 +1084,7 @@ export function ModelManager() {
                   <p className="text-xs text-muted-foreground">分组内未覆盖的模型将使用该协议。</p>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Responses transport</Label>
+                  <Label>Responses 传输方式</Label>
                   <select
                     className="h-9 w-full rounded-md border bg-card px-3 text-sm"
                     value={selectedGroup.responses_transport ?? "openai_compatible"}
@@ -1200,7 +1200,7 @@ export function ModelManager() {
                     <p className="text-xs text-muted-foreground">当前生效：{resolveModelProtocol(selectedModelContext.group, selectedModelContext.model)}</p>
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Responses transport</Label>
+                    <Label>Responses 传输方式</Label>
                     <select
                       className="h-9 w-full rounded-md border bg-card px-3 text-sm"
                       value={selectedModelContext.model.responses_transport ?? "inherit"}

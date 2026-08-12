@@ -241,7 +241,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
         ) : (
           <>
             <p className="text-xs text-muted-foreground">
-              只提供 OpenAI Codex 订阅的原始 Responses transport。OAuth 凭据保存在 SecretVault；
+              只提供 OpenAI Codex 订阅的原始 Responses 传输协议。OAuth 凭据保存在 SecretVault；
               Agent 的 system prompt、工具定义、tool loop 与会话历史仍由本平台掌控。
             </p>
 
@@ -321,7 +321,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                   <div>
                     OAuth 最近刷新：{formatTime(state.runtime.oauth.lastRefreshAt)}
                     {state.runtime.oauth.lastRefreshGeneration
-                      ? ` · generation ${state.runtime.oauth.lastRefreshGeneration}`
+                      ? ` · 代次 ${state.runtime.oauth.lastRefreshGeneration}`
                       : ""}
                   </div>
                 </div>

@@ -10,6 +10,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APPLY_SCRIPT = REPO_ROOT / 'scripts' / 'apply-orchestrator-env.py'
 VERIFY_SCRIPT = REPO_ROOT / 'scripts' / 'acs-verify-per-session.py'
+TOOL_CONTENT_JSON = REPO_ROOT / 'scripts' / 'acs-tool-content-json.mjs'
 
 
 def load_script(path: Path, module_name: str):
@@ -93,6 +94,37 @@ class AcsVerifyPerSessionTest(unittest.TestCase):
     def test_formal_acceptance_requires_one_hundred_concurrent_samples(self):
         self.assertFalse(self.module.acceptance_sample_ready([1] * 5, [1] * 99))
         self.assertTrue(self.module.acceptance_sample_ready([1] * 5, [1] * 100))
+
+
+class AcsToolContentJsonTest(unittest.TestCase):
+    def parse(self, content: str):
+        program = (
+            "import { parseToolContentJson } from " + json.dumps(TOOL_CONTENT_JSON.as_uri()) + ";"
+            "const response = JSON.parse(process.argv[1]);"
+            "process.stdout.write(JSON.stringify(parseToolContentJson(response)));"
+        )
+        result = subprocess.run(
+            ['node', '--input-type=module', '--eval', program, json.dumps({'content': content})],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def test_parses_raw_background_shell_json(self):
+        self.assertEqual(self.parse('{"taskId":"task-1","status":"starting"}'), {
+            'taskId': 'task-1',
+            'status': 'starting',
+        })
+
+    def test_parses_json_from_formatted_shell_stdout(self):
+        content = (
+            'Exit code: 0\nWall time: 0.010s\nOutput bytes: stdout=32 stderr=0\n'
+            'Output lines: stdout=1 stderr=0\n\n[stdout]\n'
+            '{"status":"ready","alive":true}\n'
+        )
+        self.assertEqual(self.parse(content), {'status': 'ready', 'alive': True})
 
 
 if __name__ == '__main__':

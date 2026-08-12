@@ -3,6 +3,8 @@
 import { copyFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { parseToolContentJson } from './acs-tool-content-json.mjs';
+
 const baseUrl = required('ACS_ORCH_URL').replace(/\/$/, '');
 const authToken = required('ACS_ORCH_AUTH_TOKEN');
 const workspaceId = required('ACS_SMOKE_WORKSPACE_ID');
@@ -34,7 +36,7 @@ try {
     taskId,
   });
   backgroundStarted = true;
-  const startView = parseContentJson(started);
+  const startView = parseToolContentJson(started);
   assert(startView.taskId === taskId, `unexpected taskId: ${startView.taskId}`);
   assert(['starting', 'running'].includes(startView.status), `unexpected start status: ${startView.status}`);
 
@@ -68,14 +70,14 @@ try {
       limit_bytes: 20_000,
       wait_ms: 1_000,
     });
-    const view = parseContentJson(response);
+    const view = parseToolContentJson(response);
     if (['failed', 'lost', 'timed_out'].includes(view.status)) {
       throw new Error(`background shell ended unexpectedly: ${JSON.stringify(view)}`);
     }
     return view.status === 'completed';
   }, 'background shell completed');
 
-  const reconciled = parseContentJson(await execute('__BackgroundShellReconcile', {}));
+  const reconciled = parseToolContentJson(await execute('__BackgroundShellReconcile', {}));
   assert(!reconciled.activeTaskIds?.includes(taskId), 'background shell remained active after lease-stop');
   assert(!reconciled.protectedUntil, 'Sandbox lifecycle protection remained after lease-stop');
   console.log(`ACS_BROWSER_LEASE_E2E_OK task=${taskId} lease=${leaseId}`);
@@ -88,7 +90,7 @@ try {
 }
 
 async function leaseStatus() {
-  return parseContentJson(await shell(
+  return parseToolContentJson(await shell(
     `python3 ${quote(helperRelativePath)} lease-status --lease-id ${quote(leaseId)}`,
   ));
 }
@@ -116,11 +118,6 @@ async function execute(toolName, input) {
   const body = JSON.parse(text);
   if (body.status !== 'success') throw new Error(`${toolName} failed: ${body.error ?? text}`);
   return body;
-}
-
-function parseContentJson(response) {
-  if (typeof response.content !== 'string') throw new Error(`missing response content: ${JSON.stringify(response)}`);
-  return JSON.parse(response.content);
 }
 
 async function poll(check, label) {

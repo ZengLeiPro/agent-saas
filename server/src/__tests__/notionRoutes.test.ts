@@ -57,7 +57,7 @@ describe('Notion connector routes', () => {
     }));
     const baseUrl = await listen({
       authFlowService: authFlow(),
-      connectionStore: {} as any,
+      connectionStore: { isRuntimeEnabled: vi.fn(() => true) } as any,
       available: true,
       getConnection: getConnection as any,
       userStore: { findById: vi.fn(() => USER) } as any,

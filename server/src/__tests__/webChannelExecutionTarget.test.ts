@@ -1,4 +1,3 @@
-import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,18 +10,14 @@ import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
 import type { RunRecord, RunStatus, RunStore, UpsertRunInput } from '../runtime/runStore.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import { chatMessage, FakeWebSocket } from './webChannelTestHelpers.js';
 
-const PLATFORM_ADMIN_USER = { sub: 'admin-1', username: 'admin', role: 'admin' as const, tenantId: DEFAULT_TENANT_ID };
-
-class FakeWebSocket extends EventEmitter {
-  OPEN = 1;
-  readyState = 1;
-  sent: Array<{ data: any; eventId?: number }> = [];
-
-  send(raw: string): void {
-    this.sent.push(JSON.parse(raw));
-  }
-}
+const PLATFORM_ADMIN_USER = {
+  sub: 'admin-1',
+  username: 'admin',
+  role: 'admin' as const,
+  tenantId: DEFAULT_TENANT_ID,
+};
 
 interface CapturedCall {
   options?: AgentRunOptions;
@@ -35,15 +30,6 @@ function createSpyDispatch(): { dispatch: AgentRunDispatch; calls: CapturedCall[
     yield { type: 'done' };
   };
   return { dispatch, calls };
-}
-
-function chatMessage(overrides: Record<string, unknown>) {
-  return {
-    action: 'chat' as const,
-    client_msg_id: `msg-${Math.random().toString(16).slice(2)}`,
-    message: 'hi',
-    ...overrides,
-  } as any;
 }
 
 async function flushMicrotasks(): Promise<void> {
@@ -77,10 +63,21 @@ class MemoryRunStore implements RunStore {
     return record;
   }
 
-  async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
+  async markStatus(
+    runId: string,
+    status: RunStatus,
+    reason?: string,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<RunRecord | null> {
     const record = this.records.get(runId);
     if (!record) return null;
-    const updated = { ...record, status, statusReason: reason, updatedAt: new Date().toISOString(), metadata: { ...record.metadata, ...metadataPatch } };
+    const updated = {
+      ...record,
+      status,
+      statusReason: reason,
+      updatedAt: new Date().toISOString(),
+      metadata: { ...record.metadata, ...metadataPatch },
+    };
     this.records.set(runId, updated);
     return updated;
   }

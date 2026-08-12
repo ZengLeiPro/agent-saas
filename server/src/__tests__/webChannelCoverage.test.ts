@@ -38,7 +38,6 @@
  *      claimTitleGenerationAttempt 去重与截断。
  */
 
-import { EventEmitter } from 'node:events';
 import { mkdtemp, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -53,7 +52,7 @@ import type { OutboundEvent, ChannelContext } from '../types/index.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
 import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
-import type { RunRecord, RunStatus, RunStore, UpsertRunInput } from '../runtime/runStore.js';
+import type { UpsertRunInput } from '../runtime/runStore.js';
 import { runtimeRunController } from '../runtime/runController.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { getTranscriptPath } from '../data/transcripts/index.js';
@@ -65,6 +64,14 @@ import type { SttConfig } from '../integrations/stt/sttClient.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import type { UserStore } from '../data/users/store.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
+import {
+  chatMessage,
+  enabledTenantStore,
+  FakeWebSocket,
+  flushMicrotasks,
+  MemoryRunStore,
+  wsClient,
+} from './webChannelTestHelpers.js';
 
 // ── 模块 mock ──────────────────────────────────────────────────────────
 
@@ -99,52 +106,6 @@ function openAiCalls(): string[] {
 
 // ── 测试基建（照 webChannelGuardrail / webChannelExecutionTarget 模式）──
 
-class FakeWebSocket extends EventEmitter {
-  OPEN = 1;
-  readyState = 1;
-  sent: Array<{ data: any; eventId?: number }> = [];
-  send(raw: string): void {
-    this.sent.push(JSON.parse(raw));
-  }
-}
-
-class MemoryRunStore implements RunStore {
-  records = new Map<string, RunRecord>();
-  async upsertPending(input: UpsertRunInput): Promise<RunRecord> {
-    const now = new Date().toISOString();
-    const record: RunRecord = {
-      runId: input.runId, sessionId: input.sessionId, userId: input.userId, tenantId: input.tenantId,
-      status: 'pending', model: input.model, channel: input.channel, requestedAt: now, updatedAt: now,
-      idempotencyKey: input.idempotencyKey, executionTarget: input.executionTarget,
-      workspaceId: input.workspaceId, metadata: input.metadata ?? {},
-    };
-    this.records.set(input.runId, record);
-    return record;
-  }
-  async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
-    const record = this.records.get(runId);
-    if (!record) return null;
-    const updated = {
-      ...record, status, statusReason: reason,
-      updatedAt: new Date().toISOString(),
-      metadata: { ...record.metadata, ...metadataPatch },
-    };
-    this.records.set(runId, updated);
-    return updated;
-  }
-  async get(runId: string): Promise<RunRecord | null> { return this.records.get(runId) ?? null; }
-  async findByIdempotencyKey(userId: string | undefined, key: string): Promise<RunRecord | null> {
-    return [...this.records.values()].find((r) => r.idempotencyKey === key && r.userId === userId) ?? null;
-  }
-  async listRecoverable(): Promise<RunRecord[]> { return []; }
-  async getActiveBySession(sessionId: string): Promise<RunRecord | null> {
-    return [...this.records.values()].find((r) =>
-      r.sessionId === sessionId
-      && ['pending', 'running', 'waiting_approval', 'waiting_user', 'waiting_hand'].includes(r.status),
-    ) ?? null;
-  }
-}
-
 /** 本文件专属租户/用户（唯一后缀防串扰；transcript 落 home 目录，afterAll 定点清理） */
 const RUN_TAG = randomUUID().slice(0, 8);
 const TENANT = `covw${RUN_TAG}`;
@@ -154,30 +115,6 @@ const ORG_ADMIN = { sub: `cov-oadmin-${RUN_TAG}`, username: `cov_oadmin_${RUN_TA
 const P_ADMIN = { sub: `cov-padmin-${RUN_TAG}`, username: `cov_padmin_${RUN_TAG}`, role: 'admin' as const, tenantId: DEFAULT_TENANT_ID };
 
 type TestUser = typeof USER;
-
-function wsClient(ws: FakeWebSocket, user?: { sub: string; username: string; role: 'user' | 'admin'; tenantId: string }) {
-  return { ws: ws as any, user, alive: true, connectedAt: Date.now(), lastActivityAt: Date.now() };
-}
-
-function chatMessage(overrides: Record<string, unknown>) {
-  return {
-    action: 'chat' as const,
-    client_msg_id: `cov-msg-${randomUUID().slice(0, 12)}`,
-    message: 'hi',
-    ...overrides,
-  } as any;
-}
-
-async function flushMicrotasks(): Promise<void> {
-  for (let i = 0; i < 8; i += 1) await Promise.resolve();
-}
-
-function enabledTenantStore(): TenantStore {
-  return {
-    findById: (id: string) => ({ id, name: id, disabled: false }),
-    getSettings: () => ({ features: {}, models: {} }),
-  } as unknown as TenantStore;
-}
 
 /** 会话固定资产：meta（可被 findTranscriptOrMetaPathBySessionId 全局定位）+ runtime 事件日志 */
 async function seedRuntimeSession(

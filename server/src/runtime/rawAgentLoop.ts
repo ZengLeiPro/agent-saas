@@ -242,8 +242,7 @@ function isEmergencyContextPressure(
   modelRef?: string,
 ): boolean {
   const contextWindow = getModelContextWindow(model, modelRef);
-  if (!contextWindow) return true;
-  return triggerTokens >= Math.floor(contextWindow * CONTEXT_EMERGENCY_THRESHOLD_RATIO);
+  return !contextWindow || triggerTokens >= Math.floor(contextWindow * CONTEXT_EMERGENCY_THRESHOLD_RATIO);
 }
 
 function parseContextPressureState(value: unknown): ContextPressureState | null {

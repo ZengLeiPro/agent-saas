@@ -90,7 +90,7 @@ import { FileEventStore, getRuntimeEventLogPath } from './fileEventStore.js';
 import { HttpTransport } from './httpTransport.js';
 import { LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
 import { createLogger } from '../utils/logger.js';
-import { getRequestContext, requestContextStorage } from '../utils/requestContext.js';
+import { enterSessionContext } from '../utils/requestContext.js';
 import { RawAgentLoop } from './rawAgentLoop.js';
 import { resolveEffectiveMcpLoadingMode } from './mcpToolLoading.js';
 import { modelSupportsImage, resolveInboundAttachments } from './imageAttachments.js';
@@ -118,26 +118,6 @@ export {
   WAKE_EVENT_LIST_TYPES,
 } from './wakeDispatchHelpers.js';
 
-const logger = createLogger('RawRuntime');
-/**
- * 把 sessionId + runId 合并进当前 AsyncLocalStorage 请求上下文,
- * 后续所有 logger 调用自动附加 (runId13/sess8) trace 前缀。
- *
- * 必须传入真实 runId：enqueue-only 异步路径（chat 主流）绕过外层
- * dispatch wrapper,此时 prev 为 undefined; 若 runId 兜底成 randomUUID,
- * 与 EventStore 里记录的真实 runId 不一致,运维跨日志聚合时找不到。
- *
- * 调用约定：三个 raw runtime 入口必须在自己生成完 runId 之后再调,
- * 而不是 sessionId 一确定就调。
- */
-function enterSessionContext(sessionId: string, runId: string): void {
-  const prev = getRequestContext();
-  requestContextStorage.enterWith({
-    ...(prev ?? {}),
-    runId,
-    sessionId,
-  });
-}
 import type { ContextReconstructionPolicy } from './contextProjection.js';
 import { buildConnectorRunEnv, reconcileConnectorRunEnv } from './connectorRunEnv.js';
 import { SessionContextService, SessionToolProvider } from './sessionContext.js';
@@ -156,7 +136,6 @@ import {
   type TenantRemoteHandAuthTokenResolver,
 } from './tenantRemoteHandResolver.js';
 import { deriveSandboxScopeId, ensureRuntimeHandRegistered } from './runtimeHandRegistration.js';
-export { deriveSandboxScopeId, ensureRuntimeHandRegistered };
 import type { SecretVault } from '../security/secretVault.js';
 import type { NetworkPolicyConfig } from './networkPolicy.js';
 import { runtimeRunController } from './runController.js';
@@ -180,6 +159,10 @@ import { AgentToolProvider } from './subagent/agentToolProvider.js';
 import { reconcileInterruptedForegroundToolCalls } from './subagent/recovery.js';
 import type { BackgroundTaskRuntime } from './background/backgroundTaskRuntime.js';
 import { BackgroundTaskToolProvider } from './background/backgroundTaskToolProvider.js';
+
+export { deriveSandboxScopeId, ensureRuntimeHandRegistered };
+
+const logger = createLogger('RawRuntime');
 
 export interface ServerRemoteDispatchConfig {
   baseUrl: string;

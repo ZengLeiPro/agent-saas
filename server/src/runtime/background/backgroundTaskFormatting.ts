@@ -1,6 +1,6 @@
 import type { RunRecord } from '../runStore.js';
 import { SUBAGENT_RESULT_MAX_CHARS } from '../subagent/subagentLimits.js';
-import type { BackgroundTaskMetadata } from './backgroundTaskService.js';
+import type { BackgroundTaskMetadata } from './backgroundTaskMetadata.js';
 
 export interface StoredBackgroundResult {
   status: 'completed' | 'failed' | 'cancelled' | 'timeout';

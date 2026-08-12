@@ -37,6 +37,13 @@ import { toRunModelOptions, type ResolvedModel } from '../../app/models.js';
 import { createEventConsumer, type EventHandler } from '../eventConsumer.js';
 import { interactionStore } from './interactionStore.js';
 import {
+  buildChatMessageActivityDetail,
+  canViewContextUsageDetails,
+  canViewContextUsageDetailsForUser,
+  isPlatformAdminUser,
+  redactContextUsageDetails,
+} from './channelHelpers.js';
+import {
   getDurableEventCursor,
   isDurableCursorAtOrBefore,
   projectRuntimePlatformEvent,
@@ -91,12 +98,13 @@ import type { RuntimeScheduler } from '../../runtime/scheduler.js';
 import type { RunStore } from '../../runtime/runStore.js';
 import type { ToolInvocationStore } from '../../runtime/toolInvocationStore.js';
 import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
-import { isPlatformAdmin } from '../../auth/types.js';
 import { runtimeRunController } from '../../runtime/runController.js';
 import {
   buildPendingInteractionsFromEvents,
   normalizeInteractionResponse,
 } from '../../runtime/interactionProjection.js';
+
+export { buildChatMessageActivityDetail } from './channelHelpers.js';
 
 /**
  * 跨 session 的 approval resume 并发兜底（cap=8）。
@@ -105,51 +113,6 @@ import {
  * 多 session 突发时被打穿。
  */
 const approvalResumeSemaphore = new Semaphore(8);
-
-/** 活动日志只保留操作元数据，禁止写入消息正文或摘要。 */
-export function buildChatMessageActivityDetail(
-  sessionId: string | undefined,
-  attachmentCount: number,
-  voiceDurationMs?: number,
-): string {
-  const parts = [
-    `session=${sessionId || 'new'}`,
-    `attachments=${attachmentCount}`,
-  ];
-  if (voiceDurationMs !== undefined) parts.push(`voice=${voiceDurationMs}ms`);
-  return parts.join(' | ');
-}
-
-function canViewContextUsageDetails(context: ChannelContext, tenantStore: TenantStore | undefined): boolean {
-  return canViewContextUsageDetailsForUser(context.user, tenantStore);
-}
-
-function canViewContextUsageDetailsForUser(
-  user: { tenantId?: string } | undefined,
-  tenantStore: TenantStore | undefined,
-): boolean {
-  if (!user?.tenantId) return false;
-  const settings = tenantStore?.getSettings(user.tenantId);
-  return settings?.models.showContextTokens !== false
-    && settings?.models.allowContextTokenDetails === true;
-}
-
-/** WsUser（tenantId 可选）适配 auth/types 的 isPlatformAdmin（JwtPayload tenantId 必选）。 */
-function isPlatformAdminUser(user: WsClient['user']): boolean {
-  if (!user?.tenantId) return false;
-  return isPlatformAdmin({ sub: user.sub, username: user.username, role: user.role, tenantId: user.tenantId });
-}
-
-function redactContextUsageDetails(usage: ContextUsageData): ContextUsageData {
-  return {
-    ...usage,
-    categories: [],
-    breakdown: undefined,
-    usageTotals: undefined,
-    memoryFiles: [],
-    mcpTools: [],
-  };
-}
 
 const INTERACTIVE_PERMISSION_TOOLS = new Set([
   'AskUserQuestion',

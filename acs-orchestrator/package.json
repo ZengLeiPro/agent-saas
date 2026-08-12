@@ -7,7 +7,7 @@
     "start": "node --enable-source-maps dist/index.js",
     "start:src": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
-    "build": "esbuild src/index.ts src/backgroundShellWorker.ts --bundle --platform=node --format=esm --target=node22 --outdir=dist --sourcemap --external:pg-native --banner:js=\"import { createRequire as __kyCreateRequire } from 'node:module'; const require = __kyCreateRequire(import.meta.url);\" && rm -rf descriptions && cp -R ../server/src/agent/descriptions descriptions",
+    "build": "esbuild src/index.ts src/backgroundShellWorker.ts --bundle --platform=node --format=esm --target=node22 --outdir=dist --sourcemap --external:pg-native --external:@napi-rs/canvas --banner:js=\"import { createRequire as __kyCreateRequire } from 'node:module'; const require = __kyCreateRequire(import.meta.url);\" && rm -rf descriptions && cp -R ../server/src/agent/descriptions descriptions",
     "typecheck": "tsc --noEmit",
     "test": "pnpm run typecheck && vitest run"
   },

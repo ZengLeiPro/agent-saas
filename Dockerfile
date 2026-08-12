@@ -417,7 +417,7 @@ COPY acs-orchestrator ./acs-orchestrator
 RUN cd /app/acs-orchestrator \
     && ./node_modules/.bin/esbuild src/sandboxRunner.ts \
          --bundle --platform=node --format=esm --target=node20 \
-         --external:node:* --external:pg-native \
+         --external:node:* --external:pg-native --external:@napi-rs/canvas \
          --banner:js="import { createRequire as __kyCreateRequire } from 'node:module'; const require = __kyCreateRequire(import.meta.url);" \
          --outfile=dist/sandboxRunner.mjs \
     && ./node_modules/.bin/esbuild src/backgroundShellWorker.ts \

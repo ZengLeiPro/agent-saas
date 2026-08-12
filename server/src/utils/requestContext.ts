@@ -27,3 +27,18 @@ export const requestContextStorage = new AsyncLocalStorage<RequestContext>();
 export function getRequestContext(): RequestContext | undefined {
   return requestContextStorage.getStore();
 }
+
+/**
+ * 把 sessionId + runId 合并进当前请求上下文。
+ *
+ * 必须传入真实 runId：enqueue-only 异步路径可能绕过外层 dispatch wrapper，
+ * 此时不能用随机 ID 兜底，否则会与 EventStore 中的 runId 不一致。
+ */
+export function enterSessionContext(sessionId: string, runId: string): void {
+  const previous = getRequestContext();
+  requestContextStorage.enterWith({
+    ...(previous ?? {}),
+    runId,
+    sessionId,
+  });
+}

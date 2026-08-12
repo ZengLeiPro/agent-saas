@@ -240,7 +240,7 @@ export const visitBriefingScript: ReplayScript = {
           kind: "prompt",
           title: "用户消息",
           defaultOpen: true,
-          content: "明天上午要见海川机械的王总，帮我快速拉齐——上次聊到哪儿了、手里有什么坑。",
+          content: "明天见海川王总，帮我做个简报。",
         },
         {
           id: "v1-tool",

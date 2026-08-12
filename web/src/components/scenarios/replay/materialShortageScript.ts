@@ -161,7 +161,7 @@ export const materialShortageScript: ReplayScript = {
           kind: "prompt",
           title: "用户消息",
           defaultOpen: true,
-          content: "采购预警又出来 5 条。帮我看哪些是真的、该催谁，今天要批哪条采购动作。别只告诉我哪张订单可能晚。",
+          content: "这 5 条采购预警，哪些真要处理？",
         },
         {
           id: "ms1-tool",

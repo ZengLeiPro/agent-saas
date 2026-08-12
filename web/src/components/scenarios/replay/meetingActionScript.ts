@@ -154,7 +154,7 @@ export const meetingActionScript: ReplayScript = {
           kind: "prompt",
           title: "用户消息",
           defaultOpen: true,
-          content: "昨天 Q2 经营分析会的听记出来了，两个多小时。你把决议和要办的事整理出来，别又整成一份存进网盘就没人打开的纪要。",
+          content: "把昨天经营会的决议和待办整理一下。",
         },
         {
           id: "m1-tool",

@@ -91,6 +91,46 @@ describe("legacy task demo", () => {
     expect(lastTodos.every((todo) => typeof (todo.outcome as { text?: string }).text === "string")).toBe(true);
   });
 
+  it("结构化结果后只保留短回复和文件卡，省略重复长文", () => {
+    const narrativeScript: ReplayScript = {
+      ...script,
+      steps: [{
+        caption: "展示结果",
+        blocks: [
+          toolBlock("tool-result", "结构化结果"),
+          {
+            id: "short-text",
+            kind: "text",
+            title: "业务进展",
+            defaultOpen: true,
+            content: "已核对，结果见表格。",
+          },
+          {
+            id: "long-text",
+            kind: "text",
+            title: "业务进展",
+            defaultOpen: true,
+            content: "这是一段会重复结构化结果的长篇说明。".repeat(12),
+          },
+          {
+            id: "file-text",
+            kind: "text",
+            title: "业务进展",
+            defaultOpen: true,
+            content: "前后说明都应删掉。\n\n[FILE]{\"filePath\":\"assets/demo/结果.html\"}[/FILE]\n\n更多重复说明。",
+          },
+        ],
+      }],
+    };
+
+    const blocks = buildLegacyReplayBlocks(narrativeScript, 1, {});
+    expect(blocks.find((block) => block.id === "short-text")?.content).toBe("已核对，结果见表格。");
+    expect(blocks.some((block) => block.id === "long-text")).toBe(false);
+    expect(blocks.find((block) => block.id === "file-text")?.content).toBe(
+      '[FILE]{"filePath":"assets/demo/结果.html"}[/FILE]',
+    );
+  });
+
   it("审批等待与退回分别使用 waiting 和 blocked，不伪装成完成", () => {
     const approvalScript: ReplayScript = {
       ...script,

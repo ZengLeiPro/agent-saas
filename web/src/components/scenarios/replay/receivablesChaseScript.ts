@@ -169,7 +169,7 @@ export const receivablesChaseScript: ReplayScript = {
           kind: "prompt",
           title: "用户消息",
           defaultOpen: true,
-          content: "月底快到了，哪些应收该催了？帮我把催款话术也拟好。",
+          content: "哪些应收该催了？",
         },
         {
           id: "r1-tool",

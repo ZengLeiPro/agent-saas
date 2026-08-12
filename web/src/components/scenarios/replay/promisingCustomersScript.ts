@@ -194,7 +194,7 @@ export const promisingCustomersScript: ReplayScript = {
           kind: "prompt",
           title: "用户消息",
           defaultOpen: true,
-          content: "分析一下我手上哪些客户最值得推进。这个月指标压力挺大，我想先把力气用在对的地方。",
+          content: "哪些客户最值得先跟？",
         },
         {
           id: "p1-tool",

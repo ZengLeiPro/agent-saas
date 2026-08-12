@@ -36,6 +36,32 @@ type DemoTodo = {
 
 type TerminalSummary = Pick<DemoTodo, "status" | "outcome" | "detail" | "display" | "evidenceRefs">;
 
+const MAX_CONCISE_NARRATIVE_LENGTH = 80;
+const FILE_CARD_PATTERN = /\[FILE\][\s\S]*?\[\/FILE\]/g;
+
+/**
+ * 结构化结果已经展示表格、状态色与异常提示时，不再重复同义长文。
+ * 文件卡必须保留真实 [FILE] 通道；短回复保留必要的人味与过渡。
+ */
+function compactNarrativeBlocks(
+  blocks: ApiTranscriptBlock[],
+  hasStructuredResult: boolean,
+): ApiTranscriptBlock[] {
+  if (!hasStructuredResult) return blocks;
+
+  return blocks.flatMap((block) => {
+    if (block.kind !== "text") return [];
+    const fileCards = block.content.match(FILE_CARD_PATTERN);
+    if (fileCards?.length) {
+      return [{ ...block, content: fileCards.join("\n") }];
+    }
+    const content = block.content.trim();
+    return Array.from(content).length <= MAX_CONCISE_NARRATIVE_LENGTH
+      ? [{ ...block, content }]
+      : [];
+  });
+}
+
 function todoBlock(id: string, todos: DemoTodo[]): ApiTranscriptBlock {
   return {
     id,
@@ -245,7 +271,7 @@ export function buildLegacyReplayBlocks(
       snapshotTodos(script, index, "start", decisions),
     ));
 
-    // 工具过程收进步骤节；面向用户的结果正文留在终态快照之后，和真实 Agent
+    // 工具过程收进步骤节；必要的短回复与产物卡留在终态快照之后，和真实 Agent
     // 「先收口业务步骤，再给最终回复」的顺序一致，也避免折叠步骤吞掉产物卡。
     const narrativeBlocks = processBlocks.filter((block) => block.kind === "text");
     visible.push(...processBlocks.filter((block) => block.kind !== "text"));
@@ -261,7 +287,12 @@ export function buildLegacyReplayBlocks(
       `demo-task-${index + 1}-terminal-${decision ?? "default"}`,
       snapshotTodos(script, index, "terminal", decisions),
     ));
-    visible.push(...narrativeBlocks, ...decisionBlocks.filter((block) => block.kind === "text"));
+    const decisionNarrativeBlocks = decisionBlocks.filter((block) => block.kind === "text");
+    const hasStructuredResult = [...processBlocks, ...decisionBlocks].some((block) => block.presentation);
+    visible.push(...compactNarrativeBlocks(
+      [...narrativeBlocks, ...decisionNarrativeBlocks],
+      hasStructuredResult,
+    ));
   }
   return visible;
 }

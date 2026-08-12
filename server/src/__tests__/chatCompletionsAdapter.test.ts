@@ -19,6 +19,22 @@ function responseStream(chunks: string[]): Response {
   }));
 }
 
+function responseStreamError(chunks: string[], error: Error): Response {
+  const encoder = new TextEncoder();
+  let index = 0;
+  return new Response(new ReadableStream({
+    pull(controller) {
+      const chunk = chunks[index];
+      if (chunk !== undefined) {
+        index += 1;
+        controller.enqueue(encoder.encode(chunk));
+      } else {
+        controller.error(error);
+      }
+    },
+  }));
+}
+
 async function collect(stream: AsyncIterable<ModelEvent>): Promise<ModelEvent[]> {
   const events: ModelEvent[] = [];
   for await (const event of stream) events.push(event);
@@ -155,6 +171,130 @@ describe('ChatCompletionsModelAdapter', () => {
       responseChained: false,
       responseMode: 'full',
      });
+  });
+
+  it('Chat Completions 永久 transport 配置错误不消耗重试预算', async () => {
+    const cause = Object.assign(new Error('self-signed certificate'), { code: 'DEPTH_ZERO_SELF_SIGNED_CERT' });
+    const transportError = new TypeError('fetch failed', { cause });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockRejectedValue(transportError);
+    const diagnostics: Array<Record<string, unknown>> = [];
+    const adapter = new ChatCompletionsModelAdapter({
+      apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1',
+    }, { preStreamRetryDelaysMs: [0, 0] });
+
+    await expect(collect(adapter.stream({
+      model: 'glm-5.2', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      runId: 'run-permanent', sessionId: 'session-permanent', model: 'glm-5.2', cwd: '/tmp',
+      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered' },
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }))).rejects.toThrow('fetch failed');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([{
+      attempt: 1,
+      outcome: 'network_error',
+      retryBlockedReason: 'permanent_error',
+    }]);
+  });
+
+  it('terminal_buffered 在 Chat Completions 流中断时丢弃失败 attempt 输出并重试', async () => {
+    const streamError = new TypeError('connection reset');
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(responseStreamError([
+        sse({ choices: [{ delta: { reasoning_content: '失败思考' } }] }),
+        sse({ choices: [{ delta: { content: '失败正文' } }] }),
+      ], streamError))
+      .mockResolvedValueOnce(responseStream([
+        sse({ choices: [{ delta: { reasoning_content: '成功思考' } }] }),
+        sse({ choices: [{ delta: { content: '成功正文' }, finish_reason: 'stop' }] }),
+        sse('[DONE]'),
+      ]));
+    const diagnostics: Array<Record<string, unknown>> = [];
+    const adapter = new ChatCompletionsModelAdapter({
+      apiKey: 'sk-test',
+      baseUrl: 'https://example.invalid/v1',
+    }, { preStreamRetryDelaysMs: [0] });
+
+    const events = await collect(adapter.stream({
+      model: 'glm-5.2', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      runId: 'run-buffered', sessionId: 'session-buffered', model: 'glm-5.2', cwd: '/tmp',
+      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered' },
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events).toEqual([
+      { type: 'thinking_delta', content: '成功思考' },
+      { type: 'text_delta', content: '成功正文' },
+      expect.objectContaining({ type: 'completed', content: '成功正文', toolCalls: [] }),
+    ]);
+    expect(diagnostics.filter((event) => event.type === 'started')).toMatchObject([
+      { attempt: 1, protocol: 'chat_completions', outputTransactionMode: 'terminal_buffered' },
+      { attempt: 2, protocol: 'chat_completions', outputTransactionMode: 'terminal_buffered' },
+    ]);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      { attempt: 1, willRetry: true, retryReason: 'transient_stream_interrupt' },
+      { attempt: 2, outcome: 'completed' },
+    ]);
+  });
+
+  it('replaceable_draft 在 Chat Completions 部分输出后 reset 并安全重试', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(responseStreamError([
+        sse({ choices: [{ delta: { content: '部分草稿' } }] }),
+      ], new TypeError('connection reset')))
+      .mockResolvedValueOnce(responseStream([
+        sse({ choices: [{ delta: { content: '完整正文' }, finish_reason: 'stop' }] }),
+        sse('[DONE]'),
+      ]));
+    const adapter = new ChatCompletionsModelAdapter({
+      apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1',
+    }, { preStreamRetryDelaysMs: [0] });
+
+    const events = await collect(adapter.stream({
+      model: 'glm-5.2', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      runId: 'run-draft', sessionId: 'session-draft', model: 'glm-5.2', cwd: '/tmp',
+      channelContext: { channel: 'web', outputTransactionMode: 'replaceable_draft' },
+    }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events).toEqual([
+      { type: 'text_delta', content: '部分草稿' },
+      { type: 'draft_reset', attempt: 1 },
+      { type: 'text_delta', content: '完整正文' },
+      expect.objectContaining({ type: 'completed', content: '完整正文' }),
+    ]);
+  });
+
+  it('irreversible_stream 在 Chat Completions 已交付后不重试', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStreamError([
+      sse({ choices: [{ delta: { content: '不可撤销内容' } }] }),
+    ], new TypeError('connection reset')));
+    const diagnostics: Array<Record<string, unknown>> = [];
+    const adapter = new ChatCompletionsModelAdapter({
+      apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1',
+    }, { preStreamRetryDelaysMs: [0] });
+    const seen: ModelEvent[] = [];
+
+    await expect((async () => {
+      for await (const event of adapter.stream({
+        model: 'glm-5.2', messages: [{ role: 'user', content: 'go' }], tools: [],
+      }, {
+        runId: 'run-legacy', sessionId: 'session-legacy', model: 'glm-5.2', cwd: '/tmp',
+        channelContext: { channel: 'web', outputTransactionMode: 'irreversible_stream' },
+        recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+      })) seen.push(event);
+    })()).rejects.toThrow('connection reset');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual([{ type: 'text_delta', content: '不可撤销内容' }]);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([{
+      attempt: 1,
+      retryBlockedReason: 'irreversible_output_delivered',
+    }]);
   });
 
   it('兼容模型忽略 additional_tools 历史项，MCP 继续按普通 function eager 发送', async () => {

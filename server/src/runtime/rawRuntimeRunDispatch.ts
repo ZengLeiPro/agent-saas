@@ -76,6 +76,7 @@ import type { ExecutionTransportRegistry } from './executionTransport.js';
 import { EventBackedApprovalStore } from './approvalStore.js';
 import { ChatCompletionsModelAdapter } from './chatCompletionsAdapter.js';
 import { ResponsesApiAdapter } from './responsesApiAdapter.js';
+import { resolveModelOutputTransactionMode } from './modelOutputTransaction.js';
 import type { ModelAdapter } from './types.js';
 import { CodexSubscriptionResponsesTransport } from './responses/codexSubscriptionResponsesTransport.js';
 import type { CodexResponsesWebSocketPool } from './responses/codexResponsesWebSocketPool.js';
@@ -1833,6 +1834,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         cwd,
         transcriptPath,
         modelRef: sessionModelRef,
+        outputTransactionMode: resolveModelOutputTransactionMode(context),
         sandboxScopeId,
         ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}),
         ...(approvalPolicy ? { approvalPolicy } : {}),
@@ -2431,6 +2433,10 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     const approvalStore = createApprovalStoreForSession(config, sessionRecord, eventStore);
     const pendingApproval = await approvalStore.get(request.approvalId);
     const resumeRunId = pendingApproval?.runId ?? `resume-${Date.now()}-${randomUUID()}`;
+    const existingResumeRun = await config.runStore?.get(resumeRunId);
+    const resumeOutputTransactionMode = existingResumeRun
+      ? resolveModelOutputTransactionMode(existingResumeRun.metadata)
+      : resolveModelOutputTransactionMode(request.context);
     enterSessionContext(request.sessionId, resumeRunId);
     let directRuntimeLease: DirectRuntimeLeaseHandle | null = null;
     await config.runStore?.upsertPending({
@@ -2444,7 +2450,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
       sandboxScopeId,
-      metadata: { cwd, transcriptPath, modelRef: sessionModelRef, approvalId: request.approvalId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
+      metadata: { cwd, transcriptPath, modelRef: sessionModelRef, outputTransactionMode: resumeOutputTransactionMode, approvalId: request.approvalId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
     });
     directRuntimeLease = await acquireDirectRuntimeRunLease({
       runStore: config.runStore,
@@ -2855,6 +2861,10 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       return;
     }
     const resumeRunId = requestEvent.runId ?? `resume-${Date.now()}-${randomUUID()}`;
+    const existingResumeRun = await config.runStore?.get(resumeRunId);
+    const resumeOutputTransactionMode = existingResumeRun
+      ? resolveModelOutputTransactionMode(existingResumeRun.metadata)
+      : resolveModelOutputTransactionMode(request.context);
     enterSessionContext(request.sessionId, resumeRunId);
     let directRuntimeLease: DirectRuntimeLeaseHandle | null = null;
     await config.runStore?.upsertPending({
@@ -2868,7 +2878,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
       sandboxScopeId,
-      metadata: { cwd, transcriptPath, modelRef: sessionModelRef, interactionId: request.interactionId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
+      metadata: { cwd, transcriptPath, modelRef: sessionModelRef, outputTransactionMode: resumeOutputTransactionMode, interactionId: request.interactionId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
     });
     directRuntimeLease = await acquireDirectRuntimeRunLease({
       runStore: config.runStore,
@@ -3274,7 +3284,7 @@ export async function wakeRuntimeSession(
         cwd: session.cwd,
         context: {
           channel: 'web',
-          replaceableDrafts: run.metadata?.replaceableDrafts === true,
+          outputTransactionMode: resolveModelOutputTransactionMode(run.metadata),
           resumeSessionId: run.sessionId,
           sessionOwner: resolveWakeSessionOwner(config, session, run.userId),
           targetCwd: session.cwd,
@@ -3345,7 +3355,7 @@ export async function wakeRuntimeSession(
         cwd: session.cwd,
         context: {
           channel: 'web',
-          replaceableDrafts: run.metadata?.replaceableDrafts === true,
+          outputTransactionMode: resolveModelOutputTransactionMode(run.metadata),
           resumeSessionId: run.sessionId,
           sessionOwner: resolveWakeSessionOwner(config, session, run.userId),
           targetCwd: session.cwd,
@@ -3386,7 +3396,7 @@ export async function wakeRuntimeSession(
   const sessionOwner = resolveWakeSessionOwner(config, session, run.userId);
   const context: ChannelContext = {
     channel: 'web',
-    replaceableDrafts: run.metadata?.replaceableDrafts === true,
+    outputTransactionMode: resolveModelOutputTransactionMode(run.metadata),
     resumeSessionId: run.sessionId,
     sessionOwner,
     targetCwd: session.cwd,

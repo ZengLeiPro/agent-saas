@@ -207,7 +207,10 @@ describe('TaskboardExecutionCoordinator', () => {
       channel: 'taskboard',
       userId: identity.ownerUserId,
       tenantId: identity.tenantId,
-      metadata: expect.objectContaining({ taskboardExecution: true }),
+      metadata: expect.objectContaining({
+        taskboardExecution: true,
+        outputTransactionMode: 'terminal_buffered',
+      }),
     }));
   });
 
@@ -541,6 +544,7 @@ describe('TaskboardExecutionCoordinator', () => {
         metadata: {
           ...claimedInput.dispatch.run.metadata,
           backgroundTask: true,
+          outputTransactionMode: 'replaceable_draft',
           toolProfile: 'forged-tool-profile',
           approvalPolicy: 'allow-all',
         },
@@ -573,8 +577,12 @@ describe('TaskboardExecutionCoordinator', () => {
       sandboxScopeId: 'forged-sandbox',
     }));
     expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ outputTransactionMode: 'terminal_buffered' }),
+    }));
+    expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledWith(expect.objectContaining({
       metadata: expect.not.objectContaining({
         backgroundTask: true,
+        outputTransactionMode: 'replaceable_draft',
         toolProfile: 'forged-tool-profile',
         approvalPolicy: 'allow-all',
       }),

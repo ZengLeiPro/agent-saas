@@ -159,6 +159,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         taskboardExecution: true,
         taskboardExecutionId: executionId,
         taskboardTaskId: taskId,
+        outputTransactionMode: 'terminal_buffered',
         cwd,
         transcriptPath: session.transcriptPath,
         wakeMessage: {
@@ -541,6 +542,7 @@ function canonicalizeDispatchPayload(
         taskboardExecution: true,
         taskboardExecutionId: dispatch.executionId,
         taskboardTaskId: dispatch.taskId,
+        outputTransactionMode: 'terminal_buffered',
         cwd: expectedCwd,
         transcriptPath: expectedTranscriptPath,
         wakeMessage: {
@@ -584,6 +586,8 @@ function assertDispatchedRun(
     || metadata?.taskboardExecution !== true
     || metadata?.taskboardExecutionId !== dispatch.executionId
     || metadata?.taskboardTaskId !== dispatch.taskId
+    || metadata?.outputTransactionMode !== 'terminal_buffered'
+    || expectedMetadata.outputTransactionMode !== 'terminal_buffered'
     || metadata?.cwd !== expectedMetadata.cwd
     || metadata?.transcriptPath !== expectedMetadata.transcriptPath
     || metadata?.backgroundTask === true

@@ -407,6 +407,7 @@ async function executeAgentTurn(
     };
     const context: ChannelContext = {
       channel: "cron",
+      outputTransactionMode: 'terminal_buffered',
       timezone: opts.timezone,
       // PR 10 修复：cron 路径的 ChannelContext.user 必须带 tenantId，否则下游
       // rawAgentLoop emit tool_audit 时拿不到 tenantId，会一律兜底平台根组织，

@@ -8,6 +8,7 @@ import type { ChannelContext, UserIdentity } from '../../types/index.js';
 import { createLogger } from '../../utils/logger.js';
 import { buildConnectorRunEnv } from '../connectorRunEnv.js';
 import { runtimeRunController } from '../runController.js';
+import { isModelOutputTransactionMode, resolveModelOutputTransactionMode } from '../modelOutputTransaction.js';
 import type { RunRecord, RunStatus, RunStore } from '../runStore.js';
 import {
   collectRuntimeTooling,
@@ -75,10 +76,12 @@ interface CommonBackgroundTaskMetadata {
   sandboxPolicy?: { denyRead: string[] };
   timezone?: string;
   parentChannel: ChannelContext['channel'];
+  parentOutputTransactionMode: NonNullable<ChannelContext['outputTransactionMode']>;
 }
 
 interface BackgroundAgentTaskMetadata extends CommonBackgroundTaskMetadata {
   taskType: 'agent';
+  outputTransactionMode: NonNullable<ChannelContext['outputTransactionMode']>;
   prompt: string;
   agentType: 'general' | 'explore';
   includeCompanyInfo: boolean;
@@ -182,6 +185,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         backgroundTaskType: 'agent',
         backgroundTaskReady: true,
         backgroundTaskVersion: 1,
+        outputTransactionMode: 'terminal_buffered',
         parentRunId,
         parentSessionId,
         topLevelSessionId: context.workspace.topLevelSessionId ?? parentSessionId,
@@ -199,6 +203,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         ...(context.workspace.sandboxPolicy ? { sandboxPolicy: context.workspace.sandboxPolicy } : {}),
         ...(context.channelContext.timezone ? { timezone: context.channelContext.timezone } : {}),
         parentChannel: context.channelContext.channel,
+        parentOutputTransactionMode: resolveModelOutputTransactionMode(context.channelContext),
         wakeState: 'none',
       },
     }, {
@@ -289,6 +294,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           ...(context.workspace.sandboxPolicy ? { sandboxPolicy: context.workspace.sandboxPolicy } : {}),
           ...(context.channelContext.timezone ? { timezone: context.channelContext.timezone } : {}),
           parentChannel: context.channelContext.channel,
+          parentOutputTransactionMode: resolveModelOutputTransactionMode(context.channelContext),
           wakeState: 'none',
         },
       }, {
@@ -396,6 +402,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       const connectorRunEnv = await buildConnectorRunEnv(this.config, identity);
       const channelContext: ChannelContext = {
         channel: metadata.parentChannel,
+        outputTransactionMode: metadata.outputTransactionMode,
         resumeSessionId: record.sessionId,
         sessionOwner: identity,
         targetCwd: metadata.cwd,
@@ -564,6 +571,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         workspaceId: parentSession.workspaceId,
         metadata: {
           backgroundTaskWake: true,
+          outputTransactionMode: metadata.parentOutputTransactionMode,
           backgroundTaskId: task.runId,
           wakeMessage: {
             channel: 'web',
@@ -898,6 +906,9 @@ function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMetadata 
     cwd,
     workspaceId,
     parentChannel,
+    parentOutputTransactionMode: isModelOutputTransactionMode(value.parentOutputTransactionMode)
+      ? value.parentOutputTransactionMode
+      : resolveModelOutputTransactionMode(value),
     ...(metadataString(value, 'mountSubPath') ? { mountSubPath: metadataString(value, 'mountSubPath') } : {}),
     ...(metadataString(value, 'sandboxScopeId') ? { sandboxScopeId: metadataString(value, 'sandboxScopeId') } : {}),
     ...(metadataString(value, 'timezone') ? { timezone: metadataString(value, 'timezone') } : {}),
@@ -916,6 +927,9 @@ function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMetadata 
   return {
     ...common,
     taskType: 'agent',
+    outputTransactionMode: isModelOutputTransactionMode(value.outputTransactionMode)
+      ? value.outputTransactionMode
+      : 'terminal_buffered',
     prompt,
     agentType,
     includeCompanyInfo: value.includeCompanyInfo === true,

@@ -278,6 +278,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       sandboxScopeId: parentWorkspace.sandboxScopeId,
       metadata: {
         subagent: true,
+        outputTransactionMode: 'terminal_buffered',
         parentRunId,
         parentSessionId,
         parentToolCallId: parentContext.toolCallId,
@@ -427,7 +428,10 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       executionTarget,
       env: parentContext.env,
       sandboxPolicy: parentWorkspace.sandboxPolicy,
-      channelContext: parentContext.channelContext,
+      channelContext: {
+        ...parentContext.channelContext,
+        outputTransactionMode: 'terminal_buffered',
+      },
       approvalPolicy,
       hooks: childHooks,
       signal: combinedSignal,

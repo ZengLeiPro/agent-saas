@@ -269,6 +269,7 @@ describe('runSubagent', () => {
     expect(outcome.childSessionId.startsWith('sub-')).toBe(true);
     expect(outcome.totalTokens).toBe(15);
     expect(modelAdapter.contexts[0]?.env).toEqual(fixture.parentContext.env);
+    expect(modelAdapter.contexts[0]?.channelContext.outputTransactionMode).toBe('terminal_buffered');
     const firstUserMessage = modelAdapter.requests[0]?.messages.find((message) => message.role === 'user');
     expect(firstUserMessage?.content).toMatch(
       /^\[\d{4}\/\d{2}\/\d{2}\s+周[一二三四五六日]\s+\d{2}:\d{2}\]\s+完成测试子任务$/,

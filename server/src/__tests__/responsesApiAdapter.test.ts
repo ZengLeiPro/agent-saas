@@ -3,7 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ResponsesApiAdapter, RESPONSE_TTL_MS, MAX_OUTPUT_TOKENS_FLOOR } from '../runtime/responsesApiAdapter.js';
 import { ChatCompletionsModelAdapter } from '../runtime/chatCompletionsAdapter.js';
 import { ModelProviderError, type ModelEvent, type ModelRequestDiagnostic } from '../runtime/types.js';
-import type { ResponsesTransport } from '../runtime/responses/responsesTransport.js';
+import {
+  ResponsesTransportStreamError,
+  type ResponsesTransport,
+} from '../runtime/responses/responsesTransport.js';
 
 /** 构造一行 Responses API SSE 帧（含 event: + data:）。 */
 function sse(eventName: string, payload: unknown): string {
@@ -374,7 +377,7 @@ describe('ResponsesApiAdapter', () => {
       type: 'finished',
       outcome: 'http_error',
       errorCode: 'invalid_prompt',
-      errorMessage: 'Request blocked by policy',
+      errorMessage: 'Responses API HTTP 400: Request blocked by provider',
     });
   });
 
@@ -923,7 +926,7 @@ describe('ResponsesApiAdapter', () => {
       type: 'completed',
       terminalStatus: 'failed',
       errorCode: 'invalid_prompt',
-      errorMessage: 'Request blocked by policy',
+      errorMessage: 'Responses API HTTP 200: Request blocked by provider',
       emittedOutputCount: expectedCount,
       providerStatus: 200,
     });
@@ -1302,7 +1305,11 @@ describe('ResponsesApiAdapter', () => {
     expect(diagnostics.some((event) => event.type === 'finished' && event.willRetry)).toBe(false);
   });
 
-  it('零输出 EOF 无终态时重试', async () => {
+  it.each([
+    'replaceable_draft',
+    'terminal_buffered',
+    'irreversible_stream',
+  ] as const)('%s 在零交付 EOF 无终态时共享瞬时重试策略', async (outputTransactionMode) => {
     vi.useFakeTimers();
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(responseStream([
@@ -1331,6 +1338,7 @@ describe('ResponsesApiAdapter', () => {
       model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
     }, {
       ...baseContext,
+      channelContext: { channel: 'web', outputTransactionMode },
       recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
     }));
     await vi.runAllTimersAsync();
@@ -1349,7 +1357,7 @@ describe('ResponsesApiAdapter', () => {
     ]);
   });
 
-  it('半截 function_call 参数中断后重试，工具调用完整交付', async () => {
+  it('Taskboard terminal_buffered 丢弃中断 attempt 的半截 function_call，只交付成功工具调用', async () => {
     // 复刻生产会话 e77bf799 故障形态：流只吐了 output_item.added + 参数 delta 就被掐断。
     vi.useFakeTimers();
     const streamError = Object.assign(new TypeError('terminated'), {
@@ -1400,12 +1408,14 @@ describe('ResponsesApiAdapter', () => {
       model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
     }, {
       ...baseContext,
+      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered' },
       recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
     }));
     await vi.runAllTimersAsync();
     const events = await resultPromise;
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events.filter((event) => event.type !== 'completed')).toEqual([]);
     expect(events.at(-1)).toMatchObject({
       type: 'completed',
       toolCalls: [{ id: 'call_ok', name: 'Shell', arguments: '{"command":"ls"}' }],
@@ -1422,7 +1432,237 @@ describe('ResponsesApiAdapter', () => {
     ]);
   });
 
-  it('已交付正文后流读取错误，Web 撤销草稿并用专属机会恢复', async () => {
+  it('Taskboard terminal_buffered 丢弃中断 attempt 的思考与正文，只提交成功 attempt', async () => {
+    vi.useFakeTimers();
+    const streamError = Object.assign(new TypeError('terminated'), {
+      cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }),
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(responseStreamError([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_taskboard_partial' } }),
+        sse('response.reasoning_summary_text.delta', {
+          type: 'response.reasoning_summary_text.delta',
+          delta: '失败 attempt 思考',
+        }),
+        sse('response.output_text.delta', {
+          type: 'response.output_text.delta',
+          delta: '失败 attempt 正文',
+        }),
+      ], streamError))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_taskboard_ok' } }),
+        sse('response.reasoning_summary_text.delta', {
+          type: 'response.reasoning_summary_text.delta',
+          delta: '成功 attempt 思考',
+        }),
+        sse('response.output_text.delta', {
+          type: 'response.output_text.delta',
+          delta: '成功 attempt 正文',
+        }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: {
+            id: 'resp_taskboard_ok',
+            status: 'completed',
+            usage: { input_tokens: 8, output_tokens: 3 },
+          },
+        }),
+      ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered' },
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events).toEqual([
+      { type: 'thinking_delta', content: '成功 attempt 思考' },
+      { type: 'text_delta', content: '成功 attempt 正文' },
+      expect.objectContaining({
+        type: 'completed',
+        content: '成功 attempt 正文',
+        terminalStatus: 'completed',
+        modelRequestAttemptCount: 2,
+      }),
+    ]);
+    const started = diagnostics.filter((event) => event.type === 'started');
+    expect(started.map((event) => event.attempt)).toEqual([1, 2]);
+    expect(new Set(started.map((event) => event.modelRequestId)).size).toBe(1);
+    expect(new Set(started.map((event) => event.attemptId)).size).toBe(2);
+    expect(started.every((event) => event.outputTransactionMode === 'terminal_buffered')).toBe(true);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      {
+        attempt: 1,
+        outcome: 'stream_error',
+        errorCode: 'MODEL_STREAM_READ_ERROR',
+        outputTransactionMode: 'terminal_buffered',
+        hasDeliveredOutput: false,
+        officialTerminalReceived: false,
+        retryReason: 'transient_stream_interrupt',
+        willRetry: true,
+      },
+      { attempt: 2, outcome: 'completed', outputTransactionMode: 'terminal_buffered' },
+    ]);
+  });
+
+  it('Taskboard terminal_buffered 重试预算耗尽后 attempt 数准确并明确失败', async () => {
+    vi.useFakeTimers();
+    const streamError = Object.assign(new TypeError('terminated'), {
+      cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }),
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(responseStreamError([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_budget_1' } }),
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '丢弃一' }),
+      ], streamError))
+      .mockResolvedValueOnce(responseStreamError([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_budget_2' } }),
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '丢弃二' }),
+      ], streamError));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered' },
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    const rejection = expect(resultPromise).rejects.toThrow('terminated');
+    await vi.runAllTimersAsync();
+    await rejection;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(diagnostics.filter((event) => event.type === 'started').map((event) => event.attempt)).toEqual([1, 2]);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      {
+        attempt: 1,
+        errorCode: 'MODEL_STREAM_READ_ERROR',
+        retryReason: 'transient_stream_interrupt',
+        willRetry: true,
+      },
+      {
+        attempt: 2,
+        errorCode: 'MODEL_STREAM_READ_ERROR',
+        retryBlockedReason: 'retry_budget_exhausted',
+      },
+    ]);
+  });
+
+  it('WebSocket 中断细节进入 model_request_finished 且不记录敏感请求内容', async () => {
+    vi.useFakeTimers();
+    const socketError = new ResponsesTransportStreamError(
+      'Codex WebSocket error without diagnostic detail; closed before terminal event',
+      {
+        wireMode: 'websocket_full',
+        clientRequestId: 'request-attempt-secret',
+        webSocketErrorEmpty: true,
+        closeCode: 1006,
+        closeReason: 'proxy reset https://proxy.test/socket?token=secret-query Cookie=session-secret {"access_token":"json-secret","authorization":"Bearer auth-secret"}',
+        requestDurationMs: 206_853,
+        frameCount: 2,
+        lastSequenceNumber: 2,
+        officialTerminalReceived: false,
+      },
+    );
+    let executeCount = 0;
+    const transport: ResponsesTransport = {
+      id: 'codex_subscription',
+      capabilities: {
+        responseState: 'stateless',
+        terminalOutput: 'canonical',
+        usageLookup: false,
+        responseDelete: false,
+        encryptedReasoning: false,
+        omitToolConfigurationWhenEmpty: false,
+        parallelToolCalls: true,
+        maxOutputTokens: true,
+      },
+      computePromptCacheKey: () => undefined,
+      execute: async () => {
+        executeCount += 1;
+        if (executeCount === 1) {
+          return {
+            response: responseStreamError([
+              sse('response.created', { type: 'response.created', sequence_number: 1, response: { id: 'resp_ws' } }),
+              sse('response.reasoning_summary_text.delta', {
+                type: 'response.reasoning_summary_text.delta', sequence_number: 2, delta: '未提交思考',
+              }),
+            ], socketError),
+            wireMode: 'websocket_full',
+          };
+        }
+        return {
+          response: responseStream([
+            sse('response.created', { type: 'response.created', response: { id: 'resp_ws_ok' } }),
+            sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '恢复成功' }),
+            sse('response.completed', {
+              type: 'response.completed',
+              response: { id: 'resp_ws_ok', status: 'completed', usage: { input_tokens: 4, output_tokens: 2 } },
+            }),
+          ]),
+          wireMode: 'websocket_full',
+        };
+      },
+    };
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'unused', baseUrl: 'https://unused.invalid' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+      transport,
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'sensitive prompt must not persist' }], tools: [],
+    }, {
+      ...baseContext,
+      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered' },
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(events.some((event) => event.type === 'thinking_delta' && event.content === '未提交思考')).toBe(false);
+    expect(events.at(-1)).toMatchObject({ type: 'completed', content: '恢复成功' });
+    expect(diagnostics.filter((event) => event.type === 'finished')[0]).toMatchObject({
+      outcome: 'stream_error',
+      errorCode: 'MODEL_STREAM_READ_ERROR',
+      outputTransactionMode: 'terminal_buffered',
+      wireMode: 'websocket_full',
+      hasDeliveredOutput: false,
+      officialTerminalReceived: false,
+      webSocketErrorEmpty: true,
+      webSocketCloseCode: 1006,
+      webSocketCloseReason: 'proxy reset https://proxy.test/socket?[REDACTED] Cookie=[REDACTED] {"access_token":"[REDACTED]","authorization":"[REDACTED]"}',
+      webSocketRequestDurationMs: 206_853,
+      webSocketFrameCount: 2,
+      webSocketLastSequenceNumber: 2,
+      retryReason: 'transient_stream_interrupt',
+      willRetry: true,
+    });
+    expect(JSON.stringify(diagnostics)).not.toContain('sensitive prompt must not persist');
+    expect(JSON.stringify(diagnostics)).not.toContain('request-attempt-secret');
+    expect(JSON.stringify(diagnostics)).not.toContain('secret-query');
+    expect(JSON.stringify(diagnostics)).not.toContain('session-secret');
+    expect(JSON.stringify(diagnostics)).not.toContain('json-secret');
+    expect(JSON.stringify(diagnostics)).not.toContain('auth-secret');
+  });
+
+  it('已交付正文后流读取错误，Web 撤销草稿并在统一预算内恢复', async () => {
     vi.useFakeTimers();
     const streamError = Object.assign(new TypeError('terminated'), {
       cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }),
@@ -1454,7 +1694,7 @@ describe('ResponsesApiAdapter', () => {
       model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
     }, {
       ...baseContext,
-      channelContext: { channel: 'web', replaceableDrafts: true },
+      channelContext: { channel: 'web', outputTransactionMode: 'replaceable_draft' },
       recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
     }));
     await vi.runAllTimersAsync();
@@ -1481,33 +1721,6 @@ describe('ResponsesApiAdapter', () => {
       },
       { attempt: 2, outcome: 'completed' },
     ]);
-  });
-
-  it('草稿恢复机会已用过时，已交付正文的流读取错误不再重试', async () => {
-    const streamError = Object.assign(new TypeError('terminated'), {
-      cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }),
-    });
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStreamError([
-      sse('response.created', { type: 'response.created', response: { id: 'resp_draft_used' } }),
-      sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '部分正文' }),
-    ], streamError));
-    const diagnostics: ModelRequestDiagnostic[] = [];
-    const adapter = new ResponsesApiAdapter(
-      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
-      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
-    );
-
-    await expect(collect(adapter.stream({
-      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
-    }, {
-      ...baseContext,
-      channelContext: { channel: 'web', replaceableDrafts: true },
-      replaceableDraftRetryUsed: true,
-      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
-    }))).rejects.toThrow('terminated');
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(diagnostics.some((event) => event.type === 'finished' && event.willRetry)).toBe(false);
   });
 
   it.each([
@@ -1555,7 +1768,13 @@ describe('ResponsesApiAdapter', () => {
       errorCode: 'internal_server_error',
     });
     expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
-      { attempt: 1, outcome: 'provider_error', errorCode: 'internal_server_error' },
+      {
+        attempt: 1,
+        outcome: 'provider_error',
+        errorCode: 'internal_server_error',
+        outputTransactionMode: 'irreversible_stream',
+        retryBlockedReason: 'irreversible_output_delivered',
+      },
     ]);
     expect(diagnostics.some((event) => event.type === 'finished' && event.willRetry)).toBe(false);
   });
@@ -1591,12 +1810,18 @@ describe('ResponsesApiAdapter', () => {
       errorCode: 'server_error',
     });
     expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
-      { attempt: 1, outcome: 'provider_error', errorCode: 'server_error' },
+      {
+        attempt: 1,
+        outcome: 'provider_error',
+        errorCode: 'server_error',
+        outputTransactionMode: 'irreversible_stream',
+        retryBlockedReason: 'irreversible_output_delivered',
+      },
     ]);
     expect(diagnostics.some((event) => event.type === 'finished' && event.willRetry)).toBe(false);
   });
 
-  it('普通重试额度耗尽后，Web 仍用专属机会重置部分草稿并沿用同一 modelRequestId 恢复', async () => {
+  it('Web 可撤销草稿与发流前故障共享统一预算，预算耗尽后不额外重放', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -1643,31 +1868,38 @@ describe('ResponsesApiAdapter', () => {
       model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
     }, {
       ...baseContext,
-      channelContext: { channel: 'web', replaceableDrafts: true },
+      channelContext: { channel: 'web', outputTransactionMode: 'replaceable_draft' },
       recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
     }));
     await vi.runAllTimersAsync();
     const events = await resultPromise;
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(events).toEqual([
       { type: 'thinking_delta', content: '失败轮思考' },
       { type: 'text_delta', content: '失败轮正文' },
-      { type: 'draft_reset', attempt: 2 },
-      { type: 'text_delta', content: '最终成功' },
       expect.objectContaining({
         type: 'completed',
-        content: '最终成功',
-        terminalStatus: 'completed',
-        modelRequestAttemptCount: 3,
+        content: '失败轮正文',
+        terminalStatus: 'failed',
+        modelRequestAttemptCount: 2,
       }),
     ]);
     const started = diagnostics.filter((event) => event.type === 'started');
     expect(new Set(started.map((event) => event.modelRequestId)).size).toBe(1);
     expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
-      { attempt: 1, outcome: 'http_error', errorCode: 'internal_server_error', willRetry: true },
-      { attempt: 2, errorCode: 'internal_server_error', willRetry: true },
-      { attempt: 3, outcome: 'completed' },
+      {
+        attempt: 1,
+        outcome: 'http_error',
+        errorCode: 'internal_server_error',
+        willRetry: true,
+        retryReason: 'transient_http_error',
+      },
+      {
+        attempt: 2,
+        errorCode: 'internal_server_error',
+        retryBlockedReason: 'retry_budget_exhausted',
+      },
     ]);
   });
 
@@ -1691,7 +1923,7 @@ describe('ResponsesApiAdapter', () => {
       model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
     }, {
       ...baseContext,
-      channelContext: { channel: 'web', replaceableDrafts: true },
+      channelContext: { channel: 'web', outputTransactionMode: 'replaceable_draft' },
     }));
     await vi.runAllTimersAsync();
     const events = await resultPromise;
@@ -1759,7 +1991,7 @@ describe('ResponsesApiAdapter', () => {
       model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
     }, {
       ...baseContext,
-      channelContext: { channel: 'cron' },
+      channelContext: { channel: 'cron', outputTransactionMode: 'terminal_buffered' },
       recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
     }));
     await vi.runAllTimersAsync();
@@ -1854,6 +2086,81 @@ describe('ResponsesApiAdapter', () => {
       }, baseContext))).rejects.toThrow('MODEL_CANONICAL_OUTPUT_INVALID');
     },
   );
+
+  it('明确的 transport 鉴权配置错误不重试', async () => {
+    const execute = vi.fn(async () => {
+      throw new Error('Codex subscription 尚未完成账号授权');
+    });
+    const transport: ResponsesTransport = {
+      id: 'codex_subscription',
+      capabilities: {
+        responseState: 'stateless',
+        terminalOutput: 'canonical',
+        usageLookup: false,
+        responseDelete: false,
+        encryptedReasoning: false,
+        omitToolConfigurationWhenEmpty: false,
+        parallelToolCalls: true,
+        maxOutputTokens: true,
+      },
+      computePromptCacheKey: () => undefined,
+      execute,
+    };
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'unused', baseUrl: 'https://unused.invalid' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500, 1_000] },
+      transport,
+    );
+
+    await expect(collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered' },
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }))).rejects.toThrow('尚未完成账号授权');
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([{
+      attempt: 1,
+      outcome: 'provider_error',
+      errorCode: 'MODEL_TRANSPORT_PERMANENT_ERROR',
+      retryBlockedReason: 'permanent_error',
+    }]);
+  });
+
+  it('Abort 不进入统一重试，诊断明确标记 aborted', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      controller.abort(new DOMException('cancelled by user', 'AbortError'));
+      throw controller.signal.reason;
+    });
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500, 1_000] },
+    );
+
+    await expect(collect(adapter.stream({
+      model: 'gpt-5.6-sol',
+      messages: [{ role: 'user', content: 'go' }],
+      tools: [],
+      signal: controller.signal,
+    }, {
+      ...baseContext,
+      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered' },
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }))).rejects.toThrow('cancelled by user');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([{
+      attempt: 1,
+      outcome: 'aborted',
+      errorCode: 'MODEL_REQUEST_ABORTED',
+      retryBlockedReason: 'aborted',
+    }]);
+  });
 
   it('消费者提前关闭流时补写 finished 诊断', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
@@ -2154,6 +2461,7 @@ describe('ResponsesApiAdapter', () => {
         message: 'Your account [2100000000] has exhausted its free trial quota for the [kimi-k3] model',
       },
     }), { status: 429 }));
+    const diagnostics: ModelRequestDiagnostic[] = [];
     const adapter = new ResponsesApiAdapter(
       { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
       { protocol: 'responses', preStreamRetryDelaysMs: [500] },
@@ -2161,8 +2469,16 @@ describe('ResponsesApiAdapter', () => {
 
     await expect(collect(adapter.stream({
       model: 'kimi-k3', messages: [{ role: 'user', content: 'go' }], tools: [],
-    }, baseContext))).rejects.toThrow('HTTP 429');
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }))).rejects.toThrow('HTTP 429');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([{
+      attempt: 1,
+      errorCode: 'QuotaExceeded',
+      retryBlockedReason: 'permanent_error',
+    }]);
   });
 
   it('显式配置后对发流前 EOF 快三次、慢两次，共重试五次', async () => {
@@ -2286,7 +2602,7 @@ describe('ResponsesApiAdapter', () => {
 
     await expect(collect(adapter.stream({
       model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
-    }, baseContext))).rejects.toThrow('invalid provider configuration');
+    }, baseContext))).rejects.toThrow('Responses API HTTP 500');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -2782,7 +3098,7 @@ describe('ResponsesApiAdapter tool-call-repair', () => {
     ]));
     const events = await collect(adapter('repair').stream(request(), {
       ...repairContext,
-      channelContext: { channel: 'cron' as const },
+      channelContext: { channel: 'cron' as const, outputTransactionMode: 'terminal_buffered' as const },
     }));
     expect(events).toEqual([
       { type: 'thinking_delta', content: 'thinking' },

@@ -32,7 +32,7 @@ import type {
   RunContext,
   RuntimeConnection,
 } from './types.js';
-import type { ModelProviderOptions } from '../types/index.js';
+import type { ModelOutputTransactionMode, ModelProviderOptions } from '../types/index.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { createLogger } from '../utils/logger.js';
 import {
@@ -41,12 +41,15 @@ import {
   detectMojibake,
   unescapeDeepseekArguments,
 } from './agentPlanDefense.js';
+import { resolveModelOutputTransactionMode } from './modelOutputTransaction.js';
 import { modelSupportsImage, readImagePartOrPlaceholder, toTextOnlyContent } from './imageAttachments.js';
 import { ToolCallRepairStreamGate, toolCallRepairProviderLabel } from './toolCallRepair.js';
 import { OpenAICompatibleResponsesTransport } from './responses/openAICompatibleResponsesTransport.js';
-import type {
-  ProviderContinuationBinding,
-  ResponsesTransport,
+import {
+  ResponsesTransportStreamError,
+  type ProviderContinuationBinding,
+  type ResponsesTransport,
+  type ResponsesTransportStreamDiagnostic,
 } from './responses/responsesTransport.js';
 
 function computeRequestInputPrefixHash(body: Record<string, unknown>): string {
@@ -90,9 +93,6 @@ const MAX_SSE_BUFFER_BYTES = 2 * 1024 * 1024;
 
 /** usage 兜底查询不能拖住已经完成的模型轮次。 */
 const USAGE_FETCH_TIMEOUT_MS = 2_000;
-
-/** 普通瞬时重试耗尽后，Web 可撤销草稿仍保留一次独立恢复机会。 */
-const WEB_REPLACEABLE_DRAFT_RETRY_DELAY_MS = 500;
 
 /**
  * 流传输中断类错误：官方终态从未出现，toolCalls 不会交付上层、工具必然未执行，
@@ -172,7 +172,6 @@ interface ResponsesRetryState {
   modelRequestId: string;
   lastAttempt: number;
   transientRetryIndex: number;
-  replaceableDraftRetryUsed: boolean;
   maxAttempts: number;
   body: Record<string, unknown>;
   usePrevious: boolean;
@@ -338,6 +337,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
 
     const requestSignal = request.signal ?? context.signal;
     const modelRequestId = retryState?.modelRequestId ?? randomUUID();
+    const outputTransactionMode = resolveModelOutputTransactionMode(context.channelContext);
     // 默认仍不重试：网络错误/5xx 不能证明上游未接单、未计费。只有模型组显式配置
     // pre_stream_retry_delays_ms 时才启用有限重试。流内额外覆盖 provider 官方
     // 瞬时服务端错误和零输出的 reader 异常；三类故障共用同一份次数与退避预算，
@@ -371,6 +371,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         attempt,
         model: request.model,
         responseMode,
+        outputTransactionMode,
         maxOutputTokens,
         requestBodyBytes,
         toolsCount: request.tools.length,
@@ -391,16 +392,35 @@ export class ResponsesApiAdapter implements ModelAdapter {
         wireRequestBodyBytes = executed.wireRequestBodyBytes;
         wireFallbackReason = executed.wireFallbackReason;
         responseContinuationBinding = executed.continuationBinding ?? responseContinuationBinding;
+        attemptDiagnostics.observeWireMode(executed.wireMode);
         if (executed.continuationReplayReset) continuationReplayReset = true;
       } catch (err) {
         const aborted = requestSignal?.aborted === true;
-        const retryDelayMs = aborted ? undefined : retryDelaysMs[transientRetryIndex];
+        const permanentTransportError = !aborted && isPermanentTransportError(err);
+        const retryDelayMs = aborted || permanentTransportError
+          ? undefined
+          : retryDelaysMs[transientRetryIndex];
         const willRetry = retryDelayMs !== undefined;
-        await attemptDiagnostics.finished(aborted ? 'aborted' : 'network_error', {
-          errorCode: aborted ? 'MODEL_REQUEST_ABORTED' : 'MODEL_NETWORK_ERROR',
-          errorMessage: compactDiagnosticError(err),
-          ...(willRetry ? { willRetry: true } : {}),
-        });
+        await attemptDiagnostics.finished(
+          aborted ? 'aborted' : permanentTransportError ? 'provider_error' : 'network_error',
+          {
+            errorCode: aborted
+              ? 'MODEL_REQUEST_ABORTED'
+              : permanentTransportError
+                ? 'MODEL_TRANSPORT_PERMANENT_ERROR'
+                : 'MODEL_NETWORK_ERROR',
+            errorMessage: compactDiagnosticError(err),
+            ...(willRetry
+              ? { willRetry: true, retryReason: 'transient_network_error' }
+              : {
+                retryBlockedReason: aborted
+                  ? 'aborted'
+                  : permanentTransportError
+                    ? 'permanent_error'
+                    : 'retry_budget_exhausted',
+              }),
+          },
+        );
         if (!willRetry) throw err;
         transientRetryIndex += 1;
         logger.warn(
@@ -429,9 +449,10 @@ export class ResponsesApiAdapter implements ModelAdapter {
           errorCode: 'PREVIOUS_RESPONSE_NOT_FOUND',
           errorMessage: `Responses API HTTP ${attemptResponse.status}: previous_response_id not found`,
           willRetry: true,
+          retryReason: 'previous_response_not_found',
         });
         logger.warn(
-          `Responses API previous_response_id 不被上游认可（跨模型切换或已过期），降级全量重试：${compactDiagnosticMessage(text)}`,
+          `Responses API previous_response_id 不被上游认可（跨模型切换或已过期），降级全量重试 status=${attemptResponse.status}`,
         );
         responseMode = 'fallback_full';
         usePrevious = false;
@@ -454,6 +475,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
             errorCode: providerError.code ?? 'INVALID_ENCRYPTED_CONTENT',
             errorMessage: 'Codex rejected prior encrypted reasoning; retrying once without opaque items',
             willRetry: true,
+            retryReason: 'invalid_encrypted_content',
           });
           body = stripped.body;
           continuationReplayReset = true;
@@ -461,31 +483,42 @@ export class ResponsesApiAdapter implements ModelAdapter {
           continue;
         }
       }
-      const retryDelayMs = isRetryablePreStreamHttpError(
+      const retryableHttp = isRetryablePreStreamHttpError(
         attemptResponse.status,
         providerError.code,
         providerError.message ?? text,
-      )
-        ? retryDelaysMs[transientRetryIndex]
-        : undefined;
+      );
+      const providerDiagnosticMessage = providerErrorDiagnosticMessage(
+        attemptResponse.status,
+        providerError.code,
+      );
+      const retryDelayMs = retryableHttp ? retryDelaysMs[transientRetryIndex] : undefined;
       const willRetry = retryDelayMs !== undefined && !requestSignal?.aborted;
       await attemptDiagnostics.finished('http_error', {
         errorCode: providerError.code ?? `HTTP_${attemptResponse.status}`,
-        errorMessage: providerError.message ?? `Responses API HTTP ${attemptResponse.status}`,
-        ...(willRetry ? { willRetry: true } : {}),
+        errorMessage: providerDiagnosticMessage,
+        ...(willRetry
+          ? { willRetry: true, retryReason: 'transient_http_error' }
+          : {
+            retryBlockedReason: requestSignal?.aborted
+              ? 'aborted'
+              : retryableHttp
+                ? 'retry_budget_exhausted'
+                : 'permanent_error',
+          }),
       });
       if (willRetry) {
         transientRetryIndex += 1;
         logger.warn(
           `Responses API HTTP ${attemptResponse.status} 发流前瞬时故障，${retryDelayMs}ms 后重试 `
           + `(${transientRetryIndex}/${retryDelaysMs.length})：`
-          + `${providerError.message ?? compactDiagnosticMessage(text)}`,
+          + `${providerDiagnosticMessage}`,
         );
         await waitForRetry(retryDelayMs, requestSignal);
         continue;
       }
       throw new ModelProviderError(
-        `Responses API HTTP ${attemptResponse.status}: ${providerError.message ?? 'upstream request failed'}`,
+        providerDiagnosticMessage,
         attemptResponse.status,
         providerError.code ?? `HTTP_${attemptResponse.status}`,
         modelRequestId,
@@ -525,12 +558,9 @@ export class ResponsesApiAdapter implements ModelAdapter {
     let providerErrorMessage: string | undefined;
     let refusal = '';
     let toolSearchResults: ModelToolSearchResult[] = [];
-    // Cron 是无人值守通道，不需要把未完成 attempt 的正文/思考实时暴露给上层。
-    // 先缓冲到官方 completed 终态，可在流内瞬时故障时安全丢弃并重试。Web
-    // 只有在客户端明确支持可撤销草稿时，才允许已交付输出后发 reset 并重试。
-    const commitOutputOnTerminal = context.channelContext.channel === 'cron';
-    const canResetDeliveredOutput = context.channelContext.channel === 'web'
-      && context.channelContext.replaceableDrafts === true;
+    // 通道只声明输出事务能力；attempt 的提交/丢弃/撤销和重试由 Runtime 统一执行。
+    const commitOutputOnTerminal = outputTransactionMode === 'terminal_buffered';
+    const canResetDeliveredOutput = outputTransactionMode === 'replaceable_draft';
     const bufferedOutputEvents: Array<{
       type: 'text_delta' | 'thinking_delta';
       content: string;
@@ -578,7 +608,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
       delayMs: number;
       errorCode: string;
       errorMessage: string;
-      useDraftRetry: boolean;
+      resetDeliveredDraft: boolean;
     } | undefined;
 
     try {
@@ -813,7 +843,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
               if (typeof respObj?.id === 'string') responseId = respObj.id;
               actualModel = compactDiagnosticToken(respObj?.model, 200) ?? actualModel;
               if (respObj?.usage) usage = normalizeResponsesUsage(respObj.usage);
-              providerErrorCode = compactDiagnosticToken(respObj?.error?.code, 200) ?? 'MODEL_RESPONSE_FAILED';
+              providerErrorCode = compactDiagnosticCode(respObj?.error?.code) ?? 'MODEL_RESPONSE_FAILED';
               providerErrorMessage = compactDiagnosticMessage(respObj?.error?.message ?? 'Responses API response failed');
               activeAttempt.observeTerminal(eventType, terminalStatus, responseId);
               await activeAttempt.checkpoint('terminal_received', {
@@ -845,7 +875,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
               assertSingleTerminal(terminalEventType, eventType);
               terminalEventType = eventType;
               terminalStatus = 'failed';
-              providerErrorCode = compactDiagnosticToken(event.code ?? event.error?.code, 200)
+              providerErrorCode = compactDiagnosticCode(event.code ?? event.error?.code)
                 ?? 'MODEL_PROVIDER_ERROR';
               providerErrorMessage = compactDiagnosticMessage(
                 event.message ?? event.error?.message ?? 'Responses API stream error',
@@ -902,26 +932,32 @@ export class ResponsesApiAdapter implements ModelAdapter {
       const classified = classifyStreamError(err, requestSignal);
       const transportInterrupted = STREAM_TRANSPORT_INTERRUPT_CODES.has(classified.code)
         && !requestSignal?.aborted;
-      const regularRetryDelayMs = transportInterrupted && !hasDeliveredOutput
+      const replaySafe = !hasDeliveredOutput
+        || commitOutputOnTerminal
+        || canResetDeliveredOutput;
+      const retryDelayMs = transportInterrupted && replaySafe
         ? retryDelaysMs[transientRetryIndex]
         : undefined;
-      // 已交付部分正文/思考时不能原样重发（前端会出现重复输出）；
-      // 复用 Web 可撤销草稿的同一逻辑请求一次性恢复。
-      const useDraftRetry = regularRetryDelayMs === undefined
-        && transportInterrupted
-        && hasDeliveredOutput
-        && canResetDeliveredOutput
-        && retryState?.replaceableDraftRetryUsed !== true
-        && context.replaceableDraftRetryUsed !== true;
-      const retryDelayMs = regularRetryDelayMs
-        ?? (useDraftRetry ? WEB_REPLACEABLE_DRAFT_RETRY_DELAY_MS : undefined);
       const willRetry = retryDelayMs !== undefined;
+      const resetDeliveredDraft = willRetry && hasDeliveredOutput && canResetDeliveredOutput;
+      const retryBlockedReason = requestSignal?.aborted
+        ? 'aborted'
+        : !transportInterrupted
+          ? 'permanent_error'
+          : !replaySafe
+            ? 'irreversible_output_delivered'
+            : 'retry_budget_exhausted';
       await reader.cancel().catch(() => undefined);
       await activeAttempt.finished(classified.outcome, {
         errorCode: classified.code,
         errorMessage: classified.message,
         usage,
-        ...(willRetry ? { willRetry: true } : {}),
+        hasDeliveredOutput,
+        officialTerminalReceived: false,
+        ...transportDiagnosticPatch(classified.transportDiagnostic),
+        ...(willRetry
+          ? { willRetry: true, retryReason: 'transient_stream_interrupt' }
+          : { retryBlockedReason }),
       });
       streamReadSettled = true;
       if (!willRetry) {
@@ -941,7 +977,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         delayMs: retryDelayMs,
         errorCode: classified.code,
         errorMessage: classified.message,
-        useDraftRetry,
+        resetDeliveredDraft,
       };
     } finally {
       // async generator 的消费者可能在任一 delta 后 return()；该路径不会进入 catch。
@@ -958,16 +994,14 @@ export class ResponsesApiAdapter implements ModelAdapter {
     }
 
     if (pendingStreamReadRetry) {
-      if (!pendingStreamReadRetry.useDraftRetry) transientRetryIndex += 1;
+      transientRetryIndex += 1;
       logger.warn(
         `Responses API 流传输中断 ${pendingStreamReadRetry.errorCode}`
-        + `${pendingStreamReadRetry.useDraftRetry ? '，撤销 Web 草稿后 ' : ' 且未交付输出，'}`
+        + `${pendingStreamReadRetry.resetDeliveredDraft ? '，撤销已交付草稿后，' : '，丢弃未提交 attempt 后，'}`
         + `${pendingStreamReadRetry.delayMs}ms 后重试 `
-        + `${pendingStreamReadRetry.useDraftRetry
-          ? '(Web 草稿专用 1/1)'
-          : `(${transientRetryIndex}/${retryDelaysMs.length})`}：${pendingStreamReadRetry.errorMessage}`,
+        + `(${transientRetryIndex}/${retryDelaysMs.length})：${pendingStreamReadRetry.errorMessage}`,
       );
-      if (pendingStreamReadRetry.useDraftRetry) {
+      if (pendingStreamReadRetry.resetDeliveredDraft) {
         yield { type: 'draft_reset', attempt: modelRequestAttemptCount };
       }
       await waitForRetry(pendingStreamReadRetry.delayMs, requestSignal);
@@ -975,11 +1009,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         modelRequestId,
         lastAttempt: modelRequestAttemptCount,
         transientRetryIndex,
-        replaceableDraftRetryUsed: pendingStreamReadRetry.useDraftRetry
-          || retryState?.replaceableDraftRetryUsed === true,
-        maxAttempts: pendingStreamReadRetry.useDraftRetry
-          ? Math.max(maxAttempts, modelRequestAttemptCount + 1)
-          : maxAttempts,
+        maxAttempts,
         body,
         usePrevious,
         responseMode,
@@ -1010,51 +1040,40 @@ export class ResponsesApiAdapter implements ModelAdapter {
         : terminalStatus === 'incomplete'
           ? 'MODEL_RESPONSE_INCOMPLETE'
           : providerErrorCode ?? 'MODEL_RESPONSE_FAILED';
+      const providerClassificationMessage = providerErrorMessage ?? 'Responses API response failed';
       const errorMessage = refusal
         ? 'Responses API returned a refusal'
         : terminalStatus === 'incomplete'
           ? `Responses API response incomplete: reason=${incompleteReason ?? 'unknown'}`
-          : providerErrorMessage ?? 'Responses API response failed';
-      const retryableTerminal = isRetryableStreamTerminalError(
+          : providerErrorDiagnosticMessage(response.status, errorCode);
+      const transientTerminal = isRetryableStreamTerminalError(
         terminalEventType,
         terminalStatus,
         errorCode,
-        errorMessage,
-        hasDeliveredOutput,
-        canResetDeliveredOutput,
-      )
-        && !requestSignal?.aborted
-        && !(hasDeliveredOutput && (
-          retryState?.replaceableDraftRetryUsed === true
-          || context.replaceableDraftRetryUsed === true
-        ));
-      const regularRetryDelayMs = retryableTerminal
-        ? retryDelaysMs[transientRetryIndex]
-        : undefined;
-      const useReplaceableDraftRetry = retryableTerminal
-        && hasDeliveredOutput
-        && retryState?.replaceableDraftRetryUsed !== true
-        && regularRetryDelayMs === undefined;
-      const retryDelayMs = regularRetryDelayMs
-        ?? (useReplaceableDraftRetry ? WEB_REPLACEABLE_DRAFT_RETRY_DELAY_MS : undefined);
+        providerClassificationMessage,
+      );
+      const replaySafe = !hasDeliveredOutput
+        || commitOutputOnTerminal
+        || canResetDeliveredOutput;
+      const retryableTerminal = transientTerminal && !requestSignal?.aborted && replaySafe;
+      const retryDelayMs = retryableTerminal ? retryDelaysMs[transientRetryIndex] : undefined;
       if (retryDelayMs !== undefined) {
         await activeAttempt.finished(outcome, {
           errorCode,
           errorMessage,
           usage,
+          hasDeliveredOutput,
+          officialTerminalReceived: true,
           willRetry: true,
+          retryReason: 'transient_provider_error',
         });
-        if (regularRetryDelayMs !== undefined) {
-          transientRetryIndex += 1;
-        }
+        transientRetryIndex += 1;
         logger.warn(
           `Responses API 流内 ${terminalEventType} ${errorCode}`
-          + `${hasDeliveredOutput ? '，撤销 Web 草稿后，' : ' 且未交付输出，'}${retryDelayMs}ms 后重试 `
-          + `${useReplaceableDraftRetry
-            ? '(Web 草稿专用 1/1)'
-            : `(${transientRetryIndex}/${retryDelaysMs.length})`}：${errorMessage}`,
+          + `${hasDeliveredOutput ? '，撤销已交付草稿后，' : '，丢弃未提交 attempt 后，'}`
+          + `${retryDelayMs}ms 后重试 (${transientRetryIndex}/${retryDelaysMs.length})：${errorMessage}`,
         );
-        if (hasDeliveredOutput) {
+        if (hasDeliveredOutput && canResetDeliveredOutput) {
           yield { type: 'draft_reset', attempt: modelRequestAttemptCount };
         }
         await waitForRetry(retryDelayMs, requestSignal);
@@ -1062,11 +1081,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
           modelRequestId,
           lastAttempt: modelRequestAttemptCount,
           transientRetryIndex,
-          replaceableDraftRetryUsed: hasDeliveredOutput
-            || retryState?.replaceableDraftRetryUsed === true,
-          maxAttempts: useReplaceableDraftRetry
-            ? Math.max(maxAttempts, modelRequestAttemptCount + 1)
-            : maxAttempts,
+          maxAttempts,
           body,
           usePrevious,
           responseMode,
@@ -1074,7 +1089,20 @@ export class ResponsesApiAdapter implements ModelAdapter {
         });
         return;
       }
-      await activeAttempt.finished(outcome, { errorCode, errorMessage, usage });
+      await activeAttempt.finished(outcome, {
+        errorCode,
+        errorMessage,
+        usage,
+        hasDeliveredOutput,
+        officialTerminalReceived: true,
+        retryBlockedReason: requestSignal?.aborted
+          ? 'aborted'
+          : !transientTerminal
+            ? 'permanent_error'
+            : !replaySafe
+              ? 'irreversible_output_delivered'
+              : 'retry_budget_exhausted',
+      });
       yield {
         type: 'completed',
         content,
@@ -1109,7 +1137,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
     // P1.1：stream 末尾 chunk usage 永远 null（RFC §2.4），用 GET /responses/{id} 兜底
     if (!usage && responseId && this.transport.capabilities.usageLookup) {
       const fetched = await this.fetchUsageById(responseId, requestSignal).catch((err) => {
-        logger.warn(`fetchUsageById 失败 responseId=${responseId.slice(0, 12)}: ${err instanceof Error ? err.message : String(err)}`);
+        logger.warn(`fetchUsageById 失败 responseId=${responseId.slice(0, 12)}: ${compactDiagnosticError(err)}`);
         return undefined;
       });
       if (fetched) usage = fetched;
@@ -1185,7 +1213,11 @@ export class ResponsesApiAdapter implements ModelAdapter {
       } satisfies ModelProviderContinuation
       : undefined;
 
-    await activeAttempt.finished('completed', { usage });
+    await activeAttempt.finished('completed', {
+      usage,
+      hasDeliveredOutput,
+      officialTerminalReceived: true,
+    });
 
     logger.info(
       `Responses 请求完成 mode=${responseMode} attempts=${modelRequestAttemptCount} `
@@ -1550,6 +1582,7 @@ class ResponsesAttemptDiagnostics {
   private httpStatus: number | undefined;
   private contentType: string | undefined;
   private upstreamRequestId: string | undefined;
+  private wireMode: ModelWireMode | undefined;
   private responseBytes = 0;
   private frameCount = 0;
   private readonly eventTypeCounts: Record<string, number> = {};
@@ -1570,6 +1603,7 @@ class ResponsesAttemptDiagnostics {
       attempt: number;
       model: string;
       responseMode: ModelResponseMode;
+      outputTransactionMode: ModelOutputTransactionMode;
       maxOutputTokens: number;
       requestBodyBytes: number;
       toolsCount: number;
@@ -1587,6 +1621,7 @@ class ResponsesAttemptDiagnostics {
       model: this.init.model,
       protocol: 'responses',
       responseMode: this.init.responseMode,
+      outputTransactionMode: this.init.outputTransactionMode,
       maxOutputTokens: this.init.maxOutputTokens,
       requestBodyBytes: this.init.requestBodyBytes,
       toolsCount: this.init.toolsCount,
@@ -1602,6 +1637,10 @@ class ResponsesAttemptDiagnostics {
       ?? response.headers.get('request-id')
       ?? response.headers.get('openai-request-id'),
     );
+  }
+
+  observeWireMode(wireMode: ModelWireMode | undefined): void {
+    this.wireMode = wireMode;
   }
 
   observeBytes(bytes: number): void {
@@ -1695,6 +1734,8 @@ class ResponsesAttemptDiagnostics {
       ...(this.httpStatus !== undefined ? { httpStatus: this.httpStatus } : {}),
       ...(this.contentType ? { contentType: this.contentType } : {}),
       ...(this.upstreamRequestId ? { upstreamRequestId: this.upstreamRequestId } : {}),
+      outputTransactionMode: this.init.outputTransactionMode,
+      ...(this.wireMode ? { wireMode: this.wireMode } : {}),
       ...(this.responseIdHash ? { responseIdHash: this.responseIdHash } : {}),
       ...(this.responseBytes > 0 ? { responseBytes: this.responseBytes } : {}),
       ...(this.frameCount > 0 ? { frameCount: this.frameCount } : {}),
@@ -1958,7 +1999,12 @@ function reconcileToolCallSnapshot(
 function classifyStreamError(
   err: unknown,
   signal: AbortSignal | undefined,
-): { outcome: FinishedOutcome; code: string; message: string } {
+): {
+  outcome: FinishedOutcome;
+  code: string;
+  message: string;
+  transportDiagnostic?: ResponsesTransportStreamDiagnostic;
+} {
   if (signal?.aborted) {
     return { outcome: 'aborted', code: 'MODEL_REQUEST_ABORTED', message: 'Model request was aborted' };
   }
@@ -1969,7 +2015,37 @@ function classifyStreamError(
     outcome: 'stream_error',
     code: 'MODEL_STREAM_READ_ERROR',
     message: compactDiagnosticError(err),
+    ...(err instanceof ResponsesTransportStreamError ? { transportDiagnostic: err.diagnostic } : {}),
   };
+}
+
+function transportDiagnosticPatch(
+  diagnostic: ResponsesTransportStreamDiagnostic | undefined,
+): FinishedPatch {
+  if (!diagnostic) return {};
+  return {
+    wireMode: diagnostic.wireMode,
+    webSocketErrorEmpty: diagnostic.webSocketErrorEmpty,
+    ...(diagnostic.closeCode !== undefined ? { webSocketCloseCode: diagnostic.closeCode } : {}),
+    ...(diagnostic.closeReason
+      ? { webSocketCloseReason: compactDiagnosticMessage(diagnostic.closeReason) }
+      : {}),
+    webSocketRequestDurationMs: diagnostic.requestDurationMs,
+    webSocketFrameCount: diagnostic.frameCount,
+    ...(diagnostic.lastSequenceNumber !== undefined
+      ? { webSocketLastSequenceNumber: diagnostic.lastSequenceNumber }
+      : {}),
+    officialTerminalReceived: diagnostic.officialTerminalReceived,
+  };
+}
+
+function providerErrorDiagnosticMessage(status: number, code: string | undefined): string {
+  const candidate = compactDiagnosticToken(code, 120);
+  const safeCode = candidate && /^[A-Za-z0-9_.:-]+$/.test(candidate) ? candidate : undefined;
+  if (safeCode?.toLowerCase() === 'invalid_prompt') {
+    return `Responses API HTTP ${status}: Request blocked by provider`;
+  }
+  return `Responses API HTTP ${status}${safeCode ? ` (${safeCode})` : ''}`;
 }
 
 function extractProviderError(text: string): { code?: string; message?: string } {
@@ -2021,6 +2097,23 @@ function isQuotaExhausted(code: string | undefined, message: string): boolean {
     .test(`${code ?? ''} ${message}`);
 }
 
+function isPermanentTransportError(error: unknown): boolean {
+  if (error instanceof ModelProviderError) {
+    return error.status === 400 || error.status === 401 || error.status === 403 || error.status === 404;
+  }
+  const message = compactDiagnosticMessage(error);
+  if (/Codex subscription (?:transport 未启用|尚未完成账号授权)/i.test(message)) return true;
+  if (/Codex (?:OAuth )?(?:凭据(?:格式损坏|字段不完整)|token 缺少|Responses endpoint|originator)/i.test(message)) {
+    return true;
+  }
+  const oauthHttpStatus = /Codex OAuth .*HTTP (\d{3})/i.exec(message)?.[1];
+  if (oauthHttpStatus) {
+    const status = Number(oauthHttpStatus);
+    return status >= 400 && status < 500 && status !== 408 && status !== 409 && status !== 429;
+  }
+  return false;
+}
+
 function isRetryablePreStreamHttpError(
   status: number,
   code: string | undefined,
@@ -2040,10 +2133,8 @@ function isRetryableStreamTerminalError(
   terminalStatus: ModelTerminalStatus | undefined,
   errorCode: string,
   errorMessage: string,
-  hasDeliveredOutput: boolean,
-  canResetDeliveredOutput: boolean,
 ): boolean {
-  if ((hasDeliveredOutput && !canResetDeliveredOutput) || terminalStatus !== 'failed') return false;
+  if (terminalStatus !== 'failed') return false;
   if (!['error', 'response.error', 'response.failed'].includes(terminalEventType ?? '')) return false;
   const normalizedCode = errorCode.trim().toLowerCase();
   if (['internal_server_error', 'server_error', 'server_is_overloaded'].includes(normalizedCode)) return true;
@@ -2074,9 +2165,12 @@ function abortReason(signal: AbortSignal): Error {
 function compactDiagnosticMessage(value: unknown): string {
   const raw = value instanceof Error ? value.message : String(value ?? '');
   return raw
+    .replace(/((?:"|')?(?:api[_-]?key|authorization|cookie|set-cookie|access_token|refresh_token|id_token)(?:"|')?\s*:\s*)(?:"[^"]*"|'[^']*')/gi, '$1"[REDACTED]"')
     .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, 'sk-[REDACTED]')
-    .replace(/(api[_-]?key\s*[=:]\s*)\S+/gi, '$1[REDACTED]')
+    .replace(/((?:api[_-]?key|authorization|cookie|set-cookie|access_token|refresh_token|id_token)\s*[=:]\s*)[^\s,;]+/gi, '$1[REDACTED]')
+    .replace(/\b(https?:\/\/)(?:[^@\s/]+@)?([^?\s#]+)\?[^\s#]*/gi, '$1$2?[REDACTED]')
+    .replace(/\b(https?:\/\/)[^@\s/]+@/gi, '$1[REDACTED]@')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 500);
@@ -2115,10 +2209,15 @@ function compactDiagnosticToken(value: unknown, maxLength: number): string | und
   return compact || undefined;
 }
 
+function compactDiagnosticCode(value: unknown): string | undefined {
+  const candidate = compactDiagnosticToken(value, 120);
+  return candidate && /^[A-Za-z0-9_.:-]+$/.test(candidate) ? candidate : undefined;
+}
+
 function sanitizeFinishedPatch(patch: FinishedPatch): FinishedPatch {
   return {
     ...patch,
-    ...(patch.errorCode ? { errorCode: compactDiagnosticToken(patch.errorCode, 200) } : {}),
+    ...(patch.errorCode ? { errorCode: compactDiagnosticCode(patch.errorCode) ?? 'MODEL_PROVIDER_ERROR' } : {}),
     ...(patch.errorMessage ? { errorMessage: compactDiagnosticMessage(patch.errorMessage) } : {}),
   };
 }

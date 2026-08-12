@@ -17,7 +17,7 @@ const taskId = `shell-bg-ci-${runId}`;
 const leaseId = `ci-browser-${runId}`;
 const profileId = `ci-browser-${runId}`;
 const helperRelativePath = '.ci/acs_browser.py';
-const snapshotRelativePath = `.ci/${leaseId}-snapshot.txt`;
+const snapshotRelativePath = `assets/ci/${leaseId}-snapshot.txt`;
 const testPage = 'data:text/html,%3Ctitle%3EACS%20Lease%20E2E%3C/title%3E%3Ch1%3EACS%20Lease%20Ready%3C/h1%3E';
 const workspace = { id: workspaceId, sessionId, mountSubPath };
 let backgroundStarted = false;
@@ -51,7 +51,7 @@ try {
   // 独立 HTTP 工具调用之间显式等待，模拟模型结束一轮、后续轮次重新进入同一 Sandbox。
   await sleep(1_000);
   await shell(
-    `python3 ${quote(helperRelativePath)} snapshot --lease-id ${quote(leaseId)} --run-id ${quote(`ci-action-${runId}`)} --out ${quote(snapshotRelativePath)}`,
+    `mkdir -p assets/ci && python3 ${quote(helperRelativePath)} snapshot --lease-id ${quote(leaseId)} --run-id ${quote(`ci-action-${runId}`)} --out ${quote(snapshotRelativePath)}`,
   );
   const snapshot = await readFile(join(workspaceDir, snapshotRelativePath), 'utf8');
   assert(snapshot.includes('ACS Lease Ready'), 'cross-turn browser action did not observe the deterministic test page');

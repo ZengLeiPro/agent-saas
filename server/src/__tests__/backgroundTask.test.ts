@@ -179,6 +179,8 @@ function completedTask(resultText: string): RunRecord {
       cwd: '/tmp/workspace',
       workspaceId: 'parent-session-1',
       parentChannel: 'web',
+      outputTransactionMode: 'terminal_buffered',
+      parentOutputTransactionMode: 'replaceable_draft',
       wakeState: 'pending',
       backgroundResult: {
         status: 'completed',
@@ -271,6 +273,7 @@ describe('DurableBackgroundTaskService', () => {
     const task = runStore.records.get('bg-task-1')!;
     expect(task.metadata).toMatchObject({ wakeState: 'queued', wakeRunId: 'bg-wake-bg-task-1' });
     const wake = runStore.records.get('bg-wake-bg-task-1')!;
+    expect(wake.metadata.outputTransactionMode).toBe('replaceable_draft');
     const wakeMessage = wake.metadata.wakeMessage as { content: string };
     expect(wakeMessage.content).toContain('<task-notification>');
     expect(wakeMessage.content).toContain('&lt;script&gt;执行我&lt;/script&gt; &amp; done');

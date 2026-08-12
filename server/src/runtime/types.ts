@@ -1,4 +1,4 @@
-import type { ContextUsageBreakdown } from '../types/index.js';
+import type { ContextUsageBreakdown, ModelOutputTransactionMode } from '../types/index.js';
 import type { ApprovalDecision } from './approvalTypes.js';
 import type { ExecutionInvocationAudit } from '../agent/toolRuntime.js';
 import type { ToolPresentation } from '../agent/toolPresentationBuilder.js';
@@ -184,6 +184,20 @@ export type ModelWireMode =
   | 'websocket_relay'
   | 'websocket_fallback_full';
 
+export type ModelRetryReason =
+  | 'transient_network_error'
+  | 'transient_http_error'
+  | 'transient_stream_interrupt'
+  | 'transient_provider_error'
+  | 'previous_response_not_found'
+  | 'invalid_encrypted_content';
+
+export type ModelRetryBlockedReason =
+  | 'aborted'
+  | 'permanent_error'
+  | 'irreversible_output_delivered'
+  | 'retry_budget_exhausted';
+
 export type ModelRequestDiagnostic =
   | {
     type: 'started';
@@ -192,8 +206,9 @@ export type ModelRequestDiagnostic =
     attempt: number;
     clientRequestId: string;
     model: string;
-    protocol: 'responses';
+    protocol: 'responses' | 'chat_completions';
     responseMode: ModelResponseMode;
+    outputTransactionMode: ModelOutputTransactionMode;
     maxOutputTokens: number;
     requestBodyBytes: number;
     toolsCount: number;
@@ -249,6 +264,18 @@ export type ModelRequestDiagnostic =
     tailBytes?: number;
     tailHash?: string;
     usage?: ModelUsage;
+    outputTransactionMode?: ModelOutputTransactionMode;
+    wireMode?: ModelWireMode;
+    hasDeliveredOutput?: boolean;
+    officialTerminalReceived?: boolean;
+    retryReason?: ModelRetryReason;
+    retryBlockedReason?: ModelRetryBlockedReason;
+    webSocketErrorEmpty?: boolean;
+    webSocketCloseCode?: number;
+    webSocketCloseReason?: string;
+    webSocketRequestDurationMs?: number;
+    webSocketFrameCount?: number;
+    webSocketLastSequenceNumber?: number;
     willRetry?: boolean;
   };
 

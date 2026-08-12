@@ -11,6 +11,29 @@ export type ResponsesTransportId = 'openai_compatible' | 'codex_subscription';
 
 export type ResponsesWireMode = ModelWireMode;
 
+export interface ResponsesTransportStreamDiagnostic {
+  wireMode: ResponsesWireMode;
+  clientRequestId: string;
+  webSocketErrorEmpty: boolean;
+  closeCode?: number;
+  closeReason?: string;
+  requestDurationMs: number;
+  frameCount: number;
+  lastSequenceNumber?: number;
+  officialTerminalReceived: boolean;
+}
+
+export class ResponsesTransportStreamError extends Error {
+  constructor(
+    message: string,
+    readonly diagnostic: ResponsesTransportStreamDiagnostic,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'ResponsesTransportStreamError';
+  }
+}
+
 export interface ResponsesTransportCapabilities {
   responseState: 'stored' | 'stateless';
   terminalOutput: 'canonical' | 'stream_authoritative_when_missing';

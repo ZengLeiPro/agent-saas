@@ -73,6 +73,7 @@ import { pickSoleReadyTenantHandId, type HandStore } from './handStore.js';
 import type { RunStore } from './runStore.js';
 import { createLogger } from '../utils/logger.js';
 import { resolveRunTenantId, withDurableRunCancellation } from './runContextGovernance.js';
+import { supportsReplaceableDrafts } from './modelOutputTransaction.js';
 import { WebFetchCircuitOpenError } from '../agent/webToolProvider.js';
 import { isCompactCommand } from '../agent/prompt.js';
 import {
@@ -655,7 +656,7 @@ export class RawAgentLoop implements AgentLoop {
   }
 
   private async loadReplaceableDraftState(context: RunContext): Promise<ReplaceableDraftRunState | null> {
-    if (!context.channelContext.replaceableDrafts || !this.runStore) return null;
+    if (!supportsReplaceableDrafts(context.channelContext) || !this.runStore) return null;
     try {
       const run = await this.runStore.get(context.runId);
       return parseReplaceableDraftRunState(run?.metadata?.replaceableDraftState);
@@ -672,7 +673,7 @@ export class RawAgentLoop implements AgentLoop {
     context: RunContext,
     state: ReplaceableDraftRunState | null,
   ): Promise<void> {
-    if (!context.channelContext.replaceableDrafts || !this.runStore?.patchMetadata) return;
+    if (!supportsReplaceableDrafts(context.channelContext) || !this.runStore?.patchMetadata) return;
     try {
       await this.runStore.patchMetadata(context.runId, { replaceableDraftState: state });
     } catch (err) {
@@ -1191,7 +1192,7 @@ export class RawAgentLoop implements AgentLoop {
         let turnThinking = '';
         const turnFinalTextStart = finalText.length;
         let inlineCompactionAttempted = false;
-        const draftId = context.channelContext.replaceableDrafts ? randomUUID() : undefined;
+        const draftId = supportsReplaceableDrafts(context.channelContext) ? randomUUID() : undefined;
         const draftStartedAt = new Date().toISOString();
         let draftStatePersisted = false;
         const ensureDraftStatePersisted = async () => {
@@ -3366,7 +3367,7 @@ export class RawAgentLoop implements AgentLoop {
         let turnText = '';
         let turnThinking = '';
         const turnFinalTextStart = finalText.length;
-        const draftId = args.context.channelContext.replaceableDrafts ? randomUUID() : undefined;
+        const draftId = supportsReplaceableDrafts(args.context.channelContext) ? randomUUID() : undefined;
         const draftStartedAt = new Date().toISOString();
         let draftStatePersisted = false;
         const ensureDraftStatePersisted = async () => {

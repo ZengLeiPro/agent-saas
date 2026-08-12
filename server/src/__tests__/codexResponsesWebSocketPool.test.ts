@@ -13,6 +13,21 @@ class FakeWebSocket extends EventTarget {
   readyState = 1;
   binaryType: 'blob' | 'arraybuffer' = 'arraybuffer';
   readonly sent: string[] = [];
+  private readonly listenerCounts = new Map<string, number>();
+
+  override addEventListener(type: string, callback: EventListenerOrEventListenerObject | null, options?: AddEventListenerOptions | boolean): void {
+    super.addEventListener(type, callback, options);
+    this.listenerCounts.set(type, (this.listenerCounts.get(type) ?? 0) + 1);
+  }
+
+  override removeEventListener(type: string, callback: EventListenerOrEventListenerObject | null, options?: EventListenerOptions | boolean): void {
+    super.removeEventListener(type, callback, options);
+    this.listenerCounts.set(type, Math.max(0, (this.listenerCounts.get(type) ?? 0) - 1));
+  }
+
+  listenerCount(type: string): number {
+    return this.listenerCounts.get(type) ?? 0;
+  }
 
   send(data: string): void {
     if (this.readyState !== 1) throw new Error('socket closed');
@@ -31,6 +46,14 @@ class FakeWebSocket extends EventTarget {
 
   fail(error: Error): void {
     this.dispatchEvent(eventWith('error', { error, message: error.message }));
+  }
+
+  failEmptyThenClose(code: number, reason: string): void {
+    this.dispatchEvent(eventWith('error', {}));
+    queueMicrotask(() => {
+      this.readyState = 3;
+      this.dispatchEvent(eventWith('close', { code, reason, wasClean: false }));
+    });
   }
 }
 
@@ -321,6 +344,42 @@ describe('CodexResponsesWebSocketPool', () => {
     complete(replacement, 'resp-recovered');
     await recovered.response.text();
     expect(recovered.wireMode).toBe('websocket_full');
+    pool.close();
+  });
+
+  it('空 ErrorEvent 后的 CloseEvent 保留 code/reason 且只 settle 一次并释放请求 listener', async () => {
+    let now = 1_000;
+    const socket = new FakeWebSocket();
+    const pool = new CodexResponsesWebSocketPool(connectorFor(socket), { now: () => now });
+    const pending = pool.execute(request(body([
+      { type: 'message', role: 'user', content: 'first' },
+    ])));
+    await waitForSend(socket);
+    socket.emit({ type: 'response.created', sequence_number: 1, response: { id: 'resp-partial' } });
+    const result = await pending;
+    socket.emit({ type: 'response.output_text.delta', sequence_number: 2, delta: '部分' });
+    now = 4_250;
+    socket.failEmptyThenClose(1006, 'proxy reset');
+
+    await expect(result.response.text()).rejects.toMatchObject({
+      message: expect.stringContaining('code=1006 reason=proxy reset'),
+      diagnostic: {
+        wireMode: 'websocket_full',
+        clientRequestId: 'request-1',
+        webSocketErrorEmpty: true,
+        closeCode: 1006,
+        closeReason: 'proxy reset',
+        requestDurationMs: 3_250,
+        frameCount: 2,
+        lastSequenceNumber: 2,
+        officialTerminalReceived: false,
+      },
+    });
+    await Promise.resolve();
+    expect(socket.listenerCount('message')).toBe(0);
+    expect(socket.listenerCount('error')).toBe(0);
+    expect(socket.listenerCount('close')).toBe(1);
+    expect(socket.readyState).toBe(3);
     pool.close();
   });
 

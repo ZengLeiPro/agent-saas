@@ -8,10 +8,12 @@ import type {
   ModelToolCall,
   ModelToolDefinition,
   ModelUsage,
+  ModelRetryReason,
   RunContext,
   RuntimeConnection,
 } from './types.js';
 import type { ModelProviderOptions } from '../types/index.js';
+import { resolveModelOutputTransactionMode } from './modelOutputTransaction.js';
 import { createLogger } from '../utils/logger.js';
 import {
   defendUserMessageText,
@@ -23,9 +25,26 @@ import { modelSupportsImage, readImagePartOrPlaceholder, toTextOnlyContent } fro
 import { ToolCallRepairStreamGate, toolCallRepairProviderLabel } from './toolCallRepair.js';
 
 const logger = createLogger('Cache');
-const CHAT_COMPLETIONS_MAX_FETCH_ATTEMPTS = 3;
 const CHAT_COMPLETIONS_RETRY_DELAYS_MS = [250, 1_000] as const;
 const RETRYABLE_CHAT_COMPLETIONS_HTTP_STATUSES = new Set([408, 409, 429, 500, 502, 503, 504]);
+
+class ChatCompletionsHttpError extends Error {
+  constructor(readonly status: number, readonly retryable: boolean) {
+    super(`Chat Completions HTTP ${status}`);
+    this.name = 'ChatCompletionsHttpError';
+  }
+}
+
+class ChatCompletionsAttemptError extends Error {
+  constructor(
+    readonly outcome: 'parse_error' | 'stream_error',
+    readonly usage: ModelUsage | undefined,
+    cause: unknown,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = 'ChatCompletionsAttemptError';
+  }
+}
 
 /**
  * O4：prompt_cache_key 改"内容指纹"。
@@ -63,6 +82,145 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
   ) {}
 
   async *stream(request: ModelRequest, context: RunContext): AsyncIterable<ModelEvent> {
+    const outputTransactionMode = resolveModelOutputTransactionMode(context.channelContext);
+    const retryDelaysMs = this.providerOptions.preStreamRetryDelaysMs
+      ?? [...CHAT_COMPLETIONS_RETRY_DELAYS_MS];
+    const modelRequestId = randomUUID();
+    let transientRetryIndex = 0;
+    let attempt = 0;
+
+    while (true) {
+      attempt += 1;
+      const attemptId = randomUUID();
+      const clientRequestId = randomUUID();
+      const startedAt = Date.now();
+      let startedRecorded = false;
+      let hasDeliveredOutput = false;
+      const bufferedOutput: Array<Extract<ModelEvent,
+        { type: 'thinking_delta' | 'text_delta' }>> = [];
+      let completed: Extract<ModelEvent, { type: 'completed' }> | undefined;
+      try {
+        for await (const event of this.streamAttempt(request, context, async (requestBodyBytes) => {
+          startedRecorded = true;
+          await context.recordModelRequestDiagnostic?.({
+            type: 'started',
+            modelRequestId,
+            attemptId,
+            attempt,
+            clientRequestId,
+            model: request.model,
+            protocol: 'chat_completions',
+            responseMode: 'full',
+            outputTransactionMode,
+            maxOutputTokens: request.maxOutputTokens ?? this.providerOptions.maxOutputTokens ?? 0,
+            requestBodyBytes,
+            toolsCount: request.tools.length,
+            hasPreviousResponseId: false,
+          });
+        })) {
+          if (event.type === 'completed') {
+            completed = event;
+          } else if (
+            outputTransactionMode === 'terminal_buffered'
+            && (event.type === 'thinking_delta' || event.type === 'text_delta')
+          ) {
+            bufferedOutput.push(event);
+          } else {
+            if (event.type === 'thinking_delta' || event.type === 'text_delta') {
+              hasDeliveredOutput = true;
+            }
+            yield event;
+          }
+        }
+        if (!completed) throw new Error('Chat Completions stream completed without completion event');
+        if (startedRecorded) {
+          await context.recordModelRequestDiagnostic?.({
+            type: 'finished',
+            modelRequestId,
+            attemptId,
+            attempt,
+            outcome: 'completed',
+            durationMs: Date.now() - startedAt,
+            outputTransactionMode,
+            hasDeliveredOutput,
+            officialTerminalReceived: true,
+            ...(completed.usage ? { usage: completed.usage } : {}),
+          });
+        }
+        for (const event of bufferedOutput) yield event;
+        yield completed;
+        return;
+      } catch (error) {
+        if (!startedRecorded) throw error;
+        const aborted = isAbortError(error, request.signal ?? context.signal);
+        const retryable = !aborted && isRetryableChatAttemptError(error);
+        const replaySafe = !hasDeliveredOutput
+          || outputTransactionMode === 'terminal_buffered'
+          || outputTransactionMode === 'replaceable_draft';
+        const retryDelayMs = retryable && replaySafe
+          ? retryDelaysMs[transientRetryIndex]
+          : undefined;
+        const willRetry = retryDelayMs !== undefined;
+        const usage = error instanceof ChatCompletionsAttemptError ? error.usage : undefined;
+        const recorded = await context.recordModelRequestDiagnostic?.({
+          type: 'finished',
+          modelRequestId,
+          attemptId,
+          attempt,
+          outcome: aborted
+            ? 'aborted'
+            : error instanceof ChatCompletionsAttemptError
+              ? error.outcome
+              : error instanceof ChatCompletionsHttpError
+                ? 'http_error'
+                : 'network_error',
+          durationMs: Date.now() - startedAt,
+          outputTransactionMode,
+          hasDeliveredOutput,
+          officialTerminalReceived: false,
+          errorCode: aborted
+            ? 'MODEL_REQUEST_ABORTED'
+            : error instanceof ChatCompletionsHttpError
+              ? `HTTP_${error.status}`
+              : error instanceof ChatCompletionsAttemptError && error.outcome === 'parse_error'
+                ? 'MODEL_STREAM_PARSE_ERROR'
+                : 'MODEL_STREAM_READ_ERROR',
+          errorMessage: compactChatDiagnostic(error),
+          ...(usage ? { usage } : {}),
+          ...(willRetry
+            ? { willRetry: true, retryReason: chatRetryReason(error) }
+            : {
+              retryBlockedReason: aborted
+                ? 'aborted'
+                : !retryable
+                  ? 'permanent_error'
+                  : !replaySafe
+                    ? 'irreversible_output_delivered'
+                    : 'retry_budget_exhausted',
+            }),
+        });
+        if (recorded === false && usage) {
+          throw new Error('MODEL_USAGE_DIAGNOSTIC_PERSIST_FAILED');
+        }
+        if (!willRetry) throw error;
+        transientRetryIndex += 1;
+        logger.warn(
+          `Chat Completions transient failure; retry ${transientRetryIndex}/${retryDelaysMs.length} `
+          + `model=${request.model} session=${context.sessionId.slice(0, 8)} detail=${compactChatDiagnostic(error)}`,
+        );
+        if (hasDeliveredOutput && outputTransactionMode === 'replaceable_draft') {
+          yield { type: 'draft_reset', attempt };
+        }
+        await waitForChatRetry(retryDelayMs, request.signal ?? context.signal);
+      }
+    }
+  }
+
+  private async *streamAttempt(
+    request: ModelRequest,
+    context: RunContext,
+    beforeRequest: (requestBodyBytes: number) => Promise<void>,
+  ): AsyncIterable<ModelEvent> {
     // ⚠️ P0.3 Cross-API 防御：Chat Completions 端点收到 previous_response_id 会 HTTP 200 静默忽略，
     // 调试时极易误判为「模型记忆差」。要么 dispatcher 路由错配（应走 ResponsesApiAdapter），
     // 要么调用方误填字段。直接抛错暴露问题。
@@ -154,20 +312,18 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
       ...(this.providerOptions.reasoningEffort !== undefined ? { reasoning_effort: this.providerOptions.reasoningEffort } : {}),
     };
     const signal = request.signal ?? context.signal;
-    const response = await fetchChatCompletionsWithRetry(chatCompletionsUrl(this.connection.baseUrl), {
+    const serializedBody = JSON.stringify(body);
+    await context.authorizeModelTurn?.();
+    await beforeRequest(Buffer.byteLength(serializedBody, 'utf8'));
+    const response = await fetchChatCompletions(chatCompletionsUrl(this.connection.baseUrl), {
       method: 'POST',
       headers: {
         authorization: `Bearer ${this.connection.apiKey}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify(body),
+      body: serializedBody,
       signal,
-    }, {
-      model: request.model,
-      sessionId: context.sessionId,
-      signal,
-      authorizeModelTurn: context.authorizeModelTurn,
-    });
+    }, { signal });
     if (!response.body) {
       throw new Error('Chat Completions response body is empty.');
     }
@@ -188,33 +344,6 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
     const reader = response.body.getReader();
     let buffer = '';
     let sawDone = false;
-    const modelRequestId = randomUUID();
-    const attemptId = randomUUID();
-    const requestStartedAt = Date.now();
-    const recordFailedUsage = async (
-      outcome: 'parse_error' | 'stream_error',
-      err: unknown,
-    ): Promise<void> => {
-      if (!usage || !context.recordModelRequestDiagnostic) return;
-      try {
-        const recorded = await context.recordModelRequestDiagnostic({
-          type: 'finished',
-          modelRequestId,
-          attemptId,
-          attempt: 1,
-          outcome,
-          durationMs: Date.now() - requestStartedAt,
-          errorMessage: err instanceof Error ? err.message : String(err),
-          usage,
-        });
-        if (recorded === false) {
-          throw new Error('MODEL_USAGE_DIAGNOSTIC_PERSIST_FAILED');
-        }
-      } catch (recordErr) {
-        throw new Error(`MODEL_USAGE_DIAGNOSTIC_PERSIST_FAILED: ${recordErr instanceof Error ? recordErr.message : String(recordErr)}`);
-      }
-    };
-
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -272,8 +401,11 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
       for (const visibleDelta of toolCallRepair.abort()) {
         yield { type: 'text_delta', content: visibleDelta };
       }
-      await recordFailedUsage(err instanceof SyntaxError ? 'parse_error' : 'stream_error', err);
-      throw err;
+      throw new ChatCompletionsAttemptError(
+        err instanceof SyntaxError ? 'parse_error' : 'stream_error',
+        usage,
+        err,
+      );
     } finally {
       reader.releaseLock();
     }
@@ -291,8 +423,7 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
     if (detectDsmlLeak(content)) {
       logger.warn(`DSML leak rejected in chat completions model=${request.model}`);
       const error = new Error('模型输出格式异常（DSML 模板未被服务端解析），已中断本轮。');
-      await recordFailedUsage('parse_error', error);
-      throw error;
+      throw new ChatCompletionsAttemptError('parse_error', usage, error);
     }
 
     if (toolCallRepairMode === 'repair' && !sawDone && !finishReason) {
@@ -309,8 +440,11 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
         yield { type: 'text_delta', content: visibleText };
       }
       const error = new Error('Chat Completions stream ended before a terminal marker.');
-      await recordFailedUsage('stream_error', error);
-      throw error;
+      throw new ChatCompletionsAttemptError('stream_error', usage, error);
+    }
+    if (!sawDone && !finishReason) {
+      const error = new Error('Chat Completions stream ended before a terminal marker.');
+      throw new ChatCompletionsAttemptError('stream_error', usage, error);
     }
 
     // C1 mojibake warn（与 ResponsesApiAdapter 对齐）；不记录正文 preview。
@@ -361,66 +495,76 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
   }
 }
 
-async function fetchChatCompletionsWithRetry(
+async function fetchChatCompletions(
   url: string,
   init: RequestInit,
-  context: {
-    model: string;
-    sessionId?: string;
-    signal?: AbortSignal;
-    authorizeModelTurn?: () => Promise<void>;
-  },
+  context: { signal?: AbortSignal },
 ): Promise<Response> {
-  for (let attempt = 1; attempt <= CHAT_COMPLETIONS_MAX_FETCH_ATTEMPTS; attempt++) {
-    await context.authorizeModelTurn?.();
-    let response: Response;
-    try {
-      response = await fetch(url, init);
-    } catch (err) {
-      if (isAbortError(err, context.signal)) throw err;
-      if (attempt >= CHAT_COMPLETIONS_MAX_FETCH_ATTEMPTS) throw err;
-      logger.warn(formatChatRetryLog('network error', attempt, context, err));
-      await waitForChatRetry(CHAT_COMPLETIONS_RETRY_DELAYS_MS[attempt - 1] ?? 0, context.signal);
-      continue;
-    }
+  const response = await fetch(url, init);
+  if (response.ok) return response;
 
-    if (response.ok) return response;
-
-    const text = await response.text().catch(() => '');
-    const message = `Chat Completions HTTP ${response.status}: ${text.slice(0, 1000)}`;
-    if (!RETRYABLE_CHAT_COMPLETIONS_HTTP_STATUSES.has(response.status)
-      || attempt >= CHAT_COMPLETIONS_MAX_FETCH_ATTEMPTS) {
-      throw new Error(message);
-    }
-
-    logger.warn(formatChatRetryLog(`HTTP ${response.status}`, attempt, context, message));
-    await waitForChatRetry(CHAT_COMPLETIONS_RETRY_DELAYS_MS[attempt - 1] ?? 0, context.signal);
-  }
-
-  throw new Error('Chat Completions request failed before receiving a response.');
+  const text = await response.text().catch(() => '');
+  const quotaExhausted = response.status === 429
+    && /quota[_\s-]?exceeded|insufficient[_\s-]?quota|exhausted its free trial|额度(?:已)?(?:用尽|耗尽)/i.test(text);
+  throw new ChatCompletionsHttpError(
+    response.status,
+    RETRYABLE_CHAT_COMPLETIONS_HTTP_STATUSES.has(response.status) && !quotaExhausted,
+  );
 }
 
-function formatChatRetryLog(
-  reason: string,
-  attempt: number,
-  context: { model: string; sessionId?: string },
-  detail: unknown,
-): string {
-  const session = context.sessionId ? context.sessionId.slice(0, 8) : '-';
-  const nextAttempt = attempt + 1;
-  const detailText = detail instanceof Error ? detail.message : String(detail);
-  return `Chat Completions ${reason}; retry ${nextAttempt}/${CHAT_COMPLETIONS_MAX_FETCH_ATTEMPTS} `
-    + `model=${context.model} session=${session} detail=${detailText.slice(0, 300)}`;
+function isRetryableChatAttemptError(error: unknown): boolean {
+  if (error instanceof ChatCompletionsHttpError) return error.retryable;
+  if (error instanceof ChatCompletionsAttemptError) return error.outcome === 'stream_error';
+  if (error instanceof SyntaxError) return false;
+  const message = compactChatDiagnostic(error);
+  return !/ERR_INVALID_URL|invalid url|unknown scheme|unsupported protocol|CERT_|ERR_TLS|DEPTH_ZERO_SELF_SIGNED_CERT|UNABLE_TO_VERIFY_LEAF_SIGNATURE|certificate|self[- ]signed|unable to verify|ENOTFOUND|EAI_NONAME|proxy authentication required/i
+    .test(message);
+}
+
+function chatRetryReason(error: unknown): ModelRetryReason {
+  return error instanceof ChatCompletionsHttpError
+    ? 'transient_http_error'
+    : error instanceof ChatCompletionsAttemptError
+      ? 'transient_stream_interrupt'
+      : 'transient_network_error';
+}
+
+function compactChatDiagnostic(error: unknown): string {
+  const cause = error instanceof Error ? error.cause : undefined;
+  const causeRecord = cause && typeof cause === 'object' ? cause as Record<string, unknown> : undefined;
+  const causeDetail = [
+    typeof causeRecord?.code === 'string' ? causeRecord.code : '',
+    cause instanceof Error
+      ? cause.message
+      : typeof causeRecord?.message === 'string'
+        ? causeRecord.message
+        : typeof cause === 'string'
+          ? cause
+          : '',
+  ].filter(Boolean).join(': ');
+  const raw = error instanceof Error ? error.message : String(error ?? '');
+  return `${raw}${causeDetail ? ` (cause=${causeDetail})` : ''}`
+    .replace(/((?:"|')?(?:api[_-]?key|authorization|cookie|set-cookie|access_token|refresh_token|id_token)(?:"|')?\s*:\s*)(?:"[^"]*"|'[^']*')/gi, '$1"[REDACTED]"')
+    .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, 'sk-[REDACTED]')
+    .replace(/((?:api[_-]?key|authorization|cookie|set-cookie|access_token|refresh_token|id_token)\s*[=:]\s*)[^\s,;]+/gi, '$1[REDACTED]')
+    .replace(/\b(https?:\/\/)(?:[^@\s/]+@)?([^?\s#]+)\?[^\s#]*/gi, '$1$2?[REDACTED]')
+    .replace(/\b(https?:\/\/)[^@\s/]+@/gi, '$1[REDACTED]@')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300) || 'unknown_error';
 }
 
 function isAbortError(err: unknown, signal: AbortSignal | undefined): boolean {
   if (signal?.aborted) return true;
-  return err instanceof Error && err.name === 'AbortError';
+  if (err instanceof Error && err.name === 'AbortError') return true;
+  const cause = err instanceof Error ? err.cause : undefined;
+  return cause instanceof Error && cause.name === 'AbortError';
 }
 
 async function waitForChatRetry(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  if (ms <= 0) return;
   if (signal?.aborted) throw createAbortError();
+  if (ms <= 0) return;
   await new Promise<void>((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout>;
     const onAbort = () => {

@@ -303,11 +303,18 @@ export interface UserIdentity {
   permissions?: UserPermissions;
 }
 
+export type ModelOutputTransactionMode =
+  | 'replaceable_draft'
+  | 'terminal_buffered'
+  | 'irreversible_stream';
+
 export interface ChannelContext {
   channel: ChannelType;
+  /** Runtime 统一管理的模型 attempt 输出提交语义；新 Run 必须持久化该字段。 */
+  outputTransactionMode?: ModelOutputTransactionMode;
   /**
-   * Web 客户端明确声明支持可撤销草稿协议后才启用。
-   * 旧页面缺省 false，避免蓝绿交叉版本把重试正文直接追加成重复回答。
+   * 旧 Run / 旧调用方兼容字段。新入口应写 outputTransactionMode，Runtime 仅在边界层
+   * 将 true 映射为 replaceable_draft，避免形成两个可冲突的事实源。
    */
   replaceableDrafts?: boolean;
   resumeSessionId?: string;

@@ -105,7 +105,10 @@ describe('cron executor', () => {
     expect(resolveModel).toHaveBeenCalledWith('kaiyan-llm/glm-5.2', undefined);
     expect(runAgentMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.anything(),
+      expect.objectContaining({
+        channel: 'cron',
+        outputTransactionMode: 'terminal_buffered',
+      }),
       expect.objectContaining({
         model: 'glm-5.2',
         modelRef: 'kaiyan-llm/glm-5.2',

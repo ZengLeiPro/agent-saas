@@ -587,7 +587,8 @@ describe('WebChannel executionTarget gating', () => {
       });
       expect(enqueued[0]?.metadata?.wakeMessage).toMatchObject({ content: 'enqueue me' });
       expect(enqueued[0]?.metadata?.approvalPolicy).toEqual({ autoApproveTools: true });
-      expect(enqueued[0]?.metadata?.replaceableDrafts).toBe(true);
+      expect(enqueued[0]?.metadata?.outputTransactionMode).toBe('replaceable_draft');
+      expect(enqueued[0]?.metadata?.replaceableDrafts).toBeUndefined();
       expect(ws.sent.find((m) => m.data?.type === 'stream_id')?.data).toMatchObject({
         runId: enqueued[0]?.runId,
       });

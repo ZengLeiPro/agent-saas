@@ -2591,7 +2591,9 @@ export class WebChannel implements BaseChannel {
 
     const context: ChannelContext = {
       channel: 'web',
-      replaceableDrafts: msg.clientCapabilities?.includes('replaceable_drafts') === true,
+      outputTransactionMode: msg.clientCapabilities?.includes('replaceable_drafts') === true
+        ? 'replaceable_draft'
+        : 'irreversible_stream',
       resumeSessionId: validSessionId,
       timezone: this.config.timezone,
       ...(userIdentity ? { user: userIdentity } : {}),
@@ -2969,7 +2971,7 @@ export class WebChannel implements BaseChannel {
             steeringAcceptedAt,
             ...(approvalPolicy ? { approvalPolicy } : {}),
             ...(guardrailMark ? { guardrail: guardrailMark } : {}),
-            ...(context.replaceableDrafts ? { replaceableDrafts: true } : {}),
+            outputTransactionMode: context.outputTransactionMode,
             wakeMessage: {
               channel: inbound.channel,
               chatId: enqueueSessionId,

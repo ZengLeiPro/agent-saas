@@ -4,6 +4,7 @@ import type {
   EgressWebSocket,
   EgressWebSocketConnector,
 } from '../egressDispatcher.js';
+import { ResponsesTransportStreamError } from './responsesTransport.js';
 
 const DEFAULT_FIRST_EVENT_TIMEOUT_MS = 30_000;
 const DEFAULT_IDLE_EVENT_TIMEOUT_MS = 5 * 60_000;
@@ -246,9 +247,15 @@ export class CodexResponsesWebSocketPool {
     entry.lastUsedAt = this.now();
 
     const encoder = new TextEncoder();
+    const requestStartedAt = this.now();
     let exposed = false;
     let settled = false;
     let terminal = false;
+    let officialTerminalReceived = false;
+    let frameCount = 0;
+    let lastSequenceNumber: number | undefined;
+    let pendingSocketError: { detail: string; empty: boolean } | undefined;
+    let socketErrorSettleTimer: ReturnType<typeof setTimeout> | undefined;
     let firstEventTimer: ReturnType<typeof setTimeout> | undefined;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     let controllerRef: ReadableStreamDefaultController<Uint8Array> | undefined;
@@ -266,6 +273,7 @@ export class CodexResponsesWebSocketPool {
 
     return new Promise<ActiveRequestResult>((resolve, reject) => {
       const cleanup = () => {
+        if (socketErrorSettleTimer) clearTimeout(socketErrorSettleTimer);
         if (firstEventTimer) clearTimeout(firstEventTimer);
         if (idleTimer) clearTimeout(idleTimer);
         input.signal?.removeEventListener('abort', onAbort);
@@ -330,6 +338,7 @@ export class CodexResponsesWebSocketPool {
 
       const finishTerminal = (event: Record<string, unknown>, eventType: string) => {
         terminal = true;
+        officialTerminalReceived = true;
         if (isSuccessfulTerminal(event, eventType) && !entry.tainted) {
           const responseId = responseIdFromEvent(event);
           const terminalOutput = responseOutputFromEvent(event);
@@ -363,6 +372,7 @@ export class CodexResponsesWebSocketPool {
 
       const onMessage: NonNullable<EgressWebSocket['onmessage']> = (raw) => {
         resetIdleTimer();
+        frameCount += 1;
         const text = websocketMessageText(raw.data);
         if (text === undefined) {
           failStream(
@@ -384,6 +394,9 @@ export class CodexResponsesWebSocketPool {
           return;
         }
         const eventType = typeof event.type === 'string' ? event.type : '';
+        if (typeof event.sequence_number === 'number' && Number.isFinite(event.sequence_number)) {
+          lastSequenceNumber = event.sequence_number;
+        }
         const code = errorCodeFromEvent(event);
         const status = eventStatus(event);
         if (!exposed && status === 401) {
@@ -417,19 +430,45 @@ export class CodexResponsesWebSocketPool {
         }
       };
 
+      const failSocketInterruption = (close?: { code: number; reason: string }) => {
+        if (terminal) return;
+        const socketError = pendingSocketError;
+        const closeReason = close?.reason ? compactError(close.reason) : undefined;
+        const detail = socketError?.empty === false ? socketError.detail : undefined;
+        const message = [
+          detail ?? (socketError ? 'Codex WebSocket error without diagnostic detail' : undefined),
+          close
+            ? `closed before terminal event (code=${close.code} reason=${closeReason ?? 'none'})`
+            : undefined,
+        ].filter(Boolean).join('; ') || 'Codex WebSocket closed before terminal event';
+        failStream(new ResponsesTransportStreamError(message, {
+          wireMode: plan.mode,
+          clientRequestId: input.clientRequestId,
+          webSocketErrorEmpty: socketError?.empty ?? false,
+          ...(close ? { closeCode: close.code } : {}),
+          ...(closeReason ? { closeReason } : {}),
+          requestDurationMs: Math.max(0, this.now() - requestStartedAt),
+          frameCount,
+          ...(lastSequenceNumber !== undefined ? { lastSequenceNumber } : {}),
+          officialTerminalReceived,
+        }), socketError ? 'socket_error' : 'connection_closed');
+        if (!close) this.discard(entry, socketError ? 'socket_error' : 'connection_closed');
+      };
       const onSocketError = (event: Event) => {
+        if (terminal || pendingSocketError) return;
         const candidate = event as Event & { error?: unknown; message?: string };
         const detail = compactError(candidate.error ?? candidate.message);
-        failStream(new Error(
-          detail === 'unknown_error' ? 'Codex WebSocket error without diagnostic detail' : detail,
-        ), 'socket_error');
-        this.discard(entry, 'socket_error');
+        pendingSocketError = { detail, empty: detail === 'unknown_error' };
+        if (socketErrorSettleTimer) return;
+        // Undici 8.9 在底层连接异常时同步先发 error、再发 close（其 #onSocketClose）。
+        // 额外容纳实现把 close 排到下一任务的情况；若只发 error，0ms timer 仍会关闭连接
+        // 并由 cleanup 清理全部 request listener/timer。
+        socketErrorSettleTimer = setTimeout(() => failSocketInterruption(), 25);
+        socketErrorSettleTimer.unref?.();
       };
       const onSocketClose = (event: CloseEvent) => {
         if (terminal) return;
-        failStream(new Error(
-          `Codex WebSocket closed before terminal event (code=${event.code} reason=${event.reason || 'none'})`,
-        ), 'connection_closed');
+        failSocketInterruption({ code: event.code, reason: event.reason });
       };
       const onAbort = () => {
         failStream(input.signal?.reason instanceof Error
@@ -711,8 +750,13 @@ function sha256(value: string): string {
 }
 
 function compactError(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error))
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+  return (error instanceof Error ? error.message : String(error ?? ''))
+    .replace(/((?:"|')?(?:api[_-]?key|authorization|cookie|set-cookie|access_token|refresh_token|id_token)(?:"|')?\s*:\s*)(?:"[^"]*"|'[^']*')/gi, '$1"[REDACTED]"')
+    .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, 'sk-[REDACTED]')
+    .replace(/((?:api[_-]?key|authorization|cookie|set-cookie|access_token|refresh_token|id_token)\s*[=:]\s*)[^\s,;]+/gi, '$1[REDACTED]')
+    .replace(/\b(https?:\/\/)(?:[^@\s/]+@)?([^?\s#]+)\?[^\s#]*/gi, '$1$2?[REDACTED]')
+    .replace(/\b(https?:\/\/)[^@\s/]+@/gi, '$1[REDACTED]@')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 300) || 'unknown_error';

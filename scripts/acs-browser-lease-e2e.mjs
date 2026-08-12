@@ -3,6 +3,8 @@
 import { copyFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { parseToolContentJson } from './acs-tool-content-json.mjs';
+
 const baseUrl = required('ACS_ORCH_URL').replace(/\/$/, '');
 const authToken = required('ACS_ORCH_AUTH_TOKEN');
 const workspaceId = required('ACS_SMOKE_WORKSPACE_ID');
@@ -15,7 +17,7 @@ const taskId = `shell-bg-ci-${runId}`;
 const leaseId = `ci-browser-${runId}`;
 const profileId = `ci-browser-${runId}`;
 const helperRelativePath = '.ci/acs_browser.py';
-const snapshotRelativePath = `.ci/${leaseId}-snapshot.txt`;
+const snapshotRelativePath = `assets/ci/${leaseId}-snapshot.txt`;
 const testPage = 'data:text/html,%3Ctitle%3EACS%20Lease%20E2E%3C/title%3E%3Ch1%3EACS%20Lease%20Ready%3C/h1%3E';
 const workspace = { id: workspaceId, sessionId, mountSubPath };
 let backgroundStarted = false;
@@ -34,7 +36,7 @@ try {
     taskId,
   });
   backgroundStarted = true;
-  const startView = parseContentJson(started);
+  const startView = parseToolContentJson(started);
   assert(startView.taskId === taskId, `unexpected taskId: ${startView.taskId}`);
   assert(['starting', 'running'].includes(startView.status), `unexpected start status: ${startView.status}`);
 
@@ -49,7 +51,7 @@ try {
   // 独立 HTTP 工具调用之间显式等待，模拟模型结束一轮、后续轮次重新进入同一 Sandbox。
   await sleep(1_000);
   await shell(
-    `python3 ${quote(helperRelativePath)} snapshot --lease-id ${quote(leaseId)} --run-id ${quote(`ci-action-${runId}`)} --out ${quote(snapshotRelativePath)}`,
+    `mkdir -p assets/ci && python3 ${quote(helperRelativePath)} snapshot --lease-id ${quote(leaseId)} --run-id ${quote(`ci-action-${runId}`)} --out ${quote(snapshotRelativePath)}`,
   );
   const snapshot = await readFile(join(workspaceDir, snapshotRelativePath), 'utf8');
   assert(snapshot.includes('ACS Lease Ready'), 'cross-turn browser action did not observe the deterministic test page');
@@ -68,14 +70,14 @@ try {
       limit_bytes: 20_000,
       wait_ms: 1_000,
     });
-    const view = parseContentJson(response);
+    const view = parseToolContentJson(response);
     if (['failed', 'lost', 'timed_out'].includes(view.status)) {
       throw new Error(`background shell ended unexpectedly: ${JSON.stringify(view)}`);
     }
     return view.status === 'completed';
   }, 'background shell completed');
 
-  const reconciled = parseContentJson(await execute('__BackgroundShellReconcile', {}));
+  const reconciled = parseToolContentJson(await execute('__BackgroundShellReconcile', {}));
   assert(!reconciled.activeTaskIds?.includes(taskId), 'background shell remained active after lease-stop');
   assert(!reconciled.protectedUntil, 'Sandbox lifecycle protection remained after lease-stop');
   console.log(`ACS_BROWSER_LEASE_E2E_OK task=${taskId} lease=${leaseId}`);
@@ -88,7 +90,7 @@ try {
 }
 
 async function leaseStatus() {
-  return parseContentJson(await shell(
+  return parseToolContentJson(await shell(
     `python3 ${quote(helperRelativePath)} lease-status --lease-id ${quote(leaseId)}`,
   ));
 }
@@ -116,11 +118,6 @@ async function execute(toolName, input) {
   const body = JSON.parse(text);
   if (body.status !== 'success') throw new Error(`${toolName} failed: ${body.error ?? text}`);
   return body;
-}
-
-function parseContentJson(response) {
-  if (typeof response.content !== 'string') throw new Error(`missing response content: ${JSON.stringify(response)}`);
-  return JSON.parse(response.content);
 }
 
 async function poll(check, label) {

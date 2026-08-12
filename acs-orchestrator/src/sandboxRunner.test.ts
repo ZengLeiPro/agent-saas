@@ -237,6 +237,7 @@ describe('pipInstallArgs', () => {
       '-m',
       'pip',
       'install',
+      '--no-compile',
       '--no-index',
       '--find-links=/opt/ky-agent/python-wheels',
       '-r',
@@ -249,6 +250,7 @@ describe('pipInstallArgs', () => {
       '-m',
       'pip',
       'install',
+      '--no-compile',
       '-r',
       '/app/requirements/base.txt',
     ]);

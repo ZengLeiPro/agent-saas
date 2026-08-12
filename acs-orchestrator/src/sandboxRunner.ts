@@ -603,6 +603,7 @@ export function pipInstallArgs(requirementsPath: string, wheelhousePath?: string
     '-m',
     'pip',
     'install',
+    '--no-compile',
     ...(wheelhousePath ? ['--no-index', `--find-links=${wheelhousePath}`] : []),
     '-r',
     requirementsPath,

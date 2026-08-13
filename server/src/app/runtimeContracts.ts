@@ -310,6 +310,10 @@ export interface AppRuntime {
   validateImageGenToolsConfig?: (imageGenTools: AppConfig['imageGenTools']) => Promise<void>;
   /** 更新 GenerateImage 引擎配置并热写入后续 raw runtime dispatch。 */
   updateImageGenToolsConfig?: (imageGenTools: AppConfig['imageGenTools']) => Promise<void>;
+  /** 校验 AudioTranscribe 服务配置及 SecretVault refs。 */
+  validateAudioTranscribeConfig?: (stt: AppConfig['stt']) => Promise<void>;
+  /** 更新 AudioTranscribe 配置并热写入后续 raw runtime dispatch。 */
+  updateAudioTranscribeConfig?: (stt: AppConfig['stt']) => Promise<void>;
   /** 更新 memory.index 配置并热写入后续 raw runtime dispatch。 */
   updateMemoryIndexConfig?: (memoryIndex: NonNullable<NonNullable<AppConfig['memory']>['index']> | undefined) => Promise<void>;
   /** 更新 memory.polling 配置：热更后续执行参数并立即重排系统任务。 */

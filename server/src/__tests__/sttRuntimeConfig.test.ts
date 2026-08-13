@@ -30,6 +30,12 @@ describe('resolveSttRuntimeConfig', () => {
     });
     expect(resolved.audioTranscribeEnvByTenant.get('customer-a')).toBeUndefined();
     expect(resolved.audioTranscribeEnvByTenant.size).toBe(1);
+    // 旧配置未显式开启直连工具，Web sttConfig 与旧租户注入仍保持兼容。
+    expect(resolved.audioTranscribeConfig).toEqual({
+      enabled: false,
+      sttConfig: resolved.sttConfig,
+      pricing: { creditsPerCall: 0, costYuanPerCall: 0 },
+    });
   });
 
   it('从 SecretVault ref 解析三项凭据', async () => {
@@ -54,13 +60,41 @@ describe('resolveSttRuntimeConfig', () => {
     });
   });
 
-  it('配置了租户注入但缺凭据时 fail-fast', async () => {
+  it('直连工具配置不依赖旧 audioTranscribeTenantIds，并返回固定按次价格', async () => {
+    const resolved = await resolveSttRuntimeConfig({
+      enabled: true,
+      apiKey: 'dashscope-key',
+      ossAccessKeyId: 'oss-ak',
+      ossAccessKeySecret: 'oss-sk',
+      pricing: { creditsPerCall: 15, costYuanPerCall: 0.1 },
+    }, new InMemorySecretVault());
+
+    expect(resolved.audioTranscribeEnvByTenant.size).toBe(0);
+    expect(resolved.audioTranscribeConfig).toEqual({
+      enabled: true,
+      sttConfig: resolved.sttConfig,
+      pricing: { creditsPerCall: 15, costYuanPerCall: 0.1 },
+    });
+  });
+
+  it('无配置时禁用且不报错，显式启用或旧租户注入缺凭据时 fail-fast', async () => {
+    await expect(resolveSttRuntimeConfig(undefined, new InMemorySecretVault())).resolves.toEqual({
+      audioTranscribeEnvByTenant: new Map(),
+    });
+    await expect(resolveSttRuntimeConfig({}, new InMemorySecretVault())).resolves.toEqual({
+      audioTranscribeEnvByTenant: new Map(),
+    });
+    await expect(resolveSttRuntimeConfig({ apiKey: 'partially-cleared' }, new InMemorySecretVault())).resolves.toEqual({
+      audioTranscribeEnvByTenant: new Map(),
+    });
+    await expect(resolveSttRuntimeConfig({ enabled: true }, new InMemorySecretVault()))
+      .rejects.toThrow(/enabled=true.*凭据为空/);
     await expect(resolveSttRuntimeConfig({
       audioTranscribeTenantIds: ['kaiyan'],
     }, new InMemorySecretVault())).rejects.toThrow(/凭据为空/);
   });
 
-  it('schema 拒绝 inline 凭据与 ref 同时出现', () => {
+  it('schema 拒绝 inline 凭据与 ref 同时出现及负数价格', () => {
     const parsed = appConfigSchema.safeParse({
       agent: {},
       server: {},
@@ -73,5 +107,14 @@ describe('resolveSttRuntimeConfig', () => {
     });
 
     expect(parsed.success).toBe(false);
+
+    const invalidPricing = appConfigSchema.safeParse({
+      agent: {},
+      server: {},
+      stt: {
+        pricing: { creditsPerCall: -1, costYuanPerCall: 0 },
+      },
+    });
+    expect(invalidPricing.success).toBe(false);
   });
 });

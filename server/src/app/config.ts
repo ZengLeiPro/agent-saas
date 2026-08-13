@@ -190,8 +190,9 @@ const ttsConfigSchema = z.object({
   defaultVoice: z.string().optional(),
   defaultSpeed: z.number().positive().optional(),
 });
-
+const sttPricingSchema = z.object({ creditsPerCall: z.number().nonnegative(), costYuanPerCall: z.number().nonnegative() });
 const sttConfigSchema = z.object({
+  enabled: z.boolean().optional(),
   /** inline 字段仅用于兼容迁移；生产优先使用对应 SecretVault ref。 */
   apiKey: z.string().optional(),
   apiKeyRef: z.string().min(1).optional(),
@@ -202,10 +203,8 @@ const sttConfigSchema = z.object({
   ossAccessKeySecretRef: z.string().min(1).optional(),
   ossBucket: z.string().optional(),
   ossEndpoint: z.string().optional(),
-  /**
-   * 允许把 STT/OSS 凭据注入隔离运行时、供 audio-transcribe skill 使用的租户。
-   * 缺省为空：Web 录音转写仍可用，但任何租户 Sandbox 都拿不到凭据。
-   */
+  pricing: sttPricingSchema.optional(),
+  /** 旧版 Sandbox 凭据注入白名单；直连工具不依赖。 */
   audioTranscribeTenantIds: z.array(z.string().min(1)).optional(),
 }).superRefine((value, ctx) => {
   for (const [inlineKey, refKey] of [
@@ -1442,6 +1441,7 @@ export type RuntimeEventRetentionConfig = z.infer<typeof runtimeEventRetentionCo
 export type ClientDaemonConfig = NonNullable<z.infer<typeof clientDaemonConfigSchema>>;
 export type SecretVaultConfig = z.infer<typeof secretVaultConfigSchema>;
 export type WebToolsConfig = z.infer<typeof webToolsConfigSchema>;
+export type SttConfig = z.infer<typeof sttConfigSchema>; export type SttPricingConfig = z.infer<typeof sttPricingSchema>;
 export type ImageGenEngineConfig = z.infer<typeof imageGenEngineConfigSchema>;
 export type ImageGenToolsConfig = z.infer<typeof imageGenToolsConfigSchema>;
 export type ImageGenPricingConfig = NonNullable<ImageGenToolsConfig>['pricing'];

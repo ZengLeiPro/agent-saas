@@ -227,8 +227,7 @@ import {
   resolveWebToolsConfig,
 } from './runtimeGovernanceCredentials.js';
 import { initializeRuntimeGovernancePreflight } from './runtimeGovernancePreflight.js';
-
-
+import { resolveSttRuntimeConfig } from '../runtime/sttRuntimeConfig.js';
 // 公开契约类型已迁至 ./runtimeContracts.ts，这里按既有 import 路径继续对外转发。
 export type {
   AppRuntime,
@@ -1899,8 +1898,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     // 逐域名走代理还是直连；未启用时内部直接透传全局 fetch。
     webFetchImpl: egressFetch,
     ...(resolvedImageGenTools ? { imageGenTools: resolvedImageGenTools } : {}),
-    // metered_tool_usage（GenerateImage 按次扣费）事件直写 runtime_events；
-    // file backend 不配置 → 工具跳过扣费事件（billingService 也不存在，语义一致）。
+    ...(resolvedSttRuntimeConfig.audioTranscribeConfig ? { audioTranscribeTools: resolvedSttRuntimeConfig.audioTranscribeConfig } : {}),
+    // PG 直写按次计费事件；file backend 不配置时工具跳过扣费事件。
     ...(pgEventStore ? {
       appendPlatformEvent: (
         event: import('../runtime/types.js').PlatformEventInput,
@@ -1948,9 +1947,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     },
     logger: serverLogger.child('RawRuntime'),
   };
-  const validateToolSettingsConfig = async (settings: Pick<AppConfig, 'toolControls' | 'webTools'>): Promise<void> => {
-    await resolveWebToolsConfig(settings.webTools, secretVault);
-  };
+  const validateToolSettingsConfig = async (settings: Pick<AppConfig, 'toolControls' | 'webTools'>): Promise<void> => { await resolveWebToolsConfig(settings.webTools, secretVault); };
   const updateToolSettingsConfig = async (settings: Pick<AppConfig, 'toolControls' | 'webTools'>): Promise<void> => {
     config.toolControls = settings.toolControls;
     config.webTools = settings.webTools;
@@ -1959,14 +1956,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     if (resolved) rawRuntimeConfig.webTools = resolved;
     else delete rawRuntimeConfig.webTools;
   };
-  const validateImageGenToolsConfig = async (imageGenTools: AppConfig['imageGenTools']): Promise<void> => {
-    await resolveImageGenToolsConfig(imageGenTools, secretVault);
-  };
+  const validateImageGenToolsConfig = async (imageGenTools: AppConfig['imageGenTools']): Promise<void> => { await resolveImageGenToolsConfig(imageGenTools, secretVault); };
   const updateImageGenToolsConfig = async (imageGenTools: AppConfig['imageGenTools']): Promise<void> => {
-    config.imageGenTools = imageGenTools;
-    const resolved = await resolveImageGenToolsConfig(imageGenTools, secretVault);
-    if (resolved) rawRuntimeConfig.imageGenTools = resolved;
-    else delete rawRuntimeConfig.imageGenTools;
+    config.imageGenTools = imageGenTools; const resolved = await resolveImageGenToolsConfig(imageGenTools, secretVault);
+    if (resolved) rawRuntimeConfig.imageGenTools = resolved; else delete rawRuntimeConfig.imageGenTools;
+  };
+  const validateAudioTranscribeConfig = async (stt: AppConfig['stt']): Promise<void> => { await resolveSttRuntimeConfig(stt, secretVault); };
+  const updateAudioTranscribeConfig = async (stt: AppConfig['stt']): Promise<void> => {
+    config.stt = stt; const resolved = await resolveSttRuntimeConfig(stt, secretVault);
+    if (resolved.audioTranscribeConfig) rawRuntimeConfig.audioTranscribeTools = resolved.audioTranscribeConfig;
+    else delete rawRuntimeConfig.audioTranscribeTools;
   };
   const updateMemoryIndexConfig = async (
     memoryIndex: NonNullable<NonNullable<AppConfig['memory']>['index']> | undefined,
@@ -3186,6 +3185,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     updateToolSettingsConfig,
     validateImageGenToolsConfig,
     updateImageGenToolsConfig,
+    validateAudioTranscribeConfig, updateAudioTranscribeConfig,
     updateMemoryIndexConfig,
     updateMemoryPollingConfig,
     systemPromptRegistry,

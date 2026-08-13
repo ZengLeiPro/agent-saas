@@ -53,6 +53,8 @@ import {
   listAvailableImageGenEngineIds,
   type ResolvedImageGenToolsConfig,
 } from '../agent/imageGenToolProvider.js';
+import type { ResolvedAudioTranscribeToolsConfig } from '../agent/audioTranscribeToolProvider.js';
+import { buildAudioTranscribeSkillFilter, createAudioTranscribeRuntimeProvider } from './audioTranscribeRuntime.js';
 import { CronToolProvider } from '../agent/cronToolProvider.js';
 import { TenantCompanyInfoToolProvider } from '../agent/tenantCompanyInfoToolProvider.js';
 import { UserActivityToolProvider } from '../agent/userActivityToolProvider.js';
@@ -416,6 +418,7 @@ export interface RawRuntimeRunDispatchConfig {
    * secretVault 解析，只存在于 server 进程内——绝不进 sandbox env、绝不上 wire。
    */
   imageGenTools?: ResolvedImageGenToolsConfig;
+  audioTranscribeTools?: ResolvedAudioTranscribeToolsConfig; // 凭据仅在 server 进程内
   /**
    * 平台计费事件直写入口（metered_tool_usage 等）。PG runtime 注入
    * pgEventStore.append；file backend / 测试不配置时按次扣费静默跳过。
@@ -632,7 +635,6 @@ export interface WakeRuntimeSessionOptions {
 
 const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
 
-
 export function resolveSessionCatalog(config: RawRuntimeRunDispatchConfig): SessionCatalog {
   return config.sessionCatalog ?? new FileSessionCatalog({ agentCwd: config.agentCwd });
 }
@@ -749,9 +751,6 @@ export async function acquireDirectRuntimeRunLease(input: {
   };
 }
 
-
-
-
 export function deriveWorkspaceMountSubPath(input: { agentCwd: string; cwd?: string }): string | undefined {
   if (!input.cwd) return undefined;
   const mountRoot = resolve(input.agentCwd, '..');
@@ -761,7 +760,6 @@ export function deriveWorkspaceMountSubPath(input: { agentCwd: string; cwd?: str
   return rel.split(sep).join('/');
 }
 
-
 function deriveRuntimeWorkspaceId(params: {
   existingSession?: RuntimeSessionRecord | null;
   fallbackSessionId: string;
@@ -770,7 +768,6 @@ function deriveRuntimeWorkspaceId(params: {
   return params.existingSession?.workspaceId
     ?? deriveStableWorkspaceId(params.identity, params.fallbackSessionId);
 }
-
 
 export async function appendResolvedRunSnapshot(input: {
   config: RawRuntimeRunDispatchConfig;
@@ -819,7 +816,6 @@ export async function appendResolvedRunSnapshot(input: {
     );
   }
 }
-
 
 function getTenantRemoteHandResolver(
   config: RawRuntimeRunDispatchConfig,
@@ -1008,6 +1004,10 @@ export async function collectRuntimeTooling(
       logger: config.logger,
     }));
   }
+
+  // 4.6 AudioTranscribe（server 直连，凭据不进入 sandbox）。
+  const audioProvider = createAudioTranscribeRuntimeProvider(config);
+  if (audioProvider) providers.push(audioProvider);
 
   // 5. 定时任务工具（CronList/CronManage；服务未启用或无用户身份时 list() 自动隐藏）
   if (config.cronService) {
@@ -1891,7 +1891,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     });
     const baseSkillFilter = composeSkillFilters(
       buildRuntimeSkillFilter(availableHands),
-      buildImageGenSkillFilter(config, sessionRecord.tenantId),
+      buildImageGenSkillFilter(config, sessionRecord.tenantId), buildAudioTranscribeSkillFilter(config),
     );
     const profileSkillFilter = boundProfile
       ? ((skill: SkillEntry) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1)
@@ -2482,7 +2482,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     });
     const resumeBaseSkillFilter = composeSkillFilters(
       buildRuntimeSkillFilter(availableHands),
-      buildImageGenSkillFilter(config, sessionRecord.tenantId),
+      buildImageGenSkillFilter(config, sessionRecord.tenantId), buildAudioTranscribeSkillFilter(config),
     );
     const resumeTooling = await collectRuntimeTooling(
       config,
@@ -2910,7 +2910,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     });
     const resumeBaseSkillFilter = composeSkillFilters(
       buildRuntimeSkillFilter(availableHands),
-      buildImageGenSkillFilter(config, sessionRecord.tenantId),
+      buildImageGenSkillFilter(config, sessionRecord.tenantId), buildAudioTranscribeSkillFilter(config),
     );
     const resumeTooling = await collectRuntimeTooling(
       config,

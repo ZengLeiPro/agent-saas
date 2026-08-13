@@ -348,7 +348,9 @@
 
   // ── STT 语音识别（阿里云百炼 DashScope）────────────────
   "stt": {
-    // inline 字段仅用于本地/迁移；生产优先把三项凭据存入 SecretVault 后填写 ref。
+    // 直连 AudioTranscribe 工具开关；Web 录音转写不依赖此开关。
+    "enabled": false,
+    // inline 字段仅用于本地/迁移；生产由管理 API 把三项凭据保存到 SecretVault。
     "apiKey": "",
     // "apiKeyRef": "<SecretVault ref>",
     "model": "fun-asr",
@@ -358,7 +360,12 @@
     // "ossAccessKeySecretRef": "<SecretVault ref>",
     "ossBucket": "your-oss-bucket",
     "ossEndpoint": "https://oss-cn-shenzhen.aliyuncs.com",
-    // 只有这里列出的租户，其隔离运行时才会收到 audio-transcribe 所需凭据。
+    // 固定按次扣费，不随音频时长变化。
+    "pricing": {
+      "creditsPerCall": 0,
+      "costYuanPerCall": 0
+    },
+    // 旧版隔离运行时注入白名单；直连 AudioTranscribe 工具不依赖此字段。
     "audioTranscribeTenantIds": []
   },
 

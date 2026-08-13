@@ -39,6 +39,7 @@ import { companyInfoToolDescriptor } from './tenantCompanyInfoToolProvider.js';
 import { skillToolDescriptor } from './skillToolProvider.js';
 import { webSearchToolDescriptor, webFetchToolDescriptor } from './webToolProvider.js';
 import { generateImageToolDescriptor } from './imageGenToolProvider.js';
+import { audioTranscribeToolDescriptor } from './audioTranscribeToolProvider.js';
 import { cronManageToolDescriptor } from './cronToolProvider.js';
 import { sessionContextToolDescriptor } from '../runtime/sessionContext.js';
 
@@ -70,6 +71,7 @@ export const PLATFORM_TOOL_CATALOG: readonly ToolDescriptor[] = [
   webFetchToolDescriptor,
   // media
   generateImageToolDescriptor,
+  audioTranscribeToolDescriptor,
   // cron
   cronManageToolDescriptor,
 ];
@@ -119,6 +121,7 @@ export const PLATFORM_TOOL_SOURCE_MODULE: Readonly<Record<string, string>> = {
   WebSearch: 'server/src/agent/webToolProvider.ts',
   WebFetch: 'server/src/agent/webToolProvider.ts',
   GenerateImage: 'server/src/agent/imageGenToolProvider.ts',
+  AudioTranscribe: 'server/src/agent/audioTranscribeToolProvider.ts',
   CronManage: 'server/src/agent/cronToolProvider.ts',
   SessionContext: 'server/src/runtime/sessionContext.ts',
 };

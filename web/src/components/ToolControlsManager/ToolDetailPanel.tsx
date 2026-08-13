@@ -37,6 +37,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/contexts/AuthContext";
+import { AudioTranscribeSettingsCard } from "@/components/ToolControlsManager/AudioTranscribeSettingsCard";
 import { ImageGenSettingsCard } from "@/components/ToolControlsManager/ImageGenSettingsCard";
 import { ImageGenPricingCard } from "@/components/ToolControlsManager/ImageGenPricingCard";
 
@@ -439,6 +440,7 @@ function renderRuntimeParamsSection(props: ToolDetailPanelProps): JSX.Element {
   if (tool.id === "WebSearch") return <WebSearchParamsSection {...props} />;
   if (tool.id === "WebFetch") return <WebFetchParamsSection {...props} />;
   if (tool.id === "GenerateImage") return <GenerateImageParamsSection />;
+  if (tool.id === "AudioTranscribe") return <AudioTranscribeSettingsCard />;
   return (
     <Card>
       <CardHeader className="pb-3">

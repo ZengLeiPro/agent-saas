@@ -19,6 +19,7 @@ export interface NotifyChannelSendOptions {
   jobOwner?: string;
   runId?: string;
   runStatus?: 'ok' | 'error' | 'skipped';
+  sessionId?: string;
   durationMs?: number;
 }
 

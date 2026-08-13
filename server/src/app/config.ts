@@ -183,6 +183,31 @@ const dingtalkSendMessageConfigSchema = z.object({
   robotCode: z.string().optional(),
 });
 
+const webPushConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  publicKey: z.string().min(1).optional(),
+  privateKey: z.string().min(1).optional(),
+  subject: z.string().min(1).optional(),
+}).superRefine((value, ctx) => {
+  if (!value.enabled) return;
+  for (const key of ['publicKey', 'privateKey', 'subject'] as const) {
+    if (!value[key]) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: `webPush.enabled=true 时必须配置 ${key}`,
+      });
+    }
+  }
+  if (value.subject && !value.subject.startsWith('mailto:') && !value.subject.startsWith('https://')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['subject'],
+      message: 'webPush.subject 必须是 mailto: 或 https:// URL',
+    });
+  }
+});
+
 const ttsConfigSchema = z.object({
   doubaoAppId: z.string(),
   doubaoApiKey: z.string(),
@@ -1338,6 +1363,7 @@ export const appConfigSchema = z.object({
   roleKit: roleKitConfigSchema,
   dingtalk: dingtalkConfigSchema.optional(),
   dingtalkSendMessage: dingtalkSendMessageConfigSchema.optional(),
+  webPush: webPushConfigSchema.optional(),
   tts: ttsConfigSchema.optional(),
   stt: sttConfigSchema.optional(),
   messageDisplay: messageDisplayConfigSchema.optional(),
@@ -1406,6 +1432,7 @@ export type RoleKitConfig = z.infer<typeof roleKitConfigSchema>;
 export type DingtalkRobotConfig = z.infer<typeof dingtalkRobotConfigSchema>;
 export type DingtalkConfig = z.infer<typeof dingtalkConfigSchema>;
 export type DingtalkSendMessageConfig = z.infer<typeof dingtalkSendMessageConfigSchema>;
+export type WebPushConfig = z.infer<typeof webPushConfigSchema>;
 export type TtsConfig = z.infer<typeof ttsConfigSchema>;
 export type WebMessageDisplayConfig = z.infer<typeof webDisplayConfigSchema>;
 export type DingtalkMessageDisplayConfig = z.infer<typeof dingtalkDisplayConfigSchema>;

@@ -23,6 +23,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SettingsPanelHeader, SettingsPanelHeaderStickyProvider } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { BrowserNotificationSettings } from "@/components/SettingsCenter/BrowserNotificationSettings";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import {
   ConnectionsSection,
@@ -340,6 +341,7 @@ export function GeneralSection() {
             </SelectContent>
           </Select>
         </div>
+        <BrowserNotificationSettings />
       </div>
     </PlaceholderSection>
   );

@@ -93,8 +93,11 @@ import { reconcileMemoryPollJobs, MEMORY_POLL_DEFAULTS } from '../cron/memoryPol
 import { UserActivityService } from '../runtime/userActivityService.js';
 import { createCronNotifier } from '../cron/notifier.js';
 import type { NotifyChannel } from '../cron/notifyChannel.js';
-import { createDingtalkNotifyChannel } from '../cron/notifyChannels/index.js';
+import { createDingtalkNotifyChannel, createWebPushNotifyChannel } from '../cron/notifyChannels/index.js';
 import { buildFollowupContext } from '../cron/followup.js';
+import { PgWebPushStore } from '../webPush/store.js';
+import { isWebPushConfigured, WebPushService } from '../webPush/service.js';
+import { notifyWebPushForRuntimeEvent } from '../webPush/runtimeEventNotifier.js';
 import { assertDevDatabaseSafety, loadAppConfig } from './config.js';
 import { createModelResolvers } from './modelResolvers.js';
 import type { AgentOptionsConfig } from '../agent/options.js';
@@ -701,6 +704,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let systemMetricsCollector: SystemMetricsCollector | undefined;
   let alertStateStore: PgAlertStateStore | undefined;
   let alertNotifier: AlertNotifier | undefined;
+  let webPushService: WebPushService | undefined;
   let dwsConnectionStore: PgDwsConnectionStore | undefined;
   let dwsAuthSessionStore: PgDwsAuthSessionStore | undefined;
   let dwsAuthKeepaliveService: DwsAuthKeepaliveService | undefined;
@@ -805,6 +809,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       logger: serverLogger.child('PgEventStore'),
     });
     await pgEventStore.init();
+    if (isWebPushConfigured(config.webPush)) {
+      try {
+        const webPushStore = new PgWebPushStore({
+          pool: pgEventStore.pool,
+          tablePrefix: config.runtimeEventStore.tablePrefix,
+        });
+        await webPushStore.init();
+        webPushService = new WebPushService(webPushStore, config.webPush);
+      } catch (err) {
+        serverLogger.warn(`Web Push init failed; desktop notifications disabled: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     ({
       authMiddleware,
       governanceAuditStore,
@@ -2335,6 +2351,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     serverLogger.warn(`Business DB init failed (token usage disabled): ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  if (config.webPush?.enabled && !webPushService) {
+    serverLogger.warn('Web Push 已启用但未完成初始化；任务执行仍继续，桌面通知将降级为站内结果');
+  }
+
   // Token usage 历史回填：首次启动时扫 ~/.agent-saas/legacy-transcripts 全量重建一次。
   // 异步触发，不阻塞启动；rebuild_state 表已有记录则自动跳过。
   if (businessDbHandle && enableSingletonWorkers) {
@@ -2446,6 +2466,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       resolveChannels: (notifyConfig) => {
         const channels: NotifyChannel[] = [];
         const shouldDingtalk = notifyConfig.channel === 'dingtalk' || notifyConfig.channel === 'both';
+        const shouldWebPush = notifyConfig.channel === 'web' || notifyConfig.channel === 'both';
 
         if (shouldDingtalk) {
           channels.push(createDingtalkNotifyChannel(
@@ -2459,6 +2480,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
             },
             notifyConfig.dingtalk,
           ));
+        }
+        if (shouldWebPush && webPushService) {
+          channels.push(createWebPushNotifyChannel({ service: webPushService, userStore }));
         }
         return channels;
       },
@@ -2815,6 +2839,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           `Taskboard runtime event projection failed: event=${event.type} error=${err instanceof Error ? err.message : String(err)}`,
         );
       });
+      if (webPushService && pgSessionProjectionStore) {
+        void notifyWebPushForRuntimeEvent(event, {
+          service: webPushService,
+          sessionStore: pgSessionProjectionStore,
+        }).catch((err) => {
+          serverLogger.warn(
+            `Web Push runtime event delivery failed: event=${event.type} error=${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      }
       if (event.type === 'tool_invocation_cancel_requested' && enableSchedulerWorker) {
         void deliverToolInvocationCancel({
           event,
@@ -3148,6 +3182,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },
     agentOptionsConfig,
     tokenUsageStore,
+    webPushService,
     billingService,
     governanceAuditStore,
     membershipStore,

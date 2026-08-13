@@ -19,6 +19,8 @@ export default defineConfig({
       // 使用已有的 manifest.webmanifest，不让插件生成
       manifest: false,
       workbox: {
+        // 在现有更新型 SW 中扩展标准 Web Push；不改变缓存与导航策略。
+        importScripts: ["workbox-push.js"],
         // 预缓存 app shell 静态资源（排除 html）
         // HTML 不缓存：托管侧（ECS express / OSS 对象 meta）设 no-cache 头，
         // 始终从网络获取，确保版本一致

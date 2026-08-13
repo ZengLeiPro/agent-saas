@@ -63,6 +63,15 @@ export function CronScheduleView({
   const { sessions: dingtalkSessions } = useDingtalkSessions();
   const modelList = useModelList();
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const requestedJobId = useMemo(() => new URLSearchParams(window.location.search).get('jobId'), []);
+
+  // Web Push 点击无结果会话时，至少准确打开对应任务详情。
+  useEffect(() => {
+    if (!selectedJobId && requestedJobId && jobs.some((job) => job.id === requestedJobId)) {
+      setSelectedJobId(requestedJobId);
+      setShowDetail(true);
+    }
+  }, [jobs, requestedJobId, selectedJobId]);
 
   // 切换用户时清除不在列表中的选中项
   useEffect(() => {

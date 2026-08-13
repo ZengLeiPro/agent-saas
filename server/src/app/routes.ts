@@ -20,6 +20,7 @@ import {
   createHealthRouter,
   createUploadRouter,
   createCronRouter,
+  createWebPushRouter,
   createTaskboardRouter,
   createSessionsRouter,
   createTtsRouter,
@@ -454,6 +455,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       onPollingUpdated: runtime.updateMemoryPollingConfig,
     }),
   );
+
+  app.use('/api/web-push', createWebPushRouter(runtime.webPushService));
 
   if (cronRuntime.service) {
     app.use(

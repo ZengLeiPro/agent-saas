@@ -165,7 +165,7 @@ describe("任务看板 hooks 并发一致性", () => {
       expect(started.execution).toEqual(execution);
     });
 
-    expect(mocks.executeTask).toHaveBeenCalledWith(originalTask.id, originalTask.version);
+    expect(mocks.executeTask).toHaveBeenCalledWith(originalTask.id, originalTask.version, "work");
     expect(result.current.tasks).toEqual([running]);
   });
 

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MySkillsResponse, UserSkillInfo } from '@agent/shared';
 import {
   fetchMySkills,
   updateMySelections,
+  updateMySkillSelection,
   fetchUserSkills,
   updateUserSelections,
 } from '@agent/shared';
@@ -14,6 +15,7 @@ export function useSkills(username?: string) {
   const [customSkills, setCustomSkills] = useState<UserSkillInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [selections, setSelections] = useState<Set<string>>(new Set());
   const [initialSelections, setInitialSelections] = useState<Set<string>>(new Set());
 
@@ -57,19 +59,32 @@ export function useSkills(username?: string) {
     [...selections].some(id => !initialSelections.has(id));
 
   const save = useCallback(async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     try {
-      const arr = [...selections];
-      if (username) {
-        await updateUserSelections(username, arr);
+      const selectedSkills = [...selections];
+      const allSkills = [...poolSkills, ...tenantSkills, ...customSkills];
+      const changed = allSkills.filter(skill => selections.has(skill.id) !== initialSelections.has(skill.id));
+      if (username || changed.some(skill => skill.selectionVersion === undefined)) {
+        if (username) await updateUserSelections(username, selectedSkills);
+        else await updateMySelections(selectedSkills);
       } else {
-        await updateMySelections(arr);
+        let revision = changed[0]?.selectionVersion ?? 0;
+        for (const skill of changed) {
+          const result = await updateMySkillSelection(skill.id, selections.has(skill.id), revision);
+          revision = result.selectionVersion;
+        }
       }
       await refresh();
+    } catch (error) {
+      await refresh();
+      throw error;
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
-  }, [username, selections, refresh]);
+  }, [username, selections, initialSelections, poolSkills, tenantSkills, customSkills, refresh]);
 
   return {
     poolSkills,

@@ -218,6 +218,7 @@ export default function SkillsScreen() {
                       <Switch
                         value={selections.has(skill.id)}
                         onValueChange={() => toggleSkill(skill.id)}
+                        disabled={saving}
                         trackColor={{ false: colors.muted, true: colors.success }}
                         thumbColor={colors.card}
                         ios_backgroundColor={colors.muted}
@@ -244,6 +245,7 @@ export default function SkillsScreen() {
                       <Switch
                         value={selections.has(skill.id)}
                         onValueChange={() => toggleSkill(skill.id)}
+                        disabled={saving}
                         trackColor={{ false: colors.muted, true: colors.success }}
                         thumbColor={colors.card}
                         ios_backgroundColor={colors.muted}
@@ -288,6 +290,7 @@ export default function SkillsScreen() {
                         <Switch
                           value={selections.has(skill.id)}
                           onValueChange={() => toggleSkill(skill.id)}
+                          disabled={saving}
                           trackColor={{ false: colors.muted, true: colors.success }}
                           thumbColor={colors.card}
                           ios_backgroundColor={colors.muted}

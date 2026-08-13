@@ -16,6 +16,17 @@ import type {
 const DEFAULT_PLATFORM_EXPOSURE: PlatformSkillExposure = 'all';
 const DEFAULT_TENANT_EXPOSURE: TenantSkillMemberExposure = 'all';
 
+export class SkillSelectionVersionConflictError extends Error {
+  constructor(
+    readonly username: string,
+    readonly selectedSkills: string[],
+    readonly revision: number,
+  ) {
+    super('SKILL_SELECTION_VERSION_CONFLICT');
+    this.name = 'SkillSelectionVersionConflictError';
+  }
+}
+
 export class SkillConfigStore {
   private data: SkillsConfigData;
   private filePath: string;
@@ -261,12 +272,64 @@ export class SkillConfigStore {
     });
   }
 
+  getUserSelectionRevision(username: string): number {
+    return this.data.users[username]?.revision ?? 0;
+  }
+
+  async setUserSkillSelected(
+    username: string,
+    skillId: string,
+    enabled: boolean,
+  ): Promise<{ selectedSkills: string[]; revision: number }> {
+    return this.serialize(async () => {
+      const current = this.data.users[username] ?? { selectedSkills: [] };
+      const selected = new Set(current.selectedSkills);
+      if (selected.has(skillId) === enabled) {
+        return { selectedSkills: [...selected], revision: current.revision ?? 0 };
+      }
+      if (enabled) selected.add(skillId);
+      else selected.delete(skillId);
+      const next = {
+        selectedSkills: [...selected],
+        revision: (current.revision ?? 0) + 1,
+      };
+      this.data.users[username] = next;
+      this.bumpVersion();
+      await this.persist();
+      return { selectedSkills: [...next.selectedSkills], revision: next.revision };
+    });
+  }
+
+  async updateUserSkillSelection(
+    username: string,
+    skillId: string,
+    enabled: boolean,
+    expectedRevision: number,
+  ): Promise<{ selectedSkills: string[]; revision: number }> {
+    return this.serialize(async () => {
+      const current = this.data.users[username] ?? { selectedSkills: [] };
+      const revision = current.revision ?? 0;
+      if (revision !== expectedRevision) {
+        throw new SkillSelectionVersionConflictError(username, [...current.selectedSkills], revision);
+      }
+      const selected = new Set(current.selectedSkills);
+      if (enabled) selected.add(skillId);
+      else selected.delete(skillId);
+      const next = { selectedSkills: [...selected], revision: revision + 1 };
+      this.data.users[username] = next;
+      this.bumpVersion();
+      await this.persist();
+      return { selectedSkills: [...next.selectedSkills], revision: next.revision };
+    });
+  }
+
   async setUserSelectedSkills(username: string, skills: string[]): Promise<void> {
     await this.serialize(async () => {
-      if (!this.data.users[username]) {
-        this.data.users[username] = { selectedSkills: [] };
-      }
-      this.data.users[username].selectedSkills = skills;
+      const current = this.data.users[username] ?? { selectedSkills: [] };
+      this.data.users[username] = {
+        selectedSkills: skills,
+        revision: (current.revision ?? 0) + 1,
+      };
       this.bumpVersion();
       await this.persist();
     });
@@ -291,6 +354,7 @@ export class SkillConfigStore {
         const next = config.selectedSkills.filter(id => id !== skillId);
         if (next.length !== config.selectedSkills.length) {
           config.selectedSkills = next;
+          config.revision = (config.revision ?? 0) + 1;
           usersUpdated++;
           changed = true;
         }
@@ -481,6 +545,7 @@ export class SkillConfigStore {
     for (const config of Object.values(this.data.users)) {
       const before = config.selectedSkills.length;
       config.selectedSkills = config.selectedSkills.filter(id => currentPoolIds.has(id) || anyOwnIds.has(id));
+      if (config.selectedSkills.length !== before) config.revision = (config.revision ?? 0) + 1;
       pruned += before - config.selectedSkills.length;
     }
     for (const [tenantId, config] of Object.entries(this.data.tenants)) {

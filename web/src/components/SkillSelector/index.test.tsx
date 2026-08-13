@@ -1,16 +1,16 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { saveSelections, refresh } = vi.hoisted(() => ({
-  saveSelections: vi.fn(),
+const { saveSelection, refresh } = vi.hoisted(() => ({
+  saveSelection: vi.fn(),
   refresh: vi.fn(),
 }));
 
 vi.mock("./hooks", () => {
   const data = {
-      poolSkills: [{ id: "platform-analysis", name: "平台分析", description: "平台统一提供的数据分析能力", selected: false, source: "pool" }],
-      tenantSkills: [{ id: "org-crm", name: "组织 CRM", description: "组织内部 CRM 能力", selected: false, source: "tenant" }],
-      customSkills: [{ id: "my-report", name: "我的周报", description: "个人创建的周报能力", selected: true, source: "custom" }],
+      poolSkills: [{ id: "platform-analysis", name: "平台分析", description: "平台统一提供的数据分析能力", selected: false, selectionVersion: 0, source: "pool" }],
+      tenantSkills: [{ id: "org-crm", name: "组织 CRM", description: "组织内部 CRM 能力", selected: false, selectionVersion: 0, source: "tenant" }],
+      customSkills: [{ id: "my-report", name: "我的周报", description: "个人创建的周报能力", selected: true, selectionVersion: 1, source: "custom" }],
   };
   return {
     useMySkills: () => ({
@@ -18,7 +18,7 @@ vi.mock("./hooks", () => {
     loading: false,
     error: null,
     saving: false,
-    saveSelections,
+    saveSelection,
     refresh,
     }),
   };
@@ -27,13 +27,19 @@ vi.mock("./hooks", () => {
 vi.mock("@agent/shared", () => ({
   deleteMySkill: vi.fn(),
   importMySkill: vi.fn(),
+  SkillSelectionConflictError: class SkillSelectionConflictError extends Error {
+    constructor() {
+      super("技能选择已在其他页面更新，已同步最新状态，请重试");
+    }
+  },
 }));
 
+import { SkillSelectionConflictError } from "@agent/shared";
 import { SkillSelector } from "./index";
 
 describe("SkillSelector 能力目录", () => {
   beforeEach(() => {
-    saveSelections.mockReset().mockResolvedValue(undefined);
+    saveSelection.mockReset().mockResolvedValue(undefined);
     refresh.mockReset().mockResolvedValue(undefined);
   });
 
@@ -49,8 +55,29 @@ describe("SkillSelector 能力目录", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "启用 平台分析" }));
     await waitFor(() => {
-      expect(saveSelections).toHaveBeenCalledWith(["platform-analysis", "my-report"]);
+      expect(saveSelection).toHaveBeenCalledWith("platform-analysis", true);
     });
+  });
+
+  it("请求处理中快速连续点击只发送一次更新", async () => {
+    let release!: () => void;
+    saveSelection.mockReturnValue(new Promise<void>(resolve => { release = resolve; }));
+    render(<SkillSelector headerTitle="我的通用 Agent 技能" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "启用 平台分析" }));
+    fireEvent.click(screen.getByRole("button", { name: "停用 平台分析" }));
+    expect(saveSelection).toHaveBeenCalledTimes(1);
+
+    release();
+    await waitFor(() => expect(screen.queryByText("技能已启用")).toBeTruthy());
+  });
+
+  it("并发冲突显示可恢复提示", async () => {
+    saveSelection.mockRejectedValue(new SkillSelectionConflictError());
+    render(<SkillSelector headerTitle="我的通用 Agent 技能" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "启用 平台分析" }));
+    expect(await screen.findByText("技能选择已在其他页面更新，已同步最新状态，请重试")).toBeTruthy();
   });
 
   it("支持来源筛选和关键词搜索", async () => {

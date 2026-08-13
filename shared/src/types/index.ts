@@ -231,6 +231,7 @@ export type {
   TenantSkillInfo,
   TenantOwnSkillInfo,
   UserSkillInfo,
+  SkillSelectionUpdateResponse,
   MySkillsResponse,
   SkillPoolResponse,
   TenantSkillPoolResponse,

@@ -3,12 +3,12 @@ import { RefreshCw, TriangleAlert } from "lucide-react";
 
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
 import { MembershipIdentityActions } from "@/components/OrganizationGovernance/MembershipIdentityActions";
+import { MemoryKnowledgeGovernance } from "@/components/OrganizationGovernance/MemoryKnowledgeGovernance";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useGovernanceRequest } from "@/hooks/useGovernanceRequest";
 import { governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
 import { navigateGovernance } from "@/lib/urlSync";
-import { EntityIcons } from "@/lib/icons";
 import { governanceAccessApi, governanceResourcesApi } from "@agent/shared/lib/governanceApi";
 
 interface MembershipRecord {
@@ -40,13 +40,13 @@ interface OffboardingPreviewResponse {
     skills: Array<{ id: string; action: "retain_and_disable" }>;
     personalCredentials: Array<{ id: string; action: "revoke" }>;
     custodialCredentials: Array<{ id: string; action: "transfer_custodian" }>;
-    cronOwnership: { status: string; ids?: string[] };
+    cronOwnership: { status: "clear" | "transfer" | "unknown" | "unavailable"; ids?: string[] };
     activeRuns?: { status: string; ids?: string[] };
     activeSessions?: { status: string; ids?: string[] };
     oauthGrants?: { status: string; ids?: string[] };
     externalConnections?: { status: string; ids?: string[] };
-    personalMemory: { status: string; ids?: string[] };
-    fileOwnership: { status: string; personalFileIds?: string[]; organizationFileIds?: string[] };
+    personalMemory: { status: "clear" | "archive" | "unknown" | "unavailable"; ids?: string[] };
+    fileOwnership: { status: "clear" | "archive" | "blocked" | "unknown" | "unavailable"; personalFileIds?: string[]; organizationFileIds?: string[] };
   };
   blockers: Array<{ code: string; domain: string; targetId?: string }>;
   canCommit: boolean;
@@ -89,10 +89,9 @@ interface MembershipDetailsResponse {
   }>;
   usagePolicy: {
     status?: "unavailable"; tenantId?: string; timezone?: string; periodStart?: string; periodEnd?: string;
-    monthUsedCreditsMicro?: number; unattributedCreditsMicro?: number;
     items?: Array<{
       userId: string; monthlyLimitCreditsMicro?: number; enforcementMode: string; perRunLimitCreditsMicro?: number;
-      active: boolean; version: number; monthUsedCreditsMicro: number; remainingCreditsMicro?: number; canStartRun: boolean;
+      active: boolean; version: number; monthAttributedCreditsMicro: number; remainingCreditsMicro?: number; canStartRun: boolean;
     }>;
   };
   recentAudit: { events: Array<{ auditId: string; action: string; result: string; occurredAt: string; actorUserId: string; reason?: string }>; coverage: string; limit: number };
@@ -109,6 +108,11 @@ interface EntitlementRecord {
 interface ResourceScope { resourceType: string; mode: "all" | "selected"; resourceIds: string[]; version: number }
 interface TenantPolicy { policyKey: string; value: unknown; source: string; version: number }
 interface EntitlementResponse { entitlement: EntitlementRecord | null; scopes: ResourceScope[]; policies: TenantPolicy[] }
+interface GovernancePreview { previewId: string; baselineDigest: string; expiresAt: string; impact: Record<string, unknown>; changeId: string }
+interface GovernanceReceipt { changeId: string; auditId: string; effectiveAt?: string; projectionStatus?: string }
+interface ConnectorRecord { connectorId: string; name: string; status: string; authMethods: string[]; version: number; healthTestSupported?: boolean }
+
+interface EnvironmentTemplateRecord { templateId: string; name: string; status: "draft" | "published" | "retired"; revision: number }
 interface CredentialRecord {
   credentialId: string;
   connectorId?: string;
@@ -119,6 +123,7 @@ interface CredentialRecord {
   generation: number;
   expiresAt?: string;
   lastValidatedAt?: string;
+  custodianUserId?: string;
   version: number;
 }
 interface CredentialResponse { credentials: CredentialRecord[] }
@@ -168,6 +173,25 @@ function localizedValue(value: string | null | undefined, labels: Record<string,
   return labels[value] ?? `未知（${value}）`;
 }
 
+function shanghaiNaturalMonth(periodStart: string | undefined): string {
+  if (!periodStart) return "周期不可用";
+  const instant = new Date(/^\d{4}-\d{2}-\d{2}$/.test(periodStart) ? `${periodStart}T00:00:00+08:00` : periodStart);
+  if (Number.isNaN(instant.getTime())) return "周期不可识别";
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "numeric",
+  }).formatToParts(instant);
+  const year = parts.find(part => part.type === "year")?.value;
+  const month = parts.find(part => part.type === "month")?.value;
+  return year && month ? `${year}年${Number(month)}月（北京时间）` : "周期不可识别";
+}
+
+function unresolvedOffboardingAuthority(preview: OffboardingPreviewResponse): string | null {
+  if (!["clear", "transfer"].includes(preview.impact.cronOwnership.status)) return "定时任务归属权威状态未知或暂不可用";
+  if (!["clear", "archive"].includes(preview.impact.personalMemory.status)) return "个人记忆权威状态未知或暂不可用";
+  if (!["clear", "archive", "blocked"].includes(preview.impact.fileOwnership.status)) return "文件归属权威状态未知或暂不可用";
+  return null;
+}
+
 function Loading() {
   return <div className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">正在读取治理权威数据…</div>;
 }
@@ -194,6 +218,7 @@ function OrganizationMemberDetails({ tenantId, userId, tab }: { tenantId: string
   if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
   if (!data) return <Empty text="成员治理详情不可用。" />;
   const selected = data.identity;
+  const memberUsage = data.usagePolicy?.items?.find(item => item.userId === selected.userId);
   return <div className="space-y-5">
     <SectionTitle title="成员详情" description="身份和可执行动作均由后端授权；资源指派来自 Assignment 权威解析。" />
     <div className="rounded-xl border bg-card p-5">
@@ -209,7 +234,7 @@ function OrganizationMemberDetails({ tenantId, userId, tab }: { tenantId: string
     {tab === "profile" ? <div id="member-panel-profile" role="tabpanel" aria-labelledby="member-tab-profile" className="grid gap-3 sm:grid-cols-2"><Fact label="姓名" value={data.profile.displayName} /><Fact label="账号" value={data.profile.username} /><Fact label="岗位" value={data.profile.position ?? "未填写"} /><Fact label="账号状态" value={data.profile.accountStatus} /><Fact label="钉钉绑定" value={data.profile.dingtalkBound ? "已绑定" : "未绑定"} /><Fact label="目录更新时间" value={new Date(data.profile.updatedAt).toLocaleString()} /></div> : null}
     {tab === "access" ? <div id="member-panel-access" role="tabpanel" aria-labelledby="member-tab-access" className="space-y-3"><div className="grid gap-3 sm:grid-cols-3"><Fact label="最终身份" value={personaLabel[data.accessSummary.effectivePersona]} /><Fact label="所有者" value={data.accessSummary.owner ? "是" : "否"} /><Fact label="账号判定" value={data.accessSummary.decision === "eligible" ? "可参与权限解析" : "已拒绝"} /></div><div className="rounded-xl border bg-card p-4"><div className="font-medium">为什么</div><ul className="mt-2 divide-y text-sm">{data.accessSummary.why.map((item, index) => <li key={`${item.source}-${index}`} className="flex justify-between gap-3 py-2"><span>{localizedValue(item.source, sourceLabels)}</span><span className="text-muted-foreground">{localizedValue(item.effect, effectLabels)} · v{item.version}</span></li>)}</ul></div></div> : null}
     {tab === "assignments" ? <div id="member-panel-assignments" role="tabpanel" aria-labelledby="member-tab-assignments" className="grid gap-3 md:grid-cols-2">{data.assignments.map(group => <div key={group.resourceType} className="rounded-xl border bg-card p-4"><div className="flex items-center justify-between gap-3"><span className="font-medium">{group.resourceType}</span><Badge variant="outline">{group.resources.length} 项</Badge></div>{group.resources.length ? <ul className="mt-3 divide-y text-xs">{group.resources.map(resource => <li key={resource.resourceId} className="py-2"><div className="flex items-center justify-between gap-2"><span className="font-mono">{resource.resourceId}</span><Badge variant="secondary">最终允许</Badge></div><div className="mt-1 text-muted-foreground">Assignment v{resource.assignmentVersion}</div><ul className="mt-2 space-y-1">{resource.bindings.map(binding => <li key={binding.assignmentId}>{binding.assigneeType}{binding.assigneeId ? `:${binding.assigneeId}` : ""} → {binding.effect}（{binding.origin}）</li>)}</ul></li>)}</ul> : <div className="mt-3 text-sm text-muted-foreground">无有效指派</div>}</div>)}</div> : null}
-    {tab === "usage-policy" ? data.usagePolicy.status === "unavailable" ? <Empty text="用量策略权威暂不可用。" /> : <div className="space-y-3"><div className="grid gap-3 sm:grid-cols-3"><Fact label="统计周期" value={`${data.usagePolicy.periodStart ?? "-"} 至 ${data.usagePolicy.periodEnd ?? "-"}`} /><Fact label="月用量" value={String(data.usagePolicy.monthUsedCreditsMicro ?? 0)} /><Fact label="未归属用量" value={String(data.usagePolicy.unattributedCreditsMicro ?? 0)} /></div>{(data.usagePolicy.items ?? []).map(item => <div key={item.userId} className="grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-4"><Fact label="执行模式" value={item.enforcementMode} /><Fact label="月限额" value={item.monthlyLimitCreditsMicro === undefined ? "不限制" : String(item.monthlyLimitCreditsMicro)} /><Fact label="本月已用" value={String(item.monthUsedCreditsMicro)} /><Fact label="允许启动" value={item.canStartRun ? "是" : "否"} /></div>)}</div> : null}
+    {tab === "usage-policy" ? data.usagePolicy.status === "unavailable" ? <Empty text="用量策略权威暂不可用。" /> : memberUsage ? <div className="grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-4"><Fact label="统计周期" value={shanghaiNaturalMonth(data.usagePolicy.periodStart)} /><Fact label="成员本月已归属用量" value={String(memberUsage.monthAttributedCreditsMicro)} /><Fact label="个人月限额" value={memberUsage.monthlyLimitCreditsMicro === undefined ? "不限制" : String(memberUsage.monthlyLimitCreditsMicro)} /><Fact label="允许启动" value={memberUsage.canStartRun ? "是" : "否"} /></div> : <Empty text="当前成员的月用量明细不可用。" /> : null}
     {tab === "security-audit" ? <div id="member-panel-security-audit" role="tabpanel" aria-labelledby="member-tab-security-audit" className="space-y-3"><div className="text-xs text-muted-foreground">覆盖范围：最近 {data.recentAudit.limit} 条组织治理审计中的 Membership 端点事件</div>{data.recentAudit.events.length ? data.recentAudit.events.map(event => <div key={event.auditId} className="rounded-xl border bg-card p-4 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{event.action}</span><Badge variant="outline">{event.result}</Badge></div><div className="mt-2 text-xs text-muted-foreground">{new Date(event.occurredAt).toLocaleString()} · 操作人 {event.actorUserId}</div>{event.reason ? <div className="mt-2">原因：{event.reason}</div> : null}</div>) : <Empty text="当前覆盖窗口内没有成员治理记录。" />}</div> : null}
   </div>;
 }
@@ -264,6 +289,7 @@ export function OrganizationOffboardingPage({ tenantId }: { tenantId: string }) 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const command = { tenantId, userId, handoffTargetUserId, reasonCode };
+  const authorityIssue = preview ? unresolvedOffboardingAuthority(preview) : null;
   const resetPreview = () => { setPreview(null); setResult(null); setReceipt(null); setError(""); };
   const runPreview = async () => {
     setBusy(true); setError(""); setResult(null);
@@ -272,7 +298,16 @@ export function OrganizationOffboardingPage({ tenantId }: { tenantId: string }) 
     finally { setBusy(false); }
   };
   const commit = async () => {
-    if (!preview?.canCommit) return;
+    if (!preview) return;
+    const unresolvedAuthority = unresolvedOffboardingAuthority(preview);
+    if (unresolvedAuthority) {
+      setError(`${unresolvedAuthority}，为避免遗漏撤权，当前不能提交。请刷新权威预览后重试。`);
+      return;
+    }
+    if (!preview.canCommit || preview.blockers.length > 0) {
+      setError("当前预览仍有阻断，不能提交离职撤权。");
+      return;
+    }
     setBusy(true); setError("");
     try {
       const started = await governanceResourcesApi.startUserOffboarding<OffboardingJobResponse>({
@@ -316,9 +351,45 @@ export function OrganizationOffboardingPage({ tenantId }: { tenantId: string }) 
       <div className="md:col-span-3"><Button disabled={busy || !userId || !handoffTargetUserId || userId === handoffTargetUserId} onClick={() => void runPreview()}>生成影响预览</Button></div>
     </div>
     {error ? <div role="alert" className="rounded-xl border border-destructive/40 p-3 text-sm text-destructive">{error}</div> : null}
-    {preview ? <div className="space-y-3 rounded-xl border bg-card p-5"><div className="flex items-center justify-between gap-3"><span className="font-medium">权威影响快照</span><Badge variant={preview.canCommit ? "secondary" : "destructive"}>{preview.canCommit ? "可提交" : `${preview.blockers.length} 个阻断`}</Badge></div><div className="grid gap-3 sm:grid-cols-3"><Fact label="组织智能体交接" value={`${preview.impact.agents.length} 项`} /><Fact label="个人智能体归档" value={`${preview.impact.personalAgents.length} 项`} /><Fact label="个人技能停用保留" value={`${preview.impact.skills.length} 项`} /><Fact label="个人凭据撤销" value={`${preview.impact.personalCredentials.length} 项`} /><Fact label="凭据托管人转移" value={`${preview.impact.custodialCredentials.length} 项`} /><Fact label="定时任务" value={localizedValue(preview.impact.cronOwnership.status)} /><Fact label="个人记忆" value={localizedValue(preview.impact.personalMemory.status)} /><Fact label="文件归属" value={localizedValue(preview.impact.fileOwnership.status)} /><Fact label="活跃运行" value={`${preview.impact.activeRuns?.ids?.length ?? 0} 项`} /><Fact label="会话留存" value={`${preview.impact.activeSessions?.ids?.length ?? 0} 项`} /><Fact label="OAuth 授权" value={`${preview.impact.oauthGrants?.ids?.length ?? 0} 项`} /><Fact label="外部连接" value={`${preview.impact.externalConnections?.ids?.length ?? 0} 项`} /></div><div className="text-xs text-muted-foreground">基线 {preview.baselineDigest.slice(0, 12)}… · 签名预览有效期至 {new Date(preview.expiresAt).toLocaleString()}</div>{preview.blockers.length ? <ul className="space-y-1 rounded-xl border border-destructive/30 p-3 text-sm text-destructive">{preview.blockers.map(item => <li key={`${item.code}:${item.targetId ?? item.domain}`}>{item.domain} · {item.code}{item.targetId ? ` · ${item.targetId}` : ""}</li>)}</ul> : <Button disabled={busy || Date.parse(preview.expiresAt) <= Date.now()} onClick={() => void commit()}>确认交接并撤权</Button>}</div> : null}
+    {preview ? <div className="space-y-3 rounded-xl border bg-card p-5"><div className="flex items-center justify-between gap-3"><span className="font-medium">权威影响快照</span><Badge variant={preview.canCommit && !authorityIssue && preview.blockers.length === 0 ? "secondary" : "destructive"}>{authorityIssue ? "权威状态不可用" : preview.canCommit && preview.blockers.length === 0 ? "可提交" : `${preview.blockers.length} 个阻断`}</Badge></div><div className="grid gap-3 sm:grid-cols-3"><Fact label="组织智能体交接" value={`${preview.impact.agents.length} 项`} /><Fact label="个人智能体归档" value={`${preview.impact.personalAgents.length} 项`} /><Fact label="个人技能停用保留" value={`${preview.impact.skills.length} 项`} /><Fact label="个人凭据撤销" value={`${preview.impact.personalCredentials.length} 项`} /><Fact label="凭据托管人转移" value={`${preview.impact.custodialCredentials.length} 项`} /><Fact label="定时任务" value={localizedValue(preview.impact.cronOwnership.status)} /><Fact label="个人记忆" value={localizedValue(preview.impact.personalMemory.status)} /><Fact label="文件归属" value={localizedValue(preview.impact.fileOwnership.status)} /><Fact label="活跃运行" value={`${preview.impact.activeRuns?.ids?.length ?? 0} 项`} /><Fact label="会话留存" value={`${preview.impact.activeSessions?.ids?.length ?? 0} 项`} /><Fact label="OAuth 授权" value={`${preview.impact.oauthGrants?.ids?.length ?? 0} 项`} /><Fact label="外部连接" value={`${preview.impact.externalConnections?.ids?.length ?? 0} 项`} /></div><div className="text-xs text-muted-foreground">基线 {preview.baselineDigest.slice(0, 12)}… · 签名预览有效期至 {new Date(preview.expiresAt).toLocaleString()}</div>{authorityIssue ? <div role="alert" className="rounded-xl border border-destructive/30 p-3 text-sm text-destructive">{authorityIssue}，为避免遗漏撤权，当前不能提交。请刷新权威预览后重试。</div> : null}{preview.blockers.length ? <ul className="space-y-1 rounded-xl border border-destructive/30 p-3 text-sm text-destructive">{preview.blockers.map(item => <li key={`${item.code}:${item.targetId ?? item.domain}`}>{item.domain} · {item.code}{item.targetId ? ` · ${item.targetId}` : ""}</li>)}</ul> : <Button disabled={busy || Boolean(authorityIssue) || !preview.canCommit || Date.parse(preview.expiresAt) <= Date.now()} onClick={() => void commit()}>确认交接并撤权</Button>}</div> : null}
     {result ? <div className="space-y-3 rounded-xl border p-4 text-sm">{receipt ? <div role="status" aria-live="polite" className="rounded-lg border bg-muted/30 p-3 text-xs"><div className="font-medium">治理回执</div><div>Change ID：{receipt.changeId ?? "未返回"} · Audit ID：{receipt.auditId ?? "未返回"}</div><div>{receipt.effectiveAt ? `生效于 ${new Date(receipt.effectiveAt).toLocaleString()}` : receipt.auditCompletion === "pending" ? `终态审计待投影${receipt.auditProjectionId ? ` · ${receipt.auditProjectionId}` : ""}` : "生效时间未返回"}</div></div> : null}<div className="flex flex-wrap items-center gap-2"><span>变更任务</span><strong>{localizedValue(result.job.status)}</strong><span className="font-mono text-xs">{result.job.jobId}</span><Badge variant="outline">尝试次数 {result.job.attempt}</Badge></div><div className="grid gap-2 md:grid-cols-2">{result.domains.map(domain => <div key={domain.domain} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-2"><span className="font-medium">{domain.domain}</span><Badge variant={domain.status === "completed" ? "secondary" : "outline"}>{localizedValue(domain.status)}</Badge></div><div className="mt-1 text-xs text-muted-foreground">完成 {domain.completedCount}/{domain.totalCount} · 失败 {domain.failedCount}{domain.lastErrorCode ? ` · ${domain.lastErrorCode}` : ""}</div>{domain.unresolvedItems?.length ? <ul className="mt-2 space-y-1 text-xs text-destructive">{domain.unresolvedItems.map(item => <li key={`${item.itemType}:${item.itemId}`}>{item.itemType} · {item.itemId} · {item.reasonCode}{item.retryable ? "（可重试）" : ""}</li>)}</ul> : null}</div>)}</div>{["retry_wait", "partial", "failed"].includes(result.job.status) ? <Button variant="outline" disabled={busy} onClick={() => void retryJob()}>重试未完成域</Button> : null}</div> : null}
   </div>;
+}
+
+function Receipt({ receipt }: { receipt: GovernanceReceipt | null }) {
+  if (!receipt) return null;
+  return <div role="status" className="rounded-lg border bg-muted/30 p-3 text-xs">治理回执 · Change ID：{receipt.changeId} · Audit ID：{receipt.auditId}{receipt.effectiveAt ? ` · ${new Date(receipt.effectiveAt).toLocaleString()}` : ""}</div>;
+}
+
+function PolicyEditor({ tenantId, policy, onCommitted }: { tenantId: string; policy: TenantPolicy; onCommitted: () => void }) {
+  const [value, setValue] = useState(policy.value === true ? "allow" : "deny");
+  const [reason, setReason] = useState("");
+  const [preview, setPreview] = useState<GovernancePreview | null>(null);
+  const [receipt, setReceipt] = useState<GovernanceReceipt | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inherited = policy.source !== "governance";
+  const runPreview = async () => {
+    setBusy(true); setError(null); setReceipt(null);
+    try { setPreview(await governanceAccessApi.previewPolicy<GovernancePreview>(policy.policyKey, { expectedVersion: policy.version, value: value === "allow", reason }, tenantId)); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
+  };
+  const commit = async () => {
+    if (!preview) return;
+    setBusy(true); setError(null);
+    try {
+      const result = await governanceAccessApi.updatePolicy<GovernanceReceipt>(policy.policyKey, { expectedVersion: policy.version, value: value === "allow", reason, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }, tenantId);
+      setReceipt(result); setPreview(null); onCommitted();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
+  };
+  return <li className="space-y-3 py-3">
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><div className="font-mono text-xs">{policy.policyKey}</div><div className="mt-1 text-xs text-muted-foreground">v{policy.version} · {inherited ? `继承（当前${policy.value === true ? "允许" : "禁止"}）` : policy.value === true ? "明确允许" : "明确禁止"}</div></div><select aria-label={`${policy.policyKey} 策略`} className="rounded-md border bg-background px-2 py-1 text-sm" value={value} onChange={event => { setValue(event.target.value); setPreview(null); }}><option value="allow">允许</option><option value="deny">禁止</option></select></div>
+    <div className="flex flex-wrap gap-2"><input aria-label={`${policy.policyKey} 变更原因`} className="min-w-64 flex-1 rounded-md border bg-background px-3 py-2 text-sm" placeholder="填写变更原因（至少 3 个字符）" value={reason} onChange={event => { setReason(event.target.value); setPreview(null); }} /><Button variant="outline" disabled={busy || reason.trim().length < 3} onClick={() => void runPreview()}>预览</Button>{preview ? <Button disabled={busy || Date.parse(preview.expiresAt) <= Date.now()} onClick={() => void commit()}>提交</Button> : null}</div>
+    {preview ? <div className="rounded-lg border p-3 text-xs">签名预览：v{policy.version} → v{policy.version + 1} · 有效至 {new Date(preview.expiresAt).toLocaleString()}</div> : null}
+    {error ? <div role="alert" className="text-xs text-destructive">{error}</div> : null}<Receipt receipt={receipt} />
+  </li>;
 }
 
 export function OrganizationPoliciesPage({ tenantId }: { tenantId: string }) {
@@ -326,24 +397,57 @@ export function OrganizationPoliciesPage({ tenantId }: { tenantId: string }) {
   const { data, loading, error, retry } = useGovernanceRequest(request, `policies:${tenantId}`);
   if (loading) return <Loading />;
   if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
-  return <div><SectionTitle title="权限策略" description="平台权益只读，组织策略按业务对象展示；本页不使用统一总开关。" />
-    <div className="grid gap-4 lg:grid-cols-2">
-      <div className="rounded-xl border bg-card p-4"><div className="mb-3 font-medium">平台权益</div><div className="text-sm">状态：{data?.entitlement ? localizedValue(data.entitlement.status) : "未配置"}</div><div className="mt-1 text-xs text-muted-foreground">来源：{data?.entitlement ? localizedValue(data.entitlement.source, sourceLabels) : "—"} · v{data?.entitlement?.version ?? 0}</div></div>
-      <div className="rounded-xl border bg-card p-4"><div className="mb-3 font-medium">组织策略</div>{data?.policies.length ? <ul className="divide-y text-sm">{data.policies.map(policy => <li key={policy.policyKey} className="flex items-center justify-between gap-3 py-2"><span className="font-mono text-xs">{policy.policyKey}</span><span>{typeof policy.value === "boolean" ? (policy.value ? "允许" : "禁止") : "已配置"}</span></li>)}</ul> : <span className="text-sm text-muted-foreground">没有治理策略记录</span>}</div>
-    </div>
-    <div className="mt-4 rounded-xl border p-3 text-sm text-muted-foreground">策略写入尚未具备统一影响预览与回执，本页暂时只读。</div>
+  return <div><SectionTitle title="权限策略" description="平台权益只读；组织策略逐项显示继承、允许或禁止，并通过版本化 preview → commit 留下审计回执。" />
+    <div className="rounded-xl border bg-card p-4"><div className="font-medium">平台权益</div><div className="mt-2 text-sm">状态：{data?.entitlement ? localizedValue(data.entitlement.status) : "未配置"}</div><div className="mt-1 text-xs text-muted-foreground">来源：{data?.entitlement ? localizedValue(data.entitlement.source, sourceLabels) : "—"} · v{data?.entitlement?.version ?? 0}</div></div>
+    <div className="mt-4 rounded-xl border bg-card p-4"><div className="font-medium">组织策略</div>{data?.policies.length ? <ul className="mt-2 divide-y">{data.policies.map(policy => <PolicyEditor key={`${policy.policyKey}:${policy.version}`} tenantId={tenantId} policy={policy} onCommitted={retry} />)}</ul> : <Empty text="权威策略表当前为空。" />}</div>
   </div>;
 }
 
+function CredentialAction({ tenantId, item, mode, onCommitted }: { tenantId: string; item: CredentialRecord; mode: "rotate" | "transfer"; onCommitted: () => void }) {
+  const [value, setValue] = useState(""); const [reason, setReason] = useState("");
+  const [preview, setPreview] = useState<GovernancePreview | null>(null); const [receipt, setReceipt] = useState<GovernanceReceipt | null>(null);
+  const [error, setError] = useState<string | null>(null); const [busy, setBusy] = useState(false);
+  const command = mode === "rotate" ? { expectedVersion: item.version, secret: value, reason } : { expectedVersion: item.version, custodianUserId: value, reason };
+  const runPreview = async () => { setBusy(true); setError(null); try { setPreview(mode === "rotate" ? await governanceResourcesApi.previewCredentialRotation<GovernancePreview>(item.credentialId, command, tenantId) : await governanceResourcesApi.previewCredentialTransfer<GovernancePreview>(item.credentialId, command, tenantId)); } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
+  const commit = async () => { if (!preview) return; setBusy(true); setError(null); try { const result = mode === "rotate" ? await governanceResourcesApi.rotateCredential<GovernanceReceipt>(item.credentialId, { ...command, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }, tenantId) : await governanceResourcesApi.transferCredential<GovernanceReceipt>(item.credentialId, { ...command, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }, tenantId); setReceipt(result); setValue(""); setReason(""); setPreview(null); onCommitted(); } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
+  return <div className="mt-3 space-y-2 rounded-lg border p-3"><div className="text-xs font-medium">{mode === "rotate" ? "轮换密钥" : "交接责任人"}</div><input aria-label={mode === "rotate" ? `${item.credentialId} 新密钥` : `${item.credentialId} 新责任人`} type={mode === "rotate" ? "password" : "text"} autoComplete="new-password" className="w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder={mode === "rotate" ? "新密钥（提交后永不回显）" : "同组织有效成员 ID"} value={value} onChange={event => { setValue(event.target.value); setPreview(null); }} /><input aria-label={`${item.credentialId} ${mode}原因`} className="w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder="变更原因" value={reason} onChange={event => { setReason(event.target.value); setPreview(null); }} /><div className="flex gap-2"><Button size="sm" variant="outline" disabled={busy || !value || reason.trim().length < 3} onClick={() => void runPreview()}>预览</Button>{preview ? <Button size="sm" disabled={busy} onClick={() => void commit()}>确认提交</Button> : null}</div>{preview ? <div className="text-xs text-muted-foreground">签名预览有效至 {new Date(preview.expiresAt).toLocaleString()}</div> : null}{error ? <div role="alert" className="text-xs text-destructive">{error}</div> : null}<Receipt receipt={receipt} /></div>;
+}
+
 export function OrganizationCredentialsPage({ tenantId }: { tenantId: string }) {
-  const request = useMemo(() => () => governanceResourcesApi.listCredentials<CredentialResponse>(tenantId), [tenantId]);
+  const request = useMemo(() => async () => {
+    const [credentials, connectors, memberships] = await Promise.all([governanceResourcesApi.listCredentials<CredentialResponse>(tenantId), governanceResourcesApi.listConnectors<{ connectors: ConnectorRecord[] }>(), governanceAccessApi.listMemberships<MembershipResponse>(tenantId)]);
+    return { credentials: credentials.credentials, connectors: connectors?.connectors ?? [], memberships: memberships?.memberships ?? [] };
+  }, [tenantId]);
   const { data, loading, error, retry } = useGovernanceRequest(request, `credentials:${tenantId}`);
-  if (loading) return <Loading />;
-  if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
-  return <div><SectionTitle title="连接器与凭据" description="只展示别名、用途、状态和健康时间；密钥永不回显。" />
-    {!data?.credentials.length ? <Empty text="当前组织没有治理凭据。" /> : <div className="grid gap-3 md:grid-cols-2">{data.credentials.map(item => <div key={item.credentialId} className="rounded-xl border bg-card p-4"><div className="flex items-start justify-between gap-3"><div><div className="font-medium">{item.alias || item.connectorId || "未命名凭据"}</div><div className="mt-1 text-xs text-muted-foreground">{item.purpose}</div></div><Badge variant={item.status === "active" ? "secondary" : "outline"}>{localizedValue(item.status)}</Badge></div><div className="mt-3 text-xs text-muted-foreground">代次 {item.generation} · v{item.version}{item.lastValidatedAt ? ` · 验证 ${new Date(item.lastValidatedAt).toLocaleString()}` : ""}</div></div>)}</div>}
-    <div className="mt-4 flex items-start gap-2 rounded-xl border p-3 text-sm text-muted-foreground"><EntityIcons.admin className="mt-0.5 size-4 shrink-0" /><span>测试、轮换、责任人交接与统一创建向导尚无完整权威合同，因此未开放写操作。</span></div>
+  const [connectorId, setConnectorId] = useState(""); const [alias, setAlias] = useState(""); const [purpose, setPurpose] = useState(""); const [secret, setSecret] = useState(""); const [custodianUserId, setCustodianUserId] = useState(""); const [reason, setReason] = useState("");
+  const [preview, setPreview] = useState<GovernancePreview | null>(null); const [receipt, setReceipt] = useState<GovernanceReceipt | null>(null); const [formError, setFormError] = useState<string | null>(null); const [busy, setBusy] = useState(false);
+  if (loading) return <Loading />; if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
+  const createCommand = { kind: "org_shared", connectorId, alias, purpose, secret, custodianUserId: custodianUserId || undefined, reason };
+  const previewCreate = async () => { setBusy(true); setFormError(null); try { setPreview(await governanceResourcesApi.previewCredentialCreate<GovernancePreview>(createCommand)); } catch (cause) { setFormError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
+  const commitCreate = async () => { if (!preview) return; setBusy(true); setFormError(null); try { const result = await governanceResourcesApi.createCredential<GovernanceReceipt>({ ...createCommand, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }); setReceipt(result); setSecret(""); setPreview(null); retry(); } catch (cause) { setFormError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
+  const health = async (item: CredentialRecord) => { setBusy(true); setFormError(null); try { const result = await governanceResourcesApi.testCredentialHealth<{ healthy: boolean; code: string }>(item.credentialId, item.version, tenantId); setReceipt(result as unknown as GovernanceReceipt); retry(); } catch (cause) { setFormError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
+  return <div><SectionTitle title="连接器与凭据" description="目录、凭据状态与健康结果来自权威服务；secret 仅写入 Vault，响应与页面永不回显。" />
+    <div className="mb-4 space-y-3 rounded-xl border bg-card p-4"><div className="font-medium">创建组织共享凭据</div><div className="grid gap-2 md:grid-cols-2"><select aria-label="连接器目录" className="rounded-md border bg-background px-3 py-2 text-sm" value={connectorId} onChange={event => { setConnectorId(event.target.value); setPreview(null); }}><option value="">选择已发布连接器</option>{data?.connectors.filter(item => item.status === "published").map(item => <option key={item.connectorId} value={item.connectorId}>{item.name}（{item.authMethods.join("/")}）</option>)}</select><select aria-label="凭据责任人" className="rounded-md border bg-background px-3 py-2 text-sm" value={custodianUserId} onChange={event => { setCustodianUserId(event.target.value); setPreview(null); }}><option value="">当前管理员</option>{data?.memberships.filter(item => item.status === "active").map(item => <option key={item.userId} value={item.userId}>{item.directoryProfile?.displayName ?? item.userId}</option>)}</select><input aria-label="凭据别名" className="rounded-md border bg-background px-3 py-2 text-sm" placeholder="别名" value={alias} onChange={event => { setAlias(event.target.value); setPreview(null); }} /><input aria-label="凭据用途" className="rounded-md border bg-background px-3 py-2 text-sm" placeholder="用途" value={purpose} onChange={event => { setPurpose(event.target.value); setPreview(null); }} /><input aria-label="凭据密钥" type="password" autoComplete="new-password" className="rounded-md border bg-background px-3 py-2 text-sm" placeholder="secret（永不回显）" value={secret} onChange={event => { setSecret(event.target.value); setPreview(null); }} /><input aria-label="创建原因" className="rounded-md border bg-background px-3 py-2 text-sm" placeholder="创建原因" value={reason} onChange={event => { setReason(event.target.value); setPreview(null); }} /></div><div className="flex gap-2"><Button variant="outline" disabled={busy || !connectorId || !purpose || !secret || reason.trim().length < 3} onClick={() => void previewCreate()}>预览创建</Button>{preview ? <Button disabled={busy} onClick={() => void commitCreate()}>确认创建</Button> : null}</div>{preview ? <div className="text-xs text-muted-foreground">目录与责任人基线已签名，有效至 {new Date(preview.expiresAt).toLocaleString()}</div> : null}{formError ? <div role="alert" className="text-sm text-destructive">{formError}</div> : null}<Receipt receipt={receipt} /></div>
+    {!data?.credentials.length ? <Empty text="当前组织没有治理凭据。" /> : <div className="grid gap-3 md:grid-cols-2">{data.credentials.map(item => <div key={item.credentialId} className="rounded-xl border bg-card p-4"><div className="flex items-start justify-between gap-3"><div><div className="font-medium">{item.alias || item.connectorId || "未命名凭据"}</div><div className="mt-1 text-xs text-muted-foreground">{item.purpose}</div></div><Badge variant={item.status === "active" ? "secondary" : "outline"}>{localizedValue(item.status)}</Badge></div><div className="mt-3 text-xs text-muted-foreground">责任人 {item.custodianUserId ?? "—"} · 代次 {item.generation} · v{item.version}{item.lastValidatedAt ? ` · 验证 ${new Date(item.lastValidatedAt).toLocaleString()}` : ""}</div><Button className="mt-3" size="sm" variant="outline" disabled={busy || !data.connectors.find(connector => connector.connectorId === item.connectorId)?.healthTestSupported} onClick={() => void health(item)}>{data.connectors.find(connector => connector.connectorId === item.connectorId)?.healthTestSupported ? "真实健康测试" : "健康测试无安全合同"}</Button><CredentialAction tenantId={tenantId} item={item} mode="rotate" onCommitted={retry} /><CredentialAction tenantId={tenantId} item={item} mode="transfer" onCommitted={retry} /></div>)}</div>}
   </div>;
+}
+
+export function OrganizationMemoryKnowledgePage({ tenantId }: { tenantId: string }) {
+  return <MemoryKnowledgeGovernance tenantId={tenantId} />;
+}
+
+export function OrganizationEnvironmentsPage({ tenantId }: { tenantId: string }) {
+  const request = useMemo(() => async () => { const [entitlements, templates] = await Promise.all([governanceAccessApi.getEntitlements<EntitlementResponse>(tenantId), governanceResourcesApi.listEnvironmentTemplates<{ templates: EnvironmentTemplateRecord[] }>()]); return { entitlements, templates: templates.templates.filter(item => item.status === "published") }; }, [tenantId]);
+  const { data, loading, error, retry } = useGovernanceRequest(request, `environments:${tenantId}`);
+  const scope = data?.entitlements.scopes.find(item => item.resourceType === "environment_template");
+  const [mode, setMode] = useState<"all" | "selected">("selected"); const [selected, setSelected] = useState<string[]>([]); const [preview, setPreview] = useState<GovernancePreview | null>(null); const [receipt, setReceipt] = useState<GovernanceReceipt | null>(null); const [formError, setFormError] = useState<string | null>(null); const [busy, setBusy] = useState(false);
+  useEffect(() => { if (scope) { setMode(scope.mode); setSelected(scope.resourceIds); } }, [scope?.version]);
+  if (loading) return <Loading />; if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
+  if (!scope) return <Empty text="本组织尚无 environment_template entitlement scope，无法安全编辑。" />;
+  const command = { expectedVersion: scope.version, mode, resourceIds: mode === "all" ? [] : selected };
+  const runPreview = async () => { setBusy(true); setFormError(null); try { setPreview(await governanceAccessApi.previewEntitlementScope<GovernancePreview>("environment_template", command, tenantId)); } catch (cause) { setFormError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
+  const commit = async () => { if (!preview) return; setBusy(true); setFormError(null); try { const result = await governanceAccessApi.updateEntitlementScope<GovernanceReceipt>("environment_template", { ...command, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }, tenantId); setReceipt(result); setPreview(null); retry(); } catch (cause) { setFormError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
+  return <div><SectionTitle title="环境可用范围" description="展示已发布环境模板权威目录和本组织 effective scope；组织管理员通过 entitlement preview → commit 修改。" /><div className="rounded-xl border bg-card p-4"><div className="flex items-center justify-between"><span className="font-medium">Effective scope</span><Badge variant="outline">v{scope.version}</Badge></div><select aria-label="环境范围模式" className="mt-3 rounded-md border bg-background px-3 py-2 text-sm" value={mode} onChange={event => { setMode(event.target.value as "all" | "selected"); setPreview(null); }}><option value="all">全部已发布模板</option><option value="selected">仅所选模板</option></select><div className="mt-3 grid gap-2 md:grid-cols-2">{data?.templates.map(item => <label key={item.templateId} className="flex items-center gap-2 rounded-lg border p-3 text-sm"><input type="checkbox" disabled={mode === "all"} checked={mode === "all" || selected.includes(item.templateId)} onChange={event => { setSelected(current => event.target.checked ? [...new Set([...current, item.templateId])] : current.filter(id => id !== item.templateId)); setPreview(null); }} /><span>{item.name}</span><span className="ml-auto font-mono text-xs text-muted-foreground">{item.templateId}</span></label>)}</div>{!data?.templates.length ? <Empty text="权威目录当前没有已发布环境模板。" /> : null}<div className="mt-3 flex gap-2"><Button variant="outline" disabled={busy} onClick={() => void runPreview()}>预览范围变更</Button>{preview ? <Button disabled={busy} onClick={() => void commit()}>确认提交</Button> : null}</div>{preview ? <div className="mt-2 text-xs text-muted-foreground">影响已签名，有效至 {new Date(preview.expiresAt).toLocaleString()}</div> : null}{formError ? <div role="alert" className="mt-2 text-sm text-destructive">{formError}</div> : null}<Receipt receipt={receipt} /></div></div>;
 }
 
 export function OrganizationGovernancePlaceholder({ title, detail }: { title: string; detail: string }) {

@@ -1,6 +1,8 @@
 import type pg from 'pg';
 import { PLATFORM_TENANT_ID } from '../tenants/types.js';
 import { governanceV18Statements } from './v18Migration.js';
+import { governanceV19Statements } from './v19Migration.js';
+import { governanceV20Statements } from './v20Migration.js';
 
 export type GovernancePgPool = pg.Pool;
 
@@ -33,6 +35,7 @@ function migrations(prefix: string): GovernanceMigration[] {
   const preferences = `${prefix}_user_resource_preferences`;
   const runResolutionSnapshots = `${prefix}_run_resolution_snapshots`;
   const credentials = `${prefix}_credentials`;
+  const credentialCommits = `${prefix}_credential_commits`;
   const connectorDefinitions = `${prefix}_connector_definitions`;
   const connectorVersions = `${prefix}_connector_definition_versions`;
   const executionProviders = `${prefix}_execution_providers`;
@@ -887,6 +890,14 @@ function migrations(prefix: string): GovernanceMigration[] {
         prefix, changeJobs, changeJobDomains, assignments, directoryGroups, directoryGroupMembers, memberships,
         oauthGrants, oauthApprovalRecords, nativeOAuthHandoffs,
       }),
+    },
+    {
+      version: 19,
+      statements: governanceV19Statements({ assignmentSets, assignments }),
+    },
+    {
+      version: 20,
+      statements: governanceV20Statements({ credentialCommits }),
     },
   ];
 }

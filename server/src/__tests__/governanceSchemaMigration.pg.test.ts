@@ -7,13 +7,14 @@ import {
   PgGovernanceMigrationRunner,
   type GovernancePgPool,
 } from '../data/governance-schema/migrations.js';
+import { governanceV20Statements } from '../data/governance-schema/v20Migration.js';
 import { PgOAuthGrantStore } from '../data/oauthGrants/store.js';
 
 const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('Governance Schema V18 PostgreSQL 升级、约束与事务回滚', () => {
+describePg('Governance Schema V20 PostgreSQL 升级、约束与事务回滚', () => {
   const prefix = `govv17_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   let pool: InstanceType<typeof Pool>;
 
@@ -45,7 +46,7 @@ describePg('Governance Schema V18 PostgreSQL 升级、约束与事务回滚', ()
     }
   }, 30_000);
 
-  it('V17 中途失败回滚到 V16，重试升级到 V18 并建立租户隔离约束与八类 outbox trigger', async () => {
+  it('V17 中途失败回滚到 V16，重试升级到 V20 并建立租户隔离约束与八类 outbox trigger', async () => {
     let injected = false;
     const failingPool = {
       connect: async () => {
@@ -90,7 +91,7 @@ describePg('Governance Schema V18 PostgreSQL 升级、约束与事务回滚', ()
       `SELECT version FROM ${prefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 18 }, (_, index) => index + 1),
+      Array.from({ length: 20 }, (_, index) => index + 1),
     );
     const v18Tables = await pool.query<{ name: string | null }>(
       `SELECT to_regclass($1) AS name UNION ALL SELECT to_regclass($2) UNION ALL SELECT to_regclass($3) UNION ALL SELECT to_regclass($4)`,
@@ -167,6 +168,148 @@ describePg('Governance Schema V18 PostgreSQL 升级、约束与事务回滚', ()
       { projector: 'preference', count: '1' },
       { projector: 'tenant_settings', count: '3' },
     ]);
+  }, 60_000);
+
+  it('V19 将组织记忆建模为带名称、状态和租户主键的 Assignment Set 元数据', async () => {
+    await new PgGovernanceMigrationRunner(pool, prefix).run();
+    const sets = `${prefix}_resource_assignment_sets`;
+    const assignments = `${prefix}_resource_assignments`;
+    await pool.query(`INSERT INTO ${sets}
+      (tenant_id,resource_type,resource_id,resource_name,resource_status,source,created_by,updated_by)
+      VALUES ('memory-tenant','org_memory','mem-1','团队决策','enabled','governance','admin','admin')`);
+    await pool.query(`INSERT INTO ${assignments}
+      (assignment_id,tenant_id,resource_type,resource_id,assignee_type,effect,origin,created_by,updated_by)
+      VALUES ('memory-assignment','memory-tenant','org_memory','mem-1','everyone','allow','direct','admin','admin')`);
+    await expect(pool.query(`INSERT INTO ${sets}
+      (tenant_id,resource_type,resource_id,resource_status,source,created_by,updated_by)
+      VALUES ('memory-tenant','org_memory','mem-missing-name','enabled','governance','admin','admin')`)).rejects.toThrow();
+    await expect(pool.query(`UPDATE ${sets} SET resource_status='unknown' WHERE tenant_id='memory-tenant' AND resource_type='org_memory' AND resource_id='mem-1'`)).rejects.toThrow();
+    const metadata = await pool.query(`SELECT tenant_id,resource_id,resource_name,resource_status,version FROM ${sets}
+      WHERE tenant_id='memory-tenant' AND resource_type='org_memory'`);
+    expect(metadata.rows).toMatchObject([{ tenant_id: 'memory-tenant', resource_id: 'mem-1', resource_name: '团队决策', resource_status: 'enabled' }]);
+  }, 30_000);
+
+  it('V19 中途失败时元数据列与 org_memory 约束整版回滚，重试幂等成功', async () => {
+    const v19Prefix = `${prefix}_v19rb`;
+    let injected = false;
+    const failingPool = {
+      connect: async () => {
+        const client = await pool.connect();
+        return {
+          query: async (text: string, values?: readonly unknown[]) => {
+            const normalized = text.replace(/\s+/g, ' ').trim();
+            if (!injected && normalized.includes(`${v19Prefix}_resource_assignment_sets_memory_catalog_idx`)) {
+              injected = true;
+              throw new Error('INJECTED_V19_FAILURE');
+            }
+            return client.query(text, values as never);
+          },
+          release: () => client.release(),
+        };
+      },
+    } as unknown as GovernancePgPool;
+    await expect(new PgGovernanceMigrationRunner(failingPool, v19Prefix).run()).rejects.toThrow('INJECTED_V19_FAILURE');
+    const version = await pool.query<{ version: number }>(`SELECT MAX(version) AS version FROM ${v19Prefix}_governance_schema_versions`);
+    expect(Number(version.rows[0]?.version)).toBe(18);
+    const columns = await pool.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM information_schema.columns
+      WHERE table_schema=current_schema() AND table_name=$1 AND column_name IN ('resource_name','resource_status')`, [`${v19Prefix}_resource_assignment_sets`]);
+    expect(Number(columns.rows[0]?.count)).toBe(0);
+    await new PgGovernanceMigrationRunner(pool, v19Prefix).run();
+    const retried = await pool.query<{ version: number }>(`SELECT MAX(version) AS version FROM ${v19Prefix}_governance_schema_versions`);
+    expect(Number(retried.rows[0]?.version)).toBe(20);
+  }, 30_000);
+
+  it('V18 遗留 org_memory 空元数据可升级，V19 已标记且旧 ledger 存在时 V20 仍幂等', async () => {
+    const legacyPrefix = `${prefix}_legacy`;
+    const sets = `${legacyPrefix}_resource_assignment_sets`;
+    const commits = `${legacyPrefix}_credential_commits`;
+    let stoppedAtV18 = false;
+    const v18Pool = {
+      connect: async () => {
+        const client = await pool.connect();
+        return {
+          query: async (text: string, values?: readonly unknown[]) => {
+            if (!stoppedAtV18 && text.includes(`ALTER TABLE ${sets} ADD COLUMN IF NOT EXISTS resource_name`)) {
+              stoppedAtV18 = true;
+              throw new Error('STOP_AFTER_V18');
+            }
+            return client.query(text, values as never);
+          },
+          release: () => client.release(),
+        };
+      },
+    } as unknown as GovernancePgPool;
+    await expect(new PgGovernanceMigrationRunner(v18Pool, legacyPrefix).run()).rejects.toThrow('STOP_AFTER_V18');
+    await pool.query(`ALTER TABLE ${sets} ADD COLUMN resource_name TEXT, ADD COLUMN resource_status TEXT`);
+    await pool.query(`INSERT INTO ${sets}
+      (tenant_id,resource_type,resource_id,resource_name,resource_status,source,created_by,updated_by)
+      VALUES ('legacy-tenant','org_memory','memory-legacy-1',NULL,NULL,'legacy_projection','migration','migration')`);
+
+    let stoppedAtV19 = false;
+    const v19Pool = {
+      connect: async () => {
+        const client = await pool.connect();
+        return {
+          query: async (text: string, values?: readonly unknown[]) => {
+            if (!stoppedAtV19 && text.includes(`CREATE TABLE IF NOT EXISTS ${commits}`)) {
+              stoppedAtV19 = true;
+              throw new Error('STOP_AFTER_V19');
+            }
+            return client.query(text, values as never);
+          },
+          release: () => client.release(),
+        };
+      },
+    } as unknown as GovernancePgPool;
+    await expect(new PgGovernanceMigrationRunner(v19Pool, legacyPrefix).run()).rejects.toThrow('STOP_AFTER_V19');
+    const afterV19 = await pool.query<{ version: number }>(
+      `SELECT MAX(version) AS version FROM ${legacyPrefix}_governance_schema_versions`,
+    );
+    expect(Number(afterV19.rows[0]?.version)).toBe(19);
+    const migrated = await pool.query<{ resource_name: string; resource_status: string }>(`
+      SELECT resource_name,resource_status FROM ${sets}
+      WHERE tenant_id='legacy-tenant' AND resource_type='org_memory' AND resource_id='memory-legacy-1'
+    `);
+    expect(migrated.rows[0]).toMatchObject({ resource_status: 'enabled' });
+    expect(migrated.rows[0]?.resource_name).toMatch(/^Migrated org memory [0-9a-f]{12}$/);
+    expect(migrated.rows[0]?.resource_name).not.toContain('memory-legacy-1');
+    const statusColumn = await pool.query<{ is_nullable: string; column_default: string }>(`
+      SELECT is_nullable,column_default FROM information_schema.columns
+      WHERE table_schema=current_schema() AND table_name=$1 AND column_name='resource_status'
+    `, [sets]);
+    expect(statusColumn.rows[0]?.is_nullable).toBe('NO');
+    expect(statusColumn.rows[0]?.column_default).toContain('enabled');
+
+    await pool.query(governanceV20Statements({ credentialCommits: commits })[0]!);
+    await pool.query(`INSERT INTO ${commits}
+      (tenant_id,operation,idempotency_key,nonce_digest,request_digest,target_id,actor_user_id,status)
+      VALUES ('tenant-a','create','idem-1','nonce-1','request-1','target-1','admin-1','running')`);
+    const runner = new PgGovernanceMigrationRunner(pool, legacyPrefix);
+    await runner.run();
+    await runner.run();
+    const versions = await pool.query<{ version: number; count: string }>(`
+      SELECT MAX(version)::integer AS version,COUNT(*) FILTER (WHERE version=20)::text AS count
+      FROM ${legacyPrefix}_governance_schema_versions
+    `);
+    expect(versions.rows[0]).toMatchObject({ version: 20, count: '1' });
+    await expect(pool.query(`INSERT INTO ${commits}
+      (tenant_id,operation,idempotency_key,nonce_digest,request_digest,target_id,actor_user_id,status)
+      VALUES ('tenant-a','create','idem-1','nonce-2','request-2','target-2','admin-1','running')`)).rejects.toThrow();
+    await expect(pool.query(`INSERT INTO ${commits}
+      (tenant_id,operation,idempotency_key,nonce_digest,request_digest,target_id,actor_user_id,status)
+      VALUES ('tenant-a','create','idem-2','nonce-1','request-2','target-2','admin-1','running')`)).rejects.toThrow();
+    await expect(pool.query(`INSERT INTO ${commits}
+      (tenant_id,operation,idempotency_key,nonce_digest,request_digest,target_id,actor_user_id,status)
+      VALUES ('tenant-b','create','idem-1','nonce-1','request-1','target-1','admin-1','running')`))
+      .resolves.toMatchObject({ rowCount: 1 });
+    const constraints = await pool.query<{ type: string; definition: string }>(`
+      SELECT contype AS type,pg_get_constraintdef(oid) AS definition FROM pg_constraint
+      WHERE conrelid=$1::regclass AND contype IN ('p','u') ORDER BY contype
+    `, [commits]);
+    expect(constraints.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'p', definition: expect.stringContaining('(tenant_id, operation, idempotency_key)') }),
+      expect.objectContaining({ type: 'u', definition: expect.stringContaining('(tenant_id, operation, nonce_digest)') }),
+    ]));
   }, 60_000);
 
   it('V18 的 Directory Group 硬约束拒绝 self、2 节点、长环及绕 store 原始写入', async () => {
@@ -289,7 +432,7 @@ describePg('Governance Schema V18 PostgreSQL 升级、约束与事务回滚', ()
     const retried = await pool.query<{ version: number }>(
       `SELECT MAX(version) AS version FROM ${v18Prefix}_governance_schema_versions`,
     );
-    expect(Number(retried.rows[0]?.version)).toBe(18);
+    expect(Number(retried.rows[0]?.version)).toBe(20);
     const unresolvedAfter = await pool.query<{ is_nullable: string; column_default: string }>(`
       SELECT is_nullable,column_default FROM information_schema.columns
       WHERE table_schema=current_schema() AND table_name=$1 AND column_name='unresolved_items_json'

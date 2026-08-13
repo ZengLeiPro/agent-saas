@@ -26,7 +26,7 @@ server/src/agent/toolRuntime.ts	1725	production
 server/src/app/config.ts	1523	production
 server/src/app/runtime.ts	3229	production
 server/src/channels/web/channel.ts	4474	production
-server/src/cron/service.ts	1138	production
+server/src/cron/service.ts	1085	production
 server/src/data/billing/pgBillingStore.ts	2319	production
 server/src/data/transcripts/parse.ts	2042	production
 server/src/routes/auth.ts	1812	production

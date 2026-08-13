@@ -28,18 +28,25 @@ interface Harness {
   clock: { now: number };
   saved: CronJob[][];
   runLogs: CronRunLogEntry[];
-  notifies: Array<{ job: CronJob; run: CronRunLogEntry; output?: string; error?: string }>;
+  notifies: Array<{
+    job: CronJob;
+    run: CronRunLogEntry;
+    output?: string;
+    error?: string;
+  }>;
   events: CronEvent[];
   clear: () => void;
 }
 
-function makeHarness(opts: {
-  loadJobs?: CronServiceDeps["loadJobs"];
-  executeJob?: CronServiceDeps["executeJob"];
-  onSessionCreated?: CronServiceDeps["onSessionCreated"];
-  defaultTimeoutSeconds?: number;
-  tryAcquireRunLease?: CronServiceDeps["tryAcquireRunLease"];
-} = {}): Harness {
+function makeHarness(
+  opts: {
+    loadJobs?: CronServiceDeps["loadJobs"];
+    executeJob?: CronServiceDeps["executeJob"];
+    onSessionCreated?: CronServiceDeps["onSessionCreated"];
+    defaultTimeoutSeconds?: number;
+    tryAcquireRunLease?: CronServiceDeps["tryAcquireRunLease"];
+  } = {},
+): Harness {
   const clock = { now: 1_000_000 };
   const saved: CronJob[][] = [];
   const runLogs: CronRunLogEntry[] = [];
@@ -53,7 +60,8 @@ function makeHarness(opts: {
       saved.push(jobs.map((j) => ({ ...j })));
     },
     tryAcquireRunLease: opts.tryAcquireRunLease,
-    executeJob: opts.executeJob ?? (async () => ({ status: "ok", output: "done" })),
+    executeJob:
+      opts.executeJob ?? (async () => ({ status: "ok", output: "done" })),
     appendRunLog: async (entry) => {
       runLogs.push(entry);
     },
@@ -78,10 +86,13 @@ function makeHarness(opts: {
 }
 
 /** executeJob 永不 resolve，模拟卡死的任务执行。 */
-const hangingExecuteJob: CronServiceDeps["executeJob"] = () => new Promise(() => {});
+const hangingExecuteJob: CronServiceDeps["executeJob"] = () =>
+  new Promise(() => {});
 
 let rawJobSeq = 0;
-function rawJob(over: Partial<CronJob> & { schedule: CronJob["schedule"] }): CronJob {
+function rawJob(
+  over: Partial<CronJob> & { schedule: CronJob["schedule"] },
+): CronJob {
   rawJobSeq += 1;
   return {
     id: `raw-${rawJobSeq}`,
@@ -100,7 +111,10 @@ async function flushMicrotasks(times = 30): Promise<void> {
 }
 
 const statusEvents = (events: CronEvent[]) =>
-  events.filter((e): e is Extract<CronEvent, { type: "statusChanged" }> => e.type === "statusChanged");
+  events.filter(
+    (e): e is Extract<CronEvent, { type: "statusChanged" }> =>
+      e.type === "statusChanged",
+  );
 
 afterEach(() => {
   vi.useRealTimers();
@@ -109,7 +123,10 @@ afterEach(() => {
 describe("cron service watchdog", () => {
   // 通过 runNow + 永不 resolve 的 executeJob 走真实卡死路径，
   // 再直接调用私有 checkStaleJobs（不依赖 60s interval），时间由注入 nowMs 控制。
-  async function arrangeStuckJob(h: Harness, create: Parameters<CronService["add"]>[0]) {
+  async function arrangeStuckJob(
+    h: Harness,
+    create: Parameters<CronService["add"]>[0],
+  ) {
     const job = await h.service.add(create);
     const res = await h.service.runNow(job.id);
     expect(res).toEqual({ ran: true });
@@ -185,27 +202,35 @@ describe("cron service watchdog", () => {
     expect(after?.state.lastDurationMs).toBe(780_001);
     expect(after?.state.lastRunAtMs).toBeUndefined();
     expect(after?.state.nextRunAtMs).toBeUndefined();
-    expect(await h.service.runNow(job.id)).toEqual({ ran: false, error: "Job is already running" });
+    expect(await h.service.runNow(job.id)).toEqual({
+      ran: false,
+      error: "Job is already running",
+    });
 
-    // 3) run log：runId = `${startedAt}-watchdog`
+    // 3) watchdog finalizes the original runId; it does not create a fake second run.
     expect(h.runLogs).toEqual([
-      {
-        runId: "1000000-watchdog",
+      expect.objectContaining({
+        runId: after?.state.runningRunId,
         startedAtMs: 1_000_000,
         endedAtMs: 1_780_001,
         jobId: job.id,
         jobName: "hung-agent",
         status: "error",
-        error: "Watchdog: exceeded 780s deadline; disabled while original run is still active",
+        error:
+          "Watchdog: exceeded 780s deadline; disabled while original run is still active",
         durationMs: 780_001,
-      },
+        trigger: "manual",
+        attempt: 1,
+      }),
     ]);
 
     // 4) notify：携带同一份 run entry 与 error，无 output
     expect(h.notifies).toHaveLength(1);
     expect(h.notifies[0].job.id).toBe(job.id);
     expect(h.notifies[0].run).toEqual(h.runLogs[0]);
-    expect(h.notifies[0].error).toBe("Watchdog: exceeded 780s deadline; disabled while original run is still active");
+    expect(h.notifies[0].error).toBe(
+      "Watchdog: exceeded 780s deadline; disabled while original run is still active",
+    );
     expect(h.notifies[0].output).toBeUndefined();
 
     // 5) persist 一次 + finished/statusChanged 事件（顺序：finished → statusChanged）
@@ -216,7 +241,8 @@ describe("cron service watchdog", () => {
       jobId: job.id,
       jobName: "hung-agent",
       status: "error",
-      error: "Watchdog: exceeded 780s deadline; disabled while original run is still active",
+      error:
+        "Watchdog: exceeded 780s deadline; disabled while original run is still active",
       durationMs: 780_001,
     });
     expect(statusEvents(h.events)[0].status).toEqual({
@@ -231,9 +257,11 @@ describe("cron service watchdog", () => {
 
   it("late watchdog completion only releases the claim and preserves the timeout result", async () => {
     let resolveExecution!: (value: { status: "ok"; output: string }) => void;
-    const execution = new Promise<{ status: "ok"; output: string }>((resolve) => {
-      resolveExecution = resolve;
-    });
+    const execution = new Promise<{ status: "ok"; output: string }>(
+      (resolve) => {
+        resolveExecution = resolve;
+      },
+    );
     const h = makeHarness({ executeJob: () => execution });
     const job = await arrangeStuckJob(h, {
       name: "late-watchdog-result",
@@ -263,7 +291,9 @@ describe("cron service watchdog", () => {
     );
     expect(h.runLogs).toHaveLength(1);
     expect(h.notifies).toHaveLength(1);
-    expect(h.events.filter((event) => event.type === "finished")).toHaveLength(1);
+    expect(h.events.filter((event) => event.type === "finished")).toHaveLength(
+      1,
+    );
   });
 
   it("falls back to 6h deadline when job timeoutSeconds=0 (no hard timeout)", async () => {
@@ -290,12 +320,15 @@ describe("cron service watchdog", () => {
       "Watchdog: exceeded 21780s deadline; disabled while original run is still active",
     );
     expect(h.runLogs).toHaveLength(1);
-    expect(h.runLogs[0].runId).toBe("1000000-watchdog");
+    expect(h.runLogs[0].runId).toBe(after?.state.runningRunId);
     expect(h.runLogs[0].durationMs).toBe(21_780_001);
   });
 
   it("cleans a stuck disabled job without rescheduling nextRun (defaultTimeoutSeconds path)", async () => {
-    const h = makeHarness({ executeJob: hangingExecuteJob, defaultTimeoutSeconds: 60 });
+    const h = makeHarness({
+      executeJob: hangingExecuteJob,
+      defaultTimeoutSeconds: 60,
+    });
     const job = await h.service.add({
       name: "later-disabled",
       schedule: { kind: "every", everyMs: 10_000 },
@@ -320,7 +353,7 @@ describe("cron service watchdog", () => {
     );
     expect(after?.state.nextRunAtMs).toBeUndefined();
     expect(h.runLogs).toHaveLength(1);
-    expect(h.runLogs[0].runId).toBe("1000000-watchdog");
+    expect(h.runLogs[0].runId).toBe(after?.state.runningRunId);
     expect(h.notifies).toHaveLength(1);
     expect(h.saved).toHaveLength(1);
     expect(statusEvents(h.events)[0].status.enabledJobCount).toBe(0);
@@ -346,7 +379,7 @@ describe("cron service watchdog", () => {
     expect(timedOut?.state.runningTimedOutAtMs).toBe(1_780_001);
     expect(timedOut?.enabled).toBe(false);
     expect(h.runLogs).toHaveLength(1);
-    expect(h.runLogs[0].runId).toBe("1000000-watchdog");
+    expect(h.runLogs[0].runId).toBe(timedOut?.state.runningRunId);
 
     // 新任务在 stop() 后即使远超 deadline，也不会被 watchdog 处理。
     const second = await h.service.add({
@@ -360,7 +393,9 @@ describe("cron service watchdog", () => {
     h.service.stop();
     h.clock.now = 1_780_001 + 780_002;
     await vi.advanceTimersByTimeAsync(180_000);
-    expect((await h.service.get(second.id))?.state.runningTimedOutAtMs).toBeUndefined();
+    expect(
+      (await h.service.get(second.id))?.state.runningTimedOutAtMs,
+    ).toBeUndefined();
     expect(h.runLogs).toHaveLength(0);
   });
 });
@@ -406,7 +441,13 @@ describe("cron service start/stop lifecycle", () => {
     // endedAt=25_000，anchor=0 → 下一次对齐到 30_000
     expect(after?.state.nextRunAtMs).toBe(30_000);
 
-    expect(statusEvents(h.events).map((e) => e.status.enabled)).toEqual([true, false, true, true, true]);
+    expect(statusEvents(h.events).map((e) => e.status.enabled)).toEqual([
+      true,
+      false,
+      true,
+      true,
+      true,
+    ]);
   });
 });
 
@@ -427,7 +468,9 @@ describe("cron service normalizeEverySchedule (load-time backfill)", () => {
   });
 
   it("does not backfill anchor for disabled jobs and skips persist entirely", async () => {
-    const jobs = [rawJob({ enabled: false, schedule: { kind: "every", everyMs: 5_000 } })];
+    const jobs = [
+      rawJob({ enabled: false, schedule: { kind: "every", everyMs: 5_000 } }),
+    ];
     const h = makeHarness({ loadJobs: async () => jobs });
     h.clock.now = 500_000;
 
@@ -440,8 +483,14 @@ describe("cron service normalizeEverySchedule (load-time backfill)", () => {
 
   it("backfills anchor = nextRunAtMs - everyMs (floors floats, clamps at 0)", async () => {
     const jobs = [
-      rawJob({ schedule: { kind: "every", everyMs: 10_000 }, state: { nextRunAtMs: 50_000.9 } }),
-      rawJob({ schedule: { kind: "every", everyMs: 10_000 }, state: { nextRunAtMs: 5_000 } }),
+      rawJob({
+        schedule: { kind: "every", everyMs: 10_000 },
+        state: { nextRunAtMs: 50_000.9 },
+      }),
+      rawJob({
+        schedule: { kind: "every", everyMs: 10_000 },
+        state: { nextRunAtMs: 5_000 },
+      }),
     ];
     const h = makeHarness({ loadJobs: async () => jobs });
     h.clock.now = 500_000;
@@ -460,15 +509,23 @@ describe("cron service normalizeEverySchedule (load-time backfill)", () => {
   it("backfills anchor = now when nextRunAtMs is missing or non-finite (toFiniteInt guard)", async () => {
     const jobs = [
       rawJob({ schedule: { kind: "every", everyMs: 10_000 } }), // 无 nextRun
-      rawJob({ schedule: { kind: "every", everyMs: 10_000 }, state: { nextRunAtMs: Number.NaN } }),
-      rawJob({ schedule: { kind: "every", everyMs: 10_000 }, state: { nextRunAtMs: Number.POSITIVE_INFINITY } }),
+      rawJob({
+        schedule: { kind: "every", everyMs: 10_000 },
+        state: { nextRunAtMs: Number.NaN },
+      }),
+      rawJob({
+        schedule: { kind: "every", everyMs: 10_000 },
+        state: { nextRunAtMs: Number.POSITIVE_INFINITY },
+      }),
     ];
     const h = makeHarness({ loadJobs: async () => jobs });
     h.clock.now = 123_456;
 
     const loaded = await h.service.list({ includeDisabled: true });
 
-    expect(loaded.map((j) => (j.schedule as any).anchorMs)).toEqual([123_456, 123_456, 123_456]);
+    expect(loaded.map((j) => (j.schedule as any).anchorMs)).toEqual([
+      123_456, 123_456, 123_456,
+    ]);
     // 无 nextRun 的 enabled job 加载后按新 anchor 补算下一次
     expect(loaded[0].state.nextRunAtMs).toBe(133_456);
   });
@@ -477,13 +534,18 @@ describe("cron service normalizeEverySchedule (load-time backfill)", () => {
 describe("cron service hard timeout (pTimeout)", () => {
   it("records a hard timeout while retaining the claim until the underlying execution stops", async () => {
     vi.useFakeTimers();
-    const sessionCreated: Array<[string, string, string, string | undefined]> = [];
+    const sessionCreated: Array<[string, string, string, string | undefined]> =
+      [];
     let leaseHeld = false;
-    const leaseReleased = vi.fn(async () => { leaseHeld = false; });
-    let resolveExecution!: (value: { status: "ok"; output: string }) => void;
-    const execution = new Promise<{ status: "ok"; output: string }>((resolve) => {
-      resolveExecution = resolve;
+    const leaseReleased = vi.fn(async () => {
+      leaseHeld = false;
     });
+    let resolveExecution!: (value: { status: "ok"; output: string }) => void;
+    const execution = new Promise<{ status: "ok"; output: string }>(
+      (resolve) => {
+        resolveExecution = resolve;
+      },
+    );
     const h = makeHarness({
       // 卡死前先通过 hook 上报 sessionId，验证 pTimeout 打断后仍可归组
       executeJob: (_job, hooks) => {
@@ -510,7 +572,10 @@ describe("cron service hard timeout (pTimeout)", () => {
 
     expect(await h.service.runNow(job.id)).toEqual({ ran: true });
     // 运行中重复触发被拒绝
-    expect(await h.service.runNow(job.id)).toEqual({ ran: false, error: "Job is already running" });
+    expect(await h.service.runNow(job.id)).toEqual({
+      ran: false,
+      error: "Job is already running",
+    });
     h.clear();
 
     h.clock.now = 1_061_000;
@@ -522,11 +587,16 @@ describe("cron service hard timeout (pTimeout)", () => {
     expect(after?.state.runningRunId).toBeDefined();
     expect(after?.state.runningTimedOutAtMs).toBe(1_061_000);
     expect(after?.state.lastStatus).toBe("error");
-    expect(after?.state.lastError).toBe("Error: Service-level hard timeout after 61s");
+    expect(after?.state.lastError).toBe(
+      "Error: Service-level hard timeout after 61s",
+    );
     expect(after?.state.lastDurationMs).toBe(61_000);
     expect(after?.state.nextRunAtMs).toBeUndefined();
     expect(after?.enabled).toBe(false);
-    expect(await h.service.runNow(job.id)).toEqual({ ran: false, error: "Job is already running" });
+    expect(await h.service.runNow(job.id)).toEqual({
+      ran: false,
+      error: "Job is already running",
+    });
     expect(leaseReleased).not.toHaveBeenCalled();
 
     expect(h.runLogs).toHaveLength(1);
@@ -544,8 +614,12 @@ describe("cron service hard timeout (pTimeout)", () => {
     expect(h.runLogs[0].runId).toMatch(/^1000000-[0-9a-f]{8}-/); // `${startedAt}-${uuid}`
 
     expect(h.notifies).toHaveLength(1);
-    expect(h.notifies[0].error).toBe("Error: Service-level hard timeout after 61s");
-    expect(sessionCreated).toEqual([[job.id, "one-shot", "sess-123", "user-1"]]);
+    expect(h.notifies[0].error).toBe(
+      "Error: Service-level hard timeout after 61s",
+    );
+    expect(sessionCreated).toEqual([
+      [job.id, "one-shot", "sess-123", "user-1"],
+    ]);
 
     const finished = h.events.find((e) => e.type === "finished");
     expect(finished).toEqual({

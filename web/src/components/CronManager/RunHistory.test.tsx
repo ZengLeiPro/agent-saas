@@ -32,24 +32,54 @@ function entry(runId: string, startedAtMs: number): CronRunLogEntry {
 }
 
 function detailsResponse(run: CronRunLogEntry, content: string): Response {
-  return new Response(JSON.stringify({
-    run,
-    transcript: {},
-    blocks: [{
-      id: `${run.runId}-block`,
-      kind: "text",
-      title: `${run.runId} 标题`,
-      defaultOpen: true,
-      content,
-    }],
-  }), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
+  return new Response(
+    JSON.stringify({
+      run,
+      transcript: {},
+      blocks: [
+        {
+          id: `${run.runId}-block`,
+          kind: "text",
+          title: `${run.runId} 标题`,
+          defaultOpen: true,
+          content,
+        },
+      ],
+    }),
+    {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    },
+  );
 }
 
 describe("RunHistory 详情请求隔离", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it("展示尝试次数与重试来源，避免把重试看成重复首发", () => {
+    const first = entry("run-first", 1_700_000_000_000);
+    const retry = {
+      ...entry("run-retry", 1_700_000_100_000),
+      trigger: "retry" as const,
+      attempt: 2,
+      retryOf: first.runId,
+      parentRunId: first.runId,
+    };
+
+    render(
+      <RunHistory
+        active
+        entries={[retry, first]}
+        loading={false}
+        error={null}
+      />,
+    );
+
+    expect(screen.getByText("第 2 次尝试")).toBeTruthy();
+    expect(screen.getByText("第 1 次尝试")).toBeTruthy();
+    const retryBadge = screen.getByText("重试");
+    expect(retryBadge.getAttribute("title")).toBe(`重试来源：${first.runId}`);
+  });
 
   it("旧运行详情响应不会覆盖新选择，视图恢复后复用已加载详情", async () => {
     const first = entry("run-1", 1_700_000_000_000);
@@ -61,7 +91,12 @@ describe("RunHistory 详情请求隔离", () => {
       .mockReturnValueOnce(secondRequest.promise);
 
     const { rerender } = render(
-      <RunHistory active entries={[first, second]} loading={false} error={null} />,
+      <RunHistory
+        active
+        entries={[first, second]}
+        loading={false}
+        error={null}
+      />,
     );
     const rows = screen.getAllByRole("row");
     fireEvent.click(rows[1]!);
@@ -75,9 +110,23 @@ describe("RunHistory 详情请求隔离", () => {
     await firstRequest.promise;
     expect(screen.queryByText("第一条旧详情")).toBeNull();
 
-    rerender(<RunHistory active={false} entries={[first, second]} loading={false} error={null} />);
+    rerender(
+      <RunHistory
+        active={false}
+        entries={[first, second]}
+        loading={false}
+        error={null}
+      />,
+    );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    rerender(<RunHistory active entries={[first, second]} loading={false} error={null} />);
+    rerender(
+      <RunHistory
+        active
+        entries={[first, second]}
+        loading={false}
+        error={null}
+      />,
+    );
     expect(await screen.findByText("第二条详情")).toBeTruthy();
     expect(authFetch).toHaveBeenCalledTimes(2);
   });

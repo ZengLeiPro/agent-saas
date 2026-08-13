@@ -32,12 +32,7 @@ import {
 import { parseJsonResponse } from "@agent/shared";
 
 type RunLogBlockKind =
-  | "prompt"
-  | "text"
-  | "thinking"
-  | "tool_use"
-  | "tool_result"
-  | "meta";
+  "prompt" | "text" | "thinking" | "tool_use" | "tool_result" | "meta";
 
 type RunLogBlock = {
   id: string;
@@ -52,7 +47,10 @@ type RunLogBlock = {
 
 type RunDetailsResponse = {
   run: CronRunLogEntry & { hasTranscript?: boolean };
-  transcript: { sessionId?: string; stats?: { lines: number; parsedLines: number; parseErrors: number } };
+  transcript: {
+    sessionId?: string;
+    stats?: { lines: number; parsedLines: number; parseErrors: number };
+  };
   blocks: RunLogBlock[];
 };
 
@@ -63,7 +61,12 @@ interface RunHistoryProps {
   error?: string | null;
 }
 
-export function RunHistory({ entries, active = true, loading, error }: RunHistoryProps) {
+export function RunHistory({
+  entries,
+  active = true,
+  loading,
+  error,
+}: RunHistoryProps) {
   const { user } = useAuth();
   // 仅当用户开启 debug 模式时，才允许点击行查看完整运行详情；否则只能看到这个列表。
   const debugMode = user?.debugMode === true;
@@ -85,7 +88,10 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
       setDetailsLoading(false);
       return;
     }
-    if (details?.run.jobId === selected.jobId && details.run.runId === selected.runId) {
+    if (
+      details?.run.jobId === selected.jobId &&
+      details.run.runId === selected.runId
+    ) {
       setDetailsLoading(false);
       return;
     }
@@ -102,9 +108,12 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
 
     const controller = new AbortController();
     setDetailsLoading(true);
-    authFetch(`/api/cron/jobs/${selected.jobId}/runs/${selected.runId}/details`, {
-      signal: controller.signal,
-    })
+    authFetch(
+      `/api/cron/jobs/${selected.jobId}/runs/${selected.runId}/details`,
+      {
+        signal: controller.signal,
+      },
+    )
       .then((res) => parseJsonResponse<RunDetailsResponse>(res, "定时任务"))
       .then((data) => {
         if (requestId !== detailsRequestRef.current) return;
@@ -112,7 +121,11 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
         setDetailsError(null);
       })
       .catch((e) => {
-        if (controller.signal.aborted || requestId !== detailsRequestRef.current) return;
+        if (
+          controller.signal.aborted ||
+          requestId !== detailsRequestRef.current
+        )
+          return;
         setDetails(null);
         setDetailsError(e instanceof Error ? e.message : String(e));
       })
@@ -122,15 +135,10 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
 
     return () => {
       controller.abort();
-      if (requestId === detailsRequestRef.current) detailsRequestRef.current += 1;
+      if (requestId === detailsRequestRef.current)
+        detailsRequestRef.current += 1;
     };
-  }, [
-    active,
-    details?.run.jobId,
-    details?.run.runId,
-    dialogOpen,
-    selected,
-  ]);
+  }, [active, details?.run.jobId, details?.run.runId, dialogOpen, selected]);
 
   useEffect(() => {
     if (!details?.blocks) return;
@@ -150,7 +158,8 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
     if (!details?.blocks) return [];
     const q = query.trim().toLowerCase();
     return details.blocks.filter((b) => {
-      if (!showTools && (b.kind === "tool_use" || b.kind === "tool_result")) return false;
+      if (!showTools && (b.kind === "tool_use" || b.kind === "tool_result"))
+        return false;
       if (!showMeta && b.kind === "meta") return false;
       if (onlyErrors && !b.isError) return false;
       if (!q) return true;
@@ -203,7 +212,11 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
   };
 
   if (loading) {
-    return <div className="py-6 text-center text-sm text-muted-foreground">加载中...</div>;
+    return (
+      <div className="py-6 text-center text-sm text-muted-foreground">
+        加载中...
+      </div>
+    );
   }
 
   if (error) {
@@ -215,7 +228,11 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
   }
 
   if (entries.length === 0) {
-    return <div className="py-6 text-center text-sm text-muted-foreground">暂无运行记录</div>;
+    return (
+      <div className="py-6 text-center text-sm text-muted-foreground">
+        暂无运行记录
+      </div>
+    );
   }
 
   return (
@@ -227,6 +244,7 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
           <TableRow>
             <TableHead className="whitespace-nowrap">时间</TableHead>
             <TableHead className="whitespace-nowrap">状态</TableHead>
+            <TableHead className="whitespace-nowrap">尝试</TableHead>
             <TableHead className="whitespace-nowrap">耗时</TableHead>
             <TableHead>摘要</TableHead>
           </TableRow>
@@ -236,7 +254,9 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
             <TableRow
               key={i}
               className={cn(
-                debugMode ? "cursor-pointer" : "cursor-default hover:bg-transparent",
+                debugMode
+                  ? "cursor-pointer"
+                  : "cursor-default hover:bg-transparent",
               )}
               onClick={
                 debugMode
@@ -252,6 +272,19 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
               </TableCell>
               <TableCell className="whitespace-nowrap">
                 {statusBadge(entry.status)}
+              </TableCell>
+              <TableCell className="whitespace-nowrap">
+                <div className="flex items-center gap-1">
+                  <span>第 {entry.attempt ?? 1} 次尝试</span>
+                  {entry.retryOf ? (
+                    <Badge
+                      variant="outline"
+                      title={`重试来源：${entry.retryOf}`}
+                    >
+                      重试
+                    </Badge>
+                  ) : null}
+                </div>
               </TableCell>
               <TableCell className="whitespace-nowrap">
                 {(entry.durationMs / 1000).toFixed(1)}s
@@ -293,6 +326,18 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
                 <Badge variant="secondary">session: {selected.sessionId}</Badge>
               ) : null}
               <Badge variant="outline">run: {selected.runId}</Badge>
+              <Badge variant="secondary">
+                第 {selected.attempt ?? 1} 次尝试
+              </Badge>
+              {selected.retryOf ? (
+                <Badge variant="outline">重试来源: {selected.retryOf}</Badge>
+              ) : null}
+              {selected.parentRunId &&
+              selected.parentRunId !== selected.retryOf ? (
+                <Badge variant="outline">
+                  首次运行: {selected.parentRunId}
+                </Badge>
+              ) : null}
               {toolErrorCount > 0 ? (
                 <Badge variant="danger">工具错误 {toolErrorCount}</Badge>
               ) : null}
@@ -345,7 +390,13 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
             </div>
             <Button
               variant="outline"
-              onClick={() => copyText(filteredBlocks.map((b) => `## ${b.title}\n${b.content}`).join("\n\n"))}
+              onClick={() =>
+                copyText(
+                  filteredBlocks
+                    .map((b) => `## ${b.title}\n${b.content}`)
+                    .join("\n\n"),
+                )
+              }
               disabled={!filteredBlocks.length}
             >
               <Copy />
@@ -357,8 +408,14 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
           {selected?.error ? (
             <div className="rounded-xl border border-destructive/50 bg-destructive/10 p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <div className="text-sm font-semibold text-destructive">错误</div>
-                <Button variant="outline" size="sm" onClick={() => copyText(selected.error || "")}>
+                <div className="text-sm font-semibold text-destructive">
+                  错误
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => copyText(selected.error || "")}
+                >
                   <Copy />
                   复制
                 </Button>
@@ -371,14 +428,17 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
 
           <div className="min-h-0 flex-1 overflow-hidden">
             {detailsLoading ? (
-              <div className="py-10 text-center text-sm text-muted-foreground">加载日志中...</div>
+              <div className="py-10 text-center text-sm text-muted-foreground">
+                加载日志中...
+              </div>
             ) : details ? (
               <ScrollArea className="h-[60vh] pr-3">
                 <div className="space-y-3">
                   {details.transcript?.stats ? (
                     <div className="text-xs text-muted-foreground">
-                      transcript：{details.transcript.stats.parsedLines}/{details.transcript.stats.lines} 行,
-                      解析错误 {details.transcript.stats.parseErrors} 行
+                      transcript：{details.transcript.stats.parsedLines}/
+                      {details.transcript.stats.lines} 行, 解析错误{" "}
+                      {details.transcript.stats.parseErrors} 行
                     </div>
                   ) : null}
 
@@ -387,7 +447,7 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
                       key={b.id}
                       className={cn(
                         CAPABILITY_SURFACE,
-                        b.isError && "bg-destructive/5 ring-destructive/40"
+                        b.isError && "bg-destructive/5 ring-destructive/40",
                       )}
                     >
                       <button
@@ -404,7 +464,9 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
                       >
                         <div className="flex min-w-0 items-center gap-2">
                           {blockKindBadge(b.kind)}
-                          {b.isError ? <Badge variant="danger">ERROR</Badge> : null}
+                          {b.isError ? (
+                            <Badge variant="danger">ERROR</Badge>
+                          ) : null}
                           <div className="flex min-w-0 items-center gap-2">
                             <div className="min-w-0 truncate text-sm font-medium">
                               {b.title}
@@ -419,7 +481,7 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
                         <ChevronDown
                           className={cn(
                             "size-4 transition-transform",
-                            openBlocks.has(b.id) && "rotate-180"
+                            openBlocks.has(b.id) && "rotate-180",
                           )}
                         />
                       </button>
@@ -427,12 +489,20 @@ export function RunHistory({ entries, active = true, loading, error }: RunHistor
                       {openBlocks.has(b.id) ? (
                         <div className="px-3 pb-3">
                           <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
-                            <Button variant="outline" size="sm" onClick={() => copyText(b.content)}>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => copyText(b.content)}
+                            >
                               <Copy />
                               复制
                             </Button>
                             {b.raw ? (
-                              <Button variant="outline" size="sm" onClick={() => copyText(b.raw!)}>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => copyText(b.raw!)}
+                              >
                                 <Copy />
                                 复制原始 JSON
                               </Button>

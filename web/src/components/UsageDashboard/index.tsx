@@ -10,7 +10,7 @@
  *   [Ranking]   用户排行表（行展开模型分布；点用户名进二级页）
  *   [Detail]    单用户详情（替换主区域）
  */
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Loader2, RefreshCw, ChevronDown, ChevronRight, CircleAlert, Download, RotateCcw, Database, ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,7 +37,7 @@ import type {
   UserAggregate,
   ModelFamily,
 } from "./types";
-import { formatTokens, formatUsd, formatPercent, formatDateRange } from "./format";
+import { formatTokens, formatUsd, formatPercent, formatDateRange, formatUsageRangeLabel } from "./format";
 import { TrendChart, type TrendBarDatum } from "./TrendChart";
 import { UserDetailView } from "./UserDetailView";
 import { RANGE_OPTIONS, RangeSelector, type RangeQuery, type RangeValue, type CustomRange } from "./RangeSelector";
@@ -317,7 +317,11 @@ function SortHeader({ field, current, dir, align = "right", width, onChange, chi
   const active = current === field;
   const Icon = active ? (dir === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
   return (
-    <TableHead className={cn(align === "right" ? "text-right" : "text-left", width)} title={title}>
+    <TableHead
+      aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+      className={cn(align === "right" ? "text-right" : "text-left", width)}
+      title={title}
+    >
       <button
         type="button"
         onClick={() => onChange(field)}
@@ -335,7 +339,7 @@ function SortHeader({ field, current, dir, align = "right", width, onChange, chi
   );
 }
 
-function UserRankTable({
+export function UserRankTable({
   users,
   dateArgs,
   onSelectUser,
@@ -352,6 +356,7 @@ function UserRankTable({
   isPlatformAdmin: boolean;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const detailsIdPrefix = useId();
   // 排序也进 URL：分享「按成本从高到低的排行」链接时，对方看到的必须是同一个排序
   const url = useAdminUrlQuery();
   const sortField = parseSortField(url.get(USAGE_SORT_KEY));
@@ -398,6 +403,7 @@ function UserRankTable({
       <TableBody>
         {sortedUsers.map((u) => {
           const isOpen = expanded === u.username;
+          const detailsId = `${detailsIdPrefix}-model-details-${encodeURIComponent(u.username)}`;
           return (
             <Fragment key={u.username}>
               <TableRow>
@@ -405,6 +411,8 @@ function UserRankTable({
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
+                      aria-controls={detailsId}
+                      aria-expanded={isOpen}
                       onClick={() => setExpanded(isOpen ? null : u.username)}
                       className="flex size-5 items-center justify-center rounded hover:bg-accent"
                       title={isOpen ? "收起" : "展开模型分布"}
@@ -436,7 +444,7 @@ function UserRankTable({
                 <TableCell className="text-xs text-muted-foreground tabular-nums">{u.lastActiveDate}</TableCell>
               </TableRow>
               {isOpen && (
-                <TableRow>
+                <TableRow id={detailsId}>
                   <TableCell colSpan={simplified ? 7 : 11} className="bg-muted/30">
                     <ModelBar
                       user={u.username}
@@ -715,7 +723,10 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
               value={range}
               customRange={customRange}
               onChange={handleRangeChange}
-              dateRangeLabel={overview ? formatDateRange(overview.fromDate, overview.toDate) : undefined}
+              dateRangeLabel={overview ? formatUsageRangeLabel(overview.fromDate, overview.toDate, {
+                range,
+                hasData: dataRange ? dataRange.earliestDate !== null : undefined,
+              }) : undefined}
             />
             <FamilyFilter value={family} onChange={setFamily} />
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>

@@ -14,8 +14,9 @@ import type { Server } from 'node:http';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createOrgAgentsRouter, type OrgAgentsRouterDeps } from '../routes/orgAgents.js';
+import { createOrgAgentsRouter, createTenantExpertTemplatesRouter, type OrgAgentsRouterDeps } from '../routes/orgAgents.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
+import { ORG_AGENT_SEED_TEMPLATES } from '../data/orgAgentTemplates.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 import { TenantStore } from '../data/tenants/store.js';
 import type { JwtPayload } from '../auth/types.js';
@@ -58,6 +59,7 @@ async function makeTestRig(overrides: Partial<OrgAgentsRouterDeps> = {}): Promis
   app.use(express.json());
   let currentCaller: JwtPayload = PLATFORM_ADMIN;
   app.use((req, _res, next) => { req.user = currentCaller; next(); });
+  app.use('/api/tenant/expert-templates', createTenantExpertTemplatesRouter());
   app.use('/api/org-agents', createOrgAgentsRouter({ orgAgentStore: store, tenantStore, ...overrides }));
   const server: Server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
@@ -181,6 +183,20 @@ describe('org-agents 路由权限', () => {
 
   beforeEach(async () => { h = await makeTestRig(); });
   afterEach(async () => { await h.close(); });
+
+  it('GET /api/tenant/expert-templates 从 ORG_AGENT_SEED_TEMPLATES 返回真实模板，且仅管理员可读', async () => {
+    h.setCaller(WAIN_ADMIN);
+    const response = await h.request('/api/tenant/expert-templates');
+    expect(response.status).toBe(200);
+    const templates = await response.json() as Array<{ key: string; name: string; values: { allowedSkills: string[]; guardrailMode: string } }>;
+    expect(templates.map(template => template.key)).toEqual(ORG_AGENT_SEED_TEMPLATES.map(template => template.templateId));
+    expect(templates.map(template => template.name)).toEqual(ORG_AGENT_SEED_TEMPLATES.map(template => template.payload.name));
+    expect(templates[0].values.allowedSkills).toEqual(ORG_AGENT_SEED_TEMPLATES[0].payload.allowedSkills);
+    expect(templates[0].values.guardrailMode).toBe('shadow');
+
+    h.setCaller(WAIN_USER);
+    expect((await h.request('/api/tenant/expert-templates')).status).toBe(403);
+  });
 
   it('组织 admin 创建时 body.tenantId 被强制覆写为自身租户（伪造无效）', async () => {
     h.setCaller(WAIN_ADMIN);

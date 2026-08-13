@@ -162,14 +162,16 @@ export function GuardrailBoardView({ tenantId, orgAgents }: { tenantId?: string;
   //   申诉率 = appeals_pending / off_topic（申诉端点未部署时不显示分子）
   //   fail-open 率：MVP 阶段无直接口径（需从 runtime_token_usage channel='guardrail' 侧推），
   //                 前端暂用「无 model 字段的比例」占位——0% 时表示所有事件都记录了 model
-  const rejectRate = board.total > 0 ? board.offTopicCount / board.total : 0;
-  const appealRate = board.offTopicCount > 0 && !appealsUnavailable
+  const hasGuardrailSamples = board.total > 0;
+  const hasAppealSamples = board.offTopicCount > 0;
+  const rejectRate = hasGuardrailSamples ? board.offTopicCount / board.total : 0;
+  const appealRate = hasAppealSamples && !appealsUnavailable
     ? pendingAppeals / board.offTopicCount
     : 0;
-  const failOpenProxy = board.total > 0
+  const failOpenProxy = hasGuardrailSamples
     ? board.total - board.modelBreakdown.reduce((s, m) => s + m.count, 0)
     : 0;
-  const failOpenRate = board.total > 0 ? failOpenProxy / board.total : 0;
+  const failOpenRate = hasGuardrailSamples ? failOpenProxy / board.total : 0;
 
   return (
     <div className="w-full space-y-4">
@@ -213,24 +215,26 @@ export function GuardrailBoardView({ tenantId, orgAgents }: { tenantId?: string;
       <div className="grid gap-3 md:grid-cols-3">
         <QaKpiCard
           label="拒答率"
-          value={formatPercent(rejectRate)}
-          hint={`off_topic ${board.offTopicCount} / total ${board.total}`}
+          value={hasGuardrailSamples ? formatPercent(rejectRate) : '-'}
+          hint={hasGuardrailSamples ? `off_topic ${board.offTopicCount} / total ${board.total}` : '无样本'}
           intent={rejectRate > 0.3 ? 'warning' : 'default'}
         />
         <QaKpiCard
           label="申诉率"
-          value={appealsUnavailable ? '未部署' : formatPercent(appealRate)}
+          value={appealsUnavailable ? '未部署' : hasAppealSamples ? formatPercent(appealRate) : '-'}
           hint={
             appealsUnavailable
               ? '/api/tenant/appeals 未装配'
-              : `pending ${pendingAppeals} / off_topic ${board.offTopicCount}`
+              : hasAppealSamples
+                ? `pending ${pendingAppeals} / off_topic ${board.offTopicCount}`
+                : '无样本'
           }
           intent={appealRate > 0.05 ? 'warning' : 'default'}
         />
         <QaKpiCard
           label="fail-open 率"
-          value={formatPercent(failOpenRate)}
-          hint="无 model 字段事件的占比（近似口径）"
+          value={hasGuardrailSamples ? formatPercent(failOpenRate) : '-'}
+          hint={hasGuardrailSamples ? '无 model 字段事件的占比（近似口径）' : '无样本'}
           intent={failOpenRate > 0.05 ? 'warning' : 'default'}
         />
       </div>
@@ -343,7 +347,7 @@ function TopRejectionsView({
   onViewRejectionLogs?: () => void;
 }) {
   if (board.topRejections.length === 0) {
-    return <EmptyBlock>当前范围无拒答记录</EmptyBlock>;
+    return <EmptyBlock>当前范围暂无门禁日志数据</EmptyBlock>;
   }
   const totalTop = board.topRejections.reduce((sum, item) => sum + item.count, 0);
   return (

@@ -15,9 +15,25 @@ interface CronManagerProps {
 
 type CronView = "schedule" | "board";
 
+function isTenantAdminPath(pathname: string): boolean {
+  return pathname === "/tenant-admin" || pathname.startsWith("/tenant-admin/");
+}
+
 export function cronViewFromLocation(location: Pick<Location, "pathname" | "search"> = window.location): CronView {
-  if (location.pathname !== "/cron") return "schedule";
+  if (location.pathname !== "/cron" && !isTenantAdminPath(location.pathname)) return "schedule";
   return new URLSearchParams(location.search).get("view") === "board" ? "board" : "schedule";
+}
+
+function cronViewHref(view: CronView, location: Pick<Location, "pathname" | "search"> = window.location): string {
+  if (!isTenantAdminPath(location.pathname)) {
+    return view === "board" ? "/cron?view=board" : "/cron";
+  }
+
+  const query = new URLSearchParams(location.search);
+  if (view === "board") query.set("view", "board");
+  else query.delete("view");
+  const search = query.toString();
+  return `${location.pathname}${search ? `?${search}` : ""}`;
 }
 
 export function CronManager({ onJobCountChange, headerNavigationTarget, headerActionsTarget }: CronManagerProps) {
@@ -41,7 +57,7 @@ export function CronManager({ onJobCountChange, headerNavigationTarget, headerAc
     const cronView = next as CronView;
     if (cronView === view) return;
     setMountedViews((current) => ({ ...current, [cronView]: true }));
-    navigateToHref(cronView === "board" ? "/cron?view=board" : "/cron");
+    navigateToHref(cronViewHref(cronView));
   };
 
   const navigation = (

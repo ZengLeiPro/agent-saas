@@ -115,10 +115,9 @@ describe('governanceApi fail closed', () => {
       assignments: [],
       usagePolicy: {
         tenantId: 'tenant-1', timezone: 'Asia/Shanghai', periodStart: '2026-08-01', periodEnd: '2026-09-01',
-        monthUsedCreditsMicro: 10, unattributedCreditsMicro: 0,
         items: [{
           userId: 'member-1', enforcementMode: 'notify', active: true, version: 1,
-          monthUsedCreditsMicro: 10, canStartRun: true,
+          monthAttributedCreditsMicro: 10, canStartRun: true,
           lastUsedAt: '2026-08-10T08:00:00Z', updatedBy: 'admin-1', updatedAt: '2026-08-10T08:00:00Z',
         }],
       },
@@ -237,6 +236,34 @@ describe('governanceApi fail closed', () => {
     })).resolves.toMatchObject({ changeId: 'change-1', canCommit: true });
   });
 
+  it('离职预览严格校验 ownership 状态并拒绝 unknown 与 canCommit=true 的矛盾响应', async () => {
+    const response = (status: 'unknown' | 'mystery', canCommit: boolean) => ({
+      previewId: `opv1.${'a'.repeat(64)}`, idempotencyKey: 'offboard-unknown', baselineDigest: 'b'.repeat(64),
+      expiresAt: '2026-08-10T08:05:00Z', canCommit, blockers: [],
+      impact: {
+        membership: 1, agents: [], personalAgents: [], skills: [], personalCredentials: [], custodialCredentials: [],
+        cronOwnership: { status, ids: [] },
+        personalMemory: { status: 'clear', ids: [] },
+        fileOwnership: { status: 'clear', personalFileIds: [], organizationFileIds: [] },
+      },
+    });
+
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse(response('unknown', false)));
+    await expect(governanceResourcesApi.previewUserOffboarding({
+      tenantId: 'tenant-1', userId: 'member-1', handoffTargetUserId: 'owner-1', reason: 'member left',
+    })).resolves.toMatchObject({ canCommit: false, impact: { cronOwnership: { status: 'unknown' } } });
+
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse(response('unknown', true)));
+    await expect(governanceResourcesApi.previewUserOffboarding({
+      tenantId: 'tenant-1', userId: 'member-1', handoffTargetUserId: 'owner-1', reason: 'member left',
+    })).rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
+
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse(response('mystery', false)));
+    await expect(governanceResourcesApi.previewUserOffboarding({
+      tenantId: 'tenant-1', userId: 'member-1', handoffTargetUserId: 'owner-1', reason: 'member left',
+    })).rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
+  });
+
   it('当前治理 endpoint 同样拒绝泄漏敏感字段', async () => {
     mockAuthFetch.mockResolvedValue(jsonResponse({ tenantId: 'tenant-1', secretRef: 'vault://x' }));
     await expect(governanceAccessApi.getEntitlements()).rejects.toMatchObject({
@@ -300,6 +327,34 @@ describe('governanceApi fail closed', () => {
     }));
     await expect(fetchMyGovernanceSummary()).resolves.toMatchObject({ persona: 'org_admin' });
     expect(mockAuthFetch).toHaveBeenCalledWith('/api/me/governance-summary', undefined);
+  });
+
+  it('凭据预览接受审计信封且客户端不要求 secret 回显', async () => {
+    mockAuthFetch.mockResolvedValue(jsonResponse({
+      previewId: `cpv1.${'a'.repeat(64)}`, baselineDigest: 'b'.repeat(64), expiresAt: '2026-08-10T08:05:00Z',
+      impact: { connectorId: 'github', secretStoredInVault: true }, changeId: 'intent-1', auditId: 'audit-1', effectiveAt: '2026-08-10T08:00:00Z',
+    }));
+    await expect(governanceResourcesApi.previewCredentialCreate({
+      connectorId: 'github', kind: 'org_shared', purpose: 'deploy', secret: 'write-only', reason: 'initial setup',
+    })).resolves.toMatchObject({ changeId: 'intent-1', impact: { secretStoredInVault: true } });
+  });
+
+  it('组织记忆知识列表严格接受真实空列表', async () => {
+    mockAuthFetch.mockResolvedValue(jsonResponse({ tenantId: 'tenant-1', authority: 'governance_assignment_sets', accessMode: 'manage', knowledge: [], memory: [], effective: { organizationKnowledge: false, organizationMemory: false } }));
+    await expect(governanceAccessApi.listMemoryKnowledge('tenant-1')).resolves.toMatchObject({ knowledge: [], memory: [] });
+  });
+
+  it('组织记忆写入客户端严格调用 signed preview→commit 端点', async () => {
+    const command = { resourceId: 'mem-1', name: '团队决策', status: 'enabled', assignments: [], expectedVersion: 0, reason: '建立组织记忆' };
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({
+      previewId: `mrpv1.${'a'.repeat(64)}`, baselineDigest: 'b'.repeat(64), expiresAt: '2099-08-10T08:05:00Z',
+      impact: { operation: 'create', resourceId: 'mem-1', currentVersion: 0, nextVersion: 1, fromStatus: null, toStatus: 'enabled', assignmentCount: 0, reversible: true }, changeId: 'intent-1',
+    }));
+    const preview = await governanceAccessApi.previewMemoryResource<Record<string, unknown>>(command, 'tenant-1');
+    expect(mockAuthFetch).toHaveBeenLastCalledWith('/api/governance/access/organization-resources/memory/preview?tenantId=tenant-1', expect.objectContaining({ method: 'POST' }));
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ changeId: 'change-1', auditId: 'audit-1' }));
+    await governanceAccessApi.updateMemoryResource('mem-1', { ...command, previewId: preview.previewId }, 'tenant-1');
+    expect(mockAuthFetch).toHaveBeenLastCalledWith('/api/governance/access/organization-resources/memory/mem-1?tenantId=tenant-1', expect.objectContaining({ method: 'PUT' }));
   });
 
   it('成功 envelope 解包 data 后再校验 schema', async () => {

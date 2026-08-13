@@ -63,27 +63,50 @@ import {
   emptyFormValues,
   parseGateSlots,
 } from './types';
-import { FALLBACK_TEMPLATES } from './templates';
+const API_TEMPLATES = [
+  { name: '报价审核助手', allow: ['粘贴一份报价单让我审'] },
+  { name: '客户情报分析师', allow: ['给公司名让我查'] },
+  { name: '合同风险检测员', allow: ['粘贴一份合同让我审'] },
+].map(({ name, allow }, index) => ({
+  key: `template-${index}`,
+  name,
+  description: `${name}模板`,
+  avatar: 'sales',
+  icon: '✨',
+  values: {
+    ...emptyFormValues(),
+    name,
+    description: `${name}模板`,
+    guardrailMode: 'shadow' as const,
+    guardrailAllowExamples: allow,
+    guardrailRejectExamples: ['闲聊'],
+  },
+}));
 
 beforeEach(() => {
   mockAuthFetch.mockReset();
-  // 默认：expert-templates 端点未部署 → hook 返回 fallback
   mockAuthFetch.mockImplementation(async () => ({
-    ok: false,
-    status: 404,
-    json: async () => ({}),
+    ok: true,
+    status: 200,
+    json: async () => API_TEMPLATES,
   }));
 });
 
 describe('OrgAgentManager - 门禁填空 / 模板卡 / 试测按钮', () => {
   it('渲染 3 张种子模板卡（报价审核 / 客户情报 / 合同风险）', async () => {
     render(<OrgAgentManager tenantId="kaiyan" tenantName="开沿科技" />);
-    // 模板 fallback 直接从静态导入
-    for (const template of FALLBACK_TEMPLATES) {
+    for (const template of API_TEMPLATES) {
       expect(await screen.findByText(template.name)).toBeTruthy();
     }
     const useButtons = screen.getAllByRole('button', { name: '使用此模板' });
-    expect(useButtons.length).toBe(FALLBACK_TEMPLATES.length);
+    expect(useButtons.length).toBe(API_TEMPLATES.length);
+  });
+
+  it('后端模板接口失败时显式报错且不渲染伪造模板', async () => {
+    mockAuthFetch.mockResolvedValue({ ok: false, status: 503, json: async () => ({ error: '模板服务不可用' }) });
+    render(<OrgAgentManager tenantId="kaiyan" />);
+    expect(await screen.findByText('加载企业专家模板失败：模板服务不可用')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '使用此模板' })).toBeNull();
   });
 
   it('点击"使用此模板"打开编辑表单并预填名称', async () => {

@@ -29,6 +29,7 @@ import {
   queryHandFailures1h,
   type SandboxSummary,
 } from '../runtime/attention.js';
+import { queryPlatformRunHealth } from './platformRunHealth.js';
 
 const RUN_ID_RE = /^\d{13}-[0-9a-fA-F-]{36}$/;
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
@@ -419,6 +420,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
           ...(canReadFinance ? { todayCostYuan } : {}),
           todayRuns: runHealth.todayRuns,
           completionRateToday: runHealth.completionRateToday,
+          runHealthScope: runHealth.scope,
           toolRouting24h,
           dispatch: options.getDispatchMetrics?.() ?? null,
           sessionMetaProjection: getSessionMetaProjectionStats(),
@@ -977,41 +979,39 @@ async function queryRunsPage(
   };
 }
 
-async function queryRunHealth(options: PlatformObservabilityRouterOptions): Promise<{
-  activeRuns: { total: number; byStatus: Record<string, number> };
+/** Stable overview projection returned by the run-health query module. */
+interface OverviewRunHealth {
+  activeRuns: {
+    total: number;
+    byStatus: Record<string, number>;
+  };
   todayRuns: number;
   completionRateToday: number | null;
-}> {
-  if (!options.runStore) return { activeRuns: { total: 0, byStatus: {} }, todayRuns: 0, completionRateToday: null };
-  const [active, today, terminal24h] = await Promise.all([
-    options.runStore.pool.query<{ status: string; count: string }>(
-      `SELECT status, count(*)::text AS count
-       FROM ${options.runStore.runsTable}
-       WHERE status = ANY($1::text[])
-       GROUP BY status`,
-      [ACTIVE_RUN_STATUSES],
-    ),
-    options.runStore.pool.query<{ count: string }>(
-      `SELECT count(*)::text AS count
-       FROM ${options.runStore.runsTable}
-       WHERE requested_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai')`,
-    ),
-    options.runStore.pool.query<{ status: string; count: string }>(
-      `SELECT status, count(*)::text AS count
-       FROM ${options.runStore.runsTable}
-       WHERE updated_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai')
-         AND status IN ('completed','failed','cancelled')
-       GROUP BY status`,
-    ),
-  ]);
-  const byStatus: Record<string, number> = {};
-  for (const row of active.rows) byStatus[row.status] = Number(row.count);
-  const completed = Number(terminal24h.rows.find((row) => row.status === 'completed')?.count ?? 0);
-  const terminalTotal = terminal24h.rows.reduce((sum, row) => sum + Number(row.count), 0);
+  scope: {
+    source: 'runtime_runs';
+    identity: 'run_id';
+    initiatedAt: 'requested_at';
+    timezone: 'Asia/Shanghai';
+    completionDenominator: 'terminal_runs_requested_today';
+  };
+}
+
+async function queryRunHealth(options: PlatformObservabilityRouterOptions): Promise<OverviewRunHealth> {
+  const health = await queryPlatformRunHealth(options.runStore);
   return {
-    activeRuns: { total: Object.values(byStatus).reduce((sum, value) => sum + value, 0), byStatus },
-    todayRuns: Number(today.rows[0]?.count ?? 0),
-    completionRateToday: terminalTotal > 0 ? completed / terminalTotal : null,
+    activeRuns: {
+      total: health.activeRuns.total,
+      byStatus: health.activeRuns.byStatus,
+    },
+    todayRuns: health.todayRuns,
+    completionRateToday: health.completionRateToday,
+    scope: {
+      source: health.scope.source,
+      identity: health.scope.identity,
+      initiatedAt: health.scope.initiatedAt,
+      timezone: health.scope.timezone,
+      completionDenominator: health.scope.completionDenominator,
+    },
   };
 }
 

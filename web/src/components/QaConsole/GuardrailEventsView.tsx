@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { CircleCheck, Loader2, RefreshCw } from 'lucide-react';
+import { Inbox, Loader2, RefreshCw } from 'lucide-react';
 import { AdminSelect, type AdminSelectOption } from '@/components/ui/admin-select';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -114,12 +114,12 @@ export function GuardrailEventsView({ tenantId, orgAgents }: { tenantId?: string
           ) : events.length === 0 ? (
             <EmptyState
               compact
-              icon={CircleCheck}
-              tone={hasFilters ? 'default' : 'positive'}
-              title={hasFilters ? '当前筛选条件下没有门禁记录' : '期间没有触发门禁'}
+              icon={Inbox}
+              tone="default"
+              title={hasFilters ? '当前筛选条件下没有门禁记录' : '当前范围暂无门禁日志数据'}
               description={hasFilters
                 ? '换个专家、判定结果或放宽时间范围再看看。'
-                : '说明成员的提问都在专家的服务范围内。'}
+                : '当前没有可用于判断服务范围表现的门禁记录。'}
               action={hasFilters ? { label: '清除筛选', onClick: clearFilters } : undefined}
             />
           ) : (

@@ -1519,8 +1519,7 @@ export class PgBillingStore {
       ORDER BY COALESCE(u.month_used_micro, 0) DESC, COALESCE(b.user_id, u.user_id)
     `, [tenantId, period.start, period.end, userId ?? null]);
     const aggregate = await this.pool.query<{
-      month_used_micro: string | number;
-      unattributed_micro: string | number;
+      month_used_micro: string | number; unattributed_micro: string | number;
     }>(`
       WITH scoped AS (
         SELECT l.*
@@ -1529,6 +1528,7 @@ export class PgBillingStore {
         WHERE l.tenant_id = $1
           AND COALESCE(original.created_at, l.created_at) >= $2
           AND COALESCE(original.created_at, l.created_at) < $3
+          AND ($4::text IS NULL OR l.user_id = $4)
       )
       SELECT GREATEST(0, COALESCE(SUM(CASE
                WHEN type = 'debit' THEN -credits_delta_micro
@@ -1539,7 +1539,7 @@ export class PgBillingStore {
                WHEN user_id IS NULL AND type IN ('refund', 'reversal') THEN -credits_delta_micro
                ELSE 0 END), 0))::bigint AS unattributed_micro
       FROM scoped
-    `, [tenantId, period.start, period.end]);
+    `, [tenantId, period.start, period.end, userId ?? null]);
     const aggregateRow = aggregate.rows[0];
     return {
       tenantId,

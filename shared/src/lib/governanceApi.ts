@@ -10,11 +10,11 @@ import {
 import { authFetch } from './authFetch';
 import { parseJsonResponse } from './parseJsonResponse';
 import {
-  agentListSchema, auditListSchema, changeJobSchema, credentialListSchema, directoryGroupListSchema,
+  agentListSchema, auditListSchema, changeJobSchema, credentialListSchema, credentialOperationPreviewSchema, directoryGroupListSchema,
   entitlementCatalogSchema, entitlementPreviewSchema, entitlementResponseSchema,
   environmentTemplateListSchema, governanceReceiptSchema, lifecyclePreviewSchema, lifecycleResponseSchema,
-  memberDetailsSchema, membershipListSchema, membershipPreviewSchema, offboardingPreviewSchema,
-  platformAdminListSchema, scopePreviewSchema,
+  memberDetailsSchema, membershipListSchema, membershipPreviewSchema, memoryKnowledgeListSchema, memoryResourcePreviewSchema, offboardingPreviewSchema,
+  platformAdminListSchema, policyPreviewSchema, scopePreviewSchema,
 } from './governanceUiSchemas';
 
 const ACCESS_BASE = '/api/governance/access';
@@ -204,8 +204,16 @@ export const governanceAccessApi = {
     request<T>(withQuery(`${ACCESS_BASE}/entitlement-scopes/${id(resourceType)}/preview`, tenant(tenantId)), body('POST', command), schemaFor<T>(scopePreviewSchema)),
   updateEntitlementScope: <T = unknown>(resourceType: string, command: GovernanceCommand, tenantId?: string) =>
     request<T>(withQuery(`${ACCESS_BASE}/entitlement-scopes/${id(resourceType)}`, tenant(tenantId)), body('PUT', command), schemaFor<T>(governanceReceiptSchema)),
+  previewPolicy: <T = unknown>(policyKey: string, command: GovernanceCommand, tenantId?: string) =>
+    request<T>(withQuery(`${ACCESS_BASE}/policies/${id(policyKey)}/preview`, tenant(tenantId)), body('POST', command), schemaFor<T>(policyPreviewSchema)),
   updatePolicy: <T = unknown>(policyKey: string, command: GovernanceCommand, tenantId?: string) =>
-    request<T>(withQuery(`${ACCESS_BASE}/policies/${id(policyKey)}`, tenant(tenantId)), body('PUT', command)),
+    request<T>(withQuery(`${ACCESS_BASE}/policies/${id(policyKey)}`, tenant(tenantId)), body('PUT', command), schemaFor<T>(governanceReceiptSchema)),
+  listMemoryKnowledge: <T = unknown>(tenantId?: string) =>
+    request<T>(withQuery(`${ACCESS_BASE}/organization-resources/memory-knowledge`, tenant(tenantId)), undefined, schemaFor<T>(memoryKnowledgeListSchema)),
+  previewMemoryResource: <T = unknown>(command: GovernanceCommand, tenantId?: string) =>
+    request<T>(withQuery(`${ACCESS_BASE}/organization-resources/memory/preview`, tenant(tenantId)), body('POST', command), schemaFor<T>(memoryResourcePreviewSchema)),
+  updateMemoryResource: <T = unknown>(resourceId: string, command: GovernanceCommand, tenantId?: string) =>
+    request<T>(withQuery(`${ACCESS_BASE}/organization-resources/memory/${id(resourceId)}`, tenant(tenantId)), body('PUT', command)),
   getAssignment: <T = unknown>(resourceType: string, resourceId: string, tenantId?: string) =>
     request<T>(withQuery(`${ACCESS_BASE}/assignments/${id(resourceType)}/${id(resourceId)}`, tenant(tenantId))),
   previewAssignment: <T = unknown>(resourceType: string, resourceId: string, command: GovernanceCommand, tenantId?: string) =>
@@ -261,8 +269,20 @@ export const governanceResourcesApi = {
     request<T>(`${RESOURCE_BASE}/connectors/${id(connectorId)}/versions`, body('POST', command)),
   updateConnectorStatus: <T = unknown>(connectorId: string, command: GovernanceCommand) =>
     request<T>(`${RESOURCE_BASE}/connectors/${id(connectorId)}/status`, body('PATCH', command)),
+  previewCredentialCreate: <T = unknown>(command: GovernanceCommand) =>
+    request<T>(`${RESOURCE_BASE}/credentials/preview`, body('POST', command), schemaFor<T>(credentialOperationPreviewSchema)),
   createCredential: <T = unknown>(command: GovernanceCommand) =>
     request<T>(`${RESOURCE_BASE}/credentials`, body('POST', command)),
+  previewCredentialRotation: <T = unknown>(credentialId: string, command: GovernanceCommand, tenantId?: string) =>
+    request<T>(withQuery(`${RESOURCE_BASE}/credentials/${id(credentialId)}/rotate/preview`, tenant(tenantId)), body('POST', command), schemaFor<T>(credentialOperationPreviewSchema)),
+  rotateCredential: <T = unknown>(credentialId: string, command: GovernanceCommand, tenantId?: string) =>
+    request<T>(withQuery(`${RESOURCE_BASE}/credentials/${id(credentialId)}/rotate`, tenant(tenantId)), body('POST', command)),
+  previewCredentialTransfer: <T = unknown>(credentialId: string, command: GovernanceCommand, tenantId?: string) =>
+    request<T>(withQuery(`${RESOURCE_BASE}/credentials/${id(credentialId)}/transfer/preview`, tenant(tenantId)), body('POST', command), schemaFor<T>(credentialOperationPreviewSchema)),
+  transferCredential: <T = unknown>(credentialId: string, command: GovernanceCommand, tenantId?: string) =>
+    request<T>(withQuery(`${RESOURCE_BASE}/credentials/${id(credentialId)}/transfer`, tenant(tenantId)), body('POST', command)),
+  testCredentialHealth: <T = unknown>(credentialId: string, expectedVersion: number, tenantId?: string) =>
+    request<T>(withQuery(`${RESOURCE_BASE}/credentials/${id(credentialId)}/health-test`, tenant(tenantId)), body('POST', { expectedVersion })),
   updateCredentialStatus: <T = unknown>(credentialId: string, command: GovernanceCommand, tenantId?: string) =>
     request<T>(withQuery(`${RESOURCE_BASE}/credentials/${id(credentialId)}/status`, tenant(tenantId)), body('PATCH', command)),
   updateEnvironmentProvider: <T = unknown>(providerId: string, command: GovernanceCommand) =>

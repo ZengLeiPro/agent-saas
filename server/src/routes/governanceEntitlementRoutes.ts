@@ -34,7 +34,6 @@ const scopeCommitSchema = z.object({
   baselineDigest: z.string().regex(/^[a-f0-9]{64}$/),
   expiresAt: z.string().datetime({ offset: true }),
 }).strict();
-
 type Persona = 'platform_admin' | 'org_admin' | 'member';
 
 function sign(secret: string, input: Record<string, unknown>): string {
@@ -104,11 +103,17 @@ export function registerGovernanceEntitlementRoutes(options: {
     const allowedActions = persona === 'platform_admin' && entitlementAction ? [entitlementAction] : [];
     const scopedActions = scopes.map(scope => ({
       ...scope,
-      allowedActions: persona === 'platform_admin'
+      allowedActions: ['platform_admin', 'org_admin'].includes(persona ?? '')
         ? [{ id: 'edit_scope', label: '从目录编辑', resourceType: scope.resourceType }]
         : [],
     }));
-    return res.json({ entitlement, scopes: scopedActions, policies, allowedActions });
+    const policyActions = policies.map(policy => ({
+      ...policy,
+      allowedActions: persona === 'org_admin'
+        ? [{ id: 'edit_policy', label: '编辑组织策略', resourceType: 'tenant_policy' }]
+        : [],
+    }));
+    return res.json({ entitlement, scopes: scopedActions, policies: policyActions, allowedActions });
   });
 
   router.post('/entitlements/preview', async (req, res) => {
@@ -202,10 +207,12 @@ export function registerGovernanceEntitlementRoutes(options: {
   });
 
   router.post('/entitlement-scopes/:resourceType/preview', async (req, res) => {
-    if (options.personaFor(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
+    const persona = options.personaFor(req);
+    if (persona !== 'platform_admin' && persona !== 'org_admin') return res.status(403).json({ error: 'Admin required' });
     const parsed = scopePreviewSchema.safeParse(req.body);
-    const tenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
-    if (!parsed.success || !tenantId) return res.status(400).json({ error: 'Invalid request' });
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid request' });
+    const tenantId = options.tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
+    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
     const resourceType = req.params.resourceType as EntitlementResourceType;
     if (!['model', 'agent_template', 'skill', 'connector', 'environment_template', 'tool'].includes(resourceType)) {
       return res.status(400).json({ error: 'Unsupported resourceType' });
@@ -245,7 +252,8 @@ export function registerGovernanceEntitlementRoutes(options: {
   });
 
   router.put('/entitlement-scopes/:resourceType', async (req, res) => {
-    if (options.personaFor(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
+    const persona = options.personaFor(req);
+    if (persona !== 'platform_admin' && persona !== 'org_admin') return res.status(403).json({ error: 'Admin required' });
     const parsed = scopeCommitSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
     const tenantId = options.tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);

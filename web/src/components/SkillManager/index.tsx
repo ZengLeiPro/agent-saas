@@ -435,6 +435,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                             variant="ghost"
                             size="sm"
                             className="h-7 px-2 text-xs"
+                            aria-label={`编辑技能 ${skill.name}`}
                             onClick={() => { void openEditor({ kind: "tenantOwn", username: "", skillId: skill.id, name: skill.name }); }}
                           >
                             <Pencil className="size-3.5" />
@@ -445,6 +446,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                               size="sm"
                               className="h-7 px-2 text-xs"
                               title="提升到平台技能池"
+                              aria-label={`提升技能 ${skill.name} 到平台技能池`}
                               disabled={writeDisabled}
                               onClick={() => { void handlePromoteOwnToPool(skill.id); }}
                             >
@@ -455,6 +457,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                             variant="ghost"
                             size="sm"
                             className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                            aria-label={`删除技能 ${skill.name}`}
                             disabled={destructiveDisabled || writeDisabled}
                             onClick={() => setDeleteTarget({ kind: "tenantOwn", username: "", skillId: skill.id, name: skill.name })}
                           >
@@ -466,7 +469,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                               void handleUpdateOwnSkill(skill, { exposure: value as TenantOwnSkillInfo["exposure"] });
                             }}
                           >
-                            <SelectTrigger className="h-8 w-36">
+                            <SelectTrigger className="h-8 w-36" aria-label={`设置技能 ${skill.name} 的成员开放范围`}>
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -477,6 +480,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                           </Select>
                           <Switch
                             checked={skill.enabled}
+                            aria-label={`启用技能 ${skill.name}`}
                             onCheckedChange={(checked) => { void handleUpdateOwnSkill(skill, { enabled: checked }); }}
                             className="shrink-0"
                           />
@@ -488,6 +492,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                             <label key={user.username} className="flex min-w-0 items-center gap-2 text-xs">
                               <Checkbox
                                 checked={skill.usernames.includes(user.username)}
+                                aria-label={`设置技能 ${skill.name} 对成员 ${user.realName || user.username} 的开放范围`}
                                 onCheckedChange={(checked) => {
                                   const usernames = checked === true
                                     ? Array.from(new Set([...skill.usernames, user.username]))
@@ -524,7 +529,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                           void handleUpdateTenantSkill(skill, { exposure: value as TenantSkillInfo["exposure"] });
                         }}
                       >
-                        <SelectTrigger className="h-8 w-36">
+                        <SelectTrigger className="h-8 w-36" aria-label={`设置技能 ${skill.name} 的成员开放范围`}>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -535,6 +540,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                       </Select>
                       <Switch
                         checked={skill.enabled}
+                        aria-label={`启用技能 ${skill.name}`}
                         onCheckedChange={(checked) => { void handleUpdateTenantSkill(skill, { enabled: checked }); }}
                         className="shrink-0"
                       />
@@ -546,6 +552,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                         <label key={user.username} className="flex min-w-0 items-center gap-2 text-xs">
                           <Checkbox
                             checked={skill.usernames.includes(user.username)}
+                            aria-label={`设置技能 ${skill.name} 对成员 ${user.realName || user.username} 的开放范围`}
                             onCheckedChange={(checked) => {
                               const usernames = checked === true
                                 ? Array.from(new Set([...skill.usernames, user.username]))
@@ -579,6 +586,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                         className="h-7 px-2 text-xs text-destructive hover:text-destructive"
                         disabled={writeDisabled || skill.enabled}
                         title={skill.enabled ? "先关闭技能后才能删除" : "删除已退役的平台技能"}
+                        aria-label={`删除技能 ${skill.name}`}
                         onClick={() => { void openPoolDelete(skill); }}
                       >
                         <Trash2 className="size-3.5" />
@@ -590,7 +598,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                           void handleUpdatePlatformSkill(skill, { exposure: value as PoolSkillInfo["exposure"] });
                         }}
                       >
-                        <SelectTrigger className="h-8 w-40">
+                        <SelectTrigger className="h-8 w-40" aria-label={`设置技能 ${skill.name} 的组织开放范围`}>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -602,6 +610,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                       {/* 平台技能启停是即时写，必须 disabled 而非仅忽略回调 */}
                       <Switch
                         checked={skill.enabled}
+                        aria-label={`启用技能 ${skill.name}`}
                         disabled={writeDisabled}
                         onCheckedChange={(checked) => { void handleUpdatePlatformSkill(skill, { enabled: checked }); }}
                         className="shrink-0"
@@ -614,6 +623,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                         <label key={tenant.id} className="flex min-w-0 items-center gap-2 text-xs">
                           <Checkbox
                             checked={skill.tenantIds.includes(tenant.id)}
+                            aria-label={`设置技能 ${skill.name} 对组织 ${tenant.name} 的开放范围`}
                             disabled={writeDisabled}
                             onCheckedChange={(checked) => {
                               const tenantIds = checked === true
@@ -661,6 +671,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 px-2 text-xs"
+                                aria-label={`接管编辑技能 ${skill.name}`}
                                 onClick={() => { void openEditor({ kind: "custom", username, skillId: skill.id, name: skill.name }); }}
                                 disabled={userSupportDisabled}
                               >
@@ -671,6 +682,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 px-2 text-xs"
+                                aria-label={`提升技能 ${skill.name}${isTenantMode ? "到组织" : "到全局"}`}
                                 disabled={writeDisabled || (!isTenantMode && destructiveDisabled)}
                                 onClick={() => handlePromote(skill.id, username)}
                               >
@@ -681,6 +693,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                                aria-label={`删除技能 ${skill.name}`}
                                 disabled={userSupportDisabled}
                                 onClick={() => setDeleteTarget({ kind: "custom", username, skillId: skill.id, name: skill.name })}
                               >

@@ -7,16 +7,36 @@ import { loadJobs, mutateJobs, saveJobs } from "../cron/store.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
   return { promise, resolve };
 }
 
-async function waitFor(assertion: () => boolean | Promise<boolean>, timeoutMs = 5_000): Promise<void> {
+async function waitFor(
+  assertion: () => boolean | Promise<boolean>,
+  timeoutMs = 5_000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!(await assertion())) {
-    if (Date.now() >= deadline) throw new Error("timed out waiting for condition");
+    if (Date.now() >= deadline)
+      throw new Error("timed out waiting for condition");
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
+}
+
+function crashableRunLease() {
+  let holder: number | undefined;
+  let sequence = 0;
+  return {
+    tryAcquire: async () => {
+      if (holder !== undefined) return null;
+      const token = ++sequence;
+      holder = token;
+      return { release: async () => { if (holder === token) holder = undefined; } };
+    },
+    crashOwner: () => { holder = undefined; },
+  };
 }
 
 function createService(
@@ -48,7 +68,9 @@ describe("CronService shared Store consistency", () => {
   afterEach(async () => {
     for (const service of started) service.stop();
     started.length = 0;
-    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    await Promise.all(
+      dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+    );
   });
 
   async function makePair(options: Parameters<typeof createService>[1] = {}) {
@@ -72,7 +94,9 @@ describe("CronService shared Store consistency", () => {
       payload: { kind: "systemEvent", text: "ping" },
     });
 
-    expect((await a.list({ includeDisabled: true })).map((job) => job.id)).toEqual([created.id]);
+    expect(
+      (await a.list({ includeDisabled: true })).map((job) => job.id),
+    ).toEqual([created.id]);
     expect((await a.get(created.id))?.name).toBe("created-by-b");
   });
 
@@ -126,12 +150,253 @@ describe("CronService shared Store consistency", () => {
     expect(results.filter((result) => !result.ran)).toEqual([
       { ran: false, error: "Job is already running" },
     ]);
+    await waitFor(() => executeCalls === 1);
     expect(executeCalls).toBe(1);
 
     gate.resolve();
     await waitFor(async () => {
       const stored = await loadJobs({ storePath });
       return stored[0]?.state.runningAtMs === undefined;
+    });
+  });
+
+  it("deduplicates concurrent delivery of the same scheduled occurrence", async () => {
+    let executeCalls = 0;
+    const runs: Array<{ runId: string; trigger?: string; scheduledAtMs?: number; attempt?: number }> = [];
+    const { a, b, storePath } = await makePair({
+      executeJob: async () => {
+        executeCalls += 1;
+        return { status: "ok" };
+      },
+      appendRunLog: async (run) => {
+        runs.push(run);
+      },
+    });
+    const scheduledAtMs = Date.now() + 100;
+    const job = await a.add({
+      name: "same-occurrence-once",
+      schedule: { kind: "at", atMs: scheduledAtMs },
+      payload: { kind: "systemEvent", text: "run once" },
+    });
+
+    await Promise.all([a.start(), b.start()]);
+    started.push(a, b);
+    await waitFor(() => runs.length === 1);
+
+    expect(executeCalls).toBe(1);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      trigger: "schedule",
+      scheduledAtMs,
+      attempt: 1,
+    });
+    const stored = (await loadJobs({ storePath })).find(
+      (candidate) => candidate.id === job.id,
+    )!;
+    expect(stored.state.executionLedger).toHaveLength(1);
+    expect(stored.state.executionLedger?.[0].idempotencyKey).toBe(
+      `cron:${job.id}:schedule:${scheduledAtMs}`,
+    );
+  });
+
+  it("deduplicates a manual request id and records explicit retry lineage", async () => {
+    const runs: Array<{
+      runId: string;
+      trigger?: string;
+      attempt?: number;
+      retryOf?: string;
+      parentRunId?: string;
+    }> = [];
+    const { a } = await makePair({
+      appendRunLog: async (run) => {
+        runs.push(run);
+      },
+    });
+    const job = await a.add({
+      name: "manual-lineage",
+      schedule: { kind: "at", atMs: Date.now() + 60_000 },
+      payload: { kind: "systemEvent", text: "run" },
+    });
+
+    const first = await a.runNow(job.id, { requestId: "manual-req-1" });
+    await waitFor(() => runs.length === 1);
+    const duplicate = await a.runNow(job.id, { requestId: "manual-req-1" });
+    expect(duplicate).toMatchObject({
+      ran: true,
+      runId: first.runId,
+      requestId: "manual-req-1",
+      deduplicated: true,
+    });
+    expect(runs).toHaveLength(1);
+
+    const retry = await a.runNow(job.id, {
+      requestId: "retry-req-1",
+      retryOf: first.runId,
+      parentRunId: first.runId,
+      attempt: 2,
+    });
+    await waitFor(() => runs.length === 2);
+    expect(retry.runId).not.toBe(first.runId);
+    expect(runs[1]).toMatchObject({
+      runId: retry.runId,
+      trigger: "retry",
+      attempt: 2,
+      retryOf: first.runId,
+      parentRunId: first.runId,
+    });
+  });
+
+  it("redispatches a manual request claimed before the crashed process entered executeJob", async () => {
+    const lease = crashableRunLease();
+    const runs: string[] = [];
+    let executeCalls = 0;
+    const { a, b, storePath } = await makePair({
+      tryAcquireRunLease: lease.tryAcquire,
+      executeJob: async () => { executeCalls += 1; return { status: "ok" }; },
+      appendRunLog: async (run) => { runs.push(run.runId); },
+    });
+    const job = await a.add({
+      name: "manual-claim-crash",
+      schedule: { kind: "at", atMs: Date.now() + 60_000 },
+      payload: { kind: "systemEvent", text: "run" },
+    });
+    const claimed = await (a as any).claimJob(job.id, {
+      trigger: "manual", requestId: "manual-crash-1",
+    });
+    expect(claimed.value).toBeDefined();
+    expect((await loadJobs({ storePath }))[0]?.state.executionLedger?.[0]).toMatchObject({
+      runId: claimed.value.runId, status: "claimed", leaseVersion: 1,
+    });
+
+    lease.crashOwner();
+    await b.start();
+    started.push(b);
+    await waitFor(() => runs.length === 1);
+
+    const stored = (await loadJobs({ storePath }))[0]!;
+    expect(executeCalls).toBe(1);
+    expect(runs).toEqual([claimed.value.runId]);
+    expect(stored.state.executionLedger).toHaveLength(1);
+    expect(stored.state.executionLedger?.[0]).toMatchObject({
+      status: "terminal", terminalStatus: "ok", leaseVersion: 2,
+      requestId: "manual-crash-1",
+    });
+    expect(await b.runNow(job.id, { requestId: "manual-crash-1" })).toMatchObject({
+      ran: true, runId: claimed.value.runId, deduplicated: true,
+    });
+    expect(executeCalls).toBe(1);
+  });
+
+  it("redispatches the same scheduledAt occurrence after a pre-execution crash", async () => {
+    let now = 0;
+    const scheduledAtMs = 1_000;
+    const lease = crashableRunLease();
+    const runs: Array<{ runId: string; scheduledAtMs?: number }> = [];
+    const { a, b, storePath } = await makePair({
+      nowMs: () => now,
+      tryAcquireRunLease: lease.tryAcquire,
+      appendRunLog: async (run) => { runs.push(run); },
+    });
+    const job = await a.add({
+      name: "scheduled-claim-crash",
+      schedule: { kind: "at", atMs: scheduledAtMs },
+      payload: { kind: "systemEvent", text: "run" },
+    });
+    (a as any).started = true;
+    now = 2_000;
+    const claimed = await (a as any).claimJob(job.id, {
+      trigger: "schedule", scheduledAtMs,
+    });
+    expect(claimed.value).toBeDefined();
+
+    lease.crashOwner();
+    await b.start();
+    started.push(b);
+    await waitFor(() => runs.length === 1);
+
+    expect(runs[0]).toMatchObject({ runId: claimed.value.runId, scheduledAtMs });
+    const ledger = (await loadJobs({ storePath }))[0]?.state.executionLedger;
+    expect(ledger).toHaveLength(1);
+    expect(ledger?.[0]).toMatchObject({
+      idempotencyKey: `cron:${job.id}:schedule:${scheduledAtMs}`,
+      status: "terminal", leaseVersion: 2,
+    });
+  });
+
+  it("fences a crashed running execution before redispatch and suppresses its stale owner", async () => {
+    const lease = crashableRunLease();
+    let executeCalls = 0;
+    let logged = 0;
+    const { a, b, storePath } = await makePair({
+      tryAcquireRunLease: lease.tryAcquire,
+      executeJob: async () => { executeCalls += 1; return { status: "ok" }; },
+      appendRunLog: async () => { logged += 1; },
+    });
+    const job = await a.add({
+      name: "running-crash",
+      schedule: { kind: "at", atMs: Date.now() + 60_000 },
+      payload: { kind: "systemEvent", text: "run" },
+    });
+    const claimed = await (a as any).claimJob(job.id, {
+      trigger: "manual", requestId: "running-crash-1",
+    });
+    await mutateJobs((jobs) => {
+      const execution = jobs[0]!.state.executionLedger![0]!;
+      execution.status = "running";
+      execution.runningAtMs = Date.now();
+    }, { storePath });
+
+    lease.crashOwner();
+    await b.start();
+    started.push(b);
+    await waitFor(() => logged === 1);
+    await (a as any).executeClaimedJob(claimed.value);
+
+    const execution = (await loadJobs({ storePath }))[0]?.state.executionLedger?.[0];
+    expect(executeCalls).toBe(1);
+    expect(logged).toBe(1);
+    expect(execution).toMatchObject({
+      runId: claimed.value.runId, status: "terminal", terminalStatus: "ok", leaseVersion: 2,
+    });
+    expect(execution?.leaseId).not.toBe(claimed.value.leaseId);
+  });
+
+  it("allows only one of two concurrent recoverers to own the recovered dispatch", async () => {
+    const lease = crashableRunLease();
+    const gate = deferred<void>();
+    let executeCalls = 0;
+    let logged = 0;
+    const { a, b, storePath } = await makePair({
+      tryAcquireRunLease: lease.tryAcquire,
+      executeJob: async () => { executeCalls += 1; await gate.promise; return { status: "ok" }; },
+      appendRunLog: async () => { logged += 1; },
+    });
+    const c = createService(storePath, {
+      tryAcquireRunLease: lease.tryAcquire,
+      executeJob: async () => { executeCalls += 1; await gate.promise; return { status: "ok" }; },
+      appendRunLog: async () => { logged += 1; },
+    });
+    const job = await a.add({
+      name: "concurrent-recovery",
+      schedule: { kind: "at", atMs: Date.now() + 60_000 },
+      payload: { kind: "systemEvent", text: "run" },
+    });
+    await (a as any).claimJob(job.id, {
+      trigger: "manual", requestId: "recover-race-1",
+    });
+    lease.crashOwner();
+
+    await Promise.all([b.start(), c.start()]);
+    started.push(b, c);
+    await waitFor(() => executeCalls === 1);
+    expect((await loadJobs({ storePath }))[0]?.state.executionLedger?.[0]).toMatchObject({
+      status: "running", leaseVersion: 2,
+    });
+    gate.resolve();
+    await waitFor(() => logged === 1);
+    expect(executeCalls).toBe(1);
+    expect((await loadJobs({ storePath }))[0]?.state.executionLedger?.[0]).toMatchObject({
+      status: "terminal", terminalStatus: "ok",
     });
   });
 
@@ -144,7 +409,9 @@ describe("CronService shared Store consistency", () => {
         output: "Job owner does not exist",
         suppressNotification: true,
       }),
-      appendRunLog: async () => { logged += 1; },
+      appendRunLog: async () => {
+        logged += 1;
+      },
       notify,
     });
     const job = await a.add({
@@ -166,7 +433,9 @@ describe("CronService shared Store consistency", () => {
         executeCalls += 1;
         return { status: "ok" };
       },
-      appendRunLog: async () => { completedRuns += 1; },
+      appendRunLog: async () => {
+        completedRuns += 1;
+      },
     });
     await worker.start();
     started.push(worker);
@@ -188,17 +457,22 @@ describe("CronService shared Store consistency", () => {
       schedule: { kind: "at", atMs: Date.now() + 60_000 },
       payload: { kind: "systemEvent", text: "run" },
     });
-    await mutateJobs((jobs) => {
-      const stored = jobs.find((candidate) => candidate.id === job.id)!;
-      stored.state.runningRunId = "orphan";
-      stored.state.runningDeadlineAtMs = Date.now() + 60_000;
-      delete stored.state.runningAtMs;
-    }, { storePath });
+    await mutateJobs(
+      (jobs) => {
+        const stored = jobs.find((candidate) => candidate.id === job.id)!;
+        stored.state.runningRunId = "orphan";
+        stored.state.runningDeadlineAtMs = Date.now() + 60_000;
+        delete stored.state.runningAtMs;
+      },
+      { storePath },
+    );
 
     const listed = await b.list({ includeDisabled: true });
     expect(listed[0]?.state.runningRunId).toBeUndefined();
     expect(listed[0]?.state.runningDeadlineAtMs).toBeUndefined();
-    expect((await loadJobs({ storePath }))[0]?.state.runningRunId).toBeUndefined();
+    expect(
+      (await loadJobs({ storePath }))[0]?.state.runningRunId,
+    ).toBeUndefined();
   });
 
   it("recovers a claim owned by a crashed process on the same host", async () => {
@@ -208,14 +482,17 @@ describe("CronService shared Store consistency", () => {
       schedule: { kind: "at", atMs: Date.now() + 60_000 },
       payload: { kind: "systemEvent", text: "run" },
     });
-    await mutateJobs((jobs) => {
-      const stored = jobs.find((candidate) => candidate.id === job.id)!;
-      stored.state.runningAtMs = Date.now();
-      stored.state.runningRunId = "dead-run";
-      stored.state.runningDeadlineAtMs = Date.now() + 60_000;
-      stored.state.runningOwnerPid = 2_147_483_647;
-      stored.state.runningOwnerHostname = hostname();
-    }, { storePath });
+    await mutateJobs(
+      (jobs) => {
+        const stored = jobs.find((candidate) => candidate.id === job.id)!;
+        stored.state.runningAtMs = Date.now();
+        stored.state.runningRunId = "dead-run";
+        stored.state.runningDeadlineAtMs = Date.now() + 60_000;
+        stored.state.runningOwnerPid = 2_147_483_647;
+        stored.state.runningOwnerHostname = hostname();
+      },
+      { storePath },
+    );
 
     const recovered = await b.get(job.id);
     expect(recovered?.state.runningAtMs).toBeUndefined();
@@ -233,14 +510,17 @@ describe("CronService shared Store consistency", () => {
       schedule: { kind: "at", atMs: Date.now() + 60_000 },
       payload: { kind: "systemEvent", text: "run" },
     });
-    await mutateJobs((jobs) => {
-      const stored = jobs.find((candidate) => candidate.id === job.id)!;
-      stored.state.runningAtMs = Date.now();
-      stored.state.runningRunId = "remote-dead-run";
-      stored.state.runningDeadlineAtMs = Date.now() + 60_000;
-      stored.state.runningOwnerPid = 123;
-      stored.state.runningOwnerHostname = "remote-host";
-    }, { storePath });
+    await mutateJobs(
+      (jobs) => {
+        const stored = jobs.find((candidate) => candidate.id === job.id)!;
+        stored.state.runningAtMs = Date.now();
+        stored.state.runningRunId = "remote-dead-run";
+        stored.state.runningDeadlineAtMs = Date.now() + 60_000;
+        stored.state.runningOwnerPid = 123;
+        stored.state.runningOwnerHostname = "remote-host";
+      },
+      { storePath },
+    );
 
     await a.start();
     await waitFor(() => released.mock.calls.length === 1);
@@ -257,13 +537,16 @@ describe("CronService shared Store consistency", () => {
       schedule: { kind: "at", atMs: Date.now() + 60_000 },
       payload: { kind: "systemEvent", text: "run" },
     });
-    await mutateJobs((jobs) => {
-      const stored = jobs.find((candidate) => candidate.id === job.id)!;
-      stored.state.runningAtMs = Date.now();
-      stored.state.runningRunId = "remote-live-run";
-      stored.state.runningOwnerPid = 123;
-      stored.state.runningOwnerHostname = "remote-host";
-    }, { storePath });
+    await mutateJobs(
+      (jobs) => {
+        const stored = jobs.find((candidate) => candidate.id === job.id)!;
+        stored.state.runningAtMs = Date.now();
+        stored.state.runningRunId = "remote-live-run";
+        stored.state.runningOwnerPid = 123;
+        stored.state.runningOwnerHostname = "remote-host";
+      },
+      { storePath },
+    );
 
     await a.start();
     expect((await a.get(job.id))?.state.runningRunId).toBe("remote-live-run");
@@ -329,14 +612,18 @@ describe("CronService shared Store consistency", () => {
     now = 2_000;
 
     const gate = deferred<void>();
-    const refreshSpy = vi.spyOn(worker, "refresh").mockImplementationOnce(() => gate.promise);
+    const refreshSpy = vi
+      .spyOn(worker, "refresh")
+      .mockImplementationOnce(() => gate.promise);
     const tick = (worker as any).onTimer();
     worker.stop();
     gate.resolve();
     await tick;
 
     expect(executeCalls).toBe(0);
-    expect((await worker.list({ includeDisabled: true }))[0]?.state.runningAtMs).toBeUndefined();
+    expect(
+      (await worker.list({ includeDisabled: true }))[0]?.state.runningAtMs,
+    ).toBeUndefined();
     refreshSpy.mockRestore();
   });
 
@@ -344,8 +631,10 @@ describe("CronService shared Store consistency", () => {
     let now = 1_000;
     let gate = deferred<void>();
     let completedRuns = 0;
+    let startedExecutions = 0;
     let settledExecutions = 0;
     const executeJob: CronServiceDeps["executeJob"] = async () => {
+      startedExecutions += 1;
       await gate.promise;
       settledExecutions += 1;
       return { status: "ok" };
@@ -353,7 +642,9 @@ describe("CronService shared Store consistency", () => {
     const { a, b } = await makePair({
       nowMs: () => now,
       executeJob,
-      appendRunLog: async () => { completedRuns += 1; },
+      appendRunLog: async () => {
+        completedRuns += 1;
+      },
     });
     const job = await a.add({
       name: "editable",
@@ -362,6 +653,7 @@ describe("CronService shared Store consistency", () => {
     });
 
     expect(await a.runNow(job.id)).toEqual({ ran: true });
+    await waitFor(() => startedExecutions === 1);
     // Same-millisecond edit still changes the optimistic updatedAt marker.
     await b.update(job.id, {
       enabled: false,
@@ -383,6 +675,7 @@ describe("CronService shared Store consistency", () => {
     now = 3_000;
     await b.update(job.id, { enabled: true });
     expect(await a.runNow(job.id)).toEqual({ ran: true });
+    await waitFor(() => startedExecutions === 2);
     await b.remove(job.id);
     gate.resolve();
     await waitFor(() => settledExecutions === 2);

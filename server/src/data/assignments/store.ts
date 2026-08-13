@@ -79,6 +79,7 @@ export class PgAssignmentStore {
     inputs: ResourceAssignmentInput[],
     expectedVersion: number,
     updatedBy: string,
+    metadata?: { resourceName: string; status: 'enabled' | 'disabled' },
   ): Promise<ResourceAssignmentSet> {
     this.assertCustomerTenant(tenantId);
     const normalized = normalizeAssignmentInputs(inputs);
@@ -99,10 +100,10 @@ export class PgAssignmentStore {
         }
         setResult = await client.query(`
           INSERT INTO ${this.assignmentSetsTable} (
-            tenant_id,resource_type,resource_id,source,version,created_by,updated_by
-          ) VALUES ($1,$2,$3,'governance',1,$4,$4)
+            tenant_id,resource_type,resource_id,resource_name,resource_status,source,version,created_by,updated_by
+          ) VALUES ($1,$2,$3,$5,$6,'governance',1,$4,$4)
           RETURNING *
-        `, [tenantId, resourceType, resourceId, updatedBy]);
+        `, [tenantId, resourceType, resourceId, updatedBy, metadata?.resourceName ?? null, metadata?.status ?? 'enabled']);
       } else {
         if (Number(current.rows[0].version) !== expectedVersion) {
           throw new AssignmentInvariantError('ASSIGNMENT_SET_VERSION_CONFLICT');
@@ -110,12 +111,14 @@ export class PgAssignmentStore {
         setResult = await client.query(`
           UPDATE ${this.assignmentSetsTable}
           SET source = 'governance',
+              resource_name = COALESCE($6, resource_name),
+              resource_status = COALESCE($7, resource_status),
               version = version + 1,
               updated_at = NOW(),
               updated_by = $4
           WHERE tenant_id = $1 AND resource_type = $2 AND resource_id = $3 AND version = $5
           RETURNING *
-        `, [tenantId, resourceType, resourceId, updatedBy, expectedVersion]);
+        `, [tenantId, resourceType, resourceId, updatedBy, expectedVersion, metadata?.resourceName ?? null, metadata?.status ?? null]);
         if (!setResult.rows[0]) {
           throw new AssignmentInvariantError('ASSIGNMENT_SET_VERSION_CONFLICT');
         }
@@ -291,6 +294,21 @@ export class PgAssignmentStore {
       }
       return { resourceSetsProjected };
     });
+  }
+
+  async listResourceSets(tenantId: string, resourceType: AssignmentResourceType): Promise<ResourceAssignmentSet[]> {
+    const result = await this.options.pool.query(
+      `SELECT s.*, COALESCE(json_agg(a.* ORDER BY a.assignment_id) FILTER (WHERE a.assignment_id IS NOT NULL), '[]'::json) AS assignments
+       FROM ${this.assignmentSetsTable} s
+       LEFT JOIN ${this.assignmentsTable} a
+         ON a.tenant_id = s.tenant_id AND a.resource_type = s.resource_type AND a.resource_id = s.resource_id
+       WHERE s.tenant_id = $1 AND s.resource_type = $2
+       GROUP BY s.tenant_id, s.resource_type, s.resource_id, s.resource_name, s.resource_status, s.source, s.version,
+                s.created_at, s.created_by, s.updated_at, s.updated_by
+       ORDER BY s.resource_id`,
+      [tenantId, resourceType],
+    );
+    return result.rows.map(row => rowToAssignmentSet(row, Array.isArray(row.assignments) ? row.assignments : []));
   }
 
   async listUserPreferences(userId: string): Promise<UserResourcePreference[]> {
@@ -702,6 +720,8 @@ function rowToAssignmentSet(
     tenantId: String(row.tenant_id),
     resourceType: row.resource_type as AssignmentResourceType,
     resourceId: String(row.resource_id),
+    ...(row.resource_name ? { resourceName: String(row.resource_name) } : {}),
+    status: row.resource_status === 'disabled' ? 'disabled' : 'enabled',
     source: row.source as ResourceAssignmentSet['source'],
     version: Number(row.version),
     assignments: assignmentRows.map(rowToAssignment),

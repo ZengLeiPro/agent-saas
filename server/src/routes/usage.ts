@@ -30,6 +30,10 @@ export interface UsageRouterOptions {
   tokenUsageStore: TokenUsageStore;
   /** 用于 enrich realName，可选 */
   userStore?: UserStore;
+  /** 当前有效组织成员权威源；组织管理员排行用它排除已离职/停用的历史账号。 */
+  membershipStore?: {
+    getMembership(tenantId: string, userId: string): Promise<{ status: string } | null>;
+  };
   /**
    * 手动触发全量回填（force=true 重扫 jsonl）。
    * 由 runtime 注入；未注入则 POST /rebuild 返回 503。
@@ -78,6 +82,10 @@ function omitKey<T extends Record<string, unknown>>(obj: T, key: string): Record
  *
  * 返回 { ok: true, tenantId } | { ok: false, status, error }
  */
+function scopeIsPlatform(req: Request): boolean {
+  return !!req.user && isPlatformAdmin(req.user);
+}
+
 function resolveQueryTenant(req: Request, queryTenantId: string | undefined):
   | { ok: true; tenantId: string | undefined }
   | { ok: false; status: 401 | 403; error: string } {
@@ -122,18 +130,23 @@ function shiftDate(yyyyMmDd: string, deltaDays: number): string {
 /**
  * 把 query 参数解析为 (fromDate, toDate)。
  * - from/to 显式给定 → 直接用
- * - range='all' → from='0000-01-01'（store SQL 的 `date >= ?` 必然命中）
+ * - range='all' / 仅传 to → 使用当前租户范围真实 earliestDate
+ * - 无数据时以今天作为空范围起点，绝不向外暴露内部哨兵日期
  * - 否则按 preset 计算
  */
-function resolveRange(q: { range?: RangePreset; from?: string; to?: string }): {
+function resolveRange(
+  q: { range?: RangePreset; from?: string; to?: string },
+  earliestDate?: string | null,
+): {
   fromDate: string;
   toDate: string;
   range: RangePreset | 'custom';
 } {
   const today = todayBeijing();
+  const earliest = earliestDate ?? today;
   if (q.from || q.to) {
     return {
-      fromDate: q.from ?? '0000-01-01',
+      fromDate: q.from ?? earliest,
       toDate: q.to ?? today,
       range: 'custom',
     };
@@ -149,7 +162,7 @@ function resolveRange(q: { range?: RangePreset; from?: string; to?: string }): {
     case 'mtd':
       return { fromDate: today.slice(0, 7) + '-01', toDate: today, range };
     case 'all':
-      return { fromDate: '0000-01-01', toDate: today, range };
+      return { fromDate: earliest, toDate: today, range };
   }
 }
 
@@ -159,8 +172,17 @@ function rangeIsValid(fromDate: string, toDate: string): boolean {
   return from <= to;
 }
 
+function resolveStoreRange(
+  q: { range?: RangePreset; from?: string; to?: string },
+  store: TokenUsageStore,
+  tenantId: string | undefined,
+) {
+  const needsEarliest = q.range === 'all' || (!!q.to && !q.from);
+  return resolveRange(q, needsEarliest ? store.getDataRange(tenantId).earliestDate : undefined);
+}
+
 export function createUsageRouter(opts: UsageRouterOptions): Router {
-  const { tokenUsageStore: store, userStore, triggerRebuild, getTenantPolicy } = opts;
+  const { tokenUsageStore: store, userStore, membershipStore, triggerRebuild, getTenantPolicy } = opts;
   const router = Router();
   /** 防并发：一次只允许一个 rebuild 在跑 */
   let rebuildInFlight = false;
@@ -174,14 +196,14 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
       res.status(400).json({ error: 'Invalid query', issues: parsed.error.issues });
       return;
     }
-    const { fromDate, toDate, range } = resolveRange(parsed.data);
-    if (!rangeIsValid(fromDate, toDate)) {
-      res.status(400).json({ error: 'Invalid range: from must be before or equal to to' });
-      return;
-    }
     const tenant = resolveQueryTenant(req, parsed.data.tenantId);
     if (!tenant.ok) {
       res.status(tenant.status).json({ error: tenant.error });
+      return;
+    }
+    const { fromDate, toDate, range } = resolveStoreRange(parsed.data, store, tenant.tenantId);
+    if (!rangeIsValid(fromDate, toDate)) {
+      res.status(400).json({ error: 'Invalid range: from must be before or equal to to' });
       return;
     }
     const family = parsed.data.family as ModelFamily | undefined;
@@ -203,22 +225,47 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
       res.status(400).json({ error: 'Invalid query', issues: parsed.error.issues });
       return;
     }
-    const { fromDate, toDate, range } = resolveRange(parsed.data);
-    if (!rangeIsValid(fromDate, toDate)) {
-      res.status(400).json({ error: 'Invalid range: from must be before or equal to to' });
-      return;
-    }
     const tenant = resolveQueryTenant(req, parsed.data.tenantId);
     if (!tenant.ok) {
       res.status(tenant.status).json({ error: tenant.error });
       return;
     }
+    const { fromDate, toDate, range } = resolveStoreRange(parsed.data, store, tenant.tenantId);
+    if (!rangeIsValid(fromDate, toDate)) {
+      res.status(400).json({ error: 'Invalid range: from must be before or equal to to' });
+      return;
+    }
     const family = parsed.data.family as ModelFamily | undefined;
     const redactCost = await shouldRedactCost(req, getTenantPolicy);
     const rows = store.getByUser(fromDate, toDate, family, tenant.tenantId);
+    // 组织排行只能由「用户目录 + active membership」两项权威数据共同裁剪。
+    // 任一依赖缺失或查询失败时 fail-closed 并明确报错，不能把历史排行静默伪装成空数据。
+    let visibleRows = rows;
+    if (!scopeIsPlatform(req)) {
+      if (!userStore || !membershipStore) {
+        res.status(503).json({
+          error: '组织成员权威数据暂不可用',
+          code: 'ACTIVE_MEMBERSHIP_AUTHORITY_UNAVAILABLE',
+        });
+        return;
+      }
+      try {
+        visibleRows = (await Promise.all(rows.map(async (row) => {
+          const user = userStore.findByUsername(row.username);
+          if (!user || user.tenantId !== tenant.tenantId || user.disabled) return null;
+          const membership = await membershipStore.getMembership(tenant.tenantId!, user.id);
+          return membership?.status === 'active' ? row : null;
+        }))).filter((row): row is (typeof rows)[number] => row !== null);
+      } catch {
+        res.status(503).json({
+          error: '组织成员权威数据暂不可用',
+          code: 'ACTIVE_MEMBERSHIP_AUTHORITY_UNAVAILABLE',
+        });
+        return;
+      }
+    }
     // realName enrich：仅在用户存在且 tenantId 匹配时填充（防止跨组织用户名碰撞泄漏 realName）。
-    // 当前 username 全局唯一，但显式校验 tenantId 增加纵深防御。
-    const enriched = rows.map((r) => {
+    const enriched = visibleRows.map((r) => {
       const user = userStore?.findByUsername(r.username);
       const base = redactCost ? omitKey(r as unknown as Record<string, unknown>, 'totalCostUsd') : r;
       return {
@@ -243,14 +290,14 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
       res.status(400).json({ error: 'Invalid query', issues: parsed.error.issues });
       return;
     }
-    const { fromDate, toDate, range } = resolveRange(parsed.data);
-    if (!rangeIsValid(fromDate, toDate)) {
-      res.status(400).json({ error: 'Invalid range: from must be before or equal to to' });
-      return;
-    }
     const tenant = resolveQueryTenant(req, parsed.data.tenantId);
     if (!tenant.ok) {
       res.status(tenant.status).json({ error: tenant.error });
+      return;
+    }
+    const { fromDate, toDate, range } = resolveStoreRange(parsed.data, store, tenant.tenantId);
+    if (!rangeIsValid(fromDate, toDate)) {
+      res.status(400).json({ error: 'Invalid range: from must be before or equal to to' });
       return;
     }
     const family = parsed.data.family as ModelFamily | undefined;
@@ -274,14 +321,14 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
       res.status(400).json({ error: 'Invalid query', issues: parsed.error.issues });
       return;
     }
-    const { fromDate, toDate, range } = resolveRange(parsed.data);
-    if (!rangeIsValid(fromDate, toDate)) {
-      res.status(400).json({ error: 'Invalid range: from must be before or equal to to' });
-      return;
-    }
     const tenant = resolveQueryTenant(req, parsed.data.tenantId);
     if (!tenant.ok) {
       res.status(tenant.status).json({ error: tenant.error });
+      return;
+    }
+    const { fromDate, toDate, range } = resolveStoreRange(parsed.data, store, tenant.tenantId);
+    if (!rangeIsValid(fromDate, toDate)) {
+      res.status(400).json({ error: 'Invalid range: from must be before or equal to to' });
       return;
     }
     const family = parsed.data.family as ModelFamily | undefined;
@@ -310,14 +357,14 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
       res.status(400).json({ error: 'Invalid query', issues: parsed.error.issues });
       return;
     }
-    const { fromDate, toDate, range } = resolveRange(parsed.data);
-    if (!rangeIsValid(fromDate, toDate)) {
-      res.status(400).json({ error: 'Invalid range: from must be before or equal to to' });
-      return;
-    }
     const tenant = resolveQueryTenant(req, parsed.data.tenantId);
     if (!tenant.ok) {
       res.status(tenant.status).json({ error: tenant.error });
+      return;
+    }
+    const { fromDate, toDate, range } = resolveStoreRange(parsed.data, store, tenant.tenantId);
+    if (!rangeIsValid(fromDate, toDate)) {
+      res.status(400).json({ error: 'Invalid range: from must be before or equal to to' });
       return;
     }
     const username = parsed.data.username ?? null;

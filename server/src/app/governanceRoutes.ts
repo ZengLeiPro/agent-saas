@@ -4,6 +4,7 @@ import type { WebChannel } from '../channels/web/channel.js';
 import { createGovernanceAccessRouter } from '../routes/governanceAccess.js';
 import { createGovernanceResourcesRouter } from '../routes/governanceResources.js';
 import { createGovernanceUiRouter } from '../routes/governanceUi.js';
+import { validateGovernanceCredentialHealth } from '../governance/credentialHealth.js';
 import { inventoryPersonalWorkspace } from './governancePersonalDataRetention.js';
 import type { ExecuteUserOffboarding } from './governanceOffboarding.js';
 import type { AppRuntime } from './runtime.js';
@@ -44,6 +45,7 @@ export function registerGovernanceRoutes(
       memberships: runtime.membershipStore,
       entitlements: runtime.entitlementStore,
       assignments: runtime.assignmentStore,
+      ...(runtime.directoryGroupStore ? { directoryGroups: runtime.directoryGroupStore } : {}),
       ...(runtime.governanceChangeJobStore ? { changeJobs: runtime.governanceChangeJobStore } : {}),
       ...(runtime.oauthGrantStore ? {
         oauthGrants: runtime.oauthGrantStore,
@@ -182,6 +184,7 @@ export function registerGovernanceRoutes(
       projectionReconciler: runtime.governanceProjectionReconciler,
       vault: runtime.secretVault,
       audit: runtime.governanceAuditStore,
+      credentialHealthCheck: validateGovernanceCredentialHealth,
     }));
     if (options.executeUserOffboarding?.retry && !scheduledOffboardingRuntimes.has(runtime)) {
       scheduledOffboardingRuntimes.add(runtime);

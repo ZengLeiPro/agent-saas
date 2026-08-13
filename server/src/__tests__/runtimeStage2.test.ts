@@ -11,7 +11,9 @@ import { FileEventStore } from '../runtime/fileEventStore.js';
 import {
   createRawApprovalResumeDispatch,
   createRawRuntimeRunDispatch,
+  failRunningRunForWallClock,
   loadRawRuntimeWakeState,
+  markRunState,
   RunStateTrackingEventStore,
   type SessionLockAcquirer,
   type SessionLockHandle,
@@ -19,6 +21,7 @@ import {
 import type { RunStore } from '../runtime/runStore.js';
 import type { RuntimeSessionRecord, SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { EventStore } from '../runtime/types.js';
+import { runtimeRunController } from '../runtime/runController.js';
 import type { OutboundEvent } from '../types/index.js';
 
 class MemorySessionCatalog implements SessionCatalog {
@@ -217,50 +220,234 @@ describe('runtime stage 2 primitives', () => {
     expect(listPage).toHaveBeenCalledWith('session-1', pageOptions);
   });
 
-  it('RunStateTrackingEventStore 只为失败或取消终态写 statusReason', async () => {
-    const append = vi.fn(async (event: Record<string, unknown>) => ({
-      id: `event-${append.mock.calls.length}`,
-      timestamp: new Date().toISOString(),
-      ...event,
-    }));
-    const inner = {
-      append,
-      list: vi.fn(async () => []),
-    } as unknown as EventStore;
-    const markStatus = vi.fn(async () => null);
+  it('RunStateTrackingEventStore 先 CAS 再发布 success/failed/cancelled 终态及原因', async () => {
+    const persisted: Array<Record<string, unknown>> = [];
+    const append = vi.fn(async (event: Record<string, unknown>) => {
+      const stored = { id: `event-${persisted.length + 1}`, timestamp: new Date().toISOString(), ...event };
+      persisted.push(stored);
+      return stored;
+    });
+    const inner = { append, list: vi.fn(async () => []) } as unknown as EventStore;
+    const statuses = new Map<string, string>([
+      ['run-success', 'running'], ['run-error', 'running'], ['run-cancelled', 'running'],
+    ]);
+    const markStatusIfCurrent = vi.fn(async (
+      runId: string,
+      expected: readonly string[],
+      next: string,
+      _reason?: string,
+      metadata?: Record<string, unknown>,
+    ) => {
+      if (!expected.includes(statuses.get(runId)!)) return null;
+      statuses.set(runId, next);
+      return { runId, tenantId: 'tenant-test', status: next, metadata };
+    });
     const runStore = {
-      get: vi.fn(async () => ({ status: 'running' })),
-      markStatus,
+      get: vi.fn(async (runId: string) => ({
+        runId, tenantId: 'tenant-test', status: statuses.get(runId), metadata: {},
+      })),
+      markStatus: vi.fn(),
+      markStatusIfCurrent,
+      patchMetadata: vi.fn(async () => null),
     } as unknown as RunStore;
     const store = new RunStateTrackingEventStore(inner, runStore);
 
+    await store.append({ type: 'run_finished', runId: 'run-success', sessionId: 'session-1', subtype: 'success', numTurns: 1 });
     await store.append({
-      type: 'run_finished',
-      runId: 'run-success',
-      sessionId: 'session-1',
-      subtype: 'success',
-      numTurns: 1,
+      type: 'run_finished', runId: 'run-error', sessionId: 'session-1', subtype: 'error', error: 'model error', numTurns: 1,
     });
     await store.append({
-      type: 'run_finished',
-      runId: 'run-error',
-      sessionId: 'session-1',
-      subtype: 'error',
-      error: 'model error',
-      numTurns: 1,
-    });
-    await store.append({
-      type: 'run_finished',
-      runId: 'run-cancelled',
-      sessionId: 'session-1',
-      subtype: 'interrupted',
-      numTurns: 1,
+      type: 'run_finished', runId: 'run-cancelled', sessionId: 'session-1', subtype: 'interrupted', numTurns: 1,
     });
 
-    expect(markStatus).toHaveBeenNthCalledWith(1, 'run-success', 'completed', undefined);
-    expect(markStatus).toHaveBeenNthCalledWith(2, 'run-error', 'failed', 'model error');
-    expect(markStatus).toHaveBeenNthCalledWith(3, 'run-cancelled', 'cancelled', 'interrupted');
+    expect(markStatusIfCurrent).toHaveBeenNthCalledWith(
+      1, 'run-success', expect.arrayContaining(['running']), 'completed', undefined, expect.any(Object),
+    );
+    expect(markStatusIfCurrent).toHaveBeenNthCalledWith(
+      2, 'run-error', expect.arrayContaining(['running']), 'failed', 'model error', expect.any(Object),
+    );
+    expect(markStatusIfCurrent).toHaveBeenNthCalledWith(
+      3, 'run-cancelled', expect.arrayContaining(['running']), 'cancelled', 'interrupted', expect.any(Object),
+    );
+    expect(persisted.filter((event) => event.type === 'run_finished')).toHaveLength(3);
+    expect(persisted.filter((event) => event.type === 'run_state_changed').map((event) => event.status))
+      .toEqual(['completed', 'failed', 'cancelled']);
   });
+
+  it('orphaned 与其它终态同样由 durable CAS 裁决，败者不发布 cancelled', async () => {
+    let status = 'running';
+    let metadata: Record<string, unknown> = {};
+    const persisted: Array<Record<string, unknown>> = [];
+    const eventStore = {
+      append: vi.fn(async (event: Record<string, unknown>) => {
+        const stored = { id: `event-${persisted.length + 1}`, timestamp: new Date().toISOString(), ...event };
+        persisted.push(stored);
+        return stored;
+      }),
+      list: vi.fn(async () => []),
+    } as unknown as EventStore;
+    const runStore = {
+      get: vi.fn(async () => ({ runId: 'run-orphaned', tenantId: 'tenant-test', status, metadata })),
+      markStatus: vi.fn(),
+      markStatusIfCurrent: vi.fn(async (
+        _runId: string, expected: readonly string[], next: string, _reason?: string, patch?: Record<string, unknown>,
+      ) => {
+        if (!expected.includes(status)) return null;
+        status = next;
+        metadata = { ...metadata, ...patch };
+        return { runId: 'run-orphaned', tenantId: 'tenant-test', status, metadata };
+      }),
+      patchMetadata: vi.fn(async (_runId: string, patch: Record<string, unknown>) => {
+        metadata = { ...metadata, ...patch };
+        return { runId: 'run-orphaned', tenantId: 'tenant-test', status, metadata };
+      }),
+    } as unknown as RunStore;
+
+    await markRunState(runStore, eventStore, 'session-orphaned', 'run-orphaned', 'orphaned', 'lease_lost');
+    await markRunState(runStore, eventStore, 'session-orphaned', 'run-orphaned', 'cancelled', 'late_cancel');
+
+    expect(status).toBe('orphaned');
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]).toMatchObject({ type: 'run_state_changed', status: 'orphaned', reason: 'lease_lost' });
+  });
+
+  it('墙钟 CAS 败给已完成 run 时不 abort，也不发布 failed 事件', async () => {
+    const append = vi.fn(async (event: Record<string, unknown>) => ({
+      id: 'event-1', timestamp: new Date().toISOString(), ...event,
+    }));
+    const eventStore = { append, list: vi.fn(async () => []) } as unknown as EventStore;
+    const markStatusIfCurrent = vi.fn(async () => null);
+    const abortController = new AbortController();
+    const runStore = {
+      get: vi.fn(async () => ({ runId: 'run-completed', tenantId: 'tenant-test', status: 'completed', metadata: {} })),
+      markStatus: vi.fn(),
+      markStatusIfCurrent,
+    } as unknown as RunStore;
+
+    const shouldAbort = await failRunningRunForWallClock({
+      runStore,
+      eventStore,
+      sessionId: 'session-completed',
+      runId: 'run-completed',
+      abortController,
+    });
+
+    expect(shouldAbort).toBe(false);
+    expect(abortController.signal.aborted).toBe(false);
+    expect(markStatusIfCurrent).toHaveBeenCalledWith(
+      'run-completed', ['running'], 'failed', 'run_max_wall_clock_exceeded', expect.any(Object),
+    );
+    expect(append).not.toHaveBeenCalled();
+  });
+
+  it('墙钟 CAS 成功后即使事件 append 失败也可靠 abort，并保留可重投 outbox', async () => {
+    let status = 'running';
+    let metadata: Record<string, unknown> = {};
+    const append = vi.fn()
+      .mockRejectedValueOnce(new Error('event store unavailable'))
+      .mockImplementation(async (event: Record<string, unknown>) => ({
+        id: 'event-replayed', timestamp: new Date().toISOString(), ...event,
+      }));
+    const eventStore = { append, list: vi.fn(async () => []) } as unknown as EventStore;
+    const runStore = {
+      get: vi.fn(async () => ({ runId: 'run-timeout', tenantId: 'tenant-test', status, metadata })),
+      markStatus: vi.fn(),
+      markStatusIfCurrent: vi.fn(async (
+        _runId: string, expected: readonly string[], next: string, _reason?: string, patch?: Record<string, unknown>,
+      ) => {
+        if (!expected.includes(status)) return null;
+        status = next;
+        metadata = { ...metadata, ...patch };
+        return { runId: 'run-timeout', tenantId: 'tenant-test', status, metadata };
+      }),
+      patchMetadata: vi.fn(async (_runId: string, patch: Record<string, unknown>) => {
+        metadata = { ...metadata, ...patch };
+        return { runId: 'run-timeout', tenantId: 'tenant-test', status, metadata };
+      }),
+    } as unknown as RunStore;
+    const abortController = new AbortController();
+    const warn = vi.fn();
+
+    await expect(failRunningRunForWallClock({
+      runStore,
+      eventStore,
+      sessionId: 'session-timeout',
+      runId: 'run-timeout',
+      abortController,
+      logger: { warn },
+    })).resolves.toBe(true);
+
+    expect(abortController.signal.aborted).toBe(true);
+    expect(abortController.signal.reason).toMatchObject({ message: 'run_max_wall_clock_exceeded' });
+    expect(metadata.terminalEventOutbox).toMatchObject({ state: 'failed', terminalStatus: 'failed', attempts: 1 });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('event append failed'));
+
+    const { retryPendingTerminalEvents } = await import('../runtime/runTerminalCoordinator.js');
+    await expect(retryPendingTerminalEvents({ runStore, eventStore, runId: 'run-timeout' })).resolves.toBe(true);
+    expect(metadata.terminalEventOutbox).toMatchObject({ state: 'delivered', attempts: 2 });
+    expect(append).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['success-first', 'timeout-first'] as const)(
+    'success-vs-timeout 双向竞态只允许 durable CAS 赢家发布终态：%s',
+    async (winner) => {
+      let status = 'running';
+      let metadata: Record<string, unknown> = {};
+      const persisted: Array<Record<string, unknown>> = [];
+      const inner = {
+        append: vi.fn(async (event: Record<string, unknown>) => {
+          const stored = { id: `event-${persisted.length + 1}`, timestamp: new Date().toISOString(), ...event };
+          persisted.push(stored);
+          return stored;
+        }),
+        appendBatch: vi.fn(async (events: Record<string, unknown>[]) => Promise.all(events.map(async (event) => {
+          const stored = { id: `event-${persisted.length + 1}`, timestamp: new Date().toISOString(), ...event };
+          persisted.push(stored);
+          return stored;
+        }))),
+        list: vi.fn(async () => []),
+      } as unknown as EventStore;
+      const runStore = {
+        get: vi.fn(async () => ({ runId: 'run-race', tenantId: 'tenant-test', status, metadata })),
+        markStatus: vi.fn(),
+        markStatusIfCurrent: vi.fn(async (
+          _runId: string, expected: readonly string[], next: string, _reason?: string, patch?: Record<string, unknown>,
+        ) => {
+          if (!expected.includes(status)) return null;
+          status = next;
+          metadata = { ...metadata, ...patch };
+          return { runId: 'run-race', tenantId: 'tenant-test', status, metadata };
+        }),
+        patchMetadata: vi.fn(async (_runId: string, patch: Record<string, unknown>) => {
+          metadata = { ...metadata, ...patch };
+          return { runId: 'run-race', tenantId: 'tenant-test', status, metadata };
+        }),
+      } as unknown as RunStore;
+      const store = new RunStateTrackingEventStore(inner, runStore);
+      const abortController = new AbortController();
+      const finish = () => store.append({
+        type: 'run_finished', runId: 'run-race', sessionId: 'session-race', subtype: 'success', numTurns: 1,
+      });
+      const timeout = () => failRunningRunForWallClock({
+        runStore, eventStore: inner, sessionId: 'session-race', runId: 'run-race', abortController,
+      });
+
+      if (winner === 'success-first') {
+        await finish();
+        await expect(timeout()).resolves.toBe(false);
+        expect(abortController.signal.aborted).toBe(false);
+      } else {
+        await expect(timeout()).resolves.toBe(true);
+        await expect(finish()).rejects.toThrow('run terminal CAS lost');
+        expect(abortController.signal.aborted).toBe(true);
+      }
+
+      expect(status).toBe(winner === 'success-first' ? 'completed' : 'failed');
+      expect(persisted.filter((event) => event.type === 'run_state_changed')).toHaveLength(1);
+      expect(persisted.filter((event) => event.type === 'run_state_changed')[0]?.status).toBe(status);
+      expect(persisted.filter((event) => event.type === 'run_finished')).toHaveLength(winner === 'success-first' ? 1 : 0);
+    },
+  );
 
   it('EventBackedApprovalStore persists approval state inside runtime events', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'approval-events-'));
@@ -444,6 +631,8 @@ describe('runtime stage 2 primitives', () => {
 
     const prevApiKey = process.env.OPENAI_API_KEY;
     process.env.OPENAI_API_KEY = 'sk-test-dummy-for-release-test';
+    const armWallClock = vi.spyOn(runtimeRunController, 'armWallClock');
+    const disarmWallClock = vi.spyOn(runtimeRunController, 'disarmWallClock');
 
     try {
       const dispatch = createRawApprovalResumeDispatch({
@@ -469,6 +658,8 @@ describe('runtime stage 2 primitives', () => {
       // loop.resumeApproval 因 approval 不存在 yield 'error'，然后 finally 释放锁
       expect(tryAcquireCalls).toBe(1);
       expect(releaseCalls).toBe(1);
+      expect(armWallClock).toHaveBeenCalledTimes(1);
+      expect(disarmWallClock).toHaveBeenCalledWith(expect.stringMatching(/^resume-/));
       const errorEvents = events.filter((e) => e.type === 'error');
       expect(errorEvents).toHaveLength(1);
     } finally {

@@ -1,9 +1,12 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { initializeRuntimeGovernanceConnectors } from '../app/runtimeGovernanceConnectors.js';
+import {
+  initializeRuntimeGovernanceConnectors,
+  resolveBrokeredMcpServerIds,
+} from '../app/runtimeGovernanceConnectors.js';
 import type { FeishuTokenBroker } from '../feishu/tokenBroker.js';
 import { InMemorySecretVault } from '../security/secretVault.js';
 import type { AppConfig } from '../types/index.js';
@@ -21,6 +24,23 @@ afterEach(() => {
 });
 
 describe('runtime governance connector env', () => {
+  it('limits brokered MCP warmup to enabled MCP servers and excludes native Aliyun', () => {
+    const getEffectiveServers = vi.fn(() => [
+      { id: 'mcp-salesforce' },
+      { id: 'mcp-internal-search' },
+    ]);
+
+    const serverIds = resolveBrokeredMcpServerIds(
+      { getEffectiveServers } as never,
+      'alice',
+      'tenant-a',
+    );
+
+    expect([...serverIds]).toEqual(['mcp-salesforce', 'mcp-internal-search']);
+    expect(serverIds.has('aliyun')).toBe(false);
+    expect(getEffectiveServers).toHaveBeenCalledWith('alice', 'tenant-a');
+  });
+
   it('wires user-owned, brokered and tenant env into the run-scoped resolver', async () => {
     const root = createRoot();
     const vault = new InMemorySecretVault();

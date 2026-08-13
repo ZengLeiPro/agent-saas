@@ -20,6 +20,10 @@ import {
 } from "./scheduler.js";
 import { cronLogger } from "../utils/logger.js";
 import { cloneJob, isProcessAlive, pTimeout, ServiceTimeoutError, toFiniteInt, transferCronJobOwner, updatedAtAfterEdit } from "./serviceUtils.js";
+import { claimCronJob, markCronClaimRunning, recoverCronClaim,
+  type ClaimedJob, type CronRunLease, type CronRunRequest, type ExecutionInvocation,
+} from "./executionClaim.js";
+export type { CronRunLease } from "./executionClaim.js";
 
 const MAX_TIMEOUT_MS = 2147483647;
 const STORE_RELOAD_INTERVAL_MS = 1_500;
@@ -109,8 +113,11 @@ function normalizeStoredJob(job: CronJob, nowMs: number): boolean {
   let changed = normalizeEverySchedule(job, nowMs);
 
   const ownerPid = job.state.runningOwnerPid;
+  const activeExecution = job.state.executionLedger?.find((record) =>
+    record.runId === job.state.runningRunId);
   if (
     job.state.runningAtMs != null
+    && !activeExecution
     && job.state.runningOwnerHostname === os.hostname()
     && Number.isInteger(ownerPid)
     && ownerPid! > 0
@@ -118,6 +125,7 @@ function normalizeStoredJob(job: CronJob, nowMs: number): boolean {
   ) {
     delete job.state.runningAtMs;
     delete job.state.runningRunId;
+    delete job.state.runningLeaseId;
     delete job.state.runningDeadlineAtMs;
     delete job.state.runningTimedOutAtMs;
     delete job.state.runningOwnerPid;
@@ -131,6 +139,10 @@ function normalizeStoredJob(job: CronJob, nowMs: number): boolean {
   if (job.state.runningAtMs == null) {
     if (job.state.runningRunId !== undefined) {
       delete job.state.runningRunId;
+      changed = true;
+    }
+    if (job.state.runningLeaseId !== undefined) {
+      delete job.state.runningLeaseId;
       changed = true;
     }
     if (job.state.runningDeadlineAtMs !== undefined) {
@@ -164,20 +176,6 @@ function normalizeStoredJob(job: CronJob, nowMs: number): boolean {
 interface MutationOutcome<T> {
   changed: boolean;
   value: T;
-}
-
-export interface CronRunLease {
-  release(): Promise<void>;
-}
-
-interface ClaimedJob {
-  job: CronJob;
-  runId: string;
-  startedAtMs: number;
-  claimedUpdatedAtMs: number;
-  forced: boolean;
-  runLease?: CronRunLease;
-  releaseLeaseAfterSettlement?: boolean;
 }
 
 export interface CronServiceDeps {
@@ -226,6 +224,7 @@ export class CronService {
   private reloadTimer: ReturnType<typeof setInterval> | null = null;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  private readonly executionOwnerId = `${os.hostname()}:${process.pid}:${randomUUID()}`;
 
   constructor(deps: CronServiceDeps) {
     this.deps = deps;
@@ -532,14 +531,23 @@ export class CronService {
     return outcome.value;
   }
 
-  async runNow(id: string): Promise<{ ran: boolean; error?: string }> {
-    const claim = await this.claimJob(id, true);
-    if (claim.error) return { ran: false, error: claim.error };
-
+  async runNow(id: string, request: CronRunRequest = {}): Promise<{
+    ran: boolean; error?: string; runId?: string; requestId?: string; deduplicated?: boolean;
+  }> {
+    const exposeIdentity = !!request.requestId;
+    const requestId = request.requestId?.trim() || randomUUID();
+    const claim = await this.claimJob(id, {
+      trigger: request.retryOf ? "retry" : "manual", requestId, retryOf: request.retryOf,
+      parentRunId: request.parentRunId, attempt: request.attempt,
+    });
+    if (claim.error) return exposeIdentity
+      ? { ran: false, error: claim.error, requestId } : { ran: false, error: claim.error };
+    if (claim.duplicate) return exposeIdentity
+      ? { ran: true, runId: claim.duplicate.runId, requestId, deduplicated: true } : { ran: true };
     void this.executeClaimedJob(claim.value!).catch((err) => {
       cronLogger.error("runNow background execution failed:", err);
     });
-    return { ran: true };
+    return exposeIdentity ? { ran: true, runId: claim.value!.runId, requestId } : { ran: true };
   }
 
   private async ensureLoaded(): Promise<void> {
@@ -651,8 +659,12 @@ export class CronService {
       if (!this.enabled || !this.started || lifecycleGeneration !== this.lifecycleGeneration) return;
 
       const nowMs = this.deps.nowMs();
-      const dueJobIds = findDueJobs(this.jobs, nowMs).map((job) => job.id);
-      const claims = await Promise.allSettled(dueJobIds.map((id) => this.claimJob(id, false)));
+      const dueJobs = findDueJobs(this.jobs, nowMs).map((job) => ({
+        id: job.id, scheduledAtMs: job.state.nextRunAtMs!,
+      }));
+      const claims = await Promise.allSettled(dueJobs.map(({ id, scheduledAtMs }) =>
+        this.claimJob(id, { trigger: "schedule", scheduledAtMs })
+      ));
       for (const result of claims) {
         if (result.status !== "fulfilled" || !result.value.value) continue;
         const claim = result.value.value;
@@ -674,92 +686,35 @@ export class CronService {
     }
   }
 
-  private async claimJob(
-    id: string,
-    forced: boolean,
-  ): Promise<{ value?: ClaimedJob; error?: string }> {
-    const startedAtMs = this.deps.nowMs();
-    const runId = `${startedAtMs}-${randomUUID()}`;
-    const runLease = this.deps.tryAcquireRunLease
-      ? await this.deps.tryAcquireRunLease(id)
-      : undefined;
-    if (this.deps.tryAcquireRunLease && !runLease) {
-      return { error: "Job is already running" };
-    }
-
-    let claimed = false;
-    try {
-      const outcome = await this.mutate((jobs): MutationOutcome<{ claim?: ClaimedJob; error?: string }> => {
-        if (!forced && (!this.enabled || !this.started)) {
-          return { changed: false, value: {} };
-        }
-        const job = jobs.find((candidate) => candidate.id === id);
-        if (!job) return { changed: false, value: { error: "Job not found" } };
-        if (job.state.runningAtMs != null || job.state.runningRunId != null) {
-          if (!runLease) {
-            return { changed: false, value: { error: "Job is already running" } };
-          }
-          // Holding the job-level PG lease proves the previous process no
-          // longer owns the execution (its PG session ended). Recover the
-          // durable orphan before creating the new claim.
-          delete job.state.runningAtMs;
-          delete job.state.runningRunId;
-          delete job.state.runningDeadlineAtMs;
-          delete job.state.runningTimedOutAtMs;
-          delete job.state.runningOwnerPid;
-          delete job.state.runningOwnerHostname;
-        }
-        if (!forced) {
-          const nextRunAtMs = job.state.nextRunAtMs;
-          if (!job.enabled || nextRunAtMs === undefined || nextRunAtMs > startedAtMs) {
-            return { changed: false, value: {} };
-          }
-        }
-
-        const claimedUpdatedAtMs = job.updatedAtMs;
-        job.state.runningAtMs = startedAtMs;
-        job.state.runningRunId = runId;
-        job.state.runningOwnerPid = process.pid;
-        job.state.runningOwnerHostname = os.hostname();
-        delete job.state.runningTimedOutAtMs;
-        const timeoutMs = this.getJobTimeoutSeconds(job) * 1000 || WATCHDOG_FALLBACK_TIMEOUT_MS;
-        job.state.runningDeadlineAtMs = startedAtMs + timeoutMs + WATCHDOG_OVERTIME_MS;
-        return {
-          changed: true,
-          value: {
-            claim: {
-              job: cloneJob(job),
-              runId,
-              startedAtMs,
-              claimedUpdatedAtMs,
-              forced,
-              runLease: runLease ?? undefined,
-            },
-          },
-        };
-      });
-
-      claimed = !!outcome.value.claim;
-      if (outcome.changed && forced) this.afterJobsChanged();
-      return { value: outcome.value.claim, error: outcome.value.error };
-    } finally {
-      if (!claimed) await runLease?.release().catch(() => {});
-    }
+  private async claimJob(id: string, invocation: ExecutionInvocation) {
+    const outcome = await claimCronJob({
+      id, invocation, nowMs: this.deps.nowMs, ownerId: this.executionOwnerId,
+      schedulerActive: () => this.enabled && this.started,
+      mutate: (mutator) => this.mutate(mutator),
+      tryAcquireRunLease: this.deps.tryAcquireRunLease,
+      getTimeoutSeconds: (job) => this.getJobTimeoutSeconds(job),
+      watchdogFallbackTimeoutMs: WATCHDOG_FALLBACK_TIMEOUT_MS,
+      watchdogOvertimeMs: WATCHDOG_OVERTIME_MS,
+    });
+    if (outcome.value && invocation.trigger !== "schedule") this.afterJobsChanged();
+    return outcome;
   }
 
+  private clearRunningState(job: CronJob): void {
+    delete job.state.runningAtMs; delete job.state.runningRunId; delete job.state.runningLeaseId;
+    delete job.state.runningDeadlineAtMs; delete job.state.runningTimedOutAtMs;
+    delete job.state.runningOwnerPid; delete job.state.runningOwnerHostname;
+  }
   private async releaseClaim(claim: ClaimedJob): Promise<void> {
     try {
       const outcome = await this.mutate((jobs): MutationOutcome<boolean> => {
         const job = jobs.find((candidate) => candidate.id === claim.job.id);
-        if (!job || job.state.runningRunId !== claim.runId) {
-          return { changed: false, value: false };
-        }
-        delete job.state.runningAtMs;
-        delete job.state.runningRunId;
-        delete job.state.runningDeadlineAtMs;
-        delete job.state.runningTimedOutAtMs;
-        delete job.state.runningOwnerPid;
-        delete job.state.runningOwnerHostname;
+        if (!job || job.state.runningRunId !== claim.runId
+          || job.state.runningLeaseId !== claim.leaseId) return { changed: false, value: false };
+        const ledger = job.state.executionLedger;
+        const index = ledger?.findIndex((record) => record.runId === claim.runId) ?? -1;
+        if (index >= 0 && ledger?.[index]?.status === "claimed") ledger.splice(index, 1);
+        this.clearRunningState(job);
         return { changed: true, value: true };
       });
       if (outcome.changed) this.afterJobsChanged();
@@ -768,59 +723,47 @@ export class CronService {
     }
   }
 
-  private async releaseSettledTimedOutClaim(jobId: string, runId: string): Promise<void> {
+  private async releaseSettledTimedOutClaim(jobId: string, runId: string, leaseId: string): Promise<void> {
     const outcome = await this.mutate((jobs): MutationOutcome<boolean> => {
       const job = jobs.find((candidate) => candidate.id === jobId);
-      if (
-        !job
-        || job.state.runningRunId !== runId
-        || job.state.runningTimedOutAtMs == null
-      ) {
-        return { changed: false, value: false };
-      }
-      delete job.state.runningAtMs;
-      delete job.state.runningRunId;
-      delete job.state.runningDeadlineAtMs;
-      delete job.state.runningTimedOutAtMs;
-      delete job.state.runningOwnerPid;
-      delete job.state.runningOwnerHostname;
+      if (!job || job.state.runningRunId !== runId || job.state.runningLeaseId !== leaseId
+        || job.state.runningTimedOutAtMs == null) return { changed: false, value: false };
+      this.clearRunningState(job);
       return { changed: true, value: true };
     });
     if (outcome.changed) this.afterJobsChanged();
   }
 
   private async recoverOrphanClaims(): Promise<void> {
-    if (!this.deps.tryAcquireRunLease) return;
-    const candidates = this.jobs
-      .filter((job) => job.state.runningRunId != null)
-      .map((job) => ({ id: job.id, runId: job.state.runningRunId! }));
-
+    const candidates = this.jobs.filter((job) => job.state.runningRunId != null).map((job) => ({ id: job.id,
+      runId: job.state.runningRunId!, leaseId: job.state.runningLeaseId, ownerPid: job.state.runningOwnerPid,
+      ownerHostname: job.state.runningOwnerHostname }));
     for (const candidate of candidates) {
       let lease: CronRunLease | null = null;
+      let dispatched = false;
       try {
-        lease = await this.deps.tryAcquireRunLease(candidate.id);
-        if (!lease) continue;
-        const outcome = await this.mutate((jobs): MutationOutcome<boolean> => {
-          const job = jobs.find((current) => current.id === candidate.id);
-          if (!job || job.state.runningRunId !== candidate.runId) {
-            return { changed: false, value: false };
-          }
-          delete job.state.runningAtMs;
-          delete job.state.runningRunId;
-          delete job.state.runningDeadlineAtMs;
-          delete job.state.runningTimedOutAtMs;
-          delete job.state.runningOwnerPid;
-          delete job.state.runningOwnerHostname;
-          return { changed: true, value: true };
+        const localOwnerDead = candidate.ownerHostname === os.hostname() && !!candidate.ownerPid && !isProcessAlive(candidate.ownerPid);
+        if (this.deps.tryAcquireRunLease) lease = await this.deps.tryAcquireRunLease(candidate.id);
+        else if (!localOwnerDead) continue;
+        if (this.deps.tryAcquireRunLease && !lease) continue;
+        const recovered = await recoverCronClaim({
+          ...candidate, expectedLeaseId: candidate.leaseId, runLease: lease ?? undefined,
+          nowMs: this.deps.nowMs, ownerId: this.executionOwnerId,
+          mutate: (mutator) => this.mutate(mutator),
+          getTimeoutSeconds: (job) => this.getJobTimeoutSeconds(job),
+          watchdogFallbackTimeoutMs: WATCHDOG_FALLBACK_TIMEOUT_MS, watchdogOvertimeMs: WATCHDOG_OVERTIME_MS,
         });
-        if (outcome.changed) {
-          cronLogger.warn(`Recovered orphan cron claim: ${candidate.id} (${candidate.runId})`);
+        if (recovered.claim) {
+          dispatched = true;
+          cronLogger.warn(`Redispatching orphan cron claim: ${candidate.id} (${candidate.runId})`);
           this.afterJobsChanged();
-        }
+          void this.executeClaimedJob(recovered.claim).catch((err) =>
+            cronLogger.error("Recovered cron execution failed:", err));
+        } else if (recovered.cleared) this.afterJobsChanged();
       } catch (err) {
-        cronLogger.error(`Failed to probe orphan cron claim ${candidate.id}:`, err);
+        cronLogger.error(`Failed to recover orphan cron claim ${candidate.id}:`, err);
       } finally {
-        await lease?.release().catch(() => {});
+        if (!dispatched) await lease?.release().catch(() => {});
       }
     }
   }
@@ -833,18 +776,20 @@ export class CronService {
   }
 
   private async executeClaimedJob(claim: ClaimedJob): Promise<void> {
-    try {
-      await this.executeClaimedJobInternal(claim);
-    } finally {
-      if (!claim.releaseLeaseAfterSettlement) {
-        await claim.runLease?.release().catch(() => {});
-      }
+    try { await this.executeClaimedJobInternal(claim); }
+    finally {
+      if (!claim.releaseLeaseAfterSettlement) await claim.runLease?.release().catch(() => {});
     }
   }
 
   private async executeClaimedJobInternal(claim: ClaimedJob): Promise<void> {
-    const { job, runId, startedAtMs, claimedUpdatedAtMs, forced } = claim;
+    const { job, runId, leaseId, startedAtMs, claimedUpdatedAtMs, forced, trigger,
+      scheduledAtMs, requestId, attempt, parentRunId, retryOf } = claim;
     this.emit({ type: "started", jobId: job.id, jobName: job.name });
+    const markedRunning = await markCronClaimRunning({
+      claim, nowMs: this.deps.nowMs, mutate: (mutator) => this.mutate(mutator),
+    });
+    if (!markedRunning) return;
 
     let status: "ok" | "error" | "skipped" = "ok";
     let error: string | undefined;
@@ -888,23 +833,24 @@ export class CronService {
     type CompletionResult = { job: CronJob | undefined; suppressFinalization: boolean };
     const completion = await this.mutate((jobs): MutationOutcome<CompletionResult> => {
       const current = jobs.find((candidate) => candidate.id === job.id);
-      if (!current || current.state.runningRunId !== runId) {
-        return {
-          changed: false,
-          value: { job: current ? cloneJob(current) : undefined, suppressFinalization: true },
-        };
+      if (!current || current.state.runningRunId !== runId
+        || current.state.runningLeaseId !== leaseId) {
+        return { changed: false, value: { job: current ? cloneJob(current) : undefined, suppressFinalization: true } };
+      }
+      const execution = current.state.executionLedger?.find((record) => record.runId === runId);
+      if (!execution || execution.leaseId !== leaseId) {
+        return { changed: false, value: { job: cloneJob(current), suppressFinalization: true } };
+      }
+      if (execution.terminalStatus) {
+        this.clearRunningState(current);
+        return { changed: true, value: { job: cloneJob(current), suppressFinalization: true } };
       }
 
       if (current.state.runningTimedOutAtMs != null && !executionTimedOut) {
         // The watchdog already finalized this run as timed out. A late executor
         // result may only release its claim; it must not overwrite the error or
         // produce a second run log, notification, or finished event.
-        delete current.state.runningAtMs;
-        delete current.state.runningRunId;
-        delete current.state.runningDeadlineAtMs;
-        delete current.state.runningTimedOutAtMs;
-        delete current.state.runningOwnerPid;
-        delete current.state.runningOwnerHostname;
+        this.clearRunningState(current);
         return {
           changed: true,
           value: { job: cloneJob(current), suppressFinalization: true },
@@ -918,13 +864,11 @@ export class CronService {
         current.enabled = false;
         delete current.state.nextRunAtMs;
       } else {
-        delete current.state.runningAtMs;
-        delete current.state.runningRunId;
-        delete current.state.runningDeadlineAtMs;
-        delete current.state.runningTimedOutAtMs;
-        delete current.state.runningOwnerPid;
-        delete current.state.runningOwnerHostname;
+        this.clearRunningState(current);
       }
+      execution.status = "terminal";
+      execution.terminalStatus = status;
+      execution.endedAtMs = endedAtMs;
       current.state.lastRunAtMs = startedAtMs;
       current.state.lastStatus = status;
       current.state.lastError = error;
@@ -955,7 +899,7 @@ export class CronService {
       claim.releaseLeaseAfterSettlement = true;
       const releaseAfterSettlement = async () => {
         try {
-          await this.releaseSettledTimedOutClaim(job.id, runId);
+          await this.releaseSettledTimedOutClaim(job.id, runId, leaseId);
         } finally {
           await claim.runLease?.release().catch(() => {});
         }
@@ -967,9 +911,7 @@ export class CronService {
 
     model = model ?? (job.payload.kind === "agentTurn" ? job.payload.model : undefined);
     const run: CronRunLogEntry = {
-      runId,
-      startedAtMs,
-      endedAtMs,
+      runId, startedAtMs, endedAtMs, trigger, scheduledAtMs, requestId, attempt, parentRunId, retryOf,
       jobId: job.id,
       jobName: job.name,
       status,
@@ -1060,10 +1002,9 @@ export class CronService {
         const fallbackDurationMs = (this.getJobTimeoutSeconds(job) * 1000 || WATCHDOG_FALLBACK_TIMEOUT_MS)
           + WATCHDOG_OVERTIME_MS;
         return {
-          id: job.id,
-          runningRunId: job.state.runningRunId,
-          startedAtMs,
-          deadlineAtMs: job.state.runningDeadlineAtMs ?? startedAtMs + fallbackDurationMs,
+          id: job.id, runningRunId: job.state.runningRunId, runningLeaseId: job.state.runningLeaseId,
+          execution: job.state.executionLedger?.find((record) => record.runId === job.state.runningRunId),
+          startedAtMs, deadlineAtMs: job.state.runningDeadlineAtMs ?? startedAtMs + fallbackDurationMs,
         };
       })
       .filter((candidate) => nowMs > candidate.deadlineAtMs);
@@ -1077,10 +1018,11 @@ export class CronService {
           !job ||
           job.state.runningAtMs !== candidate.startedAtMs ||
           job.state.runningRunId !== candidate.runningRunId ||
-          job.state.runningTimedOutAtMs != null
-        ) {
-          return { changed: false, value: undefined };
-        }
+          job.state.runningLeaseId !== candidate.runningLeaseId || job.state.runningTimedOutAtMs != null
+        ) return { changed: false, value: undefined };
+        const execution = job.state.executionLedger?.find((record) => record.runId === candidate.runningRunId);
+        if (!execution || execution.leaseId !== candidate.runningLeaseId
+          || execution.terminalStatus) return { changed: false, value: undefined };
 
         // Do not clear the claim: the underlying Promise may still be running
         // and cannot be safely cancelled here. Disable future scheduling while
@@ -1090,6 +1032,9 @@ export class CronService {
         delete job.state.nextRunAtMs;
         job.state.lastStatus = "error";
         job.state.lastError = `Watchdog: exceeded ${deadlineSec}s deadline; disabled while original run is still active`;
+        execution.status = "terminal";
+        execution.terminalStatus = "error";
+        execution.endedAtMs = nowMs;
         job.state.lastDurationMs = elapsed;
         return { changed: true, value: cloneJob(job) };
       });
@@ -1099,11 +1044,13 @@ export class CronService {
       cronLogger.warn(
         `Watchdog: job "${job.name}" (${job.id}) exceeded ${deadlineSec}s deadline; disabled with claim retained`
       );
-      const runId = `${candidate.startedAtMs}-watchdog`;
+      const runId = candidate.runningRunId || `${candidate.startedAtMs}-watchdog`;
+      const execution = candidate.execution;
       const run: CronRunLogEntry = {
-        runId,
-        startedAtMs: candidate.startedAtMs,
-        endedAtMs: nowMs,
+        runId, startedAtMs: candidate.startedAtMs, endedAtMs: nowMs,
+        trigger: execution?.trigger, scheduledAtMs: execution?.scheduledAtMs,
+        requestId: execution?.requestId, attempt: execution?.attempt,
+        parentRunId: execution?.parentRunId, retryOf: execution?.retryOf,
         jobId: job.id,
         jobName: job.name,
         status: "error",

@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
 import {
   ORG_AGENT_SEED_TEMPLATES,
+  listOrgAgentTemplateApiViews,
   seedOrgAgentTemplatesForTenant,
   shouldSkipTenantSeed,
 } from '../data/orgAgentTemplates.js';
@@ -100,6 +101,17 @@ describe('ORG_AGENT_SEED_TEMPLATES · 静态模板结构', () => {
   it('avatar 使用 8 岗位预设 key（sales / boss / …）', () => {
     for (const tpl of ORG_AGENT_SEED_TEMPLATES) {
       expect(tpl.payload.avatar).toMatch(/^(boss|sales|marketing|procurement|finance|hr|cs|production)$/);
+    }
+  });
+
+  it('管理端 API 投影逐条来自种子模板并包含可编辑门禁示例', () => {
+    const views = listOrgAgentTemplateApiViews();
+    expect(views.map(view => view.key)).toEqual(ORG_AGENT_SEED_TEMPLATES.map(template => template.templateId));
+    expect(views.map(view => view.values.instructions)).toEqual(ORG_AGENT_SEED_TEMPLATES.map(template => template.payload.instructions));
+    for (const view of views) {
+      expect(view.values.guardrailMode).toBe('shadow');
+      expect(view.values.guardrailAllowExamples.length).toBeGreaterThan(0);
+      expect(view.values.guardrailRejectExamples.length).toBeGreaterThan(0);
     }
   });
 });

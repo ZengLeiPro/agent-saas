@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JwtPayload } from '../auth/types.js';
 import { MembershipInvariantError, type TenantMembership } from '../data/memberships/index.js';
 import type { OAuthGrant } from '../data/oauthGrants/types.js';
+import type { BillingMemberBudgetOverview } from '../data/billing/types.js';
 import { createGovernanceAccessRouter } from '../routes/governanceAccess.js';
 
 const PREVIEW_SECRET = 'governance-membership-preview-test-secret-2026';
@@ -64,6 +65,7 @@ async function rig(input: {
   platformAdmin?: boolean;
   activeOffboardingUserId?: string;
   projectionEnqueue?: ReturnType<typeof vi.fn>;
+  getMemberBudgetOverview?: (tenantId: string, userId: string) => Promise<BillingMemberBudgetOverview>;
   now?: () => Date;
 } = {}) {
   const user = input.user ?? { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' };
@@ -172,6 +174,7 @@ async function rig(input: {
     } : null,
     getTenantLifecycle: tenantId => tenantId === tenantLifecycle.id ? tenantLifecycle : undefined,
     setTenantDisabled,
+    ...(input.getMemberBudgetOverview ? { getMemberBudgetOverview: input.getMemberBudgetOverview } : {}),
     audit: { append: auditAppend, ...(input.auditList ? { list: input.auditList } : {}) } as never,
     membershipPreviewSecret: PREVIEW_SECRET,
     ...(input.now ? { now: input.now } : {}),
@@ -279,14 +282,25 @@ describe('governance access routes', () => {
     }] });
   });
 
-  it('成员详情按六类资源返回权威 Assignment 聚合，解析失败则整体 fail closed', async () => {
+  it('成员详情按七类资源（含组织记忆）返回权威 Assignment 聚合，解析失败则整体 fail closed', async () => {
     const listEffectiveResources = vi.fn().mockImplementation(async (
       _tenantId: string, _userId: string, resourceType: string,
     ) => resourceType === 'skill' ? [{
       resourceId: 'skill-1', bindingId: 'binding-1', assignmentVersion: 2, finalEffect: 'allow',
       bindings: [{ assignmentId: 'binding-1', assigneeType: 'user', assigneeId: 'user-2', effect: 'allow', origin: 'direct' }],
     }] : []);
-    const test = await rig({ listEffectiveResources });
+    const test = await rig({
+      listEffectiveResources,
+      getMemberBudgetOverview: vi.fn().mockResolvedValue({
+        tenantId: 'tenant-a', timezone: 'Asia/Shanghai',
+        periodStart: '2026-07-31T16:00:00.000Z', periodEnd: '2026-08-31T16:00:00.000Z',
+        monthUsedCreditsMicro: 999, unattributedCreditsMicro: 7,
+        items: [{
+          userId: 'user-2', enforcementMode: 'notify', active: true, version: 1,
+          monthUsedCreditsMicro: 125, canStartRun: true,
+        }],
+      }),
+    });
     const response = await test.request('/api/governance/access/memberships/user-2/details');
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -302,7 +316,13 @@ describe('governance access routes', () => {
         resources: expect.arrayContaining([expect.objectContaining({ resourceId: 'skill-1' })]),
       }),
     ]));
-    expect(listEffectiveResources).toHaveBeenCalledTimes(6);
+    expect(listEffectiveResources).toHaveBeenCalledTimes(7);
+    expect(body.usagePolicy).toMatchObject({
+      items: [{ userId: 'user-2', monthAttributedCreditsMicro: 125 }],
+    });
+    expect(body.usagePolicy).not.toHaveProperty('monthUsedCreditsMicro');
+    expect(body.usagePolicy).not.toHaveProperty('unattributedCreditsMicro');
+    expect(body.usagePolicy.items[0]).not.toHaveProperty('monthUsedCreditsMicro');
 
     const failed = await rig({ listEffectiveResources: vi.fn().mockRejectedValue(new Error('ASSIGNMENT_GROUP_SUBJECT_UNRESOLVED')) });
     const failedResponse = await failed.request('/api/governance/access/memberships/user-2/details');

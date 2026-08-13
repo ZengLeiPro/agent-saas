@@ -166,6 +166,16 @@
     "robotCode": ""
   },
 
+  // ── 浏览器桌面通知（标准 Web Push）────────────────────────
+  // 用 `npx web-push generate-vapid-keys` 生成一次并长期保存；更换密钥会使现有订阅失效。
+  // privateKey 只放服务端配置，不得暴露给前端。
+  "webPush": {
+    "enabled": false,
+    "publicKey": "REPLACE_WITH_VAPID_PUBLIC_KEY",
+    "privateKey": "REPLACE_WITH_VAPID_PRIVATE_KEY",
+    "subject": "mailto:admin@example.com"
+  },
+
   // ── 调度引擎 ──────────────────────────────────────────────
   // enabled=false 可快速回退为无中间件模式
   "dispatch": {

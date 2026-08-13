@@ -71,6 +71,7 @@ export function createCronNotifier(deps: CronNotifierDeps) {
           jobOwner: job.owner,
           runId: run.runId,
           runStatus: run.status,
+          sessionId: run.sessionId,
           durationMs: run.durationMs,
         });
         if (!result.ok) {

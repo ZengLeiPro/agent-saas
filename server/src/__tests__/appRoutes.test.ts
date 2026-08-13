@@ -16,6 +16,7 @@ const mocked = vi.hoisted(() => {
   const userRoleRouter = { id: 'user-role-router' };
   const dingtalkRouter = { id: 'dingtalk-router' };
   const cronRouter = { id: 'cron-router' };
+  const webPushRouter = { id: 'web-push-router' };
   const taskboardRouter = { id: 'taskboard-router' };
   const groupsRouter = { id: 'groups-router' };
   const tenantRemoteHandsAdminRouter = { id: 'tenant-remote-hands-admin-router' };
@@ -32,6 +33,7 @@ const mocked = vi.hoisted(() => {
   const kbFilesRouter = { id: 'kb-files-router' };
   const orgQaRouter = { id: 'org-qa-router' };
   const feedbackRouter = { id: 'feedback-router' };
+  const azerothProxyRouter = { id: 'azeroth-proxy-router' };
   const requireAdmin = vi.fn((_req: unknown, _res: unknown, next: () => void) => next());
 
   return {
@@ -50,6 +52,7 @@ const mocked = vi.hoisted(() => {
     userRoleRouter,
     dingtalkRouter,
     cronRouter,
+    webPushRouter,
     taskboardRouter,
     groupsRouter,
     tenantRemoteHandsAdminRouter,
@@ -66,6 +69,7 @@ const mocked = vi.hoisted(() => {
     kbFilesRouter,
     orgQaRouter,
     feedbackRouter,
+    azerothProxyRouter,
     requireAdmin,
     createHealthRouter: vi.fn(() => healthRouter),
     createAppUpdateRouter: vi.fn(() => appUpdateRouter),
@@ -82,6 +86,7 @@ const mocked = vi.hoisted(() => {
     createUserRoleRouter: vi.fn(() => userRoleRouter),
     createDingtalkSessionRouter: vi.fn(() => dingtalkRouter),
     createCronRouter: vi.fn(() => cronRouter),
+    createWebPushRouter: vi.fn(() => webPushRouter),
     createTaskboardRouter: vi.fn(() => taskboardRouter),
     createGroupsRouter: vi.fn(() => groupsRouter),
     createTenantRemoteHandsAdminRouter: vi.fn(() => tenantRemoteHandsAdminRouter),
@@ -97,6 +102,7 @@ const mocked = vi.hoisted(() => {
     createKbFilesRouter: vi.fn(() => kbFilesRouter),
     createOrgQaRouter: vi.fn(() => orgQaRouter),
     createFeedbackRouter: vi.fn(() => feedbackRouter),
+    createAzerothProxyRouter: vi.fn(() => azerothProxyRouter),
   };
 });
 
@@ -115,9 +121,13 @@ vi.mock('../routes/index.js', () => ({
   createFeishuRouter: mocked.createFeishuRouter,
   createUserRoleRouter: mocked.createUserRoleRouter,
   createCronRouter: mocked.createCronRouter,
+  createWebPushRouter: mocked.createWebPushRouter,
   createTaskboardRouter: mocked.createTaskboardRouter,
   createGroupsRouter: mocked.createGroupsRouter,
   createPreviewRoutes: mocked.createPreviewRoutes,
+}));
+vi.mock('../routes/azeroth-proxy.js', () => ({
+  createAzerothProxyRouter: mocked.createAzerothProxyRouter,
 }));
 vi.mock('../channels/dingtalk/protocol/sessionRouter.js', () => ({
   createDingtalkSessionRouter: mocked.createDingtalkSessionRouter,
@@ -185,6 +195,7 @@ describe('registerRoutes', () => {
     mocked.createUserRoleRouter.mockClear();
     mocked.createDingtalkSessionRouter.mockClear();
     mocked.createCronRouter.mockClear();
+    mocked.createWebPushRouter.mockClear();
     mocked.createTaskboardRouter.mockClear();
     mocked.createGroupsRouter.mockClear();
     mocked.createTenantRemoteHandsAdminRouter.mockClear();
@@ -295,9 +306,13 @@ describe('registerRoutes', () => {
     //   + 租户级词典覆盖组织管理（2026-08-04 任务 E）= 39
     //   + 个人任务看板（复用 cronEnabled guard）= 40
     //   + 活跃离职流程 API 写入围栏 = 41
+    //   + 音频转录平台管理 = 42
+    //   + 当前用户 Web Push 订阅管理 = 43
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(42);
+    expect(app.use).toHaveBeenCalledTimes(43);
+    expect(mocked.createWebPushRouter).toHaveBeenCalledWith(undefined);
+    expect(app.use).toHaveBeenCalledWith('/api/web-push', mocked.webPushRouter);
     expect(mocked.createTaskboardRouter).toHaveBeenCalledWith({
       service: undefined,
       executionService: undefined,

@@ -8,6 +8,7 @@
 export { createHealthRouter } from "./health.js";
 export { createUploadRouter, type UploadRouterOptions } from "./upload.js";
 export { createCronRouter } from "./cron.js";
+export { createWebPushRouter } from "./webPush.js";
 export { createTaskboardRouter, type TaskboardRouterOptions } from "./taskboard.js";
 export {
   createSessionsRouter,

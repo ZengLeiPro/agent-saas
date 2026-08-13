@@ -9,6 +9,7 @@ import { TOKEN_KEY, SESSION_STORAGE_KEY } from "@/lib/constants";
 import { authPreload } from "@/lib/preload";
 import { clearSessionListCache } from "@/lib/sessionListCache";
 import { clearAllMessageCache } from "@/lib/messageCache";
+import { unsubscribeCurrentBrowserPush } from "@/lib/webPush";
 import {
   loginWithPassword,
   loginWithSmsCode,
@@ -97,36 +98,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [accounts, setAccounts] = useState<SavedAccountSummary[]>(readSavedAccounts);
 
   const logoutAllAccounts = useCallback(() => {
-    localStorage.removeItem(TOKEN_KEY);
-    clearSavedAccounts();
-    clearAccountScopedState();
-    setAccounts([]);
-    setUser(null);
+    void unsubscribeCurrentBrowserPush().finally(() => {
+      localStorage.removeItem(TOKEN_KEY);
+      clearSavedAccounts();
+      clearAccountScopedState();
+      setAccounts([]);
+      setUser(null);
+    });
   }, []);
 
   const logoutCurrentAccount = useCallback((nextAccountKey?: string) => {
-    const currentKey = user ? getAccountKey(user) : null;
-    const remainingAccounts = currentKey
-      ? forgetSavedAccount(currentKey)
-      : readSavedAccounts();
-    const targetAccount = nextAccountKey
-      ? remainingAccounts.find((account) => account.key === nextAccountKey)
-      : remainingAccounts[0];
+    void unsubscribeCurrentBrowserPush().finally(() => {
+      const currentKey = user ? getAccountKey(user) : null;
+      const remainingAccounts = currentKey
+        ? forgetSavedAccount(currentKey)
+        : readSavedAccounts();
+      const targetAccount = nextAccountKey
+        ? remainingAccounts.find((account) => account.key === nextAccountKey)
+        : remainingAccounts[0];
 
-    setAccounts(remainingAccounts);
-    clearAccountScopedState();
+      setAccounts(remainingAccounts);
+      clearAccountScopedState();
 
-    if (targetAccount) {
-      const token = getSavedAccountToken(targetAccount.key);
-      if (token) {
-        localStorage.setItem(TOKEN_KEY, token);
-        window.location.replace("/");
-        return;
+      if (targetAccount) {
+        const token = getSavedAccountToken(targetAccount.key);
+        if (token) {
+          localStorage.setItem(TOKEN_KEY, token);
+          window.location.replace("/");
+          return;
+        }
       }
-    }
 
-    localStorage.removeItem(TOKEN_KEY);
-    setUser(null);
+      localStorage.removeItem(TOKEN_KEY);
+      setUser(null);
+    });
   }, [user]);
 
   const logout = useCallback(() => {
@@ -164,9 +169,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const activateAccount = useCallback((data: AuthResponse) => {
+  const activateAccount = useCallback(async (data: AuthResponse) => {
     const nextUser = normalizeAuthUser(data.user);
     const isSwitching = user !== null && getAccountKey(user) !== getAccountKey(nextUser);
+    if (isSwitching) await unsubscribeCurrentBrowserPush();
     localStorage.setItem(TOKEN_KEY, data.token);
     setAccounts(rememberSavedAccount(data.token, nextUser));
     setUser(nextUser);
@@ -177,11 +183,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const login = useCallback(async (credentials: LoginCredentials) => {
-    activateAccount(await loginWithPassword(credentials));
+    await activateAccount(await loginWithPassword(credentials));
   }, [activateAccount]);
 
   const loginWithSms = useCallback(async (credentials: SmsLoginCredentials) => {
-    activateAccount(await loginWithSmsCode(credentials));
+    await activateAccount(await loginWithSmsCode(credentials));
   }, [activateAccount]);
 
   const switchAccount = useCallback((accountKey: string) => {
@@ -191,9 +197,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAccounts(readSavedAccounts());
       return;
     }
-    localStorage.setItem(TOKEN_KEY, token);
-    clearAccountScopedState();
-    window.location.replace("/");
+    void unsubscribeCurrentBrowserPush().finally(() => {
+      localStorage.setItem(TOKEN_KEY, token);
+      clearAccountScopedState();
+      window.location.replace("/");
+    });
   }, [user]);
 
   const updateAvatar = useCallback((avatar: string | undefined, avatarVersion?: number) => {

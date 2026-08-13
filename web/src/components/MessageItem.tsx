@@ -147,9 +147,9 @@ const LazyMarkdown = lazy(async () => {
       a: ({ node, children, href, ...props }) => (
         <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
       ),
-      table: ({ node, children, ...props }) => (
+      table: ({ node, children, className, ...props }) => (
         <div className="overflow-x-auto">
-          <table {...props}>{children}</table>
+          <table className={cn("w-max", className)} {...props}>{children}</table>
         </div>
       ),
       // td/th 注入 min-width = ⌈文本宽度 / 4⌉，保证自然换行不超过 4 行

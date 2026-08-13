@@ -27,11 +27,12 @@
 
 当前仓库已经具备大部分昂贵的运行时底座：公司级专职 Agent、版本化治理资源、持久 Session/Run/Event、子 Agent、钉钉收发、DWS、Credential、审计、计费、目录组和质检。真正缺的不是 Agent loop，而是把这些能力收束成 **组织身份 + 通道绑定 + 多参与者 Session + 权限交集** 的统一产品模型。
 
-最重要的三个设计判断：
+最重要的四个设计判断：
 
-1. **钉钉聊天通道与 DWS 执行能力必须分层。** `DingtalkChannel` 负责及时收发消息；DWS 负责日历、通讯录、审批、文档、待办等业务动作。DWS 不能充当消息路由层。
-2. **配置不应直接长在 Session 上。** 管理员配置的是 Agent 版本和通道绑定版本；Session 创建时固定快照。否则同一会话会随后台修改静默漂移，无法审计和复现。
-3. **共享 Agent 不等于共享全部权限。** 默认执行权限必须是：
+1. **默认通信身份改为 Agent 专属钉钉成员账号。** 它是组织通讯录中的独立成员，拥有自己的名称、头像、群关系、DWS OAuth、消息记录和数据权限；不借用任何真实员工账号。企业内部应用/机器人只作为能力缺口的补充通道，不再是默认主体。
+2. **DWS 消息事件与 DWS 业务工具要分成两个运行边界。** DWS 个人事件流可以成为 Agent 成员号的消息入口和回复出口；日历、通讯录、审批、文档、待办等操作仍经受控 DWS Broker 执行。不能让模型直接托管 token 或长连接进程。
+3. **配置不应直接长在 Session 上。** 管理员配置的是 Agent 版本和通道绑定版本；Session 创建时固定快照。否则同一会话会随后台修改静默漂移，无法审计和复现。
+4. **共享 Agent 不等于共享全部权限。** 默认执行权限必须是：
 
 ```text
 实际可执行权限
@@ -45,6 +46,63 @@
 
 群成员身份只能决定“能否向 Agent 发起请求”，不能自动授予数据权限。
 
+### 1.1 身份方案修正：Agent 专属成员号可以成为主通道
+
+用户本轮澄清后，原方案中“企业内部应用/机器人身份作为 Channel Account”的默认设计需要修正。更符合产品目标的身份模型是：
+
+```text
+组织创建 Agent 专属钉钉成员账号
+    ↓ 一次性登录并完成 DWS OAuth / PAT 授权
+DWS Personal Stream 监听该账号未来消息
+    ↓ event_id 去重，conversation_id / message_id 路由
+平台创建或续接独立 Lead Session
+    ↓ Agent 执行、审批、Worker、审计
+DWS 以 current-user 身份回复群或私聊
+```
+
+截至 2026-08-13，已从当前 DWS 二进制和官方仓库确认：
+
+| 能力 | 结论 | 已核实入口 |
+|---|---|---|
+| 创建独立组织账号 | 支持创建“企业专属账号”，名称和登录号必填，手机号可选 | `dws contact account create` |
+| 群内被 `@` 的实时事件 | 支持 | `user_im_message_receive_at` |
+| 全部私聊消息实时事件 | 支持 | `user_im_message_receive_o2o_all` |
+| 指定群/全部群消息实时事件 | 支持 | `user_im_message_receive_group` / `user_im_message_receive_group_all` |
+| 事件稳定路由字段 | 支持 | `event_id`、`conversation_id`、`message_id`、`sender_open_dingtalk_id` |
+| 以该成员身份发群消息/私聊 | 支持 | `dws chat +messages-send --as user` |
+| 以该成员身份引用回复 | 支持 | `dws chat +messages-reply` |
+| 多账号 profile | 支持 | `corpId + userId` 唯一标识，可显式 `--profile` |
+
+当前平台内置的是 DWS `v1.0.55`，已具备底层 `event consume` 和 user 身份发送；官方 `v1.0.58` 进一步提供 `dws event +listen-im --kind at-me|all-direct|group` 的高层入口。版本差异不阻断验证，但正式模块必须 pin 并回归测试指定版本。
+
+需要准确区分两件事：
+
+- **DWS 能产出消息事件并以成员身份回复；**
+- **DWS 不会自动创建本产品的 Session。**
+
+平台仍需实现常驻 `DwsPersonalEventGateway`：等待事件流 ready、持续读取 NDJSON、写 durable inbox、按 Binding 和引用消息路由 Session、管理进程退出与订阅恢复，再通过 outbox 调 DWS 回复。`Skill` 只是 Agent 使用 DWS 业务能力的说明，不承担消息网关职责。
+
+这条路线目前是**技术上成立、产品集成尚未完成**：当前仓库的 `DingtalkChannel` 仍只接机器人 Stream/Webhook，DWS 连接也仍按真实用户 workspace 建模；当前平台 DWS overlay 还明确禁止复用“无人小号”。因此不能把 Agent 账号塞进现有“我的钉钉连接”冒充完成，必须新增第一类 `agent_dws_member` 身份、独立凭证托管和运维策略。
+
+尚需用真实企业账号做 P0 验证的事项：
+
+1. “企业专属账号”能否完整完成 DWS Device OAuth 和个人事件订阅；
+2. 当前企业是否已开通 DWS 个人事件能力及所需管理员白名单；
+3. 长连接重连、订阅清理、token/PAT 长期保活的稳定性；
+4. 流式卡片、卡片回调、文件/语音等体验是否全部支持 current-user 身份；
+5. Agent 成员账号的席位、登录、离职/停用和审计口径。
+
+如果上述验证有能力缺口，再为具体缺口增加企业内部应用/机器人辅助通道；不要一开始就把机器人重新设为产品主体。
+
+官方与运行时证据：
+
+- [DWS 官方个人 IM 事件 Skill](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/blob/main/skills/multi/dingtalk-event/SKILL.md)
+- [DWS 事件到 current-user Chat 的精确字段映射](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/blob/main/skills/multi/dingtalk-event/references/event-im-output.md)
+- [DWS 官方 README：用户/机器人消息能力与认证](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/blob/main/README_zh.md)
+- [DWS v1.0.58 变更记录](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/blob/main/CHANGELOG.md)
+- [钉钉开放平台：创建用户](https://open.dingtalk.com/document/development/user-information-creation)
+- 本地事实源：`dws --version`、`dws event consume --help`、`dws event list --category im --mock`、`dws chat +messages-send --help`、`dws contact account create --help`
+
 ---
 
 ## 2. 目标与非目标
@@ -53,8 +111,8 @@
 
 组织管理员能够：
 
-1. 在组织管理中接入一个钉钉企业应用/机器人身份；
-2. 创建或选择一个组织 Agent；
+1. 在组织管理中创建或关联一个 Agent 专属钉钉成员账号，并完成 DWS 授权；
+2. 创建或选择一个组织 Agent，将该成员账号设为 Agent 的钉钉身份；
 3. 把 Agent 绑定到指定钉钉群、员工、部门或目录组；
 4. 为绑定配置触发方式、提示语补充、上下文、Skill、工具、连接器、记忆、权限、审批和预算；
 5. 在钉钉中获得可持续、可并行、可审计的 Agent 协作体验；
@@ -68,7 +126,8 @@
 - 自动读取群全部历史并声称拥有“完整上下文”；
 - 让群成员通过 Agent 的组织 service account 绕过本人权限；
 - 为每个群复制一套 Agent 定义；
-- 把 DWS token、机器人密钥或第三方凭证暴露给模型或 Sandbox；
+- 把 Agent DWS token、机器人密钥或第三方凭证暴露给模型或 Sandbox；
+- 把现有真实员工的“我的 DWS 授权”直接改绑给组织 Agent；
 - 仅靠提示语门禁承担数据授权。
 
 ---
@@ -85,8 +144,8 @@
 | Runtime Profile | 已支持上下文、Skill、MCP、Memory、模型、工具、能力、执行目标和版本 pin | 作为可复用的执行配置档 |
 | Durable Session/Run | Session meta、PG 投影、Run 状态、lease、EventStore 已存在 | 承载 Lead Session 与恢复 |
 | Subagent/Background | 独立 child session、父子链、用量、工具过滤和后台任务已存在 | 执行复杂任务和并行 Worker |
-| 钉钉通道 | 已有 Stream/Webhook、立即 ACK、消息去重、私聊/群聊、AI 卡片和主动发送 | 作为事件入口与回复出口 |
-| DWS | 已有个人 device OAuth、多组织 profile、守活和断开 | 作为钉钉业务能力连接器 |
+| 钉钉机器人通道 | 已有 Stream/Webhook、立即 ACK、消息去重、私聊/群聊、AI 卡片和主动发送 | 作为兼容/补充通道，不再作为默认 Agent 身份 |
+| DWS | 已有个人 device OAuth、多账号 profile、个人 IM 事件、current-user 消息发送、守活和断开 | 同时提供 Agent 成员号消息适配器和受控钉钉业务能力 |
 | 治理与运营 | Credential、Run 快照、审计、Billing、成员预算、QA、门禁统计 | 作为权限、追责、成本和质量底座 |
 
 关键代码证据：
@@ -101,20 +160,23 @@
 - 子 Agent 独立 child session：`server/src/runtime/subagent/subagentRunner.ts:220`
 - 钉钉 Stream ACK 与去重：`server/src/channels/dingtalk/protocol/streamClient.ts:124`
 - 钉钉群/私聊目标：`server/src/channels/dingtalk/pipeline/preprocessor.ts:130`
-- DWS 多组织 profile 元数据：`server/src/dws/store.ts:13`
+- 当前 DWS 多账号 profile 元数据：`server/src/dws/store.ts:13`
+- DWS 个人事件：当前二进制 `dws event consume --help` / `dws event list --category im --mock`
+- DWS 成员身份发送：当前二进制 `dws chat +messages-send --help`
 - 成员预算：`server/src/data/billing/types.ts:151`
 - 专职 Agent 质检入口：`server/src/routes/orgQa.ts:198`
 
 ### 3.2 当前结构性缺口
 
-#### 缺口 A：没有组织可管理的钉钉通道账号
+#### 缺口 A：没有组织可管理的 Agent 钉钉成员账号
 
-当前机器人 `appKey/appSecret` 来自服务配置，启动时统一注册；组织管理员无法在后台新增、验证、轮换或停用。见：
+当前通信身份只有服务配置中的机器人 `appKey/appSecret`，启动时统一注册；组织管理员无法创建/关联 Agent 专属成员、完成 DWS 授权、启动个人事件流、查看健康状态或停用。见：
 
 - `server/src/app/config.ts:110`
 - `server/src/app/runtime.ts:3040`
+- `server/src/channels/dingtalk/channel.ts:133`
 
-这与“组织拥有的 Agent 身份”不一致，也不能支撑多租户各自绑定企业应用。
+DWS CLI 已具备成员账号事件和发送能力，但仓库没有 `AgentDwsAccount`、个人事件 consumer supervisor、durable inbox/outbox 或 Agent 账号级 profile 账本。
 
 #### 缺口 B：钉钉只把 `conversationId` 映射为一个 Agent Session
 
@@ -158,15 +220,15 @@ Web 入口会从 Session meta 或请求解析 `orgAgentId`，执行存在、启�
 
 所以现状既没有组织 Agent 自己的持久 workspace，也没有可配置的“组织/群/私聊/任务”分层记忆。
 
-#### 缺口 F：DWS 是个人授权，不是组织 Agent 凭证
+#### 缺口 F：DWS 当前只建模真实用户，没有 Agent-owned account
 
-DWS connection 主键包含 `tenantId + userId + profileId`，token 位于该用户 workspace 的 `.dws/`。见：
+DWS connection 主键包含 `tenantId + userId + profileId`，token 位于该真实用户 workspace 的 `.dws/`。见：
 
 - DWS identity：`server/src/dws/store.ts:27`
 - 用户 workspace 登录：`server/src/dws/authFlow.ts:65`
 - profile 的 `corpId` 解析：`server/src/dws/keepalive.ts:256`
 
-这可以支撑“按请求者本人权限执行”，但不能直接当作组织 Agent 的共享 service account。
+这可以支撑“按请求者本人权限执行”，但不能直接表达“组织创建并交给某个 Agent 的独立成员账号”。应新增 `principal_type=agent` 与稳定 `agentId`，把 token 放入 Agent credential workspace/Broker；不能伪造一个平台用户来复用现有记录。
 
 #### 缺口 G：钉钉没有审批/追问交互面
 
@@ -207,29 +269,32 @@ Runtime 已有 `permission_request`、`ask_user` 和 durable interaction；钉�
 
 正式事实源使用现有 `ManagedAgentResource + ManagedAgentVersion + Assignment`。Legacy `OrgAgentRecord` 只保留兼容投影，逐步停止新增字段。
 
-### 4.2 钉钉通道账号（Channel Account）
+### 4.2 Agent 钉钉账号（Agent DingTalk Account）
 
-它代表组织在钉钉里的通信身份，不等于员工 DWS 登录：
+它代表组织在钉钉通讯录中为 Agent 创建的独立成员，不等于任何真实员工的 DWS 登录：
 
 ```text
-DingTalk Channel Account
+Agent DingTalk Account
 ├─ corpId
-├─ appKey / robotCode 等非敏感标识
-├─ appSecret credentialRef
-├─ Stream / Webhook 模式
-├─ 健康状态与最近事件
-├─ 可见群/员工目录同步状态
-└─ 轮换、停用和审计信息
+├─ dingtalkUserId / openDingTalkId
+├─ 企业专属 loginId（不保存密码）
+├─ DWS profileId + OAuth credentialRef
+├─ Personal Stream 订阅与 consumer 状态
+├─ 群关系、私聊范围和目录状态
+├─ PAT scope / 授权状态
+└─ 保活、停用和审计信息
 ```
 
-一个组织可以有多个通道账号；一个账号可以承载多个 Agent，但每个群/员工目标必须有明确绑定，不能“收到什么就默认交给个人 Agent”。
+账号与组织 Agent 默认一对一，使钉钉中的头像、名称、消息记录和审计主体都稳定对应一个 Agent。后续若明确需要节省账号席位，可以支持一账号多 Agent，但必须由显式命令/Binding 路由，不能让同一个成员身份在同一群里人格漂移。
+
+保留 `account_kind=internal_app_robot` 作为兼容模式，仅承接普通成员账号暂不支持的消息形态、卡片回调或外部场景。界面与审计必须明确显示实际发送身份，不能用机器人代发却让用户误以为是成员账号。
 
 ### 4.3 通道绑定（Agent Channel Binding）
 
 绑定是 Agent 与具体沟通对象之间的配置边界：
 
 ```text
-Agent + Channel Account + Target → Binding
+Agent + Agent DingTalk Account + Target → Binding
 ```
 
 Target 支持：
@@ -286,10 +351,12 @@ Session 是一项工作的持久协作对象，不是配置容器。创建时固
 
 ```mermaid
 flowchart TD
-  A[钉钉 Stream / Webhook] --> B[Channel Gateway\n验签、ACK、标准化]
-  B --> C[(Durable Inbox\n幂等事件)]
+  A[DWS Personal Stream\nAgent 成员号] --> B[DWS Personal Event Gateway\nready、consumer、标准化]
+  A2[可选：应用/机器人 Stream] --> B2[Robot Gateway\n验签、ACK、标准化]
+  B --> C[(Durable Inbox\n按 account + event_id 幂等)]
+  B2 --> C
   C --> D[Binding Router]
-  D --> E[身份解析\ncorp/robot/target/sender]
+  D --> E[身份解析\ncorp/agent-account/target/sender]
   E --> F[Session Router\n查找或创建 Lead Session]
   F --> G[Permission Resolver\n能力与请求者权限取交集]
   G --> H[Run Queue / Scheduler]
@@ -299,7 +366,7 @@ flowchart TD
   J --> K
   I --> L[(EventStore / Artifacts / Audit / Billing)]
   I --> M[(Durable Outbox)]
-  M --> N[钉钉消息 / AI 卡片]
+  M --> N[DWS current-user 回复\n可选机器人卡片]
 ```
 
 ### 5.1 控制面
@@ -307,7 +374,7 @@ flowchart TD
 负责“配置和治理”：
 
 - Managed Agent 与版本；
-- Channel Account；
+- Agent DingTalk Account（DWS 成员号）与可选机器人补充通道；
 - Binding 与版本；
 - Assignment；
 - Credential；
@@ -319,13 +386,14 @@ flowchart TD
 
 负责“消息可靠进入和可靠送达”：
 
-- 钉钉事件立即 ACK；
-- 原始事件标准化后写 durable inbox；
+- DWS Personal Stream consumer 必须等待 ready，持续读取 NDJSON，并由 supervisor 负责优雅退出、重连和订阅恢复；
+- 可选机器人事件继续立即 ACK；
+- 两类原始事件统一标准化后写 durable inbox；
 - Worker 异步路由和执行；
-- 回复先写 outbox，再投递钉钉；
+- 回复先写 outbox，再由 DWS current-user 或明确的补充机器人通道投递；
 - 重试不重复创建 Run、不重复发送结果。
 
-当前 Stream 已有 ACK 和进程内去重，但 `await onMessage()` 仍直接进入执行链；首期应补 durable inbox/outbox，而不是再堆内存队列。
+当前机器人 Stream 已有 ACK 和进程内去重，但 `await onMessage()` 仍直接进入执行链；当前 DWS 只有授权/保活，没有个人事件 consumer。首期应新增统一 durable inbox/outbox，而不是把 DWS stdout 直接接到现有 dispatch。
 
 ### 5.3 执行面
 
@@ -347,12 +415,18 @@ flowchart TD
 channel_account_id
  tenant_id
  channel_type               // dingtalk
+ account_kind               // agent_dws_member / internal_app_robot
+ agent_id                   // agent_dws_member 默认必填且一对一
  display_name
  corp_id
- external_app_id            // appKey / robotCode 的稳定标识
- credential_id              // 引用 GovernanceCredential，不存 secret
- mode                       // stream / webhook
- status                     // draft / active / degraded / disabled / revoked
+ external_principal_id      // dingtalkUserId/openDingTalkId 或 appKey/robotCode
+ login_id                   // 企业专属登录号；只展示脱敏值
+ dws_profile_id             // agent_dws_member 使用
+ credential_id              // OAuth token 或 app secret 的 GovernanceCredential 引用
+ event_mode                 // personal_stream / app_stream / webhook
+ subscription_state_json
+ pat_scope_state_json
+ status                     // draft / authorizing / active / degraded / disabled / revoked
  health_json
  revision
  created_by / updated_by
@@ -361,10 +435,12 @@ channel_account_id
 
 约束：
 
-- `(tenant_id, channel_type, corp_id, external_app_id)` 唯一；
-- Secret 只经 Credential Broker 解析；
+- `(tenant_id, channel_type, corp_id, external_principal_id)` 唯一；
+- Agent 成员号 OAuth/PAT、机器人 Secret 都只经 Credential Broker 解析；
+- password、access token、refresh token 不进入数据库普通列、prompt、日志或 workspace；
 - 停用账号立即停止新事件执行，历史 Session 保留只读；
-- 通道账号属于组织，不属于某个员工。
+- Agent 成员号属于组织并归属 Agent，不属于任何真实员工；
+- 当前 `runtime_dws_connections(tenantId,userId,profileId)` 不能直接复用，需支持 typed principal。
 
 ### 6.2 新增 `agent_channel_bindings`
 
@@ -393,7 +469,7 @@ binding_id
 
 约束：
 
-- 同一目标如果绑定多个 Agent，必须有明确机器人身份、@对象或关键词路由，禁止无规则竞争；
+- 同一目标如果绑定多个 Agent，必须有不同成员账号、明确 `@` 对象或关键词路由，禁止无规则竞争；
 - Binding 更新只影响新 Session；已存在 Session 继续使用 pinned revision；
 - 紧急停用、Credential 撤销、租户停用是硬状态，立即影响全部 Session。
 
@@ -420,7 +496,7 @@ inbox_event_id
 (channel_account_id, external_event_id)
 ```
 
-钉钉没有稳定 event id 的场景，退化使用规范化字段摘要，但必须把算法版本写入 payload，避免未来碰撞口径不可追溯。
+DWS 个人事件优先使用稳定 `event_id`；只有补充通道确实未提供稳定事件 ID 时，才退化使用规范化字段摘要，并把算法版本写入 payload，避免未来碰撞口径不可追溯。
 
 ### 6.4 新增 `channel_message_routes`
 
@@ -523,13 +599,14 @@ participantUserIds
 4. 普通群消息默认不触发，除非 Binding 明确开启 ambient monitor；
 5. 不使用“最近几分钟都算同一个任务”作为主路由，时间窗只能是低置信度兜底。
 
-Agent 回复使用 AI 卡片显示：
+Agent 回复至少应以成员账号身份携带：
 
 - 任务标题；
 - Session 短编号；
 - 当前状态；
-- 负责人/请求者；
-- 继续补充、批准、拒绝、停止、查看结果等动作。
+- 负责人/请求者。
+
+P0-A 若确认 current-user 流式卡片与回调可用，再增加“继续补充、批准、拒绝、停止、查看结果”等动作；若必须使用补充应用通道，界面要明确该动作卡由应用发送，普通对话仍由 Agent 成员号发送。
 
 这样同一个群里的任务 A/B/C 是三个 Lead Session，可并行运行；同一任务内部仍由 Session lock 保证决策顺序。
 
@@ -604,7 +681,7 @@ Sandbox 仍按顶层 Session 隔离和重建，父 Session 与子 Agent 共享�
 ```text
 Agent principal     谁在工作、拥有 workspace/记忆/产物
 Requester principal 当前哪位员工提出请求、数据权限属于谁
-Channel principal   哪个钉钉企业应用负责收发消息
+Channel principal   哪个 Agent 钉钉成员号或补充应用负责收发消息
 ```
 
 当前 `ChannelContext.user/sessionOwner` 主要用于“管理员代操作个人会话”，语义不足。建议新增显式字段：
@@ -624,30 +701,50 @@ Binding 对每个 Connector 指定一种模式：
 
 | 模式 | 说明 | 默认用途 |
 |---|---|---|
-| `requester_delegated` | 使用当前请求者自己的 OAuth/DWS profile | 查询个人日程、待办、个人可见数据 |
-| `org_service` | 使用组织共享 service credential | 机器人发消息、公共系统集成、明确授权的组织动作 |
-| `agent_owned` | Agent 专属服务账号 | 独立邮箱、仓库、工单账号等 |
+| `requester_delegated` | 使用当前请求者自己的 OAuth/DWS profile | 查询请求者个人日程、待办和本人可见数据 |
+| `agent_dws_member` | 使用 Agent 专属钉钉成员 OAuth | 以 Agent 身份收发消息、管理 Agent 自有日程/待办、访问明确授予 Agent 的资源 |
+| `org_service` | 使用组织共享 service credential | 公共系统集成、明确授权的组织动作、补充机器人能力 |
+| `agent_owned` | Agent 的其他专属服务账号 | 独立邮箱、仓库、工单账号等 |
 | `none` | 禁止该 Connector | 默认拒绝 |
 
 规则：
 
-- `requester_delegated` 找不到授权时，向请求者发授权卡，不得回退 `org_service`；
+- `requester_delegated` 找不到授权时，向请求者发授权卡，不得回退 `agent_dws_member` 或 `org_service`；
+- `agent_dws_member` 可以直接操作 Agent 自有对象和明确授权给 Agent 的资源；请求者借 Agent 访问其他业务数据时仍需请求者权限交集或显式业务授权；
 - `org_service` 必须有显式 Assignment、scope、purpose 和审批策略；
 - 凭证撤销、过期、停用立即生效，不受 Session pin 保护；
 - Secret 由 Broker 注入到受控调用，不进入 prompt、事件、日志、Run snapshot 或 Agent workspace。
 
-### 9.3 DWS 权限
+### 9.3 DWS 消息适配器与业务 Broker
 
-DWS 首期应采用：
+DWS 首期应拆成两个平台服务，不能让模型在 Shell 中自行启动监听或接触 token：
 
 ```text
-DWS Skill（告诉 Agent 何时、怎么用）
-+ DWS Tool/Broker（真正执行、选 profile、做授权）
+DwsPersonalEventGateway
+- 绑定 Agent DWS profile
+- 托管 event consumer 生命周期
+- 解析 NDJSON、去重并写 inbox
+- 通过 outbox 以 current-user 身份回复
+
+DWS Skill + DwsToolBroker
+- 告诉 Agent 何时调用业务能力
+- 选择 agent_dws_member / requester_delegated profile
+- 校验 scope、审批、执行并保存证据
 ```
 
-而不是让共享 Agent 随意在 Shell 里使用某个用户 workspace 中的 `dws` token。
+事件入口在当前 `v1.0.55` 可使用：
 
-推荐调用上下文：
+```bash
+dws event consume user_im_message_receive_at \
+  --flatten -f ndjson --profile <corpId:userId>
+
+dws event consume user_im_message_receive_o2o_all \
+  --flatten -f ndjson --profile <corpId:userId>
+```
+
+升级到官方 `v1.0.58` 后可优先使用 `event +listen-im` 高层入口，但底层事件键仍是事实源。宿主必须等待 `[event] ready`，优雅终止 consumer，处理订阅复用/清理和重连；不能靠轮询聊天记录模拟实时事件。
+
+推荐工具调用上下文：
 
 ```json
 {
@@ -656,20 +753,22 @@ DWS Skill（告诉 Agent 何时、怎么用）
   "agentId": "agent-sales",
   "bindingId": "bind-group-9",
   "sessionId": "session-123",
-  "credentialMode": "requester_delegated",
-  "dwsProfileId": "corp-id"
+  "credentialMode": "agent_dws_member",
+  "dwsProfileId": "corp-id:agent-user-id"
 }
 ```
 
 Broker 负责：
 
 1. 解析 Connector/Skill 是否允许；
-2. 按 corpId 选择请求者的 DWS profile；
-3. 校验操作 scope；
-4. 判断是否需要审批；
+2. 根据动作语义选择 Agent 自有 profile 或请求者 profile，禁止静默降级；
+3. 校验操作 scope、资源归属和请求者权限交集；
+4. 判断是否需要 PAT 或业务审批；
 5. 执行 DWS；
 6. 保存结构化回执与证据；
 7. 对写操作做写后回读验证。
+
+当前平台 DWS overlay 的“每个 workspace 绑定本人账号、禁止无人小号”对现有个人连接器仍然正确；本模块不能绕过它，而应新增单独的 Agent credential 类型、管理员接入流程和审计规则，再有意识地扩展该策略。
 
 ### 9.4 审批
 
@@ -679,7 +778,8 @@ Broker 负责：
 - 创建个人待办：可由请求者预授权；
 - 向群发消息、给他人建待办、提交审批：需要请求者或业务负责人确认；
 - 删除、批量修改、外部发送：强审批；
-- service account 执行但请求者本人无权的动作：默认拒绝，不允许仅靠一次“同意”扩权。
+- Agent 账号操作自己的日程、待办、消息和明确授权给 Agent 的资源：可按 Agent 自有权限执行；
+- Agent 账号访问非 Agent 自有业务数据，而请求者本人无权：默认拒绝，不允许仅靠一次“同意”扩权。
 
 钉钉内使用互动卡片承接 durable interaction：
 
@@ -696,32 +796,41 @@ Broker 负责：
 
 | 场景 | 组件 |
 |---|---|
-| 收到群/私聊消息 | `DingtalkChannel` / Channel Gateway |
-| ACK、验签、幂等、Session 路由 | Channel Gateway + Inbox + Binding Router |
-| 流式回复、任务卡、审批卡 | Dingtalk Delivery + Outbox + AI Card |
+| Agent 成员号收到群 `@` / 私聊 | `DwsPersonalEventGateway` |
+| 可选机器人消息事件 | 现有 `DingtalkChannel` / Robot Gateway |
+| consumer、验签/ACK、幂等、Session 路由 | Gateway + Inbox + Binding Router |
+| 成员身份回复、引用回复 | DWS current-user Chat + Outbox |
+| 流式卡片、任务卡、审批卡 | 优先验证 DWS current-user Card；缺口才使用明确的补充应用通道 |
 | 查询通讯录/群/日历/文档/审批/待办 | DWS Broker / DWS Skill |
-| 管理后台选择群和员工 | 优先钉钉 OpenAPI 目录同步；可复用 DirectoryGroup 投影 |
-| Agent 主动发工作通知/群消息 | 组织 Channel credential 或经过授权的 DWS 动作 |
+| 管理后台创建 Agent 企业专属账号 | 确定性 Account Provisioning Service，可封装 DWS/OpenAPI，不经模型 |
+| 管理后台选择群和员工 | 确定性目录同步服务；可复用 DirectoryGroup 投影 |
+| Agent 主动发工作通知/群消息 | Agent DWS profile；越权业务动作仍走权限交集和审批 |
 
-不建议让管理后台“调用一次 Agent + DWS Skill”来加载群列表。管理端目录是控制面，应通过确定性的服务 API 同步；Skill 是模型运行时能力，不是后台 CRUD 数据源。
+不建议让管理后台“调用一次 Agent + DWS Skill”来创建账号或加载群列表。管理端账号和目录是控制面，应通过确定性的服务封装 DWS/OpenAPI；Skill 是模型运行时能力，不是后台 CRUD 数据源。
 
 ---
 
 ## 11. 管理界面方案
 
-### 11.1 组织管理新增「沟通账号」
+### 11.1 组织管理新增「Agent 钉钉账号」
 
-页面内容：
+主流程：
 
-- 接入钉钉企业应用；
-- 展示 corp、机器人名称、模式、健康状态；
-- 验证连接；
+1. 选择组织 Agent；
+2. 创建企业专属成员账号，或关联已准备好的专属成员账号；
+3. 由管理员/账号托管人完成一次 DWS Device OAuth 和必要 PAT 授权；
+4. 验证 `@` 事件、私聊事件和 current-user 回复；
+5. 将账号加入群并创建 Binding。
+
+页面展示：
+
+- corp、Agent 成员名称、头像、loginId 脱敏值、DWS profile；
+- OAuth/PAT、Personal Stream、consumer、最近事件和回复健康状态；
 - 同步群/员工/部门；
-- 轮换凭证；
-- 暂停、断开；
-- 查看最近事件和失败原因。
+- 重新授权、暂停、断开、停用成员；
+- 可选的应用/机器人补充通道及其真实用途。
 
-现有个人「能力中心 → 钉钉连接」保留，明确标注为 **我的 DWS 授权**，不要与组织通道账号混在一起。
+现有个人「能力中心 → 钉钉连接」继续标注为 **我的 DWS 授权**；新增入口标注为 **组织 Agent 账号**。两者使用不同 principal、workspace、Credential 和审批策略，不能互相改绑。
 
 ### 11.2 组织 Agent 编辑器改为六个页签
 
@@ -744,7 +853,7 @@ Broker 负责：
 Session：每个新 @ 创建任务；回复任务卡续接
 上下文：组织 + Agent + 本群记忆
 能力：继承 Agent，禁用 Shell 和公开 Web
-DWS：请求者授权
+DWS：默认 Agent 成员账号；个人数据按动作切换请求者授权
 写操作：群消息/他人待办需批准
 预算：每月 N 积分；单任务上限 M
 状态：启用
@@ -772,18 +881,24 @@ DWS：请求者授权
 
 ## 12. API 草案
 
-### 12.1 Channel Account
+### 12.1 Agent DingTalk Account
 
 ```text
 GET    /api/governance/channel-accounts?type=dingtalk
-POST   /api/governance/channel-accounts/dingtalk
+POST   /api/governance/channel-accounts/dingtalk/member/create
+POST   /api/governance/channel-accounts/dingtalk/member/link
+POST   /api/governance/channel-accounts/dingtalk/app          // 可选补充通道
 GET    /api/governance/channel-accounts/:id
 PATCH  /api/governance/channel-accounts/:id
-POST   /api/governance/channel-accounts/:id/verify
+POST   /api/governance/channel-accounts/:id/authorize-dws
+POST   /api/governance/channel-accounts/:id/verify-events
 POST   /api/governance/channel-accounts/:id/sync-directory
-POST   /api/governance/channel-accounts/:id/rotate-credential
+POST   /api/governance/channel-accounts/:id/reauthorize
+POST   /api/governance/channel-accounts/:id/pause
 DELETE /api/governance/channel-accounts/:id
 ```
+
+`member/create` 是管理员级写操作，先展示名称、loginId、部门和席位影响并确认；创建成功后仍需完成该 Agent 账号的 DWS OAuth，不能把创建者的 token 复制给它。`DELETE` 默认只删除本产品绑定并停 consumer；是否同时停用钉钉成员必须是独立的强确认动作。
 
 ### 12.2 Binding
 
@@ -853,38 +968,52 @@ Requester / Credential / Approval
 
 ## 14. 实施分期
 
-### P0：统一事实源与身份语义
+### P0-A：Agent 成员账号技术验证
+
+1. 创建一个测试“企业专属账号”，分配到独立的数字员工部门；
+2. 用该账号完成 DWS Device OAuth 和最小 PAT 授权；
+3. 将其加入测试群，由另一员工 `@`，验证 `user_im_message_receive_at`；
+4. 私聊该账号，验证 `user_im_message_receive_o2o_all`；
+5. 用 `--as user` 完成群回复、私聊、引用回复和幂等发送；
+6. 验证 consumer 重连、服务重启、token 刷新、停用账号后的 fail-closed；
+7. 分别验证 Markdown、文件、流式卡片和卡片回调，记录必须使用应用/机器人的缺口。
+
+**完成标准**：拿到一条真实的“消息 → event_id → Session stub → 成员身份回复”闭环和能力缺口矩阵；任一关键能力仅存在于文档而未实测，不进入 P1。
+
+### P0-B：统一事实源与身份语义
 
 1. 定义 typed `ManagedAgentDefinition`，覆盖现有 OrgAgent 字段；
 2. 把 Legacy OrgAgent 变成 Managed Agent/Assignment 的兼容投影；
 3. 在 Session/Run 中显式区分 Agent、Requester、Channel principal；
 4. 为 Agent 建立组织级 workspace identity；
-5. 扩展 Run snapshot，固定 agent/binding/requester 配置。
+5. 扩展 Run snapshot，固定 agent/binding/requester 配置；
+6. 扩展 DWS connection principal，区分 `user` 与 `agent`，不伪造平台用户。
 
-**完成标准**：Web 端现有组织 Agent 行为不回退，但运行事实源不再依赖新增 JSON 字段。
+**完成标准**：Web 端现有组织 Agent 行为不回退，但运行事实源不再依赖新增 JSON 字段，Agent DWS credential 有独立所有权。
 
-### P1：组织钉钉账号、Binding 与可靠消息链
+### P1：Agent 钉钉账号、Binding 与可靠消息链
 
-1. `channel_accounts + credentialRef`；
-2. 组织后台接入、验证、停用钉钉账号；
-3. `agent_channel_bindings` 与群/员工选择；
-4. durable inbox/outbox；
-5. 钉钉事件解析 binding，创建组织 Agent Lead Session；
-6. 私聊连续 Session、群内新任务 Session、回复路由；
-7. 任务卡展示状态和 Session 编号。
+1. `channel_accounts + credentialRef`，实现 `agent_dws_member`；
+2. 组织后台创建/关联、授权、验证、停用 Agent 钉钉账号；
+3. `DwsPersonalEventGateway` consumer supervisor；
+4. `agent_channel_bindings` 与群/员工选择；
+5. durable inbox/outbox；
+6. DWS 事件解析 binding，创建组织 Agent Lead Session；
+7. 私聊连续 Session、群内新任务 Session、引用回复路由；
+8. 任务卡展示状态和 Session 编号；P0-A 证实的缺口才接补充机器人通道。
 
-**完成标准**：两个群、两个员工都能与同一 Agent 产生互相隔离的 Session；同群两个任务可并行。
+**完成标准**：两个群、两个员工都能与同一 Agent 产生互相隔离的 Session；同群两个任务可并行，钉钉中显示的发送者是 Agent 成员账号。
 
 ### P2：DWS 权限交集与钉钉内审批
 
 1. DWS Broker/Tool Provider；
-2. requester-delegated 与 org-service 两种凭证模式；
+2. agent-dws-member、requester-delegated 与 org-service 三种凭证模式；
 3. 按动作 scope 与审批策略；
 4. 钉钉授权卡、追问卡、审批卡；
 5. 写后回读与结构化证据；
 6. Credential 撤销和离职即时失效。
 
-**完成标准**：没有权限的群成员无法借 Agent service account 读取或修改数据；授权用户可在钉钉内完成问答、审批和续跑。
+**完成标准**：Agent 可按自身身份操作自有对象和明确授权资源；没有权限的群成员无法借 Agent 成员账号读取或修改其他业务数据；授权用户可在钉钉内完成问答、审批和续跑。
 
 ### P3：共享记忆、主动工作与运营闭环
 
@@ -904,35 +1033,38 @@ Requester / Credential / Approval
 如果下一步直接进入代码，建议把首批 PR 控制在以下边界：
 
 ```text
+Spike-0：Agent 企业专属账号 + DWS Personal Stream 真实闭环
 PR-A：Typed Agent principal + Session snapshot
-PR-B：Channel Account + Credential 管理
-PR-C：Agent Channel Binding CRUD + 管理 UI
-PR-D：Durable Inbox/Outbox + DingTalk Binding Router
-PR-E：群/私聊 Session 路由 + 任务卡
-PR-F：DWS Requester Broker + 钉钉 Interaction
+PR-B：Agent DWS Account + OAuth/PAT Credential 管理
+PR-C：DWS Personal Event Gateway + consumer supervisor
+PR-D：Agent Channel Binding CRUD + 管理 UI
+PR-E：Durable Inbox/Outbox + DingTalk Binding Router
+PR-F：群/私聊 Session 路由 + 成员身份回复/任务卡
+PR-G：DWS Agent/Requester Broker + 钉钉 Interaction
 ```
 
-不要把六块压进一个 PR。它们有清楚的依赖顺序，但每块都应能独立迁移、测试和回滚。
+不要把这些切片压进一个 PR。它们有清楚的依赖顺序，但每块都应能独立迁移、测试和回滚；Spike-0 未通过时，先拿真实缺口做身份方案决策，不直接退回“机器人就是 Agent”。
 
 ---
 
 ## 16. 端到端验收场景
 
-1. 组织管理员接入钉钉通道账号，密钥不出现在 API 响应、日志和 Run snapshot；
-2. 管理员将“销售 Agent”绑定到群 A、群 B、员工甲和员工乙；
-3. 群 A 与群 B 的记忆、Session 和产物互不可见；
-4. 群 A 同时发起任务 1 和任务 2，产生两个 Lead Session，并行执行；
-5. 用户回复任务 1 卡片，只进入任务 1，不污染任务 2；
-6. 未绑定平台账号的钉钉成员被明确拒绝或引导绑定，不匿名执行；
-7. 员工甲用自己的 DWS profile 查询日程，员工乙不能看到结果；
-8. 普通群成员无法借组织凭证操作本人无权访问的仓库、审批或文档；
-9. 写操作在钉钉卡片批准后续跑，拒绝后留下完整终态；
-10. 重复钉钉事件不会创建重复 Run，投递重试不会重复发送最终答复；
-11. 服务重启、Sandbox 重建后 Session 能继续，未推送文件仍在 Agent workspace；
-12. Agent/Binding 配置更新后，旧 Session 仍能显示自己 pinned 的版本；
-13. Agent 或 Channel Account 停用后，新消息立即 fail-closed，历史 Session 可审计；
-14. 管理员能看到 Agent→Lead→Worker 树、工具、审批、用量和证据；
-15. 私聊记忆无法从群 Session 的 MemorySearch 召回。
+1. 组织管理员创建或关联 Agent 专属钉钉成员账号，完成其独立 DWS OAuth；token、login secret 不出现在 API 响应、日志和 Run snapshot；
+2. 钉钉中可见的发送者是“销售 Agent”成员账号，不是创建者、其他员工或伪装机器人；
+3. 管理员将“销售 Agent”绑定到群 A、群 B、员工甲和员工乙；
+4. 群 A 与群 B 的记忆、Session 和产物互不可见；
+5. 群 A 同时发起任务 1 和任务 2，产生两个 Lead Session，并行执行；
+6. 用户引用回复任务 1 消息或点击任务卡，只进入任务 1，不污染任务 2；
+7. 未绑定平台账号的钉钉成员被明确拒绝或引导绑定，不匿名执行；
+8. Agent 可查询自己的日程/待办和明确授权给 Agent 的资源；员工甲的个人数据仍使用员工甲 DWS profile，员工乙不能看到；
+9. 普通群成员无法借 Agent 成员账号操作本人无权且未明确授权给 Agent 的仓库、审批或文档；
+10. 写操作在钉钉卡片批准后续跑，拒绝后留下完整终态；
+11. 重复 `event_id` 不会创建重复 Run，投递重试不会重复发送最终答复；
+12. Personal Stream 重连、服务重启、Sandbox 重建后 Session 能继续，未推送文件仍在 Agent workspace；
+13. Agent/Binding 配置更新后，旧 Session 仍能显示自己 pinned 的版本；
+14. Agent 或 Agent DingTalk Account 停用后，新消息立即 fail-closed，历史 Session 可审计；
+15. 管理员能看到 Agent→Lead→Worker 树、工具、审批、用量和证据；
+16. 私聊记忆无法从群 Session 的 MemorySearch 召回。
 
 ---
 
@@ -946,19 +1078,31 @@ PR-F：DWS Requester Broker + 钉钉 Interaction
 
 Skill 是使用说明和流程知识，不能证明请求者有权限。真正授权必须由 Broker、Credential scope 和业务系统权限完成。
 
-### 17.3 不要延续 `conversationId → 单 Session`
+### 17.3 不要复用现有“我的 DWS 授权”托管 Agent
+
+现有连接器按真实平台用户和个人 workspace 建模，平台 overlay 也明确禁止无人小号。Agent 成员号必须是新的 typed principal、Credential 和运维路径；否则账号归属、授权人、离职、审计和 token 生命周期都会失真。
+
+### 17.4 DWS 个人事件仍处于开放能力验证期
+
+官方 DWS 已提供个人 IM 事件，但项目处于共创阶段，企业需要管理员授权，具体租户是否开放、长期配额和稳定性没有足够独立证据。P0-A 必须以真实账号实测，不把 CLI help 等同于生产可用性。
+
+### 17.5 独立成员身份不自动解决越权
+
+Agent 成员账号拥有自己的权限是优点，也可能成为固定的权限放大器。必须明确区分“Agent 自有对象/显式授予 Agent 的资源”和“请求者借 Agent 访问其他业务数据”；后者继续执行权限交集与审批。
+
+### 17.6 不要延续 `conversationId → 单 Session`
 
 它只适合最早期个人机器人，会造成群任务串行、上下文污染、记忆泄漏和审计归属不清。
 
-### 17.4 不要让每个 Session 自由修改能力
+### 17.7 不要让每个 Session 自由修改能力
 
 Session 可以记录临时任务上下文，但提示语、Skill、工具、Credential 和权限策略必须来自版本化配置；临时例外要走审批和 event，不做不可追踪的 inline patch。
 
-### 17.5 不要把组织 Credential 放进 Agent workspace
+### 17.8 不要把组织 Credential 放进 Agent workspace
 
-Agent workspace 可以持久，但持久不等于可信。Credential 只经 Broker 使用，Sandbox 永远拿不到真实 secret。
+Agent 执行 workspace 可以持久，但持久不等于可信。DWS 因 CLI 约束需要持久化 token 时，只能放在 Broker/Gateway 控制的 credential workspace；模型可见的 Agent workspace 与 Sandbox 永远拿不到真实 secret。
 
-### 17.6 不要优先做“全群自动监听”
+### 17.9 不要优先做“全群自动监听”
 
 先把明确 `@`、私聊、任务卡和权限模型做稳。Ambient monitor 会同时放大成本、隐私、噪音和误触发，应该在 P3 作为显式 opt-in 能力。
 
@@ -970,19 +1114,22 @@ Agent workspace 可以持久，但持久不等于可信。Credential 只经 Brok
 
 ```text
 组织智能体（身份与能力）
-  + 沟通账号（组织通道身份）
+  + Agent 钉钉成员账号（独立组织身份与权限）
+  + DWS Personal Event Gateway（群 @ / 私聊入口）
   + 通道绑定（群/员工/部门）
   + Lead Session（工作对象）
   + Worker（执行并行）
   + 权限/凭证/审批（治理）
-  + DWS（钉钉业务执行能力）
+  + DWS Broker（Agent 自有能力 + 请求者委托能力）
+  + 可选应用/机器人补充通道（只补能力缺口）
 ```
 
 优先级判断：
 
-1. 先统一 Agent 主体和权限主体；
-2. 再做钉钉账号、Binding 与可靠消息链；
-3. 然后接 DWS requester 权限和钉钉内审批；
-4. 最后做共享记忆、主动监控和组织级运营。
+1. 先用真实企业专属账号跑通 DWS 消息闭环，确认产品前提；
+2. 再统一 Agent 主体、DWS principal 和权限主体；
+3. 实现 Agent 账号、Personal Event Gateway、Binding 与可靠消息链；
+4. 接 Agent/requester 双凭证模式和钉钉内审批；
+5. 最后做共享记忆、主动监控和组织级运营。
 
-这个顺序看起来没有“直接把机器人塞进群”那么快，但它决定了我们做出来的是企业可用的组织 Agent，还是一个权限不透明、上下文互相污染的群机器人。后者很好演示，前者才是产品壁垒。
+独立成员账号比默认机器人更符合“组织里的数字员工”：它有可见身份、自己的聊天关系和独立权限。真正壁垒仍不是头像像不像员工，而是把这个身份做成可治理的 Agent principal，并确保它不会成为群成员借道扩权的万能账号。

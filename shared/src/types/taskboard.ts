@@ -86,6 +86,10 @@ export interface TaskBoardTask {
   model?: string;
   commentCount: number;
   version: number;
+  /** 旧任务可能没有创建人快照。 */
+  creatorUserId?: string;
+  creatorName?: string;
+  completedAt?: string;
   archivedAt?: string;
   createdAt: string;
   updatedAt: string;

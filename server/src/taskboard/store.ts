@@ -4,8 +4,6 @@ import pg, { type PoolClient } from 'pg';
 import {
   TASKBOARD_DEFAULT_PROMPT,
   TASKBOARD_EXECUTION_STATUSES,
-  TASKBOARD_PRIORITIES,
-  TASKBOARD_STATUSES,
   type TaskBoard,
   type TaskBoardComment,
   type TaskBoardCommentCreateInput,
@@ -50,6 +48,7 @@ import {
   toIso,
   validateMoveNeighbors,
 } from './storeHelpers.js';
+import { taskFieldsMigrationSql, taskTableSql } from './taskFields.js';
 import {
   TaskboardNotFoundError,
   TaskboardValidationError,
@@ -123,31 +122,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       await client.query(boardPromptMigrationSql(this.boardsTable));
       await client.query(boardModelMigrationSql(this.boardsTable));
       await client.query(boardVisibilityMigrationSql(this.boardsTable));
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.tasksTable} (
-          id TEXT PRIMARY KEY,
-          board_id TEXT NOT NULL REFERENCES ${this.boardsTable}(id),
-          identifier TEXT NOT NULL,
-          title TEXT NOT NULL,
-          description TEXT NOT NULL DEFAULT '',
-          attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
-          status TEXT NOT NULL CHECK (status IN (${TASKBOARD_STATUSES.map(quoteSqlLiteral).join(', ')})),
-          priority TEXT NOT NULL DEFAULT 'none' CHECK (priority IN (${TASKBOARD_PRIORITIES.map(quoteSqlLiteral).join(', ')})),
-          labels TEXT[] NOT NULL DEFAULT '{}',
-          sort_order DOUBLE PRECISION NOT NULL,
-          due_at TIMESTAMPTZ,
-          model TEXT,
-          version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
-          archived_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-          UNIQUE (board_id, identifier)
-        )
-      `);
-      await client.query(`
-        ALTER TABLE ${this.tasksTable} ADD COLUMN IF NOT EXISTS model TEXT;
-        ALTER TABLE ${this.tasksTable} ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb
-      `);
+      await client.query(taskTableSql(this.tasksTable, this.boardsTable));
+      await client.query(taskFieldsMigrationSql(this.tasksTable));
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.commentsTable} (
           id TEXT PRIMARY KEY,
@@ -475,8 +451,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       const taskId = randomUUID();
       await client.query(
         `INSERT INTO ${this.tasksTable}
-           (id, board_id, identifier, title, description, attachments, status, priority, labels, sort_order, due_at, model, version)
-         VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,1)`,
+           (id, board_id, identifier, title, description, attachments, status, priority, labels,
+            sort_order, due_at, model, creator_user_id, creator_name, completed_at, version)
+         VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,
+                 CASE WHEN $7='done' THEN now() END,1)`,
         [
           taskId,
           boardId,
@@ -490,6 +468,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           sortOrder,
           input.dueAt ?? null,
           normalizeModel(input.model),
+          identity.ownerUserId,
+          identity.displayName?.trim() || identity.username,
         ],
       );
       return this.requireTask(client, identity, taskId, false);
@@ -611,7 +591,15 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
 
       await client.query(
         `UPDATE ${this.tasksTable} t
-            SET status=$4, sort_order=$5, version=t.version+1, updated_at=now()
+            SET status=$4,
+                sort_order=$5,
+                completed_at=CASE
+                  WHEN $4='done' AND t.status<>'done' THEN now()
+                  WHEN $4='done' THEN t.completed_at
+                  ELSE NULL
+                END,
+                version=t.version+1,
+                updated_at=now()
            FROM ${this.boardsTable} b
           WHERE t.id=$1 AND t.board_id=b.id
             AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')`,
@@ -775,7 +763,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
 
       await client.query(
         `UPDATE ${this.tasksTable}
-            SET status='in_progress', sort_order=$2, version=version+1, updated_at=now()
+            SET status='in_progress', sort_order=$2, completed_at=NULL,
+                version=version+1, updated_at=now()
           WHERE id=$1`,
         [taskId, sortOrder],
       );
@@ -1066,7 +1055,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         const sortOrder = Number.isFinite(lastSortOrder) ? lastSortOrder + DEFAULT_SORT_GAP : DEFAULT_SORT_GAP;
         await client.query(
           `UPDATE ${this.tasksTable}
-              SET status=$2, sort_order=$3, version=version+1, updated_at=now()
+              SET status=$2, sort_order=$3, completed_at=NULL,
+                  version=version+1, updated_at=now()
             WHERE id=$1`,
           [taskId, targetTaskStatus, sortOrder],
         );

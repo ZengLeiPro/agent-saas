@@ -1,10 +1,10 @@
 import type { DragEvent } from "react";
 import type { TaskBoardTask } from "@agent/shared";
-import { ArrowDown, ArrowUp, CalendarDays, MessageCircle } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, CircleCheck, MessageCircle, UserRound } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { formatDueAt, PRIORITY_CLASSES, PRIORITY_LABELS } from "./constants";
+import { formatDueAt, formatTaskDate, PRIORITY_CLASSES, PRIORITY_LABELS } from "./constants";
 
 interface TaskCardProps {
   task: TaskBoardTask;
@@ -34,6 +34,17 @@ export function TaskCard({
   onDropBefore,
 }: TaskCardProps) {
   const dueAt = formatDueAt(task.dueAt);
+  const createdAt = formatTaskDate(task.createdAt);
+  const completedAt = formatTaskDate(task.completedAt);
+  const creatorName = task.creatorName?.trim() || "提交人未知";
+  const cardAriaLabel = [
+    `打开任务 ${task.identifier} ${task.title}`,
+    `提交人 ${creatorName}`,
+    createdAt ? `提交于 ${createdAt}` : null,
+    completedAt ? `完成于 ${completedAt}` : null,
+    dueAt ? `截止 ${dueAt}` : null,
+    `${task.commentCount} 条评论`,
+  ].filter(Boolean).join("，");
 
   return (
     <div
@@ -61,13 +72,15 @@ export function TaskCard({
         type="button"
         className="block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => onOpen(task)}
-        aria-label={`打开任务 ${task.identifier} ${task.title}`}
+        aria-label={cardAriaLabel}
       >
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs font-medium text-muted-foreground">{task.identifier}</span>
-          <Badge variant="outline" className={cn("font-normal", PRIORITY_CLASSES[task.priority])}>
-            {PRIORITY_LABELS[task.priority]}
-          </Badge>
+          {task.priority !== "none" ? (
+            <Badge variant="outline" className={cn("font-normal", PRIORITY_CLASSES[task.priority])}>
+              {PRIORITY_LABELS[task.priority]}
+            </Badge>
+          ) : null}
         </div>
         <div className="mt-2 line-clamp-2 text-sm font-medium leading-5 text-foreground">
           {task.title}
@@ -81,17 +94,32 @@ export function TaskCard({
             ))}
           </div>
         ) : null}
-        <div className="mt-3 flex min-h-4 items-center gap-3 text-xs text-muted-foreground">
-          {dueAt ? (
-            <span className="inline-flex items-center gap-1">
-              <CalendarDays className="size-3.5" />
-              {dueAt}
+        <div className="mt-3 space-y-2 border-t pt-2.5 text-xs text-muted-foreground">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="inline-flex min-w-0 items-center gap-1.5" title={creatorName}>
+              <UserRound className="size-3.5 shrink-0" />
+              <span className="truncate">{creatorName}</span>
             </span>
-          ) : null}
-          <span className="ml-auto inline-flex items-center gap-1" aria-label={`${task.commentCount} 条评论`}>
-            <MessageCircle className="size-3.5" />
-            {task.commentCount}
-          </span>
+            <span className="ml-auto inline-flex shrink-0 items-center gap-1" aria-label={`${task.commentCount} 条评论`}>
+              <MessageCircle className="size-3.5" />
+              {task.commentCount}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+            {createdAt ? <time dateTime={task.createdAt}>提交 {createdAt}</time> : null}
+            {completedAt ? (
+              <time className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400" dateTime={task.completedAt}>
+                <CircleCheck className="size-3" />
+                完成 {completedAt}
+              </time>
+            ) : null}
+            {dueAt ? (
+              <span className="inline-flex items-center gap-1">
+                <CalendarDays className="size-3" />
+                截止 {dueAt}
+              </span>
+            ) : null}
+          </div>
         </div>
       </button>
       {!readOnly ? (

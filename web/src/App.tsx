@@ -11,6 +11,7 @@ import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { useAuth } from "@/contexts/AuthContext";
 import { FilePreviewProvider } from "@/contexts/FilePreviewContext";
 import { MessageFeedbackProvider } from "@/contexts/MessageFeedbackContext";
+import { SubagentTranscriptProvider, type SubagentTranscriptTarget } from "@/contexts/SubagentTranscriptContext";
 import { useOrgAgents } from "@/hooks/useOrgAgents";
 import { DeleteSessionDialog } from "@/components/chat/DeleteSessionDialog";
 import { OrgAgentPickerDialog } from "@/components/OrgAgentPickerDialog";
@@ -90,6 +91,27 @@ function App() {
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     startOrgAgentSession, pendingOrgAgentId,
   } = useChatAppState({ onVoiceEvent: handleVoiceEvent });
+
+  const [subagentTranscript, setSubagentTranscript] = useState<SubagentTranscriptTarget | null>(null);
+  const closeSubagentTranscript = useCallback(() => setSubagentTranscript(null), []);
+  const openSubagentTranscript = useCallback((target: SubagentTranscriptTarget) => {
+    closeFilePreview();
+    closeFileBrowser();
+    setSubagentTranscript(target);
+  }, [closeFileBrowser, closeFilePreview]);
+  const openPreview = useCallback((path: string, owner?: string, options?: { mode?: "dialog" | "side" }) => {
+    setSubagentTranscript(null);
+    openFilePreview(path, owner, options);
+  }, [openFilePreview]);
+  const toggleBrowser = useCallback(() => {
+    setSubagentTranscript(null);
+    toggleFileBrowser();
+  }, [toggleFileBrowser]);
+  const subagentTranscriptContextValue = useMemo(() => ({
+    transcript: subagentTranscript,
+    openTranscript: openSubagentTranscript,
+    closeTranscript: closeSubagentTranscript,
+  }), [closeSubagentTranscript, openSubagentTranscript, subagentTranscript]);
 
   // 专职 Agent（2026-07 唯恩批次）：当前会话绑定态 = 列表项 orgAgentId 或挂起态
   const { agents: myOrgAgents, loading: orgAgentsLoading } = useOrgAgents();
@@ -208,8 +230,8 @@ function App() {
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     agentProfile, sessionParticipants,
-    previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, expandFilePreview, closeFilePreview,
-    fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
+    previewFilePath, previewFileOwner, previewMode, openFilePreview: openPreview, dockFilePreview, expandFilePreview, closeFilePreview,
+    fileBrowserOpen, toggleFileBrowser: toggleBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   };
@@ -234,11 +256,13 @@ function App() {
         </div>
       ) : null}
 
-      <FilePreviewProvider value={{ openPreview: openFilePreview, owner: previewFileOwner }}>
-        <MessageFeedbackProvider sessionId={feedbackSessionId}>
-          {layoutNode}
-        </MessageFeedbackProvider>
-      </FilePreviewProvider>
+      <SubagentTranscriptProvider value={subagentTranscriptContextValue}>
+        <FilePreviewProvider value={{ openPreview, owner: previewFileOwner }}>
+          <MessageFeedbackProvider sessionId={feedbackSessionId}>
+            {layoutNode}
+          </MessageFeedbackProvider>
+        </FilePreviewProvider>
+      </SubagentTranscriptProvider>
 
       {/* SDK 0.2.112+ REPL 通知（右上角悬浮，按 priority 色彩，timeoutMs 自动消失）*/}
       <NotificationToastStack notifications={notifications} onDismiss={dismissNotification} />

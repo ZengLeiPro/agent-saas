@@ -1,7 +1,14 @@
+import { useState, type ReactNode } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import {
+  SubagentTranscriptProvider,
+  useSubagentTranscript,
+  type SubagentTranscriptTarget,
+} from '@/contexts/SubagentTranscriptContext';
 import { SubagentBlock } from './SubagentBlock';
+import { SubagentTranscriptPanel } from './SubagentTranscriptPanel';
 
 vi.mock('@/lib/authFetch', () => ({
   authFetch: vi.fn(async () => new Response(JSON.stringify({
@@ -15,23 +22,51 @@ vi.mock('@/lib/authFetch', () => ({
   }), { status: 200, headers: { 'content-type': 'application/json' } })),
 }));
 
+function TestSubagentTranscriptProvider({ children }: { children: ReactNode }) {
+  const [transcript, setTranscript] = useState<SubagentTranscriptTarget | null>(null);
+  return (
+    <SubagentTranscriptProvider value={{
+      transcript,
+      openTranscript: setTranscript,
+      closeTranscript: () => setTranscript(null),
+    }}>
+      {children}
+    </SubagentTranscriptProvider>
+  );
+}
+
+function TranscriptPanelHost() {
+  const context = useSubagentTranscript();
+  if (!context?.transcript) return null;
+  return (
+    <SubagentTranscriptPanel
+      childSessionId={context.transcript.childSessionId}
+      title={context.transcript.title}
+      onClose={context.closeTranscript}
+    />
+  );
+}
+
 describe('SubagentBlock', () => {
-  it('expands metrics and opens the child transcript read-only dialog', async () => {
+  it('expands metrics and opens the child transcript in the shared side panel', async () => {
     const user = userEvent.setup();
     render(
-      <SubagentBlock
-        agentType="调研金球奖"
-        status="failed"
-        childSessionId="sub-child"
-        childRunId="child-run"
-        model="gpt-5.6"
-        durationMs={600_000}
-        totalTokens={123_456}
-        toolUseCount={67}
-        turnCount={42}
-        errorMessage="upstream EOF"
-        resultPreview="部分材料"
-      />,
+      <TestSubagentTranscriptProvider>
+        <SubagentBlock
+          agentType="调研金球奖"
+          status="failed"
+          childSessionId="sub-child"
+          childRunId="child-run"
+          model="gpt-5.6"
+          durationMs={600_000}
+          totalTokens={123_456}
+          toolUseCount={67}
+          turnCount={42}
+          errorMessage="upstream EOF"
+          resultPreview="部分材料"
+        />
+        <TranscriptPanelHost />
+      </TestSubagentTranscriptProvider>,
     );
 
     // 排版型外壳：状态文字标签已删，失败语义由红色 icon 承载；折叠行显示标题+结果预览。
@@ -45,7 +80,8 @@ describe('SubagentBlock', () => {
     expect(screen.getAllByText('部分材料').some((node) => node.className.includes('leading-4'))).toBe(true);
 
     await user.click(screen.getAllByRole('button', { name: '查看完整过程' })[0]);
-    expect(await screen.findByRole('dialog', { name: '调研金球奖完整过程' })).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(await screen.findByRole('region', { name: '子任务完整过程 · 调研金球奖' })).toBeTruthy();
     expect(await screen.findByText('终止原因：upstream EOF')).toBeTruthy();
     expect(screen.getByText('调研任务')).toBeTruthy();
   });

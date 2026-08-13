@@ -11,6 +11,7 @@ import type {
   TenantSkillSettings,
   PoolSkillDeleteImpact,
   PoolSkillDeleteResponse,
+  SkillSelectionUpdateResponse,
 } from '../types/skill';
 
 // ── 用户自助 ──────────────────────────────────────────────
@@ -28,6 +29,37 @@ export async function updateMySelections(selectedSkills: string[]): Promise<void
     body: JSON.stringify({ selectedSkills }),
   });
   if (!res.ok) throw new Error(`更新技能选择失败：${res.status}`);
+}
+
+export class SkillSelectionConflictError extends Error {
+  constructor(readonly current?: { skillId: string; selected: boolean; selectionVersion: number }) {
+    super('技能选择已在其他页面更新，已同步最新状态，请重试');
+    this.name = 'SkillSelectionConflictError';
+  }
+}
+
+export async function updateMySkillSelection(
+  skillId: string,
+  enabled: boolean,
+  expectedVersion: number,
+): Promise<SkillSelectionUpdateResponse> {
+  const res = await authFetch(`/api/skills/me/skills/${encodeURIComponent(skillId)}/selection`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled, expectedVersion }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => undefined) as {
+      error?: string;
+      code?: string;
+      current?: { skillId: string; selected: boolean; selectionVersion: number };
+    } | undefined;
+    if (res.status === 409 && data?.code === 'SKILL_SELECTION_VERSION_CONFLICT') {
+      throw new SkillSelectionConflictError(data.current);
+    }
+    throw new Error(data?.error || `更新技能选择失败：${res.status}`);
+  }
+  return res.json() as Promise<SkillSelectionUpdateResponse>;
 }
 
 export async function fetchMySkillDocument(skillId: string): Promise<SkillDocumentResponse> {

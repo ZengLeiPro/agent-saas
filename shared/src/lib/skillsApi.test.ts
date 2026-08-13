@@ -9,6 +9,8 @@ import { authFetch } from './authFetch';
 import {
   fetchMySkills,
   updateMySelections,
+  updateMySkillSelection,
+  SkillSelectionConflictError,
   deleteMySkill,
   fetchUserSkills,
   updateUserSelections,
@@ -101,6 +103,37 @@ describe('skillsApi', () => {
     it('非 2xx 抛错', async () => {
       mockAuthFetch.mockResolvedValue(fail(400));
       await expect(updateMySelections([])).rejects.toThrow('更新技能选择失败：400');
+    });
+  });
+
+  describe('updateMySkillSelection', () => {
+    it('PUT 单个 Skill 治理偏好并携带 expectedVersion', async () => {
+      const body = {
+        ok: true, skillId: 'a/b', selected: true, selectionVersion: 4,
+      };
+      mockAuthFetch.mockResolvedValue(ok(body));
+
+      await expect(updateMySkillSelection('a/b', true, 3)).resolves.toEqual(body);
+      const { url, init } = lastCall();
+      expect(url).toBe('/api/skills/me/skills/a%2Fb/selection');
+      expect(init.method).toBe('PUT');
+      expect(init.body).toBe(JSON.stringify({ enabled: true, expectedVersion: 3 }));
+    });
+
+    it('409 版本冲突保留服务端 current', async () => {
+      const current = { skillId: 'a', selected: false, selectionVersion: 2 };
+      mockAuthFetch.mockResolvedValue(fail(409, {
+        code: 'SKILL_SELECTION_VERSION_CONFLICT', error: 'conflict', current,
+      }));
+
+      const error = await updateMySkillSelection('a', true, 1).catch(value => value);
+      expect(error).toBeInstanceOf(SkillSelectionConflictError);
+      expect((error as SkillSelectionConflictError).current).toEqual(current);
+    });
+
+    it('权限或策略错误显示服务端明确提示', async () => {
+      mockAuthFetch.mockResolvedValue(fail(403, { error: '技能未向当前用户开放' }));
+      await expect(updateMySkillSelection('a', true, 0)).rejects.toThrow('技能未向当前用户开放');
     });
   });
 

@@ -2945,13 +2945,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
             skillConfigStore
             && skillConfigStore.isTenantSkillAvailableToUser('dws', connectedUser.tenantId, connectedUser.username)
           ) {
-            const selected = skillConfigStore.getUserSelectedSkills(connectedUser.username);
-            if (!selected.includes('dws')) {
-              await skillConfigStore.setUserSelectedSkills(
-                connectedUser.username,
-                [...selected, 'dws'].sort(),
-              );
-            }
+            await skillConfigStore.setUserSkillSelected(connectedUser.username, 'dws', true);
           }
           await dwsAuthKeepaliveService?.runOnce();
         },
@@ -3004,13 +2998,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
             skillConfigStore
             && skillConfigStore.isTenantSkillAvailableToUser('feishu', connectedUser.tenantId, connectedUser.username)
           ) {
-            const selected = skillConfigStore.getUserSelectedSkills(connectedUser.username);
-            if (!selected.includes('feishu')) {
-              await skillConfigStore.setUserSelectedSkills(
-                connectedUser.username,
-                [...selected, 'feishu'].sort(),
-              );
-            }
+            await skillConfigStore.setUserSkillSelected(connectedUser.username, 'feishu', true);
           }
           await feishuAuthKeepaliveService?.runOnce();
         },

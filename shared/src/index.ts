@@ -180,6 +180,7 @@ export type {
   TenantSkillInfo,
   TenantOwnSkillInfo,
   UserSkillInfo,
+  SkillSelectionUpdateResponse,
   MySkillsResponse,
   SkillPoolResponse,
   TenantSkillPoolResponse,
@@ -424,6 +425,8 @@ export {
 export {
   fetchMySkills,
   updateMySelections,
+  updateMySkillSelection,
+  SkillSelectionConflictError,
   fetchMySkillDocument,
   updateMySkillDocument,
   importMySkillFormData,

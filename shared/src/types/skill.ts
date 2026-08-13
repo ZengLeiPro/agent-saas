@@ -36,6 +36,15 @@ export interface TenantOwnSkillInfo extends SkillInfo, TenantSkillSettings {}
 export interface UserSkillInfo extends SkillInfo {
   selected: boolean;
   source: 'pool' | 'tenant' | 'custom';
+  /** 治理偏好的乐观锁版本；旧服务端不返回时客户端回退兼容接口。 */
+  selectionVersion?: number;
+}
+
+export interface SkillSelectionUpdateResponse {
+  ok: true;
+  skillId: string;
+  selected: boolean;
+  selectionVersion: number;
 }
 
 /** GET /api/skills/me 响应 */

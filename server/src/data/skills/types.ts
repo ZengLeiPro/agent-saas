@@ -57,6 +57,8 @@ export interface TenantSkillConfig {
 export interface UserSkillConfig {
   /** 用户选中开启的 skill ID 列表（pool / tenant own / custom 共用） */
   selectedSkills: string[];
+  /** 该用户选择集的乐观锁版本；旧数据缺省按 0 处理。 */
+  revision?: number;
 }
 
 /** 扫描 SKILL.md 解析出的元数据 */

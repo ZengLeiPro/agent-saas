@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { createSkillsRouter } from '../routes/skills.js';
 import type { UserStore } from '../data/users/store.js';
 import type { UserRecord } from '../data/users/types.js';
-import type { SkillConfigStore } from '../data/skills/store.js';
+import { SkillSelectionVersionConflictError, type SkillConfigStore } from '../data/skills/store.js';
 import type { JwtPayload } from '../auth/types.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 
@@ -52,6 +52,7 @@ function fakeUserStore(): UserStore {
 function fakeSkillConfigStore(): SkillConfigStore {
   const visibility: Record<string, boolean> = {};
   const userSelections = new Map<string, string[]>();
+  const userRevisions = new Map<string, number>();
   let configVersion = 1;
   return {
     getPoolVisibility: () => ({ ...visibility }),
@@ -63,7 +64,25 @@ function fakeSkillConfigStore(): SkillConfigStore {
     getTenantSkillRule: () => ({ enabled: true, exposure: 'all' as const, usernames: [] }),
     getTenantOwnSkillRule: () => ({ enabled: true, exposure: 'all' as const, usernames: [] }),
     getUserSelectedSkills: (u: string) => userSelections.get(u) ?? [],
-    setUserSelectedSkills: async (u: string, skills: string[]) => { userSelections.set(u, skills); configVersion++; },
+    getUserSelectionRevision: (u: string) => userRevisions.get(u) ?? 0,
+    updateUserSkillSelection: async (u: string, skillId: string, enabled: boolean, expectedRevision: number) => {
+      const revision = userRevisions.get(u) ?? 0;
+      const selectedSkills = userSelections.get(u) ?? [];
+      if (revision !== expectedRevision) {
+        throw new SkillSelectionVersionConflictError(u, selectedSkills, revision);
+      }
+      const next = new Set(selectedSkills);
+      if (enabled) next.add(skillId); else next.delete(skillId);
+      userSelections.set(u, [...next]);
+      userRevisions.set(u, revision + 1);
+      configVersion++;
+      return { selectedSkills: [...next], revision: revision + 1 };
+    },
+    setUserSelectedSkills: async (u: string, skills: string[]) => {
+      userSelections.set(u, skills);
+      userRevisions.set(u, (userRevisions.get(u) ?? 0) + 1);
+      configVersion++;
+    },
     getConfigVersion: () => configVersion,
     touchConfigVersion: async () => { configVersion++; },
     syncWithPool: () => 0,
@@ -77,10 +96,12 @@ interface Rig {
   poolDir: string;
   request(path: string, init?: RequestInit): Promise<Response>;
   setCaller(c: JwtPayload | undefined): void;
+  getLegacySelections(username: string): string[];
+  getLegacyGateCalls(): number;
   close(): Promise<void>;
 }
 
-async function makeRig(opts: { seedPool?: boolean } = {}): Promise<Rig> {
+async function makeRig(opts: { seedPool?: boolean; sealedLegacyWrites?: boolean } = {}): Promise<Rig> {
   const tmpRoot = mkdtempSync(join(tmpdir(), 'skills-routes-cov-'));
   const agentCwd = join(tmpRoot, 'workspace');
   const sharedDir = join(tmpRoot, 'shared');
@@ -100,11 +121,20 @@ async function makeRig(opts: { seedPool?: boolean } = {}): Promise<Rig> {
   const app = express();
   app.use(express.json());
   let caller: JwtPayload | undefined = PLATFORM_ADMIN;
+  let legacyGateCalls = 0;
+  const skillConfigStore = fakeSkillConfigStore();
+  const userStore = fakeUserStore();
   app.use((req, _res, next) => { if (caller) req.user = caller; next(); });
   app.use('/api/skills', createSkillsRouter({
-    skillConfigStore: fakeSkillConfigStore(),
-    userStore: fakeUserStore(),
+    skillConfigStore,
+    userStore,
     agentCwd, sharedDir, tenantSkillsRootDir,
+    legacyWriteGate: opts.sealedLegacyWrites ? {
+      assertLegacyWriteAllowed: async () => {
+        legacyGateCalls++;
+        throw new Error('MIGRATION_LEGACY_WRITE_SEALED');
+      },
+    } : undefined,
   }));
   const server: Server = await new Promise(resolve => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
@@ -115,6 +145,8 @@ async function makeRig(opts: { seedPool?: boolean } = {}): Promise<Rig> {
     baseUrl, agentCwd, poolDir,
     request: (path, init) => fetch(`${baseUrl}${path}`, init),
     setCaller(c) { caller = c; },
+    getLegacySelections: username => skillConfigStore.getUserSelectedSkills(username),
+    getLegacyGateCalls: () => legacyGateCalls,
     close: async () => {
       await new Promise<void>(resolve => server.close(() => resolve()));
       rmSync(tmpRoot, { recursive: true, force: true });
@@ -184,6 +216,71 @@ describe('skills routes coverage', () => {
     });
     expect(ok.status).toBe(200);
     expect((await ok.json() as { ok: boolean }).ok).toBe(true);
+  });
+
+  it('选择偏好启停双向成功；并发同版本仅一笔成功，冲突返回 current 且用户隔离', async () => {
+    await h.close();
+    h = await makeRig({ sealedLegacyWrites: true });
+    h.setCaller(KAIYAN_USER);
+
+    const initial = await h.request('/api/skills/me');
+    const initialBody = await initial.json() as { poolSkills: Array<{ id: string; selected: boolean; selectionVersion: number }> };
+    expect(initialBody.poolSkills.find(skill => skill.id === 'shared_skill')).toMatchObject({
+      selected: false, selectionVersion: 0,
+    });
+
+    const enable = await h.request('/api/skills/me/skills/shared_skill/selection', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: true, expectedVersion: 0 }),
+    });
+    expect(enable.status).toBe(200);
+    expect(await enable.json()).toMatchObject({ selected: true, selectionVersion: 1 });
+    expect(h.getLegacySelections('alice')).toContain('shared_skill');
+    expect(h.getLegacyGateCalls()).toBe(0);
+
+    const legacyBulkWrite = await h.request('/api/skills/me/selections', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selectedSkills: [] }),
+    });
+    expect(legacyBulkWrite.status).toBe(409);
+    expect(await legacyBulkWrite.json()).toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
+    expect(h.getLegacyGateCalls()).toBe(1);
+
+    const disableRequest = () => h.request('/api/skills/me/skills/shared_skill/selection', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: false, expectedVersion: 1 }),
+    });
+    const concurrent = await Promise.all([disableRequest(), disableRequest()]);
+    expect(concurrent.map(response => response.status).sort()).toEqual([200, 409]);
+    const conflict = concurrent.find(response => response.status === 409)!;
+    expect(await conflict.json()).toMatchObject({
+      code: 'SKILL_SELECTION_VERSION_CONFLICT',
+      current: { skillId: 'shared_skill', selected: false, selectionVersion: 2 },
+    });
+    expect(h.getLegacySelections('alice')).not.toContain('shared_skill');
+
+    const refreshed = await h.request('/api/skills/me');
+    const refreshedBody = await refreshed.json() as { poolSkills: Array<{ id: string; selected: boolean; selectionVersion: number }> };
+    expect(refreshedBody.poolSkills.find(skill => skill.id === 'shared_skill')).toMatchObject({
+      selected: false, selectionVersion: 2,
+    });
+
+    h.setCaller(PLATFORM_ADMIN);
+    const otherUserEnable = await h.request('/api/skills/me/skills/shared_skill/selection', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: true, expectedVersion: 0 }),
+    });
+    expect(otherUserEnable.status).toBe(200);
+    expect(h.getLegacySelections('admin')).toContain('shared_skill');
+    expect(h.getLegacySelections('alice')).not.toContain('shared_skill');
+
+    h.setCaller(KAIYAN_USER);
+    const restricted = await h.request('/api/skills/me/skills/not_available/selection', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: true, expectedVersion: 0 }),
+    });
+    expect(restricted.status).toBe(403);
+    expect(await restricted.json()).toMatchObject({ code: 'SKILL_NOT_SELECTABLE' });
   });
 
   it('DELETE /me/skills/:skillId：拒删系统 skill 400 / 不存在 404 / 自删 200', async () => {

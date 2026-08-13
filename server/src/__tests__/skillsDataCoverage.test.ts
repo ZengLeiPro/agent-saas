@@ -13,7 +13,7 @@ import {
   scanUserCustomSkillsAsync,
 } from '../data/skills/scanner.js';
 import { migrateFromManifest } from '../data/skills/migrate.js';
-import { SkillConfigStore } from '../data/skills/store.js';
+import { SkillConfigStore, SkillSelectionVersionConflictError } from '../data/skills/store.js';
 
 /**
  * skills data 层未覆盖行为补测：
@@ -234,6 +234,44 @@ describe('SkillConfigStore platform & tenant exposure', () => {
   function store(): SkillConfigStore {
     return new SkillConfigStore(join(makeTmp(), 'skills-config.json'));
   }
+
+  it('启用/停用持久化后与 Agent 有效 Skill 集合一致', async () => {
+    const filePath = join(makeTmp(), 'skills-config.json');
+    const s = new SkillConfigStore(filePath);
+    await s.setUserSelectedSkills('alice', []);
+
+    const enabled = await s.updateUserSkillSelection('alice', 'a', true, 1);
+    expect(enabled.revision).toBe(2);
+    expect(s.getUserEffectivePoolSkills('alice', 'wain')).toEqual(['a']);
+
+    const disabled = await s.updateUserSkillSelection('alice', 'a', false, 2);
+    expect(disabled.revision).toBe(3);
+    expect(s.getUserEffectivePoolSkills('alice', 'wain')).toEqual([]);
+
+    const reloaded = new SkillConfigStore(filePath);
+    expect(reloaded.getUserSelectedSkills('alice')).toEqual([]);
+    expect(reloaded.getUserSelectionRevision('alice')).toBe(3);
+  });
+
+  it('用户选择集按 revision 原子更新，并发同版本仅一笔成功', async () => {
+    const filePath = join(makeTmp(), 'skills-config.json');
+    const s = new SkillConfigStore(filePath);
+    await s.setUserSelectedSkills('alice', ['a']);
+    expect(s.getUserSelectionRevision('alice')).toBe(1);
+
+    const results = await Promise.allSettled([
+      s.updateUserSkillSelection('alice', 'b', true, 1),
+      s.updateUserSkillSelection('alice', 'a', false, 1),
+    ]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find(result => result.status === 'rejected') as PromiseRejectedResult;
+    expect(rejected.reason).toBeInstanceOf(SkillSelectionVersionConflictError);
+    expect((rejected.reason as SkillSelectionVersionConflictError).revision).toBe(2);
+
+    const reloaded = new SkillConfigStore(filePath);
+    expect(reloaded.getUserSelectionRevision('alice')).toBe(2);
+    expect(reloaded.getUserSelectedSkills('alice')).toEqual(s.getUserSelectedSkills('alice'));
+  });
 
   it('platform allow_tenants：仅列出的租户可用', async () => {
     const s = store();

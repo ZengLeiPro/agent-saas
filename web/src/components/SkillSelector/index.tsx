@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { deleteMySkill, fetchMySkillDocument, importMySkill, updateMySkillDocument } from "@agent/shared";
+import { deleteMySkill, fetchMySkillDocument, importMySkill, SkillSelectionConflictError, updateMySkillDocument } from "@agent/shared";
 import type { UserSkillInfo } from "@agent/shared";
 import { useMySkills } from "./hooks";
 import {
@@ -54,11 +54,12 @@ function sourceDescription(source: CapabilitySource): string {
 }
 
 export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescription, embedded = false }: SkillSelectorProps) {
-  const { data, loading, error, saving, saveSelections, refresh } = useMySkills(targetUsername);
+  const { data, loading, error, saving, saveSelection, refresh } = useMySkills(targetUsername);
   const [localSelections, setLocalSelections] = useState<Record<string, boolean>>({});
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [saveOk, setSaveOk] = useState(false);
   const [pendingSkillId, setPendingSkillId] = useState<string | null>(null);
+  const toggleInFlightRef = useRef(false);
   const [initialized, setInitialized] = useState(false);
   const [query, setQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<SkillFilter>("all");
@@ -119,25 +120,26 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
   ], [enabledCount, skills]);
 
   const toggle = useCallback(async (id: string, checked: boolean) => {
-    if (saving) return;
+    if (saving || toggleInFlightRef.current) return;
+    toggleInFlightRef.current = true;
     const previous = localSelections;
-    const next = { ...localSelections, [id]: checked };
-    setLocalSelections(next);
+    setLocalSelections({ ...localSelections, [id]: checked });
     setPendingSkillId(id);
     setSaveMsg(null);
     try {
-      await saveSelections(Object.entries(next).filter(([, selected]) => selected).map(([skillId]) => skillId));
+      await saveSelection(id, checked);
       setSaveOk(true);
       setSaveMsg(checked ? "技能已启用" : "技能已停用");
       setTimeout(() => setSaveMsg(null), 1800);
     } catch (err) {
-      setLocalSelections(previous);
+      if (!(err instanceof SkillSelectionConflictError)) setLocalSelections(previous);
       setSaveOk(false);
       setSaveMsg(err instanceof Error ? err.message : "更新失败");
     } finally {
+      toggleInFlightRef.current = false;
       setPendingSkillId(null);
     }
-  }, [localSelections, saveSelections, saving]);
+  }, [localSelections, saveSelection, saving]);
 
   const openEdit = useCallback(async (skill: UserSkillInfo) => {
     setEditing(true);

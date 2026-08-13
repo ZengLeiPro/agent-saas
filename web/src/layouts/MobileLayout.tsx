@@ -373,6 +373,7 @@ export function MobileLayout(props: LayoutProps) {
                   <TenantAdminShell
                     renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
                     renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
+                    renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
                     renderMcp={() => <McpAdminCatalogPanel />}
                     renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
                     renderFiles={() => <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
@@ -586,6 +587,7 @@ export function MobileLayout(props: LayoutProps) {
           <TenantAdminShell
             renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
             renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
+            renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
             renderMcp={() => <McpAdminCatalogPanel />}
             renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
             renderFiles={() => <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}

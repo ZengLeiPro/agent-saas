@@ -35,6 +35,18 @@ describe("governance navigation registry", () => {
     expect(GOVERNANCE_NAVIGATION.settings[0].routes).toHaveLength(8);
   });
 
+  it("平台与组织控制台菜单全部使用中文标签", () => {
+    const labels = [
+      ...GOVERNANCE_NAVIGATION.platform.map((workspace) => workspace.label),
+      ...GOVERNANCE_NAVIGATION.organization.map((workspace) => workspace.label),
+      ...GOVERNANCE_ROUTES.filter((route) => route.area !== "settings").map((route) => route.label),
+    ];
+    expect(labels.every((label) => /[\u3400-\u9fff]/.test(label))).toBe(true);
+    expect(labels).not.toContain("Agent Template");
+    expect(labels).not.toContain("Execution Provider");
+    expect(labels).not.toContain("Session");
+  });
+
   it("registry 中每条 route 均可 build/parse/canonical round-trip", () => {
     for (const definition of GOVERNANCE_ROUTES) {
       const entityId = definition.entity === "none" ? null : "entity 42";

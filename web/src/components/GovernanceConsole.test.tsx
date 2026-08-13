@@ -30,7 +30,7 @@ describe("GovernanceConsole", () => {
         route={governanceRoute("platform.runtime.runs")}
         onExit={() => undefined}
       >
-        <div>复用 RunTraceExplorer 内容</div>
+        <div>复用运行追踪内容</div>
       </GovernanceConsole>,
     );
 
@@ -43,10 +43,10 @@ describe("GovernanceConsole", () => {
     expect(workspaceNav.textContent).toContain("治理与系统");
 
     const localNav = screen.getByRole("navigation", { name: "运行与可观测本地导航" });
-    expect(localNav.textContent).toContain("Run");
-    expect(localNav.textContent).toContain("Session");
+    expect(localNav.textContent).toContain("运行");
+    expect(localNav.textContent).toContain("会话");
     expect(localNav.textContent).not.toContain("组织");
-    expect(screen.getByText("复用 RunTraceExplorer 内容")).toBeTruthy();
+    expect(screen.getByText("复用运行追踪内容")).toBeTruthy();
   });
 
   it("平台管理员进入组织作用域显示常驻 banner，并从切换器过滤 pantheon", async () => {

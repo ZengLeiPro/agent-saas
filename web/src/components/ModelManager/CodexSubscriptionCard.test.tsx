@@ -87,7 +87,7 @@ describe("CodexSubscriptionCard", () => {
     expect(screen.getByText(/binding-hash/)).toBeTruthy();
     expect(screen.getByText(/2\/2（100.0%）/)).toBeTruthy();
     expect(screen.getByText(/2,400\/3,000（80.0%）/)).toBeTruthy();
-    expect(screen.getByText(/generation 2/)).toBeTruthy();
+    expect(screen.getByText(/代次 2/)).toBeTruthy();
     expect(screen.queryByText(/refresh_token/)).toBeNull();
 
     const originator = screen.getByDisplayValue("kaiyan-agent") as HTMLInputElement;

@@ -137,7 +137,7 @@ describe("ModelManager 排序", () => {
     render(<ModelManager />);
 
     await user.click(await screen.findByText("主分组"));
-    const label = await screen.findByText("Responses transport");
+    const label = await screen.findByText("Responses 传输方式");
     const select = label.parentElement?.querySelector("select");
     expect(select).toBeTruthy();
     fireEvent.change(select!, { target: { value: "codex_subscription" } });
@@ -163,7 +163,7 @@ describe("ModelManager 排序", () => {
     render(<ModelManager />);
 
     await user.click(await screen.findByText("GPT"));
-    const transportLabel = await screen.findByText("Responses transport");
+    const transportLabel = await screen.findByText("Responses 传输方式");
     const transportSelect = transportLabel.parentElement?.querySelector("select");
     expect(transportSelect).toBeTruthy();
     fireEvent.change(transportSelect!, { target: { value: "codex_subscription" } });

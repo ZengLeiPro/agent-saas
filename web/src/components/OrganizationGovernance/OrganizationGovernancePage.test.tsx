@@ -25,18 +25,20 @@ vi.mock("@agent/shared/lib/governanceApi", () => ({
 describe("OrganizationGovernancePage", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("展示治理 Membership 与 Owner，不渲染 legacy role 开关", async () => {
+  it("展示治理成员关系与所有者，不渲染旧角色开关", async () => {
     mocks.listMemberships.mockResolvedValue({ memberships: [
       { userId: "owner-1", persona: "org_admin", isOwner: true, status: "active", version: 3, allowedActions: [] },
       { userId: "member-1", persona: "member", isOwner: false, status: "active", version: 1, allowedActions: [{ id: "promote_admin", label: "设为组织管理员", change: { persona: "org_admin" }, requiresReason: false }] },
     ] });
     render(<OrganizationMembersPage tenantId="tenant-a" route={governanceRoute("organization.members.list", { orgId: "tenant-a" })} />);
     expect(await screen.findByText("owner-1")).toBeTruthy();
-    expect(screen.getByText("Owner")).toBeTruthy();
+    expect(screen.getByText("所有者")).toBeTruthy();
+    expect(screen.getAllByText("启用").length).toBeGreaterThan(0);
+    expect(screen.queryByText("active")).toBeNull();
     expect(screen.queryByRole("switch")).not.toBeTruthy();
   });
 
-  it("Owner 身份变更严格执行 preview→commit", async () => {
+  it("所有者身份变更严格执行预览→提交", async () => {
     mocks.listMemberships.mockResolvedValue({ memberships: [
       { userId: "owner-1", persona: "org_admin", isOwner: true, status: "active", version: 3, allowedActions: [] },
       { userId: "member-1", persona: "member", isOwner: false, status: "active", version: 1, allowedActions: [{ id: "promote_admin", label: "设为组织管理员", change: { persona: "org_admin" }, requiresReason: false }] },
@@ -97,7 +99,8 @@ describe("OrganizationGovernancePage", () => {
     render(<OrganizationGroupsPage tenantId="tenant-a" />);
     expect(await screen.findByText("销售部")).toBeTruthy();
     expect(screen.getByText("group-local-1")).toBeTruthy();
-    expect(screen.getByText("dingtalk")).toBeTruthy();
+    expect(screen.getByText("钉钉")).toBeTruthy();
+    expect(screen.getByText("启用")).toBeTruthy();
   });
 
   it("离职交接必须先预览，只有无 blocker 才提交 Change Job", async () => {
@@ -128,15 +131,22 @@ describe("OrganizationGovernancePage", () => {
       tenantId: "tenant-a", userId: "user-leaving", handoffTargetUserId: "user-owner",
       previewId: `opv1.${"a".repeat(64)}`, baselineDigest: "b".repeat(64),
     })));
+    expect(await screen.findByText("变更任务")).toBeTruthy();
+    expect(screen.getAllByText("等待中").length).toBeGreaterThan(0);
   });
 
   it("Credential 页面只展示安全字段", async () => {
     mocks.listCredentials.mockResolvedValue({ credentials: [{
       credentialId: "cred-1", connectorId: "github", alias: "发布凭据", purpose: "发布代码",
       kind: "org_shared", status: "active", generation: 2, version: 4,
+    }, {
+      credentialId: "cred-2", connectorId: "dingtalk", alias: "待轮换凭据", purpose: "发送通知",
+      kind: "org_shared", status: "rotation_due", generation: 1, version: 2,
     }] });
     render(<OrganizationCredentialsPage tenantId="tenant-a" />);
     expect(await screen.findByText("发布凭据")).toBeTruthy();
+    expect(screen.getByText("待轮换")).toBeTruthy();
+    expect(screen.queryByText("rotation_due")).toBeNull();
     await waitFor(() => expect(screen.queryByText(/secretRef|vault:\/\//i)).not.toBeTruthy());
     expect(screen.queryByRole("button", { name: /撤销|轮换|测试/ })).not.toBeTruthy();
   });

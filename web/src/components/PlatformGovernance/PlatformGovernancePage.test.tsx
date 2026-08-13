@@ -36,7 +36,8 @@ describe("PlatformOrganizationGovernance", () => {
 
   it("权益页展示权威来源、版本与硬上限，但不开放无预览写入", async () => {
     render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "entitlements" })} />);
-    expect(await screen.findByText("platform_override")).toBeTruthy();
+    expect(await screen.findByText("平台单独配置")).toBeTruthy();
+    expect(screen.queryByText("platform_override")).toBeNull();
     expect(screen.getByText("30")).toBeTruthy();
     expect(screen.getByText(/后端未返回可执行动作/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /保存|提交/ })).not.toBeTruthy();
@@ -62,6 +63,8 @@ describe("PlatformOrganizationGovernance", () => {
     await waitFor(() => expect(mocks.updateScope).toHaveBeenCalled());
     expect(await screen.findByText("changeId：change-scope-1")).toBeTruthy();
     expect(screen.getByText("auditId：audit-scope-1")).toBeTruthy();
+    expect(screen.getByText(/投影：等待中/)).toBeTruthy();
+    expect(screen.queryByText(/投影：pending/)).toBeNull();
   });
 
   it("目录已移除的历史选项标为失效并阻断预览", async () => {
@@ -73,6 +76,20 @@ describe("PlatformOrganizationGovernance", () => {
     fireEvent.click(await screen.findByRole("button", { name: "从目录编辑" }));
     expect(await screen.findByText(/当前范围含已退出目录的资源：/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "预览变更" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it.each([
+    ["trial", "试用中", "plan_default", "套餐默认"],
+    ["expired", "已过期", "legacy_migrated", "历史迁移"],
+  ])("合法权益状态 %s 与来源 %s 使用中文展示", async (status, statusLabel, source, sourceLabel) => {
+    mocks.getEntitlements.mockResolvedValue({
+      ...response,
+      entitlement: { ...response.entitlement, status, source },
+    });
+    render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "overview" })} />);
+    expect(await screen.findByText(statusLabel)).toBeTruthy();
+    render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "entitlements" })} />);
+    expect(await screen.findByText(sourceLabel)).toBeTruthy();
   });
 
   it("API 失败不回退旧 TenantSettings", async () => {

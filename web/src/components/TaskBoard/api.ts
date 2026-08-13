@@ -170,6 +170,17 @@ export async function executeTask(
   return parseEntity<TaskBoardExecutionStartResult>(response, "Agent 执行", "result");
 }
 
+export async function continueTaskExecution(
+  taskId: string,
+  commentId: string,
+): Promise<TaskBoardExecutionStartResult> {
+  const response = await authFetch(
+    `${API_BASE}/tasks/${encodeURIComponent(taskId)}/comments/${encodeURIComponent(commentId)}/execute`,
+    jsonRequest("POST"),
+  );
+  return parseEntity<TaskBoardExecutionStartResult>(response, "继续 Agent 执行", "result");
+}
+
 export async function fetchComments(taskId: string): Promise<TaskBoardComment[]> {
   const response = await authFetch(`${API_BASE}/tasks/${encodeURIComponent(taskId)}/comments`);
   return parseEntity<TaskBoardComment[]>(response, "任务评论", "comments");

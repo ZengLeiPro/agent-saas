@@ -46,7 +46,7 @@ describePg('PgTaskboardStore contract', () => {
       sessionId,
       userId: alice.ownerUserId,
       tenantId: alice.tenantId,
-      channel: 'taskboard',
+      channel: 'web',
       idempotencyKey: `taskboard-execution:${executionId}`,
       metadata: { taskboardExecution: true, taskboardExecutionId: executionId },
     },
@@ -232,6 +232,16 @@ describePg('PgTaskboardStore contract', () => {
     expect(first.attachments).toEqual([taskAttachment]);
     expect(first.branch).toBe('task/TASK-1-feature');
     expect(second.sortOrder).toBeGreaterThan(first.sortOrder);
+    const idempotentRequestId = randomUUID();
+    const idempotent = await store.createTask(alice, board.id, {
+      title: '幂等创建',
+      clientRequestId: idempotentRequestId,
+    });
+    const retried = await store.createTask(alice, board.id, {
+      title: '幂等创建',
+      clientRequestId: idempotentRequestId,
+    });
+    expect(retried.id).toBe(idempotent.id);
 
     const edited = await store.updateTask(alice, first.id, {
       priority: 'high',
@@ -340,7 +350,7 @@ describePg('PgTaskboardStore contract', () => {
       sessionId: 'runtime-session',
       userId: alice.ownerUserId,
       tenantId: alice.tenantId,
-      channel: 'taskboard',
+      channel: 'web',
       model: 'model-default',
       idempotencyKey: 'taskboard-execution:runtime-create-only',
       metadata: { taskboardExecution: true },

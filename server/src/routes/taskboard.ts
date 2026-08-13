@@ -75,7 +75,16 @@ const taskCreateSchema = z.object({
   labels: labelsSchema.optional(),
   dueAt: dueAtSchema.optional(),
   model: z.string().trim().min(1).max(256).optional(),
-}).strict();
+  clientRequestId: z.string().trim().min(1).max(128).optional(),
+  dispatch: z.boolean().optional(),
+}).strict().superRefine((input, context) => {
+  if (input.dispatch && input.status !== 'in_progress') {
+    context.addIssue({ code: 'custom', message: 'dispatch requires in_progress status', path: ['dispatch'] });
+  }
+  if (input.dispatch && !input.clientRequestId) {
+    context.addIssue({ code: 'custom', message: 'dispatch requires clientRequestId', path: ['clientRequestId'] });
+  }
+});
 
 const taskPatchSchema = z.object({
   title: z.string().trim().min(1).max(240).optional(),
@@ -195,12 +204,23 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   router.post('/boards/:boardId/tasks', route(async (req, res) => {
     const input = parseOrReply(taskCreateSchema, req.body, res, 'body');
     if (!input) return;
+    if (input.dispatch && !options.executionService?.startDirectExecution) {
+      throw new TaskboardExecutionUnavailableError();
+    }
     const attachments = await resolveRequestAttachments(options, req, input.attachments);
-    const task = await options.service!.createTask(identityFrom(req), req.params.boardId, {
-      ...input,
+    const { dispatch, ...taskInput } = input;
+    let task = await options.service!.createTask(identityFrom(req), req.params.boardId, {
+      ...taskInput,
       ...(attachments ? { attachments } : {}),
     });
     await markRequestAttachments(options, req, attachments);
+    if (dispatch) {
+      task = (await options.executionService!.startDirectExecution!(
+        identityFrom(req),
+        task.id,
+        task.version,
+      )).task;
+    }
     res.status(201).json(task);
   }));
 
@@ -280,6 +300,17 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     });
     await markRequestAttachments(options, req, attachments);
     res.status(201).json(comment);
+  }));
+
+  router.post('/tasks/:id/comments/:commentId/execute', route(async (req, res) => {
+    if (!options.executionService?.continueExecution) {
+      throw new TaskboardExecutionUnavailableError();
+    }
+    res.status(202).json(await options.executionService.continueExecution(
+      identityFrom(req),
+      req.params.id,
+      req.params.commentId,
+    ));
   }));
 
   return router;

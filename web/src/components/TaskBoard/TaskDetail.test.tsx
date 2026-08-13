@@ -8,6 +8,7 @@ import { TaskDetail } from "./TaskDetail";
 
 const mocks = vi.hoisted(() => ({
   fetchTask: vi.fn(),
+  continueTaskExecution: vi.fn(),
   addComment: vi.fn(),
   executions: [] as TaskBoardExecution[],
   refreshExecutions: vi.fn(async () => undefined),
@@ -18,7 +19,11 @@ vi.mock("@/lib/authFetch", () => ({ authFetch: mocks.authFetch }));
 
 vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
-  return { ...actual, fetchTask: mocks.fetchTask };
+  return {
+    ...actual,
+    fetchTask: mocks.fetchTask,
+    continueTaskExecution: mocks.continueTaskExecution,
+  };
 });
 
 vi.mock("./hooks", () => ({
@@ -250,6 +255,46 @@ describe("TaskDetail 草稿隔离", () => {
       body: "",
       attachments: [uploaded],
     }));
+  });
+
+  it("发表评论后可复用任务会话继续执行", async () => {
+    const user = userEvent.setup();
+    const published = {
+      id: "comment-continue",
+      taskId: taskOne.id,
+      body: "按新验收条件继续",
+      authorType: "user" as const,
+      authorId: "user-1",
+      authorName: "Alice",
+      version: 1,
+      createdAt: taskOne.createdAt,
+      updatedAt: taskOne.updatedAt,
+    };
+    const runningTask = { ...taskOne, status: "in_progress" as const, version: 4 };
+    const execution: TaskBoardExecution = {
+      id: "execution-1",
+      taskId: taskOne.id,
+      runId: "run-1",
+      sessionId: "session-1",
+      status: "running",
+      purpose: "work",
+      requestedBy: "user-1",
+      createdAt: taskOne.createdAt,
+      updatedAt: taskOne.updatedAt,
+    };
+    mocks.addComment.mockResolvedValue(published);
+    mocks.continueTaskExecution.mockResolvedValue({ task: runningTask, execution });
+    const onTaskLoaded = vi.fn();
+    render(<TaskDetail {...props({ onTaskLoaded })} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+
+    await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
+    await user.click(screen.getByRole("checkbox", { name: "发表后切换为进行中并继续执行" }));
+    await user.click(screen.getByRole("button", { name: "发表" }));
+
+    await waitFor(() => expect(mocks.continueTaskExecution).toHaveBeenCalledWith(taskOne.id, published.id));
+    expect(onTaskLoaded).toHaveBeenCalledWith(runningTask);
+    expect(mocks.refreshExecutions).toHaveBeenCalled();
   });
 
   it("待处理任务可以显式交给 Agent，并展示执行会话入口", async () => {

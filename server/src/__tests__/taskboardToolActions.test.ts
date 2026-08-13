@@ -93,6 +93,10 @@ function rig() {
       task: { ...task, status: 'in_progress' as const, version: task.version + 1 },
       execution,
     })),
+    startDirectExecution: vi.fn(async () => ({
+      task: { ...task, status: 'in_progress' as const, version: task.version + 1 },
+      execution,
+    })),
   } satisfies TaskboardExecutionService;
   const executionStore = {
     getExecutionContextByRunId: vi.fn(),
@@ -228,8 +232,9 @@ describe('CronManage taskboard actions', () => {
     expect(service.updateTask).toHaveBeenCalledWith(identity, task.id, {
       branch: 'task/TASK-1-updated', expectedVersion: task.version,
     });
-    expect(executionService.startExecution).toHaveBeenCalledWith(identity, 'task-new', {
-      expectedVersion: 1, purpose: 'work',
-    });
+    expect(service.createTask).toHaveBeenCalledWith(identity, board.id, expect.objectContaining({
+      clientRequestId: expect.stringMatching(/^taskboard-tool:/),
+    }));
+    expect(executionService.startDirectExecution).toHaveBeenCalledWith(identity, 'task-new', 1);
   });
 });

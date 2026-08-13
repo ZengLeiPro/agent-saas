@@ -8,6 +8,7 @@ import {
   type TaskBoardTaskCreateInput,
 } from "@agent/shared";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -27,9 +28,13 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useFileUpload } from "@/hooks/useFileUpload";
-import { dueAtFromDate, PRIORITY_LABELS, splitLabels, STATUS_LABELS } from "./constants";
+import { PRIORITY_LABELS, STATUS_LABELS } from "./constants";
 import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, toTaskBoardAttachments } from "./TaskAttachments";
+
+function createClientRequestId(): string {
+  return `task-dialog-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 interface TaskDialogProps {
   open: boolean;
@@ -53,8 +58,8 @@ export function TaskDialog({
   const [branch, setBranch] = useState("");
   const [status, setStatus] = useState<TaskBoardStatus>("backlog");
   const [priority, setPriority] = useState<TaskBoardPriority>("none");
-  const [labels, setLabels] = useState("");
-  const [dueDate, setDueDate] = useState("");
+  const [dispatch, setDispatch] = useState(false);
+  const [clientRequestId, setClientRequestId] = useState("");
   const [model, setModel] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,8 +72,8 @@ export function TaskDialog({
     setBranch("");
     setStatus(initialStatus);
     setPriority("none");
-    setLabels("");
-    setDueDate("");
+    setDispatch(false);
+    setClientRequestId(createClientRequestId());
     setModel(null);
     setError(null);
     attachments.clearFiles();
@@ -97,8 +102,8 @@ export function TaskDialog({
           : {}),
         status,
         priority,
-        labels: splitLabels(labels),
-        ...(dueAtFromDate(dueDate) ? { dueAt: dueAtFromDate(dueDate) } : {}),
+        ...(clientRequestId ? { clientRequestId } : {}),
+        ...(status === "in_progress" && dispatch ? { dispatch: true } : {}),
         ...(model ? { model } : {}),
       });
       onOpenChange(false);
@@ -124,7 +129,9 @@ export function TaskDialog({
         </DialogHeader>
         <form id="taskboard-task-form" className="space-y-4" onSubmit={submit}>
           <div className="space-y-2">
-            <Label htmlFor="taskboard-task-title">标题</Label>
+            <Label htmlFor="taskboard-task-title">
+              标题 <span className="text-destructive" aria-hidden="true">*</span>
+            </Label>
             <Input
               id="taskboard-task-title"
               value={title}
@@ -163,7 +170,11 @@ export function TaskDialog({
               <Label>状态</Label>
               <Select
                 value={status}
-                onValueChange={(value) => setStatus(value as TaskBoardStatus)}
+                onValueChange={(value) => {
+                  const nextStatus = value as TaskBoardStatus;
+                  setStatus(nextStatus);
+                  if (nextStatus !== "in_progress") setDispatch(false);
+                }}
                 disabled={submitting}
               >
                 <SelectTrigger aria-label="新任务状态"><SelectValue /></SelectTrigger>
@@ -173,6 +184,17 @@ export function TaskDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {status === "in_progress" ? (
+                <div className="flex items-center gap-2 pt-1">
+                  <Checkbox
+                    id="taskboard-task-dispatch"
+                    checked={dispatch}
+                    onCheckedChange={(checked) => setDispatch(checked === true)}
+                    disabled={submitting}
+                  />
+                  <Label htmlFor="taskboard-task-dispatch" className="font-normal">直接执行</Label>
+                </div>
+              ) : null}
             </div>
             <div className="space-y-2">
               <Label>优先级</Label>
@@ -189,26 +211,6 @@ export function TaskDialog({
                 </SelectContent>
               </Select>
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="taskboard-task-labels">标签</Label>
-            <Input
-              id="taskboard-task-labels"
-              value={labels}
-              onChange={(event) => setLabels(event.target.value)}
-              placeholder="多个标签用逗号分隔"
-              disabled={submitting}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="taskboard-task-due">截止日期</Label>
-            <Input
-              id="taskboard-task-due"
-              type="date"
-              value={dueDate}
-              onChange={(event) => setDueDate(event.target.value)}
-              disabled={submitting}
-            />
           </div>
           <div className="space-y-2">
             <Label>运行模型</Label>

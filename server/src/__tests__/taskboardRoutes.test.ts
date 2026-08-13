@@ -228,6 +228,22 @@ describe('Taskboard routes', () => {
           execution: EXECUTION,
         };
       },
+      startDirectExecution: async (_identity, taskId, expectedVersion) => {
+        expect(taskId).toBe(TASK.id);
+        expect(expectedVersion).toBe(TASK.version);
+        return {
+          task: { ...TASK, status: 'in_progress', version: TASK.version + 1 },
+          execution: EXECUTION,
+        };
+      },
+      continueExecution: async (_identity, taskId, commentId) => {
+        expect(taskId).toBe(TASK.id);
+        expect(commentId).toBe(COMMENT.id);
+        return {
+          task: { ...TASK, status: 'in_progress', version: TASK.version + 1 },
+          execution: EXECUTION,
+        };
+      },
     };
     const rig = await makeRig(
       makeService({ identities: [], taskFilters: [], createBoards: [] }),
@@ -249,6 +265,22 @@ describe('Taskboard routes', () => {
       task: { status: 'in_progress', version: TASK.version + 1 },
       execution: { id: EXECUTION.id, status: 'queued' },
     });
+
+    const createdAndStarted = await rig.request(`/api/taskboard/boards/${BOARD.id}/tasks`, postJson({
+      title: '直接执行',
+      status: 'in_progress',
+      clientRequestId: 'create-and-run-1',
+      dispatch: true,
+    }));
+    expect(createdAndStarted.status).toBe(201);
+    expect(await createdAndStarted.json()).toMatchObject({ status: 'in_progress' });
+
+    const continued = await rig.request(
+      `/api/taskboard/tasks/${TASK.id}/comments/${COMMENT.id}/execute`,
+      postJson({}),
+    );
+    expect(continued.status).toBe(202);
+    expect(await continued.json()).toMatchObject({ task: { status: 'in_progress' } });
 
     expect((await rig.request(`/api/taskboard/tasks/${TASK.id}/execute`, postJson({
       expectedVersion: TASK.version,

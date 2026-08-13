@@ -12,6 +12,7 @@ import {
 } from "@agent/shared";
 import { Archive, ArchiveRestore, Bot, ExternalLink, LoaderCircle, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -32,18 +33,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import * as api from "./api";
 import {
-  dateFromDueAt,
-  dueAtFromDate,
   EXECUTION_STATUS_LABELS,
   PRIORITY_LABELS,
-  splitLabels,
   STATUS_LABELS,
 } from "./constants";
 import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from "./TaskAttachments";
 import { useTaskComments, useTaskExecutions } from "./hooks";
 
-type TaskDraftField = "title" | "description" | "branch" | "attachments" | "priority" | "labels" | "dueAt" | "model";
+type TaskDraftField = "title" | "description" | "branch" | "attachments" | "priority" | "model";
 
 const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
 
@@ -87,10 +85,9 @@ export function TaskDetail({
   const [description, setDescription] = useState("");
   const [branch, setBranch] = useState("");
   const [priority, setPriority] = useState<TaskBoardPriority>("none");
-  const [labels, setLabels] = useState("");
-  const [dueDate, setDueDate] = useState("");
   const [model, setModel] = useState<string | null>(null);
   const [commentBody, setCommentBody] = useState("");
+  const [continueAfterComment, setContinueAfterComment] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const taskAttachments = useFileUpload("taskboard");
@@ -122,8 +119,6 @@ export function TaskDetail({
     setBranch(next.branch ?? "");
     taskAttachments.replaceFiles(next.attachments ?? []);
     setPriority(next.priority);
-    setLabels(next.labels.join(", "));
-    setDueDate(dateFromDueAt(next.dueAt));
     setModel(next.model ?? null);
   }, [taskAttachments.replaceFiles]);
 
@@ -134,8 +129,6 @@ export function TaskDetail({
     if (!dirty.has("branch")) setBranch(next.branch ?? "");
     if (!dirty.has("attachments")) taskAttachments.replaceFiles(next.attachments ?? []);
     if (!dirty.has("priority")) setPriority(next.priority);
-    if (!dirty.has("labels")) setLabels(next.labels.join(", "));
-    if (!dirty.has("dueAt")) setDueDate(dateFromDueAt(next.dueAt));
     if (!dirty.has("model")) setModel(next.model ?? null);
   }, [taskAttachments.replaceFiles]);
 
@@ -151,6 +144,7 @@ export function TaskDetail({
       draftTaskIdRef.current = null;
       dirtyFieldsRef.current.clear();
       setCommentBody("");
+      setContinueAfterComment(false);
       taskAttachments.clearFiles();
       commentAttachments.clearFiles();
       return;
@@ -158,6 +152,7 @@ export function TaskDetail({
     if (switchedTask) {
       hydrateDraft(task);
       setCommentBody("");
+      setContinueAfterComment(false);
       commentAttachments.clearFiles();
       setError(null);
     } else {
@@ -253,8 +248,6 @@ export function TaskDetail({
     if (dirty.has("branch")) input.branch = branch.trim() || null;
     if (dirty.has("attachments")) input.attachments = toTaskBoardAttachments(taskAttachments.uploadedFiles);
     if (dirty.has("priority")) input.priority = priority;
-    if (dirty.has("labels")) input.labels = splitLabels(labels);
-    if (dirty.has("dueAt")) input.dueAt = dueDate ? dueAtFromDate(dueDate) : null;
     if (dirty.has("model")) input.model = model;
 
     const operationTask = currentTask;
@@ -352,25 +345,48 @@ export function TaskDetail({
       setError("请等待附件上传完成");
       return;
     }
+    if (continueAfterComment && dirtyFieldsRef.current.size > 0) {
+      setError("请先保存未提交的任务修改，再继续执行");
+      return;
+    }
     const operationTask = currentTask;
     const requestId = ++detailRequestRef.current;
     setSaving(true);
     setError(null);
+    let commentPublished = false;
     try {
-      await addComment({
+      const comment = await addComment({
         body,
         ...(commentAttachments.uploadedFiles.length
           ? { attachments: toTaskBoardAttachments(commentAttachments.uploadedFiles) }
           : {}),
       });
+      commentPublished = true;
       if (isCurrentOperation(requestId, operationTask.id)) {
         setCommentBody("");
+        commentAttachments.clearFiles();
+      }
+      if (continueAfterComment) {
+        const result = await api.continueTaskExecution(operationTask.id, comment.id);
+        if (isCurrentOperation(requestId, operationTask.id)) {
+          setCurrentTask(result.task);
+          mergeServerDraft(result.task);
+          onTaskLoaded(result.task);
+          await refreshExecutions();
+        }
+      }
+      if (isCurrentOperation(requestId, operationTask.id)) {
+        setCommentBody("");
+        setContinueAfterComment(false);
         commentAttachments.clearFiles();
       }
       await onCommentsChanged();
     } catch (caught) {
       if (!isCurrentOperation(requestId, operationTask.id)) return;
-      setError(caught instanceof Error ? caught.message : "发表评论失败");
+      const message = caught instanceof Error ? caught.message : "未知错误";
+      setError(commentPublished
+        ? `${continueAfterComment ? "评论已发表，但继续执行失败" : "评论已发表，但刷新失败"}：${message}`
+        : `发表评论失败：${message}`);
     } finally {
       if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
     }
@@ -399,7 +415,7 @@ export function TaskDetail({
                   <div>
                     <h3 className="text-sm font-semibold">Agent 执行</h3>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      实施与复核使用独立会话；复核 Agent 可通过工具确认完成或退回返工。
+                      同一任务复用一个会话；运行中的新评论会排队注入下一次思考。
                     </p>
                   </div>
                   {!readOnly && (currentTask.status === "todo" || currentTask.status === "in_review") ? (
@@ -451,7 +467,9 @@ export function TaskDetail({
 
               <form className="space-y-4" onSubmit={save}>
                 <div className="space-y-2">
-                  <Label htmlFor="task-detail-title">标题</Label>
+                  <Label htmlFor="task-detail-title">
+                    标题 <span className="text-destructive" aria-hidden="true">*</span>
+                  </Label>
                   <Input
                     id="task-detail-title"
                     value={title}
@@ -537,32 +555,6 @@ export function TaskDetail({
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="task-detail-labels">标签</Label>
-                  <Input
-                    id="task-detail-labels"
-                    value={labels}
-                    onChange={(event) => {
-                      dirtyFieldsRef.current.add("labels");
-                      setLabels(event.target.value);
-                    }}
-                    placeholder="多个标签用逗号分隔"
-                    disabled={readOnly || saving}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="task-detail-due">截止日期</Label>
-                  <Input
-                    id="task-detail-due"
-                    type="date"
-                    value={dueDate}
-                    onChange={(event) => {
-                      dirtyFieldsRef.current.add("dueAt");
-                      setDueDate(event.target.value);
-                    }}
-                    disabled={readOnly || saving}
-                  />
-                </div>
-                <div className="space-y-2">
                   <Label>运行模型</Label>
                   <ModelSelect
                     modelList={modelList}
@@ -629,6 +621,19 @@ export function TaskDetail({
                     onPaste={(event) => void commentAttachments.handlePaste(event)}
                   />
                   {!readOnly ? <TaskAttachmentField upload={commentAttachments} disabled={saving} /> : null}
+                  {!readOnly ? (
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="task-comment-continue"
+                        checked={continueAfterComment}
+                        onCheckedChange={(checked) => setContinueAfterComment(checked === true)}
+                        disabled={saving}
+                      />
+                      <Label htmlFor="task-comment-continue" className="font-normal">
+                        发表后切换为进行中并继续执行
+                      </Label>
+                    </div>
+                  ) : null}
                   <Button
                     type="submit"
                     size="sm"

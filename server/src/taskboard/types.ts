@@ -47,6 +47,8 @@ export interface TaskboardExecutionDispatchPayload {
 
 export interface TaskboardExecutionClaimInput extends TaskBoardExecutionStartInput {
   executionId: string;
+  /** 新建后直执或评论续跑允许从当前状态进入 work 执行。 */
+  allowWorkFromCurrentStatus?: boolean;
   runId: string;
   sessionId: string;
   /** startExecution 读取到的任务/看板显式模型；claim 锁内复核，防止并发改模型。 */
@@ -90,6 +92,16 @@ export interface TaskboardExecutionContext {
   boardPrompt: string;
   comments: TaskBoardComment[];
   execution: TaskBoardExecution;
+  continuation?: boolean;
+}
+
+export interface TaskboardContinuationContext {
+  task: TaskBoardTask;
+  comment: TaskBoardComment;
+  pendingComments: TaskBoardComment[];
+  continuationRunId?: string;
+  activeExecution?: TaskBoardExecution;
+  latestExecution?: TaskBoardExecution;
 }
 
 export interface TaskboardExecutionCompletionInput {
@@ -111,6 +123,18 @@ export interface TaskboardExecutionStore {
     input: TaskboardExecutionClaimInput,
   ): Promise<TaskBoardExecutionStartResult>;
   getExecutionContextByRunId(runId: string): Promise<TaskboardExecutionContext | null>;
+  getContinuationContext(
+    identity: TaskboardIdentity,
+    taskId: string,
+    commentId: string,
+  ): Promise<TaskboardContinuationContext>;
+  markContinuationQueued(taskId: string, commentIds: string[], runId: string): Promise<boolean>;
+  markContinuationRunning(taskId: string): Promise<TaskBoardTask | null>;
+  completeContinuation(
+    taskId: string,
+    runId: string,
+    input: TaskboardExecutionCompletionInput,
+  ): Promise<TaskBoardTask | null>;
   moveTaskFromExecution(
     identity: TaskboardIdentity,
     runId: string,
@@ -150,6 +174,16 @@ export interface TaskboardExecutionService {
     identity: TaskboardIdentity,
     taskId: string,
     input: TaskBoardExecutionStartInput,
+  ): Promise<TaskBoardExecutionStartResult>;
+  startDirectExecution?(
+    identity: TaskboardIdentity,
+    taskId: string,
+    expectedVersion: number,
+  ): Promise<TaskBoardExecutionStartResult>;
+  continueExecution?(
+    identity: TaskboardIdentity,
+    taskId: string,
+    commentId: string,
   ): Promise<TaskBoardExecutionStartResult>;
 }
 

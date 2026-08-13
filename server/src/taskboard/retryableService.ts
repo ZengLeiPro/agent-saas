@@ -12,6 +12,7 @@ import type {
   TaskBoardTaskPatchInput,
 } from '../../../shared/src/types/taskboard.js';
 import type {
+  TaskboardContinuationContext,
   TaskboardExecutionClaimInput,
   TaskboardExecutionCompletionInput,
   TaskboardExecutionContext,
@@ -179,6 +180,34 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
   async getExecutionContextByRunId(runId: string): Promise<TaskboardExecutionContext | null> {
     await this.init();
     return this.target.getExecutionContextByRunId(runId);
+  }
+
+  async getContinuationContext(
+    identity: TaskboardIdentity,
+    taskId: string,
+    commentId: string,
+  ): Promise<TaskboardContinuationContext> {
+    await this.init();
+    return this.target.getContinuationContext(identity, taskId, commentId);
+  }
+
+  async markContinuationQueued(taskId: string, commentIds: string[], runId: string): Promise<boolean> {
+    await this.init();
+    return this.target.markContinuationQueued(taskId, commentIds, runId);
+  }
+
+  async markContinuationRunning(taskId: string): Promise<TaskBoardTask | null> {
+    await this.init();
+    return this.target.markContinuationRunning(taskId);
+  }
+
+  async completeContinuation(
+    taskId: string,
+    runId: string,
+    input: TaskboardExecutionCompletionInput,
+  ): Promise<TaskBoardTask | null> {
+    await this.init();
+    return this.target.completeContinuation(taskId, runId, input);
   }
 
   async moveTaskFromExecution(

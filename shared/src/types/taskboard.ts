@@ -161,6 +161,10 @@ export interface TaskBoardTaskCreateInput {
   labels?: string[];
   dueAt?: string;
   model?: string;
+  /** 同一次新建表单重试时保持不变，避免直执失败后重复建任务。 */
+  clientRequestId?: string;
+  /** 创建后立即启动 Agent；仅用于“进行中”状态。 */
+  dispatch?: boolean;
 }
 
 export interface TaskBoardTaskPatchInput {

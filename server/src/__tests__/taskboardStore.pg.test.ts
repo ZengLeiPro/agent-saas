@@ -480,6 +480,36 @@ describePg('PgTaskboardStore contract', () => {
       .resolves.toMatchObject({ execution: { status: 'cancelled' } });
   });
 
+  it('tracks the task creator and current completion time', async () => {
+    const board = await store.createBoard(alice, { name: '任务生命周期' });
+    const creator = { ...alice, displayName: '爱丽丝 @alice' };
+    const task = await store.createTask(creator, board.id, { title: '补充卡片信息', status: 'todo' });
+
+    expect(task).toMatchObject({
+      creatorUserId: alice.ownerUserId,
+      creatorName: '爱丽丝 @alice',
+    });
+    expect(task.completedAt).toBeUndefined();
+
+    const completed = await store.moveTask(alice, task.id, {
+      status: 'done',
+      expectedVersion: task.version,
+    });
+    expect(completed.completedAt).toBeTruthy();
+
+    const reordered = await store.moveTask(alice, task.id, {
+      status: 'done',
+      expectedVersion: completed.version,
+    });
+    expect(reordered.completedAt).toBe(completed.completedAt);
+
+    const reopened = await store.moveTask(alice, task.id, {
+      status: 'todo',
+      expectedVersion: reordered.version,
+    });
+    expect(reopened.completedAt).toBeUndefined();
+  });
+
   it('serializes concurrent writes on the same board without a task/board lock-order deadlock', async () => {
     const board = await store.createBoard(alice, { name: '并发锁顺序' });
     const first = await store.createTask(alice, board.id, { title: 'A', status: 'todo' });

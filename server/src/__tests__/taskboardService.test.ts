@@ -6,6 +6,7 @@ import {
   PgTaskboardStore,
   TASKBOARD_TABLE_PREFIX_MAX_LENGTH,
 } from '../taskboard/store.js';
+import { rowToTask } from '../taskboard/storeHelpers.js';
 import type { TaskboardIdentity } from '../taskboard/types.js';
 
 const identity: TaskboardIdentity = {
@@ -13,6 +14,35 @@ const identity: TaskboardIdentity = {
   ownerUserId: 'user-1',
   username: 'alice',
 };
+
+describe('Taskboard task mapping', () => {
+  it('exposes creator and completion metadata when present', () => {
+    const task = rowToTask({
+      id: 'task-1',
+      board_id: 'board-1',
+      identifier: 'TASK-1',
+      title: '卡片信息',
+      description: '',
+      status: 'done',
+      priority: 'none',
+      labels: [],
+      sort_order: 1024,
+      comment_count: 0,
+      version: 2,
+      creator_user_id: 'user-1',
+      creator_name: '爱丽丝 @alice',
+      completed_at: new Date('2026-08-13T01:00:00.000Z'),
+      created_at: new Date('2026-08-12T01:00:00.000Z'),
+      updated_at: new Date('2026-08-13T01:00:00.000Z'),
+    });
+
+    expect(task).toMatchObject({
+      creatorUserId: 'user-1',
+      creatorName: '爱丽丝 @alice',
+      completedAt: '2026-08-13T01:00:00.000Z',
+    });
+  });
+});
 
 describe('Taskboard service hardening', () => {
   it('按任务阶段限制实施与独立复核执行', () => {

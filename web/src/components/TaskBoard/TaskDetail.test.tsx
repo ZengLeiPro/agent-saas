@@ -204,6 +204,24 @@ describe("TaskDetail 草稿隔离", () => {
     }));
   });
 
+  it("工作分支可在任务详情中填写并保存", async () => {
+    const user = userEvent.setup();
+    const onUpdate = vi.fn(async (current: TaskBoardTask) => ({
+      ...current,
+      branch: "task/TASK-1-feature",
+      version: current.version + 1,
+    }));
+    render(<TaskDetail {...props({ onUpdate })} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+
+    await user.type(screen.getByRole("textbox", { name: "工作分支" }), "task/TASK-1-feature");
+    await user.click(screen.getByRole("button", { name: "保存任务" }));
+
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledWith(taskOne, {
+      branch: "task/TASK-1-feature",
+    }));
+  });
+
   it("评论可只上传附件后发表", async () => {
     const user = userEvent.setup();
     const uploaded = {
@@ -244,6 +262,7 @@ describe("TaskDetail 草稿隔离", () => {
       runId: "run-1",
       sessionId: "session-1",
       status: "queued",
+      purpose: "work",
       requestedBy: "user-1",
       createdAt: todoTask.createdAt,
       updatedAt: todoTask.updatedAt,
@@ -256,7 +275,7 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(onTaskLoaded).toHaveBeenCalledWith(todoTask));
 
     await user.click(screen.getByRole("button", { name: "交给 Agent" }));
-    await waitFor(() => expect(onExecute).toHaveBeenCalledWith(todoTask));
+    await waitFor(() => expect(onExecute).toHaveBeenCalledWith(todoTask, "work"));
     expect(onTaskLoaded).toHaveBeenCalledWith(runningTask);
     expect(mocks.refreshExecutions).toHaveBeenCalled();
 
@@ -266,5 +285,28 @@ describe("TaskDetail 草稿隔离", () => {
     expect(screen.getByRole("button", { name: "排队中" }).hasAttribute("disabled")).toBe(true);
     expect(screen.getByRole("link", { name: "打开执行会话" }).getAttribute("href"))
       .toBe("/chat/session-1");
+  });
+
+  it("待复核任务可以启动独立 review Agent", async () => {
+    const user = userEvent.setup();
+    const reviewTask = { ...taskOne, status: "in_review" as const, branch: "task/TASK-1-feature" };
+    const runningTask = { ...reviewTask, status: "in_progress" as const, version: reviewTask.version + 1 };
+    const execution: TaskBoardExecution = {
+      id: "execution-review",
+      taskId: reviewTask.id,
+      runId: "run-review",
+      sessionId: "session-review",
+      status: "queued",
+      purpose: "review",
+      requestedBy: "user-1",
+      createdAt: reviewTask.createdAt,
+      updatedAt: reviewTask.updatedAt,
+    };
+    mocks.fetchTask.mockResolvedValue(reviewTask);
+    const onExecute = vi.fn(async () => ({ task: runningTask, execution }));
+    render(<TaskDetail {...props({ task: reviewTask, onExecute })} />);
+
+    await user.click(await screen.findByRole("button", { name: "独立复核" }));
+    await waitFor(() => expect(onExecute).toHaveBeenCalledWith(reviewTask, "review"));
   });
 });

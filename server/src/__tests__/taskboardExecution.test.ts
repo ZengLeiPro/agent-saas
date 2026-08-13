@@ -33,6 +33,7 @@ const task: TaskBoardTask = {
   identifier: 'TASK-1',
   title: '实现执行闭环',
   description: '使用最新任务内容',
+  branch: 'task/TASK-1-feature',
   attachments: [{
     attachmentId: '11111111-1111-4111-8111-111111111111',
     originalName: '需求图.png',
@@ -82,6 +83,7 @@ function execution(input: Partial<TaskBoardExecution> = {}): TaskBoardExecution 
     createdAt: '2026-08-01T02:00:00.000Z',
     updatedAt: '2026-08-01T02:00:00.000Z',
     ...input,
+    purpose: input.purpose ?? 'work',
   };
 }
 
@@ -100,7 +102,12 @@ function makeRig(
       dispatches.set(input.runId, { executionId: input.executionId, payload: input.dispatch });
       return {
         task: { ...task, status: 'in_progress' as const, version: task.version + 1 },
-        execution: execution({ id: input.executionId, runId: input.runId, sessionId: input.sessionId }),
+        execution: execution({
+          id: input.executionId,
+          runId: input.runId,
+          sessionId: input.sessionId,
+          purpose: input.purpose ?? 'work',
+        }),
       };
     }),
     getExecutionContextByRunId: vi.fn(async (runId: string): Promise<TaskboardExecutionContext | null> => ({
@@ -287,6 +294,7 @@ describe('TaskboardExecutionCoordinator', () => {
     const content = (prepared.metadata.wakeMessage as { content: string }).content;
     expect(content.startsWith('看板提示语：\n只修改与任务直接相关的文件。')).toBe(true);
     expect(content).toContain(comment.body);
+    expect(content).toContain('工作分支：task/TASK-1-feature');
     expect(content).toContain('- 需求图.png：uploads/需求图.png');
     expect(content).toContain('- 验收视频.mp4：uploads/验收视频.mp4');
     expect(content).not.toContain('1. 直接完成任务，必要时使用可用工具；不要只给计划。');

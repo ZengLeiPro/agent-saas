@@ -181,6 +181,15 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.getExecutionContextByRunId(runId);
   }
 
+  async moveTaskFromExecution(
+    identity: TaskboardIdentity,
+    runId: string,
+    status: Extract<TaskBoardTask['status'], 'done' | 'todo'>,
+  ): Promise<TaskBoardTask> {
+    await this.init();
+    return this.target.moveTaskFromExecution(identity, runId, status);
+  }
+
   async claimExecutionDispatch(
     runId: string | undefined,
     leaseId: string,

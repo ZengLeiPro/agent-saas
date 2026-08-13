@@ -1733,7 +1733,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     fetchImpl: egressFetch,
   });
   const codexDeviceAuthService = new CodexDeviceAuthService(egressFetch);
-
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd,
     sharedDir,
@@ -1774,6 +1773,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     orgAgentStore,
     tenantStore,
     environmentStore,
+    taskboard: { service: () => taskboardService, executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
       const effectiveAgentId = agentId
         ?? (await agentResourceStore?.findPersonalByOwner(tenantId, userId))?.agentId;

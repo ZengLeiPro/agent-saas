@@ -26,18 +26,21 @@ export const TASKBOARD_EXECUTION_STATUSES = [
   "cancelled",
 ] as const;
 
+export const TASKBOARD_EXECUTION_PURPOSES = ["work", "review"] as const;
+
 export const TASKBOARD_VISIBILITIES = ["personal", "organization"] as const;
 
 export const TASKBOARD_DEFAULT_PROMPT = [
   "1. 直接完成任务，必要时使用可用工具；不要只给计划。",
   "2. 尊重当前工作区与安全边界，不 push、不部署、不对外发送，除非任务正文明确授权。",
   "3. 完成后自行检查结果。你的最终回复将作为任务的 Agent 交付回执。",
-  "4. 不要自行把任务标记为“已完成”；系统只会将成功结果送到“待复核”，由用户验收。",
+  "4. 实施 Agent 不要自行标记“已完成”；独立复核 Agent 按任务中的回写说明确认完成或退回返工。",
 ].join("\n");
 
 export type TaskBoardStatus = (typeof TASKBOARD_STATUSES)[number];
 export type TaskBoardPriority = (typeof TASKBOARD_PRIORITIES)[number];
 export type TaskBoardExecutionStatus = (typeof TASKBOARD_EXECUTION_STATUSES)[number];
+export type TaskBoardExecutionPurpose = (typeof TASKBOARD_EXECUTION_PURPOSES)[number];
 export type TaskBoardVisibility = (typeof TASKBOARD_VISIBILITIES)[number];
 
 export interface TaskBoard {
@@ -76,6 +79,8 @@ export interface TaskBoardTask {
   identifier: string;
   title: string;
   description: string;
+  /** Agent 实施、复核或合并时使用的 Git 分支。 */
+  branch?: string;
   attachments?: TaskBoardAttachment[];
   status: TaskBoardStatus;
   priority: TaskBoardPriority;
@@ -110,6 +115,7 @@ export interface TaskBoardExecution {
   runId: string;
   sessionId: string;
   status: TaskBoardExecutionStatus;
+  purpose: TaskBoardExecutionPurpose;
   requestedBy: string;
   error?: string;
   startedAt?: string;
@@ -144,6 +150,7 @@ export interface TaskBoardPatchInput {
 export interface TaskBoardTaskCreateInput {
   title: string;
   description?: string;
+  branch?: string;
   attachments?: TaskBoardUploadAttachment[];
   status?: TaskBoardStatus;
   priority?: TaskBoardPriority;
@@ -155,6 +162,8 @@ export interface TaskBoardTaskCreateInput {
 export interface TaskBoardTaskPatchInput {
   title?: string;
   description?: string;
+  /** null 表示清除工作分支。 */
+  branch?: string | null;
   attachments?: TaskBoardUploadAttachment[];
   priority?: TaskBoardPriority;
   labels?: string[];
@@ -178,4 +187,6 @@ export interface TaskBoardCommentCreateInput {
 
 export interface TaskBoardExecutionStartInput {
   expectedVersion: number;
+  /** work 从待处理开始实施；review 从待复核开始独立复核。 */
+  purpose?: TaskBoardExecutionPurpose;
 }

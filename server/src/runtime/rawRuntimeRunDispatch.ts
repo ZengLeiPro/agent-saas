@@ -379,10 +379,10 @@ export interface RawRuntimeRunDispatchConfig {
   /** 内置 brain-only 工具配置（TodoWrite/AskUserQuestion）。 */
   builtinTools?: BuiltinToolsConfig;
   /**
-   * 定时任务服务惰性 getter（CronList/CronManage 内置工具）。cronRuntime 在
-   * dispatch 构造之后才创建，因此传 getter 而非实例；返回 undefined 时工具不挂载。
+   * 定时任务服务惰性 getter（CronList/CronManage 内置工具）；cronRuntime 晚装配，因此传 getter。
    */
   cronService?: () => import('../cron/service.js').CronService | undefined;
+  taskboard?: import('../agent/taskboardToolActions.js').TaskboardToolOptions;
   /**
    * 计费服务惰性 getter（子 agent spawn 前置 hard cap 检查，D6）。与 cronService
    * 同款惰性形态：billingService 在 app/runtime.ts 中晚于 dispatch config 可用。
@@ -1009,10 +1009,10 @@ export async function collectRuntimeTooling(
     }));
   }
 
-  // 5. 定时任务工具（CronList/CronManage；服务未启用或无用户身份时 list() 自动隐藏）
-  if (config.cronService) {
-    providers.push(new CronToolProvider({ service: config.cronService }));
-  }
+  // 5. 统一任务工具：默认 cron，target=taskboard 时管理看板与独立 Agent 流程。
+  if (config.cronService || config.taskboard) providers.push(new CronToolProvider({
+    service: config.cronService ?? (() => undefined), ...(config.taskboard ? { taskboard: config.taskboard } : {}),
+  }));
 
   // 6. MCP 工具（带超时兜底，单 server hang 不会卡 dispatch 主路径）
   if (config.mcpProxy || config.mcpClientManager) {

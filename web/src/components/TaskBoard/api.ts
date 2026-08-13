@@ -5,6 +5,7 @@ import type {
   TaskBoardCommentCreateInput,
   TaskBoardCreateInput,
   TaskBoardExecution,
+  TaskBoardExecutionPurpose,
   TaskBoardExecutionStartResult,
   TaskBoardPatchInput,
   TaskBoardTask,
@@ -160,10 +161,11 @@ export async function fetchExecutions(taskId: string): Promise<TaskBoardExecutio
 export async function executeTask(
   taskId: string,
   expectedVersion: number,
+  purpose: TaskBoardExecutionPurpose = "work",
 ): Promise<TaskBoardExecutionStartResult> {
   const response = await authFetch(
     `${API_BASE}/tasks/${encodeURIComponent(taskId)}/execute`,
-    jsonRequest("POST", { expectedVersion }),
+    jsonRequest("POST", purpose === "review" ? { expectedVersion, purpose } : { expectedVersion }),
   );
   return parseEntity<TaskBoardExecutionStartResult>(response, "Agent 执行", "result");
 }

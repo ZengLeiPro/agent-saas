@@ -8,6 +8,7 @@ import {
   fetchEffectiveResources,
   fetchMyGovernanceSummary,
   governanceAccessApi,
+  governanceResourcesApi,
   GovernanceApiError,
   preflightExecution,
 } from './governanceApi';
@@ -75,6 +76,165 @@ describe('governanceApi fail closed', () => {
     await expect(preflightExecution({ action: 'run' })).rejects.toMatchObject({
       code: 'INVALID_GOVERNANCE_RESPONSE',
     });
+  });
+
+  it('接受组织控制台成员接口返回的完整持久化元数据', async () => {
+    mockAuthFetch.mockResolvedValue(jsonResponse({ memberships: [{
+      tenantId: 'tenant-1', userId: 'member-1', persona: 'member', isOwner: false,
+      status: 'active', source: 'governance', version: 2,
+      createdAt: '2026-08-10T07:00:00Z', createdBy: 'admin-1',
+      updatedAt: '2026-08-10T08:00:00Z', updatedBy: 'admin-1',
+      directoryProfile: {
+        userId: 'member-1', username: 'member', displayName: '成员一', accountStatus: 'active',
+        dingtalkBound: true, createdAt: '2026-08-01T07:00:00Z', updatedAt: '2026-08-10T08:00:00Z',
+      },
+      allowedActions: [{ id: 'disable', label: '停用账号', change: { status: 'disabled' }, requiresReason: false }],
+    }] }));
+
+    await expect(governanceAccessApi.listMemberships('tenant-1')).resolves.toMatchObject({
+      memberships: [{ userId: 'member-1', createdBy: 'admin-1', updatedBy: 'admin-1' }],
+    });
+  });
+
+  it('接受成员详情中的身份、用量与审计权威聚合', async () => {
+    mockAuthFetch.mockResolvedValue(jsonResponse({
+      profile: {
+        userId: 'member-1', username: 'member', displayName: '成员一', accountStatus: 'active',
+        dingtalkBound: true, createdAt: '2026-08-01T07:00:00Z', updatedAt: '2026-08-10T08:00:00Z',
+      },
+      identity: {
+        tenantId: 'tenant-1', userId: 'member-1', persona: 'member', isOwner: false,
+        status: 'active', source: 'governance', version: 2,
+        createdAt: '2026-08-01T07:00:00Z', createdBy: 'admin-1',
+        updatedAt: '2026-08-10T08:00:00Z', updatedBy: 'admin-1', allowedActions: [],
+      },
+      accessSummary: {
+        effectivePersona: 'member', owner: false, accountStatus: 'active', decision: 'eligible',
+        why: [{ source: 'membership', effect: 'allow', version: 2 }],
+      },
+      assignments: [],
+      usagePolicy: {
+        tenantId: 'tenant-1', timezone: 'Asia/Shanghai', periodStart: '2026-08-01', periodEnd: '2026-09-01',
+        monthUsedCreditsMicro: 10, unattributedCreditsMicro: 0,
+        items: [{
+          userId: 'member-1', enforcementMode: 'notify', active: true, version: 1,
+          monthUsedCreditsMicro: 10, canStartRun: true,
+          lastUsedAt: '2026-08-10T08:00:00Z', updatedBy: 'admin-1', updatedAt: '2026-08-10T08:00:00Z',
+        }],
+      },
+      recentAudit: {
+        coverage: 'recent_membership_endpoint_events', limit: 100,
+        events: [{
+          auditId: 'audit-1', correlationId: 'correlation-1', actorType: 'user', actorUserId: 'admin-1',
+          actorPersona: 'org_admin', actorTenantId: 'tenant-1', action: 'governance.access.patch',
+          targetType: 'governance_access_api', targetId: '/memberships/member-1', targetTenantId: 'tenant-1',
+          purpose: 'governance access mutation', result: 'succeeded', occurredAt: '2026-08-10T08:00:00Z',
+          beforeDigest: 'before', afterDigest: 'after', metadata: { statusCode: 200 },
+        }],
+      },
+      snapshot: { membershipVersion: 2, generatedAt: '2026-08-10T08:00:00Z' },
+    }));
+
+    await expect(governanceAccessApi.getMembershipDetails('member-1', 'tenant-1')).resolves.toMatchObject({
+      identity: { updatedBy: 'admin-1' }, recentAudit: { events: [{ actorType: 'user' }] },
+    });
+  });
+
+  it('接受权益接口的完整持久化记录与资源范围动作', async () => {
+    const metadata = {
+      createdAt: '2026-08-10T07:00:00Z', createdBy: 'system',
+      updatedAt: '2026-08-10T08:00:00Z', updatedBy: 'platform-1',
+    };
+    mockAuthFetch.mockResolvedValue(jsonResponse({
+      entitlement: {
+        tenantId: 'tenant-1', source: 'platform_override', status: 'active', limits: {}, version: 2,
+        updateReason: 'contract active', ...metadata,
+      },
+      scopes: [{
+        tenantId: 'tenant-1', resourceType: 'skill', mode: 'selected', resourceIds: ['skill-1'],
+        source: 'governance', version: 2, ...metadata,
+        allowedActions: [{ id: 'edit_scope', label: '从目录编辑', resourceType: 'skill' }],
+      }],
+      policies: [{
+        tenantId: 'tenant-1', policyKey: 'skill.custom.enabled', value: true,
+        source: 'governance', version: 2, ...metadata,
+      }],
+      allowedActions: [{ id: 'suspend', label: '暂停权益', change: { status: 'suspended' }, requiresReason: true }],
+    }));
+
+    await expect(governanceAccessApi.getEntitlements('tenant-1')).resolves.toMatchObject({
+      entitlement: { tenantId: 'tenant-1', updatedBy: 'platform-1' },
+      scopes: [{ resourceType: 'skill', allowedActions: [{ resourceType: 'skill' }] }],
+    });
+  });
+
+  it('接受治理写中间件追加审计字段后的成员预览与完整回执', async () => {
+    const audit = {
+      changeId: 'change-1', auditId: 'audit-1', effectiveAt: '2026-08-10T08:00:00Z',
+    };
+    mockAuthFetch
+      .mockResolvedValueOnce(jsonResponse({
+        previewId: `mpv1.${'a'.repeat(64)}`, baselineDigest: 'b'.repeat(64),
+        expiresAt: '2026-08-10T08:05:00Z', expectedVersion: 2,
+        impact: {
+          from: { persona: 'member', isOwner: false, status: 'active' },
+          to: { persona: 'member', isOwner: false, status: 'disabled' },
+          blockers: [], reversible: true, effectiveMode: 'source_immediate',
+        },
+        ...audit,
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        tenantId: 'tenant-1', userId: 'member-1', persona: 'member', isOwner: false,
+        status: 'disabled', source: 'governance', version: 3,
+        createdAt: '2026-08-10T07:00:00Z', createdBy: 'admin-1',
+        updatedAt: '2026-08-10T08:00:00Z', updatedBy: 'admin-1',
+        projectionStatus: 'pending', compatibilityProjection: 'applied_with_projection_pending',
+        ...audit,
+      }));
+
+    await expect(governanceAccessApi.previewMembership('member-1', {
+      expectedVersion: 2, status: 'disabled', reason: 'member left',
+    }, 'tenant-1')).resolves.toMatchObject({ auditId: 'audit-1' });
+    await expect(governanceAccessApi.updateMembership('member-1', {
+      expectedVersion: 2, status: 'disabled', reason: 'member left',
+      previewId: `mpv1.${'a'.repeat(64)}`, baselineDigest: 'b'.repeat(64),
+      expiresAt: '2026-08-10T08:05:00Z',
+    }, 'tenant-1')).resolves.toMatchObject({ version: 3, compatibilityProjection: 'applied_with_projection_pending' });
+  });
+
+  it('接受历史凭据的安全能力摘要', async () => {
+    mockAuthFetch.mockResolvedValue(jsonResponse({ credentials: [{
+      credentialId: 'credential-1', tenantId: 'tenant-1', connectorId: 'github', kind: 'org_shared',
+      ownerUsername: 'member', purpose: 'legacy:github:default', status: 'active', generation: 1, version: 2,
+      scopeSummary: { legacyCapability: 'connector', scopes: ['github:*'] }, source: 'legacy_projection',
+      createdAt: '2026-08-01T07:00:00Z', createdBy: 'system', updatedAt: '2026-08-10T08:00:00Z', updatedBy: 'system',
+    }] }));
+
+    await expect(governanceResourcesApi.listCredentials('tenant-1')).resolves.toMatchObject({
+      credentials: [{ ownerUsername: 'member', scopeSummary: { legacyCapability: 'connector' } }],
+    });
+  });
+
+  it('接受离职预览中的治理写审计信封', async () => {
+    mockAuthFetch.mockResolvedValue(jsonResponse({
+      previewId: `opv1.${'a'.repeat(64)}`, idempotencyKey: 'offboard-1', baselineDigest: 'b'.repeat(64),
+      expiresAt: '2026-08-10T08:05:00Z', canCommit: true, blockers: [],
+      impact: {
+        membership: 1, agents: [], personalAgents: [], skills: [], personalCredentials: [], custodialCredentials: [],
+        cronOwnership: { status: 'clear', ids: [] },
+        activeRuns: { authority: 'available', ids: ['run-1'], snapshots: [{ id: 'run-1', version: 'v1' }], count: 1 },
+        activeSessions: { authority: 'available', ids: [], snapshots: [], count: 0 },
+        oauthGrants: { authority: 'available', ids: [], snapshots: [], count: 0 },
+        externalConnections: { authority: 'available', ids: [], snapshots: [], count: 0 },
+        personalMemory: { status: 'clear', ids: [] },
+        fileOwnership: { status: 'clear', personalFileIds: [], organizationFileIds: [] },
+      },
+      changeId: 'change-1', auditId: 'audit-1', effectiveAt: '2026-08-10T08:00:00Z',
+    }));
+
+    await expect(governanceResourcesApi.previewUserOffboarding({
+      tenantId: 'tenant-1', userId: 'member-1', handoffTargetUserId: 'owner-1', reason: 'member left',
+    })).resolves.toMatchObject({ changeId: 'change-1', canCommit: true });
   });
 
   it('当前治理 endpoint 同样拒绝泄漏敏感字段', async () => {

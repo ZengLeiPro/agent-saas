@@ -105,21 +105,44 @@ export function upsertRuntimeStatusMessage(
     }
     if (candidate.type === "text" || candidate.type === "thinking" || candidate.type === "tool_use") break;
   }
-  const patch = {
+  const content = options.content ?? runtimeStatusText(status);
+  if (idx >= 0) {
+    const current = msgs[idx];
+    if (current.type !== "runtime_status") return;
+    const streamId = options.streamId ?? current.streamId;
+    const runId = options.runId ?? current.runId;
+    // 相同 lifecycle 事件可能被 active_stream / session_status 重复投递。无可见变化时
+    // 不刷新消息与 timestamp：timestamp 参与虚拟行 key，否则会重测高度并重复滚底。
+    if (
+      current.status === status
+      && current.content === content
+      && current.streamId === streamId
+      && current.runId === runId
+      && current.streaming === true
+    ) return;
+    msg.updateMessageAt(idx, (message) =>
+      message.type === "runtime_status"
+        ? {
+            ...message,
+            status,
+            content,
+            ...(streamId ? { streamId } : {}),
+            ...(runId ? { runId } : {}),
+            streaming: true,
+          }
+        : message
+    );
+    return;
+  }
+  msg.addMessage({
+    type: "runtime_status",
     status,
-    content: options.content ?? runtimeStatusText(status),
+    content,
     ...(options.streamId ? { streamId: options.streamId } : {}),
     ...(options.runId ? { runId: options.runId } : {}),
     streaming: true,
     timestamp: Date.now(),
-  } satisfies Omit<Extract<MessageItem, { type: "runtime_status" }>, "id" | "type">;
-  if (idx >= 0) {
-    msg.updateMessageAt(idx, (message) =>
-      message.type === "runtime_status" ? { ...message, ...patch } : message
-    );
-    return;
-  }
-  msg.addMessage({ type: "runtime_status", ...patch });
+  });
 }
 
 export function removeRuntimeStatusMessages(msg: MessagesController): void {

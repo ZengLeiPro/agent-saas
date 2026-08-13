@@ -6,6 +6,7 @@ import type {
   TaskBoardCommentCreateInput,
   TaskBoardCreateInput,
   TaskBoardExecution,
+  TaskBoardExecutionPurpose,
   TaskBoardPatchInput,
   TaskBoardTask,
   TaskBoardTaskCreateInput,
@@ -292,11 +293,14 @@ export function useBoardTasks(boardId: string | null) {
     }
   };
 
-  const executeTask = async (task: TaskBoardTask) => {
+  const executeTask = async (
+    task: TaskBoardTask,
+    purpose: TaskBoardExecutionPurpose = "work",
+  ) => {
     const mutationBoardId = boardId;
     invalidateRefresh();
     try {
-      const result = await api.executeTask(task.id, task.version);
+      const result = await api.executeTask(task.id, task.version, purpose);
       if (mountedRef.current && mutationBoardId === boardIdRef.current) {
         invalidateRefresh();
         syncTask(result.task);

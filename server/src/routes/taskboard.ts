@@ -5,6 +5,7 @@ import type { UserStore } from '../data/users/store.js';
 import type { UploadManager } from '../uploads/manager.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import {
+  TASKBOARD_EXECUTION_PURPOSES,
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
   TASKBOARD_VISIBILITIES,
@@ -46,6 +47,11 @@ const expectedVersionSchema = z.object({
   expectedVersion: z.number().int().min(1),
 }).strict();
 
+const executionStartSchema = z.object({
+  expectedVersion: z.number().int().min(1),
+  purpose: z.enum(TASKBOARD_EXECUTION_PURPOSES).optional(),
+}).strict();
+
 const labelsSchema = z.array(z.string().trim().min(1).max(64)).max(20)
   .transform((labels) => [...new Set(labels)]);
 const dueAtSchema = z.string().datetime({ offset: true });
@@ -62,6 +68,7 @@ const attachmentsSchema = z.array(attachmentSchema).max(50);
 const taskCreateSchema = z.object({
   title: z.string().trim().min(1).max(240),
   description: z.string().max(20_000).optional(),
+  branch: z.string().trim().min(1).max(512).optional(),
   attachments: attachmentsSchema.optional(),
   status: z.enum(TASKBOARD_STATUSES).optional(),
   priority: z.enum(TASKBOARD_PRIORITIES).optional(),
@@ -73,6 +80,7 @@ const taskCreateSchema = z.object({
 const taskPatchSchema = z.object({
   title: z.string().trim().min(1).max(240).optional(),
   description: z.string().max(20_000).optional(),
+  branch: z.string().trim().min(1).max(512).nullish(),
   attachments: attachmentsSchema.optional(),
   priority: z.enum(TASKBOARD_PRIORITIES).optional(),
   labels: labelsSchema.optional(),
@@ -82,6 +90,7 @@ const taskPatchSchema = z.object({
 }).strict().refine(
   (input) => input.title !== undefined
     || input.description !== undefined
+    || input.branch !== undefined
     || input.attachments !== undefined
     || input.priority !== undefined
     || input.labels !== undefined
@@ -248,7 +257,7 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       });
       return;
     }
-    const input = parseOrReply(expectedVersionSchema, req.body, res, 'body');
+    const input = parseOrReply(executionStartSchema, req.body, res, 'body');
     if (!input) return;
     res.status(202).json(await options.executionService.startExecution(
       identityFrom(req),

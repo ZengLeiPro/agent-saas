@@ -222,17 +222,24 @@ describePg('PgTaskboardStore contract', () => {
       mimeType: 'image/png',
       isImage: true,
     };
-    const first = await store.createTask(alice, board.id, { title: '第一项', attachments: [taskAttachment] });
+    const first = await store.createTask(alice, board.id, {
+      title: '第一项',
+      branch: 'task/TASK-1-feature',
+      attachments: [taskAttachment],
+    });
     const second = await store.createTask(alice, board.id, { title: '第二项' });
     expect([first.identifier, second.identifier]).toEqual(['TASK-1', 'TASK-2']);
     expect(first.attachments).toEqual([taskAttachment]);
+    expect(first.branch).toBe('task/TASK-1-feature');
     expect(second.sortOrder).toBeGreaterThan(first.sortOrder);
 
     const edited = await store.updateTask(alice, first.id, {
       priority: 'high',
+      branch: null,
       expectedVersion: first.version,
     });
     expect(edited.version).toBe(2);
+    expect(edited.branch).toBeUndefined();
     try {
       await store.updateTask(alice, first.id, { title: 'stale', expectedVersion: first.version });
       throw new Error('expected CAS conflict');
@@ -300,7 +307,9 @@ describePg('PgTaskboardStore contract', () => {
       dispatch: dispatch('execution-a', 'run-a', 'session-a'),
     });
     expect(claimed.task).toMatchObject({ status: 'in_progress', version: task.version + 1 });
-    expect(claimed.execution).toMatchObject({ status: 'queued', runId: 'run-a', sessionId: 'session-a' });
+    expect(claimed.execution).toMatchObject({
+      status: 'queued', purpose: 'work', runId: 'run-a', sessionId: 'session-a',
+    });
     expect(await store.listExecutions(alice, task.id)).toEqual([claimed.execution]);
     await expect(store.listExecutions(admin, task.id)).rejects.toBeInstanceOf(TaskboardNotFoundError);
 
@@ -378,6 +387,29 @@ describePg('PgTaskboardStore contract', () => {
     });
     expect(duplicate?.execution.status).toBe('succeeded');
     expect(await store.listComments(alice, task.id)).toHaveLength(commentCount);
+
+    const reviewClaim = await store.claimExecution(alice, task.id, {
+      expectedVersion: completed!.task.version,
+      purpose: 'review',
+      executionId: 'execution-review',
+      runId: 'run-review',
+      sessionId: 'session-review',
+      executionOwnerUserId: alice.ownerUserId,
+      dispatch: dispatch('execution-review', 'run-review', 'session-review'),
+    });
+    expect(reviewClaim).toMatchObject({
+      task: { status: 'in_progress' },
+      execution: { purpose: 'review', status: 'queued' },
+    });
+    const approved = await store.moveTaskFromExecution(alice, 'run-review', 'done');
+    const reviewCompleted = await store.completeExecution('run-review', {
+      status: 'succeeded',
+      commentBody: '独立复核通过',
+    });
+    expect(approved.status).toBe('done');
+    expect(reviewCompleted?.task.status).toBe('done');
+    await expect(store.moveTaskFromExecution(alice, 'run-review', 'todo'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_REVIEW_TASK_CHANGED' });
 
     const manuallyCorrected = await store.createTask(alice, board.id, { title: '人工纠正优先', status: 'todo' });
     const secondClaim = await store.claimExecution(alice, manuallyCorrected.id, {

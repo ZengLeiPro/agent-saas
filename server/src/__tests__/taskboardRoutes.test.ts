@@ -75,6 +75,7 @@ const EXECUTION: TaskBoardExecution = {
   runId: 'run-1',
   sessionId: 'session-1',
   status: 'queued',
+  purpose: 'work',
   requestedBy: USER.sub,
   createdAt: BOARD.createdAt,
   updatedAt: BOARD.updatedAt,
@@ -168,11 +169,13 @@ describe('Taskboard routes', () => {
 
     const createdTask = await rig.request('/api/taskboard/boards/board-1/tasks', postJson({
       title: '新任务',
+      branch: 'task/TASK-2-feature',
       model: 'group-a/model-b',
     }));
     expect(createdTask.status).toBe(201);
 
     expect((await rig.request('/api/taskboard/tasks/task-1', patchJson({
+      branch: null,
       model: null,
       expectedVersion: 1,
     }))).status).toBe(200);
@@ -219,7 +222,7 @@ describe('Taskboard routes', () => {
           userRole: USER.role,
         });
         expect(taskId).toBe(TASK.id);
-        expect(input).toEqual({ expectedVersion: TASK.version });
+        expect(input).toEqual({ expectedVersion: TASK.version, purpose: 'review' });
         return {
           task: { ...TASK, status: 'in_progress', version: TASK.version + 1 },
           execution: EXECUTION,
@@ -239,6 +242,7 @@ describe('Taskboard routes', () => {
 
     const started = await rig.request(`/api/taskboard/tasks/${TASK.id}/execute`, postJson({
       expectedVersion: TASK.version,
+      purpose: 'review',
     }));
     expect(started.status).toBe(202);
     expect(await started.json()).toMatchObject({

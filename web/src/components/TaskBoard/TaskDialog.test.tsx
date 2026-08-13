@@ -34,6 +34,7 @@ describe("TaskDialog 交互", () => {
     );
 
     await user.type(screen.getByRole("textbox", { name: "标题" }), "修复任务看板交互");
+    await user.type(screen.getByRole("textbox", { name: "工作分支" }), "task/TASK-32-board");
     await user.click(screen.getByRole("combobox", { name: "新任务状态" }));
     expect(screen.getByRole("listbox").className).toContain("z-[110]");
     await user.click(screen.getByRole("option", { name: "待处理" }));
@@ -45,6 +46,7 @@ describe("TaskDialog 交互", () => {
 
     await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
       title: "修复任务看板交互",
+      branch: "task/TASK-32-board",
       status: "todo",
       priority: "urgent",
       model: "group-a/model-b",

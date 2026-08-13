@@ -3,14 +3,22 @@ import {
   type TaskBoard,
 } from '../../../shared/src/types/taskboard.js';
 
+const LEGACY_TASKBOARD_DEFAULT_PROMPT = [
+  '1. 直接完成任务，必要时使用可用工具；不要只给计划。',
+  '2. 尊重当前工作区与安全边界，不 push、不部署、不对外发送，除非任务正文明确授权。',
+  '3. 完成后自行检查结果。你的最终回复将作为任务的 Agent 交付回执。',
+  '4. 不要自行把任务标记为“已完成”；系统只会将成功结果送到“待复核”，由用户验收。',
+].join('\n');
+
 export function boardPromptMigrationSql(boardsTable: string): string {
   const defaultPrompt = quoteSqlLiteral(TASKBOARD_DEFAULT_PROMPT);
+  const legacyPrompt = quoteSqlLiteral(LEGACY_TASKBOARD_DEFAULT_PROMPT);
   return `
     ALTER TABLE ${boardsTable}
       ADD COLUMN IF NOT EXISTS prompt TEXT;
     UPDATE ${boardsTable}
       SET prompt=${defaultPrompt}
-      WHERE prompt IS NULL;
+      WHERE prompt IS NULL OR prompt=${legacyPrompt};
     ALTER TABLE ${boardsTable}
       ALTER COLUMN prompt SET DEFAULT ${defaultPrompt};
     ALTER TABLE ${boardsTable}

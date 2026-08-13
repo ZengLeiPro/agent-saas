@@ -1,6 +1,6 @@
 import type { DragEvent } from "react";
 import type { TaskBoardTask } from "@agent/shared";
-import { ArrowDown, ArrowUp, CalendarDays, MessageCircle } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, GitBranch, MessageCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -79,6 +79,12 @@ export function TaskCard({
                 {label}
               </Badge>
             ))}
+          </div>
+        ) : null}
+        {task.branch ? (
+          <div className="mt-2 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+            <GitBranch className="size-3.5 shrink-0" />
+            <span className="truncate" title={task.branch}>{task.branch}</span>
           </div>
         ) : null}
         <div className="mt-3 flex min-h-4 items-center gap-3 text-xs text-muted-foreground">

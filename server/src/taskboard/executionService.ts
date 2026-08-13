@@ -648,9 +648,15 @@ function buildExecutionPrompt(
     context.boardPrompt || '（无）',
     '',
     `任务：${task.identifier} · ${task.title}`,
+    `任务记录 ID：${task.id}`,
+    `执行类型：${context.execution.purpose === 'review' ? '独立复核' : '实施'}`,
+    `工作分支：${task.branch ?? '未填写'}`,
     `优先级：${task.priority}`,
     `标签：${task.labels.length > 0 ? task.labels.join('、') : '无'}`,
     `截止时间：${task.dueAt ?? '无'}`,
+    '',
+    '任务看板回写：',
+    ...executionWritebackInstructions(context),
     '',
     '任务正文：',
     task.description || '（无正文）',
@@ -661,6 +667,25 @@ function buildExecutionPrompt(
     `最近评论（${recentComments.length}/${context.comments.length}）：`,
     comments,
   ].join('\n');
+}
+
+export function executionWritebackInstructions(context: TaskboardExecutionContext): string[] {
+  const taskId = context.task.id;
+  const boardId = context.task.boardId;
+  const common = [
+    `- 创建或确认工作分支后，调用 CronManage：target=taskboard, action=update, id=${taskId}, branch=<分支名>。`,
+    `- 需要独立的后续复核、返工或合并时，用 target=taskboard, action=create, boardId=${boardId}, status=todo, dispatch=true 创建并派发新任务。`,
+  ];
+  if (context.execution.purpose !== 'review') {
+    return [...common, '- 实施成功后不要标记 done；系统会把仍在进行中的任务送入待复核。'];
+  }
+  return [
+    ...common,
+    '- 本次只做独立复核，不顺手修改交付。',
+    `- 复核通过：调用 CronManage：target=taskboard, action=move, id=${taskId}, status=done。`,
+    `- 复核不通过：调用 CronManage：target=taskboard, action=move, id=${taskId}, status=todo；最终回执列明返工项。`,
+    '- 无法明确判定时不要移动状态；系统会把任务放回待复核。',
+  ];
 }
 
 function formatComment(

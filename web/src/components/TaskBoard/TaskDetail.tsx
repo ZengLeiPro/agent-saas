@@ -3,6 +3,7 @@ import {
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
   type ModelList,
+  type TaskBoardExecutionPurpose,
   type TaskBoardExecutionStartResult,
   type TaskBoardPriority,
   type TaskBoardStatus,
@@ -42,7 +43,7 @@ import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from "./TaskAttachments";
 import { useTaskComments, useTaskExecutions } from "./hooks";
 
-type TaskDraftField = "title" | "description" | "attachments" | "priority" | "labels" | "dueAt" | "model";
+type TaskDraftField = "title" | "description" | "branch" | "attachments" | "priority" | "labels" | "dueAt" | "model";
 
 const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
 
@@ -60,7 +61,10 @@ interface TaskDetailProps {
   ) => Promise<TaskBoardTask>;
   onMove: (task: TaskBoardTask, status: TaskBoardStatus) => Promise<TaskBoardTask>;
   onSetArchived: (task: TaskBoardTask, archived: boolean) => Promise<TaskBoardTask>;
-  onExecute: (task: TaskBoardTask) => Promise<TaskBoardExecutionStartResult>;
+  onExecute: (
+    task: TaskBoardTask,
+    purpose?: TaskBoardExecutionPurpose,
+  ) => Promise<TaskBoardExecutionStartResult>;
   onCommentsChanged: () => Promise<void>;
 }
 
@@ -81,6 +85,7 @@ export function TaskDetail({
   const [currentTask, setCurrentTask] = useState<TaskBoardTask | null>(task);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [branch, setBranch] = useState("");
   const [priority, setPriority] = useState<TaskBoardPriority>("none");
   const [labels, setLabels] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -114,6 +119,7 @@ export function TaskDetail({
     dirtyFieldsRef.current.clear();
     setTitle(next.title);
     setDescription(next.description);
+    setBranch(next.branch ?? "");
     taskAttachments.replaceFiles(next.attachments ?? []);
     setPriority(next.priority);
     setLabels(next.labels.join(", "));
@@ -125,6 +131,7 @@ export function TaskDetail({
     const dirty = dirtyFieldsRef.current;
     if (!dirty.has("title")) setTitle(next.title);
     if (!dirty.has("description")) setDescription(next.description);
+    if (!dirty.has("branch")) setBranch(next.branch ?? "");
     if (!dirty.has("attachments")) taskAttachments.replaceFiles(next.attachments ?? []);
     if (!dirty.has("priority")) setPriority(next.priority);
     if (!dirty.has("labels")) setLabels(next.labels.join(", "));
@@ -243,6 +250,7 @@ export function TaskDetail({
     const input: Omit<TaskBoardTaskPatchInput, "expectedVersion"> = {};
     if (dirty.has("title")) input.title = title.trim();
     if (dirty.has("description")) input.description = description.trim();
+    if (dirty.has("branch")) input.branch = branch.trim() || null;
     if (dirty.has("attachments")) input.attachments = toTaskBoardAttachments(taskAttachments.uploadedFiles);
     if (dirty.has("priority")) input.priority = priority;
     if (dirty.has("labels")) input.labels = splitLabels(labels);
@@ -309,8 +317,9 @@ export function TaskDetail({
     }
   };
 
-  const startAgentExecution = async () => {
-    if (!currentTask || readOnly || currentTask.status !== "todo" || executionActive) return;
+  const startAgentExecution = async (purpose: TaskBoardExecutionPurpose) => {
+    const requiredStatus = purpose === "review" ? "in_review" : "todo";
+    if (!currentTask || readOnly || currentTask.status !== requiredStatus || executionActive) return;
     if (dirtyFieldsRef.current.size > 0) {
       setError("请先保存未提交的任务修改，再交给 Agent");
       return;
@@ -320,7 +329,7 @@ export function TaskDetail({
     setSaving(true);
     setError(null);
     try {
-      const result = await onExecute(operationTask);
+      const result = await onExecute(operationTask, purpose);
       if (!isCurrentOperation(requestId, operationTask.id)) return;
       setCurrentTask(result.task);
       mergeServerDraft(result.task);
@@ -390,20 +399,22 @@ export function TaskDetail({
                   <div>
                     <h3 className="text-sm font-semibold">Agent 执行</h3>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Agent 自验后只会进入待复核，由你确认是否完成。
+                      实施与复核使用独立会话；复核 Agent 可通过工具确认完成或退回返工。
                     </p>
                   </div>
-                  {!readOnly && currentTask.status === "todo" ? (
+                  {!readOnly && (currentTask.status === "todo" || currentTask.status === "in_review") ? (
                     <Button
                       type="button"
                       size="sm"
-                      onClick={() => void startAgentExecution()}
+                      onClick={() => void startAgentExecution(
+                        currentTask.status === "in_review" ? "review" : "work",
+                      )}
                       disabled={saving || executionsLoading || executionActive}
                     >
                       {saving || executionActive ? <LoaderCircle className="animate-spin" /> : <Bot />}
                       {executionActive && latestExecution
                         ? EXECUTION_STATUS_LABELS[latestExecution.status]
-                        : "交给 Agent"}
+                        : currentTask.status === "in_review" ? "独立复核" : "交给 Agent"}
                     </Button>
                   ) : null}
                 </div>
@@ -414,7 +425,10 @@ export function TaskDetail({
                 {latestExecution ? (
                   <div className="space-y-2 text-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span>{EXECUTION_STATUS_LABELS[latestExecution.status]}</span>
+                      <span>
+                        {latestExecution.purpose === "review" ? "独立复核 · " : "实施 · "}
+                        {EXECUTION_STATUS_LABELS[latestExecution.status]}
+                      </span>
                       <time className="text-xs text-muted-foreground">
                         {new Date(latestExecution.updatedAt).toLocaleString("zh-CN")}
                       </time>
@@ -473,6 +487,19 @@ export function TaskDetail({
                       onFilesChanged={() => dirtyFieldsRef.current.add("attachments")}
                     />
                   )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="task-detail-branch">工作分支</Label>
+                  <Input
+                    id="task-detail-branch"
+                    value={branch}
+                    onChange={(event) => {
+                      dirtyFieldsRef.current.add("branch");
+                      setBranch(event.target.value);
+                    }}
+                    placeholder="由你填写，或由 Agent 创建后回写"
+                    disabled={readOnly || saving}
+                  />
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">

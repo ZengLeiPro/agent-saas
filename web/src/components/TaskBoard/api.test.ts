@@ -33,6 +33,7 @@ describe("任务看板 API 错误对象", () => {
         runId: "run-1",
         sessionId: "session-1",
         status: "queued",
+        purpose: "work",
         requestedBy: "user-1",
         createdAt: task.createdAt,
         updatedAt: task.updatedAt,
@@ -46,7 +47,10 @@ describe("任务看板 API 错误对象", () => {
     await expect(executeTask(task.id, task.version)).resolves.toEqual(result);
     expect(authFetch).toHaveBeenCalledWith(
       `/api/taskboard/tasks/${task.id}/execute`,
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ expectedVersion: task.version }) }),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ expectedVersion: task.version }),
+      }),
     );
   });
 

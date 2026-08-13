@@ -21,6 +21,7 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     identifier: String(row.identifier),
     title: String(row.title),
     description: String(row.description ?? ''),
+    ...(row.branch ? { branch: String(row.branch) } : {}),
     attachments: normalizeAttachments(row.attachments),
     status: String(row.status) as TaskBoardTask['status'],
     priority: String(row.priority) as TaskBoardTask['priority'],
@@ -60,6 +61,7 @@ export function rowToExecution(row: Record<string, unknown>): TaskBoardExecution
     runId: String(row.run_id),
     sessionId: String(row.session_id),
     status: String(row.status) as TaskBoardExecution['status'],
+    purpose: row.purpose === 'review' ? 'review' : 'work',
     requestedBy: String(row.requested_by),
     ...(row.error !== null && row.error !== undefined ? { error: String(row.error) } : {}),
     ...(row.started_at ? { startedAt: toIso(row.started_at) } : {}),
@@ -116,8 +118,8 @@ export function requireText(value: string, label: string): string {
   return normalized;
 }
 
-export function optionalText(value: string | undefined): string | null {
-  if (value === undefined) return null;
+export function optionalText(value: string | null | undefined): string | null {
+  if (value === undefined || value === null) return null;
   const normalized = value.trim();
   return normalized || null;
 }

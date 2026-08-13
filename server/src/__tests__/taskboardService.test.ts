@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { resolveExecutionPurpose } from '../taskboard/executionFields.js';
 import { RetryableTaskboardService, type InitializableTaskboardService } from '../taskboard/retryableService.js';
 import {
   PgTaskboardStore,
@@ -14,6 +15,13 @@ const identity: TaskboardIdentity = {
 };
 
 describe('Taskboard service hardening', () => {
+  it('按任务阶段限制实施与独立复核执行', () => {
+    expect(resolveExecutionPurpose('todo', undefined)).toBe('work');
+    expect(resolveExecutionPurpose('in_review', 'review')).toBe('review');
+    expect(() => resolveExecutionPurpose('todo', 'review')).toThrow('Only in-review tasks');
+    expect(() => resolveExecutionPurpose('in_review', 'work')).toThrow('Only todo tasks');
+  });
+
   it('rejects prefixes that would make implicit PostgreSQL identifiers exceed 63 bytes', () => {
     expect(() => new PgTaskboardStore({
       pool: {} as never,

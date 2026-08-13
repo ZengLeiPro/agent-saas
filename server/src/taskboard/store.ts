@@ -3,6 +3,7 @@ import pg, { type PoolClient } from 'pg';
 
 import {
   TASKBOARD_DEFAULT_PROMPT,
+  TASKBOARD_EXECUTION_PURPOSES,
   TASKBOARD_EXECUTION_STATUSES,
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
@@ -18,6 +19,8 @@ import {
   type TaskBoardTaskMoveInput,
   type TaskBoardTaskPatchInput,
 } from '../../../shared/src/types/taskboard.js';
+import { executionFieldMigrationSql, resolveExecutionPurpose, taskFieldMigrationSql } from './executionFields.js';
+import { moveTaskFromReviewExecution } from './executionTaskMove.js';
 import {
   boardModelMigrationSql,
   boardPromptMigrationSql,
@@ -71,7 +74,6 @@ type PgPool = InstanceType<typeof Pool>;
 
 const DEFAULT_SORT_GAP = 1024;
 const MIN_SORT_GAP = 1e-7;
-
 export { TASKBOARD_TABLE_PREFIX_MAX_LENGTH } from './storeHelpers.js';
 
 export interface PgTaskboardStoreOptions {
@@ -130,6 +132,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           identifier TEXT NOT NULL,
           title TEXT NOT NULL,
           description TEXT NOT NULL DEFAULT '',
+          branch TEXT,
           attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
           status TEXT NOT NULL CHECK (status IN (${TASKBOARD_STATUSES.map(quoteSqlLiteral).join(', ')})),
           priority TEXT NOT NULL DEFAULT 'none' CHECK (priority IN (${TASKBOARD_PRIORITIES.map(quoteSqlLiteral).join(', ')})),
@@ -144,10 +147,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           UNIQUE (board_id, identifier)
         )
       `);
-      await client.query(`
-        ALTER TABLE ${this.tasksTable} ADD COLUMN IF NOT EXISTS model TEXT;
-        ALTER TABLE ${this.tasksTable} ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb
-      `);
+      await client.query(taskFieldMigrationSql(this.tasksTable));
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.commentsTable} (
           id TEXT PRIMARY KEY,
@@ -179,6 +179,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           session_id TEXT NOT NULL,
           status TEXT NOT NULL
             CHECK (status IN (${TASKBOARD_EXECUTION_STATUSES.map(quoteSqlLiteral).join(', ')})),
+          purpose TEXT NOT NULL DEFAULT 'work'
+            CHECK (purpose IN (${TASKBOARD_EXECUTION_PURPOSES.map(quoteSqlLiteral).join(', ')})),
           requested_by TEXT NOT NULL,
           error TEXT,
           started_at TIMESTAMPTZ,
@@ -190,14 +192,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       `);
-      await client.query(`
-        ALTER TABLE ${this.executionsTable}
-          ADD COLUMN IF NOT EXISTS last_reconciled_at TIMESTAMPTZ;
-        ALTER TABLE ${this.executionsTable}
-          ADD COLUMN IF NOT EXISTS reconcile_lease_id TEXT;
-        ALTER TABLE ${this.executionsTable}
-          ADD COLUMN IF NOT EXISTS reconcile_lease_expires_at TIMESTAMPTZ
-      `);
+      await client.query(executionFieldMigrationSql(this.executionsTable));
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.executionOutboxTable} (
           run_id TEXT PRIMARY KEY REFERENCES ${this.executionsTable}(run_id),
@@ -430,6 +425,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         t.identifier ILIKE $${params.length}
         OR t.title ILIKE $${params.length}
         OR t.description ILIKE $${params.length}
+        OR t.branch ILIKE $${params.length}
         OR EXISTS (SELECT 1 FROM unnest(t.labels) AS label WHERE label ILIKE $${params.length})
       )`);
     }
@@ -475,14 +471,15 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       const taskId = randomUUID();
       await client.query(
         `INSERT INTO ${this.tasksTable}
-           (id, board_id, identifier, title, description, attachments, status, priority, labels, sort_order, due_at, model, version)
-         VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,1)`,
+           (id, board_id, identifier, title, description, branch, attachments, status, priority, labels, sort_order, due_at, model, version)
+         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13,1)`,
         [
           taskId,
           boardId,
           `TASK-${taskNumber}`,
           requireText(input.title, 'Task title'),
           input.description ?? '',
+          optionalText(input.branch),
           JSON.stringify(normalizeAttachments(input.attachments)),
           status,
           input.priority ?? 'none',
@@ -512,6 +509,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (
         input.title === undefined
         && input.description === undefined
+        && input.branch === undefined
         && input.attachments === undefined
         && input.priority === undefined
         && input.labels === undefined
@@ -529,6 +527,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (input.description !== undefined) {
         params.push(input.description);
         assignments.push(`description=$${params.length}`);
+      }
+      if (input.branch !== undefined) {
+        params.push(optionalText(input.branch));
+        assignments.push(`branch=$${params.length}`);
       }
       if (input.attachments !== undefined) {
         params.push(JSON.stringify(normalizeAttachments(input.attachments)));
@@ -715,12 +717,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         loaded.boardOwnerUserId,
         input.executionOwnerUserId,
       );
-      if (loaded.task.status !== 'todo') {
-        throw new TaskboardValidationError(
-          'Only todo tasks can be handed to Agent',
-          'TASKBOARD_EXECUTION_REQUIRES_TODO',
-        );
-      }
+      const purpose = resolveExecutionPurpose(loaded.task.status, input.purpose);
       const active = await client.query(
         `SELECT id FROM ${this.executionsTable}
           WHERE task_id=$1 AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
@@ -751,10 +748,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       try {
         const inserted = await client.query(
           `INSERT INTO ${this.executionsTable}
-             (id, task_id, run_id, session_id, status, requested_by)
-           VALUES ($1,$2,$3,$4,'queued',$5)
+             (id, task_id, run_id, session_id, status, purpose, requested_by)
+           VALUES ($1,$2,$3,$4,'queued',$5,$6)
            RETURNING *`,
-          [input.executionId, taskId, input.runId, input.sessionId, identity.ownerUserId],
+          [input.executionId, taskId, input.runId, input.sessionId, purpose, identity.ownerUserId],
         );
         await client.query(
           `INSERT INTO ${this.executionOutboxTable}
@@ -812,6 +809,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     };
   }
 
+  async moveTaskFromExecution(identity: TaskboardIdentity, runId: string, status: 'done' | 'todo'): Promise<TaskBoardTask> {
+    return moveTaskFromReviewExecution(this, identity, runId, status);
+  }
   async claimExecutionDispatch(
     runId: string | undefined,
     leaseId: string,

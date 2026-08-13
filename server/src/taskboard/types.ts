@@ -111,6 +111,11 @@ export interface TaskboardExecutionStore {
     input: TaskboardExecutionClaimInput,
   ): Promise<TaskBoardExecutionStartResult>;
   getExecutionContextByRunId(runId: string): Promise<TaskboardExecutionContext | null>;
+  moveTaskFromExecution(
+    identity: TaskboardIdentity,
+    runId: string,
+    status: Extract<TaskBoardStatus, 'done' | 'todo'>,
+  ): Promise<TaskBoardTask>;
   claimExecutionDispatch(runId: string | undefined, leaseId: string): Promise<TaskboardExecutionDispatch | null>;
   markExecutionDispatchSucceeded(runId: string, leaseId: string): Promise<boolean>;
   retryExecutionDispatch(runId: string, leaseId: string, error: string, delayMs: number): Promise<boolean>;

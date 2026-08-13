@@ -50,6 +50,7 @@ export function TaskDialog({
 }: TaskDialogProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [branch, setBranch] = useState("");
   const [status, setStatus] = useState<TaskBoardStatus>("backlog");
   const [priority, setPriority] = useState<TaskBoardPriority>("none");
   const [labels, setLabels] = useState("");
@@ -63,6 +64,7 @@ export function TaskDialog({
     if (!open) return;
     setTitle("");
     setDescription("");
+    setBranch("");
     setStatus(initialStatus);
     setPriority("none");
     setLabels("");
@@ -89,6 +91,7 @@ export function TaskDialog({
       await onCreate({
         title: normalizedTitle,
         description: description.trim(),
+        ...(branch.trim() ? { branch: branch.trim() } : {}),
         ...(attachments.uploadedFiles.length
           ? { attachments: toTaskBoardAttachments(attachments.uploadedFiles) }
           : {}),
@@ -143,6 +146,17 @@ export function TaskDialog({
               onPaste={(event) => void attachments.handlePaste(event)}
             />
             <TaskAttachmentField upload={attachments} disabled={submitting} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="taskboard-task-branch">工作分支</Label>
+            <Input
+              id="taskboard-task-branch"
+              value={branch}
+              onChange={(event) => setBranch(event.target.value)}
+              placeholder="例如 task/TASK-32-optimize-board"
+              disabled={submitting}
+            />
+            <p className="text-xs text-muted-foreground">可先留空，由 Agent 创建或确认分支后回写。</p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">

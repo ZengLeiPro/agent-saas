@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -89,6 +90,9 @@ export function TenantFormDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{isEdit ? "编辑组织" : "新建组织"}</DialogTitle>
+          <DialogDescription>
+            {isEdit ? "修改组织显示名称。" : "填写组织名称与唯一 slug，创建后即可进入组织配置。"}
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5">

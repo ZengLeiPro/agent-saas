@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ListX, Loader2, MessageSquareDashed, PackageOpen, RefreshCw, Settings, UserPlus } from "lucide-react";
+import { ListX, Loader2, MessageSquareDashed, PackageOpen, Plus, RefreshCw, Settings, UserPlus } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { TenantFormDialog } from "@/components/TenantManager/TenantFormDialog";
+import { useTenants } from "@/components/TenantManager/hooks";
 import { AdminEntityTable, AdminErrorAlert, EmptyState, EntityLink, MetricCard, StatusBadge } from "@/components/PlatformAdmin/common";
 import { navigateAdminSettings, navigatePlatformAdmin } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
@@ -29,10 +31,12 @@ export function TenantsPage({ tenantId }: { tenantId: string | null }) {
 }
 
 function TenantList() {
+  const { createTenant, updateTenant } = useTenants();
   const [items, setItems] = useState<TenantOverviewItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
 
   const load = useCallback(async (mode: "initial" | "refresh" = "refresh") => {
     if (mode === "initial") setLoading(true);
@@ -60,6 +64,10 @@ function TenantList() {
         description="查看各组织的用户规模、近期使用、成本与异常，点击一行可继续排查。"
         actions={
           <>
+            <Button size="sm" onClick={() => setShowCreate(true)}>
+              <Plus className="size-3.5" />
+              新建组织
+            </Button>
             <Button variant="outline" size="sm" onClick={openSettings}>
               <Settings className="size-3.5" />
               组织配置
@@ -92,8 +100,8 @@ function TenantList() {
           <EmptyState
             icon={EntityIcons.org}
             title="还没有任何组织"
-            description="平台上还没有创建组织。在「平台管理 · 组织」里新建后，这里会显示各组织的用量与余额。"
-            action={{ label: "去新建组织", onClick: openSettings }}
+            description="新建组织后，这里会显示各组织的用量与余额。"
+            action={{ label: "新建组织", onClick: () => setShowCreate(true) }}
           />
         }
         onRowClick={(row) => {
@@ -110,6 +118,16 @@ function TenantList() {
           { key: "balance", header: "余额", sortable: true, sortNumeric: true, sortValue: row => row.balanceCredits ?? null, cell: row => <span className="tabular-nums">{formatCredits(row.balanceCredits)}</span> },
           { key: "last", header: "最后活跃", sortable: true, sortNumeric: true, sortValue: row => (row.lastActiveAt ? Date.parse(row.lastActiveAt) || null : null), cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.lastActiveAt)}</span> },
         ]}
+      />
+      <TenantFormDialog
+        open={showCreate}
+        onOpenChange={setShowCreate}
+        editingTenant={null}
+        onCreate={async (input) => {
+          await createTenant(input);
+          await load();
+        }}
+        onUpdate={updateTenant}
       />
     </div>
   );

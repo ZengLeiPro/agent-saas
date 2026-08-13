@@ -189,6 +189,11 @@ export interface TaskBoardCommentCreateInput {
   attachments?: TaskBoardUploadAttachment[];
 }
 
+export interface TaskBoardCommentPatchInput {
+  body: string;
+  expectedVersion: number;
+}
+
 export interface TaskBoardExecutionStartInput {
   expectedVersion: number;
   /** work 从待处理开始实施；review 从待复核开始独立复核。 */

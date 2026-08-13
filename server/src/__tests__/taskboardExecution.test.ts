@@ -221,7 +221,7 @@ describe('TaskboardExecutionCoordinator', () => {
     }));
   });
 
-  it('组织成员发起任务时仍以看板创建者上下文运行', async () => {
+  it('组织成员不能借看板创建者上下文派发 Agent', async () => {
     const member: TaskboardIdentity = {
       tenantId: identity.tenantId,
       ownerUserId: 'user-2',
@@ -233,41 +233,12 @@ describe('TaskboardExecutionCoordinator', () => {
       getExecutionModelContext: vi.fn(async () => ({ boardOwnerUserId: identity.ownerUserId })),
     }, { resolveOwnerIdentity });
 
-    await rig.coordinator.startExecution(member, task.id, { expectedVersion: task.version });
-
-    expect(resolveOwnerIdentity).toHaveBeenCalledWith(identity.ownerUserId);
-    expect(rig.store.claimExecution).toHaveBeenCalledWith(
-      member,
-      task.id,
-      expect.objectContaining({ executionOwnerUserId: identity.ownerUserId }),
-    );
-    expect(rig.sessionCatalog.ensure).toHaveBeenCalledWith(expect.objectContaining({
-      userId: identity.ownerUserId,
-      username: identity.username,
-      workspaceId: `ws_${identity.tenantId}__${identity.ownerUserId}`,
-    }));
-    expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledWith(expect.objectContaining({
-      userId: identity.ownerUserId,
-      tenantId: identity.tenantId,
-    }));
-  });
-
-  it('组织看板创建者账号不可用时拒绝使用发起者上下文兜底', async () => {
-    const member: TaskboardIdentity = {
-      tenantId: identity.tenantId,
-      ownerUserId: 'user-2',
-      username: 'bob',
-      userRole: 'user',
-    };
-    const rig = makeRig({
-      getExecutionModelContext: vi.fn(async () => ({ boardOwnerUserId: identity.ownerUserId })),
-    });
-
     await expect(rig.coordinator.startExecution(
       member,
       task.id,
       { expectedVersion: task.version },
-    )).rejects.toThrow('看板创建者账号不可用');
+    )).rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+    expect(resolveOwnerIdentity).not.toHaveBeenCalled();
     expect(rig.store.claimExecution).not.toHaveBeenCalled();
     expect(rig.sessionCatalog.ensure).not.toHaveBeenCalled();
   });

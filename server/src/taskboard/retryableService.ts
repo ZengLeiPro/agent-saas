@@ -2,6 +2,7 @@ import type {
   TaskBoard,
   TaskBoardComment,
   TaskBoardCommentCreateInput,
+  TaskBoardCommentPatchInput,
   TaskBoardCreateInput,
   TaskBoardExecution,
   TaskBoardExecutionStartResult,
@@ -12,6 +13,7 @@ import type {
   TaskBoardTaskPatchInput,
 } from '../../../shared/src/types/taskboard.js';
 import type {
+  TaskboardBoardSearchFilter,
   TaskboardExecutionClaimInput,
   TaskboardExecutionCompletionInput,
   TaskboardExecutionContext,
@@ -21,8 +23,10 @@ import type {
   TaskboardExecutionStore,
   TaskboardExpectedVersionInput,
   TaskboardIdentity,
+  TaskboardPage,
   TaskboardService,
   TaskboardTaskListFilter,
+  TaskboardTaskSearchFilter,
 } from './types.js';
 
 export interface InitializableTaskboardService extends TaskboardService, TaskboardExecutionStore {
@@ -62,6 +66,17 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return (await this.service()).listBoards(identity, includeArchived);
   }
 
+  async searchBoards(
+    identity: TaskboardIdentity,
+    filter?: TaskboardBoardSearchFilter,
+  ): Promise<TaskboardPage<TaskBoard>> {
+    return (await this.service()).searchBoards(identity, filter);
+  }
+
+  async getBoard(identity: TaskboardIdentity, boardId: string): Promise<TaskBoard> {
+    return (await this.service()).getBoard(identity, boardId);
+  }
+
   async createBoard(identity: TaskboardIdentity, input: TaskBoardCreateInput): Promise<TaskBoard> {
     return (await this.service()).createBoard(identity, input);
   }
@@ -96,6 +111,13 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     filter?: TaskboardTaskListFilter,
   ): Promise<TaskBoardTask[]> {
     return (await this.service()).listTasks(identity, boardId, filter);
+  }
+
+  async searchTasks(
+    identity: TaskboardIdentity,
+    filter?: TaskboardTaskSearchFilter,
+  ): Promise<TaskboardPage<TaskBoardTask>> {
+    return (await this.service()).searchTasks(identity, filter);
   }
 
   async createTask(
@@ -154,6 +176,22 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return (await this.service()).createComment(identity, taskId, input);
   }
 
+  async updateComment(
+    identity: TaskboardIdentity,
+    commentId: string,
+    input: TaskBoardCommentPatchInput,
+  ): Promise<TaskBoardComment> {
+    return (await this.service()).updateComment(identity, commentId, input);
+  }
+
+  async deleteComment(
+    identity: TaskboardIdentity,
+    commentId: string,
+    input: TaskboardExpectedVersionInput,
+  ): Promise<TaskBoardComment> {
+    return (await this.service()).deleteComment(identity, commentId, input);
+  }
+
   async listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
     await this.init();
     return this.target.listExecutions(identity, taskId);
@@ -179,6 +217,24 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
   async getExecutionContextByRunId(runId: string): Promise<TaskboardExecutionContext | null> {
     await this.init();
     return this.target.getExecutionContextByRunId(runId);
+  }
+
+  async updateTaskBranchFromExecution(
+    identity: TaskboardIdentity,
+    runId: string,
+    branch: string | null,
+  ): Promise<TaskBoardTask> {
+    await this.init();
+    return this.target.updateTaskBranchFromExecution(identity, runId, branch);
+  }
+
+  async createTaskFromExecution(
+    identity: TaskboardIdentity,
+    runId: string,
+    input: TaskBoardTaskCreateInput,
+  ): Promise<TaskBoardTask> {
+    await this.init();
+    return this.target.createTaskFromExecution(identity, runId, input);
   }
 
   async moveTaskFromExecution(

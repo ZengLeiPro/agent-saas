@@ -23,7 +23,7 @@ import { deriveStableWorkspaceId } from '../runtime/workspaceIdentity.js';
 import { formatDateTime } from '../utils/timestamp.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import { isInside, resolveWorkspacePath, relativeWorkspacePath } from '../agent/toolRuntimePaths.js';
-import { TaskboardExecutionUnavailableError } from './types.js';
+import { TaskboardExecutionUnavailableError, TaskboardPermissionError } from './types.js';
 export { createTaskboardRuntimeOptions } from './runtimeOptions.js';
 import type {
   TaskboardExecutionContext,
@@ -99,9 +99,10 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     input: TaskBoardExecutionStartInput,
   ): Promise<TaskBoardExecutionStartResult> {
     const modelContext = await this.options.store.getExecutionModelContext(identity, taskId);
-    const executionIdentity = modelContext.boardOwnerUserId === identity.ownerUserId
-      ? identity
-      : this.options.resolveOwnerIdentity?.(modelContext.boardOwnerUserId);
+    if (modelContext.boardOwnerUserId !== identity.ownerUserId) {
+      throw new TaskboardPermissionError('Only the board owner may dispatch an Agent for this board');
+    }
+    const executionIdentity = identity;
     if (!executionIdentity || executionIdentity.tenantId !== identity.tenantId) {
       throw new TaskboardExecutionUnavailableError('看板创建者账号不可用，无法继承其运行上下文');
     }

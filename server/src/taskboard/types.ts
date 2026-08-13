@@ -3,6 +3,7 @@ import type {
   TaskBoardAttachment,
   TaskBoardComment,
   TaskBoardCommentCreateInput,
+  TaskBoardCommentPatchInput,
   TaskBoardCreateInput,
   TaskBoardExecution,
   TaskBoardExecutionStartInput,
@@ -28,11 +29,41 @@ export interface TaskboardIdentity {
   userRole?: "admin" | "user";
 }
 
+export interface TaskboardPage<T> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+  hasMore: boolean;
+}
+
+export interface TaskboardBoardSearchFilter {
+  includeArchived?: boolean;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}
+
 export interface TaskboardTaskListFilter {
   includeArchived?: boolean;
   search?: string;
   statuses?: TaskBoardStatus[];
   priorities?: TaskBoardPriority[];
+}
+
+export interface TaskboardTaskSearchFilter extends TaskboardTaskListFilter {
+  boardId?: string;
+  boardName?: string;
+  labels?: string[];
+  creatorUserId?: string;
+  createdAfter?: string;
+  createdBefore?: string;
+  updatedAfter?: string;
+  updatedBefore?: string;
+  dueAfter?: string;
+  dueBefore?: string;
+  page?: number;
+  pageSize?: number;
 }
 
 export interface TaskboardExpectedVersionInput {
@@ -111,6 +142,16 @@ export interface TaskboardExecutionStore {
     input: TaskboardExecutionClaimInput,
   ): Promise<TaskBoardExecutionStartResult>;
   getExecutionContextByRunId(runId: string): Promise<TaskboardExecutionContext | null>;
+  updateTaskBranchFromExecution(
+    identity: TaskboardIdentity,
+    runId: string,
+    branch: string | null,
+  ): Promise<TaskBoardTask>;
+  createTaskFromExecution(
+    identity: TaskboardIdentity,
+    runId: string,
+    input: TaskBoardTaskCreateInput,
+  ): Promise<TaskBoardTask>;
   moveTaskFromExecution(
     identity: TaskboardIdentity,
     runId: string,
@@ -155,12 +196,15 @@ export interface TaskboardExecutionService {
 
 export interface TaskboardService {
   listBoards(identity: TaskboardIdentity, includeArchived?: boolean): Promise<TaskBoard[]>;
+  searchBoards(identity: TaskboardIdentity, filter?: TaskboardBoardSearchFilter): Promise<TaskboardPage<TaskBoard>>;
+  getBoard(identity: TaskboardIdentity, boardId: string): Promise<TaskBoard>;
   createBoard(identity: TaskboardIdentity, input: TaskBoardCreateInput): Promise<TaskBoard>;
   updateBoard(identity: TaskboardIdentity, boardId: string, input: TaskBoardPatchInput): Promise<TaskBoard>;
   archiveBoard(identity: TaskboardIdentity, boardId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoard>;
   restoreBoard(identity: TaskboardIdentity, boardId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoard>;
 
   listTasks(identity: TaskboardIdentity, boardId: string, filter?: TaskboardTaskListFilter): Promise<TaskBoardTask[]>;
+  searchTasks(identity: TaskboardIdentity, filter?: TaskboardTaskSearchFilter): Promise<TaskboardPage<TaskBoardTask>>;
   createTask(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskBoardTask>;
   getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask>;
   updateTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskPatchInput): Promise<TaskBoardTask>;
@@ -170,6 +214,8 @@ export interface TaskboardService {
 
   listComments(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardComment[]>;
   createComment(identity: TaskboardIdentity, taskId: string, input: TaskBoardCommentCreateInput): Promise<TaskBoardComment>;
+  updateComment(identity: TaskboardIdentity, commentId: string, input: TaskBoardCommentPatchInput): Promise<TaskBoardComment>;
+  deleteComment(identity: TaskboardIdentity, commentId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardComment>;
 }
 
 export class TaskboardNotFoundError extends Error {
@@ -189,6 +235,14 @@ export class TaskboardValidationError extends Error {
   }
 }
 
+export class TaskboardPermissionError extends Error {
+  readonly code = 'TASKBOARD_PERMISSION_DENIED';
+
+  constructor(message = 'Taskboard permission denied') {
+    super(message);
+  }
+}
+
 export class TaskboardExecutionUnavailableError extends Error {
   readonly code = 'TASKBOARD_EXECUTION_UNAVAILABLE';
 
@@ -197,7 +251,7 @@ export class TaskboardExecutionUnavailableError extends Error {
   }
 }
 
-export class TaskboardConflictError<T extends TaskBoard | TaskBoardTask> extends Error {
+export class TaskboardConflictError<T extends TaskBoard | TaskBoardTask | TaskBoardComment> extends Error {
   readonly code = 'TASKBOARD_VERSION_CONFLICT';
   readonly current: T;
 

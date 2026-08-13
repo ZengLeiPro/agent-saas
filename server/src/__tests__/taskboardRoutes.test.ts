@@ -15,6 +15,7 @@ import { createTaskboardRouter, type TaskboardRouterOptions } from '../routes/ta
 import {
   TaskboardConflictError,
   TaskboardNotFoundError,
+  TaskboardPermissionError,
   TaskboardValidationError,
   type TaskboardExecutionService,
   type TaskboardIdentity,
@@ -294,6 +295,45 @@ describe('Taskboard routes', () => {
     expect(await response.json()).toMatchObject({ attachments: [canonical] });
   });
 
+  it('provides paged board/task search and comment update/delete endpoints', async () => {
+    const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
+    const service = makeService(captured);
+    const rig = await makeRig(service, USER, captured);
+
+    const boards = await rig.request('/api/taskboard/boards/search?search=研发&page=1&pageSize=10');
+    expect(boards.status).toBe(200);
+    expect(await boards.json()).toMatchObject({ total: 1, page: 1, pageSize: 10, items: [BOARD] });
+
+    const tasks = await rig.request('/api/taskboard/tasks/search?search=看板&status=backlog&labels=backend&pageSize=5');
+    expect(tasks.status).toBe(200);
+    expect(await tasks.json()).toMatchObject({ total: 1, pageSize: 5, items: [TASK] });
+
+    const updated = await rig.request(`/api/taskboard/comments/${COMMENT.id}`, patchJson({
+      body: '更新后的评论', expectedVersion: COMMENT.version,
+    }));
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({ body: '更新后的评论', version: 2 });
+
+    const deleted = await rig.request(`/api/taskboard/comments/${COMMENT.id}`, {
+      ...postJson({ expectedVersion: 2 }), method: 'DELETE',
+    });
+    expect(deleted.status).toBe(200);
+  });
+
+  it('maps comment permission denial to 403', async () => {
+    const service = makeService({ identities: [], taskFilters: [], createBoards: [] });
+    service.updateComment = async () => {
+      throw new TaskboardPermissionError('Only the comment author or board owner may manage this comment');
+    };
+    const rig = await makeRig(service, USER);
+
+    const response = await rig.request(`/api/taskboard/comments/${COMMENT.id}`, patchJson({
+      body: '越权修改', expectedVersion: 1,
+    }));
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+  });
+
   it('maps not found, domain validation, CAS with current object, and database faults', async () => {
     const service = makeService({ identities: [], taskFilters: [], createBoards: [] });
     service.getTask = async () => { throw new TaskboardNotFoundError('Task not found'); };
@@ -326,6 +366,11 @@ function makeService(captured: Captured): TaskboardService {
   const remember = (identity: TaskboardIdentity) => captured.identities.push(identity);
   return {
     async listBoards(identity) { remember(identity); return [BOARD]; },
+    async searchBoards(identity, filter = {}) {
+      remember(identity);
+      return { items: [BOARD], page: filter.page ?? 1, pageSize: filter.pageSize ?? 20, total: 1, hasMore: false };
+    },
+    async getBoard(identity) { remember(identity); return BOARD; },
     async createBoard(identity, input) { remember(identity); captured.createBoards.push(input); return BOARD; },
     async updateBoard(identity) { remember(identity); return BOARD; },
     async archiveBoard(identity) { remember(identity); return { ...BOARD, version: 2, archivedAt: BOARD.updatedAt }; },
@@ -335,6 +380,10 @@ function makeService(captured: Captured): TaskboardService {
       captured.taskFilters.push(filter);
       return [TASK];
     },
+    async searchTasks(identity, filter = {}) {
+      remember(identity);
+      return { items: [TASK], page: filter.page ?? 1, pageSize: filter.pageSize ?? 20, total: 1, hasMore: false };
+    },
     async createTask(identity) { remember(identity); return TASK; },
     async getTask(identity) { remember(identity); return TASK; },
     async updateTask(identity) { remember(identity); return TASK; },
@@ -343,6 +392,11 @@ function makeService(captured: Captured): TaskboardService {
     async restoreTask(identity) { remember(identity); return { ...TASK, version: 2 }; },
     async listComments(identity) { remember(identity); return [COMMENT]; },
     async createComment(identity) { remember(identity); return COMMENT; },
+    async updateComment(identity, _commentId, input) {
+      remember(identity);
+      return { ...COMMENT, body: input.body, version: input.expectedVersion + 1 };
+    },
+    async deleteComment(identity) { remember(identity); return COMMENT; },
   };
 }
 

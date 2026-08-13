@@ -26,6 +26,7 @@ describePg('PgTaskboardStore contract', () => {
   const alice: TaskboardIdentity = { tenantId: 'tenant-a', ownerUserId: 'alice-id', username: 'alice' };
   const aliceOtherTenant: TaskboardIdentity = { tenantId: 'tenant-b', ownerUserId: 'alice-id', username: 'alice' };
   const admin: TaskboardIdentity = { tenantId: 'tenant-a', ownerUserId: 'admin-id', username: 'admin' };
+  const bob: TaskboardIdentity = { tenantId: 'tenant-a', ownerUserId: 'bob-id', username: 'bob' };
 
   const dispatch = (executionId: string, runId: string, sessionId: string) => ({
     version: 1 as const,
@@ -140,6 +141,67 @@ describePg('PgTaskboardStore contract', () => {
       name: board.name,
       visibility: 'organization',
     })).rejects.toMatchObject({ code: 'TASKBOARD_BOARD_NAME_EXISTS' });
+  });
+
+  it('paginates board and cross-board task search without leaking tenants', async () => {
+    const privateBoard = await store.createBoard(alice, { name: '搜索私有看板' });
+    const organizationBoard = await store.createBoard(alice, {
+      name: '搜索组织看板', visibility: 'organization',
+    });
+    const foreignBoard = await store.createBoard(aliceOtherTenant, {
+      name: '搜索外租户看板', visibility: 'organization',
+    });
+    await store.createTask(alice, privateBoard.id, {
+      title: '搜索目标 A', labels: ['backend'], priority: 'high', status: 'todo',
+    });
+    await store.createTask(admin, organizationBoard.id, {
+      title: '搜索目标 B', labels: ['backend', 'shared'], priority: 'high', status: 'todo',
+    });
+    await store.createTask(aliceOtherTenant, foreignBoard.id, {
+      title: '搜索目标 C', labels: ['backend'], priority: 'high', status: 'todo',
+    });
+
+    const firstPage = await store.searchBoards(alice, { search: '搜索', page: 1, pageSize: 1 });
+    expect(firstPage).toMatchObject({ page: 1, pageSize: 1, total: 2, hasMore: true });
+    expect(firstPage.items).toHaveLength(1);
+
+    const aliceTasks = await store.searchTasks(alice, {
+      search: '搜索目标', statuses: ['todo'], priorities: ['high'], labels: ['backend'],
+      page: 1, pageSize: 10,
+    });
+    expect(aliceTasks.items.map((item) => item.title).sort()).toEqual(['搜索目标 A', '搜索目标 B']);
+    expect(aliceTasks.total).toBe(2);
+
+    const adminTasks = await store.searchTasks(admin, { search: '搜索目标', page: 1, pageSize: 10 });
+    expect(adminTasks.items.map((item) => item.title)).toEqual(['搜索目标 B']);
+    const foreignTasks = await store.searchTasks(aliceOtherTenant, { search: '搜索目标', page: 1, pageSize: 10 });
+    expect(foreignTasks.items.map((item) => item.title)).toEqual(['搜索目标 C']);
+  });
+
+  it('allows only comment authors or board owners to edit/delete with CAS', async () => {
+    const board = await store.createBoard(alice, {
+      name: '评论权限', visibility: 'organization',
+    });
+    const task = await store.createTask(alice, board.id, { title: '评论任务' });
+    const comment = await store.createComment(admin, task.id, { body: '管理员写的评论' });
+
+    await expect(store.updateComment(bob, comment.id, {
+      body: '越权修改', expectedVersion: comment.version,
+    })).rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+
+    const edited = await store.updateComment(admin, comment.id, {
+      body: '作者修改', expectedVersion: comment.version,
+    });
+    expect(edited).toMatchObject({ body: '作者修改', version: 2 });
+    await expect(store.updateComment(admin, comment.id, {
+      body: '旧版本覆盖', expectedVersion: comment.version,
+    })).rejects.toBeInstanceOf(TaskboardConflictError);
+
+    await expect(store.deleteComment(bob, comment.id, { expectedVersion: edited.version }))
+      .rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+    await expect(store.deleteComment(alice, comment.id, { expectedVersion: edited.version }))
+      .resolves.toMatchObject({ id: comment.id });
+    await expect(store.listComments(alice, task.id)).resolves.toEqual([]);
   });
 
   it('stores the default board prompt and allows it to be customized', async () => {

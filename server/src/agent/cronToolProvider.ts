@@ -4,6 +4,7 @@ import {
   TASKBOARD_EXECUTION_PURPOSES,
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
+  TASKBOARD_VISIBILITIES,
 } from '../../../shared/src/types/taskboard.js';
 import type { CronService } from '../cron/service.js';
 import { validateCronExpr } from '../cron/scheduler.js';
@@ -18,6 +19,8 @@ import {
 } from '../cron/types.js';
 import {
   invokeTaskboardAction,
+  TASKBOARD_MANAGE_ACTIONS,
+  TASKBOARD_READ_ACTIONS,
   type TaskboardManageInput,
   type TaskboardToolOptions,
 } from './taskboardToolActions.js';
@@ -48,7 +51,7 @@ import type {
  */
 
 type CronManageInput = TaskboardManageInput & {
-  action: 'list' | 'create' | 'update' | 'delete' | 'run' | 'move' | 'execute';
+  action: string;
   target?: 'cron' | 'taskboard';
   name?: string;
   enabled?: boolean;
@@ -57,28 +60,50 @@ type CronManageInput = TaskboardManageInput & {
   notify?: unknown;
 };
 
+const CRON_MANAGE_ACTIONS = ['delete', 'run', ...TASKBOARD_MANAGE_ACTIONS] as const;
+
+const dateTimeSchema = z.string().datetime({ offset: true });
 const cronManageSchema = z.object({
-  target: z.enum(['cron', 'taskboard']).optional().describe('操作对象。默认 cron；taskboard 表示个人任务看板。'),
-  action: z.enum(['list', 'create', 'update', 'delete', 'run', 'move', 'execute']).describe('cron 支持 list/create/update/delete/run；taskboard 支持 list/create/update/move/execute。'),
-  id: z.string().optional().describe('cron job 或看板任务 id。'),
-  name: z.string().min(1).optional().describe('cron create 必填。'),
-  description: z.string().optional(),
+  target: z.enum(['cron', 'taskboard']).optional().describe('操作对象。默认 cron；taskboard 由服务端按当前用户与租户鉴权。'),
+  action: z.enum(CRON_MANAGE_ACTIONS).describe('cron 支持 list/create/update/delete/run；taskboard 支持 board/task/comment/execution 资源 action，并兼容旧 Execution action。'),
+  id: z.string().optional().describe('cron job、旧 taskboard 任务或评论 id。'),
+  boardId: z.string().optional().describe('taskboard 看板 id。'),
+  taskId: z.string().optional().describe('taskboard 任务 id。'),
+  name: z.string().trim().min(1).max(120).optional().describe('cron 或 taskboard 看板名称。'),
+  title: z.string().trim().min(1).max(240).optional(),
+  description: z.string().max(20_000).optional(),
+  prompt: z.string().max(20_000).optional(),
+  visibility: z.enum(TASKBOARD_VISIBILITIES).optional(),
+  body: z.string().trim().min(1).max(20_000).optional().describe('评论正文。'),
   enabled: z.boolean().optional().describe('cron 是否启用。create 时默认 true。'),
   schedule: cronScheduleSchema.optional().describe('cron create 必填。kind=cron：{expr: "0 9 * * *", tz: "Asia/Shanghai"}；kind=every：{everyMs}；kind=at：{atMs: epoch 毫秒}。'),
   payload: z.union([cronPayloadSchema, cronPayloadPatchSchema]).optional().describe('cron create 必填。kind=agentTurn：{message}；kind=systemEvent：{text}。'),
   notify: notifyConfigSchema.optional().describe('cron 完成后的结果推送配置。'),
-  boardId: z.string().optional().describe('taskboard create/list 任务时的看板 id。'),
-  title: z.string().trim().min(1).max(240).optional().describe('taskboard create/update 的标题。'),
-  branch: z.string().trim().min(1).max(512).nullable().optional().describe('taskboard 工作分支；update 传 null 清除。'),
-  status: z.enum(TASKBOARD_STATUSES).optional().describe('taskboard create/move/list 的状态。'),
-  priority: z.enum(TASKBOARD_PRIORITIES).optional().describe('taskboard create/update/list 的优先级。'),
+  branch: z.string().trim().min(1).max(512).nullable().optional(),
+  status: z.enum(TASKBOARD_STATUSES).optional(),
+  statuses: z.array(z.enum(TASKBOARD_STATUSES)).max(TASKBOARD_STATUSES.length).optional(),
+  priority: z.enum(TASKBOARD_PRIORITIES).optional(),
+  priorities: z.array(z.enum(TASKBOARD_PRIORITIES)).max(TASKBOARD_PRIORITIES.length).optional(),
   labels: z.array(z.string().trim().min(1).max(64)).max(20).optional(),
-  dueAt: z.string().datetime({ offset: true }).nullable().optional(),
+  dueAt: dateTimeSchema.nullable().optional(),
   model: z.string().trim().min(1).max(256).nullable().optional(),
-  purpose: z.enum(TASKBOARD_EXECUTION_PURPOSES).optional().describe('taskboard execute 用途；in_review 默认 review，否则默认 work。'),
-  search: z.string().max(240).optional().describe('taskboard list 任务关键词。'),
+  purpose: z.enum(TASKBOARD_EXECUTION_PURPOSES).optional(),
+  search: z.string().max(500).optional(),
+  boardName: z.string().trim().max(120).optional(),
+  creatorUserId: z.string().trim().min(1).max(128).optional(),
+  createdAfter: dateTimeSchema.optional(),
+  createdBefore: dateTimeSchema.optional(),
+  updatedAfter: dateTimeSchema.optional(),
+  updatedBefore: dateTimeSchema.optional(),
+  dueAfter: dateTimeSchema.optional(),
+  dueBefore: dateTimeSchema.optional(),
   includeArchived: z.boolean().optional(),
-  dispatch: z.boolean().optional().describe('taskboard create 时立即派发给新的 work Agent。'),
+  expectedVersion: z.number().int().min(1).optional().describe('taskboard CAS 版本；资源写操作必填。'),
+  previousTaskId: z.string().min(1).max(128).optional(),
+  nextTaskId: z.string().min(1).max(128).optional(),
+  page: z.number().int().min(1).optional(),
+  pageSize: z.number().int().min(1).max(100).optional(),
+  dispatch: z.boolean().optional().describe('task.create 或兼容 create 时立即派发 work Agent。'),
 });
 
 export const cronManageToolDescriptor: ToolDescriptor<CronManageInput> = {
@@ -95,10 +120,19 @@ export const cronManageToolDescriptor: ToolDescriptor<CronManageInput> = {
   resolveCallPolicy: (input) => {
     if (!input || typeof input !== 'object') return undefined;
     const { action, target, dispatch } = input as { action?: unknown; target?: unknown; dispatch?: unknown };
-    if (action === 'list') return { risk: 'safe' };
-    if (target === 'taskboard' && action !== 'execute' && dispatch !== true) {
-      return { risk: 'workspace_write' };
-    }
+    if (target !== 'taskboard' && action === 'list') return { risk: 'safe' };
+    if (
+      target === 'taskboard'
+      && typeof action === 'string'
+      && TASKBOARD_READ_ACTIONS.includes(action as (typeof TASKBOARD_READ_ACTIONS)[number])
+    ) return { risk: 'safe' };
+    if (
+      target === 'taskboard'
+      && action !== 'execute'
+      && action !== 'task.dispatch'
+      && action !== 'comment.delete'
+      && dispatch !== true
+    ) return { risk: 'workspace_write' };
     return undefined;
   },
 };
@@ -111,9 +145,11 @@ interface CronIdentity {
   realName?: string;
 }
 
-/** 会话归属者优先；所有任务操作都作用于会话主人自己的资源。 */
-function resolveIdentity(context?: ToolCallContext): CronIdentity | undefined {
-  const identity = context?.channelContext?.sessionOwner ?? context?.channelContext?.user;
+/** cron 沿用会话归属者语义；taskboard 普通管理必须优先使用当前调用用户。 */
+function resolveIdentity(context?: ToolCallContext, currentCallerFirst = false): CronIdentity | undefined {
+  const identity = currentCallerFirst
+    ? context?.channelContext?.user ?? context?.channelContext?.sessionOwner
+    : context?.channelContext?.sessionOwner ?? context?.channelContext?.user;
   if (!identity?.id || !identity.username) return undefined;
   return {
     id: identity.id,
@@ -183,9 +219,9 @@ export class CronToolProvider implements ToolProvider {
 
   async invoke(call: AuthorizedToolCall, context: ToolCallContext): Promise<ToolResult | undefined> {
     if (call.toolId !== cronManageToolDescriptor.id) return undefined;
-    const identity = resolveIdentity(context);
-    if (!identity) throw new Error('缺少当前用户身份，无法访问任务');
     const input = cronManageSchema.parse(call.input ?? {}) as CronManageInput;
+    const identity = resolveIdentity(context, input.target === 'taskboard');
+    if (!identity) throw new Error('缺少当前用户身份，无法访问任务');
     const taskboardRun = context.runId?.startsWith('taskboard-') === true;
     if (taskboardRun && input.target !== 'taskboard') {
       throw new Error('任务看板 Agent 只能使用 target=taskboard');
@@ -198,7 +234,6 @@ export class CronToolProvider implements ToolProvider {
     if (taskboardRun && !execution) throw new Error('任务看板执行上下文不存在');
 
     if (input.target === 'taskboard') {
-      if (!taskboardRun) throw new Error('任务看板域只允许任务看板 Agent Execution 调用');
       if (!this.options.taskboard) throw new Error('任务看板服务未启用');
       const tenantId = identity.tenantId?.trim();
       if (!tenantId) throw new Error('缺少当前用户组织身份，无法访问任务看板');

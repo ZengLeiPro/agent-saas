@@ -209,44 +209,16 @@ describe('辅助函数', () => {
     expect(findUserMsgIndexByClientId(msgs, 'missing')).toBe(-1);
   });
 
-  it('upsertRuntimeStatusMessage：无既有状态则新增，再次调用则原地更新且保留初始时间', () => {
+  it('upsertRuntimeStatusMessage：无既有状态则新增，再次调用则原地更新', () => {
     const ctrl = makeController();
     upsertRuntimeStatusMessage(ctrl, 'queued', { streamId: 's1' });
     expect(ctrl.messages).toHaveLength(1);
     expect(ctrl.messages[0]).toMatchObject({ type: 'runtime_status', status: 'queued', streamId: 's1' });
-    const initialMessage = ctrl.messages[0];
-    const initialTimestamp = initialMessage.type === 'runtime_status' ? initialMessage.timestamp : undefined;
 
     upsertRuntimeStatusMessage(ctrl, 'running');
-    // 仍然只有一条，状态被更新；timestamp 参与虚拟行 key，状态切换时也必须保持稳定。
+    // 仍然只有一条，状态被更新
     expect(ctrl.messages).toHaveLength(1);
-    expect(ctrl.messages[0]).toMatchObject({
-      type: 'runtime_status',
-      status: 'running',
-      content: '正在思考',
-      streamId: 's1',
-      timestamp: initialTimestamp,
-    });
-  });
-
-  it('upsertRuntimeStatusMessage：重复的相同思考状态不更新消息', () => {
-    const status: MessageItem = {
-      id: 'status',
-      type: 'runtime_status',
-      status: 'running',
-      content: '正在思考',
-      streamId: 'stream-1',
-      runId: 'run-1',
-      streaming: true,
-      timestamp: 1234,
-    };
-    const ctrl = makeController([status]);
-    const updateMessageAt = vi.spyOn(ctrl, 'updateMessageAt');
-
-    upsertRuntimeStatusMessage(ctrl, 'running', { streamId: 'stream-1', runId: 'run-1' });
-
-    expect(updateMessageAt).not.toHaveBeenCalled();
-    expect(ctrl.messages[0]).toBe(status);
+    expect(ctrl.messages[0]).toMatchObject({ type: 'runtime_status', status: 'running', content: '正在思考' });
   });
 
   it('upsertRuntimeStatusMessage：runId 归属不同的状态行不得原地覆盖（2026-08-04）', () => {

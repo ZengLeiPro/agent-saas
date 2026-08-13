@@ -6,6 +6,7 @@
 import type { MessageItem, MessageItemInput } from '../types/message';
 import type { WsEvent } from '../types/ws';
 import { formatRuntimeFailureMessage, isInsufficientCreditsFailure } from './runtimeErrorMessage';
+import { resolveRuntimeStatusPatch, type RuntimeStatus, type RuntimeStatusOptions } from './runtimeStatusTransition';
 import { normalizeToolPresentation } from './toolPresentation';
 import { normalizeToolResultMetadata } from './toolResultMetadata';
 
@@ -65,31 +66,10 @@ export interface MessagesController {
   triggerScroll: () => void;
 }
 
-function runtimeStatusText(status: Extract<MessageItem, { type: "runtime_status" }>["status"]): string {
-  switch (status) {
-    case "sending":
-      return "正在发送消息";
-    case "queued":
-      return "已进入队列";
-    case "running":
-      return "正在思考";
-    case "waiting_hand":
-      return "正在准备工作区";
-    case "waiting_approval":
-      return "等待授权";
-    case "waiting_user":
-      return "等待补充信息";
-    case "reconnecting":
-      return "正在恢复连接";
-    default:
-      return "正在处理";
-  }
-}
-
 export function upsertRuntimeStatusMessage(
   msg: MessagesController,
-  status: Extract<MessageItem, { type: "runtime_status" }>["status"],
-  options: { content?: string; streamId?: string; runId?: string } = {},
+  status: RuntimeStatus,
+  options: RuntimeStatusOptions = {},
 ): void {
   const msgs = msg.messagesRef.current;
   let idx = -1;
@@ -105,44 +85,18 @@ export function upsertRuntimeStatusMessage(
     }
     if (candidate.type === "text" || candidate.type === "thinking" || candidate.type === "tool_use") break;
   }
-  const content = options.content ?? runtimeStatusText(status);
+  const candidate = idx >= 0 ? msgs[idx] : undefined;
+  const current = candidate?.type === "runtime_status" ? candidate : undefined;
+  // timestamp 参与虚拟行 key，状态切换与重复事件都不能刷新它。
+  const patch = resolveRuntimeStatusPatch(current, status, options);
+  if (!patch) return;
   if (idx >= 0) {
-    const current = msgs[idx];
-    if (current.type !== "runtime_status") return;
-    const streamId = options.streamId ?? current.streamId;
-    const runId = options.runId ?? current.runId;
-    // 相同 lifecycle 事件可能被 active_stream / session_status 重复投递。无可见变化时
-    // 不刷新消息与 timestamp：timestamp 参与虚拟行 key，否则会重测高度并重复滚底。
-    if (
-      current.status === status
-      && current.content === content
-      && current.streamId === streamId
-      && current.runId === runId
-      && current.streaming === true
-    ) return;
     msg.updateMessageAt(idx, (message) =>
-      message.type === "runtime_status"
-        ? {
-            ...message,
-            status,
-            content,
-            ...(streamId ? { streamId } : {}),
-            ...(runId ? { runId } : {}),
-            streaming: true,
-          }
-        : message
+      message.type === "runtime_status" ? { ...message, ...patch } : message
     );
     return;
   }
-  msg.addMessage({
-    type: "runtime_status",
-    status,
-    content,
-    ...(options.streamId ? { streamId: options.streamId } : {}),
-    ...(options.runId ? { runId: options.runId } : {}),
-    streaming: true,
-    timestamp: Date.now(),
-  });
+  msg.addMessage({ type: "runtime_status", ...patch, timestamp: Date.now() });
 }
 
 export function removeRuntimeStatusMessages(msg: MessagesController): void {

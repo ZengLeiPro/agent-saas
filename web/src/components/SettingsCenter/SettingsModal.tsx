@@ -50,7 +50,6 @@ import type { CanonicalSettingsSectionId, SettingsSectionId } from "@/types/sett
 import { SETTINGS_GROUP_LABELS, SETTINGS_SECTIONS } from "@/components/SettingsCenter/settingsConfig";
 
 export { SETTINGS_SECTIONS } from "@/components/SettingsCenter/settingsConfig";
-
 const SETTINGS_NAV_ITEM_SELECTED =
   "relative bg-brand-accent-soft text-foreground font-semibold " +
   "before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2 " +
@@ -485,7 +484,6 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
   }, [draftPhone, phoneCode, updatePhone]);
 
   const userId = user?.id || user?.username || "未知";
-
   const copyUserId = useCallback(async () => {
     await navigator.clipboard.writeText(userId);
     setCopiedUserId(true);

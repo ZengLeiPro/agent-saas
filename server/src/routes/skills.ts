@@ -23,7 +23,7 @@ import { z } from 'zod';
 import { requireAdmin, requirePlatformAdmin, isPlatformAdmin } from '../auth/middleware.js';
 import { hasPlatformCapability } from '../auth/platformGovernance.js';
 import { auditLog } from '../data/login-logs/index.js';
-import { SkillSelectionVersionConflictError, type SkillConfigStore } from '../data/skills/store.js';
+import type { SkillConfigStore } from '../data/skills/store.js';
 import type { PlatformSkillConfig, TenantSkillRule } from '../data/skills/types.js';
 import {
   scanPoolSkillsAsync,
@@ -41,6 +41,7 @@ import type { UserInfo, UserRecord } from '../data/users/types.js';
 type SkillUser = Pick<UserInfo, 'id' | 'username' | 'role' | 'tenantId'>;
 import { serverLogger } from '../utils/logger.js';
 import type { SkillMaterializationCoordinator } from '../workspace/materialization/types.js';
+import { isSkillSelectionPreferenceWrite, registerSkillSelectionRoute, setUserSkillSelected, userSkillSelectionState } from './skillSelection.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -69,8 +70,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
 
   router.use(async (req, res, next) => {
     const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
-    const isSelectionPreferenceWrite = req.method === 'PUT'
-      && /^\/me\/skills\/[^/]+\/selection$/.test(req.path);
+    const isSelectionPreferenceWrite = isSkillSelectionPreferenceWrite(req.method, req.path);
     if (!isMutation || isSelectionPreferenceWrite || req.path === '/sync' || !deps.legacyWriteGate) return next();
     try {
       await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
@@ -103,18 +103,6 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
 
   async function getPoolSkillIds(): Promise<Set<string>> {
     return new Set((await scanPoolSkillsAsync(poolDir)).map(s => s.id));
-  }
-
-  async function setUserSkillSelected(username: string, skillId: string, enabled: boolean): Promise<void> {
-    if (typeof skillConfigStore.setUserSkillSelected === 'function') {
-      await skillConfigStore.setUserSkillSelected(username, skillId, enabled);
-      return;
-    }
-    const current = skillConfigStore.getUserSelectedSkills(username);
-    const next = enabled
-      ? [...new Set([...current, skillId])]
-      : current.filter(id => id !== skillId);
-    await skillConfigStore.setUserSelectedSkills(username, next);
   }
 
   async function getKnownSystemSkillIds(): Promise<Set<string>> {
@@ -442,7 +430,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       if (!dir) return;
       // 上传即启用：把新 skillId 追加到用户 selection，保持"上传立刻可用"的直觉体验。
       // 与前端「导入后 refresh 拉回列表看到 Switch 已开」呼应；用户之后仍可自由关闭。
-      await setUserSkillSelected(username, skillId, true);
+      await setUserSkillSelected(skillConfigStore, username, skillId, true);
       auditLog(req, 'skill_custom_uploaded', `${username}/${skillId}`);
       return res.json({ ok: true, skill: { id: skillId, name: meta.name, description: meta.description } });
     }
@@ -1227,60 +1215,8 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     }
   });
 
-  /** PUT /me/skills/:skillId/document — 当前用户编辑自己的自建 skill 文档 */
-  const skillSelectionSchema = z.object({
-    enabled: z.boolean(),
-    expectedVersion: z.number().int().nonnegative(),
-  }).strict();
-
-  /** PUT /me/skills/:skillId/selection — 原子启用/停用单个 Skill，避免整组选项覆盖。 */
-  router.put('/me/skills/:skillId/selection', async (req, res) => {
-    const username = req.user?.username;
-    if (!username) return res.status(401).json({ error: 'Not authenticated' });
-    const user = userStore.findByUsername(username);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    const skillId = safeName(req.params.skillId);
-    if (!skillId) return res.status(400).json({ error: 'Invalid skillId' });
-    const parsed = skillSelectionSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Invalid selection', details: parsed.error.format() });
-
-    const allowed = await getSelectableSkillIdsForUser(user);
-    if (!allowed.has(skillId)) {
-      return res.status(403).json({
-        error: `技能“${skillId}”未向当前用户开放，无法修改选择`,
-        code: 'SKILL_NOT_SELECTABLE',
-      });
-    }
-    try {
-      const selection = await skillConfigStore.updateUserSkillSelection(
-        username,
-        skillId,
-        parsed.data.enabled,
-        parsed.data.expectedVersion,
-      );
-      auditLog(req, 'skill_user_selections_updated', `${username}/${skillId}: ${parsed.data.enabled ? 'enabled' : 'disabled'}`);
-      return res.json({
-        ok: true,
-        skillId,
-        selected: parsed.data.enabled,
-        selectionVersion: selection.revision,
-      });
-    } catch (error) {
-      if (error instanceof SkillSelectionVersionConflictError) {
-        return res.status(409).json({
-          error: '技能选择已在其他页面更新，已同步服务端最新状态，请重试',
-          code: 'SKILL_SELECTION_VERSION_CONFLICT',
-          current: {
-            skillId,
-            selected: error.selectedSkills.includes(skillId),
-            selectionVersion: error.revision,
-          },
-        });
-      }
-      serverLogger.error(`PUT /me/skills/${skillId}/selection error: ${error}`);
-      return res.status(500).json({ error: '更新技能选择失败' });
-    }
-  });
+  /** 原子启用/停用单个 Skill，避免整组选项覆盖。 */
+  registerSkillSelectionRoute(router, { skillConfigStore, userStore, safeName, getSelectableSkillIdsForUser });
 
   router.put('/me/skills/:skillId/document', async (req, res) => {
     const username = req.user?.username;
@@ -1366,7 +1302,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     try {
       await archiveDeletedDirectory(skillDir);
       // 从 selection 中移除，避免 dispatch listForUser / effective 集合出现孤儿 id
-      await setUserSkillSelected(username, skillId, false);
+      await setUserSkillSelected(skillConfigStore, username, skillId, false);
       auditLog(req, 'skill_custom_deleted', `${username}/${skillId}`);
       res.json({ ok: true });
     } catch (err) {
@@ -1418,14 +1354,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
 
   async function buildUserSkillsResponse(user: SkillUser) {
     const poolSkills = await scanPoolSkillsAsync(poolDir);
-    const selected = new Set(skillConfigStore.getUserSelectedSkills(user.username));
-    const selectionVersion = typeof skillConfigStore.getUserSelectionRevision === 'function'
-      ? skillConfigStore.getUserSelectionRevision(user.username)
-      : undefined;
-    const selectionState = (skillId: string) => ({
-      selected: selected.has(skillId),
-      ...(selectionVersion === undefined ? {} : { selectionVersion }),
-    });
+    const selectionState = userSkillSelectionState(skillConfigStore, user.username);
     const poolIds = await getKnownSystemSkillIds();
     const tenantOwnIds = await getTenantOwnSkillIds(user.tenantId);
 

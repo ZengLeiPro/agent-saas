@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/apiBase';
 import { authFetch } from '@/lib/authFetch';
 import { TOKEN_KEY } from '@/lib/constants';
 
@@ -110,7 +111,7 @@ export async function unsubscribeCurrentBrowserPush(): Promise<void> {
 
   // 先发起服务端删除，不让 Service Worker API 异常阻塞旧账号解绑；也不走全局 401 回调。
   if (binding?.id && token) {
-    void fetch(`/api/web-push/subscriptions/${encodeURIComponent(binding.id)}`, {
+    void fetch(apiUrl(`/api/web-push/subscriptions/${encodeURIComponent(binding.id)}`), {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
       keepalive: true,

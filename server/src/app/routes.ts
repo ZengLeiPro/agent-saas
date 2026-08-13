@@ -72,6 +72,7 @@ import { createToolControlsAdminRouter } from "../routes/toolControlsAdmin.js";
 import { createConnectorDictionaryAdminRouter } from "../routes/connectorDictionaryAdmin.js";
 import { createConnectorDictionaryOrgRouter } from "../routes/connectorDictionaryOrg.js";
 import { createImageGenPricingAdminRouter } from "../routes/imageGenPricingAdmin.js";
+import { createAudioTranscribeAdminRouter } from "../routes/audioTranscribeAdmin.js";
 import { createEgressConfigAdminRouter } from "../routes/egressConfigAdmin.js";
 import { createMemoryPollingAdminRouter } from "../routes/memoryPollingAdmin.js";
 import { createSystemPromptsAdminRouter } from "../routes/systemPromptsAdmin.js";
@@ -431,6 +432,17 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       onPricingUpdated: (pricing) => configureImageGenPricing(pricing),
       validateImageGenToolsConfig: runtime.validateImageGenToolsConfig,
       onImageGenToolsUpdated: runtime.updateImageGenToolsConfig,
+    }),
+  );
+  // AudioTranscribe 服务配置与固定按次定价：SecretVault 托管凭据，保存后热更新。
+  app.use(
+    "/api/admin/audio-transcribe",
+    createAudioTranscribeAdminRouter({
+      processCwd,
+      config,
+      secretVault: runtime.secretVault,
+      validate: runtime.validateAudioTranscribeConfig,
+      onUpdated: runtime.updateAudioTranscribeConfig,
     }),
   );
   // 网络出口（代理 / 国内镜像源，2026-07-25）：server 段落盘即生效（dispatcher 按

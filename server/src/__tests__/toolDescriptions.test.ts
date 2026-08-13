@@ -30,6 +30,7 @@ import {
 } from '../agent/toolRuntime.js';
 import { backgroundTaskToolDescriptor } from '../runtime/background/backgroundTaskToolProvider.js';
 import { generateImageToolDescriptor } from '../agent/imageGenToolProvider.js';
+import { audioTranscribeToolDescriptor } from '../agent/audioTranscribeToolProvider.js';
 import { webFetchToolDescriptor, webSearchToolDescriptor } from '../agent/webToolProvider.js';
 import { sessionContextToolDescriptor } from '../runtime/sessionContext.js';
 
@@ -51,8 +52,9 @@ const ALL_TOOLS = [
   // web —— 2
   webSearchToolDescriptor,
   webFetchToolDescriptor,
-  // media —— 1
+  // media —— 2
   generateImageToolDescriptor,
+  audioTranscribeToolDescriptor,
   // skill / memory —— 3
   skillToolDescriptor,
   memorySearchToolDescriptor,
@@ -60,8 +62,8 @@ const ALL_TOOLS = [
 ] as const;
 
 describe('Tool descriptions', () => {
-  it('covers all 16 tools (regression: 漏 import 立即可见)', () => {
-    expect(ALL_TOOLS).toHaveLength(16);
+  it('covers all 17 tools (regression: 漏 import 立即可见)', () => {
+    expect(ALL_TOOLS).toHaveLength(17);
     const ids = ALL_TOOLS.map((t) => t.id);
     expect(new Set(ids).size).toBe(ids.length); // 无重复 id
   });

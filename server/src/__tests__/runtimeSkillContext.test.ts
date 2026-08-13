@@ -6,6 +6,7 @@ import {
   resolveSkillContextUsername,
 } from '../runtime/rawRuntimeRunDispatch.js';
 import type { RawRuntimeRunDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
+import { buildAudioTranscribeSkillFilter } from '../runtime/audioTranscribeRuntime.js';
 import type { HandRecord } from '../runtime/handStore.js';
 import type { ChannelContext } from '../types/index.js';
 
@@ -123,6 +124,34 @@ describe('buildRuntimeSkillFilter', () => {
     } satisfies HandRecord]);
 
     expect(filter(browserSkill)).toBe(false);
+    expect(filter(docSkill)).toBe(true);
+  });
+});
+
+describe('buildAudioTranscribeSkillFilter', () => {
+  const audioSkill = { id: 'audio-transcribe', name: 'audio-transcribe', description: 'Audio transcription' };
+  const docSkill = { id: 'docx', name: 'docx', description: 'Word documents' };
+  const resolvedConfig = {
+    enabled: true,
+    sttConfig: { apiKey: 'key', ossAccessKeyId: 'id', ossAccessKeySecret: 'secret' },
+    pricing: { creditsPerCall: 10, costYuanPerCall: 0.1 },
+  };
+
+  it('keeps the skill only when the direct tool is configured and enabled', () => {
+    const enabled = buildAudioTranscribeSkillFilter({ audioTranscribeTools: resolvedConfig });
+    expect(enabled(audioSkill)).toBe(true);
+
+    const disabled = buildAudioTranscribeSkillFilter({
+      audioTranscribeTools: resolvedConfig,
+      toolControls: { tools: { AudioTranscribe: { enabled: false } } },
+    });
+    expect(disabled(audioSkill)).toBe(false);
+    expect(disabled(docSkill)).toBe(true);
+  });
+
+  it('hides the skill when platform STT is unavailable', () => {
+    const filter = buildAudioTranscribeSkillFilter({});
+    expect(filter(audioSkill)).toBe(false);
     expect(filter(docSkill)).toBe(true);
   });
 });

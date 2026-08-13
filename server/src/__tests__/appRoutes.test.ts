@@ -24,6 +24,7 @@ const mocked = vi.hoisted(() => {
   const systemAdminRouter = { id: 'system-admin-router' };
   const internalAcsAlertsRouter = { id: 'internal-acs-alerts-router' };
   const toolControlsAdminRouter = { id: 'tool-controls-admin-router' };
+  const audioTranscribeAdminRouter = { id: 'audio-transcribe-admin-router' };
   const connectorDictionaryAdminRouter = { id: 'connector-dictionary-admin-router' };
   const systemPromptsRouter = { id: 'system-prompts-router' };
   const previewTokenRouter = { id: 'preview-token-router' };
@@ -57,6 +58,7 @@ const mocked = vi.hoisted(() => {
     systemAdminRouter,
     internalAcsAlertsRouter,
     toolControlsAdminRouter,
+    audioTranscribeAdminRouter,
     connectorDictionaryAdminRouter,
     systemPromptsRouter,
     previewTokenRouter,
@@ -88,6 +90,7 @@ const mocked = vi.hoisted(() => {
     createSystemAdminRouter: vi.fn(() => systemAdminRouter),
     createInternalAcsAlertsRouter: vi.fn(() => internalAcsAlertsRouter),
     createToolControlsAdminRouter: vi.fn(() => toolControlsAdminRouter),
+    createAudioTranscribeAdminRouter: vi.fn(() => audioTranscribeAdminRouter),
     createConnectorDictionaryAdminRouter: vi.fn(() => connectorDictionaryAdminRouter),
     createSystemPromptsAdminRouter: vi.fn(() => systemPromptsRouter),
     createPreviewRoutes: vi.fn(() => ({ tokenRouter: previewTokenRouter, serveRouter: previewServeRouter })),
@@ -146,6 +149,9 @@ vi.mock('../routes/internalAcsAlerts.js', () => ({
 vi.mock('../routes/toolControlsAdmin.js', () => ({
   createToolControlsAdminRouter: mocked.createToolControlsAdminRouter,
 }));
+vi.mock('../routes/audioTranscribeAdmin.js', () => ({
+  createAudioTranscribeAdminRouter: mocked.createAudioTranscribeAdminRouter,
+}));
 vi.mock('../routes/connectorDictionaryAdmin.js', () => ({
   createConnectorDictionaryAdminRouter: mocked.createConnectorDictionaryAdminRouter,
 }));
@@ -187,6 +193,7 @@ describe('registerRoutes', () => {
     mocked.createSystemAdminRouter.mockClear();
     mocked.createInternalAcsAlertsRouter.mockClear();
     mocked.createToolControlsAdminRouter.mockClear();
+    mocked.createAudioTranscribeAdminRouter.mockClear();
     mocked.createSystemPromptsAdminRouter.mockClear();
     mocked.createPreviewRoutes.mockClear();
   });
@@ -290,7 +297,7 @@ describe('registerRoutes', () => {
     //   + 活跃离职流程 API 写入围栏 = 41
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(41);
+    expect(app.use).toHaveBeenCalledTimes(42);
     expect(mocked.createTaskboardRouter).toHaveBeenCalledWith({
       service: undefined,
       executionService: undefined,
@@ -331,6 +338,7 @@ describe('registerRoutes', () => {
     expect(app.use).toHaveBeenCalledWith('/api/admin/system', mocked.requireAdmin, mocked.systemAdminRouter);
     expect(app.use).toHaveBeenCalledWith('/api/internal', mocked.internalAcsAlertsRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/tool-controls', mocked.toolControlsAdminRouter);
+    expect(app.use).toHaveBeenCalledWith('/api/admin/audio-transcribe', mocked.audioTranscribeAdminRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/connector-dictionary', mocked.connectorDictionaryAdminRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/image-gen-pricing', expect.any(Function));
     expect(app.use).toHaveBeenCalledWith('/api/admin/memory-polling', expect.any(Function));

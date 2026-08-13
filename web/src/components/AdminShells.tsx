@@ -53,6 +53,7 @@ const AgentRuntimeProfilesManagerPanel = lazy(() => import("@/components/AgentRu
 const EgressConfigManagerPanel = lazy(() => import("@/components/EgressConfigManager"));
 const ConnectorDictionaryManagerPanel = lazy(() => import("@/components/ConnectorDictionaryManager"));
 const TenantConnectorDictionaryPanel = lazy(() => import("@/components/ConnectorDictionaryManager/TenantPanel"));
+const AgentDwsAccountsPage = lazy(() => import('@/components/AgentDwsAccounts'));
 
 export type TenantSection = "overview" | "users" | "skills" | "org-agents" | "mcp" | "connector-dictionary" | "usage" | "billing" | "files" | "qa" | "audit" | "settings" | "company" | "instructions";
 export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "connector-dictionary" | "agent-profiles" | "system-prompts" | "memory-polling" | "global-mcp" | "skill-pool" | "egress" | "system";
@@ -721,6 +722,8 @@ export function TenantAdminShell({
         return <OrganizationOffboardingPage tenantId={effectiveTenantId} />;
       case "organization.agents.org-agents":
         return renderOrgAgents ? renderOrgAgents(effectiveTenantId, currentTenant?.name) : <GovernanceCapabilityNotice title="组织智能体" />;
+      case "organization.agents.dingtalk-accounts":
+        return <AgentDwsAccountsPage tenantId={effectiveTenantId} />;
       case "organization.agents.skills":
         return renderSkills(effectiveTenantId, currentTenant?.name);
       case "organization.agents.connectors":

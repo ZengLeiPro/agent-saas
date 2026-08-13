@@ -30,6 +30,28 @@ describe('GovernanceTenantCleanup', () => {
     expect(pool.query).not.toHaveBeenCalled();
   });
 
+  it('agents_skills 先删除 Agent DWS 账号再删除 managed agent', async () => {
+    const queries: string[] = [];
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        queries.push(sql.replace(/\s+/g, ' ').trim());
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const cleanup = new GovernanceTenantCleanup({
+      pool: { connect: vi.fn(async () => client) } as never,
+      tablePrefix: 'test',
+      vault: { revokeSecret: vi.fn() } as never,
+    });
+
+    await cleanup.execute('acme', 'agents_skills');
+    const accountsIndex = queries.findIndex(query => query.startsWith('DELETE FROM test_agent_dws_accounts'));
+    const agentsIndex = queries.findIndex(query => query.startsWith('DELETE FROM test_managed_agents'));
+    expect(accountsIndex).toBeGreaterThan(0);
+    expect(agentsIndex).toBeGreaterThan(accountsIndex);
+  });
+
   it('credentials 先逐个撤销 Secret，再把治理记录置为 revoked', async () => {
     const revokeSecret = vi.fn().mockResolvedValue(undefined);
     const pool = {

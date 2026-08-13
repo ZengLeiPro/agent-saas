@@ -13,6 +13,7 @@ import { PgCredentialStore } from '../data/credentials/index.js';
 import { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
 import { PgEnvironmentStore } from '../data/environments/index.js';
 import { PgAgentResourceStore } from '../data/agentResources/index.js';
+import { PgAgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
 import { GovernanceChangePlanner, PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import { PgContentAccessGrantStore } from '../data/contentAccess/index.js';
@@ -62,6 +63,7 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
   let connectorCatalogStore: PgConnectorCatalogStore | undefined;
   let environmentStore: PgEnvironmentStore | undefined;
   let agentResourceStore: PgAgentResourceStore | undefined;
+  let agentDwsAccountStore: PgAgentDwsAccountStore | undefined;
   let skillGovernanceStore: PgSkillGovernanceStore | undefined;
   let resolveLegacySkillResourceId = (_user: { id: string; tenantId: string }, skillId: string) => skillId;
   let governanceChangeJobStore: PgGovernanceChangeJobStore | undefined;
@@ -404,6 +406,8 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
       tablePrefix: tablePrefix,
     });
     await agentResourceStore.init();
+    agentDwsAccountStore = new PgAgentDwsAccountStore(pgEventStore.pool, tablePrefix);
+    await agentDwsAccountStore.init();
     skillGovernanceStore = new PgSkillGovernanceStore({
       pool: pgEventStore.pool,
       tablePrefix: tablePrefix,
@@ -739,6 +743,7 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
     connectorCatalogStore,
     environmentStore,
     agentResourceStore,
+    agentDwsAccountStore,
     skillGovernanceStore,
     resolveLegacySkillResourceId,
     governanceChangeJobStore,

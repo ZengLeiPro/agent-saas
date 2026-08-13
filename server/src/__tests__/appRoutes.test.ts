@@ -310,7 +310,7 @@ describe('registerRoutes', () => {
     //   + 当前用户 Web Push 订阅管理 = 43
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(43);
+    expect(app.use).toHaveBeenCalledTimes(44);
     expect(mocked.createWebPushRouter).toHaveBeenCalledWith(undefined);
     expect(app.use).toHaveBeenCalledWith('/api/web-push', mocked.webPushRouter);
     expect(mocked.createTaskboardRouter).toHaveBeenCalledWith({

@@ -36,6 +36,10 @@ export {
 } from "./scenarios.js";
 export { createContentOpsRouter } from "./contentOps.js";
 export { createDwsRouter, type DwsRouterOptions } from "./dws.js";
+export {
+  createAgentDwsAccountsRouter,
+  type AgentDwsAccountsRouterOptions,
+} from './agentDwsAccounts.js';
 export { createFeishuRouter, type FeishuRouterOptions } from "./feishu.js";
 export {
   createSystemPromptsAdminRouter,

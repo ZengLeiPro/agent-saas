@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -107,11 +107,13 @@ describe('deleteTenantResources', () => {
       payload: { kind: 'systemEvent', text: 'tick' },
     }, { owner: deletedUser.id, ownerName: deletedUser.username });
 
+    const agentDwsAccountStore = { deleteForTenant: vi.fn(async () => 1) };
     const report = await deleteTenantResources({
       tenantId,
       tenantStore,
       userStore,
       agentStore,
+      agentDwsAccountStore: agentDwsAccountStore as never,
       skillConfigStore,
       mcpConfigStore,
       groupStore,
@@ -124,6 +126,7 @@ describe('deleteTenantResources', () => {
 
     expect(report.usersDeleted).toBe(1);
     expect(report.agentProfilesDeleted).toBe(1);
+    expect(agentDwsAccountStore.deleteForTenant).toHaveBeenCalledWith(tenantId);
     expect(report.groupsDeleted).toBe(1);
     expect(report.cronJobsDeleted).toBe(1);
     expect(report.mcp.serversRemoved).toBe(1);

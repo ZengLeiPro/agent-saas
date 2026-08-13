@@ -72,6 +72,12 @@ export function resolveTenantCwd(globalAgentCwd: string, tenantSlug: string): st
   return join(globalAgentCwd, safe);
 }
 
+/** Agent 专属连接器工作区；使用独立目录层级，绝不与真人用户工作区重合。 */
+export function resolveAgentCwd(globalAgentCwd: string, tenantId: string, agentId: string): string {
+  const tenantSlug = TENANT_SLUG_PATTERN.test(tenantId) ? tenantId : DEFAULT_TENANT_ID;
+  return join(globalAgentCwd, tenantSlug, `.agent-${safeUserPathSegment(agentId)}`);
+}
+
 /**
  * 首次使用时初始化用户工作目录结构
  *

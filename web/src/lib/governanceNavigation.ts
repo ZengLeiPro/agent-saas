@@ -124,6 +124,7 @@ const organizationWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
   {
     id: "agents", label: "智能体资源", routes: [
       route("organization", "agents", "org-agents", "组织智能体", ["tenant-admin", "agents", "org-agents"], { entity: "optional" }),
+      route("organization", "agents", "dingtalk-accounts", "钉钉账号", ["tenant-admin", "agents", "dingtalk-accounts"]),
       route("organization", "agents", "skills", "技能", ["tenant-admin", "agents", "skills"], { entity: "optional" }),
       route("organization", "agents", "connectors", "连接器与凭据", ["tenant-admin", "agents", "connectors"], { entity: "optional" }),
       route("organization", "agents", "memory-knowledge", "记忆与知识", ["tenant-admin", "agents", "memory-knowledge"], { entity: "optional" }),

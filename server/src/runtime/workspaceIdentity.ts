@@ -25,6 +25,11 @@ export function deriveStableWorkspaceId(
   return `ws_${tenantId}__${safeUserIdSegment(user.id)}`;
 }
 
+export function deriveAgentWorkspaceId(tenantId: string, agentId: string): string {
+  const safeTenantId = TENANT_SLUG_PATTERN.test(tenantId) ? tenantId : DEFAULT_TENANT_ID;
+  return `ws_${safeTenantId}__agent_${safeUserIdSegment(agentId)}`;
+}
+
 function safeUserIdSegment(userId: string): string {
   if (
     USER_ID_SEGMENT_PATTERN.test(userId)
@@ -49,6 +54,7 @@ export function parseWorkspaceId(workspaceId: string | undefined | null): Parsed
   const userId = mountDelimiter >= 0 ? rest.slice(0, mountDelimiter) : rest;
 
   if (!TENANT_SLUG_PATTERN.test(tenantId)) return null;
+  if (userId.startsWith("agent_")) return null;
   if (!USER_ID_SEGMENT_PATTERN.test(userId)) return null;
   if (userId.includes("..") || userId.startsWith(".")) return null;
   return { tenantId, userId };

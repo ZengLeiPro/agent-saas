@@ -45,6 +45,7 @@ import { createAgentsRouter } from "../routes/agents.js";
 import { createOrgAgentsRouter } from "../routes/orgAgents.js";
 import { createKbFilesRouter } from "../routes/kbFiles.js";
 import { createOrgQaRouter } from "../routes/orgQa.js";
+import { createAgentDwsAccountsRouter } from '../routes/agentDwsAccounts.js';
 import { createFeedbackRouter } from "../routes/feedback.js";
 import { createAppealsRouter, createTenantAppealsRouter } from "../routes/appeals.js";
 import { createRuntimeAuditRouter } from "../routes/runtimeAudit.js";
@@ -245,6 +246,14 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     connectorConnectionStore: runtime.connectorConnectionStore,
     authFlowService: runtime.dwsAuthFlowService,
     userStore: runtime.userStore,
+  }));
+
+  // 组织 Agent 专属成员账号：与真人用户 DWS 连接完全隔离，所有写操作需管理员权限与治理审计。
+  app.use('/api', requireAdmin, createAgentDwsAccountsRouter({
+    accountStore: runtime.agentDwsAccountStore,
+    authFlowService: runtime.agentDwsAuthFlowService,
+    eventGateway: runtime.dwsPersonalEventGateway,
+    auditStore: runtime.governanceAuditStore,
   }));
 
   // 飞书单轨连接状态：浏览器/PG 只接触非敏感元数据；用户 token 与官方 CLI
@@ -803,48 +812,52 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       app.use("/api/admin/signup-config", signupRouters.adminRouter);
     }
     const executeLegacyTenantDeletion = runtime.tenantStore && runtime.userStore
-      ? (tenantId: string) => deleteTenantResources({
-        tenantId,
-        tenantStore: runtime.tenantStore!,
-        userStore: runtime.userStore!,
-        agentStore: runtime.agentStore,
-        skillConfigStore: runtime.skillConfigStore,
-        mcpConfigStore: runtime.mcpConfigStore,
-        connectorConnectionStore: runtime.connectorConnectionStore,
-        onUserDeleting: async (target) => {
-          await Promise.all([
-            runtime.dwsAuthFlowService?.revokeUser?.(target),
-            runtime.feishuAuthFlowService?.revokeUser?.(target),
-            runtime.notionAuthFlowService?.cancelUser?.(target.tenantId, target.id),
-          ]);
-          await runtime.googleWorkspaceOAuthService?.cancelUser(target.id);
-          await runtime.googleWorkspaceOAuthService?.disconnect(target.id, target.username, target.tenantId);
-          if (runtime.connectorConnectionStore && runtime.secretVault) {
-            await revokeAllUserConnectorCredentials({
-              connectionStore: runtime.connectorConnectionStore,
-              vault: runtime.secretVault,
-              userId: target.id,
-              username: target.username,
-              tenantId: target.tenantId,
-            });
-          }
-        },
-        mcpOAuthService: runtime.mcpOAuthService,
-        groupStore: runtime.groupStore,
-        cronService: runtime.cronRuntime.service,
-        tokenUsageStore: runtime.tokenUsageStore,
-        billingService: runtime.billingService,
-        runtimePgEventStore: runtime.runtimePgEventStore,
-        runtimeRunStore: runtime.runtimeRunStore,
-        runtimeSessionProjectionStore: runtime.runtimeSessionProjectionStore,
-        runtimeToolInvocationStore: runtime.runtimeToolInvocationStore,
-        runtimeHandStore: runtime.runtimeHandStore,
-        artifactService: runtime.artifactService,
-        agentCwd,
-        sharedDir,
-        tenantSkillsRootDir: runtime.tenantSkillsRootDir,
-        avatarsDir: resolve(processCwd, config.auth?.usersFile || './data/users.json', '..', 'avatars'),
-      })
+      ? async (tenantId: string) => {
+          await runtime.dwsPersonalEventGateway?.stopTenant(tenantId);
+          return deleteTenantResources({
+            tenantId,
+            tenantStore: runtime.tenantStore!,
+            userStore: runtime.userStore!,
+            agentStore: runtime.agentStore,
+            agentDwsAccountStore: runtime.agentDwsAccountStore,
+            skillConfigStore: runtime.skillConfigStore,
+            mcpConfigStore: runtime.mcpConfigStore,
+            connectorConnectionStore: runtime.connectorConnectionStore,
+            onUserDeleting: async (target) => {
+              await Promise.all([
+                runtime.dwsAuthFlowService?.revokeUser?.(target),
+                runtime.feishuAuthFlowService?.revokeUser?.(target),
+                runtime.notionAuthFlowService?.cancelUser?.(target.tenantId, target.id),
+              ]);
+              await runtime.googleWorkspaceOAuthService?.cancelUser(target.id);
+              await runtime.googleWorkspaceOAuthService?.disconnect(target.id, target.username, target.tenantId);
+              if (runtime.connectorConnectionStore && runtime.secretVault) {
+                await revokeAllUserConnectorCredentials({
+                  connectionStore: runtime.connectorConnectionStore,
+                  vault: runtime.secretVault,
+                  userId: target.id,
+                  username: target.username,
+                  tenantId: target.tenantId,
+                });
+              }
+            },
+            mcpOAuthService: runtime.mcpOAuthService,
+            groupStore: runtime.groupStore,
+            cronService: runtime.cronRuntime.service,
+            tokenUsageStore: runtime.tokenUsageStore,
+            billingService: runtime.billingService,
+            runtimePgEventStore: runtime.runtimePgEventStore,
+            runtimeRunStore: runtime.runtimeRunStore,
+            runtimeSessionProjectionStore: runtime.runtimeSessionProjectionStore,
+            runtimeToolInvocationStore: runtime.runtimeToolInvocationStore,
+            runtimeHandStore: runtime.runtimeHandStore,
+            artifactService: runtime.artifactService,
+            agentCwd,
+            sharedDir,
+            tenantSkillsRootDir: runtime.tenantSkillsRootDir,
+            avatarsDir: resolve(processCwd, config.auth?.usersFile || './data/users.json', '..', 'avatars'),
+          });
+        }
       : undefined;
     // Tenant management (admin-only CRUD；PR 1 仅元数据，不影响任何运行时行为)
     if (runtime.tenantStore) {

@@ -4,8 +4,8 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { UserInfo } from '../data/users/types.js';
 import { HttpTransport } from '../runtime/httpTransport.js';
 import type { ToolInvocationResponse } from '../runtime/handProtocol.js';
-import { deriveStableWorkspaceId } from '../runtime/workspaceIdentity.js';
-import { resolveUserCwd } from '../workspace/resolver.js';
+import { deriveAgentWorkspaceId, deriveStableWorkspaceId } from '../runtime/workspaceIdentity.js';
+import { resolveAgentCwd, resolveUserCwd } from '../workspace/resolver.js';
 import type {
   DwsAuthSessionIdentity,
   DwsAuthSessionRecord,
@@ -23,13 +23,22 @@ export interface DwsDeviceAuthorization {
   authorizationUrl: string;
 }
 
+export interface DwsWorkspacePrincipal {
+  id: string;
+  username: string;
+  tenantId: string;
+  role: 'admin' | 'user';
+  principalType?: 'user' | 'agent';
+  agentId?: string;
+}
+
 export interface DwsDeviceLoginRunnerLike {
   login(
-    user: UserInfo,
+    user: DwsWorkspacePrincipal,
     onAuthorization: (authorization: DwsDeviceAuthorization) => void | Promise<void>,
     signal?: AbortSignal,
   ): Promise<void>;
-  logout?(user: UserInfo, profileIds: string[]): Promise<void>;
+  logout?(user: DwsWorkspacePrincipal, profileIds: string[]): Promise<void>;
 }
 
 export interface DwsDeviceLoginRunnerOptions {
@@ -39,7 +48,7 @@ export interface DwsDeviceLoginRunnerOptions {
     authToken: string;
     invokeTimeoutMs?: number;
   };
-  resolveServerRemote?: (user: UserInfo) => Promise<{
+  resolveServerRemote?: (user: DwsWorkspacePrincipal) => Promise<{
     baseUrl: string;
     authToken: string;
     invokeTimeoutMs?: number;
@@ -51,7 +60,7 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
   constructor(private readonly options: DwsDeviceLoginRunnerOptions) {}
 
   async login(
-    user: UserInfo,
+    user: DwsWorkspacePrincipal,
     onAuthorization: (authorization: DwsDeviceAuthorization) => void | Promise<void>,
     signal?: AbortSignal,
   ): Promise<void> {
@@ -62,10 +71,10 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
       invokeTimeoutMs: Math.max(serverRemote.invokeTimeoutMs ?? 0, DWS_DEVICE_FLOW_TIMEOUT_MS + 10_000),
       fetchImpl: this.options.fetchImpl,
     });
-    const userCwd = resolveUserCwd(this.options.agentCwd, user);
+    const userCwd = resolveDwsPrincipalCwd(this.options.agentCwd, user);
     const mountSubPath = deriveWorkspaceMountSubPath(this.options.agentCwd, userCwd);
     if (!mountSubPath) throw new Error('无法解析 DWS 用户工作区挂载路径');
-    const workspaceId = deriveStableWorkspaceId(user, `dws-${user.id}`);
+    const workspaceId = deriveDwsPrincipalWorkspaceId(user);
     const sandboxScopeId = `${workspaceId}__${mountSubPath.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
     let output = '';
     let authorizationPublished = false;
@@ -117,7 +126,7 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
     }
   }
 
-  async logout(user: UserInfo, profileIds: string[]): Promise<void> {
+  async logout(user: DwsWorkspacePrincipal, profileIds: string[]): Promise<void> {
     const targets: Array<string | undefined> = profileIds.length > 0 ? profileIds : [undefined];
     const serverRemote = await resolveServerRemote(this.options, user);
     const transport = new HttpTransport({
@@ -126,10 +135,10 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
       invokeTimeoutMs: serverRemote.invokeTimeoutMs,
       fetchImpl: this.options.fetchImpl,
     });
-    const userCwd = resolveUserCwd(this.options.agentCwd, user);
+    const userCwd = resolveDwsPrincipalCwd(this.options.agentCwd, user);
     const mountSubPath = deriveWorkspaceMountSubPath(this.options.agentCwd, userCwd);
     if (!mountSubPath) throw new Error('无法解析 DWS 用户工作区挂载路径');
-    const workspaceId = deriveStableWorkspaceId(user, `dws-${user.id}`);
+    const workspaceId = deriveDwsPrincipalWorkspaceId(user);
     const sandboxScopeId = `${workspaceId}__${mountSubPath.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
     for (const profileId of targets) {
       const profileArg = profileId ? ` --profile ${shellQuote(profileId)}` : '';
@@ -161,7 +170,7 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
 
 async function resolveServerRemote(
   options: DwsDeviceLoginRunnerOptions,
-  user: UserInfo,
+  user: DwsWorkspacePrincipal,
 ): Promise<{ baseUrl: string; authToken: string; invokeTimeoutMs?: number }> {
   const resolved = options.resolveServerRemote
     ? await options.resolveServerRemote(user)
@@ -316,6 +325,22 @@ export function parseDwsDeviceAuthorization(output: string): DwsDeviceAuthorizat
 
 function identityFor(user: UserInfo): DwsAuthSessionIdentity {
   return { tenantId: user.tenantId, userId: user.id, username: user.username };
+}
+
+export function resolveDwsPrincipalCwd(agentCwd: string, principal: DwsWorkspacePrincipal): string {
+  if (principal.principalType === 'agent') {
+    if (!principal.agentId) throw new Error('Agent DWS principal 缺少 agentId');
+    return resolveAgentCwd(agentCwd, principal.tenantId, principal.agentId);
+  }
+  return resolveUserCwd(agentCwd, principal);
+}
+
+function deriveDwsPrincipalWorkspaceId(principal: DwsWorkspacePrincipal): string {
+  if (principal.principalType === 'agent') {
+    if (!principal.agentId) throw new Error('Agent DWS principal 缺少 agentId');
+    return deriveAgentWorkspaceId(principal.tenantId, principal.agentId);
+  }
+  return deriveStableWorkspaceId(principal, `dws-${principal.id}`);
 }
 
 function deriveWorkspaceMountSubPath(agentCwd: string, userCwd: string): string | undefined {

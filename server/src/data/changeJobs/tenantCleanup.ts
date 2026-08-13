@@ -63,12 +63,14 @@ export class GovernanceTenantCleanup {
   private async deleteAgentsAndSkills(tenantId: string): Promise<void> {
     const agents = `${this.prefix}_managed_agents`;
     const agentVersions = `${this.prefix}_managed_agent_versions`;
+    const agentDwsAccounts = `${this.prefix}_agent_dws_accounts`;
     const skills = `${this.prefix}_governed_skills`;
     const skillVersions = `${this.prefix}_governed_skill_versions`;
     const candidates = `${this.prefix}_skill_candidates`;
     const references = `${this.prefix}_resource_references`;
     await this.transaction(async client => {
       await client.query(`DELETE FROM ${references} WHERE tenant_id=$1`, [tenantId]);
+      await client.query(`DELETE FROM ${agentDwsAccounts} WHERE tenant_id=$1`, [tenantId]);
       await client.query(`UPDATE ${agents} SET current_version_id=NULL WHERE tenant_id=$1`, [tenantId]);
       await client.query(
         `DELETE FROM ${agentVersions} WHERE agent_id IN (SELECT agent_id FROM ${agents} WHERE tenant_id=$1)`, [tenantId],

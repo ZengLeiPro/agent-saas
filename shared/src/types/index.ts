@@ -222,6 +222,16 @@ export type {
 } from "./orgAgent";
 
 export type {
+  AgentDwsAccount,
+  AgentDwsAccountStatus,
+  AgentDwsRuntimeStatus,
+  AgentDwsEventKind,
+  AgentDwsAuthSession,
+  CreateAgentDwsAccountInput,
+  UpdateAgentDwsAccountInput,
+} from "./agentDwsAccount";
+
+export type {
   SkillInfo,
   PlatformSkillExposure,
   TenantSkillMemberExposure,

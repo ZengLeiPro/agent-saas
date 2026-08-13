@@ -13,7 +13,7 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('Governance Schema V18 PostgreSQL 升级、约束与事务回滚', () => {
+describePg('Governance Schema V19 PostgreSQL 升级、约束与事务回滚', () => {
   const prefix = `govv17_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   let pool: InstanceType<typeof Pool>;
 
@@ -45,7 +45,7 @@ describePg('Governance Schema V18 PostgreSQL 升级、约束与事务回滚', ()
     }
   }, 30_000);
 
-  it('V17 中途失败回滚到 V16，重试升级到 V18 并建立租户隔离约束与八类 outbox trigger', async () => {
+  it('V17 中途失败回滚到 V16，重试升级到 V19 并建立 Agent DWS 账号约束与八类 outbox trigger', async () => {
     let injected = false;
     const failingPool = {
       connect: async () => {
@@ -90,7 +90,7 @@ describePg('Governance Schema V18 PostgreSQL 升级、约束与事务回滚', ()
       `SELECT version FROM ${prefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 18 }, (_, index) => index + 1),
+      Array.from({ length: 19 }, (_, index) => index + 1),
     );
     const v18Tables = await pool.query<{ name: string | null }>(
       `SELECT to_regclass($1) AS name UNION ALL SELECT to_regclass($2) UNION ALL SELECT to_regclass($3) UNION ALL SELECT to_regclass($4)`,
@@ -99,6 +99,20 @@ describePg('Governance Schema V18 PostgreSQL 升级、约束与事务回滚', ()
     expect(v18Tables.rows.map(row => row.name)).toEqual([
       `${prefix}_directory_groups`, `${prefix}_directory_group_members`, `${prefix}_oauth_grants`, `${prefix}_oauth_approval_records`,
     ]);
+    const v19Table = await pool.query<{ name: string | null }>(`SELECT to_regclass($1) AS name`, [`${prefix}_agent_dws_accounts`]);
+    expect(v19Table.rows[0]?.name).toBe(`${prefix}_agent_dws_accounts`);
+    await pool.query(`INSERT INTO ${prefix}_managed_agents
+      (agent_id,tenant_id,kind,owner_user_id,status,revision,created_by,updated_by)
+      VALUES ('oa-sales','tenant-a','org_agent','admin','enabled',1,'admin','admin')`);
+    await pool.query(`INSERT INTO ${prefix}_agent_dws_accounts
+      (account_id,tenant_id,agent_id,display_name,login_id,status,event_policy_json,created_by,updated_by)
+      VALUES ('adws-a','tenant-a','oa-sales','销售数字员工','sales-agent-001','draft','{"kinds":["at_me","all_direct"]}'::jsonb,'admin','admin')`);
+    await expect(pool.query(`INSERT INTO ${prefix}_agent_dws_accounts
+      (account_id,tenant_id,agent_id,display_name,login_id,status,event_policy_json,created_by,updated_by)
+      VALUES ('adws-b','tenant-b','oa-sales','越权账号','cross-tenant','draft','{"kinds":["at_me"]}'::jsonb,'admin','admin')`)).rejects.toThrow();
+    await expect(pool.query(`INSERT INTO ${prefix}_agent_dws_accounts
+      (account_id,tenant_id,agent_id,display_name,login_id,status,event_policy_json,created_by,updated_by)
+      VALUES ('adws-c','tenant-a','oa-sales','坏事件范围','bad-events','draft','{"kinds":["unknown"]}'::jsonb,'admin','admin')`)).rejects.toThrow();
     await pool.query(`INSERT INTO ${prefix}_directory_groups (group_id,tenant_id,source,display_name,status) VALUES ('g-a','tenant-a','governance','A','active')`);
     await expect(pool.query(`INSERT INTO ${prefix}_directory_group_members (tenant_id,group_id,user_id,source) VALUES ('tenant-b','g-a','user-a','governance')`)).rejects.toThrow();
     await pool.query(`INSERT INTO ${prefix}_tenant_memberships

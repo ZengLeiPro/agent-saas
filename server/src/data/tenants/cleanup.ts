@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import type { AgentStore } from '../agents/store.js';
+import type { AgentDwsAccountStore } from '../agentDwsAccounts/index.js';
 import type { BillingService } from '../billing/service.js';
 import type { GroupStore } from '../groups/store.js';
 import type { ConnectorConnectionStore } from '../../connectors/connectionStore.js';
@@ -72,6 +73,7 @@ export interface DeleteTenantResourcesOptions {
   tenantStore: TenantStore;
   userStore: UserStore;
   agentStore?: AgentStore;
+  agentDwsAccountStore?: AgentDwsAccountStore;
   skillConfigStore?: SkillConfigStore;
   mcpConfigStore?: McpConfigStore;
   connectorConnectionStore?: ConnectorConnectionStore;
@@ -190,6 +192,7 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
   const agentProfilesDeleted = options.agentStore
     ? await options.agentStore.removeMany(usernames)
     : 0;
+  await options.agentDwsAccountStore?.deleteForTenant(tenantId);
   const skills = options.skillConfigStore
     ? await options.skillConfigStore.removeTenant(tenantId, usernames)
     : { usersRemoved: 0, tenantConfigRemoved: false, platformRefsRemoved: 0 };

@@ -27,6 +27,9 @@ import type { AgentOptionsConfig } from '../agent/options.js';
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
+import type { AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
+import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
+import type { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
 import type { PgGuardrailEventStore } from '../data/guardrail/pgGuardrailEventStore.js';
 import type { PgMessageFeedbackStore } from '../data/feedback/store.js';
 import type { AppealStore } from '../data/appeals/index.js';
@@ -146,6 +149,12 @@ export interface AppRuntime {
   dwsConnectionStore?: DwsConnectionStore;
   /** DWS 首次绑定：能力中心连接器页启动 device flow，短期授权码落 PG，token 仍只进用户 workspace。 */
   dwsAuthFlowService?: DwsAuthFlowServiceLike;
+  /** 组织 Agent 专属钉钉成员账号治理记录，不与真人用户 DWS connection 混用。 */
+  agentDwsAccountStore?: AgentDwsAccountStore;
+  /** Agent-owned DWS device flow，token 只进入 Agent connector workspace。 */
+  agentDwsAuthFlowService?: AgentDwsAuthFlowServiceLike;
+  /** DWS Personal Stream consumer supervisor。 */
+  dwsPersonalEventGateway?: DwsPersonalEventGateway;
   /** Notion 官方 ntn 两阶段登录，成功后 token 转存用户级 Vault。 */
   notionAuthFlowService?: NotionAuthFlowServiceLike;
   getNotionConnection?: (identity: {
@@ -162,7 +171,7 @@ export interface AppRuntime {
   googleWorkspaceOAuthService?: GoogleWorkspaceOAuthService;
   notionAuthFlowShutdown?: () => void;
   /** 停止 DWS 授权守活 worker（ws-only 进程不启动）。 */
-  dwsAuthKeepaliveShutdown?: () => void;
+  dwsAuthKeepaliveShutdown?: () => void | Promise<void>;
   /** 飞书连接只保存非敏感元数据；用户 token 与加密 keychain 均留在其 workspace。 */
   feishuConnectionStore?: FeishuConnectionStore;
   /** 飞书首次绑定：Server 驱动官方 lark-cli split device flow。 */

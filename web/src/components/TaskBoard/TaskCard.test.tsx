@@ -31,11 +31,7 @@ function renderCard(current: TaskBoardTask) {
       task={current}
       readOnly
       allowDrag={false}
-      canMoveUp={false}
-      canMoveDown={false}
       onOpen={vi.fn()}
-      onMoveUp={vi.fn()}
-      onMoveDown={vi.fn()}
       onDragStart={vi.fn()}
       onDragEnd={vi.fn()}
       onDropBefore={vi.fn()}

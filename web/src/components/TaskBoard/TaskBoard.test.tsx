@@ -194,25 +194,17 @@ describe("TaskBoardView", () => {
     })));
   });
 
-  it("移动端与键盘可用上移下移调整列内顺序", async () => {
+  it("卡片不展示上移下移排序操作区", async () => {
     mocks.tasks = [
       taskOne,
       { ...taskTwo, status: "backlog", sortOrder: 2_000 },
     ];
     render(<TaskBoardView />);
 
-    const mobileList = await screen.findByTestId("taskboard-mobile-list");
-    const moveUp = within(mobileList).getByRole("button", { name: "上移 TASK-2" });
-    expect((moveUp as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(moveUp);
-
-    await waitFor(() => expect(mocks.optimisticMove).toHaveBeenCalled());
-    expect(mocks.optimisticMove.mock.calls[0]?.[1]).toEqual({
-      status: "backlog",
-      previousTaskId: undefined,
-      nextTaskId: "task-1",
-    });
-    expect(within(mobileList).getByRole("button", { name: "下移 TASK-1" })).toBeTruthy();
+    await screen.findByTestId("taskboard-mobile-list");
+    expect(screen.queryByRole("button", { name: /上移 TASK-/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /下移 TASK-/ })).toBeNull();
+    expect(screen.queryByLabelText(/TASK-\d+ 排序操作/)).toBeNull();
   });
 
   it("从看板菜单关闭创建弹窗后，其他按钮仍可立即交互", async () => {

@@ -24,7 +24,6 @@ interface TaskColumnsProps {
   onMobileStatusChange: (status: TaskBoardStatus) => void;
   onCreateTask: (status: TaskBoardStatus) => void;
   onOpenTask: (task: TaskBoardTask) => void;
-  onMoveTask: (task: TaskBoardTask, direction: "up" | "down") => void;
   onDragStart: (taskId: string) => void;
   onDragEnd: () => void;
   onDrop: (
@@ -48,7 +47,6 @@ export function TaskColumns({
   onMobileStatusChange,
   onCreateTask,
   onOpenTask,
-  onMoveTask,
   onDragStart,
   onDragEnd,
   onDrop,
@@ -131,17 +129,13 @@ export function TaskColumns({
                   if (!readOnly) onDrop(status, undefined, event);
                 }}
               >
-                {columnTasks.map((task, index) => (
+                {columnTasks.map((task) => (
                   <TaskCard
                     key={task.id}
                     task={task}
                     readOnly={readOnly}
                     allowDrag
-                    canMoveUp={index > 0}
-                    canMoveDown={index < columnTasks.length - 1}
                     onOpen={onOpenTask}
-                    onMoveUp={(current) => onMoveTask(current, "up")}
-                    onMoveDown={(current) => onMoveTask(current, "down")}
                     onDragStart={onDragStart}
                     onDragEnd={onDragEnd}
                     onDropBefore={(nextTaskId, event) => onDrop(status, nextTaskId, event)}
@@ -163,17 +157,13 @@ export function TaskColumns({
         aria-label={`${STATUS_LABELS[mobileStatus]}任务列表`}
         className="h-[calc(100%-3rem)] space-y-2 overflow-y-auto md:hidden"
       >
-        {mobileTasks.map((task, index) => (
+        {mobileTasks.map((task) => (
           <TaskCard
             key={task.id}
             task={task}
             readOnly={readOnly}
             allowDrag={false}
-            canMoveUp={index > 0}
-            canMoveDown={index < mobileTasks.length - 1}
             onOpen={onOpenTask}
-            onMoveUp={(current) => onMoveTask(current, "up")}
-            onMoveDown={(current) => onMoveTask(current, "down")}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
             onDropBefore={(nextTaskId, event) => onDrop(mobileStatus, nextTaskId, event)}

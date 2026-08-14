@@ -427,11 +427,56 @@ describe('PgRunStore steering inbox', () => {
       .resolves.toEqual([expect.objectContaining({ sourceRunId: 'source-reserved', state: 'reserved' })]);
     expect(queries.some((sql) => sql.includes('pg_advisory_xact_lock'))).toBe(true);
     expect(queries.filter((sql) => sql.includes("state IN ('pending', 'reserved')"))).toHaveLength(2);
-    const cancelledRunQueries = queries.filter((sql) => sql.includes("status = 'cancelled'"));
-    expect(cancelledRunQueries).toHaveLength(2);
-    expect(cancelledRunQueries.every((sql) => sql.includes("- 'wakeMessage'"))).toBe(true);
+    const sourceUpdate = queries.find((sql) => sql.includes('UPDATE runtime_runs') && sql.includes("'steeringState', 'released'"));
+    const targetUpdate = queries.find((sql) => sql.includes("status = 'cancelled'"));
+    expect(sourceUpdate).toContain("ELSE (metadata || jsonb_build_object('steeringState', 'cancelled')) - 'wakeMessage'");
+    expect(targetUpdate).toContain("- 'wakeMessage'");
     expect(queries.some((sql) => sql.includes('run_id = $2'))).toBe(true);
     expect(queries.at(-1)).toBe('COMMIT');
+  });
+
+  it('releases durable taskboard steering sources to standalone execution when stopping the target', async () => {
+    const now = new Date().toISOString();
+    const queries: string[] = [];
+    const client = {
+      query: async (sql: string) => {
+        queries.push(sql.trim());
+        if (sql.includes('FOR UPDATE OF input, source')) {
+          return { rows: [{
+            input_id: 'input-taskboard',
+            source_run_id: 'source-taskboard',
+            target_run_id: 'target-run',
+            session_id: 'session-1',
+            state: 'pending',
+            accepted_at: now,
+            reserved_at: null,
+            applied_at: null,
+            row_json: {
+              run_id: 'source-taskboard', session_id: 'session-1', status: 'pending',
+              requested_at: now, updated_at: now,
+              metadata: {
+                taskboardContinuation: true,
+                steeringTargetRunId: 'target-run',
+                steeringState: 'pending',
+                wakeMessage: { content: 'durable comment' },
+              },
+            },
+          }] };
+        }
+        return { rows: [], rowCount: 1 };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    await expect(store.cancelSteeringBeforeDispatchBySession('session-1', 'aborted', 'target-run'))
+      .resolves.toEqual([]);
+
+    expect(queries.some((sql) => sql.includes("THEN 'released' ELSE 'cancelled'"))).toBe(true);
+    const sourceUpdate = queries.find((sql) => sql.includes("'steeringState', 'released'"));
+    expect(sourceUpdate).toContain("THEN (metadata - 'steeringTargetRunId')");
+    expect(sourceUpdate).toContain("ELSE (metadata || jsonb_build_object('steeringState', 'cancelled')) - 'wakeMessage'");
+    expect(queries.filter((sql) => sql.includes("status = 'cancelled'"))).toHaveLength(1);
   });
 
   it('releases pending steering rows when the source run falls back to standalone execution (2026-08-04 BUG-5)', async () => {

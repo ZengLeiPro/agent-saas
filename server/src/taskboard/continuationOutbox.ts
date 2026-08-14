@@ -60,9 +60,12 @@ export function continuationOutboxMigrationSql(
   executionsTable: string,
 ): string[] {
   return [
-    `UPDATE ${commentsTable}
+    `UPDATE ${commentsTable} c
         SET continuation_eligible=true
-      WHERE continuation_run_id IS NOT NULL AND continuation_eligible=false`,
+      WHERE c.continuation_run_id IS NOT NULL AND c.continuation_eligible=false
+        AND NOT EXISTS (
+          SELECT 1 FROM ${executionsTable} e WHERE e.run_id=c.continuation_run_id
+        )`,
     `INSERT INTO ${table}
        (run_id, task_id, comment_id, session_id, payload, status, dispatched_at)
      SELECT legacy.run_id, legacy.task_id, legacy.comment_id, legacy.session_id, '{}'::jsonb,

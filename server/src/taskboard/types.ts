@@ -127,6 +127,7 @@ export interface TaskboardContinuationContext {
   continuationRunId?: string;
   hasActiveContinuation?: boolean;
   activeExecution?: TaskBoardExecution;
+  continuationExecution?: TaskBoardExecution;
   latestExecution?: TaskBoardExecution;
 }
 

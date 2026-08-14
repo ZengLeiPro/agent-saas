@@ -123,6 +123,9 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
   ): Promise<TaskBoardExecutionStartResult> {
     const context = await this.options.store.getContinuationContext(identity, taskId, commentId);
     const pendingCommentIds = context.pendingComments.map((comment) => comment.id);
+    if (context.continuationExecution) {
+      return { task: context.task, execution: context.continuationExecution };
+    }
     if (context.continuationRunId
       && context.latestExecution?.runId === context.continuationRunId) {
       return { task: context.task, execution: context.latestExecution };
@@ -132,7 +135,20 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       : null;
     if (existingContinuation && isTerminalRun(existingContinuation)) {
       if (typeof existingContinuation.metadata?.steeringTargetRunId === 'string') {
-        await this.options.store.finishContinuation(existingContinuation.runId);
+        if (existingContinuation.status === 'completed'
+          && existingContinuation.metadata?.steeringState === 'applied') {
+          await this.options.store.finishContinuation(existingContinuation.runId);
+        } else {
+          const reason = existingContinuation.statusReason
+            || `Runtime steering source 状态：${existingContinuation.status}`;
+          await this.options.store.completeContinuation(taskId, existingContinuation.runId, {
+            status: existingContinuation.status === 'cancelled' ? 'cancelled' : 'failed',
+            error: reason,
+            commentBody: limitComment(
+              `Agent 继续执行${existingContinuation.status === 'cancelled' ? '已取消' : '失败'}\n\n${reason}`,
+            ),
+          });
+        }
         const execution = context.activeExecution ?? context.latestExecution;
         if (!execution) throw new TaskboardExecutionUnavailableError('评论插话目标执行记录缺失');
         return { task: context.task, execution };
@@ -539,13 +555,24 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
   }
 
   private async handleContinuationRuntimeEvent(event: PlatformEvent, run: RunRecord): Promise<void> {
-    if (typeof run.metadata?.steeringTargetRunId === 'string') {
-      if (isTerminalRun(run)) await this.options.store.finishContinuation(run.runId);
-      return;
-    }
     const taskId = typeof run.metadata?.taskboardTaskId === 'string'
       ? run.metadata.taskboardTaskId
       : undefined;
+    if (typeof run.metadata?.steeringTargetRunId === 'string') {
+      if (!isTerminalRun(run)) return;
+      if (run.status === 'completed' && run.metadata?.steeringState === 'applied') {
+        await this.options.store.finishContinuation(run.runId);
+        return;
+      }
+      if (!taskId) return;
+      const reason = run.statusReason || `Runtime steering source 状态：${run.status}`;
+      await this.options.store.completeContinuation(taskId, run.runId, {
+        status: run.status === 'cancelled' ? 'cancelled' : 'failed',
+        error: reason,
+        commentBody: limitComment(`Agent 继续执行${run.status === 'cancelled' ? '已取消' : '失败'}\n\n${reason}`),
+      });
+      return;
+    }
     if (!taskId) return;
     if (event.type === 'run_started') {
       await this.options.store.markContinuationRunning(taskId, run.runId);

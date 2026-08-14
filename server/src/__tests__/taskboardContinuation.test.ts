@@ -181,7 +181,37 @@ describe('任务看板评论续跑', () => {
     expect(rig.store.enqueueContinuation).not.toHaveBeenCalled();
   });
 
-  it('steering source 终态不提前写任务回执', async () => {
+  it('旧评论绑定非最新正式 Execution 时，重复请求仍直接返回原 Execution', async () => {
+    const historicalExecution = { ...activeExecution, status: 'succeeded' as const };
+    const latestExecution = {
+      ...activeExecution,
+      id: 'execution-2',
+      runId: 'execution-run-2',
+      status: 'succeeded' as const,
+      createdAt: '2026-08-01T02:00:00.000Z',
+      updatedAt: '2026-08-01T02:00:00.000Z',
+    };
+    const rig = makeRig({
+      getContinuationContext: vi.fn(async () => ({
+        task,
+        comment: comments[1]!,
+        pendingComments: comments,
+        continuationRunId: historicalExecution.runId,
+        continuationExecution: historicalExecution,
+        latestExecution,
+      })),
+      completeContinuation: vi.fn(async () => task),
+    });
+
+    const result = await rig.coordinator.continueExecution(identity, task.id, comments[1]!.id);
+
+    expect(result.execution).toEqual(historicalExecution);
+    expect(rig.runStore.get).not.toHaveBeenCalled();
+    expect(rig.store.completeContinuation).not.toHaveBeenCalled();
+    expect(rig.scheduler.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('steering source 已应用终态不提前写任务回执', async () => {
     const steeringRun = {
       runId: `taskboard-comment-${comments[1]!.id}`,
       sessionId: activeExecution.sessionId,
@@ -192,6 +222,7 @@ describe('任务看板评论续跑', () => {
         taskboardContinuation: true,
         taskboardTaskId: task.id,
         steeringTargetRunId: activeExecution.runId,
+        steeringState: 'applied',
       },
     };
     const rig = makeRig({
@@ -210,6 +241,45 @@ describe('任务看板评论续跑', () => {
     await rig.coordinator.continueExecution(identity, task.id, comments[1]!.id);
 
     expect(rig.store.completeContinuation).not.toHaveBeenCalled();
+  });
+
+  it('steering source 被取消后补写取消回执，不静默结清评论', async () => {
+    const steeringRun = {
+      runId: `taskboard-comment-${comments[1]!.id}`,
+      sessionId: activeExecution.sessionId,
+      status: 'cancelled' as const,
+      statusReason: 'user_stopped',
+      requestedAt: '2026-08-01T01:02:00.000Z',
+      updatedAt: '2026-08-01T01:03:00.000Z',
+      cancelledAt: '2026-08-01T01:03:00.000Z',
+      metadata: {
+        taskboardContinuation: true,
+        taskboardTaskId: task.id,
+        steeringTargetRunId: activeExecution.runId,
+        steeringState: 'cancelled',
+      },
+    };
+    const rig = makeRig({
+      getContinuationContext: vi.fn(async () => ({
+        task,
+        comment: comments[1]!,
+        pendingComments: comments,
+        continuationRunId: steeringRun.runId,
+        activeExecution,
+        latestExecution: activeExecution,
+      })),
+      completeContinuation: vi.fn(async () => task),
+    });
+    rig.runStore.get.mockResolvedValue(steeringRun);
+
+    await rig.coordinator.continueExecution(identity, task.id, comments[1]!.id);
+
+    expect(rig.store.completeContinuation).toHaveBeenCalledWith(task.id, steeringRun.runId, {
+      status: 'cancelled',
+      error: 'user_stopped',
+      commentBody: 'Agent 继续执行已取消\n\nuser_stopped',
+    });
+    expect(rig.store.finishContinuation).not.toHaveBeenCalled();
   });
 
   it('重复请求遇到终态续跑 Run 时补写遗漏的任务回执', async () => {
@@ -296,6 +366,39 @@ describe('任务看板评论续跑', () => {
     expect(sql.some((statement) => statement.includes('INSERT INTO comments'))).toBe(true);
     expect(sql.some((statement) => statement.includes("SET status='completed'"))).toBe(true);
     expect(sql.some((statement) => statement.includes('UPDATE tasks') && statement.includes('status=$2'))).toBe(false);
+  });
+
+  it('completeContinuation 遇到正式 Execution run 时只结清 outbox，不重复补写历史回执', async () => {
+    const sql: string[] = [];
+    const taskRow = {
+      id: task.id, board_id: task.boardId, identifier: task.identifier, title: task.title,
+      description: task.description, status: task.status, priority: task.priority, labels: [],
+      sort_order: task.sortOrder, comment_count: task.commentCount, version: task.version,
+      created_at: task.createdAt, updated_at: task.updatedAt, board_archived_at: null,
+    };
+    const client = {
+      query: vi.fn(async (statement: string) => {
+        sql.push(statement);
+        if (statement.includes('SELECT t.board_id, b.tenant_id')) {
+          return { rows: [{ board_id: task.boardId, tenant_id: identity.tenantId, owner_user_id: identity.ownerUserId }] };
+        }
+        if (statement.includes('SELECT t.*, b.archived_at')) return { rows: [taskRow] };
+        if (statement.includes('SELECT id FROM executions')) return { rows: [{ id: activeExecution.id }] };
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+
+    await completeContinuation({
+      pool: { connect: vi.fn(async () => client) }, boardsTable: 'boards', tasksTable: 'tasks',
+      commentsTable: 'comments', executionsTable: 'executions', continuationOutboxTable: 'continuation_outbox',
+    } as never, task.id, activeExecution.runId, {
+      status: 'succeeded',
+      commentBody: '不应重复写入',
+    });
+
+    expect(sql.some((statement) => statement.includes("SET status='completed'"))).toBe(true);
+    expect(sql.some((statement) => statement.includes('INSERT INTO comments'))).toBe(false);
   });
 
   it('终态回执先完成时，过期 reconcile 不会把任务状态改回进行中', async () => {

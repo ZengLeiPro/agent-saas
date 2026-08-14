@@ -1017,7 +1017,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
            (id, task_id, body, attachments, author_type, author_id, author_name, version)
          VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,1)`,
         [randomUUID(), taskId, requireText(input.commentBody, 'Execution comment body'),
-          JSON.stringify(normalizeAttachments(input.attachments)), authorType, currentExecution.id,
+          JSON.stringify(normalizeAttachments(input.attachments)), authorType, runId,
           input.status === 'succeeded' ? 'Agent' : '系统'],
       );
       return {

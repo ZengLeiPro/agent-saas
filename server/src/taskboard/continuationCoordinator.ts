@@ -90,8 +90,20 @@ export async function reconcileTaskboardContinuation(
   }
   if (isTerminalRunWithinGrace(run)) return;
   if (typeof run.metadata?.steeringTargetRunId === 'string') {
-    if (isTerminalRun(run)) await options.store.finishContinuation(run.runId, candidate.leaseId);
-    else await options.store.releaseContinuationReconcile(run.runId, candidate.leaseId);
+    if (!isTerminalRun(run)) {
+      await options.store.releaseContinuationReconcile(run.runId, candidate.leaseId);
+      return;
+    }
+    if (run.status === 'completed' && run.metadata?.steeringState === 'applied') {
+      await options.store.finishContinuation(run.runId, candidate.leaseId);
+      return;
+    }
+    const reason = run.statusReason || `Runtime steering source 状态：${run.status}`;
+    await options.store.completeContinuation(candidate.taskId, run.runId, {
+      status: run.status === 'cancelled' ? 'cancelled' : 'failed',
+      error: reason,
+      commentBody: limitComment(`Agent 继续执行${run.status === 'cancelled' ? '已取消' : '失败'}\n\n${reason}`),
+    });
     return;
   }
   if (isTerminalRun(run)) {

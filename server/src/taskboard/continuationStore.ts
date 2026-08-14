@@ -110,6 +110,9 @@ export async function loadContinuationContext(
   const continuationRunId = commentResult.rows[0].continuation_run_id
     ? String(commentResult.rows[0].continuation_run_id)
     : undefined;
+  const continuationExecution = continuationRunId
+    ? executions.find((execution) => execution.runId === continuationRunId)
+    : undefined;
   const [pendingResult, activeContinuationResult] = await Promise.all([
     host.pool.query(
       `SELECT c.* FROM ${host.commentsTable} c
@@ -133,6 +136,7 @@ export async function loadContinuationContext(
     ...(activeContinuationResult.rows[0] ? { hasActiveContinuation: true } : {}),
     ...(executions[0] ? { latestExecution: executions[0] } : {}),
     ...(activeExecution ? { activeExecution } : {}),
+    ...(continuationExecution ? { continuationExecution } : {}),
   };
 }
 
@@ -181,6 +185,14 @@ export function completeContinuation(
     const loaded = await loadInternalTaskForUpdate(host, client, taskId);
     if (!loaded) return null;
     if (loaded.task.archivedAt || loaded.boardArchivedAt) {
+      await markContinuationCompleted(host, client, runId);
+      return loaded.task;
+    }
+    const formalExecution = await client.query(
+      `SELECT id FROM ${host.executionsTable} WHERE task_id=$1 AND run_id=$2 LIMIT 1`,
+      [taskId, runId],
+    );
+    if (formalExecution.rows[0]) {
       await markContinuationCompleted(host, client, runId);
       return loaded.task;
     }

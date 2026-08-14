@@ -237,6 +237,11 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.getExecutionContextByRunId(runId);
   }
 
+  async getExecutionContextBySessionId(sessionId: string): Promise<TaskboardExecutionContext | null> {
+    await this.init();
+    return this.target.getExecutionContextBySessionId(sessionId);
+  }
+
   async updateTaskBranchFromExecution(
     identity: TaskboardIdentity,
     runId: string,

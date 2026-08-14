@@ -434,6 +434,11 @@ describePg('PgTaskboardStore contract', () => {
     expect(context?.task.status).toBe('in_progress');
     expect(context?.boardPrompt).toBe('按本看板规范执行。');
     expect(context?.comments.at(-1)?.body).toBe('认领后补充的最新条件');
+    await expect(store.getExecutionContextBySessionId('session-a')).resolves.toMatchObject({
+      execution: { id: 'execution-a', runId: 'run-a', sessionId: 'session-a' },
+      identity: { tenantId: alice.tenantId, ownerUserId: alice.ownerUserId },
+    });
+    await expect(store.getExecutionContextBySessionId('missing-session')).resolves.toBeNull();
     await expect(store.setExecutionStatus('run-a', 'waiting_user')).resolves.toMatchObject({
       status: 'waiting_user',
       startedAt: expect.any(String),

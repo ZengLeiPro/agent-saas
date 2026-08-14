@@ -146,6 +146,18 @@ interface CronIdentity {
   realName?: string;
 }
 
+type TaskboardExecutionLocator =
+  | { kind: 'run'; id: string }
+  | { kind: 'session'; id: string };
+
+function resolveTaskboardExecutionLocator(context: ToolCallContext): TaskboardExecutionLocator | undefined {
+  if (context.runId?.startsWith('taskboard-')) return { kind: 'run', id: context.runId };
+  const topLevelSessionId = context.workspace.topLevelSessionId;
+  if (topLevelSessionId?.startsWith('taskboard-')) return { kind: 'session', id: topLevelSessionId };
+  if (context.sessionId?.startsWith('taskboard-')) return { kind: 'session', id: context.sessionId };
+  return undefined;
+}
+
 /** cron 沿用会话归属者语义；taskboard 普通管理必须优先使用当前调用用户。 */
 function resolveIdentity(context?: ToolCallContext, currentCallerFirst = false): CronIdentity | undefined {
   const identity = currentCallerFirst
@@ -273,10 +285,11 @@ export class CronToolProvider implements ToolProvider {
   async invoke(call: AuthorizedToolCall, context: ToolCallContext): Promise<ToolResult | undefined> {
     if (call.toolId !== cronManageToolDescriptor.id) return undefined;
     const input = cronManageSchema.parse(call.input ?? {}) as CronManageInput;
-    const taskboardRun = context.runId?.startsWith('taskboard-') === true;
-    const identity = resolveIdentity(context, input.target === 'taskboard' && !taskboardRun);
+    const executionLocator = resolveTaskboardExecutionLocator(context);
+    const taskboardExecution = executionLocator !== undefined;
+    const identity = resolveIdentity(context, input.target === 'taskboard' && !taskboardExecution);
     if (!identity) throw new Error('缺少当前用户身份，无法访问任务');
-    if (taskboardRun && input.target !== 'taskboard') {
+    if (taskboardExecution && input.target !== 'taskboard') {
       throw new Error('任务看板 Agent 只能使用 target=taskboard');
     }
     if (input.target === 'taskboard') {
@@ -285,11 +298,13 @@ export class CronToolProvider implements ToolProvider {
       if (!tenantId) throw new Error('缺少当前用户组织身份，无法访问任务看板');
       try {
         const executionStore = this.options.taskboard.executionStore?.();
-        if (taskboardRun && !executionStore) throw new Error('任务看板执行上下文服务未启用');
-        const execution = taskboardRun
-          ? await executionStore!.getExecutionContextByRunId(context.runId!)
-          : null;
-        if (taskboardRun && !execution) throw new Error('任务看板执行上下文不存在');
+        if (taskboardExecution && !executionStore) throw new Error('任务看板执行上下文服务未启用');
+        const execution = executionLocator?.kind === 'run'
+          ? await executionStore!.getExecutionContextByRunId(executionLocator.id)
+          : executionLocator?.kind === 'session'
+            ? await executionStore!.getExecutionContextBySessionId(executionLocator.id)
+            : null;
+        if (taskboardExecution && !execution) throw new Error('任务看板执行上下文不存在');
         const result = await invokeTaskboardAction(this.options.taskboard, {
           tenantId,
           ownerUserId: identity.id,
@@ -297,10 +312,10 @@ export class CronToolProvider implements ToolProvider {
           ...(identity.realName ? { displayName: `${identity.realName} @${identity.username}` } : {}),
           ...(identity.role ? { userRole: identity.role } : {}),
         }, input, execution ? { execution } : {});
-        recordTaskboardAudit(context, identity, input, taskboardRun, result);
+        recordTaskboardAudit(context, identity, input, taskboardExecution, result);
         return { content: JSON.stringify(result, null, 2) };
       } catch (error) {
-        recordTaskboardAudit(context, identity, input, taskboardRun, undefined, error);
+        recordTaskboardAudit(context, identity, input, taskboardExecution, undefined, error);
         throw error;
       }
     }

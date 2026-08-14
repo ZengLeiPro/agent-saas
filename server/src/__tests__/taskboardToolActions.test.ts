@@ -118,6 +118,7 @@ function rig() {
   } satisfies TaskboardExecutionService;
   const executionStore = {
     getExecutionContextByRunId: vi.fn(),
+    getExecutionContextBySessionId: vi.fn(),
     updateTaskBranchFromExecution: vi.fn(async (_identity, _runId, branch) => ({
       ...task, branch: branch ?? undefined, version: task.version + 1,
     })),

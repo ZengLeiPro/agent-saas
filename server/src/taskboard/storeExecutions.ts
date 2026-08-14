@@ -1,10 +1,15 @@
 import pg from 'pg';
 
-import type { TaskBoardExecution } from '../../../shared/src/types/taskboard.js';
+import type {
+  TaskBoardComment,
+  TaskBoardExecution,
+  TaskBoardTask,
+} from '../../../shared/src/types/taskboard.js';
 import { rowToExecution } from './storeHelpers.js';
 import { normalizePage, pageResult } from './storeSearch.js';
 import {
   TaskboardNotFoundError,
+  type TaskboardExecutionContext,
   type TaskboardIdentity,
   type TaskboardPage,
   type TaskboardPageFilter,
@@ -70,6 +75,55 @@ export async function searchExecutions(
     [...params, pageSize, offset],
   );
   return pageResult(result.rows.map(rowToExecution), page, pageSize, Number(count.rows[0]?.total ?? 0));
+}
+
+interface TaskboardExecutionContextStore extends TaskboardExecutionSearchStore {
+  getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask>;
+  listComments(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardComment[]>;
+}
+
+export async function getExecutionContextByRunId(
+  store: TaskboardExecutionContextStore,
+  runId: string,
+): Promise<TaskboardExecutionContext | null> {
+  return getExecutionContext(store, 'run_id', runId);
+}
+
+export async function getExecutionContextBySessionId(
+  store: TaskboardExecutionContextStore,
+  sessionId: string,
+): Promise<TaskboardExecutionContext | null> {
+  return getExecutionContext(store, 'session_id', sessionId);
+}
+
+async function getExecutionContext(
+  store: TaskboardExecutionContextStore,
+  column: 'run_id' | 'session_id',
+  value: string,
+): Promise<TaskboardExecutionContext | null> {
+  const result = await store.pool.query(
+    `SELECT e.*, b.tenant_id, b.owner_user_id, b.prompt AS board_prompt
+       FROM ${store.executionsTable} e
+       JOIN ${store.tasksTable} t ON t.id=e.task_id
+       JOIN ${store.boardsTable} b ON b.id=t.board_id
+      WHERE e.${column}=$1`,
+    [value],
+  );
+  if (!result.rows[0]) return null;
+  const row = result.rows[0];
+  const identity: TaskboardIdentity = {
+    tenantId: String(row.tenant_id),
+    ownerUserId: String(row.owner_user_id),
+    username: '',
+  };
+  const execution = rowToExecution(row);
+  return {
+    identity,
+    task: await store.getTask(identity, execution.taskId),
+    boardPrompt: String(row.board_prompt ?? ''),
+    comments: await store.listComments(identity, execution.taskId),
+    execution,
+  };
 }
 
 async function assertTaskVisible(

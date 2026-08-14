@@ -148,6 +148,7 @@ export interface TaskboardExecutionStore {
     input: TaskboardExecutionClaimInput,
   ): Promise<TaskBoardExecutionStartResult>;
   getExecutionContextByRunId(runId: string): Promise<TaskboardExecutionContext | null>;
+  getExecutionContextBySessionId(sessionId: string): Promise<TaskboardExecutionContext | null>;
   updateTaskBranchFromExecution(
     identity: TaskboardIdentity,
     runId: string,

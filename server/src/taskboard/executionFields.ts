@@ -22,7 +22,8 @@ export function executionFieldMigrationSql(executionsTable: string): string {
       CHECK (purpose IN (${purposes}));
     ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS last_reconciled_at TIMESTAMPTZ;
     ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS reconcile_lease_id TEXT;
-    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS reconcile_lease_expires_at TIMESTAMPTZ
+    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS reconcile_lease_expires_at TIMESTAMPTZ;
+    CREATE UNIQUE INDEX IF NOT EXISTS ${executionsTable}_session_uidx ON ${executionsTable} (session_id)
   `;
 }
 

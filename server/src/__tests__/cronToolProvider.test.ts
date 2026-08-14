@@ -5,7 +5,11 @@ import { createExecutionAuditRecorder, type AuthorizedToolCall, type ToolCallCon
 import { CronService } from '../cron/service.js';
 import type { CronJob } from '../cron/types.js';
 import type { UserIdentity } from '../types/index.js';
-import type { TaskboardExecutionService, TaskboardService } from '../taskboard/types.js';
+import type {
+  TaskboardExecutionContext,
+  TaskboardExecutionService,
+  TaskboardService,
+} from '../taskboard/types.js';
 
 const OWNER: UserIdentity = { id: 'u-owner', username: 'owner', role: 'user', tenantId: 'kaiyan' };
 const OTHER: UserIdentity = { id: 'u-other', username: 'other', role: 'user', tenantId: 'kaiyan' };
@@ -224,17 +228,19 @@ describe('CronToolProvider', () => {
     ]);
 
     const execution = {
-      id: 'execution-1', taskId: task.id, runId: taskboardContext.runId, sessionId: 'session-1',
+      id: 'execution-1', taskId: task.id, runId: taskboardContext.runId, sessionId: 'taskboard-session-1',
       status: 'running' as const, purpose: 'review' as const, requestedBy: OWNER.id,
       createdAt: task.createdAt, updatedAt: task.updatedAt,
     };
-    const getExecutionContextByRunId = vi.fn(async () => ({
+    const executionContext: TaskboardExecutionContext = {
       identity: { tenantId: OWNER.tenantId!, ownerUserId: OWNER.id, username: OWNER.username },
       task,
       boardPrompt: '',
       comments: [],
       execution,
-    }));
+    };
+    const getExecutionContextByRunId = vi.fn(async () => executionContext);
+    const getExecutionContextBySessionId = vi.fn(async () => executionContext);
     const updateTaskBranchFromExecution = vi.fn(async (_identity, _runId, branch) => ({
       ...task, branch: branch ?? undefined, version: task.version + 1,
     }));
@@ -244,6 +250,7 @@ describe('CronToolProvider', () => {
         service: () => taskboard,
         executionStore: () => ({
           getExecutionContextByRunId,
+          getExecutionContextBySessionId,
           updateTaskBranchFromExecution,
           createTaskFromExecution: vi.fn(),
           moveTaskFromExecution: vi.fn(),
@@ -279,6 +286,65 @@ describe('CronToolProvider', () => {
         operation: 'update', actorUserId: OWNER.id, contextKind: 'taskboard_execution', status: 'success',
       }),
     ]);
+
+    const derivedExecutionContext = {
+      ...context(OWNER),
+      sessionId: 'sub-session-1',
+      runId: 'derived-run-1',
+      workspace: {
+        ...context(OWNER).workspace,
+        topLevelSessionId: execution.sessionId,
+      },
+      channelContext: { ...context(OWNER).channelContext, user: OTHER },
+      executionAudit: createExecutionAuditRecorder(),
+    };
+    await expect(provider.invoke(call('CronManage', {
+      target: 'taskboard', action: 'task.update', taskId: task.id,
+      branch: 'task/TASK-1-bypass', expectedVersion: task.version,
+    }), derivedExecutionContext)).rejects.toThrow('只能使用兼容回写 action');
+    expect(getExecutionContextBySessionId).toHaveBeenCalledWith(execution.sessionId);
+    expect(updateTask).not.toHaveBeenCalled();
+
+    await provider.invoke(call('CronManage', {
+      target: 'taskboard', action: 'update', id: task.id, branch: 'task/TASK-1-derived',
+    }), derivedExecutionContext);
+    expect(updateTaskBranchFromExecution).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: OWNER.tenantId,
+      ownerUserId: OWNER.id,
+    }), execution.runId, 'task/TASK-1-derived');
+    await expect(provider.invoke(call('CronManage', CREATE_INPUT), derivedExecutionContext))
+      .rejects.toThrow('只能使用 target=taskboard');
+    expect(derivedExecutionContext.executionAudit.records).toEqual([
+      expect.objectContaining({
+        operation: 'task.update', actorUserId: OWNER.id,
+        contextKind: 'taskboard_execution', resultStatus: 'error', status: 'error',
+      }),
+      expect.objectContaining({
+        operation: 'update', actorUserId: OWNER.id,
+        contextKind: 'taskboard_execution', resultStatus: 'success', status: 'success',
+      }),
+    ]);
+
+    const sessionFallbackContext = {
+      ...context(OWNER),
+      sessionId: execution.sessionId,
+      runId: 'continued-run-1',
+    };
+    getExecutionContextBySessionId.mockResolvedValueOnce({
+      ...executionContext,
+      identity: { tenantId: 'other-tenant', ownerUserId: OTHER.id, username: OTHER.username },
+    });
+    await expect(provider.invoke(call('CronManage', {
+      target: 'taskboard', action: 'update', id: task.id, branch: 'task/TASK-1-cross-tenant',
+    }), sessionFallbackContext)).rejects.toThrow('执行身份不匹配');
+
+    getExecutionContextBySessionId.mockResolvedValueOnce({
+      ...executionContext,
+      execution: { ...execution, status: 'succeeded' },
+    });
+    await expect(provider.invoke(call('CronManage', {
+      target: 'taskboard', action: 'update', id: task.id, branch: 'task/TASK-1-terminal',
+    }), sessionFallbackContext)).rejects.toThrow('执行已终止');
   });
 
   it('create 缺必填字段或非法 cron 表达式时报错', async () => {

@@ -56,6 +56,8 @@ import {
 import { taskFieldsMigrationSql, taskTableSql } from './taskFields.js';
 import { deleteComment as deleteStoredComment, updateComment as updateStoredComment } from './storeComments.js';
 import {
+  getExecutionContextByRunId as getStoredExecutionContextByRunId,
+  getExecutionContextBySessionId as getStoredExecutionContextBySessionId,
   listExecutions as listStoredExecutions,
   searchExecutions as searchStoredExecutions,
 } from './storeExecutions.js';
@@ -769,29 +771,11 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   }
 
   async getExecutionContextByRunId(runId: string): Promise<TaskboardExecutionContext | null> {
-    const result = await this.pool.query(
-      `SELECT e.*, b.tenant_id, b.owner_user_id, b.prompt AS board_prompt
-         FROM ${this.executionsTable} e
-         JOIN ${this.tasksTable} t ON t.id=e.task_id
-         JOIN ${this.boardsTable} b ON b.id=t.board_id
-        WHERE e.run_id=$1`,
-      [runId],
-    );
-    if (!result.rows[0]) return null;
-    const row = result.rows[0];
-    const identity: TaskboardIdentity = {
-      tenantId: String(row.tenant_id),
-      ownerUserId: String(row.owner_user_id),
-      username: '',
-    };
-    const execution = rowToExecution(row);
-    return {
-      identity,
-      task: await this.requireTask(this.pool, identity, execution.taskId, false),
-      boardPrompt: String(row.board_prompt ?? ''),
-      comments: await this.listComments(identity, execution.taskId),
-      execution,
-    };
+    return getStoredExecutionContextByRunId(this, runId);
+  }
+
+  async getExecutionContextBySessionId(sessionId: string): Promise<TaskboardExecutionContext | null> {
+    return getStoredExecutionContextBySessionId(this, sessionId);
   }
 
   async updateTaskBranchFromExecution(identity: TaskboardIdentity, runId: string, branch: string | null): Promise<TaskBoardTask> { return updateStoredTaskBranchFromExecution(this, identity, runId, branch); }

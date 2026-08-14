@@ -118,6 +118,13 @@ function makeRig(
       comments: [comment],
       execution: execution({ runId }),
     })),
+    getExecutionContextBySessionId: vi.fn(async (sessionId: string): Promise<TaskboardExecutionContext | null> => ({
+      identity,
+      task,
+      boardPrompt: '只修改与任务直接相关的文件。',
+      comments: [comment],
+      execution: execution({ sessionId }),
+    })),
     claimExecutionDispatch: vi.fn(async (runId: string | undefined, leaseId: string) => {
       let claimedRunId: string;
       let dispatch: { executionId: string; payload: Parameters<TaskboardExecutionStore['claimExecution']>[2]['dispatch'] };

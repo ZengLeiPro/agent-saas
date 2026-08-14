@@ -101,6 +101,7 @@ export interface TaskboardToolOptions {
   executionStore?: () => Pick<
     TaskboardExecutionStore,
     | 'getExecutionContextByRunId'
+    | 'getExecutionContextBySessionId'
     | 'updateTaskBranchFromExecution'
     | 'createTaskFromExecution'
     | 'moveTaskFromExecution'

@@ -1898,8 +1898,8 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       : allowAllRuntimeSkills;
     const tooling = await collectRuntimeTooling(
       config,
-      identitySource?.username,
-      // AND 组合：browser-hand filter 与 org agent 白名单叠加（不是替换）
+      orgAgent ? undefined : identitySource?.username,
+      // AND 组合：组织 Agent 的 service identity 跳过用户技能/MCP；其技能仍与 org 白名单取交集
       orgAgent
         ? composeSkillFilters(baseSkillFilter, buildOrgAgentSkillFilter(orgAgent), profileSkillFilter)
         : composeSkillFilters(baseSkillFilter, profileSkillFilter),

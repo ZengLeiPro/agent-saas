@@ -1698,7 +1698,9 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       yield { type: 'error', error: `Session ${sessionId} 已被另一个 brain 持有，本次 dispatch 退让` };
       return;
     }
-
+    let eventStore: RunStateTrackingEventStore | null = null;
+    let directRuntimeLease: DirectRuntimeLeaseHandle | null = null;
+    try {
     const agentProfile = identitySource && config.agentStore
       ? config.agentStore.get(identitySource.username)
       : undefined;
@@ -1801,7 +1803,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     yield { type: 'session_init', sessionId };
 
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
-    let directRuntimeLease: DirectRuntimeLeaseHandle | null = null;
     await config.runStore?.upsertPending({
       runId,
       sessionId,
@@ -1834,7 +1835,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         },
       },
     });
-    const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId);
+    eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId);
     directRuntimeLease = await acquireDirectRuntimeRunLease({
       runStore: config.runStore,
       runId,
@@ -1969,7 +1970,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
 
-    try {
       await authorizeBillingRunStart(config, {
         tenantId: sessionRecord.tenantId,
         userId: sessionRecord.userId,
@@ -2041,7 +2041,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
                     timeoutMs: config.getImageUnderstandingTimeoutMs?.(),
                     systemPrompt: config.getSystemPrompt?.('utility.imageUnderstanding'),
                     onAttempt: async (attempt) => {
-                      await eventStore.append({
+                      await eventStore!.append({
                         type: 'image_understanding',
                         runId,
                         sessionId,
@@ -2106,7 +2106,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             timeoutMs: config.getImageUnderstandingTimeoutMs?.(),
             systemPrompt: config.getSystemPrompt?.('utility.imageUnderstanding'),
             onAttempt: async (attempt) => {
-              await eventStore.append({
+              await eventStore!.append({
                 type: 'image_understanding',
                 runId,
                 sessionId,
@@ -2181,7 +2181,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         return;
       }
       const msg = err instanceof Error ? err.message : String(err);
-      await markRunState(config.runStore, eventStore, sessionId, runId, 'failed', msg).catch(() => undefined);
+      if (eventStore) await markRunState(config.runStore, eventStore, sessionId, runId, 'failed', msg).catch(() => undefined);
       await sessionCatalog.markStatus(sessionId, 'error');
       logger.error(`Raw runtime run 失败: ${msg}`);
       yield { type: 'error', error: `Raw runtime 运行失败: ${msg}` };

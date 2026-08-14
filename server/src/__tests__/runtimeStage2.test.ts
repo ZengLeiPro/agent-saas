@@ -127,6 +127,31 @@ describe('runtime stage 2 primitives', () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
+  it('Session 写入在治理 preflight 前失败时仍释放已获取的 session lock', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'runtime-session-early-failure-'));
+    cleanupDirs.add(cwd);
+    const release = vi.fn(async () => undefined);
+    const sessionCatalog = new MemorySessionCatalog();
+    vi.spyOn(sessionCatalog, 'upsert').mockRejectedValue(new Error('session write failed'));
+    const dispatch = createRawRuntimeRunDispatch({
+      agentCwd: cwd,
+      sharedDir: SHARED_DIR,
+      sessionCatalog,
+      sessionLock: { tryAcquire: vi.fn(async () => ({ release })) },
+      memory: { enabled: false },
+    });
+
+    const events: OutboundEvent[] = [];
+    for await (const event of dispatch(
+      { channel: 'web', chatId: 'chat-early-failure', content: '锁释放测试' },
+      { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      { modelConnection: { apiKey: 'sk-test' }, skipSystemPrompt: true },
+    )) events.push(event);
+
+    expect(events).toContainEqual(expect.objectContaining({ type: 'error', error: expect.stringContaining('session write failed') }));
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   it('FileEventStore supports appendBatch and cursor pages without changing list()', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'eventstore-v2-'));
     cleanupDirs.add(cwd);

@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { crc32 } from 'node:zlib';
+import { crc32, deflateRawSync } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SkillGovernanceInvariantError } from '../data/skillGovernance/index.js';
@@ -58,14 +58,50 @@ function singleFileZip(entryName: string, content: string): Buffer {
   return Buffer.concat([local, central, eocd]);
 }
 
-function oversizedZipMetadata(): Buffer {
+function deflatedZipWithDeclaredSize(entryName: string, content: Buffer, declaredSize: number): Buffer {
+  const name = Buffer.from(entryName);
+  const compressed = deflateRawSync(content);
+  const checksum = crc32(content);
+  const local = Buffer.alloc(30 + name.length + compressed.length);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt16LE(8, 8);
+  local.writeUInt32LE(checksum, 14);
+  local.writeUInt32LE(compressed.length, 18);
+  local.writeUInt32LE(declaredSize, 22);
+  local.writeUInt16LE(name.length, 26);
+  name.copy(local, 30);
+  compressed.copy(local, 30 + name.length);
+
+  const central = Buffer.alloc(46 + name.length);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(0x0314, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt16LE(8, 10);
+  central.writeUInt32LE(checksum, 16);
+  central.writeUInt32LE(compressed.length, 20);
+  central.writeUInt32LE(declaredSize, 24);
+  central.writeUInt16LE(name.length, 28);
+  central.writeUInt32LE((0o100644 << 16) >>> 0, 38);
+  name.copy(central, 46);
+
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(1, 8);
+  eocd.writeUInt16LE(1, 10);
+  eocd.writeUInt32LE(central.length, 12);
+  eocd.writeUInt32LE(local.length, 16);
+  return Buffer.concat([local, central, eocd]);
+}
+
+function oversizedZipMetadata(uncompressedSize = 101 * 1024 * 1024): Buffer {
   const name = Buffer.from('SKILL.md');
   const local = Buffer.alloc(30 + name.length + 1);
   local.writeUInt32LE(0x04034b50, 0);
   local.writeUInt16LE(20, 4);
   local.writeUInt16LE(8, 8);
   local.writeUInt32LE(1, 18);
-  local.writeUInt32LE(101 * 1024 * 1024, 22);
+  local.writeUInt32LE(uncompressedSize, 22);
   local.writeUInt16LE(name.length, 26);
   name.copy(local, 30);
 
@@ -75,7 +111,7 @@ function oversizedZipMetadata(): Buffer {
   central.writeUInt16LE(20, 6);
   central.writeUInt16LE(8, 10);
   central.writeUInt32LE(1, 20);
-  central.writeUInt32LE(101 * 1024 * 1024, 24);
+  central.writeUInt32LE(uncompressedSize, 24);
   central.writeUInt16LE(name.length, 28);
   name.copy(central, 46);
 
@@ -175,6 +211,35 @@ describe('组织 Skill 治理上传服务', () => {
       .toContain('governed upload');
   });
 
+  it.each(['/SKILL.md', 'C:\\SKILL.md'])('zip 绝对路径 %s 在解压前拒绝', async (entryName) => {
+    const test = rig();
+    await expect(test.upload({
+      tenantId: 'tenant-a', actorUserId: 'admin-1',
+      files: [uploadBuffer(singleFileZip(entryName, validSkill('unsafe-path')), 'unsafe.zip')],
+    })).rejects.toMatchObject({ code: 'SKILL_PACKAGE_UNSAFE', status: 400 });
+    expect(test.createAndPublishResource).not.toHaveBeenCalled();
+  });
+
+  it('zip 中央目录声明单个文件解压后超过 25MB 时在解压前拒绝', async () => {
+    const test = rig();
+    await expect(test.upload({
+      tenantId: 'tenant-a', actorUserId: 'admin-1',
+      files: [uploadBuffer(oversizedZipMetadata(26 * 1024 * 1024), 'oversized-entry.zip')],
+    })).rejects.toMatchObject({ code: 'SKILL_PACKAGE_LIMIT_EXCEEDED', status: 413 });
+    expect(test.createAndPublishResource).not.toHaveBeenCalled();
+  });
+
+  it('zip 伪造中央目录大小时按实际解压流量执行 25MB 硬上限', async () => {
+    const test = rig();
+    const forged = deflatedZipWithDeclaredSize('SKILL.md', Buffer.alloc(26 * 1024 * 1024, 0x61), 1);
+    await expect(test.upload({
+      tenantId: 'tenant-a', actorUserId: 'admin-1',
+      files: [uploadBuffer(forged, 'forged-size.zip')],
+    })).rejects.toMatchObject({ code: 'SKILL_PACKAGE_LIMIT_EXCEEDED', status: 413 });
+    expect(test.createAndPublishResource).not.toHaveBeenCalled();
+    expect(existsSync(join(test.root, 'tenant-skills', 'tenant-a', 'skills'))).toBe(false);
+  });
+
   it('zip 中央目录声明解压后超过 100MB 时在解压前拒绝', async () => {
     const test = rig();
     await expect(test.upload({
@@ -203,6 +268,28 @@ describe('组织 Skill 治理上传服务', () => {
     expect(second.definition.legacySkillId).toBe('same-name');
     expect(existsSync(join(test.root, 'tenant-skills', 'tenant-a', 'skills', 'same-name', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(test.root, 'tenant-skills', 'tenant-b', 'skills', 'same-name', 'SKILL.md'))).toBe(true);
+  });
+
+  it('同组织并发上传同名 Skill 时仅一个成功，且不覆盖胜出文件', async () => {
+    const test = rig();
+    const outcomes = await Promise.allSettled([
+      test.upload({
+        tenantId: 'tenant-a', actorUserId: 'admin-a',
+        files: [uploadFile(validSkill('concurrent-skill'))],
+      }),
+      test.upload({
+        tenantId: 'tenant-a', actorUserId: 'admin-b',
+        files: [uploadFile(validSkill('concurrent-skill'))],
+      }),
+    ]);
+
+    expect(outcomes.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(outcomes.filter(result => result.status === 'rejected')).toEqual([
+      expect.objectContaining({ reason: expect.objectContaining({ code: 'SKILL_ALREADY_EXISTS', status: 409 }) }),
+    ]);
+    expect(test.createAndPublishResource).toHaveBeenCalledTimes(1);
+    expect(await readFile(join(test.installedDir('concurrent-skill'), 'SKILL.md'), 'utf-8'))
+      .toContain('governed upload');
   });
 
   it('平台同名、治理资源重复时返回可理解冲突且不覆盖现有数据', async () => {

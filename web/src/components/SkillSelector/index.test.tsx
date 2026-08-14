@@ -87,13 +87,13 @@ describe("SkillSelector 能力目录", () => {
   });
 
   it("个人 Skill 导入使用治理入口并展示发布版本", async () => {
-    importPersonalSkillPackage.mockResolvedValue({ ok: true, status: "succeeded", selected: true, skill: { id: "personal-tool", name: "个人工具", description: "个人治理技能" }, resource: { skillId: "personal-hash", tenantId: "tenant-a", scope: "personal", ownerUserId: "user-1", status: "published", currentVersionId: "skillv-1", revision: 2, createdBy: "user-1" }, version: { versionId: "skillv-1", skillId: "personal-hash", versionNumber: 1, digest: "digest-1" } });
+    importPersonalSkillPackage.mockResolvedValue({ ok: true, status: "succeeded", selected: true, auditCompletion: "pending", skill: { id: "personal-tool", name: "个人工具", description: "个人治理技能" }, resource: { skillId: "personal-hash", tenantId: "tenant-a", scope: "personal", ownerUserId: "user-1", status: "published", currentVersionId: "skillv-1", revision: 2, createdBy: "user-1" }, version: { versionId: "skillv-1", skillId: "personal-hash", versionNumber: 1, digest: "digest-1" } });
     const { container } = render(<SkillSelector headerTitle="我的通用 Agent 技能" />);
     const input = container.querySelector('input[accept=".md,text/markdown"]') as HTMLInputElement;
     const file = new File(["---\nname: personal-tool\ndescription: personal\n---"], "SKILL.md", { type: "text/markdown" });
     fireEvent.change(input, { target: { files: [file] } });
     await waitFor(() => expect(importPersonalSkillPackage).toHaveBeenCalledWith([file]));
-    expect(await screen.findByText("已导入并发布技能：个人工具（v1）")).toBeTruthy(); expect(refresh).toHaveBeenCalled();
+    expect(await screen.findByText("已导入并发布技能：个人工具（v1，审计记录同步中）")).toBeTruthy(); expect(refresh).toHaveBeenCalled();
   });
 
   it("个人 Skill 发布成功但自动启用失败时提示手动启用", async () => {

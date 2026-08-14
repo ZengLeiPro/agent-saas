@@ -47,6 +47,45 @@ function credentialView<T extends { secretRef: string }>(credential: T): Omit<T,
   return safe;
 }
 
+function boundedMemoryStorage(maxTotalBytes: number): multer.StorageEngine {
+  const totals = new WeakMap<Request, number>();
+  return {
+    _handleFile(req, file, callback) {
+      const chunks: Buffer[] = [];
+      let fileBytes = 0;
+      let completed = false;
+      file.stream.on('data', (chunk: Buffer) => {
+        if (completed) return;
+        const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        const totalBytes = (totals.get(req) ?? 0) + data.length;
+        totals.set(req, totalBytes);
+        if (totalBytes > maxTotalBytes) {
+          completed = true;
+          file.stream.resume();
+          callback(new multer.MulterError('LIMIT_FILE_SIZE', file.fieldname));
+          return;
+        }
+        chunks.push(data);
+        fileBytes += data.length;
+      });
+      file.stream.once('error', (error) => {
+        if (completed) return;
+        completed = true;
+        callback(error);
+      });
+      file.stream.once('end', () => {
+        if (completed) return;
+        completed = true;
+        callback(null, { buffer: Buffer.concat(chunks), size: fileBytes });
+      });
+    },
+    _removeFile(_req, file, callback) {
+      delete (file as { buffer?: Buffer }).buffer;
+      callback(null);
+    },
+  };
+}
+
 export function createGovernanceResourcesRouter(deps: {
   memberships: PgMembershipStore;
   agents: PgAgentResourceStore;
@@ -95,7 +134,7 @@ export function createGovernanceResourcesRouter(deps: {
   }
   const router = Router();
   const skillUpload = multer({
-    storage: multer.memoryStorage(),
+    storage: boundedMemoryStorage(100 * 1024 * 1024),
     limits: { fileSize: 25 * 1024 * 1024, files: 300 },
   });
   const now = deps.now ?? (() => new Date());
@@ -453,7 +492,7 @@ export function createGovernanceResourcesRouter(deps: {
           && ['LIMIT_FILE_SIZE', 'LIMIT_FILE_COUNT', 'LIMIT_UNEXPECTED_FILE'].includes(uploadError.code);
         return res.status(limitExceeded ? 413 : 400).json({
           error: limitExceeded
-            ? '技能包超出限制：单个文件不能超过 25MB，且最多上传 300 个文件'
+            ? '技能包超出限制：单个文件不能超过 25MB、总计不能超过 100MB，且最多上传 300 个文件'
             : '技能包上传请求无效',
           code: limitExceeded ? 'SKILL_PACKAGE_LIMIT_EXCEEDED' : 'SKILL_PACKAGE_REQUEST_INVALID',
         });

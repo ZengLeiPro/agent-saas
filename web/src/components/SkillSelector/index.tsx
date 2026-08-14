@@ -204,9 +204,10 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
       const result = await governanceResourcesApi.importPersonalSkillPackage(files);
       setImportDialogOpen(false);
       setImportOk(true);
+      const auditStatus = result.auditCompletion === "pending" ? "，审计记录同步中" : "";
       setImportMsg(result.selected === false
-        ? `已导入并发布技能：${result.skill.name}（v${result.version.versionNumber}），但未能自动启用，请在列表中手动启用`
-        : `已导入并发布技能：${result.skill.name}（v${result.version.versionNumber}）`);
+        ? `已导入并发布技能：${result.skill.name}（v${result.version.versionNumber}${auditStatus}），但未能自动启用，请在列表中手动启用`
+        : `已导入并发布技能：${result.skill.name}（v${result.version.versionNumber}${auditStatus}）`);
       await refresh();
       setTimeout(() => setImportMsg(null), 2200);
     } catch (err) {

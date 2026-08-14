@@ -5,7 +5,10 @@ import { AgentDwsAuthFlowService } from '../dws/agentAuthFlow.js';
 import { DwsDeviceLoginRunner, type DwsWorkspacePrincipal } from '../dws/authFlow.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
 import { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
-import { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
+import {
+  AgentDwsMessageRouter,
+  type AgentDwsDefaultModelResolution,
+} from '../dws/personalMessageRouter.js';
 import { DwsPersonalMessageSender } from '../dws/personalMessageSender.js';
 import type { PgEventStore } from '../runtime/pgEventStore.js';
 import type { PgRunStore } from '../runtime/runStore.js';
@@ -32,6 +35,7 @@ export async function createAgentDwsRuntime(options: {
   pgRunStore?: PgRunStore;
   tablePrefix: string;
   dispatch: AgentRunDispatch;
+  resolveDefaultModel: (tenantId: string) => AgentDwsDefaultModelResolution | null;
   resolveServerRemote: ConnectorServerRemoteResolver;
   remoteAvailable: boolean;
   enableWorker: boolean;
@@ -61,6 +65,7 @@ export async function createAgentDwsRuntime(options: {
         messageStore: options.messageStore,
         accountStore: options.accountStore,
         dispatch: options.dispatch,
+        resolveDefaultModel: options.resolveDefaultModel,
         sender: new DwsPersonalMessageSender({
           agentCwd: options.agentCwd,
           resolveServerRemote: options.resolveServerRemote,

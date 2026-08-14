@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import type { AgentRunDispatch } from '../agent/index.js';
+import type { AgentRunDispatch, AgentRunOptions } from '../agent/index.js';
 import { createEventConsumer } from '../channels/eventConsumer.js';
 import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import type {
@@ -42,11 +42,19 @@ interface ExistingRunEventStore {
   listByRun?: NonNullable<EventStore['listByRun']>;
 }
 
+export interface AgentDwsDefaultModelResolution {
+  ref: string;
+  model: string;
+  connection?: AgentRunOptions['modelConnection'];
+  providerOptions?: AgentRunOptions['modelProviderOptions'];
+}
+
 export interface AgentDwsMessageRouterOptions {
   agentCwd: string;
   messageStore: AgentDwsMessageStore;
   accountStore: AgentDwsAccountStore;
   dispatch: AgentRunDispatch;
+  resolveDefaultModel: (tenantId: string) => AgentDwsDefaultModelResolution | null;
   sender: DwsPersonalMessageSenderLike;
   runStore?: ExistingRunStore;
   eventStore?: ExistingRunEventStore;
@@ -315,6 +323,8 @@ export class AgentDwsMessageRouter {
     account: AgentDwsAccountRecord,
     abortController: AbortController,
   ): Promise<string> {
+    const resolvedModel = this.options.resolveDefaultModel(account.tenantId);
+    if (!resolvedModel) throw new Error('Agent DWS 当前组织没有可用的默认模型');
     let resultText: string | undefined;
     const events = this.options.dispatch({
       channel: 'dingtalk',
@@ -346,6 +356,10 @@ export class AgentDwsMessageRouter {
       cwd: resolveAgentCwd(this.options.agentCwd, account.tenantId, account.agentId),
       resumeSessionId: sessionId,
       orgAgentId: account.agentId,
+      model: resolvedModel.model,
+      modelRef: resolvedModel.ref,
+      ...(resolvedModel.connection ? { modelConnection: resolvedModel.connection } : {}),
+      ...(resolvedModel.providerOptions ? { modelProviderOptions: resolvedModel.providerOptions } : {}),
       runtimeRunId: runId,
       abortController,
     }, {

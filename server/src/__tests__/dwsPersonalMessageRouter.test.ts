@@ -6,7 +6,10 @@ import type {
   AgentDwsInboxRecord,
   AgentDwsMessageStore,
 } from '../data/agentDwsMessages/index.js';
-import { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
+import {
+  AgentDwsMessageRouter,
+  type AgentDwsDefaultModelResolution,
+} from '../dws/personalMessageRouter.js';
 import type { DwsPersonalMessageSenderLike } from '../dws/personalMessageSender.js';
 
 const account: AgentDwsAccountRecord = {
@@ -52,6 +55,7 @@ function setup(input: {
   dispatch?: AgentRunDispatch;
   existingRun?: { runId: string; sessionId: string; status: string } | null;
   recoveredEvents?: Array<Record<string, unknown>>;
+  resolveDefaultModel?: (tenantId: string) => AgentDwsDefaultModelResolution | null;
 } = {}) {
   const claimed = input.claimed ?? item;
   const messageStore = {
@@ -98,6 +102,12 @@ function setup(input: {
     messageStore,
     accountStore,
     dispatch,
+    resolveDefaultModel: input.resolveDefaultModel ?? vi.fn(() => ({
+      ref: 'group/model-a',
+      model: 'model-a',
+      connection: { apiKey: 'test-key', baseUrl: 'https://model.test/v1' },
+      providerOptions: { protocol: 'responses' as const },
+    })),
     sender,
     ...(input.existingRun !== undefined ? {
       runStore: { get: vi.fn().mockResolvedValue(input.existingRun) },
@@ -151,6 +161,9 @@ describe('AgentDwsMessageRouter', () => {
       }),
       expect.objectContaining({
         orgAgentId: 'agent-a', resumeSessionId: 'session-a',
+        model: 'model-a', modelRef: 'group/model-a',
+        modelConnection: { apiKey: 'test-key', baseUrl: 'https://model.test/v1' },
+        modelProviderOptions: { protocol: 'responses' },
         runtimeRunId: expect.stringMatching(/^agent-dws-run-/),
       }),
       expect.any(Object),
@@ -198,6 +211,22 @@ describe('AgentDwsMessageRouter', () => {
     );
     expect(sender.send).toHaveBeenCalledWith(
       account, expect.any(Object), '从 EventStore 恢复的回复', expect.any(String),
+    );
+  });
+
+  it('fails closed before dispatch when the tenant has no default model', async () => {
+    const { router, messageStore, dispatch, sender } = setup({
+      resolveDefaultModel: () => null,
+    });
+
+    await expect(router.runOnce()).resolves.toBe(false);
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(sender.send).not.toHaveBeenCalled();
+    expect(messageStore.fail).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1, expect.objectContaining({
+        message: expect.stringContaining('没有可用的默认模型'),
+      }),
     );
   });
 

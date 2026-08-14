@@ -2954,7 +2954,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
 
   if (agentDwsAccountStore) agentDwsRuntime = await createAgentDwsRuntime({
     agentCwd, accountStore: agentDwsAccountStore, messageStore: agentDwsMessageStore, pgEventStore, pgRunStore,
-    tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix ?? 'agent_runtime' : 'agent_runtime', dispatch: finalDispatch,
+    tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix ?? 'agent_runtime' : 'agent_runtime', dispatch: finalDispatch, resolveDefaultModel: tenantId => defaultModelResolver?.(tenantId) ?? null,
     resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured),
     enableWorker: enableSchedulerWorker, logger: serverLogger,
   });

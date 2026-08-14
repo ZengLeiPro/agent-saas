@@ -25,6 +25,7 @@ import { hasPlatformCapability } from '../auth/platformGovernance.js';
 import { auditLog } from '../data/login-logs/index.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
 import type { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
+import { personalSkillResourceId } from '../services/tenantSkillGovernanceUpload.js';
 import type { PlatformSkillConfig, TenantSkillRule } from '../data/skills/types.js';
 import {
   scanPoolSkillsAsync,
@@ -115,9 +116,13 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     ]);
   }
 
-  async function governedTenantSkillView(resourceId: string, tenantId: string) {
+  async function governedSkillView(
+    resourceId: string,
+    tenantId: string,
+    scope: 'tenant' | 'personal',
+  ) {
     const resource = await skillGovernanceStore?.getResource(resourceId);
-    if (!resource || resource.tenantId !== tenantId || resource.scope !== 'tenant') return undefined;
+    if (!resource || resource.tenantId !== tenantId || resource.scope !== scope) return undefined;
     const version = resource.currentVersionId
       ? await skillGovernanceStore?.getVersion(resource.currentVersionId)
       : undefined;
@@ -1052,7 +1057,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       );
       const skills = await Promise.all(scanned.map(async (skill) => {
         const rule = skillConfigStore.getTenantOwnSkillRule(tenantId, skill.id);
-        const governance = await governedTenantSkillView(skill.id, tenantId);
+        const governance = await governedSkillView(skill.id, tenantId, 'tenant');
         return {
           ...skill,
           enabled: rule.enabled,
@@ -1397,15 +1402,19 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
 
     // 组织自有 skills: 只返回租户规则允许该成员使用的
     const tenantSkills = user.tenantId
-      ? (await scanUserCustomSkillsAsync(
+      ? await Promise.all((await scanUserCustomSkillsAsync(
           tenantSkillsDirSafe(user.tenantId),
           await getPoolSkillIds(),
         ))
         .filter(s => skillConfigStore.isTenantOwnSkillAvailableToUser(user.tenantId!, s.id, user.username))
-        .map(s => ({
-          ...s,
-          ...selectionState(s.id),
-          source: 'tenant' as const,
+        .map(async s => {
+          const governance = await governedSkillView(s.id, user.tenantId!, 'tenant');
+          return {
+            ...s,
+            ...selectionState(s.id),
+            source: 'tenant' as const,
+            ...(governance ? { governance } : {}),
+          };
         }))
       : [];
 
@@ -1415,10 +1424,16 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     // 路径按 user.tenantId 解析（修 PR 4 漏改）
     const userDir = getUserSkillsDir(user);
     const customExcluded = new Set([...poolIds, ...tenantOwnIds]);
-    const customSkills = (await scanUserCustomSkillsAsync(userDir, customExcluded)).map(s => ({
-      ...s,
-      ...selectionState(s.id),
-      source: 'custom' as const,
+    const customSkills = await Promise.all((await scanUserCustomSkillsAsync(userDir, customExcluded)).map(async s => {
+      const governance = user.tenantId
+        ? await governedSkillView(personalSkillResourceId(user.id, s.id), user.tenantId, 'personal')
+        : undefined;
+      return {
+        ...s,
+        ...selectionState(s.id),
+        source: 'custom' as const,
+        ...(governance ? { governance } : {}),
+      };
     }));
 
     return { poolSkills: visiblePoolSkills, tenantSkills, customSkills };

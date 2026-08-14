@@ -14,8 +14,9 @@ function json(method: string, body: unknown): RequestInit {
   return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
 }
 
-function skillUploadBody(name = 'uploaded-skill'): FormData {
+function skillUploadBody(name = 'uploaded-skill', scope: 'tenant' | 'personal' = 'tenant'): FormData {
   const form = new FormData();
+  form.set('scope', scope);
   form.append('files', new Blob([
     `---\nname: ${name}\ndescription: uploaded\n---\nbody`,
   ], { type: 'text/markdown' }), 'SKILL.md');
@@ -39,6 +40,7 @@ async function rig(input: {
   skillReviewCandidate?: ReturnType<typeof vi.fn>;
   skillPublishCandidate?: ReturnType<typeof vi.fn>;
   skillImport?: ReturnType<typeof vi.fn>;
+  personalSkillImport?: ReturnType<typeof vi.fn>;
   listCredentials?: ReturnType<typeof vi.fn>;
   getCredential?: ReturnType<typeof vi.fn>;
   updateCredential?: ReturnType<typeof vi.fn>;
@@ -90,6 +92,12 @@ async function rig(input: {
     resource: { skillId: 'uploaded-skill', tenantId: 'tenant-a', scope: 'tenant', status: 'published', revision: 2 },
     version: { versionId: 'skillv-1', skillId: 'uploaded-skill', versionNumber: 1 },
   });
+  const personalSkillImport = input.personalSkillImport ?? vi.fn().mockResolvedValue({
+    ok: true, status: 'succeeded', selected: true,
+    skill: { id: 'personal-skill', name: 'personal-skill', description: 'uploaded' },
+    resource: { skillId: 'personal-hash', tenantId: 'tenant-a', scope: 'personal', ownerUserId: 'user-1', status: 'published', revision: 2 },
+    version: { versionId: 'skillv-personal', skillId: 'personal-hash', versionNumber: 1 },
+  });
   const connectorUpdateStatus = input.connectorUpdateStatus ?? vi.fn();
   const environmentRetire = input.environmentRetire ?? vi.fn();
   const updateCredential = input.updateCredential ?? vi.fn();
@@ -133,6 +141,7 @@ async function rig(input: {
       listPublishedPlatform: vi.fn().mockResolvedValue([]),
     } as never,
     importTenantSkill: skillImport as never,
+    importPersonalSkill: personalSkillImport as never,
     connectors: {
       get: vi.fn().mockResolvedValue({ connectorId: 'github', status: 'published' }),
       list: vi.fn().mockResolvedValue([]), updateStatus: connectorUpdateStatus,
@@ -186,7 +195,7 @@ async function rig(input: {
     request: (path: string, init?: RequestInit) => fetch(`${base}${path}`, init),
     auditAppend, agentCreate, agentPublish, agentSetStatus, agentArchive,
     skillCreate, skillPublishVersion, skillCreateCandidate, skillSubmitCandidate,
-    skillReviewCandidate, skillPublishCandidate, skillImport, credentialCreate, updateCredential,
+    skillReviewCandidate, skillPublishCandidate, skillImport, personalSkillImport, credentialCreate, updateCredential,
     connectorUpdateStatus, environmentRetire, putSecret,
   };
 }
@@ -288,6 +297,21 @@ describe('typed governance resource routes', () => {
     });
     expect(denied.status).toBe(403);
     expect(member.skillImport).not.toHaveBeenCalled();
+  });
+
+  it('普通成员通过治理入口导入个人 Skill，并强制绑定当前用户与组织', async () => {
+    const member = await rig({ user: { sub: 'member-1', username: 'member', tenantId: 'tenant-a', role: 'user' } });
+    const response = await member.request('/api/governance/resources/skills/import', { method: 'POST', body: skillUploadBody('personal-skill', 'personal') });
+    expect(response.status).toBe(201);
+    expect(member.personalSkillImport).toHaveBeenCalledWith({ tenantId: 'tenant-a', actorUserId: 'member-1', files: [expect.objectContaining({ originalname: 'SKILL.md' })] });
+    expect(member.skillImport).not.toHaveBeenCalled();
+  });
+
+  it('Skill 上传缺少合法 scope 时拒绝且不调用写服务', async () => {
+    const test = await rig({}); const form = new FormData(); form.append('files', new Blob(['content']), 'SKILL.md');
+    const response = await test.request('/api/governance/resources/skills/import', { method: 'POST', body: form });
+    expect(response.status).toBe(400); await expect(response.json()).resolves.toMatchObject({ code: 'SKILL_SCOPE_INVALID' });
+    expect(test.skillImport).not.toHaveBeenCalled(); expect(test.personalSkillImport).not.toHaveBeenCalled();
   });
 
   it('个人 Agent owner 强制绑定当前用户，拒绝代他人创建', async () => {

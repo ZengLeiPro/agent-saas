@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -5,9 +6,11 @@ import { join } from 'node:path';
 import type { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
 import { SkillGovernanceInvariantError } from '../data/skillGovernance/index.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
-import { scanPoolSkillsAsync } from '../data/skills/scanner.js';
+import { scanPoolSkillsAsync, scanTenantOwnSkillIdsAsync } from '../data/skills/scanner.js';
 import { resolveTenantSkillsDir, resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import type { UserStore } from '../data/users/store.js';
+import { setUserSkillSelected } from '../routes/skillSelection.js';
+import { serverLogger } from '../utils/logger.js';
 import { agentSkillsDir, resolveAgentPath } from '../workspace/namespace.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import {
@@ -121,6 +124,117 @@ export function createTenantSkillGovernanceUpload(deps: TenantSkillGovernanceUpl
       } catch (error) {
         await rm(installedDir, { recursive: true, force: true });
         installedDir = undefined;
+        if (error instanceof SkillGovernanceInvariantError
+          && error.code === 'SKILL_RESOURCE_VERSION_CONFLICT') {
+          throw duplicateSkillError(staged.skillId);
+        }
+        throw error;
+      }
+    } finally {
+      await staged.dispose();
+    }
+  };
+}
+
+export function personalSkillResourceId(userId: string, legacySkillId: string): string {
+  return `personal_${createHash('sha256')
+    .update(`${userId}\0${legacySkillId}`)
+    .digest('hex')
+    .slice(0, 32)}`;
+}
+
+export interface PersonalSkillGovernanceUploadResult {
+  ok: true;
+  status: 'succeeded';
+  selected: boolean;
+  skill: { id: string; name: string; description: string };
+  resource: Awaited<ReturnType<PgSkillGovernanceStore['createAndPublishResource']>>['resource'];
+  version: Awaited<ReturnType<PgSkillGovernanceStore['createAndPublishResource']>>['version'];
+}
+
+export interface PersonalSkillGovernanceUploadDeps {
+  skills: Pick<PgSkillGovernanceStore, 'getResource' | 'createAndPublishResource'>;
+  skillConfigStore: SkillConfigStore;
+  userStore: Pick<UserStore, 'findById'>;
+  agentCwd: string;
+  sharedDir: string;
+  tenantSkillsRootDir?: string;
+}
+
+export function createPersonalSkillGovernanceUpload(deps: PersonalSkillGovernanceUploadDeps) {
+  return async (input: {
+    tenantId: string;
+    actorUserId: string;
+    files: Express.Multer.File[];
+  }): Promise<PersonalSkillGovernanceUploadResult> => {
+    const actor = deps.userStore.findById(input.actorUserId);
+    if (!actor || actor.tenantId !== input.tenantId) {
+      throw new SkillPackageUploadError('SKILL_OWNER_SCOPE_DENIED', '当前用户与组织作用域不匹配', 403);
+    }
+    const staged = await stageSkillPackage(input.files);
+    try {
+      const poolDir = resolveAgentPath(deps.sharedDir, 'skills-pool');
+      const platformSkillIds = new Set([
+        ...(await scanPoolSkillsAsync(poolDir)).map(skill => skill.id),
+        ...Object.keys(deps.skillConfigStore.getPoolVisibility()),
+      ]);
+      const tenantSkillsDir = deps.tenantSkillsRootDir
+        ? resolveTenantSkillsDirFromRoot(deps.tenantSkillsRootDir, input.tenantId)
+        : resolveTenantSkillsDir(deps.sharedDir, input.tenantId);
+      const tenantSkillIds = await scanTenantOwnSkillIdsAsync(tenantSkillsDir, platformSkillIds)
+        .catch(() => new Set<string>());
+      if (platformSkillIds.has(staged.skillId) || tenantSkillIds.has(staged.skillId)) {
+        throw new SkillPackageUploadError(
+          'SKILL_SCOPE_CONFLICT',
+          `技能“${staged.skillId}”与平台或组织技能同名，请改名后重试`,
+          409,
+        );
+      }
+      const resourceId = personalSkillResourceId(actor.id, staged.skillId);
+      if (await deps.skills.getResource(resourceId)) throw duplicateSkillError(staged.skillId);
+      const userSkillsParent = userSkillsDir(deps, actor);
+      if (existsSync(join(userSkillsParent, staged.skillId))) throw duplicateSkillError(staged.skillId);
+      const installedDir = await moveStagedSkillIntoPlace(staged, userSkillsParent, true);
+      try {
+        const governed = await deps.skills.createAndPublishResource({
+          skillId: resourceId,
+          tenantId: input.tenantId,
+          scope: 'personal',
+          ownerUserId: actor.id,
+          definition: {
+            schemaVersion: 1,
+            resourceType: 'skill',
+            scope: 'personal',
+            tenantId: input.tenantId,
+            ownerUserId: actor.id,
+            legacySkillId: staged.skillId,
+            source: 'governance_upload',
+            packageFormat: 'skill-package-v1',
+            name: staged.name,
+            description: staged.description,
+            contentDigest: staged.contentDigest,
+            fileCount: staged.fileCount,
+            totalBytes: staged.totalBytes,
+          },
+          createdBy: actor.id,
+        });
+        let selected = true;
+        try {
+          await setUserSkillSelected(deps.skillConfigStore, actor.username, staged.skillId, true);
+        } catch (error) {
+          selected = false;
+          serverLogger.warn(`Personal Skill ${resourceId} published but selection update failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        return {
+          ok: true,
+          status: 'succeeded',
+          selected,
+          skill: { id: staged.skillId, name: staged.name, description: staged.description },
+          resource: governed.resource,
+          version: governed.version,
+        };
+      } catch (error) {
+        await rm(installedDir, { recursive: true, force: true });
         if (error instanceof SkillGovernanceInvariantError
           && error.code === 'SKILL_RESOURCE_VERSION_CONFLICT') {
           throw duplicateSkillError(staged.skillId);

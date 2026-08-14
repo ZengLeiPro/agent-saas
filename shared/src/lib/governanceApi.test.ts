@@ -259,6 +259,7 @@ describe('governanceApi fail closed', () => {
     );
     const request = mockAuthFetch.mock.calls[0]?.[1];
     expect(request?.headers).toBeUndefined();
+    expect((request?.body as FormData).get('scope')).toBe('tenant');
     expect((request?.body as FormData).get('files')).toMatchObject({ name: 'managed-skill/SKILL.md' });
 
     mockAuthFetch.mockResolvedValueOnce(jsonResponse({
@@ -266,6 +267,13 @@ describe('governanceApi fail closed', () => {
     }, 409));
     await expect(governanceResourcesApi.importTenantSkillPackage('tenant-a', [file]))
       .rejects.toMatchObject({ code: 'SKILL_VERSION_CONFLICT', status: 409, message: '技能版本已存在' });
+  });
+
+  it('个人 Skill 导入使用同一治理 multipart 入口并声明 personal scope', async () => {
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ ok: true, status: 'succeeded', selected: true, skill: { id: 'personal-skill', name: 'personal-skill', description: 'personal' }, resource: { skillId: 'personal-hash', tenantId: 'tenant-a', scope: 'personal', ownerUserId: 'user-1', status: 'published', currentVersionId: 'skillv-1', revision: 2, createdBy: 'user-1' }, version: { versionId: 'skillv-1', skillId: 'personal-hash', versionNumber: 1, digest: 'digest-1' } }));
+    const file = new File(['content'], 'SKILL.md', { type: 'text/markdown' });
+    await expect(governanceResourcesApi.importPersonalSkillPackage([file])).resolves.toMatchObject({ status: 'succeeded', selected: true, resource: { scope: 'personal' } });
+    const request = mockAuthFetch.mock.calls[0]?.[1]; expect(mockAuthFetch.mock.calls[0]?.[0]).toBe('/api/governance/resources/skills/import'); expect((request?.body as FormData).get('scope')).toBe('personal');
   });
 
   it('当前治理 endpoint 同样拒绝泄漏敏感字段', async () => {

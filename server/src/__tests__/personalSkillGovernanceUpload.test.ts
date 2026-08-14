@@ -1,0 +1,24 @@
+import { existsSync, mkdtempSync } from 'node:fs';
+import { readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SkillGovernanceInvariantError } from '../data/skillGovernance/index.js';
+import { createPersonalSkillGovernanceUpload, personalSkillResourceId } from '../services/tenantSkillGovernanceUpload.js';
+
+const roots: string[] = [];
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+function file(content: string): Express.Multer.File { const buffer=Buffer.from(content); return { fieldname:'files', originalname:'SKILL.md', encoding:'7bit', mimetype:'text/markdown', size:buffer.length, buffer, destination:'', filename:'', path:'', stream:undefined as never }; }
+const md=(name:string)=>`---\nname: ${name}\ndescription: governed upload\n---\nbody`;
+function rig(input:{tenantId?:string; publish?:ReturnType<typeof vi.fn>; selectionError?:Error}={}) {
+  const root=mkdtempSync(join(tmpdir(),'personal-skill-governance-')); roots.push(root);
+  const actor={id:'user-1',username:'alice',tenantId:input.tenantId??'tenant-a',role:'user'};
+  const publish=input.publish??vi.fn().mockImplementation(async value=>({resource:{skillId:value.skillId,tenantId:value.tenantId,scope:'personal',ownerUserId:value.ownerUserId,status:'published',currentVersionId:'v1',revision:2,createdAt:'x',createdBy:value.createdBy,updatedAt:'x',updatedBy:value.createdBy},version:{versionId:'v1',skillId:value.skillId,versionNumber:1,definition:value.definition,digest:'d',publishedAt:'x',publishedBy:value.createdBy},created:true}));
+  const select=input.selectionError?vi.fn().mockRejectedValue(input.selectionError):vi.fn().mockResolvedValue(undefined);
+  const upload=createPersonalSkillGovernanceUpload({skills:{getResource:vi.fn().mockResolvedValue(null),createAndPublishResource:publish} as never,skillConfigStore:{getPoolVisibility:()=>({}),setUserSkillSelected:select} as never,userStore:{findById:(id:string)=>id===actor.id?actor:undefined} as never,agentCwd:join(root,'agents'),sharedDir:join(root,'shared'),tenantSkillsRootDir:join(root,'tenants')});
+  return {upload,publish,select,dir:(id:string)=>join(root,'agents','tenant-a','user-1','.ky-agent','skills',id)};
+}
+describe('个人 Skill 治理上传服务',()=>{
+  it('强绑定 owner/tenant，发布 v1、落盘并默认启用',async()=>{const x=rig(); const r=await x.upload({tenantId:'tenant-a',actorUserId:'user-1',files:[file(md('personal-tool'))]}); expect(r).toMatchObject({status:'succeeded',selected:true,resource:{tenantId:'tenant-a',scope:'personal',ownerUserId:'user-1'},version:{versionNumber:1}}); expect(r.resource.skillId).toBe(personalSkillResourceId('user-1','personal-tool')); expect(await readFile(join(x.dir('personal-tool'),'SKILL.md'),'utf8')).toContain('governed upload'); expect(x.select).toHaveBeenCalledWith('alice','personal-tool',true);});
+  it('跨 tenant 拒绝；治理失败回滚；偏好失败不误报发布失败',async()=>{const denied=rig({tenantId:'tenant-b'}); await expect(denied.upload({tenantId:'tenant-a',actorUserId:'user-1',files:[file(md('denied'))]})).rejects.toMatchObject({code:'SKILL_OWNER_SCOPE_DENIED',status:403}); const failed=rig({publish:vi.fn().mockRejectedValue(new SkillGovernanceInvariantError('SKILL_RESOURCE_VERSION_CONFLICT'))}); await expect(failed.upload({tenantId:'tenant-a',actorUserId:'user-1',files:[file(md('rollback'))]})).rejects.toMatchObject({code:'SKILL_VERSION_CONFLICT'}); expect(existsSync(failed.dir('rollback'))).toBe(false); const selected=rig({selectionError:new Error('down')}); await expect(selected.upload({tenantId:'tenant-a',actorUserId:'user-1',files:[file(md('selection'))]})).resolves.toMatchObject({selected:false,status:'succeeded'}); expect(existsSync(selected.dir('selection'))).toBe(true);});
+});

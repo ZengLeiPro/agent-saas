@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { saveSelection, refresh } = vi.hoisted(() => ({
+const { saveSelection, refresh, importPersonalSkillPackage } = vi.hoisted(() => ({
   saveSelection: vi.fn(),
   refresh: vi.fn(),
+  importPersonalSkillPackage: vi.fn(),
 }));
 
 vi.mock("./hooks", () => {
@@ -24,6 +25,10 @@ vi.mock("./hooks", () => {
   };
 });
 
+vi.mock("@agent/shared/lib/governanceApi", () => ({
+  governanceResourcesApi: { importPersonalSkillPackage },
+}));
+
 vi.mock("@agent/shared", () => ({
   deleteMySkill: vi.fn(),
   importMySkill: vi.fn(),
@@ -41,6 +46,7 @@ describe("SkillSelector 能力目录", () => {
   beforeEach(() => {
     saveSelection.mockReset().mockResolvedValue(undefined);
     refresh.mockReset().mockResolvedValue(undefined);
+    importPersonalSkillPackage.mockReset();
   });
 
   it("统一展示三层来源，并在卡片上即时启用技能", async () => {
@@ -78,6 +84,16 @@ describe("SkillSelector 能力目录", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "启用 平台分析" }));
     expect(await screen.findByText("技能选择已在其他页面更新，已同步最新状态，请重试")).toBeTruthy();
+  });
+
+  it("个人 Skill 导入使用治理入口并展示发布版本", async () => {
+    importPersonalSkillPackage.mockResolvedValue({ ok: true, status: "succeeded", selected: true, skill: { id: "personal-tool", name: "个人工具", description: "个人治理技能" }, resource: { skillId: "personal-hash", tenantId: "tenant-a", scope: "personal", ownerUserId: "user-1", status: "published", currentVersionId: "skillv-1", revision: 2, createdBy: "user-1" }, version: { versionId: "skillv-1", skillId: "personal-hash", versionNumber: 1, digest: "digest-1" } });
+    const { container } = render(<SkillSelector headerTitle="我的通用 Agent 技能" />);
+    const input = container.querySelector('input[accept=".md,text/markdown"]') as HTMLInputElement;
+    const file = new File(["---\nname: personal-tool\ndescription: personal\n---"], "SKILL.md", { type: "text/markdown" });
+    fireEvent.change(input, { target: { files: [file] } });
+    await waitFor(() => expect(importPersonalSkillPackage).toHaveBeenCalledWith([file]));
+    expect(await screen.findByText("已导入并发布技能：个人工具（v1）")).toBeTruthy(); expect(refresh).toHaveBeenCalled();
   });
 
   it("支持来源筛选和关键词搜索", async () => {

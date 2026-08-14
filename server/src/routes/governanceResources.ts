@@ -16,7 +16,10 @@ import { hasPlatformCapability } from '../auth/platformGovernance.js';
 import {
   SkillPackageUploadError,
 } from '../services/skillPackageUpload.js';
-import type { TenantSkillGovernanceUploadResult } from '../services/tenantSkillGovernanceUpload.js';
+import type {
+  PersonalSkillGovernanceUploadResult,
+  TenantSkillGovernanceUploadResult,
+} from '../services/tenantSkillGovernanceUpload.js';
 import { serverLogger } from '../utils/logger.js';
 import type { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
 import { registerGovernanceAgentResourceRoutes } from './governanceAgentResourceRoutes.js';
@@ -53,6 +56,11 @@ export function createGovernanceResourcesRouter(deps: {
     actorUserId: string;
     files: Express.Multer.File[];
   }) => Promise<TenantSkillGovernanceUploadResult>;
+  importPersonalSkill?: (input: {
+    tenantId: string;
+    actorUserId: string;
+    files: Express.Multer.File[];
+  }) => Promise<PersonalSkillGovernanceUploadResult>;
   connectors: PgConnectorCatalogStore;
   credentials: PgCredentialStore;
   environments: PgEnvironmentStore;
@@ -399,8 +407,31 @@ export function createGovernanceResourcesRouter(deps: {
         });
       }
       void (async () => {
+        const scope = req.body?.scope;
+        if (scope !== 'tenant' && scope !== 'personal') {
+          return res.status(400).json({ error: '技能作用域无效', code: 'SKILL_SCOPE_INVALID' });
+        }
         const files = (req.files as Express.Multer.File[] | undefined) ?? [];
         try {
+          if (scope === 'personal') {
+            if (!deps.importPersonalSkill) {
+              return res.status(503).json({ error: '个人技能上传服务暂不可用', code: 'SKILL_UPLOAD_UNAVAILABLE' });
+            }
+            const tenantId = resourceTenantFor(req);
+            if (!tenantId) {
+              return res.status(403).json({ error: '当前组织作用域无效', code: 'SKILL_TENANT_SCOPE_DENIED' });
+            }
+            if (await hasActiveOffboarding(tenantId, req.user!.sub)) {
+              return res.status(409).json({ error: '账号正在离职交接，暂不能上传个人技能', code: 'RESOURCE_OWNER_OFFBOARDING_ACTIVE' });
+            }
+            const result = await deps.importPersonalSkill({
+              tenantId,
+              actorUserId: req.user!.sub,
+              files,
+            });
+            return res.status(201).json(result);
+          }
+
           if (!deps.importTenantSkill) {
             return res.status(503).json({ error: '组织技能上传服务暂不可用', code: 'SKILL_UPLOAD_UNAVAILABLE' });
           }

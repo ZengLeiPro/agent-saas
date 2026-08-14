@@ -400,13 +400,14 @@ describe('skillsApi', () => {
       return new File(['x'], name, { type: 'text/plain' });
     }
 
-    it('importMySkill POST 到 me/import 且 body 为 FormData', async () => {
+    it('importMySkill POST 到治理入口且声明 personal scope', async () => {
       const body = { imported: 1 };
       mockAuthFetch.mockResolvedValue(ok(body));
       await expect(importMySkill([makeFile('a.md')])).resolves.toEqual(body);
 
       const { url, init } = lastCall();
-      expect(url).toBe('/api/skills/me/import');
+      expect(url).toBe('/api/governance/resources/skills/import');
+      expect((init.body as FormData).get('scope')).toBe('personal');
       expect(init.method).toBe('POST');
       expect(init.body).toBeInstanceOf(FormData);
     });
@@ -417,10 +418,11 @@ describe('skillsApi', () => {
       expect(lastCall().url).toBe('/api/skills/pool/import');
     });
 
-    it('importTenantSkill POST 到 tenants/:id/import（encode）', async () => {
+    it('importTenantSkill POST 到治理入口并声明 tenant scope（encode）', async () => {
       mockAuthFetch.mockResolvedValue(ok({}));
       await importTenantSkill('t/1', [makeFile('a.md')]);
-      expect(lastCall().url).toBe('/api/skills/tenants/t%2F1/import');
+      expect(lastCall().url).toBe('/api/governance/resources/skills/import?tenantId=t%2F1');
+      expect((lastCall().init.body as FormData).get('scope')).toBe('tenant');
     });
 
     it('导入失败时优先抛 body.error', async () => {

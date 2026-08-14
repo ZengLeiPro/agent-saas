@@ -2,7 +2,7 @@
 export interface SkillGovernanceInfo {
   resourceId: string;
   tenantId: string;
-  scope: 'tenant';
+  scope: 'tenant' | 'personal';
   status: 'draft' | 'published' | 'retired';
   version?: number;
   source?: string;
@@ -48,6 +48,7 @@ export interface TenantOwnSkillInfo extends SkillInfo, TenantSkillSettings {
 export interface UserSkillInfo extends SkillInfo {
   selected: boolean;
   source: 'pool' | 'tenant' | 'custom';
+  governance?: SkillGovernanceInfo;
   /** 治理偏好的乐观锁版本；旧服务端不返回时客户端回退兼容接口。 */
   selectionVersion?: number;
 }
@@ -90,7 +91,7 @@ export interface CustomSkillsResponse {
 }
 
 
-/** POST /api/skills/me/import 响应 */
+/** POST /api/governance/resources/skills/import 响应 */
 export interface SkillImportResponse {
   ok: true;
   skill: SkillInfo;
@@ -98,10 +99,12 @@ export interface SkillImportResponse {
 
 export interface GovernanceSkillImportResponse extends SkillImportResponse {
   status: 'succeeded';
+  selected?: boolean;
   resource: {
     skillId: string;
     tenantId: string;
-    scope: 'tenant';
+    scope: 'tenant' | 'personal';
+    ownerUserId?: string;
     status: 'published';
     currentVersionId: string;
     revision: number;
@@ -125,6 +128,7 @@ export interface GovernanceSkillImportResponse extends SkillImportResponse {
 export interface SkillDocumentResponse {
   skillId: string;
   source: 'pool' | 'tenant' | 'custom';
+  governance?: SkillGovernanceInfo;
   username?: string;
   tenantId?: string;
   content: string;

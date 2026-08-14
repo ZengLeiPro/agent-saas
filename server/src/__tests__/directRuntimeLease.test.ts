@@ -84,6 +84,32 @@ describe('acquireDirectRuntimeRunLease', () => {
     await expect(acquireDirectRuntimeRunLease({ runStore, runId: 'run-no-lease-api' }))
       .rejects.toThrow('Direct runtime lease is unavailable run=run-no-lease-api');
   });
+
+  it('aborts direct execution when lease renewal is rejected', async () => {
+    const abortController = new AbortController();
+    const runStore = {
+      acquireLease: async (runId: string, workerId: string) => runRecord(runId, workerId),
+      renewLease: async () => null,
+      releaseLease: async () => null,
+    } as unknown as RunStore;
+
+    const lease = await acquireDirectRuntimeRunLease({
+      runStore,
+      runId: 'run-renew-lost',
+      renewIntervalMs: 5,
+      onLeaseLost: (error) => abortController.abort(error),
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(abortController.signal.aborted).toBe(true);
+      expect(abortController.signal.reason).toMatchObject({
+        name: 'DirectRuntimeLeaseLostError',
+        runId: 'run-renew-lost',
+      });
+    } finally {
+      await lease?.release();
+    }
+  });
 });
 
 describe('startWakeLeaseRenewal durable cancel fallback', () => {

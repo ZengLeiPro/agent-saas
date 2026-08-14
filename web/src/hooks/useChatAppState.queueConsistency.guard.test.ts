@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { QueuedInterjection } from "../lib/interjectionConsumption";
 import {
   acquireMessageSubmissionSlot,
+  finalizeNotFoundSubmission,
   markSteeringCancelledForStop,
   recoverQueueSnapshotAfterSyncOverflow,
   shouldAcceptSessionEvent,
@@ -68,6 +69,40 @@ describe("会话消息队列一致性行为", () => {
 
     expect(refreshCurrentSession).toHaveBeenCalledTimes(1);
     expect(loadSessions).toHaveBeenCalledWith({ fresh: true });
+  });
+
+  it("ACK 核验 not_found 后释放初始发送传输态", () => {
+    const markFailed = vi.fn();
+    const clearPendingSession = vi.fn();
+    const releaseTransport = vi.fn();
+
+    finalizeNotFoundSubmission({
+      preserveActiveStream: false,
+      markFailed,
+      clearPendingSession,
+      releaseTransport,
+    });
+
+    expect(markFailed).toHaveBeenCalledTimes(1);
+    expect(clearPendingSession).toHaveBeenCalledTimes(1);
+    expect(releaseTransport).toHaveBeenCalledTimes(1);
+  });
+
+  it("排队消息核验 not_found 不得释放当前 run 的传输态", () => {
+    const markFailed = vi.fn();
+    const clearPendingSession = vi.fn();
+    const releaseTransport = vi.fn();
+
+    finalizeNotFoundSubmission({
+      preserveActiveStream: true,
+      markFailed,
+      clearPendingSession,
+      releaseTransport,
+    });
+
+    expect(markFailed).toHaveBeenCalledTimes(1);
+    expect(clearPendingSession).toHaveBeenCalledTimes(1);
+    expect(releaseTransport).not.toHaveBeenCalled();
   });
 
   it("同一帧重复提交只执行一次外部副作用", async () => {

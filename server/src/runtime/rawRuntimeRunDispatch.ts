@@ -707,11 +707,20 @@ export class DirectRuntimeLeaseContendedError extends Error {
   }
 }
 
+export class DirectRuntimeLeaseLostError extends Error {
+  constructor(readonly runId: string, reason?: string) {
+    super(`Direct runtime lease lost run=${runId}${reason ? `: ${reason}` : ''}`);
+    this.name = 'DirectRuntimeLeaseLostError';
+  }
+}
+
 export async function acquireDirectRuntimeRunLease(input: {
   runStore: RunStore | undefined;
   runId: string;
   runtimeWorkerId?: string;
   logger?: RawRuntimeRunDispatchConfig['logger'];
+  onLeaseLost?: (error: DirectRuntimeLeaseLostError) => void;
+  renewIntervalMs?: number;
 }): Promise<DirectRuntimeLeaseHandle | null> {
   // scheduler wake 已持有自己的 lease；未启用 durable run store 的 legacy 路径也无需抢占。
   if (input.runtimeWorkerId || !input.runStore) return null;
@@ -734,26 +743,36 @@ export async function acquireDirectRuntimeRunLease(input: {
   }
 
   let renewTimer: ReturnType<typeof setInterval> | null = null;
+  let leaseLost = false;
+  let released = false;
+  const notifyLeaseLost = (reason?: string): void => {
+    if (leaseLost || released) return;
+    leaseLost = true;
+    if (renewTimer) {
+      clearInterval(renewTimer);
+      renewTimer = null;
+    }
+    const error = new DirectRuntimeLeaseLostError(input.runId, reason);
+    input.logger?.warn(`${error.message} worker=${workerId}`);
+    input.onLeaseLost?.(error);
+  };
   if (input.runStore.renewLease) {
     renewTimer = setInterval(() => {
       void input.runStore?.renewLease?.(input.runId, workerId, DIRECT_RUNTIME_LEASE_MS)
         .then((renewed) => {
-          if (!renewed && renewTimer) {
-            clearInterval(renewTimer);
-            renewTimer = null;
-            input.logger?.warn(`Direct runtime lease lost run=${input.runId} worker=${workerId}`);
-          }
+          if (!renewed) notifyLeaseLost('renewal rejected');
         })
         .catch((err) => {
-          input.logger?.warn(`Direct runtime lease renew failed run=${input.runId}: ${err instanceof Error ? err.message : String(err)}`);
+          notifyLeaseLost(err instanceof Error ? err.message : String(err));
         });
-    }, DIRECT_RUNTIME_LEASE_RENEW_INTERVAL_MS);
+    }, input.renewIntervalMs ?? DIRECT_RUNTIME_LEASE_RENEW_INTERVAL_MS);
     renewTimer.unref?.();
   }
 
   return {
     workerId,
     async release() {
+      released = true;
       if (renewTimer) {
         clearInterval(renewTimer);
         renewTimer = null;
@@ -1856,6 +1875,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         runId,
         runtimeWorkerId: options.runtimeWorkerId,
         logger: config.logger,
+        onLeaseLost: (error) => abortController.abort(error),
       });
     } catch (err) {
       if (lockHandle) await lockHandle.release().catch(() => undefined);
@@ -2196,16 +2216,27 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           yield event;
         }
       }
+      if (abortController.signal.reason instanceof DirectRuntimeLeaseLostError) {
+        throw abortController.signal.reason;
+      }
       await sessionCatalog.markStatus(
         sessionId,
         abortController.signal.aborted ? 'idle' : loopError ? 'error' : 'idle',
       );
     } catch (err) {
+      const failure = abortController.signal.reason instanceof DirectRuntimeLeaseLostError
+        ? abortController.signal.reason
+        : err;
+      if (failure instanceof DirectRuntimeLeaseLostError) {
+        logger.error(`Raw runtime run 中止：${failure.message}`);
+        yield { type: 'error', error: `Raw runtime 运行中止: ${failure.message}` };
+        return;
+      }
       if (abortController.signal.aborted) {
         await sessionCatalog.markStatus(sessionId, 'idle').catch(() => undefined);
         return;
       }
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = failure instanceof Error ? failure.message : String(failure);
       await markRunState(config.runStore, eventStore, sessionId, runId, 'failed', msg).catch(() => undefined);
       await sessionCatalog.markStatus(sessionId, 'error');
       logger.error(`Raw runtime run 失败: ${msg}`);
@@ -2466,6 +2497,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         runId: resumeRunId,
         runtimeWorkerId: request.runtimeWorkerId,
         logger: config.logger,
+        onLeaseLost: (error) => abortController.abort(error),
       });
     } catch (err) {
       if (lockHandle) await lockHandle.release().catch(() => undefined);
@@ -2659,13 +2691,24 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         if (event.type === 'error') loopError = event.error ?? 'approval resume failed';
         yield event;
       }
+      if (abortController.signal.reason instanceof DirectRuntimeLeaseLostError) {
+        throw abortController.signal.reason;
+      }
       await sessionCatalog.markStatus(request.sessionId, loopError ? 'error' : 'idle');
     } catch (err) {
+      const failure = abortController.signal.reason instanceof DirectRuntimeLeaseLostError
+        ? abortController.signal.reason
+        : err;
+      if (failure instanceof DirectRuntimeLeaseLostError) {
+        logger.error(`Direct runtime resume 中止：${failure.message}`);
+        yield { type: 'error', error: `Direct runtime resume 中止: ${failure.message}` };
+        return;
+      }
       if (abortController.signal.aborted) {
         await sessionCatalog.markStatus(request.sessionId, 'idle').catch(() => undefined);
         return;
       }
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = failure instanceof Error ? failure.message : String(failure);
       await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'failed', msg).catch(() => undefined);
       await sessionCatalog.markStatus(request.sessionId, 'error');
       logger.error(`Raw approval resume 失败: ${msg}`);
@@ -2903,6 +2946,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         runId: resumeRunId,
         runtimeWorkerId: request.runtimeWorkerId,
         logger: config.logger,
+        onLeaseLost: (error) => abortController.abort(error),
       });
     } catch (err) {
       if (lockHandle) await lockHandle.release().catch(() => undefined);
@@ -3096,13 +3140,24 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         if (event.type === 'error') loopError = event.error ?? 'interaction resume failed';
         yield event;
       }
+      if (abortController.signal.reason instanceof DirectRuntimeLeaseLostError) {
+        throw abortController.signal.reason;
+      }
       await sessionCatalog.markStatus(request.sessionId, loopError ? 'error' : 'idle');
     } catch (err) {
+      const failure = abortController.signal.reason instanceof DirectRuntimeLeaseLostError
+        ? abortController.signal.reason
+        : err;
+      if (failure instanceof DirectRuntimeLeaseLostError) {
+        logger.error(`Direct runtime resume 中止：${failure.message}`);
+        yield { type: 'error', error: `Direct runtime resume 中止: ${failure.message}` };
+        return;
+      }
       if (abortController.signal.aborted) {
         await sessionCatalog.markStatus(request.sessionId, 'idle').catch(() => undefined);
         return;
       }
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = failure instanceof Error ? failure.message : String(failure);
       await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'failed', msg).catch(() => undefined);
       await sessionCatalog.markStatus(request.sessionId, 'error');
       logger.error(`Raw interaction resume 失败: ${msg}`);

@@ -38,6 +38,7 @@ import {
 import type { QueuedInterjection } from "@/lib/interjectionConsumption";
 import {
   acquireMessageSubmissionSlot,
+  finalizeNotFoundSubmission,
   markSteeringCancelledForStop,
   recoverQueueSnapshotAfterSyncOverflow,
   shouldAcceptSessionEvent,
@@ -497,6 +498,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     attachments: UploadedFile[];
     voiceFile?: { savedPath: string; relativePath: string; duration: number };
     autoApproveRunShell?: boolean;
+    preserveActiveStream: boolean;
     state: 'sending' | 'acked';
     createdAt: number;
   }
@@ -2601,13 +2603,28 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
             outboxRef.current = outboxRef.current.filter((candidate) => candidate.clientMsgId !== clientMsgId);
             const reason = '服务端未收到该消息，请重试';
             const queuedEntry = queuedInterjectionsRef.current.some((item) => item.clientMsgId === clientMsgId);
-            if (queuedEntry) {
-              mutateQueuedInterjections((prev) => prev.map((item) => item.clientMsgId === clientMsgId
-                ? { ...item, status: 'failed' as const, reason }
-                : item));
-            } else {
-              markBubbleFailed(clientMsgId, -1, reason);
-            }
+            finalizeNotFoundSubmission({
+              preserveActiveStream: currentEntry.preserveActiveStream,
+              markFailed: () => {
+                if (queuedEntry) {
+                  mutateQueuedInterjections((prev) => prev.map((item) => item.clientMsgId === clientMsgId
+                    ? { ...item, status: 'failed' as const, reason }
+                    : item));
+                } else {
+                  markBubbleFailed(clientMsgId, -1, reason);
+                }
+              },
+              clearPendingSession: () => {
+                if (pendingNewSessionClientMsgIdRef.current === clientMsgId) {
+                  pendingNewSessionClientMsgIdRef.current = null;
+                }
+                newSessionClientMsgIdsRef.current.delete(clientMsgId);
+              },
+              releaseTransport: () => {
+                wsAttachedRef.current = false;
+                setLoading(false);
+              },
+            });
             return;
           }
 
@@ -2768,6 +2785,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       attachments,
       ...(voiceFile ? { voiceFile } : {}),
       ...(autoApproveRunShellForMessage ? { autoApproveRunShell: true } : {}),
+      preserveActiveStream,
       state: 'sending',
       createdAt: Date.now(),
     });

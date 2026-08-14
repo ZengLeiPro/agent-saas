@@ -44,6 +44,18 @@ export function recoverQueueSnapshotAfterSyncOverflow(session: {
   return session.loadSessions({ fresh: true });
 }
 
+/** ACK 核验明确 not_found 后，释放本次提交占用的传输态；排队发送不得干扰当前 run。 */
+export function finalizeNotFoundSubmission(input: {
+  preserveActiveStream: boolean;
+  markFailed: () => void;
+  clearPendingSession: () => void;
+  releaseTransport: () => void;
+}): void {
+  input.markFailed();
+  input.clearPendingSession();
+  if (!input.preserveActiveStream) input.releaseTransport();
+}
+
 /** 同一渲染帧内的重复点击只允许一个提交进入发送链路。 */
 export function acquireMessageSubmissionSlot(
   gate: { current: boolean },

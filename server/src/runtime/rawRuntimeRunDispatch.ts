@@ -138,6 +138,7 @@ import {
   type TenantRemoteHandAuthTokenResolver,
 } from './tenantRemoteHandResolver.js';
 import { deriveSandboxScopeId, ensureRuntimeHandRegistered } from './runtimeHandRegistration.js';
+import { restoreRuntimeSessionForWake } from './runtimeWakeSessionRestore.js';
 import type { SecretVault } from '../security/secretVault.js';
 import type { NetworkPolicyConfig } from './networkPolicy.js';
 import { runtimeRunController } from './runController.js';
@@ -161,7 +162,6 @@ import { AgentToolProvider } from './subagent/agentToolProvider.js';
 import { reconcileInterruptedForegroundToolCalls } from './subagent/recovery.js';
 import type { BackgroundTaskRuntime } from './background/backgroundTaskRuntime.js';
 import { BackgroundTaskToolProvider } from './background/backgroundTaskToolProvider.js';
-
 export { deriveSandboxScopeId, ensureRuntimeHandRegistered };
 
 const logger = createLogger('RawRuntime');
@@ -1816,7 +1816,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       metadata: {
         cwd,
         transcriptPath,
-        modelRef: sessionModelRef,
+        modelRef: sessionModelRef, username: sessionRecord.username, userRole: sessionRecord.userRole, ...(orgAgentId ? { orgAgentId } : {}),
         outputTransactionMode: resolveModelOutputTransactionMode(context),
         sandboxScopeId,
         ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}),
@@ -3092,7 +3092,7 @@ export async function wakeRuntimeSession(
   options: WakeRuntimeSessionOptions = {},
 ): Promise<void> {
   const sessionCatalog = resolveSessionCatalog(config);
-  const session = await sessionCatalog.get(run.sessionId);
+  const session = await restoreRuntimeSessionForWake(sessionCatalog, run);
   if (!session) {
     throw new Error(`wake context restore failed: session metadata not found for ${run.sessionId}`);
   }

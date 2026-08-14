@@ -123,16 +123,16 @@ describe('transcripts/meta persistence', () => {
 
   it('backfillSessionIdentity 只补空身份字段并保留并发敏感元数据', async () => {
     await writeSessionMeta(transcriptPath, {
-      ...baseMeta, userId: '', username: '', model: 'codex/gpt-5.6-sol-high',
+      ...baseMeta, userId: '', model: 'codex/gpt-5.6-sol-high',
       runtimeStatus: 'idle', totalCostUsd: 1.25,
     });
     const updated = await backfillSessionIdentity(transcriptPath, {
-      userId: 'u1', username: 'agent-dws:org-kaikai', tenantId: 'kaiyan',
-      channel: 'web', orgAgentId: 'org-kaikai', updatedAt: '2026-08-14T12:00:00.000Z',
+      userId: 'u1', tenantId: 'kaiyan', orgAgentId: 'org-kaikai',
+      updatedAt: '2026-08-14T12:00:00.000Z',
     });
 
     expect(updated).toMatchObject({
-      userId: 'u1', username: 'agent-dws:org-kaikai', tenantId: 'kaiyan',
+      userId: 'u1', username: 'alice', tenantId: 'kaiyan',
       orgAgentId: 'org-kaikai', channel: 'web', model: 'codex/gpt-5.6-sol-high',
       runtimeStatus: 'idle', totalCostUsd: 1.25, updatedAt: '2026-08-14T12:00:00.000Z',
     });

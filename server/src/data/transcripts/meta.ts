@@ -182,9 +182,7 @@ export async function addSessionCost(
 
 export interface SessionIdentityBackfill {
   userId?: string;
-  username?: string;
   tenantId?: string;
-  channel?: string;
   orgAgentId?: string;
   updatedAt: string;
 }
@@ -198,21 +196,15 @@ export async function backfillSessionIdentity(
     const meta = await readSessionMeta(transcriptPath);
     if (!meta) return null;
     assertSessionIdentityCompatible('userId', meta.userId, identity.userId);
-    assertSessionIdentityCompatible('username', meta.username, identity.username);
     assertSessionIdentityCompatible('tenantId', meta.tenantId, identity.tenantId);
-    assertSessionIdentityCompatible('channel', meta.channel, identity.channel);
     assertSessionIdentityCompatible('orgAgentId', meta.orgAgentId, identity.orgAgentId);
     const updated: SessionMeta = {
       ...meta,
       userId: meta.userId || identity.userId || '',
-      username: meta.username || identity.username || '',
-      channel: meta.channel || identity.channel || '',
       ...(!meta.tenantId && identity.tenantId ? { tenantId: identity.tenantId } : {}),
       ...(!meta.orgAgentId && identity.orgAgentId ? { orgAgentId: identity.orgAgentId } : {}),
     };
     const changed = updated.userId !== meta.userId
-      || updated.username !== meta.username
-      || updated.channel !== meta.channel
       || updated.tenantId !== meta.tenantId
       || updated.orgAgentId !== meta.orgAgentId;
     if (!changed) return meta;

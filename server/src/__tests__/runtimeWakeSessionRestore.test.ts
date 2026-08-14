@@ -32,8 +32,6 @@ function catalog(existing: RuntimeSessionRecord | null = null): SessionCatalog &
     backfillIdentity: vi.fn(async (_sessionId: string, identity: SessionIdentityBackfill) => existing ? ({
       ...existing,
       userId: existing.userId || identity.userId || '',
-      username: existing.username || identity.username || '',
-      channel: existing.channel || identity.channel || '',
       ...(!existing.tenantId && identity.tenantId ? { tenantId: identity.tenantId } : {}),
       ...(!existing.orgAgentId && identity.orgAgentId ? { orgAgentId: identity.orgAgentId } : {}),
       updatedAt: identity.updatedAt,
@@ -59,9 +57,26 @@ describe('restoreRuntimeSessionForWake', () => {
     expect(store.upsert).not.toHaveBeenCalled();
   });
 
+  it('通道或展示用户名变化时不误判为授权身份冲突', async () => {
+    const existing: RuntimeSessionRecord = {
+      sessionId: 'session-1', userId: 'account-1', username: 'legacy-agent',
+      tenantId: 'kaiyan', orgAgentId: 'org-kaikai', channel: 'web',
+      cwd: '/workspace/kaiyan/.agent-org-kaikai', transcriptPath: '/data/session-1.jsonl',
+      workspaceId: 'ws_kaiyan__account-1', status: 'running',
+      createdAt: '2026-08-14T08:00:00.000Z', updatedAt: '2026-08-14T08:00:00.000Z',
+    };
+    const store = catalog(existing);
+
+    await expect(restoreRuntimeSessionForWake(store, run({
+      username: 'agent-dws:org-kaikai', orgAgentId: 'org-kaikai',
+    }))).resolves.toBe(existing);
+    expect(store.backfillIdentity).not.toHaveBeenCalled();
+    expect(store.upsert).not.toHaveBeenCalled();
+  });
+
   it('已有 Session 缺治理身份时从同一 durable Run 安全补齐', async () => {
     const existing: RuntimeSessionRecord = {
-      sessionId: 'session-1', userId: '', username: '',
+      sessionId: 'session-1', userId: '', username: 'agent-dws:org-kaikai',
       channel: 'dingtalk', cwd: '/workspace/kaiyan/.agent-org-kaikai',
       transcriptPath: '/data/session-1.jsonl', workspaceId: 'ws_kaiyan__account-1',
       status: 'running', createdAt: '2026-08-14T08:00:00.000Z', updatedAt: '2026-08-14T08:00:00.000Z',
@@ -78,8 +93,7 @@ describe('restoreRuntimeSessionForWake', () => {
     });
     expect(restored?.createdAt).toBe(existing.createdAt);
     expect(store.backfillIdentity).toHaveBeenCalledWith('session-1', expect.objectContaining({
-      userId: 'account-1', tenantId: 'kaiyan', username: 'agent-dws:org-kaikai',
-      channel: 'dingtalk', orgAgentId: 'org-kaikai',
+      userId: 'account-1', tenantId: 'kaiyan', orgAgentId: 'org-kaikai',
     }));
     expect(store.upsert).not.toHaveBeenCalled();
   });
@@ -87,8 +101,6 @@ describe('restoreRuntimeSessionForWake', () => {
   it.each([
     ['userId', { userId: 'other-account' }],
     ['tenantId', { tenantId: 'other-tenant' }],
-    ['username', { username: 'other-agent' }],
-    ['channel', { channel: 'web' }],
     ['orgAgentId', { orgAgentId: 'other-agent' }],
   ] as Array<[string, Partial<RuntimeSessionRecord>]>)('已有 Session 的 %s 与 durable Run 冲突时 fail-closed', async (field, override) => {
     const existing: RuntimeSessionRecord = {

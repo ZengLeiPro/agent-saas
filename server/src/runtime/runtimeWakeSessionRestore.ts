@@ -26,27 +26,19 @@ export async function restoreRuntimeSessionForWake(
     const durableIdentity = {
       userId: stringValue(run.userId),
       tenantId: stringValue(run.tenantId),
-      username: stringValue(run.metadata.username),
-      channel: stringValue(run.channel),
       orgAgentId: stringValue(run.metadata.orgAgentId),
     };
     assertCompatibleIdentity('userId', existing.userId, durableIdentity.userId);
     assertCompatibleIdentity('tenantId', existing.tenantId, durableIdentity.tenantId);
-    assertCompatibleIdentity('username', existing.username, durableIdentity.username);
-    assertCompatibleIdentity('channel', existing.channel, durableIdentity.channel);
     assertCompatibleIdentity('orgAgentId', existing.orgAgentId, durableIdentity.orgAgentId);
 
     const repaired: RuntimeSessionRecord = {
       ...existing,
       userId: existing.userId || durableIdentity.userId || '',
-      username: existing.username || durableIdentity.username || '',
-      channel: existing.channel || durableIdentity.channel || '',
       ...(!existing.tenantId && durableIdentity.tenantId ? { tenantId: durableIdentity.tenantId } : {}),
       ...(!existing.orgAgentId && durableIdentity.orgAgentId ? { orgAgentId: durableIdentity.orgAgentId } : {}),
     };
     const changed = repaired.userId !== existing.userId
-      || repaired.username !== existing.username
-      || repaired.channel !== existing.channel
       || repaired.tenantId !== existing.tenantId
       || repaired.orgAgentId !== existing.orgAgentId;
     if (!changed) return existing;

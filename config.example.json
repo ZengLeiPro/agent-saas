@@ -90,7 +90,9 @@
   // ── 标题生成器 ─────────────────────────────────────────────
   // model: 引用 models.groups 中的 "groupId/modelId"
   "titleGenerator": {
-    "model": "gpa/gpt54mini"
+    "model": "gpa/gpt54mini",
+    // 主模型失败或返回空内容时按顺序尝试。
+    "fallbackModels": []
   },
 
   // ── Agent runtime 选项 ─────────────────────────────────────

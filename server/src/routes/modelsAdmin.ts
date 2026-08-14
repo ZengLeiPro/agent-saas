@@ -2,22 +2,34 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { Router } from 'express';
 import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 
+import { TITLE_SYSTEM_PROMPT } from '../agent/titleGenerator.js';
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import { getPublicModelList } from '../app/models.js';
 import { getAppConfigPath, parseAppConfig } from '../app/config.js';
-import type { AppConfig, MemoryIndexAppConfig, ModelsConfig } from '../app/config.js';
+import type {
+  AppConfig,
+  MemoryIndexAppConfig,
+  ModelsConfig,
+  SystemPromptsConfig,
+  TitleGeneratorAppConfig,
+} from '../app/config.js';
 
 export interface CreateModelsAdminRouterOptions {
   processCwd: string;
   config: AppConfig;
   onModelsUpdated?: (models: ModelsConfig) => void;
   onMemoryIndexUpdated?: (memoryIndex: MemoryIndexAppConfig | undefined) => void | Promise<void>;
+  onSystemPromptOverridesUpdated?: (next: SystemPromptsConfig) => void;
 }
 
 type ModelsAdminUpdate = {
   models: ModelsConfig;
   memoryIndex: MemoryIndexAppConfig | null;
   memoryIndexProvided: boolean;
+  titleGenerator: TitleGeneratorAppConfig | undefined;
+  titleGeneratorProvided: boolean;
+  systemPrompts: SystemPromptsConfig;
+  titleSystemPromptProvided: boolean;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -50,6 +62,33 @@ function redactMemoryIndex(memoryIndex: MemoryIndexAppConfig | null): unknown {
       hasApiKey: typeof apiKey === 'string' && apiKey.length > 0,
     },
   };
+}
+
+function titleGeneratorView(config: AppConfig): TitleGeneratorAppConfig | undefined {
+  if (config.titleGenerator) return config.titleGenerator;
+  return config.models ? { model: config.models.default, fallbackModels: [] } : undefined;
+}
+
+function titleSystemPromptView(config: AppConfig) {
+  const override = config.systemPrompts?.['utility.title'];
+  return {
+    content: override ?? TITLE_SYSTEM_PROMPT,
+    defaultContent: TITLE_SYSTEM_PROMPT,
+    overridden: typeof override === 'string',
+  };
+}
+
+function validateTitleGeneratorModels(models: ModelsConfig, titleGenerator: TitleGeneratorAppConfig | undefined): void {
+  if (!titleGenerator) return;
+  const refs = [titleGenerator.model, ...(titleGenerator.fallbackModels ?? [])];
+  if (new Set(refs).size !== refs.length) throw new Error('标题生成模型链不能包含重复模型');
+
+  const available = new Set(models.groups.flatMap((group) => (
+    group.models.map((model) => `${group.id}/${model.id}`)
+  )));
+  for (const ref of refs) {
+    if (!available.has(ref)) throw new Error(`标题生成模型引用不存在：${ref}`);
+  }
 }
 
 /** PUT 请求体中缺失/留空的 apiKey 按 group.id（memoryIndex 单例）从现有配置补回。 */
@@ -100,6 +139,8 @@ function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUp
   const rawRecord = isRecord(currentRaw) ? currentRaw : {};
   const bodyRecord = isRecord(body) ? body : {};
   const memoryIndexProvided = Object.prototype.hasOwnProperty.call(bodyRecord, 'memoryIndex');
+  const titleGeneratorProvided = Object.prototype.hasOwnProperty.call(bodyRecord, 'titleGenerator');
+  const titleSystemPromptProvided = Object.prototype.hasOwnProperty.call(bodyRecord, 'titleSystemPrompt');
   const merged: Record<string, unknown> = {
     ...rawRecord,
     models: bodyRecord.models,
@@ -123,12 +164,31 @@ function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUp
     }
   }
 
+  if (titleGeneratorProvided) merged.titleGenerator = bodyRecord.titleGenerator;
+
+  if (titleSystemPromptProvided) {
+    if (typeof bodyRecord.titleSystemPrompt !== 'string' || !bodyRecord.titleSystemPrompt.trim()) {
+      throw new Error('标题生成提示语不能为空');
+    }
+    const nextPrompts = isRecord(rawRecord.systemPrompts) ? { ...rawRecord.systemPrompts } : {};
+    const content = bodyRecord.titleSystemPrompt.trim();
+    if (content === TITLE_SYSTEM_PROMPT) delete nextPrompts['utility.title'];
+    else nextPrompts['utility.title'] = content;
+    if (Object.keys(nextPrompts).length > 0) merged.systemPrompts = nextPrompts;
+    else delete merged.systemPrompts;
+  }
+
   const parsed = parseAppConfig(merged);
   if (!parsed.models) throw new Error('models 未配置');
+  validateTitleGeneratorModels(parsed.models, parsed.titleGenerator);
   return {
     models: parsed.models,
     memoryIndex: parsed.memory?.index ?? null,
     memoryIndexProvided,
+    titleGenerator: parsed.titleGenerator,
+    titleGeneratorProvided,
+    systemPrompts: parsed.systemPrompts ?? {},
+    titleSystemPromptProvided,
   };
 }
 
@@ -145,6 +205,8 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
     res.json({
       models: redactModels(options.config.models),
       memoryIndex: redactMemoryIndex(options.config.memory?.index ?? null),
+      titleGenerator: titleGeneratorView(options.config),
+      titleSystemPrompt: titleSystemPromptView(options.config),
       publicModelList: getPublicModelList(options.config.models),
     });
   });
@@ -189,6 +251,22 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
           updatedText = applyEdits(updatedText, memoryEdits);
         }
       }
+      if (nextUpdate.titleGeneratorProvided) {
+        updatedText = applyEdits(updatedText, modify(
+          updatedText,
+          ['titleGenerator'],
+          nextUpdate.titleGenerator,
+          { formattingOptions: { insertSpaces: true, tabSize: 2 } },
+        ));
+      }
+      if (nextUpdate.titleSystemPromptProvided) {
+        updatedText = applyEdits(updatedText, modify(
+          updatedText,
+          ['systemPrompts'],
+          Object.keys(nextUpdate.systemPrompts ?? {}).length > 0 ? nextUpdate.systemPrompts : undefined,
+          { formattingOptions: { insertSpaces: true, tabSize: 2 } },
+        ));
+      }
       writeFileSync(configPath, updatedText, 'utf-8');
       options.config.models = nextUpdate.models;
       if (nextUpdate.memoryIndexProvided) {
@@ -201,6 +279,15 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
           delete options.config.memory.index;
         }
       }
+      if (nextUpdate.titleGeneratorProvided) {
+        if (nextUpdate.titleGenerator) options.config.titleGenerator = nextUpdate.titleGenerator;
+        else delete options.config.titleGenerator;
+      }
+      if (nextUpdate.titleSystemPromptProvided) {
+        if (Object.keys(nextUpdate.systemPrompts ?? {}).length > 0) options.config.systemPrompts = nextUpdate.systemPrompts;
+        else delete options.config.systemPrompts;
+        options.onSystemPromptOverridesUpdated?.(options.config.systemPrompts);
+      }
       options.onModelsUpdated?.(nextUpdate.models);
       if (nextUpdate.memoryIndexProvided) {
         await options.onMemoryIndexUpdated?.(options.config.memory?.index);
@@ -208,6 +295,8 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
       res.json({
         models: redactModels(nextUpdate.models),
         memoryIndex: redactMemoryIndex(options.config.memory?.index ?? null),
+        titleGenerator: titleGeneratorView(options.config),
+        titleSystemPrompt: titleSystemPromptView(options.config),
         publicModelList: getPublicModelList(nextUpdate.models),
       });
     } catch (error) {

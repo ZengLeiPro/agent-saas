@@ -407,7 +407,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 主模型返回空 / 报错时，自动 fallback。命名场景对模型质量不敏感、对可用性敏感，
   // 主推稳定模型即可。
   const titleGeneratorConfigs: TitleGeneratorConfig[] = [];
-
   // 检测：resolveModelRef 在 ref 失败时会**静默回退到 default**——
   // 之前 titleGenerator.model 配 "openai-agents/glm-5.2" 实际跑的是 default
   // "ark-agents/glm-5.2"，几个月没人察觉。比对 ref modelId 与解析结果，不一致就 warn。
@@ -451,8 +450,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 门禁模型配置链（主 + fallback；2026-07 唯恩批次）。与 title 不同：
   // config.guardrail 缺省 = 门禁模块不激活（空数组，checkTopicScope fail-open
   // 短路），**没有** env 默认模型兜底。热更由 routes.ts onModelsUpdated 经
-  // updateGuardrailModelConfigs 写回本变量；WebChannel 拿的是 getter——避开
-  // titleGeneratorConfigs 构造时被捕获旧数组引用的 stale 坑。
+  // updateGuardrailModelConfigs 写回本变量；标题链则原地替换数组内容，让已装配的
+  // WebChannel 与会话路由继续持有同一引用。
   let guardrailModelConfigs: GuardrailModelConfig[] = [];
   if (config.guardrail?.model && config.models) {
     for (const ref of [config.guardrail.model, ...(config.guardrail.fallbackModels ?? [])]) {
@@ -469,7 +468,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       serverLogger.warn('Guardrail: no model resolved from config.guardrail, module inactive');
     }
   }
-
   // Auth 初始化（需要在 dispatch 之前，因为 agentStore 依赖 userStore）
   let userStore: UserStore | undefined;
   let tenantStore: TenantStore | undefined;
@@ -1657,18 +1655,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const resolvedImageGenTools = await resolveImageGenToolsConfig(config.imageGenTools, secretVault);
   // 生图 per-engine 定价注册表初始化；admin PUT /api/admin/image-gen-pricing 时热更。
   configureImageGenPricing(config.imageGenTools?.pricing);
-
   // 模型解析器：如果配置了 models，绑定到 RawRuntime / WebChannel / Cron。
   // 解析前会对齐磁盘配置，让 runtime-worker 能感知 ws-only 进程的写入（见 modelResolvers.ts）。
-  const { modelResolver, defaultModelResolver } = createModelResolvers({
+  const { modelResolver, defaultModelResolver, sharedConfigRefresher } = createModelResolvers({
     config,
     processCwd,
     tenantStore,
     tenantsFilePath,
     logger: serverLogger,
+    titleGeneratorConfigs,
     onGuardrailModelConfigsUpdated: (next) => { guardrailModelConfigs = next; },
+    onSystemPromptOverridesUpdated: (next) => { systemPromptRegistry.replaceOverrides(next); },
   });
-
   runPreflightService = initializeRuntimeGovernancePreflight({
     sessionCatalog,
     userStore,
@@ -2755,6 +2753,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     modelResolver,
     userStore,
     titleGeneratorConfigs,
+    refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
     getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'),
     sttConfig: resolvedSttRuntimeConfig.sttConfig,
     jwtSecret: config.auth?.jwtSecret,
@@ -2766,8 +2765,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tenantStore,
     allowedOrigins: config.server.corsOrigins,
     // 专职 Agent + LLM 话题门禁（2026-07 唯恩批次）。getGuardrailModelConfigs
-    // 必须是 getter：热更后 channel 每次调用都取到最新链（title 的 stale 数组
-    // 引用坑勿复刻）。guardrailEventStore 仅 PG backend 存在，file backend 降级 log。
+    // 必须是 getter：热更后 channel 每次调用都取到最新链。guardrailEventStore
+    // 仅 PG backend 存在，file backend 降级 log。
     orgAgentStore,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     guardrailEventStore,
@@ -3134,6 +3133,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     groupStore,
     authMiddleware,
     titleGeneratorConfigs,
+    refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
     orgAgentStore,
     guardrailEventStore,
     messageFeedbackStore,

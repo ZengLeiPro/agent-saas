@@ -65,5 +65,5 @@ export function applyModelsHotUpdate(params: {
     const fb = resolveModelRef(merged, ref);
     if (fb) next.push({ model: fb.model, connection: fb.connection });
   }
-  target.titleGeneratorConfigs = next;
+  target.titleGeneratorConfigs?.splice(0, target.titleGeneratorConfigs.length, ...next);
 }

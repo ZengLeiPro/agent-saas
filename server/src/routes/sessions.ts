@@ -414,6 +414,7 @@ export interface SessionsRouterOptions {
   getEventBus?: () => EventBus | undefined;
   /** Title generator 配置链：主 + fallback；空表示功能未配置（接口将 501） */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
+  refreshSharedConfig?: () => void;
   /** 平台系统提示语热更新 getter；每次标题生成现取。 */
   getTitleSystemPrompt?: () => string;
   /** Token 用量统计 store，用于记录手动 auto-title 等基础设施模型调用 */
@@ -2531,12 +2532,11 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     async (req: Request, res: Response) => {
       try {
         const { sessionId } = req.params;
-
         if (!isValidSessionId(sessionId)) {
           res.status(400).json({ error: "Invalid sessionId format" });
           return;
         }
-
+        options.refreshSharedConfig?.();
         if (!options.titleGeneratorConfigs?.length) {
           res.status(501).json({ error: "Title generator not configured" });
           return;

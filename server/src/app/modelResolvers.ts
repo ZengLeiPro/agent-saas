@@ -15,6 +15,7 @@ import type { AppConfig } from './config.js';
 import { getTenantPublicModelList, isModelAllowedForTenant, resolveModelRef } from './models.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
+import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import { createSharedConfigRefresher, type SharedConfigRefresher } from './sharedConfigRefresher.js';
 
 export type ModelResolver = (
@@ -38,19 +39,23 @@ export function createModelResolvers(params: {
   tenantStore?: TenantStore;
   tenantsFilePath?: string;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
-  /**
-   * 门禁模型链热更回写。titleGeneratorConfigs 不在此维护——它的消费方
-   * （routes/sessions.ts、web channel）只存在于 ws-only 进程，由那侧的
-   * onModelsUpdated 负责。
-   */
+  /** 已装配给 WebChannel / 会话路由的标题模型链；刷新时原地替换内容。 */
+  titleGeneratorConfigs: TitleGeneratorConfig[];
+  /** 模型配置跨进程刷新后，替换门禁模型链。 */
   onGuardrailModelConfigsUpdated: (next: GuardrailModelConfig[]) => void;
+  /** config.json 中系统提示语覆盖变化后，刷新当前进程注册表。 */
+  onSystemPromptOverridesUpdated: (next: NonNullable<AppConfig['systemPrompts']>) => void;
 }): ModelResolvers {
   const { config, processCwd, tenantStore, tenantsFilePath, logger } = params;
 
   const sharedConfigRefresher = createSharedConfigRefresher({
     config,
     processCwd,
-    target: { updateGuardrailModelConfigs: params.onGuardrailModelConfigsUpdated },
+    target: {
+      titleGeneratorConfigs: params.titleGeneratorConfigs,
+      updateGuardrailModelConfigs: params.onGuardrailModelConfigsUpdated,
+    },
+    onSystemPromptOverridesUpdated: params.onSystemPromptOverridesUpdated,
     tenantStore,
     tenantsFilePath,
     logger,

@@ -56,6 +56,7 @@ export function createSharedConfigRefresher(params: {
   config: AppConfig;
   processCwd: string;
   target: ModelsHotUpdateTarget;
+  onSystemPromptOverridesUpdated?: (next: NonNullable<AppConfig['systemPrompts']>) => void;
   tenantStore?: TenantStore;
   tenantsFilePath?: string;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
@@ -67,6 +68,7 @@ export function createSharedConfigRefresher(params: {
     config,
     processCwd,
     target,
+    onSystemPromptOverridesUpdated,
     tenantStore,
     tenantsFilePath,
     logger,
@@ -98,17 +100,30 @@ export function createSharedConfigRefresher(params: {
       return;
     }
 
-    if (nextConfig.models) {
-      const before = JSON.stringify(config.models ?? null);
-      const after = JSON.stringify(nextConfig.models);
-      if (before !== after) {
-        config.models = nextConfig.models;
-        applyModelsHotUpdate({ config, target, models: nextConfig.models });
-        logger?.info(
-          `[SharedConfig] 已从磁盘热更新模型配置：${nextConfig.models.groups.length} 组 / ` +
-            `${nextConfig.models.groups.reduce((n, g) => n + g.models.length, 0)} 个模型`,
-        );
-      }
+    const modelsChanged = JSON.stringify(config.models ?? null) !== JSON.stringify(nextConfig.models ?? null);
+    const titleGeneratorChanged = JSON.stringify(config.titleGenerator ?? null)
+      !== JSON.stringify(nextConfig.titleGenerator ?? null);
+
+    if (modelsChanged && nextConfig.models) config.models = nextConfig.models;
+    if (titleGeneratorChanged) {
+      if (nextConfig.titleGenerator) config.titleGenerator = nextConfig.titleGenerator;
+      else delete config.titleGenerator;
+    }
+    if ((modelsChanged || titleGeneratorChanged) && config.models) {
+      applyModelsHotUpdate({ config, target, models: config.models });
+      logger?.info(
+        `[SharedConfig] 已从磁盘热更新模型配置：${config.models.groups.length} 组 / ` +
+          `${config.models.groups.reduce((n, g) => n + g.models.length, 0)} 个模型`,
+      );
+    }
+
+    const systemPromptsChanged = JSON.stringify(config.systemPrompts ?? null)
+      !== JSON.stringify(nextConfig.systemPrompts ?? null);
+    if (systemPromptsChanged) {
+      if (nextConfig.systemPrompts) config.systemPrompts = nextConfig.systemPrompts;
+      else delete config.systemPrompts;
+      onSystemPromptOverridesUpdated?.(nextConfig.systemPrompts ?? {});
+      logger?.info('[SharedConfig] 已从磁盘热更新系统提示语配置');
     }
 
     appliedConfigStamp = stamp;

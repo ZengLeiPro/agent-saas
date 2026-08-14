@@ -12,6 +12,8 @@ vi.mock("@/contexts/AuthContext", () => ({
 vi.mock("@/lib/authFetch", () => ({ authFetch: vi.fn() }));
 vi.mock("@/lib/refreshBus", () => ({ refreshAll: vi.fn(async () => undefined) }));
 
+const TITLE_PROMPT = "生成简短标题";
+
 const initialModels = {
   default: "main/gpt",
   allowCrossGroupSwitch: true,
@@ -77,6 +79,11 @@ describe("ModelManager 排序", () => {
         const payload = JSON.parse(String(init.body));
         return jsonResponse({
           ...payload,
+          titleSystemPrompt: {
+            content: payload.titleSystemPrompt,
+            defaultContent: TITLE_PROMPT,
+            overridden: payload.titleSystemPrompt !== TITLE_PROMPT,
+          },
           publicModelList: {
             ...payload.models,
             groups: payload.models.groups.map((group: typeof initialModels.groups[number]) => ({
@@ -90,6 +97,12 @@ describe("ModelManager 排序", () => {
       return jsonResponse({
         models: initialModels,
         memoryIndex: null,
+        titleGenerator: { model: "main/gpt", fallbackModels: [] },
+        titleSystemPrompt: {
+          content: TITLE_PROMPT,
+          defaultContent: TITLE_PROMPT,
+          overridden: false,
+        },
         publicModelList: initialModels,
       });
     });
@@ -176,5 +189,52 @@ describe("ModelManager 排序", () => {
     fireEvent.change(transportSelect!, { target: { value: "inherit" } });
     expect(protocolSelect.disabled).toBe(false);
     expect(protocolSelect.value).toBe("__inherit__");
+  });
+
+  it("按顺序编辑标题模型链并随模型配置保存提示语", async () => {
+    const user = userEvent.setup();
+    render(<ModelManager />);
+
+    expect(await screen.findByText("会话标题生成")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "增加模型" }));
+    const editor = screen.getByLabelText("标题生成提示语");
+    await user.clear(editor);
+    await user.type(editor, "只输出准确标题");
+    await user.click(screen.getByRole("button", { name: "保存并生效" }));
+
+    await waitFor(() => {
+      const modelSave = vi.mocked(authFetch).mock.calls.find(
+        (call) => call[0] === "/api/admin/models" && call[1]?.method === "PUT",
+      );
+      expect(modelSave).toBeTruthy();
+      const payload = JSON.parse(String(modelSave?.[1]?.body));
+      expect(payload.titleGenerator).toEqual({
+        model: "main/gpt",
+        fallbackModels: ["main/mini"],
+      });
+      expect(payload.titleSystemPrompt).toBe("只输出准确标题");
+    });
+  });
+
+  it("模型改名与删除时同步修正标题模型引用", async () => {
+    const user = userEvent.setup();
+    render(<ModelManager />);
+
+    await user.click(await screen.findByText("GPT"));
+    const idInput = screen.getByText("ID").parentElement?.querySelector("input") as HTMLInputElement;
+    await user.clear(idInput);
+    await user.type(idInput, "gpt-renamed");
+    await user.click(screen.getByRole("button", { name: "保存并生效" }));
+    await waitFor(() => {
+      const saves = vi.mocked(authFetch).mock.calls.filter((call) => call[0] === "/api/admin/models" && call[1]?.method === "PUT");
+      expect(JSON.parse(String(saves.at(-1)?.[1]?.body)).titleGenerator.model).toBe("main/gpt-renamed");
+    });
+
+    await user.click(screen.getByRole("button", { name: "删除模型" }));
+    await user.click(screen.getByRole("button", { name: "保存并生效" }));
+    await waitFor(() => {
+      const saves = vi.mocked(authFetch).mock.calls.filter((call) => call[0] === "/api/admin/models" && call[1]?.method === "PUT");
+      expect(JSON.parse(String(saves.at(-1)?.[1]?.body)).titleGenerator.model).toBe("main/mini");
+    });
   });
 });

@@ -212,6 +212,7 @@ export interface AppRuntime {
    * 主返回空 content 或 catch 后会按顺序尝试 fallback。
    */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
+  refreshSharedConfig: () => void;
   /**
    * 公司级专职 Agent store（2026-07 唯恩批次）。仅 auth 启用时实例化
    * （与 agentStore 同生命周期）；routes 挂 /api/org-agents 用。

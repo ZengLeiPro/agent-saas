@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { TITLE_SYSTEM_PROMPT } from '../agent/titleGenerator.js';
 import { parseAppConfig } from '../app/config.js';
 import { createModelsAdminRouter } from '../routes/modelsAdmin.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
@@ -96,6 +97,12 @@ describe('models admin router', () => {
       const body = await readJson(response);
 
       expect(body.models.default).toBe('main/gpt');
+      expect(body.titleGenerator).toEqual({ model: 'main/gpt', fallbackModels: [] });
+      expect(body.titleSystemPrompt).toEqual({
+        content: TITLE_SYSTEM_PROMPT,
+        defaultContent: TITLE_SYSTEM_PROMPT,
+        overridden: false,
+      });
       // 2026-07-18 凭据脱敏：GET 不再返回明文 apiKey，只返回 hasApiKey
       expect(body.memoryIndex.embedding).toEqual({
         baseUrl: 'https://old-embedding.example.invalid',
@@ -275,6 +282,97 @@ describe('models admin router', () => {
       });
       expect(response.status).toBe(400);
       expect((await readJson(response)).error).toContain('auto_compact_threshold');
+    });
+  });
+
+  it('persists title model order and title prompt in the same update', async () => {
+    const rawConfig = baseRawConfig();
+    rawConfig.models.groups[0]!.models.push({ id: 'mini', name: 'Mini', value: 'gpt-5-mini' });
+    const onModelsUpdated = vi.fn();
+    const onSystemPromptOverridesUpdated = vi.fn();
+
+    await withApp(rawConfig, async ({ baseUrl, configPath, runtimeConfig }) => {
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          models: rawConfig.models,
+          titleGenerator: { model: 'main/gpt', fallbackModels: ['main/mini'] },
+          titleSystemPrompt: '只输出一个准确的短标题',
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await readJson(response);
+      expect(body.titleGenerator).toEqual({ model: 'main/gpt', fallbackModels: ['main/mini'] });
+      expect(body.titleSystemPrompt).toMatchObject({
+        content: '只输出一个准确的短标题',
+        overridden: true,
+      });
+
+      const written = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(written.titleGenerator).toEqual({ model: 'main/gpt', fallbackModels: ['main/mini'] });
+      expect(written.systemPrompts['utility.title']).toBe('只输出一个准确的短标题');
+      expect(runtimeConfig.titleGenerator).toEqual(written.titleGenerator);
+      expect(runtimeConfig.systemPrompts?.['utility.title']).toBe('只输出一个准确的短标题');
+      expect(onModelsUpdated).toHaveBeenCalledOnce();
+      expect(onSystemPromptOverridesUpdated).toHaveBeenCalledWith({
+        'utility.title': '只输出一个准确的短标题',
+      });
+    }, { onModelsUpdated, onSystemPromptOverridesUpdated });
+  });
+
+  it('restores the built-in title prompt by removing only its override', async () => {
+    const rawConfig = {
+      ...baseRawConfig(),
+      systemPrompts: {
+        'utility.title': '旧标题提示语',
+        'utility.guardrail': '保留的门禁提示语',
+      },
+    };
+
+    await withApp(rawConfig, async ({ baseUrl, configPath }) => {
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          models: rawConfig.models,
+          titleGenerator: { model: 'main/gpt', fallbackModels: [] },
+          titleSystemPrompt: TITLE_SYSTEM_PROMPT,
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const written = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(written.systemPrompts['utility.title']).toBeUndefined();
+      expect(written.systemPrompts['utility.guardrail']).toBe('保留的门禁提示语');
+      expect((await readJson(response)).titleSystemPrompt.overridden).toBe(false);
+    });
+  });
+
+  it('rejects duplicate or missing title model references', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl }) => {
+      const duplicate = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          models: baseRawConfig().models,
+          titleGenerator: { model: 'main/gpt', fallbackModels: ['main/gpt'] },
+        }),
+      });
+      expect(duplicate.status).toBe(400);
+      expect((await readJson(duplicate)).error).toContain('不能包含重复模型');
+
+      const missing = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          models: baseRawConfig().models,
+          titleGenerator: { model: 'main/missing', fallbackModels: [] },
+        }),
+      });
+      expect(missing.status).toBe(400);
+      expect((await readJson(missing)).error).toContain('main/missing');
     });
   });
 });

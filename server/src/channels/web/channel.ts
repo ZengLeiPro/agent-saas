@@ -129,9 +129,7 @@ const VOICE_STT_TAG = '[这是一条语音转文字的消息，可能存在识�
 function wantsToolAutoApproval(policy: { autoApproveTools?: boolean; autoApproveRunShell?: boolean } | undefined): boolean {
   return policy?.autoApproveTools === true || policy?.autoApproveRunShell === true;
 }
-
 export type ModelResolver = (ref: string, tenantId?: string) => ResolvedModel | null;
-
 export interface WebChannelConfig {
   timezone?: string;
   displayConfig?: WebMessageDisplayConfig;
@@ -142,6 +140,8 @@ export interface WebChannelConfig {
   userStore?: UserStore;
   /** 主 + fallback 链；主返回空或异常时按顺序回落，全部失败再 return null。 */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
+  /** 标题生成前主动对齐共享 config.json，覆盖无主模型解析的手动命名路径。 */
+  refreshSharedConfig?: () => void;
   /** 平台系统提示语热更新 getter；每次标题生成现取。 */
   getTitleSystemPrompt?: () => string;
   sttConfig?: SttConfig;
@@ -163,8 +163,8 @@ export interface WebChannelConfig {
   orgAgentStore?: OrgAgentStore;
   /**
    * 门禁模型配置链 getter（主 + fallback）。**必须是 getter**：模型列表热更新
-   * 时 routes.ts 换新数组，channel 每次调用取最新链——避开 titleGeneratorConfigs
-   * 构造时捕获旧数组引用的 stale 坑。空数组/缺省 = 门禁模块未激活（fail-open 短路）。
+   * 时 routes.ts 换新数组，channel 每次调用取最新链。空数组/缺省 = 门禁模块
+   * 未激活（fail-open 短路）。
    */
   getGuardrailModelConfigs?: () => GuardrailModelConfig[];
   /** 门禁事件落库（PG backend）。缺省（file backend）时降级 log，判定照常。 */
@@ -3854,10 +3854,10 @@ export class WebChannel implements BaseChannel {
     fallbackUserMessage = '',
     fallbackAssistantReply = '',
   ): Promise<string | null> {
+    this.config.refreshSharedConfig?.();
     const titleConfigs = this.config.titleGeneratorConfigs;
     const agentCwd = this.config.agentCwd;
     if (!titleConfigs?.length || !agentCwd) return null;
-
     try {
       const userCwd = resolveUserCwd(agentCwd, {
         id: userInfo.id,

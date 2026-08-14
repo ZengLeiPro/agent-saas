@@ -1734,7 +1734,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect((rig.channel as any).findActiveStreamIdBySession(sessionId)).toBeUndefined();
     });
   });
-
   // ════════════════════════════════════════════════════════════════════
   // 8. 自动命名（publishRuntimeOutboundEvent done 钩子）
   // ════════════════════════════════════════════════════════════════════
@@ -1748,9 +1747,11 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '好的，已整理完成' }] }, sessionId }),
       ].join('\n') + '\n');
       const recordResult = vi.fn();
+      const refreshSharedConfig = vi.fn();
       const rig = makeRig({
         agentCwd: await makeTmp('cov-title-'),
         titleGeneratorConfigs: [{ model: 'title-main', connection: { apiKey: 'k' } }],
+        refreshSharedConfig,
         userStore: {
           findById: (id: string) => (id === USER.sub
             ? { id: USER.sub, username: USER.username, role: 'user', tenantId: TENANT }
@@ -1766,6 +1767,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         expect(rig.userEvents).toContainEqual({ type: 'title_updated', sessionId, title: '覆盖补齐测试标题' });
       });
       expect(openAiCalls().length).toBe(callsBefore + 1);
+      expect(refreshSharedConfig).toHaveBeenCalled();
       expect(openAiCalls().at(-1)).toBe('title-main');
       const meta = await readSessionMeta(transcriptPath);
       expect(meta?.generatedTitle).toBe('覆盖补齐测试标题');
@@ -1773,7 +1775,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(recordResult).toHaveBeenCalledWith(expect.objectContaining({
         username: USER.username, tenantId: TENANT, channel: 'title',
       }));
-
       // 同 runId 二次 done → claim 去重不再触发；新 runId → meta 已有标题守卫，也不再调用上游
       rig.channel.publishRuntimeOutboundEvent({ sessionId, runId: 'run-title-1', userId: USER.sub, event: { type: 'done' } });
       rig.channel.publishRuntimeOutboundEvent({ sessionId, runId: 'run-title-2', userId: USER.sub, event: { type: 'done' } });
@@ -1784,7 +1785,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.userEvents.filter((e) => e.type === 'title_updated')).toHaveLength(1);
     });
   });
-
   // ════════════════════════════════════════════════════════════════════
   // 9. 生命周期与杂项
   // ════════════════════════════════════════════════════════════════════

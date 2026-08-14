@@ -306,6 +306,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
             webChannel.getWsServer()?.broadcastToUser(userId, data)
         : undefined,
       titleGeneratorConfigs: runtime.titleGeneratorConfigs,
+      refreshSharedConfig: runtime.refreshSharedConfig,
       getTitleSystemPrompt: () => runtime.systemPromptRegistry.get('utility.title'),
       tokenUsageStore: runtime.tokenUsageStore,
       billingService: runtime.billingService,
@@ -353,6 +354,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           applyModelsHotUpdate({ config, target: runtime, models });
         },
         onMemoryIndexUpdated: runtime.updateMemoryIndexConfig,
+        onSystemPromptOverridesUpdated: (next) => runtime.systemPromptRegistry.replaceOverrides(next ?? {}),
       }),
     );
   }

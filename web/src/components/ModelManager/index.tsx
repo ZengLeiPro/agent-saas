@@ -14,7 +14,7 @@ import { SettingsTwoColumn } from "@/components/SettingsCenter/SettingsTwoColumn
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { CodexSubscriptionCard } from "./CodexSubscriptionCard";
-
+import { TitleGeneratorSettings, useTitleGeneratorSettings, type TitleGeneratorAdminFields } from "./TitleGeneratorSettings";
 type ModelProtocol = "chat_completions" | "responses";
 type ResponsesTransport = "openai_compatible" | "codex_subscription";
 type McpLoadingMode = "auto" | "eager" | "deferred";
@@ -114,7 +114,7 @@ type EditableMemoryIndexConfig = {
   };
 };
 
-type AdminModelsResponse = {
+type AdminModelsResponse = TitleGeneratorAdminFields & {
   models: EditableModelsConfig;
   memoryIndex: EditableMemoryIndexConfig | null;
   publicModelList: ModelList;
@@ -257,18 +257,17 @@ export function ModelManager() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const titleSettings = useTitleGeneratorSettings();
   const [selectedPanel, setSelectedPanel] = useState<SelectedPanel>({ type: "general" });
   const [draggingItem, setDraggingItem] = useState<DraggingItem>(null);
   const [dragOverItem, setDragOverItem] = useState<DraggingItem>(null);
   const [advancedText, setAdvancedText] = useState<Record<string, { groupExtraBody: string; groupThinking: string; modelExtraBody: Record<string, string>; modelThinking: Record<string, string> }>>({});
-
   const selectedGroup = useMemo(
     () => selectedPanel.type === "group"
       ? models?.groups.find((group) => group.id === selectedPanel.groupId) ?? null
       : null,
     [models, selectedPanel],
   );
-
   const selectedModelContext = useMemo(() => {
     if (selectedPanel.type !== "model") return null;
     const group = models?.groups.find((item) => item.id === selectedPanel.groupId);
@@ -282,7 +281,6 @@ export function ModelManager() {
   const selectedModelTransport = selectedModelContext
     ? resolveResponsesTransport(selectedModelContext.group, selectedModelContext.model)
     : null;
-
   const hydrateAdvancedText = useCallback((next: EditableModelsConfig) => {
     const entries: typeof advancedText = {};
     for (const group of next.groups) {
@@ -301,9 +299,10 @@ export function ModelManager() {
     try {
       const res = await authFetch("/api/admin/models");
       const data = (await res.json().catch(() => ({}))) as Partial<AdminModelsResponse> & { error?: string };
-      if (!res.ok || !data.models) throw new Error(data.error || `HTTP ${res.status}`);
+      if (!res.ok || !data.models || !data.titleGenerator || !data.titleSystemPrompt) throw new Error(data.error || `HTTP ${res.status}`);
       setModels(data.models);
       setMemoryIndex(data.memoryIndex ?? null);
+      titleSettings.applyResponse(data as AdminModelsResponse);
       setSelectedPanel((prev) => {
         if (prev.type === "group" && data.models!.groups.some((group) => group.id === prev.groupId)) return prev;
         if (prev.type === "model" && data.models!.groups.some((group) => group.id === prev.groupId && group.models.some((model) => model.id === prev.modelId))) return prev;
@@ -316,10 +315,8 @@ export function ModelManager() {
     } finally {
       setLoading(false);
     }
-  }, [hydrateAdvancedText]);
-
+  }, [hydrateAdvancedText, titleSettings.applyResponse]);
   useEffect(() => { void refresh(); }, [refresh]);
-
   const updateModels = useCallback((updater: (current: EditableModelsConfig) => EditableModelsConfig) => {
     setModels((current) => current ? updater(current) : current);
     setSavedAt(null);
@@ -385,14 +382,12 @@ export function ModelManager() {
       ),
     }));
   }, [updateModels]);
-
   const moveGroupByOffset = useCallback((groupId: string, offset: number) => {
     updateModels((current) => {
       const fromIndex = current.groups.findIndex((group) => group.id === groupId);
       return { ...current, groups: moveItem(current.groups, fromIndex, fromIndex + offset) };
     });
   }, [updateModels]);
-
   const updateGroupId = useCallback((groupId: string, nextGroupId: string) => {
     updateModels((current) => ({
       ...current,
@@ -401,6 +396,7 @@ export function ModelManager() {
         ? `${nextGroupId}/${current.default.slice(groupId.length + 1)}`
         : current.default,
     }));
+    titleSettings.remapModelRefs((ref) => ref.startsWith(`${groupId}/`) ? `${nextGroupId}/${ref.slice(groupId.length + 1)}` : ref);
     setSelectedPanel((prev) => {
       if (prev.type === "group" && prev.groupId === groupId) return { type: "group", groupId: nextGroupId };
       if (prev.type === "model" && prev.groupId === groupId) return { ...prev, groupId: nextGroupId };
@@ -411,8 +407,7 @@ export function ModelManager() {
       const { [groupId]: oldValue, ...rest } = current;
       return { ...rest, [nextGroupId]: oldValue };
     });
-  }, [updateModels]);
-
+  }, [titleSettings.remapModelRefs, updateModels]);
   const updateModel = useCallback((groupId: string, modelId: string, patch: Partial<EditableModel>) => {
     updateModels((current) => ({
       ...current,
@@ -492,6 +487,7 @@ export function ModelManager() {
         : group),
       default: current.default === `${groupId}/${modelId}` ? `${groupId}/${nextModelId}` : current.default,
     }));
+    titleSettings.remapModelRefs((ref) => ref === `${groupId}/${modelId}` ? `${groupId}/${nextModelId}` : ref);
     setSelectedPanel((prev) => (
       prev.type === "model" && prev.groupId === groupId && prev.modelId === modelId
         ? { ...prev, modelId: nextModelId }
@@ -511,8 +507,7 @@ export function ModelManager() {
         },
       };
     });
-  }, [updateModels]);
-
+  }, [titleSettings.remapModelRefs, updateModels]);
   const addGroup = useCallback(() => {
     const id = `group-${Date.now().toString(36)}`;
     updateModels((current) => ({ ...current, groups: [...current.groups, { ...emptyGroup(), id, name: "新模型分组" }] }));
@@ -526,8 +521,9 @@ export function ModelManager() {
       const defaultStillExists = groups.some((group) => group.models.some((model) => `${group.id}/${model.id}` === current.default));
       return { ...current, groups, default: defaultStillExists ? current.default : `${groups[0]!.id}/${groups[0]!.models[0]!.id}` };
     });
+    titleSettings.remapModelRefs((ref) => ref.startsWith(`${groupId}/`) ? null : ref, models?.groups.filter((group) => group.id !== groupId).flatMap((group) => group.models.map((model) => `${group.id}/${model.id}`))[0]);
     setSelectedPanel((prev) => prev.type !== "general" && prev.groupId === groupId ? { type: "general" } : prev);
-  }, [updateModels]);
+  }, [models, titleSettings.remapModelRefs, updateModels]);
 
   const addModel = useCallback((groupId: string) => {
     const id = `model-${Date.now().toString(36)}`;
@@ -591,6 +587,7 @@ export function ModelManager() {
       const firstModel = groups.flatMap((group) => group.models.map((model) => `${group.id}/${model.id}`))[0];
       return { ...current, groups, default: defaultStillExists ? current.default : (firstModel ?? current.default) };
     });
+    titleSettings.remapModelRefs((ref) => ref === `${groupId}/${modelId}` ? null : ref, models?.groups.flatMap((group) => group.models.map((model) => `${group.id}/${model.id}`)).find((ref) => ref !== `${groupId}/${modelId}`));
     setSelectedPanel((prev) => (
       prev.type === "model" && prev.groupId === groupId && prev.modelId === modelId
         ? { type: "group", groupId }
@@ -603,10 +600,10 @@ export function ModelManager() {
       const { [modelId]: _oldThinking, ...modelThinking } = groupText.modelThinking;
       return { ...current, [groupId]: { ...groupText, modelExtraBody, modelThinking } };
     });
-  }, [updateModels]);
+  }, [models, titleSettings.remapModelRefs, updateModels]);
 
-  const buildPayload = useCallback((): { models: EditableModelsConfig; memoryIndex: EditableMemoryIndexConfig | null } => {
-    if (!models) throw new Error("models 尚未加载");
+  const buildPayload = useCallback(() => {
+    if (!models) throw new Error("模型通用配置尚未加载");
     const nextModels = {
       ...models,
       groups: models.groups.map((group) => {
@@ -652,8 +649,8 @@ export function ModelManager() {
           },
         }
       : null;
-    return { models: nextModels, memoryIndex: nextMemoryIndex };
-  }, [advancedText, memoryIndex, models]);
+    return { models: nextModels, memoryIndex: nextMemoryIndex, ...titleSettings.buildPayload() };
+  }, [advancedText, memoryIndex, models, titleSettings.buildPayload]);
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -665,9 +662,10 @@ export function ModelManager() {
         body: JSON.stringify(payload),
       });
       const data = (await res.json().catch(() => ({}))) as Partial<AdminModelsResponse> & { error?: string };
-      if (!res.ok || !data.models) throw new Error(data.error || `HTTP ${res.status}`);
+      if (!res.ok || !data.models || !data.titleGenerator || !data.titleSystemPrompt) throw new Error(data.error || `HTTP ${res.status}`);
       setModels(data.models);
       setMemoryIndex(data.memoryIndex ?? null);
+      titleSettings.applyResponse(data as AdminModelsResponse);
       hydrateAdvancedText(data.models);
       setSavedAt(Date.now());
       setError(null);
@@ -677,7 +675,7 @@ export function ModelManager() {
     } finally {
       setSaving(false);
     }
-  }, [buildPayload, hydrateAdvancedText]);
+  }, [buildPayload, hydrateAdvancedText, titleSettings.applyResponse]);
 
   if (loading && !models) {
     return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>;
@@ -972,6 +970,8 @@ export function ModelManager() {
                   </label>
                 </CardContent>
               </Card>
+
+              <TitleGeneratorSettings groups={models.groups} readOnly={platformReadOnly} settings={titleSettings} onDirty={() => setSavedAt(null)} />
 
               <CodexSubscriptionCard readOnly={platformReadOnly} />
 

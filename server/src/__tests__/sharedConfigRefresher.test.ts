@@ -62,7 +62,7 @@ describe('createSharedConfigRefresher', () => {
     const refresher = createSharedConfigRefresher({
       config,
       processCwd: dir,
-      target: { updateGuardrailModelConfigs: () => {} },
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
       now: () => clock,
     });
 
@@ -85,7 +85,7 @@ describe('createSharedConfigRefresher', () => {
     const refresher = createSharedConfigRefresher({
       config,
       processCwd: dir,
-      target: { updateGuardrailModelConfigs: () => {} },
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
       now: () => clock,
     });
 
@@ -107,7 +107,7 @@ describe('createSharedConfigRefresher', () => {
     const refresher = createSharedConfigRefresher({
       config,
       processCwd: dir,
-      target: { updateGuardrailModelConfigs: () => {} },
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
       logger: { info: () => {}, warn: (m) => warnings.push(m) },
       now: () => clock,
     });
@@ -125,6 +125,47 @@ describe('createSharedConfigRefresher', () => {
     expect(config.models!.groups).toHaveLength(1);
   });
 
+  it('热更新标题模型链与标题提示语覆盖', () => {
+    const initialRaw = {
+      agent: { cwd: '.' },
+      server: { port: 3200 },
+      models: { groups: [BASE_GROUP, QWEN_GROUP], default: 'ark-agents/glm-5.2' },
+      titleGenerator: { model: 'ark-agents/glm-5.2', fallbackModels: [] },
+      systemPrompts: { 'utility.title': '旧提示语' },
+    };
+    writeFileSync(join(dir, 'config.json'), JSON.stringify(initialRaw, null, 2), 'utf-8');
+    const config = structuredClone(initialRaw) as unknown as AppConfig;
+    let clock = 10_000;
+    const titleConfigs: Array<{ model: string }> = [];
+    let promptOverrides: Record<string, string> = {};
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: {
+        updateGuardrailModelConfigs: () => {},
+        titleGeneratorConfigs: titleConfigs,
+      },
+      onSystemPromptOverridesUpdated: (next) => { promptOverrides = next; },
+      now: () => clock,
+    });
+
+    const nextRaw = {
+      ...initialRaw,
+      titleGenerator: {
+        model: 'qwen/qwen38max',
+        fallbackModels: ['ark-agents/glm-5.2'],
+      },
+      systemPrompts: { 'utility.title': '新提示语' },
+    };
+    writeFileSync(join(dir, 'config.json'), JSON.stringify(nextRaw, null, 2), 'utf-8');
+    clock += 5_000;
+    refresher.refreshIfChanged();
+
+    expect(config.titleGenerator).toEqual(nextRaw.titleGenerator);
+    expect(titleConfigs.map((item) => item.model)).toEqual(['qwen3.8-max', 'glm-5.2']);
+    expect(promptOverrides).toEqual({ 'utility.title': '新提示语' });
+  });
+
   it('组织白名单变更后重载 tenantStore', () => {
     writeConfig(dir, [BASE_GROUP]);
     const tenantsPath = join(dir, 'tenants.json');
@@ -135,7 +176,7 @@ describe('createSharedConfigRefresher', () => {
     const refresher = createSharedConfigRefresher({
       config,
       processCwd: dir,
-      target: { updateGuardrailModelConfigs: () => {} },
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
       tenantStore: { reload: () => { reloaded += 1; } } as never,
       tenantsFilePath: tenantsPath,
       now: () => clock,

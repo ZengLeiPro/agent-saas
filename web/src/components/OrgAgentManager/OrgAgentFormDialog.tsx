@@ -93,6 +93,7 @@ export function OrgAgentFormDialog({
   const [gateTestRunning, setGateTestRunning] = useState(false);
   const [gateTestResult, setGateTestResult] = useState<GateTestResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const submitGenerationRef = useRef(0);
 
   /** 选预设 = 拉取静态图转 File 走上传链路（复用图片头像存储，零额外后端逻辑） */
   const applyPreset = async (key: string) => {
@@ -122,6 +123,8 @@ export function OrgAgentFormDialog({
   );
 
   useEffect(() => {
+    submitGenerationRef.current += 1;
+    setSaving(false);
     if (!open) return;
     setError(null);
     setNewAllowExample('');
@@ -160,7 +163,7 @@ export function OrgAgentFormDialog({
     } else {
       setValues(emptyFormValues());
     }
-  }, [open, editing, initialValues]);
+  }, [open, tenantId, editing, initialValues]);
 
   const patch = (recipe: Partial<OrgAgentFormValues>) => setValues((prev) => ({ ...prev, ...recipe }));
 
@@ -282,14 +285,17 @@ export function OrgAgentFormDialog({
       setError('开启门禁时拒绝话术不能为空');
       return;
     }
+    const submitGeneration = ++submitGenerationRef.current;
     setSaving(true);
     try {
       await onSubmit(values);
-      onClose();
+      if (submitGeneration === submitGenerationRef.current) onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (submitGeneration === submitGenerationRef.current) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setSaving(false);
+      if (submitGeneration === submitGenerationRef.current) setSaving(false);
     }
   };
 

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockAuthFetch, mockUseOrgAgentAdmin } = vi.hoisted(() => ({
@@ -123,6 +123,44 @@ describe('OrgAgentManager - 数据合同', () => {
     fireEvent.click(screen.getByRole('button', { name: '重试' }));
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/企业专家加载失败/)).toBeTruthy();
+  });
+
+  it('组织切换后旧提交完成不会关闭或污染新组织弹窗', async () => {
+    let resolveCreate!: () => void;
+    const create = vi.fn(() => new Promise<void>((resolve) => { resolveCreate = resolve; }));
+    mockUseOrgAgentAdmin.mockReturnValue({
+      agents: [],
+      dataIssues: [],
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+      create,
+      update: vi.fn(),
+      remove: vi.fn(),
+      uploadAvatar: vi.fn(),
+    });
+
+    const view = render(<OrgAgentManager tenantId="tenant-a" />);
+    fireEvent.click(screen.getByRole('button', { name: /创建企业专家/ }));
+    const firstDialog = await screen.findByRole('dialog');
+    fireEvent.change(within(firstDialog).getByPlaceholderText('如：产品选型助手'), {
+      target: { value: '旧组织专家' },
+    });
+    fireEvent.click(within(firstDialog).getByRole('button', { name: '创建' }));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+
+    view.rerender(<OrgAgentManager tenantId="tenant-b" />);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: /创建企业专家/ }));
+    const secondDialog = await screen.findByRole('dialog');
+    const secondName = within(secondDialog).getByPlaceholderText('如：产品选型助手') as HTMLInputElement;
+    fireEvent.change(secondName, { target: { value: '新组织专家' } });
+
+    await act(async () => { resolveCreate(); });
+
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(secondName.value).toBe('新组织专家');
+    expect(within(secondDialog).getByRole('button', { name: '创建' })).toBeTruthy();
   });
 });
 

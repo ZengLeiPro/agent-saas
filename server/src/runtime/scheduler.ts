@@ -501,16 +501,23 @@ export class RuntimeScheduler {
 
   private createLease(record: RunRecord): RunLease {
     let expiresAt = record.leaseExpiresAt ?? new Date(Date.now() + this.leaseMs).toISOString();
+    let renewInFlight: Promise<void> | undefined;
     return {
       runId: record.runId,
       workerId: this.workerId,
       get expiresAt() {
         return expiresAt;
       },
-      renew: async () => {
-        const renewed = await this.options.runStore.renewLease?.(record.runId, this.workerId, this.leaseMs);
-        if (!renewed) throw new Error(`failed to renew run lease: ${record.runId}`);
-        expiresAt = renewed.leaseExpiresAt ?? expiresAt;
+      renew: () => {
+        if (renewInFlight) return renewInFlight;
+        renewInFlight = (async () => {
+          const renewed = await this.options.runStore.renewLease?.(record.runId, this.workerId, this.leaseMs);
+          if (!renewed) throw new Error(`failed to renew run lease: ${record.runId}`);
+          expiresAt = renewed.leaseExpiresAt ?? expiresAt;
+        })().finally(() => {
+          renewInFlight = undefined;
+        });
+        return renewInFlight;
       },
       release: async (finalStatus?: RunStatus, reason?: string) => {
         await this.options.runStore.releaseLease?.(record.runId, this.workerId, finalStatus, reason);

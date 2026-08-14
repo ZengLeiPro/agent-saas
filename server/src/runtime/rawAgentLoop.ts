@@ -1007,65 +1007,125 @@ export class RawAgentLoop implements AgentLoop {
       for (const interjection of reservedInterjections) {
         if (isCompactCommand(interjection.message.content)) {
           manualCheckpointSourceRunIds.add(interjection.sourceRunId);
-          continue;
-        }
-        if (durableInterjectionSourceRunIds.has(interjection.sourceRunId)) continue;
-        let userMessageEvent;
-        try {
-          userMessageEvent = await this.eventStore.append({
-            type: 'user_message',
-            runId: context.runId,
-            sessionId: context.sessionId,
-            content: interjection.message.content,
-            modelContent: interjection.prompt,
-            ...(interjection.attachments?.length ? { attachments: interjection.attachments } : {}),
-            ...(interjection.visionAnalysis ? { visionAnalysis: interjection.visionAnalysis } : {}),
-            interjectionSourceRunId: interjection.sourceRunId,
-            ...(interjection.clientMsgId ? { clientMsgId: interjection.clientMsgId } : {}),
-          });
-        } catch (error) {
-          requestSteeringRecoveryHandoff('steering_reserved_event_append_failed');
-          logger.warn(
-            `[run] steering event append failed; handing off target run=${context.runId}: ${error instanceof Error ? error.message : String(error)}`,
-          );
-          return [];
-        }
-        durableInterjectionSourceRunIds.add(interjection.sourceRunId);
-        try {
-          await this.transcriptProjection.project(userMessageEvent);
-        } catch (error) {
-          logger.warn(
-            `[run] interjection transcript project failed (degraded): run=${context.runId} source=${interjection.sourceRunId} error=${error instanceof Error ? error.message : String(error)}`,
-          );
         }
       }
 
       let appliedInterjections = reservedInterjections;
-      try {
-        const appliedSourceRunIds = await this.runStore?.markSteeringInputsApplied?.(
-          context.runId,
-          reservedInterjections.map((interjection) => interjection.sourceRunId),
-        ) ?? reservedInterjections.map((interjection) => interjection.sourceRunId);
-        const appliedSourceRunIdSet = new Set(appliedSourceRunIds);
-        appliedInterjections = reservedInterjections.filter((interjection) => (
-          appliedSourceRunIdSet.has(interjection.sourceRunId)
-        ));
-        if (appliedInterjections.length !== reservedInterjections.length) {
-          requestSteeringRecoveryHandoff('steering_reserved_apply_partial');
-          const missing = reservedInterjections
-            .filter((interjection) => !appliedSourceRunIdSet.has(interjection.sourceRunId))
-            .map((interjection) => interjection.sourceRunId);
-          logger.warn(
-            `[run] steering apply partial; absorption disabled for run=${context.runId} unapplied=${missing.join(',')}`,
+      if (this.runStore?.applySteeringInputsAtomically) {
+        try {
+          const atomic = await this.runStore.applySteeringInputsAtomically(
+            context.runId,
+            reservedInterjections.map((interjection) => ({
+              sourceRunId: interjection.sourceRunId,
+              ...(!isCompactCommand(interjection.message.content)
+                && !durableInterjectionSourceRunIds.has(interjection.sourceRunId) ? {
+                event: {
+                  type: 'user_message' as const,
+                  runId: context.runId,
+                  sessionId: context.sessionId,
+                  content: interjection.message.content,
+                  modelContent: interjection.prompt,
+                  ...(interjection.attachments?.length ? { attachments: interjection.attachments } : {}),
+                  ...(interjection.visionAnalysis ? { visionAnalysis: interjection.visionAnalysis } : {}),
+                  interjectionSourceRunId: interjection.sourceRunId,
+                  ...(interjection.clientMsgId ? { clientMsgId: interjection.clientMsgId } : {}),
+                },
+              } : {}),
+            })),
+            context.tenantId,
           );
+          const appliedSourceRunIdSet = new Set(atomic.appliedSourceRunIds);
+          appliedInterjections = reservedInterjections.filter((interjection) => (
+            appliedSourceRunIdSet.has(interjection.sourceRunId)
+          ));
+          for (const userMessageEvent of atomic.events) {
+            if (userMessageEvent.type !== 'user_message' || !userMessageEvent.interjectionSourceRunId) continue;
+            durableInterjectionSourceRunIds.add(userMessageEvent.interjectionSourceRunId);
+            try {
+              await this.transcriptProjection.project(userMessageEvent);
+            } catch (error) {
+              logger.warn(
+                `[run] interjection transcript project failed (degraded): run=${context.runId} source=${userMessageEvent.interjectionSourceRunId} error=${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
+          }
+          if (appliedInterjections.length !== reservedInterjections.length) {
+            requestSteeringRecoveryHandoff('steering_atomic_apply_partial');
+            const missing = reservedInterjections
+              .filter((interjection) => !appliedSourceRunIdSet.has(interjection.sourceRunId))
+              .map((interjection) => interjection.sourceRunId);
+            logger.warn(
+              `[run] steering atomic apply partial; absorption disabled for run=${context.runId} unapplied=${missing.join(',')}`,
+            );
+          }
+        } catch (error) {
+          if (context.signal?.aborted) throw error;
+          requestSteeringRecoveryHandoff('steering_atomic_apply_failed');
+          logger.warn(
+            `[run] steering atomic append/apply failed; handing off target run=${context.runId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return [];
         }
-      } catch (error) {
-        if (context.signal?.aborted) throw error;
-        requestSteeringRecoveryHandoff('steering_reserved_apply_failed');
-        logger.warn(
-          `[run] steering apply failed; handing off target run=${context.runId}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        return [];
+      } else {
+        for (const interjection of reservedInterjections) {
+          if (isCompactCommand(interjection.message.content)) continue;
+          if (durableInterjectionSourceRunIds.has(interjection.sourceRunId)) continue;
+          let userMessageEvent;
+          try {
+            userMessageEvent = await this.eventStore.append({
+              type: 'user_message',
+              runId: context.runId,
+              sessionId: context.sessionId,
+              content: interjection.message.content,
+              modelContent: interjection.prompt,
+              ...(interjection.attachments?.length ? { attachments: interjection.attachments } : {}),
+              ...(interjection.visionAnalysis ? { visionAnalysis: interjection.visionAnalysis } : {}),
+              interjectionSourceRunId: interjection.sourceRunId,
+              ...(interjection.clientMsgId ? { clientMsgId: interjection.clientMsgId } : {}),
+            });
+          } catch (error) {
+            requestSteeringRecoveryHandoff('steering_reserved_event_append_failed');
+            logger.warn(
+              `[run] steering event append failed; handing off target run=${context.runId}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            return [];
+          }
+          durableInterjectionSourceRunIds.add(interjection.sourceRunId);
+          try {
+            await this.transcriptProjection.project(userMessageEvent);
+          } catch (error) {
+            logger.warn(
+              `[run] interjection transcript project failed (degraded): run=${context.runId} source=${interjection.sourceRunId} error=${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+
+        try {
+          const appliedSourceRunIds = await this.runStore?.markSteeringInputsApplied?.(
+            context.runId,
+            reservedInterjections.map((interjection) => interjection.sourceRunId),
+          ) ?? reservedInterjections.map((interjection) => interjection.sourceRunId);
+          const appliedSourceRunIdSet = new Set(appliedSourceRunIds);
+          appliedInterjections = reservedInterjections.filter((interjection) => (
+            appliedSourceRunIdSet.has(interjection.sourceRunId)
+          ));
+          if (appliedInterjections.length !== reservedInterjections.length) {
+            requestSteeringRecoveryHandoff('steering_reserved_apply_partial');
+            const missing = reservedInterjections
+              .filter((interjection) => !appliedSourceRunIdSet.has(interjection.sourceRunId))
+              .map((interjection) => interjection.sourceRunId);
+            logger.warn(
+              `[run] steering apply partial; absorption disabled for run=${context.runId} unapplied=${missing.join(',')}`,
+            );
+          }
+        } catch (error) {
+          if (context.signal?.aborted) throw error;
+          requestSteeringRecoveryHandoff('steering_reserved_apply_failed');
+          logger.warn(
+            `[run] steering apply failed; handing off target run=${context.runId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return [];
+        }
       }
 
       for (const interjection of appliedInterjections) {

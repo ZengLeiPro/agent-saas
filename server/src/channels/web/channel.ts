@@ -1789,6 +1789,9 @@ export class WebChannel implements BaseChannel {
     if (resolvedRunStatus && TERMINAL_RUN_STATUSES.has(resolvedRunStatus)) {
       if (sessionId) {
         await this.cancelPendingSteeringForSession(sessionId, 'aborted', resolvedRunId);
+        if (resolvedRunId) {
+          await this.requestRunningToolCancellations(sessionId, resolvedRunId, client.user?.sub);
+        }
       }
       this.wsSend(client.ws, { type: 'abort_ok', ...(resolvedStreamId ? { streamId: resolvedStreamId } : {}), ...(resolvedRunId ? { runId: resolvedRunId } : {}) });
       if (sessionId) {
@@ -1803,46 +1806,81 @@ export class WebChannel implements BaseChannel {
       return;
     }
 
-    await this.appendDurableWebCommand(sessionId, {
+    // PG 路径把 stop 事件、目标 run 与 pending/reserved steering 同事务提交；旧实现也
+    // 严格先取消后记事件，避免事件先落而取消失败的“撒谎”状态。
+    const cancelEvent: Parameters<EventStore['append']>[0] = {
       type: 'run_cancel_requested',
       sessionId,
       runId: resolvedRunId,
       streamId: resolvedStreamId,
       userId: client.user?.sub,
       reason: 'web_abort',
-    });
-    // 先在 session advisory lock 内取消所有尚未 dispatch 的输入，再终结目标 run。
-    // 若该事务失败则 stop 整体失败，不能先把目标置终态、让 pending source 自动 fallback。
-    if (sessionId) {
-      await this.cancelPendingSteeringForSession(sessionId, 'aborted', resolvedRunId);
-    }
+    };
+    const stopResult = sessionId
+      ? await this.cancelPendingSteeringForSession(
+        sessionId,
+        'aborted',
+        resolvedRunId,
+        cancelEvent,
+        client.user?.tenantId,
+      )
+      : { targetCancelled: false, eventAppended: false, newCancellation: true };
     if (resolvedRunId && this.config.enqueueRuntime?.runStore) {
-      if (sessionId && this.config.enqueueRuntime.toolInvocationStore) {
-        const runningInvocations = await this.config.enqueueRuntime.toolInvocationStore.listRunning(sessionId).catch(() => []);
-        for (const invocation of runningInvocations.filter((item) => item.runId === resolvedRunId)) {
-          const cancelRecord = await this.config.enqueueRuntime.toolInvocationStore.requestCancel(
-            invocation.invocationId,
-            'web_abort',
-            { requestedBy: client.user?.sub ?? 'anonymous' },
-          ).catch(() => null);
-          await this.appendDurableWebCommand(sessionId, {
-            type: 'tool_invocation_cancel_requested',
-            sessionId,
-            runId: resolvedRunId,
-            invocationId: invocation.invocationId,
-            toolCallId: invocation.toolCallId,
-            toolName: invocation.toolName,
-            userId: client.user?.sub,
-            reason: 'web_abort',
-            metadata: cancelRecord?.metadata,
-          });
+      if (!stopResult.targetCancelled) {
+        const cancelled = await this.config.enqueueRuntime.runStore.markStatus(
+          resolvedRunId,
+          'cancelled',
+          'web_abort',
+        );
+        if (!cancelled || cancelled.status !== 'cancelled') {
+          throw new Error(`Failed to persist cancellation for run ${resolvedRunId}`);
         }
       }
-      await this.config.enqueueRuntime.runStore.markStatus(resolvedRunId, 'cancelled', 'web_abort').catch(() => null);
+      if (sessionId && !stopResult.eventAppended) {
+        await this.appendDurableWebCommand(sessionId, cancelEvent, client.user?.tenantId);
+      }
+      if (sessionId) {
+        await this.requestRunningToolCancellations(sessionId, resolvedRunId, client.user?.sub);
+      }
       runtimeRunController.abort(resolvedRunId, 'web_abort');
     }
     entry?.controller.abort('web_abort');
     this.wsSend(client.ws, { type: 'abort_ok', ...(resolvedStreamId ? { streamId: resolvedStreamId } : {}), ...(resolvedRunId ? { runId: resolvedRunId } : {}) });
+  }
+
+  /**
+   * stop 的工具取消使用 tool_invocations 作为 durable outbox：每次 stop（包括终态重试）
+   * 都重放 requestCancel，不能依赖 run_cancel_requested 是否首次创建。即时事件只在首次
+   * 持久化 cancel_requested_at 时追加；若进程在两步之间退出，后台扫描仍会从 durable 行补投。
+   */
+  private async requestRunningToolCancellations(
+    sessionId: string,
+    runId: string,
+    requestedBy?: string,
+  ): Promise<void> {
+    const store = this.config.enqueueRuntime?.toolInvocationStore;
+    if (!store) return;
+    const runningInvocations = await store.listRunning(sessionId);
+    for (const invocation of runningInvocations.filter((item) => item.runId === runId)) {
+      const cancelRequest = await store.requestCancelOnce(
+        invocation.invocationId,
+        'web_abort',
+        { requestedBy: requestedBy ?? 'anonymous' },
+      );
+      if (!cancelRequest?.created) continue;
+      const cancelRecord = cancelRequest.record;
+      await this.appendDurableWebCommand(sessionId, {
+        type: 'tool_invocation_cancel_requested',
+        sessionId,
+        runId,
+        invocationId: invocation.invocationId,
+        toolCallId: invocation.toolCallId,
+        toolName: invocation.toolName,
+        userId: requestedBy,
+        reason: 'web_abort',
+        metadata: cancelRecord.metadata,
+      });
+    }
   }
 
   /** 撤销一条仍在排队的插话（终态队列区的撤回按钮）。 */
@@ -1893,11 +1931,19 @@ export class WebChannel implements BaseChannel {
     sessionId: string,
     reason: string,
     targetRunId?: string,
-  ): Promise<void> {
+    cancelEvent?: Parameters<EventStore['append']>[0],
+    tenantId?: string,
+  ): Promise<{ targetCancelled: boolean; eventAppended: boolean; newCancellation: boolean }> {
     const runStore = this.config.enqueueRuntime?.runStore;
-    if (!runStore) return;
-    if (runStore.cancelSteeringBeforeDispatchBySession) {
-      const cancelled = await runStore.cancelSteeringBeforeDispatchBySession(sessionId, reason, targetRunId);
+    if (!runStore) return { targetCancelled: false, eventAppended: false, newCancellation: true };
+    if (cancelEvent && runStore.cancelSteeringBeforeDispatchBySessionWithEvent) {
+      const { cancelled, eventCreated } = await runStore.cancelSteeringBeforeDispatchBySessionWithEvent(
+        sessionId,
+        reason,
+        targetRunId,
+        cancelEvent,
+        tenantId,
+      );
       for (const input of cancelled) {
         const clientMsgId = typeof input.sourceRun.metadata?.clientMsgId === 'string'
           ? input.sourceRun.metadata.clientMsgId
@@ -1910,9 +1956,30 @@ export class WebChannel implements BaseChannel {
           reason,
         });
       }
-      return;
+      return { targetCancelled: Boolean(targetRunId), eventAppended: true, newCancellation: eventCreated };
     }
-    if (!runStore.listPendingSteeringBySession || !runStore.cancelPendingSteeringSourceRun) return;
+    if (runStore.cancelSteeringBeforeDispatchBySession) {
+      const cancelled = await runStore.cancelSteeringBeforeDispatchBySession(sessionId, reason, targetRunId);
+      // 非 PG/旧实现无法跨 store 原子提交：先落取消事实，再追加事件。事件绝不先行撒谎；
+      // 即使 append 失败，run status 仍是可恢复权威事实。
+      if (cancelEvent) await this.appendDurableWebCommand(sessionId, cancelEvent, tenantId);
+      for (const input of cancelled) {
+        const clientMsgId = typeof input.sourceRun.metadata?.clientMsgId === 'string'
+          ? input.sourceRun.metadata.clientMsgId
+          : undefined;
+        this.finalizeCancelledSteeringSource({
+          sourceRunId: input.sourceRunId,
+          sessionId,
+          ...(clientMsgId ? { clientMsgId } : {}),
+          userId: input.sourceRun.userId,
+          reason,
+        });
+      }
+      return { targetCancelled: Boolean(targetRunId), eventAppended: Boolean(cancelEvent), newCancellation: true };
+    }
+    if (!runStore.listPendingSteeringBySession || !runStore.cancelPendingSteeringSourceRun) {
+      return { targetCancelled: false, eventAppended: false, newCancellation: true };
+    }
     const pending = await runStore.listPendingSteeringBySession(sessionId);
     for (const input of pending) {
       const result = await runStore.cancelPendingSteeringSourceRun(input.sourceRunId, reason);
@@ -1925,6 +1992,7 @@ export class WebChannel implements BaseChannel {
         reason,
       });
     }
+    return { targetCancelled: false, eventAppended: false, newCancellation: true };
   }
 
   /** 撤销成功后的统一收尾：清 activeStreams/幂等缓存 + 多端广播 steering_cancelled。 */
@@ -2402,15 +2470,79 @@ export class WebChannel implements BaseChannel {
       chatLogger.warn(`[chat] Legacy client without client_msg_id, generated ${clientMsgId}`);
     }
 
-    // 1) Drain 拦截（服务端优雅关闭期间）
-    if (this.config.getIsDraining?.()) {
-      this.sendChatRejected(ws, clientMsgId, 'server_draining', '服务即将关闭，请稍后重试');
-      return;
-    }
-
     const tenantAccessError = this.tenantAccessErrorForClient(client);
     if (tenantAccessError) {
       this.sendChatRejected(ws, clientMsgId, 'access_denied', tenantAccessError);
+      return;
+    }
+
+    // 永久幂等事实必须先于 drain/载荷校验：重放一个已受理请求只回原权威结果，
+    // 不能因本次传输载荷缺失或实例正在排水而改写为 rejected。
+    const durableRun = await this.config.enqueueRuntime?.runStore.findByIdempotencyKey(user?.sub, clientMsgId);
+    if (durableRun) {
+      const tenantMismatch = Boolean(
+        user
+        && !isPlatformAdminUser(user)
+        && durableRun.tenantId
+        && durableRun.tenantId !== user.tenantId,
+      );
+      const ownerMismatch = Boolean(
+        durableRun.userId
+        && (!user || (user.role !== 'admin' && durableRun.userId !== user.sub)),
+      );
+      if (tenantMismatch || ownerMismatch) {
+        this.sendChatRejected(ws, clientMsgId, 'access_denied', '无权访问该会话');
+        return;
+      }
+      const authoritative = resolveAuthoritativeSubmissionState(durableRun);
+      const terminal = TERMINAL_RUN_STATUSES.has(durableRun.status);
+      this.wsSessionAffinity.set(ws, durableRun.sessionId);
+      this.idempotencySet(
+        user?.sub,
+        clientMsgId,
+        authoritative.status === 'completed' ? 'done' : terminal ? 'failed' : 'in_flight',
+        authoritative.streamId ?? '',
+        {
+          sessionId: durableRun.sessionId,
+          runId: durableRun.runId,
+          deliveryMode: authoritative.deliveryMode,
+          ...(authoritative.deliveryMode === 'queue' && authoritative.queuedTargetRunId
+            ? { queuedBehindRunId: authoritative.queuedTargetRunId }
+            : {}),
+          ...(authoritative.deliveryMode === 'steer' && authoritative.queuedTargetRunId
+            ? { steeringTargetRunId: authoritative.queuedTargetRunId }
+            : {}),
+          ...(terminal
+            ? { terminalStatus: authoritative.status as 'completed' | 'failed' | 'cancelled' }
+            : {}),
+        },
+      );
+      this.sendChatAck(ws, clientMsgId, {
+        sessionId: durableRun.sessionId,
+        runId: durableRun.runId,
+        status: authoritative.status,
+        deliveryMode: authoritative.deliveryMode,
+      });
+      if (authoritative.streamId && !terminal) {
+        this.wsSend(ws, {
+          type: 'stream_id',
+          streamId: authoritative.streamId,
+          sessionId: durableRun.sessionId,
+          runId: durableRun.runId,
+          client_msg_id: clientMsgId,
+          ...(authoritative.queuedTargetRunId
+            ? { queued: true, deliveryMode: authoritative.deliveryMode, targetRunId: authoritative.queuedTargetRunId }
+            : {}),
+        });
+      }
+      this.wsSend(ws, { type: 'session', sessionId: durableRun.sessionId, client_msg_id: clientMsgId });
+      return;
+    }
+
+
+    // 1) Drain 拦截（服务端优雅关闭期间）
+    if (this.config.getIsDraining?.()) {
+      this.sendChatRejected(ws, clientMsgId, 'server_draining', '服务即将关闭，请稍后重试');
       return;
     }
 
@@ -2545,52 +2677,6 @@ export class WebChannel implements BaseChannel {
       return;
     }
 
-    const durableRun = await this.config.enqueueRuntime?.runStore.findByIdempotencyKey(user?.sub, clientMsgId);
-    if (durableRun) {
-      const authoritative = resolveAuthoritativeSubmissionState(durableRun);
-      const terminal = TERMINAL_RUN_STATUSES.has(durableRun.status);
-      this.wsSessionAffinity.set(ws, durableRun.sessionId);
-      this.idempotencySet(
-        user?.sub,
-        clientMsgId,
-        authoritative.status === 'completed' ? 'done' : terminal ? 'failed' : 'in_flight',
-        authoritative.streamId ?? '',
-        {
-          sessionId: durableRun.sessionId,
-          runId: durableRun.runId,
-          deliveryMode: authoritative.deliveryMode,
-          ...(authoritative.deliveryMode === 'queue' && authoritative.queuedTargetRunId
-            ? { queuedBehindRunId: authoritative.queuedTargetRunId }
-            : {}),
-          ...(authoritative.deliveryMode === 'steer' && authoritative.queuedTargetRunId
-            ? { steeringTargetRunId: authoritative.queuedTargetRunId }
-            : {}),
-          ...(terminal
-            ? { terminalStatus: authoritative.status as 'completed' | 'failed' | 'cancelled' }
-            : {}),
-        },
-      );
-      this.sendChatAck(ws, clientMsgId, {
-        sessionId: durableRun.sessionId,
-        runId: durableRun.runId,
-        status: authoritative.status,
-        deliveryMode: authoritative.deliveryMode,
-      });
-      if (authoritative.streamId && !terminal) {
-        this.wsSend(ws, {
-          type: 'stream_id',
-          streamId: authoritative.streamId,
-          sessionId: durableRun.sessionId,
-          runId: durableRun.runId,
-          client_msg_id: clientMsgId,
-          ...(authoritative.queuedTargetRunId
-            ? { queued: true, deliveryMode: authoritative.deliveryMode, targetRunId: authoritative.queuedTargetRunId }
-            : {}),
-        });
-      }
-      this.wsSend(ws, { type: 'session', sessionId: durableRun.sessionId, client_msg_id: clientMsgId });
-      return;
-    }
 
     // 5) 此处仍未 accepted：STT、门禁、会话持久化和 durable enqueue 任一步都可能失败。
     // chat_ack 必须延后到 run 与幂等提交记录同事务落库之后。
@@ -3104,6 +3190,7 @@ export class WebChannel implements BaseChannel {
           runId: enqueueRunId,
           sessionId: enqueueSessionId,
           userId: enqueueOwner?.id,
+          submitterUserId: user?.sub,
           tenantId: enqueueOwner?.tenantId,
           model,
           channel: 'web',

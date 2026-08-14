@@ -1724,6 +1724,71 @@ describe('RawAgentLoop', () => {
     expect(durableEvents.some((event) => event.type === 'run_finished')).toBe(false);
   });
 
+  it('uses atomic steering append/apply and projects the returned durable event exactly once', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-steering-atomic-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const transcriptPath = join(cwd, 'session.jsonl');
+    const adapter = new InterjectionAfterFinalAdapter();
+    let queued: QueuedInterjection[] = [{
+      inputId: 'input-atomic',
+      sourceRunId: 'source-atomic',
+      clientMsgId: 'client-atomic',
+      message: { channel: 'web', chatId: 'chat-atomic', content: '请按原子路径修正' },
+      prompt: '请按原子路径修正',
+    }];
+    let loadCalls = 0;
+    const atomicApply = vi.fn(async (_targetRunId: string, inputs: Array<{ sourceRunId: string; event?: any }>) => {
+      queued = [];
+      const event = inputs[0]!.event!;
+      return {
+        appliedSourceRunIds: ['source-atomic'],
+        events: [{ ...event, id: 'event-atomic', timestamp: new Date().toISOString() }],
+      };
+    });
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-steering-atomic'),
+      transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore: {
+        reserveSteeringInputs: vi.fn(async (_targetRunId: string, ids: string[]) => ids),
+        applySteeringInputsAtomically: atomicApply,
+        trySealSteeringInputWindow: vi.fn(async () => true),
+      } as unknown as RunStore,
+    });
+
+    await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-atomic', content: '先回答' },
+        prompt: '先回答',
+        instructions: '直接回答。',
+        maxTurns: 100,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'target-atomic',
+        sessionId: 'session-steering-atomic',
+        model: 'gpt-5.5',
+        cwd,
+        channelContext: { channel: 'web' },
+        loadQueuedInterjections: async () => {
+          loadCalls += 1;
+          return loadCalls === 1 ? [] : queued;
+        },
+      },
+    ));
+
+    expect(atomicApply).toHaveBeenCalledTimes(1);
+    const durableEvents = await eventStore.list('session-steering-atomic');
+    expect(durableEvents.filter((event) => (
+      event.type === 'user_message' && event.interjectionSourceRunId === 'source-atomic'
+    ))).toHaveLength(0);
+    const transcript = await readFile(transcriptPath, 'utf-8');
+    expect(transcript.split('请按原子路径修正').length - 1).toBe(1);
+  });
+
   it('announces the applied subset before handing off a partial steering apply', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-steering-partial-apply-'));
     cleanupDirs.add(cwd);

@@ -138,6 +138,86 @@ describe('tool invocation cancel delivery', () => {
     });
   });
 
+  it('requestCancelOnce elects one publisher and stale delivery claimant cannot finish a newer claim', async () => {
+    const store = await seedInvocation();
+    const requests = await Promise.all([
+      store.requestCancelOnce('inv-1', 'web_abort'),
+      store.requestCancelOnce('inv-1', 'web_abort'),
+    ]);
+    expect(requests.map((item) => item?.created).sort()).toEqual([false, true]);
+
+    const firstClaim = await store.claimCancelDelivery(
+      'inv-1', 'claim-old', 1, new Date('2026-06-18T00:00:00.000Z'),
+    );
+    expect(firstClaim).not.toBeNull();
+    const newerClaim = await store.claimCancelDelivery(
+      'inv-1', 'claim-new', 30_000, new Date('2026-06-18T00:00:00.002Z'),
+    );
+    expect(newerClaim).not.toBeNull();
+    await expect(store.markCancelDelivered('inv-1', { cancelDelivery: 'stale' }, 'claim-old')).resolves.toBeNull();
+    await expect(store.markCancelDelivered('inv-1', { cancelDelivery: 'delivered' }, 'claim-new'))
+      .resolves.toMatchObject({ cancelDeliveredAt: expect.any(String) });
+  });
+
+  it('concurrent event/scanner delivery claims external DELETE exactly once', async () => {
+    const store = await seedInvocation();
+    let releaseFetch!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => { releaseFetch = resolve; });
+    const fetchImpl = vi.fn(async () => {
+      await fetchStarted;
+      return new Response(JSON.stringify({ status: 'ok', cancelled: true }), { status: 200 });
+    });
+    const input = {
+      event: cancelEvent(),
+      toolInvocationStore: store,
+      serverRemoteBaseUrl: 'http://hand.test',
+      serverRemoteAuthToken: 'token-1',
+      deliveryWorkerId: 'worker-test',
+      fetchImpl,
+    };
+
+    const first = deliverToolInvocationCancel(input);
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+    const second = deliverToolInvocationCancel(input);
+    const secondResult = await second;
+    releaseFetch();
+    const firstResult = await first;
+
+    expect([firstResult.status, secondResult.status].sort()).toEqual(['already_claimed', 'delivered']);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('slow preflight does not consume the delivery lease before external DELETE starts', async () => {
+    const store = await seedInvocation();
+    let getCalls = 0;
+    const runStore = {
+      get: vi.fn(async () => {
+        getCalls += 1;
+        if (getCalls === 1) await new Promise((resolve) => setTimeout(resolve, 30));
+        return null;
+      }),
+    } as unknown as RunStore;
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok', cancelled: true }), { status: 200 }));
+    const input = {
+      event: cancelEvent(),
+      toolInvocationStore: store,
+      runStore,
+      serverRemoteBaseUrl: 'http://hand.test',
+      serverRemoteAuthToken: 'token-1',
+      deliveryLeaseMs: 10,
+      deliveryRequestTimeoutMs: 5,
+      fetchImpl,
+    };
+
+    const first = deliverToolInvocationCancel(input);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    const second = deliverToolInvocationCancel(input);
+    const results = await Promise.all([first, second]);
+
+    expect(results.map((item) => item.status).sort()).toEqual(['already_claimed', 'delivered']);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('treats hand-server unknown invocation as terminal after restart', async () => {
     const store = await seedInvocation();
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok', cancelled: false, alreadyFinishedOrUnknown: true }), { status: 200 }));

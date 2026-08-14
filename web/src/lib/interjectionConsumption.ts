@@ -1,4 +1,5 @@
 import type { ApiSessionDetail } from "@/lib/sessionsApi";
+import type { UploadedFile } from "@/components/types";
 
 export interface InterjectionIdentity {
   clientMsgId?: string;
@@ -15,6 +16,8 @@ export interface QueuedInterjection {
   queuePosition?: number;
   content: string;
   attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+  /** 本机提交时保留完整上传结果，供编辑/重发复用；服务端旧 DTO 仅能恢复 attachments 元数据。 */
+  uploadedFiles?: UploadedFile[];
   /** verifying=ACK 超时后正核验服务端；此时禁止无幂等保护的重试。 */
   status: 'sending' | 'verifying' | 'queued' | 'cancelled' | 'failed';
   /** cancelled/failed 的原因说明 */
@@ -72,6 +75,7 @@ export function reconcileQueuedInterjections(
         ...(entry.queuePosition ? { queuePosition: entry.queuePosition } : {}),
         content: entry.content,
         ...(entry.attachments?.length ? { attachments: entry.attachments } : {}),
+        ...(local?.uploadedFiles?.length ? { uploadedFiles: local.uploadedFiles } : {}),
         status: 'queued' as const,
         createdAt: local?.createdAt ?? (Date.parse(entry.acceptedAt) || Date.now()),
       };

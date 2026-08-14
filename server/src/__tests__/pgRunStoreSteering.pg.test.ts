@@ -3,31 +3,46 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { PgEventStore } from '../runtime/pgEventStore.js';
 import { PgRunStore } from '../runtime/runStore.js';
+import { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
 
 const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
+if (!testPgUrl) {
+  console.warn('[pgRunStoreSteering.pg] SKIPPED: TEST_DATABASE_URL is not configured');
+}
 
 describePg('PgRunStore steering PostgreSQL contract', () => {
   const prefix = `steering_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   let pool: InstanceType<typeof Pool>;
   let store: PgRunStore;
+  let eventStore: PgEventStore;
+  let toolInvocationStore: PgToolInvocationStore;
 
   beforeAll(async () => {
-    pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 4 });
+    pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 8 });
+    eventStore = new PgEventStore({ connectionString: testPgUrl!, tablePrefix: prefix, poolMax: 4 });
+    await eventStore.init();
     store = new PgRunStore({ pool, tablePrefix: prefix });
     await store.init();
+    toolInvocationStore = new PgToolInvocationStore({ pool, tablePrefix: prefix });
+    await toolInvocationStore.init();
   }, 30_000);
 
   afterAll(async () => {
     if (!pool) return;
     try {
+      await pool.query(`DROP TABLE IF EXISTS ${prefix}_tool_invocations`);
       await pool.query(`DROP TABLE IF EXISTS ${prefix}_steering_inputs`);
       await pool.query(`DROP TABLE IF EXISTS ${prefix}_steering_sessions`);
       await pool.query(`DROP TABLE IF EXISTS ${prefix}_message_submissions`);
       await pool.query(`DROP TABLE IF EXISTS ${prefix}_runs`);
+      await pool.query(`DROP TABLE IF EXISTS ${prefix}_events`);
+      await pool.query(`DROP TABLE IF EXISTS ${prefix}_event_cursors`);
     } finally {
+      await eventStore?.close();
       await pool.end();
     }
   }, 30_000);
@@ -228,4 +243,227 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       metadata: { steeringState: 'applied', steeringAppliedToRunId: 'target-run' },
     });
   });
+
+  it('管理员代操作按 authenticated submitter 幂等，run owner 保持会话 owner', async () => {
+    const base = {
+      sessionId: 'session-admin-submit',
+      userId: 'session-owner',
+      submitterUserId: 'admin-submitter',
+      idempotencyKey: 'admin-client-message',
+      channel: 'web',
+    };
+    const first = await store.enqueueUserMessage({ ...base, runId: 'admin-submit-a' }, 'queue');
+    const duplicate = await store.enqueueUserMessage({ ...base, runId: 'admin-submit-b' }, 'queue');
+
+    expect(duplicate.runId).toBe(first.runId);
+    await expect(store.findByIdempotencyKey('admin-submitter', base.idempotencyKey))
+      .resolves.toMatchObject({ runId: first.runId, userId: 'session-owner' });
+    await expect(store.findByIdempotencyKey('session-owner', base.idempotencyKey)).resolves.toBeNull();
+  });
+
+  it('不同管理员代同一 owner 使用相同 clientMessageId 时按提交者域分别受理', async () => {
+    const base = {
+      sessionId: 'session-admin-scopes',
+      userId: 'shared-session-owner',
+      idempotencyKey: 'shared-client-message',
+      channel: 'web',
+    };
+    const [first, second] = await Promise.all([
+      store.enqueueUserMessage({ ...base, runId: 'admin-scope-a', submitterUserId: 'admin-a' }, 'queue'),
+      store.enqueueUserMessage({ ...base, runId: 'admin-scope-b', submitterUserId: 'admin-b' }, 'queue'),
+    ]);
+
+    expect(first.runId).toBe('admin-scope-a');
+    expect(second.runId).toBe('admin-scope-b');
+    await expect(store.findByIdempotencyKey('admin-a', base.idempotencyKey))
+      .resolves.toMatchObject({ runId: 'admin-scope-a', userId: base.userId, submitterUserId: 'admin-a' });
+    await expect(store.findByIdempotencyKey('admin-b', base.idempotencyKey))
+      .resolves.toMatchObject({ runId: 'admin-scope-b', userId: base.userId, submitterUserId: 'admin-b' });
+  });
+
+  it('只有 message_submissions 已受理记录可短路幂等查询', async () => {
+    await store.upsertPending({
+      runId: 'preaccepted-failed-run',
+      sessionId: 'preaccepted-session',
+      userId: 'owner-preaccepted',
+      idempotencyKey: 'preaccepted-key',
+    });
+    await store.markStatus('preaccepted-failed-run', 'failed', 'preflight_failed');
+
+    await expect(store.findByIdempotencyKey('owner-preaccepted', 'preaccepted-key')).resolves.toBeNull();
+  });
+
+  it('durable append + apply 重试不会重复事件或 transcript 外部副作用', async () => {
+    const sessionId = 'session-atomic-idempotency';
+    await store.upsertPending({
+      runId: 'target-atomic-idempotency', sessionId, userId: 'user-1', model: 'gpt-5.5', channel: 'web',
+    });
+    await store.markStatus('target-atomic-idempotency', 'running');
+    await store.enqueueUserMessage({
+      runId: 'source-atomic-idempotency', sessionId, userId: 'user-1', submitterUserId: 'user-1',
+      idempotencyKey: 'client-atomic-idempotency', model: 'gpt-5.5', channel: 'web',
+    }, 'steer');
+    await store.reserveSteeringInputs('target-atomic-idempotency', ['source-atomic-idempotency']);
+    const input = {
+      sourceRunId: 'source-atomic-idempotency',
+      event: {
+        type: 'user_message' as const,
+        runId: 'target-atomic-idempotency',
+        sessionId,
+        content: '只投影一次',
+        interjectionSourceRunId: 'source-atomic-idempotency',
+      },
+    };
+
+    const first = await store.applySteeringInputsAtomically('target-atomic-idempotency', [input]);
+    const retry = await store.applySteeringInputsAtomically('target-atomic-idempotency', [input]);
+    expect(first.events).toHaveLength(1);
+    expect(retry).toEqual({ appliedSourceRunIds: [], events: [] });
+    const events = await eventStore.list(sessionId);
+    expect(events.filter((event) => event.type === 'user_message')).toHaveLength(1);
+  });
+
+  it('恢复旧版 append 成功但 apply 未完成的半状态时不重复 durable user_message', async () => {
+    const sessionId = 'session-recovered-append';
+    const targetRunId = 'target-recovered-append';
+    const sourceRunId = 'source-recovered-append';
+    await store.upsertPending({
+      runId: targetRunId, sessionId, userId: 'user-1', model: 'gpt-5.5', channel: 'web',
+    });
+    await store.markStatus(targetRunId, 'running');
+    await store.enqueueUserMessage({
+      runId: sourceRunId, sessionId, userId: 'user-1', submitterUserId: 'user-1',
+      idempotencyKey: 'client-recovered-append', model: 'gpt-5.5', channel: 'web',
+    }, 'steer');
+    await store.reserveSteeringInputs(targetRunId, [sourceRunId]);
+    await eventStore.append({
+      type: 'user_message', runId: targetRunId, sessionId, content: '旧版已追加内容',
+      interjectionSourceRunId: sourceRunId,
+    });
+
+    const recovered = await store.applySteeringInputsAtomically(targetRunId, [{
+      sourceRunId,
+      event: {
+        type: 'user_message', runId: targetRunId, sessionId, content: '旧版已追加内容',
+        interjectionSourceRunId: sourceRunId,
+      },
+    }]);
+
+    expect(recovered).toEqual({ appliedSourceRunIds: [sourceRunId], events: [] });
+    await expect(store.get(sourceRunId)).resolves.toMatchObject({ status: 'completed' });
+    const events = await eventStore.list(sessionId);
+    expect(events.filter((event) => (
+      event.type === 'user_message' && event.interjectionSourceRunId === sourceRunId
+    ))).toHaveLength(1);
+  });
+
+  it('apply 与 stop 并发时 cancelled 内容绝不进入 durable transcript，stop 事件与状态同事务', async () => {
+    const sessionId = 'session-apply-stop-race';
+    const targetRunId = 'target-apply-stop-race';
+    const sourceRunId = 'source-apply-stop-race';
+    await store.upsertPending({
+      runId: targetRunId, sessionId, userId: 'user-1', model: 'gpt-5.5', channel: 'web',
+    });
+    await store.markStatus(targetRunId, 'running');
+    await store.enqueueUserMessage({
+      runId: sourceRunId, sessionId, userId: 'user-1', submitterUserId: 'user-1',
+      idempotencyKey: 'client-apply-stop-race', model: 'gpt-5.5', channel: 'web',
+    }, 'steer');
+    await store.reserveSteeringInputs(targetRunId, [sourceRunId]);
+
+    await Promise.all([
+      store.applySteeringInputsAtomically(targetRunId, [{
+        sourceRunId,
+        event: {
+          type: 'user_message', runId: targetRunId, sessionId, content: '竞态内容',
+          interjectionSourceRunId: sourceRunId,
+        },
+      }]),
+      store.cancelSteeringBeforeDispatchBySessionWithEvent(
+        sessionId,
+        'web_abort',
+        targetRunId,
+        { type: 'run_cancel_requested', sessionId, runId: targetRunId, reason: 'web_abort' },
+      ),
+    ]);
+
+    const source = await store.get(sourceRunId);
+    const events = await eventStore.list(sessionId);
+    const contentEvents = events.filter((event) => (
+      event.type === 'user_message' && event.interjectionSourceRunId === sourceRunId
+    ));
+    expect(events.some((event) => event.type === 'run_cancel_requested')).toBe(true);
+    if (source?.status === 'cancelled') expect(contentEvents).toHaveLength(0);
+    else {
+      expect(source?.status).toBe('completed');
+      expect(contentEvents).toHaveLength(1);
+    }
+  });
+
+  it('重复 stop 不重复投递取消事件或工具取消等外部副作用触发源', async () => {
+    const sessionId = 'session-stop-idempotency';
+    const runId = 'run-stop-idempotency';
+    await store.upsertPending({ runId, sessionId, userId: 'user-1', channel: 'web' });
+    await store.markStatus(runId, 'running');
+    const event = { type: 'run_cancel_requested' as const, sessionId, runId, reason: 'web_abort' };
+
+    const first = await store.cancelSteeringBeforeDispatchBySessionWithEvent(
+      sessionId, 'web_abort', runId, event,
+    );
+    const duplicate = await store.cancelSteeringBeforeDispatchBySessionWithEvent(
+      sessionId, 'web_abort', runId, event,
+    );
+
+    expect(first.eventCreated).toBe(true);
+    expect(duplicate.eventCreated).toBe(false);
+    const events = await eventStore.list(sessionId);
+    expect(events.filter((item) => item.type === 'run_cancel_requested')).toHaveLength(1);
+  });
+
+  it('PostgreSQL 工具取消只选出一个事件发布者和一个外部投递 claimant', async () => {
+    await toolInvocationStore.start({
+      invocationId: 'invocation-cancel-cas',
+      runId: 'run-cancel-cas',
+      sessionId: 'session-cancel-cas',
+      toolCallId: 'call-cancel-cas',
+      toolName: 'Shell',
+      executionTarget: 'server-remote',
+    });
+
+    const requests = await Promise.all([
+      toolInvocationStore.requestCancelOnce('invocation-cancel-cas', 'web_abort'),
+      toolInvocationStore.requestCancelOnce('invocation-cancel-cas', 'web_abort'),
+    ]);
+    expect(requests.map((item) => item?.created).sort()).toEqual([false, true]);
+
+    const claimNow = new Date('2026-08-15T00:00:00.000Z');
+    const claims = await Promise.all([
+      toolInvocationStore.claimCancelDelivery('invocation-cancel-cas', 'claim-a', 30_000, claimNow),
+      toolInvocationStore.claimCancelDelivery('invocation-cancel-cas', 'claim-b', 30_000, claimNow),
+    ]);
+    const winner = claims.find((claim) => claim)?.metadata.cancelDeliveryClaimId;
+    const loser = winner === 'claim-a' ? 'claim-b' : 'claim-a';
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(winner).toMatch(/^claim-[ab]$/);
+    await expect(toolInvocationStore.markCancelDelivered(
+      'invocation-cancel-cas', { cancelDelivery: 'stale' }, loser,
+    )).resolves.toBeNull();
+    await expect(toolInvocationStore.markCancelDelivered(
+      'invocation-cancel-cas', { cancelDelivery: 'delivered' }, String(winner),
+    )).resolves.toMatchObject({ cancelDeliveredAt: expect.any(String) });
+  });
+
+  it('并发 lease renew single-flight 之外仍由 SQL 保证过期时间单调不倒退', async () => {
+    const runId = 'lease-monotonic-run';
+    const baseNow = new Date('2026-08-15T00:00:00.000Z');
+    await store.upsertPending({ runId, sessionId: 'lease-monotonic-session', userId: 'user-1' });
+    await store.acquireLease(runId, 'lease-worker', 60_000, baseNow);
+    await Promise.all([
+      store.renewLease(runId, 'lease-worker', 60_000, new Date(baseNow.getTime() + 120_000)),
+      store.renewLease(runId, 'lease-worker', 60_000, new Date(baseNow.getTime() + 30_000)),
+    ]);
+    const renewed = await store.get(runId);
+    expect(Date.parse(renewed!.leaseExpiresAt!)).toBeGreaterThanOrEqual(baseNow.getTime() + 180_000);
+  });
+
 });

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { HandRecord, HandStore } from './handStore.js';
 import type { RunStore } from './runStore.js';
 import type { ToolInvocationRecord, ToolInvocationStore } from './toolInvocationStore.js';
@@ -15,6 +17,9 @@ export interface ToolInvocationCancelDeliveryOptions {
   maxAttempts?: number;
   retryBaseMs?: number;
   retryMaxMs?: number;
+  deliveryWorkerId?: string;
+  deliveryLeaseMs?: number;
+  deliveryRequestTimeoutMs?: number;
   now?: Date;
   fetchImpl?: typeof fetch;
   logger?: {
@@ -34,6 +39,7 @@ export interface CancelDeliveryResult {
     | 'run_abort_only'
     | 'missing_auth_token'
     | 'ownership_mismatch'
+    | 'already_claimed'
     | 'retry_scheduled'
     | 'dead_letter'
     | 'missing_record';
@@ -85,10 +91,38 @@ async function deliverToolInvocationCancelRecord(input: ToolInvocationCancelDeli
   eventMetadata?: Record<string, unknown>;
 }): Promise<CancelDeliveryResult> {
   const store = input.toolInvocationStore;
+  const wallStartedAt = Date.now();
   const now = input.now ?? new Date();
+  const claimId = `${input.deliveryWorkerId ?? `pid-${process.pid}`}:${randomUUID()}`;
+  const deliveryLeaseMs = input.deliveryLeaseMs ?? 30_000;
+  // 先完成无外部副作用的归属/端点/凭据解析，claim 从真正投递前才开始计时。
+  // 否则慢查询会消耗 lease，DELETE 尚在途时第二个 scanner 就可能重新取得 claim。
   const metadata = { ...input.record.metadata, ...(input.eventMetadata ?? {}) };
   const run = await input.runStore?.get(input.record.runId).catch(() => null);
   const ownerWorkerId = typeof metadata.workerId === 'string' ? metadata.workerId : undefined;
+  const handId = typeof metadata.handId === 'string'
+    ? metadata.handId
+    : typeof metadata.defaultHandId === 'string'
+      ? metadata.defaultHandId
+      : undefined;
+  const hand = handId ? await input.handStore?.get(handId).catch(() => null) : null;
+  const endpoint = resolveEndpoint(input.record, metadata, hand, input);
+  const authToken = await resolveAuthToken(metadata, hand, input);
+  const claimedRecord = await store?.claimCancelDelivery(
+    input.record.invocationId,
+    claimId,
+    deliveryLeaseMs,
+    input.now ? new Date(input.now.getTime() + (Date.now() - wallStartedAt)) : new Date(),
+  ).catch((err) => {
+    input.logger?.warn?.('claimCancelDelivery failed', {
+      invocationId: input.record.invocationId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  });
+  if (!claimedRecord) return { status: 'already_claimed', record: input.record };
+  input = { ...input, record: claimedRecord };
+
   if (
     run?.status === 'running'
     && run.workerId
@@ -100,38 +134,35 @@ async function deliverToolInvocationCancelRecord(input: ToolInvocationCancelDeli
       cancelDeliveryCurrentWorkerId: run.workerId,
     }, input);
     const terminal = patch.cancelDelivery === 'dead_letter';
-    await markAttempt(store, input.record.invocationId, patch, terminal);
-    return { status: terminal ? 'dead_letter' : 'ownership_mismatch', record: input.record };
+    const finalized = await markAttempt(store, input.record.invocationId, patch, terminal, claimId);
+    return finalized
+      ? { status: terminal ? 'dead_letter' : 'ownership_mismatch', record: input.record }
+      : { status: 'already_claimed', record: input.record };
   }
 
-  const handId = typeof metadata.handId === 'string'
-    ? metadata.handId
-    : typeof metadata.defaultHandId === 'string'
-      ? metadata.defaultHandId
-      : undefined;
-  const hand = handId ? await input.handStore?.get(handId).catch(() => null) : null;
-  const endpoint = resolveEndpoint(input.record, metadata, hand, input);
-  const authToken = await resolveAuthToken(metadata, hand, input);
-
   if (!endpoint) {
-    await store?.markCancelDelivered(input.record.invocationId, {
+    const finalized = await store?.markCancelDelivered(input.record.invocationId, {
       cancelDelivery: 'run_abort_only',
       cancelDeliveryTerminal: true,
       cancelDeliveryReason: 'missing_hand_endpoint',
       ...(handId ? { handId } : {}),
-    }).catch(() => null);
-    return { status: 'run_abort_only', record: input.record };
+    }, claimId).catch(() => null);
+    return finalized
+      ? { status: 'run_abort_only', record: input.record }
+      : { status: 'already_claimed', record: input.record };
   }
 
   if (!authToken) {
-    await store?.markCancelDelivered(input.record.invocationId, {
+    const finalized = await store?.markCancelDelivered(input.record.invocationId, {
       cancelDelivery: 'missing_auth_token',
       cancelDeliveryTerminal: true,
       ...(handId ? { handId } : {}),
       handEndpoint: endpoint,
       ...(hand?.metadata.authTokenRef ? { authTokenRef: hand.metadata.authTokenRef } : {}),
-    }).catch(() => null);
-    return { status: 'missing_auth_token', record: input.record };
+    }, claimId).catch(() => null);
+    return finalized
+      ? { status: 'missing_auth_token', record: input.record }
+      : { status: 'already_claimed', record: input.record };
   }
 
   const attemptMetadata = baseAttemptMetadata(input.record, now, {
@@ -139,15 +170,19 @@ async function deliverToolInvocationCancelRecord(input: ToolInvocationCancelDeli
     handEndpoint: endpoint,
     ...(hand ? { handStatus: hand.status } : {}),
   });
-  await store?.markCancelDeliveryAttempt(input.record.invocationId, {
-    ...attemptMetadata,
-    cancelDelivery: 'attempting',
-  }).catch(() => null);
-
+  const claimExpiresAt = parseOptionalDate(input.record.metadata.cancelDeliveryClaimExpiresAt);
+  const remainingLeaseMs = claimExpiresAt
+    ? claimExpiresAt.getTime() - Date.now()
+    : deliveryLeaseMs;
+  const requestTimeoutMs = Math.min(
+    input.deliveryRequestTimeoutMs ?? 20_000,
+    Math.max(1, remainingLeaseMs - 1_000),
+  );
   try {
     const response = await (input.fetchImpl ?? fetch)(`${endpoint.replace(/\/$/, '')}/invocations/${encodeURIComponent(input.record.invocationId)}`, {
       method: 'DELETE',
       headers: { authorization: `Bearer ${authToken}` },
+      signal: AbortSignal.timeout(requestTimeoutMs),
     });
     let responseBody: unknown;
     try {
@@ -161,17 +196,16 @@ async function deliverToolInvocationCancelRecord(input: ToolInvocationCancelDeli
         ? Boolean((responseBody as { cancelled?: unknown }).cancelled)
         : undefined;
       const delivery = cancelled === false ? 'not_found_assumed_terminal' : 'delivered';
-      await store?.markCancelDelivered(input.record.invocationId, {
+      const finalized = await store?.markCancelDelivered(input.record.invocationId, {
         ...attemptMetadata,
         cancelDelivery: delivery,
         cancelDeliveryTerminal: true,
         cancelDeliveryStatus: response.status,
         ...(typeof cancelled === 'boolean' ? { cancelDeliveryCancelled: cancelled } : {}),
-      }).catch(() => null);
-      return {
-        status: delivery,
-        record: input.record,
-      };
+      }, claimId).catch(() => null);
+      return finalized
+        ? { status: delivery, record: input.record }
+        : { status: 'already_claimed', record: input.record };
     }
 
     const patch = buildAttemptMetadata(input.record, now, 'http_error', {
@@ -179,8 +213,10 @@ async function deliverToolInvocationCancelRecord(input: ToolInvocationCancelDeli
       cancelDeliveryStatus: response.status,
     }, input);
     const terminal = patch.cancelDelivery === 'dead_letter';
-    await markAttempt(store, input.record.invocationId, patch, terminal);
-    return { status: terminal ? 'dead_letter' : 'retry_scheduled', record: input.record };
+    const finalized = await markAttempt(store, input.record.invocationId, patch, terminal, claimId);
+    return finalized
+      ? { status: terminal ? 'dead_letter' : 'retry_scheduled', record: input.record }
+      : { status: 'already_claimed', record: input.record };
   } catch (err) {
     input.logger?.warn?.('hand-aware cancel delivery failed', {
       invocationId: input.record.invocationId,
@@ -192,8 +228,10 @@ async function deliverToolInvocationCancelRecord(input: ToolInvocationCancelDeli
       cancelDeliveryError: err instanceof Error ? err.message : String(err),
     }, input);
     const terminal = patch.cancelDelivery === 'dead_letter';
-    await markAttempt(store, input.record.invocationId, patch, terminal);
-    return { status: terminal ? 'dead_letter' : 'retry_scheduled', record: input.record };
+    const finalized = await markAttempt(store, input.record.invocationId, patch, terminal, claimId);
+    return finalized
+      ? { status: terminal ? 'dead_letter' : 'retry_scheduled', record: input.record }
+      : { status: 'already_claimed', record: input.record };
   }
 }
 
@@ -202,12 +240,14 @@ async function markAttempt(
   invocationId: string,
   metadata: Record<string, unknown>,
   terminal: boolean,
-): Promise<void> {
+  claimId: string,
+): Promise<boolean> {
   if (terminal) {
-    await store?.markCancelDelivered(invocationId, metadata).catch(() => null);
-    return;
+    const record = await store?.markCancelDelivered(invocationId, metadata, claimId).catch(() => null);
+    return Boolean(record);
   }
-  await store?.markCancelDeliveryAttempt(invocationId, metadata).catch(() => null);
+  const record = await store?.markCancelDeliveryAttempt(invocationId, metadata, claimId).catch(() => null);
+  return Boolean(record);
 }
 
 function baseAttemptMetadata(

@@ -757,13 +757,18 @@ export async function acquireDirectRuntimeRunLease(input: {
     input.onLeaseLost?.(error);
   };
   if (input.runStore.renewLease) {
+    let renewInFlight: Promise<void> | undefined;
     renewTimer = setInterval(() => {
-      void input.runStore?.renewLease?.(input.runId, workerId, DIRECT_RUNTIME_LEASE_MS)
+      if (renewInFlight) return;
+      renewInFlight = input.runStore!.renewLease!(input.runId, workerId, DIRECT_RUNTIME_LEASE_MS)
         .then((renewed) => {
           if (!renewed) notifyLeaseLost('renewal rejected');
         })
         .catch((err) => {
           notifyLeaseLost(err instanceof Error ? err.message : String(err));
+        })
+        .finally(() => {
+          renewInFlight = undefined;
         });
     }, input.renewIntervalMs ?? DIRECT_RUNTIME_LEASE_RENEW_INTERVAL_MS);
     renewTimer.unref?.();
@@ -3582,8 +3587,10 @@ export function startWakeLeaseRenewal(input: {
   intervalMs: number;
 }): NodeJS.Timeout | null {
   if (!input.lease) return null;
+  let renewalInFlight: Promise<void> | undefined;
   const timer = setInterval(() => {
-    void (async () => {
+    if (renewalInFlight) return;
+    renewalInFlight = (async () => {
       try {
         await input.lease?.renew();
         // 2026-08-04 P0 兜底：run_cancel_requested 的跨进程投递主通道是 PG NOTIFY
@@ -3605,7 +3612,9 @@ export function startWakeLeaseRenewal(input: {
         }
         input.abortController.abort(err instanceof Error ? err : new Error(String(err)));
       }
-    })();
+    })().finally(() => {
+      renewalInFlight = undefined;
+    });
   }, input.intervalMs);
   timer.unref?.();
   return timer;

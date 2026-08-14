@@ -1,5 +1,16 @@
 import type { QueuedInterjection } from "./interjectionConsumption";
 
+export type AuthoritativeSubmissionStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type SubmissionProjection = 'queued' | 'sent' | 'failed' | 'cancelled';
+
+/** ACK 与 HTTP 权威查询共用同一投影：只有已运行/完成才进入 sent。 */
+export function projectAuthoritativeSubmissionStatus(
+  status: AuthoritativeSubmissionStatus,
+): SubmissionProjection {
+  if (status === 'running' || status === 'completed') return 'sent';
+  return status;
+}
+
 /** 停止当前 run 只会撤销 steering_inputs；普通 queue 仍须保留并等待后续串行执行。 */
 export function markSteeringCancelledForStop(
   entries: QueuedInterjection[],

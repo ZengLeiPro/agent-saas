@@ -5,6 +5,7 @@ import {
   acquireMessageSubmissionSlot,
   finalizeNotFoundSubmission,
   markSteeringCancelledForStop,
+  projectAuthoritativeSubmissionStatus,
   recoverQueueSnapshotAfterSyncOverflow,
   shouldAcceptSessionEvent,
 } from "../lib/queueConsistency";
@@ -69,6 +70,17 @@ describe("会话消息队列一致性行为", () => {
 
     expect(refreshCurrentSession).toHaveBeenCalledTimes(1);
     expect(loadSessions).toHaveBeenCalledWith({ fresh: true });
+  });
+
+  it("ACK 与权威查询对五种 durable 状态使用同一投影", () => {
+    expect([
+      "queued",
+      "running",
+      "completed",
+      "failed",
+      "cancelled",
+    ].map((status) => projectAuthoritativeSubmissionStatus(status as Parameters<typeof projectAuthoritativeSubmissionStatus>[0])))
+      .toEqual(["queued", "sent", "sent", "failed", "cancelled"]);
   });
 
   it("ACK 核验 not_found 后释放初始发送传输态", () => {

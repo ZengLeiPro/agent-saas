@@ -16,7 +16,7 @@ describe('PgRunStore steering inbox', () => {
           return { rows: [{ run_id: 'target-run' }] };
         }
         if (sql.includes('INSERT INTO runtime_runs')) {
-          const metadata = JSON.parse(String(params[11]));
+          const metadata = JSON.parse(String(params[params.length - 1]));
           return {
             rows: [{ row_json: {
               run_id: 'source-run',
@@ -103,7 +103,7 @@ describe('PgRunStore steering inbox', () => {
             status: 'pending',
             requested_at: now,
             updated_at: now,
-            metadata: JSON.parse(String(params[11])),
+            metadata: JSON.parse(String(params[params.length - 1])),
           } }] };
         }
         return { rows: [] };
@@ -129,7 +129,7 @@ describe('PgRunStore steering inbox', () => {
         if (sql.includes('INSERT INTO runtime_runs')) {
           return { rows: [{ row_json: {
             run_id: 'queued-run', session_id: 'session-1', status: 'pending',
-            requested_at: now, updated_at: now, metadata: JSON.parse(String(params[11])),
+            requested_at: now, updated_at: now, metadata: JSON.parse(String(params[params.length - 1])),
           } }] };
         }
         return { rows: [] };
@@ -357,7 +357,7 @@ describe('PgRunStore steering inbox', () => {
         if (sql.includes('INSERT INTO runtime_runs')) {
           return { rows: [{ row_json: {
             run_id: 'run-1', session_id: 'session-1', status: 'pending',
-            requested_at: now, updated_at: now, metadata: JSON.parse(String(params[11])),
+            requested_at: now, updated_at: now, metadata: JSON.parse(String(params[params.length - 1])),
           } }] };
         }
         return { rows: [] };
@@ -385,7 +385,7 @@ describe('PgRunStore steering inbox', () => {
         if (sql.includes('INSERT INTO runtime_runs')) {
           return { rows: [{ row_json: {
             run_id: 'queue-run', session_id: 'session-queue', status: 'pending',
-            requested_at: now, updated_at: now, metadata: JSON.parse(String(params[11])),
+            requested_at: now, updated_at: now, metadata: JSON.parse(String(params[params.length - 1])),
           } }] };
         }
         return { rows: [] };
@@ -470,7 +470,10 @@ describe('PgRunStore steering inbox', () => {
     const client = {
       query: async (sql: string) => {
         queries.push(sql.trim());
-        if (sql.includes('FOR UPDATE OF input, source')) {
+        if (sql.includes('SELECT input.source_run_id')) {
+          return { rows: [{ source_run_id: 'source-reserved' }] };
+        }
+        if (sql.includes('row_to_json(source.*)')) {
           return { rows: [{
             input_id: 'input-reserved',
             source_run_id: 'source-reserved',
@@ -495,7 +498,7 @@ describe('PgRunStore steering inbox', () => {
     await expect(store.cancelSteeringBeforeDispatchBySession('session-1', 'aborted', 'target-run'))
       .resolves.toEqual([expect.objectContaining({ sourceRunId: 'source-reserved', state: 'reserved' })]);
     expect(queries.some((sql) => sql.includes('pg_advisory_xact_lock'))).toBe(true);
-    expect(queries.filter((sql) => sql.includes("state IN ('pending', 'reserved')"))).toHaveLength(2);
+    expect(queries.some((sql) => sql.includes("SET state = 'cancelled'"))).toBe(true);
     const cancelledRunQueries = queries.filter((sql) => sql.includes("status = 'cancelled'"));
     expect(cancelledRunQueries).toHaveLength(2);
     expect(cancelledRunQueries.every((sql) => sql.includes("- 'wakeMessage'"))).toBe(true);

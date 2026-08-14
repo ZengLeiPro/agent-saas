@@ -37,8 +37,29 @@ export interface ToolInvocationStore {
   start(input: StartToolInvocationInput): Promise<ToolInvocationRecord>;
   complete(invocationId: string, status: Exclude<ToolInvocationStatus, 'running'>, error?: string): Promise<ToolInvocationRecord | null>;
   requestCancel(invocationId: string, reason?: string, metadataPatch?: Record<string, unknown>): Promise<ToolInvocationRecord | null>;
-  markCancelDeliveryAttempt(invocationId: string, metadataPatch?: Record<string, unknown>): Promise<ToolInvocationRecord | null>;
-  markCancelDelivered(invocationId: string, metadataPatch?: Record<string, unknown>): Promise<ToolInvocationRecord | null>;
+  /** 原子登记首次取消请求；只有 created=true 的调用方负责发布即时事件。 */
+  requestCancelOnce(
+    invocationId: string,
+    reason?: string,
+    metadataPatch?: Record<string, unknown>,
+  ): Promise<{ record: ToolInvocationRecord; created: boolean } | null>;
+  /** 为外部 DELETE 副作用获取短租约；并发消费者只有一个能取得 claim。 */
+  claimCancelDelivery(
+    invocationId: string,
+    claimId: string,
+    leaseMs: number,
+    now?: Date,
+  ): Promise<ToolInvocationRecord | null>;
+  markCancelDeliveryAttempt(
+    invocationId: string,
+    metadataPatch?: Record<string, unknown>,
+    claimId?: string,
+  ): Promise<ToolInvocationRecord | null>;
+  markCancelDelivered(
+    invocationId: string,
+    metadataPatch?: Record<string, unknown>,
+    claimId?: string,
+  ): Promise<ToolInvocationRecord | null>;
   get(invocationId: string): Promise<ToolInvocationRecord | null>;
   listRunning(sessionId?: string): Promise<ToolInvocationRecord[]>;
   listCancelRequested(sessionId?: string): Promise<ToolInvocationRecord[]>;
@@ -139,37 +160,96 @@ export class InMemoryToolInvocationStore implements ToolInvocationStore {
   async requestCancel(invocationId: string, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<ToolInvocationRecord | null> {
     const record = this.invocations.get(invocationId);
     if (!record || record.status !== 'running') return null;
+    const now = new Date().toISOString();
     const updated: ToolInvocationRecord = {
       ...record,
-      cancelRequestedAt: new Date().toISOString(),
-      cancelReason: reason,
-      updatedAt: new Date().toISOString(),
+      cancelRequestedAt: record.cancelRequestedAt ?? now,
+      cancelReason: record.cancelReason ?? reason,
+      updatedAt: now,
       metadata: { ...record.metadata, ...metadataPatch },
     };
     this.invocations.set(invocationId, updated);
     return updated;
   }
 
-  async markCancelDeliveryAttempt(invocationId: string, metadataPatch: Record<string, unknown> = {}): Promise<ToolInvocationRecord | null> {
+  async requestCancelOnce(
+    invocationId: string,
+    reason?: string,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<{ record: ToolInvocationRecord; created: boolean } | null> {
+    const existing = this.invocations.get(invocationId);
+    if (!existing || existing.status !== 'running') return null;
+    if (existing.cancelRequestedAt) {
+      const record = await this.requestCancel(invocationId, reason, metadataPatch);
+      return record ? { record, created: false } : null;
+    }
+    const record = await this.requestCancel(invocationId, reason, metadataPatch);
+    return record ? { record, created: true } : null;
+  }
+
+  async claimCancelDelivery(
+    invocationId: string,
+    claimId: string,
+    leaseMs: number,
+    now = new Date(),
+  ): Promise<ToolInvocationRecord | null> {
     const record = this.invocations.get(invocationId);
-    if (!record) return null;
+    if (!record || record.status !== 'running' || !record.cancelRequestedAt || record.cancelDeliveredAt) return null;
+    const nextAttemptAt = typeof record.metadata.cancelDeliveryNextAttemptAt === 'string'
+      ? Date.parse(record.metadata.cancelDeliveryNextAttemptAt)
+      : Number.NaN;
+    if (Number.isFinite(nextAttemptAt) && nextAttemptAt > now.getTime()) return null;
+    const currentExpiry = typeof record.metadata.cancelDeliveryClaimExpiresAt === 'string'
+      ? Date.parse(record.metadata.cancelDeliveryClaimExpiresAt)
+      : Number.NaN;
+    if (Number.isFinite(currentExpiry) && currentExpiry > now.getTime()) return null;
     const updated: ToolInvocationRecord = {
       ...record,
-      updatedAt: new Date().toISOString(),
-      metadata: { ...record.metadata, ...metadataPatch },
+      updatedAt: now.toISOString(),
+      metadata: {
+        ...record.metadata,
+        cancelDeliveryClaimId: claimId,
+        cancelDeliveryClaimExpiresAt: new Date(now.getTime() + leaseMs).toISOString(),
+      },
     };
     this.invocations.set(invocationId, updated);
     return updated;
   }
 
-  async markCancelDelivered(invocationId: string, metadataPatch: Record<string, unknown> = {}): Promise<ToolInvocationRecord | null> {
+  async markCancelDeliveryAttempt(
+    invocationId: string,
+    metadataPatch: Record<string, unknown> = {},
+    claimId?: string,
+  ): Promise<ToolInvocationRecord | null> {
     const record = this.invocations.get(invocationId);
-    if (!record) return null;
+    if (!record || (claimId && record.metadata.cancelDeliveryClaimId !== claimId)) return null;
+    const metadata = { ...record.metadata, ...metadataPatch };
+    delete metadata.cancelDeliveryClaimId;
+    delete metadata.cancelDeliveryClaimExpiresAt;
+    const updated: ToolInvocationRecord = {
+      ...record,
+      updatedAt: new Date().toISOString(),
+      metadata,
+    };
+    this.invocations.set(invocationId, updated);
+    return updated;
+  }
+
+  async markCancelDelivered(
+    invocationId: string,
+    metadataPatch: Record<string, unknown> = {},
+    claimId?: string,
+  ): Promise<ToolInvocationRecord | null> {
+    const record = this.invocations.get(invocationId);
+    if (!record || (claimId && record.metadata.cancelDeliveryClaimId !== claimId)) return null;
+    const metadata = { ...record.metadata, ...metadataPatch };
+    delete metadata.cancelDeliveryClaimId;
+    delete metadata.cancelDeliveryClaimExpiresAt;
     const updated: ToolInvocationRecord = {
       ...record,
       cancelDeliveredAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      metadata: { ...record.metadata, ...metadataPatch },
+      metadata,
     };
     this.invocations.set(invocationId, updated);
     return updated;
@@ -290,28 +370,94 @@ export class PgToolInvocationStore implements ToolInvocationStore {
     return result.rows[0] ? rowToRecord(result.rows[0]) : null;
   }
 
-  async markCancelDeliveryAttempt(invocationId: string, metadataPatch: Record<string, unknown> = {}): Promise<ToolInvocationRecord | null> {
+  async requestCancelOnce(
+    invocationId: string,
+    reason?: string,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<{ record: ToolInvocationRecord; created: boolean } | null> {
+    const now = new Date().toISOString();
+    const created = await this.options.pool.query<ToolInvocationRow>(`
+      UPDATE ${this.toolInvocationsTable}
+      SET cancel_requested_at = $2,
+          cancel_reason = COALESCE(cancel_reason, $3),
+          updated_at = $2,
+          metadata = metadata || $4::jsonb
+      WHERE invocation_id = $1
+        AND status = 'running'
+        AND cancel_requested_at IS NULL
+      RETURNING *
+    `, [invocationId, now, reason ?? null, JSON.stringify(metadataPatch)]);
+    if (created.rows[0]) return { record: rowToRecord(created.rows[0]), created: true };
+    const existing = await this.options.pool.query<ToolInvocationRow>(`
+      SELECT * FROM ${this.toolInvocationsTable}
+      WHERE invocation_id = $1 AND status = 'running' AND cancel_requested_at IS NOT NULL
+    `, [invocationId]);
+    return existing.rows[0] ? { record: rowToRecord(existing.rows[0]), created: false } : null;
+  }
+
+  async claimCancelDelivery(
+    invocationId: string,
+    claimId: string,
+    leaseMs: number,
+    now = new Date(),
+  ): Promise<ToolInvocationRecord | null> {
+    const leaseExpiresAt = new Date(now.getTime() + leaseMs).toISOString();
+    const result = await this.options.pool.query<ToolInvocationRow>(`
+      UPDATE ${this.toolInvocationsTable}
+      SET updated_at = $3::timestamptz,
+          metadata = metadata || jsonb_build_object(
+            'cancelDeliveryClaimId', $2::text,
+            'cancelDeliveryClaimExpiresAt', $4::text
+          )
+      WHERE invocation_id = $1
+        AND status = 'running'
+        AND cancel_requested_at IS NOT NULL
+        AND cancel_delivered_at IS NULL
+        AND (
+          metadata->>'cancelDeliveryNextAttemptAt' IS NULL
+          OR (metadata->>'cancelDeliveryNextAttemptAt')::timestamptz <= $3::timestamptz
+        )
+        AND (
+          metadata->>'cancelDeliveryClaimExpiresAt' IS NULL
+          OR (metadata->>'cancelDeliveryClaimExpiresAt')::timestamptz <= $3::timestamptz
+        )
+      RETURNING *
+    `, [invocationId, claimId, now.toISOString(), leaseExpiresAt]);
+    return result.rows[0] ? rowToRecord(result.rows[0]) : null;
+  }
+
+  async markCancelDeliveryAttempt(
+    invocationId: string,
+    metadataPatch: Record<string, unknown> = {},
+    claimId?: string,
+  ): Promise<ToolInvocationRecord | null> {
     const now = new Date().toISOString();
     const result = await this.options.pool.query<ToolInvocationRow>(`
       UPDATE ${this.toolInvocationsTable}
       SET updated_at = $2,
-          metadata = metadata || $3::jsonb
+          metadata = (metadata - 'cancelDeliveryClaimId' - 'cancelDeliveryClaimExpiresAt') || $3::jsonb
       WHERE invocation_id = $1
+        AND ($4::text IS NULL OR metadata->>'cancelDeliveryClaimId' = $4)
       RETURNING *
-    `, [invocationId, now, JSON.stringify(metadataPatch)]);
+    `, [invocationId, now, JSON.stringify(metadataPatch), claimId ?? null]);
     return result.rows[0] ? rowToRecord(result.rows[0]) : null;
   }
 
-  async markCancelDelivered(invocationId: string, metadataPatch: Record<string, unknown> = {}): Promise<ToolInvocationRecord | null> {
+  async markCancelDelivered(
+    invocationId: string,
+    metadataPatch: Record<string, unknown> = {},
+    claimId?: string,
+  ): Promise<ToolInvocationRecord | null> {
     const now = new Date().toISOString();
     const result = await this.options.pool.query<ToolInvocationRow>(`
       UPDATE ${this.toolInvocationsTable}
       SET cancel_delivered_at = COALESCE(cancel_delivered_at, $2),
           updated_at = $2,
-          metadata = metadata || $3::jsonb
+          metadata = (metadata - 'cancelDeliveryClaimId' - 'cancelDeliveryClaimExpiresAt') || $3::jsonb
       WHERE invocation_id = $1
+        AND ($4::text IS NULL OR metadata->>'cancelDeliveryClaimId' = $4)
       RETURNING *
-    `, [invocationId, now, JSON.stringify(metadataPatch)]);
+    `, [invocationId, now, JSON.stringify(metadataPatch), claimId ?? null]);
     return result.rows[0] ? rowToRecord(result.rows[0]) : null;
   }
 

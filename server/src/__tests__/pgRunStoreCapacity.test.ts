@@ -62,6 +62,7 @@ describe('PgRunStore global scheduler capacity', () => {
       'cumulative_input_tokens',
       'sandbox_scope_id',
       'tenant_id',
+      'submitter_scope',
     ];
     const client = {
       query: async <T>(sql: string) => {

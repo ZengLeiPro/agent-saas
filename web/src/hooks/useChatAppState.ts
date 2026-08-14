@@ -40,6 +40,7 @@ import {
   acquireMessageSubmissionSlot,
   finalizeNotFoundSubmission,
   markSteeringCancelledForStop,
+  projectAuthoritativeSubmissionStatus,
   recoverQueueSnapshotAfterSyncOverflow,
   shouldAcceptSessionEvent,
 } from "@/lib/queueConsistency";
@@ -502,7 +503,18 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     state: 'sending' | 'acked';
     createdAt: number;
   }
+  interface ProvisionalSubmission {
+    /** 创建该 provisional 会话的首条消息；确认/失败只能处理同一批次。 */
+    rootClientMsgId: string;
+    clientMsgId: string;
+    deliveryMode: 'queue' | 'steer';
+    input: string;
+    attachments: UploadedFile[];
+    autoApproveRunShell: boolean;
+  }
   const outboxRef = useRef<OutboxEntry[]>([]);
+  /** 首条新会话消息确认 session 前，后续普通消息只在本地排队，严禁再次以空 sessionId 发出。 */
+  const provisionalSubmissionsRef = useRef<ProvisionalSubmission[]>([]);
   /** 每个 inflight 消息的 ACK 超时定时器（收到 ack 清除） */
   const ackTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const messageSubmissionGateRef = useRef(false);
@@ -525,6 +537,30 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     },
     [],
   );
+  const failProvisionalBatch = useCallback((rootClientMsgId: string, reason: string) => {
+    const failedIds = new Set(
+      provisionalSubmissionsRef.current
+        .filter((entry) => entry.rootClientMsgId === rootClientMsgId)
+        .map((entry) => entry.clientMsgId),
+    );
+    if (failedIds.size === 0) return;
+    provisionalSubmissionsRef.current = provisionalSubmissionsRef.current.filter(
+      (entry) => entry.rootClientMsgId !== rootClientMsgId,
+    );
+    outboxRef.current = outboxRef.current.filter((entry) => !failedIds.has(entry.clientMsgId));
+    for (const clientMsgId of failedIds) {
+      const timer = ackTimersRef.current.get(clientMsgId);
+      if (timer) clearTimeout(timer);
+      ackTimersRef.current.delete(clientMsgId);
+    }
+    mutateQueuedInterjections((prev) => prev.map((entry) => failedIds.has(entry.clientMsgId)
+      ? { ...entry, status: 'failed' as const, reason }
+      : entry));
+  }, [mutateQueuedInterjections]);
+  const failAllProvisionalBatches = useCallback((reason: string) => {
+    const roots = new Set(provisionalSubmissionsRef.current.map((entry) => entry.rootClientMsgId));
+    for (const rootClientMsgId of roots) failProvisionalBatch(rootClientMsgId, reason);
+  }, [failProvisionalBatch]);
 
   // Detail 快照与消费标记的对账保持稳定引用，供 session callbacks 复用。
   const reconcileServerInterjections = useCallback(
@@ -650,7 +686,45 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     existingClientMsgId?: string,
     autoApproveRunShellForMessage?: boolean,
     preserveActiveStream?: boolean,
+    deliveryMode?: 'queue' | 'steer',
+    authoritativeSessionId?: string,
   ) => Promise<void>) | null>(null);
+  const confirmProvisionalSession = useCallback((clientMsgId: string, authoritativeSessionId: string) => {
+    const currentSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+    if (currentSessionId && currentSessionId !== authoritativeSessionId) return;
+    if (!currentSessionId && pendingNewSessionClientMsgIdRef.current !== clientMsgId) return;
+
+    immediateSessionIdRef.current = authoritativeSessionId;
+    replaceUrl('chat', authoritativeSessionId);
+    if (pendingNewSessionClientMsgIdRef.current === clientMsgId) {
+      pendingNewSessionClientMsgIdRef.current = null;
+    }
+    newSessionClientMsgIdsRef.current.delete(clientMsgId);
+    const deferredSubmissions = provisionalSubmissionsRef.current.filter(
+      (submission) => submission.rootClientMsgId === clientMsgId,
+    );
+    provisionalSubmissionsRef.current = provisionalSubmissionsRef.current.filter(
+      (submission) => submission.rootClientMsgId !== clientMsgId,
+    );
+    if (deferredSubmissions.length === 0) return;
+
+    // session 事件、durable ACK 与权威查询都可确认 id；后续消息必须在同一 id 下顺序发送。
+    void (async () => {
+      for (const submission of deferredSubmissions) {
+        await sendChatViaWsRef.current?.(
+          submission.input,
+          submission.attachments,
+          false,
+          undefined,
+          submission.clientMsgId,
+          submission.autoApproveRunShell,
+          true,
+          submission.deliveryMode,
+          authoritativeSessionId,
+        );
+      }
+    })();
+  }, []);
   const reconcileLastRunStateRef = useRef<(sessionId: string, lastRunState: LastRunState) => void>(() => {});
 
   /** Partial patch Map.get(sid)；若 sid === current,同步 ref（不动 setState 状态） */
@@ -1228,6 +1302,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const selectSessionWithUrl = useCallback((id: string) => {
     setTrashPreviewSessionId(null); // 选择正常会话时退出回收站预览
     clearPendingOrgAgent(); // 切换既有会话 = 放弃挂起的专职 Agent 新会话
+    failAllProvisionalBatches('已切换会话，请重新发送');
     pendingNewSessionClientMsgIdRef.current = null;
     markSessionRead(id);
     immediateSessionIdRef.current = id;
@@ -1236,17 +1311,18 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     wsLatestSessionIdRef.current = { value: id };
     session.selectSession(id);
     pushUrl('chat', id);
-  }, [clearPendingOrgAgent, markSessionRead, session.selectSession]);
+  }, [clearPendingOrgAgent, failAllProvisionalBatches, markSessionRead, session.selectSession]);
 
   const newSessionWithUrl = useCallback(() => {
     setTrashPreviewSessionId(null);
     clearPendingOrgAgent(); // 普通新会话 = 个人 Agent 路径
+    failAllProvisionalBatches('已新建会话，请重新发送');
     pendingNewSessionClientMsgIdRef.current = null;
     immediateSessionIdRef.current = null;
     wsLatestSessionIdRef.current = { value: null };
     session.newSession();
     pushUrl('chat', null);
-  }, [clearPendingOrgAgent, session.newSession]);
+  }, [clearPendingOrgAgent, failAllProvisionalBatches, session.newSession]);
 
   /**
    * 企业专家新草稿：只切换前端会话目标，不制造 meta-only 空会话。
@@ -1256,6 +1332,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     const normalizedAgentId = agentId.trim();
     if (!normalizedAgentId || !user || loadingRef.current) return;
     setTrashPreviewSessionId(null);
+    failAllProvisionalBatches('已新建专职 Agent 会话，请重新发送');
     immediateSessionIdRef.current = null;
     wsLatestSessionIdRef.current = { value: null };
     session.newSession();
@@ -1264,7 +1341,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setPendingOrgAgentId(normalizedAgentId);
     pushUrl('chat', null);
     if (activeTabRef.current !== 'chat') setActiveTab('chat');
-  }, [session.newSession, setActiveTab, user]);
+  }, [failAllProvisionalBatches, session.newSession, setActiveTab, user]);
 
   useEffect(() => {
     clearPendingOrgAgent();
@@ -2178,8 +2255,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           // 任一 durable ACK 都结束传输态；run 生命周期由队列/运行事件继续承载。
           const t = ackTimersRef.current.get(clientMsgId);
           if (t) { clearTimeout(t); ackTimersRef.current.delete(clientMsgId); }
+          const ackedOutboxEntry = outboxRef.current.find((entry) => entry.clientMsgId === clientMsgId);
           outboxRef.current = outboxRef.current.filter((entry) => entry.clientMsgId !== clientMsgId);
           if (ackEvent?.type === 'chat_ack') {
+            if (ackEvent.sessionId) confirmProvisionalSession(clientMsgId, ackEvent.sessionId);
             if (ackEvent.status === 'queued') {
               mutateQueuedInterjections((prev) => prev.map((entry) => entry.clientMsgId === clientMsgId ? {
                 ...entry,
@@ -2189,33 +2268,49 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                 ...(ackEvent.queuePosition ? { queuePosition: ackEvent.queuePosition } : {}),
                 reason: undefined,
               } : entry));
-            } else if (ackEvent.status && ['running', 'completed', 'failed', 'cancelled'].includes(ackEvent.status)) {
+            } else if (
+              ackEvent.status === 'running'
+              || ackEvent.status === 'completed'
+              || ackEvent.status === 'failed'
+              || ackEvent.status === 'cancelled'
+            ) {
+              const projection = projectAuthoritativeSubmissionStatus(ackEvent.status);
               consumedInterjectionsRef.current.mark({ clientMsgId, sourceRunId: ackEvent.runId });
               const queuedEntry = queuedInterjectionsRef.current.find((entry) => entry.clientMsgId === clientMsgId);
-              mutateQueuedInterjections((prev) => prev.filter((entry) => entry.clientMsgId !== clientMsgId));
               const index = msgRef.current.messagesRef.current.findIndex((message) => (
                 (message.type === 'user' || message.type === 'user-voice') && message.clientMsgId === clientMsgId
               ));
-              if (index >= 0) {
-                msgRef.current.updateMessageAt(index, (message) => (
-                  message.type === 'user' ? { ...message, status: 'sent' as const, failedReason: undefined } : message
-                ));
-              } else if (queuedEntry) {
-                msgRef.current.addMessage({
-                  type: 'user',
-                  content: queuedEntry.content,
-                  ...(queuedEntry.attachments ? { attachments: queuedEntry.attachments } : {}),
-                  status: 'sent',
-                  timestamp: queuedEntry.createdAt,
-                  clientMsgId,
-                });
+              if (projection === 'sent') {
+                mutateQueuedInterjections((prev) => prev.filter((entry) => entry.clientMsgId !== clientMsgId));
+                if (index >= 0) {
+                  msgRef.current.updateMessageAt(index, (message) => (
+                    message.type === 'user' ? { ...message, status: 'sent' as const, failedReason: undefined } : message
+                  ));
+                } else if (queuedEntry) {
+                  msgRef.current.addMessage({
+                    type: 'user',
+                    content: queuedEntry.content,
+                    ...(queuedEntry.attachments ? { attachments: queuedEntry.attachments } : {}),
+                    status: 'sent',
+                    timestamp: queuedEntry.createdAt,
+                    clientMsgId,
+                  });
+                }
+              } else {
+                const reason = projection === 'cancelled' ? '消息已取消，可重试' : '服务端执行失败，可重试';
+                mutateQueuedInterjections((prev) => prev.map((entry) => entry.clientMsgId === clientMsgId
+                  ? { ...entry, status: projection, reason }
+                  : entry));
+                if (index >= 0) markBubbleFailed(clientMsgId, index, reason);
               }
               const currentSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
               const belongsToCurrentSession = !ackEvent.sessionId
                 || !currentSessionId
                 || ackEvent.sessionId === currentSessionId;
               if (belongsToCurrentSession) {
-                setLoading(ackEvent.status === 'running');
+                if (!ackedOutboxEntry?.preserveActiveStream) {
+                  setLoading(projection === 'sent' && ackEvent.status === 'running');
+                }
                 sessionRef.current.refreshCurrentSession();
               }
             }
@@ -2373,7 +2468,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           const t = ackTimersRef.current.get(clientMsgId);
           if (t) { clearTimeout(t); ackTimersRef.current.delete(clientMsgId); }
           outboxRef.current = outboxRef.current.filter(e => e.clientMsgId !== clientMsgId);
-          if (pendingNewSessionClientMsgIdRef.current === clientMsgId) pendingNewSessionClientMsgIdRef.current = null;
+          if (pendingNewSessionClientMsgIdRef.current === clientMsgId) {
+            failProvisionalBatch(clientMsgId, '会话建立被拒绝，请重新发送');
+            pendingNewSessionClientMsgIdRef.current = null;
+          }
           newSessionClientMsgIdsRef.current.delete(clientMsgId);
           // 插话被拒：只更新队列区条目，绝不动 loading/attached——当前 run 还在跑
           const queuedEntry = queuedInterjectionsRef.current.find((entry) => entry.clientMsgId === clientMsgId);
@@ -2411,7 +2509,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           const t = ackTimersRef.current.get(clientMsgId);
           if (t) { clearTimeout(t); ackTimersRef.current.delete(clientMsgId); }
           outboxRef.current = outboxRef.current.filter(e => e.clientMsgId !== clientMsgId);
-          if (pendingNewSessionClientMsgIdRef.current === clientMsgId) pendingNewSessionClientMsgIdRef.current = null;
+          if (pendingNewSessionClientMsgIdRef.current === clientMsgId) {
+            failProvisionalBatch(clientMsgId, '会话未完成建立，请重新发送');
+            pendingNewSessionClientMsgIdRef.current = null;
+          }
           newSessionClientMsgIdsRef.current.delete(clientMsgId);
         },
       };
@@ -2425,8 +2526,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
       // 新建会话 → replaceState（不创建历史记录）
       if (data.type === 'session' && 'sessionId' in data) {
-        immediateSessionIdRef.current = (data as any).sessionId;
-        replaceUrl('chat', (data as any).sessionId);
+        const authoritativeSessionId = (data as any).sessionId as string;
+        if (data.client_msg_id) confirmProvisionalSession(data.client_msg_id, authoritativeSessionId);
         // 自己发起的新会话流：id 确定后纳入未读追踪，确保切走后流完成（idle）时能标记未读
         trackedAiReplyStreamsRef.current.add((data as any).sessionId);
         // 专职 Agent 挂起 ref 此时才清（2026-07 审查 F9）：会话真实建立、
@@ -2616,6 +2717,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               },
               clearPendingSession: () => {
                 if (pendingNewSessionClientMsgIdRef.current === clientMsgId) {
+                  failProvisionalBatch(clientMsgId, '服务端未建立会话，请重新发送');
                   pendingNewSessionClientMsgIdRef.current = null;
                 }
                 newSessionClientMsgIdsRef.current.delete(clientMsgId);
@@ -2628,6 +2730,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
             return;
           }
 
+          confirmProvisionalSession(clientMsgId, status.sessionId);
           outboxRef.current = outboxRef.current.filter((candidate) => candidate.clientMsgId !== clientMsgId);
           if (status.status === 'queued') {
             const hasQueueEntry = queuedInterjectionsRef.current.some((item) => item.clientMsgId === clientMsgId);
@@ -2652,6 +2755,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                     isImage: file.isImage,
                     relativePath: file.relativePath,
                   })),
+                  uploadedFiles: currentEntry.attachments,
                 } : {}),
                 status: 'queued' as const,
                 createdAt: currentEntry.createdAt,
@@ -2673,25 +2777,39 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               }
             }
           } else {
+            const projection = projectAuthoritativeSubmissionStatus(status.status);
             consumedInterjectionsRef.current.mark({ clientMsgId, sourceRunId: status.runId });
             const queuedEntry = queuedInterjectionsRef.current.find((item) => item.clientMsgId === clientMsgId);
-            mutateQueuedInterjections((prev) => prev.filter((item) => item.clientMsgId !== clientMsgId));
             const index = msgRef.current.messagesRef.current.findIndex((message) => (
               (message.type === 'user' || message.type === 'user-voice') && message.clientMsgId === clientMsgId
             ));
-            if (index >= 0) {
-              msgRef.current.updateMessageAt(index, (message) => (
-                message.type === 'user' ? { ...message, status: 'sent' as const, failedReason: undefined } : message
-              ));
-            } else if (queuedEntry) {
-              msgRef.current.addMessage({
-                type: 'user',
-                content: queuedEntry.content,
-                ...(queuedEntry.attachments ? { attachments: queuedEntry.attachments } : {}),
-                status: 'sent',
-                timestamp: queuedEntry.createdAt,
-                clientMsgId,
-              });
+            if (projection === 'sent') {
+              mutateQueuedInterjections((prev) => prev.filter((item) => item.clientMsgId !== clientMsgId));
+              if (index >= 0) {
+                msgRef.current.updateMessageAt(index, (message) => (
+                  message.type === 'user' ? { ...message, status: 'sent' as const, failedReason: undefined } : message
+                ));
+              } else if (queuedEntry) {
+                msgRef.current.addMessage({
+                  type: 'user',
+                  content: queuedEntry.content,
+                  ...(queuedEntry.attachments ? { attachments: queuedEntry.attachments } : {}),
+                  status: 'sent',
+                  timestamp: queuedEntry.createdAt,
+                  clientMsgId,
+                });
+              }
+            } else {
+              const reason = status.reason
+                || (projection === 'cancelled' ? '消息已取消，可重试' : '服务端执行失败，可重试');
+              mutateQueuedInterjections((prev) => prev.map((item) => item.clientMsgId === clientMsgId
+                ? { ...item, status: projection, reason }
+                : item));
+              if (index >= 0) markBubbleFailed(clientMsgId, index, reason);
+              if (!currentEntry.preserveActiveStream) {
+                wsAttachedRef.current = false;
+                setLoading(false);
+              }
             }
             sessionRef.current.refreshCurrentSession();
           }
@@ -2702,7 +2820,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         });
     }, ACK_TIMEOUT_MS);
     ackTimersRef.current.set(clientMsgId, timer);
-  }, [markBubbleFailed, mutateQueuedInterjections]);
+  }, [failProvisionalBatch, markBubbleFailed, mutateQueuedInterjections]);
 
   // ---- 通过 WS 发送聊天消息 ----
   const sendChatViaWs = useCallback(async (
@@ -2715,8 +2833,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     preserveActiveStream = false,
     /** 普通 queue 默认；只有用户显式选择“立即插话”时传 steer。 */
     deliveryMode: 'queue' | 'steer' = 'queue',
+    /** provisional 队列只接受 session 事件给出的权威 id，避免等待 React ref 同步时再次建会话。 */
+    authoritativeSessionId?: string,
   ) => {
-    const activeSessionId = sessionIdRef.current;
+    const activeSessionId = authoritativeSessionId
+      ?? immediateSessionIdRef.current
+      ?? sessionIdRef.current;
     // 自己发起的续聊流：纳入未读追踪，确保切走后流完成（idle）时能标记未读
     //（不依赖后端 busy 广播是否到达；新会话的 id 在 'session' 事件确定后再 add）
     if (activeSessionId) trackedAiReplyStreamsRef.current.add(activeSessionId);
@@ -2845,13 +2967,16 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         wsAttachedRef.current = false;
         setLoading(false);
       }
-      if (pendingNewSessionClientMsgIdRef.current === clientMsgId) pendingNewSessionClientMsgIdRef.current = null;
+      if (pendingNewSessionClientMsgIdRef.current === clientMsgId) {
+        failProvisionalBatch(clientMsgId, '会话建立失败，请重试');
+        pendingNewSessionClientMsgIdRef.current = null;
+      }
       newSessionClientMsgIdsRef.current.delete(clientMsgId);
     } else {
       // 启动 ACK 超时定时器
       armAckTimeout(clientMsgId);
     }
-  }, [dispatchConnection, armAckTimeout, markBubbleFailed, mutateQueuedInterjections]);
+  }, [dispatchConnection, armAckTimeout, failProvisionalBatch, markBubbleFailed, mutateQueuedInterjections]);
 
   // 同步 sendChatViaWs 到 ref，让 flushQueuedHead / armAckTimeout 等前置 callback 可调用
   useEffect(() => { sendChatViaWsRef.current = sendChatViaWs; }, [sendChatViaWs]);
@@ -2911,10 +3036,26 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           content: capturedInput,
           ...(capturedAttachments.length > 0 ? {
             attachments: capturedAttachments.map((f) => ({ name: f.originalName, isImage: f.isImage, relativePath: f.relativePath })),
+            uploadedFiles: capturedAttachments,
           } : {}),
           status: 'sending' as const,
           createdAt: Date.now(),
         }]);
+        if (
+          !immediateSessionIdRef.current
+          && !sessionIdRef.current
+          && pendingNewSessionClientMsgIdRef.current
+        ) {
+          provisionalSubmissionsRef.current.push({
+            rootClientMsgId: pendingNewSessionClientMsgIdRef.current,
+            clientMsgId,
+            deliveryMode,
+            input: capturedInput,
+            attachments: capturedAttachments,
+            autoApproveRunShell: autoApproveRunShellRef.current,
+          });
+          return;
+        }
         await sendChatViaWs(
           capturedInput,
           capturedAttachments,
@@ -3183,25 +3324,31 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (!ok) return;
     mutateQueuedInterjections((prev) => prev.filter((item) => item.clientMsgId !== clientMsgId));
     setInput(entry.content);
-  }, [cancelQueuedInterjection, mutateQueuedInterjections, setInput]);
+    const editableAttachments = entry.uploadedFiles ?? [];
+    uploadedFilesRef.current = editableAttachments;
+    fileUpload.replaceFiles(editableAttachments);
+  }, [cancelQueuedInterjection, mutateQueuedInterjections, setInput, fileUpload.replaceFiles]);
 
-  /** 重发一条已取消/失败的插话（附件仅保留元数据，与失败重试一致只重发文本）。 */
+  /** 重发一条已取消/失败的插话；本机仍可用的完整上传结果必须随消息重发。 */
   const resendQueuedInterjection = useCallback((clientMsgId: string) => {
     const entry = queuedInterjectionsRef.current.find((item) => item.clientMsgId === clientMsgId);
     if (!entry || (entry.status !== 'cancelled' && entry.status !== 'failed')) return;
     mutateQueuedInterjections((prev) => prev.filter((item) => item.clientMsgId !== clientMsgId));
+    const resendAttachments = entry.uploadedFiles ?? [];
     if (loadingRef.current) {
       const newClientMsgId = crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       mutateQueuedInterjections((prev) => [...prev, {
         clientMsgId: newClientMsgId,
         deliveryMode: entry.deliveryMode,
         content: entry.content,
+        ...(entry.attachments?.length ? { attachments: entry.attachments } : {}),
+        ...(resendAttachments.length ? { uploadedFiles: resendAttachments } : {}),
         status: 'sending' as const,
         createdAt: Date.now(),
       }]);
-      void sendChatViaWs(entry.content, [], false, undefined, newClientMsgId, autoApproveRunShellRef.current, true, entry.deliveryMode);
+      void sendChatViaWs(entry.content, resendAttachments, false, undefined, newClientMsgId, autoApproveRunShellRef.current, true, entry.deliveryMode);
     } else {
-      void sendChatViaWs(entry.content, [], true);
+      void sendChatViaWs(entry.content, resendAttachments, true);
     }
   }, [mutateQueuedInterjections, sendChatViaWs]);
 

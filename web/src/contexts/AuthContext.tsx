@@ -9,7 +9,6 @@ import { TOKEN_KEY, SESSION_STORAGE_KEY } from "@/lib/constants";
 import { authPreload } from "@/lib/preload";
 import { clearSessionListCache } from "@/lib/sessionListCache";
 import { clearAllMessageCache } from "@/lib/messageCache";
-import { unsubscribeCurrentBrowserPush } from "@/lib/webPush";
 import {
   loginWithPassword,
   loginWithSmsCode,
@@ -67,6 +66,12 @@ function clearAccountScopedState(): void {
   clearSessionListCache();
   void clearAllMessageCache();
   void clearGroupsCache();
+}
+
+function unsubscribeCurrentBrowserPush(): Promise<void> {
+  return import("@/lib/webPush")
+    .then((webPush) => webPush.unsubscribeCurrentBrowserPush())
+    .catch(() => undefined);
 }
 
 function normalizeAuthUser(user: AuthUser): AuthUser {

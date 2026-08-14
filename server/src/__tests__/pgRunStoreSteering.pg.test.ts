@@ -81,4 +81,54 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       metadata: { steeringState: 'applied', steeringAppliedToRunId: 'target-run' },
     });
   });
+
+  it('停止目标时仅释放 pending Taskboard source，reserved source 不回退为独立 run', async () => {
+    await store.upsertPending({
+      runId: 'target-stop-run',
+      sessionId: 'session-stop',
+      userId: 'user-1',
+      model: 'gpt-5.5',
+      channel: 'web',
+    });
+    await store.markStatus('target-stop-run', 'running');
+
+    for (const sourceRunId of ['source-pending', 'source-reserved']) {
+      await store.enqueueSteeringAware({
+        runId: sourceRunId,
+        sessionId: 'session-stop',
+        userId: 'user-1',
+        model: 'gpt-5.5',
+        channel: 'web',
+        metadata: {
+          taskboardContinuation: true,
+          wakeMessage: { channel: 'web', chatId: 'session-stop', content: sourceRunId },
+        },
+      });
+    }
+    await expect(store.reserveSteeringInputs('target-stop-run', ['source-reserved']))
+      .resolves.toEqual(['source-reserved']);
+
+    await expect(store.cancelSteeringBeforeDispatchBySession(
+      'session-stop',
+      'target cancelled',
+      'target-stop-run',
+    )).resolves.toEqual([]);
+
+    const inputs = await pool.query<{ source_run_id: string; state: string }>(
+      `SELECT source_run_id, state FROM ${prefix}_steering_inputs
+        WHERE source_run_id IN ('source-pending', 'source-reserved') ORDER BY source_run_id`,
+    );
+    expect(inputs.rows).toEqual([
+      { source_run_id: 'source-pending', state: 'released' },
+      { source_run_id: 'source-reserved', state: 'cancelled' },
+    ]);
+    await expect(store.get('source-pending')).resolves.toMatchObject({
+      status: 'pending',
+      metadata: { steeringState: 'released' },
+    });
+    await expect(store.get('source-reserved')).resolves.toMatchObject({
+      status: 'cancelled',
+      metadata: { steeringState: 'cancelled' },
+    });
+  });
 });

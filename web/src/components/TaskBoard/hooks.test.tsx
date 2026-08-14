@@ -1,8 +1,8 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { TaskBoard, TaskBoardComment, TaskBoardTask } from "@agent/shared";
+import type { TaskBoard, TaskBoardComment, TaskBoardExecution, TaskBoardTask } from "@agent/shared";
 import { TaskBoardConflictError } from "./api";
-import { useBoardTasks, useTaskBoards, useTaskComments } from "./hooks";
+import { useBoardTasks, useTaskBoards, useTaskComments, useTaskExecutions } from "./hooks";
 
 const mocks = vi.hoisted(() => ({
   fetchBoards: vi.fn(),
@@ -84,6 +84,42 @@ describe("任务看板 hooks 并发一致性", () => {
     mocks.fetchTasks.mockResolvedValue([originalTask]);
     mocks.fetchExecutions.mockResolvedValue([]);
     mocks.fetchComments.mockResolvedValue([]);
+  });
+
+  it("正式 Execution 终态但 continuation 活跃时继续轮询", async () => {
+    const activeContinuation: TaskBoardExecution = {
+      id: "execution-terminal",
+      taskId: originalTask.id,
+      runId: "run-terminal",
+      sessionId: "session-terminal",
+      status: "succeeded",
+      purpose: "work",
+      requestedBy: "user-1",
+      continuationActive: true,
+      createdAt: originalTask.createdAt,
+      updatedAt: originalTask.updatedAt,
+    };
+    mocks.fetchExecutions
+      .mockResolvedValueOnce([activeContinuation])
+      .mockResolvedValueOnce([{ ...activeContinuation, continuationActive: false }]);
+    vi.useFakeTimers();
+    try {
+      const { result, unmount } = renderHook(() => useTaskExecutions(originalTask.id));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(result.current.executions[0]?.continuationActive).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(result.current.executions[0]?.continuationActive).toBeFalsy();
+      expect(mocks.fetchExecutions).toHaveBeenCalledTimes(2);
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("乐观移动立即生效，失败后回滚并刷新，同时提交 expectedVersion", async () => {

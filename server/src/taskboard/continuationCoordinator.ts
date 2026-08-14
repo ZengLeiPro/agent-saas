@@ -112,6 +112,7 @@ export async function reconcileTaskboardContinuation(
       eventStore: options.eventStore,
       taskId: candidate.taskId,
       run,
+      agentCwd: options.agentCwd,
     });
     return;
   }

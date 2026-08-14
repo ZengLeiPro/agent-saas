@@ -1,10 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { realpath, stat } from 'node:fs/promises';
-import { extname } from 'node:path';
 
-import { splitByMessageMarkers } from '../../../shared/src/lib/markers.js';
 import type {
-  TaskBoardAttachment,
   TaskBoardExecution,
   TaskBoardExecutionStartInput,
   TaskBoardExecutionStartResult,
@@ -20,8 +16,12 @@ import {
 import type { EventStore, PlatformEvent } from '../runtime/types.js';
 import { deriveStableWorkspaceId } from '../runtime/workspaceIdentity.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
-import { isInside, resolveWorkspacePath, relativeWorkspacePath } from '../agent/toolRuntimePaths.js';
-import { reconcileTerminalContinuation } from './continuationCompletion.js';
+import {
+  extractAgentAttachments,
+  extractContinuationAttachments,
+  reconcileTerminalContinuation,
+  stripFileMarkers,
+} from './continuationCompletion.js';
 import {
   dispatchTaskboardContinuation,
   reconcileTaskboardContinuation,
@@ -161,6 +161,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         eventStore: this.options.eventStore,
         taskId,
         run: existingContinuation,
+        agentCwd: this.options.agentCwd,
       });
       return { task: reconciledTask ?? context.task, execution: context.latestExecution };
     }
@@ -603,9 +604,11 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       : await this.options.eventStore.list(run.sessionId);
     const output = finalAssistantText(events, run.runId, run.sessionId)
       || 'Agent 继续执行完成，但没有返回文本交付。';
+    const attachments = await extractContinuationAttachments(output, run, this.options.agentCwd);
     await this.options.store.completeContinuation(taskId, run.runId, {
       status: 'succeeded',
       commentBody: limitComment(`Agent 交付\n\n${stripFileMarkers(output)}`),
+      ...(attachments.length ? { attachments } : {}),
     });
   }
 
@@ -848,68 +851,6 @@ function assertExecutionSession(execution: TaskBoardExecution, sessionId: string
   if (execution.sessionId !== sessionId) {
     throw new Error(`Runtime session 与任务看板 Execution 不匹配：run=${execution.runId}`);
   }
-}
-
-async function extractAgentAttachments(output: string, userCwd: string): Promise<TaskBoardAttachment[]> {
-  let realUserCwd: string;
-  try {
-    realUserCwd = await realpath(userCwd);
-  } catch {
-    return [];
-  }
-  const paths = [...new Set(splitByMessageMarkers(output)
-    .filter((segment): segment is Extract<ReturnType<typeof splitByMessageMarkers>[number], { type: 'file' }> => (
-      segment.type === 'file' && Boolean(segment.filePath)
-    ))
-    .map((segment) => segment.filePath))]
-    .slice(0, 50);
-  const attachments = await Promise.all(paths.map(async (filePath): Promise<TaskBoardAttachment | null> => {
-    try {
-      const absolutePath = resolveWorkspacePath(userCwd, filePath);
-      const realFilePath = await realpath(absolutePath);
-      if (!isInside(realUserCwd, realFilePath)) return null;
-      const fileStat = await stat(realFilePath);
-      if (!fileStat.isFile()) return null;
-      const relativePath = relativeWorkspacePath(userCwd, absolutePath);
-      const originalName = relativePath.split('/').pop() || relativePath;
-      const mimeType = mimeTypeFromName(originalName);
-      return {
-        originalName,
-        relativePath,
-        size: fileStat.size,
-        mimeType,
-        isImage: mimeType.startsWith('image/'),
-      };
-    } catch {
-      return null;
-    }
-  }));
-  return attachments.filter((attachment): attachment is TaskBoardAttachment => attachment !== null);
-}
-
-function stripFileMarkers(output: string): string {
-  return output.replace(/\[FILE\]\{.*?\}\[\/FILE\]/g, '').trim();
-}
-
-function mimeTypeFromName(fileName: string): string {
-  const extension = extname(fileName).toLowerCase();
-  const types: Record<string, string> = {
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.mp4': 'video/mp4',
-    '.webm': 'video/webm',
-    '.mov': 'video/quicktime',
-    '.pdf': 'application/pdf',
-    '.txt': 'text/plain',
-    '.md': 'text/markdown',
-    '.csv': 'text/csv',
-    '.json': 'application/json',
-    '.zip': 'application/zip',
-  };
-  return types[extension] ?? 'application/octet-stream';
 }
 
 function finalAssistantText(events: PlatformEvent[], runId: string, sessionId: string): string {

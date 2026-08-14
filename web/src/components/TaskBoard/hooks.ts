@@ -405,14 +405,17 @@ export function useTaskExecutions(taskId: string | null, active = true) {
     };
   }, [refresh]);
 
-  const latestStatus = executions[0]?.status;
+  const latestExecution = executions[0];
+  const shouldPoll = Boolean(latestExecution && (
+    ACTIVE_EXECUTION_STATUSES.has(latestExecution.status) || latestExecution.continuationActive
+  ));
   useEffect(() => {
-    if (!active || !taskId || !latestStatus || !ACTIVE_EXECUTION_STATUSES.has(latestStatus)) return;
+    if (!active || !taskId || !shouldPoll) return;
     const timer = window.setInterval(() => {
       void refresh();
     }, 3_000);
     return () => window.clearInterval(timer);
-  }, [active, latestStatus, refresh, taskId]);
+  }, [active, refresh, shouldPoll, taskId]);
 
   return { executions, loading, error, refresh };
 }

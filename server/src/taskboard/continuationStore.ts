@@ -246,7 +246,9 @@ export function completeContinuation(
     );
 
     const targetStatus = input.status === 'succeeded' ? 'in_review' : 'blocked';
-    if (loaded.task.status === 'in_progress' && !activeExecution.rows[0]) {
+    const shouldMoveTask = loaded.task.status === 'in_progress'
+      || (input.status === 'succeeded' && loaded.task.status === 'blocked');
+    if (shouldMoveTask && !activeExecution.rows[0]) {
       const sortOrder = await nextTaskColumnSortOrder(
         host,
         client,
@@ -318,7 +320,11 @@ export async function listTaskExecutions(
   taskId: string,
 ): Promise<TaskBoardExecution[]> {
   const result = await host.pool.query(
-    `SELECT e.*
+    `SELECT e.*,
+            EXISTS (
+              SELECT 1 FROM ${host.continuationOutboxTable} continuation
+               WHERE continuation.task_id=e.task_id AND continuation.status<>'completed'
+            ) AS continuation_active
        FROM ${host.executionsTable} e
        JOIN ${host.tasksTable} t ON t.id=e.task_id
        JOIN ${host.boardsTable} b ON b.id=t.board_id
@@ -327,7 +333,10 @@ export async function listTaskExecutions(
       LIMIT 50`,
     [taskId, identity.tenantId, identity.ownerUserId],
   );
-  return result.rows.map(rowToExecution);
+  return result.rows.map((row, index) => ({
+    ...rowToExecution(row),
+    ...(index === 0 && row.continuation_active === true ? { continuationActive: true } : {}),
+  }));
 }
 
 async function loadAccessibleTask(

@@ -479,6 +479,46 @@ describe('PgRunStore steering inbox', () => {
     expect(queries.filter((sql) => sql.includes("status = 'cancelled'"))).toHaveLength(1);
   });
 
+  it('cancels reserved taskboard steering sources instead of releasing them as standalone runs', async () => {
+    const now = new Date().toISOString();
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    const client = {
+      query: async (sql: string, params: unknown[] = []) => {
+        queries.push({ sql: sql.trim(), params });
+        if (sql.includes('FOR UPDATE OF input, source')) {
+          return { rows: [{
+            input_id: 'input-taskboard-reserved',
+            source_run_id: 'source-taskboard-reserved',
+            target_run_id: 'target-run',
+            session_id: 'session-1',
+            state: 'reserved',
+            accepted_at: now,
+            reserved_at: now,
+            applied_at: null,
+            row_json: {
+              run_id: 'source-taskboard-reserved', session_id: 'session-1', status: 'pending',
+              requested_at: now, updated_at: now,
+              metadata: { taskboardContinuation: true, steeringState: 'pending' },
+            },
+          }] };
+        }
+        return { rows: [], rowCount: 1 };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    await expect(store.cancelSteeringBeforeDispatchBySession('session-1', 'aborted', 'target-run'))
+      .resolves.toEqual([]);
+
+    const inputUpdate = queries.find(({ sql }) => sql.includes('UPDATE runtime_steering_inputs'));
+    const sourceUpdate = queries.find(({ sql }) => sql.includes('UPDATE runtime_runs') && sql.includes("'steeringState', 'released'"));
+    expect(inputUpdate?.params[1]).toEqual([]);
+    expect(sourceUpdate?.params[1]).toEqual([]);
+    expect(sourceUpdate?.sql).toContain("ELSE 'cancelled'");
+    expect(sourceUpdate?.sql).toContain("'steeringState', 'cancelled'");
+  });
+
   it('releases pending steering rows when the source run falls back to standalone execution (2026-08-04 BUG-5)', async () => {
     const queries: string[] = [];
     const pool = {

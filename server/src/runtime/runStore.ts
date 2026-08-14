@@ -891,22 +891,22 @@ export class PgRunStore implements RunStore {
         FOR UPDATE OF input, source
       `, [sessionId]);
       const sourceRunIds = selected.rows.map((row) => row.source_run_id);
+      const releasableTaskboardSourceRunIds = selected.rows.filter((row) => row.state === 'pending' && row.row_json.metadata?.taskboardContinuation === true).map((row) => row.source_run_id);
       if (sourceRunIds.length > 0) {
         await client.query(`
-          UPDATE ${this.steeringInputsTable} input
-          SET state = CASE WHEN source.metadata @> '{"taskboardContinuation":true}'::jsonb THEN 'released' ELSE 'cancelled' END
-          FROM ${this.runsTable} source WHERE input.session_id = $1 AND input.source_run_id = ANY($2::text[])
-            AND input.state IN ('pending', 'reserved') AND source.run_id=input.source_run_id
-        `, [sessionId, sourceRunIds]);
+          UPDATE ${this.steeringInputsTable}
+          SET state = CASE WHEN source_run_id = ANY($2::text[]) THEN 'released' ELSE 'cancelled' END
+          WHERE session_id = $1 AND source_run_id = ANY($3::text[]) AND state IN ('pending', 'reserved')
+        `, [sessionId, releasableTaskboardSourceRunIds, sourceRunIds]);
         await client.query(`
           UPDATE ${this.runsTable}
-          SET status = CASE WHEN metadata @> '{"taskboardContinuation":true}'::jsonb THEN status ELSE 'cancelled' END,
-              status_reason = CASE WHEN metadata @> '{"taskboardContinuation":true}'::jsonb THEN status_reason ELSE $2 END, updated_at = $3::timestamptz,
-              cancelled_at = CASE WHEN metadata @> '{"taskboardContinuation":true}'::jsonb THEN cancelled_at ELSE $3::timestamptz END,
-              metadata = CASE WHEN metadata @> '{"taskboardContinuation":true}'::jsonb THEN (metadata - 'steeringTargetRunId')
-                || jsonb_build_object('steeringState', 'released') ELSE (metadata || jsonb_build_object('steeringState', 'cancelled')) - 'wakeMessage' END
+          SET status = CASE WHEN run_id = ANY($2::text[]) THEN status ELSE 'cancelled' END,
+              status_reason = CASE WHEN run_id = ANY($2::text[]) THEN status_reason ELSE $3 END, updated_at = $4::timestamptz,
+              cancelled_at = CASE WHEN run_id = ANY($2::text[]) THEN cancelled_at ELSE $4::timestamptz END,
+              metadata = CASE WHEN run_id = ANY($2::text[]) THEN (metadata - 'steeringTargetRunId') || jsonb_build_object('steeringState', 'released')
+                ELSE (metadata || jsonb_build_object('steeringState', 'cancelled')) - 'wakeMessage' END
           WHERE run_id = ANY($1::text[]) AND status = 'pending'
-        `, [sourceRunIds, reason, now]);
+        `, [sourceRunIds, releasableTaskboardSourceRunIds, reason, now]);
       }
       if (targetRunId) {
         await client.query(`

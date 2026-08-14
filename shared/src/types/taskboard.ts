@@ -122,6 +122,8 @@ export interface TaskBoardExecution {
   purpose: TaskBoardExecutionPurpose;
   requestedBy: string;
   error?: string;
+  /** 独立评论续跑仍在处理；用于正式 Execution 已终态时继续轮询最终交付。 */
+  continuationActive?: boolean;
   startedAt?: string;
   finishedAt?: string;
   createdAt: string;

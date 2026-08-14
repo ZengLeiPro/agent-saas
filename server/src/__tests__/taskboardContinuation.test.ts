@@ -1,3 +1,7 @@
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -420,6 +424,44 @@ describe('任务看板评论续跑', () => {
     expect(sql.some((statement) => statement.includes('UPDATE tasks') && statement.includes('status=$2'))).toBe(false);
   });
 
+  it('成功续跑可把原 Execution 先取消造成的 blocked 收敛到 in_review', async () => {
+    const queries: Array<{ statement: string; params: unknown[] }> = [];
+    const taskRow = {
+      id: task.id, board_id: task.boardId, identifier: task.identifier, title: task.title,
+      description: task.description, status: 'blocked', priority: task.priority, labels: [],
+      sort_order: task.sortOrder, comment_count: task.commentCount, version: task.version,
+      created_at: task.createdAt, updated_at: task.updatedAt, board_archived_at: null,
+    };
+    const client = {
+      query: vi.fn(async (statement: string, params: unknown[] = []) => {
+        queries.push({ statement, params });
+        if (statement.includes('SELECT t.board_id, b.tenant_id')) {
+          return { rows: [{ board_id: task.boardId, tenant_id: identity.tenantId, owner_user_id: identity.ownerUserId }] };
+        }
+        if (statement.includes('SELECT t.*, b.archived_at')) return { rows: [taskRow] };
+        if (statement.includes("author_type IN ('agent', 'system')")) return { rows: [] };
+        if (statement.includes('continuation_run_id=$2')) return { rows: [{ id: comments[1]!.id }] };
+        if (statement.includes("status IN ('queued', 'running', 'waiting_user', 'waiting_approval')")) return { rows: [] };
+        if (statement.includes('SELECT t.*')) return { rows: [taskRow] };
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+
+    await completeContinuation({
+      pool: { connect: vi.fn(async () => client) }, boardsTable: 'boards', tasksTable: 'tasks',
+      commentsTable: 'comments', executionsTable: 'executions', continuationOutboxTable: 'continuation_outbox',
+    } as never, task.id, 'continuation-after-cancel', {
+      status: 'succeeded',
+      commentBody: 'Agent 交付\n\n续跑成功',
+    });
+
+    const taskUpdate = queries.find(({ statement }) => (
+      statement.includes('UPDATE tasks') && statement.includes('status=$2')
+    ));
+    expect(taskUpdate?.params[1]).toBe('in_review');
+  });
+
   it('completeContinuation 遇到正式 Execution run 时只结清 outbox，不重复补写历史回执', async () => {
     const sql: string[] = [];
     const taskRow = {
@@ -515,41 +557,113 @@ describe('任务看板评论续跑', () => {
     expect(sql.some((statement) => statement.includes('UPDATE tasks'))).toBe(false);
   });
 
-  it('自动对账补写遗漏的评论续跑终态回执', async () => {
-    const runId = `taskboard-comment-${comments[1]!.id}`;
-    const rig = makeRig({
-      claimContinuationReconcileCandidates: vi.fn(async () => [{
+  it('实时续跑完成会提取文件卡并保存为评论附件', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'taskboard-continuation-live-'));
+    const userCwd = join(root, identity.tenantId, identity.ownerUserId);
+    await mkdir(join(userCwd, 'assets'), { recursive: true });
+    await writeFile(join(userCwd, 'assets', '实时交付.pdf'), 'live');
+    try {
+      const completeContinuation = vi.fn(async () => ({ ...task, status: 'in_review' as const }));
+      const rig = makeRig({ completeContinuation }, { agentCwd: root });
+      const runId = 'continuation-live-attachment';
+      rig.runStore.get.mockResolvedValue({
         runId,
-        taskId: task.id,
         sessionId: activeExecution.sessionId,
-        leaseId: 'continuation-reconcile-lease',
-      }]),
-      completeContinuation: vi.fn(async () => ({ ...task, status: 'in_review' as const })),
-    });
-    rig.runStore.get.mockResolvedValue({
-      runId,
-      sessionId: activeExecution.sessionId,
-      status: 'completed',
-      requestedAt: '2026-08-01T01:02:00.000Z',
-      updatedAt: '2026-08-01T01:03:00.000Z',
-      completedAt: '2026-08-01T01:03:00.000Z',
-      metadata: { taskboardContinuation: true, taskboardTaskId: task.id },
-    });
-    vi.mocked(rig.eventStore.listByRun!).mockResolvedValue([{
-      id: 'event-continuation-result',
-      timestamp: '2026-08-01T01:03:00.000Z',
-      type: 'assistant_message',
-      runId,
-      sessionId: activeExecution.sessionId,
-      content: '等待态后的续跑交付',
-    } as never]);
+        userId: identity.ownerUserId,
+        tenantId: identity.tenantId,
+        status: 'completed',
+        requestedAt: '2026-08-01T01:02:00.000Z',
+        updatedAt: '2026-08-01T01:03:00.000Z',
+        completedAt: '2026-08-01T01:03:00.000Z',
+        metadata: { taskboardContinuation: true, taskboardTaskId: task.id },
+      });
+      vi.mocked(rig.eventStore.listByRun!).mockResolvedValue([{
+        id: 'event-live-attachment',
+        timestamp: '2026-08-01T01:03:00.000Z',
+        type: 'assistant_message',
+        runId,
+        sessionId: activeExecution.sessionId,
+        content: '实时交付\n[FILE]{"filePath":"assets/实时交付.pdf"}[/FILE]',
+      } as never]);
 
-    await rig.coordinator.reconcile();
+      await rig.coordinator.handleRuntimeEvent({
+        id: 'event-live-finished',
+        timestamp: '2026-08-01T01:03:00.000Z',
+        type: 'run_finished',
+        runId,
+        sessionId: activeExecution.sessionId,
+        subtype: 'success',
+        numTurns: 1,
+      } as never);
 
-    expect(rig.store.completeContinuation).toHaveBeenCalledWith(task.id, runId, {
-      status: 'succeeded',
-      commentBody: 'Agent 交付\n\n等待态后的续跑交付',
-    });
+      expect(completeContinuation).toHaveBeenCalledWith(task.id, runId, {
+        status: 'succeeded',
+        commentBody: 'Agent 交付\n\n实时交付',
+        attachments: [{
+          originalName: '实时交付.pdf',
+          relativePath: 'assets/实时交付.pdf',
+          size: 4,
+          mimeType: 'application/pdf',
+          isImage: false,
+        }],
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('自动对账补写遗漏的评论续跑终态回执与附件', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'taskboard-continuation-reconcile-'));
+    const userCwd = join(root, identity.tenantId, identity.ownerUserId);
+    await mkdir(join(userCwd, 'assets'), { recursive: true });
+    await writeFile(join(userCwd, 'assets', '重启交付.pdf'), 'reconcile');
+    try {
+      const runId = `taskboard-comment-${comments[1]!.id}`;
+      const rig = makeRig({
+        claimContinuationReconcileCandidates: vi.fn(async () => [{
+          runId,
+          taskId: task.id,
+          sessionId: activeExecution.sessionId,
+          leaseId: 'continuation-reconcile-lease',
+        }]),
+        completeContinuation: vi.fn(async () => ({ ...task, status: 'in_review' as const })),
+      }, { agentCwd: root });
+      rig.runStore.get.mockResolvedValue({
+        runId,
+        sessionId: activeExecution.sessionId,
+        userId: identity.ownerUserId,
+        tenantId: identity.tenantId,
+        status: 'completed',
+        requestedAt: '2026-08-01T01:02:00.000Z',
+        updatedAt: '2026-08-01T01:03:00.000Z',
+        completedAt: '2026-08-01T01:03:00.000Z',
+        metadata: { taskboardContinuation: true, taskboardTaskId: task.id },
+      });
+      vi.mocked(rig.eventStore.listByRun!).mockResolvedValue([{
+        id: 'event-continuation-result',
+        timestamp: '2026-08-01T01:03:00.000Z',
+        type: 'assistant_message',
+        runId,
+        sessionId: activeExecution.sessionId,
+        content: '等待态后的续跑交付\n[FILE]{"filePath":"assets/重启交付.pdf"}[/FILE]',
+      } as never]);
+
+      await rig.coordinator.reconcile();
+
+      expect(rig.store.completeContinuation).toHaveBeenCalledWith(task.id, runId, {
+        status: 'succeeded',
+        commentBody: 'Agent 交付\n\n等待态后的续跑交付',
+        attachments: [{
+          originalName: '重启交付.pdf',
+          relativePath: 'assets/重启交付.pdf',
+          size: 9,
+          mimeType: 'application/pdf',
+          isImage: false,
+        }],
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('后续正式执行复用任务上一条 session，但生成新的 execution run', async () => {
@@ -578,7 +692,10 @@ describe('任务看板评论续跑', () => {
   });
 });
 
-function makeRig(overrides: Partial<TaskboardExecutionStore> = {}) {
+function makeRig(
+  overrides: Partial<TaskboardExecutionStore> = {},
+  options: { agentCwd?: string } = {},
+) {
   const store = {
     listExecutions: vi.fn(async () => [activeExecution]),
     getExecutionModelContext: vi.fn(async () => ({ boardOwnerUserId: identity.ownerUserId })),
@@ -644,7 +761,7 @@ function makeRig(overrides: Partial<TaskboardExecutionStore> = {}) {
     runStore,
     sessionCatalog,
     eventStore,
-    agentCwd: '/agent',
+    agentCwd: options.agentCwd ?? '/agent',
     executionConfig: createExecutionConfig({ tenantDefaultTarget: 'server-remote' }),
     resolveDefaultModel: () => ({ ref: 'model-default' }),
   });

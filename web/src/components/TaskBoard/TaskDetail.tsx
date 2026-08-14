@@ -193,9 +193,13 @@ export function TaskDetail({
 
   const latestExecution = executions[0];
   const executionActive = latestExecution
-    ? ACTIVE_EXECUTION_STATUSES.has(latestExecution.status)
+    ? ACTIVE_EXECUTION_STATUSES.has(latestExecution.status) || latestExecution.continuationActive === true
     : false;
   useEffect(() => {
+    if (latestExecution?.continuationActive) {
+      refreshedExecutionRef.current = null;
+      return;
+    }
     if (
       !open
       || !taskId

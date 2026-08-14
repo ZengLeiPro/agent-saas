@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   fetchTask: vi.fn(),
   continueTaskExecution: vi.fn(),
   addComment: vi.fn(),
+  refreshComments: vi.fn(async () => undefined),
   executions: [] as TaskBoardExecution[],
   refreshExecutions: vi.fn(async () => undefined),
   authFetch: vi.fn(),
@@ -31,7 +32,7 @@ vi.mock("./hooks", () => ({
     comments: [],
     loading: false,
     error: null,
-    refresh: vi.fn(),
+    refresh: mocks.refreshComments,
     addComment: mocks.addComment,
   }),
   useTaskExecutions: () => ({
@@ -337,6 +338,40 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(mocks.continueTaskExecution).toHaveBeenCalledTimes(2));
     expect(mocks.continueTaskExecution).toHaveBeenNthCalledWith(2, taskOne.id, published.id);
     expect(mocks.addComment).toHaveBeenCalledTimes(1);
+  });
+
+  it("正式 Execution 已终态时持续等待独立续跑，并在完成后刷新任务与评论", async () => {
+    const runningTask = { ...taskOne, status: "in_progress" as const, version: 4 };
+    const finalTask = { ...runningTask, status: "in_review" as const, version: 5 };
+    const terminalExecution: TaskBoardExecution = {
+      id: "execution-terminal",
+      taskId: taskOne.id,
+      runId: "run-terminal",
+      sessionId: "session-terminal",
+      status: "succeeded",
+      purpose: "work",
+      requestedBy: "user-1",
+      continuationActive: true,
+      createdAt: taskOne.createdAt,
+      updatedAt: taskOne.updatedAt,
+    };
+    mocks.executions = [terminalExecution];
+    mocks.fetchTask.mockResolvedValue(runningTask);
+    const onTaskLoaded = vi.fn();
+    const detailProps = props({ task: runningTask, onTaskLoaded });
+    const { rerender } = render(<TaskDetail {...detailProps} />);
+    await waitFor(() => expect(onTaskLoaded).toHaveBeenCalledWith(runningTask));
+
+    mocks.fetchTask.mockClear();
+    mocks.refreshComments.mockClear();
+    onTaskLoaded.mockClear();
+    mocks.fetchTask.mockResolvedValue(finalTask);
+    mocks.executions = [{ ...terminalExecution, continuationActive: false }];
+    rerender(<TaskDetail {...detailProps} />);
+
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+    expect(mocks.refreshComments).toHaveBeenCalled();
+    expect(onTaskLoaded).toHaveBeenCalledWith(finalTask);
   });
 
   it("待处理任务可以显式交给 Agent，并展示执行会话入口", async () => {

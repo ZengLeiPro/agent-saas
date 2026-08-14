@@ -287,6 +287,60 @@ describe('runtime stage 2 primitives', () => {
     expect(markStatus).toHaveBeenNthCalledWith(3, 'run-cancelled', 'cancelled', 'interrupted');
   });
 
+  it('RunStateTrackingEventStore 不把 terminal run 的迟到审批恢复为 running', async () => {
+    const append = vi.fn(async (event: Record<string, unknown>) => ({
+      id: `event-${append.mock.calls.length}`,
+      timestamp: new Date().toISOString(),
+      ...event,
+    }));
+    const markStatus = vi.fn();
+    const store = new RunStateTrackingEventStore({
+      append,
+      list: vi.fn(async () => []),
+    } as unknown as EventStore, {
+      get: vi.fn(async () => ({ status: 'cancelled' })),
+      markStatus,
+    } as unknown as RunStore);
+
+    await store.append({
+      type: 'approval_resolved',
+      runId: 'cancelled-run',
+      sessionId: 'session-1',
+      approvalId: 'approval-1',
+      decision: 'rejected',
+    });
+
+    expect(append).toHaveBeenCalledTimes(1);
+    expect(markStatus).not.toHaveBeenCalled();
+  });
+
+  it('RunStateTrackingEventStore 不为状态写入竞态追加虚假的 running 事件', async () => {
+    const append = vi.fn(async (event: Record<string, unknown>) => ({
+      id: `event-${append.mock.calls.length}`,
+      timestamp: new Date().toISOString(),
+      ...event,
+    }));
+    const markStatus = vi.fn(async () => ({ status: 'cancelled' }));
+    const store = new RunStateTrackingEventStore({
+      append,
+      list: vi.fn(async () => []),
+    } as unknown as EventStore, {
+      get: vi.fn(async () => ({ status: 'running' })),
+      markStatus,
+    } as unknown as RunStore);
+
+    await store.append({
+      type: 'approval_resolved',
+      runId: 'racing-run',
+      sessionId: 'session-1',
+      approvalId: 'approval-1',
+      decision: 'rejected',
+    });
+
+    expect(markStatus).toHaveBeenCalledWith('racing-run', 'running', 'approval_resolved:approval-1');
+    expect(append).toHaveBeenCalledTimes(1);
+  });
+
   it('EventBackedApprovalStore persists approval state inside runtime events', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'approval-events-'));
     cleanupDirs.add(cwd);

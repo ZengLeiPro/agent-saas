@@ -190,6 +190,71 @@ describe('reconcileInterruptedForegroundToolCalls', () => {
     });
   });
 
+  it('rejects a stale pending approval from a terminal run and is idempotent on replay', async () => {
+    const eventStore = new MemoryEventStore();
+    await eventStore.append({
+      type: 'assistant_tool_calls',
+      runId: 'parent-run-1',
+      sessionId: 'parent-session-1',
+      content: '',
+      toolCalls: [{ id: 'shell-call-1', name: 'Shell', arguments: '{"command":"sleep 600"}' }],
+    });
+    await eventStore.append({
+      type: 'approval_requested',
+      runId: 'parent-run-1',
+      sessionId: 'parent-session-1',
+      approvalId: 'approval-1',
+      toolCallId: 'shell-call-1',
+      toolId: 'Shell',
+      toolName: 'Shell',
+      input: { command: 'sleep 600' },
+    });
+    const runStore = {
+      get: vi.fn(async () => ({ ...childRun('cancelled'), runId: 'parent-run-1', sessionId: 'parent-session-1' })),
+    } as unknown as RunStore;
+    const options = {
+      eventStore,
+      runStore,
+      sessionCatalog: { markStatus: vi.fn() } as unknown as SessionCatalog,
+      parentSessionId: 'parent-session-1',
+    };
+
+    expect(await reconcileInterruptedForegroundToolCalls(options)).toBe(1);
+    expect(await reconcileInterruptedForegroundToolCalls(options)).toBe(0);
+    expect(eventStore.events.filter((event) => event.type === 'approval_resolved')).toEqual([
+      expect.objectContaining({ approvalId: 'approval-1', decision: 'rejected' }),
+    ]);
+  });
+
+  it('preserves a pending approval while its source run is active', async () => {
+    const eventStore = new MemoryEventStore();
+    await eventStore.append({
+      type: 'assistant_tool_calls',
+      runId: 'parent-run-1',
+      sessionId: 'parent-session-1',
+      content: '',
+      toolCalls: [{ id: 'shell-call-1', name: 'Shell', arguments: '{}' }],
+    });
+    await eventStore.append({
+      type: 'approval_requested',
+      runId: 'parent-run-1',
+      sessionId: 'parent-session-1',
+      approvalId: 'approval-1',
+      toolCallId: 'shell-call-1',
+      toolId: 'Shell',
+      toolName: 'Shell',
+      input: {},
+    });
+
+    expect(await reconcileInterruptedForegroundToolCalls({
+      eventStore,
+      runStore: { get: vi.fn(async () => ({ ...childRun(), runId: 'parent-run-1' })) } as unknown as RunStore,
+      sessionCatalog: { markStatus: vi.fn() } as unknown as SessionCatalog,
+      parentSessionId: 'parent-session-1',
+    })).toBe(0);
+    expect(eventStore.events.filter((event) => event.type === 'approval_resolved')).toHaveLength(0);
+  });
+
   it('preserves a durable ask_user interaction that is still waiting for the user', async () => {
     const eventStore = new MemoryEventStore();
     await eventStore.append({

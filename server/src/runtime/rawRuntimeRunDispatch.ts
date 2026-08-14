@@ -862,14 +862,12 @@ export class RunStateTrackingEventStore implements EventStore {
     for (const event of stored) await this.afterAppend(event);
     return stored;
   }
-
   list(sessionId: string, options?: Parameters<EventStore['list']>[1]) {
     return this.inner.list(sessionId, options);
   }
   listPage(sessionId: string, options?: Parameters<NonNullable<EventStore['listPage']>>[1]) {
     return this.inner.listPage?.(sessionId, options) ?? Promise.resolve({ events: [], hasMore: false });
   }
-
   private withTenant(ctx: Parameters<EventStore['append']>[1]): Parameters<EventStore['append']>[1] {
     if (ctx?.tenantId || !this.tenantId) return ctx;
     return { ...(ctx ?? {}), tenantId: this.tenantId };
@@ -901,7 +899,9 @@ export class RunStateTrackingEventStore implements EventStore {
     }
     if (status && 'runId' in event && typeof event.runId === 'string' && typeof event.sessionId === 'string') {
       const before = await this.runStore.get(event.runId);
-      await this.runStore.markStatus(event.runId, status, reason);
+      if ((event.type === 'approval_resolved' || event.type === 'interaction_resolved') && before && ['completed', 'failed', 'cancelled', 'orphaned'].includes(before.status)) return;
+      const updated = await this.runStore.markStatus(event.runId, status, reason);
+      if (updated && updated.status !== status) return;
       await appendRunStateChanged(
         this.inner,
         event.sessionId,

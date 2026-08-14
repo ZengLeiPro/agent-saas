@@ -51,8 +51,8 @@ export type {
 } from "./auth";
 export type { ModelItem, ModelGroup, ModelList } from "./models";
 
-export type { ChatSessionIndexItem, AppTab } from "./sidebar";
-export { baseNavItems, getSidebarNavItems, formatShortDate, sourceDisplayText } from "./sidebar";
+export type { ChatSessionIndexItem, AppTab, SessionRuntimeStatus } from "./sidebar";
+export { baseNavItems, getSidebarNavItems, formatShortDate, sourceDisplayText, getSessionWaitingLabel, getGroupWaitingRuntimeStatus } from "./sidebar";
 
 export type { SessionGroup, SessionListEntry } from "./sessionGroup";
 export type {

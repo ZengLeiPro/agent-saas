@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { ChatSessionIndexItem } from "../types/sidebar";
+import { getGroupWaitingRuntimeStatus, type ChatSessionIndexItem } from "../types/sidebar";
 import type { SessionListEntry } from "../types/sessionGroup";
 import type { ApiSessionGroup } from "../lib/groupsApi";
 
@@ -35,6 +35,7 @@ export function useGroupedSessions(
 
       children.sort(compareSessionActivity);
       for (const c of children) consumed.add(c.id);
+      const runtimeStatus = getGroupWaitingRuntimeStatus(children);
 
       entries.push({
         type: "group",
@@ -46,6 +47,7 @@ export function useGroupedSessions(
           latestUpdatedAt: Math.max(...children.map((child) => child.updatedAt)),
           count: children.length,
           isRunning: children.some((child) => child.isRunning),
+          ...(runtimeStatus ? { runtimeStatus } : {}),
         },
       });
     }

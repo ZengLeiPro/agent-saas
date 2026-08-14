@@ -736,7 +736,8 @@ describe('processWsEvent - 交互事件', () => {
       { type: 'permission_request', interactionId: 'x1', toolName: 'EnterPlanMode', toolInput: {} },
       ctx,
     );
-    expect(ctrl.messages[0]).toMatchObject({
+    expect(ctrl.messages[0]).toMatchObject({ type: 'runtime_status', status: 'waiting_approval', content: '待处理' });
+    expect(ctrl.messages[1]).toMatchObject({
       type: 'permission_request',
       interactionId: 'x1',
       toolName: '进入规划模式',
@@ -749,7 +750,8 @@ describe('processWsEvent - 交互事件', () => {
     const { ctx } = makeCtx(ctrl);
     const questions = [{ question: 'q', header: 'h', options: [], multiSelect: false }];
     dispatch({ type: 'ask_user', interactionId: 'x2', questions }, ctx);
-    expect(ctrl.messages[0]).toMatchObject({ type: 'ask_user', interactionId: 'x2', status: 'pending' });
+    expect(ctrl.messages[0]).toMatchObject({ type: 'runtime_status', status: 'waiting_user', content: '待补充' });
+    expect(ctrl.messages[1]).toMatchObject({ type: 'ask_user', interactionId: 'x2', status: 'pending' });
   });
 
   it('interaction_resolved：pending permission → allowed', () => {
@@ -786,10 +788,11 @@ describe('processWsEvent - 交互事件', () => {
       },
       ctx,
     );
-    // 原 1 条 + 新增 2 条
-    expect(ctrl.messages).toHaveLength(3);
-    expect(ctrl.messages[1]).toMatchObject({ type: 'permission_request', interactionId: 'new-p' });
-    expect(ctrl.messages[2]).toMatchObject({ type: 'ask_user', interactionId: 'new-a' });
+    // 原 1 条 + 等待状态 + 新增 2 条
+    expect(ctrl.messages).toHaveLength(4);
+    expect(ctrl.messages[1]).toMatchObject({ type: 'runtime_status', status: 'waiting_user', content: '待补充' });
+    expect(ctrl.messages[2]).toMatchObject({ type: 'permission_request', interactionId: 'new-p' });
+    expect(ctrl.messages[3]).toMatchObject({ type: 'ask_user', interactionId: 'new-a' });
   });
 });
 

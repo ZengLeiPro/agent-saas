@@ -501,12 +501,12 @@ describe('WebChannel executionTarget gating', () => {
       channel: 'web',
       executionTarget: 'server-local',
     });
-    await runStore.markStatus('run-buffer-gone-1', 'running');
+    await runStore.markStatus('run-buffer-gone-1', 'waiting_user');
 
     expect((channel as any).eventBufferStore.isActive('session-buffer-gone-1')).toBe(false);
 
     const status = await channel.getStreamStatus('session-buffer-gone-1');
-    expect(status).toMatchObject({ active: true, runId: 'run-buffer-gone-1' });
+    expect(status).toMatchObject({ active: true, runId: 'run-buffer-gone-1', status: 'waiting_user' });
   });
 
   it('getStreamStatus reports inactive when runStore says no active run (overrides stale buffer)', async () => {

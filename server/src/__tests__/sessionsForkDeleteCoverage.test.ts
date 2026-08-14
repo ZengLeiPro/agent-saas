@@ -63,6 +63,7 @@ interface StreamStatus {
   active: boolean;
   streamId?: string;
   runId?: string;
+  status?: string;
 }
 
 function stopServer(server: Server): Promise<void> {
@@ -391,7 +392,7 @@ describe('sessions fork/permanent-delete/source-index residual coverage', () => 
     const { baseUrl: ownerBase } = await startServer(OWNER, {
       getStreamStatus: async (id) => {
         ownerCalls.push(id);
-        return { active: true, streamId: 'stream-1', runId: 'run-1' };
+        return { active: true, streamId: 'stream-1', runId: 'run-1', status: 'waiting_user' };
       },
     });
 
@@ -403,7 +404,7 @@ describe('sessions fork/permanent-delete/source-index residual coverage', () => 
     // owner → 透传注入的流状态
     const ok = await fetch(`${ownerBase}/api/sessions/${sessionId}/stream-status`);
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual({ active: true, streamId: 'stream-1', runId: 'run-1' });
+    expect(await ok.json()).toEqual({ active: true, streamId: 'stream-1', runId: 'run-1', status: 'waiting_user' });
     expect(ownerCalls).toEqual([sessionId]);
 
     // 非 owner → 探活接口不暴露 403，降级 active:false，且 getStreamStatus 不被调用
@@ -429,7 +430,7 @@ describe('sessions fork/permanent-delete/source-index residual coverage', () => 
       getStreamStatus: async (id) => {
         calls.push(id);
         return id === ownedActive.sessionId
-          ? { active: true, streamId: 'stream-batch', runId: 'run-batch' }
+          ? { active: true, streamId: 'stream-batch', runId: 'run-batch', status: 'waiting_approval' }
           : { active: false };
       },
     });
@@ -444,7 +445,7 @@ describe('sessions fork/permanent-delete/source-index residual coverage', () => 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       sessions: [
-        { sessionId: ownedActive.sessionId, active: true, streamId: 'stream-batch', runId: 'run-batch' },
+        { sessionId: ownedActive.sessionId, active: true, streamId: 'stream-batch', runId: 'run-batch', status: 'waiting_approval' },
         { sessionId: ownedInactive.sessionId, active: false },
         { sessionId: foreign.sessionId, active: false },
       ],

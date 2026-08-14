@@ -45,6 +45,31 @@ export interface TaskboardExecutionDispatchPayload {
   run: UpsertRunInput;
 }
 
+export interface TaskboardContinuationDispatchPayload {
+  version: 1;
+  session: RuntimeSessionRecord;
+  run: UpsertRunInput;
+}
+
+export interface TaskboardContinuationDispatch {
+  runId: string;
+  taskId: string;
+  commentId: string;
+  sessionId: string;
+  tenantId: string;
+  ownerUserId: string;
+  payload: TaskboardContinuationDispatchPayload;
+  attemptCount: number;
+  leaseId: string;
+}
+
+export interface TaskboardContinuationReconcileCandidate {
+  runId: string;
+  taskId: string;
+  sessionId: string;
+  leaseId: string;
+}
+
 export interface TaskboardExecutionClaimInput extends TaskBoardExecutionStartInput {
   executionId: string;
   /** 新建后直执或评论续跑允许从当前状态进入 work 执行。 */
@@ -128,7 +153,31 @@ export interface TaskboardExecutionStore {
     taskId: string,
     commentId: string,
   ): Promise<TaskboardContinuationContext>;
-  markContinuationQueued(taskId: string, commentIds: string[], runId: string): Promise<boolean>;
+  enqueueContinuation(
+    taskId: string,
+    commentIds: string[],
+    runId: string,
+    commentId: string,
+    payload: TaskboardContinuationDispatchPayload,
+  ): Promise<boolean>;
+  claimContinuationDispatch(
+    runId: string | undefined,
+    leaseId: string,
+  ): Promise<TaskboardContinuationDispatch | null>;
+  markContinuationDispatchSucceeded(runId: string, leaseId: string): Promise<boolean>;
+  retryContinuationDispatch(
+    runId: string,
+    leaseId: string,
+    error: string,
+    delayMs: number,
+  ): Promise<boolean>;
+  claimContinuationReconcileCandidates(
+    staleBefore: Date,
+    limit: number,
+    leaseId: string,
+  ): Promise<TaskboardContinuationReconcileCandidate[]>;
+  releaseContinuationReconcile(runId: string, leaseId: string): Promise<boolean>;
+  finishContinuation(runId: string, leaseId?: string): Promise<boolean>;
   markContinuationRunning(taskId: string): Promise<TaskBoardTask | null>;
   completeContinuation(
     taskId: string,

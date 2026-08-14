@@ -9,6 +9,7 @@ import { createExecutionConfig } from '../runtime/executionConfig.js';
 import type { RunRecord } from '../runtime/runStore.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { EventStore } from '../runtime/types.js';
+import { completeContinuation } from '../taskboard/continuationStore.js';
 import { TaskboardExecutionCoordinator } from '../taskboard/executionService.js';
 import type {
   TaskboardExecutionStore,
@@ -62,23 +63,57 @@ describe('任务看板评论续跑', () => {
     const result = await rig.coordinator.continueExecution(identity, task.id, comments[1]!.id);
 
     expect(result.execution).toEqual(activeExecution);
-    expect(rig.store.markContinuationQueued).toHaveBeenCalledWith(
+    expect(rig.store.enqueueContinuation).toHaveBeenCalledWith(
       task.id,
       comments.map((item) => item.id),
       `taskboard-comment-${comments[1]!.id}`,
+      comments[1]!.id,
+      expect.objectContaining({
+        version: 1,
+        run: expect.objectContaining({
+          runId: `taskboard-comment-${comments[1]!.id}`,
+          sessionId: activeExecution.sessionId,
+          idempotencyKey: `taskboard-comment:${comments[1]!.id}`,
+          metadata: expect.objectContaining({
+            wakeMessage: expect.objectContaining({
+              content: expect.stringMatching(/先补充验收条件[\s\S]*再修复并发问题/),
+            }),
+          }),
+        }),
+      }),
     );
+  });
+
+  it('评论续跑先写持久化 outbox，再由派发器创建 Runtime Run', async () => {
+    let durablePayload: Parameters<TaskboardExecutionStore['enqueueContinuation']>[4] | undefined;
+    const rig = makeRig({
+      enqueueContinuation: vi.fn(async (_taskId, _commentIds, _runId, _commentId, payload) => {
+        durablePayload = payload;
+        return true;
+      }),
+      claimContinuationDispatch: vi.fn(async (runId, leaseId) => durablePayload ? ({
+        runId: runId!,
+        taskId: task.id,
+        commentId: comments[1]!.id,
+        sessionId: durablePayload.session.sessionId,
+        tenantId: identity.tenantId,
+        ownerUserId: identity.ownerUserId,
+        payload: durablePayload,
+        attemptCount: 1,
+        leaseId,
+      }) : null),
+    });
+
+    await rig.coordinator.continueExecution(identity, task.id, comments[1]!.id);
+
     expect(rig.scheduler.enqueue).toHaveBeenCalledWith(expect.objectContaining({
       runId: `taskboard-comment-${comments[1]!.id}`,
       sessionId: activeExecution.sessionId,
-      channel: 'web',
-      idempotencyKey: `taskboard-comment:${comments[1]!.id}`,
-      metadata: expect.objectContaining({
-        taskboardContinuation: true,
-        wakeMessage: expect.objectContaining({
-          content: expect.stringMatching(/先补充验收条件[\s\S]*再修复并发问题/),
-        }),
-      }),
     }), { steeringAware: true });
+    expect(rig.store.markContinuationDispatchSucceeded).toHaveBeenCalledWith(
+      `taskboard-comment-${comments[1]!.id}`,
+      expect.any(String),
+    );
   });
 
   it('评论已绑定正式 Execution run 时，重复请求直接返回且不污染 run metadata', async () => {
@@ -98,7 +133,7 @@ describe('任务看板评论续跑', () => {
     expect(result.execution).toEqual(activeExecution);
     expect(rig.runStore.get).not.toHaveBeenCalled();
     expect(rig.scheduler.enqueue).not.toHaveBeenCalled();
-    expect(rig.store.markContinuationQueued).not.toHaveBeenCalled();
+    expect(rig.store.enqueueContinuation).not.toHaveBeenCalled();
   });
 
   it('steering source 终态不提前写任务回执', async () => {
@@ -162,6 +197,99 @@ describe('任务看板评论续跑', () => {
     expect(rig.scheduler.enqueue).not.toHaveBeenCalled();
   });
 
+  it('原 Execution 等待用户时仍持久化续跑回执，但不抢先移动任务状态', async () => {
+    const sql: string[] = [];
+    const taskRow = {
+      id: task.id,
+      board_id: task.boardId,
+      identifier: task.identifier,
+      title: task.title,
+      description: task.description,
+      status: 'in_progress',
+      priority: task.priority,
+      labels: [],
+      sort_order: task.sortOrder,
+      comment_count: task.commentCount,
+      version: task.version,
+      created_at: task.createdAt,
+      updated_at: task.updatedAt,
+      board_archived_at: null,
+    };
+    const client = {
+      query: vi.fn(async (statement: string) => {
+        sql.push(statement);
+        if (statement === 'BEGIN' || statement === 'COMMIT' || statement === 'ROLLBACK') return { rows: [] };
+        if (statement.includes('SELECT t.board_id, b.tenant_id')) {
+          return { rows: [{ board_id: task.boardId, tenant_id: identity.tenantId, owner_user_id: identity.ownerUserId }] };
+        }
+        if (statement.includes('SELECT t.*, b.archived_at')) return { rows: [taskRow] };
+        if (statement.includes("author_type IN ('agent', 'system')")) return { rows: [] };
+        if (statement.includes('continuation_run_id=$2')) return { rows: [{ id: comments[1]!.id }] };
+        if (statement.includes("status IN ('queued', 'running', 'waiting_user', 'waiting_approval')")) {
+          return { rows: [{ id: activeExecution.id }] };
+        }
+        if (statement.includes('SELECT t.*')) return { rows: [taskRow] };
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const host = {
+      pool: { connect: vi.fn(async () => client) },
+      boardsTable: 'boards',
+      tasksTable: 'tasks',
+      commentsTable: 'comments',
+      executionsTable: 'executions',
+      continuationOutboxTable: 'continuation_outbox',
+    } as never;
+
+    const result = await completeContinuation(host, task.id, 'continuation-run', {
+      status: 'succeeded',
+      commentBody: 'Agent 交付\n\n等待态续跑结果',
+    });
+
+    expect(result?.status).toBe('in_progress');
+    expect(sql.some((statement) => statement.includes('INSERT INTO comments'))).toBe(true);
+    expect(sql.some((statement) => statement.includes("SET status='completed'"))).toBe(true);
+    expect(sql.some((statement) => statement.includes('UPDATE tasks') && statement.includes('status=$2'))).toBe(false);
+  });
+
+  it('自动对账补写遗漏的评论续跑终态回执', async () => {
+    const runId = `taskboard-comment-${comments[1]!.id}`;
+    const rig = makeRig({
+      claimContinuationReconcileCandidates: vi.fn(async () => [{
+        runId,
+        taskId: task.id,
+        sessionId: activeExecution.sessionId,
+        leaseId: 'continuation-reconcile-lease',
+      }]),
+      completeContinuation: vi.fn(async () => ({ ...task, status: 'in_review' as const })),
+    });
+    rig.runStore.get.mockResolvedValue({
+      runId,
+      sessionId: activeExecution.sessionId,
+      status: 'completed',
+      requestedAt: '2026-08-01T01:02:00.000Z',
+      updatedAt: '2026-08-01T01:03:00.000Z',
+      completedAt: '2026-08-01T01:03:00.000Z',
+      metadata: { taskboardContinuation: true, taskboardTaskId: task.id },
+    });
+    vi.mocked(rig.eventStore.listByRun!).mockResolvedValue([{
+      id: 'event-continuation-result',
+      timestamp: '2026-08-01T01:03:00.000Z',
+      type: 'assistant_message',
+      runId,
+      sessionId: activeExecution.sessionId,
+      content: '等待态后的续跑交付',
+    } as never]);
+
+    await rig.coordinator.reconcile();
+
+    expect(rig.store.completeContinuation).toHaveBeenCalledWith(task.id, runId, {
+      status: 'succeeded',
+      commentBody: 'Agent 交付\n\n等待态后的续跑交付',
+    });
+  });
+
   it('后续正式执行复用任务上一条 session，但生成新的 execution run', async () => {
     const completed = { ...activeExecution, status: 'succeeded' as const };
     const rig = makeRig({
@@ -199,10 +327,17 @@ function makeRig(overrides: Partial<TaskboardExecutionStore> = {}) {
       activeExecution,
       latestExecution: activeExecution,
     })),
-    markContinuationQueued: vi.fn(async () => true),
+    enqueueContinuation: vi.fn(async () => true),
+    claimContinuationDispatch: vi.fn(async () => null),
+    markContinuationDispatchSucceeded: vi.fn(async () => true),
+    retryContinuationDispatch: vi.fn(async () => true),
+    claimContinuationReconcileCandidates: vi.fn(async () => []),
+    releaseContinuationReconcile: vi.fn(async () => true),
+    finishContinuation: vi.fn(async () => true),
     markContinuationRunning: vi.fn(async () => task),
     claimExecution: vi.fn(),
     claimExecutionDispatch: vi.fn(async () => null),
+    claimExecutionReconcileCandidates: vi.fn(async () => []),
     ...overrides,
   } as unknown as TaskboardExecutionStore;
   const scheduler = {
@@ -236,17 +371,22 @@ function makeRig(overrides: Partial<TaskboardExecutionStore> = {}) {
     markStatus: vi.fn(async () => undefined),
     findTranscriptPath: vi.fn(async () => null),
   } satisfies SessionCatalog;
+  const eventStore = {
+    append: vi.fn(),
+    list: vi.fn(async () => []),
+    listByRun: vi.fn(async () => []),
+  } as unknown as EventStore;
   const coordinator = new TaskboardExecutionCoordinator({
     store,
     scheduler,
     runStore,
     sessionCatalog,
-    eventStore: { append: vi.fn(), list: vi.fn(async () => []) } as unknown as EventStore,
+    eventStore,
     agentCwd: '/agent',
     executionConfig: createExecutionConfig({ tenantDefaultTarget: 'server-remote' }),
     resolveDefaultModel: () => ({ ref: 'model-default' }),
   });
-  return { coordinator, store, scheduler, runStore };
+  return { coordinator, store, scheduler, runStore, sessionCatalog, eventStore };
 }
 
 function comment(id: string, body: string, createdAt: string): TaskBoardComment {

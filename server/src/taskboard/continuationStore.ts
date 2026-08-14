@@ -27,14 +27,13 @@ import {
 
 const DEFAULT_SORT_GAP = 1024;
 
-class PartialContinuationClaimError extends Error {}
-
 export interface TaskboardContinuationStoreHost {
   pool: Pool;
   boardsTable: string;
   tasksTable: string;
   commentsTable: string;
   executionsTable: string;
+  continuationOutboxTable: string;
 }
 
 export async function loadExecutionContext(
@@ -100,7 +99,7 @@ export async function loadContinuationContext(
        FROM ${host.commentsTable} c
        JOIN ${host.tasksTable} t ON t.id=c.task_id
        JOIN ${host.boardsTable} b ON b.id=t.board_id
-      WHERE c.id=$1 AND c.task_id=$2 AND c.author_type='user'
+      WHERE c.id=$1 AND c.task_id=$2 AND c.author_type='user' AND c.continuation_eligible=true
         AND b.tenant_id=$3 AND (b.owner_user_id=$4 OR b.visibility='organization')`,
     [commentId, taskId, identity.tenantId, identity.ownerUserId],
   );
@@ -112,7 +111,7 @@ export async function loadContinuationContext(
     : undefined;
   const pendingResult = await host.pool.query(
     `SELECT c.* FROM ${host.commentsTable} c
-      WHERE c.task_id=$1 AND c.author_type='user'
+      WHERE c.task_id=$1 AND c.author_type='user' AND c.continuation_eligible=true
         AND c.created_at <= $2::timestamptz
         AND (c.continuation_run_id IS NULL OR c.continuation_run_id=$3)
       ORDER BY c.created_at, c.id`,
@@ -126,32 +125,6 @@ export async function loadContinuationContext(
     ...(executions[0] ? { latestExecution: executions[0] } : {}),
     ...(activeExecution ? { activeExecution } : {}),
   };
-}
-
-export async function markContinuationQueued(
-  host: TaskboardContinuationStoreHost,
-  taskId: string,
-  commentIds: string[],
-  runId: string,
-): Promise<boolean> {
-  if (commentIds.length === 0) return false;
-  try {
-    return await withTransaction(host.pool, async (client) => {
-      const result = await client.query(
-        `UPDATE ${host.commentsTable}
-            SET continuation_run_id=$3, updated_at=now()
-          WHERE task_id=$1 AND id=ANY($2::text[])
-            AND (continuation_run_id IS NULL OR continuation_run_id=$3)
-          RETURNING id`,
-        [taskId, commentIds, runId],
-      );
-      if (result.rowCount !== commentIds.length) throw new PartialContinuationClaimError();
-      return true;
-    });
-  } catch (error) {
-    if (error instanceof PartialContinuationClaimError) return false;
-    throw error;
-  }
 }
 
 export function markContinuationRunning(
@@ -197,24 +170,26 @@ export function completeContinuation(
         LIMIT 1`,
       [taskId, runId],
     );
-    if (existing.rows[0]) return loaded.task;
+    if (existing.rows[0]) {
+      await markContinuationCompleted(host, client, runId);
+      return loaded.task;
+    }
     const claimed = await client.query(
       `SELECT id FROM ${host.commentsTable}
         WHERE task_id=$1 AND continuation_run_id=$2 AND author_type='user'
         LIMIT 1`,
       [taskId, runId],
     );
-    if (!claimed.rows[0] || loaded.task.status !== 'in_progress') return loaded.task;
+    if (!claimed.rows[0]) return loaded.task;
     const activeExecution = await client.query(
       `SELECT id FROM ${host.executionsTable}
         WHERE task_id=$1 AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
         LIMIT 1`,
       [taskId],
     );
-    if (activeExecution.rows[0]) return loaded.task;
 
     const targetStatus = input.status === 'succeeded' ? 'in_review' : 'blocked';
-    if (loaded.task.status === 'in_progress') {
+    if (loaded.task.status === 'in_progress' && !activeExecution.rows[0]) {
       const sortOrder = await nextTaskColumnSortOrder(
         host,
         client,
@@ -240,6 +215,7 @@ export function completeContinuation(
         input.status === 'succeeded' ? 'agent' : 'system', runId,
         input.status === 'succeeded' ? 'Agent' : '系统'],
     );
+    await markContinuationCompleted(host, client, runId);
     return loadAccessibleTask(host, loaded.identity, taskId, client);
   });
 }
@@ -358,6 +334,20 @@ export async function nextTaskColumnSortOrder(
   );
   const lastSortOrder = peers.rows[0] ? Number(peers.rows[0].sort_order) : 0;
   return Number.isFinite(lastSortOrder) ? lastSortOrder + DEFAULT_SORT_GAP : DEFAULT_SORT_GAP;
+}
+
+function markContinuationCompleted(
+  host: TaskboardContinuationStoreHost,
+  client: PoolClient,
+  runId: string,
+): Promise<unknown> {
+  return client.query(
+    `UPDATE ${host.continuationOutboxTable}
+        SET status='completed', lease_id=NULL, lease_expires_at=NULL,
+            reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL, updated_at=now()
+      WHERE run_id=$1`,
+    [runId],
+  );
 }
 
 async function withTransaction<T>(

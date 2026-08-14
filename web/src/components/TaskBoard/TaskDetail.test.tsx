@@ -297,6 +297,48 @@ describe("TaskDetail 草稿隔离", () => {
     expect(mocks.refreshExecutions).toHaveBeenCalled();
   });
 
+  it("评论已发表但续跑失败时使用原 commentId 幂等重试", async () => {
+    const user = userEvent.setup();
+    const published = {
+      id: "comment-retry",
+      taskId: taskOne.id,
+      body: "保留这条评论重试",
+      authorType: "user" as const,
+      authorId: "user-1",
+      authorName: "Alice",
+      version: 1,
+      createdAt: taskOne.createdAt,
+      updatedAt: taskOne.updatedAt,
+    };
+    const execution: TaskBoardExecution = {
+      id: "execution-retry",
+      taskId: taskOne.id,
+      runId: "run-retry",
+      sessionId: "session-retry",
+      status: "running",
+      purpose: "work",
+      requestedBy: "user-1",
+      createdAt: taskOne.createdAt,
+      updatedAt: taskOne.updatedAt,
+    };
+    mocks.addComment.mockResolvedValue(published);
+    mocks.continueTaskExecution
+      .mockRejectedValueOnce(new Error("临时派发失败"))
+      .mockResolvedValueOnce({ task: { ...taskOne, status: "in_progress" }, execution });
+    render(<TaskDetail {...props()} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+
+    await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
+    await user.click(screen.getByRole("checkbox", { name: "发表后切换为进行中并继续执行" }));
+    await user.click(screen.getByRole("button", { name: "发表" }));
+    await screen.findByText(/评论已发表，但继续执行失败，可重试/);
+
+    await user.click(screen.getByRole("button", { name: "重试继续执行" }));
+    await waitFor(() => expect(mocks.continueTaskExecution).toHaveBeenCalledTimes(2));
+    expect(mocks.continueTaskExecution).toHaveBeenNthCalledWith(2, taskOne.id, published.id);
+    expect(mocks.addComment).toHaveBeenCalledTimes(1);
+  });
+
   it("待处理任务可以显式交给 Agent，并展示执行会话入口", async () => {
     const user = userEvent.setup();
     const todoTask = { ...taskOne, status: "todo" as const };

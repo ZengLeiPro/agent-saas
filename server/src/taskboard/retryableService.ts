@@ -13,6 +13,9 @@ import type {
 } from '../../../shared/src/types/taskboard.js';
 import type {
   TaskboardContinuationContext,
+  TaskboardContinuationDispatch,
+  TaskboardContinuationDispatchPayload,
+  TaskboardContinuationReconcileCandidate,
   TaskboardExecutionClaimInput,
   TaskboardExecutionCompletionInput,
   TaskboardExecutionContext,
@@ -191,9 +194,57 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.getContinuationContext(identity, taskId, commentId);
   }
 
-  async markContinuationQueued(taskId: string, commentIds: string[], runId: string): Promise<boolean> {
+  async enqueueContinuation(
+    taskId: string,
+    commentIds: string[],
+    runId: string,
+    commentId: string,
+    payload: TaskboardContinuationDispatchPayload,
+  ): Promise<boolean> {
     await this.init();
-    return this.target.markContinuationQueued(taskId, commentIds, runId);
+    return this.target.enqueueContinuation(taskId, commentIds, runId, commentId, payload);
+  }
+
+  async claimContinuationDispatch(
+    runId: string | undefined,
+    leaseId: string,
+  ): Promise<TaskboardContinuationDispatch | null> {
+    await this.init();
+    return this.target.claimContinuationDispatch(runId, leaseId);
+  }
+
+  async markContinuationDispatchSucceeded(runId: string, leaseId: string): Promise<boolean> {
+    await this.init();
+    return this.target.markContinuationDispatchSucceeded(runId, leaseId);
+  }
+
+  async retryContinuationDispatch(
+    runId: string,
+    leaseId: string,
+    error: string,
+    delayMs: number,
+  ): Promise<boolean> {
+    await this.init();
+    return this.target.retryContinuationDispatch(runId, leaseId, error, delayMs);
+  }
+
+  async claimContinuationReconcileCandidates(
+    staleBefore: Date,
+    limit: number,
+    leaseId: string,
+  ): Promise<TaskboardContinuationReconcileCandidate[]> {
+    await this.init();
+    return this.target.claimContinuationReconcileCandidates(staleBefore, limit, leaseId);
+  }
+
+  async releaseContinuationReconcile(runId: string, leaseId: string): Promise<boolean> {
+    await this.init();
+    return this.target.releaseContinuationReconcile(runId, leaseId);
+  }
+
+  async finishContinuation(runId: string, leaseId?: string): Promise<boolean> {
+    await this.init();
+    return this.target.finishContinuation(runId, leaseId);
   }
 
   async markContinuationRunning(taskId: string): Promise<TaskBoardTask | null> {

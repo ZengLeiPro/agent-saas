@@ -10,6 +10,7 @@ import {
   TaskboardConflictError,
   TaskboardNotFoundError,
   TaskboardValidationError,
+  type TaskboardContinuationDispatchPayload,
   type TaskboardIdentity,
 } from '../taskboard/types.js';
 
@@ -67,6 +68,7 @@ describePg('PgTaskboardStore contract', () => {
   afterAll(async () => {
     if (!pool || !store) return;
     try {
+      await pool.query(`DROP TABLE IF EXISTS ${store.continuationOutboxTable}`);
       await pool.query(`DROP TABLE IF EXISTS ${store.executionOutboxTable}`);
       await pool.query(`DROP TABLE IF EXISTS ${store.executionsTable}`);
       await pool.query(`DROP TABLE IF EXISTS ${store.commentsTable}`);
@@ -300,6 +302,71 @@ describePg('PgTaskboardStore contract', () => {
     await expect(store.createComment(alice, restoredTask.id, { body: '恢复后可评论' })).resolves.toMatchObject({
       body: '恢复后可评论',
     });
+  });
+
+  it('keeps historical comments out of continuation and preserves waiting-state results through outbox', async () => {
+    const board = await store.createBoard(alice, { name: '评论续跑持久化' });
+    const task = await store.createTask(alice, board.id, { title: '等待态续跑', status: 'todo' });
+    await store.claimExecution(alice, task.id, {
+      expectedVersion: task.version,
+      executionId: 'execution-waiting',
+      runId: 'run-waiting',
+      sessionId: 'session-continuation',
+      executionOwnerUserId: alice.ownerUserId,
+      dispatch: dispatch('execution-waiting', 'run-waiting', 'session-continuation'),
+    });
+    await store.setExecutionStatus('run-waiting', 'waiting_user');
+    const historicalCommentId = randomUUID();
+    await pool.query(
+      `INSERT INTO ${store.commentsTable}
+         (id, task_id, body, author_type, author_id, author_name, continuation_eligible)
+       VALUES ($1,$2,'历史评论','user',$3,'Alice',false)`,
+      [historicalCommentId, task.id, alice.ownerUserId],
+    );
+    const first = await store.createComment(alice, task.id, { body: '第一条新评论' });
+    const second = await store.createComment(alice, task.id, { body: '第二条新评论' });
+    const context = await store.getContinuationContext(alice, task.id, second.id);
+    expect(context.pendingComments.map((item) => item.id)).toEqual(expect.arrayContaining([first.id, second.id]));
+    expect(context.pendingComments.map((item) => item.id)).not.toContain(historicalCommentId);
+
+    const payload: TaskboardContinuationDispatchPayload = dispatch(
+      'continuation-placeholder',
+      'run-continuation',
+      'session-continuation',
+    );
+    payload.run.idempotencyKey = `taskboard-comment:${second.id}`;
+    payload.run.metadata = {
+      taskboardContinuation: true,
+      taskboardTaskId: task.id,
+      taskboardCommentId: second.id,
+    };
+    expect(await store.enqueueContinuation(
+      task.id,
+      [first.id, second.id],
+      'run-continuation',
+      second.id,
+      payload,
+    )).toBe(true);
+    const claimed = await store.claimContinuationDispatch('run-continuation', 'continuation-lease');
+    expect(claimed).toMatchObject({
+      runId: 'run-continuation',
+      taskId: task.id,
+      commentId: second.id,
+      attemptCount: 1,
+    });
+    await store.markContinuationDispatchSucceeded('run-continuation', 'continuation-lease');
+    const completed = await store.completeContinuation(task.id, 'run-continuation', {
+      status: 'succeeded',
+      commentBody: 'Agent 交付\n\n等待态结果已保留',
+    });
+
+    expect(completed?.status).toBe('in_progress');
+    expect((await store.listComments(alice, task.id)).at(-1)?.body).toContain('等待态结果已保留');
+    expect(await store.claimContinuationReconcileCandidates(
+      new Date(Date.now() + 1_000),
+      10,
+      'post-completion-reconcile',
+    )).toEqual([]);
   });
 
   it('atomically claims one Agent execution, rereads comments, and finalizes idempotently', async () => {

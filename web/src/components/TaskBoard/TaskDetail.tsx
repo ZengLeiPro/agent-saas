@@ -88,6 +88,7 @@ export function TaskDetail({
   const [model, setModel] = useState<string | null>(null);
   const [commentBody, setCommentBody] = useState("");
   const [continueAfterComment, setContinueAfterComment] = useState(false);
+  const [pendingContinuationCommentId, setPendingContinuationCommentId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const taskAttachments = useFileUpload("taskboard");
@@ -145,6 +146,7 @@ export function TaskDetail({
       dirtyFieldsRef.current.clear();
       setCommentBody("");
       setContinueAfterComment(false);
+      setPendingContinuationCommentId(null);
       taskAttachments.clearFiles();
       commentAttachments.clearFiles();
       return;
@@ -153,6 +155,7 @@ export function TaskDetail({
       hydrateDraft(task);
       setCommentBody("");
       setContinueAfterComment(false);
+      setPendingContinuationCommentId(null);
       commentAttachments.clearFiles();
       setError(null);
     } else {
@@ -340,8 +343,9 @@ export function TaskDetail({
   const submitComment = async (event: FormEvent) => {
     event.preventDefault();
     const body = commentBody.trim();
-    if ((!body && commentAttachments.uploadedFiles.length === 0) || !currentTask || readOnly) return;
-    if (commentAttachments.uploading) {
+    const retryCommentId = continueAfterComment ? pendingContinuationCommentId : null;
+    if ((!retryCommentId && !body && commentAttachments.uploadedFiles.length === 0) || !currentTask || readOnly) return;
+    if (!retryCommentId && commentAttachments.uploading) {
       setError("请等待附件上传完成");
       return;
     }
@@ -353,31 +357,38 @@ export function TaskDetail({
     const requestId = ++detailRequestRef.current;
     setSaving(true);
     setError(null);
-    let commentPublished = false;
+    let commentPublished = Boolean(retryCommentId);
     try {
-      const comment = await addComment({
-        body,
-        ...(commentAttachments.uploadedFiles.length
-          ? { attachments: toTaskBoardAttachments(commentAttachments.uploadedFiles) }
-          : {}),
-      });
-      commentPublished = true;
-      if (isCurrentOperation(requestId, operationTask.id)) {
-        setCommentBody("");
-        commentAttachments.clearFiles();
+      let continuationCommentId = retryCommentId;
+      if (!continuationCommentId) {
+        const comment = await addComment({
+          body,
+          ...(commentAttachments.uploadedFiles.length
+            ? { attachments: toTaskBoardAttachments(commentAttachments.uploadedFiles) }
+            : {}),
+        });
+        commentPublished = true;
+        if (continueAfterComment) continuationCommentId = comment.id;
+        if (isCurrentOperation(requestId, operationTask.id)) {
+          setCommentBody("");
+          commentAttachments.clearFiles();
+          if (continueAfterComment) setPendingContinuationCommentId(comment.id);
+        }
       }
-      if (continueAfterComment) {
-        const result = await api.continueTaskExecution(operationTask.id, comment.id);
+      if (continueAfterComment && continuationCommentId) {
+        const result = await api.continueTaskExecution(operationTask.id, continuationCommentId);
         if (isCurrentOperation(requestId, operationTask.id)) {
           setCurrentTask(result.task);
           mergeServerDraft(result.task);
           onTaskLoaded(result.task);
+          setPendingContinuationCommentId(null);
           await refreshExecutions();
         }
       }
       if (isCurrentOperation(requestId, operationTask.id)) {
         setCommentBody("");
         setContinueAfterComment(false);
+        setPendingContinuationCommentId(null);
         commentAttachments.clearFiles();
       }
       await onCommentsChanged();
@@ -385,7 +396,7 @@ export function TaskDetail({
       if (!isCurrentOperation(requestId, operationTask.id)) return;
       const message = caught instanceof Error ? caught.message : "未知错误";
       setError(commentPublished
-        ? `${continueAfterComment ? "评论已发表，但继续执行失败" : "评论已发表，但刷新失败"}：${message}`
+        ? `${continueAfterComment ? "评论已发表，但继续执行失败，可重试" : "评论已发表，但刷新失败"}：${message}`
         : `发表评论失败：${message}`);
     } finally {
       if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
@@ -626,7 +637,11 @@ export function TaskDetail({
                       <Checkbox
                         id="task-comment-continue"
                         checked={continueAfterComment}
-                        onCheckedChange={(checked) => setContinueAfterComment(checked === true)}
+                        onCheckedChange={(checked) => {
+                          const next = checked === true;
+                          setContinueAfterComment(next);
+                          if (!next) setPendingContinuationCommentId(null);
+                        }}
                         disabled={saving}
                       />
                       <Label htmlFor="task-comment-continue" className="font-normal">
@@ -637,11 +652,12 @@ export function TaskDetail({
                   <Button
                     type="submit"
                     size="sm"
-                    disabled={readOnly || saving || commentAttachments.uploading
-                      || (!commentBody.trim() && commentAttachments.uploadedFiles.length === 0)}
+                    disabled={readOnly || saving || (!pendingContinuationCommentId && commentAttachments.uploading)
+                      || (!pendingContinuationCommentId && !commentBody.trim()
+                        && commentAttachments.uploadedFiles.length === 0)}
                   >
                     <Send />
-                    发表
+                    {pendingContinuationCommentId ? "重试继续执行" : "发表"}
                   </Button>
                 </form>
               </section>

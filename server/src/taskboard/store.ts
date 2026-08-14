@@ -23,11 +23,27 @@ import {
   loadContinuationContext,
   loadExecutionContext,
   loadExecutionModelContext,
-  markContinuationQueued,
   markContinuationRunning,
   nextTaskColumnSortOrder,
 } from './continuationStore.js';
+import {
+  claimContinuationDispatch,
+  claimContinuationReconcileCandidates,
+  continuationOutboxIndexSql,
+  continuationOutboxTableSql,
+  enqueueContinuation,
+  finishContinuation,
+  markContinuationDispatchSucceeded,
+  releaseContinuationReconcile,
+  retryContinuationDispatch,
+} from './continuationOutbox.js';
 import { executionFieldMigrationSql, resolveExecutionPurpose, taskFieldMigrationSql } from './executionFields.js';
+import {
+  claimExecutionDispatch,
+  claimExecutionReconcileCandidates,
+  markExecutionDispatchSucceeded,
+  retryExecutionDispatch,
+} from './executionOutboxStore.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
 import {
   boardModelMigrationSql,
@@ -53,9 +69,7 @@ import {
   requireText,
   rowToComment,
   rowToExecutionModelContext,
-  rowToExecutionReconcileCandidate,
   rowToExecution,
-  rowToExecutionDispatch,
   rowToTask,
   sanitizeIdentifier,
   toIso,
@@ -66,12 +80,13 @@ import {
   TaskboardNotFoundError,
   TaskboardValidationError,
   type TaskboardContinuationContext,
+  type TaskboardContinuationDispatch,
+  type TaskboardContinuationDispatchPayload,
+  type TaskboardContinuationReconcileCandidate,
   type TaskboardExecutionClaimInput,
   type TaskboardExecutionCompletionInput,
   type TaskboardExecutionContext,
-  type TaskboardExecutionDispatch,
   type TaskboardExecutionModelContext,
-  type TaskboardExecutionReconcileCandidate,
   type TaskboardExecutionStore,
   type TaskboardExpectedVersionInput,
   type TaskboardIdentity,
@@ -98,6 +113,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   readonly commentsTable: string;
   readonly executionsTable: string;
   readonly executionOutboxTable: string;
+  readonly continuationOutboxTable: string;
 
   constructor(options: PgTaskboardStoreOptions) {
     const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime');
@@ -107,6 +123,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     this.commentsTable = `${prefix}_taskboard_comments`;
     this.executionsTable = `${prefix}_taskboard_execs`;
     this.executionOutboxTable = `${prefix}_taskboard_exec_outbox`;
+    this.continuationOutboxTable = `${prefix}_taskboard_cont_outbox`;
   }
 
   async init(): Promise<void> {
@@ -148,6 +165,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
             CHECK (author_type IN ('user', 'agent', 'system')),
           author_id TEXT NOT NULL,
           author_name TEXT NOT NULL,
+          continuation_eligible BOOLEAN NOT NULL DEFAULT true,
           version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -155,6 +173,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       `);
       await client.query(`
         ALTER TABLE ${this.commentsTable} ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb;
+        ALTER TABLE ${this.commentsTable} ADD COLUMN IF NOT EXISTS continuation_eligible BOOLEAN NOT NULL DEFAULT false;
+        ALTER TABLE ${this.commentsTable} ALTER COLUMN continuation_eligible SET DEFAULT true;
         ALTER TABLE ${this.commentsTable} ADD COLUMN IF NOT EXISTS continuation_run_id TEXT;
         ALTER TABLE ${this.commentsTable}
           DROP CONSTRAINT IF EXISTS ${this.commentsTable}_author_type_check;
@@ -201,6 +221,11 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       `);
+      await client.query(continuationOutboxTableSql(
+        this.continuationOutboxTable,
+        this.tasksTable,
+        this.commentsTable,
+      ));
       await client.query(`DROP INDEX IF EXISTS ${this.boardsTable}_active_name_uidx`);
       await client.query(
         `CREATE UNIQUE INDEX IF NOT EXISTS ${this.boardsTable}_personal_name_uidx `
@@ -245,6 +270,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         + `ON ${this.executionOutboxTable} (next_attempt_at, created_at) `
         + `WHERE status IN ('pending', 'dispatching')`,
       );
+      for (const indexSql of continuationOutboxIndexSql(this.continuationOutboxTable)) {
+        await client.query(indexSql);
+      }
       await client.query(
         `CREATE UNIQUE INDEX IF NOT EXISTS ${this.executionsTable}_active_uidx `
         + `ON ${this.executionsTable} (task_id) `
@@ -672,8 +700,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (!body && attachments.length === 0) throw new TaskboardValidationError('Comment body or attachment is required');
       const result = await client.query(
         `INSERT INTO ${this.commentsTable}
-           (id, task_id, body, attachments, author_type, author_id, author_name, version)
-         VALUES ($1,$2,$3,$4::jsonb,'user',$5,$6,1)
+           (id, task_id, body, attachments, author_type, author_id, author_name, continuation_eligible, version)
+         VALUES ($1,$2,$3,$4::jsonb,'user',$5,$6,true,1)
          RETURNING *`,
         [randomUUID(), taskId, body, JSON.stringify(attachments), identity.ownerUserId,
           identity.displayName || identity.username],
@@ -769,7 +797,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       await client.query(
         `UPDATE ${this.commentsTable}
             SET continuation_run_id=$2, updated_at=now()
-          WHERE task_id=$1 AND author_type='user' AND continuation_run_id IS NULL`,
+          WHERE task_id=$1 AND author_type='user' AND continuation_eligible=true
+            AND continuation_run_id IS NULL`,
         [taskId, input.runId],
       );
       await client.query(
@@ -793,8 +822,39 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   getContinuationContext(identity: TaskboardIdentity, taskId: string, commentId: string) {
     return loadContinuationContext(this, identity, taskId, commentId);
   }
-  markContinuationQueued(taskId: string, commentIds: string[], runId: string) {
-    return markContinuationQueued(this, taskId, commentIds, runId);
+  enqueueContinuation(
+    taskId: string,
+    commentIds: string[],
+    runId: string,
+    commentId: string,
+    payload: TaskboardContinuationDispatchPayload,
+  ) {
+    return enqueueContinuation(this, taskId, commentIds, runId, commentId, payload);
+  }
+  claimContinuationDispatch(
+    runId: string | undefined,
+    leaseId: string,
+  ): Promise<TaskboardContinuationDispatch | null> {
+    return claimContinuationDispatch(this, runId, leaseId);
+  }
+  markContinuationDispatchSucceeded(runId: string, leaseId: string) {
+    return markContinuationDispatchSucceeded(this, runId, leaseId);
+  }
+  retryContinuationDispatch(runId: string, leaseId: string, error: string, delayMs: number) {
+    return retryContinuationDispatch(this, runId, leaseId, error, delayMs);
+  }
+  claimContinuationReconcileCandidates(
+    staleBefore: Date,
+    limit: number,
+    leaseId: string,
+  ): Promise<TaskboardContinuationReconcileCandidate[]> {
+    return claimContinuationReconcileCandidates(this, staleBefore, limit, leaseId);
+  }
+  releaseContinuationReconcile(runId: string, leaseId: string) {
+    return releaseContinuationReconcile(this, runId, leaseId);
+  }
+  finishContinuation(runId: string, leaseId?: string) {
+    return finishContinuation(this, runId, leaseId);
   }
   markContinuationRunning(taskId: string) {
     return markContinuationRunning(this, taskId);
@@ -806,143 +866,17 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async moveTaskFromExecution(identity: TaskboardIdentity, runId: string, status: 'done' | 'todo'): Promise<TaskBoardTask> {
     return moveTaskFromReviewExecution(this, identity, runId, status);
   }
-  async claimExecutionDispatch(
-    runId: string | undefined,
-    leaseId: string,
-  ): Promise<TaskboardExecutionDispatch | null> {
-    const result = await this.pool.query(
-      `WITH candidate AS (
-         SELECT o.run_id
-           FROM ${this.executionOutboxTable} o
-           JOIN ${this.executionsTable} e ON e.run_id=o.run_id
-          WHERE ($2::text IS NULL OR o.run_id=$2)
-            AND e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
-            AND (
-              (o.status='pending' AND o.next_attempt_at <= now())
-              OR (o.status='dispatching' AND o.lease_expires_at <= now())
-            )
-          ORDER BY o.next_attempt_at, o.created_at, o.run_id
-          FOR UPDATE OF o SKIP LOCKED
-          LIMIT 1
-       ), claimed AS (
-         UPDATE ${this.executionOutboxTable} o
-            SET status='dispatching',
-                attempt_count=o.attempt_count+1,
-                lease_id=$1,
-                lease_expires_at=now() + interval '60 seconds',
-                updated_at=now()
-           FROM candidate c
-          WHERE o.run_id=c.run_id
-          RETURNING o.*
-       )
-       SELECT c.*, e.id AS actual_execution_id, e.task_id AS actual_task_id,
-              e.session_id AS actual_session_id, b.tenant_id, b.owner_user_id
-         FROM claimed c
-         JOIN ${this.executionsTable} e ON e.run_id=c.run_id
-         JOIN ${this.tasksTable} t ON t.id=e.task_id
-         JOIN ${this.boardsTable} b ON b.id=t.board_id`,
-      [leaseId, runId ?? null],
-    );
-    return result.rows[0] ? rowToExecutionDispatch(result.rows[0]) : null;
+  claimExecutionDispatch(runId: string | undefined, leaseId: string) {
+    return claimExecutionDispatch(this, runId, leaseId);
   }
-
-  async markExecutionDispatchSucceeded(runId: string, leaseId: string): Promise<boolean> {
-    return this.withTransaction(async (client) => {
-      const executionResult = await client.query(
-        `SELECT status FROM ${this.executionsTable} WHERE run_id=$1 FOR UPDATE`,
-        [runId],
-      );
-      if (!executionResult.rows[0]) return false;
-      const dispatched = await client.query(
-        `UPDATE ${this.executionOutboxTable}
-            SET status='dispatched', lease_id=NULL, lease_expires_at=NULL,
-                last_error=NULL, dispatched_at=now(), updated_at=now()
-          WHERE run_id=$1 AND status='dispatching' AND lease_id=$2
-          RETURNING execution_id`,
-        [runId, leaseId],
-      );
-      if (!dispatched.rows[0]) return false;
-      if (!isTerminalExecutionStatus(String(executionResult.rows[0].status))) {
-        await client.query(
-          `UPDATE ${this.executionsTable} SET error=NULL, updated_at=now() WHERE run_id=$1`,
-          [runId],
-        );
-      }
-      return true;
-    });
+  markExecutionDispatchSucceeded(runId: string, leaseId: string) {
+    return markExecutionDispatchSucceeded(this, runId, leaseId);
   }
-
-  async retryExecutionDispatch(
-    runId: string,
-    leaseId: string,
-    error: string,
-    delayMs: number,
-  ): Promise<boolean> {
-    return this.withTransaction(async (client) => {
-      const executionResult = await client.query(
-        `SELECT status FROM ${this.executionsTable} WHERE run_id=$1 FOR UPDATE`,
-        [runId],
-      );
-      if (!executionResult.rows[0]) return false;
-      if (isTerminalExecutionStatus(String(executionResult.rows[0].status))) {
-        await client.query(
-          `UPDATE ${this.executionOutboxTable}
-              SET status='dispatched', lease_id=NULL, lease_expires_at=NULL, updated_at=now()
-            WHERE run_id=$1 AND status='dispatching' AND lease_id=$2`,
-          [runId, leaseId],
-        );
-        return false;
-      }
-      const message = requireText(error, 'Dispatch error');
-      const retried = await client.query(
-        `UPDATE ${this.executionOutboxTable}
-            SET status='pending', lease_id=NULL, lease_expires_at=NULL,
-                next_attempt_at=now() + ($4::double precision * interval '1 millisecond'),
-                last_error=$3, updated_at=now()
-          WHERE run_id=$1 AND status='dispatching' AND lease_id=$2
-          RETURNING execution_id`,
-        [runId, leaseId, message, Math.max(0, Math.floor(delayMs))],
-      );
-      if (!retried.rows[0]) return false;
-      await client.query(
-        `UPDATE ${this.executionsTable} SET error=$2, updated_at=now() WHERE run_id=$1`,
-        [runId, message],
-      );
-      return true;
-    });
+  retryExecutionDispatch(runId: string, leaseId: string, error: string, delayMs: number) {
+    return retryExecutionDispatch(this, runId, leaseId, error, delayMs);
   }
-
-  async claimExecutionReconcileCandidates(
-    staleBefore: Date,
-    limit: number,
-    leaseId: string,
-  ): Promise<TaskboardExecutionReconcileCandidate[]> {
-    const result = await this.pool.query(
-      `WITH candidates AS (
-         SELECT e.run_id
-           FROM ${this.executionsTable} e
-          WHERE e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
-            AND e.updated_at <= $1
-            AND (e.reconcile_lease_expires_at IS NULL OR e.reconcile_lease_expires_at <= now())
-          ORDER BY COALESCE(e.last_reconciled_at, '-infinity'::timestamptz), e.updated_at, e.run_id
-          FOR UPDATE SKIP LOCKED
-          LIMIT $2
-       ), claimed AS (
-         UPDATE ${this.executionsTable} e
-            SET last_reconciled_at=now(),
-                reconcile_lease_id=$3,
-                reconcile_lease_expires_at=now() + interval '30 seconds'
-           FROM candidates c
-          WHERE e.run_id=c.run_id
-          RETURNING e.run_id, e.id AS execution_id, e.session_id, e.status, e.reconcile_lease_id
-       )
-       SELECT c.run_id, c.execution_id, c.session_id, c.status, c.reconcile_lease_id,
-              o.status AS dispatch_status
-         FROM claimed c
-         LEFT JOIN ${this.executionOutboxTable} o ON o.run_id=c.run_id`,
-      [staleBefore, Math.max(1, Math.min(500, Math.floor(limit))), leaseId],
-    );
-    return result.rows.map(rowToExecutionReconcileCandidate);
+  claimExecutionReconcileCandidates(staleBefore: Date, limit: number, leaseId: string) {
+    return claimExecutionReconcileCandidates(this, staleBefore, limit, leaseId);
   }
 
   async setExecutionStatus(

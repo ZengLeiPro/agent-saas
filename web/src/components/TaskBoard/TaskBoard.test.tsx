@@ -267,8 +267,10 @@ describe("TaskBoardView", () => {
     await user.type(comment, "已完成首轮验证");
     await user.click(screen.getByRole("button", { name: "发表" }));
 
-    await waitFor(() => expect(mocks.addComment).toHaveBeenCalledWith({ body: "已完成首轮验证" }));
-    expect(mocks.refreshTasks).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(mocks.addComment).toHaveBeenCalledWith({ body: "已完成首轮验证" });
+      expect(mocks.refreshTasks).toHaveBeenCalled();
+    });
   }, 15_000);
 
   it("拖拽时传相邻任务，409 后显示回滚重拉提示", async () => {

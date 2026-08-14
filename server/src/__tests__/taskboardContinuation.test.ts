@@ -442,6 +442,7 @@ describe('任务看板评论续跑', () => {
         if (statement.includes("author_type IN ('agent', 'system')")) return { rows: [] };
         if (statement.includes('continuation_run_id=$2')) return { rows: [{ id: comments[1]!.id }] };
         if (statement.includes("status IN ('queued', 'running', 'waiting_user', 'waiting_approval')")) return { rows: [] };
+        if (statement.includes('e.finished_at=t.updated_at')) return { rows: [{ '?column?': 1 }] };
         if (statement.includes('SELECT t.*')) return { rows: [taskRow] };
         return { rows: [] };
       }),

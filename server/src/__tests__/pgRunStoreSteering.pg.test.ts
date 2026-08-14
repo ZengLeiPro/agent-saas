@@ -131,4 +131,70 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       metadata: { steeringState: 'cancelled' },
     });
   });
+
+  it('apply 与停止并发时按 target 优先顺序完成且不死锁', async () => {
+    await store.upsertPending({
+      runId: 'target-concurrent-run',
+      sessionId: 'session-concurrent',
+      userId: 'user-1',
+      model: 'gpt-5.5',
+      channel: 'web',
+    });
+    await store.markStatus('target-concurrent-run', 'running');
+    await store.enqueueSteeringAware({
+      runId: 'source-concurrent-run',
+      sessionId: 'session-concurrent',
+      userId: 'user-1',
+      model: 'gpt-5.5',
+      channel: 'web',
+      metadata: {
+        taskboardContinuation: true,
+        wakeMessage: { channel: 'web', chatId: 'session-concurrent', content: '并发追加要求' },
+      },
+    });
+    await expect(store.reserveSteeringInputs('target-concurrent-run', ['source-concurrent-run']))
+      .resolves.toEqual(['source-concurrent-run']);
+
+    const blocker = await pool.connect();
+    let blockerOpen = false;
+    try {
+      await blocker.query('BEGIN');
+      blockerOpen = true;
+      await blocker.query(`SELECT run_id FROM ${prefix}_runs WHERE run_id=$1 FOR UPDATE`, ['source-concurrent-run']);
+
+      const apply = store.markSteeringInputsApplied('target-concurrent-run', ['source-concurrent-run']);
+      await waitForBlockedQuery(pool, `%SELECT run_id, status%FROM ${prefix}_runs%`);
+      const stop = store.cancelSteeringBeforeDispatchBySession(
+        'session-concurrent', 'target cancelled', 'target-concurrent-run',
+      );
+      await waitForBlockedQuery(pool, '%WHERE session_id=$1 AND run_id=$2%');
+
+      await blocker.query('COMMIT');
+      blockerOpen = false;
+      await expect(Promise.all([apply, stop])).resolves.toEqual([['source-concurrent-run'], []]);
+    } finally {
+      if (blockerOpen) await blocker.query('ROLLBACK').catch(() => undefined);
+      blocker.release();
+    }
+
+    await expect(store.get('source-concurrent-run')).resolves.toMatchObject({
+      status: 'completed',
+      metadata: { steeringState: 'applied' },
+    });
+    await expect(store.get('target-concurrent-run')).resolves.toMatchObject({ status: 'cancelled' });
+  });
 });
+
+async function waitForBlockedQuery(pool: InstanceType<typeof Pool>, queryPattern: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const result = await pool.query(
+      `SELECT count(*)::int AS count FROM pg_stat_activity
+        WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE $1`,
+      [queryPattern],
+    );
+    if (Number(result.rows[0]?.count ?? 0) >= 1) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`等待数据库锁竞争超时：${queryPattern}`);
+}

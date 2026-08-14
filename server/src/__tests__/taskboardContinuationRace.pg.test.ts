@@ -111,6 +111,43 @@ describePg('Taskboard continuation PostgreSQL race contract', () => {
 
     expect(await store.getTask(alice, task.id)).toMatchObject({ status: 'in_review' });
   });
+
+  it('用户在原 Execution 失败后主动保持 blocked 时续跑成功不覆盖该状态', async () => {
+    const board = await store.createBoard(alice, { name: '续跑尊重用户阻塞' });
+    const task = await store.createTask(alice, board.id, { title: '用户主动阻塞', status: 'todo' });
+    await store.claimExecution(alice, task.id, {
+      expectedVersion: task.version, executionId: 'execution-user-block', runId: 'run-user-block-original',
+      sessionId: 'session-user-block', executionOwnerUserId: alice.ownerUserId,
+      dispatch: dispatch('execution-user-block', 'run-user-block-original', 'session-user-block'),
+    });
+    await store.setExecutionStatus('run-user-block-original', 'running');
+    const comment = await store.createComment(alice, task.id, { body: '完成后仍需人工确认' });
+    const payload: TaskboardContinuationDispatchPayload = dispatch(
+      'continuation-user-block-placeholder', 'run-user-block-continuation', 'session-user-block',
+    );
+    payload.run.idempotencyKey = `taskboard-comment:${comment.id}`;
+    payload.run.metadata = {
+      taskboardContinuation: true, taskboardTaskId: task.id, taskboardCommentId: comment.id,
+    };
+    await store.enqueueContinuation(
+      task.id, [comment.id], 'run-user-block-continuation', comment.id, payload,
+    );
+    await store.completeExecution('run-user-block-original', {
+      status: 'cancelled', error: '原执行已取消', commentBody: 'Agent 执行已取消\n\n原执行已取消',
+    });
+    const systemBlocked = await store.getTask(alice, task.id);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await store.moveTask(alice, task.id, {
+      expectedVersion: systemBlocked.version,
+      status: 'blocked',
+    });
+
+    await store.completeContinuation(task.id, 'run-user-block-continuation', {
+      status: 'succeeded', commentBody: 'Agent 交付\n\n续跑成功',
+    });
+
+    expect(await store.getTask(alice, task.id)).toMatchObject({ status: 'blocked' });
+  });
 });
 
 async function waitForBlockedQueries(pool: InstanceType<typeof Pool>, table: string): Promise<void> {

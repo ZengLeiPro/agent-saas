@@ -246,8 +246,18 @@ export function completeContinuation(
     );
 
     const targetStatus = input.status === 'succeeded' ? 'in_review' : 'blocked';
-    const shouldMoveTask = loaded.task.status === 'in_progress'
-      || (input.status === 'succeeded' && loaded.task.status === 'blocked');
+    const blockedByExecution = input.status === 'succeeded' && loaded.task.status === 'blocked'
+      ? Boolean((await client.query(
+        `SELECT 1
+           FROM ${host.executionsTable} e
+           JOIN ${host.tasksTable} t ON t.id=e.task_id
+          WHERE e.task_id=$1 AND e.status IN ('failed', 'cancelled')
+            AND e.finished_at=t.updated_at
+          LIMIT 1`,
+        [taskId],
+      )).rows[0])
+      : false;
+    const shouldMoveTask = loaded.task.status === 'in_progress' || blockedByExecution;
     if (shouldMoveTask && !activeExecution.rows[0]) {
       const sortOrder = await nextTaskColumnSortOrder(
         host,

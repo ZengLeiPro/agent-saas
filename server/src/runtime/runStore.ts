@@ -850,7 +850,6 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async cancelSteeringBeforeDispatchBySession(
     sessionId: string,
     reason: string,
@@ -862,6 +861,7 @@ export class PgRunStore implements RunStore {
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
         `${this.runsTable}:steering:${sessionId}`,
       ]);
+      if (targetRunId) await client.query(`SELECT run_id FROM ${this.runsTable} WHERE session_id=$1 AND run_id=$2 FOR UPDATE`, [sessionId, targetRunId]);
       const now = new Date().toISOString();
       await client.query(`
         INSERT INTO ${this.steeringSessionsTable} (session_id, stopped_at)

@@ -426,6 +426,10 @@ describe('PgRunStore steering inbox', () => {
     await expect(store.cancelSteeringBeforeDispatchBySession('session-1', 'aborted', 'target-run'))
       .resolves.toEqual([expect.objectContaining({ sourceRunId: 'source-reserved', state: 'reserved' })]);
     expect(queries.some((sql) => sql.includes('pg_advisory_xact_lock'))).toBe(true);
+    const targetLockIndex = queries.findIndex((sql) => sql.includes('WHERE session_id=$1 AND run_id=$2'));
+    const steeringLockIndex = queries.findIndex((sql) => sql.includes('FOR UPDATE OF input, source'));
+    expect(targetLockIndex).toBeGreaterThan(-1);
+    expect(targetLockIndex).toBeLessThan(steeringLockIndex);
     expect(queries.filter((sql) => sql.includes("state IN ('pending', 'reserved')"))).toHaveLength(2);
     const sourceUpdate = queries.find((sql) => sql.includes('UPDATE runtime_runs') && sql.includes("'steeringState', 'released'"));
     const targetUpdate = queries.find((sql) => sql.includes("status = 'cancelled'"));

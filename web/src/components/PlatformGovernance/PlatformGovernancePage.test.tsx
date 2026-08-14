@@ -38,6 +38,7 @@ describe("PlatformOrganizationGovernance", () => {
     mocks.updateScope.mockResolvedValue({ changeId: "change-scope-1", auditId: "audit-scope-1", effectiveAt: "2026-08-10T10:00:01.000Z", projectionStatus: "pending", projectionId: "projection-scope-1" });
     mocks.getTenantLifecycle.mockResolvedValue({
       tenantId: "tenant-a",
+      tenantName: "测试组织",
       status: "active",
       updatedAt: "2026-08-10T10:00:00.000Z",
       allowedActions: [{ id: "suspend", label: "暂停组织", action: "suspend", requiresReason: true }],
@@ -46,10 +47,11 @@ describe("PlatformOrganizationGovernance", () => {
       previewId: `tlpv1.${"c".repeat(64)}`,
       baselineDigest: "d".repeat(64),
       expiresAt: "2099-08-10T10:05:00.000Z",
-      impact: { tenantId: "tenant-a", from: "active", to: "suspended", blockers: [], reversible: true, effectiveMode: "immediate" },
+      impact: { tenantId: "tenant-a", from: "active", to: "suspended", affectedResources: [{ type: "membership", id: "user-1", version: 2 }], blockers: [], reversible: true, effectiveMode: "immediate" },
     });
     mocks.updateTenantLifecycle.mockResolvedValue({
       tenantId: "tenant-a",
+      tenantName: "测试组织",
       status: "suspended",
       updatedAt: "2026-08-10T10:00:01.000Z",
       changeId: "change-lifecycle-1",
@@ -120,12 +122,14 @@ describe("PlatformOrganizationGovernance", () => {
     mocks.getTenantLifecycle
       .mockResolvedValueOnce({
         tenantId: "tenant-a",
+        tenantName: "测试组织",
         status: "active",
         updatedAt: "2026-08-10T10:00:00.000Z",
         allowedActions: [{ id: "suspend", label: "暂停组织", action: "suspend", requiresReason: true }],
       })
       .mockResolvedValue({
         tenantId: "tenant-a",
+        tenantName: "测试组织",
         status: "suspended",
         updatedAt: "2026-08-10T10:00:01.000Z",
         allowedActions: [{ id: "resume", label: "恢复组织", action: "resume", requiresReason: true }],
@@ -136,7 +140,10 @@ describe("PlatformOrganizationGovernance", () => {
     fireEvent.click(screen.getByRole("button", { name: "暂停组织" }));
 
     expect(await screen.findByText(/启用 → 已暂停 · 可逆/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    expect(screen.getByText("确认暂停组织：测试组织")).toBeTruthy();
+    expect(screen.getByText(/成员后续登录和新执行请求将被拒绝/)).toBeTruthy();
+    expect(screen.getByText(/user-1/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "确认暂停组织" }));
     await waitFor(() => expect(mocks.updateTenantLifecycle).toHaveBeenCalledWith("tenant-a", expect.objectContaining({
       action: "suspend",
       reason: "测试组织暂停验收",
@@ -166,10 +173,10 @@ describe("PlatformOrganizationGovernance", () => {
         previewId: `tlpv1.${"c".repeat(64)}`,
         baselineDigest: "d".repeat(64),
         expiresAt: "2099-08-10T10:05:00.000Z",
-        impact: { tenantId: "tenant-a", from: "active", to: "suspended", blockers: [], reversible: true, effectiveMode: "immediate" },
+        impact: { tenantId: "tenant-a", from: "active", to: "suspended", affectedResources: [{ type: "membership", id: "user-1", version: 2 }], blockers: [], reversible: true, effectiveMode: "immediate" },
       });
     });
-    expect(await screen.findByRole("button", { name: "确认执行" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "确认暂停组织" })).toBeTruthy();
   });
 
   it("生命周期提交冲突显示服务端原因且不制造成功回执", async () => {
@@ -178,7 +185,7 @@ describe("PlatformOrganizationGovernance", () => {
 
     fireEvent.change(await screen.findByPlaceholderText("填写操作原因"), { target: { value: "并发冲突测试" } });
     fireEvent.click(screen.getByRole("button", { name: "暂停组织" }));
-    fireEvent.click(await screen.findByRole("button", { name: "确认执行" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认暂停组织" }));
 
     expect(await screen.findByText("Tenant lifecycle baseline changed")).toBeTruthy();
     expect(screen.queryByText("变更回执")).toBeNull();

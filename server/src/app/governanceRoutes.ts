@@ -12,6 +12,27 @@ import { createOAuthGrantReconciler } from './runtimeOAuthGrantReconciler.js';
 
 const scheduledOffboardingRuntimes = new WeakSet<AppRuntime>();
 
+export async function resolveRuntimeTenantLifecycleImpact(
+  runtime: Pick<AppRuntime, 'tenantStore' | 'membershipStore'>,
+  tenantId: string,
+  action: 'suspend' | 'resume',
+) {
+  if (!runtime.tenantStore || !runtime.membershipStore) {
+    throw new Error('Tenant lifecycle impact authority unavailable');
+  }
+  const tenant = runtime.tenantStore.findById(tenantId);
+  if (!tenant) throw new Error('Tenant not found');
+  const memberships = await runtime.membershipStore.listMemberships(tenantId);
+  const affectedResources = memberships
+    .filter(membership => membership.status === 'active')
+    .map(membership => ({ type: 'membership', id: membership.userId, version: membership.version }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const blockers = action === 'suspend' && runtime.tenantStore.activeCount() <= 1
+    ? ['不能暂停最后一个启用组织']
+    : [];
+  return { affectedResources, blockers };
+}
+
 export function registerGovernanceRoutes(
   app: Express,
   runtime: AppRuntime,
@@ -91,6 +112,9 @@ export function registerGovernanceRoutes(
       } : {}),
       ...(runtime.tenantStore ? {
         getTenantLifecycle: (tenantId: string) => runtime.tenantStore!.findById(tenantId),
+        resolveDependencyImpact: input => input.kind === 'tenant' && input.action
+          ? resolveRuntimeTenantLifecycleImpact(runtime, input.tenantId, input.action)
+          : Promise.reject(new Error('Dependency impact authority unavailable')),
         setTenantDisabled: async (tenantId: string, disabled: boolean, actorUserId: string) => {
           const tenant = await runtime.tenantStore!.setDisabled(tenantId, disabled, actorUserId);
           if (disabled) options.webChannel?.disconnectTenant(tenantId);

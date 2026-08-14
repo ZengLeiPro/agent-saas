@@ -33,6 +33,7 @@ interface PlatformAdminRecord { userId: string; status: string; source: string; 
 interface PlatformAdminResponse { platformAdmins: PlatformAdminRecord[] }
 interface TenantLifecycleResponse {
   tenantId: string;
+  tenantName: string;
   status: "active" | "suspended";
   updatedAt: string;
   allowedActions: Array<{ id: string; label: string; action: "suspend" | "resume"; requiresReason: boolean }>;
@@ -52,7 +53,15 @@ interface TenantLifecyclePreview extends GovernancePreviewToken {
   previewId: string;
   baselineDigest: string;
   expiresAt: string;
-  impact: { tenantId: string; from: string; to: string; blockers: string[]; reversible: boolean; effectiveMode: string };
+  impact: {
+    tenantId: string;
+    from: string;
+    to: string;
+    affectedResources?: Array<{ type: string; id: string; version: number }>;
+    blockers: string[];
+    reversible: boolean;
+    effectiveMode: string;
+  };
 }
 
 const statusLabels: Record<string, string> = {
@@ -100,6 +109,8 @@ const resourceTypeLabels: Record<string, string> = {
   environment: "环境",
   environment_template: "环境模板",
   tool: "工具",
+  membership: "成员身份",
+  tenant: "组织",
 };
 
 function localizedValue(value: string | null | undefined, labels: Record<string, string>) {
@@ -150,12 +161,34 @@ function TenantLifecyclePanel({ tenantId }: { tenantId: string }) {
     } catch (cause) { setMutationError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
   };
+  const affectedResources = preview?.impact.affectedResources ?? [];
+  const visibleResources = affectedResources.slice(0, 10);
   return <div className="space-y-4">
-    <div className="grid gap-3 sm:grid-cols-3"><Fact label="状态" value={localizedValue(data.status, statusLabels)} /><Fact label="更新时间" value={new Date(data.updatedAt).toLocaleString()} /><Fact label="组织 ID" value={data.tenantId} /></div>
+    <div className="grid gap-3 sm:grid-cols-3"><Fact label="状态" value={localizedValue(data.status, statusLabels)} /><Fact label="目标组织" value={data.tenantName} /><Fact label="组织 ID" value={data.tenantId} /></div>
     {action ? <Input value={reason} onChange={event => { setReason(event.target.value); setPreview(null); setReceipt(null); }} placeholder="填写操作原因" /> : null}
     {mutationError ? <div className="rounded-xl border border-destructive/30 p-3 text-sm text-destructive">{mutationError}</div> : null}
     {receipt ? <Receipt value={receipt} /> : null}
-    {preview ? <div className="rounded-xl border bg-card p-4"><div className="text-sm">{localizedValue(preview.impact.from, statusLabels)} → {localizedValue(preview.impact.to, statusLabels)} · {preview.impact.reversible ? "可逆" : "不可逆"}</div><div className="mt-1 text-xs text-muted-foreground">生效方式：{localizedValue(preview.impact.effectiveMode, effectiveModeLabels)} · 基线 {preview.baselineDigest.slice(0, 12)}… · 有效期至 {new Date(preview.expiresAt).toLocaleString()}</div>{preview.impact.blockers.length ? <div className="mt-2 rounded border border-destructive/30 p-2 text-xs text-destructive">阻断：{preview.impact.blockers.join("、")}</div> : null}<Button className="mt-3" disabled={busy || preview.impact.blockers.length > 0 || Date.parse(preview.expiresAt) <= Date.now()} onClick={() => void commit()}>确认执行</Button></div> : action ? <Button disabled={busy || reason.trim().length < 3} onClick={() => void runPreview()}>{action.label}</Button> : <Empty>后端未返回可执行动作。</Empty>}
+    {preview ? <div className="space-y-3 rounded-xl border bg-card p-4">
+      <div>
+        <div className="font-medium">确认{action?.action === "suspend" ? "暂停" : "恢复"}组织：{data.tenantName}</div>
+        <div className="mt-1 text-sm">{localizedValue(preview.impact.from, statusLabels)} → {localizedValue(preview.impact.to, statusLabels)} · {preview.impact.reversible ? "可逆" : "不可逆"}</div>
+      </div>
+      <div className="rounded-lg bg-muted/50 p-3 text-xs">
+        {action?.action === "suspend" ? <ul className="list-disc space-y-1 pl-4">
+          <li>成员后续登录和新执行请求将被拒绝，现有 Web 连接会断开。</li>
+          <li>组织、成员、会话与历史数据均会保留，不执行删除或清理。</li>
+          <li>恢复组织后，成员可按原有权限重新访问。</li>
+        </ul> : <div>恢复后解除组织级访问与执行限制，不修改成员权限或历史数据。</div>}
+      </div>
+      <div className="text-xs text-muted-foreground">生效方式：{localizedValue(preview.impact.effectiveMode, effectiveModeLabels)} · 基线 {preview.baselineDigest.slice(0, 12)}… · 有效期至 {new Date(preview.expiresAt).toLocaleString()}</div>
+      <div className="text-xs">
+        <div className="font-medium">权威影响资源（{affectedResources.length}）</div>
+        {visibleResources.length ? <ul className="mt-1 space-y-1 text-muted-foreground">{visibleResources.map(resource => <li key={`${resource.type}:${resource.id}`}>{localizedValue(resource.type, resourceTypeLabels)}：<code>{resource.id}</code> · v{resource.version}</li>)}</ul> : <div className="mt-1 text-muted-foreground">当前没有活动成员身份受影响。</div>}
+        {affectedResources.length > visibleResources.length ? <div className="mt-1 text-muted-foreground">另有 {affectedResources.length - visibleResources.length} 项未展开。</div> : null}
+      </div>
+      {preview.impact.blockers.length ? <div className="rounded border border-destructive/30 p-2 text-xs text-destructive">阻断：{preview.impact.blockers.join("、")}</div> : null}
+      <Button disabled={busy || preview.impact.blockers.length > 0 || Date.parse(preview.expiresAt) <= Date.now()} onClick={() => void commit()}>确认{action?.action === "suspend" ? "暂停" : "恢复"}组织</Button>
+    </div> : action ? <Button disabled={busy || reason.trim().length < 3} onClick={() => void runPreview()}>{action.label}</Button> : <Empty>后端未返回可执行动作。</Empty>}
   </div>;
 }
 

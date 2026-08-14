@@ -119,7 +119,7 @@ export const scopePreviewSchema = z.object({
   impact: z.object({ tenantId: z.string(), resourceType: z.string(), currentVersion: z.number().int().nonnegative(), nextVersion: z.number().int().positive(), from: z.object({ mode: z.string(), resourceCount: z.number().int().nonnegative() }).strict(), to: z.object({ mode: z.string(), resourceCount: z.number().int().nonnegative() }).strict(), affectedResources: z.array(affectedResourceSchema).optional(), blockers: z.array(z.string()), reversible: z.boolean(), effectiveMode: z.string() }).strict(),
 }).strict();
 export const lifecycleResponseSchema = z.object({
-  tenantId: z.string(), status: z.enum(['active', 'suspended']), updatedAt: z.string(),
+  tenantId: z.string(), tenantName: z.string(), status: z.enum(['active', 'suspended']), updatedAt: z.string(),
   allowedActions: z.array(actionSchema),
 }).strict();
 export const lifecyclePreviewSchema = z.object({

@@ -188,7 +188,7 @@ export function createGovernanceAccessRouter(deps: {
     accountStatus: 'active' | 'disabled'; dingtalkBound: boolean; createdAt: string; updatedAt: string;
   } | null;
   getMemberBudgetOverview?: (tenantId: string, userId: string) => Promise<BillingMemberBudgetOverview>;
-  getTenantLifecycle?: (tenantId: string) => { id: string; disabled?: boolean; updatedAt: string } | undefined;
+  getTenantLifecycle?: (tenantId: string) => { id: string; name?: string; disabled?: boolean; updatedAt: string } | undefined;
   setTenantDisabled?: (tenantId: string, disabled: boolean, actorUserId: string) => Promise<{ id: string; disabled?: boolean; updatedAt: string }>;
   audit: GovernanceAuditStore;
   contentAccess?: PgContentAccessGrantStore;
@@ -744,7 +744,7 @@ export function createGovernanceAccessRouter(deps: {
     personaFor: req => personas.get(req),
     ...(deps.getTenantLifecycle ? { getTenant: deps.getTenantLifecycle } : {}),
     ...(deps.setTenantDisabled ? { setTenantDisabled: deps.setTenantDisabled } : {}),
-    ...(deps.resolveDependencyImpact ? { dependencyImpact: (tenantId: string) => tenantDependencyImpact(deps.resolveDependencyImpact!, tenantId) } : {}),
+    ...(deps.resolveDependencyImpact ? { dependencyImpact: (tenantId, action) => tenantDependencyImpact(deps.resolveDependencyImpact!, tenantId, action) } : {}),
   });
 
   router.get('/directory-groups', async (req, res) => {

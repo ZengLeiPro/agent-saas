@@ -53,7 +53,7 @@ async function rig(input: {
   listEntitlementResources?: (resourceType: string) => Promise<{ status: 'valid'; items: Array<{ resourceId: string; version: number }> } | { status: 'unavailable' }>;
   oauthGrants?: { listForSubject(tenantId: string, subjectUserId: string): Promise<unknown[]>; getForSubject?: ReturnType<typeof vi.fn>; markRevocationPending?: ReturnType<typeof vi.fn>; markProviderRevoking?: ReturnType<typeof vi.fn>; markProviderRevoked?: ReturnType<typeof vi.fn>; markRevocationRetry?: ReturnType<typeof vi.fn>; recordRevocation?: ReturnType<typeof vi.fn> };
   revokeOAuthGrant?: (grant: OAuthGrant, user: JwtPayload) => Promise<void>;
-  tenantLifecycle?: { id: string; disabled?: boolean; updatedAt: string };
+  tenantLifecycle?: { id: string; name?: string; disabled?: boolean; updatedAt: string };
   setTenantDisabled?: (
     tenantId: string, disabled: boolean, actorUserId: string,
   ) => Promise<{ id: string; disabled?: boolean; updatedAt: string }>;
@@ -317,7 +317,7 @@ describe('governance access routes', () => {
     });
     const lifecycle = await test.request('/api/governance/access/tenant-lifecycle?tenantId=tenant-a');
     expect(await lifecycle.json()).toMatchObject({
-      status: 'active', allowedActions: [{ id: 'suspend', action: 'suspend', requiresReason: true }],
+      tenantName: 'tenant-a', status: 'active', allowedActions: [{ id: 'suspend', action: 'suspend', requiresReason: true }],
     });
     const change = { action: 'suspend', reason: 'customer security incident' };
     const previewResponse = await test.request(

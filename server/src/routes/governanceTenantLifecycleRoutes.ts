@@ -17,7 +17,7 @@ const commitSchema = z.object({
   expiresAt: z.string().datetime({ offset: true }),
 }).strict();
 
-type TenantLifecycleRecord = { id: string; disabled?: boolean; updatedAt: string };
+type TenantLifecycleRecord = { id: string; name?: string; disabled?: boolean; updatedAt: string };
 
 function sign(secret: string, input: Record<string, unknown>): string {
   return createHmac('sha256', secret).update(governanceDigest(input)).digest('hex');
@@ -41,7 +41,7 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
     disabled: boolean,
     actorUserId: string,
   ) => Promise<TenantLifecycleRecord>;
-  dependencyImpact?: (tenantId: string) => Promise<{
+  dependencyImpact?: (tenantId: string, action: 'suspend' | 'resume') => Promise<{
     affectedResources: Array<{ type: string; id: string; version: number }>; blockers: string[];
   }>;
 }): void {
@@ -56,7 +56,7 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
     if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
     const status = tenant.disabled ? 'suspended' : 'active';
     return res.json({
-      tenantId: tenant.id, status, updatedAt: tenant.updatedAt,
+      tenantId: tenant.id, tenantName: tenant.name ?? tenant.id, status, updatedAt: tenant.updatedAt,
       allowedActions: tenant.id === PLATFORM_TENANT_ID ? [] : [{
         id: status === 'active' ? 'suspend' : 'resume',
         label: status === 'active' ? '暂停组织' : '恢复组织',
@@ -83,9 +83,12 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
       return res.status(409).json({ error: 'Tenant lifecycle transition conflict', code: 'TENANT_LIFECYCLE_TRANSITION_CONFLICT' });
     }
     if (!options.dependencyImpact) return res.status(503).json({ error: 'Dependency impact authority unavailable', code: 'DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE' });
-    const dependencyImpact = await options.dependencyImpact(tenantId).catch(() => null);
+    const dependencyImpact = await options.dependencyImpact(tenantId, parsed.data.action).catch(() => null);
     if (!dependencyImpact) return res.status(503).json({ error: 'Dependency impact authority unavailable', code: 'DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE' });
-    const baselineDigest = governanceDigest({ tenantId, status: currentStatus, updatedAt: tenant.updatedAt });
+    const baselineDigest = governanceDigest({
+      tenantId, status: currentStatus, updatedAt: tenant.updatedAt,
+      affectedResources: dependencyImpact.affectedResources, blockers: dependencyImpact.blockers,
+    });
     const expiresAt = new Date(options.now().getTime() + options.previewTtlMs).toISOString();
     const signature = {
       version: 1, actorUserId: req.user!.sub, tenantId,
@@ -123,8 +126,23 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
     }
     const tenant = options.getTenant(tenantId);
     const status = tenant?.disabled ? 'suspended' : 'active';
-    if (!tenant || governanceDigest({ tenantId, status, updatedAt: tenant.updatedAt }) !== parsed.data.baselineDigest) {
+    if (!tenant) {
       return res.status(409).json({ error: 'Tenant lifecycle baseline changed', code: 'TENANT_LIFECYCLE_BASELINE_CONFLICT' });
+    }
+    const dependencyImpact = await options.dependencyImpact(tenantId, parsed.data.action).catch(() => null);
+    if (!dependencyImpact) return res.status(503).json({ error: 'Dependency impact authority unavailable', code: 'DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE' });
+    const currentBaselineDigest = governanceDigest({
+      tenantId, status, updatedAt: tenant.updatedAt,
+      affectedResources: dependencyImpact.affectedResources, blockers: dependencyImpact.blockers,
+    });
+    if (currentBaselineDigest !== parsed.data.baselineDigest) {
+      return res.status(409).json({ error: 'Tenant lifecycle impact or baseline changed', code: 'TENANT_LIFECYCLE_BASELINE_CONFLICT' });
+    }
+    if (dependencyImpact.blockers.length > 0) {
+      return res.status(409).json({
+        error: `Tenant lifecycle transition blocked: ${dependencyImpact.blockers.join('; ')}`,
+        code: 'TENANT_LIFECYCLE_BLOCKED', blockers: dependencyImpact.blockers,
+      });
     }
     try {
       const updated = await options.setTenantDisabled(tenantId, parsed.data.action === 'suspend', req.user!.sub);

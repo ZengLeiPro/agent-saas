@@ -9,6 +9,7 @@ import type { ExecuteUserOffboarding } from './governanceOffboarding.js';
 import type { AppRuntime } from './runtime.js';
 import { createAssignmentResourceResolver, createEntitlementResourceCatalogResolver, createEntitlementResourceResolver } from './runtimeAssignmentResourceResolver.js';
 import { createOAuthGrantReconciler } from './runtimeOAuthGrantReconciler.js';
+import { createTenantSkillGovernanceUpload } from '../services/tenantSkillGovernanceUpload.js';
 
 const scheduledOffboardingRuntimes = new WeakSet<AppRuntime>();
 
@@ -123,6 +124,16 @@ export function registerGovernanceRoutes(
       memberships: runtime.membershipStore,
       agents: runtime.agentResourceStore,
       skills: runtime.skillGovernanceStore,
+      ...(runtime.skillConfigStore && runtime.userStore ? {
+        importTenantSkill: createTenantSkillGovernanceUpload({
+          skills: runtime.skillGovernanceStore,
+          skillConfigStore: runtime.skillConfigStore,
+          userStore: runtime.userStore,
+          agentCwd: runtime.agentCwd,
+          sharedDir: runtime.sharedDir,
+          tenantSkillsRootDir: runtime.tenantSkillsRootDir,
+        }),
+      } : {}),
       connectors: runtime.connectorCatalogStore,
       credentials: runtime.credentialStore,
       environments: runtime.environmentStore,

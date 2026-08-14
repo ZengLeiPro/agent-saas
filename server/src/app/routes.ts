@@ -894,6 +894,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           sharedDir,
           tenantSkillsRootDir: runtime.tenantSkillsRootDir,
           skillMaterialization: runtime.skillMaterialization,
+          skillGovernanceStore: runtime.skillGovernanceStore,
           legacyWriteGate,
         }),
       );

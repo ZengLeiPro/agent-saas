@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { AccessDecision, EffectiveResourceView, ExecutionReadiness } from '../types/governance';
+import type { GovernanceSkillImportResponse } from '../types/skill';
 import {
   accessDecisionSchema,
   assertGovernanceUiSafe,
@@ -248,6 +249,17 @@ export const governanceResourcesApi = {
     request<T>(`${RESOURCE_BASE}/agents/${id(agentId)}/status`, body('PATCH', command)),
   archiveAgent: <T = unknown>(agentId: string, command: GovernanceCommand) =>
     request<T>(`${RESOURCE_BASE}/agents/${id(agentId)}/archive`, body('POST', command)),
+  importTenantSkillPackage: (tenantId: string, files: File[]) => {
+    const formData = new FormData();
+    for (const file of files) {
+      const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+      formData.append('files', file, relativePath);
+    }
+    return request<GovernanceSkillImportResponse>(
+      withQuery(`${RESOURCE_BASE}/skills/import`, { tenantId }),
+      { method: 'POST', body: formData },
+    );
+  },
   createSkill: <T = unknown>(command: GovernanceCommand) => request<T>(`${RESOURCE_BASE}/skills`, body('POST', command)),
   publishSkillVersion: <T = unknown>(skillId: string, command: GovernanceCommand) =>
     request<T>(`${RESOURCE_BASE}/skills/${id(skillId)}/versions`, body('POST', command)),

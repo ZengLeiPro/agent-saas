@@ -181,6 +181,42 @@ export class PgSkillGovernanceStore {
     return rowToResource(result.rows[0]);
   }
 
+  async createAndPublishResource(input: {
+    skillId: string;
+    tenantId: string;
+    scope: GovernedSkillResource['scope'];
+    ownerUserId?: string;
+    definition: Record<string, unknown>;
+    createdBy: string;
+  }): Promise<{ resource: GovernedSkillResource; version: GovernedSkillVersion; created: true }> {
+    if (!ID_PATTERN.test(input.skillId) || !ID_PATTERN.test(input.tenantId)
+      || (input.scope === 'personal' && !input.ownerUserId?.trim())) {
+      throw new SkillGovernanceInvariantError(
+        input.scope === 'personal' ? 'SKILL_PERSONAL_OWNER_REQUIRED' : 'SKILL_RESOURCE_INVALID',
+      );
+    }
+    assertGovernedSkillDefinitionSafe(input.definition);
+    return this.withTransaction(async client => {
+      const resourceResult = await client.query(`
+        INSERT INTO ${this.resourcesTable} (
+          skill_id,tenant_id,scope,owner_user_id,status,created_by,updated_by
+        ) VALUES ($1,$2,$3,$4,'draft',$5,$5)
+        ON CONFLICT (skill_id) DO NOTHING RETURNING *
+      `, [input.skillId, input.tenantId, input.scope, input.ownerUserId ?? null, input.createdBy]);
+      if (!resourceResult.rows[0]) {
+        throw new SkillGovernanceInvariantError('SKILL_RESOURCE_VERSION_CONFLICT');
+      }
+      const published = await this.publishVersionInTransaction(client, {
+        skillId: input.skillId,
+        expectedRevision: Number(resourceResult.rows[0].revision),
+        definition: input.definition,
+        publishedBy: input.createdBy,
+        expectedTenantId: input.tenantId,
+      });
+      return { ...published, created: true as const };
+    });
+  }
+
   async publishVersion(input: {
     tenantId: string;
     skillId: string;

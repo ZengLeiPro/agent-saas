@@ -24,6 +24,7 @@ import { requireAdmin, requirePlatformAdmin, isPlatformAdmin } from '../auth/mid
 import { hasPlatformCapability } from '../auth/platformGovernance.js';
 import { auditLog } from '../data/login-logs/index.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
+import type { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
 import type { PlatformSkillConfig, TenantSkillRule } from '../data/skills/types.js';
 import {
   scanPoolSkillsAsync,
@@ -52,6 +53,7 @@ export interface SkillsRouterDeps {
   sharedDir: string;
   tenantSkillsRootDir?: string;
   skillMaterialization?: SkillMaterializationCoordinator;
+  skillGovernanceStore?: Pick<PgSkillGovernanceStore, 'getResource' | 'getVersion'>;
   legacyWriteGate?: {
     assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
   };
@@ -65,6 +67,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     sharedDir,
     tenantSkillsRootDir,
     skillMaterialization,
+    skillGovernanceStore,
   } = deps;
   const router = Router();
 
@@ -110,6 +113,23 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       ...await getPoolSkillIds(),
       ...Object.keys(skillConfigStore.getPoolVisibility()),
     ]);
+  }
+
+  async function governedTenantSkillView(resourceId: string, tenantId: string) {
+    const resource = await skillGovernanceStore?.getResource(resourceId);
+    if (!resource || resource.tenantId !== tenantId || resource.scope !== 'tenant') return undefined;
+    const version = resource.currentVersionId
+      ? await skillGovernanceStore?.getVersion(resource.currentVersionId)
+      : undefined;
+    return {
+      resourceId: resource.skillId,
+      tenantId: resource.tenantId,
+      scope: resource.scope,
+      status: resource.status,
+      version: version?.versionNumber,
+      source: typeof version?.definition.source === 'string' ? version.definition.source : undefined,
+      createdBy: resource.createdBy,
+    };
   }
 
   /**
@@ -1026,13 +1046,21 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     const tenantId = resolveAdminTargetTenantId(req, res, req.params.tenantId);
     if (!tenantId) return;
     try {
-      const skills = (await scanUserCustomSkillsAsync(
+      const scanned = await scanUserCustomSkillsAsync(
         tenantSkillsDirFor(tenantId),
         await getPoolSkillIds(),
-      )).map(s => {
-        const rule = skillConfigStore.getTenantOwnSkillRule(tenantId, s.id);
-        return { ...s, enabled: rule.enabled, exposure: rule.exposure, usernames: rule.usernames };
-      });
+      );
+      const skills = await Promise.all(scanned.map(async (skill) => {
+        const rule = skillConfigStore.getTenantOwnSkillRule(tenantId, skill.id);
+        const governance = await governedTenantSkillView(skill.id, tenantId);
+        return {
+          ...skill,
+          enabled: rule.enabled,
+          exposure: rule.exposure,
+          usernames: rule.usernames,
+          ...(governance ? { governance } : {}),
+        };
+      }));
       res.json({ tenantId, skills });
     } catch (err) {
       serverLogger.error(`GET /tenants/${tenantId}/skills error: ${err}`);

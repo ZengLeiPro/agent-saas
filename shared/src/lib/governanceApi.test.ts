@@ -237,6 +237,37 @@ describe('governanceApi fail closed', () => {
     })).resolves.toMatchObject({ changeId: 'change-1', canCommit: true });
   });
 
+  it('组织 Skill 上传使用治理 multipart 入口并透传明确失败原因', async () => {
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      status: 'succeeded',
+      skill: { id: 'managed-skill', name: 'managed-skill', description: 'managed' },
+      resource: {
+        skillId: 'managed-skill', tenantId: 'tenant-a/managed', scope: 'tenant', status: 'published',
+        currentVersionId: 'skillv-1', revision: 2, createdBy: 'platform-1',
+      },
+      version: { versionId: 'skillv-1', skillId: 'managed-skill', versionNumber: 1, digest: 'digest-1' },
+    }));
+    const file = new File(['content'], 'SKILL.md', { type: 'text/markdown' });
+    Object.defineProperty(file, 'webkitRelativePath', { value: 'managed-skill/SKILL.md' });
+
+    await expect(governanceResourcesApi.importTenantSkillPackage('tenant-a/managed', [file]))
+      .resolves.toMatchObject({ status: 'succeeded', version: { versionNumber: 1 } });
+    expect(mockAuthFetch).toHaveBeenCalledWith(
+      '/api/governance/resources/skills/import?tenantId=tenant-a%2Fmanaged',
+      expect.objectContaining({ method: 'POST', body: expect.any(FormData) }),
+    );
+    const request = mockAuthFetch.mock.calls[0]?.[1];
+    expect(request?.headers).toBeUndefined();
+    expect((request?.body as FormData).get('files')).toMatchObject({ name: 'managed-skill/SKILL.md' });
+
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({
+      code: 'SKILL_VERSION_CONFLICT', error: '技能版本已存在',
+    }, 409));
+    await expect(governanceResourcesApi.importTenantSkillPackage('tenant-a', [file]))
+      .rejects.toMatchObject({ code: 'SKILL_VERSION_CONFLICT', status: 409, message: '技能版本已存在' });
+  });
+
   it('当前治理 endpoint 同样拒绝泄漏敏感字段', async () => {
     mockAuthFetch.mockResolvedValue(jsonResponse({ tenantId: 'tenant-1', secretRef: 'vault://x' }));
     await expect(governanceAccessApi.getEntitlements()).rejects.toMatchObject({

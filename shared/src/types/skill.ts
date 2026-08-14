@@ -1,4 +1,14 @@
 /** Skill 基本信息（pool 和自建共用） */
+export interface SkillGovernanceInfo {
+  resourceId: string;
+  tenantId: string;
+  scope: 'tenant';
+  status: 'draft' | 'published' | 'retired';
+  version?: number;
+  source?: string;
+  createdBy: string;
+}
+
 export interface SkillInfo {
   id: string;
   name: string;
@@ -30,7 +40,9 @@ export interface PoolSkillInfo extends SkillInfo, PlatformSkillSettings {
 export interface TenantSkillInfo extends SkillInfo, TenantSkillSettings {}
 
 /** 租户自有 skill（存于 tenants/<tenantId>/skills/）+ 治理规则 */
-export interface TenantOwnSkillInfo extends SkillInfo, TenantSkillSettings {}
+export interface TenantOwnSkillInfo extends SkillInfo, TenantSkillSettings {
+  governance?: SkillGovernanceInfo;
+}
 
 /** 用户视角的 skill（含选中状态和来源） */
 export interface UserSkillInfo extends SkillInfo {
@@ -82,6 +94,30 @@ export interface CustomSkillsResponse {
 export interface SkillImportResponse {
   ok: true;
   skill: SkillInfo;
+}
+
+export interface GovernanceSkillImportResponse extends SkillImportResponse {
+  status: 'succeeded';
+  resource: {
+    skillId: string;
+    tenantId: string;
+    scope: 'tenant';
+    status: 'published';
+    currentVersionId: string;
+    revision: number;
+    createdBy: string;
+  };
+  version: {
+    versionId: string;
+    skillId: string;
+    versionNumber: number;
+    digest: string;
+  };
+  auditCompletion?: 'pending';
+  auditProjectionId?: string;
+  changeId?: string;
+  auditId?: string;
+  effectiveAt?: string;
 }
 
 

@@ -309,12 +309,13 @@ describe('PgRunStore steering inbox', () => {
     expect(targetQuery).not.toContain('waiting_approval');
   });
 
-  it('recovers legacy sources stuck behind waiting_user targets via listRecoverable (2026-08-04)', async () => {
-    // 存量自愈：NOT EXISTS 的目标状态条件同步收窄后，挂在 waiting_user 目标上的
-    // pending source 立即回到可恢复集合、作为独立 run 执行。
+  it('recovers pending and reserved sources after their steering target becomes terminal', async () => {
+    // pending/reserved 都只在目标仍活跃时阻止 source recovery；目标失败后 source
+    // 回到可恢复集合，并用 durable user_message 作为独立 run 执行。
     const pool = {
       query: vi.fn(async (sql: string) => {
-        expect(sql).toContain(`AND target.status IN ('pending','running','waiting_hand')`);
+        expect(sql.match(/AND target\.status IN \('pending','running','waiting_hand'\)/g)).toHaveLength(1);
+        expect(sql).toContain("input.state = 'reserved'\n                AND target.status NOT IN ('completed','failed','cancelled','orphaned')");
         expect(sql).not.toContain(`'waiting_user','waiting_hand'`);
         return { rows: [] };
       }),
@@ -404,7 +405,7 @@ describe('PgRunStore steering inbox', () => {
     expect(queries.at(-1)).toBe('COMMIT');
   });
 
-  it('releases pending steering rows when the source run falls back to standalone execution (2026-08-04 BUG-5)', async () => {
+  it('releases pending or reserved steering rows when the source run falls back to standalone execution', async () => {
     const queries: string[] = [];
     const pool = {
       query: vi.fn(async (sql: string) => {
@@ -415,6 +416,7 @@ describe('PgRunStore steering inbox', () => {
     const store = new PgRunStore({ pool: pool as any });
     await store.releasePendingSteeringForSourceRun('source-run');
     expect(queries.some((sql) => sql.includes("SET state = 'released'"))).toBe(true);
+    expect(queries.some((sql) => sql.includes("state IN ('pending', 'reserved')"))).toBe(true);
     expect(queries.some((sql) => sql.includes("'steeringState', 'released'"))).toBe(true);
   });
 });

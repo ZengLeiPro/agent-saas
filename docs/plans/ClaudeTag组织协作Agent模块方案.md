@@ -1133,3 +1133,18 @@ Agent 执行 workspace 可以持久，但持久不等于可信。DWS 因 CLI 约
 5. 最后做共享记忆、主动监控和组织级运营。
 
 独立成员账号比默认机器人更符合“组织里的数字员工”：它有可见身份、自己的聊天关系和独立权限。真正壁垒仍不是头像像不像员工，而是把这个身份做成可治理的 Agent principal，并确保它不会成为群成员借道扩权的万能账号。
+
+---
+
+## 19. 2026-08-14 实施状态
+
+当前分支已经落地基础聊天闭环：
+
+- Agent typed DWS principal、独立模型 workspace 与独立 connector credential workspace；
+- Agent DWS Account、OAuth、Personal Stream supervisor；
+- governance schema v20 durable inbox、conversation binding、lease/fencing、重试与死信；
+- `event_id` 幂等、同会话顺序门禁、稳定 Session 与确定性 Runtime run id；
+- 组织 Agent dispatch、崩溃后从 EventStore 恢复最终文本；
+- DWS current-user 引用回复和 `--uuid` 幂等，超过 24 小时窗口不盲目重发。
+
+本轮实现的 Binding 粒度仍是 `account + conversation → Session`，足以验证私聊与群 `@` 的基础连续会话，但**尚未完成**方案中更高阶的群任务/thread 拆分、Requester 平台成员绑定与权限交集、钉钉内审批/AskUserQuestion 卡片、文件和流式卡片回复。真实钉钉账号 OAuth、PAT 与 Personal Stream 仍必须在发布后用测试账号实测，不能用单元测试代替。

@@ -460,7 +460,7 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
     <div className="space-y-5">
       <SettingsPanelHeader
         title="Agent 钉钉成员账号"
-        description="为组织 Agent 绑定独立钉钉成员身份，并管理 OAuth 与 Personal Stream。"
+        description="为组织 Agent 绑定独立钉钉成员身份，并管理 OAuth、Personal Stream 与会话回复。"
         actions={(
           <>
             <Button variant="outline" size="sm" onClick={() => void refreshAccounts()} disabled={loading}>
@@ -506,7 +506,7 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
       <Card>
         <CardHeader className="pb-3">
           <CardTitle>成员账号</CardTitle>
-          <CardDescription>每个账号只服务于一个组织 Agent，授权后通过 Personal Stream 接收消息事件。</CardDescription>
+          <CardDescription>每个账号只服务于一个组织 Agent；授权后，消息会持久路由到该 Agent 的会话，并以成员身份回复。</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (

@@ -13,7 +13,7 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('Governance Schema V19 PostgreSQL 升级、约束与事务回滚', () => {
+describePg('Governance Schema V20 PostgreSQL 升级、约束与事务回滚', () => {
   const prefix = `govv17_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   let pool: InstanceType<typeof Pool>;
 
@@ -45,7 +45,7 @@ describePg('Governance Schema V19 PostgreSQL 升级、约束与事务回滚', ()
     }
   }, 30_000);
 
-  it('V17 中途失败回滚到 V16，重试升级到 V19 并建立 Agent DWS 账号约束与八类 outbox trigger', async () => {
+  it('V17 中途失败回滚到 V16，重试升级到 V20 并建立 Agent DWS 账号约束与八类 outbox trigger', async () => {
     let injected = false;
     const failingPool = {
       connect: async () => {
@@ -90,7 +90,7 @@ describePg('Governance Schema V19 PostgreSQL 升级、约束与事务回滚', ()
       `SELECT version FROM ${prefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 19 }, (_, index) => index + 1),
+      Array.from({ length: 20 }, (_, index) => index + 1),
     );
     const v18Tables = await pool.query<{ name: string | null }>(
       `SELECT to_regclass($1) AS name UNION ALL SELECT to_regclass($2) UNION ALL SELECT to_regclass($3) UNION ALL SELECT to_regclass($4)`,
@@ -303,7 +303,7 @@ describePg('Governance Schema V19 PostgreSQL 升级、约束与事务回滚', ()
     const retried = await pool.query<{ version: number }>(
       `SELECT MAX(version) AS version FROM ${v18Prefix}_governance_schema_versions`,
     );
-    expect(Number(retried.rows[0]?.version)).toBe(18);
+    expect(Number(retried.rows[0]?.version)).toBe(20);
     const unresolvedAfter = await pool.query<{ is_nullable: string; column_default: string }>(`
       SELECT is_nullable,column_default FROM information_schema.columns
       WHERE table_schema=current_schema() AND table_name=$1 AND column_name='unresolved_items_json'

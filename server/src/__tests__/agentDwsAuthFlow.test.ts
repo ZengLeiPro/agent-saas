@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentDwsAuthFlowService } from '../dws/agentAuthFlow.js';
 import type { DwsAuthSessionRecord, DwsAuthSessionStore } from '../dws/authStore.js';
 import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
-import { resolveAgentCwd } from '../workspace/resolver.js';
+import { resolveAgentConnectorCwd } from '../workspace/resolver.js';
 
 const account: AgentDwsAccountRecord = {
   accountId: 'adws-1', tenantId: 'tenant-a', agentId: 'oa-sales',
@@ -64,7 +64,10 @@ describe('AgentDwsAuthFlowService', () => {
   it('用发起授权时的 tenant/account/revision CAS 写入授权终态', async () => {
     root = await mkdtemp(join(tmpdir(), 'agent-dws-auth-'));
     const agentCwd = join(root, 'workspaces');
-    const profileDir = join(resolveAgentCwd(agentCwd, account.tenantId, account.agentId), '.dws/config');
+    const profileDir = join(
+      resolveAgentConnectorCwd(agentCwd, account.tenantId, account.agentId, 'dws'),
+      '.dws/config',
+    );
     await mkdir(profileDir, { recursive: true });
     await writeFile(join(profileDir, 'profiles.json'), JSON.stringify({
       profiles: [{ corpId: 'corp-a', corpName: '示例企业', userId: 'ding-user-a', userName: '销售数字员工' }],

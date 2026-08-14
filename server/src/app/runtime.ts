@@ -172,7 +172,10 @@ import { PgDwsAuthSessionStore } from '../dws/authStore.js';
 import { DwsAuthFlowService, DwsDeviceLoginRunner, type DwsWorkspacePrincipal } from '../dws/authFlow.js';
 import { AgentDwsAuthFlowService } from '../dws/agentAuthFlow.js';
 import { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
+import { DwsPersonalMessageSender } from '../dws/personalMessageSender.js';
+import { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
 import type { PgAgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
+import type { PgAgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import {
   NotionAuthFlowService,
   NotionDeviceLoginRunner,
@@ -713,6 +716,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let dwsAuthFlowService: DwsAuthFlowService | undefined;
   let agentDwsAuthSessionStore: PgDwsAuthSessionStore | undefined;
   let agentDwsAuthFlowService: AgentDwsAuthFlowService | undefined;
+  let agentDwsMessageStore: PgAgentDwsMessageStore | undefined;
+  let agentDwsMessageRouter: AgentDwsMessageRouter | undefined;
   let dwsPersonalEventGateway: DwsPersonalEventGateway | undefined;
   let notionAuthSessionStore: PgDwsAuthSessionStore | undefined;
   let notionAuthFlowService: NotionAuthFlowService | undefined;
@@ -827,6 +832,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       environmentStore,
       agentResourceStore,
       agentDwsAccountStore,
+      agentDwsMessageStore,
       skillGovernanceStore,
       resolveLegacySkillResourceId,
       governanceChangeJobStore,
@@ -2986,14 +2992,29 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   }
 
   if (agentDwsAccountStore && agentDwsAuthSessionStore && (resolvedServerRemote || connectorAcsConfigured)) {
+    if (agentDwsMessageStore) {
+      agentDwsMessageRouter = new AgentDwsMessageRouter({
+        agentCwd,
+        messageStore: agentDwsMessageStore,
+        accountStore: agentDwsAccountStore,
+        dispatch: finalDispatch,
+        sender: new DwsPersonalMessageSender({
+          agentCwd,
+          resolveServerRemote: resolveConnectorServerRemote,
+          logger: serverLogger.child('DwsPersonalMessageSender'),
+        }),
+        ...(pgRunStore ? { runStore: pgRunStore } : {}),
+        ...(pgEventStore ? { eventStore: pgEventStore } : {}),
+        logger: serverLogger.child('AgentDwsMessageRouter'),
+      });
+    }
     dwsPersonalEventGateway = new DwsPersonalEventGateway({
       agentCwd,
       accountStore: agentDwsAccountStore,
       resolveServerRemote: resolveConnectorServerRemote,
       onEvent: async (account, event) => {
-        serverLogger.info(
-          `Agent DWS event received account=${account.accountId} type=${event.type} event=${event.eventId}`,
-        );
+        if (!agentDwsMessageRouter) throw new Error('Agent DWS durable inbox is unavailable');
+        await agentDwsMessageRouter.ingest(account, event);
       },
       logger: serverLogger.child('DwsPersonalEventGateway'),
     });
@@ -3002,10 +3023,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       authSessionStore: agentDwsAuthSessionStore,
       accountStore: agentDwsAccountStore,
       runner: new DwsDeviceLoginRunner({ agentCwd, resolveServerRemote: resolveConnectorServerRemote }),
-      onConnected: account => dwsPersonalEventGateway!.startAccount(account),
+      onConnected: account => enableSchedulerWorker
+        ? dwsPersonalEventGateway!.startAccount(account)
+        : Promise.resolve(),
       logger: serverLogger.child('AgentDwsAuthFlow'),
     });
     if (enableSchedulerWorker) {
+      agentDwsMessageRouter?.start();
       await dwsPersonalEventGateway.startAll().catch(error => {
         serverLogger.warn(`Agent DWS Personal Stream startup failed: ${error instanceof Error ? error.message : String(error)}`);
       });
@@ -3152,21 +3176,22 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     dwsConnectionStore,
     dwsAuthFlowService,
     agentDwsAccountStore,
+    agentDwsMessageStore,
     agentDwsAuthFlowService,
+    agentDwsMessageRouter,
     dwsPersonalEventGateway,
     notionAuthFlowService,
     getNotionConnection,
     disconnectNotionConnection,
     googleWorkspaceOAuthService,
     notionAuthFlowShutdown: notionAuthFlowService ? () => notionAuthFlowService?.stop() : undefined,
-    dwsAuthKeepaliveShutdown: dwsAuthKeepaliveService || dwsAuthFlowService || agentDwsAuthFlowService || dwsPersonalEventGateway
+    dwsAuthKeepaliveShutdown: dwsAuthKeepaliveService || dwsAuthFlowService || agentDwsAuthFlowService || agentDwsMessageRouter || dwsPersonalEventGateway
       ? async () => {
           dwsAuthFlowService?.stop();
           dwsAuthKeepaliveService?.stop();
-          await Promise.all([
-            agentDwsAuthFlowService?.stop(),
-            dwsPersonalEventGateway?.stop(),
-          ]);
+          await agentDwsAuthFlowService?.stop();
+          await dwsPersonalEventGateway?.stop();
+          await agentDwsMessageRouter?.stop();
         }
       : undefined,
     feishuConnectionStore,

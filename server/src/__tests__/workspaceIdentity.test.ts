@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { deriveAgentWorkspaceId, deriveStableWorkspaceId, parseWorkspaceId } from "../runtime/workspaceIdentity.js";
+import {
+  deriveAgentConnectorWorkspaceId,
+  deriveAgentWorkspaceId,
+  deriveStableWorkspaceId,
+  parseWorkspaceId,
+} from "../runtime/workspaceIdentity.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
-import { resolveAgentCwd, resolveUserCwd } from "../workspace/resolver.js";
+import { resolveAgentConnectorCwd, resolveAgentCwd, resolveUserCwd } from "../workspace/resolver.js";
 
 describe("deriveStableWorkspaceId", () => {
   it("derives a stable tenant/user workspace id", () => {
@@ -40,12 +45,19 @@ describe("deriveAgentWorkspaceId", () => {
     );
   });
 
-  it("does not parse Agent connector workspaces as real users", () => {
+  it("does not parse Agent or connector workspaces as real users", () => {
     expect(parseWorkspaceId(deriveAgentWorkspaceId("kaiyan", "oa-sales"))).toBeNull();
+    expect(parseWorkspaceId(deriveAgentConnectorWorkspaceId("kaiyan", "oa-sales", "dws"))).toBeNull();
   });
 
-  it("uses a separate physical directory tree from real users", () => {
+  it("separates model, connector, and real-user physical directory trees", () => {
     expect(resolveAgentCwd("/workspaces", "kaiyan", "oa-sales")).toBe("/workspaces/kaiyan/.agent-oa-sales");
+    expect(resolveAgentConnectorCwd("/workspaces", "kaiyan", "oa-sales", "dws")).toBe(
+      "/workspaces/kaiyan/.agent-connectors-oa-sales/dws",
+    );
+    expect(resolveAgentConnectorCwd("/workspaces", "kaiyan", "oa-sales", "dws")).not.toBe(
+      resolveAgentCwd("/workspaces", "kaiyan", "oa-sales"),
+    );
     expect(resolveAgentCwd("/workspaces", "kaiyan", "same-id")).not.toBe(
       resolveUserCwd("/workspaces", { id: "same-id", username: "same", role: "user", tenantId: "kaiyan" }),
     );

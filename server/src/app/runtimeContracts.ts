@@ -28,6 +28,8 @@ import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
+import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
+import type { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
 import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
 import type { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
 import type { PgGuardrailEventStore } from '../data/guardrail/pgGuardrailEventStore.js';
@@ -151,6 +153,10 @@ export interface AppRuntime {
   dwsAuthFlowService?: DwsAuthFlowServiceLike;
   /** 组织 Agent 专属钉钉成员账号治理记录，不与真人用户 DWS connection 混用。 */
   agentDwsAccountStore?: AgentDwsAccountStore;
+  /** Personal Stream durable inbox 与 conversation/session binding。 */
+  agentDwsMessageStore?: AgentDwsMessageStore;
+  /** durable inbox → 组织 Agent Session → current-user DWS 回复 worker。 */
+  agentDwsMessageRouter?: AgentDwsMessageRouter;
   /** Agent-owned DWS device flow，token 只进入 Agent connector workspace。 */
   agentDwsAuthFlowService?: AgentDwsAuthFlowServiceLike;
   /** DWS Personal Stream consumer supervisor。 */

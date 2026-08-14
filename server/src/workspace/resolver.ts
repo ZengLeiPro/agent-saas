@@ -72,10 +72,26 @@ export function resolveTenantCwd(globalAgentCwd: string, tenantSlug: string): st
   return join(globalAgentCwd, safe);
 }
 
-/** Agent 专属连接器工作区；使用独立目录层级，绝不与真人用户工作区重合。 */
+/** Agent 模型执行工作区；使用独立目录层级，绝不与真人用户工作区重合。 */
 export function resolveAgentCwd(globalAgentCwd: string, tenantId: string, agentId: string): string {
   const tenantSlug = TENANT_SLUG_PATTERN.test(tenantId) ? tenantId : DEFAULT_TENANT_ID;
   return join(globalAgentCwd, tenantSlug, `.agent-${safeUserPathSegment(agentId)}`);
+}
+
+/** Agent 连接器凭据工作区；模型执行 workspace 不挂载此目录。 */
+export function resolveAgentConnectorCwd(
+  globalAgentCwd: string,
+  tenantId: string,
+  agentId: string,
+  connectorId: string,
+): string {
+  const tenantSlug = TENANT_SLUG_PATTERN.test(tenantId) ? tenantId : DEFAULT_TENANT_ID;
+  return join(
+    globalAgentCwd,
+    tenantSlug,
+    `.agent-connectors-${safeUserPathSegment(agentId)}`,
+    safeUserPathSegment(connectorId),
+  );
 }
 
 /**

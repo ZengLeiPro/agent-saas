@@ -3,9 +3,8 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import { HttpTransport } from '../runtime/httpTransport.js';
-import { deriveAgentWorkspaceId } from '../runtime/workspaceIdentity.js';
-import { resolveAgentCwd } from '../workspace/resolver.js';
 import type { DwsWorkspacePrincipal } from './authFlow.js';
+import { deriveDwsPrincipalWorkspaceId, resolveDwsPrincipalCwd } from './authFlow.js';
 import { principalFor } from './agentAuthFlow.js';
 
 const EVENT_STREAM_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
@@ -163,10 +162,10 @@ export class DwsPersonalEventGateway {
         authToken: remote.authToken,
         invokeTimeoutMs: Math.max(remote.invokeTimeoutMs ?? 0, EVENT_STREAM_TIMEOUT_MS + 10_000),
       });
-      const root = resolveAgentCwd(this.options.agentCwd, account.tenantId, account.agentId);
+      const root = resolveDwsPrincipalCwd(this.options.agentCwd, principal);
       const mountSubPath = deriveWorkspaceMountSubPath(this.options.agentCwd, root);
-      if (!mountSubPath) throw new Error('无法解析 Agent DWS workspace 挂载路径');
-      const workspaceId = deriveAgentWorkspaceId(account.tenantId, account.agentId);
+      if (!mountSubPath) throw new Error('无法解析 Agent DWS connector workspace 挂载路径');
+      const workspaceId = deriveDwsPrincipalWorkspaceId(principal);
       const invocationId = `agent-dws-events-${randomUUID()}`;
       const command = eventCommand(account);
       let stdoutBuffer = '';

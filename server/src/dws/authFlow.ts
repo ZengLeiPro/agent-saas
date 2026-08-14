@@ -4,8 +4,8 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { UserInfo } from '../data/users/types.js';
 import { HttpTransport } from '../runtime/httpTransport.js';
 import type { ToolInvocationResponse } from '../runtime/handProtocol.js';
-import { deriveAgentWorkspaceId, deriveStableWorkspaceId } from '../runtime/workspaceIdentity.js';
-import { resolveAgentCwd, resolveUserCwd } from '../workspace/resolver.js';
+import { deriveAgentConnectorWorkspaceId, deriveStableWorkspaceId } from '../runtime/workspaceIdentity.js';
+import { resolveAgentConnectorCwd, resolveUserCwd } from '../workspace/resolver.js';
 import type {
   DwsAuthSessionIdentity,
   DwsAuthSessionRecord,
@@ -330,15 +330,15 @@ function identityFor(user: UserInfo): DwsAuthSessionIdentity {
 export function resolveDwsPrincipalCwd(agentCwd: string, principal: DwsWorkspacePrincipal): string {
   if (principal.principalType === 'agent') {
     if (!principal.agentId) throw new Error('Agent DWS principal 缺少 agentId');
-    return resolveAgentCwd(agentCwd, principal.tenantId, principal.agentId);
+    return resolveAgentConnectorCwd(agentCwd, principal.tenantId, principal.agentId, 'dws');
   }
   return resolveUserCwd(agentCwd, principal);
 }
 
-function deriveDwsPrincipalWorkspaceId(principal: DwsWorkspacePrincipal): string {
+export function deriveDwsPrincipalWorkspaceId(principal: DwsWorkspacePrincipal): string {
   if (principal.principalType === 'agent') {
     if (!principal.agentId) throw new Error('Agent DWS principal 缺少 agentId');
-    return deriveAgentWorkspaceId(principal.tenantId, principal.agentId);
+    return deriveAgentConnectorWorkspaceId(principal.tenantId, principal.agentId, 'dws');
   }
   return deriveStableWorkspaceId(principal, `dws-${principal.id}`);
 }

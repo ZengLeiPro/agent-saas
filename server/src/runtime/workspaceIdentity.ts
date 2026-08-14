@@ -30,6 +30,15 @@ export function deriveAgentWorkspaceId(tenantId: string, agentId: string): strin
   return `ws_${safeTenantId}__agent_${safeUserIdSegment(agentId)}`;
 }
 
+export function deriveAgentConnectorWorkspaceId(
+  tenantId: string,
+  agentId: string,
+  connectorId: string,
+): string {
+  const safeTenantId = TENANT_SLUG_PATTERN.test(tenantId) ? tenantId : DEFAULT_TENANT_ID;
+  return `ws_${safeTenantId}__agent_connector_${safeUserIdSegment(agentId)}_${safeUserIdSegment(connectorId)}`;
+}
+
 function safeUserIdSegment(userId: string): string {
   if (
     USER_ID_SEGMENT_PATTERN.test(userId)

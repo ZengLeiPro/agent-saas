@@ -68,6 +68,23 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     return { record: mapInboxRow(row), created: booleanValue(row.created) };
   }
 
+  async listForAccount(
+    tenantId: string,
+    accountId: string,
+    limit = 50,
+  ): Promise<AgentDwsInboxRecord[]> {
+    assertTexts(tenantId, accountId);
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const result = await this.pool.query(`
+      SELECT *
+      FROM ${this.inboxTable}
+      WHERE tenant_id=$1 AND account_id=$2
+      ORDER BY created_at DESC,inbox_id DESC
+      LIMIT $3
+    `, [tenantId, accountId, boundedLimit]);
+    return result.rows.map((row: Record<string, unknown>) => mapInboxRow(row));
+  }
+
   async claimNext(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null> {
     assertOwnerFence(owner, 1, false);
     if (!Number.isInteger(ttlMs) || ttlMs < 1 || ttlMs > MAX_LEASE_TTL_MS) {

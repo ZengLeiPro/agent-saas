@@ -353,9 +353,14 @@ export class AgentDwsMessageRouter {
         resultText = result.resultText;
       },
     });
-    const consumed = await createEventConsumer().consume(events, {});
+    let dispatchError: string | undefined;
+    const consumed = await createEventConsumer().consume(events, {
+      onError: error => { dispatchError = compactError(error); },
+    });
     if (abortController.signal.aborted) throw new Error('Agent DWS runtime dispatch aborted');
-    if (consumed.hasError) throw new Error('Agent DWS runtime dispatch failed');
+    if (consumed.hasError) {
+      throw new Error(`Agent DWS runtime dispatch failed: ${dispatchError ?? 'unknown_error'}`);
+    }
     if (consumed.sessionId && consumed.sessionId !== sessionId) {
       throw new Error('Agent DWS runtime returned an unexpected session');
     }

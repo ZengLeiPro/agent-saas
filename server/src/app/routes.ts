@@ -246,8 +246,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
 
   app.use('/api/agent-dws-accounts', requireAdmin);
   app.use('/api', createAgentDwsAccountsRouter({
-    accountStore: runtime.agentDwsAccountStore, authFlowService: runtime.agentDwsAuthFlowService,
-    eventGateway: runtime.dwsPersonalEventGateway, auditStore: runtime.governanceAuditStore }));
+    accountStore: runtime.agentDwsAccountStore, messageStore: runtime.agentDwsMessageStore,
+    authFlowService: runtime.agentDwsAuthFlowService, eventGateway: runtime.dwsPersonalEventGateway,
+    auditStore: runtime.governanceAuditStore }));
   // 飞书单轨连接状态：浏览器/PG 只接触非敏感元数据；用户 token 与官方 CLI
   // 加密 keychain 始终保存在其独立 NAS workspace 的 .lark-cli/ 内。
   app.use("/api", createFeishuRouter({

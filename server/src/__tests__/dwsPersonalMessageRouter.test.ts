@@ -57,6 +57,7 @@ function setup(input: {
   const messageStore = {
     init: vi.fn(),
     ingest: vi.fn(),
+    listForAccount: vi.fn().mockResolvedValue([]),
     claimNext: vi.fn().mockResolvedValue(claimed),
     renewLease: vi.fn().mockResolvedValue(true),
     getOrCreateBinding: vi.fn().mockResolvedValue({
@@ -197,6 +198,22 @@ describe('AgentDwsMessageRouter', () => {
     );
     expect(sender.send).toHaveBeenCalledWith(
       account, expect.any(Object), '从 EventStore 恢复的回复', expect.any(String),
+    );
+  });
+
+  it('persists the concrete runtime error for inbox diagnostics', async () => {
+    const dispatch = vi.fn(() => (async function* () {
+      yield { type: 'error' as const, error: '该企业专家已被停用或删除，请联系组织管理员' };
+    })());
+    const { router, messageStore, sender } = setup({ dispatch });
+
+    await expect(router.runOnce()).resolves.toBe(false);
+
+    expect(sender.send).not.toHaveBeenCalled();
+    expect(messageStore.fail).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1, expect.objectContaining({
+        message: expect.stringContaining('该企业专家已被停用或删除'),
+      }),
     );
   });
 

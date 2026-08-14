@@ -22,7 +22,45 @@ export async function restoreRuntimeSessionForWake(
   run: RunRecord,
 ): Promise<RuntimeSessionRecord | null> {
   const existing = await catalog.get(run.sessionId);
-  if (existing) return existing;
+  if (existing) {
+    const durableIdentity = {
+      userId: stringValue(run.userId),
+      tenantId: stringValue(run.tenantId),
+      username: stringValue(run.metadata.username),
+      channel: stringValue(run.channel),
+      orgAgentId: stringValue(run.metadata.orgAgentId),
+    };
+    assertCompatibleIdentity('userId', existing.userId, durableIdentity.userId);
+    assertCompatibleIdentity('tenantId', existing.tenantId, durableIdentity.tenantId);
+    assertCompatibleIdentity('username', existing.username, durableIdentity.username);
+    assertCompatibleIdentity('channel', existing.channel, durableIdentity.channel);
+    assertCompatibleIdentity('orgAgentId', existing.orgAgentId, durableIdentity.orgAgentId);
+
+    const repaired: RuntimeSessionRecord = {
+      ...existing,
+      userId: existing.userId || durableIdentity.userId || '',
+      username: existing.username || durableIdentity.username || '',
+      channel: existing.channel || durableIdentity.channel || '',
+      ...(!existing.tenantId && durableIdentity.tenantId ? { tenantId: durableIdentity.tenantId } : {}),
+      ...(!existing.orgAgentId && durableIdentity.orgAgentId ? { orgAgentId: durableIdentity.orgAgentId } : {}),
+    };
+    const changed = repaired.userId !== existing.userId
+      || repaired.username !== existing.username
+      || repaired.channel !== existing.channel
+      || repaired.tenantId !== existing.tenantId
+      || repaired.orgAgentId !== existing.orgAgentId;
+    if (!changed) return existing;
+    const updatedAt = new Date().toISOString();
+    if (catalog.backfillIdentity) {
+      return catalog.backfillIdentity(run.sessionId, {
+        ...durableIdentity,
+        updatedAt,
+      });
+    }
+    repaired.updatedAt = updatedAt;
+    await catalog.upsert(repaired);
+    return repaired;
+  }
 
   const metadata = run.metadata;
   const cwd = stringValue(metadata.cwd);
@@ -75,6 +113,16 @@ function profileBinding(value: unknown): Partial<RuntimeSessionRecord> {
     profileBindingKey: profileBindingKey as AgentProfileBindingKey,
     profileResolution: profileResolution as 'database' | 'builtin' | 'compatibility',
   };
+}
+
+function assertCompatibleIdentity(
+  field: string,
+  existing: string | undefined,
+  durable: string | undefined,
+): void {
+  if (existing && durable && existing !== durable) {
+    throw new Error(`WAKE_SESSION_IDENTITY_CONFLICT:${field}`);
+  }
 }
 
 function stringValue(value: unknown): string | undefined {

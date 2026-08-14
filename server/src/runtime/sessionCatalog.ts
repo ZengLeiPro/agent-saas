@@ -4,6 +4,8 @@ import {
   writeSessionMeta,
   writeSessionMetaIfAbsent,
   updateSessionMeta,
+  backfillSessionIdentity,
+  type SessionIdentityBackfill,
   type SessionMeta,
 } from '../data/transcripts/meta.js';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
@@ -43,6 +45,10 @@ export interface RuntimeSessionRecord extends Partial<AgentProfileSessionBinding
 
 export interface SessionCatalog {
   upsert(record: RuntimeSessionRecord): Promise<void>;
+  backfillIdentity?(
+    sessionId: string,
+    identity: SessionIdentityBackfill,
+  ): Promise<RuntimeSessionRecord | null>;
   ensure(record: RuntimeSessionRecord): Promise<void>;
   get(sessionId: string): Promise<RuntimeSessionRecord | null>;
   markStatus(sessionId: string, status: RuntimeSessionStatus): Promise<void>;
@@ -63,6 +69,16 @@ export class FileSessionCatalog implements SessionCatalog {
   async upsert(record: RuntimeSessionRecord): Promise<void> {
     const existing = await readSessionMeta(record.transcriptPath);
     await writeSessionMeta(record.transcriptPath, this.toMeta(record, existing));
+  }
+
+  async backfillIdentity(
+    sessionId: string,
+    identity: SessionIdentityBackfill,
+  ): Promise<RuntimeSessionRecord | null> {
+    const transcriptPath = await this.findTranscriptPath(sessionId);
+    if (!transcriptPath) return null;
+    const meta = await backfillSessionIdentity(transcriptPath, identity);
+    return meta ? this.toRecord(sessionId, transcriptPath, meta) : null;
   }
 
   async ensure(record: RuntimeSessionRecord): Promise<void> {

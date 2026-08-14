@@ -369,6 +369,66 @@ describePg('PgTaskboardStore contract', () => {
     )).toEqual([]);
   });
 
+  it('续跑先成功、原 Execution 后取消的并发顺序最终保持待复核', async () => {
+    const board = await store.createBoard(alice, { name: '续跑取消竞态' });
+    const task = await store.createTask(alice, board.id, { title: '并发释放续跑', status: 'todo' });
+    await store.claimExecution(alice, task.id, {
+      expectedVersion: task.version, executionId: 'execution-race', runId: 'run-race-original',
+      sessionId: 'session-race', executionOwnerUserId: alice.ownerUserId,
+      dispatch: dispatch('execution-race', 'run-race-original', 'session-race'),
+    });
+    await store.setExecutionStatus('run-race-original', 'running');
+    const comment = await store.createComment(alice, task.id, { body: '释放后独立续跑' });
+    const payload: TaskboardContinuationDispatchPayload = dispatch(
+      'continuation-race-placeholder',
+      'run-race-continuation',
+      'session-race',
+    );
+    payload.run.idempotencyKey = `taskboard-comment:${comment.id}`;
+    payload.run.metadata = {
+      taskboardContinuation: true, taskboardTaskId: task.id, taskboardCommentId: comment.id,
+    };
+    await store.enqueueContinuation(
+      task.id, [comment.id], 'run-race-continuation', comment.id, payload,
+    );
+    await store.claimContinuationDispatch('run-race-continuation', 'race-dispatch-lease');
+    await store.markContinuationDispatchSucceeded('run-race-continuation', 'race-dispatch-lease');
+
+    const blocker = await pool.connect();
+    let blockerOpen = false;
+    try {
+      await blocker.query('BEGIN');
+      blockerOpen = true;
+      await blocker.query(
+        `SELECT run_id FROM ${store.continuationOutboxTable} WHERE run_id=$1 FOR UPDATE`,
+        ['run-race-continuation'],
+      );
+      const continuationCompletion = store.completeContinuation(task.id, 'run-race-continuation', {
+        status: 'succeeded',
+        commentBody: 'Agent 交付\n\n续跑已成功',
+      });
+      await waitForBlockedQueries(pool, store.continuationOutboxTable, 1);
+      const originalCancellation = store.completeExecution('run-race-original', {
+        status: 'cancelled',
+        error: '原执行已取消',
+        commentBody: 'Agent 执行已取消\n\n原执行已取消',
+      });
+      await waitForBlockedQueries(pool, store.boardsTable, 1);
+      await blocker.query('COMMIT');
+      blockerOpen = false;
+      await Promise.all([continuationCompletion, originalCancellation]);
+    } finally {
+      if (blockerOpen) await blocker.query('ROLLBACK').catch(() => undefined);
+      blocker.release();
+    }
+
+    expect(await store.getTask(alice, task.id)).toMatchObject({ status: 'in_review' });
+    expect(await store.listComments(alice, task.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ authorId: 'run-race-continuation', authorType: 'agent' }),
+      expect.objectContaining({ authorId: 'run-race-original', authorType: 'system' }),
+    ]));
+  });
+
   it('backfills legacy continuation rows once and blocks archive while continuation is active', async () => {
     const board = await store.createBoard(alice, { name: '续跑迁移补偿' });
     const task = await store.createTask(alice, board.id, { title: '迁移旧续跑', status: 'todo' });
@@ -719,3 +779,19 @@ describePg('PgTaskboardStore contract', () => {
     expect(inProgress.map((task) => task.id)).toEqual([third.id, appended.id, second.id]);
   });
 });
+
+async function waitForBlockedQueries(
+  pool: InstanceType<typeof Pool>, table: string, count: number,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const result = await pool.query(
+      `SELECT count(*)::int AS count FROM pg_stat_activity
+        WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE $1`,
+      [`%${table}%`],
+    );
+    if (Number(result.rows[0]?.count ?? 0) >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`等待数据库锁竞争超时：${table}`);
+}

@@ -110,10 +110,7 @@ export async function loadContinuationContext(
   const continuationRunId = commentResult.rows[0].continuation_run_id
     ? String(commentResult.rows[0].continuation_run_id)
     : undefined;
-  const continuationExecution = continuationRunId
-    ? executions.find((execution) => execution.runId === continuationRunId)
-    : undefined;
-  const [pendingResult, activeContinuationResult] = await Promise.all([
+  const [pendingResult, activeContinuationResult, continuationExecution] = await Promise.all([
     host.pool.query(
       `SELECT c.* FROM ${host.commentsTable} c
         WHERE c.task_id=$1 AND c.author_type='user' AND c.continuation_eligible=true
@@ -127,6 +124,9 @@ export async function loadContinuationContext(
         WHERE task_id=$1 AND status<>'completed' LIMIT 1`,
       [taskId],
     ),
+    continuationRunId
+      ? loadTaskExecutionByRunId(host, identity, taskId, continuationRunId)
+      : Promise.resolve(null),
   ]);
   return {
     task,
@@ -173,6 +173,31 @@ export function markContinuationRunning(
     );
     return loadAccessibleTask(host, loaded.identity, taskId, client);
   });
+}
+
+export async function hasSuccessfulContinuationSince(
+  host: TaskboardContinuationStoreHost,
+  client: PoolClient,
+  taskId: string,
+  since: string | Date,
+): Promise<boolean> {
+  const result = await client.query(
+    `SELECT 1
+       FROM ${host.continuationOutboxTable} o
+       JOIN ${host.commentsTable} source
+         ON source.id=o.comment_id AND source.task_id=o.task_id
+      WHERE o.task_id=$1 AND o.status='completed'
+        AND source.author_type='user' AND source.continuation_run_id=o.run_id
+        AND source.created_at >= $2::timestamptz
+        AND EXISTS (
+          SELECT 1 FROM ${host.commentsTable} receipt
+           WHERE receipt.task_id=o.task_id AND receipt.author_id=o.run_id
+             AND receipt.author_type='agent'
+        )
+      LIMIT 1`,
+    [taskId, since],
+  );
+  return Boolean(result.rows[0]);
 }
 
 export function completeContinuation(
@@ -266,6 +291,25 @@ export async function loadExecutionModelContext(
   );
   if (!result.rows[0]) throw new TaskboardNotFoundError('Task not found');
   return rowToExecutionModelContext(result.rows[0]);
+}
+
+async function loadTaskExecutionByRunId(
+  host: TaskboardContinuationStoreHost,
+  identity: TaskboardIdentity,
+  taskId: string,
+  runId: string,
+): Promise<TaskBoardExecution | null> {
+  const result = await host.pool.query(
+    `SELECT e.*
+       FROM ${host.executionsTable} e
+       JOIN ${host.tasksTable} t ON t.id=e.task_id
+       JOIN ${host.boardsTable} b ON b.id=t.board_id
+      WHERE e.task_id=$1 AND e.run_id=$2
+        AND b.tenant_id=$3 AND (b.owner_user_id=$4 OR b.visibility='organization')
+      LIMIT 1`,
+    [taskId, runId, identity.tenantId, identity.ownerUserId],
+  );
+  return result.rows[0] ? rowToExecution(result.rows[0]) : null;
 }
 
 export async function listTaskExecutions(

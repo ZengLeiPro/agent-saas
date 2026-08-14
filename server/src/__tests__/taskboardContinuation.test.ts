@@ -9,7 +9,11 @@ import { createExecutionConfig } from '../runtime/executionConfig.js';
 import type { RunRecord } from '../runtime/runStore.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { EventStore } from '../runtime/types.js';
-import { completeContinuation, markContinuationRunning } from '../taskboard/continuationStore.js';
+import {
+  completeContinuation,
+  loadContinuationContext,
+  markContinuationRunning,
+} from '../taskboard/continuationStore.js';
 import { TaskboardExecutionCoordinator } from '../taskboard/executionService.js';
 import {
   TaskboardValidationError,
@@ -209,6 +213,54 @@ describe('任务看板评论续跑', () => {
     expect(rig.runStore.get).not.toHaveBeenCalled();
     expect(rig.store.completeContinuation).not.toHaveBeenCalled();
     expect(rig.scheduler.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('评论绑定超过最近 50 条的正式 Execution 时仍按 runId 精确命中', async () => {
+    const historicalRunId = 'execution-run-historical';
+    const taskRow = {
+      id: task.id, board_id: task.boardId, identifier: task.identifier, title: task.title,
+      description: task.description, status: task.status, priority: task.priority, labels: [],
+      sort_order: task.sortOrder, comment_count: task.commentCount, version: task.version,
+      created_at: task.createdAt, updated_at: task.updatedAt,
+    };
+    const commentRow = {
+      id: comments[1]!.id, task_id: task.id, body: comments[1]!.body, attachments: [],
+      author_type: 'user', author_id: identity.ownerUserId, author_name: identity.username,
+      continuation_eligible: true, continuation_run_id: historicalRunId, version: 1,
+      created_at: comments[1]!.createdAt, updated_at: comments[1]!.updatedAt,
+    };
+    const executionRow = (index: number, runId = `execution-run-${index}`) => ({
+      id: `execution-${index}`, task_id: task.id, run_id: runId,
+      session_id: activeExecution.sessionId, status: 'succeeded', purpose: 'work',
+      requested_by: identity.ownerUserId,
+      created_at: `2026-08-02T${String(index % 24).padStart(2, '0')}:00:00.000Z`,
+      updated_at: `2026-08-02T${String(index % 24).padStart(2, '0')}:00:00.000Z`,
+    });
+    const pool = {
+      query: vi.fn(async (statement: string) => {
+        if (statement.includes('SELECT t.*') && statement.includes('comment_count')) return { rows: [taskRow] };
+        if (statement.includes('WHERE c.id=$1')) return { rows: [commentRow] };
+        if (statement.includes('e.run_id=$2')) return { rows: [executionRow(0, historicalRunId)] };
+        if (statement.includes('ORDER BY e.created_at DESC')) {
+          return { rows: Array.from({ length: 50 }, (_, index) => executionRow(index + 1)) };
+        }
+        if (statement.includes('c.created_at <= $2::timestamptz')) return { rows: [commentRow] };
+        if (statement.includes('FROM continuation_outbox')) return { rows: [] };
+        throw new Error(`未处理 SQL：${statement}`);
+      }),
+    };
+
+    const context = await loadContinuationContext({
+      pool, boardsTable: 'boards', tasksTable: 'tasks', commentsTable: 'comments',
+      executionsTable: 'executions', continuationOutboxTable: 'continuation_outbox',
+    } as never, identity, task.id, comments[1]!.id);
+
+    expect(context.latestExecution?.runId).not.toBe(historicalRunId);
+    expect(context.continuationExecution?.runId).toBe(historicalRunId);
+    expect(pool.query).toHaveBeenCalledWith(
+      expect.stringContaining('e.run_id=$2'),
+      [task.id, historicalRunId, identity.tenantId, identity.ownerUserId],
+    );
   });
 
   it('steering source 已应用终态不提前写任务回执', async () => {

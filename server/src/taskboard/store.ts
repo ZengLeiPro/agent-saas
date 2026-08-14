@@ -18,7 +18,7 @@ import {
   type TaskBoardTaskPatchInput,
 } from '../../../shared/src/types/taskboard.js';
 import {
-  completeContinuation,
+  completeContinuation, hasSuccessfulContinuationSince,
   listTaskExecutions,
   loadContinuationContext,
   loadExecutionContext,
@@ -978,7 +978,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       );
       if (archivedResult) return archivedResult;
 
-      const targetTaskStatus = input.status === 'succeeded' ? 'in_review' : 'blocked';
+      const targetTaskStatus = (input.status === 'succeeded' || await hasSuccessfulContinuationSince(this, client, taskId, executionResult.rows[0].created_at)) ? 'in_review' : 'blocked';
       if (loaded.task.status === 'in_progress') {
         const sortOrder = await nextTaskColumnSortOrder(
           this,

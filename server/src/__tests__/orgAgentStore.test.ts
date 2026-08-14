@@ -11,7 +11,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { OrgAgentStore, isAssignedToOrgAgent } from '../data/orgAgents/store.js';
+import {
+  OrgAgentStore,
+  isAssignedToOrgAgent,
+  parseOrgAgentAudience,
+} from '../data/orgAgents/store.js';
 import type { OrgAgentGuardrailConfig } from '../data/orgAgents/types.js';
 
 const GUARDRAIL: OrgAgentGuardrailConfig = {
@@ -36,6 +40,36 @@ function createInput(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+describe('parseOrgAgentAudience（读写合同一致）', () => {
+  it('接受与写入 schema 一致的完整 audience', () => {
+    expect(parseOrgAgentAudience({
+      exposure: 'deny_users',
+      usernames: ['alice'],
+      departmentIds: ['dept-sales'],
+      roles: ['sales-lead'],
+    })).toEqual({
+      exposure: 'deny_users',
+      usernames: ['alice'],
+      departmentIds: ['dept-sales'],
+      roles: ['sales-lead'],
+    });
+  });
+
+  it.each([
+    ['缺失', undefined],
+    ['null', null],
+    ['缺少 usernames', { exposure: 'all' }],
+    ['空用户名', { exposure: 'deny_users', usernames: [''] }],
+    ['过长用户名', { exposure: 'allow_users', usernames: ['a'.repeat(101)] }],
+    ['空部门', { exposure: 'allow_users', usernames: [], departmentIds: [''] }],
+    ['部门过多', { exposure: 'allow_users', usernames: [], departmentIds: Array(51).fill('dept') }],
+    ['空角色', { exposure: 'allow_users', usernames: [], roles: [''] }],
+    ['角色过多', { exposure: 'allow_users', usernames: [], roles: Array(31).fill('role') }],
+  ])('拒绝%s并返回 null', (_label, audience) => {
+    expect(parseOrgAgentAudience(audience)).toBeNull();
+  });
+});
 
 describe('isAssignedToOrgAgent（audience 三态匹配）', () => {
   it('exposure=all：任意用户（含匿名）都命中', () => {
@@ -64,6 +98,7 @@ describe('isAssignedToOrgAgent（audience 三态匹配）', () => {
     ['null', null],
     ['缺少 exposure', { usernames: [] }],
     ['缺少 usernames', { exposure: 'all' }],
+    ['非法 deny_users 空用户名', { exposure: 'deny_users', usernames: [''] }],
   ])('audience %s 时 fail-closed，不指派给任何用户', (_label, audience) => {
     expect(isAssignedToOrgAgent({ audience }, 'alice')).toBe(false);
     expect(isAssignedToOrgAgent({ audience }, undefined)).toBe(false);

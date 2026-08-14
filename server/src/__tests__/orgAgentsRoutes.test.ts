@@ -196,6 +196,28 @@ describe('org-agents 路由权限', () => {
     expect((await res2.json() as OrgAgentRecord).tenantId).toBe('kaiyan');
   });
 
+  it('创建与更新共用严格 audience 合同，非法 deny_users 不得写入或放行', async () => {
+    h.setCaller(WAIN_ADMIN);
+    const invalidCreate = await h.request('/api/org-agents', postBody({
+      audience: { exposure: 'deny_users', usernames: [''] },
+    }));
+    expect(invalidCreate.status).toBe(400);
+    expect(h.store.listAll()).toHaveLength(0);
+
+    const validCreate = await h.request('/api/org-agents', postBody({
+      audience: { exposure: 'allow_users', usernames: ['alice'] },
+    }));
+    expect(validCreate.status).toBe(201);
+    const created = await validCreate.json() as OrgAgentRecord;
+    const invalidUpdate = await h.request(`/api/org-agents/${created.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audience: { exposure: 'deny_users', usernames: [''] } }),
+    });
+    expect(invalidUpdate.status).toBe(400);
+    expect(h.store.get(created.id)?.audience).toEqual({ exposure: 'allow_users', usernames: ['alice'] });
+  });
+
   it('平台 admin 显式管理组织时与组织 admin 获取相同完整 DTO；无租户作用域总览仍只返回元数据', async () => {
     h.setCaller(PLATFORM_ADMIN);
     const created = await (await h.request('/api/org-agents', postBody({

@@ -16,7 +16,11 @@ import { extname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { isPlatformAdmin } from '../auth/middleware.js';
 import { auditLog } from '../data/login-logs/index.js';
-import { isAssignedToOrgAgent, type OrgAgentStore } from '../data/orgAgents/store.js';
+import {
+  isAssignedToOrgAgent,
+  orgAgentAudienceSchema,
+  type OrgAgentStore,
+} from '../data/orgAgents/store.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import type { OrgAgentRecord, OrgAgentSummary } from '../data/orgAgents/types.js';
@@ -57,14 +61,7 @@ export interface OrgAgentsRouterDeps {
   checkTopicScopeImpl?: typeof checkTopicScope;
 }
 
-const audienceSchema = z.object({
-  exposure: z.enum(['all', 'allow_users', 'deny_users']),
-  usernames: z.array(z.string().min(1).max(100)).default([]),
-  // ★ 新增（2026-07-18 企业专家目录 MVP）：部门/角色白名单
-  // MVP 阶段类型/schema 就位，UI 不暴露；5 周灰度后按反馈决定（蓝图 v2 § 4.1.4）
-  departmentIds: z.array(z.string().min(1).max(64)).max(50).optional(),
-  roles: z.array(z.string().min(1).max(64)).max(30).optional(),
-});
+const audienceSchema = orgAgentAudienceSchema;
 
 const guardrailSchema = z.object({
   enabled: z.boolean(),

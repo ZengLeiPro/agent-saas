@@ -57,6 +57,7 @@ import {
   emptyFormValues,
   parseGateSlots,
   parseOrgAgentAdminList,
+  type OrgAgentAdminRecord,
 } from './types';
 import { FALLBACK_TEMPLATES } from './templates';
 
@@ -80,6 +81,31 @@ beforeEach(() => {
     json: async () => ({}),
   }));
 });
+
+function adminRecord(overrides: Partial<OrgAgentAdminRecord> = {}): OrgAgentAdminRecord {
+  return {
+    id: 'oa-valid',
+    tenantId: 'kaiyan',
+    name: '报价助手',
+    description: '审核报价',
+    starterPrompts: [],
+    instructions: '仅审核报价',
+    allowedSkills: [],
+    audience: { exposure: 'all', usernames: [] },
+    guardrail: {
+      enabled: false,
+      scopeDescription: '',
+      rejectionMessage: '超出范围',
+      strictness: 'strict',
+    },
+    enabled: true,
+    createdAt: '2026-08-14T00:00:00.000Z',
+    createdBy: 'admin',
+    updatedAt: '2026-08-14T00:00:00.000Z',
+    updatedBy: 'admin',
+    ...overrides,
+  };
+}
 
 describe('OrgAgentManager - 数据合同', () => {
   it('audience 异常资源被隔离时显示安全错误状态，不渲染空列表误导', () => {
@@ -123,6 +149,44 @@ describe('OrgAgentManager - 数据合同', () => {
     fireEvent.click(screen.getByRole('button', { name: '重试' }));
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/企业专家加载失败/)).toBeTruthy();
+  });
+
+  it('编辑时保留 deny_users、departmentIds 与 roles，不扩大或丢失既有范围', async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    mockUseOrgAgentAdmin.mockReturnValue({
+      agents: [adminRecord({
+        audience: {
+          exposure: 'deny_users',
+          usernames: ['blocked-user'],
+          departmentIds: ['dept-sales'],
+          roles: ['sales-lead'],
+        },
+      })],
+      dataIssues: [],
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+      create: vi.fn(),
+      update,
+      remove: vi.fn(),
+      uploadAvatar: vi.fn(),
+    });
+
+    render(<OrgAgentManager tenantId="kaiyan" />);
+    fireEvent.click(screen.getByTitle('编辑'));
+    const dialog = await screen.findByRole('dialog');
+    expect((within(dialog).getByRole('radio', { name: '排除指定成员' }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存' }));
+
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    expect(update).toHaveBeenCalledWith('oa-valid', expect.objectContaining({
+      audience: {
+        exposure: 'deny_users',
+        usernames: ['blocked-user'],
+        departmentIds: ['dept-sales'],
+        roles: ['sales-lead'],
+      },
+    }));
   });
 
   it('组织切换后旧提交完成不会关闭或污染新组织弹窗', async () => {
@@ -352,6 +416,9 @@ describe('parseOrgAgentAdminList 数据合同', () => {
     ['null', null],
     ['缺少 exposure', { usernames: [] }],
     ['缺少 usernames', { exposure: 'allow_users' }],
+    ['非法空用户名', { exposure: 'deny_users', usernames: [''] }],
+    ['非法空部门', { exposure: 'allow_users', usernames: [], departmentIds: [''] }],
+    ['非法空角色', { exposure: 'allow_users', usernames: [], roles: [''] }],
   ])('audience %s 时隔离资源且不推断 exposure', (_label, audience) => {
     const result = parseOrgAgentAdminList([{ ...validRecord, id: `oa-${_label}`, audience }]);
     expect(result.agents).toEqual([]);

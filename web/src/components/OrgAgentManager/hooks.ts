@@ -11,8 +11,8 @@ import { fetchTenantOwnSkills, fetchTenantSkillPool } from '@agent/shared';
 import type { SkillInfo } from '@agent/shared';
 import {
   parseOrgAgentAdminList,
+  type OrgAgentAdminRecord,
   type OrgAgentDataIssue,
-  type OrgAgentRecord,
 } from './types';
 
 async function readError(res: Response, fallback: string): Promise<string> {
@@ -21,7 +21,7 @@ async function readError(res: Response, fallback: string): Promise<string> {
 }
 
 export function useOrgAgentAdmin(tenantId?: string) {
-  const [agents, setAgents] = useState<OrgAgentRecord[]>([]);
+  const [agents, setAgents] = useState<OrgAgentAdminRecord[]>([]);
   const [dataIssues, setDataIssues] = useState<OrgAgentDataIssue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +59,7 @@ export function useOrgAgentAdmin(tenantId?: string) {
     void refresh();
   }, [refresh]);
 
-  const create = useCallback(async (input: Omit<OrgAgentRecord, 'id' | 'tenantId' | 'createdAt' | 'createdBy' | 'updatedAt' | 'updatedBy'>) => {
+  const create = useCallback(async (input: Omit<OrgAgentAdminRecord, 'id' | 'tenantId' | 'createdAt' | 'createdBy' | 'updatedAt' | 'updatedBy'>) => {
     const res = await authFetch('/api/org-agents', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -69,7 +69,7 @@ export function useOrgAgentAdmin(tenantId?: string) {
     await refresh();
   }, [refresh, tenantId]);
 
-  const update = useCallback(async (id: string, patch: Partial<Omit<OrgAgentRecord, 'id' | 'tenantId'>>) => {
+  const update = useCallback(async (id: string, patch: Partial<Omit<OrgAgentAdminRecord, 'id' | 'tenantId'>>) => {
     const res = await authFetch(`/api/org-agents/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },

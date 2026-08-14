@@ -33,9 +33,9 @@ import {
   assembleScopeDescription,
   emptyFormValues,
   parseGateSlots,
+  type OrgAgentAdminRecord,
   type OrgAgentFormValues,
   type OrgAgentGuardrailMode,
-  type OrgAgentRecord,
 } from './types';
 
 /** 门禁三档语义说明（radio label 旁的副标题） */
@@ -73,7 +73,7 @@ export function OrgAgentFormDialog({
   open: boolean;
   tenantId?: string;
   /** 编辑目标；null = 创建 */
-  editing: OrgAgentRecord | null;
+  editing: OrgAgentAdminRecord | null;
   /** 从模板创建时传入的预填值；优先级低于 editing */
   initialValues?: OrgAgentFormValues | null;
   onClose: () => void;
@@ -148,7 +148,7 @@ export function OrgAgentFormDialog({
         starterPromptsText: editing.starterPrompts.join('\n'),
         instructions: editing.instructions,
         allowedSkills: [...editing.allowedSkills],
-        audienceExposure: editing.audience.exposure === 'allow_users' ? 'allow_users' : 'all',
+        audienceExposure: editing.audience.exposure,
         audienceUsernames: [...editing.audience.usernames],
         guardrailMode: derivedMode,
         guardrailAllowExamples: parsed.slots?.allowExamples ?? [],
@@ -493,10 +493,18 @@ export function OrgAgentFormDialog({
                   checked={values.audienceExposure === 'allow_users'}
                   onChange={() => patch({ audienceExposure: 'allow_users' })}
                 />
-                指定成员
+                仅指定成员
+              </label>
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="radio"
+                  checked={values.audienceExposure === 'deny_users'}
+                  onChange={() => patch({ audienceExposure: 'deny_users' })}
+                />
+                排除指定成员
               </label>
             </div>
-            {values.audienceExposure === 'allow_users' && (
+            {values.audienceExposure !== 'all' && (
               tenantUsers.length === 0 ? (
                 <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">当前组织暂无成员。</div>
               ) : (

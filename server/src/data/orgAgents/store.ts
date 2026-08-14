@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { z } from 'zod';
 import { authLogger } from '../../utils/logger.js';
 import type { OrgAgentAudience, OrgAgentRecord, OrgAgentSummary, OrgAgentsFileData } from './types.js';
 
@@ -25,35 +26,30 @@ export type UpdateOrgAgentInput = Partial<Omit<CreateOrgAgentInput, 'tenantId'>>
   avatarVersion?: number;
 };
 
+/** audience 持久化与写入共用的唯一 schema，避免读取路径放宽写入约束。 */
+export const orgAgentAudienceSchema = z.object({
+  exposure: z.enum(['all', 'allow_users', 'deny_users']),
+  usernames: z.array(z.string().min(1).max(100)),
+  departmentIds: z.array(z.string().min(1).max(64)).max(50).optional(),
+  roles: z.array(z.string().min(1).max(64)).max(30).optional(),
+});
+
 /**
  * 解析持久化 audience 合同。必填字段缺失、null 或字段类型不完整时返回 null，
  * 由调用方按 fail-closed 处理；不得把未知配置猜测为 all。
  */
 export function parseOrgAgentAudience(audience: unknown): OrgAgentAudience | null {
-  if (!audience || typeof audience !== 'object' || Array.isArray(audience)) return null;
-  const raw = audience as Partial<OrgAgentAudience>;
-  if (
-    raw.exposure !== 'all'
-    && raw.exposure !== 'allow_users'
-    && raw.exposure !== 'deny_users'
-  ) return null;
-  if (!Array.isArray(raw.usernames) || !raw.usernames.every(item => typeof item === 'string')) return null;
-  if (raw.departmentIds !== undefined && (
-    !Array.isArray(raw.departmentIds)
-    || !raw.departmentIds.every(item => typeof item === 'string')
-  )) return null;
-  if (raw.roles !== undefined && (
-    !Array.isArray(raw.roles)
-    || !raw.roles.every(item => typeof item === 'string')
-  )) return null;
-
+  const parsed = orgAgentAudienceSchema.safeParse(audience);
+  if (!parsed.success) return null;
   return {
-    exposure: raw.exposure,
-    usernames: [...raw.usernames],
-    ...(raw.departmentIds && raw.departmentIds.length > 0
-      ? { departmentIds: [...raw.departmentIds] }
+    exposure: parsed.data.exposure,
+    usernames: [...parsed.data.usernames],
+    ...(parsed.data.departmentIds && parsed.data.departmentIds.length > 0
+      ? { departmentIds: [...parsed.data.departmentIds] }
       : {}),
-    ...(raw.roles && raw.roles.length > 0 ? { roles: [...raw.roles] } : {}),
+    ...(parsed.data.roles && parsed.data.roles.length > 0
+      ? { roles: [...parsed.data.roles] }
+      : {}),
   };
 }
 

@@ -20,14 +20,14 @@ import { OrgAgentFormDialog } from './OrgAgentFormDialog';
 import { useOrgAgentAdmin } from './hooks';
 import {
   assembleScopeDescription,
+  type OrgAgentAdminRecord,
   type OrgAgentFormValues,
-  type OrgAgentRecord,
 } from './types';
 import { fetchOrgAgentTemplates, FALLBACK_TEMPLATES, type OrgAgentTemplate } from './templates';
 import { useAuth } from '@/contexts/AuthContext';
 import { DEFAULT_TENANT_ID } from '@/components/TenantManager/types';
 
-function formValuesToPayload(values: OrgAgentFormValues, editing: OrgAgentRecord | null) {
+function formValuesToPayload(values: OrgAgentFormValues, editing: OrgAgentAdminRecord | null) {
   // avatar 三态：有图片头像 → 不发字段（路径值仅上传接口写入，PATCH 发路径会被 schema 拒）；
   // emoji → 发值；原图片被移除且无 emoji → 发空串显式清除
   const hadImage = !!editing?.avatar?.startsWith('org-agent-avatars/');
@@ -65,7 +65,13 @@ function formValuesToPayload(values: OrgAgentFormValues, editing: OrgAgentRecord
     allowedSkills: values.allowedSkills,
     audience: {
       exposure: values.audienceExposure,
-      usernames: values.audienceExposure === 'allow_users' ? values.audienceUsernames : [],
+      usernames: values.audienceExposure === 'all' ? [] : values.audienceUsernames,
+      ...(editing?.audience.departmentIds !== undefined
+        ? { departmentIds: [...editing.audience.departmentIds] }
+        : {}),
+      ...(editing?.audience.roles !== undefined
+        ? { roles: [...editing.audience.roles] }
+        : {}),
     },
     guardrail: {
       enabled: guardrailEnabled,
@@ -77,7 +83,7 @@ function formValuesToPayload(values: OrgAgentFormValues, editing: OrgAgentRecord
   };
 }
 
-function audienceText(agent: OrgAgentRecord): string {
+function audienceText(agent: OrgAgentAdminRecord): string {
   if (agent.audience.exposure === 'all') return '全员';
   if (agent.audience.exposure === 'allow_users') return `${agent.audience.usernames.length} 人`;
   return `排除 ${agent.audience.usernames.length} 人`;
@@ -107,9 +113,9 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
     uploadAvatar,
   } = useOrgAgentAdmin(tenantId);
   const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<OrgAgentRecord | null>(null);
+  const [editing, setEditing] = useState<OrgAgentAdminRecord | null>(null);
   const [initialValues, setInitialValues] = useState<OrgAgentFormValues | null>(null);
-  const [deleting, setDeleting] = useState<OrgAgentRecord | null>(null);
+  const [deleting, setDeleting] = useState<OrgAgentAdminRecord | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [templates, setTemplates] = useState<OrgAgentTemplate[]>(FALLBACK_TEMPLATES);
@@ -143,7 +149,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
     }
   };
 
-  const handleToggleEnabled = async (agent: OrgAgentRecord, enabled: boolean) => {
+  const handleToggleEnabled = async (agent: OrgAgentAdminRecord, enabled: boolean) => {
     const actionTenantId = tenantId;
     setActionError(null);
     try {
@@ -184,7 +190,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
     setFormOpen(true);
   };
 
-  const openEditForm = (agent: OrgAgentRecord) => {
+  const openEditForm = (agent: OrgAgentAdminRecord) => {
     setEditing(agent);
     setInitialValues(null);
     setFormOpen(true);

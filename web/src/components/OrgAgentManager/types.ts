@@ -1,4 +1,4 @@
-import type { OrgAgentRecord } from '@agent/shared';
+import type { OrgAgentAudience, OrgAgentRecord } from '@agent/shared';
 
 export type {
   OrgAgentAudience,
@@ -6,6 +6,11 @@ export type {
   OrgAgentRecord,
   OrgAgentSummary,
 } from '@agent/shared';
+
+/** 管理页只消费通过运行时校验、audience 非空的记录。 */
+export type OrgAgentAdminRecord = Omit<OrgAgentRecord, 'audience'> & {
+  audience: OrgAgentAudience;
+};
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -17,12 +22,18 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(item => typeof item === 'string');
 }
 
-function isAudience(value: unknown): boolean {
+function isBoundedStringArray(value: unknown, itemMaxLength: number, maxItems?: number): value is string[] {
+  return Array.isArray(value)
+    && (maxItems === undefined || value.length <= maxItems)
+    && value.every(item => typeof item === 'string' && item.length >= 1 && item.length <= itemMaxLength);
+}
+
+function isAudience(value: unknown): value is OrgAgentAudience {
   if (!isObject(value)) return false;
   return (value.exposure === 'all' || value.exposure === 'allow_users' || value.exposure === 'deny_users')
-    && isStringArray(value.usernames)
-    && (value.departmentIds === undefined || isStringArray(value.departmentIds))
-    && (value.roles === undefined || isStringArray(value.roles));
+    && isBoundedStringArray(value.usernames, 100)
+    && (value.departmentIds === undefined || isBoundedStringArray(value.departmentIds, 64, 50))
+    && (value.roles === undefined || isBoundedStringArray(value.roles, 64, 30));
 }
 
 function isGuardrail(value: unknown): boolean {
@@ -34,7 +45,7 @@ function isGuardrail(value: unknown): boolean {
     && (value.mode === undefined || value.mode === 'off' || value.mode === 'shadow' || value.mode === 'enforce');
 }
 
-function isOrgAgentRecord(value: unknown): value is OrgAgentRecord {
+function isOrgAgentRecord(value: unknown): value is OrgAgentAdminRecord {
   if (!isObject(value)) return false;
   return typeof value.id === 'string'
     && typeof value.tenantId === 'string'
@@ -66,11 +77,11 @@ export interface OrgAgentDataIssue {
  * 绝不推断 exposure，也不让该资源进入启用、编辑或可见范围判断。
  */
 export function parseOrgAgentAdminList(input: unknown): {
-  agents: OrgAgentRecord[];
+  agents: OrgAgentAdminRecord[];
   issues: OrgAgentDataIssue[];
 } {
   if (!Array.isArray(input)) throw new Error('企业专家接口返回格式无效，请重试');
-  const agents: OrgAgentRecord[] = [];
+  const agents: OrgAgentAdminRecord[] = [];
   const issues: OrgAgentDataIssue[] = [];
 
   input.forEach((item, index) => {
@@ -116,7 +127,7 @@ export interface OrgAgentFormValues {
   starterPromptsText: string;
   instructions: string;
   allowedSkills: string[];
-  audienceExposure: 'all' | 'allow_users';
+  audienceExposure: OrgAgentAudience['exposure'];
   audienceUsernames: string[];
   /** 门禁 UI 三档；序列化时 off → enabled:false，shadow/enforce → enabled:true */
   guardrailMode: OrgAgentGuardrailMode;

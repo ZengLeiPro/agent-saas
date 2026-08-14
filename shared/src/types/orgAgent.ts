@@ -9,6 +9,8 @@
 export interface OrgAgentAudience {
   exposure: 'all' | 'allow_users' | 'deny_users';
   usernames: string[];
+  departmentIds?: string[];
+  roles?: string[];
 }
 
 export interface OrgAgentGuardrailConfig {
@@ -36,7 +38,8 @@ export interface OrgAgentRecord {
   instructions: string;
   /** 该 Agent 的固有 Skill 能力，不依赖成员个人勾选 */
   allowedSkills: string[];
-  audience: OrgAgentAudience;
+  /** null 表示旧数据或兼容数据中的 audience 合同无效；消费端必须 fail-closed。 */
+  audience: OrgAgentAudience | null;
   guardrail: OrgAgentGuardrailConfig;
   enabled: boolean;
   createdAt: string;

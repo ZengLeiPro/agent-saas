@@ -14,9 +14,8 @@ function json(method: string, body: unknown): RequestInit {
   return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
 }
 
-function skillUploadBody(name = 'uploaded-skill', scope: 'tenant' | 'personal' = 'tenant'): FormData {
+function skillUploadBody(name = 'uploaded-skill'): FormData {
   const form = new FormData();
-  form.set('scope', scope);
   form.append('files', new Blob([
     `---\nname: ${name}\ndescription: uploaded\n---\nbody`,
   ], { type: 'text/markdown' }), 'SKILL.md');
@@ -63,6 +62,7 @@ async function rig(input: {
   listFileOwnership?: (tenantId: string, userId: string) => Promise<{ personalFileIds: string[]; organizationFileIds: string[] }>;
   platformAdmin?: boolean;
   tenantExists?: (tenantId: string) => boolean;
+  customSkillsEnabled?: (tenantId: string) => boolean;
   omitRetentionAuthorities?: boolean;
   omitExecutionAuthorities?: boolean;
 }) {
@@ -166,6 +166,7 @@ async function rig(input: {
     changePlanner: {} as never,
     offboardingPreviewSecret: 'test-offboarding-preview-secret-32-characters',
     tenantExists: input.tenantExists ?? (() => true),
+    isCustomSkillsEnabled: input.customSkillsEnabled ?? (() => true),
     listCronIdsByOwner: input.listCronIdsByOwner ?? (async () => []),
     ...(!input.omitExecutionAuthorities ? {
       listActiveRunIdsByUser: input.listActiveRunIdsByUser ?? (async () => []),
@@ -255,7 +256,7 @@ describe('typed governance resource routes', () => {
       user: { sub: 'platform-1', username: 'root', tenantId: 'pantheon', role: 'admin' },
     });
 
-    const response = await test.request('/api/governance/resources/skills/import?tenantId=tenant-a', {
+    const response = await test.request('/api/governance/resources/skills/import?scope=tenant&tenantId=tenant-a', {
       method: 'POST',
       body: skillUploadBody(),
     });
@@ -277,13 +278,13 @@ describe('typed governance resource routes', () => {
     const admin = await rig({
       user: { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' },
     });
-    const own = await admin.request('/api/governance/resources/skills/import?tenantId=tenant-a', {
+    const own = await admin.request('/api/governance/resources/skills/import?scope=tenant&tenantId=tenant-a', {
       method: 'POST', body: skillUploadBody('own-skill'),
     });
     expect(own.status).toBe(201);
     expect(admin.skillImport).toHaveBeenCalledWith(expect.objectContaining({ tenantId: 'tenant-a' }));
 
-    const cross = await admin.request('/api/governance/resources/skills/import?tenantId=tenant-b', {
+    const cross = await admin.request('/api/governance/resources/skills/import?scope=tenant&tenantId=tenant-b', {
       method: 'POST', body: skillUploadBody('cross-skill'),
     });
     expect(cross.status).toBe(403);
@@ -292,19 +293,69 @@ describe('typed governance resource routes', () => {
     const member = await rig({
       user: { sub: 'member-1', username: 'member', tenantId: 'tenant-a', role: 'user' },
     });
-    const denied = await member.request('/api/governance/resources/skills/import?tenantId=tenant-a', {
+    const denied = await member.request('/api/governance/resources/skills/import?scope=tenant&tenantId=tenant-a', {
       method: 'POST', body: skillUploadBody('member-skill'),
     });
     expect(denied.status).toBe(403);
     expect(member.skillImport).not.toHaveBeenCalled();
   });
 
+  it('普通成员的组织上传在 multipart 解析前拒绝', async () => {
+    const member = await rig({
+      user: { sub: 'member-1', username: 'member', tenantId: 'tenant-a', role: 'user' },
+    });
+    const response = await member.request(
+      '/api/governance/resources/skills/import?scope=tenant&tenantId=tenant-a',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'multipart/form-data; boundary=unfinished' },
+        body: '--unfinished\r\nContent-Disposition: form-data; name="files"; filename="large.zip"\r\n\r\n',
+      },
+    );
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ code: 'ORGANIZATION_ADMIN_REQUIRED' });
+    expect(member.skillImport).not.toHaveBeenCalled();
+  });
+
+  it('自定义技能功能关闭时，组织和个人治理上传均在接收文件前拒绝', async () => {
+    const admin = await rig({
+      user: { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' },
+      customSkillsEnabled: () => false,
+    });
+    const tenantResponse = await admin.request(
+      '/api/governance/resources/skills/import?scope=tenant&tenantId=tenant-a',
+      { method: 'POST', body: skillUploadBody('disabled-tenant') },
+    );
+    expect(tenantResponse.status).toBe(403);
+    await expect(tenantResponse.json()).resolves.toMatchObject({ code: 'TENANT_FEATURE_DISABLED' });
+    expect(admin.skillImport).not.toHaveBeenCalled();
+
+    const member = await rig({
+      user: { sub: 'member-1', username: 'member', tenantId: 'tenant-a', role: 'user' },
+      customSkillsEnabled: () => false,
+    });
+    const personalResponse = await member.request(
+      '/api/governance/resources/skills/import?scope=personal',
+      { method: 'POST', body: skillUploadBody('disabled-personal') },
+    );
+    expect(personalResponse.status).toBe(403);
+    await expect(personalResponse.json()).resolves.toMatchObject({ code: 'TENANT_FEATURE_DISABLED' });
+    expect(member.personalSkillImport).not.toHaveBeenCalled();
+  });
+
   it('普通成员通过治理入口导入个人 Skill，并强制绑定当前用户与组织', async () => {
     const member = await rig({ user: { sub: 'member-1', username: 'member', tenantId: 'tenant-a', role: 'user' } });
-    const response = await member.request('/api/governance/resources/skills/import', { method: 'POST', body: skillUploadBody('personal-skill', 'personal') });
+    const response = await member.request('/api/governance/resources/skills/import?scope=personal', { method: 'POST', body: skillUploadBody('personal-skill') });
     expect(response.status).toBe(201);
     expect(member.personalSkillImport).toHaveBeenCalledWith({ tenantId: 'tenant-a', actorUserId: 'member-1', files: [expect.objectContaining({ originalname: 'SKILL.md' })] });
     expect(member.skillImport).not.toHaveBeenCalled();
+
+    const crossTenant = await member.request(
+      '/api/governance/resources/skills/import?scope=personal&tenantId=tenant-b',
+      { method: 'POST', body: skillUploadBody('cross-personal') },
+    );
+    expect(crossTenant.status).toBe(403);
+    expect(member.personalSkillImport).toHaveBeenCalledTimes(1);
   });
 
   it('Skill 上传缺少合法 scope 时拒绝且不调用写服务', async () => {

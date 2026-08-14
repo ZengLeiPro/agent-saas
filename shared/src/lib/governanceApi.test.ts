@@ -254,12 +254,12 @@ describe('governanceApi fail closed', () => {
     await expect(governanceResourcesApi.importTenantSkillPackage('tenant-a/managed', [file]))
       .resolves.toMatchObject({ status: 'succeeded', version: { versionNumber: 1 } });
     expect(mockAuthFetch).toHaveBeenCalledWith(
-      '/api/governance/resources/skills/import?tenantId=tenant-a%2Fmanaged',
+      '/api/governance/resources/skills/import?scope=tenant&tenantId=tenant-a%2Fmanaged',
       expect.objectContaining({ method: 'POST', body: expect.any(FormData) }),
     );
     const request = mockAuthFetch.mock.calls[0]?.[1];
     expect(request?.headers).toBeUndefined();
-    expect((request?.body as FormData).get('scope')).toBe('tenant');
+    expect((request?.body as FormData).get('scope')).toBeNull();
     expect((request?.body as FormData).get('files')).toMatchObject({ name: 'managed-skill/SKILL.md' });
 
     mockAuthFetch.mockResolvedValueOnce(jsonResponse({
@@ -273,7 +273,7 @@ describe('governanceApi fail closed', () => {
     mockAuthFetch.mockResolvedValueOnce(jsonResponse({ ok: true, status: 'succeeded', selected: true, skill: { id: 'personal-skill', name: 'personal-skill', description: 'personal' }, resource: { skillId: 'personal-hash', tenantId: 'tenant-a', scope: 'personal', ownerUserId: 'user-1', status: 'published', currentVersionId: 'skillv-1', revision: 2, createdBy: 'user-1' }, version: { versionId: 'skillv-1', skillId: 'personal-hash', versionNumber: 1, digest: 'digest-1' } }));
     const file = new File(['content'], 'SKILL.md', { type: 'text/markdown' });
     await expect(governanceResourcesApi.importPersonalSkillPackage([file])).resolves.toMatchObject({ status: 'succeeded', selected: true, resource: { scope: 'personal' } });
-    const request = mockAuthFetch.mock.calls[0]?.[1]; expect(mockAuthFetch.mock.calls[0]?.[0]).toBe('/api/governance/resources/skills/import'); expect((request?.body as FormData).get('scope')).toBe('personal');
+    const request = mockAuthFetch.mock.calls[0]?.[1]; expect(mockAuthFetch.mock.calls[0]?.[0]).toBe('/api/governance/resources/skills/import?scope=personal'); expect((request?.body as FormData).get('scope')).toBeNull();
   });
 
   it('当前治理 endpoint 同样拒绝泄漏敏感字段', async () => {

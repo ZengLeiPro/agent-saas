@@ -135,6 +135,85 @@ async function packageFingerprint(root: string): Promise<{
   return { contentDigest: digest.digest('hex'), fileCount: files.length, totalBytes };
 }
 
+function inspectZipArchive(buffer: Buffer): void {
+  const eocdSignature = 0x06054b50;
+  const centralSignature = 0x02014b50;
+  const minimumOffset = Math.max(0, buffer.length - 22 - 0xffff);
+  let eocdOffset = -1;
+  for (let offset = buffer.length - 22; offset >= minimumOffset; offset -= 1) {
+    if (buffer.readUInt32LE(offset) !== eocdSignature) continue;
+    const commentLength = buffer.readUInt16LE(offset + 20);
+    if (offset + 22 + commentLength === buffer.length) {
+      eocdOffset = offset;
+      break;
+    }
+  }
+  if (eocdOffset < 0) {
+    throw new SkillPackageUploadError('SKILL_PACKAGE_INVALID', 'zip 中央目录无效', 400);
+  }
+
+  const diskNumber = buffer.readUInt16LE(eocdOffset + 4);
+  const centralDisk = buffer.readUInt16LE(eocdOffset + 6);
+  const diskEntries = buffer.readUInt16LE(eocdOffset + 8);
+  const entryCount = buffer.readUInt16LE(eocdOffset + 10);
+  const centralSize = buffer.readUInt32LE(eocdOffset + 12);
+  const centralOffset = buffer.readUInt32LE(eocdOffset + 16);
+  if (diskNumber !== 0 || centralDisk !== 0 || diskEntries !== entryCount) {
+    throw new SkillPackageUploadError('SKILL_PACKAGE_UNSAFE', '不支持分卷 zip 技能包', 400);
+  }
+  if (entryCount === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff) {
+    throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', 'zip 技能包超出支持的大小范围', 413);
+  }
+  if (entryCount > MAX_SKILL_FILES) {
+    throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', 'zip 内文件数量超出限制', 413);
+  }
+  const centralEnd = centralOffset + centralSize;
+  if (centralOffset > eocdOffset || centralEnd > eocdOffset) {
+    throw new SkillPackageUploadError('SKILL_PACKAGE_INVALID', 'zip 中央目录无效', 400);
+  }
+
+  let cursor = centralOffset;
+  let totalBytes = 0;
+  for (let index = 0; index < entryCount; index += 1) {
+    if (cursor + 46 > centralEnd || buffer.readUInt32LE(cursor) !== centralSignature) {
+      throw new SkillPackageUploadError('SKILL_PACKAGE_INVALID', 'zip 中央目录条目无效', 400);
+    }
+    const flags = buffer.readUInt16LE(cursor + 8);
+    const compressedSize = buffer.readUInt32LE(cursor + 20);
+    const uncompressedSize = buffer.readUInt32LE(cursor + 24);
+    const fileNameLength = buffer.readUInt16LE(cursor + 28);
+    const extraLength = buffer.readUInt16LE(cursor + 30);
+    const commentLength = buffer.readUInt16LE(cursor + 32);
+    const externalAttributes = buffer.readUInt32LE(cursor + 38);
+    const entryEnd = cursor + 46 + fileNameLength + extraLength + commentLength;
+    if (entryEnd > centralEnd) {
+      throw new SkillPackageUploadError('SKILL_PACKAGE_INVALID', 'zip 中央目录条目无效', 400);
+    }
+    if ((flags & 0x1) !== 0) {
+      throw new SkillPackageUploadError('SKILL_PACKAGE_UNSAFE', '不支持加密 zip 技能包', 400);
+    }
+    if (compressedSize === 0xffffffff || uncompressedSize === 0xffffffff) {
+      throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', 'zip 技能包超出支持的大小范围', 413);
+    }
+    const entryName = buffer.subarray(cursor + 46, cursor + 46 + fileNameLength).toString('utf-8');
+    if (!safeRelativePath(entryName)) {
+      throw new SkillPackageUploadError('SKILL_PACKAGE_UNSAFE', 'zip 内包含不安全路径', 400);
+    }
+    const unixMode = externalAttributes >>> 16;
+    if ((unixMode & 0xf000) === 0xa000) {
+      throw new SkillPackageUploadError('SKILL_PACKAGE_UNSAFE', 'zip 内包含符号链接', 400);
+    }
+    totalBytes += uncompressedSize;
+    if (totalBytes > MAX_SKILL_PACKAGE_BYTES) {
+      throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', 'zip 解压后大小超出限制', 413);
+    }
+    cursor = entryEnd;
+  }
+  if (cursor !== centralEnd) {
+    throw new SkillPackageUploadError('SKILL_PACKAGE_INVALID', 'zip 中央目录大小不一致', 400);
+  }
+}
+
 export async function stageSkillPackage(files: Express.Multer.File[]): Promise<StagedSkillPackage> {
   if (files.length === 0) {
     throw new SkillPackageUploadError('SKILL_PACKAGE_EMPTY', '请选择要上传的技能文件', 400);
@@ -148,6 +227,7 @@ export async function stageSkillPackage(files: Express.Multer.File[]): Promise<S
     let sourceDir: string;
     const first = files[0];
     if (files.length === 1 && first.originalname.toLowerCase().endsWith('.zip')) {
+      inspectZipArchive(first.buffer);
       const zipPath = join(tempRoot, 'upload.zip');
       await writeFile(zipPath, first.buffer);
       const listed = await execFileAsync('unzip', ['-Z', '-1', zipPath], { encoding: 'utf-8' });

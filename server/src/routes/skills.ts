@@ -25,7 +25,7 @@ import { hasPlatformCapability } from '../auth/platformGovernance.js';
 import { auditLog } from '../data/login-logs/index.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
 import type { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
-import { personalSkillResourceId } from '../services/tenantSkillGovernanceUpload.js';
+import { personalSkillResourceId, tenantSkillResourceId } from '../services/tenantSkillGovernanceUpload.js';
 import type { PlatformSkillConfig, TenantSkillRule } from '../data/skills/types.js';
 import {
   scanPoolSkillsAsync,
@@ -1057,7 +1057,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       );
       const skills = await Promise.all(scanned.map(async (skill) => {
         const rule = skillConfigStore.getTenantOwnSkillRule(tenantId, skill.id);
-        const governance = await governedSkillView(skill.id, tenantId, 'tenant');
+        const governance = await governedSkillView(tenantSkillResourceId(tenantId, skill.id), tenantId, 'tenant');
         return {
           ...skill,
           enabled: rule.enabled,
@@ -1408,7 +1408,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
         ))
         .filter(s => skillConfigStore.isTenantOwnSkillAvailableToUser(user.tenantId!, s.id, user.username))
         .map(async s => {
-          const governance = await governedSkillView(s.id, user.tenantId!, 'tenant');
+          const governance = await governedSkillView(tenantSkillResourceId(user.tenantId!, s.id), user.tenantId!, 'tenant');
           return {
             ...s,
             ...selectionState(s.id),

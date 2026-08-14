@@ -151,6 +151,7 @@ export function registerGovernanceRoutes(
       changeJobs: runtime.governanceChangeJobStore,
       changePlanner: runtime.governanceChangePlanner,
       tenantExists: tenantId => Boolean(runtime.tenantStore?.findById(tenantId)),
+      isCustomSkillsEnabled: tenantId => runtime.tenantStore?.getSettings(tenantId)?.features.customSkillsEnabled !== false,
       resolveUserTenantId: userId => runtime.userStore?.findById(userId)?.tenantId,
       listCronIdsByOwner: async userId => (await runtime.cronRuntime.service?.list({ includeDisabled: true }) ?? [])
         .filter(job => job.owner === userId)

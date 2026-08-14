@@ -60,6 +60,13 @@ function duplicateSkillError(skillId: string): SkillPackageUploadError {
   );
 }
 
+export function tenantSkillResourceId(tenantId: string, legacySkillId: string): string {
+  return `tenant_${createHash('sha256')
+    .update(`${tenantId}\0${legacySkillId}`)
+    .digest('hex')
+    .slice(0, 32)}`;
+}
+
 export function createTenantSkillGovernanceUpload(deps: TenantSkillGovernanceUploadDeps) {
   return async (input: {
     tenantId: string;
@@ -91,12 +98,13 @@ export function createTenantSkillGovernanceUpload(deps: TenantSkillGovernanceUpl
           );
         }
       }
-      if (await deps.skills.getResource(staged.skillId)) throw duplicateSkillError(staged.skillId);
+      const resourceId = tenantSkillResourceId(input.tenantId, staged.skillId);
+      if (await deps.skills.getResource(resourceId)) throw duplicateSkillError(staged.skillId);
 
       installedDir = await moveStagedSkillIntoPlace(staged, tenantSkillsDirFor(deps, input.tenantId), false);
       try {
         const governed = await deps.skills.createAndPublishResource({
-          skillId: staged.skillId,
+          skillId: resourceId,
           tenantId: input.tenantId,
           scope: 'tenant',
           definition: {
@@ -104,6 +112,7 @@ export function createTenantSkillGovernanceUpload(deps: TenantSkillGovernanceUpl
             resourceType: 'skill',
             scope: 'tenant',
             tenantId: input.tenantId,
+            legacySkillId: staged.skillId,
             source: 'governance_upload',
             packageFormat: 'skill-package-v1',
             name: staged.name,

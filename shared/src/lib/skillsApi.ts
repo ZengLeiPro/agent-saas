@@ -99,13 +99,11 @@ async function importSkillFormDataTo(url: string, formData: FormData): Promise<S
 }
 
 export async function importMySkillFormData(formData: FormData): Promise<SkillImportResponse> {
-  formData.set('scope', 'personal');
-  return importSkillFormDataTo('/api/governance/resources/skills/import', formData);
+  return importSkillFormDataTo('/api/governance/resources/skills/import?scope=personal', formData);
 }
 
 export async function importTenantSkillFormData(tenantId: string, formData: FormData): Promise<SkillImportResponse> {
-  formData.set('scope', 'tenant');
-  return importSkillFormDataTo(`/api/governance/resources/skills/import?tenantId=${encodeURIComponent(tenantId)}`, formData);
+  return importSkillFormDataTo(`/api/governance/resources/skills/import?scope=tenant&tenantId=${encodeURIComponent(tenantId)}`, formData);
 }
 
 /** DELETE /api/skills/me/skills/:skillId — 用户自删自建 skill（同时移除 selection） */
@@ -299,9 +297,8 @@ export async function syncSkills(
   return batch;
 }
 
-async function importSkillTo(url: string, files: File[], scope?: 'tenant' | 'personal'): Promise<SkillImportResponse> {
+async function importSkillTo(url: string, files: File[]): Promise<SkillImportResponse> {
   const formData = new FormData();
-  if (scope) formData.set('scope', scope);
   for (const file of files) {
     const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
     formData.append('files', file, relativePath);
@@ -322,7 +319,7 @@ async function importSkillTo(url: string, files: File[], scope?: 'tenant' | 'per
 }
 
 export async function importMySkill(files: File[]): Promise<SkillImportResponse> {
-  return importSkillTo('/api/governance/resources/skills/import', files, 'personal');
+  return importSkillTo('/api/governance/resources/skills/import?scope=personal', files);
 }
 
 /** 平台 admin 上传 skill 到全局 pool */
@@ -332,7 +329,7 @@ export async function importPoolSkill(files: File[]): Promise<SkillImportRespons
 
 /** 上传组织自有 skill（平台 admin 任意租户；组织 admin 仅本组织） */
 export async function importTenantSkill(tenantId: string, files: File[]): Promise<SkillImportResponse> {
-  return importSkillTo(`/api/governance/resources/skills/import?tenantId=${encodeURIComponent(tenantId)}`, files, 'tenant');
+  return importSkillTo(`/api/governance/resources/skills/import?scope=tenant&tenantId=${encodeURIComponent(tenantId)}`, files);
 }
 
 // ── 组织自有 skill 管理 ──────────────────────────────────

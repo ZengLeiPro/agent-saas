@@ -204,7 +204,9 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
       const result = await governanceResourcesApi.importPersonalSkillPackage(files);
       setImportDialogOpen(false);
       setImportOk(true);
-      setImportMsg(`已导入并发布技能：${result.skill.name}（v${result.version.versionNumber}）`);
+      setImportMsg(result.selected === false
+        ? `已导入并发布技能：${result.skill.name}（v${result.version.versionNumber}），但未能自动启用，请在列表中手动启用`
+        : `已导入并发布技能：${result.skill.name}（v${result.version.versionNumber}）`);
       await refresh();
       setTimeout(() => setImportMsg(null), 2200);
     } catch (err) {

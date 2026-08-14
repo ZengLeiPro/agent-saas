@@ -67,6 +67,7 @@ export function createGovernanceResourcesRouter(deps: {
   changeJobs: PgGovernanceChangeJobStore;
   changePlanner: GovernanceChangePlanner;
   tenantExists?: (tenantId: string) => boolean;
+  isCustomSkillsEnabled?: (tenantId: string) => boolean;
   resolveUserTenantId?: (userId: string) => string | undefined;
   listCronIdsByOwner?: (userId: string) => Promise<Array<{ id: string; version: string }>>;
   listActiveRunIdsByUser?: (tenantId: string, userId: string) => Promise<Array<{ id: string; version: string }>>;
@@ -394,7 +395,58 @@ export function createGovernanceResourcesRouter(deps: {
     res.json({ template, version });
   });
 
-  router.post('/skills/import', (req, res) => {
+  router.post('/skills/import', async (req, res) => {
+    const scope = typeof req.query.scope === 'string' ? req.query.scope : undefined;
+    if (scope !== 'tenant' && scope !== 'personal') {
+      return res.status(400).json({ error: '技能作用域无效', code: 'SKILL_SCOPE_INVALID' });
+    }
+
+    let tenantId: string;
+    if (scope === 'personal') {
+      if (!deps.importPersonalSkill) {
+        return res.status(503).json({ error: '个人技能上传服务暂不可用', code: 'SKILL_UPLOAD_UNAVAILABLE' });
+      }
+      const requestedTenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
+      const resolvedTenantId = resourceTenantFor(req, requestedTenantId);
+      if (!resolvedTenantId) {
+        return res.status(403).json({ error: '当前组织作用域无效', code: 'SKILL_TENANT_SCOPE_DENIED' });
+      }
+      tenantId = resolvedTenantId;
+      if (deps.isCustomSkillsEnabled && !deps.isCustomSkillsEnabled(tenantId)) {
+        return res.status(403).json({ error: '自定义技能已被当前组织禁用', code: 'TENANT_FEATURE_DISABLED' });
+      }
+      if (await hasActiveOffboarding(tenantId, req.user!.sub)) {
+        return res.status(409).json({ error: '账号正在离职交接，暂不能上传个人技能', code: 'RESOURCE_OWNER_OFFBOARDING_ACTIVE' });
+      }
+    } else {
+      if (!deps.importTenantSkill) {
+        return res.status(503).json({ error: '组织技能上传服务暂不可用', code: 'SKILL_UPLOAD_UNAVAILABLE' });
+      }
+      const requestedTenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
+      if (!requestedTenantId) {
+        return res.status(400).json({ error: '请选择目标组织', code: 'SKILL_TENANT_REQUIRED' });
+      }
+      const persona = personas.get(req);
+      if (persona === 'platform_admin') {
+        if (!hasPlatformCapability(req.user, 'skill.tenant.manage')) {
+          return res.status(403).json({ error: '当前平台管理员无组织技能管理权限', code: 'PLATFORM_CAPABILITY_REQUIRED' });
+        }
+      } else if (persona !== 'org_admin') {
+        return res.status(403).json({ error: '仅组织管理员可以上传组织技能', code: 'ORGANIZATION_ADMIN_REQUIRED' });
+      }
+      const resolvedTenantId = tenantFor(req, requestedTenantId);
+      if (!resolvedTenantId) {
+        return res.status(403).json({ error: '不能向其他组织上传技能', code: 'SKILL_TENANT_SCOPE_DENIED' });
+      }
+      tenantId = resolvedTenantId;
+      if (deps.tenantExists && !deps.tenantExists(tenantId)) {
+        return res.status(404).json({ error: '目标组织不存在', code: 'SKILL_TENANT_NOT_FOUND' });
+      }
+      if (deps.isCustomSkillsEnabled && !deps.isCustomSkillsEnabled(tenantId)) {
+        return res.status(403).json({ error: '自定义技能已被当前组织禁用', code: 'TENANT_FEATURE_DISABLED' });
+      }
+    }
+
     skillUpload.array('files', 300)(req, res, (uploadError) => {
       if (uploadError) {
         const limitExceeded = uploadError instanceof multer.MulterError
@@ -407,58 +459,11 @@ export function createGovernanceResourcesRouter(deps: {
         });
       }
       void (async () => {
-        const scope = req.body?.scope;
-        if (scope !== 'tenant' && scope !== 'personal') {
-          return res.status(400).json({ error: '技能作用域无效', code: 'SKILL_SCOPE_INVALID' });
-        }
         const files = (req.files as Express.Multer.File[] | undefined) ?? [];
         try {
-          if (scope === 'personal') {
-            if (!deps.importPersonalSkill) {
-              return res.status(503).json({ error: '个人技能上传服务暂不可用', code: 'SKILL_UPLOAD_UNAVAILABLE' });
-            }
-            const tenantId = resourceTenantFor(req);
-            if (!tenantId) {
-              return res.status(403).json({ error: '当前组织作用域无效', code: 'SKILL_TENANT_SCOPE_DENIED' });
-            }
-            if (await hasActiveOffboarding(tenantId, req.user!.sub)) {
-              return res.status(409).json({ error: '账号正在离职交接，暂不能上传个人技能', code: 'RESOURCE_OWNER_OFFBOARDING_ACTIVE' });
-            }
-            const result = await deps.importPersonalSkill({
-              tenantId,
-              actorUserId: req.user!.sub,
-              files,
-            });
-            return res.status(201).json(result);
-          }
-
-          if (!deps.importTenantSkill) {
-            return res.status(503).json({ error: '组织技能上传服务暂不可用', code: 'SKILL_UPLOAD_UNAVAILABLE' });
-          }
-          const requestedTenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
-          if (!requestedTenantId) {
-            return res.status(400).json({ error: '请选择目标组织', code: 'SKILL_TENANT_REQUIRED' });
-          }
-          const persona = personas.get(req);
-          if (persona === 'platform_admin') {
-            if (!hasPlatformCapability(req.user, 'skill.tenant.manage')) {
-              return res.status(403).json({ error: '当前平台管理员无组织技能管理权限', code: 'PLATFORM_CAPABILITY_REQUIRED' });
-            }
-          } else if (persona !== 'org_admin') {
-            return res.status(403).json({ error: '仅组织管理员可以上传组织技能', code: 'ORGANIZATION_ADMIN_REQUIRED' });
-          }
-          const tenantId = tenantFor(req, requestedTenantId);
-          if (!tenantId) {
-            return res.status(403).json({ error: '不能向其他组织上传技能', code: 'SKILL_TENANT_SCOPE_DENIED' });
-          }
-          if (deps.tenantExists && !deps.tenantExists(tenantId)) {
-            return res.status(404).json({ error: '目标组织不存在', code: 'SKILL_TENANT_NOT_FOUND' });
-          }
-          const result = await deps.importTenantSkill({
-            tenantId,
-            actorUserId: req.user!.sub,
-            files,
-          });
+          const result = scope === 'personal'
+            ? await deps.importPersonalSkill!({ tenantId, actorUserId: req.user!.sub, files })
+            : await deps.importTenantSkill!({ tenantId, actorUserId: req.user!.sub, files });
           return res.status(201).json(result);
         } catch (error) {
           if (error instanceof SkillPackageUploadError) {

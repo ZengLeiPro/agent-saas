@@ -2,22 +2,90 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { crc32 } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SkillGovernanceInvariantError } from '../data/skillGovernance/index.js';
-import { createTenantSkillGovernanceUpload } from '../services/tenantSkillGovernanceUpload.js';
+import { createTenantSkillGovernanceUpload, tenantSkillResourceId } from '../services/tenantSkillGovernanceUpload.js';
 
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function uploadFile(content: string, originalname = 'SKILL.md'): Express.Multer.File {
-  const buffer = Buffer.from(content);
+function uploadBuffer(buffer: Buffer, originalname: string): Express.Multer.File {
   return {
-    fieldname: 'files', originalname, encoding: '7bit', mimetype: 'text/markdown',
+    fieldname: 'files', originalname, encoding: '7bit', mimetype: 'application/octet-stream',
     size: buffer.length, buffer, destination: '', filename: '', path: '', stream: undefined as never,
   };
+}
+
+function uploadFile(content: string, originalname = 'SKILL.md'): Express.Multer.File {
+  return uploadBuffer(Buffer.from(content), originalname);
+}
+
+function singleFileZip(entryName: string, content: string): Buffer {
+  const name = Buffer.from(entryName);
+  const data = Buffer.from(content);
+  const checksum = crc32(data);
+  const local = Buffer.alloc(30 + name.length + data.length);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt32LE(checksum, 14);
+  local.writeUInt32LE(data.length, 18);
+  local.writeUInt32LE(data.length, 22);
+  local.writeUInt16LE(name.length, 26);
+  name.copy(local, 30);
+  data.copy(local, 30 + name.length);
+
+  const central = Buffer.alloc(46 + name.length);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(0x0314, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt32LE(checksum, 16);
+  central.writeUInt32LE(data.length, 20);
+  central.writeUInt32LE(data.length, 24);
+  central.writeUInt16LE(name.length, 28);
+  central.writeUInt32LE((0o100644 << 16) >>> 0, 38);
+  name.copy(central, 46);
+
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(1, 8);
+  eocd.writeUInt16LE(1, 10);
+  eocd.writeUInt32LE(central.length, 12);
+  eocd.writeUInt32LE(local.length, 16);
+  return Buffer.concat([local, central, eocd]);
+}
+
+function oversizedZipMetadata(): Buffer {
+  const name = Buffer.from('SKILL.md');
+  const local = Buffer.alloc(30 + name.length + 1);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt16LE(8, 8);
+  local.writeUInt32LE(1, 18);
+  local.writeUInt32LE(101 * 1024 * 1024, 22);
+  local.writeUInt16LE(name.length, 26);
+  name.copy(local, 30);
+
+  const central = Buffer.alloc(46 + name.length);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(0x0314, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt16LE(8, 10);
+  central.writeUInt32LE(1, 20);
+  central.writeUInt32LE(101 * 1024 * 1024, 24);
+  central.writeUInt16LE(name.length, 28);
+  name.copy(central, 46);
+
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(1, 8);
+  eocd.writeUInt16LE(1, 10);
+  eocd.writeUInt32LE(central.length, 12);
+  eocd.writeUInt32LE(local.length, 16);
+  return Buffer.concat([local, central, eocd]);
 }
 
 function rig(input: {
@@ -76,10 +144,11 @@ describe('组织 Skill 治理上传服务', () => {
     });
     expect(await readFile(join(test.installedDir('governed-skill'), 'SKILL.md'), 'utf-8')).toContain('governed upload');
     expect(test.createAndPublishResource).toHaveBeenCalledWith(expect.objectContaining({
-      skillId: 'governed-skill', tenantId: 'tenant-a', scope: 'tenant', createdBy: 'platform-1',
+      skillId: tenantSkillResourceId('tenant-a', 'governed-skill'),
+      tenantId: 'tenant-a', scope: 'tenant', createdBy: 'platform-1',
       definition: expect.objectContaining({
-        resourceType: 'skill', source: 'governance_upload', packageFormat: 'skill-package-v1',
-        contentDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        resourceType: 'skill', legacySkillId: 'governed-skill', source: 'governance_upload',
+        packageFormat: 'skill-package-v1', contentDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
       }),
     }));
   });
@@ -93,6 +162,47 @@ describe('组织 Skill 治理上传服务', () => {
       .rejects.toMatchObject({ code, status: 400 });
     expect(test.createAndPublishResource).not.toHaveBeenCalled();
     expect(existsSync(join(test.root, 'tenant-skills', 'tenant-a', 'skills'))).toBe(false);
+  });
+
+  it('合法 zip 通过中央目录预检后正常发布', async () => {
+    const test = rig();
+    const result = await test.upload({
+      tenantId: 'tenant-a', actorUserId: 'admin-1',
+      files: [uploadBuffer(singleFileZip('SKILL.md', validSkill('zipped-skill')), 'zipped-skill.zip')],
+    });
+    expect(result).toMatchObject({ status: 'succeeded', skill: { id: 'zipped-skill' } });
+    expect(await readFile(join(test.installedDir('zipped-skill'), 'SKILL.md'), 'utf-8'))
+      .toContain('governed upload');
+  });
+
+  it('zip 中央目录声明解压后超过 100MB 时在解压前拒绝', async () => {
+    const test = rig();
+    await expect(test.upload({
+      tenantId: 'tenant-a', actorUserId: 'admin-1',
+      files: [uploadBuffer(oversizedZipMetadata(), 'oversized.zip')],
+    })).rejects.toMatchObject({ code: 'SKILL_PACKAGE_LIMIT_EXCEEDED', status: 413 });
+    expect(test.createAndPublishResource).not.toHaveBeenCalled();
+    expect(existsSync(join(test.root, 'tenant-skills', 'tenant-a', 'skills'))).toBe(false);
+  });
+
+  it('不同组织上传同名 Skill 时使用隔离治理主键，并保留相同 legacySkillId', async () => {
+    const test = rig();
+    await test.upload({
+      tenantId: 'tenant-a', actorUserId: 'admin-a', files: [uploadFile(validSkill('same-name'))],
+    });
+    await test.upload({
+      tenantId: 'tenant-b', actorUserId: 'admin-b', files: [uploadFile(validSkill('same-name'))],
+    });
+
+    const first = test.createAndPublishResource.mock.calls[0]?.[0];
+    const second = test.createAndPublishResource.mock.calls[1]?.[0];
+    expect(first.skillId).toBe(tenantSkillResourceId('tenant-a', 'same-name'));
+    expect(second.skillId).toBe(tenantSkillResourceId('tenant-b', 'same-name'));
+    expect(first.skillId).not.toBe(second.skillId);
+    expect(first.definition.legacySkillId).toBe('same-name');
+    expect(second.definition.legacySkillId).toBe('same-name');
+    expect(existsSync(join(test.root, 'tenant-skills', 'tenant-a', 'skills', 'same-name', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(test.root, 'tenant-skills', 'tenant-b', 'skills', 'same-name', 'SKILL.md'))).toBe(true);
   });
 
   it('平台同名、治理资源重复时返回可理解冲突且不覆盖现有数据', async () => {

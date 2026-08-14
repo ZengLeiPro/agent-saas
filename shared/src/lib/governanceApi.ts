@@ -251,25 +251,23 @@ export const governanceResourcesApi = {
     request<T>(`${RESOURCE_BASE}/agents/${id(agentId)}/archive`, body('POST', command)),
   importTenantSkillPackage: (tenantId: string, files: File[]) => {
     const formData = new FormData();
-    formData.set('scope', 'tenant');
     for (const file of files) {
       const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
       formData.append('files', file, relativePath);
     }
     return request<GovernanceSkillImportResponse>(
-      withQuery(`${RESOURCE_BASE}/skills/import`, { tenantId }),
+      withQuery(`${RESOURCE_BASE}/skills/import`, { scope: 'tenant', tenantId }),
       { method: 'POST', body: formData },
     );
   },
   importPersonalSkillPackage: (files: File[]) => {
     const formData = new FormData();
-    formData.set('scope', 'personal');
     for (const file of files) {
       const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
       formData.append('files', file, relativePath);
     }
     return request<GovernanceSkillImportResponse>(
-      `${RESOURCE_BASE}/skills/import`,
+      withQuery(`${RESOURCE_BASE}/skills/import`, { scope: 'personal' }),
       { method: 'POST', body: formData },
     );
   },

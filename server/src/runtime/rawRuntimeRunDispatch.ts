@@ -3374,7 +3374,6 @@ export async function wakeRuntimeSession(
     }
     return;
   }
-
   const wakePrompt = resolveWakePrompt(run, events, session);
   const sessionOwner = resolveWakeSessionOwner(config, session, run.userId, run.tenantId);
   const context: ChannelContext = {
@@ -3411,6 +3410,7 @@ export async function wakeRuntimeSession(
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
         ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}),
+        ...(session.orgAgentId ? { orgAgentId: session.orgAgentId } : {}),
         recordUserMessage: wakePrompt.recordUserMessage,
         abortController,
         runtimeWorkerId: options.lease?.workerId,

@@ -224,14 +224,16 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
         }> = await Promise.all(orgAgentStore.listAll().map(async agent => {
           const set = await assignmentStore!.getAssignmentSet(agent.tenantId, 'org_agent', agent.id);
           const userIdFor = (username: string) => userStore?.findByUsername(username)?.id ?? `unresolved:${username}`;
-          const legacyAssignments = agent.audience.exposure === 'all'
-            ? [{ assigneeType: 'everyone', effect: 'allow' }]
-            : agent.audience.exposure === 'allow_users'
-              ? agent.audience.usernames.map(username => ({ assigneeType: 'user', assigneeId: userIdFor(username), effect: 'allow' }))
-              : [
-                  { assigneeType: 'everyone', effect: 'allow' },
-                  ...agent.audience.usernames.map(username => ({ assigneeType: 'user', assigneeId: userIdFor(username), effect: 'deny' })),
-                ];
+          const legacyAssignments = !agent.audience
+            ? []
+            : agent.audience.exposure === 'all'
+              ? [{ assigneeType: 'everyone', effect: 'allow' }]
+              : agent.audience.exposure === 'allow_users'
+                ? agent.audience.usernames.map(username => ({ assigneeType: 'user', assigneeId: userIdFor(username), effect: 'allow' }))
+                : [
+                    { assigneeType: 'everyone', effect: 'allow' },
+                    ...agent.audience.usernames.map(username => ({ assigneeType: 'user', assigneeId: userIdFor(username), effect: 'deny' })),
+                  ];
           const normalize = (items: Array<{ assigneeType: string; assigneeId?: string; effect: string }>) => items
             .map(item => ({ assigneeType: item.assigneeType, assigneeId: item.assigneeId ?? null, effect: item.effect }))
             .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));

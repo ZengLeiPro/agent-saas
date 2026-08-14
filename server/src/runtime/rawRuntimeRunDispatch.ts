@@ -1106,7 +1106,7 @@ export function buildOrgAgentSkillFilter(agent: Pick<OrgAgentRecord, 'allowedSki
 /**
  * 解析专职 Agent 覆盖三态：
  *   - null：orgAgentId 缺省 → 个人 Agent 路径照旧（兼容红线：零行为变化）
- *   - { error }：record 缺失 / disabled / 租户不符 / store 未配置 → 调用方 yield error
+ *   - { error }：record 缺失 / disabled / audience 无效 / 租户不符 / store 未配置 → 调用方 yield error
  *     **fail-closed**，绝不静默回退个人 persona + 全量 skill（漏一处 = 审批恢复后越权）
  *   - { agent }：正常应用覆盖（org 名 / 限定提示语 / skill 白名单 / 跳过 persona+memory）
  */
@@ -1121,7 +1121,7 @@ export function resolveOrgAgentOverrides(
     return { error: `企业专家服务不可用（orgAgentId=${orgAgentId}），已终止本次运行` };
   }
   const record = store.get(orgAgentId);
-  if (!record || !record.enabled) {
+  if (!record || !record.enabled || !record.audience) {
     return { error: '该企业专家已被停用或删除，请联系组织管理员' };
   }
   if (record.tenantId !== tenantId) {

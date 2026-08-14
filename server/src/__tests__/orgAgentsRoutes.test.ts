@@ -196,6 +196,47 @@ describe('org-agents 路由权限', () => {
     expect((await res2.json() as OrgAgentRecord).tenantId).toBe('kaiyan');
   });
 
+  it('平台 admin 显式管理组织时与组织 admin 获取相同完整 DTO；无租户作用域总览仍只返回元数据', async () => {
+    h.setCaller(PLATFORM_ADMIN);
+    const created = await (await h.request('/api/org-agents', postBody({
+      tenantId: 'kaiyan',
+      audience: { exposure: 'allow_users', usernames: ['alice'] },
+    }))).json() as OrgAgentRecord;
+
+    const scoped = await h.request('/api/org-agents?tenantId=kaiyan');
+    expect(scoped.status).toBe(200);
+    await expect(scoped.json()).resolves.toEqual([
+      expect.objectContaining({
+        id: created.id,
+        name: '产品选型助手',
+        audience: { exposure: 'allow_users', usernames: ['alice'] },
+        allowedSkills: ['wain-kb'],
+      }),
+    ]);
+
+    h.setCaller(KAIYAN_ADMIN);
+    const orgAdminList = await h.request('/api/org-agents');
+    expect(orgAdminList.status).toBe(200);
+    await expect(orgAdminList.json()).resolves.toEqual([
+      expect.objectContaining({
+        id: created.id,
+        audience: { exposure: 'allow_users', usernames: ['alice'] },
+      }),
+    ]);
+
+    h.setCaller(PLATFORM_ADMIN);
+    const overview = await h.request('/api/org-agents');
+    expect(overview.status).toBe(200);
+    await expect(overview.json()).resolves.toEqual([
+      {
+        id: created.id,
+        tenantId: 'kaiyan',
+        enabled: true,
+        updatedAt: created.updatedAt,
+      },
+    ]);
+  });
+
   it('平台 admin 创建时必须显式选择有效客户组织，且 pantheon 不承载组织 Agent', async () => {
     h.setCaller(PLATFORM_ADMIN);
 

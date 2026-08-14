@@ -787,7 +787,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     const record = options.orgAgentStore?.get(meta.orgAgentId);
     const adminExempt = reqUser?.role === "admin"
       && (reqUser.tenantId === DEFAULT_TENANT_ID || record?.tenantId === reqUser.tenantId);
-    const available = !!record
+    const available = !!record?.audience
       && record.enabled
       && record.tenantId === meta.tenantId
       && (adminExempt || isAssignedToOrgAgent(record, meta.username));
@@ -836,7 +836,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const record = options.orgAgentStore?.get(orgAgentId);
       const adminExempt = user.role === "admin"
         && (user.tenantId === DEFAULT_TENANT_ID || record?.tenantId === user.tenantId);
-      const assigned = !!record
+      const assigned = !!record?.audience
         && (adminExempt || isAssignedToOrgAgent(record, user.username));
       if (!record || !record.enabled || record.tenantId !== user.tenantId || !assigned) {
         res.status(403).json({ error: "该企业专家当前不可用，请联系组织管理员" });

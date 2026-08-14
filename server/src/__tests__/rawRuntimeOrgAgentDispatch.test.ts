@@ -68,14 +68,16 @@ describe('resolveOrgAgentOverrides 三态', () => {
     expect(resolveOrgAgentOverrides({}, undefined, 'wain')).toBeNull();
   });
 
-  it('record 缺失 / disabled / 租户不符 / store 未配置 → fail-closed error', () => {
+  it('record 缺失 / disabled / audience 无效 / 租户不符 / store 未配置 → fail-closed error', () => {
     const store = fakeOrgAgentStore([
       orgAgentRecord(),
       orgAgentRecord({ id: 'oa-disabled', enabled: false }),
+      orgAgentRecord({ id: 'oa-invalid-audience', audience: null }),
     ]);
     for (const [config, orgAgentId, tenantId] of [
       [{ orgAgentStore: store }, 'oa-missing', 'wain'],
       [{ orgAgentStore: store }, 'oa-disabled', 'wain'],
+      [{ orgAgentStore: store }, 'oa-invalid-audience', 'wain'],
       [{ orgAgentStore: store }, 'oa-test-1', 'kaiyan'],   // 跨租户
       [{ orgAgentStore: store }, 'oa-test-1', undefined],  // 租户身份缺失
       [{}, 'oa-test-1', 'wain'],                           // store 未装配

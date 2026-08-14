@@ -544,6 +544,21 @@ describe('WebChannel 专职 Agent 门禁', () => {
     expect(modelCalls()).toHaveLength(0);
   });
 
+  it('audience 合同无效时管理员豁免也必须 fail-closed', async () => {
+    const rig = await makeRig();
+    const agent = await seedOrgAgent(rig);
+    const stored = rig.orgAgentStore.get(agent.id);
+    expect(stored).toBeDefined();
+    stored!.audience = null;
+
+    await rig.send(WAIN_ADMIN, { message: 'hi', orgAgentId: agent.id });
+
+    expect(rig.ws.sent.find((message) => message.data?.type === 'chat_rejected')?.data?.reason_code)
+      .toBe('org_agent_unavailable');
+    expect(rig.enqueued).toHaveLength(0);
+    expect(modelCalls()).toHaveLength(0);
+  });
+
   // ── 蓝图 v2 § 4.3.1 三档 mode 行为差异（2026-07-18 加）──
   //   mode='off'     → 不跑门禁模型、直通主 Agent、不落库
   //   mode='shadow'  → 跑门禁 + 落库审计（打 [shadow] 前缀）、**不拦截**主 Agent（新专家观察期）

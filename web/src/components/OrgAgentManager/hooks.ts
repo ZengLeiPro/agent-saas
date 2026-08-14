@@ -5,11 +5,15 @@
  * 过滤到当前切换的组织。skill 多选数据源 = 租户可用 skill 清单
  * （平台池启用给该租户的 + 租户自有的）。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { authFetch } from '@/lib/authFetch';
 import { fetchTenantOwnSkills, fetchTenantSkillPool } from '@agent/shared';
 import type { SkillInfo } from '@agent/shared';
-import type { OrgAgentRecord } from './types';
+import {
+  parseOrgAgentAdminList,
+  type OrgAgentDataIssue,
+  type OrgAgentRecord,
+} from './types';
 
 async function readError(res: Response, fallback: string): Promise<string> {
   const data = await res.json().catch(() => ({}));
@@ -18,26 +22,42 @@ async function readError(res: Response, fallback: string): Promise<string> {
 
 export function useOrgAgentAdmin(tenantId?: string) {
   const [agents, setAgents] = useState<OrgAgentRecord[]>([]);
+  const [dataIssues, setDataIssues] = useState<OrgAgentDataIssue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
+  const tenantIdRef = useRef(tenantId);
+  tenantIdRef.current = tenantId;
 
   const refresh = useCallback(async () => {
+    const requestTenantId = tenantId;
+    // 旧租户 mutation 完成后可能仍持有旧 refresh；切换后直接忽略，不能抢占新租户请求序号。
+    if (requestTenantId !== tenantIdRef.current) return;
+    const requestId = ++requestIdRef.current;
     setLoading(true);
     try {
       const query = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
       const res = await authFetch(`/api/org-agents${query}`);
       if (!res.ok) throw new Error(await readError(res, '获取企业专家失败'));
-      const data = await res.json();
-      setAgents(Array.isArray(data) ? data : []);
+      const parsed = parseOrgAgentAdminList(await res.json());
+      if (requestId !== requestIdRef.current || requestTenantId !== tenantIdRef.current) return;
+      setAgents(parsed.agents);
+      setDataIssues(parsed.issues);
       setError(null);
     } catch (err) {
+      if (requestId !== requestIdRef.current || requestTenantId !== tenantIdRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current && requestTenantId === tenantIdRef.current) setLoading(false);
     }
   }, [tenantId]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    setAgents([]);
+    setDataIssues([]);
+    setError(null);
+    void refresh();
+  }, [refresh]);
 
   const create = useCallback(async (input: Omit<OrgAgentRecord, 'id' | 'tenantId' | 'createdAt' | 'createdBy' | 'updatedAt' | 'updatedBy'>) => {
     const res = await authFetch('/api/org-agents', {
@@ -78,7 +98,7 @@ export function useOrgAgentAdmin(tenantId?: string) {
     return data;
   }, [refresh]);
 
-  return { agents, loading, error, refresh, create, update, remove, uploadAvatar };
+  return { agents, dataIssues, loading, error, refresh, create, update, remove, uploadAvatar };
 }
 
 /** 租户可用 skill 清单：平台池启用给该租户的 + 租户自有启用的（skill 白名单多选数据源） */

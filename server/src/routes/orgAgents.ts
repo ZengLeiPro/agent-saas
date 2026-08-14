@@ -241,10 +241,13 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
         const tenantFilter = typeof req.query.tenantId === 'string' && req.query.tenantId
           ? String(req.query.tenantId)
           : undefined;
-        const records = tenantFilter
-          ? orgAgentStore.listByTenant(tenantFilter)
-          : orgAgentStore.listAll();
-        res.json(records.map(toPlatformMetadata));
+        if (tenantFilter) {
+          // 组织控制台是显式租户作用域，需与组织管理员共享完整管理 DTO。
+          // 未指定 tenantId 的平台总览仍只返回元数据，避免无意批量暴露组织配置。
+          res.json(orgAgentStore.listByTenant(tenantFilter));
+          return;
+        }
+        res.json(orgAgentStore.listAll().map(toPlatformMetadata));
         return;
       }
       if (user.role === 'admin') {

@@ -77,6 +77,17 @@ describe('TenantStore', () => {
       await expect(store.create({ id: 'wain', name: '', createdBy: 's' })).rejects.toThrow(/name cannot be empty/);
       await expect(store.create({ id: 'wain', name: '   ', createdBy: 's' })).rejects.toThrow(/name cannot be empty/);
     });
+
+    it('持久化失败时回滚内存记录，不留下半成品组织', async () => {
+      const blockedParent = join(tmpDir, 'blocked-parent');
+      const store = new TenantStore(join(blockedParent, 'tenants.json'));
+      rmSync(blockedParent, { recursive: true, force: true });
+      require('node:fs').writeFileSync(blockedParent, 'not a directory', 'utf-8');
+
+      await expect(store.create({ id: 'wain', name: '唯恩', createdBy: 's' })).rejects.toThrow();
+      expect(store.findById('wain')).toBeUndefined();
+      expect(store.count()).toBe(0);
+    });
   });
 
   describe('load 持久化往返', () => {

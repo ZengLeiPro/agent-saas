@@ -13,6 +13,7 @@ import { PgCredentialStore } from '../data/credentials/index.js';
 import { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
 import { PgEnvironmentStore } from '../data/environments/index.js';
 import { PgAgentResourceStore } from '../data/agentResources/index.js';
+import { projectManagedOrgAgentVersion } from '../data/agentResources/orgAgentProjection.js';
 import { PgAgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import { PgAgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
@@ -214,7 +215,11 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
             : typeof payload.policyKey === 'string'
               ? payload.policyKey
               : item.tenantId;
-        const fenceKey = `${item.tenantId}:${item.projector}:${target}`;
+        const projectsLegacyOrgAgents = item.projector === 'org_agent'
+          || (item.projector === 'assignment' && payload.resourceType === 'org_agent');
+        const fenceKey = projectsLegacyOrgAgents
+          ? 'governance-projection:legacy-org-agents-file'
+          : `${item.tenantId}:${item.projector}:${target}`;
         const client = await pgEventStore!.pool.connect();
         let locked = false;
         try {
@@ -255,6 +260,13 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
             result,
             metadata,
           });
+        },
+        org_agent: async payload => {
+          if (!agentResourceStore || !orgAgentStore) throw new Error('GOVERNANCE_PROJECTION_INVALID');
+          await projectManagedOrgAgentVersion({
+            agents: agentResourceStore,
+            legacyAgents: orgAgentStore,
+          }, payload);
         },
         tenant_settings: async payload => {
           const tenantId = typeof payload.tenantId === 'string' ? payload.tenantId : '';

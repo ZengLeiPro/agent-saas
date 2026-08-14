@@ -62,6 +62,7 @@ export interface AgentDwsConversationBindingRecord {
   accountId: string;
   conversationId: string;
   sessionId: string;
+  peerOpenDingtalkId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -76,6 +77,7 @@ export interface AgentDwsIngestResult {
 export interface AgentDwsMessageStore {
   init(): Promise<void>;
   ingest(event: AgentDwsNormalizedEvent, rawPayload: unknown): Promise<AgentDwsIngestResult>;
+  listForAccount(tenantId: string, accountId: string, limit?: number): Promise<AgentDwsInboxRecord[]>;
   claimNext(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null>;
   renewLease(inboxId: string, owner: string, fence: number, ttlMs: number): Promise<boolean>;
   getOrCreateBinding(
@@ -83,6 +85,7 @@ export interface AgentDwsMessageStore {
     accountId: string,
     conversationId: string,
     candidateSessionId: string,
+    peerOpenDingtalkId?: string,
   ): Promise<AgentDwsConversationBindingRecord>;
   markDispatchStarted(
     inboxId: string,

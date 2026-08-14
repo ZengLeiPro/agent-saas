@@ -627,7 +627,14 @@ describe('typed governance resource routes', () => {
       skillPublishVersion: vi.fn().mockResolvedValue({ resource: tenantSkill }),
       updateCredential: vi.fn().mockResolvedValue(orgCredential),
     });
-    expect((await admin.request('/api/governance/resources/agents/org-a/versions', json('POST', { expectedRevision: 1, definition: {} }))).status).toBe(503);
+    const agentPreview = await admin.request('/api/governance/resources/agents/org-a/versions/preview', json('POST', {
+      expectedRevision: 1, definition: { schemaVersion: 1, name: 'Agent' }, reason: '更新组织 Agent',
+    }));
+    expect(agentPreview.status).toBe(200);
+    await expect(agentPreview.json()).resolves.toMatchObject({
+      canCommit: false,
+      impact: { blockers: ['GOVERNANCE_PROJECTION_AUTHORITY_UNAVAILABLE'] },
+    });
     expect(admin.agentPublish).not.toHaveBeenCalled();
     expect((await admin.request('/api/governance/resources/skills/tenant-s/versions', json('POST', { expectedRevision: 1, definition: {} }))).status).toBe(200);
     expect((await admin.request('/api/governance/resources/credentials/cred-a/status', json('PATCH', {

@@ -15,6 +15,7 @@ import {
 } from '../data/transcripts/projectKey.js';
 import {
   addSessionCost,
+  backfillSessionIdentity,
   getMetaPath,
   getSessionMetaProjectionStats,
   readSessionMeta,
@@ -118,6 +119,32 @@ describe('transcripts/meta persistence', () => {
     await addSessionCost(transcriptPath, 0);
     await addSessionCost(transcriptPath, -5);
     expect((await readSessionMeta(transcriptPath))!.totalCostUsd).toBeCloseTo(1.75, 6);
+  });
+
+  it('backfillSessionIdentity 只补空身份字段并保留并发敏感元数据', async () => {
+    await writeSessionMeta(transcriptPath, {
+      ...baseMeta, userId: '', model: 'codex/gpt-5.6-sol-high',
+      runtimeStatus: 'idle', totalCostUsd: 1.25,
+    });
+    const updated = await backfillSessionIdentity(transcriptPath, {
+      userId: 'u1', tenantId: 'kaiyan', orgAgentId: 'org-kaikai',
+      updatedAt: '2026-08-14T12:00:00.000Z',
+    });
+
+    expect(updated).toMatchObject({
+      userId: 'u1', username: 'alice', tenantId: 'kaiyan',
+      orgAgentId: 'org-kaikai', channel: 'web', model: 'codex/gpt-5.6-sol-high',
+      runtimeStatus: 'idle', totalCostUsd: 1.25, updatedAt: '2026-08-14T12:00:00.000Z',
+    });
+  });
+
+  it('backfillSessionIdentity 重新读取并拒绝覆盖已存在的冲突身份', async () => {
+    await writeSessionMeta(transcriptPath, { ...baseMeta, tenantId: 'other-tenant' });
+
+    await expect(backfillSessionIdentity(transcriptPath, {
+      tenantId: 'kaiyan', updatedAt: '2026-08-14T12:00:00.000Z',
+    })).rejects.toThrow('WAKE_SESSION_IDENTITY_CONFLICT:tenantId');
+    expect((await readSessionMeta(transcriptPath))?.tenantId).toBe('other-tenant');
   });
 
   it('updateSessionMeta：空 customTitle 删除该字段（回退自动标题）', async () => {

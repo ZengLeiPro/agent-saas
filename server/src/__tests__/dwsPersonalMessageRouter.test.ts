@@ -6,7 +6,10 @@ import type {
   AgentDwsInboxRecord,
   AgentDwsMessageStore,
 } from '../data/agentDwsMessages/index.js';
-import { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
+import {
+  AgentDwsMessageRouter,
+  type AgentDwsDefaultModelResolution,
+} from '../dws/personalMessageRouter.js';
 import type { DwsPersonalMessageSenderLike } from '../dws/personalMessageSender.js';
 
 const account: AgentDwsAccountRecord = {
@@ -52,16 +55,20 @@ function setup(input: {
   dispatch?: AgentRunDispatch;
   existingRun?: { runId: string; sessionId: string; status: string } | null;
   recoveredEvents?: Array<Record<string, unknown>>;
+  bindingPeerOpenDingtalkId?: string;
+  resolveDefaultModel?: (tenantId: string) => AgentDwsDefaultModelResolution | null;
 } = {}) {
   const claimed = input.claimed ?? item;
   const messageStore = {
     init: vi.fn(),
     ingest: vi.fn(),
+    listForAccount: vi.fn().mockResolvedValue([]),
     claimNext: vi.fn().mockResolvedValue(claimed),
     renewLease: vi.fn().mockResolvedValue(true),
     getOrCreateBinding: vi.fn().mockResolvedValue({
       bindingId: 'binding-a', tenantId: 'tenant-a', accountId: 'account-a',
       conversationId: 'cid-a', sessionId: 'session-a',
+      ...(input.bindingPeerOpenDingtalkId ? { peerOpenDingtalkId: input.bindingPeerOpenDingtalkId } : {}),
       createdAt: item.createdAt, updatedAt: item.updatedAt,
     }),
     markDispatchStarted: vi.fn().mockImplementation(async (
@@ -97,6 +104,12 @@ function setup(input: {
     messageStore,
     accountStore,
     dispatch,
+    resolveDefaultModel: input.resolveDefaultModel ?? vi.fn(() => ({
+      ref: 'group/model-a',
+      model: 'model-a',
+      connection: { apiKey: 'test-key', baseUrl: 'https://model.test/v1' },
+      providerOptions: { protocol: 'responses' as const },
+    })),
     sender,
     ...(input.existingRun !== undefined ? {
       runStore: { get: vi.fn().mockResolvedValue(input.existingRun) },
@@ -150,6 +163,9 @@ describe('AgentDwsMessageRouter', () => {
       }),
       expect.objectContaining({
         orgAgentId: 'agent-a', resumeSessionId: 'session-a',
+        model: 'model-a', modelRef: 'group/model-a',
+        modelConnection: { apiKey: 'test-key', baseUrl: 'https://model.test/v1' },
+        modelProviderOptions: { protocol: 'responses' },
         runtimeRunId: expect.stringMatching(/^agent-dws-run-/),
       }),
       expect.any(Object),
@@ -164,6 +180,29 @@ describe('AgentDwsMessageRouter', () => {
       expect.stringMatching(/^agent-dws-reply-/),
     );
     expect(messageStore.complete).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a direct-message self echo when its sender differs from the bound peer', async () => {
+    const claimed = {
+      ...item,
+      eventType: 'user_im_message_receive_o2o_all',
+      senderOpenDingtalkId: 'agent-self',
+      content: '重连通过',
+    };
+    const { router, messageStore, dispatch, sender } = setup({
+      claimed,
+      bindingPeerOpenDingtalkId: 'human-peer',
+    });
+
+    await expect(router.runOnce()).resolves.toBe(true);
+
+    expect(messageStore.getOrCreateBinding).toHaveBeenCalledWith(
+      'tenant-a', 'account-a', 'cid-a', expect.stringMatching(/^agent-dws-session-/), 'agent-self',
+    );
+    expect(messageStore.complete).toHaveBeenCalledOnce();
+    expect(messageStore.markDispatchStarted).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(sender.send).not.toHaveBeenCalled();
   });
 
   it('retries reply delivery without dispatching the Agent again', async () => {
@@ -197,6 +236,38 @@ describe('AgentDwsMessageRouter', () => {
     );
     expect(sender.send).toHaveBeenCalledWith(
       account, expect.any(Object), '从 EventStore 恢复的回复', expect.any(String),
+    );
+  });
+
+  it('fails closed before dispatch when the tenant has no default model', async () => {
+    const { router, messageStore, dispatch, sender } = setup({
+      resolveDefaultModel: () => null,
+    });
+
+    await expect(router.runOnce()).resolves.toBe(false);
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(sender.send).not.toHaveBeenCalled();
+    expect(messageStore.fail).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1, expect.objectContaining({
+        message: expect.stringContaining('没有可用的默认模型'),
+      }),
+    );
+  });
+
+  it('persists the concrete runtime error for inbox diagnostics', async () => {
+    const dispatch = vi.fn(() => (async function* () {
+      yield { type: 'error' as const, error: '该企业专家已被停用或删除，请联系组织管理员' };
+    })());
+    const { router, messageStore, sender } = setup({ dispatch });
+
+    await expect(router.runOnce()).resolves.toBe(false);
+
+    expect(sender.send).not.toHaveBeenCalled();
+    expect(messageStore.fail).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1, expect.objectContaining({
+        message: expect.stringContaining('该企业专家已被停用或删除'),
+      }),
     );
   });
 

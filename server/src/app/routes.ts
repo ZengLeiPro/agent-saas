@@ -8,11 +8,7 @@ import { registerAudioTranscribeAdminRoute } from "./audioTranscribeAdminRoute.j
 import { registerGovernanceRoutes } from './governanceRoutes.js';
 import type { TenantStore } from "../data/tenants/store.js";
 import type { UserInfo } from "../data/users/types.js";
-import {
-  getPublicModelList,
-  getUserPublicModelList,
-  resolveContextAccountingFromModels,
-} from "./models.js";
+import { getPublicModelList, getUserPublicModelList, resolveContextAccountingFromModels } from "./models.js";
 import { applyModelsHotUpdate } from "./modelsHotUpdate.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import { enforcePlatformWritePolicy } from "../auth/platformGovernance.js";
@@ -248,14 +244,11 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     userStore: runtime.userStore,
   }));
 
-  // 组织 Agent 专属成员账号：与真人用户 DWS 连接完全隔离，所有写操作需管理员权限与治理审计。
-  app.use('/api', requireAdmin, createAgentDwsAccountsRouter({
-    accountStore: runtime.agentDwsAccountStore,
-    authFlowService: runtime.agentDwsAuthFlowService,
-    eventGateway: runtime.dwsPersonalEventGateway,
-    auditStore: runtime.governanceAuditStore,
-  }));
-
+  app.use('/api/agent-dws-accounts', requireAdmin);
+  app.use('/api', createAgentDwsAccountsRouter({
+    accountStore: runtime.agentDwsAccountStore, messageStore: runtime.agentDwsMessageStore,
+    authFlowService: runtime.agentDwsAuthFlowService, eventGateway: runtime.dwsPersonalEventGateway,
+    auditStore: runtime.governanceAuditStore }));
   // 飞书单轨连接状态：浏览器/PG 只接触非敏感元数据；用户 token 与官方 CLI
   // 加密 keychain 始终保存在其独立 NAS workspace 的 .lark-cli/ 内。
   app.use("/api", createFeishuRouter({

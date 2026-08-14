@@ -117,11 +117,23 @@ describe('PgAgentDwsMessageStore', () => {
     expect(client.release).toHaveBeenCalledOnce();
   });
 
+  it('按租户和账号读取最新 inbox，并限制诊断页大小', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [inboxRow({ state: 'retry_wait', attempt: 2 })] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    const records = await store.listForAccount('tenant-1', 'account-1', 999);
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ state: 'retry_wait', attempt: 2 });
+    expect(String(query.mock.calls[0]?.[0])).toContain('WHERE tenant_id=$1 AND account_id=$2');
+    expect(query.mock.calls[0]?.[1]).toEqual(['tenant-1', 'account-1', 100]);
+  });
+
   it('binding 并发 upsert 总是返回数据库 winner session', async () => {
     const winner = {
       binding_id: 'binding-winner', tenant_id: 'tenant-1', account_id: 'account-1',
       conversation_id: 'conversation-1', session_id: 'session-winner',
-      created_at: new Date(NOW), updated_at: NOW,
+      peer_open_dingtalk_id: 'peer-winner', created_at: new Date(NOW), updated_at: NOW,
     };
     const query = vi.fn().mockResolvedValue({ rows: [winner] });
     const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
@@ -131,11 +143,11 @@ describe('PgAgentDwsMessageStore', () => {
       store.getOrCreateBinding('tenant-1', 'account-1', 'conversation-1', 'session-b'),
     ]);
 
-    expect(first.sessionId).toBe('session-winner');
-    expect(second.sessionId).toBe('session-winner');
-    expect(String(query.mock.calls[0]?.[0])).toContain(
-      'ON CONFLICT (account_id,conversation_id) DO UPDATE',
-    );
+    expect(first).toMatchObject({ sessionId: 'session-winner', peerOpenDingtalkId: 'peer-winner' });
+    expect(second).toMatchObject({ sessionId: 'session-winner', peerOpenDingtalkId: 'peer-winner' });
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain('ON CONFLICT (account_id,conversation_id) DO UPDATE');
+    expect(sql).toContain('peer_open_dingtalk_id=COALESCE(binding.peer_open_dingtalk_id,EXCLUDED.peer_open_dingtalk_id)');
   });
 
   it('状态写入均校验 owner/fence/有效 lease，状态与 Date/string 正确映射', async () => {

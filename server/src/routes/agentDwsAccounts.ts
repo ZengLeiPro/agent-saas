@@ -10,6 +10,7 @@ import {
   type AgentDwsAccountRecord,
   type AgentDwsAccountStore,
 } from '../data/agentDwsAccounts/index.js';
+import type { AgentDwsInboxRecord, AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
 import type { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
 import type { DwsAuthSessionRecord } from '../dws/authStore.js';
@@ -26,6 +27,9 @@ const createSchema = z.object({
 });
 const expectedRevisionSchema = z.object({ expectedRevision: z.number().int().positive() });
 const enabledSchema = expectedRevisionSchema.extend({ enabled: z.boolean() });
+const inboxQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
 
 class AgentDwsMutationFailure extends Error {
   constructor(
@@ -38,6 +42,7 @@ class AgentDwsMutationFailure extends Error {
 
 export interface AgentDwsAccountsRouterOptions {
   accountStore?: AgentDwsAccountStore;
+  messageStore?: Pick<AgentDwsMessageStore, 'listForAccount'>;
   authFlowService?: AgentDwsAuthFlowServiceLike;
   eventGateway?: DwsPersonalEventGateway;
   auditStore?: GovernanceAuditStore;
@@ -56,6 +61,29 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
       res.json({ accounts: accounts.map(toPublicAccount) });
     } catch {
       res.status(503).json({ error: 'Agent 钉钉账号读取失败' });
+    }
+  });
+
+  router.get('/agent-dws-accounts/:accountId/inbox', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (!options.accountStore || !options.messageStore) {
+      return res.status(503).json({ error: 'Agent 钉钉消息诊断服务暂不可用' });
+    }
+    const parsed = inboxQuerySchema.safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const tenantId = tenantFor(req);
+    if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
+    const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
+    if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
+    try {
+      const items = await options.messageStore.listForAccount(
+        tenantId,
+        account.accountId,
+        parsed.data.limit,
+      );
+      res.json({ items: items.map(toPublicInboxRecord) });
+    } catch {
+      res.status(503).json({ error: 'Agent 钉钉消息诊断读取失败' });
     }
   });
 
@@ -338,6 +366,26 @@ function toPublicAccount(account: AgentDwsAccountRecord): Record<string, unknown
     revision: account.revision,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
+  };
+}
+
+function toPublicInboxRecord(record: AgentDwsInboxRecord): Record<string, unknown> {
+  return {
+    inboxId: record.inboxId,
+    eventId: record.eventId,
+    eventType: record.eventType,
+    conversationId: record.conversationId,
+    messageId: record.messageId ?? null,
+    state: record.state,
+    sessionId: record.sessionId ?? null,
+    runId: record.runId ?? null,
+    attempt: record.attempt,
+    maxAttempts: record.maxAttempts,
+    nextAttemptAt: record.nextAttemptAt ?? null,
+    lastError: record.lastError ?? null,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    completedAt: record.completedAt ?? null,
   };
 }
 

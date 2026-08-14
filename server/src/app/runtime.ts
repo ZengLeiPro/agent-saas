@@ -169,24 +169,16 @@ import { AlertNotifier } from '../runtime/alertNotifier.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
-import { DwsAuthFlowService, DwsDeviceLoginRunner, type DwsWorkspacePrincipal } from '../dws/authFlow.js';
-import { AgentDwsAuthFlowService } from '../dws/agentAuthFlow.js';
-import { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
-import { DwsPersonalMessageSender } from '../dws/personalMessageSender.js';
-import { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
+import { DwsAuthFlowService, DwsDeviceLoginRunner } from '../dws/authFlow.js';
+import { createAgentDwsRuntime, type AgentDwsRuntimeBundle } from './agentDwsRuntime.js';
+import { createConnectorServerRemoteResolver, hasAcsConnector } from './connectorServerRemote.js';
 import type { PgAgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import type { PgAgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
-import {
-  NotionAuthFlowService,
-  NotionDeviceLoginRunner,
-} from '../notion/authFlow.js';
+import { NotionAuthFlowService, NotionDeviceLoginRunner } from '../notion/authFlow.js';
 import { PgFeishuConnectionStore } from '../feishu/store.js';
 import { FeishuAuthKeepaliveService } from '../feishu/keepalive.js';
 import { PgFeishuAuthSessionStore } from '../feishu/authStore.js';
-import {
-  FeishuAuthFlowService,
-  FeishuDeviceLoginRunner,
-} from '../feishu/authFlow.js';
+import { FeishuAuthFlowService, FeishuDeviceLoginRunner } from '../feishu/authFlow.js';
 import {
   FeishuOAuthClient,
   FeishuTokenBroker,
@@ -714,11 +706,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let dwsAuthSessionStore: PgDwsAuthSessionStore | undefined;
   let dwsAuthKeepaliveService: DwsAuthKeepaliveService | undefined;
   let dwsAuthFlowService: DwsAuthFlowService | undefined;
-  let agentDwsAuthSessionStore: PgDwsAuthSessionStore | undefined;
-  let agentDwsAuthFlowService: AgentDwsAuthFlowService | undefined;
-  let agentDwsMessageStore: PgAgentDwsMessageStore | undefined;
-  let agentDwsMessageRouter: AgentDwsMessageRouter | undefined;
-  let dwsPersonalEventGateway: DwsPersonalEventGateway | undefined;
+  let agentDwsMessageStore: PgAgentDwsMessageStore | undefined; let agentDwsRuntime: AgentDwsRuntimeBundle | undefined;
   let notionAuthSessionStore: PgDwsAuthSessionStore | undefined;
   let notionAuthFlowService: NotionAuthFlowService | undefined;
   let googleWorkspaceOAuthService: GoogleWorkspaceOAuthService | undefined;
@@ -914,19 +902,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       } catch (err) {
         dwsAuthSessionStore = undefined;
         serverLogger.warn(`PgDwsAuthSessionStore init failed, DWS one-click connection disabled: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-    if (agentDwsAccountStore) {
-      try {
-        agentDwsAuthSessionStore = new PgDwsAuthSessionStore({
-          pool: pgEventStore.pool,
-          tablePrefix: config.runtimeEventStore.tablePrefix,
-          connectorId: 'agent_dws',
-        });
-        await agentDwsAuthSessionStore.init();
-      } catch (err) {
-        agentDwsAuthSessionStore = undefined;
-        serverLogger.warn(`Agent DWS auth session store init failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     try {
@@ -2900,28 +2875,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     serverLogger.info(`RuntimeScheduler worker disabled for processRole=${processRole}; durable enqueue remains enabled`);
   }
 
-  const connectorAcsConfigured = config.tenantRemoteHands?.hands.some((hand) => (
-    (hand.id === 'agent-saas-acs' || /acs/i.test(hand.id))
-    && hand.rollout?.mode !== 'disabled'
-    && hand.rollout?.mode !== 'drain'
-  )) ?? false;
-  const resolveConnectorServerRemote = async (user: DwsWorkspacePrincipal) => {
-    if (resolvedServerRemote) return resolvedServerRemote;
-    const eligible = selectTenantRemoteHandsForRegistration(config.tenantRemoteHands?.hands, {
-      userId: user.id,
-      username: user.username,
-      userTenantId: user.tenantId,
-    });
-    const entry = eligible.find((hand) => hand.id === 'agent-saas-acs')
-      ?? eligible.find((hand) => /acs/i.test(hand.id));
-    if (!entry) throw new Error(`用户 ${user.id} 没有可用的 ACS 连接器执行环境`);
-    const resolved = await tenantRemoteHandResolver.resolveForRegister(entry);
-    return {
-      baseUrl: resolved.baseUrl,
-      authToken: resolved.authToken,
-      ...(resolved.invokeTimeoutMs ? { invokeTimeoutMs: resolved.invokeTimeoutMs } : {}),
-    };
-  };
+  const connectorAcsConfigured = hasAcsConnector(config.tenantRemoteHands?.hands);
+  const resolveConnectorServerRemote = createConnectorServerRemoteResolver({
+    defaultRemote: resolvedServerRemote,
+    eligibleHands: user => selectTenantRemoteHandsForRegistration(config.tenantRemoteHands?.hands, {
+      userId: user.id, username: user.username, userTenantId: user.tenantId,
+    }),
+    resolveHand: hand => tenantRemoteHandResolver.resolveForRegister(hand),
+  });
 
   if (notionAuthSessionStore && userStore && (resolvedServerRemote || connectorAcsConfigured)) {
     notionAuthFlowService = new NotionAuthFlowService({
@@ -2991,52 +2952,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     serverLogger.warn('DWS auth keepalive unavailable: PG connection store or DWS execution remote is not configured');
   }
 
-  if (agentDwsAccountStore && agentDwsAuthSessionStore && (resolvedServerRemote || connectorAcsConfigured)) {
-    if (agentDwsMessageStore) {
-      agentDwsMessageRouter = new AgentDwsMessageRouter({
-        agentCwd,
-        messageStore: agentDwsMessageStore,
-        accountStore: agentDwsAccountStore,
-        dispatch: finalDispatch,
-        sender: new DwsPersonalMessageSender({
-          agentCwd,
-          resolveServerRemote: resolveConnectorServerRemote,
-          logger: serverLogger.child('DwsPersonalMessageSender'),
-        }),
-        ...(pgRunStore ? { runStore: pgRunStore } : {}),
-        ...(pgEventStore ? { eventStore: pgEventStore } : {}),
-        logger: serverLogger.child('AgentDwsMessageRouter'),
-      });
-    }
-    dwsPersonalEventGateway = new DwsPersonalEventGateway({
-      agentCwd,
-      accountStore: agentDwsAccountStore,
-      resolveServerRemote: resolveConnectorServerRemote,
-      onEvent: async (account, event) => {
-        if (!agentDwsMessageRouter) throw new Error('Agent DWS durable inbox is unavailable');
-        await agentDwsMessageRouter.ingest(account, event);
-      },
-      logger: serverLogger.child('DwsPersonalEventGateway'),
-    });
-    agentDwsAuthFlowService = new AgentDwsAuthFlowService({
-      agentCwd,
-      authSessionStore: agentDwsAuthSessionStore,
-      accountStore: agentDwsAccountStore,
-      runner: new DwsDeviceLoginRunner({ agentCwd, resolveServerRemote: resolveConnectorServerRemote }),
-      onConnected: account => enableSchedulerWorker
-        ? dwsPersonalEventGateway!.startAccount(account)
-        : Promise.resolve(),
-      logger: serverLogger.child('AgentDwsAuthFlow'),
-    });
-    if (enableSchedulerWorker) {
-      agentDwsMessageRouter?.start();
-      await dwsPersonalEventGateway.startAll().catch(error => {
-        serverLogger.warn(`Agent DWS Personal Stream startup failed: ${error instanceof Error ? error.message : String(error)}`);
-      });
-    }
-  } else if (agentDwsAccountStore) {
-    serverLogger.warn('Agent DWS runtime unavailable: auth session store or connector execution remote is not configured');
-  }
+  if (agentDwsAccountStore) agentDwsRuntime = await createAgentDwsRuntime({
+    agentCwd, accountStore: agentDwsAccountStore, messageStore: agentDwsMessageStore, pgEventStore, pgRunStore,
+    tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix ?? 'agent_runtime' : 'agent_runtime', dispatch: finalDispatch, resolveDefaultModel: tenantId => defaultModelResolver?.(tenantId) ?? null,
+    resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured),
+    enableWorker: enableSchedulerWorker, logger: serverLogger,
+  });
 
   if (feishuConnectionStore && userStore && resolvedFeishuConnector && feishuConnectorScopes) {
     feishuTokenBroker = new FeishuTokenBroker({
@@ -3177,21 +3098,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     dwsAuthFlowService,
     agentDwsAccountStore,
     agentDwsMessageStore,
-    agentDwsAuthFlowService,
-    agentDwsMessageRouter,
-    dwsPersonalEventGateway,
+    agentDwsAuthFlowService: agentDwsRuntime?.authFlowService, agentDwsMessageRouter: agentDwsRuntime?.messageRouter,
+    dwsPersonalEventGateway: agentDwsRuntime?.eventGateway,
     notionAuthFlowService,
     getNotionConnection,
     disconnectNotionConnection,
     googleWorkspaceOAuthService,
     notionAuthFlowShutdown: notionAuthFlowService ? () => notionAuthFlowService?.stop() : undefined,
-    dwsAuthKeepaliveShutdown: dwsAuthKeepaliveService || dwsAuthFlowService || agentDwsAuthFlowService || agentDwsMessageRouter || dwsPersonalEventGateway
+    dwsAuthKeepaliveShutdown: dwsAuthKeepaliveService || dwsAuthFlowService || agentDwsRuntime
       ? async () => {
           dwsAuthFlowService?.stop();
           dwsAuthKeepaliveService?.stop();
-          await agentDwsAuthFlowService?.stop();
-          await dwsPersonalEventGateway?.stop();
-          await agentDwsMessageRouter?.stop();
+          await agentDwsRuntime?.stop();
         }
       : undefined,
     feishuConnectionStore,

@@ -308,9 +308,11 @@ describe('registerRoutes', () => {
     //   + 活跃离职流程 API 写入围栏 = 41
     //   + 音频转录平台管理 = 42
     //   + 当前用户 Web Push 订阅管理 = 43
+    //   + Agent DWS 账号路由 = 44
+    //   + Agent DWS 精确前缀管理员门禁 = 45
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(44);
+    expect(app.use).toHaveBeenCalledTimes(45);
     expect(mocked.createWebPushRouter).toHaveBeenCalledWith(undefined);
     expect(app.use).toHaveBeenCalledWith('/api/web-push', mocked.webPushRouter);
     expect(mocked.createTaskboardRouter).toHaveBeenCalledWith({
@@ -334,6 +336,8 @@ describe('registerRoutes', () => {
     expect(app.use).toHaveBeenCalledWith('/api/appeals', expect.any(Function));
     expect(app.use).toHaveBeenCalledWith('/api/tenant/appeals', expect.any(Function));
     expect(app.use).toHaveBeenCalledWith('/api', mocked.dwsRouter);
+    expect(app.use).toHaveBeenCalledWith('/api/agent-dws-accounts', mocked.requireAdmin);
+    expect(app.use).not.toHaveBeenCalledWith('/api', mocked.requireAdmin, expect.anything());
     expect(app.use).toHaveBeenCalledWith('/api/admin/qa', mocked.requireAdmin, mocked.orgQaRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.healthRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.appUpdateRouter);

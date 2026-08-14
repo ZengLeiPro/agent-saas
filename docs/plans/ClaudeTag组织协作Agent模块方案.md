@@ -920,7 +920,19 @@ DELETE /api/governance/channel-bindings/:bindingId
 - 普通响应不返回 secretRef；
 - 平台管理员跨租户操作仍需显式 tenant scope。
 
-### 12.3 Session/Interaction
+### 12.3 Managed Org Agent 治理发布（第一版落地）
+
+生产已封闭 legacy Org Agent 写入口。组织 Agent 必须先创建 governance resource，再通过签名预览发布版本：
+
+```text
+POST /api/governance/resources/agents
+POST /api/governance/resources/agents/:agentId/versions/preview
+POST /api/governance/resources/agents/:agentId/versions
+```
+
+签名绑定 actor、tenant、Agent、expected revision、当前版本 baseline digest、definition digest、reason 和过期时间；任一字段变化、越租户、超时或基线漂移均拒绝。发布成功后写入 durable `org_agent` projection outbox，投影 payload 只含资源/版本标识，不含 instructions 等定义正文；Runtime Worker 从共享 legacy 投影读取，并在多进程写入时使用同一 PG advisory fence 串行化。
+
+### 12.4 Session/Interaction
 
 ```text
 GET  /api/org-agent-sessions

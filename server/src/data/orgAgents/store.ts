@@ -6,6 +6,8 @@ import { authLogger } from '../../utils/logger.js';
 import type { OrgAgentAudience, OrgAgentRecord, OrgAgentSummary, OrgAgentsFileData } from './types.js';
 
 export interface CreateOrgAgentInput {
+  /** 治理兼容投影写入稳定 resource id；legacy API 不暴露此字段。 */
+  id?: string;
   tenantId: string;
   name: string;
   avatar?: string;
@@ -133,14 +135,17 @@ export class OrgAgentStore {
   }
 
   get(id: string): OrgAgentRecord | undefined {
+    this.load();
     return this.agents.find((agent) => agent.id === id);
   }
 
   listAll(): OrgAgentRecord[] {
+    this.load();
     return [...this.agents];
   }
 
   listByTenant(tenantId: string): OrgAgentRecord[] {
+    this.load();
     return this.agents.filter((agent) => agent.tenantId === tenantId);
   }
 
@@ -161,9 +166,12 @@ export class OrgAgentStore {
 
   async create(input: CreateOrgAgentInput, createdBy: string): Promise<OrgAgentRecord> {
     return this.enqueueWrite(async () => {
+      this.load();
+      const id = input.id ?? `oa-${randomUUID()}`;
+      if (this.agents.some(agent => agent.id === id)) throw new Error('ORG_AGENT_ID_CONFLICT');
       const now = new Date().toISOString();
       const record: OrgAgentRecord = {
-        id: `oa-${randomUUID()}`,
+        id,
         tenantId: input.tenantId,
         name: input.name,
         ...(input.avatar ? { avatar: input.avatar } : {}),
@@ -207,6 +215,7 @@ export class OrgAgentStore {
 
   async update(id: string, patch: UpdateOrgAgentInput, updatedBy: string): Promise<OrgAgentRecord | null> {
     return this.enqueueWrite(async () => {
+      this.load();
       const index = this.agents.findIndex((agent) => agent.id === id);
       if (index < 0) return null;
       const record = this.agents[index];
@@ -262,6 +271,7 @@ export class OrgAgentStore {
 
   async remove(id: string): Promise<boolean> {
     return this.enqueueWrite(async () => {
+      this.load();
       const index = this.agents.findIndex((agent) => agent.id === id);
       if (index < 0) return false;
       const [removed] = this.agents.splice(index, 1);

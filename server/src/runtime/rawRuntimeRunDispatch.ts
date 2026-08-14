@@ -138,6 +138,7 @@ import {
   type TenantRemoteHandAuthTokenResolver,
 } from './tenantRemoteHandResolver.js';
 import { deriveSandboxScopeId, ensureRuntimeHandRegistered } from './runtimeHandRegistration.js';
+import { restoreRuntimeSessionForWake } from './runtimeWakeSessionRestore.js';
 import type { SecretVault } from '../security/secretVault.js';
 import type { NetworkPolicyConfig } from './networkPolicy.js';
 import { runtimeRunController } from './runController.js';
@@ -161,7 +162,6 @@ import { AgentToolProvider } from './subagent/agentToolProvider.js';
 import { reconcileInterruptedForegroundToolCalls } from './subagent/recovery.js';
 import type { BackgroundTaskRuntime } from './background/backgroundTaskRuntime.js';
 import { BackgroundTaskToolProvider } from './background/backgroundTaskToolProvider.js';
-
 export { deriveSandboxScopeId, ensureRuntimeHandRegistered };
 
 const logger = createLogger('RawRuntime');
@@ -1256,23 +1256,23 @@ function resolveSessionOwnerRole(
 export function resolveWakeSessionOwner(
   config: RawRuntimeRunDispatchConfig,
   session: RuntimeSessionRecord,
-  fallbackUserId?: string,
+  fallbackUserId?: string, fallbackTenantId?: string,
 ): NonNullable<ChannelContext['sessionOwner']> {
   const userId = session.userId || fallbackUserId || '';
   const realName = config.resolveUserRealName?.({
     userId: userId || undefined,
     username: session.username || undefined,
   });
-
+  const dwsServiceIdentity = Boolean(session.orgAgentId && userId.startsWith('adws-')
+    && session.username === `agent-dws:${session.orgAgentId}`);
   return {
     id: userId,
     username: session.username || 'unknown',
     role: resolveSessionOwnerRole(config, session),
-    tenantId: resolveSessionOwnerTenantId(config, session),
+    tenantId: dwsServiceIdentity ? fallbackTenantId : resolveSessionOwnerTenantId(config, session),
     ...(realName ? { realName } : {}),
   };
 }
-
 /**
  * 解析 sessionOwner.tenantId（多组织隔离主防御的 fail-safe baseline）。
  *
@@ -1816,7 +1816,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       metadata: {
         cwd,
         transcriptPath,
-        modelRef: sessionModelRef,
+        modelRef: sessionModelRef, username: sessionRecord.username, userRole: sessionRecord.userRole, ...(orgAgentId ? { orgAgentId } : {}),
         outputTransactionMode: resolveModelOutputTransactionMode(context),
         sandboxScopeId,
         ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}),
@@ -1898,8 +1898,8 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       : allowAllRuntimeSkills;
     const tooling = await collectRuntimeTooling(
       config,
-      identitySource?.username,
-      // AND 组合：browser-hand filter 与 org agent 白名单叠加（不是替换）
+      orgAgent ? undefined : identitySource?.username,
+      // AND 组合：组织 Agent 的 service identity 跳过用户技能/MCP；其技能仍与 org 白名单取交集
       orgAgent
         ? composeSkillFilters(baseSkillFilter, buildOrgAgentSkillFilter(orgAgent), profileSkillFilter)
         : composeSkillFilters(baseSkillFilter, profileSkillFilter),
@@ -3092,7 +3092,7 @@ export async function wakeRuntimeSession(
   options: WakeRuntimeSessionOptions = {},
 ): Promise<void> {
   const sessionCatalog = resolveSessionCatalog(config);
-  const session = await sessionCatalog.get(run.sessionId);
+  const session = await restoreRuntimeSessionForWake(sessionCatalog, run);
   if (!session) {
     throw new Error(`wake context restore failed: session metadata not found for ${run.sessionId}`);
   }
@@ -3269,7 +3269,7 @@ export async function wakeRuntimeSession(
           channel: 'web',
           outputTransactionMode: resolveModelOutputTransactionMode(run.metadata),
           resumeSessionId: run.sessionId,
-          sessionOwner: resolveWakeSessionOwner(config, session, run.userId),
+          sessionOwner: resolveWakeSessionOwner(config, session, run.userId, run.tenantId),
           targetCwd: session.cwd,
         },
         model: resolveWakeModelRef(run, session),
@@ -3340,7 +3340,7 @@ export async function wakeRuntimeSession(
           channel: 'web',
           outputTransactionMode: resolveModelOutputTransactionMode(run.metadata),
           resumeSessionId: run.sessionId,
-          sessionOwner: resolveWakeSessionOwner(config, session, run.userId),
+          sessionOwner: resolveWakeSessionOwner(config, session, run.userId, run.tenantId),
           targetCwd: session.cwd,
         },
         model: resolveWakeModelRef(run, session),
@@ -3376,7 +3376,7 @@ export async function wakeRuntimeSession(
   }
 
   const wakePrompt = resolveWakePrompt(run, events, session);
-  const sessionOwner = resolveWakeSessionOwner(config, session, run.userId);
+  const sessionOwner = resolveWakeSessionOwner(config, session, run.userId, run.tenantId);
   const context: ChannelContext = {
     channel: 'web',
     outputTransactionMode: resolveModelOutputTransactionMode(run.metadata),

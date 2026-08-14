@@ -8,6 +8,7 @@ import type {
   AgentDwsAccountStore,
   CreateAgentDwsAccountInput,
 } from '../data/agentDwsAccounts/index.js';
+import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import { createAgentDwsAccountsRouter } from '../routes/agentDwsAccounts.js';
 import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
 
@@ -67,6 +68,7 @@ class FakeAccountStore implements AgentDwsAccountStore {
 
 async function listen(options: {
   store: FakeAccountStore;
+  messageStore?: Pick<AgentDwsMessageStore, 'listForAccount'>;
   authFlowService?: AgentDwsAuthFlowServiceLike;
   audit?: InMemoryGovernanceAuditStore;
 }): Promise<{ server: Server; baseUrl: string }> {
@@ -78,6 +80,7 @@ async function listen(options: {
   });
   app.use('/api', createAgentDwsAccountsRouter({
     accountStore: options.store,
+    messageStore: options.messageStore,
     authFlowService: options.authFlowService,
     auditStore: options.audit ?? new InMemoryGovernanceAuditStore(),
   }));
@@ -111,6 +114,29 @@ describe('Agent DWS accounts routes', () => {
     expect(body.accounts).toHaveLength(1);
     expect(body.accounts[0]).toMatchObject({ loginIdMasked: 'sa***01', tenantId: 'tenant-a' });
     expect(body.accounts[0]).not.toHaveProperty('loginId');
+  });
+
+  it('inbox 诊断只读当前租户账号并不返回消息正文', async () => {
+    const store = new FakeAccountStore();
+    store.records.push(makeAccount());
+    const listForAccount = vi.fn(async () => [{
+      inboxId: 'inbox-1', tenantId: 'tenant-a', accountId: 'adws-1', eventId: 'event-1',
+      eventType: 'user_im_message_receive_o2o_all', conversationId: 'cid-1', messageId: 'msg-1',
+      senderOpenDingtalkId: 'sender-1', content: '敏感消息正文', payload: {}, state: 'retry_wait' as const,
+      sessionId: 'session-1', runId: 'run-1', responseText: '敏感回复正文', attempt: 2, maxAttempts: 8,
+      leaseFence: 2, nextAttemptAt: '2026-08-14T07:10:00.000Z', lastError: 'dispatch failed',
+      createdAt: '2026-08-14T07:06:43.000Z', updatedAt: '2026-08-14T07:06:44.000Z',
+    }]);
+    const opened = await listen({ store, messageStore: { listForAccount } });
+    server = opened.server;
+
+    const response = await fetch(`${opened.baseUrl}/api/agent-dws-accounts/adws-1/inbox?limit=10`);
+    expect(response.status).toBe(200);
+    expect(listForAccount).toHaveBeenCalledWith('tenant-a', 'adws-1', 10);
+    const body = await response.json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0]).toMatchObject({ state: 'retry_wait', attempt: 2, lastError: 'dispatch failed' });
+    expect(body.items[0]).not.toHaveProperty('content');
+    expect(body.items[0]).not.toHaveProperty('responseText');
   });
 
   it('创建账号时强制当前租户并写入 intent/terminal 审计', async () => {

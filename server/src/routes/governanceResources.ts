@@ -12,9 +12,10 @@ import { GLOBAL_OWNER_ID, tenantOwnerId, type SecretVault } from '../security/se
 import type { GovernanceChangePlanner, PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import type { PgMembershipStore } from '../data/memberships/index.js';
 import type { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
+import { registerGovernanceAgentResourceRoutes } from './governanceAgentResourceRoutes.js';
 import { registerGovernanceResourceCatalogRoutes } from './governanceResourceCatalogRoutes.js';
 import {
-  connectorPublishSchema, connectorStatusSchema, createAgentSchema, createCandidateSchema, createSkillSchema,
+  connectorPublishSchema, connectorStatusSchema, createCandidateSchema, createSkillSchema,
   credentialCreateSchema, credentialStatusSchema, environmentTemplateSchema, expectedRevisionSchema,
   providerSchema, publishCandidateSchema, publishSchema, reviewSchema, statusSchema,
   userOffboardingJobSchema, userOffboardingPreviewSchema,
@@ -82,17 +83,6 @@ export function createGovernanceResourcesRouter(deps: {
   const hasActiveOffboarding = async (tenantId: string, userId: string): Promise<boolean> => Boolean(
     await deps.changeJobs.findActiveForTarget(tenantId, 'user_offboarding', 'user', userId),
   );
-  const canManageAgent = (req: Request, resource: { kind: string; ownerUserId: string }) => {
-    if (resource.kind === 'personal_agent') return resource.ownerUserId === req.user?.sub;
-    if (resource.kind === 'agent_template') return personas.get(req) === 'platform_admin';
-    return canManageOrganization(req);
-  };
-  const canAccessAgent = (req: Request, resource: { kind: string; ownerUserId: string }) => {
-    if (canManageAgent(req, resource)) return true;
-    return resource.kind === 'org_agent'
-      && personas.get(req) === 'member'
-      && resource.ownerUserId === req.user?.sub;
-  };
   const canManageSkill = (req: Request, resource: { scope: string; ownerUserId?: string }) => {
     if (resource.scope === 'personal') return resource.ownerUserId === req.user?.sub;
     if (resource.scope === 'platform') return personas.get(req) === 'platform_admin';
@@ -320,21 +310,17 @@ export function createGovernanceResourcesRouter(deps: {
     next();
   });
 
-  router.get('/agents', async (req, res) => {
-    if (personas.get(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
-    const kind = req.query.kind === 'agent_template' ? 'agent_template' : undefined;
-    if (!kind) return res.status(400).json({ error: 'kind=agent_template is required' });
-    return res.json({ agents: await deps.agents.listByKind(kind) });
-  });
-
-  router.get('/agents/:agentId', async (req, res) => {
-    const tenantId = resourceTenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
-    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    const resource = await deps.agents.getForTenant(tenantId, req.params.agentId);
-    if (!resource) return res.status(404).json({ error: 'Agent not found' });
-    if (!canAccessAgent(req, resource)) return res.status(404).json({ error: 'Agent not found' });
-    const version = resource.currentVersionId ? await deps.agents.getVersion(resource.currentVersionId) : null;
-    res.json({ resource, version });
+  registerGovernanceAgentResourceRoutes({
+    router,
+    agents: deps.agents,
+    memberships: deps.memberships,
+    changeJobs: deps.changeJobs,
+    previewSecret: deps.offboardingPreviewSecret,
+    personaFor: req => personas.get(req),
+    resourceTenantFor,
+    ...(deps.projectionOutbox ? { projectionOutbox: deps.projectionOutbox } : {}),
+    ...(deps.projectionReconciler ? { projectionReconciler: deps.projectionReconciler } : {}),
+    now,
   });
 
   router.get('/skills/:skillId', async (req, res) => {
@@ -382,81 +368,6 @@ export function createGovernanceResourcesRouter(deps: {
       ? await deps.environments.getTemplateVersion(template.currentVersionId)
       : null;
     res.json({ template, version });
-  });
-
-  router.post('/agents', async (req, res) => {
-    const parsed = createAgentSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    const tenantId = resourceTenantFor(req, parsed.data.tenantId);
-    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    const ownerUserId = parsed.data.kind === 'agent_template'
-      ? GLOBAL_OWNER_ID
-      : parsed.data.kind === 'personal_agent' ? req.user!.sub : parsed.data.ownerUserId ?? req.user!.sub;
-    if (parsed.data.kind !== 'agent_template') {
-      const ownerMembership = await deps.memberships.getMembership(tenantId, ownerUserId);
-      if (!ownerMembership || ownerMembership.status !== 'active') {
-        return res.status(409).json({ error: 'Active in-tenant owner Membership required', code: 'RESOURCE_OWNER_MEMBERSHIP_REQUIRED' });
-      }
-      if (await hasActiveOffboarding(tenantId, ownerUserId)) {
-        return res.status(409).json({ error: 'Resource owner offboarding is active', code: 'RESOURCE_OWNER_OFFBOARDING_ACTIVE' });
-      }
-    }
-    if (parsed.data.kind === 'org_agent' && !canManageOrganization(req)) return res.status(403).json({ error: 'Organization admin required' });
-    if (parsed.data.kind === 'agent_template' && personas.get(req) !== 'platform_admin') {
-      return res.status(403).json({ error: 'Platform admin required' });
-    }
-    if (parsed.data.kind === 'personal_agent' && parsed.data.ownerUserId && parsed.data.ownerUserId !== req.user!.sub) {
-      return res.status(403).json({ error: 'Personal Agent owner mismatch' });
-    }
-    try {
-      const resource = await deps.agents.create({
-        ...(parsed.data.agentId ? { agentId: parsed.data.agentId } : {}), tenantId,
-        kind: parsed.data.kind, ownerUserId,
-        ...(parsed.data.templateId ? { templateId: parsed.data.templateId } : {}), createdBy: req.user!.sub,
-      });
-      res.status(201).json(resource);
-    } catch (error) {
-      res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  router.post('/agents/:agentId/versions', async (req, res) => {
-    const parsed = publishSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    const tenantId = resourceTenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
-    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    const resource = await deps.agents.getForTenant(tenantId, req.params.agentId);
-    if (!resource) return res.status(404).json({ error: 'Agent not found' });
-    if (!canManageAgent(req, resource)) return res.status(404).json({ error: 'Agent not found' });
-    return res.status(503).json({
-      error: 'Signed Agent version publish authority unavailable',
-      code: 'GOVERNANCE_PREVIEW_AUTHORITY_UNAVAILABLE',
-    });
-  });
-
-  router.patch('/agents/:agentId/status', async (req, res) => {
-    const parsed = statusSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    const tenantId = resourceTenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
-    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    const resource = await deps.agents.getForTenant(tenantId, req.params.agentId);
-    if (!resource) return res.status(404).json({ error: 'Agent not found' });
-    if (!canManageAgent(req, resource)) return res.status(404).json({ error: 'Agent not found' });
-    return res.status(503).json({
-      error: 'Signed Agent status authority unavailable',
-      code: 'GOVERNANCE_PREVIEW_AUTHORITY_UNAVAILABLE',
-    });
-  });
-
-  router.post('/agents/:agentId/archive', (req, res) => {
-    const parsed = expectedRevisionSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    const tenantId = resourceTenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
-    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    return res.status(503).json({
-      error: 'Signed Agent archive authority unavailable',
-      code: 'GOVERNANCE_PREVIEW_AUTHORITY_UNAVAILABLE',
-    });
   });
 
   router.post('/skills', async (req, res) => {

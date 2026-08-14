@@ -68,6 +68,23 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     return { record: mapInboxRow(row), created: booleanValue(row.created) };
   }
 
+  async listForAccount(
+    tenantId: string,
+    accountId: string,
+    limit = 50,
+  ): Promise<AgentDwsInboxRecord[]> {
+    assertTexts(tenantId, accountId);
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const result = await this.pool.query(`
+      SELECT *
+      FROM ${this.inboxTable}
+      WHERE tenant_id=$1 AND account_id=$2
+      ORDER BY created_at DESC,inbox_id DESC
+      LIMIT $3
+    `, [tenantId, accountId, boundedLimit]);
+    return result.rows.map((row: Record<string, unknown>) => mapInboxRow(row));
+  }
+
   async claimNext(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null> {
     assertOwnerFence(owner, 1, false);
     if (!Number.isInteger(ttlMs) || ttlMs < 1 || ttlMs > MAX_LEASE_TTL_MS) {
@@ -163,16 +180,18 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     accountId: string,
     conversationId: string,
     candidateSessionId: string,
+    peerOpenDingtalkId?: string,
   ): Promise<AgentDwsConversationBindingRecord> {
     assertTexts(tenantId, accountId, conversationId, candidateSessionId);
     const result = await this.pool.query(`
       INSERT INTO ${this.bindingsTable} AS binding (
-        binding_id,tenant_id,account_id,conversation_id,session_id,created_at,updated_at
-      ) VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
+        binding_id,tenant_id,account_id,conversation_id,session_id,peer_open_dingtalk_id,created_at,updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
       ON CONFLICT (account_id,conversation_id) DO UPDATE
-      SET updated_at=binding.updated_at
+      SET peer_open_dingtalk_id=COALESCE(binding.peer_open_dingtalk_id,EXCLUDED.peer_open_dingtalk_id),
+          updated_at=binding.updated_at
       RETURNING binding.*
-    `, [`adwsb-${randomUUID()}`, tenantId, accountId, conversationId, candidateSessionId]);
+    `, [`adwsb-${randomUUID()}`, tenantId, accountId, conversationId, candidateSessionId, optionalText(peerOpenDingtalkId)]);
     const row = result.rows[0] as Record<string, unknown> | undefined;
     if (!row) throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_INVALID');
     return mapBindingRow(row);
@@ -375,6 +394,9 @@ function mapBindingRow(row: Record<string, unknown>): AgentDwsConversationBindin
     accountId: String(row.account_id),
     conversationId: String(row.conversation_id),
     sessionId: String(row.session_id),
+    ...(optionalText(row.peer_open_dingtalk_id)
+      ? { peerOpenDingtalkId: optionalText(row.peer_open_dingtalk_id) }
+      : {}),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
   };

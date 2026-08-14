@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import type { AgentRunDispatch } from '../agent/index.js';
+import type { AgentRunDispatch, AgentRunOptions } from '../agent/index.js';
 import { createEventConsumer } from '../channels/eventConsumer.js';
 import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import type {
@@ -42,11 +42,19 @@ interface ExistingRunEventStore {
   listByRun?: NonNullable<EventStore['listByRun']>;
 }
 
+export interface AgentDwsDefaultModelResolution {
+  ref: string;
+  model: string;
+  connection?: AgentRunOptions['modelConnection'];
+  providerOptions?: AgentRunOptions['modelProviderOptions'];
+}
+
 export interface AgentDwsMessageRouterOptions {
   agentCwd: string;
   messageStore: AgentDwsMessageStore;
   accountStore: AgentDwsAccountStore;
   dispatch: AgentRunDispatch;
+  resolveDefaultModel: (tenantId: string) => AgentDwsDefaultModelResolution | null;
   sender: DwsPersonalMessageSenderLike;
   runStore?: ExistingRunStore;
   eventStore?: ExistingRunEventStore;
@@ -233,7 +241,15 @@ export class AgentDwsMessageRouter {
       item.accountId,
       item.conversationId,
       `agent-dws-session-${randomUUID()}`,
+      item.eventType === 'user_im_message_receive_o2o_all' ? item.senderOpenDingtalkId : undefined,
     );
+    if (item.eventType === 'user_im_message_receive_o2o_all'
+      && binding.peerOpenDingtalkId
+      && binding.peerOpenDingtalkId !== item.senderOpenDingtalkId) {
+      await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
+      this.options.logger?.info(`Agent DWS self echo ignored account=${item.accountId} event=${item.eventId}`);
+      return;
+    }
     const runId = item.runId ?? deterministicId('agent-dws-run', `${item.accountId}:${item.eventId}`);
     const claimed = await this.options.messageStore.markDispatchStarted(
       item.inboxId,
@@ -315,6 +331,8 @@ export class AgentDwsMessageRouter {
     account: AgentDwsAccountRecord,
     abortController: AbortController,
   ): Promise<string> {
+    const resolvedModel = this.options.resolveDefaultModel(account.tenantId);
+    if (!resolvedModel) throw new Error('Agent DWS 当前组织没有可用的默认模型');
     let resultText: string | undefined;
     const events = this.options.dispatch({
       channel: 'dingtalk',
@@ -346,6 +364,10 @@ export class AgentDwsMessageRouter {
       cwd: resolveAgentCwd(this.options.agentCwd, account.tenantId, account.agentId),
       resumeSessionId: sessionId,
       orgAgentId: account.agentId,
+      model: resolvedModel.model,
+      modelRef: resolvedModel.ref,
+      ...(resolvedModel.connection ? { modelConnection: resolvedModel.connection } : {}),
+      ...(resolvedModel.providerOptions ? { modelProviderOptions: resolvedModel.providerOptions } : {}),
       runtimeRunId: runId,
       abortController,
     }, {
@@ -353,9 +375,14 @@ export class AgentDwsMessageRouter {
         resultText = result.resultText;
       },
     });
-    const consumed = await createEventConsumer().consume(events, {});
+    let dispatchError: string | undefined;
+    const consumed = await createEventConsumer().consume(events, {
+      onError: error => { dispatchError = compactError(error); },
+    });
     if (abortController.signal.aborted) throw new Error('Agent DWS runtime dispatch aborted');
-    if (consumed.hasError) throw new Error('Agent DWS runtime dispatch failed');
+    if (consumed.hasError) {
+      throw new Error(`Agent DWS runtime dispatch failed: ${dispatchError ?? 'unknown_error'}`);
+    }
     if (consumed.sessionId && consumed.sessionId !== sessionId) {
       throw new Error('Agent DWS runtime returned an unexpected session');
     }

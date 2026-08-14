@@ -240,6 +240,8 @@ export const governanceResourcesApi = {
   getEnvironmentTemplate: <T = unknown>(templateId: string) =>
     request<T>(`${RESOURCE_BASE}/environment/templates/${id(templateId)}`),
   createAgent: <T = unknown>(command: GovernanceCommand) => request<T>(`${RESOURCE_BASE}/agents`, body('POST', command)),
+  previewAgentVersion: <T = unknown>(agentId: string, command: GovernanceCommand) =>
+    request<T>(`${RESOURCE_BASE}/agents/${id(agentId)}/versions/preview`, body('POST', command)),
   publishAgentVersion: <T = unknown>(agentId: string, command: GovernanceCommand) =>
     request<T>(`${RESOURCE_BASE}/agents/${id(agentId)}/versions`, body('POST', command)),
   updateAgentStatus: <T = unknown>(agentId: string, command: GovernanceCommand) =>

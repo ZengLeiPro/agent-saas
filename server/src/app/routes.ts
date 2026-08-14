@@ -8,11 +8,7 @@ import { registerAudioTranscribeAdminRoute } from "./audioTranscribeAdminRoute.j
 import { registerGovernanceRoutes } from './governanceRoutes.js';
 import type { TenantStore } from "../data/tenants/store.js";
 import type { UserInfo } from "../data/users/types.js";
-import {
-  getPublicModelList,
-  getUserPublicModelList,
-  resolveContextAccountingFromModels,
-} from "./models.js";
+import { getPublicModelList, getUserPublicModelList, resolveContextAccountingFromModels } from "./models.js";
 import { applyModelsHotUpdate } from "./modelsHotUpdate.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import { enforcePlatformWritePolicy } from "../auth/platformGovernance.js";
@@ -248,7 +244,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     userStore: runtime.userStore,
   }));
 
-  app.use('/api', requireAdmin, createAgentDwsAccountsRouter({
+  app.use('/api/agent-dws-accounts', requireAdmin);
+  app.use('/api', createAgentDwsAccountsRouter({
     accountStore: runtime.agentDwsAccountStore, authFlowService: runtime.agentDwsAuthFlowService,
     eventGateway: runtime.dwsPersonalEventGateway, auditStore: runtime.governanceAuditStore }));
   // 飞书单轨连接状态：浏览器/PG 只接触非敏感元数据；用户 token 与官方 CLI

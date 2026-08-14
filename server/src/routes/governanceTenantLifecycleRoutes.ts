@@ -46,6 +46,7 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
   }>;
 }): void {
   const { router } = options;
+  const commitsInFlight = new Set<string>();
   router.get('/tenant-lifecycle', async (req, res) => {
     if (options.personaFor(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
     const tenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
@@ -124,34 +125,45 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
     if (!matches(parsed.data.previewId, expectedPreviewId)) {
       return res.status(409).json({ error: 'Tenant lifecycle preview invalid', code: 'TENANT_LIFECYCLE_PREVIEW_INVALID' });
     }
-    const tenant = options.getTenant(tenantId);
-    const status = tenant?.disabled ? 'suspended' : 'active';
-    if (!tenant) {
-      return res.status(409).json({ error: 'Tenant lifecycle baseline changed', code: 'TENANT_LIFECYCLE_BASELINE_CONFLICT' });
-    }
-    const dependencyImpact = await options.dependencyImpact(tenantId, parsed.data.action).catch(() => null);
-    if (!dependencyImpact) return res.status(503).json({ error: 'Dependency impact authority unavailable', code: 'DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE' });
-    const currentBaselineDigest = governanceDigest({
-      tenantId, status, updatedAt: tenant.updatedAt,
-      affectedResources: dependencyImpact.affectedResources, blockers: dependencyImpact.blockers,
-    });
-    if (currentBaselineDigest !== parsed.data.baselineDigest) {
-      return res.status(409).json({ error: 'Tenant lifecycle impact or baseline changed', code: 'TENANT_LIFECYCLE_BASELINE_CONFLICT' });
-    }
-    if (dependencyImpact.blockers.length > 0) {
+    if (commitsInFlight.has(tenantId)) {
       return res.status(409).json({
-        error: `Tenant lifecycle transition blocked: ${dependencyImpact.blockers.join('; ')}`,
-        code: 'TENANT_LIFECYCLE_BLOCKED', blockers: dependencyImpact.blockers,
+        error: 'Tenant lifecycle transition already in progress',
+        code: 'TENANT_LIFECYCLE_TRANSITION_IN_PROGRESS',
       });
     }
+    commitsInFlight.add(tenantId);
     try {
-      const updated = await options.setTenantDisabled(tenantId, parsed.data.action === 'suspend', req.user!.sub);
-      return res.json({
-        tenantId, status: updated.disabled ? 'suspended' : 'active', updatedAt: updated.updatedAt,
-        changeId: res.locals.governanceChangeId, effectiveAt: updated.updatedAt,
+      const tenant = options.getTenant(tenantId);
+      const status = tenant?.disabled ? 'suspended' : 'active';
+      if (!tenant) {
+        return res.status(409).json({ error: 'Tenant lifecycle baseline changed', code: 'TENANT_LIFECYCLE_BASELINE_CONFLICT' });
+      }
+      const dependencyImpact = await options.dependencyImpact(tenantId, parsed.data.action).catch(() => null);
+      if (!dependencyImpact) return res.status(503).json({ error: 'Dependency impact authority unavailable', code: 'DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE' });
+      const currentBaselineDigest = governanceDigest({
+        tenantId, status, updatedAt: tenant.updatedAt,
+        affectedResources: dependencyImpact.affectedResources, blockers: dependencyImpact.blockers,
       });
-    } catch (error) {
-      return res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
+      if (currentBaselineDigest !== parsed.data.baselineDigest) {
+        return res.status(409).json({ error: 'Tenant lifecycle impact or baseline changed', code: 'TENANT_LIFECYCLE_BASELINE_CONFLICT' });
+      }
+      if (dependencyImpact.blockers.length > 0) {
+        return res.status(409).json({
+          error: `Tenant lifecycle transition blocked: ${dependencyImpact.blockers.join('; ')}`,
+          code: 'TENANT_LIFECYCLE_BLOCKED', blockers: dependencyImpact.blockers,
+        });
+      }
+      try {
+        const updated = await options.setTenantDisabled(tenantId, parsed.data.action === 'suspend', req.user!.sub);
+        return res.json({
+          tenantId, status: updated.disabled ? 'suspended' : 'active', updatedAt: updated.updatedAt,
+          changeId: res.locals.governanceChangeId, effectiveAt: updated.updatedAt,
+        });
+      } catch (error) {
+        return res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    } finally {
+      commitsInFlight.delete(tenantId);
     }
   });
 }

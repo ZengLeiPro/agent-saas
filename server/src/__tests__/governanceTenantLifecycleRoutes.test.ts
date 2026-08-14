@@ -166,4 +166,26 @@ describe('tenant lifecycle routes', () => {
     expect(committed.body).toMatchObject({ code: 'TENANT_LIFECYCLE_BASELINE_CONFLICT' });
     expect(test.setTenantDisabled).not.toHaveBeenCalled();
   });
+
+  it('同一组织已有状态提交时拒绝并发请求', async () => {
+    let releaseMutation!: () => void;
+    const setTenantDisabled = vi.fn(() => new Promise<{ id: string; disabled: true; updatedAt: string }>(resolve => {
+      releaseMutation = () => resolve({ id: 'tenant-a', disabled: true, updatedAt: '2026-08-14T14:01:00.000Z' });
+    }));
+    const dependencyImpact = vi.fn().mockResolvedValue({ affectedResources: [], blockers: [] });
+    const test = rig({ dependencyImpact, setTenantDisabled });
+    const change = { action: 'suspend', reason: 'customer security incident' };
+    const preview = await test.request('/tenant-lifecycle/preview', 'post', change);
+    const commit = commitBody(change, preview.body as Record<string, unknown>);
+
+    const first = test.request('/tenant-lifecycle', 'post', commit);
+    await vi.waitFor(() => expect(setTenantDisabled).toHaveBeenCalledTimes(1));
+    const concurrent = await test.request('/tenant-lifecycle', 'post', commit);
+
+    expect(concurrent.statusCode).toBe(409);
+    expect(concurrent.body).toMatchObject({ code: 'TENANT_LIFECYCLE_TRANSITION_IN_PROGRESS' });
+    expect(setTenantDisabled).toHaveBeenCalledTimes(1);
+    releaseMutation();
+    await expect(first).resolves.toMatchObject({ statusCode: 200 });
+  });
 });

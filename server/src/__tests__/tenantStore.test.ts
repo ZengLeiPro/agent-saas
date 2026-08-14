@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -208,6 +208,24 @@ describe('TenantStore', () => {
       const reenabled = await store.setDisabled('wain', false, 'admin-1');
       expect(reenabled.disabled).toBeUndefined();
       expect(reenabled.disabledBy).toBeUndefined();
+    });
+
+    it('setDisabled 持久化失败时回滚内存状态', async () => {
+      const store = new TenantStore(storePath);
+      await store.create({ id: 'wain', name: '唯恩', createdBy: 's' });
+      await store.create({ id: 'acme', name: 'Acme', createdBy: 's' });
+      const before = store.findById('wain')!;
+      vi.spyOn(store as unknown as { persist: () => Promise<void> }, 'persist')
+        .mockRejectedValueOnce(new Error('disk full'));
+
+      await expect(store.setDisabled('wain', true, 'admin-1')).rejects.toThrow('disk full');
+
+      const after = store.findById('wain')!;
+      expect(after.disabled).toBe(before.disabled);
+      expect(after.disabledAt).toBe(before.disabledAt);
+      expect(after.disabledBy).toBe(before.disabledBy);
+      expect(after.updatedAt).toBe(before.updatedAt);
+      expect(new TenantStore(storePath).findById('wain')?.disabled).toBeUndefined();
     });
 
     it('禁止 rename 默认组织', async () => {

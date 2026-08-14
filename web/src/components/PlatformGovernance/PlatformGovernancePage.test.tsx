@@ -179,7 +179,24 @@ describe("PlatformOrganizationGovernance", () => {
     expect(await screen.findByRole("button", { name: "确认暂停组织" })).toBeTruthy();
   });
 
-  it("生命周期提交冲突显示服务端原因且不制造成功回执", async () => {
+  it("生命周期提交同步防重，快速重复确认只发送一次请求", async () => {
+    let resolveCommit!: (value: unknown) => void;
+    mocks.updateTenantLifecycle.mockImplementationOnce(() => new Promise(resolve => { resolveCommit = resolve; }));
+    render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "security-lifecycle" })} />);
+
+    fireEvent.change(await screen.findByPlaceholderText("填写操作原因"), { target: { value: "重复提交防护测试" } });
+    fireEvent.click(screen.getByRole("button", { name: "暂停组织" }));
+    const confirm = await screen.findByRole("button", { name: "确认暂停组织" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+
+    expect(mocks.updateTenantLifecycle).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveCommit({ changeId: "change-lifecycle-1", auditId: "audit-lifecycle-1", effectiveAt: "2026-08-10T10:00:01.000Z" });
+    });
+  });
+
+  it("生命周期提交冲突清除旧预览、刷新权威状态且不制造成功回执", async () => {
     mocks.updateTenantLifecycle.mockRejectedValueOnce(new Error("Tenant lifecycle baseline changed"));
     render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "security-lifecycle" })} />);
 
@@ -189,7 +206,8 @@ describe("PlatformOrganizationGovernance", () => {
 
     expect(await screen.findByText("Tenant lifecycle baseline changed")).toBeTruthy();
     expect(screen.queryByText("变更回执")).toBeNull();
-    expect(mocks.getTenantLifecycle).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "确认暂停组织" })).toBeNull();
+    await waitFor(() => expect(mocks.getTenantLifecycle).toHaveBeenCalledTimes(2));
   });
 
   it("API 失败不回退旧 TenantSettings", async () => {

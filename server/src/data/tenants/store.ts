@@ -97,6 +97,7 @@ export class TenantStore {
   private tenants: TenantRecord[] = [];
   private filePath: string;
   private postPersistObserver?: () => void;
+  private setDisabledQueue: Promise<void> = Promise.resolve();
 
   constructor(filePath: string) {
     this.filePath = filePath;
@@ -237,20 +238,39 @@ export class TenantStore {
   }
 
   async setDisabled(id: string, disabled: boolean, operatorId: string): Promise<TenantRecord> {
-    const tenant = this.tenants.find(t => t.id === id);
-    if (!tenant) throw new Error('Tenant not found');
-    if (id === DEFAULT_TENANT_ID && disabled) {
-      throw new Error(`Cannot disable the default tenant "${DEFAULT_TENANT_ID}"`);
+    const previousMutation = this.setDisabledQueue;
+    let releaseMutation!: () => void;
+    this.setDisabledQueue = new Promise(resolve => { releaseMutation = resolve; });
+    await previousMutation;
+    try {
+      const tenant = this.tenants.find(t => t.id === id);
+      if (!tenant) throw new Error('Tenant not found');
+      if (id === DEFAULT_TENANT_ID && disabled) {
+        throw new Error(`Cannot disable the default tenant "${DEFAULT_TENANT_ID}"`);
+      }
+      if (disabled && this.activeCount() <= 1) {
+        throw new Error('Cannot disable the last active tenant');
+      }
+      const previous = {
+        disabled: tenant.disabled,
+        disabledAt: tenant.disabledAt,
+        disabledBy: tenant.disabledBy,
+        updatedAt: tenant.updatedAt,
+      };
+      tenant.disabled = disabled || undefined;
+      tenant.disabledAt = disabled ? new Date().toISOString() : undefined;
+      tenant.disabledBy = disabled ? operatorId : undefined;
+      tenant.updatedAt = new Date().toISOString();
+      try {
+        await this.persist();
+      } catch (error) {
+        Object.assign(tenant, previous);
+        throw error;
+      }
+      return { ...tenant, settings: cloneSettings(mergeSettings(tenant.settings)) };
+    } finally {
+      releaseMutation();
     }
-    if (disabled && this.activeCount() <= 1) {
-      throw new Error('Cannot disable the last active tenant');
-    }
-    tenant.disabled = disabled || undefined;
-    tenant.disabledAt = disabled ? new Date().toISOString() : undefined;
-    tenant.disabledBy = disabled ? operatorId : undefined;
-    tenant.updatedAt = new Date().toISOString();
-    await this.persist();
-    return { ...tenant, settings: cloneSettings(mergeSettings(tenant.settings)) };
   }
 
   async delete(id: string): Promise<TenantRecord> {

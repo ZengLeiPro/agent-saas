@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Boxes, TriangleAlert } from "lucide-react";
 
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
@@ -138,19 +138,22 @@ function TenantLifecyclePanel({ tenantId }: { tenantId: string }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [mutationError, setMutationError] = useState("");
+  const mutationInFlight = useRef(false);
   if (loading) return <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">正在读取生命周期…</div>;
   if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
   if (!data) return <Empty>组织生命周期数据不可用。</Empty>;
   const action = data.allowedActions[0];
   const runPreview = async () => {
-    if (!action) return;
+    if (!action || mutationInFlight.current) return;
+    mutationInFlight.current = true;
     setBusy(true); setMutationError(""); setReceipt(null);
     try { setPreview(await governanceAccessApi.previewTenantLifecycle<TenantLifecyclePreview>(tenantId, { action: action.action, reason })); }
     catch (cause) { setMutationError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { setBusy(false); }
+    finally { mutationInFlight.current = false; setBusy(false); }
   };
   const commit = async () => {
-    if (!action || !preview) return;
+    if (!action || !preview || mutationInFlight.current) return;
+    mutationInFlight.current = true;
     setBusy(true); setMutationError("");
     try {
       const result = await governanceAccessApi.updateTenantLifecycle<GovernanceReceipt>(tenantId, {
@@ -158,8 +161,12 @@ function TenantLifecyclePanel({ tenantId }: { tenantId: string }) {
         baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt,
       });
       setReceipt(result); setPreview(null); retry();
-    } catch (cause) { setMutationError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { setBusy(false); }
+    } catch (cause) {
+      setPreview(null);
+      setReceipt(null);
+      setMutationError(cause instanceof Error ? cause.message : String(cause));
+      retry();
+    } finally { mutationInFlight.current = false; setBusy(false); }
   };
   const affectedResources = preview?.impact.affectedResources ?? [];
   const visibleResources = affectedResources.slice(0, 10);

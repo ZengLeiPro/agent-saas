@@ -1256,23 +1256,23 @@ function resolveSessionOwnerRole(
 export function resolveWakeSessionOwner(
   config: RawRuntimeRunDispatchConfig,
   session: RuntimeSessionRecord,
-  fallbackUserId?: string,
+  fallbackUserId?: string, fallbackTenantId?: string,
 ): NonNullable<ChannelContext['sessionOwner']> {
   const userId = session.userId || fallbackUserId || '';
   const realName = config.resolveUserRealName?.({
     userId: userId || undefined,
     username: session.username || undefined,
   });
-
+  const dwsServiceIdentity = Boolean(session.orgAgentId && userId.startsWith('adws-')
+    && session.username === `agent-dws:${session.orgAgentId}`);
   return {
     id: userId,
     username: session.username || 'unknown',
     role: resolveSessionOwnerRole(config, session),
-    tenantId: resolveSessionOwnerTenantId(config, session),
+    tenantId: dwsServiceIdentity ? fallbackTenantId : resolveSessionOwnerTenantId(config, session),
     ...(realName ? { realName } : {}),
   };
 }
-
 /**
  * 解析 sessionOwner.tenantId（多组织隔离主防御的 fail-safe baseline）。
  *
@@ -3269,7 +3269,7 @@ export async function wakeRuntimeSession(
           channel: 'web',
           outputTransactionMode: resolveModelOutputTransactionMode(run.metadata),
           resumeSessionId: run.sessionId,
-          sessionOwner: resolveWakeSessionOwner(config, session, run.userId),
+          sessionOwner: resolveWakeSessionOwner(config, session, run.userId, run.tenantId),
           targetCwd: session.cwd,
         },
         model: resolveWakeModelRef(run, session),
@@ -3340,7 +3340,7 @@ export async function wakeRuntimeSession(
           channel: 'web',
           outputTransactionMode: resolveModelOutputTransactionMode(run.metadata),
           resumeSessionId: run.sessionId,
-          sessionOwner: resolveWakeSessionOwner(config, session, run.userId),
+          sessionOwner: resolveWakeSessionOwner(config, session, run.userId, run.tenantId),
           targetCwd: session.cwd,
         },
         model: resolveWakeModelRef(run, session),
@@ -3376,7 +3376,7 @@ export async function wakeRuntimeSession(
   }
 
   const wakePrompt = resolveWakePrompt(run, events, session);
-  const sessionOwner = resolveWakeSessionOwner(config, session, run.userId);
+  const sessionOwner = resolveWakeSessionOwner(config, session, run.userId, run.tenantId);
   const context: ChannelContext = {
     channel: 'web',
     outputTransactionMode: resolveModelOutputTransactionMode(run.metadata),

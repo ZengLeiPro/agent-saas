@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { SessionIdentityBackfill } from '../data/transcripts/meta.js';
 import type { RunRecord } from '../runtime/runStore.js';
+import { resolveWakeSessionOwner, type RawRuntimeRunDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
 import type { RuntimeSessionRecord, SessionCatalog } from '../runtime/sessionCatalog.js';
 import { restoreRuntimeSessionForWake } from '../runtime/runtimeWakeSessionRestore.js';
 
@@ -72,6 +73,24 @@ describe('restoreRuntimeSessionForWake', () => {
     }))).resolves.toBe(existing);
     expect(store.backfillIdentity).not.toHaveBeenCalled();
     expect(store.upsert).not.toHaveBeenCalled();
+  });
+
+  it('仅 DWS service identity 使用 durable Run tenant，真人组织 Agent 不绕过 UserStore', () => {
+    const serviceSession: RuntimeSessionRecord = {
+      sessionId: 'session-1', userId: 'adws-account-1', username: 'agent-dws:org-kaikai',
+      orgAgentId: 'org-kaikai', channel: 'dingtalk', cwd: '/tmp/org-kaikai',
+      transcriptPath: '/tmp/org-kaikai/session.jsonl', workspaceId: 'workspace-1',
+      createdAt: '2026-08-14T08:00:00.000Z', updatedAt: '2026-08-14T08:00:00.000Z',
+    };
+    const resolver = vi.fn(() => undefined);
+    const config = { agentCwd: '/tmp', sharedDir: '/tmp', resolveUserTenantId: resolver } as RawRuntimeRunDispatchConfig;
+
+    expect(resolveWakeSessionOwner(config, serviceSession, serviceSession.userId, 'kaiyan').tenantId).toBe('kaiyan');
+    expect(resolver).not.toHaveBeenCalled();
+    const humanSession = { ...serviceSession, userId: 'human-1', username: 'alice' };
+    expect(resolveWakeSessionOwner(config, humanSession, humanSession.userId, 'kaiyan').tenantId).toBeUndefined();
+    expect(resolver).toHaveBeenCalledWith({ userId: 'human-1', username: 'alice' });
+    expect(resolveWakeSessionOwner(config, serviceSession, serviceSession.userId).tenantId).toBeUndefined();
   });
 
   it('已有 Session 缺治理身份时从同一 durable Run 安全补齐', async () => {

@@ -37,11 +37,14 @@ export interface TaskboardPage<T> {
   hasMore: boolean;
 }
 
-export interface TaskboardBoardSearchFilter {
-  includeArchived?: boolean;
-  search?: string;
+export interface TaskboardPageFilter {
   page?: number;
   pageSize?: number;
+}
+
+export interface TaskboardBoardSearchFilter extends TaskboardPageFilter {
+  includeArchived?: boolean;
+  search?: string;
 }
 
 export interface TaskboardTaskListFilter {
@@ -51,7 +54,7 @@ export interface TaskboardTaskListFilter {
   priorities?: TaskBoardPriority[];
 }
 
-export interface TaskboardTaskSearchFilter extends TaskboardTaskListFilter {
+export interface TaskboardTaskSearchFilter extends TaskboardTaskListFilter, TaskboardPageFilter {
   boardId?: string;
   boardName?: string;
   labels?: string[];
@@ -62,8 +65,6 @@ export interface TaskboardTaskSearchFilter extends TaskboardTaskListFilter {
   updatedBefore?: string;
   dueAfter?: string;
   dueBefore?: string;
-  page?: number;
-  pageSize?: number;
 }
 
 export interface TaskboardExpectedVersionInput {
@@ -132,6 +133,11 @@ export interface TaskboardExecutionCompletionInput {
 
 export interface TaskboardExecutionStore {
   listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]>;
+  searchExecutions(
+    identity: TaskboardIdentity,
+    taskId: string,
+    filter?: TaskboardPageFilter,
+  ): Promise<TaskboardPage<TaskBoardExecution>>;
   getExecutionModelContext(
     identity: TaskboardIdentity,
     taskId: string,
@@ -187,6 +193,11 @@ export interface TaskboardExecutionStore {
 
 export interface TaskboardExecutionService {
   listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]>;
+  searchExecutions(
+    identity: TaskboardIdentity,
+    taskId: string,
+    filter?: TaskboardPageFilter,
+  ): Promise<TaskboardPage<TaskBoardExecution>>;
   startExecution(
     identity: TaskboardIdentity,
     taskId: string,
@@ -213,6 +224,11 @@ export interface TaskboardService {
   restoreTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask>;
 
   listComments(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardComment[]>;
+  searchComments(
+    identity: TaskboardIdentity,
+    taskId: string,
+    filter?: TaskboardPageFilter,
+  ): Promise<TaskboardPage<TaskBoardComment>>;
   createComment(identity: TaskboardIdentity, taskId: string, input: TaskBoardCommentCreateInput): Promise<TaskBoardComment>;
   updateComment(identity: TaskboardIdentity, commentId: string, input: TaskBoardCommentPatchInput): Promise<TaskBoardComment>;
   deleteComment(identity: TaskboardIdentity, commentId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardComment>;

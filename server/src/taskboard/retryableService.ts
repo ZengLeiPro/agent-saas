@@ -24,6 +24,7 @@ import type {
   TaskboardExpectedVersionInput,
   TaskboardIdentity,
   TaskboardPage,
+  TaskboardPageFilter,
   TaskboardService,
   TaskboardTaskListFilter,
   TaskboardTaskSearchFilter,
@@ -168,6 +169,14 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return (await this.service()).listComments(identity, taskId);
   }
 
+  async searchComments(
+    identity: TaskboardIdentity,
+    taskId: string,
+    filter?: TaskboardPageFilter,
+  ): Promise<TaskboardPage<TaskBoardComment>> {
+    return (await this.service()).searchComments(identity, taskId, filter);
+  }
+
   async createComment(
     identity: TaskboardIdentity,
     taskId: string,
@@ -195,6 +204,15 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
   async listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
     await this.init();
     return this.target.listExecutions(identity, taskId);
+  }
+
+  async searchExecutions(
+    identity: TaskboardIdentity,
+    taskId: string,
+    filter?: TaskboardPageFilter,
+  ): Promise<TaskboardPage<TaskBoardExecution>> {
+    await this.init();
+    return this.target.searchExecutions(identity, taskId, filter);
   }
 
   async getExecutionModelContext(

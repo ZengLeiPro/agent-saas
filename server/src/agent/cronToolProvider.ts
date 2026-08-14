@@ -27,6 +27,7 @@ import {
 import { loadToolDescription } from './tools/descriptionLoader.js';
 import type {
   AuthorizedToolCall,
+  ExecutionInvocationAudit,
   ToolCallContext,
   ToolDescriptor,
   ToolProvider,
@@ -160,6 +161,58 @@ function resolveIdentity(context?: ToolCallContext, currentCallerFirst = false):
   };
 }
 
+function recordTaskboardAudit(
+  context: ToolCallContext,
+  identity: CronIdentity,
+  input: TaskboardManageInput,
+  taskboardRun: boolean,
+  result?: Record<string, unknown>,
+  error?: unknown,
+): void {
+  if (!context.executionAudit) return;
+  const action = input.action;
+  const objectType = action.startsWith('board.')
+    ? 'board'
+    : action.startsWith('comment.')
+      ? 'comment'
+      : action.startsWith('execution.')
+        ? 'execution'
+        : 'task';
+  const resultResource = result?.[objectType] as { id?: unknown } | undefined;
+  const objectId = typeof resultResource?.id === 'string'
+    ? resultResource.id
+    : objectType === 'board'
+      ? input.boardId
+      : objectType === 'comment'
+        ? input.id ?? input.taskId
+        : input.taskId ?? input.id ?? input.boardId;
+  const partialFailure = result?.created === true && result.dispatched === false;
+  const dispatchError = partialFailure
+    ? (result?.dispatchError as { message?: unknown } | undefined)?.message
+    : undefined;
+  const auditError = error ?? dispatchError;
+  const audit: ExecutionInvocationAudit & Record<string, unknown> = {
+    provider: 'server-local',
+    operation: action,
+    actorUserId: identity.id,
+    ...(identity.tenantId ? { tenantId: identity.tenantId } : {}),
+    ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+    ...(context.runId ? { runId: context.runId } : {}),
+    ...(context.toolCallId ? { toolCallId: context.toolCallId } : {}),
+    ...(context.invocationId ? { invocationId: context.invocationId } : {}),
+    objectType,
+    ...(objectId ? { objectId } : {}),
+    contextKind: taskboardRun ? 'taskboard_execution' : 'normal_session',
+    resultStatus: partialFailure ? 'partial_success' : auditError === undefined ? 'success' : 'error',
+    recordedAt: new Date().toISOString(),
+    status: auditError === undefined ? 'success' : 'error',
+    ...(auditError === undefined ? {} : {
+      error: auditError instanceof Error ? auditError.message : String(auditError),
+    }),
+  };
+  context.executionAudit.record(audit);
+}
+
 function toIso(ms?: number): string | undefined {
   return typeof ms === 'number' && Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
 }
@@ -220,31 +273,36 @@ export class CronToolProvider implements ToolProvider {
   async invoke(call: AuthorizedToolCall, context: ToolCallContext): Promise<ToolResult | undefined> {
     if (call.toolId !== cronManageToolDescriptor.id) return undefined;
     const input = cronManageSchema.parse(call.input ?? {}) as CronManageInput;
-    const identity = resolveIdentity(context, input.target === 'taskboard');
-    if (!identity) throw new Error('缺少当前用户身份，无法访问任务');
     const taskboardRun = context.runId?.startsWith('taskboard-') === true;
+    const identity = resolveIdentity(context, input.target === 'taskboard' && !taskboardRun);
+    if (!identity) throw new Error('缺少当前用户身份，无法访问任务');
     if (taskboardRun && input.target !== 'taskboard') {
       throw new Error('任务看板 Agent 只能使用 target=taskboard');
     }
-    const executionStore = this.options.taskboard?.executionStore?.();
-    if (taskboardRun && !executionStore) throw new Error('任务看板执行上下文服务未启用');
-    const execution = taskboardRun
-      ? await executionStore!.getExecutionContextByRunId(context.runId!)
-      : null;
-    if (taskboardRun && !execution) throw new Error('任务看板执行上下文不存在');
-
     if (input.target === 'taskboard') {
       if (!this.options.taskboard) throw new Error('任务看板服务未启用');
       const tenantId = identity.tenantId?.trim();
       if (!tenantId) throw new Error('缺少当前用户组织身份，无法访问任务看板');
-      const result = await invokeTaskboardAction(this.options.taskboard, {
-        tenantId,
-        ownerUserId: identity.id,
-        username: identity.username,
-        ...(identity.realName ? { displayName: `${identity.realName} @${identity.username}` } : {}),
-        ...(identity.role ? { userRole: identity.role } : {}),
-      }, input, execution ? { execution } : {});
-      return { content: JSON.stringify(result, null, 2) };
+      try {
+        const executionStore = this.options.taskboard.executionStore?.();
+        if (taskboardRun && !executionStore) throw new Error('任务看板执行上下文服务未启用');
+        const execution = taskboardRun
+          ? await executionStore!.getExecutionContextByRunId(context.runId!)
+          : null;
+        if (taskboardRun && !execution) throw new Error('任务看板执行上下文不存在');
+        const result = await invokeTaskboardAction(this.options.taskboard, {
+          tenantId,
+          ownerUserId: identity.id,
+          username: identity.username,
+          ...(identity.realName ? { displayName: `${identity.realName} @${identity.username}` } : {}),
+          ...(identity.role ? { userRole: identity.role } : {}),
+        }, input, execution ? { execution } : {});
+        recordTaskboardAudit(context, identity, input, taskboardRun, result);
+        return { content: JSON.stringify(result, null, 2) };
+      } catch (error) {
+        recordTaskboardAudit(context, identity, input, taskboardRun, undefined, error);
+        throw error;
+      }
     }
 
     const service = this.options.service();

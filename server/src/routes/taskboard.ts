@@ -125,6 +125,8 @@ const pageQueryFields = {
   pageSize: numberQuerySchema(1, 100, 20),
 };
 
+const paginationQuerySchema = z.object(pageQueryFields).strict();
+
 const boardsQuerySchema = z.object({
   includeArchived: booleanQuerySchema(),
 }).strict();
@@ -314,6 +316,12 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       });
       return;
     }
+    if (req.query.page !== undefined || req.query.pageSize !== undefined) {
+      const query = parseOrReply(paginationQuerySchema, req.query, res, 'query');
+      if (!query) return;
+      res.json(await options.executionService.searchExecutions(identityFrom(req), req.params.id, query));
+      return;
+    }
     res.json(await options.executionService.listExecutions(identityFrom(req), req.params.id));
   }));
 
@@ -335,6 +343,12 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   }));
 
   router.get('/tasks/:id/comments', route(async (req, res) => {
+    if (req.query.page !== undefined || req.query.pageSize !== undefined) {
+      const query = parseOrReply(paginationQuerySchema, req.query, res, 'query');
+      if (!query) return;
+      res.json(await options.service!.searchComments(identityFrom(req), req.params.id, query));
+      return;
+    }
     res.json(await options.service!.listComments(identityFrom(req), req.params.id));
   }));
 

@@ -97,6 +97,7 @@ function makeRig(
   }>();
   const store = {
     listExecutions: vi.fn(async () => []),
+    searchExecutions: vi.fn(async () => ({ items: [], page: 1, pageSize: 20, total: 0, hasMore: false })),
     getExecutionModelContext: vi.fn(async () => ({ boardOwnerUserId: identity.ownerUserId })),
     claimExecution: vi.fn(async (_identity, _taskId, input) => {
       dispatches.set(input.runId, { executionId: input.executionId, payload: input.dispatch });

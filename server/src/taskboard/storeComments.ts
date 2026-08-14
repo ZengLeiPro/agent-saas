@@ -35,8 +35,8 @@ export async function updateComment(
 ): Promise<TaskBoardComment> {
   return withTransaction(store.pool, async (client) => {
     const loaded = await requireCommentWithBoard(store, client, identity, commentId, true);
-    assertExpectedVersion(loaded.comment, input.expectedVersion);
     assertCommentManageable(loaded, identity);
+    assertExpectedVersion(loaded.comment, input.expectedVersion);
     const body = input.body.trim();
     if (!body && !loaded.comment.attachments?.length) {
       throw new TaskboardValidationError('Comment body or attachment is required');
@@ -60,8 +60,8 @@ export async function deleteComment(
 ): Promise<TaskBoardComment> {
   return withTransaction(store.pool, async (client) => {
     const loaded = await requireCommentWithBoard(store, client, identity, commentId, true);
-    assertExpectedVersion(loaded.comment, input.expectedVersion);
     assertCommentManageable(loaded, identity);
+    assertExpectedVersion(loaded.comment, input.expectedVersion);
     await client.query(`DELETE FROM ${store.commentsTable} WHERE id=$1`, [commentId]);
     return applyCommentAuthorDisplayName(loaded.comment, identity);
   });

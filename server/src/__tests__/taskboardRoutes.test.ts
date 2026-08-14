@@ -214,6 +214,9 @@ describe('Taskboard routes', () => {
   it('lists execution history and accepts an explicit Agent execution request', async () => {
     const executionService: TaskboardExecutionService = {
       listExecutions: async () => [EXECUTION],
+      searchExecutions: async (_identity, _taskId, filter = {}) => ({
+        items: [EXECUTION], page: filter.page ?? 1, pageSize: filter.pageSize ?? 20, total: 1, hasMore: false,
+      }),
       startExecution: async (identity, taskId, input) => {
         expect(identity).toEqual({
           tenantId: USER.tenantId,
@@ -240,6 +243,9 @@ describe('Taskboard routes', () => {
     const listed = await rig.request(`/api/taskboard/tasks/${TASK.id}/executions`);
     expect(listed.status).toBe(200);
     expect(await listed.json()).toEqual([EXECUTION]);
+    const paged = await rig.request(`/api/taskboard/tasks/${TASK.id}/executions?page=1&pageSize=10`);
+    expect(paged.status).toBe(200);
+    expect(await paged.json()).toMatchObject({ items: [EXECUTION], page: 1, pageSize: 10, total: 1 });
 
     const started = await rig.request(`/api/taskboard/tasks/${TASK.id}/execute`, postJson({
       expectedVersion: TASK.version,
@@ -307,6 +313,10 @@ describe('Taskboard routes', () => {
     const tasks = await rig.request('/api/taskboard/tasks/search?search=看板&status=backlog&labels=backend&pageSize=5');
     expect(tasks.status).toBe(200);
     expect(await tasks.json()).toMatchObject({ total: 1, pageSize: 5, items: [TASK] });
+
+    const comments = await rig.request(`/api/taskboard/tasks/${TASK.id}/comments?page=1&pageSize=5`);
+    expect(comments.status).toBe(200);
+    expect(await comments.json()).toMatchObject({ total: 1, page: 1, pageSize: 5, items: [COMMENT] });
 
     const updated = await rig.request(`/api/taskboard/comments/${COMMENT.id}`, patchJson({
       body: '更新后的评论', expectedVersion: COMMENT.version,
@@ -391,6 +401,10 @@ function makeService(captured: Captured): TaskboardService {
     async archiveTask(identity) { remember(identity); return { ...TASK, version: 2, archivedAt: TASK.updatedAt }; },
     async restoreTask(identity) { remember(identity); return { ...TASK, version: 2 }; },
     async listComments(identity) { remember(identity); return [COMMENT]; },
+    async searchComments(identity, _taskId, filter = {}) {
+      remember(identity);
+      return { items: [COMMENT], page: filter.page ?? 1, pageSize: filter.pageSize ?? 20, total: 1, hasMore: false };
+    },
     async createComment(identity) { remember(identity); return COMMENT; },
     async updateComment(identity, _commentId, input) {
       remember(identity);

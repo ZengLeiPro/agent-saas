@@ -70,6 +70,7 @@ function rig() {
     searchTasks: vi.fn(async () => ({ items: [], page: 1, pageSize: 20, total: 0, hasMore: false })),
     getTask: vi.fn(async () => task),
     listComments: vi.fn(async () => []),
+    searchComments: vi.fn(async () => ({ items: [], page: 1, pageSize: 20, total: 0, hasMore: false })),
     createComment: vi.fn(async (_identity, taskId, input) => ({
       id: 'comment-1', taskId, body: input.body, authorType: 'user' as const,
       authorId: identity.ownerUserId, authorName: identity.username, version: 1,
@@ -107,6 +108,9 @@ function rig() {
   } as unknown as TaskboardService;
   const executionService = {
     listExecutions: vi.fn(async () => [execution]),
+    searchExecutions: vi.fn(async () => ({
+      items: [execution], page: 1, pageSize: 20, total: 1, hasMore: false,
+    })),
     startExecution: vi.fn(async () => ({
       task: { ...task, status: 'in_progress' as const, version: task.version + 1 },
       execution,
@@ -155,6 +159,12 @@ describe('CronManage taskboard actions', () => {
       .resolves.toEqual({
         count: 1, total: 1, page: 1, pageSize: 20, hasMore: false, boards: [board],
       });
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'comment.list', taskId: task.id, page: 1, pageSize: 20,
+    })).resolves.toMatchObject({ total: 0, page: 1, pageSize: 20, comments: [] });
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'execution.list', taskId: task.id, page: 1, pageSize: 20,
+    })).resolves.toMatchObject({ total: 1, page: 1, pageSize: 20, executions: [execution] });
     await expect(invokeTaskboardAction(options, identity, { action: 'list', id: task.id }))
       .rejects.toThrow('普通会话请使用');
     await expect(invokeTaskboardAction(options, identity, { action: 'list', id: task.id }, executionScope('work')))
@@ -166,6 +176,10 @@ describe('CronManage taskboard actions', () => {
       page: undefined,
       pageSize: undefined,
     });
+    expect(service.searchComments).toHaveBeenCalledWith(identity, task.id, { page: 1, pageSize: 20 });
+    expect(executionService.searchExecutions).toHaveBeenCalledWith(
+      identity, task.id, { page: 1, pageSize: 20 },
+    );
     expect(executionService.listExecutions).toHaveBeenCalledWith(identity, task.id);
   });
 
@@ -296,6 +310,27 @@ describe('CronManage taskboard actions', () => {
     await expect(invokeTaskboardAction(options, identity, {
       action: 'task.dispatch', taskId: task.id, expectedVersion: task.version,
     })).rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+  });
+
+  it('create+dispatch 在派发失败时明确返回已创建任务，服务未启用时不创建', async () => {
+    const { service, executionService, options } = rig();
+    vi.mocked(executionService.startExecution).mockRejectedValueOnce(new Error('默认模型不可用'));
+
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'task.create', boardId: board.id, title: '派发失败任务', dispatch: true,
+    })).resolves.toMatchObject({
+      created: true,
+      dispatched: false,
+      task: { id: 'task-new', title: '派发失败任务' },
+      dispatchError: { message: '默认模型不可用' },
+    });
+    expect(service.createTask).toHaveBeenCalledTimes(1);
+
+    const unavailable = { ...options, executionService: () => undefined };
+    await expect(invokeTaskboardAction(unavailable, identity, {
+      action: 'task.create', boardId: board.id, title: '不应创建', dispatch: true,
+    })).rejects.toThrow('执行服务未启用');
+    expect(service.createTask).toHaveBeenCalledTimes(1);
   });
 
   it('Execution fencing 限制当前分支回写，并用 create+dispatch 派发新任务', async () => {

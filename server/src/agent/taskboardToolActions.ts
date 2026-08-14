@@ -2,6 +2,7 @@ import type {
   TaskBoardExecutionPurpose,
   TaskBoardPriority,
   TaskBoardStatus,
+  TaskBoardTask,
   TaskBoardTaskPatchInput,
   TaskBoardVisibility,
 } from '../../../shared/src/types/taskboard.js';
@@ -196,9 +197,18 @@ export async function invokeTaskboardAction(
     case 'task.dispatch':
       return dispatchTask(service, options.executionService?.(), identity, input, false);
     case 'comment.list': {
-      const taskId = requireId(input, 'taskId');
-      const comments = await service.listComments(identity, taskId);
-      return { count: comments.length, comments };
+      const result = await service.searchComments(identity, requireId(input, 'taskId'), {
+        page: input.page,
+        pageSize: input.pageSize,
+      });
+      return {
+        count: result.items.length,
+        total: result.total,
+        page: result.page,
+        pageSize: result.pageSize,
+        hasMore: result.hasMore,
+        comments: result.items,
+      };
     }
     case 'comment.create': {
       const comment = await service.createComment(identity, requireId(input, 'taskId'), {
@@ -220,9 +230,19 @@ export async function invokeTaskboardAction(
       return { deleted: true, comment };
     }
     case 'execution.list': {
-      const taskId = requireId(input, 'taskId');
-      const executions = await requireExecutionService(options.executionService?.()).listExecutions(identity, taskId);
-      return { count: executions.length, executions };
+      const result = await requireExecutionService(options.executionService?.()).searchExecutions(
+        identity,
+        requireId(input, 'taskId'),
+        { page: input.page, pageSize: input.pageSize },
+      );
+      return {
+        count: result.items.length,
+        total: result.total,
+        page: result.page,
+        pageSize: result.pageSize,
+        hasMore: result.hasMore,
+        executions: result.items,
+      };
     }
     case 'list':
       return listLegacy(service, options.executionService?.(), identity, input);
@@ -355,6 +375,7 @@ async function createTask(
   input: TaskboardManageInput,
 ): Promise<Record<string, unknown>> {
   const boardId = requireField(input.boardId, 'boardId');
+  const dispatcher = input.dispatch ? requireExecutionService(executionService) : undefined;
   if (input.dispatch) await assertCanDispatch(service, identity, boardId);
   if (input.dispatch && input.status && input.status !== 'todo') {
     throw new Error('dispatch=true 只支持创建 todo 任务');
@@ -370,11 +391,34 @@ async function createTask(
     ...(typeof input.model === 'string' ? { model: input.model } : {}),
   });
   if (!input.dispatch) return { created: true, task };
-  const execution = await requireExecutionService(executionService).startExecution(identity, task.id, {
-    expectedVersion: task.version,
-    purpose: 'work',
-  });
-  return { created: true, dispatched: true, ...execution };
+  return dispatchCreatedTask(dispatcher!, identity, task);
+}
+
+async function dispatchCreatedTask(
+  executionService: TaskboardExecutionService,
+  identity: TaskboardIdentity,
+  task: TaskBoardTask,
+): Promise<Record<string, unknown>> {
+  try {
+    const execution = await executionService.startExecution(identity, task.id, {
+      expectedVersion: task.version,
+      purpose: 'work',
+    });
+    return { created: true, dispatched: true, ...execution };
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error
+      ? String((error as { code: unknown }).code)
+      : undefined;
+    return {
+      created: true,
+      dispatched: false,
+      task,
+      dispatchError: {
+        ...(code ? { code } : {}),
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
 }
 
 async function dispatchTask(
@@ -440,6 +484,7 @@ async function createExecutionTask(
 ): Promise<Record<string, unknown>> {
   const executionStore = options.executionStore?.();
   if (!executionStore) throw new Error('任务看板执行上下文服务未启用');
+  const dispatcher = input.dispatch ? requireExecutionService(options.executionService?.()) : undefined;
   const task = await executionStore.createTaskFromExecution(identity, execution.execution.runId, {
     title: requireField(input.title, 'title'),
     ...(input.description !== undefined ? { description: input.description } : {}),
@@ -451,11 +496,7 @@ async function createExecutionTask(
     ...(typeof input.model === 'string' ? { model: input.model } : {}),
   });
   if (!input.dispatch) return { created: true, task };
-  const result = await requireExecutionService(options.executionService?.()).startExecution(identity, task.id, {
-    expectedVersion: task.version,
-    purpose: 'work',
-  });
-  return { created: true, dispatched: true, ...result };
+  return dispatchCreatedTask(dispatcher!, identity, task);
 }
 
 async function updateExecutionTask(

@@ -32,6 +32,8 @@ import type {
   TaskboardExecutionService,
   TaskboardExecutionStore,
   TaskboardIdentity,
+  TaskboardPage,
+  TaskboardPageFilter,
 } from './types.js';
 
 interface DefaultModelResolution {
@@ -91,6 +93,14 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
 
   listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
     return this.options.store.listExecutions(identity, taskId);
+  }
+
+  searchExecutions(
+    identity: TaskboardIdentity,
+    taskId: string,
+    filter?: TaskboardPageFilter,
+  ): Promise<TaskboardPage<TaskBoardExecution>> {
+    return this.options.store.searchExecutions(identity, taskId, filter);
   }
 
   async startExecution(

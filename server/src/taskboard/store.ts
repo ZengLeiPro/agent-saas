@@ -56,9 +56,14 @@ import {
 import { taskFieldsMigrationSql, taskTableSql } from './taskFields.js';
 import { deleteComment as deleteStoredComment, updateComment as updateStoredComment } from './storeComments.js';
 import {
+  listExecutions as listStoredExecutions,
+  searchExecutions as searchStoredExecutions,
+} from './storeExecutions.js';
+import {
   listBoards as listStoredBoards,
   listTasks as listStoredTasks,
   searchBoards as searchStoredBoards,
+  searchComments as searchStoredComments,
   searchTasks as searchStoredTasks,
 } from './storeSearch.js';
 import {
@@ -75,6 +80,7 @@ import {
   type TaskboardExpectedVersionInput,
   type TaskboardIdentity,
   type TaskboardPage,
+  type TaskboardPageFilter,
   type TaskboardService,
   type TaskboardTaskListFilter,
   type TaskboardTaskSearchFilter,
@@ -627,6 +633,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return result.rows.map((row) => applyCommentAuthorDisplayName(rowToComment(row), identity));
   }
 
+  async searchComments(identity: TaskboardIdentity, taskId: string, filter: TaskboardPageFilter = {}): Promise<TaskboardPage<TaskBoardComment>> { return searchStoredComments(this, identity, taskId, filter); }
+
   async createComment(identity: TaskboardIdentity, taskId: string, input: TaskBoardCommentCreateInput): Promise<TaskBoardComment> {
     return this.withTransaction(async (client) => {
       const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
@@ -660,20 +668,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskBoardComment> {
     return deleteStoredComment(this, identity, commentId, input);
   }
-  async listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
-    await this.requireTask(this.pool, identity, taskId, false);
-    const result = await this.pool.query(
-      `SELECT e.*
-         FROM ${this.executionsTable} e
-         JOIN ${this.tasksTable} t ON t.id=e.task_id
-         JOIN ${this.boardsTable} b ON b.id=t.board_id
-        WHERE e.task_id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
-        ORDER BY e.created_at DESC, e.id DESC
-        LIMIT 50`,
-      [taskId, identity.tenantId, identity.ownerUserId],
-    );
-    return result.rows.map(rowToExecution);
-  }
+  async listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> { return listStoredExecutions(this, identity, taskId); }
+  async searchExecutions(identity: TaskboardIdentity, taskId: string, filter: TaskboardPageFilter = {}): Promise<TaskboardPage<TaskBoardExecution>> { return searchStoredExecutions(this, identity, taskId, filter); }
 
   async getExecutionModelContext(
     identity: TaskboardIdentity,

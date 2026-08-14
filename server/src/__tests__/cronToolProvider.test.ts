@@ -1,11 +1,11 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import { CronToolProvider } from '../agent/cronToolProvider.js';
-import type { AuthorizedToolCall, ToolCallContext } from '../agent/toolRuntime.js';
+import { createExecutionAuditRecorder, type AuthorizedToolCall, type ToolCallContext } from '../agent/toolRuntime.js';
 import { CronService } from '../cron/service.js';
 import type { CronJob } from '../cron/types.js';
 import type { UserIdentity } from '../types/index.js';
-import type { TaskboardService } from '../taskboard/types.js';
+import type { TaskboardExecutionService, TaskboardService } from '../taskboard/types.js';
 
 const OWNER: UserIdentity = { id: 'u-owner', username: 'owner', role: 'user', tenantId: 'kaiyan' };
 const OTHER: UserIdentity = { id: 'u-other', username: 'other', role: 'user', tenantId: 'kaiyan' };
@@ -125,20 +125,44 @@ describe('CronToolProvider', () => {
       branch: input.branch ?? undefined,
       version: task.version + 1,
     }));
+    const board = {
+      id: task.boardId,
+      ownerUserId: OWNER.id,
+      name: '迭代看板',
+      visibility: 'personal' as const,
+      canManage: true,
+      prompt: '',
+      version: 1,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+    };
     const taskboard = {
+      getBoard: vi.fn(async () => board),
       getTask: vi.fn(async () => task),
+      createTask: vi.fn(async (_identity, _boardId, input) => ({
+        ...task, id: 'task-new', title: input.title, status: 'todo' as const, version: 1,
+      })),
       updateTask,
     } as unknown as TaskboardService;
+    const executionService = {
+      listExecutions: vi.fn(async () => []),
+      searchExecutions: vi.fn(async () => ({ items: [], page: 1, pageSize: 20, total: 0, hasMore: false })),
+      startExecution: vi.fn(async () => { throw new Error('默认模型不可用'); }),
+    } satisfies TaskboardExecutionService;
     provider = new CronToolProvider({
       service: () => undefined,
-      taskboard: { service: () => taskboard },
+      taskboard: { service: () => taskboard, executionService: () => executionService },
     });
 
     expect(provider.list(context(OWNER)).map((item) => item.id)).toEqual(['CronManage']);
     const taskboardContext = { ...context(OWNER), runId: 'taskboard-run-1' };
+    const missingStoreContext = { ...taskboardContext, executionAudit: createExecutionAuditRecorder() };
     await expect(provider.invoke(call('CronManage', {
       target: 'taskboard', action: 'update', id: task.id, branch: 'unsafe',
-    }), taskboardContext)).rejects.toThrow('执行上下文服务未启用');
+    }), missingStoreContext)).rejects.toThrow('执行上下文服务未启用');
+    expect(missingStoreContext.executionAudit.records).toEqual([
+      expect.objectContaining({ operation: 'update', resultStatus: 'error', status: 'error' }),
+    ]);
     await expect(provider.invoke(call('CronManage', CREATE_INPUT), taskboardContext))
       .rejects.toThrow('只能使用 target=taskboard');
     await expect(provider.invoke(call('CronManage', {
@@ -153,6 +177,7 @@ describe('CronToolProvider', () => {
 
     const delegatedContext = context(OWNER);
     delegatedContext.channelContext.user = OTHER;
+    delegatedContext.executionAudit = createExecutionAuditRecorder();
     await provider.invoke(call('CronManage', {
       target: 'taskboard', action: 'task.update', taskId: task.id,
       branch: 'task/TASK-1-current-caller', expectedVersion: task.version,
@@ -161,7 +186,42 @@ describe('CronToolProvider', () => {
       tenantId: OTHER.tenantId,
       ownerUserId: OTHER.id,
     }), task.id, { branch: 'task/TASK-1-current-caller', expectedVersion: task.version });
+    expect(delegatedContext.executionAudit.records).toEqual([
+      expect.objectContaining({
+        operation: 'task.update',
+        actorUserId: OTHER.id,
+        tenantId: OTHER.tenantId,
+        sessionId: delegatedContext.sessionId,
+        runId: delegatedContext.runId,
+        objectType: 'task',
+        objectId: task.id,
+        contextKind: 'normal_session',
+        resultStatus: 'success',
+        status: 'success',
+      }),
+    ]);
     updateTask.mockClear();
+
+    const partialContext = context(OWNER);
+    partialContext.toolCallId = 'tool-call-1';
+    partialContext.invocationId = 'invocation-1';
+    partialContext.executionAudit = createExecutionAuditRecorder();
+    const partialResult = await provider.invoke(call('CronManage', {
+      target: 'taskboard', action: 'task.create', boardId: board.id,
+      title: '派发失败但已创建', dispatch: true,
+    }), partialContext);
+    expect(JSON.parse(partialResult!.content)).toMatchObject({
+      created: true, dispatched: false, task: { id: 'task-new' },
+      dispatchError: { message: '默认模型不可用' },
+    });
+    expect(partialContext.executionAudit.records).toEqual([
+      expect.objectContaining({
+        operation: 'task.create', actorUserId: OWNER.id, objectId: 'task-new',
+        toolCallId: partialContext.toolCallId, invocationId: partialContext.invocationId,
+        resultStatus: 'partial_success', recordedAt: expect.any(String),
+        status: 'error', error: '默认模型不可用',
+      }),
+    ]);
 
     const execution = {
       id: 'execution-1', taskId: task.id, runId: taskboardContext.runId, sessionId: 'session-1',
@@ -200,6 +260,25 @@ describe('CronToolProvider', () => {
       tenantId: OWNER.tenantId,
       ownerUserId: OWNER.id,
     }), taskboardContext.runId, 'task/TASK-1-feature');
+
+    updateTaskBranchFromExecution.mockClear();
+    const resumedExecutionContext = {
+      ...taskboardContext,
+      channelContext: { ...taskboardContext.channelContext, user: OTHER },
+      executionAudit: createExecutionAuditRecorder(),
+    };
+    await provider.invoke(call('CronManage', {
+      target: 'taskboard', action: 'update', id: task.id, branch: 'task/TASK-1-resumed',
+    }), resumedExecutionContext);
+    expect(updateTaskBranchFromExecution).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: OWNER.tenantId,
+      ownerUserId: OWNER.id,
+    }), taskboardContext.runId, 'task/TASK-1-resumed');
+    expect(resumedExecutionContext.executionAudit.records).toEqual([
+      expect.objectContaining({
+        operation: 'update', actorUserId: OWNER.id, contextKind: 'taskboard_execution', status: 'success',
+      }),
+    ]);
   });
 
   it('create 缺必填字段或非法 cron 表达式时报错', async () => {

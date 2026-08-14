@@ -188,6 +188,12 @@ describePg('PgTaskboardStore contract', () => {
     await expect(store.updateComment(bob, comment.id, {
       body: '越权修改', expectedVersion: comment.version,
     })).rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+    await expect(store.updateComment(bob, comment.id, {
+      body: '越权并猜旧版本', expectedVersion: comment.version + 99,
+    })).rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+    await expect(store.searchComments(alice, task.id, { page: 1, pageSize: 1 })).resolves.toMatchObject({
+      items: [expect.objectContaining({ id: comment.id })], page: 1, pageSize: 1, total: 1, hasMore: false,
+    });
 
     const edited = await store.updateComment(admin, comment.id, {
       body: '作者修改', expectedVersion: comment.version,
@@ -373,7 +379,11 @@ describePg('PgTaskboardStore contract', () => {
       status: 'queued', purpose: 'work', runId: 'run-a', sessionId: 'session-a',
     });
     expect(await store.listExecutions(alice, task.id)).toEqual([claimed.execution]);
+    await expect(store.searchExecutions(alice, task.id, { page: 1, pageSize: 1 })).resolves.toMatchObject({
+      items: [claimed.execution], page: 1, pageSize: 1, total: 1, hasMore: false,
+    });
     await expect(store.listExecutions(admin, task.id)).rejects.toBeInstanceOf(TaskboardNotFoundError);
+    await expect(store.searchExecutions(admin, task.id)).rejects.toBeInstanceOf(TaskboardNotFoundError);
 
     const firstLease = await store.claimExecutionDispatch('run-a', 'lease-a');
     expect(firstLease).toMatchObject({

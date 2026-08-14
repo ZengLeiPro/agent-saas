@@ -28,13 +28,13 @@ import {
   readTenantCompanyInfo,
   writeTenantCompanyInfo,
 } from '../data/tenants/companyInfo.js';
+import { provisionTenant } from '../data/tenants/provision.js';
 import {
   MAX_TENANT_INSTRUCTIONS_CHARS,
   readTenantInstructions,
   writeTenantInstructions,
 } from '../data/tenants/instructions.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
-import { seedOrgAgentTemplatesForTenant } from '../data/orgAgentTemplates.js';
 
 const createTenantSchema = z.object({
   id: z.string().regex(
@@ -168,21 +168,6 @@ const tenantInstructionsSchema = z.object({
 function canAccessTenantSettings(reqUser: Request['user'], tenantId: string): boolean {
   if (!reqUser) return false;
   return isPlatformAdmin(reqUser) || reqUser.tenantId === tenantId;
-}
-
-/**
- * 新组织自动生成的最小 company.md。
- * 内容会原样注入该组织所有 agent 的 system prompt「公司事实基础」段，
- * 因此除了组织名，还写入一条给 agent 的行为指令：被问到公司情况时
- * 如实说明资料未完善并引导管理员补充，而不是凭空编造。
- */
-function buildInitialCompanyInfo(tenantName: string): string {
-  return [
-    `# 组织名称：${tenantName}`,
-    '',
-    '（除组织名称外，本组织的详细资料尚未配置。当用户问及公司业务、产品、团队、制度等信息时，如实说明组织资料还未完善，不要编造；并提示：组织管理员可在管理后台「组织管理 → 公司信息」页补充，补充后新会话自动生效。）',
-    '',
-  ].join('\n');
 }
 
 export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
@@ -451,44 +436,15 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
       return;
     }
     try {
-      const tenant = await tenantStore.create({
+      const tenant = await provisionTenant({
+        tenantStore,
+        sharedDir,
+        ...(opts.orgAgentStore ? { orgAgentStore: opts.orgAgentStore } : {}),
+      }, {
         id: parsed.data.id,
         name: parsed.data.name,
         createdBy: req.user!.sub,
       });
-      // 冷启动：自动生成最小 company.md（含组织名 + 引导 agent 提示管理员完善）。
-      // 写失败只 warn 不阻断——组织记录已建成，管理员随时可在组织资料页补写。
-      try {
-        await writeTenantCompanyInfo(sharedDir, tenant.id, buildInitialCompanyInfo(tenant.name));
-      } catch (err) {
-        apiLogger.warn(`初始化 company.md 失败（tenant=${tenant.id}）: ${err instanceof Error ? err.message : String(err)}`);
-      }
-      // ★ 新增（2026-07-18 企业专家目录 MVP）：新租户 seed 3 个种子专家（disabled）
-      // seed 幂等（老租户/已 seed 过的自动跳过），失败只 warn 不阻断租户创建
-      if (opts.orgAgentStore) {
-        try {
-          const seedResult = await seedOrgAgentTemplatesForTenant(
-            opts.orgAgentStore,
-            tenant.id,
-            'system',
-          );
-          if (seedResult.seeded.length > 0) {
-            apiLogger.info(
-              `[org-agent-templates] seed 完成 tenant=${tenant.id} `
-                + `seeded=[${seedResult.seeded.join(',')}] `
-                + `skipped=[${seedResult.skipped.join(',')}] `
-                + `errors=${seedResult.errors.length}`,
-            );
-          }
-          if (seedResult.errors.length > 0) {
-            for (const e of seedResult.errors) {
-              apiLogger.warn(`[org-agent-templates] seed 失败 tenant=${tenant.id} template=${e.templateId}: ${e.error}`);
-            }
-          }
-        } catch (err) {
-          apiLogger.warn(`[org-agent-templates] seed 异常 tenant=${tenant.id}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
       auditLog(req, 'tenant_created', `${tenant.id} (${tenant.name})`);
       res.status(201).json(tenant);
     } catch (err: unknown) {

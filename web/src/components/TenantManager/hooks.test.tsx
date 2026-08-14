@@ -5,6 +5,7 @@ import type { Tenant } from "./types";
 
 const mocked = vi.hoisted(() => ({
   authFetch: vi.fn(),
+  createTenant: vi.fn(),
   initialTenants: [
     { id: "pantheon", name: "万神殿", createdAt: "2026-07-01", createdBy: "system", updatedAt: "2026-07-01" },
     { id: "wain", name: "唯恩", createdAt: "2026-07-02", createdBy: "admin", updatedAt: "2026-07-02" },
@@ -23,6 +24,9 @@ mocked.authFetch.mockImplementation(async (_url: string, init?: RequestInit) => 
   return new Response(JSON.stringify({ tenants: serverTenants }), { status: 200 });
 });
 
+vi.mock("@agent/shared/lib/governanceApi", () => ({
+  governanceAccessApi: { createTenant: (...args: unknown[]) => mocked.createTenant(...args) },
+}));
 vi.mock("@/lib/authFetch", () => ({ authFetch: (...args: [string, RequestInit?]) => mocked.authFetch(...args) }));
 vi.mock("@/lib/preload", () => ({ tenantsPreload: Promise.resolve(mocked.initialTenants) }));
 vi.mock("@/lib/refreshBus", () => ({ registerRefresh: vi.fn(), unregisterRefresh: vi.fn() }));
@@ -32,6 +36,8 @@ import { useTenants } from "./hooks";
 describe("useTenants", () => {
   it("排序刷新会同步所有已挂载的组织选择器实例", async () => {
     serverTenants = initialTenants;
+    mocked.authFetch.mockClear();
+    mocked.createTenant.mockReset();
     const { result } = renderHook(() => ({ first: useTenants(), second: useTenants() }));
     await waitFor(() => expect(result.current.first.tenants.map(tenant => tenant.id)).toEqual(["pantheon", "wain"]));
     await waitFor(() => expect(result.current.second.tenants.map(tenant => tenant.id)).toEqual(["pantheon", "wain"]));
@@ -43,5 +49,31 @@ describe("useTenants", () => {
     expect(result.current.first.tenants.map(tenant => tenant.id)).toEqual(["wain", "pantheon"]);
     expect(result.current.second.tenants.map(tenant => tenant.id)).toEqual(["wain", "pantheon"]);
     expect(mocked.authFetch).toHaveBeenCalledWith("/api/tenants", expect.objectContaining({ method: "PATCH" }));
+  });
+
+  it("创建组织改走治理 API，并在成功后刷新组织列表", async () => {
+    serverTenants = initialTenants;
+    mocked.authFetch.mockClear();
+    mocked.createTenant.mockReset();
+    mocked.createTenant.mockImplementationOnce(async (input: { id: string; name: string }) => {
+      serverTenants = [...serverTenants, {
+        ...input,
+        createdAt: "2026-08-14",
+        createdBy: "platform-1",
+        updatedAt: "2026-08-14",
+      } as Tenant];
+    });
+    const { result } = renderHook(() => useTenants());
+
+    await act(async () => {
+      await result.current.createTenant({ id: "test-org", name: "测试组织" });
+    });
+
+    expect(mocked.createTenant).toHaveBeenCalledWith({ id: "test-org", name: "测试组织" });
+    expect(result.current.tenants.map(tenant => tenant.id)).toContain("test-org");
+    expect(mocked.authFetch).not.toHaveBeenCalledWith(
+      "/api/tenants",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 });

@@ -216,7 +216,13 @@ export class TenantStore {
       settings: cloneSettings(DEFAULT_TENANT_SETTINGS),
     };
     this.tenants.push(record);
-    await this.persist();
+    try {
+      await this.persist();
+    } catch (error) {
+      const index = this.tenants.indexOf(record);
+      if (index >= 0) this.tenants.splice(index, 1);
+      throw error;
+    }
     return { ...record, settings: cloneSettings(mergeSettings(record.settings)) };
   }
 

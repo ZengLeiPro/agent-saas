@@ -97,6 +97,13 @@ export const TITLE_SYSTEM_PROMPT = `你的唯一任务是通过阅读我引用�
 - 不要加引号、标点或任何前缀
 - 只输出标题本身`;
 
+/** 首条消息足够长时，不等待 Agent 首次输出，直接生成标题。 */
+export function shouldGenerateTitleFromFirstMessage(message: string, threshold = 20): boolean {
+  const chineseCharacterCount = message.match(/\p{Script=Han}/gu)?.length ?? 0;
+  const englishWordCount = message.match(/[A-Za-z]+(?:[-'’][A-Za-z]+)*/g)?.length ?? 0;
+  return chineseCharacterCount > threshold || englishWordCount > threshold;
+}
+
 export async function generateTitle(
   userMessage: string,
   assistantReply: string,

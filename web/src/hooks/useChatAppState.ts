@@ -145,6 +145,8 @@ export interface ChatAppState {
   handleFileSelect: (event: ChangeEvent<HTMLInputElement>) => Promise<void>;
   handlePaste: (event: ClipboardEvent) => Promise<void>;
   sendMessage: () => Promise<void>;
+  /** 当前 run 运行时显式插话；普通 sendMessage 始终走串行 queue。 */
+  interjectMessage: () => Promise<void>;
   sendVoiceMessage: (wavBlob: Blob, durationMs: number) => Promise<void>;
   stopping: boolean;
   stopGeneration: () => void;
@@ -483,6 +485,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
    */
   interface OutboxEntry {
     clientMsgId: string;
+    sessionId?: string;
+    deliveryMode: 'queue' | 'steer';
     input: string;
     attachments: UploadedFile[];
     voiceFile?: { savedPath: string; relativePath: string; duration: number };
@@ -862,10 +866,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     removeRuntimeStatusMessages(msgRef.current);
     setLoading(false);
     setStopping(false);
-    // 切会话：sending/acked 留给它们自己的终态处理；队列区随会话重建（detail API 恢复）
-    // 清所有 ACK 超时定时器
+    // 切会话后由 detail API 的 durable 快照恢复；本地传输态不能跨会话阻塞导航守卫。
     for (const t of ackTimersRef.current.values()) clearTimeout(t);
     ackTimersRef.current.clear();
+    outboxRef.current = [];
     consumedInterjectionsRef.current.clear();
     mutateQueuedInterjections(() => []);
     // 通知服务端解除 wsActiveStream 绑定（buffer 仍保留,resume 时可用 cursor 增量回放）
@@ -1439,15 +1443,20 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       watchdogTimerRef.current = null;
       if (!loadingRef.current) return;
       const sid = sessionIdRef.current;
+      const watchdogNonce = streamNonceRef.current;
       if (sid) {
         try {
           const res = await authFetch(`/api/sessions/${sid}/stream-status`);
+          if (sessionIdRef.current !== sid || streamNonceRef.current !== watchdogNonce) return;
           if (res.ok) {
             const { active } = await res.json() as { active: boolean };
             if (active) { resetWatchdog(); return; } // Agent 还活着
           }
-        } catch { /* proceed with recovery */ }
+        } catch {
+          if (sessionIdRef.current !== sid || streamNonceRef.current !== watchdogNonce) return;
+        }
       }
+      if (sessionIdRef.current !== sid || streamNonceRef.current !== watchdogNonce) return;
       // 超时恢复
       finalizeStreamingMessages(msgRef.current);
       finalizeRunningSubagents(msgRef.current);
@@ -1750,6 +1759,25 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       if (data.type === 'sync_ok') {
         lastUserSeqRef.current = (data as any).seq;
         wsClient.setLastSeq((data as any).seq);
+        const settleSyncedQueueTransport = (clientMsgId: string) => {
+          const timer = ackTimersRef.current.get(clientMsgId);
+          if (timer) clearTimeout(timer);
+          ackTimersRef.current.delete(clientMsgId);
+          outboxRef.current = outboxRef.current.filter((entry) => entry.clientMsgId !== clientMsgId);
+          const messages = msgRef.current.messagesRef.current;
+          const index = messages.findIndex((message) => (
+            (message.type === 'user' || message.type === 'user-voice') && message.clientMsgId === clientMsgId
+          ));
+          if (index < 0) return;
+          msgRef.current.setMessages(messages.filter((_, candidateIndex) => candidateIndex !== index), { scrollToBottom: false });
+          if (wsBlockRef.current.currentBlockIndex > index) {
+            wsBlockRef.current = { ...wsBlockRef.current, currentBlockIndex: wsBlockRef.current.currentBlockIndex - 1 };
+          } else if (wsBlockRef.current.currentBlockIndex === index) {
+            wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
+          }
+          if (wsUserMsgIndexRef.current > index) wsUserMsgIndexRef.current -= 1;
+          else if (wsUserMsgIndexRef.current === index) wsUserMsgIndexRef.current = -1;
+        };
         for (const { event } of (data as any).events || []) {
           const e = event as WsEvent;
           if (e.type === 'title_updated') sessionRef.current.updateSessionTitle(e.sessionId, e.title);
@@ -1765,6 +1793,58 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
             }
           }
           else if (e.type === 'session_deleted') sessionRef.current.removeSession(e.sessionId);
+          else if (e.type === 'message_queued') {
+            const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
+            if (sid === e.sessionId && !consumedInterjectionsRef.current.has({ clientMsgId: e.clientMsgId, sourceRunId: e.runId })) {
+              settleSyncedQueueTransport(e.clientMsgId);
+              mutateQueuedInterjections((prev) => {
+                const nextEntry = {
+                  clientMsgId: e.clientMsgId,
+                  sourceRunId: e.runId,
+                  ...(e.targetRunId ? { targetRunId: e.targetRunId } : {}),
+                  deliveryMode: e.deliveryMode,
+                  ...(e.queuePosition ? { queuePosition: e.queuePosition } : {}),
+                  content: e.content,
+                  ...(e.attachments?.length ? { attachments: e.attachments } : {}),
+                  status: 'queued' as const,
+                  createdAt: e.timestamp,
+                };
+                return prev.some((entry) => entry.clientMsgId === e.clientMsgId)
+                  ? prev.map((entry) => entry.clientMsgId === e.clientMsgId ? { ...entry, ...nextEntry } : entry)
+                  : [...prev, nextEntry];
+              });
+            }
+          }
+          else if (e.type === 'steering_queued') {
+            const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
+            if (sid === e.sessionId && !consumedInterjectionsRef.current.has({ clientMsgId: e.clientMsgId, sourceRunId: e.sourceRunId })) {
+              settleSyncedQueueTransport(e.clientMsgId);
+              mutateQueuedInterjections((prev) => prev.some((entry) => entry.clientMsgId === e.clientMsgId)
+                ? prev.map((entry) => entry.clientMsgId === e.clientMsgId
+                  ? { ...entry, status: 'queued' as const, sourceRunId: e.sourceRunId, targetRunId: e.targetRunId, deliveryMode: 'steer' as const }
+                  : entry)
+                : [...prev, {
+                  clientMsgId: e.clientMsgId,
+                  sourceRunId: e.sourceRunId,
+                  targetRunId: e.targetRunId,
+                  deliveryMode: 'steer' as const,
+                  content: e.content,
+                  ...(e.attachments?.length ? { attachments: e.attachments } : {}),
+                  status: 'queued' as const,
+                  createdAt: e.timestamp,
+                }]);
+            }
+          }
+          else if (e.type === 'steering_cancelled') {
+            const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
+            if (sid === e.sessionId) {
+              if (e.clientMsgId) settleSyncedQueueTransport(e.clientMsgId);
+              consumedInterjectionsRef.current.mark({ clientMsgId: e.clientMsgId, sourceRunId: e.sourceRunId });
+              mutateQueuedInterjections((prev) => prev.filter((entry) => (
+                entry.sourceRunId !== e.sourceRunId && (!e.clientMsgId || entry.clientMsgId !== e.clientMsgId)
+              )));
+            }
+          }
           // SDK 0.2.112+ REPL 通知（user scope 事件也会进 UserEventLog，断线重连必须回放）
           else if (e.type === 'notification') {
             pushNotification((e as { notification: NotificationData }).notification);
@@ -1953,6 +2033,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           // 造成永久「已排队」+ outbox 泄漏锁死 SW 更新；串会话由 processWsEvent
           // 内的 sessionId 校验兜底。
           || data.type === 'interjection_applied' || data.type === 'steering_queued'
+          || data.type === 'message_queued' || data.type === 'chat_ack' || data.type === 'chat_rejected'
           || data.type === 'steering_cancelled' || data.type === 'cancel_queued_result'
           || data.type === 'user_message';
         if (!isMetadata) return;
@@ -2055,6 +2136,22 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       }
 
       // 构建处理上下文
+      const removeOptimisticBubbleForQueue = (clientMsgId: string) => {
+        const messages = msgRef.current.messagesRef.current;
+        const index = messages.findIndex((message) => (
+          (message.type === 'user' || message.type === 'user-voice') && message.clientMsgId === clientMsgId
+        ));
+        if (index < 0) return;
+        msgRef.current.setMessages(messages.filter((_, candidateIndex) => candidateIndex !== index), { scrollToBottom: false });
+        if (wsBlockRef.current.currentBlockIndex > index) {
+          wsBlockRef.current = { ...wsBlockRef.current, currentBlockIndex: wsBlockRef.current.currentBlockIndex - 1 };
+        } else if (wsBlockRef.current.currentBlockIndex === index) {
+          wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
+        }
+        if (wsUserMsgIndexRef.current > index) wsUserMsgIndexRef.current -= 1;
+        else if (wsUserMsgIndexRef.current === index) wsUserMsgIndexRef.current = -1;
+      };
+
       const ctx: WsProcessingContext = {
         msg: msgRef.current,
         session: sessionRef.current,
@@ -2070,12 +2167,52 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           localStorage.setItem(`agentChat.model.${sessionId}`, model);
         },
         // ─── 消息可靠性回调 ───
-        onChatAck: (clientMsgId) => {
-          // ACK 到达：清除超时定时器，outbox entry 翻 acked
+        onChatAck: (clientMsgId, ackEvent) => {
+          // 任一 durable ACK 都结束传输态；run 生命周期由队列/运行事件继续承载。
           const t = ackTimersRef.current.get(clientMsgId);
           if (t) { clearTimeout(t); ackTimersRef.current.delete(clientMsgId); }
-          const entry = outboxRef.current.find(e => e.clientMsgId === clientMsgId);
-          if (entry) entry.state = 'acked';
+          outboxRef.current = outboxRef.current.filter((entry) => entry.clientMsgId !== clientMsgId);
+          if (ackEvent?.type === 'chat_ack') {
+            if (ackEvent.status === 'queued') {
+              mutateQueuedInterjections((prev) => prev.map((entry) => entry.clientMsgId === clientMsgId ? {
+                ...entry,
+                status: 'queued' as const,
+                sourceRunId: ackEvent.runId ?? entry.sourceRunId,
+                deliveryMode: ackEvent.deliveryMode ?? entry.deliveryMode,
+                ...(ackEvent.queuePosition ? { queuePosition: ackEvent.queuePosition } : {}),
+                reason: undefined,
+              } : entry));
+            } else if (ackEvent.status && ['running', 'completed', 'failed', 'cancelled'].includes(ackEvent.status)) {
+              consumedInterjectionsRef.current.mark({ clientMsgId, sourceRunId: ackEvent.runId });
+              const queuedEntry = queuedInterjectionsRef.current.find((entry) => entry.clientMsgId === clientMsgId);
+              mutateQueuedInterjections((prev) => prev.filter((entry) => entry.clientMsgId !== clientMsgId));
+              const index = msgRef.current.messagesRef.current.findIndex((message) => (
+                (message.type === 'user' || message.type === 'user-voice') && message.clientMsgId === clientMsgId
+              ));
+              if (index >= 0) {
+                msgRef.current.updateMessageAt(index, (message) => (
+                  message.type === 'user' ? { ...message, status: 'sent' as const, failedReason: undefined } : message
+                ));
+              } else if (queuedEntry) {
+                msgRef.current.addMessage({
+                  type: 'user',
+                  content: queuedEntry.content,
+                  ...(queuedEntry.attachments ? { attachments: queuedEntry.attachments } : {}),
+                  status: 'sent',
+                  timestamp: queuedEntry.createdAt,
+                  clientMsgId,
+                });
+              }
+              const currentSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+              const belongsToCurrentSession = !ackEvent.sessionId
+                || !currentSessionId
+                || ackEvent.sessionId === currentSessionId;
+              if (belongsToCurrentSession) {
+                setLoading(ackEvent.status === 'running');
+                sessionRef.current.refreshCurrentSession();
+              }
+            }
+          }
           // 专职 Agent 挂起 ref 不在 ACK 清（2026-07 审查 F9）：ACK 只代表消息入队，
           // 门禁/入队失败（chat_rejected）后重发仍需带 orgAgentId；
           // 改在 'session' 事件（服务端已写 meta 绑定）后清除
@@ -2103,18 +2240,52 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           mutateQueuedInterjections((prev) => removeConsumedInterjections(prev, applied, appliedRuns));
         },
         // ── 插话队列区（2026-08-04 终态设计）──
-        onSteeringAckQueued: (clientMsgId, sourceRunId, targetRunId) => {
+        onSteeringAckQueued: (clientMsgId, sourceRunId, targetRunId, queuedDeliveryMode, queuePosition) => {
           if (!clientMsgId || consumedInterjectionsRef.current.has({ clientMsgId, sourceRunId })) return;
           mutateQueuedInterjections((prev) => prev.map((entry) => (
             entry.clientMsgId === clientMsgId
               ? {
                 ...entry,
                 status: 'queued' as const,
+                deliveryMode: queuedDeliveryMode === 'steer' ? 'steer' as const : entry.deliveryMode,
+                ...(queuePosition ? { queuePosition } : {}),
                 ...(sourceRunId ? { sourceRunId } : {}),
                 ...(targetRunId ? { targetRunId } : {}),
               }
               : entry
           )));
+        },
+        onMessageQueued: (event) => {
+          const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
+          if (!sid || event.sessionId !== sid || consumedInterjectionsRef.current.has({
+            clientMsgId: event.clientMsgId,
+            sourceRunId: event.runId,
+          })) return;
+          removeOptimisticBubbleForQueue(event.clientMsgId);
+          mutateQueuedInterjections((prev) => {
+            const existing = prev.find((entry) => entry.clientMsgId === event.clientMsgId);
+            if (existing) {
+              return prev.map((entry) => entry.clientMsgId === event.clientMsgId ? {
+                ...entry,
+                status: 'queued' as const,
+                sourceRunId: event.runId,
+                deliveryMode: event.deliveryMode,
+                ...(event.targetRunId ? { targetRunId: event.targetRunId } : {}),
+                ...(event.queuePosition ? { queuePosition: event.queuePosition } : {}),
+              } : entry);
+            }
+            return [...prev, {
+              clientMsgId: event.clientMsgId,
+              sourceRunId: event.runId,
+              ...(event.targetRunId ? { targetRunId: event.targetRunId } : {}),
+              deliveryMode: event.deliveryMode,
+              ...(event.queuePosition ? { queuePosition: event.queuePosition } : {}),
+              content: event.content,
+              ...(event.attachments?.length ? { attachments: event.attachments } : {}),
+              status: 'queued' as const,
+              createdAt: event.timestamp,
+            }];
+          });
         },
         onSteeringQueued: (event) => {
           // user scope 多端广播：只处理当前会话；其他会话靠 detail API 恢复
@@ -2127,6 +2298,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               sourceRunId: event.sourceRunId,
             })
           ) return;
+          removeOptimisticBubbleForQueue(event.clientMsgId);
           mutateQueuedInterjections((prev) => {
             const existing = prev.find((entry) => entry.clientMsgId === event.clientMsgId);
             if (existing) {
@@ -2140,6 +2312,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               clientMsgId: event.clientMsgId,
               sourceRunId: event.sourceRunId,
               targetRunId: event.targetRunId,
+              deliveryMode: 'steer' as const,
               content: event.content,
               ...(event.attachments?.length ? { attachments: event.attachments } : {}),
               status: 'queued' as const,
@@ -2166,6 +2339,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           if (!clientMsgId) return null;
           const entry = queuedInterjectionsRef.current.find((item) => item.clientMsgId === clientMsgId);
           if (!entry) return null;
+          consumedInterjectionsRef.current.mark({ clientMsgId, sourceRunId: _runId ?? entry.sourceRunId });
           mutateQueuedInterjections((prev) => prev.filter((item) => item.clientMsgId !== clientMsgId));
           const index = msgRef.current.addMessage({
             type: 'user',
@@ -2388,42 +2562,122 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     });
   }, []);
 
-  /** 启动 ACK 超时定时器：ACK_TIMEOUT_MS 内未收到 chat_ack 则翻 failed */
+  /** ACK 超时后查询服务端权威状态；网络不明时保持 verifying，绝不直接开放重试。 */
   const armAckTimeout = useCallback((clientMsgId: string) => {
     const existing = ackTimersRef.current.get(clientMsgId);
     if (existing) clearTimeout(existing);
     const timer = setTimeout(() => {
       ackTimersRef.current.delete(clientMsgId);
-      // 出队：移除该 entry
-      const entry = outboxRef.current.find(e => e.clientMsgId === clientMsgId);
-      outboxRef.current = outboxRef.current.filter(e => e.clientMsgId !== clientMsgId);
-      if (pendingNewSessionClientMsgIdRef.current === clientMsgId) pendingNewSessionClientMsgIdRef.current = null;
-      newSessionClientMsgIdsRef.current.delete(clientMsgId);
+      const entry = outboxRef.current.find((candidate) => candidate.clientMsgId === clientMsgId);
       if (!entry) return;
-      console.warn(`[chat] ACK timeout for ${clientMsgId}`);
-      // 插话超时：只更新队列区条目，绝不动 loading/attached——当前 run 还在跑
-      const queuedEntry = queuedInterjectionsRef.current.find((item) => item.clientMsgId === clientMsgId);
-      if (queuedEntry) {
-        mutateQueuedInterjections((prev) => prev.map((item) => (
-          item.clientMsgId === clientMsgId
-            ? { ...item, status: 'failed' as const, reason: '发送超时，可重试' }
-            : item
-        )));
-        return;
-      }
-      markBubbleFailed(clientMsgId, -1, '发送超时，请重试');
-      // 清 loading 判定（2026-08-04 P1-2 修复）：outbox.every 在空数组上恒真，会把
-      // 「后台已在跑、非本页发起」的 run 强制 detach。必须确认当前会话无 active runtime。
-      const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
-      const runtimeStillActive = sid
-        ? isActiveRuntimeStatus(activeRunsBySession.current.get(sid)?.status)
-        : false;
-      if (loadingRef.current && !runtimeStillActive && outboxRef.current.every(e => e.state !== 'acked')) {
-        // 仅在没有其他 acked 条目时退出 loading；否则保留继续等 done
-        // 保守策略：ACK 超时即视为"这一次失败"，清 loading 让用户能发新消息
-        wsAttachedRef.current = false;
-        setLoading(false);
-      }
+      console.warn(`[chat] ACK timeout for ${clientMsgId}; verifying durable status`);
+      mutateQueuedInterjections((prev) => prev.map((item) => (
+        item.clientMsgId === clientMsgId
+          ? { ...item, status: 'verifying' as const, reason: '正在核验服务端接收状态' }
+          : item
+      )));
+      void authFetch(`/api/messages/${encodeURIComponent(clientMsgId)}/status`)
+        .then(async (response) => {
+          if (response.status === 404) return { status: 'not_found' as const };
+          if (!response.ok) throw new Error(`status lookup failed: ${response.status}`);
+          return response.json() as Promise<{
+            status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+            runId: string;
+            sessionId: string;
+            deliveryMode: 'queue' | 'steer';
+            queuePosition?: number;
+            reason?: string;
+          }>;
+        })
+        .then((status) => {
+          const currentEntry = outboxRef.current.find((candidate) => candidate.clientMsgId === clientMsgId);
+          if (!currentEntry || currentEntry.state === 'acked') return;
+          if (status.status === 'not_found') {
+            outboxRef.current = outboxRef.current.filter((candidate) => candidate.clientMsgId !== clientMsgId);
+            const reason = '服务端未收到该消息，请重试';
+            const queuedEntry = queuedInterjectionsRef.current.some((item) => item.clientMsgId === clientMsgId);
+            if (queuedEntry) {
+              mutateQueuedInterjections((prev) => prev.map((item) => item.clientMsgId === clientMsgId
+                ? { ...item, status: 'failed' as const, reason }
+                : item));
+            } else {
+              markBubbleFailed(clientMsgId, -1, reason);
+            }
+            return;
+          }
+
+          outboxRef.current = outboxRef.current.filter((candidate) => candidate.clientMsgId !== clientMsgId);
+          if (status.status === 'queued') {
+            const hasQueueEntry = queuedInterjectionsRef.current.some((item) => item.clientMsgId === clientMsgId);
+            mutateQueuedInterjections((prev) => hasQueueEntry
+              ? prev.map((item) => item.clientMsgId === clientMsgId ? {
+                ...item,
+                status: 'queued' as const,
+                sourceRunId: status.runId,
+                deliveryMode: status.deliveryMode,
+                ...(status.queuePosition ? { queuePosition: status.queuePosition } : {}),
+                reason: undefined,
+              } : item)
+              : [...prev, {
+                clientMsgId,
+                sourceRunId: status.runId,
+                deliveryMode: status.deliveryMode,
+                ...(status.queuePosition ? { queuePosition: status.queuePosition } : {}),
+                content: currentEntry.input,
+                ...(currentEntry.attachments.length ? {
+                  attachments: currentEntry.attachments.map((file) => ({
+                    name: file.originalName,
+                    isImage: file.isImage,
+                    relativePath: file.relativePath,
+                  })),
+                } : {}),
+                status: 'queued' as const,
+                createdAt: currentEntry.createdAt,
+              }]);
+            if (!hasQueueEntry) {
+              const messages = msgRef.current.messagesRef.current;
+              const index = messages.findIndex((message) => (
+                (message.type === 'user' || message.type === 'user-voice') && message.clientMsgId === clientMsgId
+              ));
+              if (index >= 0) {
+                msgRef.current.setMessages(messages.filter((_, candidateIndex) => candidateIndex !== index), { scrollToBottom: false });
+                if (wsBlockRef.current.currentBlockIndex > index) {
+                  wsBlockRef.current = { ...wsBlockRef.current, currentBlockIndex: wsBlockRef.current.currentBlockIndex - 1 };
+                } else if (wsBlockRef.current.currentBlockIndex === index) {
+                  wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
+                }
+                if (wsUserMsgIndexRef.current > index) wsUserMsgIndexRef.current -= 1;
+                else if (wsUserMsgIndexRef.current === index) wsUserMsgIndexRef.current = -1;
+              }
+            }
+          } else {
+            consumedInterjectionsRef.current.mark({ clientMsgId, sourceRunId: status.runId });
+            const queuedEntry = queuedInterjectionsRef.current.find((item) => item.clientMsgId === clientMsgId);
+            mutateQueuedInterjections((prev) => prev.filter((item) => item.clientMsgId !== clientMsgId));
+            const index = msgRef.current.messagesRef.current.findIndex((message) => (
+              (message.type === 'user' || message.type === 'user-voice') && message.clientMsgId === clientMsgId
+            ));
+            if (index >= 0) {
+              msgRef.current.updateMessageAt(index, (message) => (
+                message.type === 'user' ? { ...message, status: 'sent' as const, failedReason: undefined } : message
+              ));
+            } else if (queuedEntry) {
+              msgRef.current.addMessage({
+                type: 'user',
+                content: queuedEntry.content,
+                ...(queuedEntry.attachments ? { attachments: queuedEntry.attachments } : {}),
+                status: 'sent',
+                timestamp: queuedEntry.createdAt,
+                clientMsgId,
+              });
+            }
+            sessionRef.current.refreshCurrentSession();
+          }
+        })
+        .catch((error) => {
+          // 无法核验不是发送失败。保留 outbox + verifying，重连/detail 快照会继续对账。
+          console.warn(`[chat] authoritative status unavailable for ${clientMsgId}:`, error);
+        });
     }, ACK_TIMEOUT_MS);
     ackTimersRef.current.set(clientMsgId, timer);
   }, [markBubbleFailed, mutateQueuedInterjections]);
@@ -2437,8 +2691,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     existingClientMsgId?: string,
     autoApproveRunShellForMessage = autoApproveRunShellRef.current,
     preserveActiveStream = false,
-    /** 2026-08-04 终态设计：插话（队列区条目已由调用方维护，不建气泡、不绑气泡） */
-    steeringQueued = false,
+    /** 普通 queue 默认；只有用户显式选择“立即插话”时传 steer。 */
+    deliveryMode: 'queue' | 'steer' = 'queue',
   ) => {
     const activeSessionId = sessionIdRef.current;
     // 自己发起的续聊流：纳入未读追踪，确保切走后流完成（idle）时能标记未读
@@ -2479,9 +2733,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           updatedAtMs: Date.now(),
         });
       }
-    } else if (!steeringQueued) {
+    } else if (!preserveActiveStream) {
       // 语音消息：将 clientMsgId 绑定到最近那条 pending user/user-voice bubble。
-      // 插话（steeringQueued）绝不走这里（2026-08-04 P2-10 修复）：倒序猜「最近一条
+      // 运行中排队消息绝不走这里：倒序猜「最近一条
       // pending」会与其他在途气泡张冠李戴，且终态设计下插话根本没有气泡。
       const msgs = msgRef.current.messagesRef.current;
       for (let i = msgs.length - 1; i >= 0; i--) {
@@ -2503,6 +2757,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     // 入 outbox
     outboxRef.current.push({
       clientMsgId,
+      ...(activeSessionId ? { sessionId: activeSessionId } : {}),
+      deliveryMode,
       input: inputText,
       attachments,
       ...(voiceFile ? { voiceFile } : {}),
@@ -2520,6 +2776,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
     const ok = await wsClient.ensureConnectedSend({
       action: 'chat',
+      deliveryMode,
       clientCapabilities: ['replaceable_drafts'],
       client_msg_id: clientMsgId,
       message: inputText || "Please check the attachments I uploaded",
@@ -2547,8 +2804,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (!ok) {
       // 传输层失败：从 outbox 移除，翻 failed
       outboxRef.current = outboxRef.current.filter(e => e.clientMsgId !== clientMsgId);
-      if (steeringQueued) {
-        // 插话无气泡：只标队列区条目，可重发；当前流不受影响
+      if (preserveActiveStream) {
+        // 运行中排队消息无气泡：只标队列区条目；当前流不受影响
         mutateQueuedInterjections((prev) => prev.map((entry) => (
           entry.clientMsgId === clientMsgId
             ? { ...entry, status: 'failed' as const, reason: '网络连接失败，可重试' }
@@ -2606,10 +2863,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
   }, [dispatchConnection]);
 
-  const sendMessage = useCallback(async () => {
+  const submitCurrentMessage = useCallback(async (deliveryMode: 'queue' | 'steer') => {
     const trimmedInput = inputRef.current.trim();
     if (!trimmedInput && uploadedFilesRef.current.length === 0) return;
-    if (stoppingRef.current) return; // 停止中禁止发送，保留输入内容
+    if (stoppingRef.current) return;
 
     const capturedInput = trimmedInput;
     const capturedAttachments = [...uploadedFilesRef.current];
@@ -2617,12 +2874,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     fileUpload.clearFiles();
 
     if (loadingRef.current) {
-      // 运行中（2026-08-04 终态设计）：消息进输入框上方的队列区（不进时间线），
-      // 直发服务端做 durable steering；当前流保持挂载，服务端在 AgentLoop 边界注入。
-      // 被消费（user_message 投影）或回退接管（非 queued stream_id）时才进时间线。
+      // 当前 run 运行时，默认 queue 只等待终态；steer 必须由用户显式点击“立即插话”。
       const clientMsgId = crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       mutateQueuedInterjections((prev) => [...prev, {
         clientMsgId,
+        deliveryMode,
         content: capturedInput,
         ...(capturedAttachments.length > 0 ? {
           attachments: capturedAttachments.map((f) => ({ name: f.originalName, isImage: f.isImage, relativePath: f.relativePath })),
@@ -2638,18 +2894,16 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         clientMsgId,
         autoApproveRunShellRef.current,
         true,
-        true,
+        deliveryMode,
       );
       return;
     }
 
-    await sendChatViaWs(capturedInput, capturedAttachments, true);
-  }, [
-    setInput,
-    fileUpload.clearFiles,
-    sendChatViaWs,
-    mutateQueuedInterjections,
-  ]);
+    await sendChatViaWs(capturedInput, capturedAttachments, true, undefined, undefined, undefined, false, 'queue');
+  }, [setInput, fileUpload.clearFiles, sendChatViaWs, mutateQueuedInterjections]);
+
+  const sendMessage = useCallback(() => submitCurrentMessage('queue'), [submitCurrentMessage]);
+  const interjectMessage = useCallback(() => submitCurrentMessage('steer'), [submitCurrentMessage]);
 
   // ---- 自动订阅活跃会话的事件流（架构改造,2026-06-25）----
   //
@@ -2842,13 +3096,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     const retryClientMsgId = message.clientMsgId
       || (crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     if (loadingRef.current) {
-      // 运行中：直发服务端 steering，进队列区（2026-08-04 终态设计，替代本地扣留）
+      // 运行中重试仍按普通 queue；复用 clientMsgId，由服务端永久幂等键消除重复执行。
       setInput("");
       mutateQueuedInterjections((prev) => [
         ...prev.filter((entry) => entry.clientMsgId !== retryClientMsgId),
-        { clientMsgId: retryClientMsgId, content: text, status: 'sending' as const, createdAt: Date.now() },
+        { clientMsgId: retryClientMsgId, deliveryMode: 'queue' as const, content: text, status: 'sending' as const, createdAt: Date.now() },
       ]);
-      void sendChatViaWs(text, [], false, undefined, retryClientMsgId, autoApproveRunShellRef.current, true, true);
+      void sendChatViaWs(text, [], false, undefined, retryClientMsgId, autoApproveRunShellRef.current, true, 'queue');
     } else {
       setInput("");
       void sendChatViaWs(text, [], true, undefined, retryClientMsgId);
@@ -2908,11 +3162,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       const newClientMsgId = crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       mutateQueuedInterjections((prev) => [...prev, {
         clientMsgId: newClientMsgId,
+        deliveryMode: entry.deliveryMode,
         content: entry.content,
         status: 'sending' as const,
         createdAt: Date.now(),
       }]);
-      void sendChatViaWs(entry.content, [], false, undefined, newClientMsgId, autoApproveRunShellRef.current, true, true);
+      void sendChatViaWs(entry.content, [], false, undefined, newClientMsgId, autoApproveRunShellRef.current, true, entry.deliveryMode);
     } else {
       void sendChatViaWs(entry.content, [], true);
     }
@@ -3108,6 +3363,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     handleFileSelect: fileUpload.handleFileSelect,
     handlePaste: fileUpload.handlePaste,
     sendMessage,
+    interjectMessage,
     stopping,
     stopGeneration: cancelActiveStream,
     queuedInterjections,

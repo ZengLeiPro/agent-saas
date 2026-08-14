@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   InterjectionConsumptionRegistry,
+  reconcileQueuedInterjections,
   removeConsumedInterjections,
 } from "./interjectionConsumption";
 
@@ -22,6 +23,31 @@ describe("InterjectionConsumptionRegistry", () => {
     registry.clear();
 
     expect(registry.has({ clientMsgId: "client-1", sourceRunId: "source-1" })).toBe(false);
+  });
+});
+
+describe("reconcileQueuedInterjections", () => {
+  it("刷新后从服务端快照恢复普通 queue 的模式、位置和 run 关联", () => {
+    const registry = new InterjectionConsumptionRegistry();
+    const next = reconcileQueuedInterjections([], [{
+      sourceRunId: "queued-run-1",
+      runId: "queued-run-1",
+      clientMsgId: "client-1",
+      deliveryMode: "queue",
+      targetRunId: "active-run",
+      queuePosition: 2,
+      content: "刷新后仍存在",
+      acceptedAt: "2026-08-14T02:00:00.000Z",
+    }], registry);
+
+    expect(next).toEqual([expect.objectContaining({
+      clientMsgId: "client-1",
+      sourceRunId: "queued-run-1",
+      deliveryMode: "queue",
+      targetRunId: "active-run",
+      queuePosition: 2,
+      status: "queued",
+    })]);
   });
 });
 

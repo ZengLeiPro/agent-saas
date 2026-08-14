@@ -89,12 +89,16 @@ export interface ApiSessionDetail {
    */
   lastRunState?: ApiLastRunState;
   /**
-   * 排队中的插话（2026-08-04 终态设计）：已被服务端受理为 steering、尚未被目标 run
-   * 消费的消息。不进 blocks（不是历史），前端刷新/切会话时据此重建输入框上方的队列区。
+   * 服务端已持久接收、尚未开始执行的消息。普通 queue 与显式 steer 共用该权威快照，
+   * 刷新、切会话和重连都据此恢复，客户端本地临时状态不得覆盖它。
    */
   queuedMessages?: Array<{
     sourceRunId: string;
+    runId?: string;
     clientMsgId?: string;
+    deliveryMode?: 'queue' | 'steer';
+    targetRunId?: string;
+    queuePosition?: number;
     content: string;
     attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
     acceptedAt: string;

@@ -168,6 +168,8 @@ export interface AgentRunOptions {
    * 避免恢复执行时再创建一个新的 run record。
    */
   runtimeRunId?: string;
+  /** RuntimeScheduler auto-wake 透传用户提交幂等键，写入 user_message 事件。 */
+  runtimeClientMsgId?: string;
   /**
    * RuntimeScheduler auto-wake 内部入口：把本次 prompt 发送给模型，但不追加
    * user_message 事件、不写 legacy transcript。用于已持久化用户消息后的隐藏 continue。

@@ -44,15 +44,19 @@ export function QueuedMessageBar({
   return (
     <div className="space-y-1.5" data-testid="queued-message-bar">
       {entries.map((entry) => {
-        const isPendingState = entry.status === "sending" || entry.status === "queued";
+        const isPendingState = entry.status === "sending" || entry.status === "verifying" || entry.status === "queued";
         const isBusy = busyId === entry.clientMsgId;
         const statusLabel = entry.status === "sending"
           ? "发送中"
-          : entry.status === "queued"
-            ? "排队中，将在当前步骤后处理"
-            : entry.status === "cancelled"
-              ? (entry.reason || "已撤销")
-              : (entry.reason || "发送失败");
+          : entry.status === "verifying"
+            ? (entry.reason || "正在核验服务端状态")
+            : entry.status === "queued"
+              ? entry.deliveryMode === "steer"
+                ? "显式插话，将在安全边界处理"
+                : `已排队${entry.queuePosition ? ` · 第 ${entry.queuePosition} 位` : ""}`
+              : entry.status === "cancelled"
+                ? (entry.reason || "已撤销")
+                : (entry.reason || "发送失败");
         return (
           <div
             key={entry.clientMsgId}
@@ -63,7 +67,7 @@ export function QueuedMessageBar({
                 : "border-border/50 bg-muted/30 opacity-80",
             )}
           >
-            {entry.status === "sending" ? (
+            {entry.status === "sending" || entry.status === "verifying" ? (
               <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground/70" />
             ) : (
               <Clock className={cn("size-3.5 shrink-0", isPendingState ? "text-muted-foreground" : "text-muted-foreground/50")} />

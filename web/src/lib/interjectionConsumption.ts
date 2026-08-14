@@ -5,16 +5,18 @@ export interface InterjectionIdentity {
   sourceRunId?: string;
 }
 
-/** 插话队列区条目（2026-08-04 终态设计）：排队中的消息不进时间线。 */
+/** 服务端已接收但尚未开始执行的消息；普通 queue 与显式 steer 共用。 */
 export interface QueuedInterjection {
   clientMsgId: string;
-  /** 服务端 steering source run id（stream_id{queued} ACK 后可用，撤回要用） */
+  /** 服务端 run id（stream_id{queued} ACK 后可用，撤回要用） */
   sourceRunId?: string;
   targetRunId?: string;
+  deliveryMode: 'queue' | 'steer';
+  queuePosition?: number;
   content: string;
   attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
-  /** sending=已发出等 ACK；queued=服务端已受理排队；cancelled=已撤销（可重发）；failed=发送失败（可重发） */
-  status: 'sending' | 'queued' | 'cancelled' | 'failed';
+  /** verifying=ACK 超时后正核验服务端；此时禁止无幂等保护的重试。 */
+  status: 'sending' | 'verifying' | 'queued' | 'cancelled' | 'failed';
   /** cancelled/failed 的原因说明 */
   reason?: string;
   createdAt: number;
@@ -60,11 +62,14 @@ export function reconcileQueuedInterjections(
     .map((entry) => {
       const local = entries.find((candidate) => (
         (entry.clientMsgId && candidate.clientMsgId === entry.clientMsgId)
-        || candidate.sourceRunId === entry.sourceRunId
+        || (entry.sourceRunId && candidate.sourceRunId === entry.sourceRunId)
       ));
       return {
         clientMsgId: entry.clientMsgId ?? entry.sourceRunId,
-        sourceRunId: entry.sourceRunId,
+        sourceRunId: entry.runId ?? entry.sourceRunId,
+        ...(entry.targetRunId ? { targetRunId: entry.targetRunId } : {}),
+        deliveryMode: entry.deliveryMode === 'steer' ? 'steer' as const : 'queue' as const,
+        ...(entry.queuePosition ? { queuePosition: entry.queuePosition } : {}),
         content: entry.content,
         ...(entry.attachments?.length ? { attachments: entry.attachments } : {}),
         status: 'queued' as const,
@@ -74,7 +79,7 @@ export function reconcileQueuedInterjections(
   const serverIds = new Set(serverEntries.map((entry) => entry.clientMsgId));
   const keepLocal = entries.filter((entry) => (
     !serverIds.has(entry.clientMsgId)
-    && (entry.status === 'sending' || entry.status === 'cancelled' || entry.status === 'failed')
+    && (entry.status === 'sending' || entry.status === 'verifying' || entry.status === 'cancelled' || entry.status === 'failed')
   ));
   return [...serverEntries, ...keepLocal].sort((a, b) => a.createdAt - b.createdAt);
 }

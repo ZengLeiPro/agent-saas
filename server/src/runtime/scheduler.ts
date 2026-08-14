@@ -6,7 +6,7 @@ import {
   isBackgroundTaskReady,
   isBackgroundTaskRun,
 } from './background/backgroundTaskRuntime.js';
-import type { RunRecord, RunStatus, RunStore } from './runStore.js';
+import type { MessageDeliveryMode, RunRecord, RunStatus, RunStore } from './runStore.js';
 import type { RuntimeAdmissionGuard } from './memoryPressureGuard.js';
 import type { EventStore } from './types.js';
 
@@ -136,11 +136,14 @@ export class RuntimeScheduler {
 
   async enqueue(
     input: Parameters<RunStore['upsertPending']>[0],
-    options: { steeringAware?: boolean } = {},
+    options: { steeringAware?: boolean; deliveryMode?: MessageDeliveryMode } = {},
   ): Promise<RunRecord> {
-    const record = options.steeringAware && this.options.runStore.enqueueSteeringAware
-      ? await this.options.runStore.enqueueSteeringAware(input)
-      : await this.options.runStore.upsertPending(input);
+    const deliveryMode = options.deliveryMode ?? (options.steeringAware ? 'steer' : undefined);
+    const record = deliveryMode && this.options.runStore.enqueueUserMessage
+      ? await this.options.runStore.enqueueUserMessage(input, deliveryMode)
+      : options.steeringAware && this.options.runStore.enqueueSteeringAware
+        ? await this.options.runStore.enqueueSteeringAware(input)
+        : await this.options.runStore.upsertPending(input);
     this.scheduleImmediateTick('enqueue');
     return record;
   }

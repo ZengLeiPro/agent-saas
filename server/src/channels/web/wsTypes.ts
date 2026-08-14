@@ -32,8 +32,12 @@ export type ChatRejectReasonCode =
     | 'personal_agent_disabled' // 租户关闭个人 Agent，普通用户仅可用专职 Agent
     | 'org_agent_unavailable'; // 专职 Agent 不存在/已禁用/未被指派（跨租户防枚举同码）
 
+export type ChatDeliveryMode = 'queue' | 'steer';
+
 export interface WsChatMessage {
     action: 'chat';
+    /** 普通消息默认串行排队；只有用户显式选择插话时才允许注入当前 run。 */
+    deliveryMode?: ChatDeliveryMode;
     /** 客户端明确支持的向后兼容能力；服务端只启用已声明的协议。 */
     clientCapabilities?: Array<'replaceable_drafts'>;
     /** 客户端生成的 UUID，贯穿全链路；老客户端可缺省，服务端生成占位 */
@@ -158,8 +162,9 @@ export interface WsAskUserQuestion {
 }
 
 export type WsDownstreamEvent =
-    | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string }
-    | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number }
+    | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string; queued?: boolean; deliveryMode?: ChatDeliveryMode; targetRunId?: string; sessionId?: string; queuePosition?: number }
+    | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
+    | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number; queuePosition?: number; targetRunId?: string }
     | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
     | { type: 'session'; sessionId: string; client_msg_id?: string }
     | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string; draftId?: string; runId?: string }

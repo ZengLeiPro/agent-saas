@@ -19,6 +19,9 @@ class CapacityPool {
         if (sql.includes('COUNT(*) AS active_count')) {
           return { rows: [{ active_count: this.activeCount }] as T[] };
         }
+        if (sql.includes('SELECT session_id FROM runtime_runs')) {
+          return { rows: [{ session_id: 'session-1' }] as T[] };
+        }
         if (sql.includes('UPDATE runtime_runs')) {
           this.updateCalls += 1;
           const now = String(params[3]);
@@ -50,6 +53,7 @@ describe('PgRunStore global scheduler capacity', () => {
   it('skips startup ALTER TABLE statements when every compatibility column exists', async () => {
     const queries: string[] = [];
     const existingColumns = [
+      'enqueue_seq',
       'last_response_id',
       'last_response_expire_at',
       'actual_model_seen',
@@ -117,6 +121,10 @@ describe('PgRunStore global scheduler capacity', () => {
       status: 'running',
     });
     expect(pool.updateCalls).toBe(1);
+    expect(pool.queries.filter((sql) => sql.includes('pg_advisory_xact_lock'))).toHaveLength(2);
+    const leaseSql = pool.queries.find((sql) => sql.includes('UPDATE runtime_runs'));
+    expect(leaseSql).toContain("active.status IN ('running','waiting_approval','waiting_user','waiting_hand')");
+    expect(leaseSql).toContain("predecessor.status = 'pending'");
     expect(pool.queries).toContain('COMMIT');
     expect(pool.releaseCalls).toBe(1);
   });

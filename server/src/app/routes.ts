@@ -317,6 +317,12 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       listPendingSteeringBySession: runtime.runtimeRunStore?.listPendingSteeringBySession
         ? (sessionId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId)
         : undefined,
+      listPendingUserMessagesBySession: runtime.runtimeRunStore?.listPendingUserMessagesBySession
+        ? (sessionId) => runtime.runtimeRunStore!.listPendingUserMessagesBySession!(sessionId)
+        : undefined,
+      findRunByClientMessageId: runtime.runtimeRunStore
+        ? (userId, clientMessageId) => runtime.runtimeRunStore!.findByIdempotencyKey(userId, clientMessageId)
+        : undefined,
     }),
   );
   app.use(

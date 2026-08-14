@@ -595,6 +595,103 @@ describe('WebChannel executionTarget gating', () => {
     }
   });
 
+  it('defaults a running-session send to durable queue and ACKs only after enqueue commits', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'web-ordinary-queue-'));
+    try {
+      const runStore = new MemoryRunStore();
+      const sessionCatalog = new FileSessionCatalog({ agentCwd: tmp });
+      const enqueueCalls: Array<{ input: UpsertRunInput; options: unknown }> = [];
+      const ws = new FakeWebSocket();
+      const { channel } = createChannel({
+        agentCwd: tmp,
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        enqueueRuntime: {
+          scheduler: {
+            enqueue: async (input: UpsertRunInput, options: unknown) => {
+              enqueueCalls.push({ input, options });
+              expect(ws.sent.some((message) => message.data?.type === 'chat_ack')).toBe(false);
+              const now = new Date().toISOString();
+              return {
+                runId: input.runId,
+                sessionId: input.sessionId,
+                userId: input.userId,
+                tenantId: input.tenantId,
+                status: 'pending',
+                requestedAt: now,
+                updatedAt: now,
+                metadata: { ...input.metadata, deliveryMode: 'queue', queuedBehindRunId: 'active-run' },
+              } as RunRecord;
+            },
+          } as any,
+          runStore,
+          sessionCatalog,
+          enabled: true,
+        },
+      });
+      const client = { ws: ws as any, user: PLATFORM_ADMIN_USER, alive: true, lastActivityAt: Date.now() };
+      (channel as any).wsActiveStream.set(ws as any, 'active-stream');
+
+      await (channel as any).processChatMessage(client, chatMessage({
+        sessionId: 'session-ordinary-queue',
+        message: '下一项普通任务',
+        client_msg_id: 'ordinary-client',
+      }));
+      expect(enqueueCalls).toHaveLength(1);
+
+      expect(enqueueCalls[0]?.options).toEqual({ deliveryMode: 'queue' });
+      expect(ws.sent.find((message) => message.data?.type === 'chat_ack')?.data).toMatchObject({
+        client_msg_id: 'ordinary-client', status: 'queued', deliveryMode: 'queue',
+      });
+      expect(ws.sent.find((message) => message.data?.type === 'stream_id')?.data).toMatchObject({
+        queued: true, deliveryMode: 'queue', targetRunId: 'active-run',
+      });
+      expect((channel as any).wsActiveStream.get(ws as any)).toBe('active-stream');
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a durable run pending when post-accept queue projection fails', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'web-post-accept-failure-'));
+    try {
+      const runStore = new MemoryRunStore();
+      (runStore as RunStore).listPendingUserMessagesBySession = async () => {
+        throw new Error('snapshot unavailable');
+      };
+      const sessionCatalog = new FileSessionCatalog({ agentCwd: tmp });
+      let acceptedRunId = '';
+      const { channel } = createChannel({
+        agentCwd: tmp,
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        enqueueRuntime: {
+          scheduler: {
+            enqueue: async (input: UpsertRunInput) => {
+              acceptedRunId = input.runId;
+              const record = await runStore.upsertPending(input);
+              return { ...record, metadata: { ...record.metadata, deliveryMode: 'queue', queuedBehindRunId: 'active-run' } };
+            },
+          } as any,
+          runStore,
+          sessionCatalog,
+          enabled: true,
+        },
+      });
+      const ws = new FakeWebSocket();
+      await (channel as any).processChatMessage(
+        { ws: ws as any, user: PLATFORM_ADMIN_USER, alive: true, lastActivityAt: Date.now() },
+        chatMessage({ sessionId: 'session-post-accept', message: '不能丢', client_msg_id: 'post-accept-client' }),
+      );
+
+      expect(await runStore.get(acceptedRunId)).toMatchObject({ status: 'pending' });
+      expect(ws.sent.find((message) => message.data?.type === 'chat_ack')?.data).toMatchObject({
+        client_msg_id: 'post-accept-client', status: 'queued', runId: acceptedRunId,
+      });
+      expect(ws.sent.find((message) => message.data?.type === 'done')).toBeUndefined();
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('ACKs a steering message as queued without replacing the current websocket stream', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'web-steering-enqueue-'));
     try {
@@ -646,10 +743,11 @@ describe('WebChannel executionTarget gating', () => {
         sessionId: 'session-steering',
         message: '运行中的补充条件',
         client_msg_id: 'steering-client',
+        deliveryMode: 'steer',
       }));
 
       expect(enqueueCalls).toHaveLength(1);
-      expect(enqueueCalls[0]?.options).toEqual({ steeringAware: true });
+      expect(enqueueCalls[0]?.options).toEqual({ deliveryMode: 'steer' });
       expect(ws.sent.find((message) => message.data?.type === 'stream_id')?.data).toMatchObject({
         queued: true,
         targetRunId: 'target-run',
@@ -663,6 +761,7 @@ describe('WebChannel executionTarget gating', () => {
         sessionId: 'session-steering',
         message: '运行中的补充条件',
         client_msg_id: 'steering-client',
+        deliveryMode: 'steer',
       }));
       const steeringAcks = ws.sent.filter((message) => (
         message.data?.type === 'stream_id' && message.data?.client_msg_id === 'steering-client'
@@ -812,7 +911,7 @@ describe('WebChannel executionTarget gating', () => {
     expect((channel as any).wsActiveStream.has(ws as any)).toBe(false);
   });
 
-  it('returns an error terminal event when enqueueRuntime fails after ACK', async () => {
+  it('does not ACK when durable enqueue fails and returns an error terminal event', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'web-enqueue-fail-'));
     try {
       const runStore = new MemoryRunStore();
@@ -842,7 +941,7 @@ describe('WebChannel executionTarget gating', () => {
       await (channel as any).processChatMessage(client, chatMessage({ message: 'enqueue fail' }));
 
       expect(calls).toHaveLength(0);
-      expect(ws.sent.find((m) => m.data?.type === 'chat_ack')).toBeDefined();
+      expect(ws.sent.find((m) => m.data?.type === 'chat_ack')).toBeUndefined();
       expect(ws.sent.find((m) => m.data?.type === 'done')?.data?.error).toContain('queue unavailable');
       expect((channel as any).activeStreams.size).toBe(0);
     } finally {

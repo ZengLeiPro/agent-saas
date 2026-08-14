@@ -1010,20 +1010,26 @@ export class RawAgentLoop implements AgentLoop {
           continue;
         }
         if (durableInterjectionSourceRunIds.has(interjection.sourceRunId)) continue;
-        const userMessageEvent = await this.eventStore.append({
-          type: 'user_message',
-          runId: context.runId,
-          sessionId: context.sessionId,
-          content: interjection.message.content,
-          modelContent: interjection.prompt,
-          ...(interjection.attachments?.length ? { attachments: interjection.attachments } : {}),
-          ...(interjection.visionAnalysis ? { visionAnalysis: interjection.visionAnalysis } : {}),
-          interjectionSourceRunId: interjection.sourceRunId,
-          ...(interjection.clientMsgId ? { clientMsgId: interjection.clientMsgId } : {}),
-        }).catch((error) => {
+        let userMessageEvent;
+        try {
+          userMessageEvent = await this.eventStore.append({
+            type: 'user_message',
+            runId: context.runId,
+            sessionId: context.sessionId,
+            content: interjection.message.content,
+            modelContent: interjection.prompt,
+            ...(interjection.attachments?.length ? { attachments: interjection.attachments } : {}),
+            ...(interjection.visionAnalysis ? { visionAnalysis: interjection.visionAnalysis } : {}),
+            interjectionSourceRunId: interjection.sourceRunId,
+            ...(interjection.clientMsgId ? { clientMsgId: interjection.clientMsgId } : {}),
+          });
+        } catch (error) {
           requestSteeringRecoveryHandoff('steering_reserved_event_append_failed');
-          throw error;
-        });
+          logger.warn(
+            `[run] steering event append failed; handing off target run=${context.runId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return [];
+        }
         durableInterjectionSourceRunIds.add(interjection.sourceRunId);
         try {
           await this.transcriptProjection.project(userMessageEvent);
@@ -1059,7 +1065,7 @@ export class RawAgentLoop implements AgentLoop {
         logger.warn(
           `[run] steering apply failed; handing off target run=${context.runId}: ${error instanceof Error ? error.message : String(error)}`,
         );
-        throw error;
+        return [];
       }
 
       for (const interjection of appliedInterjections) {
@@ -1131,6 +1137,7 @@ export class RawAgentLoop implements AgentLoop {
         sessionId: context.sessionId,
         content: input.message.content,
         modelContent: input.prompt,
+        ...(input.clientMsgId ? { clientMsgId: input.clientMsgId } : {}),
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
         ...(input.visionAnalysis ? { visionAnalysis: input.visionAnalysis } : {}),
       });

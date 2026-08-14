@@ -24,6 +24,8 @@ export type WsStateHandler = (state: WsState) => void;
 /** Outbound message types */
 export interface WsChatMessage {
     action: 'chat';
+    /** 普通消息默认排队；steer 仅用于用户显式插话。 */
+    deliveryMode?: 'queue' | 'steer';
     /** 客户端明确支持的向后兼容能力；服务端只启用已声明的协议。 */
     clientCapabilities?: Array<'replaceable_drafts'>;
     /** 客户端生成的 UUID，贯穿全链路，用于 ACK / 拒绝 / 幂等 / 状态机绑定 */

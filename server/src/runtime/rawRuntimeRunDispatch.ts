@@ -2145,6 +2145,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           {
             message,
             prompt,
+            ...(options.runtimeClientMsgId ? { clientMsgId: options.runtimeClientMsgId } : {}),
             attachments: resolvedAttachments,
             ...(visionAnalysis ? { visionAnalysis } : {}),
             recordUserMessage: options.recordUserMessage,
@@ -3405,6 +3406,7 @@ export async function wakeRuntimeSession(
       context,
       {
         runtimeRunId: run.runId,
+        ...(typeof run.metadata?.clientMsgId === 'string' ? { runtimeClientMsgId: run.metadata.clientMsgId } : {}),
         resumeSessionId: run.sessionId,
         cwd: session.cwd,
         model: resolveWakeModelRef(run, session),

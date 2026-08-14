@@ -51,6 +51,8 @@ async function startServer(
     orgAgentStore?: OrgAgentStore;
     sessionProjectionStore?: SessionsRouterOptions['sessionProjectionStore'];
     runtimeEventStoreFor?: SessionsRouterOptions['runtimeEventStoreFor'];
+    listPendingUserMessagesBySession?: SessionsRouterOptions['listPendingUserMessagesBySession'];
+    findRunByClientMessageId?: SessionsRouterOptions['findRunByClientMessageId'];
   } = {},
 ): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
@@ -72,6 +74,8 @@ async function startServer(
     resolveContextAccounting: options.resolveContextAccounting,
     orgAgentStore: options.orgAgentStore,
     sessionProjectionStore: options.sessionProjectionStore,
+    listPendingUserMessagesBySession: options.listPendingUserMessagesBySession,
+    findRunByClientMessageId: options.findRunByClientMessageId,
   }));
 
   return new Promise((resolve) => {
@@ -201,6 +205,56 @@ describe('sessions routes for meta-only runtime sessions', () => {
       const stats = await fetch(`${baseUrl}/api/sessions/${sessionId}/stats`);
       expect(stats.status).toBe(200);
       await expect(stats.json()).resolves.toMatchObject({ tokenUsage: null });
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('restores durable queued messages and exposes authoritative status after ACK loss', async () => {
+    const { sessionId } = await writeRuntimeSession({ content: '正在执行的任务' });
+    const requestedAt = '2026-08-14T02:00:00.000Z';
+    const queuedRun = {
+      runId: 'queued-run-1',
+      sessionId,
+      status: 'pending',
+      requestedAt,
+      metadata: {
+        clientMsgId: 'client-queued-1',
+        deliveryMode: 'queue',
+        queuedBehindRunId: 'active-run-1',
+        acceptedAt: requestedAt,
+        wakeMessage: { channel: 'web', chatId: sessionId, content: '排队任务' },
+      },
+    };
+    const { server, baseUrl } = await startServer(agentCwd, {
+      listPendingUserMessagesBySession: async () => [queuedRun],
+      findRunByClientMessageId: async (_userId, clientMessageId) => (
+        clientMessageId === 'client-queued-1' ? queuedRun : null
+      ),
+    });
+    try {
+      const detail = await fetch(`${baseUrl}/api/sessions/${sessionId}?silent=1`);
+      await expect(detail.json()).resolves.toMatchObject({
+        queuedMessages: [{
+          runId: 'queued-run-1',
+          clientMsgId: 'client-queued-1',
+          deliveryMode: 'queue',
+          targetRunId: 'active-run-1',
+          queuePosition: 1,
+          content: '排队任务',
+        }],
+      });
+
+      const status = await fetch(`${baseUrl}/api/messages/client-queued-1/status`);
+      expect(status.status).toBe(200);
+      await expect(status.json()).resolves.toMatchObject({
+        clientMessageId: 'client-queued-1',
+        runId: 'queued-run-1',
+        sessionId,
+        status: 'queued',
+        deliveryMode: 'queue',
+        queuePosition: 1,
+      });
     } finally {
       await stopServer(server);
     }

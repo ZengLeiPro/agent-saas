@@ -104,7 +104,7 @@ export async function reconcileTaskboardContinuation(
     return;
   }
   if (run.status === 'pending' || run.status === 'running') {
-    await options.store.markContinuationRunning(candidate.taskId);
+    await options.store.markContinuationRunning(candidate.taskId, run.runId, candidate.leaseId);
   }
   await options.store.releaseContinuationReconcile(run.runId, candidate.leaseId);
 }

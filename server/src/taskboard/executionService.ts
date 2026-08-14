@@ -29,7 +29,7 @@ import {
 import { reuseTaskboardSession } from './executionSession.js';
 import { buildExecutionPrompt, formatTaskboardComment } from './executionPrompt.js';
 export { executionWritebackInstructions } from './executionPrompt.js';
-import { TaskboardExecutionUnavailableError } from './types.js';
+import { TaskboardExecutionUnavailableError, TaskboardValidationError } from './types.js';
 export { createTaskboardRuntimeOptions } from './runtimeOptions.js';
 import type {
   TaskboardExecutionContext,
@@ -148,14 +148,18 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       });
       return { task: reconciledTask ?? context.task, execution: context.latestExecution };
     }
-    if (!context.activeExecution && !context.continuationRunId) {
-      const started = await this.startExecutionInternal(
-        identity,
-        taskId,
-        { expectedVersion: context.task.version },
-        { allowWorkFromCurrentStatus: true, executionId: commentId },
-      );
-      return started;
+    if (!context.activeExecution && !context.continuationRunId && !context.hasActiveContinuation) {
+      try {
+        return await this.startExecutionInternal(
+          identity,
+          taskId,
+          { expectedVersion: context.task.version },
+          { allowWorkFromCurrentStatus: true, executionId: commentId },
+        );
+      } catch (error) {
+        if (!(error instanceof TaskboardValidationError) || error.code !== 'TASKBOARD_EXECUTION_ACTIVE') throw error;
+        return this.continueExecution(identity, taskId, commentId);
+      }
     }
 
     const targetExecution = context.activeExecution ?? context.latestExecution;
@@ -213,7 +217,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       { version: 1, session, run },
     );
     if (!queued) throw new TaskboardExecutionUnavailableError('评论已由另一条续跑请求处理');
-    const nextTask = await this.options.store.markContinuationRunning(taskId) ?? context.task;
+    const nextTask = await this.options.store.markContinuationRunning(taskId, runId) ?? context.task;
     await dispatchTaskboardContinuation(this.options, runId);
     return { task: nextTask, execution: targetExecution };
   }
@@ -544,7 +548,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       : undefined;
     if (!taskId) return;
     if (event.type === 'run_started') {
-      await this.options.store.markContinuationRunning(taskId);
+      await this.options.store.markContinuationRunning(taskId, run.runId);
       return;
     }
     if (event.type === 'run_state_changed'

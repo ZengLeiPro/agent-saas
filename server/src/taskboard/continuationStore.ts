@@ -100,6 +100,7 @@ export async function loadContinuationContext(
        JOIN ${host.tasksTable} t ON t.id=c.task_id
        JOIN ${host.boardsTable} b ON b.id=t.board_id
       WHERE c.id=$1 AND c.task_id=$2 AND c.author_type='user' AND c.continuation_eligible=true
+        AND t.archived_at IS NULL AND b.archived_at IS NULL
         AND b.tenant_id=$3 AND (b.owner_user_id=$4 OR b.visibility='organization')`,
     [commentId, taskId, identity.tenantId, identity.ownerUserId],
   );
@@ -109,19 +110,27 @@ export async function loadContinuationContext(
   const continuationRunId = commentResult.rows[0].continuation_run_id
     ? String(commentResult.rows[0].continuation_run_id)
     : undefined;
-  const pendingResult = await host.pool.query(
-    `SELECT c.* FROM ${host.commentsTable} c
-      WHERE c.task_id=$1 AND c.author_type='user' AND c.continuation_eligible=true
-        AND c.created_at <= $2::timestamptz
-        AND (c.continuation_run_id IS NULL OR c.continuation_run_id=$3)
-      ORDER BY c.created_at, c.id`,
-    [taskId, commentResult.rows[0].created_at, continuationRunId ?? null],
-  );
+  const [pendingResult, activeContinuationResult] = await Promise.all([
+    host.pool.query(
+      `SELECT c.* FROM ${host.commentsTable} c
+        WHERE c.task_id=$1 AND c.author_type='user' AND c.continuation_eligible=true
+          AND c.created_at <= $2::timestamptz
+          AND (c.continuation_run_id IS NULL OR c.continuation_run_id=$3)
+        ORDER BY c.created_at, c.id`,
+      [taskId, commentResult.rows[0].created_at, continuationRunId ?? null],
+    ),
+    host.pool.query(
+      `SELECT 1 FROM ${host.continuationOutboxTable}
+        WHERE task_id=$1 AND status<>'completed' LIMIT 1`,
+      [taskId],
+    ),
+  ]);
   return {
     task,
     comment: applyCommentAuthorDisplayName(rowToComment(commentResult.rows[0]), identity),
     pendingComments: pendingResult.rows.map((row) => applyCommentAuthorDisplayName(rowToComment(row), identity)),
     ...(continuationRunId ? { continuationRunId } : {}),
+    ...(activeContinuationResult.rows[0] ? { hasActiveContinuation: true } : {}),
     ...(executions[0] ? { latestExecution: executions[0] } : {}),
     ...(activeExecution ? { activeExecution } : {}),
   };
@@ -130,19 +139,26 @@ export async function loadContinuationContext(
 export function markContinuationRunning(
   host: TaskboardContinuationStoreHost,
   taskId: string,
+  runId: string,
+  reconcileLeaseId?: string,
 ): Promise<TaskBoardTask | null> {
   return withTransaction(host.pool, async (client) => {
     const loaded = await loadInternalTaskForUpdate(host, client, taskId);
     if (!loaded) return null;
+    const outbox = await client.query(
+      `SELECT status, ($3::text IS NULL OR (
+          reconcile_lease_id=$3 AND reconcile_lease_expires_at > clock_timestamp()
+        )) AS reconcile_lease_valid
+         FROM ${host.continuationOutboxTable}
+        WHERE run_id=$1 AND task_id=$2 FOR UPDATE`,
+      [runId, taskId, reconcileLeaseId ?? null],
+    );
+    if (!outbox.rows[0] || outbox.rows[0].status === 'completed'
+      || outbox.rows[0].reconcile_lease_valid !== true) return loaded.task;
     assertWritableTask(loaded.task, loaded.boardArchivedAt);
     if (loaded.task.status === 'in_progress') return loaded.task;
     const sortOrder = await nextTaskColumnSortOrder(
-      host,
-      client,
-      loaded.identity,
-      loaded.task.boardId,
-      taskId,
-      'in_progress',
+      host, client, loaded.identity, loaded.task.boardId, taskId, 'in_progress',
     );
     await client.query(
       `UPDATE ${host.tasksTable}
@@ -164,6 +180,10 @@ export function completeContinuation(
   return withTransaction(host.pool, async (client) => {
     const loaded = await loadInternalTaskForUpdate(host, client, taskId);
     if (!loaded) return null;
+    if (loaded.task.archivedAt || loaded.boardArchivedAt) {
+      await markContinuationCompleted(host, client, runId);
+      return loaded.task;
+    }
     const existing = await client.query(
       `SELECT id FROM ${host.commentsTable}
         WHERE task_id=$1 AND author_id=$2 AND author_type IN ('agent', 'system')

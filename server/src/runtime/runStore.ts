@@ -1,6 +1,7 @@
 import pg from 'pg';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
 import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
+import { findRun, findRunForUpdate } from './runStoreIdempotency.js';
 import { cancelActiveRunsByUser, releaseRunLease } from './runTerminalLifecycle.js';
 import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL } from './runStatusPolicy.js';
 
@@ -421,7 +422,6 @@ export class PgRunStore implements RunStore {
     `, [input.runId, input.sessionId, input.userId ?? null, input.tenantId ?? null, input.model ?? null, input.channel ?? null, now, input.idempotencyKey ?? null, input.executionTarget ?? null, input.workspaceId ?? null, input.sandboxScopeId ?? null, JSON.stringify(input.metadata ?? {})]);
     return normalizeRunRecord(result.rows[0]!.row_json);
   }
-
   async createPending(input: UpsertRunInput): Promise<{ record: RunRecord; created: boolean }> {
     const now = new Date().toISOString();
     let result: { rows: Array<{ row_json: RunRecord }> };
@@ -446,7 +446,6 @@ export class PgRunStore implements RunStore {
     if (!existing) throw new Error(`Run create-only conflict disappeared: ${input.runId}`);
     return { record: existing, created: false };
   }
-
   async enqueueSteeringAware(input: UpsertRunInput): Promise<RunRecord> {
     const client = await this.pool.connect();
     try {
@@ -454,6 +453,8 @@ export class PgRunStore implements RunStore {
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
         `${this.runsTable}:steering:${input.sessionId}`,
       ]);
+      const existing = await findRunForUpdate(client, this.runsTable, input.runId);
+      if (existing) { await client.query('COMMIT'); return normalizeRunRecord(existing); }
       const acceptedAt = typeof input.metadata?.steeringAcceptedAt === 'string'
         ? input.metadata.steeringAcceptedAt
         : undefined;
@@ -515,9 +516,7 @@ export class PgRunStore implements RunStore {
           (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at,
            idempotency_key, execution_target, workspace_id, sandbox_scope_id, metadata)
         VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12::jsonb)
-        ON CONFLICT (run_id) DO UPDATE SET
-          updated_at = EXCLUDED.updated_at,
-          metadata = ${this.runsTable}.metadata || EXCLUDED.metadata
+        ON CONFLICT (run_id) DO NOTHING
         RETURNING row_to_json(${this.runsTable}.*) AS row_json
       `, [
         input.runId,
@@ -533,6 +532,12 @@ export class PgRunStore implements RunStore {
         input.sandboxScopeId ?? null,
         JSON.stringify(metadata),
       ]);
+      if (!result.rows[0]) {
+        const conflict = await findRun(client, this.runsTable, input.runId);
+        if (!conflict) throw new Error(`Steering run conflict disappeared: ${input.runId}`);
+        await client.query('COMMIT');
+        return normalizeRunRecord(conflict);
+      }
       if (targetRunId) {
         await client.query(`
           INSERT INTO ${this.steeringInputsTable}
@@ -562,7 +567,6 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async listPendingSteeringInputs(targetRunId: string): Promise<SteeringInputRecord[]> {
     const result = await this.pool.query<{
       input_id: string;
@@ -1600,20 +1604,16 @@ export class PgRunStore implements RunStore {
       normalizeRunRecord,
     }, runId, workerId, finalStatus, reason);
   }
-
 }
-
 function sanitizeIdentifier(value: string): string {
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) throw new Error(`非法 PG tablePrefix: ${value}`);
   return value;
 }
-
 function parseCount(value: string | number | null | undefined): number {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') return Number.parseInt(value, 10) || 0;
   return 0;
 }
-
 function stringMetadata(metadata: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = metadata?.[key];
   return typeof value === 'string' && value.length > 0 ? value : undefined;

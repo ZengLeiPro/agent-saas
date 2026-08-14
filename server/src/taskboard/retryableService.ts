@@ -247,9 +247,13 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.finishContinuation(runId, leaseId);
   }
 
-  async markContinuationRunning(taskId: string): Promise<TaskBoardTask | null> {
+  async markContinuationRunning(
+    taskId: string,
+    runId: string,
+    reconcileLeaseId?: string,
+  ): Promise<TaskBoardTask | null> {
     await this.init();
-    return this.target.markContinuationRunning(taskId);
+    return this.target.markContinuationRunning(taskId, runId, reconcileLeaseId);
   }
 
   async completeContinuation(

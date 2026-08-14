@@ -1,10 +1,11 @@
 import type { Pool, PoolClient } from 'pg';
 
 import { requireText } from './storeHelpers.js';
-import type {
-  TaskboardContinuationDispatch,
-  TaskboardContinuationDispatchPayload,
-  TaskboardContinuationReconcileCandidate,
+import {
+  TaskboardValidationError,
+  type TaskboardContinuationDispatch,
+  type TaskboardContinuationDispatchPayload,
+  type TaskboardContinuationReconcileCandidate,
 } from './types.js';
 
 export interface TaskboardContinuationOutboxHost {
@@ -51,6 +52,63 @@ export function continuationOutboxIndexSql(table: string): string[] {
   ];
 }
 
+export function continuationOutboxMigrationSql(
+  table: string,
+  boardsTable: string,
+  tasksTable: string,
+  commentsTable: string,
+  executionsTable: string,
+): string[] {
+  return [
+    `UPDATE ${commentsTable}
+        SET continuation_eligible=true
+      WHERE continuation_run_id IS NOT NULL AND continuation_eligible=false`,
+    `INSERT INTO ${table}
+       (run_id, task_id, comment_id, session_id, payload, status, dispatched_at)
+     SELECT legacy.run_id, legacy.task_id, legacy.comment_id, legacy.session_id, '{}'::jsonb,
+            CASE WHEN legacy.archived OR legacy.has_receipt THEN 'completed' ELSE 'dispatched' END,
+            now()
+       FROM (
+         SELECT DISTINCT ON (c.continuation_run_id)
+                c.continuation_run_id AS run_id, c.task_id, c.id AS comment_id,
+                latest_execution.session_id,
+                (t.archived_at IS NOT NULL OR b.archived_at IS NOT NULL) AS archived,
+                EXISTS (
+                  SELECT 1 FROM ${commentsTable} receipt
+                   WHERE receipt.task_id=c.task_id AND receipt.author_id=c.continuation_run_id
+                     AND receipt.author_type IN ('agent', 'system')
+                ) AS has_receipt
+           FROM ${commentsTable} c
+           JOIN ${tasksTable} t ON t.id=c.task_id
+           JOIN ${boardsTable} b ON b.id=t.board_id
+           JOIN LATERAL (
+             SELECT e.session_id FROM ${executionsTable} e
+              WHERE e.task_id=c.task_id ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+           ) latest_execution ON true
+           LEFT JOIN ${executionsTable} formal_execution
+             ON formal_execution.run_id=c.continuation_run_id
+          WHERE c.continuation_run_id IS NOT NULL AND formal_execution.run_id IS NULL
+          ORDER BY c.continuation_run_id, c.created_at DESC, c.id DESC
+       ) legacy
+     ON CONFLICT (run_id) DO NOTHING`,
+    `UPDATE ${table} o SET status='completed', lease_id=NULL, lease_expires_at=NULL,
+            reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL, updated_at=now()
+       FROM ${tasksTable} t JOIN ${boardsTable} b ON b.id=t.board_id
+      WHERE o.task_id=t.id AND o.status<>'completed'
+        AND (t.archived_at IS NOT NULL OR b.archived_at IS NOT NULL)`,
+  ];
+}
+
+export async function runContinuationOutboxMigrations(
+  host: TaskboardContinuationOutboxHost,
+  client: PoolClient,
+  executionsTable: string,
+): Promise<void> {
+  for (const sql of continuationOutboxMigrationSql(
+    host.continuationOutboxTable, host.boardsTable, host.tasksTable, host.commentsTable, executionsTable,
+  )) await client.query(sql);
+}
+
 export async function enqueueContinuation(
   host: TaskboardContinuationOutboxHost,
   taskId: string,
@@ -62,6 +120,26 @@ export async function enqueueContinuation(
   if (commentIds.length === 0) return false;
   try {
     return await withTransaction(host.pool, async (client) => {
+      const ownership = await client.query(
+        `SELECT board_id FROM ${host.tasksTable} WHERE id=$1`, [taskId],
+      );
+      if (!ownership.rows[0]) throw new TaskboardValidationError('Task not found');
+      await client.query(
+        `SELECT id FROM ${host.boardsTable} WHERE id=$1 FOR UPDATE`,
+        [ownership.rows[0].board_id],
+      );
+      const writable = await client.query(
+        `SELECT t.archived_at, b.archived_at AS board_archived_at
+           FROM ${host.tasksTable} t JOIN ${host.boardsTable} b ON b.id=t.board_id
+          WHERE t.id=$1 FOR UPDATE OF t`,
+        [taskId],
+      );
+      if (writable.rows[0]?.board_archived_at) {
+        throw new TaskboardValidationError('Archived boards are read-only', 'TASKBOARD_BOARD_ARCHIVED');
+      }
+      if (writable.rows[0]?.archived_at) {
+        throw new TaskboardValidationError('Archived tasks are read-only', 'TASKBOARD_TASK_ARCHIVED');
+      }
       const claimed = await client.query(
         `UPDATE ${host.commentsTable}
             SET continuation_run_id=$3, updated_at=now()
@@ -95,13 +173,16 @@ export async function claimContinuationDispatch(
     `WITH candidate AS (
        SELECT o.run_id
          FROM ${host.continuationOutboxTable} o
+         JOIN ${host.tasksTable} t ON t.id=o.task_id
+         JOIN ${host.boardsTable} b ON b.id=t.board_id
         WHERE ($2::text IS NULL OR o.run_id=$2)
+          AND t.archived_at IS NULL AND b.archived_at IS NULL
           AND (
             (o.status='pending' AND o.next_attempt_at <= now())
             OR (o.status='dispatching' AND o.lease_expires_at <= now())
           )
         ORDER BY o.next_attempt_at, o.created_at, o.run_id
-        FOR UPDATE SKIP LOCKED
+        FOR UPDATE OF o SKIP LOCKED
         LIMIT 1
      ), claimed AS (
        UPDATE ${host.continuationOutboxTable} o
@@ -177,11 +258,13 @@ export async function claimContinuationReconcileCandidates(
     `WITH candidates AS (
        SELECT o.run_id
          FROM ${host.continuationOutboxTable} o
-        WHERE o.status='dispatched'
+         JOIN ${host.tasksTable} t ON t.id=o.task_id
+         JOIN ${host.boardsTable} b ON b.id=t.board_id
+        WHERE o.status='dispatched' AND t.archived_at IS NULL AND b.archived_at IS NULL
           AND COALESCE(o.last_reconciled_at, o.dispatched_at, o.updated_at) <= $1
-          AND (o.reconcile_lease_expires_at IS NULL OR o.reconcile_lease_expires_at <= now())
+          AND (o.reconcile_lease_expires_at IS NULL OR o.reconcile_lease_expires_at <= clock_timestamp())
         ORDER BY COALESCE(o.last_reconciled_at, '-infinity'::timestamptz), o.updated_at, o.run_id
-        FOR UPDATE SKIP LOCKED
+        FOR UPDATE OF o SKIP LOCKED
         LIMIT $2
      ), claimed AS (
        UPDATE ${host.continuationOutboxTable} o

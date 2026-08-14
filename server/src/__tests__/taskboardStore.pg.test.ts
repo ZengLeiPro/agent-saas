@@ -369,6 +369,76 @@ describePg('PgTaskboardStore contract', () => {
     )).toEqual([]);
   });
 
+  it('backfills legacy continuation rows once and blocks archive while continuation is active', async () => {
+    const board = await store.createBoard(alice, { name: '续跑迁移补偿' });
+    const task = await store.createTask(alice, board.id, { title: '迁移旧续跑', status: 'todo' });
+    await store.claimExecution(alice, task.id, {
+      expectedVersion: task.version,
+      executionId: 'legacy-base-execution',
+      runId: 'legacy-base-run',
+      sessionId: 'legacy-session',
+      executionOwnerUserId: alice.ownerUserId,
+      dispatch: dispatch('legacy-base-execution', 'legacy-base-run', 'legacy-session'),
+    });
+    await store.completeExecution('legacy-base-run', { status: 'succeeded', commentBody: '基础执行完成' });
+    const current = await store.getTask(alice, task.id);
+    const commentId = randomUUID();
+    await pool.query(
+      `INSERT INTO ${store.commentsTable}
+         (id, task_id, body, author_type, author_id, author_name,
+          continuation_eligible, continuation_run_id)
+       VALUES ($1,$2,'迁移期间评论','user',$3,'Alice',false,'legacy-continuation-run')`,
+      [commentId, task.id, alice.ownerUserId],
+    );
+    const archivedTask = await store.createTask(alice, board.id, { title: '历史归档执行', status: 'todo' });
+    await store.claimExecution(alice, archivedTask.id, {
+      expectedVersion: archivedTask.version,
+      executionId: 'archived-legacy-execution',
+      runId: 'archived-legacy-run',
+      sessionId: 'archived-legacy-session',
+      executionOwnerUserId: alice.ownerUserId,
+      dispatch: dispatch('archived-legacy-execution', 'archived-legacy-run', 'archived-legacy-session'),
+    });
+    await pool.query(`UPDATE ${store.tasksTable} SET archived_at=now() WHERE id=$1`, [archivedTask.id]);
+
+    await store.init();
+    await store.init();
+
+    const migratedComment = await pool.query(
+      `SELECT continuation_eligible FROM ${store.commentsTable} WHERE id=$1`, [commentId],
+    );
+    const migratedOutbox = await pool.query(
+      `SELECT run_id, task_id, comment_id, session_id, status
+         FROM ${store.continuationOutboxTable} WHERE run_id='legacy-continuation-run'`,
+    );
+    expect(migratedComment.rows[0]?.continuation_eligible).toBe(true);
+    expect(migratedOutbox.rows).toEqual([expect.objectContaining({
+      task_id: task.id,
+      comment_id: commentId,
+      session_id: 'legacy-session',
+      status: 'dispatched',
+    })]);
+    const archivedExecution = await pool.query(
+      `SELECT e.status, o.status AS outbox_status
+         FROM ${store.executionsTable} e JOIN ${store.executionOutboxTable} o ON o.run_id=e.run_id
+        WHERE e.run_id='archived-legacy-run'`,
+    );
+    expect(archivedExecution.rows[0]).toMatchObject({ status: 'cancelled', outbox_status: 'dispatched' });
+    await expect(store.archiveTask(alice, task.id, { expectedVersion: current.version }))
+      .rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_ACTIVE' });
+    await expect(store.archiveBoard(alice, board.id, { expectedVersion: board.version }))
+      .rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_ACTIVE' });
+    await expect(store.claimExecution(alice, task.id, {
+      expectedVersion: current.version,
+      executionId: 'must-not-race-continuation',
+      runId: 'must-not-race-continuation',
+      sessionId: 'legacy-session',
+      executionOwnerUserId: alice.ownerUserId,
+      dispatch: dispatch('must-not-race-continuation', 'must-not-race-continuation', 'legacy-session'),
+      allowWorkFromCurrentStatus: true,
+    })).rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_ACTIVE' });
+  });
+
   it('atomically claims one Agent execution, rereads comments, and finalizes idempotently', async () => {
     const board = await store.createBoard(alice, {
       name: 'Agent 执行闭环',

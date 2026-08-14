@@ -61,6 +61,36 @@ describe('PgRunStore steering inbox', () => {
     expect(steeringInsert?.params.slice(0, 3)).toEqual(['source-run', 'target-run', 'session-1']);
   });
 
+  it('returns an existing source run unchanged instead of recalculating its steering target', async () => {
+    const now = new Date().toISOString();
+    const queries: string[] = [];
+    const existing = {
+      run_id: 'source-run', session_id: 'session-1', user_id: 'user-1', tenant_id: 'tenant-1',
+      status: 'pending', model: 'gpt-5.5', channel: 'web', requested_at: now, updated_at: now,
+      metadata: { steeringTargetRunId: 'original-target', steeringState: 'pending' },
+    };
+    const client = {
+      query: async (sql: string) => {
+        queries.push(sql.trim());
+        if (sql.includes('FROM runtime_runs existing') && sql.includes('FOR UPDATE')) {
+          return { rows: [{ row_json: existing }] };
+        }
+        return { rows: [] };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    const record = await store.enqueueSteeringAware({
+      runId: 'source-run', sessionId: 'session-1', metadata: { steeringTargetRunId: 'wrong-target' },
+    });
+
+    expect(record.metadata?.steeringTargetRunId).toBe('original-target');
+    expect(queries.some((sql) => sql.includes('SELECT target.run_id'))).toBe(false);
+    expect(queries.some((sql) => sql.includes('INSERT INTO runtime_runs'))).toBe(false);
+    expect(queries.at(-1)).toBe('COMMIT');
+  });
+
   it('rejects a chat accepted before the latest session stop', async () => {
     const queries: string[] = [];
     const client = {

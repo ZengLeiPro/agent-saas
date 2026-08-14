@@ -125,6 +125,7 @@ export interface TaskboardContinuationContext {
   comment: TaskBoardComment;
   pendingComments: TaskBoardComment[];
   continuationRunId?: string;
+  hasActiveContinuation?: boolean;
   activeExecution?: TaskBoardExecution;
   latestExecution?: TaskBoardExecution;
 }
@@ -178,7 +179,7 @@ export interface TaskboardExecutionStore {
   ): Promise<TaskboardContinuationReconcileCandidate[]>;
   releaseContinuationReconcile(runId: string, leaseId: string): Promise<boolean>;
   finishContinuation(runId: string, leaseId?: string): Promise<boolean>;
-  markContinuationRunning(taskId: string): Promise<TaskBoardTask | null>;
+  markContinuationRunning(taskId: string, runId: string, reconcileLeaseId?: string): Promise<TaskBoardTask | null>;
   completeContinuation(
     taskId: string,
     runId: string,

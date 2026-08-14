@@ -19,6 +19,30 @@ export interface TaskboardExecutionOutboxHost {
   executionOutboxTable: string;
 }
 
+export async function runExecutionOutboxMigrations(
+  host: TaskboardExecutionOutboxHost,
+  client: PoolClient,
+): Promise<void> {
+  await client.query(
+    `UPDATE ${host.executionsTable} e
+        SET status='cancelled', error=COALESCE(e.error, 'Task archived before execution completed'),
+            finished_at=COALESCE(e.finished_at, now()), updated_at=now(),
+            reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL
+       FROM ${host.tasksTable} t JOIN ${host.boardsTable} b ON b.id=t.board_id
+      WHERE e.task_id=t.id AND e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
+        AND (t.archived_at IS NOT NULL OR b.archived_at IS NOT NULL)`,
+  );
+  await client.query(
+    `UPDATE ${host.executionOutboxTable} o
+        SET status='dispatched', lease_id=NULL, lease_expires_at=NULL, updated_at=now()
+       FROM ${host.executionsTable} e
+       JOIN ${host.tasksTable} t ON t.id=e.task_id
+       JOIN ${host.boardsTable} b ON b.id=t.board_id
+      WHERE o.run_id=e.run_id AND (t.archived_at IS NOT NULL OR b.archived_at IS NOT NULL)
+        AND (o.status<>'dispatched' OR o.lease_id IS NOT NULL OR o.lease_expires_at IS NOT NULL)`,
+  );
+}
+
 export async function claimExecutionDispatch(
   host: TaskboardExecutionOutboxHost,
   runId: string | undefined,
@@ -28,7 +52,10 @@ export async function claimExecutionDispatch(
     `WITH candidate AS (
        SELECT o.run_id FROM ${host.executionOutboxTable} o
        JOIN ${host.executionsTable} e ON e.run_id=o.run_id
+       JOIN ${host.tasksTable} t ON t.id=e.task_id
+       JOIN ${host.boardsTable} b ON b.id=t.board_id
        WHERE ($2::text IS NULL OR o.run_id=$2)
+         AND t.archived_at IS NULL AND b.archived_at IS NULL
          AND e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
          AND ((o.status='pending' AND o.next_attempt_at <= now())
            OR (o.status='dispatching' AND o.lease_expires_at <= now()))
@@ -118,11 +145,14 @@ export async function claimExecutionReconcileCandidates(
   const result = await host.pool.query(
     `WITH candidates AS (
        SELECT e.run_id FROM ${host.executionsTable} e
+       JOIN ${host.tasksTable} t ON t.id=e.task_id
+       JOIN ${host.boardsTable} b ON b.id=t.board_id
        WHERE e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
+         AND t.archived_at IS NULL AND b.archived_at IS NULL
          AND e.updated_at <= $1
-         AND (e.reconcile_lease_expires_at IS NULL OR e.reconcile_lease_expires_at <= now())
+         AND (e.reconcile_lease_expires_at IS NULL OR e.reconcile_lease_expires_at <= clock_timestamp())
        ORDER BY COALESCE(e.last_reconciled_at, '-infinity'::timestamptz), e.updated_at, e.run_id
-       FOR UPDATE SKIP LOCKED LIMIT $2
+       FOR UPDATE OF e SKIP LOCKED LIMIT $2
      ), claimed AS (
        UPDATE ${host.executionsTable} e SET last_reconciled_at=now(), reconcile_lease_id=$3,
          reconcile_lease_expires_at=now() + interval '30 seconds'

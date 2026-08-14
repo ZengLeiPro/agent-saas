@@ -9,11 +9,12 @@ import { createExecutionConfig } from '../runtime/executionConfig.js';
 import type { RunRecord } from '../runtime/runStore.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { EventStore } from '../runtime/types.js';
-import { completeContinuation } from '../taskboard/continuationStore.js';
+import { completeContinuation, markContinuationRunning } from '../taskboard/continuationStore.js';
 import { TaskboardExecutionCoordinator } from '../taskboard/executionService.js';
-import type {
-  TaskboardExecutionStore,
-  TaskboardIdentity,
+import {
+  TaskboardValidationError,
+  type TaskboardExecutionStore,
+  type TaskboardIdentity,
 } from '../taskboard/types.js';
 
 const identity: TaskboardIdentity = {
@@ -82,6 +83,50 @@ describe('任务看板评论续跑', () => {
         }),
       }),
     );
+  });
+
+  it('已有评论续跑占用 session 时，新评论继续走 steering 而不是新建 Execution', async () => {
+    const latestExecution = { ...activeExecution, status: 'succeeded' as const };
+    const rig = makeRig({
+      getContinuationContext: vi.fn(async () => ({
+        task,
+        comment: comments[1]!,
+        pendingComments: comments,
+        hasActiveContinuation: true,
+        latestExecution,
+      })),
+    });
+
+    const result = await rig.coordinator.continueExecution(identity, task.id, comments[1]!.id);
+
+    expect(result.execution).toEqual(latestExecution);
+    expect(rig.store.claimExecution).not.toHaveBeenCalled();
+    expect(rig.store.enqueueContinuation).toHaveBeenCalledOnce();
+  });
+
+  it('并发请求抢先创建 Execution 后，失败方重读上下文并幂等复用', async () => {
+    const getContinuationContext = vi.fn()
+      .mockResolvedValueOnce({ task, comment: comments[1]!, pendingComments: comments })
+      .mockResolvedValueOnce({
+        task,
+        comment: comments[1]!,
+        pendingComments: comments,
+        continuationRunId: activeExecution.runId,
+        activeExecution,
+        latestExecution: activeExecution,
+      });
+    const rig = makeRig({
+      getContinuationContext,
+      claimExecution: vi.fn(async () => {
+        throw new TaskboardValidationError('active', 'TASKBOARD_EXECUTION_ACTIVE');
+      }),
+    });
+
+    const result = await rig.coordinator.continueExecution(identity, task.id, comments[1]!.id);
+
+    expect(result.execution).toEqual(activeExecution);
+    expect(getContinuationContext).toHaveBeenCalledTimes(2);
+    expect(rig.store.enqueueContinuation).not.toHaveBeenCalled();
   });
 
   it('评论续跑先写持久化 outbox，再由派发器创建 Runtime Run', async () => {
@@ -251,6 +296,68 @@ describe('任务看板评论续跑', () => {
     expect(sql.some((statement) => statement.includes('INSERT INTO comments'))).toBe(true);
     expect(sql.some((statement) => statement.includes("SET status='completed'"))).toBe(true);
     expect(sql.some((statement) => statement.includes('UPDATE tasks') && statement.includes('status=$2'))).toBe(false);
+  });
+
+  it('终态回执先完成时，过期 reconcile 不会把任务状态改回进行中', async () => {
+    const sql: string[] = [];
+    const taskRow = {
+      id: task.id, board_id: task.boardId, identifier: task.identifier, title: task.title,
+      description: task.description, status: 'in_review', priority: task.priority, labels: [],
+      sort_order: task.sortOrder, comment_count: task.commentCount, version: task.version,
+      created_at: task.createdAt, updated_at: task.updatedAt, board_archived_at: null,
+    };
+    const client = {
+      query: vi.fn(async (statement: string) => {
+        sql.push(statement);
+        if (statement.includes('SELECT t.board_id, b.tenant_id')) {
+          return { rows: [{ board_id: task.boardId, tenant_id: identity.tenantId, owner_user_id: identity.ownerUserId }] };
+        }
+        if (statement.includes('SELECT t.*, b.archived_at')) return { rows: [taskRow] };
+        if (statement.includes('FROM continuation_outbox')) {
+          return { rows: [{ status: 'completed', reconcile_lease_valid: true }] };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const result = await markContinuationRunning({
+      pool: { connect: vi.fn(async () => client) }, boardsTable: 'boards', tasksTable: 'tasks',
+      commentsTable: 'comments', executionsTable: 'executions', continuationOutboxTable: 'continuation_outbox',
+    } as never, task.id, 'continuation-run');
+
+    expect(result?.status).toBe('in_review');
+    expect(sql.some((statement) => statement.includes('UPDATE tasks'))).toBe(false);
+  });
+
+  it('过期 reconcile lease 不能更新仍为 dispatched 的续跑任务', async () => {
+    const sql: string[] = [];
+    const taskRow = {
+      id: task.id, board_id: task.boardId, identifier: task.identifier, title: task.title,
+      description: task.description, status: 'in_review', priority: task.priority, labels: [],
+      sort_order: task.sortOrder, comment_count: task.commentCount, version: task.version,
+      created_at: task.createdAt, updated_at: task.updatedAt, board_archived_at: null,
+    };
+    const client = {
+      query: vi.fn(async (statement: string) => {
+        sql.push(statement);
+        if (statement.includes('SELECT t.board_id, b.tenant_id')) {
+          return { rows: [{ board_id: task.boardId, tenant_id: identity.tenantId, owner_user_id: identity.ownerUserId }] };
+        }
+        if (statement.includes('SELECT t.*, b.archived_at')) return { rows: [taskRow] };
+        if (statement.includes('FROM continuation_outbox')) {
+          return { rows: [{ status: 'dispatched', reconcile_lease_valid: false }] };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    await markContinuationRunning({
+      pool: { connect: vi.fn(async () => client) }, boardsTable: 'boards', tasksTable: 'tasks',
+      commentsTable: 'comments', executionsTable: 'executions', continuationOutboxTable: 'continuation_outbox',
+    } as never, task.id, 'continuation-run', 'expired-lease');
+
+    expect(sql.some((statement) => statement.includes('clock_timestamp()'))).toBe(true);
+    expect(sql.some((statement) => statement.includes('UPDATE tasks'))).toBe(false);
   });
 
   it('自动对账补写遗漏的评论续跑终态回执', async () => {

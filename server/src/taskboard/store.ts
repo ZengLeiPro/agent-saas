@@ -31,6 +31,7 @@ import {
   claimContinuationReconcileCandidates,
   continuationOutboxIndexSql,
   continuationOutboxTableSql,
+  runContinuationOutboxMigrations,
   enqueueContinuation,
   finishContinuation,
   markContinuationDispatchSucceeded,
@@ -43,6 +44,7 @@ import {
   claimExecutionReconcileCandidates,
   markExecutionDispatchSucceeded,
   retryExecutionDispatch,
+  runExecutionOutboxMigrations,
 } from './executionOutboxStore.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
 import {
@@ -75,6 +77,7 @@ import {
   toIso,
   validateMoveNeighbors,
 } from './storeHelpers.js';
+import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns, finalizeExecutionForArchivedTask } from './archiveGuard.js';
 import { taskFieldsMigrationSql, taskTableSql } from './taskFields.js';
 import {
   TaskboardNotFoundError,
@@ -125,7 +128,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     this.executionOutboxTable = `${prefix}_taskboard_exec_outbox`;
     this.continuationOutboxTable = `${prefix}_taskboard_cont_outbox`;
   }
-
   async init(): Promise<void> {
     const lockKey = `${this.boardsTable}:init`;
     const client = await this.pool.connect();
@@ -226,6 +228,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         this.tasksTable,
         this.commentsTable,
       ));
+      await runExecutionOutboxMigrations(this, client);
+      await runContinuationOutboxMigrations(this, client, this.executionsTable);
       await client.query(`DROP INDEX IF EXISTS ${this.boardsTable}_active_name_uidx`);
       await client.query(
         `CREATE UNIQUE INDEX IF NOT EXISTS ${this.boardsTable}_personal_name_uidx `
@@ -283,7 +287,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       client.release();
     }
   }
-
   async listBoards(identity: TaskboardIdentity, includeArchived = false): Promise<TaskBoard[]> {
     const result = await this.pool.query(
       `SELECT id, owner_user_id, name, description, visibility, prompt, model, version,
@@ -297,7 +300,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     );
     return result.rows.map((row) => rowToBoard(row, identity.ownerUserId));
   }
-
   async createBoard(identity: TaskboardIdentity, input: TaskBoardCreateInput): Promise<TaskBoard> {
     const name = requireText(input.name, 'Board name');
     const description = optionalText(input.description);
@@ -318,7 +320,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       throw mapActiveBoardNameError(error);
     }
   }
-
   async updateBoard(identity: TaskboardIdentity, boardId: string, input: TaskBoardPatchInput): Promise<TaskBoard> {
     return this.withTransaction(async (client) => {
       const current = await this.requireOwnedBoard(client, identity, boardId, true);
@@ -370,7 +371,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       }
     });
   }
-
   async archiveBoard(
     identity: TaskboardIdentity,
     boardId: string,
@@ -380,6 +380,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       const current = await this.requireOwnedBoard(client, identity, boardId, true);
       assertExpectedVersion(current, input.expectedVersion);
       assertActiveBoard(current);
+      await assertBoardHasNoActiveRuns(this, client, boardId);
       const result = await client.query(
         `UPDATE ${this.boardsTable}
             SET archived_at=now(), version=version+1, updated_at=now()
@@ -391,7 +392,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       return rowToBoard(result.rows[0], identity.ownerUserId);
     });
   }
-
   async restoreBoard(
     identity: TaskboardIdentity,
     boardId: string,
@@ -418,7 +418,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       }
     });
   }
-
   async listTasks(
     identity: TaskboardIdentity,
     boardId: string,
@@ -462,7 +461,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     );
     return result.rows.map(rowToTask);
   }
-
   async createTask(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskBoardTask> {
     return this.withTransaction(async (client) => {
       const board = await this.requireBoard(client, identity, boardId, true);
@@ -522,11 +520,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       return this.requireTask(client, identity, taskId, false);
     });
   }
-
   async getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask> {
     return this.requireTask(this.pool, identity, taskId, false);
   }
-
   async updateTask(
     identity: TaskboardIdentity,
     taskId: string,
@@ -593,7 +589,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       return this.requireTask(client, identity, taskId, false);
     });
   }
-
   async moveTask(
     identity: TaskboardIdentity,
     taskId: string,
@@ -660,7 +655,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       return this.requireTask(client, identity, taskId, false);
     });
   }
-
   async archiveTask(
     identity: TaskboardIdentity,
     taskId: string,
@@ -747,9 +741,13 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         return { task: loaded.task, execution };
       }
       const active = await client.query(
-        `SELECT id FROM ${this.executionsTable}
-          WHERE task_id=$1 AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
-          LIMIT 1`,
+        `SELECT 1 WHERE EXISTS (
+           SELECT 1 FROM ${this.executionsTable}
+            WHERE task_id=$1 AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
+         ) OR EXISTS (
+           SELECT 1 FROM ${this.continuationOutboxTable}
+            WHERE task_id=$1 AND status<>'completed'
+         )`,
         [taskId],
       );
       if (active.rows[0]) {
@@ -814,7 +812,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       };
     });
   }
-
   getExecutionContextByRunId(runId: string): Promise<TaskboardExecutionContext | null> {
     return loadExecutionContext(this, runId);
   }
@@ -856,13 +853,12 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   finishContinuation(runId: string, leaseId?: string) {
     return finishContinuation(this, runId, leaseId);
   }
-  markContinuationRunning(taskId: string) {
-    return markContinuationRunning(this, taskId);
+  markContinuationRunning(taskId: string, runId: string, reconcileLeaseId?: string) {
+    return markContinuationRunning(this, taskId, runId, reconcileLeaseId);
   }
   completeContinuation(taskId: string, runId: string, input: TaskboardExecutionCompletionInput) {
     return completeContinuation(this, taskId, runId, input);
   }
-
   async moveTaskFromExecution(identity: TaskboardIdentity, runId: string, status: 'done' | 'todo'): Promise<TaskBoardTask> {
     return moveTaskFromReviewExecution(this, identity, runId, status);
   }
@@ -910,7 +906,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
               updated_at=now()
         WHERE run_id=$1
           AND reconcile_lease_id=$3
-          AND reconcile_lease_expires_at > now()
+          AND reconcile_lease_expires_at > clock_timestamp()
           AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
         RETURNING *`,
       [runId, status, leaseId],
@@ -959,7 +955,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       const executionResult = await client.query(
         `SELECT *,
                 ($2::text IS NULL OR (
-                  reconcile_lease_id=$2 AND reconcile_lease_expires_at > now()
+                  reconcile_lease_id=$2 AND reconcile_lease_expires_at > clock_timestamp()
                 )) AS reconcile_lease_valid
            FROM ${this.executionsTable}
           WHERE run_id=$1
@@ -977,6 +973,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         );
         return { task: loaded.task, execution: currentExecution };
       }
+      const archivedResult = await finalizeExecutionForArchivedTask(
+        this, client, loaded.task, loaded.boardArchivedAt, currentExecution, input,
+      );
+      if (archivedResult) return archivedResult;
 
       const targetTaskStatus = input.status === 'succeeded' ? 'in_review' : 'blocked';
       if (loaded.task.status === 'in_progress') {
@@ -1026,7 +1026,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       };
     });
   }
-
   private async setTaskArchived(
     identity: TaskboardIdentity,
     taskId: string,
@@ -1045,6 +1044,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           archive ? 'TASKBOARD_TASK_ARCHIVED' : 'TASKBOARD_TASK_NOT_ARCHIVED',
         );
       }
+      if (archive) await assertTaskHasNoActiveRuns(this, client, taskId);
       await client.query(
         `UPDATE ${this.tasksTable} t
             SET archived_at=${archive ? 'now()' : 'NULL'}, version=t.version+1, updated_at=now()

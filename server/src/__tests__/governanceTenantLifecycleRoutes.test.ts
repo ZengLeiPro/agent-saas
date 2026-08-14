@@ -1,7 +1,11 @@
 import express from 'express';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { resolveRuntimeTenantLifecycleImpact } from '../app/governanceRoutes.js';
+import { TenantStore } from '../data/tenants/store.js';
 import { registerGovernanceTenantLifecycleRoutes } from '../routes/governanceTenantLifecycleRoutes.js';
 
 const SECRET = 'tenant-lifecycle-test-secret-2026-08-14';
@@ -36,6 +40,7 @@ function rig(input: {
     tenantId: string,
     disabled: boolean,
     actorUserId: string,
+    expectedUpdatedAt: string,
   ) => Promise<{ id: string; name?: string; disabled?: boolean; updatedAt: string }>;
   persona?: 'platform_admin' | 'org_admin' | 'member';
   tenantDisabled?: boolean;
@@ -73,6 +78,42 @@ function rig(input: {
     return response;
   };
   return { request, setTenantDisabled };
+}
+
+function storeRig(store: TenantStore) {
+  const router = express.Router();
+  registerGovernanceTenantLifecycleRoutes({
+    router,
+    secret: SECRET,
+    previewTtlMs: 5 * 60_000,
+    now: () => new Date(NOW),
+    personaFor: () => 'platform_admin',
+    getTenant: tenantId => store.findById(tenantId),
+    setTenantDisabled: (tenantId, disabled, actorUserId, expectedUpdatedAt) =>
+      store.setDisabled(tenantId, disabled, actorUserId, expectedUpdatedAt),
+    dependencyImpact: async () => ({ affectedResources: [], blockers: [] }),
+  });
+  return async (
+    tenantId: string,
+    path: string,
+    method: Method,
+    body: Record<string, unknown> = {},
+  ) => {
+    const req = {
+      query: { tenantId },
+      body,
+      user: { sub: 'platform-1', username: 'platform', tenantId: 'pantheon', role: 'admin' },
+    };
+    const response = {
+      statusCode: 200,
+      body: undefined as unknown,
+      locals: { governanceChangeId: 'change-1' },
+      status(code: number) { this.statusCode = code; return this; },
+      json(value: unknown) { this.body = value; return this; },
+    };
+    await findHandler(router, path, method)(req as never, response as never);
+    return response;
+  };
 }
 
 describe('tenant lifecycle routes', () => {
@@ -125,7 +166,7 @@ describe('tenant lifecycle routes', () => {
     );
     expect(committed.statusCode).toBe(200);
     expect(committed.body).toMatchObject({ tenantId: 'tenant-a', status: 'suspended' });
-    expect(test.setTenantDisabled).toHaveBeenCalledWith('tenant-a', true, 'platform-1');
+    expect(test.setTenantDisabled).toHaveBeenCalledWith('tenant-a', true, 'platform-1', NOW);
   });
 
   it('提交阶段重新校验 blockers，不能绕过前端直接暂停', async () => {
@@ -165,6 +206,66 @@ describe('tenant lifecycle routes', () => {
     expect(committed.statusCode).toBe(409);
     expect(committed.body).toMatchObject({ code: 'TENANT_LIFECYCLE_BASELINE_CONFLICT' });
     expect(test.setTenantDisabled).not.toHaveBeenCalled();
+  });
+
+  it('两个路由实例共享 tenants.json 时并发禁用不同组织不会互相覆盖', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'tenant-lifecycle-routes-'));
+    const storePath = join(root, 'tenants.json');
+    try {
+      const seed = new TenantStore(storePath);
+      await seed.create({ id: 'tenant-a', name: '组织 A', createdBy: 'system' });
+      await seed.create({ id: 'tenant-b', name: '组织 B', createdBy: 'system' });
+      await seed.create({ id: 'tenant-c', name: '组织 C', createdBy: 'system' });
+      const requestA = storeRig(new TenantStore(storePath));
+      const requestB = storeRig(new TenantStore(storePath));
+      const change = { action: 'suspend', reason: 'multi instance concurrency test' };
+      const [previewA, previewB] = await Promise.all([
+        requestA('tenant-a', '/tenant-lifecycle/preview', 'post', change),
+        requestB('tenant-b', '/tenant-lifecycle/preview', 'post', change),
+      ]);
+
+      const committed = await Promise.all([
+        requestA('tenant-a', '/tenant-lifecycle', 'post', commitBody(change, previewA.body as Record<string, unknown>)),
+        requestB('tenant-b', '/tenant-lifecycle', 'post', commitBody(change, previewB.body as Record<string, unknown>)),
+      ]);
+
+      expect(committed.map(response => response.statusCode)).toEqual([200, 200]);
+      const persisted = new TenantStore(storePath);
+      expect(persisted.findById('tenant-a')?.disabled).toBe(true);
+      expect(persisted.findById('tenant-b')?.disabled).toBe(true);
+      expect(persisted.findById('tenant-c')?.disabled).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('两个路由实例共享 tenants.json 时同组织重复提交仅一个成功', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'tenant-lifecycle-routes-'));
+    const storePath = join(root, 'tenants.json');
+    try {
+      const seed = new TenantStore(storePath);
+      await seed.create({ id: 'tenant-a', name: '组织 A', createdBy: 'system' });
+      await seed.create({ id: 'tenant-b', name: '组织 B', createdBy: 'system' });
+      const requestA = storeRig(new TenantStore(storePath));
+      const requestB = storeRig(new TenantStore(storePath));
+      const change = { action: 'suspend', reason: 'duplicate multi instance test' };
+      const [previewA, previewB] = await Promise.all([
+        requestA('tenant-a', '/tenant-lifecycle/preview', 'post', change),
+        requestB('tenant-a', '/tenant-lifecycle/preview', 'post', change),
+      ]);
+
+      const committed = await Promise.all([
+        requestA('tenant-a', '/tenant-lifecycle', 'post', commitBody(change, previewA.body as Record<string, unknown>)),
+        requestB('tenant-a', '/tenant-lifecycle', 'post', commitBody(change, previewB.body as Record<string, unknown>)),
+      ]);
+
+      expect(committed.filter(response => response.statusCode === 200)).toHaveLength(1);
+      const conflict = committed.find(response => response.statusCode === 409);
+      expect(conflict?.body).toMatchObject({ code: 'TENANT_LIFECYCLE_BASELINE_CONFLICT' });
+      expect(new TenantStore(storePath).findById('tenant-a')?.disabled).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('同一组织已有状态提交时拒绝并发请求', async () => {

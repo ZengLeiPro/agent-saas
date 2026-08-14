@@ -115,8 +115,18 @@ export function registerGovernanceRoutes(
         resolveDependencyImpact: input => input.kind === 'tenant' && input.action
           ? resolveRuntimeTenantLifecycleImpact(runtime, input.tenantId, input.action)
           : Promise.reject(new Error('Dependency impact authority unavailable')),
-        setTenantDisabled: async (tenantId: string, disabled: boolean, actorUserId: string) => {
-          const tenant = await runtime.tenantStore!.setDisabled(tenantId, disabled, actorUserId);
+        setTenantDisabled: async (
+          tenantId: string,
+          disabled: boolean,
+          actorUserId: string,
+          expectedUpdatedAt: string,
+        ) => {
+          const tenant = await runtime.tenantStore!.setDisabled(
+            tenantId,
+            disabled,
+            actorUserId,
+            expectedUpdatedAt,
+          );
           if (disabled) options.webChannel?.disconnectTenant(tenantId);
           return tenant;
         },

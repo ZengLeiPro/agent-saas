@@ -139,6 +139,15 @@ function TenantLifecyclePanel({ tenantId }: { tenantId: string }) {
   const [busy, setBusy] = useState(false);
   const [mutationError, setMutationError] = useState("");
   const mutationInFlight = useRef(false);
+  const reasonRef = useRef(reason);
+  if (receipt && (loading || error || !data)) return <div className="space-y-3">
+    <Receipt value={receipt} />
+    {loading
+      ? <div className="text-sm text-muted-foreground">变更已生效，正在刷新组织权威状态…</div>
+      : error
+        ? <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm">变更已生效，但组织状态刷新失败：{error.message}</div>
+        : <div className="text-sm text-muted-foreground">变更已生效，组织权威状态暂不可用。</div>}
+  </div>;
   if (loading) return <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">正在读取生命周期…</div>;
   if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
   if (!data) return <Empty>组织生命周期数据不可用。</Empty>;
@@ -146,9 +155,12 @@ function TenantLifecyclePanel({ tenantId }: { tenantId: string }) {
   const runPreview = async () => {
     if (!action || mutationInFlight.current) return;
     mutationInFlight.current = true;
+    const previewReason = reason;
     setBusy(true); setMutationError(""); setReceipt(null);
-    try { setPreview(await governanceAccessApi.previewTenantLifecycle<TenantLifecyclePreview>(tenantId, { action: action.action, reason })); }
-    catch (cause) { setMutationError(cause instanceof Error ? cause.message : String(cause)); }
+    try {
+      const result = await governanceAccessApi.previewTenantLifecycle<TenantLifecyclePreview>(tenantId, { action: action.action, reason: previewReason });
+      if (reasonRef.current === previewReason) setPreview(result);
+    } catch (cause) { setMutationError(cause instanceof Error ? cause.message : String(cause)); }
     finally { mutationInFlight.current = false; setBusy(false); }
   };
   const commit = async () => {
@@ -172,7 +184,7 @@ function TenantLifecyclePanel({ tenantId }: { tenantId: string }) {
   const visibleResources = affectedResources.slice(0, 10);
   return <div className="space-y-4">
     <div className="grid gap-3 sm:grid-cols-3"><Fact label="状态" value={localizedValue(data.status, statusLabels)} /><Fact label="目标组织" value={data.tenantName} /><Fact label="组织 ID" value={data.tenantId} /></div>
-    {action ? <Input value={reason} onChange={event => { setReason(event.target.value); setPreview(null); setReceipt(null); }} placeholder="填写操作原因" /> : null}
+    {action ? <Input value={reason} disabled={busy} onChange={event => { reasonRef.current = event.target.value; setReason(event.target.value); setPreview(null); setReceipt(null); }} placeholder="填写操作原因" /> : null}
     {mutationError ? <div className="rounded-xl border border-destructive/30 p-3 text-sm text-destructive">{mutationError}</div> : null}
     {receipt ? <Receipt value={receipt} /> : null}
     {preview ? <div className="space-y-3 rounded-xl border bg-card p-4">
@@ -318,7 +330,7 @@ export function PlatformOrganizationGovernance({ tenantId, route }: { tenantId: 
   </div>;
 
   if (tab === "billing") return <div><Header title="计费" description="只呈现已有真实商业字段，不虚构订单、续费或自动降级状态机。" /><Empty>计费明细继续使用现有平台计费页面；本组织详情尚未提供统一计费聚合 DTO。</Empty></div>;
-  if (tab === "security-lifecycle") return <div><Header title="安全与生命周期" description="组织暂停与恢复执行预览→基线校验→审计回执；删除继续走持久化变更任务。" /><TenantLifecyclePanel tenantId={tenantId} /></div>;
+  if (tab === "security-lifecycle") return <div><Header title="安全与生命周期" description="组织暂停与恢复执行预览→基线校验→审计回执；删除继续走持久化变更任务。" /><TenantLifecyclePanel key={tenantId} tenantId={tenantId} /></div>;
   return <div><Header title="组织治理概览" description="组织权益、资源范围和策略均来自治理事实源。" />
     <div className="grid gap-3 sm:grid-cols-3"><Fact label="权益状态" value={entitlement ? localizedValue(entitlement.status, statusLabels) : "未配置"} /><Fact label="资源范围" value={`${data?.scopes.length ?? 0} 类`} /><Fact label="组织策略" value={`${data?.policies.length ?? 0} 项`} /></div>
     <div className="mt-4 flex items-start gap-2 rounded-xl border bg-card p-4 text-sm"><EntityIcons.admin className="mt-0.5 size-4 shrink-0" /><span>本页读取新治理事实源，不再用旧 TenantSettings 推导权限。</span></div>

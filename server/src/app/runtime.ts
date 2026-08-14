@@ -485,7 +485,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     // Tenant store 与 user store 共生命周期；tenants.json 放在 users.json 同目录。
     // 启动期保证平台根组织和开沿日常组织都始终存在。
     tenantsFilePath = join(dirname(usersFilePath), 'tenants.json');
-    tenantStore = new TenantStore(tenantsFilePath);
+    const tenantPgConfig = config.runtimeEventStore?.backend === 'pg'
+      ? config.runtimeEventStore
+      : undefined;
+    tenantStore = new TenantStore(tenantsFilePath, tenantPgConfig ? {
+      withLock: <T>(operation: () => Promise<T>) => withPgAdvisoryLock(
+        tenantPgConfig.connectionString,
+        `${tenantPgConfig.tablePrefix ?? 'agent_saas'}:tenant-store:${tenantsFilePath}`,
+        operation,
+      ),
+    } : {});
     await tenantStore.ensureDefaultTenant();
     await tenantStore.ensureKaiyanTenant();
     authMiddleware = createAuthMiddleware(config.auth.jwtSecret, userStore, tenantStore, config.auth.tokenExpiresIn || '30d');

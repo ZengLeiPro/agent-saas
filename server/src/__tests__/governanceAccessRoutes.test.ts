@@ -55,7 +55,7 @@ async function rig(input: {
   revokeOAuthGrant?: (grant: OAuthGrant, user: JwtPayload) => Promise<void>;
   tenantLifecycle?: { id: string; name?: string; disabled?: boolean; updatedAt: string };
   setTenantDisabled?: (
-    tenantId: string, disabled: boolean, actorUserId: string,
+    tenantId: string, disabled: boolean, actorUserId: string, expectedUpdatedAt: string,
   ) => Promise<{ id: string; disabled?: boolean; updatedAt: string }>;
   directoryGroups?: {
     getGroup(tenantId: string, groupId: string): Promise<{ groupId: string; status: 'active' | 'disabled' } | null>;
@@ -331,7 +331,7 @@ describe('governance access routes', () => {
     );
     expect(committed.status).toBe(200);
     expect(await committed.json()).toMatchObject({ tenantId: 'tenant-a', status: 'suspended' });
-    expect(test.setTenantDisabled).toHaveBeenCalledWith('tenant-a', true, 'platform-1');
+    expect(test.setTenantDisabled).toHaveBeenCalledWith('tenant-a', true, 'platform-1', NOW);
   });
 
   it('生命周期恢复只向平台管理员开放，并沿用 preview baseline', async () => {
@@ -358,7 +358,7 @@ describe('governance access routes', () => {
     );
     expect(committed.status).toBe(200);
     expect(await committed.json()).toMatchObject({ status: 'active' });
-    expect(test.setTenantDisabled).toHaveBeenCalledWith('tenant-a', false, 'platform-1');
+    expect(test.setTenantDisabled).toHaveBeenCalledWith('tenant-a', false, 'platform-1', NOW);
   });
 
   it('Entitlement 与 Scope 写入统一绑定 previewId 和 baselineDigest', async () => {

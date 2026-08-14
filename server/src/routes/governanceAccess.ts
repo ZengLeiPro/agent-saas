@@ -189,7 +189,12 @@ export function createGovernanceAccessRouter(deps: {
   } | null;
   getMemberBudgetOverview?: (tenantId: string, userId: string) => Promise<BillingMemberBudgetOverview>;
   getTenantLifecycle?: (tenantId: string) => { id: string; name?: string; disabled?: boolean; updatedAt: string } | undefined;
-  setTenantDisabled?: (tenantId: string, disabled: boolean, actorUserId: string) => Promise<{ id: string; disabled?: boolean; updatedAt: string }>;
+  setTenantDisabled?: (
+    tenantId: string,
+    disabled: boolean,
+    actorUserId: string,
+    expectedUpdatedAt: string,
+  ) => Promise<{ id: string; disabled?: boolean; updatedAt: string }>;
   audit: GovernanceAuditStore;
   contentAccess?: PgContentAccessGrantStore;
   projectionOutbox?: PgGovernanceProjectionOutboxStore;

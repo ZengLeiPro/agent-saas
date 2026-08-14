@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -91,7 +91,7 @@ describe('TenantStore', () => {
       expect(s2.findById('wain')?.name).toBe('唯恩电气');
     });
 
-    it('reload 能读取另一进程写入的组织开关', async () => {
+    it('读取会自动刷新另一进程写入的组织开关', async () => {
       const writer = new TenantStore(storePath);
       await writer.create({ id: 'kaiyan', name: '开沿', createdBy: 'system' });
       const reader = new TenantStore(storePath);
@@ -100,10 +100,23 @@ describe('TenantStore', () => {
       await writer.updateSettings('kaiyan', {
         features: { memoryPollingEnabled: true },
       });
-      expect(reader.getSettings('kaiyan')?.features.memoryPollingEnabled).toBe(false);
-
-      reader.reload();
       expect(reader.getSettings('kaiyan')?.features.memoryPollingEnabled).toBe(true);
+    });
+
+    it('文件损坏时拒绝 mutation，不得用空基线覆盖原文件', async () => {
+      writeFileSync(storePath, '{broken-json', 'utf-8');
+      const store = new TenantStore(storePath);
+
+      await expect(store.ensureDefaultTenant()).rejects.toThrow();
+      expect(readFileSync(storePath, 'utf-8')).toBe('{broken-json');
+    });
+
+    it('文件结构不完整时拒绝 mutation，不得覆盖原文件', async () => {
+      writeFileSync(storePath, JSON.stringify({ version: 1 }), 'utf-8');
+      const store = new TenantStore(storePath);
+
+      await expect(store.ensureDefaultTenant()).rejects.toThrow(/Invalid tenants file structure/);
+      expect(JSON.parse(readFileSync(storePath, 'utf-8'))).toEqual({ version: 1 });
     });
 
     it('文件不存在时初始化为空', () => {
@@ -208,6 +221,64 @@ describe('TenantStore', () => {
       const reenabled = await store.setDisabled('wain', false, 'admin-1');
       expect(reenabled.disabled).toBeUndefined();
       expect(reenabled.disabledBy).toBeUndefined();
+    });
+
+    it('两个实例并发禁用不同组织时保留双方修改', async () => {
+      const seed = new TenantStore(storePath);
+      await seed.create({ id: 'wain', name: '唯恩', createdBy: 's' });
+      await seed.create({ id: 'acme', name: 'Acme', createdBy: 's' });
+      await seed.create({ id: 'backup', name: 'Backup', createdBy: 's' });
+      const first = new TenantStore(storePath);
+      const second = new TenantStore(storePath);
+      const wainBaseline = first.findById('wain')!.updatedAt;
+      const acmeBaseline = second.findById('acme')!.updatedAt;
+
+      await Promise.all([
+        first.setDisabled('wain', true, 'admin-1', wainBaseline),
+        second.setDisabled('acme', true, 'admin-2', acmeBaseline),
+      ]);
+
+      const persisted = new TenantStore(storePath);
+      expect(persisted.findById('wain')?.disabled).toBe(true);
+      expect(persisted.findById('acme')?.disabled).toBe(true);
+      expect(persisted.findById('backup')?.disabled).toBeUndefined();
+    });
+
+    it('组织配置写入与禁用并发时不会整文件互相覆盖', async () => {
+      const seed = new TenantStore(storePath);
+      await seed.create({ id: 'wain', name: '唯恩', createdBy: 's' });
+      await seed.create({ id: 'backup', name: 'Backup', createdBy: 's' });
+      const lifecycleWriter = new TenantStore(storePath);
+      const configWriter = new TenantStore(storePath);
+      const baseline = lifecycleWriter.findById('wain')!.updatedAt;
+
+      await Promise.all([
+        lifecycleWriter.setDisabled('wain', true, 'admin-1', baseline),
+        configWriter.update('backup', { name: 'Backup Updated' }),
+      ]);
+
+      const persisted = new TenantStore(storePath);
+      expect(persisted.findById('wain')?.disabled).toBe(true);
+      expect(persisted.findById('backup')?.name).toBe('Backup Updated');
+    });
+
+    it('两个实例用同一基线重复禁用同一组织时仅一个成功', async () => {
+      const seed = new TenantStore(storePath);
+      await seed.create({ id: 'wain', name: '唯恩', createdBy: 's' });
+      await seed.create({ id: 'backup', name: 'Backup', createdBy: 's' });
+      const first = new TenantStore(storePath);
+      const second = new TenantStore(storePath);
+      const baseline = first.findById('wain')!.updatedAt;
+
+      const outcomes = await Promise.allSettled([
+        first.setDisabled('wain', true, 'admin-1', baseline),
+        second.setDisabled('wain', true, 'admin-2', baseline),
+      ]);
+
+      expect(outcomes.filter(outcome => outcome.status === 'fulfilled')).toHaveLength(1);
+      const rejection = outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
+      expect(rejection?.reason).toMatchObject({ code: 'TENANT_LIFECYCLE_BASELINE_CONFLICT' });
+      expect(new TenantStore(storePath).findById('wain')?.disabled).toBe(true);
     });
 
     it('setDisabled 持久化失败时回滚内存状态', async () => {

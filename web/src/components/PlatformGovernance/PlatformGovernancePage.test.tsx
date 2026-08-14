@@ -161,13 +161,15 @@ describe("PlatformOrganizationGovernance", () => {
     mocks.previewTenantLifecycle.mockImplementationOnce(() => new Promise(resolve => { resolvePreview = resolve; }));
     render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "security-lifecycle" })} />);
 
-    fireEvent.change(await screen.findByPlaceholderText("填写操作原因"), { target: { value: "重复点击防护测试" } });
+    const reasonInput = await screen.findByPlaceholderText("填写操作原因");
+    fireEvent.change(reasonInput, { target: { value: "重复点击防护测试" } });
     const action = screen.getByRole("button", { name: "暂停组织" });
     fireEvent.click(action);
     fireEvent.click(action);
 
     expect(mocks.previewTenantLifecycle).toHaveBeenCalledTimes(1);
     expect(action.hasAttribute("disabled")).toBe(true);
+    expect(reasonInput.hasAttribute("disabled")).toBe(true);
     await act(async () => {
       resolvePreview({
         previewId: `tlpv1.${"c".repeat(64)}`,
@@ -194,6 +196,47 @@ describe("PlatformOrganizationGovernance", () => {
     await act(async () => {
       resolveCommit({ changeId: "change-lifecycle-1", auditId: "audit-lifecycle-1", effectiveAt: "2026-08-10T10:00:01.000Z" });
     });
+  });
+
+  it("切换组织时清除上一组织回执", async () => {
+    const view = render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "security-lifecycle" })} />);
+
+    fireEvent.change(await screen.findByPlaceholderText("填写操作原因"), { target: { value: "组织切换回执测试" } });
+    fireEvent.click(screen.getByRole("button", { name: "暂停组织" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认暂停组织" }));
+    expect(await screen.findByText("changeId：change-lifecycle-1")).toBeTruthy();
+
+    mocks.getTenantLifecycle.mockResolvedValue({
+      tenantId: "tenant-b",
+      tenantName: "组织 B",
+      status: "active",
+      updatedAt: "2026-08-10T10:02:00.000Z",
+      allowedActions: [{ id: "suspend", label: "暂停组织", action: "suspend", requiresReason: true }],
+    });
+    view.rerender(<PlatformOrganizationGovernance tenantId="tenant-b" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-b", tab: "security-lifecycle" })} />);
+
+    expect(await screen.findByText("组织 B")).toBeTruthy();
+    expect(screen.queryByText("changeId：change-lifecycle-1")).toBeNull();
+  });
+
+  it("生命周期变更成功后刷新失败仍保留成功回执", async () => {
+    mocks.getTenantLifecycle
+      .mockResolvedValueOnce({
+        tenantId: "tenant-a",
+        tenantName: "测试组织",
+        status: "active",
+        updatedAt: "2026-08-10T10:00:00.000Z",
+        allowedActions: [{ id: "suspend", label: "暂停组织", action: "suspend", requiresReason: true }],
+      })
+      .mockRejectedValueOnce(new Error("refresh unavailable"));
+    render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "security-lifecycle" })} />);
+
+    fireEvent.change(await screen.findByPlaceholderText("填写操作原因"), { target: { value: "刷新失败回执测试" } });
+    fireEvent.click(screen.getByRole("button", { name: "暂停组织" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认暂停组织" }));
+
+    expect(await screen.findByText("changeId：change-lifecycle-1")).toBeTruthy();
+    expect(await screen.findByText(/变更已生效，但组织状态刷新失败：refresh unavailable/)).toBeTruthy();
   });
 
   it("生命周期提交冲突清除旧预览、刷新权威状态且不制造成功回执", async () => {

@@ -40,6 +40,7 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
     tenantId: string,
     disabled: boolean,
     actorUserId: string,
+    expectedUpdatedAt: string,
   ) => Promise<TenantLifecycleRecord>;
   dependencyImpact?: (tenantId: string, action: 'suspend' | 'resume') => Promise<{
     affectedResources: Array<{ type: string; id: string; version: number }>; blockers: string[];
@@ -154,13 +155,24 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
         });
       }
       try {
-        const updated = await options.setTenantDisabled(tenantId, parsed.data.action === 'suspend', req.user!.sub);
+        const updated = await options.setTenantDisabled(
+          tenantId,
+          parsed.data.action === 'suspend',
+          req.user!.sub,
+          tenant.updatedAt,
+        );
         return res.json({
           tenantId, status: updated.disabled ? 'suspended' : 'active', updatedAt: updated.updatedAt,
           changeId: res.locals.governanceChangeId, effectiveAt: updated.updatedAt,
         });
       } catch (error) {
-        return res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
+        const code = typeof error === 'object' && error !== null && 'code' in error
+          ? String((error as { code?: unknown }).code)
+          : undefined;
+        return res.status(409).json({
+          error: error instanceof Error ? error.message : String(error),
+          ...(code ? { code } : {}),
+        });
       }
     } finally {
       commitsInFlight.delete(tenantId);

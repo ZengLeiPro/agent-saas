@@ -6,6 +6,8 @@
  * 存储为文件 store（server/data/org-agents.json），tmpfile+rename 原子持久化。
  */
 
+import type { OrgAgentRuntimePolicy } from './runtimePolicy.js';
+
 /** 指派范围（复用 TenantSkillRule 三态形态） */
 export interface OrgAgentAudience {
   exposure: 'all' | 'allow_users' | 'deny_users';
@@ -114,6 +116,11 @@ export interface OrgAgentRecord {
    * 未来独立 KB 表时字段语义不变（详见蓝图 v2 § 4.1.1）。
    */
   allowedKnowledge?: string[];
+  /**
+   * Agent-local versioned Runtime Policy. Optional at the type boundary for
+   * pre-policy fixtures/files; OrgAgentStore always normalizes it on read/write.
+   */
+  runtime?: OrgAgentRuntimePolicy;
   audience: OrgAgentAudience;
   guardrail: OrgAgentGuardrailConfig;
   enabled: boolean;

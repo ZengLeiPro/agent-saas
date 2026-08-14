@@ -25,7 +25,11 @@ export {
 } from "./types/index";
 export type {
   OrgAgentAudience,
+  OrgAgentExecutionTarget,
   OrgAgentGuardrailConfig,
+  OrgAgentRuntimeCapabilityPolicy,
+  OrgAgentRuntimeContextModule,
+  OrgAgentRuntimePolicy,
   OrgAgentRecord,
   OrgAgentSummary,
   AgentDwsAccount,

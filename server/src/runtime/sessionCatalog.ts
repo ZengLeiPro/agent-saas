@@ -10,8 +10,51 @@ import {
 } from '../data/transcripts/meta.js';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
 import type { AgentProfileSessionBinding } from '../data/agentProfiles/types.js';
+import {
+  orgAgentRuntimePolicySchema,
+  parseOrgAgentRuntimePolicy,
+  type OrgAgentRuntimePolicy,
+} from '../data/orgAgents/runtimePolicy.js';
+import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 
 export type RuntimeSessionStatus = 'running' | 'idle' | 'waiting_approval' | 'finished' | 'error';
+
+export interface OrgAgentSessionSnapshot {
+  name: string;
+  instructions: string;
+  allowedSkills: string[];
+  allowedKnowledge: string[];
+  runtime: OrgAgentRuntimePolicy;
+}
+
+export function createOrgAgentSessionSnapshot(
+  agent: Pick<OrgAgentRecord, 'name' | 'instructions' | 'allowedSkills' | 'allowedKnowledge' | 'runtime'>,
+): OrgAgentSessionSnapshot {
+  return {
+    name: agent.name,
+    instructions: agent.instructions,
+    allowedSkills: [...agent.allowedSkills],
+    allowedKnowledge: [...(agent.allowedKnowledge ?? [])],
+    runtime: parseOrgAgentRuntimePolicy(agent.runtime),
+  };
+}
+
+function parseOrgAgentSessionSnapshot(value: unknown): OrgAgentSessionSnapshot | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record.name !== 'string' || typeof record.instructions !== 'string') return undefined;
+  if (!Array.isArray(record.allowedSkills) || !record.allowedSkills.every(item => typeof item === 'string')) return undefined;
+  if (!Array.isArray(record.allowedKnowledge) || !record.allowedKnowledge.every(item => typeof item === 'string')) return undefined;
+  const runtime = orgAgentRuntimePolicySchema.safeParse(record.runtime);
+  if (!runtime.success) return undefined;
+  return {
+    name: record.name,
+    instructions: record.instructions,
+    allowedSkills: [...record.allowedSkills],
+    allowedKnowledge: [...record.allowedKnowledge],
+    runtime: parseOrgAgentRuntimePolicy(runtime.data),
+  };
+}
 
 export interface RuntimeSessionRecord extends Partial<AgentProfileSessionBinding> {
   sessionId: string;
@@ -33,6 +76,8 @@ export interface RuntimeSessionRecord extends Partial<AgentProfileSessionBinding
   kind?: 'subagent';
   /** 公司级专职 Agent 绑定（2026-07 唯恩批次）。缺省 = 个人 Agent 会话。 */
   orgAgentId?: string;
+  /** 当前 in-flight run 的组织 Agent 安全快照；resume 必须复用，不能读取更宽的新配置。 */
+  orgAgentSnapshot?: OrgAgentSessionSnapshot;
   /**
    * 记忆写入策略版本（2026-07-29 记忆写入职责剥离批次）。'v2' = 主 Agent 不再
    * 自由写记忆、启用 MemoryCommand。会话首次 run 固定，之后不随租户开关变化
@@ -125,6 +170,7 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(record.kind ? { kind: record.kind } : {}),
       // orgAgentId 缺省时保留 existing 值（resume 路径 record 可能不带），不清除既有绑定
       ...(record.orgAgentId ? { orgAgentId: record.orgAgentId } : {}),
+      ...(record.orgAgentSnapshot ? { orgAgentSnapshot: record.orgAgentSnapshot } : {}),
       // memoryPolicyVersion 同理：会话级 pin，缺省保留 existing，绝不清除
       ...(record.memoryPolicyVersion ? { memoryPolicyVersion: record.memoryPolicyVersion } : {}),
       ...(record.profileId ? { profileId: record.profileId } : {}),
@@ -139,6 +185,7 @@ export class FileSessionCatalog implements SessionCatalog {
 
   private toRecord(sessionId: string, transcriptPath: string, meta: SessionMeta): RuntimeSessionRecord {
     const now = new Date().toISOString();
+    const orgAgentSnapshot = parseOrgAgentSessionSnapshot(meta.orgAgentSnapshot);
     return {
       sessionId,
       userId: meta.userId,
@@ -154,6 +201,7 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(isRuntimeSessionStatus(meta.runtimeStatus) ? { status: meta.runtimeStatus } : {}),
       ...(meta.kind === 'subagent' ? { kind: 'subagent' as const } : {}),
       ...(meta.orgAgentId ? { orgAgentId: meta.orgAgentId } : {}),
+      ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
       ...(meta.memoryPolicyVersion === 'v2' ? { memoryPolicyVersion: 'v2' as const } : {}),
       ...(meta.profileId ? { profileId: meta.profileId } : {}),
       ...(meta.profileKey ? { profileKey: meta.profileKey } : {}),
@@ -182,6 +230,7 @@ export function createRuntimeSessionRecord(args: {
   status?: RuntimeSessionStatus;
   kind?: 'subagent';
   orgAgentId?: string;
+  orgAgentSnapshot?: OrgAgentSessionSnapshot;
   profileBinding?: AgentProfileSessionBinding;
 }): RuntimeSessionRecord {
   const now = new Date().toISOString();
@@ -200,6 +249,7 @@ export function createRuntimeSessionRecord(args: {
     status: args.status ?? 'running',
     ...(args.kind ? { kind: args.kind } : {}),
     ...(args.orgAgentId ? { orgAgentId: args.orgAgentId } : {}),
+    ...(args.orgAgentSnapshot ? { orgAgentSnapshot: args.orgAgentSnapshot } : {}),
     ...(args.profileBinding ?? {}),
     createdAt: now,
     updatedAt: now,

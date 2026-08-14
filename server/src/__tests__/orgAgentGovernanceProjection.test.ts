@@ -59,7 +59,7 @@ describe('Org Agent governance compatibility projection', () => {
       id: 'org-kaikai', tenantId: 'tenant-a', name: '开开', enabled: true,
       starterPrompts: ['帮我整理一下'], instructions: '直接协助处理工作，不猜测。',
       allowedSkills: ['dws'], allowedKnowledge: ['company'],
-      audience: { exposure: 'all', usernames: [] },
+      audience: { exposure: 'allow_users', usernames: [] },
       createdBy: 'system:governance-projection',
     });
   });

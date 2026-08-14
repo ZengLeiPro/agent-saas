@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { DEFAULT_ORG_AGENT_RUNTIME_POLICY } from '../data/orgAgents/runtimePolicy.js';
 import {
+  createOrgAgentSessionSnapshot,
   createRuntimeSessionRecord,
   FileSessionCatalog,
 } from '../runtime/sessionCatalog.js';
@@ -51,6 +53,42 @@ describe('FileSessionCatalog', () => {
       modelRef: 'gpt-5.4-mini',
       executionTarget: 'server-local',
       status: 'running',
+    });
+  });
+
+  it('持久化当前 run 的组织 Agent 安全快照，供 approval/interaction resume 固定复用', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'session-catalog-org-agent-'));
+    cleanupDirs.add(cwd);
+    const sessionId = randomUUID();
+    const catalog = new FileSessionCatalog({ agentCwd: cwd });
+    const orgAgentSnapshot = createOrgAgentSessionSnapshot({
+      name: '开开',
+      instructions: '只处理组织任务',
+      allowedSkills: ['dws'],
+      allowedKnowledge: ['company'],
+      runtime: DEFAULT_ORG_AGENT_RUNTIME_POLICY,
+    });
+    const record = createRuntimeSessionRecord({
+      sessionId,
+      userId: 'adws-1',
+      username: 'agent-dws:org-kaikai',
+      channel: 'dingtalk',
+      cwd,
+      orgAgentId: 'org-kaikai',
+      orgAgentSnapshot,
+    });
+    cleanupDirs.add(dirname(record.transcriptPath));
+
+    await catalog.upsert(record);
+
+    await expect(catalog.get(sessionId)).resolves.toMatchObject({
+      orgAgentId: 'org-kaikai',
+      orgAgentSnapshot: {
+        name: '开开',
+        instructions: '只处理组织任务',
+        allowedSkills: ['dws'],
+        allowedKnowledge: ['company'],
+      },
     });
   });
 

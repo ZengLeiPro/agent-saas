@@ -51,6 +51,86 @@ export function resolveLegacySkillIdForPreferenceProjection(
   return PERSONAL_SKILL_RESOURCE_ID_PATTERN.test(resourceId) ? undefined : resourceId;
 }
 
+export async function resolveLegacyAssignmentAudience(input: {
+  tenantId: string;
+  assignments: Array<{
+    assigneeType: 'everyone' | 'user' | 'directory_group' | 'agent';
+    assigneeId?: string;
+    effect: 'allow' | 'deny';
+  }>;
+  directoryGroups?: {
+    getAssignmentSnapshot(tenantId: string, groupId: string): Promise<{
+      memberUserIds: string[];
+      fresh: boolean;
+    } | null>;
+  };
+  findUserById(userId: string): { tenantId: string; username: string } | undefined;
+}): Promise<{
+  exposure: 'all' | 'allow_users' | 'deny_users';
+  usernames: string[];
+  departmentIds: string[];
+}> {
+  if (input.assignments.some(item => item.assigneeType === 'agent')) {
+    throw new Error('GOVERNANCE_PROJECTION_UNSUPPORTED_ASSIGNEE');
+  }
+
+  const allowUserIds = new Set<string>();
+  const denyUserIds = new Set<string>();
+  const departmentIds: string[] = [];
+  const seenDepartmentIds = new Set<string>();
+  for (const assignment of input.assignments) {
+    if (assignment.assigneeType === 'everyone') continue;
+    if (assignment.assigneeType === 'user') {
+      if (!assignment.assigneeId) throw new Error('GOVERNANCE_PROJECTION_INVALID');
+      (assignment.effect === 'deny' ? denyUserIds : allowUserIds).add(assignment.assigneeId);
+      continue;
+    }
+    if (assignment.assigneeType !== 'directory_group') {
+      throw new Error('GOVERNANCE_PROJECTION_UNSUPPORTED_ASSIGNEE');
+    }
+    if (!assignment.assigneeId) throw new Error('GOVERNANCE_PROJECTION_INVALID');
+    if (!input.directoryGroups) {
+      throw new Error('GOVERNANCE_PROJECTION_DIRECTORY_GROUP_AUTHORITY_UNAVAILABLE');
+    }
+    const snapshot = await input.directoryGroups.getAssignmentSnapshot(input.tenantId, assignment.assigneeId);
+    if (!snapshot || !snapshot.fresh) {
+      throw new Error('GOVERNANCE_PROJECTION_DIRECTORY_GROUP_UNRESOLVED');
+    }
+    if (!seenDepartmentIds.has(assignment.assigneeId)) {
+      seenDepartmentIds.add(assignment.assigneeId);
+      departmentIds.push(assignment.assigneeId);
+    }
+    const target = assignment.effect === 'deny' ? denyUserIds : allowUserIds;
+    for (const memberUserId of snapshot.memberUserIds) target.add(memberUserId);
+  }
+
+  const usernamesByUserId = new Map<string, string>();
+  for (const userId of new Set([...allowUserIds, ...denyUserIds])) {
+    const user = input.findUserById(userId);
+    if (!user || user.tenantId !== input.tenantId || !user.username) {
+      throw new Error('GOVERNANCE_PROJECTION_IDENTITY_UNRESOLVED');
+    }
+    usernamesByUserId.set(userId, user.username);
+  }
+  const usernamesFor = (userIds: Set<string>) => [...new Set(
+    [...userIds].map(userId => usernamesByUserId.get(userId)!),
+  )];
+  const denyUsernames = usernamesFor(denyUserIds);
+  const deniedUsernameSet = new Set(denyUsernames);
+  const allowUsernames = usernamesFor(allowUserIds).filter(username => !deniedUsernameSet.has(username));
+
+  const everyoneAssignments = input.assignments.filter(item => item.assigneeType === 'everyone');
+  if (everyoneAssignments.some(item => item.effect === 'deny')) {
+    return { exposure: 'allow_users', usernames: [], departmentIds };
+  }
+  if (everyoneAssignments.some(item => item.effect === 'allow')) {
+    return denyUsernames.length > 0
+      ? { exposure: 'deny_users', usernames: denyUsernames, departmentIds }
+      : { exposure: 'all', usernames: [], departmentIds };
+  }
+  return { exposure: 'allow_users', usernames: allowUsernames, departmentIds };
+}
+
 /** Initializes durable governance stores in the same fail-closed order as runtime bootstrap. */
 export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceStoreDeps) {
   const { pgEventStore, tablePrefix, config, userStore, tenantStore, orgAgentStore, skillConfigStore } = deps;
@@ -332,40 +412,31 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
           const resourceId = typeof payload.resourceId === 'string' ? payload.resourceId : '';
           const set = await assignmentStore?.getAssignmentSet(tenantId, resourceType as import('../data/assignments/types.js').AssignmentResourceType, resourceId);
           if (!set) throw new Error('GOVERNANCE_PROJECTION_INVALID');
-          const everyone = set.assignments.find(item => item.assigneeType === 'everyone');
-          const userAssignments = set.assignments.filter(item => item.assigneeType === 'user' && item.assigneeId);
-          if (set.assignments.some(item => !['everyone', 'user'].includes(item.assigneeType))) {
-            throw new Error('GOVERNANCE_PROJECTION_UNSUPPORTED_ASSIGNEE');
-          }
-          const usernames = userAssignments.map(item => userStore?.findById(item.assigneeId!)?.username)
-            .filter((value): value is string => Boolean(value));
-          if (usernames.length !== userAssignments.length) throw new Error('GOVERNANCE_PROJECTION_IDENTITY_UNRESOLVED');
-          const allowUsers = userAssignments.filter(item => item.effect === 'allow').map(item => item.assigneeId);
-          const denyUsers = userAssignments.filter(item => item.effect === 'deny').map(item => item.assigneeId);
-          const exposure = everyone?.effect === 'allow'
-            ? (denyUsers.length > 0 ? 'deny_users' : 'all')
-            : 'allow_users';
-          const audienceUsernames = exposure === 'deny_users'
-            ? userAssignments.filter(item => item.effect === 'deny').map(item => userStore!.findById(item.assigneeId!)!.username)
-            : exposure === 'allow_users'
-              ? userAssignments.filter(item => item.effect === 'allow').map(item => userStore!.findById(item.assigneeId!)!.username)
-              : [];
+          const audience = await resolveLegacyAssignmentAudience({
+            tenantId,
+            assignments: set.assignments,
+            directoryGroups: directoryGroupStore,
+            findUserById: userId => userStore?.findById(userId),
+          });
           if (resourceType === 'org_agent') {
             const agent = orgAgentStore?.get(resourceId);
             if (!agent || agent.tenantId !== tenantId) throw new Error('GOVERNANCE_PROJECTION_INVALID');
             await orgAgentStore!.update(resourceId, {
-              audience: { exposure, usernames: audienceUsernames },
+              audience: {
+                exposure: audience.exposure,
+                usernames: audience.usernames,
+                ...(audience.departmentIds.length > 0 ? { departmentIds: audience.departmentIds } : {}),
+              },
             }, 'system:governance-projection');
           } else if (resourceType === 'skill') {
             const config = skillConfigStore?.getAllTenantConfigs()[tenantId];
-            const rule = { enabled: true, exposure, usernames: audienceUsernames } as const;
+            const rule = { enabled: true, exposure: audience.exposure, usernames: audience.usernames } as const;
             if (config?.ownSkills && Object.prototype.hasOwnProperty.call(config.ownSkills, resourceId)) {
               await skillConfigStore!.setTenantOwnSkillRules(tenantId, { [resourceId]: rule });
             } else {
               await skillConfigStore!.setTenantSkillRules(tenantId, { [resourceId]: rule });
             }
           }
-          void allowUsers;
         },
         preference: async payload => {
           const userId = typeof payload.userId === 'string' ? payload.userId : '';

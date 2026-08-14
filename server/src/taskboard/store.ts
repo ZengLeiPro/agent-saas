@@ -695,7 +695,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskBoardExecutionStartResult> {
     return this.withTransaction(async (client) => {
       const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
-      assertExpectedVersion(loaded.task, input.expectedVersion);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
       assertExecutionConfiguration(
         loaded.task.model ?? loaded.boardModel,
@@ -703,7 +702,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         loaded.boardOwnerUserId,
         input.executionOwnerUserId,
       );
-      const purpose = resolveExecutionPurpose(loaded.task.status, input.purpose);
       const active = await client.query(
         `SELECT id FROM ${this.executionsTable}
           WHERE task_id=$1 AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
@@ -716,6 +714,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           'TASKBOARD_EXECUTION_ACTIVE',
         );
       }
+      assertExpectedVersion(loaded.task, input.expectedVersion);
+      const purpose = resolveExecutionPurpose(loaded.task.status, input.purpose);
 
       const peers = await client.query(
         `SELECT t.sort_order

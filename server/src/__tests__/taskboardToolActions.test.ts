@@ -6,11 +6,12 @@ import type {
   TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import { invokeTaskboardAction } from '../agent/taskboardToolActions.js';
-import type {
-  TaskboardExecutionContext,
-  TaskboardExecutionService,
-  TaskboardIdentity,
-  TaskboardService,
+import {
+  TaskboardValidationError,
+  type TaskboardExecutionContext,
+  type TaskboardExecutionService,
+  type TaskboardIdentity,
+  type TaskboardService,
 } from '../taskboard/types.js';
 
 const identity: TaskboardIdentity = {
@@ -311,6 +312,23 @@ describe('CronManage taskboard actions', () => {
     await expect(invokeTaskboardAction(options, identity, {
       action: 'task.dispatch', taskId: task.id, expectedVersion: task.version,
     })).rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+  });
+
+  it('task.dispatch 连续派发同一任务时透传活跃 Execution 冲突', async () => {
+    const { executionService, options } = rig();
+
+    await invokeTaskboardAction(options, identity, {
+      action: 'task.dispatch', taskId: task.id, expectedVersion: task.version,
+    });
+    vi.mocked(executionService.startExecution).mockRejectedValueOnce(new TaskboardValidationError(
+      'Task already has an active Agent execution',
+      'TASKBOARD_EXECUTION_ACTIVE',
+    ));
+
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'task.dispatch', taskId: task.id, expectedVersion: task.version + 1,
+    })).rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_ACTIVE' });
+    expect(executionService.startExecution).toHaveBeenCalledTimes(2);
   });
 
   it('create+dispatch 在派发失败时明确返回已创建任务，服务未启用时不创建', async () => {

@@ -14,10 +14,11 @@ import { RunCreateConflictError, type RunRecord } from '../runtime/runStore.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { EventStore, PlatformEvent } from '../runtime/types.js';
 import { TaskboardExecutionCoordinator } from '../taskboard/executionService.js';
-import type {
-  TaskboardExecutionContext,
-  TaskboardExecutionStore,
-  TaskboardIdentity,
+import {
+  TaskboardValidationError,
+  type TaskboardExecutionContext,
+  type TaskboardExecutionStore,
+  type TaskboardIdentity,
 } from '../taskboard/types.js';
 
 const identity: TaskboardIdentity = {
@@ -227,6 +228,24 @@ describe('TaskboardExecutionCoordinator', () => {
         outputTransactionMode: 'terminal_buffered',
       }),
     }));
+  });
+
+  it('同一任务已有活跃 Execution 时拒绝再次派发且不创建第二个 Run', async () => {
+    const rig = makeRig();
+    const first = await rig.coordinator.startExecution(identity, task.id, {
+      expectedVersion: task.version,
+    });
+    vi.mocked(rig.store.claimExecution).mockRejectedValueOnce(new TaskboardValidationError(
+      'Task already has an active Agent execution',
+      'TASKBOARD_EXECUTION_ACTIVE',
+    ));
+
+    await expect(rig.coordinator.startExecution(identity, task.id, {
+      expectedVersion: first.task.version,
+    })).rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_ACTIVE' });
+
+    expect(rig.store.claimExecution).toHaveBeenCalledTimes(2);
+    expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledTimes(1);
   });
 
   it('组织成员不能借看板创建者上下文派发 Agent', async () => {

@@ -360,6 +360,70 @@ describePg('PgTaskboardStore contract', () => {
     });
   });
 
+  it('rejects repeated and concurrent execution claims without creating a second active Execution', async () => {
+    const board = await store.createBoard(alice, { name: '重复派发隔离' });
+    const sequentialTask = await store.createTask(alice, board.id, {
+      title: '连续派发', status: 'todo',
+    });
+    const firstExecutionId = randomUUID();
+    const firstRunId = randomUUID();
+    const firstSessionId = randomUUID();
+    const first = await store.claimExecution(alice, sequentialTask.id, {
+      expectedVersion: sequentialTask.version,
+      executionId: firstExecutionId,
+      runId: firstRunId,
+      sessionId: firstSessionId,
+      executionOwnerUserId: alice.ownerUserId,
+      dispatch: dispatch(firstExecutionId, firstRunId, firstSessionId),
+    });
+    const duplicateExecutionId = randomUUID();
+    const duplicateRunId = randomUUID();
+    const duplicateSessionId = randomUUID();
+    await expect(store.claimExecution(alice, sequentialTask.id, {
+      expectedVersion: first.task.version,
+      executionId: duplicateExecutionId,
+      runId: duplicateRunId,
+      sessionId: duplicateSessionId,
+      executionOwnerUserId: alice.ownerUserId,
+      dispatch: dispatch(duplicateExecutionId, duplicateRunId, duplicateSessionId),
+    })).rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_ACTIVE' });
+    expect(await store.listExecutions(alice, sequentialTask.id)).toHaveLength(1);
+
+    const concurrentTask = await store.createTask(alice, board.id, {
+      title: '并发派发', status: 'todo',
+    });
+    const attempts = Array.from({ length: 2 }, () => {
+      const executionId = randomUUID();
+      const runId = randomUUID();
+      const sessionId = randomUUID();
+      return store.claimExecution(alice, concurrentTask.id, {
+        expectedVersion: concurrentTask.version,
+        executionId,
+        runId,
+        sessionId,
+        executionOwnerUserId: alice.ownerUserId,
+        dispatch: dispatch(executionId, runId, sessionId),
+      });
+    });
+    const results = await Promise.allSettled(attempts);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toEqual([
+      expect.objectContaining({
+        reason: expect.objectContaining({ code: 'TASKBOARD_EXECUTION_ACTIVE' }),
+      }),
+    ]);
+    expect(await store.listExecutions(alice, concurrentTask.id)).toHaveLength(1);
+    const outbox = await pool.query(
+      `SELECT count(*)::int AS count
+         FROM ${store.executionOutboxTable} o
+         JOIN ${store.executionsTable} e ON e.id=o.execution_id
+        WHERE e.task_id=$1`,
+      [concurrentTask.id],
+    );
+    expect(outbox.rows[0]?.count).toBe(1);
+  });
+
   it('atomically claims one Agent execution, rereads comments, and finalizes idempotently', async () => {
     const board = await store.createBoard(alice, {
       name: 'Agent 执行闭环',

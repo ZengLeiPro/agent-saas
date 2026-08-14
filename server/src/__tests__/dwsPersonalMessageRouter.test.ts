@@ -55,6 +55,7 @@ function setup(input: {
   dispatch?: AgentRunDispatch;
   existingRun?: { runId: string; sessionId: string; status: string } | null;
   recoveredEvents?: Array<Record<string, unknown>>;
+  bindingPeerOpenDingtalkId?: string;
   resolveDefaultModel?: (tenantId: string) => AgentDwsDefaultModelResolution | null;
 } = {}) {
   const claimed = input.claimed ?? item;
@@ -67,6 +68,7 @@ function setup(input: {
     getOrCreateBinding: vi.fn().mockResolvedValue({
       bindingId: 'binding-a', tenantId: 'tenant-a', accountId: 'account-a',
       conversationId: 'cid-a', sessionId: 'session-a',
+      ...(input.bindingPeerOpenDingtalkId ? { peerOpenDingtalkId: input.bindingPeerOpenDingtalkId } : {}),
       createdAt: item.createdAt, updatedAt: item.updatedAt,
     }),
     markDispatchStarted: vi.fn().mockImplementation(async (
@@ -178,6 +180,29 @@ describe('AgentDwsMessageRouter', () => {
       expect.stringMatching(/^agent-dws-reply-/),
     );
     expect(messageStore.complete).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a direct-message self echo when its sender differs from the bound peer', async () => {
+    const claimed = {
+      ...item,
+      eventType: 'user_im_message_receive_o2o_all',
+      senderOpenDingtalkId: 'agent-self',
+      content: '重连通过',
+    };
+    const { router, messageStore, dispatch, sender } = setup({
+      claimed,
+      bindingPeerOpenDingtalkId: 'human-peer',
+    });
+
+    await expect(router.runOnce()).resolves.toBe(true);
+
+    expect(messageStore.getOrCreateBinding).toHaveBeenCalledWith(
+      'tenant-a', 'account-a', 'cid-a', expect.stringMatching(/^agent-dws-session-/), 'agent-self',
+    );
+    expect(messageStore.complete).toHaveBeenCalledOnce();
+    expect(messageStore.markDispatchStarted).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(sender.send).not.toHaveBeenCalled();
   });
 
   it('retries reply delivery without dispatching the Agent again', async () => {

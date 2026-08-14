@@ -133,7 +133,7 @@ describe('PgAgentDwsMessageStore', () => {
     const winner = {
       binding_id: 'binding-winner', tenant_id: 'tenant-1', account_id: 'account-1',
       conversation_id: 'conversation-1', session_id: 'session-winner',
-      created_at: new Date(NOW), updated_at: NOW,
+      peer_open_dingtalk_id: 'peer-winner', created_at: new Date(NOW), updated_at: NOW,
     };
     const query = vi.fn().mockResolvedValue({ rows: [winner] });
     const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
@@ -143,11 +143,11 @@ describe('PgAgentDwsMessageStore', () => {
       store.getOrCreateBinding('tenant-1', 'account-1', 'conversation-1', 'session-b'),
     ]);
 
-    expect(first.sessionId).toBe('session-winner');
-    expect(second.sessionId).toBe('session-winner');
-    expect(String(query.mock.calls[0]?.[0])).toContain(
-      'ON CONFLICT (account_id,conversation_id) DO UPDATE',
-    );
+    expect(first).toMatchObject({ sessionId: 'session-winner', peerOpenDingtalkId: 'peer-winner' });
+    expect(second).toMatchObject({ sessionId: 'session-winner', peerOpenDingtalkId: 'peer-winner' });
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain('ON CONFLICT (account_id,conversation_id) DO UPDATE');
+    expect(sql).toContain('peer_open_dingtalk_id=COALESCE(binding.peer_open_dingtalk_id,EXCLUDED.peer_open_dingtalk_id)');
   });
 
   it('状态写入均校验 owner/fence/有效 lease，状态与 Date/string 正确映射', async () => {

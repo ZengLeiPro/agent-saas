@@ -62,6 +62,7 @@ export interface AgentDwsConversationBindingRecord {
   accountId: string;
   conversationId: string;
   sessionId: string;
+  peerOpenDingtalkId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -84,6 +85,7 @@ export interface AgentDwsMessageStore {
     accountId: string,
     conversationId: string,
     candidateSessionId: string,
+    peerOpenDingtalkId?: string,
   ): Promise<AgentDwsConversationBindingRecord>;
   markDispatchStarted(
     inboxId: string,

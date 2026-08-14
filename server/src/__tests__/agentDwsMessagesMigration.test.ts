@@ -39,3 +39,26 @@ describe('Governance schema v20 Agent DWS message migration', () => {
     expect(client.release).toHaveBeenCalledOnce();
   });
 });
+
+describe('Governance schema v21 Agent DWS peer binding migration', () => {
+  it('adds the durable direct-message peer identity used to suppress self echoes', async () => {
+    const query = vi.fn(async (sql: string, values?: readonly unknown[]) => {
+      if (sql.includes('SELECT version FROM')) {
+        return { rows: Array.from({ length: 20 }, (_, index) => ({ version: index + 1 })) };
+      }
+      return { rows: [], rowCount: values?.[0] === 21 ? 1 : 0 };
+    });
+    const client = { query, release: vi.fn() };
+    const pool = { connect: async () => client };
+
+    await new PgGovernanceMigrationRunner(pool as never, 'test').run();
+
+    const sql = query.mock.calls.map(call => String(call[0])).join('\n');
+    expect(sql).toContain('ALTER TABLE test_agent_dws_conversation_bindings');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS peer_open_dingtalk_id TEXT');
+    expect(query.mock.calls.some(call => (
+      String(call[0]) === 'INSERT INTO test_governance_schema_versions (version) VALUES ($1)'
+      && call[1]?.[0] === 21
+    ))).toBe(true);
+  });
+});

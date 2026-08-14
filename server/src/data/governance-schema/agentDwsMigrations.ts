@@ -123,5 +123,12 @@ export function agentDwsMigrations(prefix: string): GovernanceMigrationSpec[] {
           ON ${agentDwsConversationBindings} (tenant_id,updated_at DESC)`,
       ],
     },
+    {
+      version: 21,
+      statements: [
+        `ALTER TABLE ${agentDwsConversationBindings}
+          ADD COLUMN IF NOT EXISTS peer_open_dingtalk_id TEXT`,
+      ],
+    },
   ];
 }

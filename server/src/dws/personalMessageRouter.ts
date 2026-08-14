@@ -241,7 +241,15 @@ export class AgentDwsMessageRouter {
       item.accountId,
       item.conversationId,
       `agent-dws-session-${randomUUID()}`,
+      item.eventType === 'user_im_message_receive_o2o_all' ? item.senderOpenDingtalkId : undefined,
     );
+    if (item.eventType === 'user_im_message_receive_o2o_all'
+      && binding.peerOpenDingtalkId
+      && binding.peerOpenDingtalkId !== item.senderOpenDingtalkId) {
+      await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
+      this.options.logger?.info(`Agent DWS self echo ignored account=${item.accountId} event=${item.eventId}`);
+      return;
+    }
     const runId = item.runId ?? deterministicId('agent-dws-run', `${item.accountId}:${item.eventId}`);
     const claimed = await this.options.messageStore.markDispatchStarted(
       item.inboxId,

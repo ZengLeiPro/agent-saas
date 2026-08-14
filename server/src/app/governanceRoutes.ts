@@ -4,7 +4,7 @@ import type { WebChannel } from '../channels/web/channel.js';
 import { createGovernanceAccessRouter } from '../routes/governanceAccess.js';
 import { createGovernanceResourcesRouter } from '../routes/governanceResources.js';
 import { createGovernanceUiRouter } from '../routes/governanceUi.js';
-import { provisionTenant } from '../data/tenants/provision.js';
+import { provisionTenant, rollbackProvisionedTenant } from '../data/tenants/provision.js';
 import { inventoryPersonalWorkspace } from './governancePersonalDataRetention.js';
 import type { ExecuteUserOffboarding } from './governanceOffboarding.js';
 import type { AppRuntime } from './runtime.js';
@@ -96,6 +96,11 @@ export function registerGovernanceRoutes(
           sharedDir: runtime.sharedDir,
           ...(runtime.orgAgentStore ? { orgAgentStore: runtime.orgAgentStore } : {}),
         }, input),
+        rollbackTenantCreate: (tenantId: string) => rollbackProvisionedTenant({
+          tenantStore: runtime.tenantStore!,
+          sharedDir: runtime.sharedDir,
+          ...(runtime.orgAgentStore ? { orgAgentStore: runtime.orgAgentStore } : {}),
+        }, tenantId),
         getTenantLifecycle: (tenantId: string) => runtime.tenantStore!.findById(tenantId),
         setTenantDisabled: async (tenantId: string, disabled: boolean, actorUserId: string) => {
           const tenant = await runtime.tenantStore!.setDisabled(tenantId, disabled, actorUserId);

@@ -49,6 +49,7 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
   now: () => Date;
   personaFor: (req: Request) => 'platform_admin' | 'org_admin' | 'member' | undefined;
   createTenant?: (input: { id: string; name: string; createdBy: string }) => Promise<CreatedTenantRecord>;
+  rollbackTenantCreate?: (tenantId: string) => Promise<void>;
   getTenant?: (tenantId: string) => TenantLifecycleRecord | undefined;
   setTenantDisabled?: (
     tenantId: string,
@@ -69,7 +70,7 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0]!.message, code: 'INVALID_TENANT_INPUT' });
     }
-    if (!options.createTenant) {
+    if (!options.createTenant || !options.rollbackTenantCreate) {
       return res.status(503).json({ error: '组织创建服务暂不可用，请稍后重试', code: 'TENANT_CREATE_UNAVAILABLE' });
     }
     try {
@@ -77,6 +78,17 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
         ...parsed.data,
         createdBy: req.user!.sub,
       });
+      res.locals.governanceCompensation = {
+        rollback: () => options.rollbackTenantCreate!(tenant.id),
+        failureBody: {
+          error: '创建组织失败，未保存任何组织信息，请稍后重试；如问题持续，请联系平台运维人员',
+          code: 'TENANT_CREATE_FAILED',
+        },
+        rollbackFailureBody: {
+          error: '创建组织失败且自动清理未完成，请勿重复提交，并联系平台运维人员处理',
+          code: 'TENANT_CREATE_ROLLBACK_FAILED',
+        },
+      };
       return res.status(201).json({
         tenant: {
           id: tenant.id,

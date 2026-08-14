@@ -56,6 +56,7 @@ async function rig(input: {
   createTenant?: (input: { id: string; name: string; createdBy: string }) => Promise<{
     id: string; name: string; createdAt: string; createdBy: string; updatedAt: string;
   }>;
+  rollbackTenantCreate?: (tenantId: string) => Promise<void>;
   tenantLifecycle?: { id: string; disabled?: boolean; updatedAt: string };
   setTenantDisabled?: (
     tenantId: string, disabled: boolean, actorUserId: string,
@@ -121,6 +122,7 @@ async function rig(input: {
     createdAt: NOW,
     updatedAt: NOW,
   })));
+  const rollbackTenantCreate = vi.fn(input.rollbackTenantCreate ?? (async () => undefined));
   let tenantLifecycle = input.tenantLifecycle ?? { id: 'tenant-a', updatedAt: NOW };
   const setTenantDisabled = vi.fn(input.setTenantDisabled ?? (async (
     tenantId: string, disabled: boolean,
@@ -179,6 +181,7 @@ async function rig(input: {
       createdAt: NOW, updatedAt: NOW,
     } : null,
     createTenant,
+    rollbackTenantCreate,
     getTenantLifecycle: tenantId => tenantId === tenantLifecycle.id ? tenantLifecycle : undefined,
     setTenantDisabled,
     audit: { append: auditAppend, ...(input.auditList ? { list: input.auditList } : {}) } as never,
@@ -203,6 +206,7 @@ async function rig(input: {
     replaceAssignments,
     listEffectiveResources,
     createTenant,
+    rollbackTenantCreate,
     setTenantDisabled,
     updateEntitlement,
     replaceScope,
@@ -369,6 +373,39 @@ describe('governance access routes', () => {
     }));
     expect(denied.status).toBe(403);
     expect(organizationAdmin.createTenant).not.toHaveBeenCalled();
+  });
+
+  it('创建组织后终态审计与 outbox 同时失败时回滚 Tenant 且返回友好错误', async () => {
+    const platformUser = { sub: 'platform-1', username: 'platform', tenantId: 'pantheon', role: 'admin' } as const;
+    const persistedTenants = new Set<string>();
+    const rollbackTenantCreate = vi.fn(async (tenantId: string) => {
+      persistedTenants.delete(tenantId);
+    });
+    const test = await rig({
+      user: platformUser,
+      platformAdmin: true,
+      auditAppend: vi.fn()
+        .mockResolvedValueOnce({ auditId: 'create-intent' })
+        .mockRejectedValueOnce(new Error('audit terminal down')),
+      projectionEnqueue: vi.fn().mockRejectedValue(new Error('outbox down')),
+      createTenant: async input => {
+        persistedTenants.add(input.id);
+        return { ...input, createdAt: NOW, updatedAt: NOW };
+      },
+      rollbackTenantCreate,
+    });
+
+    const response = await test.request('/api/governance/access/tenants', json('POST', {
+      id: 'rollback-org', name: '回滚组织',
+    }));
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      code: 'TENANT_CREATE_FAILED',
+      error: '创建组织失败，未保存任何组织信息，请稍后重试；如问题持续，请联系平台运维人员',
+    });
+    expect(rollbackTenantCreate).toHaveBeenCalledWith('rollback-org');
+    expect(persistedTenants.has('rollback-org')).toBe(false);
   });
 
   it('平台组织生命周期动作由后端返回，并强制 preview baseline 后提交', async () => {

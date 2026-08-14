@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { provisionTenant, rollbackProvisionedTenant } from '../data/tenants/provision.js';
 import { TenantStore } from '../data/tenants/store.js';
 import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID, TENANT_SLUG_PATTERN, type TenantsFileData } from '../data/tenants/types.js';
 
@@ -87,6 +88,24 @@ describe('TenantStore', () => {
       await expect(store.create({ id: 'wain', name: '唯恩', createdBy: 's' })).rejects.toThrow();
       expect(store.findById('wain')).toBeUndefined();
       expect(store.count()).toBe(0);
+    });
+  });
+
+  describe('创建补偿', () => {
+    it('删除已持久化 Tenant 与初始化 company.md，重新加载后也不可见', async () => {
+      const store = new TenantStore(storePath);
+      const sharedDir = join(tmpDir, 'shared');
+      await provisionTenant({ tenantStore: store, sharedDir }, {
+        id: 'rollback-org', name: '回滚组织', createdBy: 'platform-1',
+      });
+      const companyInfoPath = join(sharedDir, 'tenants', 'rollback-org', 'company.md');
+      expect(existsSync(companyInfoPath)).toBe(true);
+
+      await rollbackProvisionedTenant({ tenantStore: store, sharedDir }, 'rollback-org');
+
+      expect(store.findById('rollback-org')).toBeUndefined();
+      expect(new TenantStore(storePath).findById('rollback-org')).toBeUndefined();
+      expect(existsSync(companyInfoPath)).toBe(false);
     });
   });
 

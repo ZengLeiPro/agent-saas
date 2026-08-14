@@ -123,7 +123,8 @@ describe('PgRunStore global scheduler capacity', () => {
     expect(pool.updateCalls).toBe(1);
     expect(pool.queries.filter((sql) => sql.includes('pg_advisory_xact_lock'))).toHaveLength(2);
     const leaseSql = pool.queries.find((sql) => sql.includes('UPDATE runtime_runs'));
-    expect(leaseSql).toContain("active.status IN ('running','waiting_approval','waiting_user','waiting_hand')");
+    expect(leaseSql).toContain("active.status IN ('running','waiting_hand')");
+    expect(leaseSql).not.toContain("active.status IN ('running','waiting_approval','waiting_user','waiting_hand')");
     expect(leaseSql).toContain("predecessor.status = 'pending'");
     expect(pool.queries).toContain('COMMIT');
     expect(pool.releaseCalls).toBe(1);

@@ -700,22 +700,37 @@ export interface DirectRuntimeLeaseHandle {
   release(): Promise<void>;
 }
 
+export class DirectRuntimeLeaseContendedError extends Error {
+  constructor(readonly runId: string) {
+    super(`Direct runtime lease not acquired run=${runId}`);
+    this.name = 'DirectRuntimeLeaseContendedError';
+  }
+}
+
 export async function acquireDirectRuntimeRunLease(input: {
   runStore: RunStore | undefined;
   runId: string;
   runtimeWorkerId?: string;
   logger?: RawRuntimeRunDispatchConfig['logger'];
 }): Promise<DirectRuntimeLeaseHandle | null> {
-  if (input.runtimeWorkerId || !input.runStore?.acquireLease) return null;
+  // scheduler wake 已持有自己的 lease；未启用 durable run store 的 legacy 路径也无需抢占。
+  if (input.runtimeWorkerId || !input.runStore) return null;
+  if (!input.runStore.acquireLease) {
+    throw new Error(`Direct runtime lease is unavailable run=${input.runId}`);
+  }
 
   const workerId = `direct-${process.pid}-${randomUUID()}`;
-  const acquired = await input.runStore.acquireLease(input.runId, workerId, DIRECT_RUNTIME_LEASE_MS).catch((err) => {
+  let acquired: RunRecord | null;
+  try {
+    acquired = await input.runStore.acquireLease(input.runId, workerId, DIRECT_RUNTIME_LEASE_MS);
+  } catch (err) {
     input.logger?.warn(`Direct runtime lease acquire failed run=${input.runId}: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
-  });
+    throw err;
+  }
   if (!acquired) {
-    input.logger?.warn(`Direct runtime lease not acquired run=${input.runId}; continuing without scheduler recovery guard`);
-    return null;
+    const error = new DirectRuntimeLeaseContendedError(input.runId);
+    input.logger?.warn(error.message);
+    throw error;
   }
 
   let renewTimer: ReturnType<typeof setInterval> | null = null;
@@ -1835,12 +1850,21 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       },
     });
     const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId);
-    directRuntimeLease = await acquireDirectRuntimeRunLease({
-      runStore: config.runStore,
-      runId,
-      runtimeWorkerId: options.runtimeWorkerId,
-      logger: config.logger,
-    });
+    try {
+      directRuntimeLease = await acquireDirectRuntimeRunLease({
+        runStore: config.runStore,
+        runId,
+        runtimeWorkerId: options.runtimeWorkerId,
+        logger: config.logger,
+      });
+    } catch (err) {
+      if (lockHandle) await lockHandle.release().catch(() => undefined);
+      if (err instanceof DirectRuntimeLeaseContendedError) {
+        logger.warn(`Raw runtime run 延后：${err.message}`);
+        return;
+      }
+      throw err;
+    }
     await markRunState(config.runStore, eventStore, sessionId, runId, 'running');
     await reconcileInterruptedForegroundToolCalls({
       eventStore,
@@ -2436,12 +2460,21 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       sandboxScopeId,
       metadata: { cwd, transcriptPath, modelRef: sessionModelRef, outputTransactionMode: resumeOutputTransactionMode, approvalId: request.approvalId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
     });
-    directRuntimeLease = await acquireDirectRuntimeRunLease({
-      runStore: config.runStore,
-      runId: resumeRunId,
-      runtimeWorkerId: request.runtimeWorkerId,
-      logger: config.logger,
-    });
+    try {
+      directRuntimeLease = await acquireDirectRuntimeRunLease({
+        runStore: config.runStore,
+        runId: resumeRunId,
+        runtimeWorkerId: request.runtimeWorkerId,
+        logger: config.logger,
+      });
+    } catch (err) {
+      if (lockHandle) await lockHandle.release().catch(() => undefined);
+      if (err instanceof DirectRuntimeLeaseContendedError) {
+        logger.warn(`Raw approval resume 延后：${err.message}`);
+        return;
+      }
+      throw err;
+    }
     await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'running');
     await ensureRuntimeHandRegistered({
       handStore: config.handStore,
@@ -2864,12 +2897,21 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       sandboxScopeId,
       metadata: { cwd, transcriptPath, modelRef: sessionModelRef, outputTransactionMode: resumeOutputTransactionMode, interactionId: request.interactionId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
     });
-    directRuntimeLease = await acquireDirectRuntimeRunLease({
-      runStore: config.runStore,
-      runId: resumeRunId,
-      runtimeWorkerId: request.runtimeWorkerId,
-      logger: config.logger,
-    });
+    try {
+      directRuntimeLease = await acquireDirectRuntimeRunLease({
+        runStore: config.runStore,
+        runId: resumeRunId,
+        runtimeWorkerId: request.runtimeWorkerId,
+        logger: config.logger,
+      });
+    } catch (err) {
+      if (lockHandle) await lockHandle.release().catch(() => undefined);
+      if (err instanceof DirectRuntimeLeaseContendedError) {
+        logger.warn(`Raw interaction resume 延后：${err.message}`);
+        return;
+      }
+      throw err;
+    }
     await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'running');
     await ensureRuntimeHandRegistered({
       handStore: config.handStore,

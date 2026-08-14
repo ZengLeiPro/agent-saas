@@ -374,6 +374,40 @@ describe('PgRunStore steering inbox', () => {
     expect(targetQuery).not.toContain('waiting_approval');
   });
 
+  it('does not label a normal queue message behind waiting_user / waiting_approval', async () => {
+    const queries: string[] = [];
+    const now = new Date().toISOString();
+    const client = {
+      query: async (sql: string, params: unknown[] = []) => {
+        queries.push(sql.trim());
+        if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [{ run_id: String(params[2]) }] };
+        if (sql.includes('SELECT candidate.run_id')) return { rows: [] };
+        if (sql.includes('INSERT INTO runtime_runs')) {
+          return { rows: [{ row_json: {
+            run_id: 'queue-run', session_id: 'session-queue', status: 'pending',
+            requested_at: now, updated_at: now, metadata: JSON.parse(String(params[11])),
+          } }] };
+        }
+        return { rows: [] };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    const run = await store.enqueueUserMessage({
+      runId: 'queue-run',
+      sessionId: 'session-queue',
+      userId: 'user-1',
+      idempotencyKey: 'queue-client',
+    }, 'queue');
+
+    const blockerQuery = queries.find((sql) => sql.includes('SELECT candidate.run_id'));
+    expect(blockerQuery).toContain("candidate.status IN ('pending','running','waiting_hand')");
+    expect(blockerQuery).not.toContain('waiting_user');
+    expect(blockerQuery).not.toContain('waiting_approval');
+    expect(run.metadata?.queuedBehindRunId).toBeUndefined();
+  });
+
   it('recovers legacy sources stuck behind waiting_user targets via listRecoverable (2026-08-04)', async () => {
     // 存量自愈：NOT EXISTS 的目标状态条件同步收窄后，挂在 waiting_user 目标上的
     // pending source 立即回到可恢复集合、作为独立 run 执行。

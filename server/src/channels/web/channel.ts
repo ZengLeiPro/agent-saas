@@ -8,7 +8,7 @@
  */
 
 import { appendFile, mkdir, readdir, readFile, stat } from 'fs/promises';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { homedir } from 'os';
 import { dirname, join, resolve as resolvePath } from 'path';
 import type { Express } from 'express';
@@ -95,7 +95,7 @@ import { createRuntimeSessionRecord, type SessionCatalog } from '../../runtime/s
 import type { RunPreflightService } from '../../runtime/runPreflight.js';
 import { deriveStableWorkspaceId } from '../../runtime/workspaceIdentity.js';
 import type { RuntimeScheduler } from '../../runtime/scheduler.js';
-import type { RunStore } from '../../runtime/runStore.js';
+import type { RunRecord, RunStore } from '../../runtime/runStore.js';
 import type { ToolInvocationStore } from '../../runtime/toolInvocationStore.js';
 import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
 import { runtimeRunController } from '../../runtime/runController.js';
@@ -122,6 +122,51 @@ const INTERACTIVE_PERMISSION_TOOLS = new Set([
 ]);
 
 const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'orphaned']);
+
+type ChatSubmissionAckStatus = 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+function deriveSubmissionSessionId(userScope: string, clientMessageId: string): string {
+  const hex = createHash('sha256')
+    .update(userScope)
+    .update('\0')
+    .update(clientMessageId)
+    .digest('hex');
+  const variant = ((Number.parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+function resolveAuthoritativeSubmissionState(run: RunRecord): {
+  status: ChatSubmissionAckStatus;
+  deliveryMode: 'queue' | 'steer';
+  streamId?: string;
+  queuedTargetRunId?: string;
+} {
+  const deliveryMode = run.metadata?.deliveryMode === 'steer' ? 'steer' : 'queue';
+  const streamId = typeof run.metadata?.streamId === 'string' && run.metadata.streamId
+    ? run.metadata.streamId
+    : undefined;
+  if (run.status === 'completed') return { status: 'completed', deliveryMode, ...(streamId ? { streamId } : {}) };
+  if (run.status === 'cancelled') return { status: 'cancelled', deliveryMode, ...(streamId ? { streamId } : {}) };
+  if (run.status === 'failed' || run.status === 'orphaned') {
+    return { status: 'failed', deliveryMode, ...(streamId ? { streamId } : {}) };
+  }
+  if (run.status !== 'pending') return { status: 'running', deliveryMode, ...(streamId ? { streamId } : {}) };
+
+  const steeringTargetRunId = typeof run.metadata?.steeringTargetRunId === 'string'
+    && run.metadata.steeringState === 'pending'
+    ? run.metadata.steeringTargetRunId
+    : undefined;
+  const queuedBehindRunId = typeof run.metadata?.queuedBehindRunId === 'string'
+    ? run.metadata.queuedBehindRunId
+    : undefined;
+  const queuedTargetRunId = steeringTargetRunId ?? queuedBehindRunId;
+  return {
+    status: queuedTargetRunId ? 'queued' : 'accepted',
+    deliveryMode,
+    ...(streamId ? { streamId } : {}),
+    ...(queuedTargetRunId ? { queuedTargetRunId } : {}),
+  };
+}
 
 /** 语音转写前缀标记（STT 注入 / 门禁判定前剥离共用） */
 const VOICE_STT_TAG = '[这是一条语音转文字的消息，可能存在识别准确度问题] ';
@@ -261,6 +306,8 @@ export class WebChannel implements BaseChannel {
   private activeStreams = new Map<string, ActiveStreamEntry>();
   /** 同一 WS 上的 chat 必须按到达顺序完成接收入队，避免异步 guardrail/附件处理打乱插话 FIFO。 */
   private chatProcessingTails = new WeakMap<WebSocket, Promise<void>>();
+  /** 同进程跨 WS 的相同 clientMessageId 也要串行，避免重复 STT/门禁与 TOCTOU 入队竞争。 */
+  private submissionProcessingTails = new Map<string, Promise<void>>();
 
   /** 返回当前活跃流数量（供 ChannelManager 聚合） */
   getActiveStreamCount(): number {
@@ -1216,14 +1263,27 @@ export class WebChannel implements BaseChannel {
 
   /** 处理 chat 消息（替代 POST /api/chat） */
   private handleChat(client: WsClient, msg: WsChatMessage): void {
-    const previous = this.chatProcessingTails.get(client.ws) ?? Promise.resolve();
-    const next = previous
-      .catch(() => undefined)
+    const previousWs = this.chatProcessingTails.get(client.ws) ?? Promise.resolve();
+    const clientMsgId = msg.client_msg_id?.trim();
+    const submissionKey = clientMsgId
+      ? `${client.user?.tenantId ?? 'tenant'}|${client.user?.sub ?? 'anon'}|${clientMsgId}`
+      : undefined;
+    const previousSubmission = submissionKey
+      ? this.submissionProcessingTails.get(submissionKey)
+      : undefined;
+    const dependencies = previousSubmission && previousSubmission !== previousWs
+      ? [previousWs, previousSubmission]
+      : [previousWs];
+    const next = Promise.all(dependencies.map((dependency) => dependency.catch(() => undefined)))
       .then(() => this.processChatMessage(client, msg));
     this.chatProcessingTails.set(client.ws, next);
+    if (submissionKey) this.submissionProcessingTails.set(submissionKey, next);
     const cleanup = () => {
       if (this.chatProcessingTails.get(client.ws) === next) {
         this.chatProcessingTails.delete(client.ws);
+      }
+      if (submissionKey && this.submissionProcessingTails.get(submissionKey) === next) {
+        this.submissionProcessingTails.delete(submissionKey);
       }
     };
     void next.then(cleanup, (error) => {
@@ -2389,8 +2449,65 @@ export class WebChannel implements BaseChannel {
     const dupEntry = this.idempotencyGet(user?.sub, clientMsgId);
     if (dupEntry) {
       if (dupEntry.status === 'in_flight') {
+        const durableStore = this.config.enqueueRuntime?.runStore;
+        if (durableStore && dupEntry.runId) {
+          let authoritativeRun: RunRecord | null;
+          try {
+            authoritativeRun = await durableStore.get(dupEntry.runId);
+          } catch (error) {
+            chatLogger.warn(`[chat] Idempotency authority lookup failed run=${dupEntry.runId}: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+          }
+          if (!authoritativeRun) {
+            chatLogger.warn(`[chat] Idempotency cache points to missing run=${dupEntry.runId}`);
+            return;
+          }
+          const authoritative = resolveAuthoritativeSubmissionState(authoritativeRun);
+          this.wsSessionAffinity.set(ws, authoritativeRun.sessionId);
+          this.idempotencySet(
+            user?.sub,
+            clientMsgId,
+            authoritative.status === 'completed' ? 'done' : TERMINAL_RUN_STATUSES.has(authoritativeRun.status) ? 'failed' : 'in_flight',
+            authoritative.streamId ?? '',
+            {
+              sessionId: authoritativeRun.sessionId,
+              runId: authoritativeRun.runId,
+              deliveryMode: authoritative.deliveryMode,
+              ...(authoritative.deliveryMode === 'queue' && authoritative.queuedTargetRunId
+                ? { queuedBehindRunId: authoritative.queuedTargetRunId }
+                : {}),
+              ...(authoritative.deliveryMode === 'steer' && authoritative.queuedTargetRunId
+                ? { steeringTargetRunId: authoritative.queuedTargetRunId }
+                : {}),
+              ...(TERMINAL_RUN_STATUSES.has(authoritativeRun.status)
+                ? { terminalStatus: authoritative.status as 'completed' | 'failed' | 'cancelled' }
+                : {}),
+            },
+          );
+          this.sendChatAck(ws, clientMsgId, {
+            sessionId: authoritativeRun.sessionId,
+            runId: authoritativeRun.runId,
+            status: authoritative.status,
+            deliveryMode: authoritative.deliveryMode,
+          });
+          if (authoritative.streamId && !TERMINAL_RUN_STATUSES.has(authoritativeRun.status)) {
+            this.wsSend(ws, {
+              type: 'stream_id',
+              streamId: authoritative.streamId,
+              sessionId: authoritativeRun.sessionId,
+              runId: authoritativeRun.runId,
+              client_msg_id: clientMsgId,
+              ...(authoritative.queuedTargetRunId
+                ? { queued: true, deliveryMode: authoritative.deliveryMode, targetRunId: authoritative.queuedTargetRunId }
+                : {}),
+            });
+          }
+          this.wsSend(ws, { type: 'session', sessionId: authoritativeRun.sessionId, client_msg_id: clientMsgId });
+          return;
+        }
+
         if (dupEntry.sessionId) this.wsSessionAffinity.set(ws, dupEntry.sessionId);
-        chatLogger.info(`[chat] Idempotency hit (in_flight), resending ACK for client_msg_id=${clientMsgId}`);
+        chatLogger.info(`[chat] Legacy idempotency hit (in_flight), resending cached ACK for client_msg_id=${clientMsgId}`);
         const duplicateQueuedBehind = dupEntry.steeringTargetRunId ?? dupEntry.queuedBehindRunId;
         this.sendChatAck(ws, clientMsgId, {
           ...(dupEntry.sessionId ? { sessionId: dupEntry.sessionId } : {}),
@@ -2430,65 +2547,47 @@ export class WebChannel implements BaseChannel {
 
     const durableRun = await this.config.enqueueRuntime?.runStore.findByIdempotencyKey(user?.sub, clientMsgId);
     if (durableRun) {
-      const streamId = typeof durableRun.metadata?.streamId === 'string' ? durableRun.metadata.streamId : '';
-      const activeStatuses = new Set(['pending', 'running', 'waiting_approval', 'waiting_user', 'waiting_hand']);
-      if (activeStatuses.has(durableRun.status)) {
-        this.wsSessionAffinity.set(ws, durableRun.sessionId);
-        const durableDeliveryMode = durableRun.metadata?.deliveryMode === 'steer' ? 'steer' : 'queue';
-        const steeringTargetRunId = typeof durableRun.metadata?.steeringTargetRunId === 'string'
-          && durableRun.metadata?.steeringState === 'pending'
-          ? durableRun.metadata.steeringTargetRunId
-          : undefined;
-        const queuedBehindRunId = typeof durableRun.metadata?.queuedBehindRunId === 'string'
-          ? durableRun.metadata.queuedBehindRunId
-          : undefined;
-        const queuedTargetRunId = durableRun.status === 'pending'
-          ? steeringTargetRunId ?? queuedBehindRunId
-          : undefined;
-        this.idempotencySet(user?.sub, clientMsgId, 'in_flight', streamId, {
+      const authoritative = resolveAuthoritativeSubmissionState(durableRun);
+      const terminal = TERMINAL_RUN_STATUSES.has(durableRun.status);
+      this.wsSessionAffinity.set(ws, durableRun.sessionId);
+      this.idempotencySet(
+        user?.sub,
+        clientMsgId,
+        authoritative.status === 'completed' ? 'done' : terminal ? 'failed' : 'in_flight',
+        authoritative.streamId ?? '',
+        {
           sessionId: durableRun.sessionId,
           runId: durableRun.runId,
-          deliveryMode: durableDeliveryMode,
-          ...(queuedBehindRunId ? { queuedBehindRunId } : {}),
-          ...(steeringTargetRunId ? { steeringTargetRunId } : {}),
-        });
-        this.sendChatAck(ws, clientMsgId, {
-          sessionId: durableRun.sessionId,
-          runId: durableRun.runId,
-          status: durableRun.status === 'pending'
-            ? queuedTargetRunId ? 'queued' : 'accepted'
-            : 'running',
-          deliveryMode: durableDeliveryMode,
-        });
-        this.wsSend(ws, {
-          type: 'stream_id',
-          streamId: streamId || durableRun.runId,
-          sessionId: durableRun.sessionId,
-          runId: durableRun.runId,
-          client_msg_id: clientMsgId,
-          ...(queuedTargetRunId ? { queued: true, deliveryMode: durableDeliveryMode, targetRunId: queuedTargetRunId } : {}),
-        });
-        this.wsSend(ws, { type: 'session', sessionId: durableRun.sessionId, client_msg_id: clientMsgId });
-        return;
-      }
-      const durableTerminalStatus = durableRun.status === 'completed'
-        ? 'completed'
-        : durableRun.status === 'cancelled'
-          ? 'cancelled'
-          : 'failed';
-      const durableDeliveryMode = durableRun.metadata?.deliveryMode === 'steer' ? 'steer' : 'queue';
-      this.idempotencySet(user?.sub, clientMsgId, durableTerminalStatus === 'completed' ? 'done' : 'failed', streamId, {
-        sessionId: durableRun.sessionId,
-        runId: durableRun.runId,
-        deliveryMode: durableDeliveryMode,
-        terminalStatus: durableTerminalStatus,
-      });
+          deliveryMode: authoritative.deliveryMode,
+          ...(authoritative.deliveryMode === 'queue' && authoritative.queuedTargetRunId
+            ? { queuedBehindRunId: authoritative.queuedTargetRunId }
+            : {}),
+          ...(authoritative.deliveryMode === 'steer' && authoritative.queuedTargetRunId
+            ? { steeringTargetRunId: authoritative.queuedTargetRunId }
+            : {}),
+          ...(terminal
+            ? { terminalStatus: authoritative.status as 'completed' | 'failed' | 'cancelled' }
+            : {}),
+        },
+      );
       this.sendChatAck(ws, clientMsgId, {
         sessionId: durableRun.sessionId,
         runId: durableRun.runId,
-        status: durableTerminalStatus,
-        deliveryMode: durableDeliveryMode,
+        status: authoritative.status,
+        deliveryMode: authoritative.deliveryMode,
       });
+      if (authoritative.streamId && !terminal) {
+        this.wsSend(ws, {
+          type: 'stream_id',
+          streamId: authoritative.streamId,
+          sessionId: durableRun.sessionId,
+          runId: durableRun.runId,
+          client_msg_id: clientMsgId,
+          ...(authoritative.queuedTargetRunId
+            ? { queued: true, deliveryMode: authoritative.deliveryMode, targetRunId: authoritative.queuedTargetRunId }
+            : {}),
+        });
+      }
       this.wsSend(ws, { type: 'session', sessionId: durableRun.sessionId, client_msg_id: clientMsgId });
       return;
     }
@@ -2921,7 +3020,12 @@ export class WebChannel implements BaseChannel {
 
     const enqueueRuntime = this.config.enqueueRuntime?.enabled === false ? undefined : this.config.enqueueRuntime;
     if (enqueueRuntime) {
-      const enqueueSessionId = validSessionId ?? randomUUID();
+      // 新会话用永久幂等键派生稳定 sessionId；跨进程重复提交即使同时越过预检，
+      // 也只会 upsert 同一会话，不会留下竞争失败者的幽灵会话。
+      const enqueueSessionId = validSessionId ?? deriveSubmissionSessionId(
+        `${user?.tenantId ?? 'tenant'}|${user?.sub ?? 'anon'}`,
+        clientMsgId,
+      );
       const enqueueRunId = `${Date.now()}-${randomUUID()}`;
       const streamId = String(++this.streamIdCounter);
       let sessionPersisted = false;
@@ -3029,23 +3133,15 @@ export class WebChannel implements BaseChannel {
         const acceptedSessionId = enqueuedRun.sessionId;
         durableAcceptedRunId = acceptedRunId;
         durableAcceptedSessionId = acceptedSessionId;
-        const acceptedStreamId = typeof enqueuedRun.metadata?.streamId === 'string'
-          ? enqueuedRun.metadata.streamId
-          : streamId;
-        const acceptedDeliveryMode = enqueuedRun.metadata?.deliveryMode === 'steer'
-          ? 'steer'
-          : enqueuedRun.metadata?.deliveryMode === 'queue'
-            ? 'queue'
-            : deliveryMode;
+        const duplicateSubmission = acceptedRunId !== enqueueRunId;
+        const authoritative = resolveAuthoritativeSubmissionState(enqueuedRun);
+        const acceptedStreamId = authoritative.streamId ?? (duplicateSubmission ? '' : streamId);
+        const acceptedDeliveryMode = authoritative.deliveryMode;
         durableAcceptedStreamId = acceptedStreamId;
         durableAcceptedDeliveryMode = acceptedDeliveryMode;
-        const steeringTargetRunId = typeof enqueuedRun.metadata?.steeringTargetRunId === 'string'
-          ? enqueuedRun.metadata.steeringTargetRunId
-          : undefined;
-        const queuedBehindRunId = typeof enqueuedRun.metadata?.queuedBehindRunId === 'string'
-          ? enqueuedRun.metadata.queuedBehindRunId
-          : undefined;
-        const queuedTargetRunId = steeringTargetRunId ?? queuedBehindRunId;
+        const queuedTargetRunId = authoritative.queuedTargetRunId;
+        const steeringTargetRunId = acceptedDeliveryMode === 'steer' ? queuedTargetRunId : undefined;
+        const queuedBehindRunId = acceptedDeliveryMode === 'queue' ? queuedTargetRunId : undefined;
         durableAcceptedQueuedTargetRunId = queuedTargetRunId;
         let queuePosition: number | undefined;
         if (queuedTargetRunId && enqueueRuntime.runStore.listPendingUserMessagesBySession) {
@@ -3077,6 +3173,40 @@ export class WebChannel implements BaseChannel {
             status: terminalStatus,
             deliveryMode: acceptedDeliveryMode,
           });
+          this.eventBus!.emitReply(ws, { type: 'session', sessionId: acceptedSessionId, client_msg_id: clientMsgId });
+          return;
+        }
+
+        if (duplicateSubmission) {
+          // 并发重复提交命中原 run：只回放原 run 当前权威状态，不注册第二条本地 stream，
+          // 也不重复追加事件或广播 queue item。
+          this.idempotencySet(user?.sub, clientMsgId, 'in_flight', acceptedStreamId, {
+            sessionId: acceptedSessionId,
+            runId: acceptedRunId,
+            deliveryMode: acceptedDeliveryMode,
+            ...(queuedBehindRunId ? { queuedBehindRunId } : {}),
+            ...(steeringTargetRunId ? { steeringTargetRunId } : {}),
+          });
+          this.wsSessionAffinity.set(ws, acceptedSessionId);
+          this.sendChatAck(ws, clientMsgId, {
+            sessionId: acceptedSessionId,
+            runId: acceptedRunId,
+            status: authoritative.status,
+            deliveryMode: acceptedDeliveryMode,
+            ...(queuePosition ? { queuePosition } : {}),
+          });
+          if (acceptedStreamId) {
+            this.eventBus!.emitReply(ws, {
+              type: 'stream_id',
+              streamId: acceptedStreamId,
+              sessionId: acceptedSessionId,
+              runId: acceptedRunId,
+              client_msg_id: clientMsgId,
+              ...(queuedTargetRunId
+                ? { queued: true, deliveryMode: acceptedDeliveryMode, targetRunId: queuedTargetRunId, ...(queuePosition ? { queuePosition } : {}) }
+                : {}),
+            });
+          }
           this.eventBus!.emitReply(ws, { type: 'session', sessionId: acceptedSessionId, client_msg_id: clientMsgId });
           return;
         }
@@ -3130,7 +3260,7 @@ export class WebChannel implements BaseChannel {
         this.sendChatAck(ws, clientMsgId, {
           sessionId: acceptedSessionId,
           runId: acceptedRunId,
-          status: queuedTargetRunId ? 'queued' : 'accepted',
+          status: authoritative.status,
           deliveryMode: acceptedDeliveryMode,
           ...(queuePosition ? { queuePosition } : {}),
         });
@@ -3218,35 +3348,57 @@ export class WebChannel implements BaseChannel {
         }
         if (durableAccepted) {
           // durable commit 之后的投影/广播失败不能反向把 run 改成 failed，更不能清 wakeMessage。
-          // 回 ACK 与原 run 关联，客户端可继续通过状态接口/detail 快照恢复。
+          // ACK 必须再次读取原 run 当前状态；读取失败时保持“结果未知”，交给客户端状态查询恢复。
           chatLogger.warn(`[chat] post-accept projection failed run=${durableAcceptedRunId}: ${errorMessage}`);
-          this.idempotencySet(user?.sub, clientMsgId, 'in_flight', durableAcceptedStreamId, {
-            sessionId: durableAcceptedSessionId,
-            runId: durableAcceptedRunId,
-            deliveryMode: durableAcceptedDeliveryMode,
-            ...(durableAcceptedDeliveryMode === 'queue' && durableAcceptedQueuedTargetRunId
-              ? { queuedBehindRunId: durableAcceptedQueuedTargetRunId }
-              : {}),
-            ...(durableAcceptedDeliveryMode === 'steer' && durableAcceptedQueuedTargetRunId
-              ? { steeringTargetRunId: durableAcceptedQueuedTargetRunId }
-              : {}),
+          const currentRun = await enqueueRuntime.runStore.get(durableAcceptedRunId).catch((lookupError) => {
+            chatLogger.warn(`[chat] post-accept authority lookup failed run=${durableAcceptedRunId}: ${lookupError instanceof Error ? lookupError.message : String(lookupError)}`);
+            return null;
           });
+          if (!currentRun) return;
+          const authoritative = resolveAuthoritativeSubmissionState(currentRun);
+          const terminal = TERMINAL_RUN_STATUSES.has(currentRun.status);
+          durableAcceptedSessionId = currentRun.sessionId;
+          durableAcceptedStreamId = authoritative.streamId ?? '';
+          durableAcceptedDeliveryMode = authoritative.deliveryMode;
+          durableAcceptedQueuedTargetRunId = authoritative.queuedTargetRunId;
+          this.idempotencySet(
+            user?.sub,
+            clientMsgId,
+            authoritative.status === 'completed' ? 'done' : terminal ? 'failed' : 'in_flight',
+            durableAcceptedStreamId,
+            {
+              sessionId: durableAcceptedSessionId,
+              runId: durableAcceptedRunId,
+              deliveryMode: durableAcceptedDeliveryMode,
+              ...(durableAcceptedDeliveryMode === 'queue' && durableAcceptedQueuedTargetRunId
+                ? { queuedBehindRunId: durableAcceptedQueuedTargetRunId }
+                : {}),
+              ...(durableAcceptedDeliveryMode === 'steer' && durableAcceptedQueuedTargetRunId
+                ? { steeringTargetRunId: durableAcceptedQueuedTargetRunId }
+                : {}),
+              ...(terminal
+                ? { terminalStatus: authoritative.status as 'completed' | 'failed' | 'cancelled' }
+                : {}),
+            },
+          );
           this.sendChatAck(ws, clientMsgId, {
             sessionId: durableAcceptedSessionId,
             runId: durableAcceptedRunId,
-            status: durableAcceptedQueuedTargetRunId ? 'queued' : 'accepted',
+            status: authoritative.status,
             deliveryMode: durableAcceptedDeliveryMode,
           });
-          this.wsSend(ws, {
-            type: 'stream_id',
-            streamId: durableAcceptedStreamId,
-            sessionId: durableAcceptedSessionId,
-            runId: durableAcceptedRunId,
-            client_msg_id: clientMsgId,
-            ...(durableAcceptedQueuedTargetRunId
-              ? { queued: true, deliveryMode: durableAcceptedDeliveryMode, targetRunId: durableAcceptedQueuedTargetRunId }
-              : {}),
-          });
+          if (durableAcceptedStreamId && !terminal) {
+            this.wsSend(ws, {
+              type: 'stream_id',
+              streamId: durableAcceptedStreamId,
+              sessionId: durableAcceptedSessionId,
+              runId: durableAcceptedRunId,
+              client_msg_id: clientMsgId,
+              ...(durableAcceptedQueuedTargetRunId
+                ? { queued: true, deliveryMode: durableAcceptedDeliveryMode, targetRunId: durableAcceptedQueuedTargetRunId }
+                : {}),
+            });
+          }
           this.wsSend(ws, { type: 'session', sessionId: durableAcceptedSessionId, client_msg_id: clientMsgId });
           return;
         }

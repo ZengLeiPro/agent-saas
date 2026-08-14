@@ -255,6 +255,15 @@ describe('sessions routes for meta-only runtime sessions', () => {
         deliveryMode: 'queue',
         queuePosition: 1,
       });
+
+      // ACK 超时核验期间 run 可能已经启动；再次查询必须返回当前 running，不能倒退为 queued。
+      queuedRun.status = 'running';
+      const runningStatus = await fetch(`${baseUrl}/api/messages/client-queued-1/status`);
+      await expect(runningStatus.json()).resolves.toMatchObject({
+        clientMessageId: 'client-queued-1',
+        runId: 'queued-run-1',
+        status: 'running',
+      });
     } finally {
       await stopServer(server);
     }

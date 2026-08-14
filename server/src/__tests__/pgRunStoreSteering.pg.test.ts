@@ -82,6 +82,102 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     expect(running.rows).toHaveLength(1);
   });
 
+  it.each(['waiting_user', 'waiting_approval'] as const)(
+    '%s 释放会话后，显式发送回退为独立 run 且可取得 lease',
+    async (waitingStatus) => {
+      const sessionId = `session-${waitingStatus}`;
+      const targetRunId = `target-${waitingStatus}`;
+      const sourceRunId = `source-${waitingStatus}`;
+      await store.upsertPending({
+        runId: targetRunId,
+        sessionId,
+        userId: 'user-1',
+        model: 'gpt-5.5',
+        channel: 'web',
+      });
+      await store.markStatus(targetRunId, waitingStatus);
+
+      const source = await store.enqueueUserMessage({
+        runId: sourceRunId,
+        sessionId,
+        userId: 'user-1',
+        idempotencyKey: `client-${waitingStatus}`,
+        model: 'gpt-5.5',
+        channel: 'web',
+      }, 'steer');
+
+      expect(source.metadata?.steeringTargetRunId).toBeUndefined();
+      await expect(store.acquireLease(sourceRunId, `worker-${waitingStatus}`, 60_000))
+        .resolves.toMatchObject({ runId: sourceRunId, status: 'running' });
+      const steeringRows = await pool.query(
+        `SELECT source_run_id FROM ${prefix}_steering_inputs WHERE source_run_id = $1`,
+        [sourceRunId],
+      );
+      expect(steeringRows.rows).toHaveLength(0);
+    },
+  );
+
+  it.each(['waiting_user', 'waiting_approval'] as const)(
+    '%s 已释放会话时，普通 queue 不谎报排队并可直接取得 lease',
+    async (waitingStatus) => {
+      const sessionId = `session-queue-${waitingStatus}`;
+      const targetRunId = `target-queue-${waitingStatus}`;
+      const sourceRunId = `source-queue-${waitingStatus}`;
+      await store.upsertPending({
+        runId: targetRunId,
+        sessionId,
+        userId: 'user-1',
+        channel: 'web',
+      });
+      await store.markStatus(targetRunId, waitingStatus);
+
+      const source = await store.enqueueUserMessage({
+        runId: sourceRunId,
+        sessionId,
+        userId: 'user-1',
+        idempotencyKey: `client-queue-${waitingStatus}`,
+        channel: 'web',
+      }, 'queue');
+
+      expect(source.metadata?.queuedBehindRunId).toBeUndefined();
+      await expect(store.acquireLease(sourceRunId, `worker-queue-${waitingStatus}`, 60_000))
+        .resolves.toMatchObject({ runId: sourceRunId, status: 'running' });
+    },
+  );
+
+  it('停止只撤销 steer，普通 queue 保持 pending 并继续串行等待', async () => {
+    const sessionId = 'session-stop-semantics';
+    await store.upsertPending({
+      runId: 'stop-target',
+      sessionId,
+      userId: 'user-1',
+      model: 'gpt-5.5',
+      channel: 'web',
+    });
+    await store.markStatus('stop-target', 'running');
+    const queued = await store.enqueueUserMessage({
+      runId: 'stop-queue',
+      sessionId,
+      userId: 'user-1',
+      idempotencyKey: 'stop-queue-client',
+      model: 'gpt-5.5',
+      channel: 'web',
+    }, 'queue');
+    const steered = await store.enqueueUserMessage({
+      runId: 'stop-steer',
+      sessionId,
+      userId: 'user-1',
+      idempotencyKey: 'stop-steer-client',
+      model: 'gpt-5.5',
+      channel: 'web',
+    }, 'steer');
+
+    await store.cancelSteeringBeforeDispatchBySession(sessionId, 'web_abort');
+
+    await expect(store.get(queued.runId)).resolves.toMatchObject({ status: 'pending' });
+    await expect(store.get(steered.runId)).resolves.toMatchObject({ status: 'cancelled' });
+  });
+
   it('enqueue → reserve → apply 由真实 PostgreSQL 解析并原子结算', async () => {
     await store.upsertPending({
       runId: 'target-run',

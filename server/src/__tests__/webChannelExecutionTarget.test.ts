@@ -595,6 +595,85 @@ describe('WebChannel executionTarget gating', () => {
     }
   });
 
+  it('concurrent duplicate new-session submissions share one session, run, and active stream', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'web-concurrent-new-session-'));
+    try {
+      const runStore = new MemoryRunStore();
+      let lookupCalls = 0;
+      let releaseLookups!: () => void;
+      const lookupsReady = new Promise<void>((resolve) => { releaseLookups = resolve; });
+      runStore.findByIdempotencyKey = async () => {
+        lookupCalls += 1;
+        if (lookupCalls === 2) releaseLookups();
+        await lookupsReady;
+        return null;
+      };
+      const upsertedSessionIds: string[] = [];
+      const sessionCatalog = {
+        upsert: async (record: { sessionId: string }) => { upsertedSessionIds.push(record.sessionId); },
+        ensure: async () => undefined,
+        get: async () => null,
+        markStatus: async () => undefined,
+        findTranscriptPath: async () => null,
+      };
+      let acceptedRun: RunRecord | null = null;
+      let schedulerCalls = 0;
+      const { channel } = createChannel({
+        agentCwd: tmp,
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        enqueueRuntime: {
+          scheduler: {
+            enqueue: async (input: UpsertRunInput) => {
+              schedulerCalls += 1;
+              if (acceptedRun) return acceptedRun;
+              const now = new Date().toISOString();
+              acceptedRun = {
+                runId: input.runId,
+                sessionId: input.sessionId,
+                userId: input.userId,
+                tenantId: input.tenantId,
+                status: 'pending',
+                requestedAt: now,
+                updatedAt: now,
+                idempotencyKey: input.idempotencyKey,
+                metadata: { ...input.metadata, deliveryMode: 'queue' },
+              };
+              runStore.records.set(acceptedRun.runId, acceptedRun);
+              return acceptedRun;
+            },
+          } as any,
+          runStore,
+          sessionCatalog: sessionCatalog as any,
+          enabled: true,
+        },
+      });
+      const wsA = new FakeWebSocket();
+      const wsB = new FakeWebSocket();
+      const message = chatMessage({ message: '只执行一次', client_msg_id: 'same-new-session-client' });
+
+      await Promise.all([
+        (channel as any).processChatMessage(
+          { ws: wsA as any, user: PLATFORM_ADMIN_USER, alive: true, lastActivityAt: Date.now() },
+          message,
+        ),
+        (channel as any).processChatMessage(
+          { ws: wsB as any, user: PLATFORM_ADMIN_USER, alive: true, lastActivityAt: Date.now() },
+          message,
+        ),
+      ]);
+
+      expect(schedulerCalls).toBe(2);
+      expect(runStore.records.size).toBe(1);
+      expect(new Set(upsertedSessionIds).size).toBe(1);
+      expect(acceptedRun).not.toBeNull();
+      expect(upsertedSessionIds[0]).toBe(acceptedRun!.sessionId);
+      expect((channel as any).activeStreams.size).toBe(1);
+      expect([wsA, wsB].flatMap((ws) => ws.sent).filter((event) => event.data?.type === 'chat_ack')).toHaveLength(2);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('defaults a running-session send to durable queue and ACKs only after enqueue commits', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'web-ordinary-queue-'));
     try {
@@ -646,6 +725,73 @@ describe('WebChannel executionTarget gating', () => {
         queued: true, deliveryMode: 'queue', targetRunId: 'active-run',
       });
       expect((channel as any).wsActiveStream.get(ws as any)).toBe('active-stream');
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('duplicate ACK follows queued run current status and does not regress running to queued', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'web-duplicate-authority-'));
+    try {
+      const runStore = new MemoryRunStore();
+      await runStore.upsertPending({
+        runId: 'active-run',
+        sessionId: 'session-duplicate-authority',
+        userId: PLATFORM_ADMIN_USER.sub,
+        model: 'anthropic/claude-sonnet-4',
+        channel: 'web',
+      });
+      await runStore.markStatus('active-run', 'running');
+      const sessionCatalog = new FileSessionCatalog({ agentCwd: tmp });
+      let enqueueCalls = 0;
+      const { channel } = createChannel({
+        agentCwd: tmp,
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        enqueueRuntime: {
+          scheduler: {
+            enqueue: async (input: UpsertRunInput, options: { deliveryMode: 'queue' | 'steer' }) => {
+              enqueueCalls += 1;
+              return runStore.upsertPending({
+                ...input,
+                metadata: {
+                  ...input.metadata,
+                  deliveryMode: options.deliveryMode,
+                  queuedBehindRunId: 'active-run',
+                },
+              });
+            },
+          } as any,
+          runStore,
+          sessionCatalog,
+          enabled: true,
+        },
+      });
+      const ws = new FakeWebSocket();
+      const client = { ws: ws as any, user: PLATFORM_ADMIN_USER, alive: true, lastActivityAt: Date.now() };
+      const message = chatMessage({
+        sessionId: 'session-duplicate-authority',
+        message: '只执行一次',
+        client_msg_id: 'duplicate-authority-client',
+      });
+
+      await (channel as any).processChatMessage(client, message);
+      const firstAck = ws.sent.find((event) => event.data?.type === 'chat_ack')?.data;
+      expect(firstAck).toMatchObject({ status: 'queued' });
+      const queuedRunId = firstAck?.runId as string;
+      const activeStreamCount = (channel as any).activeStreams.size;
+      await runStore.markStatus('active-run', 'completed');
+      await runStore.markStatus(queuedRunId, 'running');
+
+      ws.sent.length = 0;
+      await (channel as any).processChatMessage(client, message);
+
+      expect(enqueueCalls).toBe(1);
+      expect((channel as any).activeStreams.size).toBe(activeStreamCount);
+      expect(ws.sent.find((event) => event.data?.type === 'chat_ack')?.data).toMatchObject({
+        runId: queuedRunId,
+        status: 'running',
+      });
+      expect(ws.sent.find((event) => event.data?.type === 'stream_id')?.data).not.toHaveProperty('queued');
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }
@@ -705,15 +851,15 @@ describe('WebChannel executionTarget gating', () => {
           scheduler: {
             enqueue: async (input: UpsertRunInput, options: unknown) => {
               enqueueCalls.push({ input, options });
-              const record = await runStore.upsertPending(input);
-              return {
-                ...record,
+              return runStore.upsertPending({
+                ...input,
                 metadata: {
-                  ...record.metadata,
+                  ...input.metadata,
+                  deliveryMode: 'steer',
                   steeringTargetRunId: 'target-run',
                   steeringState: 'pending',
                 },
-              };
+              });
             },
           } as any,
           runStore,

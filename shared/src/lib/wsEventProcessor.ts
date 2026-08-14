@@ -456,6 +456,9 @@ export function processWsEvent(
 
   if (data.type === "session") {
     const newSessionId = data.sessionId;
+    // session 会改写路由；已有当前会话时，迟到的其他会话事件只能被忽略。
+    // 新会话草稿的 clientMessageId 关联由 Web hook 在进入共享处理器前校验。
+    if (activeSessionId && newSessionId !== activeSessionId) return;
     latestSessionId.value = newSessionId;
     session.setIsNewSession(false);
     session.setSessionId(newSessionId);

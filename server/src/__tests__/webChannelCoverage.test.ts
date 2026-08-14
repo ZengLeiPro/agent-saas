@@ -596,7 +596,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await first;
     });
 
-    it('durable run 幂等：活跃 run 重发 → ACK+stream_id+session；终态 run → duplicate_inflight', async () => {
+    it('durable run 幂等：ACK 反映当前权威状态，且不伪造 streamId', async () => {
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({
         runId: 'run-idem-a', sessionId: 's-idem-a', userId: USER.sub, model: 'm', channel: 'web',
@@ -619,10 +619,17 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       });
       expect(rig.ws.sent[2].data).toEqual({ type: 'session', sessionId: 's-idem-a', client_msg_id: 'cm-durable-active' });
 
+      expect(rig.ws.sent[0].data).toMatchObject({
+        type: 'chat_ack', client_msg_id: 'cm-durable-active', runId: 'run-idem-a', status: 'running',
+      });
+
       rig.ws.sent.length = 0;
       await rig.send(USER, { client_msg_id: 'cm-durable-done', message: '重试' });
-      expect(rig.ws.sent.map((m) => m.data.type)).toEqual(['chat_rejected']);
-      expect(rig.ws.sent[0].data).toMatchObject({ reason_code: 'duplicate_inflight', reason: '该消息已处理，请发新消息' });
+      expect(rig.ws.sent.map((m) => m.data.type)).toEqual(['chat_ack', 'session']);
+      expect(rig.ws.sent[0].data).toMatchObject({
+        type: 'chat_ack', client_msg_id: 'cm-durable-done', runId: 'run-idem-b', status: 'completed',
+      });
+      expect(rig.ws.sent.some((m) => m.data.type === 'stream_id')).toBe(false);
     });
 
     it('模型不在组织白名单（modelResolver 返回 null）→ model_not_allowed', async () => {
@@ -644,9 +651,10 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const rig = makeRig();
       await rig.send(USER, { client_msg_id: 'cm-stt-0', message: '', voiceFile });
       const types = rig.ws.sent.map((m) => m.data.type);
-      expect(types).toEqual(['chat_ack', 'voice_transcribed', 'chat_rejected']);
-      expect(rig.ws.sent[1].data).toEqual({ type: 'voice_transcribed', text: '[语音识别未配置]', error: true });
-      expect(rig.ws.sent[2].data).toMatchObject({ reason_code: 'stt_not_configured' });
+      expect(types).toEqual(['voice_transcribed', 'chat_rejected']);
+      expect(rig.ws.sent[0].data).toEqual({ type: 'voice_transcribed', text: '[语音识别未配置]', error: true });
+      expect(rig.ws.sent[1].data).toMatchObject({ reason_code: 'stt_not_configured' });
+      expect(rig.ws.sent.some((message) => message.data.type === 'chat_ack')).toBe(false);
     });
 
     it('识别成功：注入 VOICE_STT_TAG 前缀送 dispatch，先推 voice_transcribed', async () => {
@@ -749,11 +757,13 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.userEvents).toContainEqual(expect.objectContaining({ type: 'session_updated', sessionId, preview: '你好，世界' }));
       expect(rig.userEvents.at(-1)).toEqual({ type: 'session_status', sessionId, status: 'idle' });
 
-      // 幂等：done 终态后同 id 重发被拒
+      // 幂等：done 终态后同 id 重发只返回原终态 ACK，不二次 dispatch。
       rig.ws.sent.length = 0;
       await rig.send(USER, { client_msg_id: 'cm-flow-1', message: '打个招呼' });
-      expect(rig.ws.sent.map((m) => m.data.type)).toEqual(['chat_rejected']);
-      expect(rig.ws.sent[0].data).toMatchObject({ reason_code: 'duplicate_inflight' });
+      expect(rig.ws.sent.map((m) => m.data.type)).toEqual(['chat_ack']);
+      expect(rig.ws.sent[0].data).toMatchObject({
+        type: 'chat_ack', client_msg_id: 'cm-flow-1', status: 'completed',
+      });
     });
 
     it('可撤销草稿：失败 attempt 被 reset 替换，预览只保留成功正文', async () => {
@@ -903,7 +913,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.ws.sent[5].data).toEqual({ type: 'tool_result', toolId: 'r1', toolName: 'Read', result: 'content-a' });
     });
 
-    it('SDK error：done 携带 error，幂等置 failed（同 id 重发被拒）', async () => {
+    it('SDK error：done 携带 error，幂等重发返回原 failed ACK', async () => {
       const tmp = await makeTmp('cov-err-');
       const rig = makeRig({ agentCwd: tmp }, scripted([
         { type: 'text_start' },
@@ -915,7 +925,9 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'done', client_msg_id: 'cm-err', error: 'model exploded' });
       rig.ws.sent.length = 0;
       await rig.send(USER, { client_msg_id: 'cm-err', message: 'hi' });
-      expect(rig.ws.sent[0].data).toMatchObject({ type: 'chat_rejected', reason_code: 'duplicate_inflight' });
+      expect(rig.ws.sent[0].data).toMatchObject({
+        type: 'chat_ack', client_msg_id: 'cm-err', status: 'failed',
+      });
     });
 
     it('用户主动停止后 SDK 返回 error：done 不携带 error', async () => {
@@ -1547,10 +1559,12 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.ws.sent.length).toBe(sentBefore);
       expect((rig.channel as any).eventBufferStore.get(sessionId).events.length).toBe(bufferLenBefore);
 
-      // 终态幂等回填：同 clientMsgId 再发 chat → duplicate_inflight
+      // 终态幂等回填：同 clientMsgId 再发 chat → 原 failed ACK，不创建新 run。
       rig.ws.sent.length = 0;
       await rig.send(USER, { client_msg_id: 'cm-pe-1', message: '重试' });
-      expect(rig.ws.sent[0].data).toMatchObject({ type: 'chat_rejected', reason_code: 'duplicate_inflight' });
+      expect(rig.ws.sent[0].data).toMatchObject({
+        type: 'chat_ack', client_msg_id: 'cm-pe-1', runId: 'run-pe-1', status: 'failed',
+      });
     });
   });
 

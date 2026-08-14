@@ -582,7 +582,7 @@ export class PgRunStore implements RunStore {
           FROM ${this.runsTable} candidate
           WHERE candidate.session_id = $1
             AND candidate.run_id <> $2
-            AND candidate.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+            AND candidate.status IN ('pending','running','waiting_hand')
             AND COALESCE(candidate.metadata->>'backgroundTask', 'false') <> 'true'
             AND NOT EXISTS (
               SELECT 1 FROM ${this.steeringInputsTable} own_input
@@ -590,7 +590,7 @@ export class PgRunStore implements RunStore {
                 AND own_input.state IN ('pending', 'reserved')
             )
           ORDER BY
-            CASE candidate.status WHEN 'running' THEN 0 WHEN 'waiting_approval' THEN 0 WHEN 'waiting_user' THEN 0 WHEN 'waiting_hand' THEN 0 ELSE 1 END,
+            CASE candidate.status WHEN 'running' THEN 0 WHEN 'waiting_hand' THEN 0 ELSE 1 END,
             candidate.requested_at ASC
           LIMIT 1
           FOR UPDATE
@@ -1620,7 +1620,7 @@ export class PgRunStore implements RunStore {
             FROM ${this.runsTable} active
             WHERE active.session_id = candidate.session_id
               AND active.run_id <> candidate.run_id
-              AND active.status IN ('running','waiting_approval','waiting_user','waiting_hand')
+              AND active.status IN ('running','waiting_hand')
           )
           AND NOT EXISTS (
             SELECT 1

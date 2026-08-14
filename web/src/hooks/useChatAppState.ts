@@ -36,6 +36,12 @@ import {
   removeConsumedInterjections,
 } from "@/lib/interjectionConsumption";
 import type { QueuedInterjection } from "@/lib/interjectionConsumption";
+import {
+  acquireMessageSubmissionSlot,
+  markSteeringCancelledForStop,
+  recoverQueueSnapshotAfterSyncOverflow,
+  shouldAcceptSessionEvent,
+} from "@/lib/queueConsistency";
 export type { QueuedInterjection } from "@/lib/interjectionConsumption";
 import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, replaceSettingsUrl, pushAdminSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, normalizeAdminSettingsSection, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl, buildTenantAdminUrl, pushTenantAdminUrl, replaceTenantAdminUrl, normalizeTenantAdminSection, preserveScopeSearch, preserveSearchKeys, TENANT_ADMIN_SCOPE_KEYS, pushGovernanceUrl, replaceGovernanceUrl } from "@/lib/urlSync";
 import { buildGovernanceUrl, governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
@@ -497,6 +503,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const outboxRef = useRef<OutboxEntry[]>([]);
   /** 每个 inflight 消息的 ACK 超时定时器（收到 ack 清除） */
   const ackTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const messageSubmissionGateRef = useRef(false);
   const ACK_TIMEOUT_MS = 15_000;
   /** cancel_queued 请求的等待器：sourceRunId → resolve(ok)（2026-08-04 终态设计） */
   const cancelWaitersRef = useRef<Map<string, (ok: boolean) => void>>(new Map());
@@ -767,16 +774,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     const targetSessionId = sessionIdRef.current;
     const sid = streamIdRef.current;
     const rid = runIdRef.current;
-    if (!sid && !rid) return;
+    if ((!sid && !rid) || stoppingRef.current) return;
+    stoppingRef.current = true;
     void wsClient.ensureConnectedSend({ action: 'abort', ...(rid ? { runId: rid } : {}), ...(sid ? { streamId: sid } : {}) });
     setStopping(true);
-    // 停止=全停（2026-08-04 终态设计）：服务端 abort 联动撤销排队插话并广播
-    // steering_cancelled；这里乐观先行标记，广播到达时幂等。内容保留可重发。
-    mutateQueuedInterjections((prev) => prev.map((entry) => (
-      entry.status === 'sending' || entry.status === 'queued'
-        ? { ...entry, status: 'cancelled' as const, reason: '已随停止一并撤销' }
-        : entry
-    )));
+    // 服务端 stop 只撤销 steering_inputs；普通 queue 仍会在当前 run 终态后串行执行。
+    // steer 乐观撤销，最终以 steering_cancelled/detail 快照为准。
+    mutateQueuedInterjections(markSteeringCancelledForStop);
 
     // 安全超时：10 秒内 done 未到达则强制恢复
     const nonceAtAbort = streamNonceRef.current;
@@ -1692,13 +1696,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         return;
       }
 
-      if (data.type === 'session' && data.client_msg_id && newSessionClientMsgIdsRef.current.has(data.client_msg_id)) {
-        const expectedClientMsgId = pendingNewSessionClientMsgIdRef.current;
-        newSessionClientMsgIdsRef.current.delete(data.client_msg_id);
-        if (expectedClientMsgId !== data.client_msg_id) {
-          console.warn(`[chat] ignored stale session event for ${data.client_msg_id}`);
+      if (data.type === 'session') {
+        const currentSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+        if (!shouldAcceptSessionEvent(data, currentSessionId, pendingNewSessionClientMsgIdRef.current)) {
+          if (data.client_msg_id) newSessionClientMsgIdsRef.current.delete(data.client_msg_id);
+          console.warn(`[chat] ignored stale session event for ${data.client_msg_id ?? data.sessionId}`);
           return;
         }
+        if (data.client_msg_id) newSessionClientMsgIdsRef.current.delete(data.client_msg_id);
       }
       if (data.type === 'abort_ok') {
         if ((data.runId && data.runId === runIdRef.current) || (data.streamId && data.streamId === streamIdRef.current)) {
@@ -1855,7 +1860,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       if (data.type === 'sync_overflow') {
         lastUserSeqRef.current = (data as any).seq;
         wsClient.setLastSeq((data as any).seq);
-        void sessionRef.current.loadSessions({ fresh: true });
+        void recoverQueueSnapshotAfterSyncOverflow(sessionRef.current);
         return;
       }
 
@@ -2867,39 +2872,48 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     const trimmedInput = inputRef.current.trim();
     if (!trimmedInput && uploadedFilesRef.current.length === 0) return;
     if (stoppingRef.current) return;
+    const releaseSubmissionSlot = acquireMessageSubmissionSlot(messageSubmissionGateRef);
+    if (!releaseSubmissionSlot) return;
 
-    const capturedInput = trimmedInput;
-    const capturedAttachments = [...uploadedFilesRef.current];
-    setInput("");
-    fileUpload.clearFiles();
+    try {
+      const capturedInput = trimmedInput;
+      const capturedAttachments = [...uploadedFilesRef.current];
+      // React state 会批量提交；refs 必须同步清空，阻断同一帧重复点击复用旧内容。
+      inputRef.current = "";
+      uploadedFilesRef.current = [];
+      setInput("");
+      fileUpload.clearFiles();
 
-    if (loadingRef.current) {
-      // 当前 run 运行时，默认 queue 只等待终态；steer 必须由用户显式点击“立即插话”。
-      const clientMsgId = crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      mutateQueuedInterjections((prev) => [...prev, {
-        clientMsgId,
-        deliveryMode,
-        content: capturedInput,
-        ...(capturedAttachments.length > 0 ? {
-          attachments: capturedAttachments.map((f) => ({ name: f.originalName, isImage: f.isImage, relativePath: f.relativePath })),
-        } : {}),
-        status: 'sending' as const,
-        createdAt: Date.now(),
-      }]);
-      await sendChatViaWs(
-        capturedInput,
-        capturedAttachments,
-        false,
-        undefined,
-        clientMsgId,
-        autoApproveRunShellRef.current,
-        true,
-        deliveryMode,
-      );
-      return;
+      if (loadingRef.current) {
+        // 当前 run 运行时，默认 queue 只等待终态；steer 必须由用户显式点击“立即插话”。
+        const clientMsgId = crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        mutateQueuedInterjections((prev) => [...prev, {
+          clientMsgId,
+          deliveryMode,
+          content: capturedInput,
+          ...(capturedAttachments.length > 0 ? {
+            attachments: capturedAttachments.map((f) => ({ name: f.originalName, isImage: f.isImage, relativePath: f.relativePath })),
+          } : {}),
+          status: 'sending' as const,
+          createdAt: Date.now(),
+        }]);
+        await sendChatViaWs(
+          capturedInput,
+          capturedAttachments,
+          false,
+          undefined,
+          clientMsgId,
+          autoApproveRunShellRef.current,
+          true,
+          deliveryMode,
+        );
+        return;
+      }
+
+      await sendChatViaWs(capturedInput, capturedAttachments, true, undefined, undefined, undefined, false, 'queue');
+    } finally {
+      releaseSubmissionSlot();
     }
-
-    await sendChatViaWs(capturedInput, capturedAttachments, true, undefined, undefined, undefined, false, 'queue');
   }, [setInput, fileUpload.clearFiles, sendChatViaWs, mutateQueuedInterjections]);
 
   const sendMessage = useCallback(() => submitCurrentMessage('queue'), [submitCurrentMessage]);
@@ -3090,8 +3104,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       return;
     }
     // 复用原 clientMsgId（2026-08-04 P2-9 修复）：「ACK 丢失但服务端已受理」是超时的
-    // 最常见成因——重发同 id 命中服务端 in_flight 幂等缓存补发 ACK/stream_id，已处理完
-    // 则回 duplicate_inflight（气泡翻已发送），真正未送达时当新消息处理。换新 id 会让
+    // 最常见成因——重发同 id 命中服务端永久幂等键并返回原 run 当前 ACK，已处理完
+    // 则回 completed/failed/cancelled 终态，真正未送达时仍以同 id 创建。换新 id 会让
     // 同一句话被入队/执行两次。
     const retryClientMsgId = message.clientMsgId
       || (crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`);

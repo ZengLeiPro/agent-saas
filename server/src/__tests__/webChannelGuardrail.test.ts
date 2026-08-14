@@ -281,10 +281,14 @@ describe('WebChannel 专职 Agent 门禁', () => {
       messageText: '帮我写一首诗', username: 'wain_user', sessionId,
     });
 
-    // 幂等：同 client_msg_id 重发 → 拒绝重复提交，不再触发模型/落库
+    // 幂等：同 client_msg_id 重发 → 返回原 completed ACK，不再触发模型/落库。
     const callsBefore = modelCalls().length;
+    const sentBefore = rig.ws.sent.length;
     await rig.send(WAIN_USER, { message: '帮我写一首诗', orgAgentId: agent.id, client_msg_id: clientMsgId });
-    expect(rig.ws.sent.find((m) => m.data?.type === 'chat_rejected')?.data?.reason_code).toBe('duplicate_inflight');
+    expect(rig.ws.sent.slice(sentBefore).find((m) => m.data?.type === 'chat_ack')?.data).toMatchObject({
+      client_msg_id: clientMsgId,
+      status: 'completed',
+    });
     expect(modelCalls().length).toBe(callsBefore);
     expect(rig.guardrailEvents).toHaveLength(1);
     expect(rig.enqueued).toHaveLength(0);

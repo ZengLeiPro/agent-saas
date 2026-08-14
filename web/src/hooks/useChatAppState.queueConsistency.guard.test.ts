@@ -1,53 +1,100 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-const source = readFileSync(resolve(process.cwd(), "src/hooks/useChatAppState.ts"), "utf8");
+import type { QueuedInterjection } from "../lib/interjectionConsumption";
+import {
+  acquireMessageSubmissionSlot,
+  markSteeringCancelledForStop,
+  recoverQueueSnapshotAfterSyncOverflow,
+  shouldAcceptSessionEvent,
+} from "../lib/queueConsistency";
 
-describe("会话消息队列一致性守卫", () => {
-  it("运行中普通发送默认 queue，显式插话才使用 steer", () => {
-    expect(source).toContain("submitCurrentMessage('queue')");
-    expect(source).toContain("submitCurrentMessage('steer')");
-    expect(source).toContain("deliveryMode: 'queue' | 'steer' = 'queue'");
+function queued(
+  clientMsgId: string,
+  deliveryMode: "queue" | "steer",
+  status: QueuedInterjection["status"] = "queued",
+): QueuedInterjection {
+  return {
+    clientMsgId,
+    deliveryMode,
+    content: clientMsgId,
+    status,
+    createdAt: 1,
+  };
+}
+
+describe("会话消息队列一致性行为", () => {
+  it("停止当前 run 只撤销 steer，普通 queue 保持排队", () => {
+    const ordinary = queued("queue-1", "queue");
+    const steering = queued("steer-1", "steer", "verifying");
+
+    const next = markSteeringCancelledForStop([ordinary, steering]);
+
+    expect(next[0]).toBe(ordinary);
+    expect(next[0]).toMatchObject({ deliveryMode: "queue", status: "queued" });
+    expect(next[1]).toMatchObject({ deliveryMode: "steer", status: "cancelled" });
   });
 
-  it("ACK 超时先查询权威状态，不直接标记发送失败", () => {
-    const timeoutStart = source.indexOf("const armAckTimeout");
-    const sendStart = source.indexOf("const sendChatViaWs", timeoutStart);
-    const timeoutBody = source.slice(timeoutStart, sendStart);
-
-    expect(timeoutBody).toContain("/api/messages/${encodeURIComponent(clientMsgId)}/status");
-    expect(timeoutBody).toContain("status: 'verifying'");
-    expect(timeoutBody).toContain("if (!currentEntry || currentEntry.state === 'acked') return");
-    expect(timeoutBody).not.toContain("发送超时，请重试");
+  it("旧会话迟到 session 事件不能改写当前会话", () => {
+    expect(shouldAcceptSessionEvent(
+      { sessionId: "session-old", client_msg_id: "client-old" },
+      "session-current",
+      null,
+    )).toBe(false);
+    expect(shouldAcceptSessionEvent(
+      { sessionId: "session-current", client_msg_id: "client-current" },
+      "session-current",
+      null,
+    )).toBe(true);
   });
 
-  it("未挂流时仍放行 durable ACK 与队列事件", () => {
-    const guardStart = source.indexOf("if (!wsAttachedRef.current)");
-    const watchdogStart = source.indexOf("// 流式事件到达", guardStart);
-    const guardBody = source.slice(guardStart, watchdogStart);
-
-    expect(guardBody).toContain("data.type === 'chat_ack'");
-    expect(guardBody).toContain("data.type === 'message_queued'");
+  it("新会话草稿只接受当前 clientMessageId 对应的 session", () => {
+    expect(shouldAcceptSessionEvent(
+      { sessionId: "session-old", client_msg_id: "client-old" },
+      null,
+      "client-current",
+    )).toBe(false);
+    expect(shouldAcceptSessionEvent(
+      { sessionId: "session-current", client_msg_id: "client-current" },
+      null,
+      "client-current",
+    )).toBe(true);
   });
 
-  it("sync 重放恢复并撤销队列事件", () => {
-    const syncStart = source.indexOf("if (data.type === 'sync_ok')");
-    const overflowStart = source.indexOf("if (data.type === 'sync_overflow')", syncStart);
-    const syncBody = source.slice(syncStart, overflowStart);
+  it("sync overflow 同时刷新列表与当前详情快照", async () => {
+    const loadSessions = vi.fn().mockResolvedValue(undefined);
+    const refreshCurrentSession = vi.fn();
 
-    expect(syncBody).toContain("e.type === 'message_queued'");
-    expect(syncBody).toContain("e.type === 'steering_queued'");
-    expect(syncBody).toContain("e.type === 'steering_cancelled'");
+    await recoverQueueSnapshotAfterSyncOverflow({ loadSessions, refreshCurrentSession });
+
+    expect(refreshCurrentSession).toHaveBeenCalledTimes(1);
+    expect(loadSessions).toHaveBeenCalledWith({ fresh: true });
   });
 
-  it("切会话清理本地传输态，由 durable detail 快照恢复", () => {
-    const detachStart = source.indexOf("const detachFromStream");
-    const callbacksStart = source.indexOf("const sessionCallbacks", detachStart);
-    const detachBody = source.slice(detachStart, callbacksStart);
+  it("同一帧重复提交只执行一次外部副作用", async () => {
+    const gate = { current: false };
+    let releaseTask!: () => void;
+    const waiting = new Promise<void>((resolve) => { releaseTask = resolve; });
+    const sideEffect = vi.fn(async () => waiting);
+    const submit = async () => {
+      const release = acquireMessageSubmissionSlot(gate);
+      if (!release) return false;
+      try {
+        await sideEffect();
+        return true;
+      } finally {
+        release();
+      }
+    };
 
-    expect(detachBody).toContain("ackTimersRef.current.clear()");
-    expect(detachBody).toContain("outboxRef.current = []");
-    expect(detachBody).toContain("mutateQueuedInterjections(() => [])");
+    const first = submit();
+    const duplicate = submit();
+    expect(sideEffect).toHaveBeenCalledTimes(1);
+    await expect(duplicate).resolves.toBe(false);
+    releaseTask();
+    await expect(first).resolves.toBe(true);
+
+    const next = submit();
+    await expect(next).resolves.toBe(true);
+    expect(sideEffect).toHaveBeenCalledTimes(2);
   });
 });

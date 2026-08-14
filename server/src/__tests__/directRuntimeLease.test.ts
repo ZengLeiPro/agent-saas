@@ -59,6 +59,31 @@ describe('acquireDirectRuntimeRunLease', () => {
     expect(lease).toBeNull();
     expect(acquireCalls).toBe(0);
   });
+
+  it('fails closed when another run owns the session lease', async () => {
+    const runStore = {
+      acquireLease: async () => null,
+    } as unknown as RunStore;
+
+    await expect(acquireDirectRuntimeRunLease({ runStore, runId: 'run-blocked' }))
+      .rejects.toThrow('Direct runtime lease not acquired run=run-blocked');
+  });
+
+  it('fails closed when durable lease acquisition throws', async () => {
+    const runStore = {
+      acquireLease: async () => { throw new Error('database unavailable'); },
+    } as unknown as RunStore;
+
+    await expect(acquireDirectRuntimeRunLease({ runStore, runId: 'run-db-error' }))
+      .rejects.toThrow('database unavailable');
+  });
+
+  it('fails closed when a durable store cannot acquire leases', async () => {
+    const runStore = {} as RunStore;
+
+    await expect(acquireDirectRuntimeRunLease({ runStore, runId: 'run-no-lease-api' }))
+      .rejects.toThrow('Direct runtime lease is unavailable run=run-no-lease-api');
+  });
 });
 
 describe('startWakeLeaseRenewal durable cancel fallback', () => {

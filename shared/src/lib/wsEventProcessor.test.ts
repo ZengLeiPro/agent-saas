@@ -498,11 +498,24 @@ describe('processWsEvent - 连接与消息生命周期', () => {
     expect(hooks.loadSessions).toHaveBeenCalledTimes(1);
   });
 
-  it('session：activeSessionId 非空时不 loadSessions', () => {
+  it('session：activeSessionId 非空且归属一致时不 loadSessions', () => {
     const ctrl = makeController();
     const { ctx, hooks } = makeCtx(ctrl);
-    dispatch({ type: 'session', sessionId: 'sess-1' }, ctx, freshBlock(), { value: null }, 'active');
+    dispatch({ type: 'session', sessionId: 'sess-1' }, ctx, freshBlock(), { value: null }, 'sess-1');
+    expect(hooks.setSessionId).toHaveBeenCalledWith('sess-1');
     expect(hooks.loadSessions).not.toHaveBeenCalled();
+  });
+
+  it('session：其他会话迟到事件不得改写当前会话', () => {
+    const ctrl = makeController();
+    const { ctx, hooks } = makeCtx(ctrl);
+    const latest = { value: 'sess-current' as string | null };
+
+    dispatch({ type: 'session', sessionId: 'sess-old', client_msg_id: 'client-old' }, ctx, freshBlock(), latest, 'sess-current');
+
+    expect(latest.value).toBe('sess-current');
+    expect(hooks.setSessionId).not.toHaveBeenCalled();
+    expect(hooks.upsertSession).not.toHaveBeenCalled();
   });
 });
 

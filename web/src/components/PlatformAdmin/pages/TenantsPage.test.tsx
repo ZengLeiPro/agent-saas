@@ -85,4 +85,34 @@ describe("TenantsPage 创建组织入口", () => {
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(mocked.tenantOverview).toHaveBeenCalledTimes(1);
   });
+
+  it("组织配置先选择目标组织，再进入安全与生命周期配置", async () => {
+    mocked.tenantOverview.mockResolvedValue({
+      items: [{
+        id: "test-org",
+        name: "测试组织",
+        disabled: false,
+        userCount: 2,
+        adminCount: 1,
+        activeRuns: 0,
+        sessions7d: 3,
+        costYuan30d: 0,
+        balanceCredits: null,
+        lastActiveAt: null,
+      }],
+      generatedAt: "2026-08-13T08:00:00.000Z",
+    });
+    window.history.replaceState({}, "", "/platform-console/org-business/tenants");
+
+    render(<TenantsPage tenantId={null} />);
+
+    await waitFor(() => expect(mocked.tenantOverview).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "组织配置" }));
+
+    expect(await screen.findByRole("dialog", { name: "组织配置" })).toBeTruthy();
+    expect(screen.getByText(/暂停只会限制组织访问与执行，不会删除组织或清除历史数据/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "配置组织 测试组织" }));
+
+    expect(window.location.pathname).toBe("/platform-console/org-business/tenants/test-org/security-lifecycle");
+  });
 });

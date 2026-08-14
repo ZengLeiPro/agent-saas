@@ -5,11 +5,13 @@ import { EntityIcons } from "@/lib/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { TenantFormDialog } from "@/components/TenantManager/TenantFormDialog";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { AdminEntityTable, AdminErrorAlert, EmptyState, EntityLink, MetricCard, StatusBadge } from "@/components/PlatformAdmin/common";
-import { navigateAdminSettings, navigatePlatformAdmin } from "@/lib/urlSync";
+import { governanceRoute, isCustomerOrganizationId } from "@/lib/governanceNavigation";
+import { navigateAdminSettings, navigateGovernance, navigatePlatformAdmin } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "../api";
@@ -37,6 +39,7 @@ function TenantList() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showConfiguration, setShowConfiguration] = useState(false);
 
   const load = useCallback(async (mode: "initial" | "refresh" = "refresh") => {
     if (mode === "initial") setLoading(true);
@@ -68,7 +71,7 @@ function TenantList() {
               <Plus className="size-3.5" />
               新建组织
             </Button>
-            <Button variant="outline" size="sm" onClick={openSettings}>
+            <Button variant="outline" size="sm" onClick={() => setShowConfiguration(true)}>
               <Settings className="size-3.5" />
               组织配置
             </Button>
@@ -129,6 +132,48 @@ function TenantList() {
         }}
         onUpdate={updateTenant}
       />
+      <Dialog open={showConfiguration} onOpenChange={setShowConfiguration}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>组织配置</DialogTitle>
+            <DialogDescription>
+              选择目标组织进入安全与生命周期配置。暂停只会限制组织访问与执行，不会删除组织或清除历史数据；提交前会显示实际影响并要求再次确认。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[min(60vh,28rem)] space-y-2 overflow-y-auto">
+            {items.filter(item => isCustomerOrganizationId(item.id)).map(item => (
+              <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border p-3">
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{item.name}</div>
+                  <div className="truncate font-mono text-xs text-muted-foreground">{item.id}</div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Badge variant={item.disabled ? "destructive" : "secondary"}>{item.disabled ? "已禁用" : "启用中"}</Badge>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label={`配置组织 ${item.name}`}
+                    onClick={() => {
+                      setShowConfiguration(false);
+                      navigateGovernance(governanceRoute("platform.org-business.tenants", {
+                        entityId: item.id,
+                        tab: "security-lifecycle",
+                      }));
+                    }}
+                  >
+                    管理生命周期
+                  </Button>
+                </div>
+              </div>
+            ))}
+            {!items.some(item => isCustomerOrganizationId(item.id)) && (
+              <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                当前没有可配置的客户组织。
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

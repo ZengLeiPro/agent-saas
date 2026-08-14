@@ -334,6 +334,33 @@ describe('governance access routes', () => {
     expect(test.setTenantDisabled).toHaveBeenCalledWith('tenant-a', true, 'platform-1');
   });
 
+  it('生命周期恢复只向平台管理员开放，并沿用 preview baseline', async () => {
+    const unauthorized = await rig();
+    const denied = await unauthorized.request('/api/governance/access/tenant-lifecycle?tenantId=tenant-a');
+    expect(denied.status).toBe(403);
+    expect(unauthorized.setTenantDisabled).not.toHaveBeenCalled();
+
+    const test = await rig({
+      user: { sub: 'platform-1', username: 'platform', tenantId: 'pantheon', role: 'admin' },
+      platformAdmin: true,
+      tenantLifecycle: { id: 'tenant-a', disabled: true, updatedAt: NOW },
+    });
+    const lifecycle = await test.request('/api/governance/access/tenant-lifecycle?tenantId=tenant-a');
+    expect(await lifecycle.json()).toMatchObject({ status: 'suspended', allowedActions: [{ action: 'resume' }] });
+    const change = { action: 'resume', reason: 'security review completed' };
+    const previewResponse = await test.request(
+      '/api/governance/access/tenant-lifecycle/preview?tenantId=tenant-a', json('POST', change),
+    );
+    const preview = await previewResponse.json() as Record<string, unknown>;
+    expect(preview).toMatchObject({ impact: { from: 'suspended', to: 'active', reversible: true } });
+    const committed = await test.request(
+      '/api/governance/access/tenant-lifecycle?tenantId=tenant-a', json('POST', commitBody(change, preview)),
+    );
+    expect(committed.status).toBe(200);
+    expect(await committed.json()).toMatchObject({ status: 'active' });
+    expect(test.setTenantDisabled).toHaveBeenCalledWith('tenant-a', false, 'platform-1');
+  });
+
   it('Entitlement 与 Scope 写入统一绑定 previewId 和 baselineDigest', async () => {
     const test = await rig({
       user: { sub: 'platform-1', username: 'platform', tenantId: 'pantheon', role: 'admin' },

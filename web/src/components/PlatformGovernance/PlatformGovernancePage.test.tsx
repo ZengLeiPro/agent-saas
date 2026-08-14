@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { governanceRoute } from "@/lib/governanceNavigation";
@@ -6,12 +6,16 @@ import { PlatformOrganizationGovernance } from "./PlatformGovernancePage";
 
 const mocks = vi.hoisted(() => ({
   getEntitlements: vi.fn(), listResourceCatalog: vi.fn(), previewScope: vi.fn(), updateScope: vi.fn(),
+  getTenantLifecycle: vi.fn(), previewTenantLifecycle: vi.fn(), updateTenantLifecycle: vi.fn(),
 }));
 vi.mock("@agent/shared/lib/governanceApi", () => ({
   governanceAccessApi: {
     getEntitlements: mocks.getEntitlements,
     previewEntitlementScope: mocks.previewScope,
     updateEntitlementScope: mocks.updateScope,
+    getTenantLifecycle: mocks.getTenantLifecycle,
+    previewTenantLifecycle: mocks.previewTenantLifecycle,
+    updateTenantLifecycle: mocks.updateTenantLifecycle,
   },
   governanceResourcesApi: { listEntitlementResourceCatalog: mocks.listResourceCatalog },
 }));
@@ -32,6 +36,26 @@ describe("PlatformOrganizationGovernance", () => {
       impact: { currentVersion: 2, nextVersion: 9, from: { mode: "selected", resourceCount: 1 }, to: { mode: "all", resourceCount: 4 }, blockers: [], reversible: true, effectiveMode: "source_immediate_projection_pending" },
     });
     mocks.updateScope.mockResolvedValue({ changeId: "change-scope-1", auditId: "audit-scope-1", effectiveAt: "2026-08-10T10:00:01.000Z", projectionStatus: "pending", projectionId: "projection-scope-1" });
+    mocks.getTenantLifecycle.mockResolvedValue({
+      tenantId: "tenant-a",
+      status: "active",
+      updatedAt: "2026-08-10T10:00:00.000Z",
+      allowedActions: [{ id: "suspend", label: "暂停组织", action: "suspend", requiresReason: true }],
+    });
+    mocks.previewTenantLifecycle.mockResolvedValue({
+      previewId: `tlpv1.${"c".repeat(64)}`,
+      baselineDigest: "d".repeat(64),
+      expiresAt: "2099-08-10T10:05:00.000Z",
+      impact: { tenantId: "tenant-a", from: "active", to: "suspended", blockers: [], reversible: true, effectiveMode: "immediate" },
+    });
+    mocks.updateTenantLifecycle.mockResolvedValue({
+      tenantId: "tenant-a",
+      status: "suspended",
+      updatedAt: "2026-08-10T10:00:01.000Z",
+      changeId: "change-lifecycle-1",
+      auditId: "audit-lifecycle-1",
+      effectiveAt: "2026-08-10T10:00:01.000Z",
+    });
   });
 
   it("权益页展示权威来源、版本与硬上限，但不开放无预览写入", async () => {
@@ -90,6 +114,75 @@ describe("PlatformOrganizationGovernance", () => {
     expect(await screen.findByText(statusLabel)).toBeTruthy();
     render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "entitlements" })} />);
     expect(await screen.findByText(sourceLabel)).toBeTruthy();
+  });
+
+  it("组织暂停经过原因、影响预览和二次确认后提交，并刷新权威状态", async () => {
+    mocks.getTenantLifecycle
+      .mockResolvedValueOnce({
+        tenantId: "tenant-a",
+        status: "active",
+        updatedAt: "2026-08-10T10:00:00.000Z",
+        allowedActions: [{ id: "suspend", label: "暂停组织", action: "suspend", requiresReason: true }],
+      })
+      .mockResolvedValue({
+        tenantId: "tenant-a",
+        status: "suspended",
+        updatedAt: "2026-08-10T10:00:01.000Z",
+        allowedActions: [{ id: "resume", label: "恢复组织", action: "resume", requiresReason: true }],
+      });
+    render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "security-lifecycle" })} />);
+
+    fireEvent.change(await screen.findByPlaceholderText("填写操作原因"), { target: { value: "测试组织暂停验收" } });
+    fireEvent.click(screen.getByRole("button", { name: "暂停组织" }));
+
+    expect(await screen.findByText(/启用 → 已暂停 · 可逆/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    await waitFor(() => expect(mocks.updateTenantLifecycle).toHaveBeenCalledWith("tenant-a", expect.objectContaining({
+      action: "suspend",
+      reason: "测试组织暂停验收",
+      previewId: `tlpv1.${"c".repeat(64)}`,
+      baselineDigest: "d".repeat(64),
+    })));
+    expect(await screen.findByText("changeId：change-lifecycle-1")).toBeTruthy();
+    expect(screen.getByText("auditId：audit-lifecycle-1")).toBeTruthy();
+    await waitFor(() => expect(mocks.getTenantLifecycle).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("已暂停")).toBeTruthy();
+  });
+
+  it("生命周期请求进行中禁用操作按钮，快速重复点击只发送一次预览", async () => {
+    let resolvePreview!: (value: unknown) => void;
+    mocks.previewTenantLifecycle.mockImplementationOnce(() => new Promise(resolve => { resolvePreview = resolve; }));
+    render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "security-lifecycle" })} />);
+
+    fireEvent.change(await screen.findByPlaceholderText("填写操作原因"), { target: { value: "重复点击防护测试" } });
+    const action = screen.getByRole("button", { name: "暂停组织" });
+    fireEvent.click(action);
+    fireEvent.click(action);
+
+    expect(mocks.previewTenantLifecycle).toHaveBeenCalledTimes(1);
+    expect(action.hasAttribute("disabled")).toBe(true);
+    await act(async () => {
+      resolvePreview({
+        previewId: `tlpv1.${"c".repeat(64)}`,
+        baselineDigest: "d".repeat(64),
+        expiresAt: "2099-08-10T10:05:00.000Z",
+        impact: { tenantId: "tenant-a", from: "active", to: "suspended", blockers: [], reversible: true, effectiveMode: "immediate" },
+      });
+    });
+    expect(await screen.findByRole("button", { name: "确认执行" })).toBeTruthy();
+  });
+
+  it("生命周期提交冲突显示服务端原因且不制造成功回执", async () => {
+    mocks.updateTenantLifecycle.mockRejectedValueOnce(new Error("Tenant lifecycle baseline changed"));
+    render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "security-lifecycle" })} />);
+
+    fireEvent.change(await screen.findByPlaceholderText("填写操作原因"), { target: { value: "并发冲突测试" } });
+    fireEvent.click(screen.getByRole("button", { name: "暂停组织" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认执行" }));
+
+    expect(await screen.findByText("Tenant lifecycle baseline changed")).toBeTruthy();
+    expect(screen.queryByText("变更回执")).toBeNull();
+    expect(mocks.getTenantLifecycle).toHaveBeenCalledTimes(1);
   });
 
   it("API 失败不回退旧 TenantSettings", async () => {

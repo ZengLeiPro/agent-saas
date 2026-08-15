@@ -142,6 +142,28 @@ describe('Governed Skill + Candidate 发布链', () => {
     expect(created).toMatchObject({ skillId: 'sales-helper', scope: 'tenant', status: 'draft', revision: 1 });
   });
 
+  it('治理上传可在单一事务内创建 tenant Skill 并发布 immutable v1', async () => {
+    const { pool, resources, versions, queries } = buildPool();
+    const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
+    const result = await store.createAndPublishResource({
+      skillId: 'uploaded-skill',
+      tenantId: 'acme',
+      scope: 'tenant',
+      definition: { ...definition, source: 'governance_upload' },
+      createdBy: 'org-admin',
+    });
+
+    expect(result).toMatchObject({
+      created: true,
+      resource: { skillId: 'uploaded-skill', tenantId: 'acme', status: 'published', revision: 2 },
+      version: { skillId: 'uploaded-skill', versionNumber: 1 },
+    });
+    expect(resources.get('uploaded-skill')).toMatchObject({ status: 'published', current_version_id: expect.any(String) });
+    expect(versions).toHaveLength(1);
+    expect(queries.filter(query => query === 'BEGIN')).toHaveLength(1);
+    expect(queries.filter(query => query === 'COMMIT')).toHaveLength(1);
+  });
+
   it('个人候选副本按 draft→submitted→approved→published，发布 immutable version', async () => {
     const { pool, versions, queries } = buildPool();
     const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });

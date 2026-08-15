@@ -12,7 +12,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { deleteMySkill, fetchMySkillDocument, importMySkill, SkillSelectionConflictError, updateMySkillDocument } from "@agent/shared";
+import { deleteMySkill, fetchMySkillDocument, SkillSelectionConflictError, updateMySkillDocument } from "@agent/shared";
+import { governanceResourcesApi } from "@agent/shared/lib/governanceApi";
 import type { UserSkillInfo } from "@agent/shared";
 import { useMySkills } from "./hooks";
 import {
@@ -200,10 +201,13 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
     setImportMsg(null);
     setImportOk(false);
     try {
-      const result = await importMySkill(files);
+      const result = await governanceResourcesApi.importPersonalSkillPackage(files);
       setImportDialogOpen(false);
       setImportOk(true);
-      setImportMsg(`已导入技能：${result.skill.name}`);
+      const auditStatus = result.auditCompletion === "pending" ? "，审计记录同步中" : "";
+      setImportMsg(result.selected === false
+        ? `已导入并发布技能：${result.skill.name}（v${result.version.versionNumber}${auditStatus}），但未能自动启用，请在列表中手动启用`
+        : `已导入并发布技能：${result.skill.name}（v${result.version.versionNumber}${auditStatus}）`);
       await refresh();
       setTimeout(() => setImportMsg(null), 2200);
     } catch (err) {
@@ -368,6 +372,14 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
             </div>
             <div className={cn("p-4 text-sm leading-6 text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}>
               {sourceDescription(skillSource(detailSkill))}
+              {detailSkill.governance ? (
+                <div className="mt-2 text-xs">
+                  {detailSkill.governance.status === "published" ? "已发布" : detailSkill.governance.status === "draft" ? "草稿" : "已退役"}
+                  {detailSkill.governance.version ? ` · v${detailSkill.governance.version}` : ""}
+                  {` · ${detailSkill.governance.source === "governance_upload" ? "治理上传" : "治理资源"}`}
+                  {` · ${detailSkill.governance.scope === "personal" ? "个人" : "组织"}`}
+                </div>
+              ) : null}
             </div>
             <Button
               className="w-full"

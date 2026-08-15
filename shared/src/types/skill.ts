@@ -1,4 +1,14 @@
 /** Skill 基本信息（pool 和自建共用） */
+export interface SkillGovernanceInfo {
+  resourceId: string;
+  tenantId: string;
+  scope: 'tenant' | 'personal';
+  status: 'draft' | 'published' | 'retired';
+  version?: number;
+  source?: string;
+  createdBy: string;
+}
+
 export interface SkillInfo {
   id: string;
   name: string;
@@ -30,12 +40,15 @@ export interface PoolSkillInfo extends SkillInfo, PlatformSkillSettings {
 export interface TenantSkillInfo extends SkillInfo, TenantSkillSettings {}
 
 /** 租户自有 skill（存于 tenants/<tenantId>/skills/）+ 治理规则 */
-export interface TenantOwnSkillInfo extends SkillInfo, TenantSkillSettings {}
+export interface TenantOwnSkillInfo extends SkillInfo, TenantSkillSettings {
+  governance?: SkillGovernanceInfo;
+}
 
 /** 用户视角的 skill（含选中状态和来源） */
 export interface UserSkillInfo extends SkillInfo {
   selected: boolean;
   source: 'pool' | 'tenant' | 'custom';
+  governance?: SkillGovernanceInfo;
   /** 治理偏好的乐观锁版本；旧服务端不返回时客户端回退兼容接口。 */
   selectionVersion?: number;
 }
@@ -78,10 +91,36 @@ export interface CustomSkillsResponse {
 }
 
 
-/** POST /api/skills/me/import 响应 */
+/** POST /api/governance/resources/skills/import 响应 */
 export interface SkillImportResponse {
   ok: true;
   skill: SkillInfo;
+}
+
+export interface GovernanceSkillImportResponse extends SkillImportResponse {
+  status: 'succeeded';
+  selected?: boolean;
+  resource: {
+    skillId: string;
+    tenantId: string;
+    scope: 'tenant' | 'personal';
+    ownerUserId?: string;
+    status: 'published';
+    currentVersionId: string;
+    revision: number;
+    createdBy: string;
+  };
+  version: {
+    versionId: string;
+    skillId: string;
+    versionNumber: number;
+    digest: string;
+  };
+  auditCompletion?: 'pending';
+  auditProjectionId?: string;
+  changeId?: string;
+  auditId?: string;
+  effectiveAt?: string;
 }
 
 
@@ -89,6 +128,7 @@ export interface SkillImportResponse {
 export interface SkillDocumentResponse {
   skillId: string;
   source: 'pool' | 'tenant' | 'custom';
+  governance?: SkillGovernanceInfo;
   username?: string;
   tenantId?: string;
   content: string;

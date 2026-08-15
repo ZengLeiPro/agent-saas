@@ -14,6 +14,14 @@ function json(method: string, body: unknown): RequestInit {
   return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
 }
 
+function skillUploadBody(name = 'uploaded-skill'): FormData {
+  const form = new FormData();
+  form.append('files', new Blob([
+    `---\nname: ${name}\ndescription: uploaded\n---\nbody`,
+  ], { type: 'text/markdown' }), 'SKILL.md');
+  return form;
+}
+
 async function rig(input: {
   user?: JwtPayload;
   auditAppend?: ReturnType<typeof vi.fn>;
@@ -30,6 +38,8 @@ async function rig(input: {
   skillSubmitCandidate?: ReturnType<typeof vi.fn>;
   skillReviewCandidate?: ReturnType<typeof vi.fn>;
   skillPublishCandidate?: ReturnType<typeof vi.fn>;
+  skillImport?: ReturnType<typeof vi.fn>;
+  personalSkillImport?: ReturnType<typeof vi.fn>;
   listCredentials?: ReturnType<typeof vi.fn>;
   getCredential?: ReturnType<typeof vi.fn>;
   updateCredential?: ReturnType<typeof vi.fn>;
@@ -54,6 +64,7 @@ async function rig(input: {
   listFileOwnership?: (tenantId: string, userId: string) => Promise<{ personalFileIds: string[]; organizationFileIds: string[] }>;
   platformAdmin?: boolean;
   tenantExists?: (tenantId: string) => boolean;
+  customSkillsEnabled?: (tenantId: string) => boolean;
   omitRetentionAuthorities?: boolean;
   omitExecutionAuthorities?: boolean;
 }) {
@@ -76,6 +87,19 @@ async function rig(input: {
   const skillSubmitCandidate = input.skillSubmitCandidate ?? vi.fn();
   const skillReviewCandidate = input.skillReviewCandidate ?? vi.fn();
   const skillPublishCandidate = input.skillPublishCandidate ?? vi.fn();
+  const skillImport = input.skillImport ?? vi.fn().mockResolvedValue({
+    ok: true,
+    status: 'succeeded',
+    skill: { id: 'uploaded-skill', name: 'uploaded-skill', description: 'uploaded' },
+    resource: { skillId: 'uploaded-skill', tenantId: 'tenant-a', scope: 'tenant', status: 'published', revision: 2 },
+    version: { versionId: 'skillv-1', skillId: 'uploaded-skill', versionNumber: 1 },
+  });
+  const personalSkillImport = input.personalSkillImport ?? vi.fn().mockResolvedValue({
+    ok: true, status: 'succeeded', selected: true,
+    skill: { id: 'personal-skill', name: 'personal-skill', description: 'uploaded' },
+    resource: { skillId: 'personal-hash', tenantId: 'tenant-a', scope: 'personal', ownerUserId: 'user-1', status: 'published', revision: 2 },
+    version: { versionId: 'skillv-personal', skillId: 'personal-hash', versionNumber: 1 },
+  });
   const connectorUpdateStatus = input.connectorUpdateStatus ?? vi.fn();
   const environmentRetire = input.environmentRetire ?? vi.fn();
   const updateCredential = input.updateCredential ?? vi.fn();
@@ -118,6 +142,8 @@ async function rig(input: {
       listPersonalByOwner: input.listOwnedSkills ?? vi.fn().mockResolvedValue([]),
       listPublishedPlatform: vi.fn().mockResolvedValue([]),
     } as never,
+    importTenantSkill: skillImport as never,
+    importPersonalSkill: personalSkillImport as never,
     connectors: {
       get: vi.fn().mockResolvedValue({ connectorId: 'github', status: 'published' }),
       list: vi.fn().mockResolvedValue([]), updateStatus: connectorUpdateStatus,
@@ -146,6 +172,7 @@ async function rig(input: {
     changePlanner: {} as never,
     offboardingPreviewSecret: 'test-offboarding-preview-secret-32-characters',
     tenantExists: input.tenantExists ?? (() => true),
+    isCustomSkillsEnabled: input.customSkillsEnabled ?? (() => true),
     listCronIdsByOwner: input.listCronIdsByOwner ?? (async () => []),
     ...(!input.omitExecutionAuthorities ? {
       listActiveRunIdsByUser: input.listActiveRunIdsByUser ?? (async () => []),
@@ -175,7 +202,7 @@ async function rig(input: {
     request: (path: string, init?: RequestInit) => fetch(`${base}${path}`, init),
     auditAppend, agentCreate, agentPublish, agentSetStatus, agentArchive,
     skillCreate, skillPublishVersion, skillCreateCandidate, skillSubmitCandidate,
-    skillReviewCandidate, skillPublishCandidate, credentialCreate, updateCredential,
+    skillReviewCandidate, skillPublishCandidate, skillImport, personalSkillImport, credentialCreate, updateCredential,
     connectorUpdateStatus, environmentRetire, putSecret,
   };
 }
@@ -227,6 +254,121 @@ describe('typed governance resource routes', () => {
     expect(await response.json()).toMatchObject({ auditId: 'intent-1', auditCompletion: 'pending', auditProjectionId: 'audit-terminal-1' });
     expect(test.agentCreate).toHaveBeenCalledOnce();
     expect(projectionEnqueue).toHaveBeenCalledWith(expect.objectContaining({ projector: 'audit_terminal' }));
+  });
+
+  it('平台管理员代管组织通过治理 multipart 入口上传，目标租户与创建人保持显式绑定', async () => {
+    const test = await rig({
+      platformAdmin: true,
+      user: { sub: 'platform-1', username: 'root', tenantId: 'pantheon', role: 'admin' },
+    });
+
+    const response = await test.request('/api/governance/resources/skills/import?scope=tenant&tenantId=tenant-a', {
+      method: 'POST',
+      body: skillUploadBody(),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      status: 'succeeded',
+      skill: { id: 'uploaded-skill' },
+    });
+    expect(test.skillImport).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      actorUserId: 'platform-1',
+      files: [expect.objectContaining({ originalname: 'SKILL.md' })],
+    });
+  });
+
+  it('组织管理员仅可上传到本组织，普通成员和跨组织请求均被拒绝', async () => {
+    const admin = await rig({
+      user: { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' },
+    });
+    const own = await admin.request('/api/governance/resources/skills/import?scope=tenant&tenantId=tenant-a', {
+      method: 'POST', body: skillUploadBody('own-skill'),
+    });
+    expect(own.status).toBe(201);
+    expect(admin.skillImport).toHaveBeenCalledWith(expect.objectContaining({ tenantId: 'tenant-a' }));
+
+    const cross = await admin.request('/api/governance/resources/skills/import?scope=tenant&tenantId=tenant-b', {
+      method: 'POST', body: skillUploadBody('cross-skill'),
+    });
+    expect(cross.status).toBe(403);
+    expect(admin.skillImport).toHaveBeenCalledTimes(1);
+
+    const member = await rig({
+      user: { sub: 'member-1', username: 'member', tenantId: 'tenant-a', role: 'user' },
+    });
+    const denied = await member.request('/api/governance/resources/skills/import?scope=tenant&tenantId=tenant-a', {
+      method: 'POST', body: skillUploadBody('member-skill'),
+    });
+    expect(denied.status).toBe(403);
+    expect(member.skillImport).not.toHaveBeenCalled();
+  });
+
+  it('普通成员的组织上传在 multipart 解析前拒绝', async () => {
+    const member = await rig({
+      user: { sub: 'member-1', username: 'member', tenantId: 'tenant-a', role: 'user' },
+    });
+    const response = await member.request(
+      '/api/governance/resources/skills/import?scope=tenant&tenantId=tenant-a',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'multipart/form-data; boundary=unfinished' },
+        body: '--unfinished\r\nContent-Disposition: form-data; name="files"; filename="large.zip"\r\n\r\n',
+      },
+    );
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ code: 'ORGANIZATION_ADMIN_REQUIRED' });
+    expect(member.skillImport).not.toHaveBeenCalled();
+  });
+
+  it('自定义技能功能关闭时，组织和个人治理上传均在接收文件前拒绝', async () => {
+    const admin = await rig({
+      user: { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' },
+      customSkillsEnabled: () => false,
+    });
+    const tenantResponse = await admin.request(
+      '/api/governance/resources/skills/import?scope=tenant&tenantId=tenant-a',
+      { method: 'POST', body: skillUploadBody('disabled-tenant') },
+    );
+    expect(tenantResponse.status).toBe(403);
+    await expect(tenantResponse.json()).resolves.toMatchObject({ code: 'TENANT_FEATURE_DISABLED' });
+    expect(admin.skillImport).not.toHaveBeenCalled();
+
+    const member = await rig({
+      user: { sub: 'member-1', username: 'member', tenantId: 'tenant-a', role: 'user' },
+      customSkillsEnabled: () => false,
+    });
+    const personalResponse = await member.request(
+      '/api/governance/resources/skills/import?scope=personal',
+      { method: 'POST', body: skillUploadBody('disabled-personal') },
+    );
+    expect(personalResponse.status).toBe(403);
+    await expect(personalResponse.json()).resolves.toMatchObject({ code: 'TENANT_FEATURE_DISABLED' });
+    expect(member.personalSkillImport).not.toHaveBeenCalled();
+  });
+
+  it('普通成员通过治理入口导入个人 Skill，并强制绑定当前用户与组织', async () => {
+    const member = await rig({ user: { sub: 'member-1', username: 'member', tenantId: 'tenant-a', role: 'user' } });
+    const response = await member.request('/api/governance/resources/skills/import?scope=personal', { method: 'POST', body: skillUploadBody('personal-skill') });
+    expect(response.status).toBe(201);
+    expect(member.personalSkillImport).toHaveBeenCalledWith({ tenantId: 'tenant-a', actorUserId: 'member-1', files: [expect.objectContaining({ originalname: 'SKILL.md' })] });
+    expect(member.skillImport).not.toHaveBeenCalled();
+
+    const crossTenant = await member.request(
+      '/api/governance/resources/skills/import?scope=personal&tenantId=tenant-b',
+      { method: 'POST', body: skillUploadBody('cross-personal') },
+    );
+    expect(crossTenant.status).toBe(403);
+    expect(member.personalSkillImport).toHaveBeenCalledTimes(1);
+  });
+
+  it('Skill 上传缺少合法 scope 时拒绝且不调用写服务', async () => {
+    const test = await rig({}); const form = new FormData(); form.append('files', new Blob(['content']), 'SKILL.md');
+    const response = await test.request('/api/governance/resources/skills/import', { method: 'POST', body: form });
+    expect(response.status).toBe(400); await expect(response.json()).resolves.toMatchObject({ code: 'SKILL_SCOPE_INVALID' });
+    expect(test.skillImport).not.toHaveBeenCalled(); expect(test.personalSkillImport).not.toHaveBeenCalled();
   });
 
   it('个人 Agent owner 强制绑定当前用户，拒绝代他人创建', async () => {

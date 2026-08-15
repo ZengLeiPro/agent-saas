@@ -10,6 +10,10 @@ import type { ExecuteUserOffboarding } from './governanceOffboarding.js';
 import type { AppRuntime } from './runtime.js';
 import { createAssignmentResourceResolver, createEntitlementResourceCatalogResolver, createEntitlementResourceResolver } from './runtimeAssignmentResourceResolver.js';
 import { createOAuthGrantReconciler } from './runtimeOAuthGrantReconciler.js';
+import {
+  createPersonalSkillGovernanceUpload,
+  createTenantSkillGovernanceUpload,
+} from '../services/tenantSkillGovernanceUpload.js';
 
 const scheduledOffboardingRuntimes = new WeakSet<AppRuntime>();
 
@@ -125,12 +129,31 @@ export function registerGovernanceRoutes(
       memberships: runtime.membershipStore,
       agents: runtime.agentResourceStore,
       skills: runtime.skillGovernanceStore,
+      ...(runtime.skillConfigStore && runtime.userStore ? {
+        importTenantSkill: createTenantSkillGovernanceUpload({
+          skills: runtime.skillGovernanceStore,
+          skillConfigStore: runtime.skillConfigStore,
+          userStore: runtime.userStore,
+          agentCwd: runtime.agentCwd,
+          sharedDir: runtime.sharedDir,
+          tenantSkillsRootDir: runtime.tenantSkillsRootDir,
+        }),
+        importPersonalSkill: createPersonalSkillGovernanceUpload({
+          skills: runtime.skillGovernanceStore,
+          skillConfigStore: runtime.skillConfigStore,
+          userStore: runtime.userStore,
+          agentCwd: runtime.agentCwd,
+          sharedDir: runtime.sharedDir,
+          tenantSkillsRootDir: runtime.tenantSkillsRootDir,
+        }),
+      } : {}),
       connectors: runtime.connectorCatalogStore,
       credentials: runtime.credentialStore,
       environments: runtime.environmentStore,
       changeJobs: runtime.governanceChangeJobStore,
       changePlanner: runtime.governanceChangePlanner,
       tenantExists: tenantId => Boolean(runtime.tenantStore?.findById(tenantId)),
+      isCustomSkillsEnabled: tenantId => runtime.tenantStore?.getSettings(tenantId)?.features.customSkillsEnabled !== false,
       resolveUserTenantId: userId => runtime.userStore?.findById(userId)?.tenantId,
       listCronIdsByOwner: async userId => (await runtime.cronRuntime.service?.list({ includeDisabled: true }) ?? [])
         .filter(job => job.owner === userId)

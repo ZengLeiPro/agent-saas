@@ -4,7 +4,6 @@ import {
   fetchTenantSkillPool,
   updateTenantSkillSettings,
   importPoolSkill,
-  importTenantSkill,
   fetchTenantOwnSkills,
   updateTenantOwnSkillSettings,
   fetchTenantOwnSkillDocument,
@@ -20,6 +19,7 @@ import {
   type TenantOwnSkillInfo,
   type TenantSkillSettings,
 } from "@agent/shared";
+import { governanceResourcesApi } from "@agent/shared/lib/governanceApi";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -82,7 +82,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<string | null>(null);
-  const [importOk, setImportOk] = useState(false);
+  const [importStatus, setImportStatus] = useState<"idle" | "submitting" | "succeeded" | "failed">("idle");
   const skillFileInputRef = useRef<HTMLInputElement>(null);
   const skillFolderInputRef = useRef<HTMLInputElement>(null);
   const skillZipInputRef = useRef<HTMLInputElement>(null);
@@ -129,24 +129,33 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
     event.target.value = "";
     if (files.length === 0) return;
     setImporting(true);
-    setImportMsg(null);
-    setImportOk(false);
+    setImportStatus("submitting");
+    setImportMsg("正在提交技能包到治理服务…");
     try {
-      const result = isTenantMode && tenantIdScope
-        ? await importTenantSkill(tenantIdScope, files)
-        : await importPoolSkill(files);
+      let successMessage: string;
+      if (isTenantMode && tenantIdScope) {
+        const result = await governanceResourcesApi.importTenantSkillPackage(tenantIdScope, files);
+        successMessage = `已上传并发布技能：${result.skill.name}（v${result.version.versionNumber}${result.auditCompletion === "pending" ? "，审计记录同步中" : ""}）`;
+      } else {
+        const result = await importPoolSkill(files);
+        successMessage = `已上传技能：${result.skill.name}`;
+      }
       setImportDialogOpen(false);
-      setImportOk(true);
-      setImportMsg(`已上传技能：${result.skill.name}`);
+      setImportStatus("succeeded");
+      setImportMsg(successMessage);
       await refreshAll();
-      setTimeout(() => setImportMsg(null), 2200);
+      setTimeout(() => {
+        setImportMsg(null);
+        setImportStatus("idle");
+      }, 2200);
     } catch (err) {
-      setImportOk(false);
-      setImportMsg(`上传失败: ${err instanceof Error ? err.message : "未知错误"}`);
+      if (isTenantMode) await refreshTenantSkills().catch(() => undefined);
+      setImportStatus("failed");
+      setImportMsg(`上传失败：${err instanceof Error ? err.message : "未知错误"}`);
     } finally {
       setImporting(false);
     }
-  }, [isTenantMode, tenantIdScope, refreshAll]);
+  }, [isTenantMode, tenantIdScope, refreshAll, refreshTenantSkills]);
 
   const handleUpdateOwnSkill = useCallback(async (skill: TenantOwnSkillInfo, patch: Partial<TenantSkillSettings>) => {
     if (!tenantIdScope) return;
@@ -377,7 +386,9 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
               刷新
             </Button>
             {importMsg && (
-              <span className={importOk ? "text-sm text-success" : "text-sm text-destructive"}>
+              <span className={importStatus === "failed"
+                ? "text-sm text-destructive"
+                : importStatus === "succeeded" ? "text-sm text-success" : "text-sm text-muted-foreground"}>
                 {importMsg}
               </span>
             )}
@@ -428,6 +439,14 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                           <div className="text-sm font-medium">{skill.name}</div>
                           {skill.description && (
                             <p className="mt-0.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{skill.description}</p>
+                          )}
+                          {skill.governance && (
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                              {skill.governance.status === "published" ? "已发布" : skill.governance.status === "draft" ? "草稿" : "已退役"}
+                              {skill.governance.version ? ` · v${skill.governance.version}` : ""}
+                              {` · ${skill.governance.source === "governance_upload" ? "治理上传" : "治理资源"}`}
+                              {` · 组织 ${skill.governance.tenantId}`}
+                            </p>
                           )}
                         </div>
                         <div className="flex shrink-0 items-center gap-1">

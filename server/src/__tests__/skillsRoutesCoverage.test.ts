@@ -383,4 +383,22 @@ describe('skills routes coverage', () => {
     expect(res.status).toBe(400);
     expect((await res.json() as { error: string }).error).toBe('No files uploaded');
   });
+
+  it('组织 Skill 旧上传入口在治理封印后稳定返回 409', async () => {
+    await h.close();
+    h = await makeRig({ sealedLegacyWrites: true });
+    h.setCaller(PLATFORM_ADMIN);
+    const files = new FormData();
+    files.append('files', new Blob([
+      '---\nname: governed-upload\ndescription: governed upload reproduction\n---\nbody',
+    ], { type: 'text/markdown' }), 'SKILL.md');
+    const response = await h.request('/api/skills/tenants/kaiyan/import', { method: 'POST', body: files });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: '旧版 Skill 写入口已封闭，请使用治理资源 API',
+      code: 'MIGRATION_LEGACY_WRITE_SEALED',
+    });
+    expect(h.getLegacyGateCalls()).toBe(1);
+  });
+
 });

@@ -1,4 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import multer from 'multer';
 import { Router } from 'express';
 import type { Request } from 'express';
 
@@ -11,6 +12,15 @@ import type { PgEnvironmentStore } from '../data/environments/index.js';
 import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
 import type { GovernanceChangePlanner, PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import type { PgMembershipStore } from '../data/memberships/index.js';
+import { hasPlatformCapability } from '../auth/platformGovernance.js';
+import {
+  SkillPackageUploadError,
+} from '../services/skillPackageUpload.js';
+import type {
+  PersonalSkillGovernanceUploadResult,
+  TenantSkillGovernanceUploadResult,
+} from '../services/tenantSkillGovernanceUpload.js';
+import { serverLogger } from '../utils/logger.js';
 import type { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
 import { registerGovernanceAgentResourceRoutes } from './governanceAgentResourceRoutes.js';
 import { registerGovernanceCredentialRoutes } from './governanceCredentialRoutes.js';
@@ -48,16 +58,66 @@ function offboardingRetentionAuthoritiesAvailable(impact: {
     && ['clear', 'archive', 'blocked'].includes(impact.fileOwnership.status);
 }
 
+function boundedMemoryStorage(maxTotalBytes: number): multer.StorageEngine {
+  const totals = new WeakMap<Request, number>();
+  return {
+    _handleFile(req, file, callback) {
+      const chunks: Buffer[] = [];
+      let fileBytes = 0;
+      let completed = false;
+      file.stream.on('data', (chunk: Buffer) => {
+        if (completed) return;
+        const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        const totalBytes = (totals.get(req) ?? 0) + data.length;
+        totals.set(req, totalBytes);
+        if (totalBytes > maxTotalBytes) {
+          completed = true;
+          file.stream.resume();
+          callback(new multer.MulterError('LIMIT_FILE_SIZE', file.fieldname));
+          return;
+        }
+        chunks.push(data);
+        fileBytes += data.length;
+      });
+      file.stream.once('error', (error) => {
+        if (completed) return;
+        completed = true;
+        callback(error);
+      });
+      file.stream.once('end', () => {
+        if (completed) return;
+        completed = true;
+        callback(null, { buffer: Buffer.concat(chunks), size: fileBytes });
+      });
+    },
+    _removeFile(_req, file, callback) {
+      delete (file as { buffer?: Buffer }).buffer;
+      callback(null);
+    },
+  };
+}
+
 export function createGovernanceResourcesRouter(deps: {
   memberships: PgMembershipStore;
   agents: PgAgentResourceStore;
   skills: PgSkillGovernanceStore;
+  importTenantSkill?: (input: {
+    tenantId: string;
+    actorUserId: string;
+    files: Express.Multer.File[];
+  }) => Promise<TenantSkillGovernanceUploadResult>;
+  importPersonalSkill?: (input: {
+    tenantId: string;
+    actorUserId: string;
+    files: Express.Multer.File[];
+  }) => Promise<PersonalSkillGovernanceUploadResult>;
   connectors: PgConnectorCatalogStore;
   credentials: PgCredentialStore;
   environments: PgEnvironmentStore;
   changeJobs: PgGovernanceChangeJobStore;
   changePlanner: GovernanceChangePlanner;
   tenantExists?: (tenantId: string) => boolean;
+  isCustomSkillsEnabled?: (tenantId: string) => boolean;
   resolveUserTenantId?: (userId: string) => string | undefined;
   listCronIdsByOwner?: (userId: string) => Promise<Array<{ id: string; version: string }>>;
   listActiveRunIdsByUser?: (tenantId: string, userId: string) => Promise<Array<{ id: string; version: string }>>;
@@ -85,6 +145,10 @@ export function createGovernanceResourcesRouter(deps: {
     throw new Error('offboardingPreviewSecret must contain at least 32 characters');
   }
   const router = Router();
+  const skillUpload = multer({
+    storage: boundedMemoryStorage(100 * 1024 * 1024),
+    limits: { fileSize: 25 * 1024 * 1024, files: 300 },
+  });
   const now = deps.now ?? (() => new Date());
   const personas = new WeakMap<Request, 'platform_admin' | 'org_admin' | 'member'>();
   const canManageTenant = (req: Request) => {
@@ -400,6 +464,87 @@ export function createGovernanceResourcesRouter(deps: {
       ? await deps.environments.getTemplateVersion(template.currentVersionId)
       : null;
     res.json({ template, version });
+  });
+
+  router.post('/skills/import', async (req, res) => {
+    const scope = typeof req.query.scope === 'string' ? req.query.scope : undefined;
+    if (scope !== 'tenant' && scope !== 'personal') {
+      return res.status(400).json({ error: '技能作用域无效', code: 'SKILL_SCOPE_INVALID' });
+    }
+
+    let tenantId: string;
+    if (scope === 'personal') {
+      if (!deps.importPersonalSkill) {
+        return res.status(503).json({ error: '个人技能上传服务暂不可用', code: 'SKILL_UPLOAD_UNAVAILABLE' });
+      }
+      const requestedTenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
+      const resolvedTenantId = resourceTenantFor(req, requestedTenantId);
+      if (!resolvedTenantId) {
+        return res.status(403).json({ error: '当前组织作用域无效', code: 'SKILL_TENANT_SCOPE_DENIED' });
+      }
+      tenantId = resolvedTenantId;
+      if (deps.isCustomSkillsEnabled && !deps.isCustomSkillsEnabled(tenantId)) {
+        return res.status(403).json({ error: '自定义技能已被当前组织禁用', code: 'TENANT_FEATURE_DISABLED' });
+      }
+      if (await hasActiveOffboarding(tenantId, req.user!.sub)) {
+        return res.status(409).json({ error: '账号正在离职交接，暂不能上传个人技能', code: 'RESOURCE_OWNER_OFFBOARDING_ACTIVE' });
+      }
+    } else {
+      if (!deps.importTenantSkill) {
+        return res.status(503).json({ error: '组织技能上传服务暂不可用', code: 'SKILL_UPLOAD_UNAVAILABLE' });
+      }
+      const requestedTenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
+      if (!requestedTenantId) {
+        return res.status(400).json({ error: '请选择目标组织', code: 'SKILL_TENANT_REQUIRED' });
+      }
+      const persona = personas.get(req);
+      if (persona === 'platform_admin') {
+        if (!hasPlatformCapability(req.user, 'skill.tenant.manage')) {
+          return res.status(403).json({ error: '当前平台管理员无组织技能管理权限', code: 'PLATFORM_CAPABILITY_REQUIRED' });
+        }
+      } else if (persona !== 'org_admin') {
+        return res.status(403).json({ error: '仅组织管理员可以上传组织技能', code: 'ORGANIZATION_ADMIN_REQUIRED' });
+      }
+      const resolvedTenantId = tenantFor(req, requestedTenantId);
+      if (!resolvedTenantId) {
+        return res.status(403).json({ error: '不能向其他组织上传技能', code: 'SKILL_TENANT_SCOPE_DENIED' });
+      }
+      tenantId = resolvedTenantId;
+      if (deps.tenantExists && !deps.tenantExists(tenantId)) {
+        return res.status(404).json({ error: '目标组织不存在', code: 'SKILL_TENANT_NOT_FOUND' });
+      }
+      if (deps.isCustomSkillsEnabled && !deps.isCustomSkillsEnabled(tenantId)) {
+        return res.status(403).json({ error: '自定义技能已被当前组织禁用', code: 'TENANT_FEATURE_DISABLED' });
+      }
+    }
+
+    skillUpload.array('files', 300)(req, res, (uploadError) => {
+      if (uploadError) {
+        const limitExceeded = uploadError instanceof multer.MulterError
+          && ['LIMIT_FILE_SIZE', 'LIMIT_FILE_COUNT', 'LIMIT_UNEXPECTED_FILE'].includes(uploadError.code);
+        return res.status(limitExceeded ? 413 : 400).json({
+          error: limitExceeded
+            ? '技能包超出限制：单个文件不能超过 25MB、总计不能超过 100MB，且最多上传 300 个文件'
+            : '技能包上传请求无效',
+          code: limitExceeded ? 'SKILL_PACKAGE_LIMIT_EXCEEDED' : 'SKILL_PACKAGE_REQUEST_INVALID',
+        });
+      }
+      void (async () => {
+        const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+        try {
+          const result = scope === 'personal'
+            ? await deps.importPersonalSkill!({ tenantId, actorUserId: req.user!.sub, files })
+            : await deps.importTenantSkill!({ tenantId, actorUserId: req.user!.sub, files });
+          return res.status(201).json(result);
+        } catch (error) {
+          if (error instanceof SkillPackageUploadError) {
+            return res.status(error.status).json({ error: error.message, code: error.code });
+          }
+          serverLogger.error(`Governance Skill upload failed: ${error}`);
+          return res.status(500).json({ error: '技能上传失败，请稍后重试', code: 'SKILL_UPLOAD_FAILED' });
+        }
+      })();
+    });
   });
 
   router.post('/skills', async (req, res) => {

@@ -12,14 +12,16 @@ import { parseJsonResponse } from './parseJsonResponse';
 import {
   agentListSchema, auditListSchema, changeJobSchema, credentialListSchema, directoryGroupListSchema,
   entitlementCatalogSchema, entitlementPreviewSchema, entitlementResponseSchema,
-  environmentTemplateListSchema, governanceReceiptSchema, lifecyclePreviewSchema, lifecycleResponseSchema,
-  memberDetailsSchema, membershipListSchema, membershipPreviewSchema, offboardingPreviewSchema,
+  environmentTemplateListSchema, governanceReceiptSchema, lifecycleMutationReceiptSchema,
+  lifecyclePreviewSchema, lifecycleResponseSchema, memberDetailsSchema, membershipListSchema,
+  membershipPreviewSchema, offboardingPreviewSchema,
   platformAdminListSchema, scopePreviewSchema,
 } from './governanceUiSchemas';
 
 const ACCESS_BASE = '/api/governance/access';
 const RESOURCE_BASE = '/api/governance/resources';
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
+const LIFECYCLE_MUTATION_SUCCESS_CODES = new Set(['TENANT_LIFECYCLE_PROPAGATION_PENDING']);
 
 type QueryValue = string | number | boolean | null | undefined;
 export type GovernanceCommand = Record<string, unknown>;
@@ -57,20 +59,23 @@ function isSuccessCode(code: unknown): boolean {
     || code === 'OK' || code === 'SUCCESS';
 }
 
-function backendError(value: unknown): { code: string; message: string } | undefined {
+function backendError(
+  value: unknown,
+  acceptedSuccessCodes?: ReadonlySet<string>,
+): { code: string; message: string } | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const record = value as Record<string, unknown>;
   if (record.code === undefined) return undefined;
   const code = String(record.code);
-  if (isSuccessCode(record.code)) return undefined;
+  if (isSuccessCode(record.code) || acceptedSuccessCodes?.has(code)) return undefined;
   const message = typeof record.message === 'string'
     ? record.message
     : typeof record.error === 'string' ? record.error : code;
   return { code, message };
 }
 
-function unwrapEnvelope(value: unknown): unknown {
-  const error = backendError(value);
+function unwrapEnvelope(value: unknown, acceptedSuccessCodes?: ReadonlySet<string>): unknown {
+  const error = backendError(value, acceptedSuccessCodes);
   if (error) throw new GovernanceApiError(error.code, error.message);
   if (value && typeof value === 'object') {
     const record = value as Record<string, unknown>;
@@ -84,6 +89,7 @@ async function request<T = unknown>(
   path: string,
   init?: RequestInit,
   schema?: z.ZodType<T>,
+  acceptedSuccessCodes?: ReadonlySet<string>,
 ): Promise<T> {
   const response = await authFetch(path, init);
   const errorCopy = !response.ok ? response.clone() : undefined;
@@ -100,7 +106,7 @@ async function request<T = unknown>(
     throw new GovernanceApiError(`HTTP_${response.status}`, message, response.status);
   }
 
-  const payload = unwrapEnvelope(raw);
+  const payload = unwrapEnvelope(raw, response.ok ? acceptedSuccessCodes : undefined);
   try {
     if (schema) return parseGovernanceDto(schema, payload);
     assertGovernanceUiSafe(payload);
@@ -182,7 +188,12 @@ export const governanceAccessApi = {
   previewTenantLifecycle: <T = unknown>(tenantId: string, command: GovernanceCommand) =>
     request<T>(withQuery(`${ACCESS_BASE}/tenant-lifecycle/preview`, { tenantId }), body('POST', command), schemaFor<T>(lifecyclePreviewSchema)),
   updateTenantLifecycle: <T = unknown>(tenantId: string, command: GovernanceCommand) =>
-    request<T>(withQuery(`${ACCESS_BASE}/tenant-lifecycle`, { tenantId }), body('POST', command), schemaFor<T>(governanceReceiptSchema)),
+    request<T>(
+      withQuery(`${ACCESS_BASE}/tenant-lifecycle`, { tenantId }),
+      body('POST', command),
+      schemaFor<T>(lifecycleMutationReceiptSchema),
+      LIFECYCLE_MUTATION_SUCCESS_CODES,
+    ),
   listDirectoryGroups: <T = unknown>(tenantId?: string) =>
     request<T>(withQuery(`${ACCESS_BASE}/directory-groups`, tenant(tenantId)), undefined, schemaFor<T>(directoryGroupListSchema)),
   previewMembership: <T = unknown>(userId: string, command: GovernanceCommand, tenantId?: string) =>

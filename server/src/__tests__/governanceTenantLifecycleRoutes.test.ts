@@ -181,6 +181,27 @@ describe('tenant lifecycle routes', () => {
     });
   });
 
+  it('拒绝纯空白原因，并在签名和执行前统一 trim', async () => {
+    const dependencyImpact = vi.fn().mockResolvedValue({ affectedResources: [], blockers: [] });
+    const test = rig({ dependencyImpact });
+
+    const invalid = await test.request('/tenant-lifecycle/preview', 'post', {
+      action: 'suspend', reason: '   ',
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(dependencyImpact).not.toHaveBeenCalled();
+
+    const change = { action: 'suspend', reason: '  customer security incident  ' };
+    const preview = await test.request('/tenant-lifecycle/preview', 'post', change);
+    const committed = await test.request(
+      '/tenant-lifecycle', 'post', commitBody(change, preview.body as Record<string, unknown>),
+    );
+    expect(committed.statusCode).toBe(200);
+    expect(test.onTenantLifecycleChanged).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'customer security incident',
+    }));
+  });
+
   it('状态已落盘但跨实例传播待重试时返回 202 并明确告警，不伪报立即生效', async () => {
     const test = rig({
       dependencyImpact: async () => ({ affectedResources: [], blockers: [] }),

@@ -126,6 +126,22 @@ export const lifecyclePreviewSchema = z.object({
   ...previewTokenShape,
   impact: z.object({ tenantId: z.string(), from: z.string(), to: z.string(), affectedResources: z.array(affectedResourceSchema).optional(), blockers: z.array(z.string()), reversible: z.boolean(), effectiveMode: z.string() }).strict(),
 }).strict();
+const lifecycleMutationReceiptShape = {
+  tenantId: z.string().min(1), status: z.enum(['active', 'suspended']),
+  updatedAt: z.string().datetime({ offset: true }),
+  changeId: z.string().min(1), auditId: z.string().min(1),
+  effectiveAt: z.string().datetime({ offset: true }),
+  auditCompletion: z.literal('pending').optional(), auditProjectionId: z.string().min(1).optional(),
+};
+export const lifecycleMutationReceiptSchema = z.discriminatedUnion('propagationStatus', [
+  z.object({ ...lifecycleMutationReceiptShape, propagationStatus: z.literal('applied') }).strict(),
+  z.object({
+    ...lifecycleMutationReceiptShape,
+    propagationStatus: z.literal('pending'),
+    warning: z.string().min(1),
+    code: z.literal('TENANT_LIFECYCLE_PROPAGATION_PENDING'),
+  }).strict(),
+]);
 
 export const platformAdminListSchema = z.object({ platformAdmins: z.array(z.object({
   userId: z.string(), status: z.string(), source: z.string(), version: z.number().int().positive(),

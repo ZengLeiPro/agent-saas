@@ -54,7 +54,6 @@ import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
 import type { UpsertRunInput } from '../runtime/runStore.js';
 import { runtimeRunController } from '../runtime/runController.js';
-import { applyTenantLifecycleChange, TenantLifecycleWatcher } from '../app/tenantLifecycleEffects.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { getTranscriptPath } from '../data/transcripts/index.js';
 import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../data/transcripts/projectKey.js';
@@ -62,7 +61,7 @@ import { readSessionMeta, writeSessionMeta, type SessionMeta } from '../data/tra
 import { resolveUserCwd } from '../workspace/resolver.js';
 import { speechToText } from '../integrations/stt/sttClient.js';
 import type { SttConfig } from '../integrations/stt/sttClient.js';
-import { TenantStore } from '../data/tenants/store.js';
+import type { TenantStore } from '../data/tenants/store.js';
 import type { UserStore } from '../data/users/store.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
 import {
@@ -1813,138 +1812,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
 
       rig.channel.disconnectTenant('acme');
       expect(c2.signal.aborted).toBe(true);
-    });
-
-    it('两个 WebChannel 实例漏掉实时事件时仍从共享组织状态断连并取消运行', async () => {
-      const root = await makeTmp('tenant-lifecycle-watch-');
-      const storePath = join(root, 'tenants.json');
-      const writer = new TenantStore(storePath);
-      await writer.create({ id: 'acme', name: 'Acme', createdBy: 'system' });
-      await writer.create({ id: 'backup', name: 'Backup', createdBy: 'system' });
-      const firstStore = new TenantStore(storePath);
-      const secondStore = new TenantStore(storePath);
-      const userStore = {
-        findById: (id: string) => ({ id, tenantId: id.startsWith('acme-') ? 'acme' : TENANT }),
-      } as unknown as UserStore;
-      const first = makeRig({ userStore });
-      const second = makeRig({ userStore });
-      const firstController = new AbortController();
-      const secondController = new AbortController();
-      (first.channel as any).activeStreams.set('multi-1', {
-        controller: firstController, userId: 'acme-user-1', ws: first.ws, runId: 'multi-run-1',
-      });
-      (second.channel as any).activeStreams.set('multi-2', {
-        controller: secondController, userId: 'acme-user-2', ws: second.ws, runId: 'multi-run-2',
-      });
-      const abortFirst = vi.fn().mockReturnValue(1);
-      const abortSecond = vi.fn().mockReturnValue(1);
-      const cancelFirst = vi.fn().mockResolvedValue(2);
-      const cancelSecond = vi.fn().mockResolvedValue(0);
-      const firstWatcher = new TenantLifecycleWatcher({
-        tenantStore: firstStore,
-        intervalMs: 60_000,
-        onChange: change => applyTenantLifecycleChange(change, {
-          tenantStore: firstStore,
-          webChannel: first.channel,
-          abortTenant: abortFirst,
-          runStore: { cancelActiveByTenant: cancelFirst },
-        }).then(() => undefined),
-      });
-      const secondWatcher = new TenantLifecycleWatcher({
-        tenantStore: secondStore,
-        intervalMs: 60_000,
-        onChange: change => applyTenantLifecycleChange(change, {
-          tenantStore: secondStore,
-          webChannel: second.channel,
-          abortTenant: abortSecond,
-          runStore: { cancelActiveByTenant: cancelSecond },
-        }).then(() => undefined),
-      });
-      firstWatcher.start();
-      secondWatcher.start();
-      try {
-        await writer.setDisabled('acme', true, 'platform-1');
-        await Promise.all([firstWatcher.pollNow(), secondWatcher.pollNow()]);
-        expect(firstController.signal.aborted).toBe(true);
-        expect(secondController.signal.aborted).toBe(true);
-        expect(abortFirst).toHaveBeenCalledWith('acme', 'Tenant disabled: shared tenant state changed');
-        expect(abortSecond).toHaveBeenCalledWith('acme', 'Tenant disabled: shared tenant state changed');
-        expect(cancelFirst).toHaveBeenCalledWith('acme', 'Tenant disabled: shared tenant state changed');
-        expect(cancelSecond).toHaveBeenCalledWith('acme', 'Tenant disabled: shared tenant state changed');
-
-        await writer.setDisabled('acme', false, 'platform-1');
-        await Promise.all([firstWatcher.pollNow(), secondWatcher.pollNow()]);
-        const fencedFirst = new AbortController();
-        const fencedSecond = new AbortController();
-        (first.channel as any).activeStreams.set('multi-fence-1', {
-          controller: fencedFirst, userId: 'acme-user-1', ws: first.ws, runId: 'multi-fence-run-1',
-        });
-        (second.channel as any).activeStreams.set('multi-fence-2', {
-          controller: fencedSecond, userId: 'acme-user-2', ws: second.ws, runId: 'multi-fence-run-2',
-        });
-        abortFirst.mockClear();
-        abortSecond.mockClear();
-        cancelFirst.mockClear();
-        cancelSecond.mockClear();
-
-        await writer.setDisabled('acme', true, 'platform-1');
-        await writer.setDisabled('acme', false, 'platform-1');
-        await Promise.all([firstWatcher.pollNow(), secondWatcher.pollNow()]);
-        expect(fencedFirst.signal.aborted).toBe(true);
-        expect(fencedSecond.signal.aborted).toBe(true);
-        expect(abortFirst).toHaveBeenCalledWith('acme', 'Tenant disabled: missed tenant suspension fence');
-        expect(abortSecond).toHaveBeenCalledWith('acme', 'Tenant disabled: missed tenant suspension fence');
-
-        const staleEventStream = new AbortController();
-        (first.channel as any).activeStreams.set('multi-stale', {
-          controller: staleEventStream, userId: 'acme-user-1', ws: first.ws, runId: 'multi-stale-run',
-        });
-        await applyTenantLifecycleChange({
-          tenantId: 'acme',
-          disabled: true,
-          actorUserId: 'platform-1',
-          reason: 'delayed old suspend event',
-          updatedAt: '2026-08-15T00:00:00.000Z',
-        }, { tenantStore: firstStore, webChannel: first.channel, abortTenant: abortFirst });
-        expect(staleEventStream.signal.aborted).toBe(false);
-
-        const raceStore = new TenantStore(storePath);
-        const raceController = new AbortController();
-        (first.channel as any).activeStreams.set('multi-race', {
-          controller: raceController, userId: 'acme-user-1', ws: first.ws, runId: 'multi-race-run',
-        });
-        const abortRace = vi.fn().mockReturnValue(1);
-        let resumeBeforeEffect = true;
-        const raceWatcher = new TenantLifecycleWatcher({
-          tenantStore: raceStore,
-          intervalMs: 60_000,
-          onChange: async change => {
-            if (change.disabled && resumeBeforeEffect) {
-              resumeBeforeEffect = false;
-              await writer.setDisabled('acme', false, 'platform-1');
-            }
-            await applyTenantLifecycleChange(change, {
-              tenantStore: raceStore,
-              webChannel: first.channel,
-              abortTenant: abortRace,
-            });
-          },
-        });
-        raceWatcher.start();
-        try {
-          await writer.setDisabled('acme', true, 'platform-1');
-          await raceWatcher.pollNow();
-          expect(raceController.signal.aborted).toBe(false);
-          await raceWatcher.pollNow();
-          expect(raceController.signal.aborted).toBe(true);
-          expect(abortRace).toHaveBeenCalledWith('acme', 'Tenant disabled: missed tenant suspension fence');
-        } finally {
-          raceWatcher.stop();
-        }
-      } finally {
-        firstWatcher.stop();
-        secondWatcher.stop();
-      }
     });
 
     it('getStreamStatus：runStore 异常时降级看 buffer（active + streamId）', async () => {

@@ -392,7 +392,7 @@ export function createGovernanceAccessRouter(deps: {
       : user.tenantId;
     const correlationId = `governance-access:${randomUUID()}`;
     const actorPersona = personas.get(req)!;
-    const auditReason = typeof req.body?.reason === 'string' ? req.body.reason : undefined;
+    const auditReason = typeof req.body?.reason === 'string' ? req.body.reason.trim() || undefined : undefined;
     let intentAuditId: string;
     try {
       const intent = await deps.audit.append({

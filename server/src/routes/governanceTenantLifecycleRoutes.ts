@@ -7,7 +7,7 @@ import { PLATFORM_TENANT_ID } from '../data/tenants/types.js';
 
 const mutationShape = {
   action: z.enum(['suspend', 'resume']),
-  reason: z.string().min(3).max(500),
+  reason: z.string().trim().min(3).max(500),
 };
 const previewSchema = z.object(mutationShape).strict();
 const commitSchema = z.object({

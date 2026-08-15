@@ -66,6 +66,33 @@ describe('governanceApi fail closed', () => {
     });
   });
 
+  it('接受组织生命周期 200 applied 成功回执', async () => {
+    mockAuthFetch.mockResolvedValue(jsonResponse({
+      tenantId: 'tenant-1', status: 'suspended', updatedAt: '2026-08-15T05:00:00.000Z',
+      changeId: 'change-1', auditId: 'audit-1', effectiveAt: '2026-08-15T05:00:00.000Z',
+      propagationStatus: 'applied',
+    }));
+
+    await expect(governanceAccessApi.updateTenantLifecycle('tenant-1', {})).resolves.toMatchObject({
+      tenantId: 'tenant-1', status: 'suspended', propagationStatus: 'applied',
+    });
+  });
+
+  it('将组织生命周期 202 pending 解析为已持久化成功回执', async () => {
+    mockAuthFetch.mockResolvedValue(jsonResponse({
+      tenantId: 'tenant-1', status: 'suspended', updatedAt: '2026-08-15T05:00:00.000Z',
+      changeId: 'change-1', auditId: 'audit-1', effectiveAt: '2026-08-15T05:00:00.000Z',
+      propagationStatus: 'pending',
+      warning: 'Tenant state persisted; cross-instance effects are retrying',
+      code: 'TENANT_LIFECYCLE_PROPAGATION_PENDING',
+    }, 202));
+
+    await expect(governanceAccessApi.updateTenantLifecycle('tenant-1', {})).resolves.toMatchObject({
+      tenantId: 'tenant-1', status: 'suspended', propagationStatus: 'pending',
+      code: 'TENANT_LIFECYCLE_PROPAGATION_PENDING',
+    });
+  });
+
   it('无效 readiness 响应 fail closed', async () => {
     mockAuthFetch.mockResolvedValue(jsonResponse({
       ready: true,

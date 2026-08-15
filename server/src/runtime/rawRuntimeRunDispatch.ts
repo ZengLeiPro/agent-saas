@@ -3248,6 +3248,7 @@ export async function wakeRuntimeSession(
     const drainHandoff: RuntimeDrainHandoffState = { requested: false };
     runtimeRunController.register(run.runId, abortController, {
       userId: session.userId,
+      tenantId: run.tenantId,
       drainHandoff,
     });
     const renewTimer = startWakeLeaseRenewal({
@@ -3319,6 +3320,7 @@ export async function wakeRuntimeSession(
     const drainHandoff: RuntimeDrainHandoffState = { requested: false };
     runtimeRunController.register(run.runId, abortController, {
       userId: session.userId,
+      tenantId: run.tenantId,
       drainHandoff,
     });
     const renewTimer = startWakeLeaseRenewal({
@@ -3389,6 +3391,7 @@ export async function wakeRuntimeSession(
   const drainHandoff: RuntimeDrainHandoffState = { requested: false };
   runtimeRunController.register(run.runId, abortController, {
     userId: sessionOwner.id,
+    tenantId: run.tenantId,
     drainHandoff,
   });
   const renewTimer = startWakeLeaseRenewal({

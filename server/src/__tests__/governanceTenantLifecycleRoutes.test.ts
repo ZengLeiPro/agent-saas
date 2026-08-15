@@ -1,5 +1,5 @@
 import express from 'express';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -44,11 +44,15 @@ function rig(input: {
   ) => Promise<{ id: string; name?: string; disabled?: boolean; updatedAt: string }>;
   persona?: 'platform_admin' | 'org_admin' | 'member';
   tenantDisabled?: boolean;
+  onTenantLifecycleChanged?: (change: {
+    tenantId: string; disabled: boolean; actorUserId: string; reason: string; updatedAt: string;
+  }) => Promise<'applied' | 'pending' | void>;
 }) {
   const router = express.Router();
   const setTenantDisabled = vi.fn(input.setTenantDisabled ?? (async () => ({
     id: 'tenant-a', name: '测试组织', disabled: true, updatedAt: '2026-08-14T14:01:00.000Z',
   })));
+  const onTenantLifecycleChanged = vi.fn(input.onTenantLifecycleChanged ?? (async () => undefined));
   registerGovernanceTenantLifecycleRoutes({
     router,
     secret: SECRET,
@@ -59,6 +63,7 @@ function rig(input: {
       ? { id: tenantId, name: '测试组织', ...(input.tenantDisabled ? { disabled: true } : {}), updatedAt: NOW }
       : undefined,
     setTenantDisabled,
+    onTenantLifecycleChanged,
     dependencyImpact: input.dependencyImpact,
   });
   const request = async (path: string, method: Method, body: Record<string, unknown> = {}) => {
@@ -77,7 +82,7 @@ function rig(input: {
     await findHandler(router, path, method)(req as never, response as never);
     return response;
   };
-  return { request, setTenantDisabled };
+  return { request, setTenantDisabled, onTenantLifecycleChanged };
 }
 
 function storeRig(store: TenantStore) {
@@ -88,7 +93,7 @@ function storeRig(store: TenantStore) {
     previewTtlMs: 5 * 60_000,
     now: () => new Date(NOW),
     personaFor: () => 'platform_admin',
-    getTenant: tenantId => store.findById(tenantId),
+    getTenant: tenantId => store.findByIdStrict(tenantId),
     setTenantDisabled: (tenantId, disabled, actorUserId, expectedUpdatedAt) =>
       store.setDisabled(tenantId, disabled, actorUserId, expectedUpdatedAt),
     dependencyImpact: async () => ({ affectedResources: [], blockers: [] }),
@@ -167,6 +172,71 @@ describe('tenant lifecycle routes', () => {
     expect(committed.statusCode).toBe(200);
     expect(committed.body).toMatchObject({ tenantId: 'tenant-a', status: 'suspended' });
     expect(test.setTenantDisabled).toHaveBeenCalledWith('tenant-a', true, 'platform-1', NOW);
+    expect(test.onTenantLifecycleChanged).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      disabled: true,
+      actorUserId: 'platform-1',
+      reason: 'customer security incident',
+      updatedAt: '2026-08-14T14:01:00.000Z',
+    });
+  });
+
+  it('状态已落盘但跨实例传播待重试时返回 202 并明确告警，不伪报立即生效', async () => {
+    const test = rig({
+      dependencyImpact: async () => ({ affectedResources: [], blockers: [] }),
+      onTenantLifecycleChanged: async () => 'pending',
+    });
+    const change = { action: 'suspend', reason: 'customer security incident' };
+    const preview = await test.request('/tenant-lifecycle/preview', 'post', change);
+    const committed = await test.request(
+      '/tenant-lifecycle', 'post', commitBody(change, preview.body as Record<string, unknown>),
+    );
+
+    expect(committed.statusCode).toBe(202);
+    expect(committed.body).toMatchObject({
+      status: 'suspended',
+      propagationStatus: 'pending',
+      code: 'TENANT_LIFECYCLE_PROPAGATION_PENDING',
+    });
+  });
+
+  it('存储或 PG 锁故障返回 503，而不是伪装成生命周期冲突', async () => {
+    const setTenantDisabled = vi.fn().mockRejectedValue(Object.assign(new Error('pg unavailable'), {
+      code: 'TENANT_STORE_LOCK_UNAVAILABLE',
+    }));
+    const test = rig({
+      dependencyImpact: async () => ({ affectedResources: [], blockers: [] }),
+      setTenantDisabled,
+    });
+    const change = { action: 'suspend', reason: 'customer security incident' };
+    const preview = await test.request('/tenant-lifecycle/preview', 'post', change);
+    const committed = await test.request(
+      '/tenant-lifecycle', 'post', commitBody(change, preview.body as Record<string, unknown>),
+    );
+
+    expect(committed.statusCode).toBe(503);
+    expect(committed.body).toMatchObject({
+      error: 'Tenant lifecycle storage unavailable',
+      code: 'TENANT_STORE_LOCK_UNAVAILABLE',
+    });
+  });
+
+  it('未知服务端故障返回 500 且不透传内部错误详情', async () => {
+    const test = rig({
+      dependencyImpact: async () => ({ affectedResources: [], blockers: [] }),
+      setTenantDisabled: async () => { throw new Error('internal database details'); },
+    });
+    const change = { action: 'suspend', reason: 'customer security incident' };
+    const preview = await test.request('/tenant-lifecycle/preview', 'post', change);
+    const committed = await test.request(
+      '/tenant-lifecycle', 'post', commitBody(change, preview.body as Record<string, unknown>),
+    );
+
+    expect(committed.statusCode).toBe(500);
+    expect(committed.body).toEqual({
+      error: 'Tenant lifecycle update failed',
+      code: 'TENANT_LIFECYCLE_UPDATE_FAILED',
+    });
   });
 
   it('提交阶段重新校验 blockers，不能绕过前端直接暂停', async () => {
@@ -206,6 +276,23 @@ describe('tenant lifecycle routes', () => {
     expect(committed.statusCode).toBe(409);
     expect(committed.body).toMatchObject({ code: 'TENANT_LIFECYCLE_BASELINE_CONFLICT' });
     expect(test.setTenantDisabled).not.toHaveBeenCalled();
+  });
+
+  it('共享 tenants.json 损坏时生命周期读取返回 503，不伪装为组织不存在', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'tenant-lifecycle-routes-'));
+    const storePath = join(root, 'tenants.json');
+    try {
+      const store = new TenantStore(storePath);
+      await store.create({ id: 'tenant-a', name: '组织 A', createdBy: 'system' });
+      const request = storeRig(store);
+      writeFileSync(storePath, '{ broken json', 'utf-8');
+
+      const response = await request('tenant-a', '/tenant-lifecycle', 'get');
+      expect(response.statusCode).toBe(503);
+      expect(response.body).toMatchObject({ code: 'TENANT_STORE_READ_FAILED' });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('两个路由实例共享 tenants.json 时并发禁用不同组织不会互相覆盖', async () => {

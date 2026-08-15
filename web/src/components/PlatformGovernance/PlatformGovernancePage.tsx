@@ -48,6 +48,7 @@ interface ScopePreview extends GovernancePreviewToken {
 interface GovernanceReceipt {
   version?: number; status?: string; changeId: string; auditId: string; effectiveAt: string;
   projectionStatus?: string; projectionId?: string; auditCompletion?: "pending"; auditProjectionId?: string;
+  propagationStatus?: "applied" | "pending"; warning?: string; code?: string;
 }
 interface TenantLifecyclePreview extends GovernancePreviewToken {
   previewId: string;
@@ -127,7 +128,15 @@ function Header({ title, description }: { title: string; description: string }) 
 }
 
 function Receipt({ value }: { value: GovernanceReceipt }) {
-  return <div className="space-y-1 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-xs"><div className="font-medium">变更回执</div><div>changeId：{value.changeId}</div><div>auditId：{value.auditId}{value.auditCompletion === "pending" ? "（终态审计排队中）" : ""}</div><div>生效时间：{new Date(value.effectiveAt).toLocaleString()}</div>{value.projectionStatus ? <div>投影：{localizedValue(value.projectionStatus, statusLabels)}{value.projectionId ? ` · ${value.projectionId}` : ""}</div> : null}</div>;
+  const propagationPending = value.propagationStatus === "pending";
+  return <div className={`space-y-1 rounded-xl border p-4 text-xs ${propagationPending ? "border-amber-500/30 bg-amber-500/5" : "border-emerald-500/30 bg-emerald-500/5"}`}>
+    <div className="font-medium">{propagationPending ? "组织状态已保存，跨实例生效正在重试" : "变更回执"}</div>
+    <div>changeId：{value.changeId}</div>
+    <div>auditId：{value.auditId}{value.auditCompletion === "pending" ? "（终态审计排队中）" : ""}</div>
+    <div>{propagationPending ? "状态保存时间" : "生效时间"}：{new Date(value.effectiveAt).toLocaleString()}</div>
+    {propagationPending ? <div>{value.warning ?? "现有连接与运行将在后台重试中止，请稍后刷新确认。"}</div> : null}
+    {value.projectionStatus ? <div>投影：{localizedValue(value.projectionStatus, statusLabels)}{value.projectionId ? ` · ${value.projectionId}` : ""}</div> : null}
+  </div>;
 }
 
 function TenantLifecyclePanel({ tenantId }: { tenantId: string }) {
@@ -143,10 +152,10 @@ function TenantLifecyclePanel({ tenantId }: { tenantId: string }) {
   if (receipt && (loading || error || !data)) return <div className="space-y-3">
     <Receipt value={receipt} />
     {loading
-      ? <div className="text-sm text-muted-foreground">变更已生效，正在刷新组织权威状态…</div>
+      ? <div className="text-sm text-muted-foreground">{receipt.propagationStatus === "pending" ? "组织状态已保存，正在重试跨实例生效并刷新权威状态…" : "变更已生效，正在刷新组织权威状态…"}</div>
       : error
-        ? <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm">变更已生效，但组织状态刷新失败：{error.message}</div>
-        : <div className="text-sm text-muted-foreground">变更已生效，组织权威状态暂不可用。</div>}
+        ? <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm">{receipt.propagationStatus === "pending" ? "组织状态已保存，跨实例生效仍在重试，且状态刷新失败" : "变更已生效，但组织状态刷新失败"}：{error.message}</div>
+        : <div className="text-sm text-muted-foreground">{receipt.propagationStatus === "pending" ? "组织状态已保存，跨实例生效仍在重试。" : "变更已生效，组织权威状态暂不可用。"}</div>}
   </div>;
   if (loading) return <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">正在读取生命周期…</div>;
   if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;

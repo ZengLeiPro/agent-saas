@@ -96,8 +96,17 @@ export interface UpdateTenantInput {
 export interface TenantStoreOptions {
   /** 生产 PG advisory lock；未提供时退化为跨进程文件锁。 */
   withLock?: <T>(operation: () => Promise<T>) => Promise<T>;
+  /** 单进程 file backend 关闭跨进程锁，避免崩溃残留锁；多进程部署必须使用 withLock。 */
+  useLocalLock?: boolean;
   lockTimeoutMs?: number;
   lockRetryMs?: number;
+}
+
+export class TenantStoreError extends Error {
+  constructor(message: string, readonly code: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'TenantStoreError';
+  }
 }
 
 interface LocalLock {
@@ -123,8 +132,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function lifecycleConflict(message: string, code: string): Error {
-  return Object.assign(new Error(message), { code });
+function lifecycleConflict(message: string, code: string): TenantStoreError {
+  return new TenantStoreError(message, code);
+}
+
+function storeUnavailable(message: string, code: string, cause?: unknown): TenantStoreError {
+  return new TenantStoreError(message, code, cause === undefined ? undefined : { cause });
 }
 
 function nextUpdatedAt(previous: string): string {
@@ -161,7 +174,13 @@ export class TenantStore {
       this.tenants = data.tenants;
     } catch (err) {
       authLogger.warn(`Failed to load tenants from ${this.filePath}: ${err}`);
-      if (strict) throw err;
+      if (strict) {
+        throw storeUnavailable(
+          `Failed to read tenant store: ${err instanceof Error ? err.message : String(err)}`,
+          'TENANT_STORE_READ_FAILED',
+          err,
+        );
+      }
       this.tenants = [];
     }
   }
@@ -183,12 +202,12 @@ export class TenantStore {
     const data: TenantsFileData = { version: 1, tenants: this.tenants };
     mkdirSync(dirname(this.filePath), { recursive: true });
     const tmpPath = join(dirname(this.filePath), `.tenants.${randomBytes(6).toString('hex')}.tmp`);
-    await writeFile(tmpPath, JSON.stringify(data, null, 2), { mode: 0o600 });
     try {
+      await writeFile(tmpPath, JSON.stringify(data, null, 2), { mode: 0o600 });
       await rename(tmpPath, this.filePath);
     } catch (err) {
       await unlink(tmpPath).catch(() => {});
-      throw err;
+      throw storeUnavailable('Failed to persist tenant store', 'TENANT_STORE_WRITE_FAILED', err);
     }
     try {
       this.postPersistObserver?.();
@@ -214,9 +233,14 @@ export class TenantStore {
       } catch (err) {
         await handle?.close().catch(() => undefined);
         if (handle) await unlink(lockPath).catch(() => undefined);
-        if (errorCode(err) !== 'EEXIST') throw err;
+        if (errorCode(err) !== 'EEXIST') {
+          throw storeUnavailable('Failed to acquire tenant store lock', 'TENANT_STORE_LOCK_UNAVAILABLE', err);
+        }
         if (Date.now() >= deadline) {
-          throw new Error(`Timed out acquiring tenant store lock: ${lockPath}`);
+          throw storeUnavailable(
+            `Timed out acquiring tenant store lock: ${lockPath}`,
+            'TENANT_STORE_LOCK_TIMEOUT',
+          );
         }
         await sleep(Math.min(retryMs, Math.max(1, deadline - Date.now())));
       }
@@ -250,6 +274,7 @@ export class TenantStore {
     };
     const run = async (): Promise<T> => {
       if (this.options.withLock) return this.options.withLock(execute);
+      if (this.options.useLocalLock === false) return execute();
       const lock = await this.acquireLocalLock();
       try {
         return await execute();
@@ -268,9 +293,20 @@ export class TenantStore {
     return tenant ? { ...tenant, settings: cloneSettings(mergeSettings(tenant.settings)) } : undefined;
   }
 
+  findByIdStrict(id: string): TenantRecord | undefined {
+    this.load(true);
+    const tenant = this.tenants.find(t => t.id === id);
+    return tenant ? { ...tenant, settings: cloneSettings(mergeSettings(tenant.settings)) } : undefined;
+  }
+
   listAll(): TenantRecord[] {
     this.refreshForRead();
     // 复制一份避免外部突变内部状态
+    return this.tenants.map(t => ({ ...t, settings: cloneSettings(mergeSettings(t.settings)) }));
+  }
+
+  listAllStrict(): TenantRecord[] {
+    this.load(true);
     return this.tenants.map(t => ({ ...t, settings: cloneSettings(mergeSettings(t.settings)) }));
   }
 
@@ -301,6 +337,11 @@ export class TenantStore {
 
   activeCount(): number {
     this.refreshForRead();
+    return this.tenants.filter(t => !t.disabled).length;
+  }
+
+  activeCountStrict(): number {
+    this.load(true);
     return this.tenants.filter(t => !t.disabled).length;
   }
 
@@ -381,7 +422,7 @@ export class TenantStore {
   ): Promise<TenantRecord> {
     return this.mutate(() => {
       const tenant = this.tenants.find(t => t.id === id);
-      if (!tenant) throw new Error('Tenant not found');
+      if (!tenant) throw lifecycleConflict('Tenant not found', 'TENANT_NOT_FOUND');
       if (expectedUpdatedAt !== undefined && tenant.updatedAt !== expectedUpdatedAt) {
         throw lifecycleConflict('Tenant lifecycle baseline changed', 'TENANT_LIFECYCLE_BASELINE_CONFLICT');
       }
@@ -389,15 +430,20 @@ export class TenantStore {
         throw lifecycleConflict('Tenant lifecycle transition conflict', 'TENANT_LIFECYCLE_TRANSITION_CONFLICT');
       }
       if (id === DEFAULT_TENANT_ID && disabled) {
-        throw new Error(`Cannot disable the default tenant "${DEFAULT_TENANT_ID}"`);
+        throw lifecycleConflict(
+          `Cannot disable the default tenant "${DEFAULT_TENANT_ID}"`,
+          'DEFAULT_TENANT_PROTECTED',
+        );
       }
       if (disabled && this.tenants.filter(candidate => !candidate.disabled).length <= 1) {
-        throw new Error('Cannot disable the last active tenant');
+        throw lifecycleConflict('Cannot disable the last active tenant', 'LAST_ACTIVE_TENANT_PROTECTED');
       }
       const updatedAt = nextUpdatedAt(tenant.updatedAt);
       tenant.disabled = disabled || undefined;
       tenant.disabledAt = disabled ? updatedAt : undefined;
       tenant.disabledBy = disabled ? operatorId : undefined;
+      tenant.lifecycleUpdatedAt = updatedAt;
+      tenant.lifecycleUpdatedBy = operatorId;
       tenant.updatedAt = updatedAt;
       return {
         changed: true,

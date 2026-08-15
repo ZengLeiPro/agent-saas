@@ -195,6 +195,13 @@ export function createGovernanceAccessRouter(deps: {
     actorUserId: string,
     expectedUpdatedAt: string,
   ) => Promise<{ id: string; disabled?: boolean; updatedAt: string }>;
+  onTenantLifecycleChanged?: (change: {
+    tenantId: string;
+    disabled: boolean;
+    actorUserId: string;
+    reason: string;
+    updatedAt: string;
+  }) => Promise<'applied' | 'pending' | void>;
   audit: GovernanceAuditStore;
   contentAccess?: PgContentAccessGrantStore;
   projectionOutbox?: PgGovernanceProjectionOutboxStore;
@@ -749,6 +756,7 @@ export function createGovernanceAccessRouter(deps: {
     personaFor: req => personas.get(req),
     ...(deps.getTenantLifecycle ? { getTenant: deps.getTenantLifecycle } : {}),
     ...(deps.setTenantDisabled ? { setTenantDisabled: deps.setTenantDisabled } : {}),
+    ...(deps.onTenantLifecycleChanged ? { onTenantLifecycleChanged: deps.onTenantLifecycleChanged } : {}),
     ...(deps.resolveDependencyImpact ? { dependencyImpact: (tenantId, action) => tenantDependencyImpact(deps.resolveDependencyImpact!, tenantId, action) } : {}),
   });
 

@@ -1,6 +1,7 @@
 import type { Express } from 'express';
 
 import type { WebChannel } from '../channels/web/channel.js';
+import { serverLogger } from '../utils/logger.js';
 import { createGovernanceAccessRouter } from '../routes/governanceAccess.js';
 import { createGovernanceResourcesRouter } from '../routes/governanceResources.js';
 import { createGovernanceUiRouter } from '../routes/governanceUi.js';
@@ -9,6 +10,7 @@ import type { ExecuteUserOffboarding } from './governanceOffboarding.js';
 import type { AppRuntime } from './runtime.js';
 import { createAssignmentResourceResolver, createEntitlementResourceCatalogResolver, createEntitlementResourceResolver } from './runtimeAssignmentResourceResolver.js';
 import { createOAuthGrantReconciler } from './runtimeOAuthGrantReconciler.js';
+import { applyTenantLifecycleChange, type TenantLifecycleChange } from './tenantLifecycleEffects.js';
 
 const scheduledOffboardingRuntimes = new WeakSet<AppRuntime>();
 
@@ -20,14 +22,19 @@ export async function resolveRuntimeTenantLifecycleImpact(
   if (!runtime.tenantStore || !runtime.membershipStore) {
     throw new Error('Tenant lifecycle impact authority unavailable');
   }
-  const tenant = runtime.tenantStore.findById(tenantId);
+  const tenant = typeof runtime.tenantStore.findByIdStrict === 'function'
+    ? runtime.tenantStore.findByIdStrict(tenantId)
+    : runtime.tenantStore.findById(tenantId);
   if (!tenant) throw new Error('Tenant not found');
   const memberships = await runtime.membershipStore.listMemberships(tenantId);
   const affectedResources = memberships
     .filter(membership => membership.status === 'active')
     .map(membership => ({ type: 'membership', id: membership.userId, version: membership.version }))
     .sort((left, right) => left.id.localeCompare(right.id));
-  const blockers = action === 'suspend' && runtime.tenantStore.activeCount() <= 1
+  const activeCount = typeof runtime.tenantStore.activeCountStrict === 'function'
+    ? runtime.tenantStore.activeCountStrict()
+    : runtime.tenantStore.activeCount();
+  const blockers = action === 'suspend' && activeCount <= 1
     ? ['不能暂停最后一个启用组织']
     : [];
   return { affectedResources, blockers };
@@ -39,6 +46,44 @@ export function registerGovernanceRoutes(
   options: { webChannel?: WebChannel; executeUserOffboarding?: ExecuteUserOffboarding },
 ): void {
   const previewSecret = runtime.config.auth?.jwtSecret;
+  const applyLifecycleChange = async (change: TenantLifecycleChange): Promise<'applied' | 'pending'> => {
+    let broadcastApplied = !runtime.runtimePgEventStore;
+    if (runtime.runtimePgEventStore) {
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= 3 && !broadcastApplied; attempt += 1) {
+        try {
+          await runtime.runtimePgEventStore.append({
+            type: 'tenant_lifecycle_changed',
+            sessionId: `__tenant_lifecycle__:${change.tenantId}`,
+            ...change,
+          }, { tenantId: change.tenantId });
+          broadcastApplied = true;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (!broadcastApplied) {
+        serverLogger.error(
+          `Tenant lifecycle broadcast failed after persisted change: tenant=${change.tenantId} error=${lastError instanceof Error ? lastError.message : String(lastError)}`,
+        );
+      }
+    }
+
+    let localApplied = true;
+    try {
+      await applyTenantLifecycleChange(change, {
+        tenantStore: runtime.tenantStore,
+        webChannel: options.webChannel,
+        runStore: runtime.runtimeRunStore,
+      });
+    } catch (error) {
+      localApplied = false;
+      serverLogger.error(
+        `Tenant lifecycle local effect failed after persisted change: tenant=${change.tenantId} error=${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return broadcastApplied && localApplied ? 'applied' : 'pending';
+  };
   app.use(createGovernanceUiRouter({
     users: runtime.userStore,
     tenants: runtime.tenantStore,
@@ -111,7 +156,7 @@ export function registerGovernanceRoutes(
           runtime.billingService!.store.getMemberBudgetOverview(tenantId, userId),
       } : {}),
       ...(runtime.tenantStore ? {
-        getTenantLifecycle: (tenantId: string) => runtime.tenantStore!.findById(tenantId),
+        getTenantLifecycle: (tenantId: string) => runtime.tenantStore!.findByIdStrict(tenantId),
         resolveDependencyImpact: input => input.kind === 'tenant' && input.action
           ? resolveRuntimeTenantLifecycleImpact(runtime, input.tenantId, input.action)
           : Promise.reject(new Error('Dependency impact authority unavailable')),
@@ -121,15 +166,14 @@ export function registerGovernanceRoutes(
           actorUserId: string,
           expectedUpdatedAt: string,
         ) => {
-          const tenant = await runtime.tenantStore!.setDisabled(
+          return runtime.tenantStore!.setDisabled(
             tenantId,
             disabled,
             actorUserId,
             expectedUpdatedAt,
           );
-          if (disabled) options.webChannel?.disconnectTenant(tenantId);
-          return tenant;
         },
+        onTenantLifecycleChanged: applyLifecycleChange,
       } : {}),
       audit: runtime.governanceAuditStore,
       contentAccess: runtime.contentAccessGrantStore,

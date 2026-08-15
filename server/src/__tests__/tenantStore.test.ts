@@ -281,6 +281,17 @@ describe('TenantStore', () => {
       expect(new TenantStore(storePath).findById('wain')?.disabled).toBe(true);
     });
 
+    it('单进程 file backend 不依赖可能残留的跨进程锁文件', async () => {
+      const seed = new TenantStore(storePath);
+      await seed.create({ id: 'wain', name: '唯恩', createdBy: 's' });
+      await seed.create({ id: 'backup', name: 'Backup', createdBy: 's' });
+      writeFileSync(`${storePath}.lock`, 'legacy-stale-lock', 'utf-8');
+
+      const store = new TenantStore(storePath, { useLocalLock: false });
+      await expect(store.setDisabled('wain', true, 'admin-1')).resolves.toMatchObject({ disabled: true });
+      expect(new TenantStore(storePath).findById('wain')?.disabled).toBe(true);
+    });
+
     it('setDisabled 持久化失败时回滚内存状态', async () => {
       const store = new TenantStore(storePath);
       await store.create({ id: 'wain', name: '唯恩', createdBy: 's' });

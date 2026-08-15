@@ -156,6 +156,26 @@ describe("PlatformOrganizationGovernance", () => {
     expect(await screen.findByText("已暂停")).toBeTruthy();
   });
 
+  it("跨实例传播待重试时显示警告回执，不宣称立即生效", async () => {
+    mocks.updateTenantLifecycle.mockResolvedValueOnce({
+      changeId: "change-lifecycle-pending",
+      auditId: "audit-lifecycle-pending",
+      effectiveAt: "2026-08-10T10:00:01.000Z",
+      propagationStatus: "pending",
+      warning: "Tenant state persisted; cross-instance effects are retrying",
+      code: "TENANT_LIFECYCLE_PROPAGATION_PENDING",
+    });
+    render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "security-lifecycle" })} />);
+
+    fireEvent.change(await screen.findByPlaceholderText("填写操作原因"), { target: { value: "传播降级提示测试" } });
+    fireEvent.click(screen.getByRole("button", { name: "暂停组织" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认暂停组织" }));
+
+    expect(await screen.findByText("组织状态已保存，跨实例生效正在重试")).toBeTruthy();
+    expect(screen.queryByText("变更回执")).toBeNull();
+    expect(screen.getByText("Tenant state persisted; cross-instance effects are retrying")).toBeTruthy();
+  });
+
   it("生命周期请求进行中禁用操作按钮，快速重复点击只发送一次预览", async () => {
     let resolvePreview!: (value: unknown) => void;
     mocks.previewTenantLifecycle.mockImplementationOnce(() => new Promise(resolve => { resolvePreview = resolve; }));

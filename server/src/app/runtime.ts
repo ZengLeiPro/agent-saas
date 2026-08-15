@@ -98,6 +98,7 @@ import { buildFollowupContext } from '../cron/followup.js';
 import { assertDevDatabaseSafety, loadAppConfig } from './config.js';
 import { createRuntimeWebPushAssembly } from './runtimeWebPush.js';
 import { createModelResolvers } from './modelResolvers.js';
+import { applyTenantLifecycleChange, TenantLifecycleWatcher } from './tenantLifecycleEffects.js';
 import type { AgentOptionsConfig } from '../agent/options.js';
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
@@ -303,6 +304,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       'runtime-worker 暂不支持进程内 clientDaemon gateway；请先外置 gateway 或禁用 clientDaemon 配置',
     );
   }
+  const tenantLifecycleRequiresPg = config.auth?.enabled === true
+    && (processRole !== 'all' || process.env.NODE_ENV === 'production');
+  if (tenantLifecycleRequiresPg && config.runtimeEventStore?.backend !== 'pg') {
+    throw new Error(
+      `processRole=${processRole} requires runtimeEventStore.backend=pg for cross-instance tenant lifecycle coordination`,
+    );
+  }
 
   // 从配置初始化全局 Logger（必须在其他模块使用 logger 之前）
   const loggingConfig = config.observability?.logging;
@@ -491,10 +499,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tenantStore = new TenantStore(tenantsFilePath, tenantPgConfig ? {
       withLock: <T>(operation: () => Promise<T>) => withPgAdvisoryLock(
         tenantPgConfig.connectionString,
-        `${tenantPgConfig.tablePrefix ?? 'agent_saas'}:tenant-store:${tenantsFilePath}`,
+        `${tenantPgConfig.tablePrefix ?? 'agent_saas'}:tenant-store`,
         operation,
       ),
-    } : {});
+    } : { useLocalLock: false });
     await tenantStore.ensureDefaultTenant();
     await tenantStore.ensureKaiyanTenant();
     authMiddleware = createAuthMiddleware(config.auth.jwtSecret, userStore, tenantStore, config.auth.tokenExpiresIn || '30d');
@@ -776,6 +784,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined;
   let runtimeAdmissionGuard: RuntimeAdmissionGuard | undefined;
   let runtimeEventSubscriptionShutdown: (() => Promise<void>) | undefined;
+  let tenantLifecycleWatcher: TenantLifecycleWatcher | undefined;
   let cancelDeliveryRetryTimer: NodeJS.Timeout | undefined;
   let runtimeSchedulerAutoWake = false;
   // B4: HandHealthScanner 仅 PG runtime 装配，shutdown 时 stop()。
@@ -1215,6 +1224,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       if (cancelDeliveryRetryTimer) clearInterval(cancelDeliveryRetryTimer);
       if (billingAuditTimer) clearInterval(billingAuditTimer);
       runtimeEventRetention?.stop();
+      tenantLifecycleWatcher?.stop();
       await runtimeEventSubscriptionShutdown?.();
       await sessionLock?.close();
       userStore?.setPostPersistObserver(undefined);
@@ -2689,6 +2699,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const beginRuntimeDrain = async (): Promise<void> => {
     if (runtimeDrainStarted) return;
     runtimeDrainStarted = true;
+    tenantLifecycleWatcher?.stop();
     memoryPollLeadershipGeneration += 1;
     // 1. 停止定时采样并取消在途 du。否则旧 Worker 在等待 run 安全交棒时仍会
     //    继续扫描 NAS；若随后 OOM 重启，还会从头派生新一轮 du。
@@ -2802,6 +2813,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     } : {}),
     ...(runPreflightService ? { runPreflight: runPreflightService } : {}),
   }, finalDispatch);
+  if (tenantStore) {
+    tenantLifecycleWatcher = new TenantLifecycleWatcher({
+      tenantStore,
+      onChange: change => applyTenantLifecycleChange(change, {
+        tenantStore,
+        webChannel: enableHttpListeners ? webChannel : undefined,
+        runStore: pgRunStore,
+      }).then(() => undefined),
+      logger: { warn: message => serverLogger.warn(message) },
+    });
+    tenantLifecycleWatcher.start();
+  }
   // 同进程 stream bridge 只在持有 WS listener 的进程上有意义：'all' 模式由 scheduler 直接
   // 推到本地 WebChannel，scheduler-only 模式下根本没有 WS 客户端，bridge 是结构性 noop。
   // 让 scheduler.wake 的 onOutboundEvent 回调自动跳过（line 826 已 `?.()` 守卫），避免
@@ -2833,7 +2856,24 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           `Taskboard runtime event projection failed: event=${event.type} error=${err instanceof Error ? err.message : String(err)}`,
         );
       });
-      runtimeWebPush.deliverRuntimeEvent(event);
+      if (event.type !== 'tenant_lifecycle_changed') runtimeWebPush.deliverRuntimeEvent(event);
+      if (event.type === 'tenant_lifecycle_changed') {
+        await applyTenantLifecycleChange(event, {
+          tenantStore,
+          webChannel: enableHttpListeners ? webChannel : undefined,
+          runStore: pgRunStore,
+        }).then((result) => {
+          if (event.disabled) {
+            serverLogger.info(
+              `Tenant suspension applied from event bridge: tenant=${event.tenantId} local=${result.abortedLocalRuns} durable=${result.cancelledDurableRuns}`,
+            );
+          }
+        }).catch((error) => {
+          serverLogger.error(
+            `Tenant lifecycle event bridge failed: tenant=${event.tenantId} error=${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+      }
       if (event.type === 'tool_invocation_cancel_requested' && enableSchedulerWorker) {
         void deliverToolInvocationCancel({
           event,
@@ -2862,7 +2902,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         // L2 记忆整合低延迟唤醒；正确性不依赖此调用（durable cursor 扫描兜底）
         memoryConsolidationEngine?.wake();
       }
-      if (enableHttpListeners) webChannel.publishRuntimePlatformEvent(event);
+      if (enableHttpListeners && event.type !== 'tenant_lifecycle_changed') {
+        webChannel.publishRuntimePlatformEvent(event);
+      }
     });
     if (enableSchedulerWorker) {
       await runCancelDeliveryScan().catch((err) => {

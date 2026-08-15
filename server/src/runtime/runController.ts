@@ -5,12 +5,14 @@ interface RuntimeRunControllerEntry {
   abortOnDrain: boolean;
   drainHandoff?: RuntimeDrainHandoffState;
   userId?: string;
+  tenantId?: string;
 }
 
 interface RuntimeRunControllerOptions {
   abortOnDrain?: boolean;
   drainHandoff?: RuntimeDrainHandoffState;
   userId?: string;
+  tenantId?: string;
 }
 
 const controllers = new Map<string, RuntimeRunControllerEntry>();
@@ -22,6 +24,7 @@ export const runtimeRunController = {
       abortOnDrain: options.abortOnDrain ?? true,
       drainHandoff: options.drainHandoff,
       userId: options.userId,
+      tenantId: options.tenantId,
     });
   },
 
@@ -60,6 +63,16 @@ export const runtimeRunController = {
     let aborted = 0;
     for (const entry of controllers.values()) {
       if (entry.userId !== userId || entry.controller.signal.aborted) continue;
+      entry.controller.abort(reason ? new Error(reason) : undefined);
+      aborted += 1;
+    }
+    return aborted;
+  },
+
+  abortByTenant(tenantId: string, reason?: string): number {
+    let aborted = 0;
+    for (const entry of controllers.values()) {
+      if (entry.tenantId !== tenantId || entry.controller.signal.aborted) continue;
       entry.controller.abort(reason ? new Error(reason) : undefined);
       aborted += 1;
     }

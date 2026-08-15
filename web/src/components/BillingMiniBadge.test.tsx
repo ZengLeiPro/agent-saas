@@ -132,6 +132,28 @@ describe("BillingMiniBadge", () => {
     expect(screen.queryByText("组织本月消耗")).toBeNull();
   });
 
+  it("菜单入口在自身右侧展开积分卡片", async () => {
+    vi.mocked(authFetch).mockResolvedValue(new Response(null, { status: 404 }));
+
+    const { container } = render(
+      <BillingMiniBadge
+        isAdmin={false}
+        sessionId="session-1"
+        variant="menu"
+        fallbackSummary={summary}
+        fallbackAllowance={{ credits: 1280, source: "tenant" }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /积分账户/ }));
+
+    const popover = screen.getByRole("dialog", { name: "积分详情" });
+    expect(popover).toBeTruthy();
+    expect(popover.className).toContain("left-full");
+    expect(popover.className).toContain("bottom-0");
+    expect(container.textContent).toContain("组织可用积分");
+  });
+
   it("打开积分卡片时关闭已展开的上下文卡片", async () => {
     vi.mocked(authFetch).mockImplementation(async (input) => (
       String(input) === "/api/billing/me/summary"

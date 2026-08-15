@@ -31,6 +31,7 @@ import { EntityIcons } from "@/lib/icons";
 import { PanelToggleIcon } from "@/components/icons/PanelToggleIcon";
 import { getGovernanceUserMenuEntries } from "@/lib/governanceUserMenu";
 import { AgentAvatar } from "@/components/AgentAvatar";
+import { BillingMiniBadge } from "@/components/BillingMiniBadge";
 import { RenameSessionDialog } from "@/components/chat/RenameSessionDialog";
 import { DeleteGroupDialog } from "@/components/chat/DeleteGroupDialog";
 import { AddToGroupDialog } from "@/components/chat/AddToGroupDialog";
@@ -39,7 +40,6 @@ import { SessionShareDialog } from "@/components/chat/SessionShareDialog";
 import { TrashView } from "@/components/chat/TrashView";
 import { SessionSearchResults } from "@/components/chat/SessionSearchResults";
 
-import { requestOpenBillingBadge } from "@/lib/billingBadgeBus";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -123,24 +123,6 @@ function formatBillingCredits(value: number): string {
   if (Math.abs(value) >= 10_000) return `${(value / 10_000).toFixed(1)}万`;
   if (Math.abs(value) >= 100) return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
-
-function formatDetailedBillingCredits(value: number): string {
-  if (!Number.isFinite(value)) return "0";
-  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
-
-function billingModeLabel(mode: string): string {
-  switch (mode) {
-    case "prepaid":
-      return "预付费";
-    case "postpaid":
-      return "后付费";
-    case "trial":
-      return "试用";
-    default:
-      return "积分";
-  }
 }
 
 function compareSessionActivity(a: ChatSessionIndexItem, b: ChatSessionIndexItem): number {
@@ -633,7 +615,7 @@ interface SidebarUserMenuFooterProps {
   onOpenSettings?: (section?: SettingsSectionId) => void;
   onNavigateAdminTab?: (tab: AppTab) => void;
   onOpenAdminSettings?: (target: AdminSettingsTarget) => void;
-  onOpenBilling?: () => void;
+  billingSessionId?: string | null;
   billingSummary: TenantBillingSummary | null;
   billingAllowance: BillingAllowance | null;
   accounts: SavedAccountSummary[];
@@ -651,7 +633,7 @@ function SidebarUserMenuFooter({
   isPlatformAdmin,
   onOpenSettings,
   onNavigateAdminTab,
-  onOpenBilling,
+  billingSessionId,
   billingSummary,
   billingAllowance,
   accounts,
@@ -781,25 +763,14 @@ function SidebarUserMenuFooter({
               )}
             </div>
 
-            {billingSummary && billingAllowance && onOpenBilling && (
-              <button
-                type="button"
-                className="mb-2 mt-1 w-full rounded-2xl border border-border/80 bg-muted/35 p-3 text-left transition-colors hover:bg-muted/60"
-                onClick={() => { setShowUserMenu(false); onOpenBilling(); }}
-              >
-                <span className="flex items-center justify-between gap-3">
-                  <span className="font-semibold">积分账户</span>
-                  <span className="rounded-full bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-sm">
-                    {billingModeLabel(billingSummary.billingMode)}
-                  </span>
-                </span>
-                <span className="mt-3 flex items-center gap-2 text-sm">
-                  <EntityIcons.credits className="size-[18px]" aria-hidden="true" />
-                  <span className="text-muted-foreground">{billingAllowance.source === "member" ? "个人剩余额度" : "组织可用积分"}</span>
-                  <span className="ml-auto text-lg font-semibold tabular-nums">{formatDetailedBillingCredits(billingAllowance.credits)}</span>
-                  <ChevronRight className="size-4 text-muted-foreground" />
-                </span>
-              </button>
+            {billingSummary && billingAllowance && (
+              <BillingMiniBadge
+                isAdmin={isAdmin}
+                sessionId={billingSessionId}
+                variant="menu"
+                fallbackSummary={billingSummary}
+                fallbackAllowance={billingAllowance}
+              />
             )}
 
             <div className={USER_MENU_SECTION}>
@@ -1118,7 +1089,6 @@ export function DesktopSessionSidebar({
 }: DesktopSessionSidebarProps) {
   const { user: authUser, accounts, switchAccount, authEnabled } = useAuth();
   const { summary: billingSummary, allowance: billingAllowance } = useTenantBillingAllowance(authUser?.tenantId);
-  const showBilling = billingSummary?.billingEnabled === true && billingSummary.billingMode !== "internal";
   // 会话列表头像开关：默认不显示（=== true 才显示），关闭时列表走紧凑单行布局
   const compactList = authUser?.preferences?.showSessionListAvatar !== true;
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -1943,11 +1913,7 @@ export function DesktopSessionSidebar({
           onOpenSettings={onOpenSettings}
           onNavigateAdminTab={(tab) => (onPushTab ?? onTabChange)?.(tab)}
           onOpenAdminSettings={onOpenAdminSettings}
-          onOpenBilling={showBilling ? () => {
-            // BillingMiniBadge 只在 chat tab 上渲染，先切回 chat，再命令展开面板。
-            (onPushTab ?? onTabChange)?.("chat");
-            requestOpenBillingBadge();
-          } : undefined}
+          billingSessionId={activeSessionId}
           billingSummary={billingSummary}
           billingAllowance={billingAllowance}
           accounts={accounts}
@@ -2309,12 +2275,7 @@ export function DesktopSessionSidebar({
               setSubPanelOpen(false);
               onOpenAdminSettings?.(target);
             }}
-            onOpenBilling={showBilling ? () => {
-              // BillingMiniBadge 只在 chat tab 上渲染，先关闭子面板并切回 chat，再命令展开面板。
-              setSubPanelOpen(false);
-              (onPushTab ?? onTabChange)?.("chat");
-              requestOpenBillingBadge();
-            } : undefined}
+            billingSessionId={activeSessionId}
             billingSummary={billingSummary} billingAllowance={billingAllowance}
             accounts={accounts}
             switchAccount={switchAccount}

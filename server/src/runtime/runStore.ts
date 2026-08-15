@@ -1586,6 +1586,50 @@ export class PgRunStore implements RunStore {
   }
 
   async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
+    if (status === 'cancelled') {
+      const client = await this.pool.connect();
+      try {
+        await client.query('BEGIN');
+        // 先取得 run 行锁，再在同一事务内生成首次取消时间；不能在可能阻塞的 UPDATE
+        // target list 中提前求值，否则 cancelled_at 会早于真正的取消线性化点。
+        const locked = await client.query<{ row_json: RunRecord }>(`
+          SELECT row_to_json(${this.runsTable}.*) AS row_json
+          FROM ${this.runsTable}
+          WHERE run_id = $1
+          FOR UPDATE
+        `, [runId]);
+        const existing = locked.rows[0]?.row_json;
+        if (!existing) {
+          await client.query('COMMIT');
+          return null;
+        }
+        if (['completed', 'failed', 'orphaned'].includes(existing.status)) {
+          await client.query('COMMIT');
+          return normalizeRunRecord(existing);
+        }
+        const updated = await client.query<{ row_json: RunRecord }>(`
+          WITH cancellation_time AS (SELECT clock_timestamp() AS now)
+          UPDATE ${this.runsTable} run
+          SET status = 'cancelled',
+              status_reason = $2,
+              updated_at = cancellation_time.now,
+              cancelled_at = COALESCE(run.cancelled_at, cancellation_time.now),
+              metadata = (run.metadata || $3::jsonb) - 'wakeMessage'
+          FROM cancellation_time
+          WHERE run.run_id = $1
+            AND run.status NOT IN ('completed', 'failed', 'orphaned')
+          RETURNING row_to_json(run.*) AS row_json
+        `, [runId, reason ?? null, JSON.stringify(metadataPatch)]);
+        await client.query('COMMIT');
+        return updated.rows[0] ? normalizeRunRecord(updated.rows[0].row_json) : normalizeRunRecord(existing);
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+
     const now = new Date().toISOString();
     // 门禁加固（2026-06-22）：terminal 状态是 sink。已 completed/failed/cancelled/orphaned
     // 的 run 不能被重新写回活跃态（防 lease 抢占重叠期内旧 worker 经事件路径覆盖
@@ -1601,7 +1645,7 @@ export class PgRunStore implements RunStore {
             started_at = CASE WHEN $2 = 'running' AND started_at IS NULL THEN $4 ELSE started_at END,
             completed_at = CASE WHEN $2 = 'completed' THEN $4 ELSE completed_at END,
             failed_at = CASE WHEN $2 = 'failed' THEN $4 ELSE failed_at END,
-            cancelled_at = CASE WHEN $2 = 'cancelled' THEN $4 ELSE cancelled_at END,
+            cancelled_at = CASE WHEN $2 = 'cancelled' THEN COALESCE(cancelled_at, $4) ELSE cancelled_at END,
             metadata = CASE
               WHEN $2::text IN ('completed','failed','cancelled','orphaned')
                 THEN (metadata || $5::jsonb) - 'wakeMessage'

@@ -43,6 +43,16 @@ export interface ToolInvocationStore {
     reason?: string,
     metadataPatch?: Record<string, unknown>,
   ): Promise<{ record: ToolInvocationRecord; created: boolean } | null>;
+  /**
+   * 恢复 cancelled run 的漏登记 outbox。只有 invocation 在取消线性化点仍在运行，
+   * 或在该时间点之后终态化时才原子登记，避免恢复快照 TOCTOU 误取消。
+   */
+  requestCancelOnceAfterRunCancellation(
+    invocationId: string,
+    runCancelledAt: string,
+    reason?: string,
+    metadataPatch?: Record<string, unknown>,
+  ): Promise<{ record: ToolInvocationRecord; created: boolean } | null>;
   /** 为外部 DELETE 副作用获取短租约；并发消费者只有一个能取得 claim。 */
   claimCancelDelivery(
     invocationId: string,
@@ -196,6 +206,22 @@ export class InMemoryToolInvocationStore implements ToolInvocationStore {
       const record = await this.requestCancel(invocationId, reason, metadataPatch);
       return record ? { record, created: false } : null;
     }
+    const record = await this.requestCancel(invocationId, reason, metadataPatch);
+    return record ? { record, created: true } : null;
+  }
+
+  async requestCancelOnceAfterRunCancellation(
+    invocationId: string,
+    runCancelledAt: string,
+    reason?: string,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<{ record: ToolInvocationRecord; created: boolean } | null> {
+    const existing = this.invocations.get(invocationId);
+    if (!existing) return null;
+    if (existing.cancelRequestedAt) return { record: existing, created: false };
+    const eligible = existing.status === 'running'
+      || (existing.completedAt !== undefined && Date.parse(existing.completedAt) >= Date.parse(runCancelledAt));
+    if (!eligible) return null;
     const record = await this.requestCancel(invocationId, reason, metadataPatch);
     return record ? { record, created: true } : null;
   }
@@ -498,6 +524,39 @@ export class PgToolInvocationStore implements ToolInvocationStore {
       WHERE invocation_id = $1
         AND cancel_requested_at IS NULL
       RETURNING *
+    `, [invocationId, now, reason ?? null, JSON.stringify(metadataPatch)]);
+    if (created.rows[0]) return { record: rowToRecord(created.rows[0]), created: true };
+    const existing = await this.options.pool.query<ToolInvocationRow>(`
+      SELECT * FROM ${this.toolInvocationsTable}
+      WHERE invocation_id = $1 AND cancel_requested_at IS NOT NULL
+    `, [invocationId]);
+    return existing.rows[0] ? { record: rowToRecord(existing.rows[0]), created: false } : null;
+  }
+
+  async requestCancelOnceAfterRunCancellation(
+    invocationId: string,
+    _runCancelledAt: string,
+    reason?: string,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<{ record: ToolInvocationRecord; created: boolean } | null> {
+    const now = new Date().toISOString();
+    const created = await this.options.pool.query<ToolInvocationRow>(`
+      UPDATE ${this.toolInvocationsTable} invocation
+      SET cancel_requested_at = $2::timestamptz,
+          cancel_reason = COALESCE(invocation.cancel_reason, $3),
+          updated_at = $2::timestamptz,
+          metadata = invocation.metadata || $4::jsonb
+      FROM ${this.runsTable} run
+      WHERE invocation.invocation_id = $1
+        AND run.run_id = invocation.run_id
+        AND run.status = 'cancelled'
+        AND run.cancelled_at IS NOT NULL
+        AND invocation.cancel_requested_at IS NULL
+        AND (
+          invocation.status = 'running'
+          OR (invocation.completed_at IS NOT NULL AND invocation.completed_at >= run.cancelled_at)
+        )
+      RETURNING invocation.*
     `, [invocationId, now, reason ?? null, JSON.stringify(metadataPatch)]);
     if (created.rows[0]) return { record: rowToRecord(created.rows[0]), created: true };
     const existing = await this.options.pool.query<ToolInvocationRow>(`

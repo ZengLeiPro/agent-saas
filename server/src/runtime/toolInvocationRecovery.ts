@@ -37,11 +37,15 @@ export async function recoverRunningToolInvocations(options: RecoverRunningToolI
     if (activeLeasedRun || completedBeforeCancellation || (!terminalRun && !stale)) continue;
     if (
       run?.status === 'cancelled'
+      && run.cancelledAt
       && !record.cancelRequestedAt
       && (record.status === 'running' || terminalNeedsCancelRepair)
     ) {
-      const cancelRequest = await options.toolInvocationStore.requestCancelOnce(
+      // record 是扫描快照；登记时必须针对 invocation 当前状态重新做时间谓词 CAS。
+      // 否则 invocation 在快照后先完成、run 随后取消时，会误建外部取消 outbox。
+      const cancelRequest = await options.toolInvocationStore.requestCancelOnceAfterRunCancellation(
         record.invocationId,
+        run.cancelledAt,
         'recovered_after_cancelled_run',
         { cancelRecovery: 'terminal_run' },
       );

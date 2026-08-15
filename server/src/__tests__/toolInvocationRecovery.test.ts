@@ -159,6 +159,40 @@ describe('recoverRunningToolInvocations cancellation outbox', () => {
     expect(eventStore.events).toHaveLength(0);
   });
 
+  it('rechecks the invocation state when completion and run cancellation happen after the recovery snapshot', async () => {
+    const store = new InMemoryToolInvocationStore();
+    const eventStore = new MemoryEventStore();
+    await seedInvocation(store);
+    let cancelledAt = '';
+    store.listCancelRecoveryCandidates = vi.fn(async () => {
+      await store.complete('invocation-1', 'completed');
+      const completed = await store.get('invocation-1');
+      cancelledAt = new Date(Date.parse(completed!.completedAt!) + 60_000).toISOString();
+      return [];
+    });
+    const runStore = {
+      get: vi.fn(async (runId: string) => ({
+        runId,
+        sessionId: 'session-1',
+        status: 'cancelled',
+        requestedAt: '2026-08-15T00:00:00.000Z',
+        updatedAt: cancelledAt,
+        cancelledAt,
+        metadata: {},
+      })),
+    } as unknown as RunStore;
+
+    await expect(recoverRunningToolInvocations({
+      toolInvocationStore: store,
+      eventStore,
+      runStore,
+    })).resolves.toEqual({ scanned: 1, recovered: 0 });
+
+    await expect(store.get('invocation-1')).resolves.toMatchObject({ status: 'completed' });
+    expect((await store.get('invocation-1'))?.cancelRequestedAt).toBeUndefined();
+    expect(eventStore.events).toHaveLength(0);
+  });
+
   it('does not cancel an invocation that completed before the run was cancelled', async () => {
     const store = new InMemoryToolInvocationStore();
     const eventStore = new MemoryEventStore();

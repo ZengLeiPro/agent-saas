@@ -572,6 +572,118 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     expect((await toolInvocationStore.get(invocationId))?.cancelRequestedAt).toBeUndefined();
   });
 
+  it('重复取消已终态 run 不改写首次 cancelledAt', async () => {
+    const runId = 'run-cancelled-at-stable';
+    await store.upsertPending({
+      runId,
+      sessionId: 'session-cancelled-at-stable',
+      userId: 'user-1',
+      channel: 'web',
+    });
+    await store.markStatus(runId, 'running');
+    const first = await store.markStatus(runId, 'cancelled', 'web_abort');
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    const repeated = await store.markStatus(runId, 'cancelled', 'web_abort');
+
+    expect(first?.cancelledAt).toBeTruthy();
+    expect(repeated?.cancelledAt).toBe(first?.cancelledAt);
+  });
+
+  it('取消等待 invocation 完成锁时以取得 run 行锁后的时间作为线性化点', async () => {
+    const sessionId = 'session-cancel-lock-linearization';
+    const runId = 'run-cancel-lock-linearization';
+    const invocationId = 'invocation-cancel-lock-linearization';
+    await store.upsertPending({ runId, sessionId, userId: 'user-1', channel: 'web' });
+    await store.markStatus(runId, 'running');
+    await toolInvocationStore.start({
+      invocationId,
+      runId,
+      sessionId,
+      toolCallId: 'call-cancel-lock-linearization',
+      toolName: 'Shell',
+      executionTarget: 'server-remote',
+    });
+
+    const blocker = await pool.connect();
+    let cancellation: ReturnType<typeof store.markStatus> | undefined;
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query(`SELECT run_id FROM ${prefix}_runs WHERE run_id = $1 FOR SHARE`, [runId]);
+      cancellation = store.markStatus(runId, 'cancelled', 'web_abort');
+      let waitingOnRunLock = false;
+      for (let attempt = 0; attempt < 100 && !waitingOnRunLock; attempt += 1) {
+        const waiting = await pool.query<{ waiting: boolean }>(`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_stat_activity
+            WHERE datname = current_database()
+              AND wait_event_type = 'Lock'
+              AND query LIKE $1
+          ) AS waiting
+        `, [`%FROM ${prefix}_runs%FOR UPDATE%`]);
+        waitingOnRunLock = waiting.rows[0]?.waiting ?? false;
+        if (!waitingOnRunLock) await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(waitingOnRunLock).toBe(true);
+      await blocker.query(`
+        UPDATE ${prefix}_tool_invocations
+        SET status = 'completed', completed_at = clock_timestamp(), updated_at = clock_timestamp()
+        WHERE invocation_id = $1 AND status = 'running'
+      `, [invocationId]);
+      await blocker.query('COMMIT');
+
+      const cancelled = await cancellation;
+      const invocation = await toolInvocationStore.get(invocationId);
+      expect(Date.parse(cancelled!.cancelledAt!)).toBeGreaterThanOrEqual(Date.parse(invocation!.completedAt!));
+    } finally {
+      await blocker.query('ROLLBACK').catch(() => undefined);
+      blocker.release();
+      await cancellation?.catch(() => undefined);
+    }
+  });
+
+  it('恢复快照后 invocation 先完成、run 后取消时不误建 cancel outbox', async () => {
+    const sessionId = 'session-recovery-snapshot-race';
+    const runId = 'run-recovery-snapshot-race';
+    const invocationId = 'invocation-recovery-snapshot-race';
+    await store.upsertPending({ runId, sessionId, userId: 'user-1', channel: 'web' });
+    await store.markStatus(runId, 'running');
+    await toolInvocationStore.start({
+      invocationId,
+      runId,
+      sessionId,
+      toolCallId: 'call-recovery-snapshot-race',
+      toolName: 'Shell',
+      executionTarget: 'server-remote',
+    });
+
+    const originalListRunning = toolInvocationStore.listRunning.bind(toolInvocationStore);
+    let snapshotRead!: () => void;
+    let releaseSnapshot!: () => void;
+    const snapshotReadPromise = new Promise<void>((resolve) => { snapshotRead = resolve; });
+    const releaseSnapshotPromise = new Promise<void>((resolve) => { releaseSnapshot = resolve; });
+    toolInvocationStore.listRunning = async (requestedSessionId?: string) => {
+      const records = await originalListRunning(requestedSessionId);
+      snapshotRead();
+      await releaseSnapshotPromise;
+      return records;
+    };
+
+    const recovery = recoverRunningToolInvocations({ toolInvocationStore, eventStore, runStore: store });
+    try {
+      await snapshotReadPromise;
+      await toolInvocationStore.complete(invocationId, 'completed');
+      await store.markStatus(runId, 'cancelled', 'web_abort');
+      releaseSnapshot();
+      await expect(recovery).resolves.toMatchObject({ scanned: 1, recovered: 0 });
+    } finally {
+      releaseSnapshot();
+      toolInvocationStore.listRunning = originalListRunning;
+    }
+
+    await expect(toolInvocationStore.get(invocationId)).resolves.toMatchObject({ status: 'completed' });
+    expect((await toolInvocationStore.get(invocationId))?.cancelRequestedAt).toBeUndefined();
+  });
+
   it('恢复器为 cancelled run 下已终态的 invocation 补登记一次 cancel outbox', async () => {
     const sessionId = 'session-terminal-cancel-repair';
     const runId = 'run-terminal-cancel-repair';
@@ -586,11 +698,21 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       toolName: 'Shell',
       executionTarget: 'server-remote',
     });
-    await store.markStatus(runId, 'cancelled', 'web_abort');
-    // 模拟旧版本/崩溃留下的终态半状态：已终态，但未走新版 complete 原子补 outbox。
+    // 使用 PostgreSQL 微秒时间模拟旧版本/崩溃留下的终态半状态；RunStore.get 会把
+    // cancelledAt 归一化到毫秒，恢复 CAS 必须直接使用数据库权威时间而非 JS 等值比较。
+    await pool.query(`
+      UPDATE ${prefix}_runs
+      SET status = 'cancelled', status_reason = 'web_abort',
+          cancelled_at = TIMESTAMPTZ '2026-08-15 00:00:00.123456+00',
+          updated_at = TIMESTAMPTZ '2026-08-15 00:00:00.123456+00'
+      WHERE run_id = $1
+    `, [runId]);
     await pool.query(`
       UPDATE ${prefix}_tool_invocations
-      SET status = 'failed', completed_at = clock_timestamp(), updated_at = clock_timestamp(), error = 'worker crashed'
+      SET status = 'failed',
+          completed_at = TIMESTAMPTZ '2026-08-15 00:00:00.123457+00',
+          updated_at = TIMESTAMPTZ '2026-08-15 00:00:00.123457+00',
+          error = 'worker crashed'
       WHERE invocation_id = $1
     `, [invocationId]);
 

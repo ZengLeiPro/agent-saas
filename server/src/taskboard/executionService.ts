@@ -1,11 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { realpath, stat } from 'node:fs/promises';
-import { extname } from 'node:path';
 
-import { splitByMessageMarkers } from '../../../shared/src/lib/markers.js';
 import type {
-  TaskBoardAttachment,
-  TaskBoardComment,
   TaskBoardExecution,
   TaskBoardExecutionStartInput,
   TaskBoardExecutionStartResult,
@@ -20,10 +15,21 @@ import {
 } from '../runtime/sessionCatalog.js';
 import type { EventStore, PlatformEvent } from '../runtime/types.js';
 import { deriveStableWorkspaceId } from '../runtime/workspaceIdentity.js';
-import { formatDateTime } from '../utils/timestamp.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
-import { isInside, resolveWorkspacePath, relativeWorkspacePath } from '../agent/toolRuntimePaths.js';
-import { TaskboardExecutionUnavailableError } from './types.js';
+import {
+  extractAgentAttachments,
+  extractContinuationAttachments,
+  reconcileTerminalContinuation,
+  stripFileMarkers,
+} from './continuationCompletion.js';
+import {
+  dispatchTaskboardContinuation,
+  reconcileTaskboardContinuation,
+} from './continuationCoordinator.js';
+import { reuseTaskboardSession } from './executionSession.js';
+import { buildExecutionPrompt, formatTaskboardComment } from './executionPrompt.js';
+export { executionWritebackInstructions } from './executionPrompt.js';
+import { TaskboardExecutionUnavailableError, TaskboardValidationError } from './types.js';
 export { createTaskboardRuntimeOptions } from './runtimeOptions.js';
 import type {
   TaskboardExecutionContext,
@@ -44,7 +50,7 @@ class InvalidTaskboardDispatchPayloadError extends Error {}
 
 export interface TaskboardExecutionCoordinatorOptions {
   store: TaskboardExecutionStore;
-  scheduler: Pick<RuntimeScheduler, 'enqueueCreateOnly'>;
+  scheduler: Pick<RuntimeScheduler, 'enqueue' | 'enqueueCreateOnly'>;
   runStore: Pick<RunStore, 'get'>;
   sessionCatalog: SessionCatalog;
   eventStore: EventStore;
@@ -93,81 +99,188 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     return this.options.store.listExecutions(identity, taskId);
   }
 
-  async startExecution(
+  startExecution(
     identity: TaskboardIdentity,
     taskId: string,
     input: TaskBoardExecutionStartInput,
   ): Promise<TaskBoardExecutionStartResult> {
-    const modelContext = await this.options.store.getExecutionModelContext(identity, taskId);
-    const executionIdentity = modelContext.boardOwnerUserId === identity.ownerUserId
-      ? identity
-      : this.options.resolveOwnerIdentity?.(modelContext.boardOwnerUserId);
-    if (!executionIdentity || executionIdentity.tenantId !== identity.tenantId) {
-      throw new TaskboardExecutionUnavailableError('看板创建者账号不可用，无法继承其运行上下文');
-    }
-    const explicitModelRef = modelContext.taskModel ?? modelContext.boardModel;
-    const model = explicitModelRef
-      ? this.options.resolveModel?.(explicitModelRef, executionIdentity.tenantId)
-      : this.options.resolveDefaultModel(executionIdentity.tenantId);
-    if (!model) {
-      const reason = explicitModelRef
-        ? `指定模型不可用：${explicitModelRef}`
-        : '当前组织没有可用的默认模型';
-      throw new TaskboardExecutionUnavailableError(reason);
-    }
-    const executionDecision = resolveExecutionTarget({
-      user: { role: executionIdentity.userRole, tenantId: executionIdentity.tenantId },
-      config: this.options.executionConfig,
-    });
-    if (!executionDecision.ok) throw new TaskboardExecutionUnavailableError(executionDecision.reason);
+    return this.startExecutionInternal(identity, taskId, input);
+  }
 
-    const executionId = randomUUID();
-    const sessionId = `taskboard-${randomUUID()}`;
-    const runId = `taskboard-${Date.now()}-${randomUUID()}`;
-    const workspaceUser = {
-      id: executionIdentity.ownerUserId,
-      username: executionIdentity.username,
-      role: executionIdentity.userRole ?? 'user' as const,
-      tenantId: executionIdentity.tenantId,
-    };
-    const cwd = resolveUserCwd(this.options.agentCwd, workspaceUser);
-    const workspaceId = deriveStableWorkspaceId(workspaceUser, sessionId);
-    const session = createRuntimeSessionRecord({
-      sessionId,
-      userId: executionIdentity.ownerUserId,
-      username: executionIdentity.username,
-      userRole: executionIdentity.userRole,
-      tenantId: executionIdentity.tenantId,
-      channel: 'web',
-      cwd,
-      modelRef: model.ref,
-      executionTarget: executionDecision.target,
-      workspaceId,
-      status: 'running',
+  startDirectExecution(
+    identity: TaskboardIdentity,
+    taskId: string,
+    expectedVersion: number,
+  ): Promise<TaskBoardExecutionStartResult> {
+    return this.startExecutionInternal(identity, taskId, { expectedVersion }, {
+      allowWorkFromCurrentStatus: true,
+      executionId: `direct-${taskId}`,
     });
+  }
+
+  async continueExecution(
+    identity: TaskboardIdentity, taskId: string, commentId: string,
+  ): Promise<TaskBoardExecutionStartResult> {
+    const context = await this.options.store.getContinuationContext(identity, taskId, commentId);
+    const pendingCommentIds = context.pendingComments.map((comment) => comment.id);
+    if (context.continuationExecution) {
+      return { task: context.task, execution: context.continuationExecution };
+    }
+    if (context.continuationRunId
+      && context.latestExecution?.runId === context.continuationRunId) {
+      return { task: context.task, execution: context.latestExecution };
+    }
+    const existingContinuation = context.continuationRunId
+      ? await this.options.runStore.get(context.continuationRunId)
+      : null;
+    if (existingContinuation && isTerminalRun(existingContinuation)) {
+      if (typeof existingContinuation.metadata?.steeringTargetRunId === 'string') {
+        if (existingContinuation.status === 'completed'
+          && existingContinuation.metadata?.steeringState === 'applied') {
+          await this.options.store.finishContinuation(existingContinuation.runId);
+        } else {
+          const reason = existingContinuation.statusReason
+            || `Runtime steering source 状态：${existingContinuation.status}`;
+          await this.options.store.completeContinuation(taskId, existingContinuation.runId, {
+            status: existingContinuation.status === 'cancelled' ? 'cancelled' : 'failed',
+            error: reason,
+            commentBody: limitComment(
+              `Agent 继续执行${existingContinuation.status === 'cancelled' ? '已取消' : '失败'}\n\n${reason}`,
+            ),
+          });
+        }
+        const execution = context.activeExecution ?? context.latestExecution;
+        if (!execution) throw new TaskboardExecutionUnavailableError('评论插话目标执行记录缺失');
+        return { task: context.task, execution };
+      }
+      if (!context.latestExecution) {
+        throw new TaskboardExecutionUnavailableError('评论续跑记录存在，但任务执行记录缺失');
+      }
+      const reconciledTask = await reconcileTerminalContinuation({
+        store: this.options.store,
+        eventStore: this.options.eventStore,
+        taskId,
+        run: existingContinuation,
+        agentCwd: this.options.agentCwd,
+      });
+      return { task: reconciledTask ?? context.task, execution: context.latestExecution };
+    }
+    if (!context.activeExecution && !context.continuationRunId && !context.hasActiveContinuation) {
+      try {
+        return await this.startExecutionInternal(
+          identity,
+          taskId,
+          { expectedVersion: context.task.version },
+          { allowWorkFromCurrentStatus: true, executionId: commentId },
+        );
+      } catch (error) {
+        if (!(error instanceof TaskboardValidationError) || error.code !== 'TASKBOARD_EXECUTION_ACTIVE') throw error;
+        return this.continueExecution(identity, taskId, commentId);
+      }
+    }
+
+    const targetExecution = context.activeExecution ?? context.latestExecution;
+    if (!targetExecution) throw new TaskboardExecutionUnavailableError('任务没有可复用的执行会话');
+    const launch = await this.resolveLaunch(identity, taskId);
+    const session = await reuseTaskboardSession({
+      sessionCatalog: this.options.sessionCatalog,
+      agentCwd: this.options.agentCwd,
+      sessionId: targetExecution.sessionId,
+      executionIdentity: launch.executionIdentity,
+      modelRef: launch.model.ref,
+      executionTarget: launch.executionTarget,
+    });
+    const runId = context.continuationRunId ?? `taskboard-comment-${commentId}`;
+    const run = {
+      runId,
+      sessionId: session.sessionId,
+      userId: launch.executionIdentity.ownerUserId,
+      tenantId: launch.executionIdentity.tenantId,
+      model: launch.model.ref,
+      channel: 'web',
+      idempotencyKey: `taskboard-comment:${commentId}`,
+      executionTarget: launch.executionTarget,
+      workspaceId: session.workspaceId,
+      metadata: {
+        taskboardContinuation: true,
+        taskboardTaskId: taskId,
+        taskboardCommentId: commentId,
+        outputTransactionMode: 'terminal_buffered',
+        cwd: session.cwd,
+        transcriptPath: session.transcriptPath,
+        wakeMessage: {
+          channel: 'web',
+          chatId: session.sessionId,
+          content: `任务看板新增评论：\n\n${context.pendingComments.map((comment) => formatTaskboardComment(
+            comment,
+            this.options.timezone,
+            this.options.resolveUserDisplayName?.(comment.authorId),
+          )).join('\n\n')}`,
+          senderId: launch.executionIdentity.ownerUserId,
+          senderName: launch.executionIdentity.username,
+          metadata: {
+            taskboardContinuation: true,
+            taskboardTaskId: taskId,
+            taskboardCommentId: commentId,
+          },
+        },
+      },
+    };
+    const queued = await this.options.store.enqueueContinuation(
+      taskId,
+      pendingCommentIds,
+      runId,
+      commentId,
+      { version: 1, session, run },
+    );
+    if (!queued) throw new TaskboardExecutionUnavailableError('评论已由另一条续跑请求处理');
+    const nextTask = await this.options.store.markContinuationRunning(taskId, runId) ?? context.task;
+    await dispatchTaskboardContinuation(this.options, runId);
+    return { task: nextTask, execution: targetExecution };
+  }
+
+  private async startExecutionInternal(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input: TaskBoardExecutionStartInput,
+    options: { allowWorkFromCurrentStatus?: boolean; executionId?: string } = {},
+  ): Promise<TaskBoardExecutionStartResult> {
+    const launch = await this.resolveLaunch(identity, taskId);
+    const executions = await this.options.store.listExecutions(identity, taskId);
+    const executionId = options.executionId ?? randomUUID();
+    const sessionId = executions[0]?.sessionId ?? `taskboard-${randomUUID()}`;
+    const session = await reuseTaskboardSession({
+      sessionCatalog: this.options.sessionCatalog,
+      agentCwd: this.options.agentCwd,
+      sessionId,
+      executionIdentity: launch.executionIdentity,
+      modelRef: launch.model.ref,
+      executionTarget: launch.executionTarget,
+    });
+    const runId = `taskboard-execution-${executionId}`;
     const run = {
       runId,
       sessionId,
-      userId: executionIdentity.ownerUserId,
-      tenantId: executionIdentity.tenantId,
-      model: model.ref,
-      channel: 'taskboard',
+      userId: launch.executionIdentity.ownerUserId,
+      tenantId: launch.executionIdentity.tenantId,
+      model: launch.model.ref,
+      channel: 'web',
       idempotencyKey: `taskboard-execution:${executionId}`,
-      executionTarget: executionDecision.target,
-      workspaceId,
+      executionTarget: launch.executionTarget,
+      workspaceId: session.workspaceId,
       metadata: {
         taskboardExecution: true,
         taskboardExecutionId: executionId,
         taskboardTaskId: taskId,
         outputTransactionMode: 'terminal_buffered',
-        cwd,
+        cwd: session.cwd,
         transcriptPath: session.transcriptPath,
         wakeMessage: {
           channel: 'web',
           chatId: sessionId,
           content: '正在读取任务看板中的最新任务与评论。',
-          senderId: executionIdentity.ownerUserId,
-          senderName: executionIdentity.username,
+          senderId: launch.executionIdentity.ownerUserId,
+          senderName: launch.executionIdentity.username,
           metadata: {
             taskboardExecution: true,
             taskboardExecutionId: executionId,
@@ -181,17 +294,47 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       executionId,
       sessionId,
       runId,
-      ...(explicitModelRef ? { configuredModelRef: explicitModelRef } : {}),
-      executionOwnerUserId: executionIdentity.ownerUserId,
+      ...(options.allowWorkFromCurrentStatus ? { allowWorkFromCurrentStatus: true } : {}),
+      ...(launch.explicitModelRef ? { configuredModelRef: launch.explicitModelRef } : {}),
+      executionOwnerUserId: launch.executionIdentity.ownerUserId,
       dispatch: { version: 1, session, run },
     });
     await this.dispatchExecution(runId);
     return claimed;
   }
 
+  private async resolveLaunch(identity: TaskboardIdentity, taskId: string) {
+    const modelContext = await this.options.store.getExecutionModelContext(identity, taskId);
+    const executionIdentity = modelContext.boardOwnerUserId === identity.ownerUserId
+      ? identity
+      : this.options.resolveOwnerIdentity?.(modelContext.boardOwnerUserId);
+    if (!executionIdentity || executionIdentity.tenantId !== identity.tenantId) {
+      throw new TaskboardExecutionUnavailableError('看板创建者账号不可用，无法继承其运行上下文');
+    }
+    const explicitModelRef = modelContext.taskModel ?? modelContext.boardModel;
+    const model = explicitModelRef
+      ? this.options.resolveModel?.(explicitModelRef, executionIdentity.tenantId)
+      : this.options.resolveDefaultModel(executionIdentity.tenantId);
+    if (!model) {
+      throw new TaskboardExecutionUnavailableError(
+        explicitModelRef ? `指定模型不可用：${explicitModelRef}` : '当前组织没有可用的默认模型',
+      );
+    }
+    const decision = resolveExecutionTarget({
+      user: { role: executionIdentity.userRole, tenantId: executionIdentity.tenantId },
+      config: this.options.executionConfig,
+    });
+    if (!decision.ok) throw new TaskboardExecutionUnavailableError(decision.reason);
+    return { executionIdentity, explicitModelRef, model, executionTarget: decision.target };
+  }
+
   async reconcile(): Promise<void> {
     for (let index = 0; index < 20; index += 1) {
       const dispatched = await this.dispatchExecution();
+      if (!dispatched) break;
+    }
+    for (let index = 0; index < 20; index += 1) {
+      const dispatched = await dispatchTaskboardContinuation(this.options);
       if (!dispatched) break;
     }
 
@@ -233,6 +376,21 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         );
       }
     }
+
+    const continuationCandidates = await this.options.store.claimContinuationReconcileCandidates(
+      staleBefore,
+      100,
+      randomUUID(),
+    );
+    for (const candidate of continuationCandidates) {
+      try {
+        await reconcileTaskboardContinuation(this.options, candidate);
+      } catch (error) {
+        this.options.logger?.warn(
+          `Taskboard continuation reconciliation failed: run=${candidate.runId} error=${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
   }
 
   private async dispatchExecution(runId?: string): Promise<boolean> {
@@ -250,7 +408,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
 
     try {
       const canonical = canonicalizeDispatchPayload(dispatch, this.options.agentCwd);
-      await this.options.sessionCatalog.ensure(canonical.session);
+      await this.options.sessionCatalog.upsert(canonical.session);
       const run = await this.options.scheduler.enqueueCreateOnly(canonical.run);
       assertDispatchedRun(run, dispatch, canonical.run);
       const marked = await this.options.store.markExecutionDispatchSucceeded(dispatch.runId, dispatch.leaseId);
@@ -367,6 +525,11 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
   async handleRuntimeEvent(event: PlatformEvent): Promise<void> {
     const runId = 'runId' in event && typeof event.runId === 'string' ? event.runId : undefined;
     if (!runId) return;
+    const run = await this.options.runStore.get(runId);
+    if (run?.metadata?.taskboardContinuation === true) {
+      await this.handleContinuationRuntimeEvent(event, run);
+      return;
+    }
     if (event.type === 'run_started') {
       await this.options.store.setExecutionStatus(runId, 'running');
       return;
@@ -390,6 +553,63 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     }
     const reason = event.error || 'Agent 执行失败';
     await this.completeFailedRun(runId, event.sessionId, 'failed', reason);
+  }
+
+  private async handleContinuationRuntimeEvent(event: PlatformEvent, run: RunRecord): Promise<void> {
+    const taskId = typeof run.metadata?.taskboardTaskId === 'string'
+      ? run.metadata.taskboardTaskId
+      : undefined;
+    if (typeof run.metadata?.steeringTargetRunId === 'string') {
+      if (!isTerminalRun(run)) return;
+      if (run.status === 'completed' && run.metadata?.steeringState === 'applied') {
+        await this.options.store.finishContinuation(run.runId);
+        return;
+      }
+      if (!taskId) return;
+      const reason = run.statusReason || `Runtime steering source 状态：${run.status}`;
+      await this.options.store.completeContinuation(taskId, run.runId, {
+        status: run.status === 'cancelled' ? 'cancelled' : 'failed',
+        error: reason,
+        commentBody: limitComment(`Agent 继续执行${run.status === 'cancelled' ? '已取消' : '失败'}\n\n${reason}`),
+      });
+      return;
+    }
+    if (!taskId) return;
+    if (event.type === 'run_started') {
+      await this.options.store.markContinuationRunning(taskId, run.runId);
+      return;
+    }
+    if (event.type === 'run_state_changed'
+      && (event.status === 'failed' || event.status === 'orphaned' || event.status === 'cancelled')) {
+      const reason = event.reason || `Runtime 状态：${event.status}`;
+      await this.options.store.completeContinuation(taskId, run.runId, {
+        status: event.status === 'cancelled' ? 'cancelled' : 'failed',
+        error: reason,
+        commentBody: limitComment(`Agent 继续执行${event.status === 'cancelled' ? '已取消' : '失败'}\n\n${reason}`),
+      });
+      return;
+    }
+    if (event.type !== 'run_finished') return;
+    if (event.subtype !== 'success') {
+      const reason = event.error || 'Agent 继续执行失败';
+      await this.options.store.completeContinuation(taskId, run.runId, {
+        status: 'failed',
+        error: reason,
+        commentBody: limitComment(`Agent 继续执行失败\n\n${reason}`),
+      });
+      return;
+    }
+    const events = this.options.eventStore.listByRun
+      ? await this.options.eventStore.listByRun(run.sessionId, run.runId)
+      : await this.options.eventStore.list(run.sessionId);
+    const output = finalAssistantText(events, run.runId, run.sessionId)
+      || 'Agent 继续执行完成，但没有返回文本交付。';
+    const attachments = await extractContinuationAttachments(output, run, this.options.agentCwd);
+    await this.options.store.completeContinuation(taskId, run.runId, {
+      status: 'succeeded',
+      commentBody: limitComment(`Agent 交付\n\n${stripFileMarkers(output)}`),
+      ...(attachments.length ? { attachments } : {}),
+    });
   }
 
   private async completeSuccessfulRun(
@@ -474,7 +694,7 @@ function canonicalizeDispatchPayload(
     || !isNonEmptyString(session.username)
     || (userRole !== 'admin' && userRole !== 'user')
     || session.channel !== 'web'
-    || run.channel !== 'taskboard'
+    || run.channel !== 'web'
     || session.status !== 'running'
     || !isNonEmptyString(run.model)
     || session.modelRef !== run.model
@@ -534,7 +754,7 @@ function canonicalizeDispatchPayload(
       userId: dispatch.ownerUserId,
       tenantId: dispatch.tenantId,
       model: run.model,
-      channel: 'taskboard',
+      channel: 'web',
       idempotencyKey: `taskboard-execution:${dispatch.executionId}`,
       executionTarget,
       workspaceId: expectedWorkspaceId,
@@ -627,153 +847,10 @@ function isExecutionTarget(value: unknown): boolean {
     || value === 'client';
 }
 
-function buildExecutionPrompt(
-  context: TaskboardExecutionContext,
-  timezone?: string,
-  ownerDisplayName?: string,
-): string {
-  const task = context.task;
-  const recentComments = context.comments.slice(-50);
-  const comments = recentComments.length > 0
-    ? recentComments.map((comment) => formatComment(
-        comment,
-        timezone,
-        comment.authorType === 'user' && comment.authorId === context.identity.ownerUserId
-          ? ownerDisplayName
-          : undefined,
-      )).join('\n\n')
-    : '（暂无评论）';
-  return [
-    '看板提示语：',
-    context.boardPrompt || '（无）',
-    '',
-    `任务：${task.identifier} · ${task.title}`,
-    `任务记录 ID：${task.id}`,
-    `执行类型：${context.execution.purpose === 'review' ? '独立复核' : '实施'}`,
-    `工作分支：${task.branch ?? '未填写'}`,
-    `优先级：${task.priority}`,
-    `标签：${task.labels.length > 0 ? task.labels.join('、') : '无'}`,
-    `截止时间：${task.dueAt ?? '无'}`,
-    '',
-    '任务看板回写：',
-    ...executionWritebackInstructions(context),
-    '',
-    '任务正文：',
-    task.description || '（无正文）',
-    '',
-    '任务附件：',
-    formatAttachments(task.attachments ?? []),
-    '',
-    `最近评论（${recentComments.length}/${context.comments.length}）：`,
-    comments,
-  ].join('\n');
-}
-
-export function executionWritebackInstructions(context: TaskboardExecutionContext): string[] {
-  const taskId = context.task.id;
-  const boardId = context.task.boardId;
-  const common = [
-    `- 创建或确认工作分支后，调用 CronManage：target=taskboard, action=update, id=${taskId}, branch=<分支名>。`,
-    `- 需要独立的后续复核、返工或合并时，用 target=taskboard, action=create, boardId=${boardId}, status=todo, dispatch=true 创建并派发新任务。`,
-  ];
-  if (context.execution.purpose !== 'review') {
-    return [...common, '- 实施成功后不要标记 done；系统会把仍在进行中的任务送入待复核。'];
-  }
-  return [
-    ...common,
-    '- 本次只做独立复核，不顺手修改交付。',
-    `- 复核通过：调用 CronManage：target=taskboard, action=move, id=${taskId}, status=done。`,
-    `- 复核不通过：调用 CronManage：target=taskboard, action=move, id=${taskId}, status=todo；最终回执列明返工项。`,
-    '- 无法明确判定时不要移动状态；系统会把任务放回待复核。',
-  ];
-}
-
-function formatComment(
-  comment: TaskBoardComment,
-  timezone?: string,
-  currentAuthorName?: string,
-): string {
-  const createdAt = new Date(comment.createdAt);
-  const timestamp = Number.isNaN(createdAt.getTime())
-    ? comment.createdAt
-    : formatDateTime(createdAt, timezone);
-  const attachments = comment.attachments?.length
-    ? `\n附件：\n${formatAttachments(comment.attachments)}`
-    : '';
-  return `[${timestamp}] ${currentAuthorName || comment.authorName}（${comment.authorType}）\n${comment.body || '（无文字）'}${attachments}`;
-}
-
-function formatAttachments(attachments: readonly TaskBoardAttachment[]): string {
-  if (attachments.length === 0) return '（无附件）';
-  return attachments.map((attachment) => `- ${attachment.originalName}：${attachment.relativePath}`).join('\n');
-}
-
 function assertExecutionSession(execution: TaskBoardExecution, sessionId: string): void {
   if (execution.sessionId !== sessionId) {
     throw new Error(`Runtime session 与任务看板 Execution 不匹配：run=${execution.runId}`);
   }
-}
-
-async function extractAgentAttachments(output: string, userCwd: string): Promise<TaskBoardAttachment[]> {
-  let realUserCwd: string;
-  try {
-    realUserCwd = await realpath(userCwd);
-  } catch {
-    return [];
-  }
-  const paths = [...new Set(splitByMessageMarkers(output)
-    .filter((segment): segment is Extract<ReturnType<typeof splitByMessageMarkers>[number], { type: 'file' }> => (
-      segment.type === 'file' && Boolean(segment.filePath)
-    ))
-    .map((segment) => segment.filePath))]
-    .slice(0, 50);
-  const attachments = await Promise.all(paths.map(async (filePath): Promise<TaskBoardAttachment | null> => {
-    try {
-      const absolutePath = resolveWorkspacePath(userCwd, filePath);
-      const realFilePath = await realpath(absolutePath);
-      if (!isInside(realUserCwd, realFilePath)) return null;
-      const fileStat = await stat(realFilePath);
-      if (!fileStat.isFile()) return null;
-      const relativePath = relativeWorkspacePath(userCwd, absolutePath);
-      const originalName = relativePath.split('/').pop() || relativePath;
-      const mimeType = mimeTypeFromName(originalName);
-      return {
-        originalName,
-        relativePath,
-        size: fileStat.size,
-        mimeType,
-        isImage: mimeType.startsWith('image/'),
-      };
-    } catch {
-      return null;
-    }
-  }));
-  return attachments.filter((attachment): attachment is TaskBoardAttachment => attachment !== null);
-}
-
-function stripFileMarkers(output: string): string {
-  return output.replace(/\[FILE\]\{.*?\}\[\/FILE\]/g, '').trim();
-}
-
-function mimeTypeFromName(fileName: string): string {
-  const extension = extname(fileName).toLowerCase();
-  const types: Record<string, string> = {
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.mp4': 'video/mp4',
-    '.webm': 'video/webm',
-    '.mov': 'video/quicktime',
-    '.pdf': 'application/pdf',
-    '.txt': 'text/plain',
-    '.md': 'text/markdown',
-    '.csv': 'text/csv',
-    '.json': 'application/json',
-    '.zip': 'application/zip',
-  };
-  return types[extension] ?? 'application/octet-stream';
 }
 
 function finalAssistantText(events: PlatformEvent[], runId: string, sessionId: string): string {
@@ -829,6 +906,13 @@ function isTerminalRunWithinGrace(run: RunRecord): boolean {
   if (!terminalAt) return false;
   const terminalAtMs = Date.parse(terminalAt);
   return Number.isFinite(terminalAtMs) && terminalAtMs > Date.now() - RECONCILIATION_GRACE_MS;
+}
+
+function isTerminalRun(run: RunRecord): boolean {
+  return run.status === 'completed'
+    || run.status === 'failed'
+    || run.status === 'cancelled'
+    || run.status === 'orphaned';
 }
 
 function isTerminalExecution(execution: TaskBoardExecution): boolean {

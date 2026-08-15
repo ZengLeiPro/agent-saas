@@ -122,6 +122,8 @@ export interface TaskBoardExecution {
   purpose: TaskBoardExecutionPurpose;
   requestedBy: string;
   error?: string;
+  /** 独立评论续跑仍在处理；用于正式 Execution 已终态时继续轮询最终交付。 */
+  continuationActive?: boolean;
   startedAt?: string;
   finishedAt?: string;
   createdAt: string;
@@ -161,6 +163,10 @@ export interface TaskBoardTaskCreateInput {
   labels?: string[];
   dueAt?: string;
   model?: string;
+  /** 同一次新建表单重试时保持不变，避免直执失败后重复建任务。 */
+  clientRequestId?: string;
+  /** 创建后立即启动 Agent；仅用于“进行中”状态。 */
+  dispatch?: boolean;
 }
 
 export interface TaskBoardTaskPatchInput {

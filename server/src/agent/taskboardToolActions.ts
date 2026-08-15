@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type {
   TaskBoardExecutionPurpose,
   TaskBoardPriority,
@@ -66,7 +68,9 @@ export async function invokeTaskboardAction(
         throw new Error('dispatch=true 只支持创建 todo 任务');
       }
       const executionService = input.dispatch ? options.executionService?.() : undefined;
-      if (input.dispatch && !executionService) throw new Error('任务看板 Agent 执行服务未启用');
+      if (input.dispatch && !executionService?.startDirectExecution) {
+        throw new Error('任务看板 Agent 执行服务未启用');
+      }
       const task = await service.createTask(identity, boardId, {
         title: requireField(input.title, 'title'),
         ...(input.description !== undefined ? { description: input.description } : {}),
@@ -76,12 +80,10 @@ export async function invokeTaskboardAction(
         ...(input.labels ? { labels: input.labels } : {}),
         ...(input.dueAt ? { dueAt: input.dueAt } : {}),
         ...(input.model ? { model: input.model } : {}),
+        ...(input.dispatch ? { clientRequestId: taskboardCreateRequestId(input, scope) } : {}),
       });
       if (!input.dispatch) return { created: true, task };
-      const result = await executionService!.startExecution(identity, task.id, {
-        expectedVersion: task.version,
-        purpose: 'work',
-      });
+      const result = await executionService!.startDirectExecution!(identity, task.id, task.version);
       return { created: true, dispatched: true, ...result };
     }
     case 'update': {
@@ -141,6 +143,22 @@ export async function invokeTaskboardAction(
     default:
       throw new Error(`target=taskboard 不支持 action=${input.action}`);
   }
+}
+
+function taskboardCreateRequestId(input: TaskboardManageInput, scope: TaskboardActionScope): string {
+  const sourceRunId = scope.execution?.execution.runId ?? 'unknown-run';
+  const digest = createHash('sha256').update(JSON.stringify({
+    boardId: input.boardId,
+    title: input.title,
+    description: input.description,
+    branch: input.branch,
+    status: input.status,
+    priority: input.priority,
+    labels: input.labels,
+    dueAt: input.dueAt,
+    model: input.model,
+  })).digest('hex').slice(0, 32);
+  return `taskboard-tool:${sourceRunId.slice(-64)}:${digest}`;
 }
 
 function assertExecutionScope(

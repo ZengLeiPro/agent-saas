@@ -53,6 +53,25 @@ describe("TaskDialog 交互", () => {
     })));
   });
 
+  it("进行中任务可勾选直接执行，其他状态不显示该选项", async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn(async () => undefined);
+    render(<TaskDialog open onOpenChange={vi.fn()} onCreate={onCreate} />);
+
+    expect(screen.queryByRole("checkbox", { name: "直接执行" })).toBeNull();
+    await user.type(screen.getByRole("textbox", { name: "标题" }), "立即处理异常");
+    await user.click(screen.getByRole("combobox", { name: "新任务状态" }));
+    await user.click(screen.getByRole("option", { name: "进行中" }));
+    await user.click(screen.getByRole("checkbox", { name: "直接执行" }));
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+      title: "立即处理异常",
+      status: "in_progress",
+      dispatch: true,
+    })));
+  });
+
   it("正文支持一次上传多个附件并随任务提交", async () => {
     const user = userEvent.setup();
     const onCreate = vi.fn(async () => undefined);
@@ -149,8 +168,8 @@ describe("TaskDialog 交互", () => {
     expect(screen.getByRole("textbox", { name: "正文" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("combobox", { name: "新任务状态" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("combobox", { name: "新任务优先级" })).toHaveProperty("disabled", true);
-    expect(screen.getByRole("textbox", { name: "标签" })).toHaveProperty("disabled", true);
-    expect(screen.getByLabelText("截止日期")).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("textbox", { name: "标签" })).toBeNull();
+    expect(screen.queryByLabelText("截止日期")).toBeNull();
     expect(screen.getByRole("button", { name: "取消" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("button", { name: "创建中..." })).toHaveProperty("disabled", true);
     expect(onOpenChange).not.toHaveBeenCalled();

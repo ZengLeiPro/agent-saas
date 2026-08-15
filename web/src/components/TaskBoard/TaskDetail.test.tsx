@@ -8,7 +8,9 @@ import { TaskDetail } from "./TaskDetail";
 
 const mocks = vi.hoisted(() => ({
   fetchTask: vi.fn(),
+  continueTaskExecution: vi.fn(),
   addComment: vi.fn(),
+  refreshComments: vi.fn(async () => undefined),
   executions: [] as TaskBoardExecution[],
   refreshExecutions: vi.fn(async () => undefined),
   authFetch: vi.fn(),
@@ -18,7 +20,11 @@ vi.mock("@/lib/authFetch", () => ({ authFetch: mocks.authFetch }));
 
 vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
-  return { ...actual, fetchTask: mocks.fetchTask };
+  return {
+    ...actual,
+    fetchTask: mocks.fetchTask,
+    continueTaskExecution: mocks.continueTaskExecution,
+  };
 });
 
 vi.mock("./hooks", () => ({
@@ -26,7 +32,7 @@ vi.mock("./hooks", () => ({
     comments: [],
     loading: false,
     error: null,
-    refresh: vi.fn(),
+    refresh: mocks.refreshComments,
     addComment: mocks.addComment,
   }),
   useTaskExecutions: () => ({
@@ -250,6 +256,122 @@ describe("TaskDetail 草稿隔离", () => {
       body: "",
       attachments: [uploaded],
     }));
+  });
+
+  it("发表评论后可复用任务会话继续执行", async () => {
+    const user = userEvent.setup();
+    const published = {
+      id: "comment-continue",
+      taskId: taskOne.id,
+      body: "按新验收条件继续",
+      authorType: "user" as const,
+      authorId: "user-1",
+      authorName: "Alice",
+      version: 1,
+      createdAt: taskOne.createdAt,
+      updatedAt: taskOne.updatedAt,
+    };
+    const runningTask = { ...taskOne, status: "in_progress" as const, version: 4 };
+    const execution: TaskBoardExecution = {
+      id: "execution-1",
+      taskId: taskOne.id,
+      runId: "run-1",
+      sessionId: "session-1",
+      status: "running",
+      purpose: "work",
+      requestedBy: "user-1",
+      createdAt: taskOne.createdAt,
+      updatedAt: taskOne.updatedAt,
+    };
+    mocks.addComment.mockResolvedValue(published);
+    mocks.continueTaskExecution.mockResolvedValue({ task: runningTask, execution });
+    const onTaskLoaded = vi.fn();
+    render(<TaskDetail {...props({ onTaskLoaded })} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+
+    await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
+    await user.click(screen.getByRole("checkbox", { name: "发表后切换为进行中并继续执行" }));
+    await user.click(screen.getByRole("button", { name: "发表" }));
+
+    await waitFor(() => expect(mocks.continueTaskExecution).toHaveBeenCalledWith(taskOne.id, published.id));
+    expect(onTaskLoaded).toHaveBeenCalledWith(runningTask);
+    expect(mocks.refreshExecutions).toHaveBeenCalled();
+  });
+
+  it("评论已发表但续跑失败时使用原 commentId 幂等重试", async () => {
+    const user = userEvent.setup();
+    const published = {
+      id: "comment-retry",
+      taskId: taskOne.id,
+      body: "保留这条评论重试",
+      authorType: "user" as const,
+      authorId: "user-1",
+      authorName: "Alice",
+      version: 1,
+      createdAt: taskOne.createdAt,
+      updatedAt: taskOne.updatedAt,
+    };
+    const execution: TaskBoardExecution = {
+      id: "execution-retry",
+      taskId: taskOne.id,
+      runId: "run-retry",
+      sessionId: "session-retry",
+      status: "running",
+      purpose: "work",
+      requestedBy: "user-1",
+      createdAt: taskOne.createdAt,
+      updatedAt: taskOne.updatedAt,
+    };
+    mocks.addComment.mockResolvedValue(published);
+    mocks.continueTaskExecution
+      .mockRejectedValueOnce(new Error("临时派发失败"))
+      .mockResolvedValueOnce({ task: { ...taskOne, status: "in_progress" }, execution });
+    render(<TaskDetail {...props()} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+
+    await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
+    await user.click(screen.getByRole("checkbox", { name: "发表后切换为进行中并继续执行" }));
+    await user.click(screen.getByRole("button", { name: "发表" }));
+    await screen.findByText(/评论已发表，但继续执行失败，可重试/);
+
+    await user.click(screen.getByRole("button", { name: "重试继续执行" }));
+    await waitFor(() => expect(mocks.continueTaskExecution).toHaveBeenCalledTimes(2));
+    expect(mocks.continueTaskExecution).toHaveBeenNthCalledWith(2, taskOne.id, published.id);
+    expect(mocks.addComment).toHaveBeenCalledTimes(1);
+  });
+
+  it("正式 Execution 已终态时持续等待独立续跑，并在完成后刷新任务与评论", async () => {
+    const runningTask = { ...taskOne, status: "in_progress" as const, version: 4 };
+    const finalTask = { ...runningTask, status: "in_review" as const, version: 5 };
+    const terminalExecution: TaskBoardExecution = {
+      id: "execution-terminal",
+      taskId: taskOne.id,
+      runId: "run-terminal",
+      sessionId: "session-terminal",
+      status: "succeeded",
+      purpose: "work",
+      requestedBy: "user-1",
+      continuationActive: true,
+      createdAt: taskOne.createdAt,
+      updatedAt: taskOne.updatedAt,
+    };
+    mocks.executions = [terminalExecution];
+    mocks.fetchTask.mockResolvedValue(runningTask);
+    const onTaskLoaded = vi.fn();
+    const detailProps = props({ task: runningTask, onTaskLoaded });
+    const { rerender } = render(<TaskDetail {...detailProps} />);
+    await waitFor(() => expect(onTaskLoaded).toHaveBeenCalledWith(runningTask));
+
+    mocks.fetchTask.mockClear();
+    mocks.refreshComments.mockClear();
+    onTaskLoaded.mockClear();
+    mocks.fetchTask.mockResolvedValue(finalTask);
+    mocks.executions = [{ ...terminalExecution, continuationActive: false }];
+    rerender(<TaskDetail {...detailProps} />);
+
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+    expect(mocks.refreshComments).toHaveBeenCalled();
+    expect(onTaskLoaded).toHaveBeenCalledWith(finalTask);
   });
 
   it("待处理任务可以显式交给 Agent，并展示执行会话入口", async () => {

@@ -45,8 +45,35 @@ export interface TaskboardExecutionDispatchPayload {
   run: UpsertRunInput;
 }
 
+export interface TaskboardContinuationDispatchPayload {
+  version: 1;
+  session: RuntimeSessionRecord;
+  run: UpsertRunInput;
+}
+
+export interface TaskboardContinuationDispatch {
+  runId: string;
+  taskId: string;
+  commentId: string;
+  sessionId: string;
+  tenantId: string;
+  ownerUserId: string;
+  payload: TaskboardContinuationDispatchPayload;
+  attemptCount: number;
+  leaseId: string;
+}
+
+export interface TaskboardContinuationReconcileCandidate {
+  runId: string;
+  taskId: string;
+  sessionId: string;
+  leaseId: string;
+}
+
 export interface TaskboardExecutionClaimInput extends TaskBoardExecutionStartInput {
   executionId: string;
+  /** 新建后直执或评论续跑允许从当前状态进入 work 执行。 */
+  allowWorkFromCurrentStatus?: boolean;
   runId: string;
   sessionId: string;
   /** startExecution 读取到的任务/看板显式模型；claim 锁内复核，防止并发改模型。 */
@@ -90,6 +117,18 @@ export interface TaskboardExecutionContext {
   boardPrompt: string;
   comments: TaskBoardComment[];
   execution: TaskBoardExecution;
+  continuation?: boolean;
+}
+
+export interface TaskboardContinuationContext {
+  task: TaskBoardTask;
+  comment: TaskBoardComment;
+  pendingComments: TaskBoardComment[];
+  continuationRunId?: string;
+  hasActiveContinuation?: boolean;
+  activeExecution?: TaskBoardExecution;
+  continuationExecution?: TaskBoardExecution;
+  latestExecution?: TaskBoardExecution;
 }
 
 export interface TaskboardExecutionCompletionInput {
@@ -111,6 +150,42 @@ export interface TaskboardExecutionStore {
     input: TaskboardExecutionClaimInput,
   ): Promise<TaskBoardExecutionStartResult>;
   getExecutionContextByRunId(runId: string): Promise<TaskboardExecutionContext | null>;
+  getContinuationContext(
+    identity: TaskboardIdentity,
+    taskId: string,
+    commentId: string,
+  ): Promise<TaskboardContinuationContext>;
+  enqueueContinuation(
+    taskId: string,
+    commentIds: string[],
+    runId: string,
+    commentId: string,
+    payload: TaskboardContinuationDispatchPayload,
+  ): Promise<boolean>;
+  claimContinuationDispatch(
+    runId: string | undefined,
+    leaseId: string,
+  ): Promise<TaskboardContinuationDispatch | null>;
+  markContinuationDispatchSucceeded(runId: string, leaseId: string): Promise<boolean>;
+  retryContinuationDispatch(
+    runId: string,
+    leaseId: string,
+    error: string,
+    delayMs: number,
+  ): Promise<boolean>;
+  claimContinuationReconcileCandidates(
+    staleBefore: Date,
+    limit: number,
+    leaseId: string,
+  ): Promise<TaskboardContinuationReconcileCandidate[]>;
+  releaseContinuationReconcile(runId: string, leaseId: string): Promise<boolean>;
+  finishContinuation(runId: string, leaseId?: string): Promise<boolean>;
+  markContinuationRunning(taskId: string, runId: string, reconcileLeaseId?: string): Promise<TaskBoardTask | null>;
+  completeContinuation(
+    taskId: string,
+    runId: string,
+    input: TaskboardExecutionCompletionInput,
+  ): Promise<TaskBoardTask | null>;
   moveTaskFromExecution(
     identity: TaskboardIdentity,
     runId: string,
@@ -150,6 +225,16 @@ export interface TaskboardExecutionService {
     identity: TaskboardIdentity,
     taskId: string,
     input: TaskBoardExecutionStartInput,
+  ): Promise<TaskBoardExecutionStartResult>;
+  startDirectExecution?(
+    identity: TaskboardIdentity,
+    taskId: string,
+    expectedVersion: number,
+  ): Promise<TaskBoardExecutionStartResult>;
+  continueExecution?(
+    identity: TaskboardIdentity,
+    taskId: string,
+    commentId: string,
   ): Promise<TaskBoardExecutionStartResult>;
 }
 

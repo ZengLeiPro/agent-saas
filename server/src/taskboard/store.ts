@@ -17,7 +17,35 @@ import {
   type TaskBoardTaskMoveInput,
   type TaskBoardTaskPatchInput,
 } from '../../../shared/src/types/taskboard.js';
+import {
+  completeContinuation, hasSuccessfulContinuationSince,
+  listTaskExecutions,
+  loadContinuationContext,
+  loadExecutionContext,
+  loadExecutionModelContext,
+  markContinuationRunning,
+  nextTaskColumnSortOrder,
+} from './continuationStore.js';
+import {
+  claimContinuationDispatch,
+  claimContinuationReconcileCandidates,
+  continuationOutboxIndexSql,
+  continuationOutboxTableSql,
+  runContinuationOutboxMigrations,
+  enqueueContinuation,
+  finishContinuation,
+  markContinuationDispatchSucceeded,
+  releaseContinuationReconcile,
+  retryContinuationDispatch,
+} from './continuationOutbox.js';
 import { executionFieldMigrationSql, resolveExecutionPurpose, taskFieldMigrationSql } from './executionFields.js';
+import {
+  claimExecutionDispatch,
+  claimExecutionReconcileCandidates,
+  markExecutionDispatchSucceeded,
+  retryExecutionDispatch,
+  runExecutionOutboxMigrations,
+} from './executionOutboxStore.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
 import {
   boardModelMigrationSql,
@@ -43,24 +71,25 @@ import {
   requireText,
   rowToComment,
   rowToExecutionModelContext,
-  rowToExecutionReconcileCandidate,
   rowToExecution,
-  rowToExecutionDispatch,
   rowToTask,
   sanitizeIdentifier,
   toIso,
   validateMoveNeighbors,
 } from './storeHelpers.js';
+import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns, finalizeExecutionForArchivedTask } from './archiveGuard.js';
 import { taskFieldsMigrationSql, taskTableSql } from './taskFields.js';
 import {
   TaskboardNotFoundError,
   TaskboardValidationError,
+  type TaskboardContinuationContext,
+  type TaskboardContinuationDispatch,
+  type TaskboardContinuationDispatchPayload,
+  type TaskboardContinuationReconcileCandidate,
   type TaskboardExecutionClaimInput,
   type TaskboardExecutionCompletionInput,
   type TaskboardExecutionContext,
-  type TaskboardExecutionDispatch,
   type TaskboardExecutionModelContext,
-  type TaskboardExecutionReconcileCandidate,
   type TaskboardExecutionStore,
   type TaskboardExpectedVersionInput,
   type TaskboardIdentity,
@@ -87,6 +116,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   readonly commentsTable: string;
   readonly executionsTable: string;
   readonly executionOutboxTable: string;
+  readonly continuationOutboxTable: string;
 
   constructor(options: PgTaskboardStoreOptions) {
     const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime');
@@ -96,8 +126,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     this.commentsTable = `${prefix}_taskboard_comments`;
     this.executionsTable = `${prefix}_taskboard_execs`;
     this.executionOutboxTable = `${prefix}_taskboard_exec_outbox`;
+    this.continuationOutboxTable = `${prefix}_taskboard_cont_outbox`;
   }
-
   async init(): Promise<void> {
     const lockKey = `${this.boardsTable}:init`;
     const client = await this.pool.connect();
@@ -137,6 +167,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
             CHECK (author_type IN ('user', 'agent', 'system')),
           author_id TEXT NOT NULL,
           author_name TEXT NOT NULL,
+          continuation_eligible BOOLEAN NOT NULL DEFAULT true,
           version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -144,6 +175,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       `);
       await client.query(`
         ALTER TABLE ${this.commentsTable} ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb;
+        ALTER TABLE ${this.commentsTable} ADD COLUMN IF NOT EXISTS continuation_eligible BOOLEAN NOT NULL DEFAULT false;
+        ALTER TABLE ${this.commentsTable} ALTER COLUMN continuation_eligible SET DEFAULT true;
+        ALTER TABLE ${this.commentsTable} ADD COLUMN IF NOT EXISTS continuation_run_id TEXT;
         ALTER TABLE ${this.commentsTable}
           DROP CONSTRAINT IF EXISTS ${this.commentsTable}_author_type_check;
         ALTER TABLE ${this.commentsTable}
@@ -189,6 +223,13 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       `);
+      await client.query(continuationOutboxTableSql(
+        this.continuationOutboxTable,
+        this.tasksTable,
+        this.commentsTable,
+      ));
+      await runExecutionOutboxMigrations(this, client);
+      await runContinuationOutboxMigrations(this, client, this.executionsTable);
       await client.query(`DROP INDEX IF EXISTS ${this.boardsTable}_active_name_uidx`);
       await client.query(
         `CREATE UNIQUE INDEX IF NOT EXISTS ${this.boardsTable}_personal_name_uidx `
@@ -208,6 +249,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         `CREATE INDEX IF NOT EXISTS ${this.tasksTable}_board_column_idx `
         + `ON ${this.tasksTable} (board_id, status, sort_order)`,
       );
+      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${this.tasksTable}_client_request_uidx ON ${this.tasksTable} (board_id, client_request_id) WHERE client_request_id IS NOT NULL`);
       await client.query(
         `CREATE INDEX IF NOT EXISTS ${this.tasksTable}_board_archived_idx `
         + `ON ${this.tasksTable} (board_id, archived_at, updated_at DESC)`,
@@ -216,6 +258,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         `CREATE INDEX IF NOT EXISTS ${this.commentsTable}_task_idx `
         + `ON ${this.commentsTable} (task_id, created_at ASC)`,
       );
+      await client.query(`DROP INDEX IF EXISTS ${this.commentsTable}_continuation_run_uidx`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.commentsTable}_continuation_run_idx ON ${this.commentsTable} (continuation_run_id) WHERE continuation_run_id IS NOT NULL`);
       await client.query(
         `CREATE INDEX IF NOT EXISTS ${this.executionsTable}_task_idx `
         + `ON ${this.executionsTable} (task_id, created_at DESC)`,
@@ -230,6 +274,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         + `ON ${this.executionOutboxTable} (next_attempt_at, created_at) `
         + `WHERE status IN ('pending', 'dispatching')`,
       );
+      for (const indexSql of continuationOutboxIndexSql(this.continuationOutboxTable)) {
+        await client.query(indexSql);
+      }
       await client.query(
         `CREATE UNIQUE INDEX IF NOT EXISTS ${this.executionsTable}_active_uidx `
         + `ON ${this.executionsTable} (task_id) `
@@ -240,7 +287,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       client.release();
     }
   }
-
   async listBoards(identity: TaskboardIdentity, includeArchived = false): Promise<TaskBoard[]> {
     const result = await this.pool.query(
       `SELECT id, owner_user_id, name, description, visibility, prompt, model, version,
@@ -254,7 +300,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     );
     return result.rows.map((row) => rowToBoard(row, identity.ownerUserId));
   }
-
   async createBoard(identity: TaskboardIdentity, input: TaskBoardCreateInput): Promise<TaskBoard> {
     const name = requireText(input.name, 'Board name');
     const description = optionalText(input.description);
@@ -275,7 +320,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       throw mapActiveBoardNameError(error);
     }
   }
-
   async updateBoard(identity: TaskboardIdentity, boardId: string, input: TaskBoardPatchInput): Promise<TaskBoard> {
     return this.withTransaction(async (client) => {
       const current = await this.requireOwnedBoard(client, identity, boardId, true);
@@ -327,7 +371,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       }
     });
   }
-
   async archiveBoard(
     identity: TaskboardIdentity,
     boardId: string,
@@ -337,6 +380,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       const current = await this.requireOwnedBoard(client, identity, boardId, true);
       assertExpectedVersion(current, input.expectedVersion);
       assertActiveBoard(current);
+      await assertBoardHasNoActiveRuns(this, client, boardId);
       const result = await client.query(
         `UPDATE ${this.boardsTable}
             SET archived_at=now(), version=version+1, updated_at=now()
@@ -348,7 +392,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       return rowToBoard(result.rows[0], identity.ownerUserId);
     });
   }
-
   async restoreBoard(
     identity: TaskboardIdentity,
     boardId: string,
@@ -375,7 +418,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       }
     });
   }
-
   async listTasks(
     identity: TaskboardIdentity,
     boardId: string,
@@ -419,15 +461,17 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     );
     return result.rows.map(rowToTask);
   }
-
-  async createTask(
-    identity: TaskboardIdentity,
-    boardId: string,
-    input: TaskBoardTaskCreateInput,
-  ): Promise<TaskBoardTask> {
+  async createTask(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskBoardTask> {
     return this.withTransaction(async (client) => {
       const board = await this.requireBoard(client, identity, boardId, true);
       assertActiveBoard(board);
+      if (input.clientRequestId) {
+        const existing = await client.query(
+          `SELECT t.*, (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id) AS comment_count FROM ${this.tasksTable} t WHERE t.board_id=$1 AND t.client_request_id=$2`,
+          [boardId, input.clientRequestId],
+        );
+        if (existing.rows[0]) return rowToTask(existing.rows[0]);
+      }
       const numberResult = await client.query(
         `UPDATE ${this.boardsTable}
             SET next_task_number=next_task_number+1
@@ -451,9 +495,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       await client.query(
         `INSERT INTO ${this.tasksTable}
            (id, board_id, identifier, title, description, branch, attachments, status, priority, labels,
-            sort_order, due_at, model, creator_user_id, creator_name, completed_at, version)
+            sort_order, due_at, model, creator_user_id, creator_name, completed_at, client_request_id, version)
          VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13,$14,$15,
-                 CASE WHEN $8='done' THEN now() END,1)`,
+                 CASE WHEN $8='done' THEN now() END,$16,1)`,
         [
           taskId,
           boardId,
@@ -470,16 +514,15 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           normalizeModel(input.model),
           identity.ownerUserId,
           identity.displayName?.trim() || identity.username,
+          optionalText(input.clientRequestId),
         ],
       );
       return this.requireTask(client, identity, taskId, false);
     });
   }
-
   async getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask> {
     return this.requireTask(this.pool, identity, taskId, false);
   }
-
   async updateTask(
     identity: TaskboardIdentity,
     taskId: string,
@@ -546,7 +589,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       return this.requireTask(client, identity, taskId, false);
     });
   }
-
   async moveTask(
     identity: TaskboardIdentity,
     taskId: string,
@@ -613,7 +655,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       return this.requireTask(client, identity, taskId, false);
     });
   }
-
   async archiveTask(
     identity: TaskboardIdentity,
     taskId: string,
@@ -653,8 +694,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (!body && attachments.length === 0) throw new TaskboardValidationError('Comment body or attachment is required');
       const result = await client.query(
         `INSERT INTO ${this.commentsTable}
-           (id, task_id, body, attachments, author_type, author_id, author_name, version)
-         VALUES ($1,$2,$3,$4::jsonb,'user',$5,$6,1)
+           (id, task_id, body, attachments, author_type, author_id, author_name, continuation_eligible, version)
+         VALUES ($1,$2,$3,$4::jsonb,'user',$5,$6,true,1)
          RETURNING *`,
         [randomUUID(), taskId, body, JSON.stringify(attachments), identity.ownerUserId,
           identity.displayName || identity.username],
@@ -663,36 +704,13 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     });
   }
 
-  async listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
-    await this.requireTask(this.pool, identity, taskId, false);
-    const result = await this.pool.query(
-      `SELECT e.*
-         FROM ${this.executionsTable} e
-         JOIN ${this.tasksTable} t ON t.id=e.task_id
-         JOIN ${this.boardsTable} b ON b.id=t.board_id
-        WHERE e.task_id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
-        ORDER BY e.created_at DESC, e.id DESC
-        LIMIT 50`,
-      [taskId, identity.tenantId, identity.ownerUserId],
-    );
-    return result.rows.map(rowToExecution);
+  listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
+    return listTaskExecutions(this, identity, taskId);
   }
 
-  async getExecutionModelContext(
-    identity: TaskboardIdentity,
-    taskId: string,
-  ): Promise<TaskboardExecutionModelContext> {
-    const result = await this.pool.query(
-      `SELECT t.model AS task_model, b.model AS board_model, b.owner_user_id AS board_owner_user_id
-         FROM ${this.tasksTable} t
-         JOIN ${this.boardsTable} b ON b.id=t.board_id
-        WHERE t.id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')`,
-      [taskId, identity.tenantId, identity.ownerUserId],
-    );
-    if (!result.rows[0]) throw new TaskboardNotFoundError('Task not found');
-    return rowToExecutionModelContext(result.rows[0]);
+  getExecutionModelContext(identity: TaskboardIdentity, taskId: string): Promise<TaskboardExecutionModelContext> {
+    return loadExecutionModelContext(this, identity, taskId);
   }
-
   async claimExecution(
     identity: TaskboardIdentity,
     taskId: string,
@@ -708,11 +726,28 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         loaded.boardOwnerUserId,
         input.executionOwnerUserId,
       );
-      const purpose = resolveExecutionPurpose(loaded.task.status, input.purpose);
+      const purpose = input.allowWorkFromCurrentStatus
+        ? 'work'
+        : resolveExecutionPurpose(loaded.task.status, input.purpose);
+      const duplicate = await client.query(
+        `SELECT * FROM ${this.executionsTable} WHERE id=$1 OR run_id=$2 LIMIT 1`,
+        [input.executionId, input.runId],
+      );
+      if (duplicate.rows[0]) {
+        const execution = rowToExecution(duplicate.rows[0]);
+        if (execution.taskId !== taskId || execution.purpose !== purpose) {
+          throw new TaskboardValidationError('Execution idempotency key conflict');
+        }
+        return { task: loaded.task, execution };
+      }
       const active = await client.query(
-        `SELECT id FROM ${this.executionsTable}
-          WHERE task_id=$1 AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
-          LIMIT 1`,
+        `SELECT 1 WHERE EXISTS (
+           SELECT 1 FROM ${this.executionsTable}
+            WHERE task_id=$1 AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
+         ) OR EXISTS (
+           SELECT 1 FROM ${this.continuationOutboxTable}
+            WHERE task_id=$1 AND status<>'completed'
+         )`,
         [taskId],
       );
       if (active.rows[0]) {
@@ -722,18 +757,14 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         );
       }
 
-      const peers = await client.query(
-        `SELECT t.sort_order
-           FROM ${this.tasksTable} t
-           JOIN ${this.boardsTable} b ON b.id=t.board_id
-          WHERE t.board_id=$1 AND t.id<>$2 AND t.status='in_progress' AND t.archived_at IS NULL
-            AND b.tenant_id=$3 AND (b.owner_user_id=$4 OR b.visibility='organization')
-          ORDER BY t.sort_order DESC, t.created_at DESC, t.id DESC
-          FOR UPDATE OF t`,
-        [loaded.task.boardId, taskId, identity.tenantId, identity.ownerUserId],
+      const sortOrder = await nextTaskColumnSortOrder(
+        this,
+        client,
+        identity,
+        loaded.task.boardId,
+        taskId,
+        'in_progress',
       );
-      const lastSortOrder = peers.rows[0] ? Number(peers.rows[0].sort_order) : 0;
-      const sortOrder = Number.isFinite(lastSortOrder) ? lastSortOrder + DEFAULT_SORT_GAP : DEFAULT_SORT_GAP;
 
       let execution: TaskBoardExecution;
       try {
@@ -762,6 +793,13 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       }
 
       await client.query(
+        `UPDATE ${this.commentsTable}
+            SET continuation_run_id=$2, updated_at=now()
+          WHERE task_id=$1 AND author_type='user' AND continuation_eligible=true
+            AND continuation_run_id IS NULL`,
+        [taskId, input.runId],
+      );
+      await client.query(
         `UPDATE ${this.tasksTable}
             SET status='in_progress', sort_order=$2, completed_at=NULL,
                 version=version+1, updated_at=now()
@@ -774,173 +812,67 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       };
     });
   }
-
-  async getExecutionContextByRunId(runId: string): Promise<TaskboardExecutionContext | null> {
-    const result = await this.pool.query(
-      `SELECT e.*, b.tenant_id, b.owner_user_id, b.prompt AS board_prompt
-         FROM ${this.executionsTable} e
-         JOIN ${this.tasksTable} t ON t.id=e.task_id
-         JOIN ${this.boardsTable} b ON b.id=t.board_id
-        WHERE e.run_id=$1`,
-      [runId],
-    );
-    if (!result.rows[0]) return null;
-    const row = result.rows[0];
-    const identity: TaskboardIdentity = {
-      tenantId: String(row.tenant_id),
-      ownerUserId: String(row.owner_user_id),
-      username: '',
-    };
-    const execution = rowToExecution(row);
-    return {
-      identity,
-      task: await this.requireTask(this.pool, identity, execution.taskId, false),
-      boardPrompt: String(row.board_prompt ?? ''),
-      comments: await this.listComments(identity, execution.taskId),
-      execution,
-    };
+  getExecutionContextByRunId(runId: string): Promise<TaskboardExecutionContext | null> {
+    return loadExecutionContext(this, runId);
   }
 
-  async moveTaskFromExecution(identity: TaskboardIdentity, runId: string, status: 'done' | 'todo'): Promise<TaskBoardTask> {
-    return moveTaskFromReviewExecution(this, identity, runId, status);
+  getContinuationContext(identity: TaskboardIdentity, taskId: string, commentId: string) {
+    return loadContinuationContext(this, identity, taskId, commentId);
   }
-  async claimExecutionDispatch(
+  enqueueContinuation(
+    taskId: string,
+    commentIds: string[],
+    runId: string,
+    commentId: string,
+    payload: TaskboardContinuationDispatchPayload,
+  ) {
+    return enqueueContinuation(this, taskId, commentIds, runId, commentId, payload);
+  }
+  claimContinuationDispatch(
     runId: string | undefined,
     leaseId: string,
-  ): Promise<TaskboardExecutionDispatch | null> {
-    const result = await this.pool.query(
-      `WITH candidate AS (
-         SELECT o.run_id
-           FROM ${this.executionOutboxTable} o
-           JOIN ${this.executionsTable} e ON e.run_id=o.run_id
-          WHERE ($2::text IS NULL OR o.run_id=$2)
-            AND e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
-            AND (
-              (o.status='pending' AND o.next_attempt_at <= now())
-              OR (o.status='dispatching' AND o.lease_expires_at <= now())
-            )
-          ORDER BY o.next_attempt_at, o.created_at, o.run_id
-          FOR UPDATE OF o SKIP LOCKED
-          LIMIT 1
-       ), claimed AS (
-         UPDATE ${this.executionOutboxTable} o
-            SET status='dispatching',
-                attempt_count=o.attempt_count+1,
-                lease_id=$1,
-                lease_expires_at=now() + interval '60 seconds',
-                updated_at=now()
-           FROM candidate c
-          WHERE o.run_id=c.run_id
-          RETURNING o.*
-       )
-       SELECT c.*, e.id AS actual_execution_id, e.task_id AS actual_task_id,
-              e.session_id AS actual_session_id, b.tenant_id, b.owner_user_id
-         FROM claimed c
-         JOIN ${this.executionsTable} e ON e.run_id=c.run_id
-         JOIN ${this.tasksTable} t ON t.id=e.task_id
-         JOIN ${this.boardsTable} b ON b.id=t.board_id`,
-      [leaseId, runId ?? null],
-    );
-    return result.rows[0] ? rowToExecutionDispatch(result.rows[0]) : null;
+  ): Promise<TaskboardContinuationDispatch | null> {
+    return claimContinuationDispatch(this, runId, leaseId);
   }
-
-  async markExecutionDispatchSucceeded(runId: string, leaseId: string): Promise<boolean> {
-    return this.withTransaction(async (client) => {
-      const executionResult = await client.query(
-        `SELECT status FROM ${this.executionsTable} WHERE run_id=$1 FOR UPDATE`,
-        [runId],
-      );
-      if (!executionResult.rows[0]) return false;
-      const dispatched = await client.query(
-        `UPDATE ${this.executionOutboxTable}
-            SET status='dispatched', lease_id=NULL, lease_expires_at=NULL,
-                last_error=NULL, dispatched_at=now(), updated_at=now()
-          WHERE run_id=$1 AND status='dispatching' AND lease_id=$2
-          RETURNING execution_id`,
-        [runId, leaseId],
-      );
-      if (!dispatched.rows[0]) return false;
-      if (!isTerminalExecutionStatus(String(executionResult.rows[0].status))) {
-        await client.query(
-          `UPDATE ${this.executionsTable} SET error=NULL, updated_at=now() WHERE run_id=$1`,
-          [runId],
-        );
-      }
-      return true;
-    });
+  markContinuationDispatchSucceeded(runId: string, leaseId: string) {
+    return markContinuationDispatchSucceeded(this, runId, leaseId);
   }
-
-  async retryExecutionDispatch(
-    runId: string,
-    leaseId: string,
-    error: string,
-    delayMs: number,
-  ): Promise<boolean> {
-    return this.withTransaction(async (client) => {
-      const executionResult = await client.query(
-        `SELECT status FROM ${this.executionsTable} WHERE run_id=$1 FOR UPDATE`,
-        [runId],
-      );
-      if (!executionResult.rows[0]) return false;
-      if (isTerminalExecutionStatus(String(executionResult.rows[0].status))) {
-        await client.query(
-          `UPDATE ${this.executionOutboxTable}
-              SET status='dispatched', lease_id=NULL, lease_expires_at=NULL, updated_at=now()
-            WHERE run_id=$1 AND status='dispatching' AND lease_id=$2`,
-          [runId, leaseId],
-        );
-        return false;
-      }
-      const message = requireText(error, 'Dispatch error');
-      const retried = await client.query(
-        `UPDATE ${this.executionOutboxTable}
-            SET status='pending', lease_id=NULL, lease_expires_at=NULL,
-                next_attempt_at=now() + ($4::double precision * interval '1 millisecond'),
-                last_error=$3, updated_at=now()
-          WHERE run_id=$1 AND status='dispatching' AND lease_id=$2
-          RETURNING execution_id`,
-        [runId, leaseId, message, Math.max(0, Math.floor(delayMs))],
-      );
-      if (!retried.rows[0]) return false;
-      await client.query(
-        `UPDATE ${this.executionsTable} SET error=$2, updated_at=now() WHERE run_id=$1`,
-        [runId, message],
-      );
-      return true;
-    });
+  retryContinuationDispatch(runId: string, leaseId: string, error: string, delayMs: number) {
+    return retryContinuationDispatch(this, runId, leaseId, error, delayMs);
   }
-
-  async claimExecutionReconcileCandidates(
+  claimContinuationReconcileCandidates(
     staleBefore: Date,
     limit: number,
     leaseId: string,
-  ): Promise<TaskboardExecutionReconcileCandidate[]> {
-    const result = await this.pool.query(
-      `WITH candidates AS (
-         SELECT e.run_id
-           FROM ${this.executionsTable} e
-          WHERE e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
-            AND e.updated_at <= $1
-            AND (e.reconcile_lease_expires_at IS NULL OR e.reconcile_lease_expires_at <= now())
-          ORDER BY COALESCE(e.last_reconciled_at, '-infinity'::timestamptz), e.updated_at, e.run_id
-          FOR UPDATE SKIP LOCKED
-          LIMIT $2
-       ), claimed AS (
-         UPDATE ${this.executionsTable} e
-            SET last_reconciled_at=now(),
-                reconcile_lease_id=$3,
-                reconcile_lease_expires_at=now() + interval '30 seconds'
-           FROM candidates c
-          WHERE e.run_id=c.run_id
-          RETURNING e.run_id, e.id AS execution_id, e.session_id, e.status, e.reconcile_lease_id
-       )
-       SELECT c.run_id, c.execution_id, c.session_id, c.status, c.reconcile_lease_id,
-              o.status AS dispatch_status
-         FROM claimed c
-         LEFT JOIN ${this.executionOutboxTable} o ON o.run_id=c.run_id`,
-      [staleBefore, Math.max(1, Math.min(500, Math.floor(limit))), leaseId],
-    );
-    return result.rows.map(rowToExecutionReconcileCandidate);
+  ): Promise<TaskboardContinuationReconcileCandidate[]> {
+    return claimContinuationReconcileCandidates(this, staleBefore, limit, leaseId);
+  }
+  releaseContinuationReconcile(runId: string, leaseId: string) {
+    return releaseContinuationReconcile(this, runId, leaseId);
+  }
+  finishContinuation(runId: string, leaseId?: string) {
+    return finishContinuation(this, runId, leaseId);
+  }
+  markContinuationRunning(taskId: string, runId: string, reconcileLeaseId?: string) {
+    return markContinuationRunning(this, taskId, runId, reconcileLeaseId);
+  }
+  completeContinuation(taskId: string, runId: string, input: TaskboardExecutionCompletionInput) {
+    return completeContinuation(this, taskId, runId, input);
+  }
+  async moveTaskFromExecution(identity: TaskboardIdentity, runId: string, status: 'done' | 'todo'): Promise<TaskBoardTask> {
+    return moveTaskFromReviewExecution(this, identity, runId, status);
+  }
+  claimExecutionDispatch(runId: string | undefined, leaseId: string) {
+    return claimExecutionDispatch(this, runId, leaseId);
+  }
+  markExecutionDispatchSucceeded(runId: string, leaseId: string) {
+    return markExecutionDispatchSucceeded(this, runId, leaseId);
+  }
+  retryExecutionDispatch(runId: string, leaseId: string, error: string, delayMs: number) {
+    return retryExecutionDispatch(this, runId, leaseId, error, delayMs);
+  }
+  claimExecutionReconcileCandidates(staleBefore: Date, limit: number, leaseId: string) {
+    return claimExecutionReconcileCandidates(this, staleBefore, limit, leaseId);
   }
 
   async setExecutionStatus(
@@ -974,7 +906,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
               updated_at=now()
         WHERE run_id=$1
           AND reconcile_lease_id=$3
-          AND reconcile_lease_expires_at > now()
+          AND reconcile_lease_expires_at > clock_timestamp()
           AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
         RETURNING *`,
       [runId, status, leaseId],
@@ -1023,7 +955,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       const executionResult = await client.query(
         `SELECT *,
                 ($2::text IS NULL OR (
-                  reconcile_lease_id=$2 AND reconcile_lease_expires_at > now()
+                  reconcile_lease_id=$2 AND reconcile_lease_expires_at > clock_timestamp()
                 )) AS reconcile_lease_valid
            FROM ${this.executionsTable}
           WHERE run_id=$1
@@ -1041,21 +973,21 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         );
         return { task: loaded.task, execution: currentExecution };
       }
+      const archivedResult = await finalizeExecutionForArchivedTask(
+        this, client, loaded.task, loaded.boardArchivedAt, currentExecution, input,
+      );
+      if (archivedResult) return archivedResult;
 
-      const targetTaskStatus = input.status === 'succeeded' ? 'in_review' : 'blocked';
+      const targetTaskStatus = (input.status === 'succeeded' || await hasSuccessfulContinuationSince(this, client, taskId, executionResult.rows[0].created_at)) ? 'in_review' : 'blocked';
       if (loaded.task.status === 'in_progress') {
-        const peers = await client.query(
-          `SELECT t.sort_order
-             FROM ${this.tasksTable} t
-             JOIN ${this.boardsTable} b ON b.id=t.board_id
-            WHERE t.board_id=$1 AND t.id<>$2 AND t.status=$3 AND t.archived_at IS NULL
-              AND b.tenant_id=$4 AND (b.owner_user_id=$5 OR b.visibility='organization')
-            ORDER BY t.sort_order DESC, t.created_at DESC, t.id DESC
-            FOR UPDATE OF t`,
-          [loaded.task.boardId, taskId, targetTaskStatus, identity.tenantId, identity.ownerUserId],
+        const sortOrder = await nextTaskColumnSortOrder(
+          this,
+          client,
+          identity,
+          loaded.task.boardId,
+          taskId,
+          targetTaskStatus,
         );
-        const lastSortOrder = peers.rows[0] ? Number(peers.rows[0].sort_order) : 0;
-        const sortOrder = Number.isFinite(lastSortOrder) ? lastSortOrder + DEFAULT_SORT_GAP : DEFAULT_SORT_GAP;
         await client.query(
           `UPDATE ${this.tasksTable}
               SET status=$2, sort_order=$3, completed_at=NULL,
@@ -1085,7 +1017,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
            (id, task_id, body, attachments, author_type, author_id, author_name, version)
          VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,1)`,
         [randomUUID(), taskId, requireText(input.commentBody, 'Execution comment body'),
-          JSON.stringify(normalizeAttachments(input.attachments)), authorType, currentExecution.id,
+          JSON.stringify(normalizeAttachments(input.attachments)), authorType, runId,
           input.status === 'succeeded' ? 'Agent' : '系统'],
       );
       return {
@@ -1094,7 +1026,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       };
     });
   }
-
   private async setTaskArchived(
     identity: TaskboardIdentity,
     taskId: string,
@@ -1113,6 +1044,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           archive ? 'TASKBOARD_TASK_ARCHIVED' : 'TASKBOARD_TASK_NOT_ARCHIVED',
         );
       }
+      if (archive) await assertTaskHasNoActiveRuns(this, client, taskId);
       await client.query(
         `UPDATE ${this.tasksTable} t
             SET archived_at=${archive ? 'now()' : 'NULL'}, version=t.version+1, updated_at=now()

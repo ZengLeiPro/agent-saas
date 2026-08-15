@@ -185,7 +185,7 @@ describe("TaskBoardView", () => {
     expect(screen.getByRole("heading", { name: "新建任务" })).toBeTruthy();
     expect(screen.getByRole("combobox", { name: "新任务状态" }).textContent).toContain("进行中");
 
-    await user.type(screen.getByLabelText("标题"), "补充进行中任务");
+    await user.type(screen.getByRole("textbox", { name: "标题" }), "补充进行中任务");
     await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(mocks.addTask).toHaveBeenCalledWith(expect.objectContaining({
@@ -259,8 +259,10 @@ describe("TaskBoardView", () => {
     await user.type(comment, "已完成首轮验证");
     await user.click(screen.getByRole("button", { name: "发表" }));
 
-    await waitFor(() => expect(mocks.addComment).toHaveBeenCalledWith({ body: "已完成首轮验证" }));
-    expect(mocks.refreshTasks).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(mocks.addComment).toHaveBeenCalledWith({ body: "已完成首轮验证" });
+      expect(mocks.refreshTasks).toHaveBeenCalled();
+    });
   }, 15_000);
 
   it("拖拽时传相邻任务，409 后显示回滚重拉提示", async () => {

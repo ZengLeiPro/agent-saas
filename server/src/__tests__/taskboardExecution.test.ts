@@ -149,6 +149,11 @@ function makeRig(
     }),
     retryExecutionDispatch: vi.fn(async () => true),
     claimExecutionReconcileCandidates: vi.fn(async () => []),
+    enqueueContinuation: vi.fn(async () => true), claimContinuationDispatch: vi.fn(async () => null),
+    markContinuationDispatchSucceeded: vi.fn(async () => true), retryContinuationDispatch: vi.fn(async () => true),
+    claimContinuationReconcileCandidates: vi.fn(async () => []), releaseContinuationReconcile: vi.fn(async () => true),
+    finishContinuation: vi.fn(async () => true), markContinuationRunning: vi.fn(async () => task),
+    completeContinuation: vi.fn(async () => task),
     setExecutionStatus: vi.fn(async () => execution({ status: 'running' })),
     setExecutionStatusFromReconcile: vi.fn(async () => execution({ status: 'running' })),
     completeExecution: vi.fn(async () => ({ task, execution: execution({ status: 'succeeded' }) })),
@@ -156,6 +161,13 @@ function makeRig(
     ...overrides,
   } as TaskboardExecutionStore;
   const scheduler = {
+    enqueue: vi.fn(async (input) => ({
+      ...input,
+      status: 'pending',
+      requestedAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z',
+      metadata: input.metadata ?? {},
+    })),
     enqueueCreateOnly: vi.fn(async (input) => ({
       ...input,
       status: 'pending',
@@ -203,7 +215,7 @@ describe('TaskboardExecutionCoordinator', () => {
       runId: expect.any(String),
       sessionId: expect.any(String),
     }));
-    expect(rig.sessionCatalog.ensure).toHaveBeenCalledWith(expect.objectContaining({
+    expect(rig.sessionCatalog.upsert).toHaveBeenCalledWith(expect.objectContaining({
       userId: identity.ownerUserId,
       tenantId: identity.tenantId,
       modelRef: 'model-default',
@@ -211,7 +223,7 @@ describe('TaskboardExecutionCoordinator', () => {
       workspaceId: `ws_${identity.tenantId}__${identity.ownerUserId}`,
     }));
     expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledWith(expect.objectContaining({
-      channel: 'taskboard',
+      channel: 'web',
       userId: identity.ownerUserId,
       tenantId: identity.tenantId,
       metadata: expect.objectContaining({
@@ -241,7 +253,7 @@ describe('TaskboardExecutionCoordinator', () => {
       task.id,
       expect.objectContaining({ executionOwnerUserId: identity.ownerUserId }),
     );
-    expect(rig.sessionCatalog.ensure).toHaveBeenCalledWith(expect.objectContaining({
+    expect(rig.sessionCatalog.upsert).toHaveBeenCalledWith(expect.objectContaining({
       userId: identity.ownerUserId,
       username: identity.username,
       workspaceId: `ws_${identity.tenantId}__${identity.ownerUserId}`,
@@ -269,7 +281,7 @@ describe('TaskboardExecutionCoordinator', () => {
       { expectedVersion: task.version },
     )).rejects.toThrow('看板创建者账号不可用');
     expect(rig.store.claimExecution).not.toHaveBeenCalled();
-    expect(rig.sessionCatalog.ensure).not.toHaveBeenCalled();
+    expect(rig.sessionCatalog.upsert).not.toHaveBeenCalled();
   });
 
   it('wake 前重读最新任务和评论并生成执行提示词', async () => {
@@ -353,7 +365,7 @@ describe('TaskboardExecutionCoordinator', () => {
       task.id,
       expect.objectContaining({ configuredModelRef: 'group-a/model-task' }),
     );
-    expect(rig.sessionCatalog.ensure).toHaveBeenCalledWith(expect.objectContaining({
+    expect(rig.sessionCatalog.upsert).toHaveBeenCalledWith(expect.objectContaining({
       modelRef: 'group-a/model-task',
     }));
 
@@ -367,7 +379,7 @@ describe('TaskboardExecutionCoordinator', () => {
       { resolveModel },
     );
     await boardOnlyRig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version });
-    expect(boardOnlyRig.sessionCatalog.ensure).toHaveBeenCalledWith(expect.objectContaining({
+    expect(boardOnlyRig.sessionCatalog.upsert).toHaveBeenCalledWith(expect.objectContaining({
       modelRef: 'group-a/model-board',
     }));
   });
@@ -375,7 +387,7 @@ describe('TaskboardExecutionCoordinator', () => {
   it('未指定模型时使用组织默认，显式模型不可用时拒绝执行', async () => {
     const defaultRig = makeRig();
     await defaultRig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version });
-    expect(defaultRig.sessionCatalog.ensure).toHaveBeenCalledWith(expect.objectContaining({
+    expect(defaultRig.sessionCatalog.upsert).toHaveBeenCalledWith(expect.objectContaining({
       modelRef: 'model-default',
     }));
 
@@ -407,7 +419,7 @@ describe('TaskboardExecutionCoordinator', () => {
       { expectedVersion: task.version },
     )).rejects.toThrow('指定模型不可用：group-a/model-board');
     expect(resolveModel).toHaveBeenCalledWith('group-a/model-board', identity.tenantId);
-    expect(rejectedRig.sessionCatalog.ensure).not.toHaveBeenCalled();
+    expect(rejectedRig.sessionCatalog.upsert).not.toHaveBeenCalled();
   });
 
   it('成功终态提取最终 assistant_message 作为待复核交付回执', async () => {
@@ -576,7 +588,7 @@ describe('TaskboardExecutionCoordinator', () => {
 
     await rig.coordinator.reconcile();
 
-    expect(rig.sessionCatalog.ensure).toHaveBeenCalledWith(expect.not.objectContaining({
+    expect(rig.sessionCatalog.upsert).toHaveBeenCalledWith(expect.not.objectContaining({
       kind: 'subagent',
       orgAgentId: 'forged-org-agent',
       profileId: 'forged-profile',

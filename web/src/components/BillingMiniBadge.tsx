@@ -1,20 +1,20 @@
 import { useEffect, useRef, useState } from "react";
+import { ChevronRight } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import { authFetch } from "@/lib/authFetch";
 import {
   resolveBillingAllowance,
+  type BillingAllowance,
   type MyMemberBudget as MemberBudgetAllowance,
+  type TenantBillingSummary,
 } from "@/hooks/useTenantBillingVisibility";
 import {
   consumePendingBillingBadgeOpen,
   subscribeBillingBadgeOpen,
 } from "@/lib/billingBadgeBus";
 
-interface BillingSummary {
-  balanceCredits: number;
+interface BillingSummary extends TenantBillingSummary {
   lowBalance: boolean;
-  billingEnabled: boolean;
-  billingMode: string;
   currentMonthCreditsUsed: number;
   currentMonthRevenueYuan: number;
 }
@@ -40,6 +40,9 @@ interface BillingMiniBadgeProps {
   sessionId?: string | null;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  variant?: "badge" | "menu";
+  fallbackSummary?: TenantBillingSummary | null;
+  fallbackAllowance?: BillingAllowance | null;
 }
 
 function formatCredits(value: number): string {
@@ -134,6 +137,9 @@ export function BillingMiniBadge({
   sessionId,
   open: controlledOpen,
   onOpenChange,
+  variant = "badge",
+  fallbackSummary,
+  fallbackAllowance,
 }: BillingMiniBadgeProps) {
   const [summary, setSummary] = useState<BillingSummary | null>(null);
   const [sessionSummary, setSessionSummary] = useState<SessionBillingSummary | null>(null);
@@ -210,35 +216,73 @@ export function BillingMiniBadge({
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  // 响应外部（侧边栏用户菜单「我的积分」入口）打开请求：挂载时消费 pending 标志，同时订阅后续请求。
+  // 右上角徽标响应消息区等外部入口；菜单内实例只处理自己的触发按钮。
   useEffect(() => {
+    if (variant !== "badge") return;
     if (consumePendingBillingBadgeOpen()) handleOpenChange(true);
     const unsub = subscribeBillingBadgeOpen(() => {
       if (consumePendingBillingBadgeOpen()) handleOpenChange(true);
     });
     return unsub;
-  }, []);
+  }, [variant]);
 
-  if (!summary || !summary.billingEnabled || summary.billingMode === "internal") return null;
+  const displaySummary: BillingSummary | null = summary ?? (fallbackSummary ? {
+    ...fallbackSummary,
+    lowBalance: false,
+    currentMonthCreditsUsed: 0,
+    currentMonthRevenueYuan: 0,
+  } : null);
+  if (!displaySummary || !displaySummary.billingEnabled || displaySummary.billingMode === "internal") return null;
 
-  const tone = badgeTone(summary.lowBalance, memberBudget?.status, memberBudget?.canStartRun === false);
-  const allowance = resolveBillingAllowance(summary, memberBudget);
+  const tone = badgeTone(displaySummary.lowBalance, memberBudget?.status, memberBudget?.canStartRun === false);
+  const allowance = memberBudget
+    ? resolveBillingAllowance(displaySummary, memberBudget)
+    : fallbackAllowance ?? resolveBillingAllowance(displaySummary, null);
   const allowanceLabel = allowance.source === "member" ? "个人剩余额度" : "组织可用积分";
+  const menuVariant = variant === "menu";
 
   return (
-    <div ref={containerRef} className="relative" onClick={(event) => event.stopPropagation()}>
-      <button
-        type="button"
-        onClick={() => handleOpenChange(!open)}
-        className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium tabular-nums transition-colors ${BADGE_TONE_CLASS[tone]}`}
-        title={allowanceLabel}
-      >
-        <EntityIcons.credits className="size-4" aria-hidden="true" />
-        {formatCredits(allowance.credits)}
-      </button>
+    <div ref={containerRef} className={menuVariant ? "relative w-full" : "relative"} onClick={(event) => event.stopPropagation()}>
+      {menuVariant ? (
+        <button
+          type="button"
+          onClick={() => handleOpenChange(!open)}
+          className="mb-2 mt-1 w-full rounded-2xl border border-border/80 bg-muted/35 p-3 text-left transition-colors hover:bg-muted/60"
+          aria-expanded={open}
+        >
+          <span className="flex items-center justify-between gap-3">
+            <span className="font-semibold">积分账户</span>
+            <span className="rounded-full bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-sm">
+              {billingModeLabel(displaySummary.billingMode)}
+            </span>
+          </span>
+          <span className="mt-3 flex items-center gap-2 text-sm">
+            <EntityIcons.credits className="size-[18px]" aria-hidden="true" />
+            <span className="text-muted-foreground">{allowanceLabel}</span>
+            <span className="ml-auto text-lg font-semibold tabular-nums">{formatDetailedCredits(allowance.credits)}</span>
+            <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
+          </span>
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => handleOpenChange(!open)}
+          className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium tabular-nums transition-colors ${BADGE_TONE_CLASS[tone]}`}
+          title={allowanceLabel}
+          aria-expanded={open}
+        >
+          <EntityIcons.credits className="size-4" aria-hidden="true" />
+          {formatCredits(allowance.credits)}
+        </button>
+      )}
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-1.5rem)] rounded-[20px] border bg-popover p-2 text-popover-foreground shadow-[0_18px_50px_rgba(15,23,42,0.16)]">
+        <div
+          data-billing-popover
+          role="dialog"
+          aria-label="积分详情"
+          className={`${menuVariant ? "absolute bottom-0 left-full z-[60] ml-2" : "absolute right-0 top-full z-50 mt-2"} w-80 max-w-[calc(100vw-1.5rem)] rounded-[20px] border bg-popover p-2 text-popover-foreground shadow-[0_18px_50px_rgba(15,23,42,0.16)]`}
+        >
           <div className="rounded-2xl border border-border/80 bg-muted/35 p-3">
             <div className="flex items-center justify-between gap-3">
               <span className="flex items-center gap-1.5 text-sm font-semibold">
@@ -246,7 +290,7 @@ export function BillingMiniBadge({
                 {allowanceLabel}
               </span>
               <span className="rounded-full bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground shadow-sm">
-                {billingModeLabel(summary.billingMode)}
+                {billingModeLabel(displaySummary.billingMode)}
               </span>
             </div>
             <div className="mt-3 flex items-baseline gap-2">
@@ -254,7 +298,7 @@ export function BillingMiniBadge({
                 {formatDetailedCredits(allowance.credits)}
               </span>
               <span className="text-xs text-muted-foreground">{allowance.source === "member" ? "本月可用" : "可用"}</span>
-              {summary.lowBalance && (
+              {displaySummary.lowBalance && (
                 <span className="ml-auto rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-destructive">
                   余额较低
                 </span>
@@ -294,7 +338,7 @@ export function BillingMiniBadge({
             )}
           </div>
 
-          {isAdmin && (
+          {isAdmin && summary && (
             <div className="border-t border-border/60 px-3 py-3">
               <div className="text-[13px] font-medium">公司共享积分池</div>
               <div className="mt-2.5 space-y-1.5 text-[13px]">

@@ -1,4 +1,4 @@
-// 让侧边栏用户菜单等外部入口可以命令右上角 BillingMiniBadge 展开其详情面板。
+// 让消息区等外部入口可以命令右上角 BillingMiniBadge 展开其详情面板。
 //
 // 用 pending flag + listener 组合以兼容两种时机：
 // 1. Badge 已经挂载：requestOpenBillingBadge() 直接触发 listener，subscriber 立即展开。

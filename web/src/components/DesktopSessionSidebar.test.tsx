@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppTab, ChatSessionIndexItem } from "@/types/sidebar";
 
 vi.mock("@/contexts/AuthContext", () => ({
@@ -46,8 +46,23 @@ vi.mock("@/hooks/useSessionSearch", () => ({
   }),
 }));
 
+const billingState = vi.hoisted(() => ({
+  current: { summary: null, allowance: null } as {
+    summary: { balanceCredits: number; billingEnabled: boolean; billingMode: string } | null;
+    allowance: { credits: number; source: "member" | "tenant" } | null;
+  },
+}));
+const billingMiniBadgeProps = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
+
 vi.mock("@/hooks/useTenantBillingVisibility", () => ({
-  useTenantBillingAllowance: () => ({ summary: null, allowance: null }),
+  useTenantBillingAllowance: () => billingState.current,
+}));
+
+vi.mock("@/components/BillingMiniBadge", () => ({
+  BillingMiniBadge: (props: Record<string, unknown>) => {
+    billingMiniBadgeProps.current = props;
+    return <div data-testid="sidebar-billing-card" />;
+  },
 }));
 
 import { DesktopSessionSidebar } from "./DesktopSessionSidebar";
@@ -80,6 +95,11 @@ function getSessionRow() {
 }
 
 describe("桌面侧边栏会话激活态", () => {
+  beforeEach(() => {
+    billingState.current = { summary: null, allowance: null };
+    billingMiniBadgeProps.current = null;
+  });
+
   it("会话页继续高亮当前会话", () => {
     renderSidebar("chat");
 
@@ -103,5 +123,21 @@ describe("桌面侧边栏会话激活态", () => {
 
     expect(screen.getByText(label)).toBeTruthy();
     expect(screen.queryByLabelText("会话运行中")).toBeNull();
+  });
+
+  it("头像菜单使用右侧展开的积分卡片", () => {
+    billingState.current = {
+      summary: { balanceCredits: 1280, billingEnabled: true, billingMode: "trial" },
+      allowance: { credits: 1280, source: "tenant" },
+    };
+    renderSidebar("chat");
+
+    fireEvent.click(screen.getByRole("button", { name: /tester/ }));
+
+    expect(screen.getByTestId("sidebar-billing-card")).toBeTruthy();
+    expect(billingMiniBadgeProps.current).toMatchObject({
+      variant: "menu",
+      sessionId: "session-1",
+    });
   });
 });

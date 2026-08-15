@@ -256,12 +256,9 @@ export function TokenUsageDisplay({
   const barColor = overThreshold ? 'bg-rose-500' : nearThreshold ? 'bg-amber-500' : 'bg-brand-500';
   const thresholdTokens = hasThreshold ? Math.floor(contextUsage!.maxTokens! * threshold!) : 0;
   const breakdown = hasRealtime ? contextUsage!.breakdown : undefined;
-  // Hero 第二列：任务累计消耗（含子 Agent）。与「当前上下文」是两个维度——
+  // Hero 第二列：任务累计消耗。与「当前上下文」是两个维度——
   // 前者只增不减、关联成本；后者是窗口占用、会被压缩重置。
   const showHeroCumulative = tokenUsage != null && cumulativeTokens > 0;
-  const heroCumulativeLabel = tokenUsage && tokenUsage.subagentTotalTokens > 0
-    ? '累计消耗 · 含子 Agent'
-    : '累计消耗';
 
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
@@ -296,7 +293,7 @@ export function TokenUsageDisplay({
           {/* Hero 卡：用户点「上下文」最关心的信息放第一屏 */}
           {hasExactContext ? (
             <div className="rounded-2xl border border-border/80 bg-muted/35 p-3">
-              {/* KPI 区：有累计消耗时展示上下文、累计消耗、主 Agent 缓存命中率 */}
+              {/* KPI 区：有累计消耗时展示上下文、累计消耗、缓存命中率 */}
               {showHeroCumulative ? (
                 <div className="grid grid-cols-3">
                   <div className="min-w-0 pr-2">
@@ -325,14 +322,14 @@ export function TokenUsageDisplay({
                     <div className="text-xl font-semibold leading-none tabular-nums">
                       {formatTokenCount(cumulativeTokens)}
                     </div>
-                    <div className="mt-1.5 text-[9px] leading-tight text-muted-foreground">{heroCumulativeLabel}</div>
+                    <div className="mt-1.5 text-[9px] leading-tight text-muted-foreground">累计消耗</div>
                   </div>
                   <div className="min-w-0 border-l border-border/60 pl-2">
                     <div className="text-xl font-semibold leading-none tabular-nums">
                       {cacheHitRatio !== undefined ? formatPercent(cacheHitRatio) : '—'}
                     </div>
                     <div className="mt-1.5 text-[9px] leading-tight text-muted-foreground">
-                      主 Agent 缓存命中率
+                      缓存命中率
                     </div>
                   </div>
                 </div>

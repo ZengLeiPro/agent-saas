@@ -186,8 +186,9 @@ export interface RunStore {
   /** 仅当没有待注入消息时封口；false 表示调用方应先消费刚到达的消息。 */
   trySealSteeringInputWindow?(targetRunId: string): Promise<boolean>;
   /**
-   * source run 回退为独立 run 执行时回收它自己的 pending steering 行并清 metadata
-   * steeringState/steeringTargetRunId——否则它永远不能再成为 steering 目标，且幂等
+   * source run 在目标终止后回退为独立 run 执行时，回收它自己的 pending/reserved
+   * steering 行，并清 metadata 中的 steeringState/steeringTargetRunId——否则它永远不能
+   * 再成为 steering 目标，且幂等
    * 兜底会对早已终态的目标继续谎报 queued。
    */
   releasePendingSteeringForSourceRun?(sourceRunId: string): Promise<void>;
@@ -793,11 +794,11 @@ export class PgRunStore implements RunStore {
 
   async releasePendingSteeringForSourceRun(sourceRunId: string): Promise<void> {
     await this.pool.query(`
-      UPDATE ${this.steeringInputsTable}
-      SET state = 'released'
-      WHERE source_run_id = $1 AND state = 'pending'
-    `, [sourceRunId]);
-    await this.pool.query(`
+      WITH released AS (
+        UPDATE ${this.steeringInputsTable}
+        SET state = 'released'
+        WHERE source_run_id = $1 AND state IN ('pending', 'reserved')
+      )
       UPDATE ${this.runsTable}
       SET metadata = (metadata - 'steeringTargetRunId')
             || jsonb_build_object('steeringState', 'released'),
@@ -1231,7 +1232,10 @@ export class PgRunStore implements RunStore {
           JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
           WHERE input.source_run_id = run.run_id
             AND (
-              input.state = 'reserved'
+              (
+                input.state = 'reserved'
+                AND target.status NOT IN ('completed','failed','cancelled','orphaned')
+              )
               OR (
                 input.state = 'pending'
                 AND target.status IN ('pending','running','waiting_hand')
@@ -1275,7 +1279,10 @@ export class PgRunStore implements RunStore {
           JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
           WHERE input.source_run_id = run.run_id
             AND (
-              input.state = 'reserved'
+              (
+                input.state = 'reserved'
+                AND target.status NOT IN ('completed','failed','cancelled','orphaned')
+              )
               OR (
                 input.state = 'pending'
                 AND target.status IN ('pending','running','waiting_hand')
@@ -1356,7 +1363,10 @@ export class PgRunStore implements RunStore {
           JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
           WHERE input.source_run_id = run.run_id
             AND (
-              input.state = 'reserved'
+              (
+                input.state = 'reserved'
+                AND target.status NOT IN ('completed','failed','cancelled','orphaned')
+              )
               OR (
                 input.state = 'pending'
                 AND target.status IN ('pending','running','waiting_hand')
@@ -1432,7 +1442,10 @@ export class PgRunStore implements RunStore {
           JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
           WHERE input.source_run_id = ${this.runsTable}.run_id
             AND (
-              input.state = 'reserved'
+              (
+                input.state = 'reserved'
+                AND target.status NOT IN ('completed','failed','cancelled','orphaned')
+              )
               OR (
                 input.state = 'pending'
                 AND target.status IN ('pending','running','waiting_hand')

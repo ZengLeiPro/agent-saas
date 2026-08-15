@@ -648,6 +648,8 @@ export interface WakeRuntimeSessionOptions {
 }
 
 const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
+const STEERING_RECOVERY_MAX_HANDOFFS = 3;
+const STEERING_RECOVERY_FAILURE_MESSAGE = '会话恢复连续失败，本次运行已结束，请重试。';
 
 export function resolveSessionCatalog(config: RawRuntimeRunDispatchConfig): SessionCatalog {
   return config.sessionCatalog ?? new FileSessionCatalog({ agentCwd: config.agentCwd });
@@ -3291,6 +3293,7 @@ export async function wakeRuntimeSession(
         run,
         lease: options.lease,
         drainHandoff,
+        onOutboundEvent: options.onOutboundEvent,
       })) return;
       const current = await config.runStore?.get(run.runId);
       if (current) {
@@ -3362,6 +3365,7 @@ export async function wakeRuntimeSession(
         run,
         lease: options.lease,
         drainHandoff,
+        onOutboundEvent: options.onOutboundEvent,
       })) return;
       const current = await config.runStore?.get(run.runId);
       if (current) {
@@ -3428,6 +3432,7 @@ export async function wakeRuntimeSession(
       run,
       lease: options.lease,
       drainHandoff,
+      onOutboundEvent: options.onOutboundEvent,
     })) return;
     const current = await config.runStore?.get(run.runId);
     if (current) {
@@ -3439,25 +3444,41 @@ export async function wakeRuntimeSession(
   }
 }
 
-async function releaseWakeLeaseForDrainHandoff(input: {
+export async function releaseWakeLeaseForDrainHandoff(input: {
   config: RawRuntimeRunDispatchConfig;
   eventStore: EventStore;
   sessionCatalog: SessionCatalog;
   run: RunRecord;
   lease?: RuntimeWakeLease;
   drainHandoff: RuntimeDrainHandoffState;
+  onOutboundEvent?: WakeRuntimeSessionOptions['onOutboundEvent'];
 }): Promise<boolean> {
   if (!input.drainHandoff.requested || !input.config.runStore || !input.lease) return false;
 
+  // renew 是 worker_id CAS：过期 worker 若已被新 worker 接管，会在写 handoff 状态前失败退出。
+  await input.lease.renew();
   const current = await input.config.runStore.get(input.run.runId);
-  if (!current || isTerminalRunStatus(current.status)) return false;
+  if (
+    !current
+    || isTerminalRunStatus(current.status)
+    || (current.workerId && input.lease.workerId && current.workerId !== input.lease.workerId)
+  ) return false;
 
   const reason = input.drainHandoff.reason ?? 'server_drain_handoff';
   const handedOffAt = new Date().toISOString();
-  await input.config.runStore.markStatus(input.run.runId, 'running', reason, {
+  // steering 的 durable user_message 可安全重放，但恢复必须有上限；否则同一故障会让
+  // 目标 run 永久 running，并把后续 reserved source 永久挡在 recoverable 集合之外。
+  const isSteeringRecovery = reason.startsWith('steering_');
+  const previousAttempts = typeof current.metadata?.drainHandoffAttempts === 'number'
+    ? current.metadata.drainHandoffAttempts
+    : 0;
+  const handoffAttempts = isSteeringRecovery ? previousAttempts + 1 : previousAttempts;
+  const handedOff = await input.config.runStore.markStatus(input.run.runId, 'running', reason, {
     drainHandoffAt: handedOffAt,
     drainHandoffWorkerId: input.lease.workerId,
+    ...(isSteeringRecovery ? { drainHandoffAttempts: handoffAttempts } : {}),
   });
+  if (!handedOff || isTerminalRunStatus(handedOff.status)) return false;
   await appendRunStateChanged(
     input.eventStore,
     input.run.sessionId,
@@ -3466,6 +3487,28 @@ async function releaseWakeLeaseForDrainHandoff(input: {
     current.status,
     reason,
   );
+
+  if (isSteeringRecovery && handoffAttempts >= STEERING_RECOVERY_MAX_HANDOFFS) {
+    await input.eventStore.append({
+      type: 'run_finished',
+      runId: input.run.runId,
+      sessionId: input.run.sessionId,
+      subtype: 'error',
+      numTurns: 0,
+      error: STEERING_RECOVERY_FAILURE_MESSAGE,
+    });
+    await input.sessionCatalog.markStatus(input.run.sessionId, 'error');
+    await input.onOutboundEvent?.(
+      { type: 'error', error: STEERING_RECOVERY_FAILURE_MESSAGE },
+      { runId: input.run.runId, sessionId: input.run.sessionId },
+    );
+    await input.lease.release('failed', STEERING_RECOVERY_FAILURE_MESSAGE);
+    input.config.logger?.error(
+      `Runtime steering recovery exhausted run=${input.run.runId} session=${input.run.sessionId} reason=${reason} attempts=${handoffAttempts}`,
+    );
+    return true;
+  }
+
   await input.sessionCatalog.markStatus(input.run.sessionId, 'running');
   await input.lease.release(undefined, reason);
   input.config.logger?.info(

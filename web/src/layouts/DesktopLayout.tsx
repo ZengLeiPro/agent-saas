@@ -4,8 +4,6 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
 import { ChatTabContent } from "@/components/chat/ChatTabContent";
-import { FilePreviewDialog, FilePreviewPanel } from "@/components/FilePreviewPanel";
-import { SubagentTranscriptPanel } from "@/components/SubagentTranscriptPanel";
 import { useSubagentTranscript } from "@/contexts/SubagentTranscriptContext";
 import { DesktopSessionSidebar } from "@/components/DesktopSessionSidebar";
 import { PanelToggleIcon } from "@/components/icons/PanelToggleIcon";
@@ -30,6 +28,9 @@ const CronManager = lazy(() => import("@/components/CronManager").then(m => ({ d
 const UserManager = lazy(() => import("@/components/UserManager").then(m => ({ default: m.UserManager })));
 const TenantManager = lazy(() => import("@/components/TenantManager").then(m => ({ default: m.TenantManager })));
 const FileBrowserLazy = lazy(() => import("@/components/FileBrowser").then(m => ({ default: m.FileBrowser })));
+const FilePreviewDialog = lazy(() => import("@/components/FilePreviewPanel").then(m => ({ default: m.FilePreviewDialog })));
+const FilePreviewPanel = lazy(() => import("@/components/FilePreviewPanel").then(m => ({ default: m.FilePreviewPanel })));
+const SubagentTranscriptPanel = lazy(() => import("@/components/SubagentTranscriptPanel").then(m => ({ default: m.SubagentTranscriptPanel })));
 const AgentProfilePanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.AgentProfile })));
 const MemorySectionPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.MemorySection })));
 const SkillManagerPanel = lazy(() => import("@/components/SkillManager").then(m => ({ default: m.SkillManager })));
@@ -845,13 +846,17 @@ export function DesktopLayout(props: LayoutProps) {
             onOpenChange={setCronWizardOpen}
           />
         )}
-        <FilePreviewDialog
-          open={!!previewFilePath && previewMode === "dialog"}
-          filePath={previewFilePath}
-          owner={previewFileOwner}
-          onClose={closeFilePreview}
-          onDock={dockFilePreview}
-        />
+        {!!previewFilePath && previewMode === "dialog" && (
+          <Suspense fallback={null}>
+            <FilePreviewDialog
+              open
+              filePath={previewFilePath}
+              owner={previewFileOwner}
+              onClose={closeFilePreview}
+              onDock={dockFilePreview}
+            />
+          </Suspense>
+        )}
         <Suspense fallback={null}>
           <SettingsModal
             open={settingsOpen}
@@ -904,19 +909,23 @@ export function DesktopLayout(props: LayoutProps) {
               style={{ flexBasis: `calc(${splitRatio * 100}% - 5px)`, flexShrink: 0, flexGrow: 0 }}
             >
               {rightPanelKind === 'subagent' && subagentTranscript ? (
-                <SubagentTranscriptPanel
-                  childSessionId={subagentTranscript.childSessionId}
-                  title={subagentTranscript.title}
-                  onClose={() => closeSubagentTranscript?.()}
-                />
+                <Suspense fallback={SuspenseFallback}>
+                  <SubagentTranscriptPanel
+                    childSessionId={subagentTranscript.childSessionId}
+                    title={subagentTranscript.title}
+                    onClose={() => closeSubagentTranscript?.()}
+                  />
+                </Suspense>
               ) : null}
               {rightPanelKind === 'preview' && previewFilePath ? (
-                <FilePreviewPanel
-                  filePath={previewFilePath}
-                  owner={previewFileOwner}
-                  onBack={closeFilePreview}
-                  onExpand={expandFilePreview}
-                />
+                <Suspense fallback={SuspenseFallback}>
+                  <FilePreviewPanel
+                    filePath={previewFilePath}
+                    owner={previewFileOwner}
+                    onBack={closeFilePreview}
+                    onExpand={expandFilePreview}
+                  />
+                </Suspense>
               ) : null}
               {systemPanel ? (
                 <div className={cn("flex h-full min-h-0 flex-col", rightPanelKind !== 'system' && "hidden")}>

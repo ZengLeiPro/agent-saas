@@ -4,13 +4,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { SwipeDrawer } from "@/components/mobile/SwipeDrawer";
 import { SlidePanel } from "@/components/SlidePanel";
-import { MarkdownPreviewPanel } from "@/components/MarkdownPreviewPanel";
-import { HtmlPreviewPanel } from "@/components/HtmlPreviewPanel";
-import { CodePreviewPanel } from "@/components/CodePreviewPanel";
-import { PdfPreviewPanel } from "@/components/PdfPreviewPanel";
-import { VideoPreviewPanel } from "@/components/VideoPreviewPanel";
 import { FilePreviewActions } from "@/components/FilePreviewActions";
-import { SubagentTranscriptPanel } from "@/components/SubagentTranscriptPanel";
 import { useSubagentTranscript } from "@/contexts/SubagentTranscriptContext";
 import { ChatTabContent } from "@/components/chat/ChatTabContent";
 import { MobileSessionList } from "@/components/MobileSessionList";
@@ -34,6 +28,12 @@ const CronManager = lazy(() => import("@/components/CronManager").then(m => ({ d
 const UserManager = lazy(() => import("@/components/UserManager").then(m => ({ default: m.UserManager })));
 const TenantManager = lazy(() => import("@/components/TenantManager").then(m => ({ default: m.TenantManager })));
 const FileBrowserLazy = lazy(() => import("@/components/FileBrowser").then(m => ({ default: m.FileBrowser })));
+const MarkdownPreviewPanel = lazy(() => import("@/components/MarkdownPreviewPanel").then(m => ({ default: m.MarkdownPreviewPanel })));
+const HtmlPreviewPanel = lazy(() => import("@/components/HtmlPreviewPanel").then(m => ({ default: m.HtmlPreviewPanel })));
+const CodePreviewPanel = lazy(() => import("@/components/CodePreviewPanel").then(m => ({ default: m.CodePreviewPanel })));
+const PdfPreviewPanel = lazy(() => import("@/components/PdfPreviewPanel").then(m => ({ default: m.PdfPreviewPanel })));
+const VideoPreviewPanel = lazy(() => import("@/components/VideoPreviewPanel").then(m => ({ default: m.VideoPreviewPanel })));
+const SubagentTranscriptPanel = lazy(() => import("@/components/SubagentTranscriptPanel").then(m => ({ default: m.SubagentTranscriptPanel })));
 const AgentProfilePanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.AgentProfile })));
 const MemorySectionPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.MemorySection })));
 const SkillManagerPanel = lazy(() => import("@/components/SkillManager").then(m => ({ default: m.SkillManager })));
@@ -542,20 +542,26 @@ export function MobileLayout(props: LayoutProps) {
           onClose={subagentTranscript ? () => closeSubagentTranscript?.() : closeFilePreview}
         >
           {subagentTranscript ? (
-            <SubagentTranscriptPanel
-              childSessionId={subagentTranscript.childSessionId}
-              title={subagentTranscript.title}
-              onClose={() => closeSubagentTranscript?.()}
-              hideHeader
-            />
-          ) : previewFilePath ? (() => {
-            const previewType = getPreviewFileType(previewFilePath);
-            if (previewType === 'html') return <HtmlPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
-            if (previewType === 'pdf') return <PdfPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
-            if (previewType === 'video') return <VideoPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
-            if (previewType === 'code') return <CodePreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
-            return <MarkdownPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
-          })() : null}
+            <Suspense fallback={SuspenseFallback}>
+              <SubagentTranscriptPanel
+                childSessionId={subagentTranscript.childSessionId}
+                title={subagentTranscript.title}
+                onClose={() => closeSubagentTranscript?.()}
+                hideHeader
+              />
+            </Suspense>
+          ) : previewFilePath ? (
+            <Suspense fallback={SuspenseFallback}>
+              {(() => {
+                const previewType = getPreviewFileType(previewFilePath);
+                if (previewType === 'html') return <HtmlPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
+                if (previewType === 'pdf') return <PdfPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
+                if (previewType === 'video') return <VideoPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
+                if (previewType === 'code') return <CodePreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
+                return <MarkdownPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
+              })()}
+            </Suspense>
+          ) : null}
         </SlidePanel>
       </div>
       {personalAgentEnabled

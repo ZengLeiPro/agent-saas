@@ -186,6 +186,9 @@ export interface TenantRecord {
   disabled?: boolean;
   disabledAt?: string;
   disabledBy?: string;
+  /** 最近一次暂停或恢复的版本戳；与普通名称/配置更新解耦，供跨实例漏事件补偿。 */
+  lifecycleUpdatedAt?: string;
+  lifecycleUpdatedBy?: string;
   settings?: TenantSettings;
 }
 

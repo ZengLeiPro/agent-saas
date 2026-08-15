@@ -13,6 +13,7 @@ export type GovernanceDependencyImpactResolver = (input: {
   tenantId: string;
   kind: 'oauth' | 'entitlement' | 'scope' | 'tenant';
   resourceType?: EntitlementResourceType;
+  action?: 'suspend' | 'resume';
   grant?: OAuthGrant;
 }) => Promise<GovernanceDependencyImpact>;
 
@@ -25,8 +26,10 @@ export function oauthDependencyImpact(resolver: GovernanceDependencyImpactResolv
   }));
 }
 
-export function tenantDependencyImpact(resolver: GovernanceDependencyImpactResolver, tenantId: string) {
-  return resolver({ tenantId, kind: 'tenant' }).then(({ affectedResources, blockers }) => ({ affectedResources, blockers }));
+export function tenantDependencyImpact(
+  resolver: GovernanceDependencyImpactResolver, tenantId: string, action: 'suspend' | 'resume',
+) {
+  return resolver({ tenantId, kind: 'tenant', action }).then(({ affectedResources, blockers }) => ({ affectedResources, blockers }));
 }
 
 export function entitlementDependencyImpact(

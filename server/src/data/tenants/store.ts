@@ -9,7 +9,7 @@
  */
 
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
-import { writeFile, rename, unlink } from 'node:fs/promises';
+import { open, readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
@@ -93,34 +93,104 @@ export interface UpdateTenantInput {
   name?: string;
 }
 
+export interface TenantStoreOptions {
+  /** 生产 PG advisory lock；未提供时退化为跨进程文件锁。 */
+  withLock?: <T>(operation: () => Promise<T>) => Promise<T>;
+  /** 单进程 file backend 关闭跨进程锁，避免崩溃残留锁；多进程部署必须使用 withLock。 */
+  useLocalLock?: boolean;
+  lockTimeoutMs?: number;
+  lockRetryMs?: number;
+}
+
+export class TenantStoreError extends Error {
+  constructor(message: string, readonly code: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'TenantStoreError';
+  }
+}
+
+interface LocalLock {
+  handle: Awaited<ReturnType<typeof open>>;
+  token: string;
+}
+
+interface MutationResult<T> {
+  changed: boolean;
+  value: T;
+}
+
+const DEFAULT_LOCK_TIMEOUT_MS = 10_000;
+const DEFAULT_LOCK_RETRY_MS = 20;
+
+function errorCode(err: unknown): string | undefined {
+  return typeof err === 'object' && err !== null && 'code' in err
+    ? String((err as { code?: unknown }).code)
+    : undefined;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function lifecycleConflict(message: string, code: string): TenantStoreError {
+  return new TenantStoreError(message, code);
+}
+
+function storeUnavailable(message: string, code: string, cause?: unknown): TenantStoreError {
+  return new TenantStoreError(message, code, cause === undefined ? undefined : { cause });
+}
+
+function nextUpdatedAt(previous: string): string {
+  const previousMs = Date.parse(previous);
+  const nextMs = Number.isFinite(previousMs) ? Math.max(Date.now(), previousMs + 1) : Date.now();
+  return new Date(nextMs).toISOString();
+}
+
 export class TenantStore {
   private tenants: TenantRecord[] = [];
-  private filePath: string;
+  private readonly filePath: string;
+  private readonly options: TenantStoreOptions;
   private postPersistObserver?: () => void;
+  private mutationQueue: Promise<void> = Promise.resolve();
 
-  constructor(filePath: string) {
+  constructor(filePath: string, options: TenantStoreOptions = {}) {
     this.filePath = filePath;
+    this.options = options;
     this.load();
   }
 
-  private load(): void {
-    if (!existsSync(this.filePath)) {
-      mkdirSync(dirname(this.filePath), { recursive: true });
-      this.tenants = [];
-      return;
-    }
+  private load(strict = false): void {
     try {
+      if (!existsSync(this.filePath)) {
+        mkdirSync(dirname(this.filePath), { recursive: true });
+        this.tenants = [];
+        return;
+      }
       const raw = readFileSync(this.filePath, 'utf-8');
       const data: TenantsFileData = JSON.parse(raw);
-      this.tenants = data.tenants || [];
+      if (data.version !== 1 || !Array.isArray(data.tenants)) {
+        throw new Error('Invalid tenants file structure');
+      }
+      this.tenants = data.tenants;
     } catch (err) {
       authLogger.warn(`Failed to load tenants from ${this.filePath}: ${err}`);
+      if (strict) {
+        throw storeUnavailable(
+          `Failed to read tenant store: ${err instanceof Error ? err.message : String(err)}`,
+          'TENANT_STORE_READ_FAILED',
+          err,
+        );
+      }
       this.tenants = [];
     }
   }
 
   /** 重新读取共享 tenants.json，供多进程后台执行器刷新组织开关。 */
   reload(): void {
+    this.load();
+  }
+
+  private refreshForRead(): void {
     this.load();
   }
 
@@ -132,12 +202,12 @@ export class TenantStore {
     const data: TenantsFileData = { version: 1, tenants: this.tenants };
     mkdirSync(dirname(this.filePath), { recursive: true });
     const tmpPath = join(dirname(this.filePath), `.tenants.${randomBytes(6).toString('hex')}.tmp`);
-    await writeFile(tmpPath, JSON.stringify(data, null, 2), { mode: 0o600 });
     try {
+      await writeFile(tmpPath, JSON.stringify(data, null, 2), { mode: 0o600 });
       await rename(tmpPath, this.filePath);
     } catch (err) {
       await unlink(tmpPath).catch(() => {});
-      throw err;
+      throw storeUnavailable('Failed to persist tenant store', 'TENANT_STORE_WRITE_FAILED', err);
     }
     try {
       this.postPersistObserver?.();
@@ -146,152 +216,290 @@ export class TenantStore {
     }
   }
 
+  private async acquireLocalLock(): Promise<LocalLock> {
+    mkdirSync(dirname(this.filePath), { recursive: true });
+    const lockPath = `${this.filePath}.lock`;
+    const timeoutMs = Math.max(0, this.options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS);
+    const retryMs = Math.max(1, this.options.lockRetryMs ?? DEFAULT_LOCK_RETRY_MS);
+    const deadline = Date.now() + timeoutMs;
+    const token = randomBytes(16).toString('hex');
+
+    for (;;) {
+      let handle: Awaited<ReturnType<typeof open>> | undefined;
+      try {
+        handle = await open(lockPath, 'wx', 0o600);
+        await handle.writeFile(token, 'utf-8');
+        return { handle, token };
+      } catch (err) {
+        await handle?.close().catch(() => undefined);
+        if (handle) await unlink(lockPath).catch(() => undefined);
+        if (errorCode(err) !== 'EEXIST') {
+          throw storeUnavailable('Failed to acquire tenant store lock', 'TENANT_STORE_LOCK_UNAVAILABLE', err);
+        }
+        if (Date.now() >= deadline) {
+          throw storeUnavailable(
+            `Timed out acquiring tenant store lock: ${lockPath}`,
+            'TENANT_STORE_LOCK_TIMEOUT',
+          );
+        }
+        await sleep(Math.min(retryMs, Math.max(1, deadline - Date.now())));
+      }
+    }
+  }
+
+  private async releaseLocalLock(lock: LocalLock): Promise<void> {
+    const lockPath = `${this.filePath}.lock`;
+    await lock.handle.close().catch(() => undefined);
+    try {
+      const currentToken = await readFile(lockPath, 'utf-8');
+      if (currentToken === lock.token) await unlink(lockPath);
+    } catch (err) {
+      if (errorCode(err) !== 'ENOENT') {
+        authLogger.warn(`Failed to release tenant store lock ${lockPath}: ${err}`);
+      }
+    }
+  }
+
+  private async mutate<T>(operation: () => MutationResult<T> | Promise<MutationResult<T>>): Promise<T> {
+    const execute = async (): Promise<T> => {
+      try {
+        this.load(true);
+        const result = await operation();
+        if (result.changed) await this.persist();
+        return result.value;
+      } catch (error) {
+        this.load();
+        throw error;
+      }
+    };
+    const run = async (): Promise<T> => {
+      if (this.options.withLock) return this.options.withLock(execute);
+      if (this.options.useLocalLock === false) return execute();
+      const lock = await this.acquireLocalLock();
+      try {
+        return await execute();
+      } finally {
+        await this.releaseLocalLock(lock);
+      }
+    };
+    const queued = this.mutationQueue.then(run, run);
+    this.mutationQueue = queued.then(() => undefined, () => undefined);
+    return queued;
+  }
+
   findById(id: string): TenantRecord | undefined {
+    this.refreshForRead();
+    const tenant = this.tenants.find(t => t.id === id);
+    return tenant ? { ...tenant, settings: cloneSettings(mergeSettings(tenant.settings)) } : undefined;
+  }
+
+  findByIdStrict(id: string): TenantRecord | undefined {
+    this.load(true);
     const tenant = this.tenants.find(t => t.id === id);
     return tenant ? { ...tenant, settings: cloneSettings(mergeSettings(tenant.settings)) } : undefined;
   }
 
   listAll(): TenantRecord[] {
+    this.refreshForRead();
     // 复制一份避免外部突变内部状态
     return this.tenants.map(t => ({ ...t, settings: cloneSettings(mergeSettings(t.settings)) }));
   }
 
+  listAllStrict(): TenantRecord[] {
+    this.load(true);
+    return this.tenants.map(t => ({ ...t, settings: cloneSettings(mergeSettings(t.settings)) }));
+  }
+
   async reorder(ids: string[]): Promise<TenantRecord[]> {
-    if (ids.length !== this.tenants.length || new Set(ids).size !== ids.length) {
-      throw new Error('Tenant order must contain every tenant exactly once');
-    }
-    const tenantsById = new Map(this.tenants.map(tenant => [tenant.id, tenant]));
-    if (ids.some(id => !tenantsById.has(id))) {
-      throw new Error('Tenant order contains unknown tenant');
-    }
-    this.tenants = ids.map(id => tenantsById.get(id)!);
-    await this.persist();
-    return this.listAll();
+    return this.mutate(() => {
+      if (ids.length !== this.tenants.length || new Set(ids).size !== ids.length) {
+        throw new Error('Tenant order must contain every tenant exactly once');
+      }
+      const tenantsById = new Map(this.tenants.map(tenant => [tenant.id, tenant]));
+      if (ids.some(id => !tenantsById.has(id))) {
+        throw new Error('Tenant order contains unknown tenant');
+      }
+      this.tenants = ids.map(id => tenantsById.get(id)!);
+      return {
+        changed: true,
+        value: this.tenants.map(tenant => ({
+          ...tenant,
+          settings: cloneSettings(mergeSettings(tenant.settings)),
+        })),
+      };
+    });
   }
 
   count(): number {
+    this.refreshForRead();
     return this.tenants.length;
   }
 
   activeCount(): number {
+    this.refreshForRead();
+    return this.tenants.filter(t => !t.disabled).length;
+  }
+
+  activeCountStrict(): number {
+    this.load(true);
     return this.tenants.filter(t => !t.disabled).length;
   }
 
   getSettings(id: string): TenantSettings | undefined {
+    this.refreshForRead();
     const tenant = this.tenants.find(t => t.id === id);
     if (!tenant) return undefined;
     return cloneSettings(mergeSettings(tenant.settings));
   }
 
   async updateSettings(id: string, input: TenantSettingsPatch): Promise<TenantSettings> {
-    const tenant = this.tenants.find(t => t.id === id);
-    if (!tenant) throw new Error('Tenant not found');
-    // 基底=租户现值（先补全默认），patch 缺省的 section 保留现值而非重置为平台默认
-    tenant.settings = mergeSettings(input, mergeSettings(tenant.settings));
-    tenant.updatedAt = new Date().toISOString();
-    await this.persist();
-    return cloneSettings(tenant.settings);
+    return this.mutate(() => {
+      const tenant = this.tenants.find(t => t.id === id);
+      if (!tenant) throw new Error('Tenant not found');
+      // 基底=租户现值（先补全默认），patch 缺省的 section 保留现值而非重置为平台默认
+      tenant.settings = mergeSettings(input, mergeSettings(tenant.settings));
+      tenant.updatedAt = nextUpdatedAt(tenant.updatedAt);
+      return { changed: true, value: cloneSettings(tenant.settings) };
+    });
   }
 
   async create(input: CreateTenantInput): Promise<TenantRecord> {
-    if (!TENANT_SLUG_PATTERN.test(input.id)) {
-      throw new Error(
-        `Invalid tenant id "${input.id}": must match ${TENANT_SLUG_PATTERN.source} ` +
-        `(小写字母开头，可含小写字母/数字/连字符，长度 2-31)`,
-      );
-    }
-    if (this.findById(input.id)) {
-      throw new Error(`Tenant id "${input.id}" already exists`);
-    }
-    if (!input.name || !input.name.trim()) {
-      throw new Error('Tenant name cannot be empty');
-    }
-    const now = new Date().toISOString();
-    const record: TenantRecord = {
-      id: input.id,
-      name: input.name.trim(),
-      createdAt: now,
-      createdBy: input.createdBy,
-      updatedAt: now,
-      settings: cloneSettings(DEFAULT_TENANT_SETTINGS),
-    };
-    this.tenants.push(record);
-    try {
-      await this.persist();
-    } catch (error) {
-      const index = this.tenants.indexOf(record);
-      if (index >= 0) this.tenants.splice(index, 1);
-      throw error;
-    }
-    return { ...record, settings: cloneSettings(mergeSettings(record.settings)) };
+    return this.mutate(() => {
+      if (!TENANT_SLUG_PATTERN.test(input.id)) {
+        throw new Error(
+          `Invalid tenant id "${input.id}": must match ${TENANT_SLUG_PATTERN.source} ` +
+          `(小写字母开头，可含小写字母/数字/连字符，长度 2-31)`,
+        );
+      }
+      if (this.tenants.some(tenant => tenant.id === input.id)) {
+        throw new Error(`Tenant id "${input.id}" already exists`);
+      }
+      if (!input.name || !input.name.trim()) {
+        throw new Error('Tenant name cannot be empty');
+      }
+      const now = new Date().toISOString();
+      const record: TenantRecord = {
+        id: input.id,
+        name: input.name.trim(),
+        createdAt: now,
+        createdBy: input.createdBy,
+        updatedAt: now,
+        settings: cloneSettings(DEFAULT_TENANT_SETTINGS),
+      };
+      this.tenants.push(record);
+      return {
+        changed: true,
+        value: { ...record, settings: cloneSettings(mergeSettings(record.settings)) },
+      };
+    });
   }
 
   async update(id: string, input: UpdateTenantInput): Promise<TenantRecord> {
-    const tenant = this.tenants.find(t => t.id === id);
-    if (!tenant) throw new Error('Tenant not found');
-    if (input.name !== undefined) {
-      if (id === DEFAULT_TENANT_ID) {
-        throw new Error(`Cannot rename the default tenant "${DEFAULT_TENANT_ID}"`);
+    return this.mutate(() => {
+      const tenant = this.tenants.find(t => t.id === id);
+      if (!tenant) throw new Error('Tenant not found');
+      if (input.name !== undefined) {
+        if (id === DEFAULT_TENANT_ID) {
+          throw new Error(`Cannot rename the default tenant "${DEFAULT_TENANT_ID}"`);
+        }
+        const trimmed = input.name.trim();
+        if (!trimmed) throw new Error('Tenant name cannot be empty');
+        tenant.name = trimmed;
       }
-      const trimmed = input.name.trim();
-      if (!trimmed) throw new Error('Tenant name cannot be empty');
-      tenant.name = trimmed;
-    }
-    tenant.updatedAt = new Date().toISOString();
-    await this.persist();
-    return { ...tenant, settings: cloneSettings(mergeSettings(tenant.settings)) };
+      tenant.updatedAt = nextUpdatedAt(tenant.updatedAt);
+      return {
+        changed: true,
+        value: { ...tenant, settings: cloneSettings(mergeSettings(tenant.settings)) },
+      };
+    });
   }
 
-  async setDisabled(id: string, disabled: boolean, operatorId: string): Promise<TenantRecord> {
-    const tenant = this.tenants.find(t => t.id === id);
-    if (!tenant) throw new Error('Tenant not found');
-    if (id === DEFAULT_TENANT_ID && disabled) {
-      throw new Error(`Cannot disable the default tenant "${DEFAULT_TENANT_ID}"`);
-    }
-    if (disabled && this.activeCount() <= 1) {
-      throw new Error('Cannot disable the last active tenant');
-    }
-    tenant.disabled = disabled || undefined;
-    tenant.disabledAt = disabled ? new Date().toISOString() : undefined;
-    tenant.disabledBy = disabled ? operatorId : undefined;
-    tenant.updatedAt = new Date().toISOString();
-    await this.persist();
-    return { ...tenant, settings: cloneSettings(mergeSettings(tenant.settings)) };
+  async setDisabled(
+    id: string,
+    disabled: boolean,
+    operatorId: string,
+    expectedUpdatedAt?: string,
+  ): Promise<TenantRecord> {
+    return this.mutate(() => {
+      const tenant = this.tenants.find(t => t.id === id);
+      if (!tenant) throw lifecycleConflict('Tenant not found', 'TENANT_NOT_FOUND');
+      if (expectedUpdatedAt !== undefined && tenant.updatedAt !== expectedUpdatedAt) {
+        throw lifecycleConflict('Tenant lifecycle baseline changed', 'TENANT_LIFECYCLE_BASELINE_CONFLICT');
+      }
+      if (Boolean(tenant.disabled) === disabled) {
+        throw lifecycleConflict('Tenant lifecycle transition conflict', 'TENANT_LIFECYCLE_TRANSITION_CONFLICT');
+      }
+      if (id === DEFAULT_TENANT_ID && disabled) {
+        throw lifecycleConflict(
+          `Cannot disable the default tenant "${DEFAULT_TENANT_ID}"`,
+          'DEFAULT_TENANT_PROTECTED',
+        );
+      }
+      if (disabled && this.tenants.filter(candidate => !candidate.disabled).length <= 1) {
+        throw lifecycleConflict('Cannot disable the last active tenant', 'LAST_ACTIVE_TENANT_PROTECTED');
+      }
+      const updatedAt = nextUpdatedAt(tenant.updatedAt);
+      tenant.disabled = disabled || undefined;
+      tenant.disabledAt = disabled ? updatedAt : undefined;
+      tenant.disabledBy = disabled ? operatorId : undefined;
+      tenant.lifecycleUpdatedAt = updatedAt;
+      tenant.lifecycleUpdatedBy = operatorId;
+      tenant.updatedAt = updatedAt;
+      return {
+        changed: true,
+        value: { ...tenant, settings: cloneSettings(mergeSettings(tenant.settings)) },
+      };
+    });
   }
 
   async delete(id: string): Promise<TenantRecord> {
-    const tenant = this.tenants.find(t => t.id === id);
-    if (!tenant) throw new Error('Tenant not found');
-    if (id === DEFAULT_TENANT_ID) {
-      throw new Error(`Cannot delete the default tenant "${DEFAULT_TENANT_ID}"`);
-    }
-    this.tenants = this.tenants.filter(t => t.id !== id);
-    await this.persist();
-    return { ...tenant, settings: cloneSettings(mergeSettings(tenant.settings)) };
+    return this.mutate(() => {
+      const tenant = this.tenants.find(t => t.id === id);
+      if (!tenant) throw new Error('Tenant not found');
+      if (id === DEFAULT_TENANT_ID) {
+        throw new Error(`Cannot delete the default tenant "${DEFAULT_TENANT_ID}"`);
+      }
+      this.tenants = this.tenants.filter(t => t.id !== id);
+      return {
+        changed: true,
+        value: { ...tenant, settings: cloneSettings(mergeSettings(tenant.settings)) },
+      };
+    });
   }
 
-  /**
-   * 启动期幂等保证默认组织存在。
-   * 用 'system' 作为 createdBy；如果已存在则不动。
-   */
-  async ensureDefaultTenant(): Promise<TenantRecord> {
-    const existing = this.findById(DEFAULT_TENANT_ID);
-    if (existing) return { ...existing, settings: cloneSettings(mergeSettings(existing.settings)) };
-    return await this.create({
-      id: DEFAULT_TENANT_ID,
-      name: '万神殿',
-      createdBy: 'system',
+  private async ensureTenant(id: string, name: string): Promise<TenantRecord> {
+    return this.mutate(() => {
+      const existing = this.tenants.find(tenant => tenant.id === id);
+      if (existing) {
+        return {
+          changed: false,
+          value: { ...existing, settings: cloneSettings(mergeSettings(existing.settings)) },
+        };
+      }
+      const now = new Date().toISOString();
+      const record: TenantRecord = {
+        id,
+        name,
+        createdAt: now,
+        createdBy: 'system',
+        updatedAt: now,
+        settings: cloneSettings(DEFAULT_TENANT_SETTINGS),
+      };
+      this.tenants.push(record);
+      return {
+        changed: true,
+        value: { ...record, settings: cloneSettings(mergeSettings(record.settings)) },
+      };
     });
+  }
+
+  /** 启动期幂等保证默认组织存在。 */
+  async ensureDefaultTenant(): Promise<TenantRecord> {
+    return this.ensureTenant(DEFAULT_TENANT_ID, '万神殿');
   }
 
   /** 迁移期保证开沿日常组织存在；平台根组织不再承载日常协作。 */
   async ensureKaiyanTenant(): Promise<TenantRecord> {
-    const existing = this.findById(LEGACY_TENANT_ID);
-    if (existing) return { ...existing, settings: cloneSettings(mergeSettings(existing.settings)) };
-    return await this.create({
-      id: LEGACY_TENANT_ID,
-      name: '开沿科技',
-      createdBy: 'system',
-    });
+    return this.ensureTenant(LEGACY_TENANT_ID, '开沿科技');
   }
 }

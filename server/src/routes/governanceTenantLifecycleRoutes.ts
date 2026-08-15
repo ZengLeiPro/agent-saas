@@ -15,7 +15,7 @@ const createTenantSchema = z.object({
 
 const mutationShape = {
   action: z.enum(['suspend', 'resume']),
-  reason: z.string().min(3).max(500),
+  reason: z.string().trim().min(3).max(500),
 };
 const previewSchema = z.object(mutationShape).strict();
 const commitSchema = z.object({
@@ -25,7 +25,7 @@ const commitSchema = z.object({
   expiresAt: z.string().datetime({ offset: true }),
 }).strict();
 
-type TenantLifecycleRecord = { id: string; disabled?: boolean; updatedAt: string };
+type TenantLifecycleRecord = { id: string; name?: string; disabled?: boolean; updatedAt: string };
 type CreatedTenantRecord = TenantLifecycleRecord & {
   name: string;
   createdAt: string;
@@ -42,6 +42,31 @@ function matches(actual: string, expected: string): boolean {
   return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
+const LIFECYCLE_CONFLICT_CODES = new Set([
+  'TENANT_LIFECYCLE_BASELINE_CONFLICT',
+  'TENANT_LIFECYCLE_TRANSITION_CONFLICT',
+  'DEFAULT_TENANT_PROTECTED',
+  'LAST_ACTIVE_TENANT_PROTECTED',
+  'TENANT_NOT_FOUND',
+]);
+
+function lifecycleMutationError(error: unknown): { status: number; error: string; code: string } {
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
+  if (code && LIFECYCLE_CONFLICT_CODES.has(code)) {
+    return { status: 409, error: error instanceof Error ? error.message : String(error), code };
+  }
+  if (code?.startsWith('TENANT_STORE_')) {
+    return { status: 503, error: 'Tenant lifecycle storage unavailable', code };
+  }
+  return {
+    status: 500,
+    error: 'Tenant lifecycle update failed',
+    code: code ?? 'TENANT_LIFECYCLE_UPDATE_FAILED',
+  };
+}
+
 export function registerGovernanceTenantLifecycleRoutes(options: {
   router: Router;
   secret: string;
@@ -55,12 +80,21 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
     tenantId: string,
     disabled: boolean,
     actorUserId: string,
+    expectedUpdatedAt: string,
   ) => Promise<TenantLifecycleRecord>;
-  dependencyImpact?: (tenantId: string) => Promise<{
+  onTenantLifecycleChanged?: (change: {
+    tenantId: string;
+    disabled: boolean;
+    actorUserId: string;
+    reason: string;
+    updatedAt: string;
+  }) => Promise<'applied' | 'pending' | void>;
+  dependencyImpact?: (tenantId: string, action: 'suspend' | 'resume') => Promise<{
     affectedResources: Array<{ type: string; id: string; version: number }>; blockers: string[];
   }>;
 }): void {
   const { router } = options;
+  const commitsInFlight = new Set<string>();
 
   router.post('/tenants', async (req, res) => {
     if (options.personaFor(req) !== 'platform_admin') {
@@ -119,11 +153,17 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
     if (!tenantId || !options.getTenant) {
       return res.status(503).json({ error: 'Tenant lifecycle authority unavailable', code: 'TENANT_LIFECYCLE_AUTHORITY_UNAVAILABLE' });
     }
-    const tenant = options.getTenant(tenantId);
+    let tenant: TenantLifecycleRecord | undefined;
+    try {
+      tenant = options.getTenant(tenantId);
+    } catch (error) {
+      const mapped = lifecycleMutationError(error);
+      return res.status(mapped.status).json({ error: mapped.error, code: mapped.code });
+    }
     if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
     const status = tenant.disabled ? 'suspended' : 'active';
     return res.json({
-      tenantId: tenant.id, status, updatedAt: tenant.updatedAt,
+      tenantId: tenant.id, tenantName: tenant.name ?? tenant.id, status, updatedAt: tenant.updatedAt,
       allowedActions: tenant.id === PLATFORM_TENANT_ID ? [] : [{
         id: status === 'active' ? 'suspend' : 'resume',
         label: status === 'active' ? '暂停组织' : '恢复组织',
@@ -139,7 +179,13 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
     const tenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
     if (!parsed.success || !tenantId) return res.status(400).json({ error: 'Invalid request' });
     if (!options.getTenant) return res.status(503).json({ error: 'Tenant lifecycle authority unavailable' });
-    const tenant = options.getTenant(tenantId);
+    let tenant: TenantLifecycleRecord | undefined;
+    try {
+      tenant = options.getTenant(tenantId);
+    } catch (error) {
+      const mapped = lifecycleMutationError(error);
+      return res.status(mapped.status).json({ error: mapped.error, code: mapped.code });
+    }
     if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
     if (tenantId === PLATFORM_TENANT_ID) {
       return res.status(409).json({ error: 'Platform tenant lifecycle is protected', code: 'DEFAULT_TENANT_PROTECTED' });
@@ -150,9 +196,12 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
       return res.status(409).json({ error: 'Tenant lifecycle transition conflict', code: 'TENANT_LIFECYCLE_TRANSITION_CONFLICT' });
     }
     if (!options.dependencyImpact) return res.status(503).json({ error: 'Dependency impact authority unavailable', code: 'DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE' });
-    const dependencyImpact = await options.dependencyImpact(tenantId).catch(() => null);
+    const dependencyImpact = await options.dependencyImpact(tenantId, parsed.data.action).catch(() => null);
     if (!dependencyImpact) return res.status(503).json({ error: 'Dependency impact authority unavailable', code: 'DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE' });
-    const baselineDigest = governanceDigest({ tenantId, status: currentStatus, updatedAt: tenant.updatedAt });
+    const baselineDigest = governanceDigest({
+      tenantId, status: currentStatus, updatedAt: tenant.updatedAt,
+      affectedResources: dependencyImpact.affectedResources, blockers: dependencyImpact.blockers,
+    });
     const expiresAt = new Date(options.now().getTime() + options.previewTtlMs).toISOString();
     const signature = {
       version: 1, actorUserId: req.user!.sub, tenantId,
@@ -188,19 +237,78 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
     if (!matches(parsed.data.previewId, expectedPreviewId)) {
       return res.status(409).json({ error: 'Tenant lifecycle preview invalid', code: 'TENANT_LIFECYCLE_PREVIEW_INVALID' });
     }
-    const tenant = options.getTenant(tenantId);
-    const status = tenant?.disabled ? 'suspended' : 'active';
-    if (!tenant || governanceDigest({ tenantId, status, updatedAt: tenant.updatedAt }) !== parsed.data.baselineDigest) {
-      return res.status(409).json({ error: 'Tenant lifecycle baseline changed', code: 'TENANT_LIFECYCLE_BASELINE_CONFLICT' });
-    }
-    try {
-      const updated = await options.setTenantDisabled(tenantId, parsed.data.action === 'suspend', req.user!.sub);
-      return res.json({
-        tenantId, status: updated.disabled ? 'suspended' : 'active', updatedAt: updated.updatedAt,
-        changeId: res.locals.governanceChangeId, effectiveAt: updated.updatedAt,
+    if (commitsInFlight.has(tenantId)) {
+      return res.status(409).json({
+        error: 'Tenant lifecycle transition already in progress',
+        code: 'TENANT_LIFECYCLE_TRANSITION_IN_PROGRESS',
       });
-    } catch (error) {
-      return res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+    commitsInFlight.add(tenantId);
+    try {
+      let tenant: TenantLifecycleRecord | undefined;
+      try {
+        tenant = options.getTenant(tenantId);
+      } catch (error) {
+        const mapped = lifecycleMutationError(error);
+        return res.status(mapped.status).json({ error: mapped.error, code: mapped.code });
+      }
+      const status = tenant?.disabled ? 'suspended' : 'active';
+      if (!tenant) {
+        return res.status(409).json({ error: 'Tenant lifecycle baseline changed', code: 'TENANT_LIFECYCLE_BASELINE_CONFLICT' });
+      }
+      const dependencyImpact = await options.dependencyImpact(tenantId, parsed.data.action).catch(() => null);
+      if (!dependencyImpact) return res.status(503).json({ error: 'Dependency impact authority unavailable', code: 'DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE' });
+      const currentBaselineDigest = governanceDigest({
+        tenantId, status, updatedAt: tenant.updatedAt,
+        affectedResources: dependencyImpact.affectedResources, blockers: dependencyImpact.blockers,
+      });
+      if (currentBaselineDigest !== parsed.data.baselineDigest) {
+        return res.status(409).json({ error: 'Tenant lifecycle impact or baseline changed', code: 'TENANT_LIFECYCLE_BASELINE_CONFLICT' });
+      }
+      if (dependencyImpact.blockers.length > 0) {
+        return res.status(409).json({
+          error: `Tenant lifecycle transition blocked: ${dependencyImpact.blockers.join('; ')}`,
+          code: 'TENANT_LIFECYCLE_BLOCKED', blockers: dependencyImpact.blockers,
+        });
+      }
+      const disabled = parsed.data.action === 'suspend';
+      let updated: TenantLifecycleRecord;
+      try {
+        updated = await options.setTenantDisabled(
+          tenantId,
+          disabled,
+          req.user!.sub,
+          tenant.updatedAt,
+        );
+      } catch (error) {
+        const mapped = lifecycleMutationError(error);
+        return res.status(mapped.status).json({ error: mapped.error, code: mapped.code });
+      }
+
+      let propagationStatus: 'applied' | 'pending' = 'applied';
+      try {
+        const result = await options.onTenantLifecycleChanged?.({
+          tenantId,
+          disabled,
+          actorUserId: req.user!.sub,
+          reason: parsed.data.reason,
+          updatedAt: updated.updatedAt,
+        });
+        if (result === 'pending') propagationStatus = 'pending';
+      } catch {
+        propagationStatus = 'pending';
+      }
+      const response = {
+        tenantId, status: updated.disabled ? 'suspended' : 'active', updatedAt: updated.updatedAt,
+        changeId: res.locals.governanceChangeId, effectiveAt: updated.updatedAt, propagationStatus,
+        ...(propagationStatus === 'pending' ? {
+          warning: 'Tenant state persisted; cross-instance effects are retrying',
+          code: 'TENANT_LIFECYCLE_PROPAGATION_PENDING',
+        } : {}),
+      };
+      return propagationStatus === 'pending' ? res.status(202).json(response) : res.json(response);
+    } finally {
+      commitsInFlight.delete(tenantId);
     }
   });
 }

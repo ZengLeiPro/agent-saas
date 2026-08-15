@@ -367,6 +367,21 @@ describe('updateResponseSessionState 动态 SET/参数位装配（现场增补�
   });
 });
 
+describe('PgRunStore.cancelActiveByTenant', () => {
+  it('只把目标组织的活跃状态原子更新为 cancelled，并返回实际影响行数', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 3 });
+    const store = new PgRunStore({ pool: { query } as any });
+
+    await expect(store.cancelActiveByTenant('tenant-a', 'Tenant disabled')).resolves.toBe(3);
+    const [sql, params] = query.mock.calls[0]! as [string, unknown[]];
+    expect(sql).toContain("WHERE tenant_id = $1");
+    expect(sql).toContain("status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')");
+    expect(sql).toContain("status = 'cancelled'");
+    expect(params[0]).toBe('tenant-a');
+    expect(params[1]).toBe('Tenant disabled');
+  });
+});
+
 // ════════════════════════ sessionProjectionStore.ts ════════════════════════
 
 describe('PgSessionProjectionStore.list 查询构造（假 pool 捕获 SQL+params）', () => {

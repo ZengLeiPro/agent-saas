@@ -83,8 +83,20 @@ export function createGovernanceAccessRouter(deps: {
     id: string; name: string; createdAt: string; createdBy: string; updatedAt: string;
   }>;
   rollbackTenantCreate?: (tenantId: string) => Promise<void>;
-  getTenantLifecycle?: (tenantId: string) => { id: string; disabled?: boolean; updatedAt: string } | undefined;
-  setTenantDisabled?: (tenantId: string, disabled: boolean, actorUserId: string) => Promise<{ id: string; disabled?: boolean; updatedAt: string }>;
+  getTenantLifecycle?: (tenantId: string) => { id: string; name?: string; disabled?: boolean; updatedAt: string } | undefined;
+  setTenantDisabled?: (
+    tenantId: string,
+    disabled: boolean,
+    actorUserId: string,
+    expectedUpdatedAt: string,
+  ) => Promise<{ id: string; disabled?: boolean; updatedAt: string }>;
+  onTenantLifecycleChanged?: (change: {
+    tenantId: string;
+    disabled: boolean;
+    actorUserId: string;
+    reason: string;
+    updatedAt: string;
+  }) => Promise<'applied' | 'pending' | void>;
   audit: GovernanceAuditStore;
   contentAccess?: PgContentAccessGrantStore;
   projectionOutbox?: PgGovernanceProjectionOutboxStore;
@@ -277,7 +289,7 @@ export function createGovernanceAccessRouter(deps: {
       : user.tenantId;
     const correlationId = `governance-access:${randomUUID()}`;
     const actorPersona = personas.get(req)!;
-    const auditReason = typeof req.body?.reason === 'string' ? req.body.reason : undefined;
+    const auditReason = typeof req.body?.reason === 'string' ? req.body.reason.trim() || undefined : undefined;
     let intentAuditId: string;
     try {
       const intent = await deps.audit.append({
@@ -660,7 +672,8 @@ export function createGovernanceAccessRouter(deps: {
     ...(deps.rollbackTenantCreate ? { rollbackTenantCreate: deps.rollbackTenantCreate } : {}),
     ...(deps.getTenantLifecycle ? { getTenant: deps.getTenantLifecycle } : {}),
     ...(deps.setTenantDisabled ? { setTenantDisabled: deps.setTenantDisabled } : {}),
-    ...(deps.resolveDependencyImpact ? { dependencyImpact: (tenantId: string) => tenantDependencyImpact(deps.resolveDependencyImpact!, tenantId) } : {}),
+    ...(deps.onTenantLifecycleChanged ? { onTenantLifecycleChanged: deps.onTenantLifecycleChanged } : {}),
+    ...(deps.resolveDependencyImpact ? { dependencyImpact: (tenantId, action) => tenantDependencyImpact(deps.resolveDependencyImpact!, tenantId, action) } : {}),
   });
 
   router.get('/directory-groups', async (req, res) => {

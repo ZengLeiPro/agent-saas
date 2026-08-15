@@ -345,6 +345,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     runtimeRunController.register(record.runId, abortController, {
       abortOnDrain: false,
       userId: taskSession.userId,
+      tenantId: record.tenantId,
     });
     const renewTimer = lease ? setInterval(() => {
       void lease.renew().catch((err) => {
@@ -633,6 +634,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     runtimeRunController.register(record.runId, abortController, {
       abortOnDrain: false,
       userId: taskSession.userId,
+      tenantId: record.tenantId,
     });
     const renewTimer = lease ? setInterval(() => {
       void lease.renew().catch((err) => abortController.abort(err instanceof Error ? err : new Error(String(err))));

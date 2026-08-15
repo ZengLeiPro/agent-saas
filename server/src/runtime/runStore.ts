@@ -217,6 +217,7 @@ export interface RunStore {
   findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null>;
   getActiveBySession?(sessionId: string): Promise<RunRecord | null>;
   cancelActiveByUser?(userId: string, reason: string): Promise<number>;
+  cancelActiveByTenant?(tenantId: string, reason: string): Promise<number>;
   listActiveByUser?(userId: string): Promise<RunRecord[]>;
   getActiveCounts?(): Promise<ActiveRunCounts>;
   listBySession?(sessionId: string, options?: { limit?: number; beforeUpdatedAt?: string }): Promise<RunRecord[]>;
@@ -1198,6 +1199,21 @@ export class PgRunStore implements RunStore {
 
   async cancelActiveByUser(userId: string, reason: string): Promise<number> {
     return cancelActiveRunsByUser(this, userId, reason);
+  }
+
+  async cancelActiveByTenant(tenantId: string, reason: string): Promise<number> {
+    const now = new Date().toISOString();
+    const result = await this.pool.query(`
+      UPDATE ${this.runsTable}
+      SET status = 'cancelled',
+          status_reason = $2,
+          updated_at = $3,
+          cancelled_at = $3,
+          metadata = metadata - 'wakeMessage'
+      WHERE tenant_id = $1
+        AND status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+    `, [tenantId, reason, now]);
+    return result.rowCount ?? 0;
   }
 
   async listActiveByUser(userId: string): Promise<RunRecord[]> {

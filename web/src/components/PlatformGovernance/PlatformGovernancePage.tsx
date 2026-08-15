@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Boxes, TriangleAlert } from "lucide-react";
 
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
@@ -33,6 +33,7 @@ interface PlatformAdminRecord { userId: string; status: string; source: string; 
 interface PlatformAdminResponse { platformAdmins: PlatformAdminRecord[] }
 interface TenantLifecycleResponse {
   tenantId: string;
+  tenantName: string;
   status: "active" | "suspended";
   updatedAt: string;
   allowedActions: Array<{ id: string; label: string; action: "suspend" | "resume"; requiresReason: boolean }>;
@@ -47,12 +48,21 @@ interface ScopePreview extends GovernancePreviewToken {
 interface GovernanceReceipt {
   version?: number; status?: string; changeId: string; auditId: string; effectiveAt: string;
   projectionStatus?: string; projectionId?: string; auditCompletion?: "pending"; auditProjectionId?: string;
+  propagationStatus?: "applied" | "pending"; warning?: string; code?: string;
 }
 interface TenantLifecyclePreview extends GovernancePreviewToken {
   previewId: string;
   baselineDigest: string;
   expiresAt: string;
-  impact: { tenantId: string; from: string; to: string; blockers: string[]; reversible: boolean; effectiveMode: string };
+  impact: {
+    tenantId: string;
+    from: string;
+    to: string;
+    affectedResources?: Array<{ type: string; id: string; version: number }>;
+    blockers: string[];
+    reversible: boolean;
+    effectiveMode: string;
+  };
 }
 
 const statusLabels: Record<string, string> = {
@@ -100,6 +110,8 @@ const resourceTypeLabels: Record<string, string> = {
   environment: "环境",
   environment_template: "环境模板",
   tool: "工具",
+  membership: "成员身份",
+  tenant: "组织",
 };
 
 function localizedValue(value: string | null | undefined, labels: Record<string, string>) {
@@ -116,7 +128,15 @@ function Header({ title, description }: { title: string; description: string }) 
 }
 
 function Receipt({ value }: { value: GovernanceReceipt }) {
-  return <div className="space-y-1 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-xs"><div className="font-medium">变更回执</div><div>changeId：{value.changeId}</div><div>auditId：{value.auditId}{value.auditCompletion === "pending" ? "（终态审计排队中）" : ""}</div><div>生效时间：{new Date(value.effectiveAt).toLocaleString()}</div>{value.projectionStatus ? <div>投影：{localizedValue(value.projectionStatus, statusLabels)}{value.projectionId ? ` · ${value.projectionId}` : ""}</div> : null}</div>;
+  const propagationPending = value.propagationStatus === "pending";
+  return <div className={`space-y-1 rounded-xl border p-4 text-xs ${propagationPending ? "border-amber-500/30 bg-amber-500/5" : "border-emerald-500/30 bg-emerald-500/5"}`}>
+    <div className="font-medium">{propagationPending ? "组织状态已保存，跨实例生效正在重试" : "变更回执"}</div>
+    <div>changeId：{value.changeId}</div>
+    <div>auditId：{value.auditId}{value.auditCompletion === "pending" ? "（终态审计排队中）" : ""}</div>
+    <div>{propagationPending ? "状态保存时间" : "生效时间"}：{new Date(value.effectiveAt).toLocaleString()}</div>
+    {propagationPending ? <div>{value.warning ?? "现有连接与运行将在后台重试中止，请稍后刷新确认。"}</div> : null}
+    {value.projectionStatus ? <div>投影：{localizedValue(value.projectionStatus, statusLabels)}{value.projectionId ? ` · ${value.projectionId}` : ""}</div> : null}
+  </div>;
 }
 
 function TenantLifecyclePanel({ tenantId }: { tenantId: string }) {
@@ -127,19 +147,34 @@ function TenantLifecyclePanel({ tenantId }: { tenantId: string }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [mutationError, setMutationError] = useState("");
+  const mutationInFlight = useRef(false);
+  const reasonRef = useRef(reason);
+  if (receipt && (loading || error || !data)) return <div className="space-y-3">
+    <Receipt value={receipt} />
+    {loading
+      ? <div className="text-sm text-muted-foreground">{receipt.propagationStatus === "pending" ? "组织状态已保存，正在重试跨实例生效并刷新权威状态…" : "变更已生效，正在刷新组织权威状态…"}</div>
+      : error
+        ? <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm">{receipt.propagationStatus === "pending" ? "组织状态已保存，跨实例生效仍在重试，且状态刷新失败" : "变更已生效，但组织状态刷新失败"}：{error.message}</div>
+        : <div className="text-sm text-muted-foreground">{receipt.propagationStatus === "pending" ? "组织状态已保存，跨实例生效仍在重试。" : "变更已生效，组织权威状态暂不可用。"}</div>}
+  </div>;
   if (loading) return <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">正在读取生命周期…</div>;
   if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
   if (!data) return <Empty>组织生命周期数据不可用。</Empty>;
   const action = data.allowedActions[0];
   const runPreview = async () => {
-    if (!action) return;
+    if (!action || mutationInFlight.current) return;
+    mutationInFlight.current = true;
+    const previewReason = reason;
     setBusy(true); setMutationError(""); setReceipt(null);
-    try { setPreview(await governanceAccessApi.previewTenantLifecycle<TenantLifecyclePreview>(tenantId, { action: action.action, reason })); }
-    catch (cause) { setMutationError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { setBusy(false); }
+    try {
+      const result = await governanceAccessApi.previewTenantLifecycle<TenantLifecyclePreview>(tenantId, { action: action.action, reason: previewReason });
+      if (reasonRef.current === previewReason) setPreview(result);
+    } catch (cause) { setMutationError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { mutationInFlight.current = false; setBusy(false); }
   };
   const commit = async () => {
-    if (!action || !preview) return;
+    if (!action || !preview || mutationInFlight.current) return;
+    mutationInFlight.current = true;
     setBusy(true); setMutationError("");
     try {
       const result = await governanceAccessApi.updateTenantLifecycle<GovernanceReceipt>(tenantId, {
@@ -147,15 +182,41 @@ function TenantLifecyclePanel({ tenantId }: { tenantId: string }) {
         baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt,
       });
       setReceipt(result); setPreview(null); retry();
-    } catch (cause) { setMutationError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { setBusy(false); }
+    } catch (cause) {
+      setPreview(null);
+      setReceipt(null);
+      setMutationError(cause instanceof Error ? cause.message : String(cause));
+      retry();
+    } finally { mutationInFlight.current = false; setBusy(false); }
   };
+  const affectedResources = preview?.impact.affectedResources ?? [];
+  const visibleResources = affectedResources.slice(0, 10);
   return <div className="space-y-4">
-    <div className="grid gap-3 sm:grid-cols-3"><Fact label="状态" value={localizedValue(data.status, statusLabels)} /><Fact label="更新时间" value={new Date(data.updatedAt).toLocaleString()} /><Fact label="组织 ID" value={data.tenantId} /></div>
-    {action ? <Input value={reason} onChange={event => { setReason(event.target.value); setPreview(null); setReceipt(null); }} placeholder="填写操作原因" /> : null}
+    <div className="grid gap-3 sm:grid-cols-3"><Fact label="状态" value={localizedValue(data.status, statusLabels)} /><Fact label="目标组织" value={data.tenantName} /><Fact label="组织 ID" value={data.tenantId} /></div>
+    {action ? <Input value={reason} disabled={busy} onChange={event => { reasonRef.current = event.target.value; setReason(event.target.value); setPreview(null); setReceipt(null); }} placeholder="填写操作原因" /> : null}
     {mutationError ? <div className="rounded-xl border border-destructive/30 p-3 text-sm text-destructive">{mutationError}</div> : null}
     {receipt ? <Receipt value={receipt} /> : null}
-    {preview ? <div className="rounded-xl border bg-card p-4"><div className="text-sm">{localizedValue(preview.impact.from, statusLabels)} → {localizedValue(preview.impact.to, statusLabels)} · {preview.impact.reversible ? "可逆" : "不可逆"}</div><div className="mt-1 text-xs text-muted-foreground">生效方式：{localizedValue(preview.impact.effectiveMode, effectiveModeLabels)} · 基线 {preview.baselineDigest.slice(0, 12)}… · 有效期至 {new Date(preview.expiresAt).toLocaleString()}</div>{preview.impact.blockers.length ? <div className="mt-2 rounded border border-destructive/30 p-2 text-xs text-destructive">阻断：{preview.impact.blockers.join("、")}</div> : null}<Button className="mt-3" disabled={busy || preview.impact.blockers.length > 0 || Date.parse(preview.expiresAt) <= Date.now()} onClick={() => void commit()}>确认执行</Button></div> : action ? <Button disabled={busy || reason.trim().length < 3} onClick={() => void runPreview()}>{action.label}</Button> : <Empty>后端未返回可执行动作。</Empty>}
+    {preview ? <div className="space-y-3 rounded-xl border bg-card p-4">
+      <div>
+        <div className="font-medium">确认{action?.action === "suspend" ? "暂停" : "恢复"}组织：{data.tenantName}</div>
+        <div className="mt-1 text-sm">{localizedValue(preview.impact.from, statusLabels)} → {localizedValue(preview.impact.to, statusLabels)} · {preview.impact.reversible ? "可逆" : "不可逆"}</div>
+      </div>
+      <div className="rounded-lg bg-muted/50 p-3 text-xs">
+        {action?.action === "suspend" ? <ul className="list-disc space-y-1 pl-4">
+          <li>成员后续登录和新执行请求将被拒绝，现有 Web 连接会断开。</li>
+          <li>组织、成员、会话与历史数据均会保留，不执行删除或清理。</li>
+          <li>恢复组织后，成员可按原有权限重新访问。</li>
+        </ul> : <div>恢复后解除组织级访问与执行限制，不修改成员权限或历史数据。</div>}
+      </div>
+      <div className="text-xs text-muted-foreground">生效方式：{localizedValue(preview.impact.effectiveMode, effectiveModeLabels)} · 基线 {preview.baselineDigest.slice(0, 12)}… · 有效期至 {new Date(preview.expiresAt).toLocaleString()}</div>
+      <div className="text-xs">
+        <div className="font-medium">权威影响资源（{affectedResources.length}）</div>
+        {visibleResources.length ? <ul className="mt-1 space-y-1 text-muted-foreground">{visibleResources.map(resource => <li key={`${resource.type}:${resource.id}`}>{localizedValue(resource.type, resourceTypeLabels)}：<code>{resource.id}</code> · v{resource.version}</li>)}</ul> : <div className="mt-1 text-muted-foreground">当前没有活动成员身份受影响。</div>}
+        {affectedResources.length > visibleResources.length ? <div className="mt-1 text-muted-foreground">另有 {affectedResources.length - visibleResources.length} 项未展开。</div> : null}
+      </div>
+      {preview.impact.blockers.length ? <div className="rounded border border-destructive/30 p-2 text-xs text-destructive">阻断：{preview.impact.blockers.join("、")}</div> : null}
+      <Button disabled={busy || preview.impact.blockers.length > 0 || Date.parse(preview.expiresAt) <= Date.now()} onClick={() => void commit()}>确认{action?.action === "suspend" ? "暂停" : "恢复"}组织</Button>
+    </div> : action ? <Button disabled={busy || reason.trim().length < 3} onClick={() => void runPreview()}>{action.label}</Button> : <Empty>后端未返回可执行动作。</Empty>}
   </div>;
 }
 
@@ -278,7 +339,7 @@ export function PlatformOrganizationGovernance({ tenantId, route }: { tenantId: 
   </div>;
 
   if (tab === "billing") return <div><Header title="计费" description="只呈现已有真实商业字段，不虚构订单、续费或自动降级状态机。" /><Empty>计费明细继续使用现有平台计费页面；本组织详情尚未提供统一计费聚合 DTO。</Empty></div>;
-  if (tab === "security-lifecycle") return <div><Header title="安全与生命周期" description="组织暂停与恢复执行预览→基线校验→审计回执；删除继续走持久化变更任务。" /><TenantLifecyclePanel tenantId={tenantId} /></div>;
+  if (tab === "security-lifecycle") return <div><Header title="安全与生命周期" description="组织暂停与恢复执行预览→基线校验→审计回执；删除继续走持久化变更任务。" /><TenantLifecyclePanel key={tenantId} tenantId={tenantId} /></div>;
   return <div><Header title="组织治理概览" description="组织权益、资源范围和策略均来自治理事实源。" />
     <div className="grid gap-3 sm:grid-cols-3"><Fact label="权益状态" value={entitlement ? localizedValue(entitlement.status, statusLabels) : "未配置"} /><Fact label="资源范围" value={`${data?.scopes.length ?? 0} 类`} /><Fact label="组织策略" value={`${data?.policies.length ?? 0} 项`} /></div>
     <div className="mt-4 flex items-start gap-2 rounded-xl border bg-card p-4 text-sm"><EntityIcons.admin className="mt-0.5 size-4 shrink-0" /><span>本页读取新治理事实源，不再用旧 TenantSettings 推导权限。</span></div>

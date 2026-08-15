@@ -867,6 +867,17 @@ export type PlatformEvent =
   | {
     id: string;
     timestamp: string;
+    type: 'tenant_lifecycle_changed';
+    sessionId: string;
+    tenantId: string;
+    disabled: boolean;
+    actorUserId: string;
+    reason: string;
+    updatedAt: string;
+  }
+  | {
+    id: string;
+    timestamp: string;
     type: 'run_cancel_requested';
     sessionId?: string;
     runId?: string;

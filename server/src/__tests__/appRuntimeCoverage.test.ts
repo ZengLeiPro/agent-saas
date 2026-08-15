@@ -23,22 +23,42 @@ describe('createRuntime 运行时装配（补充分支）', () => {
     cleanupRoots.clear();
   });
 
-  it('processRole 缺省为 all，可显式指定 ws-only/runtime-worker', async () => {
+  it('processRole 缺省为 all；多进程角色未配置 PG 时 fail-fast', async () => {
     const { rootDir, processCwd } = await createFixture({ agent: {}, server: {} });
     cleanupRoots.add(rootDir);
 
     const runtimeAll = await createRuntime({ processCwd });
     expect(runtimeAll.processRole).toBe('all');
 
-    const { rootDir: r2, processCwd: cwd2 } = await createFixture({ agent: {}, server: {} });
+    const { rootDir: r2, processCwd: cwd2 } = await createFixture({
+      agent: {}, server: {}, auth: { enabled: true, jwtSecret: 'x'.repeat(32) },
+    });
     cleanupRoots.add(r2);
-    const runtimeWs = await createRuntime({ processCwd: cwd2, processRole: 'ws-only' });
-    expect(runtimeWs.processRole).toBe('ws-only');
+    await expect(createRuntime({ processCwd: cwd2, processRole: 'ws-only' }))
+      .rejects.toThrow(/requires runtimeEventStore\.backend=pg/);
 
-    const { rootDir: r3, processCwd: cwd3 } = await createFixture({ agent: {}, server: {} });
+    const { rootDir: r3, processCwd: cwd3 } = await createFixture({
+      agent: {}, server: {}, auth: { enabled: true, jwtSecret: 'x'.repeat(32) },
+    });
     cleanupRoots.add(r3);
-    const runtimeWorker = await createRuntime({ processCwd: cwd3, processRole: 'runtime-worker' });
-    expect(runtimeWorker.processRole).toBe('runtime-worker');
+    await expect(createRuntime({ processCwd: cwd3, processRole: 'runtime-worker' }))
+      .rejects.toThrow(/requires runtimeEventStore\.backend=pg/);
+  });
+
+  it('production 的 auth 运行态即使 processRole=all 也必须使用 PG，禁止多实例误用文件锁', async () => {
+    const { rootDir, processCwd } = await createFixture({
+      agent: {}, server: {}, auth: { enabled: true, jwtSecret: 'x'.repeat(32) },
+    });
+    cleanupRoots.add(rootDir);
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      await expect(createRuntime({ processCwd }))
+        .rejects.toThrow(/requires runtimeEventStore\.backend=pg/);
+    } finally {
+      if (previous === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previous;
+    }
   });
 
   it('runtime-worker 遇到进程内 clientDaemon 配置时 fail-fast，避免静默切断本地 Hand', async () => {

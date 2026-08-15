@@ -148,4 +148,19 @@ describe('runtimeRunController', () => {
     expect(aliceCommand.signal.aborted).toBe(true);
     expect(bobAgent.signal.aborted).toBe(false);
   });
+
+  it('aborts active runs in the suspended tenant across foreground and background registrations', () => {
+    const first = new AbortController();
+    const second = new AbortController();
+    const other = new AbortController();
+    runtimeRunController.register('tenant-a-foreground', first, { tenantId: 'tenant-a' });
+    runtimeRunController.register('tenant-a-background', second, { tenantId: 'tenant-a', abortOnDrain: false });
+    runtimeRunController.register('tenant-b-foreground', other, { tenantId: 'tenant-b' });
+    runIds.push('tenant-a-foreground', 'tenant-a-background', 'tenant-b-foreground');
+
+    expect(runtimeRunController.abortByTenant('tenant-a', 'Tenant disabled')).toBe(2);
+    expect(first.signal.aborted).toBe(true);
+    expect(second.signal.aborted).toBe(true);
+    expect(other.signal.aborted).toBe(false);
+  });
 });

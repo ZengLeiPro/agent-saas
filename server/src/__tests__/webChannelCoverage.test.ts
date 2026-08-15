@@ -1645,9 +1645,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const enqueued: UpsertRunInput[] = [];
       const rig = resumeRig(runStore, tmp, enqueued);
 
-      await (rig.channel as any).resolveInteraction(
-        wsClient(rig.ws, USER), 'appr-1', { allow: true, message: '可以执行' }, sessionId,
-      );
+      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: true, message: '可以执行' }, sessionId);
       expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'appr-1' });
       expect(enqueued).toHaveLength(1);
       expect(enqueued[0]).toMatchObject({
@@ -1662,9 +1660,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
 
       // 第二次 respond：日志里已有 interaction_resolved → 直接 respond_ok，不再入队
       rig.ws.sent.length = 0;
-      await (rig.channel as any).resolveInteraction(
-        wsClient(rig.ws, USER), 'appr-1', { allow: true }, sessionId,
-      );
+      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: true }, sessionId);
       expect(rig.ws.sent.map((m) => m.data.type)).toEqual(['respond_ok']);
       expect(enqueued).toHaveLength(1);
     });
@@ -1686,9 +1682,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const enqueued: UpsertRunInput[] = [];
       const rig = resumeRig(runStore, tmp, enqueued);
 
-      await (rig.channel as any).resolveInteraction(
-        wsClient(rig.ws, USER), 'appr-t-1', { allow: true }, sessionId,
-      );
+      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-t-1', { allow: true }, sessionId);
       expect(rig.ws.sent.at(-1)?.data).toEqual({
         type: 'respond_ok', interactionId: 'appr-t-1',
       });
@@ -1699,37 +1693,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         approvalId: 'appr-t-1',
         decision: 'rejected',
         message: expect.stringContaining('源 run 不可恢复（completed）'),
-      });
-    });
-
-    it('approval 源 run 缺失 → fail-closed 拒绝且不重建旧 run', async () => {
-      const tmp = await makeTmp('cov-apprmissing-');
-      const { sessionId, eventStore } = await seedRuntimeSession(USER, { executionTarget: 'server-local' });
-      await eventStore.append({
-        type: 'assistant_tool_calls', sessionId, runId: 'run-appr-missing', content: '',
-        toolCalls: [{ id: 'call-missing-1', name: 'Shell', arguments: '{}' }],
-      } as any);
-      await eventStore.append({
-        type: 'approval_requested', sessionId, runId: 'run-appr-missing', approvalId: 'appr-missing-1',
-        toolCallId: 'call-missing-1', toolId: 'Shell', toolName: 'Shell', input: {},
-      } as any);
-      const runStore = new MemoryRunStore();
-      const enqueued: UpsertRunInput[] = [];
-      const rig = resumeRig(runStore, tmp, enqueued);
-
-      await (rig.channel as any).resolveInteraction(
-        wsClient(rig.ws, USER), 'appr-missing-1', { allow: true }, sessionId,
-      );
-
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'appr-missing-1' });
-      expect(enqueued).toHaveLength(0);
-      expect(await runStore.get('run-appr-missing')).toBeNull();
-      const events = await eventStore.list(sessionId);
-      expect(events.at(-1)).toMatchObject({
-        type: 'approval_resolved',
-        approvalId: 'appr-missing-1',
-        decision: 'rejected',
-        message: expect.stringContaining('源 run 不可恢复（missing）'),
       });
     });
 

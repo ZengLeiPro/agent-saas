@@ -1,8 +1,7 @@
 import type { DragEvent } from "react";
 import type { TaskBoardTask } from "@agent/shared";
-import { ArrowDown, ArrowUp, CalendarDays, CircleCheck, GitBranch, MessageCircle, UserRound } from "lucide-react";
+import { CalendarDays, CircleCheck, GitBranch, MessageCircle, UserRound } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatDueAt, formatTaskDate, PRIORITY_CLASSES, PRIORITY_LABELS } from "./constants";
 
@@ -10,11 +9,7 @@ interface TaskCardProps {
   task: TaskBoardTask;
   readOnly: boolean;
   allowDrag: boolean;
-  canMoveUp: boolean;
-  canMoveDown: boolean;
   onOpen: (task: TaskBoardTask) => void;
-  onMoveUp: (task: TaskBoardTask) => void;
-  onMoveDown: (task: TaskBoardTask) => void;
   onDragStart: (taskId: string) => void;
   onDragEnd: () => void;
   onDropBefore: (taskId: string, event: DragEvent<HTMLDivElement>) => void;
@@ -24,11 +19,7 @@ export function TaskCard({
   task,
   readOnly,
   allowDrag,
-  canMoveUp,
-  canMoveDown,
   onOpen,
-  onMoveUp,
-  onMoveDown,
   onDragStart,
   onDragEnd,
   onDropBefore,
@@ -128,32 +119,6 @@ export function TaskCard({
           </div>
         </div>
       </button>
-      {!readOnly ? (
-        <div className="mt-2 flex justify-end gap-1 border-t pt-2" aria-label={`${task.identifier} 排序操作`}>
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            className="size-7"
-            aria-label={`上移 ${task.identifier}`}
-            disabled={!canMoveUp}
-            onClick={() => onMoveUp(task)}
-          >
-            <ArrowUp className="size-3.5" />
-          </Button>
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            className="size-7"
-            aria-label={`下移 ${task.identifier}`}
-            disabled={!canMoveDown}
-            onClick={() => onMoveDown(task)}
-          >
-            <ArrowDown className="size-3.5" />
-          </Button>
-        </div>
-      ) : null}
     </div>
   );
 }

@@ -198,21 +198,6 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     return moveTaskTo(task, status, previousTaskId, undefined);
   }, [moveTaskTo, tasks]);
 
-  const moveWithinStatus = useCallback((task: TaskBoardTask, direction: "up" | "down") => {
-    const visibleColumn = sortedInStatus(visibleTasks, task.status);
-    const currentIndex = visibleColumn.findIndex((item) => item.id === task.id);
-    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
-    const target = visibleColumn[targetIndex];
-    if (currentIndex < 0 || !target) return;
-
-    const peers = sortedInStatus(tasks, task.status, task.id);
-    const peerIndex = peers.findIndex((item) => item.id === target.id);
-    if (peerIndex < 0) return;
-    const previousTaskId = direction === "up" ? peers[peerIndex - 1]?.id : target.id;
-    const nextTaskId = direction === "up" ? target.id : peers[peerIndex + 1]?.id;
-    void moveTaskTo(task, task.status, previousTaskId, nextTaskId).catch(() => undefined);
-  }, [moveTaskTo, tasks, visibleTasks]);
-
   const openTaskDialog = (status: TaskBoardStatus) => {
     setTaskDialogStatus(status);
     setTaskDialogOpen(true);
@@ -302,7 +287,6 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
                 setSelectedTaskId(task.id);
                 setDetailOpen(true);
               }}
-              onMoveTask={moveWithinStatus}
               onDragStart={setDraggedTaskId}
               onDragEnd={() => setDraggedTaskId(null)}
               onDrop={handleDrop}

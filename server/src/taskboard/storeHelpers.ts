@@ -111,7 +111,7 @@ export function assertWritableTask(task: TaskBoardTask, boardArchivedAt?: string
   }
 }
 
-export function assertExpectedVersion<T extends TaskBoard | TaskBoardTask>(current: T, expectedVersion: number): void {
+export function assertExpectedVersion<T extends TaskBoard | TaskBoardTask | TaskBoardComment>(current: T, expectedVersion: number): void {
   if (current.version !== expectedVersion) throw new TaskboardConflictError(current);
 }
 

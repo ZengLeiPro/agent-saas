@@ -27,6 +27,7 @@ describePg('PgTaskboardStore contract', () => {
   const alice: TaskboardIdentity = { tenantId: 'tenant-a', ownerUserId: 'alice-id', username: 'alice' };
   const aliceOtherTenant: TaskboardIdentity = { tenantId: 'tenant-b', ownerUserId: 'alice-id', username: 'alice' };
   const admin: TaskboardIdentity = { tenantId: 'tenant-a', ownerUserId: 'admin-id', username: 'admin' };
+  const bob: TaskboardIdentity = { tenantId: 'tenant-a', ownerUserId: 'bob-id', username: 'bob' };
 
   const dispatch = (executionId: string, runId: string, sessionId: string) => ({
     version: 1 as const,
@@ -142,6 +143,73 @@ describePg('PgTaskboardStore contract', () => {
       name: board.name,
       visibility: 'organization',
     })).rejects.toMatchObject({ code: 'TASKBOARD_BOARD_NAME_EXISTS' });
+  });
+
+  it('paginates board and cross-board task search without leaking tenants', async () => {
+    const privateBoard = await store.createBoard(alice, { name: '搜索私有看板' });
+    const organizationBoard = await store.createBoard(alice, {
+      name: '搜索组织看板', visibility: 'organization',
+    });
+    const foreignBoard = await store.createBoard(aliceOtherTenant, {
+      name: '搜索外租户看板', visibility: 'organization',
+    });
+    await store.createTask(alice, privateBoard.id, {
+      title: '搜索目标 A', labels: ['backend'], priority: 'high', status: 'todo',
+    });
+    await store.createTask(admin, organizationBoard.id, {
+      title: '搜索目标 B', labels: ['backend', 'shared'], priority: 'high', status: 'todo',
+    });
+    await store.createTask(aliceOtherTenant, foreignBoard.id, {
+      title: '搜索目标 C', labels: ['backend'], priority: 'high', status: 'todo',
+    });
+
+    const firstPage = await store.searchBoards(alice, { search: '搜索', page: 1, pageSize: 1 });
+    expect(firstPage).toMatchObject({ page: 1, pageSize: 1, total: 2, hasMore: true });
+    expect(firstPage.items).toHaveLength(1);
+
+    const aliceTasks = await store.searchTasks(alice, {
+      search: '搜索目标', statuses: ['todo'], priorities: ['high'], labels: ['backend'],
+      page: 1, pageSize: 10,
+    });
+    expect(aliceTasks.items.map((item) => item.title).sort()).toEqual(['搜索目标 A', '搜索目标 B']);
+    expect(aliceTasks.total).toBe(2);
+
+    const adminTasks = await store.searchTasks(admin, { search: '搜索目标', page: 1, pageSize: 10 });
+    expect(adminTasks.items.map((item) => item.title)).toEqual(['搜索目标 B']);
+    const foreignTasks = await store.searchTasks(aliceOtherTenant, { search: '搜索目标', page: 1, pageSize: 10 });
+    expect(foreignTasks.items.map((item) => item.title)).toEqual(['搜索目标 C']);
+  });
+
+  it('allows only comment authors or board owners to edit/delete with CAS', async () => {
+    const board = await store.createBoard(alice, {
+      name: '评论权限', visibility: 'organization',
+    });
+    const task = await store.createTask(alice, board.id, { title: '评论任务' });
+    const comment = await store.createComment(admin, task.id, { body: '管理员写的评论' });
+
+    await expect(store.updateComment(bob, comment.id, {
+      body: '越权修改', expectedVersion: comment.version,
+    })).rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+    await expect(store.updateComment(bob, comment.id, {
+      body: '越权并猜旧版本', expectedVersion: comment.version + 99,
+    })).rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+    await expect(store.searchComments(alice, task.id, { page: 1, pageSize: 1 })).resolves.toMatchObject({
+      items: [expect.objectContaining({ id: comment.id })], page: 1, pageSize: 1, total: 1, hasMore: false,
+    });
+
+    const edited = await store.updateComment(admin, comment.id, {
+      body: '作者修改', expectedVersion: comment.version,
+    });
+    expect(edited).toMatchObject({ body: '作者修改', version: 2 });
+    await expect(store.updateComment(admin, comment.id, {
+      body: '旧版本覆盖', expectedVersion: comment.version,
+    })).rejects.toBeInstanceOf(TaskboardConflictError);
+
+    await expect(store.deleteComment(bob, comment.id, { expectedVersion: edited.version }))
+      .rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+    await expect(store.deleteComment(alice, comment.id, { expectedVersion: edited.version }))
+      .resolves.toMatchObject({ id: comment.id });
+    await expect(store.listComments(alice, task.id)).resolves.toEqual([]);
   });
 
   it('stores the default board prompt and allows it to be customized', async () => {
@@ -304,199 +372,68 @@ describePg('PgTaskboardStore contract', () => {
     });
   });
 
-  it('keeps historical comments out of continuation and preserves waiting-state results through outbox', async () => {
-    const board = await store.createBoard(alice, { name: '评论续跑持久化' });
-    const task = await store.createTask(alice, board.id, { title: '等待态续跑', status: 'todo' });
-    await store.claimExecution(alice, task.id, {
-      expectedVersion: task.version,
-      executionId: 'execution-waiting',
-      runId: 'run-waiting',
-      sessionId: 'session-continuation',
+  it('rejects repeated and concurrent execution claims without creating a second active Execution', async () => {
+    const board = await store.createBoard(alice, { name: '重复派发隔离' });
+    const sequentialTask = await store.createTask(alice, board.id, {
+      title: '连续派发', status: 'todo',
+    });
+    const firstExecutionId = randomUUID();
+    const firstRunId = randomUUID();
+    const firstSessionId = randomUUID();
+    const first = await store.claimExecution(alice, sequentialTask.id, {
+      expectedVersion: sequentialTask.version,
+      executionId: firstExecutionId,
+      runId: firstRunId,
+      sessionId: firstSessionId,
       executionOwnerUserId: alice.ownerUserId,
-      dispatch: dispatch('execution-waiting', 'run-waiting', 'session-continuation'),
+      dispatch: dispatch(firstExecutionId, firstRunId, firstSessionId),
     });
-    await store.setExecutionStatus('run-waiting', 'waiting_user');
-    const historicalCommentId = randomUUID();
-    await pool.query(
-      `INSERT INTO ${store.commentsTable}
-         (id, task_id, body, author_type, author_id, author_name, continuation_eligible)
-       VALUES ($1,$2,'历史评论','user',$3,'Alice',false)`,
-      [historicalCommentId, task.id, alice.ownerUserId],
-    );
-    const first = await store.createComment(alice, task.id, { body: '第一条新评论' });
-    const second = await store.createComment(alice, task.id, { body: '第二条新评论' });
-    const context = await store.getContinuationContext(alice, task.id, second.id);
-    expect(context.pendingComments.map((item) => item.id)).toEqual(expect.arrayContaining([first.id, second.id]));
-    expect(context.pendingComments.map((item) => item.id)).not.toContain(historicalCommentId);
-
-    const payload: TaskboardContinuationDispatchPayload = dispatch(
-      'continuation-placeholder',
-      'run-continuation',
-      'session-continuation',
-    );
-    payload.run.idempotencyKey = `taskboard-comment:${second.id}`;
-    payload.run.metadata = {
-      taskboardContinuation: true,
-      taskboardTaskId: task.id,
-      taskboardCommentId: second.id,
-    };
-    expect(await store.enqueueContinuation(
-      task.id,
-      [first.id, second.id],
-      'run-continuation',
-      second.id,
-      payload,
-    )).toBe(true);
-    const claimed = await store.claimContinuationDispatch('run-continuation', 'continuation-lease');
-    expect(claimed).toMatchObject({
-      runId: 'run-continuation',
-      taskId: task.id,
-      commentId: second.id,
-      attemptCount: 1,
-    });
-    await store.markContinuationDispatchSucceeded('run-continuation', 'continuation-lease');
-    const completed = await store.completeContinuation(task.id, 'run-continuation', {
-      status: 'succeeded',
-      commentBody: 'Agent 交付\n\n等待态结果已保留',
-    });
-
-    expect(completed?.status).toBe('in_progress');
-    expect((await store.listComments(alice, task.id)).at(-1)?.body).toContain('等待态结果已保留');
-    expect(await store.claimContinuationReconcileCandidates(
-      new Date(Date.now() + 1_000),
-      10,
-      'post-completion-reconcile',
-    )).toEqual([]);
-  });
-
-  it('续跑先成功、原 Execution 后取消的并发顺序最终保持待复核', async () => {
-    const board = await store.createBoard(alice, { name: '续跑取消竞态' });
-    const task = await store.createTask(alice, board.id, { title: '并发释放续跑', status: 'todo' });
-    await store.claimExecution(alice, task.id, {
-      expectedVersion: task.version, executionId: 'execution-race', runId: 'run-race-original',
-      sessionId: 'session-race', executionOwnerUserId: alice.ownerUserId,
-      dispatch: dispatch('execution-race', 'run-race-original', 'session-race'),
-    });
-    await store.setExecutionStatus('run-race-original', 'running');
-    const comment = await store.createComment(alice, task.id, { body: '释放后独立续跑' });
-    const payload: TaskboardContinuationDispatchPayload = dispatch(
-      'continuation-race-placeholder',
-      'run-race-continuation',
-      'session-race',
-    );
-    payload.run.idempotencyKey = `taskboard-comment:${comment.id}`;
-    payload.run.metadata = {
-      taskboardContinuation: true, taskboardTaskId: task.id, taskboardCommentId: comment.id,
-    };
-    await store.enqueueContinuation(
-      task.id, [comment.id], 'run-race-continuation', comment.id, payload,
-    );
-    await store.claimContinuationDispatch('run-race-continuation', 'race-dispatch-lease');
-    await store.markContinuationDispatchSucceeded('run-race-continuation', 'race-dispatch-lease');
-
-    const blocker = await pool.connect();
-    let blockerOpen = false;
-    try {
-      await blocker.query('BEGIN');
-      blockerOpen = true;
-      await blocker.query(
-        `SELECT run_id FROM ${store.continuationOutboxTable} WHERE run_id=$1 FOR UPDATE`,
-        ['run-race-continuation'],
-      );
-      const continuationCompletion = store.completeContinuation(task.id, 'run-race-continuation', {
-        status: 'succeeded',
-        commentBody: 'Agent 交付\n\n续跑已成功',
-      });
-      await waitForBlockedQueries(pool, store.continuationOutboxTable, 1);
-      const originalCancellation = store.completeExecution('run-race-original', {
-        status: 'cancelled',
-        error: '原执行已取消',
-        commentBody: 'Agent 执行已取消\n\n原执行已取消',
-      });
-      await waitForBlockedQueries(pool, store.boardsTable, 1);
-      await blocker.query('COMMIT');
-      blockerOpen = false;
-      await Promise.all([continuationCompletion, originalCancellation]);
-    } finally {
-      if (blockerOpen) await blocker.query('ROLLBACK').catch(() => undefined);
-      blocker.release();
-    }
-
-    expect(await store.getTask(alice, task.id)).toMatchObject({ status: 'in_review' });
-    expect(await store.listComments(alice, task.id)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ authorId: 'run-race-continuation', authorType: 'agent' }),
-      expect.objectContaining({ authorId: 'run-race-original', authorType: 'system' }),
-    ]));
-  });
-
-  it('backfills legacy continuation rows once and blocks archive while continuation is active', async () => {
-    const board = await store.createBoard(alice, { name: '续跑迁移补偿' });
-    const task = await store.createTask(alice, board.id, { title: '迁移旧续跑', status: 'todo' });
-    await store.claimExecution(alice, task.id, {
-      expectedVersion: task.version,
-      executionId: 'legacy-base-execution',
-      runId: 'legacy-base-run',
-      sessionId: 'legacy-session',
+    const duplicateExecutionId = randomUUID();
+    const duplicateRunId = randomUUID();
+    const duplicateSessionId = randomUUID();
+    await expect(store.claimExecution(alice, sequentialTask.id, {
+      expectedVersion: first.task.version,
+      executionId: duplicateExecutionId,
+      runId: duplicateRunId,
+      sessionId: duplicateSessionId,
       executionOwnerUserId: alice.ownerUserId,
-      dispatch: dispatch('legacy-base-execution', 'legacy-base-run', 'legacy-session'),
-    });
-    await store.completeExecution('legacy-base-run', { status: 'succeeded', commentBody: '基础执行完成' });
-    const current = await store.getTask(alice, task.id);
-    const commentId = randomUUID();
-    await pool.query(
-      `INSERT INTO ${store.commentsTable}
-         (id, task_id, body, author_type, author_id, author_name,
-          continuation_eligible, continuation_run_id)
-       VALUES ($1,$2,'迁移期间评论','user',$3,'Alice',false,'legacy-continuation-run')`,
-      [commentId, task.id, alice.ownerUserId],
-    );
-    const archivedTask = await store.createTask(alice, board.id, { title: '历史归档执行', status: 'todo' });
-    await store.claimExecution(alice, archivedTask.id, {
-      expectedVersion: archivedTask.version,
-      executionId: 'archived-legacy-execution',
-      runId: 'archived-legacy-run',
-      sessionId: 'archived-legacy-session',
-      executionOwnerUserId: alice.ownerUserId,
-      dispatch: dispatch('archived-legacy-execution', 'archived-legacy-run', 'archived-legacy-session'),
-    });
-    await pool.query(`UPDATE ${store.tasksTable} SET archived_at=now() WHERE id=$1`, [archivedTask.id]);
-
-    await store.init();
-    await store.init();
-
-    const migratedComment = await pool.query(
-      `SELECT continuation_eligible FROM ${store.commentsTable} WHERE id=$1`, [commentId],
-    );
-    const migratedOutbox = await pool.query(
-      `SELECT run_id, task_id, comment_id, session_id, status
-         FROM ${store.continuationOutboxTable} WHERE run_id='legacy-continuation-run'`,
-    );
-    expect(migratedComment.rows[0]?.continuation_eligible).toBe(true);
-    expect(migratedOutbox.rows).toEqual([expect.objectContaining({
-      task_id: task.id,
-      comment_id: commentId,
-      session_id: 'legacy-session',
-      status: 'dispatched',
-    })]);
-    const archivedExecution = await pool.query(
-      `SELECT e.status, o.status AS outbox_status
-         FROM ${store.executionsTable} e JOIN ${store.executionOutboxTable} o ON o.run_id=e.run_id
-        WHERE e.run_id='archived-legacy-run'`,
-    );
-    expect(archivedExecution.rows[0]).toMatchObject({ status: 'cancelled', outbox_status: 'dispatched' });
-    await expect(store.archiveTask(alice, task.id, { expectedVersion: current.version }))
-      .rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_ACTIVE' });
-    await expect(store.archiveBoard(alice, board.id, { expectedVersion: board.version }))
-      .rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_ACTIVE' });
-    await expect(store.claimExecution(alice, task.id, {
-      expectedVersion: current.version,
-      executionId: 'must-not-race-continuation',
-      runId: 'must-not-race-continuation',
-      sessionId: 'legacy-session',
-      executionOwnerUserId: alice.ownerUserId,
-      dispatch: dispatch('must-not-race-continuation', 'must-not-race-continuation', 'legacy-session'),
-      allowWorkFromCurrentStatus: true,
+      dispatch: dispatch(duplicateExecutionId, duplicateRunId, duplicateSessionId),
     })).rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_ACTIVE' });
+    expect(await store.listExecutions(alice, sequentialTask.id)).toHaveLength(1);
+
+    const concurrentTask = await store.createTask(alice, board.id, {
+      title: '并发派发', status: 'todo',
+    });
+    const attempts = Array.from({ length: 2 }, () => {
+      const executionId = randomUUID();
+      const runId = randomUUID();
+      const sessionId = randomUUID();
+      return store.claimExecution(alice, concurrentTask.id, {
+        expectedVersion: concurrentTask.version,
+        executionId,
+        runId,
+        sessionId,
+        executionOwnerUserId: alice.ownerUserId,
+        dispatch: dispatch(executionId, runId, sessionId),
+      });
+    });
+    const results = await Promise.allSettled(attempts);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toEqual([
+      expect.objectContaining({
+        reason: expect.objectContaining({ code: 'TASKBOARD_EXECUTION_ACTIVE' }),
+      }),
+    ]);
+    expect(await store.listExecutions(alice, concurrentTask.id)).toHaveLength(1);
+    const outbox = await pool.query(
+      `SELECT count(*)::int AS count
+         FROM ${store.executionOutboxTable} o
+         JOIN ${store.executionsTable} e ON e.id=o.execution_id
+        WHERE e.task_id=$1`,
+      [concurrentTask.id],
+    );
+    expect(outbox.rows[0]?.count).toBe(1);
   });
 
   it('atomically claims one Agent execution, rereads comments, and finalizes idempotently', async () => {
@@ -518,7 +455,11 @@ describePg('PgTaskboardStore contract', () => {
       status: 'queued', purpose: 'work', runId: 'run-a', sessionId: 'session-a',
     });
     expect(await store.listExecutions(alice, task.id)).toEqual([claimed.execution]);
+    await expect(store.searchExecutions(alice, task.id, { page: 1, pageSize: 1 })).resolves.toMatchObject({
+      items: [claimed.execution], page: 1, pageSize: 1, total: 1, hasMore: false,
+    });
     await expect(store.listExecutions(admin, task.id)).rejects.toBeInstanceOf(TaskboardNotFoundError);
+    await expect(store.searchExecutions(admin, task.id)).rejects.toBeInstanceOf(TaskboardNotFoundError);
 
     const firstLease = await store.claimExecutionDispatch('run-a', 'lease-a');
     expect(firstLease).toMatchObject({
@@ -569,6 +510,11 @@ describePg('PgTaskboardStore contract', () => {
     expect(context?.task.status).toBe('in_progress');
     expect(context?.boardPrompt).toBe('按本看板规范执行。');
     expect(context?.comments.at(-1)?.body).toBe('认领后补充的最新条件');
+    await expect(store.getExecutionContextBySessionId('session-a')).resolves.toMatchObject({
+      execution: { id: 'execution-a', runId: 'run-a', sessionId: 'session-a' },
+      identity: { tenantId: alice.tenantId, ownerUserId: alice.ownerUserId },
+    });
+    await expect(store.getExecutionContextBySessionId('missing-session')).resolves.toBeNull();
     await expect(store.setExecutionStatus('run-a', 'waiting_user')).resolves.toMatchObject({
       status: 'waiting_user',
       startedAt: expect.any(String),

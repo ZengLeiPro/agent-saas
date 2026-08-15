@@ -29,7 +29,11 @@ import {
 import { reuseTaskboardSession } from './executionSession.js';
 import { buildExecutionPrompt, formatTaskboardComment } from './executionPrompt.js';
 export { executionWritebackInstructions } from './executionPrompt.js';
-import { TaskboardExecutionUnavailableError, TaskboardValidationError } from './types.js';
+import {
+  TaskboardExecutionUnavailableError,
+  TaskboardPermissionError,
+  TaskboardValidationError,
+} from './types.js';
 export { createTaskboardRuntimeOptions } from './runtimeOptions.js';
 import type {
   TaskboardExecutionContext,
@@ -38,6 +42,8 @@ import type {
   TaskboardExecutionService,
   TaskboardExecutionStore,
   TaskboardIdentity,
+  TaskboardPage,
+  TaskboardPageFilter,
 } from './types.js';
 
 interface DefaultModelResolution {
@@ -97,6 +103,14 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
 
   listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
     return this.options.store.listExecutions(identity, taskId);
+  }
+
+  searchExecutions(
+    identity: TaskboardIdentity,
+    taskId: string,
+    filter?: TaskboardPageFilter,
+  ): Promise<TaskboardPage<TaskBoardExecution>> {
+    return this.options.store.searchExecutions(identity, taskId, filter);
   }
 
   startExecution(
@@ -305,12 +319,10 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
 
   private async resolveLaunch(identity: TaskboardIdentity, taskId: string) {
     const modelContext = await this.options.store.getExecutionModelContext(identity, taskId);
-    const executionIdentity = modelContext.boardOwnerUserId === identity.ownerUserId
-      ? identity
-      : this.options.resolveOwnerIdentity?.(modelContext.boardOwnerUserId);
-    if (!executionIdentity || executionIdentity.tenantId !== identity.tenantId) {
-      throw new TaskboardExecutionUnavailableError('看板创建者账号不可用，无法继承其运行上下文');
+    if (modelContext.boardOwnerUserId !== identity.ownerUserId) {
+      throw new TaskboardPermissionError('Only the board owner may dispatch an Agent for this board');
     }
+    const executionIdentity = identity;
     const explicitModelRef = modelContext.taskModel ?? modelContext.boardModel;
     const model = explicitModelRef
       ? this.options.resolveModel?.(explicitModelRef, executionIdentity.tenantId)

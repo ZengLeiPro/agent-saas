@@ -14,10 +14,11 @@ import { RunCreateConflictError, type RunRecord } from '../runtime/runStore.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { EventStore, PlatformEvent } from '../runtime/types.js';
 import { TaskboardExecutionCoordinator } from '../taskboard/executionService.js';
-import type {
-  TaskboardExecutionContext,
-  TaskboardExecutionStore,
-  TaskboardIdentity,
+import {
+  TaskboardValidationError,
+  type TaskboardExecutionContext,
+  type TaskboardExecutionStore,
+  type TaskboardIdentity,
 } from '../taskboard/types.js';
 
 const identity: TaskboardIdentity = {
@@ -97,6 +98,7 @@ function makeRig(
   }>();
   const store = {
     listExecutions: vi.fn(async () => []),
+    searchExecutions: vi.fn(async () => ({ items: [], page: 1, pageSize: 20, total: 0, hasMore: false })),
     getExecutionModelContext: vi.fn(async () => ({ boardOwnerUserId: identity.ownerUserId })),
     claimExecution: vi.fn(async (_identity, _taskId, input) => {
       dispatches.set(input.runId, { executionId: input.executionId, payload: input.dispatch });
@@ -116,6 +118,13 @@ function makeRig(
       boardPrompt: '只修改与任务直接相关的文件。',
       comments: [comment],
       execution: execution({ runId }),
+    })),
+    getExecutionContextBySessionId: vi.fn(async (sessionId: string): Promise<TaskboardExecutionContext | null> => ({
+      identity,
+      task,
+      boardPrompt: '只修改与任务直接相关的文件。',
+      comments: [comment],
+      execution: execution({ sessionId }),
     })),
     claimExecutionDispatch: vi.fn(async (runId: string | undefined, leaseId: string) => {
       let claimedRunId: string;
@@ -233,7 +242,25 @@ describe('TaskboardExecutionCoordinator', () => {
     }));
   });
 
-  it('组织成员发起任务时仍以看板创建者上下文运行', async () => {
+  it('同一任务已有活跃 Execution 时拒绝再次派发且不创建第二个 Run', async () => {
+    const rig = makeRig();
+    const first = await rig.coordinator.startExecution(identity, task.id, {
+      expectedVersion: task.version,
+    });
+    vi.mocked(rig.store.claimExecution).mockRejectedValueOnce(new TaskboardValidationError(
+      'Task already has an active Agent execution',
+      'TASKBOARD_EXECUTION_ACTIVE',
+    ));
+
+    await expect(rig.coordinator.startExecution(identity, task.id, {
+      expectedVersion: first.task.version,
+    })).rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_ACTIVE' });
+
+    expect(rig.store.claimExecution).toHaveBeenCalledTimes(2);
+    expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledTimes(1);
+  });
+
+  it('组织成员不能借看板创建者上下文派发 Agent', async () => {
     const member: TaskboardIdentity = {
       tenantId: identity.tenantId,
       ownerUserId: 'user-2',
@@ -245,41 +272,12 @@ describe('TaskboardExecutionCoordinator', () => {
       getExecutionModelContext: vi.fn(async () => ({ boardOwnerUserId: identity.ownerUserId })),
     }, { resolveOwnerIdentity });
 
-    await rig.coordinator.startExecution(member, task.id, { expectedVersion: task.version });
-
-    expect(resolveOwnerIdentity).toHaveBeenCalledWith(identity.ownerUserId);
-    expect(rig.store.claimExecution).toHaveBeenCalledWith(
-      member,
-      task.id,
-      expect.objectContaining({ executionOwnerUserId: identity.ownerUserId }),
-    );
-    expect(rig.sessionCatalog.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      userId: identity.ownerUserId,
-      username: identity.username,
-      workspaceId: `ws_${identity.tenantId}__${identity.ownerUserId}`,
-    }));
-    expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledWith(expect.objectContaining({
-      userId: identity.ownerUserId,
-      tenantId: identity.tenantId,
-    }));
-  });
-
-  it('组织看板创建者账号不可用时拒绝使用发起者上下文兜底', async () => {
-    const member: TaskboardIdentity = {
-      tenantId: identity.tenantId,
-      ownerUserId: 'user-2',
-      username: 'bob',
-      userRole: 'user',
-    };
-    const rig = makeRig({
-      getExecutionModelContext: vi.fn(async () => ({ boardOwnerUserId: identity.ownerUserId })),
-    });
-
     await expect(rig.coordinator.startExecution(
       member,
       task.id,
       { expectedVersion: task.version },
-    )).rejects.toThrow('看板创建者账号不可用');
+    )).rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+    expect(resolveOwnerIdentity).not.toHaveBeenCalled();
     expect(rig.store.claimExecution).not.toHaveBeenCalled();
     expect(rig.sessionCatalog.upsert).not.toHaveBeenCalled();
   });

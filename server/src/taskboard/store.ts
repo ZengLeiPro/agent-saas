@@ -8,6 +8,7 @@ import {
   type TaskBoard,
   type TaskBoardComment,
   type TaskBoardCommentCreateInput,
+  type TaskBoardCommentPatchInput,
   type TaskBoardCreateInput,
   type TaskBoardExecution,
   type TaskBoardExecutionStartResult,
@@ -46,6 +47,10 @@ import {
   retryExecutionDispatch,
   runExecutionOutboxMigrations,
 } from './executionOutboxStore.js';
+import {
+  createTaskFromExecution as createStoredTaskFromExecution,
+  updateTaskBranchFromExecution as updateStoredTaskBranchFromExecution,
+} from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
 import {
   boardModelMigrationSql,
@@ -70,7 +75,6 @@ import {
   optionalText,
   requireText,
   rowToComment,
-  rowToExecutionModelContext,
   rowToExecution,
   rowToTask,
   sanitizeIdentifier,
@@ -79,9 +83,22 @@ import {
 } from './storeHelpers.js';
 import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns, finalizeExecutionForArchivedTask } from './archiveGuard.js';
 import { taskFieldsMigrationSql, taskTableSql } from './taskFields.js';
+import { deleteComment as deleteStoredComment, updateComment as updateStoredComment } from './storeComments.js';
+import {
+  getExecutionContextBySessionId as getStoredExecutionContextBySessionId,
+  searchExecutions as searchStoredExecutions,
+} from './storeExecutions.js';
+import {
+  listBoards as listStoredBoards,
+  listTasks as listStoredTasks,
+  searchBoards as searchStoredBoards,
+  searchComments as searchStoredComments,
+  searchTasks as searchStoredTasks,
+} from './storeSearch.js';
 import {
   TaskboardNotFoundError,
   TaskboardValidationError,
+  type TaskboardBoardSearchFilter,
   type TaskboardContinuationContext,
   type TaskboardContinuationDispatch,
   type TaskboardContinuationDispatchPayload,
@@ -93,8 +110,11 @@ import {
   type TaskboardExecutionStore,
   type TaskboardExpectedVersionInput,
   type TaskboardIdentity,
+  type TaskboardPage,
+  type TaskboardPageFilter,
   type TaskboardService,
   type TaskboardTaskListFilter,
+  type TaskboardTaskSearchFilter,
 } from './types.js';
 
 const { Pool } = pg;
@@ -288,17 +308,17 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     }
   }
   async listBoards(identity: TaskboardIdentity, includeArchived = false): Promise<TaskBoard[]> {
-    const result = await this.pool.query(
-      `SELECT id, owner_user_id, name, description, visibility, prompt, model, version,
-              archived_at, created_at, updated_at
-         FROM ${this.boardsTable}
-        WHERE tenant_id=$1
-          AND (owner_user_id=$2 OR visibility='organization')
-          AND ($3::boolean OR archived_at IS NULL)
-        ORDER BY archived_at NULLS FIRST, updated_at DESC, id`,
-      [identity.tenantId, identity.ownerUserId, includeArchived],
-    );
-    return result.rows.map((row) => rowToBoard(row, identity.ownerUserId));
+    return listStoredBoards(this, identity, includeArchived);
+  }
+  async searchBoards(
+    identity: TaskboardIdentity,
+    filter: TaskboardBoardSearchFilter = {},
+  ): Promise<TaskboardPage<TaskBoard>> {
+    return searchStoredBoards(this, identity, filter);
+  }
+
+  async getBoard(identity: TaskboardIdentity, boardId: string): Promise<TaskBoard> {
+    return this.requireBoard(this.pool, identity, boardId, false);
   }
   async createBoard(identity: TaskboardIdentity, input: TaskBoardCreateInput): Promise<TaskBoard> {
     const name = requireText(input.name, 'Board name');
@@ -424,42 +444,13 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     filter: TaskboardTaskListFilter = {},
   ): Promise<TaskBoardTask[]> {
     await this.requireBoard(this.pool, identity, boardId, false);
-    const conditions = [
-      't.board_id=$1',
-      'b.tenant_id=$2',
-      "(b.owner_user_id=$3 OR b.visibility='organization')",
-      '($4::boolean OR t.archived_at IS NULL)',
-    ];
-    const params: unknown[] = [boardId, identity.tenantId, identity.ownerUserId, filter.includeArchived === true];
-    if (filter.statuses?.length) {
-      params.push(filter.statuses);
-      conditions.push(`t.status=ANY($${params.length}::text[])`);
-    }
-    if (filter.priorities?.length) {
-      params.push(filter.priorities);
-      conditions.push(`t.priority=ANY($${params.length}::text[])`);
-    }
-    const search = filter.search?.trim();
-    if (search) {
-      params.push(`%${search}%`);
-      conditions.push(`(
-        t.identifier ILIKE $${params.length}
-        OR t.title ILIKE $${params.length}
-        OR t.description ILIKE $${params.length}
-        OR t.branch ILIKE $${params.length}
-        OR EXISTS (SELECT 1 FROM unnest(t.labels) AS label WHERE label ILIKE $${params.length})
-      )`);
-    }
-    const result = await this.pool.query(
-      `SELECT t.*,
-              (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id) AS comment_count
-         FROM ${this.tasksTable} t
-         JOIN ${this.boardsTable} b ON b.id=t.board_id
-        WHERE ${conditions.join(' AND ')}
-        ORDER BY t.archived_at NULLS FIRST, t.status, t.sort_order, t.created_at, t.id`,
-      params,
-    );
-    return result.rows.map(rowToTask);
+    return listStoredTasks(this, identity, boardId, filter);
+  }
+  async searchTasks(
+    identity: TaskboardIdentity,
+    filter: TaskboardTaskSearchFilter = {},
+  ): Promise<TaskboardPage<TaskBoardTask>> {
+    return searchStoredTasks(this, identity, filter);
   }
   async createTask(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskBoardTask> {
     return this.withTransaction(async (client) => {
@@ -685,6 +676,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return result.rows.map((row) => applyCommentAuthorDisplayName(rowToComment(row), identity));
   }
 
+  async searchComments(identity: TaskboardIdentity, taskId: string, filter: TaskboardPageFilter = {}): Promise<TaskboardPage<TaskBoardComment>> { return searchStoredComments(this, identity, taskId, filter); }
+
   async createComment(identity: TaskboardIdentity, taskId: string, input: TaskBoardCommentCreateInput): Promise<TaskBoardComment> {
     return this.withTransaction(async (client) => {
       const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
@@ -704,8 +697,32 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     });
   }
 
+  async updateComment(
+    identity: TaskboardIdentity,
+    commentId: string,
+    input: TaskBoardCommentPatchInput,
+  ): Promise<TaskBoardComment> {
+    return updateStoredComment(this, identity, commentId, input);
+  }
+
+  async deleteComment(
+    identity: TaskboardIdentity,
+    commentId: string,
+    input: TaskboardExpectedVersionInput,
+  ): Promise<TaskBoardComment> {
+    return deleteStoredComment(this, identity, commentId, input);
+  }
+
   listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
     return listTaskExecutions(this, identity, taskId);
+  }
+
+  async searchExecutions(
+    identity: TaskboardIdentity,
+    taskId: string,
+    filter: TaskboardPageFilter = {},
+  ): Promise<TaskboardPage<TaskBoardExecution>> {
+    return searchStoredExecutions(this, identity, taskId, filter);
   }
 
   getExecutionModelContext(identity: TaskboardIdentity, taskId: string): Promise<TaskboardExecutionModelContext> {
@@ -718,7 +735,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskBoardExecutionStartResult> {
     return this.withTransaction(async (client) => {
       const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
-      assertExpectedVersion(loaded.task, input.expectedVersion);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
       assertExecutionConfiguration(
         loaded.task.model ?? loaded.boardModel,
@@ -756,6 +772,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           'TASKBOARD_EXECUTION_ACTIVE',
         );
       }
+      assertExpectedVersion(loaded.task, input.expectedVersion);
 
       const sortOrder = await nextTaskColumnSortOrder(
         this,
@@ -816,8 +833,28 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return loadExecutionContext(this, runId);
   }
 
+  async getExecutionContextBySessionId(sessionId: string): Promise<TaskboardExecutionContext | null> {
+    return getStoredExecutionContextBySessionId(this, sessionId);
+  }
+
   getContinuationContext(identity: TaskboardIdentity, taskId: string, commentId: string) {
     return loadContinuationContext(this, identity, taskId, commentId);
+  }
+
+  async updateTaskBranchFromExecution(
+    identity: TaskboardIdentity,
+    runId: string,
+    branch: string | null,
+  ): Promise<TaskBoardTask> {
+    return updateStoredTaskBranchFromExecution(this, identity, runId, branch);
+  }
+
+  async createTaskFromExecution(
+    identity: TaskboardIdentity,
+    runId: string,
+    input: TaskBoardTaskCreateInput,
+  ): Promise<TaskBoardTask> {
+    return createStoredTaskFromExecution(this, identity, runId, input);
   }
   enqueueContinuation(
     taskId: string,
@@ -1177,6 +1214,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       boardOwnerUserId: lockedBoard?.ownerUserId ?? String(row.board_owner_user_id),
     };
   }
+
 
   private async withTransaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();

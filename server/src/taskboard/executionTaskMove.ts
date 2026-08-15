@@ -21,7 +21,7 @@ const SORT_GAP = 1024;
 
 /**
  * 复核 Agent 的 done/todo 决策与 Execution 活跃态校验必须同事务完成。
- * 锁顺序与 completeExecution 保持一致：Task → Execution，避免终态竞态覆盖人工状态。
+ * 锁顺序与其他写操作保持一致：Board → Task → Execution，避免归档或终态竞态覆盖。
  */
 export async function moveTaskFromReviewExecution(
   options: ExecutionTaskMoveOptions,
@@ -32,20 +32,29 @@ export async function moveTaskFromReviewExecution(
   const client = await options.pool.connect();
   try {
     await client.query('BEGIN');
-    const taskResult = await client.query(
-      `SELECT t.id, t.board_id, t.status, t.archived_at AS task_archived_at,
-              b.archived_at AS board_archived_at
+    const boardResult = await client.query(
+      `SELECT b.id, b.archived_at
          FROM ${options.executionsTable} e
          JOIN ${options.tasksTable} t ON t.id=e.task_id
          JOIN ${options.boardsTable} b ON b.id=t.board_id
         WHERE e.run_id=$1 AND b.tenant_id=$2
           AND (b.owner_user_id=$3 OR b.visibility='organization')
-        FOR UPDATE OF t`,
+        FOR UPDATE OF b`,
       [runId, identity.tenantId, identity.ownerUserId],
+    );
+    const boardRow = boardResult.rows[0];
+    if (!boardRow) throw new TaskboardNotFoundError('Taskboard execution not found');
+    const taskResult = await client.query(
+      `SELECT t.id, t.board_id, t.status, t.archived_at AS task_archived_at
+         FROM ${options.executionsTable} e
+         JOIN ${options.tasksTable} t ON t.id=e.task_id
+        WHERE e.run_id=$1 AND t.board_id=$2
+        FOR UPDATE OF t`,
+      [runId, boardRow.id],
     );
     const taskRow = taskResult.rows[0];
     if (!taskRow) throw new TaskboardNotFoundError('Taskboard execution not found');
-    if (taskRow.board_archived_at || taskRow.task_archived_at) {
+    if (boardRow.archived_at || taskRow.task_archived_at) {
       throw new TaskboardValidationError('Archived taskboard resources are read-only');
     }
     if (String(taskRow.status) !== 'in_progress') {

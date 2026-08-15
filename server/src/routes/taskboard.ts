@@ -16,6 +16,7 @@ import {
   TaskboardConflictError,
   TaskboardExecutionUnavailableError,
   TaskboardNotFoundError,
+  TaskboardPermissionError,
   TaskboardValidationError,
   type TaskboardExecutionService,
   type TaskboardIdentity,
@@ -123,8 +124,26 @@ const commentCreateSchema = z.object({
   { message: 'Comment body or attachment is required' },
 );
 
+const commentPatchSchema = z.object({
+  body: z.string().trim().max(20_000),
+  expectedVersion: z.number().int().min(1),
+}).strict();
+
+const pageQueryFields = {
+  page: numberQuerySchema(1, 1_000_000, 1),
+  pageSize: numberQuerySchema(1, 100, 20),
+};
+
+const paginationQuerySchema = z.object(pageQueryFields).strict();
+
 const boardsQuerySchema = z.object({
   includeArchived: booleanQuerySchema(),
+}).strict();
+
+const boardSearchQuerySchema = z.object({
+  includeArchived: booleanQuerySchema(),
+  search: z.string().trim().max(240).optional(),
+  ...pageQueryFields,
 }).strict();
 
 const tasksQuerySchema = z.object({
@@ -132,6 +151,24 @@ const tasksQuerySchema = z.object({
   search: z.string().trim().max(500).optional(),
   status: enumListQuerySchema(TASKBOARD_STATUSES),
   priority: enumListQuerySchema(TASKBOARD_PRIORITIES),
+}).strict();
+
+const taskSearchQuerySchema = z.object({
+  boardId: z.string().trim().min(1).max(128).optional(),
+  boardName: z.string().trim().max(120).optional(),
+  includeArchived: booleanQuerySchema(),
+  search: z.string().trim().max(500).optional(),
+  status: enumListQuerySchema(TASKBOARD_STATUSES),
+  priority: enumListQuerySchema(TASKBOARD_PRIORITIES),
+  labels: stringListQuerySchema(20),
+  creatorUserId: z.string().trim().min(1).max(128).optional(),
+  createdAfter: dueAtSchema.optional(),
+  createdBefore: dueAtSchema.optional(),
+  updatedAfter: dueAtSchema.optional(),
+  updatedBefore: dueAtSchema.optional(),
+  dueAfter: dueAtSchema.optional(),
+  dueBefore: dueAtSchema.optional(),
+  ...pageQueryFields,
 }).strict();
 
 export interface TaskboardRouterOptions {
@@ -166,10 +203,20 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     res.json(await options.service!.listBoards(identityFrom(req), query.includeArchived));
   }));
 
+  router.get('/boards/search', route(async (req, res) => {
+    const query = parseOrReply(boardSearchQuerySchema, req.query, res, 'query');
+    if (!query) return;
+    res.json(await options.service!.searchBoards(identityFrom(req), query));
+  }));
+
   router.post('/boards', route(async (req, res) => {
     const input = parseOrReply(boardCreateSchema, req.body, res, 'body');
     if (!input) return;
     res.status(201).json(await options.service!.createBoard(identityFrom(req), input));
+  }));
+
+  router.get('/boards/:id', route(async (req, res) => {
+    res.json(await options.service!.getBoard(identityFrom(req), req.params.id));
   }));
 
   router.patch('/boards/:id', route(async (req, res) => {
@@ -224,6 +271,29 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     res.status(201).json(task);
   }));
 
+  router.get('/tasks/search', route(async (req, res) => {
+    const query = parseOrReply(taskSearchQuerySchema, req.query, res, 'query');
+    if (!query) return;
+    res.json(await options.service!.searchTasks(identityFrom(req), {
+      boardId: query.boardId,
+      boardName: query.boardName,
+      includeArchived: query.includeArchived,
+      search: query.search,
+      statuses: query.status,
+      priorities: query.priority,
+      labels: query.labels,
+      creatorUserId: query.creatorUserId,
+      createdAfter: query.createdAfter,
+      createdBefore: query.createdBefore,
+      updatedAfter: query.updatedAfter,
+      updatedBefore: query.updatedBefore,
+      dueAfter: query.dueAfter,
+      dueBefore: query.dueBefore,
+      page: query.page,
+      pageSize: query.pageSize,
+    }));
+  }));
+
   router.get('/tasks/:id', route(async (req, res) => {
     res.json(await options.service!.getTask(identityFrom(req), req.params.id));
   }));
@@ -266,6 +336,12 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       });
       return;
     }
+    if (req.query.page !== undefined || req.query.pageSize !== undefined) {
+      const query = parseOrReply(paginationQuerySchema, req.query, res, 'query');
+      if (!query) return;
+      res.json(await options.executionService.searchExecutions(identityFrom(req), req.params.id, query));
+      return;
+    }
     res.json(await options.executionService.listExecutions(identityFrom(req), req.params.id));
   }));
 
@@ -287,6 +363,12 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   }));
 
   router.get('/tasks/:id/comments', route(async (req, res) => {
+    if (req.query.page !== undefined || req.query.pageSize !== undefined) {
+      const query = parseOrReply(paginationQuerySchema, req.query, res, 'query');
+      if (!query) return;
+      res.json(await options.service!.searchComments(identityFrom(req), req.params.id, query));
+      return;
+    }
     res.json(await options.service!.listComments(identityFrom(req), req.params.id));
   }));
 
@@ -311,6 +393,18 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       req.params.id,
       req.params.commentId,
     ));
+  }));
+
+  router.patch('/comments/:id', route(async (req, res) => {
+    const input = parseOrReply(commentPatchSchema, req.body, res, 'body');
+    if (!input) return;
+    res.json(await options.service!.updateComment(identityFrom(req), req.params.id, input));
+  }));
+
+  router.delete('/comments/:id', route(async (req, res) => {
+    const input = parseOrReply(expectedVersionSchema, req.body, res, 'body');
+    if (!input) return;
+    res.json(await options.service!.deleteComment(identityFrom(req), req.params.id, input));
   }));
 
   return router;
@@ -391,6 +485,10 @@ function sendError(res: Response, error: unknown): void {
     res.status(404).json({ error: error.message, code: error.code });
     return;
   }
+  if (error instanceof TaskboardPermissionError) {
+    res.status(403).json({ error: error.message, code: error.code });
+    return;
+  }
   if (error instanceof TaskboardValidationError) {
     res.status(400).json({ error: error.message, code: error.code });
     return;
@@ -433,4 +531,20 @@ function enumListQuerySchema<const T extends readonly [string, ...string[]]>(val
     const entries = Array.isArray(value) ? value : [value];
     return entries.flatMap((entry) => typeof entry === 'string' ? entry.split(',') : [entry]);
   }, z.array(z.enum(values)).max(values.length).optional());
+}
+
+function stringListQuerySchema(max: number) {
+  return z.preprocess((value) => {
+    if (value === undefined) return undefined;
+    const entries = Array.isArray(value) ? value : [value];
+    return entries.flatMap((entry) => typeof entry === 'string' ? entry.split(',') : [entry]);
+  }, z.array(z.string().trim().min(1).max(64)).max(max).optional());
+}
+
+function numberQuerySchema(min: number, max: number, fallback: number) {
+  return z.preprocess((value) => {
+    if (value === undefined) return fallback;
+    if (typeof value === 'string' && value.trim()) return Number(value);
+    return value;
+  }, z.number().int().min(min).max(max));
 }

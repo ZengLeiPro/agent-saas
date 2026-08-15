@@ -1,7 +1,10 @@
+import { rm } from 'node:fs/promises';
+import { dirname } from 'node:path';
+
 import type { OrgAgentStore } from '../orgAgents/store.js';
 import { seedOrgAgentTemplatesForTenant } from '../orgAgentTemplates.js';
 import { apiLogger } from '../../utils/logger.js';
-import { writeTenantCompanyInfo } from './companyInfo.js';
+import { resolveTenantCompanyInfoPath, writeTenantCompanyInfo } from './companyInfo.js';
 import type { TenantStore } from './store.js';
 import type { TenantRecord } from './types.js';
 
@@ -63,4 +66,26 @@ export async function provisionTenant(
   }
 
   return tenant;
+}
+
+/** 创建回执无法安全落地时，删除刚创建的组织及其冷启动资源。 */
+export async function rollbackProvisionedTenant(
+  options: TenantProvisioningOptions,
+  tenantId: string,
+): Promise<void> {
+  await options.tenantStore.delete(tenantId);
+
+  const cleanupResults = await Promise.allSettled([
+    rm(dirname(resolveTenantCompanyInfoPath(options.sharedDir, tenantId)), { recursive: true, force: true }),
+    ...(options.orgAgentStore
+      ? options.orgAgentStore.listByTenant(tenantId).map(agent => options.orgAgentStore!.remove(agent.id))
+      : []),
+  ]);
+  const failures = cleanupResults.filter(result => result.status === 'rejected');
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures.map(result => (result as PromiseRejectedResult).reason),
+      `Tenant provisioning rollback incomplete: ${tenantId}`,
+    );
+  }
 }

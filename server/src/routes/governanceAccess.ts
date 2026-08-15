@@ -192,6 +192,7 @@ export function createGovernanceAccessRouter(deps: {
   createTenant?: (input: { id: string; name: string; createdBy: string }) => Promise<{
     id: string; name: string; createdAt: string; createdBy: string; updatedAt: string;
   }>;
+  rollbackTenantCreate?: (tenantId: string) => Promise<void>;
   getTenantLifecycle?: (tenantId: string) => { id: string; disabled?: boolean; updatedAt: string } | undefined;
   setTenantDisabled?: (tenantId: string, disabled: boolean, actorUserId: string) => Promise<{ id: string; disabled?: boolean; updatedAt: string }>;
   audit: GovernanceAuditStore;
@@ -445,6 +446,23 @@ export function createGovernanceAccessRouter(deps: {
         } catch {
           const changed = (body && typeof body === 'object' && !Array.isArray(body)
             && (body as Record<string, unknown>).changed === true) || res.statusCode < 400;
+          const compensation = res.locals.governanceCompensation as {
+            rollback: () => Promise<void>;
+            failureBody: { code: string; error: string };
+            rollbackFailureBody: { code: string; error: string };
+          } | undefined;
+          if (changed && compensation) {
+            try {
+              await compensation.rollback();
+            } catch {
+              res.statusCode = 500;
+              sendJson({ ...compensation.rollbackFailureBody, changed: true });
+              return;
+            }
+            res.statusCode = 500;
+            sendJson(compensation.failureBody);
+            return;
+          }
           res.statusCode = 500;
           sendJson({
             code: 'GOVERNANCE_AUDIT_TERMINAL_NOT_DURABLE',
@@ -749,6 +767,7 @@ export function createGovernanceAccessRouter(deps: {
     now,
     personaFor: req => personas.get(req),
     ...(deps.createTenant ? { createTenant: deps.createTenant } : {}),
+    ...(deps.rollbackTenantCreate ? { rollbackTenantCreate: deps.rollbackTenantCreate } : {}),
     ...(deps.getTenantLifecycle ? { getTenant: deps.getTenantLifecycle } : {}),
     ...(deps.setTenantDisabled ? { setTenantDisabled: deps.setTenantDisabled } : {}),
     ...(deps.resolveDependencyImpact ? { dependencyImpact: (tenantId: string) => tenantDependencyImpact(deps.resolveDependencyImpact!, tenantId) } : {}),

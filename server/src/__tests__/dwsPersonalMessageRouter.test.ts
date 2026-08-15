@@ -182,6 +182,38 @@ describe('AgentDwsMessageRouter', () => {
     expect(messageStore.complete).toHaveBeenCalledOnce();
   });
 
+  it('rejects interactive approvals instead of leaving DingTalk runs waiting forever', async () => {
+    let interactionResponse: { allow?: boolean; message?: string } | undefined;
+    const dispatch: AgentRunDispatch = vi.fn((
+      _message, _context, _options, hooks,
+    ) => (async function* () {
+      interactionResponse = await hooks?.onInteraction?.({
+        type: 'permission_request',
+        interactionId: 'approval-a',
+        sessionId: 'session-a',
+        runId: 'run-a',
+        toolCallId: 'call-a',
+        toolId: 'Shell',
+        toolName: 'Shell',
+        displayName: 'Run Shell',
+        toolInput: { command: 'pwd' },
+      });
+      await hooks?.onResult?.({ resultText: '已说明无法执行。' });
+      yield { type: 'done' as const };
+    })());
+    const { router, sender } = setup({ dispatch });
+
+    await expect(router.runOnce()).resolves.toBe(true);
+
+    expect(interactionResponse).toEqual({
+      allow: false,
+      message: expect.stringContaining('工具审批'),
+    });
+    expect(sender.send).toHaveBeenCalledWith(
+      account, expect.any(Object), '已说明无法执行。', expect.any(String),
+    );
+  });
+
   it('ignores a direct-message self echo when its sender differs from the bound peer', async () => {
     const claimed = {
       ...item,

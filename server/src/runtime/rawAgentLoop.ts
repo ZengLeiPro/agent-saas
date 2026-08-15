@@ -2933,7 +2933,7 @@ export class RawAgentLoop implements AgentLoop {
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        await this.approvalStore.resolve(approval.id, 'rejected', message);
+        await this.approvalStore.resolvePending(approval.id, 'rejected', message);
         return {
           call,
           descriptor,

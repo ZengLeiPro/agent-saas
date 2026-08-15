@@ -1669,7 +1669,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(enqueued).toHaveLength(1);
     });
 
-    it('approval 指向终态 run → respond_error "Run already finished"，不入队', async () => {
+    it('approval 指向终态 run → 拒绝遗留审批并 respond_ok，不恢复旧 run', async () => {
       const tmp = await makeTmp('cov-apprterm-');
       const { sessionId, eventStore } = await seedRuntimeSession(USER, { executionTarget: 'server-local' });
       await eventStore.append({
@@ -1690,12 +1690,50 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         wsClient(rig.ws, USER), 'appr-t-1', { allow: true }, sessionId,
       );
       expect(rig.ws.sent.at(-1)?.data).toEqual({
-        type: 'respond_error', interactionId: 'appr-t-1', error: 'Run already finished',
+        type: 'respond_ok', interactionId: 'appr-t-1',
       });
       expect(enqueued).toHaveLength(0);
+      const events = await eventStore.list(sessionId);
+      expect(events.at(-1)).toMatchObject({
+        type: 'approval_resolved',
+        approvalId: 'appr-t-1',
+        decision: 'rejected',
+        message: expect.stringContaining('源 run 不可恢复（completed）'),
+      });
     });
 
-    it('legacy resumeApprovalDispatch 路径（无 enqueueRuntime）：透传 approvalId/应答/会话上下文并广播 busy→idle', async () => {
+    it('approval 源 run 缺失 → fail-closed 拒绝且不重建旧 run', async () => {
+      const tmp = await makeTmp('cov-apprmissing-');
+      const { sessionId, eventStore } = await seedRuntimeSession(USER, { executionTarget: 'server-local' });
+      await eventStore.append({
+        type: 'assistant_tool_calls', sessionId, runId: 'run-appr-missing', content: '',
+        toolCalls: [{ id: 'call-missing-1', name: 'Shell', arguments: '{}' }],
+      } as any);
+      await eventStore.append({
+        type: 'approval_requested', sessionId, runId: 'run-appr-missing', approvalId: 'appr-missing-1',
+        toolCallId: 'call-missing-1', toolId: 'Shell', toolName: 'Shell', input: {},
+      } as any);
+      const runStore = new MemoryRunStore();
+      const enqueued: UpsertRunInput[] = [];
+      const rig = resumeRig(runStore, tmp, enqueued);
+
+      await (rig.channel as any).resolveInteraction(
+        wsClient(rig.ws, USER), 'appr-missing-1', { allow: true }, sessionId,
+      );
+
+      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'appr-missing-1' });
+      expect(enqueued).toHaveLength(0);
+      expect(await runStore.get('run-appr-missing')).toBeNull();
+      const events = await eventStore.list(sessionId);
+      expect(events.at(-1)).toMatchObject({
+        type: 'approval_resolved',
+        approvalId: 'appr-missing-1',
+        decision: 'rejected',
+        message: expect.stringContaining('源 run 不可恢复（missing）'),
+      });
+    });
+
+    it('无 enqueueRuntime 时 fail-closed 拒绝持久审批，不调用 legacy resumeApprovalDispatch', async () => {
       const tmp = await makeTmp('cov-apprlegacy-');
       const { sessionId, eventStore } = await seedRuntimeSession(USER, { model: 'm-legacy' });
       await eventStore.append({
@@ -1720,17 +1758,15 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         wsClient(rig.ws, USER), 'appr-l-1', { allow: false, message: '不允许' }, sessionId,
       );
       expect(rig.ws.sent.some((m) => m.data.type === 'respond_ok')).toBe(true);
-      expect(resumeCalls).toHaveLength(1);
-      expect(resumeCalls[0]).toMatchObject({
+      expect(resumeCalls).toHaveLength(0);
+      const events = await eventStore.list(sessionId);
+      expect(events.at(-1)).toMatchObject({
+        type: 'approval_resolved',
         approvalId: 'appr-l-1',
-        response: { allow: false, message: '不允许' },
-        sessionId,
+        decision: 'rejected',
+        message: expect.stringContaining('未恢复旧 Run'),
       });
-      expect(resumeCalls[0].context).toMatchObject({ channel: 'web', resumeSessionId: sessionId });
-      expect(rig.userEvents).toContainEqual({ type: 'session_status', sessionId, status: 'busy', streamId: expect.any(String) });
-      await vi.waitFor(() => {
-        expect(rig.userEvents).toContainEqual({ type: 'session_status', sessionId, status: 'idle' });
-      });
+      expect(rig.userEvents).not.toContainEqual(expect.objectContaining({ type: 'session_status', status: 'busy' }));
       expect((rig.channel as any).findActiveStreamIdBySession(sessionId)).toBeUndefined();
     });
   });

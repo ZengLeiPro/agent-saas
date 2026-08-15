@@ -71,6 +71,20 @@ describe('interactionStore disconnect behavior', () => {
     await expect(planPromise).resolves.toEqual({ allow: true });
   });
 
+  it('discard 会拒绝并移除交互，不遗留永久 pending Promise', async () => {
+    const interactionId = 'discard-terminal-approval-1';
+    const promise = interactionStore.create(interactionId, 'permission_request', {
+      sessionId: 'session-discard-1',
+      runId: 'run-terminal-1',
+      toolId: 'Shell',
+      toolName: 'Shell',
+    });
+
+    expect(interactionStore.discard(interactionId, 'source run terminal')).toBe(true);
+    await expect(promise).rejects.toThrow('source run terminal');
+    expect(interactionStore.get(interactionId)).toBeUndefined();
+  });
+
   it('keeps persisted platform approval pending on disconnect', async () => {
     const interactionId = 'platform-approval-survive-1';
     const promise = interactionStore.create(interactionId, 'permission_request', {

@@ -23,7 +23,7 @@ import { useGroups } from "@/hooks/useGroups";
 import { getSortedGroupItems } from "@agent/shared";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
-import { getSidebarNavItems, formatShortDate, sourceDisplayText } from "@/types/sidebar";
+import { getSidebarNavItems, formatShortDate, sourceDisplayText, getSessionWaitingLabel } from "@/types/sidebar";
 import type { SessionGroup } from "@/types/sessionGroup";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 import { DEFAULT_TENANT_ID } from "@agent/shared";
@@ -332,6 +332,7 @@ export function MobileSessionList({
   const renderSessionRow = useCallback(
     (s: ChatSessionIndexItem, inGroup?: boolean) => {
       const active = s.id === activeSessionIdRef.current;
+      const waitingLabel = getSessionWaitingLabel(s.runtimeStatus);
       const rowContent = (
         <div
           className={cn(
@@ -350,7 +351,9 @@ export function MobileSessionList({
               <span className="truncate">{s.title || "新会话"}</span>
             </div>
             <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">
-              {s.isRunning ? (
+              {waitingLabel ? (
+                <span className="font-medium text-warning" aria-label={`会话${waitingLabel}`}>{waitingLabel}</span>
+              ) : s.isRunning ? (
                 <Loader2 className="size-3.5 animate-spin text-blue-500" aria-label="会话运行中" />
               ) : (
                 formatShortDate(s.updatedAt)
@@ -447,7 +450,9 @@ export function MobileSessionList({
                 <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
               )}
             </div>
-            {group.isRunning ? (
+            {getSessionWaitingLabel(group.runtimeStatus) ? (
+              <span className="shrink-0 text-xs font-medium text-warning">{getSessionWaitingLabel(group.runtimeStatus)}</span>
+            ) : group.isRunning ? (
               <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-label="运行中" />
             ) : (
               <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">

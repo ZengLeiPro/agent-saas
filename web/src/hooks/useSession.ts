@@ -62,6 +62,31 @@ function appendPendingInteractions(
       .filter((message) => "interactionId" in message && message.interactionId)
       .map((message) => (message as { interactionId: string }).interactionId),
   );
+  const pendingRuntimeStatus = pendingList.some((pending) => pending.type === "permission_request")
+    ? { status: "waiting_approval" as const, content: "待处理" }
+    : pendingList.some((pending) => pending.type === "ask_user")
+      ? { status: "waiting_user" as const, content: "待补充" }
+      : null;
+  if (pendingRuntimeStatus) {
+    let runtimeIndex = -1;
+    for (let i = next.length - 1; i >= 0; i--) {
+      if (next[i].type === "runtime_status") {
+        runtimeIndex = i;
+        break;
+      }
+    }
+    if (runtimeIndex >= 0) {
+      next[runtimeIndex] = { ...next[runtimeIndex], ...pendingRuntimeStatus, streaming: true } as MessageItem;
+    } else {
+      next.push({
+        id: `pending-runtime-${pendingRuntimeStatus.status}`,
+        type: "runtime_status",
+        ...pendingRuntimeStatus,
+        streaming: true,
+      });
+    }
+  }
+
   const planLabels: Record<string, { name: string; fallback: string }> = {
     EnterPlanMode: {
       name: "进入规划模式",

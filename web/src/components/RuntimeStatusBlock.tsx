@@ -15,9 +15,9 @@ function getRuntimeStatusMeta(status: RuntimeStatus): { label: string; icon: "lo
     case "waiting_hand":
       return { label: "正在准备工作区", icon: "server" };
     case "waiting_approval":
-      return { label: "等待授权", icon: "shield" };
+      return { label: "待处理", icon: "shield" };
     case "waiting_user":
-      return { label: "等待补充信息", icon: "user" };
+      return { label: "待补充", icon: "user" };
     case "reconnecting":
       return { label: "正在恢复连接", icon: "loader" };
     default:

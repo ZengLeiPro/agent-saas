@@ -24,9 +24,9 @@ function getRuntimeStatusLabel(status: Extract<MessageItem, { type: 'runtime_sta
     case 'running':
       return '思考中';
     case 'waiting_approval':
-      return '等待授权';
+      return '待处理';
     case 'waiting_user':
-      return '等待补充信息';
+      return '待补充';
     default:
       return '执行中';
   }

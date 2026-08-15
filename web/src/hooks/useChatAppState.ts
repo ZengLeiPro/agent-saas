@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { ChangeEvent, ClipboardEvent, DragEvent, RefObject } from "react";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { ApiSessionListItem, TokenUsage } from "@/lib/sessionsApi";
-import type { AskUserAnswers, ContextUsageData, NotificationData, MemoryRecallData, PluginInstallData } from "@agent/shared";
+import type { AskUserAnswers, ContextUsageData, NotificationData, MemoryRecallData, PluginInstallData, SessionRuntimeStatus } from "@agent/shared";
 import type { ModelList } from "@/types/models";
 import type { AppTab } from "@/types/sidebar";
 import type { CanonicalSettingsSectionId, SettingsSectionId } from "@/types/settings";
@@ -182,6 +182,8 @@ export interface ChatAppState {
   pluginInstallStatus: PluginInstallData | null;
   /** 当前处于活跃运行态的会话 ID 集合（含后台会话） */
   runningSessionIds: ReadonlySet<string>;
+  /** 活跃会话的精确运行态，供列表区分执行中与人工等待。 */
+  sessionRuntimeStatuses: ReadonlyMap<string, SessionRuntimeStatus>;
   connectionState: ConnectionState;
   refreshCurrentSession: () => void;
   resumeCurrentStream: () => Promise<void>;
@@ -448,9 +450,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
    * 当 sessionId 匹配当前会话才 sync 到 ref;切走时 dump ref 到 Map,切回时 load Map 到 ref。
    */
   type SessionRuntime = {
-    status: 'idle' | 'busy' | 'running' | 'queued'
-      | 'waiting_approval' | 'waiting_user' | 'waiting_hand'
-      | 'completed' | 'failed' | 'cancelled' | 'orphaned';
+    status: SessionRuntimeStatus | TerminalRuntimeStatus;
     streamId?: string;
     runId?: string;
     /** 当前 run 已成功接收的最大 EventBuffer id；新 run 必须重置 */
@@ -470,6 +470,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   /** 每次实时 runtime 事件递增；批量 HTTP 快照不得覆盖请求发出后的新事件。 */
   const runtimeVersionBySessionRef = useRef<Map<string, number>>(new Map());
   const [runningSessionIds, setRunningSessionIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [sessionRuntimeStatuses, setSessionRuntimeStatuses] = useState<ReadonlyMap<string, SessionRuntimeStatus>>(() => new Map());
 
   // ─── 消息可靠性：outbox 队列 + ACK 超时跟踪（2026-04-18）───
   /**
@@ -675,6 +676,16 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       else updated.delete(sid);
       return updated;
     });
+    setSessionRuntimeStatuses((current) => {
+      const activeStatus = isActiveRuntimeStatus(next.status)
+        ? next.status as SessionRuntimeStatus
+        : null;
+      if (activeStatus ? current.get(sid) === activeStatus : !current.has(sid)) return current;
+      const updated = new Map(current);
+      if (activeStatus) updated.set(sid, activeStatus);
+      else updated.delete(sid);
+      return updated;
+    });
     if (sid === sessionIdRef.current) {
       if (patch.streamId !== undefined) streamIdRef.current = patch.streamId;
       if (patch.runId !== undefined) runIdRef.current = patch.runId;
@@ -694,6 +705,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     );
     if (sessionIds.length === 0) {
       setRunningSessionIds(new Set());
+      setSessionRuntimeStatuses(new Map());
       return;
     }
 
@@ -710,12 +722,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         });
         if (!response.ok) throw new Error(`active-streams ${response.status}`);
         return response.json() as Promise<{
-          sessions?: Array<{ sessionId: string; active: boolean; streamId?: string; runId?: string }>;
+          sessions?: Array<{ sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string }>;
         }>;
       }));
       if (runtimeHydrationNonceRef.current !== nonce) return;
 
       const snapshotStatus = new Map<string, boolean>();
+      const snapshotRuntimeStatuses = new Map<string, SessionRuntimeStatus>();
       for (const data of responses) {
         for (const item of data.sessions ?? []) {
           if ((runtimeVersionBySessionRef.current.get(item.sessionId) ?? 0) !== requestedVersions.get(item.sessionId)) {
@@ -736,9 +749,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
             continue;
           }
           const existing = activeRunsBySession.current.get(item.sessionId);
+          const runtimeStatus = isActiveRuntimeStatus(item.status)
+            ? item.status as SessionRuntimeStatus
+            : 'running';
+          snapshotRuntimeStatuses.set(item.sessionId, runtimeStatus);
           activeRunsBySession.current.set(item.sessionId, {
             ...(existing ?? { attached: false }),
-            status: 'running',
+            status: runtimeStatus,
             streamId: item.streamId ?? existing?.streamId,
             runId: item.runId ?? existing?.runId,
             attached: existing?.attached ?? false,
@@ -749,6 +766,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         const next = new Set(current);
         for (const [sessionId, active] of snapshotStatus) {
           if (active) next.add(sessionId);
+          else next.delete(sessionId);
+        }
+        return next;
+      });
+      setSessionRuntimeStatuses((current) => {
+        const next = new Map(current);
+        for (const [sessionId, active] of snapshotStatus) {
+          if (active) next.set(sessionId, snapshotRuntimeStatuses.get(sessionId) ?? 'running');
           else next.delete(sessionId);
         }
         return next;
@@ -1710,7 +1735,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           a.sessionId,
           a.active
             ? {
-                status: 'running',
+                status: isActiveRuntimeStatus(a.status) ? a.status as SessionRuntimeStatus : 'running',
                 ...(a.streamId ? { streamId: a.streamId } : {}),
                 ...(a.runId ? { runId: a.runId } : {}),
                 attached: true,
@@ -2236,6 +2261,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       };
 
 
+      if ((data.type === 'permission_request' || data.type === 'ask_user') && sessionIdRef.current) {
+        patchSessionRuntime(sessionIdRef.current, {
+          status: data.type === 'permission_request' ? 'waiting_approval' : 'waiting_user',
+          attached: true,
+        });
+      }
+
       const result = processWsEvent(
         data, ctx, wsBlockRef.current,
         wsLatestSessionIdRef.current,
@@ -2678,13 +2710,15 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     let httpActive: boolean | null = null; // null = HTTP 失败,降级靠 active_stream
     let httpStreamId: string | undefined;
     let httpRunId: string | undefined;
+    let httpStatus: SessionRuntimeStatus | undefined;
     try {
       const statusRes = await authFetch(`/api/sessions/${targetSessionId}/stream-status`);
       if (statusRes.ok) {
-        const json = await statusRes.json() as { active: boolean; streamId?: string; runId?: string };
+        const json = await statusRes.json() as { active: boolean; streamId?: string; runId?: string; status?: string };
         httpActive = json.active;
         if (json.streamId) httpStreamId = json.streamId;
         if (json.runId) httpRunId = json.runId;
+        if (isActiveRuntimeStatus(json.status)) httpStatus = json.status as SessionRuntimeStatus;
       }
     } catch { /* HTTP 失败 → httpActive 留 null,降级靠 active_stream */ }
 
@@ -2698,11 +2732,21 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       patchSessionRuntime(targetSessionId, { runId: httpRunId });
     }
 
-    if (httpActive === true && !loadingRef.current) {
-      // HTTP 已确认活跃 → 乐观 setLoading 立刻显示停止按钮（无需等 WS 往返）
-      patchSessionRuntime(targetSessionId, { status: 'running', attached: true });
-      setLoading(true);
-      dispatchConnection('connect');
+    if (httpActive === true) {
+      // HTTP 已确认活跃 → 先恢复精确状态，人工等待不能降级成“思考中”。
+      const restoredStatus = httpStatus ?? 'running';
+      patchSessionRuntime(targetSessionId, { status: restoredStatus, attached: true });
+      const visibleStatus = runtimeStatusFromSessionStatus(restoredStatus);
+      if (visibleStatus) {
+        upsertRuntimeStatusMessage(msgRef.current, visibleStatus, {
+          ...(httpStreamId ? { streamId: httpStreamId } : {}),
+          ...(httpRunId ? { runId: httpRunId } : {}),
+        });
+      }
+      if (!loadingRef.current) {
+        setLoading(true);
+        dispatchConnection('connect');
+      }
     }
 
     wsLatestSessionIdRef.current = { value: targetSessionId };
@@ -2983,6 +3027,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           : m
       );
     }
+    upsertRuntimeStatusMessage(msg, 'queued');
     markSessionRead(sessionIdRef.current);
   }, [respondToInteraction, msg.messagesRef, msg.updateMessageAt, markSessionRead]);
 
@@ -3002,6 +3047,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           : m
       );
     }
+    upsertRuntimeStatusMessage(msg, 'queued');
     markSessionRead(sessionIdRef.current);
   }, [respondToInteraction, msg.messagesRef, msg.updateMessageAt, markSessionRead]);
 
@@ -3135,6 +3181,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     dismissMemoryRecall,
     pluginInstallStatus,
     runningSessionIds,
+    sessionRuntimeStatuses,
     connectionState,
     refreshCurrentSession: session.refreshCurrentSession,
     resumeCurrentStream,

@@ -164,7 +164,7 @@ describe('ActivityGroupBlock 排版型活动行', () => {
       isActive
       debugMode={false}
     />);
-    expect(screen.getByText('等待授权')).toBeTruthy();
+    expect(screen.getByText('待处理')).toBeTruthy();
     expect(screen.queryByText(/请授权 Shell/)).toBeNull();
 
     rerender(<ActivityGroupBlock
@@ -172,7 +172,7 @@ describe('ActivityGroupBlock 排版型活动行', () => {
       isActive
       debugMode={false}
     />);
-    expect(screen.getByText('等待补充信息')).toBeTruthy();
+    expect(screen.getByText('待补充')).toBeTruthy();
     expect(screen.queryByText(/请选择数据库/)).toBeNull();
   });
 

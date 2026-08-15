@@ -16,8 +16,8 @@ function runtimeStatusText(status: RuntimeStatus): string {
     case "queued": return "已进入队列";
     case "running": return "正在思考";
     case "waiting_hand": return "正在准备工作区";
-    case "waiting_approval": return "等待授权";
-    case "waiting_user": return "等待补充信息";
+    case "waiting_approval": return "待处理";
+    case "waiting_user": return "待补充";
     case "reconnecting": return "正在恢复连接";
     default: return "正在处理";
   }

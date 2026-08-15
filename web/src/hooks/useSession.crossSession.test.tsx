@@ -418,7 +418,9 @@ describe("useSession 跨会话详情请求隔离", () => {
       "line-1",
       "line-101",
       "stream-local",
+      "pending-runtime-waiting_user",
       "pending-ask-1",
     ]);
+    expect(currentMessages[3]).toMatchObject({ type: "runtime_status", status: "waiting_user", content: "待补充" });
   });
 });

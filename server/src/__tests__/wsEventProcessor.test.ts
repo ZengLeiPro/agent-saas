@@ -602,15 +602,16 @@ describe('wsEventProcessor pending interaction replay', () => {
       ],
     }, ctx);
 
-    expect(messages).toHaveLength(3);
-    expect(messages[1]).toMatchObject({
+    expect(messages).toHaveLength(4);
+    expect(messages[1]).toMatchObject({ type: 'runtime_status', status: 'waiting_user', content: '待补充' });
+    expect(messages[2]).toMatchObject({
       type: 'permission_request',
       interactionId: 'plan-2',
       toolName: '规划方案审批',
       toolInput: '新计划正文',
       status: 'pending',
     });
-    expect(messages[2]).toMatchObject({
+    expect(messages[3]).toMatchObject({
       type: 'ask_user',
       interactionId: 'ask-1',
       status: 'pending',
@@ -747,18 +748,18 @@ describe('wsEventProcessor dedicated tool passthrough', () => {
     expect(messages[0]).toMatchObject({ type: 'tool_use', toolName: 'Bash' });
   });
 
-  it('coexists cleanly: only ask_user card remains for AskUserQuestion end-to-end', () => {
+  it('coexists cleanly: AskUserQuestion end-to-end only adds wait status and ask_user card', () => {
     // 端到端回归：replay/durable 通道曾同时投出 tool_execution(AskUserQuestion) +
-    // ask_user,前端会渲染成"AskUserQuestion 执行中" + "Agent Question / Answered"
-    // 两条。修复后 tool_execution 分支挡住,只留 ask_user 卡片。
+    // ask_user，前端会渲染成通用工具执行行。修复后只保留确定性的等待状态和提问卡片。
     const { messages, ctx } = createTestRig();
     process({ type: 'tool_execution', phase: 'started', toolId: 't1', toolName: 'AskUserQuestion' }, ctx);
     process({
       type: 'ask_user', interactionId: 'ix-1',
       questions: [{ question: 'q?', header: 'H', options: [{ label: 'A', description: '' }], multiSelect: false }],
     }, ctx);
-    expect(messages).toHaveLength(1);
-    expect(messages[0]).toMatchObject({ type: 'ask_user', interactionId: 'ix-1' });
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({ type: 'runtime_status', status: 'waiting_user', content: '待补充' });
+    expect(messages[1]).toMatchObject({ type: 'ask_user', interactionId: 'ix-1' });
   });
 
   it('replaces an old generic Agent row and keeps subagent_start idempotent', () => {

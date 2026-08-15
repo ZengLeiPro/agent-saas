@@ -66,7 +66,7 @@ import { LogoutAccountDialog } from "@/components/LogoutAccountDialog";
 import { getAccountKey, type SavedAccountSummary } from "@/lib/savedAccounts";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
-import { getSidebarNavItems, formatShortDate } from "@/types/sidebar";
+import { getSidebarNavItems, formatShortDate, getSessionWaitingLabel, getGroupWaitingRuntimeStatus } from "@/types/sidebar";
 import type { SessionGroup, SessionListEntry } from "@/types/sessionGroup";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 
@@ -272,6 +272,7 @@ function SessionRow({
   compact?: boolean;
 }) {
   const menuOpen = actionMenuId === session.id;
+  const waitingLabel = getSessionWaitingLabel(session.runtimeStatus);
   const hasMenu = !selectionMode && Boolean(onDelete || onRename || onAutoTitle || onShare || onAddToGroup || onRemoveFromGroup || onCompact);
 
   const menuDropdown = menuOpen ? (
@@ -413,7 +414,9 @@ function SessionRow({
             hasMenu && menuOpen && "opacity-0",
           )}
         >
-          {session.isRunning ? (
+          {waitingLabel ? (
+            <span className="font-medium text-warning" aria-label={`会话${waitingLabel}`}>{waitingLabel}</span>
+          ) : session.isRunning ? (
             <Loader2 className="size-3.5 animate-spin text-blue-500" aria-label="会话运行中" />
           ) : (
             formatShortDate(session.updatedAt)
@@ -487,7 +490,9 @@ function SessionRow({
         </div>
       </div>
       <span className={cn("pointer-events-none absolute right-2 whitespace-nowrap text-right text-xs tabular-nums text-muted-foreground/60", singleColumn ? "bottom-2.5" : "bottom-3")}>
-        {session.isRunning ? (
+        {waitingLabel ? (
+          <span className="font-medium text-warning" aria-label={`会话${waitingLabel}`}>{waitingLabel}</span>
+        ) : session.isRunning ? (
           <Loader2 className="size-3.5 animate-spin text-blue-500" aria-label="会话运行中" />
         ) : (
           formatShortDate(session.updatedAt)
@@ -1327,6 +1332,7 @@ export function DesktopSessionSidebar({
         .filter((session): session is ChatSessionIndexItem => session !== undefined)
         .sort(compareSessionActivity);
       for (const child of children) consumed.add(child.id);
+      const runtimeStatus = getGroupWaitingRuntimeStatus(children);
       entries.push({
         type: "group",
         group: {
@@ -1339,6 +1345,7 @@ export function DesktopSessionSidebar({
             : group.updatedAt,
           count: children.length,
           isRunning: children.some((child) => child.isRunning),
+          ...(runtimeStatus ? { runtimeStatus } : {}),
         },
       });
     }
@@ -1847,7 +1854,9 @@ export function DesktopSessionSidebar({
                       {entry.group.name}
                       <span className="ml-1 font-normal text-muted-foreground/60">({entry.group.count})</span>
                     </span>
-                    {entry.group.isRunning ? (
+                    {getSessionWaitingLabel(entry.group.runtimeStatus) ? (
+                      <span className="shrink-0 text-xs font-medium text-warning">{getSessionWaitingLabel(entry.group.runtimeStatus)}</span>
+                    ) : entry.group.isRunning ? (
                       <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-label="运行中" />
                     ) : (
                       <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-muted-foreground/60">{formatShortDate(entry.group.latestUpdatedAt)}</span>
@@ -1862,7 +1871,9 @@ export function DesktopSessionSidebar({
                     </span>
                     {unreadByGroupId.get(entry.group.groupKey) && <GroupUnreadDot />}
                     <span className="flex shrink-0 flex-col items-end gap-0.5">
-                      {entry.group.isRunning ? (
+                      {getSessionWaitingLabel(entry.group.runtimeStatus) ? (
+                        <span className="text-xs font-medium text-warning">{getSessionWaitingLabel(entry.group.runtimeStatus)}</span>
+                      ) : entry.group.isRunning ? (
                         <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="运行中" />
                       ) : (
                         <ChevronRight className="size-4 text-muted-foreground/50" />

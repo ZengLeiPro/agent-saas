@@ -1,2 +1,2 @@
-export type { ChatSessionIndexItem, AppTab } from '@agent/shared';
-export { baseNavItems, getSidebarNavItems, formatShortDate, sourceDisplayText } from '@agent/shared';
+export type { ChatSessionIndexItem, AppTab, SessionRuntimeStatus } from '@agent/shared';
+export { baseNavItems, getSidebarNavItems, formatShortDate, sourceDisplayText, getSessionWaitingLabel, getGroupWaitingRuntimeStatus } from '@agent/shared';

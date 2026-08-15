@@ -715,7 +715,7 @@ export function processWsEvent(
   }
 
   if (data.type === "permission_request") {
-    removeRuntimeStatusMessages(msg);
+    upsertRuntimeStatusMessage(msg, "waiting_approval");
     const { name, description } = resolvePlanModeDisplay(
       data.toolName, formatPermissionInput(data.toolInput), data.planContent, data.displayName,
     );
@@ -727,7 +727,7 @@ export function processWsEvent(
   }
 
   if (data.type === "ask_user") {
-    removeRuntimeStatusMessages(msg);
+    upsertRuntimeStatusMessage(msg, "waiting_user");
     msg.addMessage({
       type: "ask_user", interactionId: data.interactionId,
       questions: data.questions, status: "pending",
@@ -1096,6 +1096,11 @@ export function processWsEvent(
         .map(m => (m as any).interactionId as string)
     );
     for (const interaction of data.interactions) {
+      if (interaction.type === 'permission_request') {
+        upsertRuntimeStatusMessage(msg, 'waiting_approval');
+      } else if (interaction.type === 'ask_user') {
+        upsertRuntimeStatusMessage(msg, 'waiting_user');
+      }
       if (existingIds.has(interaction.interactionId)) continue;
       if (interaction.type === 'permission_request' && interaction.toolName) {
         const { name, description } = resolvePlanModeDisplay(

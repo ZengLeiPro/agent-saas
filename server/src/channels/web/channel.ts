@@ -326,7 +326,7 @@ export class WebChannel implements BaseChannel {
    * buffer 在 chat 流结束后会 `complete` 但 PG run 仍可能 active（多 turn 场景）,导致 HTTP
    * 误报 inactive,前端连锁忽略 active_stream 兜底,刷新才能看到新消息。
    */
-  async getStreamStatus(sessionId: string): Promise<{ active: boolean; streamId?: string; runId?: string }> {
+  async getStreamStatus(sessionId: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string }> {
     try {
       const runStore = this.config.enqueueRuntime?.runStore;
       if (runStore?.getActiveBySession) {
@@ -334,7 +334,12 @@ export class WebChannel implements BaseChannel {
         if (activeRun) {
           const streamId = this.findActiveStreamIdBySession(sessionId)
             ?? (typeof activeRun.metadata?.streamId === 'string' ? activeRun.metadata.streamId : undefined);
-          return { active: true, ...(streamId ? { streamId } : {}), runId: activeRun.runId };
+          return {
+            active: true,
+            ...(streamId ? { streamId } : {}),
+            runId: activeRun.runId,
+            status: activeRun.status,
+          };
         }
         // runStore 明确说没在跑 → 即使 buffer 还 active 也按 runStore 为准
         return { active: false };
@@ -1926,6 +1931,7 @@ export class WebChannel implements BaseChannel {
     // 这是幽灵 buffer(背景事件误建/complete 丢失),就地收口并按 inactive 处理。
     // 否则前端 resume 永远收到 active:true,会话永久卡在"正在思考"。
     let bufferActive = Boolean(bufferEntry && this.eventBufferStore.isActive(sid));
+    let durableStatus: string | undefined;
     if (bufferActive) {
       try {
         const runStore = this.config.enqueueRuntime?.runStore;
@@ -1934,6 +1940,8 @@ export class WebChannel implements BaseChannel {
           if (!activeRun) {
             this.eventBufferStore.complete(sid);
             bufferActive = false;
+          } else {
+            durableStatus = activeRun.status;
           }
         }
       } catch (err) {
@@ -1977,7 +1985,7 @@ export class WebChannel implements BaseChannel {
       active: true,
       streamId: activeStreamId,
       ...(activeEntry?.runId ? { runId: activeEntry.runId } : {}),
-      status: 'running',
+      status: durableStatus ?? 'running',
     });
 
     const alreadyDirectBound = Boolean(

@@ -1,5 +1,27 @@
 import type { AgentProfile } from './agent';
 
+export type SessionRuntimeStatus =
+  | 'busy'
+  | 'queued'
+  | 'running'
+  | 'waiting_approval'
+  | 'waiting_user'
+  | 'waiting_hand';
+
+export function getSessionWaitingLabel(status?: SessionRuntimeStatus): string | null {
+  if (status === 'waiting_user') return '待补充';
+  if (status === 'waiting_approval') return '待处理';
+  return null;
+}
+
+export function getGroupWaitingRuntimeStatus(
+  sessions: ReadonlyArray<{ runtimeStatus?: SessionRuntimeStatus }>,
+): Extract<SessionRuntimeStatus, 'waiting_approval' | 'waiting_user'> | undefined {
+  if (sessions.some((session) => session.runtimeStatus === 'waiting_approval')) return 'waiting_approval';
+  if (sessions.some((session) => session.runtimeStatus === 'waiting_user')) return 'waiting_user';
+  return undefined;
+}
+
 /** Frontend session list item (adapted from API response) */
 export interface ChatSessionIndexItem {
   id: string;
@@ -8,8 +30,10 @@ export interface ChatSessionIndexItem {
   updatedAt: number;
   preview?: string;
   hasUnreadAiReply?: boolean;
-  /** 当前会话是否正在执行，列表行用运行指示器替代更新时间 */
+  /** 当前会话是否处于活跃 run，列表排序与运行指示器使用。 */
   isRunning?: boolean;
+  /** 活跃 run 的精确状态；人工等待时用文本替代运行转圈。 */
+  runtimeStatus?: SessionRuntimeStatus;
   source?: { type: "web" | "dingtalk" | "cron"; label: string };
   owner?: { userId: string; username: string; realName?: string; avatar?: string; avatarVersion?: number };
   agent?: AgentProfile | null;

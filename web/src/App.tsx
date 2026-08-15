@@ -23,12 +23,13 @@ import { NotificationToastStack, MemoryRecallBanner, PluginInstallBanner } from 
 import type { TtsProps } from "@/components/MessageItem";
 import type { ApiSessionListItem } from "@/lib/sessionsApi";
 import type { LayoutProps } from "@/layouts/types";
-import type { AgentProfile } from "@agent/shared";
+import type { AgentProfile, SessionRuntimeStatus } from "@agent/shared";
 
 /** 将 API 会话列表转换为 sidebar 所需的格式 */
 function toSidebarSessions(
   sessions: ApiSessionListItem[],
   runningSessionIds: ReadonlySet<string>,
+  runtimeStatuses: ReadonlyMap<string, SessionRuntimeStatus>,
   currentAgent?: AgentProfile | null,
 ) {
   return sessions.map((s) => ({
@@ -39,6 +40,7 @@ function toSidebarSessions(
     preview: s.preview,
     hasUnreadAiReply: s.hasUnreadAiReply === true,
     isRunning: runningSessionIds.has(s.sessionId),
+    runtimeStatus: runtimeStatuses.get(s.sessionId),
     source: s.source,
     owner: s.owner,
     agent: s.agent ?? (currentAgent && (!s.owner || s.owner.username === currentAgent.username) ? currentAgent : undefined),
@@ -83,7 +85,7 @@ function App() {
     tokenUsage, contextUsage, connectionState, resumeCurrentStream,
     notifications, dismissNotification,
     lastMemoryRecall, dismissMemoryRecall, pluginInstallStatus,
-    runningSessionIds,
+    runningSessionIds, sessionRuntimeStatuses,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     agentProfile, sessionParticipants,
     previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, expandFilePreview, closeFilePreview,
@@ -210,9 +212,10 @@ function App() {
     () => toSidebarSessions(
       sessions,
       runningSessionIds,
+      sessionRuntimeStatuses,
       agentProfile,
     ),
-    [sessions, runningSessionIds, agentProfile],
+    [sessions, runningSessionIds, sessionRuntimeStatuses, agentProfile],
   );
 
   const layoutProps: LayoutProps = {

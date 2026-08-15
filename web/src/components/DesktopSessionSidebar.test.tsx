@@ -59,10 +59,10 @@ const session: ChatSessionIndexItem = {
   updatedAt: 1,
 };
 
-function renderSidebar(activeTab: AppTab) {
+function renderSidebar(activeTab: AppTab, sessions: ChatSessionIndexItem[] = [session]) {
   return render(
     <DesktopSessionSidebar
-      sessions={[session]}
+      sessions={sessions}
       activeSessionId={session.id}
       activeTab={activeTab}
       sidebarLayout="single"
@@ -94,4 +94,14 @@ describe("桌面侧边栏会话激活态", () => {
       expect(getSessionRow().className).not.toContain("bg-brand-accent-soft");
     },
   );
+
+  it.each([
+    ["waiting_user", "待补充"],
+    ["waiting_approval", "待处理"],
+  ] as const)("人工等待态 %s 显示 %s 且不转圈", (runtimeStatus, label) => {
+    renderSidebar("chat", [{ ...session, isRunning: true, runtimeStatus }]);
+
+    expect(screen.getByText(label)).toBeTruthy();
+    expect(screen.queryByLabelText("会话运行中")).toBeNull();
+  });
 });

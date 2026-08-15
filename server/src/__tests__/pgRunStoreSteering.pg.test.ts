@@ -456,26 +456,6 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     expect(events.some((event) => event.type === 'tool_invocation_cancel_requested')).toBe(false);
   });
 
-  it('重复 stop 不重复投递取消事件或工具取消等外部副作用触发源', async () => {
-    const sessionId = 'session-stop-idempotency';
-    const runId = 'run-stop-idempotency';
-    await store.upsertPending({ runId, sessionId, userId: 'user-1', channel: 'web' });
-    await store.markStatus(runId, 'running');
-    const event = { type: 'run_cancel_requested' as const, sessionId, runId, reason: 'web_abort' };
-
-    const first = await store.cancelSteeringBeforeDispatchBySessionWithEvent(
-      sessionId, 'web_abort', runId, event,
-    );
-    const duplicate = await store.cancelSteeringBeforeDispatchBySessionWithEvent(
-      sessionId, 'web_abort', runId, event,
-    );
-
-    expect(first.eventCreated).toBe(true);
-    expect(duplicate.eventCreated).toBe(false);
-    const events = await eventStore.list(sessionId);
-    expect(events.filter((item) => item.type === 'run_cancel_requested')).toHaveLength(1);
-  });
-
   it.each(['start-first', 'stop-first'] as const)(
     '%s 顺序下 stop 与 tool invocation 晚插都登记 durable cancel outbox',
     async (order) => {

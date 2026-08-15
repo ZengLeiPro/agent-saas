@@ -237,6 +237,31 @@ describe('tool invocation cancel delivery', () => {
     });
   });
 
+  it('claimed invocation 尚未在旧 hand 注册时，unknown DELETE 保持重试而非永久完成', async () => {
+    const store = await seedInvocation({ invokeClaimedAt: '2026-08-15T00:00:00.000Z' });
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      status: 'ok', cancelled: false, alreadyFinishedOrUnknown: true,
+    }), { status: 200 }));
+
+    const result = await deliverToolInvocationCancel({
+      event: cancelEvent(),
+      toolInvocationStore: store,
+      serverRemoteBaseUrl: 'http://hand.test',
+      serverRemoteAuthToken: 'token-1',
+      retryBaseMs: 1_000,
+      now: new Date('2026-08-15T00:00:01.000Z'),
+      fetchImpl,
+    });
+
+    expect(result.status).toBe('retry_scheduled');
+    const pendingRetry = await store.get('inv-1');
+    expect(pendingRetry?.cancelDeliveredAt).toBeUndefined();
+    expect(pendingRetry?.metadata).toEqual(expect.objectContaining({
+      cancelDelivery: 'retry_scheduled',
+      cancelDeliveryLastReason: 'not_found_before_start',
+    }));
+  });
+
   it('schedules retry and scanner respects nextAttemptAt', async () => {
     const store = await seedInvocation();
     const firstFetch = vi.fn(async () => {

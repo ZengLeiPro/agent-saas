@@ -490,14 +490,19 @@ function truncate(value: string, maxBytes: number): string {
 }
 
 
+interface PreparedToolInvocation {
+  ok: true;
+  toolRequest: ToolInvocationRequest;
+  invocationId?: string;
+  abort: () => void;
+  cleanup: () => void;
+}
+
 /** Shared parser/executor for /execute and /execute-stream. */
 async function prepareToolInvocation(
   req: IncomingMessage,
   deps: HandlerDeps,
-): Promise<
-  | { ok: true; toolRequest: ToolInvocationRequest; invocationId?: string; cleanup: () => void }
-  | { ok: false; status: number; body: Record<string, unknown> }
-> {
+): Promise<PreparedToolInvocation | { ok: false; status: number; body: Record<string, unknown> }> {
   if (req.method !== 'POST') {
     return { ok: false, status: 405, body: { status: 'error', error: 'method not allowed; use POST' } };
   }
@@ -535,16 +540,27 @@ async function prepareToolInvocation(
   }
 
   const invocationId = wire.context.invocationId;
-  if (invocationId && deps.invocations?.has(invocationId)) {
-    return { ok: false, status: 409, body: { status: 'error', error: 'invocation already running', invocationId } };
+  const existingInvocation = invocationId ? deps.invocations?.get(invocationId) : undefined;
+  if (invocationId && existingInvocation) {
+    return {
+      ok: false,
+      status: 409,
+      body: {
+        status: 'error',
+        error: existingInvocation.signal.aborted ? 'invocation cancelled before start' : 'invocation already running',
+        invocationId,
+      },
+    };
   }
   const controller = invocationId ? registerInvocation(deps, invocationId) : undefined;
   let completed = false;
-  const abortOnClose = () => {
-    if (!completed) controller?.abort();
+  const abort = () => {
+    if (completed || !controller) return;
+    controller.abort();
+    if (invocationId) retainCancelledInvocation(deps, invocationId, controller);
   };
-  req.on('aborted', abortOnClose);
-  req.on('close', abortOnClose);
+  // IncomingMessage 的正常消费也可能触发 close；只有 aborted 才代表请求异常中断。
+  req.on('aborted', abort);
 
   const workspace: WorkspaceRef = {
     id: wire.context.workspace.id,
@@ -569,17 +585,17 @@ async function prepareToolInvocation(
     ok: true,
     toolRequest,
     ...(invocationId ? { invocationId } : {}),
+    abort,
     cleanup: () => {
       completed = true;
-      req.off('aborted', abortOnClose);
-      req.off('close', abortOnClose);
-      if (invocationId) deps.invocations?.delete(invocationId);
+      req.off('aborted', abort);
+      if (invocationId && !controller?.signal.aborted) deps.invocations?.delete(invocationId);
     },
   };
 }
 
 async function executePreparedTool(
-  prepared: { toolRequest: ToolInvocationRequest; invocationId?: string; cleanup: () => void },
+  prepared: PreparedToolInvocation,
   deps: HandlerDeps,
 ): Promise<ToolInvocationResponse> {
   try {
@@ -601,8 +617,16 @@ export async function handleExecute(
 ): Promise<void> {
   const prepared = await prepareToolInvocation(req, deps);
   if (!prepared.ok) return sendJson(res, prepared.status, prepared.body);
-  const response = await executePreparedTool(prepared, deps);
-  return sendJson(res, 200, response);
+  const abortOnResponseClose = () => {
+    if (!res.writableEnded) prepared.abort();
+  };
+  res.on('close', abortOnResponseClose);
+  try {
+    const response = await executePreparedTool(prepared, deps);
+    return sendJson(res, 200, response);
+  } finally {
+    res.off('close', abortOnResponseClose);
+  }
 }
 
 export async function handleExecuteStream(
@@ -620,8 +644,10 @@ export async function handleExecuteStream(
   });
   let sawCompleted = false;
   let closed = false;
-  const markClosed = () => { closed = true; };
-  req.on('close', markClosed);
+  const markClosed = () => {
+    closed = true;
+    prepared.abort();
+  };
   res.on('close', markClosed);
   const isClosed = () => closed || res.destroyed || res.writableEnded;
   let writeQueue: Promise<boolean> = Promise.resolve(true);
@@ -669,7 +695,6 @@ export async function handleExecuteStream(
   } finally {
     clearInterval(heartbeat);
     if (!sawCompleted) await writeChunk({ type: 'completed', response: { status: 'error', error: 'provider stream ended without completed chunk' } });
-    req.off('close', markClosed);
     res.off('close', markClosed);
     prepared.cleanup();
     if (!res.destroyed && !res.writableEnded) res.end();
@@ -686,10 +711,9 @@ export async function handleCancelInvocation(
   const auth = req.headers.authorization ?? '';
   const match = /^Bearer\s+(.+)$/i.exec(auth);
   if (!match || match[1] !== deps.config.authToken) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
-  const controller = deps.invocations?.get(invocationId);
-  if (!controller) return sendJson(res, 200, { status: 'ok', invocationId, cancelled: false, alreadyFinishedOrUnknown: true });
+  const controller = deps.invocations?.get(invocationId) ?? new AbortController();
   controller.abort();
-  deps.invocations?.delete(invocationId);
+  retainCancelledInvocation(deps, invocationId, controller);
   return sendJson(res, 200, { status: 'ok', invocationId, cancelled: true });
 }
 
@@ -736,6 +760,46 @@ export async function handleWorkspaceLifecycle(
   } catch (err) {
     return sendJson(res, 400, { status: 'error', error: err instanceof Error ? err.message : String(err) });
   }
+}
+
+const CANCELLED_INVOCATION_TOMBSTONE_TTL_MS = 10 * 60_000;
+const CANCELLED_INVOCATION_TOMBSTONE_MAX = 10_000;
+const cancelledInvocationTimers = new WeakMap<AbortController, ReturnType<typeof setTimeout>>();
+
+function retainCancelledInvocation(
+  deps: HandlerDeps,
+  invocationId: string,
+  controller: AbortController,
+): void {
+  const invocations = deps.invocations;
+  if (!invocations) return;
+  let abortedEntries = 0;
+  let oldestAbortedId: string | undefined;
+  for (const [id, entry] of invocations) {
+    if (id === invocationId || !entry.signal.aborted) continue;
+    abortedEntries += 1;
+    oldestAbortedId ??= id;
+  }
+  if (abortedEntries >= CANCELLED_INVOCATION_TOMBSTONE_MAX && oldestAbortedId) {
+    const evicted = invocations.get(oldestAbortedId);
+    if (evicted) {
+      const timer = cancelledInvocationTimers.get(evicted);
+      if (timer) clearTimeout(timer);
+      cancelledInvocationTimers.delete(evicted);
+    }
+    invocations.delete(oldestAbortedId);
+  }
+  // Map.set 不会刷新既有 key 的插入顺序；先删后加，使容量淘汰与 TTL 刷新一致。
+  if (invocations.get(invocationId) === controller) invocations.delete(invocationId);
+  invocations.set(invocationId, controller);
+  const priorTimer = cancelledInvocationTimers.get(controller);
+  if (priorTimer) clearTimeout(priorTimer);
+  const timer = setTimeout(() => {
+    if (invocations.get(invocationId) === controller) invocations.delete(invocationId);
+    cancelledInvocationTimers.delete(controller);
+  }, CANCELLED_INVOCATION_TOMBSTONE_TTL_MS);
+  cancelledInvocationTimers.set(controller, timer);
+  timer.unref?.();
 }
 
 function registerInvocation(deps: HandlerDeps, invocationId: string): AbortController {

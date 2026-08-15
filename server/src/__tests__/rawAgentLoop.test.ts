@@ -3656,6 +3656,120 @@ describe('RawAgentLoop', () => {
     ]));
   });
 
+  it('rechecks the authoritative run inside the final invoke gate and closes the get-to-invoke race', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-terminal-between-get-invoke-'));
+    cleanupDirs.add(cwd);
+    const sessionId = 'session-terminal-between-get-invoke';
+    const runId = 'run-terminal-between-get-invoke';
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const toolInvocationStore = new InMemoryToolInvocationStore();
+    const toolRuntime = new CountingToolRuntime();
+    let reads = 0;
+    const getRun = vi.fn(async () => ({
+      runId,
+      sessionId,
+      status: ++reads === 1 ? 'running' : 'completed',
+      requestedAt: '2026-08-15T00:00:00.000Z',
+      updatedAt: '2026-08-15T00:00:01.000Z',
+      metadata: {},
+    }));
+    const runStore = { get: getRun } as unknown as RunStore;
+    const loop = new RawAgentLoop({
+      modelAdapter: new FakeToolCallingAdapter(),
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime,
+      toolInvocationStore,
+      runStore,
+    });
+
+    await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '写文件' },
+        prompt: '写文件',
+        instructions: '必须调用工具。',
+        maxTurns: 4,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId,
+        sessionId,
+        model: 'gpt-5.5',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'admin-1', username: 'admin', role: 'admin' },
+        },
+        hooks: { onInteraction: async () => ({ allow: true, message: 'ok' }) },
+      },
+    ));
+
+    expect(getRun.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(toolRuntime.invocations).toBe(0);
+    await expect(toolInvocationStore.get(`${runId}:call_write_1`)).resolves.toMatchObject({
+      status: 'failed',
+      error: `tool invocation blocked because run is already terminal status=completed: ${runId}:call_write_1`,
+    });
+  });
+
+  it('duplicate worker losing invocation claim exits without failing the winner run or replaying tool lifecycle', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-duplicate-claim-loser-'));
+    cleanupDirs.add(cwd);
+    const sessionId = 'session-duplicate-claim-loser';
+    const runId = 'run-duplicate-claim-loser';
+    const invocationId = `${runId}:call_write_1`;
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const toolInvocationStore = new InMemoryToolInvocationStore();
+    await toolInvocationStore.start({
+      invocationId,
+      runId,
+      sessionId,
+      toolCallId: 'call_write_1',
+      toolName: 'Write',
+      executionTarget: 'server-local',
+    });
+    await toolInvocationStore.invokeWithActiveRunGate(
+      runId, invocationId, async () => 'winner-started', async () => 'running',
+    );
+    const toolRuntime = new CountingToolRuntime();
+    const loop = new RawAgentLoop({
+      modelAdapter: new FakeToolCallingAdapter(),
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime,
+      toolInvocationStore,
+      runStore: { get: vi.fn(async () => ({ status: 'running' })) } as unknown as RunStore,
+    });
+
+    const outbound = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '写文件' },
+        prompt: '写文件',
+        instructions: '必须调用工具。',
+        maxTurns: 4,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId,
+        sessionId,
+        model: 'gpt-5.5',
+        cwd,
+        channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+        hooks: { onInteraction: async () => ({ allow: true, message: 'ok' }) },
+      },
+    ));
+
+    expect(toolRuntime.invocations).toBe(0);
+    expect(outbound.some((event) => event.type === 'error')).toBe(false);
+    await expect(toolInvocationStore.get(invocationId)).resolves.toMatchObject({ status: 'running' });
+    const lifecycle = await eventStore.list(sessionId);
+    expect(lifecycle.some((event) => event.type === 'tool_invocation_started')).toBe(false);
+    expect(lifecycle.some((event) => event.type === 'tool_invocation_completed')).toBe(false);
+    expect(lifecycle.some((event) => event.type === 'run_finished' && event.subtype === 'error')).toBe(false);
+  });
+
   it.each(['completed', 'failed', 'orphaned'] as const)(
     'does not execute a tool after its authoritative run became %s',
     async (terminalStatus) => {

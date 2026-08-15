@@ -1787,13 +1787,12 @@ export class WebChannel implements BaseChannel {
     }
 
     if (resolvedRunStatus && TERMINAL_RUN_STATUSES.has(resolvedRunStatus)) {
-      if (sessionId) {
-        await this.cancelPendingSteeringForSession(sessionId, 'aborted', resolvedRunId);
-        // 只有 cancelled run 可能遗留“run 已取消、工具 outbox 尚未登记”的半状态。
-        // completed/failed/orphaned 已有权威执行结果，重复 stop 不得反向触发外部 DELETE。
-        if (resolvedRunId && resolvedRunStatus === 'cancelled') {
-          await this.requestRunningToolCancellations(sessionId, resolvedRunId, client.user?.sub);
-        }
+      // 只有 cancelled run 的 stop 重试需要修复首次取消遗留的 steering/tool 半状态。
+      // completed/failed/orphaned 必须只回放权威终态，不能撤销同会话后续排队项。
+      if (sessionId && resolvedRunStatus === 'cancelled' && resolvedRunId) {
+        // 首次 stop 的 target/steering 取消已在同一事务提交；重试只修复该 run 的工具
+        // outbox，不能再次扫 session，否则会撤销首次 stop 后新进入的排队消息。
+        await this.requestRunningToolCancellations(sessionId, resolvedRunId, client.user?.sub);
       }
       this.wsSend(client.ws, { type: 'abort_ok', ...(resolvedStreamId ? { streamId: resolvedStreamId } : {}), ...(resolvedRunId ? { runId: resolvedRunId } : {}) });
       if (sessionId) {
@@ -1834,8 +1833,28 @@ export class WebChannel implements BaseChannel {
           'cancelled',
           'web_abort',
         );
-        if (!cancelled || cancelled.status !== 'cancelled') {
+        if (!cancelled) {
           throw new Error(`Failed to persist cancellation for run ${resolvedRunId}`);
+        }
+        if (cancelled.status !== 'cancelled') {
+          if (!TERMINAL_RUN_STATUSES.has(cancelled.status)) {
+            throw new Error(`Failed to persist cancellation for run ${resolvedRunId}`);
+          }
+          this.wsSend(client.ws, {
+            type: 'abort_ok',
+            ...(resolvedStreamId ? { streamId: resolvedStreamId } : {}),
+            runId: resolvedRunId,
+          });
+          if (sessionId) {
+            this.wsSend(client.ws, {
+              type: 'session_status',
+              sessionId,
+              status: cancelled.status as 'completed' | 'failed' | 'orphaned',
+              runId: resolvedRunId,
+              ...(cancelled.statusReason ? { reason: cancelled.statusReason } : {}),
+            });
+          }
+          return;
         }
       }
       if (sessionId && !stopResult.eventAppended) {

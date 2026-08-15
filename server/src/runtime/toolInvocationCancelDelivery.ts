@@ -195,6 +195,21 @@ async function deliverToolInvocationCancelRecord(input: ToolInvocationCancelDeli
       const cancelled = responseBody && typeof responseBody === 'object' && 'cancelled' in responseBody
         ? Boolean((responseBody as { cancelled?: unknown }).cancelled)
         : undefined;
+      const claimedButNotRegistered = cancelled === false
+        && input.record.status === 'running'
+        && typeof input.record.metadata.invokeClaimedAt === 'string';
+      if (claimedButNotRegistered) {
+        const patch = buildAttemptMetadata(input.record, now, 'not_found_before_start', {
+          ...attemptMetadata,
+          cancelDeliveryStatus: response.status,
+          cancelDeliveryCancelled: false,
+        }, input);
+        const terminal = patch.cancelDelivery === 'dead_letter';
+        const finalized = await markAttempt(store, input.record.invocationId, patch, terminal, claimId);
+        return finalized
+          ? { status: terminal ? 'dead_letter' : 'retry_scheduled', record: input.record }
+          : { status: 'already_claimed', record: input.record };
+      }
       const delivery = cancelled === false ? 'not_found_assumed_terminal' : 'delivered';
       const finalized = await store?.markCancelDelivered(input.record.invocationId, {
         ...attemptMetadata,

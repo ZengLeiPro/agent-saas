@@ -1190,21 +1190,27 @@ export class PgRunStore implements RunStore {
         `${this.runsTable}:message:${sessionId}`,
       ]);
       const now = new Date().toISOString();
+      // 固定锁序：advisory(session) → target → source(run_id) → input(sequence)。
+      // 必须先锁定并核验 target，再写 session stopped_at 或撤销排队项；否则状态预读后
+      // target 并发终态化时，stop 会错误影响后续普通队列/steering。
+      if (targetRunId) {
+        const target = await client.query<{ status: string }>(`
+          SELECT status
+          FROM ${this.runsTable}
+          WHERE session_id = $1 AND run_id = $2
+          FOR UPDATE
+        `, [sessionId, targetRunId]);
+        if (target.rows[0] && ['completed', 'failed', 'cancelled', 'orphaned'].includes(target.rows[0].status)) {
+          await client.query('COMMIT');
+          return { cancelled: [], targetCancelled: false, eventCreated: false };
+        }
+      }
       await client.query(`
         INSERT INTO ${this.steeringSessionsTable} (session_id, stopped_at)
         VALUES ($1, $2::timestamptz)
         ON CONFLICT (session_id) DO UPDATE
         SET stopped_at = GREATEST(${this.steeringSessionsTable}.stopped_at, EXCLUDED.stopped_at)
       `, [sessionId, now]);
-      // 固定锁序：advisory(session) → target → source(run_id) → input(sequence)。
-      if (targetRunId) {
-        await client.query(`
-          SELECT run_id
-          FROM ${this.runsTable}
-          WHERE session_id = $1 AND run_id = $2
-          FOR UPDATE
-        `, [sessionId, targetRunId]);
-      }
       const candidateIds = await client.query<{ source_run_id: string }>(`
         SELECT input.source_run_id
         FROM ${this.steeringInputsTable} input

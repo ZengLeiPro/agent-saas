@@ -460,6 +460,10 @@ export class RawAgentLoop implements AgentLoop {
   private readonly mcpLoadingMode: EffectiveMcpLoadingMode;
   private readonly streamEventBatch: Required<StreamEventBatchOptions>;
   private readonly zombieToolCallTimeoutMs: number;
+  private readonly parallelInvocationGates = new WeakMap<RunContext, {
+    onClaimed: () => void;
+    waitForRelease: Promise<void>;
+  }>();
   private webFetchSynthesisReason?: string;
   private forcedSynthesisReason?: string;
   private forcedSynthesisPrompt = CONTEXT_SYNTHESIS_PROMPT;
@@ -2012,6 +2016,11 @@ export class RawAgentLoop implements AgentLoop {
       }
       throw new Error(`raw agent loop exceeded maxTurns=${turnLimit}`);
     } catch (err) {
+      if (err instanceof ToolInvocationClaimLostError) {
+        if (thinkingStarted) yield { type: 'thinking_end' };
+        if (textStarted) yield { type: 'text_end' };
+        return;
+      }
       if (err instanceof ApprovalPendingWithoutInteractionHook) {
         if (thinkingStarted) yield { type: 'thinking_end' };
         if (textStarted) {
@@ -2503,23 +2512,56 @@ export class RawAgentLoop implements AgentLoop {
             yield { type: 'tool_end', toolId: call.id, toolName: call.name };
           }
         }
-        const outcomes = await Promise.all(segment.map((call) => this.executeToolCall(
-          call,
+        // 第一项 invocation 是该并行段的 durable owner claim。它取得 claim 后先
+        // 停在真正 invoke 之前，待其余调用启动再一起放行；重复 worker 会在第一项
+        // 丢失 claim 并退出，因此不会出现双方各抢到一部分 invocation 的拆分批次。
+        const ownerCall = segment[0]!;
+        const ownerInvocationId = `${args.context.runId}:${ownerCall.id}`;
+        const ownerContext = { ...args.context };
+        let signalOwnerClaimed!: () => void;
+        const ownerClaimed = new Promise<void>((resolve) => { signalOwnerClaimed = resolve; });
+        let releaseOwner!: () => void;
+        const waitForRelease = new Promise<void>((resolve) => { releaseOwner = resolve; });
+        this.parallelInvocationGates.set(ownerContext, {
+          onClaimed: signalOwnerClaimed,
+          waitForRelease,
+        });
+        const ownerOutcome = this.executeToolCall(
+          ownerCall,
           args.descriptorsByName,
           args.baseToolContext,
-          args.context,
-        )));
-        for (let i = 0; i < segment.length; i += 1) {
-          const outcome = outcomes[i]!;
-          yield* this.appendToolResult({
-            call: segment[i]!,
-            content: outcome.result.content,
-            ...(outcome.isError ? { isError: true } : {}), ...(outcome.result.modelImages?.length ? { modelImages: outcome.result.modelImages } : {}),
-            ...(outcome.result.presentation ? { presentation: outcome.result.presentation } : {}),
-            ...(outcome.result.metadata ? { metadata: outcome.result.metadata } : {}),
-            context: args.context,
-            messages: args.messages,
-          });
+          ownerContext,
+        );
+        try {
+          await Promise.race([
+            ownerClaimed,
+            ownerOutcome.then(() => {
+              throw new Error(`parallel owner invocation completed before claim: ${ownerInvocationId}`);
+            }),
+          ]);
+          const remainingOutcomes = segment.slice(1).map((call) => this.executeToolCall(
+            call,
+            args.descriptorsByName,
+            args.baseToolContext,
+            args.context,
+          ));
+          releaseOwner();
+          const outcomes = await Promise.all([ownerOutcome, ...remainingOutcomes]);
+          for (let i = 0; i < segment.length; i += 1) {
+            const outcome = outcomes[i]!;
+            yield* this.appendToolResult({
+              call: segment[i]!,
+              content: outcome.result.content,
+              ...(outcome.isError ? { isError: true } : {}), ...(outcome.result.modelImages?.length ? { modelImages: outcome.result.modelImages } : {}),
+              ...(outcome.result.presentation ? { presentation: outcome.result.presentation } : {}),
+              ...(outcome.result.metadata ? { metadata: outcome.result.metadata } : {}),
+              context: args.context,
+              messages: args.messages,
+            });
+          }
+        } finally {
+          releaseOwner();
+          this.parallelInvocationGates.delete(ownerContext);
         }
         index = segmentEnd;
         continue;
@@ -2720,7 +2762,7 @@ export class RawAgentLoop implements AgentLoop {
         context: resumeContext,
       });
     } catch (err) {
-      if (err instanceof ApprovalPendingWithoutInteractionHook) return;
+      if (err instanceof ToolInvocationClaimLostError || err instanceof ApprovalPendingWithoutInteractionHook) return;
       if (err instanceof InteractionPendingWithoutInteractionHook) {
         yield toOutboundInteractionEvent(err.event);
         return;
@@ -2857,7 +2899,7 @@ export class RawAgentLoop implements AgentLoop {
         context,
       });
     } catch (err) {
-      if (err instanceof ApprovalPendingWithoutInteractionHook) return;
+      if (err instanceof ToolInvocationClaimLostError || err instanceof ApprovalPendingWithoutInteractionHook) return;
       if (err instanceof InteractionPendingWithoutInteractionHook) {
         yield toOutboundInteractionEvent(err.event);
         return;
@@ -3035,7 +3077,7 @@ export class RawAgentLoop implements AgentLoop {
       if (err instanceof WebFetchCircuitOpenError) {
         this.forceWebFetchSynthesis(err.reason, context);
       }
-      if (err instanceof InteractionPendingWithoutInteractionHook) throw err;
+      if (err instanceof InteractionPendingWithoutInteractionHook || err instanceof ToolInvocationClaimLostError) throw err;
       // 失败也要有摘要与结构化事实。摘要在 toolRuntime 里已按截断前 metadata 造好
       // 并随 ToolExecutionError 带上来，这里只负责不把它丢掉——此前这一跳是
       // 全部失败调用（近 7 天 3,457 次）摘要覆盖率仅 0.2% 的唯一原因，
@@ -3105,6 +3147,7 @@ export class RawAgentLoop implements AgentLoop {
       });
       return { call: args.call, descriptor: args.descriptor, input: args.input, result };
     } catch (err) {
+      if (err instanceof ToolInvocationClaimLostError) throw err;
       // 失败也要有摘要：优先用错误自带的（provider 按真实 metadata 产出），
       // 否则退回入参侧规则并强制标 warn。客户看到「读取 差旅.md · 有异常」
       // 远好过一行「已执行，有异常」。
@@ -3220,18 +3263,10 @@ export class RawAgentLoop implements AgentLoop {
         ...(args.context.workerId ? { workerId: args.context.workerId } : {}),
       },
     });
-    const invocationAlreadyTerminal = Boolean(invocation && invocation.status !== 'running');
-    if (!invocationAlreadyTerminal) {
-      await this.append({
-        type: 'tool_invocation_started',
-        runId: args.context.runId,
-        sessionId: args.context.sessionId,
-        invocationId,
-        toolCallId: args.call.id,
-        toolName: args.descriptor.name,
-        executionTarget: args.baseToolContext.workspace.executionTarget,
-      });
+    if (typeof invocation?.metadata.invokeClaimedAt === 'string') {
+      throw new ToolInvocationClaimLostError(invocationId);
     }
+    let invocationAlreadyTerminal = Boolean(invocation && invocation.status !== 'running');
     let cancelledBeforeInvoke = false;
     try {
       let blockedBeforeInvoke = invocationAlreadyTerminal;
@@ -3286,10 +3321,53 @@ export class RawAgentLoop implements AgentLoop {
             : 'invocation is already terminal';
         throw new Error(`tool invocation blocked because ${reason}: ${invocationId}`);
       }
-      const result = await this.toolRuntime.invoke(
-        { toolId: args.descriptor.id, input: args.input, authorization: args.authorization },
-        toolContext,
-      );
+      const invokeTool = async () => {
+        const parallelGate = this.parallelInvocationGates.get(args.context);
+        if (parallelGate) {
+          parallelGate.onClaimed();
+          await parallelGate.waitForRelease;
+        }
+        await this.append({
+          type: 'tool_invocation_started',
+          runId: args.context.runId,
+          sessionId: args.context.sessionId,
+          invocationId,
+          toolCallId: args.call.id,
+          toolName: args.descriptor.name,
+          executionTarget: args.baseToolContext.workspace.executionTarget,
+        });
+        return this.toolRuntime.invoke(
+          { toolId: args.descriptor.id, input: args.input, authorization: args.authorization },
+          toolContext,
+        );
+      };
+      const guarded = this.toolInvocationStore
+        ? await this.toolInvocationStore.invokeWithActiveRunGate(
+          args.context.runId,
+          invocationId,
+          invokeTool,
+          this.runStore
+            ? async () => (await this.runStore!.get(args.context.runId))?.status ?? null
+            : undefined,
+        )
+        : undefined;
+      if (guarded && !guarded.invoked) {
+        terminalRunStatus = guarded.runStatus;
+        invocationAlreadyTerminal = guarded.reason === 'invocation_terminal' || guarded.reason === 'invocation_claimed';
+        cancelledBeforeInvoke = guarded.reason === 'cancel_requested' || guarded.runStatus === 'cancelled';
+        if (guarded.reason === 'invocation_claimed') {
+          throw new ToolInvocationClaimLostError(invocationId);
+        }
+        const reason = cancelledBeforeInvoke
+          ? 'run is already cancelled'
+          : guarded.reason === 'run_terminal' && guarded.runStatus
+            ? `run is already terminal status=${guarded.runStatus}`
+            : guarded.reason === 'run_missing'
+              ? 'authoritative run not found'
+              : 'invocation is already terminal';
+        throw new Error(`tool invocation blocked because ${reason}: ${invocationId}`);
+      }
+      const result = guarded?.invoked ? guarded.result : await invokeTool();
       await streamBatcher.flush();
       await this.toolInvocationStore?.complete(invocationId, 'completed').catch(() => undefined);
       await this.append({
@@ -4158,6 +4236,13 @@ async function* captureModelStreamError(
     yield* stream;
   } catch (error) {
     onError(error);
+  }
+}
+
+class ToolInvocationClaimLostError extends Error {
+  constructor(invocationId: string) {
+    super(`tool invocation already claimed by another worker: ${invocationId}`);
+    this.name = 'ToolInvocationClaimLostError';
   }
 }
 

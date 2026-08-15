@@ -263,6 +263,8 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         const sessionId = `session-terminal-no-cancel-${terminalStatus}`;
         await runStore.upsertPending({ runId, sessionId, userId: USER.sub, model: 'm', channel: 'web' });
         await runStore.markStatus(runId, terminalStatus, `${terminalStatus}-reason`);
+        const cancelPendingSteering = vi.fn(async () => []);
+        (runStore as any).cancelSteeringBeforeDispatchBySession = cancelPendingSteering;
         const toolInvocationStore = {
           listRunning: vi.fn(async () => [{
             invocationId: `inv-terminal-no-cancel-${terminalStatus}`,
@@ -282,6 +284,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
 
         await (rig.channel as any).handleAbortAsync(wsClient(rig.ws, USER), { action: 'abort', runId });
 
+        expect(cancelPendingSteering).not.toHaveBeenCalled();
         expect(toolInvocationStore.listRunning).not.toHaveBeenCalled();
         expect(toolInvocationStore.requestCancelOnce).not.toHaveBeenCalled();
         expect(rig.ws.sent.at(-2)?.data).toEqual({ type: 'abort_ok', runId });
@@ -295,6 +298,8 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({ runId: 'run-term-tool', sessionId: 's-term-tool', userId: USER.sub, model: 'm', channel: 'web' });
       await runStore.markStatus('run-term-tool', 'cancelled', 'web_abort');
+      const cancelPendingSteering = vi.fn(async () => []);
+      (runStore as any).cancelSteeringBeforeDispatchBySession = cancelPendingSteering;
       const toolInvocationStore = {
         listRunning: vi.fn(async () => [{
           invocationId: 'inv-term-tool', runId: 'run-term-tool', sessionId: 's-term-tool',
@@ -314,6 +319,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
 
       await (rig.channel as any).handleAbortAsync(wsClient(rig.ws, USER), { action: 'abort', runId: 'run-term-tool' });
 
+      expect(cancelPendingSteering).not.toHaveBeenCalled();
       expect(toolInvocationStore.requestCancelOnce).toHaveBeenCalledWith(
         'inv-term-tool', 'web_abort', { requestedBy: USER.sub },
       );
@@ -365,7 +371,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'abort_ok', runId: 'run-waiting-stop' });
     });
 
-    it('stop 锁到并发 completed target 时不得回 abort_ok 或补写取消事件', async () => {
+    it('stop 锁到并发 completed target 时只回放权威终态，不补写取消事件', async () => {
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({ runId: 'run-stop-race', sessionId: 'session-stop-race', userId: USER.sub, channel: 'web' });
       await runStore.markStatus('run-stop-race', 'running');
@@ -384,13 +390,16 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
       });
 
-      await expect((rig.channel as any).handleAbortAsync(
+      await (rig.channel as any).handleAbortAsync(
         wsClient(rig.ws, USER),
         { action: 'abort', runId: 'run-stop-race' },
-      )).rejects.toThrow('Failed to persist cancellation for run run-stop-race');
+      );
 
       await expect(runStore.get('run-stop-race')).resolves.toMatchObject({ status: 'completed' });
-      expect(rig.ws.sent.some((entry) => entry.data?.type === 'abort_ok')).toBe(false);
+      expect(rig.ws.sent.at(-2)?.data).toEqual({ type: 'abort_ok', runId: 'run-stop-race' });
+      expect(rig.ws.sent.at(-1)?.data).toEqual({
+        type: 'session_status', sessionId: 'session-stop-race', status: 'completed', runId: 'run-stop-race',
+      });
     });
 
     it('durable 取消全链：落 run_cancel_requested + 工具 invocation 取消 + runStore cancelled + controller/runtimeRunController 双中止', async () => {

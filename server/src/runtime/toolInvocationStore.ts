@@ -1,5 +1,6 @@
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
 import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
+import { invokeWithPgActiveRunGate } from './pgToolInvocationRunGate.js';
 
 export type ToolInvocationStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -33,8 +34,27 @@ export interface StartToolInvocationInput {
   metadata?: Record<string, unknown>;
 }
 
+export type ToolInvocationRunGateResult<T> =
+  | { invoked: true; result: T }
+  | {
+      invoked: false;
+      reason: 'run_missing' | 'run_terminal' | 'invocation_missing' | 'invocation_terminal' | 'cancel_requested' | 'invocation_claimed';
+      invocation: ToolInvocationRecord | null;
+      runStatus?: string;
+    };
+
 export interface ToolInvocationStore {
   start(input: StartToolInvocationInput): Promise<ToolInvocationRecord>;
+  /**
+   * 在 run 与 invocation 的权威门禁内同步启动副作用。PG 实现持有共享行锁直到
+   * invoke 回调返回 Promise，确保终态提交与实际工具启动存在唯一先后顺序。
+   */
+  invokeWithActiveRunGate<T>(
+    runId: string,
+    invocationId: string,
+    invoke: () => Promise<T>,
+    readRunStatus?: () => Promise<string | null>,
+  ): Promise<ToolInvocationRunGateResult<T>>;
   complete(invocationId: string, status: Exclude<ToolInvocationStatus, 'running'>, error?: string): Promise<ToolInvocationRecord | null>;
   requestCancel(invocationId: string, reason?: string, metadataPatch?: Record<string, unknown>): Promise<ToolInvocationRecord | null>;
   /** 原子登记首次取消请求；只有 created=true 的调用方负责发布即时事件。 */
@@ -164,6 +184,41 @@ export class InMemoryToolInvocationStore implements ToolInvocationStore {
     };
     this.invocations.set(input.invocationId, record);
     return record;
+  }
+
+  async invokeWithActiveRunGate<T>(
+    runId: string,
+    invocationId: string,
+    invoke: () => Promise<T>,
+    readRunStatus?: () => Promise<string | null>,
+  ): Promise<ToolInvocationRunGateResult<T>> {
+    const runStatus = readRunStatus ? await readRunStatus() : null;
+    const invocation = this.invocations.get(invocationId) ?? null;
+    if (!invocation || invocation.runId !== runId) {
+      return { invoked: false, reason: 'invocation_missing', invocation: null };
+    }
+    if (typeof invocation.metadata.invokeClaimedAt === 'string') {
+      return { invoked: false, reason: 'invocation_claimed', invocation };
+    }
+    if (readRunStatus && !runStatus) {
+      return { invoked: false, reason: 'run_missing', invocation };
+    }
+    if (runStatus && ['completed', 'failed', 'cancelled', 'orphaned'].includes(runStatus)) {
+      return { invoked: false, reason: 'run_terminal', invocation, runStatus };
+    }
+    if (invocation.status !== 'running') {
+      return { invoked: false, reason: 'invocation_terminal', invocation };
+    }
+    if (invocation.cancelRequestedAt) {
+      return { invoked: false, reason: 'cancel_requested', invocation };
+    }
+    const claimed: ToolInvocationRecord = {
+      ...invocation,
+      updatedAt: new Date().toISOString(),
+      metadata: { ...invocation.metadata, invokeClaimedAt: new Date().toISOString() },
+    };
+    this.invocations.set(invocationId, claimed);
+    return { invoked: true, result: await invoke() };
   }
 
   async complete(invocationId: string, status: Exclude<ToolInvocationStatus, 'running'>, error?: string): Promise<ToolInvocationRecord | null> {
@@ -463,6 +518,20 @@ export class PgToolInvocationStore implements ToolInvocationStore {
     } finally {
       client.release();
     }
+  }
+
+  async invokeWithActiveRunGate<T>(
+    runId: string,
+    invocationId: string,
+    invoke: () => Promise<T>,
+    _readRunStatus?: () => Promise<string | null>,
+  ): Promise<ToolInvocationRunGateResult<T>> {
+    return invokeWithPgActiveRunGate<T, ToolInvocationRow>({
+      pool: this.options.pool,
+      runsTable: this.runsTable,
+      toolInvocationsTable: this.toolInvocationsTable,
+      rowToRecord,
+    }, runId, invocationId, invoke);
   }
 
   async complete(invocationId: string, status: Exclude<ToolInvocationStatus, 'running'>, error?: string): Promise<ToolInvocationRecord | null> {

@@ -184,11 +184,12 @@ export class EventBackedApprovalStore implements ApprovalStore {
   constructor(
     private readonly eventStore: EventStore,
     private readonly sessionId: string,
+    private readonly tenantId?: string,
   ) {}
 
   async create(request: ApprovalRequest): Promise<ApprovalRecord> {
     const id = randomUUID();
-    const event = await this.eventStore.append({
+    const event = await this.append({
       type: 'approval_requested',
       runId: request.runId,
       sessionId: request.sessionId,
@@ -211,7 +212,7 @@ export class EventBackedApprovalStore implements ApprovalStore {
   async resolve(id: string, decision: ApprovalDecision, message?: string): Promise<void> {
     const existing = await this.get(id);
     if (!existing) return;
-    await this.eventStore.append({
+    await this.append({
       type: 'approval_resolved',
       runId: existing.runId,
       sessionId: existing.sessionId,
@@ -225,7 +226,7 @@ export class EventBackedApprovalStore implements ApprovalStore {
     return this.withApprovalLock(id, async () => {
       const existing = await this.get(id);
       if (!existing || existing.status !== 'pending') return null;
-      const resolvedEvent = await this.eventStore.append({
+      const resolvedEvent = await this.append({
         type: 'approval_resolved',
         runId: existing.runId,
         sessionId: existing.sessionId,
@@ -255,6 +256,10 @@ export class EventBackedApprovalStore implements ApprovalStore {
 
   async listPending(sessionId = this.sessionId): Promise<ApprovalRecord[]> {
     return (await this.list(sessionId)).filter((record) => record.status === 'pending');
+  }
+
+  private append(event: Parameters<EventStore['append']>[0]): ReturnType<EventStore['append']> {
+    return this.eventStore.append(event, this.tenantId ? { tenantId: this.tenantId } : undefined);
   }
 
   private async withApprovalLock<T>(id: string, fn: () => Promise<T>): Promise<T> {

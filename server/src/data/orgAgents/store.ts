@@ -3,6 +3,10 @@ import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { authLogger } from '../../utils/logger.js';
+import {
+  normalizeOrgAgentRuntimePolicy,
+  type OrgAgentRuntimePolicy,
+} from './runtimePolicy.js';
 import type { OrgAgentAudience, OrgAgentRecord, OrgAgentSummary, OrgAgentsFileData } from './types.js';
 
 export interface CreateOrgAgentInput {
@@ -17,6 +21,8 @@ export interface CreateOrgAgentInput {
   allowedSkills: string[];
   /** ★ 新增（2026-07-18）：挂载租户知识库 id 列表，optional 向后兼容 */
   allowedKnowledge?: string[];
+  /** 缺省为继承 shared org_agent Profile 的 v1 policy。 */
+  runtime?: OrgAgentRuntimePolicy;
   audience: OrgAgentAudience;
   guardrail: OrgAgentRecord['guardrail'];
   enabled: boolean;
@@ -108,6 +114,7 @@ export class OrgAgentStore {
                   ),
                 }
               : {}),
+            runtime: normalizeOrgAgentRuntimePolicy(agent.runtime),
             audience: normalizeAudience(agent.audience),
           }))
         : [];
@@ -184,6 +191,7 @@ export class OrgAgentStore {
         ...(input.allowedKnowledge && input.allowedKnowledge.length > 0
           ? { allowedKnowledge: [...input.allowedKnowledge] }
           : {}),
+        runtime: normalizeOrgAgentRuntimePolicy(input.runtime),
         audience: {
           exposure: input.audience.exposure,
           usernames: [...input.audience.usernames],
@@ -240,6 +248,9 @@ export class OrgAgentStore {
         } else {
           delete record.allowedKnowledge;
         }
+      }
+      if (patch.runtime !== undefined) {
+        record.runtime = normalizeOrgAgentRuntimePolicy(patch.runtime);
       }
       if (patch.audience !== undefined) {
         const nextAudience: OrgAgentAudience = {

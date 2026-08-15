@@ -17,7 +17,7 @@ server/src/__tests__/runtimeTraceRoutes.test.ts	1016	test
 server/src/__tests__/sessionsRoutesMetaOnly.test.ts	814	test
 server/src/__tests__/skillsRouterTenantIsolation.test.ts	977	test
 server/src/__tests__/toolRuntime.test.ts	1277	test
-server/src/__tests__/webChannelCoverage.test.ts	1848	test
+server/src/__tests__/webChannelCoverage.test.ts	1847	test
 server/src/__tests__/webChannelExecutionTarget.test.ts	852	test
 server/src/__tests__/webChannelReconnect.test.ts	909	test
 server/src/__tests__/workflowLibraryV3.test.ts	1062	test
@@ -25,7 +25,7 @@ server/src/__tests__/wsEventProcessor.test.ts	831	test
 server/src/agent/toolRuntime.ts	1725	production
 server/src/app/config.ts	1523	production
 server/src/app/runtime.ts	3229	production
-server/src/channels/web/channel.ts	4474	production
+server/src/channels/web/channel.ts	4410	production
 server/src/cron/service.ts	1138	production
 server/src/data/billing/pgBillingStore.ts	2319	production
 server/src/data/transcripts/parse.ts	2042	production

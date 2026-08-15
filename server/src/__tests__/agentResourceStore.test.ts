@@ -124,6 +124,23 @@ describe('Typed Agent Resource', () => {
     })).rejects.toMatchObject({ code: 'AGENT_RESOURCE_VERSION_CONFLICT' });
   });
 
+  it('恢复历史 digest 时重新切换 current version，而不是错误 no-op', async () => {
+    const { pool, versions } = buildPool();
+    const store = new PgAgentResourceStore({ pool, tablePrefix: 'test' });
+    await store.create({ agentId: 'oa-1', tenantId: 'acme', kind: 'org_agent', ownerUserId: 'user-owner', createdBy: 'admin' });
+    const first = await store.publishVersion({ tenantId: 'acme', agentId: 'oa-1', expectedRevision: 1, definition, publishedBy: 'admin' });
+    await store.publishVersion({
+      tenantId: 'acme', agentId: 'oa-1', expectedRevision: 2,
+      definition: { ...definition, name: '新版' }, publishedBy: 'admin',
+    });
+    const reverted = await store.publishVersion({
+      tenantId: 'acme', agentId: 'oa-1', expectedRevision: 3, definition, publishedBy: 'admin',
+    });
+    expect(reverted).toMatchObject({ created: false, changed: true });
+    expect(reverted.resource).toMatchObject({ currentVersionId: first.version.versionId, revision: 4 });
+    expect(versions).toHaveLength(2);
+  });
+
   it('写操作按 tenant 隔离，draft 不得绕过发布直接 enabled', async () => {
     const { pool } = buildPool();
     const store = new PgAgentResourceStore({ pool, tablePrefix: 'test' });

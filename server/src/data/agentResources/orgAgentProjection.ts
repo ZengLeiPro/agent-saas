@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
 import type { OrgAgentStore } from '../orgAgents/store.js';
+import {
+  DEFAULT_ORG_AGENT_RUNTIME_POLICY,
+  orgAgentRuntimePolicySchema,
+} from '../orgAgents/runtimePolicy.js';
 import { normalizeGuardrailConfig } from '../orgAgents/types.js';
 import type { PgAgentResourceStore } from './store.js';
 
@@ -21,12 +25,14 @@ const guardrailSchema = z.object({
 export const managedOrgAgentDefinitionSchema = z.object({
   schemaVersion: z.literal(1),
   name: z.string().trim().min(1).max(30),
+  avatar: z.string().max(300).optional(),
   description: z.string().trim().max(500).default(''),
   starterPrompts: starterPromptsSchema.default([]),
   instructions: z.string().max(8000).default(''),
   skills: z.array(skillSchema).max(200).default([])
     .refine(items => new Set(items.map(item => item.id)).size === items.length, 'skills must be unique'),
   knowledge: z.array(z.string().min(1).max(200)).max(20).default([]),
+  runtime: orgAgentRuntimePolicySchema.default(DEFAULT_ORG_AGENT_RUNTIME_POLICY),
   guardrail: guardrailSchema.default({
     mode: 'off', enabled: false, scopeDescription: '',
     rejectionMessage: '这个问题超出了我的职责范围，暂时无法回答。', strictness: 'strict',
@@ -72,11 +78,13 @@ export async function projectManagedOrgAgentVersion(
   if (existing && existing.tenantId !== tenantId) throw new Error('GOVERNANCE_PROJECTION_INVALID');
   const projected = {
     name: definition.name,
+    ...(definition.avatar !== undefined ? { avatar: definition.avatar } : {}),
     description: definition.description,
     starterPrompts: definition.starterPrompts,
     instructions: definition.instructions,
     allowedSkills: definition.skills.map(item => item.id),
     allowedKnowledge: definition.knowledge,
+    runtime: definition.runtime,
     guardrail,
     enabled: resource.status === 'enabled',
   };
@@ -89,6 +97,7 @@ export async function projectManagedOrgAgentVersion(
     id: agentId,
     tenantId,
     ...projected,
-    audience: { exposure: 'all', usernames: [] },
+    // 新资源在治理 Assignment 投影完成前必须 fail closed，避免保存后半段失败时短暂全员可见。
+    audience: { exposure: 'allow_users', usernames: [] },
   }, 'system:governance-projection');
 }

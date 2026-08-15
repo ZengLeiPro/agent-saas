@@ -27,45 +27,92 @@ const definition = {
   source: 'governance' as const,
 };
 
-function json(body: unknown): RequestInit {
-  return { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+type TestAgentStatus = 'draft' | 'enabled' | 'disabled' | 'archived';
+type TestPersona = 'platform_admin' | 'org_admin' | 'member';
+interface TestResource {
+  agentId: string;
+  tenantId: string;
+  kind: 'org_agent';
+  ownerUserId: string;
+  status: TestAgentStatus;
+  revision: number;
+  currentVersionId?: string;
 }
 
-async function rig() {
-  const resource = {
-    agentId: 'org-a', tenantId: 'tenant-a', kind: 'org_agent' as const, ownerUserId: 'admin-1',
-    status: 'draft' as const, revision: 1, currentVersionId: undefined,
+function json(body: unknown, method = 'POST'): RequestInit {
+  return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+}
+
+async function rig(options: {
+  status?: TestAgentStatus;
+  revision?: number;
+  currentVersionId?: string;
+  persona?: TestPersona;
+  includeProjectionOutbox?: boolean;
+  projectionFails?: boolean;
+} = {}) {
+  let resource: TestResource = {
+    agentId: 'org-a', tenantId: 'tenant-a', kind: 'org_agent', ownerUserId: 'admin-1',
+    status: options.status ?? 'draft', revision: options.revision ?? 1,
   };
-  const publishedResource = { ...resource, status: 'enabled' as const, revision: 2, currentVersionId: 'agentv-1' };
-  const publishVersion = vi.fn().mockResolvedValue({
-    resource: publishedResource,
-    version: { versionId: 'agentv-1', agentId: 'org-a', digest: 'digest-1', definition },
-    created: true,
+  const configuredVersionId = options.currentVersionId
+    ?? (resource.status === 'enabled' || resource.status === 'disabled' ? 'agentv-1' : undefined);
+  if (configuredVersionId) resource.currentVersionId = configuredVersionId;
+  const currentVersion = {
+    versionId: 'agentv-1', agentId: 'org-a', versionNumber: 1,
+    digest: 'digest-1', definition, publishedAt: '2026-08-13T00:00:00.000Z', publishedBy: 'admin-1',
+  };
+  const publishedResource: TestResource = {
+    ...resource, status: 'enabled', revision: resource.revision + 1, currentVersionId: 'agentv-1',
+  };
+  const publishVersion = vi.fn().mockImplementation(async () => {
+    resource = publishedResource;
+    return { resource: publishedResource, version: currentVersion, created: true, changed: true };
   });
-  const enqueue = vi.fn().mockResolvedValue({ outboxId: 'projection-1' });
+  const setStatus = vi.fn().mockImplementation(async (
+    tenantId: string,
+    agentId: string,
+    status: 'enabled' | 'disabled',
+    expectedRevision: number,
+  ) => {
+    if (tenantId !== resource.tenantId || agentId !== resource.agentId || expectedRevision !== resource.revision) {
+      throw new Error('AGENT_RESOURCE_VERSION_CONFLICT');
+    }
+    resource = { ...resource, status, revision: resource.revision + 1 };
+    return resource;
+  });
+  const getForTenant = vi.fn().mockImplementation(async (tenantId: string, agentId: string) => (
+    tenantId === resource.tenantId && agentId === resource.agentId ? resource : null
+  ));
+  const getVersion = vi.fn().mockImplementation(async (versionId: string) => (
+    versionId === currentVersion.versionId ? currentVersion : null
+  ));
+  const enqueue = options.projectionFails
+    ? vi.fn().mockRejectedValue(new Error('outbox unavailable'))
+    : vi.fn().mockResolvedValue({ outboxId: 'projection-1' });
   const reconcileOne = vi.fn().mockResolvedValue(null);
   const app = express();
   app.use(express.json());
-  app.use((req, _res, next) => {
+  app.use((req, res, next) => {
     req.user = { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' };
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     next();
   });
   const router = express.Router();
   registerGovernanceAgentResourceRoutes({
     router,
-    agents: {
-      getForTenant: vi.fn().mockResolvedValue(resource),
-      getVersion: vi.fn().mockResolvedValue(null),
-      publishVersion,
-    } as never,
+    agents: { getForTenant, getVersion, publishVersion, setStatus } as never,
     memberships: {
       getMembership: vi.fn().mockResolvedValue({ tenantId: 'tenant-a', userId: 'admin-1', status: 'active' }),
     } as never,
     changeJobs: { findActiveForTarget: vi.fn().mockResolvedValue(null) } as never,
     previewSecret: 'test-agent-preview-secret-at-least-32-characters',
-    personaFor: () => 'org_admin',
-    resourceTenantFor: req => req.user?.tenantId ?? null,
-    projectionOutbox: { enqueue } as never,
+    personaFor: () => options.persona ?? 'org_admin',
+    resourceTenantFor: (req, requested) => {
+      if (!req.user?.tenantId || (requested && requested !== req.user.tenantId)) return null;
+      return req.user.tenantId;
+    },
+    ...(options.includeProjectionOutbox === false ? {} : { projectionOutbox: { enqueue } as never }),
     projectionReconciler: { reconcileOne } as never,
     now: () => new Date('2026-08-14T00:00:00.000Z'),
   });
@@ -76,7 +123,10 @@ async function rig() {
   servers.push(server);
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
-  return { baseUrl, publishVersion, enqueue, reconcileOne };
+  return {
+    baseUrl, publishVersion, setStatus, enqueue, reconcileOne,
+    mutateResource: (patch: Partial<TestResource>) => { resource = { ...resource, ...patch }; },
+  };
 }
 
 describe('governance Agent version publish', () => {
@@ -115,12 +165,172 @@ describe('governance Agent version publish', () => {
       projectionId: 'projection-1', projectionStatus: 'pending', compatibilityProjection: 'applied_with_projection_pending',
     });
     expect(test.publishVersion).toHaveBeenCalledWith(expect.objectContaining({
-      tenantId: 'tenant-a', agentId: 'org-a', expectedRevision: 1, definition,
+      tenantId: 'tenant-a', agentId: 'org-a', expectedRevision: 1,
+      definition: expect.objectContaining(definition),
     }));
     expect(test.enqueue).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-a', projector: 'org_agent',
       payload: { tenantId: 'tenant-a', agentId: 'org-a', versionId: 'agentv-1', resourceRevision: 2 },
     }));
     expect(test.reconcileOne).toHaveBeenCalledOnce();
+  });
+
+  it('拒绝引用其他 Agent 的媒体头像路径', async () => {
+    const test = await rig();
+    const response = await fetch(
+      `${test.baseUrl}/api/governance/resources/agents/org-a/versions/preview`,
+      json({
+        expectedRevision: 1,
+        definition: { ...definition, avatar: 'org-agent-avatars/org-b.png' },
+        reason: '更新组织 Agent 头像',
+      }),
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ code: 'AGENT_AVATAR_REFERENCE_INVALID' });
+    expect(test.publishVersion).not.toHaveBeenCalled();
+  });
+});
+
+describe('governance Agent status preview and commit', () => {
+  const reason = '调整组织 Agent 启停状态';
+
+  it('状态签名被篡改时拒绝 commit，且不写源数据', async () => {
+    const test = await rig({ status: 'enabled', revision: 4 });
+    const previewResponse = await fetch(
+      `${test.baseUrl}/api/governance/resources/agents/org-a/status/preview`,
+      json({ expectedRevision: 4, status: 'disabled', reason }),
+    );
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json() as Record<string, unknown>;
+
+    const response = await fetch(`${test.baseUrl}/api/governance/resources/agents/org-a/status`, json({
+      expectedRevision: 4,
+      status: 'enabled',
+      reason,
+      previewId: preview.previewId,
+      baselineDigest: preview.baselineDigest,
+      expiresAt: preview.expiresAt,
+    }, 'PATCH'));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ code: 'AGENT_STATUS_PREVIEW_INVALID' });
+    expect(test.setStatus).not.toHaveBeenCalled();
+    expect(test.enqueue).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { from: 'enabled' as const, to: 'disabled' as const },
+    { from: 'disabled' as const, to: 'enabled' as const },
+  ])('成功将 Agent 从 $from 切换为 $to，并按更新后 revision 投影', async ({ from, to }) => {
+    const test = await rig({ status: from, revision: 4 });
+    const previewResponse = await fetch(
+      `${test.baseUrl}/api/governance/resources/agents/org-a/status/preview`,
+      json({ expectedRevision: 4, status: to, reason }),
+    );
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json() as Record<string, unknown>;
+    expect(preview).toMatchObject({
+      canCommit: true,
+      baselineDigest: expect.any(String),
+      expiresAt: expect.any(String),
+      impact: {
+        from: { status: from, versionId: 'agentv-1' },
+        to: { status: to, versionId: 'agentv-1' },
+        blockers: [],
+        reversible: true,
+        effectiveMode: 'source_immediate_projection_pending',
+      },
+    });
+
+    const response = await fetch(`${test.baseUrl}/api/governance/resources/agents/org-a/status`, json({
+      expectedRevision: 4,
+      status: to,
+      reason,
+      previewId: preview.previewId,
+      baselineDigest: preview.baselineDigest,
+      expiresAt: preview.expiresAt,
+    }, 'PATCH'));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: to,
+      revision: 5,
+      currentVersionId: 'agentv-1',
+      projectionId: 'projection-1',
+      projectionStatus: 'pending',
+      compatibilityProjection: 'applied_with_projection_pending',
+    });
+    expect(test.setStatus).toHaveBeenCalledWith('tenant-a', 'org-a', to, 4, 'admin-1');
+    expect(test.enqueue).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      projector: 'org_agent',
+      idempotencyKey: 'org-a:agentv-1:5',
+      payload: { tenantId: 'tenant-a', agentId: 'org-a', versionId: 'agentv-1', resourceRevision: 5 },
+    });
+    expect(test.reconcileOne).toHaveBeenCalledOnce();
+  });
+
+  it('preview 后 revision 变化时拒绝 commit', async () => {
+    const test = await rig({ status: 'enabled', revision: 4 });
+    const previewResponse = await fetch(
+      `${test.baseUrl}/api/governance/resources/agents/org-a/status/preview`,
+      json({ expectedRevision: 4, status: 'disabled', reason }),
+    );
+    const preview = await previewResponse.json() as Record<string, unknown>;
+    test.mutateResource({ revision: 5 });
+
+    const response = await fetch(`${test.baseUrl}/api/governance/resources/agents/org-a/status`, json({
+      expectedRevision: 4,
+      status: 'disabled',
+      reason,
+      previewId: preview.previewId,
+      baselineDigest: preview.baselineDigest,
+      expiresAt: preview.expiresAt,
+    }, 'PATCH'));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ code: 'AGENT_STATUS_PREVIEW_BASELINE_CONFLICT' });
+    expect(test.setStatus).not.toHaveBeenCalled();
+    expect(test.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('源状态已更新但 projection outbox 持久化失败时返回 changed:true', async () => {
+    const test = await rig({ status: 'enabled', revision: 4, projectionFails: true });
+    const previewResponse = await fetch(
+      `${test.baseUrl}/api/governance/resources/agents/org-a/status/preview`,
+      json({ expectedRevision: 4, status: 'disabled', reason }),
+    );
+    const preview = await previewResponse.json() as Record<string, unknown>;
+
+    const response = await fetch(`${test.baseUrl}/api/governance/resources/agents/org-a/status`, json({
+      expectedRevision: 4,
+      status: 'disabled',
+      reason,
+      previewId: preview.previewId,
+      baselineDigest: preview.baselineDigest,
+      expiresAt: preview.expiresAt,
+    }, 'PATCH'));
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'GOVERNANCE_PROJECTION_NOT_DURABLE', changed: true,
+    });
+    expect(test.setStatus).toHaveBeenCalledOnce();
+  });
+
+  it('仅组织管理员可管理，显式跨租户目标返回 403', async () => {
+    const member = await rig({ status: 'enabled', revision: 4, persona: 'member' });
+    const unauthorized = await fetch(
+      `${member.baseUrl}/api/governance/resources/agents/org-a/status/preview`,
+      json({ expectedRevision: 4, status: 'disabled', reason }),
+    );
+    expect(unauthorized.status).toBe(404);
+
+    const admin = await rig({ status: 'enabled', revision: 4 });
+    const crossTenant = await fetch(
+      `${admin.baseUrl}/api/governance/resources/agents/org-a/status/preview?tenantId=tenant-b`,
+      json({ expectedRevision: 4, status: 'disabled', reason }),
+    );
+    expect(crossTenant.status).toBe(403);
   });
 });

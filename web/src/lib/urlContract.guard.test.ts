@@ -36,6 +36,7 @@ const URL_PARAM_CONTRACT: Record<string, string[]> = {
   "components/UsageDashboard/index.tsx": [
     "usageRange", "usageFrom", "usageTo", "usageModelGroup", "usageView", "usageUser", "usageSort", "usageSortDir",
   ],
+  "components/OrganizationGovernance/OrganizationUsageBillingPage.tsx": ["usageSection"],
   "components/TenantAnalytics/OverviewSection.tsx": ["orgRange", "orgFrom", "orgTo"],
   "components/QaConsole/index.tsx": ["qaView"],
   "components/QaConsole/SessionsView.tsx": ["qaAgent", "qaMember", "qaFrom", "qaTo"],
@@ -52,6 +53,7 @@ const URL_PARAM_CONTRACT: Record<string, string[]> = {
  */
 const CUSTOMER_FACING_FILES = [
   "components/UsageDashboard/index.tsx",
+  "components/OrganizationGovernance/OrganizationUsageBillingPage.tsx",
   "components/TenantAnalytics/OverviewSection.tsx",
   "components/QaConsole/index.tsx",
   "components/QaConsole/SessionsView.tsx",

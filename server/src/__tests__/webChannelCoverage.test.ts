@@ -1646,9 +1646,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const enqueued: UpsertRunInput[] = [];
       const rig = resumeRig(runStore, tmp, enqueued);
 
-      await (rig.channel as any).resolveInteraction(
-        wsClient(rig.ws, USER), 'appr-1', { allow: true, message: '可以执行' }, sessionId,
-      );
+      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: true, message: '可以执行' }, sessionId);
       expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'appr-1' });
       expect(enqueued).toHaveLength(1);
       expect(enqueued[0]).toMatchObject({
@@ -1663,14 +1661,12 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
 
       // 第二次 respond：日志里已有 interaction_resolved → 直接 respond_ok，不再入队
       rig.ws.sent.length = 0;
-      await (rig.channel as any).resolveInteraction(
-        wsClient(rig.ws, USER), 'appr-1', { allow: true }, sessionId,
-      );
+      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: true }, sessionId);
       expect(rig.ws.sent.map((m) => m.data.type)).toEqual(['respond_ok']);
       expect(enqueued).toHaveLength(1);
     });
 
-    it('approval 指向终态 run → respond_error "Run already finished"，不入队', async () => {
+    it('approval 指向终态 run → 拒绝遗留审批并 respond_ok，不恢复旧 run', async () => {
       const tmp = await makeTmp('cov-apprterm-');
       const { sessionId, eventStore } = await seedRuntimeSession(USER, { executionTarget: 'server-local' });
       await eventStore.append({
@@ -1687,16 +1683,21 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const enqueued: UpsertRunInput[] = [];
       const rig = resumeRig(runStore, tmp, enqueued);
 
-      await (rig.channel as any).resolveInteraction(
-        wsClient(rig.ws, USER), 'appr-t-1', { allow: true }, sessionId,
-      );
+      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-t-1', { allow: true }, sessionId);
       expect(rig.ws.sent.at(-1)?.data).toEqual({
-        type: 'respond_error', interactionId: 'appr-t-1', error: 'Run already finished',
+        type: 'respond_ok', interactionId: 'appr-t-1',
       });
       expect(enqueued).toHaveLength(0);
+      const events = await eventStore.list(sessionId);
+      expect(events.at(-1)).toMatchObject({
+        type: 'approval_resolved',
+        approvalId: 'appr-t-1',
+        decision: 'rejected',
+        message: expect.stringContaining('源 run 不可恢复（completed）'),
+      });
     });
 
-    it('legacy resumeApprovalDispatch 路径（无 enqueueRuntime）：透传 approvalId/应答/会话上下文并广播 busy→idle', async () => {
+    it('无 enqueueRuntime 时 fail-closed 拒绝持久审批，不调用 legacy resumeApprovalDispatch', async () => {
       const tmp = await makeTmp('cov-apprlegacy-');
       const { sessionId, eventStore } = await seedRuntimeSession(USER, { model: 'm-legacy' });
       await eventStore.append({
@@ -1721,17 +1722,15 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         wsClient(rig.ws, USER), 'appr-l-1', { allow: false, message: '不允许' }, sessionId,
       );
       expect(rig.ws.sent.some((m) => m.data.type === 'respond_ok')).toBe(true);
-      expect(resumeCalls).toHaveLength(1);
-      expect(resumeCalls[0]).toMatchObject({
+      expect(resumeCalls).toHaveLength(0);
+      const events = await eventStore.list(sessionId);
+      expect(events.at(-1)).toMatchObject({
+        type: 'approval_resolved',
         approvalId: 'appr-l-1',
-        response: { allow: false, message: '不允许' },
-        sessionId,
+        decision: 'rejected',
+        message: expect.stringContaining('未恢复旧 Run'),
       });
-      expect(resumeCalls[0].context).toMatchObject({ channel: 'web', resumeSessionId: sessionId });
-      expect(rig.userEvents).toContainEqual({ type: 'session_status', sessionId, status: 'busy', streamId: expect.any(String) });
-      await vi.waitFor(() => {
-        expect(rig.userEvents).toContainEqual({ type: 'session_status', sessionId, status: 'idle' });
-      });
+      expect(rig.userEvents).not.toContainEqual(expect.objectContaining({ type: 'session_status', status: 'busy' }));
       expect((rig.channel as any).findActiveStreamIdBySession(sessionId)).toBeUndefined();
     });
   });

@@ -2765,7 +2765,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       });
     }
   }
-
   const webChannel = new WebChannel({
     timezone: config.server.timezone,
     displayConfig: config.messageDisplay?.web,
@@ -2802,6 +2801,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     resumeApprovalDispatch: billedResumeApprovalDispatch,
     executionConfig,
     runtimeEventStoreFor,
+    runtimeEventStoreSupportsPathless: Boolean(pgEventStore),
     ...(runtimeScheduler && pgRunStore ? {
       enqueueRuntime: {
         scheduler: runtimeScheduler,

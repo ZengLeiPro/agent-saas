@@ -36,6 +36,7 @@ import type { ExecutionTargetKind } from '../../agent/toolRuntime.js';
 import { toRunModelOptions, type ResolvedModel } from '../../app/models.js';
 import { createEventConsumer, type EventHandler } from '../eventConsumer.js';
 import { interactionStore } from './interactionStore.js';
+import { persistedInteractionAccessError } from './persistedInteractionAccess.js';
 import {
   buildChatMessageActivityDetail,
   canViewContextUsageDetails,
@@ -190,6 +191,7 @@ export interface WebChannelConfig {
    * 注入路径见 app/runtime.ts。
    */
   runtimeEventStoreFor?: (transcriptPath: string) => EventStore;
+  /** 仅共享 PG EventStore 可在缺少 transcriptPath 时按 sessionId 读取。 */ runtimeEventStoreSupportsPathless?: boolean;
   /**
    * Web chat enqueue-only runtime. 配置后，Web chat 默认只创建 durable
    * session/run/command event，然后交给 RuntimeScheduler wake；WebSocket 仅返回
@@ -1251,6 +1253,22 @@ export class WebChannel implements BaseChannel {
       this.wsSend(client.ws, { type: 'respond_error', interactionId, error: orgAgentAccessError });
       return;
     }
+    if (
+      pendingInteraction?.type === 'permission_request'
+      && pendingInteraction.runId
+      && this.config.enqueueRuntime?.runStore
+    ) {
+      const sourceRun = await this.config.enqueueRuntime.runStore.get(pendingInteraction.runId);
+      if (!sourceRun || TERMINAL_RUN_STATUSES.has(sourceRun.status)) {
+        const reason = `源 run 不可恢复（${sourceRun?.status ?? 'missing'}），拒绝遗留审批`;
+        const closed = await this.tryResumePersistedInteraction(client, interactionId, { allow: false }, sessionId);
+        interactionStore.discard(interactionId, reason);
+        if (!closed) {
+          this.wsSend(client.ws, { type: 'respond_error', interactionId, error: '终态 Run 的遗留审批关闭失败' });
+        }
+        return;
+      }
+    }
     const resolved = interactionStore.resolve(interactionId, response);
     if (!resolved) {
       const resumed = await this.tryResumePersistedInteraction(client, interactionId, response, fallbackSessionId);
@@ -1295,24 +1313,22 @@ export class WebChannel implements BaseChannel {
     response: Record<string, unknown>,
     sessionId?: string,
   ): Promise<boolean> {
-    if (!sessionId || !this.config.agentCwd) return false;
-
-    const transcriptPath = await findTranscriptOrMetaPathBySessionId(sessionId);
-    if (!transcriptPath) return false;
-
+    if (!sessionId) return false;
+    const transcriptPath = this.config.agentCwd ? await findTranscriptOrMetaPathBySessionId(sessionId) : null;
+    if (!transcriptPath && !this.config.runtimeEventStoreSupportsPathless) return false;
     // 跨 session 并发兜底：限制同时进入的 jsonl 读路径并发数，遏制 EMFILE 突发。
     // 仅保护读路径（list + buildRuntimeReplayState）；dispatch 流不持锁。
     const release = await approvalResumeSemaphore.acquire();
     let eventStore: EventStore;
+    let approvalStore: EventBackedApprovalStore;
     let existingEvents: PlatformEvent[];
     let pendingApprovalRunId: string | undefined;
     let pendingAskUser: ReturnType<typeof buildPendingInteractionsFromEvents>[number] | undefined;
     let hasPendingApproval: boolean;
     try {
       eventStore = this.config.runtimeEventStoreFor
-        ? this.config.runtimeEventStoreFor(transcriptPath)
-        : new FileEventStore(getRuntimeEventLogPath(transcriptPath));
-      const approvalStore = new EventBackedApprovalStore(eventStore, sessionId);
+        ? this.config.runtimeEventStoreFor(transcriptPath ?? '') : new FileEventStore(getRuntimeEventLogPath(transcriptPath!));
+      approvalStore = new EventBackedApprovalStore(eventStore, sessionId);
       existingEvents = await eventStore.list(sessionId);
       const replayState = buildRuntimeReplayState(
         existingEvents,
@@ -1330,30 +1346,22 @@ export class WebChannel implements BaseChannel {
       release();
     }
     if (!hasPendingApproval && !pendingAskUser) return false;
-
-    const meta = await readSessionMeta(transcriptPath);
-    const targetTenantAccessError = tenantAccessErrorMessage(this.config.tenantStore, meta?.tenantId);
-    if (targetTenantAccessError) {
-      this.wsSend(client.ws, { type: 'respond_error', interactionId, error: targetTenantAccessError });
+    const meta = transcriptPath ? (await readSessionMeta(transcriptPath) ?? undefined) : undefined;
+    const enqueueRuntime = this.config.enqueueRuntime?.enabled === false ? undefined : this.config.enqueueRuntime;
+    const sourceRunId = pendingApprovalRunId ?? pendingAskUser?.runId;
+    const sourceRun = sourceRunId && enqueueRuntime ? await enqueueRuntime.runStore.get(sourceRunId) : null;
+    if (sourceRun?.tenantId) approvalStore = new EventBackedApprovalStore(eventStore, sessionId, sourceRun.tenantId);
+    const accessError = persistedInteractionAccessError({
+      sessionId, user: client.user,
+      meta,
+      sourceRun,
+      tenantStore: this.config.tenantStore,
+      orgAgentAccessError: (orgAgentId, tenantId, username) => this.orgAgentActionAccessError(client, orgAgentId, tenantId, username),
+    });
+    if (accessError) {
+      this.wsSend(client.ws, { type: 'respond_error', interactionId, error: accessError });
       return true;
     }
-    if (client.user && client.user.role !== 'admin') {
-      if (!meta || meta.userId !== client.user.sub) {
-        this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'Access denied' });
-        return true;
-      }
-    }
-    const orgAgentAccessError = this.orgAgentActionAccessError(
-      client,
-      meta?.orgAgentId,
-      meta?.tenantId,
-      meta?.username,
-    );
-    if (orgAgentAccessError) {
-      this.wsSend(client.ws, { type: 'respond_error', interactionId, error: orgAgentAccessError });
-      return true;
-    }
-
     const userRecord = client.user ? this.userStore?.findById(client.user.sub) : undefined;
     const userIdentity: ChannelContext['user'] | undefined = client.user ? {
       id: client.user.sub,
@@ -1364,7 +1372,6 @@ export class WebChannel implements BaseChannel {
       ...(userRecord?.dingtalkStaffId ? { dingtalkStaffId: userRecord.dingtalkStaffId } : {}),
     } : undefined;
 
-    const enqueueRuntime = this.config.enqueueRuntime?.enabled === false ? undefined : this.config.enqueueRuntime;
     if (pendingAskUser) {
       if (!enqueueRuntime) {
         this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'AskUserQuestion resume requires runtime scheduler' });
@@ -1375,9 +1382,12 @@ export class WebChannel implements BaseChannel {
         return false;
       }
       const currentRun = await enqueueRuntime.runStore.get(pendingAskUser.runId);
-      if (currentRun && ['completed', 'failed', 'cancelled', 'orphaned'].includes(currentRun.status)) {
-        chatLogger.warn(`ask_user resume enqueue ignored terminal run=${pendingAskUser.runId} status=${currentRun.status}`);
-        this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'Run already finished' });
+      if (!currentRun || TERMINAL_RUN_STATUSES.has(currentRun.status)) {
+        chatLogger.warn(
+          `ask_user resume enqueue ignored unavailable run=${pendingAskUser.runId} `
+          + `status=${currentRun?.status ?? 'missing'}`,
+        );
+        this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'Run unavailable' });
         return true;
       }
       const normalizedResponse = normalizeInteractionResponse(response);
@@ -1426,54 +1436,105 @@ export class WebChannel implements BaseChannel {
       return true;
     }
 
+    if (!enqueueRuntime) {
+      await approvalStore.resolvePending(
+        interactionId,
+        'rejected',
+        '持久审批恢复需要 Runtime Scheduler；已安全拒绝，未恢复旧 Run',
+      );
+      this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+      if (client.user?.sub && this.eventBus) {
+        this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws);
+      }
+      return true;
+    }
     if (enqueueRuntime) {
-      if (!meta || !pendingApprovalRunId) {
-        chatLogger.warn(`approval resume enqueue rejected: missing meta/runId session=${sessionId} approval=${interactionId}`);
+      if (!pendingApprovalRunId) {
+        chatLogger.warn(`approval resume enqueue rejected: missing runId session=${sessionId} approval=${interactionId}`);
         return false;
       }
-      const alreadyAccepted = existingEvents.some((event) => (
+      const acceptedEvent = [...existingEvents].reverse().find((event) => (
         event.type === 'interaction_resolved'
         && event.sessionId === sessionId
         && event.interactionId === interactionId
       ));
+      const alreadyAccepted = Boolean(acceptedEvent);
       const alreadyApplied = existingEvents.some((event) => (
         event.type === 'approval_resolved'
         && event.sessionId === sessionId
         && event.approvalId === interactionId
       ));
+      const currentRun = sourceRun?.runId === pendingApprovalRunId ? sourceRun : await enqueueRuntime.runStore.get(pendingApprovalRunId);
+      const cannotResume = !currentRun || TERMINAL_RUN_STATUSES.has(currentRun.status)
+        || (!alreadyAccepted && !alreadyApplied && currentRun.status !== 'waiting_approval');
+      if (cannotResume) {
+        const sourceStatus = currentRun?.status ?? 'missing';
+        const resolved = await approvalStore.resolvePending(
+          interactionId,
+          'rejected',
+          `源 run 不可恢复（${sourceStatus}），拒绝遗留审批`,
+        );
+        chatLogger.warn(
+          `approval resume closed unavailable run=${pendingApprovalRunId} status=${sourceStatus} `
+          + `approval=${interactionId} resolved=${Boolean(resolved)}`,
+        );
+        this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+        if (client.user?.sub && this.eventBus) {
+          this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws);
+        }
+        return true;
+      }
       if (alreadyAccepted || alreadyApplied) {
         this.wsSend(client.ws, { type: 'respond_ok', interactionId });
         return true;
       }
-      const currentRun = await enqueueRuntime.runStore.get(pendingApprovalRunId);
-      if (currentRun && ['completed', 'failed', 'cancelled', 'orphaned'].includes(currentRun.status)) {
-        chatLogger.warn(`approval resume enqueue ignored terminal run=${pendingApprovalRunId} status=${currentRun.status}`);
-        this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'Run already finished' });
+      if (!meta || !transcriptPath) {
+        await approvalStore.resolvePending(
+          interactionId,
+          'rejected',
+          '缺少可恢复的会话元数据，已安全拒绝审批',
+        );
+        this.wsSend(client.ws, { type: 'respond_ok', interactionId });
         return true;
       }
-      await eventStore.append({
+      const acceptedResponse = acceptedEvent?.type === 'interaction_resolved'
+        ? acceptedEvent.response
+        : undefined;
+      const resumeResponse = acceptedResponse && typeof acceptedResponse === 'object'
+        ? normalizeInteractionResponse(acceptedResponse as Record<string, unknown>)
+        : normalizeInteractionResponse(response);
+      const resumedRun = await enqueueRuntime.runStore.markStatus(
+        pendingApprovalRunId,
+        'pending',
+        'approval_resolved_enqueue_resume',
+        {
+          transcriptPath,
+          resumeApprovalConsumedAt: null,
+          resumeApprovalConsumedId: null,
+          resumeApproval: {
+            approvalId: interactionId,
+            response: resumeResponse,
+          },
+        },
+      );
+      if (!resumedRun || TERMINAL_RUN_STATUSES.has(resumedRun.status)) {
+        await approvalStore.resolvePending(
+          interactionId,
+          'rejected',
+          `源 run 不可恢复（${resumedRun?.status ?? 'missing'}），拒绝遗留审批`,
+        );
+        this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+        return true;
+      }
+      if (!alreadyAccepted) await eventStore.append({
         type: 'interaction_resolved',
         sessionId,
         runId: pendingApprovalRunId,
         interactionId,
         interactionType: 'approval',
         userId: client.user?.sub,
-        response: {
-          allow: response.allow === true,
-          ...(typeof response.message === 'string' ? { message: response.message } : {}),
-        },
+        response: resumeResponse,
       }, { tenantId: meta.tenantId });
-      await enqueueRuntime.runStore.markStatus(pendingApprovalRunId, 'pending', 'approval_resolved_enqueue_resume', {
-        resumeApprovalConsumedAt: null,
-        resumeApprovalConsumedId: null,
-        resumeApproval: {
-          approvalId: interactionId,
-          response: {
-            allow: response.allow === true,
-            ...(typeof response.message === 'string' ? { message: response.message } : {}),
-          },
-        },
-      });
       const workspaceId = meta.workspaceId ?? sessionId;
       await enqueueRuntime.scheduler.enqueue({
         runId: pendingApprovalRunId,
@@ -1488,10 +1549,7 @@ export class WebChannel implements BaseChannel {
           transcriptPath,
           resumeApproval: {
             approvalId: interactionId,
-            response: {
-              allow: response.allow === true,
-              ...(typeof response.message === 'string' ? { message: response.message } : {}),
-            },
+            response: resumeResponse,
           },
         },
       });
@@ -1503,129 +1561,7 @@ export class WebChannel implements BaseChannel {
       return true;
     }
 
-    let targetCwd: string | undefined;
-    if (!this.config.resumeApprovalDispatch) return false;
-    let sessionOwner: ChannelContext['sessionOwner'];
-    if (client.user?.role === 'admin' && meta?.username && meta.userId !== client.user.sub) {
-      // PR 7 P1-2：admin 代操作时按 ownerRecord.tenantId 落对路径
-      const ownerRecord = this.userStore?.findById(meta.userId);
-      targetCwd = resolveUserCwd(this.config.agentCwd, {
-        id: meta.userId,
-        username: meta.username,
-        role: 'user',
-        tenantId: ownerRecord?.tenantId || meta.tenantId,
-      });
-      sessionOwner = {
-        id: meta.userId,
-        username: meta.username,
-        role: (ownerRecord?.role as 'admin' | 'user' | undefined) ?? 'user',
-        tenantId: ownerRecord?.tenantId || meta.tenantId,
-        ...(ownerRecord?.realName ? { realName: ownerRecord.realName } : {}),
-      };
-    } else if (userIdentity) {
-      targetCwd = resolveUserCwd(this.config.agentCwd, userIdentity);
-    }
-    const cwd = targetCwd || this.config.agentCwd;
-
-    const resolvedModel = meta?.model && this.modelResolver ? this.modelResolver(meta.model) : null;
-    const modelOptions = resolvedModel ? toRunModelOptions(resolvedModel) : {};
-    const resumeContext: ChannelContext = {
-      channel: 'web',
-      resumeSessionId: sessionId,
-      timezone: this.config.timezone,
-      ...(userIdentity ? { user: userIdentity } : {}),
-      ...(sessionOwner ? { sessionOwner } : {}),
-      ...(targetCwd ? { targetCwd } : {}),
-    };
-
-    const streamId = String(++this.streamIdCounter);
-    const controller = new AbortController();
-    this.activeStreams.set(streamId, {
-      controller,
-      userId: client.user?.sub,
-      ws: client.ws,
-      sessionId,
-    });
-    this.wsActiveStream.set(client.ws, streamId);
-    this.eventBufferStore.create(sessionId, client.user?.sub);
-
-    this.wsSend(client.ws, { type: 'respond_ok', interactionId });
-    if (client.user?.sub && this.eventBus) {
-      this.eventBus.emitUser(client.user.sub, {
-        type: 'interaction_resolved',
-        sessionId,
-        interactionId,
-      }, client.ws);
-      this.eventBus.emitUser(client.user.sub, {
-        type: 'session_status',
-        sessionId,
-        status: 'busy',
-        streamId,
-      });
-    }
-
-    const hooks: AgentRunHooks = {
-      onResult: async (metaResult) => {
-        const tokenStore = this.config.tokenUsageStore;
-        if (tokenStore && client.user && metaResult.modelUsage && Object.keys(metaResult.modelUsage).length > 0) {
-          try {
-            tokenStore.recordResult({
-              username: client.user.username,
-              // JwtPayload.tenantId 必填；闭包内 TS narrow 保守，兜底平台根组织。
-              tenantId: client.user.tenantId ?? DEFAULT_TENANT_ID,
-              channel: 'web',
-              modelUsage: metaResult.modelUsage,
-              occurredAtMs: Date.now(),
-            });
-          } catch (err) {
-            chatLogger.warn(`[token-usage] approval resume record failed: ${err instanceof Error ? err.message : String(err)}`);
-          }
-        }
-      },
-    };
-
-    const events = this.config.resumeApprovalDispatch({
-      approvalId: interactionId,
-      response: {
-        allow: response.allow === true,
-        ...(typeof response.message === 'string' ? { message: response.message } : {}),
-      },
-      sessionId,
-      context: resumeContext,
-      model: modelOptions.model,
-      modelConnection: modelOptions.modelConnection,
-      modelProviderOptions: modelOptions.modelProviderOptions,
-      hooks,
-      abortController: controller,
-    });
-
-    void (async () => {
-      try {
-        await this.handleEvents(
-          events,
-          client.ws,
-          resumeContext,
-          controller.signal,
-          { sessionId, streamId },
-          undefined,
-          meta?.model,
-        );
-      } catch (err) {
-        chatLogger.error(`approval resume stream failed: ${err instanceof Error ? err.message : String(err)}`);
-      } finally {
-        this.activeStreams.delete(streamId);
-        this.eventBufferStore.complete(sessionId);
-        if (client.user?.sub && this.eventBus) {
-          this.eventBus.emitUser(client.user.sub, {
-            type: 'session_status',
-            sessionId,
-            status: 'idle',
-          });
-        }
-      }
-    })();
-
-    return true;
+    return false;
   }
 
   /** 处理 abort 消息（runId-first；streamId 仅兼容旧客户端）。

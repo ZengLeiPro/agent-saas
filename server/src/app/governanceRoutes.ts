@@ -110,6 +110,7 @@ export function registerGovernanceRoutes(
       memberships: runtime.membershipStore,
       entitlements: runtime.entitlementStore,
       assignments: runtime.assignmentStore,
+      ...(runtime.directoryGroupStore ? { directoryGroups: runtime.directoryGroupStore } : {}),
       ...(runtime.governanceChangeJobStore ? { changeJobs: runtime.governanceChangeJobStore } : {}),
       ...(runtime.oauthGrantStore ? {
         oauthGrants: runtime.oauthGrantStore,

@@ -29,7 +29,8 @@ export interface ForegroundToolRecoveryOptions {
  * 残留 child run/session 一并收口。RawAgentLoop 随后基于
  * tool_invocation_completed 合成标准 tool_result，让父会话立即可继续。
  *
- * pending approval / ask_user 没有开始真实执行，必须保留给既有恢复路径继续处理。
+ * active run 的 pending approval / ask_user 没有开始真实执行，保留给既有恢复路径；
+ * terminal run 遗留的 pending approval 已不可能恢复，自动拒绝，避免永久阻塞会话。
  */
 export async function reconcileInterruptedForegroundToolCalls(
   options: ForegroundToolRecoveryOptions,
@@ -39,6 +40,23 @@ export async function reconcileInterruptedForegroundToolCalls(
   let recovered = 0;
 
   for (const state of replay.unclosedToolCalls) {
+    if (state.status === 'pending_approval' && options.runStore) {
+      const sourceRun = await options.runStore.get(state.runId).catch(() => null);
+      const approvalId = state.approvalRequest?.approvalId ?? state.approval?.id;
+      if (sourceRun && !ACTIVE_RUN_STATUSES.has(sourceRun.status) && approvalId) {
+        await options.eventStore.append({
+          type: 'approval_resolved',
+          runId: state.runId,
+          sessionId: state.sessionId,
+          approvalId,
+          decision: 'rejected',
+          message: `源 run 已终止（${sourceRun.status}），自动拒绝遗留审批`,
+        });
+        options.logger?.warn(`Rejected stale approval ${approvalId} from terminal run ${state.runId}`);
+        recovered += 1;
+        continue;
+      }
+    }
     if (
       !state.invocationStarted
       || state.invocationCompleted

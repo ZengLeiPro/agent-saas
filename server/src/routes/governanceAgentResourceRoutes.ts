@@ -27,14 +27,41 @@ const agentVersionPublishSchema = agentVersionPreviewSchema.extend({
   expiresAt: z.string().datetime({ offset: true }),
 }).strict();
 
+const agentStatusPreviewSchema = statusSchema.extend({
+  reason: z.string().trim().min(3).max(500),
+}).strict();
+
+const agentStatusCommitSchema = agentStatusPreviewSchema.extend({
+  previewId: z.string().regex(/^agspv1\.[a-f0-9]{64}$/),
+  baselineDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  expiresAt: z.string().datetime({ offset: true }),
+}).strict();
+
 function signedPreviewId(secret: string, payload: Record<string, unknown>): string {
   return `agpv1.${createHmac('sha256', secret).update(governanceDigest(payload)).digest('hex')}`;
+}
+
+function signedStatusPreviewId(secret: string, payload: Record<string, unknown>): string {
+  return `agspv1.${createHmac('sha256', secret).update(governanceDigest(payload)).digest('hex')}`;
 }
 
 function previewMatches(actual: string, expected: string): boolean {
   const actualBuffer = Buffer.from(actual);
   const expectedBuffer = Buffer.from(expected);
   return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function definitionAvatarBelongsToAgent(
+  definition: z.infer<typeof managedOrgAgentDefinitionSchema>,
+  agentId: string,
+): boolean {
+  const avatar = definition.avatar;
+  if (!avatar) return true;
+  if (/^\/kaikai-presets\/[a-z0-9_-]+\.png$/.test(avatar)) return true;
+  if (!avatar.startsWith('org-agent-avatars/')) return avatar.length <= 16;
+  const filename = avatar.slice('org-agent-avatars/'.length);
+  return /^[-a-zA-Z0-9_]+\.(?:png|jpe?g|gif|webp)$/.test(filename)
+    && avatar.startsWith(`org-agent-avatars/${agentId}.`);
 }
 
 export function registerGovernanceAgentResourceRoutes(options: {
@@ -87,6 +114,22 @@ export function registerGovernanceAgentResourceRoutes(options: {
     expectedRevision: input.expectedRevision,
     baselineDigest: input.baselineDigest,
     definitionDigest: input.definitionDigest,
+    reason: input.reason,
+    expiresAt: input.expiresAt,
+  });
+  const statusSignatureInput = (input: {
+    req: Request; tenantId: string; agentId: string; expectedRevision: number;
+    baselineDigest: string; status: 'enabled' | 'disabled'; reason: string; expiresAt: string;
+  }) => ({
+    version: 1,
+    operation: 'agent_status',
+    actorUserId: input.req.user!.sub,
+    actorTenantId: input.req.user!.tenantId,
+    tenantId: input.tenantId,
+    agentId: input.agentId,
+    expectedRevision: input.expectedRevision,
+    baselineDigest: input.baselineDigest,
+    status: input.status,
     reason: input.reason,
     expiresAt: input.expiresAt,
   });
@@ -152,6 +195,9 @@ export function registerGovernanceAgentResourceRoutes(options: {
     if (resource.kind !== 'org_agent') {
       return res.status(503).json({ error: 'Signed Agent version publish authority unavailable', code: 'GOVERNANCE_PREVIEW_AUTHORITY_UNAVAILABLE' });
     }
+    if (!definitionAvatarBelongsToAgent(parsed.data.definition, resource.agentId)) {
+      return res.status(400).json({ error: 'Avatar media reference does not belong to Agent', code: 'AGENT_AVATAR_REFERENCE_INVALID' });
+    }
     if (resource.revision !== parsed.data.expectedRevision || resource.status === 'archived') {
       return res.status(409).json({ error: 'Agent version preview baseline changed', code: 'AGENT_VERSION_PREVIEW_BASELINE_CONFLICT' });
     }
@@ -169,7 +215,7 @@ export function registerGovernanceAgentResourceRoutes(options: {
       expiresAt,
       impact: {
         from: { status: resource.status, versionId: resource.currentVersionId ?? null },
-        to: { status: 'enabled', definitionDigest },
+        to: { status: resource.status === 'draft' ? 'enabled' : resource.status, definitionDigest },
         blockers,
         reversible: true,
         effectiveMode: 'source_immediate_projection_pending',
@@ -189,6 +235,9 @@ export function registerGovernanceAgentResourceRoutes(options: {
     }
     const parsed = agentVersionPublishSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
+    if (!definitionAvatarBelongsToAgent(parsed.data.definition, resource.agentId)) {
+      return res.status(400).json({ error: 'Avatar media reference does not belong to Agent', code: 'AGENT_AVATAR_REFERENCE_INVALID' });
+    }
     if (!options.projectionOutbox) {
       return res.status(503).json({ error: 'Governance projection authority unavailable', code: 'GOVERNANCE_PROJECTION_AUTHORITY_UNAVAILABLE' });
     }
@@ -214,7 +263,7 @@ export function registerGovernanceAgentResourceRoutes(options: {
         tenantId, agentId: resource.agentId, expectedRevision: parsed.data.expectedRevision,
         definition: parsed.data.definition, publishedBy: req.user!.sub,
       });
-      changed = published.created;
+      changed = published.changed;
       const projection = await options.projectionOutbox.enqueue({
         tenantId,
         projector: 'org_agent',
@@ -226,12 +275,16 @@ export function registerGovernanceAgentResourceRoutes(options: {
           resourceRevision: published.resource.revision,
         },
       });
-      void options.projectionReconciler?.reconcileOne();
+      const reconciled = await options.projectionReconciler?.reconcileOne();
+      if (reconciled?.outboxId === projection.outboxId && reconciled.status !== 'succeeded') {
+        throw new Error('GOVERNANCE_PROJECTION_FAILED');
+      }
+      const projectionApplied = reconciled?.outboxId === projection.outboxId;
       return res.json({
         ...published,
         projectionId: projection.outboxId,
-        projectionStatus: 'pending',
-        compatibilityProjection: 'applied_with_projection_pending',
+        projectionStatus: projectionApplied ? 'completed' : 'pending',
+        compatibilityProjection: projectionApplied ? 'applied' : 'applied_with_projection_pending',
         changeId: res.locals.governanceChangeId,
       });
     } catch (error) {
@@ -247,17 +300,133 @@ export function registerGovernanceAgentResourceRoutes(options: {
     }
   });
 
-  router.patch('/agents/:agentId/status', async (req, res) => {
-    const parsed = statusSchema.safeParse(req.body);
+  router.post('/agents/:agentId/status/preview', async (req, res) => {
+    const parsed = agentStatusPreviewSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    const tenantId = options.resourceTenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
+    const requestedTenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
+    const tenantId = options.resourceTenantFor(req, requestedTenantId);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
     const resource = await options.agents.getForTenant(tenantId, req.params.agentId);
-    if (!resource || !canManageAgent(req, resource)) return res.status(404).json({ error: 'Agent not found' });
-    return res.status(503).json({
-      error: 'Signed Agent status authority unavailable',
-      code: 'GOVERNANCE_PREVIEW_AUTHORITY_UNAVAILABLE',
+    if (!resource || resource.kind !== 'org_agent' || !canManageOrganization(req)) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+    if (
+      resource.revision !== parsed.data.expectedRevision
+      || (resource.status !== 'enabled' && resource.status !== 'disabled')
+    ) {
+      return res.status(409).json({ error: 'Agent status preview baseline changed', code: 'AGENT_STATUS_PREVIEW_BASELINE_CONFLICT' });
+    }
+    const [baseline, currentVersion] = await Promise.all([
+      baselineFor(resource),
+      resource.currentVersionId ? options.agents.getVersion(resource.currentVersionId) : Promise.resolve(null),
+    ]);
+    const baselineDigest = governanceDigest(baseline);
+    const expiresAt = new Date(now().getTime() + 5 * 60_000).toISOString();
+    const blockers: string[] = [];
+    if (!options.projectionOutbox) blockers.push('GOVERNANCE_PROJECTION_AUTHORITY_UNAVAILABLE');
+    if (!resource.currentVersionId || !currentVersion || currentVersion.agentId !== resource.agentId) {
+      blockers.push('AGENT_STATUS_CURRENT_VERSION_UNAVAILABLE');
+    }
+    return res.json({
+      previewId: signedStatusPreviewId(options.previewSecret, statusSignatureInput({
+        req, tenantId, agentId: resource.agentId, expectedRevision: resource.revision,
+        baselineDigest, status: parsed.data.status, reason: parsed.data.reason, expiresAt,
+      })),
+      baselineDigest,
+      expiresAt,
+      canCommit: blockers.length === 0,
+      impact: {
+        from: { status: resource.status, versionId: resource.currentVersionId ?? null },
+        to: { status: parsed.data.status, versionId: resource.currentVersionId ?? null },
+        blockers,
+        reversible: true,
+        effectiveMode: 'source_immediate_projection_pending',
+      },
+      changeId: res.locals.governanceChangeId,
     });
+  });
+
+  router.patch('/agents/:agentId/status', async (req, res) => {
+    const requestedTenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
+    const tenantId = options.resourceTenantFor(req, requestedTenantId);
+    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
+    const resource = await options.agents.getForTenant(tenantId, req.params.agentId);
+    if (!resource || resource.kind !== 'org_agent' || !canManageOrganization(req)) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+    const parsed = agentStatusCommitSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
+    if (!options.projectionOutbox) {
+      return res.status(503).json({ error: 'Governance projection authority unavailable', code: 'GOVERNANCE_PROJECTION_AUTHORITY_UNAVAILABLE' });
+    }
+    if (Date.parse(parsed.data.expiresAt) <= now().getTime()) {
+      return res.status(409).json({ error: 'Agent status preview expired', code: 'AGENT_STATUS_PREVIEW_EXPIRED' });
+    }
+    const expectedPreviewId = signedStatusPreviewId(options.previewSecret, statusSignatureInput({
+      req, tenantId, agentId: resource.agentId, expectedRevision: parsed.data.expectedRevision,
+      baselineDigest: parsed.data.baselineDigest, status: parsed.data.status,
+      reason: parsed.data.reason, expiresAt: parsed.data.expiresAt,
+    }));
+    if (!previewMatches(parsed.data.previewId, expectedPreviewId)) {
+      return res.status(409).json({ error: 'Agent status preview invalid', code: 'AGENT_STATUS_PREVIEW_INVALID' });
+    }
+    const baseline = await baselineFor(resource);
+    if (
+      resource.revision !== parsed.data.expectedRevision
+      || governanceDigest(baseline) !== parsed.data.baselineDigest
+      || (resource.status !== 'enabled' && resource.status !== 'disabled')
+    ) {
+      return res.status(409).json({ error: 'Agent status preview baseline changed', code: 'AGENT_STATUS_PREVIEW_BASELINE_CONFLICT' });
+    }
+    const currentVersion = resource.currentVersionId
+      ? await options.agents.getVersion(resource.currentVersionId)
+      : null;
+    if (!resource.currentVersionId || !currentVersion || currentVersion.agentId !== resource.agentId) {
+      return res.status(409).json({ error: 'Agent current version unavailable', code: 'AGENT_STATUS_CURRENT_VERSION_UNAVAILABLE' });
+    }
+    let changed = false;
+    try {
+      const updated = await options.agents.setStatus(
+        tenantId, resource.agentId, parsed.data.status, parsed.data.expectedRevision, req.user!.sub,
+      );
+      changed = true;
+      if (!updated.currentVersionId || updated.currentVersionId !== currentVersion.versionId) {
+        throw new Error('AGENT_STATUS_CURRENT_VERSION_UNAVAILABLE');
+      }
+      const projection = await options.projectionOutbox.enqueue({
+        tenantId,
+        projector: 'org_agent',
+        idempotencyKey: `${updated.agentId}:${updated.currentVersionId}:${updated.revision}`,
+        payload: {
+          tenantId,
+          agentId: updated.agentId,
+          versionId: updated.currentVersionId,
+          resourceRevision: updated.revision,
+        },
+      });
+      const reconciled = await options.projectionReconciler?.reconcileOne();
+      if (reconciled?.outboxId === projection.outboxId && reconciled.status !== 'succeeded') {
+        throw new Error('GOVERNANCE_PROJECTION_FAILED');
+      }
+      const projectionApplied = reconciled?.outboxId === projection.outboxId;
+      return res.json({
+        ...updated,
+        projectionId: projection.outboxId,
+        projectionStatus: projectionApplied ? 'completed' : 'pending',
+        compatibilityProjection: projectionApplied ? 'applied' : 'applied_with_projection_pending',
+        changeId: res.locals.governanceChangeId,
+      });
+    } catch (error) {
+      if (changed) {
+        return res.status(500).json({
+          error: 'Agent status 已更新，但兼容投影未能持久化',
+          code: 'GOVERNANCE_PROJECTION_NOT_DURABLE',
+          changed: true,
+          changeId: res.locals.governanceChangeId,
+        });
+      }
+      return res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   router.post('/agents/:agentId/archive', (req, res) => {

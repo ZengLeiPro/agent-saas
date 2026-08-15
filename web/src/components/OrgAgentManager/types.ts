@@ -1,6 +1,11 @@
+import type { OrgAgentRuntimePolicy } from '@agent/shared';
+
 export type {
   OrgAgentAudience,
+  OrgAgentExecutionTarget,
   OrgAgentGuardrailConfig,
+  OrgAgentRuntimeContextModule,
+  OrgAgentRuntimePolicy,
   OrgAgentRecord,
   OrgAgentSummary,
 } from '@agent/shared';
@@ -25,12 +30,18 @@ export interface OrgAgentFormValues {
   avatar: string;
   /** 当前图片头像预览 URL；null = 无图片（编辑时初始化自记录，上传/移除时更新） */
   avatarImageUrl: string | null;
+  /** 治理定义保存的 emoji 或 org-agent-avatars/... 路径。 */
+  avatarStoredPath: string;
   description: string;
   starterPromptsText: string;
   instructions: string;
   allowedSkills: string[];
+  /** 每行一个知识资源 id；MVP 期间按 tenant-owned Skill id 注入。 */
+  allowedKnowledgeText: string;
   audienceExposure: 'all' | 'allow_users';
-  audienceUsernames: string[];
+  audienceUserIds: string[];
+  audienceGroupIds: string[];
+  runtime: OrgAgentRuntimePolicy;
   /** 门禁 UI 三档；序列化时 off → enabled:false，shadow/enforce → enabled:true */
   guardrailMode: OrgAgentGuardrailMode;
   /** "允许问的问题类型"填空题（3-5 条示例） */
@@ -145,17 +156,41 @@ export function assembleScopeDescription(input: {
   return `${marker}\n${lines.join('\n')}`.trim();
 }
 
+export function defaultOrgAgentRuntimePolicy(): OrgAgentRuntimePolicy {
+  return {
+    schemaVersion: 1,
+    context: { modules: null },
+    model: { strategy: 'inherit' },
+    memory: { scope: 'inherit' },
+    limits: { maxTurns: null },
+    capabilities: {
+      shell: 'inherit',
+      backgroundTasks: 'inherit',
+      interaction: 'inherit',
+      subagents: 'inherit',
+      scheduling: 'inherit',
+    },
+    tools: { allowlist: null, denylist: [] },
+    mcp: { serverAllowlist: null, toolAllowlist: null, denyServers: [], denyTools: [] },
+    execution: { allowedTargets: null },
+  };
+}
+
 export function emptyFormValues(): OrgAgentFormValues {
   return {
     name: '',
     avatar: '',
     avatarImageUrl: null,
+    avatarStoredPath: '',
     description: '',
     starterPromptsText: '',
     instructions: '',
     allowedSkills: [],
+    allowedKnowledgeText: '',
     audienceExposure: 'all',
-    audienceUsernames: [],
+    audienceUserIds: [],
+    audienceGroupIds: [],
+    runtime: defaultOrgAgentRuntimePolicy(),
     guardrailMode: 'off',
     guardrailAllowExamples: [],
     guardrailRejectExamples: [],

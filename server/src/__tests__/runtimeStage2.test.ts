@@ -127,6 +127,31 @@ describe('runtime stage 2 primitives', () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
+  it('Session 写入在治理 preflight 前失败时仍释放已获取的 session lock', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'runtime-session-early-failure-'));
+    cleanupDirs.add(cwd);
+    const release = vi.fn(async () => undefined);
+    const sessionCatalog = new MemorySessionCatalog();
+    vi.spyOn(sessionCatalog, 'upsert').mockRejectedValue(new Error('session write failed'));
+    const dispatch = createRawRuntimeRunDispatch({
+      agentCwd: cwd,
+      sharedDir: SHARED_DIR,
+      sessionCatalog,
+      sessionLock: { tryAcquire: vi.fn(async () => ({ release })) },
+      memory: { enabled: false },
+    });
+
+    const events: OutboundEvent[] = [];
+    for await (const event of dispatch(
+      { channel: 'web', chatId: 'chat-early-failure', content: '锁释放测试' },
+      { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      { modelConnection: { apiKey: 'sk-test' }, skipSystemPrompt: true },
+    )) events.push(event);
+
+    expect(events).toContainEqual(expect.objectContaining({ type: 'error', error: expect.stringContaining('session write failed') }));
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   it('FileEventStore supports appendBatch and cursor pages without changing list()', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'eventstore-v2-'));
     cleanupDirs.add(cwd);
@@ -260,6 +285,60 @@ describe('runtime stage 2 primitives', () => {
     expect(markStatus).toHaveBeenNthCalledWith(1, 'run-success', 'completed', undefined);
     expect(markStatus).toHaveBeenNthCalledWith(2, 'run-error', 'failed', 'model error');
     expect(markStatus).toHaveBeenNthCalledWith(3, 'run-cancelled', 'cancelled', 'interrupted');
+  });
+
+  it('RunStateTrackingEventStore 不把 terminal run 的迟到审批恢复为 running', async () => {
+    const append = vi.fn(async (event: Record<string, unknown>) => ({
+      id: `event-${append.mock.calls.length}`,
+      timestamp: new Date().toISOString(),
+      ...event,
+    }));
+    const markStatus = vi.fn();
+    const store = new RunStateTrackingEventStore({
+      append,
+      list: vi.fn(async () => []),
+    } as unknown as EventStore, {
+      get: vi.fn(async () => ({ status: 'cancelled' })),
+      markStatus,
+    } as unknown as RunStore);
+
+    await store.append({
+      type: 'approval_resolved',
+      runId: 'cancelled-run',
+      sessionId: 'session-1',
+      approvalId: 'approval-1',
+      decision: 'rejected',
+    });
+
+    expect(append).toHaveBeenCalledTimes(1);
+    expect(markStatus).not.toHaveBeenCalled();
+  });
+
+  it('RunStateTrackingEventStore 不为状态写入竞态追加虚假的 running 事件', async () => {
+    const append = vi.fn(async (event: Record<string, unknown>) => ({
+      id: `event-${append.mock.calls.length}`,
+      timestamp: new Date().toISOString(),
+      ...event,
+    }));
+    const markStatus = vi.fn(async () => ({ status: 'cancelled' }));
+    const store = new RunStateTrackingEventStore({
+      append,
+      list: vi.fn(async () => []),
+    } as unknown as EventStore, {
+      get: vi.fn(async () => ({ status: 'running' })),
+      markStatus,
+    } as unknown as RunStore);
+
+    await store.append({
+      type: 'approval_resolved',
+      runId: 'racing-run',
+      sessionId: 'session-1',
+      approvalId: 'approval-1',
+      decision: 'rejected',
+    });
+
+    expect(markStatus).toHaveBeenCalledWith('racing-run', 'running', 'approval_resolved:approval-1');
+    expect(append).toHaveBeenCalledTimes(1);
   });
 
   it('EventBackedApprovalStore persists approval state inside runtime events', async () => {

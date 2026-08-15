@@ -28,6 +28,9 @@ async function listen(options: Parameters<typeof createNotionRouter>[0]): Promis
     next();
   });
   app.use('/api', createNotionRouter(options));
+  app.post('/api/org-agents', (_req, res) => {
+    res.status(204).end();
+  });
   return await new Promise(resolve => {
     server = app.listen(0, '127.0.0.1', () => {
       const address = server!.address();
@@ -103,6 +106,46 @@ describe('Notion connector routes', () => {
       providerRevoked: false,
     });
     expect(disconnect).toHaveBeenCalledWith(USER.id, USER.username, USER.tenantId);
+  });
+
+  it('sealed gate 下无关 POST 请求能继续到后续路由', async () => {
+    const assertLegacyWriteAllowed = vi.fn(async () => { throw new Error('sealed'); });
+    const baseUrl = await listen({
+      authFlowService: authFlow(),
+      connectionStore: {} as any,
+      userStore: { findById: vi.fn(() => USER) } as any,
+      available: true,
+      legacyWriteGate: { assertLegacyWriteAllowed },
+    });
+
+    const response = await fetch(`${baseUrl}/api/org-agents`, { method: 'POST' });
+
+    expect(response.status).toBe(204);
+    expect(assertLegacyWriteAllowed).not.toHaveBeenCalled();
+  });
+
+  it('sealed gate 下 Notion POST 与 DELETE 仍返回原迁移封锁响应', async () => {
+    const assertLegacyWriteAllowed = vi.fn(async () => { throw new Error('sealed'); });
+    const baseUrl = await listen({
+      authFlowService: authFlow(),
+      connectionStore: {} as any,
+      userStore: { findById: vi.fn(() => USER) } as any,
+      available: true,
+      legacyWriteGate: { assertLegacyWriteAllowed },
+    });
+
+    const postResponse = await fetch(`${baseUrl}/api/connectors/notion/auth/session`, { method: 'POST' });
+    const deleteResponse = await fetch(`${baseUrl}/api/connectors/notion`, { method: 'DELETE' });
+
+    expect(postResponse.status).toBe(409);
+    await expect(postResponse.json()).resolves.toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
+    expect(deleteResponse.status).toBe(409);
+    await expect(deleteResponse.json()).resolves.toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
+    expect(assertLegacyWriteAllowed).toHaveBeenCalledTimes(2);
+    expect(assertLegacyWriteAllowed).toHaveBeenCalledWith({
+      actor: 'user',
+      compatibilityProjection: false,
+    });
   });
 
   it('服务未配置时明确返回 unavailable', async () => {

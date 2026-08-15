@@ -12,6 +12,10 @@ import type {
 } from '../agent/types.js';
 import type { AgentStore } from '../data/agents/store.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
+import {
+  mergeOrgAgentRuntimePolicy,
+  resolveOrgAgentRuntimeSkillIds,
+} from '../data/orgAgents/runtimePolicy.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 import type { BillingService } from '../data/billing/service.js';
 import type { RunPreflightService } from './runPreflight.js';
@@ -121,10 +125,13 @@ export {
 } from './wakeDispatchHelpers.js';
 
 import type { ContextReconstructionPolicy } from './contextProjection.js';
+import { appendResolvedRunSnapshot } from './appendResolvedRunSnapshot.js';
+export { appendResolvedRunSnapshot } from './appendResolvedRunSnapshot.js';
 import { buildConnectorRunEnv, reconcileConnectorRunEnv } from './connectorRunEnv.js';
 import { SessionContextService, SessionToolProvider } from './sessionContext.js';
 import { buildRuntimeReplayState, type RuntimeReplayState } from './replay.js';
 import {
+  createOrgAgentSessionSnapshot,
   createRuntimeSessionRecord,
   FileSessionCatalog,
   type RuntimeSessionRecord,
@@ -465,7 +472,7 @@ export interface RawRuntimeRunDispatchConfig {
   runStore?: RunStore;
   /** Governance wake-time revalidation；Raw Runtime 在 Environment 解析后写最终 Snapshot。 */
   runPreflightService?: RunPreflightService;
-  runResolutionSnapshotStore?: Pick<PgRunResolutionSnapshotStore, 'append'>;
+  runResolutionSnapshotStore?: Pick<PgRunResolutionSnapshotStore, 'append' | 'get'>;
   /** Durable hand registry backend. PG runtime wires PgHandStore here for P1 hand lifecycle. */
   handStore?: HandStore;
   /** Durable tool invocation index. PG runtime wires PgToolInvocationStore for recovery. */
@@ -769,54 +776,6 @@ function deriveRuntimeWorkspaceId(params: {
     ?? deriveStableWorkspaceId(params.identity, params.fallbackSessionId);
 }
 
-export async function appendResolvedRunSnapshot(input: {
-  config: RawRuntimeRunDispatchConfig;
-  runId: string;
-  session: RuntimeSessionRecord;
-  modelRef?: string;
-  executionTarget: ExecutionTargetKind;
-  hands: HandRecord[];
-}): Promise<void> {
-  const { runPreflightService, runResolutionSnapshotStore } = input.config;
-  if (!runPreflightService || !runResolutionSnapshotStore) return;
-  const tenantHands = input.hands.filter(hand => (
-    hand.status === 'ready' && hand.metadata?.registeredBy === 'tenantRemoteHands'
-  ));
-  const tenantHandId = tenantHands.length === 1 ? tenantHands[0]?.handId : undefined;
-  const defaultHandId = `${input.session.sessionId}:${input.executionTarget}`;
-  const environment = input.hands.find(hand => hand.handId === (tenantHandId ?? defaultHandId));
-  const result = await runPreflightService.preflight({
-    phase: 'wake',
-    runId: input.runId,
-    sessionId: input.session.sessionId,
-    ...(input.session.userId ? { userId: input.session.userId } : {}),
-    ...(input.session.tenantId ? { tenantId: input.session.tenantId } : {}),
-    ...(input.session.orgAgentId ? { orgAgentId: input.session.orgAgentId } : {}),
-    ...(input.modelRef ? { modelRef: input.modelRef } : {}),
-    environment: {
-      providerId: environment?.providerId ?? input.executionTarget,
-      ...(environment?.templateVersionId ? { templateVersionId: environment.templateVersionId } : {}),
-      ...(environment?.handId ? { instanceId: environment.handId } : {}),
-      ...(environment?.recipeDigest ? { recipeDigest: environment.recipeDigest } : {}),
-    },
-    skipBilling: true,
-  });
-  if (!result.proceed) {
-    throw new Error(
-      `[${result.accessDecision.reasonCode}] governance preflight blocked run ${input.runId}`,
-    );
-  }
-  try {
-    await runResolutionSnapshotStore.append(result.snapshot);
-  } catch (error) {
-    if (result.enforcementMode === 'enforce') throw error;
-    input.config.logger?.warn(
-      `[governance-shadow] resolved snapshot unavailable (not blocking): run=${input.runId} `
-      + `error=${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
 function getTenantRemoteHandResolver(
   config: RawRuntimeRunDispatchConfig,
 ): TenantRemoteHandAuthTokenResolver {
@@ -862,14 +821,12 @@ export class RunStateTrackingEventStore implements EventStore {
     for (const event of stored) await this.afterAppend(event);
     return stored;
   }
-
   list(sessionId: string, options?: Parameters<EventStore['list']>[1]) {
     return this.inner.list(sessionId, options);
   }
   listPage(sessionId: string, options?: Parameters<NonNullable<EventStore['listPage']>>[1]) {
     return this.inner.listPage?.(sessionId, options) ?? Promise.resolve({ events: [], hasMore: false });
   }
-
   private withTenant(ctx: Parameters<EventStore['append']>[1]): Parameters<EventStore['append']>[1] {
     if (ctx?.tenantId || !this.tenantId) return ctx;
     return { ...(ctx ?? {}), tenantId: this.tenantId };
@@ -901,7 +858,9 @@ export class RunStateTrackingEventStore implements EventStore {
     }
     if (status && 'runId' in event && typeof event.runId === 'string' && typeof event.sessionId === 'string') {
       const before = await this.runStore.get(event.runId);
-      await this.runStore.markStatus(event.runId, status, reason);
+      if ((event.type === 'approval_resolved' || event.type === 'interaction_resolved') && before && ['completed', 'failed', 'cancelled', 'orphaned'].includes(before.status)) return;
+      const updated = await this.runStore.markStatus(event.runId, status, reason);
+      if (updated && updated.status !== status) return;
       await appendRunStateChanged(
         this.inner,
         event.sessionId,
@@ -1097,9 +1056,29 @@ export function composeSkillFilters(...filters: RuntimeSkillFilter[]): RuntimeSk
   return (skill) => filters.every((filter) => filter(skill));
 }
 
-/** 专职 Agent skill 白名单 filter：固有能力清单 ∩ allowedSkills（仅按 id 命中，2026-07 审查 F10：name 可被同名 skill 冒用扩权）。 */
-export function buildOrgAgentSkillFilter(agent: Pick<OrgAgentRecord, 'allowedSkills'>): RuntimeSkillFilter {
-  const allowed = new Set(agent.allowedSkills);
+/**
+ * 将 Agent-local policy 合并进已经固定版本的 shared org_agent Profile。
+ * binding/version 身份保持 shared Profile 的不可变 pin；仅本次运行使用合并后的 config。
+ */
+export function mergeOrgAgentBoundRuntimeProfile(
+  bound: BoundAgentRuntimeProfile,
+  agent: Pick<OrgAgentRecord, 'runtime'>,
+): BoundAgentRuntimeProfile {
+  if (bound.binding.profileBindingKey !== 'org_agent') return bound;
+  return {
+    ...bound,
+    version: {
+      ...bound.version,
+      config: mergeOrgAgentRuntimePolicy(bound.version.config, agent.runtime),
+    },
+  };
+}
+
+/** 专职 Agent skill 白名单 filter：固有能力与 MVP knowledge skill 合集（仅按 id 命中，防同名扩权）。 */
+export function buildOrgAgentSkillFilter(
+  agent: Pick<OrgAgentRecord, 'allowedSkills' | 'allowedKnowledge'>,
+): RuntimeSkillFilter {
+  const allowed = new Set(resolveOrgAgentRuntimeSkillIds(agent));
   return (skill) => allowed.has(skill.id);
 }
 
@@ -1607,8 +1586,9 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const abortController = options.abortController ?? new AbortController();
     enterSessionContext(sessionId, runId);
     const effectiveTenantId = resolveContextTenantId(context, existingSession);
-    const connectorIdentity = existingSession
-      ? {
+    const orgAgentId = options.orgAgentId ?? existingSession?.orgAgentId;
+    const connectorIdentity = orgAgentId ? { tenantId: effectiveTenantId }
+      : existingSession ? {
           userId: existingSession.userId,
           username: existingSession.username,
           tenantId: existingSession.tenantId,
@@ -1633,7 +1613,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
 
     // 专职 Agent 解析（在 session lock / run record 之前 fail-fast）：
     // 新会话由 options.orgAgentId 携带；resume 以 session meta 为准。
-    const orgAgentId = options.orgAgentId ?? existingSession?.orgAgentId;
     const orgAgentResolution = resolveOrgAgentOverrides(config, orgAgentId, effectiveTenantId);
     if (orgAgentResolution && 'error' in orgAgentResolution) {
       logger.warn(`Org agent fail-closed: session=${sessionId} orgAgentId=${orgAgentId} reason=${orgAgentResolution.error}`);
@@ -1648,6 +1627,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           existingSession,
           bindingKey: resolveAgentProfileBindingKey({ toolProfile, orgAgentId }),
         });
+        if (orgAgent) boundProfile = mergeOrgAgentBoundRuntimeProfile(boundProfile, orgAgent);
         assertAgentProfileExecutionTarget(boundProfile.version.config, executionTarget);
         if (boundProfile.version.config.model.strategy === 'fixed') {
           const fixedRef = boundProfile.version.config.model.modelRef;
@@ -1698,7 +1678,9 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       yield { type: 'error', error: `Session ${sessionId} 已被另一个 brain 持有，本次 dispatch 退让` };
       return;
     }
-
+    let eventStore: RunStateTrackingEventStore | null = null;
+    let directRuntimeLease: DirectRuntimeLeaseHandle | null = null;
+    try {
     const agentProfile = identitySource && config.agentStore
       ? config.agentStore.get(identitySource.username)
       : undefined;
@@ -1708,22 +1690,27 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const persona = (orgAgent || options.skipPersona) ? '' : ((await loadPersona(cwd)) || '');
 
     let memoryContext: string | undefined;
-    const profileAllowsRuntimeMemory = !boundProfile
-      || (boundProfile.version.config.context.modules.includes('runtime_memory')
-        && boundProfile.version.config.memory.scope === 'full');
-    if (memoryEnabled && profileAllowsRuntimeMemory && !isResume && !options.skipMemory && !orgAgent) {
+    const profileAllowsRuntimeMemory = boundProfile
+      ? (boundProfile.version.config.context.modules.includes('runtime_memory')
+        && boundProfile.version.config.memory.scope === 'full')
+      : !orgAgent;
+    if (memoryEnabled && profileAllowsRuntimeMemory && !isResume && !options.skipMemory) {
       const memory = await loadMemoryContext(cwd, memoryMaxLines);
       if (memory) memoryContext = memory;
     }
     const prompt = buildPrompt(message, context, resolvedAttachments);
-    const memorySearchEnabled = !orgAgent
-      && (!boundProfile || boundProfile.version.config.memory.scope !== 'none')
+    const profileAllowsMemorySearch = boundProfile
+      ? boundProfile.version.config.memory.scope !== 'none'
+      : !orgAgent;
+    const memorySearchEnabled = profileAllowsMemorySearch
       && hasMemorySearchTool(config.memoryIndexService)
       && isToolEnabled(config.toolControls, 'MemorySearch');
     const isPlatformAdmin = resolveContextIsPlatformAdmin(context);
     const sessionModelRef = boundProfile?.version.config.model.strategy === 'fixed'
       ? boundProfile.version.config.model.modelRef
-      : existingSession?.modelRef ?? options.modelRef ?? requestedModel ?? model;
+      : orgAgent
+        ? requestedModel ?? model
+        : existingSession?.modelRef ?? options.modelRef ?? requestedModel ?? model;
     // 记忆写入策略（2026-07-29 职责剥离批次）：新会话按租户开关定版并 pin 进
     // session meta；resume 读 pin；后台 profile run、专职 org Agent、非真实用户
     // 通道（subagent/cron）固定 v1 语义。会话内不再变化（prompt prefix 稳定性）。
@@ -1744,6 +1731,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         tenantId: effectiveTenantId,
       },
     });
+    const orgAgentSnapshot = orgAgent ? createOrgAgentSessionSnapshot(orgAgent) : undefined;
     let sessionRecord: RuntimeSessionRecord = {
       ...(existingSession ?? createRuntimeSessionRecord({
         sessionId,
@@ -1757,6 +1745,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         executionTarget,
         status: 'running',
         ...(orgAgentId ? { orgAgentId } : {}),
+        ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
       })),
       sessionId,
       userId: identitySource?.id ?? existingSession?.userId ?? '',
@@ -1773,6 +1762,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       workspaceId,
       status: 'running',
       ...(orgAgentId ? { orgAgentId } : {}),
+      ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
       ...(memoryPolicyVersion === 'v2' ? { memoryPolicyVersion: 'v2' as const } : {}),
       updatedAt: new Date().toISOString(),
     };
@@ -1801,7 +1791,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     yield { type: 'session_init', sessionId };
 
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
-    let directRuntimeLease: DirectRuntimeLeaseHandle | null = null;
     await config.runStore?.upsertPending({
       runId,
       sessionId,
@@ -1834,7 +1823,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         },
       },
     });
-    const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId);
+    eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId);
     directRuntimeLease = await acquireDirectRuntimeRunLease({
       runStore: config.runStore,
       runId,
@@ -1903,7 +1892,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       orgAgent
         ? composeSkillFilters(baseSkillFilter, buildOrgAgentSkillFilter(orgAgent), profileSkillFilter)
         : composeSkillFilters(baseSkillFilter, profileSkillFilter),
-      orgAgent?.allowedSkills ?? [],
+      orgAgent ? resolveOrgAgentRuntimeSkillIds(orgAgent) : [],
       { executionTransportRegistry, tenantHandResolver },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
       sessionRecord.userId ? { runId, sessionId, userId: sessionRecord.userId } : undefined,
@@ -1969,7 +1958,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
 
-    try {
       await authorizeBillingRunStart(config, {
         tenantId: sessionRecord.tenantId,
         userId: sessionRecord.userId,
@@ -2041,7 +2029,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
                     timeoutMs: config.getImageUnderstandingTimeoutMs?.(),
                     systemPrompt: config.getSystemPrompt?.('utility.imageUnderstanding'),
                     onAttempt: async (attempt) => {
-                      await eventStore.append({
+                      await eventStore!.append({
                         type: 'image_understanding',
                         runId,
                         sessionId,
@@ -2106,7 +2094,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             timeoutMs: config.getImageUnderstandingTimeoutMs?.(),
             systemPrompt: config.getSystemPrompt?.('utility.imageUnderstanding'),
             onAttempt: async (attempt) => {
-              await eventStore.append({
+              await eventStore!.append({
                 type: 'image_understanding',
                 runId,
                 sessionId,
@@ -2181,7 +2169,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         return;
       }
       const msg = err instanceof Error ? err.message : String(err);
-      await markRunState(config.runStore, eventStore, sessionId, runId, 'failed', msg).catch(() => undefined);
+      if (eventStore) await markRunState(config.runStore, eventStore, sessionId, runId, 'failed', msg).catch(() => undefined);
       await sessionCatalog.markStatus(sessionId, 'error');
       logger.error(`Raw runtime run 失败: ${msg}`);
       yield { type: 'error', error: `Raw runtime 运行失败: ${msg}` };
@@ -2308,7 +2296,10 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       yield { type: 'error', error: orgAgentResolution.error };
       return;
     }
-    const orgAgent = orgAgentResolution?.agent;
+    const currentOrgAgent = orgAgentResolution?.agent;
+    const orgAgent = currentOrgAgent && existingSession?.orgAgentSnapshot
+      ? { ...currentOrgAgent, ...existingSession.orgAgentSnapshot }
+      : currentOrgAgent;
     let boundProfile: BoundAgentRuntimeProfile | undefined;
     if (config.agentRuntimeProfileResolver) {
       try {
@@ -2317,6 +2308,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           bindingKey: existingSession?.profileBindingKey
             ?? resolveAgentProfileBindingKey({ toolProfile: resumeToolProfile, orgAgentId }),
         });
+        if (orgAgent) boundProfile = mergeOrgAgentBoundRuntimeProfile(boundProfile, orgAgent);
         assertAgentProfileExecutionTarget(boundProfile.version.config, executionTarget);
         if (boundProfile.version.config.model.strategy === 'fixed') {
           const fixedRef = boundProfile.version.config.model.modelRef;
@@ -2350,8 +2342,10 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     const agentName = orgAgent ? orgAgent.name : (agentProfile?.name || '开开');
     const userName = identitySource ? (identitySource.realName || identitySource.username || '') : '';
     const persona = orgAgent ? '' : ((await loadPersona(cwd)) || '');
-    const memorySearchEnabled = !orgAgent
-      && (!boundProfile || boundProfile.version.config.memory.scope !== 'none')
+    const profileAllowsMemorySearch = boundProfile
+      ? boundProfile.version.config.memory.scope !== 'none'
+      : !orgAgent;
+    const memorySearchEnabled = profileAllowsMemorySearch
       && hasMemorySearchTool(config.memoryIndexService)
       && isToolEnabled(config.toolControls, 'MemorySearch');
     // resume 路径 identitySource 优先 sessionRecord.username（dispatch 首跑时已记录），
@@ -2486,7 +2480,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     );
     const resumeTooling = await collectRuntimeTooling(
       config,
-      resumeUsername,
+      orgAgent ? undefined : resumeUsername,
       // AND 组合：browser-hand filter 与 org agent 白名单叠加（不是替换）
       orgAgent
         ? composeSkillFilters(
@@ -2498,7 +2492,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
             resumeBaseSkillFilter,
             boundProfile ? (skill) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1 : allowAllRuntimeSkills,
           ),
-      orgAgent?.allowedSkills ?? [],
+      orgAgent ? resolveOrgAgentRuntimeSkillIds(orgAgent) : [],
       { executionTransportRegistry, tenantHandResolver },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
       sessionRecord.userId
@@ -2567,8 +2561,8 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     });
 
     const resumeEnv = await buildConnectorRunEnv(config, {
-      userId: sessionRecord.userId,
-      username: resumeUsername,
+      userId: orgAgent ? undefined : sessionRecord.userId,
+      username: orgAgent ? undefined : resumeUsername,
       tenantId: sessionRecord.tenantId,
     });
 
@@ -2722,7 +2716,10 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       yield { type: 'error', error: orgAgentResolution.error };
       return;
     }
-    const orgAgent = orgAgentResolution?.agent;
+    const currentOrgAgent = orgAgentResolution?.agent;
+    const orgAgent = currentOrgAgent && existingSession?.orgAgentSnapshot
+      ? { ...currentOrgAgent, ...existingSession.orgAgentSnapshot }
+      : currentOrgAgent;
     let boundProfile: BoundAgentRuntimeProfile | undefined;
     if (config.agentRuntimeProfileResolver) {
       try {
@@ -2731,6 +2728,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           bindingKey: existingSession?.profileBindingKey
             ?? resolveAgentProfileBindingKey({ toolProfile: resumeToolProfile, orgAgentId }),
         });
+        if (orgAgent) boundProfile = mergeOrgAgentBoundRuntimeProfile(boundProfile, orgAgent);
         assertAgentProfileExecutionTarget(boundProfile.version.config, executionTarget);
         if (boundProfile.version.config.model.strategy === 'fixed') {
           const fixedRef = boundProfile.version.config.model.modelRef;
@@ -2764,8 +2762,10 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     const agentName = orgAgent ? orgAgent.name : (agentProfile?.name || '开开');
     const userName = identitySource ? (identitySource.realName || identitySource.username || '') : '';
     const persona = orgAgent ? '' : ((await loadPersona(cwd)) || '');
-    const memorySearchEnabled = !orgAgent
-      && (!boundProfile || boundProfile.version.config.memory.scope !== 'none')
+    const profileAllowsMemorySearch = boundProfile
+      ? boundProfile.version.config.memory.scope !== 'none'
+      : !orgAgent;
+    const memorySearchEnabled = profileAllowsMemorySearch
       && hasMemorySearchTool(config.memoryIndexService)
       && isToolEnabled(config.toolControls, 'MemorySearch');
     const resumeUsername = identitySource?.username || existingSession?.username || undefined;
@@ -2914,7 +2914,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     );
     const resumeTooling = await collectRuntimeTooling(
       config,
-      resumeUsername,
+      orgAgent ? undefined : resumeUsername,
       // AND 组合：browser-hand filter 与 org agent 白名单叠加（不是替换）
       orgAgent
         ? composeSkillFilters(
@@ -2926,7 +2926,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
             resumeBaseSkillFilter,
             boundProfile ? (skill) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1 : allowAllRuntimeSkills,
           ),
-      orgAgent?.allowedSkills ?? [],
+      orgAgent ? resolveOrgAgentRuntimeSkillIds(orgAgent) : [],
       { executionTransportRegistry, tenantHandResolver },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
       sessionRecord.userId
@@ -2995,8 +2995,8 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     });
 
     const resumeEnv = await buildConnectorRunEnv(config, {
-      userId: sessionRecord.userId,
-      username: resumeUsername,
+      userId: orgAgent ? undefined : sessionRecord.userId,
+      username: orgAgent ? undefined : resumeUsername,
       tenantId: sessionRecord.tenantId,
     });
 
@@ -3376,7 +3376,6 @@ export async function wakeRuntimeSession(
     }
     return;
   }
-
   const wakePrompt = resolveWakePrompt(run, events, session);
   const sessionOwner = resolveWakeSessionOwner(config, session, run.userId, run.tenantId);
   const context: ChannelContext = {
@@ -3414,6 +3413,7 @@ export async function wakeRuntimeSession(
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
         ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}),
+        ...(session.orgAgentId ? { orgAgentId: session.orgAgentId } : {}),
         recordUserMessage: wakePrompt.recordUserMessage,
         abortController,
         runtimeWorkerId: options.lease?.workerId,

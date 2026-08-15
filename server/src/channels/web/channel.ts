@@ -66,7 +66,7 @@ import {
   extractTitleContext,
   generateTitleWithFallback,
   shouldGenerateTitleFromFirstMessage,
-  type TitleGeneratorConfig,
+  type TitleGeneratorConfig, type TitleModelAdapterFactory,
 } from '../../agent/titleGenerator.js';
 import { checkTopicScope, extractRecentUserMessages, type GuardrailModelConfig } from '../../agent/guardrail.js';
 import { isCompactCommand } from '../../agent/prompt.js';
@@ -132,6 +132,7 @@ export interface WebChannelConfig {
   userStore?: UserStore;
   /** 主 + fallback 链；主返回空或异常时按顺序回落，全部失败再 return null。 */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
+  titleModelAdapterFactory?: TitleModelAdapterFactory;
   /** 标题生成前主动对齐共享 config.json，覆盖无主模型解析的手动命名路径。 */
   refreshSharedConfig?: () => void;
   /** 平台系统提示语热更新 getter；每次标题生成现取。 */
@@ -3833,13 +3834,12 @@ export class WebChannel implements BaseChannel {
       let title: string | null;
       try {
         title = await generateTitleWithFallback(
-          userMessage,
-          assistantReply,
-          titleConfigs,
-          ctx?.userMessages[1],
-          ctx?.assistantReplies[1],
+          userMessage, assistantReply, titleConfigs,
+          ctx?.userMessages[1], ctx?.assistantReplies[1],
           {
             systemPrompt: this.config.getTitleSystemPrompt?.(),
+            modelAdapterFactory: this.config.titleModelAdapterFactory,
+            runtimeContext: { sessionId, tenantId: userInfo.tenantId, cwd: userCwd },
             beforeModelCall: () => utilityBilling?.beforeModelCall(),
             onUsage: async (model, usage) => {
               await utilityBilling?.recordUsage(model, usage);

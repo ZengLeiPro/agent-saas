@@ -31,8 +31,10 @@ describe('resolveTitleGeneratorConfigs', () => {
 
     expect(configs).toEqual([{
       model: 'deepseek-v4-flash',
+      modelRef: 'ark/deepseek',
       connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v3' },
       protocol: 'responses',
+      providerOptions: expect.objectContaining({ protocol: 'responses' }),
     }]);
     expect(configs.some((config) => config.model === 'glm-5.2')).toBe(false);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('removed/model'));

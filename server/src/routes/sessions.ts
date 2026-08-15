@@ -40,7 +40,7 @@ import { TTLCache } from "../utils/cache.js";
 import {
   extractTitleContext,
   generateTitleWithFallback,
-  type TitleGeneratorConfig,
+  type TitleGeneratorConfig, type TitleModelAdapterFactory,
 } from "../agent/titleGenerator.js";
 import type { GroupStore } from "../data/groups/index.js";
 import type { UserStore } from "../data/users/store.js";
@@ -414,6 +414,7 @@ export interface SessionsRouterOptions {
   getEventBus?: () => EventBus | undefined;
   /** Title generator 配置链：主 + fallback；空表示功能未配置（接口将 501） */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
+  titleModelAdapterFactory?: TitleModelAdapterFactory;
   refreshSharedConfig?: () => void;
   /** 平台系统提示语热更新 getter；每次标题生成现取。 */
   getTitleSystemPrompt?: () => string;
@@ -2605,13 +2606,12 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         let title: string | null;
         try {
           title = await generateTitleWithFallback(
-            userMessages[0],
-            assistantReplies[0] || "",
-            options.titleGeneratorConfigs,
-            userMessages[1],
-            assistantReplies[1],
+            userMessages[0], assistantReplies[0] || "", options.titleGeneratorConfigs,
+            userMessages[1], assistantReplies[1],
             {
               systemPrompt: options.getTitleSystemPrompt?.(),
+              modelAdapterFactory: options.titleModelAdapterFactory,
+              runtimeContext: { sessionId, tenantId: req.user?.tenantId, cwd: userCwd },
               beforeModelCall: () => utilityBilling?.beforeModelCall(),
               onUsage: async (model, usage) => {
                 await utilityBilling?.recordUsage(model, usage);

@@ -1,11 +1,25 @@
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import type { TitleGeneratorAppConfig } from './config.js';
 import type { ModelsConfig } from '../types/index.js';
+import type { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
+import { createModelAdapterForProtocol, type ModelAdapterFactory } from '../runtime/rawRuntimeRunDispatch.js';
 import { resolveModelRefStrict } from './models.js';
 
 interface TitleConfigLogger {
   info(message: string): void;
   warn(message: string): void;
+}
+
+/** 标题调用复用 Codex OAuth，但不接入主会话 WebSocket pool。 */
+export function createTitleModelAdapterFactory(
+  codexCredentialManager: CodexCredentialManager,
+  codexFetch: typeof fetch,
+): ModelAdapterFactory {
+  return (connection, providerOptions) => createModelAdapterForProtocol(
+    connection,
+    providerOptions,
+    { codexCredentialManager, codexFetch },
+  );
 }
 
 export function resolveTitleGeneratorConfigs(input: {
@@ -40,9 +54,11 @@ export function resolveTitleGeneratorConfigs(input: {
     seen.add(identity);
     configs.push({
       model: resolved.model,
+      modelRef: ref,
       connection: resolved.connection,
       ...(protocol ? { protocol } : {}),
       ...(responsesTransport ? { responsesTransport } : {}),
+      ...(resolved.providerOptions ? { providerOptions: resolved.providerOptions } : {}),
     });
     logger?.info(
       index === 0

@@ -98,7 +98,7 @@ import { buildFollowupContext } from '../cron/followup.js';
 import { assertDevDatabaseSafety, loadAppConfig } from './config.js';
 import { createRuntimeWebPushAssembly } from './runtimeWebPush.js';
 import { createModelResolvers } from './modelResolvers.js';
-import { resolveTitleGeneratorConfigs } from './titleGeneratorConfigs.js';
+import { createTitleModelAdapterFactory, resolveTitleGeneratorConfigs } from './titleGeneratorConfigs.js';
 import { resolveGuardrailModelConfigs } from './guardrailModelConfigs.js';
 import type { AgentOptionsConfig } from '../agent/options.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
@@ -1684,12 +1684,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   };
 
   const codexCredentialManager = new CodexCredentialManager({
-    vault: secretVault,
-    getConfig: () => config.codexSubscription,
+    vault: secretVault, getConfig: () => config.codexSubscription,
     ...(pgEventStore ? { lock: new PgCodexCredentialLock(pgEventStore.pool) } : {}),
     fetchImpl: egressFetch,
   });
   const codexDeviceAuthService = new CodexDeviceAuthService(egressFetch);
+  const titleModelAdapterFactory = createTitleModelAdapterFactory(codexCredentialManager, egressFetch);
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd,
     sharedDir,
@@ -2704,7 +2704,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     loginLogFilePath: resolve(processCwd, './data/login-logs.jsonl'),
     modelResolver,
     userStore,
-    titleGeneratorConfigs,
+    titleGeneratorConfigs, titleModelAdapterFactory,
     refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
     getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'),
     sttConfig: resolvedSttRuntimeConfig.sttConfig,
@@ -3085,7 +3085,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     refreshEgressProxyCredential,
     groupStore,
     authMiddleware,
-    titleGeneratorConfigs,
+    titleGeneratorConfigs, titleModelAdapterFactory,
     refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
     orgAgentStore,
     guardrailEventStore,

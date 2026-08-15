@@ -5,11 +5,14 @@
  * 无工具、单轮、短超时。
  */
 
+import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 import OpenAI from 'openai';
 import type { SdkResultModelUsage } from './types.js';
+import type { ModelProviderOptions } from '../types/index.js';
+import type { ModelAdapter, RunContext } from '../runtime/types.js';
 import { createLogger } from '../utils/logger.js';
 
 const titleLogger = createLogger('Title');
@@ -81,16 +84,27 @@ export async function extractTitleContext(
 
 export interface TitleGeneratorConfig {
   model: string;
+  modelRef?: string;
   connection?: { apiKey?: string; baseUrl?: string };
   protocol?: 'chat_completions' | 'responses';
   responsesTransport?: 'openai_compatible' | 'codex_subscription';
+  providerOptions?: ModelProviderOptions;
 }
+
+export type TitleModelAdapterFactory = (
+  connection: { apiKey?: string; baseUrl?: string },
+  providerOptions?: ModelProviderOptions,
+) => ModelAdapter;
 
 export interface TitleGenerationOptions {
   beforeModelCall?: (model: string) => void | Promise<void>;
   onUsage?: (model: string, usage: SdkResultModelUsage) => void | Promise<void>;
   /** 平台管理热更新后的系统提示语；缺省继续使用代码内置版本。 */
   systemPrompt?: string;
+  /** Codex subscription 复用主 Runtime adapter；标题专用 factory 不注入 WebSocket pool。 */
+  modelAdapterFactory?: TitleModelAdapterFactory;
+  runtimeContext?: { sessionId: string; tenantId?: string; cwd: string };
+  timeoutMs?: number;
 }
 
 export const TITLE_SYSTEM_PROMPT = `你的唯一任务是通过阅读我引用的这些用户消息与 Agent 回复来生成一个简短的会话标题。禁止调用工具，禁止执行命令，禁止输出解释。
@@ -114,6 +128,7 @@ interface TitleProviderResult {
   finishReason: string;
   responseId: string;
   usage?: SdkResultModelUsage;
+  errorMessage?: string;
 }
 
 function extractResponsesText(payload: Record<string, any>): string {
@@ -170,6 +185,99 @@ async function generateTitleViaResponses(input: {
   };
 }
 
+interface TitleModelAdapterInput {
+  config: TitleGeneratorConfig;
+  factory: TitleModelAdapterFactory;
+  runtimeContext: NonNullable<TitleGenerationOptions['runtimeContext']>;
+  systemPrompt: string;
+  userPrompt: string;
+  signal: AbortSignal;
+  authorizeModelTurn?: () => Promise<void>;
+}
+
+const codexTitleInFlight = new WeakMap<TitleModelAdapterFactory, Set<string>>();
+
+function withTitleTimeout<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new Error('Title generation timed out'));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error('Title generation timed out'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    operation.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
+function runCodexTitleOperation(input: TitleModelAdapterInput): Promise<TitleProviderResult> {
+  const key = input.config.model;
+  const active = codexTitleInFlight.get(input.factory) ?? new Set<string>();
+  if (active.has(key)) return Promise.reject(new Error('Codex title generation is still in flight'));
+  active.add(key);
+  codexTitleInFlight.set(input.factory, active);
+  const operation = generateTitleViaModelAdapter(input);
+  const release = () => {
+    active.delete(key);
+    if (active.size === 0) codexTitleInFlight.delete(input.factory);
+  };
+  operation.then(release, release);
+  return withTitleTimeout(operation, input.signal);
+}
+
+async function generateTitleViaModelAdapter(input: TitleModelAdapterInput): Promise<TitleProviderResult> {
+  const adapter = input.factory(input.config.connection ?? {}, {
+    ...input.config.providerOptions,
+    protocol: 'responses',
+    responsesTransport: 'codex_subscription',
+    disableResponseChaining: true,
+    preStreamRetryDelaysMs: [],
+  });
+  const context: RunContext = {
+    runId: `title-${randomUUID()}`,
+    sessionId: input.runtimeContext.sessionId,
+    ...(input.config.modelRef ? { modelRef: input.config.modelRef } : {}),
+    model: input.config.model,
+    cwd: input.runtimeContext.cwd,
+    ...(input.runtimeContext.tenantId ? { tenantId: input.runtimeContext.tenantId } : {}),
+    channelContext: { channel: 'web', resumeSessionId: input.runtimeContext.sessionId },
+    signal: input.signal,
+    ...(input.authorizeModelTurn ? { authorizeModelTurn: input.authorizeModelTurn } : {}),
+  };
+  let raw = '';
+  let finishReason = 'unknown';
+  let responseId = 'n/a';
+  let usage: SdkResultModelUsage | undefined;
+  let errorMessage: string | undefined;
+  let completed = false;
+  for await (const event of adapter.stream({
+    model: input.config.model,
+    messages: [
+      { role: 'system', content: input.systemPrompt },
+      { role: 'user', content: input.userPrompt },
+    ],
+    tools: [],
+    toolChoice: 'none',
+    maxOutputTokens: RESPONSES_TITLE_MAX_OUTPUT_TOKENS,
+    signal: input.signal,
+  }, context)) {
+    if (event.type === 'text_delta') raw += event.content;
+    if (event.type !== 'completed') continue;
+    completed = true;
+    raw = event.content || raw;
+    finishReason = event.finishReason ?? event.terminalStatus ?? 'completed';
+    responseId = event.responseId ?? 'n/a';
+    usage = event.usage;
+    if (event.terminalStatus && event.terminalStatus !== 'completed') {
+      errorMessage = event.errorMessage || `Codex title generation ${event.terminalStatus}`;
+    }
+  }
+  if (!completed) errorMessage = 'Codex title generation ended without terminal event';
+  return {
+    raw,
+    finishReason,
+    responseId,
+    ...(usage ? { usage } : {}),
+    ...(errorMessage ? { errorMessage } : {}),
+  };
+}
+
 export async function generateTitle(
   userMessage: string,
   assistantReply: string,
@@ -179,29 +287,31 @@ export async function generateTitle(
   options: TitleGenerationOptions = {},
 ): Promise<string | null> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 30_000);
   const apiKey = config.connection?.apiKey || process.env.OPENAI_API_KEY;
   const baseURL = config.connection?.baseUrl || process.env.OPENAI_BASE_URL;
+  const isCodexSubscription = config.protocol === 'responses'
+    && config.responsesTransport === 'codex_subscription';
 
-  if (config.protocol === 'responses' && config.responsesTransport === 'codex_subscription') {
-    titleLogger.warn(`Title generation skipped (model=${config.model}): codex_subscription transport is unsupported`);
+  if (isCodexSubscription && (!options.modelAdapterFactory || !options.runtimeContext)) {
+    titleLogger.warn(`Title generation skipped (model=${config.model}): codex_subscription runtime is unavailable`);
     clearTimeout(timeout);
     return null;
   }
-
-  if (!apiKey) {
+  if (!isCodexSubscription && !apiKey) {
     titleLogger.warn(`Title generation skipped (model=${config.model}): missing OPENAI_API_KEY`);
     clearTimeout(timeout);
     return null;
   }
-  if (config.protocol === 'responses' && !baseURL) {
+  if (config.protocol === 'responses' && !isCodexSubscription && !baseURL) {
     titleLogger.warn(`Title generation skipped (model=${config.model}): missing Responses baseUrl`);
     clearTimeout(timeout);
     return null;
   }
 
-  // 计费授权错误必须向上冒泡，不能被当作 provider 失败后继续 fallback。
-  await options.beforeModelCall?.(config.model);
+  // Codex 由 ResponsesApiAdapter 在真实 transport attempt 前授权；其他协议维持单次外层授权。
+  if (!isCodexSubscription) await options.beforeModelCall?.(config.model);
+  let authorizationCallbackFailed = false;
   let usageCallbackFailed = false;
 
   try {
@@ -221,9 +331,28 @@ export async function generateTitle(
     }
 
     let providerResult: TitleProviderResult;
-    if (config.protocol === 'responses') {
+    if (isCodexSubscription) {
+      providerResult = await runCodexTitleOperation({
+        config,
+        factory: options.modelAdapterFactory!,
+        runtimeContext: options.runtimeContext!,
+        systemPrompt: options.systemPrompt ?? TITLE_SYSTEM_PROMPT,
+        userPrompt: parts.join('\n'),
+        signal: controller.signal,
+        authorizeModelTurn: options.beforeModelCall
+          ? async () => {
+              try {
+                await options.beforeModelCall!(config.model);
+              } catch (err) {
+                authorizationCallbackFailed = true;
+                throw err;
+              }
+            }
+          : undefined,
+      });
+    } else if (config.protocol === 'responses') {
       providerResult = await generateTitleViaResponses({
-        apiKey,
+        apiKey: apiKey!,
         baseURL: baseURL!,
         model: config.model,
         systemPrompt: options.systemPrompt ?? TITLE_SYSTEM_PROMPT,
@@ -232,7 +361,7 @@ export async function generateTitle(
       });
     } else {
       const client = new OpenAI({
-        apiKey,
+        apiKey: apiKey!,
         maxRetries: 0,
         ...(baseURL ? { baseURL } : {}),
       });
@@ -270,6 +399,7 @@ export async function generateTitle(
         throw err;
       }
     }
+    if (providerResult.errorMessage) throw new Error(providerResult.errorMessage);
     const raw = providerResult.raw;
     if (!raw) {
       // 上游 200 但 content 为空：通常是模型协议错配（如 Responses-only 模型被
@@ -294,7 +424,7 @@ export async function generateTitle(
     if (title.length > 20) title = title.slice(0, 20);
     return title || null;
   } catch (err) {
-    if (usageCallbackFailed) throw err;
+    if (authorizationCallbackFailed || usageCallbackFailed) throw err;
     const reason = err instanceof Error ? err.message : String(err);
     titleLogger.warn(`Title generation failed (model=${config.model}): ${reason}`);
     return null;

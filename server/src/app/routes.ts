@@ -301,6 +301,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
             webChannel.getWsServer()?.broadcastToUser(userId, data)
         : undefined,
       titleGeneratorConfigs: runtime.titleGeneratorConfigs,
+      titleModelAdapterFactory: runtime.titleModelAdapterFactory,
       refreshSharedConfig: runtime.refreshSharedConfig,
       getTitleSystemPrompt: () => runtime.systemPromptRegistry.get('utility.title'),
       tokenUsageStore: runtime.tokenUsageStore,

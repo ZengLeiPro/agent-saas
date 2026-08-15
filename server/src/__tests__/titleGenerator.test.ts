@@ -228,6 +228,11 @@ describe('generateTitleWithFallback', () => {
     model,
     connection: { apiKey: 'sk-test', baseUrl: 'http://test' },
   });
+  const codexConfig = {
+    model: 'gpt-codex',
+    protocol: 'responses' as const,
+    responsesTransport: 'codex_subscription' as const,
+  };
 
   afterEach(() => {
     resetResponses();
@@ -350,5 +355,195 @@ describe('generateTitleWithFallback', () => {
     ]);
 
     expect(title).toBe('备用模型标题');
+  });
+
+  it('Codex subscription 通过 Runtime adapter 生成标题并记录 usage', async () => {
+    const stream = vi.fn(async function* (request: any, context: any) {
+      await context.authorizeModelTurn?.();
+      expect(request).toMatchObject({
+        model: 'gpt-codex',
+        tools: [],
+        toolChoice: 'none',
+        maxOutputTokens: 512,
+      });
+      expect(request.previousResponseId).toBeUndefined();
+      expect(context).toMatchObject({ sessionId: 'session-title', tenantId: 'tenant-title' });
+      yield { type: 'text_delta' as const, content: 'Codex' };
+      yield {
+        type: 'completed' as const,
+        content: 'Codex生成标题',
+        toolCalls: [],
+        terminalStatus: 'completed' as const,
+        finishReason: 'stop',
+        responseId: 'resp-codex-title',
+        usage: { inputTokens: 30, outputTokens: 8, cacheReadInputTokens: 4, apiRequestCount: 1 },
+      };
+    });
+    const modelAdapterFactory = vi.fn(() => ({ stream }));
+    const beforeModelCall = vi.fn();
+    const onUsage = vi.fn();
+
+    const title = await generateTitleWithFallback('用户问题', 'Agent 回复', [{
+      ...codexConfig,
+      modelRef: 'codex/gpt-codex',
+      providerOptions: { protocol: 'responses', responsesTransport: 'codex_subscription' },
+    }], undefined, undefined, {
+      modelAdapterFactory,
+      runtimeContext: { sessionId: 'session-title', tenantId: 'tenant-title', cwd: '/workspace/title' },
+      beforeModelCall,
+      onUsage,
+    });
+
+    expect(title).toBe('Codex生成标题');
+    expect(modelAdapterFactory).toHaveBeenCalledWith({}, expect.objectContaining({
+      protocol: 'responses',
+      responsesTransport: 'codex_subscription',
+      disableResponseChaining: true,
+      preStreamRetryDelaysMs: [],
+    }));
+    expect(beforeModelCall).toHaveBeenCalledOnce();
+    expect(onUsage).toHaveBeenCalledWith('gpt-codex', expect.objectContaining({ inputTokens: 30, outputTokens: 8 }));
+  });
+
+  it('Codex subscription adapter 失败时继续普通模型 fallback', async () => {
+    const modelAdapterFactory = vi.fn(() => ({
+      stream: async function* () { throw new Error('Codex subscription 尚未完成账号授权'); },
+    }));
+    queueResponse('chat-backup', '普通模型回落标题');
+
+    const title = await generateTitleWithFallback('u', 'a', [
+      codexConfig,
+      config('chat-backup'),
+    ], undefined, undefined, {
+      modelAdapterFactory,
+      runtimeContext: { sessionId: 'session-title', cwd: '/workspace/title' },
+    });
+
+    expect(title).toBe('普通模型回落标题');
+  });
+
+  it('Codex 的计费授权拒绝向上抛出，不误当 provider 失败 fallback', async () => {
+    const modelAdapterFactory = vi.fn(() => ({
+      stream: async function* (_request: any, context: any) {
+        await context.authorizeModelTurn?.();
+        yield { type: 'completed' as const, content: '不应生成', toolCalls: [], terminalStatus: 'completed' as const };
+      },
+    }));
+    const beforeModelCall = vi.fn(async () => { throw new Error('BILLING_RUN_LIMIT_EXCEEDED'); });
+    queueResponse('chat-backup', '不应回落');
+
+    await expect(generateTitleWithFallback('u', 'a', [
+      codexConfig,
+      config('chat-backup'),
+    ], undefined, undefined, {
+      modelAdapterFactory,
+      runtimeContext: { sessionId: 'session-title', cwd: '/workspace/title' },
+      beforeModelCall,
+    })).rejects.toThrow(/BILLING_RUN_LIMIT_EXCEEDED/);
+    expect(beforeModelCall).toHaveBeenCalledOnce();
+  });
+
+  it('Codex 失败终态先记录已产生的 usage，再继续 fallback', async () => {
+    const modelAdapterFactory = vi.fn(() => ({
+      stream: async function* () {
+        yield {
+          type: 'completed' as const,
+          content: '',
+          toolCalls: [],
+          terminalStatus: 'failed' as const,
+          errorMessage: 'upstream failed after usage',
+          usage: { inputTokens: 40, outputTokens: 6, apiRequestCount: 1 },
+        };
+      },
+    }));
+    const onUsage = vi.fn();
+    queueResponse('chat-backup', '失败后回落标题');
+
+    const title = await generateTitleWithFallback('u', 'a', [
+      codexConfig,
+      config('chat-backup'),
+    ], undefined, undefined, {
+      modelAdapterFactory,
+      runtimeContext: { sessionId: 'session-title', cwd: '/workspace/title' },
+      onUsage,
+    });
+
+    expect(title).toBe('失败后回落标题');
+    expect(onUsage).toHaveBeenNthCalledWith(1, 'gpt-codex', expect.objectContaining({ inputTokens: 40, outputTokens: 6 }));
+  });
+
+  it('Codex 失败终态的 usage 入账失败时不继续 fallback', async () => {
+    const modelAdapterFactory = vi.fn(() => ({
+      stream: async function* (_request: any, context: any) {
+        await context.authorizeModelTurn?.();
+        yield {
+          type: 'completed' as const,
+          content: '',
+          toolCalls: [],
+          terminalStatus: 'failed' as const,
+          usage: { inputTokens: 40, outputTokens: 6, apiRequestCount: 1 },
+        };
+      },
+    }));
+    const beforeModelCall = vi.fn();
+    queueResponse('chat-backup', '不应调用');
+
+    await expect(generateTitleWithFallback('u', 'a', [
+      codexConfig,
+      config('chat-backup'),
+    ], undefined, undefined, {
+      modelAdapterFactory,
+      runtimeContext: { sessionId: 'session-title', cwd: '/workspace/title' },
+      beforeModelCall,
+      onUsage: async () => { throw new Error('usage write failed'); },
+    })).rejects.toThrow(/usage write failed/);
+    expect(beforeModelCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('Codex 凭据获取不响应 AbortSignal 时仍按标题超时回落', async () => {
+    const modelAdapterFactory = vi.fn(() => ({
+      stream: async function* () { await new Promise<never>(() => {}); },
+    }));
+    queueResponse('chat-backup', '超时回落标题');
+    queueResponse('chat-backup', '悬挂期间直接回落标题');
+
+    const title = await generateTitleWithFallback('u', 'a', [
+      codexConfig,
+      config('chat-backup'),
+    ], undefined, undefined, {
+      modelAdapterFactory,
+      runtimeContext: { sessionId: 'session-title', cwd: '/workspace/title' },
+      timeoutMs: 5,
+    });
+
+    expect(title).toBe('超时回落标题');
+
+    const secondTitle = await generateTitleWithFallback('u2', 'a2', [
+      { ...codexConfig, modelRef: 'codex/renamed-alias' },
+      config('chat-backup'),
+    ], undefined, undefined, {
+      modelAdapterFactory,
+      runtimeContext: { sessionId: 'session-title-2', cwd: '/workspace/title' },
+      timeoutMs: 5,
+    });
+    expect(secondTitle).toBe('悬挂期间直接回落标题');
+    expect(modelAdapterFactory).toHaveBeenCalledOnce();
+  });
+
+  it('Codex 流结束但没有 completed 终态时丢弃 delta 并回落', async () => {
+    const modelAdapterFactory = vi.fn(() => ({
+      stream: async function* () { yield { type: 'text_delta' as const, content: '未完成标题' }; },
+    }));
+    queueResponse('chat-backup', '无终态回落标题');
+
+    const title = await generateTitleWithFallback('u', 'a', [
+      codexConfig,
+      config('chat-backup'),
+    ], undefined, undefined, {
+      modelAdapterFactory,
+      runtimeContext: { sessionId: 'session-title', cwd: '/workspace/title' },
+    });
+
+    expect(title).toBe('无终态回落标题');
   });
 });

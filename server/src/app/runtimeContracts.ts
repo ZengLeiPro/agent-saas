@@ -24,7 +24,7 @@ import type { ChannelManager } from '../channels/manager.js';
 import type { DingtalkDeps } from '../channels/dingtalk/factory.js';
 import type { CronRuntime } from '../cron/bootstrap.js';
 import type { AgentOptionsConfig } from '../agent/options.js';
-import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
+import type { TitleGeneratorConfig, TitleModelAdapterFactory } from '../agent/titleGenerator.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
@@ -212,6 +212,8 @@ export interface AppRuntime {
    * 主返回空 content 或 catch 后会按顺序尝试 fallback。
    */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
+  /** 标题 utility 专用 adapter factory；Codex 固定 HTTP/SSE，不复用主会话 WebSocket pool。 */
+  titleModelAdapterFactory?: TitleModelAdapterFactory;
   refreshSharedConfig: () => void;
   /**
    * 公司级专职 Agent store（2026-07 唯恩批次）。仅 auth 启用时实例化

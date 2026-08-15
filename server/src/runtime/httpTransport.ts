@@ -324,6 +324,7 @@ export class HttpTransport implements ExecutionTransport {
       void this.cancelInvocation(request.context.invocationId);
     }, streamTimeoutMs);
     timer.unref?.();
+    let sawCompleted = false;
     try {
       // 重试仅发生在建连失败/503（此时必然还没收到任何 chunk）；流一旦建立，
       // 中途断开不重试（对端可能已产生副作用）。
@@ -341,7 +342,6 @@ export class HttpTransport implements ExecutionTransport {
         yield { type: 'completed', response: { status: 'error', error: `hand-server stream HTTP ${response.status}: ${text || 'no body'}` } };
         return;
       }
-      let sawCompleted = false;
       for await (const chunk of parseSseStream(response.body)) {
         if (chunk.type === 'completed') sawCompleted = true;
         yield chunk;
@@ -361,6 +361,10 @@ export class HttpTransport implements ExecutionTransport {
     } finally {
       clearTimeout(timer);
       upstreamSignal?.removeEventListener('abort', onUpstreamAbort);
+      if (!sawCompleted) {
+        controller.abort();
+        await this.cancelInvocation(request.context.invocationId);
+      }
     }
   }
 
@@ -391,7 +395,7 @@ export class HttpTransport implements ExecutionTransport {
     return Boolean(request.context.invocationId && request.toolName === 'Shell' && mode !== 'background');
   }
 
-  private async cancelInvocation(invocationId: string | undefined): Promise<void> {
+  async cancelInvocation(invocationId: string | undefined): Promise<void> {
     if (!invocationId) return;
     await this.fetchImpl(`${this.baseUrl}/invocations/${encodeURIComponent(invocationId)}`, {
       method: 'DELETE',

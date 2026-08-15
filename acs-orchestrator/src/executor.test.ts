@@ -10,6 +10,102 @@ import type { Kubectl } from './kubectl.js';
 import type { SandboxManager, SandboxRef } from './sandboxManager.js';
 
 describe('AcsExecutor active sandbox tracking', () => {
+  it('rejects a duplicate invocation id without spawning a second runner', async () => {
+    const ref: SandboxRef = {
+      name: 'as-active',
+      workspaceId: 'ws_kaiyan__u-1',
+      sandboxScopeId: 'ws_kaiyan__u-1',
+      sessionId: 'session-1',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    };
+    const child = fakeChild();
+    const sandboxManager = {
+      ref: () => ref,
+      ensureRunning: vi.fn(async () => ref),
+    } as unknown as SandboxManager;
+    const spawn = vi.fn(() => child);
+    const executor = new AcsExecutor(
+      baseConfig(),
+      { spawn } as unknown as Kubectl,
+      sandboxManager,
+      noopLogger,
+    );
+    const request = {
+      toolName: 'Shell',
+      input: { command: 'sleep 60' },
+      context: {
+        invocationId: 'inv-duplicate',
+        workspace: {
+          id: ref.workspaceId,
+          sessionId: ref.sessionId,
+          sandboxScopeId: ref.sandboxScopeId,
+          mountSubPath: ref.mountSubPath,
+        },
+      },
+    };
+
+    const first = executor.executeStream(request, { stream: true })[Symbol.asyncIterator]();
+    await expect(first.next()).resolves.toMatchObject({ value: { type: 'progress' }, done: false });
+    const duplicate = executor.executeStream(request, { stream: true })[Symbol.asyncIterator]();
+    await expect(duplicate.next()).resolves.toMatchObject({
+      value: { type: 'completed', response: { status: 'error', error: expect.stringContaining('already running') } },
+      done: false,
+    });
+    await expect(duplicate.next()).resolves.toMatchObject({ done: true });
+    expect(spawn).toHaveBeenCalledOnce();
+
+    executor.cancel('inv-duplicate');
+    child.stdout.end();
+    child.emit('close', null, 'SIGTERM');
+    await first.next();
+    await expect(first.next()).resolves.toMatchObject({ done: true });
+  });
+
+  it('does not spawn a runner when the downstream stream aborts during startup', async () => {
+    const ref: SandboxRef = {
+      name: 'as-active',
+      workspaceId: 'ws_kaiyan__u-1',
+      sandboxScopeId: 'ws_kaiyan__u-1',
+      sessionId: 'session-1',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    };
+    let finishStartup!: () => void;
+    const startup = new Promise<void>((resolve) => { finishStartup = resolve; });
+    const sandboxManager = {
+      ref: () => ref,
+      ensureRunning: vi.fn(async () => { await startup; return ref; }),
+    } as unknown as SandboxManager;
+    const spawn = vi.fn();
+    const executor = new AcsExecutor(
+      baseConfig(),
+      { spawn } as unknown as Kubectl,
+      sandboxManager,
+      noopLogger,
+    );
+    const controller = new AbortController();
+    const iterator = executor.executeStream({
+      toolName: 'Shell',
+      input: { command: 'pwd' },
+      context: {
+        invocationId: 'inv-aborted-startup',
+        workspace: {
+          id: ref.workspaceId,
+          sessionId: ref.sessionId,
+          sandboxScopeId: ref.sandboxScopeId,
+          mountSubPath: ref.mountSubPath,
+        },
+      },
+    }, { stream: true, signal: controller.signal })[Symbol.asyncIterator]();
+
+    const result = iterator.next();
+    await vi.waitFor(() => expect(sandboxManager.ensureRunning).toHaveBeenCalledOnce());
+    controller.abort();
+    finishStartup();
+    await expect(result).resolves.toMatchObject({ done: true });
+    expect(spawn).not.toHaveBeenCalled();
+    expect(executor.cancel('inv-aborted-startup')).toBe(false);
+  });
+
   it('releases active tracking when sandbox startup fails', async () => {
     const ref: SandboxRef = {
       name: 'as-active',

@@ -254,7 +254,7 @@ export function resolveModelRef(
 /**
  * 严格解析：ref 无效时返回 null，不做任何回退。
  */
-function resolveModelRefStrict(
+export function resolveModelRefStrict(
   modelsConfig: ModelsConfig,
   ref: string,
 ): ResolvedModel | null {

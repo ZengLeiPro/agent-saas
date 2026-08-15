@@ -47,6 +47,7 @@ let lifecycleTimer: ReturnType<typeof setInterval> | null = null;
 let lifecycleRunning = false;
 const lastAlertAtByEvent = new Map<string, number>();
 let staleImagePrewarmRunning = false;
+const STREAM_HEARTBEAT_MS = 25_000;
 
 // ─── Graceful drain (SIGUSR2) ────────────────────────────────────
 // 用于零停机 deploy: `kill -USR2` -> 停接新的长运行请求 (/provision, /execute,
@@ -621,21 +622,41 @@ async function handleExecuteStream(req: IncomingMessage, res: ServerResponse): P
     'cache-control': 'no-cache, no-transform',
     connection: 'keep-alive',
   });
+  res.write(': connected\n\n');
   let sawCompleted = false;
+  const disconnectController = new AbortController();
+  const cancelDisconnectedInvocation = () => {
+    if (sawCompleted || disconnectController.signal.aborted) return;
+    disconnectController.abort();
+    const invocationId = parsed.value.context.invocationId;
+    if (invocationId) executor.cancel(invocationId);
+  };
+  req.once('aborted', cancelDisconnectedInvocation);
+  res.once('close', cancelDisconnectedInvocation);
+  const heartbeat = setInterval(() => {
+    if (!res.destroyed && !res.writableEnded) res.write(': heartbeat\n\n');
+  }, STREAM_HEARTBEAT_MS);
+  heartbeat.unref?.();
   const writeChunk = (chunk: unknown) => {
     if (chunk && typeof chunk === 'object' && (chunk as { type?: unknown }).type === 'completed') sawCompleted = true;
-    res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+    if (!res.destroyed && !res.writableEnded) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
   };
   try {
-    for await (const chunk of executor.executeStream(parsed.value, { stream: true })) {
+    for await (const chunk of executor.executeStream(parsed.value, {
+      stream: true,
+      signal: disconnectController.signal,
+    })) {
       writeChunk(chunk);
       if (sawCompleted) break;
     }
   } catch (err) {
     writeChunk({ type: 'completed', response: { status: 'error', error: err instanceof Error ? err.message : String(err) } });
   } finally {
+    clearInterval(heartbeat);
+    req.removeListener('aborted', cancelDisconnectedInvocation);
+    res.removeListener('close', cancelDisconnectedInvocation);
     if (!sawCompleted) writeChunk({ type: 'completed', response: { status: 'error', error: 'ACS stream ended without completed chunk' } });
-    res.end();
+    if (!res.destroyed && !res.writableEnded) res.end();
   }
 }
 

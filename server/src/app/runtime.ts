@@ -410,7 +410,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     defaultModel: process.env.OPENAI_DEFAULT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.4-mini',
     logger: serverLogger,
   });
-
   // 门禁模型配置链（主 + fallback；2026-07 唯恩批次）。与 title 不同：
   // config.guardrail 缺省 = 门禁模块不激活（空数组，checkTopicScope fail-open
   // 短路），**没有** env 默认模型兜底。热更由 routes.ts onModelsUpdated 经

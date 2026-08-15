@@ -161,7 +161,7 @@ export interface WsProcessingContext {
   /** 当前会话所属用户（admin 查看其他用户会话时需要，用于文件路径解析） */
   sessionOwnerRef?: { current: string | undefined };
   /** 消息可靠性协议回调（2026-04-18 新增）—— 用于 outbox 状态机更新 */
-  onChatAck?: (clientMsgId: string) => void;
+  onChatAck?: (clientMsgId: string, event?: WsEvent) => void;
   onInterjectionApplied?: (sourceRunIds: string[], clientMsgIds: string[]) => void;
   /**
    * 活跃流接管到另一条用户消息时回调（非 queued 的 stream_id 按 client_msg_id 定位到
@@ -181,8 +181,10 @@ export interface WsProcessingContext {
   onChatDone?: (clientMsgId: string | undefined, error: string | undefined) => void;
   // ── 插话队列区（2026-08-04 终态设计）──
   /** stream_id{queued:true} ACK：本地队列区条目确认排队成功并记录 sourceRunId。 */
-  onSteeringAckQueued?: (clientMsgId: string | undefined, sourceRunId: string | undefined, targetRunId: string | undefined) => void;
-  /** steering_queued 广播（user scope，多端）：按 clientMsgId 幂等 upsert 队列区。 */
+  onSteeringAckQueued?: (clientMsgId: string | undefined, sourceRunId: string | undefined, targetRunId: string | undefined, deliveryMode?: 'queue' | 'steer', queuePosition?: number) => void;
+  /** 统一 message_queued 广播（user scope，多端）。 */
+  onMessageQueued?: (entry: Extract<WsEvent, { type: 'message_queued' }>) => void;
+  /** steering_queued 广播（旧协议兼容）。 */
   onSteeringQueued?: (entry: Extract<WsEvent, { type: 'steering_queued' }>) => void;
   /** steering_cancelled 广播：队列区条目标记已取消（abort 联动/其他端撤回）。 */
   onSteeringCancelled?: (event: Extract<WsEvent, { type: 'steering_cancelled' }>) => void;
@@ -249,10 +251,17 @@ export function processWsEvent(
       const expectedSessionId = activeSessionId ?? latestSessionId.value;
       if (expectedSessionId && data.sessionId !== expectedSessionId) return;
     }
+    // stream_id 只能在服务端 durable accepted 后产生；即使 chat_ack 下行丢包，也要
+    // 清除前端 ACK 计时器，不能把已经执行的消息翻成“发送超时”。
+    if (data.client_msg_id) ctx.onChatAck?.(data.client_msg_id);
     if (data.queued) {
-      // 插话排队 ACK（2026-08-04 终态设计）：消息在队列区（不进时间线），
-      // 只更新队列区条目状态并登记 sourceRunId（撤回按钮要用）。
-      ctx.onSteeringAckQueued?.(data.client_msg_id, data.runId, data.targetRunId);
+      ctx.onSteeringAckQueued?.(
+        data.client_msg_id,
+        data.runId,
+        data.targetRunId,
+        data.deliveryMode,
+        data.queuePosition,
+      );
     }
     if (!data.queued) {
       // 插话回退为独立 run 被接管：clientMsgId 若在队列区，由上层移入时间线并
@@ -314,7 +323,14 @@ export function processWsEvent(
     return;
   }
 
+  if (data.type === "message_queued") {
+    ctx.onChatAck?.(data.clientMsgId);
+    ctx.onMessageQueued?.(data);
+    return;
+  }
+
   if (data.type === "steering_queued") {
+    ctx.onChatAck?.(data.clientMsgId);
     ctx.onSteeringQueued?.(data);
     return;
   }
@@ -326,7 +342,7 @@ export function processWsEvent(
 
   if (data.type === "chat_ack") {
     // 通知上层 outbox：服务端已接收
-    ctx.onChatAck?.(data.client_msg_id);
+    ctx.onChatAck?.(data.client_msg_id, data);
     return;
   }
 
@@ -396,6 +412,9 @@ export function processWsEvent(
 
   if (data.type === "session") {
     const newSessionId = data.sessionId;
+    // session 会改写路由；已有当前会话时，迟到的其他会话事件只能被忽略。
+    // 新会话草稿的 clientMessageId 关联由 Web hook 在进入共享处理器前校验。
+    if (activeSessionId && newSessionId !== activeSessionId) return;
     latestSessionId.value = newSessionId;
     session.setIsNewSession(false);
     session.setSessionId(newSessionId);

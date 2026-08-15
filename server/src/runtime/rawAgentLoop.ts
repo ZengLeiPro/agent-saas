@@ -460,6 +460,10 @@ export class RawAgentLoop implements AgentLoop {
   private readonly mcpLoadingMode: EffectiveMcpLoadingMode;
   private readonly streamEventBatch: Required<StreamEventBatchOptions>;
   private readonly zombieToolCallTimeoutMs: number;
+  private readonly parallelInvocationGates = new WeakMap<RunContext, {
+    onClaimed: () => void;
+    waitForRelease: Promise<void>;
+  }>();
   private webFetchSynthesisReason?: string;
   private forcedSynthesisReason?: string;
   private forcedSynthesisPrompt = CONTEXT_SYNTHESIS_PROMPT;
@@ -1007,59 +1011,125 @@ export class RawAgentLoop implements AgentLoop {
       for (const interjection of reservedInterjections) {
         if (isCompactCommand(interjection.message.content)) {
           manualCheckpointSourceRunIds.add(interjection.sourceRunId);
-          continue;
-        }
-        if (durableInterjectionSourceRunIds.has(interjection.sourceRunId)) continue;
-        const userMessageEvent = await this.eventStore.append({
-          type: 'user_message',
-          runId: context.runId,
-          sessionId: context.sessionId,
-          content: interjection.message.content,
-          modelContent: interjection.prompt,
-          ...(interjection.attachments?.length ? { attachments: interjection.attachments } : {}),
-          ...(interjection.visionAnalysis ? { visionAnalysis: interjection.visionAnalysis } : {}),
-          interjectionSourceRunId: interjection.sourceRunId,
-          ...(interjection.clientMsgId ? { clientMsgId: interjection.clientMsgId } : {}),
-        }).catch((error) => {
-          requestSteeringRecoveryHandoff('steering_reserved_event_append_failed');
-          throw error;
-        });
-        durableInterjectionSourceRunIds.add(interjection.sourceRunId);
-        try {
-          await this.transcriptProjection.project(userMessageEvent);
-        } catch (error) {
-          logger.warn(
-            `[run] interjection transcript project failed (degraded): run=${context.runId} source=${interjection.sourceRunId} error=${error instanceof Error ? error.message : String(error)}`,
-          );
         }
       }
 
       let appliedInterjections = reservedInterjections;
-      try {
-        const appliedSourceRunIds = await this.runStore?.markSteeringInputsApplied?.(
-          context.runId,
-          reservedInterjections.map((interjection) => interjection.sourceRunId),
-        ) ?? reservedInterjections.map((interjection) => interjection.sourceRunId);
-        const appliedSourceRunIdSet = new Set(appliedSourceRunIds);
-        appliedInterjections = reservedInterjections.filter((interjection) => (
-          appliedSourceRunIdSet.has(interjection.sourceRunId)
-        ));
-        if (appliedInterjections.length !== reservedInterjections.length) {
-          requestSteeringRecoveryHandoff('steering_reserved_apply_partial');
-          const missing = reservedInterjections
-            .filter((interjection) => !appliedSourceRunIdSet.has(interjection.sourceRunId))
-            .map((interjection) => interjection.sourceRunId);
-          logger.warn(
-            `[run] steering apply partial; absorption disabled for run=${context.runId} unapplied=${missing.join(',')}`,
+      if (this.runStore?.applySteeringInputsAtomically) {
+        try {
+          const atomic = await this.runStore.applySteeringInputsAtomically(
+            context.runId,
+            reservedInterjections.map((interjection) => ({
+              sourceRunId: interjection.sourceRunId,
+              ...(!isCompactCommand(interjection.message.content)
+                && !durableInterjectionSourceRunIds.has(interjection.sourceRunId) ? {
+                event: {
+                  type: 'user_message' as const,
+                  runId: context.runId,
+                  sessionId: context.sessionId,
+                  content: interjection.message.content,
+                  modelContent: interjection.prompt,
+                  ...(interjection.attachments?.length ? { attachments: interjection.attachments } : {}),
+                  ...(interjection.visionAnalysis ? { visionAnalysis: interjection.visionAnalysis } : {}),
+                  interjectionSourceRunId: interjection.sourceRunId,
+                  ...(interjection.clientMsgId ? { clientMsgId: interjection.clientMsgId } : {}),
+                },
+              } : {}),
+            })),
+            context.tenantId,
           );
+          const appliedSourceRunIdSet = new Set(atomic.appliedSourceRunIds);
+          appliedInterjections = reservedInterjections.filter((interjection) => (
+            appliedSourceRunIdSet.has(interjection.sourceRunId)
+          ));
+          for (const userMessageEvent of atomic.events) {
+            if (userMessageEvent.type !== 'user_message' || !userMessageEvent.interjectionSourceRunId) continue;
+            durableInterjectionSourceRunIds.add(userMessageEvent.interjectionSourceRunId);
+            try {
+              await this.transcriptProjection.project(userMessageEvent);
+            } catch (error) {
+              logger.warn(
+                `[run] interjection transcript project failed (degraded): run=${context.runId} source=${userMessageEvent.interjectionSourceRunId} error=${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
+          }
+          if (appliedInterjections.length !== reservedInterjections.length) {
+            requestSteeringRecoveryHandoff('steering_atomic_apply_partial');
+            const missing = reservedInterjections
+              .filter((interjection) => !appliedSourceRunIdSet.has(interjection.sourceRunId))
+              .map((interjection) => interjection.sourceRunId);
+            logger.warn(
+              `[run] steering atomic apply partial; absorption disabled for run=${context.runId} unapplied=${missing.join(',')}`,
+            );
+          }
+        } catch (error) {
+          if (context.signal?.aborted) throw error;
+          requestSteeringRecoveryHandoff('steering_atomic_apply_failed');
+          logger.warn(
+            `[run] steering atomic append/apply failed; handing off target run=${context.runId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return [];
         }
-      } catch (error) {
-        if (context.signal?.aborted) throw error;
-        requestSteeringRecoveryHandoff('steering_reserved_apply_failed');
-        logger.warn(
-          `[run] steering apply failed; handing off target run=${context.runId}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        throw error;
+      } else {
+        for (const interjection of reservedInterjections) {
+          if (isCompactCommand(interjection.message.content)) continue;
+          if (durableInterjectionSourceRunIds.has(interjection.sourceRunId)) continue;
+          let userMessageEvent;
+          try {
+            userMessageEvent = await this.eventStore.append({
+              type: 'user_message',
+              runId: context.runId,
+              sessionId: context.sessionId,
+              content: interjection.message.content,
+              modelContent: interjection.prompt,
+              ...(interjection.attachments?.length ? { attachments: interjection.attachments } : {}),
+              ...(interjection.visionAnalysis ? { visionAnalysis: interjection.visionAnalysis } : {}),
+              interjectionSourceRunId: interjection.sourceRunId,
+              ...(interjection.clientMsgId ? { clientMsgId: interjection.clientMsgId } : {}),
+            });
+          } catch (error) {
+            requestSteeringRecoveryHandoff('steering_reserved_event_append_failed');
+            logger.warn(
+              `[run] steering event append failed; handing off target run=${context.runId}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            return [];
+          }
+          durableInterjectionSourceRunIds.add(interjection.sourceRunId);
+          try {
+            await this.transcriptProjection.project(userMessageEvent);
+          } catch (error) {
+            logger.warn(
+              `[run] interjection transcript project failed (degraded): run=${context.runId} source=${interjection.sourceRunId} error=${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+
+        try {
+          const appliedSourceRunIds = await this.runStore?.markSteeringInputsApplied?.(
+            context.runId,
+            reservedInterjections.map((interjection) => interjection.sourceRunId),
+          ) ?? reservedInterjections.map((interjection) => interjection.sourceRunId);
+          const appliedSourceRunIdSet = new Set(appliedSourceRunIds);
+          appliedInterjections = reservedInterjections.filter((interjection) => (
+            appliedSourceRunIdSet.has(interjection.sourceRunId)
+          ));
+          if (appliedInterjections.length !== reservedInterjections.length) {
+            requestSteeringRecoveryHandoff('steering_reserved_apply_partial');
+            const missing = reservedInterjections
+              .filter((interjection) => !appliedSourceRunIdSet.has(interjection.sourceRunId))
+              .map((interjection) => interjection.sourceRunId);
+            logger.warn(
+              `[run] steering apply partial; absorption disabled for run=${context.runId} unapplied=${missing.join(',')}`,
+            );
+          }
+        } catch (error) {
+          if (context.signal?.aborted) throw error;
+          requestSteeringRecoveryHandoff('steering_reserved_apply_failed');
+          logger.warn(
+            `[run] steering apply failed; handing off target run=${context.runId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return [];
+        }
       }
 
       for (const interjection of appliedInterjections) {
@@ -1131,6 +1201,7 @@ export class RawAgentLoop implements AgentLoop {
         sessionId: context.sessionId,
         content: input.message.content,
         modelContent: input.prompt,
+        ...(input.clientMsgId ? { clientMsgId: input.clientMsgId } : {}),
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
         ...(input.visionAnalysis ? { visionAnalysis: input.visionAnalysis } : {}),
       });
@@ -1945,6 +2016,11 @@ export class RawAgentLoop implements AgentLoop {
       }
       throw new Error(`raw agent loop exceeded maxTurns=${turnLimit}`);
     } catch (err) {
+      if (err instanceof ToolInvocationClaimLostError) {
+        if (thinkingStarted) yield { type: 'thinking_end' };
+        if (textStarted) yield { type: 'text_end' };
+        return;
+      }
       if (err instanceof ApprovalPendingWithoutInteractionHook) {
         if (thinkingStarted) yield { type: 'thinking_end' };
         if (textStarted) {
@@ -2436,23 +2512,56 @@ export class RawAgentLoop implements AgentLoop {
             yield { type: 'tool_end', toolId: call.id, toolName: call.name };
           }
         }
-        const outcomes = await Promise.all(segment.map((call) => this.executeToolCall(
-          call,
+        // 第一项 invocation 是该并行段的 durable owner claim。它取得 claim 后先
+        // 停在真正 invoke 之前，待其余调用启动再一起放行；重复 worker 会在第一项
+        // 丢失 claim 并退出，因此不会出现双方各抢到一部分 invocation 的拆分批次。
+        const ownerCall = segment[0]!;
+        const ownerInvocationId = `${args.context.runId}:${ownerCall.id}`;
+        const ownerContext = { ...args.context };
+        let signalOwnerClaimed!: () => void;
+        const ownerClaimed = new Promise<void>((resolve) => { signalOwnerClaimed = resolve; });
+        let releaseOwner!: () => void;
+        const waitForRelease = new Promise<void>((resolve) => { releaseOwner = resolve; });
+        this.parallelInvocationGates.set(ownerContext, {
+          onClaimed: signalOwnerClaimed,
+          waitForRelease,
+        });
+        const ownerOutcome = this.executeToolCall(
+          ownerCall,
           args.descriptorsByName,
           args.baseToolContext,
-          args.context,
-        )));
-        for (let i = 0; i < segment.length; i += 1) {
-          const outcome = outcomes[i]!;
-          yield* this.appendToolResult({
-            call: segment[i]!,
-            content: outcome.result.content,
-            ...(outcome.isError ? { isError: true } : {}), ...(outcome.result.modelImages?.length ? { modelImages: outcome.result.modelImages } : {}),
-            ...(outcome.result.presentation ? { presentation: outcome.result.presentation } : {}),
-            ...(outcome.result.metadata ? { metadata: outcome.result.metadata } : {}),
-            context: args.context,
-            messages: args.messages,
-          });
+          ownerContext,
+        );
+        try {
+          await Promise.race([
+            ownerClaimed,
+            ownerOutcome.then(() => {
+              throw new Error(`parallel owner invocation completed before claim: ${ownerInvocationId}`);
+            }),
+          ]);
+          const remainingOutcomes = segment.slice(1).map((call) => this.executeToolCall(
+            call,
+            args.descriptorsByName,
+            args.baseToolContext,
+            args.context,
+          ));
+          releaseOwner();
+          const outcomes = await Promise.all([ownerOutcome, ...remainingOutcomes]);
+          for (let i = 0; i < segment.length; i += 1) {
+            const outcome = outcomes[i]!;
+            yield* this.appendToolResult({
+              call: segment[i]!,
+              content: outcome.result.content,
+              ...(outcome.isError ? { isError: true } : {}), ...(outcome.result.modelImages?.length ? { modelImages: outcome.result.modelImages } : {}),
+              ...(outcome.result.presentation ? { presentation: outcome.result.presentation } : {}),
+              ...(outcome.result.metadata ? { metadata: outcome.result.metadata } : {}),
+              context: args.context,
+              messages: args.messages,
+            });
+          }
+        } finally {
+          releaseOwner();
+          this.parallelInvocationGates.delete(ownerContext);
         }
         index = segmentEnd;
         continue;
@@ -2653,7 +2762,7 @@ export class RawAgentLoop implements AgentLoop {
         context: resumeContext,
       });
     } catch (err) {
-      if (err instanceof ApprovalPendingWithoutInteractionHook) return;
+      if (err instanceof ToolInvocationClaimLostError || err instanceof ApprovalPendingWithoutInteractionHook) return;
       if (err instanceof InteractionPendingWithoutInteractionHook) {
         yield toOutboundInteractionEvent(err.event);
         return;
@@ -2790,7 +2899,7 @@ export class RawAgentLoop implements AgentLoop {
         context,
       });
     } catch (err) {
-      if (err instanceof ApprovalPendingWithoutInteractionHook) return;
+      if (err instanceof ToolInvocationClaimLostError || err instanceof ApprovalPendingWithoutInteractionHook) return;
       if (err instanceof InteractionPendingWithoutInteractionHook) {
         yield toOutboundInteractionEvent(err.event);
         return;
@@ -2968,7 +3077,7 @@ export class RawAgentLoop implements AgentLoop {
       if (err instanceof WebFetchCircuitOpenError) {
         this.forceWebFetchSynthesis(err.reason, context);
       }
-      if (err instanceof InteractionPendingWithoutInteractionHook) throw err;
+      if (err instanceof InteractionPendingWithoutInteractionHook || err instanceof ToolInvocationClaimLostError) throw err;
       // 失败也要有摘要与结构化事实。摘要在 toolRuntime 里已按截断前 metadata 造好
       // 并随 ToolExecutionError 带上来，这里只负责不把它丢掉——此前这一跳是
       // 全部失败调用（近 7 天 3,457 次）摘要覆盖率仅 0.2% 的唯一原因，
@@ -3038,6 +3147,7 @@ export class RawAgentLoop implements AgentLoop {
       });
       return { call: args.call, descriptor: args.descriptor, input: args.input, result };
     } catch (err) {
+      if (err instanceof ToolInvocationClaimLostError) throw err;
       // 失败也要有摘要：优先用错误自带的（provider 按真实 metadata 产出），
       // 否则退回入参侧规则并强制标 warn。客户看到「读取 差旅.md · 有异常」
       // 远好过一行「已执行，有异常」。
@@ -3131,7 +3241,7 @@ export class RawAgentLoop implements AgentLoop {
     const autoHandId = await this.autoSelectTenantHandId(args.context.sessionId);
     const effectiveHandId = autoHandId;
     const skillName = resolveInvokedSkillName(args.descriptor.id, args.input);
-    await this.toolInvocationStore?.start({
+    const invocation = await this.toolInvocationStore?.start({
       invocationId,
       runId: args.context.runId,
       sessionId: args.context.sessionId,
@@ -3152,21 +3262,112 @@ export class RawAgentLoop implements AgentLoop {
         ...(args.baseToolContext.workspace.sandboxScopeId ? { sandboxScopeId: args.baseToolContext.workspace.sandboxScopeId } : {}),
         ...(args.context.workerId ? { workerId: args.context.workerId } : {}),
       },
-    }).catch(() => undefined);
-    await this.append({
-      type: 'tool_invocation_started',
-      runId: args.context.runId,
-      sessionId: args.context.sessionId,
-      invocationId,
-      toolCallId: args.call.id,
-      toolName: args.descriptor.name,
-      executionTarget: args.baseToolContext.workspace.executionTarget,
     });
+    if (typeof invocation?.metadata.invokeClaimedAt === 'string') {
+      throw new ToolInvocationClaimLostError(invocationId);
+    }
+    let invocationAlreadyTerminal = Boolean(invocation && invocation.status !== 'running');
+    let cancelledBeforeInvoke = false;
     try {
-      const result = await this.toolRuntime.invoke(
-        { toolId: args.descriptor.id, input: args.input, authorization: args.authorization },
-        toolContext,
-      );
+      let blockedBeforeInvoke = invocationAlreadyTerminal;
+      let cancellation = invocation?.cancelRequestedAt ? invocation : undefined;
+      // Pg start 已原子登记 durable outbox；即时事件仅由本次 requestCancelOnce 的唯一创建者发布。
+      let shouldAppendCancelEvent = false;
+      let terminalRunStatus: string | undefined;
+      if (!cancellation && this.runStore) {
+        const run = await this.runStore.get(args.context.runId);
+        if (!run) throw new Error(`authoritative run not found: ${args.context.runId}`);
+        if (['completed', 'failed', 'cancelled', 'orphaned'].includes(run.status)) {
+          terminalRunStatus = run.status;
+          blockedBeforeInvoke = true;
+        }
+        if (run.status === 'cancelled') {
+          const completedBeforeCancellation = invocation?.completedAt
+            && run.cancelledAt
+            && new Date(invocation.completedAt).getTime() < new Date(run.cancelledAt).getTime();
+          if (!completedBeforeCancellation) {
+            const requested = await this.toolInvocationStore?.requestCancelOnce(
+              invocationId,
+              'run_already_cancelled_before_tool_start',
+              { cancelRecovery: 'late_start' },
+            );
+            cancellation = requested?.record;
+            shouldAppendCancelEvent = requested?.created === true;
+            cancelledBeforeInvoke = true;
+          }
+        }
+      }
+      if (cancellation) {
+        cancelledBeforeInvoke = true;
+        blockedBeforeInvoke = true;
+      }
+      if (blockedBeforeInvoke) {
+        if (cancellation && shouldAppendCancelEvent) {
+          await this.append({
+            type: 'tool_invocation_cancel_requested',
+            runId: args.context.runId,
+            sessionId: args.context.sessionId,
+            invocationId,
+            toolCallId: args.call.id,
+            toolName: args.descriptor.name,
+            reason: cancellation.cancelReason ?? 'run_already_cancelled_before_tool_start',
+            metadata: cancellation.metadata,
+          });
+        }
+        const reason = cancelledBeforeInvoke
+          ? 'run is already cancelled'
+          : terminalRunStatus
+            ? `run is already terminal status=${terminalRunStatus}`
+            : 'invocation is already terminal';
+        throw new Error(`tool invocation blocked because ${reason}: ${invocationId}`);
+      }
+      const invokeTool = async () => {
+        const parallelGate = this.parallelInvocationGates.get(args.context);
+        if (parallelGate) {
+          parallelGate.onClaimed();
+          await parallelGate.waitForRelease;
+        }
+        await this.append({
+          type: 'tool_invocation_started',
+          runId: args.context.runId,
+          sessionId: args.context.sessionId,
+          invocationId,
+          toolCallId: args.call.id,
+          toolName: args.descriptor.name,
+          executionTarget: args.baseToolContext.workspace.executionTarget,
+        });
+        return this.toolRuntime.invoke(
+          { toolId: args.descriptor.id, input: args.input, authorization: args.authorization },
+          toolContext,
+        );
+      };
+      const guarded = this.toolInvocationStore
+        ? await this.toolInvocationStore.invokeWithActiveRunGate(
+          args.context.runId,
+          invocationId,
+          invokeTool,
+          this.runStore
+            ? async () => (await this.runStore!.get(args.context.runId))?.status ?? null
+            : undefined,
+        )
+        : undefined;
+      if (guarded && !guarded.invoked) {
+        terminalRunStatus = guarded.runStatus;
+        invocationAlreadyTerminal = guarded.reason === 'invocation_terminal' || guarded.reason === 'invocation_claimed';
+        cancelledBeforeInvoke = guarded.reason === 'cancel_requested' || guarded.runStatus === 'cancelled';
+        if (guarded.reason === 'invocation_claimed') {
+          throw new ToolInvocationClaimLostError(invocationId);
+        }
+        const reason = cancelledBeforeInvoke
+          ? 'run is already cancelled'
+          : guarded.reason === 'run_terminal' && guarded.runStatus
+            ? `run is already terminal status=${guarded.runStatus}`
+            : guarded.reason === 'run_missing'
+              ? 'authoritative run not found'
+              : 'invocation is already terminal';
+        throw new Error(`tool invocation blocked because ${reason}: ${invocationId}`);
+      }
+      const result = guarded?.invoked ? guarded.result : await invokeTool();
       await streamBatcher.flush();
       await this.toolInvocationStore?.complete(invocationId, 'completed').catch(() => undefined);
       await this.append({
@@ -3208,11 +3409,12 @@ export class RawAgentLoop implements AgentLoop {
       return result;
     } catch (err) {
       await streamBatcher.flush().catch(() => undefined);
-      if (err instanceof InteractionPendingWithoutInteractionHook) {
+      if (err instanceof InteractionPendingWithoutInteractionHook || invocationAlreadyTerminal) {
         throw err;
       }
       const message = err instanceof Error ? err.message : String(err);
-      const completionStatus = args.context.signal?.aborted ? 'cancelled' : 'failed';
+      const invocationCancelled = cancelledBeforeInvoke || args.context.signal?.aborted;
+      const completionStatus = invocationCancelled ? 'cancelled' : 'failed';
       await this.toolInvocationStore?.complete(invocationId, completionStatus, message).catch(() => undefined);
       await this.append({
         type: 'tool_invocation_completed',
@@ -3221,7 +3423,7 @@ export class RawAgentLoop implements AgentLoop {
         invocationId,
         toolCallId: args.call.id,
         toolName: args.descriptor.name,
-        status: args.context.signal?.aborted ? 'cancelled' : 'error',
+        status: invocationCancelled ? 'cancelled' : 'error',
         durationMs: Date.now() - startedAt,
         error: message,
       });
@@ -3231,7 +3433,7 @@ export class RawAgentLoop implements AgentLoop {
         invocationId,
         toolCallId: args.call.id,
         toolName: args.descriptor.name,
-        status: args.context.signal?.aborted ? 'cancelled' : 'error',
+        status: invocationCancelled ? 'cancelled' : 'error',
       }).catch(() => undefined);
       await this.append({
         type: 'tool_audit',
@@ -4034,6 +4236,13 @@ async function* captureModelStreamError(
     yield* stream;
   } catch (error) {
     onError(error);
+  }
+}
+
+class ToolInvocationClaimLostError extends Error {
+  constructor(invocationId: string) {
+    super(`tool invocation already claimed by another worker: ${invocationId}`);
+    this.name = 'ToolInvocationClaimLostError';
   }
 }
 

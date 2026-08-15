@@ -18,6 +18,9 @@ const METADATA_EVENT_TYPES = new Set([
   'groups_changed',
   'stream_started',
   'interaction_resolved',
+  'message_queued',
+  'steering_queued',
+  'steering_cancelled',
 ]);
 
 export interface UserEvent {

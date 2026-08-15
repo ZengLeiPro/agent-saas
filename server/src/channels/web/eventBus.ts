@@ -74,7 +74,8 @@ export const EVENT_SCOPE: Record<string, EventScope> = {
   session_status: 'user',
   stream_started: 'user',
   interaction_resolved: 'user',
-  // 插话队列区多端同步（2026-08-04 终态设计）
+  // 普通 queue / 显式 steer 的统一队列区多端同步。
+  message_queued: 'user',
   steering_queued: 'user',
   steering_cancelled: 'user',
 

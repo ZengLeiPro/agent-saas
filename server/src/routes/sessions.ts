@@ -464,6 +464,22 @@ export interface SessionsRouterOptions {
     sourceRun: { metadata?: Record<string, unknown> };
     acceptedAt: string;
   }>>;
+  /** 普通 queue + 显式 steer 的统一权威 pending 快照。 */
+  listPendingUserMessagesBySession?: (sessionId: string) => Promise<Array<{
+    runId: string;
+    sessionId: string;
+    status: string;
+    requestedAt: string;
+    metadata: Record<string, unknown>;
+  }>>;
+  /** clientMessageId 权威状态核验（ACK 超时/断线重连）。 */
+  findRunByClientMessageId?: (userId: string | undefined, clientMessageId: string) => Promise<{
+    runId: string;
+    sessionId: string;
+    status: string;
+    statusReason?: string;
+    metadata: Record<string, unknown>;
+  } | null>;
 }
 
 interface ResolvedSessionPath {
@@ -764,6 +780,29 @@ export function clearSessionsListCache(): void {
   sessionsListCache.clear();
 }
 
+function projectQueuedMessageAttachments(value: unknown): Array<{
+  name: string;
+  attachmentId?: string;
+  savedPath?: string;
+  relativePath?: string;
+  size?: number;
+  mimeType?: string;
+  isImage?: boolean;
+}> {
+  if (!Array.isArray(value)) return [];
+  return (value as Array<Record<string, unknown>>).flatMap((attachment) => (
+    typeof attachment?.originalName === 'string' ? [{
+      name: attachment.originalName,
+      ...(typeof attachment.attachmentId === 'string' ? { attachmentId: attachment.attachmentId } : {}),
+      ...(typeof attachment.savedPath === 'string' ? { savedPath: attachment.savedPath } : {}),
+      ...(typeof attachment.relativePath === 'string' ? { relativePath: attachment.relativePath } : {}),
+      ...(typeof attachment.size === 'number' ? { size: attachment.size } : {}),
+      ...(typeof attachment.mimeType === 'string' ? { mimeType: attachment.mimeType } : {}),
+      ...(typeof attachment.isImage === 'boolean' ? { isImage: attachment.isImage } : {}),
+    }] : []
+  ));
+}
+
 /**
  * 创建会话路由
  */
@@ -995,56 +1034,81 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     }
     const parseDurationMs = Date.now() - parseStartedAt;
     const lastRunState = await getLastRunState(detailEventStore, sessionId);
-    // 排队中的插话（2026-08-04 终态设计）：不进 transcript（尚未被消费），单独返回
-    // 供前端队列区恢复。content/attachments 从 source run 的 durable wakeMessage 取。
+    // 尚未开始执行的用户消息不进 transcript，统一从 durable run.wakeMessage 恢复。
     let queuedMessages: Array<{
       sourceRunId: string;
+      runId?: string;
       clientMsgId?: string;
+      deliveryMode?: 'queue' | 'steer';
+      targetRunId?: string;
+      queuePosition?: number;
       content: string;
-      attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+      attachments?: Array<{
+        name: string;
+        attachmentId?: string;
+        savedPath?: string;
+        relativePath?: string;
+        size?: number;
+        mimeType?: string;
+        isImage?: boolean;
+      }>;
       acceptedAt: string;
     }> = [];
-    if (options.listPendingSteeringBySession) {
+    if (options.listPendingUserMessagesBySession) {
+      try {
+        const pending = await options.listPendingUserMessagesBySession(sessionId);
+        const projectedSteeringIds = new Set(parsed.blocks.flatMap((block) => (
+          block.interjectionSourceRunId ? [block.interjectionSourceRunId] : []
+        )));
+        queuedMessages = pending.flatMap((run, index) => {
+          if (projectedSteeringIds.has(run.runId)) return [];
+          const wakeMessage = run.metadata?.wakeMessage as { content?: unknown; attachments?: unknown } | undefined;
+          if (!wakeMessage || typeof wakeMessage.content !== 'string') return [];
+          const clientMsgId = typeof run.metadata?.clientMsgId === 'string' ? run.metadata.clientMsgId : undefined;
+          const deliveryMode = run.metadata?.deliveryMode === 'steer' ? 'steer' as const : 'queue' as const;
+          const targetRunId = deliveryMode === 'steer'
+            ? (typeof run.metadata?.steeringTargetRunId === 'string' ? run.metadata.steeringTargetRunId : undefined)
+            : (typeof run.metadata?.queuedBehindRunId === 'string' ? run.metadata.queuedBehindRunId : undefined);
+          const attachments = projectQueuedMessageAttachments(wakeMessage.attachments);
+          return [{
+            sourceRunId: run.runId,
+            runId: run.runId,
+            ...(clientMsgId ? { clientMsgId } : {}),
+            deliveryMode,
+            ...(targetRunId ? { targetRunId } : {}),
+            queuePosition: index + 1,
+            content: wakeMessage.content,
+            ...(attachments.length ? { attachments } : {}),
+            acceptedAt: typeof run.metadata?.acceptedAt === 'string' ? run.metadata.acceptedAt : run.requestedAt,
+          }];
+        });
+      } catch (err) {
+        apiLogger.warn(`[sessions] queued message lookup failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else if (options.listPendingSteeringBySession) {
       try {
         const queriedPending = await options.listPendingSteeringBySession(sessionId);
-        const durableProjectedSourceRunIds = await listDurablyProjectedInterjectionSourceRunIds(
-          detailEventStore,
-          sessionId,
-          queriedPending,
-        );
-        const pending = filterProjectedQueuedMessages(
-          queriedPending,
-          parsed.blocks,
-          durableProjectedSourceRunIds,
-        );
-        queuedMessages = pending.flatMap((input) => {
-          const wakeMessage = input.sourceRun.metadata?.wakeMessage as
-            | { content?: unknown; attachments?: unknown }
-            | undefined;
+        const durableProjectedSourceRunIds = await listDurablyProjectedInterjectionSourceRunIds(detailEventStore, sessionId, queriedPending);
+        const pending = filterProjectedQueuedMessages(queriedPending, parsed.blocks, durableProjectedSourceRunIds);
+        queuedMessages = pending.flatMap((input, index) => {
+          const wakeMessage = input.sourceRun.metadata?.wakeMessage as { content?: unknown; attachments?: unknown } | undefined;
           if (!wakeMessage || typeof wakeMessage.content !== 'string') return [];
-          const clientMsgId = typeof input.sourceRun.metadata?.clientMsgId === 'string'
-            ? input.sourceRun.metadata.clientMsgId
-            : undefined;
-          const attachments = Array.isArray(wakeMessage.attachments)
-            ? (wakeMessage.attachments as Array<{ originalName?: unknown; isImage?: unknown; relativePath?: unknown }>)
-              .flatMap((attachment) => (typeof attachment?.originalName === 'string' ? [{
-                name: attachment.originalName,
-                ...(typeof attachment.isImage === 'boolean' ? { isImage: attachment.isImage } : {}),
-                ...(typeof attachment.relativePath === 'string' ? { relativePath: attachment.relativePath } : {}),
-              }] : []))
-            : [];
+          const clientMsgId = typeof input.sourceRun.metadata?.clientMsgId === 'string' ? input.sourceRun.metadata.clientMsgId : undefined;
+          const attachments = projectQueuedMessageAttachments(wakeMessage.attachments);
           return [{
             sourceRunId: input.sourceRunId,
+            runId: input.sourceRunId,
             ...(clientMsgId ? { clientMsgId } : {}),
+            deliveryMode: 'steer' as const,
+            targetRunId: input.targetRunId,
+            queuePosition: index + 1,
             content: wakeMessage.content,
             ...(attachments.length ? { attachments } : {}),
             acceptedAt: input.acceptedAt,
           }];
         });
       } catch (err) {
-        apiLogger.warn(
-          `[sessions] queued steering lookup failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        apiLogger.warn(`[sessions] queued steering lookup failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -2319,6 +2383,52 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
    *
    * 获取会话详情（历史消息）
    */
+  /** ACK 丢失/前端超时后的权威核验；同 clientMessageId 永远指向同一 run。 */
+  router.get("/messages/:clientMessageId/status", async (req: Request, res: Response) => {
+    const clientMessageId = String(req.params.clientMessageId || "").trim();
+    if (!clientMessageId || clientMessageId.length > 256 || !options.findRunByClientMessageId) {
+      res.status(404).json({ error: "Message not found" });
+      return;
+    }
+    try {
+      const run = await options.findRunByClientMessageId(req.user?.sub, clientMessageId);
+      if (!run) {
+        res.status(404).json({ error: "Message not found" });
+        return;
+      }
+      const deliveryMode = run.metadata?.deliveryMode === 'steer' ? 'steer' : 'queue';
+      const status = run.status === 'pending'
+        ? 'queued'
+        : ['running', 'waiting_approval', 'waiting_user', 'waiting_hand'].includes(run.status)
+          ? 'running'
+          : run.status === 'completed'
+            ? 'completed'
+            : run.status === 'cancelled'
+              ? 'cancelled'
+              : 'failed';
+      let queuePosition: number | undefined;
+      if (status === 'queued' && options.listPendingUserMessagesBySession) {
+        const pending = await options.listPendingUserMessagesBySession(run.sessionId);
+        const index = pending.findIndex((candidate) => candidate.runId === run.runId);
+        if (index >= 0) queuePosition = index + 1;
+      }
+      res.json({
+        clientMessageId,
+        messageId: run.runId,
+        runId: run.runId,
+        conversationId: run.sessionId,
+        sessionId: run.sessionId,
+        status,
+        deliveryMode,
+        ...(queuePosition ? { queuePosition } : {}),
+        ...(run.statusReason ? { reason: run.statusReason } : {}),
+      });
+    } catch (err) {
+      apiLogger.warn(`[sessions] message status lookup failed clientMessageId=${clientMessageId}: ${err instanceof Error ? err.message : String(err)}`);
+      res.status(503).json({ error: "Message status unavailable" });
+    }
+  });
+
   router.get("/sessions/:sessionId", async (req: Request, res: Response) => {
     const requestStartedAt = Date.now();
     try {

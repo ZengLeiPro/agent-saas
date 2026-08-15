@@ -91,6 +91,7 @@ export interface LayoutProps {
   dismissUploadError: () => void;
   setInput: (value: string) => void;
   sendMessage: () => Promise<void>;
+  interjectMessage: () => Promise<void>;
   sendVoiceMessage: (wavBlob: Blob, durationMs: number) => Promise<void>;
   stopping: boolean;
   stopGeneration: () => void;

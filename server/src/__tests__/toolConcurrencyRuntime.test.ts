@@ -3,7 +3,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import type {
@@ -17,6 +17,8 @@ import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
 import { RawAgentLoop } from '../runtime/rawAgentLoop.js';
+import type { RunStore } from '../runtime/runStore.js';
+import { InMemoryToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import type { ModelAdapter, ModelEvent, ModelRequest, RunContext } from '../runtime/types.js';
 import type { OutboundEvent } from '../types/index.js';
 
@@ -185,6 +187,60 @@ describe('drainToolCalls 通用并行窗', () => {
     const results = events.filter((event) => event.type === 'tool_result');
     expect(results.map((event) => event.toolResult)).toEqual(['done:a.txt', 'done:b.txt']);
     expect(results.map((event) => event.toolId)).toEqual(['c1', 'c2']);
+  });
+
+  it('duplicate workers 在并行窗先争同一 owner claim，不会拆分 invocation', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'parallel-duplicate-worker-'));
+    cleanupDirs.add(cwd);
+    const sessionId = 'session-par-duplicate';
+    const runId = 'run-par-duplicate';
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const toolInvocationStore = new InMemoryToolInvocationStore();
+    const toolRuntime = new BarrierToolRuntime(2);
+    const runStore = {
+      get: vi.fn(async () => ({ status: 'running' })),
+    } as unknown as RunStore;
+    const calls = [
+      { id: 'c1', name: 'Read', arguments: JSON.stringify({ path: 'a.txt' }) },
+      { id: 'c2', name: 'Read', arguments: JSON.stringify({ path: 'b.txt' }) },
+    ];
+    const createLoop = (suffix: string) => new RawAgentLoop({
+      modelAdapter: new BatchAdapter(calls),
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, `session-${suffix}.jsonl`)),
+      toolRuntime,
+      toolInvocationStore,
+      runStore,
+    });
+    const input = {
+      message: { channel: 'web' as const, chatId: 'chat', content: '并行测试' },
+      prompt: '并行测试',
+      instructions: 'test',
+      maxTurns: 3,
+      connection: { apiKey: 'k', baseUrl: 'http://127.0.0.1:0' },
+    };
+    const context: RunContext = {
+      runId,
+      sessionId,
+      model: 'mock-model',
+      cwd,
+      channelContext: { channel: 'web', user: { id: 'u', username: 'alice', role: 'user', tenantId: 'kaiyan' } },
+    };
+
+    const [first, second] = await Promise.all([
+      collect(createLoop('first').run(input, context)),
+      collect(createLoop('second').run(input, { ...context })),
+    ]);
+
+    expect(toolRuntime.order.filter((entry) => entry.startsWith('start:'))).toHaveLength(2);
+    await expect(toolInvocationStore.get(`${runId}:c1`)).resolves.toMatchObject({ status: 'completed' });
+    await expect(toolInvocationStore.get(`${runId}:c2`)).resolves.toMatchObject({ status: 'completed' });
+    expect([...first, ...second].some((event) => event.type === 'error')).toBe(false);
+    const lifecycle = await eventStore.list(sessionId);
+    expect(lifecycle.filter((event) => event.type === 'tool_invocation_started')).toHaveLength(2);
+    expect(lifecycle.filter((event) => event.type === 'tool_invocation_completed')).toHaveLength(2);
+    expect(lifecycle.some((event) => event.type === 'run_finished' && event.subtype === 'error')).toBe(false);
   });
 
   it('不同的 opt-in 工具可进入同一并行窗', async () => {

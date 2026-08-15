@@ -9,11 +9,14 @@ describe('PgRunStore steering inbox', () => {
     const client = {
       query: async (sql: string, params: unknown[] = []) => {
         queries.push({ sql: sql.trim(), params });
+        if (sql.includes('INSERT INTO runtime_message_submissions')) {
+          return { rows: [{ run_id: String(params[2]) }] };
+        }
         if (sql.includes('SELECT target.run_id')) {
           return { rows: [{ run_id: 'target-run' }] };
         }
         if (sql.includes('INSERT INTO runtime_runs')) {
-          const metadata = JSON.parse(String(params[11]));
+          const metadata = JSON.parse(String(params[params.length - 1]));
           return {
             rows: [{ row_json: {
               run_id: 'source-run',
@@ -61,41 +64,12 @@ describe('PgRunStore steering inbox', () => {
     expect(steeringInsert?.params.slice(0, 3)).toEqual(['source-run', 'target-run', 'session-1']);
   });
 
-  it('returns an existing source run unchanged instead of recalculating its steering target', async () => {
-    const now = new Date().toISOString();
-    const queries: string[] = [];
-    const existing = {
-      run_id: 'source-run', session_id: 'session-1', user_id: 'user-1', tenant_id: 'tenant-1',
-      status: 'pending', model: 'gpt-5.5', channel: 'web', requested_at: now, updated_at: now,
-      metadata: { steeringTargetRunId: 'original-target', steeringState: 'pending' },
-    };
-    const client = {
-      query: async (sql: string) => {
-        queries.push(sql.trim());
-        if (sql.includes('FROM runtime_runs existing') && sql.includes('FOR UPDATE')) {
-          return { rows: [{ row_json: existing }] };
-        }
-        return { rows: [] };
-      },
-      release: vi.fn(),
-    };
-    const store = new PgRunStore({ pool: { connect: async () => client } as any });
-
-    const record = await store.enqueueSteeringAware({
-      runId: 'source-run', sessionId: 'session-1', metadata: { steeringTargetRunId: 'wrong-target' },
-    });
-
-    expect(record.metadata?.steeringTargetRunId).toBe('original-target');
-    expect(queries.some((sql) => sql.includes('SELECT target.run_id'))).toBe(false);
-    expect(queries.some((sql) => sql.includes('INSERT INTO runtime_runs'))).toBe(false);
-    expect(queries.at(-1)).toBe('COMMIT');
-  });
-
   it('rejects a chat accepted before the latest session stop', async () => {
     const queries: string[] = [];
     const client = {
-      query: async (sql: string) => {
+      query: async (sql: string, params: unknown[] = []) => {
         queries.push(sql.trim());
+        if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [{ run_id: String(params[2]) }] };
         if (sql.includes('SELECT stopped_at')) {
           return { rows: [{ stopped_at: '2026-08-06T04:00:01.000Z' }] };
         }
@@ -120,6 +94,7 @@ describe('PgRunStore steering inbox', () => {
     const client = {
       query: async (sql: string, params: unknown[] = []) => {
         queries.push(sql.trim());
+        if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [{ run_id: String(params[2]) }] };
         if (sql.includes('SELECT target.run_id')) return { rows: [] };
         if (sql.includes('INSERT INTO runtime_runs')) {
           return { rows: [{ row_json: {
@@ -128,7 +103,7 @@ describe('PgRunStore steering inbox', () => {
             status: 'pending',
             requested_at: now,
             updated_at: now,
-            metadata: JSON.parse(String(params[11])),
+            metadata: JSON.parse(String(params[params.length - 1])),
           } }] };
         }
         return { rows: [] };
@@ -141,6 +116,65 @@ describe('PgRunStore steering inbox', () => {
 
     expect(record.metadata?.steeringTargetRunId).toBeUndefined();
     expect(queries.some((sql) => sql.includes('INSERT INTO runtime_steering_inputs'))).toBe(false);
+  });
+
+  it('keeps ordinary messages as durable queue entries instead of steering into the active run', async () => {
+    const queries: string[] = [];
+    const now = new Date().toISOString();
+    const client = {
+      query: async (sql: string, params: unknown[] = []) => {
+        queries.push(sql.trim());
+        if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [{ run_id: 'queued-run' }] };
+        if (sql.includes('SELECT candidate.run_id')) return { rows: [{ run_id: 'active-run' }] };
+        if (sql.includes('INSERT INTO runtime_runs')) {
+          return { rows: [{ row_json: {
+            run_id: 'queued-run', session_id: 'session-1', status: 'pending',
+            requested_at: now, updated_at: now, metadata: JSON.parse(String(params[params.length - 1])),
+          } }] };
+        }
+        return { rows: [] };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    const record = await store.enqueueUserMessage({
+      runId: 'queued-run',
+      sessionId: 'session-1',
+      userId: 'user-1',
+      idempotencyKey: 'client-queued-1',
+      channel: 'web',
+      metadata: { wakeMessage: { channel: 'web', chatId: 'session-1', content: '下一项任务' } },
+    }, 'queue');
+
+    expect(record.metadata).toMatchObject({ deliveryMode: 'queue', queuedBehindRunId: 'active-run' });
+    expect(queries.some((sql) => sql.includes('INSERT INTO runtime_steering_inputs'))).toBe(false);
+  });
+
+  it('returns the original run when the same clientMessageId is submitted concurrently', async () => {
+    const now = new Date().toISOString();
+    const queries: string[] = [];
+    const client = {
+      query: async (sql: string) => {
+        queries.push(sql.trim());
+        if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [] };
+        if (sql.includes('SELECT run_id') && sql.includes('runtime_message_submissions')) return { rows: [{ run_id: 'original-run' }] };
+        if (sql.includes('SELECT row_to_json(runtime_runs.*)')) {
+          return { rows: [{ row_json: {
+            run_id: 'original-run', session_id: 'session-1', status: 'completed',
+            requested_at: now, updated_at: now, idempotency_key: 'client-1', metadata: { deliveryMode: 'queue' },
+          } }] };
+        }
+        return { rows: [] };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    await expect(store.enqueueUserMessage({
+      runId: 'duplicate-run', sessionId: 'session-1', userId: 'user-1', idempotencyKey: 'client-1',
+    }, 'queue')).resolves.toMatchObject({ runId: 'original-run', status: 'completed' });
+    expect(queries.some((sql) => sql.includes('INSERT INTO runtime_runs'))).toBe(false);
   });
 
   it('reserves ownership before durable append and supports idempotent recovery', async () => {
@@ -318,11 +352,12 @@ describe('PgRunStore steering inbox', () => {
     const client = {
       query: async (sql: string, params: unknown[] = []) => {
         queries.push(sql.trim());
+        if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [{ run_id: String(params[2]) }] };
         if (sql.includes('SELECT target.run_id')) return { rows: [] };
         if (sql.includes('INSERT INTO runtime_runs')) {
           return { rows: [{ row_json: {
             run_id: 'run-1', session_id: 'session-1', status: 'pending',
-            requested_at: now, updated_at: now, metadata: JSON.parse(String(params[11])),
+            requested_at: now, updated_at: now, metadata: JSON.parse(String(params[params.length - 1])),
           } }] };
         }
         return { rows: [] };
@@ -337,6 +372,40 @@ describe('PgRunStore steering inbox', () => {
     expect(targetQuery).toContain(`('pending','running','waiting_hand')`);
     expect(targetQuery).not.toContain('waiting_user');
     expect(targetQuery).not.toContain('waiting_approval');
+  });
+
+  it('does not label a normal queue message behind waiting_user / waiting_approval', async () => {
+    const queries: string[] = [];
+    const now = new Date().toISOString();
+    const client = {
+      query: async (sql: string, params: unknown[] = []) => {
+        queries.push(sql.trim());
+        if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [{ run_id: String(params[2]) }] };
+        if (sql.includes('SELECT candidate.run_id')) return { rows: [] };
+        if (sql.includes('INSERT INTO runtime_runs')) {
+          return { rows: [{ row_json: {
+            run_id: 'queue-run', session_id: 'session-queue', status: 'pending',
+            requested_at: now, updated_at: now, metadata: JSON.parse(String(params[params.length - 1])),
+          } }] };
+        }
+        return { rows: [] };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    const run = await store.enqueueUserMessage({
+      runId: 'queue-run',
+      sessionId: 'session-queue',
+      userId: 'user-1',
+      idempotencyKey: 'queue-client',
+    }, 'queue');
+
+    const blockerQuery = queries.find((sql) => sql.includes('SELECT candidate.run_id'));
+    expect(blockerQuery).toContain("candidate.status IN ('pending','running','waiting_hand')");
+    expect(blockerQuery).not.toContain('waiting_user');
+    expect(blockerQuery).not.toContain('waiting_approval');
+    expect(run.metadata?.queuedBehindRunId).toBeUndefined();
   });
 
   it('recovers pending and reserved sources after their steering target becomes terminal', async () => {
@@ -431,7 +500,7 @@ describe('PgRunStore steering inbox', () => {
     const steeringLockIndex = queries.findIndex((sql) => sql.includes('FOR UPDATE OF input, source'));
     expect(targetLockIndex).toBeGreaterThan(-1);
     expect(targetLockIndex).toBeLessThan(steeringLockIndex);
-    expect(queries.filter((sql) => sql.includes("state IN ('pending', 'reserved')"))).toHaveLength(2);
+    expect(queries.filter((sql) => sql.includes("state IN ('pending', 'reserved')"))).toHaveLength(3);
     const sourceUpdate = queries.find((sql) => sql.includes('UPDATE runtime_runs') && sql.includes("'steeringState', 'released'"));
     const targetUpdate = queries.find((sql) => sql.includes("status = 'cancelled'"));
     expect(sourceUpdate).toContain("ELSE (metadata || jsonb_build_object('steeringState', 'cancelled')) - 'wakeMessage'");
@@ -522,6 +591,76 @@ describe('PgRunStore steering inbox', () => {
     expect(sourceUpdate?.params[1]).toEqual([]);
     expect(sourceUpdate?.sql).toContain("ELSE 'cancelled'");
     expect(sourceUpdate?.sql).toContain("'steeringState', 'cancelled'");
+  });
+
+  it('reports targetCancelled from the actual stop UPDATE and includes human waiting states', async () => {
+    const queries: string[] = [];
+    const client = {
+      query: async (sql: string) => {
+        queries.push(sql.trim());
+        if (sql.includes("worker_id = NULL") && sql.includes("RETURNING run_id")) {
+          return { rows: [{ run_id: 'waiting-run' }], rowCount: 1 };
+        }
+        if (sql.includes('UPDATE runtime_tool_invocations')) {
+          return {
+            rows: [{
+              invocation_id: 'invocation-waiting',
+              tool_call_id: 'tool-call-waiting',
+              tool_name: 'Shell',
+              metadata: { requestedBy: 'user-1' },
+            }],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes('UPDATE runtime_event_cursors')) return { rows: [{ start_sequence: '1' }] };
+        return { rows: [], rowCount: 0 };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    const result = await store.cancelSteeringBeforeDispatchBySessionWithEvent(
+      'session-waiting',
+      'web_abort',
+      'waiting-run',
+      { type: 'run_cancel_requested', sessionId: 'session-waiting', runId: 'waiting-run', reason: 'web_abort' },
+    );
+
+    expect(result.targetCancelled).toBe(true);
+    const targetUpdate = queries.find((sql) => sql.includes('worker_id = NULL'));
+    expect(targetUpdate).toContain("'waiting_user'");
+    expect(targetUpdate).toContain("'waiting_approval'");
+    expect(queries.findIndex((sql) => sql.includes('UPDATE runtime_tool_invocations')))
+      .toBeLessThan(queries.findIndex((sql) => sql === 'COMMIT'));
+    expect(queries.filter((sql) => sql.includes('INSERT INTO runtime_events'))).toHaveLength(2);
+  });
+
+  it('does not persist run/tool cancellation events when the target wins the race to a non-cancellable terminal state', async () => {
+    const queries: string[] = [];
+    const client = {
+      query: async (sql: string) => {
+        queries.push(sql.trim());
+        if (sql.includes("worker_id = NULL") && sql.includes("RETURNING run_id")) {
+          return { rows: [], rowCount: 0 };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    const result = await store.cancelSteeringBeforeDispatchBySessionWithEvent(
+      'session-terminal-race',
+      'web_abort',
+      'completed-run',
+      { type: 'run_cancel_requested', sessionId: 'session-terminal-race', runId: 'completed-run', reason: 'web_abort' },
+    );
+
+    expect(result).toMatchObject({ targetCancelled: false, eventCreated: false });
+    expect(result.event).toBeUndefined();
+    expect(queries.some((sql) => sql.includes('UPDATE runtime_tool_invocations'))).toBe(false);
+    expect(queries.some((sql) => sql.includes('INSERT INTO runtime_events'))).toBe(false);
+    expect(queries.at(-1)).toBe('COMMIT');
   });
 
   it('releases pending or reserved steering rows when the source run falls back to standalone execution', async () => {

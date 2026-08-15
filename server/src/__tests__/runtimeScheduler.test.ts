@@ -109,10 +109,16 @@ class MemoryRunStore implements RunStore {
     return updated;
   }
 
-  async renewLease(runId: string, workerId: string, leaseMs: number): Promise<RunRecord | null> {
+  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date()): Promise<RunRecord | null> {
     const record = this.records.get(runId);
     if (!record || record.workerId !== workerId) return null;
-    const updated = { ...record, leaseExpiresAt: new Date(Date.now() + leaseMs).toISOString() };
+    const requestedExpiry = now.getTime() + leaseMs;
+    const currentExpiry = record.leaseExpiresAt ? Date.parse(record.leaseExpiresAt) : Number.NEGATIVE_INFINITY;
+    const updated = {
+      ...record,
+      leaseExpiresAt: new Date(Math.max(currentExpiry, requestedExpiry)).toISOString(),
+      updatedAt: new Date(Math.max(Date.parse(record.updatedAt), now.getTime())).toISOString(),
+    };
     this.records.set(runId, updated);
     return updated;
   }
@@ -370,6 +376,40 @@ describe('RuntimeScheduler', () => {
 
     expect(renewed).toBe(true);
     await expect(runStore.get('run-1')).resolves.toMatchObject({ status: 'completed', statusReason: 'done' });
+  });
+
+  it('coalesces concurrent renew calls for the same scheduler lease', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    const renewGate = deferred();
+    await runStore.upsertPending({ runId: 'run-renew-single-flight', sessionId: 'session-renew-single-flight' });
+    const originalRenew = runStore.renewLease.bind(runStore);
+    let renewCalls = 0;
+    runStore.renewLease = async (...args) => {
+      renewCalls += 1;
+      await renewGate.promise;
+      return originalRenew(...args);
+    };
+
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-1',
+      autoWake: true,
+      wake: async (_record, lease) => {
+        const first = lease.renew();
+        const second = lease.renew();
+        await Promise.resolve();
+        expect(renewCalls).toBe(1);
+        renewGate.resolve();
+        await Promise.all([first, second]);
+        await lease.release('completed', 'done');
+      },
+    });
+
+    await scheduler.tick();
+    await scheduler.stop();
+    expect(renewCalls).toBe(1);
   });
 
   it('ticks immediately after enqueue when the scheduler is started', async () => {

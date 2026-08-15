@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
@@ -5,11 +6,15 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ToolInvocationRequest } from 'server/runtime/handProtocol.js';
 import { handleExecute, type HandlerDeps } from './handlers.js';
 
-class FakeResponse {
+class FakeResponse extends EventEmitter {
   statusCode = 0;
   body = '';
+  writableEnded = false;
   writeHead(statusCode: number): void { this.statusCode = statusCode; }
-  end(chunk?: string): void { this.body += chunk ?? ''; }
+  end(chunk?: string): void {
+    this.body += chunk ?? '';
+    this.writableEnded = true;
+  }
 }
 
 describe('hand execute env forwarding', () => {

@@ -92,6 +92,49 @@ describe('runtime stage 2 primitives', () => {
     expect((await sessionCatalog.get(sessionId!))?.status).toBe('idle');
   });
 
+  it('direct runtime lease 竞争失败会延后执行，不把 winner 的 run 标成 failed', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'runtime-direct-lease-contended-'));
+    cleanupDirs.add(cwd);
+    const sessionCatalog = new MemorySessionCatalog();
+    const markStatus = vi.fn(async () => null);
+    const runStore = {
+      upsertPending: async (input: { runId: string; sessionId: string; metadata?: Record<string, unknown> }) => ({
+        runId: input.runId,
+        sessionId: input.sessionId,
+        status: 'pending' as const,
+        requestedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        metadata: input.metadata ?? {},
+      }),
+      acquireLease: async () => null,
+      markStatus,
+    } as unknown as RunStore;
+    const dispatch = createRawRuntimeRunDispatch({
+      agentCwd: cwd,
+      sharedDir: SHARED_DIR,
+      sessionCatalog,
+      runStore,
+      memory: { enabled: false },
+    });
+    const events: OutboundEvent[] = [];
+
+    for await (const event of dispatch(
+      { channel: 'web', chatId: 'chat-contended', content: '不得重复执行' },
+      { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      {
+        runtimeRunId: 'run-contended',
+        modelConnection: { apiKey: 'sk-test' },
+        skipSystemPrompt: true,
+        maxTurns: 1,
+      },
+    )) {
+      events.push(event);
+    }
+
+    expect(events.map((event) => event.type)).toEqual(['session_init']);
+    expect(markStatus).not.toHaveBeenCalled();
+  });
+
   it('PG session lease 丢失会中止 dispatch 并把 session 收口为 idle', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'runtime-session-lease-lost-'));
     cleanupDirs.add(cwd);

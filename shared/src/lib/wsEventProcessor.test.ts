@@ -59,7 +59,7 @@ function makeController(initial: MessageItem[] = []): FakeController {
 
 // ── 构造一个最小可用的 WsProcessingContext ──────────────────────────────
 interface CtxHooks {
-  onChatAck: Mock<(clientMsgId: string) => void>;
+  onChatAck: Mock<(clientMsgId: string, event?: WsEvent) => void>;
   onInterjectionApplied: Mock<(sourceRunIds: string[], clientMsgIds: string[]) => void>;
   onUserMessageProjected: Mock<(clientMsgId: string | undefined, sourceRunId: string | undefined) => void>;
   onActiveUserMsgIndexChange: Mock<(index: number) => void>;
@@ -93,7 +93,7 @@ function makeCtx(
   overrides: Partial<WsProcessingContext> = {},
 ): { ctx: WsProcessingContext; hooks: CtxHooks } {
   const hooks: CtxHooks = {
-    onChatAck: vi.fn<(clientMsgId: string) => void>(),
+    onChatAck: vi.fn<(clientMsgId: string, event?: WsEvent) => void>(),
     onInterjectionApplied: vi.fn<(sourceRunIds: string[], clientMsgIds: string[]) => void>(),
     onUserMessageProjected: vi.fn<(clientMsgId: string | undefined, sourceRunId: string | undefined) => void>(),
     onActiveUserMsgIndexChange: vi.fn<(index: number) => void>(),
@@ -396,6 +396,7 @@ describe('processWsEvent - 连接与消息生命周期', () => {
     }, ctx);
 
     expect(hooks.onActiveUserMsgIndexChange).not.toHaveBeenCalled();
+    expect(hooks.onChatAck).toHaveBeenCalledWith('c2');
     expect(ctx.streamIdRef.current).toBe('stream-a');
   });
 
@@ -428,8 +429,9 @@ describe('processWsEvent - 连接与消息生命周期', () => {
   it('chat_ack：转发 onChatAck 回调', () => {
     const ctrl = makeController();
     const { ctx, hooks } = makeCtx(ctrl);
-    dispatch({ type: 'chat_ack', client_msg_id: 'c9', server_recv_ts: 1 }, ctx);
-    expect(hooks.onChatAck).toHaveBeenCalledWith('c9');
+    const event = { type: 'chat_ack', client_msg_id: 'c9', server_recv_ts: 1 } as const;
+    dispatch(event, ctx);
+    expect(hooks.onChatAck).toHaveBeenCalledWith('c9', event);
   });
 
   it('chat_rejected：把 user 翻 failed 并写 failedReason，同时清状态条与回调', () => {
@@ -493,11 +495,24 @@ describe('processWsEvent - 连接与消息生命周期', () => {
     expect(hooks.loadSessions).toHaveBeenCalledTimes(1);
   });
 
-  it('session：activeSessionId 非空时不 loadSessions', () => {
+  it('session：activeSessionId 非空且归属一致时不 loadSessions', () => {
     const ctrl = makeController();
     const { ctx, hooks } = makeCtx(ctrl);
-    dispatch({ type: 'session', sessionId: 'sess-1' }, ctx, freshBlock(), { value: null }, 'active');
+    dispatch({ type: 'session', sessionId: 'sess-1' }, ctx, freshBlock(), { value: null }, 'sess-1');
+    expect(hooks.setSessionId).toHaveBeenCalledWith('sess-1');
     expect(hooks.loadSessions).not.toHaveBeenCalled();
+  });
+
+  it('session：其他会话迟到事件不得改写当前会话', () => {
+    const ctrl = makeController();
+    const { ctx, hooks } = makeCtx(ctrl);
+    const latest = { value: 'sess-current' as string | null };
+
+    dispatch({ type: 'session', sessionId: 'sess-old', client_msg_id: 'client-old' }, ctx, freshBlock(), latest, 'sess-current');
+
+    expect(latest.value).toBe('sess-current');
+    expect(hooks.setSessionId).not.toHaveBeenCalled();
+    expect(hooks.upsertSession).not.toHaveBeenCalled();
   });
 });
 

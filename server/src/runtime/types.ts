@@ -110,6 +110,8 @@ export interface RunContext {
 export interface RunInput {
   message: InboundMessage;
   prompt: string;
+  /** 用户提交幂等键；写入 durable user_message，供队列消费与前端回放对账。 */
+  clientMsgId?: string;
   /** 服务端校验并规范化后的本轮附件；绝不直接使用客户端路径。 */
   attachments?: ModelAttachmentRef[];
   /** text-only 主模型使用的显式辅助视觉结果；原图引用仍保留在 attachments。 */

@@ -118,10 +118,9 @@ export function projectRuntimePlatformEvent(
         }],
       };
     case 'user_message':
-      // 只投影插话消息（2026-08-04 终态设计）：排队的插话被目标 run 吸收时，经此
-      // 分支进各端时间线（消费点=显示点）。普通 user_message 的显示由发起路径
-      //（本地气泡 + enqueue 时 buffer push）负责，重复投影会双写。
-      if (!event.interjectionSourceRunId) return { events: [] };
+      // 队列消息在真正取得执行权时才进入时间线。带 clientMsgId 的普通 queue 与带
+      // interjectionSourceRunId 的显式插话都必须投影；客户端按 clientMsgId 幂等去重。
+      if (!event.clientMsgId && !event.interjectionSourceRunId) return { events: [] };
       return {
         events: [{
           type: 'user_message',

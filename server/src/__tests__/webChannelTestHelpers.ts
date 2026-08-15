@@ -23,6 +23,7 @@ export class MemoryRunStore implements RunStore {
       runId: input.runId,
       sessionId: input.sessionId,
       userId: input.userId,
+      submitterUserId: input.submitterUserId ?? input.userId,
       tenantId: input.tenantId,
       status: 'pending',
       model: input.model,
@@ -62,8 +63,10 @@ export class MemoryRunStore implements RunStore {
   }
 
   async findByIdempotencyKey(userId: string | undefined, key: string): Promise<RunRecord | null> {
+    const scope = userId ?? '__anonymous__';
     return [...this.records.values()].find(
-      (record) => record.idempotencyKey === key && record.userId === userId,
+      (record) => record.idempotencyKey === key
+        && (record.submitterUserId ?? record.userId ?? '__anonymous__') === scope,
     ) ?? null;
   }
 

@@ -20,8 +20,10 @@ export function startWakeLeaseRenewal(input: {
   intervalMs: number;
 }): NodeJS.Timeout | null {
   if (!input.lease) return null;
+  let renewalInFlight: Promise<void> | undefined;
   const timer = setInterval(() => {
-    void (async () => {
+    if (renewalInFlight) return;
+    renewalInFlight = (async () => {
       try {
         await input.lease?.renew();
         if (!input.abortController.signal.aborted && input.runStore) {
@@ -39,7 +41,9 @@ export function startWakeLeaseRenewal(input: {
         }
         input.abortController.abort(err instanceof Error ? err : new Error(String(err)));
       }
-    })();
+    })().finally(() => {
+      renewalInFlight = undefined;
+    });
   }, input.intervalMs);
   timer.unref?.();
   return timer;

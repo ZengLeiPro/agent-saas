@@ -7,6 +7,7 @@ import type {
 import type { SubagentStatus } from './message';
 
 export type WsBlockType = 'thinking' | 'text' | 'tool_use';
+export type ChatDeliveryMode = 'queue' | 'steer';
 
 export interface WsAskUserQuestion {
     question: string;
@@ -31,13 +32,15 @@ export type ChatRejectReasonCode =
     | 'org_agent_unavailable';
 
 export type WsEvent =
-    | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string; queued?: boolean; targetRunId?: string; sessionId?: string }
+    | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string; queued?: boolean; deliveryMode?: ChatDeliveryMode; targetRunId?: string; sessionId?: string; queuePosition?: number }
     | { type: 'interjection_applied'; sourceRunIds: string[]; clientMsgIds: string[]; sessionId?: string }
-    // 插话队列区（2026-08-04 终态设计）：user scope 多端同步
+    // 统一排队区：普通 queue 与显式 steer 都由服务端 durable 快照恢复。
+    | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number; queuePosition?: number; targetRunId?: string }
+    // 旧 steering 广播保留兼容。
     | { type: 'steering_queued'; sessionId: string; sourceRunId: string; targetRunId: string; clientMsgId: string; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number }
     | { type: 'steering_cancelled'; sessionId: string; sourceRunId: string; clientMsgId?: string; reason: string }
     | { type: 'cancel_queued_result'; ok: boolean; sourceRunId: string; reason?: 'too_late' | 'not_found' | 'unsupported' | 'error' }
-    | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number }
+    | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
     | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
     | { type: 'session'; sessionId: string; client_msg_id?: string }
     | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string; draftId?: string; runId?: string }

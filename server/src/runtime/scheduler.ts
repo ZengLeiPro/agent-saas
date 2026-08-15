@@ -6,7 +6,7 @@ import {
   isBackgroundTaskReady,
   isBackgroundTaskRun,
 } from './background/backgroundTaskRuntime.js';
-import type { RunRecord, RunStatus, RunStore } from './runStore.js';
+import type { MessageDeliveryMode, RunRecord, RunStatus, RunStore } from './runStore.js';
 import type { RuntimeAdmissionGuard } from './memoryPressureGuard.js';
 import type { EventStore } from './types.js';
 
@@ -136,11 +136,14 @@ export class RuntimeScheduler {
 
   async enqueue(
     input: Parameters<RunStore['upsertPending']>[0],
-    options: { steeringAware?: boolean } = {},
+    options: { steeringAware?: boolean; deliveryMode?: MessageDeliveryMode } = {},
   ): Promise<RunRecord> {
-    const record = options.steeringAware && this.options.runStore.enqueueSteeringAware
-      ? await this.options.runStore.enqueueSteeringAware(input)
-      : await this.options.runStore.upsertPending(input);
+    const deliveryMode = options.deliveryMode ?? (options.steeringAware ? 'steer' : undefined);
+    const record = deliveryMode && this.options.runStore.enqueueUserMessage
+      ? await this.options.runStore.enqueueUserMessage(input, deliveryMode)
+      : options.steeringAware && this.options.runStore.enqueueSteeringAware
+        ? await this.options.runStore.enqueueSteeringAware(input)
+        : await this.options.runStore.upsertPending(input);
     this.scheduleImmediateTick('enqueue');
     return record;
   }
@@ -498,16 +501,23 @@ export class RuntimeScheduler {
 
   private createLease(record: RunRecord): RunLease {
     let expiresAt = record.leaseExpiresAt ?? new Date(Date.now() + this.leaseMs).toISOString();
+    let renewInFlight: Promise<void> | undefined;
     return {
       runId: record.runId,
       workerId: this.workerId,
       get expiresAt() {
         return expiresAt;
       },
-      renew: async () => {
-        const renewed = await this.options.runStore.renewLease?.(record.runId, this.workerId, this.leaseMs);
-        if (!renewed) throw new Error(`failed to renew run lease: ${record.runId}`);
-        expiresAt = renewed.leaseExpiresAt ?? expiresAt;
+      renew: () => {
+        if (renewInFlight) return renewInFlight;
+        renewInFlight = (async () => {
+          const renewed = await this.options.runStore.renewLease?.(record.runId, this.workerId, this.leaseMs);
+          if (!renewed) throw new Error(`failed to renew run lease: ${record.runId}`);
+          expiresAt = renewed.leaseExpiresAt ?? expiresAt;
+        })().finally(() => {
+          renewInFlight = undefined;
+        });
+        return renewInFlight;
       },
       release: async (finalStatus?: RunStatus, reason?: string) => {
         await this.options.runStore.releaseLease?.(record.runId, this.workerId, finalStatus, reason);

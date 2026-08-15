@@ -8,7 +8,7 @@
  */
 
 import { appendFile, mkdir, stat } from 'fs/promises';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { homedir } from 'os';
 import { dirname, resolve as resolvePath } from 'path';
 import type { Express } from 'express';
@@ -100,7 +100,7 @@ import { createRuntimeSessionRecord, type SessionCatalog } from '../../runtime/s
 import type { RunPreflightService } from '../../runtime/runPreflight.js';
 import { deriveStableWorkspaceId } from '../../runtime/workspaceIdentity.js';
 import type { RuntimeScheduler } from '../../runtime/scheduler.js';
-import type { RunStore } from '../../runtime/runStore.js';
+import type { RunRecord, RunStore } from '../../runtime/runStore.js';
 import type { ToolInvocationStore } from '../../runtime/toolInvocationStore.js';
 import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
 import { runtimeRunController } from '../../runtime/runController.js';
@@ -120,6 +120,51 @@ import {
 } from './channelRuntimeHelpers.js';
 
 export { buildChatMessageActivityDetail } from './channelHelpers.js';
+
+type ChatSubmissionAckStatus = 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+function deriveSubmissionSessionId(userScope: string, clientMessageId: string): string {
+  const hex = createHash('sha256')
+    .update(userScope)
+    .update('\0')
+    .update(clientMessageId)
+    .digest('hex');
+  const variant = ((Number.parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+function resolveAuthoritativeSubmissionState(run: RunRecord): {
+  status: ChatSubmissionAckStatus;
+  deliveryMode: 'queue' | 'steer';
+  streamId?: string;
+  queuedTargetRunId?: string;
+} {
+  const deliveryMode = run.metadata?.deliveryMode === 'steer' ? 'steer' : 'queue';
+  const streamId = typeof run.metadata?.streamId === 'string' && run.metadata.streamId
+    ? run.metadata.streamId
+    : undefined;
+  if (run.status === 'completed') return { status: 'completed', deliveryMode, ...(streamId ? { streamId } : {}) };
+  if (run.status === 'cancelled') return { status: 'cancelled', deliveryMode, ...(streamId ? { streamId } : {}) };
+  if (run.status === 'failed' || run.status === 'orphaned') {
+    return { status: 'failed', deliveryMode, ...(streamId ? { streamId } : {}) };
+  }
+  if (run.status !== 'pending') return { status: 'running', deliveryMode, ...(streamId ? { streamId } : {}) };
+
+  const steeringTargetRunId = typeof run.metadata?.steeringTargetRunId === 'string'
+    && run.metadata.steeringState === 'pending'
+    ? run.metadata.steeringTargetRunId
+    : undefined;
+  const queuedBehindRunId = typeof run.metadata?.queuedBehindRunId === 'string'
+    ? run.metadata.queuedBehindRunId
+    : undefined;
+  const queuedTargetRunId = steeringTargetRunId ?? queuedBehindRunId;
+  return {
+    status: queuedTargetRunId ? 'queued' : 'accepted',
+    deliveryMode,
+    ...(streamId ? { streamId } : {}),
+    ...(queuedTargetRunId ? { queuedTargetRunId } : {}),
+  };
+}
 
 export type ModelResolver = (ref: string, tenantId?: string) => ResolvedModel | null;
 export interface WebChannelConfig {
@@ -226,6 +271,8 @@ export class WebChannel implements BaseChannel {
   private activeStreams = new Map<string, ActiveStreamEntry>();
   /** 同一 WS 上的 chat 必须按到达顺序完成接收入队，避免异步 guardrail/附件处理打乱插话 FIFO。 */
   private chatProcessingTails = new WeakMap<WebSocket, Promise<void>>();
+  /** 同进程跨 WS 的相同 clientMessageId 也要串行，避免重复 STT/门禁与 TOCTOU 入队竞争。 */
+  private submissionProcessingTails = new Map<string, Promise<void>>();
 
   /** 返回当前活跃流数量（供 ChannelManager 聚合） */
   getActiveStreamCount(): number {
@@ -325,10 +372,10 @@ export class WebChannel implements BaseChannel {
    *
    * 大小上限 500，单条 TTL 60s；TTL 过后允许用户手动"重试"生成新 client_msg_id。
    */
-  private idempotencyCache = new Map<string, { streamId: string; status: 'in_flight' | 'done' | 'failed'; at: number; sessionId?: string; runId?: string; steeringTargetRunId?: string }>();
+  private idempotencyCache = new Map<string, { streamId: string; status: 'in_flight' | 'done' | 'failed'; at: number; sessionId?: string; runId?: string; deliveryMode?: 'queue' | 'steer'; queuedBehindRunId?: string; steeringTargetRunId?: string; terminalStatus?: 'completed' | 'failed' | 'cancelled' }>();
   private static readonly IDEMPOTENCY_MAX = 500;
   private static readonly IDEMPOTENCY_TTL_MS = 60_000;
-  private idempotencyGet(userId: string | undefined, clientMsgId: string): { streamId: string; status: 'in_flight' | 'done' | 'failed'; sessionId?: string; runId?: string; steeringTargetRunId?: string } | undefined {
+  private idempotencyGet(userId: string | undefined, clientMsgId: string): { streamId: string; status: 'in_flight' | 'done' | 'failed'; sessionId?: string; runId?: string; deliveryMode?: 'queue' | 'steer'; queuedBehindRunId?: string; steeringTargetRunId?: string; terminalStatus?: 'completed' | 'failed' | 'cancelled' } | undefined {
     const key = `${userId ?? 'anon'}|${clientMsgId}`;
     const entry = this.idempotencyCache.get(key);
     if (!entry) return undefined;
@@ -344,7 +391,10 @@ export class WebChannel implements BaseChannel {
       status: entry.status,
       ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
       ...(entry.runId ? { runId: entry.runId } : {}),
+      ...(entry.deliveryMode ? { deliveryMode: entry.deliveryMode } : {}),
+      ...(entry.queuedBehindRunId ? { queuedBehindRunId: entry.queuedBehindRunId } : {}),
       ...(entry.steeringTargetRunId ? { steeringTargetRunId: entry.steeringTargetRunId } : {}),
+      ...(entry.terminalStatus ? { terminalStatus: entry.terminalStatus } : {}),
     };
   }
   private idempotencySet(
@@ -352,7 +402,7 @@ export class WebChannel implements BaseChannel {
     clientMsgId: string,
     status: 'in_flight' | 'done' | 'failed',
     streamId: string,
-    meta: { sessionId?: string; runId?: string; steeringTargetRunId?: string } = {},
+    meta: { sessionId?: string; runId?: string; deliveryMode?: 'queue' | 'steer'; queuedBehindRunId?: string; steeringTargetRunId?: string; terminalStatus?: 'completed' | 'failed' | 'cancelled' } = {},
   ): void {
     const key = `${userId ?? 'anon'}|${clientMsgId}`;
     this.idempotencyCache.set(key, {
@@ -361,7 +411,10 @@ export class WebChannel implements BaseChannel {
       at: Date.now(),
       ...(meta.sessionId ? { sessionId: meta.sessionId } : {}),
       ...(meta.runId ? { runId: meta.runId } : {}),
+      ...(meta.deliveryMode ? { deliveryMode: meta.deliveryMode } : {}),
+      ...(meta.queuedBehindRunId ? { queuedBehindRunId: meta.queuedBehindRunId } : {}),
       ...(meta.steeringTargetRunId ? { steeringTargetRunId: meta.steeringTargetRunId } : {}),
+      ...(meta.terminalStatus ? { terminalStatus: meta.terminalStatus } : {}),
     });
     // LRU 驱逐
     while (this.idempotencyCache.size > WebChannel.IDEMPOTENCY_MAX) {
@@ -371,14 +424,22 @@ export class WebChannel implements BaseChannel {
     }
   }
 
-  /** 发送消息 ACK（服务端已接收并通过基础校验） */
-  private sendChatAck(ws: WebSocket, clientMsgId: string): void {
+  /** durable enqueue 成功后的接收确认；绝不把“仅通过基础校验”冒充 accepted。 */
+  private sendChatAck(
+    ws: WebSocket,
+    clientMsgId: string,
+    meta: {
+      sessionId?: string;
+      runId?: string;
+      status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+      deliveryMode?: 'queue' | 'steer';
+      queuePosition?: number;
+    } = {},
+  ): void {
     if (ws.readyState !== ws.OPEN) return;
-    if (this.eventBus) {
-      this.eventBus.emitReply(ws, { type: 'chat_ack', client_msg_id: clientMsgId, server_recv_ts: Date.now() });
-    } else {
-      this.wsSend(ws, { type: 'chat_ack', client_msg_id: clientMsgId, server_recv_ts: Date.now() });
-    }
+    const data = { type: 'chat_ack' as const, client_msg_id: clientMsgId, server_recv_ts: Date.now(), ...meta };
+    if (this.eventBus) this.eventBus.emitReply(ws, data);
+    else this.wsSend(ws, data);
   }
 
   /** 发送消息拒绝（服务端决定不处理），客户端据此将 pending 气泡翻为 failed */
@@ -1080,7 +1141,15 @@ export class WebChannel implements BaseChannel {
           activeEntry.clientMsgId,
           projection.sessionStatus === 'failed' ? 'failed' : 'done',
           streamId ?? '',
-          { sessionId, ...(runId ? { runId } : {}) },
+          {
+            sessionId,
+            ...(runId ? { runId } : {}),
+            terminalStatus: projection.sessionStatus === 'cancelled'
+              ? 'cancelled'
+              : projection.sessionStatus === 'failed'
+                ? 'failed'
+                : 'completed',
+          },
         );
       }
       if (activeEntry?.userId && projection.sessionStatus) {
@@ -1144,14 +1213,27 @@ export class WebChannel implements BaseChannel {
 
   /** 处理 chat 消息（替代 POST /api/chat） */
   private handleChat(client: WsClient, msg: WsChatMessage): void {
-    const previous = this.chatProcessingTails.get(client.ws) ?? Promise.resolve();
-    const next = previous
-      .catch(() => undefined)
+    const previousWs = this.chatProcessingTails.get(client.ws) ?? Promise.resolve();
+    const clientMsgId = msg.client_msg_id?.trim();
+    const submissionKey = clientMsgId
+      ? `${client.user?.tenantId ?? 'tenant'}|${client.user?.sub ?? 'anon'}|${clientMsgId}`
+      : undefined;
+    const previousSubmission = submissionKey
+      ? this.submissionProcessingTails.get(submissionKey)
+      : undefined;
+    const dependencies = previousSubmission && previousSubmission !== previousWs
+      ? [previousWs, previousSubmission]
+      : [previousWs];
+    const next = Promise.all(dependencies.map((dependency) => dependency.catch(() => undefined)))
       .then(() => this.processChatMessage(client, msg));
     this.chatProcessingTails.set(client.ws, next);
+    if (submissionKey) this.submissionProcessingTails.set(submissionKey, next);
     const cleanup = () => {
       if (this.chatProcessingTails.get(client.ws) === next) {
         this.chatProcessingTails.delete(client.ws);
+      }
+      if (submissionKey && this.submissionProcessingTails.get(submissionKey) === next) {
+        this.submissionProcessingTails.delete(submissionKey);
       }
     };
     void next.then(cleanup, (error) => {
@@ -1564,27 +1646,37 @@ export class WebChannel implements BaseChannel {
     let resolvedRunStatus: string | undefined;
     let resolvedRunStatusReason: string | undefined;
 
-    if (!sessionId && resolvedRunId && this.config.enqueueRuntime?.runStore) {
+    if (resolvedRunId && this.config.enqueueRuntime?.runStore) {
       const record = await this.config.enqueueRuntime.runStore.get(resolvedRunId);
       if (record) {
         sessionId = record.sessionId;
         resolvedRunStatus = record.status;
         resolvedRunStatusReason = record.statusReason;
-        if (client.user && client.user.role !== 'admin' && record.userId && record.userId !== client.user.sub) {
+        if (
+          client.user
+          && (
+            (record.tenantId && client.user.tenantId !== record.tenantId)
+            || (client.user.role !== 'admin' && record.userId && record.userId !== client.user.sub)
+          )
+        ) {
           this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
           return;
         }
       }
     }
 
-    if (entry && client.user && client.user.role !== 'admin' && entry.userId && entry.userId !== client.user.sub) {
+    if (entry && client.user && entry.userId && entry.userId !== client.user.sub) {
       this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
       return;
     }
 
     if (resolvedRunStatus && TERMINAL_RUN_STATUSES.has(resolvedRunStatus)) {
-      if (sessionId) {
-        await this.cancelPendingSteeringForSession(sessionId, 'aborted', resolvedRunId);
+      // 只有 cancelled run 的 stop 重试需要修复首次取消遗留的 steering/tool 半状态。
+      // completed/failed/orphaned 必须只回放权威终态，不能撤销同会话后续排队项。
+      if (sessionId && resolvedRunStatus === 'cancelled' && resolvedRunId) {
+        // 首次 stop 的 target/steering 取消已在同一事务提交；重试只修复该 run 的工具
+        // outbox，不能再次扫 session，否则会撤销首次 stop 后新进入的排队消息。
+        await this.requestRunningToolCancellations(sessionId, resolvedRunId, client.user?.sub);
       }
       this.wsSend(client.ws, { type: 'abort_ok', ...(resolvedStreamId ? { streamId: resolvedStreamId } : {}), ...(resolvedRunId ? { runId: resolvedRunId } : {}) });
       if (sessionId) {
@@ -1599,53 +1691,108 @@ export class WebChannel implements BaseChannel {
       return;
     }
 
-    await this.appendDurableWebCommand(sessionId, {
+    // PG 路径把 stop 事件、目标 run 与 pending/reserved steering 同事务提交；旧实现也
+    // 严格先取消后记事件，避免事件先落而取消失败的“撒谎”状态。
+    const cancelEvent: Parameters<EventStore['append']>[0] = {
       type: 'run_cancel_requested',
       sessionId,
       runId: resolvedRunId,
       streamId: resolvedStreamId,
       userId: client.user?.sub,
       reason: 'web_abort',
-    });
-    // 先在 session advisory lock 内取消所有尚未 dispatch 的输入，再终结目标 run。
-    // 若该事务失败则 stop 整体失败，不能先把目标置终态、让 pending source 自动 fallback。
-    if (sessionId) {
-      await this.cancelPendingSteeringForSession(sessionId, 'aborted', resolvedRunId);
-    }
+    };
+    const stopResult = sessionId
+      ? await this.cancelPendingSteeringForSession(
+        sessionId,
+        'aborted',
+        resolvedRunId,
+        cancelEvent,
+        client.user?.tenantId,
+      )
+      : { targetCancelled: false, eventAppended: false, newCancellation: true };
     if (resolvedRunId && this.config.enqueueRuntime?.runStore) {
-      if (sessionId && this.config.enqueueRuntime.toolInvocationStore) {
-        const runningInvocations = await this.config.enqueueRuntime.toolInvocationStore.listRunning(sessionId).catch(() => []);
-        for (const invocation of runningInvocations.filter((item) => item.runId === resolvedRunId)) {
-          const cancelRecord = await this.config.enqueueRuntime.toolInvocationStore.requestCancel(
-            invocation.invocationId,
-            'web_abort',
-            { requestedBy: client.user?.sub ?? 'anonymous' },
-          ).catch(() => null);
-          await this.appendDurableWebCommand(sessionId, {
-            type: 'tool_invocation_cancel_requested',
-            sessionId,
+      if (!stopResult.targetCancelled) {
+        const cancelled = await this.config.enqueueRuntime.runStore.markStatus(
+          resolvedRunId,
+          'cancelled',
+          'web_abort',
+        );
+        if (!cancelled) {
+          throw new Error(`Failed to persist cancellation for run ${resolvedRunId}`);
+        }
+        if (cancelled.status !== 'cancelled') {
+          if (!TERMINAL_RUN_STATUSES.has(cancelled.status)) {
+            throw new Error(`Failed to persist cancellation for run ${resolvedRunId}`);
+          }
+          this.wsSend(client.ws, {
+            type: 'abort_ok',
+            ...(resolvedStreamId ? { streamId: resolvedStreamId } : {}),
             runId: resolvedRunId,
-            invocationId: invocation.invocationId,
-            toolCallId: invocation.toolCallId,
-            toolName: invocation.toolName,
-            userId: client.user?.sub,
-            reason: 'web_abort',
-            metadata: cancelRecord?.metadata,
           });
+          if (sessionId) {
+            this.wsSend(client.ws, {
+              type: 'session_status',
+              sessionId,
+              status: cancelled.status as 'completed' | 'failed' | 'orphaned',
+              runId: resolvedRunId,
+              ...(cancelled.statusReason ? { reason: cancelled.statusReason } : {}),
+            });
+          }
+          return;
         }
       }
-      await this.config.enqueueRuntime.runStore.markStatus(resolvedRunId, 'cancelled', 'web_abort').catch(() => null);
+      if (sessionId && !stopResult.eventAppended) {
+        await this.appendDurableWebCommand(sessionId, cancelEvent, client.user?.tenantId);
+      }
+      if (sessionId) {
+        await this.requestRunningToolCancellations(sessionId, resolvedRunId, client.user?.sub);
+      }
       runtimeRunController.abort(resolvedRunId, 'web_abort');
     }
     entry?.controller.abort('web_abort');
     this.wsSend(client.ws, { type: 'abort_ok', ...(resolvedStreamId ? { streamId: resolvedStreamId } : {}), ...(resolvedRunId ? { runId: resolvedRunId } : {}) });
   }
 
+  /**
+   * stop 的工具取消使用 tool_invocations 作为 durable outbox：每次 stop（包括终态重试）
+   * 都重放 requestCancel，不能依赖 run_cancel_requested 是否首次创建。即时事件只在首次
+   * 持久化 cancel_requested_at 时追加；若进程在两步之间退出，后台扫描仍会从 durable 行补投。
+   */
+  private async requestRunningToolCancellations(
+    sessionId: string,
+    runId: string,
+    requestedBy?: string,
+  ): Promise<void> {
+    const store = this.config.enqueueRuntime?.toolInvocationStore;
+    if (!store) return;
+    const runningInvocations = await store.listRunning(sessionId);
+    for (const invocation of runningInvocations.filter((item) => item.runId === runId)) {
+      const cancelRequest = await store.requestCancelOnce(
+        invocation.invocationId,
+        'web_abort',
+        { requestedBy: requestedBy ?? 'anonymous' },
+      );
+      if (!cancelRequest?.created) continue;
+      const cancelRecord = cancelRequest.record;
+      await this.appendDurableWebCommand(sessionId, {
+        type: 'tool_invocation_cancel_requested',
+        sessionId,
+        runId,
+        invocationId: invocation.invocationId,
+        toolCallId: invocation.toolCallId,
+        toolName: invocation.toolName,
+        userId: requestedBy,
+        reason: 'web_abort',
+        metadata: cancelRecord.metadata,
+      });
+    }
+  }
+
   /** 撤销一条仍在排队的插话（终态队列区的撤回按钮）。 */
   private async handleCancelQueued(client: WsClient, msg: import('./wsTypes.js').WsCancelQueuedMessage): Promise<void> {
     const runStore = this.config.enqueueRuntime?.runStore;
     const sourceRunId = typeof msg.sourceRunId === 'string' ? msg.sourceRunId.trim() : '';
-    if (!runStore?.cancelPendingSteeringSourceRun || !sourceRunId) {
+    if (!runStore || !sourceRunId || (!runStore.cancelPendingUserMessage && !runStore.cancelPendingSteeringSourceRun)) {
       this.wsSend(client.ws, { type: 'cancel_queued_result', ok: false, sourceRunId, reason: 'unsupported' });
       return;
     }
@@ -1654,11 +1801,19 @@ export class WebChannel implements BaseChannel {
       this.wsSend(client.ws, { type: 'cancel_queued_result', ok: false, sourceRunId, reason: 'not_found' });
       return;
     }
-    if (client.user && client.user.role !== 'admin' && record.userId && record.userId !== client.user.sub) {
+    if (
+      client.user
+      && (
+        (record.tenantId && client.user.tenantId !== record.tenantId)
+        || (client.user.role !== 'admin' && record.userId && record.userId !== client.user.sub)
+      )
+    ) {
       this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
       return;
     }
-    const result = await runStore.cancelPendingSteeringSourceRun(sourceRunId, 'user_withdrew');
+    const result = runStore.cancelPendingUserMessage
+      ? await runStore.cancelPendingUserMessage(sourceRunId, 'user_withdrew')
+      : await runStore.cancelPendingSteeringSourceRun!(sourceRunId, 'user_withdrew');
     if (result.ok) {
       this.finalizeCancelledSteeringSource({
         sourceRunId,
@@ -1681,11 +1836,19 @@ export class WebChannel implements BaseChannel {
     sessionId: string,
     reason: string,
     targetRunId?: string,
-  ): Promise<void> {
+    cancelEvent?: Parameters<EventStore['append']>[0],
+    tenantId?: string,
+  ): Promise<{ targetCancelled: boolean; eventAppended: boolean; newCancellation: boolean }> {
     const runStore = this.config.enqueueRuntime?.runStore;
-    if (!runStore) return;
-    if (runStore.cancelSteeringBeforeDispatchBySession) {
-      const cancelled = await runStore.cancelSteeringBeforeDispatchBySession(sessionId, reason, targetRunId);
+    if (!runStore) return { targetCancelled: false, eventAppended: false, newCancellation: true };
+    if (cancelEvent && runStore.cancelSteeringBeforeDispatchBySessionWithEvent) {
+      const { cancelled, targetCancelled, event, eventCreated } = await runStore.cancelSteeringBeforeDispatchBySessionWithEvent(
+        sessionId,
+        reason,
+        targetRunId,
+        cancelEvent,
+        tenantId,
+      );
       for (const input of cancelled) {
         const clientMsgId = typeof input.sourceRun.metadata?.clientMsgId === 'string'
           ? input.sourceRun.metadata.clientMsgId
@@ -1698,9 +1861,35 @@ export class WebChannel implements BaseChannel {
           reason,
         });
       }
-      return;
+      return { targetCancelled, eventAppended: Boolean(event), newCancellation: eventCreated };
     }
-    if (!runStore.listPendingSteeringBySession || !runStore.cancelPendingSteeringSourceRun) return;
+    if (runStore.cancelSteeringBeforeDispatchBySession) {
+      const cancelled = await runStore.cancelSteeringBeforeDispatchBySession(sessionId, reason, targetRunId);
+      // 非 PG/旧实现无法跨 store 原子提交：先落取消事实，再追加事件。事件绝不先行撒谎；
+      // 即使 append 失败，run status 仍是可恢复权威事实。
+      if (cancelEvent) await this.appendDurableWebCommand(sessionId, cancelEvent, tenantId);
+      for (const input of cancelled) {
+        const clientMsgId = typeof input.sourceRun.metadata?.clientMsgId === 'string'
+          ? input.sourceRun.metadata.clientMsgId
+          : undefined;
+        this.finalizeCancelledSteeringSource({
+          sourceRunId: input.sourceRunId,
+          sessionId,
+          ...(clientMsgId ? { clientMsgId } : {}),
+          userId: input.sourceRun.userId,
+          reason,
+        });
+      }
+      const target = targetRunId ? await runStore.get(targetRunId) : null;
+      return {
+        targetCancelled: target?.status === 'cancelled',
+        eventAppended: Boolean(cancelEvent),
+        newCancellation: true,
+      };
+    }
+    if (!runStore.listPendingSteeringBySession || !runStore.cancelPendingSteeringSourceRun) {
+      return { targetCancelled: false, eventAppended: false, newCancellation: true };
+    }
     const pending = await runStore.listPendingSteeringBySession(sessionId);
     for (const input of pending) {
       const result = await runStore.cancelPendingSteeringSourceRun(input.sourceRunId, reason);
@@ -1713,6 +1902,7 @@ export class WebChannel implements BaseChannel {
         reason,
       });
     }
+    return { targetCancelled: false, eventAppended: false, newCancellation: true };
   }
 
   /** 撤销成功后的统一收尾：清 activeStreams/幂等缓存 + 多端广播 steering_cancelled。 */
@@ -1727,9 +1917,10 @@ export class WebChannel implements BaseChannel {
       if (entry.runId !== input.sourceRunId) continue;
       this.activeStreams.delete(streamId);
       if (entry.clientMsgId) {
-        this.idempotencySet(entry.userId, entry.clientMsgId, 'done', streamId, {
+        this.idempotencySet(entry.userId, entry.clientMsgId, 'failed', streamId, {
           sessionId: entry.sessionId,
           runId: entry.runId,
+          terminalStatus: 'cancelled',
         });
       }
     }
@@ -2176,6 +2367,7 @@ export class WebChannel implements BaseChannel {
   private async processChatMessage(client: WsClient, msg: WsChatMessage): Promise<void> {
     const steeringAcceptedAt = new Date().toISOString();
     const { message, sessionId, attachments, model, voiceFile } = msg;
+    const deliveryMode = msg.deliveryMode === 'steer' ? 'steer' : 'queue';
     const ws = client.ws;
     const user = client.user;
     const executionConfig = this.config.executionConfig ?? DEFAULT_EXECUTION_CONFIG;
@@ -2191,15 +2383,79 @@ export class WebChannel implements BaseChannel {
       chatLogger.warn(`[chat] Legacy client without client_msg_id, generated ${clientMsgId}`);
     }
 
-    // 1) Drain 拦截（服务端优雅关闭期间）
-    if (this.config.getIsDraining?.()) {
-      this.sendChatRejected(ws, clientMsgId, 'server_draining', '服务即将关闭，请稍后重试');
-      return;
-    }
-
     const tenantAccessError = this.tenantAccessErrorForClient(client);
     if (tenantAccessError) {
       this.sendChatRejected(ws, clientMsgId, 'access_denied', tenantAccessError);
+      return;
+    }
+
+    // 永久幂等事实必须先于 drain/载荷校验：重放一个已受理请求只回原权威结果，
+    // 不能因本次传输载荷缺失或实例正在排水而改写为 rejected。
+    const durableRun = await this.config.enqueueRuntime?.runStore.findByIdempotencyKey(user?.sub, clientMsgId);
+    if (durableRun) {
+      const tenantMismatch = Boolean(
+        user
+        && !isPlatformAdminUser(user)
+        && durableRun.tenantId
+        && durableRun.tenantId !== user.tenantId,
+      );
+      const ownerMismatch = Boolean(
+        durableRun.userId
+        && (!user || (user.role !== 'admin' && durableRun.userId !== user.sub)),
+      );
+      if (tenantMismatch || ownerMismatch) {
+        this.sendChatRejected(ws, clientMsgId, 'access_denied', '无权访问该会话');
+        return;
+      }
+      const authoritative = resolveAuthoritativeSubmissionState(durableRun);
+      const terminal = TERMINAL_RUN_STATUSES.has(durableRun.status);
+      this.wsSessionAffinity.set(ws, durableRun.sessionId);
+      this.idempotencySet(
+        user?.sub,
+        clientMsgId,
+        authoritative.status === 'completed' ? 'done' : terminal ? 'failed' : 'in_flight',
+        authoritative.streamId ?? '',
+        {
+          sessionId: durableRun.sessionId,
+          runId: durableRun.runId,
+          deliveryMode: authoritative.deliveryMode,
+          ...(authoritative.deliveryMode === 'queue' && authoritative.queuedTargetRunId
+            ? { queuedBehindRunId: authoritative.queuedTargetRunId }
+            : {}),
+          ...(authoritative.deliveryMode === 'steer' && authoritative.queuedTargetRunId
+            ? { steeringTargetRunId: authoritative.queuedTargetRunId }
+            : {}),
+          ...(terminal
+            ? { terminalStatus: authoritative.status as 'completed' | 'failed' | 'cancelled' }
+            : {}),
+        },
+      );
+      this.sendChatAck(ws, clientMsgId, {
+        sessionId: durableRun.sessionId,
+        runId: durableRun.runId,
+        status: authoritative.status,
+        deliveryMode: authoritative.deliveryMode,
+      });
+      if (authoritative.streamId && !terminal) {
+        this.wsSend(ws, {
+          type: 'stream_id',
+          streamId: authoritative.streamId,
+          sessionId: durableRun.sessionId,
+          runId: durableRun.runId,
+          client_msg_id: clientMsgId,
+          ...(authoritative.queuedTargetRunId
+            ? { queued: true, deliveryMode: authoritative.deliveryMode, targetRunId: authoritative.queuedTargetRunId }
+            : {}),
+        });
+      }
+      this.wsSend(ws, { type: 'session', sessionId: durableRun.sessionId, client_msg_id: clientMsgId });
+      return;
+    }
+
+
+    // 1) Drain 拦截（服务端优雅关闭期间）
+    if (this.config.getIsDraining?.()) {
+      this.sendChatRejected(ws, clientMsgId, 'server_draining', '服务即将关闭，请稍后重试');
       return;
     }
 
@@ -2238,9 +2494,72 @@ export class WebChannel implements BaseChannel {
     const dupEntry = this.idempotencyGet(user?.sub, clientMsgId);
     if (dupEntry) {
       if (dupEntry.status === 'in_flight') {
+        const durableStore = this.config.enqueueRuntime?.runStore;
+        if (durableStore && dupEntry.runId) {
+          let authoritativeRun: RunRecord | null;
+          try {
+            authoritativeRun = await durableStore.get(dupEntry.runId);
+          } catch (error) {
+            chatLogger.warn(`[chat] Idempotency authority lookup failed run=${dupEntry.runId}: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+          }
+          if (!authoritativeRun) {
+            chatLogger.warn(`[chat] Idempotency cache points to missing run=${dupEntry.runId}`);
+            return;
+          }
+          const authoritative = resolveAuthoritativeSubmissionState(authoritativeRun);
+          this.wsSessionAffinity.set(ws, authoritativeRun.sessionId);
+          this.idempotencySet(
+            user?.sub,
+            clientMsgId,
+            authoritative.status === 'completed' ? 'done' : TERMINAL_RUN_STATUSES.has(authoritativeRun.status) ? 'failed' : 'in_flight',
+            authoritative.streamId ?? '',
+            {
+              sessionId: authoritativeRun.sessionId,
+              runId: authoritativeRun.runId,
+              deliveryMode: authoritative.deliveryMode,
+              ...(authoritative.deliveryMode === 'queue' && authoritative.queuedTargetRunId
+                ? { queuedBehindRunId: authoritative.queuedTargetRunId }
+                : {}),
+              ...(authoritative.deliveryMode === 'steer' && authoritative.queuedTargetRunId
+                ? { steeringTargetRunId: authoritative.queuedTargetRunId }
+                : {}),
+              ...(TERMINAL_RUN_STATUSES.has(authoritativeRun.status)
+                ? { terminalStatus: authoritative.status as 'completed' | 'failed' | 'cancelled' }
+                : {}),
+            },
+          );
+          this.sendChatAck(ws, clientMsgId, {
+            sessionId: authoritativeRun.sessionId,
+            runId: authoritativeRun.runId,
+            status: authoritative.status,
+            deliveryMode: authoritative.deliveryMode,
+          });
+          if (authoritative.streamId && !TERMINAL_RUN_STATUSES.has(authoritativeRun.status)) {
+            this.wsSend(ws, {
+              type: 'stream_id',
+              streamId: authoritative.streamId,
+              sessionId: authoritativeRun.sessionId,
+              runId: authoritativeRun.runId,
+              client_msg_id: clientMsgId,
+              ...(authoritative.queuedTargetRunId
+                ? { queued: true, deliveryMode: authoritative.deliveryMode, targetRunId: authoritative.queuedTargetRunId }
+                : {}),
+            });
+          }
+          this.wsSend(ws, { type: 'session', sessionId: authoritativeRun.sessionId, client_msg_id: clientMsgId });
+          return;
+        }
+
         if (dupEntry.sessionId) this.wsSessionAffinity.set(ws, dupEntry.sessionId);
-        chatLogger.info(`[chat] Idempotency hit (in_flight), resending ACK for client_msg_id=${clientMsgId}`);
-        this.sendChatAck(ws, clientMsgId);
+        chatLogger.info(`[chat] Legacy idempotency hit (in_flight), resending cached ACK for client_msg_id=${clientMsgId}`);
+        const duplicateQueuedBehind = dupEntry.steeringTargetRunId ?? dupEntry.queuedBehindRunId;
+        this.sendChatAck(ws, clientMsgId, {
+          ...(dupEntry.sessionId ? { sessionId: dupEntry.sessionId } : {}),
+          ...(dupEntry.runId ? { runId: dupEntry.runId } : {}),
+          status: duplicateQueuedBehind ? 'queued' : 'accepted',
+          ...(dupEntry.deliveryMode ? { deliveryMode: dupEntry.deliveryMode } : {}),
+        });
         if (dupEntry.streamId) {
           this.wsSend(ws, {
             type: 'stream_id',
@@ -2248,8 +2567,8 @@ export class WebChannel implements BaseChannel {
             ...(dupEntry.sessionId ? { sessionId: dupEntry.sessionId } : {}),
             ...(dupEntry.runId ? { runId: dupEntry.runId } : {}),
             client_msg_id: clientMsgId,
-            ...(dupEntry.steeringTargetRunId
-              ? { queued: true, targetRunId: dupEntry.steeringTargetRunId }
+            ...(duplicateQueuedBehind
+              ? { queued: true, deliveryMode: dupEntry.deliveryMode ?? 'queue', targetRunId: duplicateQueuedBehind }
               : {}),
           });
         }
@@ -2258,46 +2577,22 @@ export class WebChannel implements BaseChannel {
         }
         return;
       }
-      // done/failed：客户端若拿同 ID 重发视为重复提交
-      this.sendChatRejected(ws, clientMsgId, 'duplicate_inflight', '该消息已处理，请发新消息');
-      return;
-    }
-
-    const durableRun = await this.config.enqueueRuntime?.runStore.findByIdempotencyKey(user?.sub, clientMsgId);
-    if (durableRun) {
-      const streamId = typeof durableRun.metadata?.streamId === 'string' ? durableRun.metadata.streamId : '';
-      const activeStatuses = new Set(['pending', 'running', 'waiting_approval', 'waiting_user', 'waiting_hand']);
-      if (activeStatuses.has(durableRun.status)) {
-        this.wsSessionAffinity.set(ws, durableRun.sessionId);
-        const steeringTargetRunId = typeof durableRun.metadata?.steeringTargetRunId === 'string'
-          && durableRun.metadata?.steeringState === 'pending'
-          ? durableRun.metadata.steeringTargetRunId
-          : undefined;
-        this.idempotencySet(user?.sub, clientMsgId, 'in_flight', streamId, {
-          sessionId: durableRun.sessionId,
-          runId: durableRun.runId,
-          ...(steeringTargetRunId ? { steeringTargetRunId } : {}),
-        });
-        this.sendChatAck(ws, clientMsgId);
-        this.wsSend(ws, {
-          type: 'stream_id',
-          streamId: streamId || durableRun.runId,
-          sessionId: durableRun.sessionId,
-          runId: durableRun.runId,
-          client_msg_id: clientMsgId,
-          ...(steeringTargetRunId ? { queued: true, targetRunId: steeringTargetRunId } : {}),
-        });
-        this.wsSend(ws, { type: 'session', sessionId: durableRun.sessionId, client_msg_id: clientMsgId });
-        return;
+      // done/failed 仍返回原提交的终态关联；传输层重试不是新的业务消息。
+      this.sendChatAck(ws, clientMsgId, {
+        ...(dupEntry.sessionId ? { sessionId: dupEntry.sessionId } : {}),
+        ...(dupEntry.runId ? { runId: dupEntry.runId } : {}),
+        status: dupEntry.terminalStatus ?? (dupEntry.status === 'done' ? 'completed' : 'failed'),
+        ...(dupEntry.deliveryMode ? { deliveryMode: dupEntry.deliveryMode } : {}),
+      });
+      if (dupEntry.sessionId) {
+        this.wsSend(ws, { type: 'session', sessionId: dupEntry.sessionId, client_msg_id: clientMsgId });
       }
-      this.sendChatRejected(ws, clientMsgId, 'duplicate_inflight', '该消息已处理，请发新消息');
       return;
     }
 
-    // 5) ACK：到此通过连通性与权限校验，即将进入业务流程（STT/dispatch）
-    //    标记 in_flight（streamId 占位，真实 streamId 后面分配后会覆盖）
-    this.idempotencySet(user?.sub, clientMsgId, 'in_flight', '');
-    this.sendChatAck(ws, clientMsgId);
+
+    // 5) 此处仍未 accepted：STT、门禁、会话持久化和 durable enqueue 任一步都可能失败。
+    // chat_ack 必须延后到 run 与幂等提交记录同事务落库之后。
 
     // 6) 语音消息: STT 转文字
     let resolvedMessage = message || '';
@@ -2724,11 +3019,22 @@ export class WebChannel implements BaseChannel {
 
     const enqueueRuntime = this.config.enqueueRuntime?.enabled === false ? undefined : this.config.enqueueRuntime;
     if (enqueueRuntime) {
-      const enqueueSessionId = validSessionId ?? randomUUID();
+      // 新会话用永久幂等键派生稳定 sessionId；跨进程重复提交即使同时越过预检，
+      // 也只会 upsert 同一会话，不会留下竞争失败者的幽灵会话。
+      const enqueueSessionId = validSessionId ?? deriveSubmissionSessionId(
+        `${user?.tenantId ?? 'tenant'}|${user?.sub ?? 'anon'}`,
+        clientMsgId,
+      );
       const enqueueRunId = `${Date.now()}-${randomUUID()}`;
       const streamId = String(++this.streamIdCounter);
       let sessionPersisted = false;
       let titleOwnerId = userIdentity?.id;
+      let durableAccepted = false;
+      let durableAcceptedSessionId = enqueueSessionId;
+      let durableAcceptedRunId = enqueueRunId;
+      let durableAcceptedStreamId = streamId;
+      let durableAcceptedDeliveryMode: 'queue' | 'steer' = deliveryMode;
+      let durableAcceptedQueuedTargetRunId: string | undefined;
       try {
         const enqueueCwd = targetCwd || resolveUserCwd(this.config.agentCwd!, userIdentity);
         const existingSessionRecord = validSessionId
@@ -2757,25 +3063,6 @@ export class WebChannel implements BaseChannel {
         // 门禁 uncertain/纯附件的 pass_flagged 落库：sessionId 到这里才确定
         flushPendingGuardrailEvent(enqueueSessionId);
         const controller = new AbortController();
-        this.activeStreams.set(streamId, {
-          controller,
-          userId: user?.sub,
-          ws,
-          sessionId: enqueueSessionId,
-          runId: enqueueRunId,
-          clientMsgId,
-        });
-        this.idempotencySet(user?.sub, clientMsgId, 'in_flight', streamId, { sessionId: enqueueSessionId, runId: enqueueRunId });
-
-        await this.appendRuntimeEvent(sessionRecord.transcriptPath, {
-          type: 'user_message_submitted',
-          sessionId: enqueueSessionId,
-          runId: enqueueRunId,
-          streamId,
-          userId: user?.sub,
-          clientMsgId,
-          content: resolvedMessage,
-        }, sessionRecord.tenantId);
         // Governance shadow：enqueue 前用统一 evaluator 产出 AccessDecision/Readiness
         // 对比证据。legacy adminExempt/audience 门禁仍是权威；shadow 失败只记日志。
         if (this.config.runPreflight) {
@@ -2818,6 +3105,7 @@ export class WebChannel implements BaseChannel {
           runId: enqueueRunId,
           sessionId: enqueueSessionId,
           userId: enqueueOwner?.id,
+          submitterUserId: user?.sub,
           tenantId: enqueueOwner?.tenantId,
           model,
           channel: 'web',
@@ -2841,53 +3129,165 @@ export class WebChannel implements BaseChannel {
               ...(inbound.metadata ? { metadata: inbound.metadata } : {}),
             },
           },
-        }, { steeringAware: true });
-        const steeringTargetRunId = typeof enqueuedRun.metadata?.steeringTargetRunId === 'string'
-          ? enqueuedRun.metadata.steeringTargetRunId
-          : undefined;
-        // enqueue 后才能知道 queued/target；覆盖首次 in_flight 缓存，确保传输层重发
-        // stream_id 时保留 queued 语义，不会误切断当前活跃流。
-        this.idempotencySet(user?.sub, clientMsgId, 'in_flight', streamId, {
-          sessionId: enqueueSessionId,
-          runId: enqueueRunId,
+        }, { deliveryMode });
+        durableAccepted = true;
+        const acceptedRunId = enqueuedRun.runId;
+        const acceptedSessionId = enqueuedRun.sessionId;
+        durableAcceptedRunId = acceptedRunId;
+        durableAcceptedSessionId = acceptedSessionId;
+        const duplicateSubmission = acceptedRunId !== enqueueRunId;
+        const authoritative = resolveAuthoritativeSubmissionState(enqueuedRun);
+        const acceptedStreamId = authoritative.streamId ?? (duplicateSubmission ? '' : streamId);
+        const acceptedDeliveryMode = authoritative.deliveryMode;
+        durableAcceptedStreamId = acceptedStreamId;
+        durableAcceptedDeliveryMode = acceptedDeliveryMode;
+        const queuedTargetRunId = authoritative.queuedTargetRunId;
+        const steeringTargetRunId = acceptedDeliveryMode === 'steer' ? queuedTargetRunId : undefined;
+        const queuedBehindRunId = acceptedDeliveryMode === 'queue' ? queuedTargetRunId : undefined;
+        durableAcceptedQueuedTargetRunId = queuedTargetRunId;
+        let queuePosition: number | undefined;
+        if (queuedTargetRunId && enqueueRuntime.runStore.listPendingUserMessagesBySession) {
+          try {
+            const pendingMessages = await enqueueRuntime.runStore.listPendingUserMessagesBySession(acceptedSessionId);
+            const pendingIndex = pendingMessages.findIndex((run) => run.runId === acceptedRunId);
+            if (pendingIndex >= 0) queuePosition = pendingIndex + 1;
+          } catch (queueError) {
+            chatLogger.warn(`[chat] queue position lookup failed run=${acceptedRunId}: ${queueError instanceof Error ? queueError.message : String(queueError)}`);
+          }
+        }
+        if (['completed', 'failed', 'cancelled', 'orphaned'].includes(enqueuedRun.status)) {
+          // 跨进程同 clientMessageId 竞态：本请求命中另一请求已完成的原 run。
+          // 返回原终态关联，不创建第二条 active stream / run / queue item。
+          const terminalStatus = enqueuedRun.status === 'completed'
+            ? 'completed'
+            : enqueuedRun.status === 'cancelled'
+              ? 'cancelled'
+              : 'failed';
+          this.idempotencySet(user?.sub, clientMsgId, terminalStatus === 'completed' ? 'done' : 'failed', acceptedStreamId, {
+            sessionId: acceptedSessionId,
+            runId: acceptedRunId,
+            deliveryMode: acceptedDeliveryMode,
+            terminalStatus,
+          });
+          this.sendChatAck(ws, clientMsgId, {
+            sessionId: acceptedSessionId,
+            runId: acceptedRunId,
+            status: terminalStatus,
+            deliveryMode: acceptedDeliveryMode,
+          });
+          this.eventBus!.emitReply(ws, { type: 'session', sessionId: acceptedSessionId, client_msg_id: clientMsgId });
+          return;
+        }
+
+        if (duplicateSubmission) {
+          // 并发重复提交命中原 run：只回放原 run 当前权威状态，不注册第二条本地 stream，
+          // 也不重复追加事件或广播 queue item。
+          this.idempotencySet(user?.sub, clientMsgId, 'in_flight', acceptedStreamId, {
+            sessionId: acceptedSessionId,
+            runId: acceptedRunId,
+            deliveryMode: acceptedDeliveryMode,
+            ...(queuedBehindRunId ? { queuedBehindRunId } : {}),
+            ...(steeringTargetRunId ? { steeringTargetRunId } : {}),
+          });
+          this.wsSessionAffinity.set(ws, acceptedSessionId);
+          this.sendChatAck(ws, clientMsgId, {
+            sessionId: acceptedSessionId,
+            runId: acceptedRunId,
+            status: authoritative.status,
+            deliveryMode: acceptedDeliveryMode,
+            ...(queuePosition ? { queuePosition } : {}),
+          });
+          if (acceptedStreamId) {
+            this.eventBus!.emitReply(ws, {
+              type: 'stream_id',
+              streamId: acceptedStreamId,
+              sessionId: acceptedSessionId,
+              runId: acceptedRunId,
+              client_msg_id: clientMsgId,
+              ...(queuedTargetRunId
+                ? { queued: true, deliveryMode: acceptedDeliveryMode, targetRunId: queuedTargetRunId, ...(queuePosition ? { queuePosition } : {}) }
+                : {}),
+            });
+          }
+          this.eventBus!.emitReply(ws, { type: 'session', sessionId: acceptedSessionId, client_msg_id: clientMsgId });
+          return;
+        }
+
+        this.activeStreams.set(acceptedStreamId, {
+          controller,
+          userId: user?.sub,
+          ws,
+          sessionId: acceptedSessionId,
+          runId: acceptedRunId,
+          clientMsgId,
+        });
+        this.idempotencySet(user?.sub, clientMsgId, 'in_flight', acceptedStreamId, {
+          sessionId: acceptedSessionId,
+          runId: acceptedRunId,
+          deliveryMode: acceptedDeliveryMode,
+          ...(queuedBehindRunId ? { queuedBehindRunId } : {}),
           ...(steeringTargetRunId ? { steeringTargetRunId } : {}),
         });
-        await this.appendRuntimeEvent(sessionRecord.transcriptPath, {
-          type: 'run_enqueued',
-          sessionId: enqueueSessionId,
-          runId: enqueueRunId,
-          userId: user?.sub,
-          clientMsgId,
-        }, sessionRecord.tenantId);
+        // run + clientMessageId 已原子落库；事件投影失败不撤销 accepted，wakeMessage 与
+        // message_submissions 仍能恢复。并发重复提交命中旧 run 时不重复追加事件。
+        if (acceptedRunId === enqueueRunId) {
+          await this.appendRuntimeEvent(sessionRecord.transcriptPath, {
+            type: 'user_message_submitted',
+            sessionId: acceptedSessionId,
+            runId: acceptedRunId,
+            streamId: acceptedStreamId,
+            userId: user?.sub,
+            clientMsgId,
+            content: resolvedMessage,
+          }, sessionRecord.tenantId).catch((eventError) => {
+            chatLogger.warn(`[chat] accepted message event append failed run=${acceptedRunId}: ${eventError instanceof Error ? eventError.message : String(eventError)}`);
+          });
+          await this.appendRuntimeEvent(sessionRecord.transcriptPath, {
+            type: 'run_enqueued',
+            sessionId: acceptedSessionId,
+            runId: acceptedRunId,
+            userId: user?.sub,
+            clientMsgId,
+          }, sessionRecord.tenantId).catch((eventError) => {
+            chatLogger.warn(`[chat] run_enqueued event append failed run=${acceptedRunId}: ${eventError instanceof Error ? eventError.message : String(eventError)}`);
+          });
+        }
 
         const send = (data: object) => this.eventBus!.emitReply(ws, data);
-        this.wsSessionAffinity.set(ws, enqueueSessionId);
-        if (!steeringTargetRunId) {
-          this.wsActiveStream.set(ws, streamId);
-          this.eventBufferStore.create(enqueueSessionId, user?.sub);
+        this.wsSessionAffinity.set(ws, acceptedSessionId);
+        if (!queuedTargetRunId) {
+          this.wsActiveStream.set(ws, acceptedStreamId);
+          this.eventBufferStore.create(acceptedSessionId, user?.sub);
         }
+        this.sendChatAck(ws, clientMsgId, {
+          sessionId: acceptedSessionId,
+          runId: acceptedRunId,
+          status: authoritative.status,
+          deliveryMode: acceptedDeliveryMode,
+          ...(queuePosition ? { queuePosition } : {}),
+        });
         send({
           type: 'stream_id',
-          streamId,
-          sessionId: enqueueSessionId,
-          runId: enqueueRunId,
+          streamId: acceptedStreamId,
+          sessionId: acceptedSessionId,
+          runId: acceptedRunId,
           client_msg_id: clientMsgId,
-          ...(steeringTargetRunId ? { queued: true, targetRunId: steeringTargetRunId } : {}),
+          ...(queuedTargetRunId ? { queued: true, deliveryMode: acceptedDeliveryMode, targetRunId: queuedTargetRunId, ...(queuePosition ? { queuePosition } : {}) } : {}),
         });
-        send({ type: 'session', sessionId: enqueueSessionId, client_msg_id: clientMsgId });
+        send({ type: 'session', sessionId: acceptedSessionId, client_msg_id: clientMsgId });
         // 首条长消息不等待 Agent 输出；续聊时若仍无标题，也在本次输入后立即补偿。
         if (
           titleOwnerId
           && (Boolean(validSessionId) || shouldGenerateTitleFromFirstMessage(resolvedMessage))
         ) {
-          void this.maybeGenerateTitleByUserId(enqueueSessionId, titleOwnerId, resolvedMessage);
+          void this.maybeGenerateTitleByUserId(acceptedSessionId, titleOwnerId, resolvedMessage);
         }
         // steering 排队的消息尚未被消费，不进会话事件流（buffer 里的 user_message 会被
         // 其他端/重连回放成一条普通「已发送」气泡，时间线交错且不可撤回——2026-08-04
         // 终态设计改为：排队期间只存在于队列区（steering_queued 广播 + detail API 恢复），
         // 被目标 run 吸收时由 durable user_message 投影进流。
-        if ((userDisplayContent || attachmentMeta) && !steeringTargetRunId) {
-          this.eventBufferStore.push(enqueueSessionId, JSON.stringify({
+        if ((userDisplayContent || attachmentMeta) && !queuedTargetRunId) {
+          this.eventBufferStore.push(acceptedSessionId, JSON.stringify({
             type: 'user_message',
             content: userDisplayContent,
             ...(attachmentMeta ? { attachments: attachmentMeta } : {}),
@@ -2895,41 +3295,126 @@ export class WebChannel implements BaseChannel {
             client_msg_id: clientMsgId,
           }));
         }
-        if (user?.sub && this.eventBus && steeringTargetRunId) {
-          // 多端队列区同步：user scope 广播（含发起端，前端按 clientMsgId 幂等 upsert）。
+        if (user?.sub && this.eventBus && queuedTargetRunId) {
+          // 多端统一队列快照：普通 queue 与显式 steer 都广播，按 clientMsgId 幂等 upsert。
           this.eventBus.emitUser(user.sub, {
-            type: 'steering_queued',
-            sessionId: enqueueSessionId,
-            sourceRunId: enqueueRunId,
-            targetRunId: steeringTargetRunId,
+            type: 'message_queued',
+            sessionId: acceptedSessionId,
+            runId: acceptedRunId,
             clientMsgId,
+            deliveryMode: acceptedDeliveryMode,
+            targetRunId: queuedTargetRunId,
+            ...(queuePosition ? { queuePosition } : {}),
             content: userDisplayContent ?? resolvedMessage,
             ...(attachmentMeta ? { attachments: attachmentMeta } : {}),
             timestamp: Date.now(),
           });
         }
-        if (user?.sub && this.eventBus && !steeringTargetRunId) {
+        if (user?.sub && this.eventBus && !queuedTargetRunId) {
           this.eventBus.emitUser(user.sub, {
             type: 'stream_started',
-            sessionId: enqueueSessionId,
-            streamId,
-            runId: enqueueRunId,
+            sessionId: acceptedSessionId,
+            streamId: acceptedStreamId,
+            runId: acceptedRunId,
           }, ws);
           this.eventBus.emitUser(user.sub, {
             type: 'session_status',
-            sessionId: enqueueSessionId,
+            sessionId: acceptedSessionId,
             status: 'queued',
-            streamId,
-            runId: enqueueRunId,
+            streamId: acceptedStreamId,
+            runId: acceptedRunId,
           });
         }
         chatLogger.info(
-          `[chat] enqueue-only accepted run=${enqueueRunId} session=${enqueueSessionId}`
-          + ` client_msg_id=${clientMsgId}`
-          + (steeringTargetRunId ? ` steering_target=${steeringTargetRunId}` : ''),
+          `[chat] enqueue-only accepted run=${acceptedRunId} session=${acceptedSessionId}`
+          + ` client_msg_id=${clientMsgId} delivery=${acceptedDeliveryMode}`
+          + (queuedTargetRunId ? ` queued_behind=${queuedTargetRunId}` : ''),
         );
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
+        let durableLookupAvailable = true;
+        if (!durableAccepted) {
+          // PostgreSQL 的 COMMIT 可能已生效但连接在回执前中断；先按永久幂等键反查，
+          // 绝不能把“提交结果未知”直接改成 failed 并清掉 wakeMessage。
+          const committedRun = await enqueueRuntime.runStore.findByIdempotencyKey(user?.sub, clientMsgId).catch(() => {
+            durableLookupAvailable = false;
+            return null;
+          });
+          if (committedRun) {
+            durableAccepted = true;
+            durableAcceptedRunId = committedRun.runId;
+            durableAcceptedSessionId = committedRun.sessionId;
+            durableAcceptedStreamId = typeof committedRun.metadata?.streamId === 'string'
+              ? committedRun.metadata.streamId
+              : streamId;
+            durableAcceptedDeliveryMode = committedRun.metadata?.deliveryMode === 'steer' ? 'steer' : 'queue';
+            durableAcceptedQueuedTargetRunId = typeof committedRun.metadata?.steeringTargetRunId === 'string'
+              ? committedRun.metadata.steeringTargetRunId
+              : typeof committedRun.metadata?.queuedBehindRunId === 'string'
+                ? committedRun.metadata.queuedBehindRunId
+                : undefined;
+          }
+        }
+        if (durableAccepted) {
+          // durable commit 之后的投影/广播失败不能反向把 run 改成 failed，更不能清 wakeMessage。
+          // ACK 必须再次读取原 run 当前状态；读取失败时保持“结果未知”，交给客户端状态查询恢复。
+          chatLogger.warn(`[chat] post-accept projection failed run=${durableAcceptedRunId}: ${errorMessage}`);
+          const currentRun = await enqueueRuntime.runStore.get(durableAcceptedRunId).catch((lookupError) => {
+            chatLogger.warn(`[chat] post-accept authority lookup failed run=${durableAcceptedRunId}: ${lookupError instanceof Error ? lookupError.message : String(lookupError)}`);
+            return null;
+          });
+          if (!currentRun) return;
+          const authoritative = resolveAuthoritativeSubmissionState(currentRun);
+          const terminal = TERMINAL_RUN_STATUSES.has(currentRun.status);
+          durableAcceptedSessionId = currentRun.sessionId;
+          durableAcceptedStreamId = authoritative.streamId ?? '';
+          durableAcceptedDeliveryMode = authoritative.deliveryMode;
+          durableAcceptedQueuedTargetRunId = authoritative.queuedTargetRunId;
+          this.idempotencySet(
+            user?.sub,
+            clientMsgId,
+            authoritative.status === 'completed' ? 'done' : terminal ? 'failed' : 'in_flight',
+            durableAcceptedStreamId,
+            {
+              sessionId: durableAcceptedSessionId,
+              runId: durableAcceptedRunId,
+              deliveryMode: durableAcceptedDeliveryMode,
+              ...(durableAcceptedDeliveryMode === 'queue' && durableAcceptedQueuedTargetRunId
+                ? { queuedBehindRunId: durableAcceptedQueuedTargetRunId }
+                : {}),
+              ...(durableAcceptedDeliveryMode === 'steer' && durableAcceptedQueuedTargetRunId
+                ? { steeringTargetRunId: durableAcceptedQueuedTargetRunId }
+                : {}),
+              ...(terminal
+                ? { terminalStatus: authoritative.status as 'completed' | 'failed' | 'cancelled' }
+                : {}),
+            },
+          );
+          this.sendChatAck(ws, clientMsgId, {
+            sessionId: durableAcceptedSessionId,
+            runId: durableAcceptedRunId,
+            status: authoritative.status,
+            deliveryMode: durableAcceptedDeliveryMode,
+          });
+          if (durableAcceptedStreamId && !terminal) {
+            this.wsSend(ws, {
+              type: 'stream_id',
+              streamId: durableAcceptedStreamId,
+              sessionId: durableAcceptedSessionId,
+              runId: durableAcceptedRunId,
+              client_msg_id: clientMsgId,
+              ...(durableAcceptedQueuedTargetRunId
+                ? { queued: true, deliveryMode: durableAcceptedDeliveryMode, targetRunId: durableAcceptedQueuedTargetRunId }
+                : {}),
+            });
+          }
+          this.wsSend(ws, { type: 'session', sessionId: durableAcceptedSessionId, client_msg_id: clientMsgId });
+          return;
+        }
+        if (!durableLookupAvailable) {
+          chatLogger.warn(`[chat] enqueue outcome unknown; client must verify client_msg_id=${clientMsgId}: ${errorMessage}`);
+          return;
+        }
         chatLogger.error(`[chat] enqueue-only failed: ${errorMessage}`);
         this.idempotencySet(user?.sub, clientMsgId, 'failed', streamId);
         this.activeStreams.delete(streamId);
@@ -2997,6 +3482,8 @@ export class WebChannel implements BaseChannel {
     };
     ws.on('close', onWsClose);
 
+    // 旧同步运行时没有 durable queue；到这里已绑定唯一执行流，才可确认 accepted。
+    this.sendChatAck(ws, clientMsgId, { status: 'accepted', deliveryMode });
     // 将 streamId 作为首条事件发送给前端（透传 client_msg_id 以便客户端精确绑定 bubble）
     send({ type: 'stream_id', streamId, client_msg_id: clientMsgId });
 

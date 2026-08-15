@@ -253,6 +253,80 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect((await runStore.get('run-term-a'))?.status).toBe('completed');
     });
 
+    it.each(['completed', 'failed', 'orphaned'] as const)(
+      'run 已 %s 的 stop 重试只回权威终态，不扫描或登记工具取消',
+      async (terminalStatus) => {
+        const runStore = new MemoryRunStore();
+        const runId = `run-terminal-no-cancel-${terminalStatus}`;
+        const sessionId = `session-terminal-no-cancel-${terminalStatus}`;
+        await runStore.upsertPending({ runId, sessionId, userId: USER.sub, model: 'm', channel: 'web' });
+        await runStore.markStatus(runId, terminalStatus, `${terminalStatus}-reason`);
+        const cancelPendingSteering = vi.fn(async () => []);
+        (runStore as any).cancelSteeringBeforeDispatchBySession = cancelPendingSteering;
+        const toolInvocationStore = {
+          listRunning: vi.fn(async () => [{
+            invocationId: `inv-terminal-no-cancel-${terminalStatus}`,
+            runId,
+            sessionId,
+            toolCallId: 'call-terminal-no-cancel',
+            toolName: 'Shell',
+          }]),
+          requestCancelOnce: vi.fn(),
+        };
+        const rig = makeRig({
+          enqueueRuntime: {
+            scheduler: {} as any, runStore, sessionCatalog: {} as any,
+            toolInvocationStore: toolInvocationStore as any, enabled: true,
+          },
+        });
+
+        await (rig.channel as any).handleAbortAsync(wsClient(rig.ws, USER), { action: 'abort', runId });
+
+        expect(cancelPendingSteering).not.toHaveBeenCalled();
+        expect(toolInvocationStore.listRunning).not.toHaveBeenCalled();
+        expect(toolInvocationStore.requestCancelOnce).not.toHaveBeenCalled();
+        expect(rig.ws.sent.at(-2)?.data).toEqual({ type: 'abort_ok', runId });
+        expect(rig.ws.sent.at(-1)?.data).toMatchObject({
+          type: 'session_status', sessionId, status: terminalStatus, runId,
+        });
+      },
+    );
+
+    it('run 已 cancelled 的 stop 重试仍会重放 durable 工具取消，不依赖首次取消事件', async () => {
+      const runStore = new MemoryRunStore();
+      await runStore.upsertPending({ runId: 'run-term-tool', sessionId: 's-term-tool', userId: USER.sub, model: 'm', channel: 'web' });
+      await runStore.markStatus('run-term-tool', 'cancelled', 'web_abort');
+      const cancelPendingSteering = vi.fn(async () => []);
+      (runStore as any).cancelSteeringBeforeDispatchBySession = cancelPendingSteering;
+      const toolInvocationStore = {
+        listRunning: vi.fn(async () => [{
+          invocationId: 'inv-term-tool', runId: 'run-term-tool', sessionId: 's-term-tool',
+          toolCallId: 'call-term-tool', toolName: 'Shell', cancelRequestedAt: '2026-08-15T00:00:00.000Z',
+        }]),
+        requestCancelOnce: vi.fn(async () => ({
+          created: false,
+          record: { invocationId: 'inv-term-tool', cancelRequestedAt: '2026-08-15T00:00:00.000Z', metadata: {} },
+        })),
+      };
+      const rig = makeRig({
+        enqueueRuntime: {
+          scheduler: {} as any, runStore, sessionCatalog: {} as any,
+          toolInvocationStore: toolInvocationStore as any, enabled: true,
+        },
+      });
+
+      await (rig.channel as any).handleAbortAsync(wsClient(rig.ws, USER), { action: 'abort', runId: 'run-term-tool' });
+
+      expect(cancelPendingSteering).not.toHaveBeenCalled();
+      expect(toolInvocationStore.requestCancelOnce).toHaveBeenCalledWith(
+        'inv-term-tool', 'web_abort', { requestedBy: USER.sub },
+      );
+      expect(rig.ws.sent.at(-2)?.data).toEqual({ type: 'abort_ok', runId: 'run-term-tool' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({
+        type: 'session_status', sessionId: 's-term-tool', status: 'cancelled', runId: 'run-term-tool',
+      });
+    });
+
     it('非 admin 通过 runId 中止他人 durable run → Access denied', async () => {
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({ runId: 'run-other-1', sessionId: 's-other-1', userId: OTHER_USER.sub, model: 'm', channel: 'web' });
@@ -263,6 +337,67 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await (rig.channel as any).handleAbortAsync(wsClient(rig.ws, USER), { action: 'abort', runId: 'run-other-1' });
       expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
       expect((await runStore.get('run-other-1'))?.status).toBe('running');
+    });
+
+    it('原子 stop 未实际更新 waiting target 时必须 fallback，不能仅凭 targetRunId 回 abort_ok', async () => {
+      const runStore = new MemoryRunStore();
+      await runStore.upsertPending({ runId: 'run-waiting-stop', sessionId: 'session-waiting-stop', userId: USER.sub, channel: 'web' });
+      await runStore.markStatus('run-waiting-stop', 'waiting_user');
+      (runStore as any).cancelSteeringBeforeDispatchBySessionWithEvent = vi.fn(async (
+        _sessionId: string,
+        _reason: string,
+        _targetRunId: string,
+        event: Record<string, unknown>,
+      ) => ({
+        cancelled: [],
+        targetCancelled: false,
+        event: { id: 'event-stop', timestamp: new Date().toISOString(), ...event },
+        eventCreated: true,
+      }));
+      const markSpy = vi.spyOn(runStore, 'markStatus');
+      const rig = makeRig({
+        enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
+      });
+
+      await (rig.channel as any).handleAbortAsync(
+        wsClient(rig.ws, USER),
+        { action: 'abort', runId: 'run-waiting-stop' },
+      );
+
+      expect(markSpy).toHaveBeenCalledWith('run-waiting-stop', 'cancelled', 'web_abort');
+      await expect(runStore.get('run-waiting-stop')).resolves.toMatchObject({ status: 'cancelled' });
+      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'abort_ok', runId: 'run-waiting-stop' });
+    });
+
+    it('stop 锁到并发 completed target 时只回放权威终态，不补写取消事件', async () => {
+      const runStore = new MemoryRunStore();
+      await runStore.upsertPending({ runId: 'run-stop-race', sessionId: 'session-stop-race', userId: USER.sub, channel: 'web' });
+      await runStore.markStatus('run-stop-race', 'running');
+      (runStore as any).cancelSteeringBeforeDispatchBySessionWithEvent = vi.fn(async () => {
+        const current = await runStore.get('run-stop-race');
+        runStore.records.set('run-stop-race', { ...current!, status: 'completed' });
+        return { cancelled: [], targetCancelled: false, eventCreated: false };
+      });
+      const originalMarkStatus = runStore.markStatus.bind(runStore);
+      vi.spyOn(runStore, 'markStatus').mockImplementation(async (runId, status, reason, metadata) => (
+        status === 'cancelled'
+          ? runStore.get(runId)
+          : originalMarkStatus(runId, status, reason, metadata)
+      ));
+      const rig = makeRig({
+        enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
+      });
+
+      await (rig.channel as any).handleAbortAsync(
+        wsClient(rig.ws, USER),
+        { action: 'abort', runId: 'run-stop-race' },
+      );
+
+      await expect(runStore.get('run-stop-race')).resolves.toMatchObject({ status: 'completed' });
+      expect(rig.ws.sent.at(-2)?.data).toEqual({ type: 'abort_ok', runId: 'run-stop-race' });
+      expect(rig.ws.sent.at(-1)?.data).toEqual({
+        type: 'session_status', sessionId: 'session-stop-race', status: 'completed', runId: 'run-stop-race',
+      });
     });
 
     it('durable 取消全链：落 run_cancel_requested + 工具 invocation 取消 + runStore cancelled + controller/runtimeRunController 双中止', async () => {
@@ -276,7 +411,10 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
           { invocationId: 'inv-1', runId: 'run-ab-1', toolCallId: 'call-1', toolName: 'Shell' },
           { invocationId: 'inv-x', runId: 'run-unrelated', toolCallId: 'call-x', toolName: 'Read' },
         ]),
-        requestCancel: vi.fn(async () => ({ metadata: { cancelledBy: 'ops' } })),
+        requestCancelOnce: vi.fn(async () => ({
+          created: true,
+          record: { metadata: { cancelledBy: 'ops' } },
+        })),
       };
       const rig = makeRig({
         agentCwd: tmp,
@@ -304,8 +442,8 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const record = await runStore.get('run-ab-1');
       expect(record).toMatchObject({ status: 'cancelled', statusReason: 'web_abort' });
       // 只取消属于本 run 的 invocation
-      expect(toolInvocationStore.requestCancel).toHaveBeenCalledTimes(1);
-      expect(toolInvocationStore.requestCancel).toHaveBeenCalledWith('inv-1', 'web_abort', { requestedBy: USER.sub });
+      expect(toolInvocationStore.requestCancelOnce).toHaveBeenCalledTimes(1);
+      expect(toolInvocationStore.requestCancelOnce).toHaveBeenCalledWith('inv-1', 'web_abort', { requestedBy: USER.sub });
       // durable 事件日志：run_cancel_requested + tool_invocation_cancel_requested
       const events = await eventStore.list(sessionId);
       expect(events.map((e) => e.type)).toEqual(['run_cancel_requested', 'tool_invocation_cancel_requested']);
@@ -531,6 +669,86 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.ws.sent[0].data).toMatchObject({ reason_code: 'empty_message', reason: '消息内容不能为空' });
     });
 
+    it('已受理 durable 重放先于 draining 与空载荷校验，返回原 ACK', async () => {
+      const runStore = new MemoryRunStore();
+      await runStore.upsertPending({
+        runId: 'run-durable-replay',
+        sessionId: 'session-durable-replay',
+        userId: USER.sub,
+        idempotencyKey: 'cm-durable-replay',
+        channel: 'web',
+        metadata: { streamId: 'stream-durable-replay', deliveryMode: 'queue' },
+      });
+      const rig = makeRig({
+        getIsDraining: () => true,
+        enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
+      });
+
+      await rig.send(USER, { client_msg_id: 'cm-durable-replay', message: '' });
+
+      expect(rig.ws.sent.map((message) => message.data.type)).toEqual(['chat_ack', 'stream_id', 'session']);
+      expect(rig.ws.sent[0].data).toMatchObject({
+        runId: 'run-durable-replay', sessionId: 'session-durable-replay', status: 'accepted',
+      });
+    });
+
+    it('durable 幂等重放在返回 run/session 标识前重新校验租户与 owner', async () => {
+      const runStore = new MemoryRunStore();
+      await runStore.upsertPending({
+        runId: 'run-cross-tenant-replay',
+        sessionId: 'session-cross-tenant-replay',
+        userId: USER.sub,
+        tenantId: 'other-tenant',
+        idempotencyKey: 'cm-cross-tenant-replay',
+        channel: 'web',
+      });
+      const rig = makeRig({
+        enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
+      });
+
+      await rig.send(USER, { client_msg_id: 'cm-cross-tenant-replay', message: '' });
+
+      expect(rig.ws.sent).toHaveLength(1);
+      expect(rig.ws.sent[0].data).toMatchObject({
+        type: 'chat_rejected', reason_code: 'access_denied', reason: '无权访问该会话',
+      });
+    });
+
+    it('平台 admin 可重放自己跨租户代提交的 durable 消息，组织 admin 不可跨租户', async () => {
+      const runStore = new MemoryRunStore();
+      await runStore.upsertPending({
+        runId: 'run-platform-admin-replay',
+        sessionId: 'session-platform-admin-replay',
+        userId: USER.sub,
+        submitterUserId: P_ADMIN.sub,
+        tenantId: TENANT,
+        idempotencyKey: 'cm-platform-admin-replay',
+        channel: 'web',
+      });
+      await runStore.upsertPending({
+        runId: 'run-org-admin-cross-tenant',
+        sessionId: 'session-org-admin-cross-tenant',
+        userId: USER.sub,
+        submitterUserId: ORG_ADMIN.sub,
+        tenantId: 'other-tenant',
+        idempotencyKey: 'cm-org-admin-cross-tenant',
+        channel: 'web',
+      });
+      const rig = makeRig({
+        enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
+      });
+
+      await rig.send(P_ADMIN, { client_msg_id: 'cm-platform-admin-replay', message: '' });
+      expect(rig.ws.sent[0].data).toMatchObject({
+        type: 'chat_ack', runId: 'run-platform-admin-replay', sessionId: 'session-platform-admin-replay',
+      });
+      rig.ws.sent.length = 0;
+
+      await rig.send(ORG_ADMIN, { client_msg_id: 'cm-org-admin-cross-tenant', message: '' });
+      expect(rig.ws.sent).toHaveLength(1);
+      expect(rig.ws.sent[0].data).toMatchObject({ type: 'chat_rejected', reason_code: 'access_denied' });
+    });
+
     it('禁用租户 → access_denied（组织已被禁用）', async () => {
       const rig = makeRig({
         tenantStore: {
@@ -594,7 +812,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await first;
     });
 
-    it('durable run 幂等：活跃 run 重发 → ACK+stream_id+session；终态 run → duplicate_inflight', async () => {
+    it('durable run 幂等：ACK 反映当前权威状态，且不伪造 streamId', async () => {
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({
         runId: 'run-idem-a', sessionId: 's-idem-a', userId: USER.sub, model: 'm', channel: 'web',
@@ -617,10 +835,17 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       });
       expect(rig.ws.sent[2].data).toEqual({ type: 'session', sessionId: 's-idem-a', client_msg_id: 'cm-durable-active' });
 
+      expect(rig.ws.sent[0].data).toMatchObject({
+        type: 'chat_ack', client_msg_id: 'cm-durable-active', runId: 'run-idem-a', status: 'running',
+      });
+
       rig.ws.sent.length = 0;
       await rig.send(USER, { client_msg_id: 'cm-durable-done', message: '重试' });
-      expect(rig.ws.sent.map((m) => m.data.type)).toEqual(['chat_rejected']);
-      expect(rig.ws.sent[0].data).toMatchObject({ reason_code: 'duplicate_inflight', reason: '该消息已处理，请发新消息' });
+      expect(rig.ws.sent.map((m) => m.data.type)).toEqual(['chat_ack', 'session']);
+      expect(rig.ws.sent[0].data).toMatchObject({
+        type: 'chat_ack', client_msg_id: 'cm-durable-done', runId: 'run-idem-b', status: 'completed',
+      });
+      expect(rig.ws.sent.some((m) => m.data.type === 'stream_id')).toBe(false);
     });
 
     it('模型不在组织白名单（modelResolver 返回 null）→ model_not_allowed', async () => {
@@ -642,9 +867,10 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const rig = makeRig();
       await rig.send(USER, { client_msg_id: 'cm-stt-0', message: '', voiceFile });
       const types = rig.ws.sent.map((m) => m.data.type);
-      expect(types).toEqual(['chat_ack', 'voice_transcribed', 'chat_rejected']);
-      expect(rig.ws.sent[1].data).toEqual({ type: 'voice_transcribed', text: '[语音识别未配置]', error: true });
-      expect(rig.ws.sent[2].data).toMatchObject({ reason_code: 'stt_not_configured' });
+      expect(types).toEqual(['voice_transcribed', 'chat_rejected']);
+      expect(rig.ws.sent[0].data).toEqual({ type: 'voice_transcribed', text: '[语音识别未配置]', error: true });
+      expect(rig.ws.sent[1].data).toMatchObject({ reason_code: 'stt_not_configured' });
+      expect(rig.ws.sent.some((message) => message.data.type === 'chat_ack')).toBe(false);
     });
 
     it('识别成功：注入 VOICE_STT_TAG 前缀送 dispatch，先推 voice_transcribed', async () => {
@@ -747,11 +973,13 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.userEvents).toContainEqual(expect.objectContaining({ type: 'session_updated', sessionId, preview: '你好，世界' }));
       expect(rig.userEvents.at(-1)).toEqual({ type: 'session_status', sessionId, status: 'idle' });
 
-      // 幂等：done 终态后同 id 重发被拒
+      // 幂等：done 终态后同 id 重发只返回原终态 ACK，不二次 dispatch。
       rig.ws.sent.length = 0;
       await rig.send(USER, { client_msg_id: 'cm-flow-1', message: '打个招呼' });
-      expect(rig.ws.sent.map((m) => m.data.type)).toEqual(['chat_rejected']);
-      expect(rig.ws.sent[0].data).toMatchObject({ reason_code: 'duplicate_inflight' });
+      expect(rig.ws.sent.map((m) => m.data.type)).toEqual(['chat_ack']);
+      expect(rig.ws.sent[0].data).toMatchObject({
+        type: 'chat_ack', client_msg_id: 'cm-flow-1', status: 'completed',
+      });
     });
 
     it('可撤销草稿：失败 attempt 被 reset 替换，预览只保留成功正文', async () => {
@@ -901,7 +1129,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.ws.sent[5].data).toEqual({ type: 'tool_result', toolId: 'r1', toolName: 'Read', result: 'content-a' });
     });
 
-    it('SDK error：done 携带 error，幂等置 failed（同 id 重发被拒）', async () => {
+    it('SDK error：done 携带 error，幂等重发返回原 failed ACK', async () => {
       const tmp = await makeTmp('cov-err-');
       const rig = makeRig({ agentCwd: tmp }, scripted([
         { type: 'text_start' },
@@ -913,7 +1141,9 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'done', client_msg_id: 'cm-err', error: 'model exploded' });
       rig.ws.sent.length = 0;
       await rig.send(USER, { client_msg_id: 'cm-err', message: 'hi' });
-      expect(rig.ws.sent[0].data).toMatchObject({ type: 'chat_rejected', reason_code: 'duplicate_inflight' });
+      expect(rig.ws.sent[0].data).toMatchObject({
+        type: 'chat_ack', client_msg_id: 'cm-err', status: 'failed',
+      });
     });
 
     it('用户主动停止后 SDK 返回 error：done 不携带 error', async () => {
@@ -1545,10 +1775,12 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.ws.sent.length).toBe(sentBefore);
       expect((rig.channel as any).eventBufferStore.get(sessionId).events.length).toBe(bufferLenBefore);
 
-      // 终态幂等回填：同 clientMsgId 再发 chat → duplicate_inflight
+      // 终态幂等回填：同 clientMsgId 再发 chat → 原 failed ACK，不创建新 run。
       rig.ws.sent.length = 0;
       await rig.send(USER, { client_msg_id: 'cm-pe-1', message: '重试' });
-      expect(rig.ws.sent[0].data).toMatchObject({ type: 'chat_rejected', reason_code: 'duplicate_inflight' });
+      expect(rig.ws.sent[0].data).toMatchObject({
+        type: 'chat_ack', client_msg_id: 'cm-pe-1', runId: 'run-pe-1', status: 'failed',
+      });
     });
   });
 

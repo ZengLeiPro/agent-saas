@@ -59,9 +59,120 @@ describe('acquireDirectRuntimeRunLease', () => {
     expect(lease).toBeNull();
     expect(acquireCalls).toBe(0);
   });
+
+  it('fails closed when another run owns the session lease', async () => {
+    const runStore = {
+      acquireLease: async () => null,
+    } as unknown as RunStore;
+
+    await expect(acquireDirectRuntimeRunLease({ runStore, runId: 'run-blocked' }))
+      .rejects.toThrow('Direct runtime lease not acquired run=run-blocked');
+  });
+
+  it('fails closed when durable lease acquisition throws', async () => {
+    const runStore = {
+      acquireLease: async () => { throw new Error('database unavailable'); },
+    } as unknown as RunStore;
+
+    await expect(acquireDirectRuntimeRunLease({ runStore, runId: 'run-db-error' }))
+      .rejects.toThrow('database unavailable');
+  });
+
+  it('fails closed when a durable store cannot acquire leases', async () => {
+    const runStore = {} as RunStore;
+
+    await expect(acquireDirectRuntimeRunLease({ runStore, runId: 'run-no-lease-api' }))
+      .rejects.toThrow('Direct runtime lease is unavailable run=run-no-lease-api');
+  });
+
+  it('keeps direct lease renewal single-flight when interval is shorter than the query', async () => {
+    let activeRenewals = 0;
+    let maxActiveRenewals = 0;
+    let renewCalls = 0;
+    const runStore = {
+      acquireLease: async (runId: string, workerId: string) => runRecord(runId, workerId),
+      renewLease: async (runId: string, workerId: string) => {
+        renewCalls += 1;
+        activeRenewals += 1;
+        maxActiveRenewals = Math.max(maxActiveRenewals, activeRenewals);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        activeRenewals -= 1;
+        return runRecord(runId, workerId);
+      },
+      releaseLease: async () => null,
+    } as unknown as RunStore;
+
+    const lease = await acquireDirectRuntimeRunLease({
+      runStore,
+      runId: 'run-renew-single-flight',
+      renewIntervalMs: 5,
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 58));
+    } finally {
+      await lease?.release();
+    }
+    expect(renewCalls).toBeGreaterThan(1);
+    expect(maxActiveRenewals).toBe(1);
+  });
+
+  it('aborts direct execution when lease renewal is rejected', async () => {
+    const abortController = new AbortController();
+    const runStore = {
+      acquireLease: async (runId: string, workerId: string) => runRecord(runId, workerId),
+      renewLease: async () => null,
+      releaseLease: async () => null,
+    } as unknown as RunStore;
+
+    const lease = await acquireDirectRuntimeRunLease({
+      runStore,
+      runId: 'run-renew-lost',
+      renewIntervalMs: 5,
+      onLeaseLost: (error) => abortController.abort(error),
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(abortController.signal.aborted).toBe(true);
+      expect(abortController.signal.reason).toMatchObject({
+        name: 'DirectRuntimeLeaseLostError',
+        runId: 'run-renew-lost',
+      });
+    } finally {
+      await lease?.release();
+    }
+  });
 });
 
 describe('startWakeLeaseRenewal durable cancel fallback', () => {
+  it('keeps wake lease renewal and status polling single-flight', async () => {
+    const abortController = new AbortController();
+    let active = 0;
+    let maxActive = 0;
+    const lease = {
+      renew: async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active -= 1;
+      },
+      release: async () => {},
+    } as any;
+    const runStore = { get: async () => null } as unknown as RunStore;
+    const timer = startWakeLeaseRenewal({
+      lease,
+      runStore,
+      runId: 'run-wake-single-flight',
+      abortController,
+      intervalMs: 5,
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 58));
+      expect(maxActive).toBe(1);
+    } finally {
+      if (timer) clearInterval(timer);
+    }
+  });
+
   // 2026-08-04 P0 兜底回归：run_cancel_requested 的主投递通道是 PG NOTIFY；
   // NOTIFY 丢失时 renewal 轮询必须在 ≤intervalMs 内感知 durable cancelled 并 abort。
   it('aborts the run when durable status turns cancelled while renewals still succeed', async () => {

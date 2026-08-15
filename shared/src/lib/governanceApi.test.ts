@@ -201,6 +201,23 @@ describe('governanceApi fail closed', () => {
     }, 'tenant-1')).resolves.toMatchObject({ version: 3, compatibilityProjection: 'applied_with_projection_pending' });
   });
 
+  it('创建组织调用治理入口，并透传可理解的业务错误', async () => {
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ tenant: { id: 'test-org', name: '测试组织' } }, 201));
+    await expect(governanceAccessApi.createTenant({ id: 'test-org', name: '测试组织' })).resolves.toMatchObject({
+      tenant: { id: 'test-org', name: '测试组织' },
+    });
+    expect(mockAuthFetch).toHaveBeenCalledWith('/api/governance/access/tenants', expect.objectContaining({
+      method: 'POST',
+    }));
+
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({
+      code: 'TENANT_ALREADY_EXISTS', error: '该组织 slug 已存在，请更换后重试',
+    }, 409));
+    await expect(governanceAccessApi.createTenant({ id: 'test-org', name: '测试组织' })).rejects.toMatchObject({
+      code: 'TENANT_ALREADY_EXISTS', message: '该组织 slug 已存在，请更换后重试', status: 409,
+    });
+  });
+
   it('接受历史凭据的安全能力摘要', async () => {
     mockAuthFetch.mockResolvedValue(jsonResponse({ credentials: [{
       credentialId: 'credential-1', tenantId: 'tenant-1', connectorId: 'github', kind: 'org_shared',

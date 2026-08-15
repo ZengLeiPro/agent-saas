@@ -189,6 +189,9 @@ export function createGovernanceAccessRouter(deps: {
     accountStatus: 'active' | 'disabled'; dingtalkBound: boolean; createdAt: string; updatedAt: string;
   } | null;
   getMemberBudgetOverview?: (tenantId: string, userId: string) => Promise<BillingMemberBudgetOverview>;
+  createTenant?: (input: { id: string; name: string; createdBy: string }) => Promise<{
+    id: string; name: string; createdAt: string; createdBy: string; updatedAt: string;
+  }>;
   getTenantLifecycle?: (tenantId: string) => { id: string; disabled?: boolean; updatedAt: string } | undefined;
   setTenantDisabled?: (tenantId: string, disabled: boolean, actorUserId: string) => Promise<{ id: string; disabled?: boolean; updatedAt: string }>;
   audit: GovernanceAuditStore;
@@ -377,7 +380,9 @@ export function createGovernanceAccessRouter(deps: {
     const requestedTenantId = personas.get(req) === 'platform_admin'
       ? (typeof req.query.tenantId === 'string'
           ? req.query.tenantId
-          : typeof req.body?.tenantId === 'string' ? req.body.tenantId : user.tenantId)
+          : typeof req.body?.tenantId === 'string'
+            ? req.body.tenantId
+            : req.path === '/tenants' && typeof req.body?.id === 'string' ? req.body.id : user.tenantId)
       : user.tenantId;
     const correlationId = `governance-access:${randomUUID()}`;
     const actorPersona = personas.get(req)!;
@@ -743,6 +748,7 @@ export function createGovernanceAccessRouter(deps: {
     previewTtlMs,
     now,
     personaFor: req => personas.get(req),
+    ...(deps.createTenant ? { createTenant: deps.createTenant } : {}),
     ...(deps.getTenantLifecycle ? { getTenant: deps.getTenantLifecycle } : {}),
     ...(deps.setTenantDisabled ? { setTenantDisabled: deps.setTenantDisabled } : {}),
     ...(deps.resolveDependencyImpact ? { dependencyImpact: (tenantId: string) => tenantDependencyImpact(deps.resolveDependencyImpact!, tenantId) } : {}),

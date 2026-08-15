@@ -54,6 +54,9 @@ async function rig(input: {
   listEntitlementResources?: (resourceType: string) => Promise<{ status: 'valid'; items: Array<{ resourceId: string; version: number }> } | { status: 'unavailable' }>;
   oauthGrants?: { listForSubject(tenantId: string, subjectUserId: string): Promise<unknown[]>; getForSubject?: ReturnType<typeof vi.fn>; markRevocationPending?: ReturnType<typeof vi.fn>; markProviderRevoking?: ReturnType<typeof vi.fn>; markProviderRevoked?: ReturnType<typeof vi.fn>; markRevocationRetry?: ReturnType<typeof vi.fn>; recordRevocation?: ReturnType<typeof vi.fn> };
   revokeOAuthGrant?: (grant: OAuthGrant, user: JwtPayload) => Promise<void>;
+  createTenant?: (input: { id: string; name: string; createdBy: string }) => Promise<{
+    id: string; name: string; createdAt: string; createdBy: string; updatedAt: string;
+  }>;
   tenantLifecycle?: { id: string; disabled?: boolean; updatedAt: string };
   setTenantDisabled?: (
     tenantId: string, disabled: boolean, actorUserId: string,
@@ -115,6 +118,11 @@ async function rig(input: {
   };
   const updateEntitlement = vi.fn().mockResolvedValue({ ...entitlement, status: 'suspended', version: 2 });
   const replaceScope = vi.fn().mockResolvedValue({ ...scope, mode: 'selected', resourceIds: ['skill-1'], version: 2 });
+  const createTenant = vi.fn(input.createTenant ?? (async (tenantInput: { id: string; name: string; createdBy: string }) => ({
+    ...tenantInput,
+    createdAt: NOW,
+    updatedAt: NOW,
+  })));
   let tenantLifecycle = input.tenantLifecycle ?? { id: 'tenant-a', updatedAt: NOW };
   const setTenantDisabled = vi.fn(input.setTenantDisabled ?? (async (
     tenantId: string, disabled: boolean,
@@ -172,6 +180,7 @@ async function rig(input: {
       userId, username: 'member', displayName: '测试成员', accountStatus: 'active', dingtalkBound: false,
       createdAt: NOW, updatedAt: NOW,
     } : null,
+    createTenant,
     getTenantLifecycle: tenantId => tenantId === tenantLifecycle.id ? tenantLifecycle : undefined,
     setTenantDisabled,
     ...(input.getMemberBudgetOverview ? { getMemberBudgetOverview: input.getMemberBudgetOverview } : {}),
@@ -191,10 +200,12 @@ async function rig(input: {
   const base = typeof address === 'object' && address ? `http://127.0.0.1:${address.port}` : '';
   return {
     request: (path: string, init?: RequestInit) => fetch(`${base}${path}`, init),
+    auditAppend,
     updateMembership,
     getAssignmentSet,
     replaceAssignments,
     listEffectiveResources,
+    createTenant,
     setTenantDisabled,
     updateEntitlement,
     replaceScope,
@@ -328,6 +339,56 @@ describe('governance access routes', () => {
     const failedResponse = await failed.request('/api/governance/access/memberships/user-2/details');
     expect(failedResponse.status).toBe(503);
     expect(await failedResponse.json()).toMatchObject({ code: 'ASSIGNMENT_GROUP_SUBJECT_UNRESOLVED' });
+  });
+
+  it('平台管理员通过治理 API 创建组织，重复与权限失败返回可理解提示', async () => {
+    const platformUser = { sub: 'platform-1', username: 'platform', tenantId: 'pantheon', role: 'admin' } as const;
+    const created = await rig({ user: platformUser, platformAdmin: true });
+    const response = await created.request('/api/governance/access/tenants', json('POST', {
+      id: 'test-org', name: '测试组织',
+    }));
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ tenant: { id: 'test-org', name: '测试组织' } });
+    expect(created.createTenant).toHaveBeenCalledWith({
+      id: 'test-org', name: '测试组织', createdBy: 'platform-1',
+    });
+    expect(created.auditAppend).toHaveBeenCalledWith(expect.objectContaining({
+      targetTenantId: 'test-org', result: 'intent',
+    }));
+
+    const duplicate = await rig({
+      user: platformUser,
+      platformAdmin: true,
+      createTenant: async () => { throw new Error('Tenant id "test-org" already exists'); },
+    });
+    const duplicateResponse = await duplicate.request('/api/governance/access/tenants', json('POST', {
+      id: 'test-org', name: '测试组织',
+    }));
+    expect(duplicateResponse.status).toBe(409);
+    expect(await duplicateResponse.json()).toMatchObject({
+      code: 'TENANT_ALREADY_EXISTS', error: '该组织 slug 已存在，请更换后重试',
+    });
+
+    const failed = await rig({
+      user: platformUser,
+      platformAdmin: true,
+      createTenant: async () => { throw new Error('EACCES: /internal/tenants.json'); },
+    });
+    const failedResponse = await failed.request('/api/governance/access/tenants', json('POST', {
+      id: 'failed-org', name: '失败组织',
+    }));
+    expect(failedResponse.status).toBe(500);
+    expect(await failedResponse.json()).toMatchObject({
+      code: 'TENANT_CREATE_FAILED',
+      error: '创建组织失败，未保存任何组织信息，请稍后重试；如问题持续，请联系平台运维人员',
+    });
+
+    const organizationAdmin = await rig();
+    const denied = await organizationAdmin.request('/api/governance/access/tenants', json('POST', {
+      id: 'other-org', name: '其他组织',
+    }));
+    expect(denied.status).toBe(403);
+    expect(organizationAdmin.createTenant).not.toHaveBeenCalled();
   });
 
   it('平台组织生命周期动作由后端返回，并强制 preview baseline 后提交', async () => {

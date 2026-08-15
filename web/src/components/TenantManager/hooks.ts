@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { governanceAccessApi } from "@agent/shared/lib/governanceApi";
 import { authFetch } from "@/lib/authFetch";
 import { tenantsPreload } from "@/lib/preload";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
@@ -90,15 +91,7 @@ export function useTenants() {
   }, [refresh]);
 
   const createTenant = async (input: CreateTenantInput) => {
-    const res = await authFetch(API_BASE, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error((data as { error?: string }).error || "创建组织失败");
-    }
+    await governanceAccessApi.createTenant(input);
     await refresh();
   };
 

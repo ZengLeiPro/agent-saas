@@ -3,7 +3,15 @@ import type { Request, Router } from 'express';
 import { z } from 'zod';
 
 import { governanceDigest } from '../data/governance-audit/index.js';
-import { PLATFORM_TENANT_ID } from '../data/tenants/types.js';
+import { PLATFORM_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
+
+const createTenantSchema = z.object({
+  id: z.string().regex(
+    TENANT_SLUG_PATTERN,
+    'slug 必须以小写字母开头，可含小写字母/数字/连字符，长度 2-31',
+  ),
+  name: z.string().trim().min(1, '组织名称不能为空').max(100, '组织名称不超过 100 字符'),
+}).strict();
 
 const mutationShape = {
   action: z.enum(['suspend', 'resume']),
@@ -18,6 +26,11 @@ const commitSchema = z.object({
 }).strict();
 
 type TenantLifecycleRecord = { id: string; disabled?: boolean; updatedAt: string };
+type CreatedTenantRecord = TenantLifecycleRecord & {
+  name: string;
+  createdAt: string;
+  createdBy: string;
+};
 
 function sign(secret: string, input: Record<string, unknown>): string {
   return createHmac('sha256', secret).update(governanceDigest(input)).digest('hex');
@@ -35,6 +48,7 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
   previewTtlMs: number;
   now: () => Date;
   personaFor: (req: Request) => 'platform_admin' | 'org_admin' | 'member' | undefined;
+  createTenant?: (input: { id: string; name: string; createdBy: string }) => Promise<CreatedTenantRecord>;
   getTenant?: (tenantId: string) => TenantLifecycleRecord | undefined;
   setTenantDisabled?: (
     tenantId: string,
@@ -46,6 +60,47 @@ export function registerGovernanceTenantLifecycleRoutes(options: {
   }>;
 }): void {
   const { router } = options;
+
+  router.post('/tenants', async (req, res) => {
+    if (options.personaFor(req) !== 'platform_admin') {
+      return res.status(403).json({ error: '仅平台管理员可以创建组织', code: 'PLATFORM_ADMIN_REQUIRED' });
+    }
+    const parsed = createTenantSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]!.message, code: 'INVALID_TENANT_INPUT' });
+    }
+    if (!options.createTenant) {
+      return res.status(503).json({ error: '组织创建服务暂不可用，请稍后重试', code: 'TENANT_CREATE_UNAVAILABLE' });
+    }
+    try {
+      const tenant = await options.createTenant({
+        ...parsed.data,
+        createdBy: req.user!.sub,
+      });
+      return res.status(201).json({
+        tenant: {
+          id: tenant.id,
+          name: tenant.name,
+          createdAt: tenant.createdAt,
+          createdBy: tenant.createdBy,
+          updatedAt: tenant.updatedAt,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('already exists')) {
+        return res.status(409).json({ error: '该组织 slug 已存在，请更换后重试', code: 'TENANT_ALREADY_EXISTS' });
+      }
+      if (message.includes('Invalid tenant id') || message.includes('cannot be empty')) {
+        return res.status(400).json({ error: '组织信息格式无效，请检查后重试', code: 'INVALID_TENANT_INPUT' });
+      }
+      return res.status(500).json({
+        error: '创建组织失败，未保存任何组织信息，请稍后重试；如问题持续，请联系平台运维人员',
+        code: 'TENANT_CREATE_FAILED',
+      });
+    }
+  });
+
   router.get('/tenant-lifecycle', async (req, res) => {
     if (options.personaFor(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
     const tenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;

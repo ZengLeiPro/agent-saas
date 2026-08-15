@@ -41,6 +41,16 @@ export function createEntitlementResourceCatalogResolver(runtime: AppRuntime) {
   return async (
     resourceType: EntitlementResourceType,
   ): Promise<{ status: 'valid'; items: Array<{ resourceId: string; version: number }> } | { status: 'unavailable' }> => {
+    if (resourceType === 'model') {
+      if (!runtime.config.models) return { status: 'unavailable' };
+      return {
+        status: 'valid',
+        items: runtime.config.models.groups.flatMap(group => group.models.map(model => ({
+          resourceId: `${group.id}/${model.id}`,
+          version: 1,
+        }))),
+      };
+    }
     if (resourceType === 'agent_template') {
       if (!runtime.agentResourceStore) return { status: 'unavailable' };
       return { status: 'valid', items: (await runtime.agentResourceStore.listByKind('agent_template'))
@@ -73,6 +83,12 @@ export function createEntitlementResourceResolver(runtime: AppRuntime) {
     resourceType: EntitlementResourceType,
     resourceId: string,
   ): Promise<{ status: 'valid'; version: number } | { status: 'not_found' | 'unavailable' }> => {
+    if (resourceType === 'model') {
+      if (!runtime.config.models) return { status: 'unavailable' };
+      const exists = runtime.config.models.groups.some(group =>
+        group.models.some(model => `${group.id}/${model.id}` === resourceId));
+      return exists ? { status: 'valid', version: 1 } : { status: 'not_found' };
+    }
     if (resourceType === 'agent_template') {
       if (!runtime.agentResourceStore) return { status: 'unavailable' };
       const item = (await runtime.agentResourceStore.listByKind('agent_template'))

@@ -385,7 +385,7 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
             quotas: { ...current.quotas, ...(snapshot.limits ?? {}) },
             models: {
               ...current.models,
-              ...(modelScope?.mode === 'selected' ? { allowedModels: modelScope.resourceIds } : {}),
+              ...(modelScope ? { allowedModels: modelScope.mode === 'selected' ? modelScope.resourceIds : [] } : {}),
               allowUserModelSwitch: bool('model.user_switch.allowed', current.models.allowUserModelSwitch),
               showGroupNames: bool('model.group_names.visible', current.models.showGroupNames),
               showContextTokens: bool('session.context_tokens.visible', current.models.showContextTokens ?? true),

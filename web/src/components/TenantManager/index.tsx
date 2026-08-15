@@ -27,6 +27,7 @@ import { useUsers } from "@/components/UserManager/hooks";
 import type { UserInfo } from "@/components/UserManager/types";
 import { useTenants } from "./hooks";
 import { TenantFormDialog } from "./TenantFormDialog";
+import { governanceAccessApi } from "@agent/shared/lib/governanceApi";
 import {
   DEFAULT_TENANT_ID,
   DEFAULT_TENANT_SETTINGS,
@@ -57,7 +58,52 @@ function cloneTenantSettings(settings: TenantSettings): TenantSettings {
   };
 }
 
-function TenantModelPolicyPanel({
+interface ModelEntitlementScope {
+  resourceType: string;
+  mode: "all" | "selected";
+  resourceIds: string[];
+  version: number;
+}
+
+interface TenantEntitlementsResponse {
+  scopes: ModelEntitlementScope[];
+}
+
+interface ModelScopePreview {
+  previewId: string;
+  baselineDigest: string;
+  expiresAt: string;
+  impact: {
+    nextVersion: number;
+    blockers: string[];
+  };
+}
+
+export async function saveTenantModelScope(
+  tenantId: string,
+  scopeVersion: number,
+  allowedModels: string[],
+): Promise<number> {
+  const resourceIds = [...new Set(allowedModels)].sort();
+  const command = {
+    expectedVersion: scopeVersion,
+    mode: resourceIds.length > 0 ? "selected" : "all",
+    resourceIds,
+  };
+  const preview = await governanceAccessApi.previewEntitlementScope<ModelScopePreview>("model", command, tenantId);
+  if (preview.impact.blockers.length > 0) {
+    throw new Error(`模型范围变更被阻断：${preview.impact.blockers.join("、")}`);
+  }
+  await governanceAccessApi.updateEntitlementScope("model", {
+    ...command,
+    previewId: preview.previewId,
+    baselineDigest: preview.baselineDigest,
+    expiresAt: preview.expiresAt,
+  }, tenantId);
+  return preview.impact.nextVersion;
+}
+
+export function TenantModelPolicyPanel({
   tenant,
   onActionsChange,
 }: {
@@ -69,6 +115,7 @@ function TenantModelPolicyPanel({
     || !canPlatform("customer_config.manage");
   const [settings, setSettings] = useState<TenantSettings>(() => cloneTenantSettings(tenant.settings ?? DEFAULT_TENANT_SETTINGS));
   const [modelList, setModelList] = useState<ModelList | null>(null);
+  const [modelScopeVersion, setModelScopeVersion] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,18 +123,25 @@ function TenantModelPolicyPanel({
 
   const load = useCallback(async () => {
     setLoading(true);
+    setModelScopeVersion(null);
     try {
-      const [settingsRes, modelsRes] = await Promise.all([
+      const [settingsRes, entitlements, modelsRes] = await Promise.all([
         authFetch(`/api/tenants/${tenant.id}/settings`),
+        governanceAccessApi.getEntitlements<TenantEntitlementsResponse>(tenant.id),
         authFetch("/api/admin/models"),
       ]);
       const settingsData = await settingsRes.json().catch(() => ({}));
       if (!settingsRes.ok) throw new Error((settingsData as { error?: string }).error || "加载组织模型策略失败");
+      const modelScope = entitlements.scopes.find(scope => scope.resourceType === "model");
+      if (!modelScope) throw new Error("组织模型治理范围不存在");
       const modelData = await modelsRes.json().catch(() => ({}));
       const nextModels = modelsRes.ok
         ? ((modelData as { publicModelList?: ModelList }).publicModelList ?? null)
         : null;
-      setSettings(cloneTenantSettings((settingsData as { settings: TenantSettings }).settings));
+      const nextSettings = cloneTenantSettings((settingsData as { settings: TenantSettings }).settings);
+      nextSettings.models.allowedModels = modelScope.mode === "selected" ? [...modelScope.resourceIds] : [];
+      setSettings(nextSettings);
+      setModelScopeVersion(modelScope.version);
       setModelList(nextModels);
       setError(null);
     } catch (err) {
@@ -110,7 +164,6 @@ function TenantModelPolicyPanel({
 
   const allowedSet = useMemo(() => new Set(settings.models.allowedModels), [settings.models.allowedModels]);
   const customMode = settings.models.allowedModels.length > 0;
-  const visibleModelOptions = customMode ? modelOptions.filter(model => allowedSet.has(model.ref)) : modelOptions;
 
   const patch = useCallback((recipe: (draft: TenantSettings) => void) => {
     setSettings((prev) => {
@@ -126,38 +179,15 @@ function TenantModelPolicyPanel({
       draft.models.allowedModels = checked
         ? Array.from(new Set([...draft.models.allowedModels, modelRef]))
         : draft.models.allowedModels.filter(ref => ref !== modelRef);
-      if (draft.models.defaultModel === modelRef && !checked) draft.models.defaultModel = undefined;
-    });
-  }, [patch]);
-
-  const updateOverride = useCallback((modelRef: string, patchValue: Partial<NonNullable<TenantSettings["models"]["displayOverrides"]>[string]>) => {
-    patch(draft => {
-      const current = draft.models.displayOverrides ?? {};
-      const next = { ...(current[modelRef] ?? {}), ...patchValue };
-      for (const key of Object.keys(next) as Array<keyof typeof next>) {
-        if (next[key] === "" || next[key] === undefined) delete next[key];
-      }
-      draft.models.displayOverrides = { ...current };
-      if (Object.keys(next).length > 0) draft.models.displayOverrides[modelRef] = next;
-      else delete draft.models.displayOverrides[modelRef];
     });
   }, [patch]);
 
   const save = useCallback(async () => {
     setSaving(true);
     try {
-      const payload = cloneTenantSettings(settings);
-      if (payload.models.allowedModels.length > 0 && payload.models.defaultModel && !payload.models.allowedModels.includes(payload.models.defaultModel)) {
-        throw new Error("默认模型必须在组织可用模型范围内");
-      }
-      const res = await authFetch(`/api/tenants/${tenant.id}/settings`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings: payload }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data as { error?: string }).error || "保存组织模型策略失败");
-      setSettings(cloneTenantSettings((data as { settings: TenantSettings }).settings));
+      if (modelScopeVersion === null) throw new Error("组织模型治理范围尚未加载，请刷新后重试");
+      const nextVersion = await saveTenantModelScope(tenant.id, modelScopeVersion, settings.models.allowedModels);
+      setModelScopeVersion(nextVersion);
       await refreshAll();
       setSaved(true);
       setError(null);
@@ -166,17 +196,17 @@ function TenantModelPolicyPanel({
     } finally {
       setSaving(false);
     }
-  }, [settings, tenant.id]);
+  }, [modelScopeVersion, settings, tenant.id]);
 
   const actions = useMemo(() => (
     <>
       {saved && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存</Badge>}
-      <Button size="sm" onClick={() => { void save(); }} disabled={customerConfigReadOnly || loading || saving}>
+      <Button size="sm" onClick={() => { void save(); }} disabled={customerConfigReadOnly || modelScopeVersion === null || loading || saving}>
         {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-        保存策略
+        保存可用模型
       </Button>
     </>
-  ), [customerConfigReadOnly, loading, save, saved, saving]);
+  ), [customerConfigReadOnly, loading, modelScopeVersion, save, saved, saving]);
 
   useEffect(() => {
     onActionsChange?.(actions);
@@ -187,7 +217,7 @@ function TenantModelPolicyPanel({
     <div className="space-y-4">
       <div>
         <h3 className="text-base font-semibold">模型策略</h3>
-        <p className="text-sm text-muted-foreground">配置 {tenant.name} 可用的模型、组织内显示名与默认模型。</p>
+        <p className="text-sm text-muted-foreground">配置 {tenant.name} 的可用模型范围；其余模型策略暂按权威投影只读展示。</p>
       </div>
       {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
 
@@ -211,36 +241,32 @@ function TenantModelPolicyPanel({
           <div className="space-y-1.5">
             <Label>默认模型</Label>
             <select
-              className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+              className="h-9 w-full rounded-md border bg-background px-3 text-sm opacity-70"
               value={settings.models.defaultModel ?? ""}
-              onChange={(event) => patch(draft => { draft.models.defaultModel = event.target.value || undefined; })}
+              disabled
             >
               <option value="">继承平台默认</option>
-              {visibleModelOptions.map(model => <option key={model.ref} value={model.ref}>{model.label}</option>)}
+              {modelOptions.map(model => <option key={model.ref} value={model.ref}>{model.label}</option>)}
             </select>
           </div>
-          <label className="flex items-start gap-2 text-sm md:col-span-2">
-            <input type="checkbox" className="mt-0.5" checked={settings.models.allowUserModelSwitch} onChange={(event) => patch(draft => { draft.models.allowUserModelSwitch = event.target.checked; })} />
+          <label className="flex items-start gap-2 text-sm opacity-70 md:col-span-2">
+            <input type="checkbox" className="mt-0.5" checked={settings.models.allowUserModelSwitch} disabled />
             <span>允许组织用户切换模型<span className="block text-xs text-muted-foreground">关闭后，用户只能使用组织默认模型。</span></span>
           </label>
-          <label className="flex items-center gap-2 text-sm md:col-span-2">
-            <input type="checkbox" checked={!!settings.models.showGroupNames} onChange={(event) => patch(draft => { draft.models.showGroupNames = event.target.checked; })} />
+          <label className="flex items-center gap-2 text-sm opacity-70 md:col-span-2">
+            <input type="checkbox" checked={!!settings.models.showGroupNames} disabled />
             <span>显示分组名</span>
           </label>
-          <label className="flex items-start gap-2 text-sm md:col-span-2">
-            <input type="checkbox" className="mt-0.5" checked={settings.models.showContextTokens !== false} onChange={(event) => patch(draft => {
-              draft.models.showContextTokens = event.target.checked;
-              if (!event.target.checked) draft.models.allowContextTokenDetails = false;
-            })} />
+          <label className="flex items-start gap-2 text-sm opacity-70 md:col-span-2">
+            <input type="checkbox" className="mt-0.5" checked={settings.models.showContextTokens !== false} disabled />
             <span>显示上下文 Token 统计<span className="block text-xs text-muted-foreground">关闭后，组织成员在会话顶部完全看不到上下文/Token 数字。</span></span>
           </label>
-          <label className={`flex items-start gap-2 text-sm md:col-span-2 ${settings.models.showContextTokens === false ? "cursor-not-allowed opacity-50" : ""}`}>
+          <label className="flex items-start gap-2 text-sm opacity-70 md:col-span-2">
             <input
               type="checkbox"
               className="mt-0.5"
               checked={settings.models.showContextTokens !== false && settings.models.allowContextTokenDetails === true}
-              disabled={settings.models.showContextTokens === false}
-              onChange={(event) => patch(draft => { draft.models.allowContextTokenDetails = event.target.checked; })}
+              disabled
             />
             <span>允许展开上下文 Token 明细<span className="block text-xs text-muted-foreground">开启后，组织成员可点击顶部统计查看输入、输出、缓存和子 Agent 消耗。</span></span>
           </label>
@@ -248,7 +274,7 @@ function TenantModelPolicyPanel({
       </Card>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">可用模型与组织内展示</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">可用模型与组织内展示（展示设置只读）</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           {!modelList ? (
             <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">模型列表加载中或暂无可选模型。</div>
@@ -271,14 +297,14 @@ function TenantModelPolicyPanel({
                       </label>
                       <div className="space-y-1.5">
                         <Label>组织内显示名</Label>
-                        <Input value={override.displayName ?? ""} onChange={(event) => updateOverride(ref, { displayName: event.target.value })} placeholder={model.name} />
+                        <Input value={override.displayName ?? ""} placeholder={model.name} disabled />
                       </div>
                       <div className="space-y-1.5">
                         <Label>说明</Label>
-                        <Input value={override.description ?? ""} onChange={(event) => updateOverride(ref, { description: event.target.value })} placeholder="面向组织用户展示的说明" />
+                        <Input value={override.description ?? ""} placeholder="面向组织用户展示的说明" disabled />
                       </div>
                       <label className="flex items-center gap-2 text-sm md:col-span-2">
-                        <input type="checkbox" checked={!!override.recommended} onChange={(event) => updateOverride(ref, { recommended: event.target.checked || undefined })} />
+                        <input type="checkbox" checked={!!override.recommended} disabled />
                         标记为推荐模型
                       </label>
                     </div>

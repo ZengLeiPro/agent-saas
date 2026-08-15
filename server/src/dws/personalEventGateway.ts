@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
@@ -166,12 +166,15 @@ export class DwsPersonalEventGateway {
       const mountSubPath = deriveWorkspaceMountSubPath(this.options.agentCwd, root);
       if (!mountSubPath) throw new Error('无法解析 Agent DWS connector workspace 挂载路径');
       const workspaceId = deriveDwsPrincipalWorkspaceId(principal);
-      const invocationId = `agent-dws-events-${randomUUID()}`;
+      const invocationId = `agent-dws-events-${account.accountId}`;
       const command = eventCommand(account);
       let stdoutBuffer = '';
       const seen = new Set<string>();
       let finalError: string | undefined;
 
+      // 上一次 stream 若异常断开，先按稳定 invocationId 精确收口旧执行。
+      // PG lease 保证此时没有另一位合法 owner；ACS 侧的同 ID 门禁再挡竞态。
+      await transport.cancelInvocation(invocationId);
       for await (const chunk of transport.invokeStream({
         toolName: 'Shell',
         input: { command, timeoutMs: EVENT_STREAM_TIMEOUT_MS },
@@ -248,7 +251,9 @@ function eventCommand(account: AgentDwsAccountRecord): string {
   ));
   const uniqueKeys = [...new Set(keys)];
   if (uniqueKeys.length === 0) throw new Error('Agent DWS 账号未配置事件类型');
-  return `dws event consume ${uniqueKeys.join(' ')} --flatten -f ndjson --profile ${shellQuote(account.profileId!)}`;
+  const lockKey = createHash('sha256').update(account.accountId).digest('hex').slice(0, 24);
+  return `flock --no-fork --nonblock --conflict-exit-code 75 /tmp/agent-dws-events-${lockKey}.lock `
+    + `dws event consume ${uniqueKeys.join(' ')} --flatten -f ndjson --profile ${shellQuote(account.profileId!)}`;
 }
 
 export function parseEventLine(line: string): DwsPersonalEvent | null {

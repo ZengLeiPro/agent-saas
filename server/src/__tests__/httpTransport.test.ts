@@ -489,9 +489,65 @@ describe('HttpTransport.invokeStream', () => {
     expect(captured.url).toBe('http://h/execute-stream');
     expect(JSON.parse(captured.init?.body as string).context.invocationId).toBe('run-1:call-1');
     expect(seen).toEqual(chunks);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it('cancels the remote invocation when an established stream terminates unexpectedly', async () => {
+    const urls: string[] = [];
+    const encoder = new TextEncoder();
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      urls.push(String(url));
+      if (String(url).endsWith('/execute-stream')) {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'progress', message: 'accepted' })}\n\n`));
+            controller.error(new Error('terminated'));
+          },
+        }), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+      }
+      return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const transport = new HttpTransport({ baseUrl: 'http://h', authToken: 'secret-token-12345', fetchImpl });
 
+    const seen = [];
+    for await (const chunk of transport.invokeStream(buildRequest({
+      toolName: 'Shell',
+      context: { workspace: SAMPLE_WORKSPACE, invocationId: 'run-1:call-terminated' },
+    }))) seen.push(chunk);
+
+    expect(urls).toContain('http://h/invocations/run-1%3Acall-terminated');
+    expect(seen.at(-1)).toMatchObject({
+      type: 'completed',
+      response: { status: 'error', error: expect.stringContaining('terminated') },
+    });
+  });
+
+  it('cancels the remote invocation when SSE ends without a completed chunk', async () => {
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      urls.push(String(url));
+      if (String(url).endsWith('/execute-stream')) {
+        return new Response(`data: ${JSON.stringify({ type: 'progress', message: 'accepted' })}\n\n`, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      }
+      return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const transport = new HttpTransport({ baseUrl: 'http://h', authToken: 'secret-token-12345', fetchImpl });
+
+    const seen = [];
+    for await (const chunk of transport.invokeStream(buildRequest({
+      toolName: 'Shell',
+      context: { workspace: SAMPLE_WORKSPACE, invocationId: 'run-1:call-eof' },
+    }))) seen.push(chunk);
+
+    expect(urls).toContain('http://h/invocations/run-1%3Acall-eof');
+    expect(seen.at(-1)).toMatchObject({
+      type: 'completed',
+      response: { status: 'error', error: 'hand-server stream ended without completed chunk' },
+    });
+  });
 
   it('parses a final SSE frame without a trailing blank line', async () => {
     const fetchImpl = vi.fn(async () => new Response(

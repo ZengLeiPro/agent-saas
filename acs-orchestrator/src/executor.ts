@@ -40,7 +40,7 @@ export class AcsExecutor {
 
   async *executeStream(
     request: WireToolInvocationRequest,
-    options: { stream: boolean },
+    options: { stream: boolean; signal?: AbortSignal },
   ): AsyncIterable<ToolInvocationStreamChunk> {
     const workspace = request.context.workspace;
     const ref = this.sandboxManager.ref({
@@ -51,8 +51,19 @@ export class AcsExecutor {
     });
     const invocationId = request.context.invocationId;
     const invocationKey = invocationId ?? `internal-${Date.now()}-${++this.invocationSeq}`;
-    const releaseActive = this.activeRegistry?.acquire(ref.name, invocationKey);
+    if (this.invocations.has(invocationKey)) {
+      yield {
+        type: 'completed',
+        response: { status: 'error', error: `ACS invocation already running: ${invocationKey}` },
+      };
+      return;
+    }
     const controller = new AbortController();
+    const onExternalAbort = () => controller.abort();
+    options.signal?.addEventListener('abort', onExternalAbort, { once: true });
+    if (options.signal?.aborted) controller.abort();
+    this.invocations.set(invocationKey, { controller, sandboxName: ref.name });
+    const releaseActive = this.activeRegistry?.acquire(ref.name, invocationKey);
     try {
       await this.sandboxManager.ensureRunning({
         workspaceId: workspace.id!,
@@ -63,7 +74,7 @@ export class AcsExecutor {
         busySandboxNames: this.busySandboxNames(),
         activeKey: invocationKey,
       });
-      this.invocations.set(invocationKey, { controller, sandboxName: ref.name });
+      if (controller.signal.aborted) return;
       // 07-05：把 wire.context.env（parseWireRequest 已 allowlist 过滤过）透传给
       // pod 内 sandboxRunner，让其合并进 spawn 子进程的 env，pod 里 Shell 才能
       // 拿到 AZEROTH_TOKEN 等凭据。env 为空则不写字段（wire 更紧凑，与协议一致）。
@@ -113,6 +124,7 @@ export class AcsExecutor {
         };
       }
     } finally {
+      options.signal?.removeEventListener('abort', onExternalAbort);
       this.invocations.delete(invocationKey);
       releaseActive?.();
     }

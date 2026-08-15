@@ -1,4 +1,4 @@
-import type { OrgAgentRuntimePolicy } from '@agent/shared';
+import type { OrgAgentAudience, OrgAgentRecord, OrgAgentRuntimePolicy } from '@agent/shared';
 
 export type {
   OrgAgentAudience,
@@ -9,6 +9,103 @@ export type {
   OrgAgentRecord,
   OrgAgentSummary,
 } from '@agent/shared';
+
+/** 管理页只消费通过运行时校验、audience 非空的记录。 */
+export type OrgAgentAdminRecord = Omit<OrgAgentRecord, 'audience'> & {
+  audience: OrgAgentAudience;
+};
+
+type UnknownRecord = Record<string, unknown>;
+
+function isObject(value: unknown): value is UnknownRecord {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+
+function isBoundedStringArray(value: unknown, itemMaxLength: number, maxItems?: number): value is string[] {
+  return Array.isArray(value)
+    && (maxItems === undefined || value.length <= maxItems)
+    && value.every(item => typeof item === 'string' && item.length >= 1 && item.length <= itemMaxLength);
+}
+
+function isAudience(value: unknown): value is OrgAgentAudience {
+  if (!isObject(value)) return false;
+  return (value.exposure === 'all' || value.exposure === 'allow_users' || value.exposure === 'deny_users')
+    && isBoundedStringArray(value.usernames, 100)
+    && (value.departmentIds === undefined || isBoundedStringArray(value.departmentIds, 64, 50))
+    && (value.roles === undefined || isBoundedStringArray(value.roles, 64, 30));
+}
+
+function isGuardrail(value: unknown): boolean {
+  if (!isObject(value)) return false;
+  return typeof value.enabled === 'boolean'
+    && typeof value.scopeDescription === 'string'
+    && typeof value.rejectionMessage === 'string'
+    && (value.strictness === 'strict' || value.strictness === 'lenient')
+    && (value.mode === undefined || value.mode === 'off' || value.mode === 'shadow' || value.mode === 'enforce');
+}
+
+function isOrgAgentRecord(value: unknown): value is OrgAgentAdminRecord {
+  if (!isObject(value)) return false;
+  return typeof value.id === 'string'
+    && typeof value.tenantId === 'string'
+    && typeof value.name === 'string'
+    && (value.avatar === undefined || typeof value.avatar === 'string')
+    && (value.avatarVersion === undefined || typeof value.avatarVersion === 'number')
+    && typeof value.description === 'string'
+    && isStringArray(value.starterPrompts)
+    && typeof value.instructions === 'string'
+    && isStringArray(value.allowedSkills)
+    && (value.allowedKnowledge === undefined || isStringArray(value.allowedKnowledge))
+    && (value.runtime === undefined || isObject(value.runtime))
+    && isAudience(value.audience)
+    && isGuardrail(value.guardrail)
+    && typeof value.enabled === 'boolean'
+    && typeof value.createdAt === 'string'
+    && typeof value.createdBy === 'string'
+    && typeof value.updatedAt === 'string'
+    && typeof value.updatedBy === 'string';
+}
+
+export interface OrgAgentDataIssue {
+  key: string;
+  resourceId?: string;
+  message: string;
+}
+
+/**
+ * 管理列表的数据合同边界。单条脏数据被隔离而不是拖垮整页；尤其 audience 无效时，
+ * 绝不推断 exposure，也不让该资源进入启用、编辑或可见范围判断。
+ */
+export function parseOrgAgentAdminList(input: unknown): {
+  agents: OrgAgentAdminRecord[];
+  issues: OrgAgentDataIssue[];
+} {
+  if (!Array.isArray(input)) throw new Error('企业专家接口返回格式无效，请重试');
+  const agents: OrgAgentAdminRecord[] = [];
+  const issues: OrgAgentDataIssue[] = [];
+
+  input.forEach((item, index) => {
+    if (isOrgAgentRecord(item)) {
+      agents.push(item);
+      return;
+    }
+    const resourceId = isObject(item) && typeof item.id === 'string' ? item.id : undefined;
+    const audienceInvalid = !isObject(item) || !isAudience(item.audience);
+    issues.push({
+      key: resourceId ?? `index-${index}`,
+      ...(resourceId ? { resourceId } : {}),
+      message: audienceInvalid
+        ? '可见范围配置缺失或格式错误，已按安全策略隐藏'
+        : '资源字段缺失或格式错误，已安全隔离',
+    });
+  });
+
+  return { agents, issues };
+}
 
 /**
  * 门禁 UI 三档：
@@ -38,7 +135,7 @@ export interface OrgAgentFormValues {
   allowedSkills: string[];
   /** 每行一个知识资源 id；MVP 期间按 tenant-owned Skill id 注入。 */
   allowedKnowledgeText: string;
-  audienceExposure: 'all' | 'allow_users';
+  audienceExposure: OrgAgentAudience['exposure'];
   audienceUserIds: string[];
   audienceGroupIds: string[];
   runtime: OrgAgentRuntimePolicy;

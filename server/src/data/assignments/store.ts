@@ -332,16 +332,26 @@ export class PgAssignmentStore {
           });
           continue;
         }
-        const desired = await legacyAudienceAssignments(
-          agent.tenantId,
-          'org_agent',
-          agent.id,
-          agent.audience.exposure,
-          agent.audience.usernames,
-          usersByTenant.get(agent.tenantId) ?? [],
-          recordIssue,
-        );
-        if ((agent.audience.departmentIds?.length ?? 0) > 0 || (agent.audience.roles?.length ?? 0) > 0) {
+        const desired = agent.audience
+          ? await legacyAudienceAssignments(
+              agent.tenantId,
+              'org_agent',
+              agent.id,
+              agent.audience.exposure,
+              agent.audience.usernames,
+              usersByTenant.get(agent.tenantId) ?? [],
+              recordIssue,
+            )
+          : [];
+        if (!agent.audience) {
+          await recordIssue({
+            issueType: 'legacy_org_agent_audience_invalid',
+            tenantId: agent.tenantId,
+            resourceType: 'org_agent',
+            resourceId: agent.id,
+            detail: { failClosed: true },
+          });
+        } else if ((agent.audience.departmentIds?.length ?? 0) > 0 || (agent.audience.roles?.length ?? 0) > 0) {
           await recordIssue({
             issueType: 'legacy_directory_assignment_semantics_pending',
             tenantId: agent.tenantId,

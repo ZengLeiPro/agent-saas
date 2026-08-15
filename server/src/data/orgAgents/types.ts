@@ -121,7 +121,11 @@ export interface OrgAgentRecord {
    * pre-policy fixtures/files; OrgAgentStore always normalizes it on read/write.
    */
   runtime?: OrgAgentRuntimePolicy;
-  audience: OrgAgentAudience;
+  /**
+   * null 表示旧数据或兼容数据中的 audience 合同无效。无效配置必须原样暴露给管理端诊断，
+   * 运行时按未指派处理（fail-closed），不得猜测为 all。
+   */
+  audience: OrgAgentAudience | null;
   guardrail: OrgAgentGuardrailConfig;
   enabled: boolean;
   createdAt: string;

@@ -65,7 +65,7 @@ import { clearSessionsListCache } from '../../routes/sessions.js';
 import { extractTitleContext, generateTitleWithFallback, type TitleGeneratorConfig } from '../../agent/titleGenerator.js';
 import { checkTopicScope, extractRecentUserMessages, type GuardrailModelConfig } from '../../agent/guardrail.js';
 import { isCompactCommand } from '../../agent/prompt.js';
-import { isAssignedToOrgAgent, type OrgAgentStore } from '../../data/orgAgents/store.js';
+import { isAssignedToOrgAgent, parseOrgAgentAudience, type OrgAgentStore } from '../../data/orgAgents/store.js';
 import type { OrgAgentGuardrailMode, OrgAgentRecord } from '../../data/orgAgents/types.js';
 import { normalizeGuardrailConfig } from '../../data/orgAgents/types.js';
 import type { GuardrailEventStore, GuardrailEventVerdict } from '../../data/guardrail/pgGuardrailEventStore.js';
@@ -440,7 +440,7 @@ export class WebChannel implements BaseChannel {
     const tenantMatches = !!record && (expectedTenantId
       ? record.tenantId === expectedTenantId
       : (isPlatformAdminUser(actor) || record.tenantId === actor?.tenantId));
-    const assigned = !!record && (adminExempt || isAssignedToOrgAgent(record, assignedUsername ?? actor?.username));
+    const assigned = !!record && !!parseOrgAgentAudience(record.audience) && (adminExempt || isAssignedToOrgAgent(record, assignedUsername ?? actor?.username));
     return record && record.enabled && tenantMatches && assigned
       ? null
       : '该企业专家当前不可用，请联系组织管理员';
@@ -2560,7 +2560,7 @@ export class WebChannel implements BaseChannel {
       // 同租户的组织 admin；跨租户组织 admin → assigned=false → org_agent_unavailable（同码防枚举）
       const adminExempt = user?.role === 'admin'
         && (isPlatformAdminUser(user) || record?.tenantId === user.tenantId);
-      const assigned = !!record && (adminExempt || isAssignedToOrgAgent(record, gateIdentity?.username));
+      const assigned = !!record && !!parseOrgAgentAudience(record.audience) && (adminExempt || isAssignedToOrgAgent(record, gateIdentity?.username));
       if (!record || !record.enabled || record.tenantId !== gateIdentity?.tenantId || !assigned) {
         // 跨租户/缺失/停用/未指派一律同码防枚举（决策 8）；读留发禁（决策 1/3）
         this.idempotencySet(user?.sub, clientMsgId, 'failed', '');

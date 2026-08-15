@@ -1,14 +1,16 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   mockAuthFetch,
+  mockUseOrgAgentAdmin,
   mockLoadConfiguration,
   mockSaveConfiguration,
   mockUpdateStatus,
   mockUploadAvatar,
 } = vi.hoisted(() => ({
   mockAuthFetch: vi.fn(),
+  mockUseOrgAgentAdmin: vi.fn(),
   mockLoadConfiguration: vi.fn(),
   mockSaveConfiguration: vi.fn(),
   mockUpdateStatus: vi.fn(),
@@ -42,16 +44,7 @@ vi.mock('@/contexts/AuthContext', () => ({
 }));
 
 vi.mock('./hooks', () => ({
-  useOrgAgentAdmin: () => ({
-    agents: [],
-    loading: false,
-    error: null,
-    refresh: vi.fn(),
-    loadConfiguration: mockLoadConfiguration,
-    saveConfiguration: mockSaveConfiguration,
-    updateStatus: mockUpdateStatus,
-    uploadAvatar: mockUploadAvatar,
-  }),
+  useOrgAgentAdmin: mockUseOrgAgentAdmin,
   useTenantSkillOptions: () => ({ skills: [], loading: false }),
   useTenantKnowledgeOptions: () => ({ knowledge: [], loading: false }),
 }));
@@ -75,11 +68,25 @@ import {
   assembleScopeDescription,
   emptyFormValues,
   parseGateSlots,
+  parseOrgAgentAdminList,
+  type OrgAgentAdminRecord,
 } from './types';
 import { FALLBACK_TEMPLATES } from './templates';
 
 beforeEach(() => {
   mockAuthFetch.mockReset();
+  mockUseOrgAgentAdmin.mockReset();
+  mockUseOrgAgentAdmin.mockReturnValue({
+    agents: [],
+    dataIssues: [],
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+    loadConfiguration: mockLoadConfiguration,
+    saveConfiguration: mockSaveConfiguration,
+    updateStatus: mockUpdateStatus,
+    uploadAvatar: mockUploadAvatar,
+  });
   mockLoadConfiguration.mockReset();
   mockSaveConfiguration.mockReset().mockResolvedValue('org-new');
   mockUpdateStatus.mockReset().mockResolvedValue(undefined);
@@ -90,6 +97,144 @@ beforeEach(() => {
     status: 404,
     json: async () => ({}),
   }));
+});
+
+function adminRecord(overrides: Partial<OrgAgentAdminRecord> = {}): OrgAgentAdminRecord {
+  return {
+    id: 'oa-valid',
+    tenantId: 'kaiyan',
+    name: '报价助手',
+    description: '审核报价',
+    starterPrompts: [],
+    instructions: '仅审核报价',
+    allowedSkills: [],
+    runtime: emptyFormValues().runtime,
+    audience: { exposure: 'all', usernames: [] },
+    guardrail: {
+      mode: 'off',
+      enabled: false,
+      scopeDescription: '',
+      rejectionMessage: '超出范围',
+      strictness: 'strict',
+    },
+    enabled: true,
+    createdAt: '2026-08-14T00:00:00.000Z',
+    createdBy: 'admin',
+    updatedAt: '2026-08-14T00:00:00.000Z',
+    updatedBy: 'admin',
+    ...overrides,
+  };
+}
+
+describe('OrgAgentManager - 数据合同与异步隔离', () => {
+  it('隔离 audience 异常资源并显示安全错误状态', () => {
+    mockUseOrgAgentAdmin.mockReturnValue({
+      agents: [],
+      dataIssues: [{ key: 'oa-bad', resourceId: 'oa-bad', message: '可见范围配置缺失或格式错误' }],
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+      loadConfiguration: mockLoadConfiguration,
+      saveConfiguration: mockSaveConfiguration,
+      updateStatus: mockUpdateStatus,
+      uploadAvatar: mockUploadAvatar,
+    });
+    render(<OrgAgentManager tenantId="kaiyan" />);
+    expect(screen.getByText('1 条资源数据不完整，已安全隐藏')).toBeTruthy();
+    expect(screen.getByText(/现有资源的数据不完整/)).toBeTruthy();
+    expect(screen.queryByText(/还没有企业专家/)).toBeNull();
+  });
+
+  it('组织切换后旧提交完成不会关闭或污染新组织弹窗', async () => {
+    let resolveSave!: () => void;
+    mockSaveConfiguration.mockImplementationOnce(() => new Promise<string>(resolve => {
+      resolveSave = () => resolve('oa-old');
+    }));
+    const view = render(<OrgAgentManager tenantId="tenant-a" />);
+    fireEvent.click(screen.getByRole('button', { name: /创建企业专家/ }));
+    const firstDialog = await screen.findByRole('dialog');
+    fireEvent.change(within(firstDialog).getByPlaceholderText('如：产品选型助手'), {
+      target: { value: '旧组织专家' },
+    });
+    fireEvent.click(within(firstDialog).getByRole('button', { name: '创建' }));
+    await waitFor(() => expect(mockSaveConfiguration).toHaveBeenCalledTimes(1));
+
+    view.rerender(<OrgAgentManager tenantId="tenant-b" />);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: /创建企业专家/ }));
+    const secondDialog = await screen.findByRole('dialog');
+    const secondName = within(secondDialog).getByPlaceholderText('如：产品选型助手') as HTMLInputElement;
+    fireEvent.change(secondName, { target: { value: '新组织专家' } });
+    await act(async () => { resolveSave(); });
+
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(secondName.value).toBe('新组织专家');
+  });
+
+  it('编辑 deny_users 时以 everyone allow + 显式 deny 保存治理 Assignment', async () => {
+    const agent = adminRecord({ audience: { exposure: 'deny_users', usernames: ['blocked-user'] } });
+    const runtime = emptyFormValues().runtime;
+    mockUseOrgAgentAdmin.mockReturnValue({
+      agents: [agent],
+      dataIssues: [],
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+      loadConfiguration: mockLoadConfiguration,
+      saveConfiguration: mockSaveConfiguration,
+      updateStatus: mockUpdateStatus,
+      uploadAvatar: mockUploadAvatar,
+    });
+    mockLoadConfiguration.mockResolvedValue({
+      resource: {
+        agentId: agent.id,
+        tenantId: agent.tenantId,
+        kind: 'org_agent',
+        ownerUserId: 'admin',
+        status: 'enabled',
+        currentVersionId: 'v1',
+        revision: 1,
+      },
+      version: {
+        versionId: 'v1',
+        definition: {
+          schemaVersion: 1,
+          name: agent.name,
+          description: agent.description,
+          starterPrompts: [],
+          instructions: agent.instructions,
+          skills: [],
+          knowledge: [],
+          runtime,
+          guardrail: agent.guardrail,
+          source: 'governance',
+        },
+      },
+      assignment: {
+        version: 1,
+        assignments: [
+          { assigneeType: 'everyone', effect: 'allow', origin: 'direct' },
+          { assigneeType: 'user', assigneeId: 'user-blocked', effect: 'deny', origin: 'direct' },
+        ],
+      },
+    });
+
+    render(<OrgAgentManager tenantId="kaiyan" />);
+    fireEvent.click(screen.getByTitle('编辑'));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(
+      (within(dialog).getByRole('radio', { name: '排除指定成员或部门' }) as HTMLInputElement).checked,
+    ).toBe(true));
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存全部配置' }));
+
+    await waitFor(() => expect(mockSaveConfiguration).toHaveBeenCalledTimes(1));
+    expect(mockSaveConfiguration).toHaveBeenCalledWith(expect.objectContaining({
+      assignments: [
+        { assigneeType: 'everyone', effect: 'allow', origin: 'direct' },
+        { assigneeType: 'user', assigneeId: 'user-blocked', effect: 'deny', origin: 'direct' },
+      ],
+    }));
+  });
 });
 
 describe('OrgAgentManager - 门禁填空 / 模板卡 / 试测按钮', () => {
@@ -260,6 +405,36 @@ describe('types::assembleScopeDescription / parseGateSlots 往返序列化', () 
     const parsed = parseGateSlots('自由文本，无标记');
     expect(parsed.slots).toBeNull();
     expect(parsed.rawScope).toBe('自由文本，无标记');
+  });
+});
+
+describe('parseOrgAgentAdminList 数据合同', () => {
+  it('接受 main 的 runtime 字段与合法 audience', () => {
+    expect(parseOrgAgentAdminList([adminRecord()])).toMatchObject({
+      agents: [{ id: 'oa-valid', audience: { exposure: 'all', usernames: [] } }],
+      issues: [],
+    });
+  });
+
+  it.each([
+    ['缺失', undefined],
+    ['null', null],
+    ['缺少 exposure', { usernames: [] }],
+    ['缺少 usernames', { exposure: 'allow_users' }],
+    ['非法空用户名', { exposure: 'deny_users', usernames: [''] }],
+    ['非法空部门', { exposure: 'allow_users', usernames: [], departmentIds: [''] }],
+    ['非法空角色', { exposure: 'allow_users', usernames: [], roles: [''] }],
+  ])('audience %s 时隔离资源且不推断 exposure', (_label, audience) => {
+    const result = parseOrgAgentAdminList([{ ...adminRecord(), id: `oa-${_label}`, audience }]);
+    expect(result.agents).toEqual([]);
+    expect(result.issues).toEqual([expect.objectContaining({
+      resourceId: `oa-${_label}`,
+      message: expect.stringContaining('可见范围配置缺失'),
+    })]);
+  });
+
+  it('列表顶层合同错误时作为接口失败处理', () => {
+    expect(() => parseOrgAgentAdminList({ items: [] })).toThrow('企业专家接口返回格式无效');
   });
 });
 

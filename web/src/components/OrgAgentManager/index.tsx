@@ -17,8 +17,8 @@ import {
 } from './hooks';
 import {
   assembleScopeDescription,
+  type OrgAgentAdminRecord,
   type OrgAgentFormValues,
-  type OrgAgentRecord,
 } from './types';
 import { fetchOrgAgentTemplates, FALLBACK_TEMPLATES, type OrgAgentTemplate } from './templates';
 import { useAuth } from '@/contexts/AuthContext';
@@ -63,26 +63,28 @@ function formValuesToGovernance(values: OrgAgentFormValues): {
     },
     source: 'governance',
   };
-  const assignments: GovernanceAssignmentDraft[] = values.audienceExposure === 'all'
-    ? [{ assigneeType: 'everyone', effect: 'allow', origin: 'direct' }]
-    : [
-        ...values.audienceUserIds.map(assigneeId => ({
-          assigneeType: 'user' as const,
-          assigneeId,
-          effect: 'allow' as const,
-          origin: 'direct' as const,
-        })),
-        ...values.audienceGroupIds.map(assigneeId => ({
-          assigneeType: 'directory_group' as const,
-          assigneeId,
-          effect: 'allow' as const,
-          origin: 'direct' as const,
-        })),
-      ];
+  const selectedEffect: GovernanceAssignmentDraft['effect'] = values.audienceExposure === 'deny_users' ? 'deny' : 'allow';
+  const assignments: GovernanceAssignmentDraft[] = [
+    ...(values.audienceExposure === 'all' || values.audienceExposure === 'deny_users'
+      ? [{ assigneeType: 'everyone' as const, effect: 'allow' as const, origin: 'direct' as const }]
+      : []),
+    ...(values.audienceExposure === 'all' ? [] : values.audienceUserIds.map(assigneeId => ({
+      assigneeType: 'user' as const,
+      assigneeId,
+      effect: selectedEffect,
+      origin: 'direct' as const,
+    }))),
+    ...(values.audienceExposure === 'all' ? [] : values.audienceGroupIds.map(assigneeId => ({
+      assigneeType: 'directory_group' as const,
+      assigneeId,
+      effect: selectedEffect,
+      origin: 'direct' as const,
+    }))),
+  ];
   return { definition, enabled: values.enabled, assignments };
 }
 
-function audienceText(agent: OrgAgentRecord): string {
+function audienceText(agent: OrgAgentAdminRecord): string {
   if (agent.audience.exposure === 'all') return '全员';
   if (agent.audience.exposure === 'allow_users') return `${agent.audience.usernames.length} 人`;
   return `排除 ${agent.audience.usernames.length} 人`;
@@ -100,6 +102,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
   const canEdit = !isPlatformAdmin;
   const {
     agents,
+    dataIssues = [],
     loading,
     error,
     refresh,
@@ -109,7 +112,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
     uploadAvatar,
   } = useOrgAgentAdmin(tenantId);
   const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<OrgAgentRecord | null>(null);
+  const [editing, setEditing] = useState<OrgAgentAdminRecord | null>(null);
   const [configuration, setConfiguration] = useState<OrgAgentConfiguration | null>(null);
   const [configurationLoading, setConfigurationLoading] = useState(false);
   const detailRequestRef = useRef(0);
@@ -117,6 +120,18 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
   const [actionError, setActionError] = useState<string | null>(null);
   const [templates, setTemplates] = useState<OrgAgentTemplate[]>(FALLBACK_TEMPLATES);
   const [templatesCollapsed, setTemplatesCollapsed] = useState(false);
+  const tenantIdRef = useRef(tenantId);
+  tenantIdRef.current = tenantId;
+
+  useEffect(() => {
+    detailRequestRef.current += 1;
+    setFormOpen(false);
+    setEditing(null);
+    setConfiguration(null);
+    setConfigurationLoading(false);
+    setInitialValues(null);
+    setActionError(null);
+  }, [tenantId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,12 +149,15 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
     });
   };
 
-  const handleToggleEnabled = async (agent: OrgAgentRecord, enabled: boolean) => {
+  const handleToggleEnabled = async (agent: OrgAgentAdminRecord, enabled: boolean) => {
+    const actionTenantId = tenantId;
     setActionError(null);
     try {
       await updateStatus(agent.id, enabled);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      if (actionTenantId === tenantIdRef.current) {
+        setActionError(err instanceof Error ? err.message : String(err));
+      }
     }
   };
 
@@ -168,7 +186,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
     setFormOpen(true);
   };
 
-  const openEditForm = (agent: OrgAgentRecord) => {
+  const openEditForm = (agent: OrgAgentAdminRecord) => {
     const requestId = ++detailRequestRef.current;
     setActionError(null);
     setEditing(agent);
@@ -210,7 +228,27 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
       />
 
       <div className="min-h-0 flex-1 space-y-4 overflow-auto">
-        {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
+        {error && (
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <span>{error}</span>
+            <Button type="button" size="sm" variant="outline" onClick={() => { void refresh(); }} disabled={loading}>
+              重试
+            </Button>
+          </div>
+        )}
+        {dataIssues.length > 0 && (
+          <div role="status" className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
+            <div className="font-medium">{dataIssues.length} 条资源数据不完整，已安全隐藏</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              异常资源不会参与可见范围、启用或编辑判断；修复数据后可点击刷新恢复。
+            </div>
+            <ul className="mt-1 list-disc pl-5 text-xs text-muted-foreground">
+              {dataIssues.map((issue) => (
+                <li key={issue.key}>{issue.resourceId ? `${issue.resourceId}：` : ''}{issue.message}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         {actionError && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{actionError}</div>}
 
         {/* ---------------- 3 张种子模板卡 ---------------- */}
@@ -253,6 +291,16 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
             {loading && agents.length === 0 ? (
               <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
                 <Loader2 className="mr-2 size-4 animate-spin" />加载企业专家...
+              </div>
+            ) : error && agents.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-10 text-sm text-muted-foreground">
+                <Bot className="size-6" />
+                <span>企业专家加载失败，请使用上方“重试”恢复。</span>
+              </div>
+            ) : dataIssues.length > 0 && agents.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-10 text-sm text-muted-foreground">
+                <Bot className="size-6" />
+                <span>现有资源的数据不完整，暂时无法安全展示。修复数据后请刷新。</span>
               </div>
             ) : agents.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-10 text-sm text-muted-foreground">

@@ -29,6 +29,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useUsers } from '@/components/UserManager/hooks';
 import { useTenantKnowledgeOptions, useTenantSkillOptions, type OrgAgentConfiguration } from './hooks';
+import { OrgAgentAudienceSection } from './OrgAgentAudienceSection';
 import { OrgAgentDwsSection } from './OrgAgentDwsSection';
 import { OrgAgentRuntimeSection } from './OrgAgentRuntimeSection';
 import {
@@ -36,9 +37,9 @@ import {
   defaultOrgAgentRuntimePolicy,
   emptyFormValues,
   parseGateSlots,
+  type OrgAgentAdminRecord,
   type OrgAgentFormValues,
   type OrgAgentGuardrailMode,
-  type OrgAgentRecord,
 } from './types';
 
 /** 门禁三档语义说明（radio label 旁的副标题） */
@@ -78,7 +79,7 @@ export function OrgAgentFormDialog({
   open: boolean;
   tenantId?: string;
   /** 编辑目标；null = 创建 */
-  editing: OrgAgentRecord | null;
+  editing: OrgAgentAdminRecord | null;
   /** 治理真源配置；编辑时必须加载后再允许保存。 */
   configuration?: OrgAgentConfiguration | null;
   configurationLoading?: boolean;
@@ -104,6 +105,7 @@ export function OrgAgentFormDialog({
   const [directoryGroupsError, setDirectoryGroupsError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const formInitializationKeyRef = useRef('');
+  const submitGenerationRef = useRef(0);
 
   /** 选预设 = 拉取静态图转 File 走上传链路（复用图片头像存储，零额外后端逻辑） */
   const applyPreset = async (key: string) => {
@@ -139,6 +141,11 @@ export function OrgAgentFormDialog({
   );
 
   useEffect(() => {
+    submitGenerationRef.current += 1;
+    setSaving(false);
+  }, [open, tenantId, editing?.id, initialValues]);
+
+  useEffect(() => {
     if (!open || !tenantId) {
       setDirectoryGroups([]);
       setDirectoryGroupsError('');
@@ -171,8 +178,8 @@ export function OrgAgentFormDialog({
     }
     if (editing && configurationLoading) return;
     const initializationKey = editing
-      ? `${editing.id}:${configuration?.resource.revision ?? 'legacy'}`
-      : initialValues ? `template:${initialValues.name}` : 'blank';
+      ? `${tenantId ?? ''}:${editing.id}:${configuration?.resource.revision ?? 'legacy'}`
+      : initialValues ? `${tenantId ?? ''}:template:${initialValues.name}` : `${tenantId ?? ''}:blank`;
     if (formInitializationKeyRef.current === initializationKey) return;
     formInitializationKeyRef.current = initializationKey;
     setError(null);
@@ -193,12 +200,22 @@ export function OrgAgentFormDialog({
         ?? (guardrail.enabled ? 'enforce' : 'off');
       const assignments = configuration?.assignment.assignments ?? [];
       const hasEveryone = assignments.some(item => item.assigneeType === 'everyone' && item.effect === 'allow');
+      const governedExposure = hasEveryone
+        ? assignments.some(item => item.assigneeType !== 'everyone' && item.effect === 'deny')
+          ? 'deny_users'
+          : 'all'
+        : 'allow_users';
+      const audienceExposure = assignments.length > 0 ? governedExposure : editing.audience.exposure;
+      const selectedEffect = audienceExposure === 'deny_users' ? 'deny' : 'allow';
       const assignedUserIds = assignments
-        .filter(item => item.assigneeType === 'user' && item.effect === 'allow' && item.assigneeId)
+        .filter(item => item.assigneeType === 'user' && item.effect === selectedEffect && item.assigneeId)
         .map(item => item.assigneeId!);
       const fallbackUserIds = tenantUsers
         .filter(user => editing.audience.usernames.includes(user.username))
         .map(user => user.id);
+      const assignedGroupIds = assignments
+        .filter(item => item.assigneeType === 'directory_group' && item.effect === selectedEffect && item.assigneeId)
+        .map(item => item.assigneeId!);
       setValues({
         name: definition?.name ?? editing.name,
         avatar: isImageAvatar ? '' : avatarStoredPath,
@@ -211,11 +228,11 @@ export function OrgAgentFormDialog({
         instructions: definition?.instructions ?? editing.instructions,
         allowedSkills: definition?.skills.map(skill => skill.id) ?? [...editing.allowedSkills],
         allowedKnowledgeText: (definition?.knowledge ?? editing.allowedKnowledge ?? []).join('\n'),
-        audienceExposure: hasEveryone || editing.audience.exposure === 'all' ? 'all' : 'allow_users',
+        audienceExposure,
         audienceUserIds: assignedUserIds.length > 0 ? assignedUserIds : fallbackUserIds,
-        audienceGroupIds: assignments
-          .filter(item => item.assigneeType === 'directory_group' && item.effect === 'allow' && item.assigneeId)
-          .map(item => item.assigneeId!),
+        audienceGroupIds: assignedGroupIds.length > 0
+          ? assignedGroupIds
+          : [...(editing.audience.departmentIds ?? [])],
         runtime: structuredClone(definition?.runtime ?? editing.runtime ?? defaultOrgAgentRuntimePolicy()),
         guardrailMode: derivedMode,
         guardrailAllowExamples: parsed.slots?.allowExamples ?? [],
@@ -230,7 +247,7 @@ export function OrgAgentFormDialog({
     } else {
       setValues(emptyFormValues());
     }
-  }, [open, editing, configuration, configurationLoading, initialValues, tenantUsers]);
+  }, [open, tenantId, editing, configuration, configurationLoading, initialValues, tenantUsers]);
 
   const patch = (recipe: Partial<OrgAgentFormValues>) => setValues((prev) => ({ ...prev, ...recipe }));
 
@@ -367,7 +384,7 @@ export function OrgAgentFormDialog({
       setError('知识资源最多 20 个，单个 ID 不能超过 200 个字符');
       return;
     }
-    if (values.audienceExposure === 'allow_users'
+    if (values.audienceExposure !== 'all'
       && values.audienceUserIds.length === 0
       && values.audienceGroupIds.length === 0) {
       setError('指定访问范围时，至少选择一个成员或部门');
@@ -377,14 +394,17 @@ export function OrgAgentFormDialog({
       setError('限制执行环境时，至少选择一个执行目标');
       return;
     }
+    const submitGeneration = ++submitGenerationRef.current;
     setSaving(true);
     try {
       await onSubmit(values);
-      onClose();
+      if (submitGeneration === submitGenerationRef.current) onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (submitGeneration === submitGenerationRef.current) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setSaving(false);
+      if (submitGeneration === submitGenerationRef.current) setSaving(false);
     }
   };
 
@@ -627,77 +647,13 @@ export function OrgAgentFormDialog({
             onChange={runtime => patch({ runtime })}
           />
 
-          <div className="space-y-1.5 rounded-xl border p-4">
-            <Label>访问范围</Label>
-            <div className="flex items-center gap-4 text-sm">
-              <label className="flex items-center gap-1.5">
-                <input
-                  type="radio"
-                  checked={values.audienceExposure === 'all'}
-                  onChange={() => patch({ audienceExposure: 'all' })}
-                />
-                全员可用
-              </label>
-              <label className="flex items-center gap-1.5">
-                <input
-                  type="radio"
-                  checked={values.audienceExposure === 'allow_users'}
-                  onChange={() => patch({ audienceExposure: 'allow_users' })}
-                />
-                指定成员或部门
-              </label>
-            </div>
-            {values.audienceExposure === 'allow_users' ? (
-              <div className="space-y-3">
-                <div className="space-y-1.5">
-                  <div className="text-xs font-medium">成员</div>
-                  {tenantUsers.length === 0 ? (
-                    <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">当前组织暂无成员。</div>
-                  ) : (
-                    <div className="grid max-h-40 gap-2 overflow-auto rounded-md border p-3 sm:grid-cols-2">
-                      {tenantUsers.map((user) => (
-                        <label key={user.id} className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={values.audienceUserIds.includes(user.id)}
-                            onChange={(event) => patch({
-                              audienceUserIds: toggleInList(values.audienceUserIds, user.id, event.target.checked),
-                            })}
-                          />
-                          <span className="truncate">{user.realName || user.username}
-                            <span className="ml-1 text-xs text-muted-foreground">{user.username}</span>
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="space-y-1.5">
-                  <div className="text-xs font-medium">部门 / 钉钉目录组</div>
-                  {directoryGroupsError ? (
-                    <div className="rounded-md border border-warning/30 bg-warning/10 p-2 text-xs text-warning-ink">{directoryGroupsError}</div>
-                  ) : directoryGroups.length === 0 ? (
-                    <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">暂无可用目录组。</div>
-                  ) : (
-                    <div className="grid max-h-40 gap-2 overflow-auto rounded-md border p-3 sm:grid-cols-2">
-                      {directoryGroups.map(group => (
-                        <label key={group.groupId} className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={values.audienceGroupIds.includes(group.groupId)}
-                            onChange={event => patch({
-                              audienceGroupIds: toggleInList(values.audienceGroupIds, group.groupId, event.target.checked),
-                            })}
-                          />
-                          <span className="truncate">{group.displayName}<span className="ml-1 text-xs text-muted-foreground">{group.groupId}</span></span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : null}
-          </div>
+          <OrgAgentAudienceSection
+            values={values}
+            tenantUsers={tenantUsers}
+            directoryGroups={directoryGroups}
+            directoryGroupsError={directoryGroupsError}
+            onChange={patch}
+          />
 
           {/* ---------------- 门禁配置：填空题式（allow/reject chips + mode + strictness + 试测） ---------------- */}
           <div className="space-y-3 rounded-xl border p-3">

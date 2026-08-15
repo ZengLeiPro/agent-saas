@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { z } from 'zod';
 import { authLogger } from '../../utils/logger.js';
 import {
   normalizeOrgAgentRuntimePolicy,
@@ -33,37 +34,44 @@ export type UpdateOrgAgentInput = Partial<Omit<CreateOrgAgentInput, 'tenantId'>>
   avatarVersion?: number;
 };
 
-/** audience 三态匹配：用户是否被指派该专职 Agent */
-export function isAssignedToOrgAgent(record: Pick<OrgAgentRecord, 'audience'>, username: string | undefined): boolean {
-  const audience = record.audience;
-  if (!audience || audience.exposure === 'all') return true;
+/** audience 持久化与写入共用的唯一 schema，避免读取路径放宽写入约束。 */
+export const orgAgentAudienceSchema = z.object({
+  exposure: z.enum(['all', 'allow_users', 'deny_users']),
+  usernames: z.array(z.string().min(1).max(100)),
+  departmentIds: z.array(z.string().min(1).max(64)).max(50).optional(),
+  roles: z.array(z.string().min(1).max(64)).max(30).optional(),
+});
+
+/**
+ * 解析持久化 audience 合同。必填字段缺失、null 或字段类型不完整时返回 null，
+ * 由调用方按 fail-closed 处理；不得把未知配置猜测为 all。
+ */
+export function parseOrgAgentAudience(audience: unknown): OrgAgentAudience | null {
+  const parsed = orgAgentAudienceSchema.safeParse(audience);
+  if (!parsed.success) return null;
+  return {
+    exposure: parsed.data.exposure,
+    usernames: [...parsed.data.usernames],
+    ...(parsed.data.departmentIds && parsed.data.departmentIds.length > 0
+      ? { departmentIds: [...parsed.data.departmentIds] }
+      : {}),
+    ...(parsed.data.roles && parsed.data.roles.length > 0
+      ? { roles: [...parsed.data.roles] }
+      : {}),
+  };
+}
+
+/** audience 三态匹配：合同无效时一律不指派（fail-closed）。 */
+export function isAssignedToOrgAgent(
+  record: { audience?: unknown },
+  username: string | undefined,
+): boolean {
+  const audience = parseOrgAgentAudience(record.audience);
+  if (!audience) return false;
+  if (audience.exposure === 'all') return true;
   if (!username) return false;
   if (audience.exposure === 'allow_users') return audience.usernames.includes(username);
   return !audience.usernames.includes(username); // deny_users
-}
-
-/**
- * 规范化 audience：合法化必填字段，同时防御性保留 optional 部门/角色白名单
- * （2026-07-18 企业专家目录 MVP 新增字段，蓝图 v2 § 4.1.1）
- */
-function normalizeAudience(audience: unknown): OrgAgentAudience {
-  const raw = (audience ?? {}) as Partial<OrgAgentAudience>;
-  const usernames = Array.isArray(raw.usernames)
-    ? raw.usernames.filter((item): item is string => typeof item === 'string')
-    : [];
-  const result: OrgAgentAudience = {
-    exposure: raw.exposure === 'allow_users' || raw.exposure === 'deny_users' ? raw.exposure : 'all',
-    usernames,
-  };
-  if (Array.isArray(raw.departmentIds)) {
-    const departmentIds = raw.departmentIds.filter((item): item is string => typeof item === 'string');
-    if (departmentIds.length > 0) result.departmentIds = departmentIds;
-  }
-  if (Array.isArray(raw.roles)) {
-    const roles = raw.roles.filter((item): item is string => typeof item === 'string');
-    if (roles.length > 0) result.roles = roles;
-  }
-  return result;
 }
 
 export class OrgAgentStore {
@@ -115,7 +123,7 @@ export class OrgAgentStore {
                 }
               : {}),
             runtime: normalizeOrgAgentRuntimePolicy(agent.runtime),
-            audience: normalizeAudience(agent.audience),
+            audience: parseOrgAgentAudience(agent.audience),
           }))
         : [];
     } catch {

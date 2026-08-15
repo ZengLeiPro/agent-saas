@@ -12,7 +12,7 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -540,6 +540,24 @@ describe('WebChannel 专职 Agent 门禁', () => {
       await rig.send(WAIN_USER, { message: 'hi', orgAgentId });
       expect(rig.ws.sent.find((m) => m.data?.type === 'chat_rejected')?.data?.reason_code).toBe('org_agent_unavailable');
     }
+    expect(rig.enqueued).toHaveLength(0);
+    expect(modelCalls()).toHaveLength(0);
+  });
+
+  it('audience 合同无效时管理员豁免也必须 fail-closed', async () => {
+    const rig = await makeRig();
+    const agent = await seedOrgAgent(rig);
+    const storePath = (rig.orgAgentStore as unknown as { filePath: string }).filePath;
+    const persisted = JSON.parse(await readFile(storePath, 'utf8')) as { agents: Array<{ id: string; audience: unknown }> };
+    const stored = persisted.agents.find(item => item.id === agent.id);
+    expect(stored).toBeDefined();
+    stored!.audience = null;
+    await writeFile(storePath, JSON.stringify(persisted));
+
+    await rig.send(WAIN_ADMIN, { message: 'hi', orgAgentId: agent.id });
+
+    expect(rig.ws.sent.find((message) => message.data?.type === 'chat_rejected')?.data?.reason_code)
+      .toBe('org_agent_unavailable');
     expect(rig.enqueued).toHaveLength(0);
     expect(modelCalls()).toHaveLength(0);
   });

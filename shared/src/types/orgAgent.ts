@@ -75,7 +75,8 @@ export interface OrgAgentRecord {
   allowedKnowledge?: string[];
   /** 每 Agent 独立运行策略；缺省时继承组织 org_agent Profile。 */
   runtime?: OrgAgentRuntimePolicy;
-  audience: OrgAgentAudience;
+  /** null 表示旧数据或兼容数据中的 audience 合同无效；消费端必须 fail-closed。 */
+  audience: OrgAgentAudience | null;
   guardrail: OrgAgentGuardrailConfig;
   enabled: boolean;
   createdAt: string;

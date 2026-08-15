@@ -11,7 +11,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { OrgAgentStore, isAssignedToOrgAgent } from '../data/orgAgents/store.js';
+import {
+  OrgAgentStore,
+  isAssignedToOrgAgent,
+  parseOrgAgentAudience,
+} from '../data/orgAgents/store.js';
 import type { OrgAgentGuardrailConfig } from '../data/orgAgents/types.js';
 
 const GUARDRAIL: OrgAgentGuardrailConfig = {
@@ -37,6 +41,36 @@ function createInput(overrides: Record<string, unknown> = {}) {
   };
 }
 
+describe('parseOrgAgentAudience（读写合同一致）', () => {
+  it('接受与写入 schema 一致的完整 audience', () => {
+    expect(parseOrgAgentAudience({
+      exposure: 'deny_users',
+      usernames: ['alice'],
+      departmentIds: ['dept-sales'],
+      roles: ['sales-lead'],
+    })).toEqual({
+      exposure: 'deny_users',
+      usernames: ['alice'],
+      departmentIds: ['dept-sales'],
+      roles: ['sales-lead'],
+    });
+  });
+
+  it.each([
+    ['缺失', undefined],
+    ['null', null],
+    ['缺少 usernames', { exposure: 'all' }],
+    ['空用户名', { exposure: 'deny_users', usernames: [''] }],
+    ['过长用户名', { exposure: 'allow_users', usernames: ['a'.repeat(101)] }],
+    ['空部门', { exposure: 'allow_users', usernames: [], departmentIds: [''] }],
+    ['部门过多', { exposure: 'allow_users', usernames: [], departmentIds: Array(51).fill('dept') }],
+    ['空角色', { exposure: 'allow_users', usernames: [], roles: [''] }],
+    ['角色过多', { exposure: 'allow_users', usernames: [], roles: Array(31).fill('role') }],
+  ])('拒绝%s并返回 null', (_label, audience) => {
+    expect(parseOrgAgentAudience(audience)).toBeNull();
+  });
+});
+
 describe('isAssignedToOrgAgent（audience 三态匹配）', () => {
   it('exposure=all：任意用户（含匿名）都命中', () => {
     const record = { audience: { exposure: 'all' as const, usernames: [] } };
@@ -57,6 +91,17 @@ describe('isAssignedToOrgAgent（audience 三态匹配）', () => {
     expect(isAssignedToOrgAgent(record, 'alice')).toBe(true);
     // 匿名身份无法证明不在 deny 名单里，fail-safe 不命中
     expect(isAssignedToOrgAgent(record, undefined)).toBe(false);
+  });
+
+  it.each([
+    ['缺失', undefined],
+    ['null', null],
+    ['缺少 exposure', { usernames: [] }],
+    ['缺少 usernames', { exposure: 'all' }],
+    ['非法 deny_users 空用户名', { exposure: 'deny_users', usernames: [''] }],
+  ])('audience %s 时 fail-closed，不指派给任何用户', (_label, audience) => {
+    expect(isAssignedToOrgAgent({ audience }, 'alice')).toBe(false);
+    expect(isAssignedToOrgAgent({ audience }, undefined)).toBe(false);
   });
 });
 
@@ -178,8 +223,42 @@ describe('OrgAgentStore persist-reload 往返', () => {
     expect(record).toMatchObject({ description: '', starterPrompts: [] });
     // 新增 optional 字段：旧记录读入后 undefined（未设置）
     expect(record?.allowedKnowledge).toBeUndefined();
-    expect(record?.audience.departmentIds).toBeUndefined();
-    expect(record?.audience.roles).toBeUndefined();
+    expect(record?.audience?.departmentIds).toBeUndefined();
+    expect(record?.audience?.roles).toBeUndefined();
+  });
+
+  it('旧记录 audience 缺失、null 或不完整时保留为无效状态，并阻止成员侧暴露', async () => {
+    const filePath = await tmpStorePath();
+    const base = {
+      tenantId: 'wain',
+      name: '旧专家',
+      description: '',
+      starterPrompts: [],
+      instructions: '',
+      allowedSkills: [],
+      guardrail: { enabled: false, scopeDescription: '', rejectionMessage: '超范围', strictness: 'strict' },
+      enabled: true,
+      createdAt: '',
+      createdBy: '',
+      updatedAt: '',
+      updatedBy: '',
+    };
+    await writeFile(filePath, JSON.stringify({
+      version: 1,
+      agents: [
+        { ...base, id: 'oa-missing' },
+        { ...base, id: 'oa-null', audience: null },
+        { ...base, id: 'oa-incomplete', audience: { exposure: 'all' } },
+      ],
+    }));
+
+    const store = new OrgAgentStore(filePath);
+    expect(store.listAll().map(record => [record.id, record.audience])).toEqual([
+      ['oa-missing', null],
+      ['oa-null', null],
+      ['oa-incomplete', null],
+    ]);
+    expect(store.listForUser('wain', 'alice')).toEqual([]);
   });
 
   // ────────────────────────────────────────────────────────────────────
@@ -201,14 +280,14 @@ describe('OrgAgentStore persist-reload 往返', () => {
       'wain_admin',
     );
     expect(created.allowedKnowledge).toEqual(['kb-quote-rules', 'kb-customer-history']);
-    expect(created.audience.departmentIds).toEqual(['dept-sales', 'dept-finance']);
-    expect(created.audience.roles).toEqual(['sales-lead', 'ops']);
+    expect(created.audience?.departmentIds).toEqual(['dept-sales', 'dept-finance']);
+    expect(created.audience?.roles).toEqual(['sales-lead', 'ops']);
 
     const reloaded = new OrgAgentStore(filePath);
     const roundTripped = reloaded.get(created.id);
     expect(roundTripped?.allowedKnowledge).toEqual(['kb-quote-rules', 'kb-customer-history']);
-    expect(roundTripped?.audience.departmentIds).toEqual(['dept-sales', 'dept-finance']);
-    expect(roundTripped?.audience.roles).toEqual(['sales-lead', 'ops']);
+    expect(roundTripped?.audience?.departmentIds).toEqual(['dept-sales', 'dept-finance']);
+    expect(roundTripped?.audience?.roles).toEqual(['sales-lead', 'ops']);
   });
 
   it('update：allowedKnowledge 传空数组 → 字段被清空（"未设置"语义）', async () => {
@@ -228,7 +307,7 @@ describe('OrgAgentStore persist-reload 往返', () => {
     const store = new OrgAgentStore(filePath);
     const created = await store.create(createInput(), 'wain_admin');
     expect(created.allowedKnowledge).toBeUndefined();
-    expect(created.audience.departmentIds).toBeUndefined();
-    expect(created.audience.roles).toBeUndefined();
+    expect(created.audience?.departmentIds).toBeUndefined();
+    expect(created.audience?.roles).toBeUndefined();
   });
 });

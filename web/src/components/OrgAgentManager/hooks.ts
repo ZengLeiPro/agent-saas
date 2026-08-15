@@ -4,11 +4,15 @@
  * 列表继续读取 legacy projection；所有配置写入改走治理 Agent Version / Assignment，
  * legacy store 只承担运行时兼容投影，不再作为管理真源。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { authFetch } from '@/lib/authFetch';
 import { fetchTenantOwnSkills, fetchTenantSkillPool } from '@agent/shared';
 import type { OrgAgentRuntimePolicy, SkillInfo } from '@agent/shared';
-import type { OrgAgentRecord } from './types';
+import {
+  parseOrgAgentAdminList,
+  type OrgAgentAdminRecord,
+  type OrgAgentDataIssue,
+} from './types';
 
 export interface ManagedAgentResource {
   agentId: string;
@@ -95,26 +99,42 @@ function assignmentsEqual(left: GovernanceAssignmentDraft[], right: GovernanceAs
 }
 
 export function useOrgAgentAdmin(tenantId?: string) {
-  const [agents, setAgents] = useState<OrgAgentRecord[]>([]);
+  const [agents, setAgents] = useState<OrgAgentAdminRecord[]>([]);
+  const [dataIssues, setDataIssues] = useState<OrgAgentDataIssue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
+  const tenantIdRef = useRef(tenantId);
+  tenantIdRef.current = tenantId;
 
   const refresh = useCallback(async () => {
+    const requestTenantId = tenantId;
+    // 旧租户 mutation 完成后可能仍持有旧 refresh；切换后直接忽略，不能抢占新租户请求序号。
+    if (requestTenantId !== tenantIdRef.current) return;
+    const requestId = ++requestIdRef.current;
     setLoading(true);
     try {
       const res = await authFetch(`/api/org-agents${tenantQuery(tenantId)}`);
       if (!res.ok) throw await readError(res, '获取企业专家失败');
-      const data = await res.json();
-      setAgents(Array.isArray(data) ? data : []);
+      const parsed = parseOrgAgentAdminList(await res.json());
+      if (requestId !== requestIdRef.current || requestTenantId !== tenantIdRef.current) return;
+      setAgents(parsed.agents);
+      setDataIssues(parsed.issues);
       setError(null);
     } catch (err) {
+      if (requestId !== requestIdRef.current || requestTenantId !== tenantIdRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current && requestTenantId === tenantIdRef.current) setLoading(false);
     }
   }, [tenantId]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    setAgents([]);
+    setDataIssues([]);
+    setError(null);
+    void refresh();
+  }, [refresh]);
 
   const loadConfiguration = useCallback(async (id: string): Promise<OrgAgentConfiguration> => {
     const [agentResponse, assignmentResponse] = await Promise.all([
@@ -305,6 +325,7 @@ export function useOrgAgentAdmin(tenantId?: string) {
 
   return {
     agents,
+    dataIssues,
     loading,
     error,
     refresh,

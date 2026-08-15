@@ -282,6 +282,42 @@ describe('platform observability router', () => {
     });
   });
 
+  it('overview run health 以 runtime_runs.run_id/requested_at 为权威口径并返回元数据', async () => {
+    const runQuery = vi.fn(async (sql: string) => {
+      if (sql.includes("status = ANY")) return { rows: [{ status: 'running', count: '1' }] };
+      if (sql.includes("status IN ('completed','failed','cancelled','orphaned')")) {
+        return { rows: [
+          { status: 'completed', count: '2' },
+          { status: 'failed', count: '1' },
+          { status: 'orphaned', count: '1' },
+        ] };
+      }
+      if (sql.includes('requested_at >=') && sql.includes('count(*)::text AS count')) return { rows: [{ count: '4' }] };
+      return { rows: [] };
+    });
+
+    await withApp(PLATFORM_ADMIN, {
+      runStore: { pool: { query: runQuery }, runsTable: 'runtime_runs' } as any,
+    }, async (baseUrl) => {
+      const body = await (await fetch(`${baseUrl}/api/admin/overview/snapshot`)).json() as any;
+      expect(body.health).toMatchObject({
+        todayRuns: 4,
+        completionRateToday: 2 / 4,
+        runHealthScope: {
+          source: 'runtime_runs', identity: 'run_id', initiatedAt: 'requested_at',
+          timezone: 'Asia/Shanghai', completionDenominator: 'terminal_runs_requested_today',
+        },
+      });
+    });
+
+    const healthSql = runQuery.mock.calls.map((call) => String(call[0]))
+      .filter((sql) => sql.includes('count(*)::text AS count'));
+    expect(healthSql).toHaveLength(3);
+    expect(healthSql.filter((sql) => sql.includes('requested_at'))).toHaveLength(2);
+    expect(healthSql.join('\n')).toContain("status IN ('completed','failed','cancelled','orphaned')");
+    expect(healthSql.join('\n')).not.toContain('run_finished');
+  });
+
   it('overview trends returns Beijing-day series and distinguishes missing sources', async () => {
     const today = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',

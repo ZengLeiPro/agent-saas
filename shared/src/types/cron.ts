@@ -122,10 +122,18 @@ export interface CronJobPatch {
   notify?: NotifyConfig;
 }
 
+export type CronRunTrigger = "schedule" | "manual" | "retry";
+
 export interface CronRunLogEntry {
   runId: string;
   startedAtMs: number;
   endedAtMs: number;
+  trigger?: CronRunTrigger;
+  scheduledAtMs?: number;
+  requestId?: string;
+  attempt?: number;
+  parentRunId?: string;
+  retryOf?: string;
   jobId: string;
   jobName: string;
   status: "ok" | "error" | "skipped";

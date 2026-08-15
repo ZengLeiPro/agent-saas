@@ -208,12 +208,17 @@ interface RecordedCalls {
 }
 
 const EMPTY_REPORT: EfficiencyReport = {
-  range: { from: '2026-06-26T00:00:00.000Z', to: '2026-07-03T00:00:00.000Z', days: 7 },
+  range: { from: '2026-06-26T00:00:00.000Z', to: '2026-07-03T00:00:00.000Z', days: 7, bounds: '[from,to)' },
   tenantId: null,
-  outcome: { totalRuns: 0, success: 0, error: 0, interrupted: 0, completionRate: null, errorReasons: [] },
+  statistics: {
+    version: 'runtime-runs-requested-at-v1', source: 'runtime_runs', identity: 'run_id', initiatedAt: 'requested_at',
+    dataAsOf: '2026-07-03T00:00:00.000Z', completionDefinition: 'completed / initiated',
+    longRunningDefinition: 'non_terminal_started_for_24h',
+  },
+  outcome: { totalRuns: 0, success: 0, error: 0, interrupted: 0, nonTerminal: 0, completionRate: null, errorReasons: [] },
   tools: { byTool: [], handFailures: 0 },
   cost: { totalCostYuan: 0, byModel: [], perRun: { p50: null, p90: null, p99: null }, failedRunsCostYuan: 0, cacheHitRate: null },
-  longTail: { slowestRuns: [], mostTurns: [] },
+  longTail: { slowestRuns: [], longRunningRuns: [], mostTurns: [] },
   approvals: { count: 0, resolvedCount: 0, waitP50Ms: null, waitP90Ms: null, byTool: [] },
   waste: {
     duplicateToolCalls: { affectedRuns: 0, totalDuplicateCalls: 0, topOffenders: [] },
@@ -612,7 +617,6 @@ describe('runtimeTrace 纯转换函数', () => {
     expect(summary.completedAt).toBeNull();
     expect(summary.cumulativeInputTokens).toBe(0);
   });
-
   it('summarizeRunBilling：空列表 → 全 0', () => {
     const summary = summarizeRunBilling([]);
     expect(summary.totalCostYuan).toBe(0);
@@ -620,13 +624,11 @@ describe('runtimeTrace 纯转换函数', () => {
     expect(summary.models).toEqual([]);
     expect(summary.requests).toEqual([]);
   });
-
   it('summarizeRunBilling：actualModel 缺失 fallback modelValue', () => {
     const summary = summarizeRunBilling([makeUsageEvent({ actualCostYuanMicro: 123_456 })]);
     expect(summary.models).toEqual(['gpt-5.5-fallback']);
     expect(summary.totalCostYuan).toBe(0.123456);
   });
-
   it('redactBillingSummary：去 ¥ 字段保留 token 口径，标 costRedacted', () => {
     const redacted = redactBillingSummary(summarizeRunBilling(USAGE_EVENTS));
     expect(redacted.costRedacted).toBe(true);
@@ -636,7 +638,6 @@ describe('runtimeTrace 纯转换函数', () => {
     expect((redacted.requests[0] as Record<string, unknown>).costYuan).toBeUndefined();
     expect(redacted.requests[0]!.inputTokens).toBe(1000);
   });
-
   it('redactEfficiencyCost：cost 区只留 byModel token 聚合 + cacheHitRate', () => {
     const report: EfficiencyReport = {
       ...EMPTY_REPORT,
@@ -658,7 +659,6 @@ describe('runtimeTrace 纯转换函数', () => {
     expect((redacted.cost.byModel[0] as Record<string, unknown>).costYuan).toBeUndefined();
     expect(redacted.cost.byModel[0]!.inputTokens).toBe(100);
   });
-
   it('truncateTraceEvent：非字符串大对象（approval input）序列化后截断', () => {
     const event = {
       id: 'e', timestamp: 't', type: 'approval_requested',
@@ -674,7 +674,6 @@ describe('runtimeTrace 纯转换函数', () => {
     expect(out.id).toBe('e');
     expect(out.type).toBe('approval_requested');
   });
-
   it('truncateTraceEvent：Codex opaque reasoning 只返回元数据，不泄露密文与 issuer', () => {
     const event = {
       id: 'e-codex',
@@ -702,7 +701,6 @@ describe('runtimeTrace 纯转换函数', () => {
     expect(JSON.stringify(out)).not.toContain('highly-sensitive-opaque-value');
     expect(JSON.stringify(out)).not.toContain('chatgpt.com');
   });
-
   it('sanitizeTraceEvent：保留诊断信封，移除原始内容与工具参数', () => {
     const out = sanitizeTraceEvent(EVENTS[2]!);
     expect(out).toMatchObject({
@@ -717,7 +715,6 @@ describe('runtimeTrace 纯转换函数', () => {
     });
     expect(JSON.stringify(out)).not.toContain('/tmp/');
   });
-
   it('sanitizeTraceEvent：context_rewind 明确展示固定原因和排除范围', () => {
     const out = sanitizeTraceEvent({
       id: 'rewind-1',
@@ -748,7 +745,6 @@ describe('runtimeTrace 纯转换函数', () => {
       recoveryAttempt: 1,
     });
   });
-
   it('sanitizeTraceEvent：错误与原因只保留发生事实，不返回原文', () => {
     const out = sanitizeTraceEvent({
       id: 'evt-sensitive-error',
@@ -785,7 +781,6 @@ describe('efficiencyQuery 纯转换函数', () => {
     expect(parseReadToolFilePath('{"path":"/a.ts", trunc')).toBeUndefined();
     expect(parseReadToolFilePath(undefined)).toBeUndefined();
   });
-
   it('buildRepeatedFileReadsSection：同文件不同参数 hash 合并计数，>=3 才计入', () => {
     const rows = [
       // run-1 读 /a.ts：2 + 1 = 3 次（不同 offset 分散在两个 hash 组）
@@ -805,22 +800,21 @@ describe('efficiencyQuery 纯转换函数', () => {
       { filePath: '/a.ts', repeats: 3, runId: 'run-1' },
     ]);
   });
-
   it('buildOutcomeSection：completionRate 防 0；空数据为 null', () => {
     expect(buildOutcomeSection([], []).completionRate).toBeNull();
     const outcome = buildOutcomeSection(
       [
-        { subtype: 'success', count: '97' },
-        { subtype: 'error', count: '2' },
-        { subtype: 'interrupted', count: '1' },
+        { status: 'completed', count: '96' },
+        { status: 'failed', count: '2' },
+        { status: 'cancelled', count: '1' },
+        { status: 'running', count: '1' },
       ],
       [{ reason: 'boom', count: '2', sample_run_id: 'run-e' }],
     );
-    expect(outcome.totalRuns).toBe(100);
-    expect(outcome.completionRate).toBe(0.97);
+    expect(outcome).toMatchObject({ totalRuns: 100, success: 96, error: 2, interrupted: 1, nonTerminal: 1 });
+    expect(outcome.completionRate).toBe(0.96);
     expect(outcome.errorReasons).toEqual([{ reason: 'boom', count: 2, sampleRunId: 'run-e' }]);
   });
-
   it('buildCostSection：微元→元、cacheHitRate input=0 时 null、空分位为 null', () => {
     const cost = buildCostSection(
       [
@@ -837,7 +831,6 @@ describe('efficiencyQuery 纯转换函数', () => {
     expect(cost.failedRunsCostYuan).toBe(0.25);
     expect(cost.cacheHitRate).toBe(0.4);
   });
-
   it('normalizeRecentRunRow：durationMs 按终态时间戳能算则算', () => {
     const completed = normalizeRecentRunRow({
       run_id: 'r1', session_id: 's1', tenant_id: 'kaiyan', user_id: 'u1',
@@ -893,7 +886,6 @@ describe('RuntimeEfficiencyQuery（mock pool）', () => {
       billingUsageEventsTable: 'runtime_billing_usage_events',
     })).toThrow(/非法 PG identifier/);
   });
-
   it('listRecentRuns：SQL 参数化（hours/statuses/tenantId/limit）+ 行转换', async () => {
     const pool = new MockPool({
       recent_runs: [{
@@ -923,12 +915,12 @@ describe('RuntimeEfficiencyQuery（mock pool）', () => {
       durationMs: 30_000,
     }]);
   });
-
   it('getEfficiency：所有 SQL 带时间窗 + tenant 参数；rows→report 全链路', async () => {
     const pool = new MockPool({
       outcome: [
-        { subtype: 'success', count: '8' },
-        { subtype: 'error', count: '2' },
+        { status: 'completed', count: '7' },
+        { status: 'failed', count: '2' },
+        { status: 'running', count: '1' },
       ],
       error_reasons: [{ reason: 'timeout', count: '2', sample_run_id: 'run-x' }],
       tools: [{ tool_name: 'Shell', calls: '10', errors: '2', total_duration_ms: '5000' }],
@@ -937,6 +929,7 @@ describe('RuntimeEfficiencyQuery（mock pool）', () => {
       cost_per_run: [{ p50_micro: 10000, p90_micro: 90000, p99_micro: 99000 }],
       cost_failed_runs: [{ cost_micro: '120000' }],
       slowest_runs: [{ run_id: 'r-slow', session_id: 's', tenant_id: 'kaiyan', status: 'completed', model: 'm', duration_ms: '60000' }],
+      long_running_runs: [{ run_id: 'r-live', session_id: 's', tenant_id: 'kaiyan', status: 'running', model: 'm', duration_ms: '90000000' }],
       most_turns: [{ run_id: 'r-turns', session_id: 's', tenant_id: 'kaiyan', turns: '42' }],
       approvals_summary: [{ count: '4', resolved_count: '3', wait_p50_ms: 1500.4, wait_p90_ms: 9000.9 }],
       approvals_by_tool: [{ tool_name: 'Write', count: '4', avg_wait_ms: '2000.6' }],
@@ -947,21 +940,27 @@ describe('RuntimeEfficiencyQuery（mock pool）', () => {
     const before = Date.now();
     const report = await makeQuery(pool).getEfficiency({ days: 7, tenantId: 'kaiyan' });
 
-    // 每条 SQL 都是 [fromIso, tenantId] 参数化；from ≈ now - 7d
-    expect(pool.calls.length).toBe(14);
+    // 每条 SQL 都共享固定 [fromIso, tenantId, toIso]；from ≈ dataAsOf - 7d
+    expect(pool.calls.length).toBe(15);
     for (const call of pool.calls) {
-      expect(call.params).toHaveLength(2);
+      expect(call.params).toHaveLength(3);
       expect(call.params?.[1]).toBe('kaiyan');
       const fromMs = Date.parse(String(call.params?.[0]));
+      const toMs = Date.parse(String(call.params?.[2]));
       expect(Math.abs(fromMs - (before - 7 * 24 * 60 * 60 * 1000))).toBeLessThan(60_000);
+      expect(toMs - fromMs).toBe(7 * 24 * 60 * 60 * 1000);
       expect(call.text).not.toContain('kaiyan');
     }
 
-    expect(report.range.days).toBe(7);
+    expect(report.range).toMatchObject({ days: 7, bounds: '[from,to)' });
+    expect(report.statistics).toMatchObject({
+      version: 'runtime-runs-requested-at-v1', source: 'runtime_runs', identity: 'run_id', initiatedAt: 'requested_at',
+      completionDefinition: 'completed / initiated', longRunningDefinition: 'non_terminal_started_for_24h',
+    });
     expect(report.tenantId).toBe('kaiyan');
     expect(report.outcome).toEqual({
-      totalRuns: 10, success: 8, error: 2, interrupted: 0,
-      completionRate: 0.8,
+      totalRuns: 10, success: 7, error: 2, interrupted: 0, nonTerminal: 1,
+      completionRate: 0.7,
       errorReasons: [{ reason: 'timeout', count: 2, sampleRunId: 'run-x' }],
     });
     expect(report.tools).toEqual({
@@ -977,6 +976,7 @@ describe('RuntimeEfficiencyQuery（mock pool）', () => {
     });
     expect(report.longTail).toEqual({
       slowestRuns: [{ runId: 'r-slow', sessionId: 's', tenantId: 'kaiyan', durationMs: 60000, status: 'completed', model: 'm' }],
+      longRunningRuns: [{ runId: 'r-live', sessionId: 's', tenantId: 'kaiyan', durationMs: 90000000, status: 'running', model: 'm' }],
       mostTurns: [{ runId: 'r-turns', sessionId: 's', tenantId: 'kaiyan', turns: 42 }],
     });
     expect(report.approvals).toEqual({
@@ -994,7 +994,7 @@ describe('RuntimeEfficiencyQuery（mock pool）', () => {
     const pool = new MockPool({
       outcome: [], error_reasons: [], tools: [], hand_failures: [{ count: '0' }],
       cost_by_model: [], cost_per_run: [{ p50_micro: null, p90_micro: null, p99_micro: null }],
-      cost_failed_runs: [{ cost_micro: '0' }], slowest_runs: [], most_turns: [],
+      cost_failed_runs: [{ cost_micro: '0' }], slowest_runs: [], long_running_runs: [], most_turns: [],
       approvals_summary: [{ count: '0', resolved_count: '0', wait_p50_ms: null, wait_p90_ms: null }],
       approvals_by_tool: [],
       waste_duplicates: [{ affected_runs: '0', total_duplicate_calls: '0', top_offenders: [] }],

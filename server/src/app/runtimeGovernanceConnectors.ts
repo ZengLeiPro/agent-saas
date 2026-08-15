@@ -83,6 +83,20 @@ export interface RuntimeGovernanceConnectorDeps {
   resolveLegacySkillResourceId: (user: { id: string; tenantId: string }, skillId: string) => string;
 }
 
+/**
+ * Run snapshots contain native connectors and MCP-backed connectors in the same
+ * resource collection. Only enabled MCP server ids are valid brokered warmup
+ * targets; native connectors (for example Aliyun) must stay on their native
+ * runtime path and must never generate MCP credential.use attempts.
+ */
+export function resolveBrokeredMcpServerIds(
+  store: Pick<McpConfigStore, 'getEffectiveServers'>,
+  username: string,
+  tenantId: string,
+): ReadonlySet<string> {
+  return new Set(store.getEffectiveServers(username, tenantId).map(server => server.id));
+}
+
 /** Initializes connector credentials, governance shadow audits, MCP, and egress in strict startup order. */
 export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGovernanceConnectorDeps) {
   const {
@@ -680,7 +694,15 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
             throw new Error('RUN_SNAPSHOT_BINDING_MISMATCH');
           }
           const descriptors = [] as Awaited<ReturnType<McpClientManager['warmupBrokered']>>;
+          const brokeredMcpServerIds = resolveBrokeredMcpServerIds(
+            mcpConfigStore,
+            username,
+            user.tenantId,
+          );
           for (const connector of snapshot.connectors) {
+            // Snapshot connectors also include native providers such as Aliyun.
+            // Do not route those credentials through MCP list-tools.
+            if (!brokeredMcpServerIds.has(connector.id)) continue;
             const candidates = [] as Array<{
               credential: NonNullable<Awaited<ReturnType<PgCredentialStore['get']>>>;
               generation: number;

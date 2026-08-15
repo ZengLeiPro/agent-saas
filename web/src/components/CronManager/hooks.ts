@@ -166,7 +166,12 @@ export function useCronJobs() {
   };
 
   const runJob = async (id: string) => {
-    const res = await authFetch(`${API_BASE}/jobs/${id}/run`, { method: "POST" });
+    const requestId = crypto.randomUUID();
+    const res = await authFetch(`${API_BASE}/jobs/${id}/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": requestId },
+      body: JSON.stringify({ requestId }),
+    });
     await parseJsonResponse(res, "定时任务");
     await refreshLatest();
   };

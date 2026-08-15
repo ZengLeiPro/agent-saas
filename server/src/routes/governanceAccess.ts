@@ -2,7 +2,6 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { Router } from 'express';
 import type { Request } from 'express';
 import { z } from 'zod';
-
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { BillingMemberBudgetOverview } from '../data/billing/types.js';
 import type { AssignmentResourceType } from '../data/assignments/types.js';
@@ -17,9 +16,11 @@ import type { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore 
 import { registerGovernanceTenantLifecycleRoutes } from './governanceTenantLifecycleRoutes.js';
 import { registerGovernanceEntitlementRoutes } from './governanceEntitlementRoutes.js';
 import { registerGovernanceOAuthGrantRoutes } from './governanceOAuthGrantRoutes.js';
+import { getGovernanceMemberUsagePolicy } from './governanceMemberUsage.js';
+import { registerGovernanceOrganizationAccessRoutes } from './governanceOrganizationAccessRoutes.js';
+import { registerGovernanceMemoryRoutes } from './governanceMemoryRoutes.js';
 import { entitlementDependencyImpact, oauthDependencyImpact, tenantDependencyImpact,
   type GovernanceDependencyImpactResolver } from './governanceImpactAuthority.js';
-
 const membershipMutationShape = {
   expectedVersion: z.number().int().positive(),
   persona: z.enum(['member', 'org_admin']).optional(),
@@ -38,7 +39,7 @@ const platformAdminPatchSchema = z.object({
   expectedVersion: z.number().int().positive(),
   status: z.enum(['active', 'disabled']),
 }).strict();
-const assignmentResourceTypeSchema = z.enum(['org_agent', 'skill', 'credential', 'environment_template', 'org_knowledge', 'connector']);
+const assignmentResourceTypeSchema = z.enum(['org_agent', 'skill', 'credential', 'environment_template', 'org_knowledge', 'org_memory', 'connector']);
 const assignmentMutationShape = {
   expectedVersion: z.number().int().nonnegative(),
   assignments: z.array(z.object({
@@ -92,7 +93,7 @@ interface MembershipAllowedAction {
 }
 
 const ASSIGNMENT_RESOURCE_TYPES: readonly AssignmentResourceType[] = [
-  'org_agent', 'skill', 'credential', 'environment_template', 'org_knowledge', 'connector',
+  'org_agent', 'skill', 'credential', 'environment_template', 'org_knowledge', 'org_memory', 'connector',
 ];
 
 function membershipBaseline(membership: TenantMembership): Record<string, unknown> {
@@ -502,9 +503,9 @@ export function createGovernanceAccessRouter(deps: {
         resourceType,
         resources: await deps.assignments.listEffectiveResourceIds(tenantId, membership.userId, resourceType),
       })));
-      const usagePolicy = deps.getMemberBudgetOverview
-        ? await deps.getMemberBudgetOverview(tenantId, membership.userId).catch(() => ({ status: 'unavailable' }))
-        : { status: 'unavailable' };
+      const usagePolicy = await getGovernanceMemberUsagePolicy(
+        deps.getMemberBudgetOverview, tenantId, membership.userId,
+      );
       const recentAudit = deps.audit.list
         ? (await deps.audit.list({ targetTenantId: tenantId, limit: 100 }))
           .filter(event => event.targetId.includes(`/memberships/${membership.userId}`))
@@ -771,13 +772,12 @@ export function createGovernanceAccessRouter(deps: {
     ...(deps.projectionReconciler ? { projectionReconciler: deps.projectionReconciler } : {}),
   });
 
-  router.put('/policies/:policyKey', (req, res) => {
-    if (personas.get(req) !== 'org_admin') return res.status(403).json({ error: 'Organization admin required' });
-    return res.status(503).json({
-      error: 'Signed policy preview authority unavailable',
-      code: 'POLICY_PREVIEW_AUTHORITY_UNAVAILABLE',
-    });
+  registerGovernanceOrganizationAccessRoutes({ router, assignments: deps.assignments, entitlements: deps.entitlements,
+    secret: deps.membershipPreviewSecret, previewTtlMs, now, personaFor: req => personas.get(req), tenantFor,
+    ...(deps.projectionOutbox ? { projectionOutbox: deps.projectionOutbox } : {}),
+    ...(deps.projectionReconciler ? { projectionReconciler: deps.projectionReconciler } : {}),
   });
+  registerGovernanceMemoryRoutes({ router, assignments: deps.assignments, entitlements: deps.entitlements, secret: deps.membershipPreviewSecret, previewTtlMs, now, personaFor: req => personas.get(req), tenantFor, validateSubjects: assignmentSubjectError, assignmentSnapshot: assignmentDirectorySnapshot });
 
   router.get('/assignments/:resourceType/:resourceId', async (req, res) => {
     if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });

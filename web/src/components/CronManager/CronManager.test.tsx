@@ -115,6 +115,25 @@ describe("CronManager 桌面布局", () => {
     expect(window.location.search).toBe("");
   });
 
+  it("组织控制台切换任务看板时保留 tenant-admin shell、路径和现有查询", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/tenant-admin/governance/automation?org=acme&scope=mine");
+    render(<CronManager />);
+
+    await user.click(screen.getByRole("tab", { name: "任务看板" }));
+    expect(window.location.pathname).toBe("/tenant-admin/governance/automation");
+    expect(new URLSearchParams(window.location.search).get("org")).toBe("acme");
+    expect(new URLSearchParams(window.location.search).get("scope")).toBe("mine");
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("board");
+    expect(screen.getByText("任务看板视图")).toBeTruthy();
+
+    await user.click(screen.getByRole("tab", { name: "定时任务" }));
+    expect(window.location.pathname).toBe("/tenant-admin/governance/automation");
+    expect(new URLSearchParams(window.location.search).get("org")).toBe("acme");
+    expect(new URLSearchParams(window.location.search).get("scope")).toBe("mine");
+    expect(new URLSearchParams(window.location.search).has("view")).toBe(false);
+  });
+
   it("切换二级视图保持已打开表单和看板草稿", async () => {
     const user = userEvent.setup();
     render(<CronManager />);

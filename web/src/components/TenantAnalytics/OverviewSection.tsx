@@ -100,6 +100,19 @@ function reasonLabel(reason: string): string {
   return REASON_LABELS[reason] ?? reason;
 }
 
+function formatDataAsOf(value: string): string {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "—";
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(timestamp));
+}
+
 /**
  * 客户面 KPI 卡：外观与交互全部下沉到 `common/MetricCard` 的 aurora 变体（S3-7），
  * 这里只保留一层把客户面词汇（label / hint / tone）映射到统一 props 的适配。
@@ -423,7 +436,13 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
       {/* 3. AI 任务健康 */}
       {!health.unavailable && (
         <div className="space-y-3">
-          <SectionTitle title="AI 任务健康" caption={windowCaption(healthWindow)} loading={health.loading} />
+          <SectionTitle
+            title="AI 任务健康"
+            caption={report
+              ? `${windowCaption(healthWindow)} · 数据截至 ${formatDataAsOf(report.statistics.dataAsOf)} · 口径 ${report.statistics.version}`
+              : windowCaption(healthWindow)}
+            loading={health.loading}
+          />
           {health.error && (
             <div className="rounded-md border border-warning/30 bg-warning-subtle px-3 py-2 text-xs text-warning-ink">
               {health.error}
@@ -437,14 +456,14 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
                   icon={CircleCheck}
                   label="任务完成率"
                   value={formatRate(report.outcome.completionRate)}
-                  hint={`成功 ${formatCount(report.outcome.success)} / 共 ${formatCount(report.outcome.totalRuns)} 个任务`}
+                  hint={`成功 ${formatCount(report.outcome.success)} / 发起 ${formatCount(report.outcome.totalRuns)} · 未终态 ${formatCount(report.outcome.nonTerminal)}`}
                 />
                 <KpiCard
                   tone="neutral"
                   icon={Activity}
                   label="任务总数"
                   value={formatCount(report.outcome.totalRuns)}
-                  hint="期间团队发起的 AI 任务"
+                  hint="按唯一 runId 与 requestedAt 统计发起"
                 />
                 <KpiCard
                   tone={report.outcome.error > 0 ? "bad" : "neutral"}
@@ -507,9 +526,9 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
                 </AuroraCard>
 
                 <AuroraCard tone="neutral">
-                  <div className="mb-2 text-xs font-medium text-muted-foreground">最耗时任务 Top {Math.min(5, report.longTail.slowestRuns.length) || ""}</div>
+                  <div className="mb-2 text-xs font-medium text-muted-foreground">最耗时已终态任务 Top {Math.min(5, report.longTail.slowestRuns.length) || ""}</div>
                   {report.longTail.slowestRuns.length === 0 ? (
-                    <div className="py-4 text-xs text-muted-foreground">期间无任务记录</div>
+                    <div className="py-4 text-xs text-muted-foreground">期间无已终态任务记录</div>
                   ) : (
                     <ul className="space-y-1.5 text-xs">
                       {/*
@@ -558,6 +577,29 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
                         );
                       })}
                     </ul>
+                  )}
+
+                  {report.longTail.longRunningRuns.length > 0 && (
+                    <div className="mt-3 border-t border-border/60 pt-3">
+                      <div className="mb-2 text-xs font-medium text-warning-ink">
+                        超 24 小时未终态 · {formatCount(report.longTail.longRunningRuns.length)}
+                      </div>
+                      <ul className="space-y-1.5 text-xs">
+                        {report.longTail.longRunningRuns.slice(0, 5).map((run, index) => (
+                          <li
+                            key={run.runId}
+                            className="flex items-center justify-between gap-3 px-1 py-0.5"
+                            title={`任务编号 ${run.runId}（仍在执行或等待，不计作完成）`}
+                          >
+                            <span className="flex min-w-0 items-center gap-2">
+                              <RunStatusBadge status={run.status} />
+                              <span className="shrink-0 text-muted-foreground">未终态 {index + 1}</span>
+                            </span>
+                            <span className="shrink-0 font-mono tabular-nums">已持续 {formatMs(run.durationMs)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
                 </AuroraCard>
               </div>

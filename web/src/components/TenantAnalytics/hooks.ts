@@ -152,6 +152,16 @@ export function useTenantHealth(tenantId: string | undefined, days: number): Ten
       }
       const report = (await res.json()) as EfficiencyReport;
       if (requestId !== requestIdRef.current) return;
+      // 不接受旧事件口径响应，避免灰度期间旧/新源随机切换导致同一窗口数字跳变。
+      if (
+        report.statistics?.version !== "runtime-runs-requested-at-v1"
+        || report.statistics.source !== "runtime_runs"
+        || report.statistics.identity !== "run_id"
+        || report.statistics.initiatedAt !== "requested_at"
+      ) {
+        setState({ report: null, loading: false, unavailable: false, error: "运行健康统计口径版本不匹配，请稍后刷新" });
+        return;
+      }
       setState({ report, loading: false, unavailable: false, error: null });
     } catch (error) {
       if (requestId !== requestIdRef.current) return;

@@ -38,7 +38,7 @@ import { createAuthRouter } from "../routes/auth.js";
 import { createSignupRouters } from "../routes/signup.js";
 import { requireAdmin } from "../auth/middleware.js";
 import { createAgentsRouter } from "../routes/agents.js";
-import { createOrgAgentsRouter } from "../routes/orgAgents.js";
+import { createOrgAgentsRouter, createTenantExpertTemplatesRouter } from "../routes/orgAgents.js";
 import { createKbFilesRouter } from "../routes/kbFiles.js";
 import { createOrgQaRouter } from "../routes/orgQa.js";
 import { createAgentDwsAccountsRouter } from '../routes/agentDwsAccounts.js';
@@ -86,7 +86,7 @@ import { configureImageGenPricing } from "../data/usage/imageGenPricing.js";
 export function activeOffboardingWriteFence(runtime: AppRuntime) {
   return async (req: Request, res: Response, next: express.NextFunction): Promise<void> => {
     if (!req.user || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
-    if (!runtime.governanceChangeJobStore) return next();
+    if (!runtime.governanceChangeJobStore) { res.status(503).json({ error: 'Offboarding authority unavailable', code: 'OFFBOARDING_AUTHORITY_UNAVAILABLE' }); return; }
     try {
       const job = await runtime.governanceChangeJobStore.findActiveForTarget(
         req.user.tenantId, 'user_offboarding', 'user', req.user.sub,
@@ -226,14 +226,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   );
 
   // 员工申诉（门禁拒答后 owner-only 申诉 + 管理员处理队列；PG 未装配时路由内 503）
-  app.use(
-    "/api/appeals",
-    createAppealsRouter({ appealStore: runtime.appealStore }),
-  );
-  app.use(
-    "/api/tenant/appeals",
-    createTenantAppealsRouter({ appealStore: runtime.appealStore }),
-  );
+  app.use("/api/appeals", createAppealsRouter({ appealStore: runtime.appealStore }));
+  app.use("/api/tenant/appeals", createTenantAppealsRouter({ appealStore: runtime.appealStore }));
+  app.use("/api/tenant/expert-templates", createTenantExpertTemplatesRouter());
 
   // DWS 单轨连接状态：仅暴露当前登录用户自己的非敏感元数据。
   // access/refresh token 始终由 DWS 保存在该用户的 NAS workspace 内。
@@ -501,6 +496,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       createUsageRouter({
         tokenUsageStore: runtime.tokenUsageStore,
         userStore: runtime.userStore,
+        membershipStore: runtime.membershipStore,
         triggerRebuild: runtime.triggerTokenUsageRebuild,
         // USD 成本对组织 admin 按 billing policy.showCost fail-closed 脱敏（2026-07-14）
         getTenantPolicy: usageBillingStore

@@ -21,6 +21,7 @@ import {
   orgAgentAudienceSchema,
   type OrgAgentStore,
 } from '../data/orgAgents/store.js';
+import { listOrgAgentTemplateApiViews } from '../data/orgAgentTemplates.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import type { OrgAgentRecord, OrgAgentSummary } from '../data/orgAgents/types.js';
@@ -139,6 +140,23 @@ function toSummary(record: OrgAgentRecord): OrgAgentSummary {
     starterPrompts: [...record.starterPrompts],
     skillCount: record.allowedSkills.length,
   };
+}
+
+/** GET /api/tenant/expert-templates — 仅管理员读取后端种子模板投影。 */
+export function createTenantExpertTemplatesRouter(): Router {
+  const router = Router();
+  router.get('/', (req, res) => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Not authenticated' });
+      return;
+    }
+    if (req.user.role !== 'admin') {
+      res.status(403).json({ error: 'Admin access required' });
+      return;
+    }
+    res.json(listOrgAgentTemplateApiViews());
+  });
+  return router;
 }
 
 export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {

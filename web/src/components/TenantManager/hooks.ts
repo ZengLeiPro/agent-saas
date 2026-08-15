@@ -7,13 +7,32 @@ import type { Tenant, CreateTenantInput, UpdateTenantInput } from "./types";
 const API_BASE = "/api/tenants";
 
 let cachedTenants: Tenant[] | null = null;
-let tenantsPreloadConsumed = false;
 let tenantsSkipped = false; // 非平台 admin 跳过请求
+let sharedTenantsPreload: Promise<Tenant[] | null> | null = null;
 const tenantSubscribers = new Set<(tenants: Tenant[]) => void>();
 
 function publishTenants(tenants: Tenant[]): void {
   cachedTenants = tenants;
   for (const subscriber of tenantSubscribers) subscriber(tenants);
+}
+
+/**
+ * 所有并发挂载共享同一个 persona 预加载判定。
+ * 在该 Promise 明确组织管理员（null）前，任何实例都不得自行请求平台 /api/tenants。
+ */
+function resolveTenantsPreload(): Promise<Tenant[] | null> {
+  if (!sharedTenantsPreload) {
+    sharedTenantsPreload = tenantsPreload.then((preloaded) => {
+      if (preloaded) {
+        const list = preloaded as Tenant[];
+        publishTenants(list);
+        return list;
+      }
+      tenantsSkipped = true;
+      return null;
+    });
+  }
+  return sharedTenantsPreload;
 }
 
 export function useTenants() {
@@ -22,9 +41,10 @@ export function useTenants() {
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (tenantsSkipped) return;
     try {
       setLoading(true);
+      await resolveTenantsPreload();
+      if (tenantsSkipped) return;
       const res = await authFetch(API_BASE);
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -59,21 +79,9 @@ export function useTenants() {
       return;
     }
 
-    if (!tenantsPreloadConsumed) {
-      tenantsPreloadConsumed = true;
-      tenantsPreload.then((preloaded) => {
-        if (preloaded) {
-          publishTenants(preloaded as Tenant[]);
-        } else {
-          // preload 返回 null 说明非平台 admin，跳过后续请求
-          tenantsSkipped = true;
-        }
-        setLoading(false);
-      });
-    } else {
-      void refresh();
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // 并发实例只等待共享预加载，不允许第二个实例绕过 persona 判定自行 refresh。
+    void resolveTenantsPreload().finally(() => setLoading(false));
+  }, []);
 
   // 注册 refreshBus
   useEffect(() => {

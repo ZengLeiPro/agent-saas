@@ -73,7 +73,7 @@ describe('Resource Assignment 与 Personal Preference', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_resource_assignments');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_user_resource_preferences');
     expect(sql).toContain("assignee_type = 'everyone' AND assignee_id IS NULL");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(21);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(23);
   });
 
   it('legacy username 仅在同租户唯一命中时转 immutable userId；未解析 deny 记 issue 且不误授权同名账号', async () => {
@@ -245,7 +245,7 @@ describe('Resource Assignment 与 Personal Preference', () => {
     await expect(store.replaceAssignments('acme', 'org_agent', 'oa-1', [], 0, 'admin-1'))
       .resolves.toMatchObject({ version: 1, assignments: [] });
     expect(query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO test_resource_assignment_sets'), [
-      'acme', 'org_agent', 'oa-1', 'admin-1',
+      'acme', 'org_agent', 'oa-1', 'admin-1', null, 'enabled',
     ]);
     expect(query).toHaveBeenCalledWith('COMMIT');
   });

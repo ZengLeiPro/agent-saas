@@ -20,7 +20,7 @@ import {
   type OrgAgentAdminRecord,
   type OrgAgentFormValues,
 } from './types';
-import { fetchOrgAgentTemplates, FALLBACK_TEMPLATES, type OrgAgentTemplate } from './templates';
+import { fetchOrgAgentTemplates, type OrgAgentTemplate } from './templates';
 import { useAuth } from '@/contexts/AuthContext';
 
 function formValuesToGovernance(values: OrgAgentFormValues): {
@@ -118,7 +118,9 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
   const detailRequestRef = useRef(0);
   const [initialValues, setInitialValues] = useState<OrgAgentFormValues | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [templates, setTemplates] = useState<OrgAgentTemplate[]>(FALLBACK_TEMPLATES);
+  const [templates, setTemplates] = useState<OrgAgentTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [templatesCollapsed, setTemplatesCollapsed] = useState(false);
   const tenantIdRef = useRef(tenantId);
   tenantIdRef.current = tenantId;
@@ -135,9 +137,21 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
 
   useEffect(() => {
     let cancelled = false;
-    void fetchOrgAgentTemplates().then((list) => {
-      if (!cancelled) setTemplates(list);
-    });
+    setTemplatesLoading(true);
+    void fetchOrgAgentTemplates()
+      .then((list) => {
+        if (cancelled) return;
+        setTemplates(list);
+        setTemplatesError(null);
+      })
+      .catch((cause) => {
+        if (cancelled) return;
+        setTemplates([]);
+        setTemplatesError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => {
+        if (!cancelled) setTemplatesLoading(false);
+      });
     return () => { cancelled = true; };
   }, []);
 
@@ -250,8 +264,10 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
           </div>
         )}
         {actionError && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{actionError}</div>}
+        {templatesLoading && <div className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground"><Loader2 className="mr-2 inline size-4 animate-spin" />正在加载企业专家模板…</div>}
+        {templatesError && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{templatesError}</div>}
 
-        {/* ---------------- 3 张种子模板卡 ---------------- */}
+        {/* ---------------- 后端种子模板卡 ---------------- */}
         {templates.length > 0 && (
           <section aria-label="从模板创建" className="space-y-2">
             <div className="flex items-center justify-between">

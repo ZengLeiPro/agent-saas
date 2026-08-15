@@ -1,6 +1,7 @@
 /**
  * Cron API 路由
  */
+import { randomUUID } from "crypto";
 import { Router } from "express";
 import type { Request, Response } from "express";
 import type { CronService } from "../cron/service.js";
@@ -15,6 +16,11 @@ import {
 import type { GroupStore } from "../data/groups/index.js";
 import { auditLog } from "../data/login-logs/index.js";
 import { isPlatformAdminUser } from "../data/sessions/access.js";
+import { cronLogger } from "../utils/logger.js";
+import {
+  publicOperationalError,
+  publicOperationalErrorMessage,
+} from "../utils/publicOperationalError.js";
 
 /** 是否可管理/查看：所有登录用户（包括 admin）仅自己的任务；auth 未启用时放行。 */
 function canAccess(req: Request, job: CronJob): boolean {
@@ -36,9 +42,9 @@ function isSystemJob(job: CronJob): boolean {
 
 function canSeeSystemJob(req: Request): boolean {
   if (!req.user) return true;
-  return isPlatformAdminUser(req.user
-    ? { role: req.user.role, tenantId: req.user.tenantId }
-    : undefined);
+  return isPlatformAdminUser(
+    req.user ? { role: req.user.role, tenantId: req.user.tenantId } : undefined,
+  );
 }
 
 /** 钉钉通知交叉字段校验（Zod 结构校验后的语义校验） */
@@ -78,6 +84,55 @@ function validateDingtalkNotify(notify: {
   return null;
 }
 
+function isPlatformCaller(req: Request): boolean {
+  return (
+    !!req.user &&
+    isPlatformAdminUser({ role: req.user.role, tenantId: req.user.tenantId })
+  );
+}
+
+function sanitizeCronJobForCaller(req: Request, job: CronJob): CronJob {
+  const { executionLedger: _executionLedger, ...publicState } = job.state;
+  const publicJob = { ...job, state: publicState as CronJob["state"] };
+  if (isPlatformCaller(req) || !job.state.lastError) return publicJob;
+  const failure = publicOperationalErrorMessage(
+    job.state.lastError,
+    "CRON_RUN_FAILED",
+    undefined,
+    cronLogger,
+    `job=${job.id}`,
+  );
+  return {
+    ...publicJob,
+    state: {
+      ...publicState,
+      lastError: failure.message,
+      errorCode: failure.code,
+      diagnosticId: failure.diagnosticId,
+    } as CronJob["state"],
+  };
+}
+
+function sendCronInternalError(
+  req: Request,
+  res: Response,
+  error: unknown,
+  code: string,
+): void {
+  if (isPlatformCaller(req)) {
+    res.status(500).json({ error: String(error) });
+    return;
+  }
+  const sanitized = publicOperationalError(
+    error,
+    code,
+    undefined,
+    cronLogger,
+    req.originalUrl,
+  );
+  res.status(500).json(sanitized);
+}
+
 export function createCronRouter(
   cronService: CronService,
   runsDir: string,
@@ -107,16 +162,62 @@ export function createCronRouter(
       error: raw?.error,
       sessionId: raw?.sessionId,
       transcriptPath: raw?.transcriptPath,
+      trigger: raw?.trigger,
+      scheduledAtMs: raw?.scheduledAtMs,
+      requestId: raw?.requestId,
+      attempt: raw?.attempt,
+      parentRunId: raw?.parentRunId,
+      retryOf: raw?.retryOf,
       durationMs,
     };
   };
 
-  router.get("/status", async (_req: Request, res: Response) => {
+  // readRunLog 按新到旧返回；同 runId 多个终态只保留最新事实，并从旧记录补齐缺失定位字段。
+  const coalesceRunEntries = (entries: any[]) => {
+    const byRunId = new Map<string, any>();
+    for (const entry of entries) {
+      const existing = byRunId.get(entry.runId);
+      if (!existing) {
+        byRunId.set(entry.runId, { ...entry });
+        continue;
+      }
+      byRunId.set(entry.runId, {
+        ...entry,
+        ...existing,
+        startedAtMs: Math.min(
+          existing.startedAtMs ?? Infinity,
+          entry.startedAtMs ?? Infinity,
+        ),
+        endedAtMs: Math.max(existing.endedAtMs ?? 0, entry.endedAtMs ?? 0),
+        durationMs: Math.max(existing.durationMs ?? 0, entry.durationMs ?? 0),
+      });
+    }
+    return [...byRunId.values()];
+  };
+
+  const sanitizeRunEntry = (req: Request, entry: any) => {
+    if (isPlatformCaller(req) || !entry.error) return entry;
+    const failure = publicOperationalErrorMessage(
+      entry.error,
+      "CRON_RUN_FAILED",
+      undefined,
+      cronLogger,
+      `run=${entry.runId ?? "unknown"}`,
+    );
+    return {
+      ...entry,
+      error: failure.message,
+      errorCode: failure.code,
+      diagnosticId: failure.diagnosticId,
+    };
+  };
+
+  router.get("/status", async (req: Request, res: Response) => {
     try {
       await cronService.refresh();
       res.json(cronService.getStatus());
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      sendCronInternalError(req, res, err, "CRON_OPERATION_FAILED");
     }
   });
 
@@ -124,10 +225,15 @@ export function createCronRouter(
     try {
       const includeDisabled = req.query.includeDisabled === "true";
       const allJobs = await cronService.list({ includeDisabled });
-      const jobs = allJobs.filter((job) => canAccess(req, job) && (!isSystemJob(job) || canSeeSystemJob(req)));
+      const jobs = allJobs
+        .filter(
+          (job) =>
+            canAccess(req, job) && (!isSystemJob(job) || canSeeSystemJob(req)),
+        )
+        .map((job) => sanitizeCronJobForCaller(req, job));
       res.json({ jobs });
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      sendCronInternalError(req, res, err, "CRON_OPERATION_FAILED");
     }
   });
 
@@ -146,9 +252,9 @@ export function createCronRouter(
         res.status(404).json({ error: "Job not found" });
         return;
       }
-      res.json(job);
+      res.json(sanitizeCronJobForCaller(req, job));
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      sendCronInternalError(req, res, err, "CRON_OPERATION_FAILED");
     }
   });
 
@@ -187,9 +293,9 @@ export function createCronRouter(
         : undefined;
       const job = await cronService.add(create, context);
       auditLog(req, "cron_job_created", job.name);
-      res.status(201).json(job);
+      res.status(201).json(sanitizeCronJobForCaller(req, job));
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      sendCronInternalError(req, res, err, "CRON_OPERATION_FAILED");
     }
   });
 
@@ -205,7 +311,9 @@ export function createCronRouter(
         return;
       }
       if (isSystemJob(existing)) {
-        res.status(403).json({ error: "系统任务由平台管理，不能通过 API 修改" });
+        res
+          .status(403)
+          .json({ error: "系统任务由平台管理，不能通过 API 修改" });
         return;
       }
 
@@ -267,9 +375,9 @@ export function createCronRouter(
       } else {
         auditLog(req, "cron_job_updated", job.name);
       }
-      res.json(job);
+      res.json(sanitizeCronJobForCaller(req, job));
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      sendCronInternalError(req, res, err, "CRON_OPERATION_FAILED");
     }
   });
 
@@ -285,7 +393,9 @@ export function createCronRouter(
         return;
       }
       if (isSystemJob(existing)) {
-        res.status(403).json({ error: "系统任务由平台管理，不能通过 API 删除" });
+        res
+          .status(403)
+          .json({ error: "系统任务由平台管理，不能通过 API 删除" });
         return;
       }
       await cronService.remove(req.params.id);
@@ -304,7 +414,7 @@ export function createCronRouter(
 
       res.json({ ok: true });
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      sendCronInternalError(req, res, err, "CRON_OPERATION_FAILED");
     }
   });
 
@@ -319,17 +429,107 @@ export function createCronRouter(
         res.status(403).json({ error: "Access denied" });
         return;
       }
-      const result = await cronService.runNow(req.params.id);
+      const requestId = String(
+        req.body?.requestId || req.header("Idempotency-Key") || randomUUID(),
+      ).trim();
+      const result = await cronService.runNow(req.params.id, { requestId });
       if (!result.ran) {
-        res.status(400).json({ error: result.error });
+        if (isPlatformCaller(req))
+          res.status(400).json({ error: result.error });
+        else
+          res
+            .status(400)
+            .json(
+              publicOperationalError(
+                result.error,
+                "CRON_RUN_REJECTED",
+                "定时任务未启动",
+                cronLogger,
+                `job=${req.params.id}`,
+              ),
+            );
         return;
       }
       auditLog(req, "cron_job_triggered", existing.name);
-      res.json({ ok: true });
+      res.json({
+        ok: true,
+        runId: result.runId,
+        requestId: result.requestId,
+        deduplicated: result.deduplicated === true,
+      });
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      sendCronInternalError(req, res, err, "CRON_OPERATION_FAILED");
     }
   });
+
+  router.post(
+    "/jobs/:id/runs/:runId/retry",
+    async (req: Request, res: Response) => {
+      try {
+        const existing = await cronService.get(req.params.id);
+        if (!existing) {
+          res.status(404).json({ error: "Job not found" });
+          return;
+        }
+        if (!canAccess(req, existing)) {
+          res.status(403).json({ error: "Access denied" });
+          return;
+        }
+        const source = coalesceRunEntries(
+          (await readRunLog(req.params.id, { runsDir, limit: 5000 })).map(
+            (entry: any, index: number) => normalizeEntry(entry, index),
+          ),
+        ).find((entry) => entry.runId === req.params.runId);
+        if (!source) {
+          res.status(404).json({ error: "Run not found" });
+          return;
+        }
+        const requestId = String(
+          req.body?.requestId || req.header("Idempotency-Key") || randomUUID(),
+        ).trim();
+        const parentRunId = source.parentRunId || source.runId;
+        const result = await cronService.runNow(req.params.id, {
+          requestId,
+          retryOf: source.runId,
+          parentRunId,
+          attempt: Math.max(1, Number(source.attempt) || 1) + 1,
+        });
+        if (!result.ran) {
+          if (isPlatformCaller(req))
+            res.status(400).json({ error: result.error });
+          else
+            res
+              .status(400)
+              .json(
+                publicOperationalError(
+                  result.error,
+                  "CRON_RUN_REJECTED",
+                  "定时任务重试未启动",
+                  cronLogger,
+                  `job=${req.params.id} retryOf=${source.runId}`,
+                ),
+              );
+          return;
+        }
+        auditLog(
+          req,
+          "cron_job_triggered",
+          `${existing.name} retry:${source.runId}`,
+        );
+        res.json({
+          ok: true,
+          runId: result.runId,
+          requestId: result.requestId,
+          retryOf: source.runId,
+          parentRunId,
+          attempt: Math.max(1, Number(source.attempt) || 1) + 1,
+          deduplicated: result.deduplicated === true,
+        });
+      } catch (err) {
+        sendCronInternalError(req, res, err, "CRON_OPERATION_FAILED");
+      }
+    },
+  );
 
   router.get("/jobs/:id/runs", async (req: Request, res: Response) => {
     try {
@@ -342,19 +542,35 @@ export function createCronRouter(
         res.status(403).json({ error: "Access denied" });
         return;
       }
-      const limit = parseInt(req.query.limit as string) || 50;
-      const rawEntries = await readRunLog(req.params.id, { runsDir, limit });
-      const entries = rawEntries.map((e: any, i: number) => {
-        const normalized = normalizeEntry(e, i);
-        return {
+      const requestedLimit = Number.parseInt(String(req.query.limit ?? ""), 10);
+      const limit = Math.max(
+        1,
+        Math.min(200, Number.isFinite(requestedLimit) ? requestedLimit : 50),
+      );
+      // JSONL 会为同一 runId 追加多个终态。固定 limit*4 会在重复记录密集时少页；
+      // 在日志读取上限内扫描完整窗口，保证尽量填满去重后的 limit。若碰到上限，
+      // 即使当前唯一项不足，也用 hasMore 明示仍可能有更老记录。
+      const scanLimit = 5000;
+      const rawEntries = await readRunLog(req.params.id, {
+        runsDir,
+        limit: scanLimit,
+      });
+      const coalesced = coalesceRunEntries(
+        rawEntries.map((e: any, i: number) => normalizeEntry(e, i)),
+      );
+      const entries = coalesced.slice(0, limit).map((normalized) =>
+        sanitizeRunEntry(req, {
           ...normalized,
           hasTranscript: !!normalized.transcriptPath || !!normalized.sessionId,
           transcriptPath: undefined,
-        };
+        }),
+      );
+      res.json({
+        entries,
+        hasMore: coalesced.length > limit || rawEntries.length === scanLimit,
       });
-      res.json({ entries });
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      sendCronInternalError(req, res, err, "CRON_OPERATION_FAILED");
     }
   });
 
@@ -376,9 +592,9 @@ export function createCronRouter(
         }
 
         const entries = await readRunLog(jobId, { runsDir, limit: 5000 });
-        const entry = (entries as any[])
-          .map((e, i) => normalizeEntry(e, i))
-          .find((e) => e?.runId === runId);
+        const entry = coalesceRunEntries(
+          (entries as any[]).map((e, i) => normalizeEntry(e, i)),
+        ).find((e) => e?.runId === runId);
         if (!entry) {
           res.status(404).json({ error: "Run not found" });
           return;
@@ -404,11 +620,11 @@ export function createCronRouter(
         const parsed = await parseTranscriptFile(entry.transcriptPath);
 
         res.json({
-          run: {
+          run: sanitizeRunEntry(req, {
             ...entry,
             hasTranscript: true,
             transcriptPath: undefined,
-          },
+          }),
           transcript: {
             sessionId: parsed.sessionId ?? entry.sessionId,
             stats: parsed.stats,
@@ -418,10 +634,22 @@ export function createCronRouter(
       } catch (err) {
         const msg = String(err instanceof Error ? err.message : err);
         if (msg.includes("outside allowed directory")) {
-          res.status(403).json({ error: msg });
+          if (isPlatformCaller(req)) res.status(403).json({ error: msg });
+          else
+            res
+              .status(403)
+              .json(
+                publicOperationalError(
+                  err,
+                  "CRON_TRANSCRIPT_ACCESS_DENIED",
+                  "运行详情不可访问",
+                  cronLogger,
+                  `job=${req.params.id} run=${req.params.runId}`,
+                ),
+              );
           return;
         }
-        res.status(500).json({ error: msg });
+        sendCronInternalError(req, res, err, "CRON_RUN_DETAILS_FAILED");
       }
     },
   );

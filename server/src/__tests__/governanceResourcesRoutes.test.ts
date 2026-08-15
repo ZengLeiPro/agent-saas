@@ -38,6 +38,8 @@ async function rig(input: {
   listOwnedAgents?: ReturnType<typeof vi.fn>;
   listOwnedSkills?: ReturnType<typeof vi.fn>;
   credentialCreate?: ReturnType<typeof vi.fn>;
+  credentialClaimCommit?: ReturnType<typeof vi.fn>;
+  credentialFinishCommit?: ReturnType<typeof vi.fn>;
   putSecret?: ReturnType<typeof vi.fn>;
   executeUserOffboarding?: ReturnType<typeof vi.fn> & { retry?: ReturnType<typeof vi.fn> };
   getChangeJob?: ReturnType<typeof vi.fn>;
@@ -122,7 +124,11 @@ async function rig(input: {
     } as never,
     credentials: {
       create: credentialCreate,
+      claimCommit: input.credentialClaimCommit ?? vi.fn().mockResolvedValue({ state: 'acquired', leaseToken: 'lease-1' }),
+      recordCommitProgress: vi.fn().mockResolvedValue(undefined),
+      finishCommit: input.credentialFinishCommit ?? vi.fn().mockResolvedValue(undefined),
       get: input.getCredential ?? vi.fn().mockResolvedValue(null),
+      getBySecretRef: vi.fn().mockResolvedValue(null),
       updateStatus: updateCredential,
       listForTenant: input.listCredentials ?? vi.fn().mockResolvedValue([]),
       listForOwner: vi.fn().mockResolvedValue([]),
@@ -344,6 +350,30 @@ describe('typed governance resource routes', () => {
     ]));
   });
 
+  it.each([
+    ['cronOwnership', () => ({ listCronIdsByOwner: vi.fn().mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('cron authority down')) })],
+    ['personalMemory', () => ({ listPersonalMemoryIds: vi.fn().mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('memory authority down')) })],
+    ['fileOwnership', () => ({ listFileOwnership: vi.fn().mockResolvedValueOnce({ personalFileIds: [], organizationFileIds: [] }).mockRejectedValueOnce(new Error('file authority down')) })],
+  ])('offboarding commit 在 %s authority 变为 unavailable 时 fail closed', async (_domain, authorityOverride) => {
+    const executeUserOffboarding = vi.fn();
+    const test = await rig({
+      user: { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' },
+      executeUserOffboarding,
+      ...authorityOverride(),
+    });
+    const change = { userId: 'user-leaving', handoffTargetUserId: 'user-owner', reasonCode: 'employee_departure' };
+    const preview = await createOffboardingPreview(test, change);
+    expect(preview).toMatchObject({ canCommit: true });
+
+    const response = await test.request(
+      '/api/governance/resources/change-jobs/user-offboarding',
+      json('POST', withOffboardingPreview({ ...change, idempotencyKey: `offboard-${_domain}-down` }, preview)),
+    );
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ code: 'OFFBOARDING_RETENTION_AUTHORITY_UNAVAILABLE' });
+    expect(executeUserOffboarding).not.toHaveBeenCalled();
+  });
+
   it('active Run、Session、OAuth Grant 或外部连接 authority 缺失时 preview fail closed', async () => {
     const test = await rig({
       user: { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' },
@@ -471,9 +501,15 @@ describe('typed governance resource routes', () => {
     const test = await rig({
       user: { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' },
     });
+    const command = {
+      connectorId: 'github', kind: 'org_shared' as const, purpose: 'shared automation',
+      secret: 'github_pat_shared_sensitive', reason: '共享自动化接入',
+    };
+    const previewResponse = await test.request('/api/governance/resources/credentials/preview', json('POST', command));
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json() as { previewId: string; baselineDigest: string; expiresAt: string };
     const response = await test.request('/api/governance/resources/credentials', json('POST', {
-      connectorId: 'github', kind: 'org_shared', purpose: 'shared automation',
-      secret: 'github_pat_shared_sensitive',
+      ...command, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt,
     }));
     expect(response.status).toBe(201);
     expect(test.putSecret).toHaveBeenCalledWith(

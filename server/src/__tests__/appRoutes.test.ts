@@ -310,9 +310,11 @@ describe('registerRoutes', () => {
     //   + 当前用户 Web Push 订阅管理 = 43
     //   + Agent DWS 账号路由 = 44
     //   + Agent DWS 精确前缀管理员门禁 = 45
+    //   + 租户专家模板 = 46
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(45);
+    expect(app.use).toHaveBeenCalledTimes(46);
+    expect(app.use).toHaveBeenCalledWith('/api/tenant/expert-templates', expect.any(Function));
     expect(mocked.createWebPushRouter).toHaveBeenCalledWith(undefined);
     expect(app.use).toHaveBeenCalledWith('/api/web-push', mocked.webPushRouter);
     expect(mocked.createTaskboardRouter).toHaveBeenCalledWith({
@@ -406,6 +408,23 @@ describe('registerRoutes', () => {
 });
 
 describe('activeOffboardingWriteFence', () => {
+  it('store 缺失时相关写请求 fail-closed，读取与未认证请求仍放行', async () => {
+    const middleware = activeOffboardingWriteFence({} as any);
+    const status = vi.fn().mockReturnThis();
+    const json = vi.fn();
+    const next = vi.fn();
+    const user = { sub: 'user-1', tenantId: 'tenant-a' };
+
+    await middleware({ method: 'POST', user } as any, { status, json } as any, next);
+    expect(status).toHaveBeenCalledWith(503);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({ code: 'OFFBOARDING_AUTHORITY_UNAVAILABLE' }));
+    expect(next).not.toHaveBeenCalled();
+
+    await middleware({ method: 'GET', user } as any, { status, json } as any, next);
+    await middleware({ method: 'POST' } as any, { status, json } as any, next);
+    expect(next).toHaveBeenCalledTimes(2);
+  });
+
   it('活跃离职流程阻止该用户继续写入 API，读取请求仍放行', async () => {
     const findActiveForTarget = vi.fn().mockResolvedValue({ jobId: 'job-1' });
     const middleware = activeOffboardingWriteFence({ governanceChangeJobStore: { findActiveForTarget } } as any);

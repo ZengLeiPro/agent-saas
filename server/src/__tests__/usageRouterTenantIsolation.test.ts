@@ -37,6 +37,8 @@ function fakeUserStore(): UserStore {
     { id: 'u-ku', username: 'alice', role: 'user' as const, tenantId: 'kaiyan', realName: '艾丽丝' },
     { id: 'u-wa', username: 'wain_admin', role: 'admin' as const, tenantId: 'wain', realName: '唯恩管理员' },
     { id: 'u-wu', username: 'wain_user', role: 'user' as const, tenantId: 'wain', realName: '唯恩员工' },
+    { id: 'u-wi', username: 'inactive_wain', role: 'user' as const, tenantId: 'wain', realName: '已离职员工' },
+    { id: 'u-ws', username: 'suspended_wain', role: 'user' as const, tenantId: 'wain', realName: '已停用员工' },
   ];
   return {
     findByUsername: (name: string) => users.find(u => u.username === name),
@@ -52,10 +54,32 @@ interface TestRig {
   close(): Promise<void>;
 }
 
-async function makeTestRig(
-  triggerRebuild?: () => Promise<unknown>,
-  getTenantPolicy?: (tenantId: string) => Promise<{ showCost?: boolean } | null>,
-): Promise<TestRig> {
+type MembershipAuthority = {
+  getMembership(tenantId: string, userId: string): Promise<{ status: string } | null>;
+};
+
+function fakeMembershipStore(): MembershipAuthority {
+  const statuses = new Map([
+    ['u-ka', 'active'], ['u-ku', 'active'], ['u-wa', 'active'], ['u-wu', 'active'],
+    ['u-wi', 'inactive'], ['u-ws', 'suspended'],
+  ]);
+  return {
+    getMembership: async (_tenantId, userId) => {
+      const status = statuses.get(userId);
+      return status ? { status } : null;
+    },
+  };
+}
+
+interface TestRigOptions {
+  triggerRebuild?: () => Promise<unknown>;
+  getTenantPolicy?: (tenantId: string) => Promise<{ showCost?: boolean } | null>;
+  /** null 显式模拟依赖未注入；undefined 使用默认权威桩。 */
+  userStore?: UserStore | null;
+  membershipStore?: MembershipAuthority | null;
+}
+
+async function makeTestRig(options: TestRigOptions = {}): Promise<TestRig> {
   const dataDir = await mkdtemp(join(tmpdir(), 'usage-tenant-iso-'));
   __resetBusinessDbForTest();
   const db = getBusinessDb(dataDir);
@@ -67,9 +91,10 @@ async function makeTestRig(
   app.use((req, _res, next) => { req.user = currentCaller; next(); });
   app.use('/api/admin/usage', createUsageRouter({
     tokenUsageStore: store,
-    userStore: fakeUserStore(),
-    triggerRebuild,
-    getTenantPolicy,
+    ...(options.userStore === null ? {} : { userStore: options.userStore ?? fakeUserStore() }),
+    ...(options.membershipStore === null ? {} : { membershipStore: options.membershipStore ?? fakeMembershipStore() }),
+    triggerRebuild: options.triggerRebuild,
+    getTenantPolicy: options.getTenantPolicy,
   }));
 
   const server: Server = await new Promise(resolve => {
@@ -98,7 +123,7 @@ describe('Usage 路由组织隔离', () => {
   let h: TestRig;
 
   beforeEach(async () => {
-    h = await makeTestRig(async () => undefined);
+    h = await makeTestRig({ triggerRebuild: async () => undefined });
   });
 
   afterEach(async () => {
@@ -160,6 +185,26 @@ describe('Usage 路由组织隔离', () => {
       const res = await h.request('/api/admin/usage/overview?range=today&tenantId=kaiyan');
       expect(res.status).toBe(403);
     });
+
+    it('range=all 使用租户真实 earliestDate，响应不暴露内部最小日期哨兵', async () => {
+      h.store.recordResult({
+        username: 'wain_user', tenantId: 'wain', channel: 'web',
+        modelUsage: { 'claude-opus-4-7': { inputTokens: 5, outputTokens: 1 } },
+        occurredAtMs: new Date('2025-12-03T00:00:00+08:00').getTime(),
+      });
+      h.setCaller(WAIN_ADMIN);
+      const body = await (await h.request('/api/admin/usage/overview?range=all')).json();
+      expect(body.fromDate).toBe('2025-12-03');
+      expect(JSON.stringify(body)).not.toContain('0000-01-01');
+    });
+
+    it('range=all 无数据时返回空范围安全日期，不暴露 0000 哨兵', async () => {
+      h.setCaller(WAIN_ADMIN);
+      const body = await (await h.request('/api/admin/usage/overview?range=all')).json();
+      expect(body.fromDate).toBe(todayBJ());
+      expect(body.totalTurns).toBe(0);
+      expect(JSON.stringify(body)).not.toContain('0000-01-01');
+    });
   });
 
   describe('GET /by-user', () => {
@@ -192,6 +237,79 @@ describe('Usage 路由组织隔离', () => {
       const body = await res.json();
       const names = body.users.map((u: { username: string }) => u.username).sort();
       expect(names).toEqual(['alice', 'wain_user']);
+    });
+
+    it('组织管理员排行排除已不在当前目录的历史账号，平台全局历史口径不受影响', async () => {
+      h.store.recordResult({
+        username: 'former_wain', tenantId: 'wain', channel: 'web',
+        modelUsage: { 'claude-opus-4-7': { inputTokens: 300, outputTokens: 10 } },
+        occurredAtMs: Date.now(),
+      });
+      h.store.recordResult({
+        username: 'wain_user', tenantId: 'wain', channel: 'web',
+        modelUsage: { 'claude-opus-4-7': { inputTokens: 200, outputTokens: 10 } },
+        occurredAtMs: Date.now(),
+      });
+
+      h.setCaller(WAIN_ADMIN);
+      const orgBody = await (await h.request('/api/admin/usage/by-user?range=today')).json();
+      expect(orgBody.users.map((u: { username: string }) => u.username)).toEqual(['wain_user']);
+
+      h.setCaller(PLATFORM_ADMIN);
+      const platformBody = await (await h.request('/api/admin/usage/by-user?range=today')).json();
+      expect(platformBody.users.map((u: { username: string }) => u.username).sort())
+        .toEqual(['former_wain', 'wain_user']);
+    });
+
+    it('组织排行仅保留 active membership，排除 inactive 与 suspended 历史账号', async () => {
+      for (const username of ['wain_user', 'inactive_wain', 'suspended_wain']) {
+        h.store.recordResult({
+          username, tenantId: 'wain', channel: 'web',
+          modelUsage: { 'claude-opus-4-7': { inputTokens: 10, outputTokens: 1 } },
+          occurredAtMs: Date.now(),
+        });
+      }
+      h.setCaller(WAIN_ADMIN);
+
+      const res = await h.request('/api/admin/usage/by-user?range=today');
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.users.map((user: { username: string }) => user.username)).toEqual(['wain_user']);
+    });
+
+    it.each(['userStore', 'membershipStore'] as const)(
+      '组织排行缺少 %s 时明确 fail-closed，不静默返回空排行',
+      async (missing) => {
+        await h.close();
+        h = await makeTestRig({ [missing]: null });
+        h.store.recordResult({
+          username: 'wain_user', tenantId: 'wain', channel: 'web',
+          modelUsage: { 'claude-opus-4-7': { inputTokens: 10, outputTokens: 1 } },
+          occurredAtMs: Date.now(),
+        });
+        h.setCaller(WAIN_ADMIN);
+
+        const res = await h.request('/api/admin/usage/by-user?range=today');
+        expect(res.status).toBe(503);
+        expect(await res.json()).toMatchObject({ code: 'ACTIVE_MEMBERSHIP_AUTHORITY_UNAVAILABLE' });
+      },
+    );
+
+    it('membership 权威查询异常时明确 fail-closed', async () => {
+      await h.close();
+      h = await makeTestRig({
+        membershipStore: { getMembership: async () => { throw new Error('authority down'); } },
+      });
+      h.store.recordResult({
+        username: 'wain_user', tenantId: 'wain', channel: 'web',
+        modelUsage: { 'claude-opus-4-7': { inputTokens: 10, outputTokens: 1 } },
+        occurredAtMs: Date.now(),
+      });
+      h.setCaller(WAIN_ADMIN);
+
+      const res = await h.request('/api/admin/usage/by-user?range=today');
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ code: 'ACTIVE_MEMBERSHIP_AUTHORITY_UNAVAILABLE' });
     });
   });
 
@@ -301,7 +419,7 @@ describe('USD 成本脱敏（2026-07-14，policy.showCost fail-closed）', () =>
     getTenantPolicy: ((tenantId: string) => Promise<{ showCost?: boolean } | null>) | undefined,
     fn: (rig: TestRig) => Promise<void>,
   ) {
-    const rig = await makeTestRig(async () => undefined, getTenantPolicy);
+    const rig = await makeTestRig({ triggerRebuild: async () => undefined, getTenantPolicy });
     try {
       rig.store.recordResult({
         username: 'wain_user', tenantId: 'wain', channel: 'web',

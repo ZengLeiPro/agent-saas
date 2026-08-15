@@ -46,6 +46,25 @@ export const credentialStatusSchema = z.object({
   status: z.enum(['rotation_due', 'expired', 'suspended', 'revoked', 'validation_failed']),
   reason: z.string().min(1).max(500),
 }).strict();
+const credentialPreviewTokenShape = {
+  previewId: z.string().regex(/^cpv1\.[a-f0-9]{64}$/),
+  baselineDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  expiresAt: z.string().datetime({ offset: true }),
+};
+export const credentialCreatePreviewSchema = credentialCreateSchema.extend({
+  kind: z.literal('org_shared'),
+  reason: z.string().min(3).max(500),
+}).strict();
+export const credentialCreateCommitSchema = credentialCreatePreviewSchema.extend(credentialPreviewTokenShape).strict();
+export const credentialRotatePreviewSchema = z.object({
+  expectedVersion: z.number().int().positive(), secret: z.string().min(1).max(10000), reason: z.string().min(3).max(500),
+}).strict();
+export const credentialRotateCommitSchema = credentialRotatePreviewSchema.extend(credentialPreviewTokenShape).strict();
+export const credentialTransferPreviewSchema = z.object({
+  expectedVersion: z.number().int().positive(), custodianUserId: z.string().min(1).max(128), reason: z.string().min(3).max(500),
+}).strict();
+export const credentialTransferCommitSchema = credentialTransferPreviewSchema.extend(credentialPreviewTokenShape).strict();
+export const credentialHealthSchema = z.object({ expectedVersion: z.number().int().positive() }).strict();
 export const providerSchema = z.object({
   status: z.enum(['enabled', 'draining', 'disabled']), endpointRef: z.string().min(1).max(500),
   networkPolicy: z.record(z.string(), z.unknown()).optional(), infrastructureCredentialId: z.string().min(2).max(128).optional(),

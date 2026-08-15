@@ -4,10 +4,10 @@ import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import { findRun, findRunForUpdate } from './runStoreIdempotency.js';
 import { cancelActiveRunsByUser, releaseRunLease } from './runTerminalLifecycle.js';
 import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL } from './runStatusPolicy.js';
+import { markRunStatus, markRunStatusIfCurrent } from './runStatusCas.js';
 
 const { Pool } = pg;
-
-type PgPool = InstanceType<typeof Pool>;
+export type PgPool = InstanceType<typeof Pool>;
 
 export type RunStatus =
   | 'pending'
@@ -202,6 +202,14 @@ export interface RunStore {
   /** 会话内仍可由用户单条撤回的 pending 插话（供 detail API 恢复队列区）。 */
   listPendingSteeringBySession?(sessionId: string): Promise<SteeringInputRecord[]>;
   markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch?: Record<string, unknown>): Promise<RunRecord | null>;
+  /** CAS 状态迁移；仅当前状态命中 expectedStatuses 时更新，未命中返回 null。 */
+  markStatusIfCurrent?(
+    runId: string,
+    expectedStatuses: readonly RunStatus[],
+    status: RunStatus,
+    reason?: string,
+    metadataPatch?: Record<string, unknown>,
+  ): Promise<RunRecord | null>;
   patchMetadata?(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null>;
   get(runId: string): Promise<RunRecord | null>;
   findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null>;
@@ -1142,39 +1150,31 @@ export class PgRunStore implements RunStore {
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
   }
 
-  async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
-    const now = new Date().toISOString();
-    // 门禁加固（2026-06-22）：terminal 状态是 sink。已 completed/failed/cancelled/orphaned
-    // 的 run 不能被重新写回活跃态（防 lease 抢占重叠期内旧 worker 经事件路径覆盖
-    // 新 worker 状态 / 防终态被重激活）。terminal→相同 terminal 仍允许（幂等重写
-    // reason/metadata）。用 CTE 保留"返回当前 run 记录"契约：守卫拦截时返回未变更的
-    // 现有（terminal）记录，而不是 null，避免幂等调用方拿不到记录而误判。
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
-      WITH updated AS (
-        UPDATE ${this.runsTable}
-        SET status = $2,
-            status_reason = $3,
-            updated_at = $4,
-            started_at = CASE WHEN $2 = 'running' AND started_at IS NULL THEN $4 ELSE started_at END,
-            completed_at = CASE WHEN $2 = 'completed' THEN $4 ELSE completed_at END,
-            failed_at = CASE WHEN $2 = 'failed' THEN $4 ELSE failed_at END,
-            cancelled_at = CASE WHEN $2 = 'cancelled' THEN $4 ELSE cancelled_at END,
-            metadata = CASE
-              WHEN $2::text IN ('completed','failed','cancelled','orphaned')
-                THEN (metadata || $5::jsonb) - 'wakeMessage'
-              ELSE metadata || $5::jsonb
-            END
-        WHERE run_id = $1
-          AND (status NOT IN ('completed','failed','cancelled','orphaned') OR status = $2)
-        RETURNING row_to_json(${this.runsTable}.*) AS row_json
-      )
-      SELECT row_json FROM updated
-      UNION ALL
-      SELECT row_to_json(${this.runsTable}.*) AS row_json
-      FROM ${this.runsTable}
-      WHERE run_id = $1 AND NOT EXISTS (SELECT 1 FROM updated)
-    `, [runId, status, reason ?? null, now, JSON.stringify(metadataPatch)]);
-    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+  async markStatus(
+    runId: string,
+    status: RunStatus,
+    reason?: string,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<RunRecord | null> {
+    return markRunStatus({
+      pool: this.pool,
+      runsTable: this.runsTable,
+      normalizeRunRecord,
+    }, runId, status, reason, metadataPatch);
+  }
+
+  async markStatusIfCurrent(
+    runId: string,
+    expectedStatuses: readonly RunStatus[],
+    status: RunStatus,
+    reason?: string,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<RunRecord | null> {
+    return markRunStatusIfCurrent({
+      pool: this.pool,
+      runsTable: this.runsTable,
+      normalizeRunRecord,
+    }, runId, expectedStatuses, status, reason, metadataPatch);
   }
 
   async patchMetadata(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> {

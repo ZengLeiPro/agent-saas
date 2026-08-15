@@ -2,7 +2,7 @@
  * Cron 任务调度系统类型定义
  */
 
-import { z } from 'zod';
+import { z } from "zod";
 
 // ============ 调度配置 ============
 
@@ -97,17 +97,46 @@ export interface NotifyConfig {
 
 // ============ 任务状态 ============
 
+export type CronRunTrigger = "schedule" | "manual" | "retry";
+export type CronExecutionState = "claimed" | "running" | "terminal";
+
+/** Durable execution ledger used for cross-process dispatch fencing and idempotency. */
+export interface CronExecutionRecord {
+  idempotencyKey: string;
+  runId: string;
+  startedAtMs: number;
+  claimedAtMs: number;
+  runningAtMs?: number;
+  status: CronExecutionState;
+  ownerId: string;
+  leaseId: string;
+  leaseVersion: number;
+  trigger: CronRunTrigger;
+  scheduledAtMs?: number;
+  requestId?: string;
+  attempt: number;
+  parentRunId?: string;
+  retryOf?: string;
+  terminalStatus?: "ok" | "error" | "skipped";
+  endedAtMs?: number;
+}
+
 export interface CronJobState {
   nextRunAtMs?: number; // 下次执行时间
   runningAtMs?: number; // 正在执行的开始时间
   runningRunId?: string; // 跨进程运行 claim token
+  runningLeaseId?: string; // 当前派发租约 fencing token
   runningDeadlineAtMs?: number; // claim 时冻结的 watchdog 截止时间
   runningTimedOutAtMs?: number; // watchdog 已告警；保留 claim 防止旧执行与重试双跑
   runningOwnerPid?: number; // claim 所属进程，用于崩溃后的同机回收
   runningOwnerHostname?: string; // claim 所属主机；异地主机未知时 fail closed
+  executionLedger?: CronExecutionRecord[]; // durable idempotency + retry lineage (not exposed in job DTOs)
   lastRunAtMs?: number; // 上次执行时间
   lastStatus?: "ok" | "error" | "skipped";
   lastError?: string; // 上次错误信息
+  /** 非平台调用方的稳定错误码与诊断关联 ID（持久化真源仍只存 lastError）。 */
+  errorCode?: string;
+  diagnosticId?: string;
   lastDurationMs?: number; // 上次执行耗时
   lastOutput?: string; // 上次执行输出（截断）
 }
@@ -180,6 +209,13 @@ export interface CronRunLogEntry {
   runId: string;
   /** 开始时间戳（ms） */
   startedAtMs: number;
+  /** 触发来源与执行谱系。旧日志缺省时按首次执行展示。 */
+  trigger?: CronRunTrigger;
+  scheduledAtMs?: number;
+  requestId?: string;
+  attempt?: number;
+  parentRunId?: string;
+  retryOf?: string;
   /** 结束时间戳（ms） */
   endedAtMs: number;
   jobId: string;
@@ -207,8 +243,8 @@ export interface CronServiceStatus {
   jobCount: number;
   enabledJobCount: number;
   nextWakeAtMs?: number;
-  runningJobId?: string;      // 保留向后兼容
-  runningJobIds?: string[];   // 所有正在运行的 job
+  runningJobId?: string; // 保留向后兼容
+  runningJobIds?: string[]; // 所有正在运行的 job
 }
 
 // ============ 事件类型 ============
@@ -278,19 +314,23 @@ export const cronPayloadSchema = z.discriminatedUnion("kind", [
   payloadSystemEventSchema,
 ]);
 
-const payloadAgentTurnPatchSchema = z.object({
-  kind: z.literal("agentTurn").optional(),
-  message: z.string().min(1).optional(),
-  model: z.string().optional(),
-  maxTurns: z.number().int().positive().optional(),
-  timeoutSeconds: z.number().int().min(0).optional(),
-  context: agentContextConfigSchema.optional(),
-}).strict();
+const payloadAgentTurnPatchSchema = z
+  .object({
+    kind: z.literal("agentTurn").optional(),
+    message: z.string().min(1).optional(),
+    model: z.string().optional(),
+    maxTurns: z.number().int().positive().optional(),
+    timeoutSeconds: z.number().int().min(0).optional(),
+    context: agentContextConfigSchema.optional(),
+  })
+  .strict();
 
-const payloadSystemEventPatchSchema = z.object({
-  kind: z.literal("systemEvent").optional(),
-  text: z.string().min(1).optional(),
-}).strict();
+const payloadSystemEventPatchSchema = z
+  .object({
+    kind: z.literal("systemEvent").optional(),
+    text: z.string().min(1).optional(),
+  })
+  .strict();
 
 export const cronPayloadPatchSchema = z.union([
   payloadAgentTurnPatchSchema,
@@ -302,12 +342,14 @@ export const notifyConfigSchema = z.object({
   channel: z.enum(["dingtalk", "web", "both"]),
   onSuccess: z.boolean().optional(),
   onError: z.boolean().optional(),
-  dingtalk: z.object({
-    mode: z.enum(["session", "user", "chat"]).optional(),
-    conversationId: z.string().optional(),
-    userId: z.union([z.string(), z.array(z.string())]).optional(),
-    chatId: z.string().optional(),
-  }).optional(),
+  dingtalk: z
+    .object({
+      mode: z.enum(["session", "user", "chat"]).optional(),
+      conversationId: z.string().optional(),
+      userId: z.union([z.string(), z.array(z.string())]).optional(),
+      chatId: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const cronJobCreateSchema = z.object({

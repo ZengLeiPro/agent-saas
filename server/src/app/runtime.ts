@@ -29,7 +29,7 @@ import type { EventStore } from '../runtime/types.js';
 import { RuntimeEventRetention } from '../runtime/runtimeEventRetention.js';
 import { PgRuntimeAuditQuery } from '../runtime/pgAuditQuery.js';
 import { PgSessionLock } from '../runtime/pgSessionLock.js';
-import { PgRunStore } from '../runtime/runStore.js';
+import { PgTerminalEventOutboxRunStore, startTerminalEventOutboxDispatcher } from '../runtime/runTerminalOutboxDispatcher.js';
 import { PgHandStore } from '../runtime/handStore.js';
 import { PgSessionProjectionStore } from '../runtime/sessionProjectionStore.js';
 import { MemoryConsolidationEngine } from '../memory/consolidation/engine.js';
@@ -680,7 +680,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let memoryConsolidationStore: PgMemoryConsolidationStore | undefined;
   let memoryConsolidationEngine: MemoryConsolidationEngine | undefined;
   let sessionLock: PgSessionLock | undefined;
-  let pgRunStore: PgRunStore | undefined;
+  let pgRunStore: PgTerminalEventOutboxRunStore | undefined;
   let pgSessionProjectionStore: PgSessionProjectionStore | undefined;
   let sessionReadStateStore: SessionReadStateStore | undefined;
   let pgHandStore: PgHandStore | undefined;
@@ -778,7 +778,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     resolvedFeishuConnector,
     feishuConnectorScopes,
   } = await initializeRuntimeGovernanceCredentials(config, processCwd);
-
   // P4 防御纵深（2026-06-22 落地，06-26 收敛 admin 容器 env）：把按 tenant 装配子进程 env 的规则统一塞进
   // ServerLocal / Container 两条路径。buildTenantScopedEnv 会按 workspace.tenantId
   // 决定是"匿名内部调用保留完整 process.env"还是"明确 tenant 先剔除敏感宿主
@@ -935,7 +934,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         serverLogger.warn(`PgFeishuAuthSessionStore init failed, Feishu one-click connection disabled: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    pgRunStore = new PgRunStore({
+    pgRunStore = new PgTerminalEventOutboxRunStore({
       pool: pgEventStore.pool,
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
@@ -1191,6 +1190,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         serverLogger.warn(`Recovered stale running tool invocations at startup: ${recoveryResult.recovered}/${recoveryResult.scanned}`);
       }
     }
+    const terminalEventOutboxDispatcher = await startTerminalEventOutboxDispatcher({ runStore: pgRunStore, eventStore: pgEventStore, logger: serverLogger.child('TerminalEventOutbox') });
     runtimeEventStoreShutdown = async () => {
       setSessionMetaProjectionSink(undefined);
       clientDaemonGateway?.close();
@@ -1199,6 +1199,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       systemMetricsCollector?.stop();
       alertNotifier?.stop();
       await taskboardExecutionCoordinator?.stop();
+      terminalEventOutboxDispatcher.stop();
       await runtimeScheduler?.stop();
       await runtimeOutboundStreamRelay?.flushAll();
       if (cancelDeliveryRetryTimer) clearInterval(cancelDeliveryRetryTimer);
@@ -1215,7 +1216,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     };
     serverLogger.info('Runtime EventStore initialized: backend=pg; durable RunStore + HandStore + RuntimeScheduler initialized');
   }
-
   clientDaemonGateway = new ClientDaemonGateway({
     transport: clientDaemonTransport,
     handStore: pgHandStore,
@@ -2865,7 +2865,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       }, 5_000);
       cancelDeliveryRetryTimer.unref?.();
     }
-    serverLogger.info('Runtime EventStore live bridge initialized: backend=pg listen/notify');
+    serverLogger.info('Runtime EventStore live bridge initialized: backend=pg listen/notify; terminal outbox recovery started');
   }
   if (runtimeScheduler && enableSchedulerWorker) {
     await runtimeScheduler.start();

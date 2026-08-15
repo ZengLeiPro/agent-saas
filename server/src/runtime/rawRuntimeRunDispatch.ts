@@ -149,6 +149,13 @@ import { restoreRuntimeSessionForWake } from './runtimeWakeSessionRestore.js';
 import type { SecretVault } from '../security/secretVault.js';
 import type { NetworkPolicyConfig } from './networkPolicy.js';
 import { runtimeRunController } from './runController.js';
+import { appendRunStateChanged, armRuntimeRunWallClock, coordinateRunFinishedEvent, markRunState, trackRunStateAfterEvent, type TerminalEventLogger } from './runTerminalCoordinator.js';
+
+export {
+  failRunningRunForWallClock,
+  markRunState,
+  retryPendingTerminalEvents,
+} from './runTerminalCoordinator.js';
 import type { ToolInvocationStore } from './toolInvocationStore.js';
 import {
   buildPendingInteractionsFromEvents,
@@ -665,38 +672,6 @@ export function createApprovalStoreForSession(
     : new EventBackedApprovalStore(eventStore, session.sessionId);
 }
 
-async function appendRunStateChanged(
-  eventStore: EventStore,
-  sessionId: string,
-  runId: string,
-  status: RunStatus,
-  previousStatus?: RunStatus,
-  reason?: string,
-  ctx?: Parameters<EventStore['append']>[1],
-): Promise<void> {
-  await eventStore.append({
-    type: 'run_state_changed',
-    runId,
-    sessionId,
-    status,
-    ...(previousStatus ? { previousStatus } : {}),
-    ...(reason ? { reason } : {}),
-  }, ctx);
-}
-
-export async function markRunState(
-  runStore: RunStore | undefined,
-  eventStore: EventStore,
-  sessionId: string,
-  runId: string,
-  status: RunStatus,
-  reason?: string,
-): Promise<void> {
-  const before = runStore ? await runStore.get(runId) : null;
-  if (runStore) await runStore.markStatus(runId, status, reason);
-  await appendRunStateChanged(eventStore, sessionId, runId, status, before?.status, reason);
-}
-
 // cron/web fallback 直跑路径也会写 runtime_runs；不占 lease 时，scheduler 会把
 // 正在跑的 run 误判为可恢复并二次 wake。
 const DIRECT_RUNTIME_LEASE_MS = 120_000;
@@ -798,14 +773,26 @@ export class RunStateTrackingEventStore implements EventStore {
     private readonly inner: EventStore,
     private readonly runStore: RunStore | undefined,
     private readonly tenantId?: string,
+    private readonly terminalEventLogger?: TerminalEventLogger,
   ) {}
 
   async append(
     event: Parameters<EventStore['append']>[0],
     ctx?: Parameters<EventStore['append']>[1],
   ): ReturnType<EventStore['append']> {
+    const tenantContext = this.withTenant(ctx);
+    // runtime_runs CAS is the sole terminal verdict; only its winner publishes.
+    if (this.runStore && event.type === 'run_finished') {
+      return coordinateRunFinishedEvent({
+        runStore: this.runStore,
+        eventStore: this.inner,
+        event,
+        ctx: tenantContext,
+        logger: this.terminalEventLogger,
+      });
+    }
     // PR 5 修 P0-4：透传 ctx (tenantId) 到 inner store
-    const stored = await this.inner.append(event, this.withTenant(ctx));
+    const stored = await this.inner.append(event, tenantContext);
     await this.afterAppend(stored);
     return stored;
   }
@@ -814,6 +801,12 @@ export class RunStateTrackingEventStore implements EventStore {
     events: Parameters<NonNullable<EventStore['appendBatch']>>[0],
     ctx?: Parameters<NonNullable<EventStore['appendBatch']>>[1],
   ) {
+    // Never let an inner appendBatch place run_finished ahead of its durable CAS.
+    if (events.some((event) => event.type === 'run_finished')) {
+      const stored = [];
+      for (const event of events) stored.push(await this.append(event, ctx));
+      return stored;
+    }
     // PR 5 修 P0-4：透传 ctx (tenantId) 到 inner store
     const stored = this.inner.appendBatch
       ? await this.inner.appendBatch(events, this.withTenant(ctx))
@@ -833,44 +826,12 @@ export class RunStateTrackingEventStore implements EventStore {
   }
 
   private async afterAppend(event: PlatformEvent): Promise<void> {
-    if (!this.runStore || event.type === 'run_state_changed') return;
-    let status: RunStatus | undefined;
-    let reason: string | undefined;
-    if (event.type === 'approval_requested') {
-      status = 'waiting_approval';
-      reason = `approval:${event.approvalId}`;
-    } else if (event.type === 'approval_resolved') {
-      status = 'running';
-      reason = `approval_resolved:${event.approvalId}`;
-    } else if (event.type === 'interaction_requested' && event.interactionType === 'ask_user') {
-      status = 'waiting_user';
-      reason = `interaction:${event.interactionId}`;
-    } else if (event.type === 'interaction_resolved' && event.interactionType === 'ask_user') {
-      status = 'running';
-      reason = `interaction_resolved:${event.interactionId}`;
-    } else if (event.type === 'run_finished') {
-      status = event.subtype === 'success' ? 'completed' : event.subtype === 'interrupted' ? 'cancelled' : 'failed';
-      reason = event.subtype === 'error'
-        ? event.error ?? event.subtype
-        : event.subtype === 'interrupted'
-          ? event.subtype
-          : undefined;
-    }
-    if (status && 'runId' in event && typeof event.runId === 'string' && typeof event.sessionId === 'string') {
-      const before = await this.runStore.get(event.runId);
-      if ((event.type === 'approval_resolved' || event.type === 'interaction_resolved') && before && ['completed', 'failed', 'cancelled', 'orphaned'].includes(before.status)) return;
-      const updated = await this.runStore.markStatus(event.runId, status, reason);
-      if (updated && updated.status !== status) return;
-      await appendRunStateChanged(
-        this.inner,
-        event.sessionId,
-        event.runId,
-        status,
-        before?.status,
-        reason,
-        this.withTenant(undefined),
-      );
-    }
+    await trackRunStateAfterEvent({
+      runStore: this.runStore,
+      eventStore: this.inner,
+      event,
+      ctx: this.withTenant(undefined),
+    });
   }
 }
 
@@ -1823,7 +1784,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         },
       },
     });
-    eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId);
+    const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId, config.logger ?? logger);
     directRuntimeLease = await acquireDirectRuntimeRunLease({
       runStore: config.runStore,
       runId,
@@ -1958,6 +1919,17 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
 
+    // 普通前台 Run 的保守墙钟上限。CAS 只终止当前 running 执行段；
+    // waiting_approval / waiting_user 等人工等待态明确不受影响。
+    armRuntimeRunWallClock({
+      runStore: config.runStore,
+      eventStore,
+      sessionId,
+      runId,
+      abortController,
+      logger: config.logger ?? logger,
+    });
+    try {
       await authorizeBillingRunStart(config, {
         tenantId: sessionRecord.tenantId,
         userId: sessionRecord.userId,
@@ -2174,6 +2146,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       logger.error(`Raw runtime run 失败: ${msg}`);
       yield { type: 'error', error: `Raw runtime 运行失败: ${msg}` };
     } finally {
+      runtimeRunController.disarmWallClock(runId);
       await directRuntimeLease?.release();
       if (lockHandle) await lockHandle.release().catch(() => undefined);
     }
@@ -2406,7 +2379,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     });
 
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
-    const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId);
+    const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId, config.logger ?? logger);
     const approvalStore = createApprovalStoreForSession(config, sessionRecord, eventStore);
     const pendingApproval = await approvalStore.get(request.approvalId);
     const resumeRunId = pendingApproval?.runId ?? `resume-${Date.now()}-${randomUUID()}`;
@@ -2566,6 +2539,15 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       tenantId: sessionRecord.tenantId,
     });
 
+    // approval / ask_user 的每个恢复执行段都重新计算完整墙钟预算。
+    armRuntimeRunWallClock({
+      runStore: config.runStore,
+      eventStore,
+      sessionId: request.sessionId,
+      runId: resumeRunId,
+      abortController,
+      logger: config.logger ?? logger,
+    });
     try {
       await authorizeBillingRunStart(config, {
         tenantId: sessionRecord.tenantId,
@@ -2631,6 +2613,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       logger.error(`Raw approval resume 失败: ${msg}`);
       yield { type: 'error', error: `Raw approval resume 失败: ${msg}` };
     } finally {
+      runtimeRunController.disarmWallClock(resumeRunId);
       await directRuntimeLease?.release();
       if (lockHandle) await lockHandle.release().catch(() => undefined);
     }
@@ -2824,7 +2807,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     });
 
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
-    const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId);
+    const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId, config.logger ?? logger);
     const priorEvents = await eventStore.list(request.sessionId);
     const requestEvent = [...priorEvents].reverse().find((event): event is Extract<PlatformEvent, { type: 'interaction_requested' }> => (
       event.type === 'interaction_requested'
@@ -3000,6 +2983,15 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       tenantId: sessionRecord.tenantId,
     });
 
+    // approval / ask_user 的每个恢复执行段都重新计算完整墙钟预算。
+    armRuntimeRunWallClock({
+      runStore: config.runStore,
+      eventStore,
+      sessionId: request.sessionId,
+      runId: resumeRunId,
+      abortController,
+      logger: config.logger ?? logger,
+    });
     try {
       await authorizeBillingRunStart(config, {
         tenantId: sessionRecord.tenantId,
@@ -3065,6 +3057,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       logger.error(`Raw interaction resume 失败: ${msg}`);
       yield { type: 'error', error: `Raw interaction resume 失败: ${msg}` };
     } finally {
+      runtimeRunController.disarmWallClock(resumeRunId);
       await directRuntimeLease?.release();
       if (lockHandle) await lockHandle.release().catch(() => undefined);
     }
@@ -3111,7 +3104,12 @@ export async function wakeRuntimeSession(
     await options.lease?.release('orphaned', 'subagent_run_not_recoverable');
     await markRunState(
       config.runStore,
-      new RunStateTrackingEventStore(createEventStoreForSession(config, session), config.runStore, session.tenantId ?? run.tenantId),
+      new RunStateTrackingEventStore(
+        createEventStoreForSession(config, session),
+        config.runStore,
+        session.tenantId ?? run.tenantId,
+        config.logger ?? logger,
+      ),
       run.sessionId,
       run.runId,
       'orphaned',
@@ -3124,6 +3122,7 @@ export async function wakeRuntimeSession(
     baseEventStore,
     config.runStore,
     session.tenantId ?? run.tenantId,
+    config.logger ?? logger,
   );
   const events = await eventStore.list(run.sessionId, {
     includeTypes: [...WAKE_EVENT_LIST_TYPES],

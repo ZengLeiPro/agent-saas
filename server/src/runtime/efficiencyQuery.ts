@@ -3,11 +3,12 @@
  *
  * 供 /api/admin/runtime/trace 的 /recent-runs 与 /efficiency 端点使用：
  *   - listRecentRuns：直查 runtime_runs（按 updated_at DESC，status 白名单在路由层校验）
- *   - getEfficiency：时间窗内的结局/工具/成本/长尾/审批/浪费六组聚合
+ *   - getEfficiency：时间窗内的任务健康/工具/成本/长尾/审批/浪费六组聚合
  *
  * 设计取舍：
- * - 所有 SQL 限定 timestamp/created_at >= $1（时间窗），tenant_id 可选过滤（走
- *   (tenant_id, timestamp DESC) 索引）；全参数化，绝不拼接用户输入。
+ * - 所有 SQL 使用同一份 [from,to) 固定时间窗；任务健康与最耗时任务只以
+ *   runtime_runs.run_id/requested_at 为权威口径，事件重复不会放大任务数。tenant_id
+ *   可选过滤；全参数化，绝不拼接用户输入。
  * - 表名来自现有 store 实例（PgEventStore.eventsTable / PgRunStore.runsTable /
  *   PgBillingStore.usageEventsTable），构造时再做一次 identifier 白名单校验兜底。
  * - waste 三个查询较重（jsonb_array_elements 展开 + 窗口函数），顺序执行，正确性
@@ -69,14 +70,25 @@ export interface EfficiencyQueryOptions {
 }
 
 export interface EfficiencyReport {
-  range: { from: string; to: string; days: number };
+  range: { from: string; to: string; days: number; bounds: '[from,to)' };
   tenantId: string | null;
+  statistics: {
+    version: 'runtime-runs-requested-at-v1';
+    source: 'runtime_runs';
+    identity: 'run_id';
+    initiatedAt: 'requested_at';
+    dataAsOf: string;
+    completionDefinition: 'completed / initiated';
+    longRunningDefinition: 'non_terminal_started_for_24h';
+  };
   outcome: {
+    /** 时间窗内按 requested_at 发起的唯一 run 数。 */
     totalRuns: number;
     success: number;
     error: number;
     interrupted: number;
-    /** success / total；total=0 时 null。 */
+    nonTerminal: number;
+    /** completed / initiated；未终态 run 留在分母中，total=0 时 null。 */
     completionRate: number | null;
     errorReasons: Array<{ reason: string; count: number; sampleRunId: string | null }>;
   };
@@ -109,7 +121,17 @@ export interface EfficiencyReport {
     cacheHitRate: number | null;
   };
   longTail: {
+    /** 与 outcome 完全相同 requested_at 窗口内，已经进入终态的最耗时 run。 */
     slowestRuns: Array<{
+      runId: string;
+      sessionId: string;
+      tenantId: string | null;
+      durationMs: number;
+      status: string;
+      model: string | null;
+    }>;
+    /** 同一 run 集合中已启动满 24 小时仍未终态的任务，单列且不伪装成已完成。 */
+    longRunningRuns: Array<{
       runId: string;
       sessionId: string;
       tenantId: string | null;
@@ -174,29 +196,34 @@ export class RuntimeEfficiencyQuery {
   async getEfficiency(opts: EfficiencyQueryOptions): Promise<EfficiencyReport> {
     const to = new Date();
     const from = new Date(to.getTime() - opts.days * 24 * 60 * 60 * 1000);
-    const params = [from.toISOString(), opts.tenantId ?? null];
+    const params = [from.toISOString(), opts.tenantId ?? null, to.toISOString()];
     const E = this.eventsTable;
     const U = this.usageTable;
     const R = this.runsTable;
 
-    // ── outcome：run_finished 按 subtype 分布 ──
+    // ── task health：runtime_runs 是唯一权威源；按 run_id/requested_at 统计发起与当前终态。
+    // 上界固定为本次 dataAsOf，避免查询过程中跨日或后续事件追加改变同一快照。
     const outcomeRows = (await this.pool.query(`/* eff:outcome */
-      SELECT event_json->>'subtype' AS subtype, COUNT(*)::bigint AS count
-      FROM ${E}
-      WHERE event_type = 'run_finished'
-        AND timestamp >= $1::timestamptz
-        AND ($2::text IS NULL OR tenant_id = $2)
-      GROUP BY 1
+      WITH scoped_runs AS (
+        SELECT run_id, status
+        FROM ${R}
+        WHERE requested_at >= $1::timestamptz
+          AND requested_at < $3::timestamptz
+          AND ($2::text IS NULL OR tenant_id = $2)
+      )
+      SELECT status, COUNT(DISTINCT run_id)::bigint AS count
+      FROM scoped_runs
+      GROUP BY status
     `, params)).rows;
 
     const errorReasonRows = (await this.pool.query(`/* eff:error_reasons */
-      SELECT left(COALESCE(NULLIF(event_json->>'error', ''), '(no error message)'), 120) AS reason,
-             COUNT(*)::bigint AS count,
+      SELECT left(COALESCE(NULLIF(status_reason, ''), '(no error message)'), 120) AS reason,
+             COUNT(DISTINCT run_id)::bigint AS count,
              MAX(run_id) AS sample_run_id
-      FROM ${E}
-      WHERE event_type = 'run_finished'
-        AND event_json->>'subtype' = 'error'
-        AND timestamp >= $1::timestamptz
+      FROM ${R}
+      WHERE status = 'failed'
+        AND requested_at >= $1::timestamptz
+        AND requested_at < $3::timestamptz
         AND ($2::text IS NULL OR tenant_id = $2)
       GROUP BY 1
       ORDER BY 2 DESC
@@ -213,6 +240,7 @@ export class RuntimeEfficiencyQuery {
       FROM ${E}
       WHERE event_type = 'tool_audit'
         AND timestamp >= $1::timestamptz
+        AND timestamp < $3::timestamptz
         AND ($2::text IS NULL OR tenant_id = $2)
       GROUP BY 1
       ORDER BY 2 DESC
@@ -223,6 +251,7 @@ export class RuntimeEfficiencyQuery {
       FROM ${E}
       WHERE event_type = 'hand_failure'
         AND timestamp >= $1::timestamptz
+        AND timestamp < $3::timestamptz
         AND ($2::text IS NULL OR tenant_id = $2)
     `, params)).rows[0];
 
@@ -236,6 +265,7 @@ export class RuntimeEfficiencyQuery {
              COALESCE(SUM(output_tokens), 0)::bigint AS output_tokens
       FROM ${U}
       WHERE created_at >= $1::timestamptz
+        AND created_at < $3::timestamptz
         AND ($2::text IS NULL OR tenant_id = $2)
       GROUP BY 1
       ORDER BY 3 DESC
@@ -249,6 +279,7 @@ export class RuntimeEfficiencyQuery {
         SELECT SUM(actual_cost_yuan_micro)::float8 AS run_cost_micro
         FROM ${U}
         WHERE created_at >= $1::timestamptz
+          AND created_at < $3::timestamptz
           AND run_id IS NOT NULL
           AND ($2::text IS NULL OR tenant_id = $2)
         GROUP BY run_id
@@ -259,26 +290,41 @@ export class RuntimeEfficiencyQuery {
       SELECT COALESCE(SUM(u.actual_cost_yuan_micro), 0)::bigint AS cost_micro
       FROM ${U} u
       WHERE u.created_at >= $1::timestamptz
+        AND u.created_at < $3::timestamptz
         AND ($2::text IS NULL OR u.tenant_id = $2)
         AND u.run_id IN (
-          SELECT DISTINCT run_id FROM ${E}
-          WHERE event_type = 'run_finished'
-            AND event_json->>'subtype' = 'error'
-            AND run_id IS NOT NULL
-            AND timestamp >= $1::timestamptz
+          SELECT run_id FROM ${R}
+          WHERE status = 'failed'
+            AND requested_at >= $1::timestamptz
+            AND requested_at < $3::timestamptz
             AND ($2::text IS NULL OR tenant_id = $2)
         )
     `, params)).rows[0];
 
-    // ── longTail：最慢 run（runs 表终态耗时）+ 最多轮次（run_finished.numTurns） ──
+    // ── longTail：最慢终态 run 与完成率共享同一个 requested_at run 集合。
+    // 未终态 run 不参与“最耗时已完成任务”，启动满 24h 的任务单列，避免拿 dataAsOf 伪造终态。
     const slowestRows = (await this.pool.query(`/* eff:slowest_runs */
       SELECT run_id, session_id, tenant_id, status, model,
-             (EXTRACT(EPOCH FROM (COALESCE(completed_at, failed_at) - started_at)) * 1000)::bigint AS duration_ms
+             (EXTRACT(EPOCH FROM (COALESCE(completed_at, failed_at, cancelled_at) - started_at)) * 1000)::bigint AS duration_ms
       FROM ${R}
-      WHERE status IN ('completed', 'failed')
+      WHERE status IN ('completed', 'failed', 'cancelled')
         AND started_at IS NOT NULL
-        AND COALESCE(completed_at, failed_at) IS NOT NULL
-        AND updated_at >= $1::timestamptz
+        AND COALESCE(completed_at, failed_at, cancelled_at) IS NOT NULL
+        AND requested_at >= $1::timestamptz
+        AND requested_at < $3::timestamptz
+        AND ($2::text IS NULL OR tenant_id = $2)
+      ORDER BY 6 DESC
+      LIMIT 10
+    `, params)).rows;
+
+    const longRunningRows = (await this.pool.query(`/* eff:long_running_runs */
+      SELECT run_id, session_id, tenant_id, status, model,
+             (EXTRACT(EPOCH FROM ($3::timestamptz - COALESCE(started_at, requested_at))) * 1000)::bigint AS duration_ms
+      FROM ${R}
+      WHERE status NOT IN ('completed', 'failed', 'cancelled', 'orphaned')
+        AND COALESCE(started_at, requested_at) <= $3::timestamptz - interval '24 hours'
+        AND requested_at >= $1::timestamptz
+        AND requested_at < $3::timestamptz
         AND ($2::text IS NULL OR tenant_id = $2)
       ORDER BY 6 DESC
       LIMIT 10
@@ -292,6 +338,7 @@ export class RuntimeEfficiencyQuery {
         AND run_id IS NOT NULL
         AND jsonb_typeof(event_json->'numTurns') = 'number'
         AND timestamp >= $1::timestamptz
+        AND timestamp < $3::timestamptz
         AND ($2::text IS NULL OR tenant_id = $2)
       GROUP BY 1, 2, 3
       ORDER BY 4 DESC
@@ -305,6 +352,7 @@ export class RuntimeEfficiencyQuery {
         FROM ${E}
         WHERE event_type = 'approval_requested'
           AND timestamp >= $1::timestamptz
+          AND timestamp < $3::timestamptz
           AND ($2::text IS NULL OR tenant_id = $2)
       ),
       res AS (
@@ -312,6 +360,7 @@ export class RuntimeEfficiencyQuery {
         FROM ${E}
         WHERE event_type = 'approval_resolved'
           AND timestamp >= $1::timestamptz
+          AND timestamp < $3::timestamptz
           AND ($2::text IS NULL OR tenant_id = $2)
         GROUP BY 1, 2
       ),
@@ -334,6 +383,7 @@ export class RuntimeEfficiencyQuery {
         FROM ${E}
         WHERE event_type = 'approval_requested'
           AND timestamp >= $1::timestamptz
+          AND timestamp < $3::timestamptz
           AND ($2::text IS NULL OR tenant_id = $2)
       ),
       res AS (
@@ -341,6 +391,7 @@ export class RuntimeEfficiencyQuery {
         FROM ${E}
         WHERE event_type = 'approval_resolved'
           AND timestamp >= $1::timestamptz
+          AND timestamp < $3::timestamptz
           AND ($2::text IS NULL OR tenant_id = $2)
         GROUP BY 1, 2
       )
@@ -367,6 +418,7 @@ export class RuntimeEfficiencyQuery {
         WHERE e.event_type = 'assistant_tool_calls'
           AND e.run_id IS NOT NULL
           AND e.timestamp >= $1::timestamptz
+          AND e.timestamp < $3::timestamptz
           AND ($2::text IS NULL OR e.tenant_id = $2)
       ),
       dup AS (
@@ -403,6 +455,7 @@ export class RuntimeEfficiencyQuery {
         AND e.run_id IS NOT NULL
         AND call->>'name' = 'Read'
         AND e.timestamp >= $1::timestamptz
+        AND e.timestamp < $3::timestamptz
         AND ($2::text IS NULL OR e.tenant_id = $2)
       GROUP BY e.run_id, md5(COALESCE(call->>'arguments', ''))
       ORDER BY 3 DESC
@@ -424,6 +477,7 @@ export class RuntimeEfficiencyQuery {
         WHERE e.event_type = 'assistant_tool_calls'
           AND e.run_id IS NOT NULL
           AND e.timestamp >= $1::timestamptz
+          AND e.timestamp < $3::timestamptz
           AND ($2::text IS NULL OR e.tenant_id = $2)
       ),
       seq AS (
@@ -457,12 +511,21 @@ export class RuntimeEfficiencyQuery {
     `, params)).rows[0];
 
     return {
-      range: { from: from.toISOString(), to: to.toISOString(), days: opts.days },
+      range: { from: from.toISOString(), to: to.toISOString(), days: opts.days, bounds: '[from,to)' },
       tenantId: opts.tenantId ?? null,
+      statistics: {
+        version: 'runtime-runs-requested-at-v1',
+        source: 'runtime_runs',
+        identity: 'run_id',
+        initiatedAt: 'requested_at',
+        dataAsOf: to.toISOString(),
+        completionDefinition: 'completed / initiated',
+        longRunningDefinition: 'non_terminal_started_for_24h',
+      },
       outcome: buildOutcomeSection(outcomeRows, errorReasonRows),
       tools: buildToolsSection(toolRows, handFailureRow),
       cost: buildCostSection(costByModelRows, perRunRow, failedCostRow),
-      longTail: buildLongTailSection(slowestRows, mostTurnsRows),
+      longTail: buildLongTailSection(slowestRows, mostTurnsRows, longRunningRows),
       approvals: buildApprovalsSection(approvalsSummaryRow, approvalsByToolRows),
       waste: {
         duplicateToolCalls: buildDuplicateToolCallsSection(duplicatesRow),
@@ -551,25 +614,30 @@ export function normalizeRecentRunRow(row: Record<string, unknown>): RecentRunSu
 }
 
 export function buildOutcomeSection(
-  subtypeRows: Array<Record<string, unknown>>,
+  statusRows: Array<Record<string, unknown>>,
   errorReasonRows: Array<Record<string, unknown>>,
 ): EfficiencyReport['outcome'] {
   let totalRuns = 0;
   let success = 0;
   let error = 0;
   let interrupted = 0;
-  for (const row of subtypeRows) {
+  let nonTerminal = 0;
+  for (const row of statusRows) {
     const count = toNum(row.count);
     totalRuns += count;
-    if (row.subtype === 'success') success += count;
-    else if (row.subtype === 'error') error += count;
-    else if (row.subtype === 'interrupted') interrupted += count;
+    // subtype 分支仅保留对旧 mock/调用方的兼容；生产 SQL 只返回 runtime_runs.status。
+    const status = row.status ?? row.subtype;
+    if (status === 'completed' || status === 'success') success += count;
+    else if (status === 'failed' || status === 'error') error += count;
+    else if (status === 'cancelled' || status === 'orphaned' || status === 'interrupted') interrupted += count;
+    else nonTerminal += count;
   }
   return {
     totalRuns,
     success,
     error,
     interrupted,
+    nonTerminal,
     completionRate: ratio(success, totalRuns),
     errorReasons: errorReasonRows.map((row) => ({
       reason: String(row.reason ?? ''),
@@ -645,16 +713,19 @@ export function buildCostSection(
 export function buildLongTailSection(
   slowestRows: Array<Record<string, unknown>>,
   mostTurnsRows: Array<Record<string, unknown>>,
+  longRunningRows: Array<Record<string, unknown>> = [],
 ): EfficiencyReport['longTail'] {
+  const normalizeDurationRun = (row: Record<string, unknown>) => ({
+    runId: String(row.run_id ?? ''),
+    sessionId: String(row.session_id ?? ''),
+    tenantId: toStrOrNull(row.tenant_id),
+    durationMs: Math.round(toNum(row.duration_ms)),
+    status: String(row.status ?? ''),
+    model: toStrOrNull(row.model),
+  });
   return {
-    slowestRuns: slowestRows.map((row) => ({
-      runId: String(row.run_id ?? ''),
-      sessionId: String(row.session_id ?? ''),
-      tenantId: toStrOrNull(row.tenant_id),
-      durationMs: Math.round(toNum(row.duration_ms)),
-      status: String(row.status ?? ''),
-      model: toStrOrNull(row.model),
-    })),
+    slowestRuns: slowestRows.map(normalizeDurationRun),
+    longRunningRuns: longRunningRows.map(normalizeDurationRun),
     mostTurns: mostTurnsRows.map((row) => ({
       runId: String(row.run_id ?? ''),
       sessionId: String(row.session_id ?? ''),

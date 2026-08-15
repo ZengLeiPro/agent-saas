@@ -17,6 +17,31 @@ export interface PgCredentialStoreOptions {
   tablePrefix?: string;
 }
 
+export type CredentialCommitOperation = 'create' | 'rotate' | 'transfer';
+export type CredentialCommitStatus = 'running' | 'succeeded' | 'failed' | 'partial' | 'compensation_failed';
+
+export interface CredentialCommitClaimInput {
+  tenantId: string;
+  operation: CredentialCommitOperation;
+  idempotencyKey: string;
+  nonceDigest: string;
+  requestDigest: string;
+  targetId: string;
+  actorUserId: string;
+  existingOnly?: boolean;
+}
+
+export type CredentialCommitClaim =
+  | { state: 'missing' }
+  | { state: 'acquired'; leaseToken: string }
+  | { state: 'reconcile'; leaseToken: string; recovery: Record<string, unknown> }
+  | { state: 'in_progress'; retryAfterMs: number }
+  | { state: 'replayed'; credentialId?: string }
+  | { state: 'terminal'; status: Exclude<CredentialCommitStatus, 'running' | 'succeeded'> }
+  | { state: 'conflict' };
+
+const COMMIT_LEASE_MS = 30_000;
+
 function rowToCredential(row: Record<string, unknown>): GovernanceCredential {
   return {
     credentialId: String(row.credential_id),
@@ -47,6 +72,7 @@ function rowToCredential(row: Record<string, unknown>): GovernanceCredential {
 
 export class PgCredentialStore {
   readonly credentialsTable: string;
+  readonly commitsTable: string;
   private readonly issueStore: PgGovernanceMigrationIssueStore;
   private readonly tablePrefix?: string;
 
@@ -54,11 +80,107 @@ export class PgCredentialStore {
     const prefix = governanceTablePrefix(options.tablePrefix);
     this.tablePrefix = options.tablePrefix;
     this.credentialsTable = `${prefix}_credentials`;
+    this.commitsTable = `${prefix}_credential_commits`;
     this.issueStore = new PgGovernanceMigrationIssueStore(options.pool, options.tablePrefix);
   }
 
   async init(): Promise<void> {
     await new PgGovernanceMigrationRunner(this.options.pool, this.tablePrefix).run();
+  }
+
+  async claimCommit(input: CredentialCommitClaimInput): Promise<CredentialCommitClaim> {
+    const leaseToken = randomUUID();
+    if (!input.existingOnly) {
+      const inserted = await this.options.pool.query(`
+        INSERT INTO ${this.commitsTable} (
+          tenant_id,operation,idempotency_key,nonce_digest,request_digest,target_id,actor_user_id,status,manual_action_json
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,'running',$8::jsonb)
+        ON CONFLICT DO NOTHING
+        RETURNING status
+      `, [
+        input.tenantId, input.operation, input.idempotencyKey, input.nonceDigest,
+        input.requestDigest, input.targetId, input.actorUserId,
+        JSON.stringify({ leaseToken, phase: 'claimed' }),
+      ]);
+      if (inserted.rows[0]) return { state: 'acquired', leaseToken };
+    }
+    const existing = await this.options.pool.query(`
+      SELECT * FROM ${this.commitsTable}
+      WHERE tenant_id=$1 AND operation=$2 AND (idempotency_key=$3 OR nonce_digest=$4)
+    `, [input.tenantId, input.operation, input.idempotencyKey, input.nonceDigest]);
+    const row = existing.rows[0] as Record<string, unknown> | undefined;
+    if (!row) return input.existingOnly ? { state: 'missing' } : { state: 'conflict' };
+    if (row.idempotency_key !== input.idempotencyKey
+      || row.nonce_digest !== input.nonceDigest
+      || row.request_digest !== input.requestDigest
+      || row.target_id !== input.targetId
+      || row.actor_user_id !== input.actorUserId) return { state: 'conflict' };
+    const status = String(row.status) as CredentialCommitStatus;
+    if (status === 'running') {
+      const takeover = await this.options.pool.query(`
+        UPDATE ${this.commitsTable}
+        SET manual_action_json=COALESCE(manual_action_json,'{}'::jsonb)
+              || jsonb_build_object('leaseToken',$4),updated_at=NOW()
+        WHERE tenant_id=$1 AND operation=$2 AND idempotency_key=$3 AND status='running'
+          AND updated_at < NOW() - INTERVAL '30 seconds'
+        RETURNING manual_action_json
+      `, [input.tenantId, input.operation, input.idempotencyKey, leaseToken]);
+      const recovered = takeover.rows[0] as Record<string, unknown> | undefined;
+      if (recovered) {
+        return {
+          state: 'reconcile', leaseToken,
+          recovery: (recovered.manual_action_json as Record<string, unknown> | undefined) ?? {},
+        };
+      }
+      return { state: 'in_progress', retryAfterMs: COMMIT_LEASE_MS };
+    }
+    if (status === 'succeeded') {
+      return { state: 'replayed', ...(row.credential_id ? { credentialId: String(row.credential_id) } : {}) };
+    }
+    return { state: 'terminal', status };
+  }
+
+  async recordCommitProgress(input: {
+    tenantId: string;
+    operation: CredentialCommitOperation;
+    idempotencyKey: string;
+    leaseToken: string;
+    progress: Record<string, unknown>;
+  }): Promise<void> {
+    const result = await this.options.pool.query(`
+      UPDATE ${this.commitsTable}
+      SET manual_action_json=COALESCE(manual_action_json,'{}'::jsonb) || $5::jsonb,updated_at=NOW()
+      WHERE tenant_id=$1 AND operation=$2 AND idempotency_key=$3 AND status='running'
+        AND manual_action_json->>'leaseToken'=$4
+      RETURNING idempotency_key
+    `, [
+      input.tenantId, input.operation, input.idempotencyKey, input.leaseToken,
+      JSON.stringify(input.progress),
+    ]);
+    if (!result.rows[0]) throw new Error('CREDENTIAL_COMMIT_LEASE_LOST');
+  }
+
+  async finishCommit(input: {
+    tenantId: string;
+    operation: CredentialCommitOperation;
+    idempotencyKey: string;
+    leaseToken: string;
+    status: Exclude<CredentialCommitStatus, 'running'>;
+    credentialId?: string;
+    errorCode?: string;
+    manualAction?: Record<string, unknown>;
+  }): Promise<void> {
+    const result = await this.options.pool.query(`
+      UPDATE ${this.commitsTable}
+      SET status=$5,credential_id=$6,error_code=$7,manual_action_json=$8::jsonb,updated_at=NOW()
+      WHERE tenant_id=$1 AND operation=$2 AND idempotency_key=$3 AND status='running'
+        AND manual_action_json->>'leaseToken'=$4
+      RETURNING idempotency_key
+    `, [
+      input.tenantId, input.operation, input.idempotencyKey, input.leaseToken, input.status,
+      input.credentialId ?? null, input.errorCode ?? null, JSON.stringify(input.manualAction ?? {}),
+    ]);
+    if (!result.rows[0]) throw new Error('CREDENTIAL_COMMIT_LEASE_LOST');
   }
 
   async create(input: CredentialInput): Promise<GovernanceCredential> {
@@ -175,6 +297,43 @@ export class PgCredentialStore {
       RETURNING *
     `, [secretRef, updatedBy]);
     return result.rows[0] ? rowToCredential(result.rows[0]) : null;
+  }
+
+  async completeRotation(
+    tenantId: string,
+    credentialId: string,
+    expectedVersion: number,
+    updatedBy: string,
+  ): Promise<GovernanceCredential> {
+    const result = await this.options.pool.query(
+      `UPDATE ${this.credentialsTable}
+       SET generation=generation+1,status='active',last_validated_at=NULL,source='governance',
+           version=version+1,updated_at=NOW(),updated_by=$4
+       WHERE tenant_id=$1 AND credential_id=$2 AND version=$3 AND kind='org_shared' AND status<>'revoked'
+       RETURNING *`,
+      [tenantId, credentialId, expectedVersion, updatedBy],
+    );
+    if (!result.rows[0]) throw new CredentialInvariantError('CREDENTIAL_VERSION_CONFLICT');
+    return rowToCredential(result.rows[0]);
+  }
+
+  async recordValidation(
+    tenantId: string,
+    credentialId: string,
+    expectedVersion: number,
+    healthy: boolean,
+    updatedBy: string,
+  ): Promise<GovernanceCredential> {
+    const result = await this.options.pool.query(
+      `UPDATE ${this.credentialsTable}
+       SET status=CASE WHEN $4 THEN 'active' ELSE 'validation_failed' END,
+           last_validated_at=NOW(),source='governance',version=version+1,updated_at=NOW(),updated_by=$5
+       WHERE tenant_id=$1 AND credential_id=$2 AND version=$3 AND kind='org_shared' AND status<>'revoked'
+       RETURNING *`,
+      [tenantId, credentialId, expectedVersion, healthy, updatedBy],
+    );
+    if (!result.rows[0]) throw new CredentialInvariantError('CREDENTIAL_VERSION_CONFLICT');
+    return rowToCredential(result.rows[0]);
   }
 
   async updateStatus(credentialId: string, patch: CredentialStatusPatch): Promise<GovernanceCredential> {

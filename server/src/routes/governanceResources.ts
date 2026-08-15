@@ -8,16 +8,17 @@ import type { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
 import type { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
 import type { PgCredentialStore } from '../data/credentials/index.js';
 import type { PgEnvironmentStore } from '../data/environments/index.js';
-import { GLOBAL_OWNER_ID, tenantOwnerId, type SecretVault } from '../security/secretVault.js';
+import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
 import type { GovernanceChangePlanner, PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import type { PgMembershipStore } from '../data/memberships/index.js';
 import type { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
 import { registerGovernanceAgentResourceRoutes } from './governanceAgentResourceRoutes.js';
+import { registerGovernanceCredentialRoutes } from './governanceCredentialRoutes.js';
+import { registerGovernanceEnvironmentRoutes } from './governanceEnvironmentRoutes.js';
 import { registerGovernanceResourceCatalogRoutes } from './governanceResourceCatalogRoutes.js';
 import {
   connectorPublishSchema, connectorStatusSchema, createCandidateSchema, createSkillSchema,
-  credentialCreateSchema, credentialStatusSchema, environmentTemplateSchema, expectedRevisionSchema,
-  providerSchema, publishCandidateSchema, publishSchema, reviewSchema, statusSchema,
+  expectedRevisionSchema, publishCandidateSchema, publishSchema, reviewSchema, statusSchema,
   userOffboardingJobSchema, userOffboardingPreviewSchema,
 } from './governanceResourceSchemas.js';
 
@@ -35,6 +36,16 @@ function previewMatches(actual: string, expected: string): boolean {
 function credentialView<T extends { secretRef: string }>(credential: T): Omit<T, 'secretRef'> {
   const { secretRef: _secretRef, ...safe } = credential;
   return safe;
+}
+
+function offboardingRetentionAuthoritiesAvailable(impact: {
+  cronOwnership: { status: string };
+  personalMemory: { status: string };
+  fileOwnership: { status: string };
+}): boolean {
+  return ['clear', 'transfer'].includes(impact.cronOwnership.status)
+    && ['clear', 'archive'].includes(impact.personalMemory.status)
+    && ['clear', 'archive', 'blocked'].includes(impact.fileOwnership.status);
 }
 
 export function createGovernanceResourcesRouter(deps: {
@@ -68,6 +79,7 @@ export function createGovernanceResourcesRouter(deps: {
   };
   vault: SecretVault;
   audit: GovernanceAuditStore;
+  credentialHealthCheck?: (connectorId: string, secret: string) => Promise<{ healthy: boolean; code: string }>;
 }): Router {
   if (deps.offboardingPreviewSecret.length < 32) {
     throw new Error('offboardingPreviewSecret must contain at least 32 characters');
@@ -108,8 +120,24 @@ export function createGovernanceResourcesRouter(deps: {
     return { candidate, target };
   };
   const buildOffboardingPreview = async (tenantId: string, userId: string, handoffTargetUserId: string) => {
-    const optional = <T>(authority?: () => Promise<T>): Promise<T | null> =>
-      authority ? authority().catch(() => null) : Promise.resolve(null);
+    const optional = async <T>(authority: (() => Promise<T>) | undefined, valid: (value: unknown) => value is T): Promise<T | null> => {
+      if (!authority) return null;
+      try {
+        const value: unknown = await authority();
+        return valid(value) ? value : null;
+      } catch {
+        return null;
+      }
+    };
+    const versionedIds = (value: unknown): value is Array<{ id: string; version: string }> =>
+      Array.isArray(value) && value.every(item => typeof item?.id === 'string' && typeof item?.version === 'string');
+    const stringIds = (value: unknown): value is string[] =>
+      Array.isArray(value) && value.every(item => typeof item === 'string');
+    const fileOwnershipResult = (value: unknown): value is { personalFileIds: string[]; organizationFileIds: string[] } => {
+      if (!value || typeof value !== 'object') return false;
+      const ownership = value as { personalFileIds?: unknown; organizationFileIds?: unknown };
+      return stringIds(ownership.personalFileIds) && stringIds(ownership.organizationFileIds);
+    };
     const [
       targetMembership, handoffMembership, ownedAgents, ownedSkills, ownedCredentials, custodialCredentials,
       cronIds, activeRunIds, activeSessionIds, oauthGrantIds, externalConnectionIds,
@@ -121,13 +149,13 @@ export function createGovernanceResourcesRouter(deps: {
       deps.skills.listPersonalByOwner(tenantId, userId),
       deps.credentials.listForOwner(tenantId, userId),
       deps.credentials.listForCustodian(tenantId, userId),
-      optional(deps.listCronIdsByOwner ? () => deps.listCronIdsByOwner!(userId) : undefined),
-      optional(deps.listActiveRunIdsByUser ? () => deps.listActiveRunIdsByUser!(tenantId, userId) : undefined),
-      optional(deps.listActiveSessionIdsByUser ? () => deps.listActiveSessionIdsByUser!(tenantId, userId) : undefined),
-      optional(deps.listActiveOAuthGrantIdsByUser ? () => deps.listActiveOAuthGrantIdsByUser!(tenantId, userId) : undefined),
-      optional(deps.listExternalConnectionIdsByUser ? () => deps.listExternalConnectionIdsByUser!(tenantId, userId) : undefined),
-      optional(deps.listPersonalMemoryIds ? () => deps.listPersonalMemoryIds!(tenantId, userId) : undefined),
-      optional(deps.listFileOwnership ? () => deps.listFileOwnership!(tenantId, userId) : undefined),
+      optional(deps.listCronIdsByOwner ? () => deps.listCronIdsByOwner!(userId) : undefined, versionedIds),
+      optional(deps.listActiveRunIdsByUser ? () => deps.listActiveRunIdsByUser!(tenantId, userId) : undefined, versionedIds),
+      optional(deps.listActiveSessionIdsByUser ? () => deps.listActiveSessionIdsByUser!(tenantId, userId) : undefined, versionedIds),
+      optional(deps.listActiveOAuthGrantIdsByUser ? () => deps.listActiveOAuthGrantIdsByUser!(tenantId, userId) : undefined, versionedIds),
+      optional(deps.listExternalConnectionIdsByUser ? () => deps.listExternalConnectionIdsByUser!(tenantId, userId) : undefined, versionedIds),
+      optional(deps.listPersonalMemoryIds ? () => deps.listPersonalMemoryIds!(tenantId, userId) : undefined, stringIds),
+      optional(deps.listFileOwnership ? () => deps.listFileOwnership!(tenantId, userId) : undefined, fileOwnershipResult),
     ]);
     if (!targetMembership) return { error: { status: 404, body: { error: 'Target user not found in tenant' } } } as const;
     if (!handoffMembership || handoffMembership.status !== 'active') {
@@ -333,7 +361,11 @@ export function createGovernanceResourcesRouter(deps: {
   });
 
   router.get('/connectors', async (_req, res) => {
-    res.json({ connectors: await deps.connectors.list() });
+    const connectors = await deps.connectors.list();
+    res.json({ connectors: connectors.map(connector => ({
+      ...connector,
+      healthTestSupported: ['github', 'notion'].includes(connector.connectorId),
+    })) });
   });
 
   router.get('/credentials', async (req, res) => {
@@ -505,132 +537,14 @@ export function createGovernanceResourcesRouter(deps: {
     });
   });
 
-  router.post('/credentials', async (req, res) => {
-    const parsed = credentialCreateSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    const tenantId = resourceTenantFor(req, parsed.data.tenantId);
-    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    if (parsed.data.kind === 'org_shared' && !canManageOrganization(req)) return res.status(403).json({ error: 'Admin required' });
-    if (parsed.data.kind === 'infrastructure' && personas.get(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
-    const connector = await deps.connectors.get(parsed.data.connectorId);
-    if (!connector || connector.status !== 'published') {
-      return res.status(409).json({ error: 'Connector unavailable', code: 'CONNECTOR_NOT_PUBLISHED' });
-    }
-    const ownerUserId = parsed.data.kind === 'personal_grant' ? req.user!.sub : undefined;
-    const custodianUserId = parsed.data.kind === 'org_shared' ? parsed.data.custodianUserId ?? req.user!.sub : undefined;
-    const responsibleUserId = ownerUserId ?? custodianUserId;
-    if (responsibleUserId) {
-      const membership = await deps.memberships.getMembership(tenantId, responsibleUserId);
-      if (!membership || membership.status !== 'active') {
-        return res.status(409).json({ error: 'Active in-tenant Credential owner/custodian required', code: 'CREDENTIAL_CUSTODIAN_MEMBERSHIP_REQUIRED' });
-      }
-      if (await hasActiveOffboarding(tenantId, responsibleUserId)) {
-        return res.status(409).json({ error: 'Credential owner/custodian offboarding is active', code: 'CREDENTIAL_SUBJECT_OFFBOARDING_ACTIVE' });
-      }
-    }
-    const vaultCaller = {
-      actor: 'connector_proxy' as const,
-      userId: ownerUserId ?? custodianUserId ?? req.user!.sub,
-      tenantId,
-      scopes: ['secret:connector:write'],
-    };
-    const vaultOwnerId = parsed.data.kind === 'org_shared'
-      ? tenantOwnerId(tenantId)
-      : parsed.data.kind === 'infrastructure'
-        ? GLOBAL_OWNER_ID
-        : vaultCaller.userId;
-    let secretRef: string | undefined;
-    try {
-      const secret = await deps.vault.putSecret(
-        vaultOwnerId,
-        'connector',
-        parsed.data.secret,
-        vaultCaller,
-        { connectorId: parsed.data.connectorId, tenantId, credentialOwnerId: vaultCaller.userId },
-      );
-      secretRef = secret.id;
-      const credential = await deps.credentials.create({
-        tenantId, connectorId: parsed.data.connectorId, kind: parsed.data.kind,
-        ...(ownerUserId ? { ownerUserId } : {}),
-        ...(custodianUserId ? { custodianUserId } : {}),
-        ...(parsed.data.alias ? { alias: parsed.data.alias } : {}),
-        purpose: parsed.data.purpose, scopeSummary: parsed.data.scopeSummary ?? {}, secretRef,
-        ...(parsed.data.expiresAt ? { expiresAt: parsed.data.expiresAt } : {}),
-        createdBy: req.user!.sub,
-      });
-      const { secretRef: _secretRef, ...safe } = credential;
-      res.status(201).json(safe);
-    } catch (error) {
-      if (secretRef) {
-        await deps.vault.revokeSecret(secretRef, {
-          actor: 'connector_proxy', userId: vaultCaller.userId, tenantId,
-          scopes: ['secret:connector:revoke'],
-        }).catch(() => undefined);
-      }
-      res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
-    }
+  registerGovernanceCredentialRoutes({
+    router, connectors: deps.connectors, credentials: deps.credentials,
+    memberships: deps.memberships, changeJobs: deps.changeJobs, vault: deps.vault,
+    previewSecret: deps.offboardingPreviewSecret, now,
+    personaFor: req => personas.get(req), canManageOrganization, resourceTenantFor,
+    ...(deps.credentialHealthCheck ? { credentialHealthCheck: deps.credentialHealthCheck } : {}),
   });
-
-  router.patch('/credentials/:credentialId/status', async (req, res) => {
-    const parsed = credentialStatusSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    const tenantId = resourceTenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
-    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    const current = await deps.credentials.get(req.params.credentialId);
-    if (!current || current.tenantId !== tenantId) return res.status(404).json({ error: 'Credential not found' });
-    if (current.kind === 'personal_grant' && current.ownerUserId !== req.user!.sub) {
-      return res.status(404).json({ error: 'Credential not found' });
-    }
-    if (current.kind === 'org_shared' && !canManageOrganization(req)) {
-      return res.status(403).json({ error: 'Organization admin required' });
-    }
-    if (current.kind === 'infrastructure' && personas.get(req) !== 'platform_admin') {
-      return res.status(403).json({ error: 'Platform admin required' });
-    }
-    if (parsed.data.status === 'suspended' || parsed.data.status === 'revoked') {
-      return res.status(409).json({ error: 'Signed impact preview required', code: 'GOVERNANCE_PREVIEW_REQUIRED' });
-    }
-    try {
-      const credential = await deps.credentials.updateStatus(current.credentialId, {
-        status: parsed.data.status, expectedVersion: parsed.data.expectedVersion,
-        updatedBy: req.user!.sub, updateReason: parsed.data.reason,
-      });
-      const { secretRef: _secretRef, ...safe } = credential;
-      res.json(safe);
-    } catch (error) {
-      res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  router.put('/environment/providers/:providerId', async (req, res) => {
-    if (personas.get(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
-    const parsed = providerSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    return res.status(503).json({
-      error: 'Signed Environment Provider change authority unavailable',
-      code: 'GOVERNANCE_PREVIEW_AUTHORITY_UNAVAILABLE',
-    });
-  });
-
-  router.post('/environment/templates/:templateId/versions', async (req, res) => {
-    if (personas.get(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
-    const parsed = environmentTemplateSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    return res.status(503).json({
-      error: 'Signed Environment Template publish authority unavailable',
-      code: 'GOVERNANCE_PREVIEW_AUTHORITY_UNAVAILABLE',
-    });
-  });
-
-  router.post('/environment/templates/:templateId/retire', (req, res) => {
-    if (personas.get(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
-    const parsed = expectedRevisionSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    return res.status(503).json({
-      error: 'Signed Environment Template retirement authority unavailable',
-      code: 'GOVERNANCE_PREVIEW_AUTHORITY_UNAVAILABLE',
-    });
-  });
+  registerGovernanceEnvironmentRoutes({ router, personaFor: req => personas.get(req) });
 
   router.get('/change-jobs/:jobId', async (req, res) => {
     const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
@@ -736,7 +650,7 @@ export function createGovernanceResourcesRouter(deps: {
       expiresAt,
       impact: preview.impact,
       blockers: preview.blockers,
-      canCommit: preview.blockers.length === 0,
+      canCommit: preview.blockers.length === 0 && offboardingRetentionAuthoritiesAvailable(preview.impact),
       changeId: res.locals.governanceChangeId,
     });
   });
@@ -776,6 +690,12 @@ export function createGovernanceResourcesRouter(deps: {
     }
     const preview = await buildOffboardingPreview(tenantId, parsed.data.userId, parsed.data.handoffTargetUserId);
     if ('error' in preview && preview.error) return res.status(preview.error.status).json(preview.error.body);
+    if (!offboardingRetentionAuthoritiesAvailable(preview.impact)) {
+      return res.status(503).json({
+        error: 'Offboarding retention authority unavailable',
+        code: 'OFFBOARDING_RETENTION_AUTHORITY_UNAVAILABLE',
+      });
+    }
     if (governanceDigest(preview.baseline) !== parsed.data.baselineDigest) {
       return res.status(409).json({ error: 'Offboarding baseline changed', code: 'OFFBOARDING_PREVIEW_BASELINE_CONFLICT' });
     }

@@ -1,6 +1,8 @@
 import type pg from 'pg';
 import { PLATFORM_TENANT_ID } from '../tenants/types.js';
 import { agentDwsMigrations } from './agentDwsMigrations.js';
+import { governanceV22Statements } from './v22Migration.js';
+import { governanceV23Statements } from './v23Migration.js';
 import { governanceV18Statements } from './v18Migration.js';
 
 export type GovernancePgPool = pg.Pool;
@@ -34,6 +36,7 @@ function migrations(prefix: string): GovernanceMigration[] {
   const preferences = `${prefix}_user_resource_preferences`;
   const runResolutionSnapshots = `${prefix}_run_resolution_snapshots`;
   const credentials = `${prefix}_credentials`;
+  const credentialCommits = `${prefix}_credential_commits`;
   const connectorDefinitions = `${prefix}_connector_definitions`;
   const connectorVersions = `${prefix}_connector_definition_versions`;
   const executionProviders = `${prefix}_execution_providers`;
@@ -890,6 +893,14 @@ function migrations(prefix: string): GovernanceMigration[] {
       }),
     },
     ...agentDwsMigrations(prefix),
+    {
+      version: 22,
+      statements: governanceV22Statements({ assignmentSets, assignments }),
+    },
+    {
+      version: 23,
+      statements: governanceV23Statements({ credentialCommits }),
+    },
   ];
 }
 

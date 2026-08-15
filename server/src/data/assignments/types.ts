@@ -7,6 +7,7 @@ export type AssignmentResourceType =
   | 'credential'
   | 'environment_template'
   | 'org_knowledge'
+  | 'org_memory'
   | 'connector';
 export type AssignmentAssigneeType = 'everyone' | 'user' | 'directory_group' | 'agent';
 export type AssignmentEffect = 'allow' | 'deny';
@@ -32,6 +33,8 @@ export interface ResourceAssignmentSet {
   tenantId: string;
   resourceType: AssignmentResourceType;
   resourceId: string;
+  resourceName?: string;
+  status?: 'enabled' | 'disabled';
   source: 'legacy_projection' | 'governance';
   version: number;
   assignments: ResourceAssignment[];

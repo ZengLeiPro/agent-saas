@@ -42,6 +42,8 @@ import type { PlatformEvent } from '../runtime/types.js';
 import type { RunRecord } from '../runtime/runStore.js';
 import type { BillingUsageEvent } from '../data/billing/types.js';
 import type { UserStore } from '../data/users/store.js';
+import { publicOperationalError, publicOperationalErrorMessage, type OperationalErrorLogger } from '../utils/publicOperationalError.js';
+import { apiLogger } from '../utils/logger.js';
 import type {
   EfficiencyQueryOptions,
   EfficiencyReport,
@@ -65,6 +67,8 @@ export interface RuntimeTraceRouterOptions {
    * 未注入或查询失败时对组织 admin 一律脱敏（fail-closed）。
    */
   getTenantPolicy?: (tenantId: string) => Promise<{ showCost?: boolean } | null | undefined>;
+  /** 记录返回给调用方的 diagnosticId 与原始服务端错误之间的关联。 */
+  logger?: OperationalErrorLogger;
 }
 
 /** run 状态白名单（recent-runs 的 status 过滤只接受这些值，防注入 + 防拼错悄悄空结果）。 */
@@ -104,10 +108,24 @@ const efficiencyQuerySchema = z.object({
 /**
  * RunRecord → 响应里的 run 摘要（只挑复盘需要的字段，不透出 lease/idempotency 等内部态）。
  */
-export function pickRunSummary(run: RunRecord): Record<string, unknown> {
+export function pickRunSummary(
+  run: RunRecord,
+  redactOperationalError = false,
+  logger?: OperationalErrorLogger,
+): Record<string, unknown> {
+  const statusReason = redactOperationalError && run.statusReason
+    ? publicOperationalErrorMessage(
+        run.statusReason,
+        'RUNTIME_RUN_FAILED',
+        undefined,
+        logger,
+        `run=${run.runId}`,
+      )
+    : undefined;
   return {
     status: run.status,
-    statusReason: run.statusReason ?? null,
+    statusReason: statusReason?.message ?? run.statusReason ?? null,
+    ...(statusReason ? { errorCode: statusReason.code, diagnosticId: statusReason.diagnosticId } : {}),
     model: run.model ?? null,
     channel: run.channel ?? null,
     tenantId: run.tenantId ?? null,
@@ -224,6 +242,32 @@ export function redactBillingSummary(summary: ReturnType<typeof summarizeRunBill
  * 效率报告成本脱敏（导出供单测）：cost 区只保留 byModel 的 token 聚合与缓存命中率，
  * 去掉 totalCostYuan / perRun 分位 / failedRunsCostYuan 与 byModel.costYuan。
  */
+export function sanitizeEfficiencyOperationalErrors(
+  report: EfficiencyReport,
+  logger?: OperationalErrorLogger,
+  logContext?: string,
+): EfficiencyReport {
+  const grouped = new Map<string, EfficiencyReport['outcome']['errorReasons'][number]>();
+  for (const item of report.outcome.errorReasons) {
+    const safe = publicOperationalErrorMessage(
+      item.reason,
+      'RUNTIME_RUN_FAILED',
+      undefined,
+      logger,
+      `${logContext ? `${logContext} ` : ''}sampleRun=${item.sampleRunId ?? 'unknown'}`,
+    );
+    const key = `${safe.code}\u001f${safe.message}`;
+    const previous = grouped.get(key);
+    grouped.set(key, previous
+      ? { ...previous, count: previous.count + item.count }
+      : { reason: safe.message, count: item.count, sampleRunId: item.sampleRunId });
+  }
+  return {
+    ...report,
+    outcome: { ...report.outcome, errorReasons: [...grouped.values()] },
+  };
+}
+
 export function redactEfficiencyCost(report: EfficiencyReport): Omit<EfficiencyReport, 'cost'> & {
   cost: {
     byModel: Array<Omit<EfficiencyReport['cost']['byModel'][number], 'costYuan'>>;
@@ -405,6 +449,7 @@ function resolveTenantScope(req: Request, queryTenantId: string | undefined):
 export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Router {
   const router = Router();
   const { runStore, eventStore, billingStore, userStore, efficiencyQuery, getTenantPolicy } = opts;
+  const diagnosticLogger = opts.logger ?? apiLogger;
 
   /** 组织 admin 是否需要脱敏 ¥ 成本：policy.showCost === true 才放行；不可得时 fail-closed。 */
   async function shouldRedactCost(platform: boolean, tenantId: string | undefined): Promise<boolean> {
@@ -476,13 +521,25 @@ export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Route
       res.json({
         runId,
         sessionId: run.sessionId,
-        run: pickRunSummary(run),
+        run: pickRunSummary(run, !scope.platform, diagnosticLogger),
         billing: redactCost ? redactBillingSummary(billing) : billing,
-        events: filtered.map((event) => truncateTraceEvent(event, maxContentLength)),
+        events: filtered.map((event) => scope.platform
+          ? truncateTraceEvent(event, maxContentLength)
+          : sanitizeTraceEvent(event)),
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: `Run trace query failed: ${msg}` });
+      if (scope.platform) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.status(500).json({ error: `Run trace query failed: ${msg}` });
+      } else {
+        res.status(500).json(publicOperationalError(
+          err,
+          'RUNTIME_TRACE_QUERY_FAILED',
+          undefined,
+          diagnosticLogger,
+          req.originalUrl,
+        ));
+      }
     }
   });
 
@@ -514,10 +571,27 @@ export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Route
         limit: parsed.data.limit ?? 50,
         ...(scope.tenantId !== undefined ? { tenantId: scope.tenantId } : {}),
       });
-      res.json({ runs: runs.map((run) => enrichRecentRunSummary(run, userStore)) });
+      res.json({
+        runs: runs.map((run) => enrichRecentRunSummary(
+          run,
+          userStore,
+          !scope.platform,
+          diagnosticLogger,
+        )),
+      });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: `Recent runs query failed: ${msg}` });
+      if (scope.platform) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.status(500).json({ error: `Recent runs query failed: ${msg}` });
+      } else {
+        res.status(500).json(publicOperationalError(
+          err,
+          'RUNTIME_RECENT_RUNS_QUERY_FAILED',
+          undefined,
+          diagnosticLogger,
+          req.originalUrl,
+        ));
+      }
     }
   });
 
@@ -541,24 +615,59 @@ export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Route
         }),
         shouldRedactCost(scope.platform, scope.tenantId),
       ]);
-      res.json(redactCost ? redactEfficiencyCost(report) : report);
+      // 组织总览只返回公共错误文案；净化先于成本裁剪，禁止绝对路径/release hash/stack 进入响应。
+      const safeReport = scope.platform
+        ? report
+        : sanitizeEfficiencyOperationalErrors(report, diagnosticLogger, req.originalUrl);
+      res.json(redactCost ? redactEfficiencyCost(safeReport) : safeReport);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: `Efficiency query failed: ${msg}` });
+      if (scope.platform) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.status(500).json({ error: `Efficiency query failed: ${msg}` });
+      } else {
+        res.status(500).json(publicOperationalError(
+          err,
+          'RUNTIME_EFFICIENCY_QUERY_FAILED',
+          undefined,
+          diagnosticLogger,
+          req.originalUrl,
+        ));
+      }
     }
   });
 
   return router;
 }
 
-function enrichRecentRunSummary(run: RecentRunSummary, userStore?: UserStore): RecentRunSummary & {
+function enrichRecentRunSummary(
+  run: RecentRunSummary,
+  userStore?: UserStore,
+  redactOperationalError = false,
+  logger?: OperationalErrorLogger,
+): RecentRunSummary & {
   username: string | null;
   realName: string | null;
+  errorCode?: string;
+  diagnosticId?: string;
 } {
   const user = run.userId ? userStore?.findById(run.userId) : undefined;
   const matchesTenant = !!user && (!run.tenantId || user.tenantId === run.tenantId);
+  const failure = redactOperationalError && run.statusReason
+    ? publicOperationalErrorMessage(
+        run.statusReason,
+        'RUNTIME_RUN_FAILED',
+        undefined,
+        logger,
+        `run=${run.runId}`,
+      )
+    : undefined;
   return {
     ...run,
+    ...(failure ? {
+      statusReason: failure.message,
+      errorCode: failure.code,
+      diagnosticId: failure.diagnosticId,
+    } : {}),
     username: matchesTenant ? user.username : null,
     realName: matchesTenant ? user.realName ?? null : null,
   };

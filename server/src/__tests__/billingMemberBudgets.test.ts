@@ -56,6 +56,28 @@ describe('PgBillingStore 员工预算', () => {
       new Date('2026-08-31T16:00:00.000Z'),
       null,
     ]);
+    expect(query.mock.calls[1]?.[1]).toEqual([
+      'wain',
+      new Date('2026-07-31T16:00:00.000Z'),
+      new Date('2026-08-31T16:00:00.000Z'),
+      null,
+    ]);
+  });
+
+  it('按 userId 查询成员预算时预算行、用量行和聚合均使用同一 userId 作用域', async () => {
+    const query = overviewQueries();
+    const store = new PgBillingStore({ pool: { query } as any });
+
+    await store.getMemberBudgetOverview('wain', 'user-1', new Date('2026-08-01T02:00:00+08:00'));
+
+    expect(query.mock.calls[0]?.[1]?.[3]).toBe('user-1');
+    expect(query.mock.calls[1]?.[1]?.[3]).toBe('user-1');
+    const memberSql = String(query.mock.calls[0]?.[0]);
+    expect(memberSql).toContain('($4::text IS NULL OR user_id = $4)');
+    expect(memberSql).toContain('($4::text IS NULL OR l.user_id = $4)');
+    expect(memberSql).toContain('GROUP BY l.user_id');
+    const aggregateSql = String(query.mock.calls[1]?.[0]);
+    expect(aggregateSql).toContain('($4::text IS NULL OR l.user_id = $4)');
   });
 
   it('新增预算时执行乐观锁、写审计并返回当前用量', async () => {

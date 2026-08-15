@@ -23,3 +23,13 @@ export function formatDateRange(from: string, to: string): string {
   const t = to.replace("T", " ");
   return f === t ? f : `${f} → ${t}`;
 }
+
+/** 全部范围有数据时展示后端解析出的真实 earliest date；无数据时不展示内部日期哨兵。 */
+export function formatUsageRangeLabel(
+  from: string,
+  to: string,
+  options: { range: string; hasData?: boolean },
+): string {
+  if (options.range === "all" && options.hasData === false) return "全部历史 / 无数据";
+  return formatDateRange(from, to);
+}

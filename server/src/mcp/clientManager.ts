@@ -48,6 +48,11 @@ import type { SecretVault } from '../security/secretVault.js';
 type McpSecretReader = Pick<SecretVault, 'getSecret'>;
 import type { Logger } from '../utils/logger.js';
 import { agentSettingsPath } from '../workspace/namespace.js';
+import {
+  BrokeredWarmupCoordinator,
+  digestBrokeredWarmup,
+  type PreparedBrokeredWarmup,
+} from './brokeredWarmup.js';
 
 export type McpServerConfig =
   | {
@@ -264,6 +269,7 @@ function pickAllowedEnv(extra?: Record<string, string>): Record<string, string> 
 export class McpClientManager {
   private readonly entries = new Map<string, UserMcpEntry>();
   private readonly inflight = new Map<string, Promise<UserMcpEntry>>();
+  private readonly brokeredWarmups: BrokeredWarmupCoordinator<McpClientManager, McpToolDescriptor[]>;
   private readonly options: Required<Omit<McpClientManagerOptions, 'logger' | 'secretVault' | 'configProvider' | 'workspaceResolver' | 'tenantResolver' | 'oauthProviderFactory'>> & {
     logger?: Logger;
     secretVault?: McpSecretReader;
@@ -288,6 +294,7 @@ export class McpClientManager {
       tenantResolver: options.tenantResolver,
       oauthProviderFactory: options.oauthProviderFactory,
     };
+    this.brokeredWarmups = new BrokeredWarmupCoordinator(this.options.retryDelaysMs);
   }
 
   /**
@@ -526,7 +533,14 @@ export class McpClientManager {
     serverName: string,
     credential: { secretRef: string; secret: string },
   ): Promise<McpToolDescriptor[]> {
-    const oneShot = await this.createBrokeredManager(username, serverName, credential);
+    const prepared = await this.prepareBrokeredManager(username, serverName, credential);
+    return this.brokeredWarmups.run(prepared, oneShot => this.executeBrokeredWarmup(username, oneShot));
+  }
+
+  private async executeBrokeredWarmup(
+    username: string,
+    oneShot: McpClientManager,
+  ): Promise<McpToolDescriptor[]> {
     try {
       return await oneShot.ensureUser(username);
     } finally {
@@ -542,7 +556,11 @@ export class McpClientManager {
   ): Promise<string> {
     const parsed = parseMcpToolKey(toolKey);
     if (!parsed) throw new Error(`MCP invoke: invalid tool key ${toolKey}`);
-    const oneShot = await this.createBrokeredManager(username, parsed.serverName, credential);
+    const { manager: oneShot } = await this.prepareBrokeredManager(
+      username,
+      parsed.serverName,
+      credential,
+    );
     try {
       return await oneShot.invoke(username, toolKey, input);
     } finally {
@@ -550,11 +568,11 @@ export class McpClientManager {
     }
   }
 
-  private async createBrokeredManager(
+  private async prepareBrokeredManager(
     username: string,
     serverName: string,
     credential: { secretRef: string; secret: string },
-  ): Promise<McpClientManager> {
+  ): Promise<PreparedBrokeredWarmup<McpClientManager>> {
     const workspaceRoot = this.options.workspaceResolver
       ? this.options.workspaceResolver(username)
       : join(this.options.agentCwd, username);
@@ -571,15 +589,23 @@ export class McpClientManager {
     if (!configuredSecretRefs.includes(credential.secretRef)) {
       throw new Error('CREDENTIAL_SECRET_NOT_WIRED');
     }
-    return new McpClientManager({
+    const metadata = baseConfig.serverMetadata?.[serverName];
+    const identity = digestBrokeredWarmup({ username, serverName });
+    const fingerprint = digestBrokeredWarmup({
+      username,
+      serverName,
+      serverConfig,
+      metadata,
+      secretRef: credential.secretRef,
+      secretDigest: digestBrokeredWarmup(credential.secret),
+    });
+    const manager = new McpClientManager({
       ...this.options,
       failOnError: true,
       oauthProviderFactory: undefined,
       configProvider: async () => ({
         mcpServers: { [serverName]: serverConfig },
-        ...(baseConfig.serverMetadata?.[serverName] ? {
-          serverMetadata: { [serverName]: baseConfig.serverMetadata[serverName] },
-        } : {}),
+        ...(metadata ? { serverMetadata: { [serverName]: metadata } } : {}),
       }),
       secretVault: {
         getSecret: async (secretId: string) => {
@@ -588,6 +614,7 @@ export class McpClientManager {
         },
       },
     });
+    return { manager, fingerprint, identity };
   }
 
   getUserConnectionStatuses(username: string | undefined): McpServerConnectionStatus[] {
@@ -614,6 +641,7 @@ export class McpClientManager {
     await Promise.all(all);
     this.entries.clear();
     this.inflight.clear();
+    this.brokeredWarmups.clear();
   }
 
   async invalidateUser(username: string | undefined): Promise<void> {

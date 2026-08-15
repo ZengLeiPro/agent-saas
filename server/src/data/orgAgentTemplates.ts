@@ -16,6 +16,7 @@
  */
 
 import type { CreateOrgAgentInput, OrgAgentStore } from './orgAgents/store.js';
+import { normalizeOrgAgentRuntimePolicy, type OrgAgentRuntimePolicy } from './orgAgents/runtimePolicy.js';
 
 /**
  * 种子模板结构：等价于 CreateOrgAgentInput 但去掉 tenantId
@@ -208,6 +209,101 @@ export const ORG_AGENT_SEED_TEMPLATES: readonly OrgAgentTemplate[] = [
   CUSTOMER_ANALYST,
   CONTRACT_CHECKER,
 ];
+
+export interface OrgAgentTemplateApiView {
+  key: string;
+  name: string;
+  description: string;
+  avatar: string;
+  icon: string;
+  values: {
+    name: string;
+    avatar: string;
+    avatarImageUrl: null;
+    avatarStoredPath: string;
+    description: string;
+    starterPromptsText: string;
+    instructions: string;
+    allowedSkills: string[];
+    allowedKnowledgeText: string;
+    audienceExposure: 'all' | 'allow_users' | 'deny_users';
+    audienceUserIds: string[];
+    audienceGroupIds: string[];
+    runtime: OrgAgentRuntimePolicy;
+    guardrailMode: 'off' | 'shadow' | 'enforce';
+    guardrailAllowExamples: string[];
+    guardrailRejectExamples: string[];
+    guardrailScopeDescription: string;
+    guardrailRejectionMessage: string;
+    guardrailStrictness: 'strict' | 'lenient';
+    enabled: boolean;
+  };
+}
+
+function scopeExamples(scopeDescription: string): { allow: string[]; reject: string[] } {
+  const result = { allow: [] as string[], reject: [] as string[] };
+  let section: 'allow' | 'reject' | null = null;
+  for (const rawLine of scopeDescription.split('\n')) {
+    const line = rawLine.trim();
+    if (/^允许问[:：]?$/.test(line)) {
+      section = 'allow';
+      continue;
+    }
+    if (/^拒绝问[:：]?$/.test(line)) {
+      section = 'reject';
+      continue;
+    }
+    if (!line) continue;
+    if (/^[^·•-].*[:：]$/.test(line)) {
+      section = null;
+      continue;
+    }
+    if (section && /^[·•-]\s*/.test(line)) result[section].push(line.replace(/^[·•-]\s*/, ''));
+  }
+  return result;
+}
+
+/**
+ * 管理端模板 API 的唯一投影来源。任何模板字段变更都先修改
+ * ORG_AGENT_SEED_TEMPLATES，再由此处转换为前端表单契约。
+ */
+export function listOrgAgentTemplateApiViews(): OrgAgentTemplateApiView[] {
+  return ORG_AGENT_SEED_TEMPLATES.map((template) => {
+    const { payload } = template;
+    const examples = scopeExamples(payload.guardrail.scopeDescription);
+    const mode = payload.guardrail.mode ?? (payload.guardrail.enabled ? 'enforce' : 'off');
+    return {
+      key: template.templateId,
+      name: payload.name,
+      description: template.templateDescription,
+      avatar: payload.avatar ?? '',
+      icon: '✨',
+      values: {
+        name: payload.name,
+        avatar: payload.avatar ?? '',
+        avatarImageUrl: null,
+        avatarStoredPath: payload.avatar ?? '',
+        description: payload.description ?? '',
+        starterPromptsText: (payload.starterPrompts ?? []).join('\n'),
+        instructions: payload.instructions,
+        allowedSkills: [...payload.allowedSkills],
+        allowedKnowledgeText: (payload.allowedKnowledge ?? []).join('\n'),
+        audienceExposure: payload.audience.exposure,
+        // Templates are tenant-neutral: authoritative Assignment user/group ids are selected by the admin.
+        audienceUserIds: [],
+        audienceGroupIds: [],
+        runtime: normalizeOrgAgentRuntimePolicy(payload.runtime),
+        guardrailMode: mode,
+        guardrailAllowExamples: examples.allow,
+        guardrailRejectExamples: examples.reject,
+        guardrailScopeDescription: '',
+        guardrailRejectionMessage: payload.guardrail.rejectionMessage,
+        guardrailStrictness: payload.guardrail.strictness,
+        enabled: payload.enabled,
+      },
+    };
+  });
+}
 
 /**
  * seed 结果，用于路由/日志层反馈

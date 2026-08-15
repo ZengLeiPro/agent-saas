@@ -179,14 +179,24 @@ export interface RunEventsResponse {
 // ────────── GET /efficiency ──────────
 
 export interface EfficiencyReport {
-  range: { from: string; to: string; days: number };
+  range: { from: string; to: string; days: number; bounds: "[from,to)" };
   tenantId: string | null;
+  statistics: {
+    version: "runtime-runs-requested-at-v1";
+    source: "runtime_runs";
+    identity: "run_id";
+    initiatedAt: "requested_at";
+    dataAsOf: string;
+    completionDefinition: "completed / initiated";
+    longRunningDefinition: "non_terminal_started_for_24h";
+  };
   outcome: {
     totalRuns: number;
     success: number;
     error: number;
     interrupted: number;
-    /** success / total；total=0 时 null */
+    nonTerminal: number;
+    /** completed / initiated；未终态任务保留在分母中；total=0 时 null */
     completionRate: number | null;
     errorReasons: Array<{ reason: string; count: number; sampleRunId: string | null }>;
   };
@@ -219,6 +229,14 @@ export interface EfficiencyReport {
   };
   longTail: {
     slowestRuns: Array<{
+      runId: string;
+      sessionId: string;
+      tenantId: string | null;
+      durationMs: number;
+      status: string;
+      model: string | null;
+    }>;
+    longRunningRuns: Array<{
       runId: string;
       sessionId: string;
       tenantId: string | null;

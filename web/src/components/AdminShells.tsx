@@ -38,6 +38,7 @@ import {
   OrganizationOffboardingPage,
   OrganizationPoliciesPage,
 } from "@/components/OrganizationGovernance/OrganizationGovernancePage";
+import { OrganizationUsageBillingPage } from "@/components/OrganizationGovernance/OrganizationUsageBillingPage";
 import {
   PlatformAdminsPage,
   PlatformOrganizationGovernance,
@@ -739,7 +740,9 @@ export function TenantAdminShell({
       case "organization.governance.automation":
         return renderAutomation ? renderAutomation() : <GovernanceCapabilityNotice title="自动化任务" />;
       case "organization.governance.usage":
-        return renderUsage(effectiveTenantId);
+        return (
+          <OrganizationUsageBillingPage tenantId={effectiveTenantId} tenantName={currentTenant?.name} usage={renderUsage(effectiveTenantId)} />
+        );
       case "organization.governance.qa":
         return <QaConsole tenantId={effectiveTenantId} />;
       case "organization.governance.audit":

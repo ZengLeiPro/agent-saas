@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  addSnapshotMetadata,
   buildRuntimePath,
   ensurePythonEnv,
   executeFeishuCli,
@@ -13,6 +14,33 @@ import {
   toolNameForLocalProvider,
   venvRebuildReasons,
 } from './sandboxRunner.js';
+
+describe('snapshot result metadata', () => {
+  it('flattens execution facts and makes workspace fallback visible to the Agent', () => {
+    const response = addSnapshotMetadata({
+      status: 'error',
+      error: 'command failed',
+      metadata: { durationMs: 123 },
+    }, {
+      requested: 'snapshot',
+      used: 'workspace',
+      repositoryPath: 'code/agent-saas',
+      sourceCwd: '.',
+      preparationMs: 44,
+      fallbackReason: 'git_repository_not_found',
+    });
+    expect(response.status).toBe('error');
+    if (response.status !== 'error') throw new Error('expected error response');
+    expect(response.error).toContain('实际已回退持久工作区');
+    expect(response.metadata).toMatchObject({
+      executionRequested: 'snapshot',
+      executionUsed: 'workspace',
+      executionTotalMs: 167,
+      snapshotRepositoryPath: 'code/agent-saas',
+      snapshotFallbackReason: 'git_repository_not_found',
+    });
+  });
+});
 
 describe('__FeishuCli internal tool', () => {
   it('rejects unknown operations and malformed sensitive inputs before spawning CLI', () => {

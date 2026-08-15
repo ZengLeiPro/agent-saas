@@ -10,4 +10,4 @@ Python/venv 能力取决于当前运行时，不要假设一定存在：先检�
 
 `mode="foreground"`（默认）保持本轮等待，最长 10 分钟。`mode="background"` 只适用于 ACS 隔离运行时：命令持久化启动后立即返回 `taskId`，最长可运行 24 小时；完成后平台自动唤醒主 Agent，也可用 BackgroundTask(action="output") 查看增量输出、用 BackgroundTask(action="cancel") 终止。
 
-对依赖安装、测试、typecheck、build 等 I/O 密集型前台验证，可设置 `execution="snapshot"`。平台会自动把 Git 当前提交及未提交改动复制到同一 ACS 容器的临时本地盘，并复用本地包缓存后执行；无需自行 `cp`、`rsync` 或提交代码。临时执行区只用于验证，命令生成的文件不会写回持久工作区；需要保留的源码修改和交付物仍在默认 `execution="workspace"` 下完成。不满足 Git 根目录等条件时会自动回退到持久工作区并在结果 metadata 说明原因；后台命令始终使用持久工作区。
+对依赖安装、测试、typecheck、build 等 I/O 密集型前台验证，可设置 `execution="snapshot"`。仓库不在工作区根时，优先同时传工作区相对的 `snapshotCwd`（例如 `snapshotCwd="code/my-repo"`），命令直接按该目录为 cwd 编写、无需再写 `cd`；平台也会识别命令开头简单的 `cd path && ...`。平台会自动把 Git 当前提交及未提交改动复制到同一 ACS 容器的临时本地盘，并复用本地依赖树后执行；无需自行 `cp`、`rsync`、安装依赖或提交代码。临时执行区只用于验证，命令生成的文件不会写回持久工作区；需要保留的源码修改和交付物仍在默认 `execution="workspace"` 下完成。无法确定仓库、临时盘不足或依赖准备失败时会明确提示已回退持久工作区，并在结果 metadata 写明实际执行面和原因；后台命令始终使用持久工作区。

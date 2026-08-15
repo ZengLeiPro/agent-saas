@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
@@ -57,4 +57,111 @@ describe('snapshot execution', () => {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
   });
+
+  it('preserves a nested repository path for commands that start with cd', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'snapshot-nested-workspace-'));
+    const repositoryRoot = join(workspaceRoot, 'code', 'agent-saas');
+    try {
+      await mkdir(repositoryRoot, { recursive: true });
+      await initRepository(repositoryRoot);
+      await writeFile(join(repositoryRoot, 'tracked.txt'), 'nested\n');
+      await execFileAsync('git', ['add', 'tracked.txt'], { cwd: repositoryRoot });
+      await execFileAsync('git', ['commit', '--quiet', '-m', 'nested'], { cwd: repositoryRoot });
+
+      const lease = await prepareSnapshotExecution({
+        workspaceRoot,
+        command: 'cd code/agent-saas && printf ok',
+        signal: new AbortController().signal,
+        env: process.env as Record<string, string>,
+      });
+      expect(lease.metadata).toMatchObject({
+        used: 'snapshot',
+        repositoryPath: 'code/agent-saas',
+        sourceCwd: '.',
+      });
+      await expect(readFile(join(lease.root, 'code', 'agent-saas', 'tracked.txt'), 'utf8')).resolves.toBe('nested\n');
+      await lease.cleanup();
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('uses snapshotCwd as the command cwd for a nested repository', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'snapshot-explicit-cwd-'));
+    const repositoryRoot = join(workspaceRoot, 'code', 'agent-saas');
+    try {
+      await mkdir(repositoryRoot, { recursive: true });
+      await initRepository(repositoryRoot);
+      await writeFile(join(repositoryRoot, 'tracked.txt'), 'explicit\n');
+      await execFileAsync('git', ['add', 'tracked.txt'], { cwd: repositoryRoot });
+      await execFileAsync('git', ['commit', '--quiet', '-m', 'explicit'], { cwd: repositoryRoot });
+
+      const lease = await prepareSnapshotExecution({
+        workspaceRoot,
+        snapshotCwd: 'code/agent-saas',
+        command: 'printf ok',
+        signal: new AbortController().signal,
+        env: process.env as Record<string, string>,
+      });
+      expect(lease.metadata).toMatchObject({
+        used: 'snapshot',
+        repositoryPath: 'code/agent-saas',
+        sourceCwd: 'code/agent-saas',
+      });
+      await expect(readFile(join(lease.root, 'tracked.txt'), 'utf8')).resolves.toBe('explicit\n');
+      await lease.cleanup();
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('singleflights dependency preparation and reuses the prepared node_modules tree', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'snapshot-dependency-cache-'));
+    const fakeBin = join(workspaceRoot, 'fake-bin');
+    const counterPath = join(workspaceRoot, 'install-count.txt');
+    try {
+      await initRepository(workspaceRoot);
+      await mkdir(fakeBin);
+      const fakePnpm = join(fakeBin, 'pnpm');
+      await writeFile(fakePnpm, [
+        '#!/bin/sh',
+        'mkdir -p node_modules/.bin',
+        'printf "#!/bin/sh\\nprintf ready" > node_modules/.bin/snapshot-probe',
+        'chmod +x node_modules/.bin/snapshot-probe',
+        'printf "install\\n" >> "$COUNTER_PATH"',
+      ].join('\n'));
+      await chmod(fakePnpm, 0o755);
+      await writeFile(join(workspaceRoot, 'package.json'), '{"name":"snapshot-cache-test","private":true}\n');
+      await writeFile(join(workspaceRoot, 'pnpm-lock.yaml'), 'lockfileVersion: "9.0"\n');
+      await execFileAsync('git', ['add', 'package.json', 'pnpm-lock.yaml'], { cwd: workspaceRoot });
+      await execFileAsync('git', ['commit', '--quiet', '-m', 'dependencies'], { cwd: workspaceRoot });
+      const env = {
+        ...(process.env as Record<string, string>),
+        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+        COUNTER_PATH: counterPath,
+      };
+
+      const leases = await Promise.all([1, 2].map(() => prepareSnapshotExecution({
+        workspaceRoot,
+        command: 'pnpm test',
+        signal: new AbortController().signal,
+        env,
+      })));
+      expect((await readFile(counterPath, 'utf8')).trim().split('\n')).toHaveLength(1);
+      expect(leases.map((lease) => lease.metadata.dependencyCacheHit).sort()).toEqual([false, true]);
+      for (const lease of leases) {
+        await expect(readFile(join(lease.root, 'node_modules', '.bin', 'snapshot-probe'), 'utf8'))
+          .resolves.toContain('ready');
+        await lease.cleanup();
+      }
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
 });
+
+async function initRepository(root: string): Promise<void> {
+  await execFileAsync('git', ['init', '--quiet'], { cwd: root });
+  await execFileAsync('git', ['config', 'user.email', 'snapshot@example.test'], { cwd: root });
+  await execFileAsync('git', ['config', 'user.name', 'Snapshot Test'], { cwd: root });
+}

@@ -376,6 +376,12 @@ describe('结构化事实（tool_result.metadata）', () => {
       timedOut: false,
       aborted: false,
       outputExceeded: true,
+      executionRequested: 'snapshot',
+      executionUsed: 'workspace',
+      snapshotRepositoryPath: 'code/agent-saas',
+      snapshotPreparationMs: 44,
+      snapshotDependencyCacheHit: false,
+      snapshotFallbackReason: 'dependency_prepare_failed',
     })).toEqual({
       exitCode: 1,
       signal: 'SIGTERM',
@@ -385,6 +391,12 @@ describe('结构化事实（tool_result.metadata）', () => {
       timedOut: false,
       aborted: false,
       outputExceeded: true,
+      executionRequested: 'snapshot',
+      executionUsed: 'workspace',
+      snapshotRepositoryPath: 'code/agent-saas',
+      snapshotPreparationMs: 44,
+      snapshotDependencyCacheHit: false,
+      snapshotFallbackReason: 'dependency_prepare_failed',
     });
   });
 

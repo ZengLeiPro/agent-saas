@@ -118,6 +118,7 @@ export async function executeSandboxRunnerInput(
     ? await prepareSnapshotExecution({
         workspaceRoot,
         command: typeof toolInput.command === 'string' ? toolInput.command : '',
+        snapshotCwd: typeof toolInput.snapshotCwd === 'string' ? toolInput.snapshotCwd : undefined,
         signal,
         env: baseEnv,
         progress: (message) => emit({ kind: 'chunk', chunk: { type: 'progress', message } }),
@@ -163,7 +164,7 @@ export async function executeSandboxRunnerInput(
   }
 }
 
-function addSnapshotMetadata(
+export function addSnapshotMetadata(
   response: ToolInvocationResponse,
   snapshotExecution: SnapshotExecutionMetadata,
 ): ToolInvocationResponse {
@@ -171,7 +172,34 @@ function addSnapshotMetadata(
   const enriched = commandMs === undefined
     ? snapshotExecution
     : { ...snapshotExecution, commandMs, totalMs: snapshotExecution.preparationMs + commandMs };
-  return { ...response, metadata: { ...(response.metadata ?? {}), snapshotExecution: enriched } };
+  const flatMetadata = {
+    executionRequested: enriched.requested,
+    executionUsed: enriched.used,
+    snapshotPreparationMs: enriched.preparationMs,
+    ...(enriched.repositoryPath ? { snapshotRepositoryPath: enriched.repositoryPath } : {}),
+    ...(enriched.sourceCwd ? { snapshotSourceCwd: enriched.sourceCwd } : {}),
+    ...(enriched.sourceRevision ? { snapshotSourceRevision: enriched.sourceRevision } : {}),
+    ...(enriched.dirtyFileCount !== undefined ? { snapshotDirtyFileCount: enriched.dirtyFileCount } : {}),
+    ...(enriched.snapshotMs !== undefined ? { snapshotMaterializationMs: enriched.snapshotMs } : {}),
+    ...(enriched.dependencyMs !== undefined ? { snapshotDependencyMs: enriched.dependencyMs } : {}),
+    ...(enriched.dependencyCacheHit !== undefined ? { snapshotDependencyCacheHit: enriched.dependencyCacheHit } : {}),
+    ...(enriched.fallbackReason ? { snapshotFallbackReason: enriched.fallbackReason } : {}),
+    ...(enriched.totalMs !== undefined ? { executionTotalMs: enriched.totalMs } : {}),
+  };
+  const note = enriched.used === 'snapshot'
+    ? `[执行位置] 容器临时盘快照；准备 ${enriched.preparationMs}ms${enriched.dependencyCacheHit === undefined ? '' : `，依赖缓存${enriched.dependencyCacheHit ? '命中' : '新建'}`}`
+    : `[执行位置] 临时盘快照不可用，实际已回退持久工作区：${enriched.fallbackReason ?? 'unknown'}`;
+  return response.status === 'success'
+    ? {
+        ...response,
+        content: `${response.content}\n\n${note}`,
+        metadata: { ...(response.metadata ?? {}), ...flatMetadata, snapshotExecution: enriched },
+      }
+    : {
+        ...response,
+        error: `${response.error}\n\n${note}`,
+        metadata: { ...(response.metadata ?? {}), ...flatMetadata, snapshotExecution: enriched },
+      };
 }
 
 async function main(): Promise<void> {

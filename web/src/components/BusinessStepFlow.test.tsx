@@ -162,6 +162,35 @@ describe("BusinessStepFlow", () => {
     for (const sel of NO_FILL_SELECTORS) expect(container.querySelector(sel)).toBeNull();
   });
 
+  it("hides the complete outcome summary when the collapsed preference requests a fully folded row", () => {
+    render(
+      <BusinessStepFlow
+        showOutcomeWhenCollapsed={false}
+        event={event({
+          kind: "complete",
+          todo: {
+            id: "a",
+            kind: "business",
+            content: "核验订单",
+            status: "completed",
+            outcome: {
+              text: "17/18 张通过，1 张退回",
+              tone: "warn",
+              stat: [{ label: "通过", value: "17" }],
+            },
+          },
+        })}
+      />,
+    );
+
+    expect(screen.queryByText("17/18 张通过，1 张退回")).toBeNull();
+    expect(screen.queryByTestId("outcome-stats")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /核验订单.*已完成/ }));
+    expect(screen.getByText("17/18 张通过，1 张退回")).toBeTruthy();
+    expect(within(screen.getByTestId("outcome-stats")).getByText("通过")).toBeTruthy();
+  });
+
   it("keeps historical detail key-value lines readable without restoring the legacy card shell", () => {
     const { container } = render(
       <BusinessStepFlow

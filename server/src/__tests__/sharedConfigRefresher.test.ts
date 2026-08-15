@@ -30,11 +30,16 @@ const QWEN_GROUP = {
   models: [{ id: 'qwen38max', name: 'qwen3.8-max', value: 'qwen3.8-max' }],
 };
 
-function writeConfig(dir: string, groups: unknown[]): void {
+function writeConfig(
+  dir: string,
+  groups: unknown[],
+  titleGenerator?: { model: string; fallbackModels?: string[] },
+): void {
   const cfg = {
     agent: { cwd: '.' },
     server: { port: 3200 },
     models: { groups, default: 'ark-agents/glm-5.2' },
+    ...(titleGenerator ? { titleGenerator } : {}),
   };
   writeFileSync(join(dir, 'config.json'), JSON.stringify(cfg, null, 2), 'utf-8');
 }
@@ -95,6 +100,38 @@ describe('createSharedConfigRefresher', () => {
     refresher.refreshIfChanged();
     expect(refresher.getAppliedStamps().config).toEqual(before);
     expect(config.models!.groups).toHaveLength(1);
+  });
+
+  it('只修改标题模型引用时也热更新内存配置和运行链', () => {
+    const groups = [BASE_GROUP, QWEN_GROUP];
+    writeConfig(dir, groups, { model: 'ark-agents/glm-5.2' });
+    const config = {
+      models: { groups, default: 'ark-agents/glm-5.2' },
+      titleGenerator: { model: 'ark-agents/glm-5.2' },
+    } as unknown as AppConfig;
+    const target = {
+      updateGuardrailModelConfigs: () => {},
+      titleGeneratorConfigs: [] as Array<{ model: string }>,
+    };
+    const originalTitleConfigs = target.titleGeneratorConfigs;
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target,
+      now: () => clock,
+    });
+
+    writeConfig(dir, groups, { model: 'qwen/qwen38max' });
+    clock += 5_000;
+    refresher.refreshIfChanged();
+
+    expect(config.titleGenerator?.model).toBe('qwen/qwen38max');
+    expect(target.titleGeneratorConfigs).toBe(originalTitleConfigs);
+    expect(target.titleGeneratorConfigs).toEqual([expect.objectContaining({
+      model: 'qwen3.8-max',
+      protocol: 'responses',
+    })]);
   });
 
   it('config.json 写坏时保留当前内存配置，不把进程打挂', () => {

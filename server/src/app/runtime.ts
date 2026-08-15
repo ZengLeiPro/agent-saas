@@ -98,8 +98,9 @@ import { buildFollowupContext } from '../cron/followup.js';
 import { assertDevDatabaseSafety, loadAppConfig } from './config.js';
 import { createRuntimeWebPushAssembly } from './runtimeWebPush.js';
 import { createModelResolvers } from './modelResolvers.js';
+import { resolveTitleGeneratorConfigs } from './titleGeneratorConfigs.js';
+import { resolveGuardrailModelConfigs } from './guardrailModelConfigs.js';
 import type { AgentOptionsConfig } from '../agent/options.js';
-import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
 import type { ImageUnderstandingModelConfig } from '../runtime/imageUnderstanding.js';
 import { isAssignedToOrgAgent, OrgAgentStore } from '../data/orgAgents/store.js';
@@ -403,72 +404,23 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     sharedDir,
   };
 
-  // Title generator config 链（主 + fallback）
-  // 主模型返回空 / 报错时，自动 fallback。命名场景对模型质量不敏感、对可用性敏感，
-  // 主推稳定模型即可。
-  const titleGeneratorConfigs: TitleGeneratorConfig[] = [];
-
-  // 检测：resolveModelRef 在 ref 失败时会**静默回退到 default**——
-  // 之前 titleGenerator.model 配 "openai-agents/glm-5.2" 实际跑的是 default
-  // "ark-agents/glm-5.2"，几个月没人察觉。比对 ref modelId 与解析结果，不一致就 warn。
-  const detectSilentFallback = (ref: string, resolvedModel: string, label = 'Title generator') => {
-    const refModelId = ref.split('/').pop() ?? '';
-    if (refModelId && resolvedModel !== refModelId) {
-      serverLogger.warn(
-        `${label}: ref "${ref}" silently fell back to default ` +
-          `(resolved="${resolvedModel}"); check models.groups for the correct groupId.`,
-      );
-    }
-  };
-
-  if (config.titleGenerator?.model && config.models) {
-    const resolved = resolveModelRef(config.models, config.titleGenerator.model);
-    if (resolved) {
-      titleGeneratorConfigs.push({ model: resolved.model, connection: resolved.connection });
-      serverLogger.info(`Title generator: using model "${resolved.model}" from "${config.titleGenerator.model}"`);
-      detectSilentFallback(config.titleGenerator.model, resolved.model);
-    } else {
-      serverLogger.warn(`Title generator: model ref "${config.titleGenerator.model}" not found, falling back to default`);
-      const fallbackModel = process.env.OPENAI_DEFAULT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.4-mini';
-      titleGeneratorConfigs.push({ model: fallbackModel });
-    }
-    // 解析 fallbackModels：每个都得在 models 配置里有定义；找不到的直接跳过 + warn。
-    for (const ref of config.titleGenerator.fallbackModels ?? []) {
-      const fb = resolveModelRef(config.models, ref);
-      if (fb) {
-        titleGeneratorConfigs.push({ model: fb.model, connection: fb.connection });
-        serverLogger.info(`Title generator: fallback "${fb.model}" from "${ref}"`);
-        detectSilentFallback(ref, fb.model);
-      } else {
-        serverLogger.warn(`Title generator: fallback model ref "${ref}" not found, skipped`);
-      }
-    }
-  } else {
-    const fallbackModel = process.env.OPENAI_DEFAULT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.4-mini';
-    titleGeneratorConfigs.push({ model: fallbackModel });
-  }
+  const titleGeneratorConfigs = resolveTitleGeneratorConfigs({
+    models: config.models,
+    titleGenerator: config.titleGenerator,
+    defaultModel: process.env.OPENAI_DEFAULT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.4-mini',
+    logger: serverLogger,
+  });
 
   // 门禁模型配置链（主 + fallback；2026-07 唯恩批次）。与 title 不同：
   // config.guardrail 缺省 = 门禁模块不激活（空数组，checkTopicScope fail-open
   // 短路），**没有** env 默认模型兜底。热更由 routes.ts onModelsUpdated 经
-  // updateGuardrailModelConfigs 写回本变量；WebChannel 拿的是 getter——避开
-  // titleGeneratorConfigs 构造时被捕获旧数组引用的 stale 坑。
-  let guardrailModelConfigs: GuardrailModelConfig[] = [];
-  if (config.guardrail?.model && config.models) {
-    for (const ref of [config.guardrail.model, ...(config.guardrail.fallbackModels ?? [])]) {
-      const resolved = resolveModelRef(config.models, ref);
-      if (resolved) {
-        guardrailModelConfigs.push({ model: resolved.model, connection: resolved.connection });
-        serverLogger.info(`Guardrail: model "${resolved.model}" from "${ref}"`);
-        detectSilentFallback(ref, resolved.model, 'Guardrail');
-      } else {
-        serverLogger.warn(`Guardrail: model ref "${ref}" not found, skipped`);
-      }
-    }
-    if (guardrailModelConfigs.length === 0) {
-      serverLogger.warn('Guardrail: no model resolved from config.guardrail, module inactive');
-    }
-  }
+  // updateGuardrailModelConfigs 写回本变量，WebChannel 通过 getter 读取；标题链
+  // 则由热更逻辑原地替换数组内容，保证已捕获该数组的会话也能看到新配置。
+  let guardrailModelConfigs: GuardrailModelConfig[] = resolveGuardrailModelConfigs({
+    models: config.models,
+    guardrail: config.guardrail,
+    logger: serverLogger,
+  });
 
   // Auth 初始化（需要在 dispatch 之前，因为 agentStore 依赖 userStore）
   let userStore: UserStore | undefined;
@@ -1667,6 +1619,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tenantsFilePath,
     logger: serverLogger,
     onGuardrailModelConfigsUpdated: (next) => { guardrailModelConfigs = next; },
+    titleGeneratorConfigs,
   });
 
   runPreflightService = initializeRuntimeGovernancePreflight({

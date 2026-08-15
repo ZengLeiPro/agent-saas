@@ -98,17 +98,29 @@ export function createSharedConfigRefresher(params: {
       return;
     }
 
-    if (nextConfig.models) {
-      const before = JSON.stringify(config.models ?? null);
-      const after = JSON.stringify(nextConfig.models);
-      if (before !== after) {
-        config.models = nextConfig.models;
-        applyModelsHotUpdate({ config, target, models: nextConfig.models });
-        logger?.info(
-          `[SharedConfig] 已从磁盘热更新模型配置：${nextConfig.models.groups.length} 组 / ` +
-            `${nextConfig.models.groups.reduce((n, g) => n + g.models.length, 0)} 个模型`,
-        );
-      }
+    const modelsChanged = Boolean(nextConfig.models)
+      && JSON.stringify(config.models ?? null) !== JSON.stringify(nextConfig.models);
+    const titleChanged = JSON.stringify(config.titleGenerator ?? null)
+      !== JSON.stringify(nextConfig.titleGenerator ?? null);
+    const guardrailChanged = JSON.stringify(config.guardrail ?? null)
+      !== JSON.stringify(nextConfig.guardrail ?? null);
+
+    if (modelsChanged) config.models = nextConfig.models;
+    if (titleChanged) {
+      if (nextConfig.titleGenerator) config.titleGenerator = nextConfig.titleGenerator;
+      else delete config.titleGenerator;
+    }
+    if (guardrailChanged) {
+      if (nextConfig.guardrail) config.guardrail = nextConfig.guardrail;
+      else delete config.guardrail;
+    }
+
+    if ((modelsChanged || titleChanged || guardrailChanged) && config.models) {
+      applyModelsHotUpdate({ config, target, models: config.models });
+      logger?.info(
+        `[SharedConfig] 已从磁盘热更新模型及辅助模型配置：${config.models.groups.length} 组 / ` +
+          `${config.models.groups.reduce((n, g) => n + g.models.length, 0)} 个模型`,
+      );
     }
 
     appliedConfigStamp = stamp;

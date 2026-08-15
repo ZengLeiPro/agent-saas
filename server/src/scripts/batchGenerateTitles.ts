@@ -17,8 +17,8 @@ import { createReadStream } from 'node:fs';
 import * as readline from 'node:readline';
 import * as path from 'node:path';
 import { loadAppConfig } from '../app/config.js';
-import { resolveModelRef } from '../app/models.js';
-import { generateTitle, type TitleGeneratorConfig } from '../agent/titleGenerator.js';
+import { resolveTitleGeneratorConfigs } from '../app/titleGeneratorConfigs.js';
+import { generateTitle } from '../agent/titleGenerator.js';
 import { readSessionMeta, updateSessionMeta } from '../data/transcripts/meta.js';
 import { AGENT_LEGACY_TRANSCRIPTS_ROOT, isValidSessionId } from '../data/transcripts/projectKey.js';
 
@@ -203,22 +203,16 @@ async function main() {
   const processCwd = path.resolve(import.meta.dirname, '../..');
   const config = loadAppConfig(processCwd);
 
-  let titleConfig: TitleGeneratorConfig;
-
-  if (config.titleGenerator?.model && config.models) {
-    const resolved = resolveModelRef(config.models, config.titleGenerator.model);
-    if (resolved) {
-      titleConfig = { model: resolved.model, connection: resolved.connection };
-      console.log(`模型: ${resolved.model} (from "${config.titleGenerator.model}")`);
-    } else {
-      console.error(`模型引用 "${config.titleGenerator.model}" 无法解析，退出`);
-      process.exit(1);
-    }
-  } else {
-    const model = process.env.OPENAI_DEFAULT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.4-mini';
-    titleConfig = { model };
-    console.log(`模型: ${model} (default)`);
+  const titleConfig = resolveTitleGeneratorConfigs({
+    models: config.models,
+    titleGenerator: config.titleGenerator,
+    defaultModel: process.env.OPENAI_DEFAULT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.4-mini',
+  })[0];
+  if (!titleConfig) {
+    console.error('没有可用的标题生成模型，退出');
+    process.exit(1);
   }
+  console.log(`模型: ${titleConfig.model}`);
 
   // 2. 扫描所有会话
   console.log('\n扫描会话...');

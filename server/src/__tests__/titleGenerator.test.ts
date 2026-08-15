@@ -209,6 +209,7 @@ describe('generateTitleWithFallback', () => {
 
   afterEach(() => {
     resetResponses();
+    vi.unstubAllGlobals();
   });
 
   it('configs 为空直接 return null（不抛）', async () => {
@@ -273,5 +274,59 @@ describe('generateTitleWithFallback', () => {
       config('fb2'),
     ]);
     expect(title).toBeNull();
+  });
+
+  it('Responses 协议从 message.output_text 提取标题并使用独立输出预算', async () => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({
+      id: 'resp-title',
+      status: 'completed',
+      output: [{
+        type: 'message',
+        content: [{ type: 'output_text', text: 'Responses生成标题' }],
+      }],
+      usage: {
+        input_tokens: 20,
+        output_tokens: 40,
+        input_tokens_details: { cached_tokens: 5 },
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onUsage = vi.fn();
+
+    const title = await generateTitleWithFallback('u', 'a', [{
+      ...config('responses-model'),
+      protocol: 'responses',
+    }], undefined, undefined, { onUsage });
+
+    expect(title).toBe('Responses生成标题');
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      model: 'responses-model',
+      max_output_tokens: 512,
+      store: false,
+      stream: false,
+    });
+    expect(onUsage).toHaveBeenCalledWith('responses-model', expect.objectContaining({
+      inputTokens: 20,
+      outputTokens: 40,
+      cacheReadInputTokens: 5,
+    }));
+  });
+
+  it('Responses 只有 reasoning 没有文本时静默回落到下一模型', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      id: 'resp-incomplete',
+      status: 'incomplete',
+      output: [{ type: 'reasoning', status: 'incomplete' }],
+      usage: { input_tokens: 20, output_tokens: 512 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    queueResponse('chat-backup', '备用模型标题');
+
+    const title = await generateTitleWithFallback('u', 'a', [
+      { ...config('responses-main'), protocol: 'responses' },
+      config('chat-backup'),
+    ]);
+
+    expect(title).toBe('备用模型标题');
   });
 });

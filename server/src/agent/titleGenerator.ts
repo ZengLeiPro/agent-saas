@@ -1,7 +1,8 @@
 /**
  * AI Title Generator
  *
- * 使用 OpenAI-compatible Chat Completions API 生成简短会话标题。无工具、单轮、短超时。
+ * 使用 OpenAI-compatible Chat Completions / Responses API 生成简短会话标题。
+ * 无工具、单轮、短超时。
  */
 
 import { createReadStream } from 'node:fs';
@@ -81,6 +82,8 @@ export async function extractTitleContext(
 export interface TitleGeneratorConfig {
   model: string;
   connection?: { apiKey?: string; baseUrl?: string };
+  protocol?: 'chat_completions' | 'responses';
+  responsesTransport?: 'openai_compatible' | 'codex_subscription';
 }
 
 export interface TitleGenerationOptions {
@@ -97,6 +100,69 @@ export const TITLE_SYSTEM_PROMPT = `你的唯一任务是通过阅读我引用�
 - 不要加引号、标点或任何前缀
 - 只输出标题本身`;
 
+const RESPONSES_TITLE_MAX_OUTPUT_TOKENS = 512;
+
+interface TitleProviderResult {
+  raw: string;
+  finishReason: string;
+  responseId: string;
+  usage?: SdkResultModelUsage;
+}
+
+function extractResponsesText(payload: Record<string, any>): string {
+  if (typeof payload.output_text === 'string') return payload.output_text;
+  if (!Array.isArray(payload.output)) return '';
+  for (const item of payload.output) {
+    if (item?.type !== 'message' || !Array.isArray(item.content)) continue;
+    const block = item.content.find((content: any) => content?.type === 'output_text');
+    if (typeof block?.text === 'string') return block.text;
+  }
+  return '';
+}
+
+async function generateTitleViaResponses(input: {
+  apiKey: string;
+  baseURL: string;
+  model: string;
+  systemPrompt: string;
+  userPrompt: string;
+  signal: AbortSignal;
+}): Promise<TitleProviderResult> {
+  const response = await fetch(`${input.baseURL.replace(/\/+$/, '')}/responses`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${input.apiKey}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: input.model,
+      instructions: input.systemPrompt,
+      input: input.userPrompt,
+      max_output_tokens: RESPONSES_TITLE_MAX_OUTPUT_TOKENS,
+      store: false,
+      stream: false,
+    }),
+    signal: input.signal,
+  });
+  const payload = await response.json() as Record<string, any>;
+  if (!response.ok) throw new Error(`Responses API HTTP ${response.status}`);
+  const usage = payload.usage as Record<string, any> | undefined;
+  return {
+    raw: extractResponsesText(payload),
+    finishReason: typeof payload.status === 'string' ? payload.status : 'unknown',
+    responseId: typeof payload.id === 'string' ? payload.id : 'n/a',
+    ...(usage ? {
+      usage: {
+        inputTokens: usage.input_tokens ?? 0,
+        outputTokens: usage.output_tokens ?? 0,
+        cacheReadInputTokens: usage.input_tokens_details?.cached_tokens ?? 0,
+        cacheCreationInputTokens: 0,
+        apiRequestCount: 1,
+      },
+    } : {}),
+  };
+}
+
 export async function generateTitle(
   userMessage: string,
   assistantReply: string,
@@ -110,17 +176,22 @@ export async function generateTitle(
   const apiKey = config.connection?.apiKey || process.env.OPENAI_API_KEY;
   const baseURL = config.connection?.baseUrl || process.env.OPENAI_BASE_URL;
 
+  if (config.protocol === 'responses' && config.responsesTransport === 'codex_subscription') {
+    titleLogger.warn(`Title generation skipped (model=${config.model}): codex_subscription transport is unsupported`);
+    clearTimeout(timeout);
+    return null;
+  }
+
   if (!apiKey) {
     titleLogger.warn(`Title generation skipped (model=${config.model}): missing OPENAI_API_KEY`);
     clearTimeout(timeout);
     return null;
   }
-
-  const client = new OpenAI({
-    apiKey,
-    maxRetries: 0,
-    ...(baseURL ? { baseURL } : {}),
-  });
+  if (config.protocol === 'responses' && !baseURL) {
+    titleLogger.warn(`Title generation skipped (model=${config.model}): missing Responses baseUrl`);
+    clearTimeout(timeout);
+    return null;
+  }
 
   // 计费授权错误必须向上冒泡，不能被当作 provider 失败后继续 fallback。
   await options.beforeModelCall?.(config.model);
@@ -142,40 +213,65 @@ export async function generateTitle(
       }
     }
 
-    const result = await client.chat.completions.create({
-      model: config.model,
-      messages: [
-        { role: 'system', content: options.systemPrompt ?? TITLE_SYSTEM_PROMPT },
-        { role: 'user', content: parts.join('\n') },
-      ],
-      temperature: 0.2,
-      max_tokens: 64,
-      n: 1,
-    }, { signal: controller.signal });
-    if (result.usage) {
+    let providerResult: TitleProviderResult;
+    if (config.protocol === 'responses') {
+      providerResult = await generateTitleViaResponses({
+        apiKey,
+        baseURL: baseURL!,
+        model: config.model,
+        systemPrompt: options.systemPrompt ?? TITLE_SYSTEM_PROMPT,
+        userPrompt: parts.join('\n'),
+        signal: controller.signal,
+      });
+    } else {
+      const client = new OpenAI({
+        apiKey,
+        maxRetries: 0,
+        ...(baseURL ? { baseURL } : {}),
+      });
+      const result = await client.chat.completions.create({
+        model: config.model,
+        messages: [
+          { role: 'system', content: options.systemPrompt ?? TITLE_SYSTEM_PROMPT },
+          { role: 'user', content: parts.join('\n') },
+        ],
+        temperature: 0.2,
+        max_tokens: 64,
+        n: 1,
+      }, { signal: controller.signal });
+      const choice = result.choices[0];
+      providerResult = {
+        raw: choice?.message?.content ?? '',
+        finishReason: choice?.finish_reason ?? 'unknown',
+        responseId: result.id ?? 'n/a',
+        ...(result.usage ? {
+          usage: {
+            inputTokens: result.usage.prompt_tokens ?? 0,
+            outputTokens: result.usage.completion_tokens ?? 0,
+            cacheReadInputTokens: result.usage.prompt_tokens_details?.cached_tokens ?? 0,
+            cacheCreationInputTokens: 0,
+            apiRequestCount: 1,
+          },
+        } : {}),
+      };
+    }
+    if (providerResult.usage) {
       try {
-        await options.onUsage?.(config.model, {
-          inputTokens: result.usage.prompt_tokens ?? 0,
-          outputTokens: result.usage.completion_tokens ?? 0,
-          cacheReadInputTokens: result.usage.prompt_tokens_details?.cached_tokens ?? 0,
-          cacheCreationInputTokens: 0,
-          apiRequestCount: 1,
-        });
+        await options.onUsage?.(config.model, providerResult.usage);
       } catch (err) {
         usageCallbackFailed = true;
         throw err;
       }
     }
-    const choice = result.choices[0];
-    const raw = choice?.message?.content ?? '';
+    const raw = providerResult.raw;
     if (!raw) {
       // 上游 200 但 content 为空：通常是模型协议错配（如 Responses-only 模型被
       // 当成 Chat Completions 调）/ 安全过滤 / token 不足。打 warn 带 finish_reason
       // & usage 便于下次直接定位，避免之前那种"持续 502 但日志无线索"的盲查。
       titleLogger.warn(
         `Title generation got empty content (model=${config.model}) ` +
-          `finish_reason=${choice?.finish_reason ?? 'unknown'} ` +
-          `usage=${JSON.stringify(result.usage ?? null)} id=${result.id ?? 'n/a'}`,
+          `finish_reason=${providerResult.finishReason} ` +
+          `usage=${JSON.stringify(providerResult.usage ?? null)} id=${providerResult.responseId}`,
       );
       return null;
     }
@@ -208,7 +304,7 @@ export async function generateTitle(
  *
  * - 第 i 次失败（i < N-1）记 warn 注明将尝试下一个 fallback
  * - 第 i 次成功（i > 0）记 info 标记走的是 fallback——方便观察主模型健康度
- * - 全部失败返回 null（调用方按现有 502 路径继续上报）
+ * - 全部失败返回 null（自动命名调用方静默保留原标题）
  */
 export async function generateTitleWithFallback(
   userMessage: string,

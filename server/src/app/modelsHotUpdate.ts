@@ -12,10 +12,11 @@
  */
 import type { AppConfig } from './config.js';
 import type { ModelsConfig } from '../types/index.js';
-import { resolveModelRef } from './models.js';
 import { configureModelPricing } from '../data/usage/pricing.js';
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
+import { resolveTitleGeneratorConfigs } from './titleGeneratorConfigs.js';
+import { resolveGuardrailModelConfigs } from './guardrailModelConfigs.js';
 
 /** applyModelsHotUpdate 需要写回的运行时切面；抽成最小接口便于测试。 */
 export interface ModelsHotUpdateTarget {
@@ -27,8 +28,7 @@ export interface ModelsHotUpdateTarget {
  * 把一份新的 models 配置应用到当前进程。
  *
  * 派生链（门禁 / 标题生成）遵循「解析失败就保留原链」——热更新瞬时不应把已经
- * 工作的功能打挂。注意门禁必须排在标题之前重建：标题分支带 early-return，
- * 放在后面会被它吞掉。
+ * 工作的功能打挂。标题数组原地替换，保证已经持有引用的消费方也能看到新配置。
  */
 export function applyModelsHotUpdate(params: {
   config: AppConfig;
@@ -41,29 +41,13 @@ export function applyModelsHotUpdate(params: {
   const merged = { ...models, default: models.default };
 
   if (config.guardrail?.model) {
-    const nextGuardrail: GuardrailModelConfig[] = [];
-    const mainGuardrail = resolveModelRef(merged, config.guardrail.model);
-    if (mainGuardrail) {
-      nextGuardrail.push({
-        model: mainGuardrail.model,
-        connection: mainGuardrail.connection,
-      });
-      for (const ref of config.guardrail.fallbackModels ?? []) {
-        const fb = resolveModelRef(merged, ref);
-        if (fb) nextGuardrail.push({ model: fb.model, connection: fb.connection });
-      }
-      target.updateGuardrailModelConfigs(nextGuardrail);
-    }
+    const nextGuardrail = resolveGuardrailModelConfigs({ models: merged, guardrail: config.guardrail });
+    if (nextGuardrail.length > 0) target.updateGuardrailModelConfigs(nextGuardrail);
   }
 
-  if (!config.titleGenerator?.model) return;
-  const next: TitleGeneratorConfig[] = [];
-  const resolvedMain = resolveModelRef(merged, config.titleGenerator.model);
-  if (!resolvedMain) return;
-  next.push({ model: resolvedMain.model, connection: resolvedMain.connection });
-  for (const ref of config.titleGenerator.fallbackModels ?? []) {
-    const fb = resolveModelRef(merged, ref);
-    if (fb) next.push({ model: fb.model, connection: fb.connection });
+  const next = resolveTitleGeneratorConfigs({ models: merged, titleGenerator: config.titleGenerator });
+  if (next.length > 0) {
+    if (target.titleGeneratorConfigs) target.titleGeneratorConfigs.splice(0, target.titleGeneratorConfigs.length, ...next);
+    else target.titleGeneratorConfigs = next;
   }
-  target.titleGeneratorConfigs = next;
 }

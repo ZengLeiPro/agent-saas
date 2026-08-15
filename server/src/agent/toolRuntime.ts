@@ -50,8 +50,6 @@ import {
 import {
   DEFAULT_SHELL_TIMEOUT_MS,
   DEFAULT_BACKGROUND_SHELL_TIMEOUT_MS,
-  MAX_BACKGROUND_SHELL_TIMEOUT_MS,
-  MAX_SHELL_TIMEOUT_MS,
   MAX_FILE_BYTES,
   MAX_READ_LINES,
   MAX_READ_OUTPUT_BYTES,
@@ -70,6 +68,7 @@ import {
   type WorkspaceArtifactPayload,
 } from './workspaceHandTools.js';
 import { materializeReadToolImage, tryReadWorkspaceImage } from './readImageTool.js';
+import { shellToolSchema, type ShellToolInput } from './shellToolSchema.js';
 const exec = promisify(execCb);
 
 const MEMORY_SHELL_MAYBE_CHANGED_INTERVAL_MS = 120_000;
@@ -415,25 +414,7 @@ export const writeFileToolDescriptor: ToolDescriptor<{ path: string; content: st
   label: '写入文件',
 };
 
-const shellToolSchema = z.object({
-  command: z.string(),
-  mode: z.enum(['foreground', 'background']).optional(),
-  timeoutMs: z.number().int().positive().max(MAX_BACKGROUND_SHELL_TIMEOUT_MS).optional(),
-}).superRefine((value, ctx) => {
-  if (value.mode !== 'background' && value.timeoutMs !== undefined && value.timeoutMs > MAX_SHELL_TIMEOUT_MS) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['timeoutMs'],
-      message: `前台 Shell timeoutMs 不能超过 ${MAX_SHELL_TIMEOUT_MS}`,
-    });
-  }
-});
-
-export const runShellToolDescriptor: ToolDescriptor<{
-  command: string;
-  mode?: 'foreground' | 'background';
-  timeoutMs?: number;
-}> = {
+export const runShellToolDescriptor: ToolDescriptor<ShellToolInput> = {
   id: 'Shell',
   name: 'Shell',
   displayName: 'Run Shell',

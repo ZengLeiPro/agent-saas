@@ -29,6 +29,8 @@ describe('AcsExecutor active sandbox tracking', () => {
       { spawn } as unknown as Kubectl,
       sandboxManager,
       noopLogger,
+      undefined,
+      { persistentRunner: false },
     );
     const request = {
       toolName: 'Shell',
@@ -81,6 +83,8 @@ describe('AcsExecutor active sandbox tracking', () => {
       { spawn } as unknown as Kubectl,
       sandboxManager,
       noopLogger,
+      undefined,
+      { persistentRunner: false },
     );
     const controller = new AbortController();
     const iterator = executor.executeStream({
@@ -124,7 +128,7 @@ describe('AcsExecutor active sandbox tracking', () => {
     const kubectl = {
       spawn: vi.fn(),
     } as unknown as Kubectl;
-    const executor = new AcsExecutor(baseConfig(), kubectl, sandboxManager, noopLogger, activeRegistry);
+    const executor = new AcsExecutor(baseConfig(), kubectl, sandboxManager, noopLogger, activeRegistry, { persistentRunner: false });
 
     const iterator = executor.executeStream({
       toolName: 'Shell',
@@ -162,7 +166,7 @@ describe('AcsExecutor active sandbox tracking', () => {
     const kubectl = {
       spawn: vi.fn(() => child),
     } as unknown as Kubectl;
-    const executor = new AcsExecutor(baseConfig(), kubectl, sandboxManager, noopLogger, activeRegistry);
+    const executor = new AcsExecutor(baseConfig(), kubectl, sandboxManager, noopLogger, activeRegistry, { persistentRunner: false });
 
     const iterator = executor.executeStream({
       toolName: 'Shell',
@@ -214,7 +218,7 @@ describe('AcsExecutor active sandbox tracking', () => {
       setBackgroundShellProtection,
     } as unknown as SandboxManager;
     const kubectl = { spawn: vi.fn(() => child) } as unknown as Kubectl;
-    const executor = new AcsExecutor(baseConfig(), kubectl, sandboxManager, noopLogger);
+    const executor = new AcsExecutor(baseConfig(), kubectl, sandboxManager, noopLogger, undefined, { persistentRunner: false });
     const protectedUntil = '2026-07-20T00:00:00.000Z';
 
     const resultPromise = executor.execute({
@@ -245,8 +249,14 @@ describe('AcsExecutor active sandbox tracking', () => {
   });
 });
 
-function fakeChild(): EventEmitter & { stdout: PassThrough; stderr: PassThrough; kill: ReturnType<typeof vi.fn> } {
-  const child = new EventEmitter() as EventEmitter & { stdout: PassThrough; stderr: PassThrough; kill: ReturnType<typeof vi.fn> };
+function fakeChild(): EventEmitter & { stdin: PassThrough; stdout: PassThrough; stderr: PassThrough; kill: ReturnType<typeof vi.fn> } {
+  const child = new EventEmitter() as EventEmitter & {
+    stdin: PassThrough;
+    stdout: PassThrough;
+    stderr: PassThrough;
+    kill: ReturnType<typeof vi.fn>;
+  };
+  child.stdin = new PassThrough();
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
   child.kill = vi.fn();
@@ -338,7 +348,7 @@ describe('spawnRunner 命令构造（A 方案批次 3：预编译 sandboxRunner�
     } as unknown as SandboxManager;
     const spawn = vi.fn(() => child);
     const kubectl = { spawn } as unknown as Kubectl;
-    const executor = new AcsExecutor(baseConfig(), kubectl, sandboxManager, noopLogger);
+    const executor = new AcsExecutor(baseConfig(), kubectl, sandboxManager, noopLogger, undefined, { persistentRunner: false });
 
     const iterator = executor.executeStream({
       toolName: 'Read',
@@ -365,5 +375,56 @@ describe('spawnRunner 命令构造（A 方案批次 3：预编译 sandboxRunner�
     expect(script).toContain('dist/sandboxRunner.mjs');
     expect(script).toContain('src/sandboxRunner.ts');
     expect(script.indexOf('dist/sandboxRunner.mjs')).toBeLessThan(script.indexOf('node_modules/.bin/tsx'));
+  });
+});
+
+describe('persistent sandbox runner', () => {
+  it('reuses one kubectl exec connection across sequential invocations', async () => {
+    const ref: SandboxRef = {
+      name: 'as-persistent',
+      workspaceId: 'ws_kaiyan__u-1',
+      sandboxScopeId: 'ws_kaiyan__u-1__s_top',
+      sessionId: 'session-1',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    };
+    const child = fakeChild();
+    let stdinBuffer = '';
+    child.stdin.on('data', (chunk: Buffer) => {
+      stdinBuffer += chunk.toString('utf8');
+      const lines = stdinBuffer.split('\n');
+      stdinBuffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line) continue;
+        const request = JSON.parse(line) as { kind: string; invocationKey?: string };
+        if (request.kind === 'invoke') {
+          child.stdout.write(`${JSON.stringify({
+            kind: 'invocation_output',
+            invocationKey: request.invocationKey,
+            output: { kind: 'final', response: { status: 'success', content: 'ok' } },
+          })}\n`);
+        }
+      }
+    });
+    const spawn = vi.fn(() => {
+      queueMicrotask(() => child.stdout.write(`${JSON.stringify({
+        kind: 'daemon_ready', protocolVersion: 1, runnerId: 'runner-1',
+      })}\n`));
+      return child;
+    });
+    const ensureRunning = vi.fn(async () => ref);
+    const sandboxManager = { ref: () => ref, ensureRunning } as unknown as SandboxManager;
+    const executor = new AcsExecutor(baseConfig(), { spawn } as unknown as Kubectl, sandboxManager, noopLogger);
+    const request = {
+      toolName: 'Read',
+      input: { path: 'README.md' },
+      context: {
+        workspace: { id: ref.workspaceId, sessionId: ref.sessionId, sandboxScopeId: ref.sandboxScopeId },
+      },
+    };
+
+    await expect(executor.execute(request)).resolves.toMatchObject({ status: 'success', content: 'ok' });
+    await expect(executor.execute(request)).resolves.toMatchObject({ status: 'success', content: 'ok' });
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(ensureRunning).toHaveBeenCalledOnce();
   });
 });

@@ -9,6 +9,7 @@ import type {
   WireToolInvocationRequest,
 } from './protocol.js';
 import type { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
+import { PersistentSandboxRunner } from './persistentRunner.js';
 import type { SandboxManager, SandboxRef } from './sandboxManager.js';
 import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
 
@@ -20,6 +21,11 @@ interface InvocationEntry {
 
 export class AcsExecutor {
   private readonly invocations = new Map<string, InvocationEntry>();
+  private readonly persistentRunners = new Map<string, PersistentSandboxRunner>();
+  private readonly persistentRunnerPromises = new Map<string, Promise<PersistentSandboxRunner>>();
+  private readonly ensureRunningAt = new Map<string, number>();
+  private readonly ensureRunningPromises = new Map<string, Promise<void>>();
+  private readonly persistentRunnerBackoffUntil = new Map<string, number>();
   private invocationSeq = 0;
 
   constructor(
@@ -28,6 +34,7 @@ export class AcsExecutor {
     private readonly sandboxManager: SandboxManager,
     private readonly logger: { info(msg: string): void; warn(msg: string): void; error(msg: string): void },
     private readonly activeRegistry?: ActiveSandboxRegistry,
+    private readonly options: { persistentRunner?: boolean } = {},
   ) {}
 
   async execute(request: WireToolInvocationRequest): Promise<ToolInvocationResponse> {
@@ -65,15 +72,13 @@ export class AcsExecutor {
     this.invocations.set(invocationKey, { controller, sandboxName: ref.name });
     const releaseActive = this.activeRegistry?.acquire(ref.name, invocationKey);
     try {
-      await this.sandboxManager.ensureRunning({
+      const sandboxIdentity = {
         workspaceId: workspace.id!,
         sessionId: workspace.sessionId!,
         sandboxScopeId: workspace.sandboxScopeId,
         mountSubPath: workspace.mountSubPath,
-      }, {
-        busySandboxNames: this.busySandboxNames(),
-        activeKey: invocationKey,
-      });
+      };
+      await this.ensureSandboxRunning(ref, sandboxIdentity, invocationKey);
       if (controller.signal.aborted) return;
       // 07-05：把 wire.context.env（parseWireRequest 已 allowlist 过滤过）透传给
       // pod 内 sandboxRunner，让其合并进 spawn 子进程的 env，pod 里 Shell 才能
@@ -93,35 +98,38 @@ export class AcsExecutor {
         stream: options.stream,
         ...(wireEnv && Object.keys(wireEnv).length > 0 ? { env: wireEnv } : {}),
       };
-      const child = this.spawnRunner(ref, runnerInput, controller);
-      const closePromise = waitForClose(child);
-      this.invocations.set(invocationKey, { controller, child, sandboxName: ref.name });
-      yield { type: 'progress', message: 'acs sandbox invocation accepted' };
-      let sawCompleted = false;
-      for await (const line of readLines(child)) {
-        const parsed = parseRunnerLine(line);
-        if (!parsed) continue;
-        if (parsed.kind === 'chunk') {
-          if (parsed.chunk.type === 'completed') {
-            sawCompleted = true;
-            await this.applyBackgroundShellProtection(ref.name, parsed.chunk.response);
-          }
-          yield parsed.chunk;
-        } else {
-          sawCompleted = true;
-          await this.applyBackgroundShellProtection(ref.name, parsed.response);
-          yield { type: 'completed', response: parsed.response };
+      let runner: PersistentSandboxRunner | undefined;
+      if (
+        this.options.persistentRunner !== false
+        && Date.now() >= (this.persistentRunnerBackoffUntil.get(ref.name) ?? 0)
+      ) {
+        try {
+          runner = await this.getPersistentRunner(ref);
+        } catch (err) {
+          this.persistentRunnerBackoffUntil.set(ref.name, Date.now() + 5 * 60_000);
+          this.logger.warn(`runner_daemon_fallback sandbox=${ref.name}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
-      const exit = await closePromise;
-      if (!sawCompleted) {
-        yield {
-          type: 'completed',
-          response: {
-            status: 'error',
-            error: `ACS sandbox runner exited without final response (code=${exit.exitCode ?? exit.signal ?? 'unknown'})`,
-          },
-        };
+      if (controller.signal.aborted) return;
+      if (runner) {
+        yield { type: 'progress', message: 'acs sandbox invocation accepted' };
+        for await (const output of runner.invoke(invocationKey, runnerInput, controller.signal)) {
+          if (output.kind === 'chunk') {
+            if (output.chunk.type === 'completed') {
+              const response = addRunnerMetadata(output.chunk.response, 'persistent');
+              await this.applyBackgroundShellProtection(ref.name, response);
+              yield { ...output.chunk, response };
+            } else {
+              yield output.chunk;
+            }
+          } else {
+            const response = addRunnerMetadata(output.response, 'persistent');
+            await this.applyBackgroundShellProtection(ref.name, response);
+            yield { type: 'completed', response };
+          }
+        }
+      } else {
+        yield* this.executeOneShot(ref, runnerInput, controller, invocationKey);
       }
     } finally {
       options.signal?.removeEventListener('abort', onExternalAbort);
@@ -135,6 +143,7 @@ export class AcsExecutor {
     if (!entry) return false;
     entry.controller.abort();
     entry.child?.kill('SIGTERM');
+    if (entry.sandboxName) this.persistentRunners.get(entry.sandboxName)?.cancel(invocationId);
     return true;
   }
 
@@ -185,6 +194,97 @@ export class AcsExecutor {
       ? (raw as { protectedUntil: string }).protectedUntil
       : undefined;
     await this.sandboxManager.setBackgroundShellProtection(sandboxName, protectedUntil);
+  }
+
+  private async ensureSandboxRunning(
+    ref: SandboxRef,
+    identity: { workspaceId: string; sessionId: string; sandboxScopeId?: string; mountSubPath?: string },
+    invocationKey: string,
+  ): Promise<void> {
+    const existingRunner = this.persistentRunners.get(ref.name);
+    const lastEnsure = this.ensureRunningAt.get(ref.name) ?? 0;
+    if (existingRunner?.isHealthy() && Date.now() - lastEnsure < 60_000) return;
+    const pending = this.ensureRunningPromises.get(ref.name);
+    if (pending) return await pending;
+    const ensure = this.sandboxManager.ensureRunning(identity, {
+      busySandboxNames: this.busySandboxNames(),
+      activeKey: invocationKey,
+    }).then(() => {
+      this.ensureRunningAt.set(ref.name, Date.now());
+    }).finally(() => {
+      this.ensureRunningPromises.delete(ref.name);
+    });
+    this.ensureRunningPromises.set(ref.name, ensure);
+    await ensure;
+  }
+
+  private async getPersistentRunner(ref: SandboxRef): Promise<PersistentSandboxRunner> {
+    const existing = this.persistentRunners.get(ref.name);
+    if (existing?.isHealthy()) return existing;
+    const pending = this.persistentRunnerPromises.get(ref.name);
+    if (pending) return await pending;
+    existing?.close('runner_replaced');
+    this.persistentRunners.delete(ref.name);
+    const connect = this.connectPersistentRunner(ref).finally(() => {
+      this.persistentRunnerPromises.delete(ref.name);
+    });
+    this.persistentRunnerPromises.set(ref.name, connect);
+    return await connect;
+  }
+
+  private async connectPersistentRunner(ref: SandboxRef): Promise<PersistentSandboxRunner> {
+    const runner = new PersistentSandboxRunner(this.config, this.kubectl, ref, this.logger);
+    try {
+      await runner.start();
+      this.persistentRunners.set(ref.name, runner);
+      this.persistentRunnerBackoffUntil.delete(ref.name);
+      return runner;
+    } catch (err) {
+      runner.close('runner_start_failed');
+      throw err;
+    }
+  }
+
+  private async *executeOneShot(
+    ref: SandboxRef,
+    runnerInput: SandboxRunnerInput,
+    controller: AbortController,
+    invocationKey: string,
+  ): AsyncIterable<ToolInvocationStreamChunk> {
+    const child = this.spawnRunner(ref, runnerInput, controller);
+    const closePromise = waitForClose(child);
+    this.invocations.set(invocationKey, { controller, child, sandboxName: ref.name });
+    yield { type: 'progress', message: 'acs sandbox invocation accepted' };
+    let sawCompleted = false;
+    for await (const line of readLines(child)) {
+      const parsed = parseRunnerLine(line);
+      if (!parsed) continue;
+      if (parsed.kind === 'chunk') {
+        if (parsed.chunk.type === 'completed') {
+          sawCompleted = true;
+          const response = addRunnerMetadata(parsed.chunk.response, 'one-shot');
+          await this.applyBackgroundShellProtection(ref.name, response);
+          yield { ...parsed.chunk, response };
+          continue;
+        }
+        yield parsed.chunk;
+      } else {
+        sawCompleted = true;
+        const response = addRunnerMetadata(parsed.response, 'one-shot');
+        await this.applyBackgroundShellProtection(ref.name, response);
+        yield { type: 'completed', response };
+      }
+    }
+    const exit = await closePromise;
+    if (!sawCompleted) {
+      yield {
+        type: 'completed',
+        response: {
+          status: 'error',
+          error: `ACS sandbox runner exited without final response (code=${exit.exitCode ?? exit.signal ?? 'unknown'})`,
+        },
+      };
+    }
   }
 
   private spawnRunner(ref: SandboxRef, input: SandboxRunnerInput, controller: AbortController): ChildProcessWithoutNullStreams {
@@ -265,4 +365,11 @@ function parseRunnerLine(line: string): SandboxRunnerOutput | SandboxRunnerFinal
       chunk: { type: 'output', channel: 'stdout', content: `${line}\n` },
     };
   }
+}
+
+function addRunnerMetadata(
+  response: ToolInvocationResponse,
+  mode: 'persistent' | 'one-shot',
+): ToolInvocationResponse {
+  return { ...response, metadata: { ...(response.metadata ?? {}), acsRunner: { mode } } };
 }

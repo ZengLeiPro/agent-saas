@@ -8,6 +8,8 @@ import { ServerLocalExecutionProvider, type WorkspaceRef } from 'server/agent/to
 import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
 
 import type { SandboxRunnerFinalOutput, SandboxRunnerInput, SandboxRunnerOutput } from './protocol.js';
+import { runSandboxRunnerDaemon } from './sandboxRunnerDaemon.js';
+import { prepareSnapshotExecution, type SnapshotExecutionMetadata } from './snapshotExecution.js';
 import {
   getBackgroundShellOutput,
   killBackgroundShell,
@@ -69,75 +71,143 @@ function writeJsonLine(value: SandboxRunnerOutput | SandboxRunnerFinalOutput): v
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
-async function main(): Promise<void> {
-  const raw = await readStdin();
-  const input = JSON.parse(raw || '{}') as SandboxRunnerInput;
+export async function executeSandboxRunnerInput(
+  input: SandboxRunnerInput,
+  signal: AbortSignal,
+  emit: (output: SandboxRunnerOutput | SandboxRunnerFinalOutput) => void,
+  options: { skipPythonEnv?: boolean } = {},
+): Promise<void> {
   const workspaceRoot = input.workspace.root || process.env.ACS_WORKSPACE_PATH || '/workspace';
   if (input.toolName === '__FeishuCli') {
-    writeJsonLine({ kind: 'final', response: executeFeishuCli(input.input, workspaceRoot) });
+    emit({ kind: 'final', response: executeFeishuCli(input.input, workspaceRoot) });
     return;
   }
-  ensurePythonEnv(workspaceRoot);
-  const workspace: WorkspaceRef = {
-    id: input.workspace.id,
-    root: workspaceRoot,
-    userId: input.workspace.userId,
-    username: input.workspace.username,
-    sessionId: input.workspace.sessionId,
-    executionTarget: 'server-local',
-  };
-  const abortController = new AbortController();
-  const abort = () => abortController.abort();
-  process.once('SIGTERM', abort);
-  process.once('SIGINT', abort);
-  process.once('SIGHUP', abort);
-
+  if (!options.skipPythonEnv) ensurePythonEnv(workspaceRoot);
   // 07-05：从 wire 传下来的 input.env（允许列表内的 AZEROTH_TOKEN 等）合并进
   // provider spawn 的子进程 env。ServerLocalExecutionProvider 的 envBuilder 在
   // 未注入时 fallback process.env；这里显式装配 "pod process.env + input.env"，
   // 保持 pod 自身 env（PATH/PYTHONPATH 等）+ 允许 wire 层追加凭据。
   const wireEnvOverride = input.env ?? {};
-  const provider = Object.keys(wireEnvOverride).length > 0
-    ? new ServerLocalExecutionProvider({
-        envBuilder: (_workspace) => ({
-          ...(process.env as Record<string, string | undefined>),
-          ...wireEnvOverride,
-        }) as Record<string, string>,
-      })
-    : new ServerLocalExecutionProvider();
   const localToolName = toolNameForLocalProvider(input.toolName);
+  const toolInput = input.input && typeof input.input === 'object' && !Array.isArray(input.input)
+    ? input.input as Record<string, unknown>
+    : {};
+  const baseEnv = {
+    ...(process.env as Record<string, string | undefined>),
+    ...wireEnvOverride,
+  } as Record<string, string>;
   const backgroundResponse = await executeBackgroundShellTool({
     toolName: localToolName,
     input: input.input,
     workspaceRoot,
-    env: {
-      ...(process.env as Record<string, string | undefined>),
-      ...wireEnvOverride,
-    },
+    env: baseEnv,
   });
   if (backgroundResponse) {
-    writeJsonLine({ kind: 'final', response: backgroundResponse });
+    const response = toolInput.execution === 'snapshot'
+      ? addSnapshotMetadata(backgroundResponse, {
+          requested: 'snapshot',
+          used: 'workspace',
+          preparationMs: 0,
+          fallbackReason: 'background_shell_uses_persistent_workspace',
+        })
+      : backgroundResponse;
+    emit({ kind: 'final', response });
     return;
   }
+  const snapshot = localToolName === 'Shell' && toolInput.execution === 'snapshot'
+    ? await prepareSnapshotExecution({
+        workspaceRoot,
+        command: typeof toolInput.command === 'string' ? toolInput.command : '',
+        signal,
+        env: baseEnv,
+        progress: (message) => emit({ kind: 'chunk', chunk: { type: 'progress', message } }),
+      })
+    : undefined;
+  const effectiveRoot = snapshot?.root ?? workspaceRoot;
+  const effectiveEnv = snapshot?.env ?? baseEnv;
+  const workspace: WorkspaceRef = {
+    id: input.workspace.id,
+    root: effectiveRoot,
+    userId: input.workspace.userId,
+    username: input.workspace.username,
+    sessionId: input.workspace.sessionId,
+    executionTarget: 'server-local',
+  };
+  const provider = new ServerLocalExecutionProvider({ envBuilder: () => effectiveEnv });
   const request = {
     toolName: localToolName,
     input: input.input,
     context: {
       ...(input.invocationId ? { invocationId: input.invocationId } : {}),
       workspace,
-      signal: abortController.signal,
+      signal,
     },
   };
 
-  if (input.stream && provider.executeStream) {
-    for await (const chunk of provider.executeStream(request)) {
-      writeJsonLine({ kind: 'chunk', chunk: chunk as ToolInvocationStreamChunk });
+  try {
+    if (localToolName === 'Shell' && provider.executeStream) {
+      for await (const chunk of provider.executeStream(request)) {
+        const enriched = chunk.type === 'completed' && snapshot
+          ? { ...chunk, response: addSnapshotMetadata(chunk.response, snapshot.metadata) }
+          : chunk;
+        if (input.stream) emit({ kind: 'chunk', chunk: enriched as ToolInvocationStreamChunk });
+        else if (enriched.type === 'completed') emit({ kind: 'final', response: enriched.response });
+      }
+      return;
     }
+
+    const response = await provider.execute(request);
+    emit({ kind: 'final', response: snapshot ? addSnapshotMetadata(response, snapshot.metadata) : response });
+  } finally {
+    await snapshot?.cleanup().catch(() => undefined);
+  }
+}
+
+function addSnapshotMetadata(
+  response: ToolInvocationResponse,
+  snapshotExecution: SnapshotExecutionMetadata,
+): ToolInvocationResponse {
+  const commandMs = typeof response.metadata?.durationMs === 'number' ? response.metadata.durationMs : undefined;
+  const enriched = commandMs === undefined
+    ? snapshotExecution
+    : { ...snapshotExecution, commandMs, totalMs: snapshotExecution.preparationMs + commandMs };
+  return { ...response, metadata: { ...(response.metadata ?? {}), snapshotExecution: enriched } };
+}
+
+async function main(): Promise<void> {
+  if (process.argv.includes('--daemon')) {
+    const pythonEnvReady = new Map<string, Promise<void>>();
+    await runSandboxRunnerDaemon({
+      imageRef: process.env.ACS_SANDBOX_IMAGE,
+      execute: async (input, signal, emit) => {
+        if (input.toolName !== '__FeishuCli') {
+          const workspaceRoot = input.workspace.root || process.env.ACS_WORKSPACE_PATH || '/workspace';
+          let ready = pythonEnvReady.get(workspaceRoot);
+          if (!ready) {
+            ready = Promise.resolve().then(() => { ensurePythonEnv(workspaceRoot); });
+            pythonEnvReady.set(workspaceRoot, ready);
+          }
+          await ready;
+        }
+        await executeSandboxRunnerInput(input, signal, emit, { skipPythonEnv: true });
+      },
+    });
     return;
   }
-
-  const response = await provider.execute(request);
-  writeJsonLine({ kind: 'final', response });
+  const raw = await readStdin();
+  const input = JSON.parse(raw || '{}') as SandboxRunnerInput;
+  const abortController = new AbortController();
+  const abort = () => abortController.abort();
+  process.once('SIGTERM', abort);
+  process.once('SIGINT', abort);
+  process.once('SIGHUP', abort);
+  try {
+    await executeSandboxRunnerInput(input, abortController.signal, writeJsonLine);
+  } finally {
+    process.removeListener('SIGTERM', abort);
+    process.removeListener('SIGINT', abort);
+    process.removeListener('SIGHUP', abort);
+  }
 }
 
 /**

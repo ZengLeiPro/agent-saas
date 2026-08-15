@@ -77,7 +77,14 @@ function messages(): MessageItem[] {
             kind: "business",
             content: "核验订单",
             status: "completed",
-            outcome: { text: "17/18 张通过，1 张退回", tone: "warn" },
+            outcome: {
+              text: "17/18 张通过，1 张退回",
+              tone: "warn",
+              stat: [
+                { label: "通过", value: "17" },
+                { label: "退回", value: "1" },
+              ],
+            },
             detail: [{ verdict: "pass", text: "订单资料完整" }],
           },
           { id: "write-result", kind: "business", content: "写入核验结果", status: "in_progress" },
@@ -244,7 +251,13 @@ describe("MessageList business step sections", () => {
     );
     expect(screen.getByRole("button", { name: "全部展开" })).toBeTruthy();
     expect(screen.queryByText("已运行")).toBeNull();
+    expect(screen.queryByText("17/18 张通过，1 张退回")).toBeNull();
+    expect(screen.queryByTestId("outcome-stats")).toBeNull();
     expect(screen.queryByText("订单资料完整")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /核验订单.*已完成/ }));
+    expect(screen.getByText("17/18 张通过，1 张退回")).toBeTruthy();
+    expect(screen.getByTestId("outcome-stats")).toBeTruthy();
     unmount();
 
     authState.businessStepDisplayMode = "expanded";

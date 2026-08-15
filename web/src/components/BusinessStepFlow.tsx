@@ -37,9 +37,9 @@ import { statVerdict, visibleOutcomeStats, type OutcomeStat } from "./detailSema
 //   （活动组/工具块），无框 = 业务叙事」是刻意的视觉分层。
 // - 状态色只落在 icon 与小徽标上，容器一律融入背景。
 // - 归属感由缩进 + 极淡左竖线表达（timeline 语言），不靠边框。
-// - 终态步骤折叠时保留标题与 outcome；展开后再呈现 detail/display，以及同排的
+// - 终态步骤智能折叠时保留标题与 outcome；展开后再呈现 detail/display，以及同排的
 //   「过程 / 依据」折叠入口；入口控制的内容区都在下一行占满可用宽度。
-//   默认状态由用户的业务步骤展示偏好决定。
+//   用户选择「始终折叠」时，outcome 与统计标签也随正文隐藏。
 //
 // 内容纪律（08-03 二轮：样式对齐 demo + 槽位去重）：
 // - 顶层 detail 使用无框业务摘要（PresentationDetail variant="plain"）；判定、风险、
@@ -315,15 +315,17 @@ function StartRow({ event }: { event: BusinessStepEventItem }) {
   );
 }
 
-/** 终态块（无节归属时的扁平流渲染）。outcome 常显，扩展内容默认折叠。 */
+/** 终态块（无节归属时的扁平流渲染）。智能折叠保留 outcome，始终折叠隐藏全部正文。 */
 function TerminalBlock({
   event,
   open,
   onOpenChange,
+  showOutcomeWhenCollapsed,
 }: {
   event: BusinessStepEventItem;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  showOutcomeWhenCollapsed: boolean;
 }) {
   const todo = event.todo;
   const meta = TERMINAL_META[event.kind];
@@ -333,6 +335,7 @@ function TerminalBlock({
   const { label, tone, Icon } = meta;
   const hasEvidence = !!todo.evidenceRefs?.length;
   const bodyOpen = open ?? localOpen;
+  const showOutcome = !!todo.outcome && (bodyOpen || showOutcomeWhenCollapsed);
   const toggle = () => {
     const next = !bodyOpen;
     if (onOpenChange) onOpenChange(next);
@@ -359,9 +362,9 @@ function TerminalBlock({
           )}
         </button>
       </header>
-      {todo.outcome || bodyOpen ? (
+      {showOutcome || bodyOpen ? (
         <div className="ml-[7px] mt-2.5 space-y-2.5 border-l border-border/50 pl-5">
-          {todo.outcome ? (
+          {showOutcome && todo.outcome ? (
             <OutcomeLine
               outcome={todo.outcome}
               stats={visibleOutcomeStats(todo.outcome.stat, todo.detail)}
@@ -408,12 +411,14 @@ export function BusinessStepFlow({
   onOpenChange,
   planHasOpenStep,
   onTogglePlan,
+  showOutcomeWhenCollapsed = true,
 }: {
   event: BusinessStepEventItem;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   planHasOpenStep?: boolean;
   onTogglePlan?: () => void;
+  showOutcomeWhenCollapsed?: boolean;
 }) {
   switch (event.kind) {
     case "plan":
@@ -426,7 +431,14 @@ export function BusinessStepFlow({
     case "fail":
     case "block":
     case "wait":
-      return <TerminalBlock event={event} open={open} onOpenChange={onOpenChange} />;
+      return (
+        <TerminalBlock
+          event={event}
+          open={open}
+          onOpenChange={onOpenChange}
+          showOutcomeWhenCollapsed={showOutcomeWhenCollapsed}
+        />
+      );
     default:
       return null;
   }
@@ -442,7 +454,7 @@ function countSectionProcessItems(section: BusinessStepSection): number {
 }
 
 /**
- * 业务步骤节：终态折叠时保留标题与 outcome，展开后再呈现详情与过程。
+ * 业务步骤节：终态智能折叠时保留标题与 outcome，展开后再呈现详情与过程。
  * children 由 MessageList 用完整消息渲染逻辑生成，本组件只提供节壳。
  */
 export function BusinessStepSectionView({
@@ -452,6 +464,7 @@ export function BusinessStepSectionView({
   systemActions,
   open,
   onOpenChange,
+  showOutcomeWhenCollapsed = true,
 }: {
   section: BusinessStepSection;
   debugMode: boolean;
@@ -463,6 +476,7 @@ export function BusinessStepSectionView({
   systemActions?: ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  showOutcomeWhenCollapsed?: boolean;
 }) {
   const { start, terminal, isActive } = section;
   const terminalMeta = terminal ? TERMINAL_META[terminal.kind] : undefined;
@@ -474,6 +488,7 @@ export function BusinessStepSectionView({
   const [processOpen, setProcessOpen] = useState(!terminal);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const sectionOpen = open ?? localOpen;
+  const showOutcome = !!terminal?.todo?.outcome && (sectionOpen || showOutcomeWhenCollapsed);
   const terminalKey = terminal?.id ?? null;
   useEffect(() => {
     if (!terminalKey) return;
@@ -551,9 +566,9 @@ export function BusinessStepSectionView({
         </button>
       </header>
 
-      {terminal?.todo?.outcome || sectionOpen ? (
+      {showOutcome || sectionOpen ? (
         <div className="ml-[7px] mt-2.5 space-y-2.5 border-l border-border/50 pl-5">
-          {terminal?.todo?.outcome ? (
+          {showOutcome && terminal?.todo?.outcome ? (
             <OutcomeLine
               outcome={terminal.todo.outcome}
               stats={visibleOutcomeStats(terminal.todo.outcome.stat, terminal.todo.detail)}

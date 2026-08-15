@@ -31,7 +31,6 @@ import type {
 
 const HISTORY_LOAD_TRIGGER_PX = 80;
 const HISTORY_LOAD_REARM_PX = 160;
-
 // ---------------------------------------------------------------------------
 // AI Bubble Grouping — mirrors mobile's groupIntoBubbles()
 // ---------------------------------------------------------------------------
@@ -43,7 +42,6 @@ interface AiBubbleGroup {
 }
 
 type BubbleRenderItem = RenderItem | AiBubbleGroup;
-
 /**
  * Groups consecutive AI render items into a single bubble.
  * A bubble ends when a `text` or `voice` item is encountered (terminal output).

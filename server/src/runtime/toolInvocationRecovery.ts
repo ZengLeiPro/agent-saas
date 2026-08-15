@@ -11,7 +11,13 @@ export interface RecoverRunningToolInvocationsOptions {
 }
 
 export async function recoverRunningToolInvocations(options: RecoverRunningToolInvocationsOptions): Promise<{ scanned: number; recovered: number }> {
-  const records = await options.toolInvocationStore.listRunning();
+  const running = await options.toolInvocationStore.listRunning();
+  const cancelRecoveryCandidates = options.runStore
+    ? await options.toolInvocationStore.listCancelRecoveryCandidates?.() ?? []
+    : [];
+  const records = [...new Map(
+    [...running, ...cancelRecoveryCandidates].map((record) => [record.invocationId, record]),
+  ).values()];
   let recovered = 0;
   const staleAfterMs = options.staleAfterMs;
   const now = Date.now();
@@ -20,8 +26,20 @@ export async function recoverRunningToolInvocations(options: RecoverRunningToolI
     const stale = typeof staleAfterMs === 'number' && now - new Date(record.updatedAt).getTime() >= staleAfterMs;
     const terminalRun = run && ['completed', 'failed', 'cancelled', 'orphaned'].includes(run.status);
     const activeLeasedRun = run?.status === 'running' && typeof run.leaseExpiresAt === 'string' && new Date(run.leaseExpiresAt).getTime() > now;
-    if (activeLeasedRun || (!terminalRun && !stale)) continue;
-    if (run?.status === 'cancelled' && !record.cancelRequestedAt) {
+    const completedBeforeCancellation = run?.status === 'cancelled'
+      && record.completedAt
+      && run.cancelledAt
+      && new Date(record.completedAt).getTime() < new Date(run.cancelledAt).getTime();
+    const terminalNeedsCancelRepair = record.status !== 'running'
+      && record.completedAt
+      && run?.cancelledAt
+      && new Date(record.completedAt).getTime() >= new Date(run.cancelledAt).getTime();
+    if (activeLeasedRun || completedBeforeCancellation || (!terminalRun && !stale)) continue;
+    if (
+      run?.status === 'cancelled'
+      && !record.cancelRequestedAt
+      && (record.status === 'running' || terminalNeedsCancelRepair)
+    ) {
       const cancelRequest = await options.toolInvocationStore.requestCancelOnce(
         record.invocationId,
         'recovered_after_cancelled_run',
@@ -40,6 +58,8 @@ export async function recoverRunningToolInvocations(options: RecoverRunningToolI
         });
       }
     }
+    // 已终态 invocation 只补 durable cancel outbox，保留原执行结果；running 才需要恢复收尾。
+    if (record.status !== 'running') continue;
     const error = terminalRun
       ? `tool invocation recovered after terminal run status=${run.status}`
       : `tool invocation recovered as stale after ${staleAfterMs}ms`;

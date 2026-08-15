@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PgEventStore } from '../runtime/pgEventStore.js';
 import { PgRunStore } from '../runtime/runStore.js';
+import { recoverRunningToolInvocations } from '../runtime/toolInvocationRecovery.js';
 import { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
 
 const { Pool } = pg;
@@ -473,7 +474,148 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     expect(events.filter((item) => item.type === 'run_cancel_requested')).toHaveLength(1);
   });
 
+  it.each(['start-first', 'stop-first'] as const)(
+    '%s 顺序下 stop 与 tool invocation 晚插都登记 durable cancel outbox',
+    async (order) => {
+      const sessionId = `session-stop-late-invocation-${order}`;
+      const runId = `run-stop-late-invocation-${order}`;
+      const invocationId = `invocation-stop-late-invocation-${order}`;
+      await store.upsertPending({ runId, sessionId, userId: 'user-1', channel: 'web' });
+      await store.markStatus(runId, 'running');
+      const stop = () => store.cancelSteeringBeforeDispatchBySessionWithEvent(
+        sessionId,
+        'web_abort',
+        runId,
+        { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' },
+      );
+      const start = () => toolInvocationStore.start({
+        invocationId,
+        runId,
+        sessionId,
+        toolCallId: `call-stop-late-invocation-${order}`,
+        toolName: 'Shell',
+        executionTarget: 'server-remote',
+      });
+
+      if (order === 'start-first') {
+        await start();
+        await stop();
+      } else {
+        await stop();
+        await start();
+      }
+
+      await expect(store.get(runId)).resolves.toMatchObject({ status: 'cancelled' });
+      await expect(toolInvocationStore.get(invocationId)).resolves.toMatchObject({
+        cancelRequestedAt: expect.any(String),
+      });
+      await expect(toolInvocationStore.listCancelRequested(sessionId)).resolves.toEqual([
+        expect.objectContaining({ invocationId }),
+      ]);
+    },
+  );
+
+  it('stop 与 complete 真并发时 cancel outbox 与数据库线性化时间一致', async () => {
+    const sessionId = 'session-stop-complete-race';
+    const runId = 'run-stop-complete-race';
+    const invocationId = 'invocation-stop-complete-race';
+    await store.upsertPending({ runId, sessionId, userId: 'user-1', channel: 'web' });
+    await store.markStatus(runId, 'running');
+    await toolInvocationStore.start({
+      invocationId,
+      runId,
+      sessionId,
+      toolCallId: 'call-stop-complete-race',
+      toolName: 'Shell',
+      executionTarget: 'server-remote',
+    });
+
+    await Promise.all([
+      store.cancelSteeringBeforeDispatchBySessionWithEvent(
+        sessionId,
+        'web_abort',
+        runId,
+        { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' },
+      ),
+      toolInvocationStore.complete(invocationId, 'completed'),
+    ]);
+
+    await recoverRunningToolInvocations({ toolInvocationStore, eventStore, runStore: store });
+    const [run, invocation] = await Promise.all([store.get(runId), toolInvocationStore.get(invocationId)]);
+    expect(run?.status).toBe('cancelled');
+    expect(invocation?.status).toBe('completed');
+    const completedAfterCancellation = Date.parse(invocation!.completedAt!) >= Date.parse(run!.cancelledAt!);
+    expect(Boolean(invocation?.cancelRequestedAt)).toBe(completedAfterCancellation);
+  });
+
+  it('取消前已完成 invocation 的幂等 start 不补伪 cancel outbox', async () => {
+    const sessionId = 'session-completed-before-cancel';
+    const runId = 'run-completed-before-cancel';
+    const invocationId = 'invocation-completed-before-cancel';
+    const startInput = {
+      invocationId,
+      runId,
+      sessionId,
+      toolCallId: 'call-completed-before-cancel',
+      toolName: 'Shell',
+      executionTarget: 'server-remote' as const,
+    };
+    await store.upsertPending({ runId, sessionId, userId: 'user-1', channel: 'web' });
+    await store.markStatus(runId, 'running');
+    await toolInvocationStore.start(startInput);
+    await toolInvocationStore.complete(invocationId, 'completed');
+    await store.markStatus(runId, 'cancelled', 'web_abort');
+
+    await toolInvocationStore.start(startInput);
+
+    await expect(toolInvocationStore.get(invocationId)).resolves.toMatchObject({ status: 'completed' });
+    expect((await toolInvocationStore.get(invocationId))?.cancelRequestedAt).toBeUndefined();
+  });
+
+  it('恢复器为 cancelled run 下已终态的 invocation 补登记一次 cancel outbox', async () => {
+    const sessionId = 'session-terminal-cancel-repair';
+    const runId = 'run-terminal-cancel-repair';
+    const invocationId = 'invocation-terminal-cancel-repair';
+    await store.upsertPending({ runId, sessionId, userId: 'user-1', channel: 'web' });
+    await store.markStatus(runId, 'running');
+    await toolInvocationStore.start({
+      invocationId,
+      runId,
+      sessionId,
+      toolCallId: 'call-terminal-cancel-repair',
+      toolName: 'Shell',
+      executionTarget: 'server-remote',
+    });
+    await store.markStatus(runId, 'cancelled', 'web_abort');
+    // 模拟旧版本/崩溃留下的终态半状态：已终态，但未走新版 complete 原子补 outbox。
+    await pool.query(`
+      UPDATE ${prefix}_tool_invocations
+      SET status = 'failed', completed_at = clock_timestamp(), updated_at = clock_timestamp(), error = 'worker crashed'
+      WHERE invocation_id = $1
+    `, [invocationId]);
+
+    await expect(recoverRunningToolInvocations({
+      toolInvocationStore,
+      eventStore,
+      runStore: store,
+    })).resolves.toMatchObject({ recovered: 0 });
+
+    await expect(toolInvocationStore.get(invocationId)).resolves.toMatchObject({
+      status: 'failed',
+      cancelRequestedAt: expect.any(String),
+      cancelReason: 'recovered_after_cancelled_run',
+    });
+    await expect(toolInvocationStore.requestCancelOnce(invocationId, 'duplicate')).resolves.toMatchObject({ created: false });
+  });
+
   it('PostgreSQL 工具取消只选出一个事件发布者和一个外部投递 claimant', async () => {
+    await store.upsertPending({
+      runId: 'run-cancel-cas',
+      sessionId: 'session-cancel-cas',
+      userId: 'user-1',
+      channel: 'web',
+    });
+    await store.markStatus('run-cancel-cas', 'running');
     await toolInvocationStore.start({
       invocationId: 'invocation-cancel-cas',
       runId: 'run-cancel-cas',

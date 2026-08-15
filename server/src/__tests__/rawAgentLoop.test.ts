@@ -547,6 +547,19 @@ class ThinkingOnlyThenTextAdapter implements ModelAdapter {
   }
 }
 
+class CountingToolRuntime implements ToolRuntime {
+  invocations = 0;
+
+  list(): ToolDescriptor[] {
+    return [writeFileToolDescriptor];
+  }
+
+  async invoke<TInput>(_call: AuthorizedToolCall<TInput>, _context: ToolCallContext): Promise<ToolResult> {
+    this.invocations += 1;
+    return { content: 'unexpected execution' };
+  }
+}
+
 class FailingAuditToolRuntime implements ToolRuntime {
   list(): ToolDescriptor[] {
     return [writeFileToolDescriptor];
@@ -3579,6 +3592,207 @@ describe('RawAgentLoop', () => {
         error: 'test container failure',
       }],
     });
+  });
+
+  it('does not execute a tool inserted after its run already became cancelled', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-cancelled-late-tool-'));
+    cleanupDirs.add(cwd);
+    const eventPath = join(cwd, 'session.runtime-events.jsonl');
+    const transcriptPath = join(cwd, 'session.jsonl');
+    const eventStore = new FileEventStore(eventPath);
+    const toolInvocationStore = new InMemoryToolInvocationStore();
+    const toolRuntime = new CountingToolRuntime();
+    const runStore = {
+      get: vi.fn(async () => ({
+        runId: 'run-cancelled-late-tool',
+        sessionId: 'session-cancelled-late-tool',
+        status: 'cancelled',
+        requestedAt: '2026-08-15T00:00:00.000Z',
+        updatedAt: '2026-08-15T00:00:01.000Z',
+        metadata: {},
+      })),
+    } as unknown as RunStore;
+    const loop = new RawAgentLoop({
+      modelAdapter: new FakeToolCallingAdapter(),
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-cancelled-late-tool'),
+      transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
+      toolRuntime,
+      toolInvocationStore,
+      runStore,
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '写文件' },
+        prompt: '写文件',
+        instructions: '必须调用工具。',
+        maxTurns: 4,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-cancelled-late-tool',
+        sessionId: 'session-cancelled-late-tool',
+        model: 'gpt-5.5',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'admin-1', username: 'admin', role: 'admin' },
+        },
+        hooks: { onInteraction: async () => ({ allow: true, message: 'ok' }) },
+      },
+    ));
+
+    expect(toolRuntime.invocations).toBe(0);
+    await expect(toolInvocationStore.get('run-cancelled-late-tool:call_write_1')).resolves.toMatchObject({
+      status: 'cancelled',
+      cancelRequestedAt: expect.any(String),
+      cancelReason: 'run_already_cancelled_before_tool_start',
+    });
+    expect(events.map((event) => event.type)).toContain('done');
+    await expect(eventStore.list('session-cancelled-late-tool')).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool_invocation_cancel_requested' }),
+      expect.objectContaining({ type: 'tool_invocation_completed', status: 'cancelled' }),
+    ]));
+  });
+
+  it('does not replay lifecycle events or side effects for an already-terminal invocation', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-terminal-invocation-replay-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const toolInvocationStore = new InMemoryToolInvocationStore();
+    await toolInvocationStore.start({
+      invocationId: 'run-terminal-replay:call_write_1',
+      runId: 'run-terminal-replay',
+      sessionId: 'session-terminal-replay',
+      toolCallId: 'call_write_1',
+      toolName: 'Write',
+      executionTarget: 'server-local',
+    });
+    await toolInvocationStore.complete('run-terminal-replay:call_write_1', 'completed');
+    const toolRuntime = new CountingToolRuntime();
+    const loop = new RawAgentLoop({
+      modelAdapter: new FakeToolCallingAdapter(),
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-terminal-replay'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime,
+      toolInvocationStore,
+      runStore: { get: vi.fn(async () => ({ status: 'running' })) } as unknown as RunStore,
+    });
+
+    await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '写文件' },
+        prompt: '写文件',
+        instructions: '必须调用工具。',
+        maxTurns: 4,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-terminal-replay',
+        sessionId: 'session-terminal-replay',
+        model: 'gpt-5.5',
+        cwd,
+        channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+        hooks: { onInteraction: async () => ({ allow: true, message: 'ok' }) },
+      },
+    ));
+
+    expect(toolRuntime.invocations).toBe(0);
+    const events = await eventStore.list('session-terminal-replay');
+    expect(events.some((event) => event.type === 'tool_invocation_started')).toBe(false);
+    expect(events.some((event) => event.type === 'tool_invocation_completed')).toBe(false);
+  });
+
+  it('fails closed before tool execution when authoritative run lookup fails', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-run-lookup-failure-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const toolInvocationStore = new InMemoryToolInvocationStore();
+    const toolRuntime = new CountingToolRuntime();
+    const loop = new RawAgentLoop({
+      modelAdapter: new FakeToolCallingAdapter(),
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-run-lookup-failure'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime,
+      toolInvocationStore,
+      runStore: { get: vi.fn(async () => { throw new Error('run store unavailable'); }) } as unknown as RunStore,
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '写文件' },
+        prompt: '写文件',
+        instructions: '必须调用工具。',
+        maxTurns: 4,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-lookup-failure',
+        sessionId: 'session-run-lookup-failure',
+        model: 'gpt-5.5',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'admin-1', username: 'admin', role: 'admin' },
+        },
+        hooks: { onInteraction: async () => ({ allow: true, message: 'ok' }) },
+      },
+    ));
+
+    expect(toolRuntime.invocations).toBe(0);
+    await expect(toolInvocationStore.get('run-lookup-failure:call_write_1')).resolves.toMatchObject({
+      status: 'failed',
+      error: 'run store unavailable',
+    });
+    expect(events.map((event) => event.type)).toContain('done');
+  });
+
+  it('fails closed before tool execution when the authoritative run is missing', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-run-missing-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const toolInvocationStore = new InMemoryToolInvocationStore();
+    const toolRuntime = new CountingToolRuntime();
+    const loop = new RawAgentLoop({
+      modelAdapter: new FakeToolCallingAdapter(),
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-run-missing'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime,
+      toolInvocationStore,
+      runStore: { get: vi.fn(async () => null) } as unknown as RunStore,
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '写文件' },
+        prompt: '写文件',
+        instructions: '必须调用工具。',
+        maxTurns: 4,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-missing',
+        sessionId: 'session-run-missing',
+        model: 'gpt-5.5',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'admin-1', username: 'admin', role: 'admin' },
+        },
+        hooks: { onInteraction: async () => ({ allow: true, message: 'ok' }) },
+      },
+    ));
+
+    expect(toolRuntime.invocations).toBe(0);
+    await expect(toolInvocationStore.get('run-missing:call_write_1')).resolves.toMatchObject({
+      status: 'failed',
+      error: 'authoritative run not found: run-missing',
+    });
+    expect(events.map((event) => event.type)).toContain('done');
   });
 
   it('blocks a new run when prior event log has an unclosed pending tool call', async () => {

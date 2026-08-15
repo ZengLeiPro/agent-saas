@@ -33,6 +33,7 @@ function cancelledRunStore(): RunStore {
       status: 'cancelled',
       requestedAt: '2026-08-15T00:00:00.000Z',
       updatedAt: '2026-08-15T00:01:00.000Z',
+      cancelledAt: '2026-08-15T00:01:00.000Z',
       metadata: {},
     })),
   } as unknown as RunStore;
@@ -103,5 +104,89 @@ describe('recoverRunningToolInvocations cancellation outbox', () => {
       }),
     ]);
     await expect(store.listCancelRequested()).resolves.toHaveLength(1);
+  });
+
+  it('registers a missing cancel outbox even when crash recovery finds the invocation already terminal', async () => {
+    const store = new InMemoryToolInvocationStore();
+    const eventStore = new MemoryEventStore();
+    await seedInvocation(store);
+    await store.complete('invocation-1', 'failed', 'worker restarted before cancel outbox registration');
+
+    await expect(recoverRunningToolInvocations({
+      toolInvocationStore: store,
+      eventStore,
+      runStore: cancelledRunStore(),
+    })).resolves.toEqual({ scanned: 1, recovered: 0 });
+
+    await expect(store.get('invocation-1')).resolves.toMatchObject({
+      status: 'failed',
+      cancelRequestedAt: expect.any(String),
+      cancelReason: 'recovered_after_cancelled_run',
+    });
+    expect(eventStore.events).toEqual([
+      expect.objectContaining({
+        type: 'tool_invocation_cancel_requested',
+        invocationId: 'invocation-1',
+      }),
+    ]);
+    await expect(store.listCancelRequested()).resolves.toHaveLength(1);
+  });
+
+  it('keeps an in-memory terminal invocation terminal on idempotent start replay', async () => {
+    const store = new InMemoryToolInvocationStore();
+    await seedInvocation(store);
+    await store.complete('invocation-1', 'completed');
+
+    await seedInvocation(store);
+
+    await expect(store.get('invocation-1')).resolves.toMatchObject({ status: 'completed' });
+  });
+
+  it('does not infer an external cancellation for a terminal legacy record without completedAt', async () => {
+    const store = new InMemoryToolInvocationStore();
+    const eventStore = new MemoryEventStore();
+    await seedInvocation(store);
+    await store.complete('invocation-1', 'failed', 'legacy half-state');
+    delete (await store.get('invocation-1') as { completedAt?: string }).completedAt;
+
+    await expect(recoverRunningToolInvocations({
+      toolInvocationStore: store,
+      eventStore,
+      runStore: cancelledRunStore(),
+    })).resolves.toEqual({ scanned: 1, recovered: 0 });
+
+    expect((await store.get('invocation-1'))?.cancelRequestedAt).toBeUndefined();
+    expect(eventStore.events).toHaveLength(0);
+  });
+
+  it('does not cancel an invocation that completed before the run was cancelled', async () => {
+    const store = new InMemoryToolInvocationStore();
+    const eventStore = new MemoryEventStore();
+    await seedInvocation(store);
+    await store.complete('invocation-1', 'completed');
+    const completed = await store.get('invocation-1');
+    const cancelledAt = new Date(Date.parse(completed!.completedAt!) + 60_000).toISOString();
+    const runStore = {
+      get: vi.fn(async (runId: string) => ({
+        runId,
+        sessionId: 'session-1',
+        status: 'cancelled',
+        requestedAt: completed!.startedAt,
+        updatedAt: cancelledAt,
+        cancelledAt,
+        metadata: {},
+      })),
+    } as unknown as RunStore;
+
+    await expect(recoverRunningToolInvocations({
+      toolInvocationStore: store,
+      eventStore,
+      runStore,
+    })).resolves.toEqual({ scanned: 1, recovered: 0 });
+
+    const recovered = await store.get('invocation-1');
+    expect(recovered?.status).toBe('completed');
+    expect(recovered?.cancelRequestedAt).toBeUndefined();
+    expect(eventStore.events).toHaveLength(0);
   });
 });

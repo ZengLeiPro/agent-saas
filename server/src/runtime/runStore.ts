@@ -1274,21 +1274,25 @@ export class PgRunStore implements RunStore {
       }
       let toolCancelEvents: PlatformEventInput[] = [];
       if (targetRunId) {
-        const targetUpdate = await client.query<{ run_id: string }>(`
+        const targetUpdate = await client.query<{ run_id: string; cancelled_at: string | Date }>(`
           UPDATE ${this.runsTable}
           SET status = 'cancelled',
               status_reason = $3,
-              updated_at = $4::timestamptz,
-              cancelled_at = $4::timestamptz,
+              updated_at = clock_timestamp(),
+              cancelled_at = clock_timestamp(),
               worker_id = NULL,
               lease_expires_at = NULL,
               metadata = metadata - 'wakeMessage'
           WHERE session_id = $1
             AND run_id = $2
             AND status IN ${STOPPABLE_RUN_STATUS_SQL}
-          RETURNING run_id
-        `, [sessionId, targetRunId, reason, now]);
+          RETURNING run_id, cancelled_at
+        `, [sessionId, targetRunId, reason]);
         targetCancelled = targetUpdate.rows.length > 0;
+        const targetCancelledAt = targetUpdate.rows[0]?.cancelled_at;
+        const targetCancelledAtIso = targetCancelledAt instanceof Date
+          ? targetCancelledAt.toISOString()
+          : targetCancelledAt ?? now;
 
         if (event && targetCancelled) {
           const cancelRequests = await client.query<{
@@ -1306,7 +1310,7 @@ export class PgRunStore implements RunStore {
               AND status = 'running'
               AND cancel_requested_at IS NULL
             RETURNING invocation_id, tool_call_id, tool_name, metadata
-          `, [targetRunId, now, reason, JSON.stringify({ requestedBy: 'userId' in event ? event.userId ?? 'anonymous' : 'anonymous' })]);
+          `, [targetRunId, targetCancelledAtIso, reason, JSON.stringify({ requestedBy: 'userId' in event ? event.userId ?? 'anonymous' : 'anonymous' })]);
           toolCancelEvents = cancelRequests.rows.map((invocation) => ({
             type: 'tool_invocation_cancel_requested',
             sessionId,

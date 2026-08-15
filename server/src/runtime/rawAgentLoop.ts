@@ -3198,7 +3198,7 @@ export class RawAgentLoop implements AgentLoop {
     const autoHandId = await this.autoSelectTenantHandId(args.context.sessionId);
     const effectiveHandId = autoHandId;
     const skillName = resolveInvokedSkillName(args.descriptor.id, args.input);
-    await this.toolInvocationStore?.start({
+    const invocation = await this.toolInvocationStore?.start({
       invocationId,
       runId: args.context.runId,
       sessionId: args.context.sessionId,
@@ -3219,17 +3219,65 @@ export class RawAgentLoop implements AgentLoop {
         ...(args.baseToolContext.workspace.sandboxScopeId ? { sandboxScopeId: args.baseToolContext.workspace.sandboxScopeId } : {}),
         ...(args.context.workerId ? { workerId: args.context.workerId } : {}),
       },
-    }).catch(() => undefined);
-    await this.append({
-      type: 'tool_invocation_started',
-      runId: args.context.runId,
-      sessionId: args.context.sessionId,
-      invocationId,
-      toolCallId: args.call.id,
-      toolName: args.descriptor.name,
-      executionTarget: args.baseToolContext.workspace.executionTarget,
     });
+    const invocationAlreadyTerminal = Boolean(invocation && invocation.status !== 'running');
+    if (!invocationAlreadyTerminal) {
+      await this.append({
+        type: 'tool_invocation_started',
+        runId: args.context.runId,
+        sessionId: args.context.sessionId,
+        invocationId,
+        toolCallId: args.call.id,
+        toolName: args.descriptor.name,
+        executionTarget: args.baseToolContext.workspace.executionTarget,
+      });
+    }
+    let cancelledBeforeInvoke = false;
     try {
+      let blockedBeforeInvoke = invocationAlreadyTerminal;
+      let cancellation = invocation?.cancelRequestedAt ? invocation : undefined;
+      // Pg start 已原子登记 durable outbox；即时事件仅由本次 requestCancelOnce 的唯一创建者发布。
+      let shouldAppendCancelEvent = false;
+      if (!cancellation && this.runStore) {
+        const run = await this.runStore.get(args.context.runId);
+        if (!run) throw new Error(`authoritative run not found: ${args.context.runId}`);
+        if (run.status === 'cancelled') {
+          const completedBeforeCancellation = invocation?.completedAt
+            && run.cancelledAt
+            && new Date(invocation.completedAt).getTime() < new Date(run.cancelledAt).getTime();
+          if (!completedBeforeCancellation) {
+            const requested = await this.toolInvocationStore?.requestCancelOnce(
+              invocationId,
+              'run_already_cancelled_before_tool_start',
+              { cancelRecovery: 'late_start' },
+            );
+            cancellation = requested?.record;
+            shouldAppendCancelEvent = requested?.created === true;
+            cancelledBeforeInvoke = true;
+          }
+          blockedBeforeInvoke = true;
+        }
+      }
+      if (cancellation) {
+        cancelledBeforeInvoke = true;
+        blockedBeforeInvoke = true;
+      }
+      if (blockedBeforeInvoke) {
+        if (cancellation && shouldAppendCancelEvent) {
+          await this.append({
+            type: 'tool_invocation_cancel_requested',
+            runId: args.context.runId,
+            sessionId: args.context.sessionId,
+            invocationId,
+            toolCallId: args.call.id,
+            toolName: args.descriptor.name,
+            reason: cancellation.cancelReason ?? 'run_already_cancelled_before_tool_start',
+            metadata: cancellation.metadata,
+          });
+        }
+        const reason = cancelledBeforeInvoke ? 'run is already cancelled' : 'invocation is already terminal';
+        throw new Error(`tool invocation blocked because ${reason}: ${invocationId}`);
+      }
       const result = await this.toolRuntime.invoke(
         { toolId: args.descriptor.id, input: args.input, authorization: args.authorization },
         toolContext,
@@ -3275,11 +3323,12 @@ export class RawAgentLoop implements AgentLoop {
       return result;
     } catch (err) {
       await streamBatcher.flush().catch(() => undefined);
-      if (err instanceof InteractionPendingWithoutInteractionHook) {
+      if (err instanceof InteractionPendingWithoutInteractionHook || invocationAlreadyTerminal) {
         throw err;
       }
       const message = err instanceof Error ? err.message : String(err);
-      const completionStatus = args.context.signal?.aborted ? 'cancelled' : 'failed';
+      const invocationCancelled = cancelledBeforeInvoke || args.context.signal?.aborted;
+      const completionStatus = invocationCancelled ? 'cancelled' : 'failed';
       await this.toolInvocationStore?.complete(invocationId, completionStatus, message).catch(() => undefined);
       await this.append({
         type: 'tool_invocation_completed',
@@ -3288,7 +3337,7 @@ export class RawAgentLoop implements AgentLoop {
         invocationId,
         toolCallId: args.call.id,
         toolName: args.descriptor.name,
-        status: args.context.signal?.aborted ? 'cancelled' : 'error',
+        status: invocationCancelled ? 'cancelled' : 'error',
         durationMs: Date.now() - startedAt,
         error: message,
       });
@@ -3298,7 +3347,7 @@ export class RawAgentLoop implements AgentLoop {
         invocationId,
         toolCallId: args.call.id,
         toolName: args.descriptor.name,
-        status: args.context.signal?.aborted ? 'cancelled' : 'error',
+        status: invocationCancelled ? 'cancelled' : 'error',
       }).catch(() => undefined);
       await this.append({
         type: 'tool_audit',

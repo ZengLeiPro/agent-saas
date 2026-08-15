@@ -31,11 +31,9 @@
  *   7. 持久化交互恢复（file-backed runtime events）：ask_user / approval 的
  *      enqueue resume、already-accepted 幂等、终态 run 拒绝、legacy
  *      resumeApprovalDispatch 路径。
- *   8. 自动命名：publishRuntimeOutboundEvent done 钩子 → 标题生成 + meta 落盘 +
- *      跨 runId 幂等。
+ *   8. 自动命名：首条长消息提前生成、失败终态补偿、meta 落盘与会话级并发幂等。
  *   9. 生命周期杂项：disconnectUser/disconnectTenant、getActiveStreamCount、
- *      getStreamStatus runStore 异常降级、attachToServer 前置校验、
- *      claimTitleGenerationAttempt 去重与截断。
+ *      getStreamStatus runStore 异常降级、attachToServer 前置校验。
  */
 
 import { mkdtemp, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
@@ -1734,11 +1732,71 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
     });
   });
   // ════════════════════════════════════════════════════════════════════
-  // 8. 自动命名（publishRuntimeOutboundEvent done 钩子）
+  // 8. 自动命名（首条消息提前生成 + 终态补偿）
   // ════════════════════════════════════════════════════════════════════
 
   describe('自动命名', () => {
-    it('done 后按 UserStore 反查 owner 生成标题：meta 落盘 + title_updated 广播 + 记账 + 跨 runId 幂等', async () => {
+    it('首条长消息在 Agent 首次输出前生成标题', async () => {
+      const tmp = await makeTmp('cov-title-early-');
+      const sessionId = randomUUID();
+      let releaseRun!: () => void;
+      const holdRun = new Promise<void>((resolve) => { releaseRun = resolve; });
+      const dispatch: AgentRunDispatch = async function* () {
+        yield { type: 'session_init', sessionId };
+        await holdRun;
+        yield { type: 'done' };
+      };
+      const rig = makeRig({
+        agentCwd: tmp,
+        titleGeneratorConfigs: [{ model: 'title-main', connection: { apiKey: 'k' } }],
+      }, dispatch);
+      const longMessage = '中'.repeat(21);
+      const chatPromise = (rig.channel as any).processChatMessage(
+        wsClient(rig.ws, USER),
+        chatMessage({ message: longMessage }),
+      );
+
+      try {
+        await vi.waitFor(() => {
+          expect(rig.userEvents).toContainEqual({ type: 'title_updated', sessionId, title: '覆盖补齐测试标题' });
+        });
+        expect(rig.sessionEvents.some((event) => event.type === 'done')).toBe(false);
+      } finally {
+        releaseRun();
+        await chatPromise;
+      }
+
+      const userCwd = resolveUserCwd(tmp, { id: USER.sub, username: USER.username, role: 'user', tenantId: TENANT });
+      const transcriptPath = getTranscriptPath(userCwd, sessionId, { tenantId: TENANT, userId: USER.sub });
+      expect((await readSessionMeta(transcriptPath))?.generatedTitle).toBe('覆盖补齐测试标题');
+    });
+
+    it('error 终态在没有 Agent 文本时补偿生成标题', async () => {
+      const { sessionId, transcriptPath } = await seedRuntimeSession(USER);
+      await mkdir(dirname(transcriptPath), { recursive: true });
+      await writeFile(transcriptPath, `${JSON.stringify({
+        type: 'user', message: { role: 'user', content: '帮我处理这个失败的任务' }, sessionId,
+      })}\n`);
+      const rig = makeRig({
+        agentCwd: await makeTmp('cov-title-error-'),
+        titleGeneratorConfigs: [{ model: 'title-main', connection: { apiKey: 'k' } }],
+        userStore: {
+          findById: (id: string) => (id === USER.sub
+            ? { id: USER.sub, username: USER.username, role: 'user', tenantId: TENANT }
+            : undefined),
+        } as unknown as UserStore,
+      });
+
+      rig.channel.publishRuntimeOutboundEvent({
+        sessionId, runId: 'run-title-error', userId: USER.sub, event: { type: 'error', error: 'interrupted' },
+      });
+      await vi.waitFor(() => {
+        expect(rig.userEvents).toContainEqual({ type: 'title_updated', sessionId, title: '覆盖补齐测试标题' });
+      });
+      expect((await readSessionMeta(transcriptPath))?.generatedTitle).toBe('覆盖补齐测试标题');
+    });
+
+    it('done 后按 UserStore 反查 owner 生成标题：meta 落盘 + title_updated 广播 + 记账 + 会话级幂等', async () => {
       const { sessionId, transcriptPath } = await seedRuntimeSession(USER);
       await mkdir(dirname(transcriptPath), { recursive: true });
       await writeFile(transcriptPath, [
@@ -1762,6 +1820,9 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       rig.channel.publishRuntimeOutboundEvent({
         sessionId, runId: 'run-title-1', userId: USER.sub, event: { type: 'done' },
       });
+      rig.channel.publishRuntimeOutboundEvent({
+        sessionId, runId: 'run-title-2', userId: USER.sub, event: { type: 'done' },
+      });
       await vi.waitFor(() => {
         expect(rig.userEvents).toContainEqual({ type: 'title_updated', sessionId, title: '覆盖补齐测试标题' });
       });
@@ -1774,9 +1835,10 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(recordResult).toHaveBeenCalledWith(expect.objectContaining({
         username: USER.username, tenantId: TENANT, channel: 'title',
       }));
-      // 同 runId 二次 done → claim 去重不再触发；新 runId → meta 已有标题守卫，也不再调用上游
+      // 并发的 run-title-1/run-title-2 由会话级 in-flight 合并；重复 run 由 claim 去重，新 run 由 meta 守卫跳过。
       rig.channel.publishRuntimeOutboundEvent({ sessionId, runId: 'run-title-1', userId: USER.sub, event: { type: 'done' } });
       rig.channel.publishRuntimeOutboundEvent({ sessionId, runId: 'run-title-2', userId: USER.sub, event: { type: 'done' } });
+      rig.channel.publishRuntimeOutboundEvent({ sessionId, runId: 'run-title-3', userId: USER.sub, event: { type: 'done' } });
       await flushMicrotasks();
       await vi.waitFor(() => {
         expect(openAiCalls().length).toBe(callsBefore + 1);
@@ -1831,17 +1893,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
     it('attachToServer 在 start() 之前调用 → 抛错', () => {
       const rig = makeRig();
       expect(() => rig.channel.attachToServer({} as any)).toThrow('WsServer not initialized. Call start() first.');
-    });
-
-    it('claimTitleGenerationAttempt：同 runId 去重；超 1024 截断保留最近一半', () => {
-      const rig = makeRig();
-      const claim = (id: string) => (rig.channel as any).claimTitleGenerationAttempt(id);
-      expect(claim('tg-a')).toBe(true);
-      expect(claim('tg-a')).toBe(false);
-      for (let i = 0; i < 1024; i += 1) claim(`tg-${i}`);
-      // 截断后最旧的 claim 被驱逐（可再次 claim），最近的仍在
-      expect(claim('tg-a')).toBe(true);
-      expect(claim('tg-1023')).toBe(false);
     });
   });
 });

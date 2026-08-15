@@ -4,7 +4,11 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { extractTitleContext, generateTitleWithFallback } from '../agent/titleGenerator.js';
+import {
+  extractTitleContext,
+  generateTitleWithFallback,
+  shouldGenerateTitleFromFirstMessage,
+} from '../agent/titleGenerator.js';
 
 // 用 mock 隔离上游：直接拦截 OpenAI client，不真打网。
 vi.mock('openai', () => {
@@ -198,6 +202,24 @@ describe('extractTitleContext', () => {
     const ctx = await extractTitleContext(path);
     expect(ctx.userMessages).toEqual([]);
     expect(ctx.assistantReplies).toEqual([]);
+  });
+});
+
+describe('shouldGenerateTitleFromFirstMessage', () => {
+  it('中文字数超过 20 才触发，标点与英文不计入中文字符数', () => {
+    expect(shouldGenerateTitleFromFirstMessage(`${'中'.repeat(20)}，test`)).toBe(false);
+    expect(shouldGenerateTitleFromFirstMessage(`${'中'.repeat(21)}，test`)).toBe(true);
+  });
+
+  it('英文单词数超过 20 才触发，连字符和缩写按一个词计算', () => {
+    const twentyWords = 'one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty';
+    expect(shouldGenerateTitleFromFirstMessage(twentyWords)).toBe(false);
+    expect(shouldGenerateTitleFromFirstMessage(`${twentyWords} twenty-one`)).toBe(true);
+  });
+
+  it('中英文分别计数，任一语言超过阈值即可触发', () => {
+    expect(shouldGenerateTitleFromFirstMessage('中文 mixed words stay below the independent counters')).toBe(false);
+    expect(shouldGenerateTitleFromFirstMessage('中文'.repeat(11))).toBe(true);
   });
 });
 

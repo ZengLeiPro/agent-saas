@@ -62,7 +62,12 @@ import { tenantAccessErrorMessage } from '../../data/tenants/access.js';
 import { speechToText, type SttConfig } from '../../integrations/stt/sttClient.js';
 import { EventBufferStore } from './eventBuffer.js';
 import { clearSessionsListCache } from '../../routes/sessions.js';
-import { extractTitleContext, generateTitleWithFallback, type TitleGeneratorConfig } from '../../agent/titleGenerator.js';
+import {
+  extractTitleContext,
+  generateTitleWithFallback,
+  shouldGenerateTitleFromFirstMessage,
+  type TitleGeneratorConfig,
+} from '../../agent/titleGenerator.js';
 import { checkTopicScope, extractRecentUserMessages, type GuardrailModelConfig } from '../../agent/guardrail.js';
 import { isCompactCommand } from '../../agent/prompt.js';
 import { isAssignedToOrgAgent, parseOrgAgentAudience, type OrgAgentStore } from '../../data/orgAgents/store.js';
@@ -916,22 +921,9 @@ export class WebChannel implements BaseChannel {
             sessionId: input.sessionId,
             updatedAtMs: Date.now(),
           });
-          // 自动命名钩子：enqueue-only 路径完全绕过 handleEvents()，原 onDone 内的
-          // maybeGenerateTitle 永远不会被调到。这里覆盖 in-process scheduler wake
-          // 路径；cross-process（ws-only 进程）由 publishRuntimePlatformEvent 兜底。
-          if (this.claimTitleGenerationAttempt(input.runId)) {
-            const userId = input.userId;
-            void this.maybeGenerateTitleByUserId(input.sessionId, userId).then((title) => {
-              if (title && this.eventBus) {
-                this.eventBus.emitDual(userId, input.sessionId, {
-                  type: 'title_updated',
-                  sessionId: input.sessionId,
-                  title,
-                });
-                clearSessionsListCache();
-              }
-            });
-          }
+          // enqueue-only 路径绕过 handleEvents()，终态统一尝试补齐标题。
+          // 会话级 in-flight 去重与 meta 守卫会吸收同进程/跨进程的重复触发。
+          void this.maybeGenerateTitleByUserId(input.sessionId, input.userId, '', true);
         }
         clearSessionsListCache();
         break;
@@ -966,6 +958,8 @@ export class WebChannel implements BaseChannel {
             runId: input.runId,
             reason: input.event.error,
           });
+          // error 不一定还会补发 done；直接在失败终态补偿命名。
+          void this.maybeGenerateTitleByUserId(input.sessionId, input.userId, '', true);
         }
         clearSessionsListCache();
         break;
@@ -1142,10 +1136,8 @@ export class WebChannel implements BaseChannel {
         });
       }
       clearSessionsListCache();
-      // 自动命名跨进程兜底：ws-only 进程收到由 scheduler-only 进程产生的
-      // run_finished。userId 不在事件 payload 里，从 RunStore 反查；失败状态不命名。
-      // 单进程部署下 PG NOTIFY 也会回投 run_finished，靠 titleGenerationAttempts
-      // 去重避免与 publishRuntimeOutboundEvent('done') 路径双发。
+      // 自动命名跨进程兜底：ws-only 进程收到 scheduler-only 进程产生的
+      // durable 终态后，从 RunStore 反查 owner 并补齐标题。
       if (runId && projection.sessionStatus === 'completed') {
         const runStore = this.config.enqueueRuntime?.runStore;
         if (runStore) {
@@ -1162,21 +1154,14 @@ export class WebChannel implements BaseChannel {
           });
         }
       }
-      if (runId && projection.sessionStatus === 'completed' && this.claimTitleGenerationAttempt(runId)) {
+      // 所有 durable 终态都尝试补齐标题，包括 failed/cancelled/orphaned。
+      // 会话级 in-flight 与 meta 守卫会吸收同进程 done 的重复触发。
+      if (runId && projection.sessionStatus) {
         const runStore = this.config.enqueueRuntime?.runStore;
-        const eventBus = this.eventBus;
-        if (runStore && eventBus) {
-          void runStore.get(runId).then(async (record) => {
+        if (runStore) {
+          void runStore.get(runId).then((record) => {
             if (!record?.userId) return;
-            const title = await this.maybeGenerateTitleByUserId(sessionId, record.userId);
-            if (title) {
-              eventBus.emitDual(record.userId, sessionId, {
-                type: 'title_updated',
-                sessionId,
-                title,
-              });
-              clearSessionsListCache();
-            }
+            return this.maybeGenerateTitleByUserId(sessionId, record.userId, '', true);
           }).catch((err) => {
             chatLogger.warn(`title cross-process hook failed run=${runId}:`, err);
           });
@@ -2785,12 +2770,14 @@ export class WebChannel implements BaseChannel {
       const enqueueRunId = `${Date.now()}-${randomUUID()}`;
       const streamId = String(++this.streamIdCounter);
       let sessionPersisted = false;
+      let titleOwnerId = userIdentity?.id;
       try {
         const enqueueCwd = targetCwd || resolveUserCwd(this.config.agentCwd!, userIdentity);
         const existingSessionRecord = validSessionId
           ? await enqueueRuntime.sessionCatalog.get(enqueueSessionId)
           : null;
         const enqueueOwner = sessionOwner ?? userIdentity;
+        titleOwnerId = enqueueOwner?.id;
         const enqueueWorkspaceId = existingSessionRecord?.workspaceId
           ?? deriveStableWorkspaceId(enqueueOwner, enqueueSessionId);
         const sessionRecord = createRuntimeSessionRecord({
@@ -2930,6 +2917,13 @@ export class WebChannel implements BaseChannel {
           ...(steeringTargetRunId ? { queued: true, targetRunId: steeringTargetRunId } : {}),
         });
         send({ type: 'session', sessionId: enqueueSessionId, client_msg_id: clientMsgId });
+        // 首条长消息不等待 Agent 输出；续聊时若仍无标题，也在本次输入后立即补偿。
+        if (
+          titleOwnerId
+          && (Boolean(validSessionId) || shouldGenerateTitleFromFirstMessage(resolvedMessage))
+        ) {
+          void this.maybeGenerateTitleByUserId(enqueueSessionId, titleOwnerId, resolvedMessage);
+        }
         // steering 排队的消息尚未被消费，不进会话事件流（buffer 里的 user_message 会被
         // 其他端/重连回放成一条普通「已发送」气泡，时间线交错且不可撤回——2026-08-04
         // 终态设计改为：排队期间只存在于队列区（steering_queued 广播 + detail API 恢复），
@@ -2987,6 +2981,9 @@ export class WebChannel implements BaseChannel {
           await enqueueRuntime.sessionCatalog.markStatus(enqueueSessionId, 'error').catch((statusError) => {
             chatLogger.warn(`[chat] failed to mark session error session=${enqueueSessionId}: ${statusError instanceof Error ? statusError.message : String(statusError)}`);
           });
+          if (titleOwnerId) {
+            void this.maybeGenerateTitleByUserId(enqueueSessionId, titleOwnerId, resolvedMessage, true);
+          }
         }
         if (this.eventBus) {
           if (!validSessionId && sessionPersisted) {
@@ -3439,13 +3436,16 @@ export class WebChannel implements BaseChannel {
       // titleCtx 每轮都构造：自动命名不再依赖"新会话"，续聊时若首轮命名失败可补救。
       // 是否新会话由独立的 isNewSession 标志承担（见 handleEvents 内部）。
       const titleCtx = {
-        userMessage: message,
+        userMessage: resolvedMessage,
         userDisplayContent,
         attachmentMeta,
         clientMsgId,
         isNewSession: !validSessionId,
         getSessionId: () => resolvedSessionId,
       };
+      if (validSessionId) {
+        void this.maybeGenerateTitle(validSessionId, context, resolvedMessage, '');
+      }
       await this.handleEvents(events, ws, context, userAbortController.signal, bufferCtx, titleCtx, model, clientMsgId);
     } catch (error) {
       chatLogger.error('处理消息错误:', error);
@@ -3461,6 +3461,9 @@ export class WebChannel implements BaseChannel {
         client_msg_id: clientMsgId,
         error: errorMessage,
       });
+      if (terminalSessionId) {
+        void this.maybeGenerateTitle(terminalSessionId, context, resolvedMessage, '', true);
+      }
     } finally {
       clearTimeout(watchdogTimer);
       ws.off('close', onWsClose);
@@ -3753,13 +3756,8 @@ export class WebChannel implements BaseChannel {
    */
   /**
    * 自动命名核心 IO：解析 cwd → 读 meta 防覆盖 → 读 transcript 抽前两轮 →
-   * 调上游模型 → 落 meta.generatedTitle。三条触发路径共用：
-   * 1. handleEvents() onDone（同步 dispatch 历史路径，含 dingtalk/旧 web）
-   * 2. publishRuntimeOutboundEvent('done')（enqueue-only + 同进程 scheduler wake）
-   * 3. publishRuntimePlatformEvent(run_finished terminal)（跨进程 PG NOTIFY 桥）
-   *
-   * `userInfo` 由调用方按各自上下文准备：handleEvents 用 ChannelContext.user，
-   * 后两条用 userId → UserStore.findById 反查 username/role/tenantId。
+   * 调上游模型 → 落 meta.generatedTitle。首条长消息、续聊补偿、所有终态与
+   * 跨进程 durable 终态共用；会话级 in-flight 仅合并并发，失败后仍可重试。
    */
   private async markSessionUnread(input: {
     userId: string;
@@ -3792,7 +3790,54 @@ export class WebChannel implements BaseChannel {
     }
   }
 
+  private readonly titleGenerationInFlight = new Map<string, Promise<string | null>>();
+
   private async resolveTitleForSession(
+    sessionId: string,
+    userInfo: { id: string; username: string; role: string; tenantId?: string },
+    fallbackUserMessage = '',
+    fallbackAssistantReply = '',
+    retryAfterInFlightFailure = false,
+  ): Promise<string | null> {
+    const existing = this.titleGenerationInFlight.get(sessionId);
+    if (existing) {
+      const title = await existing;
+      if (title || !retryAfterInFlightFailure) return title;
+      // 终态若撞上首条消息的在途生成，且该次失败，补偿重试一次。
+      return this.resolveTitleForSession(
+        sessionId,
+        userInfo,
+        fallbackUserMessage,
+        fallbackAssistantReply,
+      );
+    }
+
+    const generation = this.generateTitleForSession(
+      sessionId,
+      userInfo,
+      fallbackUserMessage,
+      fallbackAssistantReply,
+    ).then((title) => {
+      if (title) {
+        this.eventBus?.emitDual(userInfo.id, sessionId, {
+          type: 'title_updated',
+          sessionId,
+          title,
+        });
+        clearSessionsListCache();
+      }
+      return title;
+    });
+    const tracked = generation.finally(() => {
+      if (this.titleGenerationInFlight.get(sessionId) === tracked) {
+        this.titleGenerationInFlight.delete(sessionId);
+      }
+    });
+    this.titleGenerationInFlight.set(sessionId, tracked);
+    return tracked;
+  }
+
+  private async generateTitleForSession(
     sessionId: string,
     userInfo: { id: string; username: string; role: string; tenantId?: string },
     fallbackUserMessage = '',
@@ -3811,8 +3856,8 @@ export class WebChannel implements BaseChannel {
       });
       const transcriptPath = getTranscriptPath(userCwd, sessionId, { tenantId: userInfo.tenantId, userId: userInfo.id });
       const meta = await readSessionMeta(transcriptPath);
-      // 已有命名（手动或自动）不覆盖。续聊轮 + 三路重复触发都命中这个守卫，幂等。
-      if (meta?.customTitle || meta?.generatedTitle) return null;
+      // 没有 meta 无法持久化，等 session 初始化/后续终态再次触发；已有命名不覆盖。
+      if (!meta || meta.customTitle || meta.generatedTitle) return null;
 
       // 优先从 transcript 读首两轮（命名素材稳定，与手动 /auto-title 一致）；
       // 极早期 transcript 还没落盘时退回本轮 fallback。
@@ -3861,7 +3906,11 @@ export class WebChannel implements BaseChannel {
         await utilityBilling?.finalize();
       }
       if (title) {
-        await updateSessionMeta(transcriptPath, { generatedTitle: title });
+        const updatedMeta = await updateSessionMeta(transcriptPath, { generatedTitle: title });
+        if (!updatedMeta) {
+          chatLogger.warn(`Generated title was not persisted because session meta is missing: ${sessionId}`);
+          return null;
+        }
         chatLogger.info(`Generated title for session ${sessionId}: ${title}`);
         return title;
       }
@@ -3876,18 +3925,21 @@ export class WebChannel implements BaseChannel {
     context: ChannelContext,
     fallbackUserMessage: string,
     fallbackAssistantReply: string,
+    retryAfterInFlightFailure = false,
   ): Promise<string | null> {
-    if (!context.user) return null;
+    const owner = context.sessionOwner ?? context.user;
+    if (!owner) return null;
     return this.resolveTitleForSession(
       sessionId,
       {
-        id: context.user.id,
-        username: context.user.username,
-        role: context.user.role,
-        tenantId: context.user.tenantId,
+        id: owner.id,
+        username: owner.username,
+        role: owner.role,
+        tenantId: owner.tenantId,
       },
       fallbackUserMessage,
       fallbackAssistantReply,
+      retryAfterInFlightFailure,
     );
   }
 
@@ -3896,7 +3948,12 @@ export class WebChannel implements BaseChannel {
    * username/role/tenantId 再走 resolveTitleForSession。userStore 缺失或查不到
    * 用户则放弃命名（无法解析物理 cwd）。
    */
-  private async maybeGenerateTitleByUserId(sessionId: string, userId: string): Promise<string | null> {
+  private async maybeGenerateTitleByUserId(
+    sessionId: string,
+    userId: string,
+    fallbackUserMessage = '',
+    retryAfterInFlightFailure = false,
+  ): Promise<string | null> {
     if (!this.userStore) return null;
     const userRecord = this.userStore.findById(userId);
     if (!userRecord) return null;
@@ -3905,26 +3962,7 @@ export class WebChannel implements BaseChannel {
       username: userRecord.username,
       role: userRecord.role,
       tenantId: userRecord.tenantId,
-    });
-  }
-
-  /**
-   * 自动命名跨调用去重：三路触发都先 add(runId)，已存在直接 skip。
-   * 跨 in-process outbound 'done' 与 cross-process platform 'run_finished'
-   * 投影后的二次广播——后者由 PG NOTIFY 在 single-process 部署下也会再投回来。
-   * runId 是 dispatch 维度唯一，长会话累积有限；为防极端长生命周期泄漏，
-   * 在 1024 条时截断保留最近一半，保证基本去重时效性。
-   */
-  private readonly titleGenerationAttempts = new Set<string>();
-  private claimTitleGenerationAttempt(runId: string): boolean {
-    if (this.titleGenerationAttempts.has(runId)) return false;
-    this.titleGenerationAttempts.add(runId);
-    if (this.titleGenerationAttempts.size > 1024) {
-      const arr = Array.from(this.titleGenerationAttempts);
-      this.titleGenerationAttempts.clear();
-      for (const id of arr.slice(arr.length / 2)) this.titleGenerationAttempts.add(id);
-    }
-    return true;
+    }, fallbackUserMessage, '', retryAfterInFlightFailure);
   }
 
   private async handleEvents(
@@ -4077,6 +4115,14 @@ export class WebChannel implements BaseChannel {
               ...(modelRef ? { model: modelRef } : {}),
             };
             return writeSessionMeta(transcriptPath, meta);
+          }).then(() => {
+            if (
+              isNewSession
+              && titleCtx?.userMessage
+              && shouldGenerateTitleFromFirstMessage(titleCtx.userMessage)
+            ) {
+              return self.maybeGenerateTitle(sessionId, context, titleCtx.userMessage, '');
+            }
           }).catch((err) => {
             chatLogger.warn(`[meta] Failed to write session meta: sessionId=${sessionId} user=${context.user?.username} error=${err}`);
           });
@@ -4317,23 +4363,12 @@ export class WebChannel implements BaseChannel {
         }
         // 立即清除缓存，确保客户端收到 done/session_updated 后 loadSessions() 不命中旧缓存
         clearSessionsListCache();
-        // 自动命名触发条件：会话 id 已就绪 + 本轮有真实文本输出。
-        // 不再限定"新会话"——续聊时若 meta 仍无 customTitle/generatedTitle
-        // （首轮 LLM 抖动失败、或首轮纯工具/纯思考没出文本），后续轮可补救。
-        // maybeGenerateTitle 内部用 meta 防覆盖，幂等。
-        if (titleCtx && collectedAssistantText.length > 0) {
+        // 所有终态都尝试补齐标题：正常完成、SDK error、用户停止、纯工具/纯思考
+        // 都不会再留下永久无标题会话。已有标题与并发触发由统一入口幂等吸收。
+        if (titleCtx) {
           const sid = titleCtx.getSessionId();
           if (sid) {
-            const title = await self.maybeGenerateTitle(sid, context, titleCtx.userMessage, collectedAssistantText);
-            if (title && context.user?.id && self.eventBus) {
-              self.eventBus.emitDual(context.user.id, sid, {
-                type: 'title_updated',
-                sessionId: sid,
-                title,
-              });
-              // 标题生成后再清一次，确保后续请求也拿到含标题的最新数据
-              clearSessionsListCache();
-            }
+            await self.maybeGenerateTitle(sid, context, titleCtx.userMessage, collectedAssistantText, true);
           }
         }
       },

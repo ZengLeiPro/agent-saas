@@ -9,7 +9,6 @@
  * 这样断言的就是真实的 messages 终态，而非 mock 调用次数。
  */
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-
 import type { MessageItem, MessageItemInput } from '../types/message';
 import type { WsEvent } from '../types/ws';
 import {
@@ -168,9 +167,7 @@ beforeEach(() => {
   idSeq = 0;
 });
 
-// ══════════════════════════════════════════════════════════════════════
-// 独立导出的辅助函数
-// ══════════════════════════════════════════════════════════════════════
+// ── 独立导出的辅助函数 ────────────────────────────────────────────────
 
 describe('辅助函数', () => {
   it('resolvePlanModeDisplay：EnterPlanMode 返回中文名与固定描述', () => {

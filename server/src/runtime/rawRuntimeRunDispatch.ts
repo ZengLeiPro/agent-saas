@@ -110,7 +110,6 @@ import {
   isConsumedResume,
   isResumeApprovalMetadata,
   isResumeInteractionMetadata,
-  isTerminalRunStatus,
   isWakeMessage,
   resolveWakePrompt,
   WAKE_EVENT_LIST_TYPES,
@@ -138,7 +137,7 @@ import {
   type SessionCatalog,
 } from './sessionCatalog.js';
 import type { ApprovalRecord, ApprovalStore, EventStore, ModelAttachmentRef, PlatformEvent, QueuedInterjection, RunContext } from './types.js';
-import type { RunRecord, RunStatus, RunStore } from './runStore.js';
+import type { RunRecord, RunStore } from './runStore.js';
 import type { HandRecord, HandStore, WorkspaceRecipe } from './handStore.js';
 import {
   createTenantRemoteHandAuthTokenResolver,
@@ -146,6 +145,11 @@ import {
 } from './tenantRemoteHandResolver.js';
 import { deriveSandboxScopeId, ensureRuntimeHandRegistered } from './runtimeHandRegistration.js';
 import { restoreRuntimeSessionForWake } from './runtimeWakeSessionRestore.js';
+import {
+  STEERING_RECOVERY_FAILURE_MESSAGE, STEERING_RECOVERY_MAX_HANDOFFS,
+  isTerminalRunStatus, startWakeLeaseRenewal, type RuntimeWakeLease,
+} from './runtimeWakeLeaseLifecycle.js';
+export { startWakeLeaseRenewal, type RuntimeWakeLease };
 import type { SecretVault } from '../security/secretVault.js';
 import type { NetworkPolicyConfig } from './networkPolicy.js';
 import { runtimeRunController } from './runController.js';
@@ -634,13 +638,6 @@ export interface RawRuntimeWakeState {
   replayState: RuntimeReplayState;
 }
 
-export interface RuntimeWakeLease {
-  runId: string;
-  workerId?: string;
-  renew(): Promise<void>;
-  release(finalStatus?: RunStatus, reason?: string): Promise<void>;
-}
-
 export interface WakeRuntimeSessionOptions {
   lease?: RuntimeWakeLease;
   renewIntervalMs?: number;
@@ -648,8 +645,6 @@ export interface WakeRuntimeSessionOptions {
 }
 
 const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
-const STEERING_RECOVERY_MAX_HANDOFFS = 3;
-const STEERING_RECOVERY_FAILURE_MESSAGE = '会话恢复连续失败，本次运行已结束，请重试。';
 
 export function resolveSessionCatalog(config: RawRuntimeRunDispatchConfig): SessionCatalog {
   return config.sessionCatalog ?? new FileSessionCatalog({ agentCwd: config.agentCwd });
@@ -1931,8 +1926,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       abortController,
       logger: config.logger ?? logger,
     });
-    try {
-      await authorizeBillingRunStart(config, {
+    await authorizeBillingRunStart(config, {
         tenantId: sessionRecord.tenantId,
         userId: sessionRecord.userId,
         runId,
@@ -3515,41 +3509,4 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
     `Runtime drain handoff released run=${input.run.runId} session=${input.run.sessionId} worker=${input.lease.workerId}`,
   );
   return true;
-}
-
-export function startWakeLeaseRenewal(input: {
-  lease?: RuntimeWakeLease;
-  runStore?: RunStore;
-  runId: string;
-  abortController: AbortController;
-  intervalMs: number;
-}): NodeJS.Timeout | null {
-  if (!input.lease) return null;
-  const timer = setInterval(() => {
-    void (async () => {
-      try {
-        await input.lease?.renew();
-        // 2026-08-04 P0 兜底：run_cancel_requested 的跨进程投递主通道是 PG NOTIFY
-        // （app/runtime.ts subscribeAppended）；NOTIFY 丢失时由本轮询保证 ≤intervalMs
-        // 内感知 durable cancelled 并中止。仅响应 cancelled（外部取消信号）；
-        // completed/failed 是 loop 自己写的终态，不在此处理。
-        if (!input.abortController.signal.aborted && input.runStore) {
-          const current = await input.runStore.get(input.runId).catch(() => null);
-          if (current?.status === 'cancelled') {
-            clearInterval(timer);
-            input.abortController.abort(new Error(current.statusReason ?? 'run_cancel_requested'));
-          }
-        }
-      } catch (err) {
-        const current = await input.runStore?.get(input.runId).catch(() => null);
-        if (isTerminalRunStatus(current?.status)) {
-          clearInterval(timer);
-          return;
-        }
-        input.abortController.abort(err instanceof Error ? err : new Error(String(err)));
-      }
-    })();
-  }, input.intervalMs);
-  timer.unref?.();
-  return timer;
 }

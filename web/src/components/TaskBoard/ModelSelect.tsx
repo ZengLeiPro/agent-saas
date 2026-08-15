@@ -35,7 +35,7 @@ export function ModelSelect({
   ariaLabel,
   disabled,
 }: ModelSelectProps) {
-  if (!modelList || modelList.groups.length === 0) {
+  if (!modelList?.groups?.length) {
     if (!value) {
       return <p className="text-sm text-muted-foreground">模型列表暂不可用</p>;
     }

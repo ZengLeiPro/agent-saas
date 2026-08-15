@@ -69,6 +69,7 @@ import type { SettingsSectionId } from "@/types/settings";
 import { getSidebarNavItems, formatShortDate, getSessionWaitingLabel, getGroupWaitingRuntimeStatus } from "@/types/sidebar";
 import type { SessionGroup, SessionListEntry } from "@/types/sessionGroup";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
+import { billingModeLabel, compareSessionActivity, formatBillingCredits, formatDetailedBillingCredits } from "./desktopSessionSidebarUtils";
 
 interface DesktopSessionSidebarProps {
   sessions: ChatSessionIndexItem[];
@@ -117,36 +118,6 @@ const NAV_ITEM_UNSELECTED =
 const USER_MENU_ITEM =
   "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] text-foreground transition-colors hover:bg-accent";
 const USER_MENU_SECTION = "border-t border-border/60 py-1.5";
-
-function formatBillingCredits(value: number): string {
-  if (!Number.isFinite(value)) return "0";
-  if (Math.abs(value) >= 10_000) return `${(value / 10_000).toFixed(1)}万`;
-  if (Math.abs(value) >= 100) return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
-  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
-
-function formatDetailedBillingCredits(value: number): string {
-  if (!Number.isFinite(value)) return "0";
-  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
-
-function billingModeLabel(mode: string): string {
-  switch (mode) {
-    case "prepaid":
-      return "预付费";
-    case "postpaid":
-      return "后付费";
-    case "trial":
-      return "试用";
-    default:
-      return "积分";
-  }
-}
-
-function compareSessionActivity(a: ChatSessionIndexItem, b: ChatSessionIndexItem): number {
-  if (Boolean(a.isRunning) !== Boolean(b.isRunning)) return a.isRunning ? -1 : 1;
-  return b.updatedAt - a.updatedAt;
-}
 
 /** 左栏视图/分组标签上的聚合未读小红点 */
 function GroupUnreadDot() {

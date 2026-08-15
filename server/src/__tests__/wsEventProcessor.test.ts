@@ -78,7 +78,6 @@ describe('wsEventProcessor session events', () => {
     }));
   });
 });
-
 describe('wsEventProcessor terminal errors', () => {
   it('finalizes a half-open streaming text block when done arrives without block_end', () => {
     const { messages, ctx } = createTestRig([

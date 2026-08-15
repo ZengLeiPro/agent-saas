@@ -133,7 +133,7 @@ describe("TenantModelPolicyPanel", () => {
     const selects = screen.getAllByRole("combobox");
     expect(selects[0]!.hasAttribute("disabled")).toBe(false);
     expect(selects[1]!.hasAttribute("disabled")).toBe(true);
-    expect(screen.getByPlaceholderText("模型一").hasAttribute("disabled")).toBe(true);
+    expect((await screen.findByPlaceholderText("模型一")).hasAttribute("disabled")).toBe(true);
 
     const editableModels = screen.getAllByRole("checkbox").filter(input => !input.hasAttribute("disabled"));
     expect(editableModels).toHaveLength(2);

@@ -44,6 +44,12 @@ type SkillUser = Pick<UserInfo, 'id' | 'username' | 'role' | 'tenantId'>;
 import { serverLogger } from '../utils/logger.js';
 import type { SkillMaterializationCoordinator } from '../workspace/materialization/types.js';
 import { isSkillSelectionPreferenceWrite, registerSkillSelectionRoute, setUserSkillSelected, userSkillSelectionState } from './skillSelection.js';
+import {
+  safeName,
+  safeRelativePath,
+  skillIdFromName,
+  validateSkillDocument,
+} from './skillRouteValidation.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -94,16 +100,6 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
   });
 
   // ── Helper ─────────────────────────────────────────────
-
-  /**
-   * 校验名称：必须 ^[a-zA-Z][a-zA-Z0-9_-]{0,63}$。
-   * δ 阶段强化：拒绝以 `.` 开头的隐藏目录（如 `.env`、`.git`）、`_` 开头、任何
-   * 包含 path traversal 字符的名字。与 SkillToolProvider.isSafeSkillName 同口径。
-   */
-  const SAFE_SKILL_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
-  function safeName(name: string): string | null {
-    return SAFE_SKILL_NAME_RE.test(name) ? name : null;
-  }
 
   async function getPoolSkillIds(): Promise<Set<string>> {
     return new Set((await scanPoolSkillsAsync(poolDir)).map(s => s.id));
@@ -297,45 +293,6 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     }
   }
 
-
-  function validateSkillDocument(content: string, opts?: { allowName?: string }): { name: string; description: string } | null {
-    const parsed = scanSkillFrontmatter(content);
-    if (!parsed?.name || !parsed.description) return null;
-    // 常规命名约定：小写字母/数字/连字符（上传创建路径一律执行此规则）。
-    // allowName 例外放行：目录 ID 本身经 safeName 校验（允许大写/下划线、拒绝
-    // 路径穿越与特殊字符），agent 直建/历史存量的下划线 id skill 的 frontmatter
-    // name 只要与目录 ID 完全一致就必须可编辑，否则 PUT document 永远 400。
-    if (
-      !/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(parsed.name) &&
-      !(opts?.allowName !== undefined && parsed.name === opts.allowName)
-    ) return null;
-    if (parsed.description.length > 1024) return null;
-    return parsed;
-  }
-
-  function scanSkillFrontmatter(content: string): { name: string; description: string } | null {
-    const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
-    if (!match) return null;
-    let name = '';
-    let description = '';
-    for (const line of match[1].split('\n')) {
-      const nameMatch = line.match(/^name:\s*["']?(.*?)["']?\s*$/);
-      if (nameMatch) name = nameMatch[1].trim();
-      const descMatch = line.match(/^description:\s*["']?(.*?)["']?\s*$/);
-      if (descMatch) description = descMatch[1].trim();
-    }
-    return name ? { name, description } : null;
-  }
-
-  function skillIdFromName(name: string): string | null {
-    return safeName(name);
-  }
-
-  function safeRelativePath(name: string): string | null {
-    const normalized = name.replace(/\\/g, '/').split('/').filter(Boolean).join('/');
-    if (!normalized || normalized.startsWith('.') || normalized.includes('../') || normalized.split('/').some(part => part === '..' || part.startsWith('.'))) return null;
-    return normalized;
-  }
 
   async function archiveDeletedDirectory(targetDir: string): Promise<void> {
     const parentDir = dirname(targetDir);

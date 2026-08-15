@@ -2,8 +2,7 @@ import { apiUrl, resolveApiAssetUrl } from "../lib/apiBase";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Loader2, LogOut, User, ChevronRight, ChevronLeft, FolderClosed, Camera, Lock, UserCog } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
-import { SwipeableRow } from "@/components/mobile/SwipeableRow";
-import type { SwipeAction } from "@/components/mobile/SwipeableRow";
+import { SwipeableRow, type SwipeAction } from "@/components/mobile/SwipeableRow";
 import { PullToRefresh } from "@/components/mobile/PullToRefresh";
 import { RenameSessionDialog } from "@/components/chat/RenameSessionDialog";
 import { DeleteGroupDialog } from "@/components/chat/DeleteGroupDialog";
@@ -12,7 +11,6 @@ import { AddSessionsToGroupDialog } from "@/components/chat/AddSessionsToGroupDi
 import { TrashView } from "@/components/chat/TrashView";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { refreshAll } from "@/lib/refreshBus";
-
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -20,15 +18,12 @@ import { useAuth } from "@/contexts/AuthContext";
 import { TOKEN_KEY } from "@/lib/constants";
 import { useGroupedSessions } from "@/hooks/useGroupedSessions";
 import { useGroups } from "@/hooks/useGroups";
-import { getSortedGroupItems } from "@agent/shared";
+import { DEFAULT_TENANT_ID, getSortedGroupItems } from "@agent/shared";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
 import { getSidebarNavItems, formatShortDate, sourceDisplayText, getSessionWaitingLabel } from "@/types/sidebar";
 import type { SessionGroup } from "@/types/sessionGroup";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
-import { DEFAULT_TENANT_ID } from "@agent/shared";
-
-/** 稳定的空集兜底，避免 prop 缺省时每次 render 新建 Set */
 
 interface MobileSessionListProps {
   sessions: ChatSessionIndexItem[];

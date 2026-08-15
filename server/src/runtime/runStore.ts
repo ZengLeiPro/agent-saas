@@ -5,6 +5,7 @@ import { findRun, findRunForUpdate } from './runStoreIdempotency.js';
 import { cancelActiveRunsByUser, releaseRunLease } from './runTerminalLifecycle.js';
 import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL } from './runStatusPolicy.js';
 import { markRunStatus, markRunStatusIfCurrent } from './runStatusCas.js';
+import { normalizeRunPersistenceState } from './runStoreRecord.js';
 
 const { Pool } = pg;
 export type PgPool = InstanceType<typeof Pool>;
@@ -1653,20 +1654,6 @@ function normalizeRunRecord(raw: any): RunRecord {
     idempotencyKey: raw.idempotency_key ?? raw.idempotencyKey ?? undefined,
     executionTarget: raw.execution_target ?? raw.executionTarget ?? undefined,
     workspaceId: raw.workspace_id ?? raw.workspaceId ?? undefined,
-    sandboxScopeId: raw.sandbox_scope_id ?? raw.sandboxScopeId ?? undefined,
-    metadata: raw.metadata ?? {},
-    lastResponseId: raw.last_response_id ?? raw.lastResponseId ?? undefined,
-    lastResponseExpireAt: raw.last_response_expire_at
-      ? new Date(raw.last_response_expire_at).toISOString()
-      : raw.lastResponseExpireAt ?? undefined,
-    actualModelSeen: raw.actual_model_seen ?? raw.actualModelSeen ?? undefined,
-    lastResponseModel: raw.last_response_model ?? raw.lastResponseModel ?? undefined,
-    lastResponseProfileDigest: raw.last_response_profile_digest ?? raw.lastResponseProfileDigest ?? undefined,
-    cumulativeInputTokens: (() => {
-      const v = raw.cumulative_input_tokens ?? raw.cumulativeInputTokens;
-      if (typeof v === 'number') return v;
-      if (typeof v === 'string') return Number.parseInt(v, 10) || 0;
-      return undefined;
-    })(),
+    ...normalizeRunPersistenceState(raw),
   };
 }

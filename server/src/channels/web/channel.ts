@@ -7,10 +7,10 @@
  * WS 消息协议见 wsTypes.ts。
  */
 
-import { appendFile, mkdir, readdir, readFile, stat } from 'fs/promises';
+import { appendFile, mkdir, stat } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { homedir } from 'os';
-import { dirname, join, resolve as resolvePath } from 'path';
+import { dirname, resolve as resolvePath } from 'path';
 import type { Express } from 'express';
 import type { WebSocket } from 'ws';
 import {
@@ -53,7 +53,7 @@ import {
 import { getTranscriptPath, sessionExists, findTranscriptOrMetaPathBySessionId, deleteSession } from '../../data/transcripts/index.js';
 import { readSessionMeta, writeSessionMeta, updateSessionMeta, addSessionCost, type SessionMeta } from '../../data/transcripts/meta.js';
 import { resolveUserCwd } from '../../workspace/resolver.js';
-import { agentPath, resolveAgentPath } from '../../workspace/namespace.js';
+import { resolveAgentPath } from '../../workspace/namespace.js';
 import type { UserStore } from '../../data/users/store.js';
 import type { TenantStore } from '../../data/tenants/store.js';
 import type { BillingService } from '../../data/billing/service.js';
@@ -90,7 +90,6 @@ import { EventBackedApprovalStore } from '../../runtime/approvalStore.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../../runtime/fileEventStore.js';
 import type { EventStore, PlatformEvent } from '../../runtime/types.js';
 import { buildRuntimeReplayState } from '../../runtime/replay.js';
-import { Semaphore } from '../../runtime/fileReadCoalesce.js';
 import type { RawApprovalResumeRequest } from '../../runtime/rawRuntimeRunDispatch.js';
 import {
   DEFAULT_EXECUTION_CONFIG,
@@ -109,32 +108,19 @@ import {
   buildPendingInteractionsFromEvents,
   normalizeInteractionResponse,
 } from '../../runtime/interactionProjection.js';
+// Keep bounded resume primitives and workspace plan discovery out of the channel orchestrator.
+// These helpers retain the existing policy constants and filesystem behavior.
+import {
+  approvalResumeSemaphore,
+  INTERACTIVE_PERMISSION_TOOLS,
+  readLatestPlanContent,
+  TERMINAL_RUN_STATUSES,
+  VOICE_STT_TAG,
+  wantsToolAutoApproval,
+} from './channelRuntimeHelpers.js';
 
 export { buildChatMessageActivityDetail } from './channelHelpers.js';
 
-/**
- * 跨 session 的 approval resume 并发兜底（cap=8）。
- * fileReadCoalesce 已经 dedup 了同文件并发；这里限制跨文件场景下
- * 同时进入 tryResumePersistedApproval 的会话数，避免 EMFILE 在 SaaS
- * 多 session 突发时被打穿。
- */
-const approvalResumeSemaphore = new Semaphore(8);
-
-const INTERACTIVE_PERMISSION_TOOLS = new Set([
-  'AskUserQuestion',
-  'EnterPlanMode',
-  'ExitPlanMode',
-  'RequestPluginInstall',
-]);
-
-const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'orphaned']);
-
-/** 语音转写前缀标记（STT 注入 / 门禁判定前剥离共用） */
-const VOICE_STT_TAG = '[这是一条语音转文字的消息，可能存在识别准确度问题] ';
-
-function wantsToolAutoApproval(policy: { autoApproveTools?: boolean; autoApproveRunShell?: boolean } | undefined): boolean {
-  return policy?.autoApproveTools === true || policy?.autoApproveRunShell === true;
-}
 export type ModelResolver = (ref: string, tenantId?: string) => ResolvedModel | null;
 export interface WebChannelConfig {
   timezone?: string;
@@ -215,35 +201,6 @@ export interface WebChannelConfig {
    * legacy 门禁，仅产出对比证据，供切 V2 权威前的双跑核对。
    */
   runPreflight?: RunPreflightService;
-}
-
-/** 读取用户 workspace 内最近生成的 plan 文件内容。 */
-async function readLatestPlanContent(userCwd?: string): Promise<string | null> {
-  if (!userCwd) return null;
-  const candidates = [agentPath(userCwd, 'plans')];
-
-  try {
-    const now = Date.now();
-    let latest = { name: '', mtime: 0, dir: '' };
-
-    for (const plansDir of candidates) {
-      let files: string[];
-      try { files = await readdir(plansDir); } catch { continue; }
-      const mdFiles = files.filter(f => f.endsWith('.md'));
-      for (const f of mdFiles) {
-        const s = await stat(join(plansDir, f));
-        // 只取最近 60s 内修改的文件，减少串线概率
-        if (s.mtimeMs > latest.mtime && (now - s.mtimeMs) < 60_000) {
-          latest = { name: f, mtime: s.mtimeMs, dir: plansDir };
-        }
-      }
-    }
-
-    if (!latest.name) return null;
-    return await readFile(join(latest.dir, latest.name), 'utf-8');
-  } catch {
-    return null;
-  }
 }
 
 interface ActiveStreamEntry {

@@ -445,6 +445,7 @@ export async function trackRunStateAfterEvent(input: {
   }
   if (!status || !('runId' in event) || typeof event.runId !== 'string' || typeof event.sessionId !== 'string') return;
   const before = await input.runStore.get(event.runId);
+  if (isTerminalRunStatus(before?.status)) return;
   const updated = await input.runStore.markStatus(event.runId, status, reason);
   if (!updated || updated.status !== status) return;
   await appendRunStateChanged(

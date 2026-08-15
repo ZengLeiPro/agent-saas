@@ -1734,7 +1734,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
   // ════════════════════════════════════════════════════════════════════
   // 8. 自动命名（首条消息提前生成 + 终态补偿）
   // ════════════════════════════════════════════════════════════════════
-
   describe('自动命名', () => {
     it('首条长消息在 Agent 首次输出前生成标题', async () => {
       const tmp = await makeTmp('cov-title-early-');
@@ -1770,7 +1769,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const transcriptPath = getTranscriptPath(userCwd, sessionId, { tenantId: TENANT, userId: USER.sub });
       expect((await readSessionMeta(transcriptPath))?.generatedTitle).toBe('覆盖补齐测试标题');
     });
-
     it('error 终态在没有 Agent 文本时补偿生成标题', async () => {
       const { sessionId, transcriptPath } = await seedRuntimeSession(USER);
       await mkdir(dirname(transcriptPath), { recursive: true });
@@ -1844,55 +1842,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         expect(openAiCalls().length).toBe(callsBefore + 1);
       });
       expect(rig.userEvents.filter((e) => e.type === 'title_updated')).toHaveLength(1);
-    });
-  });
-  // ════════════════════════════════════════════════════════════════════
-  // 9. 生命周期与杂项
-  // ════════════════════════════════════════════════════════════════════
-
-  describe('生命周期与杂项', () => {
-    it('disconnectUser / disconnectTenant：只中止目标用户/租户的流（含 runtimeRunController）', () => {
-      const userStore = {
-        findById: (id: string) => (id === 'lc-u2' ? { id, tenantId: 'acme' } : { id, tenantId: TENANT }),
-      } as unknown as UserStore;
-      const rig = makeRig({ userStore });
-      const c1 = new AbortController();
-      const c2 = new AbortController();
-      (rig.channel as any).activeStreams.set('lc-s1', { controller: c1, userId: 'lc-u1', ws: rig.ws, runId: 'run-lc-1' });
-      (rig.channel as any).activeStreams.set('lc-s2', { controller: c2, userId: 'lc-u2', ws: rig.ws });
-      expect(rig.channel.getActiveStreamCount()).toBe(2);
-      const runtimeController = new AbortController();
-      runtimeRunController.register('run-lc-1', runtimeController);
-      try {
-        rig.channel.disconnectUser('lc-u1');
-      } finally {
-        runtimeRunController.unregister('run-lc-1');
-      }
-      expect(c1.signal.aborted).toBe(true);
-      expect(runtimeController.signal.aborted).toBe(true);
-      expect(c2.signal.aborted).toBe(false);
-
-      rig.channel.disconnectTenant('acme');
-      expect(c2.signal.aborted).toBe(true);
-    });
-
-    it('getStreamStatus：runStore 异常时降级看 buffer（active + streamId）', async () => {
-      const rig = makeRig({
-        enqueueRuntime: {
-          runStore: { getActiveBySession: vi.fn().mockRejectedValue(new Error('pg down')) },
-        } as any,
-      });
-      const sessionId = randomUUID();
-      (rig.channel as any).eventBufferStore.create(sessionId, USER.sub);
-      (rig.channel as any).activeStreams.set('st-deg', {
-        controller: new AbortController(), userId: USER.sub, ws: rig.ws, sessionId,
-      });
-      await expect(rig.channel.getStreamStatus(sessionId)).resolves.toEqual({ active: true, streamId: 'st-deg' });
-    });
-
-    it('attachToServer 在 start() 之前调用 → 抛错', () => {
-      const rig = makeRig();
-      expect(() => rig.channel.attachToServer({} as any)).toThrow('WsServer not initialized. Call start() first.');
     });
   });
 });

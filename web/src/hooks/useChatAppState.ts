@@ -7,7 +7,7 @@ import type { ModelList } from "@/types/models";
 import type { AppTab } from "@/types/sidebar";
 import type { CanonicalSettingsSectionId, SettingsSectionId } from "@/types/settings";
 import type { WsEvent } from "@/types/ws";
-import type { WsEnvelope, WsResumeMessage } from "@/lib/wsClient";
+import type { WsEnvelope } from "@/lib/wsClient";
 import { wsClient } from "@/lib/wsClient";
 import { authFetch } from "@/lib/authFetch";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
@@ -59,27 +59,15 @@ import {
   type WsProcessingContext,
   type WsBlockState,
 } from '@agent/shared';
-/**
- * resume 去重闸门：重连时本 hook 有两个 onStateChange('connected') 监听器会各对当前会话
- * 发一次 resume（#1 连接管理、#2 subscribeToActiveStream）。重复 resume 会让服务端二次回放
- * 缓冲事件 → 整段重复。这里按 sessionId 做短时窗去重，保证一次重连只真正发一条 resume
- * （服务端 handleResume 串行化是另一层兜底）。手法同 shared/wsHandler 的 sync 防抖。
- * 去重 key 仅用 sessionId：中途切到别的 session 会重置 key，切回时不会被误挡。
- */
-const RESUME_DEDUP_MS = 2000;
-let _lastResumeSessionId = '';
-let _lastResumeAt = 0;
-function sendResumeDeduped(payload: WsResumeMessage): Promise<boolean> {
-  const now = Date.now();
-  if (_lastResumeSessionId === payload.sessionId && now - _lastResumeAt < RESUME_DEDUP_MS) {
-    // 2s 内已对同一 session 发过 resume（多监听器重复触发）→ 跳过，视为成功
-    // （已有等效 resume 在途，服务端会回同一个 active_stream，无需再发）。
-    return Promise.resolve(true);
-  }
-  _lastResumeSessionId = payload.sessionId;
-  _lastResumeAt = now;
-  return wsClient.ensureConnectedSend(payload);
-}
+import {
+  isActiveRuntimeStatus,
+  isTerminalRuntimeStatus,
+  runtimeStatusFromSessionStatus,
+  sendResumeDeduped,
+  type LastRunState,
+  type TerminalRuntimeStatus,
+} from "./chatRuntimeHelpers";
+
 export interface ChatAppState {
   messages: MessageItem[];
   input: string;
@@ -211,52 +199,6 @@ export interface ChatAppState {
 export interface ChatAppStateOptions {
   /** Callback when Agent VOICE markers arrive, used for auto-play */
   onVoiceEvent?: (key: string, text: string, voice?: string, speed?: number) => void;
-}
-
-type LastRunState = NonNullable<ApiSessionDetail["lastRunState"]>;
-type TerminalRuntimeStatus = 'idle' | 'completed' | 'failed' | 'cancelled' | 'orphaned';
-
-const ACTIVE_RUNTIME_STATUSES = new Set<string>([
-  'busy',
-  'queued',
-  'running',
-  'waiting_approval',
-  'waiting_user',
-  'waiting_hand',
-]);
-
-const TERMINAL_RUNTIME_STATUSES = new Set<string>([
-  'idle',
-  'completed',
-  'failed',
-  'cancelled',
-  'orphaned',
-]);
-
-function isActiveRuntimeStatus(status: string | undefined): boolean {
-  return !!status && ACTIVE_RUNTIME_STATUSES.has(status);
-}
-
-function isTerminalRuntimeStatus(status: string | undefined): status is TerminalRuntimeStatus {
-  return !!status && TERMINAL_RUNTIME_STATUSES.has(status);
-}
-
-function runtimeStatusFromSessionStatus(status: string): Parameters<typeof upsertRuntimeStatusMessage>[1] | null {
-  switch (status) {
-    case 'queued':
-      return 'queued';
-    case 'busy':
-    case 'running':
-      return 'running';
-    case 'waiting_hand':
-      return 'waiting_hand';
-    case 'waiting_approval':
-      return 'waiting_approval';
-    case 'waiting_user':
-      return 'waiting_user';
-    default:
-      return null;
-  }
 }
 
 export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {

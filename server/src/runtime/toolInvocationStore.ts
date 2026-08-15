@@ -370,57 +370,75 @@ export class PgToolInvocationStore implements ToolInvocationStore {
     const client = await this.options.pool.connect();
     try {
       await client.query('BEGIN');
-      // 与 run 终态 UPDATE 锁同一行：start 先拿锁时 stop 随后能看到 invocation；
-      // stop 先拿锁时 start 会读到 cancelled 并原子登记 durable cancel outbox。
+      // 与 run 终态 UPDATE 锁同一行：start 先拿锁时，终态提交随后能看到 invocation；
+      // 终态先拿锁时，start 原子落为不可执行记录。只有 cancelled 需要 durable cancel outbox。
       const run = await client.query<{ status: string }>(`
         SELECT status FROM ${this.runsTable} WHERE run_id = $1 FOR SHARE
       `, [input.runId]);
       if (!run.rows[0]) throw new Error(`Cannot start tool invocation for missing run ${input.runId}`);
-      const runAlreadyCancelled = run.rows[0].status === 'cancelled';
+      const runStatus = run.rows[0].status;
+      const terminalRunStatus = ['completed', 'failed', 'cancelled', 'orphaned'].includes(runStatus)
+        ? runStatus
+        : null;
+      const runAlreadyCancelled = terminalRunStatus === 'cancelled';
       const now = new Date().toISOString();
       const cancelReason = runAlreadyCancelled ? 'run_already_cancelled_before_tool_start' : null;
+      const terminalError = terminalRunStatus && !runAlreadyCancelled
+        ? `run_already_terminal_before_tool_start status=${terminalRunStatus}`
+        : null;
       const metadata = {
         ...(input.metadata ?? {}),
+        ...(terminalRunStatus ? { terminalRunStatus } : {}),
         ...(runAlreadyCancelled ? { cancelRecovery: 'late_start' } : {}),
       };
       const result = await client.query<ToolInvocationRow>(`
         INSERT INTO ${this.toolInvocationsTable}
           (invocation_id, run_id, session_id, tool_call_id, tool_name, execution_target, tenant_id,
-           status, started_at, updated_at, completed_at, cancel_requested_at, cancel_reason, metadata)
+           status, started_at, updated_at, completed_at, cancel_requested_at, cancel_reason, error, metadata)
         VALUES (
           $1, $2, $3, $4, $5, $6, COALESCE($7, '${DEFAULT_TENANT_ID}'),
-          CASE WHEN $10::boolean THEN 'cancelled' ELSE 'running' END,
+          CASE
+            WHEN $10::text = 'cancelled' THEN 'cancelled'
+            WHEN $10::text IS NOT NULL THEN 'failed'
+            ELSE 'running'
+          END,
           $8, $8,
-          CASE WHEN $10::boolean THEN $8::timestamptz ELSE NULL END,
-          CASE WHEN $10::boolean THEN $8::timestamptz ELSE NULL END,
+          CASE WHEN $10::text IS NOT NULL THEN $8::timestamptz ELSE NULL END,
+          CASE WHEN $10::text = 'cancelled' THEN $8::timestamptz ELSE NULL END,
           $11,
+          $12,
           $9::jsonb
         )
         ON CONFLICT (invocation_id) DO UPDATE SET
           updated_at = EXCLUDED.updated_at,
           tenant_id = CASE WHEN $7 IS NULL THEN ${this.toolInvocationsTable}.tenant_id ELSE EXCLUDED.tenant_id END,
           status = CASE
-            WHEN EXCLUDED.status = 'cancelled' AND ${this.toolInvocationsTable}.status = 'running' THEN 'cancelled'
+            WHEN EXCLUDED.status <> 'running' AND ${this.toolInvocationsTable}.status = 'running' THEN EXCLUDED.status
             ELSE ${this.toolInvocationsTable}.status
           END,
           completed_at = CASE
-            WHEN EXCLUDED.status = 'cancelled' AND ${this.toolInvocationsTable}.status = 'running'
+            WHEN EXCLUDED.status <> 'running' AND ${this.toolInvocationsTable}.status = 'running'
               THEN COALESCE(${this.toolInvocationsTable}.completed_at, EXCLUDED.completed_at)
             ELSE ${this.toolInvocationsTable}.completed_at
           END,
           cancel_requested_at = CASE
-            WHEN ${this.toolInvocationsTable}.status = 'running'
+            WHEN EXCLUDED.status = 'cancelled' AND ${this.toolInvocationsTable}.status = 'running'
               THEN COALESCE(${this.toolInvocationsTable}.cancel_requested_at, EXCLUDED.cancel_requested_at)
             ELSE ${this.toolInvocationsTable}.cancel_requested_at
           END,
           cancel_reason = CASE
-            WHEN ${this.toolInvocationsTable}.status = 'running'
+            WHEN EXCLUDED.status = 'cancelled' AND ${this.toolInvocationsTable}.status = 'running'
               THEN COALESCE(${this.toolInvocationsTable}.cancel_reason, EXCLUDED.cancel_reason)
             ELSE ${this.toolInvocationsTable}.cancel_reason
           END,
+          error = CASE
+            WHEN EXCLUDED.status = 'failed' AND ${this.toolInvocationsTable}.status = 'running'
+              THEN COALESCE(${this.toolInvocationsTable}.error, EXCLUDED.error)
+            ELSE ${this.toolInvocationsTable}.error
+          END,
           metadata = ${this.toolInvocationsTable}.metadata || CASE
             WHEN ${this.toolInvocationsTable}.status = 'running' THEN EXCLUDED.metadata
-            ELSE EXCLUDED.metadata - 'cancelRecovery'
+            ELSE EXCLUDED.metadata - 'cancelRecovery' - 'terminalRunStatus'
           END
         RETURNING *
       `, [
@@ -433,8 +451,9 @@ export class PgToolInvocationStore implements ToolInvocationStore {
         input.tenantId ?? null,
         now,
         JSON.stringify(metadata),
-        runAlreadyCancelled,
+        terminalRunStatus,
         cancelReason,
+        terminalError,
       ]);
       await client.query('COMMIT');
       return rowToRecord(result.rows[0]!);

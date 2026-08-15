@@ -3238,9 +3238,14 @@ export class RawAgentLoop implements AgentLoop {
       let cancellation = invocation?.cancelRequestedAt ? invocation : undefined;
       // Pg start 已原子登记 durable outbox；即时事件仅由本次 requestCancelOnce 的唯一创建者发布。
       let shouldAppendCancelEvent = false;
+      let terminalRunStatus: string | undefined;
       if (!cancellation && this.runStore) {
         const run = await this.runStore.get(args.context.runId);
         if (!run) throw new Error(`authoritative run not found: ${args.context.runId}`);
+        if (['completed', 'failed', 'cancelled', 'orphaned'].includes(run.status)) {
+          terminalRunStatus = run.status;
+          blockedBeforeInvoke = true;
+        }
         if (run.status === 'cancelled') {
           const completedBeforeCancellation = invocation?.completedAt
             && run.cancelledAt
@@ -3255,7 +3260,6 @@ export class RawAgentLoop implements AgentLoop {
             shouldAppendCancelEvent = requested?.created === true;
             cancelledBeforeInvoke = true;
           }
-          blockedBeforeInvoke = true;
         }
       }
       if (cancellation) {
@@ -3275,7 +3279,11 @@ export class RawAgentLoop implements AgentLoop {
             metadata: cancellation.metadata,
           });
         }
-        const reason = cancelledBeforeInvoke ? 'run is already cancelled' : 'invocation is already terminal';
+        const reason = cancelledBeforeInvoke
+          ? 'run is already cancelled'
+          : terminalRunStatus
+            ? `run is already terminal status=${terminalRunStatus}`
+            : 'invocation is already terminal';
         throw new Error(`tool invocation blocked because ${reason}: ${invocationId}`);
       }
       const result = await this.toolRuntime.invoke(

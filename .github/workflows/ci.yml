@@ -129,6 +129,14 @@ jobs:
           src/__tests__/governanceSchemaMigration.pg.test.ts
           src/__tests__/governanceProjectionPool.pg.test.ts
 
+      - name: Verify queue consistency PostgreSQL contracts explicitly
+        env:
+          TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
+        run: >-
+          pnpm -F server exec vitest run
+          src/__tests__/pgRunStoreSteering.pg.test.ts
+          src/__tests__/pgToolInvocationTerminalGate.pg.test.ts
+
       - name: Check Web API domain boundary
         run: pnpm -F web check:api-boundary
 

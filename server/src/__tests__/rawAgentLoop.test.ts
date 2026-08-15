@@ -3656,6 +3656,68 @@ describe('RawAgentLoop', () => {
     ]));
   });
 
+  it.each(['completed', 'failed', 'orphaned'] as const)(
+    'does not execute a tool after its authoritative run became %s',
+    async (terminalStatus) => {
+      const cwd = await mkdtemp(join(tmpdir(), `raw-loop-${terminalStatus}-late-tool-`));
+      cleanupDirs.add(cwd);
+      const sessionId = `session-${terminalStatus}-late-tool`;
+      const runId = `run-${terminalStatus}-late-tool`;
+      const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+      const toolInvocationStore = new InMemoryToolInvocationStore();
+      const toolRuntime = new CountingToolRuntime();
+      const runStore = {
+        get: vi.fn(async () => ({
+          runId,
+          sessionId,
+          status: terminalStatus,
+          requestedAt: '2026-08-15T00:00:00.000Z',
+          updatedAt: '2026-08-15T00:00:01.000Z',
+          metadata: {},
+        })),
+      } as unknown as RunStore;
+      const loop = new RawAgentLoop({
+        modelAdapter: new FakeToolCallingAdapter(),
+        eventStore,
+        approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+        transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+        toolRuntime,
+        toolInvocationStore,
+        runStore,
+      });
+
+      await collect(loop.run(
+        {
+          message: { channel: 'web', chatId: 'chat-1', content: '写文件' },
+          prompt: '写文件',
+          instructions: '必须调用工具。',
+          maxTurns: 4,
+          connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+        },
+        {
+          runId,
+          sessionId,
+          model: 'gpt-5.5',
+          cwd,
+          channelContext: {
+            channel: 'web',
+            user: { id: 'admin-1', username: 'admin', role: 'admin' },
+          },
+          hooks: { onInteraction: async () => ({ allow: true, message: 'ok' }) },
+        },
+      ));
+
+      expect(toolRuntime.invocations).toBe(0);
+      await expect(toolInvocationStore.get(`${runId}:call_write_1`)).resolves.toMatchObject({
+        status: 'failed',
+        error: `tool invocation blocked because run is already terminal status=${terminalStatus}: ${runId}:call_write_1`,
+      });
+      expect((await toolInvocationStore.get(`${runId}:call_write_1`))?.cancelRequestedAt).toBeUndefined();
+      const events = await eventStore.list(sessionId);
+      expect(events.some((event) => event.type === 'tool_invocation_cancel_requested')).toBe(false);
+    },
+  );
+
   it('does not replay lifecycle events or side effects for an already-terminal invocation', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-terminal-invocation-replay-'));
     cleanupDirs.add(cwd);

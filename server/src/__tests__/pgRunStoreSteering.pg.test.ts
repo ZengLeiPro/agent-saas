@@ -446,9 +446,11 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     expect(result.event).toBeUndefined();
     await expect(store.get(runId)).resolves.toMatchObject({ status: 'completed' });
     await expect(toolInvocationStore.get('invocation-stop-terminal-race')).resolves.toMatchObject({
-      status: 'running',
-      cancelRequestedAt: undefined,
+      status: 'failed',
+      error: 'run_already_terminal_before_tool_start status=completed',
+      metadata: expect.objectContaining({ terminalRunStatus: 'completed' }),
     });
+    expect((await toolInvocationStore.get('invocation-stop-terminal-race'))?.cancelRequestedAt).toBeUndefined();
     const events = await eventStore.list(sessionId);
     expect(events.some((event) => event.type === 'run_cancel_requested')).toBe(false);
     expect(events.some((event) => event.type === 'tool_invocation_cancel_requested')).toBe(false);

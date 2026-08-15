@@ -255,7 +255,43 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect((await runStore.get('run-term-a'))?.status).toBe('completed');
     });
 
-    it('run 已终态的 stop 重试仍会重放 durable 工具取消，不依赖首次取消事件', async () => {
+    it.each(['completed', 'failed', 'orphaned'] as const)(
+      'run 已 %s 的 stop 重试只回权威终态，不扫描或登记工具取消',
+      async (terminalStatus) => {
+        const runStore = new MemoryRunStore();
+        const runId = `run-terminal-no-cancel-${terminalStatus}`;
+        const sessionId = `session-terminal-no-cancel-${terminalStatus}`;
+        await runStore.upsertPending({ runId, sessionId, userId: USER.sub, model: 'm', channel: 'web' });
+        await runStore.markStatus(runId, terminalStatus, `${terminalStatus}-reason`);
+        const toolInvocationStore = {
+          listRunning: vi.fn(async () => [{
+            invocationId: `inv-terminal-no-cancel-${terminalStatus}`,
+            runId,
+            sessionId,
+            toolCallId: 'call-terminal-no-cancel',
+            toolName: 'Shell',
+          }]),
+          requestCancelOnce: vi.fn(),
+        };
+        const rig = makeRig({
+          enqueueRuntime: {
+            scheduler: {} as any, runStore, sessionCatalog: {} as any,
+            toolInvocationStore: toolInvocationStore as any, enabled: true,
+          },
+        });
+
+        await (rig.channel as any).handleAbortAsync(wsClient(rig.ws, USER), { action: 'abort', runId });
+
+        expect(toolInvocationStore.listRunning).not.toHaveBeenCalled();
+        expect(toolInvocationStore.requestCancelOnce).not.toHaveBeenCalled();
+        expect(rig.ws.sent.at(-2)?.data).toEqual({ type: 'abort_ok', runId });
+        expect(rig.ws.sent.at(-1)?.data).toMatchObject({
+          type: 'session_status', sessionId, status: terminalStatus, runId,
+        });
+      },
+    );
+
+    it('run 已 cancelled 的 stop 重试仍会重放 durable 工具取消，不依赖首次取消事件', async () => {
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({ runId: 'run-term-tool', sessionId: 's-term-tool', userId: USER.sub, model: 'm', channel: 'web' });
       await runStore.markStatus('run-term-tool', 'cancelled', 'web_abort');

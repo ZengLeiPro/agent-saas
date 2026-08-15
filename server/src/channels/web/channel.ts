@@ -1789,7 +1789,9 @@ export class WebChannel implements BaseChannel {
     if (resolvedRunStatus && TERMINAL_RUN_STATUSES.has(resolvedRunStatus)) {
       if (sessionId) {
         await this.cancelPendingSteeringForSession(sessionId, 'aborted', resolvedRunId);
-        if (resolvedRunId) {
+        // 只有 cancelled run 可能遗留“run 已取消、工具 outbox 尚未登记”的半状态。
+        // completed/failed/orphaned 已有权威执行结果，重复 stop 不得反向触发外部 DELETE。
+        if (resolvedRunId && resolvedRunStatus === 'cancelled') {
           await this.requestRunningToolCancellations(sessionId, resolvedRunId, client.user?.sub);
         }
       }

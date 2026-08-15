@@ -1,4 +1,4 @@
-import type { OrgAgentFormValues, OrgAgentGuardrailMode } from './types';
+import { emptyFormValues, type OrgAgentFormValues, type OrgAgentGuardrailMode } from './types';
 import { authFetch } from '@/lib/authFetch';
 
 /**
@@ -34,15 +34,14 @@ function buildTemplateValues(input: {
   audienceExposure?: 'all' | 'allow_users';
 }): OrgAgentFormValues {
   return {
+    ...emptyFormValues(),
     name: input.name,
     avatar: input.avatar,
-    avatarImageUrl: null,
+    avatarStoredPath: input.avatar,
     description: input.description,
     starterPromptsText: input.starterPrompts.join('\n'),
     instructions: input.instructions,
-    allowedSkills: [],
     audienceExposure: input.audienceExposure ?? 'all',
-    audienceUsernames: [],
     guardrailMode: input.mode ?? 'shadow',
     guardrailAllowExamples: input.allowExamples,
     guardrailRejectExamples: input.rejectExamples,

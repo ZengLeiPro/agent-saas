@@ -371,6 +371,15 @@ export class AgentDwsMessageRouter {
       runtimeRunId: runId,
       abortController,
     }, {
+      onInteraction: async event => event.type === 'permission_request'
+        ? {
+            allow: false,
+            message: '钉钉成员会话暂不支持交互式工具审批，本次工具调用已拒绝；请直接回复用户可执行的替代方案。',
+          }
+        : {
+            answers: {},
+            message: '钉钉成员会话暂不支持交互式提问；请在回复中直接向用户说明需要补充的信息。',
+          },
       onResult: result => {
         resultText = result.resultText;
       },

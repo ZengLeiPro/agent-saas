@@ -174,6 +174,7 @@ export class PgAgentResourceStore {
     resource: ManagedAgentResource;
     version: ManagedAgentVersion;
     created: boolean;
+    changed: boolean;
   }> {
     assertManagedAgentDefinitionSafe(input.definition);
     const digest = createHash('sha256').update(canonicalize(input.definition)).digest('hex');
@@ -191,7 +192,20 @@ export class PgAgentResourceStore {
       const duplicate = await client.query(
         `SELECT * FROM ${this.versionsTable} WHERE agent_id=$1 AND digest=$2`, [input.agentId, digest],
       );
-      if (duplicate.rows[0]) return { resource: current, version: rowToVersion(duplicate.rows[0]), created: false };
+      if (duplicate.rows[0]) {
+        const version = rowToVersion(duplicate.rows[0]);
+        if (current.currentVersionId === version.versionId) {
+          return { resource: current, version, created: false, changed: false };
+        }
+        const updated = await client.query(`
+          UPDATE ${this.resourcesTable}
+          SET status=CASE WHEN status='draft' THEN 'enabled' ELSE status END,
+              current_version_id=$2,revision=revision+1,updated_at=NOW(),updated_by=$3
+          WHERE agent_id=$1 AND revision=$4 RETURNING *
+        `, [input.agentId, version.versionId, input.publishedBy, input.expectedRevision]);
+        if (!updated.rows[0]) throw new AgentResourceInvariantError('AGENT_RESOURCE_VERSION_CONFLICT');
+        return { resource: rowToResource(updated.rows[0]), version, created: false, changed: true };
+      }
       const nextNumber = await client.query<{ next_version: string }>(
         `SELECT COALESCE(MAX(version_number),0)+1 AS next_version FROM ${this.versionsTable} WHERE agent_id=$1`,
         [input.agentId],
@@ -204,11 +218,17 @@ export class PgAgentResourceStore {
       `, [versionId, input.agentId, Number(nextNumber.rows[0]?.next_version ?? 1), JSON.stringify(input.definition), digest, input.publishedBy]);
       const updated = await client.query(`
         UPDATE ${this.resourcesTable}
-        SET status='enabled',current_version_id=$2,revision=revision+1,updated_at=NOW(),updated_by=$3
+        SET status=CASE WHEN status='draft' THEN 'enabled' ELSE status END,
+            current_version_id=$2,revision=revision+1,updated_at=NOW(),updated_by=$3
         WHERE agent_id=$1 AND revision=$4 RETURNING *
       `, [input.agentId, versionId, input.publishedBy, input.expectedRevision]);
       if (!updated.rows[0]) throw new AgentResourceInvariantError('AGENT_RESOURCE_VERSION_CONFLICT');
-      return { resource: rowToResource(updated.rows[0]), version: rowToVersion(versionResult.rows[0]), created: true };
+      return {
+        resource: rowToResource(updated.rows[0]),
+        version: rowToVersion(versionResult.rows[0]),
+        created: true,
+        changed: true,
+      };
     });
   }
 

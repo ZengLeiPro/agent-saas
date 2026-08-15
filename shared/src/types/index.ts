@@ -216,7 +216,11 @@ export type { AgentProfile, AgentProfileDetail } from "./agent";
 
 export type {
   OrgAgentAudience,
+  OrgAgentExecutionTarget,
   OrgAgentGuardrailConfig,
+  OrgAgentRuntimeCapabilityPolicy,
+  OrgAgentRuntimeContextModule,
+  OrgAgentRuntimePolicy,
   OrgAgentRecord,
   OrgAgentSummary,
 } from "./orgAgent";

@@ -35,6 +35,8 @@ export interface SessionMeta extends Partial<AgentProfileSessionBinding> {
    * 缺省 = 个人 Agent 会话（存量行为零变化）。PG meta_json 自动投影。
    */
   orgAgentId?: string;
+  /** 当前 in-flight run 的组织 Agent 安全快照；新消息更新，approval/interaction resume 固定复用。 */
+  orgAgentSnapshot?: unknown;
   /** 软删除时间戳（ISO 8601），存在即表示已删除 */
   deletedAt?: string;
   /** 执行删除操作的用户名 */

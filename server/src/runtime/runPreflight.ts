@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { resolveOrgAgentRuntimeSkillIds } from '../data/orgAgents/runtimePolicy.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 import type { ManagedAgentResource, ManagedAgentVersion } from '../data/agentResources/types.js';
 import type { TenantRecord } from '../data/tenants/types.js';
@@ -86,6 +87,45 @@ export interface RunPreflightServiceOptions {
     context: { tenantId: string; userId: string; agentId?: string },
   ) => Promise<boolean>;
   logger?: { warn(message: string): void };
+}
+
+export function mergeResolvedResourceRefs(
+  ...sources: ReadonlyArray<readonly ResolvedResourceRef[]>
+): ResolvedResourceRef[] {
+  const merged = new Map<string, ResolvedResourceRef>();
+  for (const source of sources) {
+    for (const ref of source) {
+      if (!ref.id || merged.has(ref.id)) continue;
+      merged.set(ref.id, { ...ref });
+    }
+  }
+  return [...merged.values()];
+}
+
+export function resolveOrgAgentSnapshotSkillRefs(input: {
+  typedSkills?: readonly ResolvedResourceRef[];
+  versionedSkills?: readonly ResolvedResourceRef[];
+  versionedKnowledge?: readonly string[];
+  legacyAgent?: Pick<OrgAgentRecord, 'allowedSkills' | 'allowedKnowledge'>;
+}): ResolvedResourceRef[] {
+  const typedSkills = input.typedSkills ?? [];
+  const versionedSkills = input.versionedSkills ?? [];
+  const versionedKnowledge = (input.versionedKnowledge ?? []).map(id => ({ id }));
+  const legacyKnowledge = (input.legacyAgent?.allowedKnowledge ?? []).map(id => ({ id }));
+  if (typedSkills.length > 0) {
+    // Typed governance bindings are authoritative for allowedSkills; knowledge
+    // remains an MVP tenant-skill attachment and is unioned independently.
+    return mergeResolvedResourceRefs(typedSkills, versionedKnowledge, legacyKnowledge);
+  }
+  if (versionedSkills.length > 0) {
+    return mergeResolvedResourceRefs(versionedSkills, versionedKnowledge, legacyKnowledge);
+  }
+  return mergeResolvedResourceRefs(
+    input.legacyAgent
+      ? resolveOrgAgentRuntimeSkillIds(input.legacyAgent).map(id => ({ id }))
+      : [],
+    versionedKnowledge,
+  );
 }
 
 interface ResolvedRunInput {
@@ -394,6 +434,21 @@ export class RunPreflightService {
           }];
         })
       : undefined;
+    const versionedKnowledge = Array.isArray(resolved.managedAgentVersion?.definition.knowledge)
+      ? resolved.managedAgentVersion.definition.knowledge.filter(
+          (value): value is string => typeof value === 'string' && value.length > 0,
+        )
+      : [];
+    const snapshotSkills = resolved.orgAgentId
+      ? resolveOrgAgentSnapshotSkillRefs({
+          typedSkills: resolved.typedBindings?.skills,
+          versionedSkills,
+          versionedKnowledge,
+          legacyAgent: resolved.orgAgent,
+        })
+      : resolved.typedBindings?.skills.length
+        ? resolved.typedBindings.skills
+        : versionedSkills ?? [];
     return {
       runId: input.runId,
       sessionId: input.sessionId,
@@ -428,9 +483,7 @@ export class RunPreflightService {
               version: resolved.managedAgentVersion.versionNumber,
             } : {}),
           },
-      skills: resolved.typedBindings?.skills.length
-        ? resolved.typedBindings.skills
-        : versionedSkills ?? (resolved.orgAgent?.allowedSkills ?? []).map(id => ({ id })),
+      skills: snapshotSkills,
       connectors: resolved.typedBindings?.connectors ?? [],
       credentialBindings: resolved.typedBindings?.credentialBindings ?? [],
       ...(input.environment ? {

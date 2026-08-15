@@ -151,7 +151,8 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
 
   router.use(async (req, res, next) => {
     const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
-    if (!isMutation || req.path.endsWith('/gate-preview') || !deps.legacyWriteGate) return next();
+    const isDedicatedMediaUpload = /^\/[^/]+\/avatar$/.test(req.path);
+    if (!isMutation || req.path.endsWith('/gate-preview') || isDedicatedMediaUpload || !deps.legacyWriteGate) return next();
     try {
       await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
       next();
@@ -332,7 +333,11 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
         return;
       }
       auditLog(req, 'org_agent_avatar_uploaded', `${updated.name}（${updated.id}）`);
-      res.json({ avatar: `/api/org-agents/avatar/${req.params.id}?v=${version}`, avatarVersion: version });
+      res.json({
+        avatar: `/api/org-agents/avatar/${req.params.id}?v=${version}`,
+        avatarPath: updated.avatar,
+        avatarVersion: version,
+      });
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : '上传失败' });
     }

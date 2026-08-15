@@ -1,23 +1,20 @@
-import { useEffect, useState } from 'react';
-import { Bot, Loader2, Pencil, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Bot, Loader2, Pencil, Plus, RefreshCw, Sparkles } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { SettingsPanelHeader } from '@/components/SettingsCenter/SettingsPanelHeader';
 import { OrgAgentAvatarContent } from '@/components/OrgAgentAvatar';
 import { cn } from '@/lib/utils';
 import { OrgAgentFormDialog } from './OrgAgentFormDialog';
-import { useOrgAgentAdmin } from './hooks';
+import {
+  useOrgAgentAdmin,
+  type GovernanceAssignmentDraft,
+  type ManagedOrgAgentDefinition,
+  type OrgAgentConfiguration,
+} from './hooks';
 import {
   assembleScopeDescription,
   type OrgAgentFormValues,
@@ -25,22 +22,12 @@ import {
 } from './types';
 import { fetchOrgAgentTemplates, FALLBACK_TEMPLATES, type OrgAgentTemplate } from './templates';
 import { useAuth } from '@/contexts/AuthContext';
-import { DEFAULT_TENANT_ID } from '@/components/TenantManager/types';
 
-function formValuesToPayload(values: OrgAgentFormValues, editing: OrgAgentRecord | null) {
-  // avatar 三态：有图片头像 → 不发字段（路径值仅上传接口写入，PATCH 发路径会被 schema 拒）；
-  // emoji → 发值；原图片被移除且无 emoji → 发空串显式清除
-  const hadImage = !!editing?.avatar?.startsWith('org-agent-avatars/');
-  const emoji = values.avatar.trim();
-  const avatarPatch = values.avatarImageUrl
-    ? {}
-    : emoji
-      ? { avatar: emoji }
-      : hadImage
-        ? { avatar: '' }
-        : {};
-  // 门禁 mode 序列化：off → enabled:false；shadow/enforce → enabled:true
-  // scopeDescription 通过 assembleScopeDescription 拼装（含 gate-slots 标记，供后端识别 shadow vs enforce）
+function formValuesToGovernance(values: OrgAgentFormValues): {
+  definition: ManagedOrgAgentDefinition;
+  enabled: boolean;
+  assignments: GovernanceAssignmentDraft[];
+} {
   const guardrailEnabled = values.guardrailMode !== 'off';
   const assembledScope = guardrailEnabled
     ? assembleScopeDescription({
@@ -52,29 +39,47 @@ function formValuesToPayload(values: OrgAgentFormValues, editing: OrgAgentRecord
         rawScope: values.guardrailScopeDescription,
       })
     : '';
-  return {
+  const avatar = values.avatarImageUrl ? undefined : values.avatar.trim();
+  const definition: ManagedOrgAgentDefinition = {
+    schemaVersion: 1,
     name: values.name.trim(),
-    ...avatarPatch,
+    ...(avatar !== undefined ? { avatar } : {}),
     description: values.description.trim(),
     starterPrompts: values.starterPromptsText
       .split('\n')
-      .map((item) => item.trim())
+      .map(item => item.trim())
       .filter(Boolean)
       .slice(0, 6),
     instructions: values.instructions,
-    allowedSkills: values.allowedSkills,
-    audience: {
-      exposure: values.audienceExposure,
-      usernames: values.audienceExposure === 'allow_users' ? values.audienceUsernames : [],
-    },
+    skills: values.allowedSkills.map(id => ({ id })),
+    knowledge: [...new Set(values.allowedKnowledgeText.split(/[\n,]/).map(item => item.trim()).filter(Boolean))],
+    runtime: values.runtime,
     guardrail: {
+      mode: values.guardrailMode,
       enabled: guardrailEnabled,
       scopeDescription: assembledScope,
       rejectionMessage: values.guardrailRejectionMessage.trim(),
       strictness: values.guardrailStrictness,
     },
-    enabled: values.enabled,
+    source: 'governance',
   };
+  const assignments: GovernanceAssignmentDraft[] = values.audienceExposure === 'all'
+    ? [{ assigneeType: 'everyone', effect: 'allow', origin: 'direct' }]
+    : [
+        ...values.audienceUserIds.map(assigneeId => ({
+          assigneeType: 'user' as const,
+          assigneeId,
+          effect: 'allow' as const,
+          origin: 'direct' as const,
+        })),
+        ...values.audienceGroupIds.map(assigneeId => ({
+          assigneeType: 'directory_group' as const,
+          assigneeId,
+          effect: 'allow' as const,
+          origin: 'direct' as const,
+        })),
+      ];
+  return { definition, enabled: values.enabled, assignments };
 }
 
 function audienceText(agent: OrgAgentRecord): string {
@@ -87,20 +92,28 @@ function audienceText(agent: OrgAgentRecord): string {
  * 组织管理 modal「企业专家」section
  *
  * 顶部：3 张种子模板卡（报价审核 / 客户情报 / 合同风险），可折叠。
- * 主体：列表（名称/头像/指派/门禁/启用开关/编辑/删除）+ 创建/编辑表单弹窗。
- * 表单：门禁配置改为填空题式（allow/reject 示例 + mode 三档 + strictness + 试测按钮）。
+ * 主体：列表 + 单页统一详情；所有保存走治理 Version / Assignment，legacy 仅作运行投影。
  */
 export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; tenantName?: string }) {
-  const { isPlatformAdmin, isSuperAdmin, canPlatform } = useAuth();
-  const canEdit = !isPlatformAdmin
-    || (tenantId !== DEFAULT_TENANT_ID && canPlatform("customer_config.manage"));
-  const canDelete = !isPlatformAdmin || isSuperAdmin;
-  const { agents, loading, error, refresh, create, update, remove, uploadAvatar } = useOrgAgentAdmin(tenantId);
+  const { isPlatformAdmin } = useAuth();
+  // 治理资源明确区分 platform_admin 与 org_admin；平台管理员只能查看，不能代客户组织写配置。
+  const canEdit = !isPlatformAdmin;
+  const {
+    agents,
+    loading,
+    error,
+    refresh,
+    loadConfiguration,
+    saveConfiguration,
+    updateStatus,
+    uploadAvatar,
+  } = useOrgAgentAdmin(tenantId);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<OrgAgentRecord | null>(null);
+  const [configuration, setConfiguration] = useState<OrgAgentConfiguration | null>(null);
+  const [configurationLoading, setConfigurationLoading] = useState(false);
+  const detailRequestRef = useRef(0);
   const [initialValues, setInitialValues] = useState<OrgAgentFormValues | null>(null);
-  const [deleting, setDeleting] = useState<OrgAgentRecord | null>(null);
-  const [deleteBusy, setDeleteBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [templates, setTemplates] = useState<OrgAgentTemplate[]>(FALLBACK_TEMPLATES);
   const [templatesCollapsed, setTemplatesCollapsed] = useState(false);
@@ -114,60 +127,76 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
   }, []);
 
   const handleSubmit = async (values: OrgAgentFormValues) => {
-    const payload = formValuesToPayload(values, editing);
-    if (editing) {
-      await update(editing.id, payload);
-    } else {
-      await create(payload);
-    }
+    if (editing && !configuration) throw new Error('企业专家治理配置尚未加载完成');
+    await saveConfiguration({
+      configuration: editing ? configuration : null,
+      ...formValuesToGovernance(values),
+    });
   };
 
   const handleToggleEnabled = async (agent: OrgAgentRecord, enabled: boolean) => {
     setActionError(null);
     try {
-      await update(agent.id, { enabled });
+      await updateStatus(agent.id, enabled);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
     }
   };
 
-  const handleDelete = async () => {
-    if (!deleting) return;
-    setDeleteBusy(true);
-    setActionError(null);
-    try {
-      await remove(deleting.id);
-      setDeleting(null);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setDeleteBusy(false);
-    }
+  const closeForm = () => {
+    detailRequestRef.current += 1;
+    setFormOpen(false);
+    setEditing(null);
+    setConfiguration(null);
+    setConfigurationLoading(false);
+    setInitialValues(null);
   };
 
   const openBlankForm = () => {
     setEditing(null);
+    setConfiguration(null);
+    setConfigurationLoading(false);
     setInitialValues(null);
     setFormOpen(true);
   };
 
   const openTemplateForm = (template: OrgAgentTemplate) => {
     setEditing(null);
+    setConfiguration(null);
+    setConfigurationLoading(false);
     setInitialValues(template.values);
     setFormOpen(true);
   };
 
   const openEditForm = (agent: OrgAgentRecord) => {
+    const requestId = ++detailRequestRef.current;
+    setActionError(null);
     setEditing(agent);
+    setConfiguration(null);
+    setConfigurationLoading(true);
     setInitialValues(null);
     setFormOpen(true);
+    void loadConfiguration(agent.id)
+      .then(next => {
+        if (detailRequestRef.current !== requestId) return;
+        setConfiguration(next);
+      })
+      .catch(err => {
+        if (detailRequestRef.current !== requestId) return;
+        setActionError(err instanceof Error ? err.message : String(err));
+        setFormOpen(false);
+        setEditing(null);
+      })
+      .finally(() => {
+        if (detailRequestRef.current === requestId) setConfigurationLoading(false);
+      });
   };
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SettingsPanelHeader
         title="企业专家"
-        description={`为 ${tenantName || tenantId || '当前组织'} 定义专岗专家：公开说明 + 固有技能 + 指派成员，可选话题门禁。`}
+        description={`为 ${tenantName || tenantId || '当前组织'} 管理专岗 Agent；打开详情即可配置身份、能力、运行策略、访问范围与钉钉账号。`}
         actions={
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={() => { void refresh(); }} disabled={loading}>
@@ -250,10 +279,15 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
                           <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-base">
                             <OrgAgentAvatarContent agent={agent} />
                           </span>
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-medium">{agent.name}</div>
-                            <div className="truncate text-xs text-muted-foreground">{agent.id}</div>
-                          </div>
+                          <button
+                            type="button"
+                            className="min-w-0 text-left hover:text-brand-600 disabled:cursor-default disabled:hover:text-inherit"
+                            disabled={!canEdit}
+                            onClick={() => openEditForm(agent)}
+                          >
+                            <span className="block truncate text-sm font-medium">{agent.name}</span>
+                            <span className="block truncate text-xs text-muted-foreground">{agent.id}</span>
+                          </button>
                         </div>
                       </TableCell>
                       <TableCell className="text-sm">{audienceText(agent)}</TableCell>
@@ -287,15 +321,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
                           >
                             <Pencil className="size-3.5" />
                           </Button>
-                          {canDelete && <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-8 text-destructive hover:text-destructive"
-                            title="删除"
-                            onClick={() => setDeleting(agent)}
-                          >
-                            <Trash2 className="size-3.5" />
-                          </Button>}
+
                         </div>
                       </TableCell>
                     </TableRow>
@@ -311,28 +337,14 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
         open={formOpen}
         tenantId={tenantId}
         editing={editing}
+        configuration={configuration}
+        configurationLoading={configurationLoading}
         initialValues={initialValues}
-        onClose={() => { setFormOpen(false); setEditing(null); setInitialValues(null); }}
+        onClose={closeForm}
         onSubmit={handleSubmit}
         onUploadAvatar={uploadAvatar}
       />
 
-      <Dialog open={!!deleting} onOpenChange={(next) => { if (!next) setDeleting(null); }}>
-        <DialogContent className="w-[min(420px,calc(100vw-48px))]">
-          <DialogHeader>
-            <DialogTitle>删除企业专家</DialogTitle>
-            <DialogDescription>
-              将永久删除「{deleting?.name}」的配置（已有会话记录保留）。若只是暂时下线，建议改用启用开关。
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleting(null)} disabled={deleteBusy}>取消</Button>
-            <Button variant="destructive" onClick={() => { void handleDelete(); }} disabled={deleteBusy}>
-              {deleteBusy ? '删除中...' : '确认删除'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

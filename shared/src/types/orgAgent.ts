@@ -9,9 +9,44 @@
 export interface OrgAgentAudience {
   exposure: 'all' | 'allow_users' | 'deny_users';
   usernames: string[];
+  /** 治理目录组 id；兼容投影同时展开为 usernames 供旧通道判定。 */
+  departmentIds?: string[];
+  roles?: string[];
+}
+
+export type OrgAgentRuntimeContextModule =
+  | 'company_info'
+  | 'tenant_instructions'
+  | 'runtime_memory'
+  | 'personal_context';
+export type OrgAgentRuntimeCapabilityPolicy = 'inherit' | 'disabled';
+export type OrgAgentExecutionTarget = 'server-local' | 'server-container' | 'server-remote' | 'client';
+
+export interface OrgAgentRuntimePolicy {
+  schemaVersion: 1;
+  context: { modules: OrgAgentRuntimeContextModule[] | null };
+  model: { strategy: 'inherit' } | { strategy: 'fixed'; modelRef: string };
+  memory: { scope: 'inherit' | 'full' | 'search_only' | 'none' };
+  limits: { maxTurns: number | null };
+  capabilities: {
+    shell: OrgAgentRuntimeCapabilityPolicy;
+    backgroundTasks: OrgAgentRuntimeCapabilityPolicy;
+    interaction: OrgAgentRuntimeCapabilityPolicy;
+    subagents: OrgAgentRuntimeCapabilityPolicy;
+    scheduling: OrgAgentRuntimeCapabilityPolicy;
+  };
+  tools: { allowlist: string[] | null; denylist: string[] };
+  mcp: {
+    serverAllowlist: string[] | null;
+    toolAllowlist: string[] | null;
+    denyServers: string[];
+    denyTools: string[];
+  };
+  execution: { allowedTargets: OrgAgentExecutionTarget[] | null };
 }
 
 export interface OrgAgentGuardrailConfig {
+  mode?: 'off' | 'shadow' | 'enforce';
   enabled: boolean;
   /** 话题范围描述（喂门禁小模型），≤2000 字 */
   scopeDescription: string;
@@ -36,6 +71,10 @@ export interface OrgAgentRecord {
   instructions: string;
   /** 该 Agent 的固有 Skill 能力，不依赖成员个人勾选 */
   allowedSkills: string[];
+  /** MVP 期间知识资源 id 同时作为 tenant-owned Skill id 注入运行时。 */
+  allowedKnowledge?: string[];
+  /** 每 Agent 独立运行策略；缺省时继承组织 org_agent Profile。 */
+  runtime?: OrgAgentRuntimePolicy;
   audience: OrgAgentAudience;
   guardrail: OrgAgentGuardrailConfig;
   enabled: boolean;

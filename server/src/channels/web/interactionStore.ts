@@ -112,6 +112,16 @@ class InteractionStore {
     return true;
   }
 
+  /** 终止并移除交互，避免遗留 Promise 永久占用旧执行协程。 */
+  discard(interactionId: string, reason: string): boolean {
+    const entry = this.pending.get(interactionId);
+    if (!entry) return false;
+    clearTimeout(entry.timer);
+    this.pending.delete(interactionId);
+    entry.reject(new Error(reason));
+    return true;
+  }
+
   reject(interactionId: string, reason: string): void {
     const entry = this.pending.get(interactionId);
     if (!entry) return;

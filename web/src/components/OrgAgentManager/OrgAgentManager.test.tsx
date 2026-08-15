@@ -1,7 +1,19 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockAuthFetch } = vi.hoisted(() => ({ mockAuthFetch: vi.fn() }));
+const {
+  mockAuthFetch,
+  mockLoadConfiguration,
+  mockSaveConfiguration,
+  mockUpdateStatus,
+  mockUploadAvatar,
+} = vi.hoisted(() => ({
+  mockAuthFetch: vi.fn(),
+  mockLoadConfiguration: vi.fn(),
+  mockSaveConfiguration: vi.fn(),
+  mockUpdateStatus: vi.fn(),
+  mockUploadAvatar: vi.fn(),
+}));
 
 vi.mock('@/lib/authFetch', () => ({
   authFetch: mockAuthFetch,
@@ -23,9 +35,9 @@ vi.mock('@/components/UserManager/hooks', () => ({
 
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
-    isPlatformAdmin: true,
-    isSuperAdmin: true,
-    canPlatform: () => true,
+    isPlatformAdmin: false,
+    isSuperAdmin: false,
+    canPlatform: () => false,
   }),
 }));
 
@@ -35,12 +47,13 @@ vi.mock('./hooks', () => ({
     loading: false,
     error: null,
     refresh: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    remove: vi.fn(),
-    uploadAvatar: vi.fn(),
+    loadConfiguration: mockLoadConfiguration,
+    saveConfiguration: mockSaveConfiguration,
+    updateStatus: mockUpdateStatus,
+    uploadAvatar: mockUploadAvatar,
   }),
   useTenantSkillOptions: () => ({ skills: [], loading: false }),
+  useTenantKnowledgeOptions: () => ({ knowledge: [], loading: false }),
 }));
 
 // 屏蔽 SettingsPanelHeader 的重样式，避免污染 DOM 断言
@@ -67,6 +80,10 @@ import { FALLBACK_TEMPLATES } from './templates';
 
 beforeEach(() => {
   mockAuthFetch.mockReset();
+  mockLoadConfiguration.mockReset();
+  mockSaveConfiguration.mockReset().mockResolvedValue('org-new');
+  mockUpdateStatus.mockReset().mockResolvedValue(undefined);
+  mockUploadAvatar.mockReset();
   // 默认：expert-templates 端点未部署 → hook 返回 fallback
   mockAuthFetch.mockImplementation(async () => ({
     ok: false,
@@ -76,6 +93,25 @@ beforeEach(() => {
 });
 
 describe('OrgAgentManager - 门禁填空 / 模板卡 / 试测按钮', () => {
+  it('创建保存走治理 Version / Assignment，不再调用 legacy PATCH', async () => {
+    render(<OrgAgentManager tenantId="kaiyan" />);
+    fireEvent.click(screen.getByRole('button', { name: /创建企业专家/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByPlaceholderText('如：产品选型助手'), { target: { value: '测试专家' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '创建' }));
+    await waitFor(() => expect(mockSaveConfiguration).toHaveBeenCalledTimes(1));
+    expect(mockSaveConfiguration).toHaveBeenCalledWith(expect.objectContaining({
+      configuration: null,
+      enabled: true,
+      assignments: [{ assigneeType: 'everyone', effect: 'allow', origin: 'direct' }],
+      definition: expect.objectContaining({
+        schemaVersion: 1,
+        name: '测试专家',
+        source: 'governance',
+        runtime: expect.objectContaining({ schemaVersion: 1 }),
+      }),
+    }));
+  });
   it('渲染 3 张种子模板卡（报价审核 / 客户情报 / 合同风险）', async () => {
     render(<OrgAgentManager tenantId="kaiyan" tenantName="开沿科技" />);
     // 模板 fallback 直接从静态导入

@@ -28,9 +28,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useUsers } from '@/components/UserManager/hooks';
-import { useTenantSkillOptions } from './hooks';
+import { useTenantKnowledgeOptions, useTenantSkillOptions, type OrgAgentConfiguration } from './hooks';
+import { OrgAgentDwsSection } from './OrgAgentDwsSection';
+import { OrgAgentRuntimeSection } from './OrgAgentRuntimeSection';
 import {
   assembleScopeDescription,
+  defaultOrgAgentRuntimePolicy,
   emptyFormValues,
   parseGateSlots,
   type OrgAgentFormValues,
@@ -65,6 +68,8 @@ export function OrgAgentFormDialog({
   open,
   tenantId,
   editing,
+  configuration,
+  configurationLoading = false,
   initialValues,
   onClose,
   onSubmit,
@@ -74,12 +79,15 @@ export function OrgAgentFormDialog({
   tenantId?: string;
   /** 编辑目标；null = 创建 */
   editing: OrgAgentRecord | null;
+  /** 治理真源配置；编辑时必须加载后再允许保存。 */
+  configuration?: OrgAgentConfiguration | null;
+  configurationLoading?: boolean;
   /** 从模板创建时传入的预填值；优先级低于 editing */
   initialValues?: OrgAgentFormValues | null;
   onClose: () => void;
   onSubmit: (values: OrgAgentFormValues) => Promise<void>;
-  /** 上传图片头像（仅编辑态可用；上传即时生效） */
-  onUploadAvatar?: (id: string, file: File) => Promise<{ avatar: string; avatarVersion: number }>;
+  /** 上传图片头像（专用媒体接口，上传即时生效） */
+  onUploadAvatar?: (id: string, file: File) => Promise<{ avatar: string; avatarPath?: string; avatarVersion: number }>;
 }) {
   const [values, setValues] = useState<OrgAgentFormValues>(emptyFormValues());
   const [saving, setSaving] = useState(false);
@@ -92,7 +100,10 @@ export function OrgAgentFormDialog({
   const [gateTestMessage, setGateTestMessage] = useState('');
   const [gateTestRunning, setGateTestRunning] = useState(false);
   const [gateTestResult, setGateTestResult] = useState<GateTestResult | null>(null);
+  const [directoryGroups, setDirectoryGroups] = useState<Array<{ groupId: string; displayName: string }>>([]);
+  const [directoryGroupsError, setDirectoryGroupsError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const formInitializationKeyRef = useRef('');
 
   /** 选预设 = 拉取静态图转 File 走上传链路（复用图片头像存储，零额外后端逻辑） */
   const applyPreset = async (key: string) => {
@@ -105,7 +116,12 @@ export function OrgAgentFormDialog({
       const blob = await res.blob();
       const file = new File([blob], `${key}.jpg`, { type: 'image/jpeg' });
       const data = await onUploadAvatar(editing.id, file);
-      setValues((prev) => ({ ...prev, avatarImageUrl: resolveApiAssetUrl(data.avatar), avatar: '' }));
+      setValues((prev) => ({
+        ...prev,
+        avatarImageUrl: resolveApiAssetUrl(data.avatar),
+        avatar: '',
+        avatarStoredPath: data.avatarPath ?? prev.avatarStoredPath,
+      }));
       setPresetsOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -115,6 +131,7 @@ export function OrgAgentFormDialog({
   };
   const { users } = useUsers();
   const { skills, loading: skillsLoading } = useTenantSkillOptions(tenantId);
+  const { knowledge, loading: knowledgeLoading } = useTenantKnowledgeOptions(tenantId);
 
   const tenantUsers = useMemo(
     () => (tenantId ? users.filter((user) => user.tenantId === tenantId) : users),
@@ -122,7 +139,42 @@ export function OrgAgentFormDialog({
   );
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !tenantId) {
+      setDirectoryGroups([]);
+      setDirectoryGroupsError('');
+      return;
+    }
+    let cancelled = false;
+    setDirectoryGroupsError('');
+    void authFetch(`/api/governance/access/directory-groups?tenantId=${encodeURIComponent(tenantId)}`)
+      .then(async response => {
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({})) as { error?: string };
+          throw new Error(data.error || '读取目录组失败');
+        }
+        return response.json() as Promise<{ groups?: Array<{ groupId: string; displayName: string; status?: string }> }>;
+      })
+      .then(data => {
+        if (cancelled) return;
+        setDirectoryGroups((data.groups ?? []).filter(group => group.status !== 'disabled'));
+      })
+      .catch(error => {
+        if (!cancelled) setDirectoryGroupsError(error instanceof Error ? error.message : String(error));
+      });
+    return () => { cancelled = true; };
+  }, [open, tenantId]);
+
+  useEffect(() => {
+    if (!open) {
+      formInitializationKeyRef.current = '';
+      return;
+    }
+    if (editing && configurationLoading) return;
+    const initializationKey = editing
+      ? `${editing.id}:${configuration?.resource.revision ?? 'legacy'}`
+      : initialValues ? `template:${initialValues.name}` : 'blank';
+    if (formInitializationKeyRef.current === initializationKey) return;
+    formInitializationKeyRef.current = initializationKey;
     setError(null);
     setNewAllowExample('');
     setNewRejectExample('');
@@ -130,37 +182,55 @@ export function OrgAgentFormDialog({
     setGateTestResult(null);
     setGateTestMessage('');
     if (editing) {
-      const isImageAvatar = !!editing.avatar?.startsWith('org-agent-avatars/');
+      const definition = configuration?.version?.definition;
+      const avatarStoredPath = definition?.avatar ?? editing.avatar ?? '';
+      const isImageAvatar = avatarStoredPath.startsWith('org-agent-avatars/');
+      const guardrail = definition?.guardrail ?? editing.guardrail;
       // 解析 scopeDescription 里的结构化标记（若无标记则视为遗留 raw prompt 兜底）
-      const parsed = parseGateSlots(editing.guardrail.scopeDescription || '');
+      const parsed = parseGateSlots(guardrail.scopeDescription || '');
       const derivedMode: OrgAgentGuardrailMode = parsed.slots?.mode
-        ?? (editing.guardrail.enabled ? 'enforce' : 'off');
+        ?? guardrail.mode
+        ?? (guardrail.enabled ? 'enforce' : 'off');
+      const assignments = configuration?.assignment.assignments ?? [];
+      const hasEveryone = assignments.some(item => item.assigneeType === 'everyone' && item.effect === 'allow');
+      const assignedUserIds = assignments
+        .filter(item => item.assigneeType === 'user' && item.effect === 'allow' && item.assigneeId)
+        .map(item => item.assigneeId!);
+      const fallbackUserIds = tenantUsers
+        .filter(user => editing.audience.usernames.includes(user.username))
+        .map(user => user.id);
       setValues({
-        name: editing.name,
-        avatar: isImageAvatar ? '' : editing.avatar ?? '',
+        name: definition?.name ?? editing.name,
+        avatar: isImageAvatar ? '' : avatarStoredPath,
         avatarImageUrl: isImageAvatar
-          ? agentAvatarUrl(`org-agent:${editing.id}`, editing.avatar, editing.avatarVersion)
+          ? agentAvatarUrl(`org-agent:${editing.id}`, avatarStoredPath, editing.avatarVersion)
           : null,
-        description: editing.description,
-        starterPromptsText: editing.starterPrompts.join('\n'),
-        instructions: editing.instructions,
-        allowedSkills: [...editing.allowedSkills],
-        audienceExposure: editing.audience.exposure === 'allow_users' ? 'allow_users' : 'all',
-        audienceUsernames: [...editing.audience.usernames],
+        avatarStoredPath,
+        description: definition?.description ?? editing.description,
+        starterPromptsText: (definition?.starterPrompts ?? editing.starterPrompts).join('\n'),
+        instructions: definition?.instructions ?? editing.instructions,
+        allowedSkills: definition?.skills.map(skill => skill.id) ?? [...editing.allowedSkills],
+        allowedKnowledgeText: (definition?.knowledge ?? editing.allowedKnowledge ?? []).join('\n'),
+        audienceExposure: hasEveryone || editing.audience.exposure === 'all' ? 'all' : 'allow_users',
+        audienceUserIds: assignedUserIds.length > 0 ? assignedUserIds : fallbackUserIds,
+        audienceGroupIds: assignments
+          .filter(item => item.assigneeType === 'directory_group' && item.effect === 'allow' && item.assigneeId)
+          .map(item => item.assigneeId!),
+        runtime: structuredClone(definition?.runtime ?? editing.runtime ?? defaultOrgAgentRuntimePolicy()),
         guardrailMode: derivedMode,
         guardrailAllowExamples: parsed.slots?.allowExamples ?? [],
         guardrailRejectExamples: parsed.slots?.rejectExamples ?? [],
         guardrailScopeDescription: parsed.rawScope,
-        guardrailRejectionMessage: editing.guardrail.rejectionMessage,
-        guardrailStrictness: editing.guardrail.strictness,
-        enabled: editing.enabled,
+        guardrailRejectionMessage: guardrail.rejectionMessage,
+        guardrailStrictness: guardrail.strictness,
+        enabled: configuration ? configuration.resource.status === 'enabled' : editing.enabled,
       });
     } else if (initialValues) {
-      setValues({ ...initialValues });
+      setValues(structuredClone(initialValues));
     } else {
       setValues(emptyFormValues());
     }
-  }, [open, editing, initialValues]);
+  }, [open, editing, configuration, configurationLoading, initialValues, tenantUsers]);
 
   const patch = (recipe: Partial<OrgAgentFormValues>) => setValues((prev) => ({ ...prev, ...recipe }));
 
@@ -233,7 +303,7 @@ export function OrgAgentFormDialog({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message,
+          testMessage: message,
           overrideScopeDescription: buildAssembledScope(),
           overrideStrictness: values.guardrailStrictness,
         }),
@@ -282,6 +352,31 @@ export function OrgAgentFormDialog({
       setError('开启门禁时拒绝话术不能为空');
       return;
     }
+    if (assembleScopeDescription({
+      mode: values.guardrailMode,
+      description: values.guardrailScopeDescription,
+      allowExamples: values.guardrailAllowExamples,
+      rejectExamples: values.guardrailRejectExamples,
+      strictness: values.guardrailStrictness,
+    }).length > 2000) {
+      setError('职责边界与允许/拒绝示例合计不能超过 2000 个字符');
+      return;
+    }
+    const knowledgeIds = values.allowedKnowledgeText.split(/[\n,]/).map(item => item.trim()).filter(Boolean);
+    if (new Set(knowledgeIds).size > 20 || knowledgeIds.some(item => item.length > 200)) {
+      setError('知识资源最多 20 个，单个 ID 不能超过 200 个字符');
+      return;
+    }
+    if (values.audienceExposure === 'allow_users'
+      && values.audienceUserIds.length === 0
+      && values.audienceGroupIds.length === 0) {
+      setError('指定访问范围时，至少选择一个成员或部门');
+      return;
+    }
+    if (values.runtime.execution.allowedTargets?.length === 0) {
+      setError('限制执行环境时，至少选择一个执行目标');
+      return;
+    }
     setSaving(true);
     try {
       await onSubmit(values);
@@ -293,17 +388,32 @@ export function OrgAgentFormDialog({
     }
   };
 
+  const selectedKnowledgeIds = values.allowedKnowledgeText
+    .split(/[\n,]/)
+    .map(item => item.trim())
+    .filter(Boolean);
+  const knownKnowledgeIds = new Set(knowledge.map(item => item.id));
+  const unavailableKnowledgeIds = selectedKnowledgeIds.filter(id => !knownKnowledgeIds.has(id));
+
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent className="flex max-h-[min(760px,calc(100vh-64px))] w-[min(640px,calc(100vw-48px))] max-w-none flex-col gap-0 overflow-hidden p-0">
+      <DialogContent className="flex max-h-[min(860px,calc(100vh-40px))] w-[min(960px,calc(100vw-32px))] max-w-none flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="shrink-0 border-b px-6 py-4">
-          <DialogTitle>{editing ? '编辑企业专家' : '创建企业专家'}</DialogTitle>
+          <DialogTitle>{editing ? `配置「${editing.name}」` : '创建企业专家'}</DialogTitle>
           <DialogDescription>
-            配置成员能看到的专家资料，以及内部提示语、固有技能、指派范围与门禁。
+            在一个详情页配置身份、职责、能力、运行策略、访问范围、钉钉账号与话题门禁。
           </DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4">
+        <div
+          className={`min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4 ${configurationLoading ? 'pointer-events-none opacity-60' : ''}`}
+          aria-busy={configurationLoading}
+        >
+          {configurationLoading ? (
+            <div className="flex items-center justify-center gap-2 rounded-md border border-dashed p-6 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />加载治理配置...
+            </div>
+          ) : null}
           {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
 
           <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
@@ -327,7 +437,7 @@ export function OrgAgentFormDialog({
                     size="icon"
                     className="size-8 text-muted-foreground"
                     title="移除图片头像（保存后生效）"
-                    onClick={() => patch({ avatarImageUrl: null })}
+                    onClick={() => patch({ avatarImageUrl: null, avatarStoredPath: '' })}
                   >
                     <X className="size-4" />
                   </Button>
@@ -354,7 +464,11 @@ export function OrgAgentFormDialog({
                       setUploading(true);
                       setError(null);
                       onUploadAvatar(editing.id, file)
-                        .then((data) => patch({ avatarImageUrl: resolveApiAssetUrl(data.avatar), avatar: '' }))
+                        .then((data) => patch({
+                          avatarImageUrl: resolveApiAssetUrl(data.avatar),
+                          avatar: '',
+                          avatarStoredPath: data.avatarPath ?? values.avatarStoredPath,
+                        }))
                         .catch((err) => setError(err instanceof Error ? err.message : String(err)))
                         .finally(() => setUploading(false));
                     }}
@@ -470,8 +584,51 @@ export function OrgAgentFormDialog({
             )}
           </div>
 
-          <div className="space-y-1.5">
-            <Label>指派范围</Label>
+          <div className="space-y-1.5 rounded-xl border p-4">
+            <Label>知识资源</Label>
+            <p className="text-xs text-muted-foreground">
+              选择组织自有知识技能，保存后固化到 Agent 版本并注入运行时。
+            </p>
+            {knowledgeLoading ? (
+              <div className="flex items-center gap-2 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />加载组织知识资源...
+              </div>
+            ) : knowledge.length === 0 ? (
+              <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">当前组织暂无可用知识资源。</div>
+            ) : (
+              <div className="grid max-h-40 gap-2 overflow-auto rounded-md border p-3 sm:grid-cols-2">
+                {knowledge.map(item => (
+                  <label key={item.id} className="flex items-start gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={selectedKnowledgeIds.includes(item.id)}
+                      onChange={event => patch({
+                        allowedKnowledgeText: toggleInList(selectedKnowledgeIds, item.id, event.target.checked).join('\n'),
+                      })}
+                    />
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{item.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{item.id}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+            {unavailableKnowledgeIds.length > 0 && (
+              <p className="text-xs text-amber-700">
+                {unavailableKnowledgeIds.length} 个既有知识绑定当前不可用；本次保存会原样保留。
+              </p>
+            )}
+          </div>
+
+          <OrgAgentRuntimeSection
+            value={values.runtime}
+            onChange={runtime => patch({ runtime })}
+          />
+
+          <div className="space-y-1.5 rounded-xl border p-4">
+            <Label>访问范围</Label>
             <div className="flex items-center gap-4 text-sm">
               <label className="flex items-center gap-1.5">
                 <input
@@ -487,29 +644,59 @@ export function OrgAgentFormDialog({
                   checked={values.audienceExposure === 'allow_users'}
                   onChange={() => patch({ audienceExposure: 'allow_users' })}
                 />
-                指定成员
+                指定成员或部门
               </label>
             </div>
-            {values.audienceExposure === 'allow_users' && (
-              tenantUsers.length === 0 ? (
-                <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">当前组织暂无成员。</div>
-              ) : (
-                <div className="grid max-h-40 gap-2 overflow-auto rounded-md border p-3 sm:grid-cols-2">
-                  {tenantUsers.map((user) => (
-                    <label key={user.id} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={values.audienceUsernames.includes(user.username)}
-                        onChange={(e) => patch({ audienceUsernames: toggleInList(values.audienceUsernames, user.username, e.target.checked) })}
-                      />
-                      <span className="truncate">{user.realName || user.username}
-                        <span className="ml-1 text-xs text-muted-foreground">{user.username}</span>
-                      </span>
-                    </label>
-                  ))}
+            {values.audienceExposure === 'allow_users' ? (
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <div className="text-xs font-medium">成员</div>
+                  {tenantUsers.length === 0 ? (
+                    <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">当前组织暂无成员。</div>
+                  ) : (
+                    <div className="grid max-h-40 gap-2 overflow-auto rounded-md border p-3 sm:grid-cols-2">
+                      {tenantUsers.map((user) => (
+                        <label key={user.id} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={values.audienceUserIds.includes(user.id)}
+                            onChange={(event) => patch({
+                              audienceUserIds: toggleInList(values.audienceUserIds, user.id, event.target.checked),
+                            })}
+                          />
+                          <span className="truncate">{user.realName || user.username}
+                            <span className="ml-1 text-xs text-muted-foreground">{user.username}</span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )
-            )}
+                <div className="space-y-1.5">
+                  <div className="text-xs font-medium">部门 / 钉钉目录组</div>
+                  {directoryGroupsError ? (
+                    <div className="rounded-md border border-warning/30 bg-warning/10 p-2 text-xs text-warning-ink">{directoryGroupsError}</div>
+                  ) : directoryGroups.length === 0 ? (
+                    <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">暂无可用目录组。</div>
+                  ) : (
+                    <div className="grid max-h-40 gap-2 overflow-auto rounded-md border p-3 sm:grid-cols-2">
+                      {directoryGroups.map(group => (
+                        <label key={group.groupId} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={values.audienceGroupIds.includes(group.groupId)}
+                            onChange={event => patch({
+                              audienceGroupIds: toggleInList(values.audienceGroupIds, group.groupId, event.target.checked),
+                            })}
+                          />
+                          <span className="truncate">{group.displayName}<span className="ml-1 text-xs text-muted-foreground">{group.groupId}</span></span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
           </div>
 
           {/* ---------------- 门禁配置：填空题式（allow/reject chips + mode + strictness + 试测） ---------------- */}
@@ -745,6 +932,14 @@ export function OrgAgentFormDialog({
             )}
           </div>
 
+          {editing && tenantId ? (
+            <OrgAgentDwsSection tenantId={tenantId} agentId={editing.id} agentName={values.name || editing.name} />
+          ) : (
+            <div className="rounded-xl border border-dashed p-3 text-xs text-muted-foreground">
+              创建并保存企业专家后，可在同一详情页绑定钉钉成员账号。
+            </div>
+          )}
+
           <div className="flex items-start justify-between gap-4 rounded-xl border p-3">
             <div>
               <div className="text-sm font-medium">启用</div>
@@ -755,9 +950,9 @@ export function OrgAgentFormDialog({
         </div>
 
         <DialogFooter className="shrink-0 border-t px-6 py-4">
-          <Button variant="outline" onClick={onClose} disabled={saving}>取消</Button>
-          <Button onClick={() => { void handleSubmit(); }} disabled={saving}>
-            {saving ? '保存中...' : editing ? '保存' : '创建'}
+          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>取消</Button>
+          <Button type="button" onClick={() => { void handleSubmit(); }} disabled={saving || configurationLoading}>
+            {saving ? '保存中...' : editing ? '保存全部配置' : '创建'}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { governanceRoute } from "@/lib/governanceNavigation";
 import { PlatformAdminShell, TenantAdminShell } from "./AdminShells";
@@ -39,6 +40,12 @@ vi.mock("@/components/PlatformAdmin/pages", async (importOriginal) => {
 vi.mock("@/components/EgressConfigManager", () => ({ default: () => <div>网络与安全管理器</div> }));
 vi.mock("@/components/SystemPromptsManager", () => ({ default: () => <div>系统提示语管理器</div> }));
 vi.mock("@/components/PlatformAdmin/SystemSettingsPanel", () => ({ SystemSettingsPanel: () => <div>系统配置管理器</div> }));
+vi.mock("@/components/BillingManager", () => ({
+  PlatformBillingManager: () => <div>平台计费管理器</div>,
+  TenantBillingPanel: ({ tenantId, tenantName }: { tenantId: string; tenantName?: string }) => (
+    <div>组织预算面板 {tenantId} {tenantName}</div>
+  ),
+}));
 
 const commonTenantProps = {
   renderSkills: () => <div>复用 SkillManager</div>,
@@ -55,6 +62,23 @@ const commonTenantProps = {
 };
 
 describe("AdminShells V2 内容适配", () => {
+  it("新版用量页面可切换到组织预算面板", async () => {
+    window.history.replaceState({}, "", "/tenant-admin/governance/usage?org=acme");
+    render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        renderUsers={() => <div>复用 UserManager</div>}
+        governanceRoute={governanceRoute("organization.governance.usage", { orgId: "acme" })}
+      />,
+    );
+
+    expect(screen.getByText("复用 TenantAnalytics")).toBeTruthy();
+    expect(screen.queryByText(/组织预算面板/)).toBeNull();
+    await userEvent.click(screen.getByRole("tab", { name: "预算与计费" }));
+    expect(await screen.findByText("组织预算面板 acme Acme")).toBeTruthy();
+    expect(window.location.search).toContain("usageSection=billing");
+  });
+
   it("组织成员叶子读取治理 Membership，不回退 legacy UserManager 身份", async () => {
     render(
       <TenantAdminShell

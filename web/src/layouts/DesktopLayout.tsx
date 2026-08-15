@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
 import { ChatTabContent } from "@/components/chat/ChatTabContent";
 import { FilePreviewDialog, FilePreviewPanel } from "@/components/FilePreviewPanel";
+import { SubagentTranscriptPanel } from "@/components/SubagentTranscriptPanel";
+import { useSubagentTranscript } from "@/contexts/SubagentTranscriptContext";
 import { DesktopSessionSidebar } from "@/components/DesktopSessionSidebar";
 import { PanelToggleIcon } from "@/components/icons/PanelToggleIcon";
 import { TrashView } from "@/components/chat/TrashView";
@@ -97,6 +99,9 @@ export function DesktopLayout(props: LayoutProps) {
   } = props;
 
   const { user: authUser, updatePreferences } = useAuth();
+  const subagentTranscriptContext = useSubagentTranscript();
+  const subagentTranscript = subagentTranscriptContext?.transcript ?? null;
+  const closeSubagentTranscript = subagentTranscriptContext?.closeTranscript;
   const [activeUsageCard, setActiveUsageCard] = useState<"context" | "billing" | null>(null);
   const [capabilityReplayOpen, setCapabilityReplayOpen] = useState(false);
   const handleContextCardOpenChange = useCallback((open: boolean) => {
@@ -130,21 +135,29 @@ export function DesktopLayout(props: LayoutProps) {
     activeTab === "chat" || (activeTab === "capabilities" && !capabilityReplayOpen) || activeTab === "cron";
 
   const sidePreviewOpen = !!previewFilePath && previewMode === "side";
+
+  useEffect(() => {
+    closeSubagentTranscript?.();
+  }, [closeSubagentTranscript, sessionId]);
+
   /**
    * 右栏是**单 slot + 优先级**，不是多个布尔的「或」。
    *
-   * 优先级 preview > system > browser 的理由：preview 与 browser 是用户显式
-   * 点开的，system 是自动跟随 Agent 的——用户的显式意图必须压过自动行为。
+   * 优先级 subagent > preview > system > browser。子任务详情与文件预览都是用户显式
+   * 点开的；子任务详情是当前最新意图，system 则是自动跟随 Agent 的。
    * 被压住的一方不卸载（走 hidden），保住滚动位置与内部状态。
    */
-  const rightPanelKind: 'preview' | 'system' | 'browser' | null =
-    sidePreviewOpen ? 'preview'
-      : systemPanelOpen ? 'system'
-        : fileBrowserOpen ? 'browser'
-          : null;
+  const rightPanelKind: 'subagent' | 'preview' | 'system' | 'browser' | null =
+    subagentTranscript ? 'subagent'
+      : sidePreviewOpen ? 'preview'
+        : systemPanelOpen ? 'system'
+          : fileBrowserOpen ? 'browser'
+            : null;
   const rightPanelOpen = rightPanelKind !== null;
   const showRightPanel = activeTab === "chat" && rightPanelOpen;
-  const rightPanelKey = rightPanelKind === 'preview' ? previewFilePath : rightPanelKind;
+  const rightPanelKey = rightPanelKind === 'subagent'
+    ? subagentTranscript?.childSessionId ?? null
+    : rightPanelKind === 'preview' ? previewFilePath : rightPanelKind;
   const { ratio: splitRatio, containerRef: splitContainerRef, onDividerMouseDown, onDividerDoubleClick } = useResizePanel(0.5, 0.25, 0.75, rightPanelKey);
 
   // 侧边栏折叠
@@ -890,6 +903,13 @@ export function DesktopLayout(props: LayoutProps) {
               )}
               style={{ flexBasis: `calc(${splitRatio * 100}% - 5px)`, flexShrink: 0, flexGrow: 0 }}
             >
+              {rightPanelKind === 'subagent' && subagentTranscript ? (
+                <SubagentTranscriptPanel
+                  childSessionId={subagentTranscript.childSessionId}
+                  title={subagentTranscript.title}
+                  onClose={() => closeSubagentTranscript?.()}
+                />
+              ) : null}
               {rightPanelKind === 'preview' && previewFilePath ? (
                 <FilePreviewPanel
                   filePath={previewFilePath}

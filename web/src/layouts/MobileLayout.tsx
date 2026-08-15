@@ -10,6 +10,8 @@ import { CodePreviewPanel } from "@/components/CodePreviewPanel";
 import { PdfPreviewPanel } from "@/components/PdfPreviewPanel";
 import { VideoPreviewPanel } from "@/components/VideoPreviewPanel";
 import { FilePreviewActions } from "@/components/FilePreviewActions";
+import { SubagentTranscriptPanel } from "@/components/SubagentTranscriptPanel";
+import { useSubagentTranscript } from "@/contexts/SubagentTranscriptContext";
 import { ChatTabContent } from "@/components/chat/ChatTabContent";
 import { MobileSessionList } from "@/components/MobileSessionList";
 import { TokenUsageDisplay } from "@/components/TokenUsageDisplay";
@@ -78,6 +80,9 @@ export function MobileLayout(props: LayoutProps) {
     startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   } = props;
   const { user: authUser } = useAuth();
+  const subagentTranscriptContext = useSubagentTranscript();
+  const subagentTranscript = subagentTranscriptContext?.transcript ?? null;
+  const closeSubagentTranscript = subagentTranscriptContext?.closeTranscript;
   const { config: roleKitConfig } = useRoleKitConfig();
   const authorizationModeEnabled = authUser?.preferences?.authorizationModeEnabled === true;
 
@@ -94,6 +99,10 @@ export function MobileLayout(props: LayoutProps) {
     setSheetOpen(false);
     setActiveTab("chat");
   }, [setActiveTab]);
+
+  useEffect(() => {
+    closeSubagentTranscript?.();
+  }, [closeSubagentTranscript, sessionId]);
 
   // 一级页面实际渲染在移动端抽屉中：直达 URL 与浏览器前进/后退时必须同步打开。
   useEffect(() => {
@@ -254,11 +263,11 @@ export function MobileLayout(props: LayoutProps) {
   return (
     <>
       <header
-        className={cn("shrink-0 bg-card", previewFilePath && "border-b", sheetOpen && "hidden")}
+        className={cn("shrink-0 bg-card", (subagentTranscript || previewFilePath) && "border-b", sheetOpen && "hidden")}
         style={{ paddingTop: "var(--sat)" }}
         onClick={(e) => {
           if ((e.target as HTMLElement).closest("button, a, [role=button]")) return;
-          if (!previewFilePath) {
+          if (!subagentTranscript && !previewFilePath) {
             (scrollContainerRef as React.RefObject<HTMLDivElement>)?.current?.scrollTo({ top: 0, behavior: "smooth" });
           }
         }}
@@ -269,11 +278,17 @@ export function MobileLayout(props: LayoutProps) {
               variant="ghost"
               size="icon"
               className="size-9"
-              onClick={() => previewFilePath ? closeFilePreview() : setSheetOpen(true)}
+              onClick={() => subagentTranscript
+                ? closeSubagentTranscript?.()
+                : previewFilePath ? closeFilePreview() : setSheetOpen(true)}
             >
               <ChevronLeft className="size-6" />
             </Button>
-            {previewFilePath ? (
+            {subagentTranscript ? (
+              <span className="min-w-0 truncate text-sm font-medium">
+                子任务完整过程 · {subagentTranscript.title}
+              </span>
+            ) : previewFilePath ? (
               <span className="min-w-0 truncate text-sm font-medium">
                 {previewFilePath.split("/").pop() || previewFilePath}
               </span>
@@ -281,7 +296,7 @@ export function MobileLayout(props: LayoutProps) {
               <div className="truncate text-base font-semibold">{activeOrgAgent?.name || (orgAgentIdentityLoading ? "企业专家" : agentProfile?.name) || "KY Agent"}</div>
             )}
           </div>
-          {previewFilePath ? (
+          {subagentTranscript ? null : previewFilePath ? (
             <FilePreviewActions filePath={previewFilePath} owner={previewFileOwner} />
           ) : (
             <div className="flex items-center gap-2">
@@ -521,16 +536,26 @@ export function MobileLayout(props: LayoutProps) {
           }
         />
 
-        {/* 预览面板：覆盖内容区（header 以下），与 SwipeDrawer 同级 */}
-        <SlidePanel open={!!previewFilePath} onClose={closeFilePreview}>
-          {previewFilePath && (() => {
+        {/* 详情面板：移动端沿用文件预览的 SlidePanel，桌面端则进入统一右侧 slot。 */}
+        <SlidePanel
+          open={!!subagentTranscript || !!previewFilePath}
+          onClose={subagentTranscript ? () => closeSubagentTranscript?.() : closeFilePreview}
+        >
+          {subagentTranscript ? (
+            <SubagentTranscriptPanel
+              childSessionId={subagentTranscript.childSessionId}
+              title={subagentTranscript.title}
+              onClose={() => closeSubagentTranscript?.()}
+              hideHeader
+            />
+          ) : previewFilePath ? (() => {
             const previewType = getPreviewFileType(previewFilePath);
             if (previewType === 'html') return <HtmlPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
             if (previewType === 'pdf') return <PdfPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
             if (previewType === 'video') return <VideoPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
             if (previewType === 'code') return <CodePreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
             return <MarkdownPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
-          })()}
+          })() : null}
         </SlidePanel>
       </div>
       {personalAgentEnabled

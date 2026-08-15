@@ -1,4 +1,4 @@
-import { ChevronLeft, FileQuestion, Maximize2, PanelRight } from "lucide-react";
+import { FileQuestion, Maximize2, PanelRight } from "lucide-react";
 import { getPreviewFileType, isKbPath, parseKbPath } from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import { CodePreviewPanel } from "@/components/CodePreviewPanel";
 import { PdfPreviewPanel } from "@/components/PdfPreviewPanel";
 import { VideoPreviewPanel } from "@/components/VideoPreviewPanel";
 import { FilePreviewActions } from "@/components/FilePreviewActions";
+import { RightPanelFrame } from "@/components/RightPanelFrame";
 
 interface FilePreviewPanelProps {
   filePath: string;
@@ -59,46 +60,35 @@ export function FilePreviewPanel({ onExpand, ...props }: FilePreviewPanelProps) 
     : "";
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-card">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-9 shrink-0"
-          onClick={props.onBack}
-          title="关闭预览"
-          aria-label="关闭预览"
-        >
-          <ChevronLeft className="size-5" />
-        </Button>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{filename}</div>
-          {dirPath ? (
-            <div className="truncate text-xs text-muted-foreground">{dirPath}</div>
+    <RightPanelFrame
+      title={filename}
+      subtitle={dirPath || undefined}
+      onClose={props.onBack}
+      closeLabel="关闭预览"
+      actions={(
+        <>
+          {!kbPath ? (
+            <FilePreviewActions
+              filePath={props.filePath}
+              owner={props.owner}
+              shareToken={props.shareToken}
+            />
           ) : null}
-        </div>
-        {!kbPath ? (
-          <FilePreviewActions
-            filePath={props.filePath}
-            owner={props.owner}
-            shareToken={props.shareToken}
-          />
-        ) : null}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-9 shrink-0"
-          onClick={onExpand}
-          title="放大到弹窗预览"
-          aria-label="放大到弹窗预览"
-        >
-          <Maximize2 className="size-4" />
-        </Button>
-      </header>
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <FilePreviewContent {...props} hideHeader />
-      </div>
-    </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-9 shrink-0"
+            onClick={onExpand}
+            title="放大到弹窗预览"
+            aria-label="放大到弹窗预览"
+          >
+            <Maximize2 className="size-4" />
+          </Button>
+        </>
+      )}
+    >
+      <FilePreviewContent {...props} hideHeader />
+    </RightPanelFrame>
   );
 }
 

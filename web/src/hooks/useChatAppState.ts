@@ -523,6 +523,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const cancelWaitersRef = useRef<Map<string, (ok: boolean) => void>>(new Map());
 
   // ─── 插话队列区（2026-08-04 终态设计）───
+  const queuedSessionIdRef = useRef<string | null>(urlState.sessionId);
   // 运行中发送的消息不进时间线，在输入框上方的队列区排队，被目标 run 消费
   //（user_message 投影）或回退接管（非 queued stream_id）时才进时间线。
   const [queuedInterjections, setQueuedInterjectionsState] = useState<QueuedInterjection[]>([]);
@@ -531,9 +532,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const mutateQueuedInterjections = useCallback(
     (updater: (prev: QueuedInterjection[]) => QueuedInterjection[]) => {
       const next = updater(queuedInterjectionsRef.current);
-      if (next === queuedInterjectionsRef.current) return;
       queuedInterjectionsRef.current = next;
-      setQueuedInterjectionsState(next);
+      const currentSessionId = queuedSessionIdRef.current;
+      setQueuedInterjectionsState(next.filter((entry) => (
+        currentSessionId ? entry.sessionId === currentSessionId : !entry.sessionId
+      )));
     },
     [],
   );
@@ -564,14 +567,16 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // Detail 快照与消费标记的对账保持稳定引用，供 session callbacks 复用。
   const reconcileServerInterjections = useCallback(
-    (serverQueued: NonNullable<ApiSessionDetail["queuedMessages"]>) => {
-      mutateQueuedInterjections(
-        (prev) => reconcileQueuedInterjections(
-          prev,
+    (sessionId: string, serverQueued: NonNullable<ApiSessionDetail["queuedMessages"]>) => {
+      mutateQueuedInterjections((prev) => [
+        ...prev.filter((entry) => entry.sessionId && entry.sessionId !== sessionId),
+        ...reconcileQueuedInterjections(
+          prev.filter((entry) => !entry.sessionId || entry.sessionId === sessionId),
           serverQueued,
           consumedInterjectionsRef.current,
+          sessionId,
         ),
-      );
+      ]);
     },
     [mutateQueuedInterjections],
   );
@@ -689,12 +694,19 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     deliveryMode?: 'queue' | 'steer',
     authoritativeSessionId?: string,
   ) => Promise<void>) | null>(null);
+  const submissionBelongsToCurrentSession = useCallback((entry: OutboxEntry, authoritativeSessionId?: string) => {
+    const currentSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+    const expectedSessionId = authoritativeSessionId ?? entry.sessionId;
+    if (expectedSessionId) return currentSessionId === expectedSessionId;
+    return !currentSessionId && pendingNewSessionClientMsgIdRef.current === entry.clientMsgId;
+  }, []);
   const confirmProvisionalSession = useCallback((clientMsgId: string, authoritativeSessionId: string) => {
     const currentSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
     if (currentSessionId && currentSessionId !== authoritativeSessionId) return;
     if (!currentSessionId && pendingNewSessionClientMsgIdRef.current !== clientMsgId) return;
 
     immediateSessionIdRef.current = authoritativeSessionId;
+    queuedSessionIdRef.current = authoritativeSessionId;
     replaceUrl('chat', authoritativeSessionId);
     if (pendingNewSessionClientMsgIdRef.current === clientMsgId) {
       pendingNewSessionClientMsgIdRef.current = null;
@@ -703,14 +715,27 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     const deferredSubmissions = provisionalSubmissionsRef.current.filter(
       (submission) => submission.rootClientMsgId === clientMsgId,
     );
-    provisionalSubmissionsRef.current = provisionalSubmissionsRef.current.filter(
-      (submission) => submission.rootClientMsgId !== clientMsgId,
-    );
+    outboxRef.current = outboxRef.current.map((entry) => (
+      entry.clientMsgId === clientMsgId ? { ...entry, sessionId: authoritativeSessionId } : entry
+    ));
+    const deferredIds = new Set(deferredSubmissions.map((submission) => submission.clientMsgId));
+    mutateQueuedInterjections((prev) => prev.map((entry) => (
+      deferredIds.has(entry.clientMsgId) ? { ...entry, sessionId: authoritativeSessionId } : entry
+    )));
     if (deferredSubmissions.length === 0) return;
 
     // session 事件、durable ACK 与权威查询都可确认 id；后续消息必须在同一 id 下顺序发送。
     void (async () => {
       for (const submission of deferredSubmissions) {
+        const currentSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+        if (currentSessionId !== authoritativeSessionId) {
+          failProvisionalBatch(clientMsgId, '已切换会话，请重新发送');
+          return;
+        }
+        // 仅移出即将发送的这一条；切会话时 failAll 仍能取消尚未 flush 的后续条目。
+        provisionalSubmissionsRef.current = provisionalSubmissionsRef.current.filter(
+          (entry) => entry.clientMsgId !== submission.clientMsgId,
+        );
         await sendChatViaWsRef.current?.(
           submission.input,
           submission.attachments,
@@ -724,7 +749,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         );
       }
     })();
-  }, []);
+  }, [failProvisionalBatch, mutateQueuedInterjections]);
   const reconcileLastRunStateRef = useRef<(sessionId: string, lastRunState: LastRunState) => void>(() => {});
 
   /** Partial patch Map.get(sid)；若 sid === current,同步 ref（不动 setState 状态） */
@@ -946,15 +971,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     removeRuntimeStatusMessages(msgRef.current);
     setLoading(false);
     setStopping(false);
-    // 切会话后由 detail API 的 durable 快照恢复；本地传输态不能跨会话阻塞导航守卫。
-    for (const t of ackTimersRef.current.values()) clearTimeout(t);
-    ackTimersRef.current.clear();
-    outboxRef.current = [];
+    // outbox/timer 属于 submission，不属于当前流。切会话后继续后台核验，队列状态按
+    // sessionId 隔离存储；切回原会话时才能显示 queued 或真实 failed，不能静默丢失。
     consumedInterjectionsRef.current.clear();
-    mutateQueuedInterjections(() => []);
     // 通知服务端解除 wsActiveStream 绑定（buffer 仍保留,resume 时可用 cursor 增量回放）
     wsClient.send({ action: 'detach' });
-  }, [dumpCurrentSessionRuntime, mutateQueuedInterjections]);
+  }, [dumpCurrentSessionRuntime]);
 
   const sessionCallbacks = useMemo(() => ({
     resetMessages: msg.resetMessages,
@@ -971,7 +993,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     onQueuedMessages: (sessionId: string, serverQueued: NonNullable<ApiSessionDetail["queuedMessages"]>) => {
       const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
       if (!sid || sessionId !== sid) return;
-      reconcileServerInterjections(serverQueued);
+      reconcileServerInterjections(sessionId, serverQueued);
     },
   }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections]);
 
@@ -1306,12 +1328,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     pendingNewSessionClientMsgIdRef.current = null;
     markSessionRead(id);
     immediateSessionIdRef.current = id;
+    queuedSessionIdRef.current = id;
+    mutateQueuedInterjections((prev) => prev);
     // 与 immediateSessionIdRef 同帧同语义：wsLatestSessionIdRef 原先只写不清，会长期
     // 指向上一个发过消息的会话，让终态守卫的回退值失效（2026-08-01 串会话路径）。
     wsLatestSessionIdRef.current = { value: id };
     session.selectSession(id);
     pushUrl('chat', id);
-  }, [clearPendingOrgAgent, failAllProvisionalBatches, markSessionRead, session.selectSession]);
+  }, [clearPendingOrgAgent, failAllProvisionalBatches, markSessionRead, mutateQueuedInterjections, session.selectSession]);
 
   const newSessionWithUrl = useCallback(() => {
     setTrashPreviewSessionId(null);
@@ -1319,10 +1343,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     failAllProvisionalBatches('已新建会话，请重新发送');
     pendingNewSessionClientMsgIdRef.current = null;
     immediateSessionIdRef.current = null;
+    queuedSessionIdRef.current = null;
+    mutateQueuedInterjections((prev) => prev);
     wsLatestSessionIdRef.current = { value: null };
     session.newSession();
     pushUrl('chat', null);
-  }, [clearPendingOrgAgent, failAllProvisionalBatches, session.newSession]);
+  }, [clearPendingOrgAgent, failAllProvisionalBatches, mutateQueuedInterjections, session.newSession]);
 
   /**
    * 企业专家新草稿：只切换前端会话目标，不制造 meta-only 空会话。
@@ -1334,6 +1360,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setTrashPreviewSessionId(null);
     failAllProvisionalBatches('已新建专职 Agent 会话，请重新发送');
     immediateSessionIdRef.current = null;
+    queuedSessionIdRef.current = null;
+    mutateQueuedInterjections((prev) => prev);
     wsLatestSessionIdRef.current = { value: null };
     session.newSession();
     pendingNewSessionClientMsgIdRef.current = null;
@@ -1341,7 +1369,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setPendingOrgAgentId(normalizedAgentId);
     pushUrl('chat', null);
     if (activeTabRef.current !== 'chat') setActiveTab('chat');
-  }, [failAllProvisionalBatches, session.newSession, setActiveTab, user]);
+  }, [failAllProvisionalBatches, mutateQueuedInterjections, session.newSession, setActiveTab, user]);
 
   useEffect(() => {
     clearPendingOrgAgent();
@@ -1432,6 +1460,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         setTenantAdminSectionRaw(urlTenantAdminSection);
       }
       immediateSessionIdRef.current = urlSessionId;
+      queuedSessionIdRef.current = urlSessionId;
+      mutateQueuedInterjections((prev) => prev);
       setActiveTabRaw(tab);
       if (tab === 'chat') {
         if (urlSessionId && urlSessionId !== sessionIdRef.current) {
@@ -1444,7 +1474,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     };
     window.addEventListener('popstate', handler);
     return () => window.removeEventListener('popstate', handler);
-  }, [markSessionRead]);
+  }, [markSessionRead, mutateQueuedInterjections]);
 
   // 兜底：确保 URL 始终与 state 一致（覆盖 delete fallback 等间接变更）
   useEffect(() => {
@@ -1505,9 +1535,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
     if (expectedUrl !== window.location.pathname) {
       immediateSessionIdRef.current = session.sessionId;
+      queuedSessionIdRef.current = session.sessionId;
+      mutateQueuedInterjections((prev) => prev);
       replaceUrl(activeTab, activeTab === 'chat' ? session.sessionId : null);
     }
-  }, [session.sessionId, activeTab, settingsOpen, settingsSection, adminSettings, governanceRouteState, platformAdminSection, platformAdminEntityId, tenantAdminSection, pendingCanonicalPath]);
+  }, [session.sessionId, activeTab, settingsOpen, settingsSection, adminSettings, governanceRouteState, platformAdminSection, platformAdminEntityId, tenantAdminSection, pendingCanonicalPath, mutateQueuedInterjections]);
 
   // ---- Loading watchdog：超时保护，防止 done 事件丢失时 loading 永久锁定 ----
   const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1598,16 +1630,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setStopping(false);
     sessionRef.current.setContextUsage(null);
 
-    // 2026-08-04 终态设计：不再有本地 'queued' 条目需要 flush（运行中发送直发服务端
-    // steering）；终态时清空 outbox 与全部 ACK 定时器即可。
-    for (const entry of outboxRef.current) {
-      const timer = ackTimersRef.current.get(entry.clientMsgId);
-      if (timer) {
-        clearTimeout(timer);
-        ackTimersRef.current.delete(entry.clientMsgId);
-      }
-    }
-    outboxRef.current = [];
+    // run 终态只拥有流状态，不拥有随后提交的消息传输。ACK 丢失时仍须保留 outbox/timer，
+    // 由 chat_ack、chat_rejected 或权威状态查询按 clientMsgId 收敛。
 
     dispatchConnection('complete');
     if (args.refresh !== false) {
@@ -2259,9 +2283,16 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           outboxRef.current = outboxRef.current.filter((entry) => entry.clientMsgId !== clientMsgId);
           if (ackEvent?.type === 'chat_ack') {
             if (ackEvent.sessionId) confirmProvisionalSession(clientMsgId, ackEvent.sessionId);
+            const currentSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+            const belongsToCurrentSession = ackEvent.sessionId
+              ? ackEvent.sessionId === currentSessionId
+              : ackedOutboxEntry
+                ? submissionBelongsToCurrentSession(ackedOutboxEntry)
+                : true;
             if (ackEvent.status === 'queued') {
               mutateQueuedInterjections((prev) => prev.map((entry) => entry.clientMsgId === clientMsgId ? {
                 ...entry,
+                ...(ackEvent.sessionId ? { sessionId: ackEvent.sessionId } : {}),
                 status: 'queued' as const,
                 sourceRunId: ackEvent.runId ?? entry.sourceRunId,
                 deliveryMode: ackEvent.deliveryMode ?? entry.deliveryMode,
@@ -2275,18 +2306,22 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               || ackEvent.status === 'cancelled'
             ) {
               const projection = projectAuthoritativeSubmissionStatus(ackEvent.status);
-              consumedInterjectionsRef.current.mark({ clientMsgId, sourceRunId: ackEvent.runId });
+              if (belongsToCurrentSession) {
+                consumedInterjectionsRef.current.mark({ clientMsgId, sourceRunId: ackEvent.runId });
+              }
               const queuedEntry = queuedInterjectionsRef.current.find((entry) => entry.clientMsgId === clientMsgId);
-              const index = msgRef.current.messagesRef.current.findIndex((message) => (
-                (message.type === 'user' || message.type === 'user-voice') && message.clientMsgId === clientMsgId
-              ));
+              const index = belongsToCurrentSession
+                ? msgRef.current.messagesRef.current.findIndex((message) => (
+                  (message.type === 'user' || message.type === 'user-voice') && message.clientMsgId === clientMsgId
+                ))
+                : -1;
               if (projection === 'sent') {
                 mutateQueuedInterjections((prev) => prev.filter((entry) => entry.clientMsgId !== clientMsgId));
                 if (index >= 0) {
                   msgRef.current.updateMessageAt(index, (message) => (
                     message.type === 'user' ? { ...message, status: 'sent' as const, failedReason: undefined } : message
                   ));
-                } else if (queuedEntry) {
+                } else if (belongsToCurrentSession && queuedEntry) {
                   msgRef.current.addMessage({
                     type: 'user',
                     content: queuedEntry.content,
@@ -2298,15 +2333,24 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                 }
               } else {
                 const reason = projection === 'cancelled' ? '消息已取消，可重试' : '服务端执行失败，可重试';
-                mutateQueuedInterjections((prev) => prev.map((entry) => entry.clientMsgId === clientMsgId
-                  ? { ...entry, status: projection, reason }
-                  : entry));
+                mutateQueuedInterjections((prev) => queuedEntry
+                  ? prev.map((entry) => entry.clientMsgId === clientMsgId
+                    ? { ...entry, status: projection, reason }
+                    : entry)
+                  : ackedOutboxEntry?.sessionId
+                    ? [...prev, {
+                      clientMsgId,
+                      sessionId: ackedOutboxEntry.sessionId,
+                      deliveryMode: ackedOutboxEntry.deliveryMode,
+                      content: ackedOutboxEntry.input,
+                      ...(ackedOutboxEntry.attachments.length ? { uploadedFiles: ackedOutboxEntry.attachments } : {}),
+                      status: projection,
+                      reason,
+                      createdAt: ackedOutboxEntry.createdAt,
+                    }]
+                    : prev);
                 if (index >= 0) markBubbleFailed(clientMsgId, index, reason);
               }
-              const currentSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
-              const belongsToCurrentSession = !ackEvent.sessionId
-                || !currentSessionId
-                || ackEvent.sessionId === currentSessionId;
               if (belongsToCurrentSession) {
                 if (!ackedOutboxEntry?.preserveActiveStream) {
                   setLoading(projection === 'sent' && ackEvent.status === 'running');
@@ -2412,6 +2456,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
             }
             return [...prev, {
               clientMsgId: event.clientMsgId,
+              sessionId: event.sessionId,
               sourceRunId: event.sourceRunId,
               targetRunId: event.targetRunId,
               deliveryMode: 'steer' as const,
@@ -2679,11 +2724,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       const entry = outboxRef.current.find((candidate) => candidate.clientMsgId === clientMsgId);
       if (!entry) return;
       console.warn(`[chat] ACK timeout for ${clientMsgId}; verifying durable status`);
-      mutateQueuedInterjections((prev) => prev.map((item) => (
-        item.clientMsgId === clientMsgId
-          ? { ...item, status: 'verifying' as const, reason: '正在核验服务端接收状态' }
-          : item
-      )));
+      if (submissionBelongsToCurrentSession(entry)) {
+        mutateQueuedInterjections((prev) => prev.map((item) => (
+          item.clientMsgId === clientMsgId
+            ? { ...item, status: 'verifying' as const, reason: '正在核验服务端接收状态' }
+            : item
+        )));
+      }
       void authFetch(`/api/messages/${encodeURIComponent(clientMsgId)}/status`)
         .then(async (response) => {
           if (response.status === 404) return { status: 'not_found' as const };
@@ -2702,18 +2749,30 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           if (!currentEntry || currentEntry.state === 'acked') return;
           if (status.status === 'not_found') {
             outboxRef.current = outboxRef.current.filter((candidate) => candidate.clientMsgId !== clientMsgId);
+            const belongsToCurrentSession = submissionBelongsToCurrentSession(currentEntry);
             const reason = '服务端未收到该消息，请重试';
             const queuedEntry = queuedInterjectionsRef.current.some((item) => item.clientMsgId === clientMsgId);
+            if (queuedEntry || currentEntry.sessionId) {
+              mutateQueuedInterjections((prev) => queuedEntry
+                ? prev.map((item) => item.clientMsgId === clientMsgId
+                  ? { ...item, status: 'failed' as const, reason }
+                  : item)
+                : [...prev, {
+                  clientMsgId,
+                  sessionId: currentEntry.sessionId!,
+                  deliveryMode: currentEntry.deliveryMode,
+                  content: currentEntry.input,
+                  ...(currentEntry.attachments.length ? { uploadedFiles: currentEntry.attachments } : {}),
+                  status: 'failed' as const,
+                  reason,
+                  createdAt: currentEntry.createdAt,
+                }]);
+            }
+            if (!belongsToCurrentSession) return;
             finalizeNotFoundSubmission({
               preserveActiveStream: currentEntry.preserveActiveStream,
               markFailed: () => {
-                if (queuedEntry) {
-                  mutateQueuedInterjections((prev) => prev.map((item) => item.clientMsgId === clientMsgId
-                    ? { ...item, status: 'failed' as const, reason }
-                    : item));
-                } else {
-                  markBubbleFailed(clientMsgId, -1, reason);
-                }
+                if (!queuedEntry && !currentEntry.sessionId) markBubbleFailed(clientMsgId, -1, reason);
               },
               clearPendingSession: () => {
                 if (pendingNewSessionClientMsgIdRef.current === clientMsgId) {
@@ -2732,11 +2791,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
           confirmProvisionalSession(clientMsgId, status.sessionId);
           outboxRef.current = outboxRef.current.filter((candidate) => candidate.clientMsgId !== clientMsgId);
+          const belongsToCurrentSession = submissionBelongsToCurrentSession(currentEntry, status.sessionId);
           if (status.status === 'queued') {
             const hasQueueEntry = queuedInterjectionsRef.current.some((item) => item.clientMsgId === clientMsgId);
             mutateQueuedInterjections((prev) => hasQueueEntry
               ? prev.map((item) => item.clientMsgId === clientMsgId ? {
                 ...item,
+                sessionId: status.sessionId,
                 status: 'queued' as const,
                 sourceRunId: status.runId,
                 deliveryMode: status.deliveryMode,
@@ -2745,6 +2806,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               } : item)
               : [...prev, {
                 clientMsgId,
+                sessionId: status.sessionId,
                 sourceRunId: status.runId,
                 deliveryMode: status.deliveryMode,
                 ...(status.queuePosition ? { queuePosition: status.queuePosition } : {}),
@@ -2760,7 +2822,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                 status: 'queued' as const,
                 createdAt: currentEntry.createdAt,
               }]);
-            if (!hasQueueEntry) {
+            if (!hasQueueEntry && belongsToCurrentSession) {
               const messages = msgRef.current.messagesRef.current;
               const index = messages.findIndex((message) => (
                 (message.type === 'user' || message.type === 'user-voice') && message.clientMsgId === clientMsgId
@@ -2778,18 +2840,22 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
             }
           } else {
             const projection = projectAuthoritativeSubmissionStatus(status.status);
-            consumedInterjectionsRef.current.mark({ clientMsgId, sourceRunId: status.runId });
+            if (belongsToCurrentSession) {
+              consumedInterjectionsRef.current.mark({ clientMsgId, sourceRunId: status.runId });
+            }
             const queuedEntry = queuedInterjectionsRef.current.find((item) => item.clientMsgId === clientMsgId);
-            const index = msgRef.current.messagesRef.current.findIndex((message) => (
-              (message.type === 'user' || message.type === 'user-voice') && message.clientMsgId === clientMsgId
-            ));
+            const index = belongsToCurrentSession
+              ? msgRef.current.messagesRef.current.findIndex((message) => (
+                (message.type === 'user' || message.type === 'user-voice') && message.clientMsgId === clientMsgId
+              ))
+              : -1;
             if (projection === 'sent') {
               mutateQueuedInterjections((prev) => prev.filter((item) => item.clientMsgId !== clientMsgId));
               if (index >= 0) {
                 msgRef.current.updateMessageAt(index, (message) => (
                   message.type === 'user' ? { ...message, status: 'sent' as const, failedReason: undefined } : message
                 ));
-              } else if (queuedEntry) {
+              } else if (belongsToCurrentSession && queuedEntry) {
                 msgRef.current.addMessage({
                   type: 'user',
                   content: queuedEntry.content,
@@ -2806,12 +2872,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                 ? { ...item, status: projection, reason }
                 : item));
               if (index >= 0) markBubbleFailed(clientMsgId, index, reason);
-              if (!currentEntry.preserveActiveStream) {
+              if (belongsToCurrentSession && !currentEntry.preserveActiveStream) {
                 wsAttachedRef.current = false;
                 setLoading(false);
               }
             }
-            sessionRef.current.refreshCurrentSession();
+            if (belongsToCurrentSession) sessionRef.current.refreshCurrentSession();
           }
         })
         .catch((error) => {
@@ -2820,7 +2886,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         });
     }, ACK_TIMEOUT_MS);
     ackTimersRef.current.set(clientMsgId, timer);
-  }, [failProvisionalBatch, markBubbleFailed, mutateQueuedInterjections]);
+  }, [failProvisionalBatch, markBubbleFailed, mutateQueuedInterjections, submissionBelongsToCurrentSession]);
 
   // ---- 通过 WS 发送聊天消息 ----
   const sendChatViaWs = useCallback(async (
@@ -3030,8 +3096,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       if (loadingRef.current) {
         // 当前 run 运行时，默认 queue 只等待终态；steer 必须由用户显式点击“立即插话”。
         const clientMsgId = crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const queueSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
         mutateQueuedInterjections((prev) => [...prev, {
           clientMsgId,
+          ...(queueSessionId ? { sessionId: queueSessionId } : {}),
           deliveryMode,
           content: capturedInput,
           ...(capturedAttachments.length > 0 ? {
@@ -3273,7 +3341,16 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       setInput("");
       mutateQueuedInterjections((prev) => [
         ...prev.filter((entry) => entry.clientMsgId !== retryClientMsgId),
-        { clientMsgId: retryClientMsgId, deliveryMode: 'queue' as const, content: text, status: 'sending' as const, createdAt: Date.now() },
+        {
+          clientMsgId: retryClientMsgId,
+          ...((immediateSessionIdRef.current ?? sessionIdRef.current)
+            ? { sessionId: (immediateSessionIdRef.current ?? sessionIdRef.current)! }
+            : {}),
+          deliveryMode: 'queue' as const,
+          content: text,
+          status: 'sending' as const,
+          createdAt: Date.now(),
+        },
       ]);
       void sendChatViaWs(text, [], false, undefined, retryClientMsgId, autoApproveRunShellRef.current, true, 'queue');
     } else {
@@ -3339,6 +3416,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       const newClientMsgId = crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       mutateQueuedInterjections((prev) => [...prev, {
         clientMsgId: newClientMsgId,
+        ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
         deliveryMode: entry.deliveryMode,
         content: entry.content,
         ...(entry.attachments?.length ? { attachments: entry.attachments } : {}),

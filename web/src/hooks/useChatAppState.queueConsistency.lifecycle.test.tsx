@@ -15,6 +15,10 @@ const harness = vi.hoisted(() => {
     replaceFiles: vi.fn((files: UploadedFile[]) => {
       harness.currentFiles = files;
     }),
+    sessionCallbacks: null as null | {
+      onQueuedMessages?: (sessionId: string, messages: unknown[]) => void;
+      cancelActiveStream?: () => void;
+    },
     session: {
       sessionId: null,
       sessions: [],
@@ -58,7 +62,12 @@ const harness = vi.hoisted(() => {
 });
 
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: null }) }));
-vi.mock("@/hooks/useSession", () => ({ useSession: () => harness.session }));
+vi.mock("@/hooks/useSession", () => ({
+  useSession: (callbacks: typeof harness.sessionCallbacks) => {
+    harness.sessionCallbacks = callbacks;
+    return harness.session;
+  },
+}));
 vi.mock("@/hooks/useFileUpload", () => ({
   useFileUpload: () => ({
     uploadedFiles: harness.currentFiles,
@@ -180,6 +189,33 @@ describe("useChatAppState queue consistency lifecycle", () => {
     expect(chatPayloads()[1].sessionId).toBe("session-authoritative");
   });
 
+  it("stops the remaining provisional flush when the user switches sessions mid-batch", async () => {
+    let releaseInflight: (() => void) | undefined;
+    const inflight = new Promise<void>((resolve) => { releaseInflight = resolve; });
+    harness.sends.mockImplementation(async (payload: unknown) => {
+      if ((payload as { message?: string }).message === "second") await inflight;
+      return true;
+    });
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => result.current.setInput("first"));
+    await act(async () => { await result.current.sendMessage(); });
+    act(() => result.current.setInput("second"));
+    await act(async () => { await result.current.sendMessage(); });
+    act(() => result.current.setInput("third"));
+    await act(async () => { await result.current.sendMessage(); });
+
+    const rootId = chatPayloads()[0].client_msg_id;
+    act(() => emit({ type: "session", sessionId: "session-a", client_msg_id: rootId }));
+    await waitFor(() => expect(chatPayloads().map((payload) => payload.message)).toEqual(["first", "second"]));
+    act(() => result.current.selectSession("session-b"));
+    releaseInflight?.();
+    await act(async () => { await inflight; await Promise.resolve(); });
+
+    expect(chatPayloads().map((payload) => payload.message)).toEqual(["first", "second"]);
+    expect(harness.session.selectSession).toHaveBeenCalledWith("session-b");
+  });
+
   it("fails only the rejected provisional batch and never flushes it into the next new session", async () => {
     const { result } = renderHook(() => useChatAppState());
 
@@ -220,7 +256,7 @@ describe("useChatAppState queue consistency lifecycle", () => {
     act(() => emit({ type: "session", sessionId: "stale-session", client_msg_id: staleRootId }));
 
     await waitFor(() => expect(chatPayloads()).toHaveLength(1));
-    expect(result.current.queuedInterjections.find((entry) => entry.content === "must stay local")?.status).toBe("failed");
+    expect(result.current.queuedInterjections.some((entry) => entry.content === "must stay local")).toBe(false);
     expect(harness.session.selectSession).toHaveBeenCalledWith("existing-session");
   });
 
@@ -269,6 +305,185 @@ describe("useChatAppState queue consistency lifecycle", () => {
       && (message.clientMsgId === failedId || message.clientMsgId === cancelledId)
       && message.status === "sent"
     ))).toBe(false);
+  });
+
+  it("does not project a delayed authoritative lookup into a different session", async () => {
+    vi.useFakeTimers();
+    const deferredId = "00000000-0000-4000-8000-000000000002";
+    harness.authFetch.mockImplementation(async (url: string) => {
+      if (url.includes(`/api/messages/${deferredId}/status`)) {
+        return response({
+          status: "queued",
+          runId: "run-a-queued",
+          sessionId: "session-a",
+          deliveryMode: "queue",
+          queuePosition: 1,
+        });
+      }
+      return response({}, 404);
+    });
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => result.current.setInput("root-a"));
+    await act(async () => { await result.current.sendMessage(); });
+    act(() => result.current.setInput("queued-a"));
+    await act(async () => { await result.current.sendMessage(); });
+    const rootId = chatPayloads()[0].client_msg_id;
+    act(() => emit({ type: "session", sessionId: "session-a", client_msg_id: rootId }));
+    await act(async () => { await Promise.resolve(); });
+    expect(chatPayloads()).toHaveLength(2);
+    act(() => emit({ type: "chat_ack", client_msg_id: rootId, status: "running", sessionId: "session-a" }));
+
+    harness.session.selectSession.mockImplementationOnce(() => {
+      harness.sessionCallbacks?.cancelActiveStream?.();
+    });
+    act(() => result.current.selectSession("session-b"));
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(harness.authFetch).toHaveBeenCalledWith(`/api/messages/${deferredId}/status`, undefined);
+    expect(result.current.queuedInterjections.some((entry) => entry.content === "queued-a")).toBe(false);
+
+    act(() => result.current.selectSession("session-a"));
+    expect(result.current.queuedInterjections.find((entry) => entry.clientMsgId === deferredId)).toMatchObject({
+      sessionId: "session-a",
+      status: "queued",
+      sourceRunId: "run-a-queued",
+    });
+  });
+
+  it("keeps an offscreen not-found submission as failed so returning to the session can retry", async () => {
+    vi.useFakeTimers();
+    const queuedId = "00000000-0000-4000-8000-000000000002";
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => result.current.setInput("first"));
+    await act(async () => { await result.current.sendMessage(); });
+    const firstId = chatPayloads()[0].client_msg_id;
+    act(() => emit({ type: "session", sessionId: "session-a", client_msg_id: firstId }));
+    act(() => emit({ type: "chat_ack", client_msg_id: firstId, status: "running", sessionId: "session-a" }));
+    act(() => result.current.setInput("not received"));
+    await act(async () => { await result.current.sendMessage(); });
+
+    harness.session.selectSession.mockImplementationOnce(() => {
+      harness.sessionCallbacks?.cancelActiveStream?.();
+    });
+    act(() => result.current.selectSession("session-b"));
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.queuedInterjections.some((entry) => entry.clientMsgId === queuedId)).toBe(false);
+
+    act(() => result.current.selectSession("session-a"));
+    expect(result.current.queuedInterjections.find((entry) => entry.clientMsgId === queuedId)).toMatchObject({
+      sessionId: "session-a",
+      status: "failed",
+      reason: "服务端未收到该消息，请重试",
+    });
+  });
+
+  it("keeps a later submission verification alive when the current run becomes terminal", async () => {
+    vi.useFakeTimers();
+    const queuedId = "00000000-0000-4000-8000-000000000002";
+    harness.authFetch.mockImplementation(async (url: string) => {
+      if (url.includes(`/api/messages/${queuedId}/status`)) {
+        return response({
+          status: "queued",
+          runId: "queued-after-terminal",
+          sessionId: "session-authoritative",
+          deliveryMode: "queue",
+          queuePosition: 1,
+        });
+      }
+      return response({}, 404);
+    });
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => result.current.setInput("first"));
+    await act(async () => { await result.current.sendMessage(); });
+    const firstId = chatPayloads()[0].client_msg_id;
+    act(() => emit({ type: "session", sessionId: "session-authoritative", client_msg_id: firstId }));
+    act(() => emit({ type: "chat_ack", client_msg_id: firstId, status: "running", runId: "run-first", sessionId: "session-authoritative" }));
+
+    act(() => result.current.setInput("queued after terminal"));
+    await act(async () => { await result.current.sendMessage(); });
+    act(() => emit({ type: "session_status", sessionId: "session-authoritative", runId: "run-first", status: "completed" }));
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(harness.authFetch).toHaveBeenCalledWith(`/api/messages/${queuedId}/status`, undefined);
+    expect(result.current.queuedInterjections.find((entry) => entry.clientMsgId === queuedId)).toMatchObject({
+      status: "queued",
+      sourceRunId: "queued-after-terminal",
+    });
+  });
+
+  it("restores full attachment references from a refreshed snapshot for edit and resend", async () => {
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => result.current.setInput("first"));
+    await act(async () => { await result.current.sendMessage(); });
+    const firstId = chatPayloads()[0].client_msg_id;
+    act(() => emit({ type: "session", sessionId: "session-authoritative", client_msg_id: firstId }));
+    act(() => emit({ type: "chat_ack", client_msg_id: firstId, status: "running", runId: "run-first", sessionId: "session-authoritative" }));
+
+    const snapshotMessage = {
+      sourceRunId: "queued-snapshot",
+      runId: "queued-snapshot",
+      clientMsgId: "client-snapshot",
+      deliveryMode: "queue" as const,
+      content: "snapshot attachment",
+      acceptedAt: "2026-08-15T01:00:00.000Z",
+      attachments: [{
+        attachmentId: fileB.attachmentId,
+        name: fileB.originalName,
+        savedPath: fileB.savedPath,
+        relativePath: fileB.relativePath,
+        size: fileB.size,
+        mimeType: fileB.mimeType,
+        isImage: fileB.isImage,
+      }],
+    };
+    act(() => harness.sessionCallbacks?.onQueuedMessages?.("session-authoritative", [snapshotMessage]));
+    expect(result.current.queuedInterjections[0]?.uploadedFiles).toEqual([fileB]);
+
+    let editPromise: Promise<void> | undefined;
+    act(() => { editPromise = result.current.editQueuedInterjection("client-snapshot"); });
+    await waitFor(() => expect(harness.sends).toHaveBeenCalledWith({ action: "cancel_queued", sourceRunId: "queued-snapshot" }));
+    act(() => emit({ type: "cancel_queued_result", ok: true, sourceRunId: "queued-snapshot" }));
+    await act(async () => { await editPromise; });
+    expect(harness.replaceFiles).toHaveBeenLastCalledWith([fileB]);
+
+    act(() => harness.sessionCallbacks?.onQueuedMessages?.("session-authoritative", [snapshotMessage]));
+    act(() => emit({
+      type: "steering_cancelled",
+      sessionId: "session-authoritative",
+      sourceRunId: "queued-snapshot",
+      clientMsgId: "client-snapshot",
+      reason: "user_withdrew",
+    }));
+    act(() => result.current.resendQueuedInterjection("client-snapshot"));
+    await waitFor(() => expect(chatPayloads()).toHaveLength(2));
+    expect(chatPayloads()[1].attachments).toEqual([{
+      attachmentId: fileB.attachmentId,
+      originalName: fileB.originalName,
+      savedPath: fileB.savedPath,
+      relativePath: fileB.relativePath,
+      size: fileB.size,
+      mimeType: fileB.mimeType,
+      isImage: fileB.isImage,
+    }]);
   });
 
   it("preserves full UploadedFile data through queued edit and resend", async () => {

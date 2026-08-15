@@ -100,7 +100,15 @@ export interface ApiSessionDetail {
     targetRunId?: string;
     queuePosition?: number;
     content: string;
-    attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+    attachments?: Array<{
+      name: string;
+      attachmentId?: string;
+      savedPath?: string;
+      relativePath?: string;
+      size?: number;
+      mimeType?: string;
+      isImage?: boolean;
+    }>;
     acceptedAt: string;
   }>;
 }

@@ -21,6 +21,25 @@ export async function recoverRunningToolInvocations(options: RecoverRunningToolI
     const terminalRun = run && ['completed', 'failed', 'cancelled', 'orphaned'].includes(run.status);
     const activeLeasedRun = run?.status === 'running' && typeof run.leaseExpiresAt === 'string' && new Date(run.leaseExpiresAt).getTime() > now;
     if (activeLeasedRun || (!terminalRun && !stale)) continue;
+    if (run?.status === 'cancelled' && !record.cancelRequestedAt) {
+      const cancelRequest = await options.toolInvocationStore.requestCancelOnce(
+        record.invocationId,
+        'recovered_after_cancelled_run',
+        { cancelRecovery: 'terminal_run' },
+      );
+      if (cancelRequest?.created) {
+        await options.eventStore.append({
+          type: 'tool_invocation_cancel_requested',
+          runId: record.runId,
+          sessionId: record.sessionId,
+          invocationId: record.invocationId,
+          toolCallId: record.toolCallId,
+          toolName: record.toolName,
+          reason: 'recovered_after_cancelled_run',
+          metadata: cancelRequest.record.metadata,
+        });
+      }
+    }
     const error = terminalRun
       ? `tool invocation recovered after terminal run status=${run.status}`
       : `tool invocation recovered as stale after ${staleAfterMs}ms`;

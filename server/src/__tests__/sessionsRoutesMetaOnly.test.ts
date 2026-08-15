@@ -223,7 +223,20 @@ describe('sessions routes for meta-only runtime sessions', () => {
         deliveryMode: 'queue',
         queuedBehindRunId: 'active-run-1',
         acceptedAt: requestedAt,
-        wakeMessage: { channel: 'web', chatId: sessionId, content: '排队任务' },
+        wakeMessage: {
+          channel: 'web',
+          chatId: sessionId,
+          content: '排队任务',
+          attachments: [{
+            attachmentId: 'att-queued-1',
+            originalName: '排队附件.pdf',
+            savedPath: '/workspace/uploads/att-queued-1/排队附件.pdf',
+            relativePath: 'uploads/att-queued-1/排队附件.pdf',
+            size: 1024,
+            mimeType: 'application/pdf',
+            isImage: false,
+          }],
+        },
       },
     };
     const { server, baseUrl } = await startServer(agentCwd, {
@@ -242,6 +255,15 @@ describe('sessions routes for meta-only runtime sessions', () => {
           targetRunId: 'active-run-1',
           queuePosition: 1,
           content: '排队任务',
+          attachments: [{
+            attachmentId: 'att-queued-1',
+            name: '排队附件.pdf',
+            savedPath: '/workspace/uploads/att-queued-1/排队附件.pdf',
+            relativePath: 'uploads/att-queued-1/排队附件.pdf',
+            size: 1024,
+            mimeType: 'application/pdf',
+            isImage: false,
+          }],
         }],
       });
 

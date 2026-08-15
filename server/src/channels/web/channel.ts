@@ -1937,7 +1937,7 @@ export class WebChannel implements BaseChannel {
     const runStore = this.config.enqueueRuntime?.runStore;
     if (!runStore) return { targetCancelled: false, eventAppended: false, newCancellation: true };
     if (cancelEvent && runStore.cancelSteeringBeforeDispatchBySessionWithEvent) {
-      const { cancelled, eventCreated } = await runStore.cancelSteeringBeforeDispatchBySessionWithEvent(
+      const { cancelled, targetCancelled, event, eventCreated } = await runStore.cancelSteeringBeforeDispatchBySessionWithEvent(
         sessionId,
         reason,
         targetRunId,
@@ -1956,7 +1956,7 @@ export class WebChannel implements BaseChannel {
           reason,
         });
       }
-      return { targetCancelled: Boolean(targetRunId), eventAppended: true, newCancellation: eventCreated };
+      return { targetCancelled, eventAppended: Boolean(event), newCancellation: eventCreated };
     }
     if (runStore.cancelSteeringBeforeDispatchBySession) {
       const cancelled = await runStore.cancelSteeringBeforeDispatchBySession(sessionId, reason, targetRunId);
@@ -1975,7 +1975,12 @@ export class WebChannel implements BaseChannel {
           reason,
         });
       }
-      return { targetCancelled: Boolean(targetRunId), eventAppended: Boolean(cancelEvent), newCancellation: true };
+      const target = targetRunId ? await runStore.get(targetRunId) : null;
+      return {
+        targetCancelled: target?.status === 'cancelled',
+        eventAppended: Boolean(cancelEvent),
+        newCancellation: true,
+      };
     }
     if (!runStore.listPendingSteeringBySession || !runStore.cancelPendingSteeringSourceRun) {
       return { targetCancelled: false, eventAppended: false, newCancellation: true };

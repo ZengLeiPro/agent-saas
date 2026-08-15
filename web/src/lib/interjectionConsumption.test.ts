@@ -49,6 +49,37 @@ describe("reconcileQueuedInterjections", () => {
       status: "queued",
     })]);
   });
+
+  it("硬刷新后从权威附件 DTO 重建可编辑和重发的 UploadedFile", () => {
+    const next = reconcileQueuedInterjections([], [{
+      sourceRunId: "queued-run-attachment",
+      clientMsgId: "client-attachment",
+      content: "带附件",
+      acceptedAt: "2026-08-15T01:00:00.000Z",
+      attachments: [{
+        attachmentId: "att-1",
+        name: "合同.pdf",
+        savedPath: "/workspace/uploads/att-1/合同.pdf",
+        relativePath: "uploads/att-1/合同.pdf",
+        size: 2048,
+        mimeType: "application/pdf",
+        isImage: false,
+      }],
+    }], new InterjectionConsumptionRegistry(), "session-1");
+
+    expect(next[0]).toMatchObject({
+      sessionId: "session-1",
+      uploadedFiles: [{
+        attachmentId: "att-1",
+        originalName: "合同.pdf",
+        savedPath: "/workspace/uploads/att-1/合同.pdf",
+        relativePath: "uploads/att-1/合同.pdf",
+        size: 2048,
+        mimeType: "application/pdf",
+        isImage: false,
+      }],
+    });
+  });
 });
 
 describe("removeConsumedInterjections", () => {

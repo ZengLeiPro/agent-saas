@@ -778,6 +778,29 @@ export function clearSessionsListCache(): void {
   sessionsListCache.clear();
 }
 
+function projectQueuedMessageAttachments(value: unknown): Array<{
+  name: string;
+  attachmentId?: string;
+  savedPath?: string;
+  relativePath?: string;
+  size?: number;
+  mimeType?: string;
+  isImage?: boolean;
+}> {
+  if (!Array.isArray(value)) return [];
+  return (value as Array<Record<string, unknown>>).flatMap((attachment) => (
+    typeof attachment?.originalName === 'string' ? [{
+      name: attachment.originalName,
+      ...(typeof attachment.attachmentId === 'string' ? { attachmentId: attachment.attachmentId } : {}),
+      ...(typeof attachment.savedPath === 'string' ? { savedPath: attachment.savedPath } : {}),
+      ...(typeof attachment.relativePath === 'string' ? { relativePath: attachment.relativePath } : {}),
+      ...(typeof attachment.size === 'number' ? { size: attachment.size } : {}),
+      ...(typeof attachment.mimeType === 'string' ? { mimeType: attachment.mimeType } : {}),
+      ...(typeof attachment.isImage === 'boolean' ? { isImage: attachment.isImage } : {}),
+    }] : []
+  ));
+}
+
 /**
  * 创建会话路由
  */
@@ -1018,7 +1041,15 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       targetRunId?: string;
       queuePosition?: number;
       content: string;
-      attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+      attachments?: Array<{
+        name: string;
+        attachmentId?: string;
+        savedPath?: string;
+        relativePath?: string;
+        size?: number;
+        mimeType?: string;
+        isImage?: boolean;
+      }>;
       acceptedAt: string;
     }> = [];
     if (options.listPendingUserMessagesBySession) {
@@ -1036,14 +1067,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           const targetRunId = deliveryMode === 'steer'
             ? (typeof run.metadata?.steeringTargetRunId === 'string' ? run.metadata.steeringTargetRunId : undefined)
             : (typeof run.metadata?.queuedBehindRunId === 'string' ? run.metadata.queuedBehindRunId : undefined);
-          const attachments = Array.isArray(wakeMessage.attachments)
-            ? (wakeMessage.attachments as Array<{ originalName?: unknown; isImage?: unknown; relativePath?: unknown }>)
-              .flatMap((attachment) => (typeof attachment?.originalName === 'string' ? [{
-                name: attachment.originalName,
-                ...(typeof attachment.isImage === 'boolean' ? { isImage: attachment.isImage } : {}),
-                ...(typeof attachment.relativePath === 'string' ? { relativePath: attachment.relativePath } : {}),
-              }] : []))
-            : [];
+          const attachments = projectQueuedMessageAttachments(wakeMessage.attachments);
           return [{
             sourceRunId: run.runId,
             runId: run.runId,
@@ -1068,6 +1092,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           const wakeMessage = input.sourceRun.metadata?.wakeMessage as { content?: unknown; attachments?: unknown } | undefined;
           if (!wakeMessage || typeof wakeMessage.content !== 'string') return [];
           const clientMsgId = typeof input.sourceRun.metadata?.clientMsgId === 'string' ? input.sourceRun.metadata.clientMsgId : undefined;
+          const attachments = projectQueuedMessageAttachments(wakeMessage.attachments);
           return [{
             sourceRunId: input.sourceRunId,
             runId: input.sourceRunId,
@@ -1076,6 +1101,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             targetRunId: input.targetRunId,
             queuePosition: index + 1,
             content: wakeMessage.content,
+            ...(attachments.length ? { attachments } : {}),
             acceptedAt: input.acceptedAt,
           }];
         });

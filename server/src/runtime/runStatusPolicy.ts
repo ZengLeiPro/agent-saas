@@ -10,3 +10,6 @@ export const ACTIVE_STEERING_TARGET_STATUSES: readonly string[] = [
 
 /** SQL IN 片段，必须与 ACTIVE_STEERING_TARGET_STATUSES 保持同步。 */
 export const STEERING_TARGET_STATUS_SQL = `('pending','running','waiting_hand')`;
+
+/** stop 可取消人工等待态；这不改变 steer 只能注入执行 loop 的语义。 */
+export const STOPPABLE_RUN_STATUS_SQL = `('pending','running','waiting_hand','waiting_user','waiting_approval')`;

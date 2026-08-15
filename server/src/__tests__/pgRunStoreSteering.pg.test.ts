@@ -400,6 +400,59 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     }
   });
 
+  it.each(['waiting_user', 'waiting_approval'] as const)(
+    'stop 对 %s 返回真实 targetCancelled 并持久化 cancelled',
+    async (waitingStatus) => {
+      const sessionId = `session-stop-${waitingStatus}`;
+      const runId = `run-stop-${waitingStatus}`;
+      await store.upsertPending({ runId, sessionId, userId: 'user-1', channel: 'web' });
+      await store.markStatus(runId, waitingStatus);
+
+      const result = await store.cancelSteeringBeforeDispatchBySessionWithEvent(
+        sessionId,
+        'web_abort',
+        runId,
+        { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' },
+      );
+
+      expect(result.targetCancelled).toBe(true);
+      await expect(store.get(runId)).resolves.toMatchObject({ status: 'cancelled', statusReason: 'web_abort' });
+    },
+  );
+
+  it('stop 事务锁到已 completed target 时不登记取消事件或工具 outbox', async () => {
+    const sessionId = 'session-stop-terminal-race';
+    const runId = 'run-stop-terminal-race';
+    await store.upsertPending({ runId, sessionId, userId: 'user-1', channel: 'web' });
+    await store.markStatus(runId, 'completed');
+    await toolInvocationStore.start({
+      invocationId: 'invocation-stop-terminal-race',
+      runId,
+      sessionId,
+      toolCallId: 'call-stop-terminal-race',
+      toolName: 'Shell',
+      executionTarget: 'server-remote',
+    });
+
+    const result = await store.cancelSteeringBeforeDispatchBySessionWithEvent(
+      sessionId,
+      'web_abort',
+      runId,
+      { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' },
+    );
+
+    expect(result).toMatchObject({ targetCancelled: false, eventCreated: false });
+    expect(result.event).toBeUndefined();
+    await expect(store.get(runId)).resolves.toMatchObject({ status: 'completed' });
+    await expect(toolInvocationStore.get('invocation-stop-terminal-race')).resolves.toMatchObject({
+      status: 'running',
+      cancelRequestedAt: undefined,
+    });
+    const events = await eventStore.list(sessionId);
+    expect(events.some((event) => event.type === 'run_cancel_requested')).toBe(false);
+    expect(events.some((event) => event.type === 'tool_invocation_cancel_requested')).toBe(false);
+  });
+
   it('重复 stop 不重复投递取消事件或工具取消等外部副作用触发源', async () => {
     const sessionId = 'session-stop-idempotency';
     const runId = 'run-stop-idempotency';

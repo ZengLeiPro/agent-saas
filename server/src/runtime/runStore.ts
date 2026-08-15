@@ -5,7 +5,7 @@ import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import { encodePgEventNotifyPayload } from './pgEventStore.js';
 import type { PlatformEvent, PlatformEventInput } from './types.js';
 import { cancelActiveRunsByUser, releaseRunLease } from './runTerminalLifecycle.js';
-import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL } from './runStatusPolicy.js';
+import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL, STOPPABLE_RUN_STATUS_SQL } from './runStatusPolicy.js';
 
 const { Pool } = pg;
 
@@ -238,7 +238,7 @@ export interface RunStore {
     targetRunId: string | undefined,
     event: PlatformEventInput,
     tenantId?: string,
-  ): Promise<{ cancelled: SteeringInputRecord[]; event: PlatformEvent; eventCreated: boolean }>;
+  ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }>;
   /** 会话内仍可由用户单条撤回的 pending 插话（供 detail API 恢复队列区）。 */
   listPendingSteeringBySession?(sessionId: string): Promise<SteeringInputRecord[]>;
   markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch?: Record<string, unknown>): Promise<RunRecord | null>;
@@ -313,6 +313,7 @@ export class PgRunStore implements RunStore {
   readonly steeringSessionsTable: string;
   readonly eventsTable: string;
   readonly eventCursorsTable: string;
+  readonly toolInvocationsTable: string;
   readonly eventNotifyChannel: string;
   private readonly ownsPool: boolean;
 
@@ -327,6 +328,7 @@ export class PgRunStore implements RunStore {
     this.steeringSessionsTable = `${prefix}_steering_sessions`;
     this.eventsTable = `${prefix}_events`;
     this.eventCursorsTable = `${prefix}_event_cursors`;
+    this.toolInvocationsTable = `${prefix}_tool_invocations`;
     this.eventNotifyChannel = `${prefix}_events_notify`;
     this.pool = options.pool ?? new Pool({ connectionString: options.connectionString! });
     this.ownsPool = !options.pool;
@@ -1155,7 +1157,7 @@ export class PgRunStore implements RunStore {
     targetRunId: string | undefined,
     event: PlatformEventInput,
     tenantId = DEFAULT_TENANT_ID,
-  ): Promise<{ cancelled: SteeringInputRecord[]; event: PlatformEvent; eventCreated: boolean }> {
+  ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const result = await this.cancelSteeringBeforeDispatchInternal(
       sessionId,
       reason,
@@ -1163,8 +1165,12 @@ export class PgRunStore implements RunStore {
       event,
       tenantId,
     );
-    if (!result.event) throw new Error('Atomic stop event was not appended');
-    return { cancelled: result.cancelled, event: result.event, eventCreated: result.eventCreated };
+    return {
+      cancelled: result.cancelled,
+      targetCancelled: result.targetCancelled,
+      ...(result.event ? { event: result.event } : {}),
+      eventCreated: result.eventCreated,
+    };
   }
 
   private async cancelSteeringBeforeDispatchInternal(
@@ -1173,9 +1179,11 @@ export class PgRunStore implements RunStore {
     targetRunId?: string,
     event?: PlatformEventInput,
     tenantId = DEFAULT_TENANT_ID,
-  ): Promise<{ cancelled: SteeringInputRecord[]; event?: PlatformEvent; eventCreated: boolean }> {
+  ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const client = await this.pool.connect();
     let appended: Array<PlatformEvent & { sequence: number }> = [];
+    let targetCancelled = false;
+    let runCancelEventCreated = false;
     try {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
@@ -1264,8 +1272,9 @@ export class PgRunStore implements RunStore {
           WHERE run_id = ANY($1::text[]) AND status = 'pending'
         `, [cancelIds, reason, now]);
       }
+      let toolCancelEvents: PlatformEventInput[] = [];
       if (targetRunId) {
-        await client.query(`
+        const targetUpdate = await client.query<{ run_id: string }>(`
           UPDATE ${this.runsTable}
           SET status = 'cancelled',
               status_reason = $3,
@@ -1276,8 +1285,40 @@ export class PgRunStore implements RunStore {
               metadata = metadata - 'wakeMessage'
           WHERE session_id = $1
             AND run_id = $2
-            AND status IN ${STEERING_TARGET_STATUS_SQL}
+            AND status IN ${STOPPABLE_RUN_STATUS_SQL}
+          RETURNING run_id
         `, [sessionId, targetRunId, reason, now]);
+        targetCancelled = targetUpdate.rows.length > 0;
+
+        if (event && targetCancelled) {
+          const cancelRequests = await client.query<{
+            invocation_id: string;
+            tool_call_id: string;
+            tool_name: string;
+            metadata: Record<string, unknown>;
+          }>(`
+            UPDATE ${this.toolInvocationsTable}
+            SET cancel_requested_at = $2::timestamptz,
+                cancel_reason = COALESCE(cancel_reason, $3),
+                updated_at = $2::timestamptz,
+                metadata = metadata || $4::jsonb
+            WHERE run_id = $1
+              AND status = 'running'
+              AND cancel_requested_at IS NULL
+            RETURNING invocation_id, tool_call_id, tool_name, metadata
+          `, [targetRunId, now, reason, JSON.stringify({ requestedBy: 'userId' in event ? event.userId ?? 'anonymous' : 'anonymous' })]);
+          toolCancelEvents = cancelRequests.rows.map((invocation) => ({
+            type: 'tool_invocation_cancel_requested',
+            sessionId,
+            runId: targetRunId,
+            invocationId: invocation.invocation_id,
+            toolCallId: invocation.tool_call_id,
+            toolName: invocation.tool_name,
+            ...('userId' in event && event.userId ? { userId: event.userId } : {}),
+            reason,
+            metadata: invocation.metadata,
+          }));
+        }
       }
       let existingEvent: PlatformEvent | undefined;
       if (event?.type === 'run_cancel_requested' && event.runId) {
@@ -1290,8 +1331,14 @@ export class PgRunStore implements RunStore {
         `, [event.runId]);
         existingEvent = existing.rows[0]?.event_json;
       }
-      if (event && !existingEvent) {
-        appended = await this.appendRuntimeEventsInTransaction(client, [event], tenantId);
+      const shouldAppendRunCancel = Boolean(event && !existingEvent && (!targetRunId || targetCancelled));
+      const eventsToAppend: PlatformEventInput[] = [
+        ...(shouldAppendRunCancel ? [event!] : []),
+        ...toolCancelEvents,
+      ];
+      if (eventsToAppend.length > 0) {
+        appended = await this.appendRuntimeEventsInTransaction(client, eventsToAppend, tenantId);
+        runCancelEventCreated = shouldAppendRunCancel;
       }
       await client.query('COMMIT');
       await this.notifyRuntimeEvents(client, appended);
@@ -1306,11 +1353,12 @@ export class PgRunStore implements RunStore {
         ...(row.applied_at ? { appliedAt: new Date(row.applied_at).toISOString() } : {}),
         sourceRun: normalizeRunRecord(row.row_json),
       }));
-      const durableEvent = appended[0] ?? existingEvent;
+      const durableEvent = appended.find((item) => item.type === 'run_cancel_requested') ?? existingEvent;
       return {
         cancelled,
+        targetCancelled,
         ...(durableEvent ? { event: durableEvent } : {}),
-        eventCreated: appended.length > 0,
+        eventCreated: runCancelEventCreated,
       };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);

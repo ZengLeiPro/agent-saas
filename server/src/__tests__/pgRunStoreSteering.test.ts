@@ -506,6 +506,76 @@ describe('PgRunStore steering inbox', () => {
     expect(queries.at(-1)).toBe('COMMIT');
   });
 
+  it('reports targetCancelled from the actual stop UPDATE and includes human waiting states', async () => {
+    const queries: string[] = [];
+    const client = {
+      query: async (sql: string) => {
+        queries.push(sql.trim());
+        if (sql.includes("worker_id = NULL") && sql.includes("RETURNING run_id")) {
+          return { rows: [{ run_id: 'waiting-run' }], rowCount: 1 };
+        }
+        if (sql.includes('UPDATE runtime_tool_invocations')) {
+          return {
+            rows: [{
+              invocation_id: 'invocation-waiting',
+              tool_call_id: 'tool-call-waiting',
+              tool_name: 'Shell',
+              metadata: { requestedBy: 'user-1' },
+            }],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes('UPDATE runtime_event_cursors')) return { rows: [{ start_sequence: '1' }] };
+        return { rows: [], rowCount: 0 };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    const result = await store.cancelSteeringBeforeDispatchBySessionWithEvent(
+      'session-waiting',
+      'web_abort',
+      'waiting-run',
+      { type: 'run_cancel_requested', sessionId: 'session-waiting', runId: 'waiting-run', reason: 'web_abort' },
+    );
+
+    expect(result.targetCancelled).toBe(true);
+    const targetUpdate = queries.find((sql) => sql.includes('worker_id = NULL'));
+    expect(targetUpdate).toContain("'waiting_user'");
+    expect(targetUpdate).toContain("'waiting_approval'");
+    expect(queries.findIndex((sql) => sql.includes('UPDATE runtime_tool_invocations')))
+      .toBeLessThan(queries.findIndex((sql) => sql === 'COMMIT'));
+    expect(queries.filter((sql) => sql.includes('INSERT INTO runtime_events'))).toHaveLength(2);
+  });
+
+  it('does not persist run/tool cancellation events when the target wins the race to a non-cancellable terminal state', async () => {
+    const queries: string[] = [];
+    const client = {
+      query: async (sql: string) => {
+        queries.push(sql.trim());
+        if (sql.includes("worker_id = NULL") && sql.includes("RETURNING run_id")) {
+          return { rows: [], rowCount: 0 };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    const result = await store.cancelSteeringBeforeDispatchBySessionWithEvent(
+      'session-terminal-race',
+      'web_abort',
+      'completed-run',
+      { type: 'run_cancel_requested', sessionId: 'session-terminal-race', runId: 'completed-run', reason: 'web_abort' },
+    );
+
+    expect(result).toMatchObject({ targetCancelled: false, eventCreated: false });
+    expect(result.event).toBeUndefined();
+    expect(queries.some((sql) => sql.includes('UPDATE runtime_tool_invocations'))).toBe(false);
+    expect(queries.some((sql) => sql.includes('INSERT INTO runtime_events'))).toBe(false);
+    expect(queries.at(-1)).toBe('COMMIT');
+  });
+
   it('releases pending steering rows when the source run falls back to standalone execution (2026-08-04 BUG-5)', async () => {
     const queries: string[] = [];
     const pool = {

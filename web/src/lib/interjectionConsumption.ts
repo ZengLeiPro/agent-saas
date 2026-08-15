@@ -15,7 +15,17 @@ export interface QueuedInterjection {
   deliveryMode: 'queue' | 'steer';
   queuePosition?: number;
   content: string;
-  attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+  attachments?: Array<{
+    name: string;
+    attachmentId?: string;
+    savedPath?: string;
+    relativePath?: string;
+    size?: number;
+    mimeType?: string;
+    isImage?: boolean;
+  }>;
+  /** 队列项所属的权威会话；异步 ACK/核验不得把它投影到其他会话。 */
+  sessionId?: string;
   /** 本机提交时保留完整上传结果，供编辑/重发复用；服务端旧 DTO 仅能恢复 attachments 元数据。 */
   uploadedFiles?: UploadedFile[];
   /** verifying=ACK 超时后正核验服务端；此时禁止无幂等保护的重试。 */
@@ -59,6 +69,7 @@ export function reconcileQueuedInterjections(
   entries: QueuedInterjection[],
   serverQueued: NonNullable<ApiSessionDetail["queuedMessages"]>,
   consumed: InterjectionConsumptionRegistry,
+  sessionId?: string,
 ): QueuedInterjection[] {
   const serverEntries = serverQueued
     .filter((entry) => !consumed.has(entry))
@@ -66,6 +77,21 @@ export function reconcileQueuedInterjections(
       const local = entries.find((candidate) => (
         (entry.clientMsgId && candidate.clientMsgId === entry.clientMsgId)
         || (entry.sourceRunId && candidate.sourceRunId === entry.sourceRunId)
+      ));
+      const restoredFiles = entry.attachments?.flatMap((attachment) => (
+        attachment.relativePath
+        && typeof attachment.size === 'number'
+        && typeof attachment.mimeType === 'string'
+          ? [{
+            ...(attachment.attachmentId ? { attachmentId: attachment.attachmentId } : {}),
+            originalName: attachment.name,
+            ...(attachment.savedPath ? { savedPath: attachment.savedPath } : {}),
+            relativePath: attachment.relativePath,
+            size: attachment.size,
+            mimeType: attachment.mimeType,
+            isImage: attachment.isImage ?? attachment.mimeType.startsWith('image/'),
+          }]
+          : []
       ));
       return {
         clientMsgId: entry.clientMsgId ?? entry.sourceRunId,
@@ -75,7 +101,12 @@ export function reconcileQueuedInterjections(
         ...(entry.queuePosition ? { queuePosition: entry.queuePosition } : {}),
         content: entry.content,
         ...(entry.attachments?.length ? { attachments: entry.attachments } : {}),
-        ...(local?.uploadedFiles?.length ? { uploadedFiles: local.uploadedFiles } : {}),
+        ...(local?.uploadedFiles?.length
+          ? { uploadedFiles: local.uploadedFiles }
+          : restoredFiles?.length
+            ? { uploadedFiles: restoredFiles }
+            : {}),
+        ...(sessionId ? { sessionId } : local?.sessionId ? { sessionId: local.sessionId } : {}),
         status: 'queued' as const,
         createdAt: local?.createdAt ?? (Date.parse(entry.acceptedAt) || Date.now()),
       };

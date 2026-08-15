@@ -299,6 +299,64 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect((await runStore.get('run-other-1'))?.status).toBe('running');
     });
 
+    it('原子 stop 未实际更新 waiting target 时必须 fallback，不能仅凭 targetRunId 回 abort_ok', async () => {
+      const runStore = new MemoryRunStore();
+      await runStore.upsertPending({ runId: 'run-waiting-stop', sessionId: 'session-waiting-stop', userId: USER.sub, channel: 'web' });
+      await runStore.markStatus('run-waiting-stop', 'waiting_user');
+      (runStore as any).cancelSteeringBeforeDispatchBySessionWithEvent = vi.fn(async (
+        _sessionId: string,
+        _reason: string,
+        _targetRunId: string,
+        event: Record<string, unknown>,
+      ) => ({
+        cancelled: [],
+        targetCancelled: false,
+        event: { id: 'event-stop', timestamp: new Date().toISOString(), ...event },
+        eventCreated: true,
+      }));
+      const markSpy = vi.spyOn(runStore, 'markStatus');
+      const rig = makeRig({
+        enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
+      });
+
+      await (rig.channel as any).handleAbortAsync(
+        wsClient(rig.ws, USER),
+        { action: 'abort', runId: 'run-waiting-stop' },
+      );
+
+      expect(markSpy).toHaveBeenCalledWith('run-waiting-stop', 'cancelled', 'web_abort');
+      await expect(runStore.get('run-waiting-stop')).resolves.toMatchObject({ status: 'cancelled' });
+      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'abort_ok', runId: 'run-waiting-stop' });
+    });
+
+    it('stop 锁到并发 completed target 时不得回 abort_ok 或补写取消事件', async () => {
+      const runStore = new MemoryRunStore();
+      await runStore.upsertPending({ runId: 'run-stop-race', sessionId: 'session-stop-race', userId: USER.sub, channel: 'web' });
+      await runStore.markStatus('run-stop-race', 'running');
+      (runStore as any).cancelSteeringBeforeDispatchBySessionWithEvent = vi.fn(async () => {
+        const current = await runStore.get('run-stop-race');
+        runStore.records.set('run-stop-race', { ...current!, status: 'completed' });
+        return { cancelled: [], targetCancelled: false, eventCreated: false };
+      });
+      const originalMarkStatus = runStore.markStatus.bind(runStore);
+      vi.spyOn(runStore, 'markStatus').mockImplementation(async (runId, status, reason, metadata) => (
+        status === 'cancelled'
+          ? runStore.get(runId)
+          : originalMarkStatus(runId, status, reason, metadata)
+      ));
+      const rig = makeRig({
+        enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
+      });
+
+      await expect((rig.channel as any).handleAbortAsync(
+        wsClient(rig.ws, USER),
+        { action: 'abort', runId: 'run-stop-race' },
+      )).rejects.toThrow('Failed to persist cancellation for run run-stop-race');
+
+      await expect(runStore.get('run-stop-race')).resolves.toMatchObject({ status: 'completed' });
+      expect(rig.ws.sent.some((entry) => entry.data?.type === 'abort_ok')).toBe(false);
+    });
+
     it('durable 取消全链：落 run_cancel_requested + 工具 invocation 取消 + runStore cancelled + controller/runtimeRunController 双中止', async () => {
       const tmp = await makeTmp('cov-abort-');
       const { sessionId, transcriptPath, eventStore } = await seedRuntimeSession(USER);

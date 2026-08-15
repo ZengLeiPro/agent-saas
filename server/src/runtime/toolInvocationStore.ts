@@ -194,7 +194,7 @@ export class InMemoryToolInvocationStore implements ToolInvocationStore {
     now = new Date(),
   ): Promise<ToolInvocationRecord | null> {
     const record = this.invocations.get(invocationId);
-    if (!record || record.status !== 'running' || !record.cancelRequestedAt || record.cancelDeliveredAt) return null;
+    if (!record || !record.cancelRequestedAt || record.cancelDeliveredAt) return null;
     const nextAttemptAt = typeof record.metadata.cancelDeliveryNextAttemptAt === 'string'
       ? Date.parse(record.metadata.cancelDeliveryNextAttemptAt)
       : Number.NaN;
@@ -267,7 +267,7 @@ export class InMemoryToolInvocationStore implements ToolInvocationStore {
 
   async listCancelRequested(sessionId?: string): Promise<ToolInvocationRecord[]> {
     return [...this.invocations.values()]
-      .filter((record) => record.status === 'running' && record.cancelRequestedAt && !record.cancelDeliveredAt)
+      .filter((record) => record.cancelRequestedAt && !record.cancelDeliveredAt)
       .filter((record) => !sessionId || record.sessionId === sessionId);
   }
 }
@@ -410,7 +410,6 @@ export class PgToolInvocationStore implements ToolInvocationStore {
             'cancelDeliveryClaimExpiresAt', $4::text
           )
       WHERE invocation_id = $1
-        AND status = 'running'
         AND cancel_requested_at IS NOT NULL
         AND cancel_delivered_at IS NULL
         AND (
@@ -475,8 +474,8 @@ export class PgToolInvocationStore implements ToolInvocationStore {
 
   async listCancelRequested(sessionId?: string): Promise<ToolInvocationRecord[]> {
     const result = sessionId
-      ? await this.options.pool.query<ToolInvocationRow>(`SELECT * FROM ${this.toolInvocationsTable} WHERE status = 'running' AND cancel_requested_at IS NOT NULL AND cancel_delivered_at IS NULL AND session_id = $1 ORDER BY cancel_requested_at ASC`, [sessionId])
-      : await this.options.pool.query<ToolInvocationRow>(`SELECT * FROM ${this.toolInvocationsTable} WHERE status = 'running' AND cancel_requested_at IS NOT NULL AND cancel_delivered_at IS NULL ORDER BY cancel_requested_at ASC`);
+      ? await this.options.pool.query<ToolInvocationRow>(`SELECT * FROM ${this.toolInvocationsTable} WHERE cancel_requested_at IS NOT NULL AND cancel_delivered_at IS NULL AND session_id = $1 ORDER BY cancel_requested_at ASC`, [sessionId])
+      : await this.options.pool.query<ToolInvocationRow>(`SELECT * FROM ${this.toolInvocationsTable} WHERE cancel_requested_at IS NOT NULL AND cancel_delivered_at IS NULL ORDER BY cancel_requested_at ASC`);
     return result.rows.map(rowToRecord);
   }
 

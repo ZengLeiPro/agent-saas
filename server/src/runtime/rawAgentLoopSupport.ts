@@ -1,0 +1,251 @@
+import { getModelContextWindow } from '../data/usage/pricing.js';
+import type { ToolInvocationStreamChunk } from './handProtocol.js';
+import type {
+  EventStore,
+  ModelChatMessage,
+  ModelUsage,
+  PlatformEventInput,
+} from './types.js';
+
+export interface ReplaceableDraftRunState {
+  draftId: string;
+  recoveryUsed: boolean;
+  startedAt: string;
+}
+
+export function parseReplaceableDraftRunState(value: unknown): ReplaceableDraftRunState | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const state = value as Record<string, unknown>;
+  if (
+    typeof state.draftId !== 'string'
+    || !state.draftId
+    || typeof state.startedAt !== 'string'
+    || !Number.isFinite(Date.parse(state.startedAt))
+  ) return null;
+  return {
+    draftId: state.draftId,
+    recoveryUsed: state.recoveryUsed === true,
+    startedAt: state.startedAt,
+  };
+}
+
+export function resolveInvokedSkillName(toolId: string, input: unknown): string | undefined {
+  if (toolId !== 'Skill' || !input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const skill = (input as Record<string, unknown>).skill;
+  return typeof skill === 'string' && skill.trim() ? skill.trim() : undefined;
+}
+
+export interface ContextPressureState {
+  reason: 'context_governor';
+  detectedAt: string;
+  triggerTokens: number;
+  thresholdTokens: number;
+  droppedMessages: number;
+}
+
+export interface CompactionOutcome {
+  status: 'compacted' | 'skipped' | 'aborted' | 'error';
+  numTurns: number;
+  resultText: string;
+  usage?: ModelUsage;
+  error?: string;
+}
+
+export interface CompactionOptions {
+  inline: boolean;
+  trigger: 'manual' | 'threshold';
+  sourceRunId?: string;
+  controlSourceRunIds?: string[];
+  baseFixedTokens?: number;
+}
+
+const CONTEXT_EMERGENCY_THRESHOLD_RATIO = 0.95;
+
+export function isEmergencyContextPressure(
+  triggerTokens: number,
+  model: string,
+  modelRef?: string,
+): boolean {
+  const contextWindow = getModelContextWindow(model, modelRef);
+  return !contextWindow || triggerTokens >= Math.floor(contextWindow * CONTEXT_EMERGENCY_THRESHOLD_RATIO);
+}
+
+export function parseContextPressureState(value: unknown): ContextPressureState | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const state = value as Record<string, unknown>;
+  if (
+    state.reason !== 'context_governor'
+    || typeof state.detectedAt !== 'string'
+    || typeof state.triggerTokens !== 'number'
+    || typeof state.thresholdTokens !== 'number'
+    || typeof state.droppedMessages !== 'number'
+  ) return null;
+  return state as unknown as ContextPressureState;
+}
+
+/** /compact 的压缩请求，作为普通 user message 追加在待压缩段末尾。 */
+export const COMPACTION_REQUEST_PROMPT = [
+  '请暂停当前任务。现在需要对上面提供的会话前缀执行上下文压缩，整理成可恢复的上下文检查点；平台会另外保留当前任务锚点、全部用户消息轨迹和最近完整执行尾部。',
+  '要求：',
+  '- 只总结当前请求中提供的历史前缀；不要推测平台另行保留的原始尾部。',
+  '- 保留：任务目标与当前状态；重要事实与数据（数字/文件路径/命令/URL/代码要点）；已完成工作及产出位置；未完成事项与精确下一步；用户偏好与约束。',
+  '- 对已经发生的外部副作用（写文件、提交、发送、创建/修改外部对象等）记录对象、ID、回执和结果，明确禁止重复执行。',
+  '- 丢弃：寒暄、重复内容、已被纠正的中间尝试细节、冗长工具原始输出（只留结论与检索标识）。',
+  '- 无需逐字复述用户消息，平台会在摘要旁保留确定性用户消息轨迹。',
+  '- 固定使用以下 Markdown 章节：当前任务与约束、已完成工作、外部副作用与回执、当前代码/文件/测试状态、未完成事项、下一步动作、历史检索引用；没有内容写“无”。',
+  '- 使用中文；不要调用任何工具；只输出摘要正文，不要添加解释、开场白或结尾语。',
+].join('\n');
+
+/** 防止压缩失败后裸 /compact 被当成普通聊天消息。 */
+export const COMPACT_COMMAND_MODEL_CONTENT = '[系统命令] 用户请求压缩会话上下文（/compact）。这是平台指令，无需回应此消息本身。';
+
+export const THINKING_ONLY_CONTINUATION_PROMPT = [
+  'Your previous assistant turn produced hidden reasoning only, with no user-visible content and no tool call.',
+  'Continue now from that reasoning. You must either call the next appropriate tool or provide the final user-visible answer.',
+  'Do not repeat hidden reasoning.',
+].join('\n');
+
+/** 压缩段投影后少于这个消息数不值得手动压缩。 */
+export const MIN_COMPACTABLE_MESSAGES = 4;
+
+export function findLastUserMessageIndex(messages: ModelChatMessage[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === 'user') return i;
+  }
+  return -1;
+}
+
+export interface StreamEventBatchOptions {
+  /** Flush once this many stream events are buffered. */
+  maxEvents?: number;
+  /** Flush once buffered stream content reaches this many UTF-8 bytes. */
+  maxBytes?: number;
+  /** Flush buffered chunks after this delay so slow streams still reach durable storage. */
+  flushIntervalMs?: number;
+}
+
+export class StreamEventBatcher {
+  private readonly buffer: PlatformEventInput[] = [];
+  private bufferedBytes = 0;
+  private timer: NodeJS.Timeout | undefined;
+  private flushing: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly eventStore: EventStore,
+    private readonly options: Required<StreamEventBatchOptions>,
+  ) {}
+
+  async push(event: PlatformEventInput): Promise<void> {
+    this.buffer.push(event);
+    this.bufferedBytes += 'content' in event && typeof event.content === 'string'
+      ? Buffer.byteLength(event.content, 'utf8')
+      : 0;
+    if (this.buffer.length >= this.options.maxEvents || this.bufferedBytes >= this.options.maxBytes) {
+      await this.flush();
+      return;
+    }
+    this.scheduleFlush();
+  }
+
+  async flush(): Promise<void> {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
+    if (this.buffer.length === 0) {
+      await this.flushing;
+      return;
+    }
+    const events = this.buffer.splice(0, this.buffer.length);
+    this.bufferedBytes = 0;
+    this.flushing = this.flushing.then(async () => {
+      if (this.eventStore.appendBatch) {
+        await this.eventStore.appendBatch(events);
+      } else {
+        for (const event of events) await this.eventStore.append(event);
+      }
+    });
+    await this.flushing;
+  }
+
+  private scheduleFlush(): void {
+    if (this.timer || this.options.flushIntervalMs <= 0) return;
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.flush();
+    }, this.options.flushIntervalMs);
+    this.timer.unref?.();
+  }
+}
+
+const STREAM_SUMMARY_TAIL_CHARS = 8 * 1024;
+const STREAM_SUMMARY_PROGRESS_LIMIT = 20;
+
+export class ToolStreamSummaryBuilder {
+  private stdoutTail = '';
+  private stderrTail = '';
+  private readonly progressTail: string[] = [];
+  private stdoutBytes = 0;
+  private stderrBytes = 0;
+  private outputChunks = 0;
+  private progressCount = 0;
+  private truncated = false;
+
+  observe(chunk: ToolInvocationStreamChunk): void {
+    if (chunk.type === 'output') {
+      this.outputChunks += 1;
+      const bytes = Buffer.byteLength(chunk.content, 'utf8');
+      if (chunk.channel === 'stderr') {
+        this.stderrBytes += bytes;
+        this.stderrTail = this.appendTail(this.stderrTail, chunk.content);
+      } else {
+        this.stdoutBytes += bytes;
+        this.stdoutTail = this.appendTail(this.stdoutTail, chunk.content);
+      }
+      return;
+    }
+    if (chunk.type === 'progress') {
+      this.progressCount += 1;
+      this.progressTail.push(chunk.message);
+      if (this.progressTail.length > STREAM_SUMMARY_PROGRESS_LIMIT) {
+        this.progressTail.splice(0, this.progressTail.length - STREAM_SUMMARY_PROGRESS_LIMIT);
+        this.truncated = true;
+      }
+    }
+  }
+
+  build(args: {
+    runId: string;
+    sessionId: string;
+    invocationId: string;
+    toolCallId: string;
+    toolName: string;
+    status: 'success' | 'error' | 'cancelled';
+  }): PlatformEventInput | undefined {
+    if (this.outputChunks === 0 && this.progressCount === 0) return undefined;
+    return {
+      type: 'tool_stream_summary',
+      runId: args.runId,
+      sessionId: args.sessionId,
+      invocationId: args.invocationId,
+      toolCallId: args.toolCallId,
+      toolName: args.toolName,
+      status: args.status,
+      stdoutBytes: this.stdoutBytes,
+      stderrBytes: this.stderrBytes,
+      outputChunks: this.outputChunks,
+      progressCount: this.progressCount,
+      truncated: this.truncated,
+      ...(this.stdoutTail ? { stdoutTail: this.stdoutTail } : {}),
+      ...(this.stderrTail ? { stderrTail: this.stderrTail } : {}),
+      ...(this.progressTail.length ? { progressTail: [...this.progressTail] } : {}),
+    };
+  }
+
+  private appendTail(current: string, next: string): string {
+    const combined = `${current}${next}`;
+    if (combined.length <= STREAM_SUMMARY_TAIL_CHARS) return combined;
+    this.truncated = true;
+    return combined.slice(combined.length - STREAM_SUMMARY_TAIL_CHARS);
+  }
+}

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
 import { readdir as readdirAsync } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'path';
 import { serverLogger, configureLogger } from '../utils/logger.js';
@@ -128,7 +128,6 @@ import { CredentialBroker } from '../runtime/credentialBroker.js';
 import { RunPreflightService } from '../runtime/runPreflight.js';
 import { PgRunResolutionSnapshotStore } from '../runtime/runResolutionSnapshotStore.js';
 import { MemoryIndexService } from '../memory/index/service.js';
-import type { MemoryIndexConfig } from '../memory/index/types.js';
 import { UserStore } from '../data/users/store.js';
 import type { UserInfo } from '../data/users/types.js';
 import { TenantStore } from '../data/tenants/store.js';
@@ -202,9 +201,6 @@ import {
 import { setConnectorDictionary, setTenantConnectorDictionaries } from '../agent/toolPresentationBuilder.js';
 import { UploadManager } from '../uploads/manager.js';
 
-// δ: skillsDispatchConfig.listForUser 的进程级 cache（configVersion 驱动失效），
-// 避免每次 dispatch / 每次 Skill.invoke 都重新 readdirSync pool 目录。
-const SAFE_SKILL_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 import { migrateCronGroups } from '../data/groups/migrate.js';
 import { findTranscriptPathBySessionId } from '../data/transcripts/store.js';
 import { runStartupMigrations } from '../data/migrations/startup.js';
@@ -229,6 +225,11 @@ import {
 } from './runtimeGovernanceCredentials.js';
 import { initializeRuntimeGovernancePreflight } from './runtimeGovernancePreflight.js';
 import { resolveSttRuntimeConfig } from '../runtime/sttRuntimeConfig.js';
+import {
+  SAFE_SKILL_NAME_RE,
+  createMemoryIndexService,
+  loadSettingsEnv,
+} from './runtimeSetupHelpers.js';
 // 公开契约类型已迁至 ./runtimeContracts.ts，这里按既有 import 路径继续对外转发。
 export type {
   AppRuntime,
@@ -249,44 +250,6 @@ function ensureDirectory(path: string, label: string): void {
     serverLogger.info(`Created ${label}: ${path}`);
   }
 }
-
-function createMemoryIndexService(
-  processCwd: string,
-  memoryIndexConfig: NonNullable<NonNullable<AppConfig['memory']>['index']> | undefined,
-  options: ConstructorParameters<typeof MemoryIndexService>[2] = {},
-): MemoryIndexService | null {
-  if (memoryIndexConfig?.enabled !== true) return null;
-
-  const resolvedConfig: MemoryIndexConfig = {
-    enabled: true,
-    dbDir: resolve(processCwd, memoryIndexConfig.dbDir ?? 'data/memory-index'),
-    embedding: memoryIndexConfig.embedding,
-    chunking: {
-      tokens: memoryIndexConfig.chunking?.tokens ?? 400,
-      overlap: memoryIndexConfig.chunking?.overlap ?? 80,
-    },
-    search: {
-      vectorWeight: memoryIndexConfig.search?.vectorWeight ?? 0.7,
-      textWeight: memoryIndexConfig.search?.textWeight ?? 0.3,
-      maxResults: memoryIndexConfig.search?.maxResults ?? 10,
-      minScore: memoryIndexConfig.search?.minScore ?? 0.3,
-    },
-    temporalDecay: {
-      enabled: memoryIndexConfig.temporalDecay?.enabled ?? false,
-      halfLifeDays: memoryIndexConfig.temporalDecay?.halfLifeDays ?? 30,
-    },
-    sync: {
-      debounceMs: memoryIndexConfig.sync?.debounceMs ?? 1500,
-    },
-  };
-
-  return new MemoryIndexService(
-    resolvedConfig,
-    (msg) => serverLogger.info(`[memory-index] ${msg}`),
-    options,
-  );
-}
-
 export async function createRuntime(options: CreateRuntimeOptions = {}): Promise<AppRuntime> {
   const processCwd = options.processCwd ?? process.cwd();
   const processRole = options.processRole ?? 'all';
@@ -347,20 +310,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   //   - v2 per-tenant：`workspace-shared/<tenantSlug>/.ky-agent/settings.json` → tenantSharedEnv[slug]
   // env: 通过 agentOptionsConfig.{sharedEnv, tenantSharedEnv} 传递给 buildEnv(tenantId)
   //      显式合并（不再污染 process.env）
-  function loadSettingsEnv(path: string): Record<string, string> | undefined {
-    try {
-      const raw = JSON.parse(readFileSync(path, 'utf-8'));
-      if (!raw.env || typeof raw.env !== 'object') return undefined;
-      const env: Record<string, string> = {};
-      for (const [key, value] of Object.entries(raw.env)) {
-        if (typeof value === 'string') env[key] = value;
-      }
-      return env;
-    } catch {
-      return undefined;
-    }
-  }
-
   // v1：sharedDir 顶层（向后兼容，所有组织的 fallback baseline）
   const sharedSettingsPath = resolveAgentPath(sharedDir, 'settings.json');
   const sharedEnv = loadSettingsEnv(sharedSettingsPath);

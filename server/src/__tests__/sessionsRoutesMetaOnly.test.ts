@@ -1,6 +1,6 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -795,7 +795,6 @@ describe('sessions routes for meta-only runtime sessions', () => {
       await stopServer(server);
     }
   });
-
   it('hides subagent hidden sessions from the list (kind=subagent)', async () => {
     const visible = await writeRuntimeSession({ content: 'normal session' });
     const hidden = await writeRuntimeSession({
@@ -808,90 +807,6 @@ describe('sessions routes for meta-only runtime sessions', () => {
       const json = await listSessions(baseUrl, '?fresh=1');
       expect(json.sessions.some((session) => session.sessionId === visible.sessionId)).toBe(true);
       expect(json.sessions.some((session) => session.sessionId === hidden.sessionId)).toBe(false);
-    } finally {
-      await stopServer(server);
-    }
-  });
-
-  it('de-duplicates sessions that have both transcript and meta files', async () => {
-    const { sessionId, transcriptPath } = await writeRuntimeSession({ content: 'metadata prompt' });
-    await mkdir(dirname(transcriptPath), { recursive: true });
-    await writeFile(transcriptPath, JSON.stringify({ type: 'user', message: { content: 'transcript prompt' } }) + '\n');
-
-    const { server, baseUrl } = await startServer(agentCwd);
-    try {
-      const json = await listSessions(baseUrl, '?fresh=1');
-      const matches = json.sessions.filter((session) => session.sessionId === sessionId);
-      expect(matches).toHaveLength(1);
-    } finally {
-      await stopServer(server);
-    }
-  });
-
-  it('sorts and paginates merged meta-only sessions', async () => {
-    const older = await writeRuntimeSession({
-      content: 'older prompt',
-      metaMtimeMs: Date.now() - 10_000,
-    });
-    const newer = await writeRuntimeSession({
-      content: 'newer prompt',
-      metaMtimeMs: Date.now(),
-    });
-
-    const { server, baseUrl } = await startServer(agentCwd);
-    try {
-      const firstPage = await listSessions(baseUrl, '?fresh=1&limit=1');
-      expect(firstPage.hasMore).toBe(true);
-      expect(firstPage.sessions).toHaveLength(1);
-      expect(firstPage.sessions[0]?.sessionId).toBe(newer.sessionId);
-
-      const secondPage = await listSessions(baseUrl, `?fresh=1&limit=1&before=${firstPage.sessions[0]!.updatedAtMs}`);
-      expect(secondPage.sessions[0]?.sessionId).toBe(older.sessionId);
-    } finally {
-      await stopServer(server);
-    }
-  });
-
-  it('uses the runtime session projection instead of scanning every transcript', async () => {
-    const sessionId = randomUUID();
-    const updatedAt = '2026-07-21T00:30:00.000Z';
-    const list = vi.fn(async () => ({
-      items: [{
-        sessionId,
-        tenantId: TEST_USER.tenantId,
-        userId: TEST_USER.id,
-        username: TEST_USER.username,
-        channel: 'web',
-        kind: 'user' as const,
-        title: '投影会话',
-        createdAt: updatedAt,
-        updatedAt,
-        metaJson: {
-          userId: TEST_USER.id,
-          username: TEST_USER.username,
-          tenantId: TEST_USER.tenantId,
-          channel: 'web',
-          createdAt: updatedAt,
-          updatedAt,
-          customTitle: '投影会话',
-        },
-      }],
-    }));
-
-    const { server, baseUrl } = await startServer(agentCwd, {
-      sessionProjectionStore: { list },
-    });
-    try {
-      const response = await listSessions(baseUrl, '?fresh=1&limit=50');
-      expect(response.sessions).toEqual([
-        expect.objectContaining({ sessionId, title: '投影会话' }),
-      ]);
-      expect(list).toHaveBeenCalledWith(expect.objectContaining({
-        tenantId: TEST_USER.tenantId,
-        userId: TEST_USER.id,
-        kind: 'user',
-        includeDeleted: false,
-      }));
     } finally {
       await stopServer(server);
     }

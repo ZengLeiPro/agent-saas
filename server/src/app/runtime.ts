@@ -1582,7 +1582,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     logger: serverLogger,
     titleGeneratorConfigs,
     onGuardrailModelConfigsUpdated: (next) => { guardrailModelConfigs = next; },
-    onSystemPromptOverridesUpdated: (next) => { systemPromptRegistry.replaceOverrides(next); },
+    onSystemPromptOverridesUpdated: (next) => { systemPromptRegistry.replaceOverrides(next); }, onToolControlsUpdated: (next) => { rawRuntimeConfig.toolControls = next; },
     // 凭据异步解析采用 fire-and-forget，并吞掉或记录 rejection，避免拖垮跨进程刷新。
     onWebToolsUpdated: (next) => { void applyWebToolsRuntimeUpdate(next).catch(() => undefined); },
     onSttUpdated: (next) => { void updateAudioTranscribeConfig(next).catch((error) => serverLogger.warn(`AudioTranscribe 运行时配置刷新失败：${error instanceof Error ? error.message : String(error)}`)); },

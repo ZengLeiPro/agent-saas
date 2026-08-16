@@ -10,6 +10,7 @@ export interface ShellToolInput {
   mode?: 'foreground' | 'background';
   timeoutMs?: number;
   execution?: 'workspace' | 'snapshot';
+  cwd?: string;
 }
 
 export const shellToolSchema = z.object({
@@ -17,6 +18,7 @@ export const shellToolSchema = z.object({
   mode: z.enum(['foreground', 'background']).optional(),
   timeoutMs: z.number().int().positive().max(MAX_BACKGROUND_SHELL_TIMEOUT_MS).optional(),
   execution: z.enum(['workspace', 'snapshot']).optional(),
+  cwd: z.string().trim().min(1).max(1_000).optional(),
 }).superRefine((value, ctx) => {
   if (value.mode !== 'background' && value.timeoutMs !== undefined && value.timeoutMs > MAX_SHELL_TIMEOUT_MS) {
     ctx.addIssue({

@@ -653,7 +653,13 @@ export function buildFailurePresentation(
  * 两个消费面，谁也不该从对方的文本里正则回捞。
  */
 const RESULT_METADATA_FIELDS: Record<string, readonly string[]> = {
-  Shell: ['exitCode', 'signal', 'durationMs', 'stdoutBytes', 'stderrBytes', 'timedOut', 'aborted', 'outputExceeded'],
+  Shell: [
+    'exitCode', 'signal', 'durationMs', 'stdoutBytes', 'stderrBytes', 'timedOut', 'aborted', 'outputExceeded',
+    'executionRequested', 'executionUsed', 'executionTotalMs',
+    'snapshotRepositoryPath', 'snapshotSourceCwd', 'snapshotSourceRevision', 'snapshotDirtyFileCount',
+    'snapshotPreparationMs', 'snapshotMaterializationMs', 'snapshotDependencyMs', 'snapshotDependencyCacheHit',
+    'snapshotFallbackReason',
+  ],
   Read: ['linesRead', 'fileBytes', 'shownBytes', 'truncated', 'ranged'],
   Write: ['bytesWritten'],
   Edit: ['replacements', 'occurrences', 'bytesBefore', 'bytesAfter'],

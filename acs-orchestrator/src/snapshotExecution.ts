@@ -2,25 +2,28 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { access, cp, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, statfs } from 'node:fs/promises';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+
+import { ensureSnapshotNodeDependencies } from './snapshotDependencyCache.js';
 
 const SNAPSHOT_ROOT = '/tmp/ky-agent-execution';
 const MIN_FREE_BYTES = 512 * 1024 * 1024;
 const PREPARE_TIMEOUT_MS = 10 * 60_000;
-const DEPENDENCY_PREPARE_TIMEOUT_MS = 4 * 60_000;
 const mirrorUpdates = new Map<string, Promise<void>>();
 
 export interface SnapshotExecutionMetadata {
   requested: 'snapshot';
-  used: 'snapshot' | 'workspace';
+  used: 'snapshot';
   sourceRevision?: string;
   dirtyFileCount?: number;
   preparationMs: number;
   snapshotMs?: number;
   dependencyMs?: number;
+  dependencyCacheHit?: boolean;
+  repositoryPath?: string;
+  sourceCwd?: string;
   commandMs?: number;
   totalMs?: number;
-  fallbackReason?: string;
 }
 
 export interface SnapshotExecutionLease {
@@ -33,30 +36,54 @@ export interface SnapshotExecutionLease {
 export async function prepareSnapshotExecution(input: {
   workspaceRoot: string;
   command: string;
+  cwd?: string;
   signal: AbortSignal;
   env: Record<string, string>;
   progress?: (message: string) => void;
 }): Promise<SnapshotExecutionLease> {
   const startedAt = Date.now();
-  const fallback = (reason: string): SnapshotExecutionLease => ({
-    root: input.workspaceRoot,
-    env: input.env,
-    metadata: { requested: 'snapshot', used: 'workspace', preparationMs: Date.now() - startedAt, fallbackReason: reason },
-    async cleanup() {},
-  });
+  let repositoryPath: string | undefined;
+  let sourceCwd: string | undefined;
+  const fail = (reason: string): never => {
+    const error = new SnapshotExecutionUnavailableError(reason);
+    input.progress?.(error.message);
+    throw error;
+  };
 
   try {
     throwIfAborted(input.signal);
     const workspaceRoot = await realpath(input.workspaceRoot);
-    const gitRoot = (await runFile('git', ['-C', workspaceRoot, 'rev-parse', '--show-toplevel'], {
-      signal: input.signal,
-      timeoutMs: 30_000,
-    })).stdout.toString().trim();
-    if (await realpath(gitRoot) !== workspaceRoot) return fallback('workspace_root_is_not_git_root');
-    const disk = await statfs('/tmp');
-    if (Number(disk.bavail) * Number(disk.bsize) < MIN_FREE_BYTES) return fallback('ephemeral_storage_below_512m');
+    const explicitCwd = input.cwd
+      ? await resolveWorkspaceDirectory(workspaceRoot, input.cwd)
+      : undefined;
+    if (explicitCwd) {
+      sourceCwd = workspaceRelativePath(workspaceRoot, explicitCwd);
+    }
+    const inferredCwd = !explicitCwd ? inferLeadingCommandCwd(input.command) : undefined;
+    const inferredDirectory = inferredCwd
+      ? await resolveWorkspaceDirectory(workspaceRoot, inferredCwd).catch(() => undefined)
+      : undefined;
+    const repositoryHint = explicitCwd ?? inferredDirectory ?? workspaceRoot;
+    let gitRoot = await findContainingGitRoot(repositoryHint, input.signal);
+    let autoDiscovered = false;
+    if (!gitRoot && !explicitCwd && !inferredDirectory) {
+      const repositories = await discoverNestedGitRoots(workspaceRoot);
+      if (repositories.length > 1) return fail('multiple_git_repositories_require_cwd');
+      gitRoot = repositories[0];
+      autoDiscovered = Boolean(gitRoot);
+    }
+    if (!gitRoot) return fail('git_repository_not_found');
+    gitRoot = await realpath(gitRoot);
+    assertInsideWorkspace(workspaceRoot, gitRoot, 'Git repository');
+    repositoryPath = workspaceRelativePath(workspaceRoot, gitRoot);
 
-    const workspaceKey = createHash('sha256').update(workspaceRoot).digest('hex').slice(0, 16);
+    const sourceExecutionRoot = explicitCwd
+      ?? (autoDiscovered ? gitRoot : workspaceRoot);
+    sourceCwd = workspaceRelativePath(workspaceRoot, sourceExecutionRoot);
+    const disk = await statfs('/tmp');
+    if (Number(disk.bavail) * Number(disk.bsize) < MIN_FREE_BYTES) return fail('ephemeral_storage_below_512m');
+
+    const workspaceKey = createHash('sha256').update(gitRoot).digest('hex').slice(0, 16);
     const cacheRoot = join(SNAPSHOT_ROOT, workspaceKey);
     const mirrorPath = join(cacheRoot, 'mirror.git');
     const runsRoot = join(cacheRoot, 'runs');
@@ -65,25 +92,30 @@ export async function prepareSnapshotExecution(input: {
     await mkdir(packageCacheRoot, { recursive: true });
     input.progress?.('正在把当前工作区快照准备到容器临时盘');
 
-    const revision = (await runFile('git', ['-C', workspaceRoot, 'rev-parse', 'HEAD'], {
+    const revision = (await runFile('git', ['-C', gitRoot, 'rev-parse', 'HEAD'], {
       signal: input.signal,
       timeoutMs: 30_000,
     })).stdout.toString().trim();
-    await updateMirror({ workspaceRoot, mirrorPath, revision, signal: input.signal });
+    await validateSourceRevision(gitRoot, revision, input.signal);
+    await updateMirror({ workspaceRoot: gitRoot, mirrorPath, revision, signal: input.signal });
 
-    const runRoot = await mkdtemp(join(runsRoot, 'run-'));
+    const runWorkspaceRoot = await mkdtemp(join(runsRoot, 'run-'));
+    const runRepositoryRoot = repositoryPath === '.'
+      ? runWorkspaceRoot
+      : safeChildPath(runWorkspaceRoot, repositoryPath);
     try {
-      await runFile('git', ['clone', '--shared', '--no-checkout', '--quiet', mirrorPath, runRoot], {
+      await mkdir(dirname(runRepositoryRoot), { recursive: true });
+      await runFile('git', ['clone', '--local', '--no-checkout', '--quiet', mirrorPath, runRepositoryRoot], {
         signal: input.signal,
         timeoutMs: PREPARE_TIMEOUT_MS,
       });
-      await runFile('git', ['-C', runRoot, 'checkout', '--detach', '--force', '--quiet', revision], {
+      await runFile('git', ['-C', runRepositoryRoot, 'checkout', '--detach', '--force', '--quiet', revision], {
         signal: input.signal,
         timeoutMs: PREPARE_TIMEOUT_MS,
       });
-      const dirtyPaths = await currentOverlayPaths(workspaceRoot, input.signal);
-      for (const path of dirtyPaths) await overlayPath(workspaceRoot, runRoot, path);
-      await copyIgnoredRuntimeFiles(workspaceRoot, runRoot);
+      const dirtyPaths = await currentOverlayPaths(gitRoot, input.signal);
+      for (const path of dirtyPaths) await overlayPath(gitRoot, runRepositoryRoot, path);
+      await copyIgnoredRuntimeFiles(gitRoot, runRepositoryRoot);
 
       const snapshotEnv = {
         ...input.env,
@@ -93,48 +125,63 @@ export async function prepareSnapshotExecution(input: {
         PIP_CACHE_DIR: join(packageCacheRoot, 'pip'),
       };
       const dependencyStartedAt = Date.now();
-      const dependencyBootstrapped = await ensureNodeDependencies({
-        runRoot,
+      const dependency = await ensureSnapshotNodeDependencies({
+        runRoot: runRepositoryRoot,
         command: input.command,
+        packageCacheRoot,
         env: snapshotEnv,
         signal: input.signal,
         progress: input.progress,
       });
-      const dependencyMs = dependencyBootstrapped ? Date.now() - dependencyStartedAt : 0;
+      const dependencyMs = dependency.prepared ? Date.now() - dependencyStartedAt : 0;
+      const executionRoot = sourceCwd === '.'
+        ? runWorkspaceRoot
+        : safeChildPath(runWorkspaceRoot, sourceCwd);
       return {
-        root: runRoot,
+        root: executionRoot,
         env: snapshotEnv,
         metadata: {
           requested: 'snapshot',
           used: 'snapshot',
           sourceRevision: revision,
           dirtyFileCount: dirtyPaths.length,
+          repositoryPath,
+          sourceCwd,
           preparationMs: Date.now() - startedAt,
           snapshotMs: dependencyStartedAt - startedAt,
           dependencyMs,
+          ...(dependency.cacheHit !== undefined ? { dependencyCacheHit: dependency.cacheHit } : {}),
         },
         async cleanup() {
           try {
-            const localToolResults = join(runRoot, 'tmp', 'tool-results');
+            const localToolResults = join(executionRoot, 'tmp', 'tool-results');
             if (await pathExists(localToolResults)) {
-              await cp(localToolResults, join(workspaceRoot, 'tmp', 'tool-results'), {
+              await cp(localToolResults, join(sourceExecutionRoot, 'tmp', 'tool-results'), {
                 recursive: true,
                 force: true,
                 preserveTimestamps: true,
               });
             }
           } finally {
-            await rm(runRoot, { recursive: true, force: true });
+            await rm(runWorkspaceRoot, { recursive: true, force: true });
           }
         },
       };
     } catch (err) {
-      await rm(runRoot, { recursive: true, force: true });
+      await rm(runWorkspaceRoot, { recursive: true, force: true });
       throw err;
     }
   } catch (err) {
     if (input.signal.aborted) throw err;
-    return fallback(compactError(err));
+    if (err instanceof SnapshotExecutionUnavailableError) throw err;
+    return fail(compactError(err));
+  }
+}
+
+class SnapshotExecutionUnavailableError extends Error {
+  constructor(reason: string) {
+    super(`容器临时盘快照不可用，命令未执行：${reason}`);
+    this.name = 'SnapshotExecutionUnavailableError';
   }
 }
 
@@ -146,25 +193,13 @@ async function updateMirror(input: {
 }): Promise<void> {
   const previous = mirrorUpdates.get(input.mirrorPath) ?? Promise.resolve();
   const current = previous.catch(() => undefined).then(async () => {
-    if (!(await pathExists(join(input.mirrorPath, 'HEAD')))) {
-      const temporary = `${input.mirrorPath}.tmp-${process.pid}-${Date.now()}`;
-      await rm(temporary, { recursive: true, force: true });
-      try {
-        await runFile('git', ['clone', '--mirror', '--no-hardlinks', '--quiet', input.workspaceRoot, temporary], {
-          signal: input.signal,
-          timeoutMs: PREPARE_TIMEOUT_MS,
-        });
-        await mkdir(dirname(input.mirrorPath), { recursive: true });
-        await rename(temporary, input.mirrorPath);
-      } finally {
-        await rm(temporary, { recursive: true, force: true });
-      }
+    try {
+      if (!(await pathExists(join(input.mirrorPath, 'HEAD')))) throw new Error('snapshot mirror missing');
+      await fetchMirrorRevision(input);
+      await validateMirrorRevision(input.mirrorPath, input.revision, input.signal);
+    } catch {
+      await rebuildMirror(input);
     }
-    await runFile('git', [
-      '--git-dir', input.mirrorPath,
-      'fetch', '--force', '--no-tags', input.workspaceRoot,
-      `${input.revision}:refs/ky-agent/source`,
-    ], { signal: input.signal, timeoutMs: PREPARE_TIMEOUT_MS });
   });
   mirrorUpdates.set(input.mirrorPath, current);
   try {
@@ -172,6 +207,69 @@ async function updateMirror(input: {
   } finally {
     if (mirrorUpdates.get(input.mirrorPath) === current) mirrorUpdates.delete(input.mirrorPath);
   }
+}
+
+async function fetchMirrorRevision(input: {
+  workspaceRoot: string;
+  mirrorPath: string;
+  revision: string;
+  signal: AbortSignal;
+}): Promise<void> {
+  await runFile('git', [
+    '--git-dir', input.mirrorPath,
+    'fetch', '--force', '--no-tags', input.workspaceRoot,
+    `${input.revision}:refs/ky-agent/source`,
+  ], { signal: input.signal, timeoutMs: PREPARE_TIMEOUT_MS });
+}
+
+async function rebuildMirror(input: {
+  workspaceRoot: string;
+  mirrorPath: string;
+  revision: string;
+  signal: AbortSignal;
+}): Promise<void> {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const temporary = `${input.mirrorPath}.tmp-${suffix}`;
+  const previous = `${input.mirrorPath}.stale-${suffix}`;
+  await rm(temporary, { recursive: true, force: true });
+  await rm(previous, { recursive: true, force: true });
+  let movedPrevious = false;
+  try {
+    await runFile('git', ['clone', '--mirror', '--no-hardlinks', '--quiet', input.workspaceRoot, temporary], {
+      signal: input.signal,
+      timeoutMs: PREPARE_TIMEOUT_MS,
+    });
+    await fetchMirrorRevision({ ...input, mirrorPath: temporary });
+    await validateMirrorRevision(temporary, input.revision, input.signal);
+    await mkdir(dirname(input.mirrorPath), { recursive: true });
+    if (await pathExists(input.mirrorPath)) {
+      await rename(input.mirrorPath, previous);
+      movedPrevious = true;
+    }
+    try {
+      await rename(temporary, input.mirrorPath);
+    } catch (err) {
+      if (movedPrevious) await rename(previous, input.mirrorPath).catch(() => undefined);
+      throw err;
+    }
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+    if (await pathExists(input.mirrorPath)) await rm(previous, { recursive: true, force: true });
+  }
+}
+
+async function validateSourceRevision(gitRoot: string, revision: string, signal: AbortSignal): Promise<void> {
+  await runFile('git', ['-C', gitRoot, 'cat-file', '-e', `${revision}^{tree}`], {
+    signal,
+    timeoutMs: 30_000,
+  });
+}
+
+async function validateMirrorRevision(mirrorPath: string, revision: string, signal: AbortSignal): Promise<void> {
+  await runFile('git', ['--git-dir', mirrorPath, 'cat-file', '-e', `${revision}^{tree}`], {
+    signal,
+    timeoutMs: 30_000,
+  });
 }
 
 async function currentOverlayPaths(workspaceRoot: string, signal: AbortSignal): Promise<string[]> {
@@ -210,44 +308,68 @@ async function copyIgnoredRuntimeFiles(workspaceRoot: string, runRoot: string): 
   for (const name of names) await overlayPath(workspaceRoot, runRoot, name);
 }
 
-async function ensureNodeDependencies(input: {
-  runRoot: string;
-  command: string;
-  env: Record<string, string>;
-  signal: AbortSignal;
-  progress?: (message: string) => void;
-}): Promise<boolean> {
-  if (!(await pathExists(join(input.runRoot, 'package.json')))) return false;
-  const pnpmLock = join(input.runRoot, 'pnpm-lock.yaml');
-  const npmLock = join(input.runRoot, 'package-lock.json');
-  if (await pathExists(pnpmLock)) {
-    if (commandInstallsDependencies(input.command, 'pnpm')) return false;
-    input.progress?.('正在容器临时盘复用 pnpm 缓存准备依赖');
-    await runFile('pnpm', ['install', '--frozen-lockfile', '--prefer-offline', '--reporter=append-only'], {
-      cwd: input.runRoot,
-      env: { ...input.env, NODE_ENV: 'development' },
-      signal: input.signal,
-      timeoutMs: DEPENDENCY_PREPARE_TIMEOUT_MS,
-    });
-    return true;
+async function findContainingGitRoot(directory: string, signal: AbortSignal): Promise<string | undefined> {
+  try {
+    return (await runFile('git', ['-C', directory, 'rev-parse', '--show-toplevel'], {
+      signal,
+      timeoutMs: 30_000,
+    })).stdout.toString().trim() || undefined;
+  } catch {
+    return undefined;
   }
-  if (await pathExists(npmLock)) {
-    if (commandInstallsDependencies(input.command, 'npm')) return false;
-    input.progress?.('正在容器临时盘复用 npm 缓存准备依赖');
-    await runFile('npm', ['ci', '--prefer-offline', '--no-audit', '--no-fund'], {
-      cwd: input.runRoot,
-      env: { ...input.env, NODE_ENV: 'development' },
-      signal: input.signal,
-      timeoutMs: DEPENDENCY_PREPARE_TIMEOUT_MS,
-    });
-    return true;
-  }
-  return false;
 }
 
-function commandInstallsDependencies(command: string, packageManager: 'pnpm' | 'npm'): boolean {
-  const escaped = packageManager === 'pnpm' ? 'pnpm' : 'npm';
-  return new RegExp(`(?:^|[;&|]\\s*)(?:corepack\\s+)?${escaped}\\s+(?:i|install|ci)(?:\\s|$)`).test(command);
+async function discoverNestedGitRoots(workspaceRoot: string): Promise<string[]> {
+  const repositories: string[] = [];
+  const queue: Array<{ path: string; depth: number }> = [{ path: workspaceRoot, depth: 0 }];
+  const skipped = new Set(['.ky-agent', 'assets', 'dist', 'downloads', 'node_modules', 'tmp']);
+  while (queue.length > 0 && repositories.length < 2) {
+    const current = queue.shift()!;
+    if (current.depth > 4) continue;
+    const entries = await readdir(current.path, { withFileTypes: true }).catch(() => []);
+    if (entries.some((entry) => entry.name === '.git')) {
+      repositories.push(current.path);
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || skipped.has(entry.name)) continue;
+      queue.push({ path: join(current.path, entry.name), depth: current.depth + 1 });
+    }
+  }
+  return repositories;
+}
+
+function inferLeadingCommandCwd(command: string): string | undefined {
+  const withoutSetPrelude = command.replace(
+    /^(?:\s*set\s+(?:-[a-zA-Z]+|-o\s+[a-zA-Z0-9_-]+)\s*(?:;|\n))*/,
+    '',
+  );
+  const match = withoutSetPrelude.match(/^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9._/@+~-]+))\s*(?:&&|;|\n)/);
+  const candidate = match?.[1] ?? match?.[2] ?? match?.[3];
+  if (!candidate || candidate.includes('$') || candidate.startsWith('~')) return undefined;
+  return candidate;
+}
+
+export async function resolveExecutionCwd(workspaceRoot: string, inputPath?: string): Promise<string> {
+  const actualRoot = await realpath(workspaceRoot);
+  return inputPath ? await resolveWorkspaceDirectory(actualRoot, inputPath) : actualRoot;
+}
+
+async function resolveWorkspaceDirectory(workspaceRoot: string, inputPath: string): Promise<string> {
+  const lexical = isAbsolute(inputPath) ? resolve(inputPath) : resolve(workspaceRoot, inputPath);
+  assertInsideWorkspace(workspaceRoot, lexical, 'cwd');
+  const actual = await realpath(lexical);
+  assertInsideWorkspace(workspaceRoot, actual, 'cwd');
+  return actual;
+}
+
+function assertInsideWorkspace(workspaceRoot: string, candidate: string, label: string): void {
+  const rel = relative(workspaceRoot, candidate);
+  if (rel.startsWith('..') || isAbsolute(rel)) throw new Error(`${label} escapes workspace`);
+}
+
+function workspaceRelativePath(workspaceRoot: string, candidate: string): string {
+  return relative(workspaceRoot, candidate).replace(/\\/g, '/') || '.';
 }
 
 function safeChildPath(root: string, relativePath: string): string {
@@ -276,7 +398,7 @@ function throwIfAborted(signal: AbortSignal): void {
 }
 
 function compactError(err: unknown): string {
-  return (err instanceof Error ? err.message : String(err)).replace(/\s+/g, ' ').trim().slice(0, 500) || 'snapshot_prepare_failed';
+  return (err instanceof Error ? err.message : String(err)).replace(/\s+/g, ' ').trim().slice(0, 120) || 'snapshot_prepare_failed';
 }
 
 interface RunFileOptions {

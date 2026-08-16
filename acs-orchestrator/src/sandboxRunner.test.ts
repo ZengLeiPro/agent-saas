@@ -5,14 +5,51 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  addSnapshotMetadata,
   buildRuntimePath,
   ensurePythonEnv,
   executeFeishuCli,
   pipInstallArgs,
   pruneVenvArchive,
+  normalizeShellCommandForCwd,
   toolNameForLocalProvider,
   venvRebuildReasons,
 } from './sandboxRunner.js';
+
+describe('Shell cwd command normalization', () => {
+  it('removes only a redundant leading cd while preserving a Bash prelude', () => {
+    expect(normalizeShellCommandForCwd('cd code/agent-saas && pnpm test', 'code/agent-saas')).toBe('pnpm test');
+    expect(normalizeShellCommandForCwd('set -e\ncd "code/agent-saas" && pnpm test', 'code/agent-saas'))
+      .toBe('set -e\npnpm test');
+    expect(normalizeShellCommandForCwd('cd code/other && pnpm test', 'code/agent-saas'))
+      .toBe('cd code/other && pnpm test');
+  });
+});
+
+describe('snapshot result metadata', () => {
+  it('flattens successful snapshot execution facts for the Agent', () => {
+    const response = addSnapshotMetadata({
+      status: 'error',
+      error: 'command failed',
+      metadata: { durationMs: 123 },
+    }, {
+      requested: 'snapshot',
+      used: 'snapshot',
+      repositoryPath: 'code/agent-saas',
+      sourceCwd: '.',
+      preparationMs: 44,
+    });
+    expect(response.status).toBe('error');
+    if (response.status !== 'error') throw new Error('expected error response');
+    expect(response.error).toContain('容器临时盘快照');
+    expect(response.metadata).toMatchObject({
+      executionRequested: 'snapshot',
+      executionUsed: 'snapshot',
+      executionTotalMs: 167,
+      snapshotRepositoryPath: 'code/agent-saas',
+    });
+  });
+});
 
 describe('__FeishuCli internal tool', () => {
   it('rejects unknown operations and malformed sensitive inputs before spawning CLI', () => {

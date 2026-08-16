@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -65,6 +65,24 @@ describe('background shell runtime', () => {
 
     const completed = await waitForTerminal(root, taskId);
     expect(completed).toMatchObject({ status: 'completed', stdout: 'path-preserved' });
+  });
+
+  it('runs the command in commandCwd while keeping task state under the workspace root', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-cwd-'));
+    const commandCwd = join(root, 'code', 'project');
+    await mkdir(commandCwd, { recursive: true });
+    const taskId = `shell-bg-test-${randomUUID()}`;
+    await startBackgroundShell({
+      workspaceRoot: root,
+      commandCwd,
+      taskId,
+      command: 'pwd',
+      timeoutMs: 5_000,
+      env: process.env,
+    });
+
+    const completed = await waitForTerminal(root, taskId);
+    expect(completed).toMatchObject({ status: 'completed', stdout: `${await realpath(commandCwd)}\n` });
   });
 
   it('cancels the worker and its child process group', async () => {

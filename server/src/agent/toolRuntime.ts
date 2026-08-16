@@ -1,5 +1,5 @@
 import { exec as execCb, spawn } from 'child_process';
-import { createReadStream } from 'fs';
+import { createReadStream, existsSync } from 'fs';
 import { mkdir, open, stat, writeFile } from 'fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'path';
 import { createInterface } from 'readline';
@@ -786,7 +786,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
       const child = spawn(command, {
         cwd: workspace.root,
         env: childEnv,
-        shell: true,
+        shell: process.platform === 'win32' || !existsSync('/bin/bash') ? true : '/bin/bash',
         detached: process.platform !== 'win32',
       });
       let stdout = '';

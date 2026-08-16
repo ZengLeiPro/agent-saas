@@ -68,6 +68,7 @@ interface BackgroundShellLaunch {
 
 export interface BackgroundShellStartInput {
   workspaceRoot: string;
+  commandCwd?: string;
   taskId: string;
   command: string;
   timeoutMs?: number;
@@ -150,7 +151,7 @@ export async function startBackgroundShell(input: BackgroundShellStartInput): Pr
   const spawnWorker = input.spawnWorker ?? spawn;
   const workerCommand = resolveWorkerCommand();
   const worker = spawnWorker(workerCommand.bin, [workerCommand.workerPath, taskDir, input.taskId], {
-    cwd: input.workspaceRoot,
+    cwd: input.commandCwd ?? input.workspaceRoot,
     env: input.env,
     detached: true,
     stdio: 'ignore',

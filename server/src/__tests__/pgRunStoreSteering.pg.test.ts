@@ -330,7 +330,10 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       const stop = store.cancelSteeringBeforeDispatchBySession(
         'session-concurrent', 'target cancelled', 'target-concurrent-run',
       );
-      await waitForBlockedQuery(pool, '%WHERE session_id=$1 AND run_id=$2%');
+      await waitForBlockedQuery(
+        pool,
+        `%SELECT status%FROM ${prefix}_runs%WHERE session_id = $1 AND run_id = $2%FOR UPDATE%`,
+      );
 
       await blocker.query('COMMIT');
       blockerOpen = false;

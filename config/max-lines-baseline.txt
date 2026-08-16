@@ -23,8 +23,8 @@ server/src/__tests__/webChannelReconnect.test.ts	909	test
 server/src/__tests__/workflowLibraryV3.test.ts	1062	test
 server/src/__tests__/wsEventProcessor.test.ts	831	test
 server/src/agent/toolRuntime.ts	1706	production
-server/src/app/config.ts	1523	production
-server/src/app/runtime.ts	3182	production
+server/src/app/config.ts	1503	production
+server/src/app/runtime.ts	3176	production
 server/src/channels/web/channel.ts	4386	production
 server/src/cron/service.ts	1085	production
 server/src/data/billing/pgBillingStore.ts	2319	production

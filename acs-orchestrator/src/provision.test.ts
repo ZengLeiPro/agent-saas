@@ -42,6 +42,12 @@ describe('Provisioner runtime bootstrap', () => {
       workspace: { root: '/workspace' },
     });
     expect(bootstrapInput.input.command).toContain('duckdb -json -c "select 1 as ok"');
+    expect(bootstrapInput.input.command).toContain('BROWSER_PYTHON=/opt/ky-agent/browser-runtime/bin/python3');
+    expect(bootstrapInput.input.command).toContain('if [ ! -e "$BROWSER_PYTHON" ]; then BROWSER_PYTHON="$(command -v python3)"; fi');
+    expect(bootstrapInput.input.command).toContain('from playwright.sync_api import sync_playwright');
+    expect(bootstrapInput.input.command).toContain('assert executable.is_file(), executable');
+    expect(bootstrapInput.input.command).toContain('p.chromium.launch(headless=True, channel="chromium"');
+    expect(bootstrapInput.input.command).toContain('browser.close()');
   });
 
   it('does not skip runtime bootstrap when recipe hash is already provisioned', async () => {

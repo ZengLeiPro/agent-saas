@@ -258,23 +258,39 @@ export class SandboxManager {
         && this.existingImage(existing) !== this.config.sandboxImage
         && !backgroundShellProtectionFromStatus(existing)
       ) {
-        path = existing.phase === 'Paused' ? 'refresh_paused_image' : 'recreate_image_changed';
-        this.assertNotBusyForRecreate(ref, options.busySandboxNames, 'image changed', options.activeKey);
-        this.logger.warn(
-          `sandbox_image_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${this.existingImage(existing) ?? 'unknown'} new=${this.config.sandboxImage}`,
-        );
-        if (existing.phase === 'Paused') {
-          if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.ensureCapacity(ref.name, options.busySandboxNames));
-          await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
-          await timing.step('applySandbox', () => this.applySandbox(ref));
-          await this.waitForRunningAndEnsureSnat(ref, timing);
-          this.markEnsureFastPathVerified(ref.name);
-          await timing.step('touch', () => this.touchThrottled(ref.name));
-          status = 'ok';
-          return ref;
+        const oldImage = this.existingImage(existing) ?? 'unknown';
+        if (
+          existing.phase === 'Running'
+          && this.isBusyForImageUpgrade(ref.name, options.busySandboxNames, options.activeKey)
+        ) {
+          // 镜像升级不是当前工具调用的正确性前置条件。共享 Sandbox 正被其他调用
+          // 使用时继续复用现有 Running 实例，避免把发布竞态转成原始 busy 工具错误；
+          // 不修改 spec，空闲后的下一次 ensure 仍会看到 drift 并完成重建。
+          path = 'defer_image_changed_busy';
+          this.logger.warn(
+            `sandbox_image_upgrade_deferred name=${ref.name} workspaceId=${ref.workspaceId} old=${oldImage} new=${this.config.sandboxImage} reason=busy`,
+          );
+        } else {
+          path = existing.phase === 'Paused' ? 'refresh_paused_image' : 'recreate_image_changed';
+          if (existing.phase !== 'Running') {
+            this.assertNotBusyForRecreate(ref, options.busySandboxNames, 'image changed', options.activeKey);
+          }
+          this.logger.warn(
+            `sandbox_image_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${oldImage} new=${this.config.sandboxImage}`,
+          );
+          if (existing.phase === 'Paused') {
+            if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.ensureCapacity(ref.name, options.busySandboxNames));
+            await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
+            await timing.step('applySandbox', () => this.applySandbox(ref));
+            await this.waitForRunningAndEnsureSnat(ref, timing);
+            this.markEnsureFastPathVerified(ref.name);
+            await timing.step('touch', () => this.touchThrottled(ref.name));
+            status = 'ok';
+            return ref;
+          }
+          await timing.step('delete', () => this.delete(ref, { activeKey: options.activeKey }));
+          existing = null;
         }
-        await timing.step('delete', () => this.delete(ref, { activeKey: options.activeKey }));
-        existing = null;
       }
       if (!existing) {
         path = path === 'unknown' ? 'create' : path;
@@ -1026,6 +1042,16 @@ export class SandboxManager {
 
   private isBusy(name: string, busySandboxNames?: Set<string>, activeKey?: string): boolean {
     return busySandboxNames?.has(name) === true || this.activeRegistry?.isBusy(name, { exceptKey: activeKey }) === true;
+  }
+
+  private isBusyForImageUpgrade(name: string, busySandboxNames?: Set<string>, activeKey?: string): boolean {
+    // executor.busySandboxNames() 包含当前刚登记、尚未执行工具的 invocation。存在
+    // activeRegistry + activeKey 时可精确排除自己，只把其他 lease 视为升级阻塞；
+    // 旧调用方没有 registry/key 时保留 busySandboxNames 的保守语义。
+    if (this.activeRegistry && activeKey) {
+      return this.activeRegistry.isBusy(name, { exceptKey: activeKey });
+    }
+    return this.isBusy(name, busySandboxNames, activeKey);
   }
 
   private assertIdle(name: string, reason: string, activeKey?: string): void {

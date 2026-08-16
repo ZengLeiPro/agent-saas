@@ -25,7 +25,7 @@ import {
   startBackgroundShell,
 } from './backgroundShell.js';
 
-const PYTHON_RUNTIME_CONTRACT_VERSION = 1;
+const PYTHON_RUNTIME_CONTRACT_VERSION = 2;
 const DEFAULT_PIP_INSTALL_TIMEOUT_MS = 240_000;
 const DEFAULT_PYTHON_WHEELHOUSE = '/opt/ky-agent/python-wheels';
 const DEFAULT_MAX_VENV_ARCHIVES = 2;
@@ -294,20 +294,34 @@ export function addWorkspaceRoutingMetadata(
     : { ...response, error: `${response.error}\n\n${note}`, metadata };
 }
 
+export function createCachedPythonEnvEnsurer(
+  ensure: (workspaceRoot: string) => unknown = ensurePythonEnv,
+): (workspaceRoot: string) => Promise<void> {
+  const readyByWorkspace = new Map<string, Promise<void>>();
+  return async (workspaceRoot: string): Promise<void> => {
+    let ready = readyByWorkspace.get(workspaceRoot);
+    if (!ready) {
+      ready = Promise.resolve().then(() => { ensure(workspaceRoot); });
+      readyByWorkspace.set(workspaceRoot, ready);
+      void ready.catch(() => {
+        // 失败只影响本次调用；否则 rejected Promise 会让该 workspace 在 daemon
+        // 生命周期内永久失败。仅删除仍指向本 Promise 的条目，避免误删后继重试。
+        if (readyByWorkspace.get(workspaceRoot) === ready) readyByWorkspace.delete(workspaceRoot);
+      });
+    }
+    await ready;
+  };
+}
+
 async function main(): Promise<void> {
   if (process.argv.includes('--daemon')) {
-    const pythonEnvReady = new Map<string, Promise<void>>();
+    const ensurePythonEnvReady = createCachedPythonEnvEnsurer();
     await runSandboxRunnerDaemon({
       imageRef: process.env.ACS_SANDBOX_IMAGE,
       execute: async (input, signal, emit) => {
         if (input.toolName !== '__FeishuCli') {
           const workspaceRoot = input.workspace.root || process.env.ACS_WORKSPACE_PATH || '/workspace';
-          let ready = pythonEnvReady.get(workspaceRoot);
-          if (!ready) {
-            ready = Promise.resolve().then(() => { ensurePythonEnv(workspaceRoot); });
-            pythonEnvReady.set(workspaceRoot, ready);
-          }
-          await ready;
+          await ensurePythonEnvReady(workspaceRoot);
         }
         await executeSandboxRunnerInput(input, signal, emit, { skipPythonEnv: true });
       },
@@ -554,8 +568,8 @@ export function ensurePythonEnv(workspaceRoot: string, options: EnsurePythonEnvO
   mkdirSync(pipCacheDir, { recursive: true });
   if (rebuildReasons.length > 0) {
     // 2026-08-01 生产事故修复：venv rebuild 必须跨进程互斥。每次 kubectl exec 都是
-    // 独立 runner 进程，发版换镜像（image-ref-changed）后多个并发 runner 同时
-    // rebuild 会互相踩（A archive 旧 venv 时 B 正在 python -m venv → File exists /
+    // 独立 runner 进程，兼容契约变化后多个并发 runner 同时 rebuild 会互相踩
+    //（A archive 旧 venv 时 B 正在 python -m venv → File exists /
     // ensurepip 半成品 / pip install 中文件被 archive 走），且每次失败留下的残缺
     // venv 让后续每个 runner 都再触发 rebuild，形成自激循环（2026-08-01 00:59
     // kaiyan 生产实发，hand 连续 unhealthy）。锁用 mkdir 原子性（NFS 服务端原子），
@@ -686,7 +700,8 @@ export function venvRebuildReasons(input: {
   if (manifest.contractVersion !== input.desired.contractVersion) reasons.push('contract-version-changed');
   if (manifest.pythonMajorMinor !== input.desired.pythonMajorMinor) reasons.push('python-version-changed');
   if (manifest.baseRequirementsHash !== input.desired.baseRequirementsHash) reasons.push('base-requirements-changed');
-  if (input.desired.imageRef && manifest.imageRef !== input.desired.imageRef) reasons.push('image-ref-changed');
+  // imageRef 仅用于诊断 venv 最初由哪个 Sandbox 镜像创建。无关镜像发布不改变
+  // Python ABI / base requirements / venv 隔离性，不能据此重建共享 NAS 上的可变环境。
   return reasons;
 }
 

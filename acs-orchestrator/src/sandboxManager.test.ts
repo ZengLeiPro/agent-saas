@@ -335,45 +335,80 @@ describe('SandboxManager', () => {
     expect(sandboxApplied).toBe(true);
   });
 
-  it('refuses to recreate a busy shared Sandbox when the image tag drifts', async () => {
+  it('defers a busy Running image upgrade, then rebuilds on the next idle ensure', async () => {
+    const calls: string[][] = [];
+    let state: 'old' | 'missing' | 'running' = 'old';
+    let sandboxApplyCount = 0;
     const kubectl = {
-      async run(args: string[]): Promise<KubectlResult> {
+      async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
+        calls.push(args);
+        if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
+          return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
+        }
         if (args[0] === 'get') {
+          if (state === 'missing') return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
+          const image = state === 'old'
+            ? 'registry.example.com/agent-saas/acs-sandbox:old'
+            : 'registry.example.com/agent-saas/acs-sandbox:test';
           return {
             stdout: JSON.stringify({
               status: { phase: 'Running' },
-              spec: {
-                template: {
-                  spec: {
-                    containers: [{ name: 'sandbox', image: 'registry.example.com/agent-saas/acs-sandbox:old' }],
-                  },
-                },
-              },
-              metadata: {
-                annotations: {
-                  'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1',
-                },
-              },
+              spec: { template: { spec: { containers: [{ name: 'sandbox', image }] } } },
+              metadata: { annotations: { 'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1' } },
             }),
             stderr: '',
             exitCode: 0,
             signal: null,
           };
         }
+        if (args[0] === 'delete') {
+          state = 'missing';
+          return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        }
+        if (args[0] === 'apply') {
+          const manifest = JSON.parse(options.input ?? '{}') as { kind?: string };
+          if (manifest.kind === 'Sandbox') {
+            sandboxApplyCount += 1;
+            state = 'running';
+          }
+          return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        }
+        if (args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
       },
     } as unknown as Kubectl;
-    const manager = new SandboxManager(baseConfig(), kubectl, noopLogger);
-    const busyName = manager.ref({
+    const activeRegistry = new ActiveSandboxRegistry();
+    const manager = new SandboxManager(baseConfig(), kubectl, noopLogger, activeRegistry);
+    const input = {
       workspaceId: 'ws_kaiyan__test',
-      sessionId: 'session-123',
+      sessionId: 'session-456',
       mountSubPath: 'workspaces/kaiyan/u-1',
-    }).name;
+    };
+    const busyName = manager.ref(input).name;
+    const currentKey = 'current-invocation';
+    const releaseCurrent = activeRegistry.acquire(busyName, currentKey);
+    const releaseOther = activeRegistry.acquire(busyName, 'other-invocation');
 
-    await expect(manager.ensureRunning(
-      { workspaceId: 'ws_kaiyan__test', sessionId: 'session-456', mountSubPath: 'workspaces/kaiyan/u-1' },
-      { busySandboxNames: new Set([busyName]) },
-    )).rejects.toThrow(/refuse to recreate while active/);
+    try {
+      await expect(manager.ensureRunning(input, {
+        busySandboxNames: new Set([busyName]),
+        activeKey: currentKey,
+      })).resolves.toMatchObject({ name: busyName });
+      expect(calls.some((args) => args[0] === 'delete')).toBe(false);
+      expect(sandboxApplyCount).toBe(0);
+
+      releaseOther();
+      await expect(manager.ensureRunning(input, {
+        // executor 的集合仍包含当前 invocation；activeKey 必须让它不阻塞空闲升级。
+        busySandboxNames: new Set([busyName]),
+        activeKey: currentKey,
+      })).resolves.toMatchObject({ name: busyName });
+      expect(calls.some((args) => args[0] === 'delete')).toBe(true);
+      expect(sandboxApplyCount).toBe(1);
+    } finally {
+      releaseOther();
+      releaseCurrent();
+    }
   });
 
   it('recreates a broken Paused Sandbox instead of waiting for resume forever', async () => {

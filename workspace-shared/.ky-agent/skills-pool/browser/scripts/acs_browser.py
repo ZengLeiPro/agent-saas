@@ -45,6 +45,11 @@ SENSITIVE_TEXT_RE = re.compile(
     r"(?i)(authorization|cookie|set-cookie|token|password|passwd|secret|api[-_]?key)"
     r"(\s*[:=]\s*)([^\s,;]+)"
 )
+BROWSER_RUNTIME_PYTHON = Path("/opt/ky-agent/browser-runtime/bin/python3")
+
+
+class BrowserDependencyError(RuntimeError):
+    """The Browser runtime is missing a dependency required by this skill."""
 
 
 class BrowserRuntime:
@@ -227,18 +232,40 @@ def ensure_profile_metadata(profile_id: str, profile_path: Path) -> dict:
     return metadata
 
 
+def browser_runtime_reexec_required(
+    *,
+    runtime_python: Path | None = None,
+    current_executable: str | None = None,
+) -> bool:
+    target = runtime_python or BROWSER_RUNTIME_PYTHON
+    if not target.is_file():
+        return False
+    current = Path(current_executable or sys.executable)
+    try:
+        return not os.path.samefile(current, target)
+    except OSError:
+        return current.resolve() != target.resolve()
+
+
+def reexec_browser_runtime_if_needed() -> bool:
+    if not browser_runtime_reexec_required():
+        return False
+    target = str(BROWSER_RUNTIME_PYTHON)
+    argv = [target, str(Path(__file__).resolve()), *sys.argv[1:]]
+    os.execve(target, argv, os.environ.copy())
+    return True
+
+
 def load_playwright():
     os.environ[PLAYWRIGHT_SKIP_FONT_WAIT_ENV] = "1"
     try:
         from playwright.sync_api import sync_playwright
     except Exception as exc:  # pragma: no cover - depends on runtime image
-        print(
-            "错误：当前 ACS runtime 缺少 Python Playwright。请修复 sandbox 镜像或 "
-            "workspace runtime venv，不要在普通任务里全局安装依赖。\n"
-            f"原始错误: {exc}",
-            file=sys.stderr,
-        )
-        sys.exit(2)
+        raise BrowserDependencyError(
+            "当前 ACS Browser runtime 缺少 Python Playwright。请修复 sandbox 镜像，"
+            "不要在普通任务里全局安装依赖。\n"
+            f"原始错误: {exc}"
+        ) from exc
     return sync_playwright
 
 
@@ -1301,9 +1328,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    if reexec_browser_runtime_if_needed():
+        return
     parser = build_parser()
     args = parser.parse_args()
-    args.func(args)
+    try:
+        args.func(args)
+    except BrowserDependencyError as exc:
+        print(f"错误：{exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
 
 
 if __name__ == "__main__":

@@ -301,18 +301,25 @@ FROM acs-base AS acs-deps
 
 COPY --from=acs-wheel-builder /opt/ky-agent/python-wheels /opt/ky-agent/python-wheels
 
-# 构建期自检（fail-fast）：wheelhouse 里 playwright wheel 期望的 chromium 构建号
-# 必须与 /ms-playwright 预装二进制（上方 Node 侧 playwright install，版本锁在 pnpm-lock）一致。
+# Browser Skill 使用镜像内不可变的专用 venv，不依赖会随 workspace 发布重建的
+# .ky-agent/runtime/venv。playwright wheel 已在 base.txt pin，并从 wheelhouse 离线安装。
+# 构建期继续 fail-fast 校验：Python playwright 期望的 chromium 构建号必须与
+# /ms-playwright 预装二进制（上方 Node 侧 playwright install，版本锁在 pnpm-lock）一致。
 # 不一致时 sandbox 内 browser skill 会在运行时报 "Executable doesn't exist"（2026-07-03 生产事故）。
-# 临时 venv 在同一 RUN 内创建并删除，不进镜像 layer。
 COPY acs-orchestrator/scripts/verify_playwright_browsers.py /tmp/verify_playwright_browsers.py
-RUN python3 -m venv /tmp/pwcheck \
-    && /tmp/pwcheck/bin/pip install --no-cache-dir --no-index \
-      --find-links /opt/ky-agent/python-wheels playwright duckdb \
-    && /tmp/pwcheck/bin/python3 /tmp/verify_playwright_browsers.py \
-    && PATH="/tmp/pwcheck/bin:$PATH" duckdb --version \
-    && PATH="/tmp/pwcheck/bin:$PATH" duckdb -json -c "select 1 as ok" \
-    && rm -rf /tmp/pwcheck /tmp/verify_playwright_browsers.py
+RUN playwright_requirement="$(grep -E '^playwright==[^[:space:]]+$' acs-orchestrator/requirements/base.txt)" \
+    && test -n "$playwright_requirement" \
+    && python3 -m venv /opt/ky-agent/browser-runtime \
+    && /opt/ky-agent/browser-runtime/bin/pip install --no-cache-dir --no-index \
+      --find-links /opt/ky-agent/python-wheels "$playwright_requirement" \
+    && /opt/ky-agent/browser-runtime/bin/python3 /tmp/verify_playwright_browsers.py \
+    && chmod -R a+rX /opt/ky-agent/browser-runtime \
+    && python3 -m venv /tmp/duckdb-check \
+    && /tmp/duckdb-check/bin/pip install --no-cache-dir --no-index \
+      --find-links /opt/ky-agent/python-wheels duckdb \
+    && PATH="/tmp/duckdb-check/bin:$PATH" duckdb --version \
+    && PATH="/tmp/duckdb-check/bin:$PATH" duckdb -json -c "select 1 as ok" \
+    && rm -rf /tmp/duckdb-check /tmp/verify_playwright_browsers.py
 
 # ─────────────────────────────────────────────────────────────
 # Stage: web-build — 仅产出 web/dist 给 server target COPY

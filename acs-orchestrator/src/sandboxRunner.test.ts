@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addSnapshotMetadata,
   buildRuntimePath,
+  createCachedPythonEnvEnsurer,
   ensurePythonEnv,
   executeFeishuCli,
   pipInstallArgs,
@@ -111,7 +112,7 @@ describe('ensurePythonEnv', () => {
 
       const manifest = JSON.parse(readFileSync(first.manifestPath, 'utf-8')) as Record<string, unknown>;
       expect(manifest).toMatchObject({
-        contractVersion: 1,
+        contractVersion: 2,
         imageRef: 'registry.example.com/agent-saas/acs-sandbox:test',
         createdAt: '2026-06-29T00:00:00.000Z',
       });
@@ -120,11 +121,14 @@ describe('ensurePythonEnv', () => {
 
       const second = ensurePythonEnv(root, {
         baseRequirementsPath: requirementsPath,
-        imageRef: 'registry.example.com/agent-saas/acs-sandbox:test',
+        imageRef: 'registry.example.com/agent-saas/acs-sandbox:new-release',
         skipBaseInstall: true,
       });
       expect(second.rebuilt).toBe(false);
       expect(second.rebuildReasons).toEqual([]);
+      expect(JSON.parse(readFileSync(second.manifestPath, 'utf-8'))).toMatchObject({
+        imageRef: 'registry.example.com/agent-saas/acs-sandbox:test',
+      });
     } finally {
       process.env = originalEnv;
     }
@@ -158,7 +162,7 @@ describe('ensurePythonEnv', () => {
         baseRequirementsHash: 'new-hash',
         imageRef: 'new-image',
       },
-    })).toEqual(['base-requirements-changed', 'image-ref-changed']);
+    })).toEqual(['base-requirements-changed']);
 
     writeFileSync(join(venvPath, 'pyvenv.cfg'), 'include-system-site-packages = true\n');
     expect(venvRebuildReasons({
@@ -257,6 +261,20 @@ describe('ensurePythonEnv', () => {
     } finally {
       process.env = originalEnv;
     }
+  });
+});
+
+describe('daemon Python env cache', () => {
+  it('evicts a rejected ensure promise so the workspace can recover on the next invocation', async () => {
+    let attempts = 0;
+    const ensureReady = createCachedPythonEnvEnsurer(() => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('transient bootstrap failure');
+    });
+
+    await expect(ensureReady('/workspace')).rejects.toThrow('transient bootstrap failure');
+    await expect(ensureReady('/workspace')).resolves.toBeUndefined();
+    expect(attempts).toBe(2);
   });
 });
 

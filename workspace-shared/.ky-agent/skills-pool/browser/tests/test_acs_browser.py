@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import io
 import os
 import sys
 import tempfile
@@ -65,6 +66,75 @@ class FakePage:
             raise RuntimeError("standard screenshot failed")
         Path(path).write_bytes(self.screenshot_data)
         return self.screenshot_data
+
+
+class AcsBrowserRuntimeTest(unittest.TestCase):
+    def test_reexec_requirement_tracks_dedicated_interpreter_availability_and_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "browser-python"
+            current = Path(tmp) / "workspace-python"
+            self.assertFalse(
+                acs_browser.browser_runtime_reexec_required(
+                    runtime_python=target,
+                    current_executable=str(current),
+                )
+            )
+            target.write_text("", encoding="utf-8")
+            current.write_text("", encoding="utf-8")
+            self.assertTrue(
+                acs_browser.browser_runtime_reexec_required(
+                    runtime_python=target,
+                    current_executable=str(current),
+                )
+            )
+            self.assertFalse(
+                acs_browser.browser_runtime_reexec_required(
+                    runtime_python=target,
+                    current_executable=str(target),
+                )
+            )
+
+    def test_reexec_preserves_script_arguments_and_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "browser-python"
+            current = Path(tmp) / "workspace-python"
+            target.write_text("", encoding="utf-8")
+            current.write_text("", encoding="utf-8")
+            with patch.object(acs_browser, "BROWSER_RUNTIME_PYTHON", target), patch.object(
+                sys, "executable", str(current)
+            ), patch.object(
+                sys,
+                "argv",
+                [str(SCRIPT_PATH), "snapshot", "https://example.com"],
+            ), patch.object(acs_browser.os, "execve") as execve:
+                self.assertTrue(acs_browser.reexec_browser_runtime_if_needed())
+            executable, argv, environment = execve.call_args.args
+            self.assertEqual(executable, str(target))
+            self.assertEqual(
+                argv,
+                [str(target), str(SCRIPT_PATH.resolve()), "snapshot", "https://example.com"],
+            )
+            self.assertEqual(environment, os.environ)
+
+    def test_load_playwright_raises_domain_error_when_dependency_is_missing(self) -> None:
+        with patch.dict(sys.modules, {"playwright": None, "playwright.sync_api": None}):
+            with self.assertRaises(acs_browser.BrowserDependencyError) as caught:
+                acs_browser.load_playwright()
+        self.assertIsInstance(caught.exception.__cause__, ModuleNotFoundError)
+        self.assertIn("缺少 Python Playwright", str(caught.exception))
+
+    def test_main_preserves_dependency_failure_exit_code_without_traceback(self) -> None:
+        args = SimpleNamespace(func=lambda _args: (_ for _ in ()).throw(
+            acs_browser.BrowserDependencyError("缺少 Python Playwright")
+        ))
+        parser = SimpleNamespace(parse_args=lambda: args)
+        with patch.object(acs_browser, "reexec_browser_runtime_if_needed", return_value=False), patch.object(
+            acs_browser, "build_parser", return_value=parser
+        ), patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            with self.assertRaises(SystemExit) as caught:
+                acs_browser.main()
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("缺少 Python Playwright", stderr.getvalue())
 
 
 class AcsBrowserScreenshotTest(unittest.TestCase):
@@ -397,6 +467,31 @@ class AcsBrowserLeaseTest(unittest.TestCase):
                 acs_browser.MAX_LEASE_TTL_SECONDS,
             )
             host.assert_called_once_with(args)
+
+    def test_lease_host_persists_dependency_failure_as_error(self) -> None:
+        args = SimpleNamespace(lease_id="missing-playwright", url=None, port=54_321)
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"WORKSPACE_DIR": tmp}, clear=False
+        ), patch.object(acs_browser.signal, "signal"), patch.object(
+            acs_browser,
+            "open_owned_runtime",
+            side_effect=acs_browser.BrowserDependencyError("缺少 Python Playwright"),
+        ):
+            acs_browser.update_lease_metadata(
+                args.lease_id,
+                {
+                    "leaseId": args.lease_id,
+                    "status": "starting",
+                    "stoppedAt": None,
+                    "error": None,
+                },
+            )
+            with self.assertRaises(acs_browser.BrowserDependencyError):
+                acs_browser.command_lease_host(args)
+            metadata = acs_browser.read_json_object(acs_browser.lease_meta_path(args.lease_id))
+        self.assertEqual(metadata["status"], "error")
+        self.assertIn("缺少 Python Playwright", metadata["error"])
+        self.assertIsNone(metadata["stoppedAt"])
 
     def test_lease_touch_cannot_extend_past_absolute_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(

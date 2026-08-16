@@ -72,6 +72,7 @@ import { auditLog } from "../data/login-logs/index.js";
 import { apiLogger } from "../utils/logger.js";
 import type { EventBus } from "../channels/web/eventBus.js";
 import { canAccessSession, hidesMemoryPollFrom } from "../data/sessions/access.js";
+import { createSessionWarmupHandler } from "./sessionWarmup.js";
 import type { AgentStore } from "../data/agents/store.js";
 import type { AgentProfileInfo } from "../data/agents/types.js";
 import { isAssignedToOrgAgent, type OrgAgentStore } from "../data/orgAgents/store.js";
@@ -458,8 +459,8 @@ export interface SessionsRouterOptions {
   /** 用户维度会话未读状态真源。 */
   sessionReadStateStore?: SessionReadStateStore;
   /**
-   * Sandbox 预热钩子（2026-07-31 冷启动治理）：用户打开会话页时 fire-and-forget
-   * 预热 ACS Sandbox，冷启动与打字/LLM 首轮并行。纯旁路，失败不影响会话打开。
+   * Sandbox 预热钩子（2026-07-31 冷启动治理）：用户在会话输入框首次产生有效输入时
+   * fire-and-forget 预热 ACS Sandbox。纯旁路，失败不影响输入与正式 dispatch。
    */
   sandboxWarmup?: (sessionId: string) => void;
   /**
@@ -2319,6 +2320,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     }
   });
 
+  router.post("/sessions/:sessionId/warmup", createSessionWarmupHandler({ readAccessibleSessionMetaForRequest, sandboxWarmup: options.sandboxWarmup }));
+
   router.get("/sessions/:sessionId", async (req: Request, res: Response) => {
     const requestStartedAt = Date.now();
     try {
@@ -2370,9 +2373,6 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       // 审计：记录会话打开（silent 参数标记自动刷新，跳过审计）
       if (!req.query.silent) {
         auditLog(req, "session_opened", sessionId);
-        // 用户真实打开会话 → 提前预热 Sandbox（fire-and-forget，内部节流+失败仅日志）。
-        // silent 自动刷新不预热，避免后台轮询把 idle Sandbox 一直顶着。
-        options.sandboxWarmup?.(sessionId);
       }
 
       const totalDurationMs = Date.now() - requestStartedAt;

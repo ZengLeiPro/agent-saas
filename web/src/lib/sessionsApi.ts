@@ -14,7 +14,16 @@ export { formatTokenCount, searchSessions } from '@agent/shared';
 
 import { mapSessionDetailToMessages as sharedMapSessionDetailToMessages } from '@agent/shared';
 import type { ApiSessionDetail, MessageItem } from '@agent/shared';
+import { authFetch } from '@/lib/authFetch';
 import { compactionItemFromBlock } from '@/lib/compaction';
+
+export async function warmupSessionSandbox(sessionId: string): Promise<void> {
+  const response = await authFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/warmup`,
+    { method: 'POST' },
+  );
+  if (!response.ok) throw new Error(`Sandbox warmup failed: HTTP ${response.status}`);
+}
 
 /**
  * 会话重载映射：在 shared 版基础上补充 kind='compaction' block →「上下文已压缩」分界线。

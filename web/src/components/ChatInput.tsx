@@ -2,6 +2,7 @@ import { useMemo, useRef, useCallback, useEffect, useState } from 'react';
 import { Plus, ArrowUp, Square, Mic, Loader2, StopCircle } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { warmupSessionSandbox } from "@/lib/sessionsApi";
 import type { ModelList } from "@/types/models";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import {
@@ -46,6 +47,13 @@ interface ChatInputProps {
 
 const MIN_HEIGHT = 56;
 const MAX_HEIGHT = 200;
+const warmedSessionIds = new Set<string>();
+
+function warmupSessionOnce(sessionId: string | null | undefined, value: string): void {
+  if (!sessionId || warmedSessionIds.has(sessionId) || !value.trim()) return;
+  warmedSessionIds.add(sessionId);
+  void warmupSessionSandbox(sessionId).catch(() => undefined);
+}
 
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -159,8 +167,12 @@ export function ChatInput({
     isComposingRef.current = true;
   };
 
-  const handleCompositionEnd = () => {
-    setTimeout(() => { isComposingRef.current = false; }, 0);
+  const handleCompositionEnd = (event: React.CompositionEvent<HTMLTextAreaElement>) => {
+    const value = event.currentTarget.value;
+    setTimeout(() => {
+      isComposingRef.current = false;
+      warmupSessionOnce(sessionId, value);
+    }, 0);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -365,7 +377,10 @@ export function ChatInput({
                 autoComplete="off"
                 value={input}
                 onChange={(e) => {
-                  if (!isDisabled) onInputChange(e.target.value);
+                  if (isDisabled) return;
+                  const value = e.target.value;
+                  onInputChange(value);
+                  if (!isComposingRef.current) warmupSessionOnce(sessionId, value);
                 }}
                 onKeyDown={handleKeyDown}
                 onCompositionStart={handleCompositionStart}

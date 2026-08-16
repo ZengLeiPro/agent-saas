@@ -7,12 +7,12 @@ import type { SessionCatalog } from './sessionCatalog.js';
  *
  * 背景：ACS Sandbox 冷启动（create/重建）生产 P50 33-77s，全部落在 Agent 首个
  * 工具调用上串行等待。dispatch 收到消息时已有 fire-and-forget provision 预热，
- * 但提前量只有 LLM 首轮思考时间（5-20s），盖不住冷启动。本服务把预热点再往前
- * 提到「用户打开会话页」：调 orchestrator `POST /warmup`（立即 202，后台
- * ensureRunning），预热与用户打字+LLM 首轮并行，绝大多数场景感知等待归零。
+ * 但提前量只有 LLM 首轮思考时间（5-20s），盖不住冷启动。本服务在「会话输入框
+ * 首次产生有效输入」时调 orchestrator `POST /warmup`（立即 202，后台
+ * ensureRunning），预热与用户继续输入+LLM 首轮并行，避免只浏览会话也创建 Sandbox。
  *
  * 安全边界：
- * - 纯旁路优化：所有失败仅记日志，绝不影响会话打开与正式执行链路；
+ * - 纯旁路优化：所有失败仅记日志，绝不影响用户输入与正式执行链路；
  * - 只预热 sessionCatalog 已有 record 的会话（workspaceId/cwd 取 dispatch 写入的
  *   真实值，推导函数与 dispatch 同源，保证预热的是同一个 Sandbox scope）；
  *   record 不存在（全新会话）直接放弃，绝不自行推导身份→workspace 映射；

@@ -70,12 +70,16 @@ const cronManageSchema = z.object({
   id: z.string().optional().describe('cron job、旧 taskboard 任务或评论 id。'),
   boardId: z.string().optional().describe('taskboard 看板 id。'),
   taskId: z.string().optional().describe('taskboard 任务 id。'),
+  sourceId: z.string().optional().describe('taskboard integration source id。'),
+  providerPullRequestId: z.string().optional().describe('仓库 Provider 的 pull request id 或编号。'),
+  kind: z.enum(['delivery', 'integration', 'remediation']).optional(),
   name: z.string().trim().min(1).max(120).optional().describe('cron 或 taskboard 看板名称。'),
   title: z.string().trim().min(1).max(240).optional(),
   description: z.string().max(20_000).optional(),
   prompt: z.string().max(20_000).optional(),
   visibility: z.enum(TASKBOARD_VISIBILITIES).optional(),
   body: z.string().trim().min(1).max(20_000).optional().describe('评论正文。'),
+  reason: z.string().trim().min(1).max(2_000).optional().describe('取消集成任务的原因。'),
   enabled: z.boolean().optional().describe('cron 是否启用。create 时默认 true。'),
   schedule: cronScheduleSchema.optional().describe('cron create 必填。kind=cron：{expr: "0 9 * * *", tz: "Asia/Shanghai"}；kind=every：{everyMs}；kind=at：{atMs: epoch 毫秒}。'),
   payload: z.union([cronPayloadSchema, cronPayloadPatchSchema]).optional().describe('cron create 必填。kind=agentTurn：{message}；kind=systemEvent：{text}。'),
@@ -105,6 +109,23 @@ const cronManageSchema = z.object({
   page: z.number().int().min(1).optional(),
   pageSize: z.number().int().min(1).max(100).optional(),
   dispatch: z.boolean().optional().describe('task.create 或兼容 create 时立即派发 work Agent。'),
+  include: z.array(z.enum(['task', 'board', 'comments', 'executions', 'activity', 'integrationSources'] as const)).max(6).optional(),
+  historyMode: z.enum(['auto', 'full', 'delta'] as const).optional(),
+  cursor: z.string().regex(/^\d+$/).optional(),
+  limit: z.number().int().min(1).max(500).optional(),
+  outcome: z.string().trim().min(1).max(64).optional(),
+  summary: z.string().trim().min(1).max(20_000).optional(),
+  evidence: z.array(z.string().trim().min(1).max(2_000)).max(100).optional(),
+  receipt: z.object({
+    taskId: z.string().min(1).max(128),
+    taskVersion: z.number().int().min(1),
+    changeSeq: z.string().regex(/^\d+$/),
+    contractDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    policyRevision: z.string().max(128),
+    subjectDigest: z.string().max(512).optional(),
+  }).strict().optional(),
+  deliveryTaskIds: z.array(z.string().min(1).max(128)).min(1).max(100).optional(),
+  expectedBoardVersion: z.number().int().min(1).optional(),
 });
 
 export const cronManageToolDescriptor: ToolDescriptor<CronManageInput> = {
@@ -132,6 +153,7 @@ export const cronManageToolDescriptor: ToolDescriptor<CronManageInput> = {
       && action !== 'execute'
       && action !== 'task.dispatch'
       && action !== 'comment.delete'
+      && action !== 'integration.create'
       && dispatch !== true
     ) return { risk: 'workspace_write' };
     return undefined;

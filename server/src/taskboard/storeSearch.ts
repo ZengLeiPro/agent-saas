@@ -24,6 +24,7 @@ export interface TaskboardSearchStore {
   boardsTable: string;
   tasksTable: string;
   commentsTable: string;
+  membersTable: string;
 }
 
 export async function listBoards(
@@ -32,13 +33,15 @@ export async function listBoards(
   includeArchived = false,
 ): Promise<TaskBoard[]> {
   const result = await store.pool.query(
-    `SELECT id, owner_user_id, name, description, visibility, prompt, model, version,
-            archived_at, created_at, updated_at
-       FROM ${store.boardsTable}
-      WHERE tenant_id=$1
-        AND (owner_user_id=$2 OR visibility='organization')
-        AND ($3::boolean OR archived_at IS NULL)
-      ORDER BY archived_at NULLS FIRST, updated_at DESC, id`,
+    `SELECT b.id, b.owner_user_id, b.name, b.description, b.visibility, b.prompt, b.model,
+            b.repository, b.integration_policy, b.version, b.archived_at, b.created_at, b.updated_at,
+            CASE WHEN b.owner_user_id=$2 THEN 'owner' ELSE COALESCE(m.role,'viewer') END AS board_role
+       FROM ${store.boardsTable} b
+       LEFT JOIN ${store.membersTable} m ON m.board_id=b.id AND m.user_id=$2
+      WHERE b.tenant_id=$1
+        AND (b.owner_user_id=$2 OR b.visibility='organization')
+        AND ($3::boolean OR b.archived_at IS NULL)
+      ORDER BY b.archived_at NULLS FIRST, b.updated_at DESC, b.id`,
     [identity.tenantId, identity.ownerUserId, includeArchived],
   );
   return result.rows.map((row) => rowToBoard(row, identity.ownerUserId));
@@ -95,28 +98,30 @@ export async function searchBoards(
 ): Promise<TaskboardPage<TaskBoard>> {
   const { page, pageSize, offset } = normalizePage(filter.page, filter.pageSize);
   const conditions = [
-    'tenant_id=$1',
-    "(owner_user_id=$2 OR visibility='organization')",
-    '($3::boolean OR archived_at IS NULL)',
+    'b.tenant_id=$1',
+    "(b.owner_user_id=$2 OR b.visibility='organization')",
+    '($3::boolean OR b.archived_at IS NULL)',
   ];
   const params: unknown[] = [identity.tenantId, identity.ownerUserId, filter.includeArchived === true];
   const search = filter.search?.trim();
   if (search) {
     params.push(`%${search}%`);
-    conditions.push(`(name ILIKE $${params.length} OR description ILIKE $${params.length})`);
+    conditions.push(`(b.name ILIKE $${params.length} OR b.description ILIKE $${params.length})`);
   }
   const where = conditions.join(' AND ');
   const count = await store.pool.query(
-    `SELECT count(*)::int AS total FROM ${store.boardsTable} WHERE ${where}`,
+    `SELECT count(*)::int AS total FROM ${store.boardsTable} b WHERE ${where}`,
     params,
   );
   params.push(pageSize, offset);
   const result = await store.pool.query(
-    `SELECT id, owner_user_id, name, description, visibility, prompt, model, version,
-            archived_at, created_at, updated_at
-       FROM ${store.boardsTable}
+    `SELECT b.id, b.owner_user_id, b.name, b.description, b.visibility, b.prompt, b.model,
+            b.repository, b.integration_policy, b.version, b.archived_at, b.created_at, b.updated_at,
+            CASE WHEN b.owner_user_id=$2 THEN 'owner' ELSE COALESCE(m.role,'viewer') END AS board_role
+       FROM ${store.boardsTable} b
+       LEFT JOIN ${store.membersTable} m ON m.board_id=b.id AND m.user_id=$2
       WHERE ${where}
-      ORDER BY archived_at NULLS FIRST, updated_at DESC, id
+      ORDER BY b.archived_at NULLS FIRST, b.updated_at DESC, b.id
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );

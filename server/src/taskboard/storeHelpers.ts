@@ -19,6 +19,7 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     id: String(row.id),
     boardId: String(row.board_id),
     identifier: String(row.identifier),
+    kind: row.kind === 'integration' || row.kind === 'remediation' ? row.kind : 'delivery',
     title: String(row.title),
     description: String(row.description ?? ''),
     ...(row.branch ? { branch: String(row.branch) } : {}),
@@ -31,6 +32,16 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     ...(row.model !== null && row.model !== undefined && String(row.model).trim()
       ? { model: String(row.model) }
       : {}),
+    ...(row.provider_pull_request_id ? { providerPullRequestId: String(row.provider_pull_request_id) } : {}),
+    ...(row.pull_request_number !== null && row.pull_request_number !== undefined
+      ? { pullRequestNumber: Number(row.pull_request_number) }
+      : {}),
+    ...(row.reviewed_subject_digest ? { reviewedSubjectDigest: String(row.reviewed_subject_digest) } : {}),
+    ...(row.merged_commit_oid ? { mergedCommitOid: String(row.merged_commit_oid) } : {}),
+    ...(row.integration_task_id ? { integrationTaskId: String(row.integration_task_id) } : {}),
+    ...(row.integration_state ? {
+      integrationState: String(row.integration_state) as TaskBoardTask['integrationState'],
+    } : {}),
     commentCount: Number(row.comment_count ?? 0),
     version: Number(row.version),
     ...(row.creator_user_id ? { creatorUserId: String(row.creator_user_id) } : {}),
@@ -64,7 +75,12 @@ export function rowToExecution(row: Record<string, unknown>): TaskBoardExecution
     runId: String(row.run_id),
     sessionId: String(row.session_id),
     status: String(row.status) as TaskBoardExecution['status'],
-    purpose: row.purpose === 'review' ? 'review' : 'work',
+    purpose: row.purpose === 'review' || row.purpose === 'merge' ? row.purpose : 'work',
+    trigger: row.trigger === 'comment' || row.trigger === 'resume' || row.trigger === 'retry'
+      ? row.trigger
+      : 'initial',
+    protocolVersion: Number(row.protocol_version) === 2 ? 2 : 1,
+    ...(row.attempt_id ? { attemptId: String(row.attempt_id) } : {}),
     requestedBy: String(row.requested_by),
     ...(row.error !== null && row.error !== undefined ? { error: String(row.error) } : {}),
     ...(row.started_at ? { startedAt: toIso(row.started_at) } : {}),
@@ -257,6 +273,11 @@ export function rowToExecutionModelContext(
   return {
     ...(row.task_model ? { taskModel: String(row.task_model) } : {}),
     ...(row.board_model ? { boardModel: String(row.board_model) } : {}),
+    ...(row.task_kind === 'integration' || row.task_kind === 'remediation'
+      ? { taskKind: row.task_kind }
+      : { taskKind: 'delivery' as const }),
+    ...(row.task_status ? { taskStatus: String(row.task_status) as TaskBoardTask['status'] } : {}),
+    ...(row.policy_revision ? { policyRevision: String(row.policy_revision) } : {}),
     boardOwnerUserId: String(row.board_owner_user_id),
     ...(row.board_id ? { boardId: String(row.board_id) } : {}),
     ...(row.board_name ? { boardName: String(row.board_name) } : {}),

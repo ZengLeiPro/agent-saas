@@ -85,7 +85,7 @@ describe('任务看板评论续跑', () => {
           idempotencyKey: `taskboard-comment:${comments[1]!.id}`,
           metadata: expect.objectContaining({
             wakeMessage: expect.objectContaining({
-              content: expect.stringMatching(/先补充验收条件[\s\S]*再修复并发问题/),
+              content: expect.stringMatching(/taskId: task-1[\s\S]*triggerCommentId: comment-2/),
             }),
           }),
         }),

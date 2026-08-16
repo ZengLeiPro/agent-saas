@@ -8,6 +8,7 @@ import {
   TASKBOARD_EXECUTION_PURPOSES,
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
+  TASKBOARD_TASK_KINDS,
   TASKBOARD_VISIBILITIES,
   type TaskBoardAttachment,
   type TaskBoardUploadAttachment,
@@ -23,12 +24,60 @@ import {
   type TaskboardService,
 } from '../taskboard/types.js';
 
+const repositorySchema = z.object({
+  provider: z.literal('github'),
+  repositoryId: z.string().trim().min(1).max(256),
+  owner: z.string().trim().min(1).max(128),
+  name: z.string().trim().min(1).max(128),
+  baseBranch: z.string().trim().min(1).max(256),
+  allowForkPullRequest: z.literal(false),
+}).strict();
+
+const integrationTriggerSchema = z.discriminatedUnion('mode', [
+  z.object({
+    mode: z.literal('scheduled'),
+    cron: z.string().trim().min(1).max(120),
+    timezone: z.string().trim().min(1).max(120),
+  }).strict(),
+  z.object({
+    mode: z.literal('on_ready'),
+    debounceMs: z.number().int().min(0).max(86_400_000),
+  }).strict(),
+  z.object({
+    mode: z.literal('manual'),
+    allowedRoles: z.array(z.enum(['maintainer', 'owner'] as const)).min(1).max(2),
+  }).strict(),
+]);
+
+const integrationPolicySchema = z.object({
+  schemaVersion: z.literal(1),
+  enabled: z.boolean(),
+  revision: z.string().trim().max(128).default('server'),
+  trigger: integrationTriggerSchema,
+  batch: z.object({
+    maxTasks: z.number().int().min(1).max(100),
+    selection: z.literal('priority_then_ready_at'),
+  }).strict(),
+  execution: z.object({
+    mergeMethod: z.enum(['merge', 'squash', 'rebase'] as const),
+    continueIndependentSources: z.literal(true),
+    autoResolveConflicts: z.literal(true),
+    maxAutomaticRemediationRounds: z.number().int().min(0).max(20),
+    maxTransientRetries: z.number().int().min(0).max(20),
+    requireGreenChecks: z.literal(true),
+    deleteRemoteBranch: z.literal(false),
+    deploy: z.literal(false),
+  }).strict(),
+}).strict();
+
 const boardCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().max(4_000).optional(),
   prompt: z.string().max(20_000).optional(),
   model: z.string().trim().min(1).max(256).optional(),
   visibility: z.enum(TASKBOARD_VISIBILITIES).optional(),
+  repository: repositorySchema.optional(),
+  integrationPolicy: integrationPolicySchema.optional(),
 }).strict();
 
 const boardPatchSchema = z.object({
@@ -37,10 +86,13 @@ const boardPatchSchema = z.object({
   prompt: z.string().max(20_000).optional(),
   model: z.string().trim().min(1).max(256).nullish(),
   visibility: z.enum(TASKBOARD_VISIBILITIES).optional(),
+  repository: repositorySchema.nullish(),
+  integrationPolicy: integrationPolicySchema.nullish(),
   expectedVersion: z.number().int().min(1),
 }).strict().refine(
   (input) => input.name !== undefined || input.description !== undefined
-    || input.prompt !== undefined || input.model !== undefined || input.visibility !== undefined,
+    || input.prompt !== undefined || input.model !== undefined || input.visibility !== undefined
+    || input.repository !== undefined || input.integrationPolicy !== undefined,
   { message: 'At least one board field is required' },
 );
 
@@ -69,6 +121,7 @@ const attachmentsSchema = z.array(attachmentSchema).max(50);
 const taskCreateSchema = z.object({
   title: z.string().trim().min(1).max(240),
   description: z.string().max(20_000).optional(),
+  kind: z.enum(TASKBOARD_TASK_KINDS).optional(),
   branch: z.string().trim().min(1).max(512).optional(),
   attachments: attachmentsSchema.optional(),
   status: z.enum(TASKBOARD_STATUSES).optional(),
@@ -81,6 +134,9 @@ const taskCreateSchema = z.object({
 }).strict().superRefine((input, context) => {
   if (input.dispatch && input.status !== 'in_progress') {
     context.addIssue({ code: 'custom', message: 'dispatch requires in_progress status', path: ['dispatch'] });
+  }
+  if (!input.dispatch && input.status && !['backlog', 'todo'].includes(input.status)) {
+    context.addIssue({ code: 'custom', message: 'initial status must be backlog or todo', path: ['status'] });
   }
   if (input.dispatch && !input.clientRequestId) {
     context.addIssue({ code: 'custom', message: 'dispatch requires clientRequestId', path: ['clientRequestId'] });
@@ -127,6 +183,31 @@ const commentCreateSchema = z.object({
 const commentPatchSchema = z.object({
   body: z.string().trim().max(20_000),
   expectedVersion: z.number().int().min(1),
+}).strict();
+
+const memberPatchSchema = z.object({
+  userId: z.string().trim().min(1).max(128),
+  role: z.enum(['viewer', 'editor', 'maintainer'] as const),
+}).strict();
+
+const integrationBatchSchema = z.object({
+  deliveryTaskIds: z.array(z.string().trim().min(1).max(128)).min(1).max(100),
+  expectedBoardVersion: z.number().int().min(1),
+}).strict();
+
+const integrationCancelSchema = z.object({
+  expectedVersion: z.number().int().min(1),
+  reason: z.string().trim().min(1).max(2_000).optional(),
+}).strict();
+
+const executionContextSchema = z.object({
+  include: z.array(z.enum(['task', 'board', 'comments', 'executions', 'activity', 'integrationSources'] as const))
+    .max(6).optional(),
+  history: z.object({
+    mode: z.enum(['auto', 'full', 'delta'] as const),
+    cursor: z.string().regex(/^\d+$/).optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  }).strict().optional(),
 }).strict();
 
 const pageQueryFields = {
@@ -235,6 +316,43 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     const input = parseOrReply(expectedVersionSchema, req.body, res, 'body');
     if (!input) return;
     res.json(await options.service!.restoreBoard(identityFrom(req), req.params.id, input));
+  }));
+
+  router.get('/boards/:id/members', route(async (req, res) => {
+    if (!options.service!.listMembers) throw new TaskboardExecutionUnavailableError();
+    res.json(await options.service!.listMembers(identityFrom(req), req.params.id));
+  }));
+
+  router.put('/boards/:id/members', route(async (req, res) => {
+    if (!options.service!.upsertMember) throw new TaskboardExecutionUnavailableError();
+    const input = parseOrReply(memberPatchSchema, req.body, res, 'body');
+    if (!input) return;
+    res.json(await options.service!.upsertMember(identityFrom(req), req.params.id, input));
+  }));
+
+  router.delete('/boards/:id/members/:userId', route(async (req, res) => {
+    if (!options.service!.removeMember) throw new TaskboardExecutionUnavailableError();
+    await options.service!.removeMember(identityFrom(req), req.params.id, req.params.userId);
+    res.status(204).end();
+  }));
+
+  router.post('/boards/:id/integrations', route(async (req, res) => {
+    if (!options.service!.createIntegrationBatch || !options.executionService) {
+      throw new TaskboardExecutionUnavailableError();
+    }
+    const input = parseOrReply(integrationBatchSchema, req.body, res, 'body');
+    if (!input) return;
+    const identity = identityFrom(req);
+    const task = await options.service!.createIntegrationBatch(
+      identity,
+      req.params.id,
+      input,
+      'manual_batch',
+    );
+    res.status(202).json(await options.executionService.startExecution(identity, task.id, {
+      expectedVersion: task.version,
+      purpose: 'merge',
+    }));
   }));
 
   router.get('/boards/:boardId/tasks', route(async (req, res) => {
@@ -360,6 +478,25 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       req.params.id,
       input,
     ));
+  }));
+
+  router.post('/tasks/:id/context', route(async (req, res) => {
+    if (!options.service!.getExecutionContextV2) throw new TaskboardExecutionUnavailableError();
+    const input = parseOrReply(executionContextSchema, req.body ?? {}, res, 'body');
+    if (!input) return;
+    res.json(await options.service!.getExecutionContextV2(identityFrom(req), req.params.id, input));
+  }));
+
+  router.post('/tasks/:id/integration-cancel', route(async (req, res) => {
+    if (!options.service!.cancelIntegrationTask) throw new TaskboardExecutionUnavailableError();
+    const input = parseOrReply(integrationCancelSchema, req.body, res, 'body');
+    if (!input) return;
+    res.json(await options.service!.cancelIntegrationTask(identityFrom(req), req.params.id, input));
+  }));
+
+  router.get('/tasks/:id/integration-sources', route(async (req, res) => {
+    if (!options.service!.listIntegrationSources) throw new TaskboardExecutionUnavailableError();
+    res.json(await options.service!.listIntegrationSources(identityFrom(req), req.params.id));
   }));
 
   router.get('/tasks/:id/comments', route(async (req, res) => {

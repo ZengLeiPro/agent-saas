@@ -50,6 +50,15 @@ describePg('Taskboard continuation PostgreSQL race contract', () => {
   afterAll(async () => {
     if (!pool || !store) return;
     try {
+      await pool.query(`DROP TABLE IF EXISTS ${store.integrationTriggerOutboxTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.blockEpisodesTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.mergeOperationsTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.mergeAuthorizationsTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.integrationSourcesTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.integrationLanesTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.attemptsTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.changesTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.membersTable} CASCADE`);
       await pool.query(`DROP TABLE IF EXISTS ${store.continuationOutboxTable}`);
       await pool.query(`DROP TABLE IF EXISTS ${store.executionOutboxTable}`);
       await pool.query(`DROP TABLE IF EXISTS ${store.executionsTable}`);

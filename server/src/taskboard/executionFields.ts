@@ -2,6 +2,7 @@ import {
   TASKBOARD_EXECUTION_PURPOSES,
   type TaskBoardExecutionPurpose,
   type TaskBoardStatus,
+  type TaskBoardTaskKind,
 } from '../../../shared/src/types/taskboard.js';
 import { TaskboardValidationError } from './types.js';
 
@@ -17,6 +18,15 @@ export function executionFieldMigrationSql(executionsTable: string): string {
   const purposes = TASKBOARD_EXECUTION_PURPOSES.map((value) => `'${value}'`).join(', ');
   return `
     ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'work';
+    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS trigger TEXT NOT NULL DEFAULT 'initial';
+    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS protocol_version INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS attempt_id TEXT;
+    ALTER TABLE ${executionsTable} DROP CONSTRAINT IF EXISTS ${executionsTable}_trigger_check;
+    ALTER TABLE ${executionsTable} ADD CONSTRAINT ${executionsTable}_trigger_check
+      CHECK (trigger IN ('initial', 'comment', 'resume', 'retry'));
+    ALTER TABLE ${executionsTable} DROP CONSTRAINT IF EXISTS ${executionsTable}_protocol_version_check;
+    ALTER TABLE ${executionsTable} ADD CONSTRAINT ${executionsTable}_protocol_version_check
+      CHECK (protocol_version IN (1, 2));
     ALTER TABLE ${executionsTable} DROP CONSTRAINT IF EXISTS ${executionsTable}_purpose_check;
     ALTER TABLE ${executionsTable} ADD CONSTRAINT ${executionsTable}_purpose_check
       CHECK (purpose IN (${purposes}));
@@ -31,8 +41,24 @@ export function executionFieldMigrationSql(executionsTable: string): string {
 export function resolveExecutionPurpose(
   status: TaskBoardStatus,
   requested: TaskBoardExecutionPurpose | undefined,
+  kind: TaskBoardTaskKind = 'delivery',
 ): TaskBoardExecutionPurpose {
-  const purpose = requested ?? 'work';
+  const purpose = requested ?? (kind === 'integration' ? 'merge' : 'work');
+  if (purpose === 'merge') {
+    if (kind === 'integration' && (status === 'todo' || status === 'in_progress' || status === 'blocked')) {
+      return purpose;
+    }
+    throw new TaskboardValidationError(
+      'Only active integration tasks can be handed to a merge Agent',
+      'TASKBOARD_MERGE_REQUIRES_INTEGRATION',
+    );
+  }
+  if (kind === 'integration') {
+    throw new TaskboardValidationError(
+      'Integration tasks only accept merge execution',
+      'TASKBOARD_INTEGRATION_PURPOSE_INVALID',
+    );
+  }
   const requiredStatus = purpose === 'review' ? 'in_review' : 'todo';
   if (status === requiredStatus) return purpose;
   throw new TaskboardValidationError(

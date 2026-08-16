@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PRIORITY_LABELS, STATUS_LABELS } from "./constants";
+import { boardAllows, MEMBER_ROLE_LABELS, PRIORITY_LABELS, STATUS_LABELS } from "./constants";
 
 interface BoardToolbarProps {
   boards: TaskBoard[];
@@ -59,6 +59,10 @@ export function BoardToolbar({
   onPriorityChange,
 }: BoardToolbarProps) {
   const readOnly = !!board.archivedAt;
+  const canOpenSettings = boardAllows(board, "board.update")
+    || boardAllows(board, "board.policy.update")
+    || boardAllows(board, "board.members.manage");
+  const canArchive = boardAllows(board, "board.archive");
 
   return (
     <div className="mb-3 flex shrink-0 flex-col gap-3">
@@ -86,17 +90,17 @@ export function BoardToolbar({
             <DropdownMenuItem onSelect={onCreateBoard}>
               <Plus />创建看板
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={readOnly || !board.canManage} onSelect={onEditBoard}>
-              编辑看板设置
+            <DropdownMenuItem disabled={readOnly || !canOpenSettings} onSelect={onEditBoard}>
+              看板设置与成员
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             {readOnly ? (
-              <DropdownMenuItem disabled={!board.canManage} onSelect={onRestoreBoard}>
+              <DropdownMenuItem disabled={!canArchive} onSelect={onRestoreBoard}>
                 <ArchiveRestore />恢复看板
               </DropdownMenuItem>
             ) : (
               <DropdownMenuItem
-                disabled={!board.canManage}
+                disabled={!canArchive}
                 className="text-destructive focus:text-destructive"
                 onSelect={onArchiveBoard}
               >
@@ -139,9 +143,10 @@ export function BoardToolbar({
         </div>
       </div>
       <p className="truncate text-xs text-muted-foreground">
-        {board.visibility === "organization"
-          ? `组织看板 · ${board.canManage ? "你创建的" : "由其他成员创建"} · 全员可管理任务`
-          : "个人看板"}
+        {board.visibility === "organization" ? "组织看板" : "个人看板"}
+        {` · 当前角色：${MEMBER_ROLE_LABELS[board.role ?? (board.canManage ? "owner" : "editor")]}`}
+        {board.repository ? ` · GitHub ${board.repository.owner}/${board.repository.name}:${board.repository.baseBranch}` : ""}
+        {board.integrationPolicy ? ` · 集成${board.integrationPolicy.enabled ? "已启用" : "已停用"}（${board.integrationPolicy.trigger.mode}）` : ""}
         {board.description ? ` · ${board.description}` : ""}
       </p>
       {readOnly ? (

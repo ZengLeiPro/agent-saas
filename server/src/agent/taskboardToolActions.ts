@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 
 import type {
+  TaskBoardContextReceipt,
   TaskBoardExecutionPurpose,
   TaskBoardPriority,
   TaskBoardStatus,
   TaskBoardTask,
+  TaskBoardTaskKind,
   TaskBoardTaskPatchInput,
   TaskBoardVisibility,
 } from '../../../shared/src/types/taskboard.js';
@@ -41,6 +43,16 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'comment.update',
   'comment.delete',
   'execution.list',
+  'execution.context',
+  'execution.comment',
+  'execution.pull_request.set',
+  'execution.review_subject.record',
+  'execution.resolve',
+  'integration.create',
+  'integration.cancel',
+  'integration.sources',
+  'integration.source.inspect',
+  'integration.source.merge',
 ] as const;
 export const TASKBOARD_MANAGE_ACTIONS = [
   ...TASKBOARD_LEGACY_ACTIONS,
@@ -56,6 +68,9 @@ export const TASKBOARD_READ_ACTIONS = [
   'task.get',
   'comment.list',
   'execution.list',
+  'execution.context',
+  'integration.sources',
+  'integration.source.inspect',
 ] as const;
 
 export interface TaskboardManageInput {
@@ -63,6 +78,9 @@ export interface TaskboardManageInput {
   id?: string;
   boardId?: string;
   taskId?: string;
+  sourceId?: string;
+  providerPullRequestId?: string;
+  kind?: TaskBoardTaskKind;
   name?: string;
   title?: string;
   description?: string;
@@ -95,6 +113,17 @@ export interface TaskboardManageInput {
   pageSize?: number;
   /** create/task.create 时立即把新任务派发给独立 work Agent。 */
   dispatch?: boolean;
+  include?: Array<'task' | 'board' | 'comments' | 'executions' | 'activity' | 'integrationSources'>;
+  historyMode?: 'auto' | 'full' | 'delta';
+  cursor?: string;
+  limit?: number;
+  outcome?: string;
+  summary?: string;
+  reason?: string;
+  evidence?: string[];
+  receipt?: TaskBoardContextReceipt;
+  deliveryTaskIds?: string[];
+  expectedBoardVersion?: number;
 }
 
 export interface TaskboardToolOptions {
@@ -232,6 +261,106 @@ export async function invokeTaskboardAction(
       });
       return { deleted: true, comment };
     }
+    case 'execution.context': {
+      if (!service.getExecutionContextV2) throw new Error('任务看板上下文协议未启用');
+      const taskId = scope.execution?.task.id ?? requireId(input, 'taskId');
+      return await service.getExecutionContextV2(identity, taskId, {
+        ...(input.include ? { include: input.include } : {}),
+        history: {
+          mode: input.historyMode ?? 'auto',
+          ...(input.cursor ? { cursor: input.cursor } : {}),
+          ...(input.limit ? { limit: input.limit } : {}),
+        },
+      }) as unknown as Record<string, unknown>;
+    }
+    case 'execution.comment': {
+      if (!scope.execution || !service.createExecutionCommentV2) {
+        throw new Error('仅当前任务 Execution 可以写入 Agent 进展评论');
+      }
+      const comment = await service.createExecutionCommentV2(
+        identity,
+        scope.execution.execution.runId,
+        requireField(input.body, 'body'),
+      );
+      return { created: true, comment };
+    }
+    case 'execution.pull_request.set': {
+      if (!scope.execution || !service.attachExecutionPullRequestV2) {
+        throw new Error('仅当前 work Execution 可以登记 pull request');
+      }
+      const task = await service.attachExecutionPullRequestV2(
+        identity,
+        scope.execution.execution.runId,
+        requireField(input.providerPullRequestId, 'providerPullRequestId'),
+      );
+      return { updated: true, task };
+    }
+    case 'execution.review_subject.record': {
+      if (!scope.execution || !service.recordReviewedExecutionSubjectV2) {
+        throw new Error('仅当前 review Execution 可以登记已审 subject');
+      }
+      const task = await service.recordReviewedExecutionSubjectV2(
+        identity,
+        scope.execution.execution.runId,
+      );
+      return { updated: true, task };
+    }
+    case 'execution.resolve': {
+      if (!scope.execution || !service.resolveExecutionV2 || !input.receipt) {
+        throw new Error('当前任务 Execution 缺少 resolution 服务或 context receipt');
+      }
+      const task = await service.resolveExecutionV2(identity, scope.execution.execution.runId, {
+        outcome: requireField(input.outcome, 'outcome'),
+        summary: requireField(input.summary, 'summary'),
+        ...(input.evidence ? { evidence: input.evidence } : {}),
+        receipt: input.receipt,
+      });
+      return { resolved: true, task };
+    }
+    case 'integration.create': {
+      if (!service.createIntegrationBatch) throw new Error('任务看板集成批次服务未启用');
+      if (!input.deliveryTaskIds?.length) throw new Error('integration.create 需要 deliveryTaskIds');
+      if (!Number.isInteger(input.expectedBoardVersion)) throw new Error('integration.create 需要 expectedBoardVersion');
+      const task = await service.createIntegrationBatch(identity, requireId(input, 'boardId'), {
+        deliveryTaskIds: input.deliveryTaskIds,
+        expectedBoardVersion: input.expectedBoardVersion!,
+      }, 'manual_batch');
+      return { created: true, task };
+    }
+    case 'integration.cancel': {
+      if (!service.cancelIntegrationTask) throw new Error('任务看板集成取消服务未启用');
+      const task = await service.cancelIntegrationTask(identity, requireId(input, 'taskId'), {
+        expectedVersion: requireVersion(input),
+        ...(input.reason ? { reason: input.reason } : {}),
+      });
+      return { canceled: true, task };
+    }
+    case 'integration.sources': {
+      if (!service.listIntegrationSources) throw new Error('任务看板集成来源服务未启用');
+      const taskId = scope.execution?.task.id ?? requireId(input, 'taskId');
+      const sources = await service.listIntegrationSources(identity, taskId);
+      return { count: sources.length, sources };
+    }
+    case 'integration.source.inspect': {
+      if (!scope.execution || !service.inspectIntegrationSourceV2) {
+        throw new Error('仅当前 merge Execution 可以检查集成来源');
+      }
+      return await service.inspectIntegrationSourceV2(
+        identity,
+        scope.execution.execution.runId,
+        requireField(input.sourceId, 'sourceId'),
+      ) as unknown as Record<string, unknown>;
+    }
+    case 'integration.source.merge': {
+      if (!scope.execution || !service.mergeIntegrationSourceV2) {
+        throw new Error('仅当前 merge Execution 可以合并集成来源');
+      }
+      return await service.mergeIntegrationSourceV2(
+        identity,
+        scope.execution.execution.runId,
+        requireField(input.sourceId, 'sourceId'),
+      ) as unknown as Record<string, unknown>;
+    }
     case 'execution.list': {
       const result = await requireExecutionService(options.executionService?.()).searchExecutions(
         identity,
@@ -293,8 +422,27 @@ function assertExecutionScope(
   if (!['queued', 'running', 'waiting_user', 'waiting_approval'].includes(context.execution.status)) {
     throw new Error('任务看板执行已终止，不能继续回写');
   }
+  const executionActions = [
+    'execution.context',
+    'execution.comment',
+    'execution.pull_request.set',
+    'execution.review_subject.record',
+    'execution.resolve',
+    'integration.sources',
+    'integration.source.inspect',
+    'integration.source.merge',
+  ];
+  if (executionActions.includes(input.action)) {
+    if (input.taskId && input.taskId !== context.task.id) {
+      throw new Error('看板 Agent 只能操作当前任务');
+    }
+    if (input.action.startsWith('integration.') && context.task.kind !== 'integration') {
+      throw new Error('只有 integration 任务可以读取集成来源');
+    }
+    return;
+  }
   if (!TASKBOARD_LEGACY_ACTIONS.includes(input.action as (typeof TASKBOARD_LEGACY_ACTIONS)[number])) {
-    throw new Error('看板 Agent Execution 只能使用兼容回写 action，不能进入普通会话管理域');
+    throw new Error('看板 Agent Execution 只能使用当前任务协议 action，不能进入普通会话管理域');
   }
   const currentTask = context.task;
   switch (input.action) {
@@ -306,7 +454,7 @@ function assertExecutionScope(
     case 'update': {
       const changed = ['title', 'description', 'priority', 'labels', 'dueAt', 'model']
         .some((field) => input[field as keyof TaskboardManageInput] !== undefined);
-      if (input.id !== currentTask.id || input.branch === undefined || changed) {
+      if (context.execution.purpose !== 'work' || input.id !== currentTask.id || input.branch === undefined || changed) {
         throw new Error('看板 Agent 只能回写当前任务的 branch 字段');
       }
       return;
@@ -319,8 +467,14 @@ function assertExecutionScope(
       ) throw new Error('只有当前任务的复核 Agent 可以确认待合并、退回待实施或标记阻塞');
       return;
     case 'create':
-      if (input.boardId !== currentTask.boardId || (input.status !== undefined && input.status !== 'todo')) {
-        throw new Error('看板 Agent 只能在当前看板创建 todo 后续任务');
+      if (
+        input.boardId !== currentTask.boardId
+        || (input.status !== undefined && input.status !== 'todo')
+        || context.execution.purpose === 'review'
+        || (context.execution.purpose === 'work' && input.kind !== undefined && input.kind !== 'delivery')
+        || (context.execution.purpose === 'merge' && (input.kind !== 'remediation' || !input.sourceId))
+      ) {
+        throw new Error('当前职责不能创建该后续任务');
       }
       return;
     case 'execute':
@@ -401,6 +555,7 @@ async function createTask(
   }
   const task = await service.createTask(identity, boardId, {
     title: requireField(input.title, 'title'),
+    ...(input.kind ? { kind: input.kind } : {}),
     ...(input.description !== undefined ? { description: input.description } : {}),
     ...(typeof input.branch === 'string' ? { branch: input.branch } : {}),
     status: input.dispatch ? 'todo' : input.status,
@@ -505,9 +660,14 @@ async function createExecutionTask(
 ): Promise<Record<string, unknown>> {
   const executionStore = options.executionStore?.();
   if (!executionStore) throw new Error('任务看板执行上下文服务未启用');
+  const kind = input.kind ?? (execution.task.kind === 'integration' ? 'remediation' : 'delivery');
+  if (execution.task.kind === 'integration' && kind === 'remediation' && !input.sourceId) {
+    throw new Error('integration remediation 任务需要 sourceId');
+  }
   const dispatcher = input.dispatch ? requireExecutionService(options.executionService?.()) : undefined;
   const task = await executionStore.createTaskFromExecution(identity, execution.execution.runId, {
     title: requireField(input.title, 'title'),
+    kind,
     ...(input.description !== undefined ? { description: input.description } : {}),
     ...(typeof input.branch === 'string' ? { branch: input.branch } : {}),
     status: 'todo',
@@ -517,6 +677,18 @@ async function createExecutionTask(
     ...(typeof input.model === 'string' ? { model: input.model } : {}),
     clientRequestId: taskboardCreateRequestId(input, { execution }),
   });
+  if (kind === 'remediation' && input.sourceId) {
+    const service = options.service();
+    if (!service?.linkIntegrationRemediationV2) {
+      throw new Error('任务看板 remediation 关联服务未启用');
+    }
+    await service.linkIntegrationRemediationV2(
+      identity,
+      execution.execution.runId,
+      input.sourceId,
+      task.id,
+    );
+  }
   if (!input.dispatch) return { created: true, task };
   return dispatchCreatedTask(dispatcher!, identity, task);
 }
@@ -568,6 +740,9 @@ async function moveLegacyTask(
   execution: TaskboardExecutionContext | undefined,
 ): Promise<Record<string, unknown>> {
   if (execution) {
+    if (execution.execution.protocolVersion === 2) {
+      throw new Error('当前 Execution 必须通过结构化 resolution 提交阶段结果');
+    }
     const status = input.status;
     const executionStore = options.executionStore?.();
     if (
@@ -612,8 +787,8 @@ async function assertCanDispatch(
   boardId: string,
 ): Promise<void> {
   const board = await service.getBoard(identity, boardId);
-  if (!board.canManage) {
-    throw new TaskboardPermissionError('Only the board owner may dispatch an Agent for this board');
+  if (!(board.allowedActions?.includes('execution.trigger') ?? board.canManage)) {
+    throw new TaskboardPermissionError('Taskboard role does not allow Agent execution');
   }
 }
 

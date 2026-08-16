@@ -10,7 +10,8 @@ import {
   type TaskBoardTask,
   type TaskBoardTaskPatchInput,
 } from "@agent/shared";
-import { Archive, ArchiveRestore, Bot, ExternalLink, LoaderCircle, Send } from "lucide-react";
+import { Archive, ArchiveRestore, Bot, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Send } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -33,10 +34,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import * as api from "./api";
 import {
+  canUserTransitionTask,
   EXECUTION_STATUS_LABELS,
+  INTEGRATION_SOURCE_STATE_LABELS,
   PRIORITY_LABELS,
   STATUS_LABELS,
+  TASK_KIND_LABELS,
 } from "./constants";
+import { IntegrationSourceDetails } from "./IntegrationSources";
 import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from "./TaskAttachments";
 import { useTaskComments, useTaskExecutions } from "./hooks";
@@ -50,6 +55,12 @@ interface TaskDetailProps {
   active?: boolean;
   task: TaskBoardTask | null;
   boardReadOnly: boolean;
+  canUpdateTask?: boolean;
+  canTransitionTask?: boolean;
+  canArchiveTask?: boolean;
+  canComment?: boolean;
+  canExecute?: boolean;
+  canCancelIntegration?: boolean;
   modelList?: ModelList | null;
   onOpenChange: (open: boolean) => void;
   onTaskLoaded: (task: TaskBoardTask) => void;
@@ -71,6 +82,12 @@ export function TaskDetail({
   active = true,
   task,
   boardReadOnly,
+  canUpdateTask = true,
+  canTransitionTask = true,
+  canArchiveTask = true,
+  canComment = true,
+  canExecute = true,
+  canCancelIntegration = false,
   modelList = null,
   onOpenChange,
   onTaskLoaded,
@@ -232,13 +249,23 @@ export function TaskDetail({
 
   const archived = !!currentTask?.archivedAt;
   const readOnly = boardReadOnly || archived;
+  const taskKind = currentTask?.kind ?? "delivery";
+  const editReadOnly = readOnly || !canUpdateTask || taskKind !== "delivery";
+  const commentReadOnly = readOnly || !canComment;
+  const canRunCurrentTask = !readOnly && canExecute;
+  const canTransitionCurrentTask = Boolean(
+    currentTask
+    && !readOnly
+    && canTransitionTask
+    && TASKBOARD_STATUSES.some((status) => canUserTransitionTask(taskKind, currentTask.status, status)),
+  );
   const isCurrentOperation = (requestId: number, operationTaskId: string) => (
     requestId === detailRequestRef.current && operationTaskId === draftTaskIdRef.current
   );
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
-    if (!currentTask || readOnly) return;
+    if (!currentTask || editReadOnly) return;
     if (taskAttachments.uploading) {
       setError("请等待附件上传完成");
       return;
@@ -276,7 +303,8 @@ export function TaskDetail({
   };
 
   const changeStatus = async (status: TaskBoardStatus) => {
-    if (!currentTask || readOnly || status === currentTask.status) return;
+    if (!currentTask || !canTransitionCurrentTask || status === currentTask.status
+      || !canUserTransitionTask(taskKind, currentTask.status, status)) return;
     const operationTask = currentTask;
     const requestId = ++detailRequestRef.current;
     setSaving(true);
@@ -296,7 +324,7 @@ export function TaskDetail({
   };
 
   const changeArchived = async () => {
-    if (!currentTask || boardReadOnly) return;
+    if (!currentTask || boardReadOnly || !canArchiveTask) return;
     const operationTask = currentTask;
     const nextArchived = !Boolean(operationTask.archivedAt);
     if (nextArchived && !window.confirm(`确认归档任务“${operationTask.title}”吗？`)) return;
@@ -317,9 +345,34 @@ export function TaskDetail({
     }
   };
 
+  const cancelIntegration = async () => {
+    if (!currentTask || taskKind !== "integration" || !canCancelIntegration || executionActive) return;
+    if (!window.confirm(`确认取消集成任务“${currentTask.title}”吗？已合并来源不会回滚。`)) return;
+    const operationTask = currentTask;
+    const requestId = ++detailRequestRef.current;
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await api.cancelIntegrationTask(operationTask.id, operationTask.version);
+      if (!isCurrentOperation(requestId, operationTask.id)) return;
+      setCurrentTask(next);
+      onTaskLoaded(next);
+      mergeServerDraft(next);
+    } catch (caught) {
+      if (!isCurrentOperation(requestId, operationTask.id)) return;
+      setError(caught instanceof Error ? caught.message : "取消集成任务失败");
+    } finally {
+      if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
+    }
+  };
+
   const startAgentExecution = async (purpose: TaskBoardExecutionPurpose) => {
-    const requiredStatus = purpose === "review" ? "in_review" : "todo";
-    if (!currentTask || readOnly || currentTask.status !== requiredStatus || executionActive) return;
+    const statusAllowed = purpose === "merge"
+      ? taskKind === "integration" && ["todo", "in_progress", "blocked"].includes(currentTask?.status ?? "")
+      : purpose === "review"
+        ? taskKind !== "integration" && currentTask?.status === "in_review"
+        : taskKind !== "integration" && currentTask?.status === "todo";
+    if (!currentTask || !canRunCurrentTask || !statusAllowed || executionActive) return;
     if (dirtyFieldsRef.current.size > 0) {
       setError("请先保存未提交的任务修改，再交给 Agent");
       return;
@@ -348,7 +401,8 @@ export function TaskDetail({
     event.preventDefault();
     const body = commentBody.trim();
     const retryCommentId = continueAfterComment ? pendingContinuationCommentId : null;
-    if ((!retryCommentId && !body && commentAttachments.uploadedFiles.length === 0) || !currentTask || readOnly) return;
+    if ((!retryCommentId && !body && commentAttachments.uploadedFiles.length === 0) || !currentTask || commentReadOnly) return;
+    if (continueAfterComment && !canRunCurrentTask) return;
     if (!retryCommentId && commentAttachments.uploading) {
       setError("请等待附件上传完成");
       return;
@@ -425,6 +479,22 @@ export function TaskDetail({
               </SheetDescription>
             </SheetHeader>
             <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+              <section aria-label="任务工作流信息" className="mb-6 space-y-2 rounded-lg border bg-muted/20 p-4 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={taskKind === "integration" ? "default" : "secondary"} className={taskKind === "integration" ? "bg-violet-600 hover:bg-violet-600" : ""}>{TASK_KIND_LABELS[taskKind]}</Badge>
+                  <Badge variant="outline">{STATUS_LABELS[currentTask.status]}</Badge>
+                  {currentTask.integrationState ? <Badge variant="outline">{INTEGRATION_SOURCE_STATE_LABELS[currentTask.integrationState]}</Badge> : null}
+                </div>
+                {currentTask.providerPullRequestId ? <p>PR：<span className="font-mono">{currentTask.providerPullRequestId}</span>{currentTask.pullRequestNumber ? `（#${currentTask.pullRequestNumber}）` : ""}</p> : null}
+                {currentTask.reviewedSubjectDigest ? <p className="break-all text-xs text-muted-foreground">已复核对象：<span className="font-mono">{currentTask.reviewedSubjectDigest}</span></p> : null}
+                {currentTask.mergedCommitOid ? <p className="flex items-center gap-1 break-all text-xs text-emerald-700 dark:text-emerald-400"><GitCommitHorizontal className="size-3.5 shrink-0" />merged commit {currentTask.mergedCommitOid}</p> : null}
+                {currentTask.status === "blocked" ? <p className="text-amber-700 dark:text-amber-300">任务已阻塞；请查看最新执行错误或评论中的解除条件。</p> : null}
+                {taskKind === "remediation" ? <p className="text-amber-700 dark:text-amber-300">自动修复任务：完成后会回到来源复核流程，不作为独立交付合并。</p> : null}
+                {currentTask.integrationState === "re_reviewing" ? <p>来源变更后正在重新复核已评审对象。</p> : null}
+              </section>
+
+              {taskKind === "integration" ? <IntegrationSourceDetails taskId={currentTask.id} /> : null}
+
               <section aria-label="Agent 执行" className="mb-6 space-y-3 rounded-lg border bg-muted/20 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
@@ -433,19 +503,23 @@ export function TaskDetail({
                       同一任务复用一个会话；运行中的新评论会排队注入下一次思考。
                     </p>
                   </div>
-                  {!readOnly && (currentTask.status === "todo" || currentTask.status === "in_review") ? (
+                  {canRunCurrentTask && (
+                    (taskKind === "integration" && ["todo", "in_progress", "blocked"].includes(currentTask.status))
+                    || (taskKind !== "integration" && currentTask.status === "todo")
+                    || (taskKind !== "integration" && currentTask.status === "in_review")
+                  ) ? (
                     <Button
                       type="button"
                       size="sm"
                       onClick={() => void startAgentExecution(
-                        currentTask.status === "in_review" ? "review" : "work",
+                        taskKind === "integration" ? "merge" : currentTask.status === "in_review" ? "review" : "work",
                       )}
                       disabled={saving || executionsLoading || executionActive}
                     >
                       {saving || executionActive ? <LoaderCircle className="animate-spin" /> : <Bot />}
                       {executionActive && latestExecution
                         ? EXECUTION_STATUS_LABELS[latestExecution.status]
-                        : currentTask.status === "in_review" ? "独立复核" : "交给 Agent"}
+                        : taskKind === "integration" ? "继续集成" : currentTask.status === "in_review" ? "独立复核" : "交给 Agent"}
                     </Button>
                   ) : null}
                 </div>
@@ -457,7 +531,7 @@ export function TaskDetail({
                   <div className="space-y-2 text-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span>
-                        {latestExecution.purpose === "review" ? "独立复核 · " : "实施 · "}
+                        {latestExecution.purpose === "review" ? "独立复核 · " : latestExecution.purpose === "merge" ? "集成合并 · " : "实施 · "}
                         {EXECUTION_STATUS_LABELS[latestExecution.status]}
                       </span>
                       <time className="text-xs text-muted-foreground">
@@ -492,7 +566,7 @@ export function TaskDetail({
                       dirtyFieldsRef.current.add("title");
                       setTitle(event.target.value);
                     }}
-                    disabled={readOnly || saving}
+                    disabled={editReadOnly || saving}
                   />
                 </div>
                 <div className="space-y-2">
@@ -505,13 +579,13 @@ export function TaskDetail({
                       setDescription(event.target.value);
                     }}
                     rows={7}
-                    disabled={readOnly || saving}
+                    disabled={editReadOnly || saving}
                     onPaste={(event) => {
                       if (event.clipboardData.files.length > 0) dirtyFieldsRef.current.add("attachments");
                       void taskAttachments.handlePaste(event);
                     }}
                   />
-                  {readOnly ? (
+                  {editReadOnly ? (
                     <TaskAttachmentList attachments={taskAttachments.uploadedFiles} />
                   ) : (
                     <TaskAttachmentField
@@ -531,7 +605,7 @@ export function TaskDetail({
                       setBranch(event.target.value);
                     }}
                     placeholder="由你填写，或由 Agent 创建后回写"
-                    disabled={readOnly || saving}
+                    disabled={editReadOnly || saving}
                   />
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -540,12 +614,16 @@ export function TaskDetail({
                     <Select
                       value={currentTask.status}
                       onValueChange={(value) => void changeStatus(value as TaskBoardStatus)}
-                      disabled={readOnly || saving}
+                      disabled={!canTransitionCurrentTask || saving}
                     >
                       <SelectTrigger aria-label="任务状态"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {TASKBOARD_STATUSES.map((status) => (
-                          <SelectItem key={status} value={status}>{STATUS_LABELS[status]}</SelectItem>
+                          <SelectItem
+                            key={status}
+                            value={status}
+                            disabled={status !== currentTask.status && !canUserTransitionTask(taskKind, currentTask.status, status)}
+                          >{STATUS_LABELS[status]}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -558,7 +636,7 @@ export function TaskDetail({
                         dirtyFieldsRef.current.add("priority");
                         setPriority(value as TaskBoardPriority);
                       }}
-                      disabled={readOnly || saving}
+                      disabled={editReadOnly || saving}
                     >
                       <SelectTrigger aria-label="任务优先级"><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -580,7 +658,7 @@ export function TaskDetail({
                     }}
                     inheritLabel="继承看板默认模型"
                     ariaLabel="任务运行模型"
-                    disabled={readOnly || saving}
+                    disabled={editReadOnly || saving}
                   />
                   <p className="text-xs text-muted-foreground">
                     交给 Agent 执行时使用的模型，未指定时继承看板默认模型。
@@ -588,8 +666,20 @@ export function TaskDetail({
                 </div>
                 {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
                 <div className="flex flex-wrap gap-2">
-                  {!readOnly ? <Button type="submit" disabled={saving || taskAttachments.uploading}>保存任务</Button> : null}
-                  {!boardReadOnly ? (
+                  {!editReadOnly ? <Button type="submit" disabled={saving || taskAttachments.uploading}>保存任务</Button> : null}
+                  {!boardReadOnly && taskKind === "integration" && canCancelIntegration
+                    && !["done", "canceled"].includes(currentTask.status) ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => void cancelIntegration()}
+                      disabled={saving || executionActive}
+                    >
+                      <CircleX />取消集成
+                    </Button>
+                  ) : null}
+                  {!boardReadOnly && canArchiveTask ? (
                     <Button
                       type="button"
                       variant="outline"
@@ -630,13 +720,13 @@ export function TaskDetail({
                     id="task-comment-body"
                     value={commentBody}
                     onChange={(event) => setCommentBody(event.target.value)}
-                    placeholder={readOnly ? "只读状态不可发表评论" : "补充进展、上下文或复核意见"}
+                    placeholder={commentReadOnly ? "当前角色不可发表评论" : "补充进展、上下文或复核意见"}
                     rows={3}
-                    disabled={readOnly || saving}
+                    disabled={commentReadOnly || saving}
                     onPaste={(event) => void commentAttachments.handlePaste(event)}
                   />
-                  {!readOnly ? <TaskAttachmentField upload={commentAttachments} disabled={saving} /> : null}
-                  {!readOnly ? (
+                  {!commentReadOnly ? <TaskAttachmentField upload={commentAttachments} disabled={saving} /> : null}
+                  {!commentReadOnly && canRunCurrentTask ? (
                     <div className="flex items-center gap-2">
                       <Checkbox
                         id="task-comment-continue"
@@ -656,7 +746,7 @@ export function TaskDetail({
                   <Button
                     type="submit"
                     size="sm"
-                    disabled={readOnly || saving || (!pendingContinuationCommentId && commentAttachments.uploading)
+                    disabled={commentReadOnly || saving || (!pendingContinuationCommentId && commentAttachments.uploading)
                       || (!pendingContinuationCommentId && !commentBody.trim()
                         && commentAttachments.uploadedFiles.length === 0)}
                   >

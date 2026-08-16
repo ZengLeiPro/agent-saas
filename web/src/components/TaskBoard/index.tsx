@@ -5,13 +5,15 @@ import type {
   TaskBoardStatus,
   TaskBoardTask,
 } from "@agent/shared";
-import { Plus, RefreshCw } from "lucide-react";
+import { Layers3, LoaderCircle, Plus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import * as api from "./api";
 import { TaskBoardConflictError } from "./api";
 import { BoardDialog } from "./BoardDialog";
 import { BoardToolbar } from "./BoardToolbar";
 import { useBoardTasks, useTaskboardModelList, useTaskBoards } from "./hooks";
+import { boardAllows, canUserTransitionTask } from "./constants";
 import { TaskColumns } from "./TaskColumns";
 import { TaskDetail } from "./TaskDetail";
 import { TaskDialog } from "./TaskDialog";
@@ -98,7 +100,26 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
   const [mobileStatus, setMobileStatus] = useState<TaskBoardStatus>("backlog");
   const [priority, setPriority] = useState<TaskBoardPriority | "all">("all");
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [selectedDeliveryTaskIds, setSelectedDeliveryTaskIds] = useState<Set<string>>(new Set());
+  const [creatingIntegration, setCreatingIntegration] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+
+  const boardReadOnly = !!selectedBoard?.archivedAt;
+  const canCreateTask = boardAllows(selectedBoard, "task.create");
+  const canUpdateTask = boardAllows(selectedBoard, "task.update");
+  const canReorderTask = boardAllows(selectedBoard, "task.reorder");
+  const canTransitionTask = boardAllows(selectedBoard, "task.transition");
+  const canArchiveTask = boardAllows(selectedBoard, "task.archive");
+  const canComment = boardAllows(selectedBoard, "comment.create");
+  const canExecute = boardAllows(selectedBoard, "execution.trigger");
+  const canCreateIntegration = boardAllows(selectedBoard, "integration.create")
+    && Boolean(
+      selectedBoard?.repository
+      && selectedBoard.integrationPolicy?.enabled
+      && selectedBoard.integrationPolicy.trigger.mode === "manual"
+      && selectedBoard.integrationPolicy.trigger.allowedRoles.includes(selectedBoard.role === "owner" ? "owner" : "maintainer"),
+    );
+  const canCancelIntegration = boardAllows(selectedBoard, "integration.cancel");
 
   useEffect(() => {
     if (boards.length === 0) {
@@ -109,6 +130,17 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
       setSelectedBoardId((boards.find((board) => !board.archivedAt) ?? boards[0]).id);
     }
   }, [boards, selectedBoardId]);
+
+  useEffect(() => {
+    setSelectedDeliveryTaskIds((current) => new Set([...current].filter((id) => tasks.some((task) => (
+      task.id === id
+      && !task.archivedAt
+      && (task.kind ?? "delivery") === "delivery"
+      && task.status === "ready_to_merge"
+      && Boolean(task.providerPullRequestId)
+      && Boolean(task.reviewedSubjectDigest)
+    )))));
+  }, [selectedBoard?.id, tasks]);
 
   useEffect(() => {
     if (selectedTaskId && !tasks.some((task) => task.id === selectedTaskId)) {
@@ -182,7 +214,12 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     const taskId = draggedTaskId || event.dataTransfer.getData("text/plain");
     setDraggedTaskId(null);
     const moved = tasks.find((task) => task.id === taskId);
-    if (!moved || moved.archivedAt || selectedBoard?.archivedAt || nextTaskId === moved.id) return;
+    if (!moved || moved.archivedAt || boardReadOnly || nextTaskId === moved.id) return;
+    if (status === moved.status && !canReorderTask) return;
+    if (status !== moved.status && (!canTransitionTask || !canUserTransitionTask(moved.kind, moved.status, status))) {
+      setNotice("该任务状态由工作流推进，当前不能通过拖拽变更。");
+      return;
+    }
     const target = sortedInStatus(tasks, status, moved.id);
     const nextIndex = nextTaskId ? target.findIndex((task) => task.id === nextTaskId) : -1;
     const previousTaskId = nextIndex > 0
@@ -199,8 +236,31 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
   }, [moveTaskTo, tasks]);
 
   const openTaskDialog = (status: TaskBoardStatus) => {
+    if (!canCreateTask) return;
     setTaskDialogStatus(status);
     setTaskDialogOpen(true);
+  };
+
+  const createManualIntegration = async () => {
+    if (!selectedBoard || !canCreateIntegration || selectedDeliveryTaskIds.size === 0) return;
+    setCreatingIntegration(true);
+    setNotice(null);
+    try {
+      const result = await api.createIntegrationBatch(selectedBoard.id, {
+        deliveryTaskIds: [...selectedDeliveryTaskIds],
+        expectedBoardVersion: selectedBoard.version,
+      });
+      syncTask(result.task);
+      setSelectedDeliveryTaskIds(new Set());
+      await Promise.all([refreshBoards(), refreshTasks()]);
+      setSelectedTaskId(result.task.id);
+      setDetailOpen(true);
+    } catch (caught) {
+      setNotice(caught instanceof Error ? caught.message : "创建人工集成批次失败");
+      await Promise.all([refreshBoards(), refreshTasks()]);
+    } finally {
+      setCreatingIntegration(false);
+    }
   };
 
   const headerActions = (
@@ -212,15 +272,13 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
       <Button
         size="sm"
         onClick={() => openTaskDialog("backlog")}
-        disabled={!selectedBoard || !!selectedBoard.archivedAt}
+        disabled={!selectedBoard || !canCreateTask}
       >
         <Plus className="size-3.5" />
         新建任务
       </Button>
     </>
   );
-
-  const readOnly = !!selectedBoard?.archivedAt;
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col px-4 pb-4 pt-3 sm:px-6 sm:pb-6 sm:pt-4">
@@ -273,12 +331,34 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
             onPriorityChange={setPriority}
           />
 
+          {canCreateIntegration ? (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-300/50 bg-emerald-50/60 px-3 py-2 dark:bg-emerald-950/20">
+              <p className="text-sm text-emerald-900 dark:text-emerald-100">
+                在“待合并”列勾选已复核且已绑定 PR 的交付任务，创建一次人工集成批次。
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                disabled={selectedDeliveryTaskIds.size === 0 || creatingIntegration}
+                onClick={() => void createManualIntegration()}
+              >
+                {creatingIntegration ? <LoaderCircle className="animate-spin" /> : <Layers3 />}
+                创建集成批次（{selectedDeliveryTaskIds.size}）
+              </Button>
+            </div>
+          ) : null}
+
           {tasksLoading && tasks.length === 0 ? (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">正在加载任务...</div>
           ) : (
             <TaskColumns
               tasks={visibleTasks}
-              readOnly={readOnly}
+              readOnly={boardReadOnly}
+              canCreateTask={canCreateTask}
+              canReorderTask={canReorderTask}
+              canTransitionTask={canTransitionTask}
+              canCreateIntegration={canCreateIntegration}
+              selectedDeliveryTaskIds={selectedDeliveryTaskIds}
               desktopStatus={desktopStatus}
               mobileStatus={mobileStatus}
               onMobileStatusChange={setMobileStatus}
@@ -289,6 +369,19 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
               }}
               onDragStart={setDraggedTaskId}
               onDragEnd={() => setDraggedTaskId(null)}
+              onDeliverySelectedChange={(taskId, selected) => {
+                const maxTasks = selectedBoard?.integrationPolicy?.batch.maxTasks ?? 100;
+                if (selected && !selectedDeliveryTaskIds.has(taskId) && selectedDeliveryTaskIds.size >= maxTasks) {
+                  setNotice(`每个集成批次最多选择 ${maxTasks} 个任务。`);
+                  return;
+                }
+                setSelectedDeliveryTaskIds((current) => {
+                  const next = new Set(current);
+                  if (selected) next.add(taskId);
+                  else next.delete(taskId);
+                  return next;
+                });
+              }}
               onDrop={handleDrop}
             />
           )}
@@ -312,7 +405,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={readOnly}
+                      disabled={boardReadOnly || !canArchiveTask}
                       onClick={() => {
                         void setArchived(task, false).catch((caught) => {
                           setNotice(caught instanceof Error ? caught.message : "恢复任务失败");
@@ -357,7 +450,13 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         active={active}
         open={detailOpen}
         task={selectedTask}
-        boardReadOnly={readOnly}
+        boardReadOnly={boardReadOnly}
+        canUpdateTask={canUpdateTask}
+        canTransitionTask={canTransitionTask}
+        canArchiveTask={canArchiveTask}
+        canComment={canComment}
+        canExecute={canExecute}
+        canCancelIntegration={canCancelIntegration}
         modelList={modelList}
         onOpenChange={setDetailOpen}
         onTaskLoaded={syncTask}

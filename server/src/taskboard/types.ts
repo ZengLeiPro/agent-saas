@@ -1,11 +1,20 @@
 import type {
   TaskBoard,
   TaskBoardAttachment,
+  TaskBoardAllowedAction,
   TaskBoardComment,
   TaskBoardCommentCreateInput,
   TaskBoardCommentPatchInput,
   TaskBoardCreateInput,
   TaskBoardExecution,
+  TaskBoardExecutionPurpose,
+  TaskBoardExecutionContextInput,
+  TaskBoardExecutionContextResponse,
+  TaskBoardExecutionResolutionInput,
+  TaskBoardIntegrationBatchCreateInput,
+  TaskBoardIntegrationSource,
+  TaskBoardMember,
+  TaskBoardMemberPatchInput,
   TaskBoardExecutionStartInput,
   TaskBoardExecutionStartResult,
   TaskBoardExecutionStatus,
@@ -71,6 +80,36 @@ export interface TaskboardExpectedVersionInput {
   expectedVersion: number;
 }
 
+export interface TaskboardIntegrationSourceInspection {
+  source: TaskBoardIntegrationSource;
+  pullRequest: {
+    providerPullRequestId: string;
+    number: number;
+    state: 'open' | 'closed' | 'merged';
+    draft: boolean;
+    headRef: string;
+    headOid: string;
+    baseRef: string;
+    baseOid: string;
+    mergeable: boolean | null;
+    mergeableState?: string;
+    requiredChecks: Array<{ name: string; status: 'pending' | 'success' | 'failure' }>;
+    subjectDigest: string;
+  };
+}
+
+export interface TaskboardIntegrationDispatchCandidate {
+  identity: TaskboardIdentity;
+  task: TaskBoardTask;
+  purpose: TaskBoardExecutionPurpose;
+}
+
+export interface TaskboardIntegrationMergeResult {
+  source: TaskBoardIntegrationSource;
+  task: TaskBoardTask;
+  receipt: Record<string, unknown>;
+}
+
 export interface TaskboardExecutionDispatchPayload {
   version: 1;
   session: RuntimeSessionRecord;
@@ -104,6 +143,13 @@ export interface TaskboardContinuationReconcileCandidate {
 
 export interface TaskboardExecutionClaimInput extends TaskBoardExecutionStartInput {
   executionId: string;
+  trigger?: 'initial' | 'comment' | 'resume' | 'retry';
+  protocolVersion?: 1 | 2;
+  attemptId?: string;
+  policyRevision?: string;
+  contextStartSeq?: string;
+  subjectDigest?: string;
+  laneEpoch?: bigint;
   /** 新建后直执或评论续跑允许从当前状态进入 work 执行。 */
   allowWorkFromCurrentStatus?: boolean;
   runId: string;
@@ -140,9 +186,13 @@ export interface TaskboardExecutionReconcileCandidate {
 export interface TaskboardExecutionModelContext {
   taskModel?: string;
   boardModel?: string;
+  taskKind?: 'delivery' | 'integration' | 'remediation';
+  taskStatus?: TaskBoardStatus;
+  policyRevision?: string;
   boardOwnerUserId: string;
   boardId?: string;
   boardName?: string;
+  allowedActions?: TaskBoardAllowedAction[];
 }
 
 export interface TaskboardExecutionContext {
@@ -175,6 +225,8 @@ export interface TaskboardExecutionCompletionInput {
 }
 
 export interface TaskboardExecutionStore {
+  reconcileMergeOperationsV2?(limit?: number): Promise<number>;
+  claimIntegrationDispatchCandidatesV2?(limit?: number): Promise<TaskboardIntegrationDispatchCandidate[]>;
   listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]>;
   searchExecutions(
     identity: TaskboardIdentity,
@@ -322,6 +374,70 @@ export interface TaskboardService {
   createComment(identity: TaskboardIdentity, taskId: string, input: TaskBoardCommentCreateInput): Promise<TaskBoardComment>;
   updateComment(identity: TaskboardIdentity, commentId: string, input: TaskBoardCommentPatchInput): Promise<TaskBoardComment>;
   deleteComment(identity: TaskboardIdentity, commentId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardComment>;
+
+  listMembers?(identity: TaskboardIdentity, boardId: string): Promise<TaskBoardMember[]>;
+  upsertMember?(
+    identity: TaskboardIdentity,
+    boardId: string,
+    input: TaskBoardMemberPatchInput,
+  ): Promise<TaskBoardMember>;
+  removeMember?(identity: TaskboardIdentity, boardId: string, userId: string): Promise<void>;
+  createIntegrationBatch?(
+    identity: TaskboardIdentity,
+    boardId: string,
+    input: TaskBoardIntegrationBatchCreateInput,
+    source?: 'scheduled_policy' | 'on_ready_policy' | 'manual_batch',
+  ): Promise<TaskBoardTask>;
+  cancelIntegrationTask?(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input: { expectedVersion: number; reason?: string },
+  ): Promise<TaskBoardTask>;
+  listIntegrationSources?(
+    identity: TaskboardIdentity,
+    integrationTaskId: string,
+  ): Promise<TaskBoardIntegrationSource[]>;
+  getExecutionContextV2?(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input?: TaskBoardExecutionContextInput,
+  ): Promise<TaskBoardExecutionContextResponse>;
+  createExecutionCommentV2?(
+    identity: TaskboardIdentity,
+    runId: string,
+    body: string,
+  ): Promise<TaskBoardComment>;
+  attachExecutionPullRequestV2?(
+    identity: TaskboardIdentity,
+    runId: string,
+    providerPullRequestId: string,
+  ): Promise<TaskBoardTask>;
+  recordReviewedExecutionSubjectV2?(
+    identity: TaskboardIdentity,
+    runId: string,
+  ): Promise<TaskBoardTask>;
+  inspectIntegrationSourceV2?(
+    identity: TaskboardIdentity,
+    runId: string,
+    sourceId: string,
+  ): Promise<TaskboardIntegrationSourceInspection>;
+  mergeIntegrationSourceV2?(
+    identity: TaskboardIdentity,
+    runId: string,
+    sourceId: string,
+  ): Promise<TaskboardIntegrationMergeResult>;
+  linkIntegrationRemediationV2?(
+    identity: TaskboardIdentity,
+    runId: string,
+    sourceId: string,
+    remediationTaskId: string,
+  ): Promise<TaskBoardIntegrationSource>;
+  reconcileMergeOperationsV2?(limit?: number): Promise<number>;
+  resolveExecutionV2?(
+    identity: TaskboardIdentity,
+    runId: string,
+    input: TaskBoardExecutionResolutionInput,
+  ): Promise<TaskBoardTask>;
 }
 
 export class TaskboardNotFoundError extends Error {

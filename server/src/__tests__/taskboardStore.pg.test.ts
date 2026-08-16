@@ -69,6 +69,15 @@ describePg('PgTaskboardStore contract', () => {
   afterAll(async () => {
     if (!pool || !store) return;
     try {
+      await pool.query(`DROP TABLE IF EXISTS ${store.integrationTriggerOutboxTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.blockEpisodesTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.mergeOperationsTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.mergeAuthorizationsTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.integrationSourcesTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.integrationLanesTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.attemptsTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.changesTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.membersTable} CASCADE`);
       await pool.query(`DROP TABLE IF EXISTS ${store.continuationOutboxTable}`);
       await pool.query(`DROP TABLE IF EXISTS ${store.executionOutboxTable}`);
       await pool.query(`DROP TABLE IF EXISTS ${store.executionsTable}`);
@@ -686,7 +695,7 @@ describePg('PgTaskboardStore contract', () => {
       .resolves.toMatchObject({ execution: { status: 'cancelled' } });
   });
 
-  it('tracks the task creator and current completion time', async () => {
+  it('tracks the task creator and protects workflow-owned completion state', async () => {
     const board = await store.createBoard(alice, { name: '任务生命周期' });
     const creator = { ...alice, displayName: '爱丽丝 @alice' };
     const task = await store.createTask(creator, board.id, { title: '补充卡片信息', status: 'todo' });
@@ -697,23 +706,10 @@ describePg('PgTaskboardStore contract', () => {
     });
     expect(task.completedAt).toBeUndefined();
 
-    const completed = await store.moveTask(alice, task.id, {
+    await expect(store.moveTask(alice, task.id, {
       status: 'done',
       expectedVersion: task.version,
-    });
-    expect(completed.completedAt).toBeTruthy();
-
-    const reordered = await store.moveTask(alice, task.id, {
-      status: 'done',
-      expectedVersion: completed.version,
-    });
-    expect(reordered.completedAt).toBe(completed.completedAt);
-
-    const reopened = await store.moveTask(alice, task.id, {
-      status: 'todo',
-      expectedVersion: reordered.version,
-    });
-    expect(reopened.completedAt).toBeUndefined();
+    })).rejects.toMatchObject({ code: 'TASKBOARD_PROTECTED_TRANSITION' });
   });
 
   it('serializes concurrent writes on the same board without a task/board lock-order deadlock', async () => {
@@ -763,20 +759,21 @@ describePg('PgTaskboardStore contract', () => {
     expect(todo[2]!.version).toBe(2);
 
     const movedToEmpty = await store.moveTask(alice, third.id, {
-      status: 'in_progress',
+      status: 'backlog',
       expectedVersion: between.version,
     });
-    const appended = await store.createTask(alice, board.id, { title: 'D', status: 'in_progress' });
+    const appended = await store.createTask(alice, board.id, { title: 'D', status: 'backlog' });
     expect(appended.sortOrder).toBeGreaterThan(movedToEmpty.sortOrder);
 
     await store.moveTask(alice, second.id, {
-      status: 'in_progress',
+      status: 'backlog',
       previousTaskId: appended.id,
       expectedVersion: todo[2]!.version,
     });
-    const inProgress = await store.listTasks(alice, board.id, { statuses: ['in_progress'] });
-    expect(inProgress.map((task) => task.id)).toEqual([third.id, appended.id, second.id]);
+    const backlog = await store.listTasks(alice, board.id, { statuses: ['backlog'] });
+    expect(backlog.map((task) => task.id)).toEqual([third.id, appended.id, second.id]);
   });
+
 });
 
 async function waitForBlockedQueries(

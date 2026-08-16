@@ -3,15 +3,20 @@ import pg, { type PoolClient } from 'pg';
 
 import {
   TASKBOARD_DEFAULT_PROMPT,
-  TASKBOARD_EXECUTION_PURPOSES,
-  TASKBOARD_EXECUTION_STATUSES,
   type TaskBoard,
   type TaskBoardComment,
   type TaskBoardCommentCreateInput,
   type TaskBoardCommentPatchInput,
   type TaskBoardCreateInput,
   type TaskBoardExecution,
+  type TaskBoardExecutionContextInput,
+  type TaskBoardExecutionContextResponse,
+  type TaskBoardExecutionResolutionInput,
   type TaskBoardExecutionStartResult,
+  type TaskBoardIntegrationBatchCreateInput,
+  type TaskBoardIntegrationSource,
+  type TaskBoardMember,
+  type TaskBoardMemberPatchInput,
   type TaskBoardPatchInput,
   type TaskBoardTask,
   type TaskBoardTaskCreateInput,
@@ -30,23 +35,17 @@ import {
 import {
   claimContinuationDispatch,
   claimContinuationReconcileCandidates,
-  continuationOutboxIndexSql,
-  continuationOutboxTableSql,
-  runContinuationOutboxMigrations,
   enqueueContinuation,
   finishContinuation,
   markContinuationDispatchSucceeded,
   releaseContinuationReconcile,
   retryContinuationDispatch,
 } from './continuationOutbox.js';
-import { applyExecutionTaskCompletion, enqueueAutomaticReview } from './executionCompletion.js';
-import { executionFieldMigrationSql, resolveExecutionPurpose, taskFieldMigrationSql } from './executionFields.js';
 import {
   claimExecutionDispatch,
   claimExecutionReconcileCandidates,
   markExecutionDispatchSucceeded,
   retryExecutionDispatch,
-  runExecutionOutboxMigrations,
 } from './executionOutboxStore.js';
 import {
   createTaskFromExecution as createStoredTaskFromExecution,
@@ -54,36 +53,52 @@ import {
 } from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
 import {
-  boardModelMigrationSql,
-  boardPromptMigrationSql,
-  boardVisibilityMigrationSql,
+  allowedActionsForRole,
   normalizeBoardPrompt,
   normalizeModel,
+  normalizeRepositoryConfig,
   rowToBoard,
 } from './boardFields.js';
+import type { RepositoryProvider } from './repositoryProvider.js';
+import { claimIntegrationDispatchCandidates } from './integrationTriggers.js';
+import { attachExecutionPullRequest, recordReviewedExecutionSubject } from './deliveryPullRequests.js';
+import {
+  inspectIntegrationSource,
+  linkIntegrationRemediation,
+  mergeIntegrationSource,
+  reconcileUnknownMergeOperations,
+  type IntegrationSourceInspection,
+} from './integrationOperations.js';
+import {
+  appendBoardChange,
+  appendTaskChange,
+  cancelIntegrationTask as cancelStoredIntegrationTask,
+  createExecutionCommentV2 as createStoredExecutionCommentV2,
+  createIntegrationBatch as createStoredIntegrationBatch,
+  getExecutionContextV2 as getStoredExecutionContextV2,
+  listBoardMembers as listStoredBoardMembers,
+  listIntegrationSources as listStoredIntegrationSources,
+  removeBoardMember as removeStoredBoardMember,
+  resolveExecutionV2 as resolveStoredExecutionV2,
+  upsertBoardMember as upsertStoredBoardMember,
+} from './v2Store.js';
 import {
   assertActiveBoard,
   assertExpectedVersion,
   assertWritableTask,
-  assertExecutionConfiguration,
   applyCommentAuthorDisplayName,
-  isTerminalExecutionStatus,
-  isUniqueViolation,
   mapActiveBoardNameError,
   normalizeAttachments,
   normalizeLabels,
-  quoteSqlLiteral,
   optionalText,
   requireText,
   rowToComment,
-  rowToExecution,
   rowToTask,
   sanitizeIdentifier,
   toIso,
   validateMoveNeighbors,
 } from './storeHelpers.js';
-import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns, finalizeExecutionForArchivedTask } from './archiveGuard.js';
-import { taskFieldsMigrationSql, taskTableSql } from './taskFields.js';
+import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns } from './archiveGuard.js';
 import { deleteComment as deleteStoredComment, updateComment as updateStoredComment } from './storeComments.js';
 import {
   getExecutionContextBySessionId as getStoredExecutionContextBySessionId,
@@ -96,8 +111,17 @@ import {
   searchComments as searchStoredComments,
   searchTasks as searchStoredTasks,
 } from './storeSearch.js';
+import { initializeTaskboardStore } from './storeSchema.js';
+import {
+  claimExecution as claimStoredExecution,
+  completeExecution as completeStoredExecution,
+  completeExecutionFromReconcile as completeStoredExecutionFromReconcile,
+  setExecutionStatus as setStoredExecutionStatus,
+  setExecutionStatusFromReconcile as setStoredExecutionStatusFromReconcile,
+} from './storeExecutionLifecycle.js';
 import {
   TaskboardNotFoundError,
+  TaskboardPermissionError,
   TaskboardValidationError,
   type TaskboardBoardSearchFilter,
   type TaskboardContinuationContext,
@@ -128,6 +152,7 @@ export { TASKBOARD_TABLE_PREFIX_MAX_LENGTH } from './storeHelpers.js';
 export interface PgTaskboardStoreOptions {
   pool: PgPool;
   tablePrefix?: string;
+  repositoryProvider?: RepositoryProvider;
 }
 
 export class PgTaskboardStore implements TaskboardService, TaskboardExecutionStore {
@@ -138,176 +163,153 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   readonly executionsTable: string;
   readonly executionOutboxTable: string;
   readonly continuationOutboxTable: string;
+  readonly membersTable: string;
+  readonly changesTable: string;
+  readonly attemptsTable: string;
+  readonly integrationLanesTable: string;
+  readonly integrationSourcesTable: string;
+  readonly mergeAuthorizationsTable: string;
+  readonly mergeOperationsTable: string;
+  readonly blockEpisodesTable: string;
+  readonly integrationTriggerOutboxTable: string;
+  repositoryProvider?: RepositoryProvider;
 
   constructor(options: PgTaskboardStoreOptions) {
     const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime');
     this.pool = options.pool;
+    this.repositoryProvider = options.repositoryProvider;
     this.boardsTable = `${prefix}_taskboards`;
     this.tasksTable = `${prefix}_taskboard_tasks`;
     this.commentsTable = `${prefix}_taskboard_comments`;
     this.executionsTable = `${prefix}_taskboard_execs`;
     this.executionOutboxTable = `${prefix}_taskboard_exec_outbox`;
     this.continuationOutboxTable = `${prefix}_taskboard_cont_outbox`;
+    this.membersTable = `${prefix}_taskboard_members`;
+    this.changesTable = `${prefix}_taskboard_changes`;
+    this.attemptsTable = `${prefix}_taskboard_attempts`;
+    this.integrationLanesTable = `${prefix}_taskboard_integration_lanes`;
+    this.integrationSourcesTable = `${prefix}_taskboard_integration_sources`;
+    this.mergeAuthorizationsTable = `${prefix}_taskboard_merge_auths`;
+    this.mergeOperationsTable = `${prefix}_taskboard_merge_ops`;
+    this.blockEpisodesTable = `${prefix}_taskboard_block_episodes`;
+    this.integrationTriggerOutboxTable = `${prefix}_taskboard_integration_outbox`;
   }
+
   async init(): Promise<void> {
-    const lockKey = `${this.boardsTable}:init`;
-    const client = await this.pool.connect();
-    try {
-      await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.boardsTable} (
-          id TEXT PRIMARY KEY,
-          tenant_id TEXT NOT NULL,
-          owner_user_id TEXT NOT NULL,
-          name TEXT NOT NULL,
-          description TEXT,
-          visibility TEXT NOT NULL DEFAULT 'personal'
-            CHECK (visibility IN ('personal', 'organization')),
-          prompt TEXT NOT NULL DEFAULT ${quoteSqlLiteral(TASKBOARD_DEFAULT_PROMPT)},
-          model TEXT,
-          next_task_number INTEGER NOT NULL DEFAULT 1 CHECK (next_task_number >= 1),
-          version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
-          archived_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-      `);
-      await client.query(boardPromptMigrationSql(this.boardsTable));
-      await client.query(boardModelMigrationSql(this.boardsTable));
-      await client.query(boardVisibilityMigrationSql(this.boardsTable));
-      await client.query(taskTableSql(this.tasksTable, this.boardsTable));
-      await client.query(taskFieldsMigrationSql(this.tasksTable));
-      await client.query(taskFieldMigrationSql(this.tasksTable));
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.commentsTable} (
-          id TEXT PRIMARY KEY,
-          task_id TEXT NOT NULL REFERENCES ${this.tasksTable}(id),
-          body TEXT NOT NULL,
-          attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
-          author_type TEXT NOT NULL DEFAULT 'user'
-            CHECK (author_type IN ('user', 'agent', 'system')),
-          author_id TEXT NOT NULL,
-          author_name TEXT NOT NULL,
-          continuation_eligible BOOLEAN NOT NULL DEFAULT true,
-          version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
-          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-      `);
-      await client.query(`
-        ALTER TABLE ${this.commentsTable} ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb;
-        ALTER TABLE ${this.commentsTable} ADD COLUMN IF NOT EXISTS continuation_eligible BOOLEAN NOT NULL DEFAULT false;
-        ALTER TABLE ${this.commentsTable} ALTER COLUMN continuation_eligible SET DEFAULT true;
-        ALTER TABLE ${this.commentsTable} ADD COLUMN IF NOT EXISTS continuation_run_id TEXT;
-        ALTER TABLE ${this.commentsTable}
-          DROP CONSTRAINT IF EXISTS ${this.commentsTable}_author_type_check;
-        ALTER TABLE ${this.commentsTable}
-          ADD CONSTRAINT ${this.commentsTable}_author_type_check
-          CHECK (author_type IN ('user', 'agent', 'system'))
-      `);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.executionsTable} (
-          id TEXT PRIMARY KEY,
-          task_id TEXT NOT NULL REFERENCES ${this.tasksTable}(id),
-          run_id TEXT NOT NULL UNIQUE,
-          session_id TEXT NOT NULL,
-          status TEXT NOT NULL
-            CHECK (status IN (${TASKBOARD_EXECUTION_STATUSES.map(quoteSqlLiteral).join(', ')})),
-          purpose TEXT NOT NULL DEFAULT 'work'
-            CHECK (purpose IN (${TASKBOARD_EXECUTION_PURPOSES.map(quoteSqlLiteral).join(', ')})),
-          requested_by TEXT NOT NULL,
-          error TEXT,
-          started_at TIMESTAMPTZ,
-          finished_at TIMESTAMPTZ,
-          last_reconciled_at TIMESTAMPTZ,
-          reconcile_lease_id TEXT,
-          reconcile_lease_expires_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-      `);
-      await client.query(executionFieldMigrationSql(this.executionsTable));
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.executionOutboxTable} (
-          run_id TEXT PRIMARY KEY REFERENCES ${this.executionsTable}(run_id),
-          execution_id TEXT NOT NULL REFERENCES ${this.executionsTable}(id),
-          payload JSONB NOT NULL,
-          status TEXT NOT NULL DEFAULT 'pending'
-            CHECK (status IN ('pending', 'dispatching', 'dispatched')),
-          attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
-          next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-          lease_id TEXT,
-          lease_expires_at TIMESTAMPTZ,
-          last_error TEXT,
-          dispatched_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-      `);
-      await client.query(continuationOutboxTableSql(
-        this.continuationOutboxTable,
-        this.tasksTable,
-        this.commentsTable,
-      ));
-      await runExecutionOutboxMigrations(this, client);
-      await runContinuationOutboxMigrations(this, client, this.executionsTable);
-      await client.query(`DROP INDEX IF EXISTS ${this.boardsTable}_active_name_uidx`);
-      await client.query(
-        `CREATE UNIQUE INDEX IF NOT EXISTS ${this.boardsTable}_personal_name_uidx `
-        + `ON ${this.boardsTable} (tenant_id, owner_user_id, lower(name)) `
-        + `WHERE archived_at IS NULL AND visibility='personal'`,
-      );
-      await client.query(
-        `CREATE UNIQUE INDEX IF NOT EXISTS ${this.boardsTable}_org_name_uidx `
-        + `ON ${this.boardsTable} (tenant_id, lower(name)) `
-        + `WHERE archived_at IS NULL AND visibility='organization'`,
-      );
-      await client.query(
-        `CREATE INDEX IF NOT EXISTS ${this.boardsTable}_access_idx `
-        + `ON ${this.boardsTable} (tenant_id, visibility, owner_user_id, updated_at DESC)`,
-      );
-      await client.query(
-        `CREATE INDEX IF NOT EXISTS ${this.tasksTable}_board_column_idx `
-        + `ON ${this.tasksTable} (board_id, status, sort_order)`,
-      );
-      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${this.tasksTable}_client_request_uidx ON ${this.tasksTable} (board_id, client_request_id) WHERE client_request_id IS NOT NULL`);
-      await client.query(
-        `CREATE INDEX IF NOT EXISTS ${this.tasksTable}_board_archived_idx `
-        + `ON ${this.tasksTable} (board_id, archived_at, updated_at DESC)`,
-      );
-      await client.query(
-        `CREATE INDEX IF NOT EXISTS ${this.commentsTable}_task_idx `
-        + `ON ${this.commentsTable} (task_id, created_at ASC)`,
-      );
-      await client.query(`DROP INDEX IF EXISTS ${this.commentsTable}_continuation_run_uidx`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.commentsTable}_continuation_run_idx ON ${this.commentsTable} (continuation_run_id) WHERE continuation_run_id IS NOT NULL`);
-      await client.query(
-        `CREATE INDEX IF NOT EXISTS ${this.executionsTable}_task_idx `
-        + `ON ${this.executionsTable} (task_id, created_at DESC)`,
-      );
-      await client.query(
-        `CREATE INDEX IF NOT EXISTS ${this.executionsTable}_reconcile_v2_idx `
-        + `ON ${this.executionsTable} (COALESCE(last_reconciled_at, '-infinity'::timestamptz), updated_at, run_id) `
-        + `WHERE status IN ('queued', 'running', 'waiting_user', 'waiting_approval')`,
-      );
-      await client.query(
-        `CREATE INDEX IF NOT EXISTS ${this.executionOutboxTable}_due_idx `
-        + `ON ${this.executionOutboxTable} (next_attempt_at, created_at) `
-        + `WHERE status IN ('pending', 'dispatching')`,
-      );
-      for (const indexSql of continuationOutboxIndexSql(this.continuationOutboxTable)) {
-        await client.query(indexSql);
-      }
-      await client.query(
-        `CREATE UNIQUE INDEX IF NOT EXISTS ${this.executionsTable}_active_uidx `
-        + `ON ${this.executionsTable} (task_id) `
-        + `WHERE status IN ('queued', 'running', 'waiting_user', 'waiting_approval')`,
-      );
-    } finally {
-      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
-      client.release();
-    }
+    await initializeTaskboardStore(this);
   }
+  listMembers(identity: TaskboardIdentity, boardId: string): Promise<TaskBoardMember[]> {
+    return listStoredBoardMembers(this, identity, boardId);
+  }
+
+  upsertMember(
+    identity: TaskboardIdentity,
+    boardId: string,
+    input: TaskBoardMemberPatchInput,
+  ): Promise<TaskBoardMember> {
+    return upsertStoredBoardMember(this, identity, boardId, input);
+  }
+
+  removeMember(identity: TaskboardIdentity, boardId: string, userId: string): Promise<void> {
+    return removeStoredBoardMember(this, identity, boardId, userId);
+  }
+
+  createIntegrationBatch(
+    identity: TaskboardIdentity,
+    boardId: string,
+    input: TaskBoardIntegrationBatchCreateInput,
+    source: 'scheduled_policy' | 'on_ready_policy' | 'manual_batch' = 'manual_batch',
+  ): Promise<TaskBoardTask> {
+    return createStoredIntegrationBatch(this, identity, boardId, input, source);
+  }
+
+  cancelIntegrationTask(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input: { expectedVersion: number; reason?: string },
+  ): Promise<TaskBoardTask> {
+    return cancelStoredIntegrationTask(this, identity, taskId, input);
+  }
+
+  listIntegrationSources(
+    identity: TaskboardIdentity,
+    integrationTaskId: string,
+  ): Promise<TaskBoardIntegrationSource[]> {
+    return listStoredIntegrationSources(this, identity, integrationTaskId);
+  }
+
+  getExecutionContextV2(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input?: TaskBoardExecutionContextInput,
+  ): Promise<TaskBoardExecutionContextResponse> {
+    return getStoredExecutionContextV2(this, identity, taskId, input);
+  }
+
+  createExecutionCommentV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    body: string,
+  ): Promise<TaskBoardComment> {
+    return createStoredExecutionCommentV2(this, identity, runId, body);
+  }
+
+  setRepositoryProvider(provider: RepositoryProvider): void {
+    this.repositoryProvider = provider;
+  }
+
+  attachExecutionPullRequestV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    providerPullRequestId: string,
+  ): Promise<TaskBoardTask> {
+    return attachExecutionPullRequest(this, identity, runId, providerPullRequestId);
+  }
+
+  recordReviewedExecutionSubjectV2(
+    identity: TaskboardIdentity,
+    runId: string,
+  ): Promise<TaskBoardTask> {
+    return recordReviewedExecutionSubject(this, identity, runId);
+  }
+
+  inspectIntegrationSourceV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    sourceId: string,
+  ): Promise<IntegrationSourceInspection> {
+    return inspectIntegrationSource(this, identity, runId, sourceId);
+  }
+
+  mergeIntegrationSourceV2(identity: TaskboardIdentity, runId: string, sourceId: string) {
+    return mergeIntegrationSource(this, identity, runId, sourceId);
+  }
+
+  linkIntegrationRemediationV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    sourceId: string,
+    remediationTaskId: string,
+  ) {
+    return linkIntegrationRemediation(this, identity, runId, sourceId, remediationTaskId);
+  }
+
+  reconcileMergeOperationsV2(limit?: number): Promise<number> {
+    return reconcileUnknownMergeOperations(this, limit);
+  }
+
+  claimIntegrationDispatchCandidatesV2(limit?: number) {
+    return claimIntegrationDispatchCandidates(this, limit);
+  }
+
+  resolveExecutionV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    input: TaskBoardExecutionResolutionInput,
+  ): Promise<TaskBoardTask> {
+    return resolveStoredExecutionV2(this, identity, runId, input);
+  }
+
   async listBoards(identity: TaskboardIdentity, includeArchived = false): Promise<TaskBoard[]> {
     return listStoredBoards(this, identity, includeArchived);
   }
@@ -327,16 +329,48 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     const prompt = normalizeBoardPrompt(input.prompt ?? TASKBOARD_DEFAULT_PROMPT);
     const model = normalizeModel(input.model);
     const visibility = input.visibility ?? 'personal';
-    try {
-      const result = await this.pool.query(
-        `INSERT INTO ${this.boardsTable}
-           (id, tenant_id, owner_user_id, name, description, visibility, prompt, model, next_task_number, version)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,1)
-         RETURNING id, owner_user_id, name, description, visibility, prompt, model, version,
-                   archived_at, created_at, updated_at`,
-        [randomUUID(), identity.tenantId, identity.ownerUserId, name, description, visibility, prompt, model],
+    const repository = normalizeRepositoryConfig(input.repository, identity.tenantId);
+    if (repository && (!repository.owner || !repository.name || !repository.baseBranch)) {
+      throw new TaskboardValidationError('Repository owner, name and base branch are required');
+    }
+    if (input.integrationPolicy && !repository) {
+      throw new TaskboardValidationError(
+        'Integration policy requires a repository',
+        'TASKBOARD_REPOSITORY_REQUIRED',
       );
-      return rowToBoard(result.rows[0], identity.ownerUserId);
+    }
+    try {
+      return await this.withTransaction(async (client) => {
+        const boardId = randomUUID();
+        const result = await client.query(
+          `INSERT INTO ${this.boardsTable}
+             (id, tenant_id, owner_user_id, name, description, visibility, prompt, model,
+              repository, integration_policy, next_task_number, version)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,1,1)
+           RETURNING id, owner_user_id, name, description, visibility, prompt, model, repository, integration_policy, version,
+                     archived_at, created_at, updated_at`,
+          [
+            boardId, identity.tenantId, identity.ownerUserId, name, description, visibility, prompt, model,
+            repository ? JSON.stringify(repository) : null,
+            input.integrationPolicy
+              ? JSON.stringify({ ...input.integrationPolicy, revision: randomUUID() })
+              : null,
+          ],
+        );
+        if (repository) {
+          await client.query(
+            `INSERT INTO ${this.integrationLanesTable} (repository_id, board_id) VALUES ($1,$2)`,
+            [repository.repositoryId, boardId],
+          );
+        }
+        await appendBoardChange(this, client, boardId, 'board.created', 'user', identity.ownerUserId, {
+          name,
+          visibility,
+          repositoryId: repository?.repositoryId,
+          integrationPolicyRevision: input.integrationPolicy ? 'created' : undefined,
+        });
+        return rowToBoard(result.rows[0], identity.ownerUserId);
+      });
     } catch (error) {
       throw mapActiveBoardNameError(error);
     }
@@ -352,6 +386,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         && input.prompt === undefined
         && input.model === undefined
         && input.visibility === undefined
+        && input.repository === undefined
+        && input.integrationPolicy === undefined
       ) {
         throw new TaskboardValidationError('No board changes supplied');
       }
@@ -377,16 +413,86 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         params.push(input.visibility);
         assignments.push(`visibility=$${params.length}`);
       }
+      const normalizedRepository = input.repository === undefined
+        ? undefined
+        : normalizeRepositoryConfig(input.repository, identity.tenantId);
+      if (normalizedRepository && (!normalizedRepository.owner || !normalizedRepository.name || !normalizedRepository.baseBranch)) {
+        throw new TaskboardValidationError('Repository owner, name and base branch are required');
+      }
+      if (input.repository !== undefined) {
+        const nextRepositoryId = normalizedRepository?.repositoryId;
+        const currentRepositoryId = current.repository?.repositoryId;
+        const repositoryChanged = JSON.stringify(normalizedRepository ?? null) !== JSON.stringify(current.repository ?? null);
+        if (repositoryChanged) {
+          const protectedState = await client.query(
+            `SELECT 1
+               FROM ${this.tasksTable}
+              WHERE board_id=$1 AND (provider_pull_request_id IS NOT NULL OR kind='integration')
+              LIMIT 1`,
+            [boardId],
+          );
+          if (protectedState.rows[0]) {
+            throw new TaskboardValidationError(
+              'Repository cannot change after pull requests or integration tasks exist',
+              'TASKBOARD_REPOSITORY_IMMUTABLE',
+            );
+          }
+        }
+        if (nextRepositoryId !== currentRepositoryId) {
+          await client.query(`DELETE FROM ${this.integrationLanesTable} WHERE board_id=$1`, [boardId]);
+          if (normalizedRepository) {
+            await client.query(
+              `INSERT INTO ${this.integrationLanesTable} (repository_id, board_id) VALUES ($1,$2)`,
+              [normalizedRepository.repositoryId, boardId],
+            );
+          }
+        }
+        params.push(normalizedRepository ? JSON.stringify(normalizedRepository) : null);
+        assignments.push(`repository=$${params.length}::jsonb`);
+      }
+      if (input.integrationPolicy !== undefined) {
+        const activeIntegration = await client.query(
+          `SELECT 1 FROM ${this.integrationLanesTable}
+            WHERE board_id=$1 AND active_integration_task_id IS NOT NULL LIMIT 1`,
+          [boardId],
+        );
+        if (activeIntegration.rows[0]) {
+          throw new TaskboardValidationError(
+            'Integration policy cannot change while an integration task is active',
+            'TASKBOARD_POLICY_ACTIVE',
+          );
+        }
+        const repository = input.repository === undefined ? current.repository : normalizedRepository ?? undefined;
+        if (input.integrationPolicy && !repository) {
+          throw new TaskboardValidationError(
+            'Integration policy requires a repository',
+            'TASKBOARD_REPOSITORY_REQUIRED',
+          );
+        }
+        const policy = input.integrationPolicy
+          ? { ...input.integrationPolicy, revision: randomUUID() }
+          : null;
+        params.push(policy ? JSON.stringify(policy) : null);
+        assignments.push(`integration_policy=$${params.length}::jsonb`);
+        assignments.push('integration_next_run_at=NULL');
+      }
       try {
         const result = await client.query(
           `UPDATE ${this.boardsTable}
               SET ${assignments.join(', ')}
             WHERE id=$1 AND tenant_id=$2 AND owner_user_id=$3
-            RETURNING id, owner_user_id, name, description, visibility, prompt, model, version,
+            RETURNING id, owner_user_id, name, description, visibility, prompt, model, repository, integration_policy, version,
                       archived_at, created_at, updated_at`,
           params,
         );
-        return rowToBoard(result.rows[0], identity.ownerUserId);
+        const updated = rowToBoard(result.rows[0], identity.ownerUserId);
+        await appendBoardChange(this, client, boardId, 'board.updated', 'user', identity.ownerUserId, {
+          changedFields: Object.keys(input).filter((key) => key !== 'expectedVersion'),
+          version: updated.version,
+          repositoryId: updated.repository?.repositoryId,
+          integrationPolicyRevision: updated.integrationPolicy?.revision,
+        });
+        return updated;
       } catch (error) {
         throw mapActiveBoardNameError(error);
       }
@@ -406,11 +512,15 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         `UPDATE ${this.boardsTable}
             SET archived_at=now(), version=version+1, updated_at=now()
           WHERE id=$1 AND tenant_id=$2 AND owner_user_id=$3
-          RETURNING id, owner_user_id, name, description, visibility, prompt, model, version,
+          RETURNING id, owner_user_id, name, description, visibility, prompt, model, repository, integration_policy, version,
                     archived_at, created_at, updated_at`,
         [boardId, identity.tenantId, identity.ownerUserId],
       );
-      return rowToBoard(result.rows[0], identity.ownerUserId);
+      const updated = rowToBoard(result.rows[0], identity.ownerUserId);
+      await appendBoardChange(this, client, boardId, 'board.archived', 'user', identity.ownerUserId, {
+        version: updated.version,
+      }, true);
+      return updated;
     });
   }
   async restoreBoard(
@@ -429,11 +539,15 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           `UPDATE ${this.boardsTable}
               SET archived_at=NULL, version=version+1, updated_at=now()
             WHERE id=$1 AND tenant_id=$2 AND owner_user_id=$3
-            RETURNING id, owner_user_id, name, description, visibility, prompt, model, version,
+            RETURNING id, owner_user_id, name, description, visibility, prompt, model, repository, integration_policy, version,
                     archived_at, created_at, updated_at`,
           [boardId, identity.tenantId, identity.ownerUserId],
         );
-        return rowToBoard(result.rows[0], identity.ownerUserId);
+        const updated = rowToBoard(result.rows[0], identity.ownerUserId);
+        await appendBoardChange(this, client, boardId, 'board.restored', 'user', identity.ownerUserId, {
+          version: updated.version,
+        });
+        return updated;
       } catch (error) {
         throw mapActiveBoardNameError(error);
       }
@@ -456,7 +570,20 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async createTask(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskBoardTask> {
     return this.withTransaction(async (client) => {
       const board = await this.requireBoard(client, identity, boardId, true);
+      assertBoardRole(board.role, 'editor');
       assertActiveBoard(board);
+      if (input.kind === 'integration') {
+        throw new TaskboardValidationError(
+          'Integration tasks must be created from an integration batch',
+          'TASKBOARD_INTEGRATION_CREATE_REQUIRES_BATCH',
+        );
+      }
+      if (input.status && !['backlog', 'todo', 'in_progress'].includes(input.status)) {
+        throw new TaskboardValidationError(
+          'Initial task status is controlled by the taskboard workflow',
+          'TASKBOARD_PROTECTED_TRANSITION',
+        );
+      }
       if (input.clientRequestId) {
         const existing = await client.query(
           `SELECT t.*, (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id) AS comment_count FROM ${this.tasksTable} t WHERE t.board_id=$1 AND t.client_request_id=$2`,
@@ -486,14 +613,16 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       const taskId = randomUUID();
       await client.query(
         `INSERT INTO ${this.tasksTable}
-           (id, board_id, identifier, title, description, branch, attachments, status, priority, labels,
-            sort_order, due_at, model, creator_user_id, creator_name, completed_at, client_request_id, version)
-         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13,$14,$15,
-                 CASE WHEN $8='done' THEN now() END,$16,1)`,
+           (id, board_id, identifier, kind, title, description, branch, attachments, status, priority, labels,
+            sort_order, due_at, model, provider_pull_request_id, pull_request_number,
+            reviewed_subject_digest, creator_user_id, creator_name, completed_at, client_request_id, version)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
+                 CASE WHEN $9='done' THEN now() END,$20,1)`,
         [
           taskId,
           boardId,
           `TASK-${taskNumber}`,
+          input.kind ?? 'delivery',
           requireText(input.title, 'Task title'),
           input.description ?? '',
           optionalText(input.branch),
@@ -504,11 +633,18 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           sortOrder,
           input.dueAt ?? null,
           normalizeModel(input.model),
+          optionalText(input.providerPullRequestId),
+          input.pullRequestNumber ?? null,
+          optionalText(input.reviewedSubjectDigest),
           identity.ownerUserId,
           identity.displayName?.trim() || identity.username,
           optionalText(input.clientRequestId),
         ],
       );
+      await appendTaskChange(this, client, taskId, 'task.created', 'user', identity.ownerUserId, {
+        kind: input.kind ?? 'delivery',
+        status,
+      });
       return this.requireTask(client, identity, taskId, false);
     });
   }
@@ -522,8 +658,19 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskBoardTask> {
     return this.withTransaction(async (client) => {
       const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
+      assertBoardRole(loaded.boardRole, 'editor');
       assertExpectedVersion(loaded.task, input.expectedVersion);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
+      if (
+        input.providerPullRequestId !== undefined
+        || input.pullRequestNumber !== undefined
+        || input.reviewedSubjectDigest !== undefined
+      ) {
+        throw new TaskboardValidationError(
+          'Pull request identity and reviewed subject are protected fields',
+          'TASKBOARD_PROTECTED_FIELD',
+        );
+      }
       if (
         input.title === undefined
         && input.description === undefined
@@ -578,6 +725,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
             AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')`,
         params,
       );
+      await appendTaskChange(this, client, taskId, 'task.updated', 'user', identity.ownerUserId, {
+        fields: Object.keys(input).filter((key) => key !== 'expectedVersion'),
+      });
       return this.requireTask(client, identity, taskId, false);
     });
   }
@@ -588,8 +738,25 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskBoardTask> {
     return this.withTransaction(async (client) => {
       const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
+      assertBoardRole(loaded.boardRole, input.status === loaded.task.status ? 'editor' : 'maintainer');
       assertExpectedVersion(loaded.task, input.expectedVersion);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
+      if (input.status !== loaded.task.status) {
+        if (loaded.task.kind === 'integration') {
+          throw new TaskboardValidationError(
+            'Integration state transitions are controlled by the integration workflow',
+            'TASKBOARD_PROTECTED_TRANSITION',
+          );
+        }
+        if (['in_progress', 'in_review', 'ready_to_merge', 'done'].includes(input.status)
+          || ['in_progress', 'in_review', 'ready_to_merge', 'done'].includes(loaded.task.status)) {
+          throw new TaskboardValidationError(
+            'This state transition requires a workflow command',
+            'TASKBOARD_PROTECTED_TRANSITION',
+          );
+        }
+        await assertTaskHasNoActiveRuns(this, client, taskId);
+      }
       if (input.previousTaskId === taskId || input.nextTaskId === taskId) {
         throw new TaskboardValidationError('A task cannot be its own move neighbor', 'TASKBOARD_INVALID_MOVE');
       }
@@ -644,6 +811,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
             AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')`,
         [taskId, identity.tenantId, identity.ownerUserId, input.status, sortOrder],
       );
+      await appendTaskChange(this, client, taskId,
+        input.status === loaded.task.status ? 'task.reordered' : 'task.transitioned',
+        'user', identity.ownerUserId, { from: loaded.task.status, to: input.status });
       return this.requireTask(client, identity, taskId, false);
     });
   }
@@ -682,6 +852,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async createComment(identity: TaskboardIdentity, taskId: string, input: TaskBoardCommentCreateInput): Promise<TaskBoardComment> {
     return this.withTransaction(async (client) => {
       const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
+      assertBoardRole(loaded.boardRole, 'editor');
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
       const body = input.body.trim();
       const attachments = normalizeAttachments(input.attachments);
@@ -694,6 +865,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         [randomUUID(), taskId, body, JSON.stringify(attachments), identity.ownerUserId,
           identity.displayName || identity.username],
       );
+      await appendTaskChange(this, client, taskId, 'comment.created', 'user', identity.ownerUserId, {
+        commentId: String(result.rows[0].id),
+      });
       return rowToComment(result.rows[0]);
     });
   }
@@ -726,112 +900,22 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return searchStoredExecutions(this, identity, taskId, filter);
   }
 
-  getExecutionModelContext(identity: TaskboardIdentity, taskId: string): Promise<TaskboardExecutionModelContext> {
-    return loadExecutionModelContext(this, identity, taskId);
+  async getExecutionModelContext(identity: TaskboardIdentity, taskId: string): Promise<TaskboardExecutionModelContext> {
+    const [context, loaded] = await Promise.all([
+      loadExecutionModelContext(this, identity, taskId),
+      this.requireTaskWithBoard(this.pool, identity, taskId, false),
+    ]);
+    return {
+      ...context,
+      allowedActions: allowedActionsForRole(loaded.boardRole ?? 'viewer'),
+    };
   }
   async claimExecution(
     identity: TaskboardIdentity,
     taskId: string,
     input: TaskboardExecutionClaimInput,
   ): Promise<TaskBoardExecutionStartResult> {
-    return this.withTransaction(async (client) => {
-      const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
-      assertWritableTask(loaded.task, loaded.boardArchivedAt);
-      assertExecutionConfiguration(
-        loaded.task.model ?? loaded.boardModel,
-        input.configuredModelRef,
-        loaded.boardOwnerUserId,
-        input.executionOwnerUserId,
-      );
-      const purpose = input.allowWorkFromCurrentStatus
-        ? 'work'
-        : resolveExecutionPurpose(loaded.task.status, input.purpose);
-      const duplicate = await client.query(
-        `SELECT * FROM ${this.executionsTable} WHERE id=$1 OR run_id=$2 LIMIT 1`,
-        [input.executionId, input.runId],
-      );
-      if (duplicate.rows[0]) {
-        const execution = rowToExecution(duplicate.rows[0]);
-        if (execution.taskId !== taskId || execution.purpose !== purpose) {
-          throw new TaskboardValidationError('Execution idempotency key conflict');
-        }
-        return { task: loaded.task, execution };
-      }
-      const active = await client.query(
-        `SELECT 1 WHERE EXISTS (
-           SELECT 1 FROM ${this.executionsTable}
-            WHERE task_id=$1 AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
-         ) OR EXISTS (
-           SELECT 1 FROM ${this.continuationOutboxTable}
-            WHERE task_id=$1 AND status<>'completed'
-         )`,
-        [taskId],
-      );
-      if (active.rows[0]) {
-        throw new TaskboardValidationError(
-          'Task already has an active Agent execution',
-          'TASKBOARD_EXECUTION_ACTIVE',
-        );
-      }
-      assertExpectedVersion(loaded.task, input.expectedVersion);
-
-      const runningTaskStatus = purpose === 'review' ? 'in_review' : 'in_progress';
-      const sortOrder = purpose === 'review'
-        ? loaded.task.sortOrder
-        : await nextTaskColumnSortOrder(
-          this,
-          client,
-          identity,
-          loaded.task.boardId,
-          taskId,
-          runningTaskStatus,
-        );
-
-      let execution: TaskBoardExecution;
-      try {
-        const inserted = await client.query(
-          `INSERT INTO ${this.executionsTable}
-             (id, task_id, run_id, session_id, status, purpose, requested_by)
-           VALUES ($1,$2,$3,$4,'queued',$5,$6)
-           RETURNING *`,
-          [input.executionId, taskId, input.runId, input.sessionId, purpose, identity.ownerUserId],
-        );
-        await client.query(
-          `INSERT INTO ${this.executionOutboxTable}
-             (run_id, execution_id, payload)
-           VALUES ($1,$2,$3::jsonb)`,
-          [input.runId, input.executionId, JSON.stringify(input.dispatch)],
-        );
-        execution = rowToExecution(inserted.rows[0]);
-      } catch (error) {
-        if (isUniqueViolation(error)) {
-          throw new TaskboardValidationError(
-            'Task already has an active Agent execution',
-            'TASKBOARD_EXECUTION_ACTIVE',
-          );
-        }
-        throw error;
-      }
-
-      await client.query(
-        `UPDATE ${this.commentsTable}
-            SET continuation_run_id=$2, updated_at=now()
-          WHERE task_id=$1 AND author_type='user' AND continuation_eligible=true
-            AND continuation_run_id IS NULL`,
-        [taskId, input.runId],
-      );
-      await client.query(
-        `UPDATE ${this.tasksTable}
-            SET status=$2, sort_order=$3, completed_at=NULL,
-                version=version+1, updated_at=now()
-          WHERE id=$1`,
-        [taskId, runningTaskStatus, sortOrder],
-      );
-      return {
-        task: await this.requireTask(client, identity, taskId, false),
-        execution,
-      };
-    });
+    return claimStoredExecution(this, identity, taskId, input);
   }
   getExecutionContextByRunId(runId: string): Promise<TaskboardExecutionContext | null> {
     return loadExecutionContext(this, runId);
@@ -924,19 +1008,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     runId: string,
     status: 'running' | 'waiting_user' | 'waiting_approval',
   ): Promise<TaskBoardExecution | null> {
-    const result = await this.pool.query(
-      `UPDATE ${this.executionsTable}
-          SET status=$2,
-              started_at=COALESCE(started_at, now()),
-              updated_at=now(),
-              reconcile_lease_id=NULL,
-              reconcile_lease_expires_at=NULL
-        WHERE run_id=$1
-          AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
-        RETURNING *`,
-      [runId, status],
-    );
-    return result.rows[0] ? rowToExecution(result.rows[0]) : null;
+    return setStoredExecutionStatus(this, runId, status);
   }
 
   async setExecutionStatusFromReconcile(
@@ -944,26 +1016,14 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     status: 'running' | 'waiting_user' | 'waiting_approval',
     leaseId: string,
   ): Promise<TaskBoardExecution | null> {
-    const result = await this.pool.query(
-      `UPDATE ${this.executionsTable}
-          SET status=$2,
-              started_at=COALESCE(started_at, now()),
-              updated_at=now()
-        WHERE run_id=$1
-          AND reconcile_lease_id=$3
-          AND reconcile_lease_expires_at > clock_timestamp()
-          AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
-        RETURNING *`,
-      [runId, status, leaseId],
-    );
-    return result.rows[0] ? rowToExecution(result.rows[0]) : null;
+    return setStoredExecutionStatusFromReconcile(this, runId, status, leaseId);
   }
 
   async completeExecution(
     runId: string,
     input: TaskboardExecutionCompletionInput,
   ): Promise<TaskBoardExecutionStartResult | null> {
-    return this.completeExecutionInternal(runId, input);
+    return completeStoredExecution(this, runId, input);
   }
 
   async completeExecutionFromReconcile(
@@ -971,93 +1031,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     input: TaskboardExecutionCompletionInput,
     leaseId: string,
   ): Promise<TaskBoardExecutionStartResult | null> {
-    return this.completeExecutionInternal(runId, input, leaseId);
-  }
-
-  private async completeExecutionInternal(
-    runId: string,
-    input: TaskboardExecutionCompletionInput,
-    reconcileLeaseId?: string,
-  ): Promise<TaskBoardExecutionStartResult | null> {
-    const ownership = await this.pool.query(
-      `SELECT e.task_id, b.tenant_id, b.owner_user_id
-         FROM ${this.executionsTable} e
-         JOIN ${this.tasksTable} t ON t.id=e.task_id
-         JOIN ${this.boardsTable} b ON b.id=t.board_id
-        WHERE e.run_id=$1`,
-      [runId],
-    );
-    if (!ownership.rows[0]) return null;
-    const identity: TaskboardIdentity = {
-      tenantId: String(ownership.rows[0].tenant_id),
-      ownerUserId: String(ownership.rows[0].owner_user_id),
-      username: '',
-    };
-    const taskId = String(ownership.rows[0].task_id);
-
-    return this.withTransaction(async (client) => {
-      const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
-      const executionResult = await client.query(
-        `SELECT *,
-                ($2::text IS NULL OR (
-                  reconcile_lease_id=$2 AND reconcile_lease_expires_at > clock_timestamp()
-                )) AS reconcile_lease_valid
-           FROM ${this.executionsTable}
-          WHERE run_id=$1
-          FOR UPDATE`,
-        [runId, reconcileLeaseId ?? null],
-      );
-      if (!executionResult.rows[0] || executionResult.rows[0].reconcile_lease_valid !== true) return null;
-      const currentExecution = rowToExecution(executionResult.rows[0]);
-      if (isTerminalExecutionStatus(currentExecution.status)) {
-        await client.query(
-          `UPDATE ${this.executionOutboxTable}
-              SET status='dispatched', lease_id=NULL, lease_expires_at=NULL, updated_at=now()
-            WHERE run_id=$1 AND status<>'dispatched'`,
-          [runId],
-        );
-        return { task: loaded.task, execution: currentExecution };
-      }
-      const archivedResult = await finalizeExecutionForArchivedTask(
-        this, client, loaded.task, loaded.boardArchivedAt, currentExecution, input,
-      );
-      if (archivedResult) return archivedResult;
-
-      const executionSucceeded = await applyExecutionTaskCompletion(
-        this, client, identity, loaded.task, currentExecution, executionResult.rows[0].created_at, input,
-      );
-
-      const updated = await client.query(
-        `UPDATE ${this.executionsTable}
-            SET status=$2, error=$3, finished_at=now(), updated_at=now(),
-                reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL
-          WHERE run_id=$1
-          RETURNING *`,
-        [runId, input.status, optionalText(input.error)],
-      );
-      await client.query(
-        `UPDATE ${this.executionOutboxTable}
-            SET status='dispatched', lease_id=NULL, lease_expires_at=NULL, updated_at=now()
-          WHERE run_id=$1 AND status<>'dispatched'`,
-        [runId],
-      );
-      await enqueueAutomaticReview(
-        this, client, loaded.task, currentExecution, executionSucceeded, input.reviewExecution,
-      );
-      const authorType = input.status === 'succeeded' ? 'agent' : 'system';
-      await client.query(
-        `INSERT INTO ${this.commentsTable}
-           (id, task_id, body, attachments, author_type, author_id, author_name, version)
-         VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,1)`,
-        [randomUUID(), taskId, requireText(input.commentBody, 'Execution comment body'),
-          JSON.stringify(normalizeAttachments(input.attachments)), authorType, runId,
-          input.status === 'succeeded' ? 'Agent' : '系统'],
-      );
-      return {
-        task: await this.requireTask(client, identity, taskId, false),
-        execution: rowToExecution(updated.rows[0]),
-      };
-    });
+    return completeStoredExecutionFromReconcile(this, runId, input, leaseId);
   }
   private async setTaskArchived(
     identity: TaskboardIdentity,
@@ -1067,6 +1041,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskBoardTask> {
     return this.withTransaction(async (client) => {
       const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
+      assertBoardRole(loaded.boardRole, 'maintainer');
       assertExpectedVersion(loaded.task, expectedVersion);
       if (loaded.boardArchivedAt) {
         throw new TaskboardValidationError('Archived boards are read-only', 'TASKBOARD_BOARD_ARCHIVED');
@@ -1085,6 +1060,16 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           WHERE t.id=$1 AND t.board_id=b.id
             AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')`,
         [taskId, identity.tenantId, identity.ownerUserId],
+      );
+      await appendTaskChange(
+        this,
+        client,
+        taskId,
+        archive ? 'task.archived' : 'task.restored',
+        'user',
+        identity.ownerUserId,
+        { archived: archive },
+        archive,
       );
       return this.requireTask(client, identity, taskId, false);
     });
@@ -1135,19 +1120,21 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     ownerOnly: boolean,
   ): Promise<TaskBoard> {
     const result = await db.query(
-      `SELECT id, owner_user_id, name, description, visibility, prompt, model, version,
-              archived_at, created_at, updated_at
-         FROM ${this.boardsTable}
-        WHERE id=$1 AND tenant_id=$2
-          AND (owner_user_id=$3 OR ($4::boolean=false AND visibility='organization'))
-        ${forUpdate ? 'FOR UPDATE' : ''}`,
+      `SELECT b.id, b.owner_user_id, b.name, b.description, b.visibility, b.prompt, b.model,
+              b.repository, b.integration_policy, b.version, b.archived_at, b.created_at, b.updated_at,
+              CASE WHEN b.owner_user_id=$3 THEN 'owner' ELSE COALESCE(m.role,'viewer') END AS board_role
+         FROM ${this.boardsTable} b
+         LEFT JOIN ${this.membersTable} m ON m.board_id=b.id AND m.user_id=$3
+        WHERE b.id=$1 AND b.tenant_id=$2
+          AND (b.owner_user_id=$3 OR ($4::boolean=false AND b.visibility='organization'))
+        ${forUpdate ? 'FOR UPDATE OF b' : ''}`,
       [boardId, identity.tenantId, identity.ownerUserId, ownerOnly],
     );
     if (!result.rows[0]) throw new TaskboardNotFoundError('Board not found');
     return rowToBoard(result.rows[0], identity.ownerUserId);
   }
 
-  private async requireTask(
+  async requireTask(
     db: PgPool | PoolClient,
     identity: TaskboardIdentity,
     taskId: string,
@@ -1156,7 +1143,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return (await this.requireTaskWithBoard(db, identity, taskId, forUpdate)).task;
   }
 
-  private async requireTaskWithBoard(
+  async requireTaskWithBoard(
     db: PgPool | PoolClient,
     identity: TaskboardIdentity,
     taskId: string,
@@ -1166,6 +1153,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     boardArchivedAt?: string;
     boardModel?: string;
     boardOwnerUserId: string;
+    boardRole: TaskBoard['role'];
   }> {
     let lockedBoard: TaskBoard | undefined;
     if (forUpdate) {
@@ -1189,10 +1177,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       `SELECT t.*,
               b.archived_at AS board_archived_at,
               b.model AS board_model,
-              b.owner_user_id AS board_owner_user_id,
+              b.owner_user_id AS board_owner_user_id, m.role AS board_member_role,
               (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id) AS comment_count
          FROM ${this.tasksTable} t
-         JOIN ${this.boardsTable} b ON b.id=t.board_id
+         JOIN ${this.boardsTable} b ON b.id=t.board_id LEFT JOIN ${this.membersTable} m ON m.board_id=b.id AND m.user_id=$3
         WHERE t.id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
         ${forUpdate ? 'FOR UPDATE OF t' : ''}`,
       [taskId, identity.tenantId, identity.ownerUserId],
@@ -1208,11 +1196,12 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       ...(boardArchivedAt ? { boardArchivedAt } : {}),
       ...(boardModel ? { boardModel } : {}),
       boardOwnerUserId: lockedBoard?.ownerUserId ?? String(row.board_owner_user_id),
+      boardRole: lockedBoard?.role ?? (String(row.board_owner_user_id) === identity.ownerUserId ? 'owner' : row.board_member_role ? String(row.board_member_role) as TaskBoard['role'] : 'viewer'),
     };
   }
 
 
-  private async withTransaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
+  async withTransaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -1225,5 +1214,16 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     } finally {
       client.release();
     }
+  }
+}
+
+function assertBoardRole(
+  role: TaskBoard['role'],
+  minimum: 'editor' | 'maintainer' | 'owner',
+): void {
+  const rank = role === 'owner' ? 4 : role === 'maintainer' ? 3 : role === 'editor' ? 2 : 1;
+  const required = minimum === 'owner' ? 4 : minimum === 'maintainer' ? 3 : 2;
+  if (rank < required) {
+    throw new TaskboardPermissionError('Taskboard role does not allow this operation');
   }
 }

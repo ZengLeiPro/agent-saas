@@ -25,6 +25,7 @@ export interface TaskboardCommentStore {
   boardsTable: string;
   tasksTable: string;
   commentsTable: string;
+  changesTable: string;
 }
 
 export async function updateComment(
@@ -48,6 +49,7 @@ export async function updateComment(
         RETURNING *`,
       [commentId, body],
     );
+    await appendCommentChange(store, client, loaded.taskId, 'comment.updated', identity.ownerUserId, commentId, false);
     return applyCommentAuthorDisplayName(rowToComment(result.rows[0]), identity);
   });
 }
@@ -63,12 +65,14 @@ export async function deleteComment(
     assertCommentManageable(loaded, identity);
     assertExpectedVersion(loaded.comment, input.expectedVersion);
     await client.query(`DELETE FROM ${store.commentsTable} WHERE id=$1`, [commentId]);
+    await appendCommentChange(store, client, loaded.taskId, 'comment.deleted', identity.ownerUserId, commentId, true);
     return applyCommentAuthorDisplayName(loaded.comment, identity);
   });
 }
 
 interface CommentWithBoard {
   comment: TaskBoardComment;
+  taskId: string;
   boardOwnerUserId: string;
   taskArchived: boolean;
   boardArchived: boolean;
@@ -116,6 +120,7 @@ async function requireCommentWithBoard(
   if (!result.rows[0]) throw new TaskboardNotFoundError('Comment not found');
   return {
     comment: rowToComment(result.rows[0]),
+    taskId: String(ownership.rows[0].task_id),
     boardOwnerUserId: String(board.rows[0].owner_user_id),
     taskArchived: Boolean(task.rows[0].archived_at),
     boardArchived: Boolean(board.rows[0].archived_at),
@@ -131,6 +136,23 @@ function assertCommentManageable(loaded: CommentWithBoard, identity: TaskboardId
   if (!isAuthor && loaded.boardOwnerUserId !== identity.ownerUserId) {
     throw new TaskboardPermissionError('Only the comment author or board owner may manage this comment');
   }
+}
+
+async function appendCommentChange(
+  store: TaskboardCommentStore,
+  client: PoolClient,
+  taskId: string,
+  changeType: string,
+  actorId: string,
+  commentId: string,
+  tombstone: boolean,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO ${store.changesTable}
+       (task_id, change_type, actor_type, actor_id, payload, tombstone)
+     VALUES ($1,$2,'user',$3,$4::jsonb,$5)`,
+    [taskId, changeType, actorId, JSON.stringify({ commentId }), tombstone],
+  );
 }
 
 async function withTransaction<T>(pool: PgPool, operation: (client: PoolClient) => Promise<T>): Promise<T> {

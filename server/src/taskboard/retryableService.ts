@@ -5,7 +5,14 @@ import type {
   TaskBoardCommentPatchInput,
   TaskBoardCreateInput,
   TaskBoardExecution,
+  TaskBoardExecutionContextInput,
+  TaskBoardExecutionContextResponse,
+  TaskBoardExecutionResolutionInput,
   TaskBoardExecutionStartResult,
+  TaskBoardIntegrationBatchCreateInput,
+  TaskBoardIntegrationSource,
+  TaskBoardMember,
+  TaskBoardMemberPatchInput,
   TaskBoardPatchInput,
   TaskBoardTask,
   TaskBoardTaskCreateInput,
@@ -27,15 +34,20 @@ import type {
   TaskboardExecutionStore,
   TaskboardExpectedVersionInput,
   TaskboardIdentity,
+  TaskboardIntegrationDispatchCandidate,
+  TaskboardIntegrationMergeResult,
+  TaskboardIntegrationSourceInspection,
   TaskboardPage,
   TaskboardPageFilter,
   TaskboardService,
   TaskboardTaskListFilter,
   TaskboardTaskSearchFilter,
 } from './types.js';
+import type { RepositoryProvider } from './repositoryProvider.js';
 
 export interface InitializableTaskboardService extends TaskboardService, TaskboardExecutionStore {
   init(): Promise<void>;
+  setRepositoryProvider?(provider: RepositoryProvider): void;
 }
 
 /**
@@ -203,6 +215,152 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     input: TaskboardExpectedVersionInput,
   ): Promise<TaskBoardComment> {
     return (await this.service()).deleteComment(identity, commentId, input);
+  }
+
+  async listMembers(identity: TaskboardIdentity, boardId: string): Promise<TaskBoardMember[]> {
+    const service = await this.service();
+    if (!service.listMembers) return [];
+    return service.listMembers(identity, boardId);
+  }
+
+  async upsertMember(
+    identity: TaskboardIdentity,
+    boardId: string,
+    input: TaskBoardMemberPatchInput,
+  ): Promise<TaskBoardMember> {
+    const service = await this.service();
+    if (!service.upsertMember) throw new Error('Taskboard member management unavailable');
+    return service.upsertMember(identity, boardId, input);
+  }
+
+  async removeMember(identity: TaskboardIdentity, boardId: string, userId: string): Promise<void> {
+    const service = await this.service();
+    if (!service.removeMember) throw new Error('Taskboard member management unavailable');
+    return service.removeMember(identity, boardId, userId);
+  }
+
+  async createIntegrationBatch(
+    identity: TaskboardIdentity,
+    boardId: string,
+    input: TaskBoardIntegrationBatchCreateInput,
+    source?: 'scheduled_policy' | 'on_ready_policy' | 'manual_batch',
+  ): Promise<TaskBoardTask> {
+    const service = await this.service();
+    if (!service.createIntegrationBatch) throw new Error('Taskboard integration unavailable');
+    return service.createIntegrationBatch(identity, boardId, input, source);
+  }
+
+  async cancelIntegrationTask(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input: { expectedVersion: number; reason?: string },
+  ): Promise<TaskBoardTask> {
+    await this.init();
+    if (!this.target.cancelIntegrationTask) throw new Error('Taskboard integration service unavailable');
+    return this.target.cancelIntegrationTask(identity, taskId, input);
+  }
+
+  async listIntegrationSources(
+    identity: TaskboardIdentity,
+    integrationTaskId: string,
+  ): Promise<TaskBoardIntegrationSource[]> {
+    const service = await this.service();
+    if (!service.listIntegrationSources) return [];
+    return service.listIntegrationSources(identity, integrationTaskId);
+  }
+
+  async getExecutionContextV2(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input?: TaskBoardExecutionContextInput,
+  ): Promise<TaskBoardExecutionContextResponse> {
+    const service = await this.service();
+    if (!service.getExecutionContextV2) throw new Error('Taskboard execution context unavailable');
+    return service.getExecutionContextV2(identity, taskId, input);
+  }
+
+  setRepositoryProvider(provider: RepositoryProvider): void {
+    this.target.setRepositoryProvider?.(provider);
+  }
+
+  async attachExecutionPullRequestV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    providerPullRequestId: string,
+  ): Promise<TaskBoardTask> {
+    await this.init();
+    if (!this.target.attachExecutionPullRequestV2) throw new Error('Taskboard repository provider unavailable');
+    return this.target.attachExecutionPullRequestV2(identity, runId, providerPullRequestId);
+  }
+
+  async recordReviewedExecutionSubjectV2(
+    identity: TaskboardIdentity,
+    runId: string,
+  ): Promise<TaskBoardTask> {
+    await this.init();
+    if (!this.target.recordReviewedExecutionSubjectV2) throw new Error('Taskboard repository provider unavailable');
+    return this.target.recordReviewedExecutionSubjectV2(identity, runId);
+  }
+
+  async inspectIntegrationSourceV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    sourceId: string,
+  ): Promise<TaskboardIntegrationSourceInspection> {
+    await this.init();
+    if (!this.target.inspectIntegrationSourceV2) throw new Error('Taskboard integration provider unavailable');
+    return this.target.inspectIntegrationSourceV2(identity, runId, sourceId);
+  }
+
+  async mergeIntegrationSourceV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    sourceId: string,
+  ): Promise<TaskboardIntegrationMergeResult> {
+    await this.init();
+    if (!this.target.mergeIntegrationSourceV2) throw new Error('Taskboard integration provider unavailable');
+    return this.target.mergeIntegrationSourceV2(identity, runId, sourceId);
+  }
+
+  async linkIntegrationRemediationV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    sourceId: string,
+    remediationTaskId: string,
+  ) {
+    await this.init();
+    if (!this.target.linkIntegrationRemediationV2) throw new Error('Taskboard integration provider unavailable');
+    return this.target.linkIntegrationRemediationV2(identity, runId, sourceId, remediationTaskId);
+  }
+
+  async reconcileMergeOperationsV2(limit?: number): Promise<number> {
+    await this.init();
+    return this.target.reconcileMergeOperationsV2?.(limit) ?? 0;
+  }
+
+  async claimIntegrationDispatchCandidatesV2(limit?: number): Promise<TaskboardIntegrationDispatchCandidate[]> {
+    await this.init();
+    return this.target.claimIntegrationDispatchCandidatesV2?.(limit) ?? [];
+  }
+
+  async createExecutionCommentV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    body: string,
+  ): Promise<TaskBoardComment> {
+    const service = await this.service();
+    if (!service.createExecutionCommentV2) throw new Error('Taskboard execution comments unavailable');
+    return service.createExecutionCommentV2(identity, runId, body);
+  }
+
+  async resolveExecutionV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    input: TaskBoardExecutionResolutionInput,
+  ): Promise<TaskBoardTask> {
+    const service = await this.service();
+    if (!service.resolveExecutionV2) throw new Error('Taskboard execution resolution unavailable');
+    return service.resolveExecutionV2(identity, runId, input);
   }
 
   async listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {

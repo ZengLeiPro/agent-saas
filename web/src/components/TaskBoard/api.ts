@@ -13,6 +13,12 @@ import type {
   TaskBoardTaskMoveInput,
   TaskBoardTaskPatchInput,
 } from "@agent/shared";
+import type {
+  TaskBoardIntegrationBatchCreateInput,
+  TaskBoardIntegrationSource,
+  TaskBoardMember,
+  TaskBoardMemberPatchInput,
+} from "@agent/shared/types/taskboard";
 import { authFetch } from "@/lib/authFetch";
 
 const API_BASE = "/api/taskboard";
@@ -50,7 +56,7 @@ async function parseEntity<T>(response: Response, label: string, key: string): P
   return entityFrom<T>(data, key);
 }
 
-function jsonRequest(method: "POST" | "PATCH", body?: unknown): RequestInit {
+function jsonRequest(method: "POST" | "PATCH" | "PUT" | "DELETE", body?: unknown): RequestInit {
   return {
     method,
     headers: { "Content-Type": "application/json" },
@@ -90,6 +96,60 @@ export async function restoreBoard(id: string, expectedVersion: number): Promise
     jsonRequest("POST", { expectedVersion }),
   );
   return parseEntity<TaskBoard>(response, "任务看板", "board");
+}
+
+export async function fetchBoardMembers(boardId: string): Promise<TaskBoardMember[]> {
+  const response = await authFetch(`${API_BASE}/boards/${encodeURIComponent(boardId)}/members`);
+  return parseEntity<TaskBoardMember[]>(response, "看板成员", "members");
+}
+
+export async function upsertBoardMember(
+  boardId: string,
+  input: TaskBoardMemberPatchInput,
+): Promise<TaskBoardMember> {
+  const response = await authFetch(
+    `${API_BASE}/boards/${encodeURIComponent(boardId)}/members`,
+    jsonRequest("PUT", input),
+  );
+  return parseEntity<TaskBoardMember>(response, "看板成员", "member");
+}
+
+export async function deleteBoardMember(boardId: string, userId: string): Promise<void> {
+  const response = await authFetch(
+    `${API_BASE}/boards/${encodeURIComponent(boardId)}/members/${encodeURIComponent(userId)}`,
+    jsonRequest("DELETE"),
+  );
+  if (!response.ok) await parseJsonResponse<unknown>(response, "看板成员");
+}
+
+export async function createIntegrationBatch(
+  boardId: string,
+  input: TaskBoardIntegrationBatchCreateInput,
+): Promise<TaskBoardExecutionStartResult> {
+  const response = await authFetch(
+    `${API_BASE}/boards/${encodeURIComponent(boardId)}/integrations`,
+    jsonRequest("POST", input),
+  );
+  return parseEntity<TaskBoardExecutionStartResult>(response, "人工集成批次", "result");
+}
+
+export async function cancelIntegrationTask(
+  taskId: string,
+  expectedVersion: number,
+  reason?: string,
+): Promise<TaskBoardTask> {
+  const response = await authFetch(
+    `${API_BASE}/tasks/${encodeURIComponent(taskId)}/integration-cancel`,
+    jsonRequest("POST", { expectedVersion, ...(reason?.trim() ? { reason: reason.trim() } : {}) }),
+  );
+  return parseEntity<TaskBoardTask>(response, "取消集成任务", "task");
+}
+
+export async function fetchIntegrationSources(taskId: string): Promise<TaskBoardIntegrationSource[]> {
+  const response = await authFetch(
+    `${API_BASE}/tasks/${encodeURIComponent(taskId)}/integration-sources`,
+  );
+  return parseEntity<TaskBoardIntegrationSource[]>(response, "集成来源", "integrationSources");
 }
 
 export async function fetchTasks(boardId: string): Promise<TaskBoardTask[]> {
@@ -165,7 +225,7 @@ export async function executeTask(
 ): Promise<TaskBoardExecutionStartResult> {
   const response = await authFetch(
     `${API_BASE}/tasks/${encodeURIComponent(taskId)}/execute`,
-    jsonRequest("POST", purpose === "review" ? { expectedVersion, purpose } : { expectedVersion }),
+    jsonRequest("POST", purpose === "work" ? { expectedVersion } : { expectedVersion, purpose }),
   );
   return parseEntity<TaskBoardExecutionStartResult>(response, "Agent 执行", "result");
 }

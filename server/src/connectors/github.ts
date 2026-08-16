@@ -60,10 +60,10 @@ export async function revokePendingGithubCredentials(input: {
   return revoked;
 }
 
-export async function resolveGithubRuntimeEnv(
+export async function resolveGithubToken(
   deps: { connectionStore: ConnectorConnectionStore; vault: SecretVault; onError?: (error: Error) => void },
   context: { userId: string; username: string; tenantId: string },
-): Promise<Record<string, string>> {
+): Promise<string | undefined> {
   const connection = deps.connectionStore.get(context.username, GITHUB_CONNECTOR_ID);
   if (
     !connection
@@ -71,20 +71,26 @@ export async function resolveGithubRuntimeEnv(
     || !deps.connectionStore.isRuntimeEnabled(context.username, GITHUB_CONNECTOR_ID)
     || connection.userId !== context.userId
     || connection.tenantId !== context.tenantId
-  ) return {};
+  ) return undefined;
   const tokenRef = connection.credentialRefs[GITHUB_TOKEN_CREDENTIAL_KEY];
-  if (!tokenRef) return {};
-
+  if (!tokenRef) return undefined;
   try {
-    const token = await deps.vault.getSecret(tokenRef, {
+    return await deps.vault.getSecret(tokenRef, {
       actor: 'connector_proxy',
       userId: vaultOwnerId(connection),
       tenantId: context.tenantId,
       scopes: ['secret:connector:read'],
-    });
-    return token ? { GH_TOKEN: token, GITHUB_TOKEN: token } : {};
+    }) || undefined;
   } catch (error) {
     deps.onError?.(error instanceof Error ? error : new Error(String(error)));
-    return {};
+    return undefined;
   }
+}
+
+export async function resolveGithubRuntimeEnv(
+  deps: { connectionStore: ConnectorConnectionStore; vault: SecretVault; onError?: (error: Error) => void },
+  context: { userId: string; username: string; tenantId: string },
+): Promise<Record<string, string>> {
+  const token = await resolveGithubToken(deps, context);
+  return token ? { GH_TOKEN: token, GITHUB_TOKEN: token } : {};
 }

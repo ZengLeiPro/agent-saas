@@ -1,8 +1,15 @@
 import type {
+  TaskBoard,
   TaskBoardExecutionStatus,
   TaskBoardPriority,
   TaskBoardStatus,
 } from "@agent/shared";
+import type {
+  TaskBoardAllowedAction,
+  TaskBoardIntegrationSourceState,
+  TaskBoardMemberRole,
+  TaskBoardTaskKind,
+} from "@agent/shared/types/taskboard";
 
 export const STATUS_LABELS: Record<TaskBoardStatus, string> = {
   backlog: "需求池",
@@ -14,6 +21,61 @@ export const STATUS_LABELS: Record<TaskBoardStatus, string> = {
   done: "已完成",
   canceled: "已取消",
 };
+
+export const TASK_KIND_LABELS: Record<TaskBoardTaskKind, string> = {
+  delivery: "交付任务",
+  integration: "集成批次",
+  remediation: "修复任务",
+};
+
+export const MEMBER_ROLE_LABELS: Record<TaskBoardMemberRole, string> = {
+  viewer: "查看者",
+  editor: "编辑者",
+  maintainer: "维护者",
+  owner: "所有者",
+};
+
+export const INTEGRATION_SOURCE_STATE_LABELS: Record<TaskBoardIntegrationSourceState, string> = {
+  pending: "待处理",
+  canceled: "已取消",
+  validating: "校验中",
+  ready: "可合并",
+  merging: "合并中",
+  merged: "已合并",
+  waiting_retry: "等待重试",
+  re_reviewing: "重新复核",
+  resolving_conflict: "解决冲突",
+  waiting_remediation: "等待修复",
+  needs_human: "需要人工处理",
+};
+
+const LEGACY_MANAGE_ACTIONS = new Set<TaskBoardAllowedAction>([
+  "board.update",
+  "board.archive",
+  "board.policy.update",
+  "board.members.manage",
+]);
+
+export function boardAllows(board: TaskBoard | null | undefined, action: TaskBoardAllowedAction): boolean {
+  if (!board) return false;
+  const allowed = board.allowedActions
+    ? board.allowedActions.includes(action)
+    : LEGACY_MANAGE_ACTIONS.has(action) ? board.canManage : true;
+  if (board.archivedAt && action !== "board.read" && action !== "board.archive") return false;
+  return allowed;
+}
+
+const WORKFLOW_PROTECTED_STATUSES = new Set<TaskBoardStatus>([
+  "in_progress",
+  "in_review",
+  "ready_to_merge",
+  "done",
+]);
+
+export function canUserTransitionTask(task: TaskBoardTaskKind | undefined, from: TaskBoardStatus, to: TaskBoardStatus): boolean {
+  if ((task ?? "delivery") === "integration" || from === to) return false;
+  return !WORKFLOW_PROTECTED_STATUSES.has(from) && !WORKFLOW_PROTECTED_STATUSES.has(to);
+}
 
 export const PRIORITY_LABELS: Record<TaskBoardPriority, string> = {
   urgent: "紧急",

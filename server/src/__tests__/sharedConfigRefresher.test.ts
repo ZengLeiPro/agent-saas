@@ -272,6 +272,55 @@ describe('createSharedConfigRefresher', () => {
     expect(seen).toEqual(['zhipu']);
   });
 
+  it('把别的进程改写的 STT 配置热更新进当前内存并通知执行侧', () => {
+    const writeWithStt = (enabled: boolean, creditsPerCall: number) => {
+      writeFileSync(join(dir, 'config.json'), JSON.stringify({
+        agent: { cwd: '.' },
+        server: { port: 3200 },
+        models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+        stt: {
+          enabled,
+          apiKeyRef: 'vault-dashscope',
+          ossAccessKeyIdRef: 'vault-oss-id',
+          ossAccessKeySecretRef: 'vault-oss-secret',
+          model: 'fun-asr',
+          pricing: { creditsPerCall, costYuanPerCall: 0.08 },
+        },
+      }, null, 2), 'utf-8');
+    };
+    writeWithStt(false, 0);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      stt: {
+        enabled: false,
+        apiKeyRef: 'vault-dashscope',
+        ossAccessKeyIdRef: 'vault-oss-id',
+        ossAccessKeySecretRef: 'vault-oss-secret',
+        model: 'fun-asr',
+        pricing: { creditsPerCall: 0, costYuanPerCall: 0.08 },
+      },
+    } as unknown as AppConfig;
+    const seen: string[] = [];
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      onSttUpdated: (next) => {
+        seen.push(`${next?.enabled}:${next?.pricing?.creditsPerCall}`);
+      },
+      now: () => clock,
+    });
+
+    writeWithStt(true, 123);
+    clock += 5_000;
+    refresher.refreshIfChanged();
+
+    expect(config.stt?.enabled).toBe(true);
+    expect(config.stt?.pricing?.creditsPerCall).toBe(123);
+    expect(seen).toEqual(['true:123']);
+  });
+
   it('webTools 未变化时不触发回调', () => {
     writeConfig(dir, [BASE_GROUP]);
     const config = { models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' } } as unknown as AppConfig;

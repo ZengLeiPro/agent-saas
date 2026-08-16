@@ -47,6 +47,8 @@ export function createModelResolvers(params: {
   onSystemPromptOverridesUpdated: (next: NonNullable<AppConfig['systemPrompts']>) => void;
   /** webTools 变化后重新解析凭据并替换执行进程的运行时配置。 */
   onWebToolsUpdated?: (next: AppConfig['webTools']) => void;
+  /** STT 变化后重新解析凭据并替换执行进程的 AudioTranscribe 配置。 */
+  onSttUpdated?: (next: AppConfig['stt']) => void;
 }): ModelResolvers {
   const { config, processCwd, tenantStore, tenantsFilePath, logger } = params;
 
@@ -59,6 +61,7 @@ export function createModelResolvers(params: {
     },
     onSystemPromptOverridesUpdated: params.onSystemPromptOverridesUpdated,
     ...(params.onWebToolsUpdated ? { onWebToolsUpdated: params.onWebToolsUpdated } : {}),
+    ...(params.onSttUpdated ? { onSttUpdated: params.onSttUpdated } : {}),
     tenantStore,
     tenantsFilePath,
     logger,

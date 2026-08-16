@@ -1582,9 +1582,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     titleGeneratorConfigs,
     onGuardrailModelConfigsUpdated: (next) => { guardrailModelConfigs = next; },
     onSystemPromptOverridesUpdated: (next) => { systemPromptRegistry.replaceOverrides(next); },
-    // 凭据解析是异步的，刷新器保持同步：这里 fire-and-forget。失败已在函数内告警，
-    // 此处必须吞掉 rejection，否则跨进程刷新会把进程带成 unhandledRejection。
+    // 凭据异步解析采用 fire-and-forget，并吞掉或记录 rejection，避免拖垮跨进程刷新。
     onWebToolsUpdated: (next) => { void applyWebToolsRuntimeUpdate(next).catch(() => undefined); },
+    onSttUpdated: (next) => { void updateAudioTranscribeConfig(next).catch((error) => serverLogger.warn(`AudioTranscribe 运行时配置刷新失败：${error instanceof Error ? error.message : String(error)}`)); },
   });
   runPreflightService = initializeRuntimeGovernancePreflight({
     sessionCatalog,

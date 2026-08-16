@@ -62,6 +62,10 @@ export function createSharedConfigRefresher(params: {
    * 刷新器本身保持同步且不因解析失败中断其他配置的热更新。
    */
   onWebToolsUpdated?: (next: AppConfig['webTools']) => void;
+  /**
+   * STT 变更回调。凭据需经 SecretVault 异步解析，行为与 webTools 一致。
+   */
+  onSttUpdated?: (next: AppConfig['stt']) => void;
   tenantStore?: TenantStore;
   tenantsFilePath?: string;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
@@ -75,6 +79,7 @@ export function createSharedConfigRefresher(params: {
     target,
     onSystemPromptOverridesUpdated,
     onWebToolsUpdated,
+    onSttUpdated,
     tenantStore,
     tenantsFilePath,
     logger,
@@ -154,6 +159,17 @@ export function createSharedConfigRefresher(params: {
       onWebToolsUpdated?.(nextConfig.webTools);
       logger?.info(
         `[SharedConfig] 已从磁盘热更新 Web 工具配置：search provider=${nextConfig.webTools?.search?.provider ?? 'none'}`,
+      );
+    }
+
+    const sttChanged = JSON.stringify(config.stt ?? null)
+      !== JSON.stringify(nextConfig.stt ?? null);
+    if (sttChanged) {
+      if (nextConfig.stt) config.stt = nextConfig.stt;
+      else delete config.stt;
+      onSttUpdated?.(nextConfig.stt);
+      logger?.info(
+        `[SharedConfig] 已从磁盘热更新语音转写配置：enabled=${nextConfig.stt?.enabled === true}`,
       );
     }
 

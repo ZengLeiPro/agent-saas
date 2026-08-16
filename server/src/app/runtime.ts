@@ -2073,21 +2073,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         eventStore: pgEventStore,
         agentCwd,
         executionConfig,
-        resolveDefaultModel: defaultModelResolver,
-        ...createTaskboardRuntimeOptions({ modelResolver, userStore, timezone: config.server.timezone, logger: serverLogger }),
-        groupTaskboardSession: (input) => groupStore.addTaskboardSession(input),
-        onSessionTitleUpdated: () => clearSessionsListCache(),
-        onSessionGrouped: async (event) => {
-          clearSessionsListCache();
-          if (!pgEventStore) return;
-          const tenantId = userStore?.findById(event.userId)?.tenantId;
-          await pgEventStore.append({
-            type: 'session_group_changed',
-            sessionId: event.sessionId,
-            userId: event.userId,
-            groupId: event.groupId,
-          }, tenantId ? { tenantId } : undefined);
-        },
+        resolveDefaultModel: defaultModelResolver, ...createTaskboardRuntimeOptions({ modelResolver, userStore, timezone: config.server.timezone, logger: serverLogger, eventStore: pgEventStore, groupTaskboardSession: (input) => groupStore.addTaskboardSession(input), onSessionsChanged: clearSessionsListCache }),
         logger: serverLogger.child('TaskboardExecution'),
       });
     }

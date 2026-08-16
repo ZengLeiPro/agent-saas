@@ -19,6 +19,7 @@ import {
   findDueJobs,
 } from "./scheduler.js";
 import { cronLogger } from "../utils/logger.js";
+import { createCronSessionGrouper } from "./sessionGrouping.js";
 import { cloneJob, isProcessAlive, pTimeout, ServiceTimeoutError, toFiniteInt, transferCronJobOwner, updatedAtAfterEdit } from "./serviceUtils.js";
 import { claimCronJob, markCronClaimRunning, recoverCronClaim,
   type ClaimedJob, type CronRunLease, type CronRunRequest, type ExecutionInvocation,
@@ -802,18 +803,11 @@ export class CronService {
     let ongoingExecution: ReturnType<CronServiceDeps["executeJob"]> | undefined;
 
     // session 创建后立即归组；执行器会在消费首个事件前等待该 Promise。
-    let groupedSessionId: string | undefined;
-    let sessionGrouping: Promise<void> | undefined;
+    const groupSession = createCronSessionGrouper(this.deps, job);
     const onSessionId = (sid: string, tp?: string): Promise<void> | undefined => {
       sessionId = sid;
       if (tp) transcriptPath = tp;
-      if (!this.deps.onSessionCreated) return undefined;
-      if (groupedSessionId === sid) return sessionGrouping;
-      groupedSessionId = sid;
-      sessionGrouping = this.deps.onSessionCreated(job.id, job.name, sid, job.owner).catch((e) => {
-        cronLogger.error("Failed to handle onSessionCreated:", e);
-      });
-      return sessionGrouping;
+      return groupSession(sid);
     };
 
     try {

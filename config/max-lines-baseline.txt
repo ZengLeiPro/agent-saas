@@ -26,7 +26,7 @@ server/src/agent/toolRuntime.ts	1706	production
 server/src/app/config.ts	1503	production
 server/src/app/runtime.ts	3174	production
 server/src/channels/web/channel.ts	4386	production
-server/src/cron/service.ts	1085	production
+server/src/cron/service.ts	1084	production
 server/src/data/billing/pgBillingStore.ts	2319	production
 server/src/data/transcripts/parse.ts	2042	production
 server/src/routes/auth.ts	1812	production
@@ -43,7 +43,7 @@ shared/src/lib/wsEventProcessor.test.ts	1122	test
 shared/src/lib/wsEventProcessor.ts	1024	production
 shared/src/schemas/workflowScenario.ts	1025	production
 web/src/components/BillingManager/index.tsx	2258	production
-web/src/components/DesktopSessionSidebar.tsx	2484	production
+web/src/components/DesktopSessionSidebar.tsx	2458	production
 web/src/components/MessageItem.tsx	1125	production
 web/src/components/MessageList.tsx	1135	production
 web/src/components/MobileSessionList.tsx	1033	production

@@ -1,6 +1,6 @@
 import { apiUrl, resolveApiAssetUrl } from "../lib/apiBase";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Loader2, LogOut, User, ChevronRight, ChevronLeft, FolderClosed, Camera, Lock, UserCog } from "lucide-react";
+import { Plus, Loader2, LogOut, User, ChevronRight, ChevronLeft, Camera, Lock, UserCog } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import { SwipeableRow, type SwipeAction } from "@/components/mobile/SwipeableRow";
 import { PullToRefresh } from "@/components/mobile/PullToRefresh";
@@ -24,12 +24,7 @@ import type { SettingsSectionId } from "@/types/settings";
 import { getSidebarNavItems, formatShortDate, sourceDisplayText, getSessionWaitingLabel } from "@/types/sidebar";
 import type { SessionGroup } from "@/types/sessionGroup";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
-
-function groupKindLabel(kind: SessionGroup["kind"]): string {
-  if (kind === "cron") return "cron";
-  if (kind === "taskboard") return "看板";
-  return "分组";
-}
+import { SessionGroupGlyph, sessionGroupKindLabel } from "./sessionGroupPresentation";
 
 interface MobileSessionListProps {
   sessions: ChatSessionIndexItem[];
@@ -263,7 +258,6 @@ export function MobileSessionList({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showUserMenu]);
 
-
   const navItems = useMemo(
     () => getSidebarNavItems({ isAdmin, personalAgentEnabled }),
     [isAdmin, personalAgentEnabled],
@@ -435,11 +429,6 @@ export function MobileSessionList({
   const renderGroupRow = useCallback(
     (group: SessionGroup) => {
       const groupRowId = `group:${group.groupKey}`;
-      const GroupIcon = group.kind === "cron"
-        ? EntityIcons.cron
-        : group.kind === "taskboard"
-          ? EntityIcons.taskboard
-          : FolderClosed;
       const rowContent = (
         <div
           className={cn(
@@ -450,16 +439,7 @@ export function MobileSessionList({
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-1.5">
-              <GroupIcon
-                className={cn(
-                  "size-3.5 shrink-0",
-                  group.kind === "cron"
-                    ? "text-amber-600 dark:text-amber-300"
-                    : group.kind === "taskboard"
-                      ? "text-violet-600 dark:text-violet-300"
-                      : "text-primary",
-                )}
-              />
+              <SessionGroupGlyph kind={group.kind} className="size-3.5" />
               <span className="truncate text-sm font-medium leading-snug">{group.name}</span>
               {unreadByGroupId.get(group.groupKey) && (
                 <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
@@ -476,7 +456,7 @@ export function MobileSessionList({
             )}
           </div>
           <div className="mt-1 text-xs text-muted-foreground/60">
-            {groupKindLabel(group.kind)} - {group.count} 个会话
+            {sessionGroupKindLabel(group.kind)} - {group.count} 个会话
           </div>
         </div>
       );

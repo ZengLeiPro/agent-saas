@@ -35,6 +35,10 @@ import {
   type TaskboardSessionTitleWriter,
 } from './sessionTitle.js';
 import {
+  groupTaskboardSessionBeforeDispatch,
+  type TaskboardSessionGroupingOptions,
+} from './sessionGrouping.js';
+import {
   TaskboardExecutionUnavailableError,
   TaskboardPermissionError,
   TaskboardValidationError,
@@ -60,7 +64,7 @@ const RECONCILIATION_GRACE_MS = 30_000;
 
 class InvalidTaskboardDispatchPayloadError extends Error {}
 
-export interface TaskboardExecutionCoordinatorOptions {
+export interface TaskboardExecutionCoordinatorOptions extends TaskboardSessionGroupingOptions {
   store: TaskboardExecutionStore;
   scheduler: Pick<RuntimeScheduler, 'enqueue' | 'enqueueCreateOnly'>;
   runStore: Pick<RunStore, 'get'>;
@@ -81,20 +85,6 @@ export interface TaskboardExecutionCoordinatorOptions {
   writeSessionTitle?: TaskboardSessionTitleWriter;
   /** 标题落盘后的缓存或实时事件通知，不得影响 durable dispatch。 */
   onSessionTitleUpdated?: (update: TaskboardSessionTitleUpdate) => void | Promise<void>;
-  groupTaskboardSession?: (input: {
-    boardId: string;
-    boardName: string;
-    sessionId: string;
-    owner: string;
-  }) => Promise<{ id: string }>;
-  /** 分组已持久化后的跨进程通知钩子，不得影响 durable dispatch。 */
-  onSessionGrouped?: (event: {
-    boardId: string;
-    boardName: string;
-    sessionId: string;
-    groupId: string;
-    userId: string;
-  }) => void | Promise<void>;
   logger?: {
     info(message: string): void;
     warn(message: string): void;
@@ -455,35 +445,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     try {
       const canonical = canonicalizeDispatchPayload(dispatch, this.options.agentCwd);
       await this.options.sessionCatalog.upsert(canonical.session);
-      if (this.options.groupTaskboardSession) {
-        const board = await this.options.store.getExecutionModelContext({
-          tenantId: dispatch.tenantId,
-          ownerUserId: dispatch.ownerUserId,
-          username: canonical.session.username,
-        }, dispatch.taskId);
-        if (!board.boardId || !board.boardName) {
-          throw new Error(`任务看板分组上下文不完整：${dispatch.taskId}`);
-        }
-        const group = await this.options.groupTaskboardSession({
-          boardId: board.boardId,
-          boardName: board.boardName,
-          sessionId: canonical.session.sessionId,
-          owner: dispatch.ownerUserId,
-        });
-        try {
-          await this.options.onSessionGrouped?.({
-            boardId: board.boardId,
-            boardName: board.boardName,
-            sessionId: canonical.session.sessionId,
-            groupId: group.id,
-            userId: dispatch.ownerUserId,
-          });
-        } catch (error) {
-          this.options.logger?.warn(
-            `Taskboard session group notification failed: session=${canonical.session.sessionId} error=${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-      }
+      await groupTaskboardSessionBeforeDispatch(this.options, dispatch, canonical.session);
       const titleUpdate = await (this.options.writeSessionTitle ?? writeTaskboardSessionTitle)({
         store: this.options.store,
         sessionId: canonical.session.sessionId,

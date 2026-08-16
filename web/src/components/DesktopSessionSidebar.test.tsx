@@ -76,13 +76,17 @@ const session: ChatSessionIndexItem = {
   updatedAt: 1,
 };
 
-function renderSidebar(activeTab: AppTab, sessions: ChatSessionIndexItem[] = [session]) {
+function renderSidebar(
+  activeTab: AppTab,
+  sessions: ChatSessionIndexItem[] = [session],
+  sidebarLayout: "single" | "double" = "single",
+) {
   return render(
     <DesktopSessionSidebar
       sessions={sessions}
       activeSessionId={session.id}
       activeTab={activeTab}
-      sidebarLayout="single"
+      sidebarLayout={sidebarLayout}
       onSelect={vi.fn()}
       onNew={vi.fn()}
       onTabChange={vi.fn()}
@@ -128,7 +132,7 @@ describe("桌面侧边栏会话激活态", () => {
     expect(screen.queryByLabelText("会话运行中")).toBeNull();
   });
 
-  it("任务看板分组使用独立类型文案与 violet 图标", () => {
+  it.each(["single", "double"] as const)("%s 布局的任务看板分组使用 violet 图标", (sidebarLayout) => {
     groupsState.current = [{
       id: "taskboard:board-1",
       userId: "user-1",
@@ -140,9 +144,9 @@ describe("桌面侧边栏会话激活态", () => {
       updatedAt: 1,
     }];
 
-    const { container } = renderSidebar("chat");
+    const { container } = renderSidebar("chat", [session], sidebarLayout);
 
-    expect(screen.getByText("研发交付")).toBeTruthy();
+    expect(screen.getAllByText("研发交付").length).toBeGreaterThan(0);
     expect(container.querySelector(".text-violet-600")).not.toBeNull();
   });
 

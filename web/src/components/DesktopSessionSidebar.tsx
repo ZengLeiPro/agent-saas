@@ -11,7 +11,6 @@ import {
   Loader2,
   LogOut,
   User,
-  Folder,
   FolderPlus,
   ChevronLeft,
   ChevronRight,
@@ -70,6 +69,12 @@ import { getSidebarNavItems, formatShortDate, getSessionWaitingLabel, getGroupWa
 import type { SessionGroup, SessionListEntry } from "@/types/sessionGroup";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 import { compareSessionActivity, formatBillingCredits } from "./desktopSessionSidebarUtils";
+import {
+  CompactSessionGroupLeadingIcon,
+  SessionGroupGlyph,
+  SessionGroupLeadingIcon,
+  sessionGroupKindLabel,
+} from "./sessionGroupPresentation";
 
 interface DesktopSessionSidebarProps {
   sessions: ChatSessionIndexItem[];
@@ -162,54 +167,6 @@ function CompactSessionLeadingIcon({ selected = false }: { selected?: boolean })
     );
   }
   return <MessageSquare className="size-4 shrink-0 text-muted-foreground/70" aria-hidden="true" />;
-}
-
-/** 紧凑模式下用颜色和图形区分人工分组、Cron 与任务看板。 */
-function CompactGroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
-  if (kind === "cron") {
-    return <Clock className="size-4 shrink-0 fill-amber-100 text-amber-600 dark:fill-amber-900/35 dark:text-amber-300" aria-hidden="true" />;
-  }
-  if (kind === "taskboard") {
-    const TaskboardIcon = EntityIcons.taskboard;
-    return <TaskboardIcon className="size-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" />;
-  }
-
-  return (
-    <Folder
-      className="size-4 shrink-0 fill-brand-100 text-brand-500/80 dark:fill-brand-900/35 dark:text-brand-300/80"
-      aria-hidden="true"
-    />
-  );
-}
-
-function GroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
-  const Icon = kind === "cron"
-    ? Clock
-    : kind === "taskboard"
-      ? EntityIcons.taskboard
-      : Folder;
-
-  return (
-    <span
-      className={cn(
-        "flex size-10 shrink-0 items-center justify-center rounded-full ring-1",
-        kind === "cron"
-          ? "bg-amber-50 text-amber-600 ring-amber-100 dark:bg-amber-900/25 dark:text-amber-300 dark:ring-amber-700/30"
-          : kind === "taskboard"
-            ? "bg-violet-50 text-violet-600 ring-violet-100 dark:bg-violet-900/25 dark:text-violet-300 dark:ring-violet-700/30"
-            : "bg-brand-50 text-brand-600 ring-brand-100 dark:bg-brand-900/35 dark:text-brand-300 dark:ring-brand-800",
-      )}
-      aria-hidden="true"
-    >
-      <Icon className="size-5" />
-    </span>
-  );
-}
-
-function groupKindLabel(kind: SessionGroup["kind"]): string {
-  if (kind === "cron") return "cron";
-  if (kind === "taskboard") return "看板";
-  return "分组";
 }
 
 function SessionRow({
@@ -1823,7 +1780,7 @@ export function DesktopSessionSidebar({
                   <SessionRow key={entry.session.id} session={entry.session} active={!singleSelectionMode && entry.session.id === highlightedSessionId} isLoading={isLoading} onSelect={handleSelect} onDelete={onDelete} onRename={onRename} onAutoTitle={onAutoTitle} onShare={setShareSessionId} actionMenuId={actionMenuId} setActionMenuId={setActionMenuId} actionMenuRef={actionMenuRef} setRenameSessionId={setRenameSessionId} onAddToGroup={isReadOnlyGroups ? undefined : setAddToGroupSessionId} onCompact={entry.session.id === activeSessionId && onCompact ? () => setCompactDialogOpen(true) : undefined} selectionMode={singleSelectionMode} selected={selectedSingleSessionIds.has(entry.session.id)} singleColumn compact={compactList} />
                 ) : compactList ? (
                   <button key={entry.group.groupKey} type="button" className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted" onClick={() => { setActionMenuId(null); setSingleExpandedGroupKey(entry.group.groupKey); void onLoadGroupSessions?.(entry.group.groupKey); }}>
-                    <CompactGroupLeadingIcon kind={entry.group.kind} />
+                    <CompactSessionGroupLeadingIcon kind={entry.group.kind} />
                     {unreadByGroupId.get(entry.group.groupKey) && <GroupUnreadDot />}
                     <span className="min-w-0 flex-1 truncate text-sm font-medium leading-5">
                       {entry.group.name}
@@ -1839,10 +1796,10 @@ export function DesktopSessionSidebar({
                   </button>
                 ) : (
                   <button key={entry.group.groupKey} type="button" className="group flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-muted" onClick={() => { setActionMenuId(null); setSingleExpandedGroupKey(entry.group.groupKey); void onLoadGroupSessions?.(entry.group.groupKey); }}>
-                    <GroupLeadingIcon kind={entry.group.kind} />
+                    <SessionGroupLeadingIcon kind={entry.group.kind} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">{entry.group.name}</span>
-                      <span className="mt-1 block truncate text-xs text-muted-foreground/60">{groupKindLabel(entry.group.kind)} · {entry.group.count} 个会话</span>
+                      <span className="mt-1 block truncate text-xs text-muted-foreground/60">{sessionGroupKindLabel(entry.group.kind)} · {entry.group.count} 个会话</span>
                     </span>
                     {unreadByGroupId.get(entry.group.groupKey) && <GroupUnreadDot />}
                     <span className="flex shrink-0 flex-col items-end gap-0.5">
@@ -2237,6 +2194,7 @@ export function DesktopSessionSidebar({
                         )}
                         onClick={() => handleViewClick(g.id)}
                       >
+                        <SessionGroupGlyph kind={g.kind} className="mr-2 size-4" />
                         <span className="truncate flex-1 text-left">
                           {g.name}
                         </span>

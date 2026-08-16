@@ -25,10 +25,12 @@ on:
       - 'pnpm-workspace.yaml'
       - '.github/workflows/acs-sandbox.yml'
       - '.github/scripts/acs-classify.sh'
+      - '.github/scripts/redeliver_acr_webhook.py'
       - 'scripts/apply-orchestrator-env.py'
       - 'scripts/acs-browser-lease-e2e.mjs'
       - 'scripts/acs-verify-per-session.py'
       - 'scripts/test_acs_operational_scripts.py'
+      - 'scripts/test_acr_webhook_redelivery.py'
   workflow_dispatch:
     inputs:
       force:
@@ -154,12 +156,15 @@ jobs:
         run: pnpm -F acs-orchestrator test
 
       - name: Test ACS operational scripts
-        run: python3 -m unittest scripts/test_acs_operational_scripts.py
+        run: >-
+          python3 -m unittest
+          scripts/test_acs_operational_scripts.py
+          scripts/test_acr_webhook_redelivery.py
 
   # ── 方案 C（2026-07-04 曾磊拍板）: 镜像构建全部在阿里云 ACR EE 源码构建完成 ──
   # GitHub Actions 只做两件事:
   #   gate: typecheck + test（push/dispatch 都跑, 代码门禁）
-  #   build-deploy (dispatch only): 调 ACR OpenAPI 触发云端构建 → 轮询到
+  #   build-deploy (dispatch only): 等待 push webhook 触发的 ACR 云端构建 → 轮询到
   #     SUCCESS → scp orchestrator 源码到 ECS → drain 旧进程(SIGUSR2) →
   #     systemd 自动拉起新代码+新镜像 env → health/smoke → 失败自动回滚 env。
   # 收益: push 零跨境镜像流量、零 GitHub artifact、build 5-10min(原 25-35min)、
@@ -167,7 +172,7 @@ jobs:
   # ACR 侧一次性配置(2026-07-04 完成): GitHub OAuth 绑定 + source repo
   #   ZengLeiPro/agent-saas + build rule crbr-xgrdo809of1uj6in
   #   (branches:main, Dockerfile /, tag=${GIT_PUSH_DATE:yyyyMMddHHmm}-${GIT_COMMIT_ID:6},
-  #   linux/amd64, 自动构建关闭、海外源智能加速开启、缓存开启)。
+  #   linux/amd64, push webhook 自动构建、海外源智能加速开启、缓存开启)。
   gate:
     name: Gate (typecheck + test)
     runs-on: ubuntu-latest
@@ -200,7 +205,10 @@ jobs:
         run: pnpm -F acs-orchestrator test
 
       - name: Test ACS operational scripts
-        run: python3 -m unittest scripts/test_acs_operational_scripts.py
+        run: >-
+          python3 -m unittest
+          scripts/test_acs_operational_scripts.py
+          scripts/test_acr_webhook_redelivery.py
 
   build-deploy:
     name: ACR Cloud Build and Deploy
@@ -372,6 +380,9 @@ jobs:
       - name: Wait for ACR auto-build of HEAD (poll every 30s)
         id: wait
         if: steps.necessity.outputs.deploy_needed == 'true'
+        env:
+          ACR_GITHUB_HOOK_ID: "649018221"
+          ACR_WEBHOOK_REDELIVERY_TOKEN: ${{ secrets.ACS_WEBHOOK_REDELIVERY_TOKEN }}
         run: |
           set -euo pipefail
           : "${ALIYUN_AK:?Missing secret ALIYUN_ACCESS_KEY_ID}"
@@ -387,6 +398,7 @@ jobs:
           missing_polls=0
           query_errors=0
           build_record_found=false
+          redelivery_checked=false
           echo "Looking for ACR build record with tag suffix -$SHA6 (HEAD $GITHUB_SHA) ..."
           while true; do
             poll_index=$((poll_index + 1))
@@ -437,6 +449,21 @@ jobs:
                   exit 1
                 fi
                 missing_polls=$((missing_polls + 1))
+                if [ "$missing_polls" -eq 2 ] && [ "$redelivery_checked" = "false" ]; then
+                  redelivery_checked=true
+                  if [ -z "${ACR_WEBHOOK_REDELIVERY_TOKEN:-}" ]; then
+                    echo "::warning title=ACR webhook recovery disabled::Missing secret ACS_WEBHOOK_REDELIVERY_TOKEN; exact-SHA auto-redelivery is unavailable."
+                  elif redelivery_output=$(python3 .github/scripts/redeliver_acr_webhook.py \
+                    --repository "$GITHUB_REPOSITORY" \
+                    --hook-id "$ACR_GITHUB_HOOK_ID" \
+                    --sha "$GITHUB_SHA" 2>&1); then
+                    echo "$redelivery_output"
+                  else
+                    redelivery_exit=$?
+                    echo "$redelivery_output"
+                    echo "::warning title=ACR webhook auto-redelivery skipped::No safe exact-SHA delivery was redelivered (exit $redelivery_exit); polling continues."
+                  fi
+                fi
                 if [ "$missing_polls" -ge "$MAX_MISSING_POLLS" ]; then
                   echo "::error title=ACR build record missing::No ACR build record for current main $GITHUB_SHA appeared after $missing_polls checks. Verify the ACR source webhook/build rule, then dispatch again; a later image will not be substituted."
                   exit 1

@@ -112,8 +112,20 @@ export class EgressDispatcherRegistry {
     return this.cached;
   }
 
-  /** 该 URL 是否应走代理，以及走哪个 dispatcher */
+  /** 按配置的 matchDomains 判断该 URL 是否走代理。 */
   resolve(url: string | URL): { dispatcher: Dispatcher | null; failOpen: boolean } {
+    return this.resolveWithPolicy(url, false);
+  }
+
+  /** WebSearch/WebFetch 统一交给代理分流，仅保留 bypassDomains 强制直连。 */
+  resolveWebTool(url: string | URL): { dispatcher: Dispatcher | null; failOpen: boolean } {
+    return this.resolveWithPolicy(url, true);
+  }
+
+  private resolveWithPolicy(
+    url: string | URL,
+    proxyAll: boolean,
+  ): { dispatcher: Dispatcher | null; failOpen: boolean } {
     const state = this.ensureDispatcher();
     if (!state.agent) return { dispatcher: null, failOpen: state.serverConfig.failOpen };
     let hostname: string;
@@ -122,7 +134,10 @@ export class EgressDispatcherRegistry {
     } catch {
       return { dispatcher: null, failOpen: state.serverConfig.failOpen };
     }
-    if (!shouldProxyHost(hostname, state.serverConfig)) {
+    const routingConfig = proxyAll
+      ? { ...state.serverConfig, matchDomains: [] }
+      : state.serverConfig;
+    if (!shouldProxyHost(hostname, routingConfig)) {
       return { dispatcher: null, failOpen: state.serverConfig.failOpen };
     }
     return { dispatcher: state.agent, failOpen: state.serverConfig.failOpen };
@@ -159,15 +174,7 @@ function isProxyTransportError(err: unknown): boolean {
 }
 
 /**
- * 构造一个 egress-aware 的 fetch，签名与全局 fetch 一致，可直接作为
- * `fetchImpl` 注入 webToolProvider / searchProviders，无需改动它们的 SSRF 逻辑。
- *
- * ⚠️ 走代理时必须用 `undici` 包自带的 fetch，不能用全局 fetch：
- * Node 内置的 undici 与 node_modules 里的 `undici` 是**两个独立实例**，把外部
- * ProxyAgent 交给全局 fetch 会在内部接口校验时直接失败
- * （`TypeError: invalid onRequestStart method`），耗时仅几毫秒，极易被误判成
- * 「网络不通」。2026-07-25 生产实测：curl 经同一代理 204/192ms，全局 fetch +
- * 外部 ProxyAgent 9ms 失败，undici.fetch + 同一 ProxyAgent 204/240ms 成功。
+ * 构造按 matchDomains 分流的通用 egress fetch，供模型、OAuth 和连接器使用。
  */
 export function createEgressFetch(
   registry: EgressDispatcherRegistry,
@@ -175,12 +182,48 @@ export function createEgressFetch(
   baseFetch: typeof fetch = fetch,
   proxyFetch: typeof undiciFetch = undiciFetch,
 ): typeof fetch {
+  return createResolvedEgressFetch(
+    url => registry.resolve(url),
+    logger,
+    baseFetch,
+    proxyFetch,
+  );
+}
+
+/**
+ * WebSearch/WebFetch 的来源不可预知，不能靠静态域名白名单覆盖。
+ * 代理启用后统一交给代理规则分流，同时继续尊重 bypassDomains 与 fail-open。
+ */
+export function createWebToolEgressFetch(
+  registry: EgressDispatcherRegistry,
+  logger: EgressDispatcherLogger = { warn: () => undefined },
+  baseFetch: typeof fetch = fetch,
+  proxyFetch: typeof undiciFetch = undiciFetch,
+): typeof fetch {
+  return createResolvedEgressFetch(
+    url => registry.resolveWebTool(url),
+    logger,
+    baseFetch,
+    proxyFetch,
+  );
+}
+
+/**
+ * ⚠️ 走代理时必须用 `undici` 包自带的 fetch，不能用全局 fetch：
+ * Node 内置的 undici 与 node_modules 里的 `undici` 是**两个独立实例**，把外部
+ * ProxyAgent 交给全局 fetch 会在内部接口校验时直接失败。
+ */
+function createResolvedEgressFetch(
+  resolve: (url: string | URL) => { dispatcher: Dispatcher | null; failOpen: boolean },
+  logger: EgressDispatcherLogger,
+  baseFetch: typeof fetch,
+  proxyFetch: typeof undiciFetch,
+): typeof fetch {
   return async function egressFetch(input, init) {
-    // Request 形态无法安全拆成 (url, init) 交给另一个 fetch 实现（body 是流），
-    // 当前调用方（WebFetch/WebSearch）只传 string|URL；遇到 Request 一律直连。
+    // Request 形态无法安全拆成 (url, init) 交给另一个 fetch 实现（body 是流）。
     if (input instanceof Request) return baseFetch(input, init);
 
-    const { dispatcher, failOpen } = registry.resolve(input as string | URL);
+    const { dispatcher, failOpen } = resolve(input as string | URL);
     if (!dispatcher) return baseFetch(input, init);
 
     const target = typeof input === 'string' ? input : String(input);

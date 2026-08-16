@@ -265,8 +265,8 @@ export function EgressConfigManager() {
             )}
 
             <Field
-              label="走代理的域名"
-              description="每行一个域名后缀，example.com 会命中 a.example.com。留空表示全部走代理——不建议，会把境内流量也绕出去。"
+              label="其他 Server 请求走代理的域名"
+              description="WebSearch/WebFetch 启用代理后会统一交给代理分流，不受此列表限制。这里控制模型、OAuth 和连接器等其他请求；每行一个域名后缀，留空表示全部走代理。"
             >
               <Textarea
                 aria-label="走代理的域名"

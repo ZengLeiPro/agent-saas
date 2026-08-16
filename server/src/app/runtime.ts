@@ -1472,6 +1472,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     refreshEgressProxyCredential,
     egressDispatchers,
     egressFetch,
+    webToolEgressFetch,
     getNotionConnection,
     disconnectNotionConnection,
     codexWebSocketPool,
@@ -1818,9 +1819,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ...(artifactService ? { artifactService } : {}),
     ...(resolvedServerRemote ? { serverRemote: resolvedServerRemote } : {}),
     ...(resolvedWebTools ? { webTools: resolvedWebTools } : {}),
-    // WebSearch/WebFetch 走 egress-aware fetch：按平台「网络出口」配置决定
-    // 逐域名走代理还是直连；未启用时内部直接透传全局 fetch。
-    webFetchImpl: egressFetch,
+    // Web 工具统一交给代理规则分流；bypassDomains 强制直连，传输故障仍按 fail-open 降级。
+    webFetchImpl: webToolEgressFetch,
     ...(resolvedImageGenTools ? { imageGenTools: resolvedImageGenTools } : {}),
     ...(resolvedSttRuntimeConfig.audioTranscribeConfig ? { audioTranscribeTools: resolvedSttRuntimeConfig.audioTranscribeConfig } : {}),
     // PG 直写按次计费事件；file backend 不配置时工具跳过扣费事件。

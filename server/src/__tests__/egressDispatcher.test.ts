@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   EgressDispatcherRegistry,
   createEgressFetch,
+  createWebToolEgressFetch,
   type EgressConfigSource,
 } from '../runtime/egressDispatcher.js';
 import { DEFAULT_EGRESS_CONFIG, type EgressConfig } from '../runtime/egressPolicy.js';
@@ -101,12 +102,16 @@ describe('EgressDispatcherRegistry', () => {
 });
 
 describe('createEgressFetch', () => {
-  function harness(serverCfg: Partial<EgressConfig['server']>) {
+  function harness(
+    serverCfg: Partial<EgressConfig['server']>,
+    routing: 'configured' | 'web-tool' = 'configured',
+  ) {
     const { registry } = makeRegistry(makeSource(serverCfg));
     const baseFetch = vi.fn(async () => new Response('direct-ok'));
     const proxyFetch = vi.fn(async () => new Response('proxy-ok'));
     const logger = { warn: vi.fn() };
-    const egressFetch = createEgressFetch(
+    const factory = routing === 'web-tool' ? createWebToolEgressFetch : createEgressFetch;
+    const egressFetch = factory(
       registry,
       logger,
       baseFetch as unknown as typeof fetch,
@@ -136,6 +141,33 @@ describe('createEgressFetch', () => {
     expect(proxyFetch).toHaveBeenCalledTimes(1);
     expect(baseFetch).not.toHaveBeenCalled();
     expect((proxyFetch.mock.calls[0] as any[])[1]).toHaveProperty('dispatcher');
+  });
+
+  it('Web 工具忽略 matchDomains，把未知来源交给代理分流', async () => {
+    const { egressFetch, baseFetch, proxyFetch } = harness({
+      enabled: true,
+      proxyUrl: 'http://127.0.0.1:7890',
+      matchDomains: ['openai.com'],
+    }, 'web-tool');
+
+    const response = await egressFetch('https://www.pewresearch.org/report');
+    expect(await response.text()).toBe('proxy-ok');
+    expect(proxyFetch).toHaveBeenCalledTimes(1);
+    expect(baseFetch).not.toHaveBeenCalled();
+  });
+
+  it('Web 工具仍尊重 bypassDomains 强制直连', async () => {
+    const { egressFetch, baseFetch, proxyFetch } = harness({
+      enabled: true,
+      proxyUrl: 'http://127.0.0.1:7890',
+      matchDomains: ['openai.com'],
+      bypassDomains: ['kaiyan.net'],
+    }, 'web-tool');
+
+    const response = await egressFetch('https://api.kaiyan.net/health');
+    expect(await response.text()).toBe('direct-ok');
+    expect(baseFetch).toHaveBeenCalledTimes(1);
+    expect(proxyFetch).not.toHaveBeenCalled();
   });
 
   it('Request 形态无法安全转交另一个 fetch 实现，一律直连', async () => {

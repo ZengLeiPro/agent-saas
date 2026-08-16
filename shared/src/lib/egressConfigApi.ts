@@ -18,11 +18,11 @@ export interface EgressServerProxyConfig {
   /** 代理地址，如 http://172.16.177.77:7890；支持 http/https/socks5 */
   proxyUrl: string;
   /**
-   * 走代理的域名列表（后缀匹配，example.com 命中 a.example.com）。
-   * 留空且 enabled=true 时视为「全部走代理」——不推荐，会把境内流量也绕出去。
+   * 模型、OAuth 和连接器等通用请求的代理域名列表（后缀匹配）。
+   * WebSearch/WebFetch 来源不可预知，启用代理后不受此列表限制。
    */
   matchDomains: string[];
-  /** 永不走代理的域名（优先级高于 matchDomains） */
+  /** 永不走代理的域名；WebSearch/WebFetch 同样尊重该列表 */
   bypassDomains: string[];
   /** 单请求经代理的超时（毫秒） */
   timeoutMs: number;

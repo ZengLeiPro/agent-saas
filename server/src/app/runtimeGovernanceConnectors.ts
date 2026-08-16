@@ -42,7 +42,12 @@ import { GoogleWorkspaceOAuthService, PgGoogleWorkspaceOAuthStateStore, resolveG
 import { connectNotionCredential, disconnectNotion, getLiveNotionConnection, resolveNotionRuntimeEnv, type NotionConnectionView } from '../connectors/notion.js';
 import { SignupConfigStore } from '../data/signupConfig.js';
 import { EgressConfigStore } from '../data/egressConfig.js';
-import { EgressDispatcherRegistry, createEgressFetch, createEgressWebSocketConnector } from '../runtime/egressDispatcher.js';
+import {
+  EgressDispatcherRegistry,
+  createEgressFetch,
+  createEgressWebSocketConnector,
+  createWebToolEgressFetch,
+} from '../runtime/egressDispatcher.js';
 import type { EgressConfig } from '../runtime/egressPolicy.js';
 import { resolveDwsConnectorRunEnv, resolveFeishuConnectorRunEnv } from '../runtime/connectorRunEnv.js';
 import type { FeishuTokenBroker } from '../feishu/tokenBroker.js';
@@ -617,6 +622,7 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
     egressLogger,
   );
   const egressFetch = createEgressFetch(egressDispatchers, egressLogger);
+  const webToolEgressFetch = createWebToolEgressFetch(egressDispatchers, egressLogger);
   const getNotionConnection = connectorConnectionStore && secretVault
     ? (identity: { userId: string; username: string; tenantId: string }) => getLiveNotionConnection({
         ...identity,
@@ -895,6 +901,7 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
     refreshEgressProxyCredential,
     egressDispatchers,
     egressFetch,
+    webToolEgressFetch,
     getNotionConnection,
     disconnectNotionConnection,
     codexWebSocketPool,

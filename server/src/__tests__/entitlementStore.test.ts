@@ -94,6 +94,8 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
     const settings = structuredClone(DEFAULT_TENANT_SETTINGS);
     settings.features.imageGenEnabled = true;
     settings.features.cronEnabled = false;
+    settings.features.debugModeAllowed = true;
+    settings.features.debugModeEnabled = false;
     settings.quotas.maxUsers = 25;
     settings.models.allowedModels = ['group/model-b', 'group/model-a'];
 
@@ -109,7 +111,7 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
     expect(result).toEqual({
       tenantsProjected: 1,
       scopesProjected: 2,
-      policiesProjected: 22,
+      policiesProjected: 23,
       issuesRecorded: 1,
     });
     expect(queries.some(item =>
@@ -130,6 +132,11 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
     expect(queries.some(item =>
       item.sql.includes('test_tenant_policies')
       && item.params?.[1] === 'automation.cron.enabled'
+      && item.params?.[2] === 'false',
+    )).toBe(true);
+    expect(queries.some(item =>
+      item.sql.includes('test_tenant_policies')
+      && item.params?.[1] === 'runtime.debug_mode.enabled'
       && item.params?.[2] === 'false',
     )).toBe(true);
     expect(queries.some(item =>

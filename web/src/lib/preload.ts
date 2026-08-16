@@ -4,7 +4,7 @@
 
 import { apiUrl } from "./apiBase";
 import { DEFAULT_TENANT_ID } from "@agent/shared";
-import type { UserPreferences } from "@agent/shared";
+import type { TenantFeatureFlags, UserPreferences } from "@agent/shared";
 import { TOKEN_KEY } from "./constants";
 
 const token = localStorage.getItem(TOKEN_KEY);
@@ -13,7 +13,7 @@ const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
 // --- Auth 预取（带重试，等待后端就绪） ---
 
 export type AuthPreloadResult =
-  | { status: "authenticated"; user: { id: string; username: string; role: "admin" | "user"; tenantId: string; isSuperAdmin?: boolean; realName?: string; position?: string; phone?: string; phoneVerifiedAt?: string; avatar?: string; avatarVersion?: number; debugMode?: boolean; preferences?: UserPreferences } }
+  | { status: "authenticated"; user: { id: string; username: string; role: "admin" | "user"; tenantId: string; isSuperAdmin?: boolean; realName?: string; position?: string; phone?: string; phoneVerifiedAt?: string; avatar?: string; avatarVersion?: number; debugMode?: boolean; tenantFeatures?: TenantFeatureFlags; preferences?: UserPreferences } }
   | { status: "no-auth" }
   | { status: "unauthenticated" }
   | { status: "error" };
@@ -33,7 +33,7 @@ async function fetchAuth(): Promise<AuthPreloadResult> {
     try {
       const res = await fetch(apiUrl("/api/auth/me"), { headers });
       if (res.ok) {
-        const data = await res.json() as { id: string; username: string; role: "admin" | "user"; tenantId: string; isSuperAdmin?: boolean; realName?: string; position?: string; phone?: string; phoneVerifiedAt?: string; avatar?: string; avatarVersion?: number; debugMode?: boolean; preferences?: UserPreferences };
+        const data = await res.json() as { id: string; username: string; role: "admin" | "user"; tenantId: string; isSuperAdmin?: boolean; realName?: string; position?: string; phone?: string; phoneVerifiedAt?: string; avatar?: string; avatarVersion?: number; debugMode?: boolean; tenantFeatures?: TenantFeatureFlags; preferences?: UserPreferences };
         return { status: "authenticated", user: data };
       }
       if (res.status === 404) {

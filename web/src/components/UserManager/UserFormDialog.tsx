@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { DEFAULT_TENANT_ID } from "@/components/TenantManager/types";
+import { DEFAULT_TENANT_ID, isDebugModeAvailable } from "@/components/TenantManager/types";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { useAuth } from "@/contexts/AuthContext";
 import { ROLE_POSITION_OPTIONS } from "@/lib/roleOptions";
@@ -59,7 +59,7 @@ export function UserFormDialog({
 }: UserFormDialogProps) {
   const isEdit = editingUser !== null;
   const { user: currentUser, isPlatformAdmin } = useAuth();
-  const { tenants } = useTenants();
+  const { tenants, loading: tenantsLoading } = useTenants();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"admin" | "user">("user");
@@ -83,6 +83,13 @@ export function UserFormDialog({
   const visibleTenants = isPlatformAdmin
     ? tenants
     : tenants.filter((tenant) => tenant.id !== DEFAULT_TENANT_ID || tenant.id === tenantId);
+  const targetTenantFeatures = isPlatformAdmin
+    ? tenants.find((tenant) => tenant.id === tenantId)?.settings?.features
+    : currentUser?.tenantFeatures;
+  const debugModeAvailabilityResolved = tenantId === DEFAULT_TENANT_ID
+    || !isPlatformAdmin
+    || !tenantsLoading;
+  const debugModeAvailable = isDebugModeAvailable(tenantId, targetTenantFeatures);
   const positionOptions = position && !ROLE_POSITION_OPTIONS.some((item) => item === position)
     ? [position, ...ROLE_POSITION_OPTIONS]
     : ROLE_POSITION_OPTIONS;
@@ -104,6 +111,10 @@ export function UserFormDialog({
       setError("");
     }
   }, [open, editingUser]);
+
+  useEffect(() => {
+    if (debugModeAvailabilityResolved && !debugModeAvailable) setDebugMode(false);
+  }, [debugModeAvailabilityResolved, debugModeAvailable]);
 
   const handleSubmit = async () => {
     if (!isEdit && !username.trim()) {
@@ -150,7 +161,7 @@ export function UserFormDialog({
         realName: realName.trim() || undefined,
         position: position.trim() || undefined,
         dingtalkStaffId: dingtalkStaffId.trim() || undefined,
-        debugMode,
+        debugMode: debugModeAvailable && debugMode,
         permissions: hasPermissions ? permissions : undefined,
         tenantId: isPlatformAdmin ? tenantId : undefined,
       });
@@ -274,21 +285,23 @@ export function UserFormDialog({
               placeholder="可选，用于关联钉钉身份"
             />
           </div>
-          <div className="flex items-start justify-between gap-4 rounded-lg border border-border px-3 py-2.5">
-            <div className="space-y-1">
-              <Label htmlFor="form-debug-mode">调试模式</Label>
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                关闭时，该用户只能看到 Agent 输出；思考、工具调用和技能执行细节会显示为等待提示。
-              </p>
+          {debugModeAvailable && (
+            <div className="flex items-start justify-between gap-4 rounded-lg border border-border px-3 py-2.5">
+              <div className="space-y-1">
+                <Label htmlFor="form-debug-mode">调试模式</Label>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  平台与组织均已开放。关闭时，该用户只能看到 Agent 输出；思考、工具调用和技能执行细节会显示为等待提示。
+                </p>
+              </div>
+              <Switch
+                id="form-debug-mode"
+                checked={debugMode}
+                onCheckedChange={setDebugMode}
+                disabled={loading}
+                aria-label="调试模式"
+              />
             </div>
-            <Switch
-              id="form-debug-mode"
-              checked={debugMode}
-              onCheckedChange={setDebugMode}
-              disabled={loading}
-              aria-label="调试模式"
-            />
-          </div>
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="form-maxturns">最大轮次</Label>

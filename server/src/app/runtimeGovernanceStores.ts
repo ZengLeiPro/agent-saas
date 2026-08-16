@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isDebugModeAvailable } from '../../../shared/src/types/tenant.js';
 import type { AppConfig } from '../types/index.js';
 import { serverLogger } from '../utils/logger.js';
 import { PgEventStore } from '../runtime/pgEventStore.js';
@@ -364,7 +365,7 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
             return typeof value === 'boolean' ? value : fallback;
           };
           const modelScope = snapshot.scopes?.find(scope => scope.resourceType === 'model');
-          await tenantStore!.updateSettings(tenantId, {
+          const updatedSettings = await tenantStore!.updateSettings(tenantId, {
             ...current,
             features: {
               ...current.features,
@@ -373,6 +374,15 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
               mcpEnabled: bool('connector.mcp.enabled', current.features.mcpEnabled),
               customSkillsEnabled: bool('skill.custom.enabled', current.features.customSkillsEnabled),
               debugModeAllowed: bool('runtime.debug_mode.allowed', current.features.debugModeAllowed),
+              debugModeEnabled: bool(
+                'runtime.debug_mode.allowed',
+                current.features.debugModeAllowed,
+              )
+                ? bool(
+                    'runtime.debug_mode.enabled',
+                    current.features.debugModeEnabled ?? current.features.debugModeAllowed,
+                  )
+                : false,
               autoCompactEnabled: bool('session.auto_compact.enabled', current.features.autoCompactEnabled),
               personalAgentEnabled: bool('agent.personal.enabled', current.features.personalAgentEnabled ?? true),
               kbEnabled: bool('knowledge.org.enabled', current.features.kbEnabled ?? false),
@@ -405,6 +415,9 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
               requireDingtalkBinding: bool('security.dingtalk_binding.required', current.security.requireDingtalkBinding),
             },
           });
+          if (userStore && !isDebugModeAvailable(tenantId, updatedSettings.features)) {
+            await userStore.disableDebugModeForTenant(tenantId);
+          }
         },
         assignment: async payload => {
           const tenantId = typeof payload.tenantId === 'string' ? payload.tenantId : '';

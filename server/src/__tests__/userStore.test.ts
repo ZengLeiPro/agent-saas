@@ -77,6 +77,43 @@ describe("UserStore user ids", () => {
   });
 });
 
+describe("UserStore debug mode cascade", () => {
+  it("disables every enabled user in the target tenant only", async () => {
+    const { store, filePath } = await tempUserStore();
+    const first = await store.create({
+      username: "debug-first",
+      password: "password123",
+      role: "user",
+      createdBy: "system",
+      tenantId: "tenant-a",
+      debugMode: true,
+    });
+    const second = await store.create({
+      username: "debug-second",
+      password: "password123",
+      role: "user",
+      createdBy: "system",
+      tenantId: "tenant-a",
+      debugMode: true,
+    });
+    const other = await store.create({
+      username: "debug-other",
+      password: "password123",
+      role: "user",
+      createdBy: "system",
+      tenantId: "tenant-b",
+      debugMode: true,
+    });
+
+    await expect(store.disableDebugModeForTenant("tenant-a")).resolves.toBe(2);
+
+    const reloaded = new UserStore(filePath);
+    expect(reloaded.findById(first.id)?.debugMode).toBeUndefined();
+    expect(reloaded.findById(second.id)?.debugMode).toBeUndefined();
+    expect(reloaded.findById(other.id)?.debugMode).toBe(true);
+  });
+});
+
 describe("UserStore phone uniqueness", () => {
   it("enforces phone globally across phone fields and phone-like usernames", async () => {
     const { store } = await tempUserStore();

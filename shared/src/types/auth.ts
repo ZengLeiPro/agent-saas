@@ -24,7 +24,10 @@ export interface TenantFeatureFlags {
   cronEnabled: boolean;
   mcpEnabled: boolean;
   customSkillsEnabled: boolean;
+  /** 平台是否授权当前组织使用调试模式。 */
   debugModeAllowed: boolean;
+  /** 当前组织是否向成员开放调试模式。 */
+  debugModeEnabled?: boolean;
   /** 普通用户是否可使用个人 Agent；false 时只能进入可用的公司专职 Agent。 */
   personalAgentEnabled?: boolean;
   /** 租户共享知识库文件与引用预览能力。 */

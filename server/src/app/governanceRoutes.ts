@@ -1,5 +1,6 @@
 import type { Express } from 'express';
 
+import { isDebugModeAvailable } from '../../../shared/src/types/tenant.js';
 import type { WebChannel } from '../channels/web/channel.js';
 import { serverLogger } from '../utils/logger.js';
 import { createGovernanceAccessRouter } from '../routes/governanceAccess.js';
@@ -189,6 +190,12 @@ export function registerGovernanceRoutes(
             settings,
             expectedUpdatedAt,
           );
+          if (
+            runtime.userStore
+            && !isDebugModeAvailable(tenantId, updatedSettings.features)
+          ) {
+            await runtime.userStore.disableDebugModeForTenant(tenantId);
+          }
           const tenant = runtime.tenantStore!.findByIdStrict(tenantId);
           if (!tenant) throw new Error('Tenant not found');
           return {

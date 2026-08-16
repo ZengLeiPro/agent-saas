@@ -4,19 +4,11 @@ import { Router, type RequestHandler } from "express";
 import jwt, { type SignOptions } from "jsonwebtoken";
 import multer from "multer";
 import { z } from "zod";
-import {
-  requireAdmin,
-  requirePlatformAdmin,
-  isPlatformAdmin,
-} from "../auth/middleware.js";
-import {
-  getEffectivePlatformCapabilities,
-  isSuperAdmin,
-  normalizePlatformCapabilities,
-  requireSuperAdmin,
-} from "../auth/platformGovernance.js";
+import { requireAdmin, requirePlatformAdmin, isPlatformAdmin } from "../auth/middleware.js";
+import { getEffectivePlatformCapabilities, isSuperAdmin, normalizePlatformCapabilities, requireSuperAdmin } from "../auth/platformGovernance.js";
 import type { JwtPayload } from "../auth/types.js";
 import { PLATFORM_CAPABILITIES } from "../../../shared/src/types/user.js";
+import { isDebugModeAvailable } from "../../../shared/src/types/tenant.js";
 import { isModelAllowedForTenant } from "../app/models.js";
 import type { ModelsConfig } from "../types/index.js";
 import type { UserStore } from "../data/users/store.js";
@@ -160,10 +152,14 @@ function validateTenantUserPolicy(
   tenantId: string,
   role: "admin" | "user",
   password?: string,
+  debugMode?: boolean,
   excludeUserId?: string,
 ): string | null {
   const settings = tenantStore?.getSettings(tenantId);
   if (!settings) return null;
+  if (debugMode === true && !isDebugModeAvailable(tenantId, settings.features)) {
+    return "上级未开放调试模式，不能为成员开启";
+  }
   const minLength = settings.security.passwordMinLength;
   if (password && minLength && password.length < minLength) {
     return `密码至少 ${minLength} 个字符`;
@@ -407,7 +403,8 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         phoneVerifiedAt: user.phoneVerifiedAt,
         avatar: buildAvatarUrl(user.id, user.avatar, user.avatarVersion),
         avatarVersion: user.avatarVersion,
-        debugMode: user.debugMode === true,
+        debugMode: user.debugMode === true
+          && isDebugModeAvailable(user.tenantId, tenantFeatures(user.tenantId)),
         tenantFeatures: tenantFeatures(tenantId),
         preferences: user.preferences ?? {},
       },
@@ -931,7 +928,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       platformCapabilityLimits: req.user.platformCapabilityLimits,
       avatar: buildAvatarUrl(req.user.sub, record?.avatar, record?.avatarVersion),
       avatarVersion: record?.avatarVersion,
-      debugMode: record?.debugMode === true,
+      debugMode: record?.debugMode === true && isDebugModeAvailable(record.tenantId, tenantFeatures(record.tenantId)),
       realName: record?.realName,
       position: record?.position,
       phone: record?.phone,
@@ -960,6 +957,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     const canReadPii = isPlatformAdmin(req.user);
     const users = scoped.map((u) => ({
       ...u,
+      debugMode: u.debugMode === true && isDebugModeAvailable(u.tenantId, tenantFeatures(u.tenantId)),
       ...(isPlatformAdmin(req.user) && !canReadPii
         ? { phone: maskPhone(u.phone), phoneVerifiedAt: undefined }
         : {}),
@@ -1065,6 +1063,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         effectiveTenantId,
         role,
         password,
+        debugMode,
       );
       if (policyError) {
         res.status(400).json({ error: policyError });
@@ -1204,6 +1203,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         effectiveUpdatedTenantId,
         effectiveUpdatedRole as "admin" | "user",
         password,
+        debugMode,
         target.id,
       );
       if (policyError) {

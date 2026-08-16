@@ -14,6 +14,7 @@ export const tenantSettingsSchema = z.object({
     mcpEnabled: z.boolean(),
     customSkillsEnabled: z.boolean(),
     debugModeAllowed: z.boolean(),
+    debugModeEnabled: z.boolean().optional(),
     autoCompactEnabled: z.boolean().optional(),
     personalAgentEnabled: z.boolean().optional(),
     kbEnabled: z.boolean().optional(),
@@ -74,6 +75,19 @@ export function tenantSettingsPolicyError(
   platformAdmin: boolean,
 ): { status: 400 | 403; error: string } | null {
   if (!platformAdmin) {
+    const requestedDebugModeAllowed = patch.features?.debugModeAllowed;
+    if (
+      requestedDebugModeAllowed !== undefined
+      && requestedDebugModeAllowed !== current.features.debugModeAllowed
+    ) {
+      return { status: 403, error: '调试模式平台授权仅平台管理员可配置' };
+    }
+    patch.features = {
+      ...current.features,
+      ...(patch.features ?? {}),
+      debugModeAllowed: current.features.debugModeAllowed,
+    };
+
     const requestedImageGenEnabled = patch.features?.imageGenEnabled;
     const currentImageGenEnabled = current.features.imageGenEnabled === true;
     if (requestedImageGenEnabled !== undefined && requestedImageGenEnabled !== currentImageGenEnabled) {
@@ -103,6 +117,18 @@ export function tenantSettingsPolicyError(
     }
     patch.quotas = { ...current.quotas };
   }
+
+  const finalDebugModeAllowed = patch.features?.debugModeAllowed
+    ?? current.features.debugModeAllowed;
+  const finalDebugModeEnabled = finalDebugModeAllowed
+    ? (patch.features?.debugModeEnabled ?? current.features.debugModeEnabled ?? current.features.debugModeAllowed)
+    : false;
+  patch.features = {
+    ...current.features,
+    ...(patch.features ?? {}),
+    debugModeAllowed: finalDebugModeAllowed,
+    debugModeEnabled: finalDebugModeEnabled,
+  };
 
   const finalConsolidation = patch.features?.memoryConsolidationEnabled
     ?? (current.features.memoryConsolidationEnabled === true);

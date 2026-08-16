@@ -1,8 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { AuthUser, LoginCredentials, SmsLoginCredentials } from "@/types/auth";
-import type { PlatformCapability, UserPreferences } from "@agent/shared";
-import { DEFAULT_TENANT_ID, clearGroupsCache } from "@agent/shared";
+import type { PlatformCapability, TenantFeatureFlags, UserPreferences } from "@agent/shared";
+import { DEFAULT_TENANT_ID, clearGroupsCache, isDebugModeAvailable } from "@agent/shared";
 import { setOnUnauthorized } from "@/lib/authFetch";
 import { wsClient } from "@/lib/wsClient";
 import { TOKEN_KEY, SESSION_STORAGE_KEY } from "@/lib/constants";
@@ -57,6 +57,8 @@ interface AuthContextValue {
   /** 更新当前用户手机号验证状态 */
   updatePhone: (phone: string | undefined, phoneVerifiedAt?: string) => void;
   updatePreferences: (preferences: UserPreferences) => void;
+  /** 组织策略保存后立即刷新当前用户的功能有效值。 */
+  updateTenantFeatures: (features: TenantFeatureFlags) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -221,6 +223,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser((prev) => prev ? { ...prev, preferences: { ...(prev.preferences ?? {}), ...preferences } } : prev);
   }, []);
 
+  const updateTenantFeatures = useCallback((features: TenantFeatureFlags) => {
+    setUser((prev) => prev ? {
+      ...prev,
+      debugMode: prev.debugMode === true && isDebugModeAvailable(prev.tenantId, features),
+      tenantFeatures: features,
+    } : prev);
+  }, []);
+
   const canPlatform = useCallback((_capability: PlatformCapability) => (
     user?.role === "admin" && user.tenantId === DEFAULT_TENANT_ID
   ), [user]);
@@ -247,8 +257,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updateAvatar,
       updatePhone,
       updatePreferences,
+      updateTenantFeatures,
     }),
-    [user, isLoading, authEnabled, accounts, login, loginWithSms, activateAccount, switchAccount, logoutCurrentAccount, logoutAllAccounts, logout, updateAvatar, updatePhone, updatePreferences, canPlatform],
+    [user, isLoading, authEnabled, accounts, login, loginWithSms, activateAccount, switchAccount, logoutCurrentAccount, logoutAllAccounts, logout, updateAvatar, updatePhone, updatePreferences, updateTenantFeatures, canPlatform],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -75,7 +75,7 @@ export function TenantSettingsPanel({
   tenantId: string;
   section?: TenantSettingsPanelSection;
 }) {
-  const { isPlatformAdmin, canPlatform } = useAuth();
+  const { user, isPlatformAdmin, canPlatform, updateTenantFeatures } = useAuth();
   const readOnly = isPlatformAdmin
     && (tenantId === DEFAULT_TENANT_ID || !canPlatform("customer_config.manage"));
   const [settings, setSettings] = useState<TenantSettings>(() => cloneTenantSettings(DEFAULT_TENANT_SETTINGS));
@@ -141,6 +141,7 @@ export function TenantSettingsPanel({
       setSettings(data.settings);
       setSettingsUpdatedAt(data.updatedAt);
       setDefaultMcpText(data.settings.mcp.defaultEnabledServerIds.join("\n"));
+      if (user?.tenantId === tenantId) updateTenantFeatures(data.settings.features);
       await refreshAll();
       setSaved(true);
       setError(null);
@@ -149,7 +150,7 @@ export function TenantSettingsPanel({
     } finally {
       setSaving(false);
     }
-  }, [defaultMcpText, settings, settingsUpdatedAt, tenantId]);
+  }, [defaultMcpText, settings, settingsUpdatedAt, tenantId, updateTenantFeatures, user?.tenantId]);
 
   const modelOptions = modelList?.groups.flatMap(group =>
     group.models.map(model => ({
@@ -214,7 +215,14 @@ export function TenantSettingsPanel({
             <SettingSwitch label="定时任务" description="允许创建和运行 Cron 自动化任务。" checked={settings.features.cronEnabled} onCheckedChange={checked => patch(d => { d.features.cronEnabled = checked; })} />
             <SettingSwitch label="MCP 工具" description="允许组织使用 MCP 服务与工具密钥。" checked={settings.features.mcpEnabled} onCheckedChange={checked => patch(d => { d.features.mcpEnabled = checked; })} />
             <SettingSwitch label="自定义技能" description="允许用户维护自己的技能。" checked={settings.features.customSkillsEnabled} onCheckedChange={checked => patch(d => { d.features.customSkillsEnabled = checked; })} />
-            <SettingSwitch label="调试模式" description="允许开启思考、工具和执行细节展示。" checked={settings.features.debugModeAllowed} onCheckedChange={checked => patch(d => { d.features.debugModeAllowed = checked; })} />
+            {settings.features.debugModeAllowed && (
+              <SettingSwitch
+                label="成员调试模式"
+                description="平台已授权。开启后，成员可按个人需要显示思考、工具和执行细节。"
+                checked={settings.features.debugModeEnabled ?? settings.features.debugModeAllowed}
+                onCheckedChange={checked => patch(d => { d.features.debugModeEnabled = checked; })}
+              />
+            )}
             <SettingSwitch label="自动压缩上下文" description="会话上下文达到各模型配置的触发线时，回合结束后自动压缩（还需模型配置上下文窗口）。" checked={settings.features.autoCompactEnabled} onCheckedChange={checked => patch(d => { d.features.autoCompactEnabled = checked; })} />
             <SettingSwitch
               label="AI 生图"

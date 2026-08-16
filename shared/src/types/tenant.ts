@@ -18,6 +18,15 @@ export function isInternalTenantId(tenantId: string | undefined | null): boolean
   return tenantId === PLATFORM_TENANT_ID || tenantId === LEGACY_TENANT_ID;
 }
 
+export function isDebugModeAvailable(
+  tenantId: string | undefined | null,
+  features: Pick<TenantSettings["features"], "debugModeAllowed" | "debugModeEnabled"> | undefined,
+): boolean {
+  if (tenantId === PLATFORM_TENANT_ID) return true;
+  if (!features?.debugModeAllowed) return false;
+  return features.debugModeEnabled ?? features.debugModeAllowed;
+}
+
 /** Tenant slug 规范：以小写字母开头，可含小写字母、数字、连字符，长度 2-31 */
 export const TENANT_SLUG_PATTERN = /^[a-z][a-z0-9-]{1,30}$/;
 
@@ -69,7 +78,10 @@ export interface TenantSettings {
     cronEnabled: boolean;
     mcpEnabled: boolean;
     customSkillsEnabled: boolean;
+    /** 平台是否授权该组织使用调试模式。仅平台管理员可配置。 */
     debugModeAllowed: boolean;
+    /** 组织是否向成员开放调试模式；缺省时兼容旧数据，沿用平台授权值。 */
+    debugModeEnabled?: boolean;
     /** 会话上下文自动压缩（达到各模型配置的触发线后 post-run 触发）。默认关闭。 */
     autoCompactEnabled: boolean;
     /** 每日记忆轮询（2026-07-14 批次）。默认关闭，开启后为每个有效用户自动预置系统任务。 */
@@ -139,6 +151,7 @@ export const DEFAULT_TENANT_SETTINGS: TenantSettings = {
     mcpEnabled: true,
     customSkillsEnabled: true,
     debugModeAllowed: false,
+    debugModeEnabled: false,
     autoCompactEnabled: false,
     memoryPollingEnabled: false,
     memoryPollChargesCredits: false,

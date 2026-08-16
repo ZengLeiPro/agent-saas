@@ -194,6 +194,7 @@ export {
   DEFAULT_TENANT_SETTINGS,
   TENANT_SLUG_PATTERN,
   isInternalTenantId,
+  isDebugModeAvailable,
 } from "./tenant";
 
 export type {

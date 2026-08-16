@@ -452,6 +452,7 @@ function legacyPolicies(settings: TenantSettings): Array<[TenantPolicyKey, Tenan
     ['model.user_switch.allowed', settings.models.allowUserModelSwitch],
     ['org.first_day_guide_bar.enabled', settings.personalization.firstDayGuideBarEnabled],
     ['runtime.debug_mode.allowed', settings.features.debugModeAllowed],
+    ['runtime.debug_mode.enabled', settings.features.debugModeEnabled ?? settings.features.debugModeAllowed],
     ['security.dingtalk_binding.required', settings.security.requireDingtalkBinding],
     ['session.auto_compact.enabled', settings.features.autoCompactEnabled],
     ['session.context_token_details.allowed', settings.models.allowContextTokenDetails === true],

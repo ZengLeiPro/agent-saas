@@ -211,6 +211,19 @@ export class UserStore {
     return this.users.length;
   }
 
+  async disableDebugModeForTenant(tenantId: string): Promise<number> {
+    const now = new Date().toISOString();
+    let changed = 0;
+    for (const user of this.users) {
+      if (user.tenantId !== tenantId || user.debugMode !== true) continue;
+      user.debugMode = undefined;
+      user.updatedAt = now;
+      changed += 1;
+    }
+    if (changed > 0) await this.persist();
+    return changed;
+  }
+
   adminCount(tenantId?: string): number {
     return this.users.filter(
       (u) => u.role === "admin" && (!tenantId || u.tenantId === tenantId),

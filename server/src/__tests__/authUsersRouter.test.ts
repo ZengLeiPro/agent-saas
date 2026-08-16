@@ -38,6 +38,7 @@ interface TestRig {
     wainUser: UserInfo;
   };
   userStore: UserStore;
+  tenantStore: TenantStore;
   sender: CaptureSender;
   tenantChanges: UserInfo[];
   userDeletes: UserInfo[];
@@ -152,6 +153,7 @@ async function makeTestRig(): Promise<TestRig> {
   return {
     users: { superAdmin, platformAdmin, platformAdminB, wainAdminA, wainAdminB, wainUser },
     userStore,
+    tenantStore,
     sender,
     tenantChanges,
     userDeletes,
@@ -204,6 +206,42 @@ describe("auth users router admin boundaries", () => {
       id: h.users.wainUser.id,
       realName: "普通用户",
     });
+  });
+
+  it("上级未开放时拒绝为成员开启调试模式", async () => {
+    h.setCaller(h.users.wainAdminA);
+    const res = await h.request(`/api/auth/users/${h.users.wainUser.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ debugMode: true }),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "上级未开放调试模式，不能为成员开启",
+    });
+    expect(h.userStore.findById(h.users.wainUser.id)?.debugMode).toBeUndefined();
+  });
+
+  it("登录态只返回三级开关共同决定的有效值", async () => {
+    await h.userStore.update(h.users.wainUser.id, { debugMode: true });
+    h.setCaller(h.users.wainUser);
+
+    const closed = await h.request("/api/auth/me");
+    expect(closed.status).toBe(200);
+    await expect(closed.json()).resolves.toMatchObject({ debugMode: false });
+
+    const current = h.tenantStore.getSettings("wain")!;
+    await h.tenantStore.updateSettings("wain", {
+      features: {
+        ...current.features,
+        debugModeAllowed: true,
+        debugModeEnabled: true,
+      },
+    });
+    const opened = await h.request("/api/auth/me");
+    expect(opened.status).toBe(200);
+    await expect(opened.json()).resolves.toMatchObject({ debugMode: true });
   });
 
   it("组织 admin 不能删除同租户其他 admin", async () => {

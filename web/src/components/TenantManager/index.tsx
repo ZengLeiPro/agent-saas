@@ -305,7 +305,7 @@ const capabilityFeatureFields: Array<{ key: keyof TenantSettings["features"]; la
   { key: "cronEnabled", label: "定时任务", description: "允许创建和运行 Cron 自动化任务。" },
   { key: "mcpEnabled", label: "MCP 工具", description: "允许组织使用 MCP server 与工具密钥。" },
   { key: "customSkillsEnabled", label: "自定义技能", description: "允许用户维护自定义 Agent 技能。" },
-  { key: "debugModeAllowed", label: "调试模式", description: "允许开启思考、工具和执行细节展示。" },
+  { key: "debugModeAllowed", label: "调试模式授权", description: "允许该组织向成员开放思考、工具和执行细节展示。关闭后会同步关闭组织与成员开关。" },
   { key: "autoCompactEnabled", label: "自动压缩", description: "会话上下文达到各模型配置的触发线时，回合结束后自动压缩。" },
   { key: "memoryPollingEnabled", label: "每日记忆轮询", description: "为每个有效用户自动预置每日记忆整理任务（对用户隐藏；48 小时无活动自动跳过）。" },
   { key: "memoryPollChargesCredits", label: "记忆轮询扣积分", description: "开启后记忆轮询的模型消耗计入租户积分；默认不扣（用量照记，仅平台内部可见）。" },

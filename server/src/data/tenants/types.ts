@@ -39,7 +39,10 @@ export interface TenantSettings {
     cronEnabled: boolean;
     mcpEnabled: boolean;
     customSkillsEnabled: boolean;
+    /** 平台是否授权该组织使用调试模式。仅平台管理员可配置。 */
     debugModeAllowed: boolean;
+    /** 组织是否向成员开放调试模式；缺省时兼容旧数据，沿用平台授权值。 */
+    debugModeEnabled?: boolean;
     /**
      * 会话上下文自动压缩（post-run 超阈值触发）。默认关闭，灰度租户先开。
      * 生效还需模型配置 context_window；触发比例由模型 auto_compact_threshold 决定。
@@ -139,6 +142,7 @@ export const DEFAULT_TENANT_SETTINGS: TenantSettings = {
     mcpEnabled: true,
     customSkillsEnabled: true,
     debugModeAllowed: false,
+    debugModeEnabled: false,
     autoCompactEnabled: false,
     personalAgentEnabled: true,
     kbEnabled: false,

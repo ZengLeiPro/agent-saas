@@ -57,6 +57,7 @@ export const TENANT_POLICY_KEYS = [
   'model.user_switch.allowed',
   'org.first_day_guide_bar.enabled',
   'runtime.debug_mode.allowed',
+  'runtime.debug_mode.enabled',
   'runtime.high_risk_tool.mode',
   'security.dingtalk_binding.required',
   'session.auto_compact.enabled',

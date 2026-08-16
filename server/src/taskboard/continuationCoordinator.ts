@@ -7,6 +7,11 @@ import type { EventStore } from '../runtime/types.js';
 import { deriveStableWorkspaceId } from '../runtime/workspaceIdentity.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import { reconcileTerminalContinuation } from './continuationCompletion.js';
+import {
+  writeTaskboardSessionTitle,
+  type TaskboardSessionTitleUpdate,
+  type TaskboardSessionTitleWriter,
+} from './sessionTitle.js';
 import type {
   TaskboardContinuationDispatch,
   TaskboardContinuationReconcileCandidate,
@@ -24,6 +29,8 @@ export interface TaskboardContinuationCoordinatorOptions {
   sessionCatalog: SessionCatalog;
   eventStore: EventStore;
   agentCwd: string;
+  writeSessionTitle?: TaskboardSessionTitleWriter;
+  onSessionTitleUpdated?: (update: TaskboardSessionTitleUpdate) => void | Promise<void>;
   logger?: {
     info(message: string): void;
     warn(message: string): void;
@@ -45,6 +52,20 @@ export async function dispatchTaskboardContinuation(
   try {
     const payload = canonicalizeContinuationDispatch(dispatch, options.agentCwd);
     await options.sessionCatalog.upsert(payload.session);
+    const titleUpdate = await (options.writeSessionTitle ?? writeTaskboardSessionTitle)({
+      store: options.store,
+      sessionId: payload.session.sessionId,
+      transcriptPath: payload.session.transcriptPath,
+    });
+    if (titleUpdate) {
+      try {
+        await options.onSessionTitleUpdated?.(titleUpdate);
+      } catch (error) {
+        options.logger?.warn(
+          `Taskboard session title notification failed: session=${titleUpdate.sessionId} error=${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     const run = await options.scheduler.enqueue(payload.run, { steeringAware: true });
     assertContinuationRun(run, dispatch);
     await options.store.markContinuationDispatchSucceeded(dispatch.runId, dispatch.leaseId);

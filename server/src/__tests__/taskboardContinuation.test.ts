@@ -159,6 +159,11 @@ describe('任务看板评论续跑', () => {
 
     await rig.coordinator.continueExecution(identity, task.id, comments[1]!.id);
 
+    expect(rig.writeSessionTitle).toHaveBeenCalledWith(expect.objectContaining({
+      store: rig.store,
+      sessionId: activeExecution.sessionId,
+      transcriptPath: '/agent/tenant-1/user-1/transcript.jsonl',
+    }));
     expect(rig.scheduler.enqueue).toHaveBeenCalledWith(expect.objectContaining({
       runId: `taskboard-comment-${comments[1]!.id}`,
       sessionId: activeExecution.sessionId,
@@ -756,6 +761,7 @@ function makeRig(
     list: vi.fn(async () => []),
     listByRun: vi.fn(async () => []),
   } as unknown as EventStore;
+  const writeSessionTitle = vi.fn(async () => null);
   const coordinator = new TaskboardExecutionCoordinator({
     store,
     scheduler,
@@ -765,8 +771,9 @@ function makeRig(
     agentCwd: options.agentCwd ?? '/agent',
     executionConfig: createExecutionConfig({ tenantDefaultTarget: 'server-remote' }),
     resolveDefaultModel: () => ({ ref: 'model-default' }),
+    writeSessionTitle,
   });
-  return { coordinator, store, scheduler, runStore, sessionCatalog, eventStore };
+  return { coordinator, store, scheduler, runStore, sessionCatalog, eventStore, writeSessionTitle };
 }
 
 function comment(id: string, body: string, createdAt: string): TaskBoardComment {

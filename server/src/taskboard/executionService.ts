@@ -30,6 +30,11 @@ import { reuseTaskboardSession } from './executionSession.js';
 import { buildExecutionPrompt, formatTaskboardComment } from './executionPrompt.js';
 export { executionWritebackInstructions } from './executionPrompt.js';
 import {
+  writeTaskboardSessionTitle,
+  type TaskboardSessionTitleUpdate,
+  type TaskboardSessionTitleWriter,
+} from './sessionTitle.js';
+import {
   TaskboardExecutionUnavailableError,
   TaskboardPermissionError,
   TaskboardValidationError,
@@ -71,6 +76,10 @@ export interface TaskboardExecutionCoordinatorOptions {
   resolveUserDisplayName?: (userId: string) => string | undefined;
   /** 执行提示词时间戳时区，默认 Asia/Shanghai。 */
   timezone?: string;
+  /** 任务会话标题写入器；测试可替换，生产默认写 SessionMeta.generatedTitle。 */
+  writeSessionTitle?: TaskboardSessionTitleWriter;
+  /** 标题落盘后的缓存或实时事件通知，不得影响 durable dispatch。 */
+  onSessionTitleUpdated?: (update: TaskboardSessionTitleUpdate) => void | Promise<void>;
   logger?: {
     info(message: string): void;
     warn(message: string): void;
@@ -421,6 +430,20 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     try {
       const canonical = canonicalizeDispatchPayload(dispatch, this.options.agentCwd);
       await this.options.sessionCatalog.upsert(canonical.session);
+      const titleUpdate = await (this.options.writeSessionTitle ?? writeTaskboardSessionTitle)({
+        store: this.options.store,
+        sessionId: canonical.session.sessionId,
+        transcriptPath: canonical.session.transcriptPath,
+      });
+      if (titleUpdate) {
+        try {
+          await this.options.onSessionTitleUpdated?.(titleUpdate);
+        } catch (error) {
+          this.options.logger?.warn(
+            `Taskboard session title notification failed: session=${titleUpdate.sessionId} error=${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
       const run = await this.options.scheduler.enqueueCreateOnly(canonical.run);
       assertDispatchedRun(run, dispatch, canonical.run);
       const marked = await this.options.store.markExecutionDispatchSucceeded(dispatch.runId, dispatch.leaseId);

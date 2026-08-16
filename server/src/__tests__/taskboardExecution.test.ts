@@ -198,6 +198,7 @@ function makeRig(
     list: vi.fn(async () => []),
     listByRun: vi.fn(async () => []),
   } as unknown as EventStore;
+  const writeSessionTitle = vi.fn(async () => null);
   const coordinator = new TaskboardExecutionCoordinator({
     store,
     scheduler: scheduler as never,
@@ -207,9 +208,10 @@ function makeRig(
     agentCwd: '/agent-workspaces',
     executionConfig: createExecutionConfig({ tenantDefaultTarget: 'server-remote' }),
     resolveDefaultModel: () => ({ ref: 'model-default' }),
+    writeSessionTitle,
     ...coordinatorOptions,
   });
-  return { coordinator, store, scheduler, runStore, sessionCatalog, eventStore };
+  return { coordinator, store, scheduler, runStore, sessionCatalog, eventStore, writeSessionTitle };
 }
 
 describe('TaskboardExecutionCoordinator', () => {
@@ -217,6 +219,7 @@ describe('TaskboardExecutionCoordinator', () => {
     const rig = makeRig();
     const result = await rig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version });
 
+    expect(rig.writeSessionTitle).toHaveBeenCalledWith(expect.objectContaining({ sessionId: result.execution.sessionId }));
     expect(result.task.status).toBe('in_progress');
     expect(rig.store.claimExecution).toHaveBeenCalledWith(identity, task.id, expect.objectContaining({
       expectedVersion: task.version,

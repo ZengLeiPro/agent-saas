@@ -13,7 +13,7 @@ const mirrorUpdates = new Map<string, Promise<void>>();
 
 export interface SnapshotExecutionMetadata {
   requested: 'snapshot';
-  used: 'snapshot' | 'workspace';
+  used: 'snapshot';
   sourceRevision?: string;
   dirtyFileCount?: number;
   preparationMs: number;
@@ -24,7 +24,6 @@ export interface SnapshotExecutionMetadata {
   sourceCwd?: string;
   commandMs?: number;
   totalMs?: number;
-  fallbackReason?: string;
 }
 
 export interface SnapshotExecutionLease {
@@ -37,40 +36,27 @@ export interface SnapshotExecutionLease {
 export async function prepareSnapshotExecution(input: {
   workspaceRoot: string;
   command: string;
-  snapshotCwd?: string;
+  cwd?: string;
   signal: AbortSignal;
   env: Record<string, string>;
   progress?: (message: string) => void;
 }): Promise<SnapshotExecutionLease> {
   const startedAt = Date.now();
-  let fallbackRoot = input.workspaceRoot;
   let repositoryPath: string | undefined;
   let sourceCwd: string | undefined;
-  const fallback = (reason: string): SnapshotExecutionLease => {
-    input.progress?.(`容器临时盘快照不可用，已回退持久工作区：${reason}`);
-    return {
-      root: fallbackRoot,
-      env: input.env,
-      metadata: {
-        requested: 'snapshot',
-        used: 'workspace',
-        preparationMs: Date.now() - startedAt,
-        ...(repositoryPath ? { repositoryPath } : {}),
-        ...(sourceCwd ? { sourceCwd } : {}),
-        fallbackReason: reason,
-      },
-      async cleanup() {},
-    };
+  const fail = (reason: string): never => {
+    const error = new SnapshotExecutionUnavailableError(reason);
+    input.progress?.(error.message);
+    throw error;
   };
 
   try {
     throwIfAborted(input.signal);
     const workspaceRoot = await realpath(input.workspaceRoot);
-    const explicitCwd = input.snapshotCwd
-      ? await resolveWorkspaceDirectory(workspaceRoot, input.snapshotCwd)
+    const explicitCwd = input.cwd
+      ? await resolveWorkspaceDirectory(workspaceRoot, input.cwd)
       : undefined;
     if (explicitCwd) {
-      fallbackRoot = explicitCwd;
       sourceCwd = workspaceRelativePath(workspaceRoot, explicitCwd);
     }
     const inferredCwd = !explicitCwd ? inferLeadingCommandCwd(input.command) : undefined;
@@ -82,21 +68,20 @@ export async function prepareSnapshotExecution(input: {
     let autoDiscovered = false;
     if (!gitRoot && !explicitCwd && !inferredDirectory) {
       const repositories = await discoverNestedGitRoots(workspaceRoot);
-      if (repositories.length > 1) return fallback('multiple_git_repositories_require_snapshotCwd');
+      if (repositories.length > 1) return fail('multiple_git_repositories_require_cwd');
       gitRoot = repositories[0];
       autoDiscovered = Boolean(gitRoot);
     }
-    if (!gitRoot) return fallback('git_repository_not_found');
+    if (!gitRoot) return fail('git_repository_not_found');
     gitRoot = await realpath(gitRoot);
     assertInsideWorkspace(workspaceRoot, gitRoot, 'Git repository');
     repositoryPath = workspaceRelativePath(workspaceRoot, gitRoot);
 
     const sourceExecutionRoot = explicitCwd
       ?? (autoDiscovered ? gitRoot : workspaceRoot);
-    fallbackRoot = sourceExecutionRoot;
     sourceCwd = workspaceRelativePath(workspaceRoot, sourceExecutionRoot);
     const disk = await statfs('/tmp');
-    if (Number(disk.bavail) * Number(disk.bsize) < MIN_FREE_BYTES) return fallback('ephemeral_storage_below_512m');
+    if (Number(disk.bavail) * Number(disk.bsize) < MIN_FREE_BYTES) return fail('ephemeral_storage_below_512m');
 
     const workspaceKey = createHash('sha256').update(gitRoot).digest('hex').slice(0, 16);
     const cacheRoot = join(SNAPSHOT_ROOT, workspaceKey);
@@ -111,6 +96,7 @@ export async function prepareSnapshotExecution(input: {
       signal: input.signal,
       timeoutMs: 30_000,
     })).stdout.toString().trim();
+    await validateSourceRevision(gitRoot, revision, input.signal);
     await updateMirror({ workspaceRoot: gitRoot, mirrorPath, revision, signal: input.signal });
 
     const runWorkspaceRoot = await mkdtemp(join(runsRoot, 'run-'));
@@ -119,7 +105,7 @@ export async function prepareSnapshotExecution(input: {
       : safeChildPath(runWorkspaceRoot, repositoryPath);
     try {
       await mkdir(dirname(runRepositoryRoot), { recursive: true });
-      await runFile('git', ['clone', '--shared', '--no-checkout', '--quiet', mirrorPath, runRepositoryRoot], {
+      await runFile('git', ['clone', '--local', '--no-checkout', '--quiet', mirrorPath, runRepositoryRoot], {
         signal: input.signal,
         timeoutMs: PREPARE_TIMEOUT_MS,
       });
@@ -187,7 +173,15 @@ export async function prepareSnapshotExecution(input: {
     }
   } catch (err) {
     if (input.signal.aborted) throw err;
-    return fallback(compactError(err));
+    if (err instanceof SnapshotExecutionUnavailableError) throw err;
+    return fail(compactError(err));
+  }
+}
+
+class SnapshotExecutionUnavailableError extends Error {
+  constructor(reason: string) {
+    super(`容器临时盘快照不可用，命令未执行：${reason}`);
+    this.name = 'SnapshotExecutionUnavailableError';
   }
 }
 
@@ -199,25 +193,13 @@ async function updateMirror(input: {
 }): Promise<void> {
   const previous = mirrorUpdates.get(input.mirrorPath) ?? Promise.resolve();
   const current = previous.catch(() => undefined).then(async () => {
-    if (!(await pathExists(join(input.mirrorPath, 'HEAD')))) {
-      const temporary = `${input.mirrorPath}.tmp-${process.pid}-${Date.now()}`;
-      await rm(temporary, { recursive: true, force: true });
-      try {
-        await runFile('git', ['clone', '--mirror', '--no-hardlinks', '--quiet', input.workspaceRoot, temporary], {
-          signal: input.signal,
-          timeoutMs: PREPARE_TIMEOUT_MS,
-        });
-        await mkdir(dirname(input.mirrorPath), { recursive: true });
-        await rename(temporary, input.mirrorPath);
-      } finally {
-        await rm(temporary, { recursive: true, force: true });
-      }
+    try {
+      if (!(await pathExists(join(input.mirrorPath, 'HEAD')))) throw new Error('snapshot mirror missing');
+      await fetchMirrorRevision(input);
+      await validateMirrorRevision(input.mirrorPath, input.revision, input.signal);
+    } catch {
+      await rebuildMirror(input);
     }
-    await runFile('git', [
-      '--git-dir', input.mirrorPath,
-      'fetch', '--force', '--no-tags', input.workspaceRoot,
-      `${input.revision}:refs/ky-agent/source`,
-    ], { signal: input.signal, timeoutMs: PREPARE_TIMEOUT_MS });
   });
   mirrorUpdates.set(input.mirrorPath, current);
   try {
@@ -225,6 +207,69 @@ async function updateMirror(input: {
   } finally {
     if (mirrorUpdates.get(input.mirrorPath) === current) mirrorUpdates.delete(input.mirrorPath);
   }
+}
+
+async function fetchMirrorRevision(input: {
+  workspaceRoot: string;
+  mirrorPath: string;
+  revision: string;
+  signal: AbortSignal;
+}): Promise<void> {
+  await runFile('git', [
+    '--git-dir', input.mirrorPath,
+    'fetch', '--force', '--no-tags', input.workspaceRoot,
+    `${input.revision}:refs/ky-agent/source`,
+  ], { signal: input.signal, timeoutMs: PREPARE_TIMEOUT_MS });
+}
+
+async function rebuildMirror(input: {
+  workspaceRoot: string;
+  mirrorPath: string;
+  revision: string;
+  signal: AbortSignal;
+}): Promise<void> {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const temporary = `${input.mirrorPath}.tmp-${suffix}`;
+  const previous = `${input.mirrorPath}.stale-${suffix}`;
+  await rm(temporary, { recursive: true, force: true });
+  await rm(previous, { recursive: true, force: true });
+  let movedPrevious = false;
+  try {
+    await runFile('git', ['clone', '--mirror', '--no-hardlinks', '--quiet', input.workspaceRoot, temporary], {
+      signal: input.signal,
+      timeoutMs: PREPARE_TIMEOUT_MS,
+    });
+    await fetchMirrorRevision({ ...input, mirrorPath: temporary });
+    await validateMirrorRevision(temporary, input.revision, input.signal);
+    await mkdir(dirname(input.mirrorPath), { recursive: true });
+    if (await pathExists(input.mirrorPath)) {
+      await rename(input.mirrorPath, previous);
+      movedPrevious = true;
+    }
+    try {
+      await rename(temporary, input.mirrorPath);
+    } catch (err) {
+      if (movedPrevious) await rename(previous, input.mirrorPath).catch(() => undefined);
+      throw err;
+    }
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+    if (await pathExists(input.mirrorPath)) await rm(previous, { recursive: true, force: true });
+  }
+}
+
+async function validateSourceRevision(gitRoot: string, revision: string, signal: AbortSignal): Promise<void> {
+  await runFile('git', ['-C', gitRoot, 'cat-file', '-e', `${revision}^{tree}`], {
+    signal,
+    timeoutMs: 30_000,
+  });
+}
+
+async function validateMirrorRevision(mirrorPath: string, revision: string, signal: AbortSignal): Promise<void> {
+  await runFile('git', ['--git-dir', mirrorPath, 'cat-file', '-e', `${revision}^{tree}`], {
+    signal,
+    timeoutMs: 30_000,
+  });
 }
 
 async function currentOverlayPaths(workspaceRoot: string, signal: AbortSignal): Promise<string[]> {
@@ -305,11 +350,16 @@ function inferLeadingCommandCwd(command: string): string | undefined {
   return candidate;
 }
 
+export async function resolveExecutionCwd(workspaceRoot: string, inputPath?: string): Promise<string> {
+  const actualRoot = await realpath(workspaceRoot);
+  return inputPath ? await resolveWorkspaceDirectory(actualRoot, inputPath) : actualRoot;
+}
+
 async function resolveWorkspaceDirectory(workspaceRoot: string, inputPath: string): Promise<string> {
   const lexical = isAbsolute(inputPath) ? resolve(inputPath) : resolve(workspaceRoot, inputPath);
-  assertInsideWorkspace(workspaceRoot, lexical, 'snapshotCwd');
+  assertInsideWorkspace(workspaceRoot, lexical, 'cwd');
   const actual = await realpath(lexical);
-  assertInsideWorkspace(workspaceRoot, actual, 'snapshotCwd');
+  assertInsideWorkspace(workspaceRoot, actual, 'cwd');
   return actual;
 }
 

@@ -35,10 +35,9 @@ async function main(): Promise<void> {
   process.once('SIGTERM', earlySigterm);
   process.once('SIGINT', earlySigint);
   process.once('SIGHUP', earlySighup);
-  // 与前台 ServerLocalExecutionProvider 的 shell:true 语义一致，不能使用 login shell。
-  // Debian /bin/sh -l 会重置 PATH，导致 sandboxRunner 注入的 workspace venv、CLI
-  // 与凭据环境在后台命令中消失（browser lease 会退回无 playwright 的系统 Python）。
-  const child = spawn('/bin/sh', ['-c', command], {
+  // 与前台 ServerLocalExecutionProvider 一致使用非 login Bash，保留 sandboxRunner
+  // 注入的 workspace venv、CLI 与凭据环境，并支持 pipefail 等 Bash 语法。
+  const child = spawn('/bin/bash', ['-c', command], {
     cwd: process.cwd(),
     env: { ...process.env, KY_BACKGROUND_SHELL_TASK_ID: taskId },
     detached: true,

@@ -238,33 +238,14 @@ const sessionContextSchema = z.object({
   limit: z.number().int().positive().max(MAX_LIMIT).optional().describe('返回条数上限（events 最多 200，search 最多 50，超出自动收窄）。'),
   runId: z.string().optional().describe('events/search 可选：只看某个 run 的事件。'),
   type: z.string().optional().describe('events/search 可选：只看某类事件。'),
-  query: z.string().min(1).max(512).optional().describe('search 必填；trace 可选：在指定 toolCallId 的完整工具结果中定位关键词，返回命中行号、字符位置与上下文片段。'),
-  toolCallId: z.string().min(1).optional().describe('trace 必填：工具调用 id。'),
+  query: z.string().max(512).optional().describe('search 必填；trace 可选：在指定 toolCallId 的完整工具结果中定位关键词，返回命中行号、字符位置与上下文片段。'),
+  toolCallId: z.string().optional().describe('trace 必填：工具调用 id。'),
   startLine: z.number().int().positive().optional().describe('trace 行读取模式：从第几行开始（1-based）。'),
   lineCount: z.number().int().positive().max(TRACE_MAX_LINE_COUNT).optional().describe('trace 行读取模式：最多读取多少行；默认 50，最多 200，仍受单次字符预算约束。'),
   startChar: z.number().int().positive().optional().describe('trace 字符读取模式：从第几个 Unicode 字符开始（1-based），适合超长单行 JSON。'),
   charCount: z.number().int().positive().max(TRACE_MAX_CHAR_COUNT).optional().describe('trace 字符读取模式：最多读取多少字符；默认 5000，最多 6000。'),
   maxMatches: z.number().int().positive().max(TRACE_MAX_MATCHES).optional().describe('trace 关键字模式：最多返回多少处命中，默认 8、最多 20。'),
   contextLines: z.number().int().min(0).max(TRACE_MAX_CONTEXT_LINES).optional().describe('trace 关键字模式：命中行前后各附带多少行上下文，默认 1、最多 3。'),
-}).superRefine((input, ctx) => {
-  if (input.action !== 'trace') return;
-  const modes = [input.query !== undefined, input.startLine !== undefined, input.startChar !== undefined]
-    .filter(Boolean).length;
-  if (modes > 1) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'trace 的 query、startLine、startChar 三种读取模式只能选择一种。',
-    });
-  }
-  if (input.lineCount !== undefined && input.startLine === undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'lineCount 需要与 startLine 一起使用。' });
-  }
-  if (input.charCount !== undefined && input.startChar === undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'charCount 需要与 startChar 一起使用。' });
-  }
-  if ((input.maxMatches !== undefined || input.contextLines !== undefined) && input.query === undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'maxMatches/contextLines 需要与 query 一起使用。' });
-  }
 });
 
 export const sessionContextToolDescriptor: ToolDescriptor<SessionContextInput> = {
@@ -293,7 +274,7 @@ export class SessionToolProvider implements ToolProvider {
     const sessionId = context.workspace.sessionId;
     if (!sessionId) throw new Error('Session context tools require workspace.sessionId.');
 
-    const input = sessionContextSchema.parse(call.input) as SessionContextInput;
+    const input = normalizeSessionContextInput(sessionContextSchema.parse(call.input) as SessionContextInput);
     if (input.action === 'events') {
       const opts: SessionGetEventsInput = {
         ...(input.afterCursor !== undefined ? { afterCursor: input.afterCursor } : {}),
@@ -327,6 +308,33 @@ export class SessionToolProvider implements ToolProvider {
       }), null, 2),
     };
   }
+}
+
+function normalizeSessionContextInput(input: SessionContextInput): SessionContextInput {
+  const normalized: SessionContextInput = {
+    ...input,
+    afterCursor: nonEmptyString(input.afterCursor),
+    runId: nonEmptyString(input.runId),
+    type: nonEmptyString(input.type) as PlatformEvent['type'] | undefined,
+    query: nonEmptyString(input.query),
+    toolCallId: nonEmptyString(input.toolCallId),
+  };
+  if (input.action !== 'trace') return normalized;
+  if (normalized.query) {
+    return { action: 'trace', toolCallId: normalized.toolCallId, query: normalized.query, maxMatches: input.maxMatches, contextLines: input.contextLines };
+  }
+  if (input.startLine !== undefined) {
+    return { action: 'trace', toolCallId: normalized.toolCallId, startLine: input.startLine, lineCount: input.lineCount };
+  }
+  if (input.startChar !== undefined) {
+    return { action: 'trace', toolCallId: normalized.toolCallId, startChar: input.startChar, charCount: input.charCount };
+  }
+  return { action: 'trace', toolCallId: normalized.toolCallId };
+}
+
+function nonEmptyString(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
 }
 
 function filterEvents(events: PlatformEvent[], opts: { runId?: string; type?: PlatformEvent['type'] }): PlatformEvent[] {

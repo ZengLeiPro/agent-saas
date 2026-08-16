@@ -11,33 +11,42 @@ import {
   executeFeishuCli,
   pipInstallArgs,
   pruneVenvArchive,
+  normalizeShellCommandForCwd,
   toolNameForLocalProvider,
   venvRebuildReasons,
 } from './sandboxRunner.js';
 
+describe('Shell cwd command normalization', () => {
+  it('removes only a redundant leading cd while preserving a Bash prelude', () => {
+    expect(normalizeShellCommandForCwd('cd code/agent-saas && pnpm test', 'code/agent-saas')).toBe('pnpm test');
+    expect(normalizeShellCommandForCwd('set -e\ncd "code/agent-saas" && pnpm test', 'code/agent-saas'))
+      .toBe('set -e\npnpm test');
+    expect(normalizeShellCommandForCwd('cd code/other && pnpm test', 'code/agent-saas'))
+      .toBe('cd code/other && pnpm test');
+  });
+});
+
 describe('snapshot result metadata', () => {
-  it('flattens execution facts and makes workspace fallback visible to the Agent', () => {
+  it('flattens successful snapshot execution facts for the Agent', () => {
     const response = addSnapshotMetadata({
       status: 'error',
       error: 'command failed',
       metadata: { durationMs: 123 },
     }, {
       requested: 'snapshot',
-      used: 'workspace',
+      used: 'snapshot',
       repositoryPath: 'code/agent-saas',
       sourceCwd: '.',
       preparationMs: 44,
-      fallbackReason: 'git_repository_not_found',
     });
     expect(response.status).toBe('error');
     if (response.status !== 'error') throw new Error('expected error response');
-    expect(response.error).toContain('实际已回退持久工作区');
+    expect(response.error).toContain('容器临时盘快照');
     expect(response.metadata).toMatchObject({
       executionRequested: 'snapshot',
-      executionUsed: 'workspace',
+      executionUsed: 'snapshot',
       executionTotalMs: 167,
       snapshotRepositoryPath: 'code/agent-saas',
-      snapshotFallbackReason: 'git_repository_not_found',
     });
   });
 });

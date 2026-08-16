@@ -22,7 +22,11 @@ export async function ensureSnapshotNodeDependencies(input: {
   progress?: (message: string) => void;
 }): Promise<SnapshotDependencyResult> {
   const manager = await detectPackageManager(input.runRoot);
-  if (!manager || commandInstallsDependencies(input.command, manager)) return { prepared: false };
+  if (
+    !manager
+    || commandInstallsDependencies(input.command, manager)
+    || !commandNeedsNodeDependencies(input.command)
+  ) return { prepared: false };
 
   const cacheKey = await dependencyContractKey(input.runRoot, manager, input.env, input.signal);
   const preparedRoot = join(input.packageCacheRoot, 'prepared-node-modules', cacheKey);
@@ -55,6 +59,45 @@ export async function ensureSnapshotNodeDependencies(input: {
 }
 
 type PackageManager = 'pnpm' | 'npm';
+
+export function commandNeedsNodeDependencies(command: string): boolean {
+  const directTool = /(?:^|[;&|()]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:\.\/node_modules\/\.bin\/)?(?:npx|tsx|ts-node|tsc|vitest|vite|jest|eslint|prettier|next|nuxt|turbo|webpack|rollup|esbuild)(?:\s|$)/;
+  if (directTool.test(command)) return true;
+  for (const segment of command.split(/&&|\|\||[;|\n]/)) {
+    const match = segment.match(/(?:^|\s)(?:corepack\s+)?(pnpm|npm)\s+(.+)$/);
+    if (!match) continue;
+    const manager = match[1] as PackageManager;
+    const tokens = shellWords(match[2] ?? '');
+    const subcommand = packageManagerSubcommand(tokens, manager);
+    if (!subcommand) continue;
+    if (manager === 'npm') {
+      if (['run', 'run-script', 'test', 'start', 'restart', 'stop', 'exec'].includes(subcommand)) return true;
+      continue;
+    }
+    if (!['add', 'audit', 'config', 'create', 'fetch', 'help', 'i', 'import', 'info', 'init', 'install', 'list', 'outdated', 'patch', 'publish', 'remove', 'root', 'setup', 'store', 'update', 'view', 'why'].includes(subcommand)) return true;
+  }
+  return false;
+}
+
+function shellWords(value: string): string[] {
+  return [...value.matchAll(/"[^"]*"|'[^']*'|\S+/g)].map((match) => match[0]!.replace(/^(?:"|')|(?:"|')$/g, ''));
+}
+
+function packageManagerSubcommand(tokens: string[], manager: PackageManager): string | undefined {
+  const optionsWithValue = manager === 'pnpm'
+    ? new Set(['--dir', '--filter', '--global-dir', '--store-dir', '--workspace-root', '-C', '-F'])
+    : new Set(['--prefix', '--workspace', '-w']);
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+    if (optionsWithValue.has(token)) {
+      index += 1;
+      continue;
+    }
+    if (token.startsWith('-')) continue;
+    return token;
+  }
+  return undefined;
+}
 
 async function detectPackageManager(runRoot: string): Promise<PackageManager | undefined> {
   if (!(await pathExists(join(runRoot, 'package.json')))) return undefined;

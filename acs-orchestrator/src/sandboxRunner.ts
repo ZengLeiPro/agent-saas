@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, normalize } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { ServerLocalExecutionProvider, type WorkspaceRef } from 'server/agent/toolRuntime.js';
@@ -9,7 +9,7 @@ import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/r
 
 import type { SandboxRunnerFinalOutput, SandboxRunnerInput, SandboxRunnerOutput } from './protocol.js';
 import { runSandboxRunnerDaemon } from './sandboxRunnerDaemon.js';
-import { prepareSnapshotExecution, type SnapshotExecutionMetadata } from './snapshotExecution.js';
+import { prepareSnapshotExecution, resolveExecutionCwd, type SnapshotExecutionMetadata } from './snapshotExecution.js';
 import {
   getBackgroundShellOutput,
   killBackgroundShell,
@@ -92,39 +92,40 @@ export async function executeSandboxRunnerInput(
   const toolInput = input.input && typeof input.input === 'object' && !Array.isArray(input.input)
     ? input.input as Record<string, unknown>
     : {};
+  const requestedCwd = localToolName === 'Shell' && typeof toolInput.cwd === 'string'
+    ? toolInput.cwd
+    : undefined;
+  const effectiveToolInput = localToolName === 'Shell' && typeof toolInput.command === 'string'
+    ? { ...toolInput, command: normalizeShellCommandForCwd(toolInput.command, requestedCwd) }
+    : input.input;
   const baseEnv = {
     ...(process.env as Record<string, string | undefined>),
     ...wireEnvOverride,
   } as Record<string, string>;
   const backgroundResponse = await executeBackgroundShellTool({
     toolName: localToolName,
-    input: input.input,
+    input: effectiveToolInput,
     workspaceRoot,
     env: baseEnv,
   });
   if (backgroundResponse) {
-    const response = toolInput.execution === 'snapshot'
-      ? addSnapshotMetadata(backgroundResponse, {
-          requested: 'snapshot',
-          used: 'workspace',
-          preparationMs: 0,
-          fallbackReason: 'background_shell_uses_persistent_workspace',
-        })
-      : backgroundResponse;
-    emit({ kind: 'final', response });
+    emit({ kind: 'final', response: backgroundResponse });
     return;
   }
   const snapshot = localToolName === 'Shell' && toolInput.execution === 'snapshot'
     ? await prepareSnapshotExecution({
         workspaceRoot,
-        command: typeof toolInput.command === 'string' ? toolInput.command : '',
-        snapshotCwd: typeof toolInput.snapshotCwd === 'string' ? toolInput.snapshotCwd : undefined,
+        command: typeof effectiveToolInput === 'object' && effectiveToolInput && 'command' in effectiveToolInput
+          ? String(effectiveToolInput.command)
+          : '',
+        cwd: requestedCwd,
         signal,
         env: baseEnv,
         progress: (message) => emit({ kind: 'chunk', chunk: { type: 'progress', message } }),
       })
     : undefined;
-  const effectiveRoot = snapshot?.root ?? workspaceRoot;
+  const effectiveRoot = snapshot?.root
+    ?? (localToolName === 'Shell' ? await resolveExecutionCwd(workspaceRoot, requestedCwd) : workspaceRoot);
   const effectiveEnv = snapshot?.env ?? baseEnv;
   const workspace: WorkspaceRef = {
     id: input.workspace.id,
@@ -137,7 +138,7 @@ export async function executeSandboxRunnerInput(
   const provider = new ServerLocalExecutionProvider({ envBuilder: () => effectiveEnv });
   const request = {
     toolName: localToolName,
-    input: input.input,
+    input: effectiveToolInput,
     context: {
       ...(input.invocationId ? { invocationId: input.invocationId } : {}),
       workspace,
@@ -164,6 +165,20 @@ export async function executeSandboxRunnerInput(
   }
 }
 
+export function normalizeShellCommandForCwd(command: string, cwd: string | undefined): string {
+  if (!cwd) return command;
+  const prelude = command.match(/^(?:\s*set\s+(?:-[a-zA-Z]+|-o\s+[a-zA-Z0-9_-]+)\s*(?:;|\n))*/)?.[0] ?? '';
+  const remainder = command.slice(prelude.length);
+  const match = remainder.match(/^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))\s*(?:&&|;|\n)\s*/);
+  const commandCwd = match?.[1] ?? match?.[2] ?? match?.[3];
+  if (!match || !commandCwd || normalizeComparableCwd(commandCwd) !== normalizeComparableCwd(cwd)) return command;
+  return `${prelude}${remainder.slice(match[0].length)}`;
+}
+
+function normalizeComparableCwd(value: string): string {
+  return normalize(value).replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '') || '.';
+}
+
 export function addSnapshotMetadata(
   response: ToolInvocationResponse,
   snapshotExecution: SnapshotExecutionMetadata,
@@ -183,12 +198,9 @@ export function addSnapshotMetadata(
     ...(enriched.snapshotMs !== undefined ? { snapshotMaterializationMs: enriched.snapshotMs } : {}),
     ...(enriched.dependencyMs !== undefined ? { snapshotDependencyMs: enriched.dependencyMs } : {}),
     ...(enriched.dependencyCacheHit !== undefined ? { snapshotDependencyCacheHit: enriched.dependencyCacheHit } : {}),
-    ...(enriched.fallbackReason ? { snapshotFallbackReason: enriched.fallbackReason } : {}),
     ...(enriched.totalMs !== undefined ? { executionTotalMs: enriched.totalMs } : {}),
   };
-  const note = enriched.used === 'snapshot'
-    ? `[执行位置] 容器临时盘快照；准备 ${enriched.preparationMs}ms${enriched.dependencyCacheHit === undefined ? '' : `，依赖缓存${enriched.dependencyCacheHit ? '命中' : '新建'}`}`
-    : `[执行位置] 临时盘快照不可用，实际已回退持久工作区：${enriched.fallbackReason ?? 'unknown'}`;
+  const note = `[执行位置] 容器临时盘快照；准备 ${enriched.preparationMs}ms${enriched.dependencyCacheHit === undefined ? '' : `，依赖缓存${enriched.dependencyCacheHit ? '命中' : '新建'}`}`;
   return response.status === 'success'
     ? {
         ...response,
@@ -368,6 +380,10 @@ async function executeBackgroundShellTool(input: {
       }
       const output = await startBackgroundShell({
         workspaceRoot: input.workspaceRoot,
+        commandCwd: await resolveExecutionCwd(
+          input.workspaceRoot,
+          typeof args.cwd === 'string' ? args.cwd : undefined,
+        ),
         taskId: args.taskId,
         command: args.command,
         timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined,

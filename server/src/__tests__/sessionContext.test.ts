@@ -246,15 +246,20 @@ describe('SessionContextService', () => {
     }, context);
     expect(result?.content).toContain('package content');
 
-    await expect(provider.invoke({
+    const normalized = await provider.invoke({
       toolId: 'SessionContext',
       input: {
         action: 'trace',
         toolCallId: 'call-1',
+        query: '',
         startLine: 1,
         startChar: 1,
+        charCount: 6_000,
+        maxMatches: 8,
       },
       authorization: { approved: true, source: 'policy_auto' },
-    }, context)).rejects.toThrow('三种读取模式只能选择一种');
+    }, context);
+    expect(normalized?.content).toContain('"mode": "lines"');
+    expect(normalized?.content).not.toContain('"mode": "characters"');
   });
 });

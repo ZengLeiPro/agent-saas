@@ -74,6 +74,8 @@ export interface RuntimeSessionRecord extends Partial<AgentProfileSessionBinding
    * session：不进会话列表，Run Trace 可见。与 SessionMeta.kind 一一对应。
    */
   kind?: 'subagent';
+  /** 组织 Agent 调度链角色；缺省表示普通直接执行会话。 */
+  executionRole?: 'dispatcher' | 'worker';
   /** 公司级专职 Agent 绑定（2026-07 唯恩批次）。缺省 = 个人 Agent 会话。 */
   orgAgentId?: string;
   /** 当前 in-flight run 的组织 Agent 安全快照；resume 必须复用，不能读取更宽的新配置。 */
@@ -168,6 +170,7 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(record.modelRef ? { model: record.modelRef } : {}),
       ...(record.executionTarget ? { executionTarget: record.executionTarget } : {}),
       ...(record.kind ? { kind: record.kind } : {}),
+      executionRole: record.executionRole,
       // orgAgentId 缺省时保留 existing 值（resume 路径 record 可能不带），不清除既有绑定
       ...(record.orgAgentId ? { orgAgentId: record.orgAgentId } : {}),
       ...(record.orgAgentSnapshot ? { orgAgentSnapshot: record.orgAgentSnapshot } : {}),
@@ -200,6 +203,9 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(meta.workspaceId ? { workspaceId: meta.workspaceId } : {}),
       ...(isRuntimeSessionStatus(meta.runtimeStatus) ? { status: meta.runtimeStatus } : {}),
       ...(meta.kind === 'subagent' ? { kind: 'subagent' as const } : {}),
+      ...(meta.executionRole === 'dispatcher' || meta.executionRole === 'worker'
+        ? { executionRole: meta.executionRole }
+        : {}),
       ...(meta.orgAgentId ? { orgAgentId: meta.orgAgentId } : {}),
       ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
       ...(meta.memoryPolicyVersion === 'v2' ? { memoryPolicyVersion: 'v2' as const } : {}),
@@ -229,6 +235,7 @@ export function createRuntimeSessionRecord(args: {
   workspaceId?: string;
   status?: RuntimeSessionStatus;
   kind?: 'subagent';
+  executionRole?: 'dispatcher' | 'worker';
   orgAgentId?: string;
   orgAgentSnapshot?: OrgAgentSessionSnapshot;
   profileBinding?: AgentProfileSessionBinding;
@@ -248,6 +255,7 @@ export function createRuntimeSessionRecord(args: {
     workspaceId: args.workspaceId ?? args.sessionId,
     status: args.status ?? 'running',
     ...(args.kind ? { kind: args.kind } : {}),
+    ...(args.executionRole ? { executionRole: args.executionRole } : {}),
     ...(args.orgAgentId ? { orgAgentId: args.orgAgentId } : {}),
     ...(args.orgAgentSnapshot ? { orgAgentSnapshot: args.orgAgentSnapshot } : {}),
     ...(args.profileBinding ?? {}),

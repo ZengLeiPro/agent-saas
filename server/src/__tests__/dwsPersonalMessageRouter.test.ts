@@ -182,6 +182,41 @@ describe('AgentDwsMessageRouter', () => {
     expect(messageStore.complete).toHaveBeenCalledOnce();
   });
 
+  it('background completion is dispatched into the same parent Session as a durable notification, not a new Worker request', async () => {
+    const completion = {
+      ...item,
+      eventId: 'background-task-completion:bg-1',
+      content: '<task-notification><task-id>T-1234ABCD</task-id><status>completed</status></task-notification>',
+      payload: { source: 'background_task_completion', backgroundTaskId: 'bg-1' },
+    };
+    const dispatch: AgentRunDispatch = vi.fn((_message, _context, _options, hooks) => (async function* () {
+      await hooks?.onResult?.({ resultText: '任务 T-1234ABCD 已完成。' });
+      yield { type: 'done' as const };
+    })());
+    const { router, sender } = setup({ claimed: completion, dispatch });
+
+    await expect(router.runOnce()).resolves.toBe(true);
+
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('<task-notification>'),
+        metadata: expect.objectContaining({ source: 'agent_dws_background_completion' }),
+      }),
+      expect.objectContaining({
+        resumeSessionId: 'session-a',
+        systemContext: expect.stringContaining('不是用户的新请求'),
+      }),
+      expect.objectContaining({ orgAgentId: 'agent-a', dispatcherCompletion: true }),
+      expect.any(Object),
+    );
+    expect(sender.send).toHaveBeenCalledWith(
+      account,
+      expect.objectContaining({ eventId: 'background-task-completion:bg-1' }),
+      '任务 T-1234ABCD 已完成。',
+      expect.any(String),
+    );
+  });
+
   it('rejects interactive approvals instead of leaving DingTalk runs waiting forever', async () => {
     let interactionResponse: { allow?: boolean; message?: string } | undefined;
     const dispatch: AgentRunDispatch = vi.fn((

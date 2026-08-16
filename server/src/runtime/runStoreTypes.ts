@@ -259,6 +259,11 @@ export interface RunStore {
    */
   enqueueBackgroundTask?(input: UpsertRunInput, limits: EnqueueBackgroundTaskLimits): Promise<RunRecord>;
   listBackgroundTasks?(parentSessionId: string, options?: ListBackgroundTasksOptions): Promise<RunRecord[]>;
+  findBackgroundTasksByIdentifier?(
+    parentSessionId: string,
+    identifier: string,
+    options?: Pick<ListBackgroundTasksOptions, 'userId' | 'tenantId'>,
+  ): Promise<RunRecord[]>;
   /** 终态且完成通知仍待投递（或 delivering 超时）的后台任务。 */
   listPendingBackgroundTaskWakes?(staleBefore: Date, limit?: number): Promise<RunRecord[]>;
   /** CAS 抢占一条完成通知；返回 null 表示已被其他 brain 抢走。 */

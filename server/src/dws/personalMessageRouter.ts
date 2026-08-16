@@ -340,7 +340,9 @@ export class AgentDwsMessageRouter {
       content: item.content,
       ...(item.senderOpenDingtalkId ? { senderId: item.senderOpenDingtalkId } : {}),
       metadata: {
-        source: 'agent_dws_personal_stream',
+        source: item.payload.source === 'background_task_completion'
+          ? 'agent_dws_background_completion'
+          : 'agent_dws_personal_stream',
         accountId: item.accountId,
         eventId: item.eventId,
         eventType: item.eventType,
@@ -369,6 +371,7 @@ export class AgentDwsMessageRouter {
       ...(resolvedModel.connection ? { modelConnection: resolvedModel.connection } : {}),
       ...(resolvedModel.providerOptions ? { modelProviderOptions: resolvedModel.providerOptions } : {}),
       runtimeRunId: runId,
+      ...(item.payload.source === 'background_task_completion' ? { dispatcherCompletion: true } : {}),
       abortController,
     }, {
       onInteraction: async event => event.type === 'permission_request'
@@ -413,10 +416,14 @@ function inboxEvent(item: AgentDwsInboxRecord): DwsPersonalEvent {
 }
 
 function buildSystemContext(account: AgentDwsAccountRecord, item: AgentDwsInboxRecord): string {
+  const isBackgroundCompletion = item.payload.source === 'background_task_completion';
   return [
     `你正在通过组织 Agent「${bounded(account.displayName)}」的专属钉钉成员账号参与工作。`,
     '回复会由平台以该成员账号发回当前钉钉会话。不要声称自己是机器人，也不要泄露内部账号、事件或会话标识。',
     '需要澄清时直接用普通文本提问，不要调用 AskUserQuestion；当前钉钉通道不承载平台审批交互。',
+    ...(isBackgroundCompletion ? [
+      '当前消息是平台生成的 durable Worker 完成通知，不是用户的新请求。请播报其中的任务 ID、准确终态和精炼结果；不要再创建 Worker。',
+    ] : []),
     `当前入口：${item.eventType === 'user_im_message_receive_at' ? '群聊 @' : '单聊'}。`,
   ].join('\n');
 }

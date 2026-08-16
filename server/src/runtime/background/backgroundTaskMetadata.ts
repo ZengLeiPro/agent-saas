@@ -2,6 +2,14 @@ import type { ChannelContext } from '../../types/index.js';
 import { isModelOutputTransactionMode, resolveModelOutputTransactionMode } from '../modelOutputTransaction.js';
 import type { RunRecord } from '../runStore.js';
 
+export interface BackgroundTaskDwsCompletionRoute {
+  accountId: string;
+  conversationId: string;
+  eventType: 'user_im_message_receive_at' | 'user_im_message_receive_o2o_all';
+  messageId?: string;
+  senderOpenDingtalkId?: string;
+}
+
 interface CommonBackgroundTaskMetadata {
   parentRunId: string;
   parentSessionId: string;
@@ -13,7 +21,12 @@ interface CommonBackgroundTaskMetadata {
    */
   topLevelSessionId?: string;
   parentToolCallId: string;
+  shortTaskId?: string;
   description: string;
+  orgAgentId?: string;
+  executionMode?: 'direct' | 'dispatcher';
+  executionRole?: 'worker';
+  dwsCompletionRoute?: BackgroundTaskDwsCompletionRoute;
   modelRef: string;
   cwd: string;
   workspaceId: string;
@@ -62,6 +75,10 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
   }
 
   const sandboxPolicy = isSandboxPolicy(value.sandboxPolicy) ? value.sandboxPolicy : undefined;
+  const dwsCompletionRoute = parseDwsCompletionRoute(value.dwsCompletionRoute);
+  const executionMode = value.executionMode === 'dispatcher' ? 'dispatcher' as const
+    : value.executionMode === 'direct' ? 'direct' as const
+      : undefined;
   const common: CommonBackgroundTaskMetadata = {
     parentRunId,
     parentSessionId,
@@ -69,7 +86,12 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
     // workspace 级 scope 运行（其 metadata.sandboxScopeId 已固化），语义不变。
     topLevelSessionId: metadataString(value, 'topLevelSessionId') ?? parentSessionId,
     parentToolCallId,
+    ...(metadataString(value, 'shortTaskId') ? { shortTaskId: metadataString(value, 'shortTaskId') } : {}),
     description,
+    ...(metadataString(value, 'orgAgentId') ? { orgAgentId: metadataString(value, 'orgAgentId') } : {}),
+    ...(executionMode ? { executionMode } : {}),
+    ...(value.executionRole === 'worker' ? { executionRole: 'worker' as const } : {}),
+    ...(dwsCompletionRoute ? { dwsCompletionRoute } : {}),
     modelRef,
     cwd,
     workspaceId,
@@ -116,6 +138,27 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
 export function metadataString(metadata: Record<string, unknown>, key: string): string | undefined {
   const value = metadata[key];
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function parseDwsCompletionRoute(value: unknown): BackgroundTaskDwsCompletionRoute | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const route = value as Record<string, unknown>;
+  const accountId = metadataString(route, 'accountId');
+  const conversationId = metadataString(route, 'conversationId');
+  const eventType = route.eventType === 'user_im_message_receive_at'
+    || route.eventType === 'user_im_message_receive_o2o_all'
+    ? route.eventType
+    : undefined;
+  if (!accountId || !conversationId || !eventType) return undefined;
+  return {
+    accountId,
+    conversationId,
+    eventType,
+    ...(metadataString(route, 'messageId') ? { messageId: metadataString(route, 'messageId') } : {}),
+    ...(metadataString(route, 'senderOpenDingtalkId')
+      ? { senderOpenDingtalkId: metadataString(route, 'senderOpenDingtalkId') }
+      : {}),
+  };
 }
 
 function isSandboxPolicy(value: unknown): value is { denyRead: string[] } {

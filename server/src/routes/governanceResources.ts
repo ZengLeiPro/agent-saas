@@ -100,6 +100,7 @@ function boundedMemoryStorage(maxTotalBytes: number): multer.StorageEngine {
 export function createGovernanceResourcesRouter(deps: {
   memberships: PgMembershipStore;
   agents: PgAgentResourceStore;
+  validateOrgAgentDispatcherRuntime?: Parameters<typeof registerGovernanceAgentResourceRoutes>[0]['validateDispatcherRuntime'];
   skills: PgSkillGovernanceStore;
   importTenantSkill?: (input: {
     tenantId: string;
@@ -407,6 +408,9 @@ export function createGovernanceResourcesRouter(deps: {
     agents: deps.agents,
     memberships: deps.memberships,
     changeJobs: deps.changeJobs,
+    ...(deps.validateOrgAgentDispatcherRuntime
+      ? { validateDispatcherRuntime: deps.validateOrgAgentDispatcherRuntime }
+      : {}),
     previewSecret: deps.offboardingPreviewSecret,
     personaFor: req => personas.get(req),
     resourceTenantFor,

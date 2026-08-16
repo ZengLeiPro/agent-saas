@@ -27,6 +27,7 @@ import type { AgentOptionsConfig } from '../agent/options.js';
 import type { TitleGeneratorConfig, TitleModelAdapterFactory } from '../agent/titleGenerator.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
+import type { OrgAgentRuntimePolicy } from '../data/orgAgents/runtimePolicy.js';
 import type { AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import type { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
@@ -220,6 +221,11 @@ export interface AppRuntime {
    * （与 agentStore 同生命周期）；routes 挂 /api/org-agents 用。
    */
   orgAgentStore?: OrgAgentStore;
+  /** 发布 dispatcher 模式前校验后台 Agent、Profile 与 Worker 模型连接。 */
+  validateOrgAgentDispatcherRuntime?: (
+    tenantId: string,
+    policy: OrgAgentRuntimePolicy,
+  ) => Promise<string[]>;
   /**
    * 门禁事件落库（仅 runtimeEventStore.backend='pg'；file backend 为 undefined，
    * WebChannel 降级 log）。阶段 2 质检台 /api/admin/qa/guardrail-events 消费。

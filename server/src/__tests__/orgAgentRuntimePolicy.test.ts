@@ -13,6 +13,7 @@ import { OrgAgentStore } from '../data/orgAgents/store.js';
 import {
   DEFAULT_ORG_AGENT_RUNTIME_POLICY,
   mergeOrgAgentRuntimePolicy,
+  mergeOrgAgentWorkerRuntimePolicy,
   orgAgentRuntimePolicySchema,
   resolveOrgAgentRuntimeSkillIds,
   type OrgAgentRuntimePolicy,
@@ -74,7 +75,30 @@ describe('Org Agent Runtime Policy', () => {
     expect(definition.runtime).toEqual(DEFAULT_ORG_AGENT_RUNTIME_POLICY);
 
     const shared = sharedProfile();
+    expect(definition.runtime.executionMode).toBe('direct');
+    expect(definition.runtime.workerModel).toEqual({ strategy: 'inherit' });
     expect(mergeOrgAgentRuntimePolicy(shared, definition.runtime)).toEqual(shared);
+  });
+
+  it('dispatcher 强制保留 Agent/BackgroundTask，Worker 模型可独立覆盖前台模型', () => {
+    expect(() => policy({
+      executionMode: 'dispatcher',
+      capabilities: {
+        ...DEFAULT_ORG_AGENT_RUNTIME_POLICY.capabilities,
+        subagents: 'disabled',
+      },
+    })).toThrow(/子 Agent/);
+    expect(() => policy({
+      executionMode: 'dispatcher',
+      tools: { allowlist: ['Agent'], denylist: [] },
+    })).toThrow(/BackgroundTask/);
+
+    const worker = mergeOrgAgentWorkerRuntimePolicy(sharedProfile(), policy({
+      executionMode: 'dispatcher',
+      model: { strategy: 'fixed', modelRef: 'tenant/front' },
+      workerModel: { strategy: 'fixed', modelRef: 'tenant/worker' },
+    }));
+    expect(worker.model).toEqual({ strategy: 'fixed', modelRef: 'tenant/worker' });
   });
 
   it('governance projection 将已发布版本的 runtime policy 写入 legacy record', async () => {

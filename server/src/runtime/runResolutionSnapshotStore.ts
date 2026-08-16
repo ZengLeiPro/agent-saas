@@ -38,7 +38,11 @@ export interface RunResolutionSnapshotDraft {
   };
   accessDecision: AccessDecision;
   readiness: ExecutionReadiness;
-  agent: ResolvedResourceRef & { type: 'org_agent' | 'personal_agent' };
+  agent: ResolvedResourceRef & {
+    type: 'org_agent' | 'personal_agent';
+    executionMode?: 'direct' | 'dispatcher';
+    executionRole?: 'dispatcher' | 'worker';
+  };
   skills: ResolvedResourceRef[];
   connectors: ResolvedResourceRef[];
   credentialBindings: ResolvedResourceRef[];

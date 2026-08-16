@@ -96,7 +96,7 @@ export function buildTaskNotification(task: RunRecord, metadata: BackgroundTaskM
   const spill = result?.spillPath ? `\n完整输出已保存到 ${result.spillPath}` : '';
   return [
     '<task-notification>',
-    `<task-id>${escapeXml(task.runId)}</task-id>`,
+    `<task-id>${escapeXml(metadata.shortTaskId ?? task.runId)}</task-id>`,
     `<tool-use-id>${escapeXml(metadata.parentToolCallId)}</tool-use-id>`,
     `<status>${status}</status>`,
     `<summary>${escapeXml(metadata.description)}</summary>`,

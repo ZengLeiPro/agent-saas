@@ -17,6 +17,14 @@ const executionTargetSchema = z.enum([
   'client',
 ]);
 const capabilityPolicySchema = z.enum(['inherit', 'disabled']);
+const executionModeSchema = z.enum(['direct', 'dispatcher']);
+const workerModelSchema = z.discriminatedUnion('strategy', [
+  z.object({ strategy: z.literal('inherit') }).strict(),
+  z.object({
+    strategy: z.literal('fixed'),
+    modelRef: z.string().trim().min(1).max(200),
+  }).strict(),
+]);
 
 /**
  * Agent-local policy is deliberately unable to grant executable capabilities.
@@ -26,6 +34,8 @@ const capabilityPolicySchema = z.enum(['inherit', 'disabled']);
  */
 export const orgAgentRuntimePolicySchema = z.object({
   schemaVersion: z.literal(ORG_AGENT_RUNTIME_POLICY_SCHEMA_VERSION),
+  executionMode: executionModeSchema.default('direct'),
+  workerModel: workerModelSchema.default({ strategy: 'inherit' }),
   context: z.object({
     /** null inherits the shared Profile module set; an array explicitly selects non-security context modules. */
     modules: z.array(agentProfileContextModuleSchema).max(4).nullable().default(null),
@@ -75,6 +85,38 @@ export const orgAgentRuntimePolicySchema = z.object({
     allowedTargets: z.array(executionTargetSchema).max(4).nullable().default(null),
   }).strict().default({ allowedTargets: null }),
 }).strict().superRefine((policy, ctx) => {
+  if (policy.executionMode === 'dispatcher') {
+    if (policy.capabilities.backgroundTasks === 'disabled') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['capabilities', 'backgroundTasks'],
+        message: '前台调度器必须启用后台任务能力',
+      });
+    }
+    if (policy.capabilities.subagents === 'disabled') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['capabilities', 'subagents'],
+        message: '前台调度器必须启用子 Agent 能力',
+      });
+    }
+    for (const requiredTool of ['Agent', 'BackgroundTask']) {
+      if (policy.tools.allowlist && !policy.tools.allowlist.includes(requiredTool)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['tools', 'allowlist'],
+          message: `前台调度器工具允许列表必须包含 ${requiredTool}`,
+        });
+      }
+      if (policy.tools.denylist.includes(requiredTool)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['tools', 'denylist'],
+          message: `前台调度器不能禁止 ${requiredTool}`,
+        });
+      }
+    }
+  }
   // Keep the Profile invariant at the policy boundary too. A null allowlist can
   // inherit workspace tools, so denying the readiness gate would be unsafe.
   const workspaceTools = new Set(['Read', 'Write', 'Edit', 'Shell']);
@@ -101,6 +143,8 @@ export type OrgAgentRuntimePolicy = z.infer<typeof orgAgentRuntimePolicySchema>;
 
 export const DEFAULT_ORG_AGENT_RUNTIME_POLICY = Object.freeze({
   schemaVersion: ORG_AGENT_RUNTIME_POLICY_SCHEMA_VERSION,
+  executionMode: 'direct',
+  workerModel: { strategy: 'inherit' },
   context: { modules: null },
   model: { strategy: 'inherit' },
   memory: { scope: 'inherit' },
@@ -127,6 +171,7 @@ export function parseOrgAgentRuntimePolicy(input: unknown): OrgAgentRuntimePolic
   const parsed = orgAgentRuntimePolicySchema.parse(input);
   return {
     ...parsed,
+    workerModel: { ...parsed.workerModel },
     context: {
       modules: parsed.context.modules ? uniqueSorted(parsed.context.modules) : null,
     },
@@ -220,6 +265,24 @@ export function mergeOrgAgentRuntimePolicy(
         policy.execution.allowedTargets,
       ),
     },
+  });
+}
+
+/**
+ * Worker inherits the organization Agent's narrowed runtime policy. A dedicated
+ * Worker model overrides the front-desk model; otherwise the normal Agent model
+ * strategy remains authoritative. Dispatcher-only fields do not grant tools.
+ */
+export function mergeOrgAgentWorkerRuntimePolicy(
+  shared: AgentRuntimeProfileConfig,
+  input: OrgAgentRuntimePolicy | undefined,
+): AgentRuntimeProfileConfig {
+  const policy = normalizeOrgAgentRuntimePolicy(input);
+  return mergeOrgAgentRuntimePolicy(shared, {
+    ...policy,
+    model: policy.workerModel.strategy === 'fixed'
+      ? { strategy: 'fixed', modelRef: policy.workerModel.modelRef }
+      : policy.model,
   });
 }
 

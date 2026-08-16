@@ -26,6 +26,7 @@ import {
 } from '../runtime/rawRuntimeRunDispatch.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
+import { DEFAULT_ORG_AGENT_RUNTIME_POLICY } from '../data/orgAgents/runtimePolicy.js';
 import type { HandRecord } from '../runtime/handStore.js';
 import type { SkillsDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
 import type { ToolCallContext } from '../agent/toolRuntime.js';
@@ -190,6 +191,23 @@ describe('buildInstructions 专职 Agent 覆盖（真实模板渲染）', () => 
     expect(instructions).not.toContain('开开');
     // 模板变量必须全部渲染干净
     expect(instructions).not.toContain('{{');
+  });
+
+  it('dispatcher 注入前台职责与 background-only 回执规则', () => {
+    const instructions = buildInstructions({
+      ...baseParams,
+      orgAgent: {
+        name: '开开',
+        instructions: '负责客户请求。',
+        runtime: {
+          ...structuredClone(DEFAULT_ORG_AGENT_RUNTIME_POLICY),
+          executionMode: 'dispatcher',
+        },
+      },
+    });
+    expect(instructions).toContain('<dispatcher-mode>');
+    expect(instructions).toContain('其他任何实质咨询或执行请求都必须创建 background Worker');
+    expect(instructions).toContain('已交给执行 Agent，我继续在线');
   });
 
   it('个人会话（缺省）：persona 正常注入、无组织专职段（兼容红线）', () => {

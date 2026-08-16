@@ -3,6 +3,7 @@ import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { registerGovernanceAgentResourceRoutes } from '../routes/governanceAgentResourceRoutes.js';
+import { DEFAULT_ORG_AGENT_RUNTIME_POLICY } from '../data/orgAgents/runtimePolicy.js';
 
 const servers: Server[] = [];
 afterEach(async () => {
@@ -25,6 +26,15 @@ const definition = {
     strictness: 'strict' as const,
   },
   source: 'governance' as const,
+};
+
+const dispatcherDefinition = {
+  ...definition,
+  runtime: {
+    ...structuredClone(DEFAULT_ORG_AGENT_RUNTIME_POLICY),
+    executionMode: 'dispatcher' as const,
+    workerModel: { strategy: 'fixed' as const, modelRef: 'group/worker' },
+  },
 };
 
 type TestAgentStatus = 'draft' | 'enabled' | 'disabled' | 'archived';
@@ -50,6 +60,8 @@ async function rig(options: {
   persona?: TestPersona;
   includeProjectionOutbox?: boolean;
   projectionFails?: boolean;
+  dispatcherBlockers?: string[];
+  currentDefinition?: typeof definition & { runtime?: unknown };
 } = {}) {
   let resource: TestResource = {
     agentId: 'org-a', tenantId: 'tenant-a', kind: 'org_agent', ownerUserId: 'admin-1',
@@ -60,7 +72,7 @@ async function rig(options: {
   if (configuredVersionId) resource.currentVersionId = configuredVersionId;
   const currentVersion = {
     versionId: 'agentv-1', agentId: 'org-a', versionNumber: 1,
-    digest: 'digest-1', definition, publishedAt: '2026-08-13T00:00:00.000Z', publishedBy: 'admin-1',
+    digest: 'digest-1', definition: options.currentDefinition ?? definition, publishedAt: '2026-08-13T00:00:00.000Z', publishedBy: 'admin-1',
   };
   const publishedResource: TestResource = {
     ...resource, status: 'enabled', revision: resource.revision + 1, currentVersionId: 'agentv-1',
@@ -91,6 +103,7 @@ async function rig(options: {
     ? vi.fn().mockRejectedValue(new Error('outbox unavailable'))
     : vi.fn().mockResolvedValue({ outboxId: 'projection-1' });
   const reconcileOne = vi.fn().mockResolvedValue(null);
+  const validateDispatcherRuntime = vi.fn().mockResolvedValue(options.dispatcherBlockers ?? []);
   const app = express();
   app.use(express.json());
   app.use((req, res, next) => {
@@ -106,6 +119,7 @@ async function rig(options: {
       getMembership: vi.fn().mockResolvedValue({ tenantId: 'tenant-a', userId: 'admin-1', status: 'active' }),
     } as never,
     changeJobs: { findActiveForTarget: vi.fn().mockResolvedValue(null) } as never,
+    validateDispatcherRuntime,
     previewSecret: 'test-agent-preview-secret-at-least-32-characters',
     personaFor: () => options.persona ?? 'org_admin',
     resourceTenantFor: (req, requested) => {
@@ -124,7 +138,7 @@ async function rig(options: {
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
   return {
-    baseUrl, publishVersion, setStatus, enqueue, reconcileOne,
+    baseUrl, publishVersion, setStatus, enqueue, reconcileOne, validateDispatcherRuntime,
     mutateResource: (patch: Partial<TestResource>) => { resource = { ...resource, ...patch }; },
   };
 }
@@ -175,6 +189,44 @@ describe('governance Agent version publish', () => {
     expect(test.reconcileOne).toHaveBeenCalledOnce();
   });
 
+  it('dispatcher 缺后台工具或 Worker 模型连接时 preview 与 commit 都 fail-closed', async () => {
+    const test = await rig({
+      dispatcherBlockers: ['DISPATCHER_REQUIRED_TOOL_MISSING:Agent', 'DISPATCHER_WORKER_MODEL_UNAVAILABLE:background_general'],
+    });
+    const previewResponse = await fetch(
+      `${test.baseUrl}/api/governance/resources/agents/org-a/versions/preview`,
+      json({ expectedRevision: 1, definition: dispatcherDefinition, reason: '启用前台调度器模式' }),
+    );
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json() as {
+      canCommit: boolean;
+      previewId: string;
+      baselineDigest: string;
+      expiresAt: string;
+      impact: { blockers: string[] };
+    };
+    expect(preview.canCommit).toBe(false);
+    expect(preview.impact.blockers).toEqual([
+      'DISPATCHER_REQUIRED_TOOL_MISSING:Agent',
+      'DISPATCHER_WORKER_MODEL_UNAVAILABLE:background_general',
+    ]);
+
+    const response = await fetch(`${test.baseUrl}/api/governance/resources/agents/org-a/versions`, json({
+      expectedRevision: 1,
+      definition: dispatcherDefinition,
+      reason: '启用前台调度器模式',
+      previewId: preview.previewId,
+      baselineDigest: preview.baselineDigest,
+      expiresAt: preview.expiresAt,
+    }));
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'DISPATCHER_RUNTIME_UNAVAILABLE',
+      blockers: expect.arrayContaining(['DISPATCHER_REQUIRED_TOOL_MISSING:Agent']),
+    });
+    expect(test.publishVersion).not.toHaveBeenCalled();
+  });
+
   it('拒绝引用其他 Agent 的媒体头像路径', async () => {
     const test = await rig();
     const response = await fetch(
@@ -216,6 +268,26 @@ describe('governance Agent status preview and commit', () => {
     await expect(response.json()).resolves.toMatchObject({ code: 'AGENT_STATUS_PREVIEW_INVALID' });
     expect(test.setStatus).not.toHaveBeenCalled();
     expect(test.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('dispatcher 当前版本依赖失效时禁止重新启用', async () => {
+    const test = await rig({
+      status: 'disabled',
+      revision: 4,
+      currentDefinition: dispatcherDefinition,
+      dispatcherBlockers: ['DISPATCHER_BACKGROUND_RUNTIME_UNAVAILABLE'],
+    });
+    const previewResponse = await fetch(
+      `${test.baseUrl}/api/governance/resources/agents/org-a/status/preview`,
+      json({ expectedRevision: 4, status: 'enabled', reason }),
+    );
+    const preview = await previewResponse.json() as {
+      canCommit: boolean;
+      impact: { blockers: string[] };
+    };
+    expect(preview.canCommit).toBe(false);
+    expect(preview.impact.blockers).toContain('DISPATCHER_BACKGROUND_RUNTIME_UNAVAILABLE');
+    expect(test.setStatus).not.toHaveBeenCalled();
   });
 
   it.each([

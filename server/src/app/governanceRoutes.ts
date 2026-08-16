@@ -248,6 +248,9 @@ export function registerGovernanceRoutes(
     app.use('/api/governance/resources', createGovernanceResourcesRouter({
       memberships: runtime.membershipStore,
       agents: runtime.agentResourceStore,
+      ...(runtime.validateOrgAgentDispatcherRuntime
+        ? { validateOrgAgentDispatcherRuntime: runtime.validateOrgAgentDispatcherRuntime }
+        : {}),
       skills: runtime.skillGovernanceStore,
       ...(runtime.skillConfigStore && runtime.userStore ? {
         importTenantSkill: createTenantSkillGovernanceUpload({

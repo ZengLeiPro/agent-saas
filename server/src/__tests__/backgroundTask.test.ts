@@ -14,6 +14,7 @@ import type {
   UpsertRunInput,
 } from '../runtime/runStore.js';
 import { BackgroundTaskLimitError, PgRunStore } from '../runtime/runStore.js';
+import { DEFAULT_ORG_AGENT_RUNTIME_POLICY } from '../data/orgAgents/runtimePolicy.js';
 import type {
   RuntimeSessionRecord,
   RuntimeSessionStatus,
@@ -22,6 +23,7 @@ import type {
 import type { RawRuntimeRunDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
 import { createTenantRemoteHandAuthTokenResolver } from '../runtime/tenantRemoteHandResolver.js';
 import type { ExecutionTransport } from '../runtime/executionTransport.js';
+import { McpProxy } from '../mcp/proxy.js';
 import type { SubagentOutcome } from '../runtime/subagent/subagentRunner.js';
 import type { EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 
@@ -271,8 +273,24 @@ describe('DurableBackgroundTaskService', () => {
     expect(activateCommand).toHaveBeenCalledWith(effectiveContext, 'shell-bg-effective');
   });
 
-  it('persists a hidden task session/run and emits background_task_started', async () => {
+  it('persists a hidden Worker session/run with dispatcher snapshot and emits background_task_started', async () => {
     const { service, runStore, sessionCatalog, eventStore } = fixture();
+    sessionCatalog.records.set('parent-session-1', {
+      ...session('parent-session-1'),
+      orgAgentId: 'org-kaikai',
+      executionRole: 'dispatcher',
+      orgAgentSnapshot: {
+        name: '开开',
+        instructions: '遵守组织规则',
+        allowedSkills: ['dws'],
+        allowedKnowledge: ['kb-sales'],
+        runtime: {
+          ...structuredClone(DEFAULT_ORG_AGENT_RUNTIME_POLICY),
+          executionMode: 'dispatcher',
+          workerModel: { strategy: 'fixed', modelRef: 'group/worker' },
+        },
+      },
+    });
     const context: ToolCallContext = {
       channelContext: {
         channel: 'web',
@@ -300,16 +318,30 @@ describe('DurableBackgroundTaskService', () => {
       includeCompanyInfo: false,
     });
 
-    expect(started).toMatchObject({ status: 'pending', description: '后台调研', model: 'group/model' });
+    expect(started).toMatchObject({
+      status: 'pending', description: '后台调研', model: 'group/worker', shortTaskId: expect.stringMatching(/^T-[A-F0-9]{24}$/),
+    });
     const task = runStore.records.get(started.taskId)!;
     expect(task.metadata).toMatchObject({
       backgroundTask: true,
       parentRunId: 'parent-run-1',
       parentSessionId: 'parent-session-1',
       agentType: 'explore',
+      shortTaskId: started.shortTaskId,
+      orgAgentId: 'org-kaikai',
+      executionMode: 'dispatcher',
+      executionRole: 'worker',
       wakeState: 'none',
     });
-    expect(sessionCatalog.records.get(task.sessionId)).toMatchObject({ kind: 'subagent', status: 'idle' });
+    expect(sessionCatalog.records.get(task.sessionId)).toMatchObject({
+      kind: 'subagent', status: 'idle', executionRole: 'worker', orgAgentId: 'org-kaikai',
+      orgAgentSnapshot: expect.objectContaining({ name: '开开' }),
+    });
+    await expect(service.get(context, started.shortTaskId)).resolves.toMatchObject({ runId: started.taskId });
+    const duplicate = { ...task, runId: 'bg-duplicate', metadata: { ...task.metadata } };
+    runStore.records.set(duplicate.runId, duplicate);
+    await expect(service.get(context, started.shortTaskId)).rejects.toThrow(/存在歧义/);
+    runStore.records.delete(duplicate.runId);
     expect(eventStore.events).toContainEqual(expect.objectContaining({
       type: 'background_task_started',
       taskId: started.taskId,
@@ -375,6 +407,14 @@ describe('DurableBackgroundTaskService', () => {
       return { GH_TOKEN: 'connector-token-alice' };
     };
     let seenConnectorEnv: Record<string, string> | undefined;
+    let seenParentTools: string[] = [];
+    const mcpWarmup = vi.fn(async () => [{
+      serverName: 'crm', toolName: 'lookup', description: '查询客户', inputSchema: { type: 'object' },
+    }]);
+    base.config.mcpProxy = new McpProxy({
+      manager: {} as never,
+      warmupWithCredential: mcpWarmup,
+    });
     const outcome: SubagentOutcome = {
       status: 'completed',
       text: '后台执行完成',
@@ -389,6 +429,7 @@ describe('DurableBackgroundTaskService', () => {
     const service = new DurableBackgroundTaskService(base.config, {
       runSubagentImpl: async (params) => {
         seenConnectorEnv = params.parentContext.env;
+        seenParentTools = params.parentProviders.flatMap(provider => provider.list(params.parentContext).map(tool => tool.name));
         await params.onChildRunCreated?.({
           childSessionId: outcome.childSessionId,
           childRunId: outcome.childRunId,
@@ -417,6 +458,10 @@ describe('DurableBackgroundTaskService', () => {
       GIT_CONFIG_KEY_1: 'credential.helper',
     });
     expect(seenConnectorEnv?.GIT_CONFIG_VALUE_1).not.toContain('connector-token-alice');
+    expect(mcpWarmup).toHaveBeenCalledWith(expect.objectContaining({
+      username: 'alice', userId: 'user-1', sessionId: 'sub-task-1', runId: 'bg-task-1',
+    }));
+    expect(seenParentTools).toContain('mcp__crm__lookup');
     expect(base.runStore.records.get(task.runId)).toMatchObject({
       status: 'completed',
       statusReason: undefined,

@@ -72,7 +72,7 @@ import {
   profileRunMetadata,
   resolveAgentProfileBindingKey,
   resolveAgentProfileMaxTurns,
-  type BoundAgentRuntimeProfile,
+  type BoundAgentRuntimeProfile, applyOrgAgentExecutionMode, appendDispatcherInstructionSection, resolveAgentModePolicy,
 } from './agentProfiles.js';
 import { McpClientToolProvider } from '../mcp/clientToolProvider.js';
 import type { McpClientManager } from '../mcp/clientManager.js';
@@ -516,9 +516,8 @@ export class RunStateTrackingEventStore implements EventStore {
  */
 interface SubagentToolingDeps {
   executionTransportRegistry: ExecutionTransportRegistry;
-  tenantHandResolver: TenantRemoteHandAuthTokenResolver;
+  tenantHandResolver: TenantRemoteHandAuthTokenResolver; agentModePolicy?: 'any' | 'background_only';
 }
-
 /**
  * 收集本次 dispatch 用到的所有 tool providers + buildInstructions 入参。
  * 两条 dispatch（首跑 / approval resume）共用同一构造，保证 instructions 一致。
@@ -635,7 +634,7 @@ export async function collectRuntimeTooling(
       config,
       executionTransportRegistry: subagentDeps.executionTransportRegistry,
       tenantHandResolver: subagentDeps.tenantHandResolver,
-      parentProviders: [...providers],
+      parentProviders: [...providers], modePolicy: subagentDeps.agentModePolicy ?? 'any',
     }));
   }
 
@@ -992,7 +991,7 @@ export function buildInstructionSections(params: {
   /** 平台系统提示语注册表 getter；缺省走随版本发布的模板。 */
   getSystemPrompt?: (id: SystemPromptId) => string;
   /** 专职 Agent 覆盖：注入 {{ORG_AGENT_INSTRUCTIONS}}，IF_PERSONA/IF_NO_PERSONA 强制 false，AGENT_NAME 用 org 名。 */
-  orgAgent?: Pick<OrgAgentRecord, 'name' | 'instructions'>;
+  orgAgent?: Pick<OrgAgentRecord, 'name' | 'instructions'> & Pick<Partial<OrgAgentRecord>, 'runtime'>;
   /** Profile 只选择可选上下文模块；main.static 与 dynamic-personal 中的平台安全底座不可移除。 */
   contextModules?: readonly ('company_info' | 'tenant_instructions' | 'runtime_memory' | 'personal_context')[];
   profileSystemInstructions?: string;
@@ -1032,6 +1031,7 @@ export function buildInstructionSections(params: {
       content: `<agent-profile-instructions>\n${params.profileSystemInstructions.trim()}\n</agent-profile-instructions>`,
     });
   }
+  appendDispatcherInstructionSection(sections, params.orgAgent?.runtime?.executionMode);
   if (modules.has('company_info')) {
     sections.push({
       key: 'company_info',
@@ -1377,7 +1377,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         cwd,
         modelRef: sessionModelRef,
         executionTarget,
-        status: 'running',
+        status: 'running', executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined,
         ...(orgAgentId ? { orgAgentId } : {}),
         ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
       })),
@@ -1394,7 +1394,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       modelRef: sessionModelRef,
       executionTarget,
       workspaceId,
-      status: 'running',
+      status: 'running', executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined,
       ...(orgAgentId ? { orgAgentId } : {}),
       ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
       ...(memoryPolicyVersion === 'v2' ? { memoryPolicyVersion: 'v2' as const } : {}),
@@ -1439,7 +1439,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       metadata: {
         cwd,
         transcriptPath,
-        modelRef: sessionModelRef, username: sessionRecord.username, userRole: sessionRecord.userRole, ...(orgAgentId ? { orgAgentId } : {}),
+        modelRef: sessionModelRef, username: sessionRecord.username, userRole: sessionRecord.userRole, ...(orgAgentId ? { orgAgentId } : {}), ...(sessionRecord.executionRole ? { executionRole: sessionRecord.executionRole } : {}), ...(orgAgent?.runtime?.executionMode ? { executionMode: orgAgent.runtime.executionMode } : {}), ...(options.dispatcherCompletion ? { dispatcherCompletion: true } : {}),
         outputTransactionMode: resolveModelOutputTransactionMode(context),
         sandboxScopeId,
         ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}),
@@ -1541,7 +1541,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         ? composeSkillFilters(baseSkillFilter, buildOrgAgentSkillFilter(orgAgent), profileSkillFilter)
         : composeSkillFilters(baseSkillFilter, profileSkillFilter),
       orgAgent ? resolveOrgAgentRuntimeSkillIds(orgAgent) : [],
-      { executionTransportRegistry, tenantHandResolver },
+      { executionTransportRegistry, tenantHandResolver, agentModePolicy: resolveAgentModePolicy(orgAgent?.runtime?.executionMode) },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
       sessionRecord.userId ? { runId, sessionId, userId: sessionRecord.userId } : undefined,
     );
@@ -1575,7 +1575,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       eventStore,
       approvalStore,
       transcriptProjection: projection,
-      toolRuntime: boundProfile
+      toolRuntime: applyOrgAgentExecutionMode(boundProfile
         ? applyAgentRuntimeProfile(applyToolProfile(new PlatformToolRuntime({
             memoryIndexService: config.memoryIndexService,
             executionTransportRegistry,
@@ -1597,7 +1597,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         providers: [...tooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
         toolControls: config.toolControls,
         backgroundTasks: config.backgroundTasks,
-      }), toolProfile, memoryPolicyVersion),
+      }), toolProfile, memoryPolicyVersion), orgAgent?.runtime?.executionMode, options.dispatcherCompletion === true),
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
@@ -2174,7 +2174,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
             boundProfile ? (skill) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1 : allowAllRuntimeSkills,
           ),
       orgAgent ? resolveOrgAgentRuntimeSkillIds(orgAgent) : [],
-      { executionTransportRegistry, tenantHandResolver },
+      { executionTransportRegistry, tenantHandResolver, agentModePolicy: resolveAgentModePolicy(orgAgent?.runtime?.executionMode) },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
       sessionRecord.userId
         ? { runId: resumeRunId, sessionId: request.sessionId, userId: sessionRecord.userId }
@@ -2210,7 +2210,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       eventStore,
       approvalStore,
       transcriptProjection: projection,
-      toolRuntime: boundProfile
+      toolRuntime: applyOrgAgentExecutionMode(boundProfile
         ? applyAgentRuntimeProfile(applyToolProfile(new PlatformToolRuntime({
             memoryIndexService: config.memoryIndexService,
             executionTransportRegistry,
@@ -2232,7 +2232,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
         toolControls: config.toolControls,
         backgroundTasks: config.backgroundTasks,
-      }), resumeToolProfile, memoryPolicyVersion),
+      }), resumeToolProfile, memoryPolicyVersion), orgAgent?.runtime?.executionMode, request.dispatcherCompletion === true),
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
@@ -2639,7 +2639,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
             boundProfile ? (skill) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1 : allowAllRuntimeSkills,
           ),
       orgAgent ? resolveOrgAgentRuntimeSkillIds(orgAgent) : [],
-      { executionTransportRegistry, tenantHandResolver },
+      { executionTransportRegistry, tenantHandResolver, agentModePolicy: resolveAgentModePolicy(orgAgent?.runtime?.executionMode) },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
       sessionRecord.userId
         ? { runId: resumeRunId, sessionId: request.sessionId, userId: sessionRecord.userId }
@@ -2675,7 +2675,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       eventStore,
       approvalStore: createApprovalStoreForSession(config, sessionRecord, eventStore),
       transcriptProjection: projection,
-      toolRuntime: boundProfile
+      toolRuntime: applyOrgAgentExecutionMode(boundProfile
         ? applyAgentRuntimeProfile(applyToolProfile(new PlatformToolRuntime({
             memoryIndexService: config.memoryIndexService,
             executionTransportRegistry,
@@ -2697,7 +2697,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
         toolControls: config.toolControls,
         backgroundTasks: config.backgroundTasks,
-      }), resumeToolProfile, memoryPolicyVersion),
+      }), resumeToolProfile, memoryPolicyVersion), orgAgent?.runtime?.executionMode, request.dispatcherCompletion === true),
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
@@ -3015,7 +3015,7 @@ export async function wakeRuntimeSession(
         model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
-        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}),
+        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}), ...(run.metadata.dispatcherCompletion === true ? { dispatcherCompletion: true } : {}),
         abortController,
         runtimeWorkerId: options.lease?.workerId,
         runtimeDrainHandoff: drainHandoff,
@@ -3088,7 +3088,7 @@ export async function wakeRuntimeSession(
         model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
-        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}),
+        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}), ...(run.metadata.dispatcherCompletion === true ? { dispatcherCompletion: true } : {}),
         abortController,
         runtimeWorkerId: options.lease?.workerId,
         runtimeDrainHandoff: drainHandoff,
@@ -3154,7 +3154,7 @@ export async function wakeRuntimeSession(
         model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
-        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}),
+        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}), ...(run.metadata.dispatcherCompletion === true ? { dispatcherCompletion: true } : {}),
         ...(session.orgAgentId ? { orgAgentId: session.orgAgentId } : {}),
         recordUserMessage: wakePrompt.recordUserMessage,
         abortController,

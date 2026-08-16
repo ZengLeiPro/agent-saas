@@ -1415,9 +1415,9 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     // 预 provision（2026-08-10，A 方案批次 2）：session record 落库后立即异步拉起
     // Sandbox，让 pod 冷启动与模型首个 token 的思考时间重叠。
     //
-    // 为什么不能复用「打开会话页」那条既有预热路径：那条要求 sessionCatalog 里已有
-    // record，全新会话必然被 skip（sandboxWarmup 明确「record 不存在时跳过，绝不
-    // 自行推导身份映射」）。而 per-session Sandbox 下**每个新会话组都是一次冷启动**，
+    // 为什么不能只依赖「输入框首次有效输入」预热：全新会话在 dispatch 前尚无 sessionId 和
+    // sessionCatalog record，输入阶段无法锁定 scope；sandboxWarmup 也会跳过无 record 的会话。
+    // 而 per-session Sandbox 下**每个新会话组都是一次冷启动**，
     // 实测新 pod 的 WaitForWorkspaceReady 7 次全部打满 30s——正是要消除的首屏等待。
     // fire-and-forget：内部自带 per-scope 节流与失败静默，不阻塞、不影响本次 run。
     config.sandboxWarmup?.(sessionId);

@@ -223,15 +223,14 @@ curl -sf http://127.0.0.1:3400/health
 
 - `Classify ACS Impact` 读取本次 push 的 changed files，输出 `publish` / `contract_check`。
 - `workflow_dispatch` 视为人工强制发布；非 main 手动触发只 build，不 deploy。
-- `publish=true` 时自动构建 `acs-sandbox` 镜像。
-- 本地跑命令矩阵与 runner contract smoke。
-- 将镜像 tar 和代码 release 包上传到 ECS。
-- 在 ECS 上安装 orchestrator 依赖、用 ACR VPC endpoint 推送镜像、更新 `/etc/agent-saas/acs-orchestrator.env` 的 `ACS_SANDBOX_IMAGE`。
-- 重启 `agent-saas-acs-orchestrator.service`。
+- `publish=true` 时跑 typecheck、orchestrator tests 与 operational scripts；镜像由 GitHub push webhook 触发 ACR EE 源码构建。
+- `workflow_dispatch` 只接受当前 `GITHUB_SHA` 对应的不可变镜像，禁止用后继镜像替代。
+- exact SHA 构建记录连续两次缺失时，按 `push + refs/heads/main + payload.after=GITHUB_SHA` 精确定位失败的 ACR webhook delivery，最多自动补投一次，然后继续原轮询；找不到或补投失败仍保持 fail-fast。
+- 将 orchestrator release 包上传到 ECS，更新 `/etc/agent-saas/acs-orchestrator.env` 的 `ACS_SANDBOX_IMAGE`，并通过 drain 旧进程后由 systemd 拉起新版本。
 - 正式跑 `/provision + /execute Shell` smoke，断言 workspace venv 路径、base Python 包 import、`ACS_SANDBOX_DEPLOY_SMOKE_OK`。
 - `/health` 暴露当前 Sandbox image、runtime contract、capabilities、networkPolicy、SNAT 与 Sandbox inventory。
 - `publish=false && contract_check=true` 时只跑 `server` / `acs-orchestrator` typecheck 和 `acs-orchestrator` tests，不发布。
 
-Workflow 依赖 GitHub Secrets：`ECS_HOST`、`ECS_USER`、`ECS_SSH_KEY`、`ACR_USERNAME`、`ACR_PASSWORD`。ACR 推送发生在 ECS 内，经 VPC endpoint；`ACR_USERNAME`/`ACR_PASSWORD` 是主登录路径。ECS 上的阿里云 CLI `cr GetAuthorizationToken` 与集群 `acr-agentsaasacrprod` imagePullSecret 只作为诊断兜底，不应依赖 orchestrator 最小 RBAC 去读 Secret。不要求打开 ACR 公网 endpoint。
+Workflow 依赖 GitHub Secrets：`ECS_HOST`、`ECS_USER`、`ECS_SSH_KEY`、`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ACS_WEBHOOK_REDELIVERY_TOKEN`。最后一项必须是仅授权 `ZengLeiPro/agent-saas`、Repository permissions 只有 `Webhooks: write` 的 fine-grained token；禁止复用个人 broad-scope token。集群 `acr-agentsaasacrprod` imagePullSecret 只用于拉取生产镜像，不作为 webhook 补投凭据。
 
 旧 tag 清理不是自动化的一部分。删除 ACR tag 仍需单独确认回滚窗口。

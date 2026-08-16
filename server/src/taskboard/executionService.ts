@@ -271,7 +271,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     identity: TaskboardIdentity,
     taskId: string,
     input: TaskBoardExecutionStartInput,
-    options: { allowWorkFromCurrentStatus?: boolean; executionId?: string; sessionId?: string } = {},
+    options: { allowWorkFromCurrentStatus?: boolean; executionId?: string } = {},
   ): Promise<TaskBoardExecutionStartResult> {
     const claim = await this.prepareExecutionClaim(identity, taskId, input, options);
     const claimed = await this.options.store.claimExecution(identity, taskId, claim);
@@ -283,12 +283,16 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     identity: TaskboardIdentity,
     taskId: string,
     input: TaskBoardExecutionStartInput,
-    options: { allowWorkFromCurrentStatus?: boolean; executionId?: string; sessionId?: string } = {},
+    options: { allowWorkFromCurrentStatus?: boolean; executionId?: string } = {},
   ): Promise<TaskboardExecutionClaimInput> {
     const launch = await this.resolveLaunch(identity, taskId);
-    const executions = options.sessionId ? [] : await this.options.store.listExecutions(identity, taskId);
+    const purpose = input.purpose ?? 'work';
+    const executions = purpose === 'work'
+      ? await this.options.store.listExecutions(identity, taskId)
+      : [];
     const executionId = options.executionId ?? randomUUID();
-    const sessionId = options.sessionId ?? executions[0]?.sessionId ?? `taskboard-${randomUUID()}`;
+    const workSessionId = executions.find((execution) => execution.purpose === 'work')?.sessionId;
+    const sessionId = workSessionId ?? `taskboard-${randomUUID()}`;
     const session = await reuseTaskboardSession({
       sessionCatalog: this.options.sessionCatalog,
       agentCwd: this.options.agentCwd,
@@ -695,7 +699,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         reviewIdentity,
         context.task.id,
         { expectedVersion: context.task.version, purpose: 'review' },
-        { executionId: `${context.execution.id}-review`, sessionId },
+        { executionId: `${context.execution.id}-review` },
       );
     }
     const completion = {

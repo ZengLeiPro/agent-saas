@@ -37,7 +37,7 @@ describe('taskboard task status DDL', () => {
     expect(sql).not.toMatch(/\bUPDATE\b/i);
   });
 
-  it('keeps the existing work/review session reuse compatible with multiple executions', () => {
+  it('keeps the session index non-unique for work execution reuse', () => {
     const sql = executionFieldMigrationSql('runtime_taskboard_execs');
 
     expect(sql).toContain('DROP INDEX IF EXISTS runtime_taskboard_execs_session_uidx;');

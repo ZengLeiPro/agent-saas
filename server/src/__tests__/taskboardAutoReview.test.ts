@@ -58,14 +58,56 @@ describe('Taskboard automatic review', () => {
         purpose: 'review',
         executionId: 'execution-1-review',
         runId: 'taskboard-execution-execution-1-review',
-        sessionId: 'session-1',
+        sessionId: expect.stringMatching(/^taskboard-/),
       }),
     }));
+    expect(review?.sessionId).not.toBe('session-1');
     expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledTimes(1);
     expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledWith(expect.objectContaining({
       runId: 'taskboard-execution-execution-1-review',
-      sessionId: 'session-1',
+      sessionId: review?.sessionId,
     }));
+  });
+
+  it('每一轮 review 都新建 Session，不复用 work 或历史 review Session', async () => {
+    const rig = makeRig({
+      listExecutions: vi.fn(async () => [
+        execution({ id: 'review-old', purpose: 'review', sessionId: 'review-session-old' }),
+        execution({ id: 'work-old', purpose: 'work', sessionId: 'work-session' }),
+      ]),
+    });
+
+    const first = await rig.coordinator.startExecution(identity, task.id, {
+      expectedVersion: task.version,
+      purpose: 'review',
+    });
+    const second = await rig.coordinator.startExecution(identity, task.id, {
+      expectedVersion: task.version,
+      purpose: 'review',
+    });
+
+    expect(first.execution.sessionId).toMatch(/^taskboard-/);
+    expect(second.execution.sessionId).toMatch(/^taskboard-/);
+    expect(first.execution.sessionId).not.toBe(second.execution.sessionId);
+    expect([first.execution.sessionId, second.execution.sessionId]).not.toContain('work-session');
+    expect([first.execution.sessionId, second.execution.sessionId]).not.toContain('review-session-old');
+    expect(rig.store.listExecutions).not.toHaveBeenCalled();
+  });
+
+  it('返工 work 复用原 work Session，不误接最新 review Session', async () => {
+    const rig = makeRig({
+      listExecutions: vi.fn(async () => [
+        execution({ id: 'review-latest', purpose: 'review', sessionId: 'review-session-latest' }),
+        execution({ id: 'work-old', purpose: 'work', sessionId: 'work-session' }),
+      ]),
+    });
+
+    const result = await rig.coordinator.startExecution(identity, task.id, {
+      expectedVersion: task.version,
+      purpose: 'work',
+    });
+
+    expect(result.execution.sessionId).toBe('work-session');
   });
 
   it('复核 Execution 成功时不会递归派发下一轮复核', async () => {

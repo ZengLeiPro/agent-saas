@@ -42,14 +42,14 @@ export async function loadExecutionContext(
 ): Promise<TaskboardExecutionContext | null> {
   const result = await host.pool.query(
     `SELECT e.*, b.tenant_id, b.owner_user_id, b.prompt AS board_prompt,
-            previous.created_at AS previous_created_at
+            previous.context_since
        FROM ${host.executionsTable} e
        JOIN ${host.tasksTable} t ON t.id=e.task_id
        JOIN ${host.boardsTable} b ON b.id=t.board_id
        LEFT JOIN LATERAL (
-         SELECT prior.created_at
+         SELECT COALESCE(prior.finished_at, prior.updated_at, prior.created_at) AS context_since
            FROM ${host.executionsTable} prior
-          WHERE prior.task_id=e.task_id
+          WHERE prior.task_id=e.task_id AND prior.session_id=e.session_id
             AND (prior.created_at < e.created_at OR (prior.created_at=e.created_at AND prior.id < e.id))
           ORDER BY prior.created_at DESC, prior.id DESC
           LIMIT 1
@@ -65,14 +65,15 @@ export async function loadExecutionContext(
     username: '',
   };
   const execution = rowToExecution(row);
-  const continuation = Boolean(row.previous_created_at);
+  const contextSince = row.context_since ?? null;
+  const continuation = Boolean(contextSince);
   const commentsResult = await host.pool.query(
     `SELECT c.*
        FROM ${host.commentsTable} c
       WHERE c.task_id=$1
-        AND ($2::boolean=false OR (c.author_type='user' AND c.continuation_run_id=$3))
+        AND ($2::timestamptz IS NULL OR c.created_at >= $2::timestamptz)
       ORDER BY c.created_at, c.id`,
-    [execution.taskId, continuation, runId],
+    [execution.taskId, contextSince],
   );
   return {
     identity,

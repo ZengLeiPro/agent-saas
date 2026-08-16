@@ -561,7 +561,7 @@ export class PgRunStore implements RunStore {
               lease_expires_at = NULL,
               metadata = (metadata || jsonb_build_object(
                 'steeringState', 'applied',
-                'steeringAppliedToRunId', $1,
+                'steeringAppliedToRunId', $1::text,
                 'steeringAppliedAt', $4::text
               )) - 'wakeMessage'
           WHERE run_id = ANY($2::text[]) AND status = 'pending'
@@ -683,7 +683,7 @@ export class PgRunStore implements RunStore {
             lease_expires_at = NULL,
             metadata = (metadata || jsonb_build_object(
               'steeringState', 'applied',
-              'steeringAppliedToRunId', $1,
+              'steeringAppliedToRunId', $1::text,
               'steeringAppliedAt', $3::text
             )) - 'wakeMessage'
         WHERE run_id = ANY($2::text[]) AND status = 'pending'
@@ -897,7 +897,6 @@ export class PgRunStore implements RunStore {
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
         `${this.runsTable}:message:${sessionId}`,
       ]);
-      if (targetRunId) await client.query(`SELECT run_id FROM ${this.runsTable} WHERE session_id=$1 AND run_id=$2 FOR UPDATE`, [sessionId, targetRunId]);
       const now = new Date().toISOString();
       // 固定锁序：advisory(session) → target → source(run_id) → input(sequence)。
       // 必须先锁定并核验 target，再写 session stopped_at 或撤销排队项；否则状态预读后

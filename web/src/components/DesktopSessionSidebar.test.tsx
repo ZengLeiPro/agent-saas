@@ -16,9 +16,11 @@ vi.mock("@/contexts/AuthContext", () => ({
   }),
 }));
 
+const groupsState = vi.hoisted(() => ({ current: [] as Array<Record<string, unknown>> }));
+
 vi.mock("@/hooks/useGroups", () => ({
   useGroups: () => ({
-    groups: [],
+    groups: groupsState.current,
     loading: false,
     editing: false,
     sorting: "recent",
@@ -96,6 +98,7 @@ function getSessionRow() {
 
 describe("桌面侧边栏会话激活态", () => {
   beforeEach(() => {
+    groupsState.current = [];
     billingState.current = { summary: null, allowance: null };
     billingMiniBadgeProps.current = null;
   });
@@ -123,6 +126,24 @@ describe("桌面侧边栏会话激活态", () => {
 
     expect(screen.getByText(label)).toBeTruthy();
     expect(screen.queryByLabelText("会话运行中")).toBeNull();
+  });
+
+  it("任务看板分组使用独立类型文案与 violet 图标", () => {
+    groupsState.current = [{
+      id: "taskboard:board-1",
+      userId: "user-1",
+      name: "研发交付",
+      kind: "taskboard",
+      taskboardId: "board-1",
+      sessionIds: [session.id],
+      createdAt: 1,
+      updatedAt: 1,
+    }];
+
+    const { container } = renderSidebar("chat");
+
+    expect(screen.getByText("研发交付")).toBeTruthy();
+    expect(container.querySelector(".text-violet-600")).not.toBeNull();
   });
 
   it("头像菜单使用右侧展开的积分卡片", () => {

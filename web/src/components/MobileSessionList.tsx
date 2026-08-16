@@ -25,6 +25,12 @@ import { getSidebarNavItems, formatShortDate, sourceDisplayText, getSessionWaiti
 import type { SessionGroup } from "@/types/sessionGroup";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 
+function groupKindLabel(kind: SessionGroup["kind"]): string {
+  if (kind === "cron") return "cron";
+  if (kind === "taskboard") return "看板";
+  return "分组";
+}
+
 interface MobileSessionListProps {
   sessions: ChatSessionIndexItem[];
   activeSessionId: string | null;
@@ -429,6 +435,11 @@ export function MobileSessionList({
   const renderGroupRow = useCallback(
     (group: SessionGroup) => {
       const groupRowId = `group:${group.groupKey}`;
+      const GroupIcon = group.kind === "cron"
+        ? EntityIcons.cron
+        : group.kind === "taskboard"
+          ? EntityIcons.taskboard
+          : FolderClosed;
       const rowContent = (
         <div
           className={cn(
@@ -439,7 +450,16 @@ export function MobileSessionList({
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-1.5">
-              <FolderClosed className="size-3.5 shrink-0 text-primary" />
+              <GroupIcon
+                className={cn(
+                  "size-3.5 shrink-0",
+                  group.kind === "cron"
+                    ? "text-amber-600 dark:text-amber-300"
+                    : group.kind === "taskboard"
+                      ? "text-violet-600 dark:text-violet-300"
+                      : "text-primary",
+                )}
+              />
               <span className="truncate text-sm font-medium leading-snug">{group.name}</span>
               {unreadByGroupId.get(group.groupKey) && (
                 <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
@@ -456,7 +476,7 @@ export function MobileSessionList({
             )}
           </div>
           <div className="mt-1 text-xs text-muted-foreground/60">
-            {group.kind === "cron" ? "cron" : "分组"} - {group.count} 个会话
+            {groupKindLabel(group.kind)} - {group.count} 个会话
           </div>
         </div>
       );

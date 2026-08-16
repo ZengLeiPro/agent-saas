@@ -41,6 +41,38 @@ describe('TaskboardExecutionCoordinator', () => {
     }));
   });
 
+  it('在 Runtime Run 入队前把会话加入以看板名称命名的系统分组', async () => {
+    const groupTaskboardSession = vi.fn(async () => ({ id: 'taskboard:board-1' }));
+    const onSessionGrouped = vi.fn(async () => undefined);
+    const rig = makeRig(
+      {
+        getExecutionModelContext: vi.fn(async () => ({
+          boardOwnerUserId: identity.ownerUserId,
+          boardId: task.boardId,
+          boardName: '研发交付',
+        })),
+      },
+      { groupTaskboardSession, onSessionGrouped },
+    );
+
+    const result = await rig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version });
+
+    expect(groupTaskboardSession).toHaveBeenCalledWith({
+      boardId: task.boardId,
+      boardName: '研发交付',
+      sessionId: result.execution.sessionId,
+      owner: identity.ownerUserId,
+    });
+    expect(onSessionGrouped).toHaveBeenCalledWith(expect.objectContaining({
+      groupId: 'taskboard:board-1',
+      sessionId: result.execution.sessionId,
+      userId: identity.ownerUserId,
+    }));
+    expect(groupTaskboardSession.mock.invocationCallOrder[0]).toBeLessThan(
+      rig.scheduler.enqueueCreateOnly.mock.invocationCallOrder[0]!,
+    );
+  });
+
   it('同一任务已有活跃 Execution 时拒绝再次派发且不创建第二个 Run', async () => {
     const rig = makeRig();
     const first = await rig.coordinator.startExecution(identity, task.id, {

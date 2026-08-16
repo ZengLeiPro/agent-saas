@@ -203,7 +203,9 @@ export class GroupStore {
     const kind = input.kind ?? 'manual';
     const id = kind === 'cron' && input.cronJobId
       ? `cron:${input.cronJobId}`
-      : randomUUID();
+      : kind === 'taskboard' && input.taskboardId
+        ? `taskboard:${input.taskboardId}`
+        : randomUUID();
 
     return {
       id,
@@ -211,6 +213,7 @@ export class GroupStore {
       name: input.name.trim(),
       kind,
       ...(input.cronJobId ? { cronJobId: input.cronJobId } : {}),
+      ...(input.taskboardId ? { taskboardId: input.taskboardId } : {}),
       sessionIds: input.sessionIds ?? [],
       createdAt: now,
       updatedAt: now,
@@ -239,6 +242,7 @@ export class GroupStore {
       if (patch.sessionIds !== undefined) group.sessionIds = patch.sessionIds;
       if (patch.kind !== undefined) group.kind = patch.kind;
       if ('cronJobId' in patch) group.cronJobId = patch.cronJobId ?? undefined;
+      if ('taskboardId' in patch) group.taskboardId = patch.taskboardId ?? undefined;
       if (patch.userId !== undefined) group.userId = patch.userId;
       group.updatedAt = Date.now();
       return { changed: true, value: group };
@@ -331,6 +335,36 @@ export class GroupStore {
 
       const updated = this.addSessionsInMemory(group.id, [input.sessionId], group.userId);
       return { changed: !!updated, value: updated };
+    });
+  }
+
+  /** Taskboard 会话创建后的原子 upsert；同一看板的所有任务会话共享一个系统分组。 */
+  async addTaskboardSession(input: {
+    boardId: string;
+    boardName: string;
+    sessionId: string;
+    owner: string;
+  }): Promise<SessionGroup> {
+    return this.mutate(() => {
+      let group = this.groups.find(candidate => (
+        candidate.kind === 'taskboard' && candidate.taskboardId === input.boardId
+      ));
+
+      if (!group) {
+        group = this.buildGroup({
+          name: input.boardName,
+          kind: 'taskboard',
+          taskboardId: input.boardId,
+          sessionIds: [],
+          userId: input.owner,
+        });
+        this.groups.push(group);
+      } else if (group.name !== input.boardName.trim()) {
+        group.name = input.boardName.trim();
+      }
+
+      const updated = this.addSessionsInMemory(group.id, [input.sessionId], group.userId);
+      return { changed: true, value: updated ?? group };
     });
   }
 

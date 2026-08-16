@@ -164,10 +164,14 @@ function CompactSessionLeadingIcon({ selected = false }: { selected?: boolean })
   return <MessageSquare className="size-4 shrink-0 text-muted-foreground/70" aria-hidden="true" />;
 }
 
-/** 紧凑模式下的分组前缀小图标：普通分组用品牌蓝，定时任务用黄色填充区分。 */
+/** 紧凑模式下用颜色和图形区分人工分组、Cron 与任务看板。 */
 function CompactGroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
   if (kind === "cron") {
     return <Clock className="size-4 shrink-0 fill-amber-100 text-amber-600 dark:fill-amber-900/35 dark:text-amber-300" aria-hidden="true" />;
+  }
+  if (kind === "taskboard") {
+    const TaskboardIcon = EntityIcons.taskboard;
+    return <TaskboardIcon className="size-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" />;
   }
 
   return (
@@ -179,7 +183,11 @@ function CompactGroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
 }
 
 function GroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
-  const Icon = kind === "cron" ? Clock : Folder;
+  const Icon = kind === "cron"
+    ? Clock
+    : kind === "taskboard"
+      ? EntityIcons.taskboard
+      : Folder;
 
   return (
     <span
@@ -187,13 +195,21 @@ function GroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
         "flex size-10 shrink-0 items-center justify-center rounded-full ring-1",
         kind === "cron"
           ? "bg-amber-50 text-amber-600 ring-amber-100 dark:bg-amber-900/25 dark:text-amber-300 dark:ring-amber-700/30"
-          : "bg-brand-50 text-brand-600 ring-brand-100 dark:bg-brand-900/35 dark:text-brand-300 dark:ring-brand-800",
+          : kind === "taskboard"
+            ? "bg-violet-50 text-violet-600 ring-violet-100 dark:bg-violet-900/25 dark:text-violet-300 dark:ring-violet-700/30"
+            : "bg-brand-50 text-brand-600 ring-brand-100 dark:bg-brand-900/35 dark:text-brand-300 dark:ring-brand-800",
       )}
       aria-hidden="true"
     >
       <Icon className="size-5" />
     </span>
   );
+}
+
+function groupKindLabel(kind: SessionGroup["kind"]): string {
+  if (kind === "cron") return "cron";
+  if (kind === "taskboard") return "看板";
+  return "分组";
 }
 
 function SessionRow({
@@ -862,7 +878,7 @@ function GroupHeaderActions({
 
 interface SidebarDialogsProps {
   sessions: ChatSessionIndexItem[];
-  groups: Array<{ id: string; name: string; kind: "cron" | "manual"; sessionIds: string[] }>;
+  groups: Array<{ id: string; name: string; kind: SessionGroup["kind"]; sessionIds: string[] }>;
   onRename?: (sessionId: string, newTitle: string) => Promise<boolean>;
   renameSessionId: string | null;
   setRenameSessionId: (id: string | null) => void;
@@ -1826,7 +1842,7 @@ export function DesktopSessionSidebar({
                     <GroupLeadingIcon kind={entry.group.kind} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">{entry.group.name}</span>
-                      <span className="mt-1 block truncate text-xs text-muted-foreground/60">{entry.group.kind === "cron" ? "cron" : "分组"} · {entry.group.count} 个会话</span>
+                      <span className="mt-1 block truncate text-xs text-muted-foreground/60">{groupKindLabel(entry.group.kind)} · {entry.group.count} 个会话</span>
                     </span>
                     {unreadByGroupId.get(entry.group.groupKey) && <GroupUnreadDot />}
                     <span className="flex shrink-0 flex-col items-end gap-0.5">

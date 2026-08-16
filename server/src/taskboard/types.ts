@@ -141,6 +141,8 @@ export interface TaskboardExecutionModelContext {
   taskModel?: string;
   boardModel?: string;
   boardOwnerUserId: string;
+  boardId?: string;
+  boardName?: string;
 }
 
 export interface TaskboardExecutionContext {

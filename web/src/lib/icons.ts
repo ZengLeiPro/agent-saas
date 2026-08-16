@@ -25,6 +25,7 @@ import {
   CircleSlash2,
   Clock,
   Coins,
+  Columns3,
   Cpu,
   Files,
   Info,
@@ -97,6 +98,8 @@ export const EntityIcons = {
   tenantInstructions: Speech,
   /** 定时任务 */
   cron: Clock,
+  /** 任务看板 */
+  taskboard: Columns3,
   /** 平台每日记忆轮询 */
   memoryPolling: BrainCircuit,
   /** 网络出口（出站代理 / 镜像源分流） */

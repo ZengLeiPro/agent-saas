@@ -655,7 +655,7 @@ export function buildFailurePresentation(
 const RESULT_METADATA_FIELDS: Record<string, readonly string[]> = {
   Shell: [
     'exitCode', 'signal', 'durationMs', 'stdoutBytes', 'stderrBytes', 'timedOut', 'aborted', 'outputExceeded',
-    'executionRequested', 'executionUsed', 'executionTotalMs',
+    'executionRequested', 'executionUsed', 'executionRoutingReason', 'executionTotalMs',
     'snapshotRepositoryPath', 'snapshotSourceCwd', 'snapshotSourceRevision', 'snapshotDirtyFileCount',
     'snapshotPreparationMs', 'snapshotMaterializationMs', 'snapshotDependencyMs', 'snapshotDependencyCacheHit',
     'snapshotFallbackReason', 'validationChainSplit', 'validationChainCommandCount', 'validationChainMaxConcurrency',

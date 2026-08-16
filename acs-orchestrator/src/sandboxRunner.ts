@@ -9,6 +9,10 @@ import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/r
 
 import type { SandboxRunnerFinalOutput, SandboxRunnerInput, SandboxRunnerOutput } from './protocol.js';
 import { runSandboxRunnerDaemon } from './sandboxRunnerDaemon.js';
+import {
+  snapshotWorkspaceRoutingReason,
+  type SnapshotWorkspaceRoutingReason,
+} from './shellExecutionRouting.js';
 import { prepareSnapshotExecution, resolveExecutionCwd, type SnapshotExecutionMetadata } from './snapshotExecution.js';
 import {
   executeSnapshotValidationChain,
@@ -121,7 +125,13 @@ export async function executeSandboxRunnerInput(
     && 'command' in effectiveToolInput
     ? String(effectiveToolInput.command)
     : '';
-  const validationPlan = localToolName === 'Shell' && toolInput.execution === 'snapshot'
+  const workspaceRoutingReason = localToolName === 'Shell' && toolInput.execution === 'snapshot'
+    ? snapshotWorkspaceRoutingReason(effectiveCommand)
+    : undefined;
+  const shouldUseSnapshot = localToolName === 'Shell'
+    && toolInput.execution === 'snapshot'
+    && !workspaceRoutingReason;
+  const validationPlan = shouldUseSnapshot
     ? planSnapshotValidationChain(effectiveCommand)
     : undefined;
   if (validationPlan) {
@@ -146,7 +156,7 @@ export async function executeSandboxRunnerInput(
     else emit({ kind: 'final', response });
     return;
   }
-  const snapshot = localToolName === 'Shell' && toolInput.execution === 'snapshot'
+  const snapshot = shouldUseSnapshot
     ? await prepareSnapshotExecution({
         workspaceRoot,
         command: effectiveCommand,
@@ -168,9 +178,12 @@ export async function executeSandboxRunnerInput(
     executionTarget: 'server-local',
   };
   const provider = new ServerLocalExecutionProvider({ envBuilder: () => effectiveEnv });
+  const runtimeToolInput = workspaceRoutingReason && typeof effectiveToolInput === 'object' && effectiveToolInput
+    ? { ...effectiveToolInput, execution: 'workspace' }
+    : effectiveToolInput;
   const request = {
     toolName: localToolName,
-    input: effectiveToolInput,
+    input: runtimeToolInput,
     context: {
       ...(input.invocationId ? { invocationId: input.invocationId } : {}),
       workspace,
@@ -181,8 +194,15 @@ export async function executeSandboxRunnerInput(
   try {
     if (localToolName === 'Shell' && provider.executeStream) {
       for await (const chunk of provider.executeStream(request)) {
-        const enriched = chunk.type === 'completed' && snapshot
-          ? { ...chunk, response: addSnapshotMetadata(chunk.response, snapshot.metadata) }
+        const enriched = chunk.type === 'completed'
+          ? {
+              ...chunk,
+              response: snapshot
+                ? addSnapshotMetadata(chunk.response, snapshot.metadata)
+                : workspaceRoutingReason
+                  ? addWorkspaceRoutingMetadata(chunk.response, workspaceRoutingReason)
+                  : chunk.response,
+            }
           : chunk;
         if (input.stream) emit({ kind: 'chunk', chunk: enriched as ToolInvocationStreamChunk });
         else if (enriched.type === 'completed') emit({ kind: 'final', response: enriched.response });
@@ -191,7 +211,14 @@ export async function executeSandboxRunnerInput(
     }
 
     const response = await provider.execute(request);
-    emit({ kind: 'final', response: snapshot ? addSnapshotMetadata(response, snapshot.metadata) : response });
+    emit({
+      kind: 'final',
+      response: snapshot
+        ? addSnapshotMetadata(response, snapshot.metadata)
+        : workspaceRoutingReason
+          ? addWorkspaceRoutingMetadata(response, workspaceRoutingReason)
+          : response,
+    });
   } finally {
     await snapshot?.cleanup().catch(() => undefined);
   }
@@ -244,6 +271,27 @@ export function addSnapshotMetadata(
         error: `${response.error}\n\n${note}`,
         metadata: { ...(response.metadata ?? {}), ...flatMetadata, snapshotExecution: enriched },
       };
+}
+
+export function addWorkspaceRoutingMetadata(
+  response: ToolInvocationResponse,
+  reason: SnapshotWorkspaceRoutingReason,
+): ToolInvocationResponse {
+  const durationMs = typeof response.metadata?.durationMs === 'number' ? response.metadata.durationMs : undefined;
+  const metadata = {
+    ...(response.metadata ?? {}),
+    executionRequested: 'snapshot',
+    executionUsed: 'workspace',
+    executionRoutingReason: reason,
+    ...(durationMs === undefined ? {} : { executionTotalMs: durationMs }),
+  };
+  const explanation = reason === 'workspace_git_remote_refresh'
+    ? 'Git 远端引用刷新需要保留结果'
+    : '命令只读取持久工作区';
+  const note = `[执行位置] 持久工作区；已将 snapshot 请求确定性改道：${explanation}`;
+  return response.status === 'success'
+    ? { ...response, content: `${response.content}\n\n${note}`, metadata }
+    : { ...response, error: `${response.error}\n\n${note}`, metadata };
 }
 
 async function main(): Promise<void> {

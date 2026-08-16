@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { parse as parseJsonc } from 'jsonc-parser';
 import { z } from 'zod';
+import { buildWebToolsSchemas } from './webToolsSchema.js';
 
 import {
   DEFAULT_CODING_HAND_NETWORK_POLICY,
@@ -1080,32 +1081,11 @@ function applyApiKeyCredentialRefine(
   }
 }
 
-const webToolsSearchConfigSchema = z.object({
-  enabled: z.boolean().optional(),
-  provider: z.enum(['brave', 'volcengine', 'tencent_wsa']).default('volcengine'),
-  endpoint: z.string().url().optional(),
-  ...apiKeyCredentialFields,
-  timeoutMs: z.number().int().positive().max(60_000).optional(),
-  maxResults: z.number().int().min(1).max(10).optional(),
-}).superRefine((value, ctx) => {
-  applyApiKeyCredentialRefine(value, ctx, { allowEmpty: true });
-});
-
-const webToolsFetchConfigSchema = z.object({
-  enabled: z.boolean().optional(),
-  timeoutMs: z.number().int().positive().max(60_000).optional(),
-  maxBytes: z.number().int().positive().max(10 * 1024 * 1024).optional(),
-  maxChars: z.number().int().min(100).max(50_000).optional(),
-  maxRedirects: z.number().int().min(0).max(10).optional(),
-  allowedContentTypes: z.array(z.string().min(1)).optional(),
-  userAgent: z.string().min(1).optional(),
-});
-
-const webToolsEgressConfigSchema = z.object({
-  allowPrivateNetworks: z.boolean().optional(),
-  allowedHosts: z.array(z.string().min(1)).optional(),
-  blockedHosts: z.array(z.string().min(1)).optional(),
-});
+const {
+  search: webToolsSearchConfigSchema,
+  fetch: webToolsFetchConfigSchema,
+  egress: webToolsEgressConfigSchema,
+} = buildWebToolsSchemas(apiKeyCredentialFields, applyApiKeyCredentialRefine);
 
 const webToolsConfigSchema = z.object({
   enabled: z.boolean().optional(),

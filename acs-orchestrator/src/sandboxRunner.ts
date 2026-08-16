@@ -11,6 +11,10 @@ import type { SandboxRunnerFinalOutput, SandboxRunnerInput, SandboxRunnerOutput 
 import { runSandboxRunnerDaemon } from './sandboxRunnerDaemon.js';
 import { prepareSnapshotExecution, resolveExecutionCwd, type SnapshotExecutionMetadata } from './snapshotExecution.js';
 import {
+  executeSnapshotValidationChain,
+  planSnapshotValidationChain,
+} from './snapshotValidationChain.js';
+import {
   getBackgroundShellOutput,
   killBackgroundShell,
   reconcileBackgroundShells,
@@ -112,12 +116,40 @@ export async function executeSandboxRunnerInput(
     emit({ kind: 'final', response: backgroundResponse });
     return;
   }
+  const effectiveCommand = typeof effectiveToolInput === 'object'
+    && effectiveToolInput
+    && 'command' in effectiveToolInput
+    ? String(effectiveToolInput.command)
+    : '';
+  const validationPlan = localToolName === 'Shell' && toolInput.execution === 'snapshot'
+    ? planSnapshotValidationChain(effectiveCommand)
+    : undefined;
+  if (validationPlan) {
+    const response = await executeSnapshotValidationChain({
+      plan: validationPlan,
+      workspaceRoot,
+      cwd: requestedCwd,
+      ...(typeof toolInput.timeoutMs === 'number' ? { timeoutMs: toolInput.timeoutMs } : {}),
+      env: baseEnv,
+      signal,
+      invocationId: input.invocationId,
+      workspace: {
+        id: input.workspace.id,
+        userId: input.workspace.userId,
+        username: input.workspace.username,
+        sessionId: input.workspace.sessionId,
+      },
+      stream: input.stream === true,
+      emit: (chunk) => emit({ kind: 'chunk', chunk }),
+    });
+    if (input.stream) emit({ kind: 'chunk', chunk: { type: 'completed', response } });
+    else emit({ kind: 'final', response });
+    return;
+  }
   const snapshot = localToolName === 'Shell' && toolInput.execution === 'snapshot'
     ? await prepareSnapshotExecution({
         workspaceRoot,
-        command: typeof effectiveToolInput === 'object' && effectiveToolInput && 'command' in effectiveToolInput
-          ? String(effectiveToolInput.command)
-          : '',
+        command: effectiveCommand,
         cwd: requestedCwd,
         signal,
         env: baseEnv,

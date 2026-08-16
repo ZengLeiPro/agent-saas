@@ -382,6 +382,9 @@ describe('结构化事实（tool_result.metadata）', () => {
       snapshotPreparationMs: 44,
       snapshotDependencyCacheHit: false,
       snapshotFallbackReason: 'dependency_prepare_failed',
+      validationChainSplit: true,
+      validationChainCommandCount: 5,
+      validationChainMaxConcurrency: 4,
     })).toEqual({
       exitCode: 1,
       signal: 'SIGTERM',
@@ -397,6 +400,9 @@ describe('结构化事实（tool_result.metadata）', () => {
       snapshotPreparationMs: 44,
       snapshotDependencyCacheHit: false,
       snapshotFallbackReason: 'dependency_prepare_failed',
+      validationChainSplit: true,
+      validationChainCommandCount: 5,
+      validationChainMaxConcurrency: 4,
     });
   });
 

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { extractReadableContent, truncateChars } from './web/htmlExtract.js';
-import { runWebSearch, type WebSearchProviderConfig } from './web/searchProviders.js';
+import { runRoutedWebSearch, type WebSearchRoutingConfig } from './web/searchRouter.js';
 import { fetchRemoteText, type WebEgressPolicy } from './web/ssrf.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
 import { buildToolPresentation } from './toolPresentationBuilder.js';
@@ -15,7 +15,7 @@ import type {
 
 export interface ResolvedWebToolsConfig {
   enabled?: boolean;
-  search?: WebSearchProviderConfig & { enabled?: boolean };
+  search?: WebSearchRoutingConfig & { enabled?: boolean };
   fetch?: {
     enabled?: boolean;
     timeoutMs?: number;
@@ -61,6 +61,10 @@ export class WebFetchCircuitOpenError extends Error {
 const webSearchSchema = z.object({
   query: z.string().min(1).describe('搜索关键词。'),
   count: z.number().int().min(1).max(10).optional().describe('返回结果数。默认 5，最大 10。'),
+  scope: z.enum(['cn', 'global']).optional().describe(
+    '检索范围。cn=中文互联网（默认），global=境外来源，适用于英文资料、海外厂商动态、国外站点。'
+    + '按目标资料所在语言与地域选择，而不是按提问语言。',
+  ),
   freshness: z.enum(['day', 'week', 'month', 'year']).optional().describe('可选，时效过滤。'),
   allowedDomains: z.array(z.string().min(1)).optional().describe('只保留这些域名的结果。'),
   blockedDomains: z.array(z.string().min(1)).optional().describe('排除这些域名的结果。'),
@@ -198,7 +202,8 @@ export class WebToolProvider implements ToolProvider {
       throw new Error('WebSearch cannot use allowedDomains and blockedDomains at the same time.');
     }
     const searchConfig = this.config.search ?? {};
-    const output = await runWebSearch(
+    const scope = input.scope ?? 'cn';
+    const output = await runRoutedWebSearch(
       {
         ...searchConfig,
         egress: this.config.egress,
@@ -211,14 +216,26 @@ export class WebToolProvider implements ToolProvider {
         ...(input.blockedDomains ? { blockedDomains: input.blockedDomains } : {}),
         signal,
       },
+      scope,
       this.fetchImpl,
     );
+    // 部分中文来源只给正文不给原文链接；显式告知模型，避免它凭标题臆造 URL 去 WebFetch。
+    const linklessCount = output.results.filter((item) => !item.url).length;
     const meta = {
       query: output.query,
       provider: output.provider,
+      scope: output.requestedScope,
       resultCount: output.results.length,
       truncated: output.truncated,
       fetchedAt: output.fetchedAt,
+      // 降级对模型可见：拿到的可能不是它请求的那一侧来源，避免据此误判「境外无资料」。
+      ...(output.degraded ? { degraded: true } : {}),
+      ...(linklessCount > 0
+        ? {
+          linklessResults: linklessCount,
+          linklessNote: '部分结果来自不提供原文链接的内容源：正文已在 snippet 中给全，不要臆造 URL，也不要对这些结果调用 WebFetch。',
+        }
+        : {}),
     };
     return {
       content: formatUntrustedToolResult({

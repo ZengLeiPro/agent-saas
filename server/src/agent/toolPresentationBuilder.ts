@@ -658,7 +658,7 @@ const RESULT_METADATA_FIELDS: Record<string, readonly string[]> = {
     'executionRequested', 'executionUsed', 'executionTotalMs',
     'snapshotRepositoryPath', 'snapshotSourceCwd', 'snapshotSourceRevision', 'snapshotDirtyFileCount',
     'snapshotPreparationMs', 'snapshotMaterializationMs', 'snapshotDependencyMs', 'snapshotDependencyCacheHit',
-    'snapshotFallbackReason',
+    'snapshotFallbackReason', 'validationChainSplit', 'validationChainCommandCount', 'validationChainMaxConcurrency',
   ],
   Read: ['linesRead', 'fileBytes', 'shownBytes', 'truncated', 'ranged'],
   Write: ['bytesWritten'],

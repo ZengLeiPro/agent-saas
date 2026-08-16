@@ -168,6 +168,7 @@ import { PgSystemMetricsStore } from '../runtime/systemMetricsStore.js';
 import { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { PgAlertStateStore } from '../runtime/alertStateStore.js';
 import { AlertNotifier } from '../runtime/alertNotifier.js';
+import { notifyBillingAuditAlerts, registerSearchProviderAlerts } from './registerSearchProviderAlerts.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
@@ -1095,19 +1096,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     } else {
       serverLogger.info(`AlertNotifier worker disabled for processRole=${processRole}`);
     }
+    registerSearchProviderAlerts(alertNotifier, serverLogger);
     const runBillingAudit = async () => {
       const audit = await billingService!.getAuditSummary({ days: 7 });
       if (audit.alerts.length > 0) {
         billingLogger.warn(`Billing audit alerts: ${audit.alerts.join('；')}`);
-        await alertNotifier?.notifyExternal('billing_audit', audit.alerts.map((message) => ({
-          kind: 'billing_audit',
-          severity: 'high' as const,
-          title: message,
-          occurredAt: new Date().toISOString(),
-          actions: ['open_billing'],
-          // FIX-2: billing audit 每条 alert 语义不同，去重键保留 message hash（文档 §6.5）。
-          dedupeKey: createHash('sha1').update(message).digest('hex').slice(0, 16),
-        })));
+        await notifyBillingAuditAlerts(alertNotifier, audit.alerts);
       }
     };
     if (enableSingletonWorkers) {

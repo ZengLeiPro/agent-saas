@@ -9,6 +9,7 @@ import {
   type SecretVault,
 } from '../security/secretVault.js';
 import type { ResolvedWebToolsConfig } from '../agent/webToolProvider.js';
+import type { WebSearchProviderConfig } from '../agent/web/searchProviderTypes.js';
 import type { ResolvedImageGenToolsConfig } from '../agent/imageGenToolProvider.js';
 
 /** Resolves startup credentials without exposing plaintext outside server bootstrap objects. */
@@ -131,28 +132,50 @@ export async function resolveWebToolsConfig(
   if (webTools.egress) resolved.egress = webTools.egress;
 
   if (webTools.search) {
-    const { apiKeyRef, apiKey, ...searchRest } = webTools.search;
-    let resolvedApiKey = apiKey;
-    if (apiKeyRef) {
-      try {
-        resolvedApiKey = await secretVault.getSecret(apiKeyRef, {
-          actor: 'system',
-          userId: '__system__',
-          scopes: ['secret:web_tools:read'],
-        });
-      } catch (err) {
-        throw new Error(
-          `webTools.search.apiKeyRef "${apiKeyRef}" 解析失败: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+    const { apiKeyRef, apiKey, global: globalSearch, ...searchRest } = webTools.search;
+    const resolvedApiKey = await resolveSearchApiKey(
+      { apiKey, apiKeyRef },
+      secretVault,
+      'webTools.search.apiKeyRef',
+    );
+    let resolvedGlobal: WebSearchProviderConfig | undefined;
+    if (globalSearch) {
+      const { apiKeyRef: globalRef, apiKey: globalKey, ...globalRest } = globalSearch;
+      const resolvedGlobalKey = await resolveSearchApiKey(
+        { apiKey: globalKey, apiKeyRef: globalRef },
+        secretVault,
+        'webTools.search.global.apiKeyRef',
+      );
+      resolvedGlobal = {
+        ...globalRest,
+        ...(resolvedGlobalKey ? { apiKey: resolvedGlobalKey } : {}),
+      };
     }
     resolved.search = {
       ...searchRest,
       ...(resolvedApiKey ? { apiKey: resolvedApiKey } : {}),
+      ...(resolvedGlobal ? { global: resolvedGlobal } : {}),
     };
   }
 
   return resolved;
+}
+
+async function resolveSearchApiKey(
+  credential: { apiKey?: string; apiKeyRef?: string },
+  secretVault: SecretVault,
+  label: string,
+): Promise<string | undefined> {
+  if (!credential.apiKeyRef) return credential.apiKey;
+  try {
+    return await secretVault.getSecret(credential.apiKeyRef, {
+      actor: 'system',
+      userId: '__system__',
+      scopes: ['secret:web_tools:read'],
+    });
+  } catch (err) {
+    throw new Error(`${label} "${credential.apiKeyRef}" 解析失败: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /**

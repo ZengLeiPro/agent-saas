@@ -1,40 +1,22 @@
-import type { WebEgressPolicy } from './ssrf.js';
+import { runTavilySearch } from './providers/tavily.js';
+import { runZhipuSearch } from './providers/zhipu.js';
+import type {
+  WebSearchInput,
+  WebSearchOutput,
+  WebSearchProviderConfig,
+  WebSearchProviderId,
+  WebSearchResultItem,
+} from './searchProviderTypes.js';
+import { clamp, extractError, firstString, getObject, hostMatches, normalizeHostname } from './searchProviderUtils.js';
 
-export type WebSearchProviderId = 'brave' | 'volcengine' | 'tencent_wsa';
-
-export interface WebSearchInput {
-  query: string;
-  count: number;
-  freshness?: 'day' | 'week' | 'month' | 'year';
-  allowedDomains?: string[];
-  blockedDomains?: string[];
-  signal?: AbortSignal;
-}
-
-export interface WebSearchResultItem {
-  title: string;
-  url: string;
-  snippet?: string;
-  publishedAt?: string;
-  source?: string;
-}
-
-export interface WebSearchProviderConfig {
-  provider?: WebSearchProviderId;
-  endpoint?: string;
-  apiKey?: string;
-  timeoutMs?: number;
-  maxResults?: number;
-  egress?: WebEgressPolicy;
-}
-
-export interface WebSearchOutput {
-  provider: WebSearchProviderId;
-  query: string;
-  results: WebSearchResultItem[];
-  fetchedAt: string;
-  truncated: boolean;
-}
+export type {
+  WebSearchInput,
+  WebSearchOutput,
+  WebSearchProviderConfig,
+  WebSearchProviderId,
+  WebSearchResultItem,
+  WebSearchScope,
+} from './searchProviderTypes.js';
 
 const DEFAULT_BRAVE_ENDPOINT = 'https://api.search.brave.com/res/v1/web/search';
 const DEFAULT_VOLCENGINE_ENDPOINT = 'https://open.feedcoopapi.com/search_api/web_search';
@@ -56,6 +38,12 @@ export async function runWebSearch(
   }
   if (provider === 'tencent_wsa') {
     return runTencentWsaSearch(config, input, fetchImpl);
+  }
+  if (provider === 'zhipu') {
+    return runZhipuSearch(config, input, fetchImpl);
+  }
+  if (provider === 'tavily') {
+    return runTavilySearch(config, input, fetchImpl);
   }
   throw new Error(`Unsupported web search provider: ${provider}`);
 }
@@ -311,6 +299,7 @@ function filterTencentWsaResults(
   const blocked = (blockedDomains ?? []).map(normalizeHostname).filter((host): host is string => !!host);
   if (allowed.length <= 1 && blocked.length === 0) return results;
   return results.filter((result) => {
+    if (!result.url) return false;
     let hostname: string;
     try {
       hostname = new URL(result.url).hostname.toLowerCase();
@@ -407,21 +396,6 @@ function withDomainFilters(query: string, allowedDomains?: string[], blockedDoma
   return parts.join(' ');
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, Math.trunc(value)));
-}
-
-function getObject(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' ? value as Record<string, unknown> : {};
-}
-
-function firstString(...values: unknown[]): string | undefined {
-  for (const value of values) {
-    if (typeof value === 'string' && value.trim()) return value;
-  }
-  return undefined;
-}
-
 function getVolcengineResultCount(payload: unknown): number {
   const result = getObject(getObject(payload).Result);
   return typeof result.ResultCount === 'number' ? result.ResultCount : 0;
@@ -497,20 +471,6 @@ function freshnessSeconds(freshness: NonNullable<WebSearchInput['freshness']>): 
   }
 }
 
-function normalizeHostname(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  if (!trimmed) return undefined;
-  try {
-    return new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`).hostname.toLowerCase();
-  } catch {
-    return undefined;
-  }
-}
-
-function hostMatches(hostname: string, domain: string): boolean {
-  return hostname === domain || hostname.endsWith(`.${domain}`);
-}
-
 class RequestPacer {
   private nextAt = 0;
   private tail: Promise<void> = Promise.resolve();
@@ -546,17 +506,4 @@ function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
     };
     signal?.addEventListener('abort', onAbort, { once: true });
   });
-}
-
-function extractError(payload: unknown, fallback: string): string {
-  if (payload && typeof payload === 'object') {
-    const record = payload as Record<string, unknown>;
-    if (typeof record.error === 'string') return record.error;
-    if (record.error && typeof record.error === 'object') {
-      const error = record.error as Record<string, unknown>;
-      if (typeof error.message === 'string') return error.message;
-    }
-    if (typeof record.message === 'string') return record.message;
-  }
-  return fallback.slice(0, 500);
 }

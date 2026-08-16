@@ -1665,7 +1665,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       providerOptions,
       { codexCredentialManager, codexFetch: egressFetch, codexWebSocketPool },
     ),
-    getSystemPrompt: (id) => systemPromptRegistry.get(id),
+    getSystemPrompt: (id) => systemPromptRegistry.get(id), refreshSharedConfig: () => { sharedConfigRefresher.refreshIfChanged(); rawRuntimeConfig.toolControls = config.toolControls; },
     agentRuntimeProfileResolver,
     ...(userActivityService.available ? { userActivityService } : {}),
     memory: {

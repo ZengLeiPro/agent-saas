@@ -145,6 +145,14 @@ export function createSharedConfigRefresher(params: {
       logger?.info('[SharedConfig] 已从磁盘热更新系统提示语配置');
     }
 
+    const toolControlsChanged = JSON.stringify(config.toolControls ?? null)
+      !== JSON.stringify(nextConfig.toolControls ?? null);
+    if (toolControlsChanged) {
+      if (nextConfig.toolControls) config.toolControls = nextConfig.toolControls;
+      else delete config.toolControls;
+      logger?.info('[SharedConfig] 已从磁盘热更新工具开关与描述覆盖配置');
+    }
+
     /**
      * webTools 与模型同属「管理端写、执行进程读」：2026-08-16 实测把搜索源换成智谱后，
      * ws-only 进程内存已更新、config.json 也已落盘，但 runtime-worker 仍用启动时的旧

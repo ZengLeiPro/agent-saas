@@ -101,6 +101,8 @@ export interface RawRuntimeRunDispatchConfig {
   modelAdapterFactory?: ModelAdapterFactory;
   /** 平台系统提示语注册表 getter；每次运行现取，以支持管理端热更新。 */
   getSystemPrompt?: (id: SystemPromptId) => string;
+  /** Run 执行边界刷新跨进程共享配置；普通 dispatch、resume 与 scheduler wake 均调用。 */
+  refreshSharedConfig?: () => void;
   /** Stable entity + immutable version resolver. New sessions read current binding once; resumes use the pinned version. */
   agentRuntimeProfileResolver?: AgentRuntimeProfileResolver;
   memory?: { enabled?: boolean; maxLines?: number };

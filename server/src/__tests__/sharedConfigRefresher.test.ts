@@ -272,6 +272,49 @@ describe('createSharedConfigRefresher', () => {
     expect(seen).toEqual(['zhipu']);
   });
 
+  it('把别的进程改写或清除的 toolControls 热更新进当前内存配置', () => {
+    const writeWithToolControls = (toolControls?: AppConfig['toolControls']) => {
+      writeFileSync(join(dir, 'config.json'), JSON.stringify({
+        agent: { cwd: '.' },
+        server: { port: 3200 },
+        models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+        ...(toolControls ? { toolControls } : {}),
+      }, null, 2), 'utf-8');
+    };
+    const initial = { tools: { Write: { enabled: false } } } satisfies NonNullable<AppConfig['toolControls']>;
+    const replacement = {
+      tools: {
+        Write: {
+          descriptionOverride: { mode: 'replace' as const, text: '只写入管理员批准的交付文件。' },
+        },
+      },
+    } satisfies NonNullable<AppConfig['toolControls']>;
+    writeWithToolControls(initial);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      toolControls: initial,
+    } as unknown as AppConfig;
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      now: () => clock,
+    });
+
+    writeWithToolControls(replacement);
+    clock += 5_000;
+    refresher.refreshIfChanged();
+
+    expect(config.toolControls).toEqual(replacement);
+
+    writeWithToolControls();
+    clock += 5_000;
+    refresher.refreshIfChanged();
+
+    expect(config.toolControls).toBeUndefined();
+  });
+
   it('把别的进程改写的 STT 配置热更新进当前内存并通知执行侧', () => {
     const writeWithStt = (enabled: boolean, creditsPerCall: number) => {
       writeFileSync(join(dir, 'config.json'), JSON.stringify({

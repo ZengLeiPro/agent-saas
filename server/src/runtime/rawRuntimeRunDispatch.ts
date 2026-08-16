@@ -1176,8 +1176,8 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     options: AgentRunOptions = {},
     hooks?: AgentRunHooks,
   ): AsyncGenerator<OutboundEvent> {
-    // cron/dingtalk 通道：触发即跑，无 approval/interaction resume 路径，所需上下文
-    // （context.user / cwd / modelConnection）由各 channel 注入，与 web 通道行为等价。
+    config.refreshSharedConfig?.();
+    // cron/dingtalk 触发即跑，无 resume 路径；context.user/cwd/modelConnection 由 channel 注入。
     if (context.channel !== 'web' && context.channel !== 'cron' && context.channel !== 'dingtalk') {
       yield { type: 'error', error: `Raw runtime 暂不支持通道 "${context.channel}"（仅支持 web/cron/dingtalk）` };
       return;
@@ -1902,13 +1902,13 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
   return async function* rawApprovalResumeDispatch(
     request: RawApprovalResumeRequest,
   ): AsyncGenerator<OutboundEvent> {
+    config.refreshSharedConfig?.();
     if (request.context.channel !== 'web') {
       yield { type: 'error', error: 'Raw approval resume 当前仅支持 Web 通道' };
       return;
     }
 
-    // PR 2026-06-14 (γ): approval resume admin-only gate 解除（与 dispatch 同步）。
-    // δ 阶段加 anonymous 防御：approval 路径上 user 也必须存在。
+    // approval resume 已解除 admin-only gate，但 user/sessionOwner 仍必须存在。
     if (!request.context.user && !request.context.sessionOwner) {
       yield { type: 'error', error: 'Raw approval resume 拒绝匿名访问：缺少 user / sessionOwner' };
       return;
@@ -2360,6 +2360,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
   return async function* rawInteractionResumeDispatch(
     request: RawInteractionResumeRequest,
   ): AsyncGenerator<OutboundEvent> {
+    config.refreshSharedConfig?.();
     if (request.context.channel !== 'web') {
       yield { type: 'error', error: 'Raw interaction resume 当前仅支持 Web 通道' };
       return;
@@ -2408,8 +2409,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     }
 
     const effectiveTenantId = resolveContextTenantId(request.context, existingSession);
-    // 专职 Agent 覆盖（interaction resume 同样应用，漏一处 = 交互恢复后越权）。
-    // resume 路径 orgAgentId 只信 session meta（existingSession）。
+    // interaction resume 也应用专职 Agent 覆盖；orgAgentId 只信 session meta。
     const orgAgentId = existingSession?.orgAgentId;
     const orgAgentResolution = resolveOrgAgentOverrides(config, orgAgentId, effectiveTenantId);
     if (orgAgentResolution && 'error' in orgAgentResolution) {
@@ -2824,13 +2824,13 @@ export async function wakeRuntimeSession(
   run: RunRecord,
   options: WakeRuntimeSessionOptions = {},
 ): Promise<void> {
+  config.refreshSharedConfig?.();
   const sessionCatalog = resolveSessionCatalog(config);
   const session = await restoreRuntimeSessionForWake(sessionCatalog, run);
   if (!session) {
     throw new Error(`wake context restore failed: session metadata not found for ${run.sessionId}`);
   }
-  // durable 后台 Agent 有自己的子 loop 装配与无重放语义，不能落入普通主会话 wake。
-  // 只有 pending 首跑会走 execute；expired running 由 scheduler.failInterrupted 先冻结。
+  // durable 后台 Agent 走独立子 loop；仅 pending 首跑 execute，过期 running 由 scheduler 先冻结。
   if (run.metadata?.backgroundTask === true) {
     if (!config.backgroundTasks) throw new Error('background task runtime is not configured');
     await config.backgroundTasks.execute(run, options.lease);

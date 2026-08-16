@@ -174,12 +174,12 @@ describe('tenants 路由治理（settings 越权守卫 + CRUD 权限矩阵）', 
     it('组织 admin 提交与现值相同的平台专属字段 → 放行（非翻转不算越权）', async () => {
       h.setCaller(WAIN_ADMIN);
       const res = await patchSettings(h, 'wain', {
-        features: { ...BASE_FEATURES, debugModeAllowed: true, imageGenEnabled: false },
+        features: { ...BASE_FEATURES, debugModeAllowed: false, imageGenEnabled: false },
         models: { allowUserModelSwitch: true, allowContextTokenDetails: false },
       });
       expect(res.status).toBe(200);
       const after = h.tenantStore.getSettings('wain')!;
-      expect(after.features.debugModeAllowed).toBe(true);
+      expect(after.features.debugModeAllowed).toBe(false);
       expect(after.features.imageGenEnabled).toBe(false);
     });
 

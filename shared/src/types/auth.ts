@@ -44,6 +44,8 @@ export interface AuthUser {
    * 组织 admin = role==='admin' && tenantId !== DEFAULT_TENANT_ID
    */
   tenantId: string;
+  /** 所属组织的人类可读名称（登录/`/me` 时由后端从 TenantStore 解析下发）。 */
+  tenantName?: string;
   /** @deprecated 兼容旧客户端；平台管理员统一返回 true。 */
   isSuperAdmin?: boolean;
   /** @deprecated 兼容旧客户端；平台管理员实际始终拥有完整能力集。 */

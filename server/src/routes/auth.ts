@@ -366,6 +366,16 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     );
   }
 
+  /**
+   * 解析所属组织的人类可读名称（前端左下角头像行展示）。
+   * 组织不存在（极端配置）时回退 tenantId slug；tenantStore 未提供时返回 undefined。
+   */
+  function resolveTenantName(tenantId: string | undefined): string | undefined {
+    if (!tenantStore) return undefined;
+    const id = tenantId || DEFAULT_TENANT_ID;
+    return tenantStore.findById(id)?.name ?? id;
+  }
+
   function buildAuthResponse(user: UserRecord) {
     const tenantId = user.tenantId || DEFAULT_TENANT_ID;
     const authPayload: JwtPayload = {
@@ -393,6 +403,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         username: user.username,
         role: user.role,
         tenantId,
+        tenantName: resolveTenantName(tenantId),
         // 兼容旧客户端字段；所有平台管理员均返回 true。
         isSuperAdmin: isSuperAdmin(authPayload),
         platformCapabilities: getEffectivePlatformCapabilities(authPayload),
@@ -922,6 +933,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       // /me handler 原先漏返。前端依赖此字段判断"当前组织"标签 / 是否平台 admin。
       // JWT payload 里有，所以直接透传 req.user.tenantId 即可。
       tenantId: req.user.tenantId,
+      tenantName: resolveTenantName(req.user.tenantId),
       // 兼容旧客户端字段；所有平台管理员均返回 true。
       isSuperAdmin: isSuperAdmin(req.user),
       platformCapabilities: getEffectivePlatformCapabilities(req.user),

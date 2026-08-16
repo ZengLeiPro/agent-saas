@@ -8,6 +8,7 @@ vi.mock("@/contexts/AuthContext", () => ({
       id: "user-1",
       username: "tester",
       tenantId: "tenant-1",
+      tenantName: "开沿科技",
       preferences: { showSessionListAvatar: false },
     },
     accounts: [],
@@ -164,5 +165,12 @@ describe("桌面侧边栏会话激活态", () => {
       variant: "menu",
       sessionId: "session-1",
     });
+  });
+
+  it("左下角头像行用户名右侧展示组织名", () => {
+    renderSidebar("chat");
+
+    const trigger = screen.getByRole("button", { name: /tester/ });
+    expect(trigger.textContent).toContain("开沿科技");
   });
 });

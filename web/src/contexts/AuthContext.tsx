@@ -82,6 +82,7 @@ function normalizeAuthUser(user: AuthUser): AuthUser {
     username: user.username,
     role: user.role,
     tenantId: user.tenantId,
+    tenantName: user.tenantName,
     // 兼容旧客户端字段；平台管理员已不再按账号层级区分权限。
     isSuperAdmin: user.role === "admin" && user.tenantId === DEFAULT_TENANT_ID,
     platformCapabilities: user.platformCapabilities ?? [],

@@ -332,4 +332,16 @@ describe("auth 跨租户隔离（target.tenantId !== req.user.tenantId 这条线
       realName: "平台已修改",
     });
   });
+
+  it("GET /api/auth/me 返回所属组织名称（tenantName），非 slug", async () => {
+    h.setCaller(h.users.wainAdmin);
+    const res = await h.request("/api/auth/me");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      id: h.users.wainAdmin.id,
+      tenantId: "wain",
+      tenantName: "唯恩",
+    });
+  });
 });

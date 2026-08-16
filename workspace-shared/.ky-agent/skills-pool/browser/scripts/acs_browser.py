@@ -241,10 +241,10 @@ def browser_runtime_reexec_required(
     if not target.is_file():
         return False
     current = Path(current_executable or sys.executable)
-    try:
-        return not os.path.samefile(current, target)
-    except OSError:
-        return current.resolve() != target.resolve()
+    # 不能用 samefile()/resolve()：不同 venv 的 python3 通常都符号链接到同一个
+    # 系统 Python inode，但它们的 sys.prefix/site-packages 完全不同。这里比较调用路径，
+    # 只有已经从专用 runtime 路径启动时才跳过 re-exec。
+    return os.path.abspath(current) != os.path.abspath(target)
 
 
 def reexec_browser_runtime_if_needed() -> bool:

@@ -94,6 +94,23 @@ class AcsBrowserRuntimeTest(unittest.TestCase):
                 )
             )
 
+    def test_reexec_does_not_treat_two_venv_symlinks_as_the_same_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            system_python = root / "system-python"
+            system_python.write_text("", encoding="utf-8")
+            workspace_python = root / "workspace-venv-python"
+            browser_python = root / "browser-runtime-python"
+            workspace_python.symlink_to(system_python)
+            browser_python.symlink_to(system_python)
+            self.assertTrue(os.path.samefile(workspace_python, browser_python))
+            self.assertTrue(
+                acs_browser.browser_runtime_reexec_required(
+                    runtime_python=browser_python,
+                    current_executable=str(workspace_python),
+                )
+            )
+
     def test_reexec_preserves_script_arguments_and_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "browser-python"

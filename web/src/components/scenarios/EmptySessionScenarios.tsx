@@ -56,7 +56,7 @@ export function EmptySessionScenarios({ onTryScenario, onStartWorkflow, onViewAl
     };
     return (
       <div className="mx-auto w-full max-w-2xl pt-[12vh]">
-        <div className="mb-3 text-center text-sm text-muted-foreground">先看虚构业务回放，理解 AI 同事如何把工作办完</div>
+        <div className="mb-3 text-center text-sm text-muted-foreground">先看业务回放，理解 AI 同事如何把工作办完</div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {recommended.map((scenario) => {
             const canReplay = hasReplayScript(scenario);
@@ -76,7 +76,7 @@ export function EmptySessionScenarios({ onTryScenario, onStartWorkflow, onViewAl
                 <div className="mt-3 flex flex-wrap items-center gap-1.5">
                   {canReplay ? (
                     <Button type="button" size="sm" className="h-7 px-2.5 text-xs" onClick={() => openCatalog(scenario, "presentation")}>
-                      看虚构回放
+                      看回放
                     </Button>
                   ) : (
                     <Button type="button" size="sm" className="h-7 px-2.5 text-xs" onClick={openOperational}>

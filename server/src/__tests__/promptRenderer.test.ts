@@ -44,7 +44,7 @@ describe('prompt smoke', () => {
     });
     expect(out).toContain('「开开」');
     expect(out).toContain('尚未定义你的个性化人格');
-    // 默认态不得虚构「用户起名 / 情感纽带」叙事
+    // 默认态不得捏造「用户起名 / 情感纽带」叙事
     expect(out).not.toContain('把你的名字定为');
     expect(out).not.toContain('情感纽带');
     expect(out).not.toContain('{{');

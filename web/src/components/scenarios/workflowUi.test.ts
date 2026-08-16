@@ -46,7 +46,7 @@ describe("Workflow V3 UI 纯契约", () => {
       presentation: {
         version: 1,
         dataLabel: "合成场景演示",
-        limitation: "演示数据均为虚构。",
+        limitation: "演示数据均为示例。",
         chapters: Array.from({ length: 6 }, (_, index) => ({
           id: `chapter-${index + 1}`,
           title: `第 ${index + 1} 步`,

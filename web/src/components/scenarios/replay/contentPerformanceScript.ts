@@ -6,7 +6,7 @@ import type { ReplayScript } from "./types";
  * 钩子剧本：市场负责人问「这周哪条内容值得加推」。
  *
  * 回放先排除异常流量，再把自然表现拆成观察、假设和证据缺口，最后用
- * 72 小时小流量随机对照实验决定是否值得放量。内容为虚构示例。
+ * 72 小时小流量随机对照实验决定是否值得放量。内容为示例数据。
  */
 
 const world = demoWorldFixture;
@@ -80,7 +80,7 @@ const REVIEW_HTML = `<!doctype html>
   <li>退回后保持 ¥0 花费，可修改周期、样本、预算或门槛后重新提交。</li>
 </ul>
 
-<p class="foot">虚构回放产物。统一演示账套日期为 ${world.demoDate.iso}；账套另含 ${world.inTransitOrders.count} 张在途订单（¥${world.inTransitOrders.totalAmountWan} 万）与 ${world.receivables.count} 笔未结应收（¥${world.receivables.totalAmountWan} 万），这些经营事实仅用于统一演示世界，不进入内容效果计算。</p>
+<p class="foot">演示回放产物。统一演示账套日期为 ${world.demoDate.iso}；账套另含 ${world.inTransitOrders.count} 张在途订单（¥${world.inTransitOrders.totalAmountWan} 万）与 ${world.receivables.count} 笔未结应收（¥${world.receivables.totalAmountWan} 万），这些经营事实仅用于统一演示世界，不进入内容效果计算。</p>
 </body></html>`;
 
 const REVIEW_SIZE_BYTES = new TextEncoder().encode(REVIEW_HTML).length;

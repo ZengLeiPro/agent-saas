@@ -7,7 +7,7 @@ import type { ReplayScript } from "./types";
  *
  * 这个场景不判断哪张销售订单会晚；交付风险由 deliveryRiskDailyScript 负责。
  * 这里回答采购岗的四个问题：缺口是否真实、该催谁、三条采购路径各付什么代价、
- * 今天批准并执行哪条采购动作。内容均为虚构示例。
+ * 今天批准并执行哪条采购动作。内容均为示例数据。
  */
 
 const ACTION_BOARD_PATH = "assets/demo/今日缺口采购行动板.html";
@@ -76,7 +76,7 @@ const ACTION_BOARD_HTML = `<!doctype html>
     <li>替代料只保留测算，不改 BOM、不占用客户认可。</li>
   </ul>
 </div>
-<p class="foot">虚构回放。金额、供应商、订单与物料均为演示数据；审批前不形成新的采购承诺。</p>
+<p class="foot">演示回放。金额、供应商、订单与物料均为演示数据；审批前不形成新的采购承诺。</p>
 </body></html>`;
 
 const ACTION_BOARD_SIZE_BYTES = new TextEncoder().encode(ACTION_BOARD_HTML).length;

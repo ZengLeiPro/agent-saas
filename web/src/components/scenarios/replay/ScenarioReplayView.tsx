@@ -51,7 +51,7 @@ function typewriterChunkSize(length: number): number {
  * 这是本批次的验收标准：演示里能看到的每一个像素，普通客户在真实会话里
  * 遇到同类数据时也能看到——不允许存在「只有演示看得到」的视图。
  *
- * 回放头部统一标识「虚构回放」；内部 sources 只服务制作与估算，不在观众侧逐块披露。
+ * 回放头部统一标识「回放」；内部 sources 只服务制作与估算，不在观众侧逐块披露。
  */
 
 function buildDetail(blocks: ApiTranscriptBlock[]): ApiSessionDetail {
@@ -359,7 +359,7 @@ export function ScenarioReplayView({
           </Button>
           <h2 className="min-w-0 truncate text-sm font-medium">{script.title}</h2>
           <Badge variant="secondary" className="ml-auto shrink-0 font-normal">
-            {script.mode === "hero" ? "虚构回放 · 完整闭环" : "虚构回放 · 快速体验"}
+            {script.mode === "hero" ? "回放 · 完整闭环" : "回放 · 快速体验"}
           </Badge>
         </div>
           <FilePreviewProvider value={{ openPreview, downloadFile }}>

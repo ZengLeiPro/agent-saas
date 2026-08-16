@@ -7,7 +7,7 @@ import type { ReplayScript } from "./types";
  *
  * meetingActionScript 负责事实、决定与行动的可追溯记录；本场景从确认后的决议起步，
  * 找出责任人与期限缺口，交回给人补齐，经确认批量创建追办事项，并持续监测到完成或升级。
- * 内容均为虚构示例。
+ * 内容均为示例数据。
  */
 
 const FOLLOW_UP_BOARD_PATH = "assets/demo/经营会会后追办看板.html";
@@ -54,7 +54,7 @@ const FOLLOW_UP_BOARD_HTML = `<!doctype html>
 <div class="rule"><b>提醒规则</b>：到期前 2 小时提醒责任人；24 小时内仍未读则补发一次。</div>
 <div class="rule"><b>升级规则</b>：到期未完成立即升级给沈建国；升级不等于完成，原责任人仍需闭环。</div>
 <div class="rule"><b>停止条件</b>：有完成回执才销项；被升级的事项持续监测，直到完成或由有权人取消。</div>
-<p class="foot">虚构回放。人员、决议、日期与业务对象均为演示数据；审批前不会创建待办或发送提醒。</p>
+<p class="foot">演示回放。人员、决议、日期与业务对象均为演示数据；审批前不会创建待办或发送提醒。</p>
 </body></html>`;
 
 const FOLLOW_UP_BOARD_SIZE_BYTES = new TextEncoder().encode(FOLLOW_UP_BOARD_HTML).length;

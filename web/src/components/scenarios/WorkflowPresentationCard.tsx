@@ -27,7 +27,7 @@ export function WorkflowPresentationCard({
           <MousePointerClick className="size-3" />
           {isHookScenario(scenario) ? scenario.triggerBadge : replayScript?.mode === "hero" ? "完整业务闭环" : "快速体验"}
         </Badge>
-        <Badge variant="outline" className="font-normal">虚构业务回放</Badge>
+        <Badge variant="outline" className="font-normal">业务回放</Badge>
       </div>
       <h3 className="mt-4 text-lg font-semibold leading-snug text-foreground">{scenario.title}</h3>
       <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">{scenario.value}</p>

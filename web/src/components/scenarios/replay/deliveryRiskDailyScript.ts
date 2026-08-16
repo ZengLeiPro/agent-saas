@@ -12,7 +12,7 @@ import type { ReplayScript } from "./types";
  *   ④ 可下载产物——交付风险晨报 HTML，右侧预览 + 本地下载。
  * 外加：判定逐条给倒推依据（不给黑箱结论），人可以改掉 AI 拟的对外口径并被记账。
  *
- * 内容为虚构示例，不对应任何真实企业、订单、采购单或人员。
+ * 内容为示例数据，不对应任何真实企业、订单、采购单或人员。
  */
 
 const MORNING_REPORT_PATH = "assets/demo/交付风险晨报.html";

@@ -7,7 +7,7 @@ import type { ReplayScript } from "./types";
  *
  * 回放不再拼接交付、应收、客诉三个独立故事，而是回答一个管理问题：
  * 从昨天到今天，哪些风险新增、恶化或解除，哪些取舍必须升级给老板。
- * 内容为虚构示例，不对应任何真实企业、订单或人员。
+ * 内容为示例数据，不对应任何真实企业、订单或人员。
  */
 
 const world = demoWorldFixture;
@@ -74,7 +74,7 @@ const RISK_BRIEF_HTML = `<!doctype html>
 <tr><td>回款止扩</td><td>暂缓蓝谷 ¥42 万新单至 08-10 12:00，不取消订单，不改账期</td><td>陈静</td><td>扣款凭证核清并由财务负责人复核后放行</td></tr>
 </tbody></table>
 
-<p class="foot">本页为虚构回放产物。置信度是对当前证据支持程度的演示评分，不代表审计保证；所有金额均使用同一演示账套。</p>
+<p class="foot">本页为演示回放产物。置信度是对当前证据支持程度的演示评分，不代表审计保证；所有金额均使用同一演示账套。</p>
 </body></html>`;
 
 const RISK_BRIEF_SIZE_BYTES = new TextEncoder().encode(RISK_BRIEF_HTML).length;

@@ -12,7 +12,7 @@ import type { ReplayScript } from "./types";
  *   ④ 可下载产物——对账催款函 HTML，右侧预览 + 本地下载。
  * 外加两条：人可以改掉 AI 的结论并被记账（第 6 步销售补了一句话），退回不是死路。
  *
- * 内容为虚构示例，不对应任何真实企业、往来款或函件。
+ * 内容为示例数据，不对应任何真实企业、往来款或函件。
  */
 
 const DUNNING_LETTER_PATH = "assets/demo/对账催款函-蓝谷自动化.html";
@@ -84,7 +84,7 @@ const DUNNING_LETTER_HTML = `<!doctype html>
     <p class="sign">陈静<br>澜达精密制造有限公司 · 财务部</p>
   </div>
 
-  <p class="foot">示例内容，公司、人员、订单与往来款项均为虚构，不对应任何真实业务。</p>
+  <p class="foot">示例内容，公司、人员、订单与往来款项均为演示数据，不对应任何真实业务。</p>
 </div>
 </body></html>`;
 

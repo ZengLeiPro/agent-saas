@@ -60,7 +60,7 @@ describe("ScenariosPanel V3", () => {
       presentation: {
         version: 1,
         dataLabel: "合成场景演示",
-        limitation: "演示数据均为虚构。",
+        limitation: "演示数据均为示例。",
         chapters: Array.from({ length: 6 }, (_, index) => ({
           id: `chapter-${index + 1}`,
           title: `业务步骤 ${index + 1}`,
@@ -87,7 +87,7 @@ describe("ScenariosPanel V3", () => {
     fireEvent.click(screen.getByRole("button", { name: "看演示" }));
     expect(await screen.findByRole("heading", { name: guided.title }, { timeout: 5_000 })).toBeTruthy();
     expect(onReplayOpenChange).toHaveBeenLastCalledWith(true);
-    expect(screen.getByText("虚构回放 · 完整闭环")).toBeTruthy();
+    expect(screen.getByText("回放 · 完整闭环")).toBeTruthy();
     expect(screen.getByText("0 / 6")).toBeTruthy();
     expect(screen.getByText(/业务系统出现一条待处理事件/)).toBeTruthy();
 
@@ -115,7 +115,7 @@ describe("ScenariosPanel V3", () => {
       presentation: {
         version: 1,
         dataLabel: '合成场景演示',
-        limitation: '演示数据均为虚构。',
+        limitation: '演示数据均为示例。',
         chapters: [{
           id: 'legacy-only',
           title: '旧回放占位',
@@ -152,12 +152,12 @@ describe("ScenariosPanel V3", () => {
     const target = makeWorkflowScenario(TECHNICAL_INQUIRY_TRACE_SCENARIO_ID, {
       featured: true,
       featuredOrder: 1,
-      presentation: { version: 1, dataLabel: '合成场景演示', limitation: '演示数据均为虚构。', chapters: [chapter] },
+      presentation: { version: 1, dataLabel: '合成场景演示', limitation: '演示数据均为示例。', chapters: [chapter] },
     });
     const ordinary = makeWorkflowScenario('ordinary-after-target', {
       featured: true,
       featuredOrder: 2,
-      presentation: { version: 1, dataLabel: '合成场景演示', limitation: '演示数据均为虚构。', chapters: [chapter] },
+      presentation: { version: 1, dataLabel: '合成场景演示', limitation: '演示数据均为示例。', chapters: [chapter] },
     });
     mocked.workflowLibrary = makeWorkflowLibrary([target, ordinary]);
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
@@ -176,7 +176,7 @@ describe("ScenariosPanel V3", () => {
       presentation: {
         version: 1,
         dataLabel: "合成场景演示",
-        limitation: "演示数据均为虚构。",
+        limitation: "演示数据均为示例。",
         chapters: Array.from({ length: 6 }, (_, index) => ({
           id: `chapter-${index + 1}`,
           title: `业务步骤 ${index + 1}`,

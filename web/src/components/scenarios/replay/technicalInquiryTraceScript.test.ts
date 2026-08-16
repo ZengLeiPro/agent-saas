@@ -94,7 +94,7 @@ describe('复杂询价 Workflow Trace Hero', () => {
       presentation: {
         version: 1,
         dataLabel: '合成场景演示',
-        limitation: '演示数据均为虚构。',
+        limitation: '演示数据均为示例。',
         chapters: [{
           id: 'read',
           title: '读取状态',

@@ -134,7 +134,7 @@ export function EmptyChatRecommendCards({
     return (
       <div className="mx-auto w-full max-w-3xl pt-[10vh]">
         <div className="mb-4 flex items-end justify-between gap-3">
-          <div><div className="text-sm font-medium text-foreground">{roleName(workflowLibrary.roles, matchedRoleId)}工作流</div><div className="mt-1 text-sm text-muted-foreground">先看虚构业务回放，理解 AI 同事如何把工作办完。</div></div>
+          <div><div className="text-sm font-medium text-foreground">{roleName(workflowLibrary.roles, matchedRoleId)}工作流</div><div className="mt-1 text-sm text-muted-foreground">先看业务回放，理解 AI 同事如何把工作办完。</div></div>
           <Button type="button" variant="ghost" size="sm" className="h-8 shrink-0 gap-1 text-xs" onClick={onViewAll}>查看目录<ArrowRight className="size-3.5" /></Button>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -156,7 +156,7 @@ export function EmptyChatRecommendCards({
                 <div className="mt-auto flex flex-wrap items-center justify-end gap-1.5 pt-3">
                   {canReplay ? (
                     <Button type="button" size="sm" className="h-7 px-2.5 text-xs" onClick={() => openCatalog(scenario, "presentation")}>
-                      看虚构回放
+                      看回放
                     </Button>
                   ) : (
                     <Button type="button" size="sm" className="h-7 px-2.5 text-xs" onClick={openOperational}>

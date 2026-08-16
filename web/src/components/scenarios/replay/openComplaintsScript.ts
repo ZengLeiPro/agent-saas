@@ -12,7 +12,7 @@ import type { ReplayScript } from "./types";
  *   ④ 可下载产物——未结盘点与今日行动清单，右侧预览 + 本地下载。
  * 外加：人可以改掉 AI 的措辞并被记账（第 6 步），退回不是死路（rejectedBlocks）。
  *
- * 内容为虚构示例，不对应任何真实企业、工单或批次。
+ * 内容为示例数据，不对应任何真实企业、工单或批次。
  */
 
 const ACTION_LIST_PATH = "assets/demo/客诉未结盘点与今日行动.html";
@@ -97,7 +97,7 @@ const ACTION_LIST_HTML = `<!doctype html>
   </ol>
 </div>
 
-<p class="foot">示例内容，工单号、批次号与客户均为虚构，不对应任何真实企业。</p>
+<p class="foot">示例内容，工单号、批次号与客户均为演示数据，不对应任何真实企业。</p>
 </body></html>`;
 
 const CUSTOMER_VIEW_HTML = `<!doctype html>
@@ -145,7 +145,7 @@ const CUSTOMER_VIEW_HTML = `<!doctype html>
       </div>
     </div>
   </div>
-  <div class="tail">这是客户此刻在消息里看到的样子 · 示例内容，虚构工单与客户</div>
+  <div class="tail">这是客户此刻在消息里看到的样子 · 示例内容，示例工单与客户</div>
 </div>
 </body></html>`;
 

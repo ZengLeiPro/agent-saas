@@ -12,7 +12,7 @@ import type { ReplayScript } from "./types";
  * 外加两条从客户演示稿里学来的：人可以改掉 AI 的结论并被记账（第 5 步），
  * 退回不是死路（rejectedBlocks）。
  *
- * 内容为虚构示例，不对应任何真实企业、订单或证书。
+ * 内容为示例数据，不对应任何真实企业、订单或证书。
  */
 
 const EVIDENCE_PACK_PATH = "assets/demo/出口合规证据包.html";

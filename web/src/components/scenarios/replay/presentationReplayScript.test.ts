@@ -7,7 +7,7 @@ function makeScenarioWithApproval() {
     presentation: {
       version: 1,
       dataLabel: "合成场景演示",
-      limitation: "演示数据均为虚构。",
+      limitation: "演示数据均为示例。",
       chapters: [
         {
           id: "read",

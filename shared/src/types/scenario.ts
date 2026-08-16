@@ -105,7 +105,7 @@ export interface ScenarioSlot {
 
 /**
  * 示例结果的数据来源标签。
- * synthetic：完全虚构的示例数据；desensitized：真实数据脱除标识后的示例数据；
+ * synthetic：完全合成的示例数据；desensitized：真实数据脱除标识后的示例数据；
  * public：来自公开渠道的数据。P0 批次全部为 synthetic。
  */
 export type ScenarioExampleDataLabel = "synthetic" | "desensitized" | "public";

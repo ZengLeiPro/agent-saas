@@ -21,7 +21,7 @@ const demo = makeWorkflowScenario("demo-with-script", {
   presentation: {
     version: 1,
     dataLabel: "合成场景演示",
-    limitation: "演示数据均为虚构。",
+    limitation: "演示数据均为示例。",
     chapters: [
       {
         id: "only",
@@ -70,13 +70,13 @@ describe("EmptyChatRecommendCards V3", () => {
     expect(params.get("intent")).toBe("connect");
   });
 
-  it("有剧本的场景在第一屏只给虚构回放入口", () => {
+  it("有剧本的场景在第一屏只给回放入口", () => {
     const onStartWorkflow = vi.fn();
     const onViewAll = vi.fn(() => window.history.pushState({}, "", "/capabilities"));
     render(<EmptyChatRecommendCards onTryScenario={vi.fn()} onStartWorkflow={onStartWorkflow} onViewAll={onViewAll} />);
 
     // 只有带剧本的那张卡长出演示入口，另外两张不受影响
-    const replayButtons = screen.getAllByRole("button", { name: "看虚构回放" });
+    const replayButtons = screen.getAllByRole("button", { name: "看回放" });
     expect(replayButtons).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "接入这个流程" })).toBeNull();
 

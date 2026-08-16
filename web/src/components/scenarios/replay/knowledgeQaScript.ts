@@ -7,7 +7,7 @@ import type { ReplayScript } from "./types";
  * 选它作为第一份，是因为它用最少的块打通全链路——工具摘要、多轮工具、
  * 正文答复、[FILE] 产物挂右侧面板——便于验证底层，而不是因为它最好看。
  *
- * 内容为虚构示例，不对应任何真实企业制度。
+ * 内容为示例数据，不对应任何真实企业制度。
  */
 
 const CITATION_PANEL_PATH = "assets/demo/制度条款引用.html";

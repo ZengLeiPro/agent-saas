@@ -208,7 +208,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
     } else if (intent === "connect" && resolved.scenario.launch.startMode === "connector") {
       handleWorkflowAction("connector", resolved.scenario);
     } else if (intent === "presentation") {
-      // 首屏推荐卡的「看虚构回放」：切到能力中心后直接进回放，不停在详情弹窗
+      // 首屏推荐卡的「看回放」：切到能力中心后直接进回放，不停在详情弹窗
       setDetail(null);
       handleWorkflowAction("presentation", resolved.scenario);
     }
@@ -302,7 +302,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
           <h1 className="text-xl font-semibold">{roleDetailName ? `${roleDetailName} AI 同事工作流` : "AI 同事能帮你完成什么"}</h1>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
             {hasRecommendedSections && !roleDetailName
-              ? "从一句话或业务事件开始，看虚构回放如何读系统、给判断、经你确认后动手。"
+              ? "从一句话或业务事件开始，看回放如何读系统、给判断、经你确认后动手。"
               : `从业务事件到系统终态，不只生成报告。默认目录共 ${scenarios.length} 个唯一工作流。`}
           </p>
         </div>
@@ -314,7 +314,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
           <div className="mb-3 flex items-end justify-between gap-3">
             <div>
               <h2 id="hook-presentations-title" className="font-semibold">从一句话或业务事件开始</h2>
-              <p className="mt-1 text-xs text-muted-foreground">虚构业务数据 · 模拟完整工作过程 · 不会修改真实系统。</p>
+              <p className="mt-1 text-xs text-muted-foreground">演示数据 · 模拟完整工作过程 · 不会修改真实系统。</p>
             </div>
             <Badge variant="secondary">{hookScenarios.length} 个</Badge>
           </div>
@@ -331,7 +331,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
           <div className="mb-3 flex items-end justify-between gap-3">
             <div>
               <h2 id="guided-presentations-title" className="font-semibold">完整业务闭环演示</h2>
-              <p className="mt-1 text-xs text-muted-foreground">演示数据均为虚构；每一步由你推进，不会修改真实系统。</p>
+              <p className="mt-1 text-xs text-muted-foreground">演示数据均为示例；每一步由你推进，不会修改真实系统。</p>
             </div>
             <Badge variant="secondary">{presentationScenarios.length} 个</Badge>
           </div>

@@ -11,7 +11,7 @@ import type { ReplayScript } from "./types";
  *   ④ 可下载产物——会议纪要 HTML（决议表 + 行动项表 + 出处段落）。
  * 外加两条：退回不是死路（rejectedBlocks），终态两栏（第 8 步）。
  *
- * 内容为虚构示例，不对应任何真实企业、会议或人员。
+ * 内容为示例数据，不对应任何真实企业、会议或人员。
  */
 
 const MINUTES_PATH = "assets/demo/远洲重工Q2经营会纪要.html";
@@ -86,7 +86,7 @@ const MINUTES_HTML = `<!doctype html>
   <p><b>会后补充说明</b>：R-2026Q2-04 的责任人与到期、R-2026Q2-05 的到期，均由会议主持人于 2026-07-25 09:20 补充，会上未作明确表述，已与会上原话分层存放。</p>
 </div>
 
-<p class="foot">本版本记账：采纳 5 项 · 人工修改 2 项 · 会后补充 3 处 · 自动执行 0 项。示例内容，虚构企业、人员与数据，不对应任何真实会议。</p>
+<p class="foot">本版本记账：采纳 5 项 · 人工修改 2 项 · 会后补充 3 处 · 自动执行 0 项。示例内容，企业、人员与数据均为演示，不对应任何真实会议。</p>
 </body></html>`;
 
 const MINUTES_SIZE_BYTES = new TextEncoder().encode(MINUTES_HTML).length;

@@ -1,7 +1,7 @@
-# 场景虚构回放写作规范
+# 场景回放写作规范
 
 > 2026-08-09 修订。目标读者：为能力中心编写销售演示剧本的人。
-> 当前产品定位：所有手写场景均为**虚构业务回放**，目标是讲清真正的业务价值与 AI 同事如何工作，不要求当前连接器或 Runtime 逐项兑现剧本动作。
+> 当前产品定位：所有手写场景均为**业务回放**，目标是讲清真正的业务价值与 AI 同事如何工作，不要求当前连接器或 Runtime 逐项兑现剧本动作。
 
 ## 0. 一句话
 
@@ -54,7 +54,7 @@
 
 不要因为 hook 数量多，就把所有 hook 都按 hero 质量条款强制成同一种结构。
 
-## 3. 共享虚构世界
+## 3. 共享演示世界
 
 跨场景重复出现的客户、订单、采购单、物料、应收、客诉、人员和日期统一维护在：
 
@@ -93,7 +93,7 @@ web/src/components/scenarios/replay/demoWorldFixture.ts
 mapSessionDetailToMessages → MessageList → MessageItem → ToolBlock
 ```
 
-演示和真实会话共享渲染管线，但**不共享事实来源**。演示事实来自虚构 fixture。
+演示和真实会话共享渲染管线，但**不共享事实来源**。演示事实来自共享 fixture。
 
 ### 工具摘要
 
@@ -112,7 +112,7 @@ mapSessionDetailToMessages → MessageList → MessageItem → ToolBlock
 - 每一步 `focus` 到本步真正变化的系统；
 - 面板视图不超过 6 个；
 - `detail` 写业务事实，不塞原始 JSON；
-- 虚构回放可以使用 `completed/readBack/live` 表达虚构世界终态。
+- 回放可以使用 `completed/readBack/live` 表达演示世界终态。
 
 ### 审批门禁
 
@@ -124,15 +124,15 @@ mapSessionDetailToMessages → MessageList → MessageItem → ToolBlock
 - 流程停在哪里；
 - 如何修改并重新提交。
 
-## 5. 虚构回放标识
+## 5. 回放标识
 
 能力中心专区和回放头部统一显示：
 
-> 虚构业务数据 · 模拟完整工作过程 · 不会修改真实系统
+> 演示数据 · 模拟完整工作过程 · 不会修改真实系统
 
 不必在每个工具块重复解释，也不向客户逐项展示内部 `sources` 缺口。
 
-精选演示卡与空会话推荐卡只提供“看虚构回放”。真实试用、连接器接入和落地诊断放在完整目录或详情中，避免把演示入口与真实执行入口混为一谈。
+精选演示卡与空会话推荐卡只提供“看回放”。真实试用、连接器接入和落地诊断放在完整目录或详情中，避免把演示入口与真实执行入口混为一谈。
 
 ## 6. `sources` 的内部用途
 
@@ -147,13 +147,13 @@ mapSessionDetailToMessages → MessageList → MessageItem → ToolBlock
 }
 ```
 
-它用于内部制作评估、产品规划与项目报价，不是虚构回放的发布门槛，也不在观众侧渲染。
+它用于内部制作评估、产品规划与项目报价，不是回放的发布门槛，也不在观众侧渲染。
 
 - `exists`：当前已有同类产出方；
 - `needs-change`：已有产出方，但展示结构仍需改造；
 - `missing`：当前没有产出方。
 
-不要为了让回放“看起来真实”篡改 `sources`；也不要因为 `missing` 就削弱虚构故事中的完整闭环。
+不要为了让回放“看起来真实”篡改 `sources`；也不要因为 `missing` 就削弱演示故事中的完整闭环。
 
 ## 7. 文案红线
 
@@ -161,7 +161,7 @@ mapSessionDetailToMessages → MessageList → MessageItem → ToolBlock
 2. 订单额、暴露额、预计损失、ROI 和因果关系必须分清；
 3. 观察不能直接写成因果，预测必须写前提与置信度；
 4. 同一句话不要在工具摘要和正文重复；
-5. 不出现真实客户名；虚构数据必须具体且内部一致；
+5. 不出现真实客户名；演示数据必须具体且内部一致；
 6. 不批量使用“一口气、一次改干净、全都、绝不遗漏”等同一修辞；
 7. 人审写具体岗位和具体取舍，不写泛化“有权人确认”；
 8. `**加粗**` 后不要紧跟会破坏 CommonMark 定界的中文全角标点。
@@ -169,7 +169,7 @@ mapSessionDetailToMessages → MessageList → MessageItem → ToolBlock
 ## 8. 发布前自检
 
 - [ ] `scenarioId` 与 catalog id 精确一致；
-- [ ] 回放头部明确标识虚构；
+- [ ] 回放头部明确标识演示；
 - [ ] 第一屏有 `panelBase`；
 - [ ] quick 只讲一个核心判断，hero 才承担完整闭环；
 - [ ] 场景步骤不是为了凑拒绝、审批、HTML、ReadBack；
@@ -184,7 +184,7 @@ mapSessionDetailToMessages → MessageList → MessageItem → ToolBlock
 ## 9. 推荐制作顺序
 
 1. 先选销售最值得讲的 3～5 个场景；
-2. 建共享虚构 fixture；
+2. 建共享演示 fixture；
 3. 先写场景的“新判断”和终态，再决定需要哪些步骤；
 4. quick 与 hero 混排，不追求统一步数；
 5. 写完一个就注册并跑测试，不攒一批后再统一修矛盾。

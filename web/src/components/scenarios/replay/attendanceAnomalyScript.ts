@@ -15,7 +15,7 @@ import type { ReplayScript } from "./types";
  *   ④ 可下载产物——《今日考勤异常处理单》HTML，右侧预览 + 本地下载。
  * 外加：人改掉 AI 的一项（群发改私发）并被记账，退回不是死路。
  *
- * 内容为虚构示例，不对应任何真实企业、员工或考勤记录。
+ * 内容为示例数据，不对应任何真实企业、员工或考勤记录。
  */
 
 const HANDLE_SHEET_PATH = "assets/demo/今日考勤异常处理单.html";

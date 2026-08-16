@@ -52,9 +52,7 @@ describe('snapshot validation chain planning', () => {
     'turbo deploy && pnpm test',
     'pnpm test | tee test.log && pnpm build',
     'pnpm test > test.log && pnpm build',
-    'NODE_ENV=test pnpm test && pnpm build',
     'export NODE_ENV=test && pnpm test && pnpm build',
-    'pnpm test\npnpm build',
     'pnpm test && echo $(date)',
   ])('keeps unsafe or stateful shell semantics unchanged: %s', (command) => {
     expect(planSnapshotValidationChain(command)).toBeUndefined();
@@ -67,6 +65,13 @@ describe('snapshot validation chain planning', () => {
     });
     expect(planSnapshotValidationChain('prettier --check . && pnpm test')).toBeDefined();
     expect(planSnapshotValidationChain('prettier --write . && pnpm test')).toBeUndefined();
+  });
+
+  it('accepts static env assignments, a safe shell prelude and newline-separated validations', () => {
+    expect(planSnapshotValidationChain('set -euo pipefail\nNODE_ENV=test pnpm test\npnpm typecheck')).toEqual({
+      commands: ['NODE_ENV=test pnpm test', 'pnpm typecheck'],
+      maxConcurrency: 2,
+    });
   });
 
   it('refuses oversized chains instead of creating an unbounded batch', () => {

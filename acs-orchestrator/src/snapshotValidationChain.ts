@@ -52,7 +52,7 @@ interface ValidationLaneResult {
 }
 
 export function planSnapshotValidationChain(command: string): SnapshotValidationChainPlan | undefined {
-  const commands = splitTopLevelAndChain(command);
+  const commands = splitTopLevelAndChain(stripStaticShellPrelude(command));
   if (!commands || commands.length < 2 || commands.length > MAX_VALIDATION_COMMANDS) return undefined;
   if (!commands.every(isKnownValidationCommand)) return undefined;
   return {
@@ -72,6 +72,8 @@ export async function executeSnapshotValidationChain(input: {
   workspace: Omit<WorkspaceRef, 'root' | 'executionTarget'>;
   stream: boolean;
   emit: (chunk: ToolInvocationStreamChunk) => void;
+  executionRequested?: 'snapshot' | 'workspace';
+  executionRoutingReason?: string;
 }): Promise<ToolInvocationResponse> {
   const startedAt = Date.now();
   if (input.stream) {
@@ -85,7 +87,13 @@ export async function executeSnapshotValidationChain(input: {
     input.plan.maxConcurrency,
     async (command, index) => await executeValidationLane({ ...input, command, index }),
   );
-  return buildValidationChainResponse(results, Date.now() - startedAt, input.plan.maxConcurrency);
+  return buildValidationChainResponse(
+    results,
+    Date.now() - startedAt,
+    input.plan.maxConcurrency,
+    input.executionRequested,
+    input.executionRoutingReason,
+  );
 }
 
 export async function mapWithConcurrency<T, R>(
@@ -182,6 +190,8 @@ function buildValidationChainResponse(
   results: ValidationLaneResult[],
   durationMs: number,
   maxConcurrency: number,
+  executionRequested: 'snapshot' | 'workspace' = 'snapshot',
+  executionRoutingReason?: string,
 ): ToolInvocationResponse {
   const failed = results.filter((result) => result.response.status === 'error');
   const metadataRows = results.map((result) => ({
@@ -205,8 +215,9 @@ function buildValidationChainResponse(
     .map((result) => result.snapshot?.dependencyCacheHit)
     .filter((value): value is boolean => value !== undefined);
   const metadata = {
-    executionRequested: 'snapshot',
+    executionRequested,
     executionUsed: 'snapshot',
+    ...(executionRoutingReason ? { executionRoutingReason } : {}),
     durationMs,
     executionTotalMs: durationMs,
     exitCode: firstFailure ? (numericMetadata(firstFailure, 'exitCode') ?? 1) : 0,
@@ -230,7 +241,8 @@ function buildValidationChainResponse(
     ...(outputFiles.length > 0 ? { outputFiles } : {}),
   };
   const body = renderValidationResults(results);
-  const note = `[执行位置] 容器临时盘快照；验证链 ${results.length} 段、最多 ${maxConcurrency} 路并行；总耗时 ${durationMs}ms`;
+  const routingNote = executionRoutingReason ? '；已将持久工作区请求确定性改道到纯验证快照' : '';
+  const note = `[执行位置] 容器临时盘快照；验证链 ${results.length} 段、最多 ${maxConcurrency} 路并行；总耗时 ${durationMs}ms${routingNote}`;
   if (failed.length === 0) {
     return {
       status: 'success',
@@ -315,7 +327,13 @@ function splitTopLevelAndChain(command: string): string[] | undefined {
       start = index + 1;
       continue;
     }
-    if (char === '&' || char === '|' || char === ';' || char === '<' || char === '>' || char === '\n' || char === '\r') {
+    if (char === '\n' || char === '\r') {
+      const segment = command.slice(start, index).trim();
+      if (segment) segments.push(segment);
+      start = index + 1;
+      continue;
+    }
+    if (char === '&' || char === '|' || char === ';' || char === '<' || char === '>') {
       return undefined;
     }
   }
@@ -326,10 +344,17 @@ function splitTopLevelAndChain(command: string): string[] | undefined {
   return segments;
 }
 
-function isKnownValidationCommand(command: string): boolean {
+export function isKnownValidationCommand(command: string): boolean {
+  const commands = splitTopLevelAndChain(stripStaticShellPrelude(command));
+  if (!commands || commands.length !== 1) return false;
+  return isKnownValidationSegment(commands[0]!);
+}
+
+function isKnownValidationSegment(command: string): boolean {
   const words = shellWords(command);
   if (words.length === 0 || words.some(isMutatingOrInteractiveFlag)) return false;
   let index = 0;
+  while (/^[A-Za-z_][A-Za-z0-9_]*=[^\s]+$/.test(words[index] ?? '')) index += 1;
   if (words[index] === 'corepack') index += 1;
   const manager = words[index];
   if (manager === 'pnpm' || manager === 'npm') {
@@ -394,4 +419,13 @@ function isMutatingOrInteractiveFlag(word: string): boolean {
 function shellWords(command: string): string[] {
   return [...command.matchAll(/"(?:\\.|[^"])*"|'[^']*'|\\.|[^\s]+/g)]
     .map((match) => match[0]!.replace(/^(?:"|')|(?:"|')$/g, ''));
+}
+
+function stripStaticShellPrelude(command: string): string {
+  let remaining = command;
+  while (true) {
+    const match = remaining.match(/^\s*set\s+(?:-[a-zA-Z]+(?:\s+[a-zA-Z0-9_-]+)?|-o\s+[A-Za-z0-9_-]+)\s*(?:;\s*|\r?\n)/);
+    if (!match) return remaining.trim();
+    remaining = remaining.slice(match[0].length);
+  }
 }

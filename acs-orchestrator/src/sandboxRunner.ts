@@ -10,6 +10,10 @@ import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/r
 import type { SandboxRunnerFinalOutput, SandboxRunnerInput, SandboxRunnerOutput } from './protocol.js';
 import { runSandboxRunnerDaemon } from './sandboxRunnerDaemon.js';
 import {
+  snapshotAutoRoutingReason,
+  type SnapshotAutoRoutingReason,
+} from './snapshotAutoRouting.js';
+import {
   snapshotWorkspaceRoutingReason,
   type SnapshotWorkspaceRoutingReason,
 } from './shellExecutionRouting.js';
@@ -128,8 +132,11 @@ export async function executeSandboxRunnerInput(
   const workspaceRoutingReason = localToolName === 'Shell' && toolInput.execution === 'snapshot'
     ? snapshotWorkspaceRoutingReason(effectiveCommand)
     : undefined;
+  const autoSnapshotReason = localToolName === 'Shell' && !workspaceRoutingReason
+    ? snapshotAutoRoutingReason(effectiveCommand, toolInput.execution)
+    : undefined;
   const shouldUseSnapshot = localToolName === 'Shell'
-    && toolInput.execution === 'snapshot'
+    && (toolInput.execution === 'snapshot' || Boolean(autoSnapshotReason))
     && !workspaceRoutingReason;
   const validationPlan = shouldUseSnapshot
     ? planSnapshotValidationChain(effectiveCommand)
@@ -151,6 +158,8 @@ export async function executeSandboxRunnerInput(
       },
       stream: input.stream === true,
       emit: (chunk) => emit({ kind: 'chunk', chunk }),
+      executionRequested: toolInput.execution === 'snapshot' ? 'snapshot' : 'workspace',
+      ...(autoSnapshotReason ? { executionRoutingReason: autoSnapshotReason } : {}),
     });
     if (input.stream) emit({ kind: 'chunk', chunk: { type: 'completed', response } });
     else emit({ kind: 'final', response });
@@ -198,7 +207,7 @@ export async function executeSandboxRunnerInput(
           ? {
               ...chunk,
               response: snapshot
-                ? addSnapshotMetadata(chunk.response, snapshot.metadata)
+                ? addSnapshotMetadata(chunk.response, snapshot.metadata, autoSnapshotReason)
                 : workspaceRoutingReason
                   ? addWorkspaceRoutingMetadata(chunk.response, workspaceRoutingReason)
                   : chunk.response,
@@ -214,7 +223,7 @@ export async function executeSandboxRunnerInput(
     emit({
       kind: 'final',
       response: snapshot
-        ? addSnapshotMetadata(response, snapshot.metadata)
+        ? addSnapshotMetadata(response, snapshot.metadata, autoSnapshotReason)
         : workspaceRoutingReason
           ? addWorkspaceRoutingMetadata(response, workspaceRoutingReason)
           : response,
@@ -241,14 +250,16 @@ function normalizeComparableCwd(value: string): string {
 export function addSnapshotMetadata(
   response: ToolInvocationResponse,
   snapshotExecution: SnapshotExecutionMetadata,
+  routingReason?: SnapshotAutoRoutingReason,
 ): ToolInvocationResponse {
   const commandMs = typeof response.metadata?.durationMs === 'number' ? response.metadata.durationMs : undefined;
   const enriched = commandMs === undefined
     ? snapshotExecution
     : { ...snapshotExecution, commandMs, totalMs: snapshotExecution.preparationMs + commandMs };
   const flatMetadata = {
-    executionRequested: enriched.requested,
+    executionRequested: routingReason ? 'workspace' : enriched.requested,
     executionUsed: enriched.used,
+    ...(routingReason ? { executionRoutingReason: routingReason } : {}),
     snapshotPreparationMs: enriched.preparationMs,
     ...(enriched.repositoryPath ? { snapshotRepositoryPath: enriched.repositoryPath } : {}),
     ...(enriched.sourceCwd ? { snapshotSourceCwd: enriched.sourceCwd } : {}),
@@ -259,7 +270,10 @@ export function addSnapshotMetadata(
     ...(enriched.dependencyCacheHit !== undefined ? { snapshotDependencyCacheHit: enriched.dependencyCacheHit } : {}),
     ...(enriched.totalMs !== undefined ? { executionTotalMs: enriched.totalMs } : {}),
   };
-  const note = `[执行位置] 容器临时盘快照；准备 ${enriched.preparationMs}ms${enriched.dependencyCacheHit === undefined ? '' : `，依赖缓存${enriched.dependencyCacheHit ? '命中' : '新建'}`}`;
+  const routingNote = routingReason
+    ? `；已将持久工作区请求确定性改道：${routingReason === 'snapshot_dependency_restore' ? '依赖恢复不写入工作区' : '纯验证无需保留产物'}`
+    : '';
+  const note = `[执行位置] 容器临时盘快照；准备 ${enriched.preparationMs}ms${enriched.dependencyCacheHit === undefined ? '' : `，依赖缓存${enriched.dependencyCacheHit ? '命中' : '新建'}`}${routingNote}`;
   return response.status === 'success'
     ? {
         ...response,

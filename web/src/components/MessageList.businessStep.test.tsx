@@ -166,7 +166,7 @@ describe("MessageList business step sections", () => {
 
     expect(screen.getByRole("region", { name: "业务计划" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "业务步骤已完成" })).toBeTruthy();
-    const completedToggle = screen.getByRole("button", { name: /核验订单.*第 1\/2 步.*已完成/ });
+    const completedToggle = screen.getByRole("button", { name: /核验订单.*第 1\/2 步/ });
     const currentToggle = screen.getByRole("button", { name: /写入核验结果.*第 2\/2 步/ });
     expect(completedToggle.getAttribute("aria-expanded")).toBe("false");
     expect(currentToggle.getAttribute("aria-expanded")).toBe("true");

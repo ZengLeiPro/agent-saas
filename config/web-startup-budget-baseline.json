@@ -3,15 +3,15 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 299907,
+    "startupJsGzipBytes": 301431,
     "startupCssGzipBytes": 32258,
-    "startupJsBrotliBytes": 239079,
+    "startupJsBrotliBytes": 240423,
     "startupCssBrotliBytes": 25851,
-    "largestJsGzipBytes": 299907,
+    "largestJsGzipBytes": 301431,
     "largestCssGzipBytes": 32258,
-    "largestJsBrotliBytes": 239079,
+    "largestJsBrotliBytes": 240423,
     "largestCssBrotliBytes": 25851,
-    "largestJs": "assets/index-DdFvsYTC.js",
+    "largestJs": "assets/index-gUZV_UZD.js",
     "largestCss": "assets/index-ED_tn1g1.css"
   },
   "tolerance": {
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "任务看板附件上传与预览进入既有看板首屏链路；新增文件类型映射和附件交互使启动包增加约 1.0 KiB gzip，仍远低于 450 KiB 单包绝对上限",
-  "updatedAt": "2026-08-12"
+  "reason": "TASK-46 队列一致性将排队、取消与恢复状态纳入首屏会话状态机；CI 实测启动 JS 增加 1524 B gzip、1344 B brotli，仍远低于 450000 B 单包绝对上限",
+  "updatedAt": "2026-08-16"
 }

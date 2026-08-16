@@ -315,8 +315,8 @@ function assertExecutionScope(
       if (
         input.id !== currentTask.id
         || context.execution.purpose !== 'review'
-        || (input.status !== 'done' && input.status !== 'todo')
-      ) throw new Error('只有当前任务的独立复核 Agent 可以确认 done 或退回 todo');
+        || !['ready_to_merge', 'todo', 'blocked'].includes(input.status ?? '')
+      ) throw new Error('只有当前任务的复核 Agent 可以确认待合并、退回待实施或标记阻塞');
       return;
     case 'create':
       if (input.boardId !== currentTask.boardId || (input.status !== undefined && input.status !== 'todo')) {
@@ -570,7 +570,10 @@ async function moveLegacyTask(
   if (execution) {
     const status = input.status;
     const executionStore = options.executionStore?.();
-    if (!executionStore || (status !== 'done' && status !== 'todo')) {
+    if (
+      !executionStore
+      || (status !== 'ready_to_merge' && status !== 'todo' && status !== 'blocked')
+    ) {
       throw new Error('任务看板复核回写服务未启用');
     }
     const task = await executionStore.moveTaskFromExecution(identity, execution.execution.runId, status);

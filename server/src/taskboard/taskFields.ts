@@ -38,7 +38,10 @@ export function taskFieldsMigrationSql(tasksTable: string): string {
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS creator_user_id TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS creator_name TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
-    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS client_request_id TEXT
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS client_request_id TEXT;
+    ALTER TABLE ${tasksTable} DROP CONSTRAINT IF EXISTS ${tasksTable}_status_check;
+    ALTER TABLE ${tasksTable} ADD CONSTRAINT ${tasksTable}_status_check
+      CHECK (status IN (${TASKBOARD_STATUSES.map(quoteSqlLiteral).join(', ')}))
   `;
 }
 

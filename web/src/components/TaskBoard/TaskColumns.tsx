@@ -80,7 +80,7 @@ export function TaskColumns({
 
       <div
         data-testid="taskboard-columns"
-        aria-label="七态任务看板"
+        aria-label="八态任务看板"
         className="hidden h-full min-w-0 gap-3 overflow-x-auto pb-2 md:flex"
       >
         {TASKBOARD_STATUSES.map((status) => {

@@ -246,22 +246,46 @@ describe('CronManage taskboard actions', () => {
       { action: 'move', id: task.id, status: 'todo' },
       executionScope('review'),
     );
+    await invokeTaskboardAction(
+      options,
+      identity,
+      { action: 'move', id: task.id, status: 'ready_to_merge' },
+      executionScope('review'),
+    );
+    await invokeTaskboardAction(
+      options,
+      identity,
+      { action: 'move', id: task.id, status: 'blocked' },
+      executionScope('review'),
+    );
+    await expect(invokeTaskboardAction(
+      options,
+      identity,
+      { action: 'move', id: task.id, status: 'ready_to_merge' },
+      executionScope('work'),
+    )).rejects.toThrow('只有当前任务的复核 Agent');
+    await expect(invokeTaskboardAction(
+      options,
+      identity,
+      { action: 'move', id: 'task-other', status: 'ready_to_merge' },
+      executionScope('review'),
+    )).rejects.toThrow('只有当前任务的复核 Agent');
     await expect(invokeTaskboardAction(
       options,
       identity,
       { action: 'move', id: task.id, status: 'done' },
-      executionScope('work'),
-    )).rejects.toThrow('只有当前任务的独立复核 Agent');
-    await expect(invokeTaskboardAction(
-      options,
-      identity,
-      { action: 'move', id: 'task-other', status: 'done' },
       executionScope('review'),
-    )).rejects.toThrow('只有当前任务的独立复核 Agent');
+    )).rejects.toThrow('只有当前任务的复核 Agent');
 
     expect(service.moveTask).not.toHaveBeenCalled();
     expect(executionStore.moveTaskFromExecution).toHaveBeenCalledWith(
       identity, execution.runId, 'todo',
+    );
+    expect(executionStore.moveTaskFromExecution).toHaveBeenCalledWith(
+      identity, execution.runId, 'ready_to_merge',
+    );
+    expect(executionStore.moveTaskFromExecution).toHaveBeenCalledWith(
+      identity, execution.runId, 'blocked',
     );
   });
 

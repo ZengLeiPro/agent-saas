@@ -347,7 +347,7 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
   async moveTaskFromExecution(
     identity: TaskboardIdentity,
     runId: string,
-    status: Extract<TaskBoardTask['status'], 'done' | 'todo'>,
+    status: Extract<TaskBoardTask['status'], 'ready_to_merge' | 'todo' | 'blocked'>,
   ): Promise<TaskBoardTask> {
     await this.init();
     return this.target.moveTaskFromExecution(identity, runId, status);

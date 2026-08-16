@@ -454,6 +454,8 @@ describePg('PgTaskboardStore contract', () => {
     expect(claimed.execution).toMatchObject({
       status: 'queued', purpose: 'work', runId: 'run-a', sessionId: 'session-a',
     });
+    await expect(store.moveTaskFromExecution(alice, 'run-a', 'ready_to_merge'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_REVIEW_EXECUTION_INACTIVE' });
     expect(await store.listExecutions(alice, task.id)).toEqual([claimed.execution]);
     await expect(store.searchExecutions(alice, task.id, { page: 1, pageSize: 1 })).resolves.toMatchObject({
       items: [claimed.execution], page: 1, pageSize: 1, total: 1, hasMore: false,
@@ -523,6 +525,15 @@ describePg('PgTaskboardStore contract', () => {
     const completed = await store.completeExecution('run-a', {
       status: 'succeeded',
       commentBody: 'Agent 交付\n\n实现完成',
+      reviewExecution: {
+        expectedVersion: claimed.task.version,
+        purpose: 'review',
+        executionId: 'execution-review',
+        runId: 'run-review',
+        sessionId: 'session-a',
+        executionOwnerUserId: alice.ownerUserId,
+        dispatch: dispatch('execution-review', 'run-review', 'session-a'),
+      },
     });
     expect(completed?.task.status).toBe('in_review');
     expect(completed?.execution).toMatchObject({ status: 'succeeded', finishedAt: expect.any(String) });
@@ -540,29 +551,71 @@ describePg('PgTaskboardStore contract', () => {
     });
     expect(duplicate?.execution.status).toBe('succeeded');
     expect(await store.listComments(alice, task.id)).toHaveLength(commentCount);
+    expect((await store.listExecutions(alice, task.id))
+      .filter((item) => item.purpose === 'review')).toHaveLength(1);
 
-    const reviewClaim = await store.claimExecution(alice, task.id, {
-      expectedVersion: completed!.task.version,
-      purpose: 'review',
+    expect(await store.listExecutions(alice, task.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'execution-review',
+        runId: 'run-review',
+        sessionId: 'session-a',
+        purpose: 'review',
+        status: 'queued',
+      }),
+    ]));
+    expect(await store.claimExecutionDispatch('run-review', 'review-lease')).toMatchObject({
       executionId: 'execution-review',
       runId: 'run-review',
-      sessionId: 'session-review',
-      executionOwnerUserId: alice.ownerUserId,
-      dispatch: dispatch('execution-review', 'run-review', 'session-review'),
+      sessionId: 'session-a',
     });
-    expect(reviewClaim).toMatchObject({
-      task: { status: 'in_progress' },
-      execution: { purpose: 'review', status: 'queued' },
-    });
-    const approved = await store.moveTaskFromExecution(alice, 'run-review', 'done');
+    const approved = await store.moveTaskFromExecution(alice, 'run-review', 'ready_to_merge');
     const reviewCompleted = await store.completeExecution('run-review', {
       status: 'succeeded',
       commentBody: '独立复核通过',
     });
-    expect(approved.status).toBe('done');
-    expect(reviewCompleted?.task.status).toBe('done');
+    expect(approved.status).toBe('ready_to_merge');
+    expect(reviewCompleted?.task.status).toBe('ready_to_merge');
     await expect(store.moveTaskFromExecution(alice, 'run-review', 'todo'))
-      .rejects.toMatchObject({ code: 'TASKBOARD_REVIEW_TASK_CHANGED' });
+      .rejects.toMatchObject({ code: 'TASKBOARD_REVIEW_EXECUTION_INACTIVE' });
+
+    const prepareReviewTask = async (suffix: string) => {
+      const reviewTask = await store.createTask(
+        alice, board.id, { title: `复核分支-${suffix}`, status: 'todo' },
+      );
+      const workId = `execution-work-${suffix}`, workRunId = `run-work-${suffix}`;
+      const reviewId = `execution-review-${suffix}`, reviewRunId = `run-review-${suffix}`;
+      const sessionId = `session-${suffix}`;
+      const work = await store.claimExecution(alice, reviewTask.id, {
+        expectedVersion: reviewTask.version, executionId: workId, runId: workRunId, sessionId,
+        executionOwnerUserId: alice.ownerUserId,
+        dispatch: dispatch(workId, workRunId, sessionId),
+      });
+      await store.completeExecution(workRunId, {
+        status: 'succeeded', commentBody: `实施完成-${suffix}`,
+        reviewExecution: {
+          expectedVersion: work.task.version, purpose: 'review', executionId: reviewId,
+          runId: reviewRunId, sessionId, executionOwnerUserId: alice.ownerUserId,
+          dispatch: dispatch(reviewId, reviewRunId, sessionId),
+        },
+      });
+      return reviewRunId;
+    };
+
+    const rejectedReview = await prepareReviewTask('rejected');
+    await store.moveTaskFromExecution(alice, rejectedReview, 'todo');
+    expect((await store.completeExecution(rejectedReview, {
+      status: 'succeeded', commentBody: '复核不通过并已列出返工项',
+    }))?.task.status).toBe('todo');
+
+    const inconclusiveReview = await prepareReviewTask('inconclusive');
+    expect((await store.completeExecution(inconclusiveReview, {
+      status: 'succeeded', commentBody: '证据不足，无法明确结论',
+    }))?.task.status).toBe('in_review');
+
+    const failedReview = await prepareReviewTask('failed');
+    expect((await store.completeExecution(failedReview, {
+      status: 'failed', error: 'review runtime failed', commentBody: '复核运行失败',
+    }))?.task.status).toBe('blocked');
 
     const manuallyCorrected = await store.createTask(alice, board.id, { title: '人工纠正优先', status: 'todo' });
     const secondClaim = await store.claimExecution(alice, manuallyCorrected.id, {

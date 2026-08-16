@@ -3,6 +3,7 @@ export const TASKBOARD_STATUSES = [
   "todo",
   "in_progress",
   "in_review",
+  "ready_to_merge",
   "blocked",
   "done",
   "canceled",
@@ -34,7 +35,7 @@ export const TASKBOARD_DEFAULT_PROMPT = [
   "1. 直接完成任务，必要时使用可用工具；不要只给计划。",
   "2. 尊重当前工作区与安全边界，不 push、不部署、不对外发送，除非任务正文明确授权。",
   "3. 完成后自行检查结果。你的最终回复将作为任务的 Agent 交付回执。",
-  "4. 实施 Agent 不要自行标记“已完成”；独立复核 Agent 按任务中的回写说明确认完成或退回返工。",
+  "4. 实施 Agent 不要自行标记“待合并”或“已完成”；复核通过只进入“待合并”，不直接完成。",
 ].join("\n");
 
 export type TaskBoardStatus = (typeof TASKBOARD_STATUSES)[number];
@@ -165,7 +166,7 @@ export interface TaskBoardTaskCreateInput {
   model?: string;
   /** 同一次新建表单重试时保持不变，避免直执失败后重复建任务。 */
   clientRequestId?: string;
-  /** 创建后立即启动 Agent；仅用于“进行中”状态。 */
+  /** 创建后立即启动实施 Agent；任务进入“实施中”。 */
   dispatch?: boolean;
 }
 
@@ -202,6 +203,6 @@ export interface TaskBoardCommentPatchInput {
 
 export interface TaskBoardExecutionStartInput {
   expectedVersion: number;
-  /** work 从待处理开始实施；review 从待复核开始独立复核。 */
+  /** work 从待实施开始实施；review 从复核中开始独立复核。 */
   purpose?: TaskBoardExecutionPurpose;
 }

@@ -649,7 +649,7 @@ export function TaskDetail({
                         disabled={saving}
                       />
                       <Label htmlFor="task-comment-continue" className="font-normal">
-                        发表后切换为进行中并继续执行
+                        发表后切换为实施中并继续执行
                       </Label>
                     </div>
                   ) : null}

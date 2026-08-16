@@ -168,6 +168,8 @@ export interface TaskboardExecutionCompletionInput {
   commentBody: string;
   attachments?: TaskBoardAttachment[];
   error?: string;
+  /** 实施成功时与终态回写同事务创建的自动复核 Execution。 */
+  reviewExecution?: TaskboardExecutionClaimInput;
 }
 
 export interface TaskboardExecutionStore {
@@ -237,7 +239,7 @@ export interface TaskboardExecutionStore {
   moveTaskFromExecution(
     identity: TaskboardIdentity,
     runId: string,
-    status: Extract<TaskBoardStatus, 'done' | 'todo'>,
+    status: Extract<TaskBoardStatus, 'ready_to_merge' | 'todo' | 'blocked'>,
   ): Promise<TaskBoardTask>;
   claimExecutionDispatch(runId: string | undefined, leaseId: string): Promise<TaskboardExecutionDispatch | null>;
   markExecutionDispatchSucceeded(runId: string, leaseId: string): Promise<boolean>;

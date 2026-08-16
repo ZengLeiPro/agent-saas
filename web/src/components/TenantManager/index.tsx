@@ -42,6 +42,8 @@ import { cloneTenantSettings, saveTenantModelScope, type TenantEntitlementsRespo
 
 export { saveTenantModelScope } from "./modelPolicy";
 
+type GovernedTenantSettingsResponse = TenantSettingsResponse & { updatedAt: string };
+
 export function TenantModelPolicyPanel({
   tenant,
   onActionsChange,
@@ -409,11 +411,8 @@ function TenantCapabilitiesPanel({
     setMemoryFeatureStatusError(false);
     void (async () => {
       try {
-        const response = await authFetch(`/api/tenants/${tenant.id}/settings`);
-        const body = await response.json().catch(() => ({})) as Partial<TenantSettingsResponse> & { error?: string };
-        if (!response.ok || !body.memoryFeatureStatus) {
-          throw new Error(body.error || `HTTP ${response.status}`);
-        }
+        const body = await governanceAccessApi.getTenantSettings<GovernedTenantSettingsResponse>(tenant.id);
+        if (!body.memoryFeatureStatus) throw new Error("记忆能力状态不可用");
         if (!cancelled) {
           setMemoryFeatureStatus(body.memoryFeatureStatus);
           setMemoryFeatureStatusError(false);
@@ -448,10 +447,7 @@ function TenantCapabilitiesPanel({
   const save = useCallback(async () => {
     setSaving(true);
     try {
-      const latestRes = await authFetch(`/api/tenants/${tenant.id}/settings`);
-      const latestData = await latestRes.json().catch(() => ({})) as Partial<TenantSettingsResponse> & { error?: string };
-      if (!latestRes.ok || !latestData.settings) throw new Error(latestData.error || "加载最新组织设置失败");
-
+      const latestData = await governanceAccessApi.getTenantSettings<GovernedTenantSettingsResponse>(tenant.id);
       const payload = cloneTenantSettings(latestData.settings);
       payload.features = { ...settings.features };
       payload.quotas = { ...settings.quotas };
@@ -461,13 +457,10 @@ function TenantCapabilitiesPanel({
         requireDingtalkBinding: settings.security.requireDingtalkBinding,
       };
 
-      const res = await authFetch(`/api/tenants/${tenant.id}/settings`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings: payload }),
+      const data = await governanceAccessApi.updateTenantSettings<GovernedTenantSettingsResponse>(tenant.id, {
+        settings: payload,
+        expectedUpdatedAt: latestData.updatedAt,
       });
-      const data = await res.json().catch(() => ({})) as Partial<TenantSettingsResponse> & { error?: string };
-      if (!res.ok || !data.settings) throw new Error(data.error || "保存能力与配额失败");
       const next = cloneTenantSettings(data.settings);
       await onSaved?.();
       setSettings(next);

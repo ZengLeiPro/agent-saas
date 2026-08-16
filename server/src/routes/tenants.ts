@@ -35,6 +35,7 @@ import {
   writeTenantInstructions,
 } from '../data/tenants/instructions.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
+import { tenantSettingsPolicyError, tenantSettingsSchema } from './tenantSettingsValidation.js';
 
 const createTenantSchema = z.object({
   id: z.string().regex(
@@ -59,77 +60,6 @@ const reorderTenantsSchema = z.object({
 
 const deleteTenantSchema = z.object({
   confirm: z.string().min(1),
-});
-
-const optionalNumber = z.preprocess(
-  value => value === '' || value === null ? undefined : value,
-  z.number().int().positive().optional(),
-);
-
-const tenantSettingsSchema = z.object({
-  features: z.object({
-    filesEnabled: z.boolean(),
-    cronEnabled: z.boolean(),
-    mcpEnabled: z.boolean(),
-    customSkillsEnabled: z.boolean(),
-    debugModeAllowed: z.boolean(),
-    // optional：兼容不带新字段的旧客户端提交；缺省时 store merge 保留原值/默认 false
-    autoCompactEnabled: z.boolean().optional(),
-    // 专职 Agent 批次（2026-07）：optional 兼容旧客户端；缺省走 DEFAULT_TENANT_SETTINGS
-    personalAgentEnabled: z.boolean().optional(),
-    kbEnabled: z.boolean().optional(),
-    // 记忆轮询批次（2026-07-14）：默认关，kaiyan 灰度先开；计费默认不扣积分
-    memoryPollingEnabled: z.boolean().optional(),
-    memoryPollChargesCredits: z.boolean().optional(),
-    // GenerateImage 生图批次（2026-07-15）：默认关，平台管理员按租户开放
-    imageGenEnabled: z.boolean().optional(),
-    // 记忆写入职责剥离批次（2026-07-29）：默认关；delegation 依赖 consolidation
-    // （服务端强制，见 assertMemoryFeatureDependency——v2 剥离主 Agent 写入后
-    // 必须有 L2 接管，否则记忆静默停更）
-    memoryConsolidationEnabled: z.boolean().optional(),
-    memoryWriteDelegationEnabled: z.boolean().optional(),
-  }).optional(),
-  quotas: z.object({
-    maxUsers: optionalNumber,
-    maxAdmins: optionalNumber,
-    maxStorageMb: optionalNumber,
-    monthlyTokenLimit: optionalNumber,
-    maxTurnsPerRequest: optionalNumber,
-    rateLimitMaxRequests: optionalNumber,
-  }).optional(),
-  models: z.object({
-    defaultModel: z.string().max(200).optional(),
-    allowedModels: z.array(z.string().max(200)).optional(),
-    allowUserModelSwitch: z.boolean(),
-    showGroupNames: z.boolean().optional(),
-    showContextTokens: z.boolean().optional(),
-    allowContextTokenDetails: z.boolean().optional(),
-    displayOverrides: z.record(z.string().max(200), z.object({
-      displayName: z.string().max(100).optional(),
-      description: z.string().max(500).optional(),
-      recommended: z.boolean().optional(),
-      sortOrder: z.number().int().optional(),
-      groupDisplayName: z.string().max(100).optional(),
-    })).optional(),
-  }).optional(),
-  mcp: z.object({
-    allowTenantServers: z.boolean(),
-    allowGlobalServers: z.boolean(),
-    defaultEnabledServerIds: z.array(z.string().max(200)).optional(),
-  }).optional(),
-  branding: z.object({
-    displayName: z.string().max(100).optional(),
-    logoUrl: z.string().max(500).optional(),
-    primaryColor: z.string().max(32).optional(),
-  }).optional(),
-  personalization: z.object({
-    firstDayGuideBarEnabled: z.boolean().optional(),
-  }).optional(),
-  security: z.object({
-    passwordMinLength: optionalNumber,
-    sessionTtlHours: optionalNumber,
-    requireDingtalkBinding: z.boolean(),
-  }).optional(),
 });
 
 export interface CreateTenantsRouterOptions {
@@ -350,65 +280,15 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
       res.status(400).json({ error: parsed.error.issues[0]!.message });
       return;
     }
-    if (!isPlatformAdmin(req.user)) {
-      const current = tenantStore.getSettings(req.params.id);
-      if (!current) {
-        res.status(404).json({ error: '组织不存在' });
-        return;
-      }
-      const requestedImageGenEnabled = parsed.data.features?.imageGenEnabled;
-      const currentImageGenEnabled = current.features.imageGenEnabled === true;
-      if (requestedImageGenEnabled !== undefined && requestedImageGenEnabled !== currentImageGenEnabled) {
-        res.status(403).json({ error: 'AI 生图能力仅平台管理员可配置' });
-        return;
-      }
-      parsed.data.features = {
-        ...current.features,
-        ...(parsed.data.features ?? {}),
-        imageGenEnabled: currentImageGenEnabled,
-      };
-      const requested = parsed.data.models?.allowContextTokenDetails;
-      const currentValue = current.models.allowContextTokenDetails === true;
-      const requestedShowContextTokens = parsed.data.models?.showContextTokens
-        ?? current.models.showContextTokens;
-      const nextValue = requestedShowContextTokens === false
-        ? false
-        : requested ?? currentValue;
-      if (nextValue !== currentValue) {
-        res.status(403).json({ error: '上下文 Token 明细仅平台管理员可配置' });
-        return;
-      }
-      parsed.data.models = {
-        ...current.models,
-        ...(parsed.data.models ?? {}),
-        allowContextTokenDetails: currentValue,
-      };
-      // 配额=平台商务约束（maxUsers/monthlyTokenLimit 等），组织 admin 不得自助改动：
-      // 任一字段与现值不同 → 403；同值/缺省则强制保留现值（2026-07-19 治理修复）
-      if (parsed.data.quotas !== undefined) {
-        const requestedQuotas = parsed.data.quotas;
-        const changed = (Object.keys(requestedQuotas) as Array<keyof typeof requestedQuotas>)
-          .some(key => requestedQuotas[key] !== undefined && requestedQuotas[key] !== current.quotas[key]);
-        if (changed) {
-          res.status(403).json({ error: '组织配额仅平台管理员可配置' });
-          return;
-        }
-      }
-      parsed.data.quotas = { ...current.quotas };
+    const current = tenantStore.getSettings(req.params.id);
+    if (!current) {
+      res.status(404).json({ error: '组织不存在' });
+      return;
     }
-    // 记忆开关依赖校验（2026-07-29 P0 修复）：v2 剥离主 Agent 写入后必须有
-    // L2 接管，否则该租户记忆静默停更。以「合并后的最终态」校验，防止只提交
-    // 部分字段绕过（如仅关 consolidation 而 delegation 保持开启）。
-    {
-      const currentSettings = tenantStore.getSettings(req.params.id);
-      const finalConsolidation = parsed.data.features?.memoryConsolidationEnabled
-        ?? (currentSettings?.features.memoryConsolidationEnabled === true);
-      const finalDelegation = parsed.data.features?.memoryWriteDelegationEnabled
-        ?? (currentSettings?.features.memoryWriteDelegationEnabled === true);
-      if (finalDelegation && !finalConsolidation) {
-        res.status(400).json({ error: '「记忆写入剥离 v2」依赖「会话记忆整合」：请先开启会话记忆整合，或同时关闭两者' });
-        return;
-      }
+    const policyError = tenantSettingsPolicyError(parsed.data, current, isPlatformAdmin(req.user));
+    if (policyError) {
+      res.status(policyError.status).json({ error: policyError.error });
+      return;
     }
     try {
       const settings = await tenantStore.updateSettings(req.params.id, parsed.data);

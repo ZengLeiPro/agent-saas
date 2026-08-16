@@ -1,11 +1,26 @@
 import { useCallback, useEffect, useState } from "react";
-import { governanceAccessApi } from "@agent/shared/lib/governanceApi";
+import { governanceAccessApi, governanceResourcesApi } from "@agent/shared/lib/governanceApi";
 import { authFetch } from "@/lib/authFetch";
 import { tenantsPreload } from "@/lib/preload";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import type { Tenant, CreateTenantInput, UpdateTenantInput } from "./types";
 
 const API_BASE = "/api/tenants";
+
+type TenantLifecyclePreview = {
+  previewId: string;
+  baselineDigest: string;
+  expiresAt: string;
+  impact: { blockers: string[] };
+};
+
+type TenantDeletePreview = {
+  previewId: string;
+  baselineDigest: string;
+  expiresAt: string;
+  blockers?: unknown[];
+  idempotencyKey?: string;
+};
 
 let cachedTenants: Tenant[] | null = null;
 let tenantsSkipped = false; // 非平台 admin 跳过请求
@@ -122,28 +137,42 @@ export function useTenants() {
   }, [refresh]);
 
   const setTenantDisabled = async (id: string, disabled: boolean) => {
-    const res = await authFetch(`${API_BASE}/${id}/status`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ disabled }),
+    const action = disabled ? "suspend" : "resume";
+    const reason = disabled ? "平台组织管理暂停组织" : "平台组织管理恢复组织";
+    const preview = await governanceAccessApi.previewTenantLifecycle<TenantLifecyclePreview>(id, {
+      action,
+      reason,
     });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error((data as { error?: string }).error || "操作失败");
+    if (preview.impact.blockers.length > 0) {
+      throw new Error(`组织生命周期变更存在阻断：${preview.impact.blockers.join("、")}`);
     }
+    await governanceAccessApi.updateTenantLifecycle(id, {
+      action,
+      reason,
+      previewId: preview.previewId,
+      baselineDigest: preview.baselineDigest,
+      expiresAt: preview.expiresAt,
+    });
     await refresh();
   };
 
   const deleteTenant = async (id: string, confirm: string) => {
-    const res = await authFetch(`${API_BASE}/${id}`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirm }),
+    const reasonCode = "platform_admin_confirmed";
+    const preview = await governanceResourcesApi.previewTenantDelete<TenantDeletePreview>({
+      tenantId: id,
+      confirm,
+      reasonCode,
     });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error((data as { error?: string }).error || "删除组织失败");
-    }
+    if (preview.blockers?.length) throw new Error("组织删除预览仍有阻断，不能提交 Change Job");
+    await governanceResourcesApi.startTenantDelete({
+      tenantId: id,
+      confirm,
+      reasonCode,
+      idempotencyKey: preview.idempotencyKey ?? `tenant-delete:${id}:${preview.baselineDigest}`,
+      previewId: preview.previewId,
+      baselineDigest: preview.baselineDigest,
+      expiresAt: preview.expiresAt,
+    });
     await refresh();
   };
 

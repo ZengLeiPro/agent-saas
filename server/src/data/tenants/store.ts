@@ -352,10 +352,17 @@ export class TenantStore {
     return cloneSettings(mergeSettings(tenant.settings));
   }
 
-  async updateSettings(id: string, input: TenantSettingsPatch): Promise<TenantSettings> {
+  async updateSettings(
+    id: string,
+    input: TenantSettingsPatch,
+    expectedUpdatedAt?: string,
+  ): Promise<TenantSettings> {
     return this.mutate(() => {
       const tenant = this.tenants.find(t => t.id === id);
       if (!tenant) throw new Error('Tenant not found');
+      if (expectedUpdatedAt !== undefined && tenant.updatedAt !== expectedUpdatedAt) {
+        throw new Error('Tenant settings baseline changed');
+      }
       // 基底=租户现值（先补全默认），patch 缺省的 section 保留现值而非重置为平台默认
       tenant.settings = mergeSettings(input, mergeSettings(tenant.settings));
       tenant.updatedAt = nextUpdatedAt(tenant.updatedAt);

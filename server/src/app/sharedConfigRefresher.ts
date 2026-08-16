@@ -57,8 +57,6 @@ export function createSharedConfigRefresher(params: {
   processCwd: string;
   target: ModelsHotUpdateTarget;
   onSystemPromptOverridesUpdated?: (next: NonNullable<AppConfig['systemPrompts']>) => void;
-  /** toolControls 变更回调。执行进程用它替换 RawRuntime 的工具开关与描述覆盖。 */
-  onToolControlsUpdated?: (next: AppConfig['toolControls']) => void;
   /**
    * webTools 变更回调。凭据需经 SecretVault 异步解析，实现方自行 fire-and-forget，
    * 刷新器本身保持同步且不因解析失败中断其他配置的热更新。
@@ -80,7 +78,6 @@ export function createSharedConfigRefresher(params: {
     processCwd,
     target,
     onSystemPromptOverridesUpdated,
-    onToolControlsUpdated,
     onWebToolsUpdated,
     onSttUpdated,
     tenantStore,
@@ -153,7 +150,6 @@ export function createSharedConfigRefresher(params: {
     if (toolControlsChanged) {
       if (nextConfig.toolControls) config.toolControls = nextConfig.toolControls;
       else delete config.toolControls;
-      onToolControlsUpdated?.(nextConfig.toolControls);
       logger?.info('[SharedConfig] 已从磁盘热更新工具开关与描述覆盖配置');
     }
 

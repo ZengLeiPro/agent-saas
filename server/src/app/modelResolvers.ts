@@ -45,8 +45,6 @@ export function createModelResolvers(params: {
   onGuardrailModelConfigsUpdated: (next: GuardrailModelConfig[]) => void;
   /** config.json 中系统提示语覆盖变化后，刷新当前进程注册表。 */
   onSystemPromptOverridesUpdated: (next: NonNullable<AppConfig['systemPrompts']>) => void;
-  /** toolControls 变化后替换执行进程的工具开关与描述覆盖。 */
-  onToolControlsUpdated?: (next: AppConfig['toolControls']) => void;
   /** webTools 变化后重新解析凭据并替换执行进程的运行时配置。 */
   onWebToolsUpdated?: (next: AppConfig['webTools']) => void;
   /** STT 变化后重新解析凭据并替换执行进程的 AudioTranscribe 配置。 */
@@ -62,7 +60,6 @@ export function createModelResolvers(params: {
       updateGuardrailModelConfigs: params.onGuardrailModelConfigsUpdated,
     },
     onSystemPromptOverridesUpdated: params.onSystemPromptOverridesUpdated,
-    ...(params.onToolControlsUpdated ? { onToolControlsUpdated: params.onToolControlsUpdated } : {}),
     ...(params.onWebToolsUpdated ? { onWebToolsUpdated: params.onWebToolsUpdated } : {}),
     ...(params.onSttUpdated ? { onSttUpdated: params.onSttUpdated } : {}),
     tenantStore,

@@ -272,7 +272,7 @@ describe('createSharedConfigRefresher', () => {
     expect(seen).toEqual(['zhipu']);
   });
 
-  it('把别的进程改写或清除的 toolControls 热更新进执行侧', () => {
+  it('把别的进程改写或清除的 toolControls 热更新进当前内存配置', () => {
     const writeWithToolControls = (toolControls?: AppConfig['toolControls']) => {
       writeFileSync(join(dir, 'config.json'), JSON.stringify({
         agent: { cwd: '.' },
@@ -294,17 +294,11 @@ describe('createSharedConfigRefresher', () => {
       models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
       toolControls: initial,
     } as unknown as AppConfig;
-    const executionConfig: { toolControls?: AppConfig['toolControls'] } = { toolControls: initial };
-    const seen: Array<AppConfig['toolControls']> = [];
     let clock = 10_000;
     const refresher = createSharedConfigRefresher({
       config,
       processCwd: dir,
       target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
-      onToolControlsUpdated: (next) => {
-        executionConfig.toolControls = next;
-        seen.push(next);
-      },
       now: () => clock,
     });
 
@@ -313,15 +307,12 @@ describe('createSharedConfigRefresher', () => {
     refresher.refreshIfChanged();
 
     expect(config.toolControls).toEqual(replacement);
-    expect(executionConfig.toolControls).toEqual(replacement);
 
     writeWithToolControls();
     clock += 5_000;
     refresher.refreshIfChanged();
 
     expect(config.toolControls).toBeUndefined();
-    expect(executionConfig.toolControls).toBeUndefined();
-    expect(seen).toEqual([replacement, undefined]);
   });
 
   it('把别的进程改写的 STT 配置热更新进当前内存并通知执行侧', () => {

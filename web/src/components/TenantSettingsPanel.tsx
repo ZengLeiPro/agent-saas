@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { governanceAccessApi } from "@agent/shared/lib/governanceApi";
 import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,6 +62,12 @@ function SettingSwitch({
 
 type TenantSettingsPanelSection = "all" | "model-tools" | "brand" | "security";
 
+type GovernedTenantSettingsResponse = {
+  tenantId: string;
+  settings: TenantSettings;
+  updatedAt: string;
+};
+
 export function TenantSettingsPanel({
   tenantId,
   section = "all",
@@ -78,17 +85,16 @@ export function TenantSettingsPanel({
   const [saved, setSaved] = useState(false);
   const [defaultMcpText, setDefaultMcpText] = useState("");
   const [modelList, setModelList] = useState<ModelList | null>(null);
+  const [settingsUpdatedAt, setSettingsUpdatedAt] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!tenantId) return;
     setLoading(true);
     try {
-      const res = await authFetch(`/api/tenants/${tenantId}/settings`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data as { error?: string }).error || "加载组织管理失败");
-      const next = (data as { settings: TenantSettings }).settings;
-      setSettings(next);
-      setDefaultMcpText(next.mcp.defaultEnabledServerIds.join("\n"));
+      const data = await governanceAccessApi.getTenantSettings<GovernedTenantSettingsResponse>(tenantId);
+      setSettings(data.settings);
+      setSettingsUpdatedAt(data.updatedAt);
+      setDefaultMcpText(data.settings.mcp.defaultEnabledServerIds.join("\n"));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -125,18 +131,16 @@ export function TenantSettingsPanel({
   const save = useCallback(async () => {
     setSaving(true);
     try {
+      if (!settingsUpdatedAt) throw new Error("组织设置版本不可用，请刷新后重试");
       const payload = cloneTenantSettings(settings);
       payload.mcp.defaultEnabledServerIds = splitLines(defaultMcpText);
-      const res = await authFetch(`/api/tenants/${tenantId}/settings`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings: payload }),
+      const data = await governanceAccessApi.updateTenantSettings<GovernedTenantSettingsResponse>(tenantId, {
+        settings: payload,
+        expectedUpdatedAt: settingsUpdatedAt,
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data as { error?: string }).error || "保存组织管理失败");
-      const next = (data as { settings: TenantSettings }).settings;
-      setSettings(next);
-      setDefaultMcpText(next.mcp.defaultEnabledServerIds.join("\n"));
+      setSettings(data.settings);
+      setSettingsUpdatedAt(data.updatedAt);
+      setDefaultMcpText(data.settings.mcp.defaultEnabledServerIds.join("\n"));
       await refreshAll();
       setSaved(true);
       setError(null);
@@ -145,7 +149,7 @@ export function TenantSettingsPanel({
     } finally {
       setSaving(false);
     }
-  }, [defaultMcpText, settings, tenantId]);
+  }, [defaultMcpText, settings, settingsUpdatedAt, tenantId]);
 
   const modelOptions = modelList?.groups.flatMap(group =>
     group.models.map(model => ({

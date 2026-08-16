@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import type { Request } from 'express';
+import type { TenantMemoryFeatureStatusMap } from '../../../shared/src/types/tenant.js';
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { BillingMemberBudgetOverview } from '../data/billing/types.js';
 import type { AssignmentResourceType } from '../data/assignments/types.js';
@@ -10,12 +11,15 @@ import { governanceDigest, type GovernanceAuditStore } from '../data/governance-
 import { MembershipInvariantError, type MembershipIdentityPatch, type PgMembershipStore, type TenantMembership } from '../data/memberships/index.js';
 import type { PgContentAccessGrantStore } from '../data/contentAccess/index.js';
 import type { PgOAuthGrantStore } from '../data/oauthGrants/index.js';
+import type { TenantSettings } from '../data/tenants/types.js';
 import type { OAuthGrant } from '../data/oauthGrants/types.js';
 import type { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
 import { registerGovernanceTenantLifecycleRoutes } from './governanceTenantLifecycleRoutes.js';
 import { registerGovernanceEntitlementRoutes } from './governanceEntitlementRoutes.js';
 import { registerGovernanceOAuthGrantRoutes } from './governanceOAuthGrantRoutes.js';
 import { getGovernanceMemberUsagePolicy } from './governanceMemberUsage.js';
+import { registerGovernanceTenantSettingsRoutes } from './governanceTenantSettingsRoutes.js';
+import type { TenantSettingsPatch } from './tenantSettingsValidation.js';
 import { registerGovernanceOrganizationAccessRoutes } from './governanceOrganizationAccessRoutes.js';
 import { registerGovernanceMemoryRoutes } from './governanceMemoryRoutes.js';
 import {
@@ -43,6 +47,7 @@ import {
 } from './governanceAccessValidation.js';
 import { entitlementDependencyImpact, oauthDependencyImpact, tenantDependencyImpact,
   type GovernanceDependencyImpactResolver } from './governanceImpactAuthority.js';
+
 export function createGovernanceAccessRouter(deps: {
   memberships: PgMembershipStore;
   entitlements: PgEntitlementStore;
@@ -83,6 +88,20 @@ export function createGovernanceAccessRouter(deps: {
     id: string; name: string; createdAt: string; createdBy: string; updatedAt: string;
   }>;
   rollbackTenantCreate?: (tenantId: string) => Promise<void>;
+  getTenantSettings?: (tenantId: string) => {
+    settings: TenantSettings;
+    updatedAt: string;
+    memoryFeatureStatus?: TenantMemoryFeatureStatusMap;
+  } | undefined;
+  updateTenantSettings?: (
+    tenantId: string,
+    settings: TenantSettingsPatch,
+    expectedUpdatedAt: string,
+  ) => Promise<{
+    settings: TenantSettings;
+    updatedAt: string;
+    memoryFeatureStatus?: TenantMemoryFeatureStatusMap;
+  }>;
   getTenantLifecycle?: (tenantId: string) => { id: string; name?: string; disabled?: boolean; updatedAt: string } | undefined;
   setTenantDisabled?: (
     tenantId: string,
@@ -382,6 +401,13 @@ export function createGovernanceAccessRouter(deps: {
       return res;
     }) as typeof res.json;
     next();
+  });
+
+  registerGovernanceTenantSettingsRoutes(router, {
+    personaFor: req => personas.get(req),
+    tenantFor,
+    getTenantSettings: deps.getTenantSettings,
+    updateTenantSettings: deps.updateTenantSettings,
   });
 
   router.get('/projections/:projectionId', async (req, res) => {

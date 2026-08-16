@@ -173,6 +173,30 @@ export function registerGovernanceRoutes(
           sharedDir: runtime.sharedDir,
           ...(runtime.orgAgentStore ? { orgAgentStore: runtime.orgAgentStore } : {}),
         }, tenantId),
+        getTenantSettings: (tenantId: string) => {
+          const tenant = runtime.tenantStore!.findByIdStrict(tenantId);
+          const settings = runtime.tenantStore!.getSettings(tenantId);
+          if (!tenant || !settings) return undefined;
+          return {
+            settings,
+            updatedAt: tenant.updatedAt,
+            memoryFeatureStatus: runtime.getTenantMemoryFeatureStatus(tenantId),
+          };
+        },
+        updateTenantSettings: async (tenantId, settings, expectedUpdatedAt) => {
+          const updatedSettings = await runtime.tenantStore!.updateSettings(
+            tenantId,
+            settings,
+            expectedUpdatedAt,
+          );
+          const tenant = runtime.tenantStore!.findByIdStrict(tenantId);
+          if (!tenant) throw new Error('Tenant not found');
+          return {
+            settings: updatedSettings,
+            updatedAt: tenant.updatedAt,
+            memoryFeatureStatus: runtime.getTenantMemoryFeatureStatus(tenantId),
+          };
+        },
         getTenantLifecycle: (tenantId: string) => runtime.tenantStore!.findByIdStrict(tenantId),
         resolveDependencyImpact: input => input.kind === 'tenant' && input.action
           ? resolveRuntimeTenantLifecycleImpact(runtime, input.tenantId, input.action)

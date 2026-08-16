@@ -6,6 +6,10 @@ import type { Tenant } from "./types";
 const mocked = vi.hoisted(() => ({
   authFetch: vi.fn(),
   createTenant: vi.fn(),
+  previewTenantLifecycle: vi.fn(),
+  updateTenantLifecycle: vi.fn(),
+  previewTenantDelete: vi.fn(),
+  startTenantDelete: vi.fn(),
   initialTenants: [
     { id: "pantheon", name: "万神殿", createdAt: "2026-07-01", createdBy: "system", updatedAt: "2026-07-01" },
     { id: "wain", name: "唯恩", createdAt: "2026-07-02", createdBy: "admin", updatedAt: "2026-07-02" },
@@ -25,7 +29,15 @@ mocked.authFetch.mockImplementation(async (_url: string, init?: RequestInit) => 
 });
 
 vi.mock("@agent/shared/lib/governanceApi", () => ({
-  governanceAccessApi: { createTenant: (...args: unknown[]) => mocked.createTenant(...args) },
+  governanceAccessApi: {
+    createTenant: (...args: unknown[]) => mocked.createTenant(...args),
+    previewTenantLifecycle: (...args: unknown[]) => mocked.previewTenantLifecycle(...args),
+    updateTenantLifecycle: (...args: unknown[]) => mocked.updateTenantLifecycle(...args),
+  },
+  governanceResourcesApi: {
+    previewTenantDelete: (...args: unknown[]) => mocked.previewTenantDelete(...args),
+    startTenantDelete: (...args: unknown[]) => mocked.startTenantDelete(...args),
+  },
 }));
 vi.mock("@/lib/authFetch", () => ({ authFetch: (...args: [string, RequestInit?]) => mocked.authFetch(...args) }));
 vi.mock("@/lib/preload", () => ({ tenantsPreload: Promise.resolve(mocked.initialTenants) }));
@@ -76,4 +88,66 @@ describe("useTenants", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+
+  it("启停组织通过生命周期预览与提交，不再调用旧 status 路由", async () => {
+    serverTenants = initialTenants;
+    mocked.authFetch.mockClear();
+    mocked.previewTenantLifecycle.mockReset().mockResolvedValue({
+      previewId: "preview-1",
+      baselineDigest: "digest-1",
+      expiresAt: "2026-08-16T08:00:00.000Z",
+      impact: { blockers: [] },
+    });
+    mocked.updateTenantLifecycle.mockReset().mockResolvedValue({ status: "suspended" });
+    const { result } = renderHook(() => useTenants());
+
+    await act(async () => {
+      await result.current.setTenantDisabled("wain", true);
+    });
+
+    expect(mocked.previewTenantLifecycle).toHaveBeenCalledWith("wain", {
+      action: "suspend",
+      reason: "平台组织管理暂停组织",
+    });
+    expect(mocked.updateTenantLifecycle).toHaveBeenCalledWith("wain", expect.objectContaining({
+      action: "suspend",
+      previewId: "preview-1",
+    }));
+    expect(mocked.authFetch).not.toHaveBeenCalledWith(
+      "/api/tenants/wain/status",
+      expect.objectContaining({ method: "PATCH" }),
+    );
+  });
+
+  it("删除组织通过预览与 Change Job，不再调用旧 DELETE 路由", async () => {
+    serverTenants = initialTenants;
+    mocked.authFetch.mockClear();
+    mocked.previewTenantDelete.mockReset().mockResolvedValue({
+      previewId: "delete-preview-1",
+      baselineDigest: "delete-digest-1",
+      expiresAt: "2026-08-16T08:00:00.000Z",
+      blockers: [],
+    });
+    mocked.startTenantDelete.mockReset().mockResolvedValue({ jobId: "job-1" });
+    const { result } = renderHook(() => useTenants());
+
+    await act(async () => {
+      await result.current.deleteTenant("wain", "wain");
+    });
+
+    expect(mocked.previewTenantDelete).toHaveBeenCalledWith({
+      tenantId: "wain",
+      confirm: "wain",
+      reasonCode: "platform_admin_confirmed",
+    });
+    expect(mocked.startTenantDelete).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: "wain",
+      previewId: "delete-preview-1",
+    }));
+    expect(mocked.authFetch).not.toHaveBeenCalledWith(
+      "/api/tenants/wain",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
 });

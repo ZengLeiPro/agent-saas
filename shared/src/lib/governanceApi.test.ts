@@ -245,6 +245,29 @@ describe('governanceApi fail closed', () => {
     });
   });
 
+  it('组织设置读写使用治理入口并携带 CAS 基线', async () => {
+    mockAuthFetch
+      .mockResolvedValueOnce(jsonResponse({ tenantId: 'tenant-1', settings: {}, updatedAt: '2026-08-10T08:00:00Z' }))
+      .mockResolvedValueOnce(jsonResponse({ tenantId: 'tenant-1', settings: {}, updatedAt: '2026-08-10T08:01:00Z' }));
+
+    await governanceAccessApi.getTenantSettings('tenant-1');
+    await governanceAccessApi.updateTenantSettings('tenant-1', {
+      settings: {},
+      expectedUpdatedAt: '2026-08-10T08:00:00Z',
+    });
+
+    expect(mockAuthFetch).toHaveBeenNthCalledWith(
+      1,
+      '/api/governance/access/tenant-settings?tenantId=tenant-1',
+      undefined,
+    );
+    expect(mockAuthFetch).toHaveBeenNthCalledWith(
+      2,
+      '/api/governance/access/tenant-settings?tenantId=tenant-1',
+      expect.objectContaining({ method: 'PUT' }),
+    );
+  });
+
   it('接受历史凭据的安全能力摘要', async () => {
     mockAuthFetch.mockResolvedValue(jsonResponse({ credentials: [{
       credentialId: 'credential-1', tenantId: 'tenant-1', connectorId: 'github', kind: 'org_shared',

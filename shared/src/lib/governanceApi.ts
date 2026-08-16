@@ -186,6 +186,10 @@ export const governanceAccessApi = {
     request<T>(withQuery(`${ACCESS_BASE}/memberships/${id(userId)}/details`, tenant(tenantId)), undefined, schemaFor<T>(memberDetailsSchema)),
   createTenant: <T = unknown>(command: { id: string; name: string }) =>
     request<T>(`${ACCESS_BASE}/tenants`, body('POST', command)),
+  getTenantSettings: <T = unknown>(tenantId: string) =>
+    request<T>(withQuery(`${ACCESS_BASE}/tenant-settings`, { tenantId })),
+  updateTenantSettings: <T = unknown>(tenantId: string, command: GovernanceCommand) =>
+    request<T>(withQuery(`${ACCESS_BASE}/tenant-settings`, { tenantId }), body('PUT', command)),
   getTenantLifecycle: <T = unknown>(tenantId: string) =>
     request<T>(withQuery(`${ACCESS_BASE}/tenant-lifecycle`, { tenantId }), undefined, schemaFor<T>(lifecycleResponseSchema)),
   previewTenantLifecycle: <T = unknown>(tenantId: string, command: GovernanceCommand) =>

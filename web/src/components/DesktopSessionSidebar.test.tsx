@@ -16,9 +16,11 @@ vi.mock("@/contexts/AuthContext", () => ({
   }),
 }));
 
+const groupsState = vi.hoisted(() => ({ current: [] as Array<Record<string, unknown>> }));
+
 vi.mock("@/hooks/useGroups", () => ({
   useGroups: () => ({
-    groups: [],
+    groups: groupsState.current,
     loading: false,
     editing: false,
     sorting: "recent",
@@ -74,13 +76,17 @@ const session: ChatSessionIndexItem = {
   updatedAt: 1,
 };
 
-function renderSidebar(activeTab: AppTab, sessions: ChatSessionIndexItem[] = [session]) {
+function renderSidebar(
+  activeTab: AppTab,
+  sessions: ChatSessionIndexItem[] = [session],
+  sidebarLayout: "single" | "double" = "single",
+) {
   return render(
     <DesktopSessionSidebar
       sessions={sessions}
       activeSessionId={session.id}
       activeTab={activeTab}
-      sidebarLayout="single"
+      sidebarLayout={sidebarLayout}
       onSelect={vi.fn()}
       onNew={vi.fn()}
       onTabChange={vi.fn()}
@@ -96,6 +102,7 @@ function getSessionRow() {
 
 describe("桌面侧边栏会话激活态", () => {
   beforeEach(() => {
+    groupsState.current = [];
     billingState.current = { summary: null, allowance: null };
     billingMiniBadgeProps.current = null;
   });
@@ -123,6 +130,24 @@ describe("桌面侧边栏会话激活态", () => {
 
     expect(screen.getByText(label)).toBeTruthy();
     expect(screen.queryByLabelText("会话运行中")).toBeNull();
+  });
+
+  it.each(["single", "double"] as const)("%s 布局的任务看板分组使用 violet 图标", (sidebarLayout) => {
+    groupsState.current = [{
+      id: "taskboard:board-1",
+      userId: "user-1",
+      name: "研发交付",
+      kind: "taskboard",
+      taskboardId: "board-1",
+      sessionIds: [session.id],
+      createdAt: 1,
+      updatedAt: 1,
+    }];
+
+    const { container } = renderSidebar("chat", [session], sidebarLayout);
+
+    expect(screen.getAllByText("研发交付").length).toBeGreaterThan(0);
+    expect(container.querySelector(".text-violet-600")).not.toBeNull();
   });
 
   it("头像菜单使用右侧展开的积分卡片", () => {

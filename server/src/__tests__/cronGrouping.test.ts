@@ -12,7 +12,7 @@ afterEach(async () => {
   await Promise.all(cleanupPaths.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
-describe('Cron session grouping', () => {
+describe('Automated session grouping', () => {
   it('persists the cron group before publishing the grouped event', async () => {
     const root = await mkdtemp(join(tmpdir(), 'cron-grouping-'));
     cleanupPaths.push(root);
@@ -22,6 +22,11 @@ describe('Cron session grouping', () => {
       groupId: string;
       userId: string;
     }> = [];
+    const runtimeEvents: string[] = [];
+    let releaseExecution!: () => void;
+    const executionGate = new Promise<void>((resolve) => {
+      releaseExecution = resolve;
+    });
 
     const runtime = createCronRuntime({
       config: {
@@ -37,6 +42,7 @@ describe('Cron session grouping', () => {
       runAgent: ((_message: unknown, _context: unknown, _options: unknown, hooks: any) => (
         async function* () {
           await hooks?.onSessionStart?.('session-1', join(root, 'session-1.jsonl'));
+          await executionGate;
           yield { type: 'text_delta', content: '完成' };
           yield { type: 'done' };
         }
@@ -55,6 +61,7 @@ describe('Cron session grouping', () => {
         expect(groupStore.findById(event.groupId)?.sessionIds).toContain(event.sessionId);
         groupedEvents.push(event);
       },
+      onEvent: (event) => runtimeEvents.push(event.type),
     });
 
     const job = await runtime.service!.add({
@@ -70,6 +77,39 @@ describe('Cron session grouping', () => {
       sessionId: 'session-1',
       groupId: `cron:${job.id}`,
       userId: 'user-1',
+    });
+    expect(runtimeEvents).toContain('started');
+    expect(runtimeEvents).not.toContain('finished');
+
+    releaseExecution();
+    await vi.waitFor(() => expect(runtimeEvents).toContain('finished'));
+  });
+
+  it('按看板原子 upsert 系统分组，并跟随看板名称更新', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'taskboard-grouping-'));
+    cleanupPaths.push(root);
+    const groupStore = new GroupStore(join(root, 'data', 'groups.json'));
+
+    const created = await groupStore.addTaskboardSession({
+      boardId: 'board-1',
+      boardName: '研发交付',
+      sessionId: 'taskboard-session-1',
+      owner: 'user-1',
+    });
+    const updated = await groupStore.addTaskboardSession({
+      boardId: 'board-1',
+      boardName: '研发任务',
+      sessionId: 'taskboard-session-2',
+      owner: 'user-1',
+    });
+
+    expect(created.id).toBe('taskboard:board-1');
+    expect(updated).toMatchObject({
+      id: 'taskboard:board-1',
+      kind: 'taskboard',
+      name: '研发任务',
+      taskboardId: 'board-1',
+      sessionIds: ['taskboard-session-1', 'taskboard-session-2'],
     });
   });
 });

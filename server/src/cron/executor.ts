@@ -64,7 +64,7 @@ export interface ExecutorOptions {
   /** 组织存储（用于阻止 disabled tenant 的后台任务继续执行） */
   tenantStore?: TenantStore;
   /** session 创建时立即回调（不等执行完成），用于 pTimeout 场景保留 sessionId */
-  onSessionId?: (sessionId: string, transcriptPath?: string) => void;
+  onSessionId?: (sessionId: string, transcriptPath?: string) => void | Promise<void>;
   /** Token 用量统计 store（可选） */
   tokenUsageStore?: TokenUsageStore;
   /** Skill 配置 store（用于 cron owner workspace 同步用户/组织 skill） */
@@ -467,6 +467,7 @@ async function executeAgentTurn(
       }
     }
 
+    let sessionStartReady: Promise<void> | undefined;
     const events = opts.runAgent(
       inbound,
       context,
@@ -489,8 +490,10 @@ async function executeAgentTurn(
           sessionId = startedSessionId;
           transcriptPath = startedTranscriptPath ?? transcriptPath;
 
-          // 立即上报 sessionId，确保即使 pTimeout 打断也能归组
-          opts.onSessionId?.(startedSessionId, transcriptPath);
+          // 立即上报 sessionId，并在消费首个事件前等待归组完成。
+          sessionStartReady = Promise.resolve(
+            opts.onSessionId?.(startedSessionId, transcriptPath),
+          ).then(() => undefined);
 
           // raw dispatch 已经写入完整 session meta。这里只 merge cron 展示字段，
           // 禁止用不完整对象覆盖 cwd/model/execution/workspace/Profile 版本绑定。
@@ -542,6 +545,10 @@ async function executeAgentTurn(
         if (nextValue.value === TIMEOUT_SENTINEL) {
           didTimeoutAbort = true;
           break;
+        }
+        if (sessionStartReady) {
+          await sessionStartReady;
+          sessionStartReady = undefined;
         }
         if (nextValue.done) break;
 

@@ -258,6 +258,8 @@ export function rowToExecutionModelContext(
     ...(row.task_model ? { taskModel: String(row.task_model) } : {}),
     ...(row.board_model ? { boardModel: String(row.board_model) } : {}),
     boardOwnerUserId: String(row.board_owner_user_id),
+    ...(row.board_id ? { boardId: String(row.board_id) } : {}),
+    ...(row.board_name ? { boardName: String(row.board_name) } : {}),
   };
 }
 

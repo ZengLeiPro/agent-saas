@@ -1,6 +1,6 @@
 import { apiUrl, resolveApiAssetUrl } from "../lib/apiBase";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Loader2, LogOut, User, ChevronRight, ChevronLeft, FolderClosed, Camera, Lock, UserCog } from "lucide-react";
+import { Plus, Loader2, LogOut, User, ChevronRight, ChevronLeft, Camera, Lock, UserCog } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import { SwipeableRow, type SwipeAction } from "@/components/mobile/SwipeableRow";
 import { PullToRefresh } from "@/components/mobile/PullToRefresh";
@@ -24,6 +24,7 @@ import type { SettingsSectionId } from "@/types/settings";
 import { getSidebarNavItems, formatShortDate, sourceDisplayText, getSessionWaitingLabel } from "@/types/sidebar";
 import type { SessionGroup } from "@/types/sessionGroup";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
+import { SessionGroupGlyph, sessionGroupKindLabel } from "./sessionGroupPresentation";
 
 interface MobileSessionListProps {
   sessions: ChatSessionIndexItem[];
@@ -257,7 +258,6 @@ export function MobileSessionList({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showUserMenu]);
 
-
   const navItems = useMemo(
     () => getSidebarNavItems({ isAdmin, personalAgentEnabled }),
     [isAdmin, personalAgentEnabled],
@@ -439,7 +439,7 @@ export function MobileSessionList({
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-1.5">
-              <FolderClosed className="size-3.5 shrink-0 text-primary" />
+              <SessionGroupGlyph kind={group.kind} className="size-3.5" />
               <span className="truncate text-sm font-medium leading-snug">{group.name}</span>
               {unreadByGroupId.get(group.groupKey) && (
                 <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
@@ -456,7 +456,7 @@ export function MobileSessionList({
             )}
           </div>
           <div className="mt-1 text-xs text-muted-foreground/60">
-            {group.kind === "cron" ? "cron" : "分组"} - {group.count} 个会话
+            {sessionGroupKindLabel(group.kind)} - {group.count} 个会话
           </div>
         </div>
       );

@@ -1,9 +1,12 @@
+export type SessionGroupKind = 'manual' | 'cron' | 'taskboard';
+
 export interface SessionGroup {
   id: string;
   userId: string;
   name: string;
-  kind: 'manual' | 'cron';
+  kind: SessionGroupKind;
   cronJobId?: string;
+  taskboardId?: string;
   sessionIds: string[];
   createdAt: number;
   updatedAt: number;
@@ -16,8 +19,9 @@ export interface GroupsStoreFile {
 
 export interface CreateGroupInput {
   name: string;
-  kind?: 'manual' | 'cron';
+  kind?: SessionGroupKind;
   cronJobId?: string;
+  taskboardId?: string;
   sessionIds?: string[];
   userId: string;
 }
@@ -29,7 +33,8 @@ export interface UpdateGroupInput {
 
 /** Internal-only patch fields (not exposed to API) */
 export interface InternalGroupPatch extends UpdateGroupInput {
-  kind?: 'manual' | 'cron';
+  kind?: SessionGroupKind;
   cronJobId?: string | undefined;
+  taskboardId?: string | undefined;
   userId?: string;
 }

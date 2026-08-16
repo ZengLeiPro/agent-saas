@@ -19,6 +19,7 @@ import {
   findDueJobs,
 } from "./scheduler.js";
 import { cronLogger } from "../utils/logger.js";
+import { createCronSessionGrouper } from "./sessionGrouping.js";
 import { cloneJob, isProcessAlive, pTimeout, ServiceTimeoutError, toFiniteInt, transferCronJobOwner, updatedAtAfterEdit } from "./serviceUtils.js";
 import { claimCronJob, markCronClaimRunning, recoverCronClaim,
   type ClaimedJob, type CronRunLease, type CronRunRequest, type ExecutionInvocation,
@@ -193,7 +194,7 @@ export interface CronServiceDeps {
   tryAcquireRunLease?: (jobId: string) => Promise<CronRunLease | null>;
   executeJob: (
     job: CronJob,
-    hooks?: { onSessionId?: (sessionId: string, transcriptPath?: string) => void },
+    hooks?: { onSessionId?: (sessionId: string, transcriptPath?: string) => void | Promise<void> },
   ) => Promise<{
     status: "ok" | "error" | "skipped";
     error?: string;
@@ -801,10 +802,12 @@ export class CronService {
     let model: string | undefined;
     let ongoingExecution: ReturnType<CronServiceDeps["executeJob"]> | undefined;
 
-    // 通过回调提前捕获 sessionId，确保 pTimeout 打断 promise 后仍可归组
-    const onSessionId = (sid: string, tp?: string) => {
+    // session 创建后立即归组；执行器会在消费首个事件前等待该 Promise。
+    const groupSession = createCronSessionGrouper(this.deps, job);
+    const onSessionId = (sid: string, tp?: string): Promise<void> | undefined => {
       sessionId = sid;
       if (tp) transcriptPath = tp;
+      return groupSession(sid);
     };
 
     try {
@@ -930,11 +933,7 @@ export class CronService {
       });
     }
 
-    if (sessionId && this.deps.onSessionCreated) {
-      await this.deps.onSessionCreated(job.id, job.name, sessionId, job.owner).catch((e) => {
-        cronLogger.error("Failed to handle onSessionCreated:", e);
-      });
-    }
+    if (sessionId) await onSessionId(sessionId, transcriptPath);
 
     this.emit({
       type: "finished",

@@ -5,8 +5,9 @@ export interface ApiSessionGroup {
   id: string;
   userId: string;
   name: string;
-  kind: "manual" | "cron";
+  kind: "manual" | "cron" | "taskboard";
   cronJobId?: string;
+  taskboardId?: string;
   sessionIds: string[];
   createdAt: number;
   updatedAt: number;

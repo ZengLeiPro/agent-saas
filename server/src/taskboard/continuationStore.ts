@@ -295,7 +295,8 @@ export async function loadExecutionModelContext(
   taskId: string,
 ): Promise<TaskboardExecutionModelContext> {
   const result = await host.pool.query(
-    `SELECT t.model AS task_model, b.model AS board_model, b.owner_user_id AS board_owner_user_id
+    `SELECT t.model AS task_model, b.model AS board_model, b.owner_user_id AS board_owner_user_id,
+            b.id AS board_id, b.name AS board_name
        FROM ${host.tasksTable} t
        JOIN ${host.boardsTable} b ON b.id=t.board_id
       WHERE t.id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')`,

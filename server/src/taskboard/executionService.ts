@@ -35,6 +35,10 @@ import {
   type TaskboardSessionTitleWriter,
 } from './sessionTitle.js';
 import {
+  groupTaskboardSessionBeforeDispatch,
+  type TaskboardSessionGroupingOptions,
+} from './sessionGrouping.js';
+import {
   TaskboardExecutionUnavailableError,
   TaskboardPermissionError,
   TaskboardValidationError,
@@ -60,7 +64,7 @@ const RECONCILIATION_GRACE_MS = 30_000;
 
 class InvalidTaskboardDispatchPayloadError extends Error {}
 
-export interface TaskboardExecutionCoordinatorOptions {
+export interface TaskboardExecutionCoordinatorOptions extends TaskboardSessionGroupingOptions {
   store: TaskboardExecutionStore;
   scheduler: Pick<RuntimeScheduler, 'enqueue' | 'enqueueCreateOnly'>;
   runStore: Pick<RunStore, 'get'>;
@@ -441,6 +445,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     try {
       const canonical = canonicalizeDispatchPayload(dispatch, this.options.agentCwd);
       await this.options.sessionCatalog.upsert(canonical.session);
+      await groupTaskboardSessionBeforeDispatch(this.options, dispatch, canonical.session);
       const titleUpdate = await (this.options.writeSessionTitle ?? writeTaskboardSessionTitle)({
         store: this.options.store,
         sessionId: canonical.session.sessionId,

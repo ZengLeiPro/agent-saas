@@ -333,7 +333,7 @@ export function useGroups() {
 export interface GroupMenuItem {
   id: string;
   name: string;
-  kind: "manual" | "cron";
+  kind: "manual" | "cron" | "taskboard";
   count: number;
   updatedAt: number;
 }

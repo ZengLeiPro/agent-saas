@@ -4,7 +4,7 @@ import type { ChatSessionIndexItem, SessionRuntimeStatus } from "./sidebar";
 export interface SessionGroup {
   groupKey: string;
   name: string;
-  kind: "cron" | "manual";
+  kind: "cron" | "manual" | "taskboard";
   children: ChatSessionIndexItem[];
   latestUpdatedAt: number;
   count: number;

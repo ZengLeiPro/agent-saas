@@ -146,6 +146,66 @@ describe('snapshot execution', () => {
     }
   });
 
+  it('materializes a local-only commit created after the mirror cache already exists', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'snapshot-mirror-advance-'));
+    try {
+      await initRepository(workspaceRoot);
+      await writeFile(join(workspaceRoot, 'first.txt'), 'first\n');
+      await execFileAsync('git', ['add', 'first.txt'], { cwd: workspaceRoot });
+      await execFileAsync('git', ['commit', '--quiet', '-m', 'first'], { cwd: workspaceRoot });
+      const first = await prepareSnapshotExecution({
+        workspaceRoot,
+        command: 'true',
+        signal: new AbortController().signal,
+        env: process.env as Record<string, string>,
+      });
+      await first.cleanup();
+
+      await writeFile(join(workspaceRoot, 'second.txt'), 'second\n');
+      await execFileAsync('git', ['add', 'second.txt'], { cwd: workspaceRoot });
+      await execFileAsync('git', ['commit', '--quiet', '-m', 'second'], { cwd: workspaceRoot });
+      const second = await prepareSnapshotExecution({
+        workspaceRoot,
+        command: 'true',
+        signal: new AbortController().signal,
+        env: process.env as Record<string, string>,
+      });
+      await expect(readFile(join(second.root, 'second.txt'), 'utf8')).resolves.toBe('second\n');
+      await second.cleanup();
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not overlay an untracked dependency tree renamed after an interrupted install', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'snapshot-incomplete-dependencies-'));
+    try {
+      await initRepository(workspaceRoot);
+      await writeFile(join(workspaceRoot, 'tracked.txt'), 'tracked\n');
+      await execFileAsync('git', ['add', 'tracked.txt'], { cwd: workspaceRoot });
+      await execFileAsync('git', ['commit', '--quiet', '-m', 'tracked'], { cwd: workspaceRoot });
+      await mkdir(join(workspaceRoot, 'server', 'node_modules.incomplete', 'package'), { recursive: true });
+      await writeFile(join(workspaceRoot, 'server', 'node_modules.incomplete', 'package', 'index.js'), 'generated\n');
+      await writeFile(join(workspaceRoot, 'kept.txt'), 'untracked source\n');
+
+      const lease = await prepareSnapshotExecution({
+        workspaceRoot,
+        command: 'true',
+        signal: new AbortController().signal,
+        env: process.env as Record<string, string>,
+      });
+      expect(lease.metadata.dirtyFileCount).toBe(1);
+      await expect(readFile(join(lease.root, 'kept.txt'), 'utf8')).resolves.toBe('untracked source\n');
+      await expect(readFile(
+        join(lease.root, 'server', 'node_modules.incomplete', 'package', 'index.js'),
+        'utf8',
+      )).rejects.toThrow();
+      await lease.cleanup();
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it('does not prepare node_modules for a lightweight snapshot command', async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'snapshot-lightweight-'));
     const fakeBin = join(workspaceRoot, 'fake-bin');

@@ -109,6 +109,14 @@ export async function prepareSnapshotExecution(input: {
         signal: input.signal,
         timeoutMs: PREPARE_TIMEOUT_MS,
       });
+      await runFile('git', [
+        '-C', runRepositoryRoot,
+        'fetch', '--force', '--no-tags', mirrorPath,
+        'refs/ky-agent/source:refs/ky-agent/source',
+      ], {
+        signal: input.signal,
+        timeoutMs: PREPARE_TIMEOUT_MS,
+      });
       await runFile('git', ['-C', runRepositoryRoot, 'checkout', '--detach', '--force', '--quiet', revision], {
         signal: input.signal,
         timeoutMs: PREPARE_TIMEOUT_MS,
@@ -279,13 +287,22 @@ async function currentOverlayPaths(workspaceRoot: string, signal: AbortSignal): 
       timeoutMs: 60_000,
       encoding: 'buffer',
     }),
-    runFile('git', ['-C', workspaceRoot, 'ls-files', '--others', '--exclude-standard', '-z'], {
+    runFile('git', [
+      '-C', workspaceRoot,
+      'ls-files', '--others', '--exclude-standard', '--exclude=node_modules.incomplete/', '-z',
+    ], {
       signal,
       timeoutMs: 60_000,
       encoding: 'buffer',
     }),
   ]);
-  return [...new Set([...nulPaths(tracked.stdout), ...nulPaths(untracked.stdout)])].sort();
+  const trackedPaths = nulPaths(tracked.stdout);
+  const untrackedPaths = nulPaths(untracked.stdout).filter((path) => !isGeneratedDependencyPath(path));
+  return [...new Set([...trackedPaths, ...untrackedPaths])].sort();
+}
+
+function isGeneratedDependencyPath(path: string): boolean {
+  return path.split('/').some((segment) => segment === 'node_modules.incomplete');
 }
 
 async function overlayPath(workspaceRoot: string, runRoot: string, relativePath: string): Promise<void> {

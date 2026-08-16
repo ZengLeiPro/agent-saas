@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { InMemorySecretVault } from '../security/secretVault.js';
+import { resolveWebToolsConfig } from '../app/runtimeGovernanceCredentials.js';
 import { WebToolProvider } from '../agent/webToolProvider.js';
 import {
   SEARCH_PROVIDER_ALERT_THRESHOLD,
@@ -202,6 +204,28 @@ describe('WebSearch provider payloads', () => {
     );
     expect(result?.content).toContain('"linklessResults": 1');
     expect(result?.content).toContain('不要臆造 URL');
+  });
+
+  it('resolves both the primary and the global apiKeyRef into runtime plaintext', async () => {
+    const vault = new InMemorySecretVault();
+    const write = (value: string) => vault.putSecret('__global__', 'web_tools', value, {
+      actor: 'system', userId: 'tool_controls_admin', scopes: ['secret:web_tools:write'],
+    }, { purpose: 'test' });
+    const cnRef = await write('zhipu-plaintext');
+    const globalRef = await write('tavily-plaintext');
+
+    const resolved = await resolveWebToolsConfig({
+      enabled: true,
+      search: {
+        provider: 'zhipu',
+        apiKeyRef: cnRef.id,
+        global: { provider: 'tavily', apiKeyRef: globalRef.id },
+      },
+    } as never, vault);
+
+    // 境外源拿不到明文就等于 scope=global 不可用，必须与主源同等解析
+    expect(resolved?.search?.apiKey).toBe('zhipu-plaintext');
+    expect(resolved?.search?.global?.apiKey).toBe('tavily-plaintext');
   });
 
   it('exposes scope in tool metadata and surfaces degradation to the model', async () => {

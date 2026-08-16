@@ -45,6 +45,8 @@ export function createModelResolvers(params: {
   onGuardrailModelConfigsUpdated: (next: GuardrailModelConfig[]) => void;
   /** config.json 中系统提示语覆盖变化后，刷新当前进程注册表。 */
   onSystemPromptOverridesUpdated: (next: NonNullable<AppConfig['systemPrompts']>) => void;
+  /** webTools 变化后重新解析凭据并替换执行进程的运行时配置。 */
+  onWebToolsUpdated?: (next: AppConfig['webTools']) => void;
 }): ModelResolvers {
   const { config, processCwd, tenantStore, tenantsFilePath, logger } = params;
 
@@ -56,6 +58,7 @@ export function createModelResolvers(params: {
       updateGuardrailModelConfigs: params.onGuardrailModelConfigsUpdated,
     },
     onSystemPromptOverridesUpdated: params.onSystemPromptOverridesUpdated,
+    ...(params.onWebToolsUpdated ? { onWebToolsUpdated: params.onWebToolsUpdated } : {}),
     tenantStore,
     tenantsFilePath,
     logger,

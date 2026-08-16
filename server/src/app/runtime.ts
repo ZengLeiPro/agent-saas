@@ -168,6 +168,7 @@ import { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { PgAlertStateStore } from '../runtime/alertStateStore.js';
 import { AlertNotifier } from '../runtime/alertNotifier.js';
 import { notifyBillingAuditAlerts, registerSearchProviderAlerts } from './registerSearchProviderAlerts.js';
+import { createToolSettingsUpdater, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
@@ -1581,6 +1582,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     titleGeneratorConfigs,
     onGuardrailModelConfigsUpdated: (next) => { guardrailModelConfigs = next; },
     onSystemPromptOverridesUpdated: (next) => { systemPromptRegistry.replaceOverrides(next); },
+    // 凭据解析是异步的，刷新器保持同步：这里 fire-and-forget。失败已在函数内告警，
+    // 此处必须吞掉 rejection，否则跨进程刷新会把进程带成 unhandledRejection。
+    onWebToolsUpdated: (next) => { void applyWebToolsRuntimeUpdate(next).catch(() => undefined); },
   });
   runPreflightService = initializeRuntimeGovernancePreflight({
     sessionCatalog,
@@ -1868,14 +1872,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     logger: serverLogger.child('RawRuntime'),
   };
   const validateToolSettingsConfig = async (settings: Pick<AppConfig, 'toolControls' | 'webTools'>): Promise<void> => { await resolveWebToolsConfig(settings.webTools, secretVault); };
-  const updateToolSettingsConfig = async (settings: Pick<AppConfig, 'toolControls' | 'webTools'>): Promise<void> => {
-    config.toolControls = settings.toolControls;
-    config.webTools = settings.webTools;
-    rawRuntimeConfig.toolControls = settings.toolControls;
-    const resolved = await resolveWebToolsConfig(settings.webTools, secretVault);
-    if (resolved) rawRuntimeConfig.webTools = resolved;
-    else delete rawRuntimeConfig.webTools;
-  };
+  const applyWebToolsRuntimeUpdate = createWebToolsRuntimeUpdater({ target: rawRuntimeConfig, secretVault, logger: serverLogger });
+  const updateToolSettingsConfig = createToolSettingsUpdater({ config, target: rawRuntimeConfig, applyWebTools: applyWebToolsRuntimeUpdate });
   const validateImageGenToolsConfig = async (imageGenTools: AppConfig['imageGenTools']): Promise<void> => { await resolveImageGenToolsConfig(imageGenTools, secretVault); };
   const updateImageGenToolsConfig = async (imageGenTools: AppConfig['imageGenTools']): Promise<void> => {
     config.imageGenTools = imageGenTools; const resolved = await resolveImageGenToolsConfig(imageGenTools, secretVault);

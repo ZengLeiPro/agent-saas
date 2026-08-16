@@ -125,27 +125,40 @@ async function persistSearchCredential(
   secretVault?: SecretVault,
 ): Promise<Pick<AppConfig, 'toolControls' | 'webTools'>> {
   const search = settings.webTools?.search;
-  if (!secretVault || !search?.apiKey) return settings;
+  if (!secretVault || !search) return settings;
+  if (!search.apiKey && !search.global?.apiKey) return settings;
 
-  const { apiKey, ...safeSearch } = search;
-  const ref = await secretVault.putSecret(
+  const vaultPut = (plaintext: string, provider: string | undefined, purpose: string) => secretVault.putSecret(
     GLOBAL_OWNER_ID,
     'web_tools',
-    apiKey,
+    plaintext,
     {
       actor: 'system',
       userId: 'tool_controls_admin',
       scopes: ['secret:web_tools:write'],
     },
-    { provider: search.provider, purpose: 'web-search' },
+    { provider, purpose },
   );
+
+  const { apiKey, global: globalSearch, ...safeSearch } = search;
+  const ref = apiKey ? await vaultPut(apiKey, search.provider, 'web-search') : undefined;
+
+  // 境外源凭据与主源同等对待：绝不把明文留在 config.json（2026-08-16 实测漏配）。
+  let safeGlobal = globalSearch;
+  if (globalSearch?.apiKey) {
+    const { apiKey: globalKey, ...restGlobal } = globalSearch;
+    const globalRef = await vaultPut(globalKey, globalSearch.provider, 'web-search-global');
+    safeGlobal = { ...restGlobal, apiKeyRef: globalRef.id };
+  }
+
   return {
     ...settings,
     webTools: {
       ...settings.webTools,
       search: {
         ...safeSearch,
-        apiKeyRef: ref.id,
+        ...(ref ? { apiKeyRef: ref.id } : {}),
+        ...(safeGlobal ? { global: safeGlobal } : {}),
       },
     },
   };

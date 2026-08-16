@@ -244,6 +244,54 @@ describe('tool controls admin router', () => {
     }, { secretVault });
   });
 
+  /**
+   * 回归：2026-08-16 首次配置境外源时，主源 key 正确入库，但 search.global.apiKey
+   * 以明文落进了生产 config.json，并被管理 API 原样回显。
+   */
+  it('stores the global (overseas) WebSearch apiKey in the vault too', async () => {
+    const secretVault = new InMemorySecretVault();
+    await withApp({
+      agent: { cwd: '/tmp/agent' },
+      server: { port: 3200 },
+    }, async ({ baseUrl, configPath, runtimeConfig }) => {
+      const response = await fetch(`${baseUrl}/api/admin/tool-controls`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          toolControls: { tools: {} },
+          webTools: {
+            enabled: true,
+            search: {
+              enabled: true,
+              provider: 'zhipu',
+              apiKey: 'zhipu-secret',
+              searchEngine: 'search_std',
+              global: { provider: 'tavily', apiKey: 'tavily-secret' },
+            },
+          },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await readJson(response);
+      const globalRef = body.webTools.search.global.apiKeyRef;
+      expect(body.webTools.search.global.apiKey).toBeUndefined();
+      expect(globalRef).toEqual(expect.any(String));
+      expect(globalRef).not.toBe(body.webTools.search.apiKeyRef);
+
+      const written = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(written.webTools.search.global.apiKey).toBeUndefined();
+      expect(written.webTools.search.global.apiKeyRef).toBe(globalRef);
+      expect(runtimeConfig.webTools?.search?.global?.apiKey).toBeUndefined();
+      expect(runtimeConfig.webTools?.search?.global?.apiKeyRef).toBe(globalRef);
+      await expect(secretVault.getSecret(globalRef, {
+        actor: 'system',
+        userId: '__system__',
+        scopes: ['secret:web_tools:read'],
+      })).resolves.toBe('tavily-secret');
+    }, { secretVault });
+  });
+
   it('rejects enabled WebSearch without credentials before writing config.json', async () => {
     await withApp({
       agent: { cwd: '/tmp/agent' },

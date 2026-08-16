@@ -57,6 +57,11 @@ export function createSharedConfigRefresher(params: {
   processCwd: string;
   target: ModelsHotUpdateTarget;
   onSystemPromptOverridesUpdated?: (next: NonNullable<AppConfig['systemPrompts']>) => void;
+  /**
+   * webTools 变更回调。凭据需经 SecretVault 异步解析，实现方自行 fire-and-forget，
+   * 刷新器本身保持同步且不因解析失败中断其他配置的热更新。
+   */
+  onWebToolsUpdated?: (next: AppConfig['webTools']) => void;
   tenantStore?: TenantStore;
   tenantsFilePath?: string;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
@@ -69,6 +74,7 @@ export function createSharedConfigRefresher(params: {
     processCwd,
     target,
     onSystemPromptOverridesUpdated,
+    onWebToolsUpdated,
     tenantStore,
     tenantsFilePath,
     logger,
@@ -132,6 +138,23 @@ export function createSharedConfigRefresher(params: {
       else delete config.systemPrompts;
       onSystemPromptOverridesUpdated?.(nextConfig.systemPrompts ?? {});
       logger?.info('[SharedConfig] 已从磁盘热更新系统提示语配置');
+    }
+
+    /**
+     * webTools 与模型同属「管理端写、执行进程读」：2026-08-16 实测把搜索源换成智谱后，
+     * ws-only 进程内存已更新、config.json 也已落盘，但 runtime-worker 仍用启动时的旧
+     * provider，真实会话持续报旧供应商的鉴权错误。凭据要经 SecretVault 解析（异步），
+     * 故这里只同步内存配置并把解析交给回调。
+     */
+    const webToolsChanged = JSON.stringify(config.webTools ?? null)
+      !== JSON.stringify(nextConfig.webTools ?? null);
+    if (webToolsChanged) {
+      if (nextConfig.webTools) config.webTools = nextConfig.webTools;
+      else delete config.webTools;
+      onWebToolsUpdated?.(nextConfig.webTools);
+      logger?.info(
+        `[SharedConfig] 已从磁盘热更新 Web 工具配置：search provider=${nextConfig.webTools?.search?.provider ?? 'none'}`,
+      );
     }
 
     appliedConfigStamp = stamp;

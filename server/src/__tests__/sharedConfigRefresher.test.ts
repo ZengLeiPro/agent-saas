@@ -234,4 +234,62 @@ describe('createSharedConfigRefresher', () => {
     // 确认读的就是这个文件，避免路径拼错却静默通过
     expect(readFileSync(tenantsPath, 'utf-8')).toContain('kaiyan');
   });
+
+  /**
+   * 回归：2026-08-16 搜索源从腾讯换到智谱后，config.json 与 ws-only 进程都已是新配置，
+   * 但 runtime-worker 仍用启动快照里的旧 provider，真实会话持续报旧供应商鉴权错误。
+   */
+  it('把别的进程改写的 webTools 热更新进当前内存配置并回调', () => {
+    const writeWithWebTools = (provider: string) => {
+      writeFileSync(join(dir, 'config.json'), JSON.stringify({
+        agent: { cwd: '.' },
+        server: { port: 3200 },
+        models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+        webTools: { enabled: true, search: { provider, apiKeyRef: `ref-${provider}`, maxResults: 8 } },
+      }, null, 2), 'utf-8');
+    };
+    writeWithWebTools('tencent_wsa');
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      webTools: { enabled: true, search: { provider: 'tencent_wsa', apiKeyRef: 'ref-tencent_wsa', maxResults: 8 } },
+    } as unknown as AppConfig;
+    const seen: Array<string | undefined> = [];
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      onWebToolsUpdated: (next) => { seen.push(next?.search?.provider); },
+      now: () => clock,
+    });
+
+    writeWithWebTools('zhipu');
+    clock += 5_000;
+    refresher.refreshIfChanged();
+
+    expect(config.webTools?.search?.provider).toBe('zhipu');
+    // 关键断言：回调必须触发，执行侧才有机会重新解析凭据并替换运行时配置
+    expect(seen).toEqual(['zhipu']);
+  });
+
+  it('webTools 未变化时不触发回调', () => {
+    writeConfig(dir, [BASE_GROUP]);
+    const config = { models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' } } as unknown as AppConfig;
+    let calls = 0;
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      onWebToolsUpdated: () => { calls += 1; },
+      now: () => clock,
+    });
+
+    writeConfig(dir, [BASE_GROUP, QWEN_GROUP]);
+    clock += 5_000;
+    refresher.refreshIfChanged();
+
+    expect(config.models!.groups.map((g) => g.id)).toContain('qwen');
+    expect(calls).toBe(0);
+  });
 });

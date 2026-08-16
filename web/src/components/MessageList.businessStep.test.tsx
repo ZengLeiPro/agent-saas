@@ -180,7 +180,7 @@ describe("MessageList business step sections", () => {
   it("reveals constant business details on title click without exposing debug metadata", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /核验订单.*已完成/ }));
+    fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
     expect(screen.queryByText(/过程 · 1 项/)).toBeNull();
     expect(screen.queryByText(/读取订单/)).toBeNull();
     expect(screen.queryByRole("button", { name: "业务详情" })).toBeNull();
@@ -255,7 +255,7 @@ describe("MessageList business step sections", () => {
     expect(screen.queryByTestId("outcome-stats")).toBeNull();
     expect(screen.queryByText("订单资料完整")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: /核验订单.*已完成/ }));
+    fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
     expect(screen.getByText("17/18 张通过，1 张退回")).toBeTruthy();
     expect(screen.getByTestId("outcome-stats")).toBeTruthy();
     unmount();
@@ -337,7 +337,7 @@ describe("MessageList business step sections", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride />);
 
     // 先展开已完成步骤；debug 视图会额外保留 TodoWrite 原始工具块，因此过程项数包含该工具。
-    fireEvent.click(screen.getByRole("button", { name: /核验订单.*已完成/ }));
+    fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
     fireEvent.click(screen.getByRole("button", { name: /过程 · 2 项/ }));
 
     // 过程展开后先显示活动组摘要，而不是直接铺开组内命令。

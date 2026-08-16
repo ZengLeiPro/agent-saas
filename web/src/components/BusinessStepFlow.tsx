@@ -354,7 +354,6 @@ function TerminalBlock({
         >
           <span className="break-words text-sm font-medium leading-5 text-foreground">{todo.content}</span>
           <StepBadge index={event.stepIndex} count={event.stepCount} />
-          <span className={activityStatusBadgeClass(tone)}>{label}</span>
           {bodyOpen ? (
             <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" data-testid="business-step-chevron-down" />
           ) : (
@@ -546,17 +545,10 @@ export function BusinessStepSectionView({
             {titleLabel}
           </span>
           <StepBadge index={terminal?.stepIndex ?? start.stepIndex} count={terminal?.stepCount ?? start.stepCount} />
-          {terminalMeta ? (
-            <>
-              <span className={activityStatusBadgeClass(terminalMeta.tone)}>{terminalMeta.label}</span>
-              {section.processAnomaly ? (
-                // 跨层矛盾角标：平台事实（区间内同类操作最后一次仍失败）压过模型
-                // 干净完成叙事。浅色低重量，不改写模型文本。
-                <span className={activityStatusBadgeClass("warning", "opacity-75")}>过程有异常</span>
-              ) : null}
-            </>
-          ) : isActive ? (
-            <span className={activityStatusBadgeClass("active")}>进行中</span>
+          {terminalMeta && section.processAnomaly ? (
+            // 跨层矛盾角标：平台事实（区间内同类操作最后一次仍失败）压过模型
+            // 干净完成叙事。浅色低重量，不改写模型文本。
+            <span className={activityStatusBadgeClass("warning", "opacity-75")}>过程有异常</span>
           ) : null}
           {sectionOpen ? (
             <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" data-testid="business-step-chevron-down" />

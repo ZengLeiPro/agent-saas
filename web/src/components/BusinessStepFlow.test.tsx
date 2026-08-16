@@ -125,7 +125,8 @@ describe("BusinessStepFlow", () => {
     );
 
     const region = screen.getByRole("region", { name: "业务步骤已完成" });
-    const titleToggle = screen.getByRole("button", { name: /核验订单.*第 1\/2 步.*已完成/ });
+    const titleToggle = screen.getByRole("button", { name: /核验订单.*第 1\/2 步/ });
+    expect(screen.queryByText("已完成")).toBeNull();
     const header = region.querySelector("header")!;
     expect(titleToggle.getAttribute("aria-expanded")).toBe("false");
     expect(screen.getByTestId("business-step-chevron-right")).toBeTruthy();
@@ -140,7 +141,7 @@ describe("BusinessStepFlow", () => {
     fireEvent.click(header);
     expect(titleToggle.getAttribute("aria-expanded")).toBe("false");
 
-    // 标题、步数、状态与箭头位于同一个内容宽度按钮内；步数紧跟标题且在箭头左侧。
+    // 标题、步数与箭头位于同一个内容宽度按钮内；步数紧跟标题且在箭头左侧。
     const title = screen.getByText("核验订单");
     const step = screen.getByText("第 1/2 步");
     expect(title.nextElementSibling).toBe(step);
@@ -186,7 +187,7 @@ describe("BusinessStepFlow", () => {
     expect(screen.queryByText("17/18 张通过，1 张退回")).toBeNull();
     expect(screen.queryByTestId("outcome-stats")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: /核验订单.*已完成/ }));
+    fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
     expect(screen.getByText("17/18 张通过，1 张退回")).toBeTruthy();
     expect(within(screen.getByTestId("outcome-stats")).getByText("通过")).toBeTruthy();
   });
@@ -412,7 +413,7 @@ describe("BusinessStepSectionView", () => {
     );
 
     expect(screen.getByText("正在核验订单")).toBeTruthy();
-    expect(screen.getByText("进行中")).toBeTruthy();
+    expect(screen.queryByText("进行中")).toBeNull();
     expect(screen.getByTestId("process-content")).toBeTruthy();
     expect(container.querySelector(".animate-spin")).toBeTruthy();
   });
@@ -437,13 +438,13 @@ describe("BusinessStepSectionView", () => {
       </BusinessStepSectionView>,
     );
 
-    const titleToggle = screen.getByRole("button", { name: /核验订单.*第 1\/2 步.*已完成/ });
+    const titleToggle = screen.getByRole("button", { name: /核验订单.*第 1\/2 步/ });
     expect(titleToggle.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText(/过程 ·/)).toBeNull();
     expect(screen.getByText("全部通过")).toBeTruthy();
     expect(within(screen.getByTestId("outcome-stats")).getByText("字段")).toBeTruthy();
     expect(screen.queryByText("共核验 12 项字段")).toBeNull();
-    expect(screen.getByText("已完成")).toBeTruthy();
+    expect(screen.queryByText("已完成")).toBeNull();
 
     fireEvent.click(titleToggle);
     expect(screen.getByText(/过程 ·/)).toBeTruthy();
@@ -562,7 +563,7 @@ describe("BusinessStepSectionView", () => {
     expect(screen.getByText("税号校验失败，已终止")).toBeTruthy();
   });
 
-  it("processAnomaly 时在终态徽标旁渲染浅色「过程有异常」角标", () => {
+  it("processAnomaly 时只渲染浅色「过程有异常」角标，不恢复终态标签", () => {
     const terminal = event({
       kind: "complete",
       todo: { id: "a", kind: "business", content: "同步钉钉待办", status: "completed", outcome: { text: "已创建", tone: "ok" } },
@@ -573,7 +574,7 @@ describe("BusinessStepSectionView", () => {
       </BusinessStepSectionView>,
     );
 
-    expect(screen.getByText("已完成")).toBeTruthy();
+    expect(screen.queryByText("已完成")).toBeNull();
     expect(screen.getByText("过程有异常")).toBeTruthy();
   });
 
@@ -610,7 +611,7 @@ describe("BusinessStepSectionView 外部系统动作留痕", () => {
     );
     expect(screen.getByText("已创建")).toBeTruthy();
     expect(screen.queryByText("钉钉 · 创建待办")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /同步钉钉待办.*已完成/ }));
+    fireEvent.click(screen.getByRole("button", { name: /同步钉钉待办/ }));
     expect(screen.getByText("钉钉 · 创建待办")).toBeTruthy();
     // 非 debug 下过程仍隐藏，只有确定性的系统动作行例外。
     expect(screen.queryByText("过程细节")).toBeNull();

@@ -20,14 +20,14 @@ const ACTIVE_EXECUTION_STATUSES = ['queued', 'running', 'waiting_user', 'waiting
 const SORT_GAP = 1024;
 
 /**
- * 复核 Agent 的 done/todo 决策与 Execution 活跃态校验必须同事务完成。
+ * 复核 Agent 的通过、退回或阻塞决策与 Execution 活跃态校验必须同事务完成。
  * 锁顺序与其他写操作保持一致：Board → Task → Execution，避免归档或终态竞态覆盖。
  */
 export async function moveTaskFromReviewExecution(
   options: ExecutionTaskMoveOptions,
   identity: TaskboardIdentity,
   runId: string,
-  status: Extract<TaskBoardStatus, 'done' | 'todo'>,
+  status: Extract<TaskBoardStatus, 'ready_to_merge' | 'todo' | 'blocked'>,
 ): Promise<TaskBoardTask> {
   const client = await options.pool.connect();
   try {
@@ -57,13 +57,6 @@ export async function moveTaskFromReviewExecution(
     if (boardRow.archived_at || taskRow.task_archived_at) {
       throw new TaskboardValidationError('Archived taskboard resources are read-only');
     }
-    if (String(taskRow.status) !== 'in_progress') {
-      throw new TaskboardValidationError(
-        'Task status changed while review was running',
-        'TASKBOARD_REVIEW_TASK_CHANGED',
-      );
-    }
-
     const executionResult = await client.query(
       `SELECT status, purpose FROM ${options.executionsTable} WHERE run_id=$1 FOR UPDATE`,
       [runId],
@@ -77,6 +70,12 @@ export async function moveTaskFromReviewExecution(
       throw new TaskboardValidationError(
         'Review execution is no longer active',
         'TASKBOARD_REVIEW_EXECUTION_INACTIVE',
+      );
+    }
+    if (String(taskRow.status) !== 'in_review') {
+      throw new TaskboardValidationError(
+        'Task status changed while review was running',
+        'TASKBOARD_REVIEW_TASK_CHANGED',
       );
     }
 

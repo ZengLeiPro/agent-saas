@@ -120,7 +120,7 @@ describe("TaskDetail 草稿隔离", () => {
     fireEvent.change(comment, { target: { value: "任务一评论草稿" } });
 
     await user.click(screen.getByRole("combobox", { name: "任务状态" }));
-    await user.click(screen.getByRole("option", { name: "待处理" }));
+    await user.click(screen.getByRole("option", { name: "待实施" }));
     await waitFor(() => expect(initialProps.onMove).toHaveBeenCalled());
     expect(title.value).toBe("未保存的新标题");
     expect(comment.value).toBe("任务一评论草稿");
@@ -290,7 +290,7 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
     await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
-    await user.click(screen.getByRole("checkbox", { name: "发表后切换为进行中并继续执行" }));
+    await user.click(screen.getByRole("checkbox", { name: "发表后切换为实施中并继续执行" }));
     await user.click(screen.getByRole("button", { name: "发表" }));
 
     await waitFor(() => expect(mocks.continueTaskExecution).toHaveBeenCalledWith(taskOne.id, published.id));
@@ -330,7 +330,7 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
     await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
-    await user.click(screen.getByRole("checkbox", { name: "发表后切换为进行中并继续执行" }));
+    await user.click(screen.getByRole("checkbox", { name: "发表后切换为实施中并继续执行" }));
     await user.click(screen.getByRole("button", { name: "发表" }));
     await screen.findByText(/评论已发表，但继续执行失败，可重试/);
 
@@ -374,7 +374,7 @@ describe("TaskDetail 草稿隔离", () => {
     expect(onTaskLoaded).toHaveBeenCalledWith(finalTask);
   });
 
-  it("待处理任务可以显式交给 Agent，并展示执行会话入口", async () => {
+  it("待实施任务可以显式交给 Agent，并展示执行会话入口", async () => {
     const user = userEvent.setup();
     const todoTask = { ...taskOne, status: "todo" as const };
     const runningTask = { ...todoTask, status: "in_progress" as const, version: todoTask.version + 1 };
@@ -409,10 +409,10 @@ describe("TaskDetail 草稿隔离", () => {
       .toBe("/chat/session-1");
   });
 
-  it("待复核任务可以启动独立 review Agent", async () => {
+  it("复核中任务可以启动独立 review Agent", async () => {
     const user = userEvent.setup();
     const reviewTask = { ...taskOne, status: "in_review" as const, branch: "task/TASK-1-feature" };
-    const runningTask = { ...reviewTask, status: "in_progress" as const, version: reviewTask.version + 1 };
+    const reviewingTask = { ...reviewTask, version: reviewTask.version + 1 };
     const execution: TaskBoardExecution = {
       id: "execution-review",
       taskId: reviewTask.id,
@@ -425,7 +425,7 @@ describe("TaskDetail 草稿隔离", () => {
       updatedAt: reviewTask.updatedAt,
     };
     mocks.fetchTask.mockResolvedValue(reviewTask);
-    const onExecute = vi.fn(async () => ({ task: runningTask, execution }));
+    const onExecute = vi.fn(async () => ({ task: reviewingTask, execution }));
     render(<TaskDetail {...props({ task: reviewTask, onExecute })} />);
 
     await user.click(await screen.findByRole("button", { name: "独立复核" }));

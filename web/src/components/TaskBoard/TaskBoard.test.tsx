@@ -136,12 +136,21 @@ describe("TaskBoardView", () => {
     expect(screen.getByRole("button", { name: /创建看板/ })).toBeTruthy();
   });
 
-  it("支持多看板、固定七列、关键词与优先级筛选", async () => {
+  it("支持多看板、固定八列、关键词与优先级筛选", async () => {
     const user = userEvent.setup();
     render(<TaskBoardView />);
 
     await waitFor(() => expect(screen.getByRole("combobox", { name: "选择看板" })).toBeTruthy());
-    expect(screen.getAllByRole("region", { name: /列$/ })).toHaveLength(7);
+    expect(screen.getAllByRole("region", { name: /列$/ }).map((column) => column.getAttribute("aria-label"))).toEqual([
+      "需求池列",
+      "待实施列",
+      "实施中列",
+      "复核中列",
+      "待合并列",
+      "已阻塞列",
+      "已完成列",
+      "已取消列",
+    ]);
 
     await user.click(screen.getByRole("combobox", { name: "选择看板" }));
     expect(screen.getByRole("option", { name: "产品研发（个人）" })).toBeTruthy();
@@ -169,8 +178,8 @@ describe("TaskBoardView", () => {
     expect(within(mobileList).queryByRole("button", { name: /打开任务 TASK-2/ })).toBeNull();
 
     await user.click(screen.getByRole("combobox", { name: "移动端状态" }));
-    await user.click(screen.getByRole("option", { name: "待处理" }));
-    expect(mobileList.getAttribute("aria-label")).toBe("待处理任务列表");
+    await user.click(screen.getByRole("option", { name: "待实施" }));
+    expect(mobileList.getAttribute("aria-label")).toBe("待实施任务列表");
     expect(within(mobileList).getByRole("button", { name: /打开任务 TASK-2/ })).toBeTruthy();
     expect(within(mobileList).queryByRole("button", { name: /打开任务 TASK-1/ })).toBeNull();
   });
@@ -179,17 +188,17 @@ describe("TaskBoardView", () => {
     const user = userEvent.setup();
     render(<TaskBoardView />);
 
-    const inProgressColumn = await screen.findByRole("region", { name: "进行中列" });
-    await user.click(within(inProgressColumn).getByRole("button", { name: "在进行中新建任务" }));
+    const inProgressColumn = await screen.findByRole("region", { name: "实施中列" });
+    await user.click(within(inProgressColumn).getByRole("button", { name: "在实施中新建任务" }));
 
     expect(screen.getByRole("heading", { name: "新建任务" })).toBeTruthy();
-    expect(screen.getByRole("combobox", { name: "新任务状态" }).textContent).toContain("进行中");
+    expect(screen.getByRole("combobox", { name: "新任务状态" }).textContent).toContain("实施中");
 
-    await user.type(screen.getByRole("textbox", { name: "标题" }), "补充进行中任务");
+    await user.type(screen.getByRole("textbox", { name: "标题" }), "补充实施中任务");
     await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(mocks.addTask).toHaveBeenCalledWith(expect.objectContaining({
-      title: "补充进行中任务",
+      title: "补充实施中任务",
       status: "in_progress",
     })));
   });

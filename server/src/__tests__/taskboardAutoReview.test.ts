@@ -1,0 +1,102 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import type { PlatformEvent } from '../runtime/types.js';
+import type {
+  TaskboardExecutionClaimInput,
+  TaskboardExecutionCompletionInput,
+  TaskboardExecutionDispatch,
+} from '../taskboard/types.js';
+import { execution, identity, makeRig, task } from './taskboardExecutionTestRig.js';
+
+describe('Taskboard automatic review', () => {
+  it('实施成功后创建并立即派发唯一 review Execution', async () => {
+    let review: TaskboardExecutionClaimInput | undefined;
+    const completeExecution = vi.fn(async (_runId: string, input: TaskboardExecutionCompletionInput) => {
+      review = input.reviewExecution;
+      return { task: { ...task, status: 'in_review' as const }, execution: execution({ status: input.status }) };
+    });
+    const claimExecutionDispatch = vi.fn(async (
+      runId: string | undefined,
+      leaseId: string,
+    ): Promise<TaskboardExecutionDispatch | null> => {
+      if (!review || runId !== review.runId) return null;
+      return {
+        runId: review.runId,
+        executionId: review.executionId,
+        outboxExecutionId: review.executionId,
+        taskId: task.id,
+        sessionId: review.sessionId,
+        tenantId: identity.tenantId,
+        ownerUserId: identity.ownerUserId,
+        payload: review.dispatch,
+        attemptCount: 1,
+        leaseId,
+      };
+    });
+    const rig = makeRig({ completeExecution, claimExecutionDispatch });
+    vi.mocked(rig.eventStore.listByRun!).mockResolvedValue([{
+      id: 'event-auto-review',
+      timestamp: '2026-08-01T03:00:00.000Z',
+      type: 'assistant_message',
+      runId: 'run-1',
+      sessionId: 'session-1',
+      content: '实施交付完成',
+    } as PlatformEvent]);
+
+    await rig.coordinator.handleRuntimeEvent({
+      id: 'event-auto-review-finished',
+      timestamp: '2026-08-01T03:01:00.000Z',
+      type: 'run_finished',
+      runId: 'run-1',
+      sessionId: 'session-1',
+      subtype: 'success',
+      numTurns: 2,
+    } as PlatformEvent);
+
+    expect(completeExecution).toHaveBeenCalledWith('run-1', expect.objectContaining({
+      reviewExecution: expect.objectContaining({
+        purpose: 'review',
+        executionId: 'execution-1-review',
+        runId: 'taskboard-execution-execution-1-review',
+        sessionId: 'session-1',
+      }),
+    }));
+    expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledTimes(1);
+    expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'taskboard-execution-execution-1-review',
+      sessionId: 'session-1',
+    }));
+  });
+
+  it('复核 Execution 成功时不会递归派发下一轮复核', async () => {
+    const completeExecution = vi.fn(async () => ({
+      task: { ...task, status: 'in_review' as const },
+      execution: execution({ purpose: 'review', status: 'succeeded' }),
+    }));
+    const rig = makeRig({
+      getExecutionContextByRunId: vi.fn(async () => ({
+        identity,
+        task: { ...task, status: 'in_review' as const },
+        boardPrompt: '只做复核。',
+        comments: [],
+        execution: execution({ purpose: 'review' }),
+      })),
+      completeExecution,
+    });
+
+    await rig.coordinator.handleRuntimeEvent({
+      id: 'event-review-finished',
+      timestamp: '2026-08-01T03:01:00.000Z',
+      type: 'run_finished',
+      runId: 'run-1',
+      sessionId: 'session-1',
+      subtype: 'success',
+      numTurns: 2,
+    } as PlatformEvent);
+
+    expect(completeExecution).toHaveBeenCalledWith('run-1', expect.not.objectContaining({
+      reviewExecution: expect.anything(),
+    }));
+    expect(rig.scheduler.enqueueCreateOnly).not.toHaveBeenCalled();
+  });
+});

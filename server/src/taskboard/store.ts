@@ -19,7 +19,7 @@ import {
   type TaskBoardTaskPatchInput,
 } from '../../../shared/src/types/taskboard.js';
 import {
-  completeContinuation, hasSuccessfulContinuationSince,
+  completeContinuation,
   listTaskExecutions,
   loadContinuationContext,
   loadExecutionContext,
@@ -39,6 +39,7 @@ import {
   releaseContinuationReconcile,
   retryContinuationDispatch,
 } from './continuationOutbox.js';
+import { applyExecutionTaskCompletion, enqueueAutomaticReview } from './executionCompletion.js';
 import { executionFieldMigrationSql, resolveExecutionPurpose, taskFieldMigrationSql } from './executionFields.js';
 import {
   claimExecutionDispatch,
@@ -774,14 +775,17 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       }
       assertExpectedVersion(loaded.task, input.expectedVersion);
 
-      const sortOrder = await nextTaskColumnSortOrder(
-        this,
-        client,
-        identity,
-        loaded.task.boardId,
-        taskId,
-        'in_progress',
-      );
+      const runningTaskStatus = purpose === 'review' ? 'in_review' : 'in_progress';
+      const sortOrder = purpose === 'review'
+        ? loaded.task.sortOrder
+        : await nextTaskColumnSortOrder(
+          this,
+          client,
+          identity,
+          loaded.task.boardId,
+          taskId,
+          runningTaskStatus,
+        );
 
       let execution: TaskBoardExecution;
       try {
@@ -818,10 +822,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       );
       await client.query(
         `UPDATE ${this.tasksTable}
-            SET status='in_progress', sort_order=$2, completed_at=NULL,
+            SET status=$2, sort_order=$3, completed_at=NULL,
                 version=version+1, updated_at=now()
           WHERE id=$1`,
-        [taskId, sortOrder],
+        [taskId, runningTaskStatus, sortOrder],
       );
       return {
         task: await this.requireTask(client, identity, taskId, false),
@@ -896,7 +900,11 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   completeContinuation(taskId: string, runId: string, input: TaskboardExecutionCompletionInput) {
     return completeContinuation(this, taskId, runId, input);
   }
-  async moveTaskFromExecution(identity: TaskboardIdentity, runId: string, status: 'done' | 'todo'): Promise<TaskBoardTask> {
+  async moveTaskFromExecution(
+    identity: TaskboardIdentity,
+    runId: string,
+    status: 'ready_to_merge' | 'todo' | 'blocked',
+  ): Promise<TaskBoardTask> {
     return moveTaskFromReviewExecution(this, identity, runId, status);
   }
   claimExecutionDispatch(runId: string | undefined, leaseId: string) {
@@ -1015,24 +1023,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       );
       if (archivedResult) return archivedResult;
 
-      const targetTaskStatus = (input.status === 'succeeded' || await hasSuccessfulContinuationSince(this, client, taskId, executionResult.rows[0].created_at)) ? 'in_review' : 'blocked';
-      if (loaded.task.status === 'in_progress') {
-        const sortOrder = await nextTaskColumnSortOrder(
-          this,
-          client,
-          identity,
-          loaded.task.boardId,
-          taskId,
-          targetTaskStatus,
-        );
-        await client.query(
-          `UPDATE ${this.tasksTable}
-              SET status=$2, sort_order=$3, completed_at=NULL,
-                  version=version+1, updated_at=now()
-            WHERE id=$1`,
-          [taskId, targetTaskStatus, sortOrder],
-        );
-      }
+      const executionSucceeded = await applyExecutionTaskCompletion(
+        this, client, identity, loaded.task, currentExecution, executionResult.rows[0].created_at, input,
+      );
 
       const updated = await client.query(
         `UPDATE ${this.executionsTable}
@@ -1047,6 +1040,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
             SET status='dispatched', lease_id=NULL, lease_expires_at=NULL, updated_at=now()
           WHERE run_id=$1 AND status<>'dispatched'`,
         [runId],
+      );
+      await enqueueAutomaticReview(
+        this, client, loaded.task, currentExecution, executionSucceeded, input.reviewExecution,
       );
       const authorType = input.status === 'succeeded' ? 'agent' : 'system';
       await client.query(

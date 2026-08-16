@@ -36,6 +36,7 @@ import {
 } from './types.js';
 export { createTaskboardRuntimeOptions } from './runtimeOptions.js';
 import type {
+  TaskboardExecutionClaimInput,
   TaskboardExecutionContext,
   TaskboardExecutionDispatch,
   TaskboardExecutionReconcileCandidate,
@@ -257,12 +258,24 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     identity: TaskboardIdentity,
     taskId: string,
     input: TaskBoardExecutionStartInput,
-    options: { allowWorkFromCurrentStatus?: boolean; executionId?: string } = {},
+    options: { allowWorkFromCurrentStatus?: boolean; executionId?: string; sessionId?: string } = {},
   ): Promise<TaskBoardExecutionStartResult> {
+    const claim = await this.prepareExecutionClaim(identity, taskId, input, options);
+    const claimed = await this.options.store.claimExecution(identity, taskId, claim);
+    await this.dispatchExecution(claim.runId);
+    return claimed;
+  }
+
+  private async prepareExecutionClaim(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input: TaskBoardExecutionStartInput,
+    options: { allowWorkFromCurrentStatus?: boolean; executionId?: string; sessionId?: string } = {},
+  ): Promise<TaskboardExecutionClaimInput> {
     const launch = await this.resolveLaunch(identity, taskId);
-    const executions = await this.options.store.listExecutions(identity, taskId);
+    const executions = options.sessionId ? [] : await this.options.store.listExecutions(identity, taskId);
     const executionId = options.executionId ?? randomUUID();
-    const sessionId = executions[0]?.sessionId ?? `taskboard-${randomUUID()}`;
+    const sessionId = options.sessionId ?? executions[0]?.sessionId ?? `taskboard-${randomUUID()}`;
     const session = await reuseTaskboardSession({
       sessionCatalog: this.options.sessionCatalog,
       agentCwd: this.options.agentCwd,
@@ -303,7 +316,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         },
       },
     };
-    const claimed = await this.options.store.claimExecution(identity, taskId, {
+    return {
       ...input,
       executionId,
       sessionId,
@@ -312,9 +325,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       ...(launch.explicitModelRef ? { configuredModelRef: launch.explicitModelRef } : {}),
       executionOwnerUserId: launch.executionIdentity.ownerUserId,
       dispatch: { version: 1, session, run },
-    });
-    await this.dispatchExecution(runId);
-    return claimed;
+    };
   }
 
   private async resolveLaunch(identity: TaskboardIdentity, taskId: string) {
@@ -644,16 +655,31 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       tenantId: context.identity.tenantId,
     });
     const attachments = await extractAgentAttachments(output, userCwd);
+    let reviewExecution: TaskboardExecutionClaimInput | undefined;
+    if (context.execution.purpose === 'work') {
+      const existingSession = await this.options.sessionCatalog.get(sessionId);
+      const reviewIdentity = this.options.resolveOwnerIdentity?.(context.identity.ownerUserId) ?? {
+        ...context.identity,
+        username: existingSession?.username ?? context.identity.username,
+        userRole: existingSession?.userRole ?? context.identity.userRole,
+      };
+      reviewExecution = await this.prepareExecutionClaim(
+        reviewIdentity,
+        context.task.id,
+        { expectedVersion: context.task.version, purpose: 'review' },
+        { executionId: `${context.execution.id}-review`, sessionId },
+      );
+    }
     const completion = {
       status: 'succeeded' as const,
       commentBody: limitComment(`Agent 交付\n\n${stripFileMarkers(output)}`),
       ...(attachments.length ? { attachments } : {}),
+      ...(reviewExecution ? { reviewExecution } : {}),
     };
-    if (reconcileLeaseId) {
-      await this.options.store.completeExecutionFromReconcile(runId, completion, reconcileLeaseId);
-    } else {
-      await this.options.store.completeExecution(runId, completion);
-    }
+    const completed = reconcileLeaseId
+      ? await this.options.store.completeExecutionFromReconcile(runId, completion, reconcileLeaseId)
+      : await this.options.store.completeExecution(runId, completion);
+    if (completed && reviewExecution) await this.dispatchExecution(reviewExecution.runId);
   }
 
   private async completeFailedRun(

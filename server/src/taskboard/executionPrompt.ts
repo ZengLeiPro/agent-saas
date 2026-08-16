@@ -46,14 +46,15 @@ export function executionWritebackInstructions(context: TaskboardExecutionContex
     `- 需要独立的后续复核、返工或合并时，用 target=taskboard, action=create, boardId=${boardId}, status=todo, dispatch=true 创建并派发新任务。`,
   ];
   if (context.execution.purpose !== 'review') {
-    return [...common, '- 实施成功后不要标记 done；系统会把仍在进行中的任务送入待复核。'];
+    return [...common, '- 实施成功后不要标记待合并或已完成；系统会进入复核中并自动派发复核。'];
   }
   return [
     ...common,
-    '- 本次只做独立复核，不顺手修改交付。',
-    `- 复核通过：调用 CronManage：target=taskboard, action=move, id=${taskId}, status=done。`,
+    '- 本次只做独立复核，不顺手修改交付，也不得标记已完成。',
+    `- 复核通过：调用 CronManage：target=taskboard, action=move, id=${taskId}, status=ready_to_merge。`,
     `- 复核不通过：调用 CronManage：target=taskboard, action=move, id=${taskId}, status=todo；最终回执列明返工项。`,
-    '- 无法明确判定时不要移动状态；系统会把任务放回待复核。',
+    `- 存在客观阻塞：调用 CronManage：target=taskboard, action=move, id=${taskId}, status=blocked；如实记录原因。`,
+    '- 无法明确判定时不要移动状态；任务保持在复核中。',
   ];
 }
 

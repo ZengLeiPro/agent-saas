@@ -200,13 +200,13 @@ describe('Taskboard routes', () => {
     }))).status).toBe(400);
 
     const list = await rig.request(
-      '/api/taskboard/boards/board-1/tasks?includeArchived=true&search=TASK&status=todo,in_progress&priority=urgent&priority=high',
+      '/api/taskboard/boards/board-1/tasks?includeArchived=true&search=TASK&status=todo,in_progress,ready_to_merge&priority=urgent&priority=high',
     );
     expect(list.status).toBe(200);
     expect(captured.taskFilters).toEqual([{
       includeArchived: true,
       search: 'TASK',
-      statuses: ['todo', 'in_progress'],
+      statuses: ['todo', 'in_progress', 'ready_to_merge'],
       priorities: ['urgent', 'high'],
     }]);
   });
@@ -228,7 +228,7 @@ describe('Taskboard routes', () => {
         expect(taskId).toBe(TASK.id);
         expect(input).toEqual({ expectedVersion: TASK.version, purpose: 'review' });
         return {
-          task: { ...TASK, status: 'in_progress', version: TASK.version + 1 },
+          task: { ...TASK, status: 'in_review', version: TASK.version + 1 },
           execution: EXECUTION,
         };
       },
@@ -269,7 +269,7 @@ describe('Taskboard routes', () => {
     }));
     expect(started.status).toBe(202);
     expect(await started.json()).toMatchObject({
-      task: { status: 'in_progress', version: TASK.version + 1 },
+      task: { status: 'in_review', version: TASK.version + 1 },
       execution: { id: EXECUTION.id, status: 'queued' },
     });
 

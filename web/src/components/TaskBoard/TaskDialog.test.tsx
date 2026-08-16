@@ -37,7 +37,7 @@ describe("TaskDialog 交互", () => {
     await user.type(screen.getByRole("textbox", { name: "工作分支" }), "task/TASK-32-board");
     await user.click(screen.getByRole("combobox", { name: "新任务状态" }));
     expect(screen.getByRole("listbox").className).toContain("z-[110]");
-    await user.click(screen.getByRole("option", { name: "待处理" }));
+    await user.click(screen.getByRole("option", { name: "待实施" }));
     await user.click(screen.getByRole("combobox", { name: "新任务优先级" }));
     await user.click(screen.getByRole("option", { name: "紧急" }));
     await user.click(screen.getByRole("combobox", { name: "任务运行模型" }));
@@ -53,7 +53,7 @@ describe("TaskDialog 交互", () => {
     })));
   });
 
-  it("进行中任务可勾选直接执行，其他状态不显示该选项", async () => {
+  it("实施中任务可勾选直接执行，其他状态不显示该选项", async () => {
     const user = userEvent.setup();
     const onCreate = vi.fn(async () => undefined);
     render(<TaskDialog open onOpenChange={vi.fn()} onCreate={onCreate} />);
@@ -61,7 +61,7 @@ describe("TaskDialog 交互", () => {
     expect(screen.queryByRole("checkbox", { name: "直接执行" })).toBeNull();
     await user.type(screen.getByRole("textbox", { name: "标题" }), "立即处理异常");
     await user.click(screen.getByRole("combobox", { name: "新任务状态" }));
-    await user.click(screen.getByRole("option", { name: "进行中" }));
+    await user.click(screen.getByRole("option", { name: "实施中" }));
     await user.click(screen.getByRole("checkbox", { name: "直接执行" }));
     await user.click(screen.getByRole("button", { name: "创建任务" }));
 

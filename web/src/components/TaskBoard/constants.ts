@@ -6,9 +6,10 @@ import type {
 
 export const STATUS_LABELS: Record<TaskBoardStatus, string> = {
   backlog: "需求池",
-  todo: "待处理",
-  in_progress: "进行中",
-  in_review: "待复核",
+  todo: "待实施",
+  in_progress: "实施中",
+  in_review: "复核中",
+  ready_to_merge: "待合并",
   blocked: "已阻塞",
   done: "已完成",
   canceled: "已取消",

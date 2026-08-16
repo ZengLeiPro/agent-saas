@@ -61,7 +61,7 @@ describePg('Taskboard continuation PostgreSQL race contract', () => {
     }
   }, 30_000);
 
-  it('原 Execution 先取消提交、续跑后成功时最终仍进入待复核', async () => {
+  it('原 Execution 先取消提交、续跑后成功时最终仍进入复核中', async () => {
     const board = await store.createBoard(alice, { name: '续跑取消反向竞态' });
     const task = await store.createTask(alice, board.id, { title: '取消先提交', status: 'todo' });
     await store.claimExecution(alice, task.id, {

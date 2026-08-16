@@ -128,7 +128,7 @@ describePg('PgTaskboardStore continuation contract', () => {
     )).toEqual([]);
   });
 
-  it('续跑先成功、原 Execution 后取消的并发顺序最终保持待复核', async () => {
+  it('续跑先成功、原 Execution 后取消的并发顺序最终保持复核中', async () => {
     const board = await store.createBoard(alice, { name: '续跑取消竞态' });
     const task = await store.createTask(alice, board.id, { title: '并发释放续跑', status: 'todo' });
     await store.claimExecution(alice, task.id, {

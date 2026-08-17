@@ -437,7 +437,7 @@ export function createGovernanceResourcesRouter(deps: {
   });
 
   router.get('/credentials', async (req, res) => {
-    const tenantId = resourceTenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
+    const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
     const credentials = canManageTenant(req)
       ? (await deps.credentials.listForTenant(tenantId)).filter(item => item.kind !== 'personal_grant')

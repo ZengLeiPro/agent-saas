@@ -172,4 +172,51 @@ describe('跨进程/后台 run 的 ask_user 实时投递与恢复（TASK-63）',
       type: 'ask_user', interactionId: 'ask-buf-only',
     }));
   });
+
+  it('非本人用户 resume 已完成 buffer：不推送他人 ask_user（安全回归，review CHANGES_REQUESTED）', async () => {
+    const rig = makeRig();
+    const sessionId = randomUUID();
+    const attacker = { sub: 'task63-attacker', username: 'attacker', role: 'user' as const, tenantId: 'task63-tenant' };
+    // 他人（USER）已完成 buffer 中残留 ask_user
+    (rig.channel as any).eventBufferStore.create(sessionId, USER.sub);
+    (rig.channel as any).eventBufferStore.push(sessionId, JSON.stringify({
+      type: 'ask_user', interactionId: 'ask-other-user', questions: [{
+        question: '机密问题', header: '机密',
+        options: [{ label: '选项A', description: '机密选项' }], multiSelect: false,
+      }],
+    }));
+    (rig.channel as any).eventBufferStore.complete(sessionId);
+
+    // 攻击者 resume 该 sessionId
+    await (rig.channel as any).handleResumeAsync(wsClient(rig.ws, attacker), {
+      action: 'resume', sessionId, lastEventId: 0, skipReplay: false,
+    });
+    await flushMicrotasks();
+
+    const pending = rig.ws.sent.find((m) => m.data?.type === 'pending_interactions');
+    expect(pending).toBeUndefined();
+    expect(rig.ws.sent.some((m) => m.data?.type === 'ask_user' && m.data.interactionId === 'ask-other-user')).toBe(false);
+  });
+
+  it('admin resume 他人已完成 buffer：仍能推送 pending 交互（归属校验放行 admin）', async () => {
+    const rig = makeRig();
+    const sessionId = randomUUID();
+    const admin = { sub: 'task63-admin', username: 'admin', role: 'admin' as const, tenantId: 'task63-tenant' };
+    (rig.channel as any).eventBufferStore.create(sessionId, USER.sub);
+    (rig.channel as any).eventBufferStore.push(sessionId, JSON.stringify({
+      type: 'ask_user', interactionId: 'ask-admin-visible', questions: [],
+    }));
+    (rig.channel as any).eventBufferStore.complete(sessionId);
+
+    await (rig.channel as any).handleResumeAsync(wsClient(rig.ws, admin), {
+      action: 'resume', sessionId, lastEventId: 0, skipReplay: false,
+    });
+    await flushMicrotasks();
+
+    const pending = rig.ws.sent.find((m) => m.data?.type === 'pending_interactions');
+    expect(pending).toBeDefined();
+    expect(pending!.data.interactions).toContainEqual(expect.objectContaining({
+      type: 'ask_user', interactionId: 'ask-admin-visible',
+    }));
+  });
 });

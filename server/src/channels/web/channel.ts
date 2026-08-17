@@ -1995,8 +1995,8 @@ export class WebChannel implements BaseChannel {
           ...(requestId ? { requestId } : {}),
         });
       }
-      // 已完成的 buffer：推送 pending 交互（如有）
-      if (bufferEntry) {
+      // 已完成的 buffer：推送 pending 交互（须先通过归属校验，防止把他人交互内容暴露给非本人用户）
+      if (bufferEntry && (client.user?.role === 'admin' || !bufferEntry.userId || bufferEntry.userId === client.user?.sub)) {
         this.pushPendingInteractions(client, sid);
       }
       return;

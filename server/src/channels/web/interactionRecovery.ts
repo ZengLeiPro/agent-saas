@@ -27,6 +27,13 @@ export interface PendingInteractionShape {
  * 保证「停留在会话页」的用户也能在 resume 后立即看到提问表单，不必刷新或切换
  * 会话。扫描是同步的，复用 EventBufferStore.getEventsAfter(sid, 0) 的快照，
  * 不引入新的权限面（调用点已完成用户归属校验）。
+ *
+ * 去重说明：`interaction_resolved` 事件走 emitUser（per-user）+ durable
+ * eventStore，从不写入会话 EventBuffer，因此此处不做基于 buffer 的 resolved
+ * 去重（buffer 内不存在该事件）。重复/已应答交互的去重由以下既有机制兜底：
+ * interactionStore.getPendingInteractions（同进程内存态）与前端按 interactionId
+ * 去重。跨进程已 resolved 交互的权威去重建议后续改用 durable 记录（review
+ * 2026-08-17 非阻塞项）。
  */
 export function scanBufferForPendingInteractions(
   bufferedEvents: ReadonlyArray<{ data: string }> | undefined,
@@ -34,20 +41,14 @@ export function scanBufferForPendingInteractions(
 ): PendingInteractionShape[] {
   const result: PendingInteractionShape[] = [];
   if (!bufferedEvents) return result;
-  const resolvedIds = new Set<string>();
   for (const evt of bufferedEvents) {
     try {
       const data = JSON.parse(evt.data) as Record<string, unknown>;
       if (!data || typeof data.type !== 'string') continue;
-      if (data.type === 'interaction_resolved' && typeof data.interactionId === 'string') {
-        resolvedIds.add(data.interactionId);
-        continue;
-      }
       if (
         (data.type === 'ask_user' || data.type === 'permission_request')
         && typeof data.interactionId === 'string'
         && !known.has(data.interactionId)
-        && !resolvedIds.has(data.interactionId)
       ) {
         result.push({
           interactionId: data.interactionId,

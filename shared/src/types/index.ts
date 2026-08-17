@@ -143,6 +143,8 @@ export {
   TASKBOARD_EXECUTION_PURPOSES,
   TASKBOARD_VISIBILITIES,
   TASKBOARD_DEFAULT_PROMPT,
+  TASKBOARD_DEFAULT_STAGE_PROMPT,
+  TASKBOARD_STAGE_DEFAULT_PROMPTS,
 } from "./taskboard";
 export type {
   TaskBoardStatus,
@@ -165,6 +167,7 @@ export type {
   TaskBoardTaskMoveInput,
   TaskBoardCommentCreateInput,
   TaskBoardExecutionStartInput,
+  TaskBoardStagePrompts,
 } from "./taskboard";
 
 export type {

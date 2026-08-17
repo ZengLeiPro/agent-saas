@@ -5,6 +5,7 @@ import type {
   TaskBoardExecution,
   TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
+import { parseStagePrompts } from './boardFields.js';
 import {
   applyCommentAuthorDisplayName,
   assertWritableTask,
@@ -41,7 +42,7 @@ export async function loadExecutionContext(
   runId: string,
 ): Promise<TaskboardExecutionContext | null> {
   const result = await host.pool.query(
-    `SELECT e.*, b.tenant_id, b.owner_user_id, b.prompt AS board_prompt,
+    `SELECT e.*, b.tenant_id, b.owner_user_id, b.prompt AS board_prompt, b.stage_prompts AS board_stage_prompts,
             previous.context_since
        FROM ${host.executionsTable} e
        JOIN ${host.tasksTable} t ON t.id=e.task_id
@@ -75,10 +76,12 @@ export async function loadExecutionContext(
       ORDER BY c.created_at, c.id`,
     [execution.taskId, contextSince],
   );
+  const stagePrompts = parseStagePrompts(row.board_stage_prompts);
   return {
     identity,
     task: await loadAccessibleTask(host, identity, execution.taskId),
     boardPrompt: String(row.board_prompt ?? ''),
+    ...(Object.keys(stagePrompts).length ? { stagePrompts } : {}),
     comments: commentsResult.rows.map((commentRow) => applyCommentAuthorDisplayName(
       rowToComment(commentRow),
       identity,
@@ -96,7 +99,7 @@ export async function loadContinuationContext(
 ): Promise<TaskboardContinuationContext> {
   const task = await loadAccessibleTask(host, identity, taskId);
   const commentResult = await host.pool.query(
-    `SELECT c.*
+    `SELECT c.*, b.stage_prompts AS board_stage_prompts
        FROM ${host.commentsTable} c
        JOIN ${host.tasksTable} t ON t.id=c.task_id
        JOIN ${host.boardsTable} b ON b.id=t.board_id
@@ -129,10 +132,12 @@ export async function loadContinuationContext(
       ? loadTaskExecutionByRunId(host, identity, taskId, continuationRunId)
       : Promise.resolve(null),
   ]);
+  const stagePrompts = parseStagePrompts(commentResult.rows[0].board_stage_prompts);
   return {
     task,
     comment: applyCommentAuthorDisplayName(rowToComment(commentResult.rows[0]), identity),
     pendingComments: pendingResult.rows.map((row) => applyCommentAuthorDisplayName(rowToComment(row), identity)),
+    ...(Object.keys(stagePrompts).length ? { stagePrompts } : {}),
     ...(continuationRunId ? { continuationRunId } : {}),
     ...(activeContinuationResult.rows[0] ? { hasActiveContinuation: true } : {}),
     ...(executions[0] ? { latestExecution: executions[0] } : {}),

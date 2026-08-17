@@ -373,4 +373,16 @@ describe('governance access routes: assignment projection and audit', () => {
     expect(response.status).toBe(503);
     expect(test.updateMembership).not.toHaveBeenCalled();
   });
+
+  it('平台管理员可在组织控制台跨租户只读查看部门/群组', async () => {
+    const listGroups = vi.fn(async () => [{ groupId: 'group-1', displayName: '研发部', status: 'active', version: 1 }]);
+    const platform = await rig({
+      user: { sub: 'platform-1', username: 'platform', tenantId: 'pantheon', role: 'admin' },
+      platformAdmin: true,
+      directoryGroups: { getGroup: vi.fn(), listGroups },
+    });
+    const response = await platform.request('/api/governance/access/directory-groups?tenantId=tenant-a');
+    expect(response.status).toBe(200);
+    expect(listGroups).toHaveBeenCalledWith('tenant-a');
+  });
 });

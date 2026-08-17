@@ -5,6 +5,7 @@ import type {
   TaskBoardExecution,
   TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
+import { parseStagePrompts } from './boardFields.js';
 import { rowToExecution } from './storeHelpers.js';
 import { normalizePage, pageResult } from './storeSearch.js';
 import {
@@ -102,7 +103,7 @@ async function getExecutionContext(
   value: string,
 ): Promise<TaskboardExecutionContext | null> {
   const result = await store.pool.query(
-    `SELECT e.*, b.tenant_id, b.owner_user_id, b.prompt AS board_prompt
+    `SELECT e.*, b.tenant_id, b.owner_user_id, b.prompt AS board_prompt, b.stage_prompts AS board_stage_prompts
        FROM ${store.executionsTable} e
        JOIN ${store.tasksTable} t ON t.id=e.task_id
        JOIN ${store.boardsTable} b ON b.id=t.board_id
@@ -120,10 +121,12 @@ async function getExecutionContext(
     username: '',
   };
   const execution = rowToExecution(row);
+  const stagePrompts = parseStagePrompts(row.board_stage_prompts);
   return {
     identity,
     task: await store.getTask(identity, execution.taskId),
     boardPrompt: String(row.board_prompt ?? ''),
+    ...(Object.keys(stagePrompts).length ? { stagePrompts } : {}),
     comments: await store.listComments(identity, execution.taskId),
     execution,
   };

@@ -230,17 +230,28 @@ function withOffboardingPreview(change: Record<string, unknown>, preview: Record
 }
 
 describe('typed governance resource routes: authorization and credential boundaries', () => {
-  it('平台管理员不得用 tenantId 跨租户读取或管理客户组织资源', async () => {
+  it('平台管理员可跨租户只读查看组织凭据，但跨租户写管理仍 fail closed', async () => {
     const getAgent = vi.fn();
     const getSkill = vi.fn();
-    const listCredentials = vi.fn();
+    const listCredentials = vi.fn().mockResolvedValue([{
+      credentialId: 'cred-a', tenantId: 'tenant-a', connectorId: 'github', kind: 'org_shared',
+      custodianUserId: 'admin-1', secretRef: 'sec-a', status: 'active', version: 1,
+    }]);
     const getCredential = vi.fn();
     const test = await rig({
       platformAdmin: true,
       user: { sub: 'platform-1', username: 'root', tenantId: 'pantheon', role: 'admin' },
       getAgent, getSkill, listCredentials, getCredential,
     });
-    const responses = [
+    // 平台管理员在组织控制台可跨租户只读查看组织凭据（与成员/权限策略等治理页一致）
+    const read = await test.request('/api/governance/resources/credentials?tenantId=tenant-a');
+    expect(read.status).toBe(200);
+    await expect(read.json()).resolves.toMatchObject({ credentials: [{ credentialId: 'cred-a' }] });
+    expect(listCredentials).toHaveBeenCalledWith('tenant-a');
+
+    // 平台管理员跨租户仍不可读取或管理客户组织 Agent/Skill 资源，
+    // 也不可跨租户写组织凭据（创建、状态变更）
+    const forbidden = [
       await test.request('/api/governance/resources/agents/org-a?tenantId=tenant-a'),
       await test.request('/api/governance/resources/agents', json('POST', { tenantId: 'tenant-a', kind: 'org_agent' })),
       await test.request('/api/governance/resources/agents/org-a/versions?tenantId=tenant-a', json('POST', { expectedRevision: 1, definition: {} })),
@@ -249,7 +260,6 @@ describe('typed governance resource routes: authorization and credential boundar
       await test.request('/api/governance/resources/skills/tenant-s?tenantId=tenant-a'),
       await test.request('/api/governance/resources/skills', json('POST', { tenantId: 'tenant-a', skillId: 'tenant-s', scope: 'tenant' })),
       await test.request('/api/governance/resources/skills/tenant-s/versions?tenantId=tenant-a', json('POST', { expectedRevision: 1, definition: {} })),
-      await test.request('/api/governance/resources/credentials?tenantId=tenant-a'),
       await test.request('/api/governance/resources/credentials', json('POST', {
         tenantId: 'tenant-a', connectorId: 'github', kind: 'org_shared', purpose: 'shared', secret: 'sensitive',
       })),
@@ -257,10 +267,9 @@ describe('typed governance resource routes: authorization and credential boundar
         expectedVersion: 1, status: 'rotation_due', reason: 'rotation',
       })),
     ];
-    expect(responses.every(response => response.status === 403)).toBe(true);
+    expect(forbidden.every(response => response.status === 403)).toBe(true);
     expect(getAgent).not.toHaveBeenCalled();
     expect(getSkill).not.toHaveBeenCalled();
-    expect(listCredentials).not.toHaveBeenCalled();
     expect(getCredential).not.toHaveBeenCalled();
     expect(test.agentCreate).not.toHaveBeenCalled();
     expect(test.agentPublish).not.toHaveBeenCalled();

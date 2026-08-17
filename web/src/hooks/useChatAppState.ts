@@ -706,9 +706,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setLoading(false);
     setStopping(false);
     // outbox/timer 属于 submission，不属于当前流。切会话后继续后台核验，队列状态按
-    // sessionId 隔离存储；切回原会话时才能显示 queued 或真实 failed，不能静默丢失。
-    consumedInterjectionsRef.current.clear();
-    // 通知服务端解除 wsActiveStream 绑定（buffer 仍保留,resume 时可用 cursor 增量回放）
+    // sessionId 隔离存储。consumedInterjectionsRef 保留（TASK-70）：它是「已进入时间线」的
+    // 全局消费事实，切回会话时旧 detail 快照不得把已发送的消息复活到队列区；clientMsgId
+    // 全局唯一，跨会话保留不会误拦截真实仍在排队的新消息。服务端 buffer 仍保留，resume 时可用 cursor 增量回放。
     wsClient.send({ action: 'detach' });
   }, [dumpCurrentSessionRuntime]);
 

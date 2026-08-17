@@ -36,7 +36,9 @@ export interface QueuedInterjection {
 }
 
 /**
- * 记录当前会话内已进入时间线的插话，拒绝稍晚到达的 queued 广播或旧 detail 快照将其复活。
+ * 记录已进入时间线的插话，拒绝稍晚到达的 queued 广播或旧 detail 快照将其复活。
+ * clientMsgId 全局唯一，消费标记跨会话保留（TASK-70）：切会话再切回时，旧 detail
+ * 快照即使短暂返回已投影的 pending run，也会被这里拦截，不再复活到队列区。
  */
 export class InterjectionConsumptionRegistry {
   private readonly clientMsgIds = new Set<string>();

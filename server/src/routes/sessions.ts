@@ -513,40 +513,38 @@ export function filterProjectedQueuedMessages<T extends { sourceRunId: string }>
 }
 
 /**
- * 增量详情只解析 cursor 之后的 transcript 窗口，已投影的插话可能已经落在窗口外。
- * 以 durable runtime user_message 补充对账，避免 PG claim 尚未完成时切回会话又把消息
- * 恢复到队列区。PG 按目标 run 读取；file backend 回退为只读 user_message 事件。
+ * durable user_message 投影对账（TASK-70）：过滤「已投影但 source run 尚未转出 pending」的
+ * 消息，防止 detail 刷新/切回时复活到队列区。普通 queue 匹配 event.runId，steering 匹配
+ * event.interjectionSourceRunId（投影落在 target run 下）；blocks 一并并入已投影集合。
  */
-export async function listDurablyProjectedInterjectionSourceRunIds(
+export async function listDurablyProjectedQueuedRunIds(
   eventStore: EventStore,
   sessionId: string,
-  pending: Array<{ sourceRunId: string; targetRunId: string }>,
+  pending: Array<{ runId?: string; sourceRunId?: string; targetRunId?: string; metadata?: Record<string, unknown> }>,
+  blocks: Array<{ interjectionSourceRunId?: string }> = [],
 ): Promise<string[]> {
   if (pending.length === 0) return [];
-  const wantedSourceRunIds = new Set(pending.map((input) => input.sourceRunId));
-  const projectedSourceRunIds = new Set<string>();
+  const wanted = new Set(pending.map((input) => input.runId ?? input.sourceRunId!));
+  const projected = new Set<string>();
+  for (const block of blocks) if (block.interjectionSourceRunId) projected.add(block.interjectionSourceRunId);
   const collect = (events: PlatformEvent[]) => {
     for (const event of events) {
-      if (
-        event.type === "user_message"
-        && event.interjectionSourceRunId
-        && wantedSourceRunIds.has(event.interjectionSourceRunId)
-      ) {
-        projectedSourceRunIds.add(event.interjectionSourceRunId);
-      }
+      if (event.type !== "user_message") continue;
+      if (event.runId && wanted.has(event.runId)) projected.add(event.runId);
+      if (event.interjectionSourceRunId && wanted.has(event.interjectionSourceRunId)) projected.add(event.interjectionSourceRunId);
     }
   };
-
   if (eventStore.listByRun) {
-    const targetRunIds = [...new Set(pending.map((input) => input.targetRunId))];
-    const batches = await Promise.all(
-      targetRunIds.map((targetRunId) => eventStore.listByRun!(sessionId, targetRunId)),
-    );
-    for (const events of batches) collect(events);
+    for (const input of pending) {
+      const sourceRunId = input.runId ?? input.sourceRunId!;
+      collect(await eventStore.listByRun(sessionId, sourceRunId));
+      const targetRunId = input.targetRunId ?? (typeof input.metadata?.steeringTargetRunId === "string" ? input.metadata.steeringTargetRunId : undefined);
+      if (targetRunId && targetRunId !== sourceRunId) collect(await eventStore.listByRun(sessionId, targetRunId));
+    }
   } else {
     collect(await eventStore.list(sessionId, { includeTypes: ["user_message"] }));
   }
-  return [...projectedSourceRunIds];
+  return [...projected];
 }
 
 function reqTranscriptOwner(reqUser: Request["user"] | undefined): { tenantId?: string; userId?: string } | undefined {
@@ -947,12 +945,12 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     }> = [];
     if (options.listPendingUserMessagesBySession) {
       try {
-        const pending = await options.listPendingUserMessagesBySession(sessionId);
-        const projectedSteeringIds = new Set(parsed.blocks.flatMap((block) => (
-          block.interjectionSourceRunId ? [block.interjectionSourceRunId] : []
-        )));
-        queuedMessages = pending.flatMap((run, index) => {
-          if (projectedSteeringIds.has(run.runId)) return [];
+        const queriedPending = await options.listPendingUserMessagesBySession(sessionId);
+        // 普通 queue 与 steer 共用本分支：transcript 窗口 + durable user_message 双对账，
+        // 过滤「已投影但 source run 尚未转出 pending」的消息，防止刷新/切回时复活（TASK-70）。
+        const projectedRunIds = new Set(await listDurablyProjectedQueuedRunIds(detailEventStore, sessionId, queriedPending, parsed.blocks));
+        queuedMessages = queriedPending.flatMap((run, index) => {
+          if (projectedRunIds.has(run.runId)) return [];
           const wakeMessage = run.metadata?.wakeMessage as { content?: unknown; attachments?: unknown } | undefined;
           if (!wakeMessage || typeof wakeMessage.content !== 'string') return [];
           const clientMsgId = typeof run.metadata?.clientMsgId === 'string' ? run.metadata.clientMsgId : undefined;
@@ -979,8 +977,10 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     } else if (options.listPendingSteeringBySession) {
       try {
         const queriedPending = await options.listPendingSteeringBySession(sessionId);
-        const durableProjectedSourceRunIds = await listDurablyProjectedInterjectionSourceRunIds(detailEventStore, sessionId, queriedPending);
-        const pending = filterProjectedQueuedMessages(queriedPending, parsed.blocks, durableProjectedSourceRunIds);
+        const durableProjectedSourceRunIds = await listDurablyProjectedQueuedRunIds(
+          detailEventStore, sessionId, queriedPending, parsed.blocks,
+        );
+        const pending = filterProjectedQueuedMessages(queriedPending, [], durableProjectedSourceRunIds);
         queuedMessages = pending.flatMap((input, index) => {
           const wakeMessage = input.sourceRun.metadata?.wakeMessage as { content?: unknown; attachments?: unknown } | undefined;
           if (!wakeMessage || typeof wakeMessage.content !== 'string') return [];

@@ -136,4 +136,73 @@ describe('system prompt registry', () => {
       systemPrompts: { 'main.static': '   ' },
     })).toThrow('systemPrompts.main.static');
   });
+
+  // 任务看板各阶段提示语（TASK-75）：taskboardExecution 会话默认注入固定模板，
+  // 传 taskboardStagePrompt 时以该阶段覆盖文本替换固定模板；非任务看板会话不注入。
+  describe('taskboard stage prompt injection', () => {
+    const DEFAULT_TEMPLATE_MARKER = '## 任务看板执行职责';
+    const CUSTOM_STAGE_PROMPT = '## 实施 Agent 专属职责\n\n只负责实施，不审批。';
+
+    const buildTaskboard = (extra: { taskboardExecution?: boolean; taskboardStagePrompt?: string } = {}) =>
+      buildInstructions({
+        sharedDir: SHARED_DIR,
+        tenantId: 'acme',
+        agentName: '开开',
+        userName: '张三',
+        persona: '',
+        cwd: '/workspace',
+        executionTarget: 'server-remote',
+        memorySearchEnabled: false,
+        isPlatformAdmin: false,
+        getSystemPrompt: (id) => new SystemPromptRegistry(SHARED_DIR).get(id),
+        ...extra,
+      });
+
+    it('非任务看板会话不注入任务看板执行职责', () => {
+      const out = buildTaskboard();
+      expect(out).not.toContain(DEFAULT_TEMPLATE_MARKER);
+      expect(out).not.toContain('任务看板执行职责');
+    });
+
+    it('任务看板会话默认注入系统固定模板', () => {
+      const out = buildTaskboard({ taskboardExecution: true });
+      expect(out).toContain(DEFAULT_TEMPLATE_MARKER);
+      expect(out).toContain('你正在处理任务看板中的一项工作。');
+    });
+
+    it('配置了阶段提示语时替换固定模板', () => {
+      const out = buildTaskboard({ taskboardExecution: true, taskboardStagePrompt: CUSTOM_STAGE_PROMPT });
+      expect(out).toContain('## 实施 Agent 专属职责');
+      expect(out).toContain('只负责实施，不审批。');
+      expect(out).not.toContain(DEFAULT_TEMPLATE_MARKER);
+    });
+
+    it('空白阶段提示语回退系统固定模板', () => {
+      const out = buildTaskboard({ taskboardExecution: true, taskboardStagePrompt: '   \n  ' });
+      expect(out).toContain(DEFAULT_TEMPLATE_MARKER);
+      expect(out).not.toContain('## 实施 Agent 专属职责');
+    });
+
+    it('阶段提示语同时受系统提示语注册表覆盖优先级约束（stagePrompt 优先于注册表覆盖）', () => {
+      const registry = new SystemPromptRegistry(SHARED_DIR, {
+        'main.taskboardExecution': '## 平台级任务看板总纲\n\n平台级内容。',
+      });
+      const out = buildInstructions({
+        sharedDir: SHARED_DIR,
+        tenantId: 'acme',
+        agentName: '开开',
+        userName: '张三',
+        persona: '',
+        cwd: '/workspace',
+        executionTarget: 'server-remote',
+        memorySearchEnabled: false,
+        isPlatformAdmin: false,
+        getSystemPrompt: (id) => registry.get(id),
+        taskboardExecution: true,
+        taskboardStagePrompt: CUSTOM_STAGE_PROMPT,
+      });
+      expect(out).toContain('## 实施 Agent 专属职责');
+      expect(out).not.toContain('## 平台级任务看板总纲');
+    });
+  });
 });

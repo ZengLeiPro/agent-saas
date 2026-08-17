@@ -132,6 +132,8 @@ export interface AgentRunOptions {
   /** 内部标记：记录连接器 env 的不可变 owner 与注入 key，raw runtime 可校验或剥离后重建。 */
   connectorEnvResolvedFor?: { userId: string; username: string; tenantId: string };
   connectorEnvKeys?: string[];
+  /** 任务看板 Execution 按阶段配置的特定提示语（wake 路径从 run.metadata 恢复）。 */
+  taskboardStagePrompt?: string;
   additionalDirectories?: string[];
   /** 预批准的工具白名单（dontAsk 模式下，白名单外的工具一律拒绝） */
   allowedTools?: string[];

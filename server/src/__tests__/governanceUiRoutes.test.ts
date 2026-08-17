@@ -34,6 +34,7 @@ async function rig(input: {
   runtimePolicy?: unknown;
   assignments?: Record<string, ReturnType<typeof assignmentSet> | null>;
   effective?: Partial<Record<'org_agent' | 'skill' | 'credential' | 'environment_template', string[]>>;
+  personalAgents?: string[];
   auditAppend?: ReturnType<typeof vi.fn>;
 } = {}) {
   const jwt = input.jwt ?? { sub: 'user-1', username: 'user-1', tenantId: 'tenant-a', role: 'user' };
@@ -48,6 +49,10 @@ async function rig(input: {
     ['tenant-a:admin-a', membership('admin-a', 'tenant-a', 'org_admin')],
     ['tenant-b:user-b', membership('user-b', 'tenant-b')],
   ]);
+  const personalAgentRecords = (input.personalAgents ?? []).map(agentId => ({
+    agentId, tenantId: 'tenant-a', kind: 'personal_agent' as const, ownerUserId: 'user-1',
+    status: 'enabled' as const, revision: 1, createdAt: now, createdBy: 'system', updatedAt: now, updatedBy: 'system',
+  }));
   const credentials = [{
     credentialId: 'cred-1', tenantId: 'tenant-a', connectorId: 'github', kind: 'personal_grant' as const,
     ownerUserId: 'user-1', ownerUsername: 'private-account', alias: 'private alias', purpose: 'source control',
@@ -85,7 +90,11 @@ async function rig(input: {
         (input.effective?.[type] ?? []).map((resourceId, index) => ({ resourceId, bindingId: `binding-${index}`, assignmentVersion: 4 }))),
       listUserPreferences: vi.fn(async () => []),
     },
-    agents: { get: vi.fn(async () => null), listPersonalByOwner: vi.fn(async () => []) },
+    agents: {
+      get: vi.fn(async (id: string) => personalAgentRecords.find(item => item.agentId === id) ?? null),
+      listPersonalByOwner: vi.fn(async (tenantId: string, ownerUserId: string) =>
+        personalAgentRecords.filter(item => item.tenantId === tenantId && item.ownerUserId === ownerUserId)),
+    },
     skills: {
       getResource: vi.fn(async (id: string) => ({
         skillId: id, tenantId: id === 'skill-b' ? 'tenant-b' : 'tenant-a', scope: 'tenant' as const,
@@ -219,6 +228,36 @@ describe('authoritative governance UI routes', () => {
     const partial = await request('/api/me/effective-resources?domains=file');
     expect(partial.status).toBe(503);
     expect(await partial.json()).toMatchObject({ code: 'EFFECTIVE_RESOURCES_PARTIAL' });
+  });
+
+  it('允许的个人 Agent 没有运行依赖索引时 effective list 省略 readiness 而不是 503', async () => {
+    const request = await rig({ personalAgents: ['personal_agent_user-1'] });
+    const response = await request('/api/me/effective-resources');
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toHaveLength(1);
+    expect(body[0]).toMatchObject({
+      resource: { id: 'personal_agent_user-1', domain: 'agent' },
+      access: { verdict: 'allow', accessState: 'allowed' },
+      primaryResult: { code: 'available' },
+    });
+    expect(body[0].readiness).toBeUndefined();
+    expect(effectiveResourceViewSchema.array().parse(body)).toHaveLength(1);
+
+    const evaluate = await request('/api/access/evaluate', post({
+      action: 'use', resource: { type: 'personal_agent', id: 'personal_agent_user-1', tenantId: 'tenant-a', domain: 'agent' },
+    }));
+    expect(evaluate.status).toBe(200);
+    const evaluated = await evaluate.json();
+    expect(evaluated[0].access).toMatchObject({ verdict: 'allow' });
+    expect(evaluated[0].readiness).toBeUndefined();
+
+    // 执行门禁仍 fail closed：allow 但缺少就绪索引时 preflight 必须 503。
+    const preflight = await request('/api/execution/preflight', post({
+      action: 'use', resource: { type: 'personal_agent', id: 'personal_agent_user-1', tenantId: 'tenant-a', domain: 'agent' },
+    }));
+    expect(preflight.status).toBe(503);
+    expect(await preflight.json()).toMatchObject({ code: 'READINESS_UNAVAILABLE' });
   });
 
   it('本人治理摘要由服务端 Membership 权威返回 Persona 与桌面续办路径', async () => {

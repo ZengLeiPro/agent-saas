@@ -10,6 +10,7 @@ import {
 } from '../data/transcripts/meta.js';
 import {
   formatTaskboardSessionTitle,
+  TASKBOARD_PURPOSE_LABELS,
   writeTaskboardSessionTitle,
 } from '../taskboard/sessionTitle.js';
 
@@ -20,11 +21,26 @@ afterEach(async () => {
 });
 
 describe('任务看板会话标题', () => {
-  it('使用任务编号和标题生成确定性标题', () => {
+  it('使用任务编号和阶段名生成确定性标题', () => {
     expect(formatTaskboardSessionTitle({
       identifier: ' TASK-50 ',
-      title: ' 优化标题生成逻辑 ',
-    })).toBe('TASK-50 优化标题生成逻辑');
+    }, 'work')).toBe('50 实施');
+  });
+
+  it('各执行阶段均生成对应阶段名', () => {
+    expect(formatTaskboardSessionTitle({ identifier: 'TASK-35' }, 'review')).toBe('35 复核');
+    expect(formatTaskboardSessionTitle({ identifier: 'TASK-67' }, 'work')).toBe('67 实施');
+    expect(formatTaskboardSessionTitle({ identifier: 'TASK-71' }, 'merge')).toBe('71 合并');
+    expect(TASKBOARD_PURPOSE_LABELS).toEqual({ work: '实施', review: '复核', merge: '合并' });
+  });
+
+  it('未提供 purpose 时仅保留任务编号', () => {
+    expect(formatTaskboardSessionTitle({ identifier: 'TASK-50' })).toBe('50');
+  });
+
+  it('非 TASK- 前缀编号保持原样', () => {
+    expect(formatTaskboardSessionTitle({ identifier: 'TASK-ABC' }, 'work')).toBe('ABC 实施');
+    expect(formatTaskboardSessionTitle({ identifier: '35' }, 'review')).toBe('35 复核');
   });
 
   it('写入 generatedTitle 且保留人工 customTitle', async () => {
@@ -43,6 +59,7 @@ describe('任务看板会话标题', () => {
       getExecutionContextBySessionId: vi.fn(async () => ({
         identity: { tenantId: 'tenant-a', ownerUserId: 'user-1', username: 'alice' },
         task: { identifier: 'TASK-50', title: '优化标题生成逻辑' },
+        execution: { purpose: 'work' },
       })),
     };
 
@@ -59,7 +76,7 @@ describe('任务看板会话标题', () => {
     });
     expect(await readSessionMeta(transcriptPath)).toMatchObject({
       customTitle: '人工命名',
-      generatedTitle: 'TASK-50 优化标题生成逻辑',
+      generatedTitle: '50 实施',
     });
   });
 
@@ -73,7 +90,7 @@ describe('任务看板会话标题', () => {
       tenantId: 'tenant-a',
       channel: 'web',
       createdAt: '2026-08-16T06:00:00.000Z',
-      generatedTitle: 'TASK-50 优化标题生成逻辑',
+      generatedTitle: '50 实施',
     });
 
     const updated = await writeTaskboardSessionTitle({
@@ -81,6 +98,7 @@ describe('任务看板会话标题', () => {
         getExecutionContextBySessionId: vi.fn(async () => ({
           identity: { tenantId: 'tenant-a', ownerUserId: 'user-1', username: 'alice' },
           task: { identifier: 'TASK-50', title: '优化标题生成逻辑' },
+          execution: { purpose: 'work' },
         })),
       } as never,
       sessionId: 'taskboard-session',

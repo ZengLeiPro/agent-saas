@@ -15,6 +15,9 @@ const STALE_APPROVAL_REASON = 'stale_waiting_approval_timeout';
 const STALE_APPROVAL_BATCH_SIZE = 50;
 const BACKGROUND_COMMAND_START_TIMEOUT_MS = 2 * 60_000;
 const DEFAULT_MAX_CONCURRENT_RUNS = 16;
+export const SCHEDULER_STATE_METADATA_KEY = 'schedulerState';
+export const SCHEDULER_STATE_STAGED = 'staged';
+export const SCHEDULER_STATE_READY = 'ready';
 
 export interface RunLease {
   runId: string;
@@ -154,6 +157,40 @@ export class RuntimeScheduler {
     const { record } = await createPending(input);
     this.scheduleImmediateTick('enqueue-create-only');
     return record;
+  }
+
+  /**
+   * Makes a create-only staged pending run visible to recovery/lease scans.
+   * The RunStore CAS must return the current record when another worker already advanced it.
+   */
+  async activateCreatedRun(runId: string): Promise<RunRecord> {
+    const activateStagedRun = this.options.runStore.activateStagedRun?.bind(this.options.runStore);
+    if (!activateStagedRun) throw new Error('RunStore staged activation unavailable');
+    const activated = await activateStagedRun(runId);
+    if (!activated) throw new Error(`Runtime Run not found during activation: ${runId}`);
+    if (
+      activated.status === 'pending'
+      && activated.metadata?.[SCHEDULER_STATE_METADATA_KEY] === SCHEDULER_STATE_READY
+    ) {
+      this.scheduleImmediateTick('activate-created-run');
+    }
+    return activated;
+  }
+
+  /** Quarantines a deploy-era legacy pending Taskboard Run before dispatch retry validation. */
+  async stagePendingRun(runId: string): Promise<RunRecord> {
+    const stagePendingRun = this.options.runStore.stagePendingRun?.bind(this.options.runStore);
+    if (!stagePendingRun) throw new Error('RunStore pending staging unavailable');
+    const staged = await stagePendingRun(runId);
+    if (!staged) throw new Error(`Runtime Run not found during staging: ${runId}`);
+    return staged;
+  }
+
+  /** Stops a poison dispatch from leaving a pending Taskboard Run executable. */
+  async cancelPendingTaskboardRun(runId: string, reason: string): Promise<RunRecord | null> {
+    const cancelPendingTaskboardRun = this.options.runStore.cancelPendingTaskboardRun?.bind(this.options.runStore);
+    if (!cancelPendingTaskboardRun) throw new Error('RunStore pending Taskboard cancellation unavailable');
+    return cancelPendingTaskboardRun(runId, reason);
   }
 
   async start(): Promise<void> {

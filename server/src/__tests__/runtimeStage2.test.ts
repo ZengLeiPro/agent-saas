@@ -20,7 +20,7 @@ import {
 } from '../runtime/rawRuntimeRunDispatch.js';
 import type { RunStore } from '../runtime/runStore.js';
 import type { RuntimeSessionRecord, SessionCatalog } from '../runtime/sessionCatalog.js';
-import type { EventStore } from '../runtime/types.js';
+import type { EventStore, PlatformEvent } from '../runtime/types.js';
 import { runtimeRunController } from '../runtime/runController.js';
 import type { OutboundEvent } from '../types/index.js';
 
@@ -217,9 +217,18 @@ describe('runtime stage 2 primitives', () => {
 
     const first = await store.listPage?.('session-1', { limit: 2 });
     expect(first?.events.map((event) => event.type)).toEqual(['run_started', 'user_message']);
+    expect(first?.events.map((event) => (event as typeof event & { sequence?: number }).sequence)).toEqual([1, 2]);
+    expect(first?.nextCursor).toBe('2');
     expect(first?.hasMore).toBe(true);
-    const second = await store.listPage?.('session-1', { afterCursor: first?.nextCursor, limit: 2 });
+
+    // Reconnect must resume from the numeric read projection, never from the persisted
+    // UUID event id (which parseFileCursor would degrade to offset 0 and replay in full).
+    const reconnectCursor = String((first?.events.at(-1) as PlatformEvent & { sequence: number }).sequence);
+    expect(reconnectCursor).not.toBe(first?.events.at(-1)?.id);
+    const second = await store.listPage?.('session-1', { afterCursor: reconnectCursor, limit: 2 });
     expect(second?.events.map((event) => event.type)).toEqual(['assistant_message']);
+    expect(second?.events.map((event) => (event as typeof event & { sequence?: number }).sequence)).toEqual([3]);
+    expect(second?.nextCursor).toBeUndefined();
     expect(second?.hasMore).toBe(false);
   });
 

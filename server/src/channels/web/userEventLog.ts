@@ -8,6 +8,8 @@
  * 服务端从日志中回放漏掉的元数据事件，避免全量 loadSessions() HTTP 请求。
  */
 
+import { randomUUID } from 'node:crypto';
+
 /** 元数据事件类型白名单 */
 const METADATA_EVENT_TYPES = new Set([
   'title_updated',
@@ -30,6 +32,7 @@ export interface UserEvent {
 }
 
 interface UserLog {
+  epoch: string;
   events: UserEvent[];
   nextSeq: number;
   lastAccessAt: number;
@@ -40,8 +43,20 @@ const LOG_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const CLEANUP_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 
 export class UserEventLog {
+  /** 当前日志实例的随机代际，仅供没有 userId 的匿名 probe 使用。 */
+  readonly epoch = randomUUID();
   private logs = new Map<string, UserLog>();
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** 获取用户日志代际；首次访问及 TTL 删除后的重建都会分配新代际。 */
+  getEpoch(userId: string): string {
+    return this.getOrCreateLog(userId).epoch;
+  }
+
+  /** lastSeq=0 是首次同步；其余请求必须证明来自当前用户日志代际。 */
+  hasEpochMismatch(userId: string, clientEpoch: string | undefined, lastSeq: number): boolean {
+    return lastSeq > 0 && clientEpoch !== this.getEpoch(userId);
+  }
 
   start(): void {
     this.cleanupTimer = setInterval(() => this.cleanup(), CLEANUP_INTERVAL_MS);
@@ -60,13 +75,20 @@ export class UserEventLog {
     return 'type' in event && METADATA_EVENT_TYPES.has((event as { type: string }).type);
   }
 
-  /** 推送一条元数据事件到用户日志，返回分配的 seq */
-  push(userId: string, event: object): number {
+  private getOrCreateLog(userId: string): UserLog {
     let log = this.logs.get(userId);
     if (!log) {
-      log = { events: [], nextSeq: 1, lastAccessAt: Date.now() };
+      log = { epoch: randomUUID(), events: [], nextSeq: 1, lastAccessAt: Date.now() };
       this.logs.set(userId, log);
+    } else {
+      log.lastAccessAt = Date.now();
     }
+    return log;
+  }
+
+  /** 推送一条元数据事件到用户日志，返回分配的 seq */
+  push(userId: string, event: object): number {
+    const log = this.getOrCreateLog(userId);
 
     const seq = log.nextSeq++;
     log.lastAccessAt = Date.now();
@@ -84,15 +106,21 @@ export class UserEventLog {
   getEventsAfter(userId: string, lastSeq: number): { events: UserEvent[]; gapDetected: boolean } {
     const log = this.logs.get(userId);
     if (!log || log.events.length === 0) {
-      return { events: [], gapDetected: false };
+      return { events: [], gapDetected: lastSeq > 0 };
     }
 
     log.lastAccessAt = Date.now();
 
     const oldestSeq = log.events[0].seq;
+    const currentSeq = log.nextSeq - 1;
+
+    // 客户端 seq 超前说明服务端日志来自重启后的新实例/其它副本，必须全量恢复
+    if (lastSeq > currentSeq) {
+      return { events: [], gapDetected: true };
+    }
 
     // 客户端已经是最新的
-    if (lastSeq >= log.nextSeq - 1) {
+    if (lastSeq === currentSeq) {
       return { events: [], gapDetected: false };
     }
 

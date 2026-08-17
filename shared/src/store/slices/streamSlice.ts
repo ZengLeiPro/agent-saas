@@ -23,6 +23,7 @@ export const createStreamSlice: StateCreator<ChatStore, [], [], StreamSlice> = (
   blockState: { ...INITIAL_BLOCK_STATE },
   pendingMessage: null,
   lastUserSeq: 0,
+  lastUserEpoch: null,
 
   setLoading: (v) => set({ loading: v }),
   setStopping: (v) => set({ stopping: v }),
@@ -41,4 +42,5 @@ export const createStreamSlice: StateCreator<ChatStore, [], [], StreamSlice> = (
   setBlockState: (state) => set({ blockState: state }),
   setPendingMessage: (msg) => set({ pendingMessage: msg }),
   setLastUserSeq: (seq) => set({ lastUserSeq: seq }),
+  setLastUserEpoch: (epoch) => set({ lastUserEpoch: epoch }),
 });

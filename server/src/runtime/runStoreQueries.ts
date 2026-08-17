@@ -90,6 +90,53 @@ export class PgRunStoreQueries {
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
   }
 
+  async activateStagedRun(runId: string): Promise<RunRecord | null> {
+    return this.updateSchedulerState(runId, "metadata->>'schedulerState' = 'staged'", 'ready', false);
+  }
+
+  async stagePendingRun(runId: string): Promise<RunRecord | null> {
+    return this.updateSchedulerState(runId, "NOT (metadata ? 'schedulerState')", 'staged', true);
+  }
+
+  private async updateSchedulerState(
+    runId: string,
+    schedulerStatePredicate: string,
+    schedulerState: 'staged' | 'ready',
+    requireTaskboardExecution: boolean,
+  ): Promise<RunRecord | null> {
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      UPDATE ${this.runsTable}
+      SET metadata = jsonb_set(metadata, '{schedulerState}', to_jsonb($2::text), true),
+          updated_at = clock_timestamp()
+      WHERE run_id = $1
+        AND status = 'pending'
+        ${requireTaskboardExecution ? "AND metadata->>'taskboardExecution' = 'true'" : ''}
+        AND ${schedulerStatePredicate}
+      RETURNING row_to_json(${this.runsTable}.*) AS row_json
+    `, [runId, schedulerState]);
+    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : this.get(runId);
+  }
+
+  async cancelPendingTaskboardRun(runId: string, reason: string): Promise<RunRecord | null> {
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      WITH cancellation_time AS (SELECT clock_timestamp() AS now)
+      UPDATE ${this.runsTable}
+      SET status = 'cancelled',
+          status_reason = $2,
+          updated_at = cancellation_time.now,
+          cancelled_at = COALESCE(cancelled_at, cancellation_time.now),
+          worker_id = NULL,
+          lease_expires_at = NULL,
+          metadata = metadata - 'wakeMessage'
+      FROM cancellation_time
+      WHERE run_id = $1
+        AND status = 'pending'
+        AND metadata->>'taskboardExecution' = 'true'
+      RETURNING row_to_json(${this.runsTable}.*) AS row_json
+    `, [runId, reason]);
+    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : this.get(runId);
+  }
+
   async markStatusIfCurrent(
     runId: string,
     expectedStatuses: readonly RunStatus[],
@@ -301,6 +348,10 @@ export class PgRunStoreQueries {
         run.status = 'pending'
         OR (run.status = 'running' AND (run.lease_expires_at IS NULL OR run.lease_expires_at < $1))
       )
+        AND NOT (
+          run.status = 'pending'
+          AND COALESCE(run.metadata->>'schedulerState', '') = 'staged'
+        )
         AND NOT EXISTS (
           SELECT 1
           FROM ${this.steeringInputsTable} input
@@ -415,6 +466,10 @@ export class PgRunStoreQueries {
             candidate.status = 'pending'
             OR (candidate.status = 'running' AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at < $4))
           )
+          AND NOT (
+            candidate.status = 'pending'
+            AND COALESCE(candidate.metadata->>'schedulerState', '') = 'staged'
+          )
           AND (
             candidate.status <> 'pending'
             OR NOT EXISTS (
@@ -439,7 +494,10 @@ export class PgRunStoreQueries {
             JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
             WHERE input.source_run_id = candidate.run_id
               AND (
-                input.state = 'reserved'
+                (
+                  input.state = 'reserved'
+                  AND target.status NOT IN ('completed','failed','cancelled','orphaned')
+                )
                 OR (
                   input.state = 'pending'
                   AND target.status IN ('pending','running','waiting_hand')

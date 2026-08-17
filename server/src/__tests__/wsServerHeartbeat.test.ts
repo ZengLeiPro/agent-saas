@@ -58,7 +58,9 @@ describe('WsServer heartbeat', () => {
       const messagePromise = waitMessage(ws);
 
       await waitOpen(ws);
-      await expect(messagePromise).resolves.toEqual({ data: { type: 'pong', probe: true } });
+      await expect(messagePromise).resolves.toEqual({
+        data: { type: 'pong', probe: true, epoch: wsServer.userEventLog.epoch },
+      });
       expect(wsServer.clientCount).toBe(0);
     });
   });
@@ -74,13 +76,15 @@ describe('WsServer heartbeat', () => {
       ws.send(JSON.stringify({ action: 'ping', lastSeq: 0, clientTs: Date.now() }));
 
       await waitUntil(() => messages.length >= 2);
+      const userEpoch = wsServer.userEventLog.getEpoch('user-1');
       expect(messages[0]).toEqual({
-        data: { type: 'pong', seq: 1 },
+        data: { type: 'pong', seq: 1, epoch: userEpoch },
       });
       expect(messages[1]).toEqual({
         data: {
           type: 'sync_ok',
           seq: 1,
+          epoch: userEpoch,
           events: [
             {
               seq: 1,
@@ -91,6 +95,61 @@ describe('WsServer heartbeat', () => {
         },
       });
 
+      ws.close();
+    });
+  });
+
+  it('legacy client without epoch overflows once per socket and again after the user epoch rotates', async () => {
+    await withWsServer(async ({ url, wsServer }) => {
+      wsServer.userEventLog.push('user-1', { type: 'session_updated', sessionId: 'session-1' });
+      const firstEpoch = wsServer.userEventLog.getEpoch('user-1');
+      const ws = new WebSocket(url);
+      const messages: any[] = [];
+      ws.on('message', (raw) => messages.push(JSON.parse(raw.toString())));
+      await waitOpen(ws);
+
+      ws.send(JSON.stringify({ action: 'ping', lastSeq: 1 }));
+      await waitUntil(() => messages.length >= 2);
+      expect(messages.slice(0, 2)).toEqual([
+        { data: { type: 'pong', seq: 1, epoch: firstEpoch } },
+        { data: { type: 'sync_overflow', seq: 1, epoch: firstEpoch } },
+      ]);
+
+      ws.send(JSON.stringify({ action: 'ping', lastSeq: 1 }));
+      await waitUntil(() => messages.length >= 3);
+      expect(messages[2]).toEqual({ data: { type: 'pong', seq: 1, epoch: firstEpoch } });
+
+      // 模拟 TTL 删除后的日志重建：seq 回到 1，但用户 epoch 必须换代。
+      wsServer.userEventLog.stop();
+      wsServer.userEventLog.push('user-1', { type: 'session_updated', sessionId: 'session-2' });
+      const nextEpoch = wsServer.userEventLog.getEpoch('user-1');
+      expect(nextEpoch).not.toBe(firstEpoch);
+      ws.send(JSON.stringify({ action: 'ping', lastSeq: 1 }));
+      await waitUntil(() => messages.length >= 5);
+      expect(messages.slice(3)).toEqual([
+        { data: { type: 'pong', seq: 1, epoch: nextEpoch } },
+        { data: { type: 'sync_overflow', seq: 1, epoch: nextEpoch } },
+      ]);
+      ws.close();
+    });
+  });
+
+  it('forces overflow when a positive lastSeq has a stale epoch even if seq matches', async () => {
+    await withWsServer(async ({ url, wsServer }) => {
+      wsServer.userEventLog.push('user-1', { type: 'session_updated', sessionId: 'session-1' });
+      const ws = new WebSocket(url);
+      const messages: any[] = [];
+      ws.on('message', (raw) => messages.push(JSON.parse(raw.toString())));
+      await waitOpen(ws);
+
+      ws.send(JSON.stringify({ action: 'ping', lastSeq: 1, epoch: 'previous-instance' }));
+      await waitUntil(() => messages.length >= 2);
+
+      const userEpoch = wsServer.userEventLog.getEpoch('user-1');
+      expect(messages).toEqual([
+        { data: { type: 'pong', seq: 1, epoch: userEpoch } },
+        { data: { type: 'sync_overflow', seq: 1, epoch: userEpoch } },
+      ]);
       ws.close();
     });
   });

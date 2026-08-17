@@ -416,12 +416,56 @@ describe('PgRunStore steering inbox', () => {
         expect(sql.match(/AND target\.status IN \('pending','running','waiting_hand'\)/g)).toHaveLength(1);
         expect(sql).toContain("input.state = 'reserved'\n                AND target.status NOT IN ('completed','failed','cancelled','orphaned')");
         expect(sql).not.toContain(`'waiting_user','waiting_hand'`);
+        expect(sql).toContain("COALESCE(run.metadata->>'schedulerState', '') = 'staged'");
         return { rows: [] };
       }),
     };
     const store = new PgRunStore({ pool: pool as any });
     await store.listRecoverable();
     expect(pool.query).toHaveBeenCalled();
+  });
+
+  it('acquires a lease for a reserved source after its steering target becomes terminal', async () => {
+    const now = new Date().toISOString();
+    let leaseUpdateSql = '';
+    const client = {
+      query: async (sql: string) => {
+        const normalizedSql = sql.trim();
+        if (normalizedSql.includes('SELECT session_id FROM runtime_runs')) {
+          return { rows: [{ session_id: 'session-reserved-terminal' }] };
+        }
+        if (normalizedSql.includes('UPDATE runtime_runs candidate')) {
+          leaseUpdateSql = normalizedSql;
+          const reservedOnlyBlocksLiveTarget = /input\.state = 'reserved'\s+AND target\.status NOT IN \('completed','failed','cancelled','orphaned'\)/.test(normalizedSql);
+          return reservedOnlyBlocksLiveTarget
+            ? { rows: [{ row_json: {
+                run_id: 'source-reserved-terminal',
+                session_id: 'session-reserved-terminal',
+                status: 'running',
+                worker_id: 'worker-reserved-terminal',
+                requested_at: now,
+                updated_at: now,
+              } }] }
+            : { rows: [] };
+        }
+        return { rows: [] };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    await expect(store.acquireLease('source-reserved-terminal', 'worker-reserved-terminal', 60_000))
+      .resolves.toMatchObject({
+        runId: 'source-reserved-terminal',
+        status: 'running',
+        workerId: 'worker-reserved-terminal',
+      });
+    expect(leaseUpdateSql).toMatch(
+      /input\.state = 'reserved'\s+AND target\.status NOT IN \('completed','failed','cancelled','orphaned'\)/,
+    );
+    expect(leaseUpdateSql).toContain(
+      "COALESCE(candidate.metadata->>'schedulerState', '') = 'staged'",
+    );
   });
 
   it('cancels a pending steering source and rejects late withdrawal (2026-08-04 终态设计)', async () => {
@@ -599,9 +643,11 @@ describe('PgRunStore steering inbox', () => {
 
   it('reports targetCancelled from the actual stop UPDATE and includes human waiting states', async () => {
     const queries: string[] = [];
+    const queryCalls: Array<{ sql: string; params: unknown[] }> = [];
     const client = {
-      query: async (sql: string) => {
+      query: async (sql: string, params: unknown[] = []) => {
         queries.push(sql.trim());
+        queryCalls.push({ sql: sql.trim(), params });
         if (sql.includes("worker_id = NULL") && sql.includes("RETURNING run_id")) {
           return { rows: [{ run_id: 'waiting-run' }], rowCount: 1 };
         }
@@ -636,6 +682,12 @@ describe('PgRunStore steering inbox', () => {
     expect(targetUpdate).toContain("'waiting_approval'");
     expect(queries.findIndex((sql) => sql.includes('UPDATE runtime_tool_invocations')))
       .toBeLessThan(queries.findIndex((sql) => sql === 'COMMIT'));
+    const eventLockIndex = queries.findIndex((sql, index) => sql.includes('pg_advisory_xact_lock')
+      && queryCalls[index]?.params[0] === 'runtime_events:global-sequence-commit-order');
+    const firstEventInsertIndex = queries.findIndex((sql) => sql.includes('INSERT INTO runtime_events'));
+    expect(eventLockIndex).toBeGreaterThan(-1);
+    expect(eventLockIndex).toBeLessThan(firstEventInsertIndex);
+    expect(queryCalls[eventLockIndex]?.params).toEqual(['runtime_events:global-sequence-commit-order']);
     expect(queries.filter((sql) => sql.includes('INSERT INTO runtime_events'))).toHaveLength(2);
   });
 

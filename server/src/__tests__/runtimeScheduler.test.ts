@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { RuntimeScheduler } from '../runtime/scheduler.js';
+import {
+  RuntimeScheduler,
+  SCHEDULER_STATE_METADATA_KEY,
+  SCHEDULER_STATE_READY,
+  SCHEDULER_STATE_STAGED,
+} from '../runtime/scheduler.js';
 import type { RunRecord, RunStatus, UpsertRunInput } from '../runtime/runStore.js';
 import { deferred, MemoryEventStore, MemoryRunStore } from './runtimeScheduler.testHelpers.js';
 
@@ -9,6 +14,129 @@ async function flushSchedulerMicrotasks(): Promise<void> {
 }
 
 describe('RuntimeScheduler', () => {
+  it('keeps staged pending runs out of recovery and lease acquisition', async () => {
+    const runStore = new MemoryRunStore();
+    await runStore.createPending({
+      runId: 'run-staged',
+      sessionId: 'session-staged',
+      metadata: { [SCHEDULER_STATE_METADATA_KEY]: SCHEDULER_STATE_STAGED },
+    });
+
+    await expect(runStore.listRecoverable()).resolves.toEqual([]);
+    await expect(runStore.acquireLease('run-staged', 'worker-staged', 60_000)).resolves.toBeNull();
+  });
+
+  it('does not wake while session setup is blocked, then schedules after activation', async () => {
+    const runStore = new MemoryRunStore();
+    const wake = vi.fn(async (_record, lease) => {
+      await lease.release('completed', 'done');
+    });
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore: new MemoryEventStore(),
+      workerId: 'worker-staged-activation',
+      pollIntervalMs: 60_000,
+      autoWake: true,
+      wake,
+    });
+    await scheduler.start();
+    const setupGate = deferred();
+    await scheduler.enqueueCreateOnly({
+      runId: 'run-staged-activation',
+      sessionId: 'session-staged-activation',
+      metadata: { [SCHEDULER_STATE_METADATA_KEY]: SCHEDULER_STATE_STAGED },
+    });
+
+    await flushSchedulerMicrotasks();
+    await scheduler.tick();
+    expect(wake).not.toHaveBeenCalled();
+
+    setupGate.resolve();
+    await setupGate.promise;
+    await expect(scheduler.activateCreatedRun('run-staged-activation')).resolves.toMatchObject({
+      status: 'pending',
+      metadata: { [SCHEDULER_STATE_METADATA_KEY]: SCHEDULER_STATE_READY },
+    });
+    await vi.waitFor(() => expect(wake).toHaveBeenCalledTimes(1));
+    await scheduler.stop();
+  });
+
+  it('stages only legacy pending Taskboard runs and observes a concurrent running winner', async () => {
+    const runStore = new MemoryRunStore();
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore: new MemoryEventStore(),
+    });
+    await runStore.createPending({
+      runId: 'run-legacy-stage',
+      sessionId: 'session-legacy-stage',
+      metadata: { taskboardExecution: true },
+    });
+    await expect(scheduler.stagePendingRun('run-legacy-stage')).resolves.toMatchObject({
+      status: 'pending',
+      metadata: { taskboardExecution: true, schedulerState: SCHEDULER_STATE_STAGED },
+    });
+
+    await runStore.createPending({
+      runId: 'run-legacy-stage-race',
+      sessionId: 'session-legacy-stage-race',
+      metadata: { taskboardExecution: true },
+    });
+    await runStore.markStatus('run-legacy-stage-race', 'running');
+    await expect(scheduler.stagePendingRun('run-legacy-stage-race')).resolves.toMatchObject({
+      status: 'running',
+      metadata: { taskboardExecution: true },
+    });
+    await expect(runStore.get('run-legacy-stage-race')).resolves.toMatchObject({ status: 'running' });
+  });
+
+  it('concurrent activation never demotes a run that already acquired its lease', async () => {
+    const runStore = new MemoryRunStore();
+    await runStore.createPending({
+      runId: 'run-concurrent-activation',
+      sessionId: 'session-concurrent-activation',
+      metadata: { [SCHEDULER_STATE_METADATA_KEY]: SCHEDULER_STATE_STAGED },
+    });
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore: new MemoryEventStore(),
+      workerId: 'worker-concurrent-activation',
+    });
+
+    const [, leased, observed] = await Promise.all([
+      runStore.activateStagedRun('run-concurrent-activation'),
+      runStore.acquireLease('run-concurrent-activation', 'other-worker', 60_000),
+      scheduler.activateCreatedRun('run-concurrent-activation'),
+    ]);
+
+    expect(leased).toMatchObject({ status: 'running', workerId: 'other-worker' });
+    expect(observed).toMatchObject({ status: 'running', workerId: 'other-worker' });
+    await expect(runStore.get('run-concurrent-activation')).resolves.toMatchObject({
+      status: 'running',
+      workerId: 'other-worker',
+    });
+  });
+
+  it.each(['running', 'completed', 'failed', 'cancelled', 'orphaned'] as const)(
+    'activation is idempotent for an already %s run',
+    async (status) => {
+      const runStore = new MemoryRunStore();
+      await runStore.createPending({
+        runId: `run-activation-${status}`,
+        sessionId: `session-activation-${status}`,
+        metadata: { [SCHEDULER_STATE_METADATA_KEY]: SCHEDULER_STATE_STAGED },
+      });
+      await runStore.markStatus(`run-activation-${status}`, status);
+      const scheduler = new RuntimeScheduler({
+        runStore,
+        eventStore: new MemoryEventStore(),
+      });
+
+      await expect(scheduler.activateCreatedRun(`run-activation-${status}`)).resolves.toMatchObject({ status });
+      await expect(runStore.get(`run-activation-${status}`)).resolves.toMatchObject({ status });
+    },
+  );
+
   it('create-only enqueue returns an existing waiting run without resuming it', async () => {
     const runStore = new MemoryRunStore();
     const input: UpsertRunInput = {

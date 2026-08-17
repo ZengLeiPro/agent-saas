@@ -219,6 +219,7 @@ onMessageQueued: (event) => {
     if (existing) {
       return prev.map((entry) => entry.clientMsgId === event.clientMsgId ? {
         ...entry,
+        sessionId: event.sessionId,
         status: 'queued' as const,
         sourceRunId: event.runId,
         deliveryMode: event.deliveryMode,
@@ -228,6 +229,7 @@ onMessageQueued: (event) => {
     }
     return [...prev, {
       clientMsgId: event.clientMsgId,
+      sessionId: event.sessionId,
       sourceRunId: event.runId,
       ...(event.targetRunId ? { targetRunId: event.targetRunId } : {}),
       deliveryMode: event.deliveryMode,

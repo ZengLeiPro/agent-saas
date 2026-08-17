@@ -16,6 +16,11 @@ const NOTIFY_RANGE_PAGE_LIMIT = 250;
 const DEFAULT_POOL_MAX = 6;
 const PG_TOO_MANY_CONNECTIONS = '53300';
 
+/** Shared by every runtime_events writer. */
+export function pgEventGlobalSequenceLockKey(eventsTable: string): string {
+  return `${eventsTable}:global-sequence-commit-order`;
+}
+
 function isPgConnectionCapacityError(err: unknown): boolean {
   return typeof err === 'object'
     && err !== null
@@ -54,13 +59,13 @@ export interface SubscribeAppendedOptions {
   /** 重连退避上限（ms）。默认 15000。 */
   maxReconnectDelayMs?: number;
   /**
-   * 安全轮询周期（ms）：周期性对所有已跟踪会话从水位 drain，兜底"连接没断但单条
+   * 安全轮询周期（ms）：周期性从 durable global_sequence 水位 drain，兜底"连接没断但
    * NOTIFY 丢失"的情况。设 0 关闭。默认 10000。
    */
   safetyPollIntervalMs?: number;
-  /** 内存跟踪的会话水位上限（LRU 淘汰）。默认 10000。 */
+  /** @deprecated 全局水位不再需要按 session 跟踪；保留字段仅兼容旧配置。 */
   maxTrackedSessions?: number;
-  /** 单次 drain 分页大小。默认 NOTIFY_RANGE_PAGE_LIMIT(250)。 */
+  /** 单次全局 drain 分页大小。默认 NOTIFY_RANGE_PAGE_LIMIT(250)。 */
   drainPageLimit?: number;
 }
 
@@ -92,6 +97,27 @@ export class PgEventStore implements EventStore {
         error: err instanceof Error ? err.message : String(err),
       });
     });
+  }
+
+  private async queryWithEventsShareLock<Row extends pg.QueryResultRow>(
+    text: string,
+    params?: unknown[],
+  ): Promise<pg.QueryResult<Row>> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // SHARE conflicts with the ROW EXCLUSIVE lock held by INSERT. PostgreSQL's lock queue also
+      // keeps later INSERTs behind this pending/granted reader until the SELECT snapshot is read.
+      await client.query(`LOCK TABLE ${this.eventsTable} IN SHARE MODE`);
+      const result = await client.query<Row>(text, params);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async init(): Promise<void> {
@@ -188,6 +214,11 @@ export class PgEventStore implements EventStore {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      // Keep new writers commit-ordered as an optimization; read-side SHARE locking below is the
+      // compatibility guarantee for rolling-deploy writers that do not take this advisory lock.
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        pgEventGlobalSequenceLockKey(this.eventsTable),
+      ]);
       await client.query(
         `INSERT INTO ${this.cursorsTable} (session_id, next_sequence)
          VALUES ($1, 1)
@@ -451,7 +482,7 @@ export class PgEventStore implements EventStore {
     hasMore: boolean;
   }> {
     const limit = options.limit && options.limit > 0 ? options.limit : 500;
-    const result = await this.pool.query<{
+    const result = await this.queryWithEventsShareLock<{
       global_sequence: string;
       session_sequence: string;
       tenant_id: string;
@@ -626,19 +657,13 @@ export class PgEventStore implements EventStore {
    * Subscribe to events appended by this or other server processes using PG
    * LISTEN/NOTIFY.
    *
-   * 门禁加固（2026-06-22）：原实现单 Client 单次 LISTEN，无重连、无断线 catch-up、
-   * 无消费水位——LISTEN 连接一断，期间 commit 的事件 NOTIFY 全丢且永不补拉（跨进程
-   * silent data loss）。现加三层保证：
-   *   1. 每会话消费水位 `delivered`（已投递的最高 session_sequence）。
-   *   2. NOTIFY 只作"该会话有新事件"的触发信号；实际投递走 `drainSession`——从水位
-   *      之后用 `listPage` 拉全部新事件。所以丢一条 NOTIFY 会被下一条 NOTIFY / 重连 /
-   *      安全轮询自动补齐（不漏）；水位严格单调 + `session_sequence > cursor`（不重）。
-   *   3. LISTEN 连接 error/end 自动重连（指数退避），重连后对所有已跟踪会话 catch-up；
-   *      可选安全轮询周期 drain，兜底"连接没断但单条 NOTIFY 丢"的极端情况。
-   * 旧 event-id payload 仍按单事件直投（兼容，不接入水位）。
+   * NOTIFY 只作低延迟 wake。durable 投递始终扫描单调 global_sequence 水位；读取订阅
+   * boundary 和每一页水位前，短事务都会在 events table 上取得 SHARE lock。该锁等待旧
+   * writer INSERT 持有的 ROW EXCLUSIVE 事务结束，并阻止后续 writer 在 SELECT 完成前
+   * 插入，因此滚动发布期间即使旧 writer 不拿 advisory lock，也不会越过未提交的低序号。
    *
-   * 首会话用 NOTIFY 的 afterCursor 初始化水位，所以只投订阅点之后的事件，不回放历史
-   *（与原实现语义一致）。
+   * callback 成功后才推进水位；LISTEN 重连与安全轮询使用同一锁定读取路径，所以丢失
+   * NOTIFY 仍可恢复，且不依赖 payload exact hint。
    */
   async subscribeAppended(
     onEvent: (event: PlatformEvent) => void | Promise<void>,
@@ -647,115 +672,123 @@ export class PgEventStore implements EventStore {
     const reconnectBaseDelayMs = options.reconnectDelayMs ?? 1_000;
     const reconnectMaxDelayMs = options.maxReconnectDelayMs ?? 15_000;
     const safetyPollIntervalMs = options.safetyPollIntervalMs ?? 10_000;
-    const maxTrackedSessions = options.maxTrackedSessions ?? 10_000;
-    const drainPageLimit = options.drainPageLimit ?? NOTIFY_RANGE_PAGE_LIMIT;
+    const drainPageLimit =
+      options.drainPageLimit && options.drainPageLimit > 0
+        ? options.drainPageLimit
+        : NOTIFY_RANGE_PAGE_LIMIT;
 
-    const delivered = new Map<string, number>();
-    const draining = new Set<string>();
-    const redo = new Set<string>();
+    let globalWatermark = 0n;
+    let drainPromise: Promise<void> | null = null;
+    let redo = false;
     let closed = false;
     let client: InstanceType<typeof Client> | null = null;
+    let connectAttempt: Promise<void> | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let reconnectDelay = reconnectBaseDelayMs;
 
-    // LRU：把会话挪到 Map 末尾并淘汰最旧的，防内存无界增长。
-    const touch = (sessionId: string): void => {
-      const value = delivered.get(sessionId);
-      if (value !== undefined) {
-        delivered.delete(sessionId);
-        delivered.set(sessionId, value);
-      }
-      while (delivered.size > maxTrackedSessions) {
-        const oldest = delivered.keys().next().value as string | undefined;
-        if (oldest === undefined) break;
-        delivered.delete(oldest);
-      }
+    const readGlobalBoundary = async (): Promise<bigint> => {
+      const result = await this.queryWithEventsShareLock<{ global_sequence: string }>(
+        `SELECT COALESCE(MAX(global_sequence), 0)::text AS global_sequence
+         FROM ${this.eventsTable}`,
+      );
+      return BigInt(result.rows[0]?.global_sequence ?? '0');
     };
 
-    const safeOnEvent = async (event: PlatformEvent): Promise<void> => {
-      try {
-        await onEvent(event);
-      } catch (err) {
-        this.options.logger?.warn?.('PgEventStore subscriber onEvent failed', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    };
-
-    // 从水位之后拉全部新事件并投递，严格单调推进水位。per-session 串行（draining
-    // guard + redo flag）——并发触发（live NOTIFY / 重连 catch-up / 安全轮询）折叠成
-    // 一次顺序 drain，避免重复投递与水位竞争。
-    const drainSession = async (sessionId: string): Promise<void> => {
-      if (closed) return;
-      if (draining.has(sessionId)) {
-        redo.add(sessionId);
-        return;
-      }
-      draining.add(sessionId);
-      try {
-        do {
-          redo.delete(sessionId);
-          touch(sessionId);
-          while (!closed) {
-            const after = delivered.get(sessionId) ?? 0;
-            const page = await this.listPage(sessionId, { afterCursor: String(after), limit: drainPageLimit });
-            if (page.events.length === 0) break;
-            for (const event of page.events) {
-              await safeOnEvent(event);
-              const seq = Number((event as { sequence?: number }).sequence);
-              // 投递成功后才推进水位；非法 seq 时容错跳过（不卡死整条流）。
-              if (Number.isFinite(seq) && seq > (delivered.get(sessionId) ?? 0)) {
-                delivered.set(sessionId, seq);
-              }
-            }
-            if (!page.hasMore) break;
+    const drainGlobalWatermark = async (): Promise<void> => {
+      while (!closed) {
+        const result = await this.queryWithEventsShareLock<{
+          global_sequence: string;
+          event_json: PlatformEvent;
+        }>(
+          `SELECT global_sequence, event_json
+           FROM ${this.eventsTable}
+           WHERE global_sequence > $1
+           ORDER BY global_sequence ASC
+           LIMIT $2`,
+          [globalWatermark.toString(), drainPageLimit],
+        );
+        if (result.rows.length === 0) break;
+        for (const row of result.rows) {
+          if (closed) return;
+          try {
+            await onEvent(normalizeEventJson(row.event_json));
+          } catch (err) {
+            this.options.logger?.warn?.(
+              'PgEventStore subscriber onEvent failed',
+              {
+                error: err instanceof Error ? err.message : String(err),
+              },
+            );
+            throw err;
           }
-        } while (redo.has(sessionId));
-      } catch (err) {
-        this.options.logger?.warn?.('PgEventStore subscriber drain failed', {
-          sessionId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      } finally {
-        draining.delete(sessionId);
+          // Advance only after callback success so a rejected callback remains retryable.
+          const sequence = BigInt(row.global_sequence);
+          if (sequence > globalWatermark) globalWatermark = sequence;
+        }
+        if (result.rows.length < drainPageLimit) break;
       }
     };
 
-    const catchUpAllSessions = (): void => {
-      for (const sessionId of [...delivered.keys()]) {
-        void drainSession(sessionId);
+    // redo coalesces notifications, reconnects, and polls received while a drain is in flight.
+    const drainGlobal = (): Promise<void> => {
+      if (closed) return Promise.resolve();
+      if (drainPromise) {
+        redo = true;
+        return drainPromise;
       }
+      drainPromise = (async () => {
+        let failed = false;
+        try {
+          do {
+            redo = false;
+            await drainGlobalWatermark();
+          } while (redo && !closed);
+        } catch (err) {
+          failed = true;
+          this.options.logger?.warn?.(
+            'PgEventStore subscriber global drain failed',
+            {
+              globalWatermark: globalWatermark.toString(),
+              error: err instanceof Error ? err.message : String(err),
+            },
+          );
+        } finally {
+          drainPromise = null;
+          // A wake received while a failing callback was in flight must not be swallowed.
+          // Consume that coalesced wake exactly once after releasing drainPromise. If the retry
+          // also fails without another wake, it stops here rather than forming a hot loop.
+          if (failed && redo && !closed) {
+            redo = false;
+            void drainGlobal();
+          }
+        }
+      })();
+      return drainPromise;
     };
 
-    const handleNotification = (message: { channel: string; payload?: string | undefined }): void => {
-      if (message.channel !== this.notifyChannel || !message.payload) return;
-      const decoded = decodePgEventNotifyPayload(message.payload);
-      if (decoded.kind === 'eventId') {
-        // 兼容旧 payload：单事件直投，不接入水位。
-        void (async () => {
-          const event = await this.getById(decoded.eventId).catch(() => null);
-          if (event) await safeOnEvent(event);
-        })();
-        return;
-      }
-      // range payload：首见会话用 afterCursor 初始化水位（只从订阅点之后投，不回放历史）。
-      if (!delivered.has(decoded.sessionId)) {
-        delivered.set(decoded.sessionId, parsePgCursor(decoded.afterCursor));
-      }
-      void drainSession(decoded.sessionId);
+    const handleNotification = (message: {
+      channel: string;
+      payload?: string | undefined;
+    }): void => {
+      if (message.channel !== this.notifyChannel) return;
+      void drainGlobal();
     };
 
-    const teardownClient = (target: InstanceType<typeof Client> | null): void => {
+    const teardownClient = async (
+      target: InstanceType<typeof Client> | null,
+    ): Promise<void> => {
       if (!target) return;
       target.removeAllListeners('notification');
       target.removeAllListeners('error');
       target.removeAllListeners('end');
-      target.end().catch(() => undefined);
+      await target.end().catch(() => undefined);
     };
 
     const connectOnce = async (): Promise<void> => {
-      const next = new Client({ connectionString: this.options.connectionString });
+      const next = new Client({
+        connectionString: this.options.connectionString,
+      });
       next.on('error', (err) => {
         this.options.logger?.warn?.('PgEventStore listener error', {
           error: err instanceof Error ? err.message : String(err),
@@ -770,27 +803,47 @@ export class PgEventStore implements EventStore {
         await next.connect();
         await next.query(`LISTEN ${this.notifyChannel}`);
       } catch (err) {
-        teardownClient(next);
+        await teardownClient(next);
         throw err;
+      }
+      // unsubscribe may close the subscription while connect/LISTEN is still in flight.
+      // Such a client must never become active, even briefly.
+      if (closed) {
+        await teardownClient(next);
+        return;
       }
       client = next;
       reconnectDelay = reconnectBaseDelayMs;
-      // (重)连接后对所有已跟踪会话 catch-up，补回断线窗口内 commit 的事件。
-      catchUpAllSessions();
+      // 初连补 subscription-boundary 到 LISTEN 生效之间的窗口；重连补断线窗口。
+      void drainGlobal();
+    };
+
+    const startConnectAttempt = (): Promise<void> => {
+      const attempt = connectOnce();
+      connectAttempt = attempt;
+      void attempt
+        .finally(() => {
+          if (connectAttempt === attempt) connectAttempt = null;
+        })
+        .catch(() => undefined);
+      return attempt;
     };
 
     const scheduleReconnect = (): void => {
       if (closed || reconnectTimer) return;
       const failed = client;
       client = null;
-      teardownClient(failed);
+      void teardownClient(failed);
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         if (closed) return;
-        connectOnce().catch((err) => {
-          this.options.logger?.warn?.('PgEventStore listener reconnect failed', {
-            error: err instanceof Error ? err.message : String(err),
-          });
+        startConnectAttempt().catch((err) => {
+          this.options.logger?.warn?.(
+            'PgEventStore listener reconnect failed',
+            {
+              error: err instanceof Error ? err.message : String(err),
+            },
+          );
           reconnectDelay = Math.min(reconnectDelay * 2, reconnectMaxDelayMs);
           scheduleReconnect();
         });
@@ -798,29 +851,35 @@ export class PgEventStore implements EventStore {
       reconnectTimer.unref?.();
     };
 
-    // 初次连接遇到 PG 连接额度耗尽时进入现有指数退避重连：主查询池已完成初始化，
-    // LISTEN 仅负责实时通知，安全轮询会兜底补拉，不应让蓝绿新色反复崩溃重启。
-    // 其他错误仍直接抛出，确保认证、DNS、SSL、数据库名等配置错误在启动期暴露。
+    // 订阅点是该 durable 边界：边界前已有事件永不回放。先取边界、后 LISTEN 产生的
+    // 窗口由首次 drain 补齐，因此连接建立过程也不漏新事件。
+    globalWatermark = await readGlobalBoundary();
+
+    // 初次连接遇到 PG 连接额度耗尽时进入指数退避；全局安全轮询仍可从订阅边界补拉。
     try {
-      await connectOnce();
+      await startConnectAttempt();
     } catch (err) {
       if (!isPgConnectionCapacityError(err)) throw err;
-      this.options.logger?.warn?.('PgEventStore listener initial connect deferred: connection capacity exhausted', {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      this.options.logger?.warn?.(
+        'PgEventStore listener initial connect deferred: connection capacity exhausted',
+        {
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
       scheduleReconnect();
     }
 
     if (safetyPollIntervalMs > 0) {
       pollTimer = setInterval(() => {
         if (closed) return;
-        catchUpAllSessions();
+        void drainGlobal();
       }, safetyPollIntervalMs);
       pollTimer.unref?.();
     }
 
     return async () => {
       closed = true;
+      const pendingConnect = connectAttempt;
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -832,9 +891,17 @@ export class PgEventStore implements EventStore {
       const active = client;
       client = null;
       if (active) {
-        await active.query(`UNLISTEN ${this.notifyChannel}`).catch(() => undefined);
-        teardownClient(active);
+        await active
+          .query(`UNLISTEN ${this.notifyChannel}`)
+          .catch(() => undefined);
+        await teardownClient(active);
       }
+      // A reconnect may currently be inside connect() or LISTEN. connectOnce observes closed after
+      // LISTEN and tears the new client down instead of publishing it as active.
+      await pendingConnect?.catch(() => undefined);
+      // Do not return while a callback already admitted by drainGlobal is still running.
+      // closed prevents any later row from entering the callback.
+      await drainPromise;
     };
   }
 }

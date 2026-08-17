@@ -138,6 +138,48 @@ export class EventBufferStore {
     entry.completionListeners.clear();
   }
 
+  /** Atomically catch up after an event ID and subscribe to future events.
+   *
+   *  This method is intentionally synchronous: no push/complete can interleave between
+   *  taking the catch-up snapshot and registering (or observing completion).
+   *  Returns null when the buffer is missing or already completed. */
+  subscribeFrom(
+    sessionId: string,
+    afterEventId: number,
+    onEvent: EventListener,
+    onComplete: CompletionListener,
+  ): (() => void) | null {
+    const entry = this.buffers.get(sessionId);
+    if (!entry) return null;
+
+    const startIdx = entry.events.findIndex(event => event.id > afterEventId);
+    const catchup = startIdx === -1 ? [] : entry.events.slice(startIdx);
+
+    if (entry.completed) {
+      for (const event of catchup) {
+        try { onEvent(event); } catch { /* silent */ }
+      }
+      try { onComplete(); } catch { /* silent */ }
+      return null;
+    }
+
+    // Register first so events produced after the snapshot cannot fall into a gap.
+    entry.listeners.add(onEvent);
+    entry.completionListeners.add(onComplete);
+    for (const event of catchup) {
+      try { onEvent(event); } catch { /* silent */ }
+    }
+
+    // A catch-up callback may synchronously complete the entry. In that case complete()
+    // has already notified and cleared both listener sets, so there is nothing to retain.
+    if (entry.completed) return null;
+
+    return () => {
+      entry.listeners.delete(onEvent);
+      entry.completionListeners.delete(onComplete);
+    };
+  }
+
   /** Subscribe to new events and completion for a session.
    *  Returns an unsubscribe function. */
   subscribe(

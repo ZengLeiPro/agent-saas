@@ -34,13 +34,20 @@ export interface StartToolInvocationInput {
   metadata?: Record<string, unknown>;
 }
 
+export type ToolInvocationRunGateRunState = string | {
+  status: string;
+  workerId?: string;
+  leaseExpiresAt?: string;
+};
+
 export type ToolInvocationRunGateResult<T> =
   | { invoked: true; result: T }
   | {
       invoked: false;
-      reason: 'run_missing' | 'run_terminal' | 'invocation_missing' | 'invocation_terminal' | 'cancel_requested' | 'invocation_claimed';
+      reason: 'run_missing' | 'run_terminal' | 'run_lease_lost' | 'invocation_missing' | 'invocation_terminal' | 'cancel_requested' | 'invocation_claimed';
       invocation: ToolInvocationRecord | null;
       runStatus?: string;
+      runWorkerId?: string;
     };
 
 export interface ToolInvocationStore {
@@ -53,7 +60,8 @@ export interface ToolInvocationStore {
     runId: string,
     invocationId: string,
     invoke: () => Promise<T>,
-    readRunStatus?: () => Promise<string | null>,
+    readRunStatus?: () => Promise<ToolInvocationRunGateRunState | null>,
+    expectedWorkerId?: string,
   ): Promise<ToolInvocationRunGateResult<T>>;
   complete(invocationId: string, status: Exclude<ToolInvocationStatus, 'running'>, error?: string): Promise<ToolInvocationRecord | null>;
   requestCancel(invocationId: string, reason?: string, metadataPatch?: Record<string, unknown>): Promise<ToolInvocationRecord | null>;
@@ -160,11 +168,21 @@ export class InMemoryToolInvocationStore implements ToolInvocationStore {
     const now = new Date().toISOString();
     const existing = this.invocations.get(input.invocationId);
     if (existing) {
+      const mergedMetadata = { ...existing.metadata, ...(input.metadata ?? {}) };
+      if (typeof existing.metadata.invokeClaimedAt === 'string') {
+        for (const key of ['workerId', 'invokeClaimedAt', 'invokeClaimedByWorkerId'] as const) {
+          if (Object.prototype.hasOwnProperty.call(existing.metadata, key)) {
+            mergedMetadata[key] = existing.metadata[key];
+          } else {
+            delete mergedMetadata[key];
+          }
+        }
+      }
       const updated: ToolInvocationRecord = {
         ...existing,
         updatedAt: now,
         tenantId: input.tenantId ?? existing.tenantId,
-        metadata: { ...existing.metadata, ...(input.metadata ?? {}) },
+        metadata: mergedMetadata,
       };
       this.invocations.set(input.invocationId, updated);
       return updated;
@@ -190,18 +208,32 @@ export class InMemoryToolInvocationStore implements ToolInvocationStore {
     runId: string,
     invocationId: string,
     invoke: () => Promise<T>,
-    readRunStatus?: () => Promise<string | null>,
+    readRunStatus?: () => Promise<ToolInvocationRunGateRunState | null>,
+    expectedWorkerId?: string,
   ): Promise<ToolInvocationRunGateResult<T>> {
-    const runStatus = readRunStatus ? await readRunStatus() : null;
+    const runState = readRunStatus ? await readRunStatus() : null;
+    const runStatus = typeof runState === 'string' ? runState : runState?.status;
+    const structuredRunState = typeof runState === 'object' && runState ? runState : undefined;
+    const runWorkerId = structuredRunState?.workerId;
+    const leaseExpiresAt = structuredRunState?.leaseExpiresAt;
+    const leaseExpiresAtMs = leaseExpiresAt ? Date.parse(leaseExpiresAt) : Number.NaN;
     const invocation = this.invocations.get(invocationId) ?? null;
+    if (readRunStatus && !runStatus) {
+      return { invoked: false, reason: 'run_missing', invocation };
+    }
+    if (expectedWorkerId && (
+      runStatus !== 'running'
+      || runWorkerId !== expectedWorkerId
+      || !Number.isFinite(leaseExpiresAtMs)
+      || leaseExpiresAtMs <= Date.now()
+    )) {
+      return { invoked: false, reason: 'run_lease_lost', invocation, runStatus, runWorkerId };
+    }
     if (!invocation || invocation.runId !== runId) {
       return { invoked: false, reason: 'invocation_missing', invocation: null };
     }
     if (typeof invocation.metadata.invokeClaimedAt === 'string') {
       return { invoked: false, reason: 'invocation_claimed', invocation };
-    }
-    if (readRunStatus && !runStatus) {
-      return { invoked: false, reason: 'run_missing', invocation };
     }
     if (runStatus && ['completed', 'failed', 'cancelled', 'orphaned'].includes(runStatus)) {
       return { invoked: false, reason: 'run_terminal', invocation, runStatus };
@@ -215,7 +247,15 @@ export class InMemoryToolInvocationStore implements ToolInvocationStore {
     const claimed: ToolInvocationRecord = {
       ...invocation,
       updatedAt: new Date().toISOString(),
-      metadata: { ...invocation.metadata, invokeClaimedAt: new Date().toISOString() },
+      metadata: {
+        ...invocation.metadata,
+        invokeClaimedAt: new Date().toISOString(),
+        ...(expectedWorkerId
+          ? { invokeClaimedByWorkerId: expectedWorkerId }
+          : typeof invocation.metadata.workerId === 'string'
+            ? { invokeClaimedByWorkerId: invocation.metadata.workerId }
+            : {}),
+      },
     };
     this.invocations.set(invocationId, claimed);
     return { invoked: true, result: await invoke() };
@@ -491,9 +531,19 @@ export class PgToolInvocationStore implements ToolInvocationStore {
               THEN COALESCE(${this.toolInvocationsTable}.error, EXCLUDED.error)
             ELSE ${this.toolInvocationsTable}.error
           END,
-          metadata = ${this.toolInvocationsTable}.metadata || CASE
-            WHEN ${this.toolInvocationsTable}.status = 'running' THEN EXCLUDED.metadata
-            ELSE EXCLUDED.metadata - 'cancelRecovery' - 'terminalRunStatus'
+          metadata = CASE
+            WHEN ${this.toolInvocationsTable}.metadata ? 'invokeClaimedAt' THEN
+              ${this.toolInvocationsTable}.metadata || (
+                CASE
+                  WHEN ${this.toolInvocationsTable}.status = 'running' THEN EXCLUDED.metadata
+                  ELSE EXCLUDED.metadata - 'cancelRecovery' - 'terminalRunStatus'
+                END
+                - 'workerId' - 'invokeClaimedAt' - 'invokeClaimedByWorkerId'
+              )
+            ELSE ${this.toolInvocationsTable}.metadata || CASE
+              WHEN ${this.toolInvocationsTable}.status = 'running' THEN EXCLUDED.metadata
+              ELSE EXCLUDED.metadata - 'cancelRecovery' - 'terminalRunStatus'
+            END
           END
         RETURNING *
       `, [
@@ -524,14 +574,15 @@ export class PgToolInvocationStore implements ToolInvocationStore {
     runId: string,
     invocationId: string,
     invoke: () => Promise<T>,
-    _readRunStatus?: () => Promise<string | null>,
+    _readRunStatus?: () => Promise<ToolInvocationRunGateRunState | null>,
+    expectedWorkerId?: string,
   ): Promise<ToolInvocationRunGateResult<T>> {
     return invokeWithPgActiveRunGate<T, ToolInvocationRow>({
       pool: this.options.pool,
       runsTable: this.runsTable,
       toolInvocationsTable: this.toolInvocationsTable,
       rowToRecord,
-    }, runId, invocationId, invoke);
+    }, runId, invocationId, invoke, expectedWorkerId);
   }
 
   async complete(invocationId: string, status: Exclude<ToolInvocationStatus, 'running'>, error?: string): Promise<ToolInvocationRecord | null> {

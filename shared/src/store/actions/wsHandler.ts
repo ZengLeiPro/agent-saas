@@ -75,7 +75,11 @@ export function setupWsHandler(): () => void {
         const now = Date.now();
         if (now - lastSyncRequestAt > 2000) {
           lastSyncRequestAt = now;
-          wsClient.send({ action: 'sync', lastSeq: prevSeq });
+          wsClient.send({
+            action: 'sync',
+            lastSeq: prevSeq,
+            ...(state.lastUserEpoch ? { epoch: state.lastUserEpoch } : {}),
+          });
         }
       }
       // 更新 lastUserSeq（只增不减���
@@ -98,8 +102,12 @@ export function setupWsHandler(): () => void {
 
     // ── sync 协议响应 ──
     if (data.type === 'sync_ok') {
-      store.setState({ lastUserSeq: data.seq });
+      store.setState({
+        lastUserSeq: data.seq,
+        ...(typeof data.epoch === 'string' ? { lastUserEpoch: data.epoch } : {}),
+      });
       wsClient.setLastSeq(data.seq);
+      if (typeof data.epoch === 'string') wsClient.setEpoch(data.epoch);
       // 回放漏掉的元数据事件
       for (const { event } of data.events) {
         const e = event as WsEvent;
@@ -113,8 +121,12 @@ export function setupWsHandler(): () => void {
       return;
     }
     if (data.type === 'sync_overflow') {
-      store.setState({ lastUserSeq: data.seq });
+      store.setState({
+        lastUserSeq: data.seq,
+        ...(typeof data.epoch === 'string' ? { lastUserEpoch: data.epoch } : {}),
+      });
       wsClient.setLastSeq(data.seq);
+      if (typeof data.epoch === 'string') wsClient.setEpoch(data.epoch);
       // 降级：全量刷新
       void loadSessions({ fresh: true });
       _groupsRefreshCallback?.();

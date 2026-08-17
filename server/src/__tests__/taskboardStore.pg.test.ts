@@ -82,6 +82,34 @@ describePg('PgTaskboardStore contract', () => {
     }
   }, 30_000);
 
+  it('atomically stages legacy pending runs and never demotes an advanced run during activation', async () => {
+    const runId = `run-cas-${randomUUID()}`;
+    await runStore.createPending({
+      runId,
+      sessionId: `session-cas-${randomUUID()}`,
+      metadata: { taskboardExecution: true },
+    });
+
+    await expect(runStore.stagePendingRun(runId)).resolves.toMatchObject({
+      status: 'pending',
+      metadata: { taskboardExecution: true, schedulerState: 'staged' },
+    });
+
+    const blocker = await pool.connect();
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query(`SELECT 1 FROM ${runStore.runsTable} WHERE run_id = $1 FOR UPDATE`, [runId]);
+      const activation = runStore.activateStagedRun(runId);
+      await blocker.query(`UPDATE ${runStore.runsTable} SET status = 'running' WHERE run_id = $1`, [runId]);
+      await blocker.query('COMMIT');
+      await expect(activation).resolves.toMatchObject({ status: 'running' });
+    } finally {
+      await blocker.query('ROLLBACK').catch(() => undefined);
+      blocker.release();
+    }
+    await expect(runStore.get(runId)).resolves.toMatchObject({ status: 'running' });
+  });
+
   it('isolates every access by tenant and owner, including administrators, and enforces active names', async () => {
     const board = await store.createBoard(alice, { name: '个人计划' });
     const adminBoard = await store.createBoard(admin, { name: '个人计划' });

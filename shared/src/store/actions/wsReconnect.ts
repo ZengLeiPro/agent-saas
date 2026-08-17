@@ -85,7 +85,11 @@ export async function handleReconnected(): Promise<void> {
   state.dispatchConnection('connect');
 
   // 1. 发送 sync 请求恢复漏掉的元数据事件
-  wsClient.send({ action: 'sync', lastSeq: state.lastUserSeq });
+  wsClient.send({
+    action: 'sync',
+    lastSeq: state.lastUserSeq,
+    ...(state.lastUserEpoch ? { epoch: state.lastUserEpoch } : {}),
+  });
 
   // 2. 如果有活跃流，尝试恢复
   if (state.loading && state.activeSessionId) {

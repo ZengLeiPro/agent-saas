@@ -1067,11 +1067,15 @@ export class WebChannel implements BaseChannel {
       this.crossProcessTerminalRuns.add(runId);
     }
     const eventCursor = getDurableEventCursor(event);
-    for (const data of projection.events) {
-      const eventId = this.eventBufferStore.push(sessionId, JSON.stringify(data), eventCursor);
+    for (const [index, data] of projection.events.entries()) {
+      // A durable PlatformEvent is the atomic resume unit. Advancing its cursor on an
+      // earlier projected frame could make a reconnect skip the remaining frames (most
+      // importantly a terminal done), so only the final frame may carry the cursor.
+      const frameCursor = index === projection.events.length - 1 ? eventCursor : undefined;
+      const eventId = this.eventBufferStore.push(sessionId, JSON.stringify(data), frameCursor);
       const ws = activeEntry?.ws;
       if (ws && ws.readyState === ws.OPEN && streamId && this.wsActiveStream.get(ws) === streamId) {
-        this.wsSend(ws, data, eventId ?? undefined, eventCursor);
+        this.wsSend(ws, data, eventId ?? undefined, frameCursor);
       }
     }
     if (projection.terminal) {
@@ -2003,7 +2007,7 @@ export class WebChannel implements BaseChannel {
   }
 
   private async handleResumeAsync(client: WsClient, msg: WsResumeMessage): Promise<void> {
-    const { sessionId: sid, lastEventId, lastEventCursor, skipReplay } = msg;
+    const { sessionId: sid, requestId, lastEventId, lastEventCursor, skipReplay } = msg;
     this.wsSessionAffinity.set(client.ws, sid);
 
     // 总是先清理旧订阅（防止切换会话后旧事件继续推送到新会话）
@@ -2014,6 +2018,9 @@ export class WebChannel implements BaseChannel {
     }
 
     const bufferEntry = this.eventBufferStore.get(sid);
+    // Capture before the first async status/replay decision. If the run terminates while
+    // either await is in flight, subscribeFrom must still include that terminal window.
+    const resumeBufferBoundary = bufferEntry ? bufferEntry.nextId - 1 : 0;
     // 判活口径与 getStreamStatus() 统一：durable runStore 是 run 是否活着的唯一真相,
     // 内存 buffer 只是传输缓存。buffer active 但 runStore 明确说没有活跃 run 时,
     // 这是幽灵 buffer(背景事件误建/complete 丢失),就地收口并按 inactive 处理。
@@ -2040,12 +2047,16 @@ export class WebChannel implements BaseChannel {
     // buffer 不存在 OR 已完成/被收口 → 返回 inactive
     if (!bufferEntry || !bufferActive) {
       const durableActive = await this.tryReplayDurableRuntimeEvents(client, sid, {
+        requestId,
         lastEventId,
         lastEventCursor,
         skipReplay: skipReplay === true,
       });
       if (!durableActive) {
-        this.wsSend(client.ws, { type: 'active_stream', sessionId: sid, active: false });
+        this.wsSend(client.ws, {
+          type: 'active_stream', sessionId: sid, active: false,
+          ...(requestId ? { requestId } : {}),
+        });
       }
       // 已完成的 buffer：推送 pending 交互（如有）
       if (bufferEntry) {
@@ -2056,7 +2067,10 @@ export class WebChannel implements BaseChannel {
 
     // 用户归属校验
     if (client.user?.role !== 'admin' && bufferEntry.userId && bufferEntry.userId !== client.user?.sub) {
-      this.wsSend(client.ws, { type: 'active_stream', sessionId: sid, active: false });
+      this.wsSend(client.ws, {
+        type: 'active_stream', sessionId: sid, active: false,
+        ...(requestId ? { requestId } : {}),
+      });
       return;
     }
 
@@ -2074,6 +2088,7 @@ export class WebChannel implements BaseChannel {
       streamId: activeStreamId,
       ...(activeEntry?.runId ? { runId: activeEntry.runId } : {}),
       status: durableStatus ?? 'running',
+      ...(requestId ? { requestId } : {}),
     });
 
     const alreadyDirectBound = Boolean(
@@ -2102,17 +2117,22 @@ export class WebChannel implements BaseChannel {
     if (!skipReplay && !hasAnyCursor) {
       chatLogger.warn(`[resume] replay requested without any cursor session=${sid}; skipping full replay to avoid duplicate content`);
     }
+    let subscribeAfterId = resumeBufferBoundary;
+    let durableReplayCursor: string | undefined;
     if (!skipReplay && hasAnyCursor) {
       if (!hasBufferCursor && lastEventCursor) {
+        // The boundary was captured before async status lookup. Events pushed while either
+        // status lookup or durable replay is in flight are recovered by subscribeFrom below.
         const store = await this.getRuntimeEventStoreForSession(sid);
         if (store) {
-          await this.replayDurableRuntimeEvents(client, sid, store, {
+          durableReplayCursor = await this.replayDurableRuntimeEvents(client, sid, store, {
             lastEventCursor,
             activeRunId: activeEntry?.runId ?? '',
           });
         }
       } else {
         const result = this.eventBufferStore.getEventsAfter(sid, lastEventId);
+        subscribeAfterId = lastEventId;
         if (result) {
           if (result.gapDetected) {
             this.wsSend(client.ws, { type: 'buffer_overflow' });
@@ -2123,15 +2143,22 @@ export class WebChannel implements BaseChannel {
               const data = JSON.parse(evt.data);
               this.wsSend(client.ws, data, evt.id, evt.eventCursor);
             } catch { /* skip */ }
+            subscribeAfterId = evt.id;
           }
         }
       }
     }
 
-    // 订阅新事件
-    const unsubscribe = this.eventBufferStore.subscribe(
+    // Atomically recover the replay→subscribe window and subscribe to future events.
+    const unsubscribe = this.eventBufferStore.subscribeFrom(
       sid,
+      subscribeAfterId,
       (event) => {
+        if (
+          durableReplayCursor
+          && event.eventCursor
+          && isDurableCursorAtOrBefore(event.eventCursor, durableReplayCursor)
+        ) return;
         if (client.ws.readyState === client.ws.OPEN) {
           try {
             const data = JSON.parse(event.data);
@@ -2140,7 +2167,7 @@ export class WebChannel implements BaseChannel {
         }
       },
       () => {
-        // Agent 完成
+        // Agent 完成； subscribeFrom may invoke this synchronously before returning null.
         this.resumeSubscriptions.delete(client.ws);
       },
     );
@@ -2163,7 +2190,7 @@ export class WebChannel implements BaseChannel {
   private async tryReplayDurableRuntimeEvents(
     client: WsClient,
     sessionId: string,
-    options: { lastEventId?: number; lastEventCursor?: string; skipReplay?: boolean },
+    options: { requestId?: string; lastEventId?: number; lastEventCursor?: string; skipReplay?: boolean },
   ): Promise<boolean> {
     const runStore = this.config.enqueueRuntime?.runStore;
     if (!runStore) return false;
@@ -2182,24 +2209,38 @@ export class WebChannel implements BaseChannel {
       streamId,
       runId: activeRun.runId,
       status: activeRun.status,
+      ...(options.requestId ? { requestId: options.requestId } : {}),
     });
+    // Capture before either durable-store await. subscribeFrom recovers every buffered
+    // event produced while store lookup/replay is in flight, including terminal events.
+    const subscribeAfterId = this.eventBufferStore.get(sessionId)!.nextId - 1;
+    let durableReplayCursor: string | undefined;
     if (!options.skipReplay) {
       const store = await this.getRuntimeEventStoreForSession(sessionId);
       if (store) {
-        await this.replayDurableRuntimeEvents(client, sessionId, store, {
+        durableReplayCursor = await this.replayDurableRuntimeEvents(client, sessionId, store, {
           ...options,
           activeRunId: activeRun.runId,
         });
       }
     }
-    const unsubscribe = this.eventBufferStore.subscribe(
+    const unsubscribe = this.eventBufferStore.subscribeFrom(
       sessionId,
+      subscribeAfterId,
       (event) => {
+        if (
+          durableReplayCursor
+          && event.eventCursor
+          && isDurableCursorAtOrBefore(event.eventCursor, durableReplayCursor)
+        ) return;
         if (client.ws.readyState === client.ws.OPEN) {
           try { this.wsSend(client.ws, JSON.parse(event.data), event.id, event.eventCursor); } catch { /* skip */ }
         }
       },
-      () => this.resumeSubscriptions.delete(client.ws),
+      () => {
+        // subscribeFrom may complete synchronously and return null; never install a noop.
+        this.resumeSubscriptions.delete(client.ws);
+      },
     );
     if (unsubscribe) this.resumeSubscriptions.set(client.ws, unsubscribe);
     client.ws.once('close', () => {
@@ -2221,8 +2262,9 @@ export class WebChannel implements BaseChannel {
     sessionId: string,
     store: EventStore,
     options: { lastEventId?: number; lastEventCursor?: string; activeRunId: string },
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     let replayId = options.lastEventId ?? 0;
+    let replayedCursor = options.lastEventCursor;
     const hasDurableCursor = Boolean(options.lastEventCursor);
     const streamStates = new Map<string, RuntimeStreamProjectionState>();
     // 新 ws-only 实例可能在流进行到一半时接管：浏览器 cursor 之前的 batch 已在 DOM，
@@ -2248,15 +2290,22 @@ export class WebChannel implements BaseChannel {
         });
         for (const event of page.events) {
           const eventCursor = getDurableEventCursor(event);
-          for (const data of projectRuntimePlatformEvent(event, { expandStreamed: true, streamStates }).events) {
+          const frames = projectRuntimePlatformEvent(event, { expandStreamed: true, streamStates }).events;
+          for (const [index, data] of frames.entries()) {
             replayId += 1;
-            this.wsSend(client.ws, data, replayId, eventCursor);
+            const frameCursor = index === frames.length - 1 ? eventCursor : undefined;
+            // replayId is synthetic, not an EventBuffer ID. Once the client has a durable
+            // cursor, attaching replayId would let a later resume accidentally enter the
+            // in-memory buffer-cursor path.
+            this.wsSend(client.ws, data, hasDurableCursor ? undefined : replayId, frameCursor);
           }
+          // Do not cover buffered events with this cursor until every projected frame sent.
+          if (eventCursor) replayedCursor = eventCursor;
         }
         if (!page.hasMore || !page.nextCursor) break;
         cursor = page.nextCursor;
       }
-      return;
+      return replayedCursor;
     }
     // 兼容没有分页能力的自定义 EventStore，同样把最坏影响限制在当前 run。
     const events = store.listByRun
@@ -2266,11 +2315,17 @@ export class WebChannel implements BaseChannel {
         );
     for (const event of events) {
       const eventCursor = getDurableEventCursor(event);
-      for (const data of projectRuntimePlatformEvent(event, { expandStreamed: true, streamStates }).events) {
+      const frames = projectRuntimePlatformEvent(event, { expandStreamed: true, streamStates }).events;
+      for (const [index, data] of frames.entries()) {
         replayId += 1;
-        if (replayId > (options.lastEventId ?? 0)) this.wsSend(client.ws, data, replayId, eventCursor);
+        const frameCursor = index === frames.length - 1 ? eventCursor : undefined;
+        if (replayId > (options.lastEventId ?? 0)) {
+          this.wsSend(client.ws, data, hasDurableCursor ? undefined : replayId, frameCursor);
+        }
       }
+      if (eventCursor) replayedCursor = eventCursor;
     }
+    return replayedCursor;
   }
 
   /** 处理 detach 消息：客户端切换会话时立即取消 EventBuffer 订阅，防止旧会话事件串流 */
@@ -2290,16 +2345,22 @@ export class WebChannel implements BaseChannel {
     const userId = client.user?.sub;
     if (!userId || !this.wsServer) return;
 
-    const result = this.wsServer.userEventLog.getEventsAfter(userId, msg.lastSeq);
+    const eventLog = this.wsServer.userEventLog;
+    const epoch = eventLog.getEpoch(userId);
+    const currentSeq = eventLog.getCurrentSeq(userId);
+    if (this.wsServer.hasUserEventEpochMismatch(client, userId, msg.epoch, msg.lastSeq)) {
+      this.wsSend(client.ws, { type: 'sync_overflow', seq: currentSeq, epoch });
+      return;
+    }
+
+    const result = eventLog.getEventsAfter(userId, msg.lastSeq);
     if (result.gapDetected) {
-      this.wsSend(client.ws, {
-        type: 'sync_overflow',
-        seq: this.wsServer.userEventLog.getCurrentSeq(userId),
-      });
+      this.wsSend(client.ws, { type: 'sync_overflow', seq: currentSeq, epoch });
     } else {
       this.wsSend(client.ws, {
         type: 'sync_ok',
-        seq: this.wsServer.userEventLog.getCurrentSeq(userId),
+        seq: currentSeq,
+        epoch,
         events: result.events,
       });
     }
@@ -2321,7 +2382,9 @@ export class WebChannel implements BaseChannel {
   private async processChatMessage(client: WsClient, msg: WsChatMessage): Promise<void> {
     const steeringAcceptedAt = new Date().toISOString();
     const { message, sessionId, attachments, model, voiceFile } = msg;
-    const deliveryMode = msg.deliveryMode === 'steer' ? 'steer' : 'queue';
+    let deliveryMode: 'queue' | 'steer' = msg.deliveryMode === 'steer' && !isCompactCommand(message)
+      ? 'steer'
+      : 'queue';
     const ws = client.ws;
     const user = client.user;
     const executionConfig = this.config.executionConfig ?? DEFAULT_EXECUTION_CONFIG;
@@ -2753,6 +2816,7 @@ export class WebChannel implements BaseChannel {
       orgAgentId = msg.orgAgentId;
     }
     const isPlatformCommand = isCompactCommand(resolvedMessage);
+    if (isPlatformCommand) deliveryMode = 'queue';
     if (orgAgentId) {
       const record = this.config.orgAgentStore?.get(orgAgentId);
       const gateIdentity = sessionOwner ?? userIdentity;

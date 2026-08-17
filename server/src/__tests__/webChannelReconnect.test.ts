@@ -96,7 +96,7 @@ describe('WebChannel active stream reconnect', () => {
         alive: true,
         lastActivityAt: Date.now(),
       },
-      { action: 'resume', sessionId: 'session-2', lastEventId: 1 },
+      { action: 'resume', sessionId: 'session-2', requestId: 'resume-request-2', lastEventId: 1 },
     );
 
     expect(newWs.sent[0]).toEqual({
@@ -106,6 +106,7 @@ describe('WebChannel active stream reconnect', () => {
         active: true,
         streamId: 'stream-2',
         status: 'running',
+        requestId: 'resume-request-2',
       },
     });
     expect(newWs.sent[1]).toEqual({
@@ -148,12 +149,15 @@ describe('WebChannel active stream reconnect', () => {
         alive: true,
         lastActivityAt: Date.now(),
       },
-      { action: 'resume', sessionId: 'session-dc', lastEventId: 0, lastEventCursor: '4321' },
+      { action: 'resume', sessionId: 'session-dc', requestId: 'resume-request-durable', lastEventId: 0, lastEventCursor: '4321' },
     );
     await (channel as any).resumeChains.get(ws);
 
     expect(ws.sent[0]).toMatchObject({
-      data: { type: 'active_stream', sessionId: 'session-dc', active: true },
+      data: {
+        type: 'active_stream', sessionId: 'session-dc', active: true,
+        requestId: 'resume-request-durable',
+      },
     });
     // durable 增量：从客户端 cursor 之后取，而不是 buffer 全量
     expect(listPage).toHaveBeenCalledWith('session-dc', {
@@ -332,6 +336,44 @@ describe('WebChannel active stream reconnect', () => {
       { type: 'block_start', blockType: 'text', runId: 'run-cross-1' },
       { type: 'text', content: '跨进程正文' },
       { type: 'block_end', blockType: 'text' },
+    ]);
+  });
+
+  it('attaches an assistant PlatformEvent cursor only to its final live WS frame', () => {
+    const channel = createChannel();
+    (channel as any).eventBus = fakeEventBus();
+    const ws = new FakeWebSocket();
+    (channel as any).activeStreams.set('stream-cursor-live', {
+      controller: new AbortController(),
+      userId: 'admin-1',
+      ws,
+      sessionId: 'session-cursor-live',
+      runId: 'run-cursor-live',
+    });
+    (channel as any).wsActiveStream.set(ws, 'stream-cursor-live');
+
+    channel.publishRuntimePlatformEvent({
+      id: 'evt-cursor-live',
+      sequence: 701,
+      timestamp: new Date().toISOString(),
+      type: 'assistant_message',
+      runId: 'run-cursor-live',
+      sessionId: 'session-cursor-live',
+      content: '跨进程正文',
+      streamed: true,
+    } as any);
+
+    expect(ws.sent).toEqual([
+      {
+        eventId: 1,
+        data: { type: 'block_start', blockType: 'text', runId: 'run-cursor-live' },
+      },
+      { eventId: 2, data: { type: 'text', content: '跨进程正文' } },
+      {
+        eventId: 3,
+        eventCursor: '701',
+        data: { type: 'block_end', blockType: 'text' },
+      },
     ]);
   });
 
@@ -690,15 +732,62 @@ describe('WebChannel active stream reconnect', () => {
         alive: true,
         lastActivityAt: Date.now(),
       },
-      { action: 'resume', sessionId: 'session-ghost-2', lastEventId: 0, skipReplay: true },
+      { action: 'resume', sessionId: 'session-ghost-2', requestId: 'resume-request-inactive', lastEventId: 0, skipReplay: true },
     );
 
     expect(getActiveBySession).toHaveBeenCalledWith('session-ghost-2');
     // 必须回 inactive，且幽灵 buffer 被收口
     expect(ws.sent).toContainEqual({
-      data: { type: 'active_stream', sessionId: 'session-ghost-2', active: false },
+      data: {
+        type: 'active_stream', sessionId: 'session-ghost-2', active: false,
+        requestId: 'resume-request-inactive',
+      },
     });
     expect((channel as any).eventBufferStore.isActive('session-ghost-2')).toBe(false);
+  });
+
+  it('echoes requestId when durable replay recovers an active run without an in-memory buffer', async () => {
+    const getActiveBySession = vi.fn().mockResolvedValue({
+      runId: 'run-durable-only',
+      sessionId: 'session-durable-only',
+      userId: 'admin-1',
+      status: 'running',
+      metadata: { streamId: 'stream-durable-only' },
+    });
+    const channel = new WebChannel({
+      agentCwd: '/tmp/workspace',
+      enqueueRuntime: { runStore: { getActiveBySession } } as any,
+    }, noopDispatch);
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+
+    await (channel as any).handleResumeAsync(
+      {
+        ws,
+        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        alive: true,
+        lastActivityAt: Date.now(),
+      },
+      {
+        action: 'resume',
+        sessionId: 'session-durable-only',
+        requestId: 'resume-request-durable-only',
+        lastEventId: 0,
+        skipReplay: true,
+      },
+    );
+
+    expect(ws.sent[0]).toEqual({
+      data: {
+        type: 'active_stream',
+        sessionId: 'session-durable-only',
+        active: true,
+        streamId: 'stream-durable-only',
+        runId: 'run-durable-only',
+        status: 'running',
+        requestId: 'resume-request-durable-only',
+      },
+    });
   });
 
   it('resume still reports active when durable runStore confirms a live run', async () => {
@@ -852,10 +941,162 @@ describe('WebChannel active stream reconnect', () => {
       { lastEventId: 9, lastEventCursor: '101', activeRunId: 'run-cursor-stream' },
     );
 
-    expect(ws.sent.map((entry) => (entry as { data: unknown }).data)).toEqual([
-      { type: 'text', content: '，补齐尾段' },
-      { type: 'block_end', blockType: 'text' },
+    expect(ws.sent).toEqual([
+      {
+        eventCursor: '102',
+        data: { type: 'text', content: '，补齐尾段' },
+      },
+      {
+        eventCursor: '103',
+        data: { type: 'block_end', blockType: 'text' },
+      },
     ]);
+    expect(ws.sent.every((entry: any) => entry.eventId === undefined)).toBe(true);
+  });
+
+  it('recovers a terminal buffer event pushed while durable replay is awaiting and leaves no listener', async () => {
+    let resolvePage!: (page: { events: never[]; hasMore: false }) => void;
+    const listPage = vi.fn(() => new Promise<{ events: never[]; hasMore: false }>((resolve) => {
+      resolvePage = resolve;
+    }));
+    const getActiveBySession = vi.fn().mockResolvedValue({
+      runId: 'run-terminal-window',
+      sessionId: 'session-terminal-window',
+      userId: 'admin-1',
+      status: 'running',
+      metadata: { streamId: 'stream-terminal-window' },
+    });
+    const channel = new WebChannel({
+      agentCwd: '/tmp/workspace',
+      enqueueRuntime: { runStore: { getActiveBySession } } as any,
+    }, noopDispatch);
+    channels.push(channel);
+    vi.spyOn(channel as any, 'getRuntimeEventStoreForSession').mockResolvedValue({ listPage });
+    const ws = new FakeWebSocket();
+    const client = {
+      ws,
+      user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+      alive: true,
+      lastActivityAt: Date.now(),
+    };
+
+    const resume = (channel as any).handleResumeAsync(client, {
+      action: 'resume',
+      sessionId: 'session-terminal-window',
+      lastEventId: 0,
+      lastEventCursor: '499',
+    });
+    await vi.waitFor(() => expect(listPage).toHaveBeenCalledTimes(1));
+
+    (channel as any).eventBufferStore.push(
+      'session-terminal-window',
+      JSON.stringify({ type: 'done', finalOutput: true }),
+      '500',
+    );
+    (channel as any).eventBufferStore.complete('session-terminal-window');
+    resolvePage({ events: [], hasMore: false });
+    await resume;
+
+    expect(ws.sent.filter((entry: any) => entry?.data?.type === 'done')).toEqual([
+      { eventId: 1, eventCursor: '500', data: { type: 'done', finalOutput: true } },
+    ]);
+    const entry = (channel as any).eventBufferStore.get('session-terminal-window');
+    expect(entry.listeners.size).toBe(0);
+    expect(entry.completionListeners.size).toBe(0);
+    expect((channel as any).resumeSubscriptions.has(ws)).toBe(false);
+  });
+
+  it('deduplicates a buffered replay-window event already covered by durable cursor', async () => {
+    const channel = createChannel();
+    const ws = new FakeWebSocket();
+    const buffer = (channel as any).eventBufferStore;
+    (channel as any).activeStreams.set('stream-cursor-window', {
+      controller: new AbortController(),
+      userId: 'admin-1',
+      ws: new FakeWebSocket(),
+      sessionId: 'session-cursor-window',
+      runId: 'run-cursor-window',
+    });
+    buffer.create('session-cursor-window', 'admin-1');
+    const durableTerminal = {
+      id: 'terminal-500',
+      sequence: '500',
+      timestamp: new Date().toISOString(),
+      type: 'run_state_changed',
+      sessionId: 'session-cursor-window',
+      runId: 'run-cursor-window',
+      status: 'completed',
+    };
+    const listPage = vi.fn(async () => {
+      buffer.push(
+        'session-cursor-window',
+        JSON.stringify({ type: 'done', sessionId: 'session-cursor-window', runId: 'run-cursor-window' }),
+        '500',
+      );
+      buffer.complete('session-cursor-window');
+      return { events: [durableTerminal], hasMore: false };
+    });
+    vi.spyOn(channel as any, 'getRuntimeEventStoreForSession').mockResolvedValue({ listPage });
+
+    await (channel as any).handleResumeAsync(
+      {
+        ws,
+        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        alive: true,
+        lastActivityAt: Date.now(),
+      },
+      {
+        action: 'resume',
+        sessionId: 'session-cursor-window',
+        lastEventId: 0,
+        lastEventCursor: '499',
+      },
+    );
+
+    expect(ws.sent.filter((entry: any) => entry?.data?.type === 'done')).toHaveLength(1);
+    expect(buffer.get('session-cursor-window').listeners.size).toBe(0);
+    expect((channel as any).resumeSubscriptions.has(ws)).toBe(false);
+  });
+
+  it('closes the ordinary buffer replay-to-subscribe window', async () => {
+    const channel = createChannel();
+    const ws = new FakeWebSocket();
+    (channel as any).activeStreams.set('stream-buffer-window', {
+      controller: new AbortController(),
+      userId: 'admin-1',
+      ws: new FakeWebSocket(),
+      sessionId: 'session-buffer-window',
+      runId: 'run-buffer-window',
+    });
+    const buffer = (channel as any).eventBufferStore;
+    buffer.create('session-buffer-window', 'admin-1');
+    buffer.push('session-buffer-window', JSON.stringify({ type: 'text', content: 'before disconnect' }));
+    buffer.push('session-buffer-window', JSON.stringify({ type: 'text', content: 'first catchup' }));
+    const originalSend = ws.send.bind(ws);
+    let injected = false;
+    vi.spyOn(ws, 'send').mockImplementation((raw: string) => {
+      originalSend(raw);
+      const sent = JSON.parse(raw);
+      if (!injected && sent?.data?.content === 'first catchup') {
+        injected = true;
+        buffer.push('session-buffer-window', JSON.stringify({ type: 'done', finalOutput: true }));
+        buffer.complete('session-buffer-window');
+      }
+    });
+
+    await (channel as any).handleResumeAsync(
+      {
+        ws,
+        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        alive: true,
+        lastActivityAt: Date.now(),
+      },
+      { action: 'resume', sessionId: 'session-buffer-window', lastEventId: 1 },
+    );
+
+    expect(ws.sent.filter((entry: any) => entry?.data?.type === 'done')).toHaveLength(1);
+    expect(buffer.get('session-buffer-window').listeners.size).toBe(0);
+    expect((channel as any).resumeSubscriptions.has(ws)).toBe(false);
   });
 
   it('serializes concurrent resume on the same ws so only one buffer listener survives', async () => {

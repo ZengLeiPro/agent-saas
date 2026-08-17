@@ -105,11 +105,11 @@ describe('handleDisconnecting / handleDisconnected', () => {
 describe('handleReconnected', () => {
   it('无活跃流：发 sync、刷新列表(fresh)、刷新当前会话', async () => {
     const store = getChatStore();
-    store.setState({ loading: false, activeSessionId: 's1', lastUserSeq: 5 });
+    store.setState({ loading: false, activeSessionId: 's1', lastUserSeq: 5, lastUserEpoch: 'server-epoch-1' });
 
     await handleReconnected();
 
-    expect(wsSend).toHaveBeenCalledWith({ action: 'sync', lastSeq: 5 });
+    expect(wsSend).toHaveBeenCalledWith({ action: 'sync', lastSeq: 5, epoch: 'server-epoch-1' });
     expect(store.getState().connectionState).toBe('connected');
     expect(loadSessionsMock).toHaveBeenCalledWith({ fresh: true });
     expect(refreshCurrentMock).toHaveBeenCalled();

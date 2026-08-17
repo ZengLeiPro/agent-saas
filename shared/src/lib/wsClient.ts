@@ -87,6 +87,8 @@ export interface WsApprovalPolicyMessage {
 export interface WsResumeMessage {
     action: 'resume';
     sessionId: string;
+    /** Correlates the active_stream response with this exact resume attempt. */
+    requestId?: string;
     lastEventId: number;
     lastEventCursor?: string | null;
     skipReplay?: boolean;
@@ -104,6 +106,8 @@ export interface WsDetachMessage {
 export interface WsSyncMessage {
     action: 'sync';
     lastSeq: number;
+    /** 上次见到的服务端用户日志代际；旧服务端会忽略。 */
+    epoch?: string;
 }
 
 /** 撤回一条仍在排队（未被目标 run 消费）的插话（2026-08-04 终态设计）。 */
@@ -157,8 +161,9 @@ class WsClient {
     private lastPongAt = 0;
     private lastPingSentAt = 0;
 
-    // Heartbeat-piggyback sync: last known user event sequence number
+    // Heartbeat-piggyback sync: last known user event sequence number + server log epoch
     private lastSeq = 0;
+    private serverEpoch: string | null = null;
 
     // Auth failure detection
     private consecutiveFailures = 0;
@@ -302,29 +307,31 @@ class WsClient {
                 // a pong/sync frame specifically; streaming frames may arrive while
                 // heartbeat replies are queued behind other downstream messages.
                 this.lastPongAt = now;
-                const msgType = envelope.data && (envelope.data as { type?: string }).type;
-                // Handle pong internally (don't forward to messageHandlers)
+                const messageData = envelope.data as { type?: string; epoch?: unknown; seq?: unknown } | null | undefined;
+                const msgType = messageData?.type;
+                // pong 只证明链路存活，不能推进恢复 cursor/epoch。若 pong 后、对应 overflow/sync_ok
+                // 前断线，提前采纳其 E2/seq 会让重连 sync 跳过本应执行的恢复窗口。
                 if (msgType === 'pong') {
                     const rttMs = this.lastPingSentAt > 0 ? now - this.lastPingSentAt : undefined;
-                    // 心跳 piggyback sync：从 pong 中更新 lastSeq
-                    const seq = (envelope.data as Record<string, unknown>).seq;
-                    if (typeof seq === 'number') this.lastSeq = seq;
                     if (typeof rttMs === 'number' && rttMs >= 3000) {
                         console.warn(`[WS] Heartbeat pong slow: ${rttMs}ms`);
                     }
                     return;
                 }
-                // sync_ok / sync_overflow 可能来自心跳 piggyback——视为有效心跳响应，
-                // 但不拦截，让其流入 messageHandlers 复用现有 sync 处理逻辑
+                // 只有可恢复的 sync 结果或真实事件信封才推进 cursor/epoch。
+                // overflow 可能切换 epoch 并把 seq 回退到新代际起点，因此不能只取 max。
                 if (msgType === 'sync_ok' || msgType === 'sync_overflow') {
+                    if (typeof messageData?.seq === 'number') this.lastSeq = messageData.seq;
+                    if (typeof messageData?.epoch === 'string') this.serverEpoch = messageData.epoch;
                     const rttMs = this.lastPingSentAt > 0 ? now - this.lastPingSentAt : undefined;
                     if (typeof rttMs === 'number' && rttMs >= 3000) {
                         console.warn(`[WS] Heartbeat sync response slow: ${msgType} ${rttMs}ms`);
                     }
-                }
-                // 从任何携带 seq 的事件中自动更新 lastSeq（供心跳 piggyback sync 使用）
-                if (typeof envelope.seq === 'number' && envelope.seq > this.lastSeq) {
-                    this.lastSeq = envelope.seq;
+                } else {
+                    if (typeof messageData?.epoch === 'string') this.serverEpoch = messageData.epoch;
+                    if (typeof envelope.seq === 'number' && envelope.seq > this.lastSeq) {
+                        this.lastSeq = envelope.seq;
+                    }
                 }
                 for (const handler of this.messageHandlers) {
                     handler(envelope);
@@ -421,7 +428,12 @@ class WsClient {
                 return;
             }
             this.lastPingSentAt = Date.now();
-            this.ws.send(JSON.stringify({ action: 'ping', lastSeq: this.lastSeq, clientTs: this.lastPingSentAt }));
+            this.ws.send(JSON.stringify({
+                action: 'ping',
+                lastSeq: this.lastSeq,
+                ...(this.serverEpoch ? { epoch: this.serverEpoch } : {}),
+                clientTs: this.lastPingSentAt,
+            }));
         }, HEARTBEAT_INTERVAL_MS);
     }
 
@@ -434,9 +446,14 @@ class WsClient {
 
     // ── Public API ──────────────────────────────────────
 
-    /** Update the last known user event sequence (called by useChatAppState after sync responses) */
+    /** Update the last known user event sequence (called by store/hooks after sync responses). */
     setLastSeq(seq: number): void {
         this.lastSeq = seq;
+    }
+
+    /** Update the server UserEventLog epoch; null is only used by tests/account resets. */
+    setEpoch(epoch: string | null): void {
+        this.serverEpoch = epoch;
     }
 
     /** Disconnect */
@@ -464,7 +481,11 @@ class WsClient {
     /** Send message, returns whether successful */
     send(msg: WsOutboundMessage): boolean {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify(msg));
+            // wsClient 持有从 sync/真实事件得到的最新 epoch，覆盖调用方可能滞后的副本。
+            const outbound = msg.action === 'sync' && this.serverEpoch
+                ? { ...msg, epoch: this.serverEpoch }
+                : msg;
+            this.ws.send(JSON.stringify(outbound));
             return true;
         }
         console.warn('[WS] Cannot send: not connected');

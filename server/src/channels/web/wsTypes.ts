@@ -97,6 +97,8 @@ export interface WsRunStatusMessage {
 export interface WsResumeMessage {
     action: 'resume';
     sessionId: string;
+    /** Optional correlation id echoed by the active_stream response. */
+    requestId?: string;
     /** Legacy per-process EventBuffer id. */
     lastEventId: number;
     /** Durable runtime EventStore cursor (PG session_sequence as opaque string). */
@@ -118,12 +120,16 @@ export interface WsCancelQueuedMessage {
 export interface WsPingMessage {
     action: 'ping';
     lastSeq?: number;
+    /** 客户端上次见到的用户日志代际；旧客户端可省略。 */
+    epoch?: string;
     clientTs?: number;
 }
 
 export interface WsSyncMessage {
     action: 'sync';
     lastSeq: number;
+    /** 客户端上次见到的用户日志代际；旧客户端可省略。 */
+    epoch?: string;
 }
 
 export type WsInboundMessage =
@@ -193,7 +199,7 @@ export type WsDownstreamEvent =
     | { type: 'respond_ok'; interactionId: string }
     | { type: 'abort_ok'; streamId?: string; runId?: string }
     | { type: 'pending_interactions'; interactions: Array<{ interactionId: string; type: string; runId?: string; toolCallId?: string; invocationId?: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string }> }
-    | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string }
+    | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; requestId?: string }
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string }
     | { type: 'session_deleted'; sessionId: string }
@@ -205,6 +211,6 @@ export type WsDownstreamEvent =
     | { type: 'plugin_install'; pluginInstall: PluginInstallData }
     | { type: 'notification'; notification: NotificationData }
     | { type: 'memory_recall'; memoryRecall: MemoryRecallData }
-    | { type: 'sync_ok'; seq: number; events: Array<{ seq: number; event: object }> }
-    | { type: 'sync_overflow'; seq: number }
-    | { type: 'pong'; seq?: number };
+    | { type: 'sync_ok'; seq: number; epoch: string; events: Array<{ seq: number; event: object }> }
+    | { type: 'sync_overflow'; seq: number; epoch: string }
+    | { type: 'pong'; seq?: number; epoch: string; probe?: boolean };

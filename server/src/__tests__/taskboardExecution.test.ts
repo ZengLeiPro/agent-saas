@@ -37,11 +37,12 @@ describe('TaskboardExecutionCoordinator', () => {
       metadata: expect.objectContaining({
         taskboardExecution: true,
         outputTransactionMode: 'terminal_buffered',
+        schedulerState: 'staged',
       }),
     }));
   });
 
-  it('在 Runtime Run 入队前把会话加入以看板名称命名的系统分组', async () => {
+  it('在 durable Runtime Run 创建后把会话加入以看板名称命名的系统分组', async () => {
     const groupTaskboardSession = vi.fn(async () => ({ id: 'taskboard:board-1' }));
     const onSessionGrouped = vi.fn(async () => undefined);
     const rig = makeRig(
@@ -68,10 +69,197 @@ describe('TaskboardExecutionCoordinator', () => {
       sessionId: result.execution.sessionId,
       userId: identity.ownerUserId,
     }));
-    expect(groupTaskboardSession.mock.invocationCallOrder[0]).toBeLessThan(
-      rig.scheduler.enqueueCreateOnly.mock.invocationCallOrder[0]!,
+    expect(rig.scheduler.enqueueCreateOnly.mock.invocationCallOrder[0]).toBeLessThan(
+      groupTaskboardSession.mock.invocationCallOrder[0]!,
     );
   });
+
+  it('session upsert 阻塞期间保持 staged，不会提前激活', async () => {
+    let releaseUpsert!: () => void;
+    const upsertGate = new Promise<void>((resolve) => { releaseUpsert = resolve; });
+    const rig = makeRig();
+    rig.sessionCatalog.upsert.mockImplementationOnce(async () => {
+      await upsertGate;
+      return undefined;
+    });
+
+    const starting = rig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version });
+    await vi.waitFor(() => expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledTimes(1));
+
+    expect(rig.scheduler.activateCreatedRun).not.toHaveBeenCalled();
+    expect(rig.store.markExecutionDispatchSucceeded).not.toHaveBeenCalled();
+
+    releaseUpsert();
+    await starting;
+    expect(rig.scheduler.activateCreatedRun).toHaveBeenCalledTimes(1);
+    expect(rig.store.markExecutionDispatchSucceeded).toHaveBeenCalledTimes(1);
+  });
+
+  it('分组首次失败时先保有 durable Runtime Run，不留下缺少 Run 的 running Session', async () => {
+    const groupTaskboardSession = vi.fn()
+      .mockRejectedValueOnce(new Error('group unavailable'))
+      .mockResolvedValue({ id: 'taskboard:board-1' });
+    const rig = makeRig(
+      {
+        getExecutionModelContext: vi.fn(async () => ({
+          boardOwnerUserId: identity.ownerUserId,
+          boardId: task.boardId,
+          boardName: '研发交付',
+        })),
+      },
+      { groupTaskboardSession },
+    );
+
+    await expect(rig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version }))
+      .resolves.toMatchObject({ execution: { status: 'queued' } });
+
+    expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledTimes(1);
+    expect(rig.scheduler.enqueueCreateOnly.mock.invocationCallOrder[0]).toBeLessThan(
+      rig.sessionCatalog.upsert.mock.invocationCallOrder[0]!,
+    );
+    expect(rig.store.retryExecutionDispatch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      'Agent 派发重试中：group unavailable',
+      1_000,
+    );
+    expect(rig.scheduler.activateCreatedRun).not.toHaveBeenCalled();
+    expect(rig.store.markExecutionDispatchSucceeded).not.toHaveBeenCalled();
+
+    await rig.coordinator.reconcile();
+
+    expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledTimes(2);
+    expect(groupTaskboardSession).toHaveBeenCalledTimes(2);
+    expect(rig.scheduler.activateCreatedRun).toHaveBeenCalledTimes(1);
+    expect(rig.store.markExecutionDispatchSucceeded).toHaveBeenCalledTimes(1);
+  });
+
+  it('标题首次失败时先保有 durable Runtime Run，重试可幂等完成派发', async () => {
+    const writeSessionTitle = vi.fn()
+      .mockRejectedValueOnce(new Error('title unavailable'))
+      .mockResolvedValue(null);
+    const rig = makeRig({}, { writeSessionTitle });
+
+    await expect(rig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version }))
+      .resolves.toMatchObject({ execution: { status: 'queued' } });
+
+    expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledTimes(1);
+    expect(rig.scheduler.enqueueCreateOnly.mock.invocationCallOrder[0]).toBeLessThan(
+      rig.sessionCatalog.upsert.mock.invocationCallOrder[0]!,
+    );
+    expect(rig.store.retryExecutionDispatch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      'Agent 派发重试中：title unavailable',
+      1_000,
+    );
+
+    await rig.coordinator.reconcile();
+
+    expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledTimes(2);
+    expect(writeSessionTitle).toHaveBeenCalledTimes(2);
+    expect(rig.scheduler.activateCreatedRun).toHaveBeenCalledTimes(1);
+    expect(rig.store.markExecutionDispatchSucceeded).toHaveBeenCalledTimes(1);
+  });
+
+  it('Runtime Run 入队后 dispatch 标记失败时可用同一 Run 幂等重试', async () => {
+    const rig = makeRig();
+    vi.mocked(rig.store.markExecutionDispatchSucceeded)
+      .mockRejectedValueOnce(new Error('outbox mark unavailable'));
+
+    await rig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version });
+    await rig.coordinator.reconcile();
+
+    expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledTimes(2);
+    expect(rig.scheduler.activateCreatedRun).toHaveBeenCalledTimes(1);
+    expect(rig.sessionCatalog.upsert).toHaveBeenCalledTimes(1);
+    expect(rig.writeSessionTitle).toHaveBeenCalledTimes(1);
+    expect(rig.store.markExecutionDispatchSucceeded).toHaveBeenCalledTimes(2);
+    expect(rig.store.retryExecutionDispatch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      'Agent 派发重试中：outbox mark unavailable',
+      1_000,
+    );
+    expect(rig.store.completeExecution).not.toHaveBeenCalled();
+  });
+
+  it('部署前 legacy pending Run 会先原子 staged，再完成 setup 与 activation', async () => {
+    const writeSessionTitle = vi.fn()
+      .mockRejectedValueOnce(new Error('title unavailable'))
+      .mockResolvedValue(null);
+    const rig = makeRig({}, { writeSessionTitle });
+
+    await rig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version });
+    const [runId, existing] = [...rig.schedulerRecords.entries()][0]!;
+    const { schedulerState: _schedulerState, ...legacyMetadata } = existing.metadata;
+    rig.schedulerRecords.set(runId, { ...existing, metadata: legacyMetadata });
+
+    await rig.coordinator.reconcile();
+
+    expect(rig.scheduler.stagePendingRun).toHaveBeenCalledWith(runId);
+    expect(rig.scheduler.activateCreatedRun).toHaveBeenCalledTimes(1);
+    expect(rig.store.markExecutionDispatchSucceeded).toHaveBeenCalledTimes(1);
+    expect(rig.store.completeExecution).not.toHaveBeenCalled();
+  });
+
+  it('legacy pending staging CAS 遇并发 running 后仅补 dispatch marker', async () => {
+    const writeSessionTitle = vi.fn()
+      .mockRejectedValueOnce(new Error('title unavailable'));
+    const rig = makeRig({}, { writeSessionTitle });
+
+    await rig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version });
+    const [runId, existing] = [...rig.schedulerRecords.entries()][0]!;
+    const { schedulerState: _schedulerState, ...legacyMetadata } = existing.metadata;
+    rig.schedulerRecords.set(runId, { ...existing, metadata: legacyMetadata });
+    rig.scheduler.stagePendingRun.mockImplementationOnce(async () => {
+      const { wakeMessage: _wakeMessage, ...consumedMetadata } = legacyMetadata;
+      const running = {
+        ...existing,
+        status: 'running' as const,
+        workerId: 'other-worker',
+        metadata: consumedMetadata,
+      };
+      rig.schedulerRecords.set(runId, running);
+      return running;
+    });
+
+    await rig.coordinator.reconcile();
+
+    expect(rig.scheduler.stagePendingRun).toHaveBeenCalledWith(runId);
+    expect(writeSessionTitle).toHaveBeenCalledTimes(1);
+    expect(rig.scheduler.activateCreatedRun).not.toHaveBeenCalled();
+    expect(rig.store.markExecutionDispatchSucceeded).toHaveBeenCalledTimes(1);
+    expect(rig.store.completeExecution).not.toHaveBeenCalled();
+  });
+
+  it.each(['running', 'completed'] as const)(
+    'dispatch marker 重试接受已 %s 且 wakeMessage 已清的稳定关联 Run',
+    async (status) => {
+      const rig = makeRig();
+      vi.mocked(rig.store.markExecutionDispatchSucceeded)
+        .mockRejectedValueOnce(new Error('outbox mark unavailable'));
+      await rig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version });
+
+      rig.scheduler.enqueueCreateOnly.mockImplementationOnce(async (input) => {
+        const { wakeMessage: _wakeMessage, ...metadata } = input.metadata ?? {};
+        return {
+          ...input,
+          status,
+          requestedAt: '2026-08-01T00:00:00.000Z',
+          updatedAt: '2026-08-01T00:01:00.000Z',
+          metadata: { ...metadata, schedulerState: 'ready' },
+        };
+      });
+      await rig.coordinator.reconcile();
+
+      expect(rig.store.completeExecution).not.toHaveBeenCalled();
+      expect(rig.scheduler.activateCreatedRun).toHaveBeenCalledTimes(1);
+      expect(rig.sessionCatalog.upsert).toHaveBeenCalledTimes(1);
+      expect(rig.writeSessionTitle).toHaveBeenCalledTimes(1);
+      expect(rig.store.markExecutionDispatchSucceeded).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it('同一任务已有活跃 Execution 时拒绝再次派发且不创建第二个 Run', async () => {
     const rig = makeRig();
@@ -350,6 +538,8 @@ describe('TaskboardExecutionCoordinator', () => {
       'Agent 派发重试中：scheduler unavailable',
       1_000,
     );
+    expect(rig.sessionCatalog.upsert).not.toHaveBeenCalled();
+    expect(rig.writeSessionTitle).not.toHaveBeenCalled();
     expect(rig.store.completeExecution).not.toHaveBeenCalled();
   });
 
@@ -373,6 +563,101 @@ describe('TaskboardExecutionCoordinator', () => {
       error: expect.stringContaining('payload'),
     }));
     expect(rig.store.retryExecutionDispatch).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 'staged'] as const)(
+    '毒 payload 会先取消关联的 %s pending Run，再终止 Execution',
+    async (schedulerState) => {
+      const claimExecutionDispatch = vi.fn()
+        .mockResolvedValueOnce({
+          runId: 'poison-associated-run',
+          executionId: 'poison-associated-execution',
+          payload: { version: 2 } as never,
+          attemptCount: 1,
+          leaseId: 'poison-associated-lease',
+        })
+        .mockResolvedValue(null);
+      const rig = makeRig({ claimExecutionDispatch });
+      rig.schedulerRecords.set('poison-associated-run', {
+        runId: 'poison-associated-run',
+        sessionId: 'poison-associated-session',
+        status: 'pending',
+        requestedAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-01T00:00:00.000Z',
+        metadata: {
+          taskboardExecution: true,
+          ...(schedulerState ? { schedulerState } : {}),
+          wakeMessage: { channel: 'web' },
+        },
+      });
+
+      await rig.coordinator.reconcile();
+
+      expect(rig.scheduler.cancelPendingTaskboardRun).toHaveBeenCalledWith(
+        'poison-associated-run',
+        'taskboard_dispatch_poison',
+      );
+      expect(rig.scheduler.cancelPendingTaskboardRun.mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(rig.store.completeExecution).mock.invocationCallOrder[0]!,
+      );
+      expect(rig.schedulerRecords.get('poison-associated-run')).toMatchObject({
+        status: 'cancelled',
+        statusReason: 'taskboard_dispatch_poison',
+        metadata: expect.not.objectContaining({ wakeMessage: expect.anything() }),
+      });
+      expect(rig.store.retryExecutionDispatch).not.toHaveBeenCalled();
+    },
+  );
+
+  it('poison Run 已被 worker 领取时保留 outbox 重试，不提前终止 Execution', async () => {
+    const rig = makeRig();
+    rig.scheduler.cancelPendingTaskboardRun.mockResolvedValueOnce({
+      runId: 'running-poison-run',
+      sessionId: 'running-poison-session',
+      status: 'running',
+      requestedAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:01:00.000Z',
+      metadata: { taskboardExecution: true },
+    });
+    rig.scheduler.enqueueCreateOnly.mockImplementationOnce(async (input) => ({
+      ...input,
+      status: 'running',
+      requestedAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:01:00.000Z',
+      metadata: { ...input.metadata, taskboardTaskId: 'other-task' },
+    }));
+
+    await rig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version });
+
+    expect(rig.store.completeExecution).not.toHaveBeenCalled();
+    expect(rig.store.retryExecutionDispatch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.stringContaining('既有 Runtime Run'),
+      1_000,
+    );
+  });
+
+  it('poison Run 取消持久化失败时保留 outbox 重试，不提前终止 Execution', async () => {
+    const rig = makeRig();
+    rig.scheduler.cancelPendingTaskboardRun.mockRejectedValueOnce(new Error('cancel unavailable'));
+    rig.scheduler.enqueueCreateOnly.mockImplementationOnce(async (input) => ({
+      ...input,
+      status: 'completed',
+      requestedAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:01:00.000Z',
+      metadata: { ...input.metadata, taskboardTaskId: 'other-task' },
+    }));
+
+    await rig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version });
+
+    expect(rig.store.completeExecution).not.toHaveBeenCalled();
+    expect(rig.store.retryExecutionDispatch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.stringContaining('既有 Runtime Run'),
+      1_000,
+    );
   });
 
   it('合法外形 payload 的特权扩展字段不会进入 Session 或 Runtime Run', async () => {
@@ -440,13 +725,16 @@ describe('TaskboardExecutionCoordinator', () => {
 
   it('create-only 命中关联污染的既有 Run 时失败收口，不标记 dispatched', async () => {
     const rig = makeRig();
-    rig.scheduler.enqueueCreateOnly.mockImplementationOnce(async (input) => ({
-      ...input,
-      status: 'waiting_user',
-      requestedAt: '2026-08-01T00:00:00.000Z',
-      updatedAt: '2026-08-01T00:01:00.000Z',
-      metadata: { ...input.metadata, taskboardTaskId: 'other-task' },
-    }));
+    rig.scheduler.enqueueCreateOnly.mockImplementationOnce(async (input) => {
+      const { wakeMessage: _wakeMessage, ...metadata } = input.metadata ?? {};
+      return {
+        ...input,
+        status: 'completed',
+        requestedAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-01T00:01:00.000Z',
+        metadata: { ...metadata, taskboardTaskId: 'other-task', schedulerState: 'ready' },
+      };
+    });
 
     await rig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version });
 

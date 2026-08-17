@@ -33,6 +33,8 @@ export interface WsClient {
     lastActivityAt: number;
     ip?: string;
     userAgent?: string;
+    /** 旧客户端不发送 epoch；记录本 socket 已经 overflow 接受过的用户日志代际。 */
+    acceptedLegacyUserEventEpoch?: string;
 }
 
 export type WsMessageHandler = (client: WsClient, msg: WsInboundMessage) => void;
@@ -84,6 +86,24 @@ export class WsServer {
         this.closeHandler = handler;
     }
 
+    /**
+     * 校验用户日志代际。旧客户端没有 epoch：同一 socket 每个用户代际只 overflow 一次，
+     * 随后把该代际视为已接受；TTL 重建换代后再 overflow 一次。
+     */
+    hasUserEventEpochMismatch(
+        client: WsClient,
+        userId: string,
+        clientEpoch: string | undefined,
+        lastSeq: number,
+    ): boolean {
+        if (lastSeq <= 0) return false;
+        const currentEpoch = this.userEventLog.getEpoch(userId);
+        if (clientEpoch !== undefined) return clientEpoch !== currentEpoch;
+        if (client.acceptedLegacyUserEventEpoch === currentEpoch) return false;
+        client.acceptedLegacyUserEventEpoch = currentEpoch;
+        return true;
+    }
+
     /** Attach to an HTTP server for upgrade handling */
     attach(httpServer: HttpServer): void {
         httpServer.on('upgrade', (request, socket, head) => {
@@ -104,7 +124,7 @@ export class WsServer {
             // registering a user connection or touching session state.
             if (this.isDeploymentProbe(request)) {
                 this.wss.handleUpgrade(request, socket, head, (ws) => {
-                    ws.send(JSON.stringify({ data: { type: 'pong', probe: true } }), (err) => {
+                    ws.send(JSON.stringify({ data: { type: 'pong', probe: true, epoch: this.userEventLog.epoch } }), (err) => {
                         if (err) {
                             ws.terminate();
                             return;
@@ -164,26 +184,33 @@ export class WsServer {
                     // metadata sync so sync payloads cannot delay pong delivery.
                     if (msg.action === 'ping') {
                         client.alive = true;
-                        const { lastSeq, clientTs } = msg as WsPingMessage;
+                        const { lastSeq, epoch: clientEpoch, clientTs } = msg as WsPingMessage;
                         const userId = client.user?.sub;
+                        const serverEpoch = userId
+                            ? this.userEventLog.getEpoch(userId)
+                            : this.userEventLog.epoch;
                         const heartbeatRttMs = typeof clientTs === 'number' ? Date.now() - clientTs : undefined;
                         if (typeof heartbeatRttMs === 'number' && heartbeatRttMs >= 3000) {
                             chatLogger.warn(`WS heartbeat slow: user=${client.user?.username ?? 'anonymous'} rtt=${heartbeatRttMs}ms lastSeq=${typeof lastSeq === 'number' ? lastSeq : 'n/a'}`);
                         }
                         if (userId) {
                             const currentSeq = this.userEventLog.getCurrentSeq(userId);
-                            this.sendTo(ws, { data: { type: 'pong', seq: currentSeq } });
+                            this.sendTo(ws, { data: { type: 'pong', seq: currentSeq, epoch: serverEpoch } });
                             // 如果客户端报告了 lastSeq，另发 sync 回放漏掉的元数据事件。
                             if (typeof lastSeq === 'number') {
-                                const result = this.userEventLog.getEventsAfter(userId, lastSeq);
-                                if (result.gapDetected) {
-                                    this.sendTo(ws, { data: { type: 'sync_overflow', seq: currentSeq } });
-                                } else if (result.events.length > 0) {
-                                    this.sendTo(ws, { data: { type: 'sync_ok', seq: currentSeq, events: result.events } });
+                                if (this.hasUserEventEpochMismatch(client, userId, clientEpoch, lastSeq)) {
+                                    this.sendTo(ws, { data: { type: 'sync_overflow', seq: currentSeq, epoch: serverEpoch } });
+                                } else {
+                                    const result = this.userEventLog.getEventsAfter(userId, lastSeq);
+                                    if (result.gapDetected) {
+                                        this.sendTo(ws, { data: { type: 'sync_overflow', seq: currentSeq, epoch: serverEpoch } });
+                                    } else if (result.events.length > 0) {
+                                        this.sendTo(ws, { data: { type: 'sync_ok', seq: currentSeq, epoch: serverEpoch, events: result.events } });
+                                    }
                                 }
                             }
                         } else {
-                            this.sendTo(ws, { data: { type: 'pong' } });
+                            this.sendTo(ws, { data: { type: 'pong', epoch: serverEpoch } });
                         }
                         return;
                     }

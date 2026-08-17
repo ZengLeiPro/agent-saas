@@ -17,11 +17,13 @@ import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 let captured: ((env: unknown) => void) | null = null;
 const wsSend = vi.fn();
 const wsSetLastSeq = vi.fn();
+const wsSetEpoch = vi.fn();
 vi.mock('../../lib/wsClient', () => ({
   wsClient: {
     onMessage: (cb: (env: unknown) => void) => { captured = cb; return () => { captured = null; }; },
     send: (...a: unknown[]) => wsSend(...a),
     setLastSeq: (...a: unknown[]) => wsSetLastSeq(...a),
+    setEpoch: (...a: unknown[]) => wsSetEpoch(...a),
   },
 }));
 
@@ -81,6 +83,7 @@ beforeEach(() => {
   captured = null;
   wsSend.mockClear();
   wsSetLastSeq.mockClear();
+  wsSetEpoch.mockClear();
   processWsEvent.mockReset();
   processWsEvent.mockReturnValue(undefined);
   finalizeRunningSubagents.mockClear();
@@ -115,10 +118,10 @@ describe('eventId / eventCursor 追踪', () => {
 describe('seq gap 检测与主动 sync', () => {
   it('已建基线且发现 gap → 主动发 sync(lastSeq=prev)', () => {
     const store = getChatStore();
-    store.setState({ lastUserSeq: 5, isAttached: true });
+    store.setState({ lastUserSeq: 5, lastUserEpoch: 'server-epoch-1', isAttached: true });
     // seq 从 5 跳到 8（gap）
     emit({ seq: 8, data: { type: 'text' } });
-    expect(wsSend).toHaveBeenCalledWith({ action: 'sync', lastSeq: 5 });
+    expect(wsSend).toHaveBeenCalledWith({ action: 'sync', lastSeq: 5, epoch: 'server-epoch-1' });
     // lastUserSeq 前进到 8
     expect(store.getState().lastUserSeq).toBe(8);
     expect(wsSetLastSeq).toHaveBeenCalledWith(8);
@@ -175,13 +178,14 @@ describe('sync 协议响应', () => {
       { sessionId: 's1', updatedAtMs: 1, title: '旧', source: { type: 'web', label: 'WEB' } },
       { sessionId: 's2', updatedAtMs: 2, source: { type: 'web', label: 'WEB' } },
     ]);
-    emit({ data: { type: 'sync_ok', seq: 20, events: [
+    emit({ data: { type: 'sync_ok', seq: 20, epoch: 'server-epoch-1', events: [
       { event: { type: 'title_updated', sessionId: 's1', title: '新标题' } },
       { event: { type: 'session_deleted', sessionId: 's2' } },
     ] } });
 
-    expect(store.getState().lastUserSeq).toBe(20);
+    expect(store.getState()).toMatchObject({ lastUserSeq: 20, lastUserEpoch: 'server-epoch-1' });
     expect(wsSetLastSeq).toHaveBeenCalledWith(20);
+    expect(wsSetEpoch).toHaveBeenCalledWith('server-epoch-1');
     const s = store.getState().sessions;
     expect(s.find(x => x.sessionId === 's1')!.title).toBe('新标题');
     expect(s.find(x => x.sessionId === 's2')).toBeUndefined();
@@ -192,10 +196,19 @@ describe('sync 协议响应', () => {
     expect(loadSessionsMock).toHaveBeenCalledWith({ fresh: true });
   });
 
+  it('旧服务端 sync_ok 缺少 epoch 时保留已知 epoch', () => {
+    const store = getChatStore();
+    store.setState({ lastUserEpoch: 'known-epoch' });
+    emit({ data: { type: 'sync_ok', seq: 4, events: [] } });
+    expect(store.getState()).toMatchObject({ lastUserSeq: 4, lastUserEpoch: 'known-epoch' });
+    expect(wsSetEpoch).not.toHaveBeenCalled();
+  });
+
   it('sync_overflow：更新 seq 并降级全量刷新列表', () => {
     const store = getChatStore();
-    emit({ data: { type: 'sync_overflow', seq: 99 } });
-    expect(store.getState().lastUserSeq).toBe(99);
+    emit({ data: { type: 'sync_overflow', seq: 99, epoch: 'server-epoch-2' } });
+    expect(store.getState()).toMatchObject({ lastUserSeq: 99, lastUserEpoch: 'server-epoch-2' });
+    expect(wsSetEpoch).toHaveBeenCalledWith('server-epoch-2');
     expect(loadSessionsMock).toHaveBeenCalledWith({ fresh: true });
   });
 });

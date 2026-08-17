@@ -20,7 +20,7 @@ const harness = vi.hoisted(() => {
       cancelActiveStream?: () => void;
     },
     session: {
-      sessionId: null,
+      sessionId: null as string | null,
       sessions: [],
       isLoadingSessions: false,
       isLoadingMessages: false,
@@ -99,6 +99,7 @@ vi.mock("@/lib/wsClient", () => ({
     ensureConnectedSend: (payload: unknown) => harness.sends(payload),
     forceReconnect: vi.fn(async () => {}),
     setLastSeq: vi.fn(),
+    setEpoch: vi.fn(),
     onMessage: (handler: (envelope: { data: unknown }) => void) => {
       harness.messageHandlers.add(handler);
       return () => harness.messageHandlers.delete(handler);
@@ -152,6 +153,8 @@ beforeEach(() => {
   harness.sends.mockClear();
   harness.replaceFiles.mockClear();
   harness.currentFiles = [];
+  harness.session.sessionId = null;
+  harness.session.isNewSession = true;
   Object.values(harness.session).forEach((value) => {
     if (typeof value === "function" && "mockClear" in value) (value as ReturnType<typeof vi.fn>).mockClear();
   });
@@ -166,6 +169,501 @@ afterEach(() => {
 });
 
 describe("useChatAppState queue consistency lifecycle", () => {
+  it("reattaches a cold switched session before accepting text and done", async () => {
+    harness.session.sessionId = "session-old";
+    harness.session.isNewSession = false;
+    const { result, rerender } = renderHook(() => useChatAppState());
+
+    act(() => {
+      // The WS event can race React's session state commit in the same click frame.
+      result.current.selectSession("session-active");
+      emit({
+        type: "active_stream",
+        sessionId: "session-active",
+        active: true,
+        streamId: "stream-active",
+        runId: "run-active",
+        status: "running",
+      });
+    });
+    expect(result.current.loading).toBe(true);
+
+    harness.session.sessionId = "session-active";
+    rerender();
+    act(() => {
+      emit({ type: "block_start", blockType: "text", runId: "run-active" });
+      emit({ type: "text", content: "recovered reply" });
+      emit({
+        type: "done",
+        sessionId: "session-active",
+        streamId: "stream-active",
+        runId: "run-active",
+      });
+    });
+
+    await waitFor(() => expect(result.current.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "text", content: "recovered reply" }),
+    ])));
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("does not let late session A active_stream/text/done leak into session B in the switch frame", () => {
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+    harness.session.selectSession.mockImplementationOnce(() => {
+      harness.sessionCallbacks?.cancelActiveStream?.();
+    });
+
+    act(() => {
+      result.current.selectSession("session-b");
+      emit({
+        type: "active_stream",
+        sessionId: "session-a",
+        active: true,
+        streamId: "stream-a",
+        runId: "run-a",
+        status: "running",
+      });
+      emit({ type: "block_start", blockType: "text", runId: "run-a" });
+      emit({ type: "text", content: "late reply from A" });
+      emit({
+        type: "done",
+        sessionId: "session-a",
+        streamId: "stream-a",
+        runId: "run-a",
+      });
+    });
+
+    expect(result.current.messages).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ content: expect.stringContaining("late reply from A") }),
+    ]));
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("drops the temporary reconnect active_stream handler after switching sessions", () => {
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => {
+      emit({
+        type: "active_stream",
+        sessionId: "session-a",
+        active: true,
+        streamId: "stream-a",
+        runId: "run-a",
+        status: "running",
+      });
+    });
+    expect(result.current.loading).toBe(true);
+    harness.session.refreshCurrentSession.mockClear();
+
+    // connected while loading installs the one-shot reconnect handler for session A.
+    act(() => {
+      for (const handler of [...harness.stateHandlers]) handler("connected");
+    });
+    const handlersWithReconnect = harness.messageHandlers.size;
+
+    act(() => {
+      result.current.selectSession("session-b");
+      emit({ type: "active_stream", sessionId: "session-a", active: false });
+    });
+
+    expect(harness.session.refreshCurrentSession).not.toHaveBeenCalled();
+    expect(harness.messageHandlers.size).toBe(handlersWithReconnect - 1);
+  });
+
+  it("ignores a correlated inactive resume response that arrives after a new stream_id binding", async () => {
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+
+    await waitFor(() => expect(harness.sends.mock.calls.some(([payload]) => (
+      (payload as { action?: string }).action === "resume"
+    ))).toBe(true));
+    const resume = harness.sends.mock.calls
+      .map(([payload]) => payload as { action?: string; requestId?: string })
+      .find((payload) => payload.action === "resume");
+    expect(resume?.requestId).toBeTruthy();
+
+    act(() => {
+      emit({
+        type: "active_stream",
+        sessionId: "session-a",
+        active: true,
+        streamId: "stream-old",
+        runId: "run-old",
+        requestId: resume?.requestId,
+      });
+    });
+    expect(result.current.loading).toBe(true);
+
+    act(() => {
+      emit({
+        type: "stream_id",
+        sessionId: "session-a",
+        streamId: "stream-new",
+        runId: "run-new",
+      });
+    });
+    expect(result.current.loading).toBe(true);
+    harness.session.refreshCurrentSession.mockClear();
+
+    act(() => {
+      emit({
+        type: "active_stream",
+        sessionId: "session-a",
+        active: false,
+        requestId: resume?.requestId,
+      });
+    });
+
+    expect(result.current.loading).toBe(true);
+    expect(harness.session.refreshCurrentSession).not.toHaveBeenCalled();
+  });
+
+  it("treats a late HTTP inactive result as stale after a new lifecycle binding", async () => {
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    let resolveStreamStatus!: (value: Response) => void;
+    harness.authFetch.mockImplementation((url: string) => (
+      url.endsWith("/stream-status")
+        ? new Promise<Response>((resolve) => { resolveStreamStatus = resolve; })
+        : Promise.resolve(response({}, 404))
+    ));
+    const { result } = renderHook(() => useChatAppState());
+
+    await waitFor(() => expect(resolveStreamStatus).toBeTypeOf("function"));
+    act(() => emit({
+      type: "session_status",
+      sessionId: "session-a",
+      status: "running",
+      streamId: "stream-new",
+      runId: "run-new",
+    }));
+    await act(async () => { resolveStreamStatus(response({ active: false })); });
+    await waitFor(() => expect(harness.sends.mock.calls.some(([payload]) => (
+      (payload as { action?: string }).action === "resume"
+    ))).toBe(true));
+
+    act(() => result.current.stopGeneration());
+    expect(result.current.loading).toBe(true);
+    expect(harness.sends.mock.calls.map(([payload]) => payload)).toContainEqual({
+      action: "abort",
+      runId: "run-new",
+      streamId: "stream-new",
+    });
+  });
+
+  it("protects a new active lifecycle without IDs from old correlated and legacy inactive responses", async () => {
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+
+    await waitFor(() => expect(harness.sends.mock.calls.some(([payload]) => (
+      (payload as { action?: string }).action === "resume"
+    ))).toBe(true));
+    const oldResume = harness.sends.mock.calls
+      .map(([payload]) => payload as { action?: string; requestId?: string })
+      .find((payload) => payload.action === "resume");
+
+    act(() => emit({
+      type: "session_status",
+      sessionId: "session-a",
+      status: "running",
+    }));
+    harness.session.refreshCurrentSession.mockClear();
+    act(() => {
+      emit({
+        type: "active_stream",
+        sessionId: "session-a",
+        active: false,
+        requestId: oldResume?.requestId,
+      });
+      emit({ type: "active_stream", sessionId: "session-a", active: false });
+    });
+
+    expect(result.current.loading).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-a")).toBe("running");
+    expect(harness.session.refreshCurrentSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not resurrect a terminal lifecycle with an older correlated active response", async () => {
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+
+    await waitFor(() => expect(harness.sends.mock.calls.some(([payload]) => (
+      (payload as { action?: string }).action === "resume"
+    ))).toBe(true));
+    const oldResume = harness.sends.mock.calls
+      .map(([payload]) => payload as { action?: string; requestId?: string })
+      .find((payload) => payload.action === "resume");
+
+    act(() => {
+      emit({ type: "session_status", sessionId: "session-a", status: "completed" });
+      emit({
+        type: "active_stream",
+        sessionId: "session-a",
+        active: true,
+        streamId: "stream-old",
+        runId: "run-old",
+        requestId: oldResume?.requestId,
+      });
+    });
+
+    expect(result.current.loading).toBe(false);
+    expect(result.current.sessionRuntimeStatuses.get("session-a")).toBeUndefined();
+    expect(result.current.runningSessionIds.has("session-a")).toBe(false);
+  });
+
+  it("invalidates an older correlated response when session_status establishes a new binding", async () => {
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+
+    await waitFor(() => expect(harness.sends.mock.calls.some(([payload]) => (
+      (payload as { action?: string }).action === "resume"
+    ))).toBe(true));
+    const oldResume = harness.sends.mock.calls
+      .map(([payload]) => payload as { action?: string; requestId?: string })
+      .find((payload) => payload.action === "resume");
+
+    act(() => emit({
+      type: "session_status",
+      sessionId: "session-a",
+      status: "running",
+      streamId: "stream-status-new",
+      runId: "run-status-new",
+    }));
+    harness.session.refreshCurrentSession.mockClear();
+    act(() => emit({
+      type: "active_stream",
+      sessionId: "session-a",
+      active: false,
+      requestId: oldResume?.requestId,
+    }));
+    act(() => result.current.stopGeneration());
+
+    expect(result.current.loading).toBe(true);
+    expect(harness.session.refreshCurrentSession).not.toHaveBeenCalled();
+    expect(harness.sends.mock.calls.map(([payload]) => payload)).toContainEqual({
+      action: "abort",
+      runId: "run-status-new",
+      streamId: "stream-status-new",
+    });
+  });
+
+  it("resumes a different stream_started binding while already loading and rejects the older response", async () => {
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+
+    await waitFor(() => expect(harness.sends.mock.calls.some(([payload]) => (
+      (payload as { action?: string }).action === "resume"
+    ))).toBe(true));
+    const oldResume = harness.sends.mock.calls
+      .map(([payload]) => payload as { action?: string; requestId?: string })
+      .find((payload) => payload.action === "resume");
+    act(() => emit({
+      type: "active_stream",
+      sessionId: "session-a",
+      active: true,
+      streamId: "stream-old",
+      runId: "run-old",
+      requestId: oldResume?.requestId,
+    }));
+
+    act(() => emit({
+      type: "stream_started",
+      sessionId: "session-a",
+      streamId: "stream-started-new",
+      runId: "run-started-new",
+    }));
+    await waitFor(() => expect(harness.sends.mock.calls.filter(([payload]) => (
+      (payload as { action?: string }).action === "resume"
+    ))).toHaveLength(2));
+    harness.session.refreshCurrentSession.mockClear();
+    act(() => emit({
+      type: "active_stream",
+      sessionId: "session-a",
+      active: false,
+      requestId: oldResume?.requestId,
+    }));
+    act(() => result.current.stopGeneration());
+
+    expect(result.current.loading).toBe(true);
+    expect(harness.session.refreshCurrentSession).not.toHaveBeenCalled();
+    expect(harness.sends.mock.calls.map(([payload]) => payload)).toContainEqual({
+      action: "abort",
+      runId: "run-started-new",
+      streamId: "stream-started-new",
+    });
+  });
+
+  it("invalidates an older response when HTTP stream-status restores a new binding", async () => {
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+
+    await waitFor(() => expect(harness.sends.mock.calls.some(([payload]) => (
+      (payload as { action?: string }).action === "resume"
+    ))).toBe(true));
+    const oldResume = harness.sends.mock.calls
+      .map(([payload]) => payload as { action?: string; requestId?: string })
+      .find((payload) => payload.action === "resume");
+    act(() => emit({
+      type: "active_stream",
+      sessionId: "session-a",
+      active: true,
+      streamId: "stream-old",
+      runId: "run-old",
+      requestId: oldResume?.requestId,
+    }));
+
+    harness.authFetch.mockImplementation(async (url: string) => (
+      url.endsWith("/stream-status")
+        ? response({ active: true, status: "running", streamId: "stream-http-new", runId: "run-http-new" })
+        : response({}, 404)
+    ));
+    await act(async () => { await result.current.resumeCurrentStream(); });
+    harness.session.refreshCurrentSession.mockClear();
+    act(() => emit({
+      type: "active_stream",
+      sessionId: "session-a",
+      active: false,
+      requestId: oldResume?.requestId,
+    }));
+    act(() => result.current.stopGeneration());
+
+    expect(result.current.loading).toBe(true);
+    expect(harness.session.refreshCurrentSession).not.toHaveBeenCalled();
+    expect(harness.sends.mock.calls.map(([payload]) => payload)).toContainEqual({
+      action: "abort",
+      runId: "run-http-new",
+      streamId: "stream-http-new",
+    });
+  });
+
+  it("ignores a legacy active response when only streamId differs and preserves an omitted runId", () => {
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => emit({
+      type: "session_status",
+      sessionId: "session-a",
+      status: "running",
+      streamId: "stream-current",
+      runId: "run-current",
+    }));
+    act(() => emit({
+      type: "active_stream",
+      sessionId: "session-a",
+      active: true,
+      streamId: "stream-stale",
+      runId: "run-current",
+    }));
+    act(() => emit({
+      type: "active_stream",
+      sessionId: "session-a",
+      active: true,
+      streamId: "stream-current",
+    }));
+    act(() => result.current.stopGeneration());
+
+    expect(harness.sends.mock.calls.map(([payload]) => payload)).toContainEqual({
+      action: "abort",
+      runId: "run-current",
+      streamId: "stream-current",
+    });
+  });
+
+  it("keeps a new binding when a legacy server sends inactive or an active response for another run", async () => {
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+
+    await waitFor(() => expect(harness.sends.mock.calls.some(([payload]) => (
+      (payload as { action?: string }).action === "resume"
+    ))).toBe(true));
+    const resume = harness.sends.mock.calls
+      .map(([payload]) => payload as { action?: string; requestId?: string })
+      .find((payload) => payload.action === "resume");
+
+    act(() => {
+      emit({
+        type: "active_stream",
+        sessionId: "session-a",
+        active: true,
+        streamId: "stream-old",
+        runId: "run-old",
+        requestId: resume?.requestId,
+      });
+      emit({
+        type: "stream_id",
+        sessionId: "session-a",
+        streamId: "stream-new",
+        runId: "run-new",
+      });
+    });
+    harness.session.refreshCurrentSession.mockClear();
+
+    act(() => {
+      emit({ type: "active_stream", sessionId: "session-a", active: false });
+      emit({
+        type: "active_stream",
+        sessionId: "session-a",
+        active: true,
+        streamId: "stream-stale",
+        runId: "run-stale",
+      });
+      result.current.stopGeneration();
+    });
+
+    expect(result.current.loading).toBe(true);
+    expect(harness.session.refreshCurrentSession).toHaveBeenCalledTimes(1);
+    expect(harness.sends.mock.calls.map(([payload]) => payload)).toContainEqual({
+      action: "abort",
+      runId: "run-new",
+      streamId: "stream-new",
+    });
+  });
+
+  it("binds queued entries from live and sync events to their authoritative session", async () => {
+    harness.session.sessionId = "session-queue";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+    await waitFor(() => expect(harness.sends.mock.calls.some(([payload]) => (
+      (payload as { action?: string }).action === "resume"
+    ))).toBe(true));
+    const first = {
+      type: "message_queued",
+      sessionId: "session-queue",
+      runId: "run-live",
+      clientMsgId: "client-live",
+      deliveryMode: "queue",
+      content: "live queued",
+      timestamp: 1,
+    };
+    const second = {
+      ...first,
+      runId: "run-sync",
+      clientMsgId: "client-sync",
+      content: "sync queued",
+      timestamp: 2,
+    };
+
+    act(() => emit(first));
+    act(() => emit({ type: "sync_ok", seq: 2, events: [{ seq: 2, event: second }] }));
+
+    expect(result.current.queuedInterjections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ clientMsgId: "client-live", sessionId: "session-queue" }),
+      expect.objectContaining({ clientMsgId: "client-sync", sessionId: "session-queue" }),
+    ]));
+  });
+
   it("locks later provisional submissions and flushes them in order with the authoritative sessionId", async () => {
     const { result } = renderHook(() => useChatAppState());
 

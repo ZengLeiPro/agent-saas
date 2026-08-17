@@ -174,6 +174,7 @@ export interface CancelSteeringResult {
 
 export interface SteeringApplyInput {
   sourceRunId: string;
+  clientMsgId?: string;
   /** /compact 等控制输入没有 user_message 事件，但仍与 applied 状态同事务结算。 */
   event?: PlatformEventInput;
 }
@@ -235,6 +236,12 @@ export interface RunStore {
   /** 会话内仍可由用户单条撤回的 pending 插话（供 detail API 恢复队列区）。 */
   listPendingSteeringBySession?(sessionId: string): Promise<SteeringInputRecord[]>;
   markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch?: Record<string, unknown>): Promise<RunRecord | null>;
+  /** 仅 pending + schedulerState=staged 时原子切到 ready；未命中返回当前记录。 */
+  activateStagedRun?(runId: string): Promise<RunRecord | null>;
+  /** 仅 legacy pending Taskboard Run（无 schedulerState）原子切到 staged；未命中返回当前记录。 */
+  stagePendingRun?(runId: string): Promise<RunRecord | null>;
+  /** poison dispatch 收口：仅取消 pending Taskboard Run；未命中返回当前记录。 */
+  cancelPendingTaskboardRun?(runId: string, reason: string): Promise<RunRecord | null>;
   /** CAS 状态迁移；仅当前状态命中 expectedStatuses 时更新，未命中返回 null。 */
   markStatusIfCurrent?(
     runId: string,

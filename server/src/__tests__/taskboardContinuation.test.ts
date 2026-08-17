@@ -734,6 +734,16 @@ function makeRig(
       metadata: input.metadata ?? {},
     })),
     enqueueCreateOnly: vi.fn(),
+    stagePendingRun: vi.fn(),
+    cancelPendingTaskboardRun: vi.fn(async () => null),
+    activateCreatedRun: vi.fn(async (runId: string): Promise<RunRecord> => ({
+      runId,
+      sessionId: activeExecution.sessionId,
+      status: 'pending',
+      requestedAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z',
+      metadata: { schedulerState: 'ready' },
+    })),
   };
   const runStore = { get: vi.fn(async (): Promise<RunRecord | null> => null) };
   const sessionCatalog = {

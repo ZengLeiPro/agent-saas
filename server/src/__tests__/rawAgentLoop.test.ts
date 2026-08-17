@@ -1754,9 +1754,21 @@ describe('RawAgentLoop', () => {
     const atomicApply = vi.fn(async (_targetRunId: string, inputs: Array<{ sourceRunId: string; event?: any }>) => {
       queued = [];
       const event = inputs[0]!.event!;
+      const timestamp = new Date().toISOString();
       return {
         appliedSourceRunIds: ['source-atomic'],
-        events: [{ ...event, id: 'event-atomic', timestamp: new Date().toISOString() }],
+        events: [
+          { ...event, id: 'event-atomic', timestamp },
+          {
+            id: 'event-atomic-applied',
+            timestamp,
+            type: 'interjection_applied' as const,
+            runId: 'target-atomic',
+            sessionId: 'session-steering-atomic',
+            sourceRunIds: ['source-atomic'],
+            clientMsgIds: ['client-atomic'],
+          },
+        ],
       };
     });
     const loop = new RawAgentLoop({
@@ -1772,7 +1784,7 @@ describe('RawAgentLoop', () => {
       } as unknown as RunStore,
     });
 
-    await collect(loop.run(
+    const outbound = await collect(loop.run(
       {
         message: { channel: 'web', chatId: 'chat-atomic', content: '先回答' },
         prompt: '先回答',
@@ -1798,6 +1810,12 @@ describe('RawAgentLoop', () => {
     expect(durableEvents.filter((event) => (
       event.type === 'user_message' && event.interjectionSourceRunId === 'source-atomic'
     ))).toHaveLength(0);
+    expect(durableEvents.filter((event) => event.type === 'interjection_applied')).toHaveLength(0);
+    expect(outbound.filter((event) => event.type === 'interjection_applied')).toEqual([{
+      type: 'interjection_applied',
+      sourceRunIds: ['source-atomic'],
+      clientMsgIds: ['client-atomic'],
+    }]);
     const transcript = await readFile(transcriptPath, 'utf-8');
     expect(transcript.split('请按原子路径修正').length - 1).toBe(1);
   });

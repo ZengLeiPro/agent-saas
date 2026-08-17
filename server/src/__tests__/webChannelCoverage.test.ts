@@ -556,18 +556,40 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const rig = makeRig();
       const log = new UserEventLog();
       // destroy 供 channel.stop() 调用（真 WsServer 的最小替身）
-      (rig.channel as any).wsServer = { userEventLog: log, destroy: () => {} };
+      (rig.channel as any).wsServer = {
+        userEventLog: log,
+        hasUserEventEpochMismatch: (_client: unknown, userId: string, epoch: string | undefined, lastSeq: number) => (
+          log.hasEpochMismatch(userId, epoch, lastSeq)
+        ),
+        destroy: () => {},
+      };
       try {
         log.push('sync-u1', { type: 'title_updated', sessionId: 'a' });
         log.push('sync-u1', { type: 'session_updated', sessionId: 'a' });
         log.push('sync-u1', { type: 'session_deleted', sessionId: 'a' });
-        (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), { action: 'sync', lastSeq: 1 });
-        expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'sync_ok', seq: 3 });
+        (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
+          action: 'sync', lastSeq: 1, epoch: log.getEpoch('sync-u1'),
+        });
+        expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'sync_ok', seq: 3, epoch: log.getEpoch('sync-u1') });
         expect(rig.ws.sent.at(-1)?.data.events.map((e: any) => e.seq)).toEqual([2, 3]);
 
+        // 新实例可恰好追到相同 seq；正 seq 缺失/不匹配 epoch 仍必须强制全量恢复。
+        (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
+          action: 'sync', lastSeq: 3, epoch: 'previous-instance',
+        });
+        expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'sync_overflow', seq: 3, epoch: log.getEpoch('sync-u1') });
+
+        // 首次客户端 lastSeq=0 不要求 epoch，兼容滚动部署。
+        (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
+          action: 'sync', lastSeq: 0,
+        });
+        expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'sync_ok', seq: 3, epoch: log.getEpoch('sync-u1') });
+
         for (let i = 0; i < 205; i += 1) log.push('sync-u2', { type: 'title_updated' });
-        (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u2' }), { action: 'sync', lastSeq: 1 });
-        expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'sync_overflow', seq: 205 });
+        (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u2' }), {
+          action: 'sync', lastSeq: 1, epoch: log.getEpoch('sync-u2'),
+        });
+        expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'sync_overflow', seq: 205, epoch: log.getEpoch('sync-u2') });
 
         const before = rig.ws.sent.length;
         (rig.channel as any).handleSync(wsClient(rig.ws), { action: 'sync', lastSeq: 0 });
@@ -1210,7 +1232,8 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         { type: 'compaction_end', compaction: { summary: 's', coveredEventCount: 3 } } as unknown as OutboundEvent,
         { type: 'done' },
       ]));
-      await rig.send(USER, { client_msg_id: 'cm-compact', message: '/compact' });
+      await rig.send(USER, { client_msg_id: 'cm-compact', message: '/compact', deliveryMode: 'steer' });
+      expect(rig.ws.sent[0]?.data).toMatchObject({ type: 'chat_ack', deliveryMode: 'queue' });
       expect(rig.ws.sent.map((m) => m.data.type)).toEqual([
         'chat_ack', 'stream_id', 'compaction_status', 'compaction_status', 'done',
       ]);

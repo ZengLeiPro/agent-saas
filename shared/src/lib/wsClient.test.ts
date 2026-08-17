@@ -105,8 +105,9 @@ beforeEach(() => {
   vi.stubGlobal('WebSocket', FakeWebSocket);
   initPlatform(makePlatform());
   vi.spyOn(console, 'warn').mockImplementation(() => {});
-  // 单例的 lastSeq 会跨用例残留，复位避免串扰
+  // 单例的 sync 游标会跨用例残留，复位避免串扰
   wsClient.setLastSeq(0);
+  wsClient.setEpoch(null);
 });
 
 afterEach(() => {
@@ -218,6 +219,17 @@ describe('wsClient - 发送', () => {
     expect(JSON.parse(ws.sent[ws.sent.length - 1])).toEqual({ action: 'abort', runId: 'r1' });
   });
 
+  it('send(sync) 自动带回最近由 sync 确认的服务端 epoch', async () => {
+    await connectAndOpen();
+    const ws = latestWs();
+    ws.simulateMessage({ data: { type: 'sync_ok', seq: 4, epoch: 'server-epoch-2', events: [] } });
+
+    expect(wsClient.send({ action: 'sync', lastSeq: 4 })).toBe(true);
+    expect(JSON.parse(ws.sent.at(-1)!)).toEqual({
+      action: 'sync', lastSeq: 4, epoch: 'server-epoch-2',
+    });
+  });
+
   it('send() 未连接时返回 false 且不写 socket', () => {
     // 未 connect，无 open 的 ws
     const ok = wsClient.send({ action: 'abort' });
@@ -252,6 +264,29 @@ describe('wsClient - 重连', () => {
     await vi.advanceTimersByTimeAsync(1000);
     await vi.advanceTimersByTimeAsync(0);
     expect(FakeWebSocket.instances.length).toBe(countBefore + 1);
+  });
+
+  it('pong 后、overflow 前断线时重连 sync 仍携带旧 epoch/seq', async () => {
+    const p = wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    const first = latestWs();
+    first.simulateOpen();
+    await p;
+
+    first.simulateMessage({ data: { type: 'sync_ok', seq: 4, epoch: 'epoch-1', events: [] } });
+    // 服务端已换代，但 overflow 尚未抵达；pong 只能作为 liveness，不能提前推进恢复游标。
+    first.simulateMessage({ data: { type: 'pong', seq: 9, epoch: 'epoch-2' } });
+    first.simulateClose(1006, 'between pong and overflow');
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(0);
+    const second = latestWs();
+    second.simulateOpen();
+
+    expect(wsClient.send({ action: 'sync', lastSeq: 4 })).toBe(true);
+    expect(JSON.parse(second.sent.at(-1)!)).toEqual({
+      action: 'sync', lastSeq: 4, epoch: 'epoch-1',
+    });
   });
 
   it('主动 disconnect 后 onclose 不触发重连', async () => {
@@ -299,14 +334,14 @@ describe('wsClient - 心跳', () => {
     ws.simulateOpen();
     await p;
 
-    // 收到带 seq 的事件 → 更新内部 lastSeq
-    ws.simulateMessage({ seq: 7, data: { type: 'text', content: 'x' } });
+    // 只有可恢复的 sync 结果建立 seq 与服务端实例 epoch 基线。
+    ws.simulateMessage({ data: { type: 'sync_ok', seq: 7, epoch: 'server-epoch-1', events: [] } });
 
     // 推进一个心跳周期（25s）
     await vi.advanceTimersByTimeAsync(25_000);
     const ping = ws.sent.map((s) => JSON.parse(s)).find((m) => m.action === 'ping');
     expect(ping).toBeTruthy();
-    expect(ping.lastSeq).toBe(7);
+    expect(ping).toMatchObject({ lastSeq: 7, epoch: 'server-epoch-1' });
   });
 
   it('心跳超时（长时间无入站帧）会主动 close(4000) 触发重连', async () => {

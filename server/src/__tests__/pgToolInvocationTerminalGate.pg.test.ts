@@ -101,8 +101,115 @@ describePg('PgToolInvocationStore terminal run gate', () => {
     )).resolves.toMatchObject({ invoked: false, reason: 'invocation_claimed' });
 
     expect(sideEffects).toBe(1);
+    await toolInvocationStore.start({
+      invocationId,
+      runId,
+      sessionId,
+      toolCallId: 'call-invoke-claim-once',
+      toolName: 'Shell',
+      executionTarget: 'server-remote',
+      metadata: { workerId: 'worker-recovery' },
+    });
+    const claimed = await toolInvocationStore.get(invocationId);
+    expect(claimed?.metadata.invokeClaimedAt).toEqual(expect.any(String));
+    expect(claimed?.metadata).not.toHaveProperty('workerId');
+    expect(claimed?.metadata).not.toHaveProperty('invokeClaimedByWorkerId');
+  });
+
+  it('真实 PostgreSQL 下旧 worker 在 lease 转移后不能 claim 或执行，新 owner 可继续 claim', async () => {
+    const sessionId = 'session-run-lease-owner-gate';
+    const runId = 'run-lease-owner-gate';
+    const invocationId = 'invocation-run-lease-owner-gate';
+    await runStore.upsertPending({ runId, sessionId, userId: 'user-1', channel: 'web' });
+    await expect(runStore.acquireLease(runId, 'worker-winner', 60_000)).resolves.toMatchObject({
+      status: 'running',
+      workerId: 'worker-winner',
+    });
+    await toolInvocationStore.start({
+      invocationId,
+      runId,
+      sessionId,
+      toolCallId: 'call-run-lease-owner-gate',
+      toolName: 'Write',
+      executionTarget: 'server-remote',
+      metadata: { workerId: 'worker-loser' },
+    });
+    let sideEffects = 0;
+    const invoke = async () => {
+      sideEffects += 1;
+      return 'invoked';
+    };
+
+    await expect(toolInvocationStore.invokeWithActiveRunGate(
+      runId, invocationId, invoke, undefined, 'worker-loser',
+    )).resolves.toMatchObject({
+      invoked: false,
+      reason: 'run_lease_lost',
+      runWorkerId: 'worker-winner',
+    });
+    expect(sideEffects).toBe(0);
     await expect(toolInvocationStore.get(invocationId)).resolves.toMatchObject({
-      metadata: { invokeClaimedAt: expect.any(String) },
+      metadata: expect.not.objectContaining({ invokeClaimedAt: expect.anything() }),
+    });
+
+    await toolInvocationStore.start({
+      invocationId,
+      runId,
+      sessionId,
+      toolCallId: 'call-run-lease-owner-gate',
+      toolName: 'Write',
+      executionTarget: 'server-remote',
+      metadata: { workerId: 'worker-winner' },
+    });
+    await expect(toolInvocationStore.invokeWithActiveRunGate(
+      runId, invocationId, invoke, undefined, 'worker-winner',
+    )).resolves.toMatchObject({ invoked: true, result: 'invoked' });
+    expect(sideEffects).toBe(1);
+    await expect(toolInvocationStore.get(invocationId)).resolves.toMatchObject({
+      metadata: expect.objectContaining({ invokeClaimedByWorkerId: 'worker-winner' }),
+    });
+  });
+
+  it('真实 PostgreSQL 下 worker 匹配但 lease 已过期时不能 claim 或执行', async () => {
+    const sessionId = 'session-run-expired-lease-gate';
+    const runId = 'run-expired-lease-gate';
+    const invocationId = 'invocation-run-expired-lease-gate';
+    await runStore.upsertPending({ runId, sessionId, userId: 'user-1', channel: 'web' });
+    await runStore.acquireLease(runId, 'worker-expired', 60_000);
+    await pool.query(`
+      UPDATE ${prefix}_runs
+      SET lease_expires_at = clock_timestamp() - interval '1 second'
+      WHERE run_id = $1
+    `, [runId]);
+    await toolInvocationStore.start({
+      invocationId,
+      runId,
+      sessionId,
+      toolCallId: 'call-run-expired-lease-gate',
+      toolName: 'Write',
+      executionTarget: 'server-remote',
+      metadata: { workerId: 'worker-expired' },
+    });
+    let sideEffects = 0;
+
+    await expect(toolInvocationStore.invokeWithActiveRunGate(
+      runId,
+      invocationId,
+      async () => {
+        sideEffects += 1;
+        return 'must-not-run';
+      },
+      undefined,
+      'worker-expired',
+    )).resolves.toMatchObject({
+      invoked: false,
+      reason: 'run_lease_lost',
+      runStatus: 'running',
+      runWorkerId: 'worker-expired',
+    });
+    expect(sideEffects).toBe(0);
+    await expect(toolInvocationStore.get(invocationId)).resolves.toMatchObject({
+      metadata: expect.not.objectContaining({ invokeClaimedAt: expect.anything() }),
     });
   });
 
@@ -204,7 +311,7 @@ describePg('PgToolInvocationStore terminal run gate', () => {
               AND wait_event_type = 'Lock'
               AND query LIKE $1
           ) AS waiting
-        `, [`%SELECT status FROM ${prefix}_runs%FOR SHARE%`]);
+        `, [`%SELECT status, worker_id, lease_expires_at%FROM ${prefix}_runs%FOR SHARE%`]);
         waitingOnRunLock = waiting.rows[0]?.waiting ?? false;
         if (!waitingOnRunLock) await new Promise((resolve) => setTimeout(resolve, 5));
       }

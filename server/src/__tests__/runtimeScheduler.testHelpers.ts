@@ -1,4 +1,9 @@
 import type { RunRecord, RunStatus, RunStore, UpsertRunInput } from '../runtime/runStore.js';
+import {
+  SCHEDULER_STATE_METADATA_KEY,
+  SCHEDULER_STATE_READY,
+  SCHEDULER_STATE_STAGED,
+} from '../runtime/scheduler.js';
 import type { EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 
 export class MemoryRunStore implements RunStore {
@@ -39,6 +44,62 @@ export class MemoryRunStore implements RunStore {
     return updated;
   }
 
+  async activateStagedRun(runId: string): Promise<RunRecord | null> {
+    const record = this.records.get(runId);
+    if (!record) return null;
+    if (
+      record.status !== 'pending'
+      || record.metadata?.[SCHEDULER_STATE_METADATA_KEY] !== SCHEDULER_STATE_STAGED
+    ) return record;
+    const updated: RunRecord = {
+      ...record,
+      updatedAt: new Date().toISOString(),
+      metadata: { ...record.metadata, [SCHEDULER_STATE_METADATA_KEY]: SCHEDULER_STATE_READY },
+    };
+    this.records.set(runId, updated);
+    return updated;
+  }
+
+  async stagePendingRun(runId: string): Promise<RunRecord | null> {
+    const record = this.records.get(runId);
+    if (!record) return null;
+    if (
+      record.status !== 'pending'
+      || record.metadata?.taskboardExecution !== true
+      || record.metadata?.[SCHEDULER_STATE_METADATA_KEY] !== undefined
+    ) return record;
+    const updated: RunRecord = {
+      ...record,
+      updatedAt: new Date().toISOString(),
+      metadata: { ...record.metadata, [SCHEDULER_STATE_METADATA_KEY]: SCHEDULER_STATE_STAGED },
+    };
+    this.records.set(runId, updated);
+    return updated;
+  }
+
+  async cancelPendingTaskboardRun(runId: string, reason: string): Promise<RunRecord | null> {
+    const record = this.records.get(runId);
+    if (!record) return null;
+    if (
+      record.status !== 'pending'
+      || record.metadata?.taskboardExecution !== true
+    ) return record;
+    const now = new Date().toISOString();
+    const { wakeMessage: _wakeMessage, ...metadata } = record.metadata;
+    const updated: RunRecord = {
+      ...record,
+      status: 'cancelled',
+      statusReason: reason,
+      updatedAt: now,
+      cancelledAt: now,
+      workerId: undefined,
+      leaseExpiresAt: undefined,
+      metadata,
+    };
+    this.records.set(runId, updated);
+    return updated;
+  }
+
   async get(runId: string): Promise<RunRecord | null> { return this.records.get(runId) ?? null; }
 
   async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
@@ -49,7 +110,11 @@ export class MemoryRunStore implements RunStore {
 
   async listRecoverable(): Promise<RunRecord[]> {
     return [...this.records.values()]
-      .filter((record) => record.status === 'pending' || record.status === 'running')
+      .filter((record) => (
+        (record.status === 'pending' || record.status === 'running')
+        && !(record.status === 'pending'
+          && record.metadata?.[SCHEDULER_STATE_METADATA_KEY] === SCHEDULER_STATE_STAGED)
+      ))
       .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
   }
 
@@ -94,7 +159,9 @@ export class MemoryRunStore implements RunStore {
       record.leaseExpiresAt === null ||
       new Date(record.leaseExpiresAt) < now;
     const acquirable = record.status === 'pending' || (record.status === 'running' && leaseExpired);
-    if (!acquirable) return null;
+    const stagedPending = record.status === 'pending'
+      && record.metadata?.[SCHEDULER_STATE_METADATA_KEY] === SCHEDULER_STATE_STAGED;
+    if (!acquirable || stagedPending) return null;
     const updated: RunRecord = {
       ...record,
       status: 'running',

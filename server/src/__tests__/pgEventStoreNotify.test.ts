@@ -5,13 +5,22 @@ import type { PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 const pgMock = vi.hoisted(() => {
   type QueryResult = { rows: unknown[] };
   type QueryCall = { text: string; params?: unknown[] };
-  type RangeRow = { session_id: string; session_sequence: string; event_json: PlatformEvent };
+  type RangeRow = {
+    global_sequence: string;
+    session_id: string;
+    session_sequence: string;
+    tenant_id: string;
+    event_json: PlatformEvent;
+  };
 
   class MockConnection {
     readonly queries: QueryCall[] = [];
     readonly insertedEvents: PlatformEvent[] = [];
     readonly existingColumns = new Set<string>();
     startSequence = '1';
+    boundarySequence = '0';
+    rangeRows: RangeRow[] = [];
+    readonly shareLockGates: Promise<void>[] = [];
     released = false;
 
     async query(text: string, params?: unknown[]): Promise<QueryResult> {
@@ -21,6 +30,31 @@ const pgMock = vi.hoisted(() => {
       }
       if (text.includes('RETURNING next_sequence - $2 AS start_sequence')) {
         return { rows: [{ start_sequence: this.startSequence }] };
+      }
+      if (text.includes('LOCK TABLE') && text.includes('IN SHARE MODE')) {
+        const gate = this.shareLockGates.shift();
+        if (gate) await gate;
+        return { rows: [] };
+      }
+      if (text.includes('MAX(global_sequence)')) {
+        return { rows: [{ global_sequence: this.boundarySequence }] };
+      }
+      if (text.includes('global_sequence > $1')) {
+        const hasTypeFilter = text.includes('event_type = ANY($2::text[])');
+        const types = hasTypeFilter ? new Set(params?.[1] as string[]) : null;
+        const limit = Number(params?.[hasTypeFilter ? 2 : 1]);
+        return {
+          rows: this.rangeRows
+            .filter((row) => Number(row.global_sequence) > Number(params?.[0]))
+            .filter((row) => !types || types.has(row.event_json.type))
+            .sort((a, b) => Number(a.global_sequence) - Number(b.global_sequence))
+            .slice(0, limit)
+            .map((row) => (
+              text.includes('session_sequence, tenant_id, session_id')
+                ? row
+                : { global_sequence: row.global_sequence, event_json: row.event_json }
+            )),
+        };
       }
       if (text.includes('(session_id, session_sequence, event_id, event_type, run_id, tenant_id, timestamp, event_json)')) {
         // PR 3：INSERT 参数顺序变更，event_json 是 $8（index 7）
@@ -41,9 +75,9 @@ const pgMock = vi.hoisted(() => {
     readonly connection = new MockConnection();
     readonly queries: QueryCall[] = [];
     readonly notifyCalls: QueryCall[] = [];
-    readonly byId = new Map<string, PlatformEvent>();
     listRows: RangeRow[] = [];
     rangeRows: RangeRow[] = [];
+    boundarySequence = '0';
     blockNotifyQueries = false;
 
     constructor(options: { connectionString?: string; max?: number } = {}) {
@@ -54,6 +88,8 @@ const pgMock = vi.hoisted(() => {
     on(): void {}
 
     async connect(): Promise<MockConnection> {
+      this.connection.boundarySequence = this.boundarySequence;
+      this.connection.rangeRows = this.rangeRows;
       return this.connection;
     }
 
@@ -66,9 +102,25 @@ const pgMock = vi.hoisted(() => {
         this.notifyCalls.push({ text, params });
         return { rows: [] };
       }
-      if (text.includes('WHERE event_id = $1')) {
-        const event = this.byId.get(String(params?.[0]));
-        return { rows: event ? [{ event_json: event }] : [] };
+      if (text.includes('MAX(global_sequence)')) {
+        return { rows: [{ global_sequence: this.boundarySequence }] };
+      }
+      if (text.includes('global_sequence > $1')) {
+        const hasTypeFilter = text.includes('event_type = ANY($2::text[])');
+        const types = hasTypeFilter ? new Set(params?.[1] as string[]) : null;
+        const limit = Number(params?.[hasTypeFilter ? 2 : 1]);
+        return {
+          rows: this.rangeRows
+            .filter((row) => Number(row.global_sequence) > Number(params?.[0]))
+            .filter((row) => !types || types.has(row.event_json.type))
+            .sort((a, b) => Number(a.global_sequence) - Number(b.global_sequence))
+            .slice(0, limit)
+            .map((row) => (
+              text.includes('session_sequence, tenant_id, session_id')
+                ? row
+                : { global_sequence: row.global_sequence, event_json: row.event_json }
+            )),
+        };
       }
       if (
         text.includes('FROM test_events')
@@ -100,7 +152,25 @@ const pgMock = vi.hoisted(() => {
             }),
         };
       }
-      // listPage（drainSession 用）：WHERE session_id = $1 AND session_sequence > $2 ORDER BY ... LIMIT $3
+      // listSessionRange（NOTIFY durable range hint）：精确回读水位以下的会话范围。
+      if (text.includes('AND session_sequence > $2') && text.includes('AND session_sequence <= $3')) {
+        const sessionId = String(params?.[0]);
+        const after = Number(params?.[1]);
+        const toInclusive = Number(params?.[2]);
+        const limit = Number(params?.[4]);
+        return {
+          rows: this.rangeRows
+            .filter((row) => (
+              row.session_id === sessionId
+              && Number(row.session_sequence) > after
+              && Number(row.session_sequence) <= toInclusive
+            ))
+            .sort((a, b) => Number(a.session_sequence) - Number(b.session_sequence))
+            .slice(0, limit)
+            .map((row) => ({ event_json: row.event_json, session_sequence: row.session_sequence })),
+        };
+      }
+      // listPage：WHERE session_id = $1 AND session_sequence > $2 ORDER BY ... LIMIT $3
       if (text.includes('AND session_sequence > $2') && !text.includes('<= $3')) {
         const sessionId = String(params?.[0]);
         const after = Number(params?.[1]);
@@ -126,6 +196,8 @@ const pgMock = vi.hoisted(() => {
 
     static connectErrors: unknown[] = [];
 
+    static listenGates: Promise<void>[] = [];
+
     readonly queries: string[] = [];
     ended = false;
     private readonly handlers = new Map<string, (arg: unknown) => void>();
@@ -150,6 +222,10 @@ const pgMock = vi.hoisted(() => {
 
     async query(text: string): Promise<QueryResult> {
       this.queries.push(text);
+      if (text.startsWith('LISTEN ')) {
+        const gate = MockClient.listenGates.shift();
+        if (gate) await gate;
+      }
       return { rows: [] };
     }
 
@@ -176,6 +252,7 @@ const pgMock = vi.hoisted(() => {
     reset() {
       MockClient.instances = [];
       MockClient.connectErrors = [];
+      MockClient.listenGates = [];
       MockPool.instances = [];
     },
   };
@@ -209,10 +286,12 @@ function event(id: string, sequence: number, sessionId = 'session-1'): PlatformE
   } as PlatformEvent & { sequence: number };
 }
 
-function rangeRow(item: PlatformEvent & { sequence: number }) {
+function rangeRow(item: PlatformEvent & { sequence: number }, globalSequence = item.sequence) {
   return {
+    global_sequence: String(globalSequence),
     session_id: item.sessionId ?? 'session-1',
     session_sequence: String(item.sequence),
+    tenant_id: 'tenant-1',
     event_json: item,
   };
 }
@@ -273,6 +352,13 @@ describe('PgEventStore notify coalescing', () => {
     await store.appendBatch?.([input('a'), input('b'), input('c')]);
 
     expect(pool.connection.insertedEvents).toHaveLength(3);
+    const appendLockIndex = pool.connection.queries.findIndex((call) => call.text.includes('pg_advisory_xact_lock'));
+    const firstInsertIndex = pool.connection.queries.findIndex((call) => call.text.includes('INSERT INTO test_events'));
+    expect(appendLockIndex).toBeGreaterThan(pool.connection.queries.findIndex((call) => call.text === 'BEGIN'));
+    expect(appendLockIndex).toBeLessThan(firstInsertIndex);
+    expect(pool.connection.queries[appendLockIndex]?.params).toEqual([
+      'test_events:global-sequence-commit-order',
+    ]);
     const notifyCalls = pool.connection.queries.filter((call) => call.text.includes('pg_notify'));
     expect(notifyCalls).toHaveLength(1);
     expect(decodePgEventNotifyPayload(String(notifyCalls[0]?.params?.[1]))).toMatchObject({
@@ -507,22 +593,108 @@ describe('PgEventStore notify coalescing', () => {
     expect(lastQuery?.params?.[5]).toEqual(['model_request_started']);
   });
 
-  it('drains range payloads from the durable watermark and still accepts legacy ids', async () => {
+  it('listGlobalPage reads in BEGIN → events SHARE lock → SELECT → COMMIT order', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+    pool.rangeRows = [rangeRow(event('global-page-event', 1), 7)];
+
+    const page = await store.listGlobalPage({
+      afterGlobalSequence: 0,
+      types: ['tool_output_delta'],
+      limit: 10,
+    });
+
+    expect(page.events).toMatchObject([{
+      globalSequence: 7,
+      sessionSequence: 1,
+      tenantId: 'tenant-1',
+      sessionId: 'session-1',
+      event: { id: 'global-page-event' },
+    }]);
+    const readIndex = pool.connection.queries.findIndex((call) => (
+      call.text.includes('global_sequence > $1')
+    ));
+    expect(pool.connection.queries.slice(readIndex - 2, readIndex + 2).map((call) => call.text)).toEqual([
+      'BEGIN',
+      'LOCK TABLE test_events IN SHARE MODE',
+      expect.stringContaining('global_sequence > $1'),
+      'COMMIT',
+    ]);
+  });
+
+  it('listGlobalPage waits for an uncommitted low sequence before returning a visible higher sequence', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+    pool.rangeRows = [rangeRow(event('event-n-plus-1', 1, 'new-writer-session'), 2)];
+    let releaseOldWriter!: () => void;
+    pool.connection.shareLockGates.push(new Promise<void>((resolve) => { releaseOldWriter = resolve; }));
+
+    let settled = false;
+    const pagePromise = store.listGlobalPage({
+      afterGlobalSequence: 0,
+      types: ['tool_output_delta'],
+      limit: 10,
+    }).then((page) => {
+      settled = true;
+      return page;
+    });
+
+    await vi.waitFor(() => expect(pool.connection.queries.at(-1)?.text).toBe(
+      'LOCK TABLE test_events IN SHARE MODE',
+    ));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled).toBe(false);
+
+    pool.rangeRows.push(rangeRow(event('event-n', 1, 'old-writer-session'), 1));
+    releaseOldWriter();
+    const page = await pagePromise;
+    expect(page.events.map((item) => item.event.id)).toEqual(['event-n', 'event-n-plus-1']);
+  });
+
+  it('starts at the durable global boundary without replaying subscription history', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+    pool.boundarySequence = '40';
+    pool.rangeRows = [rangeRow(event('historical-event', 1, 'historical-session'), 40)];
+
+    const seen: PlatformEvent[] = [];
+    const unsub = await store.subscribeAppended((item) => { seen.push(item); }, FAST_SUBSCRIBE);
+    const boundaryReadIndex = pool.connection.queries.findIndex((call) => call.text.includes('MAX(global_sequence)'));
+    expect(pool.connection.queries.slice(boundaryReadIndex - 2, boundaryReadIndex + 2).map((call) => call.text)).toEqual([
+      'BEGIN',
+      'LOCK TABLE test_events IN SHARE MODE',
+      expect.stringContaining('MAX(global_sequence)'),
+      'COMMIT',
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(seen).toEqual([]);
+
+    pool.rangeRows.push(rangeRow(event('post-subscribe-event', 1, 'new-session'), 41));
+    pgMock.MockClient.instances[0]!.emitNotification(
+      'test_events_notify',
+      encodePgEventNotifyPayload([event('post-subscribe-event', 1, 'new-session')]),
+    );
+    await vi.waitFor(() => expect(seen.map((item) => item.id)).toEqual(['post-subscribe-event']));
+
+    await unsub();
+  });
+
+  it('treats NOTIFY payloads as pure wakes and drains only from the durable watermark', async () => {
     const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
     const pool = pgMock.MockPool.instances[0]!;
     const rangeEvents = [event('event-10', 10), event('event-11', 11), event('event-12', 12)];
-    pool.rangeRows = rangeEvents.map(rangeRow);
-    pool.byId.set('legacy-event-id', event('legacy-event-id', 99));
+    pool.rangeRows = rangeEvents.map((item) => rangeRow(item));
 
     const seen: PlatformEvent[] = [];
     const unsub = await store.subscribeAppended((item) => { seen.push(item); }, FAST_SUBSCRIBE);
     const client = pgMock.MockClient.instances[0]!;
 
-    client.emitNotification('test_events_notify', encodePgEventNotifyPayload(rangeEvents));
+    client.emitNotification('test_events_notify', 'payload-is-not-an-exact-delivery-hint');
     await vi.waitFor(() => {
       expect(seen.map((item) => item.id)).toEqual(['event-10', 'event-11', 'event-12']);
     });
 
+    pool.rangeRows.push(rangeRow(event('legacy-event-id', 99), 13));
     client.emitNotification('test_events_notify', 'legacy-event-id');
     await vi.waitFor(() => {
       expect(seen.map((item) => item.id)).toEqual(['event-10', 'event-11', 'event-12', 'legacy-event-id']);
@@ -535,7 +707,7 @@ describe('PgEventStore notify coalescing', () => {
     const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
     const pool = pgMock.MockPool.instances[0]!;
     const rangeEvents = [event('event-10', 10), event('event-11', 11), event('event-12', 12)];
-    pool.rangeRows = rangeEvents.map(rangeRow);
+    pool.rangeRows = rangeEvents.map((item) => rangeRow(item));
 
     const seen: PlatformEvent[] = [];
     const unsub = await store.subscribeAppended((item) => { seen.push(item); }, FAST_SUBSCRIBE);
@@ -553,10 +725,168 @@ describe('PgEventStore notify coalescing', () => {
     await unsub();
   });
 
+  it('waits at the SHARE lock for an uncommitted N instead of advancing past visible N+1', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+    const seen: string[] = [];
+    const unsub = await store.subscribeAppended((item) => { seen.push(item.id); }, FAST_SUBSCRIBE);
+    const client = pgMock.MockClient.instances[0]!;
+
+    // Let the initial post-LISTEN empty catch-up finish before gating the next page lock.
+    await vi.waitFor(() => expect(pool.connection.queries.filter((call) => (
+      call.text.includes('global_sequence > $1')
+    )).length).toBeGreaterThanOrEqual(1));
+
+    let releaseOldWriter!: () => void;
+    pool.connection.shareLockGates.push(new Promise<void>((resolve) => { releaseOldWriter = resolve; }));
+    // N+1 is notionally committed, but old writer N is still uncommitted. A plain SELECT would see
+    // only N+1 and incorrectly advance the watermark; the SHARE lock must wait instead.
+    pool.rangeRows.push(rangeRow(event('event-n-plus-1', 1, 'new-writer-session'), 2));
+    client.emitNotification('test_events_notify', 'wake');
+
+    await vi.waitFor(() => expect(pool.connection.queries.at(-1)?.text).toBe(
+      'LOCK TABLE test_events IN SHARE MODE',
+    ));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(seen).toEqual([]);
+
+    // Old writer commits N while the lock request is queued. Once granted, one locked snapshot sees
+    // both rows in global order and only then may callbacks/watermark advance.
+    pool.rangeRows.push(rangeRow(event('event-n', 1, 'old-writer-session'), 1));
+    releaseOldWriter();
+    await vi.waitFor(() => expect(seen).toEqual(['event-n', 'event-n-plus-1']));
+
+    let pageReadIndex = -1;
+    pool.connection.queries.forEach((call, index) => {
+      if (call.text.includes('global_sequence > $1')) pageReadIndex = index;
+    });
+    expect(pool.connection.queries.slice(pageReadIndex - 2, pageReadIndex + 2).map((call) => call.text)).toEqual([
+      'BEGIN',
+      'LOCK TABLE test_events IN SHARE MODE',
+      expect.stringContaining('global_sequence > $1'),
+      'COMMIT',
+    ]);
+    await unsub();
+  });
+
+  it('preserves one concurrent wake across callback failure without entering a hot retry loop', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+    const attempts: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let failFirst = true;
+    const unsub = await store.subscribeAppended(async (item) => {
+      attempts.push(item.id);
+      if (failFirst) {
+        failFirst = false;
+        await firstGate;
+        throw new Error('transient callback failure');
+      }
+    }, FAST_SUBSCRIBE);
+    const client = pgMock.MockClient.instances[0]!;
+    pool.rangeRows.push(
+      rangeRow(event('retry-event', 1), 1),
+      rangeRow(event('after-retry-event', 2), 2),
+    );
+
+    client.emitNotification('test_events_notify', encodePgEventNotifyPayload([event('retry-event', 1)]));
+    await vi.waitFor(() => expect(attempts).toEqual(['retry-event']));
+    // This wake arrives while the first callback is still in flight and sets redo=true.
+    client.emitNotification('test_events_notify', encodePgEventNotifyPayload([event('after-retry-event', 2)]));
+    releaseFirst();
+
+    await vi.waitFor(() => expect(attempts).toEqual([
+      'retry-event',
+      'retry-event',
+      'after-retry-event',
+    ]));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(attempts).toHaveLength(3);
+
+    await unsub();
+  });
+
+  it('uses a coalesced wake for only one retry when the callback keeps failing', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let attempts = 0;
+    const unsub = await store.subscribeAppended(async () => {
+      attempts += 1;
+      if (attempts === 1) await firstGate;
+      throw new Error('persistent callback failure');
+    }, FAST_SUBSCRIBE);
+    const client = pgMock.MockClient.instances[0]!;
+    pool.rangeRows.push(rangeRow(event('always-fails', 1), 1));
+
+    client.emitNotification('test_events_notify', encodePgEventNotifyPayload([event('always-fails', 1)]));
+    await vi.waitFor(() => expect(attempts).toBe(1));
+    client.emitNotification('test_events_notify', encodePgEventNotifyPayload([event('always-fails', 1)]));
+    releaseFirst();
+
+    await vi.waitFor(() => expect(attempts).toBe(2));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(attempts).toBe(2);
+    await unsub();
+  });
+
+  it('waits for an in-flight subscriber callback before unsubscribe resolves', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+    let releaseCallback!: () => void;
+    const callbackGate = new Promise<void>((resolve) => { releaseCallback = resolve; });
+    let callbackStarted = false;
+    const unsub = await store.subscribeAppended(async () => {
+      callbackStarted = true;
+      await callbackGate;
+    }, FAST_SUBSCRIBE);
+    pool.rangeRows.push(rangeRow(event('slow-event', 1), 1));
+    pgMock.MockClient.instances[0]!.emitNotification(
+      'test_events_notify',
+      encodePgEventNotifyPayload([event('slow-event', 1)]),
+    );
+    await vi.waitFor(() => expect(callbackStarted).toBe(true));
+
+    let unsubscribeSettled = false;
+    const unsubscribePromise = unsub().then(() => { unsubscribeSettled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(unsubscribeSettled).toBe(false);
+
+    releaseCallback();
+    await unsubscribePromise;
+    expect(unsubscribeSettled).toBe(true);
+  });
+
+  it('unsubscribe waits for an in-flight reconnect LISTEN and tears down the late client', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const unsub = await store.subscribeAppended(() => undefined, FAST_SUBSCRIBE);
+    const firstClient = pgMock.MockClient.instances[0]!;
+    let releaseListen!: () => void;
+    pgMock.MockClient.listenGates.push(new Promise<void>((resolve) => { releaseListen = resolve; }));
+
+    firstClient.emitEnd();
+    await vi.waitFor(() => {
+      expect(pgMock.MockClient.instances).toHaveLength(2);
+      expect(pgMock.MockClient.instances[1]!.queries).toContain('LISTEN test_events_notify');
+    });
+
+    let settled = false;
+    const unsubscribePromise = unsub().then(() => { settled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled).toBe(false);
+
+    releaseListen();
+    await unsubscribePromise;
+    expect(settled).toBe(true);
+    expect(pgMock.MockClient.instances[1]!.ended).toBe(true);
+  });
+
   it('recovers a dropped NOTIFY when the next NOTIFY drains from the watermark', async () => {
     const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
     const pool = pgMock.MockPool.instances[0]!;
-    pool.rangeRows = [event('event-10', 10)].map(rangeRow);
+    pool.rangeRows = [event('event-10', 10)].map((item) => rangeRow(item));
 
     const seen: PlatformEvent[] = [];
     const unsub = await store.subscribeAppended((item) => { seen.push(item); }, FAST_SUBSCRIBE);
@@ -605,7 +935,7 @@ describe('PgEventStore notify coalescing', () => {
   it('reconnects after the listen connection drops and catches up missed events', async () => {
     const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
     const pool = pgMock.MockPool.instances[0]!;
-    pool.rangeRows = [event('event-10', 10), event('event-11', 11)].map(rangeRow);
+    pool.rangeRows = [event('event-10', 10), event('event-11', 11)].map((item) => rangeRow(item));
 
     const seen: PlatformEvent[] = [];
     const unsub = await store.subscribeAppended((item) => { seen.push(item); }, FAST_SUBSCRIBE);
@@ -629,10 +959,40 @@ describe('PgEventStore notify coalescing', () => {
     await unsub();
   });
 
+  it('catches up a first-seen session created while LISTEN is disconnected without duplicates', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+    const seen: PlatformEvent[] = [];
+    const unsub = await store.subscribeAppended((item) => { seen.push(item); }, FAST_SUBSCRIBE);
+    const client0 = pgMock.MockClient.instances[0]!;
+
+    client0.emitEnd();
+    // 断线窗口内首次出现的新 session；它的所有 NOTIFY 都丢失，旧 per-session 水位无法发现它。
+    pool.rangeRows.push(
+      rangeRow(event('new-session-1', 1, 'session-created-offline'), 1),
+      rangeRow(event('new-session-2', 2, 'session-created-offline'), 2),
+    );
+
+    await vi.waitFor(() => {
+      expect(pgMock.MockClient.instances.length).toBeGreaterThanOrEqual(2);
+      expect(seen.map((item) => item.id)).toEqual(['new-session-1', 'new-session-2']);
+    });
+
+    // 重复重连 catch-up / 后续 NOTIFY 都只扫描全局水位之后，不重投已交付事件。
+    pgMock.MockClient.instances[1]!.emitNotification(
+      'test_events_notify',
+      encodePgEventNotifyPayload([event('new-session-1', 1, 'session-created-offline')]),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(seen.map((item) => item.id)).toEqual(['new-session-1', 'new-session-2']);
+
+    await unsub();
+  });
+
   it('self-heals a dropped terminal-tail NOTIFY via the safety poll', async () => {
     const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
     const pool = pgMock.MockPool.instances[0]!;
-    pool.rangeRows = [event('event-10', 10)].map(rangeRow);
+    pool.rangeRows = [event('event-10', 10)].map((item) => rangeRow(item));
 
     const seen: PlatformEvent[] = [];
     const unsub = await store.subscribeAppended(

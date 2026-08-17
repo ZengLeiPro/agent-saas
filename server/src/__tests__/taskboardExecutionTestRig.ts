@@ -7,6 +7,11 @@ import type {
 } from '../../../shared/src/types/taskboard.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
 import type { RunRecord } from '../runtime/runStore.js';
+import {
+  SCHEDULER_STATE_METADATA_KEY,
+  SCHEDULER_STATE_READY,
+  SCHEDULER_STATE_STAGED,
+} from '../runtime/scheduler.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { EventStore } from '../runtime/types.js';
 import { TaskboardExecutionCoordinator } from '../taskboard/executionService.js';
@@ -164,21 +169,82 @@ export function makeRig(
     completeExecutionFromReconcile: vi.fn(async () => ({ task, execution: execution({ status: 'succeeded' }) })),
     ...overrides,
   } as TaskboardExecutionStore;
+  const schedulerRecords = new Map<string, RunRecord>();
   const scheduler = {
     enqueue: vi.fn(async (input) => ({
       ...input,
-      status: 'pending',
+      status: 'pending' as const,
       requestedAt: '2026-08-01T00:00:00.000Z',
       updatedAt: '2026-08-01T00:00:00.000Z',
       metadata: input.metadata ?? {},
     })),
-    enqueueCreateOnly: vi.fn(async (input) => ({
-      ...input,
-      status: 'pending',
-      requestedAt: '2026-08-01T00:00:00.000Z',
-      updatedAt: '2026-08-01T00:00:00.000Z',
-      metadata: input.metadata ?? {},
-    })),
+    enqueueCreateOnly: vi.fn(async (input) => {
+      const existing = schedulerRecords.get(input.runId);
+      if (existing) return existing;
+      const created: RunRecord = {
+        ...input,
+        status: 'pending',
+        requestedAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-01T00:00:00.000Z',
+        metadata: input.metadata ?? {},
+      };
+      schedulerRecords.set(input.runId, created);
+      return created;
+    }),
+    stagePendingRun: vi.fn(async (runId: string) => {
+      const existing = schedulerRecords.get(runId);
+      if (!existing) throw new Error(`missing scheduler record: ${runId}`);
+      if (
+        existing.status !== 'pending'
+        || existing.metadata?.taskboardExecution !== true
+        || existing.metadata?.[SCHEDULER_STATE_METADATA_KEY] !== undefined
+      ) return existing;
+      const staged: RunRecord = {
+        ...existing,
+        metadata: {
+          ...existing.metadata,
+          [SCHEDULER_STATE_METADATA_KEY]: SCHEDULER_STATE_STAGED,
+        },
+      };
+      schedulerRecords.set(runId, staged);
+      return staged;
+    }),
+    activateCreatedRun: vi.fn(async (runId: string) => {
+      const existing = schedulerRecords.get(runId);
+      if (!existing) throw new Error(`missing scheduler record: ${runId}`);
+      if (
+        existing.status !== 'pending'
+        || existing.metadata?.[SCHEDULER_STATE_METADATA_KEY] !== SCHEDULER_STATE_STAGED
+      ) return existing;
+      const activated: RunRecord = {
+        ...existing,
+        metadata: {
+          ...existing.metadata,
+          [SCHEDULER_STATE_METADATA_KEY]: SCHEDULER_STATE_READY,
+        },
+      };
+      schedulerRecords.set(runId, activated);
+      return activated;
+    }),
+    cancelPendingTaskboardRun: vi.fn(async (runId: string, reason: string) => {
+      const existing = schedulerRecords.get(runId);
+      if (!existing) return null;
+      if (
+        existing.status !== 'pending'
+        || existing.metadata?.taskboardExecution !== true
+      ) return existing;
+      const { wakeMessage: _wakeMessage, ...metadata } = existing.metadata;
+      const cancelled: RunRecord = {
+        ...existing,
+        status: 'cancelled',
+        statusReason: reason,
+        cancelledAt: '2026-08-01T00:01:00.000Z',
+        updatedAt: '2026-08-01T00:01:00.000Z',
+        metadata,
+      };
+      schedulerRecords.set(runId, cancelled);
+      return cancelled;
+    }),
   };
   const runStore = { get: vi.fn(async (): Promise<RunRecord | null> => null) };
   const sessionCatalog = {
@@ -206,5 +272,14 @@ export function makeRig(
     writeSessionTitle,
     ...coordinatorOptions,
   });
-  return { coordinator, store, scheduler, runStore, sessionCatalog, eventStore, writeSessionTitle };
+  return {
+    coordinator,
+    store,
+    scheduler,
+    schedulerRecords,
+    runStore,
+    sessionCatalog,
+    eventStore,
+    writeSessionTitle,
+  };
 }

@@ -66,6 +66,32 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     expect(rows.rows).toHaveLength(1);
   });
 
+  it('staged pending 激活前不可恢复或取得 lease，ready 后可领取', async () => {
+    const runId = 'staged-pending-run';
+    await store.createPending({
+      runId,
+      sessionId: 'session-staged-pending',
+      userId: 'user-1',
+      idempotencyKey: 'staged-pending-client',
+      channel: 'web',
+      metadata: { schedulerState: 'staged' },
+    });
+
+    await expect(store.listRecoverable()).resolves.not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ runId })]),
+    );
+    await expect(store.acquireLease(runId, 'worker-staged', 60_000)).resolves.toBeNull();
+
+    await store.markStatus(runId, 'pending', undefined, { schedulerState: 'ready' });
+    await expect(store.listRecoverable()).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ runId, status: 'pending' })]),
+    );
+    await expect(store.acquireLease(runId, 'worker-ready', 60_000)).resolves.toMatchObject({
+      runId,
+      status: 'running',
+    });
+  });
+
   it('同会话后入队 run 不能越过更早的 pending run', async () => {
     await store.enqueueUserMessage({
       runId: 'fifo-run-a', sessionId: 'session-fifo', userId: 'user-1', idempotencyKey: 'fifo-client-a', channel: 'web',
@@ -245,6 +271,36 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     });
   });
 
+  it('reserved source 在 target terminal 后既可恢复也可取得 lease', async () => {
+    const sessionId = 'session-reserved-terminal-recovery';
+    const targetRunId = 'target-reserved-terminal-recovery';
+    const sourceRunId = 'source-reserved-terminal-recovery';
+    await store.upsertPending({
+      runId: targetRunId,
+      sessionId,
+      userId: 'user-1',
+      model: 'gpt-5.5',
+      channel: 'web',
+    });
+    await store.markStatus(targetRunId, 'running');
+    await store.enqueueUserMessage({
+      runId: sourceRunId,
+      sessionId,
+      userId: 'user-1',
+      idempotencyKey: 'client-reserved-terminal-recovery',
+      model: 'gpt-5.5',
+      channel: 'web',
+    }, 'steer');
+    await expect(store.reserveSteeringInputs(targetRunId, [sourceRunId])).resolves.toEqual([sourceRunId]);
+    await store.markStatus(targetRunId, 'completed');
+
+    await expect(store.listRecoverable()).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ runId: sourceRunId, status: 'pending' })]),
+    );
+    await expect(store.acquireLease(sourceRunId, 'worker-reserved-terminal-recovery', 60_000))
+      .resolves.toMatchObject({ runId: sourceRunId, status: 'running' });
+  });
+
   it('停止目标时仅释放 pending Taskboard source，reserved source 不回退为独立 run', async () => {
     await store.upsertPending({
       runId: 'target-stop-run',
@@ -411,6 +467,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     await store.reserveSteeringInputs('target-atomic-idempotency', ['source-atomic-idempotency']);
     const input = {
       sourceRunId: 'source-atomic-idempotency',
+      clientMsgId: 'client-atomic-idempotency',
       event: {
         type: 'user_message' as const,
         runId: 'target-atomic-idempotency',
@@ -422,10 +479,16 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
 
     const first = await store.applySteeringInputsAtomically('target-atomic-idempotency', [input]);
     const retry = await store.applySteeringInputsAtomically('target-atomic-idempotency', [input]);
-    expect(first.events).toHaveLength(1);
+    expect(first.events.map((event) => event.type)).toEqual(['user_message', 'interjection_applied']);
     expect(retry).toEqual({ appliedSourceRunIds: [], events: [] });
     const events = await eventStore.list(sessionId);
     expect(events.filter((event) => event.type === 'user_message')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'interjection_applied')).toEqual([
+      expect.objectContaining({
+        sourceRunIds: ['source-atomic-idempotency'],
+        clientMsgIds: ['client-atomic-idempotency'],
+      }),
+    ]);
   });
 
   it('恢复旧版 append 成功但 apply 未完成的半状态时不重复 durable user_message', async () => {
@@ -454,7 +517,14 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       },
     }]);
 
-    expect(recovered).toEqual({ appliedSourceRunIds: [sourceRunId], events: [] });
+    expect(recovered.appliedSourceRunIds).toEqual([sourceRunId]);
+    expect(recovered.events).toEqual([
+      expect.objectContaining({
+        type: 'interjection_applied',
+        sourceRunIds: [sourceRunId],
+        clientMsgIds: [],
+      }),
+    ]);
     await expect(store.get(sourceRunId)).resolves.toMatchObject({ status: 'completed' });
     const events = await eventStore.list(sessionId);
     expect(events.filter((event) => (

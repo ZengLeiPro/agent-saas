@@ -67,7 +67,13 @@ export class FileEventStore implements EventStore {
     });
     const offset = parseFileCursor(options.afterCursor);
     const limit = options.limit && options.limit > 0 ? options.limit : all.length;
-    const page = all.slice(offset, offset + limit);
+    // File cursors are numeric offsets. Project the matching 1-based sequence while
+    // reading so durable WS resume uses the same cursor domain as afterCursor without
+    // changing the append-only JSONL format (whose persisted ids remain UUIDs).
+    const page = all.slice(offset, offset + limit).map((event, index) => ({
+      ...event,
+      sequence: offset + index + 1,
+    } as PlatformEvent & { sequence: number }));
     const nextOffset = offset + page.length;
     return {
       events: options.projection === 'usage' ? page.map(projectUsageEvent) : page,

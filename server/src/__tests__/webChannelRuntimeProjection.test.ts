@@ -270,20 +270,34 @@ describe('WebChannel runtime event projection', () => {
       expect((rig.channel as any).eventBufferStore.get(successSession)).toBeUndefined();
     });
 
-    it('最终输出标记：跨进程 completed 终态携带 finalOutput', () => {
+    it('最终输出标记：跨进程 completed 终态仅在 done frame 推进 durable cursor', () => {
       const rig = makeRig();
       const sessionId = randomUUID();
+      (rig.channel as any).activeStreams.set('st-final-cross', {
+        controller: new AbortController(), userId: USER.sub, ws: rig.ws,
+        sessionId, runId: 'run-final-cross',
+      });
+      (rig.channel as any).wsActiveStream.set(rig.ws, 'st-final-cross');
 
       rig.channel.publishRuntimePlatformEvent({
-        id: 'evt-final-cross', timestamp: new Date().toISOString(),
+        id: 'evt-final-cross', sequence: 700, timestamp: new Date().toISOString(),
         type: 'run_state_changed', runId: 'run-final-cross', sessionId,
         status: 'completed', previousStatus: 'running',
       } as any);
 
+      expect(rig.ws.sent).toEqual([
+        {
+          eventId: 1,
+          data: { type: 'session_status', sessionId, status: 'completed', runId: 'run-final-cross' },
+        },
+        {
+          eventId: 2,
+          eventCursor: '700',
+          data: { type: 'done', sessionId, runId: 'run-final-cross', finalOutput: true },
+        },
+      ]);
       const buffer = (rig.channel as any).eventBufferStore.get(sessionId);
-      expect(buffer.events.map((entry: { data: string }) => JSON.parse(entry.data))).toContainEqual({
-        type: 'done', sessionId, runId: 'run-final-cross', finalOutput: true,
-      });
+      expect(buffer.events.map((entry: { eventCursor?: string }) => entry.eventCursor)).toEqual([undefined, '700']);
     });
 
     it('run_state_changed(cancelled) 终态：正常结束流但不携带 error', () => {

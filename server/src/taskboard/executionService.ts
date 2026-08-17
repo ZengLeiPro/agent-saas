@@ -8,7 +8,12 @@ import type {
 import { getTranscriptPath } from '../data/transcripts/store.js';
 import { resolveExecutionTarget, type ExecutionConfig } from '../runtime/executionConfig.js';
 import { RunCreateConflictError, type RunRecord, type RunStore } from '../runtime/runStore.js';
-import type { RuntimeScheduler } from '../runtime/scheduler.js';
+import {
+  SCHEDULER_STATE_METADATA_KEY,
+  SCHEDULER_STATE_READY,
+  SCHEDULER_STATE_STAGED,
+  type RuntimeScheduler,
+} from '../runtime/scheduler.js';
 import {
   createRuntimeSessionRecord,
   type SessionCatalog,
@@ -66,7 +71,9 @@ class InvalidTaskboardDispatchPayloadError extends Error {}
 
 export interface TaskboardExecutionCoordinatorOptions extends TaskboardSessionGroupingOptions {
   store: TaskboardExecutionStore;
-  scheduler: Pick<RuntimeScheduler, 'enqueue' | 'enqueueCreateOnly'>;
+  scheduler: Pick<RuntimeScheduler,
+    'enqueue' | 'enqueueCreateOnly' | 'stagePendingRun' | 'activateCreatedRun' | 'cancelPendingTaskboardRun'
+  >;
   runStore: Pick<RunStore, 'get'>;
   sessionCatalog: SessionCatalog;
   eventStore: EventStore;
@@ -448,24 +455,31 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
 
     try {
       const canonical = canonicalizeDispatchPayload(dispatch, this.options.agentCwd);
-      await this.options.sessionCatalog.upsert(canonical.session);
-      await groupTaskboardSessionBeforeDispatch(this.options, dispatch, canonical.session);
-      const titleUpdate = await (this.options.writeSessionTitle ?? writeTaskboardSessionTitle)({
-        store: this.options.store,
-        sessionId: canonical.session.sessionId,
-        transcriptPath: canonical.session.transcriptPath,
-      });
-      if (titleUpdate) {
-        try {
-          await this.options.onSessionTitleUpdated?.(titleUpdate);
-        } catch (error) {
-          this.options.logger?.warn(
-            `Taskboard session title notification failed: session=${titleUpdate.sessionId} error=${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
+      let run = await this.options.scheduler.enqueueCreateOnly(canonical.run);
+      if (isLegacyPendingTaskboardRun(run)) {
+        run = await this.options.scheduler.stagePendingRun(run.runId);
       }
-      const run = await this.options.scheduler.enqueueCreateOnly(canonical.run);
       assertDispatchedRun(run, dispatch, canonical.run);
+      if (isStagedPendingRun(run)) {
+        await this.options.sessionCatalog.upsert(canonical.session);
+        await groupTaskboardSessionBeforeDispatch(this.options, dispatch, canonical.session);
+        const titleUpdate = await (this.options.writeSessionTitle ?? writeTaskboardSessionTitle)({
+          store: this.options.store,
+          sessionId: canonical.session.sessionId,
+          transcriptPath: canonical.session.transcriptPath,
+        });
+        if (titleUpdate) {
+          try {
+            await this.options.onSessionTitleUpdated?.(titleUpdate);
+          } catch (error) {
+            this.options.logger?.warn(
+              `Taskboard session title notification failed: session=${titleUpdate.sessionId} error=${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+        const activated = await this.options.scheduler.activateCreatedRun(run.runId);
+        assertDispatchedRun(activated, dispatch, canonical.run);
+      }
       const marked = await this.options.store.markExecutionDispatchSucceeded(dispatch.runId, dispatch.leaseId);
       if (!marked) {
         this.options.logger?.warn(`Taskboard execution dispatch lease changed after enqueue: run=${dispatch.runId}`);
@@ -476,6 +490,13 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       const message = error instanceof Error ? error.message : String(error);
       if (error instanceof InvalidTaskboardDispatchPayloadError || error instanceof RunCreateConflictError) {
         try {
+          const stopped = await this.options.scheduler.cancelPendingTaskboardRun(
+            dispatch.runId,
+            'taskboard_dispatch_poison',
+          );
+          if (stopped && !isTerminalRun(stopped)) {
+            throw new Error(`poison Runtime Run 仍在执行，等待终态后再结算：${dispatch.runId} status=${stopped.status}`);
+          }
           await this.options.store.completeExecution(dispatch.runId, {
             status: 'failed',
             error: message,
@@ -833,6 +854,7 @@ function canonicalizeDispatchPayload(
         taskboardExecutionId: dispatch.executionId,
         taskboardTaskId: dispatch.taskId,
         outputTransactionMode: 'terminal_buffered',
+        [SCHEDULER_STATE_METADATA_KEY]: SCHEDULER_STATE_STAGED,
         cwd: expectedCwd,
         transcriptPath: expectedTranscriptPath,
         wakeMessage: {
@@ -859,8 +881,20 @@ function assertDispatchedRun(
 ): void {
   const metadata = run.metadata;
   const expectedMetadata = expected.metadata;
+  const schedulerState = metadata?.[SCHEDULER_STATE_METADATA_KEY];
   const wakeMessage = metadata?.wakeMessage;
   const wakeMetadata = isRecord(wakeMessage) ? wakeMessage.metadata : undefined;
+  const wakeMessageMayBeConsumed = run.status === 'running' || isTerminalRun(run);
+  const wakeMessageInvalid = wakeMessage === undefined
+    ? !wakeMessageMayBeConsumed
+    : !isRecord(wakeMessage)
+      || wakeMessage.channel !== 'web'
+      || wakeMessage.chatId !== dispatch.sessionId
+      || wakeMessage.senderId !== dispatch.ownerUserId
+      || !isRecord(wakeMetadata)
+      || wakeMetadata.taskboardExecution !== true
+      || wakeMetadata.taskboardExecutionId !== dispatch.executionId
+      || wakeMetadata.taskboardTaskId !== dispatch.taskId;
   if (
     run.runId !== expected.runId
     || run.sessionId !== expected.sessionId
@@ -878,6 +912,10 @@ function assertDispatchedRun(
     || metadata?.taskboardTaskId !== dispatch.taskId
     || metadata?.outputTransactionMode !== 'terminal_buffered'
     || expectedMetadata.outputTransactionMode !== 'terminal_buffered'
+    || expectedMetadata[SCHEDULER_STATE_METADATA_KEY] !== SCHEDULER_STATE_STAGED
+    || (schedulerState !== SCHEDULER_STATE_STAGED
+      && schedulerState !== SCHEDULER_STATE_READY
+      && !(schedulerState === undefined && wakeMessageMayBeConsumed))
     || metadata?.cwd !== expectedMetadata.cwd
     || metadata?.transcriptPath !== expectedMetadata.transcriptPath
     || metadata?.backgroundTask === true
@@ -885,17 +923,21 @@ function assertDispatchedRun(
     || metadata?.subagent === true
     || metadata?.toolProfile !== undefined
     || metadata?.approvalPolicy !== undefined
-    || !isRecord(wakeMessage)
-    || wakeMessage.channel !== 'web'
-    || wakeMessage.chatId !== dispatch.sessionId
-    || wakeMessage.senderId !== dispatch.ownerUserId
-    || !isRecord(wakeMetadata)
-    || wakeMetadata.taskboardExecution !== true
-    || wakeMetadata.taskboardExecutionId !== dispatch.executionId
-    || wakeMetadata.taskboardTaskId !== dispatch.taskId
+    || wakeMessageInvalid
   ) {
     throw new InvalidTaskboardDispatchPayloadError(`既有 Runtime Run 与执行派发不一致：${dispatch.runId}`);
   }
+}
+
+function isLegacyPendingTaskboardRun(run: RunRecord): boolean {
+  return run.status === 'pending'
+    && run.metadata?.taskboardExecution === true
+    && run.metadata?.[SCHEDULER_STATE_METADATA_KEY] === undefined;
+}
+
+function isStagedPendingRun(run: RunRecord): boolean {
+  return run.status === 'pending'
+    && run.metadata?.[SCHEDULER_STATE_METADATA_KEY] === SCHEDULER_STATE_STAGED;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

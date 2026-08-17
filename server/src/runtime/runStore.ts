@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
 import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
-import { encodePgEventNotifyPayload } from './pgEventStore.js';
+import { encodePgEventNotifyPayload, pgEventGlobalSequenceLockKey } from './pgEventStore.js';
 import type { PlatformEvent, PlatformEventInput } from './types.js';
 import { releaseRunLease } from './runTerminalLifecycle.js';
 import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL, STOPPABLE_RUN_STATUS_SQL } from './runStatusPolicy.js';
@@ -664,7 +664,19 @@ export class PgRunStore implements RunStore {
         || !eventInput.interjectionSourceRunId
         || !existingDurableSourceSet.has(eventInput.interjectionSourceRunId)
       ));
-      appended = await this.appendRuntimeEventsInTransaction(client, eventInputs, tenantId);
+      const appliedClientMsgIds = inputs.flatMap((input) => (
+        appliedSet.has(input.sourceRunId) && input.clientMsgId ? [input.clientMsgId] : []
+      ));
+      appended = await this.appendRuntimeEventsInTransaction(client, [
+        ...eventInputs,
+        {
+          type: 'interjection_applied',
+          runId: targetRunId,
+          sessionId,
+          sourceRunIds: appliedSourceRunIds,
+          clientMsgIds: appliedClientMsgIds,
+        },
+      ], tenantId);
       const now = new Date().toISOString();
       await client.query(`
         UPDATE ${this.steeringInputsTable}
@@ -1306,6 +1318,15 @@ export class PgRunStore implements RunStore {
   async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
     return this.queries.markStatus(runId, status, reason, metadataPatch);
   }
+  async activateStagedRun(runId: string): Promise<RunRecord | null> {
+    return this.queries.activateStagedRun(runId);
+  }
+  async stagePendingRun(runId: string): Promise<RunRecord | null> {
+    return this.queries.stagePendingRun(runId);
+  }
+  async cancelPendingTaskboardRun(runId: string, reason: string): Promise<RunRecord | null> {
+    return this.queries.cancelPendingTaskboardRun(runId, reason);
+  }
   async markStatusIfCurrent(runId: string, expectedStatuses: readonly RunStatus[], nextStatus: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
     return this.queries.markStatusIfCurrent(runId, expectedStatuses, nextStatus, reason, metadataPatch);
   }
@@ -1358,6 +1379,11 @@ export class PgRunStore implements RunStore {
     const sessionIds = new Set(events.map((event) => event.sessionId).filter(Boolean));
     if (sessionIds.size !== 1) throw new Error('Atomic runtime event append requires one session');
     const sessionId = [...sessionIds][0]!;
+    // Must match PgEventStore.appendBatch: hold through the caller's COMMIT so BIGSERIAL
+    // allocation order cannot diverge from durable commit order across the two writers.
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+      pgEventGlobalSequenceLockKey(this.eventsTable),
+    ]);
     await client.query(`
       INSERT INTO ${this.eventCursorsTable} (session_id, next_sequence)
       VALUES ($1, 1)

@@ -71,7 +71,7 @@ export type WsEvent =
     | { type: 'respond_ok'; interactionId: string }
     | { type: 'abort_ok'; streamId?: string; runId?: string }
     | { type: 'pending_interactions'; interactions: Array<{ interactionId: string; type: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string }> }
-    | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string }
+    | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; requestId?: string }
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string }
     | { type: 'session_deleted'; sessionId: string }
@@ -84,8 +84,9 @@ export type WsEvent =
     | { type: 'plugin_install'; pluginInstall: PluginInstallData }
     | { type: 'notification'; notification: NotificationData }
     | { type: 'memory_recall'; memoryRecall: MemoryRecallData }
-    | { type: 'sync_ok'; seq: number; events: Array<{ seq: number; event: object }> }
-    | { type: 'sync_overflow'; seq: number };
+    | { type: 'sync_ok'; seq: number; epoch?: string; events: Array<{ seq: number; event: object }> }
+    | { type: 'sync_overflow'; seq: number; epoch?: string }
+    | { type: 'pong'; seq?: number; epoch?: string; probe?: boolean };
 
 export interface WsOutboundEnvelope {
     eventId?: number;

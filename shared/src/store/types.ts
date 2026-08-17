@@ -104,6 +104,8 @@ export interface StreamSlice {
   pendingMessage: { input: string; attachments: unknown[] } | null;
   /** sync 协议：用户级元数据事件序列号 */
   lastUserSeq: number;
+  /** sync 协议：服务端用户日志代际；null 兼容旧服务端。 */
+  lastUserEpoch: string | null;
 
   setLoading(v: boolean): void;
   setStopping(v: boolean): void;
@@ -120,6 +122,7 @@ export interface StreamSlice {
     msg: { input: string; attachments: unknown[] } | null,
   ): void;
   setLastUserSeq(seq: number): void;
+  setLastUserEpoch(epoch: string | null): void;
 }
 
 // ── Connection Slice ──────────────────────────────────────────

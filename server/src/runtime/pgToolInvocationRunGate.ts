@@ -19,15 +19,41 @@ export async function invokeWithPgActiveRunGate<T, TRow extends QueryResultRow>(
   runId: string,
   invocationId: string,
   invoke: () => Promise<T>,
+  expectedWorkerId?: string,
 ): Promise<ToolInvocationRunGateResult<T>> {
   const client = await options.pool.connect();
   let claimed = false;
   try {
     await client.query('BEGIN');
-    const run = await client.query<{ status: string }>(`
-      SELECT status FROM ${options.runsTable} WHERE run_id = $1 FOR SHARE
+    const run = await client.query<{
+      status: string;
+      worker_id: string | null;
+      lease_expires_at: Date | string | null;
+      lease_is_valid: boolean;
+    }>(`
+      SELECT status, worker_id, lease_expires_at,
+             lease_expires_at > clock_timestamp() AS lease_is_valid
+      FROM ${options.runsTable}
+      WHERE run_id = $1
+      FOR SHARE
     `, [runId]);
     const runStatus = run.rows[0]?.status;
+    const runWorkerId = run.rows[0]?.worker_id ?? undefined;
+    const runLeaseIsValid = run.rows[0]?.lease_is_valid === true;
+    if (runStatus && expectedWorkerId && (
+      runStatus !== 'running'
+      || runWorkerId !== expectedWorkerId
+      || !runLeaseIsValid
+    )) {
+      await client.query('COMMIT');
+      return {
+        invoked: false,
+        reason: 'run_lease_lost',
+        invocation: null,
+        runStatus,
+        ...(runWorkerId ? { runWorkerId } : {}),
+      };
+    }
     const invocationResult = await client.query<TRow>(`
       SELECT * FROM ${options.toolInvocationsTable}
       WHERE invocation_id = $1 AND run_id = $2
@@ -56,14 +82,22 @@ export async function invokeWithPgActiveRunGate<T, TRow extends QueryResultRow>(
     const claim = await client.query<TRow>(`
       UPDATE ${options.toolInvocationsTable}
       SET updated_at = clock_timestamp(),
-          metadata = metadata || jsonb_build_object('invokeClaimedAt', clock_timestamp())
+          metadata = metadata
+            || jsonb_build_object('invokeClaimedAt', clock_timestamp())
+            || CASE
+              WHEN COALESCE($3::text, metadata->>'workerId') IS NOT NULL
+                THEN jsonb_build_object(
+                  'invokeClaimedByWorkerId', COALESCE($3::text, metadata->>'workerId')
+                )
+              ELSE '{}'::jsonb
+            END
       WHERE invocation_id = $1
         AND run_id = $2
         AND status = 'running'
         AND cancel_requested_at IS NULL
         AND NOT (metadata ? 'invokeClaimedAt')
       RETURNING *
-    `, [invocationId, runId]);
+    `, [invocationId, runId, expectedWorkerId ?? null]);
     if (!claim.rows[0]) {
       await client.query('ROLLBACK');
       return { invoked: false, reason: 'invocation_claimed', invocation };

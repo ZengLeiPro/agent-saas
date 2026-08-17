@@ -183,6 +183,52 @@ describe('EventBufferStore', () => {
     expect(good).toHaveBeenCalledTimes(1);
   });
 
+  it('subscribeFrom: completed entry 同步补发窗口、完成并且不残留 listener', () => {
+    store.create('s1');
+    store.push('s1', 'before-boundary');
+    store.push('s1', 'window-1');
+    store.push('s1', 'window-2');
+    store.complete('s1');
+    const delivered: string[] = [];
+    const onComplete = vi.fn(() => delivered.push('complete'));
+
+    const unsubscribe = store.subscribeFrom(
+      's1',
+      1,
+      event => delivered.push(event.data),
+      onComplete,
+    );
+
+    expect(unsubscribe).toBeNull();
+    expect(delivered).toEqual(['window-1', 'window-2', 'complete']);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(store.get('s1')!.listeners.size).toBe(0);
+    expect(store.get('s1')!.completionListeners.size).toBe(0);
+  });
+
+  it('subscribeFrom: active entry 先补发窗口，再持续接收 live event，退订后无泄漏', () => {
+    store.create('s1');
+    store.push('s1', 'before-boundary');
+    store.push('s1', 'window');
+    const delivered: string[] = [];
+
+    const unsubscribe = store.subscribeFrom(
+      's1',
+      1,
+      event => delivered.push(event.data),
+      () => delivered.push('complete'),
+    );
+
+    expect(unsubscribe).not.toBeNull();
+    expect(delivered).toEqual(['window']);
+    expect(store.get('s1')!.listeners.size).toBe(1);
+    store.push('s1', 'live');
+    expect(delivered).toEqual(['window', 'live']);
+    unsubscribe!();
+    expect(store.get('s1')!.listeners.size).toBe(0);
+    expect(store.get('s1')!.completionListeners.size).toBe(0);
+  });
+
   it('remove: 立即丢弃单会话 buffer', () => {
     store.create('s1');
     store.push('s1', 'a');
@@ -210,6 +256,32 @@ describe('UserEventLog', () => {
     log.stop();
   });
 
+  it('epoch: 按用户隔离并仅对正 seq 校验，实例 epoch 只作匿名 probe', () => {
+    const userEpoch = log.getEpoch('u1');
+    expect(userEpoch).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(log.getEpoch('u1')).toBe(userEpoch);
+    expect(log.getEpoch('u2')).not.toBe(userEpoch);
+    expect(log.epoch).not.toBe(userEpoch);
+    expect(log.hasEpochMismatch('u1', undefined, 0)).toBe(false);
+    expect(log.hasEpochMismatch('u1', undefined, 1)).toBe(true);
+    expect(log.hasEpochMismatch('u1', userEpoch, 1)).toBe(false);
+  });
+
+  it('TTL 删除后同一用户 seq 重置时分配新 epoch', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-16T00:00:00Z'));
+    log.push('u1', { type: 'title_updated' });
+    const firstEpoch = log.getEpoch('u1');
+
+    vi.advanceTimersByTime(31 * 60 * 1000);
+    (log as unknown as { cleanup(): void }).cleanup();
+
+    expect(log.getCurrentSeq('u1')).toBe(0);
+    expect(log.push('u1', { type: 'session_updated' })).toBe(1);
+    expect(log.getEpoch('u1')).not.toBe(firstEpoch);
+    vi.useRealTimers();
+  });
+
   it('shouldLog: 仅白名单元数据类型返回 true', () => {
     expect(log.shouldLog({ type: 'title_updated' })).toBe(true);
     expect(log.shouldLog({ type: 'session_deleted' })).toBe(true);
@@ -227,8 +299,19 @@ describe('UserEventLog', () => {
     expect(log.getCurrentSeq('missing')).toBe(0);
   });
 
-  it('getEventsAfter: 未知/空用户返回空且不报 gap', () => {
+  it('getEventsAfter: 初次同步未知/空用户返回空且不报 gap', () => {
     expect(log.getEventsAfter('missing', 0)).toEqual({ events: [], gapDetected: false });
+  });
+
+  it('getEventsAfter: 客户端有旧 seq 但新实例无日志时报告 gap', () => {
+    expect(log.getEventsAfter('u1', 3)).toEqual({ events: [], gapDetected: true });
+  });
+
+  it('getEventsAfter: 客户端旧 seq 大于新实例当前 seq 时报告 gap', () => {
+    log.push('u1', { type: 'title_updated' });
+    log.push('u1', { type: 'session_updated' });
+
+    expect(log.getEventsAfter('u1', 5)).toEqual({ events: [], gapDetected: true });
   });
 
   it('getEventsAfter: 返回 lastSeq 之后事件；已最新返回空', () => {

@@ -6,7 +6,7 @@ import type { ModelList } from "@/types/models";
 import type { AppTab } from "@/types/sidebar";
 import type { CanonicalSettingsSectionId } from "@/types/settings";
 import type { WsEvent } from "@/types/ws";
-import type { WsEnvelope } from "@/lib/wsClient";
+import type { WsEnvelope, WsResumeMessage } from "@/lib/wsClient";
 import { wsClient } from "@/lib/wsClient";
 import { authFetch } from "@/lib/authFetch";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
@@ -69,7 +69,6 @@ import {
   isActiveRuntimeStatus,
   isTerminalRuntimeStatus,
   runtimeStatusFromSessionStatus,
-  sendResumeDeduped,
   type LastRunState,
   type TerminalRuntimeStatus,
 } from "./chatRuntimeHelpers";
@@ -257,6 +256,20 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const streamNonceRef = useRef(0);
   const streamIdRef = useRef<string | null>(null);
   const runIdRef = useRef<string | null>(null);
+  /** 每次当前会话建立不同的 run/stream 绑定时递增，用于拒绝更早 resume 的迟到响应。 */
+  const streamBindingGenerationRef = useRef(0);
+  const advanceStreamBindingGenerationIfChanged = useCallback((next: {
+    streamId?: string | null;
+    runId?: string | null;
+  }): boolean => {
+    const changed = (next.streamId !== undefined && next.streamId !== streamIdRef.current)
+      || (next.runId !== undefined && next.runId !== runIdRef.current);
+    if (changed) streamBindingGenerationRef.current += 1;
+    return changed;
+  }, []);
+  const resumeRequestsRef = useRef(new Map<string, { sessionId: string; generation: number }>());
+  const resumeDedupRef = useRef<{ sessionId: string; generation: number; sentAt: number } | null>(null);
+  const resumeRequestSerialRef = useRef(0);
   const handledTerminalKeysRef = useRef(new Set<string>());
   const lastEventIdRef = useRef<number | null>(null);
   const lastEventCursorRef = useRef<string | null>(null);
@@ -575,7 +588,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       else updated.delete(sid);
       return updated;
     });
-    if (sid === sessionIdRef.current) {
+    // immediateSessionIdRef 在点击切换时同步更新，是当前会话的权威值。
+    // sessionIdRef 要等 React 提交；同帧迟到的旧会话 active_stream 不能借它污染全局 refs。
+    if (sid === immediateSessionIdRef.current) {
       if (patch.streamId !== undefined) streamIdRef.current = patch.streamId;
       if (patch.runId !== undefined) runIdRef.current = patch.runId;
       if (patch.lastEventId !== undefined) lastEventIdRef.current = patch.lastEventId;
@@ -820,6 +835,80 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     });
   }, [session.updateSessionMeta, session.loadSessions]);
   const sessionRef = useRef(session); sessionRef.current = session;
+
+  const sendCorrelatedResume = useCallback((payload: Omit<WsResumeMessage, 'requestId'>): Promise<boolean> => {
+    const now = Date.now();
+    const generation = streamBindingGenerationRef.current;
+    const previous = resumeDedupRef.current;
+    if (previous?.sessionId === payload.sessionId
+      && previous.generation === generation
+      && now - previous.sentAt < 2_000) {
+      return Promise.resolve(true);
+    }
+
+    const requestId = `resume-${now}-${++resumeRequestSerialRef.current}`;
+    const correlation = { sessionId: payload.sessionId, generation };
+    resumeDedupRef.current = { sessionId: payload.sessionId, generation, sentAt: now };
+    resumeRequestsRef.current.set(requestId, correlation);
+    setTimeout(() => {
+      if (resumeRequestsRef.current.get(requestId) === correlation) {
+        resumeRequestsRef.current.delete(requestId);
+      }
+    }, 30_000);
+
+    return wsClient.ensureConnectedSend({ ...payload, requestId }).then(
+      (ok) => {
+        if (!ok) {
+          resumeRequestsRef.current.delete(requestId);
+        } else {
+          // ensureConnectedSend 可能先等待重连；Promise 在实际 send 后的 microtask 结算，
+          // 此处把相关性校准到真正发出请求时的 binding generation。
+          correlation.generation = streamBindingGenerationRef.current;
+          resumeDedupRef.current = {
+            sessionId: payload.sessionId,
+            generation: correlation.generation,
+            sentAt: Date.now(),
+          };
+        }
+        return ok;
+      },
+      (err) => {
+        resumeRequestsRef.current.delete(requestId);
+        throw err;
+      },
+    );
+  }, []);
+
+  const shouldApplyActiveStreamResponse = useCallback((response: Extract<WsEvent, { type: 'active_stream' }>): boolean => {
+    if (response.requestId) {
+      const request = resumeRequestsRef.current.get(response.requestId);
+      return Boolean(
+        request
+        && request.sessionId === response.sessionId
+        && request.generation === streamBindingGenerationRef.current,
+      );
+    }
+
+    // 兼容尚未 echo requestId 的旧服务端。已有新 run/stream 绑定或当前仍处于
+    // attached/loading 生命周期时，legacy inactive 只能触发刷新，不能直接拆挂；
+    // 新 run 的生命周期信号可能尚未携带 runId/streamId。legacy active 的任一已知
+    // 标识不同都视为迟到响应，避免旧 stream 在 runId 相同/缺失时覆盖新绑定。
+    if (response.sessionId === immediateSessionIdRef.current) {
+      const hasCurrentBinding = Boolean(
+        runIdRef.current || streamIdRef.current || wsAttachedRef.current || loadingRef.current,
+      );
+      if (!response.active && hasCurrentBinding) {
+        sessionRef.current.refreshCurrentSession();
+        return false;
+      }
+      if (response.active) {
+        if (runIdRef.current && response.runId && response.runId !== runIdRef.current) return false;
+        if (streamIdRef.current && response.streamId && response.streamId !== streamIdRef.current) return false;
+      }
+    }
+    return true;
+  }, []);
+
   const attachmentsHydratedRef = useRef(false);
   const attachmentScopeRef = useRef<string | null>(null);
   const composerScopeInitializedRef = useRef(false);
@@ -1472,8 +1561,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     void reconcileLastRunState(sessionId, lastRunState);
   };
 
-  // ---- Sync 序列号（用于断线重连恢复元数据事件）----
+  // ---- Sync 序列号与服务端日志代际（用于断线重连恢复元数据事件）----
   const lastUserSeqRef = useRef(0);
+  const lastUserEpochRef = useRef<string | null>(null);
 
   // ---- WS 连接管理 ----
   useEffect(() => {
@@ -1489,7 +1579,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           if (!modelListRef.current) fetchModelList();
 
           // 发送 sync 请求恢复漏掉的元数据事件
-          wsClient.send({ action: 'sync', lastSeq: lastUserSeqRef.current });
+          wsClient.send({
+            action: 'sync',
+            lastSeq: lastUserSeqRef.current,
+            ...(lastUserEpochRef.current ? { epoch: lastUserEpochRef.current } : {}),
+          });
 
           // WS 重连时自动恢复活跃流
           if (loadingRef.current && sessionIdRef.current) {
@@ -1513,22 +1607,25 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               const d = envelope.data as WsEvent;
               if (d.type !== 'active_stream') return;
               if (d.sessionId !== targetSid) return;
+              // selectSession 同帧先更新 immediate ref；临时重连 handler 在任何 refs/UI
+              // mutation 前必须再校验，避免迟到的旧会话 active_stream 串入新会话。
+              if (immediateSessionIdRef.current !== targetSid) {
+                unsubReconnect();
+                return;
+              }
+              if (!shouldApplyActiveStreamResponse(d)) {
+                unsubReconnect();
+                return;
+              }
               unsubReconnect();
-              if (!d.active) {
-                wsAttachedRef.current = false;
-                setLoading(false);
+              // refs/UI 由全局 active_stream reducer 统一修改。临时 handler 只补无 replay
+              // cursor 时的 transcript 刷新，避免两条 handler 产生不同相关性判定。
+              if (d.active && !hasReplayCursor) {
                 sessionRef.current.refreshCurrentSession();
-              } else {
-                if (d.streamId) streamIdRef.current = d.streamId;
-                wsAttachedRef.current = true;
-                if (!hasReplayCursor) {
-                  // 跳过了 replay：用 transcript 刷新补齐断线期间的增量
-                  sessionRef.current.refreshCurrentSession();
-                }
               }
             };
             const unsubReconnect = wsClient.onMessage(handleReconnectStream);
-            sendResumeDeduped({
+            sendCorrelatedResume({
               action: 'resume',
               sessionId: targetSid,
               lastEventId: lastEventIdRef.current ?? 0,
@@ -1625,6 +1722,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       // 而该临时 handler 在 HTTP inactive 早 return 时根本没注册。
       if (data.type === 'active_stream') {
         const a = data as Extract<WsEvent, { type: 'active_stream' }>;
+        if (!shouldApplyActiveStreamResponse(a)) return;
         patchSessionRuntime(
           a.sessionId,
           a.active
@@ -1641,9 +1739,15 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                 attached: false,
               },
         );
-        // 仅在 sessionId === 当前选中 时改 UI;其他会话只持久化状态(切回时再恢复 UI)
-        if (a.sessionId === sessionIdRef.current) {
+        // immediateSessionIdRef 与点击切换同帧更新；React sessionId 在切换提交前可能仍是旧值。
+        // 当前会话必须显式恢复 refs，否则后续 text/done/error 会被未挂载守卫吞掉。
+        if (a.sessionId === immediateSessionIdRef.current) {
           if (a.active) {
+            // 旧服务端可能只返回 active 或只返回一个标识；缺省字段不是清空指令。
+            if (a.streamId) streamIdRef.current = a.streamId;
+            if (a.runId) runIdRef.current = a.runId;
+            wsAttachedRef.current = true;
+            wsLatestSessionIdRef.current = { value: a.sessionId };
             upsertRuntimeStatusMessage(msgRef.current, runtimeStatusFromSessionStatus(a.status || 'running') ?? 'running', {
               ...(a.streamId ? { streamId: a.streamId } : {}),
               ...(a.runId ? { runId: a.runId } : {}),
@@ -1652,13 +1756,17 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               setLoading(true);
               dispatchConnection('connect');
             }
-          } else if (loadingRef.current) {
-            // 服务端权威说没在跑了 → 清 loading（用户切回后不应再显示停止按钮）
-            setLoading(false);
-            setStopping(false);
-            dispatchConnection('complete');
-            sessionRef.current.refreshCurrentSession();
           } else {
+            // 服务端权威说没在跑了 → refs/UI 一致清理，避免旧流事件串入当前会话。
+            streamIdRef.current = null;
+            runIdRef.current = null;
+            wsAttachedRef.current = false;
+            wsLatestSessionIdRef.current = { value: null };
+            if (loadingRef.current) {
+              setLoading(false);
+              setStopping(false);
+              dispatchConnection('complete');
+            }
             sessionRef.current.refreshCurrentSession();
           }
         }
@@ -1669,6 +1777,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       if (data.type === 'sync_ok') {
         lastUserSeqRef.current = (data as any).seq;
         wsClient.setLastSeq((data as any).seq);
+        if (typeof (data as any).epoch === 'string') {
+          lastUserEpochRef.current = (data as any).epoch;
+          wsClient.setEpoch((data as any).epoch);
+        }
         const settleSyncedQueueTransport = (clientMsgId: string) => {
           const timer = ackTimersRef.current.get(clientMsgId);
           if (timer) clearTimeout(timer);
@@ -1710,6 +1822,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               mutateQueuedInterjections((prev) => {
                 const nextEntry = {
                   clientMsgId: e.clientMsgId,
+                  sessionId: e.sessionId,
                   sourceRunId: e.runId,
                   ...(e.targetRunId ? { targetRunId: e.targetRunId } : {}),
                   deliveryMode: e.deliveryMode,
@@ -1765,6 +1878,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       if (data.type === 'sync_overflow') {
         lastUserSeqRef.current = (data as any).seq;
         wsClient.setLastSeq((data as any).seq);
+        if (typeof (data as any).epoch === 'string') {
+          lastUserEpochRef.current = (data as any).epoch;
+          wsClient.setEpoch((data as any).epoch);
+        }
         void recoverQueueSnapshotAfterSyncOverflow(sessionRef.current);
         return;
       }
@@ -1792,6 +1909,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       // 但仅对当前选中会话生效（banner UI 是会话级独立 alert）。
       if (data.type === 'session_status') {
         const d = data as Extract<WsEvent, { type: 'session_status' }>;
+
+        // 当前会话每个 run 生命周期信号都建立一道相关性边界。active/terminal 即使
+        // 尚未携带 runId/streamId，也必须让更早 resume 的迟到响应失效。
+        const lifecycleSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+        if (d.sessionId === lifecycleSessionId
+          && (isActiveRuntimeStatus(d.status) || isTerminalRuntimeStatus(d.status))) {
+          streamBindingGenerationRef.current += 1;
+        }
 
         // ① 总是更新 Map（per-session 持久态,不论是否当前会话）
         patchSessionRuntime(d.sessionId, {
@@ -1895,15 +2020,19 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       // 其他设备发起的流：自动订阅（多设备实时同步）
       if (data.type === 'stream_started') {
         trackedAiReplyStreamsRef.current.add(data.sessionId);
-        // 总是更新 Map（per-session 持久态）,即使不是当前会话
+        const currentSid = immediateSessionIdRef.current;
+        const bindingChanged = data.sessionId === currentSid
+          ? advanceStreamBindingGenerationIfChanged({ streamId: data.streamId, runId: data.runId })
+          : false;
+        // 总是更新 Map（per-session 持久态）,即使不是当前会话。当前会话的标识已先切代。
         patchSessionRuntime(data.sessionId, {
           status: 'running',
           streamId: data.streamId,
           ...(data.runId ? { runId: data.runId } : {}),
-          attached: false, // 当前 ws 尚未真正订阅这条流
+          attached: false, // 下方 resume 前尚未真正订阅这条流
         });
-        const currentSid = immediateSessionIdRef.current;
-        if (data.sessionId === currentSid && !loadingRef.current) {
+        // loading 只说明旧绑定仍活跃；不同的新 binding 仍必须 attach + resume。
+        if (data.sessionId === currentSid && (!loadingRef.current || bindingChanged)) {
           streamIdRef.current = data.streamId;
           if (data.runId) runIdRef.current = data.runId;
           wsLatestSessionIdRef.current = { value: data.sessionId };
@@ -1911,9 +2040,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           wsUserMsgIndexRef.current = -1;
           lastEventIdRef.current = null;
           wsAttachedRef.current = true;
-          setLoading(true);
+          if (!loadingRef.current) setLoading(true);
           dispatchConnection('connect');
-          void wsClient.ensureConnectedSend({
+          void sendCorrelatedResume({
             action: 'resume',
             sessionId: data.sessionId,
             lastEventId: 0,
@@ -2045,6 +2174,20 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         return;
       }
 
+      // 非 queued stream_id 会在 processWsEvent 内建立当前流绑定；先推进 generation，
+      // 让更早 resume 的 active_stream 即使随后到达也无法拆掉这条新 run。
+      if (data.type === 'stream_id' && !data.queued) {
+        const expectedSessionId = immediateSessionIdRef.current ?? wsLatestSessionIdRef.current.value;
+        const belongsToCurrent = !data.sessionId || !expectedSessionId || data.sessionId === expectedSessionId;
+        if (belongsToCurrent) {
+          // processWsEvent 会把缺省 runId 规范化为 null，因此比较同样的实际写入值。
+          advanceStreamBindingGenerationIfChanged({
+            streamId: data.streamId,
+            runId: data.runId ?? null,
+          });
+        }
+      }
+
       // 构建处理上下文
       const ctx: WsProcessingContext = {
         msg: msgRef.current,
@@ -2109,11 +2252,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           void (async () => {
             try { await detailPromise; } catch { /* ignore */ }
             if (sessionIdRef.current !== overflowSid) return;
-            wsClient.ensureConnectedSend({
+            sendCorrelatedResume({
               action: 'resume',
               sessionId: overflowSid,
               lastEventId: 0,
-            lastEventCursor: null,
+              lastEventCursor: null,
               skipReplay: true,
             }).catch(() => {});
           })();
@@ -2689,6 +2832,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     let httpStreamId: string | undefined;
     let httpRunId: string | undefined;
     let httpStatus: SessionRuntimeStatus | undefined;
+    // HTTP 响应只能描述请求发起时的 binding。等待期间任何当前会话生命周期
+    // 信号都会推进 generation；此时迟到 HTTP 结果不得覆盖新 binding。
+    const httpRequestGeneration = streamBindingGenerationRef.current;
     try {
       const statusRes = await authFetch(`/api/sessions/${targetSessionId}/stream-status`);
       if (statusRes.ok) {
@@ -2702,28 +2848,46 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
     if (sessionIdRef.current !== targetSessionId) return;
 
-    // HTTP 探活把"权威 runId / streamId"补回来（即使 Map 没有也能恢复）
-    if (httpStreamId) {
-      patchSessionRuntime(targetSessionId, { streamId: httpStreamId });
-    }
-    if (httpRunId) {
-      patchSessionRuntime(targetSessionId, { runId: httpRunId });
-    }
-
-    if (httpActive === true) {
-      // HTTP 已确认活跃 → 先恢复精确状态，人工等待不能降级成“思考中”。
-      const restoredStatus = httpStatus ?? 'running';
-      patchSessionRuntime(targetSessionId, { status: restoredStatus, attached: true });
-      const visibleStatus = runtimeStatusFromSessionStatus(restoredStatus);
-      if (visibleStatus) {
-        upsertRuntimeStatusMessage(msgRef.current, visibleStatus, {
-          ...(httpStreamId ? { streamId: httpStreamId } : {}),
-          ...(httpRunId ? { runId: httpRunId } : {}),
-        });
+    const httpResultStale = httpRequestGeneration !== streamBindingGenerationRef.current;
+    if (!httpResultStale) {
+      // HTTP 探活把"权威 runId / streamId"补回来（即使 Map 没有也能恢复）。
+      // patchSessionRuntime 会同步写 refs；恢复出不同 binding 时必须先切代，挡住旧 resume 响应。
+      if (httpActive !== false) {
+        advanceStreamBindingGenerationIfChanged({ streamId: httpStreamId, runId: httpRunId });
       }
-      if (!loadingRef.current) {
-        setLoading(true);
-        dispatchConnection('connect');
+      // 同步写当前 refs，不能只依赖 Map，否则 active_stream 到达前的流事件仍会被守卫丢弃。
+      if (httpActive === false) {
+        patchSessionRuntime(targetSessionId, { status: 'idle', streamId: null, runId: null, attached: false });
+        streamIdRef.current = null;
+        runIdRef.current = null;
+        wsAttachedRef.current = false;
+      } else {
+        if (httpStreamId) {
+          patchSessionRuntime(targetSessionId, { streamId: httpStreamId });
+          streamIdRef.current = httpStreamId;
+        }
+        if (httpRunId) {
+          patchSessionRuntime(targetSessionId, { runId: httpRunId });
+          runIdRef.current = httpRunId;
+        }
+      }
+
+      if (httpActive === true) {
+        // HTTP 已确认活跃 → 先恢复精确状态，人工等待不能降级成“思考中”。
+        const restoredStatus = httpStatus ?? 'running';
+        patchSessionRuntime(targetSessionId, { status: restoredStatus, attached: true });
+        wsAttachedRef.current = true;
+        const visibleStatus = runtimeStatusFromSessionStatus(restoredStatus);
+        if (visibleStatus) {
+          upsertRuntimeStatusMessage(msgRef.current, visibleStatus, {
+            ...(httpStreamId ? { streamId: httpStreamId } : {}),
+            ...(httpRunId ? { runId: httpRunId } : {}),
+          });
+        }
+        if (!loadingRef.current) {
+          setLoading(true);
+          dispatchConnection('connect');
+        }
       }
     }
 
@@ -2740,7 +2904,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     //   - 让服务端清理旧订阅,绑定新 ws → 当前 stream
     //   - 服务端通过 active_stream 给前端权威信号（全局 reducer 接管）
     //   - 即使 HTTP buffer 误报 inactive,runStore 仍 active 时 active_stream{active:true} 兜底
-    const ok = await sendResumeDeduped({
+    const ok = await sendCorrelatedResume({
       action: 'resume',
       sessionId: targetSessionId,
       lastEventId: lastEventIdRef.current ?? 0,

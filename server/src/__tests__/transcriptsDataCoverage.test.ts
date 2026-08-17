@@ -33,12 +33,13 @@ import {
 
 // ── projectKey 纯逻辑 ──────────────────────────────────────────
 describe('transcripts/projectKey', () => {
-  it('isValidSessionId 接受 UUID、sub-、taskboard- 及 review/merge 前缀，拒绝非法格式', () => {
+  it('isValidSessionId 接受 UUID、sub-、taskboard-、agent-dws-session- 及 review/merge 前缀，拒绝非法格式', () => {
     expect(isValidSessionId('12345678-1234-1234-1234-123456789abc')).toBe(true);
     expect(isValidSessionId('sub-12345678-1234-1234-1234-123456789abc')).toBe(true);
     expect(isValidSessionId('taskboard-12345678-1234-1234-1234-123456789abc')).toBe(true);
     expect(isValidSessionId('taskboard-review-12345678-1234-1234-1234-123456789abc')).toBe(true);
     expect(isValidSessionId('taskboard-merge-12345678-1234-1234-1234-123456789abc')).toBe(true);
+    expect(isValidSessionId('agent-dws-session-12345678-1234-1234-1234-123456789abc')).toBe(true);
     expect(isValidSessionId('not-a-uuid')).toBe(false);
     expect(isValidSessionId('../evil')).toBe(false);
     expect(isValidSessionId('xx-12345678-1234-1234-1234-123456789abc')).toBe(false);
@@ -46,6 +47,9 @@ describe('transcripts/projectKey', () => {
     expect(isValidSessionId('taskboard-review-not-a-uuid')).toBe(false);
     expect(isValidSessionId('taskboard-merge-not-a-uuid')).toBe(false);
     expect(isValidSessionId('taskboard-review-12345678-1234-1234-1234-123456789abc-extra')).toBe(false);
+    // agent-dws-session 前缀同样必须紧跟合法 UUID
+    expect(isValidSessionId('agent-dws-session-not-a-uuid')).toBe(false);
+    expect(isValidSessionId('agent-dws-session-12345678-1234-1234-1234-123456789abc-extra')).toBe(false);
   });
 
   it('deriveProjectKey 把非字母数字替换为连字符', () => {

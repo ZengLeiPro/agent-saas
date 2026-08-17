@@ -106,6 +106,12 @@ function rig() {
       status: input.status,
       version: task.version + 1,
     })),
+    cancelIntegrationTask: vi.fn(async (_identity, _taskId, input) => ({
+      ...task,
+      kind: 'integration' as const,
+      status: 'canceled' as const,
+      version: input.expectedVersion + 1,
+    })),
   } as unknown as TaskboardService;
   const executionService = {
     listExecutions: vi.fn(async () => [execution]),
@@ -145,14 +151,14 @@ function rig() {
   return { service, executionService, executionStore, options };
 }
 
-function executionScope(purpose: 'work' | 'review'): { execution: TaskboardExecutionContext } {
+function executionScope(purpose: 'work' | 'review', protocolVersion?: 2): { execution: TaskboardExecutionContext } {
   return {
     execution: {
       identity,
       task: { ...task, status: 'in_progress' },
       boardPrompt: '',
       comments: [],
-      execution: { ...execution, purpose, status: 'running' },
+      execution: { ...execution, purpose, status: 'running', ...(protocolVersion ? { protocolVersion } : {}) },
     },
   };
 }
@@ -237,6 +243,18 @@ describe('CronManage taskboard actions', () => {
     });
   });
 
+  it('普通会话可用 CAS 取消集成任务', async () => {
+    const { service, options } = rig();
+
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'integration.cancel', taskId: task.id, expectedVersion: task.version, reason: '人工终止',
+    })).resolves.toMatchObject({ canceled: true, task: { status: 'canceled' } });
+    expect(service.cancelIntegrationTask).toHaveBeenCalledWith(identity, task.id, {
+      expectedVersion: task.version,
+      reason: '人工终止',
+    });
+  });
+
   it('Execution fencing 只允许复核 Agent 决策自己的任务', async () => {
     const { service, executionStore, options } = rig();
 
@@ -287,6 +305,18 @@ describe('CronManage taskboard actions', () => {
     expect(executionStore.moveTaskFromExecution).toHaveBeenCalledWith(
       identity, execution.runId, 'blocked',
     );
+  });
+
+  it('V2 Execution 禁止使用旧 move 回写，必须提交结构化 resolution', async () => {
+    const { executionStore, options } = rig();
+
+    await expect(invokeTaskboardAction(
+      options,
+      identity,
+      { action: 'move', id: task.id, status: 'ready_to_merge' },
+      executionScope('review', 2),
+    )).rejects.toThrow('结构化 resolution');
+    expect(executionStore.moveTaskFromExecution).not.toHaveBeenCalled();
   });
 
   it('普通会话可跨看板分页搜索，并用显式 CAS 修改任务和评论', async () => {

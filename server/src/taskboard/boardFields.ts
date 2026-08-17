@@ -1,6 +1,11 @@
 import {
+  TASKBOARD_ALLOWED_ACTIONS,
   TASKBOARD_DEFAULT_PROMPT,
   type TaskBoard,
+  type TaskBoardAllowedAction,
+  type TaskBoardIntegrationPolicy,
+  type TaskBoardMemberRole,
+  type TaskBoardRepositoryConfig,
 } from '../../../shared/src/types/taskboard.js';
 
 const LEGACY_TASKBOARD_DEFAULT_PROMPT = [
@@ -45,6 +50,31 @@ export function boardVisibilityMigrationSql(boardsTable: string): string {
   `;
 }
 
+export function boardIntegrationMigrationSql(boardsTable: string): string {
+  return `
+    ALTER TABLE ${boardsTable} ADD COLUMN IF NOT EXISTS repository JSONB;
+    ALTER TABLE ${boardsTable} ADD COLUMN IF NOT EXISTS integration_policy JSONB;
+    ALTER TABLE ${boardsTable} ADD COLUMN IF NOT EXISTS integration_next_run_at TIMESTAMPTZ
+  `;
+}
+
+export function normalizeRepositoryConfig(
+  repository: TaskBoardRepositoryConfig | null | undefined,
+  tenantId?: string,
+): TaskBoardRepositoryConfig | null | undefined {
+  if (!repository) return repository;
+  const owner = repository.owner.trim();
+  const name = repository.name.trim();
+  return {
+    ...repository,
+    owner,
+    name,
+    baseBranch: repository.baseBranch.trim(),
+    repositoryId: `github:${tenantId ? `${tenantId}:` : ''}${owner.toLowerCase()}/${name.toLowerCase()}`,
+    allowForkPullRequest: false,
+  };
+}
+
 export function normalizeBoardPrompt(value: string): string {
   return value.trim();
 }
@@ -57,6 +87,9 @@ export function normalizeModel(value: string | null | undefined): string | null 
 
 export function rowToBoard(row: Record<string, unknown>, currentUserId: string): TaskBoard {
   const ownerUserId = String(row.owner_user_id);
+  const role = resolveBoardRole(row, currentUserId);
+  const repository = parseJsonObject<TaskBoardRepositoryConfig>(row.repository);
+  const integrationPolicy = parseJsonObject<TaskBoardIntegrationPolicy>(row.integration_policy);
   return {
     id: String(row.id),
     name: String(row.name),
@@ -65,16 +98,62 @@ export function rowToBoard(row: Record<string, unknown>, currentUserId: string):
       : {}),
     visibility: row.visibility === 'organization' ? 'organization' : 'personal',
     ownerUserId,
-    canManage: ownerUserId === currentUserId,
+    role,
+    allowedActions: allowedActionsForRole(role),
+    canManage: role === 'owner',
     prompt: String(row.prompt ?? TASKBOARD_DEFAULT_PROMPT),
     ...(row.model !== null && row.model !== undefined && String(row.model).trim()
       ? { model: String(row.model) }
       : {}),
+    ...(repository ? { repository } : {}),
+    ...(integrationPolicy ? { integrationPolicy } : {}),
     version: Number(row.version),
     ...(row.archived_at ? { archivedAt: toIso(row.archived_at) } : {}),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
   };
+}
+
+export function allowedActionsForRole(role: TaskBoardMemberRole): TaskBoardAllowedAction[] {
+  const read: TaskBoardAllowedAction[] = ['board.read'];
+  if (role === 'viewer') return read;
+  const editor: TaskBoardAllowedAction[] = [
+    ...read,
+    'task.create',
+    'task.update',
+    'task.reorder',
+    'comment.create',
+    'execution.trigger',
+  ];
+  if (role === 'editor') return editor;
+  const maintainer: TaskBoardAllowedAction[] = [
+    ...editor,
+    'task.transition',
+    'task.archive',
+    'integration.create',
+    'integration.authorize',
+    'integration.cancel',
+  ];
+  if (role === 'maintainer') return maintainer;
+  return [...TASKBOARD_ALLOWED_ACTIONS];
+}
+
+function resolveBoardRole(row: Record<string, unknown>, currentUserId: string): TaskBoardMemberRole {
+  if (String(row.owner_user_id) === currentUserId) return 'owner';
+  const value = String(row.board_role ?? 'viewer');
+  return value === 'editor' || value === 'maintainer' ? value : 'viewer';
+}
+
+function parseJsonObject<T>(value: unknown): T | undefined {
+  if (!value) return undefined;
+  if (typeof value === 'object') return value as T;
+  if (typeof value !== 'string') return undefined;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed as T : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function toIso(value: unknown): string {

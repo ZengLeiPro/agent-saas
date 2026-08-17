@@ -1,7 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskBoardTask } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
-import { executeTask, patchTask, TaskBoardConflictError } from "./api";
+import {
+  cancelIntegrationTask,
+  createIntegrationBatch,
+  deleteBoardMember,
+  executeTask,
+  fetchBoardMembers,
+  fetchIntegrationSources,
+  patchTask,
+  TaskBoardConflictError,
+  upsertBoardMember,
+} from "./api";
 
 vi.mock("@/lib/authFetch", () => ({ authFetch: vi.fn() }));
 
@@ -52,6 +62,96 @@ describe("任务看板 API 错误对象", () => {
         body: JSON.stringify({ expectedVersion: task.version }),
       }),
     );
+  });
+
+  it("集成任务重跑与取消保留 merge purpose 和 CAS 版本", async () => {
+    const mergeExecution = {
+      task: { ...task, kind: "integration" as const, status: "in_progress" as const },
+      execution: {
+        id: "execution-merge",
+        taskId: task.id,
+        runId: "run-merge",
+        sessionId: "session-merge",
+        status: "queued" as const,
+        purpose: "merge" as const,
+        requestedBy: "user-1",
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+      },
+    };
+    const canceled = { ...mergeExecution.task, status: "canceled" as const, version: 6 };
+    vi.mocked(authFetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify(mergeExecution), { status: 202, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(canceled), { status: 200, headers: { "content-type": "application/json" } }));
+
+    await expect(executeTask(task.id, task.version, "merge")).resolves.toEqual(mergeExecution);
+    await expect(cancelIntegrationTask(task.id, task.version, "人工终止")).resolves.toEqual(canceled);
+    expect(authFetch).toHaveBeenNthCalledWith(1, `/api/taskboard/tasks/${task.id}/execute`, expect.objectContaining({
+      body: JSON.stringify({ expectedVersion: task.version, purpose: "merge" }),
+    }));
+    expect(authFetch).toHaveBeenNthCalledWith(2, `/api/taskboard/tasks/${task.id}/integration-cancel`, expect.objectContaining({
+      body: JSON.stringify({ expectedVersion: task.version, reason: "人工终止" }),
+    }));
+  });
+
+  it("成员、人工集成与来源接口使用 V2 REST 契约", async () => {
+    const member = {
+      boardId: "board-1",
+      userId: "user-2",
+      role: "maintainer" as const,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+    };
+    const integrationResult = {
+      task: { ...task, id: "integration-1", kind: "integration" as const },
+      execution: {
+        id: "execution-2",
+        taskId: "integration-1",
+        runId: "run-2",
+        sessionId: "session-2",
+        status: "queued" as const,
+        purpose: "merge" as const,
+        requestedBy: "user-1",
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+      },
+    };
+    const sources = [{
+      id: "source-1",
+      integrationTaskId: "integration-1",
+      deliveryTaskId: task.id,
+      repositoryId: "repo-1",
+      providerPullRequestId: "pr-1",
+      reviewedSubjectDigest: "sha256:reviewed",
+      order: 0,
+      state: "ready" as const,
+      attemptCount: 1,
+      updatedAt: task.updatedAt,
+    }];
+    for (const [status, body] of [[200, [member]], [200, member], [204, null], [202, integrationResult], [200, sources]] as const) {
+      vi.mocked(authFetch).mockResolvedValueOnce(new Response(body === null ? null : JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      }));
+    }
+
+    await expect(fetchBoardMembers("board-1")).resolves.toEqual([member]);
+    await expect(upsertBoardMember("board-1", { userId: "user-2", role: "maintainer" })).resolves.toEqual(member);
+    await expect(deleteBoardMember("board-1", "user-2")).resolves.toBeUndefined();
+    await expect(createIntegrationBatch("board-1", {
+      deliveryTaskIds: [task.id],
+      expectedBoardVersion: 7,
+    })).resolves.toEqual(integrationResult);
+    await expect(fetchIntegrationSources("integration-1")).resolves.toEqual(sources);
+
+    expect(authFetch).toHaveBeenNthCalledWith(2, "/api/taskboard/boards/board-1/members", expect.objectContaining({
+      method: "PUT",
+      body: JSON.stringify({ userId: "user-2", role: "maintainer" }),
+    }));
+    expect(authFetch).toHaveBeenNthCalledWith(4, "/api/taskboard/boards/board-1/integrations", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ deliveryTaskIds: [task.id], expectedBoardVersion: 7 }),
+    }));
   });
 
   it("409 保留服务端 current，供 hooks 立即同步最新版本", async () => {

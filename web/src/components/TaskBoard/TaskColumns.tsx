@@ -19,6 +19,11 @@ import { STATUS_LABELS } from "./constants";
 interface TaskColumnsProps {
   tasks: TaskBoardTask[];
   readOnly: boolean;
+  canCreateTask: boolean;
+  canReorderTask: boolean;
+  canTransitionTask: boolean;
+  canCreateIntegration: boolean;
+  selectedDeliveryTaskIds: Set<string>;
   desktopStatus: TaskBoardStatus | "all";
   mobileStatus: TaskBoardStatus;
   onMobileStatusChange: (status: TaskBoardStatus) => void;
@@ -26,6 +31,7 @@ interface TaskColumnsProps {
   onOpenTask: (task: TaskBoardTask) => void;
   onDragStart: (taskId: string) => void;
   onDragEnd: () => void;
+  onDeliverySelectedChange: (taskId: string, selected: boolean) => void;
   onDrop: (
     status: TaskBoardStatus,
     nextTaskId: string | undefined,
@@ -42,6 +48,11 @@ function sortedTasks(tasks: TaskBoardTask[], status: TaskBoardStatus): TaskBoard
 export function TaskColumns({
   tasks,
   readOnly,
+  canCreateTask,
+  canReorderTask,
+  canTransitionTask,
+  canCreateIntegration,
+  selectedDeliveryTaskIds,
   desktopStatus,
   mobileStatus,
   onMobileStatusChange,
@@ -49,9 +60,11 @@ export function TaskColumns({
   onOpenTask,
   onDragStart,
   onDragEnd,
+  onDeliverySelectedChange,
   onDrop,
 }: TaskColumnsProps) {
   const mobileTasks = sortedTasks(tasks, mobileStatus);
+  const dragEnabled = !readOnly && (canReorderTask || canTransitionTask);
 
   return (
     <div className="min-h-0 flex-1 overflow-hidden">
@@ -69,7 +82,7 @@ export function TaskColumns({
           size="sm"
           variant="outline"
           className="mt-2 w-full"
-          disabled={readOnly}
+          disabled={readOnly || !canCreateTask || !["backlog", "todo"].includes(mobileStatus)}
           aria-label={`在${STATUS_LABELS[mobileStatus]}新建任务`}
           onClick={() => onCreateTask(mobileStatus)}
         >
@@ -94,10 +107,10 @@ export function TaskColumns({
               aria-label={`${STATUS_LABELS[status]}列`}
               className="flex h-full w-72 shrink-0 flex-col rounded-xl border bg-muted/30"
               onDragOver={(event) => {
-                if (!readOnly) event.preventDefault();
+                if (dragEnabled) event.preventDefault();
               }}
               onDrop={(event) => {
-                if (!readOnly) onDrop(status, undefined, event);
+                if (dragEnabled) onDrop(status, undefined, event);
               }}
             >
               <header className="flex shrink-0 items-center justify-between border-b px-3 py-2.5">
@@ -112,7 +125,7 @@ export function TaskColumns({
                   size="sm"
                   variant="outline"
                   className="w-full"
-                  disabled={readOnly}
+                  disabled={readOnly || !canCreateTask || !["backlog", "todo"].includes(status)}
                   aria-label={`在${STATUS_LABELS[status]}新建任务`}
                   onClick={() => onCreateTask(status)}
                 >
@@ -123,10 +136,10 @@ export function TaskColumns({
               <div
                 className="min-h-24 flex-1 space-y-2 overflow-y-auto p-2"
                 onDragOver={(event) => {
-                  if (!readOnly) event.preventDefault();
+                  if (dragEnabled) event.preventDefault();
                 }}
                 onDrop={(event) => {
-                  if (!readOnly) onDrop(status, undefined, event);
+                  if (dragEnabled) onDrop(status, undefined, event);
                 }}
               >
                 {columnTasks.map((task) => (
@@ -134,7 +147,10 @@ export function TaskColumns({
                     key={task.id}
                     task={task}
                     readOnly={readOnly}
-                    allowDrag
+                    allowDrag={dragEnabled}
+                    selectable={canCreateIntegration && (task.kind ?? "delivery") === "delivery" && task.status === "ready_to_merge" && Boolean(task.providerPullRequestId) && Boolean(task.reviewedSubjectDigest)}
+                    selected={selectedDeliveryTaskIds.has(task.id)}
+                    onSelectedChange={onDeliverySelectedChange}
                     onOpen={onOpenTask}
                     onDragStart={onDragStart}
                     onDragEnd={onDragEnd}
@@ -163,6 +179,9 @@ export function TaskColumns({
             task={task}
             readOnly={readOnly}
             allowDrag={false}
+            selectable={canCreateIntegration && (task.kind ?? "delivery") === "delivery" && task.status === "ready_to_merge" && Boolean(task.providerPullRequestId) && Boolean(task.reviewedSubjectDigest)}
+            selected={selectedDeliveryTaskIds.has(task.id)}
+            onSelectedChange={onDeliverySelectedChange}
             onOpen={onOpenTask}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}

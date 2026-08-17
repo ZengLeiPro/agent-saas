@@ -61,6 +61,49 @@ describe("BoardDialog", () => {
     });
   });
 
+  it("配置 GitHub 仓库、互斥定时触发与执行批次策略", async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn(async () => undefined);
+    render(
+      <BoardDialog
+        open
+        onOpenChange={vi.fn()}
+        onCreate={onCreate}
+        onUpdate={vi.fn(async () => undefined)}
+      />,
+    );
+
+    await user.type(screen.getByRole("textbox", { name: "名称" }), "自动集成");
+    await user.click(screen.getByRole("checkbox", { name: "关联 GitHub 仓库" }));
+    await user.type(screen.getByRole("textbox", { name: "Repository ID" }), "repo-1");
+    await user.type(screen.getByRole("textbox", { name: "仓库所有者" }), "kaiyan");
+    await user.type(screen.getByRole("textbox", { name: "仓库名" }), "agent-saas");
+    await user.click(screen.getByRole("combobox", { name: "集成触发模式" }));
+    await user.click(screen.getByRole("option", { name: "定时触发" }));
+    const cron = screen.getByRole("textbox", { name: "Cron" });
+    await user.clear(cron);
+    await user.type(cron, "0 3 * * 1-5");
+    await user.click(screen.getByRole("button", { name: "创建看板" }));
+
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+      repository: {
+        provider: "github",
+        repositoryId: "repo-1",
+        owner: "kaiyan",
+        name: "agent-saas",
+        baseBranch: "main",
+        allowForkPullRequest: false,
+      },
+      integrationPolicy: expect.objectContaining({
+        enabled: true,
+        trigger: { mode: "scheduled", cron: "0 3 * * 1-5", timezone: "Asia/Shanghai" },
+        batch: { maxTasks: 10, selection: "priority_then_ready_at" },
+        execution: expect.objectContaining({ mergeMethod: "squash" }),
+      }),
+    }));
+    expect(screen.queryByRole("spinbutton", { name: "就绪防抖（毫秒）" })).toBeNull();
+  });
+
   it("同一看板版本刷新时保留用户草稿，并用最新 expectedVersion 提交", async () => {
     const user = userEvent.setup();
     const onUpdate = vi.fn(async () => undefined);

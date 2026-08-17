@@ -7,54 +7,26 @@ import type { TaskboardExecutionContext } from './types.js';
 
 export function buildExecutionPrompt(
   context: TaskboardExecutionContext,
-  timezone?: string,
-  ownerDisplayName?: string,
+  _timezone?: string,
+  _ownerDisplayName?: string,
 ): string {
-  const task = context.task;
-  const recentComments = context.comments.slice(-50);
-  const comments = recentComments.length > 0
-    ? recentComments.map((comment) => formatTaskboardComment(
-        comment,
-        timezone,
-        comment.authorType === 'user' && comment.authorId === context.identity.ownerUserId
-          ? ownerDisplayName
-          : undefined,
-      )).join('\n\n')
-    : '（暂无评论）';
   return [
-    '看板提示语：', context.boardPrompt || '（无）', '',
-    `任务：${task.identifier} · ${task.title}`,
-    `任务记录 ID：${task.id}`,
-    `执行类型：${context.execution.purpose === 'review' ? '独立复核' : '实施'}`,
-    `工作分支：${task.branch ?? '未填写'}`,
-    `优先级：${task.priority}`,
-    `标签：${task.labels.length > 0 ? task.labels.join('、') : '无'}`,
-    `截止时间：${task.dueAt ?? '无'}`, '',
-    '任务看板回写：', ...executionWritebackInstructions(context), '',
-    '任务正文：', task.description || '（无正文）', '',
-    '任务附件：', formatAttachments(task.attachments ?? []), '',
-    `${context.continuation ? '本次新增评论' : '最近评论'}（${recentComments.length}/${context.comments.length}）：`,
-    comments,
+    context.continuation
+      ? '任务看板中的任务有了新的输入。'
+      : '请处理任务看板中的指定任务。',
+    '',
+    `taskId: ${context.task.id}`,
+    `executionId: ${context.execution.id}`,
+    '',
+    '开始工作前，请读取该任务的最新上下文，并根据当前职责完成工作和回写。',
   ].join('\n');
 }
 
-export function executionWritebackInstructions(context: TaskboardExecutionContext): string[] {
-  const taskId = context.task.id;
-  const boardId = context.task.boardId;
-  const common = [
-    `- 创建或确认工作分支后，调用 CronManage：target=taskboard, action=update, id=${taskId}, branch=<分支名>。`,
-    `- 需要独立的后续复核、返工或合并时，用 target=taskboard, action=create, boardId=${boardId}, status=todo, dispatch=true 创建并派发新任务。`,
-  ];
-  if (context.execution.purpose !== 'review') {
-    return [...common, '- 实施成功后不要标记待合并或已完成；系统会进入复核中并自动派发复核。'];
-  }
+export function executionWritebackInstructions(_context: TaskboardExecutionContext): string[] {
   return [
-    ...common,
-    '- 本次只做独立复核，不顺手修改交付，也不得标记已完成。',
-    `- 复核通过：调用 CronManage：target=taskboard, action=move, id=${taskId}, status=ready_to_merge。`,
-    `- 复核不通过：调用 CronManage：target=taskboard, action=move, id=${taskId}, status=todo；最终回执列明返工项。`,
-    `- 存在客观阻塞：调用 CronManage：target=taskboard, action=move, id=${taskId}, status=blocked；如实记录原因。`,
-    '- 无法明确判定时不要移动状态；任务保持在复核中。',
+    '- 读取任务看板返回的最新事实和结构化职责约束。',
+    '- 自主完成当前职责，按需记录重要进展。',
+    '- 结束前提交明确、真实且可验证的阶段结果。',
   ];
 }
 

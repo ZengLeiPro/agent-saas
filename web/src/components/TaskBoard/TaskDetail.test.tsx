@@ -9,6 +9,7 @@ import { TaskDetail } from "./TaskDetail";
 const mocks = vi.hoisted(() => ({
   fetchTask: vi.fn(),
   continueTaskExecution: vi.fn(),
+  fetchIntegrationSources: vi.fn(),
   addComment: vi.fn(),
   refreshComments: vi.fn(async () => undefined),
   executions: [] as TaskBoardExecution[],
@@ -23,6 +24,7 @@ vi.mock("./api", async (importOriginal) => {
   return {
     ...actual,
     fetchTask: mocks.fetchTask,
+    fetchIntegrationSources: mocks.fetchIntegrationSources,
     continueTaskExecution: mocks.continueTaskExecution,
   };
 });
@@ -105,6 +107,7 @@ describe("TaskDetail 草稿隔离", () => {
     vi.clearAllMocks();
     mocks.executions = [];
     mocks.fetchTask.mockImplementation(async (id: string) => id === taskOne.id ? taskOne : taskTwo);
+    mocks.fetchIntegrationSources.mockResolvedValue([]);
     mocks.addComment.mockResolvedValue(undefined);
   });
 
@@ -407,6 +410,54 @@ describe("TaskDetail 草稿隔离", () => {
     expect(screen.getByRole("button", { name: "排队中" }).hasAttribute("disabled")).toBe(true);
     expect(screen.getByRole("link", { name: "打开执行会话" }).getAttribute("href"))
       .toBe("/chat/session-1");
+  });
+
+  it("集成任务详情区分任务类型并展示来源进度、错误和 merged commit", async () => {
+    const integrationTask = {
+      ...taskOne,
+      id: "integration-1",
+      identifier: "TASK-9",
+      kind: "integration" as const,
+      status: "blocked" as const,
+    };
+    mocks.fetchTask.mockResolvedValue(integrationTask);
+    mocks.fetchIntegrationSources.mockResolvedValue([
+      {
+        id: "source-1",
+        integrationTaskId: integrationTask.id,
+        deliveryTaskId: "task-delivery-1",
+        repositoryId: "repo-1",
+        providerPullRequestId: "pr-101",
+        reviewedSubjectDigest: "sha256:subject-1",
+        order: 0,
+        state: "merged",
+        attemptCount: 1,
+        mergedCommitOid: "abc123",
+        updatedAt: taskOne.updatedAt,
+      },
+      {
+        id: "source-2",
+        integrationTaskId: integrationTask.id,
+        deliveryTaskId: "task-delivery-2",
+        repositoryId: "repo-1",
+        providerPullRequestId: "pr-102",
+        reviewedSubjectDigest: "sha256:subject-2",
+        order: 1,
+        state: "waiting_remediation",
+        attemptCount: 2,
+        lastError: "合并冲突需要自动修复",
+        updatedAt: taskOne.updatedAt,
+      },
+    ]);
+    render(<TaskDetail {...props({ task: integrationTask })} />);
+
+    expect(await screen.findByText("集成批次")).toBeTruthy();
+    expect(await screen.findByText("1/2 已合并")).toBeTruthy();
+    expect(screen.getByText("等待修复")).toBeTruthy();
+    expect(screen.getByText(/merged commit abc123/)).toBeTruthy();
+    expect(screen.getByText(/合并冲突需要自动修复/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "保存任务" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "交给 Agent" })).toBeNull();
   });
 
   it("复核中任务可以启动独立 review Agent", async () => {

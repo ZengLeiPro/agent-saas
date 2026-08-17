@@ -229,7 +229,7 @@ describe('CronToolProvider', () => {
 
     const execution = {
       id: 'execution-1', taskId: task.id, runId: taskboardContext.runId, sessionId: 'taskboard-session-1',
-      status: 'running' as const, purpose: 'review' as const, requestedBy: OWNER.id,
+      status: 'running' as const, purpose: 'work' as const, requestedBy: OWNER.id,
       createdAt: task.createdAt, updatedAt: task.updatedAt,
     };
     const executionContext: TaskboardExecutionContext = {
@@ -301,7 +301,7 @@ describe('CronToolProvider', () => {
     await expect(provider.invoke(call('CronManage', {
       target: 'taskboard', action: 'task.update', taskId: task.id,
       branch: 'task/TASK-1-bypass', expectedVersion: task.version,
-    }), derivedExecutionContext)).rejects.toThrow('只能使用兼容回写 action');
+    }), derivedExecutionContext)).rejects.toThrow('不能进入普通会话管理域');
     expect(getExecutionContextBySessionId).toHaveBeenCalledWith(execution.sessionId);
     expect(updateTask).not.toHaveBeenCalled();
 

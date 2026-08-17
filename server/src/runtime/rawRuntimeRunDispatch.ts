@@ -106,6 +106,7 @@ import {
 } from './imageUnderstanding.js';
 import { MINIMAL_SYSTEM_PROMPT } from './systemPrompts.js';
 import type { SystemPromptId } from '../systemPrompts/types.js';
+import { appendTaskboardExecutionInstruction, stripTaskboardWritableGitCredentials } from '../taskboard/runtimeTaskboardPolicy.js';
 import {
   isConsumedResume,
   isResumeApprovalMetadata,
@@ -995,6 +996,8 @@ export function buildInstructionSections(params: {
   /** Profile 只选择可选上下文模块；main.static 与 dynamic-personal 中的平台安全底座不可移除。 */
   contextModules?: readonly ('company_info' | 'tenant_instructions' | 'runtime_memory' | 'personal_context')[];
   profileSystemInstructions?: string;
+  /** 任务看板 Execution 的稳定职责总纲；不含 task 数据或阶段分支。 */
+  taskboardExecution?: boolean;
 }): Array<{ key: string; name: string; content: string }> {
   const modules = new Set(params.contextModules
     ?? ['company_info', 'tenant_instructions', 'runtime_memory', 'personal_context']);
@@ -1042,7 +1045,6 @@ export function buildInstructionSections(params: {
       ),
     });
   }
-
   // 组织自定义规则排在 company_info 之后：事实在前（稳定、进 per-tenant 缓存段前部），
   // 行为规则在后（要能覆盖 static 的风格默认）。未配置 instructions.md 的组织整段不注入
   // ——没配置就不该凭空多出一节空标题，这与 company_info 有 fallback 文案的处理刻意不同。
@@ -1059,7 +1061,6 @@ export function buildInstructionSections(params: {
       ),
     });
   }
-
   if (params.memorySearchEnabled && modules.has('runtime_memory')) {
     sections.push({
       key: 'memory_instructions',
@@ -1075,27 +1076,25 @@ export function buildInstructionSections(params: {
       personalVars,
     ),
   });
-
+  appendTaskboardExecutionInstruction(sections, params.taskboardExecution, () => (
+    params.getSystemPrompt?.('main.taskboardExecution') ?? loadPrompt(params.sharedDir, 'taskboard-execution')
+  ));
   return sections;
 }
-
 export function buildInstructions(params: Parameters<typeof buildInstructionSections>[0]): string {
   return buildInstructionSections(params).map((section) => section.content).join('\n\n');
 }
-
 export function visibleWorkspaceCwd(hostCwd: string, executionTarget: ExecutionTargetKind): string {
   if (executionTarget === 'server-remote') return '/workspace';
   if (executionTarget === 'server-container') return '/workspace';
   return hostCwd;
 }
-
 /**
  * 未配置 company.md 时的 fallback：不是给人看的占位符，而是给 agent 的行为指令——
  * 如实说明组织资料缺失并引导管理员补充，避免 agent 凭空编造公司信息。
  * 注意：此文本位于 dynamic-shared 共享缓存段，必须保持角色无关（admin/普通用户同文案）。
  */
 const COMPANY_INFO_FALLBACK = '（本组织尚未配置组织资料。当用户问及公司业务、产品、团队、制度等信息时，如实说明你还没有组织资料，不要编造；并提示：组织管理员可在管理后台「组织管理 → 公司信息」页补充，补充后新会话自动生效。）';
-
 function loadCompanyInfo(sharedDir: string, tenantId?: string): string {
   if (!tenantId) return COMPANY_INFO_FALLBACK;
   try {
@@ -1105,7 +1104,6 @@ function loadCompanyInfo(sharedDir: string, tenantId?: string): string {
     return COMPANY_INFO_FALLBACK;
   }
 }
-
 /**
  * 组织自定义规则正文。无 tenantId、文件缺失、内容为空或读取失败一律返回空串，
  * 由调用方整段跳过——与 company_info 不同，这里没有 fallback 文案：
@@ -1119,7 +1117,6 @@ function loadTenantInstructions(sharedDir: string, tenantId?: string): string {
     return '';
   }
 }
-
 /**
  * 07-05：给 tenant-remote hand（HttpTransport → acs-orchestrator/hand-server → pod）
  * 现场装配 wire.context.env。envResolver 走 workspace.tenantId + workspace.username
@@ -1149,7 +1146,6 @@ export function buildTenantRemoteHandWireEnv(workspace: WorkspaceRef): Record<st
   }
   return env;
 }
-
 export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig): AgentRunDispatch {
   const logger = config.logger ?? noopLogger;
   const sessionCatalog = resolveSessionCatalog(config);
@@ -1169,7 +1165,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
   const executionConfig = config.executionConfig
     ?? createExecutionConfig(config.executionTarget ? { defaultTarget: config.executionTarget } : undefined);
   const tenantHandResolver = getTenantRemoteHandResolver(config);
-
   return async function* rawRuntimeRunDispatch(
     message: InboundMessage,
     context: ChannelContext,
@@ -1182,7 +1177,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       yield { type: 'error', error: `Raw runtime 暂不支持通道 "${context.channel}"（仅支持 web/cron/dingtalk）` };
       return;
     }
-
     // PR 2026-06-14 (γ): raw runtime admin-only gate 解除。非 admin 用户可走 raw runtime；
     // 个别危险工具（Shell 等）仍由 WorkspaceToolProvider 内部按角色拦截。
     // δ 阶段加 anonymous 防御：必须有 user 身份（context.user 或 sessionOwner），否则
@@ -1238,6 +1232,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       resolvedFor: options.connectorEnvResolvedFor,
       injectedKeys: options.connectorEnvKeys,
     });
+    stripTaskboardWritableGitCredentials(sessionId, runtimeEnv);
     // BUG FIX 2026-06-23：tenantId 必须与 userId 同源用 identitySource，否则
     // admin 代操作 / cron / 内部触发等 context.user 为空但 sessionOwner 存在的
     // 路径上 hasTranscriptOwnerRef 会返回 false，transcript 会回退到 ownerless
@@ -1559,6 +1554,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           isPlatformAdmin,
           memoryPolicyVersion,
           getSystemPrompt: config.getSystemPrompt,
+          taskboardExecution: sessionId.startsWith('taskboard-'),
           ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
           ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
           ...(orgAgent ? { orgAgent } : {}),
@@ -2196,6 +2192,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       isPlatformAdmin: resumeIsPlatformAdmin,
       memoryPolicyVersion,
       getSystemPrompt: config.getSystemPrompt,
+      taskboardExecution: request.sessionId.startsWith('taskboard-'),
       ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
       ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
       ...(orgAgent ? { orgAgent } : {}),
@@ -2246,6 +2243,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       username: orgAgent ? undefined : resumeUsername,
       tenantId: sessionRecord.tenantId,
     });
+    stripTaskboardWritableGitCredentials(request.sessionId, resumeEnv);
 
     // approval / ask_user 的每个恢复执行段都重新计算完整墙钟预算。
     armRuntimeRunWallClock({
@@ -2661,6 +2659,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       isPlatformAdmin: resumeIsPlatformAdmin,
       memoryPolicyVersion,
       getSystemPrompt: config.getSystemPrompt,
+      taskboardExecution: request.sessionId.startsWith('taskboard-'),
       ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
       ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
       ...(orgAgent ? { orgAgent } : {}),
@@ -2711,6 +2710,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       username: orgAgent ? undefined : resumeUsername,
       tenantId: sessionRecord.tenantId,
     });
+    stripTaskboardWritableGitCredentials(request.sessionId, resumeEnv);
 
     // approval / ask_user 的每个恢复执行段都重新计算完整墙钟预算。
     armRuntimeRunWallClock({

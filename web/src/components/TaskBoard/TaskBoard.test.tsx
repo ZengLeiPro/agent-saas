@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   syncTask: vi.fn(),
   addComment: vi.fn(async () => undefined),
   fetchTask: vi.fn(),
+  createIntegrationBatch: vi.fn(),
 }));
 
 vi.mock("./hooks", () => ({
@@ -65,7 +66,11 @@ vi.mock("./hooks", () => ({
 
 vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
-  return { ...actual, fetchTask: mocks.fetchTask };
+  return {
+    ...actual,
+    fetchTask: mocks.fetchTask,
+    createIntegrationBatch: mocks.createIntegrationBatch,
+  };
 });
 
 function board(id: string, name: string, archived = false): TaskBoard {
@@ -184,22 +189,25 @@ describe("TaskBoardView", () => {
     expect(within(mobileList).queryByRole("button", { name: /打开任务 TASK-1/ })).toBeNull();
   });
 
-  it("每个状态列可快捷新建并预选该状态", async () => {
+  it("仅需求池和待实施列可快捷新建，工作流状态禁止直接创建", async () => {
     const user = userEvent.setup();
     render(<TaskBoardView />);
 
     const inProgressColumn = await screen.findByRole("region", { name: "实施中列" });
-    await user.click(within(inProgressColumn).getByRole("button", { name: "在实施中新建任务" }));
+    expect(within(inProgressColumn).getByRole("button", { name: "在实施中新建任务" }).hasAttribute("disabled")).toBe(true);
+
+    const backlogColumn = screen.getByRole("region", { name: "需求池列" });
+    await user.click(within(backlogColumn).getByRole("button", { name: "在需求池新建任务" }));
 
     expect(screen.getByRole("heading", { name: "新建任务" })).toBeTruthy();
-    expect(screen.getByRole("combobox", { name: "新任务状态" }).textContent).toContain("实施中");
+    expect(screen.getByRole("combobox", { name: "新任务状态" }).textContent).toContain("需求池");
 
-    await user.type(screen.getByRole("textbox", { name: "标题" }), "补充实施中任务");
+    await user.type(screen.getByRole("textbox", { name: "标题" }), "补充需求池任务");
     await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(mocks.addTask).toHaveBeenCalledWith(expect.objectContaining({
-      title: "补充实施中任务",
-      status: "in_progress",
+      title: "补充需求池任务",
+      status: "backlog",
     })));
   });
 
@@ -240,11 +248,106 @@ describe("TaskBoardView", () => {
     }];
     render(<TaskBoardView />);
 
-    expect(await screen.findByText(/组织看板 · 由其他成员创建 · 全员可管理任务/)).toBeTruthy();
+    expect(await screen.findByText(/组织看板 · 当前角色：编辑者/)).toBeTruthy();
     expect((screen.getByRole("button", { name: "新建任务" }) as HTMLButtonElement).disabled).toBe(false);
     await user.click(screen.getByRole("button", { name: "看板管理" }));
-    expect(screen.getByRole("menuitem", { name: "编辑看板设置" }).getAttribute("data-disabled")).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "看板设置与成员" }).getAttribute("data-disabled")).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "归档看板" }).getAttribute("data-disabled")).not.toBeNull();
+  });
+
+  it("维护者可多选已复核的待合并交付任务并创建人工集成批次", async () => {
+    const user = userEvent.setup();
+    const integrationBoard: TaskBoard = {
+      ...board("board-1", "自动集成"),
+      role: "maintainer",
+      canManage: false,
+      allowedActions: ["board.read", "integration.create"],
+      repository: {
+        provider: "github",
+        repositoryId: "repo-1",
+        owner: "kaiyan",
+        name: "agent-saas",
+        baseBranch: "main",
+        allowForkPullRequest: false,
+      },
+      integrationPolicy: {
+        schemaVersion: 1,
+        enabled: true,
+        revision: "r1",
+        trigger: { mode: "manual", allowedRoles: ["maintainer", "owner"] },
+        batch: { maxTasks: 2, selection: "priority_then_ready_at" },
+        execution: {
+          mergeMethod: "squash",
+          continueIndependentSources: true,
+          autoResolveConflicts: true,
+          maxAutomaticRemediationRounds: 2,
+          maxTransientRetries: 3,
+          requireGreenChecks: true,
+          deleteRemoteBranch: false,
+          deploy: false,
+        },
+      },
+    };
+    const readyTask = {
+      ...taskOne,
+      kind: "delivery" as const,
+      status: "ready_to_merge" as const,
+      providerPullRequestId: "pr-1",
+      pullRequestNumber: 88,
+      reviewedSubjectDigest: "sha256:reviewed",
+    };
+    const integrationTask = {
+      ...taskTwo,
+      id: "integration-1",
+      identifier: "TASK-9",
+      kind: "integration" as const,
+      status: "todo" as const,
+    };
+    mocks.boards = [integrationBoard];
+    mocks.tasks = [readyTask];
+    mocks.createIntegrationBatch.mockResolvedValue({
+      task: integrationTask,
+      execution: {
+        id: "execution-1",
+        taskId: integrationTask.id,
+        runId: "run-1",
+        sessionId: "session-1",
+        status: "queued",
+        purpose: "merge",
+        requestedBy: "user-1",
+        createdAt: taskOne.createdAt,
+        updatedAt: taskOne.updatedAt,
+      },
+    });
+    render(<TaskBoardView />);
+
+    const choices = await screen.findAllByRole("checkbox", { name: "选择 TASK-1 加入人工集成批次" });
+    await user.click(choices[0]);
+    await user.click(screen.getByRole("button", { name: "创建集成批次（1）" }));
+
+    await waitFor(() => expect(mocks.createIntegrationBatch).toHaveBeenCalledWith("board-1", {
+      deliveryTaskIds: [readyTask.id],
+      expectedBoardVersion: integrationBoard.version,
+    }));
+    expect(mocks.syncTask).toHaveBeenCalledWith(integrationTask);
+    expect(mocks.refreshBoards).toHaveBeenCalled();
+    expect(mocks.refreshTasks).toHaveBeenCalled();
+  });
+
+  it("allowedActions 将查看者的任务写按钮和拖拽全部门禁", async () => {
+    mocks.boards = [{
+      ...board("board-1", "只读协作"),
+      role: "viewer",
+      canManage: false,
+      allowedActions: ["board.read"],
+    }];
+    render(<TaskBoardView />);
+
+    expect((await screen.findByRole("button", { name: "新建任务" }) as HTMLButtonElement).disabled).toBe(true);
+    for (const card of screen.getAllByTestId("task-card-task-1")) {
+      expect(card.getAttribute("draggable")).toBe("false");
+    }
+    expect(screen.queryByRole("button", { name: /创建集成批次/ })).toBeNull();
   });
 
   it("归档看板只读，关键写操作禁用且卡片不可拖拽", async () => {

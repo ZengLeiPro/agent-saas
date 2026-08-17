@@ -5,6 +5,7 @@ export const SYSTEM_PROMPT_IDS = [
   'main.dynamicTenant',
   'main.runtimeMemory',
   'main.dynamicPersonal',
+  'main.taskboardExecution',
   'main.minimal',
   'subagent.general',
   'subagent.explore',

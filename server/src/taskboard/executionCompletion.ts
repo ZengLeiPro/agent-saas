@@ -24,6 +24,9 @@ export async function applyExecutionTaskCompletion(
   executionCreatedAt: string | Date,
   input: TaskboardExecutionCompletionInput,
 ): Promise<boolean> {
+  if (execution.protocolVersion === 2) {
+    return input.status === 'succeeded';
+  }
   const succeeded = input.status === 'succeeded'
     || (execution.purpose === 'work'
       && await hasSuccessfulContinuationSince(host, client, task.id, executionCreatedAt));
@@ -76,9 +79,16 @@ export async function enqueueAutomaticReview(
 
   await client.query(
     `INSERT INTO ${host.executionsTable}
-       (id, task_id, run_id, session_id, status, purpose, requested_by)
-     VALUES ($1,$2,$3,$4,'queued','review',$5)`,
-    [review.executionId, task.id, review.runId, review.sessionId, execution.requestedBy],
+       (id, task_id, run_id, session_id, status, purpose, trigger, protocol_version, requested_by)
+     VALUES ($1,$2,$3,$4,'queued','review','initial',$5,$6)`,
+    [
+      review.executionId,
+      task.id,
+      review.runId,
+      review.sessionId,
+      review.protocolVersion ?? execution.protocolVersion,
+      execution.requestedBy,
+    ],
   );
   await client.query(
     `INSERT INTO ${host.executionOutboxTable}

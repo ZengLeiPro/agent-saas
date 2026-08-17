@@ -90,6 +90,13 @@ const DEFINITIONS_META: ReadonlyArray<Omit<SystemPromptDefinition, 'defaultConte
     ],
   },
   {
+    id: 'main.taskboardExecution',
+    category: 'main',
+    label: '主 Agent · 任务看板执行总纲',
+    description: '仅任务看板 Execution 注入的稳定职责总纲，不绑定具体工具或阶段文本。',
+    variables: [],
+  },
+  {
     id: 'main.minimal',
     category: 'main',
     label: '主 Agent · 最小提示语',
@@ -173,6 +180,7 @@ export class SystemPromptRegistry {
       case 'main.dynamicTenant': return loadPrompt(this.sharedDir, 'dynamic-tenant');
       case 'main.runtimeMemory': return loadPrompt(this.sharedDir, 'runtime-memory');
       case 'main.dynamicPersonal': return loadPrompt(this.sharedDir, 'dynamic-personal');
+      case 'main.taskboardExecution': return loadPrompt(this.sharedDir, 'taskboard-execution');
       case 'main.minimal': return MINIMAL_SYSTEM_PROMPT;
       case 'subagent.general': return GENERAL_SYSTEM_PROMPT;
       case 'subagent.explore': return EXPLORE_SYSTEM_PROMPT;

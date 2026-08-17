@@ -36,6 +36,7 @@ import { MemoryConsolidationEngine } from '../memory/consolidation/engine.js';
 import { TaskboardExecutionCoordinator, createTaskboardRuntimeOptions } from '../taskboard/executionService.js';
 import { RetryableTaskboardService } from '../taskboard/retryableService.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
+import { configureTaskboardGithubRepositoryProvider } from '../taskboard/repositoryRuntime.js';
 import type { TaskboardService } from '../taskboard/types.js';
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import { MEMORY_CONSOLIDATION_DEFAULTS, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
@@ -1509,6 +1510,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   });
   googleWorkspaceOAuthService = initializedGoogleWorkspaceOAuthService;
   credentialBroker = initializedCredentialBroker;
+  configureTaskboardGithubRepositoryProvider(taskboardStoreService, userStore, {
+    connectionStore: connectorConnectionStore,
+    vault: secretVault,
+    onError: (error) => serverLogger.warn(`Taskboard GitHub credential resolve failed: ${error.message}`),
+  });
   const initialMemoryIndexService = createMemoryIndexService(
     processCwd,
     config.memory?.index,
@@ -1519,13 +1525,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     memoryIndexServices.add(initialMemoryIndexService);
     serverLogger.info('Memory index service created (hybrid search enabled)');
   }
-
   const tenantRemoteHandResolver = createTenantRemoteHandAuthTokenResolver({
     tenantRemoteHands: () => config.tenantRemoteHands?.hands,
     vault: secretVault,
     logger: serverLogger.child('TenantHand'),
   });
-
   // Sandbox 预热（2026-07-31 冷启动治理）：用户打开会话页即 fire-and-forget 预热
   // ACS Sandbox，让 30s+ 冷启动与打字/LLM 首轮并行。未配置 tenantRemoteHands
   // 的环境（本地开发/测试）service 内部找不到 ACS hand 自然跳过。
@@ -1536,7 +1540,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tenantRemoteHandResolver,
     logger: serverLogger.child('SandboxWarmup'),
   });
-
   // A4: serverRemote 凭证在装配层解析为 plaintext，下游 dispatch / cancel delivery
   // 仍按 plaintext 接收。authTokenRef 走 vault.getSecret(actor:'system')；inline
   // authToken 直接透传。两者互斥由 schema 保证。
@@ -1568,7 +1571,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ...(sr.invokeTimeoutMs !== undefined ? { invokeTimeoutMs: sr.invokeTimeoutMs } : {}),
     };
   })();
-
   const resolvedWebTools = await resolveWebToolsConfig(config.webTools, secretVault);
   const resolvedImageGenTools = await resolveImageGenToolsConfig(config.imageGenTools, secretVault);
   // 生图 per-engine 定价注册表初始化；admin PUT /api/admin/image-gen-pricing 时热更。
@@ -1607,7 +1609,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     billingService,
     modelResolver,
   });
-
   // 用户活动聚合（2026-07-14 记忆轮询批次）：PG 后端可用；file backend 下
   // available=false，UserActivityList 工具不挂载、memory_poll 预检 fail-closed。
   const userActivityService = new UserActivityService({
@@ -1615,7 +1616,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     eventStore: pgEventStore ?? null,
     logger: serverLogger.child('UserActivity'),
   });
-
   // ── L2 记忆整合 store（2026-07-29 记忆写入职责剥离批次）──────────
   // 先于 dispatch config 构造：MemoryCommand/MemoryCommit provider 依赖它。
   // 仅 PG 后端可用；file 后端（单机开发形态）不启用整套 L2/v2 能力。

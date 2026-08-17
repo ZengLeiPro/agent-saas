@@ -279,7 +279,7 @@ describe('TaskboardExecutionCoordinator', () => {
     expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledTimes(1);
   });
 
-  it('组织成员不能借看板创建者上下文派发 Agent', async () => {
+  it('有执行权限的组织成员可以触发，并继续使用看板创建者运行身份', async () => {
     const member: TaskboardIdentity = {
       tenantId: identity.tenantId,
       ownerUserId: 'user-2',
@@ -295,10 +295,30 @@ describe('TaskboardExecutionCoordinator', () => {
       member,
       task.id,
       { expectedVersion: task.version },
-    )).rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
-    expect(resolveOwnerIdentity).not.toHaveBeenCalled();
-    expect(rig.store.claimExecution).not.toHaveBeenCalled();
+    )).resolves.toMatchObject({ task: { id: task.id } });
+    expect(resolveOwnerIdentity).toHaveBeenCalledWith(identity.ownerUserId);
+    expect(rig.store.claimExecution).toHaveBeenCalledOnce();
+    expect(rig.sessionCatalog.upsert).toHaveBeenCalledOnce();
+  });
+
+  it('viewer 在创建 Runtime Session 前即被拒绝触发', async () => {
+    const viewer: TaskboardIdentity = {
+      tenantId: identity.tenantId,
+      ownerUserId: 'viewer-1',
+      username: 'viewer',
+    };
+    const rig = makeRig({
+      getExecutionModelContext: vi.fn(async () => ({
+        boardOwnerUserId: identity.ownerUserId,
+        allowedActions: ['board.read' as const],
+      })),
+    }, { resolveOwnerIdentity: () => identity });
+
+    await expect(rig.coordinator.startExecution(viewer, task.id, {
+      expectedVersion: task.version,
+    })).rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
     expect(rig.sessionCatalog.upsert).not.toHaveBeenCalled();
+    expect(rig.store.claimExecution).not.toHaveBeenCalled();
   });
 
   it('wake 前重读最新任务和评论并生成执行提示词', async () => {
@@ -318,19 +338,14 @@ describe('TaskboardExecutionCoordinator', () => {
     expect(rig.store.getExecutionContextByRunId).toHaveBeenCalledWith('run-1');
     expect(rig.store.setExecutionStatus).toHaveBeenCalledWith('run-1', 'running');
     expect(prepared.metadata.wakeMessage).toMatchObject({
-      content: expect.stringContaining(task.title),
+      content: expect.stringMatching(/taskId: task-1[\s\S]*executionId: execution-1/),
     });
     const content = (prepared.metadata.wakeMessage as { content: string }).content;
-    expect(content.startsWith('看板提示语：\n只修改与任务直接相关的文件。')).toBe(true);
-    expect(content).toContain(comment.body);
-    expect(content).toContain('工作分支：task/TASK-1-feature');
-    expect(content).toContain('- 需求图.png：uploads/需求图.png');
-    expect(content).toContain('- 验收视频.mp4：uploads/验收视频.mp4');
-    expect(content).not.toContain('1. 直接完成任务，必要时使用可用工具；不要只给计划。');
-    expect(content).not.toContain('你正在执行一条由用户明确交给 Agent 的任务看板任务。');
+    expect(content).not.toContain(task.title);
+    expect(content).not.toContain(comment.body);
+    expect(content).not.toContain('task/TASK-1-feature');
+    expect(content).toContain('读取该任务的最新上下文');
     expect(content).not.toContain('执行前输入已从服务端重新读取');
-    // 评论时间戳使用与正常会话用户消息一致的格式（Asia/Shanghai）
-    expect(content).toContain('[2026/08/01 周六 09:00] 爱丽丝 @alice（user）');
     expect(content).not.toContain('2026-08-01T01:00:00.000Z');
   });
 

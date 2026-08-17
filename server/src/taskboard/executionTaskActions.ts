@@ -24,6 +24,7 @@ interface ExecutionTaskActionOptions {
   tasksTable: string;
   commentsTable: string;
   executionsTable: string;
+  changesTable: string;
 }
 
 const ACTIVE_EXECUTION_STATUSES = ['queued', 'running', 'waiting_user', 'waiting_approval'];
@@ -42,6 +43,12 @@ export async function updateTaskBranchFromExecution(
         WHERE id=$1`,
       [task.id, optionalText(branch)],
     );
+    await client.query(
+      `INSERT INTO ${options.changesTable}
+         (task_id, change_type, actor_type, actor_id, payload)
+       VALUES ($1,'task.branch_updated','agent',$2,$3::jsonb)`,
+      [task.id, runId, JSON.stringify({ branch: optionalText(branch) })],
+    );
     return loadTask(options, client, task.id);
   });
 }
@@ -55,6 +62,10 @@ export async function createTaskFromExecution(
   return withActiveExecutionTask(options, identity, runId, async (client, currentTask) => {
     if (input.status !== undefined && input.status !== 'todo') {
       throw new TaskboardValidationError('Taskboard Execution may only create todo follow-up tasks');
+    }
+    const kind = input.kind ?? (currentTask.kind === 'integration' ? 'remediation' : 'delivery');
+    if (kind === 'integration') {
+      throw new TaskboardValidationError('Integration tasks require an integration batch');
     }
     if (input.clientRequestId) {
       const existing = await client.query(
@@ -84,15 +95,16 @@ export async function createTaskFromExecution(
     const taskId = randomUUID();
     await client.query(
       `INSERT INTO ${options.tasksTable}
-         (id, board_id, identifier, title, description, branch, attachments, status, priority, labels,
+         (id, board_id, identifier, title, description, kind, branch, attachments, status, priority, labels,
           sort_order, due_at, model, creator_user_id, creator_name, completed_at, client_request_id, version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,'todo',$8,$9,$10,$11,$12,$13,$14,NULL,$15,1)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,'todo',$9,$10,$11,$12,$13,$14,$15,NULL,$16,1)`,
       [
         taskId,
         currentTask.boardId,
         `TASK-${Number(numberResult.rows[0].task_number)}`,
         requireText(input.title, 'Task title'),
         input.description ?? '',
+        kind,
         optionalText(input.branch),
         JSON.stringify(normalizeAttachments(input.attachments)),
         input.priority ?? 'none',
@@ -104,6 +116,12 @@ export async function createTaskFromExecution(
         identity.displayName?.trim() || identity.username,
         optionalText(input.clientRequestId),
       ],
+    );
+    await client.query(
+      `INSERT INTO ${options.changesTable}
+         (task_id, change_type, actor_type, actor_id, payload)
+       VALUES ($1,'task.created_from_execution','agent',$2,$3::jsonb)`,
+      [taskId, runId, JSON.stringify({ sourceTaskId: currentTask.id, kind })],
     );
     return loadTask(options, client, taskId);
   });

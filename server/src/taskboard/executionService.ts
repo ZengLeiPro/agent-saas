@@ -5,12 +5,10 @@ import type {
   TaskBoardExecutionStartInput,
   TaskBoardExecutionStartResult,
 } from '../../../shared/src/types/taskboard.js';
-import { getTranscriptPath } from '../data/transcripts/store.js';
 import { resolveExecutionTarget, type ExecutionConfig } from '../runtime/executionConfig.js';
 import { RunCreateConflictError, type RunRecord, type RunStore } from '../runtime/runStore.js';
 import {
   SCHEDULER_STATE_METADATA_KEY,
-  SCHEDULER_STATE_READY,
   SCHEDULER_STATE_STAGED,
   type RuntimeScheduler,
 } from '../runtime/scheduler.js';
@@ -19,7 +17,6 @@ import {
   type SessionCatalog,
 } from '../runtime/sessionCatalog.js';
 import type { EventStore, PlatformEvent } from '../runtime/types.js';
-import { deriveStableWorkspaceId } from '../runtime/workspaceIdentity.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import {
   extractAgentAttachments,
@@ -32,7 +29,12 @@ import {
   reconcileTaskboardContinuation,
 } from './continuationCoordinator.js';
 import { reuseTaskboardSession } from './executionSession.js';
-import { buildExecutionPrompt, formatTaskboardComment } from './executionPrompt.js';
+import {
+  assertDispatchedRun,
+  canonicalizeDispatchPayload,
+  InvalidTaskboardDispatchPayloadError,
+} from './executionDispatchValidation.js';
+import { buildExecutionPrompt } from './executionPrompt.js';
 export { executionWritebackInstructions } from './executionPrompt.js';
 import {
   writeTaskboardSessionTitle,
@@ -67,7 +69,6 @@ interface DefaultModelResolution {
 
 const RECONCILIATION_GRACE_MS = 30_000;
 
-class InvalidTaskboardDispatchPayloadError extends Error {}
 
 export interface TaskboardExecutionCoordinatorOptions extends TaskboardSessionGroupingOptions {
   store: TaskboardExecutionStore;
@@ -246,11 +247,14 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         wakeMessage: {
           channel: 'web',
           chatId: session.sessionId,
-          content: `任务看板新增评论：\n\n${context.pendingComments.map((comment) => formatTaskboardComment(
-            comment,
-            this.options.timezone,
-            this.options.resolveUserDisplayName?.(comment.authorId),
-          )).join('\n\n')}`,
+          content: [
+            '任务看板中的任务有了新的输入。',
+            '',
+            `taskId: ${taskId}`,
+            `triggerCommentId: ${commentId}`,
+            '',
+            '请读取最新上下文并继续处理。',
+          ].join('\n'),
           senderId: launch.executionIdentity.ownerUserId,
           senderName: launch.executionIdentity.username,
           metadata: {
@@ -293,13 +297,18 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     options: { allowWorkFromCurrentStatus?: boolean; executionId?: string } = {},
   ): Promise<TaskboardExecutionClaimInput> {
     const launch = await this.resolveLaunch(identity, taskId);
-    const purpose = input.purpose ?? 'work';
+    const purpose = input.purpose ?? (launch.modelContext.taskKind === 'integration' ? 'merge' : 'work');
     const executions = purpose === 'work'
       ? await this.options.store.listExecutions(identity, taskId)
       : [];
     const executionId = options.executionId ?? randomUUID();
     const workSessionId = executions.find((execution) => execution.purpose === 'work')?.sessionId;
-    const sessionId = workSessionId ?? `taskboard-${randomUUID()}`;
+    const sessionPrefix = purpose === 'review'
+      ? 'taskboard-review'
+      : purpose === 'merge'
+        ? 'taskboard-merge'
+        : 'taskboard';
+    const sessionId = workSessionId ?? `${sessionPrefix}-${randomUUID()}`;
     const session = await reuseTaskboardSession({
       sessionCatalog: this.options.sessionCatalog,
       agentCwd: this.options.agentCwd,
@@ -342,9 +351,13 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     };
     return {
       ...input,
+      purpose,
       executionId,
       sessionId,
       runId,
+      trigger: 'initial',
+      protocolVersion: 2,
+      ...(launch.modelContext.policyRevision ? { policyRevision: launch.modelContext.policyRevision } : {}),
       ...(options.allowWorkFromCurrentStatus ? { allowWorkFromCurrentStatus: true } : {}),
       ...(launch.explicitModelRef ? { configuredModelRef: launch.explicitModelRef } : {}),
       executionOwnerUserId: launch.executionIdentity.ownerUserId,
@@ -354,10 +367,15 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
 
   private async resolveLaunch(identity: TaskboardIdentity, taskId: string) {
     const modelContext = await this.options.store.getExecutionModelContext(identity, taskId);
-    if (modelContext.boardOwnerUserId !== identity.ownerUserId) {
-      throw new TaskboardPermissionError('Only the board owner may dispatch an Agent for this board');
+    if (modelContext.allowedActions && !modelContext.allowedActions.includes('execution.trigger')) {
+      throw new TaskboardPermissionError('Taskboard role cannot trigger Agent execution');
     }
-    const executionIdentity = identity;
+    const executionIdentity = modelContext.boardOwnerUserId === identity.ownerUserId && identity.userRole
+      ? identity
+      : this.options.resolveOwnerIdentity?.(modelContext.boardOwnerUserId);
+    if (!executionIdentity || executionIdentity.tenantId !== identity.tenantId) {
+      throw new TaskboardPermissionError('Board execution identity is unavailable');
+    }
     const explicitModelRef = modelContext.taskModel ?? modelContext.boardModel;
     const model = explicitModelRef
       ? this.options.resolveModel?.(explicitModelRef, executionIdentity.tenantId)
@@ -372,10 +390,24 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       config: this.options.executionConfig,
     });
     if (!decision.ok) throw new TaskboardExecutionUnavailableError(decision.reason);
-    return { executionIdentity, explicitModelRef, model, executionTarget: decision.target };
+    return { executionIdentity, explicitModelRef, model, modelContext, executionTarget: decision.target };
   }
 
   async reconcile(): Promise<void> {
+    await this.options.store.reconcileMergeOperationsV2?.(20);
+    const integrationCandidates = await this.options.store.claimIntegrationDispatchCandidatesV2?.(10) ?? [];
+    for (const candidate of integrationCandidates) {
+      try {
+        await this.startExecutionInternal(candidate.identity, candidate.task.id, {
+          expectedVersion: candidate.task.version,
+          purpose: candidate.purpose,
+        });
+      } catch (error) {
+        this.options.logger?.warn(
+          `Taskboard integration dispatch failed task=${candidate.task.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     for (let index = 0; index < 20; index += 1) {
       const dispatched = await this.dispatchExecution();
       if (!dispatched) break;
@@ -709,7 +741,9 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     });
     const attachments = await extractAgentAttachments(output, userCwd);
     let reviewExecution: TaskboardExecutionClaimInput | undefined;
-    if (context.execution.purpose === 'work') {
+    if (context.execution.purpose === 'work' && (
+      context.execution.protocolVersion !== 2 || context.task.status === 'in_review'
+    )) {
       const existingSession = await this.options.sessionCatalog.get(sessionId);
       const reviewIdentity = this.options.resolveOwnerIdentity?.(context.identity.ownerUserId) ?? {
         ...context.identity,
@@ -758,177 +792,6 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
   }
 }
 
-function canonicalizeDispatchPayload(
-  dispatch: TaskboardExecutionDispatch,
-  agentCwd: string,
-): TaskboardExecutionDispatch['payload'] {
-  const payload = dispatch.payload as unknown;
-  if (!isRecord(payload) || payload.version !== 1 || !isRecord(payload.session) || !isRecord(payload.run)) {
-    throw new InvalidTaskboardDispatchPayloadError(`执行派发 payload 版本或结构无效：${dispatch.runId}`);
-  }
-  const session = payload.session;
-  const run = payload.run;
-  const userRole = session.userRole === undefined ? 'user' : session.userRole;
-  if (
-    dispatch.outboxExecutionId !== dispatch.executionId
-    || !isNonEmptyString(dispatch.taskId)
-    || !isNonEmptyString(dispatch.sessionId)
-    || !isNonEmptyString(dispatch.tenantId)
-    || !isNonEmptyString(dispatch.ownerUserId)
-    || run.runId !== dispatch.runId
-    || run.sessionId !== dispatch.sessionId
-    || session.sessionId !== dispatch.sessionId
-    || run.userId !== dispatch.ownerUserId
-    || session.userId !== dispatch.ownerUserId
-    || run.tenantId !== dispatch.tenantId
-    || session.tenantId !== dispatch.tenantId
-    || !isNonEmptyString(session.username)
-    || (userRole !== 'admin' && userRole !== 'user')
-    || session.channel !== 'web'
-    || run.channel !== 'web'
-    || session.status !== 'running'
-    || !isNonEmptyString(run.model)
-    || session.modelRef !== run.model
-    || !isExecutionTarget(run.executionTarget)
-    || session.executionTarget !== run.executionTarget
-    || !isNonEmptyString(session.cwd)
-    || !isNonEmptyString(session.transcriptPath)
-    || !isIsoTimestamp(session.createdAt)
-    || !isIsoTimestamp(session.updatedAt)
-    || run.idempotencyKey !== `taskboard-execution:${dispatch.executionId}`
-  ) {
-    throw new InvalidTaskboardDispatchPayloadError(`执行派发 payload 关联字段不一致：${dispatch.runId}`);
-  }
-  const canonicalUserRole = userRole as 'admin' | 'user';
-  const executionTarget = run.executionTarget as 'server-local' | 'server-container' | 'server-remote' | 'client';
-  const workspaceUser = {
-    id: dispatch.ownerUserId,
-    username: session.username,
-    role: canonicalUserRole,
-    tenantId: dispatch.tenantId,
-  };
-  const expectedCwd = resolveUserCwd(agentCwd, workspaceUser);
-  const expectedWorkspaceId = deriveStableWorkspaceId(workspaceUser, dispatch.sessionId);
-  const expectedTranscriptPath = getTranscriptPath(expectedCwd, dispatch.sessionId, {
-    userId: dispatch.ownerUserId,
-    tenantId: dispatch.tenantId,
-  });
-  if (
-    session.cwd !== expectedCwd
-    || session.transcriptPath !== expectedTranscriptPath
-    || session.workspaceId !== expectedWorkspaceId
-    || run.workspaceId !== expectedWorkspaceId
-  ) {
-    throw new InvalidTaskboardDispatchPayloadError(`执行派发 payload 路径或 workspace 不合法：${dispatch.runId}`);
-  }
-  const canonicalSession = createRuntimeSessionRecord({
-    sessionId: dispatch.sessionId,
-    userId: dispatch.ownerUserId,
-    username: session.username,
-    userRole: canonicalUserRole,
-    tenantId: dispatch.tenantId,
-    channel: 'web',
-    cwd: expectedCwd,
-    modelRef: run.model,
-    executionTarget,
-    workspaceId: expectedWorkspaceId,
-    status: 'running',
-  });
-  canonicalSession.createdAt = session.createdAt;
-  canonicalSession.updatedAt = session.updatedAt;
-  return {
-    version: 1,
-    session: canonicalSession,
-    run: {
-      runId: dispatch.runId,
-      sessionId: dispatch.sessionId,
-      userId: dispatch.ownerUserId,
-      tenantId: dispatch.tenantId,
-      model: run.model,
-      channel: 'web',
-      idempotencyKey: `taskboard-execution:${dispatch.executionId}`,
-      executionTarget,
-      workspaceId: expectedWorkspaceId,
-      metadata: {
-        taskboardExecution: true,
-        taskboardExecutionId: dispatch.executionId,
-        taskboardTaskId: dispatch.taskId,
-        outputTransactionMode: 'terminal_buffered',
-        [SCHEDULER_STATE_METADATA_KEY]: SCHEDULER_STATE_STAGED,
-        cwd: expectedCwd,
-        transcriptPath: expectedTranscriptPath,
-        wakeMessage: {
-          channel: 'web',
-          chatId: dispatch.sessionId,
-          content: '正在读取任务看板中的最新任务与评论。',
-          senderId: dispatch.ownerUserId,
-          senderName: session.username,
-          metadata: {
-            taskboardExecution: true,
-            taskboardExecutionId: dispatch.executionId,
-            taskboardTaskId: dispatch.taskId,
-          },
-        },
-      },
-    },
-  };
-}
-
-function assertDispatchedRun(
-  run: RunRecord,
-  dispatch: TaskboardExecutionDispatch,
-  expected: TaskboardExecutionDispatch['payload']['run'],
-): void {
-  const metadata = run.metadata;
-  const expectedMetadata = expected.metadata;
-  const schedulerState = metadata?.[SCHEDULER_STATE_METADATA_KEY];
-  const wakeMessage = metadata?.wakeMessage;
-  const wakeMetadata = isRecord(wakeMessage) ? wakeMessage.metadata : undefined;
-  const wakeMessageMayBeConsumed = run.status === 'running' || isTerminalRun(run);
-  const wakeMessageInvalid = wakeMessage === undefined
-    ? !wakeMessageMayBeConsumed
-    : !isRecord(wakeMessage)
-      || wakeMessage.channel !== 'web'
-      || wakeMessage.chatId !== dispatch.sessionId
-      || wakeMessage.senderId !== dispatch.ownerUserId
-      || !isRecord(wakeMetadata)
-      || wakeMetadata.taskboardExecution !== true
-      || wakeMetadata.taskboardExecutionId !== dispatch.executionId
-      || wakeMetadata.taskboardTaskId !== dispatch.taskId;
-  if (
-    run.runId !== expected.runId
-    || run.sessionId !== expected.sessionId
-    || run.userId !== expected.userId
-    || run.tenantId !== expected.tenantId
-    || run.model !== expected.model
-    || run.channel !== expected.channel
-    || run.idempotencyKey !== expected.idempotencyKey
-    || run.executionTarget !== expected.executionTarget
-    || run.workspaceId !== expected.workspaceId
-    || run.sandboxScopeId !== undefined
-    || !isRecord(expectedMetadata)
-    || metadata?.taskboardExecution !== true
-    || metadata?.taskboardExecutionId !== dispatch.executionId
-    || metadata?.taskboardTaskId !== dispatch.taskId
-    || metadata?.outputTransactionMode !== 'terminal_buffered'
-    || expectedMetadata.outputTransactionMode !== 'terminal_buffered'
-    || expectedMetadata[SCHEDULER_STATE_METADATA_KEY] !== SCHEDULER_STATE_STAGED
-    || (schedulerState !== SCHEDULER_STATE_STAGED
-      && schedulerState !== SCHEDULER_STATE_READY
-      && !(schedulerState === undefined && wakeMessageMayBeConsumed))
-    || metadata?.cwd !== expectedMetadata.cwd
-    || metadata?.transcriptPath !== expectedMetadata.transcriptPath
-    || metadata?.backgroundTask === true
-    || metadata?.backgroundCommand === true
-    || metadata?.subagent === true
-    || metadata?.toolProfile !== undefined
-    || metadata?.approvalPolicy !== undefined
-    || wakeMessageInvalid
-  ) {
-    throw new InvalidTaskboardDispatchPayloadError(`既有 Runtime Run 与执行派发不一致：${dispatch.runId}`);
-  }
-}
-
 function isLegacyPendingTaskboardRun(run: RunRecord): boolean {
   return run.status === 'pending'
     && run.metadata?.taskboardExecution === true
@@ -938,25 +801,6 @@ function isLegacyPendingTaskboardRun(run: RunRecord): boolean {
 function isStagedPendingRun(run: RunRecord): boolean {
   return run.status === 'pending'
     && run.metadata?.[SCHEDULER_STATE_METADATA_KEY] === SCHEDULER_STATE_STAGED;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0;
-}
-
-function isIsoTimestamp(value: unknown): value is string {
-  return isNonEmptyString(value) && Number.isFinite(Date.parse(value));
-}
-
-function isExecutionTarget(value: unknown): boolean {
-  return value === 'server-local'
-    || value === 'server-container'
-    || value === 'server-remote'
-    || value === 'client';
 }
 
 function assertExecutionSession(execution: TaskBoardExecution, sessionId: string): void {

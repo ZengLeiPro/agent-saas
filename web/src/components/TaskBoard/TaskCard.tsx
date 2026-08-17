@@ -1,9 +1,18 @@
 import type { DragEvent } from "react";
 import type { TaskBoardTask } from "@agent/shared";
-import { CalendarDays, CircleCheck, GitBranch, MessageCircle, UserRound } from "lucide-react";
+import { CalendarDays, CircleCheck, GitBranch, GitCommitHorizontal, MessageCircle, UserRound } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
-import { formatDueAt, formatTaskDate, PRIORITY_CLASSES, PRIORITY_LABELS } from "./constants";
+import {
+  formatDueAt,
+  formatTaskDate,
+  INTEGRATION_SOURCE_STATE_LABELS,
+  PRIORITY_CLASSES,
+  PRIORITY_LABELS,
+  TASK_KIND_LABELS,
+} from "./constants";
+import { IntegrationCardSummary } from "./IntegrationSources";
 
 interface TaskCardProps {
   task: TaskBoardTask;
@@ -13,6 +22,9 @@ interface TaskCardProps {
   onDragStart: (taskId: string) => void;
   onDragEnd: () => void;
   onDropBefore: (taskId: string, event: DragEvent<HTMLDivElement>) => void;
+  selectable?: boolean;
+  selected?: boolean;
+  onSelectedChange?: (taskId: string, selected: boolean) => void;
 }
 
 export function TaskCard({
@@ -23,11 +35,15 @@ export function TaskCard({
   onDragStart,
   onDragEnd,
   onDropBefore,
+  selectable = false,
+  selected = false,
+  onSelectedChange,
 }: TaskCardProps) {
   const dueAt = formatDueAt(task.dueAt);
   const createdAt = formatTaskDate(task.createdAt);
   const completedAt = formatTaskDate(task.completedAt);
   const creatorName = task.creatorName?.trim() || "提交人未知";
+  const kind = task.kind ?? "delivery";
   const cardAriaLabel = [
     `打开任务 ${task.identifier} ${task.title}`,
     `提交人 ${creatorName}`,
@@ -59,6 +75,16 @@ export function TaskCard({
         !readOnly && allowDrag && "cursor-grab hover:border-foreground/20 active:cursor-grabbing",
       )}
     >
+      {selectable ? (
+        <label className="mb-2 flex cursor-pointer items-center gap-2 rounded-md bg-emerald-50 px-2 py-1.5 text-xs text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200">
+          <Checkbox
+            checked={selected}
+            onCheckedChange={(checked) => onSelectedChange?.(task.id, checked === true)}
+            aria-label={`选择 ${task.identifier} 加入人工集成批次`}
+          />
+          加入人工集成批次
+        </label>
+      ) : null}
       <button
         type="button"
         className="block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -67,15 +93,28 @@ export function TaskCard({
       >
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs font-medium text-muted-foreground">{task.identifier}</span>
-          {task.priority !== "none" ? (
-            <Badge variant="outline" className={cn("font-normal", PRIORITY_CLASSES[task.priority])}>
-              {PRIORITY_LABELS[task.priority]}
-            </Badge>
-          ) : null}
+          <span className="flex flex-wrap justify-end gap-1">
+            {kind !== "delivery" ? (
+              <Badge variant={kind === "integration" ? "default" : "secondary"} className={cn("font-normal", kind === "integration" && "bg-violet-600 hover:bg-violet-600")}>
+                {TASK_KIND_LABELS[kind]}
+              </Badge>
+            ) : null}
+            {task.priority !== "none" ? (
+              <Badge variant="outline" className={cn("font-normal", PRIORITY_CLASSES[task.priority])}>
+                {PRIORITY_LABELS[task.priority]}
+              </Badge>
+            ) : null}
+          </span>
         </div>
         <div className="mt-2 line-clamp-2 text-sm font-medium leading-5 text-foreground">
           {task.title}
         </div>
+        {task.providerPullRequestId ? (
+          <div className="mt-2 text-xs text-muted-foreground">
+            PR <span className="font-mono">{task.providerPullRequestId}</span>
+            {task.reviewedSubjectDigest ? <span className="ml-2 text-emerald-700 dark:text-emerald-400">已复核</span> : <span className="ml-2 text-amber-700 dark:text-amber-300">待复核</span>}
+          </div>
+        ) : null}
         {task.labels.length ? (
           <div className="mt-2 flex flex-wrap gap-1">
             {task.labels.slice(0, 4).map((label) => (
@@ -83,6 +122,18 @@ export function TaskCard({
                 {label}
               </Badge>
             ))}
+          </div>
+        ) : null}
+        {kind === "integration" ? <IntegrationCardSummary taskId={task.id} /> : null}
+        {kind === "delivery" && task.integrationState ? (
+          <div className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+            集成状态：{INTEGRATION_SOURCE_STATE_LABELS[task.integrationState]}
+          </div>
+        ) : null}
+        {task.mergedCommitOid ? (
+          <div className="mt-2 flex min-w-0 items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
+            <GitCommitHorizontal className="size-3.5 shrink-0" />
+            <span className="truncate" title={task.mergedCommitOid}>merged commit {task.mergedCommitOid}</span>
           </div>
         ) : null}
         {task.branch ? (

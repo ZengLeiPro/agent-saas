@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "reason": "shared-cidr SNAT 模式（2026-08-10 per-session Sandbox A 方案）需要 ACS_SNAT_SHARED_CIDR 声明托管 pod 网段；该模式把 SNAT 条目数与 pod 数解耦，无法由既有变量派生。",
-  "updatedAt": "2026-08-10",
+  "reason": "蓝绿部署 drain 死锁修复（2026-08-17）：客户端连接已消失但计数未释放的挂死上传导致旧色永不退出、CI 无法覆盖 idle 色；AGENT_SAAS_DRAIN_UPLOAD_STALE_MS 提供可调的挂死判定阈值（默认 2h），真实超长上传场景需要独立于 DRAIN_DEADLINE_MS 调整。",
+  "updatedAt": "2026-08-17",
   "domains": {
     "server": {
-      "budget": 47,
+      "budget": 48,
       "names": [
         "ACS_ALERT_INBOUND_TOKEN",
         "AGENT_AZEROTH_LEAD_SECRET",
@@ -14,6 +14,7 @@
         "AGENT_SAAS_DRAIN_ABORT_GRACE_MS",
         "AGENT_SAAS_DRAIN_DEADLINE_MS",
         "AGENT_SAAS_DRAIN_MARKER",
+        "AGENT_SAAS_DRAIN_UPLOAD_STALE_MS",
         "AGENT_SAAS_PIDFILE",
         "AGENT_SAAS_PROCESS_ROLE",
         "AGENT_SAAS_READYFILE",

@@ -7,6 +7,7 @@ import { managedOrgAgentDefinitionSchema } from '../data/agentResources/orgAgent
 import { governanceDigest } from '../data/governance-audit/index.js';
 import type { PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import type { PgMembershipStore } from '../data/memberships/index.js';
+import type { OrgAgentRuntimePolicy } from '../data/orgAgents/runtimePolicy.js';
 import type {
   GovernanceProjectionOutboxStore,
   GovernanceProjectionReconciler,
@@ -69,6 +70,7 @@ export function registerGovernanceAgentResourceRoutes(options: {
   agents: PgAgentResourceStore;
   memberships: PgMembershipStore;
   changeJobs: PgGovernanceChangeJobStore;
+  validateDispatcherRuntime?: (tenantId: string, policy: OrgAgentRuntimePolicy) => Promise<string[]>;
   previewSecret: string;
   personaFor(req: Request): Persona | undefined;
   resourceTenantFor(req: Request, requested?: string): string | null;
@@ -147,7 +149,13 @@ export function registerGovernanceAgentResourceRoutes(options: {
     const resource = await options.agents.getForTenant(tenantId, req.params.agentId);
     if (!resource || !canAccessAgent(req, resource)) return res.status(404).json({ error: 'Agent not found' });
     const version = resource.currentVersionId ? await options.agents.getVersion(resource.currentVersionId) : null;
-    return res.json({ resource, version });
+    const normalizedVersion = resource.kind === 'org_agent' && version
+      ? (() => {
+          const definition = managedOrgAgentDefinitionSchema.safeParse(version.definition);
+          return definition.success ? { ...version, definition: definition.data } : version;
+        })()
+      : version;
+    return res.json({ resource, version: normalizedVersion });
   });
 
   router.post('/agents', async (req, res) => {
@@ -206,6 +214,13 @@ export function registerGovernanceAgentResourceRoutes(options: {
     const definitionDigest = governanceDigest(parsed.data.definition);
     const expiresAt = new Date(now().getTime() + 5 * 60_000).toISOString();
     const blockers = options.projectionOutbox ? [] : ['GOVERNANCE_PROJECTION_AUTHORITY_UNAVAILABLE'];
+    if (parsed.data.definition.runtime.executionMode === 'dispatcher') {
+      if (!options.validateDispatcherRuntime) {
+        blockers.push('DISPATCHER_RUNTIME_VALIDATOR_UNAVAILABLE');
+      } else {
+        blockers.push(...await options.validateDispatcherRuntime(tenantId, parsed.data.definition.runtime));
+      }
+    }
     return res.json({
       previewId: signedPreviewId(options.previewSecret, signatureInput({
         req, tenantId, agentId: resource.agentId, expectedRevision: resource.revision,
@@ -256,6 +271,18 @@ export function registerGovernanceAgentResourceRoutes(options: {
     const baseline = await baselineFor(resource);
     if (resource.revision !== parsed.data.expectedRevision || governanceDigest(baseline) !== parsed.data.baselineDigest) {
       return res.status(409).json({ error: 'Agent version preview baseline changed', code: 'AGENT_VERSION_PREVIEW_BASELINE_CONFLICT' });
+    }
+    if (parsed.data.definition.runtime.executionMode === 'dispatcher') {
+      const blockers = options.validateDispatcherRuntime
+        ? await options.validateDispatcherRuntime(tenantId, parsed.data.definition.runtime)
+        : ['DISPATCHER_RUNTIME_VALIDATOR_UNAVAILABLE'];
+      if (blockers.length > 0) {
+        return res.status(409).json({
+          error: '前台调度器运行依赖不可用',
+          code: 'DISPATCHER_RUNTIME_UNAVAILABLE',
+          blockers,
+        });
+      }
     }
     let changed = false;
     try {
@@ -326,6 +353,14 @@ export function registerGovernanceAgentResourceRoutes(options: {
     if (!options.projectionOutbox) blockers.push('GOVERNANCE_PROJECTION_AUTHORITY_UNAVAILABLE');
     if (!resource.currentVersionId || !currentVersion || currentVersion.agentId !== resource.agentId) {
       blockers.push('AGENT_STATUS_CURRENT_VERSION_UNAVAILABLE');
+    } else if (parsed.data.status === 'enabled') {
+      const definition = managedOrgAgentDefinitionSchema.safeParse(currentVersion.definition);
+      if (!definition.success) {
+        blockers.push('AGENT_STATUS_CURRENT_VERSION_INVALID');
+      } else if (definition.data.runtime.executionMode === 'dispatcher') {
+        if (!options.validateDispatcherRuntime) blockers.push('DISPATCHER_RUNTIME_VALIDATOR_UNAVAILABLE');
+        else blockers.push(...await options.validateDispatcherRuntime(tenantId, definition.data.runtime));
+      }
     }
     return res.json({
       previewId: signedStatusPreviewId(options.previewSecret, statusSignatureInput({
@@ -383,6 +418,20 @@ export function registerGovernanceAgentResourceRoutes(options: {
       : null;
     if (!resource.currentVersionId || !currentVersion || currentVersion.agentId !== resource.agentId) {
       return res.status(409).json({ error: 'Agent current version unavailable', code: 'AGENT_STATUS_CURRENT_VERSION_UNAVAILABLE' });
+    }
+    if (parsed.data.status === 'enabled') {
+      const definition = managedOrgAgentDefinitionSchema.safeParse(currentVersion.definition);
+      if (!definition.success) {
+        return res.status(409).json({ error: 'Agent current version invalid', code: 'AGENT_STATUS_CURRENT_VERSION_INVALID' });
+      }
+      if (definition.data.runtime.executionMode === 'dispatcher') {
+        const blockers = options.validateDispatcherRuntime
+          ? await options.validateDispatcherRuntime(tenantId, definition.data.runtime)
+          : ['DISPATCHER_RUNTIME_VALIDATOR_UNAVAILABLE'];
+        if (blockers.length > 0) {
+          return res.status(409).json({ error: '前台调度器运行依赖不可用', code: 'DISPATCHER_RUNTIME_UNAVAILABLE', blockers });
+        }
+      }
     }
     let changed = false;
     try {

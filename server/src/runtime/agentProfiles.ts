@@ -22,6 +22,7 @@ import {
   type ResolvedAgentRuntimeProfile,
 } from '../data/agentProfiles/types.js';
 import type { RuntimeSessionRecord } from './sessionCatalog.js';
+export { applyOrgAgentExecutionMode, appendDispatcherInstructionSection, resolveAgentModePolicy } from './dispatcherMode.js';
 
 export type AgentProfileScene = AgentProfileBindingKey;
 

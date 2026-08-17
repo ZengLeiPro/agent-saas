@@ -27,6 +27,7 @@ import {
   type WorkspaceRef,
 } from '../agent/toolRuntime.js';
 import type { BillingService } from '../data/billing/service.js';
+import { DEFAULT_ORG_AGENT_RUNTIME_POLICY } from '../data/orgAgents/runtimePolicy.js';
 import type { RecordResultParams, TokenUsageStore } from '../data/usage/store.js';
 import { buildContextProjection } from '../runtime/contextProjection.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
@@ -301,6 +302,50 @@ describe('runSubagent', () => {
     expect(childRecord?.tenantId).toBe(fixture.tenantId);
   });
 
+  it('组织 dispatcher 派生的 child 固化 Worker 角色、治理快照与独立模型', async () => {
+    const fixture = await makeFixture({ cleanupDirs });
+    const parent = await fixture.config.sessionCatalog!.get(fixture.parentSessionId);
+    expect(parent).not.toBeNull();
+    await fixture.config.sessionCatalog!.upsert({
+      ...parent!,
+      orgAgentId: 'org-kaikai',
+      executionRole: 'dispatcher',
+      orgAgentSnapshot: {
+        name: '开开',
+        instructions: '不得访问组织范围外的数据',
+        allowedSkills: ['dws'],
+        allowedKnowledge: ['kb-sales'],
+        runtime: {
+          ...structuredClone(DEFAULT_ORG_AGENT_RUNTIME_POLICY),
+          executionMode: 'dispatcher',
+          workerModel: { strategy: 'fixed', modelRef: 'mock/worker-model' },
+        },
+      },
+    });
+    const adapter = new TextOnlyAdapter();
+    const outcome = await runSubagent({
+      ...runnerDeps(fixture),
+      parentProviders: [createBuiltinTools()],
+      agentType: SUBAGENT_TYPES.general,
+      request: { description: '执行任务', prompt: '完成任务', includeCompanyInfo: false },
+      limiter: new SubagentLimiter(),
+      modelAdapterFactory: () => adapter,
+    });
+
+    const child = await fixture.config.sessionCatalog!.get(outcome.childSessionId);
+    expect(child).toMatchObject({
+      kind: 'subagent', executionRole: 'worker', orgAgentId: 'org-kaikai', modelRef: 'mock/worker-model',
+      orgAgentSnapshot: expect.objectContaining({ name: '开开' }),
+    });
+    const systemText = adapter.requests[0]!.messages
+      .filter(message => message.role === 'system')
+      .map(message => typeof message.content === 'string' ? message.content : '')
+      .join('\n');
+    expect(systemText).toContain('<org-agent-worker-policy>');
+    expect(systemText).toContain('不得访问组织范围外的数据');
+    expect(systemText).toContain('不承担前台接待或再次派单');
+  });
+
   it('billing hard cap 拒绝：child Run 实际用量门禁失败后停止模型调用', async () => {
     const fixture = await makeFixture({
       cleanupDirs,
@@ -494,12 +539,14 @@ describe('AgentToolProvider', () => {
     outcome?: SubagentOutcome;
     resultMaxChars?: number;
     impl?: typeof runSubagent;
+    modePolicy?: 'any' | 'background_only';
   }): AgentToolProvider {
     return new AgentToolProvider({
       config: fixture.config,
       executionTransportRegistry: createDefaultExecutionTransportRegistry(),
       tenantHandResolver: createTenantRemoteHandAuthTokenResolver({}),
       parentProviders: [],
+      modePolicy: options.modePolicy ?? 'any',
       ...(options.resultMaxChars ? { resultMaxChars: options.resultMaxChars } : {}),
       runSubagentImpl: options.impl ?? (async (params) => {
         const outcome = options.outcome!;
@@ -532,6 +579,39 @@ describe('AgentToolProvider', () => {
     expect(SUBAGENT_PER_RUN_MAX_CONCURRENCY).toBe(6);
     expect(SUBAGENT_GLOBAL_MAX_CONCURRENCY).toBe(30);
     expect(SUBAGENT_MAX_TURNS).toBe(200);
+  });
+
+  it('dispatcher Agent schema 只能表达 background，且不能覆盖 Worker 模型', async () => {
+    const fixture = await makeFixture({ cleanupDirs });
+    const enqueue = vi.fn().mockResolvedValue({
+      taskId: 'bg-task-1',
+      shortTaskId: 'T-1234ABCD',
+      status: 'pending',
+      description: '执行任务',
+      model: 'worker-model',
+    });
+    fixture.config.backgroundTasks = { enqueue } as any;
+    const provider = makeProvider(fixture, {
+      outcome: fakeOutcome(fixture),
+      modePolicy: 'background_only',
+    });
+    const [descriptor] = provider.list();
+    expect(descriptor!.schema.safeParse({
+      description: '执行任务', prompt: '完成任务', mode: 'foreground',
+    }).success).toBe(false);
+    const parsed = descriptor!.schema.parse({
+      description: '执行任务', prompt: '完成任务', model: '越权模型',
+    }) as Record<string, unknown>;
+    expect(parsed).toMatchObject({ mode: 'background' });
+    expect(parsed).not.toHaveProperty('model');
+
+    const result = await provider.invoke({
+      toolId: 'Agent',
+      input: { description: '执行任务', prompt: '完成任务' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, fixture.parentContext);
+    expect(JSON.parse(result!.content)).toMatchObject({ shortTaskId: 'T-1234ABCD', status: 'pending' });
+    expect(enqueue).toHaveBeenCalledWith(expect.anything(), expect.not.objectContaining({ model: expect.anything() }));
   });
 
   it('durable 事件形态：subagent_started/finished 写父 session，字段完整', async () => {
@@ -572,6 +652,7 @@ describe('AgentToolProvider', () => {
     const fixture = await makeFixture({ cleanupDirs });
     const enqueue = vi.fn().mockResolvedValue({
       taskId: 'bg-task-1',
+      shortTaskId: 'T-BG000001',
       status: 'pending',
       description: '长时调研',
       model: 'mock-model',

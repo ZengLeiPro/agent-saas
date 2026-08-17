@@ -94,6 +94,29 @@ export function OrgAgentRuntimeSection({ value, onChange }: OrgAgentRuntimeSecti
     onChange({ ...value, [key]: next });
   };
   const fixedModel = value.model.strategy === 'fixed' ? value.model.modelRef : null;
+  const fixedWorkerModel = value.workerModel.strategy === 'fixed' ? value.workerModel.modelRef : null;
+  const setExecutionMode = (executionMode: OrgAgentRuntimePolicy['executionMode']) => {
+    if (executionMode === 'direct') {
+      onChange({ ...value, executionMode });
+      return;
+    }
+    onChange({
+      ...value,
+      executionMode,
+      capabilities: {
+        ...value.capabilities,
+        backgroundTasks: 'inherit',
+        subagents: 'inherit',
+      },
+      tools: {
+        ...value.tools,
+        allowlist: value.tools.allowlist
+          ? [...new Set([...value.tools.allowlist, 'Agent', 'BackgroundTask'])]
+          : null,
+        denylist: value.tools.denylist.filter(tool => tool !== 'Agent' && tool !== 'BackgroundTask'),
+      },
+    });
+  };
   const customContext = value.context.modules !== null;
   const toolAllowlistLimited = value.tools.allowlist !== null;
   const mcpServerLimited = value.mcp.serverAllowlist !== null;
@@ -109,9 +132,35 @@ export function OrgAgentRuntimeSection({ value, onChange }: OrgAgentRuntimeSecti
         </p>
       </div>
 
+      <div className="space-y-2">
+        <Label>工作模式</Label>
+        <div role="radiogroup" aria-label="企业专家工作模式" className="grid gap-2 md:grid-cols-2">
+          <label className="flex cursor-pointer gap-3 rounded-md border p-3">
+            <input
+              type="radio"
+              name="org-agent-execution-mode"
+              value="direct"
+              checked={value.executionMode === 'direct'}
+              onChange={() => setExecutionMode('direct')}
+            />
+            <span><span className="block text-sm font-medium">自主执行</span><span className="block text-xs leading-5 text-muted-foreground">当前 Agent 直接使用受治理工具完成工作。</span></span>
+          </label>
+          <label className="flex cursor-pointer gap-3 rounded-md border p-3">
+            <input
+              type="radio"
+              name="org-agent-execution-mode"
+              value="dispatcher"
+              checked={value.executionMode === 'dispatcher'}
+              onChange={() => setExecutionMode('dispatcher')}
+            />
+            <span><span className="block text-sm font-medium">前台调度器</span><span className="block text-xs leading-5 text-muted-foreground">前台只接单、澄清和汇报，实际工作交给独立后台 Worker；可并行接收新任务，但会增加一次模型调度及相应用量。</span></span>
+          </label>
+        </div>
+      </div>
+
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-1.5">
-          <Label>模型</Label>
+          <Label>前台模型</Label>
           <ModelSelect
             modelList={modelList}
             value={fixedModel}
@@ -135,6 +184,20 @@ export function OrgAgentRuntimeSection({ value, onChange }: OrgAgentRuntimeSecti
           />
         </div>
       </div>
+
+      {value.executionMode === 'dispatcher' ? (
+        <div className="space-y-1.5 rounded-md border border-dashed p-3">
+          <Label>Worker 模型</Label>
+          <p className="text-xs text-muted-foreground">默认继承前台模型，也可选择当前组织允许的独立模型；保存时会校验后台 Agent、Runtime Profile 和模型连接。</p>
+          <ModelSelect
+            modelList={modelList}
+            value={fixedWorkerModel}
+            onChange={modelRef => patch('workerModel', modelRef ? { strategy: 'fixed', modelRef } : { strategy: 'inherit' })}
+            inheritLabel="继承组织 Agent 模型"
+            ariaLabel="企业专家 Worker 模型"
+          />
+        </div>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-1.5">
@@ -184,7 +247,10 @@ export function OrgAgentRuntimeSection({ value, onChange }: OrgAgentRuntimeSecti
             <div key={capability.key} className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
               <div><div className="text-sm font-medium">{capability.label}</div><div className="text-xs text-muted-foreground">{capability.hint}</div></div>
               <Switch
+                aria-label={capability.label}
                 checked={value.capabilities[capability.key] !== 'disabled'}
+                disabled={value.executionMode === 'dispatcher'
+                  && (capability.key === 'backgroundTasks' || capability.key === 'subagents')}
                 onCheckedChange={checked => patch('capabilities', {
                   ...value.capabilities,
                   [capability.key]: checked ? 'inherit' : 'disabled',

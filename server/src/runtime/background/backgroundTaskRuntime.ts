@@ -18,6 +18,7 @@ export interface BackgroundAgentRequest {
 
 export interface BackgroundTaskStartResult {
   taskId: string;
+  shortTaskId: string;
   status: 'pending';
   description: string;
   model: string;

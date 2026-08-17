@@ -1,6 +1,6 @@
 import { cancelActiveRunsByUser } from './runTerminalLifecycle.js';
 import { markRunStatusIfCurrent } from './runStatusCas.js';
-import type { ActiveRunCounts, LatestResponseSessionState, PgPool, ResponseSessionStatePatch, RunRecord, RunStatus } from './runStoreTypes.js';
+import type { ActiveRunCounts, LatestResponseSessionState, ListBackgroundTasksOptions, PgPool, ResponseSessionStatePatch, RunRecord, RunStatus } from './runStoreTypes.js';
 import { normalizeRunRecord, parseCount } from './runStoreRecordHelpers.js';
 
 export class PgRunStoreQueries {
@@ -622,6 +622,25 @@ export class PgRunStoreQueries {
       ...(row.last_response_profile_digest ? { lastResponseProfileDigest: row.last_response_profile_digest } : {}),
       ...(cumulative ? { cumulativeInputTokens: cumulative } : {}),
     };
+  }
+
+  async findBackgroundTasksByIdentifier(
+    parentSessionId: string,
+    identifier: string,
+    options: Pick<ListBackgroundTasksOptions, 'userId' | 'tenantId'> = {},
+  ): Promise<RunRecord[]> {
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      SELECT row_to_json(${this.runsTable}.*) AS row_json
+      FROM ${this.runsTable}
+      WHERE metadata->>'backgroundTask' = 'true'
+        AND metadata->>'parentSessionId' = $1
+        AND (run_id = $2 OR UPPER(metadata->>'shortTaskId') = UPPER($2))
+        AND ($3::text IS NULL OR user_id = $3)
+        AND ($4::text IS NULL OR tenant_id = $4)
+      ORDER BY requested_at DESC
+      LIMIT 2
+    `, [parentSessionId, identifier, options.userId ?? null, options.tenantId ?? null]);
+    return result.rows.map((entry) => normalizeRunRecord(entry.row_json));
   }
 
   async clearResponseSessionStateBySession(sessionId: string): Promise<number> {

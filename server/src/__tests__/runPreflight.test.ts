@@ -260,7 +260,7 @@ describe('RunPreflightService shadow/enforce 行为', () => {
     expect(result.shadowWouldBlock).toBe(false);
     expect(result.accessDecision.verdict).toBe('allow');
     expect(result.readiness.ready).toBe(true);
-    expect(result.snapshot.agent).toEqual({ type: 'org_agent', id: 'oa-1' });
+    expect(result.snapshot.agent).toEqual({ type: 'org_agent', id: 'oa-1', executionMode: 'direct' });
     expect(result.snapshot.skills).toEqual([{ id: 'skill-1' }]);
     expect(result.snapshot.memoryScopes).toEqual([{ id: 'user:user-1' }]);
     expect(result.snapshot.model).toEqual({ id: 'gpt-test' });
@@ -288,7 +288,7 @@ describe('RunPreflightService shadow/enforce 行为', () => {
     const result = await service.preflight(baseInput);
     expect(result.snapshot.agent).toEqual({
       type: 'org_agent', id: 'oa-1', revision: 7, versionId: 'agentv-2', version: 2,
-      templateId: 'tpl-sales', templateVersionId: 'tplv-3',
+      templateId: 'tpl-sales', templateVersionId: 'tplv-3', executionMode: 'direct',
     });
     expect(result.snapshot.skills).toEqual([{ id: 'skill-1', versionId: 'skillv-4', revision: 6 }]);
   });

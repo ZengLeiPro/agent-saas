@@ -183,6 +183,17 @@ export interface RawRuntimeRunDispatchConfig {
   tokenUsageStore?: () => TokenUsageStore | undefined;
   /** PG durable 后台 Agent；file backend 缺省时 Agent(mode=background) fail-closed。 */
   backgroundTasks?: BackgroundTaskRuntime;
+  /** DWS dispatcher Worker 终态进入 durable current-user outbox 的注入点。 */
+  enqueueDwsBackgroundCompletion?: (input: {
+    tenantId: string;
+    taskId: string;
+    accountId: string;
+    conversationId: string;
+    eventType: 'user_im_message_receive_at' | 'user_im_message_receive_o2o_all';
+    messageId?: string;
+    senderOpenDingtalkId?: string;
+    content: string;
+  }) => Promise<void>;
   /** 当前模型不支持 image 输入时使用的独立图片理解模型链。 */
   getImageUnderstandingModelConfigs?: () => readonly ImageUnderstandingModelConfig[];
   /** 图片理解模型单次尝试超时；默认 30 秒。 */
@@ -370,6 +381,7 @@ export interface RawApprovalResumeRequest {
   approvalPolicy?: ToolApprovalPolicyOptions;
   /** run.metadata.toolProfile 恢复（wake 路径传入；resume 后维持受限工具集）。 */
   toolProfile?: 'memory_poll' | 'memory_consolidate';
+  dispatcherCompletion?: boolean;
   hooks?: AgentRunHooks;
   abortController?: AbortController;
   maxTurns?: number;
@@ -391,6 +403,7 @@ export interface RawInteractionResumeRequest {
   approvalPolicy?: ToolApprovalPolicyOptions;
   /** run.metadata.toolProfile 恢复（wake 路径传入；resume 后维持受限工具集）。 */
   toolProfile?: 'memory_poll' | 'memory_consolidate';
+  dispatcherCompletion?: boolean;
   hooks?: AgentRunHooks;
   abortController?: AbortController;
   maxTurns?: number;

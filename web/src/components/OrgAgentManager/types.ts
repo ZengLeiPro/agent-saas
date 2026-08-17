@@ -256,6 +256,8 @@ export function assembleScopeDescription(input: {
 export function defaultOrgAgentRuntimePolicy(): OrgAgentRuntimePolicy {
   return {
     schemaVersion: 1,
+    executionMode: 'direct',
+    workerModel: { strategy: 'inherit' },
     context: { modules: null },
     model: { strategy: 'inherit' },
     memory: { scope: 'inherit' },

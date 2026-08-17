@@ -34,6 +34,7 @@ export interface RunPreflightInput {
   userId?: string;
   tenantId?: string;
   orgAgentId?: string;
+  executionRole?: 'dispatcher' | 'worker';
   modelRef?: string;
   serviceSubject?: Omit<ServiceSubjectContext, 'subjectType'>;
   environment?: {
@@ -449,6 +450,11 @@ export class RunPreflightService {
       : resolved.typedBindings?.skills.length
         ? resolved.typedBindings.skills
         : versionedSkills ?? [];
+    const versionRuntime = resolved.managedAgentVersion?.definition.runtime;
+    const executionMode = versionRuntime && typeof versionRuntime === 'object'
+      && (versionRuntime as Record<string, unknown>).executionMode === 'dispatcher'
+      ? 'dispatcher' as const
+      : 'direct' as const;
     return {
       runId: input.runId,
       sessionId: input.sessionId,
@@ -461,6 +467,8 @@ export class RunPreflightService {
       agent: resolved.orgAgentId
         ? {
             type: 'org_agent', id: resolved.orgAgentId,
+            executionMode,
+            ...(input.executionRole ? { executionRole: input.executionRole } : {}),
             ...(resolved.managedAgent ? {
               revision: resolved.managedAgent.revision,
               ...(resolved.managedAgent.templateId ? { templateId: resolved.managedAgent.templateId } : {}),

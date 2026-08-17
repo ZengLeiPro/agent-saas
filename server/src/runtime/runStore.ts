@@ -1241,7 +1241,7 @@ export class PgRunStore implements RunStore {
     `, [parentSessionId, options.userId ?? null, options.tenantId ?? null, limit]);
     return result.rows.map((entry) => normalizeRunRecord(entry.row_json));
   }
-
+  findBackgroundTasksByIdentifier(parentSessionId: string, identifier: string, options: Pick<ListBackgroundTasksOptions, 'userId' | 'tenantId'> = {}): Promise<RunRecord[]> { return this.queries.findBackgroundTasksByIdentifier(parentSessionId, identifier, options); }
   async listPendingBackgroundTaskWakes(staleBefore: Date, limit = 50): Promise<RunRecord[]> {
     const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), 500);
     const result = await this.pool.query<{ row_json: RunRecord }>(`

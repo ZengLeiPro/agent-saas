@@ -98,6 +98,7 @@ function toTaskView(task: RunRecord, includeFullResult: boolean): Record<string,
     : undefined;
   return {
     taskId: task.runId,
+    shortTaskId: typeof task.metadata.shortTaskId === 'string' ? task.metadata.shortTaskId : undefined,
     taskType: task.metadata.backgroundTaskType === 'command' ? 'command' : 'agent',
     status: task.status,
     description: typeof task.metadata.description === 'string' ? task.metadata.description : undefined,

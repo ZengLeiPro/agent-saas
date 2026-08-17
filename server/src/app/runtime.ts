@@ -105,6 +105,7 @@ import type { AgentOptionsConfig } from '../agent/options.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
 import type { ImageUnderstandingModelConfig } from '../runtime/imageUnderstanding.js';
 import { isAssignedToOrgAgent, OrgAgentStore } from '../data/orgAgents/store.js';
+import { createDwsBackgroundCompletionEnqueuer, createOrgAgentDispatcherRuntimeValidator } from './orgAgentDispatcherRuntime.js';
 import { PgGuardrailEventStore } from '../data/guardrail/pgGuardrailEventStore.js';
 import { PgMessageFeedbackStore } from '../data/feedback/store.js';
 import { PgAppealStore } from '../data/appeals/index.js';
@@ -1761,6 +1762,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     dispatch: config.dispatch,
     executionConfig,
     modelResolver,
+    ...(agentDwsMessageStore ? { enqueueDwsBackgroundCompletion: createDwsBackgroundCompletionEnqueuer(agentDwsMessageStore) } : {}),
     getImageUnderstandingModelConfigs: (): ImageUnderstandingModelConfig[] => {
       const imageUnderstanding = config.models?.imageUnderstanding;
       if (!config.models || !imageUnderstanding) return [];
@@ -1913,11 +1915,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ? 'Memory index service hot-swapped for subsequent runs'
       : 'Memory index service disabled for subsequent runs');
   };
-  if (pgRunStore) {
-    rawRuntimeConfig.backgroundTasks = new DurableBackgroundTaskService(rawRuntimeConfig);
-  }
-  const baseRunDispatch = createRawRuntimeRunDispatch(rawRuntimeConfig);
-  const resumeApprovalDispatch = createRawApprovalResumeDispatch(rawRuntimeConfig);
+  if (pgRunStore) rawRuntimeConfig.backgroundTasks = new DurableBackgroundTaskService(rawRuntimeConfig);
+  const baseRunDispatch = createRawRuntimeRunDispatch(rawRuntimeConfig), resumeApprovalDispatch = createRawApprovalResumeDispatch(rawRuntimeConfig);
 
   if (pgRunStore && pgEventStore) {
     runtimeSchedulerAutoWake = enableSchedulerWorker && (config.runtimeScheduler?.autoWake ?? true);
@@ -3080,6 +3079,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     titleGeneratorConfigs, titleModelAdapterFactory,
     refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
     orgAgentStore,
+    validateOrgAgentDispatcherRuntime: createOrgAgentDispatcherRuntimeValidator({ backgroundTasks: rawRuntimeConfig.backgroundTasks, profileResolver: rawRuntimeConfig.agentRuntimeProfileResolver, defaultModelResolver, modelResolver }),
     guardrailEventStore,
     messageFeedbackStore,
     appealStore,

@@ -33,6 +33,7 @@ import {
   type ToolRuntime,
 } from '../../agent/toolRuntime.js';
 import { readTenantCompanyInfoSync } from '../../data/tenants/companyInfo.js';
+import { mergeOrgAgentWorkerRuntimePolicy } from '../../data/orgAgents/runtimePolicy.js';
 import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
 import type { ExecutionTransportRegistry } from '../executionTransport.js';
 import { LegacyTranscriptProjection } from '../legacyTranscriptProjection.js';
@@ -187,15 +188,30 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       existingSession: params.profileSourceSession ?? null,
       bindingKey,
     });
+    if (parentSession?.orgAgentSnapshot) {
+      boundProfile = {
+        ...boundProfile,
+        version: {
+          ...boundProfile.version,
+          config: mergeOrgAgentWorkerRuntimePolicy(
+            boundProfile.version.config,
+            parentSession.orgAgentSnapshot.runtime,
+          ),
+        },
+      };
+    }
     assertAgentProfileExecutionTarget(boundProfile.version.config, executionTarget);
   }
 
   // ── 闸门 1：模型白名单（关键不变量 3：显式传父 tenantId，不能沿用 dispatch 的单参调用） ──
   // Billing 在 childRunId 落库后按实际用量执行门禁；旧余额快照
   // 无法识别父 run 自身预占，会误拒绝合法子 Agent，因此不在派生前重复检查。
+  const configuredWorkerModel = parentSession?.orgAgentSnapshot?.runtime.workerModel;
   const requestedRef = boundProfile?.version.config.model.strategy === 'fixed'
     ? boundProfile.version.config.model.modelRef
-    : request.model?.trim() || undefined;
+    : configuredWorkerModel?.strategy === 'fixed'
+      ? configuredWorkerModel.modelRef
+      : request.model?.trim() || undefined;
   const inheritedRef = parentSession?.modelRef;
   const refToResolve = requestedRef ?? inheritedRef;
   let model: string | undefined;
@@ -252,6 +268,8 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       userRole: parentSession?.userRole ?? identity?.role,
       tenantId,
       ...(parentSession?.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
+      ...(parentSession?.orgAgentSnapshot ? { orgAgentSnapshot: parentSession.orgAgentSnapshot } : {}),
+      ...(parentSession?.orgAgentId ? { executionRole: 'worker' as const } : {}),
       channel: parentContext.channelContext.channel,
       cwd: parentWorkspace.root,
       modelRef: refToResolve ?? model,
@@ -284,6 +302,11 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         parentToolCallId: parentContext.toolCallId,
         agentType: agentType.id,
         description: request.description,
+        ...(parentSession?.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
+        ...(parentSession?.orgAgentId ? { executionRole: 'worker' } : {}),
+        ...(parentSession?.orgAgentSnapshot?.runtime.executionMode
+          ? { executionMode: parentSession.orgAgentSnapshot.runtime.executionMode }
+          : {}),
         ...(approvalPolicy ? { approvalPolicy } : {}),
         ...(boundProfile ? profileRunMetadata(boundProfile) : {}),
         cwd: parentWorkspace.root,
@@ -360,6 +383,10 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       executionTarget,
       systemPrompt: config.getSystemPrompt?.(`subagent.${agentType.id}`),
       profileSystemInstructions: boundProfile?.version.config.context.systemInstructions,
+      ...(parentSession?.orgAgentSnapshot ? {
+        orgAgentName: parentSession.orgAgentSnapshot.name,
+        orgAgentInstructions: parentSession.orgAgentSnapshot.instructions,
+      } : {}),
       companyInfo: request.includeCompanyInfo
         && agentType.allowCompanyInfo
         && (!boundProfile || boundProfile.version.config.context.modules.includes('company_info'))
@@ -645,10 +672,21 @@ function buildSubagentInstructions(args: {
   companyInfo?: string;
   systemPrompt?: string;
   profileSystemInstructions?: string;
+  orgAgentName?: string;
+  orgAgentInstructions?: string;
 }): string {
   const sections: string[] = [args.systemPrompt ?? args.agentType.systemPrompt];
   if (args.profileSystemInstructions?.trim()) {
     sections.push(`<agent-profile-instructions>\n${args.profileSystemInstructions.trim()}\n</agent-profile-instructions>`);
+  }
+  if (args.orgAgentInstructions?.trim()) {
+    sections.push([
+      '<org-agent-worker-policy>',
+      `你是组织 Agent「${args.orgAgentName ?? '未命名'}」派生的执行 Worker，不承担前台接待或再次派单。`,
+      '以下组织规则继续约束你的执行；其中若包含“只负责调度”等前台职责，以本段 Worker 角色为准。',
+      args.orgAgentInstructions.trim(),
+      '</org-agent-worker-policy>',
+    ].join('\n'));
   }
   sections.push([
     '<env>',

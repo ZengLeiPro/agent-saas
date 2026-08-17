@@ -109,10 +109,15 @@ beforeEach(() => {
   mockSaveConfiguration.mockReset().mockResolvedValue('org-new');
   mockUpdateStatus.mockReset().mockResolvedValue(undefined);
   mockUploadAvatar.mockReset();
-  mockAuthFetch.mockImplementation(async () => ({
+  mockAuthFetch.mockImplementation(async (url: string) => ({
     ok: true,
     status: 200,
-    json: async () => API_TEMPLATES,
+    json: async () => url === '/api/models'
+      ? {
+          showGroupNames: true,
+          groups: [{ id: 'group', name: '组织模型', models: [{ id: 'worker-model', name: 'Worker 专用模型' }] }],
+        }
+      : API_TEMPLATES,
   }));
 });
 
@@ -252,6 +257,43 @@ describe('OrgAgentManager - 数据合同与异步隔离', () => {
       ],
     }));
   });
+
+  it('重新打开时恢复 dispatcher 与 Worker 固定模型配置', async () => {
+    const runtime = {
+      ...emptyFormValues().runtime,
+      executionMode: 'dispatcher' as const,
+      workerModel: { strategy: 'fixed' as const, modelRef: 'group/worker-model' },
+      capabilities: {
+        ...emptyFormValues().runtime.capabilities,
+        subagents: 'inherit' as const,
+        backgroundTasks: 'inherit' as const,
+      },
+    };
+    const agent = adminRecord({ runtime });
+    mockUseOrgAgentAdmin.mockReturnValue({
+      agents: [agent], dataIssues: [], loading: false, error: null, refresh: vi.fn(),
+      loadConfiguration: mockLoadConfiguration, saveConfiguration: mockSaveConfiguration,
+      updateStatus: mockUpdateStatus, uploadAvatar: mockUploadAvatar,
+    });
+    mockLoadConfiguration.mockResolvedValue({
+      resource: { agentId: agent.id, tenantId: agent.tenantId, kind: 'org_agent', ownerUserId: 'admin', status: 'enabled', currentVersionId: 'v1', revision: 1 },
+      version: { versionId: 'v1', definition: {
+        schemaVersion: 1, name: agent.name, description: agent.description, starterPrompts: [],
+        instructions: agent.instructions, skills: [], knowledge: [], runtime,
+        guardrail: agent.guardrail, source: 'governance',
+      } },
+      assignment: { version: 1, assignments: [{ assigneeType: 'everyone', effect: 'allow', origin: 'direct' }] },
+    });
+
+    render(<OrgAgentManager tenantId="kaiyan" />);
+    fireEvent.click(screen.getByTitle('编辑'));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(
+      (within(dialog).getByRole('radio', { name: /前台调度器/ }) as HTMLInputElement).checked,
+    ).toBe(true));
+    expect(within(dialog).getByRole('combobox', { name: '企业专家 Worker 模型' }).textContent)
+      .toContain('Worker 专用模型');
+  });
 });
 
 describe('OrgAgentManager - 门禁填空 / 模板卡 / 试测按钮', () => {
@@ -274,6 +316,32 @@ describe('OrgAgentManager - 门禁填空 / 模板卡 / 试测按钮', () => {
       }),
     }));
   });
+  it('可切换为前台调度器并保存不可关闭的强制能力', async () => {
+    render(<OrgAgentManager tenantId="kaiyan" />);
+    fireEvent.click(screen.getByRole('button', { name: /创建企业专家/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByPlaceholderText('如：产品选型助手'), { target: { value: '前台助手' } });
+    fireEvent.click(within(dialog).getByRole('radio', { name: /前台调度器/ }));
+    const subagentsSwitch = within(dialog).getByRole('switch', { name: '子 Agent' });
+    const backgroundTasksSwitch = within(dialog).getByRole('switch', { name: '后台任务' });
+    expect(subagentsSwitch.getAttribute('aria-checked')).toBe('true');
+    expect((subagentsSwitch as HTMLButtonElement).disabled).toBe(true);
+    expect(backgroundTasksSwitch.getAttribute('aria-checked')).toBe('true');
+    expect((backgroundTasksSwitch as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(dialog).getByRole('button', { name: '创建' }));
+
+    await waitFor(() => expect(mockSaveConfiguration).toHaveBeenCalledOnce());
+    expect(mockSaveConfiguration).toHaveBeenCalledWith(expect.objectContaining({
+      definition: expect.objectContaining({
+        runtime: expect.objectContaining({
+          executionMode: 'dispatcher',
+          workerModel: { strategy: 'inherit' },
+          capabilities: expect.objectContaining({ subagents: 'inherit', backgroundTasks: 'inherit' }),
+        }),
+      }),
+    }));
+  });
+
   it('渲染 3 张种子模板卡（报价审核 / 客户情报 / 合同风险）', async () => {
     render(<OrgAgentManager tenantId="kaiyan" tenantName="开沿科技" />);
     for (const template of API_TEMPLATES) {

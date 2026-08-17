@@ -42,6 +42,7 @@ export async function appendResolvedRunSnapshot(input: {
     ...(input.session.userId ? { userId: input.session.userId } : {}),
     ...(input.session.tenantId ? { tenantId: input.session.tenantId } : {}),
     ...(input.session.orgAgentId ? { orgAgentId: input.session.orgAgentId } : {}),
+    ...(input.session.executionRole ? { executionRole: input.session.executionRole } : {}),
     ...(input.modelRef ? { modelRef: input.modelRef } : {}),
     environment: {
       providerId: environment?.providerId ?? input.executionTarget,

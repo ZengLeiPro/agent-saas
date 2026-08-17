@@ -52,19 +52,29 @@ import { runSubagent, type SubagentOutcome } from './subagentRunner.js';
 const logger = createLogger('AgentToolProvider');
 const SUBAGENT_RESULT_PREVIEW_CHARS = 2_000;
 
-const agentToolSchema = z.object({
+const agentToolBaseShape = {
   description: z.string().min(1).max(120)
     .describe('简短任务摘要（3-5 个词），子 agent 运行期间显示在 UI 上。'),
   prompt: z.string().min(1)
     .describe('交给子 agent 的完整自包含任务。它看不到本对话；必须写入全部背景、约束与期望的报告格式。'),
   agent_type: z.enum(['general', 'explore']).optional().default('general')
     .describe('general = 全量工具执行者；explore = 搜索侦察（Read/Shell/WebSearch/WebFetch/MemorySearch）。'),
-  model: z.string().optional()
-    .describe('可选，覆盖模型 ref（必须是本租户允许的模型）。省略则继承父模型。'),
   include_company_info: z.boolean().optional().default(false)
     .describe('仅 general 有效：把租户公司信息注入子 agent 的系统提示词。'),
+};
+
+const agentToolSchema = z.object({
+  ...agentToolBaseShape,
+  model: z.string().optional()
+    .describe('可选，覆盖模型 ref（必须是本租户允许的模型）。省略则继承父模型。'),
   mode: z.enum(['foreground', 'background']).optional().default('foreground')
     .describe('foreground = 等待子 Agent 完成并返回结果；background = 持久化后台执行，立即返回 taskId，完成后自动唤醒当前会话。'),
+});
+
+const dispatcherAgentToolSchema = z.object({
+  ...agentToolBaseShape,
+  mode: z.literal('background').optional().default('background')
+    .describe('前台调度器只能创建持久化后台 Worker。'),
 });
 
 export type AgentToolInput = z.infer<typeof agentToolSchema>;
@@ -80,6 +90,8 @@ export interface AgentToolProviderOptions {
   hardTimeoutMs?: number;
   resultMaxChars?: number;
   runSubagentImpl?: typeof runSubagent;
+  /** Dispatcher front desk may only create durable background Workers. */
+  modePolicy?: 'any' | 'background_only';
 }
 
 export class AgentToolProvider implements ToolProvider {
@@ -94,8 +106,10 @@ export class AgentToolProvider implements ToolProvider {
       id: 'Agent',
       name: 'Agent',
       displayName: 'Agent',
-      description: renderAgentToolDescription(),
-      schema: agentToolSchema,
+      description: options.modePolicy === 'background_only'
+        ? `${renderAgentToolDescription()}\n\n当前会话是前台调度器：只能创建 background Worker，模型由组织配置决定。`
+        : renderAgentToolDescription(),
+      schema: options.modePolicy === 'background_only' ? dispatcherAgentToolSchema : agentToolSchema,
       risk: 'safe',
       approvalMode: 'never',
       concurrency: 'parallel',
@@ -112,6 +126,9 @@ export class AgentToolProvider implements ToolProvider {
   async invoke<TInput>(call: AuthorizedToolCall<TInput>, context: ToolCallContext): Promise<ToolResult | undefined> {
     if (call.toolId !== this.descriptor.id) return undefined;
     const input = this.descriptor.schema.parse(call.input) as AgentToolInput;
+    if (this.options.modePolicy === 'background_only' && input.mode !== 'background') {
+      throw new Error('前台调度器只允许创建 background Worker。');
+    }
     const agentType = getSubagentType(input.agent_type);
     if (!agentType) {
       throw new Error(`未知的 agent_type: ${input.agent_type}（可用：${Object.keys(SUBAGENT_TYPES).join(' / ')}）`);
@@ -135,10 +152,11 @@ export class AgentToolProvider implements ToolProvider {
       return {
         content: JSON.stringify({
           taskId: started.taskId,
+          shortTaskId: started.shortTaskId,
           status: started.status,
           description: started.description,
           model: started.model,
-          message: '后台 Agent 已持久化入队；无需轮询，完成后会自动唤醒当前会话。',
+          message: `已交给执行 Agent，前台继续在线。请向用户回执任务 ${started.shortTaskId} 已排队，并说明可以继续发新任务。`,
         }),
       };
     }

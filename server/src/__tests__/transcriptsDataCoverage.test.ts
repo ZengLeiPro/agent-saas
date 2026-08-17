@@ -33,13 +33,19 @@ import {
 
 // ── projectKey 纯逻辑 ──────────────────────────────────────────
 describe('transcripts/projectKey', () => {
-  it('isValidSessionId 接受 UUID、sub-<uuid> 与 taskboard-<uuid>，拒绝非法格式', () => {
+  it('isValidSessionId 接受 UUID、sub-、taskboard- 及 review/merge 前缀，拒绝非法格式', () => {
     expect(isValidSessionId('12345678-1234-1234-1234-123456789abc')).toBe(true);
     expect(isValidSessionId('sub-12345678-1234-1234-1234-123456789abc')).toBe(true);
     expect(isValidSessionId('taskboard-12345678-1234-1234-1234-123456789abc')).toBe(true);
+    expect(isValidSessionId('taskboard-review-12345678-1234-1234-1234-123456789abc')).toBe(true);
+    expect(isValidSessionId('taskboard-merge-12345678-1234-1234-1234-123456789abc')).toBe(true);
     expect(isValidSessionId('not-a-uuid')).toBe(false);
     expect(isValidSessionId('../evil')).toBe(false);
     expect(isValidSessionId('xx-12345678-1234-1234-1234-123456789abc')).toBe(false);
+    // review/merge 前缀必须紧跟合法 UUID，非法 uuid 或多余片段仍拒绝
+    expect(isValidSessionId('taskboard-review-not-a-uuid')).toBe(false);
+    expect(isValidSessionId('taskboard-merge-not-a-uuid')).toBe(false);
+    expect(isValidSessionId('taskboard-review-12345678-1234-1234-1234-123456789abc-extra')).toBe(false);
   });
 
   it('deriveProjectKey 把非字母数字替换为连字符', () => {

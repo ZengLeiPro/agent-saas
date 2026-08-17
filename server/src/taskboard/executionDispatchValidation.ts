@@ -111,6 +111,11 @@ export function canonicalizeDispatchPayload(
         [SCHEDULER_STATE_METADATA_KEY]: SCHEDULER_STATE_STAGED,
         cwd: expectedCwd,
         transcriptPath: expectedTranscriptPath,
+        // 首跑重建 Session 所需字段（runtimeWakeSessionRestore 契约）：
+        // 文件投影跨进程/重启可能暂时缺失，wake 需要从 run.metadata 重建。
+        username: session.username,
+        ...(canonicalUserRole ? { userRole: canonicalUserRole } : {}),
+        modelRef: run.model,
         wakeMessage: {
           channel: 'web',
           chatId: dispatch.sessionId,
@@ -172,6 +177,9 @@ export function assertDispatchedRun(
       && !(schedulerState === undefined && wakeMessageMayBeConsumed))
     || metadata?.cwd !== expectedMetadata.cwd
     || metadata?.transcriptPath !== expectedMetadata.transcriptPath
+    || metadata?.username !== expectedMetadata.username
+    || metadata?.userRole !== expectedMetadata.userRole
+    || metadata?.modelRef !== expectedMetadata.modelRef
     || metadata?.backgroundTask === true
     || metadata?.backgroundCommand === true
     || metadata?.subagent === true

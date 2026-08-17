@@ -170,4 +170,22 @@ describePg('PgTaskboardStore contract', () => {
     expect(backlog.map((task) => task.id)).toEqual([third.id, appended.id, second.id]);
   });
 
+  it('soft-deletes a task, hides it from listings and requires maintainer', async () => {
+    const board = await store.createBoard(alice, { name: '删除任务', visibility: 'organization' });
+    await store.upsertMember(alice, board.id, { userId: bob.ownerUserId, role: 'editor' });
+    const task = await store.createTask(alice, board.id, { title: '待删除', status: 'todo' });
+
+    const deleted = await store.deleteTask(alice, task.id, { expectedVersion: task.version });
+    expect(deleted).toMatchObject({ id: task.id, version: task.version + 1 });
+    expect(deleted.deletedAt).toBeDefined();
+
+    const tasks = await store.listTasks(alice, board.id);
+    expect(tasks.map((item) => item.id)).not.toContain(task.id);
+
+    await expect(store.getTask(alice, task.id)).rejects.toMatchObject({ code: 'TASKBOARD_NOT_FOUND' });
+
+    const second = await store.createTask(alice, board.id, { title: '待删除2', status: 'todo' });
+    await expect(store.deleteTask(bob, second.id, { expectedVersion: second.version }))
+      .rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+  });
 });

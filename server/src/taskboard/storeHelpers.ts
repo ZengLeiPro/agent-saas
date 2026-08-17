@@ -48,6 +48,7 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     ...(row.creator_name ? { creatorName: String(row.creator_name) } : {}),
     ...(row.completed_at ? { completedAt: toIso(row.completed_at) } : {}),
     ...(row.archived_at ? { archivedAt: toIso(row.archived_at) } : {}),
+    ...(row.deleted_at ? { deletedAt: toIso(row.deleted_at) } : {}),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
   };

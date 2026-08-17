@@ -58,6 +58,7 @@ export async function listTasks(
     'b.tenant_id=$2',
     "(b.owner_user_id=$3 OR b.visibility='organization')",
     '($4::boolean OR t.archived_at IS NULL)',
+    't.deleted_at IS NULL',
   ];
   const params: unknown[] = [boardId, identity.tenantId, identity.ownerUserId, filter.includeArchived === true];
   if (filter.statuses?.length) {
@@ -139,6 +140,7 @@ export async function searchTasks(
     'b.tenant_id=$1',
     "(b.owner_user_id=$2 OR b.visibility='organization')",
     '($3::boolean OR (t.archived_at IS NULL AND b.archived_at IS NULL))',
+    't.deleted_at IS NULL',
   ];
   const params: unknown[] = [identity.tenantId, identity.ownerUserId, filter.includeArchived === true];
   const add = (condition: (position: number) => string, value: unknown): void => {

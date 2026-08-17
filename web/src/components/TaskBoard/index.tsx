@@ -84,6 +84,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     addTask,
     updateTask,
     setArchived,
+    removeTask,
     executeTask,
     optimisticMove,
     syncTask,
@@ -110,6 +111,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
   const canReorderTask = boardAllows(selectedBoard, "task.reorder");
   const canTransitionTask = boardAllows(selectedBoard, "task.transition");
   const canArchiveTask = boardAllows(selectedBoard, "task.archive");
+  const canDeleteTask = boardAllows(selectedBoard, "task.delete");
   const canComment = boardAllows(selectedBoard, "comment.create");
   const canExecute = boardAllows(selectedBoard, "execution.trigger");
   const canCreateIntegration = boardAllows(selectedBoard, "integration.create")
@@ -412,6 +414,18 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
                         });
                       }}
                     >恢复</Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-destructive hover:text-destructive"
+                      disabled={boardReadOnly || !canDeleteTask}
+                      onClick={() => {
+                        if (!window.confirm(`确认删除任务“${task.title}”吗？删除后任务将不再显示，且无法恢复。`)) return;
+                        void removeTask(task).catch((caught) => {
+                          setNotice(caught instanceof Error ? caught.message : "删除任务失败");
+                        });
+                      }}
+                    >删除</Button>
                   </div>
                 ))}
               </div>
@@ -454,6 +468,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         canUpdateTask={canUpdateTask}
         canTransitionTask={canTransitionTask}
         canArchiveTask={canArchiveTask}
+        canDeleteTask={canDeleteTask}
         canComment={canComment}
         canExecute={canExecute}
         canCancelIntegration={canCancelIntegration}
@@ -463,6 +478,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         onUpdate={async (task, input) => updateTask(task, input)}
         onMove={moveFromDetail}
         onSetArchived={async (task, archived) => setArchived(task, archived)}
+        onDeleteTask={async (task) => removeTask(task)}
         onExecute={executeTask}
         onCommentsChanged={refreshTasks}
       />

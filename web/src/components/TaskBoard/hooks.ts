@@ -293,6 +293,26 @@ export function useBoardTasks(boardId: string | null) {
     }
   };
 
+  const removeTask = async (task: TaskBoardTask) => {
+    const mutationBoardId = boardId;
+    invalidateRefresh();
+    try {
+      const next = await api.deleteTask(task.id, task.version);
+      if (mountedRef.current && mutationBoardId === boardIdRef.current) {
+        setTasks((current) => {
+          const filtered = current.filter((item) => item.id !== task.id);
+          tasksRef.current = filtered;
+          return filtered;
+        });
+        setError(null);
+      }
+      return next;
+    } catch (caught) {
+      if (mountedRef.current) await recoverFailure(caught, mutationBoardId);
+      throw caught;
+    }
+  };
+
   const executeTask = async (
     task: TaskBoardTask,
     purpose: TaskBoardExecutionPurpose = "work",
@@ -348,6 +368,7 @@ export function useBoardTasks(boardId: string | null) {
     addTask,
     updateTask,
     setArchived,
+    removeTask,
     executeTask,
     optimisticMove,
     syncTask,

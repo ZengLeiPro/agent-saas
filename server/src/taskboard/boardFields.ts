@@ -130,6 +130,7 @@ export function allowedActionsForRole(role: TaskBoardMemberRole): TaskBoardAllow
     ...editor,
     'task.transition',
     'task.archive',
+    'task.delete',
     'integration.create',
     'integration.authorize',
     'integration.cancel',

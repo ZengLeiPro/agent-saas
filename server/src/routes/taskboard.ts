@@ -446,6 +446,12 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     res.json(await options.service!.restoreTask(identityFrom(req), req.params.id, input));
   }));
 
+  router.delete('/tasks/:id', route(async (req, res) => {
+    const input = parseOrReply(expectedVersionSchema, req.body, res, 'body');
+    if (!input) return;
+    res.json(await options.service!.deleteTask(identityFrom(req), req.params.id, input));
+  }));
+
   router.get('/tasks/:id/executions', route(async (req, res) => {
     if (!options.executionService) {
       res.status(503).json({

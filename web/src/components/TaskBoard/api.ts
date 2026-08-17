@@ -213,6 +213,14 @@ export async function restoreTask(id: string, expectedVersion: number): Promise<
   return parseEntity<TaskBoardTask>(response, "看板任务", "task");
 }
 
+export async function deleteTask(id: string, expectedVersion: number): Promise<TaskBoardTask> {
+  const response = await authFetch(
+    `${API_BASE}/tasks/${encodeURIComponent(id)}`,
+    jsonRequest("DELETE", { expectedVersion }),
+  );
+  return parseEntity<TaskBoardTask>(response, "看板任务", "task");
+}
+
 export async function fetchExecutions(taskId: string): Promise<TaskBoardExecution[]> {
   const response = await authFetch(`${API_BASE}/tasks/${encodeURIComponent(taskId)}/executions`);
   return parseEntity<TaskBoardExecution[]>(response, "Agent 执行记录", "executions");

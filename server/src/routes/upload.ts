@@ -116,6 +116,23 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
       void uploadManager.finishFailedRequest(requestId, 'aborted');
     });
 
+    // 客户端断开兜底：现代 Node 客户端断开触发 req 'close' 而非 'aborted'，
+    // 只监听 aborted 会让 activeRequests 计数泄漏、drain 永不归零（2026-08-17
+    // 生产 blue 色 drain 死锁根因）。'close' 在正常完成后也会触发，且客户端
+    // "发完即关写端"时可能早于 multer 回调，因此延迟判定：宽限期内 multer
+    // 正常回调会置 completionStarted，只有宽限后仍未开始完成流程且响应未
+    // 结束的连接才判定为断开失败。finishFailedRequest 幂等，双触发安全。
+    req.once('close', () => {
+      if (completionStarted || res.writableEnded) return;
+      const closeGraceMs = 5_000;
+      const timer = setTimeout(() => {
+        if (completionStarted || res.writableEnded) return;
+        uploadLogger.warn(`Upload connection closed before completion request=${requestId}; releasing drain counter`);
+        void uploadManager.finishFailedRequest(requestId, 'aborted');
+      }, closeGraceMs);
+      timer.unref?.();
+    });
+
     upload.array('files', MAX_UPLOAD_FILES_PER_REQUEST)(req, res, async (uploadError) => {
       completionStarted = true;
       if (uploadError) {

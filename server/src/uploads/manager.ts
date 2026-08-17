@@ -167,6 +167,24 @@ export class UploadManager {
     return this.activeRequests.size;
   }
 
+  /**
+   * drain 截止兜底：把开始时间早于 maxAgeMs 的挂死上传请求判定为 failed 并
+   * 释放计数（2026-08-17 生产 blue 色 drain 死锁修复）。客户端连接已物理消失
+   * 但计数未清时，进程会因「uploads are never force-interrupted」永不退出，
+   * 蓝绿部署无法覆盖 idle 色；超过宽限阈值的请求不再无限等待。
+   * 返回清理的请求数。
+   */
+  failStaleUploads(maxAgeMs: number): number {
+    const nowMs = this.now();
+    let failed = 0;
+    for (const [requestId, active] of this.activeRequests) {
+      if (nowMs - active.startedAtMs <= maxAgeMs) continue;
+      failed += 1;
+      void this.finishFailedRequest(requestId, 'failed').catch(() => undefined);
+    }
+    return failed;
+  }
+
   getMetricsSnapshot(): UploadMetricsSnapshot {
     return { activeUploads: this.activeRequests.size, ...this.metrics };
   }

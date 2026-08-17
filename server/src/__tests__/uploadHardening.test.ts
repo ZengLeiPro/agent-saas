@@ -195,6 +195,65 @@ describe('attachment upload hardening', () => {
     expect(manager.getActiveUploadCount()).toBe(0);
   });
 
+  it('failStaleUploads releases only hung requests past the grace threshold (drain deadlock fix)', async () => {
+    const root = await createRoot();
+    let now = Date.UTC(2026, 7, 17, 12, 0, 0);
+    const manager = new UploadManager({ agentCwd: root, now: () => now });
+    const hungDir = await manager.beginRequest(join(root, 'tenant-a', 'user-1'), 'req-hung');
+    expect(manager.getActiveUploadCount()).toBe(1);
+
+    // 宽限期内（1h）不清理
+    now += 30 * 60_000;
+    expect(manager.failStaleUploads(3_600_000)).toBe(0);
+    expect(manager.getActiveUploadCount()).toBe(1);
+
+    // 新请求开始得更晚，不应被误杀
+    now += 2 * 3_600_000;
+    await manager.beginRequest(join(root, 'tenant-a', 'user-1'), 'req-fresh');
+    expect(manager.getActiveUploadCount()).toBe(2);
+
+    expect(manager.failStaleUploads(3_600_000)).toBe(1);
+    expect(manager.getActiveUploadCount()).toBe(1);
+    // failStaleUploads 内部 rm 是异步 fire-and-forget，轮询等待目录清理完成
+    await waitFor(async () => {
+      try { await stat(hungDir); return false; } catch { return true; }
+    });
+    expect(manager.getMetricsSnapshot().failedRequests).toBe(1);
+
+    await manager.finishFailedRequest('req-fresh', 'aborted');
+    expect(manager.getActiveUploadCount()).toBe(0);
+  });
+
+  it('closes an upload whose connection disappears before completion (close-event fallback)', async () => {
+    const root = await createRoot();
+    const manager = new UploadManager({ agentCwd: root });
+    const baseUrl = new URL(await startUploadServer(root, manager));
+    const boundary = '----agent-upload-close-test';
+    const preamble = Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="stuck.bin"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+    );
+    const req = httpRequest({
+      host: baseUrl.hostname,
+      port: Number(baseUrl.port),
+      path: '/api/upload',
+      method: 'POST',
+      headers: {
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+        'content-length': preamble.length + 1024 * 1024,
+      },
+    });
+    req.on('error', () => undefined);
+    req.write(preamble);
+    req.write(Buffer.alloc(64 * 1024, 1));
+    await waitFor(() => manager.getActiveUploadCount() === 1);
+    // 客户端消失（socket 半开/destroy 均覆盖：aborted 或 close 兜底至少一条生效）
+    req.destroy();
+    await waitFor(() => manager.getActiveUploadCount() === 0, 15_000);
+
+    const partialRoot = join(root, USER.tenantId, USER.sub, 'uploads', '.partial');
+    await waitFor(async () => (await readdir(partialRoot)).length === 0);
+  });
+
   it('cleans staged files only inside the requesting user workspace', async () => {
     const root = await createRoot();
     const manager = new UploadManager({ agentCwd: root });

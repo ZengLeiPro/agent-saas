@@ -443,7 +443,21 @@ process.on('SIGUSR2', () => {
   const deadlineMs = parseInt(process.env.AGENT_SAAS_DRAIN_DEADLINE_MS || '', 10) || 900_000;
   const onDrainDeadline = (): void => {
     const remaining = runtime?.channelManager.getActiveStreamCount() ?? 0;
-    const remainingUploads = runtime?.uploadManager.getActiveUploadCount() ?? 0;
+    let remainingUploads = runtime?.uploadManager.getActiveUploadCount() ?? 0;
+    if (remainingUploads > 0) {
+      // 挂死上传兜底：客户端连接已断但计数未释放的请求（close 事件丢失等场景）
+      // 超过宽限阈值后判定 failed，避免「永不强中断」演变为部署死锁
+      // （2026-08-17 生产 blue 色 drain 2h+ 死锁）。真实超长上传请调大 env。
+      const staleUploadMs = parseInt(process.env.AGENT_SAAS_DRAIN_UPLOAD_STALE_MS || '', 10) || 7_200_000;
+      const staleFailed = runtime?.uploadManager.failStaleUploads(staleUploadMs) ?? 0;
+      if (staleFailed > 0) {
+        serverLogger.warn(
+          `Drain deadline: failed ${staleFailed} stale upload(s) older than ${staleUploadMs}ms `
+          + '(client connection lost without close propagation); releasing drain counters',
+        );
+      }
+      remainingUploads = runtime?.uploadManager.getActiveUploadCount() ?? 0;
+    }
     if (remainingUploads > 0) {
       serverLogger.warn(`Drain deadline after ${deadlineMs}ms deferred: ${remainingUploads} upload(s) still active; uploads are never force-interrupted`);
       drainDeadline = setTimeout(onDrainDeadline, deadlineMs);

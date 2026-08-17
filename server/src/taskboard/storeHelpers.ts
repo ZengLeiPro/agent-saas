@@ -13,6 +13,7 @@ import {
   type TaskboardIdentity,
   TaskboardValidationError,
 } from './types.js';
+import { parseStageModels } from './boardFields.js';
 
 export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
   return {
@@ -273,6 +274,9 @@ export function rowToExecutionModelContext(
   return {
     ...(row.task_model ? { taskModel: String(row.task_model) } : {}),
     ...(row.board_model ? { boardModel: String(row.board_model) } : {}),
+    ...(Object.keys(parseStageModels(row.board_stage_models)).length
+      ? { boardStageModels: parseStageModels(row.board_stage_models) }
+      : {}),
     ...(row.task_kind === 'integration' || row.task_kind === 'remediation'
       ? { taskKind: row.task_kind }
       : { taskKind: 'delivery' as const }),

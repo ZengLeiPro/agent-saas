@@ -302,7 +302,8 @@ export async function loadExecutionModelContext(
 ): Promise<TaskboardExecutionModelContext> {
   const result = await host.pool.query(
     `SELECT t.model AS task_model, t.kind AS task_kind, t.status AS task_status,
-            b.model AS board_model, b.owner_user_id AS board_owner_user_id,
+            b.model AS board_model, b.stage_models AS board_stage_models,
+            b.owner_user_id AS board_owner_user_id,
             b.integration_policy->>'revision' AS policy_revision,
             b.id AS board_id, b.name AS board_name
        FROM ${host.tasksTable} t

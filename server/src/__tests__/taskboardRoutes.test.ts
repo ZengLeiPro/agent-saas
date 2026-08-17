@@ -129,6 +129,7 @@ describe('Taskboard routes', () => {
       description: '首期',
       prompt: '只处理当前看板任务',
       model: 'group-a/model-a',
+      stageModels: { work: 'group-a/model-work', review: 'group-a/model-review', merge: 'group-a/model-merge' },
       visibility: 'organization',
     }));
     expect(created.status).toBe(201);
@@ -144,6 +145,7 @@ describe('Taskboard routes', () => {
       description: '首期',
       prompt: '只处理当前看板任务',
       model: 'group-a/model-a',
+      stageModels: { work: 'group-a/model-work', review: 'group-a/model-review', merge: 'group-a/model-merge' },
       visibility: 'organization',
     }]);
   });
@@ -196,6 +198,7 @@ describe('Taskboard routes', () => {
 
     const patchedBoard = await rig.request('/api/taskboard/boards/board-1', patchJson({
       model: null,
+      stageModels: { merge: 'group-a/model-merge' },
       expectedVersion: 1,
     }));
     expect(patchedBoard.status).toBe(200);
@@ -231,6 +234,14 @@ describe('Taskboard routes', () => {
       runId: 'forbidden',
     }))).status).toBe(400);
     expect((await rig.request('/api/taskboard/tasks/task-1', patchJson({
+      expectedVersion: 1,
+    }))).status).toBe(400);
+    expect((await rig.request('/api/taskboard/boards/board-1', patchJson({
+      stageModels: { unknownStage: 'group-a/model-a' },
+      expectedVersion: 1,
+    }))).status).toBe(400);
+    expect((await rig.request('/api/taskboard/boards/board-1', patchJson({
+      stageModels: { work: '' },
       expectedVersion: 1,
     }))).status).toBe(400);
     expect((await rig.request('/api/taskboard/tasks/task-1/comments', postJson({

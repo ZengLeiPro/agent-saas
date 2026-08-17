@@ -8,6 +8,7 @@ import {
   type TaskBoardIntegrationPolicy,
   type TaskBoardMemberRole,
   type TaskBoardRepositoryConfig,
+  type TaskBoardStageModels,
   type TaskBoardStagePrompts,
 } from '../../../shared/src/types/taskboard.js';
 
@@ -38,6 +39,13 @@ export function boardModelMigrationSql(boardsTable: string): string {
   return `
     ALTER TABLE ${boardsTable}
       ADD COLUMN IF NOT EXISTS model TEXT
+  `;
+}
+
+export function boardStageModelsMigrationSql(boardsTable: string): string {
+  return `
+    ALTER TABLE ${boardsTable}
+      ADD COLUMN IF NOT EXISTS stage_models JSONB NOT NULL DEFAULT '{}'::jsonb
   `;
 }
 
@@ -116,11 +124,43 @@ export function normalizeModel(value: string | null | undefined): string | null 
   return normalized || null;
 }
 
+/**
+ * 归一化各阶段默认模型：只保留三阶段中 trim 后非空的模型 ref，其余阶段视为未配置
+ * （执行时回退看板全局模型/组织默认模型）。null/undefined 表示整体未设置。
+ */
+export function normalizeStageModels(
+  value: TaskBoardStageModels | null | undefined,
+): TaskBoardStageModels {
+  if (!value || typeof value !== 'object') return {};
+  return Object.fromEntries(
+    TASKBOARD_EXECUTION_PURPOSES.flatMap((purpose) => {
+      const ref = value[purpose];
+      const normalized = typeof ref === 'string' ? ref.trim() : '';
+      return normalized ? [[purpose, normalized] as const] : [];
+    }),
+  );
+}
+
+export function stageModelsToJson(value: TaskBoardStageModels | null | undefined): string {
+  return JSON.stringify(normalizeStageModels(value));
+}
+
+export function parseStageModels(value: unknown): TaskBoardStageModels {
+  const parsed = parseJsonObject<Record<string, unknown>>(value);
+  if (!parsed) return {};
+  return normalizeStageModels({
+    ...(typeof parsed.work === 'string' ? { work: parsed.work } : {}),
+    ...(typeof parsed.review === 'string' ? { review: parsed.review } : {}),
+    ...(typeof parsed.merge === 'string' ? { merge: parsed.merge } : {}),
+  });
+}
+
 export function rowToBoard(row: Record<string, unknown>, currentUserId: string): TaskBoard {
   const ownerUserId = String(row.owner_user_id);
   const role = resolveBoardRole(row, currentUserId);
   const repository = parseJsonObject<TaskBoardRepositoryConfig>(row.repository);
   const integrationPolicy = parseJsonObject<TaskBoardIntegrationPolicy>(row.integration_policy);
+  const stageModels = parseStageModels(row.stage_models);
   const stagePrompts = parseStagePrompts(row.stage_prompts);
   return {
     id: String(row.id),
@@ -134,6 +174,7 @@ export function rowToBoard(row: Record<string, unknown>, currentUserId: string):
     allowedActions: allowedActionsForRole(role),
     canManage: role === 'owner',
     prompt: String(row.prompt ?? TASKBOARD_DEFAULT_PROMPT),
+    ...(Object.keys(stageModels).length ? { stageModels } : {}),
     ...(Object.keys(stagePrompts).length ? { stagePrompts } : {}),
     ...(row.model !== null && row.model !== undefined && String(row.model).trim()
       ? { model: String(row.model) }

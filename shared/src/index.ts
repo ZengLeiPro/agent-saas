@@ -248,6 +248,8 @@ export {
   TASKBOARD_EXECUTION_PURPOSES,
   TASKBOARD_VISIBILITIES,
   TASKBOARD_DEFAULT_PROMPT,
+  TASKBOARD_DEFAULT_STAGE_PROMPT,
+  TASKBOARD_STAGE_DEFAULT_PROMPTS,
   buildScenarioPrompt,
 } from "./types/index";
 export { saveUserPreferences } from "./lib/preferencesApi";

@@ -33,7 +33,7 @@ export async function listBoards(
   includeArchived = false,
 ): Promise<TaskBoard[]> {
   const result = await store.pool.query(
-    `SELECT b.id, b.owner_user_id, b.name, b.description, b.visibility, b.prompt, b.model,
+    `SELECT b.id, b.owner_user_id, b.name, b.description, b.visibility, b.prompt, b.stage_prompts, b.model,
             b.repository, b.integration_policy, b.version, b.archived_at, b.created_at, b.updated_at,
             CASE WHEN b.owner_user_id=$2 THEN 'owner' ELSE COALESCE(m.role,'viewer') END AS board_role
        FROM ${store.boardsTable} b
@@ -115,7 +115,7 @@ export async function searchBoards(
   );
   params.push(pageSize, offset);
   const result = await store.pool.query(
-    `SELECT b.id, b.owner_user_id, b.name, b.description, b.visibility, b.prompt, b.model,
+    `SELECT b.id, b.owner_user_id, b.name, b.description, b.visibility, b.prompt, b.stage_prompts, b.model,
             b.repository, b.integration_policy, b.version, b.archived_at, b.created_at, b.updated_at,
             CASE WHEN b.owner_user_id=$2 THEN 'owner' ELSE COALESCE(m.role,'viewer') END AS board_role
        FROM ${store.boardsTable} b

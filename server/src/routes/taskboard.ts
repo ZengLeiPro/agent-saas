@@ -70,10 +70,17 @@ const integrationPolicySchema = z.object({
   }).strict(),
 }).strict();
 
+const stagePromptsSchema = z.object({
+  work: z.string().trim().max(20_000).optional(),
+  review: z.string().trim().max(20_000).optional(),
+  merge: z.string().trim().max(20_000).optional(),
+}).strict();
+
 const boardCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().max(4_000).optional(),
   prompt: z.string().max(20_000).optional(),
+  stagePrompts: stagePromptsSchema.optional(),
   model: z.string().trim().min(1).max(256).optional(),
   visibility: z.enum(TASKBOARD_VISIBILITIES).optional(),
   repository: repositorySchema.optional(),
@@ -84,6 +91,7 @@ const boardPatchSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   description: z.string().max(4_000).optional(),
   prompt: z.string().max(20_000).optional(),
+  stagePrompts: stagePromptsSchema.nullish(),
   model: z.string().trim().min(1).max(256).nullish(),
   visibility: z.enum(TASKBOARD_VISIBILITIES).optional(),
   repository: repositorySchema.nullish(),
@@ -91,8 +99,8 @@ const boardPatchSchema = z.object({
   expectedVersion: z.number().int().min(1),
 }).strict().refine(
   (input) => input.name !== undefined || input.description !== undefined
-    || input.prompt !== undefined || input.model !== undefined || input.visibility !== undefined
-    || input.repository !== undefined || input.integrationPolicy !== undefined,
+    || input.prompt !== undefined || input.stagePrompts !== undefined || input.model !== undefined
+    || input.visibility !== undefined || input.repository !== undefined || input.integrationPolicy !== undefined,
   { message: 'At least one board field is required' },
 );
 

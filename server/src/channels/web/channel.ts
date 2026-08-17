@@ -29,7 +29,7 @@ import type {
 } from '../../types/index.js';
 import type { AgentRunDispatch, AgentRunHooks } from '../../agent/types.js';
 import type { ExecutionTargetKind } from '../../agent/toolRuntime.js';
-import { toRunModelOptions, type ResolvedModel } from '../../app/models.js';
+import { toRunModelOptions } from '../../app/models.js';
 import { interactionStore } from './interactionStore.js';
 import { persistedInteractionAccessError } from './persistedInteractionAccess.js';
 import {
@@ -50,26 +50,21 @@ import { readSessionMeta, writeSessionMeta, updateSessionMeta, addSessionCost, t
 import { resolveUserCwd } from '../../workspace/resolver.js';
 import { resolveAgentPath } from '../../workspace/namespace.js';
 import type { UserStore } from '../../data/users/store.js';
-import type { TenantStore } from '../../data/tenants/store.js';
-import type { BillingService } from '../../data/billing/service.js';
-import type { UploadManager } from '../../uploads/manager.js';
 import { tenantAccessErrorMessage } from '../../data/tenants/access.js';
-import { speechToText, type SttConfig } from '../../integrations/stt/sttClient.js';
+import { speechToText } from '../../integrations/stt/sttClient.js';
 import { EventBufferStore } from './eventBuffer.js';
 import { clearSessionsListCache } from '../../routes/sessions.js';
 import {
   extractTitleContext,
   generateTitleWithFallback,
   shouldGenerateTitleFromFirstMessage,
-  type TitleGeneratorConfig, type TitleModelAdapterFactory,
 } from '../../agent/titleGenerator.js';
-import { checkTopicScope, extractRecentUserMessages, type GuardrailModelConfig } from '../../agent/guardrail.js';
+import { checkTopicScope, extractRecentUserMessages } from '../../agent/guardrail.js';
 import { isCompactCommand } from '../../agent/prompt.js';
-import { isAssignedToOrgAgent, parseOrgAgentAudience, type OrgAgentStore } from '../../data/orgAgents/store.js';
+import { isAssignedToOrgAgent, parseOrgAgentAudience } from '../../data/orgAgents/store.js';
 import type { OrgAgentGuardrailMode, OrgAgentRecord } from '../../data/orgAgents/types.js';
 import { normalizeGuardrailConfig } from '../../data/orgAgents/types.js';
-import type { GuardrailEventStore, GuardrailEventVerdict } from '../../data/guardrail/pgGuardrailEventStore.js';
-import type { SessionReadStateStore } from '../../data/sessionReadStateStore.js';
+import type { GuardrailEventVerdict } from '../../data/guardrail/pgGuardrailEventStore.js';
 import { WsServer, type WsClient } from './wsServer.js';
 import { EventBus, type SessionContext } from './eventBus.js';
 import type { WsChatMessage, WsRespondMessage, WsAbortMessage, WsRunStatusMessage, WsResumeMessage, WsSyncMessage, WsInboundMessage, ChatRejectReasonCode } from './wsTypes.js';
@@ -78,25 +73,18 @@ import {
   getUserExtraDirs,
   isPathWithinAnyDirectory,
   isPathWithinDirectory,
-  type UserOverrides,
 } from '../../security/extraDirs.js';
-import type { TokenUsageStore } from '../../data/usage/store.js';
 import { EventBackedApprovalStore } from '../../runtime/approvalStore.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../../runtime/fileEventStore.js';
 import type { EventStore, PlatformEvent } from '../../runtime/types.js';
 import { buildRuntimeReplayState } from '../../runtime/replay.js';
-import type { RawApprovalResumeRequest } from '../../runtime/rawRuntimeRunDispatch.js';
 import {
   DEFAULT_EXECUTION_CONFIG,
   resolveExecutionTarget,
-  type ExecutionConfig,
 } from '../../runtime/executionConfig.js';
-import { createRuntimeSessionRecord, type SessionCatalog } from '../../runtime/sessionCatalog.js';
-import type { RunPreflightService } from '../../runtime/runPreflight.js';
+import { createRuntimeSessionRecord } from '../../runtime/sessionCatalog.js';
 import { deriveStableWorkspaceId } from '../../runtime/workspaceIdentity.js';
-import type { RuntimeScheduler } from '../../runtime/scheduler.js';
-import type { RunRecord, RunStore } from '../../runtime/runStore.js';
-import type { ToolInvocationStore } from '../../runtime/toolInvocationStore.js';
+import type { RunRecord } from '../../runtime/runStore.js';
 import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
 import { runtimeRunController } from '../../runtime/runController.js';
 import {
@@ -117,91 +105,39 @@ import {
 import { handleWebChannelEvents, type WebChannelEventTitleContext } from './channelEventHandler.js';
 
 import { deriveSubmissionSessionId, resolveAuthoritativeSubmissionState } from './channelSubmissionHelpers.js';
-export { buildChatMessageActivityDetail } from './channelHelpers.js';
+import type { ModelResolver, WebChannelRuntimeConfig } from './channelConfig.js';
+export type { ModelResolver } from './channelConfig.js';
 
-
-export type ModelResolver = (ref: string, tenantId?: string) => ResolvedModel | null;
-export interface WebChannelConfig {
+/**
+ * Public WebChannel construction contract.
+ *
+ * Web-facing paths and adapters stay beside the channel orchestrator, while
+ * runtime/store integrations live in channelConfig.ts to keep this file under
+ * its grandfathered line ceiling without changing the exported API.
+ * Keeping this facade here also preserves existing type-only import paths.
+ * Consumers do not need to know how the contract is partitioned internally.
+ */
+export interface WebChannelConfig extends WebChannelRuntimeConfig {
+  /** Server timezone used when formatting channel output. */
   timezone?: string;
+  /** Optional overrides for web message rendering. */
   displayConfig?: WebMessageDisplayConfig;
+  /** Default agent workspace root. */
   agentCwd?: string;
+  /** Shared resource root. */
   sharedDir?: string;
+  /** Login activity JSONL path. */
   loginLogFilePath?: string;
+  /** Tenant-aware model reference resolver. */
   modelResolver?: ModelResolver;
+  /** User lookup used for channel identity and preferences. */
   userStore?: UserStore;
-  /** 主 + fallback 链；主返回空或异常时按顺序回落，全部失败再 return null。 */
-  titleGeneratorConfigs?: TitleGeneratorConfig[];
-  titleModelAdapterFactory?: TitleModelAdapterFactory;
-  /** 标题生成前主动对齐共享 config.json，覆盖无主模型解析的手动命名路径。 */
-  refreshSharedConfig?: () => void;
-  /** 平台系统提示语热更新 getter；每次标题生成现取。 */
-  getTitleSystemPrompt?: () => string;
-  sttConfig?: SttConfig;
+  /** Secret used to authenticate WebSocket connections. */
   jwtSecret?: string;
-  userOverrides?: UserOverrides;
-  /** 优雅关闭（drain）状态回调，由 ChannelManager 注入；draining 时拒绝新 chat */
+  /** Reports whether shutdown draining has begun. */
   getIsDraining?: () => boolean;
-  /** Token 用量统计 store（可选，注入失败时静默跳过统计） */
-  tokenUsageStore?: TokenUsageStore;
-  /** PG Billing；getter 避免装配时序与 file backend 分支。 */
-  billingService?: () => BillingService | undefined;
-  /** Tenant store for disabled-tenant hard-stop checks. */
-  tenantStore?: TenantStore;
-  /** Browser WebSocket Origin allowlist，复用 HTTP CORS origins。 */
-  allowedOrigins?: string[];
-  /** Web 上传附件生命周期：消息通过校验后把 staged sidecar 原子标为 referenced。 */
-  uploadManager?: UploadManager;
-  /** 公司级专职 Agent store（orgAgentId 解析/audience 校验/门禁配置来源）。 */
-  orgAgentStore?: OrgAgentStore;
-  /**
-   * 门禁模型配置链 getter（主 + fallback）。**必须是 getter**：模型列表热更新
-   * 时 routes.ts 换新数组，channel 每次调用取最新链。空数组/缺省 = 门禁模块
-   * 未激活（fail-open 短路）。
-   */
-  getGuardrailModelConfigs?: () => GuardrailModelConfig[];
-  /** 门禁事件落库（PG backend）。缺省（file backend）时降级 log，判定照常。 */
-  guardrailEventStore?: GuardrailEventStore;
-  /** 用户维度会话未读状态真源。 */
-  sessionReadStateStore?: SessionReadStateStore;
-  /** 门禁调用参数（maxRecentRounds 现表示最近真实用户消息数，配置键为兼容历史保留）。 */
-  guardrailOptions?: { timeoutMs?: number; maxRecentRounds?: number };
-  /** 平台系统提示语热更新 getter；每次门禁调用现取。 */
-  getGuardrailSystemPrompt?: () => string;
-  /** raw runtime 持久化 approval 的恢复入口 */
-  resumeApprovalDispatch?: (request: RawApprovalResumeRequest) => AsyncGenerator<OutboundEvent>;
-  /**
-   * Runtime-level execution config；未传时使用 DEFAULT_EXECUTION_CONFIG（server-local 默认 + admin override 允许）。
-   * 所有 executionTarget 策略集中到 resolveExecutionTarget，不再在通道内联判定。
-   */
-  executionConfig?: ExecutionConfig;
-  /**
-   * Runtime EventStore 解析函数。WS 重连恢复持久化 approval 时（tryResumePersistedApproval）
-   * 用它拿到当前 session 的事件流。
-   * - PG backend：返回共享 pgEventStore（按 session_id 过滤）
-   * - file backend / 缺省：`new FileEventStore(getRuntimeEventLogPath(transcriptPath))`
-   * 注入路径见 app/runtime.ts。
-   */
-  runtimeEventStoreFor?: (transcriptPath: string) => EventStore;
-  /** 仅共享 PG EventStore 可在缺少 transcriptPath 时按 sessionId 读取。 */ runtimeEventStoreSupportsPathless?: boolean;
-  /**
-   * Web chat enqueue-only runtime. 配置后，Web chat 默认只创建 durable
-   * session/run/command event，然后交给 RuntimeScheduler wake；WebSocket 仅返回
-   * stream/session id 并订阅后续事件，不直接持有长 run 生命周期。
-   */
-  enqueueRuntime?: {
-    scheduler: RuntimeScheduler;
-    runStore: RunStore;
-    sessionCatalog: SessionCatalog;
-    toolInvocationStore?: ToolInvocationStore;
-    enabled?: boolean;
-  };
-  /**
-   * Governance Access/Run 统一 Preflight（shadow 阶段）。enqueue 前用同一
-   * evaluator 生成 AccessDecision + Readiness 并记录日志；shadow 模式不阻断
-   * legacy 门禁，仅产出对比证据，供切 V2 权威前的双跑核对。
-   */
-  runPreflight?: RunPreflightService;
 }
+export { buildChatMessageActivityDetail } from './channelHelpers.js';
 
 interface ActiveStreamEntry {
   controller: AbortController;

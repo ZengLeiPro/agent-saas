@@ -10,16 +10,16 @@ server/src/__tests__/appConfig.test.ts	928	test
 server/src/__tests__/billingRouterEndpoints.test.ts	822	test
 server/src/__tests__/feishuTokenBroker.test.ts	809	test
 server/src/__tests__/memoryPoll.test.ts	973	test
-server/src/__tests__/rawAgentLoop.test.ts	4891	test
+server/src/__tests__/rawAgentLoop.test.ts	4885	test
 server/src/__tests__/responsesApiAdapter.test.ts	2744	test
-server/src/__tests__/runtimeScheduler.test.ts	946	test
+server/src/__tests__/runtimeScheduler.test.ts	849	test
 server/src/__tests__/runtimeTraceRoutes.test.ts	1016	test
 server/src/__tests__/sessionsRoutesMetaOnly.test.ts	814	test
 server/src/__tests__/skillsRouterTenantIsolation.test.ts	977	test
 server/src/__tests__/toolRuntime.test.ts	1277	test
-server/src/__tests__/webChannelCoverage.test.ts	1769	test
+server/src/__tests__/webChannelCoverage.test.ts	1679	test
 server/src/__tests__/webChannelExecutionTarget.test.ts	801	test
-server/src/__tests__/webChannelReconnect.test.ts	909	test
+server/src/__tests__/webChannelReconnect.test.ts	890	test
 server/src/__tests__/workflowLibraryV3.test.ts	1062	test
 server/src/__tests__/wsEventProcessor.test.ts	831	test
 server/src/agent/toolRuntime.ts	1706	production
@@ -43,7 +43,7 @@ shared/src/lib/wsEventProcessor.test.ts	1122	test
 shared/src/lib/wsEventProcessor.ts	1024	production
 shared/src/schemas/workflowScenario.ts	1025	production
 web/src/components/BillingManager/index.tsx	2258	production
-web/src/components/DesktopSessionSidebar.tsx	2458	production
+web/src/components/DesktopSessionSidebar.tsx	2457	production
 web/src/components/MessageItem.tsx	1125	production
 web/src/components/MessageList.tsx	1135	production
 web/src/components/MobileSessionList.tsx	1033	production
@@ -51,5 +51,5 @@ web/src/components/ModelManager/index.tsx	1366	production
 web/src/components/RuntimeOperationsManager/index.tsx	1219	production
 web/src/components/SettingsCenter/SettingsModal.tsx	1092	production
 web/src/components/TenantManager/index.tsx	1222	production
-web/src/hooks/useChatAppState.ts	3190	production
+web/src/hooks/useChatAppState.ts	3189	production
 web/src/hooks/useSession.ts	1075	production

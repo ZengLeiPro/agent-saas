@@ -1,12 +1,12 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { ApiSessionListItem } from "@/lib/sessionsApi";
-import type { AskUserAnswers, NotificationData, MemoryRecallData, PluginInstallData, SessionRuntimeStatus } from "@agent/shared";
+import type { AskUserAnswers, MemoryRecallData, NotificationData, PluginInstallData, SessionRuntimeStatus } from "@agent/shared";
 import type { ModelList } from "@/types/models";
 import type { AppTab } from "@/types/sidebar";
 import type { CanonicalSettingsSectionId } from "@/types/settings";
 import type { WsEvent } from "@/types/ws";
-import type { WsEnvelope, WsResumeMessage } from "@/lib/wsClient";
+import type { WsEnvelope } from "@/lib/wsClient";
 import { wsClient } from "@/lib/wsClient";
 import { authFetch } from "@/lib/authFetch";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
@@ -82,6 +82,7 @@ import {
   cancelQueuedEntry, createQueueConsistencyCallbacks, dismissQueuedEntry,
   resendQueuedEntry, restoreQueuedEntryForEdit,
 } from "./useChatAppStateQueueConsistency";
+import { useChatNotificationState, useChatStreamCorrelation } from "./useChatRuntimeState";
 
 export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const { user } = useAuth();
@@ -157,80 +158,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const [loading, setLoading] = useState(false);
   const [stopping, setStopping] = useState(false);
 
-  // ---- SDK notifications (REPL 级通知队列，按 priority 排序 + timeoutMs 自动消失) ----
-  // 通知队列最大长度：超出后按优先级保留前 N 条，低优先级被挤掉
-  const MAX_NOTIFICATIONS = 5;
-  const [notifications, setNotifications] = useState<NotificationData[]>([]);
-  const notificationTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const dismissNotification = useCallback((key: string) => {
-    setNotifications((list) => list.filter((n) => n.key !== key));
-    const timer = notificationTimersRef.current.get(key);
-    if (timer) {
-      clearTimeout(timer);
-      notificationTimersRef.current.delete(key);
-    }
-  }, []);
-  const pushNotification = useCallback((n: NotificationData) => {
-    // 闭包变量：updater 执行后回写，决定新 timer 是否需要设置
-    // React 18 StrictMode 下 updater 可能被调用两次，两次都会重置成一致值，安全
-    let included = true;
-    setNotifications((list) => {
-      const next = list.filter((x) => x.key !== n.key);
-      next.push(n);
-      // 按 priority 排序（immediate > high > medium > low）
-      const order: Record<NotificationData['priority'], number> = {
-        immediate: 0, high: 1, medium: 2, low: 3,
-      };
-      next.sort((a, b) => order[a.priority] - order[b.priority]);
-      if (next.length > MAX_NOTIFICATIONS) {
-        const dropped = next.slice(MAX_NOTIFICATIONS);
-        for (const d of dropped) {
-          const t = notificationTimersRef.current.get(d.key);
-          if (t) {
-            clearTimeout(t);
-            notificationTimersRef.current.delete(d.key);
-          }
-        }
-        const finalNext = next.slice(0, MAX_NOTIFICATIONS);
-        included = finalNext.some((x) => x.key === n.key);
-        return finalNext;
-      }
-      included = true;
-      return next;
-    });
-    // 无条件清除同 key 旧 timer——避免"新通知 timeoutMs 为 undefined 时，旧 timer 仍在原时间点把新通知误删"
-    const existing = notificationTimersRef.current.get(n.key);
-    if (existing) {
-      clearTimeout(existing);
-      notificationTimersRef.current.delete(n.key);
-    }
-    // 仅当新通知真的进入队列 + 自身带 timeoutMs 时才设新 timer，避免孤儿 timer
-    if (included && n.timeoutMs && n.timeoutMs > 0) {
-      const t = setTimeout(() => dismissNotification(n.key), n.timeoutMs);
-      notificationTimersRef.current.set(n.key, t);
-    }
-  }, [dismissNotification]);
+  const { notifications, dismissNotification, pushNotification,
+    lastMemoryRecall, dismissMemoryRecall, showMemoryRecall, pluginInstallStatus,
+    showPluginInstallStatus, resetChatNotifications } = useChatNotificationState();
 
-  const [lastMemoryRecall, setLastMemoryRecall] = useState<MemoryRecallData | null>(null);
-  const dismissMemoryRecall = useCallback(() => setLastMemoryRecall(null), []);
-  const [pluginInstallStatus, setPluginInstallStatus] = useState<PluginInstallData | null>(null);
-  // pluginInstall 自动清除计时器：ref 化防止切会话时旧 timer 误清新会话状态
-  const pluginInstallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clearPluginInstallTimer = useCallback(() => {
-    if (pluginInstallTimerRef.current) {
-      clearTimeout(pluginInstallTimerRef.current);
-      pluginInstallTimerRef.current = null;
-    }
-  }, []);
-
-  // 统一的 unmount cleanup：notifications timer + pluginInstall timer 一并回收
-  useEffect(() => {
-    return () => {
-      for (const t of notificationTimersRef.current.values()) clearTimeout(t);
-      notificationTimersRef.current.clear();
-      clearPluginInstallTimer();
-    };
-  }, [clearPluginInstallTimer]);
   const [activeTab, setActiveTabRaw] = useState<AppTab>(urlState.tab);
   const [governanceRouteState, setGovernanceRouteRaw] = useState<GovernanceRouteState | null>(urlState.governanceRoute);
   const [platformAdminSection, setPlatformAdminSectionRaw] = useState<PlatformAdminSection>(urlState.adminSection ?? 'overview');
@@ -256,20 +187,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const streamNonceRef = useRef(0);
   const streamIdRef = useRef<string | null>(null);
   const runIdRef = useRef<string | null>(null);
-  /** 每次当前会话建立不同的 run/stream 绑定时递增，用于拒绝更早 resume 的迟到响应。 */
-  const streamBindingGenerationRef = useRef(0);
-  const advanceStreamBindingGenerationIfChanged = useCallback((next: {
-    streamId?: string | null;
-    runId?: string | null;
-  }): boolean => {
-    const changed = (next.streamId !== undefined && next.streamId !== streamIdRef.current)
-      || (next.runId !== undefined && next.runId !== runIdRef.current);
-    if (changed) streamBindingGenerationRef.current += 1;
-    return changed;
-  }, []);
-  const resumeRequestsRef = useRef(new Map<string, { sessionId: string; generation: number }>());
-  const resumeDedupRef = useRef<{ sessionId: string; generation: number; sentAt: number } | null>(null);
-  const resumeRequestSerialRef = useRef(0);
   const handledTerminalKeysRef = useRef(new Set<string>());
   const lastEventIdRef = useRef<number | null>(null);
   const lastEventCursorRef = useRef<string | null>(null);
@@ -836,78 +753,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   }, [session.updateSessionMeta, session.loadSessions]);
   const sessionRef = useRef(session); sessionRef.current = session;
 
-  const sendCorrelatedResume = useCallback((payload: Omit<WsResumeMessage, 'requestId'>): Promise<boolean> => {
-    const now = Date.now();
-    const generation = streamBindingGenerationRef.current;
-    const previous = resumeDedupRef.current;
-    if (previous?.sessionId === payload.sessionId
-      && previous.generation === generation
-      && now - previous.sentAt < 2_000) {
-      return Promise.resolve(true);
-    }
-
-    const requestId = `resume-${now}-${++resumeRequestSerialRef.current}`;
-    const correlation = { sessionId: payload.sessionId, generation };
-    resumeDedupRef.current = { sessionId: payload.sessionId, generation, sentAt: now };
-    resumeRequestsRef.current.set(requestId, correlation);
-    setTimeout(() => {
-      if (resumeRequestsRef.current.get(requestId) === correlation) {
-        resumeRequestsRef.current.delete(requestId);
-      }
-    }, 30_000);
-
-    return wsClient.ensureConnectedSend({ ...payload, requestId }).then(
-      (ok) => {
-        if (!ok) {
-          resumeRequestsRef.current.delete(requestId);
-        } else {
-          // ensureConnectedSend 可能先等待重连；Promise 在实际 send 后的 microtask 结算，
-          // 此处把相关性校准到真正发出请求时的 binding generation。
-          correlation.generation = streamBindingGenerationRef.current;
-          resumeDedupRef.current = {
-            sessionId: payload.sessionId,
-            generation: correlation.generation,
-            sentAt: Date.now(),
-          };
-        }
-        return ok;
-      },
-      (err) => {
-        resumeRequestsRef.current.delete(requestId);
-        throw err;
-      },
-    );
-  }, []);
-
-  const shouldApplyActiveStreamResponse = useCallback((response: Extract<WsEvent, { type: 'active_stream' }>): boolean => {
-    if (response.requestId) {
-      const request = resumeRequestsRef.current.get(response.requestId);
-      return Boolean(
-        request
-        && request.sessionId === response.sessionId
-        && request.generation === streamBindingGenerationRef.current,
-      );
-    }
-
-    // 兼容尚未 echo requestId 的旧服务端。已有新 run/stream 绑定或当前仍处于
-    // attached/loading 生命周期时，legacy inactive 只能触发刷新，不能直接拆挂；
-    // 新 run 的生命周期信号可能尚未携带 runId/streamId。legacy active 的任一已知
-    // 标识不同都视为迟到响应，避免旧 stream 在 runId 相同/缺失时覆盖新绑定。
-    if (response.sessionId === immediateSessionIdRef.current) {
-      const hasCurrentBinding = Boolean(
-        runIdRef.current || streamIdRef.current || wsAttachedRef.current || loadingRef.current,
-      );
-      if (!response.active && hasCurrentBinding) {
-        sessionRef.current.refreshCurrentSession();
-        return false;
-      }
-      if (response.active) {
-        if (runIdRef.current && response.runId && response.runId !== runIdRef.current) return false;
-        if (streamIdRef.current && response.streamId && response.streamId !== streamIdRef.current) return false;
-      }
-    }
-    return true;
-  }, []);
+  const {
+    streamBindingGenerationRef, advanceStreamBindingGenerationIfChanged,
+    sendCorrelatedResume, shouldApplyActiveStreamResponse,
+  } = useChatStreamCorrelation({ streamIdRef, runIdRef, immediateSessionIdRef, wsAttachedRef, loadingRef, sessionRef });
 
   const attachmentsHydratedRef = useRef(false);
   const attachmentScopeRef = useRef<string | null>(null);
@@ -991,13 +840,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   // - notifications 是 user scope（跨会话保留？业务含义说是 REPL 级，切会话应该清）
   // - lastMemoryRecall / pluginInstallStatus 是 session scope，必须清
   useEffect(() => {
-    setNotifications([]);
-    for (const t of notificationTimersRef.current.values()) clearTimeout(t);
-    notificationTimersRef.current.clear();
-    setLastMemoryRecall(null);
-    setPluginInstallStatus(null);
-    clearPluginInstallTimer();
-  }, [session.sessionId, clearPluginInstallTimer]);
+    resetChatNotifications();
+  }, [session.sessionId, resetChatNotifications]);
 
   const handleModelChange = useCallback((ref: string) => {
     setSelectedModel(ref);
@@ -2000,20 +1844,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         return;
       }
       if (data.type === 'memory_recall') {
-        setLastMemoryRecall((data as { memoryRecall: MemoryRecallData }).memoryRecall);
+        showMemoryRecall((data as { memoryRecall: MemoryRecallData }).memoryRecall);
         return;
       }
       if (data.type === 'plugin_install') {
-        const d = (data as { pluginInstall: PluginInstallData }).pluginInstall;
-        setPluginInstallStatus(d);
-        // 每次状态更新都清掉旧 timer，避免旧 timer 误清新状态（切会话或快速连续推送时）
-        clearPluginInstallTimer();
-        if (d.status === 'completed' || d.status === 'installed' || d.status === 'failed') {
-          pluginInstallTimerRef.current = setTimeout(() => {
-            setPluginInstallStatus((cur) => (cur && cur.status === d.status && cur.name === d.name ? null : cur));
-            pluginInstallTimerRef.current = null;
-          }, 5000);
-        }
+        showPluginInstallStatus((data as { pluginInstall: PluginInstallData }).pluginInstall);
         return;
       }
 

@@ -8,6 +8,8 @@ import {
   TOOL_RESULT_PROJECTION_PREFIX_CHARS,
   TOOL_RESULT_PROJECTION_SUFFIX_CHARS,
 } from './replayEventBounds.js';
+import { encodePgEventNotifyPayload, lockPgEventGlobalSequence, parsePgCursor } from './pgEventStoreProtocol.js';
+export { decodePgEventNotifyPayload, encodePgEventNotifyPayload } from './pgEventStoreProtocol.js';
 
 const { Client, Pool } = pg;
 const NOTIFY_RANGE_PAGE_LIMIT = 250;
@@ -15,11 +17,6 @@ const NOTIFY_RANGE_PAGE_LIMIT = 250;
 // 默认 6 给事件 append/投影/运行状态等并发短事务留出余量；显式配置仍可覆盖。
 const DEFAULT_POOL_MAX = 6;
 const PG_TOO_MANY_CONNECTIONS = '53300';
-
-/** Shared by every runtime_events writer. */
-export function pgEventGlobalSequenceLockKey(eventsTable: string): string {
-  return `${eventsTable}:global-sequence-commit-order`;
-}
 
 function isPgConnectionCapacityError(err: unknown): boolean {
   return typeof err === 'object'
@@ -216,9 +213,7 @@ export class PgEventStore implements EventStore {
       await client.query('BEGIN');
       // Keep new writers commit-ordered as an optimization; read-side SHARE locking below is the
       // compatibility guarantee for rolling-deploy writers that do not take this advisory lock.
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
-        pgEventGlobalSequenceLockKey(this.eventsTable),
-      ]);
+      await lockPgEventGlobalSequence(client, this.eventsTable);
       await client.query(
         `INSERT INTO ${this.cursorsTable} (session_id, next_sequence)
          VALUES ($1, 1)
@@ -913,93 +908,6 @@ function sanitizeIdentifier(value: string): string {
   return value;
 }
 
-function parsePgCursor(cursor?: string): number {
-  if (!cursor) return 0;
-  const parsed = Number.parseInt(cursor, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-}
-
 function normalizeEventJson(raw: PlatformEvent | string): PlatformEvent {
   return typeof raw === 'string' ? JSON.parse(raw) as PlatformEvent : raw;
-}
-
-export interface PgEventNotifyRangePayload {
-  v: 1;
-  type: 'event_range';
-  sessionId: string;
-  afterCursor: string;
-  fromCursor: string;
-  toCursor: string;
-  count: number;
-}
-
-export type PgEventNotifyDecodedPayload =
-  | {
-    kind: 'range';
-    sessionId: string;
-    afterCursor: string;
-    fromCursor: string;
-    toCursor: string;
-    count: number;
-  }
-  | { kind: 'eventId'; eventId: string };
-
-export function encodePgEventNotifyPayload(events: Array<PlatformEvent & { sequence: number }>): string {
-  if (events.length === 0) {
-    throw new Error('cannot encode empty PgEventStore notification payload');
-  }
-  const first = events[0]!;
-  const last = events[events.length - 1]!;
-  if (!first.sessionId) {
-    throw new Error('cannot encode PgEventStore notification payload without sessionId');
-  }
-  return JSON.stringify({
-    v: 1,
-    type: 'event_range',
-    sessionId: first.sessionId,
-    afterCursor: String(first.sequence - 1),
-    fromCursor: String(first.sequence),
-    toCursor: String(last.sequence),
-    count: events.length,
-  } satisfies PgEventNotifyRangePayload);
-}
-
-export function decodePgEventNotifyPayload(payload: string): PgEventNotifyDecodedPayload {
-  try {
-    const parsed = JSON.parse(payload) as Partial<PgEventNotifyRangePayload>;
-    if (
-      parsed
-      && parsed.v === 1
-      && parsed.type === 'event_range'
-      && typeof parsed.sessionId === 'string'
-      && parsed.sessionId.length > 0
-      && typeof parsed.afterCursor === 'string'
-      && typeof parsed.fromCursor === 'string'
-      && typeof parsed.toCursor === 'string'
-      && typeof parsed.count === 'number'
-      && Number.isInteger(parsed.count)
-      && parsed.count > 0
-      && isPositiveCursor(parsed.fromCursor)
-      && isPositiveCursor(parsed.toCursor)
-      && parsePgCursor(parsed.toCursor) >= parsePgCursor(parsed.fromCursor)
-      && parsed.count === parsePgCursor(parsed.toCursor) - parsePgCursor(parsed.fromCursor) + 1
-    ) {
-      return {
-        kind: 'range',
-        sessionId: parsed.sessionId,
-        afterCursor: parsed.afterCursor,
-        fromCursor: parsed.fromCursor,
-        toCursor: parsed.toCursor,
-        count: parsed.count,
-      };
-    }
-  } catch {
-    // Legacy payloads are raw event ids, not JSON.
-  }
-  return { kind: 'eventId', eventId: payload };
-}
-
-function isPositiveCursor(value: string): boolean {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed > 0 && String(parsed) === value;
 }

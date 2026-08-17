@@ -1,6 +1,8 @@
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
 import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import { invokeWithPgActiveRunGate } from './pgToolInvocationRunGate.js';
+import { invokeWithInMemoryActiveRunGate, type ToolInvocationRunGateResult, type ToolInvocationRunGateRunState } from './toolInvocationRunGate.js';
+export type { ToolInvocationRunGateResult, ToolInvocationRunGateRunState } from './toolInvocationRunGate.js';
 
 export type ToolInvocationStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -33,22 +35,6 @@ export interface StartToolInvocationInput {
   tenantId?: string;
   metadata?: Record<string, unknown>;
 }
-
-export type ToolInvocationRunGateRunState = string | {
-  status: string;
-  workerId?: string;
-  leaseExpiresAt?: string;
-};
-
-export type ToolInvocationRunGateResult<T> =
-  | { invoked: true; result: T }
-  | {
-      invoked: false;
-      reason: 'run_missing' | 'run_terminal' | 'run_lease_lost' | 'invocation_missing' | 'invocation_terminal' | 'cancel_requested' | 'invocation_claimed';
-      invocation: ToolInvocationRecord | null;
-      runStatus?: string;
-      runWorkerId?: string;
-    };
 
 export interface ToolInvocationStore {
   start(input: StartToolInvocationInput): Promise<ToolInvocationRecord>;
@@ -211,54 +197,9 @@ export class InMemoryToolInvocationStore implements ToolInvocationStore {
     readRunStatus?: () => Promise<ToolInvocationRunGateRunState | null>,
     expectedWorkerId?: string,
   ): Promise<ToolInvocationRunGateResult<T>> {
-    const runState = readRunStatus ? await readRunStatus() : null;
-    const runStatus = typeof runState === 'string' ? runState : runState?.status;
-    const structuredRunState = typeof runState === 'object' && runState ? runState : undefined;
-    const runWorkerId = structuredRunState?.workerId;
-    const leaseExpiresAt = structuredRunState?.leaseExpiresAt;
-    const leaseExpiresAtMs = leaseExpiresAt ? Date.parse(leaseExpiresAt) : Number.NaN;
-    const invocation = this.invocations.get(invocationId) ?? null;
-    if (readRunStatus && !runStatus) {
-      return { invoked: false, reason: 'run_missing', invocation };
-    }
-    if (expectedWorkerId && (
-      runStatus !== 'running'
-      || runWorkerId !== expectedWorkerId
-      || !Number.isFinite(leaseExpiresAtMs)
-      || leaseExpiresAtMs <= Date.now()
-    )) {
-      return { invoked: false, reason: 'run_lease_lost', invocation, runStatus, runWorkerId };
-    }
-    if (!invocation || invocation.runId !== runId) {
-      return { invoked: false, reason: 'invocation_missing', invocation: null };
-    }
-    if (typeof invocation.metadata.invokeClaimedAt === 'string') {
-      return { invoked: false, reason: 'invocation_claimed', invocation };
-    }
-    if (runStatus && ['completed', 'failed', 'cancelled', 'orphaned'].includes(runStatus)) {
-      return { invoked: false, reason: 'run_terminal', invocation, runStatus };
-    }
-    if (invocation.status !== 'running') {
-      return { invoked: false, reason: 'invocation_terminal', invocation };
-    }
-    if (invocation.cancelRequestedAt) {
-      return { invoked: false, reason: 'cancel_requested', invocation };
-    }
-    const claimed: ToolInvocationRecord = {
-      ...invocation,
-      updatedAt: new Date().toISOString(),
-      metadata: {
-        ...invocation.metadata,
-        invokeClaimedAt: new Date().toISOString(),
-        ...(expectedWorkerId
-          ? { invokeClaimedByWorkerId: expectedWorkerId }
-          : typeof invocation.metadata.workerId === 'string'
-            ? { invokeClaimedByWorkerId: invocation.metadata.workerId }
-            : {}),
-      },
-    };
-    this.invocations.set(invocationId, claimed);
-    return { invoked: true, result: await invoke() };
+    return invokeWithInMemoryActiveRunGate(
+      this.invocations, runId, invocationId, invoke, readRunStatus, expectedWorkerId,
+    );
   }
 
   async complete(invocationId: string, status: Exclude<ToolInvocationStatus, 'running'>, error?: string): Promise<ToolInvocationRecord | null> {

@@ -54,9 +54,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/contexts/AuthContext";
 import type { AuthUser } from "@/types/auth";
 import { useGroups } from "@/hooks/useGroups";
-import {
-  applyGroupOrder,
-} from "@agent/shared";
+import { applyGroupOrder } from "@agent/shared";
 import { useResizableWidth } from "@/hooks/useResizableWidth";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
 import { useTenantBillingAllowance, type BillingAllowance, type TenantBillingSummary } from "@/hooks/useTenantBillingVisibility";
@@ -639,9 +637,7 @@ function SidebarUserMenuFooter({
           )}
           <span className="min-w-0 flex-1 truncate text-[13px] font-semibold leading-tight">
             {authUser ? authUser.realName || authUser.username : "未登录"}
-            {authUser?.tenantName ? (
-              <span className="ml-1.5 align-baseline text-[11px] font-normal text-muted-foreground">{authUser.tenantName}</span>
-            ) : null}
+            {authUser?.tenantName ? <span className="ml-1.5 align-baseline text-[11px] font-normal text-muted-foreground">{authUser.tenantName}</span> : null}
           </span>
           {billingAllowance && billingSummary ? (
             <span className="flex shrink-0 items-center gap-1 rounded-full border border-border/80 bg-background px-2 py-1 text-xs font-medium tabular-nums text-foreground shadow-sm">
@@ -672,10 +668,7 @@ function SidebarUserMenuFooter({
                     <div className="truncate text-base font-semibold">{authUser.realName || authUser.username}</div>
                     <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{roleLabel}</span>
                   </div>
-                  <div className="mt-0.5 truncate text-sm text-muted-foreground">
-                    @{authUser.username}
-                    {authUser.tenantName ? <span className="ml-2">{authUser.tenantName}</span> : null}
-                  </div>
+                  <div className="mt-0.5 truncate text-sm text-muted-foreground">@{authUser.username}{authUser.tenantName ? <span className="ml-2">{authUser.tenantName}</span> : null}</div>
                 </div>
                 <ChevronRight className="size-5 shrink-0 text-muted-foreground" />
               </button>

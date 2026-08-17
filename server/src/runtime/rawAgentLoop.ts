@@ -102,6 +102,9 @@ import {
   unavailableToolMessage,
   type InvalidPromptRequestBlockedFailure,
 } from './rawAgentLoopHelpers.js';
+
+import { ApprovalAlreadyResolvedError, ApprovalPendingWithoutInteractionHook, InteractionPendingWithoutInteractionHook, RunLeaseLostError, ToolInvocationClaimLostError, captureModelStreamError, handleInvocationClaimLoss, readRunLeaseState, resolveClaimedWorkerId } from './rawAgentLoopControlErrors.js';
+import { announceAppliedInterjections as announceInterjections, buildAtomicSteeringInputs, collectDurableInterjectionAnnouncementSourceRunIds, projectAtomicInterjectionEvents } from './rawAgentLoopInterjections.js';
 import {
   COMPACTION_REQUEST_PROMPT,
   COMPACT_COMMAND_MODEL_CONTENT,
@@ -744,13 +747,7 @@ export class RawAgentLoop implements AgentLoop {
     // recoveredEvents 已进入 contextProjection；新 append 的消息只有结算成功后才加入
     // 当前内存 messages，避免 reserve/apply 失败时仍被模型看到。
     const modelContextInterjectionSourceRunIds = new Set(durableInterjectionSourceRunIds);
-    const durableInterjectionAnnouncementSourceRunIds = new Set(
-      recoveredEvents
-        .filter((event): event is Extract<PlatformEvent, { type: 'interjection_applied' }> => (
-          event.type === 'interjection_applied'
-        ))
-        .flatMap((event) => event.sourceRunIds),
-    );
+    const durableInterjectionAnnouncementSourceRunIds = collectDurableInterjectionAnnouncementSourceRunIds(recoveredEvents);
     let steeringAbsorptionDisabled = false;
     const requestSteeringRecoveryHandoff = (reason: string) => {
       steeringAbsorptionDisabled = true;
@@ -803,47 +800,23 @@ export class RawAgentLoop implements AgentLoop {
         try {
           const atomic = await this.runStore.applySteeringInputsAtomically(
             context.runId,
-            reservedInterjections.map((interjection) => ({
-              sourceRunId: interjection.sourceRunId,
-              ...(interjection.clientMsgId ? { clientMsgId: interjection.clientMsgId } : {}),
-              ...(!isCompactCommand(interjection.message.content)
-                && !durableInterjectionSourceRunIds.has(interjection.sourceRunId) ? {
-                event: {
-                  type: 'user_message' as const,
-                  runId: context.runId,
-                  sessionId: context.sessionId,
-                  content: interjection.message.content,
-                  modelContent: interjection.prompt,
-                  ...(interjection.attachments?.length ? { attachments: interjection.attachments } : {}),
-                  ...(interjection.visionAnalysis ? { visionAnalysis: interjection.visionAnalysis } : {}),
-                  interjectionSourceRunId: interjection.sourceRunId,
-                  ...(interjection.clientMsgId ? { clientMsgId: interjection.clientMsgId } : {}),
-                },
-              } : {}),
-            })),
+            buildAtomicSteeringInputs(
+              reservedInterjections, durableInterjectionSourceRunIds, context.runId, context.sessionId,
+            ),
             context.tenantId,
           );
           const appliedSourceRunIdSet = new Set(atomic.appliedSourceRunIds);
           appliedInterjections = reservedInterjections.filter((interjection) => (
             appliedSourceRunIdSet.has(interjection.sourceRunId)
           ));
-          for (const durableEvent of atomic.events) {
-            if (durableEvent.type === 'interjection_applied') {
-              for (const sourceRunId of durableEvent.sourceRunIds) {
-                durableInterjectionAnnouncementSourceRunIds.add(sourceRunId);
-              }
-              continue;
-            }
-            if (durableEvent.type !== 'user_message' || !durableEvent.interjectionSourceRunId) continue;
-            durableInterjectionSourceRunIds.add(durableEvent.interjectionSourceRunId);
-            try {
-              await this.transcriptProjection.project(durableEvent);
-            } catch (error) {
-              logger.warn(
-                `[run] interjection transcript project failed (degraded): run=${context.runId} source=${durableEvent.interjectionSourceRunId} error=${error instanceof Error ? error.message : String(error)}`,
-              );
-            }
-          }
+          await projectAtomicInterjectionEvents({
+            events: atomic.events,
+            durableInterjectionSourceRunIds,
+            durableAnnouncementSourceRunIds: durableInterjectionAnnouncementSourceRunIds,
+            transcriptProjection: this.transcriptProjection,
+            runId: context.runId,
+            warn: (message) => logger.warn(message),
+          });
           if (appliedInterjections.length !== reservedInterjections.length) {
             requestSteeringRecoveryHandoff('steering_atomic_apply_partial');
             const missing = reservedInterjections
@@ -941,40 +914,16 @@ export class RawAgentLoop implements AgentLoop {
       }
       return appliedInterjections;
     };
-    const announceAppliedInterjections = async (
+    const announceAppliedInterjections = (
       interjections: Awaited<ReturnType<typeof drainQueuedInterjections>>,
-    ): Promise<OutboundEvent> => {
-      const appliedPayload = {
-        sourceRunIds: interjections.map((interjection) => interjection.sourceRunId),
-        clientMsgIds: interjections.flatMap((interjection) => (
-          interjection.clientMsgId ? [interjection.clientMsgId] : []
-        )),
-      };
-      const notDurablyAnnounced = interjections.filter((interjection) => (
-        !durableInterjectionAnnouncementSourceRunIds.has(interjection.sourceRunId)
-      ));
-      if (notDurablyAnnounced.length > 0) {
-        try {
-          await this.append({
-            type: 'interjection_applied',
-            runId: context.runId,
-            sessionId: context.sessionId,
-            sourceRunIds: notDurablyAnnounced.map((interjection) => interjection.sourceRunId),
-            clientMsgIds: notDurablyAnnounced.flatMap((interjection) => (
-              interjection.clientMsgId ? [interjection.clientMsgId] : []
-            )),
-          });
-          for (const interjection of notDurablyAnnounced) {
-            durableInterjectionAnnouncementSourceRunIds.add(interjection.sourceRunId);
-          }
-        } catch (error) {
-          logger.warn(
-            `[run] durable interjection_applied append failed: run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-      }
-      return { type: 'interjection_applied', ...appliedPayload };
-    };
+    ): Promise<OutboundEvent> => announceInterjections({
+      interjections,
+      durableSourceRunIds: durableInterjectionAnnouncementSourceRunIds,
+      runId: context.runId,
+      sessionId: context.sessionId,
+      append: (event) => this.append(event),
+      warn: (message) => logger.warn(message),
+    });
 
     if (contextProjection.summaryEvent) await this.append(contextProjection.summaryEvent);
     if (input.memoryContext) {
@@ -1824,9 +1773,11 @@ export class RawAgentLoop implements AgentLoop {
         return;
       }
       if (err instanceof ToolInvocationClaimLostError) {
-        if (await this.shouldFailRunAfterInvocationClaimLoss(err, context)) {
-          yield await this.failRunAfterInvocationClaimLoss(err, context, 'run');
-        } else {
+        const failure = await handleInvocationClaimLoss(
+          err, context, this.runStore, (event) => this.append(event), 'run',
+        );
+        if (failure) yield failure;
+        else {
           if (thinkingStarted) yield { type: 'thinking_end' };
           if (textStarted) yield { type: 'text_end' };
         }
@@ -2158,37 +2109,6 @@ export class RawAgentLoop implements AgentLoop {
         error: message,
       };
     }
-  }
-
-  private async shouldFailRunAfterInvocationClaimLoss(
-    err: ToolInvocationClaimLostError,
-    context: RunContext,
-  ): Promise<boolean> {
-    if (!context.workerId || !this.runStore) return false;
-    const run = await this.runStore.get(context.runId).catch(() => null);
-    return run?.status === 'running'
-      && run.workerId === context.workerId
-      && (!err.claimedWorkerId || err.claimedWorkerId !== context.workerId);
-  }
-
-  private async failRunAfterInvocationClaimLoss(
-    err: ToolInvocationClaimLostError,
-    context: RunContext,
-    phase: string,
-  ): Promise<OutboundEvent> {
-    await this.append({
-      type: 'run_finished',
-      runId: context.runId,
-      sessionId: context.sessionId,
-      subtype: 'error',
-      numTurns: 0,
-      error: err.message,
-    });
-    await context.hooks?.onResult?.({ subtype: 'error', numTurns: 0, resultText: '' });
-    logger.error(
-      `[${phase}] failed closed after stale invocation claim session=${context.sessionId} run=${context.runId}: ${err.message}`,
-    );
-    return { type: 'error', error: err.message };
   }
 
   private async recoverUnclosedToolCalls(
@@ -2590,9 +2510,10 @@ export class RawAgentLoop implements AgentLoop {
     } catch (err) {
       if (err instanceof RunLeaseLostError) return;
       if (err instanceof ToolInvocationClaimLostError) {
-        if (await this.shouldFailRunAfterInvocationClaimLoss(err, resumeContext)) {
-          yield await this.failRunAfterInvocationClaimLoss(err, resumeContext, 'approval_resume');
-        }
+        const failure = await handleInvocationClaimLoss(
+          err, resumeContext, this.runStore, (event) => this.append(event), 'approval_resume',
+        );
+        if (failure) yield failure;
         return;
       }
       throw err;
@@ -2618,9 +2539,10 @@ export class RawAgentLoop implements AgentLoop {
     } catch (err) {
       if (err instanceof RunLeaseLostError) return;
       if (err instanceof ToolInvocationClaimLostError) {
-        if (await this.shouldFailRunAfterInvocationClaimLoss(err, resumeContext)) {
-          yield await this.failRunAfterInvocationClaimLoss(err, resumeContext, 'approval_resume');
-        }
+        const failure = await handleInvocationClaimLoss(
+          err, resumeContext, this.runStore, (event) => this.append(event), 'approval_resume',
+        );
+        if (failure) yield failure;
         return;
       }
       if (err instanceof ApprovalPendingWithoutInteractionHook) return;
@@ -2762,9 +2684,10 @@ export class RawAgentLoop implements AgentLoop {
     } catch (err) {
       if (err instanceof RunLeaseLostError) return;
       if (err instanceof ToolInvocationClaimLostError) {
-        if (await this.shouldFailRunAfterInvocationClaimLoss(err, context)) {
-          yield await this.failRunAfterInvocationClaimLoss(err, context, 'interaction_resume');
-        }
+        const failure = await handleInvocationClaimLoss(
+          err, context, this.runStore, (event) => this.append(event), 'interaction_resume',
+        );
+        if (failure) yield failure;
         return;
       }
       if (err instanceof ApprovalPendingWithoutInteractionHook) return;
@@ -3216,12 +3139,7 @@ export class RawAgentLoop implements AgentLoop {
           invocationId,
           invokeTool,
           this.runStore
-            ? async () => {
-              const run = await this.runStore!.get(args.context.runId);
-              return run
-                ? { status: run.status, workerId: run.workerId, leaseExpiresAt: run.leaseExpiresAt }
-                : null;
-            }
+            ? () => readRunLeaseState(this.runStore!, args.context.runId)
             : undefined,
           args.context.workerId,
         )
@@ -3234,12 +3152,7 @@ export class RawAgentLoop implements AgentLoop {
         invocationAlreadyTerminal = guarded.reason === 'invocation_terminal' || guarded.reason === 'invocation_claimed';
         cancelledBeforeInvoke = guarded.reason === 'cancel_requested' || guarded.runStatus === 'cancelled';
         if (guarded.reason === 'invocation_claimed') {
-          const claimedWorkerId = typeof guarded.invocation?.metadata.invokeClaimedByWorkerId === 'string'
-            ? guarded.invocation.metadata.invokeClaimedByWorkerId
-            : typeof guarded.invocation?.metadata.workerId === 'string'
-              ? guarded.invocation.metadata.workerId
-              : undefined;
-          throw new ToolInvocationClaimLostError(invocationId, claimedWorkerId);
+          throw new ToolInvocationClaimLostError(invocationId, resolveClaimedWorkerId(guarded.invocation));
         }
         const reason = cancelledBeforeInvoke
           ? 'run is already cancelled'
@@ -3951,9 +3864,11 @@ export class RawAgentLoop implements AgentLoop {
         return;
       }
       if (err instanceof ToolInvocationClaimLostError) {
-        if (await this.shouldFailRunAfterInvocationClaimLoss(err, args.context)) {
-          yield await this.failRunAfterInvocationClaimLoss(err, args.context, 'resume');
-        } else {
+        const failure = await handleInvocationClaimLoss(
+          err, args.context, this.runStore, (event) => this.append(event), 'resume',
+        );
+        if (failure) yield failure;
+        else {
           if (thinkingStarted) yield { type: 'thinking_end' };
           if (textStarted) yield { type: 'text_end' };
         }
@@ -4126,54 +4041,5 @@ export class RawAgentLoop implements AgentLoop {
   private async append(event: Parameters<EventStore['append']>[0]): Promise<void> {
     const stored = await this.eventStore.append(event);
     await this.transcriptProjection.project(stored);
-  }
-}
-
-async function* captureModelStreamError(
-  stream: AsyncIterable<ModelEvent>,
-  onError: (error: unknown) => void,
-): AsyncGenerator<ModelEvent> {
-  try {
-    yield* stream;
-  } catch (error) {
-    onError(error);
-  }
-}
-
-class RunLeaseLostError extends Error {
-  constructor(runId: string, expectedWorkerId?: string, currentWorkerId?: string) {
-    super(
-      `run lease lost before tool invocation: ${runId}`
-      + ` expected=${expectedWorkerId ?? 'unknown'} current=${currentWorkerId ?? 'unknown'}`,
-    );
-    this.name = 'RunLeaseLostError';
-  }
-}
-
-class ToolInvocationClaimLostError extends Error {
-  constructor(invocationId: string, readonly claimedWorkerId?: string) {
-    super(`tool invocation already claimed by another worker: ${invocationId}`);
-    this.name = 'ToolInvocationClaimLostError';
-  }
-}
-
-class ApprovalAlreadyResolvedError extends Error {
-  constructor(approvalId: string) {
-    super(`approval already resolved: ${approvalId}`);
-    this.name = 'ApprovalAlreadyResolvedError';
-  }
-}
-
-class ApprovalPendingWithoutInteractionHook extends Error {
-  constructor(approvalId: string) {
-    super(`approval pending without interaction hook: ${approvalId}`);
-    this.name = 'ApprovalPendingWithoutInteractionHook';
-  }
-}
-
-class InteractionPendingWithoutInteractionHook extends Error {
-  constructor(readonly event: InteractionEvent) {
-    super(`interaction pending without interaction hook: ${event.interactionId}`);
-    this.name = 'InteractionPendingWithoutInteractionHook';
   }
 }

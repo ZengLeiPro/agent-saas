@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 301431,
-    "startupCssGzipBytes": 32258,
-    "startupJsBrotliBytes": 240423,
-    "startupCssBrotliBytes": 25851,
-    "largestJsGzipBytes": 301431,
-    "largestCssGzipBytes": 32258,
-    "largestJsBrotliBytes": 240423,
-    "largestCssBrotliBytes": 25851,
-    "largestJs": "assets/index-gUZV_UZD.js",
-    "largestCss": "assets/index-ED_tn1g1.css"
+    "startupJsGzipBytes": 302669,
+    "startupCssGzipBytes": 32233,
+    "startupJsBrotliBytes": 241432,
+    "startupCssBrotliBytes": 25753,
+    "largestJsGzipBytes": 302669,
+    "largestCssGzipBytes": 32233,
+    "largestJsBrotliBytes": 241432,
+    "largestCssBrotliBytes": 25753,
+    "largestJs": "assets/index-CNSj61v9.js",
+    "largestCss": "assets/index-BIsVGANp.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "TASK-46 队列一致性将排队、取消与恢复状态纳入首屏会话状态机；CI 实测启动 JS 增加 1524 B gzip、1344 B brotli，仍远低于 450000 B 单包绝对上限",
-  "updatedAt": "2026-08-16"
+  "reason": "插话重连新增 requestId 与 binding generation 关联，阻止迟到 active_stream 响应拆除新 Run；生产构建启动 JS 增加 1238 B gzip，仍远低于 450000 B 单包绝对上限",
+  "updatedAt": "2026-08-17"
 }

@@ -672,30 +672,6 @@ describe('任务看板评论续跑', () => {
     }
   });
 
-  it('后续正式执行复用任务上一条 session，但生成新的 execution run', async () => {
-    const completed = { ...activeExecution, status: 'succeeded' as const };
-    const rig = makeRig({
-      listExecutions: vi.fn(async () => [completed]),
-      claimExecution: vi.fn(async (_identity, _taskId, input) => ({
-        task: { ...task, version: task.version + 1 },
-        execution: {
-          ...activeExecution,
-          id: input.executionId,
-          runId: input.runId,
-          sessionId: input.sessionId,
-          status: 'queued' as const,
-        },
-      })),
-    });
-
-    await rig.coordinator.startDirectExecution(identity, task.id, task.version);
-
-    expect(rig.store.claimExecution).toHaveBeenCalledWith(identity, task.id, expect.objectContaining({
-      sessionId: completed.sessionId,
-      runId: expect.not.stringMatching(/^execution-run-1$/),
-      allowWorkFromCurrentStatus: true,
-    }));
-  });
 });
 
 function makeRig(

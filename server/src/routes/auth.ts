@@ -47,6 +47,7 @@ import { softDeleteUserResources } from "../data/users/cleanup.js";
 import type { McpOAuthService } from "../mcp/oauthService.js";
 import { ALLOWED_AVATAR_TYPES, buildAvatarUrl } from './authAvatar.js';
 import { createLegacyAuthWriteGate, type LegacyAuthWriteGateDeps } from './authLegacyWriteGate.js';
+import { startLoginRateCleanup, type RateBucket } from './authLoginRate.js';
 
 // ---- Zod schemas ----
 
@@ -250,23 +251,10 @@ function selfUpdateError(
 const MAX_ATTEMPTS = 5;
 const WINDOW_MS = 60_000;
 
-interface RateBucket {
-  startedAt: number;
-  count: number;
-}
-
 const loginAttempts = new Map<string, RateBucket>();
-
-// 定期清理过期桶（每 2 分钟），unref() 避免阻止进程优雅退出
-const cleanupTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [ip, bucket] of loginAttempts) {
-    if (now - bucket.startedAt > WINDOW_MS) {
-      loginAttempts.delete(ip);
-    }
-  }
-}, WINDOW_MS * 2);
-cleanupTimer.unref();
+// Keep one cleanup timer and one bucket map for the process-wide auth router module.
+// Login decisions below continue to share this in-memory rate-limit state.
+startLoginRateCleanup(loginAttempts, WINDOW_MS);
 
 function checkLoginRate(ip: string): { allowed: boolean; retryAfter?: number } {
   const now = Date.now();

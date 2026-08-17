@@ -24,6 +24,8 @@ export function taskTableSql(tasksTable: string, boardsTable: string): string {
       creator_name TEXT,
       provider_pull_request_id TEXT,
       pull_request_number INTEGER,
+      head_oid TEXT,
+      base_oid TEXT,
       reviewed_subject_digest TEXT,
       merged_commit_oid TEXT,
       completed_at TIMESTAMPTZ,
@@ -46,6 +48,8 @@ export function taskFieldsMigrationSql(tasksTable: string): string {
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'delivery';
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS provider_pull_request_id TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS pull_request_number INTEGER;
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS head_oid TEXT;
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS base_oid TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS reviewed_subject_digest TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS merged_commit_oid TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;

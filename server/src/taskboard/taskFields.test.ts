@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TASKBOARD_STATUSES } from '../../../shared/src/types/taskboard.js';
-import { executionFieldMigrationSql } from './executionFields.js';
+import { executionFieldMigrationSql, taskFieldMigrationSql } from './executionFields.js';
 import { taskFieldsMigrationSql, taskTableSql } from './taskFields.js';
 
 const EXPECTED_STATUSES = [
@@ -44,5 +44,18 @@ describe('taskboard task status DDL', () => {
     expect(sql).toContain(
       'CREATE INDEX IF NOT EXISTS runtime_taskboard_execs_session_idx ON runtime_taskboard_execs (session_id, created_at DESC)',
     );
+  });
+
+  it('defines every delivery evidence column written by pull request registration', () => {
+    const ddl = taskTableSql('runtime_taskboard_tasks', 'runtime_taskboards');
+    const migration = taskFieldsMigrationSql('runtime_taskboard_tasks');
+    for (const column of ['head_oid', 'base_oid']) {
+      expect(ddl).toContain(`${column} TEXT`);
+      expect(migration).toContain(
+        `ALTER TABLE runtime_taskboard_tasks ADD COLUMN IF NOT EXISTS ${column} TEXT;`,
+      );
+    }
+    // branch 由 executionFields.ts 的 taskFieldMigrationSql 补建，此处只确认整体不丢失
+    expect(taskFieldMigrationSql('runtime_taskboard_tasks')).toContain('branch TEXT');
   });
 });

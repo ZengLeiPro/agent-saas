@@ -998,6 +998,7 @@ export function buildInstructionSections(params: {
   profileSystemInstructions?: string;
   /** 任务看板 Execution 的稳定职责总纲；不含 task 数据或阶段分支。 */
   taskboardExecution?: boolean;
+  taskboardStagePrompt?: string;
 }): Array<{ key: string; name: string; content: string }> {
   const modules = new Set(params.contextModules
     ?? ['company_info', 'tenant_instructions', 'runtime_memory', 'personal_context']);
@@ -1076,9 +1077,7 @@ export function buildInstructionSections(params: {
       personalVars,
     ),
   });
-  appendTaskboardExecutionInstruction(sections, params.taskboardExecution, () => (
-    params.getSystemPrompt?.('main.taskboardExecution') ?? loadPrompt(params.sharedDir, 'taskboard-execution')
-  ));
+  appendTaskboardExecutionInstruction(sections, params.taskboardExecution, () => params.taskboardStagePrompt?.trim() || params.getSystemPrompt?.('main.taskboardExecution') || loadPrompt(params.sharedDir, 'taskboard-execution'));
   return sections;
 }
 export function buildInstructions(params: Parameters<typeof buildInstructionSections>[0]): string {
@@ -1554,7 +1553,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           isPlatformAdmin,
           memoryPolicyVersion,
           getSystemPrompt: config.getSystemPrompt,
-          taskboardExecution: sessionId.startsWith('taskboard-'),
+          taskboardExecution: sessionId.startsWith('taskboard-'), taskboardStagePrompt: options.taskboardStagePrompt,
           ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
           ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
           ...(orgAgent ? { orgAgent } : {}),
@@ -2192,7 +2191,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       isPlatformAdmin: resumeIsPlatformAdmin,
       memoryPolicyVersion,
       getSystemPrompt: config.getSystemPrompt,
-      taskboardExecution: request.sessionId.startsWith('taskboard-'),
+      taskboardExecution: request.sessionId.startsWith('taskboard-'), taskboardStagePrompt: request.taskboardStagePrompt,
       ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
       ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
       ...(orgAgent ? { orgAgent } : {}),
@@ -2659,7 +2658,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       isPlatformAdmin: resumeIsPlatformAdmin,
       memoryPolicyVersion,
       getSystemPrompt: config.getSystemPrompt,
-      taskboardExecution: request.sessionId.startsWith('taskboard-'),
+      taskboardExecution: request.sessionId.startsWith('taskboard-'), taskboardStagePrompt: request.taskboardStagePrompt,
       ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
       ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
       ...(orgAgent ? { orgAgent } : {}),
@@ -3015,7 +3014,7 @@ export async function wakeRuntimeSession(
         model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
-        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}), ...(run.metadata.dispatcherCompletion === true ? { dispatcherCompletion: true } : {}),
+        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}), ...(run.metadata.dispatcherCompletion === true ? { dispatcherCompletion: true } : {}), ...(typeof run.metadata.taskboardStagePrompt === 'string' ? { taskboardStagePrompt: run.metadata.taskboardStagePrompt } : {}),
         abortController,
         runtimeWorkerId: options.lease?.workerId,
         runtimeDrainHandoff: drainHandoff,
@@ -3088,7 +3087,7 @@ export async function wakeRuntimeSession(
         model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
-        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}), ...(run.metadata.dispatcherCompletion === true ? { dispatcherCompletion: true } : {}),
+        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}), ...(run.metadata.dispatcherCompletion === true ? { dispatcherCompletion: true } : {}), ...(typeof run.metadata.taskboardStagePrompt === 'string' ? { taskboardStagePrompt: run.metadata.taskboardStagePrompt } : {}),
         abortController,
         runtimeWorkerId: options.lease?.workerId,
         runtimeDrainHandoff: drainHandoff,
@@ -3154,7 +3153,7 @@ export async function wakeRuntimeSession(
         model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
-        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}), ...(run.metadata.dispatcherCompletion === true ? { dispatcherCompletion: true } : {}),
+        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}), ...(run.metadata.dispatcherCompletion === true ? { dispatcherCompletion: true } : {}), ...(typeof run.metadata.taskboardStagePrompt === 'string' ? { taskboardStagePrompt: run.metadata.taskboardStagePrompt } : {}),
         ...(session.orgAgentId ? { orgAgentId: session.orgAgentId } : {}),
         recordUserMessage: wakePrompt.recordUserMessage,
         abortController,

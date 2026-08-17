@@ -1,11 +1,14 @@
 import {
   TASKBOARD_ALLOWED_ACTIONS,
   TASKBOARD_DEFAULT_PROMPT,
+  TASKBOARD_EXECUTION_PURPOSES,
   type TaskBoard,
   type TaskBoardAllowedAction,
+  type TaskBoardExecutionPurpose,
   type TaskBoardIntegrationPolicy,
   type TaskBoardMemberRole,
   type TaskBoardRepositoryConfig,
+  type TaskBoardStagePrompts,
 } from '../../../shared/src/types/taskboard.js';
 
 const LEGACY_TASKBOARD_DEFAULT_PROMPT = [
@@ -35,6 +38,13 @@ export function boardModelMigrationSql(boardsTable: string): string {
   return `
     ALTER TABLE ${boardsTable}
       ADD COLUMN IF NOT EXISTS model TEXT
+  `;
+}
+
+export function boardStagePromptsMigrationSql(boardsTable: string): string {
+  return `
+    ALTER TABLE ${boardsTable}
+      ADD COLUMN IF NOT EXISTS stage_prompts JSONB NOT NULL DEFAULT '{}'::jsonb
   `;
 }
 
@@ -79,6 +89,27 @@ export function normalizeBoardPrompt(value: string): string {
   return value.trim();
 }
 
+/**
+ * 归一化各阶段提示语：只保留非空白字符串的阶段配置，其余阶段视为未覆盖（执行时回退系统固定模板）。
+ * 传入 null/undefined 表示整体清除（全部回退系统固定模板）。
+ */
+export function normalizeStagePrompts(
+  value: TaskBoardStagePrompts | null | undefined,
+): TaskBoardStagePrompts {
+  if (!value || typeof value !== 'object') return {};
+  return Object.fromEntries(
+    TASKBOARD_EXECUTION_PURPOSES.flatMap((purpose) => {
+      const content = value[purpose];
+      const normalized = typeof content === 'string' ? content.trim() : '';
+      return normalized ? [[purpose, normalized] as const] : [];
+    }),
+  );
+}
+
+export function stagePromptsToJson(value: TaskBoardStagePrompts | null | undefined): string {
+  return JSON.stringify(normalizeStagePrompts(value));
+}
+
 /** 模型 ref： trim 后为空视为未设置（继承上级默认）。 */
 export function normalizeModel(value: string | null | undefined): string | null {
   const normalized = value?.trim();
@@ -90,6 +121,7 @@ export function rowToBoard(row: Record<string, unknown>, currentUserId: string):
   const role = resolveBoardRole(row, currentUserId);
   const repository = parseJsonObject<TaskBoardRepositoryConfig>(row.repository);
   const integrationPolicy = parseJsonObject<TaskBoardIntegrationPolicy>(row.integration_policy);
+  const stagePrompts = parseStagePrompts(row.stage_prompts);
   return {
     id: String(row.id),
     name: String(row.name),
@@ -102,6 +134,7 @@ export function rowToBoard(row: Record<string, unknown>, currentUserId: string):
     allowedActions: allowedActionsForRole(role),
     canManage: role === 'owner',
     prompt: String(row.prompt ?? TASKBOARD_DEFAULT_PROMPT),
+    ...(Object.keys(stagePrompts).length ? { stagePrompts } : {}),
     ...(row.model !== null && row.model !== undefined && String(row.model).trim()
       ? { model: String(row.model) }
       : {}),
@@ -162,6 +195,16 @@ export function parseJsonObject<T>(value: unknown): T | undefined {
   } catch {
     return undefined;
   }
+}
+
+export function parseStagePrompts(value: unknown): TaskBoardStagePrompts {
+  const parsed = parseJsonObject<Record<string, unknown>>(value);
+  if (!parsed) return {};
+  return normalizeStagePrompts({
+    ...(typeof parsed.work === 'string' ? { work: parsed.work } : {}),
+    ...(typeof parsed.review === 'string' ? { review: parsed.review } : {}),
+    ...(typeof parsed.merge === 'string' ? { merge: parsed.merge } : {}),
+  });
 }
 
 function toIso(value: unknown): string {

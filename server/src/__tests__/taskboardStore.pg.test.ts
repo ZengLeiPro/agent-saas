@@ -278,6 +278,34 @@ describePg('PgTaskboardStore contract', () => {
     expect(empty.prompt).toBe('');
   });
 
+  it('stores per-stage prompts, normalizes blanks, and clears them via null', async () => {
+    const board = await store.createBoard(alice, {
+      name: '阶段提示语',
+      stagePrompts: {
+        work: '  只负责实施。  ',
+        review: '   ',
+        merge: '负责合并交付。',
+      },
+    });
+    // 只保留非空白阶段；空白阶段视为未覆盖。
+    expect(board.stagePrompts).toEqual({ work: '只负责实施。', merge: '负责合并交付。' });
+
+    const patched = await store.updateBoard(alice, board.id, {
+      stagePrompts: { review: '复核时检查证据链。' },
+      expectedVersion: board.version,
+    });
+    expect(patched.stagePrompts).toEqual({ review: '复核时检查证据链。' });
+
+    const cleared = await store.updateBoard(alice, board.id, {
+      stagePrompts: null,
+      expectedVersion: patched.version,
+    });
+    expect(cleared.stagePrompts).toBeUndefined();
+
+    const reloaded = await store.getBoard(alice, board.id);
+    expect(reloaded.stagePrompts).toBeUndefined();
+  });
+
   it('stores board/task model overrides and exposes them through the execution model context', async () => {
     const board = await store.createBoard(alice, { name: '模型继承', model: 'group-a/model-board', repository: testRepository });
     expect(board.model).toBe('group-a/model-board');

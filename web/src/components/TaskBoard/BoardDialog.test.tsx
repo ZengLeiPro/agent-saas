@@ -161,6 +161,66 @@ describe("BoardDialog", () => {
     });
   });
 
+  it("创建看板时展示各阶段提示语默认值，编辑后随创建请求提交", async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn(async () => undefined);
+    render(
+      <BoardDialog
+        open
+        onOpenChange={vi.fn()}
+        onCreate={onCreate}
+        onUpdate={vi.fn(async () => undefined)}
+      />,
+    );
+
+    // 默认展示固定模板文本。
+    const work = screen.getByRole("textbox", { name: "实施（work）" }) as HTMLTextAreaElement;
+    expect(work.value).toContain("## 任务看板执行职责");
+    // 未编辑时不随创建请求提交。
+    await user.type(screen.getByRole("textbox", { name: "名称" }), "阶段提示语看板");
+    await user.click(screen.getByRole("button", { name: "创建看板" }));
+    expect(onCreate).toHaveBeenCalledWith(expect.not.objectContaining({ stagePrompts: expect.anything() }));
+
+    // 编辑后仅提交与默认不同的阶段。
+    const review = screen.getByRole("textbox", { name: "复核（review）" });
+    await user.clear(review);
+    await user.type(review, "复核时检查证据链。");
+    await user.click(screen.getByRole("button", { name: "创建看板" }));
+    expect(onCreate).toHaveBeenLastCalledWith(expect.objectContaining({
+      stagePrompts: { review: "复核时检查证据链。" },
+    }));
+  });
+
+  it("编辑看板时加载已有阶段提示语，改动后提交完整覆盖", async () => {
+    const user = userEvent.setup();
+    const onUpdate = vi.fn(async () => undefined);
+    render(
+      <BoardDialog
+        open
+        board={{
+          ...board,
+          stagePrompts: { work: "只负责实施。", merge: "负责合并交付。" },
+        }}
+        onOpenChange={vi.fn()}
+        onCreate={vi.fn(async () => undefined)}
+        onUpdate={onUpdate}
+      />,
+    );
+
+    const work = screen.getByRole("textbox", { name: "实施（work）" }) as HTMLTextAreaElement;
+    expect(work.value).toBe("只负责实施。");
+    const merge = screen.getByRole("textbox", { name: "集成（merge）" }) as HTMLTextAreaElement;
+    expect(merge.value).toBe("负责合并交付。");
+
+    await user.clear(merge);
+    await user.type(merge, "合并前必须绿色检查。");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(onUpdate).toHaveBeenCalledWith(board.id, {
+      stagePrompts: { work: "只负责实施。", merge: "合并前必须绿色检查。" },
+      expectedVersion: board.version,
+    });
+  });
+
   it("提交期间锁定全部表单控件，请求完成后再关闭", async () => {
     const user = userEvent.setup();
     let resolveUpdate!: () => void;

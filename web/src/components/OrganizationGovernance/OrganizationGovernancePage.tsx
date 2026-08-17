@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
-import { RefreshCw, TriangleAlert } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { RefreshCw, TriangleAlert, UserPlus } from "lucide-react";
 
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
 import { MembershipIdentityActions } from "@/components/OrganizationGovernance/MembershipIdentityActions";
 import { MemoryKnowledgeGovernance } from "@/components/OrganizationGovernance/MemoryKnowledgeGovernance";
+import { UserFormDialog, type UserFormData } from "@/components/UserManager/UserFormDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/contexts/AuthContext";
+import { authFetch } from "@/lib/authFetch";
 import { useGovernanceRequest } from "@/hooks/useGovernanceRequest";
 import { governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
 import { navigateGovernance } from "@/lib/urlSync";
@@ -196,8 +199,14 @@ function Loading() {
   return <div className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">正在读取治理权威数据…</div>;
 }
 
-function SectionTitle({ title, description }: { title: string; description: string }) {
-  return <div className="mb-5"><h2 className="text-xl font-semibold">{title}</h2><p className="mt-1 text-sm text-muted-foreground">{description}</p></div>;
+function SectionTitle({ title, description, action }: { title: string; description: string; action?: ReactNode }) {
+  return <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+    <div>
+      <h2 className="text-xl font-semibold">{title}</h2>
+      <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+    </div>
+    {action}
+  </div>;
 }
 
 function Empty({ text }: { text: string }) {
@@ -239,6 +248,45 @@ function OrganizationMemberDetails({ tenantId, userId, tab }: { tenantId: string
   </div>;
 }
 
+/** 成员与权限 · 成员页的“添加成员”入口；无权限时不渲染按钮，原因由 MemberAddPermissionNotice 说明。 */
+function AddMemberEntry({ tenantId, onCreated }: { tenantId: string; onCreated: () => void }) {
+  const { isAdmin } = useAuth();
+  const [open, setOpen] = useState(false);
+  if (!isAdmin) return null;
+
+  const submit = async (data: UserFormData) => {
+    // 组织锁定为当前页面的 tenantId；后端仍会按管理员身份复核（组织管理员强制归属自身组织）。
+    const response = await authFetch("/api/auth/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...data, tenantId }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error((payload as { error?: string }).error || `添加成员失败（HTTP ${response.status}）`);
+    }
+    onCreated();
+  };
+
+  return <>
+    <Button size="sm" onClick={() => setOpen(true)}>
+      <UserPlus className="size-4" />
+      添加成员
+    </Button>
+    <UserFormDialog open={open} onOpenChange={setOpen} editingUser={null} onSubmit={submit} defaultTenantId={tenantId} lockTenant />
+  </>;
+}
+
+/** 无成员管理权限的账号看到原因与指引，而不是只静默隐藏入口。 */
+function MemberAddPermissionNotice() {
+  const { user, isAdmin } = useAuth();
+  if (isAdmin) return null;
+  return <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm" role="note">
+    <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+    <span>当前账号（{user?.username ?? "身份未知"}）没有成员管理权限：新增组织成员需要组织管理员或平台管理员身份。如需添加成员，请联系本组织管理员或平台管理员在「成员与权限 · 成员」页操作。</span>
+  </div>;
+}
+
 export function OrganizationMembersPage({ tenantId, route }: { tenantId: string; route: GovernanceRouteState }) {
   const request = useMemo(() => () => governanceAccessApi.listMemberships<MembershipResponse>(tenantId), [tenantId]);
   const { data, loading, error, retry } = useGovernanceRequest(request, `members:${tenantId}`);
@@ -251,8 +299,20 @@ export function OrganizationMembersPage({ tenantId, route }: { tenantId: string;
     return <OrganizationMemberDetails tenantId={tenantId} userId={route.entityId} tab={route.tab ?? "profile"} />;
   }
 
+  // 用户落库后治理成员关系投影是异步的：立即刷新一次，再延迟补刷，避免新成员短暂缺席列表。
+  const handleMemberCreated = () => {
+    void retry();
+    window.setTimeout(() => void retry(), 600);
+    window.setTimeout(() => void retry(), 2000);
+  };
+
   return <div>
-    <SectionTitle title={route.routeId === "organization.members.owners" ? "组织所有者与管理员" : "成员与权限"} description="治理身份、所有者标记和状态来自成员关系权威数据。" />
+    <SectionTitle
+      title={route.routeId === "organization.members.owners" ? "组织所有者与管理员" : "成员与权限"}
+      description="治理身份、所有者标记和状态来自成员关系权威数据。"
+      action={route.routeId === "organization.members.list" ? <AddMemberEntry tenantId={tenantId} onCreated={handleMemberCreated} /> : undefined}
+    />
+    {route.routeId === "organization.members.list" ? <MemberAddPermissionNotice /> : null}
     {memberships.length === 0 ? <Empty text="当前组织没有可展示的治理成员关系。" /> : (
       <div className="overflow-x-auto rounded-xl border bg-card" tabIndex={0} aria-label="成员治理列表，可横向滚动">
         <table className="min-w-[900px] w-full text-sm"><thead className="bg-muted/50 text-left text-muted-foreground"><tr><th className="px-4 py-3">成员</th><th className="px-4 py-3">身份</th><th className="px-4 py-3">状态</th><th className="px-4 py-3">版本</th><th className="px-4 py-3">身份治理</th><th className="px-4 py-3">详情</th></tr></thead>

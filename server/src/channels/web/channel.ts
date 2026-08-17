@@ -27,6 +27,7 @@ import type {
   OutboundEvent,
   ContextUsageData,
 } from '../../types/index.js';
+import { scanBufferForPendingInteractions } from './interactionRecovery.js';
 import type { AgentRunDispatch, AgentRunHooks } from '../../agent/types.js';
 import type { ExecutionTargetKind } from '../../agent/toolRuntime.js';
 import { toRunModelOptions } from '../../app/models.js';
@@ -2302,15 +2303,14 @@ export class WebChannel implements BaseChannel {
     }
   }
 
-  /** 推送 pending 交互给客户端 */
   private pushPendingInteractions(client: WsClient, sessionId: string): void {
     const pending = interactionStore.getPendingInteractions(sessionId);
-    if (pending.length > 0) {
-      this.wsSend(client.ws, {
-        type: 'pending_interactions',
-        interactions: pending,
-      });
-    }
+    const recovered = scanBufferForPendingInteractions(
+      this.eventBufferStore.getEventsAfter(sessionId, 0)?.events,
+      new Set(pending.map((entry) => entry.interactionId)),
+    );
+    if (recovered.length > 0) pending.push(...recovered);
+    if (pending.length > 0) this.wsSend(client.ws, { type: 'pending_interactions', interactions: pending });
   }
 
   // ── 核心聊天处理逻辑 ──────────────────────────────────

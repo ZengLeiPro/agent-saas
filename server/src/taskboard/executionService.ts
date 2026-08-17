@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type {
   TaskBoardExecution,
+  TaskBoardExecutionPurpose,
   TaskBoardExecutionStartInput,
   TaskBoardExecutionStartResult,
 } from '../../../shared/src/types/taskboard.js';
@@ -296,7 +297,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     input: TaskBoardExecutionStartInput,
     options: { allowWorkFromCurrentStatus?: boolean; executionId?: string } = {},
   ): Promise<TaskboardExecutionClaimInput> {
-    const launch = await this.resolveLaunch(identity, taskId);
+    const launch = await this.resolveLaunch(identity, taskId, input.purpose);
     const purpose = input.purpose ?? (launch.modelContext.taskKind === 'integration' ? 'merge' : 'work');
     const executions = purpose === 'work'
       ? await this.options.store.listExecutions(identity, taskId)
@@ -365,7 +366,11 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     };
   }
 
-  private async resolveLaunch(identity: TaskboardIdentity, taskId: string) {
+  private async resolveLaunch(
+    identity: TaskboardIdentity,
+    taskId: string,
+    purpose?: TaskBoardExecutionPurpose,
+  ) {
     const modelContext = await this.options.store.getExecutionModelContext(identity, taskId);
     if (modelContext.allowedActions && !modelContext.allowedActions.includes('execution.trigger')) {
       throw new TaskboardPermissionError('Taskboard role cannot trigger Agent execution');
@@ -376,7 +381,11 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     if (!executionIdentity || executionIdentity.tenantId !== identity.tenantId) {
       throw new TaskboardPermissionError('Board execution identity is unavailable');
     }
-    const explicitModelRef = modelContext.taskModel ?? modelContext.boardModel;
+    // 未显式指定阶段时，integration 任务按 merge 阶段、其余按 work 阶段解析。
+    const resolvedPurpose = purpose
+      ?? (modelContext.taskKind === 'integration' ? 'merge' : 'work');
+    const stageModel = modelContext.boardStageModels?.[resolvedPurpose];
+    const explicitModelRef = modelContext.taskModel ?? stageModel ?? modelContext.boardModel;
     const model = explicitModelRef
       ? this.options.resolveModel?.(explicitModelRef, executionIdentity.tenantId)
       : this.options.resolveDefaultModel(executionIdentity.tenantId);

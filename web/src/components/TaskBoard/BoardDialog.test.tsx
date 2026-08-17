@@ -161,6 +161,61 @@ describe("BoardDialog", () => {
     });
   });
 
+  it("创建看板时为各执行阶段指定默认模型", async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn(async () => undefined);
+    render(
+      <BoardDialog
+        open
+        modelList={modelList}
+        onOpenChange={vi.fn()}
+        onCreate={onCreate}
+        onUpdate={vi.fn(async () => undefined)}
+      />,
+    );
+
+    await user.type(screen.getByRole("textbox", { name: "名称" }), "阶段模型看板");
+    await user.click(screen.getByRole("combobox", { name: "实施（work）默认模型" }));
+    await user.click(screen.getByRole("option", { name: "模型 A" }));
+    await user.click(screen.getByRole("combobox", { name: "复核（review）默认模型" }));
+    await user.click(screen.getByRole("option", { name: "模型 A" }));
+    await user.click(screen.getByRole("combobox", { name: "集成（merge）默认模型" }));
+    await user.click(screen.getByRole("option", { name: "模型 A" }));
+    await user.click(screen.getByRole("button", { name: "创建看板" }));
+
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+      stageModels: { work: "group-a/model-a", review: "group-a/model-a", merge: "group-a/model-a" },
+    }));
+  });
+
+  it("编辑看板时展示已有阶段模型，并可将阶段恢复为继承看板默认", async () => {
+    const user = userEvent.setup();
+    const onUpdate = vi.fn(async () => undefined);
+    render(
+      <BoardDialog
+        open
+        modelList={modelList}
+        board={{ ...board, stageModels: { work: "group-a/model-a", merge: "group-a/model-merge" } }}
+        onOpenChange={vi.fn()}
+        onCreate={vi.fn(async () => undefined)}
+        onUpdate={onUpdate}
+      />,
+    );
+
+    expect(screen.getByRole("combobox", { name: "实施（work）默认模型" }).textContent).toContain("模型 A");
+    expect(screen.getByRole("combobox", { name: "复核（review）默认模型" }).textContent).toContain("继承看板默认模型");
+    // 列表外的模型 ref 保留原值提交，展示时回退为空占位。
+    expect(screen.getByRole("combobox", { name: "集成（merge）默认模型" }).textContent).toBe("");
+    await user.click(screen.getByRole("combobox", { name: "实施（work）默认模型" }));
+    await user.click(screen.getByRole("option", { name: "继承看板默认模型" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(onUpdate).toHaveBeenCalledWith(board.id, {
+      stageModels: { merge: "group-a/model-merge" },
+      expectedVersion: board.version,
+    });
+  });
+
   it("提交期间锁定全部表单控件，请求完成后再关闭", async () => {
     const user = userEvent.setup();
     let resolveUpdate!: () => void;

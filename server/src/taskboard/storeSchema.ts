@@ -7,6 +7,7 @@ import {
   boardIntegrationMigrationSql,
   boardModelMigrationSql,
   boardPromptMigrationSql,
+  boardStageModelsMigrationSql,
   boardVisibilityMigrationSql,
 } from './boardFields.js';
 import {
@@ -48,6 +49,7 @@ export async function initializeTaskboardStore(store: PgTaskboardStore): Promise
       )
     `);
     await client.query(boardPromptMigrationSql(store.boardsTable));
+    await client.query(boardStageModelsMigrationSql(store.boardsTable));
     await client.query(boardModelMigrationSql(store.boardsTable));
     await client.query(boardVisibilityMigrationSql(store.boardsTable));
     await client.query(boardIntegrationMigrationSql(store.boardsTable));

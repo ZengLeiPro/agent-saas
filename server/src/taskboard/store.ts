@@ -57,7 +57,7 @@ import {
   normalizeBoardPrompt,
   normalizeModel,
   normalizeRepositoryConfig,
-  rowToBoard,
+  rowToBoard, stageModelsToJson,
 } from './boardFields.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
 import { claimIntegrationDispatchCandidates } from './integrationTriggers.js';
@@ -344,14 +344,13 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         const boardId = randomUUID();
         const result = await client.query(
           `INSERT INTO ${this.boardsTable}
-             (id, tenant_id, owner_user_id, name, description, visibility, prompt, model,
+             (id, tenant_id, owner_user_id, name, description, visibility, prompt, model, stage_models,
               repository, integration_policy, next_task_number, version)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,1,1)
-           RETURNING id, owner_user_id, name, description, visibility, prompt, model, repository, integration_policy, version,
-                     archived_at, created_at, updated_at`,
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,1,1)
+           RETURNING *`,
           [
             boardId, identity.tenantId, identity.ownerUserId, name, description, visibility, prompt, model,
-            repository ? JSON.stringify(repository) : null,
+            stageModelsToJson(input.stageModels), repository ? JSON.stringify(repository) : null,
             input.integrationPolicy
               ? JSON.stringify({ ...input.integrationPolicy, revision: randomUUID() })
               : null,
@@ -384,7 +383,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         input.name === undefined
         && input.description === undefined
         && input.prompt === undefined
-        && input.model === undefined
+        && input.model === undefined && input.stageModels === undefined
         && input.visibility === undefined
         && input.repository === undefined
         && input.integrationPolicy === undefined
@@ -408,6 +407,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (input.model !== undefined) {
         params.push(normalizeModel(input.model));
         assignments.push(`model=$${params.length}`);
+      }
+      if (input.stageModels !== undefined) {
+        params.push(stageModelsToJson(input.stageModels));
+        assignments.push(`stage_models=$${params.length}::jsonb`);
       }
       if (input.visibility !== undefined) {
         params.push(input.visibility);
@@ -481,8 +484,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           `UPDATE ${this.boardsTable}
               SET ${assignments.join(', ')}
             WHERE id=$1 AND tenant_id=$2 AND owner_user_id=$3
-            RETURNING id, owner_user_id, name, description, visibility, prompt, model, repository, integration_policy, version,
-                      archived_at, created_at, updated_at`,
+            RETURNING *`,
           params,
         );
         const updated = rowToBoard(result.rows[0], identity.ownerUserId);
@@ -512,8 +514,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         `UPDATE ${this.boardsTable}
             SET archived_at=now(), version=version+1, updated_at=now()
           WHERE id=$1 AND tenant_id=$2 AND owner_user_id=$3
-          RETURNING id, owner_user_id, name, description, visibility, prompt, model, repository, integration_policy, version,
-                    archived_at, created_at, updated_at`,
+          RETURNING *`,
         [boardId, identity.tenantId, identity.ownerUserId],
       );
       const updated = rowToBoard(result.rows[0], identity.ownerUserId);
@@ -539,8 +540,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           `UPDATE ${this.boardsTable}
               SET archived_at=NULL, version=version+1, updated_at=now()
             WHERE id=$1 AND tenant_id=$2 AND owner_user_id=$3
-            RETURNING id, owner_user_id, name, description, visibility, prompt, model, repository, integration_policy, version,
-                    archived_at, created_at, updated_at`,
+            RETURNING *`,
           [boardId, identity.tenantId, identity.ownerUserId],
         );
         const updated = rowToBoard(result.rows[0], identity.ownerUserId);
@@ -1120,7 +1120,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     ownerOnly: boolean,
   ): Promise<TaskBoard> {
     const result = await db.query(
-      `SELECT b.id, b.owner_user_id, b.name, b.description, b.visibility, b.prompt, b.model,
+      `SELECT b.id, b.owner_user_id, b.name, b.description, b.visibility, b.prompt, b.model, b.stage_models,
               b.repository, b.integration_policy, b.version, b.archived_at, b.created_at, b.updated_at,
               CASE WHEN b.owner_user_id=$3 THEN 'owner' ELSE COALESCE(m.role,'viewer') END AS board_role
          FROM ${this.boardsTable} b

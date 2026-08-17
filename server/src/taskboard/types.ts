@@ -21,6 +21,7 @@ import type {
   TaskBoardPatchInput,
   TaskBoardPriority,
   TaskBoardStatus,
+  TaskBoardStageModels,
   TaskBoardTask,
   TaskBoardTaskCreateInput,
   TaskBoardTaskMoveInput,
@@ -186,6 +187,8 @@ export interface TaskboardExecutionReconcileCandidate {
 export interface TaskboardExecutionModelContext {
   taskModel?: string;
   boardModel?: string;
+  /** 看板按执行阶段配置的默认模型；解析优先级：任务模型 > 阶段模型 > 看板模型。 */
+  boardStageModels?: TaskBoardStageModels;
   taskKind?: 'delivery' | 'integration' | 'remediation';
   taskStatus?: TaskBoardStatus;
   policyRevision?: string;

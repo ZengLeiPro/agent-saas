@@ -85,6 +85,9 @@ export type TaskBoardPriority = (typeof TASKBOARD_PRIORITIES)[number];
 export type TaskBoardExecutionStatus = (typeof TASKBOARD_EXECUTION_STATUSES)[number];
 export type TaskBoardExecutionPurpose = (typeof TASKBOARD_EXECUTION_PURPOSES)[number];
 export type TaskBoardExecutionTrigger = (typeof TASKBOARD_EXECUTION_TRIGGERS)[number];
+
+/** 各执行阶段（work/review/merge）可单独指定的默认模型；未配置的阶段回退看板/组织默认。 */
+export type TaskBoardStageModels = Partial<Record<TaskBoardExecutionPurpose, string>>;
 export type TaskBoardVisibility = (typeof TASKBOARD_VISIBILITIES)[number];
 export type TaskBoardTaskKind = (typeof TASKBOARD_TASK_KINDS)[number];
 export type TaskBoardMemberRole = (typeof TASKBOARD_MEMBER_ROLES)[number];
@@ -140,6 +143,8 @@ export interface TaskBoard {
   canManage: boolean;
   prompt: string;
   model?: string;
+  /** 按执行阶段（work/review/merge）指定的默认模型；比全局 model 优先级更高。 */
+  stageModels?: TaskBoardStageModels;
   repository?: TaskBoardRepositoryConfig;
   integrationPolicy?: TaskBoardIntegrationPolicy;
   version: number;
@@ -339,6 +344,7 @@ export interface TaskBoardCreateInput {
   description?: string;
   prompt?: string;
   model?: string;
+  stageModels?: TaskBoardStageModels;
   visibility?: TaskBoardVisibility;
   repository?: TaskBoardRepositoryConfig;
   integrationPolicy?: TaskBoardIntegrationPolicy;
@@ -349,6 +355,7 @@ export interface TaskBoardPatchInput {
   description?: string;
   prompt?: string;
   model?: string | null;
+  stageModels?: TaskBoardStageModels | null;
   visibility?: TaskBoardVisibility;
   repository?: TaskBoardRepositoryConfig | null;
   integrationPolicy?: TaskBoardIntegrationPolicy | null;

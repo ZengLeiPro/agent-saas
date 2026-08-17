@@ -13,6 +13,14 @@ const describePg = connectionString ? describe : describe.skip;
 describePg('Taskboard continuation PostgreSQL race contract', () => {
   const prefix = `tb_race_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const alice: TaskboardIdentity = { tenantId: 'tenant-a', ownerUserId: 'alice-id', username: 'alice' };
+  const testRepository = {
+    provider: 'github' as const,
+    repositoryId: 'github:tenant-a:acme/app',
+    owner: 'acme',
+    name: 'app',
+    baseBranch: 'main',
+    allowForkPullRequest: false as const,
+  };
   let pool: InstanceType<typeof Pool>;
   let store: PgTaskboardStore;
 
@@ -71,7 +79,7 @@ describePg('Taskboard continuation PostgreSQL race contract', () => {
   }, 30_000);
 
   it('原 Execution 先取消提交、续跑后成功时最终仍进入复核中', async () => {
-    const board = await store.createBoard(alice, { name: '续跑取消反向竞态' });
+    const board = await store.createBoard(alice, { name: '续跑取消反向竞态', repository: testRepository });
     const task = await store.createTask(alice, board.id, { title: '取消先提交', status: 'todo' });
     await store.claimExecution(alice, task.id, {
       expectedVersion: task.version, executionId: 'execution-cancel-first', runId: 'run-cancel-first-original',
@@ -122,7 +130,7 @@ describePg('Taskboard continuation PostgreSQL race contract', () => {
   });
 
   it('用户在原 Execution 失败后主动保持 blocked 时续跑成功不覆盖该状态', async () => {
-    const board = await store.createBoard(alice, { name: '续跑尊重用户阻塞' });
+    const board = await store.createBoard(alice, { name: '续跑尊重用户阻塞', repository: testRepository });
     const task = await store.createTask(alice, board.id, { title: '用户主动阻塞', status: 'todo' });
     await store.claimExecution(alice, task.id, {
       expectedVersion: task.version, executionId: 'execution-user-block', runId: 'run-user-block-original',

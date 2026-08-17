@@ -144,7 +144,15 @@ function resolveBoardRole(row: Record<string, unknown>, currentUserId: string): 
   return value === 'editor' || value === 'maintainer' ? value : 'viewer';
 }
 
-function parseJsonObject<T>(value: unknown): T | undefined {
+export function boardRepositoryFragment(
+  lockedBoardRepository: TaskBoardRepositoryConfig | undefined,
+  rowRepository: unknown,
+): { boardRepository?: TaskBoardRepositoryConfig } {
+  const repository = lockedBoardRepository ?? parseJsonObject<TaskBoardRepositoryConfig>(rowRepository);
+  return repository ? { boardRepository: repository } : {};
+}
+
+export function parseJsonObject<T>(value: unknown): T | undefined {
   if (!value) return undefined;
   if (typeof value === 'object') return value as T;
   if (typeof value !== 'string') return undefined;

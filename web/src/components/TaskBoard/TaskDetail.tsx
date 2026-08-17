@@ -371,7 +371,7 @@ export function TaskDetail({
       ? taskKind === "integration" && ["todo", "in_progress", "blocked"].includes(currentTask?.status ?? "")
       : purpose === "review"
         ? taskKind !== "integration" && currentTask?.status === "in_review"
-        : taskKind !== "integration" && currentTask?.status === "todo";
+        : taskKind !== "integration" && ["todo", "blocked"].includes(currentTask?.status ?? "");
     if (!currentTask || !canRunCurrentTask || !statusAllowed || executionActive) return;
     if (dirtyFieldsRef.current.size > 0) {
       setError("请先保存未提交的任务修改，再交给 Agent");
@@ -507,6 +507,7 @@ export function TaskDetail({
                     (taskKind === "integration" && ["todo", "in_progress", "blocked"].includes(currentTask.status))
                     || (taskKind !== "integration" && currentTask.status === "todo")
                     || (taskKind !== "integration" && currentTask.status === "in_review")
+                    || (taskKind !== "integration" && currentTask.status === "blocked")
                   ) ? (
                     <Button
                       type="button"
@@ -519,7 +520,10 @@ export function TaskDetail({
                       {saving || executionActive ? <LoaderCircle className="animate-spin" /> : <Bot />}
                       {executionActive && latestExecution
                         ? EXECUTION_STATUS_LABELS[latestExecution.status]
-                        : taskKind === "integration" ? "继续集成" : currentTask.status === "in_review" ? "独立复核" : "交给 Agent"}
+                        : taskKind === "integration" ? "继续集成"
+                          : currentTask.status === "in_review" ? "独立复核"
+                          : currentTask.status === "blocked" ? "重新运行"
+                          : "交给 Agent"}
                     </Button>
                   ) : null}
                 </div>

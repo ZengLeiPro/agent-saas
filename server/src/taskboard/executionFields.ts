@@ -61,10 +61,12 @@ export function resolveExecutionPurpose(
   }
   const requiredStatus = purpose === 'review' ? 'in_review' : 'todo';
   if (status === requiredStatus) return purpose;
+  // 阻塞的交付/修复任务允许人工手动重跑：外部依赖解除后由同一会话补齐证据。
+  if (purpose === 'work' && status === 'blocked') return purpose;
   throw new TaskboardValidationError(
     purpose === 'review'
       ? 'Only in-review tasks can be handed to a review Agent'
-      : 'Only todo tasks can be handed to Agent',
+      : 'Only todo or blocked tasks can be handed to a work Agent',
     purpose === 'review' ? 'TASKBOARD_REVIEW_REQUIRES_IN_REVIEW' : 'TASKBOARD_EXECUTION_REQUIRES_TODO',
   );
 }

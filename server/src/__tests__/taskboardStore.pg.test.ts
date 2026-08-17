@@ -29,6 +29,15 @@ describePg('PgTaskboardStore contract', () => {
   const admin: TaskboardIdentity = { tenantId: 'tenant-a', ownerUserId: 'admin-id', username: 'admin' };
   const bob: TaskboardIdentity = { tenantId: 'tenant-a', ownerUserId: 'bob-id', username: 'bob' };
 
+  const testRepository = {
+    provider: 'github' as const,
+    repositoryId: 'github:tenant-a:acme/app',
+    owner: 'acme',
+    name: 'app',
+    baseBranch: 'main',
+    allowForkPullRequest: false as const,
+  };
+
   const dispatch = (executionId: string, runId: string, sessionId: string) => ({
     version: 1 as const,
     session: {
@@ -270,7 +279,7 @@ describePg('PgTaskboardStore contract', () => {
   });
 
   it('stores board/task model overrides and exposes them through the execution model context', async () => {
-    const board = await store.createBoard(alice, { name: '模型继承', model: 'group-a/model-board' });
+    const board = await store.createBoard(alice, { name: '模型继承', model: 'group-a/model-board', repository: testRepository });
     expect(board.model).toBe('group-a/model-board');
 
     const task = await store.createTask(alice, board.id, { title: '模型任务', status: 'todo' });
@@ -410,7 +419,7 @@ describePg('PgTaskboardStore contract', () => {
   });
 
   it('rejects repeated and concurrent execution claims without creating a second active Execution', async () => {
-    const board = await store.createBoard(alice, { name: '重复派发隔离' });
+    const board = await store.createBoard(alice, { name: '重复派发隔离', repository: testRepository });
     const sequentialTask = await store.createTask(alice, board.id, {
       title: '连续派发', status: 'todo',
     });
@@ -477,6 +486,7 @@ describePg('PgTaskboardStore contract', () => {
     const board = await store.createBoard(alice, {
       name: 'Agent 执行闭环',
       prompt: '按本看板规范执行。',
+      repository: testRepository,
     });
     const task = await store.createTask(alice, board.id, { title: '执行我', status: 'todo' });
     const claimed = await store.claimExecution(alice, task.id, {
@@ -721,6 +731,46 @@ describePg('PgTaskboardStore contract', () => {
       .resolves.toBeNull();
     await expect(store.completeExecutionFromReconcile('run-c', runCCancel, runCLease))
       .resolves.toMatchObject({ execution: { status: 'cancelled' } });
+  });
+
+  it('refuses to start delivery executions when the board repository is not configured', async () => {
+    const board = await store.createBoard(alice, { name: '未配置仓库' });
+    const task = await store.createTask(alice, board.id, { title: '缺少仓库', status: 'todo' });
+    const executionId = randomUUID();
+    const runId = randomUUID();
+    const sessionId = randomUUID();
+    await expect(store.claimExecution(alice, task.id, {
+      expectedVersion: task.version,
+      executionId,
+      runId,
+      sessionId,
+      executionOwnerUserId: alice.ownerUserId,
+      dispatch: dispatch(executionId, runId, sessionId),
+    })).rejects.toMatchObject({ code: 'TASKBOARD_REPOSITORY_REQUIRED' });
+    expect((await store.getTask(alice, task.id)).status).toBe('todo');
+  });
+
+  it('allows a manual rerun of a blocked delivery task and clears the block episode', async () => {
+    const board = await store.createBoard(alice, { name: '阻塞重跑', repository: testRepository });
+    const task = await store.createTask(alice, board.id, { title: '外部依赖阻塞', status: 'todo' });
+    await pool.query(
+      `UPDATE ${store.tasksTable} SET status='blocked', version=version+1, updated_at=now() WHERE id=$1`,
+      [task.id],
+    );
+    const blocked = await store.getTask(alice, task.id);
+    const executionId = randomUUID();
+    const runId = randomUUID();
+    const sessionId = randomUUID();
+    const claimed = await store.claimExecution(alice, blocked.id, {
+      expectedVersion: blocked.version,
+      executionId,
+      runId,
+      sessionId,
+      executionOwnerUserId: alice.ownerUserId,
+      dispatch: dispatch(executionId, runId, sessionId),
+    });
+    expect(claimed.task.status).toBe('in_progress');
+    expect(claimed.execution).toMatchObject({ purpose: 'work', status: 'queued' });
   });
 
 

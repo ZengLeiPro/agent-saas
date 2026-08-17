@@ -15,6 +15,14 @@ describePg('PgTaskboardStore continuation contract', () => {
   const alice: TaskboardIdentity = {
     tenantId: 'tenant-a', ownerUserId: 'alice-id', username: 'alice',
   };
+  const testRepository = {
+    provider: 'github' as const,
+    repositoryId: 'github:tenant-a:acme/app',
+    owner: 'acme',
+    name: 'app',
+    baseBranch: 'main',
+    allowForkPullRequest: false as const,
+  };
   let pool: InstanceType<typeof Pool>;
   let store: PgTaskboardStore;
 
@@ -73,7 +81,7 @@ describePg('PgTaskboardStore continuation contract', () => {
   }, 30_000);
 
   it('keeps historical comments out of continuation and preserves waiting-state results through outbox', async () => {
-    const board = await store.createBoard(alice, { name: '评论续跑持久化' });
+    const board = await store.createBoard(alice, { name: '评论续跑持久化', repository: testRepository });
     const task = await store.createTask(alice, board.id, { title: '等待态续跑', status: 'todo' });
     await store.claimExecution(alice, task.id, {
       expectedVersion: task.version,
@@ -138,7 +146,7 @@ describePg('PgTaskboardStore continuation contract', () => {
   });
 
   it('续跑先成功、原 Execution 后取消的并发顺序最终保持复核中', async () => {
-    const board = await store.createBoard(alice, { name: '续跑取消竞态' });
+    const board = await store.createBoard(alice, { name: '续跑取消竞态', repository: testRepository });
     const task = await store.createTask(alice, board.id, { title: '并发释放续跑', status: 'todo' });
     await store.claimExecution(alice, task.id, {
       expectedVersion: task.version, executionId: 'execution-race', runId: 'run-race-original',
@@ -198,7 +206,7 @@ describePg('PgTaskboardStore continuation contract', () => {
   });
 
   it('backfills legacy continuation rows once and blocks archive while continuation is active', async () => {
-    const board = await store.createBoard(alice, { name: '续跑迁移补偿' });
+    const board = await store.createBoard(alice, { name: '续跑迁移补偿', repository: testRepository });
     const task = await store.createTask(alice, board.id, { title: '迁移旧续跑', status: 'todo' });
     await store.claimExecution(alice, task.id, {
       expectedVersion: task.version,

@@ -17,7 +17,7 @@ import {
   type TaskBoardIntegrationSource,
   type TaskBoardMember,
   type TaskBoardMemberPatchInput,
-  type TaskBoardPatchInput,
+  type TaskBoardPatchInput, type TaskBoardRepositoryConfig,
   type TaskBoardTask,
   type TaskBoardTaskCreateInput,
   type TaskBoardTaskMoveInput,
@@ -53,7 +53,7 @@ import {
 } from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
 import {
-  allowedActionsForRole,
+  allowedActionsForRole, boardRepositoryFragment,
   normalizeBoardPrompt,
   normalizeModel,
   normalizeRepositoryConfig,
@@ -1151,7 +1151,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<{
     task: TaskBoardTask;
     boardArchivedAt?: string;
-    boardModel?: string;
+    boardModel?: string; boardRepository?: TaskBoardRepositoryConfig;
     boardOwnerUserId: string;
     boardRole: TaskBoard['role'];
   }> {
@@ -1176,7 +1176,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     const result = await db.query(
       `SELECT t.*,
               b.archived_at AS board_archived_at,
-              b.model AS board_model,
+              b.model AS board_model, b.repository AS board_repository,
               b.owner_user_id AS board_owner_user_id, m.role AS board_member_role,
               (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id) AS comment_count
          FROM ${this.tasksTable} t
@@ -1194,7 +1194,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return {
       task: rowToTask(row),
       ...(boardArchivedAt ? { boardArchivedAt } : {}),
-      ...(boardModel ? { boardModel } : {}),
+      ...(boardModel ? { boardModel } : {}), ...boardRepositoryFragment(lockedBoard?.repository, row.board_repository),
       boardOwnerUserId: lockedBoard?.ownerUserId ?? String(row.board_owner_user_id),
       boardRole: lockedBoard?.role ?? (String(row.board_owner_user_id) === identity.ownerUserId ? 'owner' : row.board_member_role ? String(row.board_member_role) as TaskBoard['role'] : 'viewer'),
     };

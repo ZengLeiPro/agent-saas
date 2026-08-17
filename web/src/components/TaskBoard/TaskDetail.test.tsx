@@ -482,4 +482,27 @@ describe("TaskDetail 草稿隔离", () => {
     await user.click(await screen.findByRole("button", { name: "独立复核" }));
     await waitFor(() => expect(onExecute).toHaveBeenCalledWith(reviewTask, "review"));
   });
+
+  it("阻塞的交付任务可以手动重新运行 work 执行", async () => {
+    const user = userEvent.setup();
+    const blockedTask = { ...taskOne, status: "blocked" as const };
+    const rerunningTask = { ...blockedTask, status: "in_progress" as const, version: blockedTask.version + 1 };
+    const execution: TaskBoardExecution = {
+      id: "execution-rerun",
+      taskId: blockedTask.id,
+      runId: "run-rerun",
+      sessionId: "session-rerun",
+      status: "queued",
+      purpose: "work",
+      requestedBy: "user-1",
+      createdAt: blockedTask.createdAt,
+      updatedAt: blockedTask.updatedAt,
+    };
+    mocks.fetchTask.mockResolvedValue(blockedTask);
+    const onExecute = vi.fn(async () => ({ task: rerunningTask, execution }));
+    render(<TaskDetail {...props({ task: blockedTask, onExecute })} />);
+
+    await user.click(await screen.findByRole("button", { name: "重新运行" }));
+    await waitFor(() => expect(onExecute).toHaveBeenCalledWith(blockedTask, "work"));
+  });
 });

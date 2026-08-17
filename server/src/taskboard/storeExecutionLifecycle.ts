@@ -65,6 +65,16 @@ export async function claimExecution(
       }
       return { task: loaded.task, execution };
     }
+    if (
+      loaded.task.kind !== 'integration'
+      && (purpose === 'work' || purpose === 'review')
+      && (!loaded.boardRepository || loaded.boardRepository.provider !== 'github')
+    ) {
+      throw new TaskboardValidationError(
+        'Board repository is not configured; execution cannot register pull request evidence',
+        'TASKBOARD_REPOSITORY_REQUIRED',
+      );
+    }
     const active = await client.query(
       `SELECT 1 WHERE EXISTS (
          SELECT 1 FROM ${store.executionsTable}

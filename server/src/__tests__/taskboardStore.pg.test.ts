@@ -356,6 +356,33 @@ describePg('PgTaskboardStore contract', () => {
     })).rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_MODEL_CHANGED' });
   });
 
+  it('claims a new task with the work-stage model under the board lock', async () => {
+    const board = await store.createBoard(alice, {
+      name: '阶段模型直执',
+      model: 'group-a/model-board',
+      stageModels: { work: 'group-a/model-work' },
+      repository: testRepository,
+    });
+    const task = await store.createTask(alice, board.id, { title: '创建后直接执行', status: 'todo' });
+    const executionId = randomUUID();
+    const runId = randomUUID();
+    const sessionId = randomUUID();
+
+    await expect(store.claimExecution(alice, task.id, {
+      expectedVersion: task.version,
+      executionId,
+      runId,
+      sessionId,
+      purpose: 'work',
+      configuredModelRef: 'group-a/model-work',
+      executionOwnerUserId: alice.ownerUserId,
+      dispatch: dispatch(executionId, runId, sessionId),
+    })).resolves.toMatchObject({
+      task: { id: task.id, status: 'in_progress' },
+      execution: { id: executionId, purpose: 'work' },
+    });
+  });
+
   it('allocates stable numbers, returns CAS current state, and makes archived boards/tasks read-only', async () => {
     const board = await store.createBoard(alice, { name: 'CAS 与归档' });
     const taskAttachment = {

@@ -18,6 +18,7 @@ import {
   type TaskBoardMember,
   type TaskBoardMemberPatchInput,
   type TaskBoardPatchInput, type TaskBoardRepositoryConfig,
+  type TaskBoardStageModels,
   type TaskBoardTask,
   type TaskBoardTaskCreateInput,
   type TaskBoardTaskMoveInput,
@@ -57,6 +58,7 @@ import {
   normalizeBoardPrompt,
   normalizeModel,
   normalizeRepositoryConfig,
+  parseStageModels,
   rowToBoard, stageModelsToJson, stagePromptsToJson,
 } from './boardFields.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
@@ -1149,7 +1151,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<{
     task: TaskBoardTask;
     boardArchivedAt?: string;
-    boardModel?: string; boardRepository?: TaskBoardRepositoryConfig;
+    boardModel?: string;
+    boardStageModels?: TaskBoardStageModels;
+    boardRepository?: TaskBoardRepositoryConfig;
     boardOwnerUserId: string;
     boardRole: TaskBoard['role'];
   }> {
@@ -1174,7 +1178,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     const result = await db.query(
       `SELECT t.*,
               b.archived_at AS board_archived_at,
-              b.model AS board_model, b.repository AS board_repository,
+              b.model AS board_model, b.stage_models AS board_stage_models,
+              b.repository AS board_repository,
               b.owner_user_id AS board_owner_user_id, m.role AS board_member_role,
               (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id) AS comment_count
          FROM ${this.tasksTable} t
@@ -1189,10 +1194,13 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       ?? (row.board_archived_at ? toIso(row.board_archived_at) : undefined);
     const boardModel = lockedBoard?.model
       ?? (row.board_model ? String(row.board_model) : undefined);
+    const boardStageModels = lockedBoard?.stageModels ?? parseStageModels(row.board_stage_models);
     return {
       task: rowToTask(row),
       ...(boardArchivedAt ? { boardArchivedAt } : {}),
-      ...(boardModel ? { boardModel } : {}), ...boardRepositoryFragment(lockedBoard?.repository, row.board_repository),
+      ...(boardModel ? { boardModel } : {}),
+      ...(Object.keys(boardStageModels).length ? { boardStageModels } : {}),
+      ...boardRepositoryFragment(lockedBoard?.repository, row.board_repository),
       boardOwnerUserId: lockedBoard?.ownerUserId ?? String(row.board_owner_user_id),
       boardRole: lockedBoard?.role ?? (String(row.board_owner_user_id) === identity.ownerUserId ? 'owner' : row.board_member_role ? String(row.board_member_role) as TaskBoard['role'] : 'viewer'),
     };

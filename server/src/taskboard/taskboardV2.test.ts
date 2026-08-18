@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { allowedActionsForRole, normalizeRepositoryConfig } from './boardFields.js';
+import { resolveExecutionModelRef } from './executionFields.js';
 import { runTaskboardV2Schema } from './v2Schema.js';
 import { resolveWorkflowContract } from './workflowContract.js';
 
@@ -58,6 +59,14 @@ describe('taskboard V2 contracts', () => {
     expect(normalizeRepositoryConfig(input, 'tenant-a')).toMatchObject({
       repositoryId: 'github:tenant-a:kaiyan/agent-saas',
     });
+  });
+
+  it('resolves the locked execution model with the same task, stage, board priority', () => {
+    const stageModels = { work: 'stage/work', review: 'stage/review' };
+
+    expect(resolveExecutionModelRef(undefined, stageModels, 'board/default', 'work')).toBe('stage/work');
+    expect(resolveExecutionModelRef('task/override', stageModels, 'board/default', 'review')).toBe('task/override');
+    expect(resolveExecutionModelRef(undefined, stageModels, 'board/default', 'merge')).toBe('board/default');
   });
 
   it('derives work, review and merge duties from one structured workflow contract', () => {

@@ -1,6 +1,7 @@
 import {
   TASKBOARD_EXECUTION_PURPOSES,
   type TaskBoardExecutionPurpose,
+  type TaskBoardStageModels,
   type TaskBoardStatus,
   type TaskBoardTaskKind,
 } from '../../../shared/src/types/taskboard.js';
@@ -36,6 +37,15 @@ export function executionFieldMigrationSql(executionsTable: string): string {
     DROP INDEX IF EXISTS ${executionsTable}_session_uidx;
     CREATE INDEX IF NOT EXISTS ${executionsTable}_session_idx ON ${executionsTable} (session_id, created_at DESC)
   `;
+}
+
+export function resolveExecutionModelRef(
+  taskModel: string | undefined,
+  boardStageModels: TaskBoardStageModels | undefined,
+  boardModel: string | undefined,
+  purpose: TaskBoardExecutionPurpose,
+): string | undefined {
+  return taskModel ?? boardStageModels?.[purpose] ?? boardModel;
 }
 
 export function resolveExecutionPurpose(

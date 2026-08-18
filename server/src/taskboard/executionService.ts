@@ -35,6 +35,7 @@ import {
   canonicalizeDispatchPayload,
   InvalidTaskboardDispatchPayloadError,
 } from './executionDispatchValidation.js';
+import { resolveExecutionModelRef } from './executionFields.js';
 import { buildExecutionPrompt } from './executionPrompt.js';
 export { executionWritebackInstructions } from './executionPrompt.js';
 import {
@@ -384,8 +385,12 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     // 未显式指定阶段时，integration 任务按 merge 阶段、其余按 work 阶段解析。
     const resolvedPurpose = purpose
       ?? (modelContext.taskKind === 'integration' ? 'merge' : 'work');
-    const stageModel = modelContext.boardStageModels?.[resolvedPurpose];
-    const explicitModelRef = modelContext.taskModel ?? stageModel ?? modelContext.boardModel;
+    const explicitModelRef = resolveExecutionModelRef(
+      modelContext.taskModel,
+      modelContext.boardStageModels,
+      modelContext.boardModel,
+      resolvedPurpose,
+    );
     const model = explicitModelRef
       ? this.options.resolveModel?.(explicitModelRef, executionIdentity.tenantId)
       : this.options.resolveDefaultModel(executionIdentity.tenantId);

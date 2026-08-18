@@ -7,7 +7,7 @@ import type {
 import { finalizeExecutionForArchivedTask } from './archiveGuard.js';
 import { nextTaskColumnSortOrder } from './continuationStore.js';
 import { applyExecutionTaskCompletion, enqueueAutomaticReview } from './executionCompletion.js';
-import { resolveExecutionPurpose } from './executionFields.js';
+import { resolveExecutionModelRef, resolveExecutionPurpose } from './executionFields.js';
 import {
   assertExecutionConfiguration,
   assertExpectedVersion,
@@ -45,15 +45,20 @@ export async function claimExecution(
     const loaded = await store.requireTaskWithBoard(client, identity, taskId, true);
     assertBoardRole(loaded.boardRole);
     assertWritableTask(loaded.task, loaded.boardArchivedAt);
+    const purpose = input.allowWorkFromCurrentStatus
+      ? 'work'
+      : resolveExecutionPurpose(loaded.task.status, input.purpose, loaded.task.kind);
     assertExecutionConfiguration(
-      loaded.task.model ?? loaded.boardModel,
+      resolveExecutionModelRef(
+        loaded.task.model,
+        loaded.boardStageModels,
+        loaded.boardModel,
+        purpose,
+      ),
       input.configuredModelRef,
       loaded.boardOwnerUserId,
       input.executionOwnerUserId,
     );
-    const purpose = input.allowWorkFromCurrentStatus
-      ? 'work'
-      : resolveExecutionPurpose(loaded.task.status, input.purpose, loaded.task.kind);
     const duplicate = await client.query(
       `SELECT * FROM ${store.executionsTable} WHERE id=$1 OR run_id=$2 LIMIT 1`,
       [input.executionId, input.runId],

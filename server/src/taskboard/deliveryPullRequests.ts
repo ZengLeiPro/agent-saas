@@ -1,24 +1,23 @@
 import type { PoolClient } from 'pg';
 
 import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
-import type { RepositoryProvider } from './repositoryProvider.js';
+import {
+  finalizeMergedSource,
+  type IntegrationOperationHost,
+} from './integrationOperations.js';
+import type {
+  RepositoryProvider,
+  RepositoryPullRequestSnapshot,
+} from './repositoryProvider.js';
 import { rowToTask, visibleCommentPredicate } from './storeHelpers.js';
+import { fenceTaskExecutions } from './workflow/commandService.js';
 import {
   TaskboardNotFoundError,
   TaskboardValidationError,
   type TaskboardIdentity,
 } from './types.js';
 
-interface DeliveryPullRequestHost {
-  pool: { connect(): Promise<PoolClient> };
-  boardsTable: string;
-  tasksTable: string;
-  commentsTable: string;
-  executionsTable: string;
-  changesTable: string;
-  integrationSourcesTable: string;
-  repositoryProvider?: RepositoryProvider;
-}
+interface DeliveryPullRequestHost extends IntegrationOperationHost {}
 
 export async function attachExecutionPullRequest(
   host: DeliveryPullRequestHost,
@@ -91,6 +90,18 @@ export async function recordReviewedExecutionSubject(
     context.providerPullRequestId,
     context.boardOwnerUserId,
   );
+  if (pullRequest.state === 'merged') {
+    if (!pullRequest.mergeCommitOid) {
+      throw new TaskboardValidationError(
+        'Provider did not return the merged commit oid',
+        'TASKBOARD_PROVIDER_RECEIPT_INCOMPLETE',
+      );
+    }
+    return reconcileExternallyMergedPullRequest(host, context, {
+      ...pullRequest,
+      mergeCommitOid: pullRequest.mergeCommitOid,
+    });
+  }
   if (pullRequest.state !== 'open' || pullRequest.draft) {
     throw new TaskboardValidationError('Pull request is not reviewable', 'TASKBOARD_PR_NOT_OPEN');
   }
@@ -157,6 +168,92 @@ export async function recordReviewedExecutionSubject(
   }
 }
 
+async function reconcileExternallyMergedPullRequest(
+  host: DeliveryPullRequestHost,
+  context: Awaited<ReturnType<typeof loadContext>>,
+  pullRequest: RepositoryPullRequestSnapshot & { mergeCommitOid: string },
+): Promise<TaskBoardTask> {
+  const sourceClient = await host.pool.connect();
+  try {
+    const source = await sourceClient.query(
+      `SELECT id FROM ${host.integrationSourcesTable}
+        WHERE delivery_task_id=$1 AND provider_pull_request_id=$2 AND state<>'canceled'
+        ORDER BY updated_at DESC,id DESC LIMIT 1`,
+      [context.taskId, context.providerPullRequestId],
+    );
+    if (source.rows[0]) {
+      const finalized = await finalizeMergedSource(host, String(source.rows[0].id), {
+        providerRequestId: `external-merge:${context.taskId}:${pullRequest.mergeCommitOid}`,
+        mergedCommitOid: pullRequest.mergeCommitOid,
+        raw: { reconciled: true, source: 'review_subject', pullRequest },
+        expectedReview: {
+          deliveryTaskId: context.taskId,
+          providerPullRequestId: context.providerPullRequestId!,
+          executionId: context.executionId,
+        },
+      });
+      return finalized.task;
+    }
+  } finally {
+    sourceClient.release();
+  }
+
+  const client = await host.pool.connect();
+  try {
+    await client.query('BEGIN');
+    await lockExecution(client, host, context.runId, context.taskId);
+    const current = await client.query(
+      `SELECT provider_pull_request_id FROM ${host.tasksTable} WHERE id=$1 FOR UPDATE`,
+      [context.taskId],
+    );
+    if (current.rows[0]?.provider_pull_request_id !== context.providerPullRequestId) {
+      throw new TaskboardValidationError('Pull request changed during merge reconciliation', 'TASKBOARD_SUBJECT_STALE');
+    }
+    const result = await client.query(
+      `UPDATE ${host.tasksTable}
+          SET status='done', pull_request_number=$2, head_oid=$3, base_oid=$4,
+              merged_commit_oid=$5, completed_at=COALESCE(completed_at,now()),
+              workflow_epoch=workflow_epoch+1, next_action='none',
+              next_action_revision=next_action_revision+1,
+              version=version+1, updated_at=now()
+        WHERE id=$1
+        RETURNING *,
+          (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=${host.tasksTable}.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count`,
+      [context.taskId, pullRequest.number, pullRequest.headOid, pullRequest.baseOid, pullRequest.mergeCommitOid],
+    );
+    await client.query(
+      `UPDATE ${host.blockEpisodesTable} SET closed_at=COALESCE(closed_at,now())
+        WHERE task_id=$1 AND closed_at IS NULL`,
+      [context.taskId],
+    );
+    await fenceTaskExecutions(host, client, [context.taskId], 'external_merge_confirmed');
+    const commandId = `external-merge:${context.taskId}:${pullRequest.mergeCommitOid}`;
+    await client.query(
+      `INSERT INTO ${host.changesTable}
+         (task_id, change_type, actor_type, actor_id, execution_id, payload)
+       SELECT $1,'merge.succeeded.v2','system',$2,$3,$4::jsonb
+        WHERE NOT EXISTS (
+          SELECT 1 FROM ${host.changesTable}
+           WHERE task_id=$1 AND change_type='merge.succeeded.v2' AND payload->>'commandId'=$2
+        )`,
+      [context.taskId, commandId, context.executionId, JSON.stringify({
+        schemaVersion: 2,
+        commandId,
+        providerPullRequestId: pullRequest.providerPullRequestId,
+        mergedCommitOid: pullRequest.mergeCommitOid,
+        reconciledFrom: 'review_subject',
+      })],
+    );
+    await client.query('COMMIT');
+    return rowToTask(result.rows[0]!);
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function loadContext(
   host: DeliveryPullRequestHost,
   identity: TaskboardIdentity,
@@ -165,6 +262,7 @@ async function loadContext(
 ): Promise<{
   taskId: string;
   executionId: string;
+  runId: string;
   isRemediation: boolean;
   providerPullRequestId?: string;
   sourceProviderPullRequestId?: string;
@@ -215,6 +313,7 @@ async function loadContext(
     return {
       taskId: String(row.task_id),
       executionId: String(row.execution_id),
+      runId,
       isRemediation: String(row.kind) === 'remediation',
       ...(row.provider_pull_request_id ? { providerPullRequestId: String(row.provider_pull_request_id) } : {}),
       ...(row.source_provider_pull_request_id

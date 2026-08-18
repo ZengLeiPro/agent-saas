@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 
 import type {
   TaskBoardExecution,
+  TaskBoardExecutionPurpose,
   TaskBoardExecutionStartResult,
+  TaskBoardStatus,
 } from '../../../shared/src/types/taskboard.js';
 import { finalizeExecutionForArchivedTask } from './archiveGuard.js';
 import { nextTaskColumnSortOrder } from './continuationStore.js';
@@ -33,6 +35,25 @@ function assertBoardRole(role: 'viewer' | 'editor' | 'maintainer' | 'owner' | un
   if (!role || role === 'viewer') {
     throw new TaskboardPermissionError('Taskboard role does not allow this operation');
   }
+}
+
+export function unresolvedExecutionRecovery(
+  purpose: TaskBoardExecutionPurpose,
+  completionStatus: 'failed' | 'cancelled',
+  failedCount: number,
+  maxRetries: number,
+): { status: TaskBoardStatus; exhausted: boolean } {
+  const exhausted = completionStatus === 'failed' && failedCount >= Math.max(0, maxRetries);
+  return {
+    exhausted,
+    status: exhausted
+      ? 'blocked'
+      : purpose === 'work'
+        ? 'todo'
+        : purpose === 'review'
+          ? 'in_review'
+          : 'in_progress',
+  };
 }
 
 export async function claimExecution(
@@ -348,33 +369,57 @@ async function completeExecutionInternal(
       store, client, identity, loaded.task, currentExecution, executionResult.rows[0].created_at, completionInput,
     );
     if (currentExecution.protocolVersion === 2 && !hasProtocolResolution
-      && completionInput.status === 'failed' && !workflowFacts.hasMergeFact
+      && (completionInput.status === 'failed' || completionInput.status === 'cancelled')
+      && !workflowFacts.hasMergeFact
       && loaded.task.status !== 'done' && loaded.task.status !== 'canceled') {
-      const retryPolicy = await client.query(
-        `SELECT count(*)::int AS failed_count,
-                COALESCE((b.integration_policy->'execution'->>'maxTransientRetries')::int,3) AS max_retries
-           FROM ${store.executionsTable} prior
-           JOIN ${store.tasksTable} retry_task ON retry_task.id=$1
-           JOIN ${store.boardsTable} b ON b.id=retry_task.board_id
-          WHERE prior.task_id=$1 AND prior.purpose=$2 AND prior.protocol_version=2 AND prior.status='failed'
-          GROUP BY b.integration_policy`,
-        [taskId, currentExecution.purpose],
+      let failedCount = 0;
+      let maxRetries = 3;
+      if (completionInput.status === 'failed') {
+        const retryPolicy = await client.query(
+          `SELECT count(*)::int AS failed_count,
+                  COALESCE((b.integration_policy->'execution'->>'maxTransientRetries')::int,3) AS max_retries
+             FROM ${store.executionsTable} prior
+             JOIN ${store.tasksTable} retry_task ON retry_task.id=$1
+             JOIN ${store.boardsTable} b ON b.id=retry_task.board_id
+            WHERE prior.task_id=$1 AND prior.purpose=$2 AND prior.protocol_version=2 AND prior.status='failed'
+            GROUP BY b.integration_policy`,
+          [taskId, currentExecution.purpose],
+        );
+        failedCount = Number(retryPolicy.rows[0]?.failed_count ?? 0);
+        maxRetries = Math.max(0, Number(retryPolicy.rows[0]?.max_retries ?? 3));
+      }
+      const recovery = unresolvedExecutionRecovery(
+        currentExecution.purpose,
+        completionInput.status,
+        failedCount,
+        maxRetries,
       );
-      const failedCount = Number(retryPolicy.rows[0]?.failed_count ?? 0);
-      const maxRetries = Math.max(0, Number(retryPolicy.rows[0]?.max_retries ?? 3));
-      const exhausted = failedCount >= maxRetries;
-      const retryStatus = exhausted
-        ? 'blocked'
-        : currentExecution.purpose === 'work'
-          ? 'todo'
-          : currentExecution.purpose === 'review'
-            ? 'in_review'
-            : 'in_progress';
+      const retryStatus = recovery.status;
+      const exhausted = recovery.exhausted;
+      const sortOrder = retryStatus === loaded.task.status
+        ? loaded.task.sortOrder
+        : await nextTaskColumnSortOrder(
+          store,
+          client,
+          identity,
+          loaded.task.boardId,
+          taskId,
+          retryStatus,
+        );
       await client.query(
         `UPDATE ${store.tasksTable}
-            SET status=$2, completed_at=NULL, version=version+1, updated_at=now()
+            SET status=$2, sort_order=$3, completed_at=NULL,
+                workflow_epoch=workflow_epoch+1,
+                next_action=CASE
+                  WHEN $2='todo' THEN 'work'
+                  WHEN $2='in_review' THEN 'review'
+                  WHEN $2='in_progress' THEN $4
+                  ELSE 'none'
+                END,
+                next_action_revision=next_action_revision+1,
+                version=version+1, updated_at=now()
           WHERE id=$1`,
-        [taskId, retryStatus],
+        [taskId, retryStatus, sortOrder, currentExecution.purpose],
       );
       if (exhausted) {
         await client.query(

@@ -363,11 +363,15 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     const context = await store.getExecutionContextV2(identity, integration.id, { runId });
     await store.mergeIntegrationSourceV2(identity, runId, source.id);
 
+    const firstRemediation = await store.getTask(identity, remediation.id);
+    expect(firstRemediation).toMatchObject({ status: 'done', completedAt: expect.any(String) });
+    const remediationVersion = firstRemediation.version;
+    await store.mergeIntegrationSourceV2(identity, runId, source.id);
     const [deliveryAfter, remediationAfter, integrationAfter] = await Promise.all([
       store.getTask(identity, delivery.id), store.getTask(identity, remediation.id), store.getTask(identity, integration.id),
     ]);
     expect(deliveryAfter).toMatchObject({ status: 'done', mergedCommitOid: 'merge-77' });
-    expect(remediationAfter.status).toBe('canceled');
+    expect(remediationAfter).toMatchObject({ status: 'done', completedAt: firstRemediation.completedAt, version: remediationVersion });
     expect(integrationAfter.status).toBe('done');
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
       state: 'merged', mergedCommitOid: 'merge-77',
@@ -386,7 +390,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       `SELECT state FROM ${store.remediationAttemptsTable} WHERE remediation_task_id=$1`,
       [remediation.id],
     );
-    expect(attempt.rows[0].state).toBe('superseded');
+    expect(attempt.rows[0].state).toBe('resolved');
   });
 
   it('schema migration projects one valid legacy Resolution and exposes duplicate/incomplete anomalies', async () => {
@@ -503,6 +507,12 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       expect(first.after.mergedProjectionMismatch).toBe(0);
       expect(first.after.mergedActiveExecution).toBe(0);
       expect((await store.getTask(identity, delivery.id))).toMatchObject({ status: 'done' });
+      expect((await store.getTask(identity, remediation.id))).toMatchObject({ status: 'done', completedAt: expect.any(String) });
+      const repairedAttempt = await pool.query(
+        `SELECT state,resolved_at FROM ${store.remediationAttemptsTable} WHERE remediation_task_id=$1`,
+        [remediation.id],
+      );
+      expect(repairedAttempt.rows[0]).toMatchObject({ state: 'resolved', resolved_at: expect.anything() });
       const fenced = await pool.query(`SELECT status,superseded_at FROM ${store.executionsTable} WHERE id=$1`, [activeExecutionId]);
       expect(fenced.rows[0]).toMatchObject({ status: 'cancelled' });
       expect(fenced.rows[0].superseded_at).toBeTruthy();

@@ -116,9 +116,10 @@ describe('任务看板后续正式执行', () => {
     expect(rig.store.enqueueContinuation).not.toHaveBeenCalled();
   });
 
-  it('终态、merged 与 blocked 评论均不得再次派发', async () => {
+  it('终态、待合并、merged 与 blocked 评论均不得再次派发', async () => {
     for (const terminalTask of [
       { ...task, status: 'done' as const },
+      { ...task, status: 'ready_to_merge' as const },
       { ...task, status: 'in_review' as const, mergedCommitOid: 'abc123' },
       { ...task, status: 'blocked' as const },
     ]) {

@@ -909,11 +909,20 @@ function assertContinuationAllowed(task: TaskBoardTask, activeExecution?: TaskBo
   if (task.status === 'blocked') {
     throw new TaskboardValidationError('阻塞任务需要显式恢复后才能继续', 'TASKBOARD_RESUME_REQUIRED');
   }
-  if (task.kind === 'integration' && activeExecution && activeExecution.purpose !== 'merge') {
-    throw new TaskboardValidationError(
-      '集成任务只能继续 merge execution',
-      'TASKBOARD_INTEGRATION_PURPOSE_INVALID',
-    );
+  if (task.kind === 'integration') {
+    if (!['todo', 'in_progress'].includes(task.status)) {
+      throw new TaskboardValidationError('当前集成任务状态不允许从评论继续执行', 'TASKBOARD_EXECUTION_STATUS_INVALID');
+    }
+    if (activeExecution && activeExecution.purpose !== 'merge') {
+      throw new TaskboardValidationError(
+        '集成任务只能继续 merge execution',
+        'TASKBOARD_INTEGRATION_PURPOSE_INVALID',
+      );
+    }
+    return;
+  }
+  if (!['todo', 'in_review', 'in_progress'].includes(task.status)) {
+    throw new TaskboardValidationError('当前任务状态不允许从评论创建新执行', 'TASKBOARD_EXECUTION_STATUS_INVALID');
   }
 }
 

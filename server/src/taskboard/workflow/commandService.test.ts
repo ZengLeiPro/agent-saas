@@ -8,6 +8,7 @@ import type {
 import {
   assertReceiptBoundToExecution,
   assertReceiptIdentityBoundToExecution,
+  completeRemediationAfterMerge,
   fenceTaskExecutions,
   insertResolution,
   loadWorkflowFacts,
@@ -58,6 +59,49 @@ describe('workflow command service', () => {
     await expect(loadWorkflowFacts(host, client as never, {
       id: 'remediation-1', mergedCommitOid: undefined,
     })).resolves.toEqual({ hasMergeFact: true });
+  });
+
+  it('merge-first remediation completion is a workflow command and idempotent', async () => {
+    let taskStatus = 'ready_to_merge';
+    let completedAt: string | null = null;
+    let attemptState = 'active';
+    let attemptResolvedAt: string | null = null;
+    const changes: string[] = [];
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT id,kind,status,completed_at')) {
+          return { rows: [{ id: 'remediation-1', kind: 'remediation', status: taskStatus, completed_at: completedAt }] };
+        }
+        if (sql.includes('SELECT id,state')) {
+          return { rows: [{ id: 'attempt-1', state: attemptState }] };
+        }
+        if (sql.includes('UPDATE tasks')) {
+          if (taskStatus === 'done' && completedAt) return { rows: [] };
+          taskStatus = 'done';
+          completedAt = '2026-08-18T01:00:00.000Z';
+          return { rows: [{ id: 'remediation-1' }] };
+        }
+        if (sql.includes('UPDATE remediation_attempts')) {
+          if (attemptState === 'resolved' && attemptResolvedAt) return { rows: [] };
+          attemptState = 'resolved';
+          attemptResolvedAt = '2026-08-18T01:00:00.000Z';
+          return { rows: [{ id: 'attempt-1' }] };
+        }
+        if (sql.includes('INSERT INTO changes')) changes.push(sql);
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const input = {
+      remediationTaskId: 'remediation-1', sourceId: 'source-1', attemptId: 'attempt-1',
+      commandId: 'merge:source-1:remediation-1:merge-1', mergedCommitOid: 'merge-1',
+    };
+    await expect(completeRemediationAfterMerge(host, client as never, input)).resolves.toBe(true);
+    await expect(completeRemediationAfterMerge(host, client as never, input)).resolves.toBe(false);
+    expect(taskStatus).toBe('done');
+    expect(completedAt).toBeTruthy();
+    expect(attemptState).toBe('resolved');
+    expect(attemptResolvedAt).toBeTruthy();
+    expect(changes).toHaveLength(1);
   });
 
   it('stores one canonical Resolution, replays the same idempotency key, and rejects a second id', async () => {

@@ -84,6 +84,100 @@ describe('MemoryIndexer', () => {
     }
   });
 
+  it('isolates same-named workspaces by tenant in separate SQLite files', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'memory-index-tenants-'));
+    cleanupDirs.add(root);
+    const workspaceA = join(root, 'tenant-a', 'shared-workspace');
+    const workspaceB = join(root, 'tenant-b', 'shared-workspace');
+    const dbDir = join(root, 'indexes');
+    await mkdir(join(workspaceA, 'memory'), { recursive: true });
+    await mkdir(join(workspaceB, 'memory'), { recursive: true });
+    await writeFile(join(workspaceA, 'MEMORY.md'), '甲租户专属记忆：青铜齿轮。\n');
+    await writeFile(join(workspaceB, 'MEMORY.md'), '乙租户专属记忆：银色罗盘。\n');
+
+    const indexerA = new MemoryIndexer(workspaceA, testConfig(dbDir), undefined, { skipWatch: true });
+    const indexerB = new MemoryIndexer(workspaceB, testConfig(dbDir), undefined, { skipWatch: true });
+    try {
+      await Promise.all([indexerA.forceSync(), indexerB.forceSync()]);
+      expect(indexerA.getStatus().dbPath).toMatch(new RegExp(`${dbDir}/v2/[a-f0-9]{64}\\.sqlite$`));
+      expect(indexerB.getStatus().dbPath).toMatch(new RegExp(`${dbDir}/v2/[a-f0-9]{64}\\.sqlite$`));
+      expect(indexerA.getStatus().dbPath).not.toBe(indexerB.getStatus().dbPath);
+
+      const resultA = await indexerA.search('青铜齿轮', { keywords: '青铜齿轮', minScore: 0 });
+      const resultB = await indexerB.search('银色罗盘', { keywords: '银色罗盘', minScore: 0 });
+      expect(resultA.results.some((item) => item.snippet.includes('青铜齿轮'))).toBe(true);
+      expect(resultA.results.some((item) => item.snippet.includes('银色罗盘'))).toBe(false);
+      expect(resultB.results.some((item) => item.snippet.includes('银色罗盘'))).toBe(true);
+      expect(resultB.results.some((item) => item.snippet.includes('青铜齿轮'))).toBe(false);
+    } finally {
+      await Promise.all([indexerA.close(), indexerB.close()]);
+    }
+  });
+
+  it('serializes concurrent syncs for the same workspace across indexer instances', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'memory-index-lease-'));
+    cleanupDirs.add(root);
+    const workspace = join(root, 'tenant-a', 'shared-workspace');
+    const dbDir = join(root, 'indexes');
+    await mkdir(join(workspace, 'memory'), { recursive: true });
+    await writeFile(join(workspace, 'MEMORY.md'), '并发同步记忆：紫色沙漏。\n');
+
+    const indexerA = new MemoryIndexer(workspace, testConfig(dbDir), undefined, { skipWatch: true });
+    const indexerB = new MemoryIndexer(workspace, testConfig(dbDir), undefined, { skipWatch: true });
+    try {
+      await Promise.all([indexerA.forceSync(), indexerB.forceSync()]);
+      expect(indexerA.getStatus().dbPath).toBe(indexerB.getStatus().dbPath);
+      expect(indexerA.getStatus().fileCount).toBe(1);
+      expect(indexerA.getStatus().chunkCount).toBe(1);
+      expect(indexerB.getStatus().chunkCount).toBe(1);
+    } finally {
+      await Promise.all([indexerA.close(), indexerB.close()]);
+    }
+  });
+
+  it('fails closed when a memory source changes during embedding and succeeds on retry', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'memory-index-source-race-'));
+    cleanupDirs.add(root);
+    const workspace = join(root, 'tenant-a', 'workspace-a');
+    const memoryPath = join(workspace, 'MEMORY.md');
+    const dbDir = join(root, 'indexes');
+    await mkdir(join(workspace, 'memory'), { recursive: true });
+    await writeFile(memoryPath, '初始记忆：黑色方舟。\n');
+
+    const indexer = new MemoryIndexer(workspace, testConfig(dbDir), undefined, { skipWatch: true });
+    try {
+      await indexer.forceSync();
+      await writeFile(memoryPath, '待提交记忆：白色灯塔。\n');
+
+      let signalStarted!: () => void;
+      let releaseEmbedding!: () => void;
+      const started = new Promise<void>((resolveStarted) => { signalStarted = resolveStarted; });
+      const gate = new Promise<void>((resolveGate) => { releaseEmbedding = resolveGate; });
+      globalThis.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        signalStarted();
+        await gate;
+        const body = JSON.parse(String(init?.body ?? '{}')) as { input?: string[] };
+        const inputs = Array.isArray(body.input) ? body.input : [];
+        return new Response(JSON.stringify({
+          data: inputs.map(() => ({ embedding: [1, 0, 0] })),
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }) as typeof fetch;
+
+      const staleSync = indexer.forceSync();
+      await started;
+      await writeFile(memoryPath, '最终记忆：金色罗盘。\n');
+      releaseEmbedding();
+      await expect(staleSync).rejects.toThrow('memory source changed during indexing');
+
+      await indexer.forceSync();
+      const result = await indexer.search('金色罗盘', { keywords: '金色罗盘', minScore: 0 });
+      expect(result.results.some((item) => item.snippet.includes('金色罗盘'))).toBe(true);
+      expect(indexer.getStatus().chunkCount).toBe(1);
+    } finally {
+      await indexer.close();
+    }
+  });
+
   it('syncIfStale builds and refreshes the index with bounded search-path sync', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'memory-index-stale-'));
     cleanupDirs.add(workspace);

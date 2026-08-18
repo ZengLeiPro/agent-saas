@@ -10,9 +10,9 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import { readFile, stat, readdir } from 'node:fs/promises';
-import { existsSync, lstatSync, mkdirSync } from 'node:fs';
-import { join, relative, resolve, dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { existsSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 import { watch, type FSWatcher } from 'node:fs';
 import { createRequire } from 'node:module';
 
@@ -37,6 +37,23 @@ import type {
 } from './types.js';
 
 type LogFn = (msg: string) => void;
+
+function isMissingPathError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+/**
+ * 索引库使用完整规范化 workspace 路径的 SHA-256 作为物理身份。旧实现只使用
+ * workspace 末级名，不同租户出现相同 workspaceId 时会打开同一个 SQLite，造成
+ * 交叉覆盖与误读。哈希键不依赖目录层级，也避免用户可控路径产生穿越或超长文件名。
+ * 不回退读取旧平铺库；存量迁移必须先确认源 workspace，避免把碰撞库复制给错误租户。
+ */
+export function resolveMemoryIndexDbPath(workspaceDir: string, dbDir: string): string {
+  const workspace = resolve(workspaceDir);
+  const workspaceKey = createHash('sha256').update(workspace).digest('hex');
+  return join(resolve(dbDir), 'v2', `${workspaceKey}.sqlite`);
+}
 
 export interface SyncIfStaleOptions {
   /** 已有索引但可能 stale 时最多等待同步完成多久。 */
@@ -76,13 +93,8 @@ export class MemoryIndexer {
     this.log = log ?? (() => {});
     this.provider = new EmbeddingProvider(config.embedding, opts?.embeddingProvider);
 
-    // DB 路径：{dbDir}/{workspace名}.sqlite
-    const workspaceName = this.workspaceDir.split('/').pop() ?? 'default';
-    const dbDir = resolve(config.dbDir);
-    if (!existsSync(dbDir)) {
-      mkdirSync(dbDir, { recursive: true });
-    }
-    this.dbPath = join(dbDir, `${workspaceName}.sqlite`);
+    // DB 路径：{dbDir}/v2/{sha256(绝对workspace路径)}.sqlite，跨租户物理隔离。
+    this.dbPath = resolveMemoryIndexDbPath(this.workspaceDir, config.dbDir);
 
     this.db = this.openDatabase();
     this.ftsAvailable = ensureSchema(this.db).ftsAvailable;
@@ -272,9 +284,14 @@ export class MemoryIndexer {
     if (this.closed) return;
     if (this.syncing) return this.syncing;
 
-    this.syncing = this._doSync(force).finally(() => {
-      this.syncing = null;
-    });
+    this.syncing = this._doSync(force)
+      .catch((error) => {
+        this.dirty = true;
+        throw error;
+      })
+      .finally(() => {
+        this.syncing = null;
+      });
     return this.syncing;
   }
 
@@ -283,20 +300,20 @@ export class MemoryIndexer {
     const files = await this.listMemoryFiles();
     const indexedFiles = this.getIndexedFiles();
 
-    // 找出需要处理的文件
-    const toIndex: MemoryFileEntry[] = [];
-    const toDelete: string[] = [];
+    // 带上扫描时 manifest hash，提交短事务时做乐观并发校验。
+    const toIndex: Array<{ file: MemoryFileEntry; expectedHash: string | undefined }> = [];
+    const toDelete: Array<{ path: string; expectedHash: string }> = [];
     const currentPaths = new Set<string>();
 
     for (const file of files) {
       currentPaths.add(file.path);
       const indexed = indexedFiles.get(file.path);
       if (!force && indexed && indexed.hash === file.hash) continue;
-      toIndex.push(file);
+      toIndex.push({ file, expectedHash: indexed?.hash });
     }
 
-    for (const [path] of indexedFiles) {
-      if (!currentPaths.has(path)) toDelete.push(path);
+    for (const [path, indexed] of indexedFiles) {
+      if (!currentPaths.has(path)) toDelete.push({ path, expectedHash: indexed.hash });
     }
 
     if (toIndex.length === 0 && toDelete.length === 0) {
@@ -307,18 +324,23 @@ export class MemoryIndexer {
     this.log(`sync: ${toIndex.length} to index, ${toDelete.length} to delete`);
 
     // 删除过期文件的 chunks
-    for (const path of toDelete) {
-      this.deleteFileChunks(path);
+    for (const entry of toDelete) {
+      await this.deleteFileIfUnchanged(entry.path, entry.expectedHash);
     }
 
-    // 索引新/变更文件
-    for (const file of toIndex) {
+    // 索引新/变更文件。允许其他文件继续，但任一失败都必须让整轮同步失败，
+    // 不能让 forceSync/调用方把部分成功误判为索引已完全刷新。
+    let firstError: unknown;
+    for (const entry of toIndex) {
       try {
-        await this.indexFile(file);
-      } catch (e) {
-        this.log(`index error for ${file.path}: ${e}`);
+        await this.indexFile(entry.file, entry.expectedHash);
+      } catch (error) {
+        this.dirty = true;
+        firstError ??= error;
+        this.log(`index error for ${entry.file.path}: ${error}`);
       }
     }
+    if (firstError) throw firstError;
     this.lastManifestCheckAt = Date.now();
   }
 
@@ -359,21 +381,20 @@ export class MemoryIndexer {
     return completed;
   }
 
-  private async indexFile(file: MemoryFileEntry): Promise<void> {
+  private async indexFile(file: MemoryFileEntry, expectedHash: string | undefined): Promise<void> {
     const content = await readFile(file.absPath, 'utf-8');
+    if (hashText(content) !== file.hash) {
+      throw new Error(`memory source changed before chunking: ${file.path}`);
+    }
     const chunks = chunkMarkdown(content, this.config.chunking);
+    const embeddings = chunks.length > 0 ? await this.embedWithCache(chunks) : [];
 
-    // 先删除旧 chunks；空文件也要更新 files manifest，否则会被反复判 stale。
-    this.deleteFileChunks(file.path);
-    if (chunks.length === 0) {
-      this.upsertFileEntry(file);
-      return;
+    // embedding 期间源文件可能变化；旧快照不允许覆盖更新内容。
+    const currentSource = await this.buildFileEntry(file.absPath, file.path);
+    if (!currentSource || currentSource.hash !== file.hash) {
+      throw new Error(`memory source changed during indexing: ${file.path}`);
     }
 
-    // 获取嵌入（带缓存）
-    const embeddings = await this.embedWithCache(chunks);
-
-    // 写入新 chunks
     const insertChunk = this.db.prepare(
       `INSERT INTO chunks (id, path, start_line, end_line, hash, text, embedding, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -386,8 +407,25 @@ export class MemoryIndexer {
       : null;
 
     const now = Date.now();
-    this.db.exec('BEGIN');
+    this.db.exec('BEGIN IMMEDIATE');
     try {
+      // 再在提交门口核对一次源内容，缩小扫描后变化的竞态窗口。
+      if (!existsSync(file.absPath) || hashText(readFileSync(file.absPath, 'utf-8')) !== file.hash) {
+        throw new Error(`memory source changed before commit: ${file.path}`);
+      }
+      const current = this.db.prepare('SELECT hash FROM files WHERE path = ?')
+        .get(file.path) as { hash?: string } | undefined;
+      const currentHash = current?.hash;
+      if (currentHash !== expectedHash) {
+        // 另一进程已提交同一版本时直接复用；不同版本必须 fail-closed 后重扫。
+        if (currentHash === file.hash) {
+          this.db.exec('ROLLBACK');
+          return;
+        }
+        throw new Error(`memory index manifest changed during commit: ${file.path}`);
+      }
+
+      this.deleteFileChunksInTransaction(file.path);
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i]!;
         const embedding = embeddings[i] ?? [];
@@ -397,26 +435,15 @@ export class MemoryIndexer {
           id, file.path, chunk.startLine, chunk.endLine,
           chunk.hash, chunk.text, JSON.stringify(embedding), now,
         );
+        insertFts?.run(id, file.path, chunk.startLine, chunk.endLine, chunk.text);
 
-        if (insertFts) {
-          insertFts.run(id, file.path, chunk.startLine, chunk.endLine, chunk.text);
-        }
-
-        // sqlite-vec
         if (this.vecAvailable && embedding.length > 0) {
-          try {
-            this.db.prepare(
-              `INSERT INTO chunks_vec (id, embedding) VALUES (?, ?)`
-            ).run(id, Buffer.from(new Float32Array(embedding).buffer));
-          } catch {
-            // vec 表可能还未创建（维度未知时），跳过
-          }
+          this.db.prepare('INSERT INTO chunks_vec (id, embedding) VALUES (?, ?)')
+            .run(id, Buffer.from(new Float32Array(embedding).buffer));
         }
       }
-
-      // 更新 files 表
+      // 空文件也更新 manifest，避免被反复判 stale。
       this.upsertFileEntry(file);
-
       this.db.exec('COMMIT');
     } catch (e) {
       try { this.db.exec('ROLLBACK'); } catch {}
@@ -430,33 +457,45 @@ export class MemoryIndexer {
     ).run(file.path, file.hash, Math.floor(file.mtimeMs), file.size);
   }
 
-  private deleteFileChunks(path: string): void {
-    // 获取要删除的 chunk IDs
-    const ids = (this.db.prepare('SELECT id FROM chunks WHERE path = ?').all(path) as Array<{ id: string }>)
-      .map((r) => r.id);
+  private async deleteFileIfUnchanged(path: string, expectedHash: string): Promise<void> {
+    const source = await this.buildFileEntry(join(this.workspaceDir, path), path);
+    if (source) {
+      throw new Error(`memory source recreated during delete: ${path}`);
+    }
 
-    this.db.exec('BEGIN');
+    this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.db.prepare('DELETE FROM chunks WHERE path = ?').run(path);
-      this.db.prepare('DELETE FROM files WHERE path = ?').run(path);
-
-      if (this.ftsAvailable) {
-        for (const id of ids) {
-          this.db.prepare('DELETE FROM chunks_fts WHERE id = ?').run(id);
-        }
+      if (existsSync(join(this.workspaceDir, path))) {
+        throw new Error(`memory source recreated before delete commit: ${path}`);
       }
-
-      if (this.vecAvailable) {
-        for (const id of ids) {
-          try {
-            this.db.prepare('DELETE FROM chunks_vec WHERE id = ?').run(id);
-          } catch {}
+      const current = this.db.prepare('SELECT hash FROM files WHERE path = ?')
+        .get(path) as { hash?: string } | undefined;
+      if (current?.hash !== expectedHash) {
+        if (!current) {
+          this.db.exec('ROLLBACK');
+          return;
         }
+        throw new Error(`memory index manifest changed before delete: ${path}`);
       }
-
+      this.deleteFileChunksInTransaction(path);
       this.db.exec('COMMIT');
-    } catch {
+    } catch (e) {
       try { this.db.exec('ROLLBACK'); } catch {}
+      throw e;
+    }
+  }
+
+  private deleteFileChunksInTransaction(path: string): void {
+    const ids = (this.db.prepare('SELECT id FROM chunks WHERE path = ?').all(path) as Array<{ id: string }>)
+      .map((row) => row.id);
+    this.db.prepare('DELETE FROM chunks WHERE path = ?').run(path);
+    this.db.prepare('DELETE FROM files WHERE path = ?').run(path);
+
+    if (this.ftsAvailable) {
+      for (const id of ids) this.db.prepare('DELETE FROM chunks_fts WHERE id = ?').run(id);
+    }
+    if (this.vecAvailable) {
+      for (const id of ids) this.db.prepare('DELETE FROM chunks_vec WHERE id = ?').run(id);
     }
   }
 
@@ -629,7 +668,9 @@ export class MemoryIndexer {
           if (fileEntry) files.push(fileEntry);
         }
       }
-    } catch {}
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+    }
   }
 
   private async buildFileEntry(
@@ -647,8 +688,9 @@ export class MemoryIndexer {
         mtimeMs: s.mtimeMs,
         size: s.size,
       };
-    } catch {
-      return null;
+    } catch (error) {
+      if (isMissingPathError(error)) return null;
+      throw error;
     }
   }
 

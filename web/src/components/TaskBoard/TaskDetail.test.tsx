@@ -505,4 +505,35 @@ describe("TaskDetail 草稿隔离", () => {
     await user.click(await screen.findByRole("button", { name: "重新运行" }));
     await waitFor(() => expect(onExecute).toHaveBeenCalledWith(blockedTask, "work"));
   });
+
+  it("确认后删除任务并关闭详情", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const deleted = { ...taskOne, version: taskOne.version + 1, deletedAt: taskOne.updatedAt };
+    const onDeleteTask = vi.fn(async () => deleted);
+    const onOpenChange = vi.fn();
+    render(<TaskDetail {...props({ task: taskOne, onDeleteTask, onOpenChange })} />);
+
+    await user.click(await screen.findByRole("button", { name: "删除任务" }));
+    await waitFor(() => expect(onDeleteTask).toHaveBeenCalledWith(taskOne));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("确认删除任务"));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    confirmSpy.mockRestore();
+  });
+
+  it("未确认时不删除任务", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const onDeleteTask = vi.fn();
+    render(<TaskDetail {...props({ task: taskOne, onDeleteTask })} />);
+
+    await user.click(await screen.findByRole("button", { name: "删除任务" }));
+    expect(onDeleteTask).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it("无删除权限时不展示删除按钮", async () => {
+    render(<TaskDetail {...props({ task: taskOne, canDeleteTask: false })} />);
+    expect(screen.queryByRole("button", { name: "删除任务" })).toBeNull();
+  });
 });

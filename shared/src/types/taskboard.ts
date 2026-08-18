@@ -66,6 +66,7 @@ export const TASKBOARD_ALLOWED_ACTIONS = [
   "task.reorder",
   "task.transition",
   "task.archive",
+  "task.delete",
   "comment.create",
   "execution.trigger",
   "integration.create",
@@ -228,6 +229,7 @@ export interface TaskBoardTask {
   creatorName?: string;
   completedAt?: string;
   archivedAt?: string;
+  deletedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

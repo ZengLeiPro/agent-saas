@@ -52,6 +52,7 @@ import {
   updateTaskBranchFromExecution as updateStoredTaskBranchFromExecution,
 } from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
+import { deleteStoredTask } from './storeTaskDelete.js';
 import {
   allowedActionsForRole, boardRepositoryFragment,
   normalizeBoardPrompt,
@@ -659,25 +660,16 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       assertBoardRole(loaded.boardRole, 'editor');
       assertExpectedVersion(loaded.task, input.expectedVersion);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
-      if (
-        input.providerPullRequestId !== undefined
-        || input.pullRequestNumber !== undefined
-        || input.reviewedSubjectDigest !== undefined
-      ) {
+      if (input.providerPullRequestId !== undefined || input.pullRequestNumber !== undefined || input.reviewedSubjectDigest !== undefined) {
         throw new TaskboardValidationError(
           'Pull request identity and reviewed subject are protected fields',
           'TASKBOARD_PROTECTED_FIELD',
         );
       }
       if (
-        input.title === undefined
-        && input.description === undefined
-        && input.branch === undefined
-        && input.attachments === undefined
-        && input.priority === undefined
-        && input.labels === undefined
-        && input.dueAt === undefined
-        && input.model === undefined
+        input.title === undefined && input.description === undefined && input.branch === undefined
+        && input.attachments === undefined && input.priority === undefined && input.labels === undefined
+        && input.dueAt === undefined && input.model === undefined
       ) {
         throw new TaskboardValidationError('No task changes supplied');
       }
@@ -829,6 +821,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     input: TaskboardExpectedVersionInput,
   ): Promise<TaskBoardTask> {
     return this.setTaskArchived(identity, taskId, input.expectedVersion, false);
+  }
+
+  async deleteTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask> {
+    return this.withTransaction((client) => deleteStoredTask(this, client, identity, taskId, input.expectedVersion));
   }
 
   async listComments(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardComment[]> {
@@ -1179,7 +1175,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
               (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id) AS comment_count
          FROM ${this.tasksTable} t
          JOIN ${this.boardsTable} b ON b.id=t.board_id LEFT JOIN ${this.membersTable} m ON m.board_id=b.id AND m.user_id=$3
-        WHERE t.id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
+        WHERE t.id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization') AND t.deleted_at IS NULL
         ${forUpdate ? 'FOR UPDATE OF t' : ''}`,
       [taskId, identity.tenantId, identity.ownerUserId],
     );

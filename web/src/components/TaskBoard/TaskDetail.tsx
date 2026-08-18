@@ -10,7 +10,7 @@ import {
   type TaskBoardTask,
   type TaskBoardTaskPatchInput,
 } from "@agent/shared";
-import { Archive, ArchiveRestore, Bot, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Send } from "lucide-react";
+import { Archive, ArchiveRestore, Bot, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Send, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -58,6 +58,7 @@ interface TaskDetailProps {
   canUpdateTask?: boolean;
   canTransitionTask?: boolean;
   canArchiveTask?: boolean;
+  canDeleteTask?: boolean;
   canComment?: boolean;
   canExecute?: boolean;
   canCancelIntegration?: boolean;
@@ -70,6 +71,7 @@ interface TaskDetailProps {
   ) => Promise<TaskBoardTask>;
   onMove: (task: TaskBoardTask, status: TaskBoardStatus) => Promise<TaskBoardTask>;
   onSetArchived: (task: TaskBoardTask, archived: boolean) => Promise<TaskBoardTask>;
+  onDeleteTask?: (task: TaskBoardTask) => Promise<TaskBoardTask>;
   onExecute: (
     task: TaskBoardTask,
     purpose?: TaskBoardExecutionPurpose,
@@ -85,6 +87,7 @@ export function TaskDetail({
   canUpdateTask = true,
   canTransitionTask = true,
   canArchiveTask = true,
+  canDeleteTask = true,
   canComment = true,
   canExecute = true,
   canCancelIntegration = false,
@@ -94,6 +97,7 @@ export function TaskDetail({
   onUpdate,
   onMove,
   onSetArchived,
+  onDeleteTask,
   onExecute,
   onCommentsChanged,
 }: TaskDetailProps) {
@@ -342,6 +346,22 @@ export function TaskDetail({
       setError(caught instanceof Error ? caught.message : nextArchived ? "归档任务失败" : "恢复任务失败");
     } finally {
       if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
+    }
+  };
+
+  const deleteCurrentTask = async () => {
+    if (!currentTask || boardReadOnly || !canDeleteTask || !onDeleteTask) return;
+    const operationTask = currentTask;
+    if (!window.confirm(`确认删除任务“${operationTask.title}”吗？删除后任务将不再显示，且无法恢复。`)) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onDeleteTask(operationTask);
+      onOpenChange(false);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "删除任务失败");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -693,6 +713,18 @@ export function TaskDetail({
                     >
                       {archived ? <ArchiveRestore /> : <Archive />}
                       {archived ? "恢复任务" : "归档任务"}
+                    </Button>
+                  ) : null}
+                  {!boardReadOnly && canDeleteTask && onDeleteTask ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void deleteCurrentTask()}
+                      disabled={saving}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      <Trash2 />
+                      删除任务
                     </Button>
                   ) : null}
                 </div>

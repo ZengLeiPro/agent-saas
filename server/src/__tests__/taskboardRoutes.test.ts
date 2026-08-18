@@ -452,6 +452,30 @@ describe('Taskboard routes', () => {
 
     expect((await rig.request('/api/taskboard/tasks/task-1/comments')).status).toBe(503);
   });
+
+  it('deletes a task via DELETE with CAS version and forwards 409', async () => {
+    const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
+    const service = makeService(captured);
+    const rig = await makeRig(service, USER, captured);
+
+    const deleted = await rig.request(`/api/taskboard/tasks/${TASK.id}`, {
+      ...postJson({ expectedVersion: TASK.version }),
+      method: 'DELETE',
+    });
+    expect(deleted.status).toBe(200);
+    expect(await deleted.json()).toMatchObject({ id: TASK.id, version: TASK.version + 1, deletedAt: TASK.updatedAt });
+    expect(captured.identities.map((identity) => identity.ownerUserId)).toEqual([USER.sub]);
+
+    service.deleteTask = async () => {
+      throw new TaskboardConflictError({ ...TASK, version: 3 });
+    };
+    const conflict = await rig.request(`/api/taskboard/tasks/${TASK.id}`, {
+      ...postJson({ expectedVersion: 1 }),
+      method: 'DELETE',
+    });
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ code: 'TASKBOARD_VERSION_CONFLICT' });
+  });
 });
 
 function makeService(captured: Captured): TaskboardService {
@@ -482,6 +506,7 @@ function makeService(captured: Captured): TaskboardService {
     async moveTask(identity) { remember(identity); return TASK; },
     async archiveTask(identity) { remember(identity); return { ...TASK, version: 2, archivedAt: TASK.updatedAt }; },
     async restoreTask(identity) { remember(identity); return { ...TASK, version: 2 }; },
+    async deleteTask(identity) { remember(identity); return { ...TASK, version: 2, deletedAt: TASK.updatedAt }; },
     async listComments(identity) { remember(identity); return [COMMENT]; },
     async searchComments(identity, _taskId, filter = {}) {
       remember(identity);

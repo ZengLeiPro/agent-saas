@@ -749,6 +749,7 @@ async function loadAccessibleTaskAndBoard(
        LEFT JOIN ${options.membersTable} m ON m.board_id=b.id AND m.user_id=$3
       WHERE t.id=$1 AND b.tenant_id=$2
         AND (b.owner_user_id=$3 OR b.visibility='organization')
+        AND t.deleted_at IS NULL
       ${forUpdate ? 'FOR UPDATE OF t' : ''}`,
     [taskId, identity.tenantId, identity.ownerUserId],
   );
@@ -797,7 +798,7 @@ async function loadTask(
               WHERE s.delivery_task_id=t.id AND s.state<>'merged' LIMIT 1) AS integration_task_id,
             (SELECT s.state FROM ${options.integrationSourcesTable} s
               WHERE s.delivery_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1) AS integration_state
-       FROM ${options.tasksTable} t WHERE t.id=$1`,
+       FROM ${options.tasksTable} t WHERE t.id=$1 AND t.deleted_at IS NULL`,
     [taskId],
   );
   if (!result.rows[0]) throw new TaskboardNotFoundError('Task not found');

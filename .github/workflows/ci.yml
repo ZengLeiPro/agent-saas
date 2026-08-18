@@ -802,8 +802,15 @@ jobs:
             corepack enable
             corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
           fi
-          log "remote pnpm isolated install start"
-          NODE_ENV=development pnpm --config.node-linker=isolated --config.allow-unused-patches=true install --frozen-lockfile --filter server... --filter shared...
+          log "remote pnpm isolated install start (low priority, persistent store cache)"
+          PNPM_INSTALL=(pnpm --config.node-linker=isolated --config.allow-unused-patches=true \
+            --config.network-concurrency=8 --config.child-concurrency=2 \
+            install --frozen-lockfile --filter server... --filter shared...)
+          if command -v ionice >/dev/null 2>&1; then
+            NODE_ENV=development nice -n 10 ionice -c 2 -n 7 "${PNPM_INSTALL[@]}"
+          else
+            NODE_ENV=development nice -n 10 "${PNPM_INSTALL[@]}"
+          fi
           log "remote pnpm install done"
           INSTALL_CLEANUP_ARMED=0
 
@@ -1417,11 +1424,10 @@ jobs:
             log "old color draining in background: $ACTIVE still active after 60s (not a failure; next deploy waits up to 600s)"
           fi
 
-          # ── 13. 收尾：pnpm store 清理 + 删除上传包 ──
-          if command -v pnpm >/dev/null 2>&1; then
-            log "pnpm store prune"
-            pnpm store prune || log "WARN: pnpm store prune failed (non-fatal)"
-          fi
+          # ── 13. 收尾：保留 pnpm store 热缓存 + 删除上传包 ──
+          # 不在部署热路径执行 pnpm store prune：它会让下一次发布 reused=0，
+          # 冷装全部依赖时与 active 服务争抢 CPU/IO/内存，破坏零停机保证。
+          log "preserve pnpm store cache for the next isolated install"
           log "remove uploaded release archive"
           rm -f "$RELEASE_TGZ" "$UPSTREAM_BAK" "$API_SITE_BAK"
           log "deploy ok: $RELEASE_ID active=$IDLE (old color $ACTIVE drain issued)"

@@ -129,7 +129,7 @@ deploy-ecs 远端脚本（ci.yml「Deploy and restart」step 内嵌，编号与�
 | 0 | 获取 ECS `flock`，安装/刷新超龄部署包清理 timer，并立即执行一次清理 | 上传包自动回收；活动色不动 |
 | 1 | 前置校验：`/etc/agent-saas/active-color` 存在且为 `blue|green`，`agent-saas-server@<active>` 必须 active，否则要求先完成一次性手工迁移。据此解析 idle 色/端口 | 直接退出，什么都没动 |
 | 2 | 安装前清理旧 release：保留最近 4 个现有版本 + current/previous + Web/worker 两组 symlink 的 target；同 SHA 的未完成目录直接回收，活动版本则幂等 no-op；随后校验至少 8 GiB 可用空间与 25 万可用 inode | 切流前失败，老色照常服务；上传包自动回收 |
-| 3 | 解包 release 到 `releases/<sha>`，`server/data` 软链到 NAS，以 `node-linker=isolated` 安装 server/shared 依赖，并刷新 Web/worker systemd unit（只 daemon-reload，不重启 active） | 同上 |
+| 3 | 解包 release 到 `releases/<sha>`，`server/data` 软链到 NAS，以 `node-linker=isolated`、低 CPU/IO 优先级和受限并发安装 server/shared 依赖；保留 pnpm store 热缓存，并刷新 Web/worker systemd unit（只 daemon-reload，不重启 active） | 同上 |
 | 4 | idle 色残留处理：上次部署的旧色可能还在 drain，最多等 600s，超时 `systemctl stop` 强停 | 同上 |
 | 5 | 更新 symlink：只动 `color/<idle>` → 新 release；`current`/`previous` 仅作 bookkeeping | 同上 |
 | 6 | `systemctl start agent-saas-server@<idle>` + **ready 硬门禁**：等 `/api/healthz/ready` 200，最长 180s | `rollback_idle_and_exit`：stop idle 色 + 还原 current/previous/idle 色 symlink + 删除当次 release/上传包，nginx/active-color 全程未动 |
@@ -141,7 +141,7 @@ deploy-ecs 远端脚本（ci.yml「Deploy and restart」step 内嵌，编号与�
 | 10.5 | 启动 worker 候选并以 pidfile=readyfile 做硬门禁；成功后更新 worker active-color，SIGUSR2 排空旧 worker。纯 Web 发布整步跳过 | 候选失败时旧 worker（或首次迁移时旧 all 进程）仍继续执行 run；发布判红但不产生 run 失败 |
 | 11 | 重新生成 Web/API `/opt/agent-saas-app/rollback.sh`（蓝绿语义，幂等覆盖，见 §9.1；不隐式切换 Runtime Worker） | — |
 | 12 | drain 旧色：`kill -USR2 $(cat /run/agent-saas-server-<旧色>.pid)` 精确送 node 主进程；pidfile 缺失/kill 失败则降级 `systemctl stop`（SIGTERM，可能打断活跃流）。观察 60s，未退不算失败（后台继续排空，下次部署最多等 600s） | — |
-| 13 | 收尾：`pnpm store prune` + 删除上传包 | — |
+| 13 | 收尾：保留 pnpm store 热缓存供下次隔离安装复用，只删除上传包 | — |
 
 核心设计：**门禁前移**。步骤 6-8 的所有校验都发生在切流（步骤 9）之前，此时
 公网流量 100% 在老色上；所以「部署失败」对用户是不可见事件，只是这次发版没发出去。

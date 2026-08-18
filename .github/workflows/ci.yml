@@ -804,7 +804,7 @@ jobs:
           fi
           log "remote pnpm isolated install start (low priority, persistent store cache)"
           PNPM_INSTALL=(pnpm --config.node-linker=isolated --config.allow-unused-patches=true \
-            --config.network-concurrency=8 --config.child-concurrency=2 \
+            --network-concurrency=8 --child-concurrency=2 \
             install --frozen-lockfile --filter server... --filter shared...)
           if command -v ionice >/dev/null 2>&1; then
             NODE_ENV=development nice -n 10 ionice -c 2 -n 7 "${PNPM_INSTALL[@]}"

@@ -50,9 +50,10 @@ describe('OpenAI-only model resolver', () => {
         {
           id: 'openai-agents',
           name: 'OpenAI Agents',
+          originalName: 'OpenAI Agents',
           models: [
-            { id: 'doubao', name: 'Doubao Pro' },
-            { id: 'kimi', name: 'Kimi 2.6' },
+            { id: 'doubao', name: 'Doubao Pro', originalName: 'Doubao Pro' },
+            { id: 'kimi', name: 'Kimi 2.6', originalName: 'Kimi 2.6' },
           ],
         },
       ],
@@ -71,6 +72,40 @@ describe('OpenAI-only model resolver', () => {
     const publicList = getPublicModelList(reordered);
     expect(publicList.groups.map((group) => group.id)).toEqual(['backup', 'openai-agents']);
     expect(publicList.groups[1]?.models.map((model) => model.id)).toEqual(['kimi', 'doubao']);
+  });
+
+  it('carries platform originalName alongside tenant displayName overrides', () => {
+    const tenantList = getTenantPublicModelList(modelsConfig, {
+      features: {
+        filesEnabled: true,
+        cronEnabled: true,
+        mcpEnabled: true,
+        customSkillsEnabled: true,
+        debugModeAllowed: false,
+        autoCompactEnabled: false,
+      },
+      quotas: {},
+      models: {
+        defaultModel: 'openai-agents/doubao',
+        allowedModels: ['openai-agents/doubao'],
+        allowUserModelSwitch: true,
+        showGroupNames: true,
+        displayOverrides: {
+          'openai-agents/doubao': { displayName: '豆包 Pro（组织）', groupDisplayName: '组织模型' },
+        },
+      },
+      mcp: { allowTenantServers: true, allowGlobalServers: true, defaultEnabledServerIds: [] },
+      branding: {},
+      personalization: DEFAULT_TENANT_SETTINGS.personalization,
+      security: { requireDingtalkBinding: false },
+    });
+    const group = tenantList.groups[0]!;
+    // 分组名被覆盖，但 originalName 保留平台原始名
+    expect(group.name).toBe('组织模型');
+    expect(group.originalName).toBe('OpenAI Agents');
+    const doubao = group.models.find((m) => m.id === 'doubao')!;
+    expect(doubao.name).toBe('豆包 Pro（组织）');
+    expect(doubao.originalName).toBe('Doubao Pro');
   });
 
   it('resolves configured model refs into raw runtime model options', () => {
@@ -375,12 +410,14 @@ describe('OpenAI-only model resolver', () => {
         {
           id: 'openai-agents',
           name: '组织模型',
+          originalName: 'OpenAI Agents',
           models: [
             {
               id: 'kimi',
               name: '高性能模型',
               description: '适合复杂任务',
               recommended: true,
+              originalName: 'Kimi 2.6',
             },
           ],
         },

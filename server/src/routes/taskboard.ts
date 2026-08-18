@@ -70,11 +70,25 @@ const integrationPolicySchema = z.object({
   }).strict(),
 }).strict();
 
+const boardStageModelsSchema = z.object({
+  work: z.string().trim().min(1).max(256).optional(),
+  review: z.string().trim().min(1).max(256).optional(),
+  merge: z.string().trim().min(1).max(256).optional(),
+}).strict();
+
+const stagePromptsSchema = z.object({
+  work: z.string().trim().max(20_000).optional(),
+  review: z.string().trim().max(20_000).optional(),
+  merge: z.string().trim().max(20_000).optional(),
+}).strict();
+
 const boardCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().max(4_000).optional(),
   prompt: z.string().max(20_000).optional(),
+  stagePrompts: stagePromptsSchema.optional(),
   model: z.string().trim().min(1).max(256).optional(),
+  stageModels: boardStageModelsSchema.optional(),
   visibility: z.enum(TASKBOARD_VISIBILITIES).optional(),
   repository: repositorySchema.optional(),
   integrationPolicy: integrationPolicySchema.optional(),
@@ -84,15 +98,18 @@ const boardPatchSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   description: z.string().max(4_000).optional(),
   prompt: z.string().max(20_000).optional(),
+  stagePrompts: stagePromptsSchema.nullish(),
   model: z.string().trim().min(1).max(256).nullish(),
+  stageModels: boardStageModelsSchema.nullish(),
   visibility: z.enum(TASKBOARD_VISIBILITIES).optional(),
   repository: repositorySchema.nullish(),
   integrationPolicy: integrationPolicySchema.nullish(),
   expectedVersion: z.number().int().min(1),
 }).strict().refine(
   (input) => input.name !== undefined || input.description !== undefined
-    || input.prompt !== undefined || input.model !== undefined || input.visibility !== undefined
-    || input.repository !== undefined || input.integrationPolicy !== undefined,
+    || input.prompt !== undefined || input.model !== undefined
+    || input.stageModels !== undefined || input.stagePrompts !== undefined
+    || input.visibility !== undefined || input.repository !== undefined || input.integrationPolicy !== undefined,
   { message: 'At least one board field is required' },
 );
 

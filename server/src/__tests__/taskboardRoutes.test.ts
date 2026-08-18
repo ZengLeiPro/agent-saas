@@ -129,6 +129,7 @@ describe('Taskboard routes', () => {
       description: '首期',
       prompt: '只处理当前看板任务',
       model: 'group-a/model-a',
+      stageModels: { work: 'group-a/model-work', review: 'group-a/model-review', merge: 'group-a/model-merge' },
       visibility: 'organization',
     }));
     expect(created.status).toBe(201);
@@ -144,8 +145,48 @@ describe('Taskboard routes', () => {
       description: '首期',
       prompt: '只处理当前看板任务',
       model: 'group-a/model-a',
+      stageModels: { work: 'group-a/model-work', review: 'group-a/model-review', merge: 'group-a/model-merge' },
       visibility: 'organization',
     }]);
+  });
+
+  it('parses and validates per-stage prompts on board create/patch', async () => {
+    const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
+    const rig = await makeRig(makeService(captured), USER, captured);
+
+    const created = await rig.request('/api/taskboard/boards', postJson({
+      name: '阶段提示语看板',
+      prompt: '看板总提示语',
+      stagePrompts: {
+        work: '只负责实施。',
+        review: '复核时检查证据链。',
+      },
+    }));
+    expect(created.status).toBe(201);
+    expect(captured.createBoards).toEqual([{
+      name: '阶段提示语看板',
+      prompt: '看板总提示语',
+      stagePrompts: { work: '只负责实施。', review: '复核时检查证据链。' },
+    }]);
+
+    const patched = await rig.request('/api/taskboard/boards/board-1', patchJson({
+      stagePrompts: { merge: '负责合并交付。' },
+      expectedVersion: 1,
+    }));
+    expect(patched.status).toBe(200);
+
+    const cleared = await rig.request('/api/taskboard/boards/board-1', patchJson({
+      stagePrompts: null,
+      expectedVersion: 1,
+    }));
+    expect(cleared.status).toBe(200);
+
+    // 未知阶段字段在 strict schema 下被拒绝。
+    const rejected = await rig.request('/api/taskboard/boards/board-1', patchJson({
+      stagePrompts: { deploy: '不允许的阶段' },
+      expectedVersion: 1,
+    }));
+    expect(rejected.status).toBe(400);
   });
 
   it('parses model fields on board/task mutations and injects display name from userStore', async () => {
@@ -157,6 +198,7 @@ describe('Taskboard routes', () => {
 
     const patchedBoard = await rig.request('/api/taskboard/boards/board-1', patchJson({
       model: null,
+      stageModels: { merge: 'group-a/model-merge' },
       expectedVersion: 1,
     }));
     expect(patchedBoard.status).toBe(200);
@@ -192,6 +234,14 @@ describe('Taskboard routes', () => {
       runId: 'forbidden',
     }))).status).toBe(400);
     expect((await rig.request('/api/taskboard/tasks/task-1', patchJson({
+      expectedVersion: 1,
+    }))).status).toBe(400);
+    expect((await rig.request('/api/taskboard/boards/board-1', patchJson({
+      stageModels: { unknownStage: 'group-a/model-a' },
+      expectedVersion: 1,
+    }))).status).toBe(400);
+    expect((await rig.request('/api/taskboard/boards/board-1', patchJson({
+      stageModels: { work: '' },
       expectedVersion: 1,
     }))).status).toBe(400);
     expect((await rig.request('/api/taskboard/tasks/task-1/comments', postJson({

@@ -739,4 +739,55 @@ describe("useChatAppState queue consistency lifecycle", () => {
     expect(harness.session.selectSession).toHaveBeenCalledWith("existing-session");
   });
 
+  it("does not resurrect an already-projected message into the queue bar after switching sessions (TASK-70)", async () => {
+    harness.session.sessionId = "session-queue";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+    await waitFor(() => expect(harness.sends.mock.calls.some(([payload]) => (
+      (payload as { action?: string }).action === "resume"
+    ))).toBe(true));
+
+    // 1. 消息排队 → 队列卡片出现
+    act(() => emit({
+      type: "message_queued",
+      sessionId: "session-queue",
+      runId: "run-projected",
+      clientMsgId: "client-projected",
+      deliveryMode: "queue",
+      content: "已经发送",
+      timestamp: 1,
+    }));
+    expect(result.current.queuedInterjections.map((entry) => entry.clientMsgId)).toContain("client-projected");
+
+    // 2. user_message 投影 → 消费标记 + 移除队列卡片
+    act(() => emit({
+      type: "user_message",
+      sessionId: "session-queue",
+      content: "已经发送",
+      client_msg_id: "client-projected",
+      sourceRunId: "run-projected",
+      timestamp: 2,
+    }));
+    expect(result.current.queuedInterjections.map((entry) => entry.clientMsgId)).not.toContain("client-projected");
+
+    // 3. 切会话（detachFromStream 不再清空消费标记）
+    act(() => { harness.sessionCallbacks?.cancelActiveStream?.(); });
+
+    // 4. 切回会话 A：detail 短暂返回旧 pending 快照（已投影但 source run 尚未转出 pending）
+    act(() => {
+      harness.sessionCallbacks?.onQueuedMessages?.("session-queue", [{
+        sourceRunId: "run-projected",
+        runId: "run-projected",
+        clientMsgId: "client-projected",
+        deliveryMode: "queue",
+        content: "已经发送",
+        acceptedAt: "2026-08-17T00:00:00.000Z",
+      }]);
+    });
+
+    // 5. 消费标记跨会话保留，旧快照不得复活已发送消息
+    expect(result.current.queuedInterjections.map((entry) => entry.clientMsgId)).not.toContain("client-projected");
+    expect(result.current.queuedInterjections).toEqual([]);
+  });
+
 });

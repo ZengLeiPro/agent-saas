@@ -173,6 +173,28 @@ export function TenantSettingsPanel({
     });
   }, [patch]);
 
+  const updateModelOverride = useCallback((
+    modelRef: string,
+    patchValue: Partial<NonNullable<TenantSettings["models"]["displayOverrides"]>[string]>,
+  ) => {
+    patch(d => {
+      const current = d.models.displayOverrides?.[modelRef] ?? {};
+      const next = { ...current, ...patchValue };
+      // 空字符串会触发后端「displayName 为空 = 隐藏模型」，清空时必须删除该字段。
+      if (!next.displayName) delete next.displayName;
+      if (!next.description) delete next.description;
+      if (!next.groupDisplayName) delete next.groupDisplayName;
+      const hasValue = Object.values(next).some(v => v !== undefined);
+      const overrides = { ...(d.models.displayOverrides ?? {}) };
+      if (hasValue) {
+        overrides[modelRef] = next;
+      } else {
+        delete overrides[modelRef];
+      }
+      d.models.displayOverrides = overrides;
+    });
+  }, [patch]);
+
   const sectionCopy: Record<TenantSettingsPanelSection, { title: string; description: string }> = {
     all: {
       title: "组织管理",
@@ -311,6 +333,86 @@ export function TenantSettingsPanel({
                   ))}
                 </div>
               )}
+            </div>
+            <div className="space-y-3 rounded-md border bg-muted/20 p-3">
+              <div>
+                <Label>模型别名 / 展示名称</Label>
+                <p className="mt-1 text-xs text-muted-foreground">为组织成员自定义模型在模型选择器等页面的展示名称、说明与推荐标记；留空表示使用平台默认名。</p>
+              </div>
+              {!modelList?.groups.length ? (
+                <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">模型列表加载中或暂无可选模型。</div>
+              ) : modelList.groups.map(group => {
+                const groupRef = group.models[0] ? `${group.id}/${group.models[0].id}` : null;
+                const groupOverride = groupRef ? settings.models.displayOverrides?.[groupRef]?.groupDisplayName ?? "" : "";
+                return (
+                  <div key={group.id} className="space-y-3 rounded-md border bg-background p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0 text-sm font-medium">
+                        <span className="block truncate">{group.originalName ?? group.name}</span>
+                        <span className="block text-xs font-normal text-muted-foreground">分组 {group.id}</span>
+                      </div>
+                      <div className="w-56 shrink-0 space-y-1">
+                        <Label className="text-xs">分组展示名称</Label>
+                        <Input
+                          aria-label="分组展示名称"
+                          value={groupOverride}
+                          placeholder={group.name}
+                          onChange={event => {
+                            const ref = `${group.id}/${group.models[0]?.id ?? ""}`;
+                            if (!group.models[0]) return;
+                            updateModelOverride(ref, { groupDisplayName: event.target.value.trim() || undefined });
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      {group.models.map(model => {
+                        const ref = `${group.id}/${model.id}`;
+                        const override = settings.models.displayOverrides?.[ref] ?? {};
+                        return (
+                          <div key={ref} className="grid gap-3 rounded-md border bg-muted/30 p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                            <div className="min-w-0 md:col-span-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0 text-sm">
+                                  <span className="block truncate font-medium">{model.originalName ?? model.name}</span>
+                                  <span className="block truncate font-mono text-xs text-muted-foreground">{ref}</span>
+                                </div>
+                                <label className="flex shrink-0 items-center gap-2 text-xs">
+                                  <input
+                                    type="checkbox"
+                                    className="mt-0.5"
+                                    checked={override.recommended === true}
+                                    onChange={event => updateModelOverride(ref, { recommended: event.target.checked || undefined })}
+                                  />
+                                  标记为推荐模型
+                                </label>
+                              </div>
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs">展示名称</Label>
+                              <Input
+                                aria-label="展示名称"
+                                value={override.displayName ?? ""}
+                                placeholder={model.originalName ?? model.name}
+                                onChange={event => updateModelOverride(ref, { displayName: event.target.value.trim() || undefined })}
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs">说明</Label>
+                              <Input
+                                aria-label="说明"
+                                value={override.description ?? ""}
+                                placeholder="面向组织成员展示的说明"
+                                onChange={event => updateModelOverride(ref, { description: event.target.value.trim() || undefined })}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </CardContent>
         </Card>

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSessionDetailPayload,
   filterProjectedQueuedMessages,
-  listDurablyProjectedInterjectionSourceRunIds,
+  listDurablyProjectedQueuedRunIds,
 } from '../routes/sessions.js';
 import type { SessionShareSnapshot } from '../data/sessionShares/store.js';
 import type { EventStore } from '../runtime/types.js';
@@ -56,15 +56,124 @@ describe('filterProjectedQueuedMessages', () => {
       }],
     } as unknown as EventStore;
 
-    const durableProjected = await listDurablyProjectedInterjectionSourceRunIds(
+    const durableProjected = await listDurablyProjectedQueuedRunIds(
       eventStore,
       'session-1',
-      pending,
+      pending.map((input) => ({ sourceRunId: input.sourceRunId, targetRunId: input.targetRunId })),
     );
 
     expect(filterProjectedQueuedMessages(pending, [], durableProjected)).toEqual([
       { sourceRunId: 'source-pending', targetRunId: 'target-run', content: '仍在排队' },
     ]);
+  });
+});
+
+describe('listDurablyProjectedQueuedRunIds', () => {
+  const pending = [
+    {
+      runId: 'queue-run-consumed',
+      metadata: { deliveryMode: 'queue', queuedBehindRunId: 'target-run' },
+    },
+    {
+      runId: 'steer-source-consumed',
+      metadata: { deliveryMode: 'steer', steeringTargetRunId: 'target-run' },
+    },
+    {
+      runId: 'queue-run-pending',
+      metadata: { deliveryMode: 'queue' },
+    },
+  ];
+
+  it('普通 queue 消息已由 source run 自身投影 user_message 时，不再属于排队区', async () => {
+    const eventStore = {
+      list: async () => [],
+      listByRun: async (_sessionId: string, runId: string) => [
+        runId === 'queue-run-consumed'
+          ? {
+              id: 'event-1',
+              timestamp: '2026-08-17T00:00:00.000Z',
+              type: 'user_message',
+              runId: 'queue-run-consumed',
+              sessionId: 'session-1',
+              content: '已经发送',
+              clientMsgId: 'client-1',
+            }
+          : [],
+      ],
+    } as unknown as EventStore;
+
+    const projected = await listDurablyProjectedQueuedRunIds(eventStore, 'session-1', pending);
+
+    expect(projected).toContain('queue-run-consumed');
+    expect(projected).not.toContain('queue-run-pending');
+    expect(projected).not.toContain('steer-source-consumed');
+  });
+
+  it('steering source 的 target run 已投影 user_message（interjectionSourceRunId 匹配）时不再排队', async () => {
+    const eventStore = {
+      list: async () => [],
+      listByRun: async (_sessionId: string, runId: string) => [
+        runId === 'target-run'
+          ? {
+              id: 'event-2',
+              timestamp: '2026-08-17T00:00:00.000Z',
+              type: 'user_message',
+              runId: 'target-run',
+              sessionId: 'session-1',
+              content: '已经发送',
+              interjectionSourceRunId: 'steer-source-consumed',
+              clientMsgId: 'client-2',
+            }
+          : [],
+      ],
+    } as unknown as EventStore;
+
+    const projected = await listDurablyProjectedQueuedRunIds(eventStore, 'session-1', pending);
+
+    expect(projected).toContain('steer-source-consumed');
+    expect(projected).not.toContain('queue-run-pending');
+    expect(projected).not.toContain('queue-run-consumed');
+  });
+
+  it('无 listByRun 的 file backend 回退为全量 user_message 扫描', async () => {
+    const eventStore = {
+      list: async () => [{
+        id: 'event-1',
+        timestamp: '2026-08-17T00:00:00.000Z',
+        type: 'user_message',
+        runId: 'queue-run-consumed',
+        sessionId: 'session-1',
+        content: '已经发送',
+        clientMsgId: 'client-1',
+      }, {
+        id: 'event-2',
+        timestamp: '2026-08-17T00:00:00.000Z',
+        type: 'user_message',
+        runId: 'target-run',
+        sessionId: 'session-1',
+        content: '已经发送',
+        interjectionSourceRunId: 'steer-source-consumed',
+        clientMsgId: 'client-2',
+      }],
+    } as unknown as EventStore;
+
+    const projected = await listDurablyProjectedQueuedRunIds(eventStore, 'session-1', pending);
+
+    expect(projected).toContain('queue-run-consumed');
+    expect(projected).toContain('steer-source-consumed');
+    expect(projected).not.toContain('queue-run-pending');
+  });
+
+  it('空 pending 时直接返回，不触发事件读取', async () => {
+    let reads = 0;
+    const eventStore = {
+      list: async () => { reads += 1; return []; },
+    } as unknown as EventStore;
+
+    const projected = await listDurablyProjectedQueuedRunIds(eventStore, 'session-1', []);
+
+    expect(projected).toEqual([]);
+    expect(reads).toBe(0);
   });
 });
 

@@ -261,7 +261,7 @@ export class AuthoritativeGovernanceService {
     return this.audited(actorUserId, 'governance.ui.access.evaluate', command.resource.id, async actor => {
       const target = await this.resolveTarget(actor, command.subjectUserId, command.resource.tenantId);
       const resource = await this.resolveResource(command.resource, target);
-      return [await this.view(target, resource, actionFor(resource, command.action))];
+      return [await this.view(target, resource, actionFor(resource, command.action), { unavailableReadiness: 'omit' })];
     });
   }
 
@@ -289,7 +289,10 @@ export class AuthoritativeGovernanceService {
       const views: EffectiveResourceViewDto[] = [];
       for (const input of inputs) {
         const resource = await this.resolveResource(input, actor);
-        views.push(await this.view(actor, resource, actionFor(resource, 'use')));
+        // 权限结论本身仍由七层评估权威返回；但列表是只读展示查询，
+        // agent/skill 这类没有运行依赖索引的资源按约定省略 readiness，
+        // 不允许让整个“我的权限”页面 503（readiness 省略≠降级为允许）。
+        views.push(await this.view(actor, resource, actionFor(resource, 'use'), { unavailableReadiness: 'omit' }));
       }
       return views;
     });
@@ -434,7 +437,12 @@ export class AuthoritativeGovernanceService {
     return required ? { runtimeApproval: { required: true, approved: false } } : {};
   }
 
-  private async view(subject: HumanSubjectContext, resource: ResolvedResource, action: string): Promise<EffectiveResourceViewDto> {
+  private async view(
+    subject: HumanSubjectContext,
+    resource: ResolvedResource,
+    action: string,
+    options: { unavailableReadiness?: 'throw' | 'omit' } = {},
+  ): Promise<EffectiveResourceViewDto> {
     let decision: AccessDecision;
     try {
       decision = await this.accessEvaluator.evaluate({ subject, action, resource: resource.access, context: resource.context });
@@ -442,7 +450,10 @@ export class AuthoritativeGovernanceService {
       throw new GovernanceUiError(503, 'EVALUATOR_UNAVAILABLE', '访问评估依赖不可用');
     }
     const access = this.accessDto(subject, resource.dto, decision);
-    const readiness = access.verdict === 'allow'
+    // 执行门禁（preflight）保持 fail closed：allow 但缺少运行依赖索引时必须 503。
+    // 展示类查询（effectiveResources / evaluate）选择 omit：readiness 是可选展示字段，
+    // 省略它不代表降级放行，access 结论仍完全来自七层权威评估。
+    const readiness = access.verdict === 'allow' && !(resource.readinessKind === 'unavailable' && options.unavailableReadiness === 'omit')
       ? await this.readiness(resource, subject)
       : undefined;
     const draft = { resource: resource.dto, lifecycle: resource.lifecycle, access, ...(readiness ? { readiness } : {}) };

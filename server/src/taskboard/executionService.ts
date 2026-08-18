@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type {
   TaskBoardExecution,
+  TaskBoardExecutionPurpose,
   TaskBoardExecutionStartInput,
   TaskBoardExecutionStartResult,
 } from '../../../shared/src/types/taskboard.js';
@@ -296,7 +297,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     input: TaskBoardExecutionStartInput,
     options: { allowWorkFromCurrentStatus?: boolean; executionId?: string } = {},
   ): Promise<TaskboardExecutionClaimInput> {
-    const launch = await this.resolveLaunch(identity, taskId);
+    const launch = await this.resolveLaunch(identity, taskId, input.purpose);
     const purpose = input.purpose ?? (launch.modelContext.taskKind === 'integration' ? 'merge' : 'work');
     const executions = purpose === 'work'
       ? await this.options.store.listExecutions(identity, taskId)
@@ -365,7 +366,11 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     };
   }
 
-  private async resolveLaunch(identity: TaskboardIdentity, taskId: string) {
+  private async resolveLaunch(
+    identity: TaskboardIdentity,
+    taskId: string,
+    purpose?: TaskBoardExecutionPurpose,
+  ) {
     const modelContext = await this.options.store.getExecutionModelContext(identity, taskId);
     if (modelContext.allowedActions && !modelContext.allowedActions.includes('execution.trigger')) {
       throw new TaskboardPermissionError('Taskboard role cannot trigger Agent execution');
@@ -376,7 +381,11 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     if (!executionIdentity || executionIdentity.tenantId !== identity.tenantId) {
       throw new TaskboardPermissionError('Board execution identity is unavailable');
     }
-    const explicitModelRef = modelContext.taskModel ?? modelContext.boardModel;
+    // 未显式指定阶段时，integration 任务按 merge 阶段、其余按 work 阶段解析。
+    const resolvedPurpose = purpose
+      ?? (modelContext.taskKind === 'integration' ? 'merge' : 'work');
+    const stageModel = modelContext.boardStageModels?.[resolvedPurpose];
+    const explicitModelRef = modelContext.taskModel ?? stageModel ?? modelContext.boardModel;
     const model = explicitModelRef
       ? this.options.resolveModel?.(explicitModelRef, executionIdentity.tenantId)
       : this.options.resolveDefaultModel(executionIdentity.tenantId);
@@ -585,49 +594,78 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
   }
 
   async prepareWake(record: RunRecord): Promise<RunRecord> {
-    if (record.metadata?.taskboardExecution !== true) return record;
-    const context = await this.options.store.getExecutionContextByRunId(record.runId);
-    if (!context) throw new Error(`任务看板执行记录不存在：${record.runId}`);
-    assertExecutionSession(context.execution, record.sessionId);
-    if (record.metadata?.taskboardExecutionId !== context.execution.id) {
-      throw new Error(`Runtime Run 与任务看板 Execution 不匹配：run=${record.runId}`);
-    }
-    if (isTerminalExecution(context.execution)) {
-      throw new Error(`任务看板执行已终止：${context.execution.status}`);
-    }
-    const persistedModelRef = record.model?.trim();
-    if (
-      persistedModelRef
-      && this.options.resolveModel
-      && !this.options.resolveModel(persistedModelRef, context.identity.tenantId)
-    ) {
-      throw new TaskboardExecutionUnavailableError(`指定模型不可用：${persistedModelRef}`);
-    }
-    const started = await this.options.store.setExecutionStatus(record.runId, 'running');
-    if (!started) {
-      throw new Error(`任务看板执行已终止：${record.runId}`);
-    }
-    return {
-      ...record,
-      metadata: {
-        ...record.metadata,
-        wakeMessage: {
-          channel: 'web',
-          chatId: record.sessionId,
-          content: buildExecutionPrompt(
-            context,
-            this.options.timezone,
-            this.options.resolveUserDisplayName?.(context.identity.ownerUserId),
-          ),
-          senderId: context.identity.ownerUserId,
-          metadata: {
-            taskboardExecution: true,
-            taskboardExecutionId: context.execution.id,
-            taskboardTaskId: context.task.id,
+    const isExecution = record.metadata?.taskboardExecution === true;
+    const isContinuation = record.metadata?.taskboardContinuation === true;
+    if (!isExecution && !isContinuation) return record;
+    if (isExecution) {
+      const context = await this.options.store.getExecutionContextByRunId(record.runId);
+      if (!context) throw new Error(`任务看板执行记录不存在：${record.runId}`);
+      assertExecutionSession(context.execution, record.sessionId);
+      if (record.metadata?.taskboardExecutionId !== context.execution.id) {
+        throw new Error(`Runtime Run 与任务看板 Execution 不匹配：run=${record.runId}`);
+      }
+      if (isTerminalExecution(context.execution)) {
+        throw new Error(`任务看板执行已终止：${context.execution.status}`);
+      }
+      const persistedModelRef = record.model?.trim();
+      if (
+        persistedModelRef
+        && this.options.resolveModel
+        && !this.options.resolveModel(persistedModelRef, context.identity.tenantId)
+      ) {
+        throw new TaskboardExecutionUnavailableError(`指定模型不可用：${persistedModelRef}`);
+      }
+      const started = await this.options.store.setExecutionStatus(record.runId, 'running');
+      if (!started) {
+        throw new Error(`任务看板执行已终止：${record.runId}`);
+      }
+      const stagePrompt = context.stagePrompts?.[context.execution.purpose]?.trim();
+      return {
+        ...record,
+        metadata: {
+          ...record.metadata,
+          ...(stagePrompt ? { taskboardStagePrompt: stagePrompt } : {}),
+          wakeMessage: {
+            channel: 'web',
+            chatId: record.sessionId,
+            content: buildExecutionPrompt(
+              context,
+              this.options.timezone,
+              this.options.resolveUserDisplayName?.(context.identity.ownerUserId),
+            ),
+            senderId: context.identity.ownerUserId,
+            metadata: {
+              taskboardExecution: true,
+              taskboardExecutionId: context.execution.id,
+              taskboardTaskId: context.task.id,
+            },
           },
         },
-      },
-    };
+      };
+    }
+    // 评论续跑（taskboardContinuation）：复用目标执行会话，按该执行阶段解析看板配置的提示语。
+    // 尽力注入：任何查询失败或无法定位执行阶段都回退系统固定模板，绝不影响续跑 wake。
+    const taskId = String(record.metadata.taskboardTaskId ?? '');
+    const commentId = String(record.metadata.taskboardCommentId ?? '');
+    if (!taskId || !commentId) return record;
+    try {
+      const continuationContext = await this.options.store.getContinuationContext(
+        { tenantId: String(record.tenantId ?? ''), ownerUserId: String(record.userId ?? ''), username: '' },
+        taskId,
+        commentId,
+      );
+      const targetExecution = continuationContext.activeExecution
+        ?? continuationContext.continuationExecution
+        ?? continuationContext.latestExecution;
+      const stagePrompt = targetExecution
+        ? continuationContext.stagePrompts?.[targetExecution.purpose]?.trim()
+        : undefined;
+      return stagePrompt
+        ? { ...record, metadata: { ...record.metadata, taskboardStagePrompt: stagePrompt } }
+        : record;
+    } catch {
+      return record;
+    }
   }
 
   async handleRuntimeEvent(event: PlatformEvent): Promise<void> {

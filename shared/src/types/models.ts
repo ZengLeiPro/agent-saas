@@ -3,12 +3,16 @@ export interface ModelItem {
   name: string;
   description?: string;
   recommended?: boolean;
+  /** 平台配置中的原始展示名（未被租户 displayOverrides 覆盖），组织控制台别名编辑时用于参照。 */
+  originalName?: string;
 }
 
 export interface ModelGroup {
   id: string;
   name: string;
   models: ModelItem[];
+  /** 平台配置中的原始分组展示名（未被租户 displayOverrides 覆盖），组织控制台别名编辑时用于参照。 */
+  originalName?: string;
 }
 
 export interface ModelList {

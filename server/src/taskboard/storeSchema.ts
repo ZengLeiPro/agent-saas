@@ -7,6 +7,8 @@ import {
   boardIntegrationMigrationSql,
   boardModelMigrationSql,
   boardPromptMigrationSql,
+  boardStageModelsMigrationSql,
+  boardStagePromptsMigrationSql,
   boardVisibilityMigrationSql,
 } from './boardFields.js';
 import {
@@ -36,6 +38,8 @@ export async function initializeTaskboardStore(store: PgTaskboardStore): Promise
         visibility TEXT NOT NULL DEFAULT 'personal'
           CHECK (visibility IN ('personal', 'organization')),
         prompt TEXT NOT NULL DEFAULT ${quoteSqlLiteral(TASKBOARD_DEFAULT_PROMPT)},
+        stage_models JSONB NOT NULL DEFAULT '{}'::jsonb,
+        stage_prompts JSONB NOT NULL DEFAULT '{}'::jsonb,
         model TEXT,
         repository JSONB,
         integration_policy JSONB,
@@ -48,6 +52,8 @@ export async function initializeTaskboardStore(store: PgTaskboardStore): Promise
       )
     `);
     await client.query(boardPromptMigrationSql(store.boardsTable));
+    await client.query(boardStageModelsMigrationSql(store.boardsTable));
+    await client.query(boardStagePromptsMigrationSql(store.boardsTable));
     await client.query(boardModelMigrationSql(store.boardsTable));
     await client.query(boardVisibilityMigrationSql(store.boardsTable));
     await client.query(boardIntegrationMigrationSql(store.boardsTable));

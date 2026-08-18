@@ -9,6 +9,29 @@ const mocks = vi.hoisted(() => ({
   previewMembership: vi.fn(), updateMembership: vi.fn(), previewUserOffboarding: vi.fn(), startUserOffboarding: vi.fn(), previewPolicy: vi.fn(), updatePolicy: vi.fn(), previewMemoryResource: vi.fn(), updateMemoryResource: vi.fn(), previewAssignment: vi.fn(), updateAssignment: vi.fn(),
   previewEntitlementScope: vi.fn(), updateEntitlementScope: vi.fn(), previewCredentialCreate: vi.fn(), createCredential: vi.fn(), previewCredentialRotation: vi.fn(), rotateCredential: vi.fn(), previewCredentialTransfer: vi.fn(), transferCredential: vi.fn(), testCredentialHealth: vi.fn(),
 }));
+
+const authState = vi.hoisted(() => ({ isAdmin: true, username: "org-admin" }));
+const authFetchMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/contexts/AuthContext", () => ({
+  useAuth: () => ({
+    user: {
+      id: "admin-1",
+      username: authState.username,
+      tenantId: "tenant-a",
+      role: authState.isAdmin ? "admin" : "user",
+    },
+    isAdmin: authState.isAdmin,
+    isPlatformAdmin: false,
+  }),
+}));
+
+vi.mock("@/lib/authFetch", () => ({ authFetch: authFetchMock }));
+
+vi.mock("@/components/TenantManager/hooks", () => ({
+  useTenants: () => ({ tenants: [], loading: false }),
+}));
+
 vi.mock("@agent/shared/lib/governanceApi", () => ({
   governanceAccessApi: {
     listMemberships: mocks.listMemberships,
@@ -46,6 +69,8 @@ vi.mock("@agent/shared/lib/governanceApi", () => ({
 describe("OrganizationGovernancePage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authState.isAdmin = true;
+    authState.username = "org-admin";
     mocks.listConnectors.mockResolvedValue({ connectors: [] });
     mocks.listMemberships.mockResolvedValue({ memberships: [] });
   });
@@ -61,6 +86,46 @@ describe("OrganizationGovernancePage", () => {
     expect(screen.getAllByText("启用").length).toBeGreaterThan(0);
     expect(screen.queryByText("active")).toBeNull();
     expect(screen.queryByRole("switch")).not.toBeTruthy();
+  });
+
+  it("管理员在成员页看到添加成员入口，新增时组织锁定为当前组织并刷新列表", async () => {
+    mocks.listMemberships.mockResolvedValue({ memberships: [] });
+    authFetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({ id: "user-9" }) });
+    render(<OrganizationMembersPage tenantId="tenant-a" route={governanceRoute("organization.members.list", { orgId: "tenant-a" })} />);
+    fireEvent.click(await screen.findByRole("button", { name: /添加成员/ }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("用户名"), { target: { value: "new-member" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "secret123" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    await waitFor(() => expect(authFetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = authFetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/auth/users");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toMatchObject({ username: "new-member", role: "user", tenantId: "tenant-a" });
+    await waitFor(() => expect(mocks.listMemberships.mock.calls.length).toBeGreaterThan(1));
+  });
+
+  it("无成员管理权限的账号看到权限原因与指引，而不是静默隐藏", async () => {
+    authState.isAdmin = false;
+    authState.username = "plain-member";
+    mocks.listMemberships.mockResolvedValue({ memberships: [] });
+    render(<OrganizationMembersPage tenantId="tenant-a" route={governanceRoute("organization.members.list", { orgId: "tenant-a" })} />);
+    expect(await screen.findByText(/没有成员管理权限/)).toBeTruthy();
+    expect(screen.getByText(/请联系本组织管理员或平台管理员/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /添加成员/ })).toBeNull();
+    expect(authFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("添加成员失败时在对话框内展示后端错误且不关闭", async () => {
+    mocks.listMemberships.mockResolvedValue({ memberships: [] });
+    authFetchMock.mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: "用户名已存在" }) });
+    render(<OrganizationMembersPage tenantId="tenant-a" route={governanceRoute("organization.members.list", { orgId: "tenant-a" })} />);
+    fireEvent.click(await screen.findByRole("button", { name: /添加成员/ }));
+    fireEvent.change(screen.getByLabelText("用户名"), { target: { value: "dup-member" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "secret123" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    expect(await screen.findByText("用户名已存在")).toBeTruthy();
+    expect(screen.getByRole("dialog")).toBeTruthy();
   });
 
   it("所有者身份变更严格执行预览→提交", async () => {

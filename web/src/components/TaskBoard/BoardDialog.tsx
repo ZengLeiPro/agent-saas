@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { TASKBOARD_DEFAULT_PROMPT } from "@agent/shared";
+import { TASKBOARD_DEFAULT_PROMPT, TASKBOARD_STAGE_DEFAULT_PROMPTS } from "@agent/shared";
 import type {
   ModelList,
   TaskBoard,
@@ -7,7 +7,7 @@ import type {
   TaskBoardPatchInput,
   TaskBoardVisibility,
 } from "@agent/shared";
-import type { TaskBoardIntegrationPolicy, TaskBoardIntegrationTriggerMode } from "@agent/shared/types/taskboard";
+import type { TaskBoardExecutionPurpose, TaskBoardIntegrationPolicy, TaskBoardIntegrationTriggerMode, TaskBoardStageModels, TaskBoardStagePrompts } from "@agent/shared/types/taskboard";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -32,7 +32,14 @@ import { BoardMembers } from "./BoardMembers";
 import { boardAllows } from "./constants";
 import { ModelSelect } from "./ModelSelect";
 
-type BoardDraftField = "name" | "description" | "prompt" | "model" | "visibility" | "repository" | "integrationPolicy";
+type BoardDraftField = "name" | "description" | "prompt" | "model" | "stageModels" | "stagePrompts" | "visibility" | "repository" | "integrationPolicy";
+
+/** 看板可配置的各执行阶段，用于阶段默认模型选择。 */
+const STAGE_MODEL_FIELDS: Array<{ purpose: TaskBoardExecutionPurpose; title: string; hint: string }> = [
+  { purpose: "work", title: "实施（work）", hint: "实施 Agent 处理可交付任务时使用的默认模型" },
+  { purpose: "review", title: "复核（review）", hint: "复核 Agent 审查工作结果时使用的默认模型" },
+  { purpose: "merge", title: "集成（merge）", hint: "集成 Agent 合并交付时使用的默认模型" },
+];
 
 function numberInRange(value: string, fallback: number, min: number, max: number): number {
   const parsed = Number(value);
@@ -81,7 +88,9 @@ export function BoardDialog({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [prompt, setPrompt] = useState(TASKBOARD_DEFAULT_PROMPT);
+  const [stagePrompts, setStagePrompts] = useState<TaskBoardStagePrompts>({ ...TASKBOARD_STAGE_DEFAULT_PROMPTS });
   const [model, setModel] = useState<string | null>(null);
+  const [stageModels, setStageModels] = useState<TaskBoardStageModels>({});
   const [visibility, setVisibility] = useState<TaskBoardVisibility>("personal");
   const [repositoryEnabled, setRepositoryEnabled] = useState(false);
   const [repositoryId, setRepositoryId] = useState("");
@@ -116,7 +125,9 @@ export function BoardDialog({
       setName(board?.name ?? "");
       setDescription(board?.description ?? "");
       setPrompt(board?.prompt ?? TASKBOARD_DEFAULT_PROMPT);
+      setStagePrompts({ ...TASKBOARD_STAGE_DEFAULT_PROMPTS, ...(board?.stagePrompts ?? {}) });
       setModel(board?.model ?? null);
+      setStageModels({ ...(board?.stageModels ?? {}) });
       setVisibility(board?.visibility ?? "personal");
       const repository = board?.repository;
       setRepositoryEnabled(Boolean(repository));
@@ -142,7 +153,11 @@ export function BoardDialog({
     if (!dirtyFieldsRef.current.has("name")) setName(board.name);
     if (!dirtyFieldsRef.current.has("description")) setDescription(board.description ?? "");
     if (!dirtyFieldsRef.current.has("prompt")) setPrompt(board.prompt);
+    if (!dirtyFieldsRef.current.has("stagePrompts")) {
+      setStagePrompts({ ...TASKBOARD_STAGE_DEFAULT_PROMPTS, ...(board.stagePrompts ?? {}) });
+    }
     if (!dirtyFieldsRef.current.has("model")) setModel(board.model ?? null);
+    if (!dirtyFieldsRef.current.has("stageModels")) setStageModels({ ...(board.stageModels ?? {}) });
     if (!dirtyFieldsRef.current.has("visibility")) setVisibility(board.visibility);
     if (!dirtyFieldsRef.current.has("repository")) {
       setRepositoryEnabled(Boolean(board.repository));
@@ -169,6 +184,16 @@ export function BoardDialog({
   const canEditSettings = !board || boardAllows(board, "board.update");
   const canEditPolicy = !board || boardAllows(board, "board.policy.update");
   const canManageMembers = Boolean(board && boardAllows(board, "board.members.manage"));
+
+  const setStageModel = (purpose: TaskBoardExecutionPurpose, next: string | null) => {
+    dirtyFieldsRef.current.add("stageModels");
+    setStageModels((prev) => {
+      const updated = { ...prev };
+      if (next) updated[purpose] = next;
+      else delete updated[purpose];
+      return updated;
+    });
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -198,6 +223,24 @@ export function BoardDialog({
       allowForkPullRequest: false as const,
     } : undefined;
     const previousPolicy = board?.integrationPolicy ?? defaultPolicy();
+    const normalizedStageModels = Object.fromEntries(
+      STAGE_MODEL_FIELDS.flatMap(({ purpose }) => {
+        const value = stageModels[purpose];
+        if (typeof value !== "string") return [];
+        const trimmed = value.trim();
+        return trimmed ? [[purpose, trimmed] as const] : [];
+      }),
+    ) as TaskBoardStageModels;
+    // 只提交与系统默认模板不同的阶段（未覆盖阶段保持空白 → 执行时跟随系统固定模板更新）。
+    const normalizedStagePrompts = Object.fromEntries(
+      (Object.keys(TASKBOARD_STAGE_DEFAULT_PROMPTS) as TaskBoardExecutionPurpose[]).flatMap((purpose) => {
+        const value = stagePrompts[purpose];
+        if (typeof value !== "string") return [];
+        const trimmed = value.trim();
+        if (!trimmed || trimmed === TASKBOARD_STAGE_DEFAULT_PROMPTS[purpose]) return [];
+        return [[purpose, trimmed] as const];
+      }),
+    ) as TaskBoardStagePrompts;
     const integrationPolicy: TaskBoardIntegrationPolicy = {
       schemaVersion: 1,
       enabled: repositoryEnabled && policyEnabled,
@@ -230,7 +273,9 @@ export function BoardDialog({
         if (dirtyFieldsRef.current.has("name")) input.name = normalizedName;
         if (dirtyFieldsRef.current.has("description")) input.description = description.trim();
         if (dirtyFieldsRef.current.has("prompt")) input.prompt = prompt.trim();
+        if (dirtyFieldsRef.current.has("stagePrompts")) input.stagePrompts = normalizedStagePrompts;
         if (dirtyFieldsRef.current.has("model")) input.model = model;
+        if (dirtyFieldsRef.current.has("stageModels")) input.stageModels = normalizedStageModels;
         if (dirtyFieldsRef.current.has("visibility")) input.visibility = visibility;
         if (dirtyFieldsRef.current.has("repository")) input.repository = repository ?? null;
         if (dirtyFieldsRef.current.has("integrationPolicy") || dirtyFieldsRef.current.has("repository")) {
@@ -242,7 +287,9 @@ export function BoardDialog({
           name: normalizedName,
           ...(description.trim() ? { description: description.trim() } : {}),
           prompt: prompt.trim(),
+          ...(Object.keys(normalizedStagePrompts).length ? { stagePrompts: normalizedStagePrompts } : {}),
           ...(model ? { model } : {}),
+          ...(Object.keys(normalizedStageModels).length ? { stageModels: normalizedStageModels } : {}),
           visibility,
           ...(repository ? { repository, integrationPolicy } : {}),
         });
@@ -428,6 +475,36 @@ export function BoardDialog({
               每次执行此看板中的任务时，都会传递当前提示语。
             </p>
           </div>
+          <section className="space-y-3">
+            <div>
+              <h3 className="text-sm font-medium">各阶段执行提示语</h3>
+              <p className="text-xs text-muted-foreground">
+                分别为实施（work）、复核（review）、集成（merge）阶段配置交给 Agent 的执行提示语；
+                未填写的阶段使用系统默认模板。
+              </p>
+            </div>
+            {([
+              ["work", "实施（work）", "实施 Agent 处理可交付任务时的执行提示语"],
+              ["review", "复核（review）", "复核 Agent 审查工作结果时的执行提示语"],
+              ["merge", "集成（merge）", "集成 Agent 合并交付时的执行提示语"],
+            ] as const).map(([purpose, title, hint]) => (
+              <div className="space-y-2" key={purpose}>
+                <Label htmlFor={`taskboard-stage-${purpose}`}>{title}</Label>
+                <Textarea
+                  id={`taskboard-stage-${purpose}`}
+                  value={stagePrompts[purpose] ?? ""}
+                  onChange={(event) => {
+                    dirtyFieldsRef.current.add("stagePrompts");
+                    setStagePrompts((prev) => ({ ...prev, [purpose]: event.target.value }));
+                  }}
+                  placeholder="留空则使用系统默认模板"
+                  rows={6}
+                  disabled={submitting || !canEditSettings}
+                />
+                <p className="text-xs text-muted-foreground">{hint}</p>
+              </div>
+            ))}
+          </section>
           <div className="space-y-2">
             <Label>运行模型</Label>
             <ModelSelect
@@ -445,6 +522,28 @@ export function BoardDialog({
               看板中任务的默认执行模型；任务也可以单独指定模型。
             </p>
           </div>
+          <section className="space-y-3">
+            <div>
+              <h3 className="text-sm font-medium">各阶段默认模型</h3>
+              <p className="text-xs text-muted-foreground">
+                分别为实施（work）、复核（review）、集成（merge）阶段指定默认模型；未指定的阶段继承看板运行模型。
+              </p>
+            </div>
+            {STAGE_MODEL_FIELDS.map(({ purpose, title, hint }) => (
+              <div className="space-y-2" key={purpose}>
+                <Label htmlFor={`taskboard-stage-model-${purpose}`}>{title}</Label>
+                <ModelSelect
+                  modelList={modelList}
+                  value={stageModels[purpose] ?? null}
+                  onChange={(next) => setStageModel(purpose, next)}
+                  inheritLabel="继承看板默认模型"
+                  ariaLabel={`${title}默认模型`}
+                  disabled={submitting || !canEditSettings}
+                />
+                <p className="text-xs text-muted-foreground">{hint}</p>
+              </div>
+            ))}
+          </section>
           {board?.visibility === "organization" ? <BoardMembers board={board} canManage={canManageMembers} /> : null}
           {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
         </form>

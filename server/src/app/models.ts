@@ -18,7 +18,8 @@ export interface ResolvedModel {
 export interface PublicModelGroup {
   id: string;
   name: string;
-  models: { id: string; name: string; description?: string; recommended?: boolean }[];
+  originalName?: string;
+  models: { id: string; name: string; description?: string; recommended?: boolean; originalName?: string }[];
 }
 
 export interface PublicModelList {
@@ -123,7 +124,8 @@ export function getPublicModelList(modelsConfig: ModelsConfig): PublicModelList 
     groups: modelsConfig.groups.map((g) => ({
       id: g.id,
       name: g.name,
-      models: g.models.map((m) => ({ id: m.id, name: m.name })),
+      originalName: g.name,
+      models: g.models.map((m) => ({ id: m.id, name: m.name, originalName: m.name })),
     })),
     default: modelsConfig.default,
     allowCrossGroupSwitch: modelsConfig.allowCrossGroupSwitch,
@@ -162,6 +164,7 @@ export function getTenantPublicModelList(
             ...(override?.description ? { description: override.description } : {}),
             ...(override?.recommended !== undefined ? { recommended: override.recommended } : {}),
             sortOrder: override?.sortOrder,
+            originalName: m.name,
           };
         })
         .filter((m): m is NonNullable<typeof m> => Boolean(m))
@@ -172,6 +175,7 @@ export function getTenantPublicModelList(
       return {
         id: g.id,
         name: groupDisplayName || g.name,
+        originalName: g.name,
         models: groupModels.map(({ sortOrder: _sortOrder, ...model }) => model),
       };
     })

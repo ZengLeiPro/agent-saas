@@ -56,6 +56,40 @@ describe('FileSessionCatalog', () => {
     });
   });
 
+  it('recovers agent-dws-session（钉钉成员会话）meta，使后台 Agent 派发能解析到父会话', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'session-catalog-dws-'));
+    cleanupDirs.add(cwd);
+
+    const sessionId = `agent-dws-session-${randomUUID()}`;
+    const catalog = new FileSessionCatalog({ agentCwd: cwd });
+    const record = createRuntimeSessionRecord({
+      sessionId,
+      userId: 'adws-1',
+      username: 'agent-dws:org-kaikai',
+      userRole: 'user',
+      tenantId: 'tenant-a',
+      channel: 'dingtalk',
+      cwd,
+      orgAgentId: 'org-kaikai',
+      status: 'running',
+    });
+    cleanupDirs.add(dirname(record.transcriptPath));
+
+    await catalog.upsert(record);
+
+    // 回归（TASK-78）：根因是 isValidSessionId 白名单缺失 agent-dws-session- 前缀，
+    // 导致 backgroundTaskService.enqueue 里 sessionCatalog.get(parentSessionId) 永远
+    // 返回 null，抛出「父会话不存在」且 recoverable:false。这里必须能按 id 找回。
+    await expect(catalog.get(sessionId)).resolves.toMatchObject({
+      sessionId,
+      userId: 'adws-1',
+      username: 'agent-dws:org-kaikai',
+      channel: 'dingtalk',
+      orgAgentId: 'org-kaikai',
+      tenantId: 'tenant-a',
+    });
+  });
+
   it('持久化当前 run 的组织 Agent 安全快照，供 approval/interaction resume 固定复用', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'session-catalog-org-agent-'));
     cleanupDirs.add(cwd);

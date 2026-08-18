@@ -21,6 +21,7 @@ import type {
   TaskBoardPatchInput,
   TaskBoardPriority,
   TaskBoardStatus,
+  TaskBoardStageModels,
   TaskBoardTask,
   TaskBoardTaskCreateInput,
   TaskBoardTaskMoveInput,
@@ -186,6 +187,8 @@ export interface TaskboardExecutionReconcileCandidate {
 export interface TaskboardExecutionModelContext {
   taskModel?: string;
   boardModel?: string;
+  /** 看板按执行阶段配置的默认模型；解析优先级：任务模型 > 阶段模型 > 看板模型。 */
+  boardStageModels?: TaskBoardStageModels;
   taskKind?: 'delivery' | 'integration' | 'remediation';
   taskStatus?: TaskBoardStatus;
   policyRevision?: string;
@@ -199,6 +202,8 @@ export interface TaskboardExecutionContext {
   identity: TaskboardIdentity;
   task: TaskBoardTask;
   boardPrompt: string;
+  /** 各执行阶段（work/review/merge）特定提示语；与 boardPrompt 并存。 */
+  stagePrompts?: Partial<Record<TaskBoardExecutionPurpose, string>>;
   comments: TaskBoardComment[];
   execution: TaskBoardExecution;
   continuation?: boolean;
@@ -208,6 +213,8 @@ export interface TaskboardContinuationContext {
   task: TaskBoardTask;
   comment: TaskBoardComment;
   pendingComments: TaskBoardComment[];
+  /** 看板各执行阶段（work/review/merge）特定提示语；缺省阶段执行时使用系统固定模板。 */
+  stagePrompts?: Partial<Record<TaskBoardExecutionPurpose, string>>;
   continuationRunId?: string;
   hasActiveContinuation?: boolean;
   activeExecution?: TaskBoardExecution;

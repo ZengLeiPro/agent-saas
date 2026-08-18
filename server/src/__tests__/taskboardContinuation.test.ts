@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
   TaskBoardComment,
   TaskBoardExecution,
+  TaskBoardExecutionPurpose,
   TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
@@ -21,6 +22,7 @@ import {
 import { TaskboardExecutionCoordinator } from '../taskboard/executionService.js';
 import {
   TaskboardValidationError,
+  type TaskboardExecutionModelContext,
   type TaskboardExecutionStore,
   type TaskboardIdentity,
 } from '../taskboard/types.js';
@@ -672,11 +674,31 @@ describe('任务看板评论续跑', () => {
     }
   });
 
+  it('按执行阶段解析默认模型：任务模型 > 阶段模型 > 看板模型 > 组织默认', async () => {
+    const resolveModel = (ref: string) => ({ ref });
+    const launch = async (ctx: Partial<TaskboardExecutionModelContext>, purpose?: TaskBoardExecutionPurpose) => {
+      const rig = makeRig({
+        getExecutionModelContext: vi.fn(async () => ({ boardOwnerUserId: identity.ownerUserId, ...ctx })),
+      }, { resolveModel });
+      return await (rig.coordinator as unknown as {
+        resolveLaunch: (i: TaskboardIdentity, t: string, p?: TaskBoardExecutionPurpose)
+          => Promise<{ explicitModelRef?: string; model: { ref: string } }>;
+      }).resolveLaunch(identity, task.id, purpose);
+    };
+    const stages = { work: 'stage/work', review: 'stage/review', merge: 'stage/merge' };
+    expect((await launch({ boardStageModels: stages }, 'review')).model.ref).toBe('stage/review');
+    expect((await launch({ boardStageModels: stages }, 'work')).model.ref).toBe('stage/work');
+    expect((await launch({ boardStageModels: stages }, 'merge')).model.ref).toBe('stage/merge');
+    const overridden = await launch({ taskKind: 'integration', taskModel: 'task/explicit', boardStageModels: stages });
+    expect([overridden.explicitModelRef, overridden.model.ref]).toEqual(['task/explicit', 'task/explicit']);
+    expect((await launch({ boardModel: 'board/fallback', boardStageModels: { review: 'stage/review' } }, 'work')).model.ref).toBe('board/fallback');
+    expect((await launch({}, 'merge')).model.ref).toBe('model-default');
+  });
 });
 
 function makeRig(
   overrides: Partial<TaskboardExecutionStore> = {},
-  options: { agentCwd?: string } = {},
+  options: { agentCwd?: string; resolveModel?: (ref: string) => { ref: string } | null } = {},
 ) {
   const store = {
     listExecutions: vi.fn(async () => [activeExecution]),
@@ -757,6 +779,7 @@ function makeRig(
     agentCwd: options.agentCwd ?? '/agent',
     executionConfig: createExecutionConfig({ tenantDefaultTarget: 'server-remote' }),
     resolveDefaultModel: () => ({ ref: 'model-default' }),
+    ...(options.resolveModel ? { resolveModel: options.resolveModel } : {}),
     writeSessionTitle,
   });
   return { coordinator, store, scheduler, runStore, sessionCatalog, eventStore, writeSessionTitle };

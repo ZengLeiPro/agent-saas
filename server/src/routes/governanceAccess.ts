@@ -704,7 +704,7 @@ export function createGovernanceAccessRouter(deps: {
 
   router.get('/directory-groups', async (req, res) => {
     const tenantId = tenantFor(req, req.query.tenantId as string | undefined);
-    if (!tenantId || personas.get(req) !== 'org_admin') return res.status(403).json({ error: 'Organization admin required' });
+    if (!tenantId || !canManageTenant(req)) return res.status(403).json({ error: 'Organization admin required' });
     if (!deps.directoryGroups) {
       return res.status(503).json({ error: 'Directory group authority unavailable', code: 'DIRECTORY_GROUP_AUTHORITY_UNAVAILABLE' });
     }

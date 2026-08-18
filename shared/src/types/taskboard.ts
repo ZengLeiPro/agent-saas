@@ -461,6 +461,7 @@ export interface TaskBoardTaskCreateInput {
 export interface TaskBoardTaskPatchInput {
   title?: string;
   description?: string;
+  kind?: Extract<TaskBoardTaskKind, "delivery">;
   branch?: string | null;
   attachments?: TaskBoardUploadAttachment[];
   priority?: TaskBoardPriority;

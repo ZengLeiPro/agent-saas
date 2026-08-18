@@ -163,6 +163,7 @@ const taskCreateSchema = z.object({
 const taskPatchSchema = z.object({
   title: z.string().trim().min(1).max(240).optional(),
   description: z.string().max(20_000).optional(),
+  kind: z.literal('delivery').optional(),
   branch: z.string().trim().min(1).max(512).nullish(),
   attachments: attachmentsSchema.optional(),
   priority: z.enum(TASKBOARD_PRIORITIES).optional(),
@@ -173,6 +174,7 @@ const taskPatchSchema = z.object({
 }).strict().refine(
   (input) => input.title !== undefined
     || input.description !== undefined
+    || input.kind !== undefined
     || input.branch !== undefined
     || input.attachments !== undefined
     || input.priority !== undefined

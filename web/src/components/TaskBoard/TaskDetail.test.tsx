@@ -233,6 +233,25 @@ describe("TaskDetail 草稿隔离", () => {
     }));
   });
 
+  it("advisory 可确认后单向升级为 delivery", async () => {
+    const user = userEvent.setup();
+    const advisory = { ...taskOne, kind: "advisory" as const, status: "blocked" as const };
+    const promoted = { ...advisory, kind: "delivery" as const, status: "todo" as const, version: advisory.version + 1 };
+    mocks.fetchTask.mockResolvedValue(advisory);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const onUpdate = vi.fn(async () => promoted);
+    render(<TaskDetail {...props({ task: advisory, onUpdate })} />);
+
+    await user.click(await screen.findByRole("button", { name: "升级为交付任务" }));
+
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledWith(advisory, { kind: "delivery" }));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("不能改回 advisory"));
+    expect(await screen.findByText("交付任务")).toBeTruthy();
+    expect(screen.getAllByText("待实施").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "升级为交付任务" })).toBeNull();
+    confirmSpy.mockRestore();
+  });
+
   it("评论可只上传附件后发表", async () => {
     const user = userEvent.setup();
     const uploaded = {

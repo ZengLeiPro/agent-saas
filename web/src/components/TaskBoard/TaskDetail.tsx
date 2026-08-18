@@ -322,6 +322,27 @@ export function TaskDetail({
     }
   };
 
+  const promoteToDelivery = async () => {
+    if (!currentTask || taskKind !== "advisory" || editReadOnly || !canTransitionTask) return;
+    if (!window.confirm("确认将该答复与分析任务升级为交付任务吗？升级后将进入待实施，且不能改回 advisory。")) return;
+    const operationTask = currentTask;
+    const requestId = ++detailRequestRef.current;
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await onUpdate(operationTask, { kind: "delivery" });
+      if (!isCurrentOperation(requestId, operationTask.id)) return;
+      setCurrentTask(next);
+      hydrateDraft(next);
+    } catch (caught) {
+      if (!isCurrentOperation(requestId, operationTask.id)) return;
+      useConflictCurrent(caught);
+      setError(caught instanceof Error ? caught.message : "升级交付任务失败");
+    } finally {
+      if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
+    }
+  };
+
   const changeStatus = async (status: TaskBoardStatus) => {
     if (!currentTask || !canTransitionCurrentTask || status === currentTask.status
       || !canUserTransitionTask(taskKind, currentTask.status, status)) return;
@@ -561,6 +582,11 @@ export function TaskDetail({
                   <Badge variant={taskKind === "integration" ? "default" : "secondary"} className={taskKind === "integration" ? "bg-violet-600 hover:bg-violet-600" : ""}>{TASK_KIND_LABELS[taskKind]}</Badge>
                   <Badge variant="outline">{STATUS_LABELS[currentTask.status]}</Badge>
                   {currentTask.integrationState ? <Badge variant="outline">{INTEGRATION_SOURCE_STATE_LABELS[currentTask.integrationState]}</Badge> : null}
+                  {taskKind === "advisory" && canTransitionTask && canUpdateTask && !readOnly ? (
+                    <Button type="button" size="sm" variant="outline" onClick={() => void promoteToDelivery()} disabled={saving || executionActive}>
+                      升级为交付任务
+                    </Button>
+                  ) : null}
                 </div>
                 {currentTask.providerPullRequestId ? <p>PR：<span className="font-mono">{currentTask.providerPullRequestId}</span>{currentTask.pullRequestNumber ? `（#${currentTask.pullRequestNumber}）` : ""}</p> : null}
                 {currentTask.reviewedSubjectDigest ? <p className="break-all text-xs text-muted-foreground">已复核对象：<span className="font-mono">{currentTask.reviewedSubjectDigest}</span></p> : null}

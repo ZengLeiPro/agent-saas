@@ -53,6 +53,7 @@ import {
 } from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
 import { deleteStoredTask } from './storeTaskDelete.js';
+import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
 import {
   allowedActionsForRole,
   normalizeBoardPrompt,
@@ -685,17 +686,15 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask> {
     return this.requireTask(this.pool, identity, taskId, false);
   }
-  async updateTask(
-    identity: TaskboardIdentity,
-    taskId: string,
-    input: TaskBoardTaskPatchInput,
-  ): Promise<TaskBoardTask> {
+  async updateTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskPatchInput): Promise<TaskBoardTask> {
     return this.withTransaction(async (client) => {
       const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
-      assertBoardRole(loaded.boardRole, 'editor');
+      const kindMutation = resolveTaskKindMutation(loaded.task, input.kind);
+      assertBoardRole(loaded.boardRole, kindMutation.requiredRole);
       assertExpectedVersion(loaded.task, input.expectedVersion);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
-      if (loaded.task.kind === 'advisory' && input.branch !== undefined) {
+      if (kindMutation.promoting) await assertTaskHasNoActiveRuns(this, client, taskId);
+      if (loaded.task.kind === 'advisory' && !kindMutation.promoting && input.branch !== undefined) {
         throw new TaskboardValidationError(
           'Advisory tasks cannot carry a repository branch',
           'TASKBOARD_ADVISORY_REPOSITORY_FORBIDDEN',
@@ -712,8 +711,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         );
       }
       if (
-        input.title === undefined && input.description === undefined && input.branch === undefined
-        && input.attachments === undefined && input.priority === undefined && input.labels === undefined
+        input.title === undefined && input.description === undefined && input.kind === undefined
+        && input.branch === undefined && input.attachments === undefined && input.priority === undefined && input.labels === undefined
         && input.dueAt === undefined && input.model === undefined
       ) {
         throw new TaskboardValidationError('No task changes supplied');
@@ -728,6 +727,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         params.push(input.description);
         assignments.push(`description=$${params.length}`);
       }
+      if (kindMutation.promoting) assignments.push("kind='delivery'", "status='todo'", 'completed_at=NULL', 'resume_context=NULL');
       if (input.branch !== undefined) {
         params.push(optionalText(input.branch));
         assignments.push(`branch=$${params.length}`);
@@ -760,9 +760,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
             AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')`,
         params,
       );
-      await appendTaskChange(this, client, taskId, 'task.updated', 'user', identity.ownerUserId, {
-        fields: Object.keys(input).filter((key) => key !== 'expectedVersion'),
-      });
+      const change = describeTaskUpdate(loaded.task, input);
+      await appendTaskChange(this, client, taskId, change.type, 'user', identity.ownerUserId, change.payload);
       return this.requireTask(client, identity, taskId, false);
     });
   }

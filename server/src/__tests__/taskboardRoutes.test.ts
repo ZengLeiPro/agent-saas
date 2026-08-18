@@ -236,6 +236,14 @@ describe('Taskboard routes', () => {
     expect((await rig.request('/api/taskboard/tasks/task-1', patchJson({
       expectedVersion: 1,
     }))).status).toBe(400);
+    expect((await rig.request('/api/taskboard/tasks/task-1', patchJson({
+      kind: 'delivery',
+      expectedVersion: 1,
+    }))).status).toBe(200);
+    expect((await rig.request('/api/taskboard/tasks/task-1', patchJson({
+      kind: 'advisory',
+      expectedVersion: 1,
+    }))).status).toBe(400);
     expect((await rig.request('/api/taskboard/boards/board-1', patchJson({
       stageModels: { unknownStage: 'group-a/model-a' },
       expectedVersion: 1,

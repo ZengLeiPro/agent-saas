@@ -27,6 +27,7 @@ export async function attachExecutionPullRequest(
   providerPullRequestId: string,
 ): Promise<TaskBoardTask> {
   const context = await loadContext(host, identity, runId, ['work']);
+  assertRemediationPullRequest(context, providerPullRequestId);
   const provider = requireProvider(host);
   const pullRequest = await provider.getPullRequest(
     context.repository,
@@ -36,6 +37,8 @@ export async function attachExecutionPullRequest(
   if (pullRequest.state !== 'open') {
     throw new TaskboardValidationError('Delivery pull request must be open', 'TASKBOARD_PR_NOT_OPEN');
   }
+  assertRemediationPullRequest(context, pullRequest.providerPullRequestId);
+  assertRemediationBranch(context, pullRequest.headRef);
   const client = await host.pool.connect();
   try {
     await client.query('BEGIN');
@@ -81,6 +84,7 @@ export async function recordReviewedExecutionSubject(
   if (!context.providerPullRequestId) {
     throw new TaskboardValidationError('Delivery task has no pull request');
   }
+  assertRemediationPullRequest(context, context.providerPullRequestId);
   const provider = requireProvider(host);
   const pullRequest = await provider.getPullRequest(
     context.repository,
@@ -90,6 +94,8 @@ export async function recordReviewedExecutionSubject(
   if (pullRequest.state !== 'open' || pullRequest.draft) {
     throw new TaskboardValidationError('Pull request is not reviewable', 'TASKBOARD_PR_NOT_OPEN');
   }
+  assertRemediationPullRequest(context, pullRequest.providerPullRequestId);
+  assertRemediationBranch(context, pullRequest.headRef);
   const client = await host.pool.connect();
   try {
     await client.query('BEGIN');
@@ -130,6 +136,17 @@ export async function recordReviewedExecutionSubject(
            OR (remediation_task_id=$1 AND state='waiting_remediation')`,
       [context.taskId, pullRequest.providerPullRequestId, pullRequest.subjectDigest],
     );
+    await client.query(
+      `UPDATE ${host.tasksTable} d
+          SET provider_pull_request_id=$2, pull_request_number=$3,
+              head_oid=$4, base_oid=$5, reviewed_subject_digest=$6,
+              version=version+1, updated_at=now()
+         FROM ${host.integrationSourcesTable} s
+        WHERE s.remediation_task_id=$1 AND s.state='waiting_remediation'
+          AND d.id=s.delivery_task_id`,
+      [context.taskId, pullRequest.providerPullRequestId, pullRequest.number,
+        pullRequest.headOid, pullRequest.baseOid, pullRequest.subjectDigest],
+    );
     await client.query('COMMIT');
     return rowToTask(result.rows[0]!);
   } catch (error) {
@@ -148,19 +165,35 @@ async function loadContext(
 ): Promise<{
   taskId: string;
   executionId: string;
+  isRemediation: boolean;
   providerPullRequestId?: string;
+  sourceProviderPullRequestId?: string;
+  deliveryProviderPullRequestId?: string;
+  taskBranch?: string;
+  deliveryBranch?: string;
   repository: { provider: 'github'; repositoryId: string; owner: string; name: string; baseBranch: string; allowForkPullRequest: false };
   boardOwnerUserId: string;
 }> {
   const client = await host.pool.connect();
   try {
     const result = await client.query(
-      `SELECT t.id AS task_id,t.kind,t.provider_pull_request_id,
+      `SELECT t.id AS task_id,t.kind,t.branch AS task_branch,t.provider_pull_request_id,
               e.id AS execution_id,e.purpose,e.status AS execution_status,e.resolved_at,e.superseded_at,
-              b.repository,b.owner_user_id
+              b.repository,b.owner_user_id,
+              remediation_source.provider_pull_request_id AS source_provider_pull_request_id,
+              delivery.provider_pull_request_id AS delivery_provider_pull_request_id,
+              delivery.branch AS delivery_branch
          FROM ${host.executionsTable} e
          JOIN ${host.tasksTable} t ON t.id=e.task_id
          JOIN ${host.boardsTable} b ON b.id=t.board_id
+         LEFT JOIN LATERAL (
+           SELECT s.provider_pull_request_id,s.delivery_task_id
+             FROM ${host.integrationSourcesTable} s
+            WHERE s.remediation_task_id=t.id
+            ORDER BY s.updated_at DESC,s.id
+            LIMIT 1
+         ) remediation_source ON true
+         LEFT JOIN ${host.tasksTable} delivery ON delivery.id=remediation_source.delivery_task_id
         WHERE e.run_id=$1 AND b.tenant_id=$2
           AND (b.owner_user_id=$3 OR b.visibility='organization')
         LIMIT 1`,
@@ -182,7 +215,14 @@ async function loadContext(
     return {
       taskId: String(row.task_id),
       executionId: String(row.execution_id),
+      isRemediation: String(row.kind) === 'remediation',
       ...(row.provider_pull_request_id ? { providerPullRequestId: String(row.provider_pull_request_id) } : {}),
+      ...(row.source_provider_pull_request_id
+        ? { sourceProviderPullRequestId: String(row.source_provider_pull_request_id) } : {}),
+      ...(row.delivery_provider_pull_request_id
+        ? { deliveryProviderPullRequestId: String(row.delivery_provider_pull_request_id) } : {}),
+      ...(row.task_branch ? { taskBranch: String(row.task_branch) } : {}),
+      ...(row.delivery_branch ? { deliveryBranch: String(row.delivery_branch) } : {}),
       repository: repository as {
         provider: 'github'; repositoryId: string; owner: string; name: string;
         baseBranch: string; allowForkPullRequest: false;
@@ -213,6 +253,36 @@ async function lockExecution(
     [runId, taskId],
   );
   if (!result.rows[0]) throw new TaskboardValidationError('Taskboard execution changed');
+}
+
+function assertRemediationPullRequest(
+  context: Awaited<ReturnType<typeof loadContext>>,
+  providerPullRequestId: string,
+): void {
+  if (!context.isRemediation) return;
+  if (!context.sourceProviderPullRequestId
+    || !context.deliveryProviderPullRequestId
+    || context.sourceProviderPullRequestId !== context.deliveryProviderPullRequestId
+    || providerPullRequestId !== context.sourceProviderPullRequestId) {
+    throw new TaskboardValidationError(
+      'Remediation pull request must remain the integration source pull request',
+      'TASKBOARD_REMEDIATION_PR_MISMATCH',
+    );
+  }
+}
+
+function assertRemediationBranch(
+  context: Awaited<ReturnType<typeof loadContext>>,
+  headRef: string,
+): void {
+  if (!context.isRemediation) return;
+  const expectedBranch = context.deliveryBranch ?? context.taskBranch;
+  if (expectedBranch && headRef !== expectedBranch) {
+    throw new TaskboardValidationError(
+      'Remediation pull request head does not match the delivery branch',
+      'TASKBOARD_REMEDIATION_BRANCH_MISMATCH',
+    );
+  }
 }
 
 function requireProvider(host: DeliveryPullRequestHost): RepositoryProvider {

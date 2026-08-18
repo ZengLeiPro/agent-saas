@@ -274,11 +274,19 @@ export async function runTaskboardV2Schema(
       round INTEGER NOT NULL CHECK (round > 0),
       remediation_task_id TEXT NOT NULL UNIQUE REFERENCES ${options.tasksTable}(id),
       state TEXT NOT NULL CHECK (state IN ('active','resolved','superseded','canceled')),
+      base_head_oid TEXT,
+      completed_head_oid TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       resolved_at TIMESTAMPTZ,
       superseded_at TIMESTAMPTZ,
       UNIQUE (integration_source_id, round)
     )
+  `);
+  await client.query(`
+    ALTER TABLE ${options.remediationAttemptsTable}
+      ADD COLUMN IF NOT EXISTS base_head_oid TEXT;
+    ALTER TABLE ${options.remediationAttemptsTable}
+      ADD COLUMN IF NOT EXISTS completed_head_oid TEXT
   `);
   await client.query(`
     CREATE TABLE IF NOT EXISTS ${options.cancellationOutboxTable} (

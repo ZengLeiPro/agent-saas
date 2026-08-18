@@ -21,9 +21,9 @@ describe("isDebugModeAvailable", () => {
     })).toBe(true);
   });
 
-  it("旧数据缺少组织开关时沿用原平台授权值", () => {
+  it("旧数据缺少组织开关时按关闭处理", () => {
     expect(isDebugModeAvailable("tenant-a", {
       debugModeAllowed: true,
-    })).toBe(true);
+    })).toBe(false);
   });
 });

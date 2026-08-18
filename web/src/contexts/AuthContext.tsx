@@ -57,6 +57,8 @@ interface AuthContextValue {
   /** 更新当前用户手机号验证状态 */
   updatePhone: (phone: string | undefined, phoneVerifiedAt?: string) => void;
   updatePreferences: (preferences: UserPreferences) => void;
+  /** 本人调试模式保存后立即刷新服务端返回的有效值。 */
+  updateDebugMode: (debugMode: boolean) => void;
   /** 组织策略保存后立即刷新当前用户的功能有效值。 */
   updateTenantFeatures: (features: TenantFeatureFlags) => void;
 }
@@ -224,6 +226,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser((prev) => prev ? { ...prev, preferences: { ...(prev.preferences ?? {}), ...preferences } } : prev);
   }, []);
 
+  const updateDebugMode = useCallback((debugMode: boolean) => {
+    setUser((prev) => prev ? { ...prev, debugMode: debugMode === true } : prev);
+  }, []);
+
   const updateTenantFeatures = useCallback((features: TenantFeatureFlags) => {
     setUser((prev) => prev ? {
       ...prev,
@@ -258,9 +264,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updateAvatar,
       updatePhone,
       updatePreferences,
+      updateDebugMode,
       updateTenantFeatures,
     }),
-    [user, isLoading, authEnabled, accounts, login, loginWithSms, activateAccount, switchAccount, logoutCurrentAccount, logoutAllAccounts, logout, updateAvatar, updatePhone, updatePreferences, updateTenantFeatures, canPlatform],
+    [user, isLoading, authEnabled, accounts, login, loginWithSms, activateAccount, switchAccount, logoutCurrentAccount, logoutAllAccounts, logout, updateAvatar, updatePhone, updatePreferences, updateDebugMode, updateTenantFeatures, canPlatform],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

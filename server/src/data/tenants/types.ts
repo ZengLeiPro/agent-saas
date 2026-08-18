@@ -41,7 +41,7 @@ export interface TenantSettings {
     customSkillsEnabled: boolean;
     /** 平台是否授权该组织使用调试模式。仅平台管理员可配置。 */
     debugModeAllowed: boolean;
-    /** 组织是否向成员开放调试模式；缺省时兼容旧数据，沿用平台授权值。 */
+    /** 组织是否向成员开放调试模式；旧数据缺省按 false 处理。 */
     debugModeEnabled?: boolean;
     /**
      * 会话上下文自动压缩（post-run 超阈值触发）。默认关闭，灰度租户先开。

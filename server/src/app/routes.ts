@@ -817,6 +817,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         "/api/tenants",
         createTenantsRouter({
           tenantStore: runtime.tenantStore,
+          userStore: runtime.userStore,
           sharedDir,
           resolveMemoryFeatureStatus: runtime.getTenantMemoryFeatureStatus,
           // ★ 2026-07-18 企业专家目录 MVP：新租户开通时 seed 3 个种子专家（disabled）

@@ -11,6 +11,7 @@ import { PLATFORM_CAPABILITIES } from "../../../shared/src/types/user.js";
 import { isDebugModeAvailable } from "../../../shared/src/types/tenant.js";
 import { isModelAllowedForTenant } from "../app/models.js";
 import type { ModelsConfig } from "../types/index.js";
+import { registerAuthDebugModeRoute } from "./authDebugMode.js";
 import type { UserStore } from "../data/users/store.js";
 import type { UserInfo, UserRecord } from "../data/users/types.js";
 import type { TenantStore } from "../data/tenants/store.js";
@@ -338,8 +339,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     getModelsConfig,
   } = deps;
   const router = Router();
-  router.use(createLegacyAuthWriteGate(deps.legacyWriteGate));
-
+  router.use(createLegacyAuthWriteGate(deps.legacyWriteGate)); registerAuthDebugModeRoute(router, { userStore, ...(tenantStore ? { tenantStore } : {}) });
   /** Resolve createdBy userId to username (fallback to raw value) */
   function resolveCreatedBy(createdBy: string | undefined): string {
     if (!createdBy || createdBy === "system") return createdBy || "";

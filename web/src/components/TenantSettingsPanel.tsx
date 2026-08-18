@@ -241,7 +241,7 @@ export function TenantSettingsPanel({
               <SettingSwitch
                 label="成员调试模式"
                 description="平台已授权。开启后，成员可按个人需要显示思考、工具和执行细节。"
-                checked={settings.features.debugModeEnabled ?? settings.features.debugModeAllowed}
+                checked={settings.features.debugModeEnabled === true}
                 onCheckedChange={checked => patch(d => { d.features.debugModeEnabled = checked; })}
               />
             )}

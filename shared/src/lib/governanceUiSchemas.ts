@@ -51,6 +51,7 @@ export const governanceReceiptSchema = z.object({
 const directoryProfileSchema = z.object({
   userId: z.string().optional(), username: z.string().min(1), displayName: z.string().min(1), position: z.string().optional(),
   accountStatus: z.enum(['active', 'disabled']), dingtalkBound: z.boolean().optional(),
+  debugMode: z.boolean().optional(), debugModeAvailable: z.boolean().optional(),
   createdAt: z.string().optional(), updatedAt: z.string().optional(),
 }).strict();
 

@@ -220,7 +220,7 @@ describe("auth users router admin boundaries", () => {
     await expect(res.json()).resolves.toMatchObject({
       error: "上级未开放调试模式，不能为成员开启",
     });
-    expect(h.userStore.findById(h.users.wainUser.id)?.debugMode).toBeUndefined();
+    expect(h.userStore.findById(h.users.wainUser.id)?.debugMode).toBe(false);
   });
 
   it("登录态只返回三级开关共同决定的有效值", async () => {
@@ -256,6 +256,60 @@ describe("auth users router admin boundaries", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ debugMode: false });
+  });
+
+  it("成员通过本人设置 API 开关且保存后立即返回有效值", async () => {
+    h.setCaller(h.users.wainUser);
+    const blocked = await h.request("/api/auth/me/debug-mode", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ debugMode: true }),
+    });
+    expect(blocked.status).toBe(400);
+    await expect(blocked.json()).resolves.toMatchObject({ error: "上级未开放调试模式，不能为本人开启" });
+
+    const current = h.tenantStore.getSettings("wain")!;
+    await h.tenantStore.updateSettings("wain", {
+      features: { ...current.features, debugModeAllowed: true, debugModeEnabled: true },
+    });
+    const opened = await h.request("/api/auth/me/debug-mode", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ debugMode: true }),
+    });
+    expect(opened.status).toBe(200);
+    await expect(opened.json()).resolves.toMatchObject({ debugMode: true });
+    expect(h.userStore.findById(h.users.wainUser.id)?.debugMode).toBe(true);
+
+    const closed = await h.request("/api/auth/me/debug-mode", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ debugMode: false }),
+    });
+    expect(closed.status).toBe(200);
+    await expect(closed.json()).resolves.toMatchObject({ debugMode: false });
+    expect(h.userStore.findById(h.users.wainUser.id)?.debugMode).toBe(false);
+  });
+
+  it("本人设置 API 不接受其他 userId 或修改其他成员", async () => {
+    h.setCaller(h.users.wainUser);
+    const response = await h.request("/api/auth/me/debug-mode", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ debugMode: true, userId: h.users.wainAdminA.id }),
+    });
+    expect(response.status).toBe(400);
+    expect(h.userStore.findById(h.users.wainAdminA.id)?.debugMode).toBe(false);
+  });
+
+  it("组织关闭时清理成员开关并持久化为 false", async () => {
+    const current = h.tenantStore.getSettings("wain")!;
+    await h.tenantStore.updateSettings("wain", {
+      features: { ...current.features, debugModeAllowed: true, debugModeEnabled: true },
+    });
+    await h.userStore.update(h.users.wainUser.id, { debugMode: true });
+    await h.userStore.disableDebugModeForTenant("wain");
+    expect(h.userStore.findById(h.users.wainUser.id)?.debugMode).toBe(false);
   });
 
   it("组织 admin 不能删除同租户其他 admin", async () => {

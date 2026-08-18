@@ -215,8 +215,8 @@ export class UserStore {
     const now = new Date().toISOString();
     let changed = 0;
     for (const user of this.users) {
-      if (user.tenantId !== tenantId || user.debugMode !== true) continue;
-      user.debugMode = undefined;
+      if (user.tenantId !== tenantId || user.debugMode === false) continue;
+      user.debugMode = false;
       user.updatedAt = now;
       changed += 1;
     }
@@ -293,7 +293,7 @@ export class UserStore {
       ...(input.dingtalkStaffId
         ? { dingtalkStaffId: input.dingtalkStaffId }
         : {}),
-      ...(input.debugMode ? { debugMode: true } : {}),
+      debugMode: input.debugMode === true,
       ...(input.permissions ? { permissions: input.permissions } : {}),
       ...(input.platformCapabilities !== undefined
         ? { platformCapabilities: [...input.platformCapabilities] }
@@ -371,7 +371,7 @@ export class UserStore {
       user.dingtalkStaffId = input.dingtalkStaffId || undefined;
     }
     if (input.debugMode !== undefined) {
-      user.debugMode = input.debugMode || undefined;
+      user.debugMode = input.debugMode === true;
     }
     if (input.tenantId !== undefined) {
       // PR 2 起 tenantId 必选——空字符串/undefined 都视为"不变更"

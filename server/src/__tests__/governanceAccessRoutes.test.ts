@@ -46,6 +46,7 @@ async function rig(input: {
   auditAppend?: ReturnType<typeof vi.fn>;
   auditList?: ReturnType<typeof vi.fn>;
   createMember?: ReturnType<typeof vi.fn>;
+  validateMemberDebugMode?: (tenantId: string, debugMode: boolean) => string | null;
   updateMembership?: ReturnType<typeof vi.fn>;
   replaceAssignments?: ReturnType<typeof vi.fn>;
   getAssignmentSet?: ReturnType<typeof vi.fn>;
@@ -184,6 +185,7 @@ async function rig(input: {
       createdAt: NOW, updatedAt: NOW,
     } : null,
     ...(input.createMember ? { createMember: input.createMember as never } : {}),
+    ...(input.validateMemberDebugMode ? { validateMemberDebugMode: input.validateMemberDebugMode } : {}),
     createTenant,
     rollbackTenantCreate,
     getTenantLifecycle: tenantId => tenantId === tenantLifecycle.id ? tenantLifecycle : undefined,
@@ -277,6 +279,11 @@ describe('governance access routes', () => {
     const denied = await test.request('/api/governance/access/memberships?tenantId=tenant-a', json('POST', { username: 'new-admin', password: 'secret123', role: 'admin' }));
     expect(denied.status).toBe(403);
     expect(createMember).toHaveBeenCalledTimes(1);
+  });
+  it('治理 API 创建成员时拒绝越权开启个人调试模式', async () => {
+    const createMember = vi.fn(), validateMemberDebugMode = vi.fn().mockReturnValue('上级未开放调试模式，不能为成员开启'); const test = await rig({ createMember, validateMemberDebugMode });
+    const response = await test.request('/api/governance/access/memberships?tenantId=tenant-a', json('POST', { username: 'debug-member', password: 'secret123', role: 'user', debugMode: true }));
+    expect(response.status).toBe(400); await expect(response.json()).resolves.toMatchObject({ error: '上级未开放调试模式，不能为成员开启' }); expect(validateMemberDebugMode).toHaveBeenCalledWith('tenant-a', true); expect(createMember).not.toHaveBeenCalled();
   });
 
   it('Owner 与平台恢复动作均由服务端作用域授权生成', async () => {

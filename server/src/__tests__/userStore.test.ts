@@ -60,6 +60,7 @@ describe("UserStore user ids", () => {
 
     expect(user.id).toMatch(USER_ID_PATTERN);
     expect(user.id).toHaveLength(14);
+    expect(user.debugMode).toBe(false);
     expect(user.preferences).toEqual({
       authorizationModeEnabled: true,
       sidebarLayout: "single",
@@ -108,8 +109,8 @@ describe("UserStore debug mode cascade", () => {
     await expect(store.disableDebugModeForTenant("tenant-a")).resolves.toBe(2);
 
     const reloaded = new UserStore(filePath);
-    expect(reloaded.findById(first.id)?.debugMode).toBeUndefined();
-    expect(reloaded.findById(second.id)?.debugMode).toBeUndefined();
+    expect(reloaded.findById(first.id)?.debugMode).toBe(false);
+    expect(reloaded.findById(second.id)?.debugMode).toBe(false);
     expect(reloaded.findById(other.id)?.debugMode).toBe(true);
   });
 });

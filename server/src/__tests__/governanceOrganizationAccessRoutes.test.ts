@@ -27,6 +27,7 @@ afterEach(async () => {
 async function rig(input: {
   getPolicies?: ReturnType<typeof vi.fn>;
   updatePolicy?: ReturnType<typeof vi.fn>;
+  onDebugModeDisabled?: (tenantId: string) => Promise<void>;
   listResourceSets?: ReturnType<typeof vi.fn>;
   getAssignmentSet?: ReturnType<typeof vi.fn>;
   replaceAssignments?: ReturnType<typeof vi.fn>;
@@ -71,6 +72,7 @@ async function rig(input: {
     } as never,
     membershipPreviewSecret: PREVIEW_SECRET,
     now: () => new Date(NOW),
+    ...(input.onDebugModeDisabled ? { onDebugModeDisabled: input.onDebugModeDisabled } : {}),
   }));
   const server: Server = await new Promise(resolve => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
@@ -100,6 +102,21 @@ describe('governance organization access routes', () => {
     expect(crossTenant.status).toBe(403);
   });
 
+  it('通过组织治理策略关闭调试模式时清理成员个人状态', async () => {
+    const policy = { tenantId: 'tenant-a', policyKey: 'runtime.debug_mode.enabled', value: true, source: 'governance', version: 3, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' };
+    const getPolicies = vi.fn().mockResolvedValue([policy]);
+    const updatePolicy = vi.fn().mockResolvedValue({ ...policy, value: false, version: 4, updatedAt: '2026-08-10T09:01:00.000Z', updatedBy: 'admin-1' });
+    const onDebugModeDisabled = vi.fn().mockResolvedValue(undefined);
+    const test = await rig({ getPolicies, updatePolicy, onDebugModeDisabled });
+    const change = { expectedVersion: 3, value: false, reason: '组织关闭调试模式' };
+    const previewResponse = await test.request('/api/governance/access/policies/runtime.debug_mode.enabled/preview?tenantId=tenant-a', json('POST', change));
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json() as Record<string, unknown>;
+    const commit = await test.request('/api/governance/access/policies/runtime.debug_mode.enabled?tenantId=tenant-a', json('PUT', commitBody(change, preview)));
+    expect(commit.status).toBe(200);
+    expect(onDebugModeDisabled).toHaveBeenCalledWith('tenant-a');
+  });
+
   it('组织管理员不能预览或提交平台专属调试模式授权', async () => {
     const policy = { tenantId: 'tenant-a', policyKey: 'runtime.debug_mode.allowed', value: false, source: 'legacy_projection', version: 1, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' };
     const updatePolicy = vi.fn();
@@ -117,6 +134,21 @@ describe('governance organization access routes', () => {
       expiresAt: '2099-01-01T00:00:00.000Z',
     }));
     expect(commit.status).toBe(403);
+    expect(updatePolicy).not.toHaveBeenCalled();
+  });
+
+  it('平台未授权时组织管理员不能通过策略接口开启成员调试模式', async () => {
+    const policies = [
+      { tenantId: 'tenant-a', policyKey: 'runtime.debug_mode.allowed', value: false, source: 'legacy_projection', version: 1, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' },
+      { tenantId: 'tenant-a', policyKey: 'runtime.debug_mode.enabled', value: false, source: 'legacy_projection', version: 1, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' },
+    ];
+    const updatePolicy = vi.fn();
+    const test = await rig({ getPolicies: vi.fn().mockResolvedValue(policies), updatePolicy });
+    const response = await test.request('/api/governance/access/policies/runtime.debug_mode.enabled/preview?tenantId=tenant-a', json('POST', {
+      expectedVersion: 1, value: true, reason: '组织尝试越级开启',
+    }));
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: '平台尚未授予调试模式，组织不能开启' });
     expect(updatePolicy).not.toHaveBeenCalled();
   });
 

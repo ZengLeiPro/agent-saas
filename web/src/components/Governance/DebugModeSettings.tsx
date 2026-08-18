@@ -50,7 +50,7 @@ export function TenantDebugModeSetting({
   const platformAllowed = features.debugModeAllowed === true;
   const checked = level === "platform"
     ? platformAllowed
-    : platformAllowed && (features.debugModeEnabled ?? platformAllowed);
+    : platformAllowed && features.debugModeEnabled === true;
   const disabled = saving || (level === "organization" && !platformAllowed);
   const label = level === "platform" ? "调试模式授权" : "成员调试模式";
   const description = level === "platform"

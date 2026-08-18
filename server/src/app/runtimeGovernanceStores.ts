@@ -380,7 +380,7 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
               )
                 ? bool(
                     'runtime.debug_mode.enabled',
-                    current.features.debugModeEnabled ?? current.features.debugModeAllowed,
+                    current.features.debugModeEnabled ?? false,
                   )
                 : false,
               autoCompactEnabled: bool('session.auto_compact.enabled', current.features.autoCompactEnabled),

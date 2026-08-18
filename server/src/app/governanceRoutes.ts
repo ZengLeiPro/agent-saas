@@ -167,11 +167,28 @@ export function registerGovernanceRoutes(
           updatedAt: user.updatedAt,
         };
       },
+      ...(runtime.userStore ? {
+        onDebugModeDisabled: async (tenantId: string) => {
+          await runtime.userStore!.disableDebugModeForTenant(tenantId);
+        },
+      } : {}),
+      ...(runtime.tenantStore ? {
+        validateMemberDebugMode: (tenantId: string, debugMode: boolean) => {
+          if (!debugMode) return null;
+          return isDebugModeAvailable(
+            tenantId,
+            runtime.tenantStore!.getSettings(tenantId)?.features,
+          ) ? null : '上级未开放调试模式，不能为成员开启';
+        },
+      } : {}),
       ...(runtime.userStore && runtime.tenantStore ? {
         createMember: async (input: MembershipCreateInput & { tenantId: string; createdBy: string }) => {
           const tenant = runtime.tenantStore!.findById(input.tenantId);
           if (!tenant) throw new Error('Tenant not found');
           if (tenant.disabled) throw new Error('Tenant disabled');
+          if (input.debugMode === true && !isDebugModeAvailable(input.tenantId, tenant.settings?.features)) {
+            throw new Error('上级未开放调试模式，不能为成员开启');
+          }
           const user = await runtime.userStore!.create({
             username: input.username,
             password: input.password,

@@ -44,6 +44,8 @@ export function registerGovernanceOrganizationAccessRoutes(options: {
   tenantFor: (req: Request, requested?: string) => string | null;
   projectionOutbox?: PgGovernanceProjectionOutboxStore;
   projectionReconciler?: GovernanceProjectionReconciler;
+  /** 组织关闭调试模式后清理成员个人状态。 */
+  onDebugModeDisabled?: (tenantId: string) => Promise<void>;
 }): void {
   const { router } = options;
 
@@ -58,10 +60,17 @@ export function registerGovernanceOrganizationAccessRoutes(options: {
     }
     const tenantId = options.tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    const current = (await options.entitlements.getPolicies(tenantId))
-      .find(policy => policy.policyKey === req.params.policyKey);
+    const policies = await options.entitlements.getPolicies(tenantId);
+    const current = policies.find(policy => policy.policyKey === req.params.policyKey);
     if (!current || current.version !== parsed.data.expectedVersion) {
       return res.status(409).json({ error: 'Policy baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
+    }
+    if (
+      req.params.policyKey === 'runtime.debug_mode.enabled'
+      && parsed.data.value === true
+      && policies.find(policy => policy.policyKey === 'runtime.debug_mode.allowed')?.value !== true
+    ) {
+      return res.status(403).json({ error: '平台尚未授予调试模式，组织不能开启' });
     }
     const baselineDigest = governanceDigest(current);
     const expiresAt = new Date(options.now().getTime() + options.previewTtlMs).toISOString();
@@ -105,19 +114,38 @@ export function registerGovernanceOrganizationAccessRoutes(options: {
       policyKey: req.params.policyKey, baselineDigest, expiresAt,
       changeDigest: governanceDigest(mutation),
     })}`;
-    const current = (await options.entitlements.getPolicies(tenantId))
-      .find(policy => policy.policyKey === req.params.policyKey);
+    const policies = await options.entitlements.getPolicies(tenantId);
+    const current = policies.find(policy => policy.policyKey === req.params.policyKey);
     if (!matches(previewId, expectedPreviewId)) {
       return res.status(409).json({ error: 'Governance preview invalid', code: 'GOVERNANCE_PREVIEW_INVALID' });
     }
     if (!current || current.version !== mutation.expectedVersion || governanceDigest(current) !== baselineDigest) {
       return res.status(409).json({ error: 'Governance baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
     }
+    if (
+      req.params.policyKey === 'runtime.debug_mode.enabled'
+      && mutation.value === true
+      && policies.find(policy => policy.policyKey === 'runtime.debug_mode.allowed')?.value !== true
+    ) {
+      return res.status(403).json({ error: '平台尚未授予调试模式，组织不能开启' });
+    }
     try {
       const policy = await options.entitlements.updatePolicy(
         tenantId, req.params.policyKey as TenantPolicyKey,
         mutation.value, mutation.expectedVersion, req.user!.sub,
       );
+      if (options.onDebugModeDisabled && req.params.policyKey === 'runtime.debug_mode.enabled' && mutation.value === false) {
+        try {
+          await options.onDebugModeDisabled(tenantId);
+        } catch {
+          return res.status(500).json({
+            error: '策略已更新，但成员调试模式状态清理失败',
+            code: 'GOVERNANCE_DEBUG_MODE_CLEANUP_FAILED',
+            changed: true,
+            changeId: res.locals.governanceChangeId,
+          });
+        }
+      }
       let projectionId: string | undefined;
       if (options.projectionOutbox) {
         try {

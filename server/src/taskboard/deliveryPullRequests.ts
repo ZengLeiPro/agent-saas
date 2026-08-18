@@ -130,6 +130,17 @@ export async function recordReviewedExecutionSubject(
            OR (remediation_task_id=$1 AND state='waiting_remediation')`,
       [context.taskId, pullRequest.providerPullRequestId, pullRequest.subjectDigest],
     );
+    await client.query(
+      `UPDATE ${host.tasksTable} d
+          SET provider_pull_request_id=$2, pull_request_number=$3,
+              head_oid=$4, base_oid=$5, reviewed_subject_digest=$6,
+              version=version+1, updated_at=now()
+         FROM ${host.integrationSourcesTable} s
+        WHERE s.remediation_task_id=$1 AND s.state='waiting_remediation'
+          AND d.id=s.delivery_task_id`,
+      [context.taskId, pullRequest.providerPullRequestId, pullRequest.number,
+        pullRequest.headOid, pullRequest.baseOid, pullRequest.subjectDigest],
+    );
     await client.query('COMMIT');
     return rowToTask(result.rows[0]!);
   } catch (error) {

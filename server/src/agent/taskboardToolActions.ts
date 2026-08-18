@@ -674,7 +674,7 @@ async function createExecutionTask(
     throw new Error('integration remediation 任务需要 sourceId');
   }
   const dispatcher = input.dispatch ? requireExecutionService(options.executionService?.()) : undefined;
-  const task = await executionStore.createTaskFromExecution(identity, execution.execution.runId, {
+  let task = await executionStore.createTaskFromExecution(identity, execution.execution.runId, {
     title: requireField(input.title, 'title'),
     kind,
     ...(input.description !== undefined ? { description: input.description } : {}),
@@ -697,6 +697,7 @@ async function createExecutionTask(
       input.sourceId,
       task.id,
     );
+    task = await service.getTask(identity, task.id);
   }
   if (!input.dispatch) return { created: true, task };
   return dispatchCreatedTask(dispatcher!, identity, task);

@@ -53,19 +53,28 @@ export async function inspectIntegrationSource(
     loaded.source.providerPullRequestId,
     loaded.boardOwnerUserId,
   );
-  if (loaded.source.state === 'merged' || loaded.source.state === 'needs_human') {
+  if (['merged', 'needs_human', 'resolving_conflict', 'waiting_remediation'].includes(loaded.source.state)) {
     return { source: loaded.source, pullRequest };
   }
+  const failedChecks = loaded.requireGreenChecks
+    && pullRequest.requiredChecks.some((check) => check.status === 'failure');
   const nextState = pullRequest.subjectDigest !== loaded.source.reviewedSubjectDigest
     ? 're_reviewing'
-    : pullRequest.mergeable === false
-      ? 'resolving_conflict'
+    : pullRequest.mergeable === false || failedChecks
+      ? (loaded.source.remediationCount ?? 0) >= loaded.maxAutomaticRemediationRounds
+        ? 'needs_human'
+        : 'resolving_conflict'
       : loaded.requireGreenChecks && pullRequest.requiredChecks.some((check) => check.status !== 'success')
         ? 'waiting_retry'
         : 'ready';
   const source = nextState === 're_reviewing'
     ? await markSourceForRereview(host, sourceId)
-    : await updateSourceState(host, sourceId, nextState, undefined);
+    : await updateSourceState(
+      host,
+      sourceId,
+      nextState,
+      failedChecks ? 'Required checks failed; automatic remediation is required' : undefined,
+    );
   return { source, pullRequest };
 }
 
@@ -76,7 +85,7 @@ export async function mergeIntegrationSource(
   sourceId: string,
 ): Promise<{ source: TaskBoardIntegrationSource; task: ReturnType<typeof rowToTask>; receipt: Record<string, unknown> }> {
   const loaded = await loadOperationContext(host, identity, runId, sourceId);
-  if (['needs_human', 'waiting_remediation', 're_reviewing', 'canceled'].includes(loaded.source.state)) {
+  if (['needs_human', 'waiting_remediation', 'resolving_conflict', 're_reviewing', 'canceled'].includes(loaded.source.state)) {
     throw new TaskboardValidationError('Integration source requires an explicit workflow transition', 'TASKBOARD_SOURCE_NOT_MERGEABLE');
   }
   const provider = requireProvider(host);
@@ -106,12 +115,22 @@ export async function mergeIntegrationSource(
   }
   if (pullRequest.mergeable === false) {
     const exhausted = (loaded.source.remediationCount ?? 0) >= loaded.maxAutomaticRemediationRounds;
-    await recordMergeConflict(host, sourceId, exhausted);
+    await recordMergeConflict(host, sourceId, exhausted, 'Pull request has merge conflicts');
     throw new TaskboardValidationError(
       exhausted
         ? 'Automatic remediation rounds exhausted; human intervention is required'
         : 'Pull request conflict requires automatic remediation',
       exhausted ? 'TASKBOARD_REMEDIATION_EXHAUSTED' : 'TASKBOARD_MERGE_CONFLICT',
+    );
+  }
+  if (loaded.requireGreenChecks && pullRequest.requiredChecks.some((check) => check.status === 'failure')) {
+    const exhausted = (loaded.source.remediationCount ?? 0) >= loaded.maxAutomaticRemediationRounds;
+    await recordMergeConflict(host, sourceId, exhausted, 'Required checks failed; automatic remediation is required');
+    throw new TaskboardValidationError(
+      exhausted
+        ? 'Automatic remediation rounds exhausted; human intervention is required'
+        : 'Required checks failed and require automatic remediation',
+      exhausted ? 'TASKBOARD_REMEDIATION_EXHAUSTED' : 'TASKBOARD_CHECKS_FAILED',
     );
   }
   if (loaded.requireGreenChecks && pullRequest.requiredChecks.some((check) => check.status !== 'success')) {
@@ -208,9 +227,12 @@ export async function linkIntegrationRemediation(
     const sourceResult = await client.query(
       `SELECT s.*, i.board_id AS integration_board_id, r.board_id AS remediation_board_id,
               r.kind AS remediation_kind,r.status AS remediation_status,
+              d.branch AS delivery_branch,d.pull_request_number AS delivery_pull_request_number,
+              d.head_oid AS delivery_head_oid,d.base_oid AS delivery_base_oid,
               b.tenant_id,b.owner_user_id
          FROM ${host.integrationSourcesTable} s
          JOIN ${host.tasksTable} i ON i.id=s.integration_task_id
+         JOIN ${host.tasksTable} d ON d.id=s.delivery_task_id
          JOIN ${host.tasksTable} r ON r.id=$2
          JOIN ${host.boardsTable} b ON b.id=i.board_id
         WHERE s.id=$1 AND b.tenant_id=$3
@@ -245,7 +267,7 @@ export async function linkIntegrationRemediation(
     if (row.state === 'needs_human') {
       throw new TaskboardValidationError('Automatic remediation is exhausted for this source');
     }
-    if (!['resolving_conflict', 'waiting_remediation'].includes(String(row.state))) {
+    if (!['resolving_conflict', 'waiting_remediation', 'waiting_retry'].includes(String(row.state))) {
       throw new TaskboardValidationError('Integration source is not awaiting remediation');
     }
     if (row.remediation_task_id && row.remediation_task_id !== remediationTaskId) {
@@ -254,15 +276,15 @@ export async function linkIntegrationRemediation(
         'TASKBOARD_REMEDIATION_LINK_CONFLICT',
       );
     }
-    const round = Math.max(1, Number(row.remediation_count ?? 1));
+    const round = Math.max(1, Number(row.remediation_count ?? 0) + 1);
     const attemptId = randomUUID();
     const inserted = await client.query(
       `INSERT INTO ${host.remediationAttemptsTable}
-         (id,integration_source_id,round,remediation_task_id,state)
-       VALUES ($1,$2,$3,$4,'active')
+         (id,integration_source_id,round,remediation_task_id,state,base_head_oid)
+       VALUES ($1,$2,$3,$4,'active',$5)
        ON CONFLICT DO NOTHING
        RETURNING id,integration_source_id,round,remediation_task_id`,
-      [attemptId, sourceId, round, remediationTaskId],
+      [attemptId, sourceId, round, remediationTaskId, row.delivery_head_oid ?? null],
     );
     let canonical = inserted.rows[0];
     if (!canonical) {
@@ -283,6 +305,23 @@ export async function linkIntegrationRemediation(
         );
       }
     }
+    await client.query(
+      `UPDATE ${host.tasksTable}
+          SET branch=COALESCE($2,branch), provider_pull_request_id=$3,
+              pull_request_number=COALESCE($4,pull_request_number),
+              head_oid=COALESCE($5,head_oid), base_oid=COALESCE($6,base_oid),
+              version=version+1, updated_at=now()
+        WHERE id=$1 AND kind='remediation' AND status='todo'
+          AND (
+            ($2::text IS NOT NULL AND branch IS DISTINCT FROM $2)
+            OR provider_pull_request_id IS DISTINCT FROM $3
+            OR ($4::integer IS NOT NULL AND pull_request_number IS DISTINCT FROM $4)
+            OR ($5::text IS NOT NULL AND head_oid IS DISTINCT FROM $5)
+            OR ($6::text IS NOT NULL AND base_oid IS DISTINCT FROM $6)
+          )`,
+      [remediationTaskId, row.delivery_branch ?? null, String(row.provider_pull_request_id),
+        row.delivery_pull_request_number ?? null, row.delivery_head_oid ?? null, row.delivery_base_oid ?? null],
+    );
     const updated = await client.query(
       `UPDATE ${host.integrationSourcesTable}
           SET remediation_task_id=$2, state='waiting_remediation', last_error=NULL, updated_at=now()
@@ -816,8 +855,7 @@ async function recordMergeConflict(
   await withTransaction(host, async (client) => {
     await client.query(
       `UPDATE ${host.integrationSourcesTable}
-          SET state=$2, remediation_count=remediation_count+1,
-              remediation_task_id=NULL, last_error=$3, updated_at=now()
+          SET state=$2, remediation_task_id=NULL, last_error=$3, updated_at=now()
         WHERE id=$1 AND state<>'merged'
           AND merged_commit_oid IS NULL AND provider_receipt_id IS NULL`,
       [sourceId, exhausted ? 'needs_human' : 'resolving_conflict', error],

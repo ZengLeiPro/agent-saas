@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -60,6 +60,7 @@ describe("UserStore user ids", () => {
 
     expect(user.id).toMatch(USER_ID_PATTERN);
     expect(user.id).toHaveLength(14);
+    expect(user.debugMode).toBe(false);
     expect(user.preferences).toEqual({
       authorizationModeEnabled: true,
       sidebarLayout: "single",
@@ -78,6 +79,33 @@ describe("UserStore user ids", () => {
 });
 
 describe("UserStore debug mode cascade", () => {
+  it("首次加载旧 users 文件时幂等清理成员 debugMode=true，显式新值不受影响", async () => {
+    const { filePath } = await tempUserStore();
+    await writeFile(filePath, JSON.stringify({
+      version: 1,
+      users: [{
+        id: "kylegacydebug01",
+        username: "legacy-debug",
+        passwordHash: "hash",
+        role: "user",
+        tenantId: "tenant-a",
+        debugMode: true,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }],
+    }));
+
+    const store = new UserStore(filePath);
+    expect(store.findByUsername("legacy-debug")?.debugMode).toBe(false);
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    const reloaded = new UserStore(filePath);
+    const legacy = reloaded.findByUsername("legacy-debug")!;
+    expect(legacy.debugMode).toBe(false);
+    await reloaded.update(legacy.id, { debugMode: true });
+    expect(reloaded.findById(legacy.id)?.debugMode).toBe(true);
+  });
+
   it("disables every enabled user in the target tenant only", async () => {
     const { store, filePath } = await tempUserStore();
     const first = await store.create({
@@ -108,8 +136,8 @@ describe("UserStore debug mode cascade", () => {
     await expect(store.disableDebugModeForTenant("tenant-a")).resolves.toBe(2);
 
     const reloaded = new UserStore(filePath);
-    expect(reloaded.findById(first.id)?.debugMode).toBeUndefined();
-    expect(reloaded.findById(second.id)?.debugMode).toBeUndefined();
+    expect(reloaded.findById(first.id)?.debugMode).toBe(false);
+    expect(reloaded.findById(second.id)?.debugMode).toBe(false);
     expect(reloaded.findById(other.id)?.debugMode).toBe(true);
   });
 });

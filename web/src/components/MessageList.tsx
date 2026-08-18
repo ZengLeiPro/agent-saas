@@ -21,13 +21,7 @@ import type { TtsState } from '@/hooks/useTtsPlayer';
 import { useVoicePlayer } from '@/hooks/useVoicePlayer';
 import { useAuth } from '@/contexts/AuthContext';
 import { AgentAvatar, UserAvatar } from './AgentAvatar';
-import type {
-  AgentProfile,
-  AskUserAnswers,
-  BusinessStepDisplayMode,
-  BusinessStepEventItem,
-  SessionParticipants,
-} from '@agent/shared';
+import { isDebugModeAvailable, type AgentProfile, type AskUserAnswers, type BusinessStepDisplayMode, type BusinessStepEventItem, type SessionParticipants } from '@agent/shared';
 
 const HISTORY_LOAD_TRIGGER_PX = 80;
 const HISTORY_LOAD_REARM_PX = 160;
@@ -333,7 +327,7 @@ export const MessageList = memo(function MessageList({
 
   const voicePlayer = useVoicePlayer();
   const { user } = useAuth();
-  const debugMode = debugModeOverride ?? user?.debugMode === true;
+  const debugMode = debugModeOverride ?? (user?.debugMode === true && isDebugModeAvailable(user.tenantId, user.tenantFeatures));
   const businessStepDisplayMode = user?.preferences?.businessStepDisplayMode ?? 'auto';
   const groupedMessages = useGroupedMessages(messages, loading, { debugMode, sectioning: true });
   const bubbleItems = useMemo(() => groupIntoBubbles(groupedMessages), [groupedMessages]);

@@ -2,7 +2,12 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageItem } from "@agent/shared";
 
-const authState = vi.hoisted(() => ({ businessStepDisplayMode: "auto" }));
+const authState = vi.hoisted(() => ({
+  businessStepDisplayMode: "auto",
+  debugMode: false,
+  tenantId: "tenant-a",
+  tenantFeatures: { debugModeAllowed: true, debugModeEnabled: true },
+}));
 
 beforeAll(() => {
   // jsdom 未实现 Range.getClientRects（MessageItem footer 行内测量用）；
@@ -19,7 +24,9 @@ vi.mock("@/contexts/AuthContext", () => ({
     user: {
       id: "user-1",
       username: "tester",
-      debugMode: false,
+      tenantId: authState.tenantId,
+      debugMode: authState.debugMode,
+      tenantFeatures: authState.tenantFeatures,
       preferences: { businessStepDisplayMode: authState.businessStepDisplayMode },
     },
   }),
@@ -39,6 +46,8 @@ import { MessageList } from "./MessageList";
 
 beforeEach(() => {
   authState.businessStepDisplayMode = "auto";
+  authState.debugMode = false;
+  authState.tenantFeatures = { debugModeAllowed: true, debugModeEnabled: true };
 });
 
 function messages(): MessageItem[] {
@@ -331,6 +340,13 @@ describe("MessageList business step sections", () => {
     const inFlat = screen.getByText("已运行");
     expect(inFlat.closest("div.mb-3")).toBeNull();
     expect(inFlat.closest("div.gap-2\\.5")).toBeTruthy();
+  });
+
+  it("上级关闭后即使缓存的个人开关为 true，消息 UI 也不展示调试详情", () => {
+    authState.debugMode = true;
+    authState.tenantFeatures = { debugModeAllowed: true, debugModeEnabled: false };
+    render(<MessageList messages={[...messages(), { id: "stale-debug-tool", type: "tool_use", toolName: "Shell", toolId: "stale-debug-tool", toolInput: "{}", executionStatus: "completed", resultReady: true, result: "ok" }]} loading={false} />);
+    expect(screen.queryByText("Shell")).toBeNull();
   });
 
   it("keeps activity groups inside the expanded process in debug mode", () => {

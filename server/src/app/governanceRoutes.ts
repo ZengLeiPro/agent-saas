@@ -7,6 +7,7 @@ import { createGovernanceAccessRouter } from '../routes/governanceAccess.js';
 import { createGovernanceResourcesRouter } from '../routes/governanceResources.js';
 import { createGovernanceUiRouter } from '../routes/governanceUi.js';
 import { provisionTenant, rollbackProvisionedTenant } from '../data/tenants/provision.js';
+import { withTenantDebugModeLock } from '../data/tenants/debugModeLock.js';
 import { validateGovernanceCredentialHealth } from '../governance/credentialHealth.js';
 import { inventoryPersonalWorkspace } from './governancePersonalDataRetention.js';
 import type { ExecuteUserOffboarding } from './governanceOffboarding.js';
@@ -167,11 +168,23 @@ export function registerGovernanceRoutes(
           updatedAt: user.updatedAt,
         };
       },
+      ...(runtime.tenantStore ? {
+        validateMemberDebugMode: (tenantId: string, debugMode: boolean) => {
+          if (!debugMode) return null;
+          return isDebugModeAvailable(
+            tenantId,
+            runtime.tenantStore!.getSettings(tenantId)?.features,
+          ) ? null : '上级未开放调试模式，不能为成员开启';
+        },
+      } : {}),
       ...(runtime.userStore && runtime.tenantStore ? {
-        createMember: async (input: MembershipCreateInput & { tenantId: string; createdBy: string }) => {
+        createMember: async (input: MembershipCreateInput & { tenantId: string; createdBy: string }) => withTenantDebugModeLock(input.tenantId, async () => {
           const tenant = runtime.tenantStore!.findById(input.tenantId);
           if (!tenant) throw new Error('Tenant not found');
           if (tenant.disabled) throw new Error('Tenant disabled');
+          if (input.debugMode === true && !isDebugModeAvailable(input.tenantId, tenant.settings?.features)) {
+            throw new Error('上级未开放调试模式，不能为成员开启');
+          }
           const user = await runtime.userStore!.create({
             username: input.username,
             password: input.password,
@@ -205,7 +218,7 @@ export function registerGovernanceRoutes(
             await runtime.userStore!.delete(user.id).catch(() => undefined);
             throw error;
           }
-        },
+        }),
       } : {}),
       ...(runtime.billingService ? {
         getMemberBudgetOverview: (tenantId: string, userId: string) =>
@@ -232,7 +245,7 @@ export function registerGovernanceRoutes(
             memoryFeatureStatus: runtime.getTenantMemoryFeatureStatus(tenantId),
           };
         },
-        updateTenantSettings: async (tenantId, settings, expectedUpdatedAt) => {
+        updateTenantSettings: async (tenantId, settings, expectedUpdatedAt) => withTenantDebugModeLock(tenantId, async () => {
           const updatedSettings = await runtime.tenantStore!.updateSettings(
             tenantId,
             settings,
@@ -246,12 +259,24 @@ export function registerGovernanceRoutes(
           }
           const tenant = runtime.tenantStore!.findByIdStrict(tenantId);
           if (!tenant) throw new Error('Tenant not found');
+          const eventBus = options.webChannel?.getEventBus();
+          for (const user of runtime.userStore?.listAll() ?? []) {
+            if (user.tenantId !== tenantId) continue;
+            const event = {
+              type: 'tenant_features_changed' as const,
+              tenantId,
+              tenantFeatures: updatedSettings.features,
+              debugMode: user.debugMode === true && isDebugModeAvailable(tenantId, updatedSettings.features),
+            };
+            if (eventBus) eventBus.emitUser(user.id, event);
+            else options.webChannel?.getWsServer()?.broadcastToUser(user.id, event);
+          }
           return {
             settings: updatedSettings,
             updatedAt: tenant.updatedAt,
             memoryFeatureStatus: runtime.getTenantMemoryFeatureStatus(tenantId),
           };
-        },
+        }),
         getTenantLifecycle: (tenantId: string) => runtime.tenantStore!.findByIdStrict(tenantId),
         resolveDependencyImpact: input => input.kind === 'tenant' && input.action
           ? resolveRuntimeTenantLifecycleImpact(runtime, input.tenantId, input.action)

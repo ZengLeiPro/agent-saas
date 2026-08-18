@@ -86,6 +86,7 @@ export function createGovernanceAccessRouter(deps: {
     accountStatus: 'active' | 'disabled'; dingtalkBound: boolean; createdAt: string; updatedAt: string;
     debugMode?: boolean; debugModeAvailable?: boolean;
   } | null;
+  validateMemberDebugMode?: (tenantId: string, debugMode: boolean) => string | null;
   getMemberBudgetOverview?: (tenantId: string, userId: string) => Promise<BillingMemberBudgetOverview>;
   createMember?: (input: MembershipCreateInput & { tenantId: string; createdBy: string }) => Promise<{
     userId: string;
@@ -445,6 +446,8 @@ export function createGovernanceAccessRouter(deps: {
     if (personas.get(req) === 'platform_admin' && requestedTenantId === undefined) return res.status(403).json({ error: 'Explicit customer tenant scope required', code: 'PLATFORM_RECOVERY_SCOPE_REQUIRED' });
     const tenantId = tenantFor(req, requestedTenantId);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
+    const debugModeError = deps.validateMemberDebugMode?.(tenantId, parsed.data.debugMode);
+    if (debugModeError) return res.status(400).json({ error: debugModeError });
     if (tenantId === DEFAULT_TENANT_ID) return res.status(403).json({ error: 'Platform admins must use the platform-admin governance entry', code: 'PLATFORM_TENANT_MEMBERSHIP_FORBIDDEN' });
     if (parsed.data.role === 'admin' && personas.get(req) !== 'platform_admin' && !actorMemberships.get(req)?.isOwner) return res.status(403).json({ error: 'Only organization owners can create organization admins', code: 'MEMBERSHIP_CHANGE_FORBIDDEN' });
     try {

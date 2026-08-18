@@ -100,6 +100,13 @@ describe('governance organization access routes', () => {
     expect(crossTenant.status).toBe(403);
   });
 
+  it('调试模式 Policy 仅兼容读取，不能通过治理接口写入', async () => {
+    const policy = { tenantId: 'tenant-a', policyKey: 'runtime.debug_mode.enabled', value: true, source: 'governance', version: 3, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' };
+    const updatePolicy = vi.fn(); const test = await rig({ getPolicies: vi.fn().mockResolvedValue([policy]), updatePolicy });
+    const response = await test.request('/api/governance/access/policies/runtime.debug_mode.enabled/preview?tenantId=tenant-a', json('POST', { expectedVersion: 3, value: false, reason: '组织关闭调试模式' }));
+    expect(response.status).toBe(403); await expect(response.json()).resolves.toMatchObject({ error: 'Policy is managed by the platform' }); expect(updatePolicy).not.toHaveBeenCalled();
+  });
+
   it('组织管理员不能预览或提交平台专属调试模式授权', async () => {
     const policy = { tenantId: 'tenant-a', policyKey: 'runtime.debug_mode.allowed', value: false, source: 'legacy_projection', version: 1, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' };
     const updatePolicy = vi.fn();
@@ -120,6 +127,21 @@ describe('governance organization access routes', () => {
     expect(updatePolicy).not.toHaveBeenCalled();
   });
 
+  it('平台未授权时组织管理员不能通过策略接口开启成员调试模式', async () => {
+    const policies = [
+      { tenantId: 'tenant-a', policyKey: 'runtime.debug_mode.allowed', value: false, source: 'legacy_projection', version: 1, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' },
+      { tenantId: 'tenant-a', policyKey: 'runtime.debug_mode.enabled', value: false, source: 'legacy_projection', version: 1, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' },
+    ];
+    const updatePolicy = vi.fn();
+    const test = await rig({ getPolicies: vi.fn().mockResolvedValue(policies), updatePolicy });
+    const response = await test.request('/api/governance/access/policies/runtime.debug_mode.enabled/preview?tenantId=tenant-a', json('POST', {
+      expectedVersion: 1, value: true, reason: '组织尝试越级开启',
+    }));
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: 'Policy is managed by the platform' });
+    expect(updatePolicy).not.toHaveBeenCalled();
+  });
+
   it('组织策略列表不向组织管理员开放平台专属授权动作', async () => {
     const policies = [
       { tenantId: 'tenant-a', policyKey: 'runtime.debug_mode.allowed', value: false, source: 'legacy_projection', version: 1, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' },
@@ -131,7 +153,7 @@ describe('governance organization access routes', () => {
     expect(response.status).toBe(200);
     const body = await response.json() as { policies: Array<{ policyKey: string; allowedActions: unknown[] }> };
     expect(body.policies.find(policy => policy.policyKey === 'runtime.debug_mode.allowed')?.allowedActions).toEqual([]);
-    expect(body.policies.find(policy => policy.policyKey === 'runtime.debug_mode.enabled')?.allowedActions).toHaveLength(1);
+    expect(body.policies.find(policy => policy.policyKey === 'runtime.debug_mode.enabled')?.allowedActions).toEqual([]);
   });
 
   it('记忆与知识资源端点只返回组织 Assignment 权威元数据，不含个人记忆正文', async () => {

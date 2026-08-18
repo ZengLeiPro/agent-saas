@@ -74,8 +74,10 @@ export function tenantSettingsPolicyError(
   current: TenantSettings,
   platformAdmin: boolean,
 ): { status: 400 | 403; error: string } | null {
+  const requestedDebugModeAllowed = patch.features?.debugModeAllowed;
+  const requestedDebugModeEnabled = patch.features?.debugModeEnabled;
+
   if (!platformAdmin) {
-    const requestedDebugModeAllowed = patch.features?.debugModeAllowed;
     if (
       requestedDebugModeAllowed !== undefined
       && requestedDebugModeAllowed !== current.features.debugModeAllowed
@@ -120,8 +122,11 @@ export function tenantSettingsPolicyError(
 
   const finalDebugModeAllowed = patch.features?.debugModeAllowed
     ?? current.features.debugModeAllowed;
+  if (!platformAdmin && !finalDebugModeAllowed && requestedDebugModeEnabled === true) {
+    return { status: 400, error: '平台尚未授予调试模式，组织不能开启' };
+  }
   const finalDebugModeEnabled = finalDebugModeAllowed
-    ? (patch.features?.debugModeEnabled ?? current.features.debugModeEnabled ?? current.features.debugModeAllowed)
+    ? (patch.features?.debugModeEnabled ?? current.features.debugModeEnabled ?? false)
     : false;
   patch.features = {
     ...current.features,

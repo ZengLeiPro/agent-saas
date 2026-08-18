@@ -57,6 +57,7 @@ export const EVENT_SCOPE: Record<string, EventScope> = {
   session_deleted: 'user',
   session_read_state_changed: 'user',
   groups_changed: 'user',
+  tenant_features_changed: 'user',
 
   // ── SDK 0.2.112+ 新增事件 ──
   context_usage: 'session',

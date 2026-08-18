@@ -21,7 +21,13 @@ interface MembershipRecord {
   status: string;
   version: number;
   updatedAt?: string;
-  directoryProfile?: { username: string; displayName: string; accountStatus: "active" | "disabled" } | null;
+  directoryProfile?: {
+    username: string;
+    displayName: string;
+    accountStatus: "active" | "disabled";
+    debugMode?: boolean;
+    debugModeAvailable?: boolean;
+  } | null;
   allowedActions: Array<{
     id: string;
     label: string;

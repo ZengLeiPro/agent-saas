@@ -4,27 +4,70 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const retry = vi.fn();
 const governanceError = Object.assign(new Error("private backend detail"), { status: 503 });
 const governanceApi = vi.hoisted(() => ({ listOAuthGrants: vi.fn(), previewOAuthGrantRevocation: vi.fn(), revokeOAuthGrant: vi.fn() }));
-const sharedApi = vi.hoisted(() => ({ startGoogleWorkspaceOAuth: vi.fn() }));
+const authApi = vi.hoisted(() => ({ authFetch: vi.fn() }));
+const authState = vi.hoisted(() => ({
+  user: null as { tenantId: string; debugMode?: boolean; tenantFeatures?: { debugModeAllowed: boolean; debugModeEnabled?: boolean } } | null,
+  updateDebugMode: vi.fn(),
+}));
+const sharedApi = vi.hoisted(() => ({
+  startGoogleWorkspaceOAuth: vi.fn(),
+  isDebugModeAvailable: vi.fn((tenantId: string, features?: { debugModeAllowed: boolean; debugModeEnabled?: boolean }) => (
+    tenantId === "pantheon" || (features?.debugModeAllowed === true && features.debugModeEnabled === true)
+  )),
+}));
 
 vi.mock("@/hooks/useEffectiveResources", () => ({
   useEffectiveResources: () => ({ data: null, loading: false, error: governanceError, retry }),
 }));
 
 vi.mock("@/contexts/AuthContext", () => ({
-  useAuth: () => ({ user: null, updatePreferences: vi.fn() }),
+  useAuth: () => authState,
 }));
+vi.mock("@/lib/authFetch", () => ({ authFetch: authApi.authFetch }));
 vi.mock("@agent/shared/lib/governanceApi", () => ({ governanceAccessApi: governanceApi }));
 vi.mock("@agent/shared", () => sharedApi);
 
 import { ConnectionsSection, MyPermissionsSection } from "./V2Sections";
 
 describe("我的权限 fail-closed", () => {
+  beforeEach(() => {
+    authState.user = null;
+    authState.updateDebugMode.mockReset();
+    authApi.authFetch.mockReset();
+  });
+
   it("503 时复用权威资源列表的不可用态，不泄露后端详情或本地推导允许", () => {
     render(<MyPermissionsSection />);
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("不会降级为允许");
     expect(alert.textContent).toContain("服务状态：503");
     expect(alert.textContent).not.toContain("private backend detail");
+  });
+
+  it("个人开关使用三级有效值，保存后更新认证态", async () => {
+    authState.user = {
+      tenantId: "tenant-a",
+      debugMode: false,
+      tenantFeatures: { debugModeAllowed: true, debugModeEnabled: true },
+    };
+    authApi.authFetch.mockResolvedValue(new Response(JSON.stringify({ debugMode: true }), { status: 200 }));
+    render(<MyPermissionsSection />);
+    const toggle = screen.getByRole("switch", { name: "个人调试模式" });
+    expect((toggle as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(authState.updateDebugMode).toHaveBeenCalledWith(true));
+    expect(authApi.authFetch).toHaveBeenCalledWith("/api/auth/me/debug-mode", expect.objectContaining({ method: "PATCH" }));
+  });
+
+  it("上级任一开关关闭时个人开关禁用", () => {
+    authState.user = {
+      tenantId: "tenant-a",
+      debugMode: true,
+      tenantFeatures: { debugModeAllowed: true, debugModeEnabled: false },
+    };
+    render(<MyPermissionsSection />);
+    expect((screen.getByRole("switch", { name: "个人调试模式" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("组织尚未开放，当前不能开启个人调试模式。")).toBeTruthy();
   });
 });
 

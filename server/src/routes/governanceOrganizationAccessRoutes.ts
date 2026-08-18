@@ -58,8 +58,8 @@ export function registerGovernanceOrganizationAccessRoutes(options: {
     }
     const tenantId = options.tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    const current = (await options.entitlements.getPolicies(tenantId))
-      .find(policy => policy.policyKey === req.params.policyKey);
+    const policies = await options.entitlements.getPolicies(tenantId);
+    const current = policies.find(policy => policy.policyKey === req.params.policyKey);
     if (!current || current.version !== parsed.data.expectedVersion) {
       return res.status(409).json({ error: 'Policy baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
     }
@@ -105,8 +105,8 @@ export function registerGovernanceOrganizationAccessRoutes(options: {
       policyKey: req.params.policyKey, baselineDigest, expiresAt,
       changeDigest: governanceDigest(mutation),
     })}`;
-    const current = (await options.entitlements.getPolicies(tenantId))
-      .find(policy => policy.policyKey === req.params.policyKey);
+    const policies = await options.entitlements.getPolicies(tenantId);
+    const current = policies.find(policy => policy.policyKey === req.params.policyKey);
     if (!matches(previewId, expectedPreviewId)) {
       return res.status(409).json({ error: 'Governance preview invalid', code: 'GOVERNANCE_PREVIEW_INVALID' });
     }

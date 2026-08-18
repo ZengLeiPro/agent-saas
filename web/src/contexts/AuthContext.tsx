@@ -9,6 +9,7 @@ import { TOKEN_KEY, SESSION_STORAGE_KEY } from "@/lib/constants";
 import { authPreload } from "@/lib/preload";
 import { clearSessionListCache } from "@/lib/sessionListCache";
 import { clearAllMessageCache } from "@/lib/messageCache";
+import { tenantFeatureUpdatesFromEnvelope } from "./tenantFeatureEvents";
 import {
   loginWithPassword,
   loginWithSmsCode,
@@ -57,8 +58,10 @@ interface AuthContextValue {
   /** 更新当前用户手机号验证状态 */
   updatePhone: (phone: string | undefined, phoneVerifiedAt?: string) => void;
   updatePreferences: (preferences: UserPreferences) => void;
+  /** 本人调试模式保存后立即刷新服务端返回的有效值。 */
+  updateDebugMode: (debugMode: boolean) => void;
   /** 组织策略保存后立即刷新当前用户的功能有效值。 */
-  updateTenantFeatures: (features: TenantFeatureFlags) => void;
+  updateTenantFeatures: (features: TenantFeatureFlags, effectiveDebugMode?: boolean) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -224,13 +227,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser((prev) => prev ? { ...prev, preferences: { ...(prev.preferences ?? {}), ...preferences } } : prev);
   }, []);
 
-  const updateTenantFeatures = useCallback((features: TenantFeatureFlags) => {
+  const updateDebugMode = useCallback((debugMode: boolean) => {
+    setUser((prev) => prev ? { ...prev, debugMode: debugMode === true } : prev);
+  }, []);
+
+  const updateTenantFeatures = useCallback((features: TenantFeatureFlags, effectiveDebugMode?: boolean) => {
     setUser((prev) => prev ? {
       ...prev,
-      debugMode: prev.debugMode === true && isDebugModeAvailable(prev.tenantId, features),
+      debugMode: effectiveDebugMode === undefined
+        ? prev.debugMode === true && isDebugModeAvailable(prev.tenantId, features)
+        : effectiveDebugMode === true,
       tenantFeatures: features,
     } : prev);
   }, []);
+
+  useEffect(() => {
+    return wsClient.onMessage((envelope) => {
+      for (const update of tenantFeatureUpdatesFromEnvelope(envelope, user?.tenantId)) {
+        updateTenantFeatures(update.tenantFeatures, update.debugMode);
+      }
+    });
+  }, [updateTenantFeatures, user?.tenantId]);
 
   const canPlatform = useCallback((_capability: PlatformCapability) => (
     user?.role === "admin" && user.tenantId === DEFAULT_TENANT_ID
@@ -258,9 +275,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updateAvatar,
       updatePhone,
       updatePreferences,
+      updateDebugMode,
       updateTenantFeatures,
     }),
-    [user, isLoading, authEnabled, accounts, login, loginWithSms, activateAccount, switchAccount, logoutCurrentAccount, logoutAllAccounts, logout, updateAvatar, updatePhone, updatePreferences, updateTenantFeatures, canPlatform],
+    [user, isLoading, authEnabled, accounts, login, loginWithSms, activateAccount, switchAccount, logoutCurrentAccount, logoutAllAccounts, logout, updateAvatar, updatePhone, updatePreferences, updateDebugMode, updateTenantFeatures, canPlatform],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

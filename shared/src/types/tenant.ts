@@ -19,12 +19,12 @@ export function isInternalTenantId(tenantId: string | undefined | null): boolean
 }
 
 export function isDebugModeAvailable(
-  tenantId: string | undefined | null,
+  _tenantId: string | undefined | null,
   features: Pick<TenantSettings["features"], "debugModeAllowed" | "debugModeEnabled"> | undefined,
 ): boolean {
-  if (tenantId === PLATFORM_TENANT_ID) return true;
-  if (!features?.debugModeAllowed) return false;
-  return features.debugModeEnabled ?? features.debugModeAllowed;
+  // 所有组织（含平台根组织）都必须同时满足平台授权与组织开关；
+  // 缺失字段按 false 处理，绝不从上级开关回退推导。
+  return features?.debugModeAllowed === true && features.debugModeEnabled === true;
 }
 
 /** Tenant slug 规范：以小写字母开头，可含小写字母、数字、连字符，长度 2-31 */
@@ -80,7 +80,7 @@ export interface TenantSettings {
     customSkillsEnabled: boolean;
     /** 平台是否授权该组织使用调试模式。仅平台管理员可配置。 */
     debugModeAllowed: boolean;
-    /** 组织是否向成员开放调试模式；缺省时兼容旧数据，沿用平台授权值。 */
+    /** 组织是否向成员开放调试模式；旧数据缺省按 false 处理。 */
     debugModeEnabled?: boolean;
     /** 会话上下文自动压缩（达到各模型配置的触发线后 post-run 触发）。默认关闭。 */
     autoCompactEnabled: boolean;

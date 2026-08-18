@@ -118,5 +118,7 @@ export interface UserInfo {
 
 export interface UsersFileData {
   version: 1;
+  /** 一次性清理旧成员 debugMode=true 的迁移标记。旧文件缺失时视为未迁移。 */
+  debugModeMigrationVersion?: 1;
   users: UserRecord[];
 }

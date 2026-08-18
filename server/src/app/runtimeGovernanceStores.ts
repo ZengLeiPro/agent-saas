@@ -26,7 +26,7 @@ import { PgResourceReferenceStore } from '../data/resourceReferences/index.js';
 import { PgRunResolutionSnapshotStore } from '../runtime/runResolutionSnapshotStore.js';
 import { UserStore } from '../data/users/store.js';
 import { TenantStore } from '../data/tenants/store.js';
-import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS } from '../data/tenants/types.js';
+import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS, type TenantSettings } from '../data/tenants/types.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
 import { SkillConfigStore } from '../data/skills/index.js';
 import { createAuthMiddleware } from '../auth/middleware.js';
@@ -50,6 +50,15 @@ export function resolveLegacySkillIdForPreferenceProjection(
   const legacySkillId = definition?.legacySkillId;
   if (typeof legacySkillId === 'string' && legacySkillId.length > 0) return legacySkillId;
   return PERSONAL_SKILL_RESOURCE_ID_PATTERN.test(resourceId) ? undefined : resourceId;
+}
+
+export function debugModeFeaturesFromTenantSettings(
+  features: Pick<TenantSettings["features"], "debugModeAllowed" | "debugModeEnabled">,
+): Pick<TenantSettings["features"], "debugModeAllowed" | "debugModeEnabled"> {
+  return {
+    debugModeAllowed: features.debugModeAllowed === true,
+    debugModeEnabled: features.debugModeEnabled === true,
+  };
 }
 
 export async function resolveLegacyAssignmentAudience(input: {
@@ -369,20 +378,12 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
             ...current,
             features: {
               ...current.features,
+              ...debugModeFeaturesFromTenantSettings(current.features),
               filesEnabled: bool('session.files.enabled', current.features.filesEnabled),
               cronEnabled: bool('automation.cron.enabled', current.features.cronEnabled),
               mcpEnabled: bool('connector.mcp.enabled', current.features.mcpEnabled),
               customSkillsEnabled: bool('skill.custom.enabled', current.features.customSkillsEnabled),
-              debugModeAllowed: bool('runtime.debug_mode.allowed', current.features.debugModeAllowed),
-              debugModeEnabled: bool(
-                'runtime.debug_mode.allowed',
-                current.features.debugModeAllowed,
-              )
-                ? bool(
-                    'runtime.debug_mode.enabled',
-                    current.features.debugModeEnabled ?? current.features.debugModeAllowed,
-                  )
-                : false,
+              // 调试模式以 TenantSettings 为唯一写权威；旧 Policy 仅保留读取/审计兼容，不得反向覆盖。
               autoCompactEnabled: bool('session.auto_compact.enabled', current.features.autoCompactEnabled),
               personalAgentEnabled: bool('agent.personal.enabled', current.features.personalAgentEnabled ?? true),
               kbEnabled: bool('knowledge.org.enabled', current.features.kbEnabled ?? false),

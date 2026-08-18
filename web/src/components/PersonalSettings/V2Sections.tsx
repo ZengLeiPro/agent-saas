@@ -7,13 +7,15 @@ import { PermissionWhyPanel } from "@/components/Governance/PermissionWhyPanel";
 import { AttachmentStorageSection } from "@/components/SettingsCenter/AttachmentStorageSection";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/contexts/AuthContext";
+import { authFetch } from "@/lib/authFetch";
 import { useEffectiveResources } from "@/hooks/useEffectiveResources";
 import { navigateSettingsRoute } from "@/lib/urlSync";
 import { EntityIcons } from "@/lib/icons";
 import { governanceRoute, parseGovernanceUrl } from "@/lib/governanceNavigation";
-import { startGoogleWorkspaceOAuth, type GoogleWorkspaceOAuthStartResponse } from "@agent/shared";
+import { isDebugModeAvailable, startGoogleWorkspaceOAuth, type GoogleWorkspaceOAuthStartResponse } from "@agent/shared";
 import { governanceAccessApi, type OAuthGrantResponse, type OAuthRevocationPreview, type OAuthRevocationResult } from "@agent/shared/lib/governanceApi";
 import type { MyAgentSettingsTab } from "@/types/settings";
 
@@ -71,6 +73,43 @@ export function MyAgentSection({
 export function MyPermissionsSection() {
   const request = useEffectiveResources();
   const authoritativeExample = request.data?.[0] ?? null;
+  const { user, updateDebugMode } = useAuth();
+  const [debugMode, setDebugMode] = useState(user?.debugMode === true);
+  const [debugModeSaving, setDebugModeSaving] = useState(false);
+  const [debugModeError, setDebugModeError] = useState<string | null>(null);
+  const debugModeAvailable = user
+    ? isDebugModeAvailable(user.tenantId, user.tenantFeatures)
+    : false;
+  const debugModeDisabledReason = user?.tenantFeatures?.debugModeAllowed !== true
+    ? "平台尚未授权，当前不能开启个人调试模式。"
+    : "组织尚未开放，当前不能开启个人调试模式。";
+
+  useEffect(() => {
+    setDebugMode(user?.debugMode === true && debugModeAvailable);
+  }, [debugModeAvailable, user?.debugMode]);
+
+  const saveDebugMode = async (next: boolean) => {
+    setDebugModeSaving(true);
+    setDebugModeError(null);
+    try {
+      const response = await authFetch("/api/auth/me/debug-mode", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ debugMode: next }),
+      });
+      const payload = await response.json().catch(() => ({})) as { debugMode?: boolean; error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || `保存调试模式失败（HTTP ${response.status}）`);
+      }
+      const effective = payload.debugMode === true;
+      setDebugMode(effective);
+      updateDebugMode(effective);
+    } catch (cause) {
+      setDebugModeError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setDebugModeSaving(false);
+    }
+  };
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
@@ -80,6 +119,24 @@ export function MyPermissionsSection() {
         actions={<Button type="button" size="sm" variant="outline" onClick={request.retry} disabled={request.loading}>{request.loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}刷新</Button>}
       />
       <div className="min-h-0 flex-1 space-y-6 overflow-auto pb-4">
+        <section className="rounded-2xl border bg-card p-5 shadow-sm" aria-labelledby="personal-debug-mode">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h2 id="personal-debug-mode" className="font-semibold">个人调试模式</h2>
+              <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                只影响当前账号。开启后显示思考、工具调用和技能执行细节；平台授权和组织开关均开启后才能使用。
+              </p>
+            </div>
+            <Switch
+              checked={debugModeAvailable && debugMode}
+              disabled={debugModeSaving || !debugModeAvailable}
+              onCheckedChange={next => void saveDebugMode(next)}
+              aria-label="个人调试模式"
+            />
+          </div>
+          {!debugModeAvailable ? <p className="mt-3 text-sm text-muted-foreground" role="note">{debugModeDisabledReason}</p> : null}
+          {debugModeError ? <div className="mt-3 text-sm text-destructive" role="alert">{debugModeError}</div> : null}
+        </section>
         <EffectiveResourceList resources={request.data} loading={request.loading} error={request.error} onRetry={request.retry} />
         {authoritativeExample ? <PermissionWhyPanel evaluation={authoritativeExample} /> : null}
       </div>

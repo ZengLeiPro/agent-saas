@@ -9,7 +9,7 @@ import { Router } from 'express';
 import type { Request } from 'express';
 import { z } from 'zod';
 
-import type { TenantMemoryFeatureStatusMap } from '../../../shared/src/types/tenant.js';
+import { isDebugModeAvailable, type TenantMemoryFeatureStatusMap } from '../../../shared/src/types/tenant.js';
 import { isPlatformAdmin, requireAdmin, requirePlatformAdmin } from '../auth/middleware.js';
 import { auditLog } from '../data/login-logs/index.js';
 import {
@@ -21,6 +21,8 @@ import {
 } from '../data/governance-audit/index.js';
 import { apiLogger } from '../utils/logger.js';
 import type { TenantStore } from '../data/tenants/store.js';
+import { withTenantDebugModeLock } from '../data/tenants/debugModeLock.js';
+import type { UserStore } from '../data/users/store.js';
 import { DEFAULT_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
 import type { TenantDeletionReport } from '../data/tenants/cleanup.js';
 import {
@@ -64,6 +66,8 @@ const deleteTenantSchema = z.object({
 
 export interface CreateTenantsRouterOptions {
   tenantStore: TenantStore;
+  /** 用户存储用于上级关闭时清理组织成员的个人调试开关。 */
+  userStore?: UserStore;
   /** sharedDir 用于读写每个组织独立的 company.md（注入到该组织 agent 的 system prompt）。 */
   sharedDir: string;
   /** 组织被禁用时的回调（断开 WS 连接 + 中止当前进程活跃流）。 */
@@ -125,7 +129,7 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
       });
     }
   });
-  const { tenantStore, sharedDir } = opts;
+  const { tenantStore, userStore, sharedDir } = opts;
   const memoryFeatureStatusFor = (tenantId: string) => opts.resolveMemoryFeatureStatus?.(tenantId);
 
   // GET /api/tenants — 列出所有组织（含 disabled）
@@ -291,7 +295,13 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
       return;
     }
     try {
-      const settings = await tenantStore.updateSettings(req.params.id, parsed.data);
+      const settings = await withTenantDebugModeLock(req.params.id, async () => {
+        const nextSettings = await tenantStore.updateSettings(req.params.id, parsed.data);
+        if (userStore && !isDebugModeAvailable(req.params.id, nextSettings.features)) {
+          await userStore.disableDebugModeForTenant(req.params.id);
+        }
+        return nextSettings;
+      });
       auditLog(req, 'tenant_updated', `${req.params.id} → settings`);
       res.json({
         tenantId: req.params.id,

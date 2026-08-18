@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveLegacySkillIdForPreferenceProjection } from '../app/runtimeGovernanceStores.js';
+import {
+  debugModeFeaturesFromTenantSettings,
+  resolveLegacySkillIdForPreferenceProjection,
+} from '../app/runtimeGovernanceStores.js';
+
+describe('debugModeFeaturesFromTenantSettings', () => {
+  it('治理投影只保留 Tenant settings 的显式值，旧 Policy 不参与反向覆盖', () => {
+    expect(debugModeFeaturesFromTenantSettings({ debugModeAllowed: true, debugModeEnabled: undefined })).toEqual({
+      debugModeAllowed: true,
+      debugModeEnabled: false,
+    });
+  });
+});
 
 describe('resolveLegacySkillIdForPreferenceProjection', () => {
   it('把有版本映射的个人技能还原为 legacy skill id', () => {

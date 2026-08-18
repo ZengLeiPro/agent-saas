@@ -37,4 +37,29 @@ describe('tenantSettingsPolicyError 调试模式继承', () => {
     expect(patch.features.debugModeAllowed).toBe(true);
     expect(patch.features.debugModeEnabled).toBe(false);
   });
+
+  it('旧数据缺少组织开关时，平台开启授权不会自动打开组织开关', () => {
+    const current = structuredClone(DEFAULT_TENANT_SETTINGS);
+    current.features.debugModeAllowed = false;
+    delete current.features.debugModeEnabled;
+    const patch = structuredClone(current);
+    patch.features.debugModeAllowed = true;
+    delete patch.features.debugModeEnabled;
+
+    expect(tenantSettingsPolicyError(patch, current, true)).toBeNull();
+    expect(patch.features.debugModeEnabled).toBe(false);
+  });
+
+  it('平台未授权时组织管理员越权开启组织开关会被拒绝', () => {
+    const current = structuredClone(DEFAULT_TENANT_SETTINGS);
+    current.features.debugModeAllowed = false;
+    current.features.debugModeEnabled = false;
+    const patch = structuredClone(current);
+    patch.features.debugModeEnabled = true;
+
+    expect(tenantSettingsPolicyError(patch, current, false)).toEqual({
+      status: 400,
+      error: '平台尚未授予调试模式，组织不能开启',
+    });
+  });
 });

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/contexts/AuthContext";
 
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
 import { Switch } from "@/components/ui/switch";
@@ -20,6 +21,7 @@ export function TenantDebugModeSetting({
   tenantId: string;
   level: "platform" | "organization";
 }) {
+  const { user, updateTenantFeatures } = useAuth();
   const request = useMemo(
     () => () => governanceAccessApi.getTenantSettings<GovernedTenantSettingsResponse>(tenantId),
     [tenantId],
@@ -50,7 +52,7 @@ export function TenantDebugModeSetting({
   const platformAllowed = features.debugModeAllowed === true;
   const checked = level === "platform"
     ? platformAllowed
-    : platformAllowed && (features.debugModeEnabled ?? platformAllowed);
+    : platformAllowed && features.debugModeEnabled === true;
   const disabled = saving || (level === "organization" && !platformAllowed);
   const label = level === "platform" ? "调试模式授权" : "成员调试模式";
   const description = level === "platform"
@@ -75,6 +77,7 @@ export function TenantDebugModeSetting({
         expectedUpdatedAt: current.updatedAt,
       });
       setCurrent(result);
+      if (user?.tenantId === tenantId) updateTenantFeatures(result.settings.features);
       setSaved(true);
     } catch (cause) {
       setMutationError(cause instanceof Error ? cause.message : String(cause));

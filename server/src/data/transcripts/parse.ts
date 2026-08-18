@@ -97,6 +97,8 @@ export interface TranscriptBlock {
    * 不可信边界，权威校验器是 shared 的 `normalizeToolResultMetadata`。
    */
   toolMetadata?: unknown;
+  /** 公开分享投影使用：只按普通工具活动渲染，跳过交互工具的原始恢复逻辑。 */
+  publicActivityOnly?: boolean;
 }
 
 export interface ParsedTranscript {

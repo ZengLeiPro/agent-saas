@@ -189,7 +189,7 @@ describe('session share routes', () => {
     return { sessionId, transcriptPath };
   }
 
-  it('公开快照只保留对话正文并强制关闭调试细节', async () => {
+  it('公开快照保留正文和安全工具摘要，并剥离原始调试细节', async () => {
     const { sessionId } = await writeSharedSession();
     const { server, baseUrl } = await startServer(agentCwd);
     try {
@@ -201,7 +201,7 @@ describe('session share routes', () => {
       expect(created.status).toBe(200);
       const createdJson = await created.json() as { enabled: boolean; url: string; debugMode: boolean };
       expect(createdJson.enabled).toBe(true);
-      expect(createdJson.debugMode).toBe(false);
+      expect(createdJson.debugMode).toBe(true);
       expect(createdJson.url).toMatch(/^\/share\//);
 
       const token = createdJson.url.split('/').pop()!;
@@ -217,7 +217,7 @@ describe('session share routes', () => {
           lastRunState?: unknown;
         };
       };
-      expect(publicJson.share.debugMode).toBe(false);
+      expect(publicJson.share.debugMode).toBe(true);
       expect(publicJson.detail.sessionId).toBe('shared-session');
       expect(publicJson.detail.owner).toEqual({
         userId: 'shared-user',
@@ -225,15 +225,21 @@ describe('session share routes', () => {
         realName: '用户',
       });
       expect(publicJson.detail).not.toHaveProperty('source');
-      expect(publicJson.detail.blocks.map((block) => block.kind)).toEqual(['prompt', 'text']);
+      expect(publicJson.detail.blocks.map((block) => block.kind)).toEqual(['prompt', 'tool_use', 'tool_result', 'text']);
       expect(publicJson.detail.blocks.map((block) => block.content)).toEqual([
         '帮我查一下订单',
+        '',
+        '',
         '订单 A 已完成。',
       ]);
+      const publicTool = publicJson.detail.blocks.find((block) => block.kind === 'tool_use')!;
+      expect(publicTool.toolName).toBe('SearchOrders');
+      expect(publicTool.toolId).toBe('shared-tool-1');
+      expect(publicTool.toolId).not.toBe('toolu_1');
+      expect(publicTool.presentation).toEqual({ title: '工具调用: SearchOrders' });
+      expect(publicTool.publicActivityOnly).toBe(true);
       for (const block of publicJson.detail.blocks) {
         expect(block).not.toHaveProperty('raw');
-        expect(block).not.toHaveProperty('toolName');
-        expect(block).not.toHaveProperty('toolId');
         expect(block).not.toHaveProperty('runId');
       }
       expect(publicJson.detail).not.toHaveProperty('lastRunState');

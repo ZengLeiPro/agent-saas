@@ -477,6 +477,34 @@ describe("TaskDetail 草稿隔离", () => {
       .toBe("/chat/session-1");
   });
 
+  it("无活跃 Execution 的实施中任务可以恢复实施", async () => {
+    const user = userEvent.setup();
+    const stuckTask = { ...taskOne, status: "in_progress" as const, version: 8 };
+    const cancelledExecution: TaskBoardExecution = {
+      id: "execution-cancelled",
+      taskId: stuckTask.id,
+      runId: "run-cancelled",
+      sessionId: "session-cancelled",
+      status: "cancelled",
+      purpose: "work",
+      requestedBy: "user-1",
+      error: "aborted",
+      createdAt: stuckTask.createdAt,
+      updatedAt: stuckTask.updatedAt,
+    };
+    const runningTask = { ...stuckTask, version: 9 };
+    const runningExecution = { ...cancelledExecution, id: "execution-retry", status: "queued" as const };
+    mocks.executions = [cancelledExecution];
+    mocks.fetchTask.mockResolvedValue(stuckTask);
+    const onExecute = vi.fn(async () => ({ task: runningTask, execution: runningExecution }));
+    render(<TaskDetail {...props({ task: stuckTask, onExecute })} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(stuckTask.id));
+
+    expect(screen.queryByRole("checkbox", { name: /发表后继续/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "恢复实施" }));
+    await waitFor(() => expect(onExecute).toHaveBeenCalledWith(stuckTask, "work"));
+  });
+
   it("集成任务详情区分任务类型并展示来源进度、错误和 merged commit", async () => {
     const integrationTask = {
       ...taskOne,

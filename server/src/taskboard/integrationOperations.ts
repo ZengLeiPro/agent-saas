@@ -635,7 +635,7 @@ async function markOperationUnknown(host: IntegrationOperationHost, operationId:
   });
 }
 
-async function finalizeMergedSource(
+export async function finalizeMergedSource(
   host: IntegrationOperationHost,
   sourceId: string,
   input: {
@@ -645,6 +645,11 @@ async function finalizeMergedSource(
     operationId?: string;
     reconciled?: boolean;
     exceptExecutionId?: string;
+    expectedReview?: {
+      deliveryTaskId: string;
+      providerPullRequestId: string;
+      executionId: string;
+    };
   },
 ): Promise<{ source: TaskBoardIntegrationSource; task: ReturnType<typeof rowToTask>; receipt: Record<string, unknown> }> {
   return withTransaction(host, async (client) => {
@@ -681,6 +686,36 @@ async function finalizeMergedSource(
     );
     const sourceRow = sourceResult.rows[0];
     if (!sourceRow) throw new TaskboardNotFoundError('Integration source not found');
+    if (input.expectedReview) {
+      if (String(sourceRow.delivery_task_id) !== input.expectedReview.deliveryTaskId
+        || String(sourceRow.provider_pull_request_id) !== input.expectedReview.providerPullRequestId) {
+        throw new TaskboardValidationError(
+          'Pull request changed during merge reconciliation',
+          'TASKBOARD_SUBJECT_STALE',
+        );
+      }
+      const delivery = await client.query(
+        `SELECT provider_pull_request_id FROM ${host.tasksTable} WHERE id=$1`,
+        [input.expectedReview.deliveryTaskId],
+      );
+      if (String(delivery.rows[0]?.provider_pull_request_id ?? '') !== input.expectedReview.providerPullRequestId) {
+        throw new TaskboardValidationError(
+          'Pull request changed during merge reconciliation',
+          'TASKBOARD_SUBJECT_STALE',
+        );
+      }
+      const execution = await client.query(
+        `SELECT id FROM ${host.executionsTable}
+          WHERE id=$1 AND task_id=$2
+            AND status IN ('queued','running','waiting_user','waiting_approval')
+            AND resolved_at IS NULL AND superseded_at IS NULL
+          FOR UPDATE`,
+        [input.expectedReview.executionId, input.expectedReview.deliveryTaskId],
+      );
+      if (!execution.rows[0]) {
+        throw new TaskboardValidationError('Taskboard execution changed');
+      }
+    }
     const alreadyMerged = sourceRow.state === 'merged';
     if (alreadyMerged && String(sourceRow.merged_commit_oid ?? '') !== input.mergedCommitOid) {
       throw new TaskboardValidationError(

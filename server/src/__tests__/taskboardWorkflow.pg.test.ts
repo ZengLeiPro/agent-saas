@@ -565,4 +565,76 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       }
     }
   }, 60_000);
+
+  it('reconciles a pull request merged outside the taskboard while recording review subject', async () => {
+    const board = await store.createBoard(identity, {
+      name: 'External merge reconciliation',
+      repository: {
+        provider: 'github', repositoryId: 'github:acme/external', owner: 'acme', name: 'external',
+        baseBranch: 'main', allowForkPullRequest: false,
+      },
+    });
+    const delivery = await store.createTask(identity, board.id, { title: 'Externally merged delivery', status: 'todo' });
+    const executionId = randomUUID();
+    const runId = `run-${executionId}`;
+    await pool.query(
+      `UPDATE ${store.tasksTable}
+          SET status='in_review',provider_pull_request_id='32',pull_request_number=32,
+              head_oid='head-32',base_oid='base-32',version=version+1
+        WHERE id=$1`,
+      [delivery.id],
+    );
+    await pool.query(
+      `INSERT INTO ${store.executionsTable}
+         (id,task_id,run_id,session_id,status,purpose,trigger,protocol_version,attempt_id,requested_by)
+       VALUES($1,$2,$3,$4,'running','review','initial',2,$5,$6)`,
+      [executionId, delivery.id, runId, `session-${executionId}`, `attempt-${executionId}`, identity.ownerUserId],
+    );
+    store.setRepositoryProvider({
+      getPullRequest: async () => ({
+        providerPullRequestId: '32', number: 32, state: 'merged', draft: false,
+        headRef: 'fix/task-32', headOid: 'head-32', baseRef: 'main', baseOid: 'base-32',
+        mergeCommitOid: 'merge-32', mergeable: null, requiredChecks: [], subjectDigest: 'digest-32',
+      }),
+      mergePullRequest: async () => ({
+        providerRequestId: 'unused', providerPullRequestId: '32', merged: true,
+        mergedCommitOid: 'merge-32', raw: {},
+      }),
+    });
+
+    await expect(store.recordReviewedExecutionSubjectV2(identity, runId)).resolves.toMatchObject({
+      status: 'done', mergedCommitOid: 'merge-32',
+    });
+    const execution = await pool.query(
+      `SELECT status,superseded_at FROM ${store.executionsTable} WHERE id=$1`,
+      [executionId],
+    );
+    expect(execution.rows[0]).toMatchObject({ status: 'cancelled' });
+    expect(execution.rows[0].superseded_at).toBeTruthy();
+    const cancellations = await pool.query(
+      `SELECT count(*)::int AS count FROM ${store.cancellationOutboxTable} WHERE execution_id=$1`,
+      [executionId],
+    );
+    expect(cancellations.rows[0].count).toBe(1);
+  });
+
+  it('returns unresolved protocol V2 executions to a dispatchable business state', async () => {
+    const board = await store.createBoard(identity, {
+      name: 'Cancelled execution recovery',
+      repository: {
+        provider: 'github', repositoryId: 'github:acme/recovery', owner: 'acme', name: 'recovery',
+        baseBranch: 'main', allowForkPullRequest: false,
+      },
+    });
+    const delivery = await store.createTask(identity, board.id, { title: 'Cancelled work', status: 'todo' });
+    const executionId = randomUUID();
+    const runId = `run-${executionId}`;
+    await store.claimExecution(identity, delivery.id, executionClaim(delivery.id, delivery.version, executionId, runId));
+
+    const completed = await store.completeExecution(runId, {
+      status: 'cancelled', commentBody: 'Agent execution cancelled', error: 'aborted',
+    });
+    expect(completed?.task).toMatchObject({ status: 'todo' });
+    expect(completed?.execution).toMatchObject({ status: 'cancelled' });
+  });
 });

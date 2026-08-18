@@ -50,4 +50,24 @@ describe("AskUserPromptPanel", () => {
       "需要哪些内容？": ["合规说明", "流量打法"],
     });
   });
+
+  it("can collapse the form and expand it again", () => {
+    render(
+      <AskUserPromptPanel
+        questions={[{
+          question: "需要查看正文吗？",
+          header: "阅读",
+          multiSelect: false,
+          options: [{ label: "需要", description: "" }],
+        }]}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "折叠提问表单" }));
+    expect(screen.queryByText("需要查看正文吗？")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开提问表单" }));
+    expect(screen.getByText("需要查看正文吗？")).toBeTruthy();
+  });
 });

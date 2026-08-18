@@ -158,19 +158,50 @@ describe('跨进程/后台 run 的 ask_user 实时投递与恢复（TASK-63）',
     expect(after.some((m) => m.data?.type === 'ask_user' && m.data.interactionId === 'ask-live-2')).toBe(true);
   });
 
-  it('web 进程 interactionStore 无跨进程 ask_user 条目时，buffer 扫描为唯一恢复来源', () => {
+  it('web 进程 interactionStore 无跨进程 ask_user 条目时，buffer 扫描为唯一恢复来源', async () => {
     const rig = makeRig();
     const sessionId = randomUUID();
     (rig.channel as any).eventBufferStore.create(sessionId, USER.sub);
     (rig.channel as any).eventBufferStore.push(sessionId, JSON.stringify({
       type: 'ask_user', interactionId: 'ask-buf-only', questions: [],
     }));
-    (rig.channel as any).pushPendingInteractions(wsClient(rig.ws, USER), sessionId);
+    await (rig.channel as any).pushPendingInteractions(wsClient(rig.ws, USER), sessionId);
     const pending = rig.ws.sent.find((m) => m.data?.type === 'pending_interactions');
     expect(pending).toBeDefined();
     expect(pending!.data.interactions).toContainEqual(expect.objectContaining({
       type: 'ask_user', interactionId: 'ask-buf-only',
     }));
+  });
+
+  it('durable 已解决的 ask_user 不会从残留 buffer 再次恢复', async () => {
+    const sessionId = randomUUID();
+    const eventStore = {
+      list: async () => [{
+        id: 'resolved-1',
+        timestamp: '2026-08-19T00:00:00.000Z',
+        type: 'interaction_resolved' as const,
+        sessionId,
+        interactionId: 'ask-resolved',
+        interactionType: 'ask_user' as const,
+      }],
+    } as any;
+    const channel = new WebChannel(
+      {
+        executionConfig: createExecutionConfig(),
+        runtimeEventStoreFor: () => eventStore,
+      },
+      async function* () { yield { type: 'done' as const }; },
+    );
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+    (channel as any).eventBufferStore.create(sessionId, USER.sub);
+    (channel as any).eventBufferStore.push(sessionId, JSON.stringify({
+      type: 'ask_user', interactionId: 'ask-resolved', questions: [],
+    }));
+
+    await (channel as any).pushPendingInteractions(wsClient(ws, USER), sessionId);
+
+    expect(ws.sent.some((message) => message.data?.type === 'pending_interactions')).toBe(false);
   });
 
   it('非本人用户 resume 已完成 buffer：不推送他人 ask_user（安全回归，review CHANGES_REQUESTED）', async () => {

@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, PenLine } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, PenLine } from "lucide-react";
 import { ActionIcons } from "@/lib/icons";
 
 import { cn } from "@/lib/utils";
@@ -49,6 +49,7 @@ function ChoiceIndicator({ selected, multiSelect }: { selected: boolean; multiSe
 
 export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelProps) {
   const [activeIndex, setActiveIndex] = useState(0);
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const [selectedByQuestion, setSelectedByQuestion] = useState<Record<number, Set<string>>>({});
   const [customInputs, setCustomInputs] = useState<Record<number, string>>({});
 
@@ -136,6 +137,22 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
 
   if (!question) return null;
 
+  if (isCollapsed) {
+    return (
+      <div className="msg-user-text flex justify-end rounded-t-[1.75rem] rounded-b-none border-x border-t border-border/70 bg-card px-3 py-1.5 shadow-[0_8px_30px_-18px_rgba(15,23,42,0.35)] md:px-4">
+        <button
+          type="button"
+          className="flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          onClick={() => setIsCollapsed(false)}
+          aria-label="展开提问表单"
+          title="展开提问表单"
+        >
+          <ChevronUp className="size-4" />
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="msg-user-text rounded-t-[1.75rem] rounded-b-none border-x border-t border-border/70 bg-card p-3 shadow-[0_8px_30px_-18px_rgba(15,23,42,0.35)] md:p-4">
       <div className="flex items-start gap-3 px-1 pb-3">
@@ -172,6 +189,15 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
             title="全部跳过"
           >
             <ActionIcons.skip className="size-5" />
+          </button>
+          <button
+            type="button"
+            className="flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            onClick={() => setIsCollapsed(true)}
+            aria-label="折叠提问表单"
+            title="折叠提问表单"
+          >
+            <ChevronDown className="size-4" />
           </button>
         </div>
       </div>

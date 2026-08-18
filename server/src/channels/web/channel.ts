@@ -27,7 +27,7 @@ import type {
   OutboundEvent,
   ContextUsageData,
 } from '../../types/index.js';
-import { notifyCrossProcessInteractionResume, scanBufferForPendingInteractions } from './interactionRecovery.js';
+import { loadResolvedInteractionIds, notifyCrossProcessInteractionResume, scanBufferForPendingInteractions } from './interactionRecovery.js';
 import type { AgentRunDispatch, AgentRunHooks } from '../../agent/types.js';
 import type { ExecutionTargetKind } from '../../agent/toolRuntime.js';
 import { toRunModelOptions } from '../../app/models.js';
@@ -1997,7 +1997,7 @@ export class WebChannel implements BaseChannel {
       }
       // 已完成的 buffer：推送 pending 交互（须先通过归属校验，防止把他人交互内容暴露给非本人用户）
       if (bufferEntry && (client.user?.role === 'admin' || !bufferEntry.userId || bufferEntry.userId === client.user?.sub)) {
-        this.pushPendingInteractions(client, sid);
+        await this.pushPendingInteractions(client, sid);
       }
       return;
     }
@@ -2034,7 +2034,7 @@ export class WebChannel implements BaseChannel {
       && this.wsActiveStream.get(client.ws) === activeStreamId,
     );
     if (alreadyDirectBound) {
-      this.pushPendingInteractions(client, sid);
+      await this.pushPendingInteractions(client, sid);
       return;
     }
 
@@ -2121,7 +2121,7 @@ export class WebChannel implements BaseChannel {
     }
 
     // 推送 pending 交互
-    this.pushPendingInteractions(client, sid);
+    await this.pushPendingInteractions(client, sid);
   }
 
   private async tryReplayDurableRuntimeEvents(
@@ -2184,7 +2184,7 @@ export class WebChannel implements BaseChannel {
       const closeSub = this.resumeSubscriptions.get(client.ws);
       if (closeSub) { closeSub(); this.resumeSubscriptions.delete(client.ws); }
     });
-    this.pushPendingInteractions(client, sessionId);
+    await this.pushPendingInteractions(client, sessionId);
     return true;
   }
 
@@ -2303,12 +2303,12 @@ export class WebChannel implements BaseChannel {
     }
   }
 
-  private pushPendingInteractions(client: WsClient, sessionId: string): void {
-    const pending = interactionStore.getPendingInteractions(sessionId);
-    const recovered = scanBufferForPendingInteractions(
-      this.eventBufferStore.getEventsAfter(sessionId, 0)?.events,
-      new Set(pending.map((entry) => entry.interactionId)),
-    );
+  private async pushPendingInteractions(client: WsClient, sessionId: string): Promise<void> {
+    const resolvedIds = await loadResolvedInteractionIds(await this.getRuntimeEventStoreForSession(sessionId), sessionId);
+    const pending = interactionStore.getPendingInteractions(sessionId).filter((entry) => !resolvedIds.has(entry.interactionId));
+    const excluded = new Set([...resolvedIds, ...pending.map((entry) => entry.interactionId)]);
+
+    const recovered = scanBufferForPendingInteractions(this.eventBufferStore.getEventsAfter(sessionId, 0)?.events, excluded);
     if (recovered.length > 0) pending.push(...recovered);
     if (pending.length > 0) this.wsSend(client.ws, { type: 'pending_interactions', interactions: pending });
   }

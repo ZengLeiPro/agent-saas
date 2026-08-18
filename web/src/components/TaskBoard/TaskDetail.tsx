@@ -388,8 +388,8 @@ export function TaskDetail({
     }
     const decision = window.prompt(
       taskKind === "integration"
-        ? `请填写恢复 ${sourceIds!.length} 个阻塞来源的处理决策`
-        : "请填写解除阻塞并恢复执行的处理决策",
+        ? `请填写恢复 ${sourceIds!.length} 个阻塞来源的决策与后续要求`
+        : "请填写解除阻塞后的恢复决策与后续要求",
     )?.trim();
     if (!decision) return;
     const operationTask = currentTask;
@@ -575,6 +575,24 @@ export function TaskDetail({
                         显式恢复{taskKind === "integration" ? "阻塞来源" : "任务"}
                       </Button>
                     ) : null}
+                  </div>
+                ) : null}
+                {currentTask.resumeContext ? (
+                  <div aria-label="最近恢复决策" className="space-y-1 rounded-md border border-blue-200 bg-blue-50 p-3 text-blue-950 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100">
+                    <p className="font-medium">最近恢复决策与后续要求</p>
+                    <p className="whitespace-pre-wrap">{currentTask.resumeContext.decision}</p>
+                    <p className="text-xs opacity-80">
+                      恢复目标：{currentTask.resumeContext.purpose === "review" ? "复核" : currentTask.resumeContext.purpose === "merge" ? "集成" : "实施"} Agent
+                      {currentTask.resumeContext.sourceIds.length
+                        ? ` · ${currentTask.resumeContext.sourceIds.length} 个来源`
+                        : ""}
+                      {` · 提交于 ${new Date(currentTask.resumeContext.requestedAt).toLocaleString("zh-CN")}`}
+                    </p>
+                    <p className="text-xs opacity-80">
+                      {currentTask.resumeContext.consumedAt
+                        ? `已交给 Agent · ${new Date(currentTask.resumeContext.consumedAt).toLocaleString("zh-CN")}`
+                        : "尚未交给 Agent，需另行启动"}
+                    </p>
                   </div>
                 ) : null}
                 {taskKind === "remediation" ? <p className="text-amber-700 dark:text-amber-300">{currentTask.status === "done" ? "修复已验收，等待来源继续集成。" : "自动修复任务：完成后会回到来源复核流程，不作为独立交付合并。"}</p> : null}

@@ -3,6 +3,7 @@ import {
   type TaskBoardAttachment,
   type TaskBoardComment,
   type TaskBoardExecution,
+  type TaskBoardResumeContext,
   type TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import {
@@ -13,7 +14,7 @@ import {
   type TaskboardIdentity,
   TaskboardValidationError,
 } from './types.js';
-import { parseStageModels } from './boardFields.js';
+import { parseJsonObject, parseStageModels } from './boardFields.js';
 
 export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
   if (row.kind !== null && row.kind !== undefined
@@ -62,6 +63,7 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     } : {}),
     mergeEligibility: taskMergeEligibility(row),
     workflowDisplayState: taskWorkflowDisplayState(row),
+    ...taskResumeContext(row.resume_context),
     commentCount: Number(row.comment_count ?? 0),
     version: Number(row.version),
     ...(row.creator_user_id ? { creatorUserId: String(row.creator_user_id) } : {}),
@@ -71,6 +73,28 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     ...(row.deleted_at ? { deletedAt: toIso(row.deleted_at) } : {}),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
+  };
+}
+
+function taskResumeContext(value: unknown): { resumeContext: TaskBoardResumeContext } | Record<string, never> {
+  const context = parseJsonObject<Record<string, unknown>>(value);
+  if (!context || typeof context.decision !== 'string' || !context.decision.trim()
+    || !['work', 'review', 'merge'].includes(String(context.purpose))
+    || typeof context.requestedAt !== 'string' || typeof context.requestedBy !== 'string') {
+    return {};
+  }
+  return {
+    resumeContext: {
+      decision: context.decision,
+      purpose: String(context.purpose) as TaskBoardResumeContext['purpose'],
+      sourceIds: Array.isArray(context.sourceIds) ? context.sourceIds.map(String) : [],
+      requestedAt: context.requestedAt,
+      requestedBy: context.requestedBy,
+      ...(typeof context.consumedAt === 'string' ? { consumedAt: context.consumedAt } : {}),
+      ...(typeof context.consumedExecutionId === 'string'
+        ? { consumedExecutionId: context.consumedExecutionId }
+        : {}),
+    },
   };
 }
 

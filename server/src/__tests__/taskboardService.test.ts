@@ -32,6 +32,11 @@ describe('Taskboard task mapping', () => {
       creator_user_id: 'user-1',
       creator_name: '爱丽丝 @alice',
       completed_at: new Date('2026-08-13T01:00:00.000Z'),
+      resume_context: {
+        decision: '依赖已解除，按新接口继续实施', purpose: 'work', sourceIds: [],
+        requestedAt: '2026-08-12T08:00:00.000Z', requestedBy: 'user-1',
+        consumedAt: '2026-08-12T08:05:00.000Z', consumedExecutionId: 'execution-1',
+      },
       created_at: new Date('2026-08-12T01:00:00.000Z'),
       updated_at: new Date('2026-08-13T01:00:00.000Z'),
     });
@@ -40,6 +45,10 @@ describe('Taskboard task mapping', () => {
       creatorUserId: 'user-1',
       creatorName: '爱丽丝 @alice',
       completedAt: '2026-08-13T01:00:00.000Z',
+      resumeContext: {
+        decision: '依赖已解除，按新接口继续实施', purpose: 'work',
+        consumedExecutionId: 'execution-1',
+      },
     });
   });
 });
@@ -98,5 +107,19 @@ describe('Taskboard service hardening', () => {
     expect(second).toEqual([board]);
     expect(init).toHaveBeenCalledTimes(2);
     expect(listBoards).toHaveBeenCalledTimes(2);
+  });
+
+  it('通过可重试包装层暴露显式恢复能力', async () => {
+    const resumed = { id: 'task-1', status: 'todo', version: 3 };
+    const resumeBlockedTask = vi.fn().mockResolvedValue(resumed);
+    const target = {
+      init: vi.fn().mockResolvedValue(undefined),
+      resumeBlockedTask,
+    } as unknown as InitializableTaskboardService;
+    const service = new RetryableTaskboardService(target);
+    const input = { expectedVersion: 2, decision: '依赖已解除，继续实施' };
+
+    await expect(service.resumeBlockedTask(identity, 'task-1', input)).resolves.toBe(resumed);
+    expect(resumeBlockedTask).toHaveBeenCalledWith(identity, 'task-1', input);
   });
 });

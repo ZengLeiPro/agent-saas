@@ -533,7 +533,13 @@ describe("TaskDetail 草稿隔离", () => {
   it("阻塞任务必须提交显式恢复决策，不能直接重新运行", async () => {
     const user = userEvent.setup();
     const blockedTask = { ...taskOne, status: "blocked" as const };
-    const resumedTask = { ...blockedTask, status: "todo" as const, version: blockedTask.version + 1 };
+    const resumedTask = {
+      ...blockedTask, status: "todo" as const, version: blockedTask.version + 1,
+      resumeContext: {
+        decision: "依赖已解除，恢复实施", purpose: "work" as const, sourceIds: [],
+        requestedAt: "2026-08-18T08:43:00.000Z", requestedBy: "user-1",
+      },
+    };
     mocks.fetchTask.mockResolvedValue(blockedTask);
     mocks.resumeTask.mockResolvedValue(resumedTask);
     vi.spyOn(window, "prompt").mockReturnValue("依赖已解除，恢复实施");
@@ -551,6 +557,10 @@ describe("TaskDetail 草稿隔离", () => {
     ));
     expect(onExecute).not.toHaveBeenCalled();
     expect(onTaskLoaded).toHaveBeenCalledWith(resumedTask);
+    expect(await screen.findByText("最近恢复决策与后续要求")).toBeTruthy();
+    expect(screen.getByText("依赖已解除，恢复实施")).toBeTruthy();
+    expect(screen.getByText(/恢复目标：实施 Agent/)).toBeTruthy();
+    expect(screen.getByText("尚未交给 Agent，需另行启动")).toBeTruthy();
   });
 
   it("确认后删除任务并关闭详情", async () => {

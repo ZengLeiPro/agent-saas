@@ -188,9 +188,18 @@ export async function claimExecution(
     await client.query(
       `UPDATE ${store.tasksTable}
           SET status=$2, sort_order=$3, completed_at=NULL,
+              resume_context=CASE
+                WHEN resume_context IS NOT NULL
+                  AND resume_context->>'consumedAt' IS NULL
+                  AND resume_context->>'purpose'=$4::text
+                THEN resume_context || jsonb_build_object(
+                  'consumedAt',clock_timestamp(),'consumedExecutionId',$5::text
+                )
+                ELSE resume_context
+              END,
               version=version+1, updated_at=now()
         WHERE id=$1`,
-      [taskId, runningTaskStatus, sortOrder],
+      [taskId, runningTaskStatus, sortOrder, purpose, execution.id],
     );
     await client.query(
       `UPDATE ${store.blockEpisodesTable} SET closed_at=now()

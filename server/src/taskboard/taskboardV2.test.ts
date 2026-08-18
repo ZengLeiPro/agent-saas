@@ -140,6 +140,7 @@ describe('taskboard V2 contracts', () => {
     }, client as never);
     const ddl = sql.join('\n');
 
+    expect(ddl).toContain('ADD COLUMN IF NOT EXISTS resume_context JSONB');
     expect(ddl).toContain('CREATE OR REPLACE RULE tb_changes_no_update');
     expect(ddl).toContain('CREATE OR REPLACE RULE tb_changes_no_delete');
     expect(ddl).toContain('active_integration_task_id');

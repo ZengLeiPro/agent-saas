@@ -24,6 +24,10 @@ export async function runTaskboardV2Schema(
   client: PoolClient,
 ): Promise<void> {
   await client.query(`
+    ALTER TABLE ${options.tasksTable}
+      ADD COLUMN IF NOT EXISTS resume_context JSONB
+  `);
+  await client.query(`
     CREATE TABLE IF NOT EXISTS ${options.membersTable} (
       board_id TEXT NOT NULL REFERENCES ${options.boardsTable}(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL,

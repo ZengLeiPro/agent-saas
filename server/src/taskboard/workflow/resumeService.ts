@@ -31,6 +31,7 @@ export async function resumeBlockedTask(
     const decision = input.decision.trim();
     if (!decision) throw new TaskboardValidationError('Resume decision is required');
     let resumePurpose: 'work' | 'review' | 'merge' = 'work';
+    let resumedSourceIds: string[] = [];
     if (loaded.task.kind === 'integration') {
       const sourceIds = [...new Set(input.sourceIds ?? [])];
       if (!sourceIds.length) {
@@ -47,6 +48,7 @@ export async function resumeBlockedTask(
       if (resumed.rows.length !== sourceIds.length) {
         throw new TaskboardValidationError('One or more sources are not resumable', 'TASKBOARD_RESUME_SOURCE_INVALID');
       }
+      resumedSourceIds = sourceIds;
       resumePurpose = 'merge';
     } else if (input.sourceIds?.length) {
       throw new TaskboardValidationError('sourceIds are only valid for integration resume');
@@ -62,9 +64,14 @@ export async function resumeBlockedTask(
     await client.query(
       `UPDATE ${options.tasksTable}
           SET status=$2,workflow_epoch=workflow_epoch+1,next_action=$3,
-              next_action_revision=next_action_revision+1,completed_at=NULL,version=version+1,updated_at=now()
+              next_action_revision=next_action_revision+1,completed_at=NULL,
+              resume_context=jsonb_build_object(
+                'decision',$4::text,'purpose',$3::text,'sourceIds',$5::jsonb,
+                'requestedAt',clock_timestamp(),'requestedBy',$6::text
+              ),
+              version=version+1,updated_at=now()
         WHERE id=$1`,
-      [taskId, resumeStatus, resumePurpose],
+      [taskId, resumeStatus, resumePurpose, decision, JSON.stringify(resumedSourceIds), identity.ownerUserId],
     );
     await client.query(
       `UPDATE ${options.blockEpisodesTable} SET closed_at=now()
@@ -73,7 +80,7 @@ export async function resumeBlockedTask(
     );
     await appendChange(options, client, taskId,
       loaded.task.kind === 'integration' ? 'integration.resume_requested' : 'task.resume_requested',
-      'user', identity.ownerUserId, { decision, sourceIds: input.sourceIds ?? [], purpose: resumePurpose });
+      'user', identity.ownerUserId, { decision, sourceIds: resumedSourceIds, purpose: resumePurpose });
     return loadTask(options, client, taskId);
   });
 }

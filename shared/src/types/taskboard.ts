@@ -202,6 +202,16 @@ export interface TaskBoardUploadAttachment extends TaskBoardAttachment {
   attachmentId: string;
 }
 
+export interface TaskBoardResumeContext {
+  decision: string;
+  purpose: TaskBoardExecutionPurpose;
+  sourceIds: string[];
+  requestedAt: string;
+  requestedBy: string;
+  consumedAt?: string;
+  consumedExecutionId?: string;
+}
+
 export interface TaskBoardTask {
   id: string;
   boardId: string;
@@ -231,6 +241,7 @@ export interface TaskBoardTask {
   integrationState?: TaskBoardIntegrationSourceState;
   mergeEligibility?: "eligible" | "claimed" | "merged" | "not_applicable";
   workflowDisplayState?: string;
+  resumeContext?: TaskBoardResumeContext;
   commentCount: number;
   version: number;
   creatorUserId?: string;

@@ -154,7 +154,9 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
 
   it('blocked projection cannot be moved and only structured resume advances epoch', async () => {
     const board = await store.createBoard(identity, { name: 'Resume guard board' });
-    const task = await store.createTask(identity, board.id, { title: 'Blocked task', status: 'todo' });
+    const task = await store.createTask(identity, board.id, {
+      title: 'Blocked task', kind: 'advisory', status: 'todo',
+    });
     await pool.query(
       `UPDATE ${store.tasksTable} SET status='blocked',version=version+1 WHERE id=$1`,
       [task.id],
@@ -168,8 +170,27 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       expectedVersion: blocked.version, decision: 'Dependency verified and released',
     });
     const after = await pool.query(`SELECT workflow_epoch FROM ${store.tasksTable} WHERE id=$1`, [task.id]);
-    expect(resumed.status).toBe('todo');
+    expect(resumed).toMatchObject({
+      status: 'todo',
+      resumeContext: {
+        decision: 'Dependency verified and released', purpose: 'work', sourceIds: [],
+        requestedBy: identity.ownerUserId,
+      },
+    });
+    expect(resumed.resumeContext?.consumedAt).toBeUndefined();
     expect(BigInt(after.rows[0].workflow_epoch)).toBe(BigInt(before.rows[0].workflow_epoch) + 1n);
+
+    const executionId = randomUUID();
+    const runId = `resume-run-${executionId}`;
+    const claim = executionClaim(task.id, resumed.version, executionId, runId);
+    claim.trigger = 'resume';
+    const claimed = await store.claimExecution(identity, task.id, claim);
+    expect(claimed.task.resumeContext).toMatchObject({
+      decision: 'Dependency verified and released', consumedExecutionId: executionId,
+      consumedAt: expect.any(String),
+    });
+    const context = await store.getExecutionContextV2(identity, task.id, { runId });
+    expect(context.task.resumeContext).toEqual(claimed.task.resumeContext);
   });
 
   it('canceled source remains navigable history but delivery is eligible again in get/list/search', async () => {

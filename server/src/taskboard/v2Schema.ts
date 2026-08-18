@@ -14,6 +14,9 @@ interface TaskboardV2SchemaOptions {
   mergeOperationsTable: string;
   blockEpisodesTable: string;
   integrationTriggerOutboxTable: string;
+  resolutionsTable: string;
+  remediationAttemptsTable: string;
+  cancellationOutboxTable: string;
 }
 
 export async function runTaskboardV2Schema(
@@ -190,6 +193,132 @@ export async function runTaskboardV2Schema(
     CREATE INDEX IF NOT EXISTS ${options.blockEpisodesTable}_task_open_idx
       ON ${options.blockEpisodesTable} (task_id, opened_at DESC)
       WHERE closed_at IS NULL
+  `);
+  await client.query(`
+    ALTER TABLE ${options.tasksTable} ADD COLUMN IF NOT EXISTS workflow_epoch BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE ${options.tasksTable} ADD COLUMN IF NOT EXISTS next_action TEXT;
+    ALTER TABLE ${options.tasksTable} ADD COLUMN IF NOT EXISTS next_action_revision BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE ${options.executionsTable} ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+    ALTER TABLE ${options.executionsTable} ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMPTZ;
+    ALTER TABLE ${options.executionsTable} ADD COLUMN IF NOT EXISTS fence_epoch BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE ${options.executionsTable} ADD COLUMN IF NOT EXISTS terminal_reason_code TEXT;
+    ALTER TABLE ${options.executionsTable} ADD COLUMN IF NOT EXISTS resolution_id TEXT;
+  `);
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${options.resolutionsTable} (
+      execution_id TEXT PRIMARY KEY REFERENCES ${options.executionsTable}(id) ON DELETE CASCADE,
+      attempt_id TEXT NOT NULL,
+      resolution_id TEXT NOT NULL UNIQUE,
+      payload_digest TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
+      receipt JSONB NOT NULL,
+      subject_snapshot JSONB,
+      from_status TEXT NOT NULL,
+      to_status TEXT,
+      from_version INTEGER NOT NULL,
+      to_version INTEGER,
+      applied BOOLEAN NOT NULL,
+      ignored_reason TEXT,
+      resolved_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+  await client.query(`
+    ALTER TABLE ${options.resolutionsTable} ADD COLUMN IF NOT EXISTS historical BOOLEAN NOT NULL DEFAULT false
+  `);
+  await client.query(`
+    WITH legacy AS (
+      SELECT e.id AS execution_id,COALESCE(e.attempt_id,e.id) AS attempt_id,
+             e.task_id,c.seq,c.payload,c.created_at,t.status,t.version,
+             count(*) OVER (PARTITION BY e.id) AS candidate_count
+        FROM ${options.executionsTable} e
+        JOIN ${options.tasksTable} t ON t.id=e.task_id
+        JOIN ${options.changesTable} c ON c.task_id=e.task_id
+       WHERE c.change_type IN ('execution.resolved','execution.resolved.v2')
+         AND (
+           c.payload->>'executionId'=e.id
+           OR ((c.payload->>'executionId') IS NULL AND c.payload->>'runId'=e.run_id)
+         )
+    ), valid AS (
+      SELECT * FROM legacy
+       WHERE candidate_count=1
+         AND NULLIF(payload->>'outcome','') IS NOT NULL
+         AND NULLIF(payload->>'summary','') IS NOT NULL
+    ), inserted AS (
+      INSERT INTO ${options.resolutionsTable}
+        (execution_id,attempt_id,resolution_id,payload_digest,outcome,summary,evidence,receipt,
+         subject_snapshot,from_status,to_status,from_version,to_version,applied,ignored_reason,resolved_at,historical)
+      SELECT execution_id,attempt_id,'historical:' || md5(execution_id || ':' || seq::text),
+             md5(payload::text),payload->>'outcome',payload->>'summary',
+             CASE WHEN jsonb_typeof(payload->'evidence')='array' THEN payload->'evidence' ELSE '[]'::jsonb END,
+             CASE WHEN jsonb_typeof(payload->'receipt')='object' THEN payload->'receipt'
+                  ELSE jsonb_build_object('schemaVersion',1,'runId',payload->>'runId','historical',true) END,
+             NULL,status,status,version,version,false,'historical_projection',created_at,true
+        FROM valid
+      ON CONFLICT DO NOTHING
+      RETURNING execution_id,resolution_id,resolved_at
+    )
+    UPDATE ${options.executionsTable} e
+       SET resolution_id=i.resolution_id,resolved_at=COALESCE(e.resolved_at,i.resolved_at)
+      FROM inserted i WHERE e.id=i.execution_id
+  `);
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${options.remediationAttemptsTable} (
+      id TEXT PRIMARY KEY,
+      integration_source_id TEXT NOT NULL REFERENCES ${options.integrationSourcesTable}(id) ON DELETE CASCADE,
+      round INTEGER NOT NULL CHECK (round > 0),
+      remediation_task_id TEXT NOT NULL UNIQUE REFERENCES ${options.tasksTable}(id),
+      state TEXT NOT NULL CHECK (state IN ('active','resolved','superseded','canceled')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      resolved_at TIMESTAMPTZ,
+      superseded_at TIMESTAMPTZ,
+      UNIQUE (integration_source_id, round)
+    )
+  `);
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${options.cancellationOutboxTable} (
+      id TEXT PRIMARY KEY,
+      execution_id TEXT NOT NULL UNIQUE REFERENCES ${options.executionsTable}(id) ON DELETE CASCADE,
+      run_id TEXT NOT NULL,
+      task_id TEXT NOT NULL REFERENCES ${options.tasksTable}(id) ON DELETE CASCADE,
+      reason TEXT NOT NULL,
+      fence_epoch BIGINT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','completed','failed')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS ${options.cancellationOutboxTable}_pending_idx
+      ON ${options.cancellationOutboxTable}(created_at) WHERE status IN ('pending','failed')
+  `);
+  await client.query(`
+    DO $migration$
+    DECLARE duplicate_summary TEXT;
+    BEGIN
+      SELECT string_agg(repository_id || ':' || provider_pull_request_id || '=' || duplicate_count, ', ')
+        INTO duplicate_summary
+        FROM (
+          SELECT repository_id,provider_pull_request_id,count(*)::text AS duplicate_count
+            FROM ${options.integrationSourcesTable}
+           WHERE state NOT IN ('merged','canceled')
+           GROUP BY repository_id,provider_pull_request_id HAVING count(*) > 1
+           ORDER BY repository_id,provider_pull_request_id
+           LIMIT 20
+        ) duplicates;
+      IF duplicate_summary IS NOT NULL THEN
+        RAISE EXCEPTION 'TASKBOARD_ACTIVE_PR_DUPLICATES: %. Run repair:taskboard-workflow --apply, then retry schema initialization.', duplicate_summary;
+      END IF;
+      EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS ${options.integrationSourcesTable}_apr_uq'
+        || ' ON ${options.integrationSourcesTable}(repository_id,provider_pull_request_id)'
+        || ' WHERE state NOT IN (''merged'',''canceled'')';
+      IF to_regclass('${options.integrationSourcesTable}_apr_uq') IS NULL THEN
+        RAISE EXCEPTION 'TASKBOARD_ACTIVE_PR_INDEX_MISSING';
+      END IF;
+    END $migration$
   `);
   await client.query(`
     CREATE TABLE IF NOT EXISTS ${options.integrationTriggerOutboxTable} (

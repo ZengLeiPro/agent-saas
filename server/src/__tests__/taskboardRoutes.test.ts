@@ -345,6 +345,31 @@ describe('Taskboard routes', () => {
     }))).status).toBe(400);
   });
 
+  it('blocked task resume endpoint validates and forwards the explicit decision', async () => {
+    const service = makeService({ identities: [], taskFilters: [], createBoards: [] });
+    let received: unknown;
+    service.resumeBlockedTask = async (_identity, taskId, input) => {
+      expect(taskId).toBe(TASK.id);
+      received = input;
+      return { ...TASK, status: 'todo', version: TASK.version + 1 };
+    };
+    const rig = await makeRig(service, USER);
+
+    const response = await rig.request(`/api/taskboard/tasks/${TASK.id}/resume`, postJson({
+      expectedVersion: TASK.version,
+      decision: '批准恢复失败来源',
+      sourceIds: ['source-1'],
+    }));
+
+    expect(response.status).toBe(200);
+    expect(received).toEqual({
+      expectedVersion: TASK.version,
+      decision: '批准恢复失败来源',
+      sourceIds: ['source-1'],
+    });
+    expect(await response.json()).toMatchObject({ status: 'todo', version: TASK.version + 1 });
+  });
+
   it('评论可仅携带附件，并使用服务端解析出的可信元数据', async () => {
     const service = makeService({ identities: [], taskFilters: [], createBoards: [] });
     let received: unknown;

@@ -69,23 +69,13 @@ describePg('PgTaskboardStore contract', () => {
   afterAll(async () => {
     if (!pool || !store) return;
     try {
-      await pool.query(`DROP TABLE IF EXISTS ${store.integrationTriggerOutboxTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.blockEpisodesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.mergeOperationsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.mergeAuthorizationsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.integrationSourcesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.integrationLanesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.attemptsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.changesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.membersTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.continuationOutboxTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.executionOutboxTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.executionsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.commentsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.tasksTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.boardsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${runStore.steeringInputsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${runStore.runsTable}`);
+      await pool.query(`DROP TABLE IF EXISTS
+        ${store.integrationTriggerOutboxTable}, ${store.blockEpisodesTable}, ${store.cancellationOutboxTable},
+        ${store.resolutionsTable}, ${store.remediationAttemptsTable}, ${store.mergeOperationsTable},
+        ${store.mergeAuthorizationsTable}, ${store.integrationSourcesTable}, ${store.integrationLanesTable},
+        ${store.attemptsTable}, ${store.changesTable}, ${store.membersTable}, ${store.continuationOutboxTable},
+        ${store.executionOutboxTable}, ${store.executionsTable}, ${store.commentsTable}, ${store.tasksTable},
+        ${store.boardsTable}, ${runStore.steeringInputsTable}, ${runStore.runsTable} CASCADE`);
     } finally {
       await pool.end();
     }

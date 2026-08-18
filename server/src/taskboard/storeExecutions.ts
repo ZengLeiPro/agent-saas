@@ -24,6 +24,29 @@ export interface TaskboardExecutionSearchStore {
   boardsTable: string;
   tasksTable: string;
   executionsTable: string;
+  resolutionsTable: string;
+  changesTable: string;
+}
+
+function resolutionProjection(store: TaskboardExecutionSearchStore): string {
+  return `r.outcome AS resolution_outcome,r.summary AS resolution_summary,
+          r.to_status AS task_status_after,r.ignored_reason,r.historical AS resolution_historical,
+          (r.execution_id IS NOT NULL) AS has_resolution,
+          legacy.candidate_count AS legacy_resolution_count,
+          legacy.valid_count AS legacy_resolution_valid_count`;
+}
+
+function resolutionJoins(store: TaskboardExecutionSearchStore): string {
+  return `LEFT JOIN ${store.resolutionsTable} r ON r.execution_id=e.id
+          LEFT JOIN LATERAL (
+            SELECT count(*)::int AS candidate_count,
+                   count(*) FILTER (WHERE NULLIF(c.payload->>'outcome','') IS NOT NULL
+                     AND NULLIF(c.payload->>'summary','') IS NOT NULL)::int AS valid_count
+              FROM ${store.changesTable} c
+             WHERE c.task_id=e.task_id AND c.change_type IN ('execution.resolved','execution.resolved.v2')
+               AND (c.payload->>'executionId'=e.id
+                 OR ((c.payload->>'executionId') IS NULL AND c.payload->>'runId'=e.run_id))
+          ) legacy ON true`;
 }
 
 export async function listExecutions(
@@ -33,8 +56,9 @@ export async function listExecutions(
 ): Promise<TaskBoardExecution[]> {
   await assertTaskVisible(store, identity, taskId);
   const result = await store.pool.query(
-    `SELECT e.*
+    `SELECT e.*,${resolutionProjection(store)}
        FROM ${store.executionsTable} e
+       ${resolutionJoins(store)}
        JOIN ${store.tasksTable} t ON t.id=e.task_id
        JOIN ${store.boardsTable} b ON b.id=t.board_id
       WHERE e.task_id=$1 AND b.tenant_id=$2
@@ -65,8 +89,9 @@ export async function searchExecutions(
     params,
   );
   const result = await store.pool.query(
-    `SELECT e.*
+    `SELECT e.*,${resolutionProjection(store)}
        FROM ${store.executionsTable} e
+       ${resolutionJoins(store)}
        JOIN ${store.tasksTable} t ON t.id=e.task_id
        JOIN ${store.boardsTable} b ON b.id=t.board_id
       WHERE e.task_id=$1 AND b.tenant_id=$2
@@ -103,8 +128,10 @@ async function getExecutionContext(
   value: string,
 ): Promise<TaskboardExecutionContext | null> {
   const result = await store.pool.query(
-    `SELECT e.*, b.tenant_id, b.owner_user_id, b.prompt AS board_prompt, b.stage_prompts AS board_stage_prompts
+    `SELECT e.*,${resolutionProjection(store)},
+            b.tenant_id,b.owner_user_id,b.prompt AS board_prompt,b.stage_prompts AS board_stage_prompts
        FROM ${store.executionsTable} e
+       ${resolutionJoins(store)}
        JOIN ${store.tasksTable} t ON t.id=e.task_id
        JOIN ${store.boardsTable} b ON b.id=t.board_id
       WHERE e.${column}=$1

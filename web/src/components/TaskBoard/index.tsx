@@ -137,10 +137,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     setSelectedDeliveryTaskIds((current) => new Set([...current].filter((id) => tasks.some((task) => (
       task.id === id
       && !task.archivedAt
-      && (task.kind ?? "delivery") === "delivery"
-      && task.status === "ready_to_merge"
-      && Boolean(task.providerPullRequestId)
-      && Boolean(task.reviewedSubjectDigest)
+      && task.mergeEligibility === "eligible"
     )))));
   }, [selectedBoard?.id, tasks]);
 
@@ -475,6 +472,14 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         modelList={modelList}
         onOpenChange={setDetailOpen}
         onTaskLoaded={syncTask}
+        onNavigateTask={(taskId) => {
+          if (!tasks.some((candidate) => candidate.id === taskId)) {
+            setNotice("关联任务不可见或已归档，无法打开详情");
+            return;
+          }
+          setSelectedTaskId(taskId);
+          setDetailOpen(true);
+        }}
         onUpdate={async (task, input) => updateTask(task, input)}
         onMove={moveFromDetail}
         onSetArchived={async (task, archived) => setArchived(task, archived)}

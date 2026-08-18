@@ -9,6 +9,7 @@ import { TaskDetail } from "./TaskDetail";
 const mocks = vi.hoisted(() => ({
   fetchTask: vi.fn(),
   continueTaskExecution: vi.fn(),
+  resumeTask: vi.fn(),
   fetchIntegrationSources: vi.fn(),
   addComment: vi.fn(),
   refreshComments: vi.fn(async () => undefined),
@@ -26,6 +27,7 @@ vi.mock("./api", async (importOriginal) => {
     fetchTask: mocks.fetchTask,
     fetchIntegrationSources: mocks.fetchIntegrationSources,
     continueTaskExecution: mocks.continueTaskExecution,
+    resumeTask: mocks.resumeTask,
   };
 });
 
@@ -293,7 +295,7 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
     await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
-    await user.click(screen.getByRole("checkbox", { name: "发表后切换为实施中并继续执行" }));
+    await user.click(screen.getByRole("checkbox", { name: "发表后继续实施" }));
     await user.click(screen.getByRole("button", { name: "发表" }));
 
     await waitFor(() => expect(mocks.continueTaskExecution).toHaveBeenCalledWith(taskOne.id, published.id));
@@ -333,7 +335,7 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
     await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
-    await user.click(screen.getByRole("checkbox", { name: "发表后切换为实施中并继续执行" }));
+    await user.click(screen.getByRole("checkbox", { name: "发表后继续实施" }));
     await user.click(screen.getByRole("button", { name: "发表" }));
     await screen.findByText(/评论已发表，但继续执行失败，可重试/);
 
@@ -399,7 +401,7 @@ describe("TaskDetail 草稿隔离", () => {
     const { rerender } = render(<TaskDetail {...detailProps} />);
     await waitFor(() => expect(onTaskLoaded).toHaveBeenCalledWith(todoTask));
 
-    await user.click(screen.getByRole("button", { name: "交给 Agent" }));
+    await user.click(screen.getByRole("button", { name: "开始实施" }));
     await waitFor(() => expect(onExecute).toHaveBeenCalledWith(todoTask, "work"));
     expect(onTaskLoaded).toHaveBeenCalledWith(runningTask);
     expect(mocks.refreshExecutions).toHaveBeenCalled();
@@ -460,6 +462,51 @@ describe("TaskDetail 草稿隔离", () => {
     expect(screen.queryByRole("button", { name: "交给 Agent" })).toBeNull();
   });
 
+  it("集成阻塞恢复仅提交用户显式勾选的来源", async () => {
+    const user = userEvent.setup();
+    const integrationTask = {
+      ...taskOne, id: "integration-select", identifier: "TASK-10",
+      kind: "integration" as const, status: "blocked" as const,
+    };
+    const resumedTask = { ...integrationTask, status: "todo" as const, version: integrationTask.version + 1 };
+    mocks.fetchTask.mockResolvedValue(integrationTask);
+    mocks.fetchIntegrationSources.mockResolvedValue([
+      {
+        id: "source-a", integrationTaskId: integrationTask.id, deliveryTaskId: "delivery-a",
+        deliveryTaskIdentifier: "TASK-1", repositoryId: "repo-1", providerPullRequestId: "pr-a",
+        reviewedSubjectDigest: "digest-a", order: 0, state: "needs_human", attemptCount: 1,
+        lastError: "需要确认 A", updatedAt: taskOne.updatedAt,
+      },
+      {
+        id: "source-b", integrationTaskId: integrationTask.id, deliveryTaskId: "delivery-b",
+        deliveryTaskIdentifier: "TASK-2", repositoryId: "repo-1", providerPullRequestId: "pr-b",
+        reviewedSubjectDigest: "digest-b", order: 1, state: "needs_human", attemptCount: 1,
+        lastError: "需要确认 B", updatedAt: taskOne.updatedAt,
+      },
+      {
+        id: "source-c", integrationTaskId: integrationTask.id, deliveryTaskId: "delivery-c",
+        repositoryId: "repo-1", providerPullRequestId: "pr-c", reviewedSubjectDigest: "digest-c",
+        order: 2, state: "merged", attemptCount: 1, updatedAt: taskOne.updatedAt,
+      },
+    ]);
+    mocks.resumeTask.mockResolvedValue(resumedTask);
+    const prompt = vi.spyOn(window, "prompt").mockReturnValue(null);
+    render(<TaskDetail {...props({ task: integrationTask, canTransitionTask: true })} />);
+
+    const resume = await screen.findByRole("button", { name: "显式恢复阻塞来源" });
+    expect(resume.hasAttribute("disabled")).toBe(true);
+    await user.click(screen.getByRole("checkbox", { name: "选择恢复来源 TASK-1" }));
+    expect(resume.hasAttribute("disabled")).toBe(false);
+    await user.click(resume);
+    expect(mocks.resumeTask).not.toHaveBeenCalled();
+    prompt.mockReturnValue("仅恢复来源 A");
+    await user.click(resume);
+    await waitFor(() => expect(mocks.resumeTask).toHaveBeenCalledWith(
+      integrationTask.id, integrationTask.version, "仅恢复来源 A", ["source-a"],
+    ));
+
+  });
+
   it("复核中任务可以启动独立 review Agent", async () => {
     const user = userEvent.setup();
     const reviewTask = { ...taskOne, status: "in_review" as const, branch: "task/TASK-1-feature" };
@@ -483,27 +530,27 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(onExecute).toHaveBeenCalledWith(reviewTask, "review"));
   });
 
-  it("阻塞的交付任务可以手动重新运行 work 执行", async () => {
+  it("阻塞任务必须提交显式恢复决策，不能直接重新运行", async () => {
     const user = userEvent.setup();
     const blockedTask = { ...taskOne, status: "blocked" as const };
-    const rerunningTask = { ...blockedTask, status: "in_progress" as const, version: blockedTask.version + 1 };
-    const execution: TaskBoardExecution = {
-      id: "execution-rerun",
-      taskId: blockedTask.id,
-      runId: "run-rerun",
-      sessionId: "session-rerun",
-      status: "queued",
-      purpose: "work",
-      requestedBy: "user-1",
-      createdAt: blockedTask.createdAt,
-      updatedAt: blockedTask.updatedAt,
-    };
+    const resumedTask = { ...blockedTask, status: "todo" as const, version: blockedTask.version + 1 };
     mocks.fetchTask.mockResolvedValue(blockedTask);
-    const onExecute = vi.fn(async () => ({ task: rerunningTask, execution }));
-    render(<TaskDetail {...props({ task: blockedTask, onExecute })} />);
+    mocks.resumeTask.mockResolvedValue(resumedTask);
+    vi.spyOn(window, "prompt").mockReturnValue("依赖已解除，恢复实施");
+    const onExecute = vi.fn();
+    const onTaskLoaded = vi.fn();
+    render(<TaskDetail {...props({ task: blockedTask, onExecute, onTaskLoaded, canTransitionTask: true })} />);
 
-    await user.click(await screen.findByRole("button", { name: "重新运行" }));
-    await waitFor(() => expect(onExecute).toHaveBeenCalledWith(blockedTask, "work"));
+    expect(screen.queryByRole("button", { name: "重新运行" })).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "显式恢复任务" }));
+    await waitFor(() => expect(mocks.resumeTask).toHaveBeenCalledWith(
+      blockedTask.id,
+      blockedTask.version,
+      "依赖已解除，恢复实施",
+      undefined,
+    ));
+    expect(onExecute).not.toHaveBeenCalled();
+    expect(onTaskLoaded).toHaveBeenCalledWith(resumedTask);
   });
 
   it("确认后删除任务并关闭详情", async () => {

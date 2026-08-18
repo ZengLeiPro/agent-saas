@@ -117,6 +117,7 @@ export interface TaskboardManageInput {
   historyMode?: 'auto' | 'full' | 'delta';
   cursor?: string;
   limit?: number;
+  resolutionId?: string;
   outcome?: string;
   summary?: string;
   reason?: string;
@@ -265,6 +266,7 @@ export async function invokeTaskboardAction(
       if (!service.getExecutionContextV2) throw new Error('任务看板上下文协议未启用');
       const taskId = scope.execution?.task.id ?? requireId(input, 'taskId');
       return await service.getExecutionContextV2(identity, taskId, {
+        ...(scope.execution ? { runId: scope.execution.execution.runId } : {}),
         ...(input.include ? { include: input.include } : {}),
         history: {
           mode: input.historyMode ?? 'auto',
@@ -310,6 +312,7 @@ export async function invokeTaskboardAction(
         throw new Error('当前任务 Execution 缺少 resolution 服务或 context receipt');
       }
       const task = await service.resolveExecutionV2(identity, scope.execution.execution.runId, {
+        ...(input.resolutionId ? { resolutionId: input.resolutionId } : {}),
         outcome: requireField(input.outcome, 'outcome'),
         summary: requireField(input.summary, 'summary'),
         ...(input.evidence ? { evidence: input.evidence } : {}),
@@ -454,12 +457,16 @@ function assertExecutionScope(
     case 'update': {
       const changed = ['title', 'description', 'priority', 'labels', 'dueAt', 'model']
         .some((field) => input[field as keyof TaskboardManageInput] !== undefined);
-      if (context.execution.purpose !== 'work' || input.id !== currentTask.id || input.branch === undefined || changed) {
-        throw new Error('看板 Agent 只能回写当前任务的 branch 字段');
+      if (currentTask.kind === 'advisory'
+        || context.execution.purpose !== 'work' || input.id !== currentTask.id || input.branch === undefined || changed) {
+        throw new Error('看板 Agent 只能回写当前任务的 branch 字段，且须符合当前工作流能力');
       }
       return;
     }
     case 'move':
+      if (context.execution.protocolVersion === 2) {
+        throw new Error('当前 Execution 必须通过结构化 resolution 提交阶段结果');
+      }
       if (
         input.id !== currentTask.id
         || context.execution.purpose !== 'review'
@@ -468,7 +475,8 @@ function assertExecutionScope(
       return;
     case 'create':
       if (
-        input.boardId !== currentTask.boardId
+        currentTask.kind === 'advisory'
+        || input.boardId !== currentTask.boardId
         || (input.status !== undefined && input.status !== 'todo')
         || context.execution.purpose === 'review'
         || (context.execution.purpose === 'work' && input.kind !== undefined && input.kind !== 'delivery')
@@ -516,6 +524,7 @@ async function taskSearch(
     includeArchived: input.includeArchived,
     search: input.search,
     statuses: input.statuses ?? (input.status ? [input.status] : undefined),
+    kinds: input.kind ? [input.kind] : undefined,
     priorities: input.priorities ?? (input.priority ? [input.priority] : undefined),
     labels: input.labels,
     creatorUserId: input.creatorUserId,

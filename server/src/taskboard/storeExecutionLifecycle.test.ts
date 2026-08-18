@@ -66,6 +66,118 @@ function claimInput(): TaskboardExecutionClaimInput {
 }
 
 describe('claimExecution model consistency', () => {
+  it('replays the same execution id after the task reaches a terminal state', async () => {
+    const terminalTask = { ...task, status: 'done' as const, version: 9 };
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('FROM taskboard_executions WHERE id=')) return {
+          rows: [{
+            id: 'execution-1', task_id: task.id, run_id: 'original-run', session_id: 'session-1',
+            status: 'succeeded', purpose: 'work', trigger: 'initial', protocol_version: 2,
+            requested_by: identity.ownerUserId, id_match: true, run_match: false,
+            created_at: task.createdAt, updated_at: task.updatedAt,
+          }],
+        };
+        return { rows: [] };
+      }),
+    };
+    const store = {
+      executionsTable: 'taskboard_executions',
+      requireTaskWithBoard: vi.fn(async () => ({
+        task: terminalTask, boardOwnerUserId: identity.ownerUserId, boardRole: 'owner',
+      })),
+      withTransaction: vi.fn(async (operation: (transaction: typeof client) => Promise<unknown>) => operation(client)),
+    } as unknown as PgTaskboardStore;
+
+    await expect(claimExecution(store, identity, task.id, claimInput())).resolves.toMatchObject({
+      task: { status: 'done' }, execution: { id: 'execution-1', runId: 'original-run' },
+    });
+  });
+
+  it('replays an execution matched by run id after the task reaches a terminal state', async () => {
+    const terminalTask = { ...task, status: 'done' as const, version: 9 };
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('FROM taskboard_executions WHERE id=')) return {
+          rows: [{
+            id: 'original-execution', task_id: task.id, run_id: 'run-1', session_id: 'session-1',
+            status: 'succeeded', purpose: 'work', trigger: 'initial', protocol_version: 2,
+            requested_by: identity.ownerUserId, id_match: false, run_match: true,
+            created_at: task.createdAt, updated_at: task.updatedAt,
+          }],
+        };
+        return { rows: [] };
+      }),
+    };
+    const store = {
+      executionsTable: 'taskboard_executions',
+      requireTaskWithBoard: vi.fn(async () => ({
+        task: terminalTask, boardOwnerUserId: identity.ownerUserId, boardRole: 'owner',
+      })),
+      withTransaction: vi.fn(async (operation: (transaction: typeof client) => Promise<unknown>) => operation(client)),
+    } as unknown as PgTaskboardStore;
+
+    await expect(claimExecution(store, identity, task.id, claimInput())).resolves.toMatchObject({
+      task: { status: 'done' }, execution: { id: 'original-execution', runId: 'run-1' },
+    });
+  });
+
+  it('rejects a replay whose execution id and run id belong to different executions', async () => {
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('FROM taskboard_executions WHERE id=')) return {
+          rows: [
+            {
+              id: 'execution-1', task_id: task.id, run_id: 'other-run', session_id: 'session-1',
+              status: 'running', purpose: 'work', trigger: 'initial', protocol_version: 2,
+              requested_by: identity.ownerUserId, id_match: true, run_match: false,
+              created_at: task.createdAt, updated_at: task.updatedAt,
+            },
+            {
+              id: 'other-execution', task_id: task.id, run_id: 'run-1', session_id: 'session-2',
+              status: 'running', purpose: 'work', trigger: 'initial', protocol_version: 2,
+              requested_by: identity.ownerUserId, id_match: false, run_match: true,
+              created_at: task.createdAt, updated_at: task.updatedAt,
+            },
+          ],
+        };
+        return { rows: [] };
+      }),
+    };
+    const store = {
+      executionsTable: 'taskboard_executions',
+      requireTaskWithBoard: vi.fn(async () => ({
+        task, boardOwnerUserId: identity.ownerUserId, boardRole: 'owner',
+      })),
+      withTransaction: vi.fn(async (operation: (transaction: typeof client) => Promise<unknown>) => operation(client)),
+    } as unknown as PgTaskboardStore;
+
+    await expect(claimExecution(store, identity, task.id, claimInput())).rejects.toMatchObject({
+      code: 'TASKBOARD_EXECUTION_IDEMPOTENCY_CONFLICT',
+    });
+  });
+
+  it('rejects a new claim when a provider receipt is the only merge fact', async () => {
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('FROM taskboard_executions WHERE id=')) return { rows: [] };
+        if (sql.includes('AS merged')) return { rows: [{ merged: true }] };
+        return { rows: [] };
+      }),
+    };
+    const store = {
+      executionsTable: 'taskboard_executions', integrationSourcesTable: 'taskboard_sources',
+      requireTaskWithBoard: vi.fn(async () => ({
+        task, boardOwnerUserId: identity.ownerUserId, boardRole: 'owner',
+      })),
+      withTransaction: vi.fn(async (operation: (transaction: typeof client) => Promise<unknown>) => operation(client)),
+    } as unknown as PgTaskboardStore;
+
+    await expect(claimExecution(store, identity, task.id, claimInput())).rejects.toMatchObject({
+      code: 'TASKBOARD_TERMINAL_EXECUTION_FORBIDDEN',
+    });
+  });
+
   it('accepts the selected work-stage model while holding the board lock', async () => {
     const client = {
       query: vi.fn(async () => ({

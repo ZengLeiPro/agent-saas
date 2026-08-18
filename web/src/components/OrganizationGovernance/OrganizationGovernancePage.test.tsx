@@ -6,7 +6,7 @@ import { DEFAULT_TENANT_SETTINGS } from "@/components/TenantManager/types";
 import { OrganizationCredentialsPage, OrganizationEnvironmentsPage, OrganizationGroupsPage, OrganizationMemoryKnowledgePage, OrganizationMembersPage, OrganizationOffboardingPage, OrganizationPoliciesPage } from "./OrganizationGovernancePage";
 
 const mocks = vi.hoisted(() => ({
-  listMemberships: vi.fn(), getMembershipDetails: vi.fn(), listDirectoryGroups: vi.fn(), listCredentials: vi.fn(), listConnectors: vi.fn(), getEntitlements: vi.fn(), getTenantSettings: vi.fn(), updateTenantSettings: vi.fn(), listMemoryKnowledge: vi.fn(), listEnvironmentTemplates: vi.fn(),
+  listMemberships: vi.fn(), createMembership: vi.fn(), getMembershipDetails: vi.fn(), listDirectoryGroups: vi.fn(), listCredentials: vi.fn(), listConnectors: vi.fn(), getEntitlements: vi.fn(), getTenantSettings: vi.fn(), updateTenantSettings: vi.fn(), listMemoryKnowledge: vi.fn(), listEnvironmentTemplates: vi.fn(),
   previewMembership: vi.fn(), updateMembership: vi.fn(), previewUserOffboarding: vi.fn(), startUserOffboarding: vi.fn(), previewPolicy: vi.fn(), updatePolicy: vi.fn(), previewMemoryResource: vi.fn(), updateMemoryResource: vi.fn(), previewAssignment: vi.fn(), updateAssignment: vi.fn(),
   previewEntitlementScope: vi.fn(), updateEntitlementScope: vi.fn(), previewCredentialCreate: vi.fn(), createCredential: vi.fn(), previewCredentialRotation: vi.fn(), rotateCredential: vi.fn(), previewCredentialTransfer: vi.fn(), transferCredential: vi.fn(), testCredentialHealth: vi.fn(),
 }));
@@ -36,6 +36,7 @@ vi.mock("@/components/TenantManager/hooks", () => ({
 vi.mock("@agent/shared/lib/governanceApi", () => ({
   governanceAccessApi: {
     listMemberships: mocks.listMemberships,
+    createMembership: mocks.createMembership,
     getMembershipDetails: mocks.getMembershipDetails,
     listDirectoryGroups: mocks.listDirectoryGroups,
     previewMembership: mocks.previewMembership,
@@ -101,20 +102,20 @@ describe("OrganizationGovernancePage", () => {
     expect(screen.queryByRole("switch")).not.toBeTruthy();
   });
 
-  it("管理员在成员页看到添加成员入口，新增时组织锁定为当前组织并刷新列表", async () => {
+  it("管理员在成员页通过治理 API 新增成员，组织范围锁定并刷新列表", async () => {
     mocks.listMemberships.mockResolvedValue({ memberships: [] });
-    authFetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({ id: "user-9" }) });
+    mocks.createMembership.mockResolvedValue({ userId: "user-9" });
     render(<OrganizationMembersPage tenantId="tenant-a" route={governanceRoute("organization.members.list", { orgId: "tenant-a" })} />);
     fireEvent.click(await screen.findByRole("button", { name: /添加成员/ }));
     expect(screen.getByRole("dialog")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("用户名"), { target: { value: "new-member" } });
     fireEvent.change(screen.getByLabelText("密码"), { target: { value: "secret123" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
-    await waitFor(() => expect(authFetchMock).toHaveBeenCalledTimes(1));
-    const [url, init] = authFetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/api/auth/users");
-    expect(init?.method).toBe("POST");
-    expect(JSON.parse(String(init?.body))).toMatchObject({ username: "new-member", role: "user", tenantId: "tenant-a" });
+    await waitFor(() => expect(mocks.createMembership).toHaveBeenCalledWith(
+      expect.objectContaining({ username: "new-member", password: "secret123", role: "user" }),
+      "tenant-a",
+    ));
+    expect(mocks.createMembership.mock.calls[0][0]).not.toHaveProperty("tenantId");
     await waitFor(() => expect(mocks.listMemberships.mock.calls.length).toBeGreaterThan(1));
   });
 
@@ -126,12 +127,12 @@ describe("OrganizationGovernancePage", () => {
     expect(await screen.findByText(/没有成员管理权限/)).toBeTruthy();
     expect(screen.getByText(/请联系本组织管理员或平台管理员/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /添加成员/ })).toBeNull();
-    expect(authFetchMock).not.toHaveBeenCalled();
+    expect(mocks.createMembership).not.toHaveBeenCalled();
   });
 
-  it("添加成员失败时在对话框内展示后端错误且不关闭", async () => {
+  it("添加成员失败时在对话框内展示治理 API 错误且不关闭", async () => {
     mocks.listMemberships.mockResolvedValue({ memberships: [] });
-    authFetchMock.mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: "用户名已存在" }) });
+    mocks.createMembership.mockRejectedValue(new Error("用户名已存在"));
     render(<OrganizationMembersPage tenantId="tenant-a" route={governanceRoute("organization.members.list", { orgId: "tenant-a" })} />);
     fireEvent.click(await screen.findByRole("button", { name: /添加成员/ }));
     fireEvent.change(screen.getByLabelText("用户名"), { target: { value: "dup-member" } });

@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
 import type { PgTaskboardStore } from './store.js';
-import { claimExecution } from './storeExecutionLifecycle.js';
+import {
+  claimExecution,
+  unresolvedExecutionRecovery,
+} from './storeExecutionLifecycle.js';
 import type { TaskboardExecutionClaimInput, TaskboardIdentity } from './types.js';
 
 const identity: TaskboardIdentity = {
@@ -213,4 +216,21 @@ describe('claimExecution model consistency', () => {
       execution: { id: 'execution-1', purpose: 'work' },
     });
   });
+});
+
+describe('unresolvedExecutionRecovery', () => {
+  it.each([
+    ['work', 'cancelled', 99, 0, 'todo', false],
+    ['review', 'cancelled', 99, 0, 'in_review', false],
+    ['merge', 'cancelled', 99, 0, 'in_progress', false],
+    ['work', 'failed', 1, 3, 'todo', false],
+    ['review', 'failed', 3, 3, 'blocked', true],
+    ['merge', 'failed', 4, 3, 'blocked', true],
+  ] as const)(
+    '%s %s recovers to %s without consuming cancellation retry budget',
+    (purpose, completionStatus, failedCount, maxRetries, status, exhausted) => {
+      expect(unresolvedExecutionRecovery(purpose, completionStatus, failedCount, maxRetries))
+        .toEqual({ status, exhausted });
+    },
+  );
 });

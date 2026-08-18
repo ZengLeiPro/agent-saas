@@ -276,7 +276,8 @@ describe("TaskDetail 草稿隔离", () => {
       createdAt: taskOne.createdAt,
       updatedAt: taskOne.updatedAt,
     };
-    const runningTask = { ...taskOne, status: "in_progress" as const, version: 4 };
+    const todoTask = { ...taskOne, status: "todo" as const };
+    const runningTask = { ...todoTask, status: "in_progress" as const, version: 4 };
     const execution: TaskBoardExecution = {
       id: "execution-1",
       taskId: taskOne.id,
@@ -290,8 +291,9 @@ describe("TaskDetail 草稿隔离", () => {
     };
     mocks.addComment.mockResolvedValue(published);
     mocks.continueTaskExecution.mockResolvedValue({ task: runningTask, execution });
+    mocks.fetchTask.mockResolvedValue(todoTask);
     const onTaskLoaded = vi.fn();
-    render(<TaskDetail {...props({ onTaskLoaded })} />);
+    render(<TaskDetail {...props({ task: todoTask, onTaskLoaded })} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
     await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
@@ -301,6 +303,46 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(mocks.continueTaskExecution).toHaveBeenCalledWith(taskOne.id, published.id));
     expect(onTaskLoaded).toHaveBeenCalledWith(runningTask);
     expect(mocks.refreshExecutions).toHaveBeenCalled();
+  });
+
+  it("实施中且存在 active execution 时评论可继续实施", async () => {
+    const user = userEvent.setup();
+    const current = { ...taskOne, status: "in_progress" as const };
+    const published = {
+      id: "comment-active-in-progress",
+      taskId: current.id,
+      body: "继续当前实施",
+      authorType: "user" as const,
+      authorId: "user-1",
+      authorName: "Alice",
+      version: 1,
+      createdAt: current.createdAt,
+      updatedAt: current.updatedAt,
+    };
+    const execution: TaskBoardExecution = {
+      id: "execution-active-in-progress",
+      taskId: current.id,
+      runId: "run-active-in-progress",
+      sessionId: "session-active-in-progress",
+      status: "running",
+      purpose: "work",
+      requestedBy: "user-1",
+      createdAt: current.createdAt,
+      updatedAt: current.updatedAt,
+    };
+    mocks.fetchTask.mockResolvedValue(current);
+    mocks.executions = [execution];
+    mocks.addComment.mockResolvedValue(published);
+    mocks.continueTaskExecution.mockResolvedValue({ task: current, execution });
+    render(<TaskDetail {...props({ task: current })} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(current.id));
+
+    await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
+    await user.click(screen.getByRole("checkbox", { name: "发表后继续实施" }));
+    await user.click(screen.getByRole("button", { name: "发表" }));
+
+    await waitFor(() => expect(mocks.addComment).toHaveBeenCalledWith({ body: published.body }));
+    expect(mocks.continueTaskExecution).toHaveBeenCalledWith(current.id, published.id);
   });
 
   it("评论已发表但续跑失败时使用原 commentId 幂等重试", async () => {
@@ -331,7 +373,9 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.continueTaskExecution
       .mockRejectedValueOnce(new Error("临时派发失败"))
       .mockResolvedValueOnce({ task: { ...taskOne, status: "in_progress" }, execution });
-    render(<TaskDetail {...props()} />);
+    const todoTask = { ...taskOne, status: "todo" as const };
+    mocks.fetchTask.mockResolvedValue(todoTask);
+    render(<TaskDetail {...props({ task: todoTask })} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
     await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
@@ -344,6 +388,25 @@ describe("TaskDetail 草稿隔离", () => {
     expect(mocks.continueTaskExecution).toHaveBeenNthCalledWith(2, taskOne.id, published.id);
     expect(mocks.addComment).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["ready_to_merge", "done", "canceled"] as const)(
+    "不可创建 Execution 的 %s 任务仍可单独发表评论",
+    async (status) => {
+      const user = userEvent.setup();
+      const current = { ...taskOne, status };
+      const body = `状态 ${status} 的普通评论`;
+      mocks.fetchTask.mockResolvedValue(current);
+      render(<TaskDetail {...props({ task: current })} />);
+      await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(current.id));
+
+      expect(screen.queryByRole("checkbox", { name: /发表后继续/ })).toBeNull();
+      await user.type(screen.getByRole("textbox", { name: "发表评论" }), body);
+      await user.click(screen.getByRole("button", { name: "发表" }));
+
+      await waitFor(() => expect(mocks.addComment).toHaveBeenCalledWith({ body }));
+      expect(mocks.continueTaskExecution).not.toHaveBeenCalled();
+    },
+  );
 
   it("正式 Execution 已终态时持续等待独立续跑，并在完成后刷新任务与评论", async () => {
     const runningTask = { ...taskOne, status: "in_progress" as const, version: 4 };
@@ -412,6 +475,34 @@ describe("TaskDetail 草稿隔离", () => {
     expect(screen.getByRole("button", { name: "排队中" }).hasAttribute("disabled")).toBe(true);
     expect(screen.getByRole("link", { name: "打开执行会话" }).getAttribute("href"))
       .toBe("/chat/session-1");
+  });
+
+  it("无活跃 Execution 的实施中任务可以恢复实施", async () => {
+    const user = userEvent.setup();
+    const stuckTask = { ...taskOne, status: "in_progress" as const, version: 8 };
+    const cancelledExecution: TaskBoardExecution = {
+      id: "execution-cancelled",
+      taskId: stuckTask.id,
+      runId: "run-cancelled",
+      sessionId: "session-cancelled",
+      status: "cancelled",
+      purpose: "work",
+      requestedBy: "user-1",
+      error: "aborted",
+      createdAt: stuckTask.createdAt,
+      updatedAt: stuckTask.updatedAt,
+    };
+    const runningTask = { ...stuckTask, version: 9 };
+    const runningExecution = { ...cancelledExecution, id: "execution-retry", status: "queued" as const };
+    mocks.executions = [cancelledExecution];
+    mocks.fetchTask.mockResolvedValue(stuckTask);
+    const onExecute = vi.fn(async () => ({ task: runningTask, execution: runningExecution }));
+    render(<TaskDetail {...props({ task: stuckTask, onExecute })} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(stuckTask.id));
+
+    expect(screen.queryByRole("checkbox", { name: /发表后继续/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "恢复实施" }));
+    await waitFor(() => expect(onExecute).toHaveBeenCalledWith(stuckTask, "work"));
   });
 
   it("集成任务详情区分任务类型并展示来源进度、错误和 merged commit", async () => {

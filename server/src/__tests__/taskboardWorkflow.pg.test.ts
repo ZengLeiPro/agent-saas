@@ -363,11 +363,15 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     const context = await store.getExecutionContextV2(identity, integration.id, { runId });
     await store.mergeIntegrationSourceV2(identity, runId, source.id);
 
+    const firstRemediation = await store.getTask(identity, remediation.id);
+    expect(firstRemediation).toMatchObject({ status: 'done', completedAt: expect.any(String) });
+    const remediationVersion = firstRemediation.version;
+    await store.mergeIntegrationSourceV2(identity, runId, source.id);
     const [deliveryAfter, remediationAfter, integrationAfter] = await Promise.all([
       store.getTask(identity, delivery.id), store.getTask(identity, remediation.id), store.getTask(identity, integration.id),
     ]);
     expect(deliveryAfter).toMatchObject({ status: 'done', mergedCommitOid: 'merge-77' });
-    expect(remediationAfter.status).toBe('canceled');
+    expect(remediationAfter).toMatchObject({ status: 'done', completedAt: firstRemediation.completedAt, version: remediationVersion });
     expect(integrationAfter.status).toBe('done');
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
       state: 'merged', mergedCommitOid: 'merge-77',
@@ -386,7 +390,220 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       `SELECT state FROM ${store.remediationAttemptsTable} WHERE remediation_task_id=$1`,
       [remediation.id],
     );
-    expect(attempt.rows[0].state).toBe('superseded');
+    expect(attempt.rows[0].state).toBe('resolved');
+  });
+
+  it('conflict recovery creates one work remediation, records a new commit, reviews, and resumes merge', async () => {
+    let mergeable = false;
+    let headOid = 'head-base';
+    let subjectDigest = 'digest-base';
+    const mergeCalls: string[] = [];
+    const provider: RepositoryProvider = {
+      getPullRequest: async () => ({
+        providerPullRequestId: '801', number: 801, state: 'open', draft: false,
+        headRef: 'feature/801', headOid, baseRef: 'main', baseOid: 'base-1', mergeable,
+        requiredChecks: [{ name: 'ci', status: 'success' }], subjectDigest,
+      }),
+      mergePullRequest: async (_repository, input) => {
+        mergeCalls.push(input.providerPullRequestId);
+        return {
+          providerRequestId: input.requestId, providerPullRequestId: input.providerPullRequestId,
+          merged: true, mergedCommitOid: 'merge-801', raw: { merged: true },
+        };
+      },
+    };
+    store.setRepositoryProvider(provider);
+    const board = await store.createBoard(identity, {
+      name: 'Automatic remediation board',
+      repository: {
+        provider: 'github', repositoryId: 'github:acme/automatic-remediation', owner: 'acme',
+        name: 'automatic-remediation', baseBranch: 'main', allowForkPullRequest: false,
+      },
+      integrationPolicy: {
+        schemaVersion: 1, enabled: true, revision: 'automatic-remediation-policy',
+        trigger: { mode: 'manual', allowedRoles: ['owner'] },
+        batch: { maxTasks: 5, selection: 'priority_then_ready_at' },
+        execution: {
+          mergeMethod: 'merge', continueIndependentSources: true, autoResolveConflicts: true,
+          maxAutomaticRemediationRounds: 2, maxTransientRetries: 1, requireGreenChecks: true,
+          deleteRemoteBranch: false, deploy: false,
+        },
+      },
+    });
+    const delivery = await store.createTask(identity, board.id, {
+      title: 'Conflict delivery', status: 'todo', branch: 'feature/801',
+    });
+    await pool.query(
+      `UPDATE ${store.tasksTable}
+          SET status='ready_to_merge',provider_pull_request_id='801',pull_request_number=801,
+              head_oid='head-base',base_oid='base-1',reviewed_subject_digest='digest-base',version=version+1
+        WHERE id=$1`,
+      [delivery.id],
+    );
+    const integration = await store.createIntegrationBatch(identity, board.id, {
+      deliveryTaskIds: [delivery.id], expectedBoardVersion: (await store.getBoard(identity, board.id)).version,
+    });
+    const source = (await store.listIntegrationSources(identity, integration.id))[0]!;
+    const mergeExecutionId = randomUUID();
+    const mergeRunId = `merge-run-${mergeExecutionId}`;
+    const mergeClaim = executionClaim(integration.id, integration.version, mergeExecutionId, mergeRunId);
+    mergeClaim.purpose = 'merge';
+    const mergeStarted = await store.claimExecution(identity, integration.id, mergeClaim);
+    const mergeContext = await store.getExecutionContextV2(identity, integration.id, { runId: mergeRunId });
+    await expect(store.mergeIntegrationSourceV2(identity, mergeRunId, source.id))
+      .rejects.toMatchObject({ code: 'TASKBOARD_MERGE_CONFLICT' });
+    expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
+      state: 'resolving_conflict', remediationCount: 0,
+    });
+    await store.resolveExecutionV2(identity, mergeRunId, {
+      outcome: 'progress', summary: 'Conflict routed to automatic remediation', receipt: mergeContext.receipt,
+    });
+    await store.completeExecution(mergeRunId, { status: 'succeeded', commentBody: 'Merge is waiting for remediation' });
+
+    const recovery = (await store.claimIntegrationDispatchCandidatesV2(10))
+      .find((candidate) => candidate.task.kind === 'remediation');
+    expect(recovery).toBeTruthy();
+    expect(recovery!.purpose).toBe('work');
+    expect(recovery!.task).toMatchObject({
+      status: 'todo', branch: 'feature/801', providerPullRequestId: '801',
+    });
+    expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
+      state: 'waiting_remediation', remediationCount: 0, remediationTaskId: recovery!.task.id,
+    });
+
+    const remediationExecutionId = randomUUID();
+    const remediationRunId = `remediation-run-${remediationExecutionId}`;
+    const remediationClaim = executionClaim(
+      recovery!.task.id, recovery!.task.version, remediationExecutionId, remediationRunId,
+    );
+    await store.claimExecution(identity, recovery!.task.id, remediationClaim);
+    await expect(store.attachExecutionPullRequestV2(identity, remediationRunId, '999'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_REMEDIATION_PR_MISMATCH' });
+    const noCommitContext = await store.getExecutionContextV2(identity, recovery!.task.id, {
+      runId: remediationRunId,
+    });
+    await expect(store.resolveExecutionV2(identity, remediationRunId, {
+      outcome: 'ready_for_review', summary: 'No new commit yet', receipt: noCommitContext.receipt,
+    })).rejects.toMatchObject({ code: 'TASKBOARD_REMEDIATION_COMMIT_REQUIRED' });
+    expect(await store.getTask(identity, recovery!.task.id)).toMatchObject({ status: 'in_progress' });
+    expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
+      state: 'waiting_remediation', remediationCount: 0, remediationTaskId: recovery!.task.id,
+    });
+    const activeAttempt = await pool.query(
+      `SELECT state,round FROM ${store.remediationAttemptsTable} WHERE remediation_task_id=$1`,
+      [recovery!.task.id],
+    );
+    expect(activeAttempt.rows[0]).toMatchObject({ state: 'active', round: 1 });
+    await pool.query(
+      `UPDATE ${store.tasksTable} SET head_oid='head-fixed',version=version+1 WHERE id=$1`,
+      [recovery!.task.id],
+    );
+    const remediationContext = await store.getExecutionContextV2(identity, recovery!.task.id, {
+      runId: remediationRunId,
+    });
+    const remediationResolved = await store.resolveExecutionV2(identity, remediationRunId, {
+      outcome: 'ready_for_review', summary: 'Conflict fixed and committed', evidence: ['head-fixed'],
+      receipt: remediationContext.receipt,
+    });
+    expect(remediationResolved.status).toBe('in_review');
+    expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
+      state: 'waiting_remediation', remediationCount: 1,
+    });
+    await store.completeExecution(remediationRunId, {
+      status: 'succeeded', commentBody: 'Remediation work delivered',
+    });
+
+    headOid = 'head-fixed';
+    subjectDigest = 'digest-fixed';
+    const reviewExecutionId = randomUUID();
+    const reviewRunId = `review-run-${reviewExecutionId}`;
+    const reviewClaim = executionClaim(
+      recovery!.task.id, remediationResolved.version, reviewExecutionId, reviewRunId,
+    );
+    reviewClaim.purpose = 'review';
+    await store.claimExecution(identity, recovery!.task.id, reviewClaim);
+    await store.recordReviewedExecutionSubjectV2(identity, reviewRunId);
+    const reviewContext = await store.getExecutionContextV2(identity, recovery!.task.id, { runId: reviewRunId });
+    const approved = await store.resolveExecutionV2(identity, reviewRunId, {
+      outcome: 'approved', summary: 'Reviewed the repaired PR subject', evidence: ['digest-fixed'],
+      receipt: reviewContext.receipt,
+    });
+    expect(approved.status).toBe('done');
+    await store.completeExecution(reviewRunId, { status: 'succeeded', commentBody: 'Remediation approved' });
+    expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
+      state: 'pending', remediationCount: 1,
+    });
+
+    const resumed = (await store.claimIntegrationDispatchCandidatesV2(10))
+      .find((candidate) => candidate.task.kind === 'integration');
+    expect(resumed).toBeTruthy();
+    const resumedExecutionId = randomUUID();
+    const resumedRunId = `resumed-merge-run-${resumedExecutionId}`;
+    const resumedClaim = executionClaim(
+      integration.id, resumed!.task.version, resumedExecutionId, resumedRunId,
+    );
+    resumedClaim.purpose = 'merge';
+    await store.claimExecution(identity, integration.id, resumedClaim);
+    const merged = await store.mergeIntegrationSourceV2(identity, resumedRunId, source.id);
+    expect(merged.source).toMatchObject({ state: 'merged', mergedCommitOid: 'merge-801' });
+    expect(mergeCalls).toEqual(['801']);
+    expect((await store.getTask(identity, integration.id)).status).toBe('done');
+    expect((await store.getTask(identity, delivery.id))).toMatchObject({ status: 'done', mergedCommitOid: 'merge-801' });
+    expect(mergeStarted.execution.purpose).toBe('merge');
+  });
+
+  it('failed required checks do not re-dispatch the integration merge while awaiting remediation', async () => {
+    const board = await store.createBoard(identity, {
+      name: 'Failed checks gate board',
+      repository: {
+        provider: 'github', repositoryId: 'github:acme/check-gate', owner: 'acme',
+        name: 'check-gate', baseBranch: 'main', allowForkPullRequest: false,
+      },
+      integrationPolicy: {
+        schemaVersion: 1, enabled: true, revision: 'check-gate-policy',
+        trigger: { mode: 'manual', allowedRoles: ['owner'] },
+        batch: { maxTasks: 5, selection: 'priority_then_ready_at' },
+        execution: {
+          mergeMethod: 'merge', continueIndependentSources: true, autoResolveConflicts: true,
+          maxAutomaticRemediationRounds: 2, maxTransientRetries: 1, requireGreenChecks: true,
+          deleteRemoteBranch: false, deploy: false,
+        },
+      },
+    });
+    const delivery = await store.createTask(identity, board.id, { title: 'Check failure', status: 'todo' });
+    await pool.query(`UPDATE ${store.tasksTable} SET status='ready_to_merge',provider_pull_request_id='901',
+      pull_request_number=901,head_oid='head-901',base_oid='base-901',reviewed_subject_digest='digest-901' WHERE id=$1`, [delivery.id]);
+    const integration = await store.createIntegrationBatch(identity, board.id, {
+      deliveryTaskIds: [delivery.id], expectedBoardVersion: (await store.getBoard(identity, board.id)).version,
+    });
+    const source = (await store.listIntegrationSources(identity, integration.id))[0]!;
+    const executionId = randomUUID();
+    const runId = `checks-run-${executionId}`;
+    const claim = executionClaim(integration.id, integration.version, executionId, runId);
+    claim.purpose = 'merge';
+    await store.claimExecution(identity, integration.id, claim);
+    const context = await store.getExecutionContextV2(identity, integration.id, { runId });
+    const provider: RepositoryProvider = {
+      getPullRequest: async () => ({
+        providerPullRequestId: '901', number: 901, state: 'open', draft: false,
+        headRef: 'feature/901', headOid: 'head-901', baseRef: 'main', baseOid: 'base-901', mergeable: true,
+        requiredChecks: [{ name: 'ci', status: 'failure' }], subjectDigest: 'digest-901',
+      }),
+      mergePullRequest: async () => { throw new Error('must not merge'); },
+    };
+    store.setRepositoryProvider(provider);
+    await expect(store.mergeIntegrationSourceV2(identity, runId, source.id))
+      .rejects.toMatchObject({ code: 'TASKBOARD_CHECKS_FAILED' });
+    expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
+      state: 'resolving_conflict', remediationCount: 0,
+    });
+    await store.resolveExecutionV2(identity, runId, {
+      outcome: 'progress', summary: 'Checks routed to remediation', receipt: context.receipt,
+    });
+    await store.completeExecution(runId, { status: 'succeeded', commentBody: 'Waiting for checks remediation' });
+    const candidates = await store.claimIntegrationDispatchCandidatesV2(10);
+    expect(candidates.filter((candidate) => candidate.task.kind === 'integration')).toHaveLength(0);
+    expect(candidates.filter((candidate) => candidate.task.kind === 'remediation')).toHaveLength(1);
   });
 
   it('schema migration projects one valid legacy Resolution and exposes duplicate/incomplete anomalies', async () => {
@@ -503,6 +720,12 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       expect(first.after.mergedProjectionMismatch).toBe(0);
       expect(first.after.mergedActiveExecution).toBe(0);
       expect((await store.getTask(identity, delivery.id))).toMatchObject({ status: 'done' });
+      expect((await store.getTask(identity, remediation.id))).toMatchObject({ status: 'done', completedAt: expect.any(String) });
+      const repairedAttempt = await pool.query(
+        `SELECT state,resolved_at FROM ${store.remediationAttemptsTable} WHERE remediation_task_id=$1`,
+        [remediation.id],
+      );
+      expect(repairedAttempt.rows[0]).toMatchObject({ state: 'resolved', resolved_at: expect.anything() });
       const fenced = await pool.query(`SELECT status,superseded_at FROM ${store.executionsTable} WHERE id=$1`, [activeExecutionId]);
       expect(fenced.rows[0]).toMatchObject({ status: 'cancelled' });
       expect(fenced.rows[0].superseded_at).toBeTruthy();

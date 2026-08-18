@@ -265,8 +265,14 @@ export function TaskDetail({
   const editReadOnly = readOnly || !canUpdateTask || taskKind === "integration" || taskKind === "remediation";
   const commentReadOnly = readOnly || !canComment;
   const canRunCurrentTask = !readOnly && canExecute
-    && !["done", "canceled", "blocked"].includes(currentTask?.status ?? "canceled")
-    && !currentTask?.mergedCommitOid;
+    && !currentTask?.mergedCommitOid
+    && (taskKind === "integration"
+      ? ["todo", "in_progress"].includes(currentTask?.status ?? "canceled")
+      : ["todo", "in_review"].includes(currentTask?.status ?? "canceled")
+        || (currentTask?.status === "in_progress" && !executionActive));
+  const canContinueCurrentTask = (canRunCurrentTask && currentTask?.status !== "in_progress")
+    || (!readOnly && canExecute && taskKind !== "integration"
+      && currentTask?.status === "in_progress" && executionActive);
   const canTransitionCurrentTask = Boolean(
     currentTask
     && !readOnly
@@ -441,7 +447,7 @@ export function TaskDetail({
       ? taskKind === "integration" && ["todo", "in_progress", "blocked"].includes(currentTask?.status ?? "")
       : purpose === "review"
         ? taskKind !== "integration" && currentTask?.status === "in_review"
-        : taskKind !== "integration" && ["todo", "blocked"].includes(currentTask?.status ?? "");
+        : taskKind !== "integration" && ["todo", "blocked", "in_progress"].includes(currentTask?.status ?? "");
     if (!currentTask || !canRunCurrentTask || !statusAllowed || executionActive) return;
     if (dirtyFieldsRef.current.size > 0) {
       setError("请先保存未提交的任务修改，再交给 Agent");
@@ -472,7 +478,7 @@ export function TaskDetail({
     const body = commentBody.trim();
     const retryCommentId = continueAfterComment ? pendingContinuationCommentId : null;
     if ((!retryCommentId && !body && commentAttachments.uploadedFiles.length === 0) || !currentTask || commentReadOnly) return;
-    if (continueAfterComment && !canRunCurrentTask) return;
+    if (continueAfterComment && !canContinueCurrentTask) return;
     if (!retryCommentId && commentAttachments.uploading) {
       setError("请等待附件上传完成");
       return;
@@ -646,6 +652,7 @@ export function TaskDetail({
                     (taskKind === "integration" && ["todo", "in_progress"].includes(currentTask.status))
                     || (taskKind !== "integration" && currentTask.status === "todo")
                     || (taskKind !== "integration" && currentTask.status === "in_review")
+                    || (taskKind !== "integration" && currentTask.status === "in_progress" && !executionActive)
                   ) ? (
                     <Button
                       type="button"
@@ -660,6 +667,7 @@ export function TaskDetail({
                         ? EXECUTION_STATUS_LABELS[latestExecution.status]
                         : taskKind === "integration" ? "继续集成"
                           : currentTask.status === "in_review" ? "独立复核"
+                          : currentTask.status === "in_progress" ? "恢复实施"
                           : taskKind === "advisory" ? "开始分析/答复"
                           : "开始实施"}
                     </Button>
@@ -901,7 +909,7 @@ export function TaskDetail({
                     onPaste={(event) => void commentAttachments.handlePaste(event)}
                   />
                   {!commentReadOnly ? <TaskAttachmentField upload={commentAttachments} disabled={saving} /> : null}
-                  {!commentReadOnly && canRunCurrentTask ? (
+                  {!commentReadOnly && canContinueCurrentTask ? (
                     <div className="flex items-center gap-2">
                       <Checkbox
                         id="task-comment-continue"

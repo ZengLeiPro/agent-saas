@@ -2,7 +2,7 @@ import type { PoolClient } from 'pg';
 
 import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
-import { rowToTask } from './storeHelpers.js';
+import { rowToTask, visibleCommentPredicate } from './storeHelpers.js';
 import {
   TaskboardNotFoundError,
   TaskboardValidationError,
@@ -47,7 +47,7 @@ export async function attachExecutionPullRequest(
               version=version+1, updated_at=now()
         WHERE id=$1
         RETURNING *,
-          (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=${host.tasksTable}.id) AS comment_count`,
+          (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=${host.tasksTable}.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count`,
       [context.taskId, pullRequest.providerPullRequestId, pullRequest.number, pullRequest.headOid, pullRequest.baseOid],
     );
     await client.query(
@@ -107,7 +107,7 @@ export async function recordReviewedExecutionSubject(
               reviewed_subject_digest=$5, version=version+1, updated_at=now()
         WHERE id=$1
         RETURNING *,
-          (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=${host.tasksTable}.id) AS comment_count`,
+          (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=${host.tasksTable}.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count`,
       [context.taskId, pullRequest.number, pullRequest.headOid, pullRequest.baseOid, pullRequest.subjectDigest],
     );
     await client.query(

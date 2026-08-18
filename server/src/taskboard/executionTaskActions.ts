@@ -11,6 +11,7 @@ import {
   optionalText,
   requireText,
   rowToTask,
+  visibleCommentPredicate,
 } from './storeHelpers.js';
 import {
   TaskboardNotFoundError,
@@ -70,7 +71,7 @@ export async function createTaskFromExecution(
     if (input.clientRequestId) {
       const existing = await client.query(
         `SELECT t.*,
-                (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id) AS comment_count
+                (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', options.changesTable)}) AS comment_count
            FROM ${options.tasksTable} t
           WHERE t.board_id=$1 AND t.client_request_id=$2`,
         [currentTask.boardId, input.clientRequestId],
@@ -150,7 +151,7 @@ async function withActiveExecutionTask<T>(
     if (!board) throw new TaskboardNotFoundError('Taskboard execution not found');
     const taskResult = await client.query(
       `SELECT t.*,
-              (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id) AS comment_count
+              (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', options.changesTable)}) AS comment_count
          FROM ${options.executionsTable} e
          JOIN ${options.tasksTable} t ON t.id=e.task_id
         WHERE e.run_id=$1 AND t.board_id=$2
@@ -190,7 +191,7 @@ async function loadTask(
 ): Promise<TaskBoardTask> {
   const result = await client.query(
     `SELECT t.*,
-            (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id) AS comment_count
+            (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', options.changesTable)}) AS comment_count
        FROM ${options.tasksTable} t
       WHERE t.id=$1`,
     [taskId],

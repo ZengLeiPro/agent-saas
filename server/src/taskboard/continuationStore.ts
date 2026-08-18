@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 
 import type {
@@ -10,12 +9,11 @@ import {
   applyCommentAuthorDisplayName,
   assertWritableTask,
   isTerminalExecutionStatus,
-  normalizeAttachments,
-  requireText,
   rowToComment,
   rowToExecution,
   rowToExecutionModelContext,
   rowToTask,
+  visibleCommentPredicate,
 } from './storeHelpers.js';
 import {
   TaskboardNotFoundError,
@@ -33,6 +31,7 @@ export interface TaskboardContinuationStoreHost {
   boardsTable: string;
   tasksTable: string;
   commentsTable: string;
+  changesTable: string;
   executionsTable: string;
   continuationOutboxTable: string;
 }
@@ -73,6 +72,12 @@ export async function loadExecutionContext(
        FROM ${host.commentsTable} c
       WHERE c.task_id=$1
         AND ($2::timestamptz IS NULL OR c.created_at >= $2::timestamptz)
+        AND (c.author_type='user' OR EXISTS (
+          SELECT 1 FROM ${host.changesTable} execution_comment
+           WHERE execution_comment.task_id=c.task_id
+             AND execution_comment.change_type='execution.comment'
+             AND execution_comment.payload->>'commentId'=c.id
+        ))
       ORDER BY c.created_at, c.id`,
     [execution.taskId, contextSince],
   );
@@ -195,11 +200,6 @@ export async function hasSuccessfulContinuationSince(
       WHERE o.task_id=$1 AND o.status='completed'
         AND source.author_type='user' AND source.continuation_run_id=o.run_id
         AND source.created_at >= $2::timestamptz
-        AND EXISTS (
-          SELECT 1 FROM ${host.commentsTable} receipt
-           WHERE receipt.task_id=o.task_id AND receipt.author_id=o.run_id
-             AND receipt.author_type='agent'
-        )
       LIMIT 1`,
     [taskId, since],
   );
@@ -228,8 +228,8 @@ export function completeContinuation(
       return loaded.task;
     }
     const existing = await client.query(
-      `SELECT id FROM ${host.commentsTable}
-        WHERE task_id=$1 AND author_id=$2 AND author_type IN ('agent', 'system')
+      `SELECT run_id FROM ${host.continuationOutboxTable}
+        WHERE task_id=$1 AND run_id=$2 AND status='completed'
         LIMIT 1`,
       [taskId, runId],
     );
@@ -281,15 +281,6 @@ export function completeContinuation(
         [taskId, targetStatus, sortOrder],
       );
     }
-    await client.query(
-      `INSERT INTO ${host.commentsTable}
-         (id, task_id, body, attachments, author_type, author_id, author_name, version)
-       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,1)`,
-      [randomUUID(), taskId, requireText(input.commentBody, 'Continuation comment body'),
-        JSON.stringify(normalizeAttachments(input.attachments)),
-        input.status === 'succeeded' ? 'agent' : 'system', runId,
-        input.status === 'succeeded' ? 'Agent' : '系统'],
-    );
     await markContinuationCompleted(host, client, runId);
     return loadAccessibleTask(host, loaded.identity, taskId, client);
   });
@@ -367,7 +358,7 @@ async function loadAccessibleTask(
 ): Promise<TaskBoardTask> {
   const result = await db.query(
     `SELECT t.*,
-            (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=t.id) AS comment_count
+            (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count
        FROM ${host.tasksTable} t
        JOIN ${host.boardsTable} b ON b.id=t.board_id
       WHERE t.id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')`,
@@ -398,7 +389,7 @@ async function loadInternalTaskForUpdate(
   await client.query(`SELECT id FROM ${host.boardsTable} WHERE id=$1 FOR UPDATE`, [row.board_id]);
   const result = await client.query(
     `SELECT t.*, b.archived_at AS board_archived_at,
-            (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=t.id) AS comment_count
+            (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count
        FROM ${host.tasksTable} t
        JOIN ${host.boardsTable} b ON b.id=t.board_id
       WHERE t.id=$1

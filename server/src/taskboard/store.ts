@@ -98,6 +98,7 @@ import {
   sanitizeIdentifier,
   toIso,
   validateMoveNeighbors,
+  visibleCommentPredicate,
 } from './storeHelpers.js';
 import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns } from './archiveGuard.js';
 import { deleteComment as deleteStoredComment, updateComment as updateStoredComment } from './storeComments.js';
@@ -585,7 +586,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       }
       if (input.clientRequestId) {
         const existing = await client.query(
-          `SELECT t.*, (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id) AS comment_count FROM ${this.tasksTable} t WHERE t.board_id=$1 AND t.client_request_id=$2`,
+          `SELECT t.*, (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', this.changesTable)}) AS comment_count FROM ${this.tasksTable} t WHERE t.board_id=$1 AND t.client_request_id=$2`,
           [boardId, input.clientRequestId],
         );
         if (existing.rows[0]) return rowToTask(existing.rows[0]);
@@ -835,6 +836,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
          JOIN ${this.tasksTable} t ON t.id=c.task_id
          JOIN ${this.boardsTable} b ON b.id=t.board_id
         WHERE c.task_id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
+          AND ${visibleCommentPredicate('c', this.changesTable)}
         ORDER BY c.created_at, c.id`,
       [taskId, identity.tenantId, identity.ownerUserId],
     );
@@ -1172,7 +1174,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
               b.archived_at AS board_archived_at,
               b.model AS board_model, b.stage_models AS board_stage_models, b.repository AS board_repository,
               b.owner_user_id AS board_owner_user_id, m.role AS board_member_role,
-              (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id) AS comment_count
+              (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', this.changesTable)}) AS comment_count
          FROM ${this.tasksTable} t
          JOIN ${this.boardsTable} b ON b.id=t.board_id LEFT JOIN ${this.membersTable} m ON m.board_id=b.id AND m.user_id=$3
         WHERE t.id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization') AND t.deleted_at IS NULL

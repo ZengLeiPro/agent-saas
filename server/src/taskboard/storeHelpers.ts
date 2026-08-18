@@ -70,6 +70,15 @@ export function rowToComment(row: Record<string, unknown>): TaskBoardComment {
   };
 }
 
+export function visibleCommentPredicate(commentAlias: string, changesTable: string): string {
+  return `(${commentAlias}.author_type='user' OR EXISTS (
+    SELECT 1 FROM ${changesTable} execution_comment
+     WHERE execution_comment.task_id=${commentAlias}.task_id
+       AND execution_comment.change_type='execution.comment'
+       AND execution_comment.payload->>'commentId'=${commentAlias}.id
+  ))`;
+}
+
 export function rowToExecution(row: Record<string, unknown>): TaskBoardExecution {
   return {
     id: String(row.id),

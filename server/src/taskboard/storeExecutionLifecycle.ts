@@ -14,9 +14,7 @@ import {
   assertWritableTask,
   isTerminalExecutionStatus,
   isUniqueViolation,
-  normalizeAttachments,
   optionalText,
-  requireText,
   rowToExecution,
 } from './storeHelpers.js';
 import type { PgTaskboardStore } from './store.js';
@@ -378,15 +376,6 @@ async function completeExecutionInternal(
     );
     await enqueueAutomaticReview(
       store, client, loaded.task, currentExecution, executionSucceeded, completionInput.reviewExecution,
-    );
-    const authorType = completionInput.status === 'succeeded' ? 'agent' : 'system';
-    await client.query(
-      `INSERT INTO ${store.commentsTable}
-         (id, task_id, body, attachments, author_type, author_id, author_name, version)
-       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,1)`,
-      [randomUUID(), taskId, requireText(completionInput.commentBody, 'Execution comment body'),
-        JSON.stringify(normalizeAttachments(completionInput.attachments)), authorType, runId,
-        completionInput.status === 'succeeded' ? 'Agent' : '系统'],
     );
     await appendTaskChange(store, client, taskId, 'execution.completed', 'system', runId, {
       executionId: currentExecution.id,

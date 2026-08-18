@@ -14,7 +14,13 @@ import type {
 } from '../../../shared/src/types/taskboard.js';
 import { rowToBoard } from './boardFields.js';
 import { assertWorkflowOutcome, resolveWorkflowContract } from './workflowContract.js';
-import { rowToComment, rowToExecution, rowToTask, toIso } from './storeHelpers.js';
+import {
+  rowToComment,
+  rowToExecution,
+  rowToTask,
+  toIso,
+  visibleCommentPredicate,
+} from './storeHelpers.js';
 import {
   TaskboardConflictError,
   TaskboardNotFoundError,
@@ -169,7 +175,7 @@ export async function createIntegrationBatch(
     }
     const sources = await client.query(
       `SELECT t.*,
-              (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id) AS comment_count
+              (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', options.changesTable)}) AS comment_count
          FROM ${options.tasksTable} t
         WHERE t.board_id=$1 AND t.id=ANY($2::text[])
         ORDER BY
@@ -409,7 +415,12 @@ export async function getExecutionContextV2(
       : { rows: [] as Record<string, unknown>[] };
     const page = changeRows.rows.slice(0, limit);
     const comments = include.has('comments')
-      ? await client.query(`SELECT * FROM ${options.commentsTable} WHERE task_id=$1 ORDER BY created_at,id`, [taskId])
+      ? await client.query(
+        `SELECT * FROM ${options.commentsTable} c
+          WHERE c.task_id=$1 AND ${visibleCommentPredicate('c', options.changesTable)}
+          ORDER BY c.created_at,c.id`,
+        [taskId],
+      )
       : undefined;
     const executions = include.has('executions')
       ? await client.query(`SELECT * FROM ${options.executionsTable} WHERE task_id=$1 ORDER BY created_at,id`, [taskId])
@@ -606,12 +617,6 @@ export async function resolveExecutionV2(
         );
       }
     }
-    await client.query(
-      `INSERT INTO ${options.commentsTable}
-         (id, task_id, body, author_type, author_id, author_name, continuation_eligible, version)
-       VALUES ($1,$2,$3,'agent',$4,'Agent',false,1)`,
-      [randomUUID(), taskId, input.summary, identity.ownerUserId],
-    );
     await appendChange(options, client, taskId, 'execution.resolved', 'agent', identity.ownerUserId, {
       runId,
       outcome: input.outcome,
@@ -739,7 +744,7 @@ async function loadAccessibleTaskAndBoard(
             b.created_at AS board_created_at,
             b.updated_at AS board_updated_at,
             CASE WHEN b.owner_user_id=$3 THEN 'owner' ELSE COALESCE(m.role,'viewer') END AS board_role,
-            (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id) AS comment_count,
+            (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', options.changesTable)}) AS comment_count,
             (SELECT s.integration_task_id FROM ${options.integrationSourcesTable} s
               WHERE s.delivery_task_id=t.id AND s.state<>'merged' LIMIT 1) AS integration_task_id,
             (SELECT s.state FROM ${options.integrationSourcesTable} s
@@ -793,7 +798,7 @@ async function loadTask(
 ): Promise<TaskBoardTask> {
   const result = await client.query(
     `SELECT t.*,
-            (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id) AS comment_count,
+            (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', options.changesTable)}) AS comment_count,
             (SELECT s.integration_task_id FROM ${options.integrationSourcesTable} s
               WHERE s.delivery_task_id=t.id AND s.state<>'merged' LIMIT 1) AS integration_task_id,
             (SELECT s.state FROM ${options.integrationSourcesTable} s

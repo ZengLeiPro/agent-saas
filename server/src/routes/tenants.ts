@@ -21,6 +21,7 @@ import {
 } from '../data/governance-audit/index.js';
 import { apiLogger } from '../utils/logger.js';
 import type { TenantStore } from '../data/tenants/store.js';
+import { withTenantDebugModeLock } from '../data/tenants/debugModeLock.js';
 import type { UserStore } from '../data/users/store.js';
 import { DEFAULT_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
 import type { TenantDeletionReport } from '../data/tenants/cleanup.js';
@@ -294,10 +295,13 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
       return;
     }
     try {
-      const settings = await tenantStore.updateSettings(req.params.id, parsed.data);
-      if (userStore && !isDebugModeAvailable(req.params.id, settings.features)) {
-        await userStore.disableDebugModeForTenant(req.params.id);
-      }
+      const settings = await withTenantDebugModeLock(req.params.id, async () => {
+        const nextSettings = await tenantStore.updateSettings(req.params.id, parsed.data);
+        if (userStore && !isDebugModeAvailable(req.params.id, nextSettings.features)) {
+          await userStore.disableDebugModeForTenant(req.params.id);
+        }
+        return nextSettings;
+      });
       auditLog(req, 'tenant_updated', `${req.params.id} → settings`);
       res.json({
         tenantId: req.params.id,

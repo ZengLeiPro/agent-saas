@@ -18,6 +18,7 @@ const METADATA_EVENT_TYPES = new Set([
   'session_read_state_changed',
   'session_status',
   'groups_changed',
+  'tenant_features_changed',
   'stream_started',
   'interaction_resolved',
   'message_queued',

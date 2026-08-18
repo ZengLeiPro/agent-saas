@@ -6,6 +6,7 @@ import { auditLog } from "../data/login-logs/index.js";
 import type { TenantStore } from "../data/tenants/store.js";
 import { DEFAULT_TENANT_SETTINGS } from "../data/tenants/types.js";
 import type { UserStore } from "../data/users/store.js";
+import { withTenantDebugModeLock } from "../data/tenants/debugModeLock.js";
 
 const updateDebugModeSchema = z.object({
   debugMode: z.boolean(),
@@ -26,17 +27,19 @@ export function registerAuthDebugModeRoute(
       if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "请求无效" });
       const current = deps.userStore.findById(req.user.sub);
       if (!current) return res.status(404).json({ error: "用户不存在" });
-      const features = tenantFeatures(current.tenantId);
-      if (parsed.data.debugMode && !isDebugModeAvailable(current.tenantId, features)) {
-        return res.status(400).json({ error: "上级未开放调试模式，不能为本人开启" });
-      }
-      const updated = await deps.userStore.update(current.id, { debugMode: parsed.data.debugMode });
-      const effectiveDebugMode = updated.debugMode === true
-        && isDebugModeAvailable(updated.tenantId, tenantFeatures(updated.tenantId));
-      auditLog(req, "user_updated", "debugMode");
-      return res.json({
-        debugMode: effectiveDebugMode,
-        tenantFeatures: tenantFeatures(updated.tenantId),
+      return withTenantDebugModeLock(current.tenantId, async () => {
+        const features = tenantFeatures(current.tenantId);
+        if (parsed.data.debugMode && !isDebugModeAvailable(current.tenantId, features)) {
+          return res.status(400).json({ error: "上级未开放调试模式，不能为本人开启" });
+        }
+        const updated = await deps.userStore.update(current.id, { debugMode: parsed.data.debugMode });
+        const effectiveDebugMode = updated.debugMode === true
+          && isDebugModeAvailable(updated.tenantId, tenantFeatures(updated.tenantId));
+        auditLog(req, "user_updated", "debugMode");
+        return res.json({
+          debugMode: effectiveDebugMode,
+          tenantFeatures: tenantFeatures(updated.tenantId),
+        });
       });
     } catch (err) {
       return res.status(500).json({ error: err instanceof Error ? err.message : "更新失败" });

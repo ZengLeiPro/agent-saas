@@ -9,6 +9,7 @@ import { TOKEN_KEY, SESSION_STORAGE_KEY } from "@/lib/constants";
 import { authPreload } from "@/lib/preload";
 import { clearSessionListCache } from "@/lib/sessionListCache";
 import { clearAllMessageCache } from "@/lib/messageCache";
+import { tenantFeatureUpdatesFromEnvelope } from "./tenantFeatureEvents";
 import {
   loginWithPassword,
   loginWithSmsCode,
@@ -60,7 +61,7 @@ interface AuthContextValue {
   /** 本人调试模式保存后立即刷新服务端返回的有效值。 */
   updateDebugMode: (debugMode: boolean) => void;
   /** 组织策略保存后立即刷新当前用户的功能有效值。 */
-  updateTenantFeatures: (features: TenantFeatureFlags) => void;
+  updateTenantFeatures: (features: TenantFeatureFlags, effectiveDebugMode?: boolean) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -230,13 +231,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser((prev) => prev ? { ...prev, debugMode: debugMode === true } : prev);
   }, []);
 
-  const updateTenantFeatures = useCallback((features: TenantFeatureFlags) => {
+  const updateTenantFeatures = useCallback((features: TenantFeatureFlags, effectiveDebugMode?: boolean) => {
     setUser((prev) => prev ? {
       ...prev,
-      debugMode: prev.debugMode === true && isDebugModeAvailable(prev.tenantId, features),
+      debugMode: effectiveDebugMode === undefined
+        ? prev.debugMode === true && isDebugModeAvailable(prev.tenantId, features)
+        : effectiveDebugMode === true,
       tenantFeatures: features,
     } : prev);
   }, []);
+
+  useEffect(() => {
+    return wsClient.onMessage((envelope) => {
+      for (const update of tenantFeatureUpdatesFromEnvelope(envelope, user?.tenantId)) {
+        updateTenantFeatures(update.tenantFeatures, update.debugMode);
+      }
+    });
+  }, [updateTenantFeatures, user?.tenantId]);
 
   const canPlatform = useCallback((_capability: PlatformCapability) => (
     user?.role === "admin" && user.tenantId === DEFAULT_TENANT_ID

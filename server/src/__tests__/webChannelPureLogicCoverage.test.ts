@@ -286,6 +286,7 @@ describe('UserEventLog', () => {
     expect(log.shouldLog({ type: 'title_updated' })).toBe(true);
     expect(log.shouldLog({ type: 'session_deleted' })).toBe(true);
     expect(log.shouldLog({ type: 'interaction_resolved' })).toBe(true);
+    expect(log.shouldLog({ type: 'tenant_features_changed' })).toBe(true);
     // 非白名单 / 无 type 字段
     expect(log.shouldLog({ type: 'text' })).toBe(false);
     expect(log.shouldLog({ foo: 'bar' })).toBe(false);
@@ -368,6 +369,7 @@ describe('EventBus', () => {
   it('EVENT_SCOPE 声明表对关键事件类型给出正确作用域', () => {
     expect(EVENT_SCOPE.text).toBe('session');
     expect(EVENT_SCOPE.session_deleted).toBe('user');
+    expect(EVENT_SCOPE.tenant_features_changed).toBe('user');
     expect(EVENT_SCOPE.title_updated).toBe('dual');
     expect(EVENT_SCOPE.pong).toBe('reply');
   });

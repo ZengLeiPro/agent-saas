@@ -30,7 +30,7 @@ server/src/channels/web/channel.ts	4386	production
 server/src/cron/service.ts	1084	production
 server/src/data/billing/pgBillingStore.ts	2319	production
 server/src/data/transcripts/parse.ts	2042	production
-server/src/routes/auth.ts	1812	production
+server/src/routes/auth.ts	1793	production
 server/src/routes/platformObservability.ts	1276	production
 server/src/routes/sessions.ts	3359	production
 server/src/routes/skills.ts	1409	production

@@ -5,6 +5,7 @@ import type {
     MemoryRecallData,
 } from './session';
 import type { SubagentStatus } from './message';
+import type { TenantFeatureFlags } from './auth';
 
 export type WsBlockType = 'thinking' | 'text' | 'tool_use';
 export type ChatDeliveryMode = 'queue' | 'steer';
@@ -79,6 +80,7 @@ export type WsEvent =
     | { type: 'user_message'; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number; client_msg_id?: string; sourceRunId?: string; sessionId?: string }
     | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; reason?: string }
     | { type: 'groups_changed' }
+    | { type: 'tenant_features_changed'; tenantId: string; tenantFeatures: TenantFeatureFlags; debugMode: boolean }
     // ── SDK 0.2.112+ 新增事件 ──
     | { type: 'context_usage'; contextUsage: ContextUsageData }
     | { type: 'plugin_install'; pluginInstall: PluginInstallData }

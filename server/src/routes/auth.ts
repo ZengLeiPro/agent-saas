@@ -12,7 +12,9 @@ import { isDebugModeAvailable } from "../../../shared/src/types/tenant.js";
 import { isModelAllowedForTenant } from "../app/models.js";
 import type { ModelsConfig } from "../types/index.js";
 import { registerAuthDebugModeRoute } from "./authDebugMode.js";
+import { validateTenantUserPolicy } from "./authUserPolicy.js";
 import type { UserStore } from "../data/users/store.js";
+import { withTenantDebugModeLock } from "../data/tenants/debugModeLock.js";
 import type { UserInfo, UserRecord } from "../data/users/types.js";
 import type { TenantStore } from "../data/tenants/store.js";
 import {
@@ -147,45 +149,6 @@ const updatePhoneSchema = z.object({
       "请输入有效的 11 位手机号",
     ),
 });
-
-function validateTenantUserPolicy(
-  tenantStore: TenantStore | undefined,
-  userStore: UserStore,
-  tenantId: string,
-  role: "admin" | "user",
-  password?: string,
-  debugMode?: boolean,
-  excludeUserId?: string,
-): string | null {
-  const settings = tenantStore?.getSettings(tenantId);
-  if (!settings) return null;
-  if (debugMode === true && !isDebugModeAvailable(tenantId, settings.features)) {
-    return "上级未开放调试模式，不能为成员开启";
-  }
-  const minLength = settings.security.passwordMinLength;
-  if (password && minLength && password.length < minLength) {
-    return `密码至少 ${minLength} 个字符`;
-  }
-  const tenantUsers = userStore
-    .listAll()
-    .filter((u) => u.tenantId === tenantId && u.id !== excludeUserId);
-  if (
-    settings.quotas.maxUsers &&
-    tenantUsers.length + 1 > settings.quotas.maxUsers
-  ) {
-    return `组织用户数已达到上限 ${settings.quotas.maxUsers}`;
-  }
-  if (role === "admin") {
-    const adminCount = tenantUsers.filter((u) => u.role === "admin").length;
-    if (
-      settings.quotas.maxAdmins &&
-      adminCount + 1 > settings.quotas.maxAdmins
-    ) {
-      return `组织管理员数已达到上限 ${settings.quotas.maxAdmins}`;
-    }
-  }
-  return null;
-}
 
 const updateUserSchema = z.object({
   password: z.string().min(6, "密码至少 6 个字符").optional(),
@@ -1057,34 +1020,43 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
           return;
         }
       }
-      const policyError = validateTenantUserPolicy(
-        tenantStore,
-        userStore,
-        effectiveTenantId,
-        role,
-        password,
-        debugMode,
-      );
-      if (policyError) {
-        res.status(400).json({ error: policyError });
+      const createUser = async () => {
+        const policyError = validateTenantUserPolicy(
+          tenantStore,
+          userStore,
+          effectiveTenantId,
+          role,
+          password,
+          debugMode,
+        );
+        if (policyError) return { policyError } as const;
+        return {
+          user: await userStore.create({
+            username,
+            password,
+            role,
+            tenantId: effectiveTenantId,
+            createdBy: req.user!.sub,
+            realName,
+            position,
+            dingtalkStaffId,
+            debugMode,
+            permissions,
+            platformCapabilities: platformCapabilities
+              ? normalizePlatformCapabilities(platformCapabilities)
+              : undefined,
+            platformCapabilityLimits,
+          }),
+        } as const;
+      };
+      const created = debugMode !== undefined
+        ? await withTenantDebugModeLock(effectiveTenantId, createUser)
+        : await createUser();
+      if ('policyError' in created) {
+        res.status(400).json({ error: created.policyError });
         return;
       }
-      const user = await userStore.create({
-        username,
-        password,
-        role,
-        tenantId: effectiveTenantId,
-        createdBy: req.user!.sub,
-        realName,
-        position,
-        dingtalkStaffId,
-        debugMode,
-        permissions,
-        platformCapabilities: platformCapabilities
-          ? normalizePlatformCapabilities(platformCapabilities)
-          : undefined,
-        platformCapabilityLimits,
-      });
+      const user = created.user;
 
       // 注册时立即初始化用户工作区（目录结构 + MEMORY.md）
       const userCwd = resolveUserCwd(agentCwd, {
@@ -1196,33 +1168,42 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         res.status(400).json({ error: capabilityConfigError });
         return;
       }
-      const policyError = validateTenantUserPolicy(
-        tenantStore,
-        userStore,
-        effectiveUpdatedTenantId,
-        effectiveUpdatedRole as "admin" | "user",
-        password,
-        debugMode,
-        target.id,
-      );
-      if (policyError) {
-        res.status(400).json({ error: policyError });
+      const updateUser = async () => {
+        const policyError = validateTenantUserPolicy(
+          tenantStore,
+          userStore,
+          effectiveUpdatedTenantId,
+          effectiveUpdatedRole as "admin" | "user",
+          password,
+          debugMode,
+          target.id,
+        );
+        if (policyError) return { policyError } as const;
+        return {
+          user: await userStore.update(req.params.id, {
+            password,
+            role,
+            realName,
+            position,
+            dingtalkStaffId,
+            debugMode,
+            tenantId: tenantIdUpdate,
+            permissions: permissions ?? undefined,
+            platformCapabilities: platformCapabilities !== undefined
+              ? normalizePlatformCapabilities(platformCapabilities)
+              : undefined,
+            platformCapabilityLimits,
+          }),
+        } as const;
+      };
+      const updated = debugMode !== undefined
+        ? await withTenantDebugModeLock(effectiveUpdatedTenantId, updateUser)
+        : await updateUser();
+      if ('policyError' in updated) {
+        res.status(400).json({ error: updated.policyError });
         return;
       }
-      const user = await userStore.update(req.params.id, {
-        password,
-        role,
-        realName,
-        position,
-        dingtalkStaffId,
-        debugMode,
-        tenantId: tenantIdUpdate,
-        permissions: permissions ?? undefined,
-        platformCapabilities: platformCapabilities !== undefined
-          ? normalizePlatformCapabilities(platformCapabilities)
-          : undefined,
-        platformCapabilityLimits,
-      });
+      const user = updated.user;
       auditLog(req, "user_updated", user.username);
       res.json({
         ...user,

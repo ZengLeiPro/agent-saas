@@ -84,6 +84,7 @@ export interface UpdateUserInput {
 export class UserStore {
   private users: UserRecord[] = [];
   private filePath: string;
+  private debugModeMigrationVersion: 1 = 1;
   private postPersistObserver?: () => void;
 
   constructor(filePath: string) {
@@ -95,14 +96,18 @@ export class UserStore {
     if (!existsSync(this.filePath)) {
       mkdirSync(dirname(this.filePath), { recursive: true });
       this.users = [];
+      this.debugModeMigrationVersion = 1;
       return;
     }
+    let needsDebugModeMigration = false;
     try {
       const raw = readFileSync(this.filePath, "utf-8");
       const data: UsersFileData = JSON.parse(raw);
       this.users = data.users || [];
+      needsDebugModeMigration = data.debugModeMigrationVersion !== 1;
     } catch {
       this.users = [];
+      this.debugModeMigrationVersion = 1;
       return;
     }
 
@@ -111,7 +116,12 @@ export class UserStore {
     // 一次性持久化（fire-and-forget）。持久化失败不阻止启动——下次启动会再次回填。
     let migrated = 0;
     let purgedMediaSync = 0;
+    let purgedLegacyDebugMode = 0;
     for (const u of this.users as Array<UserRecord & { photoSync?: unknown }>) {
+      if (needsDebugModeMigration && u.debugMode === true) {
+        u.debugMode = false;
+        purgedLegacyDebugMode += 1;
+      }
       if ("photoSync" in u) {
         delete u.photoSync;
         purgedMediaSync += 1;
@@ -121,7 +131,13 @@ export class UserStore {
         migrated += 1;
       }
     }
-    if (migrated > 0 || purgedMediaSync > 0) {
+    this.debugModeMigrationVersion = 1;
+    if (needsDebugModeMigration || migrated > 0 || purgedMediaSync > 0) {
+      if (needsDebugModeMigration) {
+        authLogger.info(
+          `Purged ${purgedLegacyDebugMode} legacy debug mode value(s) from user records`,
+        );
+      }
       if (migrated > 0) {
         authLogger.info(
           `Migrated ${migrated} legacy user record(s) to tenantId by platform/admin split`,
@@ -133,7 +149,7 @@ export class UserStore {
         );
       }
       void this.persist().catch((err) => {
-        authLogger.warn(`Failed to persist tenantId migration: ${err}`);
+        authLogger.warn(`Failed to persist user record migrations: ${err}`);
       });
     }
   }
@@ -148,7 +164,11 @@ export class UserStore {
   }
 
   private async persist(): Promise<void> {
-    const data: UsersFileData = { version: 1, users: this.users };
+    const data: UsersFileData = {
+      version: 1,
+      debugModeMigrationVersion: this.debugModeMigrationVersion,
+      users: this.users,
+    };
     mkdirSync(dirname(this.filePath), { recursive: true });
     const tmpPath = join(
       dirname(this.filePath),

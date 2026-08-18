@@ -8,7 +8,10 @@ import { PlatformOrganizationGovernance } from "./PlatformGovernancePage";
 const mocks = vi.hoisted(() => ({
   getEntitlements: vi.fn(), listResourceCatalog: vi.fn(), previewScope: vi.fn(), updateScope: vi.fn(),
   getTenantLifecycle: vi.fn(), previewTenantLifecycle: vi.fn(), updateTenantLifecycle: vi.fn(),
-  getTenantSettings: vi.fn(), updateTenantSettings: vi.fn(),
+  getTenantSettings: vi.fn(), updateTenantSettings: vi.fn(), updateTenantFeatures: vi.fn(),
+}));
+vi.mock("@/contexts/AuthContext", () => ({
+  useAuth: () => ({ user: null, updateTenantFeatures: mocks.updateTenantFeatures }),
 }));
 vi.mock("@agent/shared/lib/governanceApi", () => ({
   governanceAccessApi: {

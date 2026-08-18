@@ -141,6 +141,29 @@ describe('integration operation guards', () => {
     expect(guardedUpdate).toContain('provider_receipt_id IS NULL');
   });
 
+  it('required checks failure requests remediation without consuming a round', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => ({ ...pull, requiredChecks: [{ name: 'ci', status: 'failure' as const }] })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(mergeIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_CHECKS_FAILED' });
+    const conflictUpdate = statements.find((sql) => sql.includes('UPDATE sources'));
+    expect(conflictUpdate).toContain("SET state=$2, remediation_task_id=NULL");
+    expect(conflictUpdate).not.toContain('remediation_count=remediation_count+1');
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it('acquires the delivery Task lock before changing a stale source', async () => {
     const statements: string[] = [];
     const client = {

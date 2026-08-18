@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
 
 import type {
   TaskBoardExecutionResolutionInput,
@@ -148,6 +149,15 @@ export async function resolveExecutionV2(
         'TASKBOARD_REVIEW_SUBJECT_REQUIRED',
       );
     }
+    if (loaded.task.kind === 'remediation' && input.outcome === 'ready_for_review') {
+      const hasNewCommit = await recordRemediationCommit(options, client, taskId, execution.id);
+      if (!hasNewCommit) {
+        throw new TaskboardValidationError(
+          'Remediation work must produce a new commit before entering review',
+          'TASKBOARD_REMEDIATION_COMMIT_REQUIRED',
+        );
+      }
+    }
     const workflowDecision = decideResolution(loaded.task, contract.purpose, input.outcome, facts);
     if (workflowDecision.kind === 'ignore') return loaded.task;
     const nextStatus = workflowDecision.toStatus;
@@ -266,6 +276,85 @@ export async function resolveExecutionV2(
     }
     return loadTask(options, client, taskId);
   });
+}
+
+async function recordRemediationCommit(
+  options: TaskboardV2StoreOptions,
+  client: PoolClient,
+  remediationTaskId: string,
+  executionId: string,
+): Promise<boolean> {
+  const relation = await client.query(
+    `SELECT a.id,a.integration_source_id,a.base_head_oid,a.completed_head_oid,
+            s.integration_task_id,s.state,s.remediation_count,s.remediation_task_id,
+            d.id AS delivery_task_id,d.head_oid AS delivery_head_oid,
+            r.head_oid AS remediation_head_oid
+       FROM ${options.remediationAttemptsTable} a
+       JOIN ${options.integrationSourcesTable} s ON s.id=a.integration_source_id
+       JOIN ${options.tasksTable} d ON d.id=s.delivery_task_id
+       JOIN ${options.tasksTable} r ON r.id=a.remediation_task_id
+      WHERE a.remediation_task_id=$1 AND a.state='active'
+        AND s.remediation_task_id=$1 AND s.state='waiting_remediation'`,
+    [remediationTaskId],
+  );
+  if (!relation.rows[0]) return true;
+  const locked = await client.query(
+    `SELECT a.id,a.integration_source_id,a.base_head_oid,a.completed_head_oid,
+            s.integration_task_id,s.state,s.remediation_count,s.remediation_task_id,
+            d.head_oid AS delivery_head_oid,r.head_oid AS remediation_head_oid
+       FROM ${options.remediationAttemptsTable} a
+       JOIN ${options.integrationSourcesTable} s ON s.id=a.integration_source_id
+       JOIN ${options.tasksTable} d ON d.id=s.delivery_task_id
+       JOIN ${options.tasksTable} r ON r.id=a.remediation_task_id
+      WHERE a.remediation_task_id=$1 AND a.state='active'
+        AND s.remediation_task_id=$1 AND s.state='waiting_remediation'
+      FOR UPDATE OF s,a`,
+    [remediationTaskId],
+  );
+  const row = locked.rows[0];
+  if (!row) {
+    throw new TaskboardValidationError(
+      'Remediation source changed before the commit check completed',
+      'TASKBOARD_CONTEXT_STALE',
+    );
+  }
+  const headOid = row.remediation_head_oid ? String(row.remediation_head_oid) : '';
+  const baseline = row.base_head_oid ?? row.delivery_head_oid;
+  if (!headOid || headOid === baseline || headOid === row.completed_head_oid) return false;
+  const attempt = await client.query(
+    `UPDATE ${options.remediationAttemptsTable}
+        SET completed_head_oid=$2
+      WHERE id=$1 AND state='active' AND completed_head_oid IS DISTINCT FROM $2
+      RETURNING id`,
+    [row.id, headOid],
+  );
+  if (!attempt.rows[0]) {
+    throw new TaskboardValidationError(
+      'Remediation attempt changed before the new commit was recorded',
+      'TASKBOARD_CONTEXT_STALE',
+    );
+  }
+  const source = await client.query(
+    `UPDATE ${options.integrationSourcesTable}
+        SET remediation_count=remediation_count+1,updated_at=now()
+      WHERE id=$1 AND state='waiting_remediation' AND remediation_task_id=$2
+      RETURNING integration_task_id,remediation_count`,
+    [row.integration_source_id, remediationTaskId],
+  );
+  if (!source.rows[0]) {
+    throw new TaskboardValidationError(
+      'Remediation source changed before the new commit was recorded',
+      'TASKBOARD_CONTEXT_STALE',
+    );
+  }
+  await appendChange(options, client, String(source.rows[0].integration_task_id), 'integration.remediation_commit_recorded', 'agent', executionId, {
+    sourceId: String(row.integration_source_id),
+    remediationTaskId,
+    attemptId: String(row.id),
+    headOid,
+    remediationCount: Number(source.rows[0].remediation_count),
+  });
+  return true;
 }
 
 function jsonObject(value: unknown): Record<string, unknown> | undefined {

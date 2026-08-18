@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 const authState = vi.hoisted(() => ({ isAdmin: true, username: "org-admin" }));
+const authFetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/contexts/AuthContext", () => ({
   useAuth: () => ({
@@ -25,6 +26,8 @@ vi.mock("@/contexts/AuthContext", () => ({
     isPlatformAdmin: false,
   }),
 }));
+
+vi.mock("@/lib/authFetch", () => ({ authFetch: authFetchMock }));
 
 vi.mock("@/components/TenantManager/hooks", () => ({
   useTenants: () => ({ tenants: [], loading: false }),

@@ -472,6 +472,21 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       recovery!.task.id, recovery!.task.version, remediationExecutionId, remediationRunId,
     );
     await store.claimExecution(identity, recovery!.task.id, remediationClaim);
+    const noCommitContext = await store.getExecutionContextV2(identity, recovery!.task.id, {
+      runId: remediationRunId,
+    });
+    await expect(store.resolveExecutionV2(identity, remediationRunId, {
+      outcome: 'ready_for_review', summary: 'No new commit yet', receipt: noCommitContext.receipt,
+    })).rejects.toMatchObject({ code: 'TASKBOARD_REMEDIATION_COMMIT_REQUIRED' });
+    expect(await store.getTask(identity, recovery!.task.id)).toMatchObject({ status: 'in_progress' });
+    expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
+      state: 'waiting_remediation', remediationCount: 0, remediationTaskId: recovery!.task.id,
+    });
+    const activeAttempt = await pool.query(
+      `SELECT state,round FROM ${store.remediationAttemptsTable} WHERE remediation_task_id=$1`,
+      [recovery!.task.id],
+    );
+    expect(activeAttempt.rows[0]).toMatchObject({ state: 'active', round: 1 });
     await pool.query(
       `UPDATE ${store.tasksTable} SET head_oid='head-fixed',version=version+1 WHERE id=$1`,
       [recovery!.task.id],

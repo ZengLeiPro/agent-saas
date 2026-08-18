@@ -150,7 +150,13 @@ export async function resolveExecutionV2(
       );
     }
     if (loaded.task.kind === 'remediation' && input.outcome === 'ready_for_review') {
-      await recordRemediationCommit(options, client, taskId, execution.id);
+      const hasNewCommit = await recordRemediationCommit(options, client, taskId, execution.id);
+      if (!hasNewCommit) {
+        throw new TaskboardValidationError(
+          'Remediation work must produce a new commit before entering review',
+          'TASKBOARD_REMEDIATION_COMMIT_REQUIRED',
+        );
+      }
     }
     const workflowDecision = decideResolution(loaded.task, contract.purpose, input.outcome, facts);
     if (workflowDecision.kind === 'ignore') return loaded.task;
@@ -283,7 +289,7 @@ async function recordRemediationCommit(
   client: PoolClient,
   remediationTaskId: string,
   executionId: string,
-): Promise<void> {
+): Promise<boolean> {
   const relation = await client.query(
     `SELECT a.id,a.integration_source_id,a.base_head_oid,a.completed_head_oid,
             s.integration_task_id,s.state,s.remediation_count,s.remediation_task_id,
@@ -297,7 +303,7 @@ async function recordRemediationCommit(
         AND s.remediation_task_id=$1 AND s.state='waiting_remediation'`,
     [remediationTaskId],
   );
-  if (!relation.rows[0]) return;
+  if (!relation.rows[0]) return true;
   const locked = await client.query(
     `SELECT a.id,a.integration_source_id,a.base_head_oid,a.completed_head_oid,
             s.integration_task_id,s.state,s.remediation_count,s.remediation_task_id,
@@ -312,10 +318,15 @@ async function recordRemediationCommit(
     [remediationTaskId],
   );
   const row = locked.rows[0];
-  if (!row) return;
+  if (!row) {
+    throw new TaskboardValidationError(
+      'Remediation source changed before the commit check completed',
+      'TASKBOARD_CONTEXT_STALE',
+    );
+  }
   const headOid = row.remediation_head_oid ? String(row.remediation_head_oid) : '';
   const baseline = row.base_head_oid ?? row.delivery_head_oid;
-  if (!headOid || headOid === baseline || headOid === row.completed_head_oid) return;
+  if (!headOid || headOid === baseline || headOid === row.completed_head_oid) return false;
   const attempt = await client.query(
     `UPDATE ${options.remediationAttemptsTable}
         SET completed_head_oid=$2
@@ -323,7 +334,12 @@ async function recordRemediationCommit(
       RETURNING id`,
     [row.id, headOid],
   );
-  if (!attempt.rows[0]) return;
+  if (!attempt.rows[0]) {
+    throw new TaskboardValidationError(
+      'Remediation attempt changed before the new commit was recorded',
+      'TASKBOARD_CONTEXT_STALE',
+    );
+  }
   const source = await client.query(
     `UPDATE ${options.integrationSourcesTable}
         SET remediation_count=remediation_count+1,updated_at=now()
@@ -344,6 +360,7 @@ async function recordRemediationCommit(
     headOid,
     remediationCount: Number(source.rows[0].remediation_count),
   });
+  return true;
 }
 
 function jsonObject(value: unknown): Record<string, unknown> | undefined {

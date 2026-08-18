@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import type { PgEntitlementStore } from '../data/entitlements/index.js';
 import { isOrganizationEditableTenantPolicyKey, type EntitlementResourceType } from '../data/entitlements/types.js';
+import { PLATFORM_TENANT_ID } from '../data/tenants/types.js';
 import { governanceDigest } from '../data/governance-audit/index.js';
 import type { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
 
@@ -90,11 +91,27 @@ export function registerGovernanceEntitlementRoutes(options: {
     if (persona !== 'platform_admin' && persona !== 'org_admin') return res.status(403).json({ error: 'Admin required' });
     const tenantId = options.tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    const [entitlement, scopes, policies] = await Promise.all([
-      options.entitlements.getEntitlementSet(tenantId),
-      options.entitlements.listResourceScopes(tenantId),
-      options.entitlements.getPolicies(tenantId),
-    ]);
+    if (tenantId === PLATFORM_TENANT_ID) {
+      return res.status(409).json({
+        error: 'Platform tenant does not use organization entitlements',
+        code: 'PLATFORM_TENANT_GOVERNANCE_FORBIDDEN',
+      });
+    }
+    let entitlement: Awaited<ReturnType<PgEntitlementStore['getEntitlementSet']>>;
+    let scopes: Awaited<ReturnType<PgEntitlementStore['listResourceScopes']>>;
+    let policies: Awaited<ReturnType<PgEntitlementStore['getPolicies']>>;
+    try {
+      [entitlement, scopes, policies] = await Promise.all([
+        options.entitlements.getEntitlementSet(tenantId),
+        options.entitlements.listResourceScopes(tenantId),
+        options.entitlements.getPolicies(tenantId),
+      ]);
+    } catch {
+      return res.status(503).json({
+        error: 'Entitlement authority unavailable',
+        code: 'ENTITLEMENT_AUTHORITY_UNAVAILABLE',
+      });
+    }
     const entitlementAction = entitlement?.status === 'suspended'
       ? { id: 'activate', label: '恢复权益', change: { status: 'active' }, requiresReason: true }
       : entitlement && ['active', 'trial'].includes(entitlement.status)

@@ -346,7 +346,7 @@ export function TenantAdminShell({
   }, [urlTenantId]);
 
   const effectiveTenantId = isPlatformAdmin
-    ? targetTenantId || tenants[0]?.id || ""
+    ? (tenants.some(tenant => tenant.id === targetTenantId) ? targetTenantId : tenants[0]?.id) || ""
     : user?.tenantId || "";
   const currentTenant = tenants.find(t => t.id === effectiveTenantId);
   const tenantSwitcherOptions: AdminSelectOption[] = tenants.map(tenant => ({

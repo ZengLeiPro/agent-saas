@@ -195,6 +195,24 @@ describe('Membership/Owner 治理事实模型', () => {
     expect(queries.some(sql => sql.includes('UPDATE test_platform_admins'))).toBe(false);
   });
 
+  it('治理创建 Membership 使用 governance source，并在冲突时回滚', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const query = async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, ...(params ? { params } : {}) });
+      if (sql.includes('INSERT INTO test_tenant_memberships')) {
+        return { rows: [membershipRow({ user_id: 'user-new', persona: 'member', is_owner: false, source: 'governance', created_by: 'admin-1', updated_by: 'admin-1' })], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    };
+    const pool = { query, connect: async () => ({ query, release: () => undefined }) };
+    const store = new PgMembershipStore({ pool: pool as never, tablePrefix: 'test' });
+
+    const created = await store.createMembership({ tenantId: 'acme', userId: 'user-new', persona: 'member', createdBy: 'admin-1' });
+    expect(created).toMatchObject({ tenantId: 'acme', userId: 'user-new', source: 'governance', status: 'active' });
+    expect(queries.some(item => item.sql.includes('ON CONFLICT DO NOTHING') && item.params?.[2] === 'member')).toBe(true);
+    expect(queries).toContainEqual({ sql: 'COMMIT' });
+  });
+
   it('有另一名有效 Owner 时允许降级，并用 expectedVersion 防并发覆盖', async () => {
     const query = async (sql: string) => {
       if (sql.includes('SELECT * FROM test_tenant_memberships')) {

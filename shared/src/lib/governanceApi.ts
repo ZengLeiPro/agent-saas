@@ -182,6 +182,8 @@ export const governanceAccessApi = {
     request(`${ACCESS_BASE}/oauth-grants/${id(grantId)}/revoke`, body('POST', command), oauthRevocationResultSchema),
   listMemberships: <T = unknown>(tenantId?: string) =>
     request<T>(withQuery(`${ACCESS_BASE}/memberships`, tenant(tenantId)), undefined, schemaFor<T>(membershipListSchema)),
+  createMembership: <T = unknown>(command: GovernanceCommand, tenantId?: string) =>
+    request<T>(withQuery(`${ACCESS_BASE}/memberships`, tenant(tenantId)), body('POST', command)),
   getMembershipDetails: <T = unknown>(userId: string, tenantId?: string) =>
     request<T>(withQuery(`${ACCESS_BASE}/memberships/${id(userId)}/details`, tenant(tenantId)), undefined, schemaFor<T>(memberDetailsSchema)),
   createTenant: <T = unknown>(command: { id: string; name: string }) =>

@@ -35,6 +35,28 @@ export class PgMembershipStore {
     await new PgGovernanceMigrationRunner(this.options.pool, this.tablePrefix).run();
   }
 
+  async createMembership(input: {
+    tenantId: string;
+    userId: string;
+    persona: TenantMembership['persona'];
+    createdBy: string;
+  }): Promise<TenantMembership> {
+    if (!input.tenantId.trim() || !input.userId.trim() || !input.createdBy.trim()) {
+      throw new MembershipInvariantError('MEMBERSHIP_IDENTITY_INVALID');
+    }
+    return this.withTransaction(async client => {
+      const created = await client.query(`
+        INSERT INTO ${this.membershipsTable} (
+          tenant_id, user_id, persona, is_owner, status, source, created_by, updated_by
+        ) VALUES ($1, $2, $3, FALSE, 'active', 'governance', $4, $4)
+        ON CONFLICT DO NOTHING
+        RETURNING *
+      `, [input.tenantId, input.userId, input.persona, input.createdBy]);
+      if (!created.rows[0]) throw new MembershipInvariantError('MEMBERSHIP_ALREADY_EXISTS');
+      return rowToMembership(created.rows[0]);
+    });
+  }
+
   async offboardMembership(input: {
     tenantId: string;
     userId: string;

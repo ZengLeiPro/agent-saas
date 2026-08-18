@@ -8,7 +8,6 @@ import { UserFormDialog, type UserFormData } from "@/components/UserManager/User
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
-import { authFetch } from "@/lib/authFetch";
 import { useGovernanceRequest } from "@/hooks/useGovernanceRequest";
 import { governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
 import { navigateGovernance } from "@/lib/urlSync";
@@ -255,16 +254,10 @@ function AddMemberEntry({ tenantId, onCreated }: { tenantId: string; onCreated: 
   if (!isAdmin) return null;
 
   const submit = async (data: UserFormData) => {
-    // 组织锁定为当前页面的 tenantId；后端仍会按管理员身份复核（组织管理员强制归属自身组织）。
-    const response = await authFetch("/api/auth/users", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...data, tenantId }),
-    });
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error((payload as { error?: string }).error || `添加成员失败（HTTP ${response.status}）`);
-    }
+    // 组织范围由治理 API 的 tenantId query 绑定；表单里的 tenantId 仅用于锁定展示。
+    const command = { ...data };
+    delete command.tenantId;
+    await governanceAccessApi.createMembership(command, tenantId);
     onCreated();
   };
 

@@ -11,7 +11,7 @@ import { governanceDigest, type GovernanceAuditStore } from '../data/governance-
 import { MembershipInvariantError, type MembershipIdentityPatch, type PgMembershipStore, type TenantMembership } from '../data/memberships/index.js';
 import type { PgContentAccessGrantStore } from '../data/contentAccess/index.js';
 import type { PgOAuthGrantStore } from '../data/oauthGrants/index.js';
-import type { TenantSettings } from '../data/tenants/types.js';
+import { DEFAULT_TENANT_ID, type TenantSettings } from '../data/tenants/types.js';
 import type { OAuthGrant } from '../data/oauthGrants/types.js';
 import type { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
 import { registerGovernanceTenantLifecycleRoutes } from './governanceTenantLifecycleRoutes.js';
@@ -33,6 +33,7 @@ import {
   contentGrantSchema,
   membershipBaseline,
   membershipChange,
+  membershipCreateSchema,
   membershipErrorStatus,
   membershipPatchSchema,
   membershipPreviewSchema,
@@ -43,6 +44,7 @@ import {
   type AssignmentMutation,
   type GovernancePersona,
   type MembershipAllowedAction,
+  type MembershipCreateInput,
   type MembershipMutation,
 } from './governanceAccessValidation.js';
 import { entitlementDependencyImpact, oauthDependencyImpact, tenantDependencyImpact,
@@ -84,6 +86,10 @@ export function createGovernanceAccessRouter(deps: {
     accountStatus: 'active' | 'disabled'; dingtalkBound: boolean; createdAt: string; updatedAt: string;
   } | null;
   getMemberBudgetOverview?: (tenantId: string, userId: string) => Promise<BillingMemberBudgetOverview>;
+  createMember?: (input: MembershipCreateInput & { tenantId: string; createdBy: string }) => Promise<{
+    userId: string;
+    membership: TenantMembership;
+  }>;
   createTenant?: (input: { id: string; name: string; createdBy: string }) => Promise<{
     id: string; name: string; createdAt: string; createdBy: string; updatedAt: string;
   }>;
@@ -429,6 +435,45 @@ export function createGovernanceAccessRouter(deps: {
     return res.json({ grants: await deps.oauthGrants.listForSubject(tenantId, req.user!.sub) });
   });
 
+  router.post('/memberships', async (req, res) => {
+    if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
+    if (!deps.createMember) return res.status(503).json({ error: 'Member creation authority unavailable', code: 'MEMBERSHIP_CREATION_AUTHORITY_UNAVAILABLE' });
+    const parsed = membershipCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid body' });
+    const requestedTenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
+    if (personas.get(req) === 'platform_admin' && requestedTenantId === undefined) return res.status(403).json({ error: 'Explicit customer tenant scope required', code: 'PLATFORM_RECOVERY_SCOPE_REQUIRED' });
+    const tenantId = tenantFor(req, requestedTenantId);
+    if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
+    if (tenantId === DEFAULT_TENANT_ID) return res.status(403).json({ error: 'Platform admins must use the platform-admin governance entry', code: 'PLATFORM_TENANT_MEMBERSHIP_FORBIDDEN' });
+    if (parsed.data.role === 'admin' && personas.get(req) !== 'platform_admin' && !actorMemberships.get(req)?.isOwner) return res.status(403).json({ error: 'Only organization owners can create organization admins', code: 'MEMBERSHIP_CHANGE_FORBIDDEN' });
+    try {
+      const created = await deps.createMember({ ...parsed.data, tenantId, createdBy: req.user!.sub });
+      res.status(201).json({
+        userId: created.userId,
+        membership: {
+          ...created.membership,
+          directoryProfile: deps.getMemberProfile?.(tenantId, created.userId) ?? null,
+          allowedActions: membershipActionsFor(req, tenantId, created.membership),
+        },
+        changeId: res.locals.governanceChangeId,
+        effectiveAt: created.membership.createdAt,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Username already exists') {
+        return res.status(409).json({ error: '用户名已存在', code: 'USERNAME_ALREADY_EXISTS' });
+      }
+      if (message === 'Tenant not found' || message === 'Tenant disabled') {
+        return res.status(400).json({ error: message === 'Tenant disabled' ? '目标组织已禁用' : '目标组织不存在' });
+      }
+      const status = error instanceof MembershipInvariantError ? membershipErrorStatus(error) : 500;
+      return res.status(status).json({
+        error: message,
+        ...(error instanceof MembershipInvariantError ? { code: error.code } : {}),
+      });
+    }
+  });
+
   router.get('/memberships', async (req, res) => {
     if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
     const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
@@ -492,9 +537,7 @@ export function createGovernanceAccessRouter(deps: {
     const parsed = membershipPreviewSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
     const requestedTenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
-    if (personas.get(req) === 'platform_admin' && requestedTenantId === undefined) {
-      return res.status(403).json({ error: 'Explicit customer tenant scope required', code: 'PLATFORM_RECOVERY_SCOPE_REQUIRED' });
-    }
+    if (personas.get(req) === 'platform_admin' && requestedTenantId === undefined) return res.status(403).json({ error: 'Explicit customer tenant scope required', code: 'PLATFORM_RECOVERY_SCOPE_REQUIRED' });
     const tenantId = tenantFor(req, requestedTenantId);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
     try {
@@ -549,9 +592,7 @@ export function createGovernanceAccessRouter(deps: {
     const parsed = membershipPatchSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
     const requestedTenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
-    if (personas.get(req) === 'platform_admin' && requestedTenantId === undefined) {
-      return res.status(403).json({ error: 'Explicit customer tenant scope required', code: 'PLATFORM_RECOVERY_SCOPE_REQUIRED' });
-    }
+    if (personas.get(req) === 'platform_admin' && requestedTenantId === undefined) return res.status(403).json({ error: 'Explicit customer tenant scope required', code: 'PLATFORM_RECOVERY_SCOPE_REQUIRED' });
     const tenantId = tenantFor(req, requestedTenantId);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
     let mutationApplied = false;

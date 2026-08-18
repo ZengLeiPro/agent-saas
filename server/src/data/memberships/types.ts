@@ -57,7 +57,8 @@ export type MembershipInvariantCode =
   | 'PLATFORM_TENANT_MEMBERSHIP_FORBIDDEN'
   | 'MEMBERSHIP_CHANGE_FORBIDDEN'
   | 'PLATFORM_RECOVERY_SCOPE_REQUIRED'
-  | 'MEMBERSHIP_IDENTITY_INVALID';
+  | 'MEMBERSHIP_IDENTITY_INVALID'
+  | 'MEMBERSHIP_ALREADY_EXISTS';
 
 export class MembershipInvariantError extends Error {
   constructor(readonly code: MembershipInvariantCode) {

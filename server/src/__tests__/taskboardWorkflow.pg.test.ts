@@ -472,6 +472,8 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       recovery!.task.id, recovery!.task.version, remediationExecutionId, remediationRunId,
     );
     await store.claimExecution(identity, recovery!.task.id, remediationClaim);
+    await expect(store.attachExecutionPullRequestV2(identity, remediationRunId, '999'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_REMEDIATION_PR_MISMATCH' });
     const noCommitContext = await store.getExecutionContextV2(identity, recovery!.task.id, {
       runId: remediationRunId,
     });

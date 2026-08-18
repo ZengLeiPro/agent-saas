@@ -305,6 +305,46 @@ describe("TaskDetail 草稿隔离", () => {
     expect(mocks.refreshExecutions).toHaveBeenCalled();
   });
 
+  it("实施中且存在 active execution 时评论可继续实施", async () => {
+    const user = userEvent.setup();
+    const current = { ...taskOne, status: "in_progress" as const };
+    const published = {
+      id: "comment-active-in-progress",
+      taskId: current.id,
+      body: "继续当前实施",
+      authorType: "user" as const,
+      authorId: "user-1",
+      authorName: "Alice",
+      version: 1,
+      createdAt: current.createdAt,
+      updatedAt: current.updatedAt,
+    };
+    const execution: TaskBoardExecution = {
+      id: "execution-active-in-progress",
+      taskId: current.id,
+      runId: "run-active-in-progress",
+      sessionId: "session-active-in-progress",
+      status: "running",
+      purpose: "work",
+      requestedBy: "user-1",
+      createdAt: current.createdAt,
+      updatedAt: current.updatedAt,
+    };
+    mocks.fetchTask.mockResolvedValue(current);
+    mocks.executions = [execution];
+    mocks.addComment.mockResolvedValue(published);
+    mocks.continueTaskExecution.mockResolvedValue({ task: current, execution });
+    render(<TaskDetail {...props({ task: current })} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(current.id));
+
+    await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
+    await user.click(screen.getByRole("checkbox", { name: "发表后继续实施" }));
+    await user.click(screen.getByRole("button", { name: "发表" }));
+
+    await waitFor(() => expect(mocks.addComment).toHaveBeenCalledWith({ body: published.body }));
+    expect(mocks.continueTaskExecution).toHaveBeenCalledWith(current.id, published.id);
+  });
+
   it("评论已发表但续跑失败时使用原 commentId 幂等重试", async () => {
     const user = userEvent.setup();
     const published = {

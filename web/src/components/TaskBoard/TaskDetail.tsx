@@ -477,7 +477,7 @@ export function TaskDetail({
     const body = commentBody.trim();
     const retryCommentId = continueAfterComment ? pendingContinuationCommentId : null;
     if ((!retryCommentId && !body && commentAttachments.uploadedFiles.length === 0) || !currentTask || commentReadOnly) return;
-    if (continueAfterComment && !canRunCurrentTask) return;
+    if (continueAfterComment && !canContinueCurrentTask) return;
     if (!retryCommentId && commentAttachments.uploading) {
       setError("请等待附件上传完成");
       return;

@@ -993,7 +993,7 @@ export class WebChannel implements BaseChannel {
     // 实证: 2026-07-02 会话 3adc25a5 服务重启后被 ACS sandbox 健康探测事件复活。
     if (projection.events.length === 0 && !projection.terminal) return;
     const buffer = this.eventBufferStore.get(sessionId);
-    if (!buffer) this.eventBufferStore.create(sessionId, activeEntry?.userId ?? ('userId' in event && typeof event.userId === 'string' ? event.userId : undefined));
+    if (!buffer || (!buffer.completed && !buffer.userId)) this.eventBufferStore.create(sessionId, activeEntry?.userId ?? ('userId' in event && typeof event.userId === 'string' ? event.userId : undefined));
     // 终态投影跨事件去重：run_finished{error} 与 RunStore 派生的 run_state_changed{failed}
     // 来自同一个 runId 且都会 terminal=true，第二次到达直接 return 避免给前端发两次 done /
     // session_status。注意必须在 events push 之前判断,否则 buffer 仍会被脏写。

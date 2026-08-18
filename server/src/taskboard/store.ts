@@ -97,7 +97,7 @@ import {
   rowToComment,
   rowToTask,
   sanitizeIdentifier,
-  validateMoveNeighbors,
+  validateMoveNeighbors, visibleCommentPredicate,
 } from './storeHelpers.js';
 import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns } from './archiveGuard.js';
 import { deleteComment as deleteStoredComment, updateComment as updateStoredComment } from './storeComments.js';
@@ -620,7 +620,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       }
       if (input.clientRequestId) {
         const existing = await client.query(
-          `SELECT t.*, (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id) AS comment_count FROM ${this.tasksTable} t WHERE t.board_id=$1 AND t.client_request_id=$2`,
+          `SELECT t.*, (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', this.changesTable)}) AS comment_count FROM ${this.tasksTable} t WHERE t.board_id=$1 AND t.client_request_id=$2`,
           [boardId, input.clientRequestId],
         );
         if (existing.rows[0]) return rowToTask(existing.rows[0]);
@@ -879,7 +879,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
          FROM ${this.commentsTable} c
          JOIN ${this.tasksTable} t ON t.id=c.task_id
          JOIN ${this.boardsTable} b ON b.id=t.board_id
-        WHERE c.task_id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
+        WHERE c.task_id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization') AND ${visibleCommentPredicate('c', this.changesTable)}
         ORDER BY c.created_at, c.id`,
       [taskId, identity.tenantId, identity.ownerUserId],
     );

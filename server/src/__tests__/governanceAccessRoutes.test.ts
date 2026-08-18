@@ -45,6 +45,7 @@ async function rig(input: {
   getMembership?: ReturnType<typeof vi.fn>;
   auditAppend?: ReturnType<typeof vi.fn>;
   auditList?: ReturnType<typeof vi.fn>;
+  createMember?: ReturnType<typeof vi.fn>;
   updateMembership?: ReturnType<typeof vi.fn>;
   replaceAssignments?: ReturnType<typeof vi.fn>;
   getAssignmentSet?: ReturnType<typeof vi.fn>;
@@ -182,6 +183,7 @@ async function rig(input: {
       userId, username: 'member', displayName: '测试成员', accountStatus: 'active', dingtalkBound: false,
       createdAt: NOW, updatedAt: NOW,
     } : null,
+    ...(input.createMember ? { createMember: input.createMember as never } : {}),
     createTenant,
     rollbackTenantCreate,
     getTenantLifecycle: tenantId => tenantId === tenantLifecycle.id ? tenantLifecycle : undefined,
@@ -265,15 +267,16 @@ describe('governance access routes', () => {
     expect(listForSubject).toHaveBeenCalledWith('tenant-a', 'admin-1');
   });
 
-  it('Membership 列表由后端返回动作，普通管理员不能获得身份治理动作', async () => {
-    const target = membership({ userId: 'user-2', persona: 'member' });
-    const test = await rig({ memberships: [target] });
-    const response = await test.request('/api/governance/access/memberships');
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ memberships: [{
-      userId: 'user-2',
-      allowedActions: [{ id: 'disable', change: { status: 'disabled' } }],
-    }] });
+  it('治理 API 创建成员绑定租户范围与 Membership，并拒绝非 Owner 创建管理员', async () => {
+    const createMember = vi.fn().mockResolvedValue({ userId: 'user-new', membership: membership({ userId: 'user-new', createdBy: 'admin-1', updatedBy: 'admin-1' }) });
+    const test = await rig({ createMember });
+    const response = await test.request('/api/governance/access/memberships?tenantId=tenant-a', json('POST', { username: 'new-member', password: 'secret123', role: 'user' }));
+    expect(response.status).toBe(201);
+    expect(createMember).toHaveBeenCalledWith(expect.objectContaining({ username: 'new-member', tenantId: 'tenant-a', createdBy: 'admin-1' }));
+    expect(await response.json()).toMatchObject({ userId: 'user-new', membership: { userId: 'user-new' } });
+    const denied = await test.request('/api/governance/access/memberships?tenantId=tenant-a', json('POST', { username: 'new-admin', password: 'secret123', role: 'admin' }));
+    expect(denied.status).toBe(403);
+    expect(createMember).toHaveBeenCalledTimes(1);
   });
 
   it('Owner 与平台恢复动作均由服务端作用域授权生成', async () => {

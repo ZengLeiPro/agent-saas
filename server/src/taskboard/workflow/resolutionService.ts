@@ -249,12 +249,6 @@ export async function resolveExecutionV2(
         );
       }
     }
-    await client.query(
-      `INSERT INTO ${options.commentsTable}
-         (id, task_id, body, author_type, author_id, author_name, continuation_eligible, version)
-       VALUES ($1,$2,$3,'agent',$4,'Agent',false,1)`,
-      [randomUUID(), taskId, input.summary, identity.ownerUserId],
-    );
     await appendChange(options, client, taskId, 'execution.resolved.v2', 'agent', identity.ownerUserId, {
       schemaVersion: 2,
       commandId: canonical.resolutionId,

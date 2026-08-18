@@ -18,6 +18,8 @@ import {
   createTenantSkillGovernanceUpload,
 } from '../services/tenantSkillGovernanceUpload.js';
 import { applyTenantLifecycleChange, type TenantLifecycleChange } from './tenantLifecycleEffects.js';
+import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
+import type { MembershipCreateInput } from '../routes/governanceAccessValidation.js';
 
 const scheduledOffboardingRuntimes = new WeakSet<AppRuntime>();
 
@@ -165,6 +167,46 @@ export function registerGovernanceRoutes(
           updatedAt: user.updatedAt,
         };
       },
+      ...(runtime.userStore && runtime.tenantStore ? {
+        createMember: async (input: MembershipCreateInput & { tenantId: string; createdBy: string }) => {
+          const tenant = runtime.tenantStore!.findById(input.tenantId);
+          if (!tenant) throw new Error('Tenant not found');
+          if (tenant.disabled) throw new Error('Tenant disabled');
+          const user = await runtime.userStore!.create({
+            username: input.username,
+            password: input.password,
+            role: input.role,
+            tenantId: input.tenantId,
+            createdBy: input.createdBy,
+            realName: input.realName,
+            position: input.position,
+            dingtalkStaffId: input.dingtalkStaffId,
+            debugMode: input.debugMode,
+            permissions: input.permissions,
+          });
+          try {
+            await ensureUserWorkspace(
+              resolveUserCwd(runtime.agentCwd, user),
+              runtime.agentCwd,
+              runtime.sharedDir,
+              user,
+              { realName: input.realName, position: input.position },
+              runtime.skillConfigStore,
+              runtime.tenantSkillsRootDir,
+            );
+            const membership = await runtime.membershipStore!.createMembership({
+              tenantId: input.tenantId,
+              userId: user.id,
+              persona: input.role === 'admin' ? 'org_admin' : 'member',
+              createdBy: input.createdBy,
+            });
+            return { userId: user.id, membership };
+          } catch (error) {
+            await runtime.userStore!.delete(user.id).catch(() => undefined);
+            throw error;
+          }
+        },
+      } : {}),
       ...(runtime.billingService ? {
         getMemberBudgetOverview: (tenantId: string, userId: string) =>
           runtime.billingService!.store.getMemberBudgetOverview(tenantId, userId),

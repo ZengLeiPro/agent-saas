@@ -140,7 +140,7 @@ describePg('PgTaskboardStore continuation contract', () => {
     });
 
     expect(completed?.status).toBe('in_progress');
-    expect((await store.listComments(alice, task.id)).at(-1)?.body).toContain('等待态结果已保留');
+    expect((await store.listComments(alice, task.id)).at(-1)?.body).toBe('第二条新评论');
     expect(await store.claimContinuationReconcileCandidates(
       new Date(Date.now() + 1_000),
       10,
@@ -206,9 +206,9 @@ describePg('PgTaskboardStore continuation contract', () => {
 
     expect(await store.getTask(alice, task.id)).toMatchObject({ status: 'in_review' });
     expect(await store.listComments(alice, task.id)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ authorId: 'run-race-continuation', authorType: 'agent' }),
-      expect.objectContaining({ authorId: 'run-race-original', authorType: 'system' }),
+      expect.objectContaining({ authorId: alice.ownerUserId, authorType: 'user', body: '释放后独立续跑' }),
     ]));
+    expect((await store.listComments(alice, task.id)).every((comment) => comment.authorType === 'user')).toBe(true);
   });
 
   it('backfills legacy continuation rows once and blocks archive while continuation is active', async () => {

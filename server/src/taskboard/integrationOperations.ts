@@ -9,7 +9,7 @@ import type {
   RepositoryProvider,
   RepositoryPullRequestSnapshot,
 } from './repositoryProvider.js';
-import { rowToTask, toIso } from './storeHelpers.js';
+import { rowToTask, toIso, visibleCommentPredicate } from './storeHelpers.js';
 import {
   completeRemediationAfterMerge,
   fenceTaskExecutions,
@@ -795,7 +795,7 @@ async function finalizeMergedSource(
     }
     const taskResult = await client.query(
       `SELECT t.*,
-              (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=t.id) AS comment_count
+              (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count
          FROM ${host.tasksTable} t WHERE t.id=$1`,
       [sourceRow.delivery_task_id],
     );

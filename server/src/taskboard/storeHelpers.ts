@@ -128,6 +128,15 @@ export function rowToComment(row: Record<string, unknown>): TaskBoardComment {
   };
 }
 
+export function visibleCommentPredicate(commentAlias: string, changesTable: string): string {
+  return `(${commentAlias}.author_type='user' OR EXISTS (
+    SELECT 1 FROM ${changesTable} execution_comment
+     WHERE execution_comment.task_id=${commentAlias}.task_id
+       AND execution_comment.change_type='execution.comment'
+       AND execution_comment.payload->>'commentId'=${commentAlias}.id
+  ))`;
+}
+
 function executionResolutionProjection(row: Record<string, unknown>): Pick<TaskBoardExecution, 'resolutionState' | 'resolutionIssue'> {
   if (row.has_resolution === true || row.resolution_id || row.resolution_outcome) {
     return { resolutionState: row.resolution_historical === true ? 'historical' : 'canonical' };

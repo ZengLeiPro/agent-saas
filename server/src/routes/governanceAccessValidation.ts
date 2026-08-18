@@ -19,6 +19,27 @@ export const membershipPatchSchema = z.object({
   baselineDigest: z.string().regex(/^[a-f0-9]{64}$/),
   expiresAt: z.string().datetime({ offset: true }),
 }).strict();
+
+const MEMBER_USERNAME_PATTERN = /^[a-zA-Z0-9\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff][a-zA-Z0-9_\-\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]*$/;
+const memberPermissionsSchema = z.object({
+  maxTurns: z.number().int().positive().optional(),
+  rateLimit: z.object({
+    maxRequests: z.number().int().positive().optional(),
+    windowMs: z.number().int().positive().optional(),
+  }).optional(),
+}).strict();
+export const membershipCreateSchema = z.object({
+  username: z.string().min(1).max(50).regex(MEMBER_USERNAME_PATTERN),
+  password: z.string().min(6),
+  role: z.enum(['admin', 'user']).default('user'),
+  realName: z.string().max(100).optional(),
+  position: z.string().max(50).optional(),
+  dingtalkStaffId: z.string().max(200).optional(),
+  debugMode: z.boolean().optional().default(false),
+  permissions: memberPermissionsSchema.optional(),
+}).strict();
+
+export type MembershipCreateInput = z.infer<typeof membershipCreateSchema>;
 export const platformAdminPatchSchema = z.object({
   expectedVersion: z.number().int().positive(),
   status: z.enum(['active', 'disabled']),

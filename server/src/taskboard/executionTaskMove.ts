@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 
 import type { TaskBoardStatus, TaskBoardTask } from '../../../shared/src/types/taskboard.js';
-import { rowToTask } from './storeHelpers.js';
+import { rowToTask, visibleCommentPredicate } from './storeHelpers.js';
 import {
   TaskboardNotFoundError,
   TaskboardValidationError,
@@ -13,6 +13,7 @@ interface ExecutionTaskMoveOptions {
   boardsTable: string;
   tasksTable: string;
   commentsTable: string;
+  changesTable: string;
   executionsTable: string;
 }
 
@@ -97,7 +98,7 @@ export async function moveTaskFromReviewExecution(
     );
     const updated = await client.query(
       `SELECT t.*,
-              (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id) AS comment_count
+              (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', options.changesTable)}) AS comment_count
          FROM ${options.tasksTable} t
         WHERE t.id=$1`,
       [taskRow.id],

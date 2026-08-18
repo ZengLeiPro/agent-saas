@@ -4,7 +4,7 @@ import type { PoolClient } from 'pg';
 import { computeNextRunAtMs } from '../cron/scheduler.js';
 import type { TaskboardIntegrationDispatchCandidate, TaskboardIdentity } from './types.js';
 import { createIntegrationBatch } from './v2Store.js';
-import { rowToTask } from './storeHelpers.js';
+import { rowToTask, visibleCommentPredicate } from './storeHelpers.js';
 
 interface IntegrationTriggerHost {
   pool: {
@@ -230,7 +230,7 @@ async function loadUnstartedIntegrationTasks(
   try {
     const result = await client.query(
       `SELECT t.*, b.tenant_id, b.owner_user_id,
-              (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=t.id) AS comment_count
+              (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count
          FROM ${host.tasksTable} t
          JOIN ${host.boardsTable} b ON b.id=t.board_id
          LEFT JOIN ${host.integrationLanesTable} l ON l.active_integration_task_id=t.id

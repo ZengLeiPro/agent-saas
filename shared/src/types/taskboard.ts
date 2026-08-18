@@ -30,7 +30,7 @@ export const TASKBOARD_EXECUTION_STATUSES = [
 export const TASKBOARD_EXECUTION_PURPOSES = ["work", "review", "merge"] as const;
 export const TASKBOARD_EXECUTION_TRIGGERS = ["initial", "comment", "resume", "retry"] as const;
 export const TASKBOARD_VISIBILITIES = ["personal", "organization"] as const;
-export const TASKBOARD_TASK_KINDS = ["delivery", "integration", "remediation"] as const;
+export const TASKBOARD_TASK_KINDS = ["delivery", "advisory", "integration", "remediation"] as const;
 export const TASKBOARD_MEMBER_ROLES = ["viewer", "editor", "maintainer", "owner"] as const;
 export const TASKBOARD_INTEGRATION_TRIGGER_MODES = ["scheduled", "on_ready", "manual"] as const;
 export const TASKBOARD_INTEGRATION_SOURCE_STATES = [
@@ -202,6 +202,16 @@ export interface TaskBoardUploadAttachment extends TaskBoardAttachment {
   attachmentId: string;
 }
 
+export interface TaskBoardResumeContext {
+  decision: string;
+  purpose: TaskBoardExecutionPurpose;
+  sourceIds: string[];
+  requestedAt: string;
+  requestedBy: string;
+  consumedAt?: string;
+  consumedExecutionId?: string;
+}
+
 export interface TaskBoardTask {
   id: string;
   boardId: string;
@@ -222,7 +232,16 @@ export interface TaskBoardTask {
   reviewedSubjectDigest?: string;
   mergedCommitOid?: string;
   integrationTaskId?: string;
+  integrationTaskIdentifier?: string;
+  integrationTaskTitle?: string;
+  integrationSourceId?: string;
+  rootDeliveryTaskId?: string;
+  rootDeliveryTaskIdentifier?: string;
+  rootDeliveryTaskTitle?: string;
   integrationState?: TaskBoardIntegrationSourceState;
+  mergeEligibility?: "eligible" | "claimed" | "merged" | "not_applicable";
+  workflowDisplayState?: string;
+  resumeContext?: TaskBoardResumeContext;
   commentCount: number;
   version: number;
   creatorUserId?: string;
@@ -260,6 +279,16 @@ export interface TaskBoardExecution {
   requestedBy: string;
   error?: string;
   continuationActive?: boolean;
+  resolutionId?: string;
+  resolutionOutcome?: string;
+  resolutionSummary?: string;
+  resolutionState?: "canonical" | "historical" | "legacy_ambiguous" | "legacy_incomplete" | "missing";
+  resolutionIssue?: string;
+  taskStatusAfter?: TaskBoardStatus;
+  resolvedAt?: string;
+  ignoredReason?: string;
+  supersededAt?: string;
+  fenceEpoch?: string;
   startedAt?: string;
   finishedAt?: string;
   createdAt: string;
@@ -267,7 +296,14 @@ export interface TaskBoardExecution {
 }
 
 export interface TaskBoardContextReceipt {
+  schemaVersion?: 1 | 2;
   taskId: string;
+  runId?: string;
+  executionId?: string;
+  attemptId?: string;
+  purpose?: TaskBoardExecutionPurpose;
+  workflowEpoch?: string;
+  fenceEpoch?: string;
   taskVersion: number;
   changeSeq: string;
   contractDigest: string;
@@ -318,6 +354,8 @@ export interface TaskBoardIntegrationSource {
   id: string;
   integrationTaskId: string;
   deliveryTaskId: string;
+  deliveryTaskIdentifier?: string;
+  deliveryTaskTitle?: string;
   repositoryId: string;
   providerPullRequestId: string;
   reviewedSubjectDigest: string;
@@ -328,6 +366,15 @@ export interface TaskBoardIntegrationSource {
   providerReceiptId?: string;
   mergedCommitOid?: string;
   remediationTaskId?: string;
+  remediationAttempts?: Array<{
+    id: string;
+    round: number;
+    remediationTaskId: string;
+    remediationTaskIdentifier?: string;
+    remediationTaskTitle?: string;
+    state: "active" | "resolved" | "superseded" | "canceled";
+    resolvedAt?: string;
+  }>;
   lastError?: string;
   updatedAt: string;
 }
@@ -455,6 +502,7 @@ export interface TaskBoardExecutionStartInput {
 }
 
 export interface TaskBoardExecutionContextInput {
+  runId?: string;
   include?: Array<"task" | "board" | "comments" | "executions" | "activity" | "integrationSources">;
   history?: {
     mode: TaskBoardContextHistoryMode;
@@ -464,15 +512,32 @@ export interface TaskBoardExecutionContextInput {
 }
 
 export interface TaskBoardExecutionResolutionInput {
+  resolutionId?: string;
   outcome: string;
   summary: string;
   evidence?: string[];
   receipt: TaskBoardContextReceipt;
 }
 
+export interface TaskBoardContinuationPlan {
+  eligible: boolean;
+  action: "steer_active" | "start_new_attempt" | "resume_required" | "none";
+  purpose?: TaskBoardExecutionPurpose;
+  targetExecutionId?: string;
+  expectedTaskVersion: number;
+  label: string;
+  reason?: string;
+}
+
 export interface TaskBoardIntegrationBatchCreateInput {
   deliveryTaskIds: string[];
   expectedBoardVersion: number;
+}
+
+export interface TaskBoardResumeInput {
+  expectedVersion: number;
+  decision: string;
+  sourceIds?: string[];
 }
 
 export interface TaskBoardMemberPatchInput {

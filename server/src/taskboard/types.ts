@@ -23,6 +23,7 @@ import type {
   TaskBoardStatus,
   TaskBoardStageModels,
   TaskBoardTask,
+  TaskBoardTaskKind,
   TaskBoardTaskCreateInput,
   TaskBoardTaskMoveInput,
   TaskBoardTaskPatchInput,
@@ -61,6 +62,7 @@ export interface TaskboardTaskListFilter {
   includeArchived?: boolean;
   search?: string;
   statuses?: TaskBoardStatus[];
+  kinds?: TaskBoardTaskKind[];
   priorities?: TaskBoardPriority[];
 }
 
@@ -151,8 +153,6 @@ export interface TaskboardExecutionClaimInput extends TaskBoardExecutionStartInp
   contextStartSeq?: string;
   subjectDigest?: string;
   laneEpoch?: bigint;
-  /** 新建后直执或评论续跑允许从当前状态进入 work 执行。 */
-  allowWorkFromCurrentStatus?: boolean;
   runId: string;
   sessionId: string;
   /** startExecution 读取到的任务/看板显式模型；claim 锁内复核，防止并发改模型。 */
@@ -231,7 +231,15 @@ export interface TaskboardExecutionCompletionInput {
   reviewExecution?: TaskboardExecutionClaimInput;
 }
 
+export interface TaskboardWorkflowCancellation {
+  id: string;
+  runId: string;
+  reason: string;
+}
+
 export interface TaskboardExecutionStore {
+  claimWorkflowCancellations?(limit?: number): Promise<TaskboardWorkflowCancellation[]>;
+  finishWorkflowCancellation?(id: string, error?: string): Promise<void>;
   reconcileMergeOperationsV2?(limit?: number): Promise<number>;
   claimIntegrationDispatchCandidatesV2?(limit?: number): Promise<TaskboardIntegrationDispatchCandidate[]>;
   listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]>;
@@ -405,6 +413,11 @@ export interface TaskboardService {
     identity: TaskboardIdentity,
     integrationTaskId: string,
   ): Promise<TaskBoardIntegrationSource[]>;
+  resumeBlockedTask?(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input: { expectedVersion: number; decision: string; sourceIds?: string[] },
+  ): Promise<TaskBoardTask>;
   getExecutionContextV2?(
     identity: TaskboardIdentity,
     taskId: string,

@@ -137,7 +137,7 @@ function TenantList() {
           <DialogHeader>
             <DialogTitle>组织配置</DialogTitle>
             <DialogDescription>
-              选择目标组织进入安全与生命周期配置。暂停只会限制组织访问与执行，不会删除组织或清除历史数据；提交前会显示实际影响并要求再次确认。
+              选择目标组织进入正式治理配置，可管理平台级能力授权；安全与生命周期仍在同一组织治理详情中维护。
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-[min(60vh,28rem)] space-y-2 overflow-y-auto">
@@ -157,11 +157,11 @@ function TenantList() {
                       setShowConfiguration(false);
                       navigateGovernance(governanceRoute("platform.org-business.tenants", {
                         entityId: item.id,
-                        tab: "security-lifecycle",
+                        tab: "configuration",
                       }));
                     }}
                   >
-                    管理生命周期
+                    进入配置
                   </Button>
                 </div>
               </div>

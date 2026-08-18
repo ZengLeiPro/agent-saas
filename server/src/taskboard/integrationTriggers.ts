@@ -23,6 +23,9 @@ interface IntegrationTriggerHost {
   mergeOperationsTable: string;
   blockEpisodesTable: string;
   integrationTriggerOutboxTable: string;
+  resolutionsTable: string;
+  remediationAttemptsTable: string;
+  cancellationOutboxTable: string;
 }
 
 export async function claimIntegrationDispatchCandidates(
@@ -204,7 +207,7 @@ async function eligibleSources(host: IntegrationTriggerHost, boardId: string, li
           AND t.reviewed_subject_digest IS NOT NULL
           AND NOT EXISTS (
             SELECT 1 FROM ${host.integrationSourcesTable} s
-             WHERE s.delivery_task_id=t.id AND s.state<>'merged'
+             WHERE s.delivery_task_id=t.id AND s.state NOT IN ('merged','canceled')
           )
         ORDER BY
           CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
@@ -264,8 +267,9 @@ async function loadUnstartedIntegrationTasks(
                       <= COALESCE((b.integration_policy->'execution'->>'maxTransientRetries')::int,3))
                   OR EXISTS (
                     SELECT 1 FROM ${host.changesTable} rework_change
-                     WHERE rework_change.task_id=t.id AND rework_change.change_type='execution.resolved'
-                       AND rework_change.payload->>'outcome' IN ('changes_requested','stale_subject')
+                     WHERE rework_change.task_id=t.id
+                       AND rework_change.change_type IN ('execution.resolved','execution.resolved.v2')
+                       AND rework_change.payload->>'outcome'='changes_requested'
                        AND NOT EXISTS (
                          SELECT 1 FROM ${host.executionsTable} rework_execution
                           WHERE rework_execution.task_id=t.id AND rework_execution.purpose='work'

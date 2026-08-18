@@ -25,6 +25,64 @@ type PgPool = InstanceType<typeof Pool>;
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 
+function taskRelationProjection(store: TaskboardSearchStore): string {
+  return `,
+    (SELECT relation.id FROM (
+       SELECT s.id,s.integration_task_id,s.delivery_task_id,s.state,s.updated_at
+         FROM ${store.integrationSourcesTable} s WHERE s.delivery_task_id=t.id
+       UNION ALL
+       SELECT s.id,s.integration_task_id,s.delivery_task_id,s.state,s.updated_at
+         FROM ${store.remediationAttemptsTable} a
+         JOIN ${store.integrationSourcesTable} s ON s.id=a.integration_source_id
+        WHERE a.remediation_task_id=t.id
+     ) relation ORDER BY relation.updated_at DESC LIMIT 1) AS integration_source_id,
+    (SELECT relation.integration_task_id FROM (
+       SELECT s.integration_task_id,s.updated_at FROM ${store.integrationSourcesTable} s WHERE s.delivery_task_id=t.id
+       UNION ALL
+       SELECT s.integration_task_id,s.updated_at FROM ${store.remediationAttemptsTable} a
+         JOIN ${store.integrationSourcesTable} s ON s.id=a.integration_source_id
+        WHERE a.remediation_task_id=t.id
+     ) relation ORDER BY relation.updated_at DESC LIMIT 1) AS integration_task_id,
+    (SELECT relation.delivery_task_id FROM (
+       SELECT s.delivery_task_id,s.updated_at FROM ${store.integrationSourcesTable} s WHERE s.delivery_task_id=t.id
+       UNION ALL
+       SELECT s.delivery_task_id,s.updated_at FROM ${store.remediationAttemptsTable} a
+         JOIN ${store.integrationSourcesTable} s ON s.id=a.integration_source_id
+        WHERE a.remediation_task_id=t.id
+     ) relation ORDER BY relation.updated_at DESC LIMIT 1) AS root_delivery_task_id,
+    (SELECT relation.state FROM (
+       SELECT s.state,s.updated_at FROM ${store.integrationSourcesTable} s WHERE s.delivery_task_id=t.id
+       UNION ALL
+       SELECT s.state,s.updated_at FROM ${store.remediationAttemptsTable} a
+         JOIN ${store.integrationSourcesTable} s ON s.id=a.integration_source_id
+        WHERE a.remediation_task_id=t.id
+     ) relation ORDER BY relation.updated_at DESC LIMIT 1) AS integration_state,
+    (SELECT i.identifier FROM ${store.integrationSourcesTable} s
+       JOIN ${store.tasksTable} i ON i.id=s.integration_task_id
+      WHERE s.delivery_task_id=t.id OR EXISTS (
+        SELECT 1 FROM ${store.remediationAttemptsTable} a
+         WHERE a.integration_source_id=s.id AND a.remediation_task_id=t.id
+      ) ORDER BY s.updated_at DESC LIMIT 1) AS integration_task_identifier,
+    (SELECT i.title FROM ${store.integrationSourcesTable} s
+       JOIN ${store.tasksTable} i ON i.id=s.integration_task_id
+      WHERE s.delivery_task_id=t.id OR EXISTS (
+        SELECT 1 FROM ${store.remediationAttemptsTable} a
+         WHERE a.integration_source_id=s.id AND a.remediation_task_id=t.id
+      ) ORDER BY s.updated_at DESC LIMIT 1) AS integration_task_title,
+    (SELECT d.identifier FROM ${store.integrationSourcesTable} s
+       JOIN ${store.tasksTable} d ON d.id=s.delivery_task_id
+      WHERE s.delivery_task_id=t.id OR EXISTS (
+        SELECT 1 FROM ${store.remediationAttemptsTable} a
+         WHERE a.integration_source_id=s.id AND a.remediation_task_id=t.id
+      ) ORDER BY s.updated_at DESC LIMIT 1) AS root_delivery_task_identifier,
+    (SELECT d.title FROM ${store.integrationSourcesTable} s
+       JOIN ${store.tasksTable} d ON d.id=s.delivery_task_id
+      WHERE s.delivery_task_id=t.id OR EXISTS (
+        SELECT 1 FROM ${store.remediationAttemptsTable} a
+         WHERE a.integration_source_id=s.id AND a.remediation_task_id=t.id
+      ) ORDER BY s.updated_at DESC LIMIT 1) AS root_delivery_task_title`;
+}
+
 export interface TaskboardSearchStore {
   pool: PgPool;
   boardsTable: string;
@@ -32,6 +90,8 @@ export interface TaskboardSearchStore {
   commentsTable: string;
   changesTable: string;
   membersTable: string;
+  integrationSourcesTable: string;
+  remediationAttemptsTable: string;
 }
 
 export async function listBoards(
@@ -72,6 +132,10 @@ export async function listTasks(
     params.push(filter.statuses);
     conditions.push(`t.status=ANY($${params.length}::text[])`);
   }
+  if (filter.kinds?.length) {
+    params.push(filter.kinds);
+    conditions.push(`t.kind=ANY($${params.length}::text[])`);
+  }
   if (filter.priorities?.length) {
     params.push(filter.priorities);
     conditions.push(`t.priority=ANY($${params.length}::text[])`);
@@ -90,6 +154,7 @@ export async function listTasks(
   const result = await store.pool.query(
     `SELECT t.*,
             (SELECT count(*)::int FROM ${store.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', store.changesTable)}) AS comment_count
+            ${taskRelationProjection(store)}
        FROM ${store.tasksTable} t
        JOIN ${store.boardsTable} b ON b.id=t.board_id
       WHERE ${conditions.join(' AND ')}
@@ -157,6 +222,7 @@ export async function searchTasks(
   if (filter.boardId) add((position) => `t.board_id=$${position}`, filter.boardId);
   if (filter.boardName?.trim()) add((position) => `b.name ILIKE $${position}`, `%${filter.boardName.trim()}%`);
   if (filter.statuses?.length) add((position) => `t.status=ANY($${position}::text[])`, filter.statuses);
+  if (filter.kinds?.length) add((position) => `t.kind=ANY($${position}::text[])`, filter.kinds);
   if (filter.priorities?.length) add((position) => `t.priority=ANY($${position}::text[])`, filter.priorities);
   if (filter.labels?.length) add((position) => `t.labels @> $${position}::text[]`, normalizeLabels(filter.labels));
   if (filter.creatorUserId?.trim()) add((position) => `t.creator_user_id=$${position}`, filter.creatorUserId.trim());
@@ -188,6 +254,7 @@ export async function searchTasks(
   const result = await store.pool.query(
     `SELECT t.*,
             (SELECT count(*)::int FROM ${store.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', store.changesTable)}) AS comment_count
+            ${taskRelationProjection(store)}
        FROM ${store.tasksTable} t
        JOIN ${store.boardsTable} b ON b.id=t.board_id
       WHERE ${where}

@@ -10,6 +10,7 @@ import {
   fetchBoardMembers,
   fetchIntegrationSources,
   patchTask,
+  resumeTask,
   TaskBoardConflictError,
   upsertBoardMember,
 } from "./api";
@@ -93,6 +94,24 @@ describe("任务看板 API 错误对象", () => {
     expect(authFetch).toHaveBeenNthCalledWith(2, `/api/taskboard/tasks/${task.id}/integration-cancel`, expect.objectContaining({
       body: JSON.stringify({ expectedVersion: task.version, reason: "人工终止" }),
     }));
+  });
+
+  it("阻塞恢复提交结构化决策与明确 sourceIds", async () => {
+    const resumed = { ...task, kind: "integration" as const, status: "todo" as const, version: 6 };
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify(resumed), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+
+    await expect(resumeTask(task.id, task.version, "批准恢复来源", ["source-1"]))
+      .resolves.toEqual(resumed);
+    expect(authFetch).toHaveBeenCalledWith(
+      `/api/taskboard/tasks/${task.id}/resume`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ expectedVersion: task.version, decision: "批准恢复来源", sourceIds: ["source-1"] }),
+      }),
+    );
   });
 
   it("成员、人工集成与来源接口使用 V2 REST 契约", async () => {

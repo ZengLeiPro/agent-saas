@@ -205,6 +205,28 @@ export function projectRuntimePlatformEvent(
             : { value: event.input },
         }],
       };
+    case 'interaction_requested':
+      // AskUserQuestion/permission_request 在运行进程写入 durable event 后，
+      // Web 进程也必须投影到同一条会话流；否则刷新时 HTTP 能恢复，停留页面却没有实时卡片。
+      if (event.interactionType !== 'ask_user' && event.interactionType !== 'permission_request') {
+        return { events: [] };
+      }
+      return {
+        events: [{
+          type: event.interactionType,
+          interactionId: event.interactionId,
+          ...(event.runId ? { runId: event.runId } : {}),
+          ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+          ...(event.invocationId ? { invocationId: event.invocationId } : {}),
+          ...(event.toolId ? { toolId: event.toolId } : {}),
+          ...(event.toolName ? { toolName: event.toolName } : {}),
+          ...(event.displayName ? { displayName: event.displayName } : {}),
+          ...(Array.isArray(event.questions) ? { questions: event.questions } : {}),
+          ...(event.toolInput && typeof event.toolInput === 'object' && !Array.isArray(event.toolInput)
+            ? { toolInput: event.toolInput }
+            : {}),
+        }],
+      };
     case 'assistant_stream_event': {
       if (event.phase === 'reset') {
         const state = getOrCreateRuntimeStreamProjectionState(options.streamStates, event.runId);

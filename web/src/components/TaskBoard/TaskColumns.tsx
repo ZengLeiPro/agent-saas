@@ -148,7 +148,7 @@ export function TaskColumns({
                     task={task}
                     readOnly={readOnly}
                     allowDrag={dragEnabled}
-                    selectable={canCreateIntegration && (task.kind ?? "delivery") === "delivery" && task.status === "ready_to_merge" && Boolean(task.providerPullRequestId) && Boolean(task.reviewedSubjectDigest)}
+                    selectable={canCreateIntegration && task.mergeEligibility === "eligible"}
                     selected={selectedDeliveryTaskIds.has(task.id)}
                     onSelectedChange={onDeliverySelectedChange}
                     onOpen={onOpenTask}
@@ -179,7 +179,7 @@ export function TaskColumns({
             task={task}
             readOnly={readOnly}
             allowDrag={false}
-            selectable={canCreateIntegration && (task.kind ?? "delivery") === "delivery" && task.status === "ready_to_merge" && Boolean(task.providerPullRequestId) && Boolean(task.reviewedSubjectDigest)}
+            selectable={canCreateIntegration && task.mergeEligibility === "eligible"}
             selected={selectedDeliveryTaskIds.has(task.id)}
             onSelectedChange={onDeliverySelectedChange}
             onOpen={onOpenTask}

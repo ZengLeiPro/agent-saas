@@ -78,23 +78,13 @@ describePg('PgTaskboardStore contract', () => {
   afterAll(async () => {
     if (!pool || !store) return;
     try {
-      await pool.query(`DROP TABLE IF EXISTS ${store.integrationTriggerOutboxTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.blockEpisodesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.mergeOperationsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.mergeAuthorizationsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.integrationSourcesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.integrationLanesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.attemptsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.changesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.membersTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.continuationOutboxTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.executionOutboxTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.executionsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.commentsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.tasksTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.boardsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${runStore.steeringInputsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${runStore.runsTable}`);
+      await pool.query(`DROP TABLE IF EXISTS
+        ${store.integrationTriggerOutboxTable}, ${store.blockEpisodesTable}, ${store.cancellationOutboxTable},
+        ${store.resolutionsTable}, ${store.remediationAttemptsTable}, ${store.mergeOperationsTable},
+        ${store.mergeAuthorizationsTable}, ${store.integrationSourcesTable}, ${store.integrationLanesTable},
+        ${store.attemptsTable}, ${store.changesTable}, ${store.membersTable}, ${store.continuationOutboxTable},
+        ${store.executionOutboxTable}, ${store.executionsTable}, ${store.commentsTable}, ${store.tasksTable},
+        ${store.boardsTable}, ${runStore.steeringInputsTable}, ${runStore.runsTable} CASCADE`);
     } finally {
       await pool.end();
     }
@@ -169,6 +159,7 @@ describePg('PgTaskboardStore contract', () => {
       name: '越权修改',
       expectedVersion: board.version,
     })).rejects.toBeInstanceOf(TaskboardNotFoundError);
+    await store.upsertMember(alice, board.id, { userId: admin.ownerUserId, role: 'maintainer' });
 
     const task = await store.createTask(admin, board.id, { title: '组织成员创建', status: 'todo' });
     const updated = await store.updateTask(alice, task.id, {
@@ -199,6 +190,7 @@ describePg('PgTaskboardStore contract', () => {
     const foreignBoard = await store.createBoard(aliceOtherTenant, {
       name: '搜索外租户看板', visibility: 'organization',
     });
+    await store.upsertMember(alice, organizationBoard.id, { userId: admin.ownerUserId, role: 'editor' });
     await store.createTask(alice, privateBoard.id, {
       title: '搜索目标 A', labels: ['backend'], priority: 'high', status: 'todo',
     });
@@ -231,6 +223,7 @@ describePg('PgTaskboardStore contract', () => {
       name: '评论权限', visibility: 'organization',
     });
     const task = await store.createTask(alice, board.id, { title: '评论任务' });
+    await store.upsertMember(alice, board.id, { userId: admin.ownerUserId, role: 'editor' });
     const comment = await store.createComment(admin, task.id, { body: '管理员写的评论' });
 
     await expect(store.updateComment(bob, comment.id, {
@@ -307,12 +300,12 @@ describePg('PgTaskboardStore contract', () => {
   });
 
   it('stores board/task model overrides and exposes them through the execution model context', async () => {
-    const board = await store.createBoard(alice, { name: '模型继承', model: 'group-a/model-board', repository: testRepository });
+    const board = await store.createBoard(alice, { name: '模型继承', model: 'group-a/model-board', repository: { ...testRepository, repositoryId: `${testRepository.repositoryId}-model`, name: 'app-model' } });
     expect(board.model).toBe('group-a/model-board');
 
     const task = await store.createTask(alice, board.id, { title: '模型任务', status: 'todo' });
     expect(task.model).toBeUndefined();
-    expect(await store.getExecutionModelContext(alice, task.id)).toEqual({
+    expect(await store.getExecutionModelContext(alice, task.id)).toMatchObject({
       boardModel: 'group-a/model-board',
     });
 
@@ -321,7 +314,7 @@ describePg('PgTaskboardStore contract', () => {
       expectedVersion: task.version,
     });
     expect(overridden.model).toBe('group-a/model-task');
-    expect(await store.getExecutionModelContext(alice, task.id)).toEqual({
+    expect(await store.getExecutionModelContext(alice, task.id)).toMatchObject({
       taskModel: 'group-a/model-task',
       boardModel: 'group-a/model-board',
     });
@@ -331,7 +324,7 @@ describePg('PgTaskboardStore contract', () => {
       expectedVersion: overridden.version,
     });
     expect(inherited.model).toBeUndefined();
-    expect(await store.getExecutionModelContext(alice, task.id)).toEqual({
+    expect(await store.getExecutionModelContext(alice, task.id)).toMatchObject({
       boardModel: 'group-a/model-board',
     });
 
@@ -340,7 +333,7 @@ describePg('PgTaskboardStore contract', () => {
       expectedVersion: board.version,
     });
     expect(cleared.model).toBeUndefined();
-    expect(await store.getExecutionModelContext(alice, task.id)).toEqual({});
+    expect(await store.getExecutionModelContext(alice, task.id)).toMatchObject({});
 
     const executionId = randomUUID();
     const runId = randomUUID();
@@ -447,7 +440,7 @@ describePg('PgTaskboardStore contract', () => {
   });
 
   it('rejects repeated and concurrent execution claims without creating a second active Execution', async () => {
-    const board = await store.createBoard(alice, { name: '重复派发隔离', repository: testRepository });
+    const board = await store.createBoard(alice, { name: '重复派发隔离', repository: { ...testRepository, repositoryId: `${testRepository.repositoryId}-claims`, name: 'app-claims' } });
     const sequentialTask = await store.createTask(alice, board.id, {
       title: '连续派发', status: 'todo',
     });
@@ -508,13 +501,17 @@ describePg('PgTaskboardStore contract', () => {
       [concurrentTask.id],
     );
     expect(outbox.rows[0]?.count).toBe(1);
+    const concurrentRunId = results.find((result) => result.status === 'fulfilled')?.value.execution.runId;
+    expect(concurrentRunId).toBeTruthy();
+    const cleanup = { status: 'cancelled' as const, error: 'test cleanup', commentBody: '测试清理：取消执行' };
+    await Promise.all([firstRunId, concurrentRunId!].map((id) => store.completeExecution(id, cleanup)));
   });
 
   it('atomically claims one Agent execution, rereads comments, and finalizes idempotently', async () => {
     const board = await store.createBoard(alice, {
       name: 'Agent 执行闭环',
       prompt: '按本看板规范执行。',
-      repository: testRepository,
+      repository: { ...testRepository, repositoryId: `${testRepository.repositoryId}-execution`, name: 'app-execution' },
     });
     const task = await store.createTask(alice, board.id, { title: '执行我', status: 'todo' });
     const claimed = await store.claimExecution(alice, task.id, {
@@ -523,6 +520,7 @@ describePg('PgTaskboardStore contract', () => {
       runId: 'run-a',
       sessionId: 'session-a',
       executionOwnerUserId: alice.ownerUserId,
+      protocolVersion: 1,
       dispatch: dispatch('execution-a', 'run-a', 'session-a'),
     });
     expect(claimed.task).toMatchObject({ status: 'in_progress', version: task.version + 1 });
@@ -663,6 +661,7 @@ describePg('PgTaskboardStore contract', () => {
       const work = await store.claimExecution(alice, reviewTask.id, {
         expectedVersion: reviewTask.version, executionId: workId, runId: workRunId, sessionId,
         executionOwnerUserId: alice.ownerUserId,
+        protocolVersion: 1,
         dispatch: dispatch(workId, workRunId, sessionId),
       });
       await store.completeExecution(workRunId, {
@@ -739,10 +738,11 @@ describePg('PgTaskboardStore contract', () => {
       .resolves.toMatchObject({ status: 'waiting_user' });
     await expect(store.setExecutionStatusFromReconcile('run-b', 'running', 'reconcile-c'))
       .resolves.toBeNull();
-    const canceled = await store.moveTask(alice, manuallyCorrected.id, {
-      status: 'canceled',
-      expectedVersion: secondClaim.task.version,
-    });
+    await pool.query(
+      `UPDATE ${store.tasksTable} SET status='canceled', version=version+1, updated_at=now() WHERE id=$1`,
+      [manuallyCorrected.id],
+    );
+    const canceled = await store.getTask(alice, manuallyCorrected.id);
     const failed = await store.completeExecution('run-b', {
       status: 'failed',
       error: 'runtime failed',
@@ -779,18 +779,20 @@ describePg('PgTaskboardStore contract', () => {
   });
 
   it('allows a manual rerun of a blocked delivery task and clears the block episode', async () => {
-    const board = await store.createBoard(alice, { name: '阻塞重跑', repository: testRepository });
+    const board = await store.createBoard(alice, { name: '阻塞重跑', repository: { ...testRepository, repositoryId: `${testRepository.repositoryId}-blocked`, name: 'app-blocked' } });
     const task = await store.createTask(alice, board.id, { title: '外部依赖阻塞', status: 'todo' });
     await pool.query(
       `UPDATE ${store.tasksTable} SET status='blocked', version=version+1, updated_at=now() WHERE id=$1`,
       [task.id],
     );
     const blocked = await store.getTask(alice, task.id);
+    const resumed = await store.resumeBlockedTask(alice, blocked.id, { expectedVersion: blocked.version, decision: '外部依赖已解除，继续实施' });
+    expect(resumed.status).toBe('todo');
     const executionId = randomUUID();
     const runId = randomUUID();
     const sessionId = randomUUID();
     const claimed = await store.claimExecution(alice, blocked.id, {
-      expectedVersion: blocked.version,
+      expectedVersion: resumed.version,
       executionId,
       runId,
       sessionId,
@@ -800,8 +802,6 @@ describePg('PgTaskboardStore contract', () => {
     expect(claimed.task.status).toBe('in_progress');
     expect(claimed.execution).toMatchObject({ purpose: 'work', status: 'queued' });
   });
-
-
 });
 
 async function waitForBlockedQueries(

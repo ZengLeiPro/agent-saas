@@ -106,9 +106,10 @@ describePg('PgTaskboardStore V2 integration contract', () => {
     }, 'manual_batch');
     expect(integration).toMatchObject({ kind: 'integration', status: 'todo' });
     expect(await store.listIntegrationSources!(bob, integration.id)).toHaveLength(2);
+    const boardAfterIntegration = await store.getBoard(bob, board.id);
     await expect(store.createIntegrationBatch!(bob, board.id, {
       deliveryTaskIds: [first.id],
-      expectedBoardVersion: freshBoard.version,
+      expectedBoardVersion: boardAfterIntegration.version,
     }, 'manual_batch')).rejects.toMatchObject({ code: 'TASKBOARD_INTEGRATION_ACTIVE' });
 
     const change = await pool.query(

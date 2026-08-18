@@ -86,7 +86,7 @@ describe("TenantsPage 创建组织入口", () => {
     expect(mocked.tenantOverview).toHaveBeenCalledTimes(1);
   });
 
-  it("组织配置先选择目标组织，再进入安全与生命周期配置", async () => {
+  it("组织配置先选择目标组织，再进入正式治理配置", async () => {
     mocked.tenantOverview.mockResolvedValue({
       items: [{
         id: "test-org",
@@ -110,9 +110,9 @@ describe("TenantsPage 创建组织入口", () => {
     fireEvent.click(screen.getByRole("button", { name: "组织配置" }));
 
     expect(await screen.findByRole("dialog", { name: "组织配置" })).toBeTruthy();
-    expect(screen.getByText(/暂停只会限制组织访问与执行，不会删除组织或清除历史数据/)).toBeTruthy();
+    expect(screen.getByText(/进入正式治理配置，可管理平台级能力授权/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "配置组织 测试组织" }));
 
-    expect(window.location.pathname).toBe("/platform-console/org-business/tenants/test-org/security-lifecycle");
+    expect(window.location.pathname).toBe("/platform-console/org-business/tenants/test-org/configuration");
   });
 });

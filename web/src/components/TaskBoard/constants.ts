@@ -24,6 +24,7 @@ export const STATUS_LABELS: Record<TaskBoardStatus, string> = {
 
 export const TASK_KIND_LABELS: Record<TaskBoardTaskKind, string> = {
   delivery: "交付任务",
+  advisory: "答复与分析",
   integration: "集成批次",
   remediation: "修复任务",
 };
@@ -49,18 +50,11 @@ export const INTEGRATION_SOURCE_STATE_LABELS: Record<TaskBoardIntegrationSourceS
   needs_human: "需要人工处理",
 };
 
-const LEGACY_MANAGE_ACTIONS = new Set<TaskBoardAllowedAction>([
-  "board.update",
-  "board.archive",
-  "board.policy.update",
-  "board.members.manage",
-]);
-
 export function boardAllows(board: TaskBoard | null | undefined, action: TaskBoardAllowedAction): boolean {
   if (!board) return false;
   const allowed = board.allowedActions
     ? board.allowedActions.includes(action)
-    : LEGACY_MANAGE_ACTIONS.has(action) ? board.canManage : true;
+    : action === "board.read" || board.canManage;
   if (board.archivedAt && action !== "board.read" && action !== "board.archive") return false;
   return allowed;
 }
@@ -69,6 +63,7 @@ const WORKFLOW_PROTECTED_STATUSES = new Set<TaskBoardStatus>([
   "in_progress",
   "in_review",
   "ready_to_merge",
+  "blocked",
   "done",
 ]);
 
@@ -90,7 +85,7 @@ export const EXECUTION_STATUS_LABELS: Record<TaskBoardExecutionStatus, string> =
   running: "执行中",
   waiting_user: "等待用户",
   waiting_approval: "等待授权",
-  succeeded: "已交付",
+  succeeded: "运行已结束 · 已提交结构化结果",
   failed: "执行失败",
   cancelled: "已取消",
 };

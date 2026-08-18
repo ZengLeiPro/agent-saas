@@ -10,6 +10,7 @@ import type {
   RepositoryPullRequestSnapshot,
 } from './repositoryProvider.js';
 import { rowToTask, toIso, visibleCommentPredicate } from './storeHelpers.js';
+import { fenceTaskExecutions } from './workflow/commandService.js';
 import {
   TaskboardNotFoundError,
   TaskboardValidationError,
@@ -27,6 +28,10 @@ export interface IntegrationOperationHost {
   integrationSourcesTable: string;
   mergeAuthorizationsTable: string;
   mergeOperationsTable: string;
+  blockEpisodesTable: string;
+  remediationAttemptsTable: string;
+  resolutionsTable: string;
+  cancellationOutboxTable: string;
   repositoryProvider?: RepositoryProvider;
 }
 
@@ -88,6 +93,7 @@ export async function mergeIntegrationSource(
       providerRequestId: `reconcile:${randomUUID()}`,
       mergedCommitOid: pullRequest.mergeCommitOid,
       raw: { reconciled: true, pullRequest },
+      exceptExecutionId: loaded.executionId,
     });
   }
   if (pullRequest.state !== 'open' || pullRequest.draft) {
@@ -122,6 +128,7 @@ export async function mergeIntegrationSource(
       providerRequestId: prepared.providerRequestId ?? prepared.id,
       mergedCommitOid: prepared.mergedCommitOid,
       raw: prepared.providerReceipt ?? { replayed: true },
+      exceptExecutionId: loaded.executionId,
     });
   }
   if (prepared.state === 'executing' || prepared.state === 'unknown') {
@@ -130,8 +137,11 @@ export async function mergeIntegrationSource(
       'TASKBOARD_PROVIDER_RESULT_UNKNOWN',
     );
   }
-  if (!(await markOperationExecuting(host, prepared.id))) {
-    throw new TaskboardValidationError('Merge operation was claimed concurrently', 'TASKBOARD_PROVIDER_RESULT_UNKNOWN');
+  if (!(await markOperationExecuting(host, prepared.id, runId, loaded))) {
+    throw new TaskboardValidationError(
+      'Merge authorization changed before the provider side effect',
+      'TASKBOARD_PROVIDER_GUARD_STALE',
+    );
   }
   try {
     const receipt = await provider.mergePullRequest(
@@ -159,6 +169,7 @@ export async function mergeIntegrationSource(
       mergedCommitOid: receipt.mergedCommitOid,
       raw: receipt.raw,
       operationId: prepared.id,
+      exceptExecutionId: loaded.executionId,
     });
   } catch (error) {
     if (error instanceof TaskboardValidationError) throw error;
@@ -179,26 +190,57 @@ export async function linkIntegrationRemediation(
   remediationTaskId: string,
 ): Promise<TaskBoardIntegrationSource> {
   return withTransaction(host, async (client) => {
-    const result = await client.query(
-      `SELECT s.*, i.board_id AS integration_board_id, r.board_id AS remediation_board_id, r.kind AS remediation_kind,
-              e.id AS execution_id, e.purpose, e.status AS execution_status, b.tenant_id, b.owner_user_id
+    const preview = await client.query(
+      `SELECT integration_task_id,delivery_task_id FROM ${host.integrationSourcesTable} WHERE id=$1`,
+      [sourceId],
+    );
+    if (!preview.rows[0]) throw new TaskboardNotFoundError('Integration source not found');
+    const taskIds = [...new Set([
+      String(preview.rows[0].integration_task_id),
+      String(preview.rows[0].delivery_task_id),
+      remediationTaskId,
+    ])].sort();
+    // Global lock order: Task(s) -> Source -> Execution/Attempt.
+    await client.query(
+      `SELECT id FROM ${host.tasksTable} WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE`,
+      [taskIds],
+    );
+    const sourceResult = await client.query(
+      `SELECT s.*, i.board_id AS integration_board_id, r.board_id AS remediation_board_id,
+              r.kind AS remediation_kind,r.status AS remediation_status,
+              b.tenant_id,b.owner_user_id
          FROM ${host.integrationSourcesTable} s
          JOIN ${host.tasksTable} i ON i.id=s.integration_task_id
-         JOIN ${host.tasksTable} r ON r.id=$3
+         JOIN ${host.tasksTable} r ON r.id=$2
          JOIN ${host.boardsTable} b ON b.id=i.board_id
-         JOIN ${host.executionsTable} e ON e.task_id=i.id AND e.run_id=$1
-        WHERE s.id=$2 AND b.tenant_id=$4
-          AND (b.owner_user_id=$5 OR b.visibility='organization')
+        WHERE s.id=$1 AND b.tenant_id=$3
+          AND (b.owner_user_id=$4 OR b.visibility='organization')
         FOR UPDATE OF s`,
-      [runId, sourceId, remediationTaskId, identity.tenantId, identity.ownerUserId],
+      [sourceId, remediationTaskId, identity.tenantId, identity.ownerUserId],
     );
-    const row = result.rows[0];
-    if (!row) throw new TaskboardNotFoundError('Integration source not found');
-    if (row.purpose !== 'merge' || !['queued', 'running', 'waiting_user', 'waiting_approval'].includes(String(row.execution_status))) {
+    const sourceRow = sourceResult.rows[0];
+    if (!sourceRow) throw new TaskboardNotFoundError('Integration source not found');
+    const executionResult = await client.query(
+      `SELECT id AS execution_id,purpose,status AS execution_status,resolved_at,superseded_at
+         FROM ${host.executionsTable}
+        WHERE task_id=$1 AND run_id=$2
+        FOR UPDATE`,
+      [sourceRow.integration_task_id, runId],
+    );
+    const row = executionResult.rows[0] ? { ...sourceRow, ...executionResult.rows[0] } : undefined;
+    if (!row) throw new TaskboardNotFoundError('Integration source execution not found');
+    if (row.purpose !== 'merge' || row.resolved_at || row.superseded_at
+      || !['queued', 'running', 'waiting_user', 'waiting_approval'].includes(String(row.execution_status))) {
       throw new TaskboardValidationError('Merge execution is not active');
     }
     if (row.integration_board_id !== row.remediation_board_id || row.remediation_kind !== 'remediation') {
       throw new TaskboardValidationError('Remediation task must belong to the same board');
+    }
+    if (['done', 'canceled'].includes(String(row.remediation_status))) {
+      throw new TaskboardValidationError(
+        'Terminal remediation task cannot be linked',
+        'TASKBOARD_REMEDIATION_TERMINAL',
+      );
     }
     if (row.state === 'needs_human') {
       throw new TaskboardValidationError('Automatic remediation is exhausted for this source');
@@ -207,20 +249,63 @@ export async function linkIntegrationRemediation(
       throw new TaskboardValidationError('Integration source is not awaiting remediation');
     }
     if (row.remediation_task_id && row.remediation_task_id !== remediationTaskId) {
-      throw new TaskboardValidationError('Integration source already has a remediation task');
+      throw new TaskboardValidationError(
+        'Integration source already has a different remediation task',
+        'TASKBOARD_REMEDIATION_LINK_CONFLICT',
+      );
+    }
+    const round = Math.max(1, Number(row.remediation_count ?? 1));
+    const attemptId = randomUUID();
+    const inserted = await client.query(
+      `INSERT INTO ${host.remediationAttemptsTable}
+         (id,integration_source_id,round,remediation_task_id,state)
+       VALUES ($1,$2,$3,$4,'active')
+       ON CONFLICT DO NOTHING
+       RETURNING id,integration_source_id,round,remediation_task_id`,
+      [attemptId, sourceId, round, remediationTaskId],
+    );
+    let canonical = inserted.rows[0];
+    if (!canonical) {
+      const existing = await client.query(
+        `SELECT id,integration_source_id,round,remediation_task_id
+           FROM ${host.remediationAttemptsTable}
+          WHERE remediation_task_id=$1 OR (integration_source_id=$2 AND round=$3)
+          ORDER BY CASE WHEN remediation_task_id=$1 THEN 0 ELSE 1 END
+          FOR UPDATE`,
+        [remediationTaskId, sourceId, round],
+      );
+      canonical = existing.rows.find((attempt) => String(attempt.remediation_task_id) === remediationTaskId
+        && String(attempt.integration_source_id) === sourceId && Number(attempt.round) === round);
+      if (!canonical || existing.rows.some((attempt) => String(attempt.id) !== String(canonical.id))) {
+        throw new TaskboardValidationError(
+          'Remediation attempt conflicts with its source, round, or task identity',
+          'TASKBOARD_REMEDIATION_LINK_CONFLICT',
+        );
+      }
     }
     const updated = await client.query(
       `UPDATE ${host.integrationSourcesTable}
           SET remediation_task_id=$2, state='waiting_remediation', last_error=NULL, updated_at=now()
-        WHERE id=$1 RETURNING *`,
+        WHERE id=$1 AND (remediation_task_id IS NULL OR remediation_task_id=$2)
+        RETURNING *`,
       [sourceId, remediationTaskId],
     );
-    await client.query(
-      `INSERT INTO ${host.changesTable}
-         (task_id, change_type, actor_type, actor_id, execution_id, payload)
-       VALUES ($1,'integration.remediation_linked','agent',$2,$3,$4::jsonb)`,
-      [row.integration_task_id, runId, row.execution_id, JSON.stringify({ sourceId, remediationTaskId })],
-    );
+    if (!updated.rows[0]) {
+      throw new TaskboardValidationError(
+        'Integration source remediation pointer changed concurrently',
+        'TASKBOARD_REMEDIATION_LINK_CONFLICT',
+      );
+    }
+    if (inserted.rows[0]) {
+      await client.query(
+        `INSERT INTO ${host.changesTable}
+           (task_id, change_type, actor_type, actor_id, execution_id, payload)
+         VALUES ($1,'integration.remediation_linked','agent',$2,$3,$4::jsonb)`,
+        [row.integration_task_id, runId, row.execution_id, JSON.stringify({
+          sourceId, remediationTaskId, attemptId: String(canonical.id), round,
+        })],
+      );
+    }
     return rowToSource(updated.rows[0]!);
   });
 }
@@ -311,6 +396,7 @@ async function loadOperationContext(
   sourceId: string,
 ): Promise<{
   source: TaskBoardIntegrationSource;
+  executionId: string;
   repository: TaskBoardRepositoryConfig;
   boardOwnerUserId: string;
   authorizationId: string;
@@ -318,11 +404,13 @@ async function loadOperationContext(
   requireGreenChecks: boolean;
   maxAutomaticRemediationRounds: number;
   maxTransientRetries: number;
+  laneEpoch: string;
 }> {
   const client = await host.pool.connect();
   try {
     const result = await client.query(
-      `SELECT s.*, e.purpose, e.status AS execution_status,
+      `SELECT s.*, e.id AS execution_id,e.purpose,e.status AS execution_status,
+              e.resolved_at,e.superseded_at,
               i.id AS integration_task_id_actual, i.status AS integration_status,
               b.tenant_id, b.owner_user_id, b.repository, b.integration_policy,
               l.active_integration_task_id, l.epoch,
@@ -342,7 +430,8 @@ async function loadOperationContext(
     );
     const row = result.rows[0];
     if (!row) throw new TaskboardNotFoundError('Integration source execution not found');
-    if (row.purpose !== 'merge' || !['queued', 'running', 'waiting_user', 'waiting_approval'].includes(String(row.execution_status))) {
+    if (row.purpose !== 'merge' || row.resolved_at || row.superseded_at
+      || !['queued', 'running', 'waiting_user', 'waiting_approval'].includes(String(row.execution_status))) {
       throw new TaskboardValidationError('Merge execution is not active');
     }
     if (row.active_integration_task_id !== row.integration_task_id_actual) {
@@ -367,6 +456,7 @@ async function loadOperationContext(
     const method = policy.execution?.mergeMethod;
     return {
       source: rowToSource(row),
+      executionId: String(row.execution_id),
       repository,
       boardOwnerUserId: String(row.owner_user_id),
       authorizationId: String(row.authorization_id),
@@ -374,6 +464,7 @@ async function loadOperationContext(
       requireGreenChecks: policy.execution?.requireGreenChecks !== false,
       maxAutomaticRemediationRounds: Math.max(0, Number(policy.execution?.maxAutomaticRemediationRounds ?? 3)),
       maxTransientRetries: Math.max(0, Number(policy.execution?.maxTransientRetries ?? 3)),
+      laneEpoch: String(row.epoch),
     };
   } finally {
     client.release();
@@ -387,16 +478,27 @@ async function prepareOperation(
 ): Promise<Record<string, any>> {
   return withTransaction(host, async (client) => {
     const source = await client.query(
-      `SELECT state, reviewed_subject_digest FROM ${host.integrationSourcesTable} WHERE id=$1 FOR UPDATE`,
+      `SELECT state, reviewed_subject_digest, merged_commit_oid, provider_receipt_id
+         FROM ${host.integrationSourcesTable} WHERE id=$1 FOR UPDATE`,
       [loaded.source.id],
     );
     if (!source.rows[0]) throw new TaskboardNotFoundError('Integration source not found');
-    if (source.rows[0].state === 'merged') {
+    if (source.rows[0].state === 'merged' || source.rows[0].merged_commit_oid || source.rows[0].provider_receipt_id) {
       const existing = await client.query(
         `SELECT * FROM ${host.mergeOperationsTable} WHERE integration_source_id=$1`,
         [loaded.source.id],
       );
       if (existing.rows[0]) return existing.rows[0];
+      throw new TaskboardValidationError(
+        'Integration source already has a merge fact and requires reconciliation',
+        'TASKBOARD_PROVIDER_RESULT_UNKNOWN',
+      );
+    }
+    if (['needs_human', 'waiting_remediation', 're_reviewing', 'canceled'].includes(String(source.rows[0].state))) {
+      throw new TaskboardValidationError(
+        'Integration source changed before merge preparation',
+        'TASKBOARD_PROVIDER_GUARD_STALE',
+      );
     }
     if (source.rows[0].reviewed_subject_digest !== pullRequest.subjectDigest) {
       throw new TaskboardValidationError('Reviewed subject changed while preparing merge');
@@ -448,13 +550,56 @@ async function prepareOperation(
   });
 }
 
-async function markOperationExecuting(host: IntegrationOperationHost, operationId: string): Promise<boolean> {
+async function markOperationExecuting(
+  host: IntegrationOperationHost,
+  operationId: string,
+  runId: string,
+  loaded: Awaited<ReturnType<typeof loadOperationContext>>,
+): Promise<boolean> {
   return withTransaction(host, async (client) => {
-    const result = await client.query(
-      `UPDATE ${host.mergeOperationsTable} SET state='executing', updated_at=now()
-        WHERE id=$1 AND state='prepared'
-        RETURNING id`,
+    const preview = await client.query(
+      `SELECT s.integration_task_id
+         FROM ${host.mergeOperationsTable} o
+         JOIN ${host.integrationSourcesTable} s ON s.id=o.integration_source_id
+        WHERE o.id=$1`,
       [operationId],
+    );
+    if (!preview.rows[0]) return false;
+    // Last authoritative guard before the irreversible provider call. Lock in Task -> Source -> Operation order.
+    await client.query(
+      `SELECT id FROM ${host.tasksTable} WHERE id=$1 FOR UPDATE`,
+      [preview.rows[0].integration_task_id],
+    );
+    const source = await client.query(
+      `SELECT id,state,integration_task_id,repository_id,merged_commit_oid,provider_receipt_id
+         FROM ${host.integrationSourcesTable} WHERE id=$1 FOR UPDATE`,
+      [loaded.source.id],
+    );
+    if (!source.rows[0] || source.rows[0].state !== 'merging'
+      || source.rows[0].merged_commit_oid || source.rows[0].provider_receipt_id
+      || String(source.rows[0].integration_task_id) !== loaded.source.integrationTaskId
+      || String(source.rows[0].repository_id) !== loaded.repository.repositoryId) return false;
+    const result = await client.query(
+      `UPDATE ${host.mergeOperationsTable} o
+          SET state='executing', updated_at=now()
+         FROM ${host.executionsTable} e,
+              ${host.tasksTable} i,
+              ${host.boardsTable} b,
+              ${host.mergeAuthorizationsTable} a,
+              ${host.integrationLanesTable} l
+        WHERE o.id=$1 AND o.integration_source_id=$2 AND o.authorization_id=$3
+          AND o.state='prepared'
+          AND e.id=$4 AND e.run_id=$5 AND e.task_id=i.id AND e.purpose='merge'
+          AND e.status IN ('queued','running','waiting_user','waiting_approval')
+          AND e.resolved_at IS NULL AND e.superseded_at IS NULL
+          AND i.id=$6 AND i.status IN ('todo','in_progress') AND i.board_id=b.id
+          AND a.id=$3 AND a.integration_task_id=i.id AND a.repository_id=$7
+          AND a.revoked_at IS NULL AND (a.expires_at IS NULL OR a.expires_at>clock_timestamp())
+          AND a.policy_revision=b.integration_policy->>'revision'
+          AND l.repository_id=$7 AND l.active_integration_task_id=i.id AND l.epoch=$8::bigint
+        RETURNING o.id`,
+      [operationId, loaded.source.id, loaded.authorizationId, loaded.executionId, runId,
+        loaded.source.integrationTaskId, loaded.repository.repositoryId, loaded.laneEpoch],
     );
     return Boolean(result.rows[0]);
   });
@@ -496,29 +641,58 @@ async function finalizeMergedSource(
     raw: Record<string, unknown>;
     operationId?: string;
     reconciled?: boolean;
+    exceptExecutionId?: string;
   },
 ): Promise<{ source: TaskBoardIntegrationSource; task: ReturnType<typeof rowToTask>; receipt: Record<string, unknown> }> {
   return withTransaction(host, async (client) => {
+    // Discover aggregate members without locks, then acquire the global Task -> Source -> Execution order.
+    const preview = await client.query(
+      `SELECT delivery_task_id,integration_task_id FROM ${host.integrationSourcesTable} WHERE id=$1`,
+      [sourceId],
+    );
+    if (!preview.rows[0]) throw new TaskboardNotFoundError('Integration source not found');
+    const remediationRows = await client.query(
+      `SELECT remediation_task_id FROM ${host.remediationAttemptsTable} WHERE integration_source_id=$1`,
+      [sourceId],
+    );
+    const aggregateTaskIds = [...new Set([
+      String(preview.rows[0].delivery_task_id),
+      String(preview.rows[0].integration_task_id),
+      ...remediationRows.rows.map((row) => String(row.remediation_task_id)),
+    ])].sort();
+    await client.query(
+      `SELECT id FROM ${host.tasksTable} WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE`,
+      [aggregateTaskIds],
+    );
     const sourceResult = await client.query(
       `SELECT * FROM ${host.integrationSourcesTable} WHERE id=$1 FOR UPDATE`,
       [sourceId],
     );
     const sourceRow = sourceResult.rows[0];
     if (!sourceRow) throw new TaskboardNotFoundError('Integration source not found');
-    const receiptId = input.providerRequestId;
-    await client.query(
-      `UPDATE ${host.integrationSourcesTable}
-          SET state='merged', provider_receipt_id=$2, merged_commit_oid=$3,
-              last_error=NULL, updated_at=now()
-        WHERE id=$1`,
-      [sourceId, receiptId, input.mergedCommitOid],
-    );
+    const alreadyMerged = sourceRow.state === 'merged';
+    if (alreadyMerged && String(sourceRow.merged_commit_oid ?? '') !== input.mergedCommitOid) {
+      throw new TaskboardValidationError(
+        'Merge receipt conflicts with the canonical merged commit',
+        'TASKBOARD_MERGE_RECEIPT_CONFLICT',
+      );
+    }
+
+    if (!alreadyMerged) {
+      await client.query(
+        `UPDATE ${host.integrationSourcesTable}
+            SET state='merged', provider_receipt_id=$2, merged_commit_oid=$3,
+                last_error=NULL, updated_at=now()
+          WHERE id=$1`,
+        [sourceId, input.providerRequestId, input.mergedCommitOid],
+      );
+    }
     if (input.operationId) {
       await client.query(
         `UPDATE ${host.mergeOperationsTable}
             SET state=$5, provider_request_id=$2, provider_receipt=$3::jsonb,
                 merged_commit_oid=$4, error=NULL, updated_at=now()
-          WHERE id=$1 AND state IN ('executing','unknown')`,
+          WHERE id=$1 AND state IN ('prepared','executing','unknown')`,
         [input.operationId, input.providerRequestId, JSON.stringify(input.raw), input.mergedCommitOid,
           input.reconciled ? 'reconciled' : 'succeeded'],
       );
@@ -531,24 +705,93 @@ async function finalizeMergedSource(
         [sourceId, input.providerRequestId, JSON.stringify(input.raw), input.mergedCommitOid],
       );
     }
+
     await client.query(
       `UPDATE ${host.tasksTable}
-          SET status='done', merged_commit_oid=$2, completed_at=now(),
+          SET status='done', merged_commit_oid=$2, completed_at=COALESCE(completed_at,now()),
+              workflow_epoch=workflow_epoch+1,next_action='none',next_action_revision=next_action_revision+1,
               version=version+1, updated_at=now()
-        WHERE id=$1`,
+        WHERE id=$1 AND (status<>'done' OR merged_commit_oid IS DISTINCT FROM $2)`,
       [sourceRow.delivery_task_id, input.mergedCommitOid],
     );
     await client.query(
-      `INSERT INTO ${host.changesTable}
-         (task_id, change_type, actor_type, actor_id, payload)
-       VALUES ($1,'merge.succeeded','system',$2,$3::jsonb)`,
-      [sourceRow.delivery_task_id, input.providerRequestId, JSON.stringify({
-        integrationTaskId: sourceRow.integration_task_id,
-        sourceId,
-        mergedCommitOid: input.mergedCommitOid,
-        providerRequestId: input.providerRequestId,
-      })],
+      `UPDATE ${host.tasksTable} r
+          SET status=CASE WHEN a.state='resolved' THEN 'done' ELSE 'canceled' END,
+              completed_at=now(),workflow_epoch=workflow_epoch+1,next_action='none',
+              next_action_revision=next_action_revision+1,version=r.version+1,updated_at=now()
+         FROM ${host.remediationAttemptsTable} a
+        WHERE a.integration_source_id=$1 AND r.id=a.remediation_task_id
+          AND r.status NOT IN ('done','canceled')`,
+      [sourceId],
     );
+    await client.query(
+      `UPDATE ${host.remediationAttemptsTable}
+          SET state=CASE WHEN state='resolved' THEN state ELSE 'superseded' END,
+              resolved_at=CASE WHEN state='resolved' THEN COALESCE(resolved_at,now()) ELSE resolved_at END,
+              superseded_at=CASE WHEN state<>'resolved' THEN COALESCE(superseded_at,now()) ELSE superseded_at END
+        WHERE integration_source_id=$1 AND state IN ('active','resolved')`,
+      [sourceId],
+    );
+    await client.query(
+      `UPDATE ${host.blockEpisodesTable} SET closed_at=COALESCE(closed_at,now())
+        WHERE task_id=ANY($1::text[]) AND closed_at IS NULL`,
+      [aggregateTaskIds],
+    );
+    await fenceTaskExecutions(
+      host,
+      client,
+      aggregateTaskIds.filter((id) => id !== String(sourceRow.integration_task_id)),
+      'merge_confirmed',
+    );
+
+    const remaining = await client.query(
+      `SELECT 1 FROM ${host.integrationSourcesTable}
+        WHERE integration_task_id=$1 AND state<>'merged' LIMIT 1`,
+      [sourceRow.integration_task_id],
+    );
+    if (!remaining.rows[0]) {
+      await client.query(
+        `UPDATE ${host.tasksTable}
+            SET status='done',completed_at=COALESCE(completed_at,now()),workflow_epoch=workflow_epoch+1,
+                next_action='none',next_action_revision=next_action_revision+1,version=version+1,updated_at=now()
+          WHERE id=$1 AND status<>'done'`,
+        [sourceRow.integration_task_id],
+      );
+      await client.query(
+        `UPDATE ${host.mergeAuthorizationsTable} SET revoked_at=COALESCE(revoked_at,now())
+          WHERE integration_task_id=$1 AND revoked_at IS NULL`,
+        [sourceRow.integration_task_id],
+      );
+      await client.query(
+        `UPDATE ${host.integrationLanesTable}
+            SET active_integration_task_id=NULL,lease_id=NULL,updated_at=now()
+          WHERE repository_id=$1 AND active_integration_task_id=$2`,
+        [sourceRow.repository_id, sourceRow.integration_task_id],
+      );
+      await fenceTaskExecutions(
+        host,
+        client,
+        [String(sourceRow.integration_task_id)],
+        'integration_converged',
+        input.exceptExecutionId,
+      );
+    }
+
+    if (!alreadyMerged) {
+      await client.query(
+        `INSERT INTO ${host.changesTable}
+           (task_id, change_type, actor_type, actor_id, payload)
+         VALUES ($1,'merge.succeeded.v2','system',$2,$3::jsonb)`,
+        [sourceRow.delivery_task_id, input.providerRequestId, JSON.stringify({
+          schemaVersion: 2,
+          commandId: input.providerRequestId,
+          integrationTaskId: sourceRow.integration_task_id,
+          sourceId,
+          mergedCommitOid: input.mergedCommitOid,
+          providerRequestId: input.providerRequestId,
+        })],
+      );
+    }
     const taskResult = await client.query(
       `SELECT t.*,
               (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count
@@ -575,7 +818,8 @@ async function recordMergeConflict(
       `UPDATE ${host.integrationSourcesTable}
           SET state=$2, remediation_count=remediation_count+1,
               remediation_task_id=NULL, last_error=$3, updated_at=now()
-        WHERE id=$1`,
+        WHERE id=$1 AND state<>'merged'
+          AND merged_commit_oid IS NULL AND provider_receipt_id IS NULL`,
       [sourceId, exhausted ? 'needs_human' : 'resolving_conflict', error],
     );
   });
@@ -586,20 +830,39 @@ async function markSourceForRereview(
   sourceId: string,
 ): Promise<TaskBoardIntegrationSource> {
   return withTransaction(host, async (client) => {
+    const preview = await client.query(
+      `SELECT delivery_task_id FROM ${host.integrationSourcesTable} WHERE id=$1`,
+      [sourceId],
+    );
+    if (!preview.rows[0]) throw new TaskboardNotFoundError('Integration source not found');
+    // Global lock order: Task -> Source. This matches merge finalization and avoids TASK-69 deadlocks.
+    await client.query(
+      `SELECT id FROM ${host.tasksTable} WHERE id=$1 FOR UPDATE`,
+      [preview.rows[0].delivery_task_id],
+    );
     const result = await client.query(
       `UPDATE ${host.integrationSourcesTable}
           SET state='re_reviewing', last_error='Pull request subject changed after review', updated_at=now()
-        WHERE id=$1
+        WHERE id=$1 AND state<>'merged'
+          AND merged_commit_oid IS NULL AND provider_receipt_id IS NULL
         RETURNING *`,
       [sourceId],
     );
-    const row = result.rows[0];
-    if (!row) throw new TaskboardNotFoundError('Integration source not found');
+    let row = result.rows[0];
+    if (!row) {
+      const current = await client.query(
+        `SELECT * FROM ${host.integrationSourcesTable} WHERE id=$1`,
+        [sourceId],
+      );
+      row = current.rows[0];
+      if (!row) throw new TaskboardNotFoundError('Integration source not found');
+      return rowToSource(row);
+    }
     await client.query(
       `UPDATE ${host.tasksTable}
           SET status='in_review', reviewed_subject_digest=NULL,
               version=version+1, updated_at=now()
-        WHERE id=$1 AND status IN ('ready_to_merge','done')`,
+        WHERE id=$1 AND status='ready_to_merge' AND merged_commit_oid IS NULL`,
       [row.delivery_task_id],
     );
     await client.query(
@@ -622,12 +885,18 @@ async function updateSourceState(
     const result = await client.query(
       `UPDATE ${host.integrationSourcesTable}
           SET state=$2, last_error=$3, updated_at=now()
-        WHERE id=$1
+        WHERE id=$1 AND state<>'merged'
+          AND merged_commit_oid IS NULL AND provider_receipt_id IS NULL
         RETURNING *`,
       [sourceId, state, error ?? null],
     );
-    if (!result.rows[0]) throw new TaskboardNotFoundError('Integration source not found');
-    return rowToSource(result.rows[0]);
+    if (result.rows[0]) return rowToSource(result.rows[0]);
+    const current = await client.query(
+      `SELECT * FROM ${host.integrationSourcesTable} WHERE id=$1`,
+      [sourceId],
+    );
+    if (!current.rows[0]) throw new TaskboardNotFoundError('Integration source not found');
+    return rowToSource(current.rows[0]);
   });
 }
 

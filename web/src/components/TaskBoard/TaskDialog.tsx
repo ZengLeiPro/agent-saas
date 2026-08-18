@@ -1,12 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import {
   TASKBOARD_PRIORITIES,
-  TASKBOARD_STATUSES,
   type ModelList,
   type TaskBoardPriority,
   type TaskBoardStatus,
   type TaskBoardTaskCreateInput,
 } from "@agent/shared";
+import type { TaskBoardTaskKind } from "@agent/shared/types/taskboard";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -32,6 +32,8 @@ import { PRIORITY_LABELS, STATUS_LABELS } from "./constants";
 import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, toTaskBoardAttachments } from "./TaskAttachments";
 
+const CREATE_TASK_STATUSES = ["backlog", "todo", "in_progress"] as const satisfies readonly TaskBoardStatus[];
+
 function createClientRequestId(): string {
   return `task-dialog-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -55,6 +57,7 @@ export function TaskDialog({
 }: TaskDialogProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [kind, setKind] = useState<Extract<TaskBoardTaskKind, "delivery" | "advisory">>("delivery");
   const [branch, setBranch] = useState("");
   const [status, setStatus] = useState<TaskBoardStatus>("backlog");
   const [priority, setPriority] = useState<TaskBoardPriority>("none");
@@ -69,8 +72,11 @@ export function TaskDialog({
     if (!open) return;
     setTitle("");
     setDescription("");
+    setKind("delivery");
     setBranch("");
-    setStatus(initialStatus);
+    setStatus(CREATE_TASK_STATUSES.includes(initialStatus as (typeof CREATE_TASK_STATUSES)[number])
+      ? initialStatus
+      : "backlog");
     setPriority("none");
     setDispatch(false);
     setClientRequestId(createClientRequestId());
@@ -90,13 +96,18 @@ export function TaskDialog({
       setError("请输入任务标题");
       return;
     }
+    if (status === "in_progress" && !dispatch) {
+      setError("创建为实施中时必须勾选“直接执行”");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
       await onCreate({
         title: normalizedTitle,
         description: description.trim(),
-        ...(branch.trim() ? { branch: branch.trim() } : {}),
+        kind,
+        ...(kind === "delivery" && branch.trim() ? { branch: branch.trim() } : {}),
         ...(attachments.uploadedFiles.length
           ? { attachments: toTaskBoardAttachments(attachments.uploadedFiles) }
           : {}),
@@ -129,6 +140,24 @@ export function TaskDialog({
         </DialogHeader>
         <form id="taskboard-task-form" className="space-y-4" onSubmit={submit}>
           <div className="space-y-2">
+            <Label>任务类型</Label>
+            <Select
+              value={kind}
+              onValueChange={(value) => {
+                const nextKind = value as Extract<TaskBoardTaskKind, "delivery" | "advisory">;
+                setKind(nextKind);
+                if (nextKind === "advisory") setBranch("");
+              }}
+              disabled={submitting}
+            >
+              <SelectTrigger aria-label="任务类型"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="delivery">交付变更（需 PR、复核与集成）</SelectItem>
+                <SelectItem value="advisory">答复与分析（不实施变更）</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
             <Label htmlFor="taskboard-task-title">
               标题 <span className="text-destructive" aria-hidden="true">*</span>
             </Label>
@@ -154,17 +183,26 @@ export function TaskDialog({
             />
             <TaskAttachmentField upload={attachments} disabled={submitting} />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="taskboard-task-branch">工作分支</Label>
-            <Input
-              id="taskboard-task-branch"
-              value={branch}
-              onChange={(event) => setBranch(event.target.value)}
-              placeholder="例如 task/TASK-32-optimize-board"
-              disabled={submitting}
-            />
-            <p className="text-xs text-muted-foreground">可先留空，由 Agent 创建或确认分支后回写。</p>
-          </div>
+          {kind === "delivery" ? (
+            <div className="space-y-2">
+              <Label htmlFor="taskboard-task-branch">工作分支</Label>
+              <Input
+                id="taskboard-task-branch"
+                value={branch}
+                onChange={(event) => setBranch(event.target.value)}
+                placeholder="例如 task/TASK-32-optimize-board"
+                disabled={submitting}
+              />
+              <p className="text-xs text-muted-foreground">可先留空，由 Agent 创建或确认分支后回写。</p>
+            </div>
+          ) : (
+            <p className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+              答复与分析任务不会创建分支、PR、复核或集成。
+            </p>
+          )}
+          {kind === "delivery" && /仅回答|不实施|无需修改/.test(description) ? (
+            <p role="alert" className="text-xs text-amber-700">正文看起来要求不实施；请确认是否应选择“答复与分析”。</p>
+          ) : null}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>状态</Label>
@@ -179,7 +217,7 @@ export function TaskDialog({
               >
                 <SelectTrigger aria-label="新任务状态"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {TASKBOARD_STATUSES.map((value) => (
+                  {CREATE_TASK_STATUSES.map((value) => (
                     <SelectItem key={value} value={value}>{STATUS_LABELS[value]}</SelectItem>
                   ))}
                 </SelectContent>

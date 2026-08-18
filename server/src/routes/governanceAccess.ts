@@ -82,6 +82,7 @@ export function createGovernanceAccessRouter(deps: {
   getMemberProfile?: (tenantId: string, userId: string) => {
     userId: string; username: string; displayName: string; position?: string;
     accountStatus: 'active' | 'disabled'; dingtalkBound: boolean; createdAt: string; updatedAt: string;
+    debugMode?: boolean; debugModeAvailable?: boolean;
   } | null;
   getMemberBudgetOverview?: (tenantId: string, userId: string) => Promise<BillingMemberBudgetOverview>;
   createTenant?: (input: { id: string; name: string; createdBy: string }) => Promise<{

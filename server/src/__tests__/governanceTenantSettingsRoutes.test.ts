@@ -82,6 +82,32 @@ describe('governed tenant settings routes', () => {
     }), NOW);
   });
 
+  it('平台管理员可授权目标组织使用调试模式', async () => {
+    const test = await rig({ platformAdmin: true });
+    const settings = structuredClone(DEFAULT_TENANT_SETTINGS);
+    settings.features.debugModeAllowed = true;
+    const response = await test.request('/api/governance/access/tenant-settings?tenantId=tenant-a', json('PUT', {
+      settings,
+      expectedUpdatedAt: NOW,
+    }));
+    expect(response.status).toBe(200);
+    expect(test.updateTenantSettings).toHaveBeenCalledWith('tenant-a', expect.objectContaining({
+      features: expect.objectContaining({ debugModeAllowed: true, debugModeEnabled: false }),
+    }), NOW);
+  });
+
+  it('组织管理员不能越权开启平台调试模式授权', async () => {
+    const test = await rig();
+    const settings = structuredClone(DEFAULT_TENANT_SETTINGS);
+    settings.features.debugModeAllowed = true;
+    const response = await test.request('/api/governance/access/tenant-settings', json('PUT', {
+      settings,
+      expectedUpdatedAt: NOW,
+    }));
+    expect(response.status).toBe(403);
+    expect(test.updateTenantSettings).not.toHaveBeenCalled();
+  });
+
   it('拒绝组织管理员修改平台专属配额', async () => {
     const test = await rig();
     const settings = structuredClone(DEFAULT_TENANT_SETTINGS);

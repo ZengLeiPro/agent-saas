@@ -38,6 +38,12 @@ export async function updateTaskBranchFromExecution(
   branch: string | null,
 ): Promise<TaskBoardTask> {
   return withActiveExecutionTask(options, identity, runId, async (client, task) => {
+    if (task.kind === 'advisory') {
+      throw new TaskboardValidationError(
+        'Advisory tasks cannot carry a repository branch',
+        'TASKBOARD_ADVISORY_REPOSITORY_FORBIDDEN',
+      );
+    }
     await client.query(
       `UPDATE ${options.tasksTable}
           SET branch=$2, version=version+1, updated_at=now()
@@ -61,6 +67,12 @@ export async function createTaskFromExecution(
   input: TaskBoardTaskCreateInput,
 ): Promise<TaskBoardTask> {
   return withActiveExecutionTask(options, identity, runId, async (client, currentTask) => {
+    if (currentTask.kind === 'advisory') {
+      throw new TaskboardValidationError(
+        'Advisory executions cannot create workflow follow-up tasks',
+        'TASKBOARD_ADVISORY_CAPABILITY_FORBIDDEN',
+      );
+    }
     if (input.status !== undefined && input.status !== 'todo') {
       throw new TaskboardValidationError('Taskboard Execution may only create todo follow-up tasks');
     }
@@ -164,10 +176,12 @@ async function withActiveExecutionTask<T>(
       throw new TaskboardValidationError('Archived taskboard resources are read-only');
     }
     const executionResult = await client.query(
-      `SELECT status FROM ${options.executionsTable} WHERE run_id=$1 FOR UPDATE`,
+      `SELECT status,resolved_at,superseded_at FROM ${options.executionsTable} WHERE run_id=$1 FOR UPDATE`,
       [runId],
     );
-    if (!executionResult.rows[0] || !ACTIVE_EXECUTION_STATUSES.includes(String(executionResult.rows[0].status))) {
+    if (!executionResult.rows[0]
+      || executionResult.rows[0].resolved_at || executionResult.rows[0].superseded_at
+      || !ACTIVE_EXECUTION_STATUSES.includes(String(executionResult.rows[0].status))) {
       throw new TaskboardValidationError(
         'Taskboard execution is no longer active',
         'TASKBOARD_EXECUTION_INACTIVE',

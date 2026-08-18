@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 
 import { requireText } from './storeHelpers.js';
+import { loadWorkflowFacts } from './workflow/commandService.js';
 import {
   TaskboardValidationError,
   type TaskboardContinuationDispatch,
@@ -13,6 +14,8 @@ export interface TaskboardContinuationOutboxHost {
   boardsTable: string;
   tasksTable: string;
   commentsTable: string;
+  integrationSourcesTable: string;
+  remediationAttemptsTable: string;
   continuationOutboxTable: string;
 }
 
@@ -132,7 +135,7 @@ export async function enqueueContinuation(
         [ownership.rows[0].board_id],
       );
       const writable = await client.query(
-        `SELECT t.archived_at, b.archived_at AS board_archived_at
+        `SELECT t.id,t.merged_commit_oid,t.archived_at, b.archived_at AS board_archived_at
            FROM ${host.tasksTable} t JOIN ${host.boardsTable} b ON b.id=t.board_id
           WHERE t.id=$1 FOR UPDATE OF t`,
         [taskId],
@@ -143,6 +146,13 @@ export async function enqueueContinuation(
       if (writable.rows[0]?.archived_at) {
         throw new TaskboardValidationError('Archived tasks are read-only', 'TASKBOARD_TASK_ARCHIVED');
       }
+      const facts = await loadWorkflowFacts(host, client, {
+        id: taskId,
+        ...(writable.rows[0]?.merged_commit_oid
+          ? { mergedCommitOid: String(writable.rows[0].merged_commit_oid) }
+          : {}),
+      });
+      if (facts.hasMergeFact) return false;
       const claimed = await client.query(
         `UPDATE ${host.commentsTable}
             SET continuation_run_id=$3, updated_at=now()
@@ -172,6 +182,25 @@ export async function claimContinuationDispatch(
   runId: string | undefined,
   leaseId: string,
 ): Promise<TaskboardContinuationDispatch | null> {
+  // Absorb queued continuations when an irreversible provider merge fact wins before dispatch.
+  await host.pool.query(
+    `UPDATE ${host.continuationOutboxTable} o
+        SET status='completed',lease_id=NULL,lease_expires_at=NULL,updated_at=now()
+       FROM ${host.tasksTable} t
+      WHERE o.task_id=t.id AND o.status<>'completed'
+        AND (t.merged_commit_oid IS NOT NULL
+          OR EXISTS (
+            SELECT 1 FROM ${host.integrationSourcesTable} s
+             WHERE s.delivery_task_id=t.id
+               AND (s.state='merged' OR s.merged_commit_oid IS NOT NULL OR s.provider_receipt_id IS NOT NULL)
+          )
+          OR EXISTS (
+            SELECT 1 FROM ${host.integrationSourcesTable} s
+             WHERE s.integration_task_id=t.id
+             GROUP BY s.integration_task_id
+            HAVING bool_and(s.state='merged' OR s.merged_commit_oid IS NOT NULL OR s.provider_receipt_id IS NOT NULL)
+          ))`,
+  );
   const result = await host.pool.query(
     `WITH candidate AS (
        SELECT o.run_id

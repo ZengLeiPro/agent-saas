@@ -5,6 +5,7 @@ import type {
   TaskBoardExecutionPurpose,
   TaskBoardExecutionStartInput,
   TaskBoardExecutionStartResult,
+  TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import { resolveExecutionTarget, type ExecutionConfig } from '../runtime/executionConfig.js';
 import { RunCreateConflictError, type RunRecord, type RunStore } from '../runtime/runStore.js';
@@ -77,7 +78,7 @@ export interface TaskboardExecutionCoordinatorOptions extends TaskboardSessionGr
   scheduler: Pick<RuntimeScheduler,
     'enqueue' | 'enqueueCreateOnly' | 'stagePendingRun' | 'activateCreatedRun' | 'cancelPendingTaskboardRun'
   >;
-  runStore: Pick<RunStore, 'get'>;
+  runStore: Pick<RunStore, 'get'> & Partial<Pick<RunStore, 'markStatus' | 'markStatusIfCurrent'>>;
   sessionCatalog: SessionCatalog;
   eventStore: EventStore;
   agentCwd: string;
@@ -150,9 +151,9 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     taskId: string,
     expectedVersion: number,
   ): Promise<TaskBoardExecutionStartResult> {
-    return this.startExecutionInternal(identity, taskId, { expectedVersion }, {
-      allowWorkFromCurrentStatus: true,
+    return this.startExecutionInternal(identity, taskId, { expectedVersion, purpose: 'work' }, {
       executionId: `direct-${taskId}`,
+      trigger: 'initial',
     });
   }
 
@@ -160,6 +161,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     identity: TaskboardIdentity, taskId: string, commentId: string,
   ): Promise<TaskBoardExecutionStartResult> {
     const context = await this.options.store.getContinuationContext(identity, taskId, commentId);
+    assertContinuationAllowed(context.task, context.activeExecution);
     const pendingCommentIds = context.pendingComments.map((comment) => comment.id);
     if (context.continuationExecution) {
       return { task: context.task, execution: context.continuationExecution };
@@ -205,11 +207,12 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     }
     if (!context.activeExecution && !context.continuationRunId && !context.hasActiveContinuation) {
       try {
+        const purpose = continuationPurpose(context.task);
         return await this.startExecutionInternal(
           identity,
           taskId,
-          { expectedVersion: context.task.version },
-          { allowWorkFromCurrentStatus: true, executionId: commentId },
+          { expectedVersion: context.task.version, purpose },
+          { executionId: commentId, trigger: 'comment' },
         );
       } catch (error) {
         if (!(error instanceof TaskboardValidationError) || error.code !== 'TASKBOARD_EXECUTION_ACTIVE') throw error;
@@ -219,7 +222,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
 
     const targetExecution = context.activeExecution ?? context.latestExecution;
     if (!targetExecution) throw new TaskboardExecutionUnavailableError('任务没有可复用的执行会话');
-    const launch = await this.resolveLaunch(identity, taskId);
+    const launch = await this.resolveLaunch(identity, taskId, targetExecution.purpose);
     const session = await reuseTaskboardSession({
       sessionCatalog: this.options.sessionCatalog,
       agentCwd: this.options.agentCwd,
@@ -284,7 +287,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     identity: TaskboardIdentity,
     taskId: string,
     input: TaskBoardExecutionStartInput,
-    options: { allowWorkFromCurrentStatus?: boolean; executionId?: string } = {},
+    options: { executionId?: string; trigger?: 'initial' | 'comment' | 'resume' | 'retry' } = {},
   ): Promise<TaskBoardExecutionStartResult> {
     const claim = await this.prepareExecutionClaim(identity, taskId, input, options);
     const claimed = await this.options.store.claimExecution(identity, taskId, claim);
@@ -296,7 +299,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     identity: TaskboardIdentity,
     taskId: string,
     input: TaskBoardExecutionStartInput,
-    options: { allowWorkFromCurrentStatus?: boolean; executionId?: string } = {},
+    options: { executionId?: string; trigger?: 'initial' | 'comment' | 'resume' | 'retry' } = {},
   ): Promise<TaskboardExecutionClaimInput> {
     const launch = await this.resolveLaunch(identity, taskId, input.purpose);
     const purpose = input.purpose ?? (launch.modelContext.taskKind === 'integration' ? 'merge' : 'work');
@@ -357,10 +360,9 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       executionId,
       sessionId,
       runId,
-      trigger: 'initial',
+      trigger: options.trigger ?? 'initial',
       protocolVersion: 2,
       ...(launch.modelContext.policyRevision ? { policyRevision: launch.modelContext.policyRevision } : {}),
-      ...(options.allowWorkFromCurrentStatus ? { allowWorkFromCurrentStatus: true } : {}),
       ...(launch.explicitModelRef ? { configuredModelRef: launch.explicitModelRef } : {}),
       executionOwnerUserId: launch.executionIdentity.ownerUserId,
       dispatch: { version: 1, session, run },
@@ -408,6 +410,36 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
   }
 
   async reconcile(): Promise<void> {
+    const cancellations = await this.options.store.claimWorkflowCancellations?.(20) ?? [];
+    for (const cancellation of cancellations) {
+      try {
+        if (this.options.runStore.markStatusIfCurrent) {
+          await this.options.runStore.markStatusIfCurrent(
+            cancellation.runId,
+            ['pending', 'running', 'waiting_user', 'waiting_approval'],
+            'cancelled',
+            cancellation.reason,
+            { taskboardWorkflowFenced: true },
+          );
+        } else if (this.options.runStore.markStatus) {
+          await this.options.runStore.markStatus(
+            cancellation.runId,
+            'cancelled',
+            cancellation.reason,
+            { taskboardWorkflowFenced: true },
+          );
+        } else {
+          throw new Error('RunStore cancellation is unavailable');
+        }
+        await this.options.store.finishWorkflowCancellation?.(cancellation.id);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await this.options.store.finishWorkflowCancellation?.(cancellation.id, message);
+        this.options.logger?.warn(
+          `Taskboard workflow cancellation failed: run=${cancellation.runId} error=${message}`,
+        );
+      }
+    }
     await this.options.store.reconcileMergeOperationsV2?.(20);
     const integrationCandidates = await this.options.store.claimIntegrationDispatchCandidatesV2?.(10) ?? [];
     for (const candidate of integrationCandidates) {
@@ -865,6 +897,33 @@ function finalAssistantText(events: PlatformEvent[], runId: string, sessionId: s
     if (content) return content;
   }
   return '';
+}
+
+function assertContinuationAllowed(task: TaskBoardTask, activeExecution?: TaskBoardExecution): void {
+  if (task.status === 'done' || task.status === 'canceled' || task.mergedCommitOid) {
+    throw new TaskboardValidationError(
+      '已完成、已取消或已合并任务不能继续派发',
+      'TASKBOARD_TERMINAL_EXECUTION_FORBIDDEN',
+    );
+  }
+  if (task.status === 'blocked') {
+    throw new TaskboardValidationError('阻塞任务需要显式恢复后才能继续', 'TASKBOARD_RESUME_REQUIRED');
+  }
+  if (task.kind === 'integration' && activeExecution && activeExecution.purpose !== 'merge') {
+    throw new TaskboardValidationError(
+      '集成任务只能继续 merge execution',
+      'TASKBOARD_INTEGRATION_PURPOSE_INVALID',
+    );
+  }
+}
+
+function continuationPurpose(task: TaskBoardTask): TaskBoardExecutionPurpose {
+  assertContinuationAllowed(task);
+
+  if (task.kind === 'integration') return 'merge';
+  if (task.status === 'in_review') return 'review';
+  if (task.status === 'todo') return 'work';
+  throw new TaskboardValidationError('当前任务状态不允许从评论创建新执行', 'TASKBOARD_EXECUTION_STATUS_INVALID');
 }
 
 function limitComment(value: string): string {

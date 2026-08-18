@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { PgEntitlementStore } from '../data/entitlements/index.js';
-import { TENANT_POLICY_KEYS, type TenantPolicyKey } from '../data/entitlements/types.js';
+import { isOrganizationEditableTenantPolicyKey, TENANT_POLICY_KEYS, type TenantPolicyKey } from '../data/entitlements/types.js';
 import { governanceDigest } from '../data/governance-audit/index.js';
 import type { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
 
@@ -53,6 +53,9 @@ export function registerGovernanceOrganizationAccessRoutes(options: {
     if (!parsed.success || !(TENANT_POLICY_KEYS as readonly string[]).includes(req.params.policyKey)) {
       return res.status(400).json({ error: 'Invalid request' });
     }
+    if (!isOrganizationEditableTenantPolicyKey(req.params.policyKey)) {
+      return res.status(403).json({ error: 'Policy is managed by the platform' });
+    }
     const tenantId = options.tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
     const current = (await options.entitlements.getPolicies(tenantId))
@@ -87,6 +90,9 @@ export function registerGovernanceOrganizationAccessRoutes(options: {
     const parsed = policyCommitSchema.safeParse(req.body);
     if (!parsed.success || !(TENANT_POLICY_KEYS as readonly string[]).includes(req.params.policyKey)) {
       return res.status(400).json({ error: 'Invalid request' });
+    }
+    if (!isOrganizationEditableTenantPolicyKey(req.params.policyKey)) {
+      return res.status(403).json({ error: 'Policy is managed by the platform' });
     }
     const tenantId = options.tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });

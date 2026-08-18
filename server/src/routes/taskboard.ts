@@ -138,7 +138,7 @@ const attachmentsSchema = z.array(attachmentSchema).max(50);
 const taskCreateSchema = z.object({
   title: z.string().trim().min(1).max(240),
   description: z.string().max(20_000).optional(),
-  kind: z.enum(TASKBOARD_TASK_KINDS).optional(),
+  kind: z.enum(['delivery', 'advisory']).optional(),
   branch: z.string().trim().min(1).max(512).optional(),
   attachments: attachmentsSchema.optional(),
   status: z.enum(TASKBOARD_STATUSES).optional(),
@@ -217,6 +217,12 @@ const integrationCancelSchema = z.object({
   reason: z.string().trim().min(1).max(2_000).optional(),
 }).strict();
 
+const taskResumeSchema = z.object({
+  expectedVersion: z.number().int().min(1),
+  decision: z.string().trim().min(1).max(2_000),
+  sourceIds: z.array(z.string().trim().min(1).max(128)).max(100).optional(),
+}).strict();
+
 const executionContextSchema = z.object({
   include: z.array(z.enum(['task', 'board', 'comments', 'executions', 'activity', 'integrationSources'] as const))
     .max(6).optional(),
@@ -248,6 +254,7 @@ const tasksQuerySchema = z.object({
   includeArchived: booleanQuerySchema(),
   search: z.string().trim().max(500).optional(),
   status: enumListQuerySchema(TASKBOARD_STATUSES),
+  kind: enumListQuerySchema(TASKBOARD_TASK_KINDS),
   priority: enumListQuerySchema(TASKBOARD_PRIORITIES),
 }).strict();
 
@@ -257,6 +264,7 @@ const taskSearchQuerySchema = z.object({
   includeArchived: booleanQuerySchema(),
   search: z.string().trim().max(500).optional(),
   status: enumListQuerySchema(TASKBOARD_STATUSES),
+  kind: enumListQuerySchema(TASKBOARD_TASK_KINDS),
   priority: enumListQuerySchema(TASKBOARD_PRIORITIES),
   labels: stringListQuerySchema(20),
   creatorUserId: z.string().trim().min(1).max(128).optional(),
@@ -379,6 +387,7 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       includeArchived: query.includeArchived,
       ...(query.search ? { search: query.search } : {}),
       ...(query.status?.length ? { statuses: query.status } : {}),
+      ...(query.kind?.length ? { kinds: query.kind } : {}),
       ...(query.priority?.length ? { priorities: query.priority } : {}),
     }));
   }));
@@ -415,6 +424,7 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       includeArchived: query.includeArchived,
       search: query.search,
       statuses: query.status,
+      kinds: query.kind,
       priorities: query.priority,
       labels: query.labels,
       creatorUserId: query.creatorUserId,
@@ -508,6 +518,13 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     const input = parseOrReply(executionContextSchema, req.body ?? {}, res, 'body');
     if (!input) return;
     res.json(await options.service!.getExecutionContextV2(identityFrom(req), req.params.id, input));
+  }));
+
+  router.post('/tasks/:id/resume', route(async (req, res) => {
+    if (!options.service!.resumeBlockedTask) throw new TaskboardExecutionUnavailableError();
+    const input = parseOrReply(taskResumeSchema, req.body, res, 'body');
+    if (!input) return;
+    res.json(await options.service!.resumeBlockedTask(identityFrom(req), req.params.id, input));
   }));
 
   router.post('/tasks/:id/integration-cancel', route(async (req, res) => {

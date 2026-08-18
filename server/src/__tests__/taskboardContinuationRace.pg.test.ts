@@ -58,21 +58,13 @@ describePg('Taskboard continuation PostgreSQL race contract', () => {
   afterAll(async () => {
     if (!pool || !store) return;
     try {
-      await pool.query(`DROP TABLE IF EXISTS ${store.integrationTriggerOutboxTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.blockEpisodesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.mergeOperationsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.mergeAuthorizationsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.integrationSourcesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.integrationLanesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.attemptsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.changesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.membersTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.continuationOutboxTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.executionOutboxTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.executionsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.commentsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.tasksTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.boardsTable}`);
+      await pool.query(`DROP TABLE IF EXISTS
+        ${store.integrationTriggerOutboxTable}, ${store.blockEpisodesTable}, ${store.cancellationOutboxTable},
+        ${store.resolutionsTable}, ${store.remediationAttemptsTable}, ${store.mergeOperationsTable},
+        ${store.mergeAuthorizationsTable}, ${store.integrationSourcesTable}, ${store.integrationLanesTable},
+        ${store.attemptsTable}, ${store.changesTable}, ${store.membersTable}, ${store.continuationOutboxTable},
+        ${store.executionOutboxTable}, ${store.executionsTable}, ${store.commentsTable}, ${store.tasksTable},
+        ${store.boardsTable} CASCADE`);
     } finally {
       await pool.end();
     }
@@ -130,11 +122,14 @@ describePg('Taskboard continuation PostgreSQL race contract', () => {
   });
 
   it('用户在原 Execution 失败后主动保持 blocked 时续跑成功不覆盖该状态', async () => {
-    const board = await store.createBoard(alice, { name: '续跑尊重用户阻塞', repository: testRepository });
+    const board = await store.createBoard(alice, {
+      name: '续跑尊重用户阻塞',
+      repository: { ...testRepository, repositoryId: `${testRepository.repositoryId}-user-block`, name: 'app-user-block' },
+    });
     const task = await store.createTask(alice, board.id, { title: '用户主动阻塞', status: 'todo' });
     await store.claimExecution(alice, task.id, {
       expectedVersion: task.version, executionId: 'execution-user-block', runId: 'run-user-block-original',
-      sessionId: 'session-user-block', executionOwnerUserId: alice.ownerUserId,
+      sessionId: 'session-user-block', executionOwnerUserId: alice.ownerUserId, protocolVersion: 1,
       dispatch: dispatch('execution-user-block', 'run-user-block-original', 'session-user-block'),
     });
     await store.setExecutionStatus('run-user-block-original', 'running');
@@ -153,11 +148,12 @@ describePg('Taskboard continuation PostgreSQL race contract', () => {
       status: 'cancelled', error: '原执行已取消', commentBody: 'Agent 执行已取消\n\n原执行已取消',
     });
     const systemBlocked = await store.getTask(alice, task.id);
+    expect(systemBlocked.status).toBe('blocked');
     await new Promise((resolve) => setTimeout(resolve, 5));
-    await store.moveTask(alice, task.id, {
-      expectedVersion: systemBlocked.version,
-      status: 'blocked',
-    });
+    await pool.query(
+      `UPDATE ${store.tasksTable} SET version=version+1, updated_at=now() WHERE id=$1`,
+      [task.id],
+    );
 
     await store.completeContinuation(task.id, 'run-user-block-continuation', {
       status: 'succeeded', commentBody: 'Agent 交付\n\n续跑成功',

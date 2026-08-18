@@ -27,7 +27,7 @@ import type {
   OutboundEvent,
   ContextUsageData,
 } from '../../types/index.js';
-import { scanBufferForPendingInteractions } from './interactionRecovery.js';
+import { notifyCrossProcessInteractionResume, scanBufferForPendingInteractions } from './interactionRecovery.js';
 import type { AgentRunDispatch, AgentRunHooks } from '../../agent/types.js';
 import type { ExecutionTargetKind } from '../../agent/toolRuntime.js';
 import { toRunModelOptions } from '../../app/models.js';
@@ -993,9 +993,7 @@ export class WebChannel implements BaseChannel {
     // 实证: 2026-07-02 会话 3adc25a5 服务重启后被 ACS sandbox 健康探测事件复活。
     if (projection.events.length === 0 && !projection.terminal) return;
     const buffer = this.eventBufferStore.get(sessionId);
-    if (!buffer) {
-      this.eventBufferStore.create(sessionId, activeEntry?.userId);
-    }
+    if (!buffer || (!buffer.completed && !buffer.userId)) this.eventBufferStore.create(sessionId, activeEntry?.userId ?? ('userId' in event && typeof event.userId === 'string' ? event.userId : undefined));
     // 终态投影跨事件去重：run_finished{error} 与 RunStore 派生的 run_state_changed{failed}
     // 来自同一个 runId 且都会 terminal=true，第二次到达直接 return 避免给前端发两次 done /
     // session_status。注意必须在 events push 之前判断,否则 buffer 仍会被脏写。
@@ -1015,6 +1013,8 @@ export class WebChannel implements BaseChannel {
         this.wsSend(ws, data, eventId ?? undefined, frameCursor);
       }
     }
+    // EventBuffer 入库后触发 resume，避免跨进程交互只在刷新时出现。
+    notifyCrossProcessInteractionResume(event, sessionId, activeEntry?.userId, this.inProcessOutboundRuns, (userId, data) => this.eventBus?.emitUser(userId, data));
     if (projection.terminal) {
       const hasDeferredStream = Array.from(this.activeStreams.entries()).some(
         ([candidateStreamId, entry]) => (

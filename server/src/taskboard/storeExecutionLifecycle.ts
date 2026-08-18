@@ -7,7 +7,9 @@ import type {
 import { finalizeExecutionForArchivedTask } from './archiveGuard.js';
 import { nextTaskColumnSortOrder } from './continuationStore.js';
 import { applyExecutionTaskCompletion, enqueueAutomaticReview } from './executionCompletion.js';
-import { resolveExecutionModelRef, resolveExecutionPurpose } from './executionFields.js';
+import { resolveExecutionModelRef } from './executionFields.js';
+import { assertExecutionRequestAllowed, isIrreversibleMerged } from './workflow/decider.js';
+import { loadWorkflowFacts } from './workflow/commandService.js';
 import {
   assertExecutionConfiguration,
   assertExpectedVersion,
@@ -43,40 +45,37 @@ export async function claimExecution(
     const loaded = await store.requireTaskWithBoard(client, identity, taskId, true);
     assertBoardRole(loaded.boardRole);
     assertWritableTask(loaded.task, loaded.boardArchivedAt);
-    const purpose = input.allowWorkFromCurrentStatus
-      ? 'work'
-      : resolveExecutionPurpose(loaded.task.status, input.purpose, loaded.task.kind);
-    assertExecutionConfiguration(
-      resolveExecutionModelRef(
-        loaded.task.model,
-        loaded.boardStageModels,
-        loaded.boardModel,
-        purpose,
-      ),
-      input.configuredModelRef,
-      loaded.boardOwnerUserId,
-      input.executionOwnerUserId,
-    );
+    const purpose = input.purpose ?? (loaded.task.kind === 'integration' ? 'merge' : 'work');
+    // Authorization and object visibility are checked above. Idempotent replay must be resolved
+    // before mutable task/workflow checks, otherwise a successful request cannot be retried after
+    // the task has advanced to blocked/done/merged.
     const duplicate = await client.query(
-      `SELECT * FROM ${store.executionsTable} WHERE id=$1 OR run_id=$2 LIMIT 1`,
+      `SELECT *, id=$1 AS id_match, run_id=$2 AS run_match
+         FROM ${store.executionsTable} WHERE id=$1 OR run_id=$2
+        ORDER BY CASE WHEN id=$1 THEN 0 ELSE 1 END`,
       [input.executionId, input.runId],
     );
+    if (duplicate.rows.length > 1) {
+      throw new TaskboardValidationError(
+        'Execution idempotency keys refer to different executions',
+        'TASKBOARD_EXECUTION_IDEMPOTENCY_CONFLICT',
+      );
+    }
     if (duplicate.rows[0]) {
       const execution = rowToExecution(duplicate.rows[0]);
-      if (execution.taskId !== taskId || execution.purpose !== purpose) {
-        throw new TaskboardValidationError('Execution idempotency key conflict');
+      if (execution.taskId !== taskId || execution.purpose !== purpose
+        || execution.requestedBy !== identity.ownerUserId) {
+        throw new TaskboardValidationError(
+          'Execution idempotency key conflict',
+          'TASKBOARD_EXECUTION_IDEMPOTENCY_CONFLICT',
+        );
       }
       return { task: loaded.task, execution };
     }
-    if (
-      loaded.task.kind !== 'integration'
-      && (purpose === 'work' || purpose === 'review')
-      && (!loaded.boardRepository || loaded.boardRepository.provider !== 'github')
-    ) {
-      throw new TaskboardValidationError(
-        'Board repository is not configured; execution cannot register pull request evidence',
-        'TASKBOARD_REPOSITORY_REQUIRED',
-      );
+    const facts = await loadWorkflowFacts(store, client, loaded.task);
+    if (loaded.task.status === 'done' || loaded.task.status === 'canceled'
+      || isIrreversibleMerged(loaded.task, facts)) {
+      assertExecutionRequestAllowed(loaded.task, purpose, { facts });
     }
     const active = await client.query(
       `SELECT 1 WHERE EXISTS (
@@ -92,6 +91,32 @@ export async function claimExecution(
       throw new TaskboardValidationError(
         'Task already has an active Agent execution',
         'TASKBOARD_EXECUTION_ACTIVE',
+      );
+    }
+    assertExecutionRequestAllowed(loaded.task, purpose, {
+      allowInitialInProgress: input.trigger === 'initial',
+      facts,
+    });
+    assertExecutionConfiguration(
+      resolveExecutionModelRef(
+        loaded.task.model,
+        loaded.boardStageModels,
+        loaded.boardModel,
+        purpose,
+      ),
+      input.configuredModelRef,
+      loaded.boardOwnerUserId,
+      input.executionOwnerUserId,
+    );
+    if (
+      loaded.task.kind !== 'integration'
+      && loaded.task.kind !== 'advisory'
+      && (purpose === 'work' || purpose === 'review')
+      && (!loaded.boardRepository || loaded.boardRepository.provider !== 'github')
+    ) {
+      throw new TaskboardValidationError(
+        'Board repository is not configured; execution cannot register pull request evidence',
+        'TASKBOARD_REPOSITORY_REQUIRED',
       );
     }
     assertExpectedVersion(loaded.task, input.expectedVersion);
@@ -158,20 +183,21 @@ export async function claimExecution(
           AND continuation_run_id IS NULL`,
       [taskId, input.runId],
     );
-    if (purpose === 'merge' && loaded.task.status === 'blocked') {
-      await client.query(
-        `UPDATE ${store.integrationSourcesTable}
-            SET state='pending', last_error=NULL, updated_at=now()
-          WHERE integration_task_id=$1 AND state='needs_human'`,
-        [taskId],
-      );
-    }
     await client.query(
       `UPDATE ${store.tasksTable}
           SET status=$2, sort_order=$3, completed_at=NULL,
+              resume_context=CASE
+                WHEN resume_context IS NOT NULL
+                  AND resume_context->>'consumedAt' IS NULL
+                  AND resume_context->>'purpose'=$4::text
+                THEN resume_context || jsonb_build_object(
+                  'consumedAt',clock_timestamp(),'consumedExecutionId',$5::text
+                )
+                ELSE resume_context
+              END,
               version=version+1, updated_at=now()
         WHERE id=$1`,
-      [taskId, runningTaskStatus, sortOrder],
+      [taskId, runningTaskStatus, sortOrder, purpose, execution.id],
     );
     await client.query(
       `UPDATE ${store.blockEpisodesTable} SET closed_at=now()
@@ -300,10 +326,8 @@ async function completeExecutionInternal(
     let hasProtocolResolution = false;
     if (currentExecution.protocolVersion === 2) {
       const resolution = await client.query(
-        `SELECT 1 FROM ${store.changesTable}
-          WHERE task_id=$1 AND change_type='execution.resolved' AND payload->>'runId'=$2
-          LIMIT 1`,
-        [taskId, runId],
+        `SELECT 1 FROM ${store.resolutionsTable} WHERE execution_id=$1 LIMIT 1`,
+        [currentExecution.id],
       );
       hasProtocolResolution = Boolean(resolution.rows[0]);
       if (input.status === 'succeeded' && !hasProtocolResolution) {
@@ -319,10 +343,13 @@ async function completeExecutionInternal(
     );
     if (archivedResult) return archivedResult;
 
+    const workflowFacts = await loadWorkflowFacts(store, client, loaded.task);
     const executionSucceeded = await applyExecutionTaskCompletion(
       store, client, identity, loaded.task, currentExecution, executionResult.rows[0].created_at, completionInput,
     );
-    if (currentExecution.protocolVersion === 2 && !hasProtocolResolution && completionInput.status === 'failed') {
+    if (currentExecution.protocolVersion === 2 && !hasProtocolResolution
+      && completionInput.status === 'failed' && !workflowFacts.hasMergeFact
+      && loaded.task.status !== 'done' && loaded.task.status !== 'canceled') {
       const retryPolicy = await client.query(
         `SELECT count(*)::int AS failed_count,
                 COALESCE((b.integration_policy->'execution'->>'maxTransientRetries')::int,3) AS max_retries

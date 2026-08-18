@@ -238,7 +238,7 @@ describe("TaskBoardView", () => {
     expect(screen.getByRole("heading", { name: "新建任务" })).toBeTruthy();
   });
 
-  it("组织看板成员可管理任务，但不能修改创建者的看板设置", async () => {
+  it("旧组织看板缺少 capabilities 时非 owner 默认只读", async () => {
     const user = userEvent.setup();
     mocks.boards = [{
       ...board("board-1", "组织协作"),
@@ -249,7 +249,7 @@ describe("TaskBoardView", () => {
     render(<TaskBoardView />);
 
     expect(await screen.findByText(/组织看板 · 当前角色：编辑者/)).toBeTruthy();
-    expect((screen.getByRole("button", { name: "新建任务" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "新建任务" }) as HTMLButtonElement).disabled).toBe(true);
     await user.click(screen.getByRole("button", { name: "看板管理" }));
     expect(screen.getByRole("menuitem", { name: "看板设置与成员" }).getAttribute("data-disabled")).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "归档看板" }).getAttribute("data-disabled")).not.toBeNull();
@@ -295,6 +295,7 @@ describe("TaskBoardView", () => {
       providerPullRequestId: "pr-1",
       pullRequestNumber: 88,
       reviewedSubjectDigest: "sha256:reviewed",
+      mergeEligibility: "eligible" as const,
     };
     const integrationTask = {
       ...taskTwo,

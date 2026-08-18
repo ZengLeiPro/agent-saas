@@ -15,6 +15,7 @@ import {
   rowToTask,
   visibleCommentPredicate,
 } from './storeHelpers.js';
+import { loadWorkflowFacts } from './workflow/commandService.js';
 import {
   TaskboardNotFoundError,
   type TaskboardContinuationContext,
@@ -33,6 +34,9 @@ export interface TaskboardContinuationStoreHost {
   commentsTable: string;
   changesTable: string;
   executionsTable: string;
+  resolutionsTable: string;
+  integrationSourcesTable: string;
+  remediationAttemptsTable: string;
   continuationOutboxTable: string;
 }
 
@@ -123,10 +127,13 @@ export async function loadContinuationContext(
     host.pool.query(
       `SELECT c.* FROM ${host.commentsTable} c
         WHERE c.task_id=$1 AND c.author_type='user' AND c.continuation_eligible=true
-          AND c.created_at <= $2::timestamptz
+          AND (c.created_at,c.id) <= (
+            SELECT boundary.created_at,boundary.id FROM ${host.commentsTable} boundary
+             WHERE boundary.id=$2 AND boundary.task_id=$1
+          )
           AND (c.continuation_run_id IS NULL OR c.continuation_run_id=$3)
         ORDER BY c.created_at, c.id`,
-      [taskId, commentResult.rows[0].created_at, continuationRunId ?? null],
+      [taskId, commentId, continuationRunId ?? null],
     ),
     host.pool.query(
       `SELECT 1 FROM ${host.continuationOutboxTable}
@@ -171,7 +178,19 @@ export function markContinuationRunning(
     if (!outbox.rows[0] || outbox.rows[0].status === 'completed'
       || outbox.rows[0].reconcile_lease_valid !== true) return loaded.task;
     assertWritableTask(loaded.task, loaded.boardArchivedAt);
-    if (loaded.task.status === 'in_progress') return loaded.task;
+    const facts = await loadWorkflowFacts(host, client, loaded.task);
+    if (loaded.task.status === 'done' || loaded.task.status === 'canceled' || facts.hasMergeFact) {
+      await markContinuationCompleted(host, client, runId);
+      return loaded.task;
+    }
+    const activeExecution = await client.query(
+      `SELECT 1 FROM ${host.executionsTable}
+        WHERE task_id=$1 AND status IN ('queued','running','waiting_user','waiting_approval')
+          AND superseded_at IS NULL LIMIT 1`,
+      [taskId],
+    );
+    // Steering an active formal Execution inherits its purpose and must not rewrite Task state.
+    if (activeExecution.rows[0] || loaded.task.status === 'in_progress') return loaded.task;
     const sortOrder = await nextTaskColumnSortOrder(
       host, client, loaded.identity, loaded.task.boardId, taskId, 'in_progress',
     );
@@ -215,7 +234,9 @@ export function completeContinuation(
   return withTransaction(host.pool, async (client) => {
     const loaded = await loadInternalTaskForUpdate(host, client, taskId);
     if (!loaded) return null;
-    if (loaded.task.archivedAt || loaded.boardArchivedAt) {
+    const facts = await loadWorkflowFacts(host, client, loaded.task);
+    if (loaded.task.archivedAt || loaded.boardArchivedAt
+      || loaded.task.status === 'done' || loaded.task.status === 'canceled' || facts.hasMergeFact) {
       await markContinuationCompleted(host, client, runId);
       return loaded.task;
     }
@@ -244,13 +265,13 @@ export function completeContinuation(
       [taskId, runId],
     );
     if (!claimed.rows[0]) return loaded.task;
-    const activeExecution = await client.query(
-      `SELECT id FROM ${host.executionsTable}
-        WHERE task_id=$1 AND status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
+    const waitingExecution = await client.query(
+      `SELECT 1 FROM ${host.executionsTable}
+        WHERE task_id=$1 AND status IN ('waiting_user','waiting_approval')
+          AND resolved_at IS NULL AND superseded_at IS NULL
         LIMIT 1`,
       [taskId],
     );
-
     const targetStatus = input.status === 'succeeded' ? 'in_review' : 'blocked';
     const blockedByExecution = input.status === 'succeeded' && loaded.task.status === 'blocked'
       ? Boolean((await client.query(
@@ -264,7 +285,7 @@ export function completeContinuation(
       )).rows[0])
       : false;
     const shouldMoveTask = loaded.task.status === 'in_progress' || blockedByExecution;
-    if (shouldMoveTask && !activeExecution.rows[0]) {
+    if (shouldMoveTask && !waitingExecution.rows[0]) {
       const sortOrder = await nextTaskColumnSortOrder(
         host,
         client,
@@ -330,13 +351,29 @@ export async function listTaskExecutions(
   identity: TaskboardIdentity,
   taskId: string,
 ): Promise<TaskBoardExecution[]> {
+  await loadAccessibleTask(host, identity, taskId);
   const result = await host.pool.query(
     `SELECT e.*,
+            r.outcome AS resolution_outcome,r.summary AS resolution_summary,
+            r.to_status AS task_status_after,r.ignored_reason,r.historical AS resolution_historical,
+            (r.execution_id IS NOT NULL) AS has_resolution,
+            legacy.candidate_count AS legacy_resolution_count,
+            legacy.valid_count AS legacy_resolution_valid_count,
             EXISTS (
               SELECT 1 FROM ${host.continuationOutboxTable} continuation
                WHERE continuation.task_id=e.task_id AND continuation.status<>'completed'
             ) AS continuation_active
        FROM ${host.executionsTable} e
+       LEFT JOIN ${host.resolutionsTable} r ON r.execution_id=e.id
+       LEFT JOIN LATERAL (
+         SELECT count(*)::int AS candidate_count,
+                count(*) FILTER (WHERE NULLIF(c.payload->>'outcome','') IS NOT NULL
+                  AND NULLIF(c.payload->>'summary','') IS NOT NULL)::int AS valid_count
+           FROM ${host.changesTable} c
+          WHERE c.task_id=e.task_id AND c.change_type IN ('execution.resolved','execution.resolved.v2')
+            AND (c.payload->>'executionId'=e.id
+              OR ((c.payload->>'executionId') IS NULL AND c.payload->>'runId'=e.run_id))
+       ) legacy ON true
        JOIN ${host.tasksTable} t ON t.id=e.task_id
        JOIN ${host.boardsTable} b ON b.id=t.board_id
       WHERE e.task_id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')

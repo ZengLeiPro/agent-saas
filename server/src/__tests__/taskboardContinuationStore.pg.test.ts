@@ -62,6 +62,9 @@ describePg('PgTaskboardStore continuation contract', () => {
     try {
       await pool.query(`DROP TABLE IF EXISTS ${store.integrationTriggerOutboxTable} CASCADE`);
       await pool.query(`DROP TABLE IF EXISTS ${store.blockEpisodesTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.cancellationOutboxTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.resolutionsTable} CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${store.remediationAttemptsTable} CASCADE`);
       await pool.query(`DROP TABLE IF EXISTS ${store.mergeOperationsTable} CASCADE`);
       await pool.query(`DROP TABLE IF EXISTS ${store.mergeAuthorizationsTable} CASCADE`);
       await pool.query(`DROP TABLE IF EXISTS ${store.integrationSourcesTable} CASCADE`);
@@ -146,7 +149,10 @@ describePg('PgTaskboardStore continuation contract', () => {
   });
 
   it('续跑先成功、原 Execution 后取消的并发顺序最终保持复核中', async () => {
-    const board = await store.createBoard(alice, { name: '续跑取消竞态', repository: testRepository });
+    const board = await store.createBoard(alice, {
+      name: '续跑取消竞态',
+      repository: { ...testRepository, repositoryId: `${testRepository.repositoryId}-race`, name: 'app-race' },
+    });
     const task = await store.createTask(alice, board.id, { title: '并发释放续跑', status: 'todo' });
     await store.claimExecution(alice, task.id, {
       expectedVersion: task.version, executionId: 'execution-race', runId: 'run-race-original',
@@ -206,7 +212,10 @@ describePg('PgTaskboardStore continuation contract', () => {
   });
 
   it('backfills legacy continuation rows once and blocks archive while continuation is active', async () => {
-    const board = await store.createBoard(alice, { name: '续跑迁移补偿', repository: testRepository });
+    const board = await store.createBoard(alice, {
+      name: '续跑迁移补偿',
+      repository: { ...testRepository, repositoryId: `${testRepository.repositoryId}-legacy`, name: 'app-legacy' },
+    });
     const task = await store.createTask(alice, board.id, { title: '迁移旧续跑', status: 'todo' });
     await store.claimExecution(alice, task.id, {
       expectedVersion: task.version,
@@ -271,7 +280,8 @@ describePg('PgTaskboardStore continuation contract', () => {
       sessionId: 'legacy-session',
       executionOwnerUserId: alice.ownerUserId,
       dispatch: dispatch('must-not-race-continuation', 'must-not-race-continuation', 'legacy-session'),
-      allowWorkFromCurrentStatus: true,
+      purpose: 'work',
+      trigger: 'initial',
     })).rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_ACTIVE' });
   });
 

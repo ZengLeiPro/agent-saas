@@ -116,7 +116,7 @@ describe('任务看板评论续跑', () => {
 
   it('并发请求抢先创建 Execution 后，失败方重读上下文并幂等复用', async () => {
     const getContinuationContext = vi.fn()
-      .mockResolvedValueOnce({ task, comment: comments[1]!, pendingComments: comments })
+      .mockResolvedValueOnce({ task: { ...task, status: 'todo' }, comment: comments[1]!, pendingComments: comments })
       .mockResolvedValueOnce({
         task,
         comment: comments[1]!,
@@ -255,7 +255,7 @@ describe('任务看板评论续跑', () => {
         if (statement.includes('ORDER BY e.created_at DESC')) {
           return { rows: Array.from({ length: 50 }, (_, index) => executionRow(index + 1)) };
         }
-        if (statement.includes('c.created_at <= $2::timestamptz')) return { rows: [commentRow] };
+        if (statement.includes('SELECT boundary.created_at,boundary.id')) return { rows: [commentRow] };
         if (statement.includes('FROM continuation_outbox')) return { rows: [] };
         throw new Error(`未处理 SQL：${statement}`);
       }),
@@ -403,7 +403,7 @@ describe('任务看板评论续跑', () => {
         if (statement.includes('SELECT t.*, b.archived_at')) return { rows: [taskRow] };
         if (statement.includes("author_type IN ('agent', 'system')")) return { rows: [] };
         if (statement.includes('continuation_run_id=$2')) return { rows: [{ id: comments[1]!.id }] };
-        if (statement.includes("status IN ('queued', 'running', 'waiting_user', 'waiting_approval')")) {
+        if (statement.includes("status IN ('waiting_user','waiting_approval')")) {
           return { rows: [{ id: activeExecution.id }] };
         }
         if (statement.includes('SELECT t.*')) return { rows: [taskRow] };

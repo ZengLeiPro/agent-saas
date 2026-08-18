@@ -81,6 +81,9 @@ describe("governance navigation registry", () => {
     expect(buildGovernanceUrl(governanceRoute("platform.org-business.tenants", {
       entityId: "tenant 1", tab: "resource-scope",
     }))).toBe("/platform-console/org-business/tenants/tenant%201/resource-scope");
+    expect(buildGovernanceUrl(governanceRoute("platform.org-business.tenants", {
+      entityId: "tenant 1", tab: "configuration",
+    }))).toBe("/platform-console/org-business/tenants/tenant%201/configuration");
     expect(buildGovernanceUrl(governanceRoute("organization.members.member", {
       orgId: "org-1", entityId: "user-1", tab: "security-audit",
     }))).toBe("/tenant-admin/members/member/user-1/security-audit?org=org-1");
@@ -114,6 +117,7 @@ describe("legacy URL canonical adapters", () => {
     ["/platform-admin/infra", "platform.runtime.infra", "/platform-console/runtime/infra"],
     ["/platform-admin/audit", "platform.governance.audit", "/platform-console/governance/audit"],
     ["/platform-admin/efficiency", "platform.runtime.efficiency", "/platform-console/runtime/efficiency"],
+    ["/platform-admin/settings/tenants", "platform.org-business.tenants", "/platform-console/org-business/tenants"],
     ["/platform-admin/settings/models", "platform.resource-center.models", "/platform-console/resource-center/models"],
     ["/platform-admin/settings/system-prompts", "platform.governance.system-prompts", "/platform-console/governance/system-prompts"],
     ["/platform-admin/settings/egress", "platform.governance.network-security", "/platform-console/governance/network-security"],
@@ -132,6 +136,7 @@ describe("legacy URL canonical adapters", () => {
     ["/tenant-admin/settings/org-agents?org=acme", "organization.agents.org-agents", "/tenant-admin/agents/org-agents?org=acme"],
     ["/tenant-admin/settings/mcp?org=acme", "organization.agents.connectors", "/tenant-admin/agents/connectors?org=acme"],
     ["/tenant-admin/settings/company?org=acme", "organization.settings.profile", "/tenant-admin/settings/profile?org=acme"],
+    ["/tenant-admin/settings/settings?org=acme", "organization.settings.security", "/tenant-admin/settings/security?org=acme"],
     ["/users?org=acme", "organization.members.list", "/tenant-admin/members/list?org=acme"],
     ["/skills?org=acme", "organization.agents.skills", "/tenant-admin/agents/skills?org=acme"],
   ])("%s → %s且不丢 org", (legacy, routeId, canonical) => {

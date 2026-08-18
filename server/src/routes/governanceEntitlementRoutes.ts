@@ -3,7 +3,7 @@ import type { Request, Router } from 'express';
 import { z } from 'zod';
 
 import type { PgEntitlementStore } from '../data/entitlements/index.js';
-import type { EntitlementResourceType } from '../data/entitlements/types.js';
+import { isOrganizationEditableTenantPolicyKey, type EntitlementResourceType } from '../data/entitlements/types.js';
 import { governanceDigest } from '../data/governance-audit/index.js';
 import type { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
 
@@ -109,7 +109,7 @@ export function registerGovernanceEntitlementRoutes(options: {
     }));
     const policyActions = policies.map(policy => ({
       ...policy,
-      allowedActions: persona === 'org_admin'
+      allowedActions: persona === 'org_admin' && isOrganizationEditableTenantPolicyKey(policy.policyKey)
         ? [{ id: 'edit_policy', label: '编辑组织策略', resourceType: 'tenant_policy' }]
         : [],
     }));

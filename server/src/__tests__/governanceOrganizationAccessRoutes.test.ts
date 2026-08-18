@@ -53,6 +53,8 @@ async function rig(input: {
       listMemberships: vi.fn().mockResolvedValue([actor]),
     } as never,
     entitlements: {
+      getEntitlementSet: vi.fn().mockResolvedValue(null),
+      listResourceScopes: vi.fn().mockResolvedValue([]),
       getPolicies: input.getPolicies ?? vi.fn().mockResolvedValue([]),
       updatePolicy: input.updatePolicy ?? vi.fn(),
     } as never,
@@ -96,6 +98,40 @@ describe('governance organization access routes', () => {
 
     const crossTenant = await test.request('/api/governance/access/policies/knowledge.org.enabled/preview?tenantId=tenant-b', json('POST', change));
     expect(crossTenant.status).toBe(403);
+  });
+
+  it('组织管理员不能预览或提交平台专属调试模式授权', async () => {
+    const policy = { tenantId: 'tenant-a', policyKey: 'runtime.debug_mode.allowed', value: false, source: 'legacy_projection', version: 1, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' };
+    const updatePolicy = vi.fn();
+    const test = await rig({ getPolicies: vi.fn().mockResolvedValue([policy]), updatePolicy });
+    const change = { expectedVersion: 1, value: true, reason: '尝试越权授权' };
+
+    const preview = await test.request('/api/governance/access/policies/runtime.debug_mode.allowed/preview?tenantId=tenant-a', json('POST', change));
+    expect(preview.status).toBe(403);
+    await expect(preview.json()).resolves.toMatchObject({ error: 'Policy is managed by the platform' });
+
+    const commit = await test.request('/api/governance/access/policies/runtime.debug_mode.allowed?tenantId=tenant-a', json('PUT', {
+      ...change,
+      previewId: `gpv1.${'a'.repeat(64)}`,
+      baselineDigest: 'b'.repeat(64),
+      expiresAt: '2099-01-01T00:00:00.000Z',
+    }));
+    expect(commit.status).toBe(403);
+    expect(updatePolicy).not.toHaveBeenCalled();
+  });
+
+  it('组织策略列表不向组织管理员开放平台专属授权动作', async () => {
+    const policies = [
+      { tenantId: 'tenant-a', policyKey: 'runtime.debug_mode.allowed', value: false, source: 'legacy_projection', version: 1, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' },
+      { tenantId: 'tenant-a', policyKey: 'runtime.debug_mode.enabled', value: false, source: 'legacy_projection', version: 1, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' },
+    ];
+    const test = await rig({ getPolicies: vi.fn().mockResolvedValue(policies) });
+
+    const response = await test.request('/api/governance/access/entitlements?tenantId=tenant-a');
+    expect(response.status).toBe(200);
+    const body = await response.json() as { policies: Array<{ policyKey: string; allowedActions: unknown[] }> };
+    expect(body.policies.find(policy => policy.policyKey === 'runtime.debug_mode.allowed')?.allowedActions).toEqual([]);
+    expect(body.policies.find(policy => policy.policyKey === 'runtime.debug_mode.enabled')?.allowedActions).toHaveLength(1);
   });
 
   it('记忆与知识资源端点只返回组织 Assignment 权威元数据，不含个人记忆正文', async () => {

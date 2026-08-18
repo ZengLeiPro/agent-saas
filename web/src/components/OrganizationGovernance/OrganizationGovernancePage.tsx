@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { RefreshCw, TriangleAlert, UserPlus } from "lucide-react";
 
+import { MemberDebugModeSetting, TenantDebugModeSetting } from "@/components/Governance/DebugModeSettings";
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
 import { MembershipIdentityActions } from "@/components/OrganizationGovernance/MembershipIdentityActions";
 import { MemoryKnowledgeGovernance } from "@/components/OrganizationGovernance/MemoryKnowledgeGovernance";
@@ -76,6 +77,7 @@ interface MembershipDetailsResponse {
   profile: {
     userId: string; username: string; displayName: string; position?: string;
     accountStatus: "active" | "disabled"; dingtalkBound: boolean; createdAt: string; updatedAt: string;
+    debugMode?: boolean; debugModeAvailable?: boolean;
   };
   identity: MembershipRecord;
   accessSummary: {
@@ -241,7 +243,11 @@ function OrganizationMemberDetails({ tenantId, userId, tab }: { tenantId: string
       ].map(([value, label]) => <Button key={value} id={`member-tab-${value}`} size="sm" role="tab" aria-selected={tab === value} aria-controls={`member-panel-${value}`} tabIndex={tab === value ? 0 : -1} variant={tab === value ? "default" : "outline"} onClick={() => navigateGovernance(governanceRoute("organization.members.member", { orgId: tenantId, entityId: userId, tab: value }))}>{label}</Button>)}
     </div>
     {tab === "profile" ? <div id="member-panel-profile" role="tabpanel" aria-labelledby="member-tab-profile" className="grid gap-3 sm:grid-cols-2"><Fact label="姓名" value={data.profile.displayName} /><Fact label="账号" value={data.profile.username} /><Fact label="岗位" value={data.profile.position ?? "未填写"} /><Fact label="账号状态" value={data.profile.accountStatus} /><Fact label="钉钉绑定" value={data.profile.dingtalkBound ? "已绑定" : "未绑定"} /><Fact label="目录更新时间" value={new Date(data.profile.updatedAt).toLocaleString()} /></div> : null}
-    {tab === "access" ? <div id="member-panel-access" role="tabpanel" aria-labelledby="member-tab-access" className="space-y-3"><div className="grid gap-3 sm:grid-cols-3"><Fact label="最终身份" value={personaLabel[data.accessSummary.effectivePersona]} /><Fact label="所有者" value={data.accessSummary.owner ? "是" : "否"} /><Fact label="账号判定" value={data.accessSummary.decision === "eligible" ? "可参与权限解析" : "已拒绝"} /></div><div className="rounded-xl border bg-card p-4"><div className="font-medium">为什么</div><ul className="mt-2 divide-y text-sm">{data.accessSummary.why.map((item, index) => <li key={`${item.source}-${index}`} className="flex justify-between gap-3 py-2"><span>{localizedValue(item.source, sourceLabels)}</span><span className="text-muted-foreground">{localizedValue(item.effect, effectLabels)} · v{item.version}</span></li>)}</ul></div></div> : null}
+    {tab === "access" ? <div id="member-panel-access" role="tabpanel" aria-labelledby="member-tab-access" className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-3"><Fact label="最终身份" value={personaLabel[data.accessSummary.effectivePersona]} /><Fact label="所有者" value={data.accessSummary.owner ? "是" : "否"} /><Fact label="账号判定" value={data.accessSummary.decision === "eligible" ? "可参与权限解析" : "已拒绝"} /></div>
+      <MemberDebugModeSetting userId={userId} enabled={data.profile.debugMode === true} available={data.profile.debugModeAvailable === true} onSaved={retry} />
+      <div className="rounded-xl border bg-card p-4"><div className="font-medium">为什么</div><ul className="mt-2 divide-y text-sm">{data.accessSummary.why.map((item, index) => <li key={`${item.source}-${index}`} className="flex justify-between gap-3 py-2"><span>{localizedValue(item.source, sourceLabels)}</span><span className="text-muted-foreground">{localizedValue(item.effect, effectLabels)} · v{item.version}</span></li>)}</ul></div>
+    </div> : null}
     {tab === "assignments" ? <div id="member-panel-assignments" role="tabpanel" aria-labelledby="member-tab-assignments" className="grid gap-3 md:grid-cols-2">{data.assignments.map(group => <div key={group.resourceType} className="rounded-xl border bg-card p-4"><div className="flex items-center justify-between gap-3"><span className="font-medium">{group.resourceType}</span><Badge variant="outline">{group.resources.length} 项</Badge></div>{group.resources.length ? <ul className="mt-3 divide-y text-xs">{group.resources.map(resource => <li key={resource.resourceId} className="py-2"><div className="flex items-center justify-between gap-2"><span className="font-mono">{resource.resourceId}</span><Badge variant="secondary">最终允许</Badge></div><div className="mt-1 text-muted-foreground">Assignment v{resource.assignmentVersion}</div><ul className="mt-2 space-y-1">{resource.bindings.map(binding => <li key={binding.assignmentId}>{binding.assigneeType}{binding.assigneeId ? `:${binding.assigneeId}` : ""} → {binding.effect}（{binding.origin}）</li>)}</ul></li>)}</ul> : <div className="mt-3 text-sm text-muted-foreground">无有效指派</div>}</div>)}</div> : null}
     {tab === "usage-policy" ? data.usagePolicy.status === "unavailable" ? <Empty text="用量策略权威暂不可用。" /> : memberUsage ? <div className="grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-4"><Fact label="统计周期" value={shanghaiNaturalMonth(data.usagePolicy.periodStart)} /><Fact label="成员本月已归属用量" value={String(memberUsage.monthAttributedCreditsMicro)} /><Fact label="个人月限额" value={memberUsage.monthlyLimitCreditsMicro === undefined ? "不限制" : String(memberUsage.monthlyLimitCreditsMicro)} /><Fact label="允许启动" value={memberUsage.canStartRun ? "是" : "否"} /></div> : <Empty text="当前成员的月用量明细不可用。" /> : null}
     {tab === "security-audit" ? <div id="member-panel-security-audit" role="tabpanel" aria-labelledby="member-tab-security-audit" className="space-y-3"><div className="text-xs text-muted-foreground">覆盖范围：最近 {data.recentAudit.limit} 条组织治理审计中的 Membership 端点事件</div>{data.recentAudit.events.length ? data.recentAudit.events.map(event => <div key={event.auditId} className="rounded-xl border bg-card p-4 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{event.action}</span><Badge variant="outline">{event.result}</Badge></div><div className="mt-2 text-xs text-muted-foreground">{new Date(event.occurredAt).toLocaleString()} · 操作人 {event.actorUserId}</div>{event.reason ? <div className="mt-2">原因：{event.reason}</div> : null}</div>) : <Empty text="当前覆盖窗口内没有成员治理记录。" />}</div> : null}
@@ -457,9 +463,11 @@ export function OrganizationPoliciesPage({ tenantId }: { tenantId: string }) {
   const { data, loading, error, retry } = useGovernanceRequest(request, `policies:${tenantId}`);
   if (loading) return <Loading />;
   if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
+  const policies = (data?.policies ?? []).filter(policy => policy.policyKey !== "runtime.debug_mode.allowed" && policy.policyKey !== "runtime.debug_mode.enabled");
   return <div><SectionTitle title="权限策略" description="平台权益只读；组织策略逐项显示继承、允许或禁止，并通过版本化 preview → commit 留下审计回执。" />
     <div className="rounded-xl border bg-card p-4"><div className="font-medium">平台权益</div><div className="mt-2 text-sm">状态：{data?.entitlement ? localizedValue(data.entitlement.status) : "未配置"}</div><div className="mt-1 text-xs text-muted-foreground">来源：{data?.entitlement ? localizedValue(data.entitlement.source, sourceLabels) : "—"} · v{data?.entitlement?.version ?? 0}</div></div>
-    <div className="mt-4 rounded-xl border bg-card p-4"><div className="font-medium">组织策略</div>{data?.policies.length ? <ul className="mt-2 divide-y">{data.policies.map(policy => <PolicyEditor key={`${policy.policyKey}:${policy.version}`} tenantId={tenantId} policy={policy} onCommitted={retry} />)}</ul> : <Empty text="权威策略表当前为空。" />}</div>
+    <div className="mt-4"><TenantDebugModeSetting tenantId={tenantId} level="organization" /></div>
+    <div className="mt-4 rounded-xl border bg-card p-4"><div className="font-medium">组织策略</div>{policies.length ? <ul className="mt-2 divide-y">{policies.map(policy => <PolicyEditor key={`${policy.policyKey}:${policy.version}`} tenantId={tenantId} policy={policy} onCommitted={retry} />)}</ul> : <Empty text="权威策略表当前为空。" />}</div>
   </div>;
 }
 

@@ -2,11 +2,13 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { governanceRoute } from "@/lib/governanceNavigation";
+import { DEFAULT_TENANT_SETTINGS } from "@/components/TenantManager/types";
 import { PlatformOrganizationGovernance } from "./PlatformGovernancePage";
 
 const mocks = vi.hoisted(() => ({
   getEntitlements: vi.fn(), listResourceCatalog: vi.fn(), previewScope: vi.fn(), updateScope: vi.fn(),
   getTenantLifecycle: vi.fn(), previewTenantLifecycle: vi.fn(), updateTenantLifecycle: vi.fn(),
+  getTenantSettings: vi.fn(), updateTenantSettings: vi.fn(),
 }));
 vi.mock("@agent/shared/lib/governanceApi", () => ({
   governanceAccessApi: {
@@ -16,6 +18,8 @@ vi.mock("@agent/shared/lib/governanceApi", () => ({
     getTenantLifecycle: mocks.getTenantLifecycle,
     previewTenantLifecycle: mocks.previewTenantLifecycle,
     updateTenantLifecycle: mocks.updateTenantLifecycle,
+    getTenantSettings: mocks.getTenantSettings,
+    updateTenantSettings: mocks.updateTenantSettings,
   },
   governanceResourcesApi: { listEntitlementResourceCatalog: mocks.listResourceCatalog },
 }));
@@ -58,6 +62,25 @@ describe("PlatformOrganizationGovernance", () => {
       auditId: "audit-lifecycle-1",
       effectiveAt: "2026-08-10T10:00:01.000Z",
     });
+    mocks.getTenantSettings.mockResolvedValue({
+      tenantId: "tenant-a",
+      settings: { ...structuredClone(DEFAULT_TENANT_SETTINGS), features: { ...structuredClone(DEFAULT_TENANT_SETTINGS.features), debugModeAllowed: false, debugModeEnabled: false } },
+      updatedAt: "2026-08-10T10:00:00.000Z",
+    });
+    mocks.updateTenantSettings.mockResolvedValue({
+      tenantId: "tenant-a",
+      settings: { ...structuredClone(DEFAULT_TENANT_SETTINGS), features: { ...structuredClone(DEFAULT_TENANT_SETTINGS.features), debugModeAllowed: true, debugModeEnabled: false } },
+      updatedAt: "2026-08-10T10:01:00.000Z",
+    });
+  });
+
+  it("目标组织配置提供平台调试模式授权", async () => {
+    render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "configuration" })} />);
+    fireEvent.click(await screen.findByRole("switch", { name: "调试模式授权" }));
+    await waitFor(() => expect(mocks.updateTenantSettings).toHaveBeenCalledWith("tenant-a", expect.objectContaining({
+      expectedUpdatedAt: "2026-08-10T10:00:00.000Z",
+      settings: expect.objectContaining({ features: expect.objectContaining({ debugModeAllowed: true }) }),
+    })));
   });
 
   it("权益页展示权威来源、版本与硬上限，但不开放无预览写入", async () => {

@@ -59,7 +59,7 @@ const platformWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
     id: "org-business", label: "组织与商业", routes: [
       route("platform", "org-business", "tenants", "组织", ["platform-console", "org-business", "tenants"], {
         entity: "optional",
-        tabs: ["overview", "entitlements", "resource-scope", "billing", "security-lifecycle"],
+        tabs: ["overview", "configuration", "entitlements", "resource-scope", "billing", "security-lifecycle"],
         defaultTab: "overview",
       }),
       route("platform", "org-business", "users", "跨组织用户检索", ["platform-console", "org-business", "users"], { entity: "optional" }),

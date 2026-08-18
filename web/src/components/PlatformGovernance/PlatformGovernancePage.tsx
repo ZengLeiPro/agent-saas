@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { Boxes, TriangleAlert } from "lucide-react";
 
+import { TenantDebugModeSetting } from "@/components/Governance/DebugModeSettings";
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -319,11 +320,13 @@ function ScopeEditor({ tenantId, scope, onChanged }: { tenantId: string; scope: 
 }
 
 export function PlatformOrganizationGovernance({ tenantId, route }: { tenantId: string; route: GovernanceRouteState }) {
-  const request = useMemo(() => () => governanceAccessApi.getEntitlements<EntitlementResponse>(tenantId), [tenantId]);
-  const { data, loading, error, retry } = useGovernanceRequest(request, `platform-tenant:${tenantId}`);
+  const tab = route.tab ?? "overview";
+  const request = useMemo(() => tab === "configuration" ? null : () => governanceAccessApi.getEntitlements<EntitlementResponse>(tenantId), [tab, tenantId]);
+  const requestKey = `platform-tenant:${tenantId}:${tab === "configuration" ? "settings" : "entitlements"}`;
+  const { data, loading, error, retry } = useGovernanceRequest(request, requestKey);
+  if (tab === "configuration") return <div><Header title="组织配置" description="配置目标组织的平台级能力授权；组织和成员均不能越过本级授权。" /><TenantDebugModeSetting tenantId={tenantId} level="platform" /></div>;
   if (loading) return <div className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">正在读取组织治理数据…</div>;
   if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
-  const tab = route.tab ?? "overview";
   const entitlement = data?.entitlement;
 
   if (tab === "entitlements") return <div><Header title="权益与配额" description="展示治理权威值、来源与版本；无权威预览时不开放编辑。" />

@@ -71,6 +71,14 @@ export const TENANT_POLICY_KEYS = [
 ] as const;
 
 export type TenantPolicyKey = typeof TENANT_POLICY_KEYS[number];
+
+export const ORGANIZATION_EDITABLE_TENANT_POLICY_KEYS: readonly TenantPolicyKey[] = TENANT_POLICY_KEYS
+  .filter(policyKey => policyKey !== 'runtime.debug_mode.allowed');
+
+export function isOrganizationEditableTenantPolicyKey(policyKey: string): policyKey is TenantPolicyKey {
+  return ORGANIZATION_EDITABLE_TENANT_POLICY_KEYS.includes(policyKey as TenantPolicyKey);
+}
+
 export type TenantPolicyValue = boolean | string | number | null | string[] | Record<string, boolean | string | number | null>;
 
 export interface TenantPolicy {

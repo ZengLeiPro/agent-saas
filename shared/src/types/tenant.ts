@@ -19,12 +19,11 @@ export function isInternalTenantId(tenantId: string | undefined | null): boolean
 }
 
 export function isDebugModeAvailable(
-  tenantId: string | undefined | null,
+  _tenantId: string | undefined | null,
   features: Pick<TenantSettings["features"], "debugModeAllowed" | "debugModeEnabled"> | undefined,
 ): boolean {
-  // 平台根组织只承载平台管理员，保留其内部调试能力；客户组织必须同时满足
-  // 平台授权与组织开关，缺失字段按 false 处理，绝不从上级开关回退推导。
-  if (tenantId === PLATFORM_TENANT_ID) return true;
+  // 所有组织（含平台根组织）都必须同时满足平台授权与组织开关；
+  // 缺失字段按 false 处理，绝不从上级开关回退推导。
   return features?.debugModeAllowed === true && features.debugModeEnabled === true;
 }
 

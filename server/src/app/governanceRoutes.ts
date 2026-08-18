@@ -167,11 +167,6 @@ export function registerGovernanceRoutes(
           updatedAt: user.updatedAt,
         };
       },
-      ...(runtime.userStore ? {
-        onDebugModeDisabled: async (tenantId: string) => {
-          await runtime.userStore!.disableDebugModeForTenant(tenantId);
-        },
-      } : {}),
       ...(runtime.tenantStore ? {
         validateMemberDebugMode: (tenantId: string, debugMode: boolean) => {
           if (!debugMode) return null;

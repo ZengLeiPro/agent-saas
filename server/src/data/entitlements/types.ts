@@ -72,8 +72,18 @@ export const TENANT_POLICY_KEYS = [
 
 export type TenantPolicyKey = typeof TENANT_POLICY_KEYS[number];
 
+/** 调试模式由 TenantSettings 统一写入；保留 Policy key 仅用于旧数据读取与审计兼容。 */
+export const DEBUG_MODE_TENANT_POLICY_KEYS: readonly TenantPolicyKey[] = [
+  'runtime.debug_mode.allowed',
+  'runtime.debug_mode.enabled',
+];
+
+export function isDebugModeTenantPolicyKey(policyKey: string): boolean {
+  return DEBUG_MODE_TENANT_POLICY_KEYS.includes(policyKey as TenantPolicyKey);
+}
+
 export const ORGANIZATION_EDITABLE_TENANT_POLICY_KEYS: readonly TenantPolicyKey[] = TENANT_POLICY_KEYS
-  .filter(policyKey => policyKey !== 'runtime.debug_mode.allowed');
+  .filter(policyKey => !isDebugModeTenantPolicyKey(policyKey));
 
 export function isOrganizationEditableTenantPolicyKey(policyKey: string): policyKey is TenantPolicyKey {
   return ORGANIZATION_EDITABLE_TENANT_POLICY_KEYS.includes(policyKey as TenantPolicyKey);

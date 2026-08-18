@@ -3,8 +3,12 @@ import { describe, expect, it } from "vitest";
 import { isDebugModeAvailable, PLATFORM_TENANT_ID } from "./tenant";
 
 describe("isDebugModeAvailable", () => {
-  it("平台根组织不受组织层开关约束", () => {
-    expect(isDebugModeAvailable(PLATFORM_TENANT_ID, undefined)).toBe(true);
+  it("平台根组织也必须同时满足两级上级开关", () => {
+    expect(isDebugModeAvailable(PLATFORM_TENANT_ID, undefined)).toBe(false);
+    expect(isDebugModeAvailable(PLATFORM_TENANT_ID, {
+      debugModeAllowed: true,
+      debugModeEnabled: true,
+    })).toBe(true);
   });
 
   it("平台未授权时始终关闭", () => {

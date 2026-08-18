@@ -110,7 +110,6 @@ export function createGovernanceAccessRouter(deps: {
     updatedAt: string;
     memoryFeatureStatus?: TenantMemoryFeatureStatusMap;
   }>;
-  onDebugModeDisabled?: (tenantId: string) => Promise<void>;
   getTenantLifecycle?: (tenantId: string) => { id: string; name?: string; disabled?: boolean; updatedAt: string } | undefined;
   setTenantDisabled?: (
     tenantId: string,
@@ -775,7 +774,7 @@ export function createGovernanceAccessRouter(deps: {
   registerGovernanceOrganizationAccessRoutes({ router, assignments: deps.assignments, entitlements: deps.entitlements,
     secret: deps.membershipPreviewSecret, previewTtlMs, now, personaFor: req => personas.get(req), tenantFor,
     ...(deps.projectionOutbox ? { projectionOutbox: deps.projectionOutbox } : {}),
-    ...(deps.projectionReconciler ? { projectionReconciler: deps.projectionReconciler } : {}), ...(deps.onDebugModeDisabled ? { onDebugModeDisabled: deps.onDebugModeDisabled } : {}),
+    ...(deps.projectionReconciler ? { projectionReconciler: deps.projectionReconciler } : {}),
   });
   registerGovernanceMemoryRoutes({ router, assignments: deps.assignments, entitlements: deps.entitlements, secret: deps.membershipPreviewSecret, previewTtlMs, now, personaFor: req => personas.get(req), tenantFor, validateSubjects: assignmentSubjectError, assignmentSnapshot: assignmentDirectorySnapshot });
 

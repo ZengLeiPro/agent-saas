@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   getTenantSettings: vi.fn(),
   updateTenantSettings: vi.fn(),
   authFetch: vi.fn(),
+  authUser: { tenantId: "tenant-a" },
+  updateTenantFeatures: vi.fn(),
 }));
 
 vi.mock("@agent/shared/lib/governanceApi", () => ({
@@ -17,6 +19,7 @@ vi.mock("@agent/shared/lib/governanceApi", () => ({
   },
 }));
 vi.mock("@/lib/authFetch", () => ({ authFetch: mocks.authFetch }));
+vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: mocks.authUser, updateTenantFeatures: mocks.updateTenantFeatures }) }));
 
 const response = (allowed: boolean, enabled: boolean) => ({
   tenantId: "tenant-a",
@@ -50,6 +53,7 @@ describe("DebugModeSettings", () => {
       }),
     })));
     expect(await screen.findByText("策略已保存")).toBeTruthy();
+    expect(mocks.updateTenantFeatures).toHaveBeenCalledWith(expect.objectContaining({ debugModeAllowed: false, debugModeEnabled: false }));
   });
 
   it("平台未授权时组织开关不可用", async () => {

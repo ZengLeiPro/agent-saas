@@ -27,7 +27,6 @@ afterEach(async () => {
 async function rig(input: {
   getPolicies?: ReturnType<typeof vi.fn>;
   updatePolicy?: ReturnType<typeof vi.fn>;
-  onDebugModeDisabled?: (tenantId: string) => Promise<void>;
   listResourceSets?: ReturnType<typeof vi.fn>;
   getAssignmentSet?: ReturnType<typeof vi.fn>;
   replaceAssignments?: ReturnType<typeof vi.fn>;
@@ -72,7 +71,6 @@ async function rig(input: {
     } as never,
     membershipPreviewSecret: PREVIEW_SECRET,
     now: () => new Date(NOW),
-    ...(input.onDebugModeDisabled ? { onDebugModeDisabled: input.onDebugModeDisabled } : {}),
   }));
   const server: Server = await new Promise(resolve => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
@@ -102,19 +100,11 @@ describe('governance organization access routes', () => {
     expect(crossTenant.status).toBe(403);
   });
 
-  it('通过组织治理策略关闭调试模式时清理成员个人状态', async () => {
+  it('调试模式 Policy 仅兼容读取，不能通过治理接口写入', async () => {
     const policy = { tenantId: 'tenant-a', policyKey: 'runtime.debug_mode.enabled', value: true, source: 'governance', version: 3, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' };
-    const getPolicies = vi.fn().mockResolvedValue([policy]);
-    const updatePolicy = vi.fn().mockResolvedValue({ ...policy, value: false, version: 4, updatedAt: '2026-08-10T09:01:00.000Z', updatedBy: 'admin-1' });
-    const onDebugModeDisabled = vi.fn().mockResolvedValue(undefined);
-    const test = await rig({ getPolicies, updatePolicy, onDebugModeDisabled });
-    const change = { expectedVersion: 3, value: false, reason: '组织关闭调试模式' };
-    const previewResponse = await test.request('/api/governance/access/policies/runtime.debug_mode.enabled/preview?tenantId=tenant-a', json('POST', change));
-    expect(previewResponse.status).toBe(200);
-    const preview = await previewResponse.json() as Record<string, unknown>;
-    const commit = await test.request('/api/governance/access/policies/runtime.debug_mode.enabled?tenantId=tenant-a', json('PUT', commitBody(change, preview)));
-    expect(commit.status).toBe(200);
-    expect(onDebugModeDisabled).toHaveBeenCalledWith('tenant-a');
+    const updatePolicy = vi.fn(); const test = await rig({ getPolicies: vi.fn().mockResolvedValue([policy]), updatePolicy });
+    const response = await test.request('/api/governance/access/policies/runtime.debug_mode.enabled/preview?tenantId=tenant-a', json('POST', { expectedVersion: 3, value: false, reason: '组织关闭调试模式' }));
+    expect(response.status).toBe(403); await expect(response.json()).resolves.toMatchObject({ error: 'Policy is managed by the platform' }); expect(updatePolicy).not.toHaveBeenCalled();
   });
 
   it('组织管理员不能预览或提交平台专属调试模式授权', async () => {
@@ -148,7 +138,7 @@ describe('governance organization access routes', () => {
       expectedVersion: 1, value: true, reason: '组织尝试越级开启',
     }));
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toMatchObject({ error: '平台尚未授予调试模式，组织不能开启' });
+    await expect(response.json()).resolves.toMatchObject({ error: 'Policy is managed by the platform' });
     expect(updatePolicy).not.toHaveBeenCalled();
   });
 
@@ -163,7 +153,7 @@ describe('governance organization access routes', () => {
     expect(response.status).toBe(200);
     const body = await response.json() as { policies: Array<{ policyKey: string; allowedActions: unknown[] }> };
     expect(body.policies.find(policy => policy.policyKey === 'runtime.debug_mode.allowed')?.allowedActions).toEqual([]);
-    expect(body.policies.find(policy => policy.policyKey === 'runtime.debug_mode.enabled')?.allowedActions).toHaveLength(1);
+    expect(body.policies.find(policy => policy.policyKey === 'runtime.debug_mode.enabled')?.allowedActions).toEqual([]);
   });
 
   it('记忆与知识资源端点只返回组织 Assignment 权威元数据，不含个人记忆正文', async () => {

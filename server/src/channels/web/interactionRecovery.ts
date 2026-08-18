@@ -1,4 +1,5 @@
 import type { AskUserQuestion } from '../../types/index.js';
+import type { PlatformEvent } from '../../runtime/types.js';
 
 /**
  * pending 交互的数据形态（与 interactionStore.getPendingInteractions 同构）。
@@ -15,6 +16,23 @@ export interface PendingInteractionShape {
   displayName?: string;
   toolInput?: Record<string, unknown>;
   planContent?: string;
+}
+
+/** 通知当前用户触发 resume，接收跨进程 durable interaction 的实时投影。 */
+export function notifyCrossProcessInteractionResume(
+  event: PlatformEvent,
+  sessionId: string,
+  fallbackUserId: string | undefined,
+  inProcessRunIds: ReadonlySet<string>,
+  emitUser: (userId: string, data: object) => void,
+): void {
+  if (event.type !== 'interaction_requested') return;
+  const runId = event.runId;
+  if (!runId || !['ask_user', 'permission_request'].includes(event.interactionType)) return;
+  if (inProcessRunIds.has(runId)) return;
+  const userId = event.userId ?? fallbackUserId;
+  if (!userId) return;
+  emitUser(userId, { type: 'stream_started', sessionId, streamId: runId, runId });
 }
 
 /**

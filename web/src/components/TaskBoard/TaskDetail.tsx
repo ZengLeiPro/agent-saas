@@ -265,8 +265,13 @@ export function TaskDetail({
   const editReadOnly = readOnly || !canUpdateTask || taskKind === "integration" || taskKind === "remediation";
   const commentReadOnly = readOnly || !canComment;
   const canRunCurrentTask = !readOnly && canExecute
-    && !["done", "canceled", "blocked"].includes(currentTask?.status ?? "canceled")
-    && !currentTask?.mergedCommitOid;
+    && !currentTask?.mergedCommitOid
+    && (taskKind === "integration"
+      ? ["todo", "in_progress"].includes(currentTask?.status ?? "canceled")
+      : ["todo", "in_review"].includes(currentTask?.status ?? "canceled"));
+  const canContinueCurrentTask = canRunCurrentTask
+    || (!readOnly && canExecute && taskKind !== "integration"
+      && currentTask?.status === "in_progress" && executionActive);
   const canTransitionCurrentTask = Boolean(
     currentTask
     && !readOnly
@@ -901,7 +906,7 @@ export function TaskDetail({
                     onPaste={(event) => void commentAttachments.handlePaste(event)}
                   />
                   {!commentReadOnly ? <TaskAttachmentField upload={commentAttachments} disabled={saving} /> : null}
-                  {!commentReadOnly && canRunCurrentTask ? (
+                  {!commentReadOnly && canContinueCurrentTask ? (
                     <div className="flex items-center gap-2">
                       <Checkbox
                         id="task-comment-continue"

@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import pg from 'pg';
 
 import { sanitizeIdentifier } from '../src/taskboard/storeHelpers.js';
+import { completeRemediationAfterMerge } from '../src/taskboard/workflow/commandService.js';
 
 const { Pool } = pg;
 
@@ -273,14 +274,33 @@ async function main(): Promise<void> {
             `UPDATE ${tables.blocks} SET closed_at=COALESCE(closed_at,now()) WHERE task_id=$1 AND closed_at IS NULL`,
             [finding.taskId],
           );
-          await client.query(
-            `UPDATE ${tables.tasks} r SET status=CASE WHEN a.state='resolved' THEN 'done' ELSE 'canceled' END,
-                    completed_at=now(),workflow_epoch=workflow_epoch+1,next_action='none',
-                    next_action_revision=next_action_revision+1,version=r.version+1,updated_at=now()
-               FROM ${tables.attempts} a JOIN ${tables.sources} s ON s.id=a.integration_source_id
-              WHERE s.delivery_task_id=$1 AND r.id=a.remediation_task_id AND r.status NOT IN ('done','canceled')`,
-            [finding.taskId],
+          const remediationRows = await client.query(
+            `SELECT DISTINCT remediation_task_id
+               FROM ${tables.attempts}
+              WHERE integration_source_id=$1 AND state IN ('active','resolved')
+             UNION
+             SELECT remediation_task_id
+               FROM ${tables.sources}
+              WHERE id=$1 AND remediation_task_id IS NOT NULL`,
+            [finding.detail.source_id],
           );
+          for (const remediation of remediationRows.rows) {
+            const remediationTaskId = String(remediation.remediation_task_id);
+            await completeRemediationAfterMerge(
+              {
+                tasksTable: tables.tasks,
+                changesTable: tables.changes,
+                remediationAttemptsTable: tables.attempts,
+              },
+              client,
+              {
+                remediationTaskId,
+                sourceId: String(finding.detail.source_id),
+                commandId: `repair:${commandId}:${remediationTaskId}`,
+                mergedCommitOid: finding.detail.source_oid ? String(finding.detail.source_oid) : undefined,
+              },
+            );
+          }
         } else if (finding.type === 'merged_active_execution' || finding.type === 'integration_purpose_mismatch') {
           const fenced = await client.query(
             `UPDATE ${tables.execs}
@@ -315,20 +335,20 @@ async function main(): Promise<void> {
           );
           await client.query(`UPDATE ${tables.attempts} SET state='resolved',resolved_at=COALESCE(resolved_at,now()) WHERE remediation_task_id=$1`, [finding.taskId]);
         } else if (finding.type === 'merged_remediation_not_converged') {
-          await client.query(
-            `UPDATE ${tables.tasks} SET status=CASE WHEN $2='resolved' THEN 'done' ELSE 'canceled' END,
-                    completed_at=now(),workflow_epoch=workflow_epoch+1,next_action='none',
-                    next_action_revision=next_action_revision+1,version=version+1,updated_at=now()
-              WHERE id=$1 AND status NOT IN ('done','canceled')`,
-            [finding.taskId, finding.detail.state],
-          );
-          await client.query(
-            `UPDATE ${tables.attempts}
-                SET state=CASE WHEN state='resolved' THEN state ELSE 'superseded' END,
-                    resolved_at=CASE WHEN state='resolved' THEN COALESCE(resolved_at,now()) ELSE resolved_at END,
-                    superseded_at=CASE WHEN state<>'resolved' THEN COALESCE(superseded_at,now()) ELSE superseded_at END
-              WHERE id=$1`,
-            [finding.detail.attempt_id],
+          await completeRemediationAfterMerge(
+            {
+              tasksTable: tables.tasks,
+              changesTable: tables.changes,
+              remediationAttemptsTable: tables.attempts,
+            },
+            client,
+            {
+              remediationTaskId: String(finding.taskId),
+              sourceId: String(finding.detail.source_id),
+              ...(finding.detail.attempt_id ? { attemptId: String(finding.detail.attempt_id) } : {}),
+              commandId: `repair:${commandId}`,
+              ...(finding.detail.merged_commit_oid ? { mergedCommitOid: String(finding.detail.merged_commit_oid) } : {}),
+            },
           );
         } else if (finding.type === 'integration_not_converged') {
           await client.query(

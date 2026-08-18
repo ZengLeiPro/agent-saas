@@ -10,7 +10,10 @@ import type {
   RepositoryPullRequestSnapshot,
 } from './repositoryProvider.js';
 import { rowToTask, toIso } from './storeHelpers.js';
-import { fenceTaskExecutions } from './workflow/commandService.js';
+import {
+  completeRemediationAfterMerge,
+  fenceTaskExecutions,
+} from './workflow/commandService.js';
 import {
   TaskboardNotFoundError,
   TaskboardValidationError,
@@ -647,18 +650,26 @@ async function finalizeMergedSource(
   return withTransaction(host, async (client) => {
     // Discover aggregate members without locks, then acquire the global Task -> Source -> Execution order.
     const preview = await client.query(
-      `SELECT delivery_task_id,integration_task_id FROM ${host.integrationSourcesTable} WHERE id=$1`,
+      `SELECT delivery_task_id,integration_task_id,remediation_task_id
+         FROM ${host.integrationSourcesTable}
+        WHERE id=$1`,
       [sourceId],
     );
     if (!preview.rows[0]) throw new TaskboardNotFoundError('Integration source not found');
     const remediationRows = await client.query(
-      `SELECT remediation_task_id FROM ${host.remediationAttemptsTable} WHERE integration_source_id=$1`,
+      `SELECT DISTINCT remediation_task_id
+         FROM ${host.remediationAttemptsTable}
+        WHERE integration_source_id=$1 AND state IN ('active','resolved')`,
       [sourceId],
     );
+    const remediationTaskIds = [...new Set([
+      ...(preview.rows[0].remediation_task_id ? [String(preview.rows[0].remediation_task_id)] : []),
+      ...remediationRows.rows.map((row) => String(row.remediation_task_id)),
+    ])];
     const aggregateTaskIds = [...new Set([
       String(preview.rows[0].delivery_task_id),
       String(preview.rows[0].integration_task_id),
-      ...remediationRows.rows.map((row) => String(row.remediation_task_id)),
+      ...remediationTaskIds,
     ])].sort();
     await client.query(
       `SELECT id FROM ${host.tasksTable} WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE`,
@@ -714,24 +725,14 @@ async function finalizeMergedSource(
         WHERE id=$1 AND (status<>'done' OR merged_commit_oid IS DISTINCT FROM $2)`,
       [sourceRow.delivery_task_id, input.mergedCommitOid],
     );
-    await client.query(
-      `UPDATE ${host.tasksTable} r
-          SET status=CASE WHEN a.state='resolved' THEN 'done' ELSE 'canceled' END,
-              completed_at=now(),workflow_epoch=workflow_epoch+1,next_action='none',
-              next_action_revision=next_action_revision+1,version=r.version+1,updated_at=now()
-         FROM ${host.remediationAttemptsTable} a
-        WHERE a.integration_source_id=$1 AND r.id=a.remediation_task_id
-          AND r.status NOT IN ('done','canceled')`,
-      [sourceId],
-    );
-    await client.query(
-      `UPDATE ${host.remediationAttemptsTable}
-          SET state=CASE WHEN state='resolved' THEN state ELSE 'superseded' END,
-              resolved_at=CASE WHEN state='resolved' THEN COALESCE(resolved_at,now()) ELSE resolved_at END,
-              superseded_at=CASE WHEN state<>'resolved' THEN COALESCE(superseded_at,now()) ELSE superseded_at END
-        WHERE integration_source_id=$1 AND state IN ('active','resolved')`,
-      [sourceId],
-    );
+    for (const remediationTaskId of remediationTaskIds) {
+      await completeRemediationAfterMerge(host, client, {
+        remediationTaskId,
+        sourceId,
+        commandId: `merge:${sourceId}:${remediationTaskId}:${input.mergedCommitOid}`,
+        mergedCommitOid: input.mergedCommitOid,
+      });
+    }
     await client.query(
       `UPDATE ${host.blockEpisodesTable} SET closed_at=COALESCE(closed_at,now())
         WHERE task_id=ANY($1::text[]) AND closed_at IS NULL`,

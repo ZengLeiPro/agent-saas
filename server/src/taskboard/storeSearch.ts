@@ -2,7 +2,13 @@ import pg from 'pg';
 
 import type { TaskBoard, TaskBoardComment, TaskBoardTask } from '../../../shared/src/types/taskboard.js';
 import { rowToBoard } from './boardFields.js';
-import { applyCommentAuthorDisplayName, normalizeLabels, rowToComment, rowToTask } from './storeHelpers.js';
+import {
+  applyCommentAuthorDisplayName,
+  normalizeLabels,
+  rowToComment,
+  rowToTask,
+  visibleCommentPredicate,
+} from './storeHelpers.js';
 import { TaskboardNotFoundError } from './types.js';
 import type {
   TaskboardBoardSearchFilter,
@@ -82,6 +88,7 @@ export interface TaskboardSearchStore {
   boardsTable: string;
   tasksTable: string;
   commentsTable: string;
+  changesTable: string;
   membersTable: string;
   integrationSourcesTable: string;
   remediationAttemptsTable: string;
@@ -146,7 +153,7 @@ export async function listTasks(
   }
   const result = await store.pool.query(
     `SELECT t.*,
-            (SELECT count(*)::int FROM ${store.commentsTable} c WHERE c.task_id=t.id) AS comment_count
+            (SELECT count(*)::int FROM ${store.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', store.changesTable)}) AS comment_count
             ${taskRelationProjection(store)}
        FROM ${store.tasksTable} t
        JOIN ${store.boardsTable} b ON b.id=t.board_id
@@ -246,7 +253,7 @@ export async function searchTasks(
   params.push(pageSize, offset);
   const result = await store.pool.query(
     `SELECT t.*,
-            (SELECT count(*)::int FROM ${store.commentsTable} c WHERE c.task_id=t.id) AS comment_count
+            (SELECT count(*)::int FROM ${store.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', store.changesTable)}) AS comment_count
             ${taskRelationProjection(store)}
        FROM ${store.tasksTable} t
        JOIN ${store.boardsTable} b ON b.id=t.board_id
@@ -282,7 +289,8 @@ export async function searchComments(
        JOIN ${store.tasksTable} t ON t.id=c.task_id
        JOIN ${store.boardsTable} b ON b.id=t.board_id
       WHERE c.task_id=$1 AND b.tenant_id=$2
-        AND (b.owner_user_id=$3 OR b.visibility='organization')`,
+        AND (b.owner_user_id=$3 OR b.visibility='organization')
+        AND ${visibleCommentPredicate('c', store.changesTable)}`,
     accessParams,
   );
   const result = await store.pool.query(
@@ -292,6 +300,7 @@ export async function searchComments(
        JOIN ${store.boardsTable} b ON b.id=t.board_id
       WHERE c.task_id=$1 AND b.tenant_id=$2
         AND (b.owner_user_id=$3 OR b.visibility='organization')
+        AND ${visibleCommentPredicate('c', store.changesTable)}
       ORDER BY c.created_at, c.id
       LIMIT $4 OFFSET $5`,
     [...accessParams, pageSize, offset],

@@ -426,7 +426,7 @@ describe('任务看板评论续跑', () => {
     });
 
     expect(result?.status).toBe('in_progress');
-    expect(sql.some((statement) => statement.includes('INSERT INTO comments'))).toBe(true);
+    expect(sql.some((statement) => statement.includes('INSERT INTO comments'))).toBe(false);
     expect(sql.some((statement) => statement.includes("SET status='completed'"))).toBe(true);
     expect(sql.some((statement) => statement.includes('UPDATE tasks') && statement.includes('status=$2'))).toBe(false);
   });

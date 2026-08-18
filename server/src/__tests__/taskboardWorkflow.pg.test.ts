@@ -94,6 +94,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       [executionId],
     );
     expect(resolutions.rows[0].count).toBe(1);
+    expect(await store.listComments(identity, advisory.id)).toEqual([]);
     await expect(store.resolveExecutionV2(identity, runId, { ...input, resolutionId: randomUUID() }))
       .rejects.toMatchObject({ code: 'TASKBOARD_RESOLUTION_CONFLICT' });
   });

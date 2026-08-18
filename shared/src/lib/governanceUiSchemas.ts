@@ -280,7 +280,7 @@ export const entitlementCatalogSchema = z.object({
 }).strict();
 
 export const memberDetailsSchema = z.object({
-  profile: z.object({ userId: z.string(), username: z.string(), displayName: z.string(), position: z.string().optional(), accountStatus: z.enum(['active','disabled']), dingtalkBound: z.boolean(), createdAt: z.string(), updatedAt: z.string() }).strict(),
+  profile: z.object({ userId: z.string(), username: z.string(), displayName: z.string(), position: z.string().optional(), accountStatus: z.enum(['active','disabled']), dingtalkBound: z.boolean(), debugMode: z.boolean().optional(), debugModeAvailable: z.boolean().optional(), createdAt: z.string(), updatedAt: z.string() }).strict(),
   identity: membershipSchema,
   accessSummary: z.object({ effectivePersona: z.enum(['platform_admin','org_admin','member']), owner: z.boolean(), accountStatus: z.string(), decision: z.enum(['eligible','denied']), why: z.array(z.object({ source: z.string(), effect: z.string(), version: z.number().int() }).strict()) }).strict(),
   assignments: z.array(z.object({ resourceType: z.string(), resources: z.array(z.object({ resourceId: z.string(), bindingId: z.string(), assignmentVersion: z.number().int(), finalEffect: z.literal('allow'), bindings: z.array(z.object({ assignmentId: z.string(), assigneeType: z.string(), assigneeId: z.string().optional(), effect: z.string(), origin: z.string() }).strict()) }).strict()) }).strict()),

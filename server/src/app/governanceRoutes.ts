@@ -150,6 +150,10 @@ export function registerGovernanceRoutes(
       getMemberProfile: (tenantId, userId) => {
         const user = runtime.userStore?.findById(userId);
         if (!user || user.tenantId !== tenantId) return null;
+        const debugModeAvailable = isDebugModeAvailable(
+          tenantId,
+          runtime.tenantStore?.getSettings(tenantId)?.features,
+        );
         return {
           userId: user.id,
           username: user.username,
@@ -157,6 +161,8 @@ export function registerGovernanceRoutes(
           ...(user.position ? { position: user.position } : {}),
           accountStatus: user.disabled ? 'disabled' as const : 'active' as const,
           dingtalkBound: Boolean(user.dingtalkStaffId),
+          debugMode: user.debugMode === true && debugModeAvailable,
+          debugModeAvailable,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         };

@@ -5,10 +5,12 @@ import {
   cancelIntegrationTask,
   createIntegrationBatch,
   deleteBoardMember,
+  deleteTask,
   executeTask,
   fetchBoardMembers,
   fetchIntegrationSources,
   patchTask,
+  resumeTask,
   TaskBoardConflictError,
   upsertBoardMember,
 } from "./api";
@@ -94,6 +96,24 @@ describe("任务看板 API 错误对象", () => {
     }));
   });
 
+  it("阻塞恢复提交结构化决策与明确 sourceIds", async () => {
+    const resumed = { ...task, kind: "integration" as const, status: "todo" as const, version: 6 };
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify(resumed), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+
+    await expect(resumeTask(task.id, task.version, "批准恢复来源", ["source-1"]))
+      .resolves.toEqual(resumed);
+    expect(authFetch).toHaveBeenCalledWith(
+      `/api/taskboard/tasks/${task.id}/resume`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ expectedVersion: task.version, decision: "批准恢复来源", sourceIds: ["source-1"] }),
+      }),
+    );
+  });
+
   it("成员、人工集成与来源接口使用 V2 REST 契约", async () => {
     const member = {
       boardId: "board-1",
@@ -152,6 +172,23 @@ describe("任务看板 API 错误对象", () => {
       method: "POST",
       body: JSON.stringify({ deliveryTaskIds: [task.id], expectedBoardVersion: 7 }),
     }));
+  });
+
+  it("删除任务使用 DELETE 并携带 CAS 版本", async () => {
+    const deleted = { ...task, version: 6, deletedAt: "2026-08-01T00:00:00.000Z" };
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify(deleted), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+
+    await expect(deleteTask(task.id, task.version)).resolves.toEqual(deleted);
+    expect(authFetch).toHaveBeenCalledWith(
+      `/api/taskboard/tasks/${task.id}`,
+      expect.objectContaining({
+        method: "DELETE",
+        body: JSON.stringify({ expectedVersion: task.version }),
+      }),
+    );
   });
 
   it("409 保留服务端 current，供 hooks 立即同步最新版本", async () => {

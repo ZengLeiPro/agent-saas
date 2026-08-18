@@ -181,6 +181,14 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return (await this.service()).restoreTask(identity, taskId, input);
   }
 
+  async deleteTask(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input: TaskboardExpectedVersionInput,
+  ): Promise<TaskBoardTask> {
+    return (await this.service()).deleteTask(identity, taskId, input);
+  }
+
   async listComments(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardComment[]> {
     return (await this.service()).listComments(identity, taskId);
   }
@@ -258,6 +266,16 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     await this.init();
     if (!this.target.cancelIntegrationTask) throw new Error('Taskboard integration service unavailable');
     return this.target.cancelIntegrationTask(identity, taskId, input);
+  }
+
+  async resumeBlockedTask(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input: { expectedVersion: number; decision: string; sourceIds?: string[] },
+  ): Promise<TaskBoardTask> {
+    const service = await this.service();
+    if (!service.resumeBlockedTask) throw new Error('Taskboard resume service unavailable');
+    return service.resumeBlockedTask(identity, taskId, input);
   }
 
   async listIntegrationSources(

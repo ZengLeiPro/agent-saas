@@ -30,6 +30,7 @@
     "verify:codex-websocket": "tsx scripts/verify-codex-websocket-stateful.mts",
     "verify:pg-event-store": "tsx scripts/verify-pg-event-store.mts",
     "backfill:runtime-sessions": "tsx scripts/backfill-runtime-sessions.mts",
+    "repair:taskboard-workflow": "tsx scripts/repairTaskboardWorkflow.ts",
     "kb:previews": "tsx scripts/generate-kb-previews.mts",
     "migrate:platform-tenant-pantheon": "tsx scripts/migrate-platform-tenant-pantheon.mts",
     "migrate:events-file-to-pg": "tsx scripts/migrate-events-file-to-pg.mts",

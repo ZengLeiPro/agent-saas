@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   moveTask: vi.fn(),
   archiveTask: vi.fn(),
   restoreTask: vi.fn(),
+  deleteTask: vi.fn(),
   executeTask: vi.fn(),
   fetchExecutions: vi.fn(),
   fetchComments: vi.fn(),
@@ -258,6 +259,35 @@ describe("任务看板 hooks 并发一致性", () => {
 
     expect(result.current.boards).toEqual([current]);
     expect(mocks.fetchBoards).toHaveBeenCalledTimes(2);
+  });
+
+  it("删除任务后本地列表移除该任务，携带 CAS 版本", async () => {
+    const deleted = { ...originalTask, deletedAt: "2026-08-02T00:00:00.000Z", version: 8 };
+    mocks.deleteTask.mockResolvedValueOnce(deleted);
+    const { result } = renderHook(() => useBoardTasks(originalTask.boardId));
+    await waitFor(() => expect(result.current.tasks).toEqual([originalTask]));
+
+    await act(async () => {
+      const next = await result.current.removeTask(originalTask);
+      expect(next).toEqual(deleted);
+    });
+
+    expect(mocks.deleteTask).toHaveBeenCalledWith(originalTask.id, originalTask.version);
+    expect(result.current.tasks).toEqual([]);
+  });
+
+  it("删除任务失败时抛出错误并重拉列表", async () => {
+    mocks.deleteTask.mockRejectedValueOnce(new Error("删除失败"));
+    mocks.fetchTasks
+      .mockResolvedValueOnce([originalTask])
+      .mockResolvedValueOnce([originalTask]);
+    const { result } = renderHook(() => useBoardTasks(originalTask.boardId));
+    await waitFor(() => expect(result.current.tasks).toEqual([originalTask]));
+
+    await act(async () => {
+      await expect(result.current.removeTask(originalTask)).rejects.toThrow("删除失败");
+    });
+    expect(result.current.tasks).toEqual([originalTask]);
   });
 
   it("新增评论会使慢评论 GET 失效，旧列表不会抹掉刚发布的评论", async () => {

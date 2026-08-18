@@ -27,6 +27,9 @@ export async function applyExecutionTaskCompletion(
   if (execution.protocolVersion === 2) {
     return input.status === 'succeeded';
   }
+  if (task.mergedCommitOid || task.status === 'done' || task.status === 'canceled') {
+    return input.status === 'succeeded';
+  }
   const succeeded = input.status === 'succeeded'
     || (execution.purpose === 'work'
       && await hasSuccessfulContinuationSince(host, client, task.id, executionCreatedAt));
@@ -70,7 +73,6 @@ export async function enqueueAutomaticReview(
     execution.purpose !== 'work'
     || !executionSucceeded
     || review.purpose !== 'review'
-    || review.allowWorkFromCurrentStatus
     || review.executionOwnerUserId !== execution.requestedBy
   ) {
     throw new TaskboardValidationError('Invalid automatic review execution');

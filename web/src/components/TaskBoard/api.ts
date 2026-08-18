@@ -133,6 +133,19 @@ export async function createIntegrationBatch(
   return parseEntity<TaskBoardExecutionStartResult>(response, "人工集成批次", "result");
 }
 
+export async function resumeTask(
+  taskId: string,
+  expectedVersion: number,
+  decision: string,
+  sourceIds?: string[],
+): Promise<TaskBoardTask> {
+  const response = await authFetch(
+    `${API_BASE}/tasks/${encodeURIComponent(taskId)}/resume`,
+    jsonRequest("POST", { expectedVersion, decision, ...(sourceIds?.length ? { sourceIds } : {}) }),
+  );
+  return parseEntity<TaskBoardTask>(response, "恢复任务", "task");
+}
+
 export async function cancelIntegrationTask(
   taskId: string,
   expectedVersion: number,
@@ -209,6 +222,14 @@ export async function restoreTask(id: string, expectedVersion: number): Promise<
   const response = await authFetch(
     `${API_BASE}/tasks/${encodeURIComponent(id)}/restore`,
     jsonRequest("POST", { expectedVersion }),
+  );
+  return parseEntity<TaskBoardTask>(response, "看板任务", "task");
+}
+
+export async function deleteTask(id: string, expectedVersion: number): Promise<TaskBoardTask> {
+  const response = await authFetch(
+    `${API_BASE}/tasks/${encodeURIComponent(id)}`,
+    jsonRequest("DELETE", { expectedVersion }),
   );
   return parseEntity<TaskBoardTask>(response, "看板任务", "task");
 }

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { allowedActionsForRole, normalizeRepositoryConfig } from './boardFields.js';
 import { resolveExecutionModelRef } from './executionFields.js';
+import { rowToExecution, rowToTask } from './storeHelpers.js';
 import { runTaskboardV2Schema } from './v2Schema.js';
 import { resolveWorkflowContract } from './workflowContract.js';
 
@@ -84,6 +85,33 @@ describe('taskboard V2 contracts', () => {
     expect(new Set([work.digest, review.digest, merge.digest]).size).toBe(3);
   });
 
+  it('treats a canceled integration source as historical and allows delivery reselection', () => {
+    expect(rowToTask({
+      id: task.id, board_id: task.boardId, identifier: task.identifier, kind: 'delivery',
+      title: task.title, description: '', status: 'ready_to_merge', priority: 'none', labels: [],
+      sort_order: 1, comment_count: 0, version: 2,
+      provider_pull_request_id: '101', reviewed_subject_digest: 'digest-101',
+      integration_source_id: 'source-old', integration_task_id: 'integration-old', integration_state: 'canceled',
+      created_at: task.createdAt, updated_at: task.updatedAt,
+    })).toMatchObject({ mergeEligibility: 'eligible', integrationState: 'canceled' });
+  });
+
+  it('projects legacy Resolution anomalies explicitly instead of showing them as missing', () => {
+    const base = {
+      id: 'execution-1', task_id: task.id, run_id: 'run-1', session_id: 'session-1',
+      status: 'succeeded', purpose: 'work', requested_by: 'alice',
+      created_at: task.createdAt, updated_at: task.updatedAt,
+    };
+    expect(rowToExecution({ ...base, legacy_resolution_count: 2, legacy_resolution_valid_count: 2 }))
+      .toMatchObject({ resolutionState: 'legacy_ambiguous', resolutionIssue: expect.stringContaining('2 条') });
+    expect(rowToExecution({ ...base, legacy_resolution_count: 1, legacy_resolution_valid_count: 0 }))
+      .toMatchObject({ resolutionState: 'legacy_incomplete' });
+    expect(rowToExecution({
+      ...base, has_resolution: true, resolution_historical: true,
+      resolution_id: 'historical:1', resolution_outcome: 'completed',
+    })).toMatchObject({ resolutionState: 'historical', resolutionOutcome: 'completed' });
+  });
+
   it('installs immutable change log, repository lane, saga and durable trigger schema', async () => {
     const sql: string[] = [];
     const client = {
@@ -106,9 +134,13 @@ describe('taskboard V2 contracts', () => {
       mergeOperationsTable: 'tb_operations',
       blockEpisodesTable: 'tb_blocks',
       integrationTriggerOutboxTable: 'tb_trigger_outbox',
+      resolutionsTable: 'tb_resolutions',
+      remediationAttemptsTable: 'tb_remediation_attempts',
+      cancellationOutboxTable: 'tb_cancellation_outbox',
     }, client as never);
     const ddl = sql.join('\n');
 
+    expect(ddl).toContain('ADD COLUMN IF NOT EXISTS resume_context JSONB');
     expect(ddl).toContain('CREATE OR REPLACE RULE tb_changes_no_update');
     expect(ddl).toContain('CREATE OR REPLACE RULE tb_changes_no_delete');
     expect(ddl).toContain('active_integration_task_id');
@@ -116,5 +148,8 @@ describe('taskboard V2 contracts', () => {
     expect(ddl).toContain("trigger_mode IN ('scheduled','on_ready','manual')");
     expect(ddl).toContain("state NOT IN ('merged','canceled')");
     expect(ddl).toContain('provider_receipt JSONB');
+    expect(ddl).toContain('TASKBOARD_ACTIVE_PR_DUPLICATES');
+    expect(ddl).toContain('apr_uq');
+    expect(ddl).toContain('historical_projection');
   });
 });

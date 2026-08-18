@@ -244,6 +244,20 @@ describe("auth users router admin boundaries", () => {
     await expect(opened.json()).resolves.toMatchObject({ debugMode: true });
   });
 
+  it("成员 PATCH 响应返回三级继承后的有效调试模式", async () => {
+    await h.userStore.update(h.users.wainUser.id, { debugMode: true });
+    h.setCaller(h.users.wainAdminA);
+
+    const response = await h.request(`/api/auth/users/${h.users.wainUser.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ realName: "成员一" }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ debugMode: false });
+  });
+
   it("组织 admin 不能删除同租户其他 admin", async () => {
     h.setCaller(h.users.wainAdminA);
     const res = await h.request(`/api/auth/users/${h.users.wainAdminB.id}`, {

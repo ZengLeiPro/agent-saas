@@ -1124,7 +1124,6 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       }
     }
   });
-
   // PATCH /api/auth/users/:id (admin only)
   router.patch("/users/:id", requireAdmin, async (req, res) => {
     try {
@@ -1227,6 +1226,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       auditLog(req, "user_updated", user.username);
       res.json({
         ...user,
+        debugMode: user.debugMode === true && isDebugModeAvailable(user.tenantId, tenantFeatures(user.tenantId)),
         avatar: buildAvatarUrl(user.id, user.avatar, user.avatarVersion),
       });
     } catch (err: unknown) {

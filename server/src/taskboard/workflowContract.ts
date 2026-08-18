@@ -61,6 +61,26 @@ function buildContract(
     };
   }
   if (purpose === 'merge') invalidPurpose(task, purpose);
+  if (task.kind === 'advisory') {
+    if (purpose !== 'work') invalidPurpose(task, purpose);
+    return {
+      taskKind: 'advisory',
+      purpose,
+      status: task.status,
+      objective: '完成答复、分析或建议；不得实施代码、配置或外部系统变更。',
+      capabilities: {
+        readContext: true,
+        comment: true,
+        modifyTaskBranch: false,
+        attachPullRequest: false,
+        createFollowUpTask: false,
+        merge: false,
+      },
+      allowedOutcomes: ['completed', 'blocked'],
+      requiredEvidence: ['answer or analysis summary', 'sources or explicit assumptions when needed'],
+      blockedReasons: ['business_decision_required', 'external_dependency', 'evidence_missing'],
+    };
+  }
   if (purpose === 'review') {
     return {
       taskKind: task.kind ?? 'delivery',

@@ -2,10 +2,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { governanceRoute } from "@/lib/governanceNavigation";
+import { DEFAULT_TENANT_SETTINGS } from "@/components/TenantManager/types";
 import { OrganizationCredentialsPage, OrganizationEnvironmentsPage, OrganizationGroupsPage, OrganizationMemoryKnowledgePage, OrganizationMembersPage, OrganizationOffboardingPage, OrganizationPoliciesPage } from "./OrganizationGovernancePage";
 
 const mocks = vi.hoisted(() => ({
-  listMemberships: vi.fn(), createMembership: vi.fn(), getMembershipDetails: vi.fn(), listDirectoryGroups: vi.fn(), listCredentials: vi.fn(), listConnectors: vi.fn(), getEntitlements: vi.fn(), listMemoryKnowledge: vi.fn(), listEnvironmentTemplates: vi.fn(),
+  listMemberships: vi.fn(), createMembership: vi.fn(), getMembershipDetails: vi.fn(), listDirectoryGroups: vi.fn(), listCredentials: vi.fn(), listConnectors: vi.fn(), getEntitlements: vi.fn(), getTenantSettings: vi.fn(), updateTenantSettings: vi.fn(), listMemoryKnowledge: vi.fn(), listEnvironmentTemplates: vi.fn(),
   previewMembership: vi.fn(), updateMembership: vi.fn(), previewUserOffboarding: vi.fn(), startUserOffboarding: vi.fn(), previewPolicy: vi.fn(), updatePolicy: vi.fn(), previewMemoryResource: vi.fn(), updateMemoryResource: vi.fn(), previewAssignment: vi.fn(), updateAssignment: vi.fn(),
   previewEntitlementScope: vi.fn(), updateEntitlementScope: vi.fn(), previewCredentialCreate: vi.fn(), createCredential: vi.fn(), previewCredentialRotation: vi.fn(), rotateCredential: vi.fn(), previewCredentialTransfer: vi.fn(), transferCredential: vi.fn(), testCredentialHealth: vi.fn(),
 }));
@@ -38,6 +39,8 @@ vi.mock("@agent/shared/lib/governanceApi", () => ({
     previewMembership: mocks.previewMembership,
     updateMembership: mocks.updateMembership,
     getEntitlements: mocks.getEntitlements,
+    getTenantSettings: mocks.getTenantSettings,
+    updateTenantSettings: mocks.updateTenantSettings,
     listMemoryKnowledge: mocks.listMemoryKnowledge,
     previewMemoryResource: mocks.previewMemoryResource,
     updateMemoryResource: mocks.updateMemoryResource,
@@ -71,6 +74,16 @@ describe("OrganizationGovernancePage", () => {
     authState.username = "org-admin";
     mocks.listConnectors.mockResolvedValue({ connectors: [] });
     mocks.listMemberships.mockResolvedValue({ memberships: [] });
+    mocks.getTenantSettings.mockResolvedValue({
+      tenantId: "tenant-a",
+      settings: { ...structuredClone(DEFAULT_TENANT_SETTINGS), features: { ...structuredClone(DEFAULT_TENANT_SETTINGS.features), debugModeAllowed: true, debugModeEnabled: true } },
+      updatedAt: "2026-08-18T07:00:00.000Z",
+    });
+    mocks.updateTenantSettings.mockResolvedValue({
+      tenantId: "tenant-a",
+      settings: { ...structuredClone(DEFAULT_TENANT_SETTINGS), features: { ...structuredClone(DEFAULT_TENANT_SETTINGS.features), debugModeAllowed: true, debugModeEnabled: false } },
+      updatedAt: "2026-08-18T07:01:00.000Z",
+    });
   });
 
   it("展示治理成员关系与所有者，不渲染旧角色开关", async () => {
@@ -157,6 +170,26 @@ describe("OrganizationGovernancePage", () => {
     mocks.listMemberships.mockRejectedValue(new Error("503"));
     render(<OrganizationMembersPage tenantId="tenant-a" route={governanceRoute("organization.members.list", { orgId: "tenant-a" })} />);
     expect(await screen.findByText("权威治理结论暂不可获得")).toBeTruthy();
+  });
+
+  it("成员详情的身份与权限页可更新个人调试模式", async () => {
+    authFetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ debugMode: true }) });
+    mocks.getMembershipDetails.mockResolvedValue({
+      profile: { userId: "member-1", username: "member", displayName: "成员一", accountStatus: "active", dingtalkBound: false, debugMode: false, debugModeAvailable: true, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" },
+      identity: { userId: "member-1", persona: "member", isOwner: false, status: "active", version: 1, allowedActions: [] },
+      accessSummary: { effectivePersona: "member", owner: false, accountStatus: "active", decision: "eligible", why: [{ source: "membership", effect: "allow", version: 1 }] },
+      assignments: [], usagePolicy: { status: "unavailable" }, recentAudit: { events: [], coverage: "recent_membership_endpoint_events", limit: 100 },
+      snapshot: { membershipVersion: 1, generatedAt: "2099-08-10T10:00:00.000Z" },
+    });
+    render(<OrganizationMembersPage tenantId="tenant-a" route={governanceRoute("organization.members.member", {
+      orgId: "tenant-a", entityId: "member-1", tab: "access",
+    })} />);
+
+    fireEvent.click(await screen.findByRole("switch", { name: "成员个人调试模式" }));
+
+    await waitFor(() => expect(authFetchMock).toHaveBeenCalledWith("/api/auth/users/member-1", expect.objectContaining({
+      method: "PATCH", body: JSON.stringify({ debugMode: true }),
+    })));
   });
 
   it("成员资源指派只渲染后端聚合，不在前端枚举推导", async () => {
@@ -297,6 +330,18 @@ describe("OrganizationGovernancePage", () => {
     expect(screen.getByRole("button", { name: "真实健康测试" })).toBeTruthy();
     expect((screen.getByRole("button", { name: "健康测试无安全合同" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByText(/secretRef|vault:\/\//i)).not.toBeTruthy();
+  });
+
+  it("组织策略页提供成员调试模式开关并沿用组织设置接口", async () => {
+    mocks.getEntitlements.mockResolvedValue({ entitlement: null, scopes: [], policies: [{ policyKey: "runtime.debug_mode.allowed", value: true, source: "legacy_projection", version: 1 }, { policyKey: "runtime.debug_mode.enabled", value: true, source: "legacy_projection", version: 1 }] });
+    render(<OrganizationPoliciesPage tenantId="tenant-a" />);
+
+    fireEvent.click(await screen.findByRole("switch", { name: "成员调试模式" }));
+
+    await waitFor(() => expect(mocks.updateTenantSettings).toHaveBeenCalledWith("tenant-a", expect.objectContaining({
+      settings: expect.objectContaining({ features: expect.objectContaining({ debugModeAllowed: true, debugModeEnabled: false }) }),
+    })));
+    expect(screen.queryByLabelText("runtime.debug_mode.allowed 策略")).toBeNull();
   });
 
   it("组织策略明确显示继承状态并执行 preview→commit", async () => {

@@ -69,23 +69,13 @@ describePg('PgTaskboardStore contract', () => {
   afterAll(async () => {
     if (!pool || !store) return;
     try {
-      await pool.query(`DROP TABLE IF EXISTS ${store.integrationTriggerOutboxTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.blockEpisodesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.mergeOperationsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.mergeAuthorizationsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.integrationSourcesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.integrationLanesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.attemptsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.changesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.membersTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.continuationOutboxTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.executionOutboxTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.executionsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.commentsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.tasksTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.boardsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${runStore.steeringInputsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${runStore.runsTable}`);
+      await pool.query(`DROP TABLE IF EXISTS
+        ${store.integrationTriggerOutboxTable}, ${store.blockEpisodesTable}, ${store.cancellationOutboxTable},
+        ${store.resolutionsTable}, ${store.remediationAttemptsTable}, ${store.mergeOperationsTable},
+        ${store.mergeAuthorizationsTable}, ${store.integrationSourcesTable}, ${store.integrationLanesTable},
+        ${store.attemptsTable}, ${store.changesTable}, ${store.membersTable}, ${store.continuationOutboxTable},
+        ${store.executionOutboxTable}, ${store.executionsTable}, ${store.commentsTable}, ${store.tasksTable},
+        ${store.boardsTable}, ${runStore.steeringInputsTable}, ${runStore.runsTable} CASCADE`);
     } finally {
       await pool.end();
     }
@@ -170,4 +160,22 @@ describePg('PgTaskboardStore contract', () => {
     expect(backlog.map((task) => task.id)).toEqual([third.id, appended.id, second.id]);
   });
 
+  it('soft-deletes a task, hides it from listings and requires maintainer', async () => {
+    const board = await store.createBoard(alice, { name: '删除任务', visibility: 'organization' });
+    await store.upsertMember(alice, board.id, { userId: bob.ownerUserId, role: 'editor' });
+    const task = await store.createTask(alice, board.id, { title: '待删除', status: 'todo' });
+
+    const deleted = await store.deleteTask(alice, task.id, { expectedVersion: task.version });
+    expect(deleted).toMatchObject({ id: task.id, version: task.version + 1 });
+    expect(deleted.deletedAt).toBeDefined();
+
+    const tasks = await store.listTasks(alice, board.id);
+    expect(tasks.map((item) => item.id)).not.toContain(task.id);
+
+    await expect(store.getTask(alice, task.id)).rejects.toMatchObject({ code: 'TASKBOARD_NOT_FOUND' });
+
+    const second = await store.createTask(alice, board.id, { title: '待删除2', status: 'todo' });
+    await expect(store.deleteTask(bob, second.id, { expectedVersion: second.version }))
+      .rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+  });
 });

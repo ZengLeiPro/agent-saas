@@ -10,7 +10,7 @@ import {
   type TaskBoardTask,
   type TaskBoardTaskPatchInput,
 } from "@agent/shared";
-import { Archive, ArchiveRestore, Bot, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Send } from "lucide-react";
+import { Archive, ArchiveRestore, Bot, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Send, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -41,7 +41,7 @@ import {
   STATUS_LABELS,
   TASK_KIND_LABELS,
 } from "./constants";
-import { IntegrationSourceDetails } from "./IntegrationSources";
+import { IntegrationSourceDetails, useIntegrationSources } from "./IntegrationSources";
 import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from "./TaskAttachments";
 import { useTaskComments, useTaskExecutions } from "./hooks";
@@ -58,18 +58,21 @@ interface TaskDetailProps {
   canUpdateTask?: boolean;
   canTransitionTask?: boolean;
   canArchiveTask?: boolean;
+  canDeleteTask?: boolean;
   canComment?: boolean;
   canExecute?: boolean;
   canCancelIntegration?: boolean;
   modelList?: ModelList | null;
   onOpenChange: (open: boolean) => void;
   onTaskLoaded: (task: TaskBoardTask) => void;
+  onNavigateTask?: (taskId: string) => void;
   onUpdate: (
     task: TaskBoardTask,
     input: Omit<TaskBoardTaskPatchInput, "expectedVersion">,
   ) => Promise<TaskBoardTask>;
   onMove: (task: TaskBoardTask, status: TaskBoardStatus) => Promise<TaskBoardTask>;
   onSetArchived: (task: TaskBoardTask, archived: boolean) => Promise<TaskBoardTask>;
+  onDeleteTask?: (task: TaskBoardTask) => Promise<TaskBoardTask>;
   onExecute: (
     task: TaskBoardTask,
     purpose?: TaskBoardExecutionPurpose,
@@ -85,15 +88,18 @@ export function TaskDetail({
   canUpdateTask = true,
   canTransitionTask = true,
   canArchiveTask = true,
+  canDeleteTask = true,
   canComment = true,
   canExecute = true,
   canCancelIntegration = false,
   modelList = null,
   onOpenChange,
   onTaskLoaded,
+  onNavigateTask,
   onUpdate,
   onMove,
   onSetArchived,
+  onDeleteTask,
   onExecute,
   onCommentsChanged,
 }: TaskDetailProps) {
@@ -108,6 +114,7 @@ export function TaskDetail({
   const [pendingContinuationCommentId, setPendingContinuationCommentId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedResumeSourceIds, setSelectedResumeSourceIds] = useState<Set<string>>(new Set());
   const taskAttachments = useFileUpload("taskboard");
   const commentAttachments = useFileUpload("taskboard");
   const draftTaskIdRef = useRef<string | null>(null);
@@ -128,6 +135,10 @@ export function TaskDetail({
     error: executionsError,
     refresh: refreshExecutions,
   } = useTaskExecutions(open && task ? task.id : null, active && open);
+  const integrationSourcesState = useIntegrationSources(
+    open && currentTask?.kind === "integration" ? currentTask.id : null,
+    active && open,
+  );
 
   const hydrateDraft = useCallback((next: TaskBoardTask) => {
     draftTaskIdRef.current = next.id;
@@ -156,6 +167,7 @@ export function TaskDetail({
     if (switchedTask) {
       detailRequestRef.current += 1;
       refreshedExecutionRef.current = null;
+      setSelectedResumeSourceIds(new Set());
       setSaving(false);
     }
     if (!task) {
@@ -250,9 +262,11 @@ export function TaskDetail({
   const archived = !!currentTask?.archivedAt;
   const readOnly = boardReadOnly || archived;
   const taskKind = currentTask?.kind ?? "delivery";
-  const editReadOnly = readOnly || !canUpdateTask || taskKind !== "delivery";
+  const editReadOnly = readOnly || !canUpdateTask || taskKind === "integration" || taskKind === "remediation";
   const commentReadOnly = readOnly || !canComment;
-  const canRunCurrentTask = !readOnly && canExecute;
+  const canRunCurrentTask = !readOnly && canExecute
+    && !["done", "canceled", "blocked"].includes(currentTask?.status ?? "canceled")
+    && !currentTask?.mergedCommitOid;
   const canTransitionCurrentTask = Boolean(
     currentTask
     && !readOnly
@@ -340,6 +354,62 @@ export function TaskDetail({
       if (!isCurrentOperation(requestId, operationTask.id)) return;
       useConflictCurrent(caught);
       setError(caught instanceof Error ? caught.message : nextArchived ? "归档任务失败" : "恢复任务失败");
+    } finally {
+      if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
+    }
+  };
+
+  const deleteCurrentTask = async () => {
+    if (!currentTask || boardReadOnly || !canDeleteTask || !onDeleteTask) return;
+    const operationTask = currentTask;
+    if (!window.confirm(`确认删除任务“${operationTask.title}”吗？删除后任务将不再显示，且无法恢复。`)) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onDeleteTask(operationTask);
+      onOpenChange(false);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "删除任务失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resumeBlocked = async () => {
+    if (!currentTask || currentTask.status !== "blocked" || !canTransitionTask || executionActive) return;
+    const sourceIds = taskKind === "integration"
+      ? integrationSourcesState.sources
+        .filter((source) => source.state === "needs_human" && selectedResumeSourceIds.has(source.id))
+        .map((source) => source.id)
+      : undefined;
+    if (taskKind === "integration" && !sourceIds?.length) {
+      setError("请先勾选至少一个要恢复的 needs_human 集成来源");
+      return;
+    }
+    const decision = window.prompt(
+      taskKind === "integration"
+        ? `请填写恢复 ${sourceIds!.length} 个阻塞来源的决策与后续要求`
+        : "请填写解除阻塞后的恢复决策与后续要求",
+    )?.trim();
+    if (!decision) return;
+    const operationTask = currentTask;
+    const requestId = ++detailRequestRef.current;
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await api.resumeTask(operationTask.id, operationTask.version, decision, sourceIds);
+      if (!isCurrentOperation(requestId, operationTask.id)) return;
+      setCurrentTask(next);
+      mergeServerDraft(next);
+      onTaskLoaded(next);
+      if (taskKind === "integration") {
+        setSelectedResumeSourceIds(new Set());
+        await integrationSourcesState.refresh();
+      }
+    } catch (caught) {
+      if (!isCurrentOperation(requestId, operationTask.id)) return;
+      useConflictCurrent(caught);
+      setError(caught instanceof Error ? caught.message : "恢复任务失败");
     } finally {
       if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
     }
@@ -479,7 +549,8 @@ export function TaskDetail({
               </SheetDescription>
             </SheetHeader>
             <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
-              <section aria-label="任务工作流信息" className="mb-6 space-y-2 rounded-lg border bg-muted/20 p-4 text-sm">
+              <section aria-label="流程状态" className="mb-6 space-y-2 rounded-lg border bg-muted/20 p-4 text-sm">
+                <h3 className="text-sm font-semibold">流程状态（Task）</h3>
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant={taskKind === "integration" ? "default" : "secondary"} className={taskKind === "integration" ? "bg-violet-600 hover:bg-violet-600" : ""}>{TASK_KIND_LABELS[taskKind]}</Badge>
                   <Badge variant="outline">{STATUS_LABELS[currentTask.status]}</Badge>
@@ -488,26 +559,93 @@ export function TaskDetail({
                 {currentTask.providerPullRequestId ? <p>PR：<span className="font-mono">{currentTask.providerPullRequestId}</span>{currentTask.pullRequestNumber ? `（#${currentTask.pullRequestNumber}）` : ""}</p> : null}
                 {currentTask.reviewedSubjectDigest ? <p className="break-all text-xs text-muted-foreground">已复核对象：<span className="font-mono">{currentTask.reviewedSubjectDigest}</span></p> : null}
                 {currentTask.mergedCommitOid ? <p className="flex items-center gap-1 break-all text-xs text-emerald-700 dark:text-emerald-400"><GitCommitHorizontal className="size-3.5 shrink-0" />merged commit {currentTask.mergedCommitOid}</p> : null}
-                {currentTask.status === "blocked" ? <p className="text-amber-700 dark:text-amber-300">任务已阻塞；请查看最新执行错误或评论中的解除条件。</p> : null}
-                {taskKind === "remediation" ? <p className="text-amber-700 dark:text-amber-300">自动修复任务：完成后会回到来源复核流程，不作为独立交付合并。</p> : null}
+                {currentTask.status === "blocked" ? (
+                  <div className="space-y-2 text-amber-700 dark:text-amber-300">
+                    <p>任务已阻塞；请查看最新执行错误或评论中的解除条件。</p>
+                    {canTransitionTask ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void resumeBlocked()}
+                        disabled={saving || executionActive || (taskKind === "integration"
+                          && (integrationSourcesState.loading || integrationSourcesState.error !== null
+                            || selectedResumeSourceIds.size === 0))}
+                      >
+                        显式恢复{taskKind === "integration" ? "阻塞来源" : "任务"}
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+                {currentTask.resumeContext ? (
+                  <div aria-label="最近恢复决策" className="space-y-1 rounded-md border border-blue-200 bg-blue-50 p-3 text-blue-950 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100">
+                    <p className="font-medium">最近恢复决策与后续要求</p>
+                    <p className="whitespace-pre-wrap">{currentTask.resumeContext.decision}</p>
+                    <p className="text-xs opacity-80">
+                      恢复目标：{currentTask.resumeContext.purpose === "review" ? "复核" : currentTask.resumeContext.purpose === "merge" ? "集成" : "实施"} Agent
+                      {currentTask.resumeContext.sourceIds.length
+                        ? ` · ${currentTask.resumeContext.sourceIds.length} 个来源`
+                        : ""}
+                      {` · 提交于 ${new Date(currentTask.resumeContext.requestedAt).toLocaleString("zh-CN")}`}
+                    </p>
+                    <p className="text-xs opacity-80">
+                      {currentTask.resumeContext.consumedAt
+                        ? `已交给 Agent · ${new Date(currentTask.resumeContext.consumedAt).toLocaleString("zh-CN")}`
+                        : "尚未交给 Agent，需另行启动"}
+                    </p>
+                  </div>
+                ) : null}
+                {taskKind === "remediation" ? <p className="text-amber-700 dark:text-amber-300">{currentTask.status === "done" ? "修复已验收，等待来源继续集成。" : "自动修复任务：完成后会回到来源复核流程，不作为独立交付合并。"}</p> : null}
+                {currentTask.rootDeliveryTaskId && taskKind === "remediation" ? (
+                  <p>
+                    原交付：
+                    <button type="button" className="text-primary hover:underline" onClick={() => onNavigateTask?.(currentTask.rootDeliveryTaskId!)} disabled={!onNavigateTask}>
+                      {currentTask.rootDeliveryTaskIdentifier ?? currentTask.rootDeliveryTaskId}
+                      {currentTask.rootDeliveryTaskTitle ? ` · ${currentTask.rootDeliveryTaskTitle}` : ""}
+                    </button>
+                  </p>
+                ) : null}
+                {currentTask.integrationTaskId ? (
+                  <p className="text-violet-700 dark:text-violet-300">
+                    {currentTask.mergeEligibility === "claimed" ? "已进入集成 " : currentTask.integrationState === "canceled" ? "上次批次已取消，可重新选择：" : "关联集成："}
+                    <button type="button" className="hover:underline" onClick={() => onNavigateTask?.(currentTask.integrationTaskId!)} disabled={!onNavigateTask}>
+                      {currentTask.integrationTaskIdentifier ?? currentTask.integrationTaskId}
+                      {currentTask.integrationTaskTitle ? ` · ${currentTask.integrationTaskTitle}` : ""}
+                    </button>
+                    {currentTask.mergeEligibility === "claimed" ? "，不可重复选择。" : ""}
+                  </p>
+                ) : null}
                 {currentTask.integrationState === "re_reviewing" ? <p>来源变更后正在重新复核已评审对象。</p> : null}
               </section>
 
-              {taskKind === "integration" ? <IntegrationSourceDetails taskId={currentTask.id} /> : null}
+              {taskKind === "integration" ? (
+                <IntegrationSourceDetails
+                  taskId={currentTask.id}
+                  state={integrationSourcesState}
+                  selectedSourceIds={selectedResumeSourceIds}
+                  onSourceSelectionChange={currentTask.status === "blocked" && canTransitionTask ? (sourceId, selected) => {
+                    setSelectedResumeSourceIds((previous) => {
+                      const next = new Set(previous);
+                      if (selected) next.add(sourceId); else next.delete(sourceId);
+                      return next;
+                    });
+                  } : undefined}
+                  onNavigateTask={onNavigateTask}
+                />
+              ) : null}
 
               <section aria-label="Agent 执行" className="mb-6 space-y-3 rounded-lg border bg-muted/20 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <h3 className="text-sm font-semibold">Agent 执行</h3>
+                    <h3 className="text-sm font-semibold">最近运行（Execution）</h3>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      同一任务复用一个会话；运行中的新评论会排队注入下一次思考。
+                      运行成功只表示已提交结构化结果，不等于业务流程已完成。
                     </p>
                   </div>
                   {canRunCurrentTask && (
-                    (taskKind === "integration" && ["todo", "in_progress", "blocked"].includes(currentTask.status))
+                    (taskKind === "integration" && ["todo", "in_progress"].includes(currentTask.status))
                     || (taskKind !== "integration" && currentTask.status === "todo")
                     || (taskKind !== "integration" && currentTask.status === "in_review")
-                    || (taskKind !== "integration" && currentTask.status === "blocked")
                   ) ? (
                     <Button
                       type="button"
@@ -522,8 +660,8 @@ export function TaskDetail({
                         ? EXECUTION_STATUS_LABELS[latestExecution.status]
                         : taskKind === "integration" ? "继续集成"
                           : currentTask.status === "in_review" ? "独立复核"
-                          : currentTask.status === "blocked" ? "重新运行"
-                          : "交给 Agent"}
+                          : taskKind === "advisory" ? "开始分析/答复"
+                          : "开始实施"}
                     </Button>
                   ) : null}
                 </div>
@@ -535,7 +673,7 @@ export function TaskDetail({
                   <div className="space-y-2 text-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span>
-                        {latestExecution.purpose === "review" ? "独立复核 · " : latestExecution.purpose === "merge" ? "集成合并 · " : "实施 · "}
+                        {latestExecution.purpose === "review" ? "独立复核 · " : latestExecution.purpose === "merge" ? "集成合并 · " : taskKind === "advisory" ? "分析/答复 · " : "实施 · "}
                         {EXECUTION_STATUS_LABELS[latestExecution.status]}
                       </span>
                       <time className="text-xs text-muted-foreground">
@@ -556,6 +694,25 @@ export function TaskDetail({
                 ) : !executionsLoading ? (
                   <p className="text-sm text-muted-foreground">尚未交给 Agent 执行</p>
                 ) : null}
+              </section>
+
+              <section aria-label="业务结论" className="mb-6 space-y-2 rounded-lg border bg-muted/20 p-4 text-sm">
+                <h3 className="text-sm font-semibold">业务结论（Resolution）</h3>
+                {latestExecution?.resolutionOutcome ? (
+                  <>
+                    <p>
+                      {latestExecution.resolutionOutcome}
+                      {latestExecution.resolutionState === "historical" ? " · 历史结论（已迁移）" : ""}
+                      {latestExecution.ignoredReason && latestExecution.ignoredReason !== "historical_projection" ? ` · 已忽略（${latestExecution.ignoredReason}）` : ""}
+                    </p>
+                    {latestExecution.resolutionSummary ? <p className="whitespace-pre-wrap text-xs text-muted-foreground">{latestExecution.resolutionSummary}</p> : null}
+                    {latestExecution.taskStatusAfter ? <p className="text-xs text-muted-foreground">裁决后流程：{STATUS_LABELS[latestExecution.taskStatusAfter]}</p> : null}
+                  </>
+                ) : latestExecution?.resolutionState === "legacy_ambiguous" || latestExecution?.resolutionState === "legacy_incomplete" ? (
+                  <p role="alert" className="text-xs text-amber-700 dark:text-amber-300">
+                    历史结论（未迁移）：{latestExecution.resolutionIssue}
+                  </p>
+                ) : <p className="text-xs text-muted-foreground">尚未提交结构化业务结论。</p>}
               </section>
 
               <form className="space-y-4" onSubmit={save}>
@@ -599,19 +756,21 @@ export function TaskDetail({
                     />
                   )}
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="task-detail-branch">工作分支</Label>
-                  <Input
-                    id="task-detail-branch"
-                    value={branch}
-                    onChange={(event) => {
-                      dirtyFieldsRef.current.add("branch");
-                      setBranch(event.target.value);
-                    }}
-                    placeholder="由你填写，或由 Agent 创建后回写"
-                    disabled={editReadOnly || saving}
-                  />
-                </div>
+                {taskKind === "delivery" ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="task-detail-branch">工作分支</Label>
+                    <Input
+                      id="task-detail-branch"
+                      value={branch}
+                      onChange={(event) => {
+                        dirtyFieldsRef.current.add("branch");
+                        setBranch(event.target.value);
+                      }}
+                      placeholder="由你填写，或由 Agent 创建后回写"
+                      disabled={editReadOnly || saving}
+                    />
+                  </div>
+                ) : null}
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>状态</Label>
@@ -695,6 +854,18 @@ export function TaskDetail({
                       {archived ? "恢复任务" : "归档任务"}
                     </Button>
                   ) : null}
+                  {!boardReadOnly && canDeleteTask && onDeleteTask ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void deleteCurrentTask()}
+                      disabled={saving}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      <Trash2 />
+                      删除任务
+                    </Button>
+                  ) : null}
                 </div>
               </form>
 
@@ -743,7 +914,13 @@ export function TaskDetail({
                         disabled={saving}
                       />
                       <Label htmlFor="task-comment-continue" className="font-normal">
-                        发表后切换为实施中并继续执行
+                        {latestExecution && ACTIVE_EXECUTION_STATUSES.has(latestExecution.status)
+                          ? latestExecution.purpose === "merge" ? "发表后继续集成"
+                            : latestExecution.purpose === "review" ? "发表后继续复核"
+                            : taskKind === "advisory" ? "发表后继续分析/答复" : "发表后继续实施"
+                          : taskKind === "integration" ? "发表后继续集成"
+                            : currentTask.status === "in_review" ? "发表后继续复核"
+                            : taskKind === "advisory" ? "发表后继续分析/答复" : "发表后继续实施"}
                       </Label>
                     </div>
                   ) : null}

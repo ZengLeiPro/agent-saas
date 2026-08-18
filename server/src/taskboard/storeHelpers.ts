@@ -3,6 +3,7 @@ import {
   type TaskBoardAttachment,
   type TaskBoardComment,
   type TaskBoardExecution,
+  type TaskBoardResumeContext,
   type TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import {
@@ -13,14 +14,25 @@ import {
   type TaskboardIdentity,
   TaskboardValidationError,
 } from './types.js';
-import { parseStageModels } from './boardFields.js';
+import { parseJsonObject, parseStageModels } from './boardFields.js';
 
 export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
+  if (row.kind !== null && row.kind !== undefined
+    && !['delivery', 'advisory', 'integration', 'remediation'].includes(String(row.kind))) {
+    throw new TaskboardValidationError(
+      `Unsupported task kind: ${String(row.kind)}`,
+      'TASKBOARD_TASK_KIND_UNSUPPORTED',
+    );
+  }
   return {
     id: String(row.id),
     boardId: String(row.board_id),
     identifier: String(row.identifier),
-    kind: row.kind === 'integration' || row.kind === 'remediation' ? row.kind : 'delivery',
+    ...(row.kind === null || row.kind === undefined
+      ? { kind: 'delivery' as const }
+      : row.kind === 'delivery' || row.kind === 'advisory' || row.kind === 'integration' || row.kind === 'remediation'
+        ? { kind: row.kind }
+        : {}),
     title: String(row.title),
     description: String(row.description ?? ''),
     ...(row.branch ? { branch: String(row.branch) } : {}),
@@ -40,18 +52,65 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     ...(row.reviewed_subject_digest ? { reviewedSubjectDigest: String(row.reviewed_subject_digest) } : {}),
     ...(row.merged_commit_oid ? { mergedCommitOid: String(row.merged_commit_oid) } : {}),
     ...(row.integration_task_id ? { integrationTaskId: String(row.integration_task_id) } : {}),
+    ...(row.integration_task_identifier ? { integrationTaskIdentifier: String(row.integration_task_identifier) } : {}),
+    ...(row.integration_task_title ? { integrationTaskTitle: String(row.integration_task_title) } : {}),
+    ...(row.integration_source_id ? { integrationSourceId: String(row.integration_source_id) } : {}),
+    ...(row.root_delivery_task_id ? { rootDeliveryTaskId: String(row.root_delivery_task_id) } : {}),
+    ...(row.root_delivery_task_identifier ? { rootDeliveryTaskIdentifier: String(row.root_delivery_task_identifier) } : {}),
+    ...(row.root_delivery_task_title ? { rootDeliveryTaskTitle: String(row.root_delivery_task_title) } : {}),
     ...(row.integration_state ? {
       integrationState: String(row.integration_state) as TaskBoardTask['integrationState'],
     } : {}),
+    mergeEligibility: taskMergeEligibility(row),
+    workflowDisplayState: taskWorkflowDisplayState(row),
+    ...taskResumeContext(row.resume_context),
     commentCount: Number(row.comment_count ?? 0),
     version: Number(row.version),
     ...(row.creator_user_id ? { creatorUserId: String(row.creator_user_id) } : {}),
     ...(row.creator_name ? { creatorName: String(row.creator_name) } : {}),
     ...(row.completed_at ? { completedAt: toIso(row.completed_at) } : {}),
     ...(row.archived_at ? { archivedAt: toIso(row.archived_at) } : {}),
+    ...(row.deleted_at ? { deletedAt: toIso(row.deleted_at) } : {}),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
   };
+}
+
+function taskResumeContext(value: unknown): { resumeContext: TaskBoardResumeContext } | Record<string, never> {
+  const context = parseJsonObject<Record<string, unknown>>(value);
+  if (!context || typeof context.decision !== 'string' || !context.decision.trim()
+    || !['work', 'review', 'merge'].includes(String(context.purpose))
+    || typeof context.requestedAt !== 'string' || typeof context.requestedBy !== 'string') {
+    return {};
+  }
+  return {
+    resumeContext: {
+      decision: context.decision,
+      purpose: String(context.purpose) as TaskBoardResumeContext['purpose'],
+      sourceIds: Array.isArray(context.sourceIds) ? context.sourceIds.map(String) : [],
+      requestedAt: context.requestedAt,
+      requestedBy: context.requestedBy,
+      ...(typeof context.consumedAt === 'string' ? { consumedAt: context.consumedAt } : {}),
+      ...(typeof context.consumedExecutionId === 'string'
+        ? { consumedExecutionId: context.consumedExecutionId }
+        : {}),
+    },
+  };
+}
+
+function taskMergeEligibility(row: Record<string, unknown>): TaskBoardTask['mergeEligibility'] {
+  if (row.kind !== 'delivery') return 'not_applicable';
+  if (row.integration_state === 'merged' || row.merged_commit_oid) return 'merged';
+  if (row.integration_state !== 'canceled' && (row.integration_source_id || row.integration_task_id)) return 'claimed';
+  return row.status === 'ready_to_merge' && row.provider_pull_request_id && row.reviewed_subject_digest
+    ? 'eligible'
+    : 'not_applicable';
+}
+
+function taskWorkflowDisplayState(row: Record<string, unknown>): string {
+  if (row.kind === 'remediation' && row.status === 'done') return 'remediation_accepted';
+  if (row.integration_state && !['merged', 'canceled'].includes(String(row.integration_state))) return 'claimed_for_integration';
+  return String(row.status);
 }
 
 export function rowToComment(row: Record<string, unknown>): TaskBoardComment {
@@ -69,6 +128,27 @@ export function rowToComment(row: Record<string, unknown>): TaskBoardComment {
   };
 }
 
+function executionResolutionProjection(row: Record<string, unknown>): Pick<TaskBoardExecution, 'resolutionState' | 'resolutionIssue'> {
+  if (row.has_resolution === true || row.resolution_id || row.resolution_outcome) {
+    return { resolutionState: row.resolution_historical === true ? 'historical' : 'canonical' };
+  }
+  const candidates = Number(row.legacy_resolution_count ?? 0);
+  const valid = Number(row.legacy_resolution_valid_count ?? 0);
+  if (candidates > 1) {
+    return {
+      resolutionState: 'legacy_ambiguous',
+      resolutionIssue: `检测到 ${candidates} 条历史结论，无法唯一迁移`,
+    };
+  }
+  if (candidates === 1 && valid !== 1) {
+    return {
+      resolutionState: 'legacy_incomplete',
+      resolutionIssue: '历史结论字段不完整，未迁移为结构化结论',
+    };
+  }
+  return { resolutionState: 'missing' };
+}
+
 export function rowToExecution(row: Record<string, unknown>): TaskBoardExecution {
   return {
     id: String(row.id),
@@ -84,6 +164,15 @@ export function rowToExecution(row: Record<string, unknown>): TaskBoardExecution
     ...(row.attempt_id ? { attemptId: String(row.attempt_id) } : {}),
     requestedBy: String(row.requested_by),
     ...(row.error !== null && row.error !== undefined ? { error: String(row.error) } : {}),
+    ...(row.resolution_id ? { resolutionId: String(row.resolution_id) } : {}),
+    ...(row.resolution_outcome ? { resolutionOutcome: String(row.resolution_outcome) } : {}),
+    ...(row.resolution_summary ? { resolutionSummary: String(row.resolution_summary) } : {}),
+    ...executionResolutionProjection(row),
+    ...(row.task_status_after ? { taskStatusAfter: String(row.task_status_after) as TaskBoardTask['status'] } : {}),
+    ...(row.resolved_at ? { resolvedAt: toIso(row.resolved_at) } : {}),
+    ...(row.ignored_reason ? { ignoredReason: String(row.ignored_reason) } : {}),
+    ...(row.superseded_at ? { supersededAt: toIso(row.superseded_at) } : {}),
+    ...(row.fence_epoch !== null && row.fence_epoch !== undefined ? { fenceEpoch: String(row.fence_epoch) } : {}),
     ...(row.started_at ? { startedAt: toIso(row.started_at) } : {}),
     ...(row.finished_at ? { finishedAt: toIso(row.finished_at) } : {}),
     createdAt: toIso(row.created_at),

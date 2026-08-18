@@ -87,9 +87,53 @@ describe('任务看板后续正式执行', () => {
     expect(rig.store.claimExecution).toHaveBeenCalledWith(identity, task.id, expect.objectContaining({
       sessionId: completed.sessionId,
       runId: expect.not.stringMatching(/^execution-run-1$/),
-      allowWorkFromCurrentStatus: true,
+      purpose: 'work',
+      trigger: 'initial',
     }));
   });
+
+  it('integration 评论在无 active execution 时只创建 merge execution', async () => {
+    const integration = { ...task, kind: 'integration' as const, status: 'todo' as const };
+    const claimed = { ...activeExecution, taskId: integration.id, purpose: 'merge' as const };
+    const rig = makeRig({
+      getContinuationContext: vi.fn(async () => ({
+        task: integration, comment: comments[1]!, pendingComments: comments,
+      })),
+      getExecutionModelContext: vi.fn(async () => ({
+        taskKind: 'integration' as const, boardOwnerUserId: identity.ownerUserId,
+      })),
+      claimExecution: vi.fn(async (_identity, _taskId, input) => ({
+        task: { ...integration, status: 'in_progress' as const },
+        execution: { ...claimed, id: input.executionId, runId: input.runId, sessionId: input.sessionId },
+      })),
+    });
+
+    await rig.coordinator.continueExecution(identity, integration.id, comments[1]!.id);
+
+    expect(rig.store.claimExecution).toHaveBeenCalledWith(identity, integration.id, expect.objectContaining({
+      purpose: 'merge', trigger: 'comment', protocolVersion: 2,
+    }));
+    expect(rig.store.enqueueContinuation).not.toHaveBeenCalled();
+  });
+
+  it('终态、merged 与 blocked 评论均不得再次派发', async () => {
+    for (const terminalTask of [
+      { ...task, status: 'done' as const },
+      { ...task, status: 'in_review' as const, mergedCommitOid: 'abc123' },
+      { ...task, status: 'blocked' as const },
+    ]) {
+      const rig = makeRig({
+        getContinuationContext: vi.fn(async () => ({
+          task: terminalTask, comment: comments[1]!, pendingComments: comments,
+        })),
+      });
+      await expect(rig.coordinator.continueExecution(identity, terminalTask.id, comments[1]!.id))
+        .rejects.toBeInstanceOf(TaskboardValidationError);
+      expect(rig.store.claimExecution).not.toHaveBeenCalled();
+      expect(rig.store.enqueueContinuation).not.toHaveBeenCalled();
+    }
+  });
+
 });
 
 function makeRig(

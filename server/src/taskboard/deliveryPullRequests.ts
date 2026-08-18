@@ -156,7 +156,7 @@ async function loadContext(
   try {
     const result = await client.query(
       `SELECT t.id AS task_id,t.kind,t.provider_pull_request_id,
-              e.id AS execution_id,e.purpose,e.status AS execution_status,
+              e.id AS execution_id,e.purpose,e.status AS execution_status,e.resolved_at,e.superseded_at,
               b.repository,b.owner_user_id
          FROM ${host.executionsTable} e
          JOIN ${host.tasksTable} t ON t.id=e.task_id
@@ -171,7 +171,8 @@ async function loadContext(
     if (!['delivery', 'remediation'].includes(String(row.kind)) || !purposes.includes(String(row.purpose))) {
       throw new TaskboardValidationError('Execution purpose cannot update task pull request');
     }
-    if (!['queued', 'running', 'waiting_user', 'waiting_approval'].includes(String(row.execution_status))) {
+    if (row.resolved_at || row.superseded_at
+      || !['queued', 'running', 'waiting_user', 'waiting_approval'].includes(String(row.execution_status))) {
       throw new TaskboardValidationError('Taskboard execution is no longer active');
     }
     const repository = jsonObject(row.repository);
@@ -199,10 +200,15 @@ async function lockExecution(
   runId: string,
   taskId: string,
 ): Promise<void> {
+  await client.query(
+    `SELECT id FROM ${host.tasksTable} WHERE id=$1 FOR UPDATE`,
+    [taskId],
+  );
   const result = await client.query(
     `SELECT id FROM ${host.executionsTable}
       WHERE run_id=$1 AND task_id=$2
         AND status IN ('queued','running','waiting_user','waiting_approval')
+        AND resolved_at IS NULL AND superseded_at IS NULL
       FOR UPDATE`,
     [runId, taskId],
   );

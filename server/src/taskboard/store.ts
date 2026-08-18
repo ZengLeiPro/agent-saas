@@ -52,11 +52,12 @@ import {
   updateTaskBranchFromExecution as updateStoredTaskBranchFromExecution,
 } from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
+import { deleteStoredTask } from './storeTaskDelete.js';
 import {
-  allowedActionsForRole, boardRepositoryFragment,
+  allowedActionsForRole,
   normalizeBoardPrompt,
   normalizeModel,
-  normalizeRepositoryConfig, parseStageModels,
+  normalizeRepositoryConfig,
   rowToBoard, stageModelsToJson, stagePromptsToJson,
 } from './boardFields.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
@@ -79,9 +80,10 @@ import {
   listBoardMembers as listStoredBoardMembers,
   listIntegrationSources as listStoredIntegrationSources,
   removeBoardMember as removeStoredBoardMember,
-  resolveExecutionV2 as resolveStoredExecutionV2,
   upsertBoardMember as upsertStoredBoardMember,
 } from './v2Store.js';
+import { resolveExecutionV2 as resolveStoredExecutionV2 } from './workflow/resolutionService.js';
+import { resumeBlockedTask as resumeStoredBlockedTask } from './workflow/resumeService.js';
 import {
   assertActiveBoard,
   assertExpectedVersion,
@@ -95,7 +97,6 @@ import {
   rowToComment,
   rowToTask,
   sanitizeIdentifier,
-  toIso,
   validateMoveNeighbors,
 } from './storeHelpers.js';
 import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns } from './archiveGuard.js';
@@ -112,6 +113,11 @@ import {
   searchTasks as searchStoredTasks,
 } from './storeSearch.js';
 import { initializeTaskboardStore } from './storeSchema.js';
+import { requireTaskWithBoard as requireStoredTaskWithBoard } from './storeTaskAccess.js';
+import {
+  claimWorkflowCancellations as claimStoredWorkflowCancellations,
+  finishWorkflowCancellation as finishStoredWorkflowCancellation,
+} from './workflow/cancellationOutbox.js';
 import {
   claimExecution as claimStoredExecution,
   completeExecution as completeStoredExecution,
@@ -172,6 +178,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   readonly mergeOperationsTable: string;
   readonly blockEpisodesTable: string;
   readonly integrationTriggerOutboxTable: string;
+  readonly resolutionsTable: string;
+  readonly remediationAttemptsTable: string;
+  readonly cancellationOutboxTable: string;
   repositoryProvider?: RepositoryProvider;
 
   constructor(options: PgTaskboardStoreOptions) {
@@ -193,6 +202,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     this.mergeOperationsTable = `${prefix}_taskboard_merge_ops`;
     this.blockEpisodesTable = `${prefix}_taskboard_block_episodes`;
     this.integrationTriggerOutboxTable = `${prefix}_taskboard_integration_outbox`;
+    this.resolutionsTable = `${prefix}_taskboard_resolutions`;
+    this.remediationAttemptsTable = `${prefix}_taskboard_remediation_attempts`;
+    this.cancellationOutboxTable = `${prefix}_taskboard_cancel_outbox`;
   }
 
   async init(): Promise<void> {
@@ -236,6 +248,14 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     integrationTaskId: string,
   ): Promise<TaskBoardIntegrationSource[]> {
     return listStoredIntegrationSources(this, identity, integrationTaskId);
+  }
+
+  resumeBlockedTask(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input: { expectedVersion: number; decision: string; sourceIds?: string[] },
+  ): Promise<TaskBoardTask> {
+    return resumeStoredBlockedTask(this, identity, taskId, input);
   }
 
   getExecutionContextV2(
@@ -292,6 +312,14 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     remediationTaskId: string,
   ) {
     return linkIntegrationRemediation(this, identity, runId, sourceId, remediationTaskId);
+  }
+
+  claimWorkflowCancellations(limit = 20): Promise<Array<{ id: string; runId: string; reason: string }>> {
+    return claimStoredWorkflowCancellations(this, limit);
+  }
+
+  finishWorkflowCancellation(id: string, error?: string): Promise<void> {
+    return finishStoredWorkflowCancellation(this, id, error);
   }
 
   reconcileMergeOperationsV2(limit?: number): Promise<number> {
@@ -570,10 +598,18 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       const board = await this.requireBoard(client, identity, boardId, true);
       assertBoardRole(board.role, 'editor');
       assertActiveBoard(board);
-      if (input.kind === 'integration') {
+      if (input.kind === 'integration' || input.kind === 'remediation') {
         throw new TaskboardValidationError(
-          'Integration tasks must be created from an integration batch',
-          'TASKBOARD_INTEGRATION_CREATE_REQUIRES_BATCH',
+          'Integration and remediation tasks must be created by their dedicated workflow',
+          'TASKBOARD_INTERNAL_TASK_CREATE_REQUIRES_WORKFLOW',
+        );
+      }
+      if (input.kind === 'advisory' && (
+        input.branch || input.providerPullRequestId || input.pullRequestNumber || input.reviewedSubjectDigest
+      )) {
+        throw new TaskboardValidationError(
+          'Advisory tasks cannot carry repository or pull request fields',
+          'TASKBOARD_ADVISORY_REPOSITORY_FORBIDDEN',
         );
       }
       if (input.status && !['backlog', 'todo', 'in_progress'].includes(input.status)) {
@@ -659,6 +695,12 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       assertBoardRole(loaded.boardRole, 'editor');
       assertExpectedVersion(loaded.task, input.expectedVersion);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
+      if (loaded.task.kind === 'advisory' && input.branch !== undefined) {
+        throw new TaskboardValidationError(
+          'Advisory tasks cannot carry a repository branch',
+          'TASKBOARD_ADVISORY_REPOSITORY_FORBIDDEN',
+        );
+      }
       if (
         input.providerPullRequestId !== undefined
         || input.pullRequestNumber !== undefined
@@ -670,14 +712,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         );
       }
       if (
-        input.title === undefined
-        && input.description === undefined
-        && input.branch === undefined
-        && input.attachments === undefined
-        && input.priority === undefined
-        && input.labels === undefined
-        && input.dueAt === undefined
-        && input.model === undefined
+        input.title === undefined && input.description === undefined && input.branch === undefined
+        && input.attachments === undefined && input.priority === undefined && input.labels === undefined
+        && input.dueAt === undefined && input.model === undefined
       ) {
         throw new TaskboardValidationError('No task changes supplied');
       }
@@ -746,8 +783,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
             'TASKBOARD_PROTECTED_TRANSITION',
           );
         }
-        if (['in_progress', 'in_review', 'ready_to_merge', 'done'].includes(input.status)
-          || ['in_progress', 'in_review', 'ready_to_merge', 'done'].includes(loaded.task.status)) {
+        if (['in_progress', 'in_review', 'ready_to_merge', 'blocked', 'done'].includes(input.status)
+          || ['in_progress', 'in_review', 'ready_to_merge', 'blocked', 'done'].includes(loaded.task.status)) {
           throw new TaskboardValidationError(
             'This state transition requires a workflow command',
             'TASKBOARD_PROTECTED_TRANSITION',
@@ -831,6 +868,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return this.setTaskArchived(identity, taskId, input.expectedVersion, false);
   }
 
+  async deleteTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask> {
+    return this.withTransaction((client) => deleteStoredTask(this, client, identity, taskId, input.expectedVersion));
+  }
+
   async listComments(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardComment[]> {
     await this.requireTask(this.pool, identity, taskId, false);
     const result = await this.pool.query(
@@ -858,10 +899,11 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       const result = await client.query(
         `INSERT INTO ${this.commentsTable}
            (id, task_id, body, attachments, author_type, author_id, author_name, continuation_eligible, version)
-         VALUES ($1,$2,$3,$4::jsonb,'user',$5,$6,true,1)
+         VALUES ($1,$2,$3,$4::jsonb,'user',$5,$6,$7,1)
          RETURNING *`,
         [randomUUID(), taskId, body, JSON.stringify(attachments), identity.ownerUserId,
-          identity.displayName || identity.username],
+          identity.displayName || identity.username,
+          !['done', 'canceled', 'blocked'].includes(loaded.task.status) && !loaded.task.mergedCommitOid],
       );
       await appendTaskChange(this, client, taskId, 'comment.created', 'user', identity.ownerUserId, {
         commentId: String(result.rows[0].id),
@@ -1092,7 +1134,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     }
   }
 
-  private requireBoard(
+  requireBoard(
     db: PgPool | PoolClient,
     identity: TaskboardIdentity,
     boardId: string,
@@ -1146,57 +1188,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     identity: TaskboardIdentity,
     taskId: string,
     forUpdate: boolean,
-  ): Promise<{
-    task: TaskBoardTask;
-    boardArchivedAt?: string;
-    boardModel?: string; boardStageModels?: TaskBoard['stageModels']; boardRepository?: TaskBoardRepositoryConfig;
-    boardOwnerUserId: string;
-    boardRole: TaskBoard['role'];
-  }> {
-    let lockedBoard: TaskBoard | undefined;
-    if (forUpdate) {
-      const ownership = await db.query(
-        `SELECT t.board_id
-           FROM ${this.tasksTable} t
-           JOIN ${this.boardsTable} b ON b.id=t.board_id
-          WHERE t.id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')`,
-        [taskId, identity.tenantId, identity.ownerUserId],
-      );
-      if (!ownership.rows[0]) throw new TaskboardNotFoundError('Task not found');
-      lockedBoard = await this.requireBoard(
-        db,
-        identity,
-        String(ownership.rows[0].board_id),
-        true,
-      );
-    }
-
-    const result = await db.query(
-      `SELECT t.*,
-              b.archived_at AS board_archived_at,
-              b.model AS board_model, b.stage_models AS board_stage_models, b.repository AS board_repository,
-              b.owner_user_id AS board_owner_user_id, m.role AS board_member_role,
-              (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id) AS comment_count
-         FROM ${this.tasksTable} t
-         JOIN ${this.boardsTable} b ON b.id=t.board_id LEFT JOIN ${this.membersTable} m ON m.board_id=b.id AND m.user_id=$3
-        WHERE t.id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
-        ${forUpdate ? 'FOR UPDATE OF t' : ''}`,
-      [taskId, identity.tenantId, identity.ownerUserId],
-    );
-    if (!result.rows[0]) throw new TaskboardNotFoundError('Task not found');
-    const row = result.rows[0];
-    const boardArchivedAt = lockedBoard?.archivedAt
-      ?? (row.board_archived_at ? toIso(row.board_archived_at) : undefined);
-    const boardModel = lockedBoard?.model ?? (row.board_model ? String(row.board_model) : undefined);
-    const boardStageModels = lockedBoard?.stageModels ?? parseStageModels(row.board_stage_models);
-    return {
-      task: rowToTask(row),
-      ...(boardArchivedAt ? { boardArchivedAt } : {}),
-      ...(boardModel ? { boardModel } : {}), ...(Object.keys(boardStageModels).length ? { boardStageModels } : {}),
-      ...boardRepositoryFragment(lockedBoard?.repository, row.board_repository),
-      boardOwnerUserId: lockedBoard?.ownerUserId ?? String(row.board_owner_user_id),
-      boardRole: lockedBoard?.role ?? (String(row.board_owner_user_id) === identity.ownerUserId ? 'owner' : row.board_member_role ? String(row.board_member_role) as TaskBoard['role'] : 'viewer'),
-    };
+  ) {
+    return requireStoredTaskWithBoard(this, db, identity, taskId, forUpdate);
   }
 
   async withTransaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {

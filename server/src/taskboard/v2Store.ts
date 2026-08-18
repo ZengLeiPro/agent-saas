@@ -5,7 +5,6 @@ import type {
   TaskBoardChange,
   TaskBoardExecutionContextInput,
   TaskBoardExecutionContextResponse,
-  TaskBoardExecutionResolutionInput,
   TaskBoardIntegrationBatchCreateInput,
   TaskBoardIntegrationSource,
   TaskBoardMember,
@@ -13,7 +12,8 @@ import type {
   TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import { rowToBoard } from './boardFields.js';
-import { assertWorkflowOutcome, resolveWorkflowContract } from './workflowContract.js';
+import { rowToIntegrationSource } from './integrationSourceMapper.js';
+import { resolveWorkflowContract } from './workflowContract.js';
 import { rowToComment, rowToExecution, rowToTask, toIso } from './storeHelpers.js';
 import {
   TaskboardConflictError,
@@ -37,6 +37,9 @@ export interface TaskboardV2StoreOptions {
   mergeOperationsTable: string;
   blockEpisodesTable: string;
   integrationTriggerOutboxTable: string;
+  resolutionsTable: string;
+  remediationAttemptsTable: string;
+  cancellationOutboxTable: string;
 }
 
 const SORT_GAP = 1024;
@@ -196,14 +199,19 @@ export async function createIntegrationBatch(
       }
     }
     const duplicate = await client.query(
-      `SELECT s.delivery_task_id
+      `SELECT s.delivery_task_id,s.provider_pull_request_id
          FROM ${options.integrationSourcesTable} s
-        WHERE s.delivery_task_id=ANY($1::text[]) AND s.state NOT IN ('merged','canceled')
+        WHERE s.state NOT IN ('merged','canceled')
+          AND (s.delivery_task_id=ANY($1::text[])
+            OR (s.repository_id=$2 AND s.provider_pull_request_id=ANY($3::text[])))
         LIMIT 1`,
-      [uniqueTaskIds],
+      [uniqueTaskIds, repository.repositoryId, sources.rows.map((row) => String(row.provider_pull_request_id))],
     );
     if (duplicate.rows[0]) {
-      throw new TaskboardValidationError('A delivery task already belongs to an active integration batch');
+      throw new TaskboardValidationError(
+        'A delivery task or pull request already belongs to an active integration batch',
+        'TASKBOARD_INTEGRATION_SOURCE_DUPLICATE',
+      );
     }
     const nextNumber = await client.query(
       `UPDATE ${options.boardsTable}
@@ -323,7 +331,8 @@ export async function cancelIntegrationTask(
     await client.query(
       `UPDATE ${options.integrationSourcesTable}
           SET state='canceled', last_error=$2, updated_at=now()
-        WHERE integration_task_id=$1 AND state<>'merged'`,
+        WHERE integration_task_id=$1 AND state<>'merged'
+          AND merged_commit_oid IS NULL AND provider_receipt_id IS NULL`,
       [taskId, input.reason?.trim() || 'Integration task canceled by user'],
     );
     await client.query(
@@ -359,9 +368,19 @@ export async function listIntegrationSources(
       throw new TaskboardValidationError('Task is not an integration task');
     }
     const result = await client.query(
-      `SELECT * FROM ${options.integrationSourcesTable}
-        WHERE integration_task_id=$1
-        ORDER BY source_order, created_at`,
+      `SELECT s.*,d.identifier AS delivery_task_identifier,d.title AS delivery_task_title,
+              (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                'id',a.id,'round',a.round,'remediationTaskId',a.remediation_task_id,
+                'remediationTaskIdentifier',r.identifier,'remediationTaskTitle',r.title,
+                'state',a.state,'resolvedAt',a.resolved_at
+              ) ORDER BY a.round),'[]'::jsonb)
+                 FROM ${options.remediationAttemptsTable} a
+                 JOIN ${options.tasksTable} r ON r.id=a.remediation_task_id
+                WHERE a.integration_source_id=s.id) AS remediation_attempts
+         FROM ${options.integrationSourcesTable} s
+         JOIN ${options.tasksTable} d ON d.id=s.delivery_task_id
+        WHERE s.integration_task_id=$1
+        ORDER BY s.source_order, s.created_at`,
       [integrationTaskId],
     );
     return result.rows.map(rowToIntegrationSource);
@@ -381,10 +400,16 @@ export async function getExecutionContextV2(
     const loaded = await loadAccessibleTaskAndBoard(options, client, identity, taskId, false);
     const include = new Set(input.include ?? ['task', 'board', 'comments', 'executions', 'integrationSources']);
     const latestExecutionResult = await client.query(
-      `SELECT * FROM ${options.executionsTable}
-        WHERE task_id=$1 ORDER BY created_at DESC LIMIT 1`,
-      [taskId],
+      `SELECT e.*, t.workflow_epoch
+         FROM ${options.executionsTable} e
+         JOIN ${options.tasksTable} t ON t.id=e.task_id
+        WHERE e.task_id=$1 AND ($2::text IS NULL OR e.run_id=$2)
+        ORDER BY e.created_at DESC LIMIT 1`,
+      [taskId, input.runId ?? null],
     );
+    if (input.runId && !latestExecutionResult.rows[0]) {
+      throw new TaskboardNotFoundError('Execution does not belong to this task');
+    }
     const latestExecution = latestExecutionResult.rows[0] ? rowToExecution(latestExecutionResult.rows[0]) : undefined;
     const contract = resolveWorkflowContract(loaded.task, latestExecution?.purpose);
     const asOfResult = await client.query(
@@ -412,7 +437,26 @@ export async function getExecutionContextV2(
       ? await client.query(`SELECT * FROM ${options.commentsTable} WHERE task_id=$1 ORDER BY created_at,id`, [taskId])
       : undefined;
     const executions = include.has('executions')
-      ? await client.query(`SELECT * FROM ${options.executionsTable} WHERE task_id=$1 ORDER BY created_at,id`, [taskId])
+      ? await client.query(
+        `SELECT e.*,r.outcome AS resolution_outcome,r.summary AS resolution_summary,
+                r.to_status AS task_status_after,r.ignored_reason,r.historical AS resolution_historical,
+                (r.execution_id IS NOT NULL) AS has_resolution,
+                legacy.candidate_count AS legacy_resolution_count,
+                legacy.valid_count AS legacy_resolution_valid_count
+           FROM ${options.executionsTable} e
+           LEFT JOIN ${options.resolutionsTable} r ON r.execution_id=e.id
+           LEFT JOIN LATERAL (
+             SELECT count(*)::int AS candidate_count,
+                    count(*) FILTER (WHERE NULLIF(c.payload->>'outcome','') IS NOT NULL
+                      AND NULLIF(c.payload->>'summary','') IS NOT NULL)::int AS valid_count
+               FROM ${options.changesTable} c
+              WHERE c.task_id=e.task_id AND c.change_type IN ('execution.resolved','execution.resolved.v2')
+                AND (c.payload->>'executionId'=e.id
+                  OR ((c.payload->>'executionId') IS NULL AND c.payload->>'runId'=e.run_id))
+           ) legacy ON true
+          WHERE e.task_id=$1 ORDER BY e.created_at,e.id`,
+        [taskId],
+      )
       : undefined;
     const sources = include.has('integrationSources') && loaded.task.kind === 'integration'
       ? await client.query(
@@ -435,6 +479,15 @@ export async function getExecutionContextV2(
       hasMore: changeRows.rows.length > limit,
       contract,
       receipt: {
+        ...(latestExecution ? {
+          schemaVersion: 2 as const,
+          runId: latestExecution.runId,
+          executionId: latestExecution.id,
+          attemptId: latestExecution.attemptId ?? latestExecution.id,
+          purpose: latestExecution.purpose,
+          workflowEpoch: String(latestExecutionResult.rows[0]?.workflow_epoch ?? '0'),
+          fenceEpoch: latestExecution.fenceEpoch ?? '0',
+        } : {}),
         taskId,
         taskVersion: loaded.task.version,
         changeSeq: asOfSeq,
@@ -465,6 +518,7 @@ export async function createExecutionCommentV2(
          JOIN ${options.tasksTable} t ON t.id=e.task_id
          JOIN ${options.boardsTable} b ON b.id=t.board_id
         WHERE e.run_id=$1 AND e.status IN ('queued','running','waiting_user','waiting_approval')
+          AND e.resolved_at IS NULL AND e.superseded_at IS NULL
           AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
         FOR UPDATE OF e`,
       [runId, identity.tenantId, identity.ownerUserId],
@@ -482,147 +536,6 @@ export async function createExecutionCommentV2(
       commentId: String(result.rows[0]!.id),
     });
     return rowToComment(result.rows[0]!);
-  });
-}
-
-export async function resolveExecutionV2(
-  options: TaskboardV2StoreOptions,
-  identity: TaskboardIdentity,
-  runId: string,
-  input: TaskBoardExecutionResolutionInput,
-): Promise<TaskBoardTask> {
-  return withTransaction(options, async (client) => {
-    const executionResult = await client.query(
-      `SELECT e.*, t.id AS actual_task_id
-         FROM ${options.executionsTable} e
-         JOIN ${options.tasksTable} t ON t.id=e.task_id
-         JOIN ${options.boardsTable} b ON b.id=t.board_id
-        WHERE e.run_id=$1 AND b.tenant_id=$2
-          AND (b.owner_user_id=$3 OR b.visibility='organization')
-        FOR UPDATE OF e`,
-      [runId, identity.tenantId, identity.ownerUserId],
-    );
-    const executionRow = executionResult.rows[0];
-    if (!executionRow) throw new TaskboardNotFoundError('Taskboard execution not found');
-    if (!['queued', 'running', 'waiting_user', 'waiting_approval'].includes(String(executionRow.status))) {
-      throw new TaskboardValidationError('Taskboard execution is no longer active');
-    }
-    const taskId = String(executionRow.actual_task_id);
-    if (input.receipt.taskId !== taskId) {
-      throw new TaskboardValidationError('Context receipt belongs to another task', 'TASKBOARD_CONTEXT_STALE');
-    }
-    const loaded = await loadAccessibleTaskAndBoard(options, client, identity, taskId, true);
-    const maxSeqResult = await client.query(
-      `SELECT COALESCE(MAX(seq),0)::text AS seq FROM ${options.changesTable} WHERE task_id=$1`,
-      [taskId],
-    );
-    const maxSeq = String(maxSeqResult.rows[0]?.seq ?? '0');
-    const contract = resolveWorkflowContract(loaded.task, rowToExecution(executionRow).purpose);
-    const policy = jsonObject(loaded.board.integration_policy) as { revision?: string } | undefined;
-    if (
-      loaded.task.version !== input.receipt.taskVersion
-      || maxSeq !== input.receipt.changeSeq
-      || contract.digest !== input.receipt.contractDigest
-      || (policy?.revision ?? 'none') !== input.receipt.policyRevision
-      || (loaded.task.reviewedSubjectDigest ?? undefined) !== input.receipt.subjectDigest
-    ) {
-      throw new TaskboardValidationError(
-        'Task context changed; read the latest context before resolving',
-        'TASKBOARD_CONTEXT_STALE',
-      );
-    }
-    assertWorkflowOutcome(contract, input.outcome);
-    if (contract.purpose === 'work' && input.outcome === 'ready_for_review' && !loaded.task.providerPullRequestId) {
-      throw new TaskboardValidationError(
-        'Delivery work must attach its pull request before completion',
-        'TASKBOARD_PULL_REQUEST_REQUIRED',
-      );
-    }
-    if (contract.purpose === 'review' && input.outcome === 'approved' && !loaded.task.reviewedSubjectDigest) {
-      throw new TaskboardValidationError(
-        'Review must record the exact pull request subject before approval',
-        'TASKBOARD_REVIEW_SUBJECT_REQUIRED',
-      );
-    }
-    const nextStatus = statusForOutcome(loaded.task, input.outcome);
-    if (input.outcome === 'approved' && loaded.task.kind === 'remediation') {
-      const resumed = await client.query(
-        `UPDATE ${options.integrationSourcesTable}
-            SET state='pending', last_error=NULL, updated_at=now()
-          WHERE remediation_task_id=$1 AND state='waiting_remediation'
-          RETURNING integration_task_id,id`,
-        [taskId],
-      );
-      for (const row of resumed.rows) {
-        await appendChange(options, client, String(row.integration_task_id), 'integration.remediation_completed', 'agent', identity.ownerUserId, {
-          sourceId: String(row.id),
-          remediationTaskId: taskId,
-        });
-      }
-    }
-    if (input.outcome === 'completed' && loaded.task.kind === 'integration') {
-      const remaining = await client.query(
-        `SELECT 1 FROM ${options.integrationSourcesTable}
-          WHERE integration_task_id=$1 AND state<>'merged' LIMIT 1`,
-        [taskId],
-      );
-      if (remaining.rows[0]) {
-        throw new TaskboardValidationError(
-          'Integration task still has unmerged sources',
-          'TASKBOARD_INTEGRATION_INCOMPLETE',
-        );
-      }
-    }
-    if (nextStatus) {
-      await client.query(
-        `UPDATE ${options.tasksTable}
-            SET status=$2, completed_at=CASE WHEN $2='done' THEN now() ELSE NULL END,
-                version=version+1, updated_at=now()
-          WHERE id=$1`,
-        [taskId, nextStatus],
-      );
-    }
-    if (input.outcome === 'needs_human' || input.outcome === 'blocked') {
-      await client.query(
-        `INSERT INTO ${options.blockEpisodesTable}
-           (id, task_id, purpose, execution_id, reason_code, reason)
-         VALUES ($1,$2,$3,$4,'agent_needs_human',$5)`,
-        [randomUUID(), taskId, contract.purpose, executionRow.id, input.summary],
-      );
-    }
-    if (input.outcome === 'completed' && loaded.task.kind === 'integration') {
-      await client.query(
-        `UPDATE ${options.mergeAuthorizationsTable} SET revoked_at=now()
-          WHERE integration_task_id=$1 AND revoked_at IS NULL`,
-        [taskId],
-      );
-      const repository = jsonObject(loaded.board.repository) as { repositoryId?: string } | undefined;
-      if (repository?.repositoryId) {
-        await client.query(
-          `UPDATE ${options.integrationLanesTable}
-              SET active_integration_task_id=NULL, lease_id=NULL, updated_at=now()
-            WHERE repository_id=$1 AND active_integration_task_id=$2`,
-          [repository.repositoryId, taskId],
-        );
-      }
-    }
-    await client.query(
-      `INSERT INTO ${options.commentsTable}
-         (id, task_id, body, author_type, author_id, author_name, continuation_eligible, version)
-       VALUES ($1,$2,$3,'agent',$4,'Agent',false,1)`,
-      [randomUUID(), taskId, input.summary, identity.ownerUserId],
-    );
-    await appendChange(options, client, taskId, 'execution.resolved', 'agent', identity.ownerUserId, {
-      runId,
-      outcome: input.outcome,
-      summary: input.summary,
-      evidence: input.evidence ?? [],
-      receipt: input.receipt,
-    });
-    if (input.outcome === 'approved' && loaded.task.kind === 'delivery') {
-      await enqueueOnReadyTrigger(options, client, loaded.board, taskId);
-    }
-    return loadTask(options, client, taskId);
   });
 }
 
@@ -657,7 +570,7 @@ export async function appendTaskChange(
   await appendChange(options, client, taskId, changeType, actorType, actorId, payload, tombstone);
 }
 
-async function enqueueOnReadyTrigger(
+export async function enqueueOnReadyTrigger(
   options: TaskboardV2StoreOptions,
   client: PoolClient,
   board: Record<string, unknown>,
@@ -678,18 +591,7 @@ async function enqueueOnReadyTrigger(
   );
 }
 
-function statusForOutcome(task: TaskBoardTask, outcome: string): string | undefined {
-  if (outcome === 'ready_for_review') return 'in_review';
-  if (outcome === 'approved') return 'ready_to_merge';
-  if (outcome === 'changes_requested' || outcome === 'stale_subject') return 'todo';
-  if (outcome === 'blocked' || outcome === 'needs_human') return 'blocked';
-  if (outcome === 'completed') return 'done';
-  if (outcome === 'canceled') return 'canceled';
-  if (outcome === 'progress') return undefined;
-  throw new TaskboardValidationError(`Unsupported outcome ${outcome}`);
-}
-
-async function requireBoardAccess(
+export async function requireBoardAccess(
   options: TaskboardV2StoreOptions,
   client: PoolClient,
   identity: TaskboardIdentity,
@@ -714,7 +616,7 @@ async function requireBoardAccess(
   return row;
 }
 
-async function loadAccessibleTaskAndBoard(
+export async function loadAccessibleTaskAndBoard(
   options: TaskboardV2StoreOptions,
   client: PoolClient,
   identity: TaskboardIdentity,
@@ -740,15 +642,28 @@ async function loadAccessibleTaskAndBoard(
             b.updated_at AS board_updated_at,
             CASE WHEN b.owner_user_id=$3 THEN 'owner' ELSE COALESCE(m.role,'viewer') END AS board_role,
             (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id) AS comment_count,
-            (SELECT s.integration_task_id FROM ${options.integrationSourcesTable} s
-              WHERE s.delivery_task_id=t.id AND s.state<>'merged' LIMIT 1) AS integration_task_id,
-            (SELECT s.state FROM ${options.integrationSourcesTable} s
-              WHERE s.delivery_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1) AS integration_state
+            COALESCE(
+              (SELECT s.integration_task_id FROM ${options.integrationSourcesTable} s WHERE s.delivery_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1),
+              (SELECT s.integration_task_id FROM ${options.remediationAttemptsTable} a JOIN ${options.integrationSourcesTable} s ON s.id=a.integration_source_id WHERE a.remediation_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1)
+            ) AS integration_task_id,
+            COALESCE(
+              (SELECT s.id FROM ${options.integrationSourcesTable} s WHERE s.delivery_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1),
+              (SELECT s.id FROM ${options.remediationAttemptsTable} a JOIN ${options.integrationSourcesTable} s ON s.id=a.integration_source_id WHERE a.remediation_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1)
+            ) AS integration_source_id,
+            COALESCE(
+              (SELECT s.delivery_task_id FROM ${options.integrationSourcesTable} s WHERE s.delivery_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1),
+              (SELECT s.delivery_task_id FROM ${options.remediationAttemptsTable} a JOIN ${options.integrationSourcesTable} s ON s.id=a.integration_source_id WHERE a.remediation_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1)
+            ) AS root_delivery_task_id,
+            COALESCE(
+              (SELECT s.state FROM ${options.integrationSourcesTable} s WHERE s.delivery_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1),
+              (SELECT s.state FROM ${options.remediationAttemptsTable} a JOIN ${options.integrationSourcesTable} s ON s.id=a.integration_source_id WHERE a.remediation_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1)
+            ) AS integration_state
        FROM ${options.tasksTable} t
        JOIN ${options.boardsTable} b ON b.id=t.board_id
        LEFT JOIN ${options.membersTable} m ON m.board_id=b.id AND m.user_id=$3
       WHERE t.id=$1 AND b.tenant_id=$2
         AND (b.owner_user_id=$3 OR b.visibility='organization')
+        AND t.deleted_at IS NULL
       ${forUpdate ? 'FOR UPDATE OF t' : ''}`,
     [taskId, identity.tenantId, identity.ownerUserId],
   );
@@ -785,7 +700,7 @@ async function loadAccessibleTask(
   return (await loadAccessibleTaskAndBoard(options, client, identity, taskId, forUpdate)).task;
 }
 
-async function loadTask(
+export async function loadTask(
   options: TaskboardV2StoreOptions,
   client: PoolClient,
   taskId: string,
@@ -793,18 +708,30 @@ async function loadTask(
   const result = await client.query(
     `SELECT t.*,
             (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id) AS comment_count,
-            (SELECT s.integration_task_id FROM ${options.integrationSourcesTable} s
-              WHERE s.delivery_task_id=t.id AND s.state<>'merged' LIMIT 1) AS integration_task_id,
-            (SELECT s.state FROM ${options.integrationSourcesTable} s
-              WHERE s.delivery_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1) AS integration_state
-       FROM ${options.tasksTable} t WHERE t.id=$1`,
+            COALESCE(
+              (SELECT s.integration_task_id FROM ${options.integrationSourcesTable} s WHERE s.delivery_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1),
+              (SELECT s.integration_task_id FROM ${options.remediationAttemptsTable} a JOIN ${options.integrationSourcesTable} s ON s.id=a.integration_source_id WHERE a.remediation_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1)
+            ) AS integration_task_id,
+            COALESCE(
+              (SELECT s.id FROM ${options.integrationSourcesTable} s WHERE s.delivery_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1),
+              (SELECT s.id FROM ${options.remediationAttemptsTable} a JOIN ${options.integrationSourcesTable} s ON s.id=a.integration_source_id WHERE a.remediation_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1)
+            ) AS integration_source_id,
+            COALESCE(
+              (SELECT s.delivery_task_id FROM ${options.integrationSourcesTable} s WHERE s.delivery_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1),
+              (SELECT s.delivery_task_id FROM ${options.remediationAttemptsTable} a JOIN ${options.integrationSourcesTable} s ON s.id=a.integration_source_id WHERE a.remediation_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1)
+            ) AS root_delivery_task_id,
+            COALESCE(
+              (SELECT s.state FROM ${options.integrationSourcesTable} s WHERE s.delivery_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1),
+              (SELECT s.state FROM ${options.remediationAttemptsTable} a JOIN ${options.integrationSourcesTable} s ON s.id=a.integration_source_id WHERE a.remediation_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1)
+            ) AS integration_state
+       FROM ${options.tasksTable} t WHERE t.id=$1 AND t.deleted_at IS NULL`,
     [taskId],
   );
   if (!result.rows[0]) throw new TaskboardNotFoundError('Task not found');
   return rowToTask(result.rows[0]);
 }
 
-async function appendChange(
+export async function appendChange(
   options: TaskboardV2StoreOptions,
   client: PoolClient,
   taskId: string,
@@ -820,26 +747,6 @@ async function appendChange(
      VALUES ($1,$2,$3,$4,$5::jsonb,$6)`,
     [taskId, changeType, actorType, actorId, JSON.stringify(payload), tombstone],
   );
-}
-
-function rowToIntegrationSource(row: Record<string, unknown>): TaskBoardIntegrationSource {
-  return {
-    id: String(row.id),
-    integrationTaskId: String(row.integration_task_id),
-    deliveryTaskId: String(row.delivery_task_id),
-    repositoryId: String(row.repository_id),
-    providerPullRequestId: String(row.provider_pull_request_id),
-    reviewedSubjectDigest: String(row.reviewed_subject_digest),
-    order: Number(row.source_order),
-    state: String(row.state) as TaskBoardIntegrationSource['state'],
-    attemptCount: Number(row.attempt_count),
-    remediationCount: Number(row.remediation_count ?? 0),
-    ...(row.provider_receipt_id ? { providerReceiptId: String(row.provider_receipt_id) } : {}),
-    ...(row.merged_commit_oid ? { mergedCommitOid: String(row.merged_commit_oid) } : {}),
-    ...(row.remediation_task_id ? { remediationTaskId: String(row.remediation_task_id) } : {}),
-    ...(row.last_error ? { lastError: String(row.last_error) } : {}),
-    updatedAt: toIso(row.updated_at),
-  };
 }
 
 function rowToChange(row: Record<string, unknown>): TaskBoardChange {
@@ -881,7 +788,7 @@ function roleRank(role: string): number {
   return role === 'owner' ? 4 : role === 'maintainer' ? 3 : role === 'editor' ? 2 : 1;
 }
 
-async function withTransaction<T>(
+export async function withTransaction<T>(
   options: TaskboardV2StoreOptions,
   operation: (client: PoolClient) => Promise<T>,
 ): Promise<T> {

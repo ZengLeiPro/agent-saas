@@ -32,6 +32,7 @@ export function taskTableSql(tasksTable: string, boardsTable: string): string {
       client_request_id TEXT,
       version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
       archived_at TIMESTAMPTZ,
+      deleted_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE (board_id, identifier)
@@ -54,6 +55,7 @@ export function taskFieldsMigrationSql(tasksTable: string): string {
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS merged_commit_oid TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS client_request_id TEXT;
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
     ALTER TABLE ${tasksTable} DROP CONSTRAINT IF EXISTS ${tasksTable}_kind_check;
     ALTER TABLE ${tasksTable} ADD CONSTRAINT ${tasksTable}_kind_check
       CHECK (kind IN (${TASKBOARD_TASK_KINDS.map(quoteSqlLiteral).join(', ')}));

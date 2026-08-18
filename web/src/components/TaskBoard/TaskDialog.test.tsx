@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ModelList } from "@agent/shared";
+import type { ModelList, TaskBoardTaskCreateInput } from "@agent/shared";
 import { TaskDialog } from "./TaskDialog";
 
 const mocks = vi.hoisted(() => ({ authFetch: vi.fn() }));
@@ -53,6 +53,24 @@ describe("TaskDialog 交互", () => {
     })));
   });
 
+  it("TASK-84 可显式创建 advisory，且不提交分支字段", async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn(async (_input: TaskBoardTaskCreateInput) => undefined);
+    render(<TaskDialog open onOpenChange={vi.fn()} onCreate={onCreate} />);
+
+    await user.click(screen.getByRole("combobox", { name: "任务类型" }));
+    await user.click(screen.getByRole("option", { name: "答复与分析（不实施变更）" }));
+    await user.type(screen.getByRole("textbox", { name: "标题" }), "仅回答部署风险");
+    expect(screen.queryByRole("textbox", { name: "工作分支" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+      title: "仅回答部署风险",
+      kind: "advisory",
+    })));
+    expect(onCreate.mock.calls[0]?.[0]).not.toHaveProperty("branch");
+  });
+
   it("实施中任务可勾选直接执行，其他状态不显示该选项", async () => {
     const user = userEvent.setup();
     const onCreate = vi.fn(async () => undefined);
@@ -70,6 +88,25 @@ describe("TaskDialog 交互", () => {
       status: "in_progress",
       dispatch: true,
     })));
+  });
+
+  it("创建状态与 REST 契约一致，非法工作流状态不可选且实施中必须直接执行", async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn(async () => undefined);
+    render(<TaskDialog open onOpenChange={vi.fn()} onCreate={onCreate} />);
+
+    await user.type(screen.getByRole("textbox", { name: "标题" }), "契约校验");
+    await user.click(screen.getByRole("combobox", { name: "新任务状态" }));
+    expect(screen.getByRole("option", { name: "需求池" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "待实施" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "实施中" })).toBeTruthy();
+    for (const illegal of ["复核中", "待合并", "已阻塞", "已完成", "已取消"]) {
+      expect(screen.queryByRole("option", { name: illegal })).toBeNull();
+    }
+    await user.click(screen.getByRole("option", { name: "实施中" }));
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("必须勾选“直接执行”");
+    expect(onCreate).not.toHaveBeenCalled();
   });
 
   it("正文支持一次上传多个附件并随任务提交", async () => {

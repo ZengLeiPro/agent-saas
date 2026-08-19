@@ -6,7 +6,7 @@ import {
   type IntegrationPushCapabilityBinding,
 } from './integrationPushCapability.js';
 import type { AuthoritativeIntegrationPushTarget } from './integrationPushCapabilityPostgres.js';
-import { runSafeServerGit, safeServerGitEnvironment } from './safeServerGitRunner.js';
+import { runSafeServerGit } from './safeServerGitRunner.js';
 import {
   IntegrationProviderOperationService,
   integrationProviderOperationKey,
@@ -409,12 +409,7 @@ export class IntegrationPushGateway {
     try {
       await writeFile(askpass, '#!/bin/sh\ncase "$1" in *Username*) printf "%s\\n" "x-access-token";; *) printf "%s\\n" "$KY_GIT_PUSH_TOKEN";; esac\n', { mode: 0o700 });
       await access(askpass);
-      return await action(safeServerGitEnvironment({
-        HOME: dir,
-        XDG_CONFIG_HOME: dir,
-        GIT_ASKPASS: askpass,
-        KY_GIT_PUSH_TOKEN: token,
-      }) as Record<string, string>);
+      return await action({ GIT_ASKPASS: askpass, KY_GIT_PUSH_TOKEN: token });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

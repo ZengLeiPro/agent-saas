@@ -198,6 +198,43 @@ describe('health router', () => {
     });
   });
 
+  it('reports 200 when enabled integration v3 adapters, gateway, and worker are healthy', async () => {
+    const server = await startHealthServer({
+      getIntegrationV3Health: async () => ({
+        status: 'ok', releaseReady: true, reasons: [],
+        metrics: { capturedAt: new Date().toISOString(), unknownOperationCount: 0, oldestUnknownOperationAgeMs: null,
+          staleLaneCount: 0, staleOutboxCount: 0, oldestOutboxAgeMs: null, cleanupFailureCount: 0,
+          gatewayDisabled: false, gatewayHealthy: true, activeV2Count: 0, activeV3Count: 1,
+          costBudgetUsed: null, costBudgetLimit: null, workRoundBudgetUsed: null, workRoundBudgetLimit: null },
+      }),
+    });
+    servers.push(server);
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: 'ok', integrationV3: { status: 'ok', releaseReady: true } });
+  });
+
+  it.each([
+    'worker_or_required_adapter_unavailable',
+    'runtime_isolation_attestation_unavailable',
+    'gateway_unhealthy',
+    'git_unavailable',
+  ])('fails readiness with 503 when enabled integration v3 condition %s is broken', async (reason) => {
+    const server = await startHealthServer({
+      getIntegrationV3Health: async () => ({
+        status: 'degraded', releaseReady: false, reasons: [reason],
+        metrics: { capturedAt: new Date().toISOString(), unknownOperationCount: 0, oldestUnknownOperationAgeMs: null,
+          staleLaneCount: 0, staleOutboxCount: 0, oldestOutboxAgeMs: null, cleanupFailureCount: 0,
+          gatewayDisabled: reason === 'gateway_unhealthy', gatewayHealthy: false, activeV2Count: 0, activeV3Count: 1,
+          costBudgetUsed: null, costBudgetLimit: null, workRoundBudgetUsed: null, workRoundBudgetLimit: null },
+      }),
+    });
+    servers.push(server);
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ status: 'not_ready', integrationV3: { reasons: [reason] } });
+  });
+
   it('fails the release readiness gate when integration v3 is degraded', async () => {
     const server = await startHealthServer({
       getIntegrationV3Health: async () => ({

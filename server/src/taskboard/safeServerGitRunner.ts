@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 import type { RepositoryWorkspaceGitCommand, RepositoryWorkspaceGitResult } from './repositoryWorkspaceSync.js';
@@ -8,24 +8,39 @@ const SAFE_GIT_CONFIG = [
   'core.hooksPath=/dev/null',
   'core.fsmonitor=false',
   'credential.helper=',
+  'credential.useHttpPath=true',
+  'http.sslVerify=true',
+  'http.proxy=',
+  'http.extraHeader=',
+  'http.followRedirects=false',
   'protocol.allow=never',
   'protocol.https.allow=always',
   'protocol.file.allow=never',
   'protocol.ext.allow=never',
 ] as const;
 
-/**
- * The only child-process Git boundary for server-owned v3 repositories.
- * Configuration scopes are redirected away from the host and repository. The
- * explicit -c policy also wins on Git versions that do not yet honour
- * GIT_CONFIG_LOCAL.
- */
+const ALLOWED_ENV_OVERRIDES = new Set(['GIT_ASKPASS', 'KY_GIT_PUSH_TOKEN']);
+const ALLOWED_CORE_CONFIG = new Map<string, ReadonlySet<string>>([
+  ['repositoryformatversion', new Set(['0'])],
+  ['filemode', new Set(['true', 'false'])],
+  ['bare', new Set(['true', 'false'])],
+  ['logallrefupdates', new Set(['true', 'false'])],
+]);
+const ALLOWED_ORIGIN_FETCH = new Set([
+  '+refs/heads/*:refs/remotes/origin/*',
+  '+refs/*:refs/*',
+]);
+const CANONICAL_GITHUB_ORIGIN = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/;
+
+/** The only child-process Git boundary for server-owned v3 repositories. */
 export function safeServerGitArgs(args: readonly string[]): string[] {
   return [...SAFE_GIT_CONFIG.flatMap((entry) => ['-c', entry]), ...args];
 }
 
 export function safeServerGitEnvironment(overrides: Readonly<Record<string, string>> = {}): NodeJS.ProcessEnv {
+  const allowed = Object.fromEntries(Object.entries(overrides).filter(([key]) => ALLOWED_ENV_OVERRIDES.has(key)));
   return {
+    ...allowed,
     PATH: process.env.PATH ?? '/usr/bin:/bin',
     LANG: 'C',
     HOME: '/nonexistent/integration-v3-control-plane',
@@ -33,18 +48,15 @@ export function safeServerGitEnvironment(overrides: Readonly<Record<string, stri
     GIT_CONFIG_NOSYSTEM: '1',
     GIT_CONFIG_SYSTEM: '/dev/null',
     GIT_CONFIG_GLOBAL: '/dev/null',
-    // Supported by the production Git build. This is intentionally set even
-    // though older Git ignores it; all dangerous facilities are also pinned
-    // above and network commands use an explicit canonical URL after `--`.
-    GIT_CONFIG_LOCAL: '/dev/null',
     GIT_TERMINAL_PROMPT: '0',
-    ...overrides,
+    GIT_PROTOCOL_FROM_USER: '0',
+    GIT_ALLOW_PROTOCOL: 'https',
   };
 }
 
 export function runSafeServerGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult> {
   try {
-    assertNoDangerousRepositoryConfig(command.cwd);
+    assertSafeRepository(command.cwd);
   } catch (error) {
     return Promise.resolve({
       exitCode: 128,
@@ -71,44 +83,106 @@ export function runSafeServerGit(command: RepositoryWorkspaceGitCommand): Promis
   ));
 }
 
-function assertNoDangerousRepositoryConfig(cwd: string): void {
-  const config = findRepositoryConfig(cwd);
-  if (!config) return;
-  const text = readFileSync(config, 'utf8');
-  // Includes can smuggle every forbidden setting from an attacker-controlled
-  // path. URL rewriting is never needed because all network commands receive a
-  // canonical URL explicitly.
-  if (/^\s*\[(?:include|includeIf)\b/im.test(text)
-    || /^\s*(?:pushInsteadOf|insteadOf)\s*=/im.test(text)
-    || /^\s*(?:helper|hooksPath|fsmonitor)\s*=/im.test(text)
-    || /^\s*(?:uploadpack|receivepack)\s*=/im.test(text)
-    || /^\s*ext\s*=/im.test(text)) {
-    throw new Error('unsafe repository Git configuration is forbidden');
+/**
+ * Parse repository discovery metadata without invoking Git, then validate the
+ * real common-dir before Git can read any repository-controlled configuration.
+ */
+function assertSafeRepository(cwd: string): void {
+  const repository = findRepository(cwd);
+  // `git --version` is used by the health probe outside a repository.
+  if (!repository) return;
+  for (const path of [repository.gitDir, repository.commonDir]) assertOwnedPrivateDirectory(path);
+  const config = resolve(repository.commonDir, 'config');
+  if (!existsSync(config)) return;
+  const configInfo = lstatSync(config);
+  if (!configInfo.isFile() || configInfo.isSymbolicLink()) throw unsafeConfig();
+  assertOwnedPrivate(configInfo.uid, configInfo.mode);
+  assertAllowlistedLocalConfig(readFileSync(config, 'utf8'));
+}
+
+function assertAllowlistedLocalConfig(text: string): void {
+  let section: 'core' | 'origin' | undefined;
+  const seen = new Set<string>();
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue;
+    const sectionMatch = /^\[([^\]]+)]$/.exec(line);
+    if (sectionMatch) {
+      const rawSection = sectionMatch[1]!.trim();
+      section = rawSection.toLowerCase() === 'core'
+        ? 'core'
+        : /^remote\s+"origin"$/i.test(rawSection) ? 'origin' : undefined;
+      if (!section) throw unsafeConfig();
+      continue;
+    }
+    const keyValue = /^([A-Za-z][A-Za-z0-9-]*)\s*=\s*(.*?)\s*$/.exec(line);
+    if (!keyValue || !section) throw unsafeConfig();
+    const key = keyValue[1]!.toLowerCase();
+    const value = keyValue[2]!.trim();
+    const identity = `${section}.${key}`;
+    if (seen.has(identity)) throw unsafeConfig();
+    if (section === 'core') {
+      if (!ALLOWED_CORE_CONFIG.get(key)?.has(value.toLowerCase())) throw unsafeConfig();
+    } else if (key === 'url') {
+      if (!CANONICAL_GITHUB_ORIGIN.test(value)) throw unsafeConfig();
+    } else if (key === 'fetch') {
+      if (!ALLOWED_ORIGIN_FETCH.has(value)) throw unsafeConfig();
+    } else throw unsafeConfig();
+    seen.add(identity);
   }
 }
 
-function findRepositoryConfig(start: string): string | undefined {
-  let current = resolve(start);
+function findRepository(start: string): { gitDir: string; commonDir: string } | undefined {
+  let current = realpathSync(resolve(start));
   while (true) {
     const dotGit = resolve(current, '.git');
     if (existsSync(dotGit)) {
-      if (statSync(dotGit).isDirectory()) return resolve(dotGit, 'config');
-      const match = /^gitdir:\s*(.+)\s*$/i.exec(readFileSync(dotGit, 'utf8'));
-      if (match) {
-        const gitDir = resolve(current, match[1]!);
-        const commonDirFile = resolve(gitDir, 'commondir');
-        const commonDir = existsSync(commonDirFile)
-          ? resolve(gitDir, readFileSync(commonDirFile, 'utf8').trim())
-          : gitDir;
-        return resolve(commonDir, 'config');
+      const dotGitInfo = lstatSync(dotGit);
+      if (dotGitInfo.isSymbolicLink()) throw unsafeConfig();
+      let gitDir: string;
+      if (dotGitInfo.isDirectory()) gitDir = realpathSync(dotGit);
+      else {
+        if (!dotGitInfo.isFile()) throw unsafeConfig();
+        const match = /^gitdir:\s*(.+)\s*$/i.exec(readFileSync(dotGit, 'utf8'));
+        if (!match) throw unsafeConfig();
+        gitDir = realpathSync(resolve(current, match[1]!));
       }
+      const commonDirFile = resolve(gitDir, 'commondir');
+      let commonDir = gitDir;
+      if (existsSync(commonDirFile)) {
+        const info = lstatSync(commonDirFile);
+        if (!info.isFile() || info.isSymbolicLink()) throw unsafeConfig();
+        assertOwnedPrivate(info.uid, info.mode);
+        const commonDirPath = readFileSync(commonDirFile, 'utf8').trim();
+        if (!commonDirPath || commonDirPath.includes('\0')) throw unsafeConfig();
+        commonDir = realpathSync(resolve(gitDir, commonDirPath));
+      }
+      return { gitDir, commonDir };
     }
-    // Bare mirror.
-    if (existsSync(resolve(current, 'HEAD')) && existsSync(resolve(current, 'config'))) return resolve(current, 'config');
+    // Bare repositories are supported, but still receive the same strict config policy.
+    if (existsSync(resolve(current, 'HEAD')) && existsSync(resolve(current, 'config'))) {
+      const commonDir = realpathSync(current);
+      return { gitDir: commonDir, commonDir };
+    }
     const parent = dirname(current);
     if (parent === current) return undefined;
     current = parent;
   }
+}
+
+function assertOwnedPrivateDirectory(path: string): void {
+  const info = statSync(path);
+  if (!info.isDirectory()) throw unsafeConfig();
+  assertOwnedPrivate(info.uid, info.mode);
+}
+
+function assertOwnedPrivate(uid: number, mode: number): void {
+  if (typeof process.getuid === 'function' && uid !== process.getuid()) throw unsafeConfig();
+  if ((mode & 0o022) !== 0) throw unsafeConfig();
+}
+
+function unsafeConfig(): Error {
+  return new Error('unsafe repository Git configuration is forbidden');
 }
 
 export async function runSafeServerGitOrThrow(

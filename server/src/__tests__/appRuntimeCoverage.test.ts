@@ -73,6 +73,17 @@ describe('createRuntime 运行时装配（补充分支）', () => {
       .rejects.toThrow(/runtime-worker 暂不支持进程内 clientDaemon gateway/);
   });
 
+  it('createRuntime 对启用但缺生产 GitHub App 配置的 integration v3 保持 fail-closed', async () => {
+    const { rootDir, processCwd } = await createFixture({
+      agent: {}, server: {}, integrationV3ControlPlane: {
+        enabled: true, controlledMirrorRoot: '/srv/integration-mirrors', githubAppInstallationId: 456,
+      },
+    });
+    cleanupRoots.add(rootDir);
+    const runtime = await createRuntime({ processCwd });
+    await expect(runtime.getIntegrationV3Health?.()).resolves.toMatchObject({ releaseReady: false });
+  });
+
   it('guardrail 配置缺省时门禁模型链为空数组；updateGuardrailModelConfigs 热写后 getter 取到最新链（同一 getter 引用不失效）', async () => {
     const { rootDir, processCwd } = await createFixture({ agent: {}, server: {} });
     cleanupRoots.add(rootDir);

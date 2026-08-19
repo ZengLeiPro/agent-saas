@@ -19,8 +19,17 @@ import { PostgresIntegrationPushCapabilityHost } from '../taskboard/integrationP
 import { IntegrationPushGateway, type IntegrationPushCredential } from '../taskboard/integrationPushGateway.js';
 import { createGithubAppIntegrationPushTokenResolver } from '../taskboard/integrationPushService.js';
 import { DefaultIntegrationV3ComposeExecutor } from '../taskboard/integrationV3ComposeExecutor.js';
-import { IntegrationV3Worker } from '../taskboard/integrationV3Worker.js';
-import { PostgresIntegrationV3ComposeHost, PostgresIntegrationV3WorkerHost } from '../taskboard/integrationV3WorkerPostgres.js';
+import {
+  IntegrationV3Worker,
+  type IntegrationV3CleanupReceipt,
+  type IntegrationV3RequestLease,
+  type IntegrationV3WorkerCurrent,
+} from '../taskboard/integrationV3Worker.js';
+import {
+  executeIntegrationV3Cleanup,
+  PostgresIntegrationV3ComposeHost,
+  PostgresIntegrationV3WorkerHost,
+} from '../taskboard/integrationV3WorkerPostgres.js';
 import { canonicalGithubRepositoryUrl, isCanonicalGithubRepositoryRemote, type RepositoryProvider } from '../taskboard/repositoryProvider.js';
 import { runSafeServerGit, runSafeServerGitOrThrow } from '../taskboard/safeServerGitRunner.js';
 import { RepositoryProviderIntegrationEngineV3Adapter } from '../taskboard/repositoryRuntime.js';
@@ -34,6 +43,88 @@ import { serverLogger } from '../utils/logger.js';
 export interface RuntimeTaskboardIntegrationV3 {
   stop(): Promise<void>;
   health(): Promise<{ enabled: true; healthy: boolean; workerActive: boolean; reason?: string }>;
+}
+
+export interface RuntimeIntegrationV3CleanupHostOptions {
+  controlledMirrorRoot?: string;
+  loadCurrent(candidateId: string): Promise<IntegrationV3WorkerCurrent>;
+  resolveContext(current: Required<IntegrationV3WorkerCurrent>): Promise<{
+    repositoryPath: string;
+    worktreePath: string;
+    tenantId: string;
+    credentialOwnerId: string;
+    sources: Array<{ providerPullRequestId: string }>;
+  }>;
+  findActiveCapabilityIds(candidateId: string): Promise<string[]>;
+  revokeCapability(capabilityId: string, reason: string): Promise<void>;
+  fenceCapabilities(input: {
+    tenantId: string;
+    repositoryId: string;
+    integrationTaskId: string;
+    candidateId: string;
+    revision: number;
+    laneEpoch: number;
+    workflowEpoch: number;
+    enabled: false;
+  }, reason: string): Promise<number>;
+  withRepositoryBranchLock<T>(
+    lock: { repositoryPath: string; branch: string }, operation: () => Promise<T>,
+  ): Promise<T>;
+  runGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult>;
+}
+
+/** Production cleanup host wiring. Frozen v3 policy has no source-PR mutation switch, so every source is explicitly receipted as skipped. */
+export function createRuntimeIntegrationV3CleanupHost(
+  options: RuntimeIntegrationV3CleanupHostOptions,
+): (request: IntegrationV3RequestLease) => Promise<IntegrationV3CleanupReceipt> {
+  return async (request) => {
+    if (!options.controlledMirrorRoot) throw new Error('Controlled mirror root is unavailable for cleanup');
+    const current = await options.loadCurrent(request.candidateId);
+    if (!current.revision || current.candidate.currentRevision !== request.candidateRevision) {
+      throw new Error('Cleanup candidate revision fence is stale');
+    }
+    const laneEpoch = strictEpoch(current.candidate.laneEpoch, 'lane');
+    const workflowEpoch = strictEpoch(current.candidate.workflowEpoch, 'workflow');
+    const context = await options.resolveContext({ candidate: current.candidate, revision: current.revision });
+    const reason = typeof request.payload.reason === 'string' && request.payload.reason
+      ? request.payload.reason
+      : `candidate_${current.candidate.state}`;
+    return executeIntegrationV3Cleanup({
+      candidateId: current.candidate.id,
+      repositoryPath: context.repositoryPath,
+      worktreePath: context.worktreePath,
+      controlledWorktreeRoot: resolve(options.controlledMirrorRoot, '.worktrees'),
+      branch: current.candidate.branch,
+      sourcePullRequests: context.sources.map((source) => ({
+        id: source.providerPullRequestId,
+        action: 'skip' as const,
+        policyReason: 'frozen integration policy does not authorize source pull request mutation',
+      })),
+      withRepositoryBranchLock: options.withRepositoryBranchLock,
+      runGit: options.runGit,
+      revokeCapabilities: async () => {
+        const ids = await options.findActiveCapabilityIds(current.candidate.id);
+        const results = await Promise.allSettled(ids.map((id) => options.revokeCapability(id, reason)));
+        const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+        if (failures.length) throw new Error(`Failed to revoke ${failures.length} integration push capability(s)`);
+      },
+      fenceCapabilities: async () => {
+        await options.fenceCapabilities({
+          tenantId: context.tenantId,
+          repositoryId: current.candidate.repositoryId,
+          integrationTaskId: current.candidate.integrationTaskId,
+          candidateId: current.candidate.id,
+          revision: current.candidate.currentRevision,
+          laneEpoch,
+          workflowEpoch,
+          enabled: false,
+        }, reason);
+      },
+      applySourcePullRequest: async () => {
+        throw new Error('Frozen integration policy does not authorize source pull request mutation');
+      },
+    });
+  };
 }
 
 interface StartRuntimeTaskboardIntegrationV3Options {
@@ -96,13 +187,14 @@ export function startRuntimeTaskboardIntegrationV3(
   const operationService = new IntegrationProviderOperationService(
     operationStorage, new PostgresIntegrationProviderFenceHost(pgOptions),
   );
-  const capabilityHost = new PostgresIntegrationPushCapabilityHost({
+  const capabilityHostOptions = {
     pool: store.pool,
     capabilitiesTable: `${store.executionsTable}_integration_push_capabilities`,
     fencesTable: `${store.executionsTable}_integration_push_fences`,
     boardsTable: store.boardsTable, tasksTable: store.tasksTable, executionsTable: store.executionsTable,
     candidatesTable: tables.candidatesTable, revisionsTable: tables.revisionsTable,
-  });
+  };
+  const capabilityHost = new PostgresIntegrationPushCapabilityHost(capabilityHostOptions);
   const capabilityService = new IntegrationPushCapabilityService(capabilityHost);
   const pushGateway = new IntegrationPushGateway({
     enabled: options.enabled === true
@@ -131,7 +223,7 @@ export function startRuntimeTaskboardIntegrationV3(
     operationService,
   });
   let composeHost: PostgresIntegrationV3ComposeHost;
-  const workerHost = new PostgresIntegrationV3WorkerHost({
+  const workerHost: PostgresIntegrationV3WorkerHost = new PostgresIntegrationV3WorkerHost({
     ...pgOptions,
     sourceSnapshotsTable: tables.sourceSnapshotsTable,
     boardsTable: store.boardsTable,
@@ -155,8 +247,22 @@ export function startRuntimeTaskboardIntegrationV3(
         controlledRemoteUrl: canonicalGithubRepositoryUrl(context.repository),
       });
     },
-    // Branch deletion and source PR closure remain fail-closed/no-op because policy currently freezes deleteRemoteBranch=false.
-    cleanup: async () => undefined,
+    cleanup: createRuntimeIntegrationV3CleanupHost({
+      controlledMirrorRoot: options.controlledMirrorRoot,
+      loadCurrent: (candidateId) => workerHost.loadCurrent(candidateId),
+      resolveContext: (current) => composeHost.resolveContext(current),
+      findActiveCapabilityIds: async (candidateId) => {
+        const result = await store.pool.query(
+          `SELECT id FROM ${capabilityHostOptions.capabilitiesTable} WHERE candidate_id=$1 AND status='active' ORDER BY id`,
+          [candidateId],
+        );
+        return result.rows.map((row) => String(row.id));
+      },
+      revokeCapability: (capabilityId, reason) => capabilityService.revoke(capabilityId, reason),
+      fenceCapabilities: (fence, reason) => capabilityService.fence(fence, reason),
+      withRepositoryBranchLock: (lock, operation) => composeHost.withRepositoryBranchLock(lock, operation),
+      runGit,
+    }),
     logger: serverLogger.child('IntegrationV3Worker'),
   });
 
@@ -298,6 +404,12 @@ function execGit(cwd: string, args: string[]): Promise<string> {
 
 function runGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult> {
   return runSafeServerGit(command);
+}
+
+function strictEpoch(value: string, label: string): number {
+  const epoch = Number(value);
+  if (!Number.isSafeInteger(epoch) || epoch < 0) throw new Error(`Cleanup ${label} epoch is invalid`);
+  return epoch;
 }
 
 function validAttestation(value: unknown): value is {

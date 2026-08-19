@@ -80,4 +80,18 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(query.mock.calls[0]![0]).toContain('worker_available_at');
     expect(query.mock.calls[0]![1]).toEqual(['candidate-1', 'lease-1', 'temporary network failure', true]);
   });
+
+  it('persists failed cleanup receipts and requeues them with bounded backoff', async () => {
+    const query = vi.fn(async (_text: string, _values?: unknown[]) => ({ rows: [] }));
+    const host = workerHost(query);
+    await host.completeRequest({
+      id: 'cleanup-1', leaseId: 'lease-1', kind: 'cleanup', candidateId: 'candidate-1', candidateRevision: 1, payload: {},
+    }, {
+      version: 1, outcome: 'failed', completedAt: '2026-08-19T00:00:00.000Z',
+      actions: [{ action: 'remove_candidate_worktree', status: 'failed', error: 'dirty worktree' }],
+    });
+    expect(query.mock.calls[0]![0]).toContain("attempts<5 THEN 'pending'");
+    expect(query.mock.calls[0]![0]).toContain('available_at=CASE');
+    expect(query.mock.calls[0]![1]).toEqual(expect.arrayContaining(['cleanup-1', 'lease-1', true, 'remove_candidate_worktree: dirty worktree']));
+  });
 });

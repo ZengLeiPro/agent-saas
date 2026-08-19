@@ -3,10 +3,18 @@ import { chmodSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
-import { buildRuntimeTaskboardIntegrationV3Options, resolveIntegrationV3RepositoryPaths } from './runtimeTaskboardIntegrationV3.js';
+import type {
+  TaskBoardIntegrationCandidate,
+  TaskBoardIntegrationCandidateRevision,
+  TaskBoardRepositoryConfig,
+} from '../../../shared/src/types/taskboard.js';
+import {
+  buildRuntimeTaskboardIntegrationV3Options,
+  createRuntimeIntegrationV3CleanupHost,
+  resolveIntegrationV3RepositoryPaths,
+} from './runtimeTaskboardIntegrationV3.js';
 
 const repository: TaskBoardRepositoryConfig = {
   provider: 'github', repositoryId: 'github:acme/widget', owner: 'acme', name: 'widget',
@@ -93,6 +101,116 @@ describe('resolveIntegrationV3RepositoryPaths', () => {
     })).resolves.toBeUndefined();
   });
 });
+
+describe('production Integration v3 cleanup host', () => {
+  it('revokes and fences capabilities, safely removes the server worktree, and explicitly skips source PRs by frozen policy', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'integration-v3-cleanup-host-')); roots.push(root);
+    const mirrorRoot = join(root, 'mirrors');
+    const repositoryPath = join(mirrorRoot, 'github_acme_widget');
+    const worktreePath = join(mirrorRoot, '.worktrees', 'candidate-1');
+    mkdirSync(repositoryPath, { recursive: true });
+    mkdirSync(worktreePath, { recursive: true });
+    const candidate = cleanupCandidate();
+    const revision = cleanupRevision();
+    const revoked: string[] = [];
+    const fenceCapabilities = vi.fn(async () => 2);
+    const runGit = vi.fn(async (command: { cwd: string; args: readonly string[] }) => {
+      if (command.args[0] === 'worktree') rmSync(worktreePath, { recursive: true, force: true });
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+    let firstAttempt = true;
+    const cleanup = createRuntimeIntegrationV3CleanupHost({
+      controlledMirrorRoot: mirrorRoot,
+      loadCurrent: async () => ({ candidate, revision }),
+      resolveContext: async () => ({
+        repositoryPath, worktreePath, tenantId: 'tenant-1', credentialOwnerId: 'owner-1',
+        sources: [{ providerPullRequestId: '101' }, { providerPullRequestId: '102' }],
+      }),
+      findActiveCapabilityIds: async () => firstAttempt ? ['cap-1', 'cap-2'] : [],
+      revokeCapability: async (id) => { revoked.push(id); },
+      fenceCapabilities,
+      withRepositoryBranchLock: async (_lock, operation) => operation(),
+      runGit,
+    });
+    const request = {
+      id: 'cleanup-1', leaseId: 'lease-1', kind: 'cleanup' as const,
+      candidateId: candidate.id, candidateRevision: 1, payload: { reason: 'candidate_merged' },
+    };
+
+    const receipt = await cleanup(request);
+    expect(revoked).toEqual(['cap-1', 'cap-2']);
+    expect(fenceCapabilities).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-1', repositoryId: candidate.repositoryId,
+      integrationTaskId: candidate.integrationTaskId, candidateId: candidate.id,
+      revision: 1, laneEpoch: 9, workflowEpoch: 3, enabled: false,
+    }), 'candidate_merged');
+    expect(receipt).toMatchObject({ outcome: 'succeeded', actions: [
+      { action: 'revoke_capabilities', status: 'succeeded' },
+      { action: 'fence_capabilities', status: 'succeeded' },
+      { action: 'remove_candidate_worktree', status: 'succeeded', target: worktreePath },
+      { action: 'source_pull_request', status: 'skipped', target: '101', reason: expect.stringContaining('does not authorize') },
+      { action: 'source_pull_request', status: 'skipped', target: '102', reason: expect.stringContaining('does not authorize') },
+    ] });
+    expect(runGit.mock.calls.map(([command]) => command.args)).toEqual([
+      ['status', '--porcelain=v1', '--untracked-files=all'],
+      ['worktree', 'remove', '--', worktreePath],
+    ]);
+
+    firstAttempt = false;
+    const retried = await cleanup({ ...request, leaseId: 'lease-2' });
+    expect(retried).toMatchObject({ outcome: 'succeeded', actions: expect.arrayContaining([
+      { action: 'remove_candidate_worktree', status: 'skipped', target: worktreePath, reason: 'candidate worktree is already absent' },
+    ]) });
+    expect(runGit).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed with action receipts when capability revoke and worktree inspection fail', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'integration-v3-cleanup-host-fail-')); roots.push(root);
+    const mirrorRoot = join(root, 'mirrors');
+    const repositoryPath = join(mirrorRoot, 'github_acme_widget');
+    const worktreePath = join(mirrorRoot, '.worktrees', 'candidate-1');
+    mkdirSync(repositoryPath, { recursive: true });
+    mkdirSync(worktreePath, { recursive: true });
+    const candidate = cleanupCandidate();
+    const cleanup = createRuntimeIntegrationV3CleanupHost({
+      controlledMirrorRoot: mirrorRoot,
+      loadCurrent: async () => ({ candidate, revision: cleanupRevision() }),
+      resolveContext: async () => ({ repositoryPath, worktreePath, tenantId: 'tenant-1', credentialOwnerId: 'owner-1', sources: [] }),
+      findActiveCapabilityIds: async () => ['cap-fail'],
+      revokeCapability: async () => { throw new Error('database unavailable'); },
+      fenceCapabilities: async () => 0,
+      withRepositoryBranchLock: async (_lock, operation) => operation(),
+      runGit: async () => ({ exitCode: 0, stdout: ' M dirty.ts\n', stderr: '' }),
+    });
+    const receipt = await cleanup({
+      id: 'cleanup-2', leaseId: 'lease-1', kind: 'cleanup', candidateId: candidate.id,
+      candidateRevision: 1, payload: {},
+    });
+    expect(receipt).toMatchObject({ outcome: 'failed', actions: expect.arrayContaining([
+      expect.objectContaining({ action: 'revoke_capabilities', status: 'failed', error: expect.stringContaining('Failed to revoke 1') }),
+      expect.objectContaining({ action: 'fence_capabilities', status: 'succeeded' }),
+      expect.objectContaining({ action: 'remove_candidate_worktree', status: 'failed', error: expect.stringContaining('dirty') }),
+    ]) });
+  });
+});
+
+function cleanupCandidate(): TaskBoardIntegrationCandidate {
+  return {
+    id: 'candidate-1', integrationTaskId: 'integration-task-1', repositoryId: repository.repositoryId,
+    baseBranch: 'main', branch: 'integration/candidate-1', state: 'merged', currentRevision: 1,
+    workRound: 0, version: 2, workflowEpoch: '3', laneEpoch: '9', policyRevision: 'policy-1',
+    mergeMethod: 'squash', policySnapshot: { execution: { deleteRemoteBranch: false } },
+    createdAt: '2026-08-19T00:00:00.000Z', updatedAt: '2026-08-19T00:00:00.000Z',
+  };
+}
+
+function cleanupRevision(): TaskBoardIntegrationCandidateRevision {
+  return {
+    candidateId: 'candidate-1', revision: 1, digestVersion: 1, baseOid: 'base', headOid: 'head', treeOid: 'tree',
+    sourceSetDigest: 'sources', subjectDigest: 'subject', policySnapshotDigest: 'policy', policyRevision: 'policy-1',
+    mergeMethod: 'squash', workRound: 0, createdAt: '2026-08-19T00:00:00.000Z',
+  };
+}
 
 function createRepository(path: string, origin: string): string {
   mkdirSync(path, { recursive: true });

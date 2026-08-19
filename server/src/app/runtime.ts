@@ -704,7 +704,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     resolvedClientDaemonAuthToken,
     resolvedFeishuConnector,
     feishuConnectorScopes,
-  } = await initializeRuntimeGovernanceCredentials(config, processCwd);
+  } = await initializeRuntimeGovernanceCredentials(config, processCwd); const integrationV3Adapters = (await import('./runtimeIntegrationV3ProductionAdapters.js')).resolveProductionIntegrationV3Adapters({ config, secretVault, ...options });
   // P4 防御纵深（2026-06-22 落地，06-26 收敛 admin 容器 env）：把按 tenant 装配子进程 env 的规则统一塞进
   // ServerLocal / Container 两条路径。buildTenantScopedEnv 会按 workspace.tenantId
   // 决定是"匿名内部调用保留完整 process.env"还是"明确 tenant 先剔除敏感宿主
@@ -1519,7 +1519,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     vault: secretVault,
     onError: (error) => serverLogger.warn(`Taskboard GitHub credential resolve failed: ${error.message}`),
   });
-  if (config.integrationV3ControlPlane?.enabled === true && options.githubAppInstallationTokenProvider) integrationV3RepositoryProvider = createIntegrationV3GithubAppRepositoryProvider({ tokenProvider: options.githubAppInstallationTokenProvider, installationId: config.integrationV3ControlPlane.githubAppInstallationId });
+  if (config.integrationV3ControlPlane?.enabled === true && integrationV3Adapters.githubAppInstallationTokenProvider) integrationV3RepositoryProvider = createIntegrationV3GithubAppRepositoryProvider({ tokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, installationId: config.integrationV3ControlPlane.githubAppInstallationId });
   const initialMemoryIndexService = createMemoryIndexService(
     processCwd,
     config.memory?.index,
@@ -2075,7 +2075,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         logger: serverLogger.child('TaskboardExecution') });
     }
     if (enableSchedulerWorker && rawTaskboardStore && taskboardExecutionCoordinator && config.integrationV3ControlPlane?.enabled === true && integrationV3RepositoryProvider)
-      integrationV3Runtime = startRuntimeTaskboardIntegrationV3(buildRuntimeTaskboardIntegrationV3Options({ store: rawTaskboardStore, executionCoordinator: taskboardExecutionCoordinator, repositoryProvider: integrationV3RepositoryProvider, processCwd, agentCwd, runtimeIsolationAttestationProvider: options.runtimeIsolationAttestationProvider, githubAppInstallationTokenProvider: options.githubAppInstallationTokenProvider, control: config.integrationV3ControlPlane }));
+      integrationV3Runtime = startRuntimeTaskboardIntegrationV3(buildRuntimeTaskboardIntegrationV3Options({ store: rawTaskboardStore, executionCoordinator: taskboardExecutionCoordinator, repositoryProvider: integrationV3RepositoryProvider, processCwd, agentCwd, runtimeIsolationAttestationProvider: integrationV3Adapters.runtimeIsolationAttestationProvider, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, control: config.integrationV3ControlPlane }));
     const getRuntimeSchedulerCapacitySnapshot = async () => {
       const persisted = await runtimeSchedulerConfigStore!.get();
       const effective = effectiveMaxConcurrentRuns(

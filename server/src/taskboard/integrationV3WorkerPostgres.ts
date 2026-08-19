@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, normalize, relative, resolve, sep } from 'node:path';
 import type { PoolClient } from 'pg';
 
@@ -37,16 +38,27 @@ export async function executeIntegrationV3Cleanup(options: IntegrationV3CleanupE
   };
   await perform('revoke_capabilities', options.revokeCapabilities);
   await perform('fence_capabilities', options.fenceCapabilities);
-  await perform('remove_candidate_worktree', async () => {
-    assertServerOwnedWorktree(options.controlledWorktreeRoot, options.worktreePath, options.candidateId);
+  try {
+    assertServerOwnedWorktreePath(options.controlledWorktreeRoot, options.worktreePath, options.candidateId);
+    let alreadyAbsent = false;
     await options.withRepositoryBranchLock({ repositoryPath: options.repositoryPath, branch: options.branch }, async () => {
+      if (!existsSync(options.worktreePath)) { alreadyAbsent = true; return; }
+      assertServerOwnedWorktree(options.controlledWorktreeRoot, options.worktreePath, options.candidateId);
       const status = await options.runGit({ cwd: options.worktreePath, args: ['status', '--porcelain=v1', '--untracked-files=all'] });
       if (status.exitCode !== 0) throw new Error(`Cannot inspect candidate worktree: ${status.stderr || status.stdout}`);
       if (status.stdout.trim()) throw new Error('Candidate worktree is dirty; refusing cleanup');
       const removed = await options.runGit({ cwd: options.repositoryPath, args: ['worktree', 'remove', '--', options.worktreePath] });
       if (removed.exitCode !== 0) throw new Error(`Cannot remove candidate worktree: ${removed.stderr || removed.stdout}`);
     });
-  }, options.worktreePath);
+    actions.push(alreadyAbsent
+      ? { action: 'remove_candidate_worktree', status: 'skipped', target: options.worktreePath, reason: 'candidate worktree is already absent' }
+      : { action: 'remove_candidate_worktree', status: 'succeeded', target: options.worktreePath });
+  } catch (error) {
+    actions.push({
+      action: 'remove_candidate_worktree', status: 'failed', target: options.worktreePath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   for (const source of options.sourcePullRequests) {
     if (source.action === 'skip') {
       actions.push({ action: 'source_pull_request', status: 'skipped', target: source.id, reason: source.policyReason ?? 'policy explicitly disabled source PR cleanup' });
@@ -58,13 +70,27 @@ export async function executeIntegrationV3Cleanup(options: IntegrationV3CleanupE
   return { version: 1, outcome: actions.some((action) => action.status === 'failed') ? 'failed' : 'succeeded', actions, completedAt: new Date().toISOString() };
 }
 
-function assertServerOwnedWorktree(root: string, worktreePath: string, candidateId: string): void {
+function assertServerOwnedWorktreePath(root: string, worktreePath: string, candidateId: string): void {
   if (![root, worktreePath].every(isAbsolute) || normalize(worktreePath) !== worktreePath) throw new Error('Candidate worktree path is not absolute and normalized');
   const ownedRoot = resolve(root);
   const candidatePath = resolve(worktreePath);
-  const child = relative(ownedRoot, candidatePath);
-  if (!child || child === '..' || child.startsWith(`..${sep}`) || child.split(sep).every((part) => part !== candidateId)) {
+  if (candidatePath !== resolve(ownedRoot, candidateId)) {
     throw new Error('Candidate worktree is outside the server-owned candidate root');
+  }
+}
+
+function assertServerOwnedWorktree(root: string, worktreePath: string, candidateId: string): void {
+  assertServerOwnedWorktreePath(root, worktreePath, candidateId);
+  if (lstatSync(worktreePath).isSymbolicLink()) throw new Error('Candidate worktree must not be a symbolic link');
+  const ownedRoot = realpathSync(root);
+  const candidatePath = realpathSync(worktreePath);
+  const child = relative(ownedRoot, candidatePath);
+  if (!child || child === '..' || child.startsWith(`..${sep}`)) throw new Error('Candidate worktree escapes the server-owned candidate root');
+  for (const path of [ownedRoot, candidatePath]) {
+    const info = statSync(path);
+    if (!info.isDirectory()) throw new Error('Candidate worktree ownership boundary is not a directory');
+    if (typeof process.getuid === 'function' && info.uid !== process.getuid()) throw new Error('Candidate worktree owner mismatch');
+    if ((info.mode & 0o022) !== 0) throw new Error('Candidate worktree boundary is group/world writable');
   }
 }
 
@@ -225,7 +251,8 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
       : null;
     await this.options.pool.query(
       `UPDATE ${this.options.requestsOutboxTable}
-          SET status=CASE WHEN $3::boolean THEN 'failed' ELSE 'completed' END,
+          SET status=CASE WHEN $3::boolean AND attempts<5 THEN 'pending' WHEN $3::boolean THEN 'failed' ELSE 'completed' END,
+              available_at=CASE WHEN $3::boolean AND attempts<5 THEN now()+(LEAST(attempts,5)*interval '5 seconds') ELSE available_at END,
               receipt=$4::jsonb,lease_id=NULL,lease_expires_at=NULL,last_error=$5,updated_at=now()
         WHERE id=$1 AND lease_id=$2 AND status='processing'`,
       [request.id, request.leaseId, failed, receipt ? JSON.stringify(receipt) : null, failure]);

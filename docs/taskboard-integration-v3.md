@@ -106,11 +106,15 @@
 
 现有 integration source 状态、remediation、Merge Agent schema 和 execution purpose 均未删除或改义。现有批次创建路径未指定 v3，因此继续落为 workflow v2。新增表和索引采用 expand-only、`IF NOT EXISTS` / 可重复 trigger 安装，v2 读写路径不依赖 candidate 表。
 
-## 8. 遗留接线（本任务不修改）
+## 8. 生产启用条件
 
-- 批次创建：在 insert integration task 时选择并写死 workflow version 3。
-- v2/v3 worker 分流：decider、integration triggers、resolution、repair、cancel/archive/resume。
-- execution metadata：绑定 candidate ID/revision/work round；迟到 receipt ignored。
-- RepositoryProvider/Engine：稳定 branch/PR、tree 查询、checks、provider operation ledger/reconcile。
-- push gateway/runtime credential policy：exact ref + expected old OID + epochs capability。
-- API/UI projection：显式显示 workflow version、revision、work round、candidate/check/review/provider unknown。
+v3 默认关闭；只有显式配置并通过全部激活探针后才承载批次：
+
+- `integrationV3ControlPlane.enabled=true`，配置 server-owned `controlledMirrorRoot`。
+- 配置固定 GitHub App installation ID，以及 App ID 和私钥的 Secret Vault 引用；v3 不接受用户 PAT 或通用 connector token。
+- 正式 server 镜像必须包含受支持的 Git；所有 mirror/worktree 操作统一经过 safe Git runner。
+- ACS runtime isolation attestation 必须通过真实 network-policy probe；配置布尔值不是证明。
+- gateway、worker、mirror、GitHub App 或 attestation 任一不可用时，v3 admission 与 readiness 均 fail closed。
+- Work/Review Runtime 不持有 GitHub、SSH 或控制面原始凭据；所有 provider 写操作由 Integration Engine 经 operation ledger 执行。
+
+v2 路径不依赖上述配置；v3 未配置或显式关闭时健康状态为 `not_applicable`，不得影响全站 readiness。

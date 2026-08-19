@@ -352,6 +352,12 @@ RUN pnpm -F web build
 FROM deps AS server
 WORKDIR /app
 
+# Integration v3 performs server-owned mirror operations. Pin the supported Git
+# package instead of inheriting an unspecified host binary.
+ARG SERVER_GIT_PACKAGE_VERSION=2.49.1-r0
+RUN apk add --no-cache "git=${SERVER_GIT_PACKAGE_VERSION}" \
+    && git --version
+
 COPY shared ./shared
 COPY server ./server
 COPY --from=web-build /app/web/dist ./web/dist

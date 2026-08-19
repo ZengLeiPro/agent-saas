@@ -1,3 +1,7 @@
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type { TaskBoardIntegrationCandidate, TaskBoardIntegrationCandidateRevision } from '../../../shared/src/types/taskboard.js';
@@ -135,11 +139,15 @@ describe('IntegrationV3Worker pure mock flow', () => {
 
 describe('Integration v3 cleanup receipts', () => {
   it('receipts capability fencing, clean server-owned worktree removal, and each source PR policy action', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'integration-v3-cleanup-'));
+    const controlledWorktreeRoot = join(root, 'worktrees');
+    const worktreePath = join(controlledWorktreeRoot, 'candidate-1');
+    mkdirSync(worktreePath, { recursive: true });
     const commands: readonly string[][] = [];
     const mutableCommands = commands as string[][];
     const receipt = await executeIntegrationV3Cleanup({
-      candidateId: 'candidate-1', repositoryPath: '/srv/repos/repo-1',
-      controlledWorktreeRoot: '/srv/worktrees', worktreePath: '/srv/worktrees/candidate-1', branch: 'integration/candidate-1',
+      candidateId: 'candidate-1', repositoryPath: join(root, 'repo-1'),
+      controlledWorktreeRoot, worktreePath, branch: 'integration/candidate-1',
       sourcePullRequests: [{ id: 'pr-1', action: 'skip', policyReason: 'policy keeps source PRs open' }],
       withRepositoryBranchLock: async (_lock, operation) => operation(),
       runGit: async (command) => { mutableCommands.push([...command.args]); return { exitCode: 0, stdout: '', stderr: '' }; },
@@ -155,15 +163,20 @@ describe('Integration v3 cleanup receipts', () => {
     ] });
     expect(commands).toEqual([
       ['status', '--porcelain=v1', '--untracked-files=all'],
-      ['worktree', 'remove', '--', '/srv/worktrees/candidate-1'],
+      ['worktree', 'remove', '--', worktreePath],
     ]);
+    rmSync(root, { recursive: true, force: true });
   });
 
   it('fails closed without removing an unsafe or dirty candidate worktree', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'integration-v3-cleanup-dirty-'));
+    const controlledWorktreeRoot = join(root, 'worktrees');
+    const worktreePath = join(controlledWorktreeRoot, 'candidate-1');
+    mkdirSync(worktreePath, { recursive: true });
     const runGit = vi.fn(async () => ({ exitCode: 0, stdout: ' M file.ts\n', stderr: '' }));
     const receipt = await executeIntegrationV3Cleanup({
-      candidateId: 'candidate-1', repositoryPath: '/srv/repos/repo-1',
-      controlledWorktreeRoot: '/srv/worktrees', worktreePath: '/srv/worktrees/candidate-1', branch: 'integration/candidate-1',
+      candidateId: 'candidate-1', repositoryPath: join(root, 'repo-1'),
+      controlledWorktreeRoot, worktreePath, branch: 'integration/candidate-1',
       sourcePullRequests: [], withRepositoryBranchLock: async (_lock, operation) => operation(), runGit,
       revokeCapabilities: async () => undefined, fenceCapabilities: async () => undefined,
       applySourcePullRequest: async () => undefined,
@@ -172,5 +185,6 @@ describe('Integration v3 cleanup receipts', () => {
       expect.objectContaining({ action: 'remove_candidate_worktree', status: 'failed', error: expect.stringContaining('dirty') }),
     ]) });
     expect(runGit).toHaveBeenCalledTimes(1);
+    rmSync(root, { recursive: true, force: true });
   });
 });

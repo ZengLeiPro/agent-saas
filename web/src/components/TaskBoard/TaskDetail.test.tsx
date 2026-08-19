@@ -168,13 +168,11 @@ describe("TaskDetail 草稿隔离", () => {
     const execution: TaskBoardExecution = {
       id: "execution-lock",
       taskId: runningTask.id,
-      runId: "run-lock",
-      sessionId: "session-lock",
+      runId: "run-lock", sessionId: "session-lock",
       status: "running",
       purpose: "work",
       requestedBy: "user-1",
-      createdAt: runningTask.createdAt,
-      updatedAt: runningTask.updatedAt,
+      createdAt: runningTask.createdAt, updatedAt: runningTask.updatedAt,
     };
     mocks.executions = [execution];
     mocks.fetchTask.mockResolvedValue(runningTask);
@@ -186,7 +184,11 @@ describe("TaskDetail 草稿隔离", () => {
     expect(screen.getByText("任务首次执行后，标题和正文已锁定；后续变更请通过评论补充。")).toBeTruthy();
 
     mocks.executions = [];
+    rerender(<TaskDetail {...props({ task: runningTask })} />);
+    mocks.executions = [execution];
     mocks.fetchTask.mockResolvedValue(taskTwo);
+    rerender(<TaskDetail {...props({ task: taskTwo })} />);
+    mocks.executions = [];
     rerender(<TaskDetail {...props({ task: taskTwo })} />);
     await waitFor(() => expect((screen.getByRole("textbox", { name: "标题" }) as HTMLInputElement).disabled).toBe(false));
   });

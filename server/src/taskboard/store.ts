@@ -56,6 +56,7 @@ import { deleteStoredTask } from './storeTaskDelete.js';
 import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
 import {
   allowedActionsForRole,
+  appendModelAssignments,
   normalizeBoardPrompt,
   normalizeModel,
   normalizeRepositoryConfig,
@@ -89,8 +90,6 @@ import {
   assertActiveBoard,
   assertExpectedVersion,
   assertWritableTask,
-  applyCommentAuthorDisplayName,
-  commentExecutionJoin,
   mapActiveBoardNameError,
   normalizeAttachments,
   normalizeLabels,
@@ -109,6 +108,7 @@ import {
 } from './storeExecutions.js';
 import {
   listBoards as listStoredBoards,
+  listComments as listStoredComments,
   listTasks as listStoredTasks,
   searchBoards as searchStoredBoards,
   searchComments as searchStoredComments,
@@ -753,16 +753,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         params.push(input.dueAt);
         assignments.push(`due_at=$${params.length}`);
       }
-      if (input.stageModels !== undefined) {
-        // stageModels is the explicit replacement for the legacy all-stage model.
-        params.push(null);
-        assignments.push(`model=$${params.length}`);
-        params.push(stageModelsToJson(input.stageModels));
-        assignments.push(`stage_models=$${params.length}::jsonb`);
-      } else if (input.model !== undefined) {
-        params.push(normalizeModel(input.model));
-        assignments.push(`model=$${params.length}`);
-      }
+      appendModelAssignments(params, assignments, input.model, input.stageModels);
       await client.query(
         `UPDATE ${this.tasksTable} t
             SET ${assignments.join(', ')}
@@ -884,18 +875,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
 
   async listComments(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardComment[]> {
     await this.requireTask(this.pool, identity, taskId, false);
-    const result = await this.pool.query(
-      `SELECT c.*, comment_execution.comment_session_id, comment_execution.comment_execution_id,
-              comment_execution.comment_execution_purpose
-         FROM ${this.commentsTable} c
-         JOIN ${this.tasksTable} t ON t.id=c.task_id
-         JOIN ${this.boardsTable} b ON b.id=t.board_id
-         ${commentExecutionJoin(this.changesTable, this.executionsTable)}
-        WHERE c.task_id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization') AND ${visibleCommentPredicate('c', this.changesTable)}
-        ORDER BY c.created_at, c.id`,
-      [taskId, identity.tenantId, identity.ownerUserId],
-    );
-    return result.rows.map((row) => applyCommentAuthorDisplayName(rowToComment(row), identity));
+    return listStoredComments(this, identity, taskId);
   }
 
   async searchComments(identity: TaskboardIdentity, taskId: string, filter: TaskboardPageFilter = {}): Promise<TaskboardPage<TaskBoardComment>> { return searchStoredComments(this, identity, taskId, filter); }

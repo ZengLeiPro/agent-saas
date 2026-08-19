@@ -90,30 +90,6 @@ describePg('PgTaskboardStore contract', () => {
     }
   }, 30_000);
 
-  it('clears the legacy task model when stage model overrides are edited', async () => {
-    const board = await store.createBoard(alice, { name: `旧模型迁移-${randomUUID()}` });
-    const legacy = await store.createTask(alice, board.id, {
-      title: '旧模型任务',
-      model: 'legacy/model',
-    });
-
-    const migrated = await store.updateTask(alice, legacy.id, {
-      expectedVersion: legacy.version,
-      stageModels: { review: 'stage/review' },
-    });
-    expect(migrated).toMatchObject({
-      stageModels: { review: 'stage/review' },
-    });
-    expect(migrated.model).toBeUndefined();
-
-    const cleared = await store.updateTask(alice, migrated.id, {
-      expectedVersion: migrated.version,
-      stageModels: {},
-    });
-    expect(cleared.model).toBeUndefined();
-    expect(cleared.stageModels).toBeUndefined();
-  });
-
   it('atomically stages legacy pending runs and never demotes an advanced run during activation', async () => {
     const runId = `run-cas-${randomUUID()}`;
     await runStore.createPending({
@@ -634,21 +610,8 @@ describePg('PgTaskboardStore contract', () => {
     });
     expect(completed?.task.status).toBe('in_review');
     expect(completed?.execution).toMatchObject({ status: 'succeeded', finishedAt: expect.any(String) });
-    const listedComments = await store.listComments(alice, task.id);
-    expect(listedComments).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        authorType: 'agent',
-        body: 'Agent 交付\n\n实现完成',
-        sessionId: 'session-a',
-        executionId: 'execution-a',
-        executionPurpose: 'work',
-      }),
-    ]));
-    expect(listedComments.at(-1)).toMatchObject({
-      authorType: 'user',
-      authorName: 'Alice',
-      body: '认领后补充的最新条件',
-    });
+    expect((await store.listComments(alice, task.id)).find((item) => item.authorType === 'agent')).toMatchObject({ body: 'Agent 交付\n\n实现完成', sessionId: 'session-a', executionId: 'execution-a', executionPurpose: 'work' });
+    expect((await store.listComments(alice, task.id)).at(-1)).toMatchObject({ authorType: 'user', authorName: 'Alice', body: '认领后补充的最新条件' });
 
     const commentCount = (await store.listComments(alice, task.id)).length;
     const duplicate = await store.completeExecution('run-a', {

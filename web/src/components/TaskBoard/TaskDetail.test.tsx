@@ -68,6 +68,7 @@ function task(id: string, title: string, version = 3): TaskBoardTask {
 
 const taskOne = task("task-1", "任务一");
 const taskTwo = task("task-2", "任务二");
+const commentDefaults = { taskId: taskOne.id, version: 1, createdAt: "2026-08-19T01:00:00.000Z", updatedAt: "2026-08-19T01:00:00.000Z" };
 const modelList: ModelList = {
   groups: [{ id: "group-a", name: "模型组", models: [{ id: "model-c", name: "模型 C" }] }],
   default: "group-a/model-c",
@@ -149,33 +150,8 @@ describe("TaskDetail 草稿隔离", () => {
 
   it("评论展示 Agent 阶段胶囊、关联会话，并用用户消息色区分用户评论", async () => {
     mocks.comments = [
-      {
-        id: "comment-agent",
-        taskId: taskOne.id,
-        body: "Agent 已完成实施。",
-        authorType: "agent",
-        authorId: "run-work",
-        authorName: "旧显示名",
-        sessionId: "session-work",
-        executionId: "execution-work",
-        executionPurpose: "work",
-        version: 1,
-        createdAt: "2026-08-19T01:00:00.000Z",
-        updatedAt: "2026-08-19T01:00:00.000Z",
-      },
-      {
-        id: "comment-user",
-        taskId: taskOne.id,
-        body: "用户补充意见",
-        authorType: "user",
-        authorId: "user-1",
-        authorName: "曾磊",
-        sessionId: "session-work",
-        executionPurpose: "work",
-        version: 1,
-        createdAt: "2026-08-19T01:01:00.000Z",
-        updatedAt: "2026-08-19T01:01:00.000Z",
-      },
+      { ...commentDefaults, id: "comment-agent", body: "Agent 已完成实施。", authorType: "agent", authorId: "run-work", authorName: "旧显示名", sessionId: "session-work", executionId: "execution-work", executionPurpose: "work" },
+      { ...commentDefaults, id: "comment-user", body: "用户补充意见", authorType: "user", authorId: "user-1", authorName: "曾磊", sessionId: "session-work", executionPurpose: "work" },
     ];
     const { container } = render(<TaskDetail {...props()} />);
 

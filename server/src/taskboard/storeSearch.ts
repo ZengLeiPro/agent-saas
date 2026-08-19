@@ -268,6 +268,27 @@ export async function searchTasks(
   return pageResult(result.rows.map(rowToTask), page, pageSize, total);
 }
 
+export async function listComments(
+  store: TaskboardSearchStore,
+  identity: TaskboardIdentity,
+  taskId: string,
+): Promise<TaskBoardComment[]> {
+  const result = await store.pool.query(
+    `SELECT c.*, comment_execution.comment_session_id, comment_execution.comment_execution_id,
+            comment_execution.comment_execution_purpose
+       FROM ${store.commentsTable} c
+       JOIN ${store.tasksTable} t ON t.id=c.task_id
+       JOIN ${store.boardsTable} b ON b.id=t.board_id
+       ${commentExecutionJoin(store.changesTable, store.executionsTable)}
+      WHERE c.task_id=$1 AND b.tenant_id=$2
+        AND (b.owner_user_id=$3 OR b.visibility='organization')
+        AND ${visibleCommentPredicate('c', store.changesTable)}
+      ORDER BY c.created_at, c.id`,
+    [taskId, identity.tenantId, identity.ownerUserId],
+  );
+  return result.rows.map((row) => applyCommentAuthorDisplayName(rowToComment(row), identity));
+}
+
 export async function searchComments(
   store: TaskboardSearchStore,
   identity: TaskboardIdentity,

@@ -513,12 +513,12 @@ export function TaskDetail({
     }
     const operationTask = currentTask;
     const requestId = ++detailRequestRef.current;
-    setExecutionStarted(true);
     setSaving(true);
     setError(null);
     try {
       const result = await onExecute(operationTask, purpose);
       if (!isCurrentOperation(requestId, operationTask.id)) return;
+      setExecutionStarted(true);
       setCurrentTask(result.task);
       mergeServerDraft(result.task);
       onTaskLoaded(result.task);

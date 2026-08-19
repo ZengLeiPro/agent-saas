@@ -668,7 +668,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           normalizeLabels(input.labels),
           sortOrder,
           input.dueAt ?? null,
-          normalizeModel(input.model),
+          normalizeModel(input.stageModels !== undefined ? undefined : input.model),
           stageModelsToJson(input.stageModels),
           optionalText(input.providerPullRequestId),
           input.pullRequestNumber ?? null,
@@ -753,13 +753,15 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         params.push(input.dueAt);
         assignments.push(`due_at=$${params.length}`);
       }
-      if (input.model !== undefined) {
-        params.push(normalizeModel(input.model));
-        assignments.push(`model=$${params.length}`);
-      }
       if (input.stageModels !== undefined) {
+        // stageModels is the explicit replacement for the legacy all-stage model.
+        params.push(null);
+        assignments.push(`model=$${params.length}`);
         params.push(stageModelsToJson(input.stageModels));
         assignments.push(`stage_models=$${params.length}::jsonb`);
+      } else if (input.model !== undefined) {
+        params.push(normalizeModel(input.model));
+        assignments.push(`model=$${params.length}`);
       }
       await client.query(
         `UPDATE ${this.tasksTable} t
@@ -883,7 +885,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async listComments(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardComment[]> {
     await this.requireTask(this.pool, identity, taskId, false);
     const result = await this.pool.query(
-      `SELECT c.*
+      `SELECT c.*, comment_execution.comment_session_id, comment_execution.comment_execution_id,
+              comment_execution.comment_execution_purpose
          FROM ${this.commentsTable} c
          JOIN ${this.tasksTable} t ON t.id=c.task_id
          JOIN ${this.boardsTable} b ON b.id=t.board_id

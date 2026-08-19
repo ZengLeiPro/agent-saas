@@ -558,6 +558,20 @@ describe("TaskDetail 草稿隔离", () => {
     expect(onTaskLoaded).toHaveBeenCalledWith(finalTask);
   });
 
+  it("启动 Agent 失败时不锁定标题和正文", async () => {
+    const user = userEvent.setup();
+    const todoTask = { ...taskOne, status: "todo" as const };
+    mocks.fetchTask.mockResolvedValue(todoTask);
+    const onExecute = vi.fn().mockRejectedValue(new Error("模型不存在"));
+    render(<TaskDetail {...props({ task: todoTask, onExecute })} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(todoTask.id));
+
+    await user.click(screen.getByRole("button", { name: "开始实施" }));
+    expect(await screen.findByText("模型不存在")).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "标题" }) as HTMLInputElement).disabled).toBe(false);
+    expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).disabled).toBe(false);
+  });
+
   it("待实施任务可以显式交给 Agent，并展示执行会话入口", async () => {
     const user = userEvent.setup();
     const todoTask = { ...taskOne, status: "todo" as const };

@@ -443,7 +443,9 @@ export async function getExecutionContextV2(
     const page = changeRows.rows.slice(0, limit);
     const comments = include.has('comments')
       ? await client.query(
-        `SELECT c.* FROM ${options.commentsTable} c
+        `SELECT c.*, comment_execution.comment_session_id, comment_execution.comment_execution_id,
+                comment_execution.comment_execution_purpose
+           FROM ${options.commentsTable} c
           ${commentExecutionJoin(options.changesTable, options.executionsTable)}
           WHERE c.task_id=$1 AND ${visibleCommentPredicate('c', options.changesTable)}
           ORDER BY c.created_at,c.id`,

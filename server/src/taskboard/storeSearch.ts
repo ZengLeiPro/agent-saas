@@ -290,14 +290,14 @@ export async function searchComments(
        FROM ${store.commentsTable} c
        JOIN ${store.tasksTable} t ON t.id=c.task_id
        JOIN ${store.boardsTable} b ON b.id=t.board_id
-       ${commentExecutionJoin(store.changesTable, store.executionsTable)}
       WHERE c.task_id=$1 AND b.tenant_id=$2
         AND (b.owner_user_id=$3 OR b.visibility='organization')
         AND ${visibleCommentPredicate('c', store.changesTable)}`,
     accessParams,
   );
   const result = await store.pool.query(
-    `SELECT c.*
+    `SELECT c.*, comment_execution.comment_session_id, comment_execution.comment_execution_id,
+            comment_execution.comment_execution_purpose
        FROM ${store.commentsTable} c
        JOIN ${store.tasksTable} t ON t.id=c.task_id
        JOIN ${store.boardsTable} b ON b.id=t.board_id

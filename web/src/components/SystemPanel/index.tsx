@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { MoreHorizontal, X } from "lucide-react";
+import { useMemo, useRef } from "react";
+import { X } from "lucide-react";
 import type {
   PanelBadge,
   PanelCard,
@@ -16,12 +16,6 @@ import type {
 import { HTML_SANDBOX_CSP } from "@/components/HtmlPreviewPanel";
 import { cn } from "@/lib/utils";
 import { activityStatusBadgeClass, activityStatusTextClass, type ActivityStatusTone } from "@/components/activityStatusStyles";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 
 /**
  * 右侧企业系统面板。
@@ -279,6 +273,7 @@ export function SystemPanel({
   onClose?: () => void;
   className?: string;
 }) {
+  const overflowDetailsRef = useRef<HTMLDetailsElement>(null);
   const active = snapshot.views.find((view) => view.key === snapshot.activeView) ?? snapshot.views[0];
   if (!active) return null;
   const panelViews = visiblePanelViews(snapshot.views, active.key);
@@ -320,25 +315,32 @@ export function SystemPanel({
             </button>
           ))}
           {panelViews.overflow.length ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className="inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                  aria-label={`更多系统视图，共 ${panelViews.overflow.length} 个`}
-                >
-                  <MoreHorizontal className="size-3.5" />
-                  更多
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+            <details ref={overflowDetailsRef} className="relative shrink-0">
+              <summary
+                role="button"
+                className="inline-flex cursor-pointer list-none items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground [&::-webkit-details-marker]:hidden"
+                aria-label={`更多系统视图，共 ${panelViews.overflow.length} 个`}
+              >
+                <span aria-hidden>···</span>
+                更多
+              </summary>
+              <div role="menu" className="absolute right-0 top-full z-50 mt-1 min-w-32 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
                 {panelViews.overflow.map((view) => (
-                  <DropdownMenuItem key={view.key} onSelect={() => onSelectView?.(view.key)}>
+                  <button
+                    key={view.key}
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                    onClick={() => {
+                      onSelectView?.(view.key);
+                      if (overflowDetailsRef.current) overflowDetailsRef.current.open = false;
+                    }}
+                  >
                     {view.label}
-                  </DropdownMenuItem>
+                  </button>
                 ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+              </div>
+            </details>
           ) : null}
         </div>
       ) : null}

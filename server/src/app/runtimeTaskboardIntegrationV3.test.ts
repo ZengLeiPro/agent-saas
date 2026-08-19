@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -38,6 +38,14 @@ describe('buildRuntimeTaskboardIntegrationV3Options', () => {
     expect(built.enabled).toBe(true);
     expect(built.runtimeIsolationAttestationProvider).toBeUndefined();
     expect(built.resolveGithubToken).toBeUndefined();
+  });
+
+  it('does not use an independent probe as Integration Work admission before dispatch', () => {
+    const source = readFileSync(new URL('./runtimeTaskboardIntegrationV3.ts', import.meta.url), 'utf8');
+    const dispatchBlock = source.slice(source.indexOf('dispatchAgent:'), source.indexOf('syncWorkspace:', source.indexOf('dispatchAgent:')));
+    expect(dispatchBlock).toContain('executionCoordinator.startExecution');
+    expect(dispatchBlock).not.toContain('.attest(');
+    expect(dispatchBlock).not.toContain('validAttestation');
   });
 
   it('accepts only an injected App provider and preserves repository/installation binding', async () => {

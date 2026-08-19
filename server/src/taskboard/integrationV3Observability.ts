@@ -1,5 +1,6 @@
 import type { PoolClient } from 'pg';
 
+import { PostgresIntegrationV3ActivationStore } from './integrationV3ActivationStore.js';
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import type { IntegrationV3RepairTables } from './integrationV3Repair.js';
 
@@ -82,11 +83,17 @@ export function createRuntimeIntegrationV3HealthProvider(
   enabled: boolean,
   store: Parameters<typeof createIntegrationV3HealthProvider>[0] | undefined,
   getRuntimeHealth: () => Promise<IntegrationV3GatewayHealth> | undefined,
+  processRole: 'all' | 'ws-only' | 'scheduler-only' | 'runtime-worker' = 'all',
 ): () => Promise<IntegrationV3HealthStatus> {
   if (!enabled) return async () => ({ status: 'not_applicable', releaseReady: true, reasons: [] });
   if (!store) return async () => evaluateIntegrationV3Health(unavailableMetrics('runtime_store_unavailable'));
-  return createIntegrationV3HealthProvider(store, async () => await getRuntimeHealth()
-    ?? { enabled: true, healthy: false, reason: 'worker_or_required_adapter_unavailable' });
+  const tables = integrationCandidateTableNames(store.integrationSourcesTable);
+  const activationStore = new PostgresIntegrationV3ActivationStore(store.pool, tables.activationHeartbeatsTable);
+  return createIntegrationV3HealthProvider(store, async () => {
+    if (processRole === 'ws-only') return activationStore.compatibleHealth();
+    return await getRuntimeHealth()
+      ?? { enabled: true, healthy: false, reason: 'worker_or_required_adapter_unavailable' };
+  });
 }
 
 function unavailableMetrics(reason: string): IntegrationV3MetricsSnapshot {

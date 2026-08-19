@@ -4,6 +4,7 @@ import {
   IntegrationV3KillSwitch,
   assertIntegrationV3DestructiveActionAllowed,
   collectIntegrationV3Metrics,
+  createRuntimeIntegrationV3HealthProvider,
   evaluateIntegrationV3Health,
 } from './integrationV3Observability.js';
 import type { IntegrationV3RepairTables } from './integrationV3Repair.js';
@@ -31,6 +32,32 @@ describe('integration v3 observability and release gate', () => {
       status: 'degraded', releaseReady: false,
       reasons: expect.arrayContaining(['unknown_operation_too_old', 'stale_integration_lane', 'cleanup_failure', 'gateway_disabled']),
     });
+  });
+
+  it('makes ws-only ready when a fresh compatible independent worker is healthy and metrics pass', async () => {
+    const db = { query: vi.fn(async (sql: string) => sql.includes('ORDER BY ((status=\'healthy\')')
+      ? { rows: [{ status: 'healthy', compatible: true, fresh: true }] }
+      : { rows: [{ unknown_count: 0, unknown_age_ms: null, stale_lane_count: 0, stale_outbox_count: 0,
+          outbox_age_ms: null, cleanup_failure_count: 0, active_failed_candidate_count: 0,
+          active_v2_count: 0, active_v3_count: 0 }] }) } as any;
+    const health = createRuntimeIntegrationV3HealthProvider(true, {
+      pool: db, tasksTable: 'tasks', executionsTable: 'execs', integrationLanesTable: 'lanes',
+      integrationSourcesTable: 'integration_sources',
+    }, () => undefined, 'ws-only');
+    await expect(health()).resolves.toMatchObject({ status: 'ok', releaseReady: true, reasons: [] });
+  });
+
+  it('keeps ws-only closed when the independent worker heartbeat is missing', async () => {
+    const db = { query: vi.fn(async (sql: string) => sql.includes('ORDER BY ((status=\'healthy\')')
+      ? { rows: [] }
+      : { rows: [{ unknown_count: 0, stale_lane_count: 0, stale_outbox_count: 0,
+          cleanup_failure_count: 0, active_failed_candidate_count: 0, active_v2_count: 0, active_v3_count: 0 }] }) } as any;
+    const health = createRuntimeIntegrationV3HealthProvider(true, {
+      pool: db, tasksTable: 'tasks', executionsTable: 'execs', integrationLanesTable: 'lanes',
+      integrationSourcesTable: 'integration_sources',
+    }, () => undefined, 'ws-only');
+    await expect(health()).resolves.toMatchObject({ status: 'degraded', releaseReady: false, reasons: ['gateway_unhealthy'],
+      metrics: { gatewayReason: 'worker_heartbeat_missing' } });
   });
 
   it('enforces global and repository kill switches fail closed', () => {

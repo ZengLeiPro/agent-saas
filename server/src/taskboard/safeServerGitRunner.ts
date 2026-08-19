@@ -7,6 +7,8 @@ import type { RepositoryWorkspaceGitCommand, RepositoryWorkspaceGitResult } from
 const SAFE_GIT_CONFIG = [
   'core.hooksPath=/dev/null',
   'core.fsmonitor=false',
+  'user.name=Integration Worker',
+  'user.email=integration-worker@localhost',
   'credential.helper=',
   'credential.useHttpPath=true',
   'http.sslVerify=true',
@@ -32,8 +34,23 @@ const ALLOWED_ORIGIN_FETCH = new Set([
 ]);
 const CANONICAL_GITHUB_ORIGIN = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/;
 
+const FORBIDDEN_CALLER_GLOBAL_OPTIONS = [
+  '-c',
+  '--config-env',
+  '--exec-path',
+  '--git-dir',
+  '--work-tree',
+  '--namespace',
+] as const;
+
 /** The only child-process Git boundary for server-owned v3 repositories. */
 export function safeServerGitArgs(args: readonly string[]): string[] {
+  for (const arg of args) {
+    const forbidden = FORBIDDEN_CALLER_GLOBAL_OPTIONS.find((option) => (
+      arg === option || (option.startsWith('--') && arg.startsWith(`${option}=`))
+    ));
+    if (forbidden) throw new Error(`unsafe Git global option is forbidden: ${forbidden}`);
+  }
   return [...SAFE_GIT_CONFIG.flatMap((entry) => ['-c', entry]), ...args];
 }
 

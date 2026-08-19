@@ -315,7 +315,7 @@ export class SandboxManager {
 
   networkPolicyStatus(): NetworkPolicyStatus {
     return this.networkPolicyManager.currentStatus();
-  }
+  } async probeNetworkPolicyForRef(ref: SandboxRef): Promise<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }> { return await this.networkPolicyManager.probe(ref); }
 
   async probeNetworkPolicy(): Promise<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }> {
     const probeId = `probe-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;

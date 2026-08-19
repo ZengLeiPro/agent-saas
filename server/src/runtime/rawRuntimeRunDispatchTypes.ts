@@ -384,6 +384,8 @@ export interface RawApprovalResumeRequest {
   dispatcherCompletion?: boolean;
   /** run.metadata.taskboardStagePrompt 恢复：任务看板 Execution 按阶段配置的特定提示语。 */
   taskboardStagePrompt?: string;
+  /** Server-only persisted metadata for Integration Work/Review isolation re-attestation. */
+  runtimeIsolationMetadata?: Record<string, unknown>;
   hooks?: AgentRunHooks;
   abortController?: AbortController;
   maxTurns?: number;
@@ -408,6 +410,8 @@ export interface RawInteractionResumeRequest {
   dispatcherCompletion?: boolean;
   /** run.metadata.taskboardStagePrompt 恢复：任务看板 Execution 按阶段配置的特定提示语。 */
   taskboardStagePrompt?: string;
+  /** Server-only persisted metadata for Integration Work/Review isolation re-attestation. */
+  runtimeIsolationMetadata?: Record<string, unknown>;
   hooks?: AgentRunHooks;
   abortController?: AbortController;
   maxTurns?: number;

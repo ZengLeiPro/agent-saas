@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import type { TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
 import type { GithubAppInstallationTokenProvider, RuntimeIsolationAttestationProvider } from './runtimeContracts.js';
 import type { TaskboardExecutionCoordinator } from '../taskboard/executionService.js';
+import { createIntegrationV3ActivationHeartbeat, PostgresIntegrationV3ActivationStore } from '../taskboard/integrationV3ActivationStore.js';
 import { integrationCandidateTableNames } from '../taskboard/integrationCandidateSchema.js';
 import { IntegrationEngineV3 } from '../taskboard/integrationEngineV3.js';
 import {
@@ -135,6 +136,8 @@ interface StartRuntimeTaskboardIntegrationV3Options {
   agentCwd: string;
   controlledMirrorRoot?: string;
   enabled: boolean;
+  processRole?: 'all' | 'runtime-worker';
+  releaseIdentity?: string;
   githubAppInstallationId?: number;
   runtimeIsolationAttestationProvider?: RuntimeIsolationAttestationProvider;
   resolveGithubToken?: (input: { tenantId: string; ownerUserId: string; repositoryId: string }) => Promise<IntegrationPushCredential | undefined>;
@@ -229,10 +232,9 @@ export function startRuntimeTaskboardIntegrationV3(
     boardsTable: store.boardsTable,
     executionsTable: store.executionsTable,
     dispatchAgent: async ({ identity, taskId, expectedVersion, purpose }) => {
-      const attestation = await options.runtimeIsolationAttestationProvider?.attest({
-        admission: 'integration_v3_work', tenantId: identity.tenantId, taskId,
-      });
-      if (!validAttestation(attestation)) throw new Error('Integration v3 work admission requires runtime isolation attestation');
+      // Work admission is enforced inside rawRuntimeRunDispatch against evidence returned
+      // by provisioning the exact ACS SandboxRef. A standalone capability probe here would
+      // attest a different boundary and is therefore intentionally forbidden.
       await executionCoordinator.startExecution(identity, taskId, { expectedVersion, purpose });
     },
     syncWorkspace: async (request) => {
@@ -316,6 +318,20 @@ export function startRuntimeTaskboardIntegrationV3(
   let stopped = false;
   let workerActive = false;
   let activationReason: string | undefined;
+  const runtimeHealth = async () => {
+    const gateway = await pushGateway.health();
+    const healthy = gateway.healthy && workerActive && !stopped;
+    return {
+      healthy,
+      ...(!healthy ? { reason: activationReason ?? gateway.reason ?? 'worker_inactive' } : {}),
+    };
+  };
+  const activationHeartbeat = createIntegrationV3ActivationHeartbeat({
+    store: new PostgresIntegrationV3ActivationStore(store.pool, tables.activationHeartbeatsTable),
+    releaseIdentity: options.releaseIdentity ?? 'unknown-release',
+    processRole: options.processRole ?? 'runtime-worker',
+    getHealth: runtimeHealth,
+  });
   const activation = Promise.all([
     pushGateway.health(),
     options.runtimeIsolationAttestationProvider?.attest({ admission: 'integration_v3_worker' }),
@@ -329,23 +345,24 @@ export function startRuntimeTaskboardIntegrationV3(
     activationReason = 'worker_activation_failed';
     serverLogger.warn(`Integration v3 worker disabled: ${error instanceof Error ? error.message : String(error)}`);
   });
+  const heartbeatReady = activation.then(() => activationHeartbeat.start()).catch((error) => {
+    serverLogger.warn(`Integration v3 activation heartbeat unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  });
   return {
     async health() {
-      await activation;
-      const gateway = await pushGateway.health();
-      const healthy = gateway.healthy && workerActive && !stopped;
-      return {
-        enabled: true as const,
-        healthy,
-        workerActive,
-        ...(!healthy ? { reason: activationReason ?? gateway.reason ?? 'worker_inactive' } : {}),
-      };
+      await heartbeatReady;
+      const health = await runtimeHealth();
+      return { enabled: true as const, ...health, workerActive };
     },
     async stop() {
       stopped = true;
-      await activation;
-      await worker.stop();
-      workerActive = false;
+      await heartbeatReady;
+      try {
+        await worker.stop();
+      } finally {
+        workerActive = false;
+        await activationHeartbeat.stop();
+      }
     },
   };
 }

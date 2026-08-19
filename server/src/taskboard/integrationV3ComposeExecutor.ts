@@ -75,8 +75,7 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
     const message = `Integration candidate ${current.candidate.id} revision ${current.candidate.currentRevision + 1}\n\nSource-Set: ${digestSources(ordered)}\n`;
     const commit = await this.host.runGit({
       cwd: context.worktreePath,
-      args: ['-c', 'user.name=Integration Worker', '-c', 'user.email=integration-worker@localhost',
-        'commit-tree', treeOid, '-p', sync.baseOid, '-m', message],
+      args: ['commit-tree', treeOid, '-p', sync.baseOid, '-m', message],
       env: {
         GIT_AUTHOR_NAME: 'Integration Worker',
         GIT_AUTHOR_EMAIL: 'integration-worker@localhost',

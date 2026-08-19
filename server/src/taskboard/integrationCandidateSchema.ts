@@ -12,6 +12,7 @@ export interface IntegrationCandidateTableNames {
   sourceSnapshotsTable: string;
   providerOperationsTable: string;
   requestsOutboxTable: string;
+  activationHeartbeatsTable: string;
 }
 
 export function integrationCandidateTableNames(integrationSourcesTable: string): IntegrationCandidateTableNames {
@@ -24,6 +25,7 @@ export function integrationCandidateTableNames(integrationSourcesTable: string):
     sourceSnapshotsTable: `${root}_candidate_source_snapshots`,
     providerOperationsTable: `${root}_provider_operations_v3`,
     requestsOutboxTable: `${root}_requests_outbox_v3`,
+    activationHeartbeatsTable: `${root}_activation_heartbeats_v3`,
   };
 }
 
@@ -303,6 +305,26 @@ const INTEGRATION_CANDIDATE_SCHEMA_MIGRATIONS = [
     run: async (options: IntegrationCandidateSchemaOptions, client: Pick<PoolClient, 'query'>) => {
       const { requestsOutboxTable } = integrationCandidateTableNames(options.integrationSourcesTable);
       await client.query(`ALTER TABLE ${requestsOutboxTable} ADD COLUMN IF NOT EXISTS receipt JSONB`);
+    },
+  },
+  {
+    version: 3,
+    name: 'runtime_activation_heartbeat',
+    run: async (options: IntegrationCandidateSchemaOptions, client: Pick<PoolClient, 'query'>) => {
+      const { activationHeartbeatsTable } = integrationCandidateTableNames(options.integrationSourcesTable);
+      await client.query(`CREATE TABLE IF NOT EXISTS ${activationHeartbeatsTable} (
+        process_identity TEXT PRIMARY KEY,
+        release_identity TEXT NOT NULL,
+        process_role TEXT NOT NULL CHECK (process_role IN ('all','runtime-worker')),
+        schema_version INTEGER NOT NULL CHECK (schema_version > 0),
+        protocol_version INTEGER NOT NULL CHECK (protocol_version > 0),
+        policy_revision TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('healthy','unhealthy','inactive')),
+        reason TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+      )`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${activationHeartbeatsTable}_fresh_idx
+        ON ${activationHeartbeatsTable}(updated_at DESC) WHERE status='healthy'`);
     },
   },
 ] as const;

@@ -57,8 +57,8 @@ describe('safe server Git runner', () => {
 
   it('accepts only Git-init core structural configuration', async () => {
     const root = repository();
-    await expect(runSafeServerGit({ cwd: root, args: ['rev-parse', '--git-dir'] }))
-      .resolves.toMatchObject({ exitCode: 0, stdout: '.git\n' });
+    await expect(runSafeServerGit({ cwd: root, args: ['status', '--porcelain=v1'] }))
+      .resolves.toMatchObject({ exitCode: 0, stdout: '' });
   });
 
   it('pins network policy and does not depend on GIT_CONFIG_LOCAL', () => {
@@ -71,6 +71,25 @@ describe('safe server Git runner', () => {
       GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ALLOW_PROTOCOL: 'https',
     });
     expect(safeServerGitEnvironment()).not.toHaveProperty('GIT_CONFIG_LOCAL');
+  });
+
+  it.each([
+    ['-c', ['status', '-c', 'http.sslVerify=false']],
+    ['--config-env', ['--config-env=http.sslVerify=ATTACKER', 'status']],
+    ['--exec-path', ['status', '--exec-path=/tmp/attacker']],
+    ['--git-dir', ['--git-dir', '/tmp/attacker', 'status']],
+    ['--work-tree', ['status', '--work-tree=/tmp/attacker']],
+    ['--namespace', ['--namespace=attacker', 'status']],
+  ])('rejects caller global option %s before spawning Git', (_option, args) => {
+    expect(() => safeServerGitArgs(args)).toThrow(/unsafe Git global option is forbidden/);
+  });
+
+  it('black-box rejects a trailing -c that would otherwise override pinned TLS policy', async () => {
+    const root = repository();
+    await expect(runSafeServerGit({
+      cwd: root,
+      args: ['config', '--get', 'http.sslVerify', '-c', 'http.sslVerify=false'],
+    })).rejects.toThrow('unsafe Git global option is forbidden: -c');
   });
 
   it('does not let caller env override or inject Git network/config policy', () => {

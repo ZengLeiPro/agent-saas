@@ -2074,8 +2074,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         ...createTaskboardRuntimeOptions({ modelResolver, userStore, timezone: config.server.timezone, logger: serverLogger, eventStore: pgEventStore, groupTaskboardSession: (input) => groupStore.addTaskboardSession(input), onSessionsChanged: clearSessionsListCache }),
         logger: serverLogger.child('TaskboardExecution') });
     }
-    if (enableSchedulerWorker && rawTaskboardStore && taskboardExecutionCoordinator && config.integrationV3ControlPlane?.enabled === true && integrationV3RepositoryProvider)
-      integrationV3Runtime = startRuntimeTaskboardIntegrationV3(buildRuntimeTaskboardIntegrationV3Options({ store: rawTaskboardStore, executionCoordinator: taskboardExecutionCoordinator, repositoryProvider: integrationV3RepositoryProvider, processCwd, agentCwd, runtimeIsolationAttestationProvider: integrationV3Adapters.runtimeIsolationAttestationProvider, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, control: config.integrationV3ControlPlane }));
+    if (enableSingletonWorkers && rawTaskboardStore && taskboardExecutionCoordinator && config.integrationV3ControlPlane?.enabled === true && integrationV3RepositoryProvider)
+      integrationV3Runtime = startRuntimeTaskboardIntegrationV3(buildRuntimeTaskboardIntegrationV3Options({ store: rawTaskboardStore, executionCoordinator: taskboardExecutionCoordinator, repositoryProvider: integrationV3RepositoryProvider, processCwd, agentCwd, processRole: processRole === 'all' ? 'all' : 'runtime-worker', releaseIdentity: skillSourceRevision, runtimeIsolationAttestationProvider: integrationV3Adapters.runtimeIsolationAttestationProvider, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, control: config.integrationV3ControlPlane }));
     const getRuntimeSchedulerCapacitySnapshot = async () => {
       const persisted = await runtimeSchedulerConfigStore!.get();
       const effective = effectiveMaxConcurrentRuns(
@@ -3087,7 +3087,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     taskboardService,
     taskboardExecutionService: taskboardExecutionCoordinator,
     integrationV3WorkerShutdown: integrationV3Runtime ? () => integrationV3Runtime.stop() : undefined,
-    getIntegrationV3Health: createRuntimeIntegrationV3HealthProvider(config.integrationV3ControlPlane?.enabled === true, rawTaskboardStore, () => integrationV3Runtime?.health()),
+    getIntegrationV3Health: createRuntimeIntegrationV3HealthProvider(config.integrationV3ControlPlane?.enabled === true, rawTaskboardStore, () => integrationV3Runtime?.health(), processRole),
     requeueIntegrationV3Candidate: rawTaskboardStore ? createIntegrationV3RequeueHandler(rawTaskboardStore) : undefined,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },

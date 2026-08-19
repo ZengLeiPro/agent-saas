@@ -17,6 +17,12 @@ import {
 } from './tenantRemoteHandResolver.js';
 import type { EventStore } from './types.js';
 import type { RawRuntimeRunDispatchConfig, TenantRemoteHandDispatchConfig } from './rawRuntimeRunDispatch.js';
+import {
+  assertRuntimeIsolationEvidence,
+  integrationRuntimeIsolationRequirement,
+  type RuntimeIsolationRequirement,
+} from './runtimeIsolationEvidence.js';
+export { integrationRuntimeIsolationRequirement };
 
 /**
  * Sandbox 归属键。决定「哪些执行流共享同一个 ACS Sandbox pod」。
@@ -99,9 +105,14 @@ export async function ensureRuntimeHandRegistered(params: {
    * Combined with `users`: independently permissive (any match attaches).
    */
   userTenantId?: string;
+  /** Server-derived Integration Work/Review identity; never accepted from clients. */
+  runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
 }): Promise<void> {
-  if (!params.handStore) return;
+  if (!params.handStore) {
+    if (params.runtimeIsolationRequirement) throw new Error('RUNTIME_ISOLATION_EVIDENCE_MISSING:handStore');
+    return;
+  }
   const transport = params.executionTransportRegistry.has(params.executionTarget)
     ? params.executionTransportRegistry.get(params.executionTarget)
     : undefined;
@@ -170,11 +181,19 @@ export async function ensureRuntimeHandRegistered(params: {
         resources: { ...environmentVersion.recipe.resources },
       }
     : baseRecipe;
+  if (params.runtimeIsolationRequirement) {
+    if (params.executionTarget !== 'server-remote') {
+      throw new Error('RUNTIME_ISOLATION_EVIDENCE_MISSING:executionTarget');
+    }
+    recipe.runtimeIsolationRequirement = params.runtimeIsolationRequirement;
+  }
   const recipeDigest = environmentVersion?.digest
     ?? createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
   let defaultProvisionFailure: string | undefined;
+  let defaultProvisionMetadata: Record<string, unknown> | undefined;
   if (transport && typeof (transport as { provision?: unknown }).provision === 'function') {
     const result = await (transport as unknown as { provision(recipe: { workspaceId: string }): Promise<{ status: 'ok' | 'error'; error?: string; metadata?: Record<string, unknown> }> }).provision(recipe);
+    defaultProvisionMetadata = result.metadata;
     // B3: persist provisioning logs (workspace_ensure / setup_command#N / skipped
     // repo+artifact placeholders) emitted by hand-server so audit can correlate.
     await appendProvisioningLogs({
@@ -194,6 +213,16 @@ export async function ensureRuntimeHandRegistered(params: {
         classifiedAs: 'unhealthy',
       });
     }
+  }
+  if (params.runtimeIsolationRequirement) {
+    const provisionMetadata = isRecord(defaultProvisionMetadata?.metadata)
+      ? defaultProvisionMetadata.metadata
+      : defaultProvisionMetadata;
+    assertRuntimeIsolationEvidence({
+      requirement: params.runtimeIsolationRequirement,
+      evidence: provisionMetadata?.runtimeIsolationEvidence,
+      sandboxScopeId: recipe.sandboxScopeId ?? recipe.workspaceId,
+    });
   }
   await manager.provision({
     handId: defaultHandId,
@@ -255,7 +284,7 @@ export async function ensureRuntimeHandRegistered(params: {
     throw new Error(`HAND_PROVISION_FAILED:${defaultProvisionFailure}`);
   }
 
-  for (const hand of selectTenantRemoteHandsForRegistration(params.tenantRemoteHands, {
+  for (const hand of selectTenantRemoteHandsForRegistration(params.runtimeIsolationRequirement ? [] : params.tenantRemoteHands, {
     userId: params.userId,
     username: params.username,
     userTenantId: params.userTenantId,
@@ -540,4 +569,8 @@ async function provisionTenantRemoteHand(args: {
     }).catch(() => undefined);
     args.logger?.warn(`tenant_hand_provision_failed handId=${args.handId}: ${error}`);
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
 }

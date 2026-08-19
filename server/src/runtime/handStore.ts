@@ -37,6 +37,8 @@ export interface HandCapability {
 
 export interface WorkspaceRecipe {
   workspaceId: string;
+  /** Server-issued only. ACS must attest the exact SandboxRef provisioned for this run. */
+  runtimeIsolationRequirement?: import('./runtimeIsolationEvidence.js').RuntimeIsolationRequirement;
   /**
    * Underlying execution-runtime pooling key. Session records can stay
    * session-scoped while ACS maps multiple sessions for the same user workspace

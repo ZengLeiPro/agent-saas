@@ -266,6 +266,22 @@ describe('Codex subscription Responses transport', () => {
 
     expect(first).toMatch(/^[a-f0-9]{32}$/);
     expect(otherSession).toBe(first);
+    const secondSystemKey = transport.computePromptCacheKey({
+      ...base,
+      messages: [
+        { role: 'system' as const, content: 'stable system' },
+        { role: 'system' as const, content: 'second system' },
+        { role: 'user' as const, content: 'first session message' },
+      ],
+    });
+    expect(transport.computePromptCacheKey({
+      ...base,
+      messages: [
+        { role: 'system' as const, content: 'stable system' },
+        { role: 'system' as const, content: 'changed second system' },
+        { role: 'user' as const, content: 'first session message' },
+      ],
+    })).not.toBe(secondSystemKey);
     expect(transport.computePromptCacheKey({ ...base, model: 'gpt-5.5' })).not.toBe(first);
     expect(transport.computePromptCacheKey({
       ...base,

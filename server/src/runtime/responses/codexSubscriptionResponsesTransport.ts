@@ -44,7 +44,12 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
     tools: ModelToolDefinition[];
     context: RunContext;
   }): string {
-    const systemContent = input.messages.find((message) => message.role === 'system')?.content ?? '';
+    const systemContent = input.messages
+      .filter(
+        (message): message is Extract<ModelChatMessage, { role: 'system' }> => message.role === 'system',
+      )
+      .map((message) => message.content)
+      .join('\n\n');
     // Skill 工具描述包含按用户计算的可用技能清单；缓存指纹必须覆盖完整工具定义，
     // 否则“无 Skill”与“已启用 Skill”的新会话会共享过期的清单。
     const toolSignature = input.tools

@@ -130,6 +130,8 @@ export interface FirstDayGuideBarProps {
   onSoftExitAcknowledged?: () => void;
   stageTimeoutMs?: number;
   showOnMobile?: boolean;
+  /** 保持事件监听但暂不展示，避免空会话首屏与 composer 抢注意力。 */
+  visible?: boolean;
 }
 
 export function FirstDayGuideBar({
@@ -145,6 +147,7 @@ export function FirstDayGuideBar({
   onSoftExitAcknowledged,
   stageTimeoutMs = DEFAULT_TIMEOUT_MS,
   showOnMobile = false,
+  visible = true,
 }: FirstDayGuideBarProps) {
   const [state, dispatch] = useReducer(guideReducer, undefined, initialState);
 
@@ -174,18 +177,18 @@ export function FirstDayGuideBar({
   }, []);
 
   useEffect(() => {
-    if (state === "closed" || state === "done") return;
+    if (!visible || state === "closed" || state === "done") return;
     const timer = window.setTimeout(() => dispatch({ type: "STAGE_TIMEOUT" }), stageTimeoutMs);
     return () => window.clearTimeout(timer);
-  }, [stageTimeoutMs, state]);
+  }, [stageTimeoutMs, state, visible]);
 
   useEffect(() => {
-    if (state !== "done") return;
+    if (!visible || state !== "done") return;
     const timer = window.setTimeout(() => dispatch({ type: "USER_CLOSE" }), 3_000);
     return () => window.clearTimeout(timer);
-  }, [state]);
+  }, [state, visible]);
 
-  if (state === "closed") return null;
+  if (!visible || state === "closed") return null;
 
   // 没有显式 Cron 打开能力时移除 schedule proof，避免 CTA 显示“配置常驻”却只能跳目录。
   const workflowContext = activeWorkflow && !onOpenWorkflowCron && activeWorkflow.schedule

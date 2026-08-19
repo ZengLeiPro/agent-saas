@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, Volume2, VolumeX, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,8 @@ import { TokenUsageDisplay } from "@/components/TokenUsageDisplay";
 import { BillingMiniBadge } from "@/components/BillingMiniBadge";
 import { getPreviewFileType } from "@agent/shared";
 import { useAuth } from "@/contexts/AuthContext";
+import { EmptyChatRecommendCards } from "@/components/scenarios/EmptyChatRecommendCards";
+import { EmptySessionScenarios } from "@/components/scenarios/EmptySessionScenarios";
 import { useScenarioDeepLink } from "@/components/scenarios/useScenarioDeepLink";
 import { useRoleKitConfig } from "@/components/scenarios/useRoleKitConfig";
 import { FirstDayGuideBar } from "@/components/onboarding/FirstDayGuideBar";
@@ -95,6 +97,7 @@ export function MobileLayout(props: LayoutProps) {
     setActiveUsageCard((current) => open ? "billing" : current === "billing" ? null : current);
   }, []);
   const [activeWorkflow, setActiveWorkflow] = useState<WorkflowOnboardingContext | null>(null);
+  const [roleDetailId, setRoleDetailId] = useState<string | null>(null);
   const closeDrawer = useCallback(() => {
     setSheetOpen(false);
     setActiveTab("chat");
@@ -132,6 +135,44 @@ export function MobileLayout(props: LayoutProps) {
     setInput(message);
     closeDrawer();
   }, [closeDrawer, loading, newPersonalSession, setInput]);
+
+  const handlePrefillWorkflow = useCallback((
+    message: string,
+    scenario: WorkflowOnboardingContext["scenario"],
+  ) => {
+    if (!personalAgentEnabled || loading) return;
+    setActiveWorkflow({ scenario });
+    setInput(message);
+  }, [loading, personalAgentEnabled, setInput]);
+
+  const handleViewAllScenarios = useCallback(() => {
+    setRoleDetailId(null);
+    setActiveTab("capabilities");
+    setSheetOpen(true);
+  }, [setActiveTab]);
+
+  const handleOpenRoleDetail = useCallback((roleId: string) => {
+    setRoleDetailId(roleId);
+    setActiveTab("capabilities");
+    setSheetOpen(true);
+  }, [setActiveTab]);
+
+  const chatEmptySlot = useMemo(() => (
+    roleKitConfig.roleKitV2Enabled ? (
+      <EmptyChatRecommendCards
+        onTryScenario={handleScenarioPrefill}
+        onStartWorkflow={handlePrefillWorkflow}
+        onViewAll={handleViewAllScenarios}
+        onOpenRoleDetail={handleOpenRoleDetail}
+      />
+    ) : (
+      <EmptySessionScenarios
+        onTryScenario={handleScenarioPrefill}
+        onStartWorkflow={handlePrefillWorkflow}
+        onViewAll={handleViewAllScenarios}
+      />
+    )
+  ), [handleOpenRoleDetail, handlePrefillWorkflow, handleScenarioPrefill, handleViewAllScenarios, roleKitConfig.roleKitV2Enabled]);
 
   const handleSendMessage = useCallback(async () => {
     await sendWorkflowExperience(sendMessage, input, activeWorkflow);
@@ -452,6 +493,9 @@ export function MobileLayout(props: LayoutProps) {
                     onStartWorkflow={handleStartWorkflow}
                     onRequestDiagnosis={handleStartWorkflow}
                     onWorkflowSelected={(scenario) => setActiveWorkflow({ scenario })}
+                    roleDetailId={roleDetailId}
+                    onOpenRoleDetail={setRoleDetailId}
+                    onCloseRoleDetail={() => setRoleDetailId(null)}
                   />
                 </Suspense>
               )}
@@ -525,7 +569,8 @@ export function MobileLayout(props: LayoutProps) {
                     <div className="font-semibold">当前没有可用的企业专家</div>
                     <p className="mt-2 text-sm text-muted-foreground">请联系组织管理员完成专家指派。</p>
                   </div>
-                ) : undefined))}
+                ) : chatEmptySlot))}
+              initialComposer={!isTrashPreview && !orgAgentIdentityLoading && !activeOrgAgentReadOnly && (Boolean(activeOrgAgent) || personalAgentEnabled)}
               orgAgent={isTrashPreview ? null : activeOrgAgent}
               onNewOrgAgentConversation={activeOrgAgent && !activeOrgAgentReadOnly && !loading
                 ? () => { startOrgAgentSession(activeOrgAgent.id); }
@@ -566,11 +611,13 @@ export function MobileLayout(props: LayoutProps) {
         </SlidePanel>
       </div>
       {personalAgentEnabled
+        && !activeOrgAgent
         && activeTab === "chat"
         && roleKitConfig.roleKitV2Enabled
         && roleKitConfig.firstDayGuideBar.enabled
         && roleKitConfig.firstDayGuideBar.showOnMobile ? (
           <FirstDayGuideBar
+            visible={messages.some((message) => message.type === "text" && message.streaming !== true)}
             activeWorkflow={activeWorkflow ?? undefined}
             onOpenCronWizard={() => { setActiveTab("cron"); setSheetOpen(true); }}
             onOpenExampleDemo={() => { setActiveTab("capabilities"); setSheetOpen(true); }}

@@ -140,7 +140,12 @@ import { GroupStore } from '../data/groups/store.js';
 import { SkillConfigStore, migrateFromManifest } from '../data/skills/index.js';
 import { GoogleWorkspaceOAuthService } from '../connectors/googleWorkspace.js';
 import { connectNotionCredential } from '../connectors/notion.js';
-import { scanPoolSkills as scanPoolSkillsForDispatch, scanTenantOwnSkillIds, scanUserCustomSkills } from '../data/skills/scanner.js';
+import {
+  scanAllTenantOwnSkillIds,
+  scanPoolSkills as scanPoolSkillsForDispatch,
+  scanTenantOwnSkillIds,
+  scanUserCustomSkills,
+} from '../data/skills/scanner.js';
 import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import { agentDir, resolveAgentPath } from '../workspace/namespace.js';
@@ -1417,6 +1422,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           const poolIds = new Set(all.map((s) => s.id));
           const tenantSkillsDir = user.tenantId ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, user.tenantId) : null;
           const tenantOwnIds = tenantSkillsDir ? scanTenantOwnSkillIds(tenantSkillsDir, poolIds) : new Set<string>();
+          const allTenantOwnIds = scanAllTenantOwnSkillIds(tenantSkillsRootDir, poolIds);
           const effectiveTenantOwn = new Set(
             [
               ...store.getUserEffectiveTenantOwnSkills(username, user.tenantId, tenantOwnIds),
@@ -1433,7 +1439,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
               }))
             : [];
           const selected = new Set(store.getUserSelectedSkills(username));
-          const customExcluded = new Set([...poolIds, ...tenantOwnIds]);
+          const customExcluded = new Set([...poolIds, ...allTenantOwnIds]);
           const customResult = scanUserCustomSkills(userSkillsDir, customExcluded)
             .filter((s) => selected.has(s.id))
             .map((s) => ({

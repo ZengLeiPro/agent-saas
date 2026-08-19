@@ -10,7 +10,6 @@ import { scanPoolSkillsAsync, scanTenantOwnSkillIdsAsync } from '../data/skills/
 import { resolveTenantSkillsDir, resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import type { UserStore } from '../data/users/store.js';
 import { setUserSkillSelected } from '../routes/skillSelection.js';
-import { serverLogger } from '../utils/logger.js';
 import { agentSkillsDir, resolveAgentPath } from '../workspace/namespace.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import {
@@ -155,7 +154,7 @@ export function personalSkillResourceId(userId: string, legacySkillId: string): 
 export interface PersonalSkillGovernanceUploadResult {
   ok: true;
   status: 'succeeded';
-  selected: boolean;
+  selected: true;
   skill: { id: string; name: string; description: string };
   resource: Awaited<ReturnType<PgSkillGovernanceStore['createAndPublishResource']>>['resource'];
   version: Awaited<ReturnType<PgSkillGovernanceStore['createAndPublishResource']>>['version'];
@@ -227,17 +226,13 @@ export function createPersonalSkillGovernanceUpload(deps: PersonalSkillGovernanc
           },
           createdBy: actor.id,
         });
-        let selected = true;
-        try {
-          await setUserSkillSelected(deps.skillConfigStore, actor.username, staged.skillId, true);
-        } catch (error) {
-          selected = false;
-          serverLogger.warn(`Personal Skill ${resourceId} published but selection update failed: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        // 个人技能上传的成功语义包含“已默认启用”。选择偏好写入失败时直接失败，
+        // 不返回一个需要用户再手动开启的假成功结果。
+        await setUserSkillSelected(deps.skillConfigStore, actor.username, staged.skillId, true);
         return {
           ok: true,
           status: 'succeeded',
-          selected,
+          selected: true,
           skill: { id: staged.skillId, name: staged.name, description: staged.description },
           resource: governed.resource,
           version: governed.version,

@@ -112,6 +112,26 @@ describe('技能异步增量物化', () => {
     });
   });
 
+  it('跨组织组织技能残留移入可恢复备份，不再留在用户热目录', async () => {
+    createSkill(poolDir, 'alpha', 'alpha');
+    createSkill(join(sharedDir, 'tenants', 'tenant-b', 'skills'), 'foreign-org-skill', 'foreign');
+    createSkill(join(userCwd, '.ky-agent', 'skills'), 'foreign-org-skill', 'stale-copy');
+    const config = fakeStore(['alpha']);
+    const materializer = new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      skillConfigStore: config.store,
+    });
+
+    const result = await materializer.materialize({ taskId: 'task-cross-tenant', user, userCwd });
+
+    expect(result.removedSkills).toBe(1);
+    expect(() => readFileSync(join(userCwd, '.ky-agent', 'skills', 'foreign-org-skill', 'SKILL.md'), 'utf-8'))
+      .toThrow();
+    expect(readFileSync(join(sharedDir, 'tenants', 'tenant-b', 'skills', 'foreign-org-skill', 'SKILL.md'), 'utf-8'))
+      .toContain('foreign');
+  });
+
   it('撤销系统技能时移入可恢复备份，不碰同目录下的自建技能', async () => {
     createSkill(poolDir, 'alpha', 'alpha');
     createSkill(poolDir, 'beta', 'beta');

@@ -157,6 +157,34 @@ export function scanTenantOwnSkillIds(tenantSkillsDir: string, poolSkillIds: Set
   }));
 }
 
+/**
+ * 扫描所有租户的自有 skill ID。
+ *
+ * 用户 workspace 里的组织 skill 是物化副本；历史版本或迁移异常可能留下不属于
+ * 当前租户的副本。调用方可用该集合把这类副本从个人 skill 视图/选择集合中排除，
+ * 避免把组织 skill 误判为用户自建 skill。
+ */
+export function scanAllTenantOwnSkillIds(
+  tenantsRootDir: string,
+  poolSkillIds: Set<string>,
+): Set<string> {
+  if (!existsSync(tenantsRootDir)) return new Set();
+  const result = new Set<string>();
+  let entries;
+  try {
+    entries = readdirSync(tenantsRootDir, { withFileTypes: true });
+  } catch {
+    return result;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name.startsWith('_')) continue;
+    for (const skillId of scanTenantOwnSkillIds(join(tenantsRootDir, entry.name, 'skills'), poolSkillIds)) {
+      result.add(skillId);
+    }
+  }
+  return result;
+}
+
 /** 请求/后台路径使用的非阻塞版本；只扫描一级目录。 */
 export async function scanTenantOwnSkillIdsAsync(
   tenantSkillsDir: string,

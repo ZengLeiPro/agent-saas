@@ -692,6 +692,47 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       const body = await res.json() as { customSkills: { id: string }[] };
       expect(body.customSkills.map(s => s.id)).toContain('alice_custom');
     });
+
+    it('其他组织的物化残留不进入个人列表、选择和文档接口', async () => {
+      const form = new FormData();
+      form.append('files', new Blob(['---\nname: wy-invoice\ndescription: 唯恩电气 T100 Vendor Portal\n---\nbody'], { type: 'text/markdown' }), 'SKILL.md');
+      h.setCaller(WAIN_ADMIN);
+      const uploaded = await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: form });
+      expect(uploaded.status).toBe(200);
+      h.setCaller(WAIN_USER);
+      const ownerView = await h.request('/api/skills/me');
+      expect((await ownerView.json() as { tenantSkills: { id: string }[] }).tenantSkills.map(s => s.id)).toContain('wy-invoice');
+
+      // 模拟历史错误物化：wain 组织技能残留在 kaiyan 用户 workspace。
+      const leakedDir = join(h.userSkillsDir('alice'), 'wy-invoice');
+      mkdirSync(leakedDir, { recursive: true });
+      writeFileSync(join(leakedDir, 'SKILL.md'), '---\nname: wy-invoice\ndescription: leaked\n---\nbody');
+
+      h.setCaller(KAIYAN_USER);
+      const listed = await h.request('/api/skills/me');
+      expect(listed.status).toBe(200);
+      const body = await listed.json() as { customSkills: { id: string }[]; tenantSkills: { id: string }[] };
+      expect(body.customSkills.map(s => s.id)).not.toContain('wy-invoice');
+      expect(body.tenantSkills.map(s => s.id)).not.toContain('wy-invoice');
+
+      const bulkSelection = await h.request('/api/skills/me/selections', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedSkills: ['wy-invoice'] }),
+      });
+      expect(bulkSelection.status).toBe(200);
+      expect(h.skillConfigStore.getUserSelectedSkills('alice')).not.toContain('wy-invoice');
+
+      const singleSelection = await h.request('/api/skills/me/skills/wy-invoice/selection', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: true, expectedVersion: 0 }),
+      });
+      expect(singleSelection.status).toBe(403);
+
+      const document = await h.request('/api/skills/me/skills/wy-invoice/document');
+      expect(document.status).toBe(400);
+    });
   });
 
   // ============================================================

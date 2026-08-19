@@ -11,6 +11,7 @@ import {
 import { dirname, join } from 'node:path';
 
 import type { SkillConfigStore } from '../../data/skills/store.js';
+import { scanAllTenantOwnSkillIds } from '../../data/skills/scanner.js';
 import { resolveTenantSkillsDir, resolveTenantSkillsDirFromRoot } from '../../data/tenants/tenantSkillsPath.js';
 import { serverLogger } from '../../utils/logger.js';
 import {
@@ -340,6 +341,10 @@ export class SkillWorkspaceMaterializer {
       for (const id of Object.keys(this.options.skillConfigStore.getTenantOwnSkillRules(user.tenantId))) {
         known.add(id);
       }
+      // 物化残留可能来自其他租户；把所有组织目录纳入 managed 集合，warmup 时移出热目录。
+      const poolIds = await listDirectoryIds(resolveAgentPath(this.options.sharedDir, 'skills-pool'));
+      const tenantsRootDir = this.options.tenantSkillsRootDir ?? join(this.options.sharedDir, 'tenants');
+      for (const id of scanAllTenantOwnSkillIds(tenantsRootDir, poolIds)) known.add(id);
     }
     return known;
   }

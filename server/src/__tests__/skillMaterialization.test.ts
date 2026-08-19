@@ -1,9 +1,12 @@
+import { createHash } from 'node:crypto';
 import {
   lstatSync,
   mkdtempSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -15,7 +18,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SkillConfigStore } from '../data/skills/store.js';
 import { resolveUserCwd, type WorkspaceUser } from '../workspace/resolver.js';
 import { SkillWorkspaceMaterializer } from '../workspace/materialization/materializer.js';
-import { computeSkillPackageFingerprint } from '../workspace/materialization/fingerprint.js';
 import { readSkillManifest } from '../workspace/materialization/manifest.js';
 import { SkillMaterializationService } from '../workspace/materialization/service.js';
 import { InMemorySkillMaterializationStore } from '../workspace/materialization/store.js';
@@ -27,6 +29,27 @@ function createSkill(root: string, id: string, body: string): void {
     join(dir, 'SKILL.md'),
     `---\nname: ${id}\ndescription: ${id}\n---\n${body}\n`,
   );
+}
+
+/** 复现旧 skillPackageUpload：故意不排除 node_modules 等目录。 */
+function legacyPackageFingerprint(root: string): string {
+  const files: string[] = [];
+  const visit = (current: string, prefix = ''): void => {
+    for (const name of readdirSync(current).sort((a, b) => a.localeCompare(b))) {
+      const relativePath = prefix ? `${prefix}/${name}` : name;
+      const path = join(current, name);
+      if (statSync(path).isDirectory()) visit(path, relativePath);
+      else files.push(relativePath);
+    }
+  };
+  visit(root);
+  const hash = createHash('sha256');
+  for (const relativePath of files) {
+    const path = join(root, relativePath);
+    const size = statSync(path).size;
+    hash.update(relativePath).update('\\0').update(String(size)).update('\\0').update(readFileSync(path));
+  }
+  return hash.digest('hex');
 }
 
 function fakeStore(selected: string[]) {
@@ -173,7 +196,8 @@ describe('技能异步增量物化', () => {
     mkdirSync(join(sourceDir, 'legacy-foreign', 'node_modules'), { recursive: true });
     writeFileSync(join(sourceDir, 'legacy-foreign', 'node_modules', 'ignored.js'), 'ignored-v1');
     createSkill(userSkillDir, 'legacy-foreign', 'foreign-v1');
-    const legacyDigest = await computeSkillPackageFingerprint(join(userSkillDir, 'legacy-foreign'));
+    // 历史 DB 中持久化的是旧上传算法对完整 v1 包的摘要；用户副本只含可物化文件。
+    const legacyDigest = legacyPackageFingerprint(join(sourceDir, 'legacy-foreign'));
     writeFileSync(
       join(sourceDir, 'legacy-foreign', 'SKILL.md'),
       '---\nname: legacy-foreign\ndescription: legacy-foreign\n---\nforeign-v2\n',
@@ -198,14 +222,22 @@ describe('技能异步增量物化', () => {
 
   it('旧 .skills-version 状态不按同名误伤既有个人 Skill', async () => {
     createSkill(poolDir, 'alpha', 'alpha');
+    const foreignDir = join(sharedDir, 'tenants', 'tenant-b', 'skills', 'same-name');
     createSkill(join(sharedDir, 'tenants', 'tenant-b', 'skills'), 'same-name', 'foreign');
+    mkdirSync(join(foreignDir, 'node_modules'), { recursive: true });
+    writeFileSync(join(foreignDir, 'node_modules', 'ignored.js'), 'ignored');
     createSkill(join(userCwd, '.ky-agent', 'skills'), 'same-name', 'personal');
     writeFileSync(join(userCwd, '.ky-agent', '.skills-version'), '1');
+    const legacyDigest = legacyPackageFingerprint(foreignDir);
     const config = fakeStore(['alpha']);
     const materializer = new SkillWorkspaceMaterializer({
       sharedDir,
       sourceRevision: 'test-release',
       skillConfigStore: config.store,
+      resolveTenantSkillHistoricalProvenance: async (tenantId) => new Map([
+        ...(tenantId === 'tenant-b' ? [['same-name', [legacyDigest]] as const] : []),
+      ]),
+      resolveUserPersonalSkillIds: async () => new Set(['same-name']),
     });
 
     const result = await materializer.materialize({ taskId: 'task-same-name', user, userCwd });

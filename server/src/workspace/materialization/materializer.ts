@@ -10,6 +10,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import type { SkillHistoricalProvenance } from '../../data/skillGovernance/types.js';
 import type { SkillConfigStore } from '../../data/skills/store.js';
 import { resolveTenantSkillsDir, resolveTenantSkillsDirFromRoot } from '../../data/tenants/tenantSkillsPath.js';
 import { serverLogger } from '../../utils/logger.js';
@@ -49,7 +50,10 @@ export interface SkillMaterializerOptions {
   resolveAssignedOrgAgentSkillIds?: (user: WorkspaceUser) => readonly string[];
   resolveTenantSkillHistoricalProvenance?: (
     tenantId: string,
-  ) => Promise<ReadonlyMap<string, readonly string[]>>;
+  ) => Promise<ReadonlyMap<string, SkillHistoricalProvenance | readonly string[]>>;
+  resolveUserPersonalSkillIds?: (
+    user: WorkspaceUser,
+  ) => Promise<ReadonlySet<string> | undefined>;
 }
 
 export interface MaterializeWorkspaceInput {
@@ -219,8 +223,12 @@ export class SkillWorkspaceMaterializer {
           userSkillsDir: skillsDir,
           tenantsRootDir: this.options.tenantSkillsRootDir ?? join(this.options.sharedDir, 'tenants'),
           currentTenantId: user.tenantId,
+          userId: user.id,
           poolSkillIds: await listDirectoryIds(resolveAgentPath(this.options.sharedDir, 'skills-pool')),
           resolveTenantSkillHistoricalProvenance: this.options.resolveTenantSkillHistoricalProvenance,
+          resolveUserPersonalSkillIds: this.options.resolveUserPersonalSkillIds
+            ? () => this.options.resolveUserPersonalSkillIds!(user)
+            : undefined,
         });
     const nextSkills: Record<string, MaterializedSkillEntry> = {};
     let changedSkills = 0;

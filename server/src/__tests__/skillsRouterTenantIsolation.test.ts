@@ -5,9 +5,19 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import express from 'express';
 import type { Server } from 'node:http';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -28,6 +38,27 @@ const PLATFORM_ADMIN: JwtPayload = { sub: 'u-platform', username: 'admin', role:
 const KAIYAN_USER: JwtPayload = { sub: 'u-ku', username: 'alice', role: 'user', tenantId: 'kaiyan' };
 const WAIN_ADMIN: JwtPayload = { sub: 'u-wa', username: 'wain_admin', role: 'admin', tenantId: 'wain' };
 const WAIN_USER: JwtPayload = { sub: 'u-wu', username: 'wain_user', role: 'user', tenantId: 'wain' };
+
+/** 复现旧 skillPackageUpload：故意不排除 node_modules 等目录。 */
+function legacyPackageFingerprint(root: string): string {
+  const files: string[] = [];
+  const visit = (current: string, prefix = ''): void => {
+    for (const name of readdirSync(current).sort((a, b) => a.localeCompare(b))) {
+      const relativePath = prefix ? `${prefix}/${name}` : name;
+      const path = join(current, name);
+      if (statSync(path).isDirectory()) visit(path, relativePath);
+      else files.push(relativePath);
+    }
+  };
+  visit(root);
+  const hash = createHash('sha256');
+  for (const relativePath of files) {
+    const path = join(root, relativePath);
+    const size = statSync(path).size;
+    hash.update(relativePath).update('\\0').update(String(size)).update('\\0').update(readFileSync(path));
+  }
+  return hash.digest('hex');
+}
 
 interface TestRig {
   baseUrl: string;
@@ -282,13 +313,13 @@ async function makeTestRig(): Promise<TestRig> {
     listTenantSkillHistoricalProvenance: async (tenantId: string) => new Map(
       [...tenantSkillHistory.values()]
         .filter((entry) => entry.tenantId === tenantId)
-        .map((entry) => [entry.skillId, entry.digests] as const),
+        .map((entry) => [entry.skillId, { digests: [], legacyDigests: entry.digests }] as const),
     ),
   };
   const resolveTenantSkillHistoricalProvenance = async (tenantId: string) => new Map(
     [...tenantSkillHistory.values()]
       .filter((entry) => entry.tenantId === tenantId)
-      .map((entry) => [entry.skillId, entry.digests] as const),
+      .map((entry) => [entry.skillId, { digests: [], legacyDigests: entry.digests }] as const),
   );
   const materializer = new SkillWorkspaceMaterializer({
     sharedDir,
@@ -808,11 +839,14 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       const sourceDir = join(h.tenantSkillsRootDir, 'wain', 'skills', 'legacy-foreign');
       mkdirSync(sourceDir, { recursive: true });
       writeFileSync(join(sourceDir, 'SKILL.md'), '---\nname: legacy-foreign\ndescription: foreign\n---\nforeign-v1');
+      mkdirSync(join(sourceDir, 'node_modules'), { recursive: true });
+      writeFileSync(join(sourceDir, 'node_modules', 'ignored.js'), 'ignored-v1');
 
       const leakedDir = join(h.userSkillsDir('alice'), 'legacy-foreign');
       mkdirSync(leakedDir, { recursive: true });
       writeFileSync(join(leakedDir, 'SKILL.md'), '---\nname: legacy-foreign\ndescription: foreign\n---\nforeign-v1');
-      const legacyDigest = await computeSkillPackageFingerprint(leakedDir);
+      // 历史摘要来自完整 v1 包，而用户副本只含可物化文件。
+      const legacyDigest = legacyPackageFingerprint(sourceDir);
       writeFileSync(join(sourceDir, 'SKILL.md'), '---\nname: legacy-foreign\ndescription: foreign\n---\nforeign-v2');
       writeFileSync(join(h.userSkillsDir('alice'), '..', '.skills-version'), '1');
       h.setTenantSkillHistoricalDigests('wain', 'legacy-foreign', [legacyDigest]);

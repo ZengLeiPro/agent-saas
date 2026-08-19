@@ -185,9 +185,28 @@ describe('Governed Skill + Candidate 发布链', () => {
       { skillId: 'uploaded-skill', versionNumber: 1 },
     ]);
     const history = await store.listTenantSkillHistoricalProvenance('acme');
-    expect(history.get('sales-helper')).toEqual(['history-v1']);
+    expect(history.get('sales-helper')).toEqual({ digests: [], legacyDigests: ['history-v1'] });
     expect(queries.filter(query => query === 'BEGIN')).toHaveLength(1);
     expect(queries.filter(query => query === 'COMMIT')).toHaveLength(1);
+  });
+
+  it('新摘要算法带标记，历史查询不把它降级为旧摘要', async () => {
+    const { pool } = buildPool();
+    const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
+    await store.createAndPublishResource({
+      skillId: 'current-skill',
+      tenantId: 'acme',
+      scope: 'tenant',
+      definition: {
+        ...definition,
+        legacySkillId: 'current-skill',
+        contentDigest: 'current-v2',
+        contentDigestAlgorithm: 'materialized-v2',
+      },
+      createdBy: 'org-admin',
+    });
+    const history = await store.listTenantSkillHistoricalProvenance('acme');
+    expect(history.get('current-skill')).toEqual({ digests: ['current-v2'], legacyDigests: [] });
   });
 
   it('个人候选副本按 draft→submitted→approved→published，发布 immutable version', async () => {

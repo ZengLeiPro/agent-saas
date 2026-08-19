@@ -29,14 +29,11 @@ import { personalSkillResourceId, tenantSkillResourceId } from '../services/tena
 import type { PlatformSkillConfig, TenantSkillRule } from '../data/skills/types.js';
 import {
   scanPoolSkillsAsync,
-  scanTenantOwnSkillIdsAsync,
   scanUserCustomSkillsAsync,
 } from '../data/skills/scanner.js';
-import { resolveTenantSkillsDir, resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
-import { detectLegacyTenantSkillIds } from '../workspace/materialization/legacyProvenance.js';
-import { manifestTenantSkillIds, readSkillManifest } from '../workspace/materialization/manifest.js';
-import { agentDir, agentPath, agentSkillsDir, resolveAgentPath } from '../workspace/namespace.js';
+import { createSkillOwnershipResolver } from './skillOwnership.js';
+import { agentDir, agentPath, resolveAgentPath } from '../workspace/namespace.js';
 import { ensureWorkspaceDir, repairWorkspacePath, repairWorkspaceTreeAsync } from '../workspace/permissions.js';
 import type { UserStore } from '../data/users/store.js';
 import type { UserInfo, UserRecord } from '../data/users/types.js';
@@ -63,7 +60,7 @@ export interface SkillsRouterDeps {
   tenantSkillsRootDir?: string;
   skillMaterialization?: SkillMaterializationCoordinator;
   skillGovernanceStore?: Pick<PgSkillGovernanceStore, 'getResource' | 'getVersion'>
-    & Partial<Pick<PgSkillGovernanceStore, 'listTenantSkillHistoricalProvenance'>>;
+    & Partial<Pick<PgSkillGovernanceStore, 'listTenantSkillHistoricalProvenance' | 'listPersonalByOwner'>>;
   legacyWriteGate?: {
     assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
   };
@@ -136,76 +133,19 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     };
   }
 
-  async function getTenantSkillHistoricalProvenance(
-    tenantId: string,
-  ): Promise<ReadonlyMap<string, readonly string[]>> {
-    if (!skillGovernanceStore?.listTenantSkillHistoricalProvenance) return new Map();
-    return await skillGovernanceStore.listTenantSkillHistoricalProvenance(tenantId);
-  }
-
-  /**
-   * 用户的 `.ky-agent/skills` 目录。workspace 物理路径由 resolveUserCwd 统一决定；
-   * 本路由原代码仍用旧扁平路径 `<cwd>/<username>`，
-   * 导致非默认组织用户读不到自建 skill / 写到错路径。修复方式：要求 caller 传完
-   * 整 UserRecord（含 tenantId），用 resolveUserCwd 统一解析。
-   */
-  function getUserCwd(user: SkillUser): string {
-    return resolveUserCwd(agentCwd, {
-      id: user.id,
-      username: user.username,
-      role: user.role as 'admin' | 'user',
-      tenantId: user.tenantId,
-    });
-  }
-
-  function getUserSkillsDir(user: SkillUser): string {
-    return agentSkillsDir(getUserCwd(user));
-  }
-
-  /** 当前租户目录 + manifest provenance + 可证明的旧状态组织副本。 */
-  async function getManagedTenantSkillIdsForUser(user: SkillUser): Promise<Set<string>> {
-    const userCwd = getUserCwd(user);
-    const [currentTenantIds, manifest, poolSkillIds] = await Promise.all([
-      getTenantOwnSkillIds(user.tenantId),
-      readSkillManifest(userCwd),
-      getPoolSkillIds(),
-    ]);
-    const legacyTenantIds = manifest
-      ? new Set<string>()
-      : await detectLegacyTenantSkillIds({
-          userCwd,
-          userSkillsDir: getUserSkillsDir(user),
-          tenantsRootDir: tenantSkillsRootDir ?? join(sharedDir, 'tenants'),
-          currentTenantId: user.tenantId,
-          poolSkillIds,
-          resolveTenantSkillHistoricalProvenance: getTenantSkillHistoricalProvenance,
-        });
-    return new Set([
-      ...currentTenantIds,
-      ...manifestTenantSkillIds(manifest),
-      ...legacyTenantIds,
-    ]);
-  }
-
-  /** 租户自有 skill 目录（tenants/<tenantId>/skills/）；tenantId 非法时抛错 */
-  function tenantSkillsDirFor(tenantId: string): string {
-    return tenantSkillsRootDir
-      ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, tenantId)
-      : resolveTenantSkillsDir(sharedDir, tenantId);
-  }
-
-  /** 租户自有 skill 现存 ID（与 pool 同名的被 shadow，不返回） */
-  async function getTenantOwnSkillIds(tenantId: string | undefined): Promise<Set<string>> {
-    if (!tenantId) return new Set();
-    try {
-      return scanTenantOwnSkillIdsAsync(
-        tenantSkillsDirFor(tenantId),
-        await getPoolSkillIds(),
-      );
-    } catch {
-      return new Set();
-    }
-  }
+  const {
+    getUserCwd,
+    getUserSkillsDir,
+    tenantSkillsDirFor,
+    getTenantOwnSkillIds,
+    getManagedTenantSkillIdsForUser,
+  } = createSkillOwnershipResolver({
+    agentCwd,
+    sharedDir,
+    tenantSkillsRootDir,
+    getPoolSkillIds,
+    skillGovernanceStore,
+  });
 
   async function getAllTenantOwnSkillIds(): Promise<Record<string, Set<string>>> {
     const tenantsRoot = tenantSkillsRootDir ?? join(sharedDir, 'tenants');

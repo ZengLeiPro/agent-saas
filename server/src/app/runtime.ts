@@ -146,8 +146,8 @@ import {
   scanUserCustomSkills,
 } from '../data/skills/scanner.js';
 import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
-import { detectLegacyTenantSkillIds } from '../workspace/materialization/legacyProvenance.js';
-import { manifestTenantSkillIds, readSkillManifest } from '../workspace/materialization/manifest.js';
+import { resolveUserPersonalSkillIds as resolvePersonalSkillIds } from '../workspace/materialization/managedTenantSkills.js';
+import { createSkillDispatchState } from './skillDispatchState.js';
 import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import { agentDir, resolveAgentPath } from '../workspace/namespace.js';
 import { CronLeadership } from '../runtime/cronLeadership.js';
@@ -1161,12 +1161,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ? (_transcriptPath) => pgEventStore!  // PG backend：共享 pool，按 session_id 过滤
     : (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath));
 
-  const resolveTenantSkillHistoricalProvenance = async (
-    tenantId: string,
-  ): Promise<ReadonlyMap<string, readonly string[]>> => {
-    if (!skillGovernanceStore) return new Map();
-    return await skillGovernanceStore.listTenantSkillHistoricalProvenance(tenantId);
-  };
+  const resolveTenantSkillHistoricalProvenance = (tenantId: string) =>
+    skillGovernanceStore?.listTenantSkillHistoricalProvenance(tenantId) ?? Promise.resolve(new Map());
+  const resolveUserPersonalSkillIds = (user: { id: string; tenantId?: string }) =>
+    resolvePersonalSkillIds(user, skillGovernanceStore);
 
   if (skillConfigStore && userStore) {
     const materializationStore = pgEventStore
@@ -1193,6 +1191,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           .flatMap((agent) => agent.allowedSkills);
       },
       resolveTenantSkillHistoricalProvenance,
+      resolveUserPersonalSkillIds,
     });
     skillMaterializationService = new SkillMaterializationService({
       store: materializationStore,
@@ -1381,58 +1380,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     if (!skillConfigStore) return undefined;
     const store = skillConfigStore; // 闭包稳定捕获
     const poolDir = resolveAgentPath(sharedDir, 'skills-pool');
-    let cache: { version: number; entries: { id: string; name: string; description: string }[] } | null = null;
-    const managedTenantIdsByUser = new Map<string, Set<string>>();
-
-    function resolveRuntimeUserCwd(username: string): string | null {
-      const user = userStore?.findByUsername(username);
-      if (!user) return null;
-      return resolveUserCwd(agentCwd, {
-        id: user.id,
-        username: user.username,
-        role: user.role,
-        tenantId: user.tenantId,
-      });
-    }
-
-    async function refreshUserManifest(username: string | undefined): Promise<void> {
-      if (!username) return;
-      const user = userStore?.findByUsername(username);
-      const userCwd = resolveRuntimeUserCwd(username);
-      if (!user || !userCwd) return;
-      const manifest = await readSkillManifest(userCwd);
-      const legacyTenantIds = manifest
-        ? new Set<string>()
-        : await detectLegacyTenantSkillIds({
-            userCwd,
-            userSkillsDir: resolveAgentPath(userCwd, 'skills'),
-            tenantsRootDir: tenantSkillsRootDir,
-            currentTenantId: user.tenantId,
-            poolSkillIds: new Set(getAllPoolEntries().map((skill) => skill.id)),
-            resolveTenantSkillHistoricalProvenance,
-          });
-      managedTenantIdsByUser.set(username, new Set([
-        ...manifestTenantSkillIds(manifest),
-        ...legacyTenantIds,
-      ]));
-    }
-
-    function getManagedTenantIds(username: string): Set<string> {
-      return managedTenantIdsByUser.get(username) ?? new Set<string>();
-    }
-
-    function getAllPoolEntries() {
-      const currentVersion = store.getConfigVersion();
-      if (cache && cache.version === currentVersion) return cache.entries;
-      const scanned = scanPoolSkillsForDispatch(poolDir).map((s) => ({
-        id: s.id,
-        // 保留 frontmatter name 字段（若无 fallback 到 id）
-        name: (s as { name?: string }).name || s.id,
-        description: s.description ?? '',
-      }));
-      cache = { version: currentVersion, entries: scanned };
-      return scanned;
-    }
+    const skillDispatchState = createSkillDispatchState({
+      findUser: (username) => userStore?.findByUsername(username),
+      agentCwd,
+      tenantsRootDir: tenantSkillsRootDir,
+      getConfigVersion: () => store.getConfigVersion(),
+      scanPoolSkills: () => scanPoolSkillsForDispatch(poolDir),
+      resolveTenantSkillHistoricalProvenance,
+      resolveUserPersonalSkillIds,
+    });
     return {
       async ensureReady(username: string | undefined, requiredSkillIds: readonly string[] = []): Promise<void> {
         // ws-only 负责 Skill/User 管理接口，runtime-worker 负责会话执行；两者各自持有
@@ -1443,11 +1399,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         await (skillMaterializationService?.ensureReady(username, requiredSkillIds, 'dispatch')
           ?? Promise.resolve());
         // listForUser 是同步装配接口，provenance 在这里异步预载，避免请求路径重新引入同步 I/O。
-        await refreshUserManifest(username);
+        await skillDispatchState.refresh(username);
       },
       listForUser(username: string | undefined, requiredSkillIds: readonly string[] = []): SkillEntry[] {
         if (!username) return [];
-        const all = getAllPoolEntries();
+        const all = skillDispatchState.getAllPoolEntries();
         const user = userStore?.findByUsername(username);
         const tenantId = user?.tenantId;
         const effective = new Set([
@@ -1472,7 +1428,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           const poolIds = new Set(all.map((s) => s.id));
           const tenantSkillsDir = user.tenantId ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, user.tenantId) : null;
           const tenantOwnIds = tenantSkillsDir ? scanTenantOwnSkillIds(tenantSkillsDir, poolIds) : new Set<string>();
-          const managedTenantIds = getManagedTenantIds(username);
+          const managedTenantIds = skillDispatchState.getManagedTenantIds(username);
           const effectiveTenantOwn = new Set(
             [
               ...store.getUserEffectiveTenantOwnSkills(username, user.tenantId, tenantOwnIds),

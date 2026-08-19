@@ -12,6 +12,7 @@ import type { UserStore } from '../data/users/store.js';
 import { setUserSkillSelected } from '../routes/skillSelection.js';
 import { agentSkillsDir, resolveAgentPath } from '../workspace/namespace.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
+import { MATERIALIZED_CONTENT_DIGEST_ALGORITHM } from '../workspace/materialization/fingerprint.js';
 import {
   moveStagedSkillIntoPlace,
   SkillPackageUploadError,
@@ -114,6 +115,7 @@ export function createTenantSkillGovernanceUpload(deps: TenantSkillGovernanceUpl
             legacySkillId: staged.skillId,
             source: 'governance_upload',
             packageFormat: 'skill-package-v1',
+            contentDigestAlgorithm: MATERIALIZED_CONTENT_DIGEST_ALGORITHM,
             name: staged.name,
             description: staged.description,
             contentDigest: staged.contentDigest,
@@ -222,6 +224,7 @@ export function createPersonalSkillGovernanceUpload(deps: PersonalSkillGovernanc
             legacySkillId: staged.skillId,
             source: 'governance_upload',
             packageFormat: 'skill-package-v1',
+            contentDigestAlgorithm: MATERIALIZED_CONTENT_DIGEST_ALGORITHM,
             name: staged.name,
             description: staged.description,
             contentDigest: staged.contentDigest,

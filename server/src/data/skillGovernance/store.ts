@@ -4,8 +4,10 @@ import type { PoolClient } from 'pg';
 import { PgGovernanceMigrationRunner, governanceTablePrefix, type GovernancePgPool } from '../governance-schema/index.js';
 import {
   SkillGovernanceInvariantError,
+  MATERIALIZED_CONTENT_DIGEST_ALGORITHM,
   type GovernedSkillResource,
   type GovernedSkillVersion,
+  type SkillHistoricalProvenance,
   type SkillCandidate,
 } from './types.js';
 
@@ -160,7 +162,7 @@ export class PgSkillGovernanceStore {
 
   async listTenantSkillHistoricalProvenance(
     tenantId: string,
-  ): Promise<Map<string, readonly string[]>> {
+  ): Promise<Map<string, SkillHistoricalProvenance>> {
     const result = await this.options.pool.query(`
       SELECT resource.skill_id, version.definition_json
       FROM ${this.resourcesTable} resource
@@ -168,7 +170,7 @@ export class PgSkillGovernanceStore {
       WHERE resource.tenant_id=$1 AND resource.scope='tenant'
       ORDER BY resource.skill_id, version.version_number
     `, [tenantId]);
-    const history = new Map<string, string[]>();
+    const history = new Map<string, SkillHistoricalProvenance>();
     for (const row of result.rows as Array<Record<string, unknown>>) {
       let definition: Record<string, unknown> = {};
       if (row.definition_json && typeof row.definition_json === 'object') {
@@ -184,12 +186,22 @@ export class PgSkillGovernanceStore {
       const legacySkillId = typeof definition.legacySkillId === 'string'
         ? definition.legacySkillId
         : String(row.skill_id);
-      const digests = history.get(legacySkillId) ?? [];
-      for (const key of ['contentDigest', 'materializedContentDigest', 'directoryFingerprint']) {
+      const previous = history.get(legacySkillId) ?? { digests: [], legacyDigests: [] };
+      const algorithm = definition.contentDigestAlgorithm;
+      const currentDigests = [...previous.digests];
+      const legacyDigests = [...previous.legacyDigests];
+      for (const key of ['materializedContentDigest', 'directoryFingerprint']) {
         const digest = definition[key];
-        if (typeof digest === 'string' && !digests.includes(digest)) digests.push(digest);
+        if (typeof digest === 'string' && !currentDigests.includes(digest)) currentDigests.push(digest);
       }
-      history.set(legacySkillId, digests);
+      const contentDigest = definition.contentDigest;
+      if (typeof contentDigest === 'string') {
+        const target = algorithm === MATERIALIZED_CONTENT_DIGEST_ALGORITHM
+          ? currentDigests
+          : legacyDigests;
+        if (!target.includes(contentDigest)) target.push(contentDigest);
+      }
+      history.set(legacySkillId, { digests: currentDigests, legacyDigests });
     }
     return history;
   }

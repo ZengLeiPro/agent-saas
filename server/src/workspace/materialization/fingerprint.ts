@@ -3,7 +3,10 @@ import { createReadStream } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
 import { basename, join, relative } from 'node:path';
 
+import { MATERIALIZED_CONTENT_DIGEST_ALGORITHM } from '../../data/skillGovernance/types.js';
+
 const EXCLUDED_NAMES = new Set(['__pycache__', '.DS_Store', 'node_modules']);
+export { MATERIALIZED_CONTENT_DIGEST_ALGORITHM } from '../../data/skillGovernance/types.js';
 
 export function shouldIncludeMaterializedPath(path: string): boolean {
   return !EXCLUDED_NAMES.has(basename(path));

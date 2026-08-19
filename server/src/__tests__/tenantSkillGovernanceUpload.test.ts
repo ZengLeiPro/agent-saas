@@ -185,7 +185,8 @@ describe('组织 Skill 治理上传服务', () => {
       tenantId: 'tenant-a', scope: 'tenant', createdBy: 'platform-1',
       definition: expect.objectContaining({
         resourceType: 'skill', legacySkillId: 'governed-skill', source: 'governance_upload',
-        packageFormat: 'skill-package-v1', contentDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        packageFormat: 'skill-package-v1', contentDigestAlgorithm: 'materialized-v2',
+        contentDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
       }),
     }));
   });

@@ -1,8 +1,13 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { governanceRoute } from "@/lib/governanceNavigation";
 import { PlatformAdminShell, TenantAdminShell } from "./AdminShells";
+
+const adminShellMocks = vi.hoisted(() => ({
+  auth: { user: { tenantId: "acme" }, isPlatformAdmin: false },
+  tenants: [{ id: "acme", name: "Acme" }],
+}));
 
 vi.mock("@agent/shared/lib/governanceApi", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@agent/shared/lib/governanceApi")>();
@@ -26,13 +31,12 @@ vi.mock("@agent/shared/lib/governanceApi", async (importOriginal) => {
 vi.mock("@/lib/authFetch", () => ({ authFetch: vi.fn(() => new Promise(() => undefined)) }));
 vi.mock("@/contexts/AuthContext", () => ({
   useAuth: () => ({
-    user: { tenantId: "acme" },
-    isPlatformAdmin: false,
+    ...adminShellMocks.auth,
     canPlatform: () => true,
   }),
 }));
 vi.mock("@/components/TenantManager/hooks", () => ({
-  useTenants: () => ({ tenants: [{ id: "acme", name: "Acme" }] }),
+  useTenants: () => ({ tenants: adminShellMocks.tenants }),
 }));
 vi.mock("@/components/PlatformAdmin/pages", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/PlatformAdmin/pages")>();
@@ -63,6 +67,11 @@ const commonTenantProps = {
 };
 
 describe("AdminShells V2 内容适配", () => {
+  beforeEach(() => {
+    adminShellMocks.auth = { user: { tenantId: "acme" }, isPlatformAdmin: false };
+    adminShellMocks.tenants = [{ id: "acme", name: "Acme" }];
+  });
+
   it("新版用量页面可切换到组织预算面板", async () => {
     window.history.replaceState({}, "", "/tenant-admin/governance/usage?org=acme");
     render(
@@ -78,6 +87,25 @@ describe("AdminShells V2 内容适配", () => {
     await userEvent.click(screen.getByRole("tab", { name: "预算与计费" }));
     expect(await screen.findByText("组织预算面板 acme Acme")).toBeTruthy();
     expect(window.location.search).toContain("usageSection=billing");
+  });
+
+  it("平台管理员进入组织控制台时跳过 pantheon，默认选择首个业务组织", async () => {
+    adminShellMocks.auth = { user: { tenantId: "pantheon" }, isPlatformAdmin: true };
+    adminShellMocks.tenants = [
+      { id: "pantheon", name: "万神殿" },
+      { id: "kaiyan-demo", name: "开沿演示" },
+    ];
+    window.history.replaceState({}, "", "/tenant-admin/governance/usage");
+    render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        renderUsers={() => <div />}
+        governanceRoute={governanceRoute("organization.governance.usage")}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: "预算与计费" }));
+    expect(await screen.findByText("组织预算面板 kaiyan-demo 开沿演示")).toBeTruthy();
   });
 
   it("组织成员叶子读取治理 Membership，不回退 legacy UserManager 身份", async () => {

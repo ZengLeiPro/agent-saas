@@ -49,7 +49,7 @@ import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from 
 import { TaskDetailComments, EXECUTION_PURPOSE_LABELS } from "./TaskDetailComments";
 import { useTaskComments, useTaskExecutions } from "./hooks";
 
-type TaskDraftField = "title" | "description" | "branch" | "attachments" | "priority" | "stageModels";
+type TaskDraftField = "title" | "description" | "attachments" | "priority" | "stageModels";
 
 const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review", "merge"];
 const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
@@ -63,7 +63,7 @@ function taskStageModels(task: TaskBoardTask): TaskBoardStageModels {
 
 function inheritedModelHint(board: TaskBoard | null, purpose: TaskBoardExecutionPurpose): string {
   const model = board?.stageModels?.[purpose] ?? board?.model;
-  return model ? `看板默认：${model}` : "未指定时继承看板默认模型";
+  return model ?? "未指定时继承看板默认模型";
 }
 
 interface TaskDetailProps {
@@ -124,7 +124,6 @@ export function TaskDetail({
   const [currentTask, setCurrentTask] = useState<TaskBoardTask | null>(task);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [branch, setBranch] = useState("");
   const [priority, setPriority] = useState<TaskBoardPriority>("none");
   const [stageModels, setStageModels] = useState<TaskBoardStageModels>({});
   const [executionStartedTaskId, setExecutionStartedTaskId] = useState<string | null>(null);
@@ -164,7 +163,6 @@ export function TaskDetail({
     dirtyFieldsRef.current.clear();
     setTitle(next.title);
     setDescription(next.description);
-    setBranch(next.branch ?? "");
     taskAttachments.replaceFiles(next.attachments ?? []);
     setPriority(next.priority);
     setStageModels(taskStageModels(next));
@@ -174,7 +172,6 @@ export function TaskDetail({
     const dirty = dirtyFieldsRef.current;
     if (!dirty.has("title")) setTitle(next.title);
     if (!dirty.has("description")) setDescription(next.description);
-    if (!dirty.has("branch")) setBranch(next.branch ?? "");
     if (!dirty.has("attachments")) taskAttachments.replaceFiles(next.attachments ?? []);
     if (!dirty.has("priority")) setPriority(next.priority);
     if (!dirty.has("stageModels")) setStageModels(taskStageModels(next));
@@ -324,7 +321,6 @@ export function TaskDetail({
     const input: Omit<TaskBoardTaskPatchInput, "expectedVersion"> = {};
     if (dirty.has("title")) input.title = title.trim();
     if (dirty.has("description")) input.description = description.trim();
-    if (dirty.has("branch")) input.branch = branch.trim() || null;
     if (dirty.has("attachments")) input.attachments = toTaskBoardAttachments(taskAttachments.uploadedFiles);
     if (dirty.has("priority")) input.priority = priority;
     if (dirty.has("stageModels")) input.stageModels = stageModels;
@@ -798,21 +794,6 @@ export function TaskDetail({
                     <p className="text-xs text-muted-foreground">任务首次执行后，标题和正文已锁定；后续变更请通过评论补充。</p>
                   ) : null}
                 </div>
-                {taskKind === "delivery" ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="task-detail-branch">工作分支</Label>
-                    <Input
-                      id="task-detail-branch"
-                      value={branch}
-                      onChange={(event) => {
-                        dirtyFieldsRef.current.add("branch");
-                        setBranch(event.target.value);
-                      }}
-                      placeholder="由你填写，或由 Agent 创建后回写"
-                      disabled={editReadOnly || saving}
-                    />
-                  </div>
-                ) : null}
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>状态</Label>
@@ -855,9 +836,6 @@ export function TaskDetail({
                 <section aria-label="分阶段运行模型" className="space-y-3 rounded-lg border bg-muted/20 p-3">
                   <div>
                     <h3 className="text-sm font-medium">运行模型</h3>
-                    <p className="text-xs text-muted-foreground">
-                      按实施、复核、集成阶段分别选择；留空则继承看板对应阶段的默认模型。
-                    </p>
                   </div>
                   <div className="grid gap-3 sm:grid-cols-3">
                     {TASK_MODEL_PURPOSES.map((purpose) => (

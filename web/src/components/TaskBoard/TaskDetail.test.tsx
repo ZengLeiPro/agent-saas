@@ -295,22 +295,11 @@ describe("TaskDetail 草稿隔离", () => {
     }));
   });
 
-  it("工作分支可在任务详情中填写并保存", async () => {
-    const user = userEvent.setup();
-    const onUpdate = vi.fn(async (current: TaskBoardTask) => ({
-      ...current,
-      branch: "task/TASK-1-feature",
-      version: current.version + 1,
-    }));
-    render(<TaskDetail {...props({ onUpdate })} />);
+  it("任务详情不再展示工作分支表单", async () => {
+    render(<TaskDetail {...props()} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
-    await user.type(screen.getByRole("textbox", { name: "工作分支" }), "task/TASK-1-feature");
-    await user.click(screen.getByRole("button", { name: "保存任务" }));
-
-    await waitFor(() => expect(onUpdate).toHaveBeenCalledWith(taskOne, {
-      branch: "task/TASK-1-feature",
-    }));
+    expect(screen.queryByRole("textbox", { name: "工作分支" })).toBeNull();
   });
 
   it("advisory 可确认后单向升级为 delivery", async () => {

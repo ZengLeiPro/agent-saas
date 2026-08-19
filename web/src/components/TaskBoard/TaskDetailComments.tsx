@@ -1,4 +1,4 @@
-import type { Dispatch, FormEvent, SetStateAction } from "react";
+import { useEffect, useRef, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import type {
   TaskBoardComment,
   TaskBoardExecution,
@@ -65,6 +65,14 @@ export function TaskDetailComments({
   commentAttachments,
   onSubmit,
 }: TaskDetailCommentsProps) {
+  const commentsScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (commentsLoading) return;
+    const container = commentsScrollRef.current;
+    if (container) container.scrollTop = container.scrollHeight;
+  }, [comments.length, commentsLoading]);
+
   return (
     <section aria-label="任务评论" className="flex min-h-0 flex-col bg-muted/10">
       <header className="flex items-center justify-between border-b bg-background px-4 py-3 sm:px-6">
@@ -72,7 +80,7 @@ export function TaskDetailComments({
           <h3 className="text-sm font-semibold">评论（{comments.length}）</h3>
         </div>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+      <div ref={commentsScrollRef} data-testid="task-comments-scroll" className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
         {commentsError ? <p role="alert" className="mb-4 text-sm text-destructive">{commentsError}</p> : null}
         {commentsLoading ? <p className="text-sm text-muted-foreground">正在加载评论...</p> : null}
         <div className="space-y-0">
@@ -88,9 +96,8 @@ export function TaskDetailComments({
                     <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs font-medium text-foreground">
                       {comment.authorType === "agent" ? (
                         <span>
-                          Agent{purpose ? "（" : ""}
+                          Agent{" "}
                           {purpose ? <span className={`ml-0.5 inline-flex rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none ${EXECUTION_PURPOSE_CLASSES[purpose]}`}>{EXECUTION_PURPOSE_LABELS[purpose]}</span> : null}
-                          {purpose ? "）" : ""}
                         </span>
                       ) : comment.authorType === "system" ? "系统" : comment.authorName}
                       {sessionHref ? (

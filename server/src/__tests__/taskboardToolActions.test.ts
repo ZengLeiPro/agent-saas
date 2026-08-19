@@ -4,6 +4,7 @@ import type {
   TaskBoard,
   TaskBoardExecution,
   TaskBoardTask,
+  TaskBoardUploadAttachment,
 } from '../../../shared/src/types/taskboard.js';
 import { invokeTaskboardAction } from '../agent/taskboardToolActions.js';
 import {
@@ -441,5 +442,60 @@ describe('CronManage taskboard actions', () => {
       }),
     );
     expect(executionService.startDirectExecution).toHaveBeenCalledWith(identity, 'task-new', 1);
+  });
+
+  it('task/comment 写入只接收会话 attachmentId，并持久化服务端解析出的元数据', async () => {
+    const { service, options } = rig();
+    const attachmentId = '11111111-1111-4111-8111-111111111111';
+    const canonical: TaskBoardUploadAttachment = {
+      attachmentId,
+      originalName: '验收证据.png',
+      relativePath: `uploads/${attachmentId}_验收证据.png`,
+      size: 128,
+      mimeType: 'image/png',
+      isImage: true,
+    };
+    const resolveAttachments = vi.fn(async (_identity: TaskboardIdentity, ids: readonly string[]) => {
+      expect(ids).toEqual([attachmentId]);
+      return [canonical];
+    });
+    const markAttachmentsReferenced = vi.fn(async (
+      _identity: TaskboardIdentity,
+      attachments: readonly TaskBoardUploadAttachment[],
+      refs: { sessionId?: string },
+    ) => {
+      expect(attachments).toEqual([canonical]);
+      expect(refs).toEqual({ sessionId: 'session-attachment-test' });
+    });
+    const attachmentOptions = {
+      ...options,
+      resolveAttachments,
+      markAttachmentsReferenced,
+    };
+    const scope = { sessionId: 'session-attachment-test' };
+
+    await invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'task.create', boardId: board.id, title: '带证据任务',
+      attachments: [{ attachmentId }],
+    }, scope);
+    await invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'task.update', taskId: task.id, expectedVersion: task.version,
+      attachments: [{ attachmentId }],
+    }, scope);
+    await invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'comment.create', taskId: task.id, attachments: [{ attachmentId }],
+    }, scope);
+
+    expect(service.createTask).toHaveBeenCalledWith(identity, board.id, expect.objectContaining({
+      attachments: [canonical],
+    }));
+    expect(service.updateTask).toHaveBeenCalledWith(identity, task.id, expect.objectContaining({
+      attachments: [canonical], expectedVersion: task.version,
+    }));
+    expect(service.createComment).toHaveBeenCalledWith(identity, task.id, {
+      body: '', attachments: [canonical],
+    });
+    expect(resolveAttachments).toHaveBeenCalledTimes(3);
+    expect(markAttachmentsReferenced).toHaveBeenCalledTimes(3);
   });
 });

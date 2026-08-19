@@ -1698,7 +1698,33 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     orgAgentStore,
     tenantStore,
     environmentStore,
-    taskboard: { service: () => taskboardService, executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService },
+    taskboard: {
+      service: () => taskboardService,
+      executionService: () => taskboardExecutionCoordinator,
+      executionStore: () => taskboardStoreService,
+      resolveAttachments: async (identity, attachmentIds) => {
+        const userCwd = resolveUserCwd(agentCwd, {
+          id: identity.ownerUserId,
+          username: identity.username,
+          role: identity.userRole ?? 'user',
+          tenantId: identity.tenantId,
+        });
+        const resolved = await uploadManager.resolveAttachments(userCwd, attachmentIds);
+        return resolved.map((attachment, index) => ({
+          ...attachment,
+          attachmentId: attachment.attachmentId ?? attachmentIds[index]!,
+        }));
+      },
+      markAttachmentsReferenced: async (identity, attachments, refs) => {
+        const userCwd = resolveUserCwd(agentCwd, {
+          id: identity.ownerUserId,
+          username: identity.username,
+          role: identity.userRole ?? 'user',
+          tenantId: identity.tenantId,
+        });
+        await uploadManager.markReferenced(userCwd, attachments, refs);
+      },
+    },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
       const effectiveAgentId = agentId
         ?? (await agentResourceStore?.findPersonalByOwner(tenantId, userId))?.agentId;

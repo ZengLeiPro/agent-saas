@@ -86,6 +86,15 @@ export async function runIntegrationCandidateSchema(
     )
   `);
   await client.query(`
+    ALTER TABLE ${candidatesTable}
+      ADD COLUMN IF NOT EXISTS worker_status TEXT NOT NULL DEFAULT 'idle'
+        CHECK (worker_status IN ('idle','processing','failed'));
+    ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_lease_id TEXT;
+    ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_lease_expires_at TIMESTAMPTZ;
+    ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_checkpoint JSONB NOT NULL DEFAULT '{}'::jsonb;
+    ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_error TEXT
+  `);
+  await client.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS ${candidatesTable}_repository_branch_uidx
       ON ${candidatesTable}(repository_id, branch);
     CREATE UNIQUE INDEX IF NOT EXISTS ${candidatesTable}_repository_pr_uidx
@@ -93,7 +102,10 @@ export async function runIntegrationCandidateSchema(
       WHERE provider_pull_request_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS ${candidatesTable}_state_updated_idx
       ON ${candidatesTable}(state, updated_at)
-      WHERE state NOT IN ('merged','canceled')
+      WHERE state NOT IN ('merged','canceled');
+    CREATE INDEX IF NOT EXISTS ${candidatesTable}_worker_idx
+      ON ${candidatesTable}(updated_at)
+      WHERE worker_status<>'failed'
   `);
   await client.query(`
     CREATE TABLE IF NOT EXISTS ${revisionsTable} (

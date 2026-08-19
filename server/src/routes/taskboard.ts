@@ -53,6 +53,11 @@ const integrationPolicySchema = z.object({
   schemaVersion: z.literal(1),
   enabled: z.boolean(),
   revision: z.string().trim().max(128).default('server'),
+  workflowVersion: z.union([z.literal(2), z.literal(3)]).optional(),
+  featureFlags: z.object({
+    engineV3: z.boolean(), compose: z.boolean(), review: z.boolean(), merge: z.boolean(),
+    cleanup: z.boolean(), workspaceSync: z.boolean(),
+  }).strict().optional(),
   trigger: integrationTriggerSchema,
   batch: z.object({
     maxTasks: z.number().int().min(1).max(100),
@@ -539,6 +544,11 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   router.get('/tasks/:id/integration-sources', route(async (req, res) => {
     if (!options.service!.listIntegrationSources) throw new TaskboardExecutionUnavailableError();
     res.json(await options.service!.listIntegrationSources(identityFrom(req), req.params.id));
+  }));
+
+  router.get('/tasks/:id/integration-candidate', route(async (req, res) => {
+    if (!options.service!.getIntegrationCandidate) throw new TaskboardExecutionUnavailableError();
+    res.json(await options.service!.getIntegrationCandidate(identityFrom(req), req.params.id));
   }));
 
   router.get('/tasks/:id/comments', route(async (req, res) => {

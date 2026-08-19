@@ -10,8 +10,9 @@ export function configureTaskboardGithubRepositoryProvider(
   store: Pick<PgTaskboardStore, 'setRepositoryProvider'> | undefined,
   userStore: Pick<UserStore, 'findById'> | undefined,
   githubContext: Parameters<typeof resolveGithubToken>[0],
-): void {
-  store?.setRepositoryProvider(new GithubRepositoryProvider({
+): RepositoryProvider | undefined {
+  if (!store) return undefined;
+  const provider = new GithubRepositoryProvider({
     resolveToken: async (_repository, credentialOwnerId) => {
       const user = userStore?.findById(credentialOwnerId);
       if (!user || user.disabled) return undefined;
@@ -21,7 +22,9 @@ export function configureTaskboardGithubRepositoryProvider(
         tenantId: user.tenantId,
       });
     },
-  }));
+  });
+  store.setRepositoryProvider(provider);
+  return provider;
 }
 
 /** Adapts the existing GitHub provider to authoritative v3 facts and merge operations. */

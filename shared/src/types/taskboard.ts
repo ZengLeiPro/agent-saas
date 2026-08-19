@@ -428,6 +428,39 @@ export interface TaskBoardIntegrationCandidateRevision {
   createdAt: string;
 }
 
+export type TaskBoardIntegrationCandidatePhase =
+  | "freezing"
+  | "composing"
+  | "checks"
+  | "work"
+  | "review"
+  | "merging"
+  | "cleanup"
+  | "unknown"
+  | "blocked"
+  | "merged";
+
+/** Read projection returned by GET /tasks/:taskId/integration-candidate. */
+export interface TaskBoardIntegrationCandidateDetails {
+  candidate: TaskBoardIntegrationCandidate;
+  revisions: TaskBoardIntegrationCandidateRevision[];
+  sourceSnapshots: TaskBoardIntegrationCandidateSourceSnapshot[];
+  /** Optional server projection; clients derive a conservative phase from candidate.state when absent. */
+  phase?: TaskBoardIntegrationCandidatePhase;
+  operations?: Array<{
+    id: string;
+    operationKey: string;
+    kind: string;
+    state: string;
+    attemptCount: number;
+    error?: string;
+    receipt?: Record<string, unknown>;
+    updatedAt: string;
+  }>;
+  worker?: { status: string; checkpoint: Record<string, unknown>; error?: string };
+  lastRefreshedAt: string;
+}
+
 export interface TaskBoardIntegrationCandidateSourceSnapshot {
   candidateId: string;
   revision: number;

@@ -185,6 +185,23 @@ describe('health router', () => {
     expect(body).toMatchObject({ status: 'draining', draining: true });
   });
 
+  it('fails the release readiness gate when integration v3 is degraded', async () => {
+    const server = await startHealthServer({
+      getIntegrationV3Health: async () => ({
+        status: 'degraded', releaseReady: false, reasons: ['gateway_disabled'],
+        metrics: { capturedAt: new Date().toISOString(), unknownOperationCount: 0, oldestUnknownOperationAgeMs: null,
+          staleLaneCount: 0, staleOutboxCount: 0, oldestOutboxAgeMs: null, cleanupFailureCount: 0,
+          gatewayDisabled: true, gatewayHealthy: false, activeV2Count: 0, activeV3Count: 1,
+          costBudgetUsed: null, costBudgetLimit: null, workRoundBudgetUsed: null, workRoundBudgetLimit: null },
+      }),
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ status: 'not_ready', integrationV3: { releaseReady: false } });
+  });
+
   it('defaults warmup to done when no status provider is wired', async () => {
     const server = await startHealthServer({});
     servers.push(server);

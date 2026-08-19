@@ -15,6 +15,7 @@ import type {
 } from "@agent/shared";
 import type {
   TaskBoardIntegrationBatchCreateInput,
+  TaskBoardIntegrationCandidateDetails,
   TaskBoardIntegrationSource,
   TaskBoardMember,
   TaskBoardMemberPatchInput,
@@ -156,6 +157,13 @@ export async function cancelIntegrationTask(
     jsonRequest("POST", { expectedVersion, ...(reason?.trim() ? { reason: reason.trim() } : {}) }),
   );
   return parseEntity<TaskBoardTask>(response, "取消集成任务", "task");
+}
+
+export async function fetchIntegrationCandidate(taskId: string): Promise<TaskBoardIntegrationCandidateDetails> {
+  const response = await authFetch(
+    `${API_BASE}/tasks/${encodeURIComponent(taskId)}/integration-candidate`,
+  );
+  return parseEntity<TaskBoardIntegrationCandidateDetails>(response, "Integration v3 Candidate", "result");
 }
 
 export async function fetchIntegrationSources(taskId: string): Promise<TaskBoardIntegrationSource[]> {

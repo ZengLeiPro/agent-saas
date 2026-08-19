@@ -245,6 +245,8 @@ export interface AppRuntime {
   taskboardService?: TaskboardService;
   /** 任务看板单任务 Agent 执行闭环；依赖 PG durable scheduler。 */
   taskboardExecutionService?: TaskboardExecutionService;
+  /** Stops the durable Integration v3 poller and waits for its current lease handler. */
+  integrationV3WorkerShutdown?: () => Promise<void>;
   /**
    * 门禁模型配置链 getter（主 + fallback）。空数组 = 门禁模块未激活。
    * WebChannel 持有同一 getter——热更后取到的永远是最新链。

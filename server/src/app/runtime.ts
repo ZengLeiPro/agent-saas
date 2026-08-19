@@ -37,6 +37,7 @@ import { TaskboardExecutionCoordinator, createTaskboardRuntimeOptions } from '..
 import { RetryableTaskboardService } from '../taskboard/retryableService.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import { configureTaskboardGithubRepositoryProvider } from '../taskboard/repositoryRuntime.js';
+import { startRuntimeTaskboardIntegrationV3, type RuntimeTaskboardIntegrationV3 } from './runtimeTaskboardIntegrationV3.js';
 import type { TaskboardService } from '../taskboard/types.js';
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import { MEMORY_CONSOLIDATION_DEFAULTS, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
@@ -614,7 +615,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let appealStore: PgAppealStore | undefined;
   let taskboardService: TaskboardService | undefined;
   let taskboardStoreService: RetryableTaskboardService | undefined;
-  let taskboardExecutionCoordinator: TaskboardExecutionCoordinator | undefined;
+  let rawTaskboardStore: PgTaskboardStore | undefined, taskboardExecutionCoordinator: TaskboardExecutionCoordinator | undefined;
+  let integrationV3Runtime: RuntimeTaskboardIntegrationV3 | undefined, taskboardRepositoryProvider: ReturnType<typeof configureTaskboardGithubRepositoryProvider>;
   let pgArtifactStore: PgArtifactStore | undefined;
   let systemMetricsStore: PgSystemMetricsStore | undefined;
   let systemMetricsCollector: SystemMetricsCollector | undefined;
@@ -774,6 +776,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         pool: pgEventStore.pool,
         tablePrefix: config.runtimeEventStore.tablePrefix,
       });
+      rawTaskboardStore = store;
       const retryableService = new RetryableTaskboardService(store);
       taskboardService = retryableService;
       taskboardStoreService = retryableService;
@@ -1510,7 +1513,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   });
   googleWorkspaceOAuthService = initializedGoogleWorkspaceOAuthService;
   credentialBroker = initializedCredentialBroker;
-  configureTaskboardGithubRepositoryProvider(taskboardStoreService, userStore, {
+  taskboardRepositoryProvider = configureTaskboardGithubRepositoryProvider(taskboardStoreService, userStore, {
     connectionStore: connectorConnectionStore,
     vault: secretVault,
     onError: (error) => serverLogger.warn(`Taskboard GitHub credential resolve failed: ${error.message}`),
@@ -2064,18 +2067,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       logger: serverLogger.child('RuntimeScheduler'),
     });
     if (taskboardStoreService && defaultModelResolver) {
-      taskboardExecutionCoordinator = new TaskboardExecutionCoordinator({
-        store: taskboardStoreService,
-        scheduler: runtimeScheduler,
-        runStore: pgRunStore,
-        sessionCatalog,
-        eventStore: pgEventStore,
-        agentCwd,
-        executionConfig,
-        resolveDefaultModel: defaultModelResolver, ...createTaskboardRuntimeOptions({ modelResolver, userStore, timezone: config.server.timezone, logger: serverLogger, eventStore: pgEventStore, groupTaskboardSession: (input) => groupStore.addTaskboardSession(input), onSessionsChanged: clearSessionsListCache }),
-        logger: serverLogger.child('TaskboardExecution'),
-      });
+      taskboardExecutionCoordinator = new TaskboardExecutionCoordinator({ store: taskboardStoreService, scheduler: runtimeScheduler, runStore: pgRunStore, sessionCatalog,
+        eventStore: pgEventStore, agentCwd, executionConfig, resolveDefaultModel: defaultModelResolver,
+        ...createTaskboardRuntimeOptions({ modelResolver, userStore, timezone: config.server.timezone, logger: serverLogger, eventStore: pgEventStore, groupTaskboardSession: (input) => groupStore.addTaskboardSession(input), onSessionsChanged: clearSessionsListCache }),
+        logger: serverLogger.child('TaskboardExecution') });
     }
+    if (enableSchedulerWorker && rawTaskboardStore && taskboardExecutionCoordinator && taskboardRepositoryProvider)
+      integrationV3Runtime = startRuntimeTaskboardIntegrationV3({ store: rawTaskboardStore, executionCoordinator: taskboardExecutionCoordinator, repositoryProvider: taskboardRepositoryProvider, processCwd, agentCwd });
     const getRuntimeSchedulerCapacitySnapshot = async () => {
       const persisted = await runtimeSchedulerConfigStore!.get();
       const effective = effectiveMaxConcurrentRuns(
@@ -2590,6 +2588,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const beginRuntimeDrain = async (): Promise<void> => {
     if (runtimeDrainStarted) return;
     runtimeDrainStarted = true;
+    await integrationV3Runtime?.stop();
     tenantLifecycleWatcher?.stop();
     memoryPollLeadershipGeneration += 1;
     // 1. 停止定时采样并取消在途 du。否则旧 Worker 在等待 run 安全交棒时仍会
@@ -3085,6 +3084,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     appealStore,
     taskboardService,
     taskboardExecutionService: taskboardExecutionCoordinator,
+    integrationV3WorkerShutdown: integrationV3Runtime ? () => integrationV3Runtime.stop() : undefined,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },
     agentOptionsConfig,

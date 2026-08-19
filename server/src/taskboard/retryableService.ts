@@ -268,6 +268,12 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.cancelIntegrationTask(identity, taskId, input);
   }
 
+  async getIntegrationCandidate(identity: TaskboardIdentity, integrationTaskId: string) {
+    const service = await this.service();
+    if (!service.getIntegrationCandidate) throw new Error('Taskboard Integration v3 candidate read unavailable');
+    return service.getIntegrationCandidate(identity, integrationTaskId);
+  }
+
   async resumeBlockedTask(
     identity: TaskboardIdentity,
     taskId: string,

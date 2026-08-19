@@ -11,14 +11,20 @@ export function useIntegrationSources(taskId: string | null, active = true) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
+  const loadedTaskIdRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     const requestId = ++requestRef.current;
-    setSources([]);
     setError(null);
     if (!taskId || !active) {
+      loadedTaskIdRef.current = taskId;
+      setSources([]);
       setLoading(false);
       return;
+    }
+    if (loadedTaskIdRef.current !== taskId) {
+      loadedTaskIdRef.current = taskId;
+      setSources([]);
     }
     setLoading(true);
     try {
@@ -27,7 +33,7 @@ export function useIntegrationSources(taskId: string | null, active = true) {
       setSources(next);
     } catch (caught) {
       if (requestRef.current !== requestId) return;
-      setSources([]);
+      // Keep the last successful projection visible; a refresh failure must not regress progress to 0/0.
       setError(caught instanceof Error ? caught.message : "加载集成来源失败");
     } finally {
       if (requestRef.current === requestId) setLoading(false);
@@ -53,7 +59,7 @@ export function IntegrationCardSummary({ taskId }: { taskId: string }) {
     <div className="mt-2 space-y-1.5 rounded-md border border-violet-300/40 bg-violet-50/50 p-2 text-xs dark:bg-violet-950/20">
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium text-violet-800 dark:text-violet-200">来源进度</span>
-        <span>{loading ? "加载中" : `${merged}/${sources.length} 已合并`}</span>
+        <span>{loading && sources.length === 0 ? "加载中" : `${merged}/${sources.length} 已合并`}</span>
       </div>
       {activeStates.length ? (
         <div className="flex flex-wrap gap-1">

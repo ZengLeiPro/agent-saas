@@ -3,6 +3,8 @@ import { isAbsolute, normalize, resolve } from 'node:path';
 export interface RepositoryWorkspaceGitCommand {
   cwd: string;
   args: readonly string[];
+  /** Optional trusted process environment overrides (used for deterministic server-authored commits). */
+  env?: Readonly<Record<string, string>>;
 }
 
 export interface RepositoryWorkspaceGitResult {

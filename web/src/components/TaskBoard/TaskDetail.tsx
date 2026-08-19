@@ -41,7 +41,8 @@ import {
   STATUS_LABELS,
   TASK_KIND_LABELS,
 } from "./constants";
-import { IntegrationSourceDetails, useIntegrationSources } from "./IntegrationSources";
+import { IntegrationTaskDetails } from "./IntegrationCandidate";
+import { useIntegrationSources } from "./IntegrationSources";
 import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from "./TaskAttachments";
 import { TaskCommentMarkdown } from "./TaskCommentMarkdown";
@@ -137,7 +138,7 @@ export function TaskDetail({
     refresh: refreshExecutions,
   } = useTaskExecutions(open && task ? task.id : null, active && open);
   const integrationSourcesState = useIntegrationSources(
-    open && currentTask?.kind === "integration" ? currentTask.id : null,
+    open && currentTask?.kind === "integration" && currentTask.workflowVersion !== 3 ? currentTask.id : null,
     active && open,
   );
 
@@ -653,17 +654,13 @@ export function TaskDetail({
               </section>
 
               {taskKind === "integration" ? (
-                <IntegrationSourceDetails
-                  taskId={currentTask.id}
-                  state={integrationSourcesState}
+                <IntegrationTaskDetails
+                  task={currentTask}
+                  active={active && open}
+                  sourceState={integrationSourcesState}
                   selectedSourceIds={selectedResumeSourceIds}
-                  onSourceSelectionChange={currentTask.status === "blocked" && canTransitionTask ? (sourceId, selected) => {
-                    setSelectedResumeSourceIds((previous) => {
-                      const next = new Set(previous);
-                      if (selected) next.add(sourceId); else next.delete(sourceId);
-                      return next;
-                    });
-                  } : undefined}
+                  setSelectedSourceIds={setSelectedResumeSourceIds}
+                  sourceSelectionEnabled={currentTask.status === "blocked" && canTransitionTask}
                   onNavigateTask={onNavigateTask}
                 />
               ) : null}

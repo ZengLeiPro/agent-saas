@@ -52,6 +52,7 @@ import {
   updateTaskBranchFromExecution as updateStoredTaskBranchFromExecution,
 } from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
+import { loadIntegrationCandidateProjection } from './integrationCandidateProjection.js';
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import { deleteStoredTask } from './storeTaskDelete.js';
 import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
@@ -88,6 +89,7 @@ import { resolveExecutionV2 as resolveStoredExecutionV2 } from './workflow/resol
 import { resumeBlockedTask as resumeStoredBlockedTask } from './workflow/resumeService.js';
 import {
   assertActiveBoard,
+  assertBoardRole,
   assertExpectedVersion,
   assertWritableTask,
   applyCommentAuthorDisplayName,
@@ -115,7 +117,10 @@ import {
   searchTasks as searchStoredTasks,
 } from './storeSearch.js';
 import { initializeTaskboardStore } from './storeSchema.js';
-import { requireTaskWithBoard as requireStoredTaskWithBoard } from './storeTaskAccess.js';
+import {
+  loadBoard as loadStoredBoard,
+  requireTaskWithBoard as requireStoredTaskWithBoard,
+} from './storeTaskAccess.js';
 import {
   claimWorkflowCancellations as claimStoredWorkflowCancellations,
   finishWorkflowCancellation as finishStoredWorkflowCancellation,
@@ -129,7 +134,6 @@ import {
 } from './storeExecutionLifecycle.js';
 import {
   TaskboardNotFoundError,
-  TaskboardPermissionError,
   TaskboardValidationError,
   type TaskboardBoardSearchFilter,
   type TaskboardContinuationContext,
@@ -252,6 +256,17 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return listStoredIntegrationSources(this, identity, integrationTaskId);
   }
 
+  /**
+   * Loads the durable v3 candidate projection after checking task visibility
+   * and workflow eligibility through the store's public task access path.
+   */
+  getIntegrationCandidate(
+    identity: TaskboardIdentity,
+    integrationTaskId: string,
+  ) {
+    return loadIntegrationCandidateProjection(this, identity, integrationTaskId);
+  }
+
   resumeBlockedTask(
     identity: TaskboardIdentity,
     taskId: string,
@@ -278,6 +293,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
 
   setRepositoryProvider(provider: RepositoryProvider): void {
     this.repositoryProvider = provider;
+  }
+
+  getRepositoryProvider(): RepositoryProvider | undefined {
+    return this.repositoryProvider;
   }
 
   attachExecutionPullRequestV2(
@@ -1153,7 +1172,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     boardId: string,
     forUpdate: boolean,
   ): Promise<TaskBoard> {
-    return this.loadBoard(db, identity, boardId, forUpdate, false);
+    return loadStoredBoard(this, db, identity, boardId, forUpdate, false);
   }
 
   private requireOwnedBoard(
@@ -1162,29 +1181,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     boardId: string,
     forUpdate: boolean,
   ): Promise<TaskBoard> {
-    return this.loadBoard(db, identity, boardId, forUpdate, true);
-  }
-
-  private async loadBoard(
-    db: PgPool | PoolClient,
-    identity: TaskboardIdentity,
-    boardId: string,
-    forUpdate: boolean,
-    ownerOnly: boolean,
-  ): Promise<TaskBoard> {
-    const result = await db.query(
-      `SELECT b.id, b.owner_user_id, b.name, b.description, b.visibility, b.prompt, b.model, b.stage_models, b.stage_prompts,
-              b.repository, b.integration_policy, b.version, b.archived_at, b.created_at, b.updated_at,
-              CASE WHEN b.owner_user_id=$3 THEN 'owner' ELSE COALESCE(m.role,'viewer') END AS board_role
-         FROM ${this.boardsTable} b
-         LEFT JOIN ${this.membersTable} m ON m.board_id=b.id AND m.user_id=$3
-        WHERE b.id=$1 AND b.tenant_id=$2
-          AND (b.owner_user_id=$3 OR ($4::boolean=false AND b.visibility='organization'))
-        ${forUpdate ? 'FOR UPDATE OF b' : ''}`,
-      [boardId, identity.tenantId, identity.ownerUserId, ownerOnly],
-    );
-    if (!result.rows[0]) throw new TaskboardNotFoundError('Board not found');
-    return rowToBoard(result.rows[0], identity.ownerUserId);
+    return loadStoredBoard(this, db, identity, boardId, forUpdate, true);
   }
 
   async requireTask(
@@ -1218,16 +1215,5 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     } finally {
       client.release();
     }
-  }
-}
-
-function assertBoardRole(
-  role: TaskBoard['role'],
-  minimum: 'editor' | 'maintainer' | 'owner',
-): void {
-  const rank = role === 'owner' ? 4 : role === 'maintainer' ? 3 : role === 'editor' ? 2 : 1;
-  const required = minimum === 'owner' ? 4 : minimum === 'maintainer' ? 3 : 2;
-  if (rank < required) {
-    throw new TaskboardPermissionError('Taskboard role does not allow this operation');
   }
 }

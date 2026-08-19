@@ -9,6 +9,8 @@ export interface TaskboardArchiveGuardHost {
   executionsTable: string;
   continuationOutboxTable: string;
   executionOutboxTable: string;
+  /** Present on the real store; optional for focused hosts and legacy tests. */
+  integrationSourcesTable?: string;
 }
 
 export async function assertBoardHasNoActiveRuns(
@@ -32,6 +34,7 @@ export async function assertBoardHasNoActiveRuns(
     [boardId],
   );
   if (active.rows[0]) throw activeRunError();
+  await assertNoIntegrationV3State(host, client, { boardId });
 }
 
 export async function assertTaskHasNoActiveRuns(
@@ -50,6 +53,7 @@ export async function assertTaskHasNoActiveRuns(
     [taskId],
   );
   if (active.rows[0]) throw activeRunError();
+  await assertNoIntegrationV3State(host, client, { taskId });
 }
 
 export async function finalizeExecutionForArchivedTask(
@@ -74,6 +78,33 @@ export async function finalizeExecutionForArchivedTask(
     [execution.runId],
   );
   return { task, execution: rowToExecution(archived.rows[0]) };
+}
+
+async function assertNoIntegrationV3State(
+  host: TaskboardArchiveGuardHost,
+  client: PoolClient,
+  scope: { taskId?: string; boardId?: string },
+): Promise<void> {
+  if (!host.integrationSourcesTable) return;
+  const root = host.integrationSourcesTable.endsWith('_sources')
+    ? host.integrationSourcesTable.slice(0, -'_sources'.length)
+    : host.integrationSourcesTable;
+  const candidates = `${root}_candidates`;
+  const operations = `${root}_provider_operations_v3`;
+  const outbox = `${root}_requests_outbox_v3`;
+  const active = await client.query(
+    `SELECT 1 FROM ${candidates} c JOIN ${host.tasksTable} t ON t.id=c.integration_task_id
+      WHERE (($1::text IS NOT NULL AND t.id=$1) OR ($2::text IS NOT NULL AND t.board_id=$2))
+        AND (c.state NOT IN ('merged','canceled')
+          OR EXISTS (SELECT 1 FROM ${operations} o WHERE o.candidate_id=c.id AND o.state IN ('prepared','executing','unknown'))
+          OR EXISTS (SELECT 1 FROM ${outbox} q WHERE q.candidate_id=c.id AND q.status IN ('pending','processing')))
+      LIMIT 1`,
+    [scope.taskId ?? null, scope.boardId ?? null],
+  );
+  if (active.rows[0]) throw new TaskboardValidationError(
+    'Workflow v3 provider and outbox state must be terminal before archive or delete',
+    'TASKBOARD_INTEGRATION_V3_ACTIVE',
+  );
 }
 
 function activeRunError(): TaskboardValidationError {

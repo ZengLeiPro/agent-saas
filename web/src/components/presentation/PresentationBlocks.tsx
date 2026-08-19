@@ -172,54 +172,63 @@ function RecordRow({
   const expandable = !!item.detail?.length;
   const itemTone = item.tone ?? "neutral";
   const ChecklistIcon = CHECKLIST_ICON_MAP[itemTone];
+  const labelColumn = checklist ? "col-start-2" : "col-start-1";
+  const valueColumn = checklist ? "col-start-3" : "col-start-2";
+  const tagColumn = checklist
+    ? showValueColumn ? "col-start-4" : "col-start-3"
+    : showValueColumn ? "col-start-3" : "col-start-2";
+  const expandColumn = checklist
+    ? showValueColumn ? "col-start-5" : "col-start-4"
+    : showValueColumn ? "col-start-4" : "col-start-3";
   return (
-    <div className={cn("border-b border-border/60 px-4 py-2 last:border-b-0", item.tone === "warn" && "bg-warning/5")}>
+    <div className={cn("col-span-full grid grid-cols-[subgrid] border-b border-border/60 px-4 py-2 last:border-b-0", item.tone === "warn" && "bg-warning/5")}>
       <button
         type="button"
         onClick={expandable ? () => setOpen((v) => !v) : undefined}
         className={cn(
-          "grid w-full items-start gap-3 text-left",
-          checklist
-            ? showValueColumn
-              ? "grid-cols-[auto_minmax(10rem,1fr)_minmax(16rem,2fr)_auto_auto]"
-              : "grid-cols-[auto_minmax(16rem,1fr)_auto_auto]"
-            : showValueColumn
-              ? "grid-cols-[minmax(10rem,1fr)_minmax(16rem,2fr)_auto_auto]"
-              : "grid-cols-[minmax(16rem,1fr)_auto_auto]",
+          "col-span-full grid grid-cols-[subgrid] items-start text-left",
           !expandable && "cursor-default",
         )}
       >
         {checklist ? (
-          <ChecklistIcon className={activityStatusIconClass(TONE_MAP[itemTone], "mt-1 size-3 shrink-0")} aria-hidden="true" />
+          <ChecklistIcon className={activityStatusIconClass(TONE_MAP[itemTone], "col-start-1 mt-1 size-3 shrink-0")} aria-hidden="true" />
         ) : null}
-        <span className={cn("min-w-0 break-words text-sm", checklist ? "text-foreground" : "text-muted-foreground", !checklist && item.tone === "danger" && "line-through opacity-70", item.mono && "font-mono text-xs")}>
+        <span className={cn("min-w-0 max-w-80 break-words text-sm", labelColumn, checklist ? "text-foreground" : "text-muted-foreground", !checklist && item.tone === "danger" && "line-through opacity-70", item.mono && "font-mono text-xs")}>
           {item.label}
         </span>
         {showValueColumn ? (
-          <span className={cn("min-w-0 break-words text-left text-sm text-foreground", item.mono && "font-mono text-xs")}>
+          <span className={cn("min-w-0 max-w-[min(48rem,70vw)] break-words text-left text-sm text-foreground", valueColumn, item.mono && "font-mono text-xs")}>
             {item.value ?? ""}
           </span>
         ) : null}
-        {item.tag ? <span className={activityStatusBadgeClass(TONE_MAP[item.tag.tone])}>{item.tag.text}</span> : null}
-        {expandable ? <ChevronRight className={cn("mt-0.5 size-3.5 shrink-0 transition-transform", open && "rotate-90")} /> : null}
+        {item.tag ? <span className={cn(tagColumn, activityStatusBadgeClass(TONE_MAP[item.tag.tone]))}>{item.tag.text}</span> : null}
+        {expandable ? <ChevronRight className={cn(expandColumn, "mt-0.5 size-3.5 shrink-0 transition-transform", open && "rotate-90")} /> : null}
       </button>
-      {item.note ? <p className="mt-0.5 text-xs text-muted-foreground">{item.note}</p> : null}
-      {expandable && open ? <Detail lines={item.detail} /> : null}
+      {item.note ? <p className="col-span-full mt-0.5 text-xs text-muted-foreground">{item.note}</p> : null}
+      {expandable && open ? <div className="col-span-full"><Detail lines={item.detail} /></div> : null}
     </div>
   );
 }
 
 function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext }) {
   const tabular = block.layout !== "grid";
+  const checklist = block.layout === "checklist";
   const showValueColumn = tabular && block.items.some((item) => item.value !== undefined && item.value !== "");
+  const tableColumns = checklist
+    ? showValueColumn
+      ? "grid-cols-[auto_minmax(0,max-content)_minmax(0,max-content)_auto_auto]"
+      : "grid-cols-[auto_minmax(0,max-content)_auto_auto]"
+    : showValueColumn
+      ? "grid-cols-[minmax(0,max-content)_minmax(0,max-content)_auto_auto]"
+      : "grid-cols-[minmax(0,max-content)_auto_auto]";
   return (
     <div
-      className="w-fit max-w-full overflow-x-auto rounded-xl border border-primary/20 bg-card"
+      className="inline-block max-w-full overflow-x-auto rounded-xl border border-primary/20 bg-card align-top"
       data-records-block
       tabIndex={tabular ? 0 : undefined}
       aria-label={tabular ? `${block.title ?? "数据表格"}，可横向滚动` : undefined}
     >
-      <div className={cn(tabular && "min-w-[32rem]")}>
+      <div className="w-max">
         {block.title ? (
           <div
             className="border-b border-primary/15 bg-primary/5 px-4 py-2.5 text-sm font-semibold text-foreground"
@@ -229,9 +238,9 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
           </div>
         ) : null}
         {block.layout === "grid" ? (
-          <div className="grid grid-cols-2 gap-x-5 gap-y-2 p-4 sm:grid-cols-3">
+          <div className="inline-grid grid-cols-[repeat(2,minmax(0,max-content))] gap-x-8 gap-y-2 p-4 sm:grid-cols-[repeat(3,minmax(0,max-content))]" data-records-grid>
             {block.items.map((item, i) => (
-              <div key={i}>
+              <div className="max-w-64" key={i}>
                 <div className="break-words text-xs text-muted-foreground">{item.label}</div>
                 <div className={cn("break-words text-sm", item.mono && "font-mono text-xs", item.tone && activityStatusTextClass(TONE_MAP[item.tone]))}>
                   {item.value ?? ""}
@@ -240,12 +249,12 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
             ))}
           </div>
         ) : (
-          <div>
+          <div className={cn("grid w-max gap-x-4", tableColumns)} data-records-table>
             {block.items.map((item, i) => (
               <RecordRow
                 key={i}
                 item={item}
-                checklist={block.layout === "checklist"}
+                checklist={checklist}
                 showValueColumn={showValueColumn}
               />
             ))}

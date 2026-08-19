@@ -1268,7 +1268,6 @@ export class ResponsesApiAdapter implements ModelAdapter {
     };
     return;
   }
-
   /**
    * P1.2：DELETE /responses/{id} — PIPL 合规闭环，删除服务端存储的 reasoning chain。
    */

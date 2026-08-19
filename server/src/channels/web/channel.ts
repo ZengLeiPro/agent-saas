@@ -208,7 +208,6 @@ export class WebChannel implements BaseChannel {
     }
     return undefined;
   }
-
   private findActiveStreamByRunId(runId: string): { streamId: string; entry: ActiveStreamEntry } | undefined {
     for (const [streamId, entry] of this.activeStreams) {
       if (entry.runId === runId) return { streamId, entry };
@@ -441,7 +440,6 @@ export class WebChannel implements BaseChannel {
     this.displayConfig = getWebDisplayConfig(config.displayConfig);
     this.modelResolver = config.modelResolver;
     this.userStore = config.userStore;
-
     // 定期清理 stale session locks，防止异常路径导致的 Map 泄漏
     this.lockCleanupTimer = setInterval(() => {
       const now = Date.now();
@@ -1091,7 +1089,6 @@ export class WebChannel implements BaseChannel {
       }
     }
   }
-
   // ── WS 辅助方法 ──────────────────────────────────────
 
   private wsSend(ws: WebSocket, data: object, eventId?: number, eventCursor?: string): void {
@@ -1488,7 +1485,6 @@ export class WebChannel implements BaseChannel {
 
     return false;
   }
-
   /** 处理 abort 消息（runId-first；streamId 仅兼容旧客户端）。
    * 与同连接 chat 共用串行链，确保先收到的 chat 完成 durable enqueue 后再执行 stop-all。
    */
@@ -1867,7 +1863,6 @@ export class WebChannel implements BaseChannel {
     );
     this.wsSend(client.ws, { type: 'approval_policy_ok', runId, sessionId: record.sessionId });
   }
-
   private async handleRunStatus(client: WsClient, msg: WsRunStatusMessage): Promise<void> {
     const runId = typeof msg.runId === 'string' ? msg.runId.trim() : '';
     if (!runId || !this.config.enqueueRuntime?.runStore) {
@@ -2085,7 +2080,6 @@ export class WebChannel implements BaseChannel {
         }
       }
     }
-
     // Atomically recover the replay→subscribe window and subscribe to future events.
     const unsubscribe = this.eventBufferStore.subscribeFrom(
       sid,
@@ -2314,7 +2308,6 @@ export class WebChannel implements BaseChannel {
   }
 
   // ── 核心聊天处理逻辑 ──────────────────────────────────
-
   private async processChatMessage(client: WsClient, msg: WsChatMessage): Promise<void> {
     const steeringAcceptedAt = new Date().toISOString();
     const { message, sessionId, attachments, model, voiceFile } = msg;
@@ -2542,7 +2535,6 @@ export class WebChannel implements BaseChannel {
       }
       return;
     }
-
 
     // 5) 此处仍未 accepted：STT、门禁、会话持久化和 durable enqueue 任一步都可能失败。
     // chat_ack 必须延后到 run 与幂等提交记录同事务落库之后。
@@ -2957,7 +2949,6 @@ export class WebChannel implements BaseChannel {
         content: resolvedMessage,
       });
     }
-
     if (user && user.role !== 'admin' && this.config.loginLogFilePath) {
       appendLoginLog({
         timestamp: new Date().toISOString(),
@@ -3470,7 +3461,6 @@ export class WebChannel implements BaseChannel {
         const streamEntry = this.activeStreams.get(streamId);
         if (streamEntry) streamEntry.sessionId = sid;
       },
-
       onResult: async (meta) => {
         // 现有：累计 session 级 cost 到 meta.json
         if (meta.totalCostUsd) {
@@ -3744,7 +3734,6 @@ export class WebChannel implements BaseChannel {
           agentType: info.agentType,
         });
       },
-
       onSubagentEnd: async (info) => {
         if (!sessionInitialized) return; // 过滤 warmup
         send({
@@ -4072,7 +4061,6 @@ export class WebChannel implements BaseChannel {
     clearSessionsListCache();
     chatLogger.info(`[guardrail] off_topic rejected via synthetic bubble: session=${sessionId} orgAgent=${orgAgent.id} client_msg_id=${args.clientMsgId}`);
   }
-
   /**
    * 门禁拒绝的 legacy transcript 两行（格式照 legacyTranscriptProjection line builder）。
    * assistant 行顶层可带 guardrailEventId：parse.ts 透传到 text block →

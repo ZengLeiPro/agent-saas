@@ -123,7 +123,6 @@ export {
   resolveWakePrompt,
   WAKE_EVENT_LIST_TYPES,
 } from './wakeDispatchHelpers.js';
-
 import type { ContextReconstructionPolicy } from './contextProjection.js';
 import { appendResolvedRunSnapshot } from './appendResolvedRunSnapshot.js';
 export { appendResolvedRunSnapshot } from './appendResolvedRunSnapshot.js';
@@ -183,7 +182,6 @@ import { reconcileInterruptedForegroundToolCalls } from './subagent/recovery.js'
 import type { BackgroundTaskRuntime } from './background/backgroundTaskRuntime.js';
 import { BackgroundTaskToolProvider } from './background/backgroundTaskToolProvider.js';
 export { deriveSandboxScopeId, ensureRuntimeHandRegistered };
-
 const logger = createLogger('RawRuntime');
 
 export type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalResumeRequest, RawInteractionResumeRequest, RawRuntimeRunDispatchConfig, RawRuntimeWakeState, ServerRemoteDispatchConfig, SessionLockAcquireOptions, SessionLockAcquirer, SessionLockHandle, SkillsDispatchConfig, TenantRemoteHandDispatchConfig, TenantRemoteHandsSource, WakeRuntimeSessionOptions } from './rawRuntimeRunDispatchTypes.js';
@@ -191,7 +189,6 @@ import type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalR
 
 const DEFAULT_MODEL = 'gpt-5.4-mini';
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
-
 /**
  * RFC v1 P0.2：按 modelProviderOptions.protocol 路由 ModelAdapter。
  * - protocol="responses" → ResponsesApiAdapter（火山 /responses 端点，previous_response_id 接力）
@@ -242,7 +239,6 @@ export function createModelAdapterForProtocol(
 function modelRequiresApiKey(options: ModelProviderOptions | undefined): boolean {
   return options?.responsesTransport !== 'codex_subscription';
 }
-
 export function resolveRuntimeModelOptions(
   config: Pick<RawRuntimeRunDispatchConfig, 'modelResolver'>,
   requestedModel: string | undefined,
@@ -277,7 +273,6 @@ export function resolveWakeModelRef(
     : '';
   return persistedRef || session.modelRef || run.model;
 }
-
 /**
  * Skills wiring：dispatch 不知道 SkillConfigStore，只知道"给我 username/skill 名字，
  * 我返回有效 skill 集合或物理路径"。runtime.ts 在装配时把 SkillConfigStore + sharedDir
@@ -297,7 +292,6 @@ export function createEventStoreForSession(
     ? config.eventStoreFactory(session)
     : new FileEventStore(getRuntimeEventLogPath(session.transcriptPath));
 }
-
 export function createApprovalStoreForSession(
   config: RawRuntimeRunDispatchConfig,
   session: RuntimeSessionRecord,
@@ -312,7 +306,6 @@ export function createApprovalStoreForSession(
 // 正在跑的 run 误判为可恢复并二次 wake。
 const DIRECT_RUNTIME_LEASE_MS = 120_000;
 const DIRECT_RUNTIME_LEASE_RENEW_INTERVAL_MS = 30_000;
-
 export interface DirectRuntimeLeaseHandle {
   workerId: string;
   release(): Promise<void>;
@@ -324,7 +317,6 @@ export class DirectRuntimeLeaseContendedError extends Error {
     this.name = 'DirectRuntimeLeaseContendedError';
   }
 }
-
 export class DirectRuntimeLeaseLostError extends Error {
   constructor(readonly runId: string, reason?: string) {
     super(`Direct runtime lease lost run=${runId}${reason ? `: ${reason}` : ''}`);
@@ -359,7 +351,6 @@ export async function acquireDirectRuntimeRunLease(input: {
     input.logger?.warn(error.message);
     throw error;
   }
-
   let renewTimer: ReturnType<typeof setInterval> | null = null;
   let leaseLost = false;
   let released = false;
@@ -407,7 +398,6 @@ export async function acquireDirectRuntimeRunLease(input: {
     },
   };
 }
-
 export function deriveWorkspaceMountSubPath(input: { agentCwd: string; cwd?: string }): string | undefined {
   if (!input.cwd) return undefined;
   const mountRoot = resolve(input.agentCwd, '..');
@@ -425,7 +415,6 @@ function deriveRuntimeWorkspaceId(params: {
   return params.existingSession?.workspaceId
     ?? deriveStableWorkspaceId(params.identity, params.fallbackSessionId);
 }
-
 function getTenantRemoteHandResolver(
   config: RawRuntimeRunDispatchConfig,
 ): TenantRemoteHandAuthTokenResolver {
@@ -450,7 +439,6 @@ export class RunStateTrackingEventStore implements EventStore {
     private readonly tenantId?: string,
     private readonly terminalEventLogger?: TerminalEventLogger,
   ) {}
-
   async append(
     event: Parameters<EventStore['append']>[0],
     ctx?: Parameters<EventStore['append']>[1],
@@ -499,7 +487,6 @@ export class RunStateTrackingEventStore implements EventStore {
     if (ctx?.tenantId || !this.tenantId) return ctx;
     return { ...(ctx ?? {}), tenantId: this.tenantId };
   }
-
   private async afterAppend(event: PlatformEvent): Promise<void> {
     await trackRunStateAfterEvent({
       runStore: this.runStore,
@@ -536,7 +523,6 @@ export async function collectRuntimeTooling(
   providers: ToolProvider[];
 }> {
   const providers: ToolProvider[] = [];
-
   // Skill 工具：注入 EffectiveSkillsResolver，SkillToolProvider.list(context) 会用它
   // 派生用户实际可用清单并拼进工具 description（模型注意力最集中的位置）。原
   // <available-skills> xml section 已废弃（2026-07-03）。
@@ -559,7 +545,6 @@ export async function collectRuntimeTooling(
   if (config.userActivityService && isToolEnabled(config.toolControls, 'UserActivityList')) {
     providers.push(new UserActivityToolProvider(config.userActivityService));
   }
-
   // 3. Web 工具（平台托管网络出站，不走 workspace hand / shell）
   if (config.tenantStore) {
     providers.push(new TenantCompanyInfoToolProvider({
@@ -576,7 +561,6 @@ export async function collectRuntimeTooling(
       providers.push(webProvider);
     }
   }
-
   // 4.5 GenerateImage 生图工具（brain 进程内执行，不进 WORKSPACE_HAND_TOOLS；
   // 凭据留在 server 侧，按张扣积分）。租户 gate（features.imageGenEnabled）由
   // provider 的 list/invoke 按 context 解析，默认 false fail-closed。
@@ -602,7 +586,6 @@ export async function collectRuntimeTooling(
   // 4.6 AudioTranscribe（server 直连，凭据不进入 sandbox）。
   const audioProvider = createAudioTranscribeRuntimeProvider(config);
   if (audioProvider) providers.push(audioProvider);
-
   // 5. 统一任务工具：默认 cron，target=taskboard 时管理看板与独立 Agent 流程。
   if (config.cronService || config.taskboard) providers.push(new CronToolProvider({
     service: config.cronService ?? (() => undefined), ...(config.taskboard ? { taskboard: config.taskboard } : {}),
@@ -627,7 +610,6 @@ export async function collectRuntimeTooling(
   if (config.backgroundTasks && isToolEnabled(config.toolControls, 'Agent')) {
     providers.push(new BackgroundTaskToolProvider(config.backgroundTasks));
   }
-
   // 7. Agent 工具（子 agent 委派，2026-07-06）。必须最后 push：parentProviders 快照
   // 在 push 之前截取，子工具集从快照派生 → 子 agent 天然拿不到 Agent 工具（禁嵌套，
   // 工具移除式，D4）。subagentDeps 缺失（调用方未接线）时不挂载。
@@ -642,13 +624,11 @@ export async function collectRuntimeTooling(
 
   return { providers };
 }
-
 type RuntimeSkillFilter = (skill: SkillEntry) => boolean;
 
 function allowAllRuntimeSkills(): boolean {
   return true;
 }
-
 function filterRuntimeSkills(skills: SkillEntry[], filter: RuntimeSkillFilter): SkillEntry[] {
   return skills.filter(filter);
 }
@@ -685,7 +665,6 @@ function prioritizeRuntimeSkills(skills: SkillEntry[], preferredSkillIds: readon
     })
     .map(({ skill }) => skill);
 }
-
 /** AND 组合多个 skill filter：任一 filter 拒绝即拒绝（browser-hand filter 与 org agent 白名单叠加用，不是替换）。 */
 export function composeSkillFilters(...filters: RuntimeSkillFilter[]): RuntimeSkillFilter {
   return (skill) => filters.every((filter) => filter(skill));
@@ -708,7 +687,6 @@ export function mergeOrgAgentBoundRuntimeProfile(
     },
   };
 }
-
 /** 专职 Agent skill 白名单 filter：固有能力与 MVP knowledge skill 合集（仅按 id 命中，防同名扩权）。 */
 export function buildOrgAgentSkillFilter(
   agent: Pick<OrgAgentRecord, 'allowedSkills' | 'allowedKnowledge'>,
@@ -744,7 +722,6 @@ export function resolveOrgAgentOverrides(
   }
   return { agent: record };
 }
-
 export function buildRuntimeSkillFilter(availableHands: HandRecord[]): RuntimeSkillFilter {
   const hasTenantAcsHand = availableHands.some((hand) => (
     typeof hand.metadata?.tenantRemoteHandId === 'string'
@@ -771,7 +748,6 @@ export function buildRuntimeSkillFilter(availableHands: HandRecord[]): RuntimeSk
 
   return (skill) => skill.id !== 'browser' && skill.name !== 'browser';
 }
-
 /**
  * `image-gen` 是 GenerateImage 的方法论层，不是独立执行能力。平台工具、引擎或
  * 租户授权任一缺失时从 Skill 清单同步隐藏，避免模型把工具名当 Shell 命令，或
@@ -798,7 +774,6 @@ export function buildImageGenSkillFilter(
 export function resolveSkillContextUsername(context: ChannelContext | undefined): string | undefined {
   return context?.sessionOwner?.username ?? context?.user?.username;
 }
-
 function resolveContextIsPlatformAdmin(context: ChannelContext | undefined): boolean {
   const identity = context?.user ?? context?.sessionOwner;
   return identity?.role === 'admin' && identity.tenantId === DEFAULT_TENANT_ID;
@@ -815,7 +790,6 @@ function resolveDefaultExecutionTargetForContext(
   });
   return decision.ok ? decision.target : executionConfig.defaultTarget;
 }
-
 function resolveContextTenantId(
   context: ChannelContext,
   existingSession?: RuntimeSessionRecord | null,
@@ -856,7 +830,6 @@ function billingRunContextHooks(
     },
   };
 }
-
 function resolveSessionOwnerRole(
   config: RawRuntimeRunDispatchConfig,
   session: RuntimeSessionRecord,
@@ -920,7 +893,6 @@ export function resolveSessionOwnerTenantId(
     return undefined;
   }
 }
-
 function normalizeApprovalPolicy(value: unknown): ToolApprovalPolicyOptions | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const autoApproveTools = (value as { autoApproveTools?: unknown }).autoApproveTools === true
@@ -953,7 +925,6 @@ export function resolveEffectiveApprovalPolicy(
     return undefined;
   }
 }
-
 /**
  * 加载并组装 system prompt。模板源在 `workspace-shared/prompts/*.md`。
  *
@@ -1185,7 +1156,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       yield { type: 'error', error: 'Raw runtime 拒绝匿名访问：缺少 user / sessionOwner（请配置 auth.jwtSecret）' };
       return;
     }
-
     const resumeSessionId = options.resumeSessionId ?? context.resumeSessionId;
     const existingSession = resumeSessionId ? await sessionCatalog.get(resumeSessionId) : null;
     const cwd = options.cwd ? resolve(options.cwd) : existingSession?.cwd ?? config.agentCwd;
@@ -1239,7 +1209,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     // dev/test layout，把同一 userId 按 cwd 切碎成多个文件夹。
     const transcriptPath = existingSession?.transcriptPath ?? getTranscriptPath(cwd, sessionId, { userId: identitySource?.id, tenantId: identitySource?.tenantId });
     await mkdir(dirname(transcriptPath), { recursive: true });
-
     // 专职 Agent 解析（在 session lock / run record 之前 fail-fast）：
     // 新会话由 options.orgAgentId 携带；resume 以 session meta 为准。
     const orgAgentResolution = resolveOrgAgentOverrides(config, orgAgentId, effectiveTenantId);
@@ -1294,7 +1263,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       yield { type: 'error', error: detail };
       return;
     }
-
     // Session-level lock：尽早占用，失败即退让；resume 路径多 brain 抢同一
     // session 时只让一个进入 dispatch。lock 必须在 try/finally 内 release。
     const sessionLockAcquireOptions: SessionLockAcquireOptions = {
@@ -1604,7 +1572,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       runStore: config.runStore,
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
-
     // 普通前台 Run 的保守墙钟上限。CAS 只终止当前 running 执行段；
     // waiting_approval / waiting_user 等人工等待态明确不受影响。
     armRuntimeRunWallClock({
@@ -1879,7 +1846,6 @@ function buildRawRuntimeSandboxPolicy(
   );
   return { denyRead };
 }
-
 export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchConfig) {
   const logger = config.logger ?? noopLogger;
   const sessionCatalog = resolveSessionCatalog(config);
@@ -1906,7 +1872,6 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       yield { type: 'error', error: 'Raw approval resume 当前仅支持 Web 通道' };
       return;
     }
-
     // approval resume 已解除 admin-only gate，但 user/sessionOwner 仍必须存在。
     if (!request.context.user && !request.context.sessionOwner) {
       yield { type: 'error', error: 'Raw approval resume 拒绝匿名访问：缺少 user / sessionOwner' };
@@ -1954,7 +1919,6 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       yield { type: 'error', error: `Session ${request.sessionId} 已被另一个 brain 持有，本次 approval resume 退让` };
       return;
     }
-
     const effectiveTenantId = resolveContextTenantId(request.context, existingSession);
     // 专职 Agent 覆盖（approval resume 同样应用，漏一处 = 审批恢复后越权）。
     // resume 路径 orgAgentId 只信 session meta（existingSession）。
@@ -2074,7 +2038,6 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       mountSubPath: workspaceMountSubPath,
       topLevelSessionId: request.sessionId,
     });
-
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
     const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId, config.logger ?? logger);
     const approvalStore = createApprovalStoreForSession(config, sessionRecord, eventStore);
@@ -2267,7 +2230,6 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       tenantId: sessionRecord.tenantId,
     });
     stripTaskboardWritableGitCredentials(request.sessionId, resumeEnv);
-
     // approval / ask_user 的每个恢复执行段都重新计算完整墙钟预算。
     armRuntimeRunWallClock({
       runStore: config.runStore,
@@ -2397,7 +2359,6 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       yield { type: 'error', error: `Raw interaction resume 找不到 session 元数据: ${request.sessionId}` };
       return;
     }
-
     let requestedModel = request.model || existingSession?.modelRef;
     let { model, modelConnection, modelProviderOptions } = resolveRuntimeModelOptions(
       config,
@@ -2428,7 +2389,6 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       yield { type: 'error', error: `Session ${request.sessionId} 已被另一个 brain 持有，本次 interaction resume 退让` };
       return;
     }
-
     const effectiveTenantId = resolveContextTenantId(request.context, existingSession);
     // interaction resume 也应用专职 Agent 覆盖；orgAgentId 只信 session meta。
     const orgAgentId = existingSession?.orgAgentId;
@@ -2545,7 +2505,6 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       mountSubPath: workspaceMountSubPath,
       topLevelSessionId: request.sessionId,
     });
-
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
     const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId, config.logger ?? logger);
     const priorEvents = await eventStore.list(request.sessionId);
@@ -2846,7 +2805,6 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     }
   };
 }
-
 export async function loadRawRuntimeWakeState(
   config: RawRuntimeRunDispatchConfig,
   sessionId: string,
@@ -2929,7 +2887,6 @@ export async function wakeRuntimeSession(
     await appendRunStateChanged(eventStore, run.sessionId, run.runId, 'cancelled', run.status, 'cancel_requested_before_wake');
     return;
   }
-
   // steering 行回收（2026-08-04 BUG-5 修复）：本 run 是回退执行的插话 source 时，
   // 把它自己的 pending steering 行标 released + 清 metadata。不回收的话：
   // ① 它永远不能成为后续插话的 steering 目标（NOT EXISTS own_input pending 排除），
@@ -2985,7 +2942,6 @@ export async function wakeRuntimeSession(
     await options.lease?.release('waiting_user', 'wake_deferred_pending_ask_user');
     return;
   }
-
   // Wake-time workspace provisioning. PR 8 enqueue-only 路径绕过了 engine/dispatch.ts
   // 的 ensureUserWorkspace 调用，新 tenant / 新用户首跑必踩 cwd 物理目录不存在
   // 导致 hand-server spawn ENOENT。这里在调 dispatch 之前先 provision，让 PR 4
@@ -3228,7 +3184,6 @@ export async function wakeRuntimeSession(
     runtimeRunController.unregister(run.runId);
   }
 }
-
 export async function releaseWakeLeaseForDrainHandoff(input: {
   config: RawRuntimeRunDispatchConfig;
   eventStore: EventStore;
@@ -3248,7 +3203,6 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
     || isTerminalRunStatus(current.status)
     || (current.workerId && input.lease.workerId && current.workerId !== input.lease.workerId)
   ) return false;
-
   const reason = input.drainHandoff.reason ?? 'server_drain_handoff';
   const handedOffAt = new Date().toISOString();
   // steering 的 durable user_message 可安全重放，但恢复必须有上限；否则同一故障会让

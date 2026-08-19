@@ -442,7 +442,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const skillsWarmup: SkillsWarmupStatus = { state: 'pending' };
   let skillMaterializationService: SkillMaterializationService | undefined;
   let skillMaterializationLeadership: CronLeadership | undefined;
-
   // Skills config store
   let skillConfigStore: SkillConfigStore | undefined;
   if (userStore) {
@@ -1903,7 +1902,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     } else if (config.memory) {
       delete config.memory.index;
     }
-
     const previous = memoryIndexServiceRef.current;
     const next = createMemoryIndexService(
       processCwd,
@@ -2411,7 +2409,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // CronList/CronManage 内置工具接线：dispatch 构造早于 cronRuntime，
   // config 传的是惰性 getter（与 updateToolSettingsConfig 热改同模式）。
   rawRuntimeConfig.cronService = () => cronRuntime.service ?? undefined;
-
   // ── Cron leader 协调器（2026-07-15 零停机部署批次）─────────────────
   // 蓝绿部署下新旧实例短暂并存：cron 调度（含 memory_poll reconcile）必须
   // 单实例运行，否则同一任务双触发（双 run / 双扣费 / 双通知）。

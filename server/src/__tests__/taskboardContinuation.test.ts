@@ -1,7 +1,6 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -49,7 +48,6 @@ const task: TaskBoardTask = {
   createdAt: '2026-08-01T00:00:00.000Z',
   updatedAt: '2026-08-01T00:00:00.000Z',
 };
-
 const comments: TaskBoardComment[] = [
   comment('comment-1', '先补充验收条件', '2026-08-01T01:00:00.000Z'),
   comment('comment-2', '再修复并发问题', '2026-08-01T01:01:00.000Z'),
@@ -72,7 +70,6 @@ describe('任务看板评论续跑', () => {
     const rig = makeRig();
 
     const result = await rig.coordinator.continueExecution(identity, task.id, comments[1]!.id);
-
     expect(result.execution).toEqual(activeExecution);
     expect(rig.store.enqueueContinuation).toHaveBeenCalledWith(
       task.id,
@@ -113,7 +110,6 @@ describe('任务看板评论续跑', () => {
     expect(rig.store.claimExecution).not.toHaveBeenCalled();
     expect(rig.store.enqueueContinuation).toHaveBeenCalledOnce();
   });
-
   it('并发请求抢先创建 Execution 后，失败方重读上下文并幂等复用', async () => {
     const getContinuationContext = vi.fn()
       .mockResolvedValueOnce({ task: { ...task, status: 'todo' }, comment: comments[1]!, pendingComments: comments })
@@ -166,7 +162,6 @@ describe('任务看板评论续跑', () => {
         leaseId,
       }) : null),
     });
-
     await rig.coordinator.continueExecution(identity, task.id, comments[1]!.id);
 
     expect(rig.writeSessionTitle).toHaveBeenCalledWith(expect.objectContaining({
@@ -202,7 +197,6 @@ describe('任务看板评论续跑', () => {
     });
 
     const result = await rig.coordinator.continueExecution(identity, task.id, comments[1]!.id);
-
     expect(result.execution).toEqual(activeExecution);
     expect(rig.runStore.get).not.toHaveBeenCalled();
     expect(rig.scheduler.enqueue).not.toHaveBeenCalled();
@@ -238,7 +232,6 @@ describe('任务看板评论续跑', () => {
     expect(rig.store.completeContinuation).not.toHaveBeenCalled();
     expect(rig.scheduler.enqueue).not.toHaveBeenCalled();
   });
-
   it('评论绑定超过最近 50 条的正式 Execution 时仍按 runId 精确命中', async () => {
     const historicalRunId = 'execution-run-historical';
     const taskRow = {
@@ -315,7 +308,6 @@ describe('任务看板评论续跑', () => {
     rig.runStore.get.mockResolvedValue(steeringRun);
 
     await rig.coordinator.continueExecution(identity, task.id, comments[1]!.id);
-
     expect(rig.store.completeContinuation).not.toHaveBeenCalled();
   });
 
@@ -357,7 +349,6 @@ describe('任务看板评论续跑', () => {
     });
     expect(rig.store.finishContinuation).not.toHaveBeenCalled();
   });
-
   it('重复请求遇到终态续跑 Run 时补写遗漏的任务回执', async () => {
     const terminalRun = {
       runId: `taskboard-comment-${comments[1]!.id}`,
@@ -432,7 +423,6 @@ describe('任务看板评论续跑', () => {
       executionsTable: 'executions',
       continuationOutboxTable: 'continuation_outbox',
     } as never;
-
     const result = await completeContinuation(host, task.id, 'continuation-run', {
       status: 'succeeded',
       commentBody: 'Agent 交付\n\n等待态续跑结果',
@@ -476,7 +466,6 @@ describe('任务看板评论续跑', () => {
       status: 'succeeded',
       commentBody: 'Agent 交付\n\n续跑成功',
     });
-
     const taskUpdate = queries.find(({ statement }) => (
       statement.includes('UPDATE tasks') && statement.includes('status=$2')
     ));
@@ -515,7 +504,6 @@ describe('任务看板评论续跑', () => {
     expect(sql.some((statement) => statement.includes("SET status='completed'"))).toBe(true);
     expect(sql.some((statement) => statement.includes('INSERT INTO comments'))).toBe(false);
   });
-
   it('终态回执先完成时，过期 reconcile 不会把任务状态改回进行中', async () => {
     const sql: string[] = [];
     const taskRow = {
@@ -577,7 +565,6 @@ describe('任务看板评论续跑', () => {
     expect(sql.some((statement) => statement.includes('clock_timestamp()'))).toBe(true);
     expect(sql.some((statement) => statement.includes('UPDATE tasks'))).toBe(false);
   });
-
   it('实时续跑完成会提取文件卡并保存为评论附件', async () => {
     const root = await mkdtemp(join(tmpdir(), 'taskboard-continuation-live-'));
     const userCwd = join(root, identity.tenantId, identity.ownerUserId);
@@ -668,7 +655,6 @@ describe('任务看板评论续跑', () => {
         sessionId: activeExecution.sessionId,
         content: '等待态后的续跑交付\n[FILE]{"filePath":"assets/重启交付.pdf"}[/FILE]',
       } as never]);
-
       await rig.coordinator.reconcile();
 
       expect(rig.store.completeContinuation).toHaveBeenCalledWith(task.id, runId, {

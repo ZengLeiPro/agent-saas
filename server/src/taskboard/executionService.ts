@@ -395,6 +395,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       modelContext.boardStageModels,
       modelContext.boardModel,
       resolvedPurpose,
+      modelContext.taskStageModels,
     );
     const model = explicitModelRef
       ? this.options.resolveModel?.(explicitModelRef, executionIdentity.tenantId)

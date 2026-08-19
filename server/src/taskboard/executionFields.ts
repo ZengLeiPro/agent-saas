@@ -104,8 +104,9 @@ export function resolveExecutionModelRef(
   boardStageModels: TaskBoardStageModels | undefined,
   boardModel: string | undefined,
   purpose: TaskBoardExecutionPurpose,
+  taskStageModels?: TaskBoardStageModels,
 ): string | undefined {
-  return taskModel ?? boardStageModels?.[purpose] ?? boardModel;
+  return taskStageModels?.[purpose] ?? taskModel ?? boardStageModels?.[purpose] ?? boardModel;
 }
 
 export function resolveExecutionPurpose(

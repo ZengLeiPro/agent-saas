@@ -154,19 +154,12 @@ export function MobileLayout(props: LayoutProps) {
     setSheetOpen(true);
   }, [setActiveTab]);
 
-  const handleOpenRoleDetail = useCallback((roleId: string) => {
-    setRoleDetailId(roleId);
-    setActiveTab("capabilities");
-    setSheetOpen(true);
-  }, [setActiveTab]);
-
   const chatEmptySlot = useMemo(() => (
     roleKitConfig.roleKitV2Enabled ? (
       <EmptyChatRecommendCards
         onTryScenario={handleScenarioPrefill}
         onStartWorkflow={handlePrefillWorkflow}
         onViewAll={handleViewAllScenarios}
-        onOpenRoleDetail={handleOpenRoleDetail}
       />
     ) : (
       <EmptySessionScenarios
@@ -175,7 +168,7 @@ export function MobileLayout(props: LayoutProps) {
         onViewAll={handleViewAllScenarios}
       />
     )
-  ), [handleOpenRoleDetail, handlePrefillWorkflow, handleScenarioPrefill, handleViewAllScenarios, roleKitConfig.roleKitV2Enabled]);
+  ), [handlePrefillWorkflow, handleScenarioPrefill, handleViewAllScenarios, roleKitConfig.roleKitV2Enabled]);
 
   const handleSendMessage = useCallback(async () => {
     await sendWorkflowExperience(sendMessage, input, activeWorkflow);

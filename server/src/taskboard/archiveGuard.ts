@@ -56,6 +56,24 @@ export async function assertTaskHasNoActiveRuns(
   await assertNoIntegrationV3State(host, client, { taskId });
 }
 
+/** 首次交给 Agent 后，任务标题/正文改走评论，避免执行上下文与任务对象脱节。 */
+export async function assertTaskHasNoExecutionHistory(
+  host: TaskboardArchiveGuardHost,
+  client: PoolClient,
+  taskId: string,
+): Promise<void> {
+  const history = await client.query(
+    `SELECT 1 FROM ${host.executionsTable} WHERE task_id=$1 LIMIT 1`,
+    [taskId],
+  );
+  if (history.rows[0]) {
+    throw new TaskboardValidationError(
+      'Task title and description cannot be changed after Agent execution starts; add a comment instead',
+      'TASKBOARD_TASK_CONTENT_LOCKED',
+    );
+  }
+}
+
 export async function finalizeExecutionForArchivedTask(
   host: TaskboardArchiveGuardHost,
   client: PoolClient,

@@ -19,6 +19,7 @@ const input = {
   worktreePath: WORKTREE,
   baseBranch: 'main',
   integrationBranch: 'integration/42',
+  controlledRemoteUrl: 'https://github.com/acme/widget.git',
 };
 
 type Step = {
@@ -51,7 +52,10 @@ class ScriptedHost implements RepositoryWorkspaceSyncHost {
   }
 }
 
-const fetchStep = (): Step => ({ cwd: REPOSITORY, args: ['fetch', '--prune', 'origin'] });
+const fetchStep = (): Step => ({ cwd: REPOSITORY, args: [
+  'fetch', '--no-tags', '--prune', '--', input.controlledRemoteUrl,
+  '+refs/heads/main:refs/remotes/origin/main',
+] });
 const remoteOidStep = (): Step => ({
   cwd: REPOSITORY,
   args: ['rev-parse', '--verify', 'refs/remotes/origin/main'],
@@ -143,7 +147,7 @@ describe('syncRepositoryWorkspace', () => {
 
     await expect(syncRepositoryWorkspace(host, input)).rejects.toMatchObject({
       code: 'GIT_COMMAND_FAILED',
-      command: { cwd: REPOSITORY, args: ['fetch', '--prune', 'origin'] },
+      command: { cwd: REPOSITORY, args: fetchStep().args },
     });
     expect(host.commands).toHaveLength(1);
     host.assertConsumed();

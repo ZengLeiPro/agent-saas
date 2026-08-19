@@ -1,5 +1,6 @@
 import type { PoolClient } from 'pg';
 
+import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import type { IntegrationV3RepairTables } from './integrationV3Repair.js';
 
 export interface IntegrationV3MetricsSnapshot {
@@ -53,6 +54,22 @@ const DEFAULT_THRESHOLDS: IntegrationV3HealthThresholds = {
 };
 
 type Queryable = Pick<PoolClient, 'query'>;
+
+export function createIntegrationV3HealthProvider(store: {
+  pool: Queryable;
+  tasksTable: string;
+  executionsTable: string;
+  integrationLanesTable: string;
+  integrationSourcesTable: string;
+}, getGatewayHealth?: () => Promise<IntegrationV3GatewayHealth>): () => Promise<IntegrationV3HealthStatus> {
+  const candidateTables = integrationCandidateTableNames(store.integrationSourcesTable);
+  const tables: IntegrationV3RepairTables = {
+    tasks: store.tasksTable, executions: store.executionsTable, lanes: store.integrationLanesTable,
+    candidates: candidateTables.candidatesTable, providerOperations: candidateTables.providerOperationsTable,
+    requestsOutbox: candidateTables.requestsOutboxTable,
+  };
+  return async () => evaluateIntegrationV3Health(await collectIntegrationV3Metrics(store.pool, tables, getGatewayHealth));
+}
 
 export async function collectIntegrationV3Metrics(
   db: Queryable,

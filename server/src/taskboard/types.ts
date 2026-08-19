@@ -458,6 +458,7 @@ export interface TaskboardService {
   getIntegrationCandidate?(
     identity: TaskboardIdentity,
     integrationTaskId: string,
+    options?: { includeHistory?: boolean; page?: number; pageSize?: number },
   ): Promise<TaskboardIntegrationCandidateView>;
   resumeBlockedTask?(
     identity: TaskboardIdentity,

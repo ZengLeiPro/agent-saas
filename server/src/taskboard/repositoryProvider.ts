@@ -4,6 +4,41 @@ import type { TaskBoardRepositoryConfig } from '../../../shared/src/types/taskbo
 
 export type RepositoryCheckStatus = 'pending' | 'success' | 'failure';
 
+/** Canonical GitHub identity parser. Deliberately rejects URL suffix matching, ports,
+ * userinfo, query/fragment, encoded path separators and all non-GitHub hosts. */
+export function canonicalGithubRepositoryUrl(repository: Pick<TaskBoardRepositoryConfig, 'owner' | 'name'>): string {
+  assertGithubPathComponent(repository.owner, 'owner');
+  assertGithubPathComponent(repository.name, 'name');
+  return `https://github.com/${repository.owner}/${repository.name}.git`;
+}
+
+export function isCanonicalGithubRepositoryRemote(
+  value: string,
+  repository: Pick<TaskBoardRepositoryConfig, 'owner' | 'name'>,
+): boolean {
+  const expectedPath = `/${repository.owner}/${repository.name}`;
+  try {
+    if (/^git@github\.com:/.test(value)) {
+      const path = value.slice('git@github.com:'.length).replace(/\.git$/, '');
+      return !/[?#@\\]/.test(path) && `/${path}` === expectedPath;
+    }
+    const parsed = new URL(value);
+    const path = parsed.pathname.replace(/\.git$/, '');
+    return parsed.protocol === 'https:'
+      && parsed.hostname.toLowerCase() === 'github.com'
+      && parsed.port === '' && parsed.username === '' && parsed.password === ''
+      && parsed.search === '' && parsed.hash === ''
+      && !/%2f|%5c/i.test(parsed.pathname)
+      && path === expectedPath;
+  } catch { return false; }
+}
+
+function assertGithubPathComponent(value: string, label: string): void {
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,99})$/.test(value) || value === '.' || value === '..') {
+    throw new RepositoryProviderPolicyError(`Invalid GitHub repository ${label}`);
+  }
+}
+
 export interface RepositoryRequiredCheck {
   name: string;
   status: RepositoryCheckStatus;

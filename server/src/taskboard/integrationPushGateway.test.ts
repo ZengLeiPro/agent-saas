@@ -8,6 +8,12 @@ import {
   IntegrationPushGateway,
   type IntegrationPushGitRunner,
 } from './integrationPushGateway.js';
+import {
+  IntegrationProviderOperationService,
+  type IntegrationProviderOperationRecord,
+  type IntegrationProviderOperationState,
+  type IntegrationProviderOperationStorageHost,
+} from './integrationProviderOperations.js';
 
 const A = 'a'.repeat(40);
 const B = 'b'.repeat(40);
@@ -18,6 +24,21 @@ const binding: IntegrationPushCapabilityBinding = {
   candidateId: 'candidate-1', revision: 2, executionId: 'execution-1',
   exactRef: 'refs/heads/integration/task-1', expectedOldOid: A, laneEpoch: 3, workflowEpoch: 4,
 };
+
+class MemoryOperations implements IntegrationProviderOperationStorageHost {
+  records = new Map<string, IntegrationProviderOperationRecord>();
+  async getByOperationKey(key: string) { return this.records.get(key); }
+  async insertPrepared(record: IntegrationProviderOperationRecord) {
+    const existing = this.records.get(record.operationKey); if (existing) return existing;
+    this.records.set(record.operationKey, record); return record;
+  }
+  async compareAndSet(input: { id: string; expectedState: IntegrationProviderOperationState; nextState: IntegrationProviderOperationState; patch: any }) {
+    const record = [...this.records.values()].find((item) => item.id === input.id);
+    if (!record || record.state !== input.expectedState) return undefined;
+    const updated = { ...record, ...input.patch, state: input.nextState };
+    this.records.set(updated.operationKey, updated); return updated;
+  }
+}
 
 class FakeGit implements IntegrationPushGitRunner {
   calls: Array<{ args: string[]; env?: Record<string, string> }> = [];
@@ -45,6 +66,8 @@ async function fixture() {
   const host = new InMemoryIntegrationPushCapabilityHost();
   const capabilityService = new IntegrationPushCapabilityService(host);
   const git = new FakeGit(root);
+  const operationStorage = new MemoryOperations();
+  const operationService = new IntegrationProviderOperationService(operationStorage, { assertCurrent: async () => undefined });
   let active = true;
   const gateway = new IntegrationPushGateway({
     enabled: true,
@@ -54,7 +77,8 @@ async function fixture() {
       && input.executionId === binding.executionId && input.candidateId === binding.candidateId
       ? { binding, ownerUserId: 'owner-1' } : undefined,
     resolveRepository: async () => ({ worktreePath: root, remoteUrl: 'https://github.com/org/repo.git' }),
-    resolveGithubToken: async () => TOKEN,
+    resolveGithubToken: async () => ({ token: TOKEN, mode: 'restricted_pat', repositoryId: binding.repositoryId }),
+    operationService,
     runner: git,
   });
   const issue = () => gateway.issue({
@@ -65,7 +89,7 @@ async function fixture() {
     tenantId: binding.tenantId, requesterUserId: 'owner-1', executionId: binding.executionId,
     candidateId: binding.candidateId, capabilityToken, commitOid,
   });
-  return { root, host, capabilityService, gateway, git, issue, push, disableTarget: () => { active = false; } };
+  return { root, host, capabilityService, gateway, git, operationStorage, issue, push, disableTarget: () => { active = false; } };
 }
 
 describe('IntegrationPushGateway', () => {
@@ -138,6 +162,26 @@ describe('IntegrationPushGateway', () => {
       f.git.failPush = true;
       await expect(f.push(preflight.capabilityToken)).rejects.toMatchObject({ code: 'push_failed_unknown', retryable: false });
       await expect(f.capabilityService.verify(preflight.capabilityToken)).rejects.toMatchObject({ code: 'already_consumed' });
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('durably records exact push intent and reconciles unknown by read-back without a second write', async () => {
+    const f = await fixture();
+    const input = {
+      tenantId: binding.tenantId, ownerUserId: 'owner-1', repositoryId: binding.repositoryId,
+      integrationTaskId: binding.integrationTaskId, candidateId: binding.candidateId,
+      revision: binding.revision, exactRef: binding.exactRef, expectedOldOid: A, newOid: B,
+      fence: { workflowEpoch: binding.workflowEpoch, laneEpoch: binding.laneEpoch,
+        candidateId: binding.candidateId, candidateRevision: binding.revision, executionId: 'compose-1' },
+    };
+    try {
+      f.git.failPush = true;
+      await expect(f.gateway.pushExact(input)).rejects.toMatchObject({ code: 'push_failed_unknown' });
+      expect([...f.operationStorage.records.values()][0]).toMatchObject({ kind: 'push_ref', state: 'unknown', expected: { oldOid: A, newOid: B } });
+      f.git.failPush = false; f.git.remoteLine = `${B}\t${binding.exactRef}\n`;
+      await expect(f.gateway.pushExact(input)).resolves.toBeUndefined();
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
+      expect([...f.operationStorage.records.values()][0]?.state).toBe('succeeded');
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 

@@ -62,6 +62,30 @@ describe("Integration v3 Candidate UI", () => {
     expect(screen.queryByRole("region", { name: "集成来源" })).toBeNull();
   });
 
+  it.each([
+    [undefined, "已合并 · cleanup 待处理"],
+    [{ outcome: "failed", requestStatus: "failed", reason: "branch deletion failed", updatedAt: details.lastRefreshedAt }, "已合并 · cleanup 失败：branch deletion failed"],
+    [{ outcome: "skipped", requestStatus: "completed", reason: "skipped-by-policy: disabled", updatedAt: details.lastRefreshedAt }, "已合并 · cleanup 已跳过：skipped-by-policy: disabled"],
+    [{ outcome: "completed", requestStatus: "completed", updatedAt: details.lastRefreshedAt }, "已合并 · cleanup 已完成"],
+  ] as const)("区分 merged 后的 cleanup 状态 %#", async (cleanup, expected) => {
+    fetchIntegrationCandidate.mockResolvedValue({
+      ...details,
+      candidate: { ...details.candidate, state: "merged" },
+      ...(cleanup ? { cleanup } : {}),
+    });
+    render(<IntegrationCandidateDetails taskId="task-v3" />);
+    expect(await screen.findByText(expected)).toBeTruthy();
+  });
+
+  it("明确展示永久 worker_error", async () => {
+    fetchIntegrationCandidate.mockResolvedValue({
+      ...details,
+      worker: { status: "failed", checkpoint: {}, error: "provider permission denied" },
+    });
+    render(<IntegrationCandidateDetails taskId="task-v3" />);
+    expect(await screen.findByText("worker_error：provider permission denied")).toBeTruthy();
+  });
+
   it("同一 Candidate 刷新失败时保留 stale 投影", async () => {
     fetchIntegrationCandidate.mockResolvedValueOnce(details).mockRejectedValueOnce(new Error("temporary outage"));
     const { result } = renderHook(() => useIntegrationCandidate("task-v3"));

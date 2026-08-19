@@ -174,9 +174,29 @@ export class PostgresIntegrationEngineV3CandidateHost implements IntegrationEngi
       const operation = await client.query(
         `SELECT * FROM ${this.options.providerOperationsTable}
           WHERE id=$1 AND candidate_id=$2 AND candidate_revision=$3 AND workflow_epoch=$4::bigint
-            AND lane_epoch=$5::bigint AND state='succeeded' FOR UPDATE`,
+            AND lane_epoch=$5::bigint AND kind='merge_pull_request' AND state='succeeded' FOR UPDATE`,
         [input.providerOperationId, candidate.id, candidate.currentRevision, candidate.workflowEpoch, candidate.laneEpoch]);
-      if (!operation.rows[0]) throw new TaskboardValidationError('Provider operation receipt is absent or fenced', 'TASKBOARD_PROVIDER_OPERATION_FENCE_MISMATCH');
+      const operationRow = operation.rows[0];
+      if (!operationRow) throw new TaskboardValidationError('Provider merge operation receipt is absent or fenced', 'TASKBOARD_PROVIDER_OPERATION_FENCE_MISMATCH');
+      const revision = await client.query(
+        `SELECT subject_digest,head_oid,tree_oid FROM ${this.options.revisionsTable}
+          WHERE candidate_id=$1 AND revision=$2 FOR UPDATE`,
+        [candidate.id, candidate.currentRevision],
+      );
+      const revisionRow = revision.rows[0];
+      const expected = asRecord(operationRow.expected);
+      const command = asRecord(operationRow.command);
+      const receipt = asRecord(operationRow.receipt);
+      if (!revisionRow
+        || String(operationRow.repository_id) !== candidate.repositoryId
+        || String(command.providerPullRequestId ?? '') !== String(candidate.providerPullRequestId ?? '')
+        || String(command.expectedHeadOid ?? '') !== String(revisionRow.head_oid)
+        || String(expected.subjectDigest ?? '') !== String(revisionRow.subject_digest)
+        || String(expected.treeOid ?? '') !== String(revisionRow.tree_oid)
+        || String(receipt.providerPullRequestId ?? '') !== String(candidate.providerPullRequestId ?? '')
+        || String(receipt.mergedCommitOid ?? '') !== input.mergedCommitOid) {
+        throw new TaskboardValidationError('Provider merge operation target or receipt does not match the approved revision', 'TASKBOARD_PROVIDER_OPERATION_RECEIPT_MISMATCH');
+      }
       const task = await client.query(`SELECT id,workflow_version,workflow_epoch FROM ${this.options.tasksTable} WHERE id=$1 FOR UPDATE`, [candidate.integrationTaskId]);
       if (Number(task.rows[0]?.workflow_version ?? 2) !== 3 || String(task.rows[0]?.workflow_epoch) !== candidate.workflowEpoch) {
         throw new TaskboardValidationError('Integration task workflow fence changed', 'TASKBOARD_INTEGRATION_WORKFLOW_FENCE_MISMATCH');
@@ -259,14 +279,26 @@ export class PostgresIntegrationEngineV3RequestHost implements IntegrationEngine
 export class PostgresIntegrationProviderFenceHost {
   constructor(private readonly options: Pick<PostgresIntegrationEngineV3HostOptions, 'pool'|'tasksTable'|'integrationLanesTable'|'candidatesTable'>) {}
   async assertCurrent(operation: IntegrationProviderOperationRecord): Promise<void> {
+    const boardsTable = this.options.tasksTable.endsWith('_tasks')
+      ? `${this.options.tasksTable.slice(0, -'_tasks'.length)}_boards`
+      : (() => { throw new Error('Cannot derive boards table for dynamic Integration v3 gate'); })();
     const result = await this.options.pool.query(
       `SELECT c.integration_task_id,c.current_revision,c.workflow_epoch,c.lane_epoch,c.state,t.workflow_version,t.workflow_epoch AS task_epoch,
-              l.epoch AS current_lane_epoch,l.active_integration_task_id
+              l.epoch AS current_lane_epoch,l.active_integration_task_id,
+              COALESCE(NULLIF(current_setting('agent_saas.integration_v3_enabled',true),'')::boolean,true) AS global_enabled,
+              COALESCE((b.integration_policy->>'enabled')::boolean,false) AS repository_enabled,
+              COALESCE((b.integration_policy->'featureFlags'->>'engineV3')::boolean,false) AS engine_enabled,
+              COALESCE((b.integration_policy->'featureFlags'->>'merge')::boolean,false) AS merge_enabled
          FROM ${this.options.candidatesTable} c
          JOIN ${this.options.tasksTable} t ON t.id=c.integration_task_id
+         JOIN ${boardsTable} b ON b.id=t.board_id
          JOIN ${this.options.integrationLanesTable} l ON l.repository_id=c.repository_id
         WHERE c.id=$1`, [operation.fence.candidateId]);
     const row = result.rows[0];
+    if (row && (row.global_enabled !== true || row.repository_enabled !== true || row.engine_enabled !== true
+      || (operation.kind === 'merge_pull_request' && row.merge_enabled !== true))) {
+      throw new TaskboardValidationError('Dynamic global or repository Integration v3 kill switch is active', 'TASKBOARD_INTEGRATION_KILL_SWITCH');
+    }
     if (!row || Number(row.workflow_version) !== 3 || Number(row.current_revision) !== operation.fence.candidateRevision
       || String(row.workflow_epoch) !== String(operation.fence.workflowEpoch)
       || String(row.task_epoch) !== String(operation.fence.workflowEpoch)
@@ -288,10 +320,9 @@ function sortObject(value: unknown): unknown {
 /** Feature flags are frozen in the candidate policy snapshot; repository lookup is fail-closed. */
 export class PostgresIntegrationEngineV3FeatureHost implements IntegrationEngineV3FeatureHost {
   constructor(private readonly options: Pick<PostgresIntegrationEngineV3HostOptions, 'pool'|'candidatesTable'>) {}
-  async getFlags(repositoryId: string) {
+  async getFlags(candidateId: string) {
     const result = await this.options.pool.query(
-      `SELECT policy_snapshot FROM ${this.options.candidatesTable}
-        WHERE repository_id=$1 AND state NOT IN ('merged','canceled') ORDER BY created_at DESC LIMIT 1`, [repositoryId]);
+      `SELECT policy_snapshot FROM ${this.options.candidatesTable} WHERE id=$1`, [candidateId]);
     const policy = asRecord(result.rows[0]?.policy_snapshot);
     const flags = asRecord(policy.featureFlags);
     const enabled = Number(policy.workflowVersion) === 3 && flags.engineV3 === true;

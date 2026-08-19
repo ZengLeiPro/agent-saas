@@ -16,7 +16,7 @@ import {
   integrationCandidateTableNames,
   runIntegrationCandidateSchema,
 } from './integrationCandidateSchema.js';
-import { assertCandidateTransition } from './integrationCandidateStore.js';
+import { assertCandidateTransition, IntegrationCandidateStore } from './integrationCandidateStore.js';
 
 const source = {
   order: 0,
@@ -120,6 +120,12 @@ describe('integration candidate v3 mapper and invariants', () => {
       subject_digest: 'subject', policy_snapshot_digest: 'policy', policy_revision: 'policy-1',
       merge_method: 'squash', work_round: 1, created_at: candidate.createdAt,
     })).toMatchObject({ candidateId: candidate.id, revision: 1, workRound: 1 });
+    expect(rowToIntegrationCandidateRevision({
+      candidate_id: candidate.id, revision: 1, digest_version: 1, subject_kind: 'source_seed',
+      base_oid: 'base', head_oid: 'head', tree_oid: null, source_set_digest: 'sources',
+      subject_digest: 'seed-subject', policy_snapshot_digest: 'policy', policy_revision: 'policy-1',
+      merge_method: 'squash', work_round: 0, created_at: candidate.createdAt,
+    })).toEqual(expect.objectContaining({ subjectKind: 'source_seed' }));
     expect(rowToIntegrationCandidateSourceSnapshot({
       candidate_id: candidate.id, revision: 1, source_order: 0,
       integration_source_id: source.integrationSourceId, delivery_task_id: source.deliveryTaskId,
@@ -129,6 +135,32 @@ describe('integration candidate v3 mapper and invariants', () => {
       review_execution_id: source.reviewExecutionId, review_receipt_digest: source.reviewReceiptDigest,
       requirement_digest: source.requirementDigest, created_at: candidate.createdAt,
     })).toMatchObject({ candidateId: candidate.id, revision: 1, order: 0 });
+  });
+
+  it('rejects a source snapshot whose durable source belongs to another integration task', async () => {
+    const candidateRow = {
+      id: candidate.id, integration_task_id: candidate.integrationTaskId, repository_id: candidate.repositoryId,
+      base_branch: candidate.baseBranch, branch: candidate.branch, state: 'composing', current_revision: 1,
+      work_round: 0, version: 4, workflow_epoch: 2, lane_epoch: 3, policy_revision: candidate.policyRevision,
+      merge_method: candidate.mergeMethod, policy_snapshot: candidate.policySnapshot, created_at: candidate.createdAt, updated_at: candidate.updatedAt,
+    };
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('SELECT * FROM') && sql.includes('FOR UPDATE')) return { rows: [candidateRow] };
+      if (sql.includes('SELECT s.integration_task_id')) return { rows: [{
+        integration_task_id: 'another-integration', delivery_task_id: source.deliveryTaskId,
+        repository_id: source.repositoryId, provider_pull_request_id: source.providerPullRequestId,
+        reviewed_subject_digest: source.reviewedSubjectDigest, delivery_task_version: source.deliveryTaskVersion,
+        board_id: 'board-1', integration_board_id: 'board-1', head_oid: source.frozenHeadOid, base_oid: source.frozenBaseOid,
+      }] };
+      return { rows: [] };
+    });
+    const client = { query, release: vi.fn() };
+    const store = new IntegrationCandidateStore({
+      pool: { connect: vi.fn(async () => client) }, tasksTable: 'tasks', integrationSourcesTable: 'integration_sources',
+    } as never);
+    await expect(store.appendRevision(candidate.id, {
+      expectedVersion: 4, expectedCurrentRevision: 1, baseOid: 'base', headOid: 'head', treeOid: 'tree', sources: [source],
+    })).rejects.toMatchObject({ code: 'TASKBOARD_CANDIDATE_SOURCE_OWNERSHIP_MISMATCH' });
   });
 
   it('requires current revision approval before merging and a receipt before merged', () => {
@@ -141,6 +173,9 @@ describe('integration candidate v3 mapper and invariants', () => {
     expect(() => assertCandidateTransition({ ...candidate, state: 'merging' }, {
       expectedVersion: 4, expectedRevision: 1, to: 'merged',
     })).toThrow('provider commit OID');
+    expect(() => assertCandidateTransition({ ...candidate, state: 'merging' }, {
+      expectedVersion: 4, expectedRevision: 1, to: 'canceled',
+    })).toThrow('Invalid candidate transition');
     expect(() => assertCandidateTransition(candidate, {
       expectedVersion: 4, expectedRevision: 1, to: 'approved', approvedReviewExecutionId: 'review-1',
     })).not.toThrow();
@@ -181,5 +216,9 @@ describe('integration candidate v3 schema', () => {
     expect(ddl).toContain('TASKBOARD_CANDIDATE_SNAPSHOT_IMMUTABLE');
     expect(ddl).toContain('current_revision INTEGER NOT NULL DEFAULT 0');
     expect(ddl).toContain('work_round INTEGER NOT NULL DEFAULT 0');
+    expect(ddl).toContain("subject_kind TEXT NOT NULL DEFAULT 'provider_subject'");
+    expect(ddl).toContain('ALTER COLUMN tree_oid DROP NOT NULL');
+    expect(ddl).toContain('TASKBOARD_CANDIDATE_MERGE_RECONCILIATION_REQUIRED');
+    expect(ddl).toContain('worker_attempts INTEGER NOT NULL DEFAULT 0');
   });
 });

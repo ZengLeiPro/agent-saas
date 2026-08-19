@@ -428,10 +428,10 @@ async function resolveIntegrationV3Execution(
             approved_revision=CASE WHEN $9::boolean THEN current_revision ELSE NULL END,
             approved_review_execution_id=CASE WHEN $9::boolean THEN $7 ELSE NULL END,
             last_error=CASE WHEN $8='blocked' THEN $10 ELSE NULL END,
-            version=version+1,updated_at=now()
+            workflow_epoch=workflow_epoch+1,version=version+1,updated_at=now()
       WHERE id=$1 AND version=$2 AND current_revision=$3 AND work_round=$4
         AND workflow_epoch=$5::bigint AND lane_epoch=$6::bigint AND state=$11
-      RETURNING version`,
+      RETURNING version,workflow_epoch`,
     [candidate.id, candidate.version, candidate.currentRevision, candidate.workRound,
       candidate.workflowEpoch, candidate.laneEpoch, execution.id, nextCandidateState,
       approved, input.summary, candidate.state],
@@ -468,7 +468,7 @@ async function resolveIntegrationV3Execution(
     candidateRevision: candidate.currentRevision,
     candidateHeadOid: candidate.headOid,
     candidateWorkRound: candidate.workRound,
-    workflowEpoch: candidate.workflowEpoch,
+    workflowEpoch: String(candidateUpdate.rows[0]!.workflow_epoch),
     laneEpoch: candidate.laneEpoch,
   });
   return loadTask(options, client, task.id);

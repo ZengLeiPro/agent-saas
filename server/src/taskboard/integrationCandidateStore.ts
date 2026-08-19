@@ -205,6 +205,32 @@ export class IntegrationCandidateStore {
             'TASKBOARD_CANDIDATE_SOURCE_REPOSITORY_MISMATCH',
           );
         }
+        const ownership = await client.query(
+          `SELECT s.integration_task_id,s.delivery_task_id,s.repository_id,s.provider_pull_request_id,
+                  s.reviewed_subject_digest,d.version AS delivery_task_version,d.board_id,
+                  d.head_oid,d.base_oid,it.board_id AS integration_board_id
+             FROM ${this.options.integrationSourcesTable} s
+             JOIN ${this.options.tasksTable} d ON d.id=s.delivery_task_id
+             JOIN ${this.options.tasksTable} it ON it.id=s.integration_task_id
+            WHERE s.id=$1 FOR UPDATE OF s,d`,
+          [source.integrationSourceId],
+        );
+        const row = ownership.rows[0];
+        if (!row
+          || String(row.integration_task_id) !== candidate.integrationTaskId
+          || String(row.delivery_task_id) !== source.deliveryTaskId
+          || String(row.repository_id) !== candidate.repositoryId
+          || String(row.provider_pull_request_id) !== source.providerPullRequestId
+          || String(row.reviewed_subject_digest) !== source.reviewedSubjectDigest
+          || Number(row.delivery_task_version) !== source.deliveryTaskVersion
+          || String(row.board_id) !== String(row.integration_board_id)
+          || String(row.head_oid) !== source.frozenHeadOid
+          || String(row.base_oid) !== source.frozenBaseOid) {
+          throw new TaskboardValidationError(
+            'Source snapshot does not belong to this candidate or no longer matches its frozen delivery source',
+            'TASKBOARD_CANDIDATE_SOURCE_OWNERSHIP_MISMATCH',
+          );
+        }
       }
       const revision = candidate.currentRevision + 1;
       const sourceSetDigest = computeIntegrationSourceSetDigest(input.sources);
@@ -221,10 +247,10 @@ export class IntegrationCandidateStore {
       });
       await client.query(
         `INSERT INTO ${this.revisionsTable}
-          (candidate_id,revision,digest_version,base_oid,head_oid,tree_oid,source_set_digest,
+          (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,source_set_digest,
            subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round,
            work_execution_id,review_execution_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+         VALUES ($1,$2,$3,$4,$5,'provider_subject',$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [
           candidate.id, revision, INTEGRATION_CANDIDATE_DIGEST_VERSION,
           required(input.baseOid, 'baseOid'), required(input.headOid, 'headOid'), required(input.treeOid, 'treeOid'),

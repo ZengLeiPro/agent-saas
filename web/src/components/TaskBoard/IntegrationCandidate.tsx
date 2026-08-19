@@ -7,6 +7,7 @@ import type {
 } from "@agent/shared/types/taskboard";
 import { GitBranch, LoaderCircle, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import * as api from "./api";
 import { IntegrationSourceDetails, useIntegrationSources } from "./IntegrationSources";
 
@@ -43,7 +44,8 @@ function phaseFromState(state: TaskBoardIntegrationCandidateState): TaskBoardInt
 function phaseFromDetails(details: TaskBoardIntegrationCandidateDetails): TaskBoardIntegrationCandidatePhase {
   if (details.phase) return details.phase;
   if (details.operations?.some((operation) => operation.state === "unknown")) return "unknown";
-  if (details.worker?.error) return "blocked";
+  if (details.worker?.error || details.cleanup?.outcome === "failed") return "blocked";
+  if (details.candidate.state === "merged" && ["completed", "skipped"].includes(details.cleanup?.outcome ?? "")) return "merged";
   return phaseFromState(details.candidate.state);
 }
 
@@ -165,11 +167,19 @@ export function IntegrationCandidateDetails({
 }) {
   const internal = useIntegrationCandidate(taskId, !state);
   const { details, loading, error } = state ?? internal;
-  const candidate = details?.candidate;
-  const currentRevision = useMemo(() => details?.revisions.find(
+  const [historyDetails, setHistoryDetails] = useState<TaskBoardIntegrationCandidateDetails | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const displayed = historyDetails ?? details;
+  const candidate = displayed?.candidate;
+  const currentRevision = useMemo(() => displayed?.revisions.find(
     (revision) => revision.revision === candidate?.currentRevision,
-  ), [candidate?.currentRevision, details?.revisions]);
+  ), [candidate?.currentRevision, displayed?.revisions]);
   const phase = details ? phaseFromDetails(details) : null;
+  const loadHistory = async (page: number) => {
+    setHistoryLoading(true);
+    try { setHistoryDetails(await api.fetchIntegrationCandidate(taskId, { includeHistory: true, page, pageSize: 10 })); }
+    finally { setHistoryLoading(false); }
+  };
 
   return (
     <section aria-label="Integration v3 Candidate 详情" className="mb-6 space-y-3 rounded-lg border border-blue-300/50 bg-blue-50/30 p-4 dark:bg-blue-950/20">
@@ -187,7 +197,7 @@ export function IntegrationCandidateDetails({
             <div><dt className="text-muted-foreground">branch</dt><dd className="break-all font-mono"><GitBranch className="mr-1 inline size-3" />{candidate.branch}</dd></div>
             <div><dt className="text-muted-foreground">Integration PR</dt><dd className="break-all font-mono">{candidate.providerPullRequestId ?? "尚未创建"}</dd></div>
             <div><dt className="text-muted-foreground">base</dt><dd className="break-all font-mono">{candidate.baseBranch}{currentRevision ? ` @ ${shortOid(currentRevision.baseOid)}` : ""}</dd></div>
-            <div><dt className="text-muted-foreground">head / tree</dt><dd className="break-all font-mono">{currentRevision ? `${shortOid(currentRevision.headOid)} / ${shortOid(currentRevision.treeOid)}` : "尚未冻结 revision"}</dd></div>
+            <div><dt className="text-muted-foreground">head / tree</dt><dd className="break-all font-mono">{currentRevision ? `${shortOid(currentRevision.headOid)} / ${currentRevision.treeOid ? shortOid(currentRevision.treeOid) : "未知"}` : "尚未冻结 revision"}</dd></div>
             <div><dt className="text-muted-foreground">revision</dt><dd>{candidate.currentRevision} · Work round {candidate.workRound}</dd></div>
             <div><dt className="text-muted-foreground">source-set</dt><dd className="break-all font-mono">{currentRevision?.sourceSetDigest ?? candidate.sourceSetDigest ?? "尚未冻结"}</dd></div>
           </dl>
@@ -195,19 +205,35 @@ export function IntegrationCandidateDetails({
             <div className="rounded-md border bg-background/80 p-3">
               <h4 className="text-xs font-semibold">Work 历史</h4>
               <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-                {details?.revisions.filter((revision) => revision.workExecutionId).map((revision) => <li key={`work-${revision.revision}`}>R{revision.revision} · round {revision.workRound} · <span className="font-mono">{revision.workExecutionId}</span></li>)}
-                {!details?.revisions.some((revision) => revision.workExecutionId) ? <li>暂无 Work 记录</li> : null}
+                {displayed?.revisions.filter((revision) => revision.workExecutionId).map((revision) => <li key={`work-${revision.revision}`}>R{revision.revision} · round {revision.workRound} · <span className="font-mono">{revision.workExecutionId}</span></li>)}
+                {!displayed?.revisions.some((revision) => revision.workExecutionId) ? <li>暂无 Work 记录</li> : null}
               </ul>
             </div>
             <div className="rounded-md border bg-background/80 p-3">
               <h4 className="text-xs font-semibold">Review 历史</h4>
               <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-                {details?.revisions.filter((revision) => revision.reviewExecutionId).map((revision) => <li key={`review-${revision.revision}`}>R{revision.revision} · <span className="font-mono">{revision.reviewExecutionId}</span>{candidate.approvedRevision === revision.revision ? " · 已批准" : ""}</li>)}
-                {!details?.revisions.some((revision) => revision.reviewExecutionId) ? <li>暂无 Review 记录</li> : null}
+                {displayed?.revisions.filter((revision) => revision.reviewExecutionId).map((revision) => <li key={`review-${revision.revision}`}>R{revision.revision} · <span className="font-mono">{revision.reviewExecutionId}</span>{candidate.approvedRevision === revision.revision ? " · 已批准" : ""}</li>)}
+                {!displayed?.revisions.some((revision) => revision.reviewExecutionId) ? <li>暂无 Review 记录</li> : null}
               </ul>
             </div>
           </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            {!historyDetails ? <Button type="button" variant="outline" size="sm" disabled={historyLoading} onClick={() => void loadHistory(1)}>{historyLoading ? "加载中..." : "查看历史 revision"}</Button> : null}
+            {historyDetails?.history ? <>
+              <span>历史第 {historyDetails.history.page} 页 · 共 {historyDetails.history.total} 个 revision</span>
+              <Button type="button" variant="outline" size="sm" disabled={historyLoading || historyDetails.history.page <= 1} onClick={() => void loadHistory(historyDetails.history!.page - 1)}>上一页</Button>
+              <Button type="button" variant="outline" size="sm" disabled={historyLoading || !historyDetails.history.hasMore} onClick={() => void loadHistory(historyDetails.history!.page + 1)}>下一页</Button>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setHistoryDetails(null)}>仅看当前 revision</Button>
+            </> : null}
+          </div>
+          {candidate.state === "merged" ? <p className="text-xs font-medium">
+            {details?.cleanup?.outcome === "completed" ? "已合并 · cleanup 已完成"
+              : details?.cleanup?.outcome === "failed" ? `已合并 · cleanup 失败${details.cleanup.reason ? `：${details.cleanup.reason}` : ""}`
+                : details?.cleanup?.outcome === "skipped" ? `已合并 · cleanup 已跳过${details.cleanup.reason ? `：${details.cleanup.reason}` : ""}`
+                  : "已合并 · cleanup 待处理"}
+          </p> : null}
           <p className="text-xs text-muted-foreground">last refreshed：<time dateTime={details?.lastRefreshedAt}>{details?.lastRefreshedAt ? new Date(details.lastRefreshedAt).toLocaleString("zh-CN") : "未知"}</time></p>
+          {details?.worker?.error ? <p className="whitespace-pre-wrap text-xs text-destructive"><TriangleAlert className="mr-1 inline size-3.5" />worker_error：{details.worker.error}</p> : null}
           {candidate.lastError ? <p className="whitespace-pre-wrap text-xs text-destructive"><TriangleAlert className="mr-1 inline size-3.5" />{candidate.lastError}</p> : null}
         </>
       ) : !loading ? <p className="text-sm text-muted-foreground">尚无 Candidate 投影。</p> : null}

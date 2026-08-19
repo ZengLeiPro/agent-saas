@@ -25,6 +25,7 @@ class MemoryHost implements IntegrationV3WorkerHost {
   errors: Array<string | undefined> = [];
   dispatched: IntegrationV3RequestLease[] = [];
   cleanupCalls: IntegrationV3RequestLease[] = [];
+  completedRequests: Array<{ request: IntegrationV3RequestLease; outcome?: string }> = [];
   operationKey?: string;
   async claimCandidate() {
     if (['merged', 'canceled'].includes(this.current.candidate.state) && this.checkpoints.at(-1)?.status === 'requested') return undefined;
@@ -32,14 +33,14 @@ class MemoryHost implements IntegrationV3WorkerHost {
   }
   async loadCurrent() { return structuredClone(this.current); }
   async checkpointCandidate(_lease: unknown, value: Record<string, unknown>) { this.checkpoints.push(value); }
-  async releaseCandidate(_lease: unknown, error?: string) { this.errors.push(error); }
+  async releaseCandidate(_lease: unknown, error?: string, _retryable?: boolean) { this.errors.push(error); }
   async claimRequest() { return this.requests.shift(); }
   async dispatchAgent(request: IntegrationV3RequestLease) { this.dispatched.push(request); }
   async syncWorkspace() {}
   async cleanup(request: IntegrationV3RequestLease) { this.cleanupCalls.push(request); }
-  async completeRequest() {}
+  async completeRequest(request: IntegrationV3RequestLease, outcome?: 'completed' | 'skipped-by-policy' | 'disabled') { this.completedRequests.push({ request, ...(outcome ? { outcome } : {}) }); }
   async releaseRequest() { throw new Error('unexpected request failure'); }
-  async findUnknownMergeOperation() { return this.operationKey; }
+  async findRecoverableMergeOperation() { return this.operationKey; }
 }
 
 function request(kind: 'work'|'review'|'cleanup'): IntegrationV3RequestLease {
@@ -85,22 +86,39 @@ describe('IntegrationV3Worker pure mock flow', () => {
 
     expect(commands).toEqual(['start_compose', 'compose_clean', 'request_review', 'merge_approved', 'reconcile_merge', 'cleanup']);
     expect(host.cleanupCalls).toHaveLength(1);
+    expect(host.completedRequests.at(-1)).toMatchObject({ request: { kind: 'cleanup' }, outcome: 'skipped-by-policy' });
     expect(host.dispatched.every((item) => item.kind === 'work' || item.kind === 'review')).toBe(true);
-    expect(host.errors.every((error) => error === undefined)).toBe(true);
+    expect(host.errors.filter(Boolean)).toEqual(['Provider outcome awaits durable reconciliation']);
   });
 
-  it('fails closed and does not requeue a non-retryable provider/compose error', async () => {
+  it('durably requeues transient compose failures instead of terminally failing the candidate', async () => {
     const host = new MemoryHost();
     host.current.candidate = candidate('composing');
+    const releases: Array<{ error?: string; retryable?: boolean }> = [];
+    host.releaseCandidate = async (_lease: unknown, error?: string, retryable?: boolean) => { releases.push({ ...(error ? { error } : {}), retryable }); };
     const worker = new IntegrationV3Worker({
       host,
       engine: { execute: vi.fn() } as unknown as IntegrationEngineV3,
       composer: {
-        compose: async () => { throw new Error('provider unknown'); },
+        compose: async () => { throw new Error('temporary workspace outage'); },
         refreshAfterWork: async () => undefined,
       },
     });
     await worker.runOnce();
-    expect(host.errors.at(-1)).toBe('provider unknown');
+    expect(releases.at(-1)).toEqual({ error: 'temporary workspace outage', retryable: true });
+  });
+
+  it('recovers a succeeded merge operation after restart without resending merge', async () => {
+    const host = new MemoryHost();
+    host.current.candidate = candidate('merging');
+    host.operationKey = 'succeeded-merge-op';
+    const engine = { execute: vi.fn(async (command: IntegrationEngineV3Command) => ({ candidate: { ...host.current.candidate, state: 'merged' }, status: 'applied' })) } as unknown as IntegrationEngineV3;
+    const worker = new IntegrationV3Worker({
+      host, engine,
+      composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
+    });
+    await worker.runOnce();
+    expect(engine.execute).toHaveBeenCalledWith(expect.objectContaining({ type: 'reconcile_merge', operationKey: 'succeeded-merge-op' }));
+    expect(host.errors.at(-1)).toBeUndefined();
   });
 });

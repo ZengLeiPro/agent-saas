@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  hasEnforcedIntegrationRuntimeIsolation,
   isCredentialIsolatedTaskboardRuntime,
   stripTaskboardWritableGitCredentials,
 } from './runtimeCredentialPolicy.js';
@@ -27,13 +28,16 @@ const writableGitEnv = {
 };
 
 const isolatedEnv = {
-  SAFE_VALUE: 'kept',
-  GIT_TERMINAL_PROMPT: '0',
-  GIT_CONFIG_COUNT: '2',
-  GIT_CONFIG_KEY_0: 'credential.helper',
-  GIT_CONFIG_VALUE_0: '',
-  GIT_CONFIG_KEY_1: 'remote.origin.pushurl',
-  GIT_CONFIG_VALUE_1: 'disabled://taskboard-provider-only',
+  SAFE_VALUE: 'kept', HOME: '/nonexistent/taskboard-integration-runtime',
+  XDG_CONFIG_HOME: '/nonexistent/taskboard-integration-runtime/config',
+  GH_CONFIG_DIR: '/nonexistent/taskboard-integration-runtime/gh',
+  GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0',
+  KY_TASKBOARD_NETWORK_POLICY: 'provider-read-only', KY_TASKBOARD_NETWORK_POLICY_REQUIRED: '1',
+  GIT_CONFIG_COUNT: '4',
+  GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '',
+  GIT_CONFIG_KEY_1: 'remote.origin.pushurl', GIT_CONFIG_VALUE_1: 'disabled://taskboard-provider-only',
+  GIT_CONFIG_KEY_2: 'core.hooksPath', GIT_CONFIG_VALUE_2: '/dev/null',
+  GIT_CONFIG_KEY_3: 'protocol.allow', GIT_CONFIG_VALUE_3: 'never',
 };
 
 describe('taskboard runtime credential policy', () => {
@@ -76,6 +80,17 @@ describe('taskboard runtime credential policy', () => {
       taskboardIntegration: true,
       taskboardIntegrationRole: 'work',
     })).toBe(false);
+  });
+
+  it('reports isolation capability only when every platform enforcement is present', () => {
+    expect(hasEnforcedIntegrationRuntimeIsolation({ taskboardRuntimeIsolation: {
+      isolatedHome: true, credentialsUnmounted: true, gitCommonDirUnmounted: true,
+      networkPolicyEnforced: true, networkPolicyMode: 'provider-read-only',
+    } })).toBe(true);
+    expect(hasEnforcedIntegrationRuntimeIsolation({ taskboardRuntimeIsolation: {
+      isolatedHome: true, credentialsUnmounted: true, gitCommonDirUnmounted: true,
+      networkPolicyEnforced: false, networkPolicyMode: 'provider-read-only',
+    } })).toBe(false);
   });
 
   it('keeps ordinary implementation work credentials available', () => {

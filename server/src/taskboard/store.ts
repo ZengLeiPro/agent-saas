@@ -261,10 +261,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
    * and workflow eligibility through the store's public task access path.
    */
   getIntegrationCandidate(
-    identity: TaskboardIdentity,
-    integrationTaskId: string,
+    identity: TaskboardIdentity, integrationTaskId: string,
+    options?: { includeHistory?: boolean; page?: number; pageSize?: number },
   ) {
-    return loadIntegrationCandidateProjection(this, identity, integrationTaskId);
+    return loadIntegrationCandidateProjection(this, identity, integrationTaskId, options);
   }
 
   resumeBlockedTask(

@@ -37,7 +37,9 @@ import { TaskboardExecutionCoordinator, createTaskboardRuntimeOptions } from '..
 import { RetryableTaskboardService } from '../taskboard/retryableService.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import { configureTaskboardGithubRepositoryProvider } from '../taskboard/repositoryRuntime.js';
-import { startRuntimeTaskboardIntegrationV3, type RuntimeTaskboardIntegrationV3 } from './runtimeTaskboardIntegrationV3.js';
+import { buildRuntimeTaskboardIntegrationV3Options, startRuntimeTaskboardIntegrationV3, type RuntimeTaskboardIntegrationV3 } from './runtimeTaskboardIntegrationV3.js';
+import { createIntegrationV3HealthProvider } from '../taskboard/integrationV3Observability.js';
+import { createIntegrationV3RequeueHandler } from '../taskboard/integrationV3Repair.js';
 import type { TaskboardService } from '../taskboard/types.js';
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import { MEMORY_CONSOLIDATION_DEFAULTS, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
@@ -616,7 +618,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let taskboardService: TaskboardService | undefined;
   let taskboardStoreService: RetryableTaskboardService | undefined;
   let rawTaskboardStore: PgTaskboardStore | undefined, taskboardExecutionCoordinator: TaskboardExecutionCoordinator | undefined;
-  let integrationV3Runtime: RuntimeTaskboardIntegrationV3 | undefined, taskboardRepositoryProvider: ReturnType<typeof configureTaskboardGithubRepositoryProvider>;
+  let integrationV3Runtime: RuntimeTaskboardIntegrationV3 | undefined, taskboardRepositoryProvider: ReturnType<typeof configureTaskboardGithubRepositoryProvider>, integrationV3GatewayHealthy = false;
   let pgArtifactStore: PgArtifactStore | undefined;
   let systemMetricsStore: PgSystemMetricsStore | undefined;
   let systemMetricsCollector: SystemMetricsCollector | undefined;
@@ -1517,7 +1519,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     connectionStore: connectorConnectionStore,
     vault: secretVault,
     onError: (error) => serverLogger.warn(`Taskboard GitHub credential resolve failed: ${error.message}`),
-  });
+  }, config.integrationV3ControlPlane?.githubTokenMode);
   const initialMemoryIndexService = createMemoryIndexService(
     processCwd,
     config.memory?.index,
@@ -2073,7 +2075,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         logger: serverLogger.child('TaskboardExecution') });
     }
     if (enableSchedulerWorker && rawTaskboardStore && taskboardExecutionCoordinator && taskboardRepositoryProvider)
-      integrationV3Runtime = startRuntimeTaskboardIntegrationV3({ store: rawTaskboardStore, executionCoordinator: taskboardExecutionCoordinator, repositoryProvider: taskboardRepositoryProvider, processCwd, agentCwd });
+      integrationV3GatewayHealthy = config.integrationV3ControlPlane?.enabled === true && config.integrationV3ControlPlane.runtimeIsolationEnforced === true && !!userStore, integrationV3Runtime = startRuntimeTaskboardIntegrationV3(buildRuntimeTaskboardIntegrationV3Options({ store: rawTaskboardStore, executionCoordinator: taskboardExecutionCoordinator, repositoryProvider: taskboardRepositoryProvider, processCwd, agentCwd, connectionStore: connectorConnectionStore, vault: secretVault, ...(config.integrationV3ControlPlane ? { control: config.integrationV3ControlPlane } : {}), ...(userStore ? { userStore } : {}) }));
     const getRuntimeSchedulerCapacitySnapshot = async () => {
       const persisted = await runtimeSchedulerConfigStore!.get();
       const effective = effectiveMaxConcurrentRuns(
@@ -3085,6 +3087,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     taskboardService,
     taskboardExecutionService: taskboardExecutionCoordinator,
     integrationV3WorkerShutdown: integrationV3Runtime ? () => integrationV3Runtime.stop() : undefined,
+    getIntegrationV3Health: rawTaskboardStore ? createIntegrationV3HealthProvider(rawTaskboardStore, async () => ({ enabled: config.integrationV3ControlPlane?.enabled === true, healthy: integrationV3GatewayHealthy && !!integrationV3Runtime, ...(!config.integrationV3ControlPlane?.enabled ? { reason: 'control_plane_disabled' } : !integrationV3Runtime ? { reason: 'worker_unavailable' } : {}) })) : undefined,
+    requeueIntegrationV3Candidate: rawTaskboardStore ? createIntegrationV3RequeueHandler(rawTaskboardStore) : undefined,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },
     agentOptionsConfig,
@@ -3094,20 +3098,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     governanceAuditStore,
     membershipStore,
     entitlementStore,
-    directoryGroupStore, oauthGrantStore, assignmentStore,
-    credentialStore,
-    connectorCatalogStore,
+    directoryGroupStore,
+    oauthGrantStore,
+    assignmentStore,
+    credentialStore, connectorCatalogStore,
     environmentStore,
     agentResourceStore,
     skillGovernanceStore,
-    governanceChangeJobStore,
-    governanceChangePlanner,
-    governanceMigrationControlStore,
-    governanceWriteGate,
-    governanceShadowComparator,
-    contentAccessGrantStore,
-    governanceProjectionOutboxStore,
-    governanceProjectionReconciler,
+    governanceChangeJobStore, governanceChangePlanner, governanceMigrationControlStore,
+    governanceWriteGate, governanceShadowComparator, contentAccessGrantStore,
+    governanceProjectionOutboxStore, governanceProjectionReconciler,
     resourceReferenceStore,
     credentialBroker,
     flushGovernanceShadowProjections,

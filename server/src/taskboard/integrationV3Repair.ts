@@ -1,5 +1,8 @@
 import type { PoolClient } from 'pg';
 
+import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
+import type { TaskboardIdentity } from './types.js';
+
 export const INTEGRATION_V3_ACTIVE_EXECUTION_STATUSES = ['queued', 'running', 'waiting_user', 'waiting_approval'] as const;
 export const INTEGRATION_V3_TERMINAL_TASK_STATUSES = ['done', 'canceled'] as const;
 export const INTEGRATION_V3_TERMINAL_CANDIDATE_STATES = ['merged', 'canceled'] as const;
@@ -44,6 +47,13 @@ export interface IntegrationV3RepairScanOptions {
 export interface IntegrationV3RepairApplyResult {
   finding: IntegrationV3RepairFinding;
   outcome: 'repaired' | 'needs_human' | 'no_longer_present';
+}
+
+export interface IntegrationV3RequeueResult {
+  candidateId: string;
+  taskId: string;
+  previousError: string;
+  status: 'idle';
 }
 
 type Queryable = Pick<PoolClient, 'query'>;
@@ -241,6 +251,63 @@ export async function applyIntegrationV3Repair(
     return { finding, outcome: result.rows[0] ? 'repaired' : 'no_longer_present' };
   }
   return { finding, outcome: 'needs_human' };
+}
+
+/**
+ * Explicit operator requeue for a permanently failed candidate. The caller owns the transaction
+ * and authorization; the state change and task audit record are written through the same client.
+ */
+export async function requeueFailedIntegrationV3Candidate(
+  db: Queryable,
+  tables: Pick<IntegrationV3RepairTables, 'candidates'> & { changes: string },
+  input: { taskId: string; actorId: string; reason: string },
+): Promise<IntegrationV3RequeueResult | undefined> {
+  const result = await db.query(
+    `WITH failed AS (
+       SELECT id,worker_error FROM ${tables.candidates}
+        WHERE integration_task_id=$1 AND worker_status='failed'
+          AND worker_lease_id IS NULL AND state NOT IN ('merged','canceled')
+        FOR UPDATE
+     )
+     UPDATE ${tables.candidates} c
+        SET worker_status='idle',worker_error=NULL,worker_lease_id=NULL,worker_lease_expires_at=NULL,
+            worker_checkpoint=COALESCE(c.worker_checkpoint,'{}'::jsonb)||jsonb_build_object(
+              'requeuedAt',now(),'requeuedBy',$2::text,'requeueReason',$3::text),updated_at=now()
+       FROM failed WHERE c.id=failed.id
+      RETURNING c.id,c.integration_task_id,failed.worker_error AS previous_error`,
+    [input.taskId, input.actorId, input.reason],
+  );
+  const row = result.rows[0];
+  if (!row) return undefined;
+  const previousError = String(row.previous_error ?? 'unknown worker failure');
+  await db.query(
+    `INSERT INTO ${tables.changes}(task_id,change_type,actor_type,actor_id,payload,tombstone)
+     VALUES ($1,'integration.v3.worker_requeued','user',$2,$3::jsonb,false)`,
+    [input.taskId, input.actorId, JSON.stringify({ candidateId: String(row.id), reason: input.reason, previousError })],
+  );
+  return { candidateId: String(row.id), taskId: String(row.integration_task_id), previousError, status: 'idle' };
+}
+
+export function createIntegrationV3RequeueHandler(store: {
+  pool: { connect(): Promise<PoolClient> };
+  integrationSourcesTable: string;
+  changesTable: string;
+}) {
+  const candidates = integrationCandidateTableNames(store.integrationSourcesTable).candidatesTable;
+  return async (input: { identity: TaskboardIdentity; taskId: string; reason: string }) => {
+    const client = await store.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await requeueFailedIntegrationV3Candidate(client, { candidates, changes: store.changesTable }, {
+        taskId: input.taskId, actorId: input.identity.ownerUserId, reason: input.reason,
+      });
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
+  };
 }
 
 /** Ownership changes are always fenced by a fresh epoch, for both acquire and release. */

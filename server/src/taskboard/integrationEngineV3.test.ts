@@ -59,17 +59,25 @@ function setup(state: TaskBoardIntegrationCandidate['state'], providerFacts = fa
   const requests = { requestWork: vi.fn(async () => ({ requestId: 'work-request' })), requestReview: vi.fn(async () => ({ requestId: 'review-request' })), requestWorkspaceSync: vi.fn(async () => ({ requestId: 'sync-request' })), requestCleanup: vi.fn(async () => ({ requestId: 'cleanup-request' })) };
   let currentFacts = providerFacts;
   const merge = vi.fn(async () => ({ providerRequestId: 'merge-request' }));
-  const reconcileMerge = vi.fn(async () => ({ status: 'succeeded' as const, receipt: { providerRequestId: 'merge-request' } }));
+  const reconcileMerge = vi.fn(async () => ({ status: 'succeeded' as const, receipt: { providerPullRequestId: '42', mergedCommitOid: 'commit-1', mergedTreeOid: 'tree-1' } }));
+  const getFlags = vi.fn(async () => ({ enabled: true, composeEnabled: true, reviewEnabled: true, mergeEnabled: true, cleanupEnabled: true, workspaceSyncEnabled: true }));
   const engine = new IntegrationEngineV3({
     candidates, providerOperations: new IntegrationProviderOperationService(operations, { assertCurrent: async () => undefined }),
     provider: { readFacts: async () => structuredClone(currentFacts), merge, reconcileMerge },
-    features: { getFlags: async () => ({ enabled: true, composeEnabled: true, reviewEnabled: true, mergeEnabled: true, cleanupEnabled: true, workspaceSyncEnabled: true }) }, requests,
+    features: { getFlags }, requests,
     resolveRepository: async () => repository, credentialOwnerId: 'owner-1',
   });
-  return { engine, candidates, operations, requests, merge, reconcileMerge, setFacts(value: IntegrationEngineV3ProviderFacts) { currentFacts = value; } };
+  return { engine, candidates, operations, requests, merge, reconcileMerge, getFlags, setFacts(value: IntegrationEngineV3ProviderFacts) { currentFacts = value; } };
 }
 
 describe('IntegrationEngineV3', () => {
+  it('loads frozen feature flags by candidate identity, never by repository history', async () => {
+    const value = candidate('waiting_checks');
+    const { engine, getFlags } = setup('waiting_checks');
+    await engine.execute({ type: 'request_review', candidateId: value.id, expected: expected(value) });
+    expect(getFlags).toHaveBeenCalledWith('candidate-1');
+  });
+
   it('rejects a stale subject fence before dispatching any side effect', async () => {
     const { engine, requests } = setup('waiting_checks');
     const stale = { ...expected(candidate('waiting_checks')), headOid: 'stale-head' };

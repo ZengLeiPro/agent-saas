@@ -202,6 +202,21 @@ describe('health router', () => {
     expect(await response.json()).toMatchObject({ status: 'not_ready', integrationV3: { releaseReady: false } });
   });
 
+  it('fails readiness closed when integration v3 PostgreSQL metrics are unavailable', async () => {
+    const server = await startHealthServer({
+      getIntegrationV3Health: async () => { throw new Error('integration metrics db unavailable'); },
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      status: 'not_ready',
+      integrationV3: { releaseReady: false, reasons: ['metrics_unavailable'] },
+      error: 'integration metrics db unavailable',
+    });
+  });
+
   it('defaults warmup to done when no status provider is wired', async () => {
     const server = await startHealthServer({});
     servers.push(server);

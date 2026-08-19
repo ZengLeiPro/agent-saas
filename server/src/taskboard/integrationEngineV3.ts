@@ -83,7 +83,10 @@ export interface IntegrationEngineV3Flags {
   cleanupEnabled: boolean;
   workspaceSyncEnabled?: boolean;
 }
-export interface IntegrationEngineV3FeatureHost { getFlags(repositoryId: string): Promise<IntegrationEngineV3Flags>; }
+export interface IntegrationEngineV3FeatureHost {
+  /** Candidate policy flags are immutable for the lifetime of this candidate. Dynamic operational freezes belong outside the engine. */
+  getFlags(candidateId: string): Promise<IntegrationEngineV3Flags>;
+}
 
 export interface IntegrationEngineV3RequestHost {
   /** Requests are durable, idempotent by their complete subject tuple, and dispatch-time fenced. */
@@ -142,7 +145,7 @@ export class IntegrationEngineV3 {
   async execute(command: IntegrationEngineV3Command): Promise<IntegrationEngineV3Result> {
     const current = await this.options.candidates.getCurrent(command.candidateId);
     assertExpected(current, command.expected);
-    const flags = await this.options.features.getFlags(current.candidate.repositoryId);
+    const flags = await this.options.features.getFlags(current.candidate.id);
     // A global freeze stops new work/provider writes, but must never prevent reconciliation or cancellation.
     if (!flags.enabled && !['reconcile_merge', 'cancel', 'needs_human'].includes(command.type)) {
       throw failClosed('Integration Engine v3 is disabled', 'TASKBOARD_INTEGRATION_V3_DISABLED');
@@ -233,7 +236,10 @@ export class IntegrationEngineV3 {
     });
     const merging = current.candidate.state === 'merging' ? current.candidate : await this.transition(current, 'merging');
     const repository = await this.repository(current.candidate.repositoryId);
-    const completed = await this.options.providerOperations.execute(operationKey, () => this.options.provider.merge(repository, { providerPullRequestId: requiredPr(current.candidate), expectedHeadOid: revision.headOid, method: current.candidate.mergeMethod, operationKey }, this.options.credentialOwnerId));
+    const completed = await this.options.providerOperations.execute(operationKey, async () => {
+      const receipt = await this.options.provider.merge(repository, { providerPullRequestId: requiredPr(current.candidate), expectedHeadOid: revision.headOid, method: current.candidate.mergeMethod, operationKey }, this.options.credentialOwnerId);
+      return { ...receipt, providerPullRequestId: requiredPr(current.candidate) };
+    });
     if (completed.state !== 'succeeded') return { candidate: merging, status: 'provider_unknown', operation: completed };
     return this.finishMerge({ candidate: merging, revision }, completed);
   }

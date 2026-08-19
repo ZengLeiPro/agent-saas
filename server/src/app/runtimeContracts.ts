@@ -247,6 +247,14 @@ export interface AppRuntime {
   taskboardExecutionService?: TaskboardExecutionService;
   /** Stops the durable Integration v3 poller and waits for its current lease handler. */
   integrationV3WorkerShutdown?: () => Promise<void>;
+  /** Live PostgreSQL-backed Integration v3 release gate used by /healthz/ready. */
+  getIntegrationV3Health?: () => Promise<import('../taskboard/integrationV3Observability.js').IntegrationV3HealthStatus>;
+  /** Audited maintainer recovery entrypoint for a permanently failed Integration v3 worker. */
+  requeueIntegrationV3Candidate?: (input: {
+    identity: import('../taskboard/types.js').TaskboardIdentity;
+    taskId: string;
+    reason: string;
+  }) => Promise<import('../taskboard/integrationV3Repair.js').IntegrationV3RequeueResult | undefined>;
   /**
    * 门禁模型配置链 getter（主 + fallback）。空数组 = 门禁模块未激活。
    * WebChannel 持有同一 getter——热更后取到的永远是最新链。

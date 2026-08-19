@@ -10,12 +10,20 @@ export function configureTaskboardGithubRepositoryProvider(
   store: Pick<PgTaskboardStore, 'setRepositoryProvider'> | undefined,
   userStore: Pick<UserStore, 'findById'> | undefined,
   githubContext: Parameters<typeof resolveGithubToken>[0],
+  tokenMode?: 'github_app' | 'restricted_pat',
 ): RepositoryProvider | undefined {
   if (!store) return undefined;
   const provider = new GithubRepositoryProvider({
-    resolveToken: async (_repository, credentialOwnerId) => {
+    resolveToken: async (repository, credentialOwnerId) => {
       const user = userStore?.findById(credentialOwnerId);
       if (!user || user.disabled) return undefined;
+      const mode = tokenMode;
+      // v3 write credentials are repository-bound by deployment mode. App mode only
+      // accepts immutable numeric GitHub ids; PAT is an explicit compatibility mode.
+      if (mode === 'github_app' && !/^github-id:\d+$/.test(repository.repositoryId)) return undefined;
+      if (mode === 'restricted_pat'
+        && repository.repositoryId.toLowerCase() !== `github:${repository.owner}/${repository.name}`.toLowerCase()) return undefined;
+      if (mode !== 'github_app' && mode !== 'restricted_pat') return undefined;
       return resolveGithubToken(githubContext, {
         userId: user.id,
         username: user.username,

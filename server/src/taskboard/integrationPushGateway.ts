@@ -9,6 +9,12 @@ import {
   type IntegrationPushCapabilityBinding,
 } from './integrationPushCapability.js';
 import type { AuthoritativeIntegrationPushTarget } from './integrationPushCapabilityPostgres.js';
+import {
+  IntegrationProviderOperationService,
+  integrationProviderOperationKey,
+  type IntegrationProviderOperationFence,
+  type IntegrationProviderOperationRecord,
+} from './integrationProviderOperations.js';
 
 const execFileAsync = promisify(execFile);
 const OID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
@@ -33,14 +39,24 @@ export interface IntegrationPushGatewayOptions {
     tenantId: string;
     repositoryId: string;
     ownerUserId: string;
+    candidateId: string;
   }): Promise<IntegrationPushRepositoryAccess | undefined>;
   /** Server-side connector read. The returned token is never copied to runtime metadata. */
   resolveGithubToken(input: {
     tenantId: string;
     ownerUserId: string;
     repositoryId: string;
-  }): Promise<string | undefined>;
+  }): Promise<IntegrationPushCredential | undefined>;
+  /** Required for every production write. Missing ledger keeps health fail-closed. */
+  operationService?: IntegrationProviderOperationService;
   runner?: IntegrationPushGitRunner;
+}
+
+export interface IntegrationPushCredential {
+  token: string;
+  mode: 'github_app' | 'restricted_pat';
+  /** Immutable GitHub numeric repository id for App mode; exact owner/name identity for PAT mode. */
+  repositoryId: string;
 }
 
 export interface IntegrationPushGitRunner {
@@ -88,6 +104,7 @@ export class IntegrationPushGateway {
 
   async health(): Promise<{ enabled: boolean; healthy: boolean; reason?: string }> {
     if (this.options.enabled !== true) return { enabled: false, healthy: false, reason: 'disabled' };
+    if (!this.options.operationService) return { enabled: true, healthy: false, reason: 'durable_operation_ledger_unavailable' };
     if (this.options.allowedWorktreeRoots.length === 0) {
       return { enabled: true, healthy: false, reason: 'no_allowed_worktree_roots' };
     }
@@ -154,6 +171,7 @@ export class IntegrationPushGateway {
       tenantId: target.binding.tenantId,
       repositoryId: target.binding.repositoryId,
       ownerUserId: target.ownerUserId,
+      candidateId: target.binding.candidateId,
     });
     if (!repository) throw new IntegrationPushGatewayError('worktree_unavailable', true);
     const cwd = await this.resolveControlledWorktree(repository.worktreePath);
@@ -165,9 +183,11 @@ export class IntegrationPushGateway {
       ownerUserId: target.ownerUserId,
       repositoryId: target.binding.repositoryId,
     });
-    if (!token) throw new IntegrationPushGatewayError('credential_unavailable', true);
+    if (!token || !credentialMatchesRepository(token, target.binding.repositoryId)) {
+      throw new IntegrationPushGatewayError('credential_unavailable', false);
+    }
 
-    await this.withAskpass(token, async (env) => {
+    await this.withAskpass(token.token, async (env) => {
       const remoteOld = await this.runner.run({
         cwd,
         args: ['ls-remote', '--refs', repository.remoteUrl, target.binding.exactRef],
@@ -206,6 +226,59 @@ export class IntegrationPushGateway {
     return { pushed: true, candidateId: input.candidateId, commitOid: input.commitOid };
   }
 
+  /** Trusted compose boundary. Every write is first persisted as an exact semantic
+   * intent. An executing/unknown intent is never pushed again and can only perform
+   * authenticated ls-remote read-back reconciliation. */
+  async pushExact(input: {
+    tenantId: string; ownerUserId: string; repositoryId: string; integrationTaskId: string;
+    candidateId: string; revision: number; exactRef: string; expectedOldOid: string; newOid: string;
+    fence: IntegrationProviderOperationFence;
+  }): Promise<void> {
+    await this.assertHealthy();
+    if (!OID.test(input.expectedOldOid) || !OID.test(input.newOid)) throw new IntegrationPushGatewayError('invalid_commit', false);
+    const repository = await this.options.resolveRepository({
+      tenantId: input.tenantId, repositoryId: input.repositoryId, ownerUserId: input.ownerUserId,
+      candidateId: input.candidateId,
+    });
+    if (!repository) throw new IntegrationPushGatewayError('worktree_unavailable', true);
+    validateRemote(repository.remoteUrl);
+    const cwd = await this.resolveControlledWorktree(repository.worktreePath);
+    await this.assertCommitGraph(cwd, input.expectedOldOid, input.newOid);
+    const credential = await this.options.resolveGithubToken({
+      tenantId: input.tenantId, ownerUserId: input.ownerUserId, repositoryId: input.repositoryId,
+    });
+    if (!credential || !credentialMatchesRepository(credential, input.repositoryId)) {
+      throw new IntegrationPushGatewayError('credential_unavailable', false);
+    }
+    const operationKey = integrationProviderOperationKey({
+      repositoryId: input.repositoryId, candidateId: input.candidateId,
+      candidateRevision: input.revision, kind: 'push_ref', target: input.exactRef,
+    });
+    const service = this.options.operationService!;
+    const operation = await service.prepare({
+      operationKey, kind: 'push_ref', repositoryId: input.repositoryId, fence: input.fence,
+      expected: { ref: input.exactRef, oldOid: input.expectedOldOid, newOid: input.newOid },
+      command: { ref: input.exactRef, oldOid: input.expectedOldOid, newOid: input.newOid },
+    });
+    await this.withAskpass(credential.token, async (env) => {
+      if (operation.state === 'unknown' || operation.state === 'executing') {
+        const reconciled = await service.reconcile(operationKey, (record) => this.reconcileExactRef(record, cwd, repository.remoteUrl, env));
+        if (reconciled.state !== 'succeeded') throw new IntegrationPushGatewayError('push_failed_unknown', false);
+        return;
+      }
+      const remoteOld = await this.readExactRemoteRef(cwd, repository.remoteUrl, input.exactRef, env);
+      if (remoteOld !== input.expectedOldOid) throw new IntegrationPushGatewayError('remote_old_mismatch', true);
+      const completed = await service.execute(operationKey, async () => {
+        await this.runner.run({
+          cwd, args: ['push', `--force-with-lease=${input.exactRef}:${input.expectedOldOid}`, '--',
+            repository.remoteUrl, `${input.newOid}:${input.exactRef}`], env, redactOutput: true,
+        });
+        return { ref: input.exactRef, oldOid: input.expectedOldOid, newOid: input.newOid };
+      });
+      if (completed.state !== 'succeeded') throw new IntegrationPushGatewayError('push_failed_unknown', false);
+    });
+  }
+
   async cancel(input: {
     tenantId: string;
     executionId: string;
@@ -224,6 +297,28 @@ export class IntegrationPushGateway {
       workflowEpoch: target.binding.workflowEpoch,
       enabled: false,
     }, input.reason || 'integration execution cancelled');
+  }
+
+  private async readExactRemoteRef(cwd: string, remoteUrl: string, exactRef: string, env: Record<string, string>): Promise<string | undefined> {
+    const result = await this.runner.run({ cwd, args: ['ls-remote', '--refs', remoteUrl, exactRef], env, redactOutput: true });
+    if (!result.stdout.trim()) return undefined;
+    const fields = result.stdout.trim().split(/\s+/);
+    if (fields.length !== 2 || fields[1] !== exactRef || !OID.test(fields[0]!)) throw new Error('invalid remote ref response');
+    return fields[0];
+  }
+
+  private async reconcileExactRef(
+    operation: IntegrationProviderOperationRecord,
+    cwd: string,
+    remoteUrl: string,
+    env: Record<string, string>,
+  ) {
+    const ref = String(operation.expected.ref ?? '');
+    const expectedNew = String(operation.expected.newOid ?? '');
+    const actual = await this.readExactRemoteRef(cwd, remoteUrl, ref, env);
+    if (actual === expectedNew) return { status: 'succeeded' as const, receipt: { ref, newOid: actual, reconciled: true } };
+    if (!actual) return { status: 'not_found' as const, detail: 'Exact remote ref is not visible' };
+    return { status: 'mismatch' as const, detail: 'Exact remote ref points to an unexpected OID', evidence: { ref, actualOid: actual, expectedNew } };
   }
 
   private async assertHealthy(): Promise<void> {
@@ -323,11 +418,21 @@ function sameBinding(a: IntegrationPushCapabilityBinding, b: IntegrationPushCapa
     && a.workflowEpoch === b.workflowEpoch;
 }
 
+function credentialMatchesRepository(credential: IntegrationPushCredential, configuredRepositoryId: string): boolean {
+  if (!credential.token || !credential.repositoryId) return false;
+  if (credential.mode === 'github_app') return /^github-id:\d+$/.test(configuredRepositoryId)
+    && credential.repositoryId === configuredRepositoryId;
+  return credential.mode === 'restricted_pat' && /^github:[^/]+\/[^/]+$/.test(configuredRepositoryId)
+    && credential.repositoryId.toLowerCase() === configuredRepositoryId.toLowerCase();
+}
+
 function validateRemote(value: string): void {
   try {
     const parsed = new URL(value);
-    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash
-      || !['github.com', 'www.github.com'].includes(parsed.hostname.toLowerCase())) throw new Error('forbidden');
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash || parsed.search || parsed.port
+      || parsed.hostname.toLowerCase() !== 'github.com'
+      || !/^\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\.git$/.test(parsed.pathname)
+      || /%2f|%5c/i.test(parsed.pathname)) throw new Error('forbidden');
   } catch {
     throw new IntegrationPushGatewayError('remote_forbidden', false);
   }

@@ -416,7 +416,9 @@ export interface TaskBoardIntegrationCandidateRevision {
   digestVersion: TaskBoardIntegrationCandidateDigestVersion;
   baseOid: string;
   headOid: string;
-  treeOid: string;
+  /** source_seed revisions intentionally have no Git tree; provider_subject revisions always do. */
+  subjectKind?: 'source_seed' | 'provider_subject';
+  treeOid?: string;
   sourceSetDigest: string;
   subjectDigest: string;
   policySnapshotDigest: string;
@@ -458,6 +460,13 @@ export interface TaskBoardIntegrationCandidateDetails {
     updatedAt: string;
   }>;
   worker?: { status: string; checkpoint: Record<string, unknown>; error?: string };
+  cleanup?: {
+    outcome: "pending" | "completed" | "failed" | "skipped";
+    requestStatus: string;
+    reason?: string;
+    updatedAt: string;
+  };
+  history?: { includeHistory: boolean; page: number; pageSize: number; total: number; hasMore: boolean };
   lastRefreshedAt: string;
 }
 

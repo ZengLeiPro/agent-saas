@@ -16,7 +16,6 @@ import { rowToIntegrationSource } from './integrationSourceMapper.js';
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import {
   canonicalJson,
-  computeIntegrationCandidateSubjectDigest,
   computeIntegrationPolicySnapshotDigest,
   computeIntegrationSourceSetDigest,
 } from './integrationCandidateDigest.js';
@@ -333,15 +332,15 @@ export async function createIntegrationBatch(
       // revision 2 before checks/review; it never treats this source-bound seed as a PR fact.
       const bootstrapBaseOid = frozenSources[0]!.frozenBaseOid;
       const bootstrapHeadOid = frozenSources[0]!.frozenHeadOid;
-      const subjectDigest = computeIntegrationCandidateSubjectDigest({
-        repository: { repositoryId: repository.repositoryId, baseBranch: repository.baseBranch! },
+      const subjectDigest = snapshotDigest('taskboard.integration-candidate-source-seed', {
+        repositoryId: repository.repositoryId,
+        baseBranch: repository.baseBranch!,
         baseOid: bootstrapBaseOid,
         headOid: bootstrapHeadOid,
-        treeOid: bootstrapHeadOid,
         sourceSetDigest,
         mergeMethod: policy.execution?.mergeMethod ?? 'squash',
         policyRevision: policy.revision,
-        policySnapshot,
+        policySnapshotDigest,
       });
       const laneEpoch = String(BigInt(String(lane.rows[0].epoch)) + 1n);
       await client.query(
@@ -353,9 +352,9 @@ export async function createIntegrationBatch(
           policy.revision, policy.execution?.mergeMethod ?? 'squash', JSON.stringify(policySnapshot), sourceSetDigest]);
       await client.query(
         `INSERT INTO ${tables.revisionsTable}
-          (candidate_id,revision,digest_version,base_oid,head_oid,tree_oid,source_set_digest,subject_digest,
+          (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,source_set_digest,subject_digest,
            policy_snapshot_digest,policy_revision,merge_method,work_round)
-         VALUES ($1,1,1,$2,$3,$3,$4,$5,$6,$7,$8,0)`,
+         VALUES ($1,1,1,$2,$3,'source_seed',NULL,$4,$5,$6,$7,$8,0)`,
         [candidateId, bootstrapBaseOid, bootstrapHeadOid, sourceSetDigest, subjectDigest,
           policySnapshotDigest, policy.revision, policy.execution?.mergeMethod ?? 'squash']);
       for (const frozen of frozenSources) {
@@ -424,12 +423,15 @@ export async function cancelIntegrationTask(
       const candidate = await client.query(
         `SELECT * FROM ${tables.candidatesTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId]);
       const row = candidate.rows[0];
-      if (!row || ['merged','canceled'].includes(String(row.state))) {
-        throw new TaskboardValidationError('Workflow v3 candidate is already terminal', 'TASKBOARD_CANDIDATE_CANCEL_INVALID');
+      if (!row || ['merging','merged','canceled'].includes(String(row.state))) {
+        throw new TaskboardValidationError(
+          String(row?.state) === 'merging' ? 'A merging candidate must be reconciled before cancellation' : 'Workflow v3 candidate is already terminal',
+          String(row?.state) === 'merging' ? 'TASKBOARD_PROVIDER_RESULT_UNKNOWN' : 'TASKBOARD_CANDIDATE_CANCEL_INVALID',
+        );
       }
       const uncertainV3 = await client.query(
         `SELECT 1 FROM ${tables.providerOperationsTable}
-          WHERE candidate_id=$1 AND state IN ('executing','unknown') LIMIT 1`, [row.id]);
+          WHERE candidate_id=$1 AND kind='merge_pull_request' AND state IN ('executing','unknown','succeeded') LIMIT 1`, [row.id]);
       if (uncertainV3.rows[0]) throw new TaskboardValidationError(
         'Provider result must be reconciled before cancellation', 'TASKBOARD_PROVIDER_RESULT_UNKNOWN');
       const reason = input.reason?.trim() || 'Integration task canceled by user';

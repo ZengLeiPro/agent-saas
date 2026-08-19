@@ -27,14 +27,14 @@ export interface IntegrationV3WorkerHost {
   claimCandidate(leaseMs: number): Promise<IntegrationV3CandidateLease | undefined>;
   loadCurrent(candidateId: string): Promise<IntegrationV3WorkerCurrent>;
   checkpointCandidate(lease: IntegrationV3CandidateLease, checkpoint: Record<string, unknown>): Promise<void>;
-  releaseCandidate(lease: IntegrationV3CandidateLease, error?: string): Promise<void>;
+  releaseCandidate(lease: IntegrationV3CandidateLease, error?: string, retryable?: boolean): Promise<void>;
   claimRequest(leaseMs: number): Promise<IntegrationV3RequestLease | undefined>;
   dispatchAgent(request: IntegrationV3RequestLease): Promise<void>;
   syncWorkspace(request: IntegrationV3RequestLease): Promise<void>;
-  cleanup(request: IntegrationV3RequestLease): Promise<void>;
-  completeRequest(request: IntegrationV3RequestLease): Promise<void>;
+  cleanup(request: IntegrationV3RequestLease): Promise<'completed' | 'skipped-by-policy' | 'disabled' | void>;
+  completeRequest(request: IntegrationV3RequestLease, outcome?: 'completed' | 'skipped-by-policy' | 'disabled'): Promise<void>;
   releaseRequest(request: IntegrationV3RequestLease, error: string, retryable: boolean): Promise<void>;
-  findUnknownMergeOperation(candidateId: string, revision: number): Promise<string | undefined>;
+  findRecoverableMergeOperation(candidateId: string, revision: number): Promise<string | undefined>;
   logger?: { info(message: string): void; warn(message: string): void };
 }
 
@@ -106,10 +106,11 @@ export class IntegrationV3Worker {
 
   private async processRequest(request: IntegrationV3RequestLease): Promise<void> {
     try {
+      let cleanupOutcome: 'completed' | 'skipped-by-policy' | 'disabled' | undefined;
       if (request.kind === 'work' || request.kind === 'review') await this.options.host.dispatchAgent(request);
       else if (request.kind === 'workspace_sync') await this.options.host.syncWorkspace(request);
-      else await this.options.host.cleanup(request);
-      await this.options.host.completeRequest(request);
+      else cleanupOutcome = await this.options.host.cleanup(request) ?? 'skipped-by-policy';
+      await this.options.host.completeRequest(request, cleanupOutcome);
     } catch (error) {
       await this.options.host.releaseRequest(request, message(error), isRetryable(error));
     }
@@ -154,7 +155,7 @@ export class IntegrationV3Worker {
           result = await engine.execute({ type: 'merge_approved', candidateId: lease.candidateId, expected, executionId: `integration-v3-worker:${lease.candidateId}:r${current.candidate.currentRevision}` });
           break;
         case 'merging': {
-          const operationKey = await this.options.host.findUnknownMergeOperation(lease.candidateId, current.candidate.currentRevision);
+          const operationKey = await this.options.host.findRecoverableMergeOperation(lease.candidateId, current.candidate.currentRevision);
           if (operationKey) result = await engine.execute({ type: 'reconcile_merge', candidateId: lease.candidateId, expected, operationKey });
           break;
         }
@@ -171,11 +172,13 @@ export class IntegrationV3Worker {
         status: result?.status ?? 'idle',
         at: new Date().toISOString(),
       });
-      await this.options.host.releaseCandidate(lease);
+      if (result?.status === 'provider_unknown') {
+        await this.options.host.releaseCandidate(lease, 'Provider outcome awaits durable reconciliation', true);
+      } else {
+        await this.options.host.releaseCandidate(lease);
+      }
     } catch (error) {
-      // Unknown provider outcomes and unsupported providers are terminal for this attempt. They are
-      // never converted back to an immediately runnable lease (no blind provider retry).
-      await this.options.host.releaseCandidate(lease, isRetryable(error) ? undefined : message(error));
+      await this.options.host.releaseCandidate(lease, message(error), isRetryable(error));
     }
   }
 }
@@ -207,8 +210,16 @@ function requireRevision(current: IntegrationV3WorkerCurrent): TaskBoardIntegrat
 }
 
 function isRetryable(error: unknown): boolean {
-  if (error && typeof error === 'object' && 'retryable' in error) return (error as { retryable?: unknown }).retryable === true;
+  if (error && typeof error === 'object' && 'retryable' in error) return (error as { retryable?: unknown }).retryable !== false;
   const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code) : '';
-  return ['TASKBOARD_INTEGRATION_V3_DISABLED', 'TASKBOARD_INTEGRATION_KILL_SWITCH', 'TASKBOARD_CANDIDATE_CAS_MISMATCH'].includes(code);
+  const deterministic = new Set([
+    'TASKBOARD_INTEGRATION_PROVIDER_UNSUPPORTED',
+    'TASKBOARD_INTEGRATION_SUBJECT_DRIFT',
+    'TASKBOARD_CANDIDATE_APPROVAL_STALE',
+    'TASKBOARD_CANDIDATE_SOURCE_OWNERSHIP_MISMATCH',
+    'TASKBOARD_CANDIDATE_SOURCE_REPOSITORY_MISMATCH',
+    'TASKBOARD_CANDIDATE_TRANSITION_INVALID',
+  ]);
+  return !deterministic.has(code);
 }
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }

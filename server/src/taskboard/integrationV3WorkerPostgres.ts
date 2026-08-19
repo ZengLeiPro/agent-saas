@@ -32,7 +32,7 @@ export interface IntegrationV3WorkerPostgresOptions {
     purpose: 'work' | 'review';
   }): Promise<void>;
   syncWorkspace(request: IntegrationV3RequestLease): Promise<void>;
-  cleanup(request: IntegrationV3RequestLease): Promise<void>;
+  cleanup(request: IntegrationV3RequestLease): Promise<'completed' | 'skipped-by-policy' | 'disabled' | void>;
   logger?: IntegrationV3WorkerHost['logger'];
 }
 
@@ -44,11 +44,17 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
     const leaseId = randomUUID();
     const result = await this.options.pool.query(
       `WITH claim AS (
-         SELECT id FROM ${this.options.candidatesTable}
-          WHERE worker_status<>'failed'
-            AND (worker_status='idle' OR worker_lease_expires_at<now())
-            AND (state NOT IN ('merged','canceled') OR worker_checkpoint->>'status' IS DISTINCT FROM 'requested')
-          ORDER BY updated_at,id FOR UPDATE SKIP LOCKED LIMIT 1
+         SELECT c.id FROM ${this.options.candidatesTable} c
+         JOIN ${this.options.tasksTable} t ON t.id=c.integration_task_id
+         JOIN ${this.options.boardsTable} b ON b.id=t.board_id
+          WHERE COALESCE(NULLIF(current_setting('agent_saas.integration_v3_enabled',true),'')::boolean,true)
+            AND COALESCE((b.integration_policy->>'enabled')::boolean,false)
+            AND COALESCE((b.integration_policy->>'workflowVersion')::int,2)=3
+            AND COALESCE((b.integration_policy->'featureFlags'->>'engineV3')::boolean,false)
+            AND c.worker_status<>'failed' AND c.worker_available_at<=now()
+            AND (c.worker_status='idle' OR c.worker_lease_expires_at<now())
+            AND (c.state NOT IN ('merged','canceled') OR c.worker_checkpoint->>'status' IS DISTINCT FROM 'requested')
+          ORDER BY c.updated_at,c.id FOR UPDATE OF c SKIP LOCKED LIMIT 1
        )
        UPDATE ${this.options.candidatesTable} c
           SET worker_status='processing',worker_lease_id=$1,
@@ -94,13 +100,21 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
     );
   }
 
-  async releaseCandidate(lease: IntegrationV3CandidateLease, error?: string): Promise<void> {
+  async releaseCandidate(lease: IntegrationV3CandidateLease, error?: string, retryable = false): Promise<void> {
     await this.options.pool.query(
       `UPDATE ${this.options.candidatesTable}
-          SET worker_status=CASE WHEN $3::text IS NULL THEN 'idle' ELSE 'failed' END,
+          SET worker_status=CASE
+                WHEN $3::text IS NULL THEN 'idle'
+                WHEN $4::boolean AND worker_attempts<9 THEN 'idle'
+                ELSE 'failed' END,
+              worker_attempts=CASE WHEN $3::text IS NULL THEN 0 ELSE worker_attempts+1 END,
+              worker_available_at=CASE
+                WHEN $3::text IS NULL THEN now()
+                WHEN $4::boolean THEN now()+(LEAST(worker_attempts+1,10)*interval '5 seconds')
+                ELSE worker_available_at END,
               worker_lease_id=NULL,worker_lease_expires_at=NULL,worker_error=$3
         WHERE id=$1 AND worker_lease_id=$2`,
-      [lease.candidateId, lease.leaseId, error ?? null],
+      [lease.candidateId, lease.leaseId, error ?? null, retryable],
     );
   }
 
@@ -148,11 +162,15 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
   syncWorkspace(request: IntegrationV3RequestLease) { return this.options.syncWorkspace(request); }
   cleanup(request: IntegrationV3RequestLease) { return this.options.cleanup(request); }
 
-  async completeRequest(request: IntegrationV3RequestLease): Promise<void> {
+  async completeRequest(
+    request: IntegrationV3RequestLease,
+    outcome?: 'completed' | 'skipped-by-policy' | 'disabled',
+  ): Promise<void> {
     await this.options.pool.query(
       `UPDATE ${this.options.requestsOutboxTable}
-          SET status='completed',lease_id=NULL,lease_expires_at=NULL,last_error=NULL,updated_at=now()
-        WHERE id=$1 AND lease_id=$2 AND status='processing'`, [request.id, request.leaseId]);
+          SET status='completed',lease_id=NULL,lease_expires_at=NULL,
+              last_error=CASE WHEN $3::text IS NULL OR $3='completed' THEN NULL ELSE $3 END,updated_at=now()
+        WHERE id=$1 AND lease_id=$2 AND status='processing'`, [request.id, request.leaseId, outcome ?? null]);
   }
 
   async releaseRequest(request: IntegrationV3RequestLease, error: string, retryable: boolean): Promise<void> {
@@ -175,11 +193,12 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
     return { repository, credentialOwnerId: String(row.owner_user_id) };
   }
 
-  async findUnknownMergeOperation(candidateId: string, revision: number): Promise<string | undefined> {
+  async findRecoverableMergeOperation(candidateId: string, revision: number): Promise<string | undefined> {
     const result = await this.options.pool.query(
       `SELECT operation_key FROM ${this.options.providerOperationsTable}
         WHERE candidate_id=$1 AND candidate_revision=$2 AND kind='merge_pull_request'
-          AND state IN ('executing','unknown') ORDER BY updated_at DESC LIMIT 1`, [candidateId, revision]);
+          AND state IN ('executing','unknown','succeeded')
+        ORDER BY CASE state WHEN 'succeeded' THEN 0 ELSE 1 END,updated_at DESC LIMIT 1`, [candidateId, revision]);
     return result.rows[0] ? String(result.rows[0].operation_key) : undefined;
   }
 }
@@ -202,7 +221,7 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
 
   async resolveContext(current: Required<IntegrationV3WorkerCurrent>): Promise<IntegrationV3ComposeContext> {
     const result = await this.options.pool.query(
-      `SELECT b.repository,b.owner_user_id,
+      `SELECT b.repository,b.owner_user_id,b.tenant_id,
               (SELECT e.id FROM ${this.options.executionsTable} e WHERE e.task_id=c.integration_task_id
                 AND e.purpose='work' AND e.status='succeeded' ORDER BY e.finished_at DESC NULLS LAST LIMIT 1) AS work_execution_id
          FROM ${this.options.candidatesTable} c JOIN ${this.options.tasksTable} t ON t.id=c.integration_task_id
@@ -216,7 +235,7 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
       `SELECT * FROM ${this.options.sourceSnapshotsTable} WHERE candidate_id=$1 AND revision=$2 ORDER BY source_order`,
       [current.candidate.id, current.candidate.currentRevision]);
     return {
-      repository, credentialOwnerId: String(row.owner_user_id), ...paths,
+      repository, credentialOwnerId: String(row.owner_user_id), tenantId: String(row.tenant_id), ...paths,
       sources: snapshots.rows.map(rowToIntegrationCandidateSourceSnapshot),
       ...(row.work_execution_id ? { workExecutionId: String(row.work_execution_id) } : {}),
     };

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   applyIntegrationV3Repair,
   changeIntegrationLaneOwner,
+  requeueFailedIntegrationV3Candidate,
   scanIntegrationV3Invariants,
   type IntegrationV3RepairTables,
 } from './integrationV3Repair.js';
@@ -55,6 +56,23 @@ describe('integration v3 invariant repair', () => {
     expect(result.outcome).toBe('needs_human');
     expect(db.query.mock.calls[0]![0]).toContain("state='needs_human'");
     expect(db.query.mock.calls[0]![0]).not.toContain("state='prepared'");
+  });
+
+  it('requeues only a permanently failed candidate and writes the operator audit payload', async () => {
+    const db = dbWithRows([{ id: 'candidate-1', integration_task_id: 'task-1', previous_error: 'provider denied' }], []);
+
+    await expect(requeueFailedIntegrationV3Candidate(db, { candidates: 'candidates', changes: 'changes' }, {
+      taskId: 'task-1', actorId: 'maintainer-1', reason: 'credentials repaired',
+    })).resolves.toEqual({
+      candidateId: 'candidate-1', taskId: 'task-1', previousError: 'provider denied', status: 'idle',
+    });
+
+    expect(db.query).toHaveBeenNthCalledWith(1, expect.stringContaining("worker_status='failed'"), [
+      'task-1', 'maintainer-1', 'credentials repaired',
+    ]);
+    expect(db.query).toHaveBeenNthCalledWith(2, expect.stringContaining('integration.v3.worker_requeued'), [
+      'task-1', 'maintainer-1', JSON.stringify({ candidateId: 'candidate-1', reason: 'credentials repaired', previousError: 'provider denied' }),
+    ]);
   });
 
   it('increments the lane epoch on both acquire and release CAS operations', async () => {

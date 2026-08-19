@@ -32,6 +32,8 @@ export interface RepositoryWorkspaceSyncInput {
   worktreePath: string;
   baseBranch: string;
   integrationBranch: string;
+  /** Canonical server-configured HTTPS URL; remote aliases/config are never used for network access. */
+  controlledRemoteUrl: string;
 }
 
 export interface RepositoryWorkspaceSyncResult {
@@ -87,10 +89,14 @@ async function syncLocked(
   host: RepositoryWorkspaceSyncHost,
   input: RepositoryWorkspaceSyncInput,
 ): Promise<RepositoryWorkspaceSyncResult> {
-  await git(host, input.repositoryPath, ['fetch', '--prune', 'origin']);
+  const remoteBaseRef = `refs/remotes/origin/${input.baseBranch}`;
+  // Explicit URL/refspec avoids local remote.*.url, uploadpack and helper config.
+  await git(host, input.repositoryPath, [
+    'fetch', '--no-tags', '--prune', '--', input.controlledRemoteUrl,
+    `+refs/heads/${input.baseBranch}:${remoteBaseRef}`,
+  ]);
 
   const baseRef = `refs/heads/${input.baseBranch}`;
-  const remoteBaseRef = `refs/remotes/origin/${input.baseBranch}`;
   const integrationRef = `refs/heads/${input.integrationBranch}`;
   const baseOid = singleOid(await git(host, input.repositoryPath, ['rev-parse', '--verify', remoteBaseRef]), remoteBaseRef);
   const worktrees = parseWorktrees((await git(host, input.repositoryPath, [
@@ -332,10 +338,22 @@ function validateInput(input: RepositoryWorkspaceSyncInput): RepositoryWorkspace
   }
   assertBranch(input.baseBranch, 'baseBranch');
   assertBranch(input.integrationBranch, 'integrationBranch');
+  assertControlledRemoteUrl(input.controlledRemoteUrl);
   if (input.baseBranch === input.integrationBranch) {
     throw new RepositoryWorkspaceSyncError('Base and integration branches must differ', 'INVALID_REF');
   }
   return { ...input };
+}
+
+function assertControlledRemoteUrl(value: string): void {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== 'github.com' || parsed.port
+      || parsed.username || parsed.password || parsed.search || parsed.hash
+      || !/^\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\.git$/.test(parsed.pathname)) throw new Error('forbidden');
+  } catch {
+    throw new RepositoryWorkspaceSyncError('controlledRemoteUrl must be a canonical GitHub HTTPS URL', 'INVALID_PATH');
+  }
 }
 
 function isSafeAbsolutePath(path: string): boolean {

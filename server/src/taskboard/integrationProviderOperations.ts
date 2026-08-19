@@ -8,6 +8,7 @@ export type IntegrationProviderOperationKind =
   | 'create_branch'
   | 'create_pull_request'
   | 'update_ref'
+  | 'push_ref'
   | 'merge_pull_request'
   | 'close_source_pull_request'
   | 'comment_source_pull_request';

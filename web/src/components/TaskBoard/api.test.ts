@@ -192,6 +192,12 @@ describe("任务看板 API 错误对象", () => {
 
     await expect(fetchIntegrationCandidate(task.id)).resolves.toEqual(result);
     expect(authFetch).toHaveBeenCalledWith(`/api/taskboard/tasks/${task.id}/integration-candidate`);
+
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify({ result }), {
+      status: 200, headers: { "content-type": "application/json" },
+    }));
+    await expect(fetchIntegrationCandidate(task.id, { includeHistory: true, page: 2, pageSize: 10 })).resolves.toEqual(result);
+    expect(authFetch).toHaveBeenLastCalledWith(`/api/taskboard/tasks/${task.id}/integration-candidate?includeHistory=true&page=2&pageSize=10`);
   });
 
   it("删除任务使用 DELETE 并携带 CAS 版本", async () => {

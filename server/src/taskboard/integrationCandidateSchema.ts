@@ -92,7 +92,26 @@ export async function runIntegrationCandidateSchema(
     ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_lease_id TEXT;
     ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_lease_expires_at TIMESTAMPTZ;
     ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_checkpoint JSONB NOT NULL DEFAULT '{}'::jsonb;
-    ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_error TEXT
+    ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_error TEXT;
+    ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_attempts INTEGER NOT NULL DEFAULT 0 CHECK (worker_attempts >= 0);
+    ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_available_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  `);
+  await client.query(`
+    CREATE OR REPLACE FUNCTION ${candidatesTable}_irreversible_state_fn()
+    RETURNS trigger LANGUAGE plpgsql AS $function$
+    BEGIN
+      IF OLD.state='merged' AND NEW.state IS DISTINCT FROM OLD.state THEN
+        RAISE EXCEPTION 'TASKBOARD_CANDIDATE_MERGED_IRREVERSIBLE';
+      END IF;
+      IF OLD.state='merging' AND NEW.state='canceled' THEN
+        RAISE EXCEPTION 'TASKBOARD_CANDIDATE_MERGE_RECONCILIATION_REQUIRED';
+      END IF;
+      RETURN NEW;
+    END
+    $function$;
+    DROP TRIGGER IF EXISTS ${candidatesTable}_irreversible_state ON ${candidatesTable};
+    CREATE TRIGGER ${candidatesTable}_irreversible_state BEFORE UPDATE OF state ON ${candidatesTable}
+      FOR EACH ROW EXECUTE FUNCTION ${candidatesTable}_irreversible_state_fn()
   `);
   await client.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS ${candidatesTable}_repository_branch_uidx
@@ -114,8 +133,11 @@ export async function runIntegrationCandidateSchema(
       digest_version SMALLINT NOT NULL CHECK (digest_version = 1),
       base_oid TEXT NOT NULL,
       head_oid TEXT NOT NULL,
-      tree_oid TEXT NOT NULL,
+      subject_kind TEXT NOT NULL DEFAULT 'provider_subject' CHECK (subject_kind IN ('source_seed','provider_subject')),
+      tree_oid TEXT,
       source_set_digest TEXT NOT NULL,
+      CHECK ((subject_kind='source_seed' AND tree_oid IS NULL)
+        OR (subject_kind='provider_subject' AND tree_oid IS NOT NULL)),
       subject_digest TEXT NOT NULL,
       policy_snapshot_digest TEXT NOT NULL,
       policy_revision TEXT NOT NULL,
@@ -127,6 +149,27 @@ export async function runIntegrationCandidateSchema(
       PRIMARY KEY (candidate_id, revision),
       UNIQUE (candidate_id, subject_digest)
     )
+  `);
+  await client.query(`
+    ALTER TABLE ${revisionsTable}
+      ADD COLUMN IF NOT EXISTS subject_kind TEXT NOT NULL DEFAULT 'provider_subject'
+        CHECK (subject_kind IN ('source_seed','provider_subject'));
+    ALTER TABLE ${revisionsTable} ALTER COLUMN tree_oid DROP NOT NULL
+  `);
+  await client.query(`
+    CREATE OR REPLACE FUNCTION ${revisionsTable}_subject_kind_fn()
+    RETURNS trigger LANGUAGE plpgsql AS $function$
+    BEGIN
+      IF NOT ((NEW.subject_kind='source_seed' AND NEW.tree_oid IS NULL)
+        OR (NEW.subject_kind='provider_subject' AND NEW.tree_oid IS NOT NULL)) THEN
+        RAISE EXCEPTION 'TASKBOARD_CANDIDATE_REVISION_SUBJECT_KIND_INVALID';
+      END IF;
+      RETURN NEW;
+    END
+    $function$;
+    DROP TRIGGER IF EXISTS ${revisionsTable}_subject_kind ON ${revisionsTable};
+    CREATE TRIGGER ${revisionsTable}_subject_kind BEFORE INSERT OR UPDATE ON ${revisionsTable}
+      FOR EACH ROW EXECUTE FUNCTION ${revisionsTable}_subject_kind_fn()
   `);
   await client.query(`
     CREATE TABLE IF NOT EXISTS ${sourceSnapshotsTable} (
@@ -156,7 +199,7 @@ export async function runIntegrationCandidateSchema(
       id TEXT PRIMARY KEY,
       operation_key TEXT NOT NULL UNIQUE,
       intent_digest TEXT NOT NULL,
-      kind TEXT NOT NULL CHECK (kind IN ('create_branch','create_pull_request','update_ref','merge_pull_request','close_source_pull_request','comment_source_pull_request')),
+      kind TEXT NOT NULL CHECK (kind IN ('create_branch','create_pull_request','update_ref','push_ref','merge_pull_request','close_source_pull_request','comment_source_pull_request')),
       repository_id TEXT NOT NULL,
       candidate_id TEXT NOT NULL REFERENCES ${candidatesTable}(id),
       candidate_revision INTEGER NOT NULL CHECK (candidate_revision > 0),
@@ -174,6 +217,13 @@ export async function runIntegrationCandidateSchema(
       FOREIGN KEY (candidate_id,candidate_revision)
         REFERENCES ${revisionsTable}(candidate_id,revision)
     )
+  `);
+  await client.query(`
+    ALTER TABLE ${providerOperationsTable}
+      DROP CONSTRAINT IF EXISTS ${providerOperationsTable}_kind_check;
+    ALTER TABLE ${providerOperationsTable}
+      ADD CONSTRAINT ${providerOperationsTable}_kind_check
+      CHECK (kind IN ('create_branch','create_pull_request','update_ref','push_ref','merge_pull_request','close_source_pull_request','comment_source_pull_request'))
   `);
   await client.query(`
     CREATE INDEX IF NOT EXISTS ${providerOperationsTable}_reconcile_idx

@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 
 import type { TaskBoardIntegrationCandidateSourceSnapshot, TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
-import type { RepositoryProvider } from './repositoryProvider.js';
+import { canonicalGithubRepositoryUrl, type RepositoryProvider } from './repositoryProvider.js';
 import { syncRepositoryWorkspace, type RepositoryWorkspaceSyncHost } from './repositoryWorkspaceSync.js';
 import type { IntegrationV3ComposeExecutor, IntegrationV3WorkerCurrent } from './integrationV3Worker.js';
 
 export interface IntegrationV3ComposeContext {
   repository: TaskBoardRepositoryConfig;
   credentialOwnerId: string;
+  tenantId: string;
   repositoryPath: string;
   worktreePath: string;
   sources: TaskBoardIntegrationCandidateSourceSnapshot[];
@@ -22,6 +23,11 @@ export interface IntegrationV3ComposeHost extends RepositoryWorkspaceSyncHost {
     branch: string;
     expectedOldOid: string;
     headOid: string;
+    candidateId: string;
+    revision: number;
+    integrationTaskId: string;
+    laneEpoch: number;
+    workflowEpoch: number;
   }): Promise<void>;
   bindPullRequest(candidateId: string, expectedVersion: number, providerPullRequestId: string): Promise<void>;
 }
@@ -41,6 +47,7 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
       worktreePath: context.worktreePath,
       baseBranch: current.candidate.baseBranch,
       integrationBranch: current.candidate.branch,
+      controlledRemoteUrl: canonicalGithubRepositoryUrl(context.repository),
     });
     await git(this.host, context.worktreePath, ['reset', '--hard', sync.baseOid]);
     const ordered = [...context.sources].sort((a, b) => a.order - b.order);
@@ -83,7 +90,12 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
         expectedBaseTreeOid: singleOid(await git(this.host, context.worktreePath, ['rev-parse', `${sync.baseOid}^{tree}`])),
         operationKey: operationKey(current.candidate.id, current.candidate.currentRevision, 'branch'),
       }, context.credentialOwnerId);
-    await this.host.pushIntegrationHead({ context, branch: current.candidate.branch, expectedOldOid: branchReceipt.oid, headOid });
+    await this.host.pushIntegrationHead({
+      context, branch: current.candidate.branch, expectedOldOid: branchReceipt.oid, headOid,
+      candidateId: current.candidate.id, revision: current.candidate.currentRevision,
+      integrationTaskId: current.candidate.integrationTaskId,
+      laneEpoch: Number(current.candidate.laneEpoch), workflowEpoch: Number(current.candidate.workflowEpoch),
+    });
     const remote = await this.provider.getReference(context.repository, current.candidate.branch, context.credentialOwnerId);
     if (remote.oid !== headOid || remote.treeOid !== treeOid) throw new Error('Provider integration ref does not match composed revision');
     const pull = await this.provider.ensureIntegrationPullRequest(context.repository, {

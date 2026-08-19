@@ -154,6 +154,38 @@ describe('foldPanel', () => {
     ]);
   });
 
+  it('tableRowUpdate 只更新指定单元格，不丢失同一行的其他列和标记', () => {
+    const snapshot: SystemPanelSnapshot = {
+      activeView: 'tbl',
+      views: [{
+        key: 'tbl',
+        label: '对账',
+        winTitle: '对账表',
+        widget: {
+          kind: 'table',
+          cols: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }],
+          rows: [{
+            id: 't1',
+            cells: { a: '保留', b: '旧值' },
+            flags: { a: { tone: 'pass' } },
+          }],
+        },
+      }],
+    };
+    const result = foldPanel(snapshot, [{
+      op: 'tableRowUpdate',
+      view: 'tbl',
+      id: 't1',
+      set: { cells: { b: '新值' }, flags: { b: { tone: 'warn', flag: '待确认' } } },
+    }]);
+    const widget = result.views[0].widget;
+    expect(widget.kind === 'table' && widget.rows[0]).toEqual({
+      id: 't1',
+      cells: { a: '保留', b: '新值' },
+      flags: { a: { tone: 'pass' }, b: { tone: 'warn', flag: '待确认' } },
+    });
+  });
+
   it('cellFlag 落到表格单元格', () => {
     const result = foldPanel(BASE, [{ op: 'cellFlag', view: 'tbl', rowId: 't1', colKey: 'a', tone: 'deny', flag: '不符' }]);
     const widget = result.views[3].widget;

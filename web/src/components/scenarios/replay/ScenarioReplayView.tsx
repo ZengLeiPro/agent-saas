@@ -180,6 +180,7 @@ export function ScenarioReplayView({
   }, [streamedTextLengths, typewriterEnabled, visibleBlocks]);
   const isStreaming = activeTextBlock !== null;
   const gateBlocked = isStreaming || (!!currentApproval && currentDecision !== "approved");
+  const replayComplete = atEnd && !gateBlocked;
 
   useEffect(() => {
     if (!activeTextBlock) return;
@@ -232,13 +233,14 @@ export function ScenarioReplayView({
   }, [activeTextBlock?.id, streamedTextLengths, traceProjection, typewriterEnabled, visibleBlocks]);
 
   // Legacy 从 ToolPresentation fold；Trace V1 由同一语义事件前缀确定性生成完整快照。
-  const { snapshot: legacySnapshot, selectView: selectLegacyView } = useSystemPanel(messages);
+  const { snapshot: legacySnapshot, pulse: legacyPulse, selectView: selectLegacyView } = useSystemPanel(messages);
   const snapshot = useMemo(() => {
     const traceSnapshot = traceProjection?.panel;
     if (!traceSnapshot) return legacySnapshot;
     if (!traceViewOverride || !traceSnapshot.views.some((view) => view.key === traceViewOverride)) return traceSnapshot;
     return { ...traceSnapshot, activeView: traceViewOverride };
   }, [legacySnapshot, traceProjection?.panel, traceViewOverride]);
+  const pulse = traceMode ? null : legacyPulse;
   const selectView = useCallback((key: string) => {
     if (traceMode) setTraceViewOverride(key);
     else selectLegacyView(key);
@@ -431,8 +433,9 @@ export function ScenarioReplayView({
                       上一步
                     </Button>
                     <Button size="sm" onClick={next} disabled={atEnd || gateBlocked} className="gap-1">
-                      {isStreaming ? "生成中" : gateBlocked ? "需先批准" : "下一步"}
-                      <ChevronRight className="size-4" />
+                      {replayComplete ? <ApprovalSuccessIcon className="size-4" /> : null}
+                      {replayComplete ? "演示完成" : isStreaming ? "生成中" : gateBlocked ? "需先批准" : "下一步"}
+                      {!replayComplete ? <ChevronRight className="size-4" /> : null}
                     </Button>
                     <Button variant="ghost" size="sm" onClick={reset} disabled={stepIndex === 0 && Object.keys(decisions).length === 0} className="gap-1">
                       <RotateCcw className="size-4" />
@@ -477,7 +480,7 @@ export function ScenarioReplayView({
                 />
               ) : null}
               <div className={cn("flex min-h-0 flex-1 flex-col", artifactHtml && "hidden")}>
-                {snapshot ? <SystemPanel snapshot={snapshot} onSelectView={selectView} className="min-h-0 flex-1" /> : null}
+                {snapshot ? <SystemPanel snapshot={snapshot} pulse={pulse} onSelectView={selectView} className="min-h-0 flex-1" /> : null}
               </div>
             </div>
           </>

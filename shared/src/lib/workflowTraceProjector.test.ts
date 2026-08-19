@@ -87,6 +87,8 @@ describe('Workflow Trace V1', () => {
 
     const business = projectBusinessStepEvents(first.messages, false);
     expect(business.events.map((event) => event.kind)).toEqual(['plan', 'start', 'complete', 'start']);
+    expect(business.events.find((event) => event.kind === 'plan')?.todos?.map((todo) => todo.status))
+      .toEqual(['completed', 'in_progress']);
     expect(business.events.find((event) => event.kind === 'complete')?.todo?.outcome?.text).toBe('发现 1 项规格冲突');
 
     expect(first.panel?.live).toBe(false);
@@ -107,6 +109,29 @@ describe('Workflow Trace V1', () => {
       ...events,
       { ...events[3]!, id: 'other-effect' } as WorkflowTraceEventV1,
     ])).toThrow('sequence 3 重复');
+  });
+
+  it('终态核对的状态文字只显示一次，flag 仅承担语义着色', () => {
+    const verification: WorkflowTraceEventV1 = {
+      ...base,
+      id: 'verify-final-state',
+      sequence: 7,
+      type: 'effect',
+      stepId: 'send',
+      effectId: 'final-check',
+      effectType: 'verification',
+      system: '订单中心',
+      operation: 'verify',
+      title: '核对订单终态',
+      entity: { type: 'order', id: 'SO-001' },
+      fields: [{ label: '订单状态', value: '已生效', state: 'success' }],
+      verification: 'simulated',
+    };
+    const summary = projectWorkflowTrace([...fixture(), verification]).panel?.views.find((view) => view.key === 'summary');
+    expect(summary?.widget.kind).toBe('table');
+    if (summary?.widget.kind !== 'table') throw new Error('缺少终态核对表');
+    expect(summary.widget.rows[0]?.cells.state).toBe('已核对');
+    expect(summary.widget.rows[0]?.flags?.state).toEqual({ tone: 'pass' });
   });
 
   it('真实写入没有回执或回读时只能显示待核对，不能声称系统已写入', () => {

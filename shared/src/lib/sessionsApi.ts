@@ -386,6 +386,7 @@ function mapBlock(
         toolName: resolvedName,
         toolInput: block.content,
         toolId: block.toolId || "",
+        ...(block.runId ? { runId: block.runId } : {}),
         streaming: false,
         ...(typeof block.durationMs === "number" ? { durationMs: block.durationMs } : {}),
         ...(block.executionStatus

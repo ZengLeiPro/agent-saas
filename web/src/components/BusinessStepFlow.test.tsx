@@ -46,7 +46,7 @@ function expandEvidence() {
 const NO_FILL_SELECTORS = ["section.bg-success\\/5", "section.bg-warning\\/5", "section.bg-destructive\\/5"];
 
 describe("BusinessStepFlow", () => {
-  it("renders the plan block frameless with uniform step typography", () => {
+  it("renders one frameless compact plan with live step statuses", () => {
     const { container } = render(
       <BusinessStepFlow
         event={event({
@@ -62,14 +62,14 @@ describe("BusinessStepFlow", () => {
     );
 
     expect(screen.getByRole("region", { name: "业务计划" })).toBeTruthy();
-    expect(screen.queryByText("共 3 步")).toBeNull();
-    expect(screen.getByText("1.")).toBeTruthy();
-    expect(screen.getByText("2.")).toBeTruthy();
-    expect(screen.getByText("3.")).toBeTruthy();
+    expect(screen.getByText("1/3 完成")).toBeTruthy();
+    expect(screen.getByText("完成")).toBeTruthy();
+    expect(screen.getByText("进行中")).toBeTruthy();
+    expect(screen.getByText("3")).toBeTruthy();
     const rows = ["读取订单", "核验订单", "写入结果"].map((label) => screen.getByText(label));
-    expect(new Set(rows.map((row) => row.className))).toHaveLength(1);
+    expect(rows[1].className).toContain("font-medium");
+    expect(rows[1].className).toContain("text-foreground");
     expect(rows[0].className).not.toContain("line-through");
-    expect(rows[0].className).not.toContain("font-medium");
     expect(rows[0].className).not.toContain("opacity-");
     // 去框：计划块容器不允许四边框与状态色填充
     const region = screen.getByRole("region", { name: "业务计划" });

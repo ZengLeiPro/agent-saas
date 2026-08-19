@@ -2270,7 +2270,7 @@ export class RawAgentLoop implements AgentLoop {
           // 准入工具的 policy 恒 allow → shouldEmit 恒 true；仍走同一判定入口，
           // 保持与串行分支的行为对称。
           if (await this.shouldEmitToolUseBeforeExecution(call, args.descriptorsByName, args.context)) {
-            yield { type: 'tool_start', toolId: call.id, toolName: call.name };
+            yield { type: 'tool_start', toolId: call.id, toolName: call.name, runId: args.context.runId };
             yield { type: 'tool_input_delta', toolId: call.id, toolName: call.name, partialJson: call.arguments };
             yield { type: 'tool_end', toolId: call.id, toolName: call.name };
           }
@@ -2336,7 +2336,7 @@ export class RawAgentLoop implements AgentLoop {
         args.descriptorsByName,
         args.context,
       )) {
-        yield { type: 'tool_start', toolId: call.id, toolName: call.name };
+        yield { type: 'tool_start', toolId: call.id, toolName: call.name, runId: args.context.runId };
         yield { type: 'tool_input_delta', toolId: call.id, toolName: call.name, partialJson: call.arguments };
         yield { type: 'tool_end', toolId: call.id, toolName: call.name };
       }

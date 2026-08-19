@@ -319,7 +319,7 @@ export function projectRuntimePlatformEvent(
         // 拥有独立卡片的工具不产生通用 tool_use 骨架，避免双条并存。
         if (isDedicatedWebTool(call.name)) continue;
         events.push(
-          { type: 'block_start', blockType: 'tool_use', toolId: call.id, toolName: call.name },
+          { type: 'block_start', blockType: 'tool_use', toolId: call.id, toolName: call.name, runId: event.runId },
           { type: 'tool_input', toolId: call.id, toolName: call.name, content: call.arguments },
           { type: 'block_end', blockType: 'tool_use', toolName: call.name },
         );

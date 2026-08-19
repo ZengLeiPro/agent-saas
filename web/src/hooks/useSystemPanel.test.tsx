@@ -28,6 +28,16 @@ function toolMessage(id: string, presentation: ToolPresentation): MessageItem {
   } as MessageItem;
 }
 
+function todoMessage(id: string, todos: Array<Record<string, unknown>>): MessageItem {
+  return {
+    id,
+    type: 'tool_use',
+    toolName: 'TodoWrite',
+    toolInput: JSON.stringify({ todos }),
+    toolId: id,
+  } as MessageItem;
+}
+
 describe('useSystemPanel', () => {
   it('没有 panelBase 时不产出面板——真实会话未触达系统前右侧就该是空的', () => {
     const { result } = renderHook(() => useSystemPanel([
@@ -54,6 +64,106 @@ describe('useSystemPanel', () => {
     const widget = result.current.snapshot!.views[0].widget;
     expect(widget.kind === 'rows' && widget.rows[0].state).toBe('hit');
     expect(result.current.snapshot!.activeView).toBe('audit');
+  });
+
+  it('只暴露最新一组 patch 的本步变化，下一组无 pulse 时清空旧高亮', () => {
+    const first = [
+      toolMessage('t1', { title: 'a', panelBase: BASE }),
+      toolMessage('t2', { title: 'b', panel: [
+        { op: 'rowUpdate', view: 'kb', id: 'r1', set: { state: 'hit' } },
+        { op: 'pulse', view: 'kb', ids: ['r1'], kind: 'hit' },
+      ] }),
+    ];
+    const { result, rerender } = renderHook(
+      ({ items }: { items: MessageItem[] }) => useSystemPanel(items),
+      { initialProps: { items: first } },
+    );
+
+    expect(result.current.pulse).toEqual({ op: 'pulse', view: 'kb', ids: ['r1'], kind: 'hit' });
+
+    rerender({ items: [
+      ...first,
+      toolMessage('t3', { title: 'c', panel: [{ op: 'toolbar', view: 'kb', sub: '下一步未修改行' }] }),
+    ] });
+    expect(result.current.pulse).toBeNull();
+  });
+
+  it('同一步终态与短回复保留 delta，下一步只有 TodoWrite 与文本时清空', () => {
+    const step1 = { id: 'step-1', kind: 'business', content: '扫描风险', status: 'in_progress' };
+    const initial = [
+      todoMessage('todo-1-start', [step1]),
+      toolMessage('t1', { title: 'a', panelBase: BASE, panel: [
+        { op: 'rowUpdate', view: 'kb', id: 'r1', set: { state: 'hit' } },
+        { op: 'pulse', view: 'kb', ids: ['r1'], kind: 'hit' },
+      ] }),
+    ];
+    const { result, rerender } = renderHook(
+      ({ items }: { items: MessageItem[] }) => useSystemPanel(items),
+      { initialProps: { items: initial } },
+    );
+    expect(result.current.pulse?.ids).toEqual(['r1']);
+
+    rerender({ items: [
+      ...initial,
+      todoMessage('todo-1-end', [{ ...step1, status: 'completed' }]),
+      { id: 'summary', type: 'text', content: '本步完成' } as MessageItem,
+    ] });
+    expect(result.current.pulse?.ids).toEqual(['r1']);
+
+    rerender({ items: [
+      ...initial,
+      todoMessage('todo-1-end', [{ ...step1, status: 'completed' }]),
+      todoMessage('todo-2-start', [
+        { ...step1, status: 'completed' },
+        { id: 'step-2', kind: 'business', content: '生成摘要', status: 'in_progress' },
+      ]),
+      { id: 'next-text', type: 'text', content: '正在生成摘要' } as MessageItem,
+    ] });
+    expect(result.current.pulse).toBeNull();
+  });
+
+  it('新用户输入、空 panel 组和新 run 的无面板工具都会清除旧 delta', () => {
+    const first = [toolMessage('t1', { title: 'a', panelBase: BASE, panel: [
+      { op: 'rowUpdate', view: 'kb', id: 'r1', set: { state: 'hit' } },
+      { op: 'pulse', view: 'kb', ids: ['r1'], kind: 'hit' },
+    ] })];
+    const withUser = renderHook(() => useSystemPanel([
+      ...first,
+      { id: 'u2', type: 'user', content: '下一步' } as MessageItem,
+    ]));
+    expect(withUser.result.current.pulse).toBeNull();
+
+    const withEmptyPanel = renderHook(() => useSystemPanel([
+      ...first,
+      toolMessage('t2', { title: '空变化组', panel: [] }),
+    ]));
+    expect(withEmptyPanel.result.current.pulse).toBeNull();
+
+    const run1Panel = { ...first[0], runId: 'run-1' } as MessageItem;
+    const withNewRunTool = renderHook(() => useSystemPanel([
+      run1Panel,
+      { id: 't3', type: 'tool_use', toolName: 'Read', toolInput: '{}', toolId: 't3', runId: 'run-2' } as MessageItem,
+    ]));
+    expect(withNewRunTool.result.current.pulse).toBeNull();
+
+    const withNewRunText = renderHook(() => useSystemPanel([
+      run1Panel,
+      { id: 'answer', type: 'text', content: '新运行开始', runId: 'run-2' } as MessageItem,
+    ]));
+    expect(withNewRunText.result.current.pulse).toBeNull();
+  });
+
+  it('无步骤归属的 delta 遇到首个 TodoWrite 时清除，不冒充新步骤变化', () => {
+    const { result } = renderHook(() => useSystemPanel([
+      toolMessage('t1', { title: 'a', panelBase: BASE, panel: [
+        { op: 'rowUpdate', view: 'kb', id: 'r1', set: { state: 'hit' } },
+        { op: 'pulse', view: 'kb', ids: ['r1'], kind: 'hit' },
+      ] }),
+      todoMessage('todo-new', [
+        { id: 'step-new', kind: 'business', content: '新步骤', status: 'in_progress' },
+      ]),
+    ]));
+    expect(result.current.pulse).toBeNull();
   });
 
   it('用户切 tab 后不被后续 focus patch 抢走焦点', () => {

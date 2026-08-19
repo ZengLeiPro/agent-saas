@@ -903,7 +903,7 @@ async function parseTranscriptFileUncached(
                 input: block?.input,
               }, TRANSCRIPT_DETAIL_RAW_MAX_CHARS),
               toolName,
-              toolId,
+              toolId, ...(runId ? { runId } : {}),
             });
             continue;
           }

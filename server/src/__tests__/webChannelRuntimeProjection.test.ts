@@ -146,7 +146,7 @@ describe('WebChannel runtime event projection', () => {
         { type: 'block_start', blockType: 'thinking' },
         { type: 'thinking', content: 'T' },
         { type: 'block_end', blockType: 'thinking' },
-        { type: 'block_start', blockType: 'tool_use', toolId: 't1', toolName: 'Read' },
+        { type: 'block_start', blockType: 'tool_use', toolId: 't1', toolName: 'Read', runId: 'run-out-1' },
         { type: 'tool_input', toolId: 't1', toolName: 'Read', content: '{"pa' },
         { type: 'block_end', blockType: 'tool_use', toolName: 'Read' },
         { type: 'tool_execution', phase: 'started', toolId: 't1', toolName: 'Read', invocationId: 'inv-9' },

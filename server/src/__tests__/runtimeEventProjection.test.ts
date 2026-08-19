@@ -27,6 +27,26 @@ describe("runtimeEventProjection", () => {
     }]);
   });
 
+  it("assistant_tool_calls 的通用工具块携带 runtime runId", () => {
+    const event: Extract<PlatformEvent, { type: "assistant_tool_calls" }> = {
+      id: "event-tool-1",
+      timestamp: "2026-08-19T12:00:00.000Z",
+      type: "assistant_tool_calls",
+      sessionId: "session-tool-1",
+      runId: "run-tool-1",
+      content: "",
+      toolCalls: [{ id: "todo-1", name: "TodoWrite", arguments: '{"todos":[]}' }],
+    };
+
+    expect(projectRuntimePlatformEvent(event).events[0]).toEqual({
+      type: "block_start",
+      blockType: "tool_use",
+      toolId: "todo-1",
+      toolName: "TodoWrite",
+      runId: "run-tool-1",
+    });
+  });
+
   it("interaction_requested 投影为实时 ask_user 事件", () => {
     const event: Extract<PlatformEvent, { type: "interaction_requested" }> = {
       id: "event-ask-1",

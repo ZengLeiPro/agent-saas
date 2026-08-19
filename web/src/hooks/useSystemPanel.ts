@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { foldPanel, type MessageItem, type PanelPatch, type SystemPanelSnapshot } from "@agent/shared";
+import { type MessageItem, type PanelPulse, type SystemPanelSnapshot } from "@agent/shared";
+import { foldSystemPanelMessages } from "./systemPanelMessages";
 
 /**
  * 从消息流里 fold 出右侧企业系统面板的当前快照。
@@ -12,33 +13,24 @@ import { foldPanel, type MessageItem, type PanelPatch, type SystemPanelSnapshot 
  */
 export function useSystemPanel(messages: MessageItem[]): {
   snapshot: SystemPanelSnapshot | null;
+  /** 最新一组面板 patch 声明的本步变化；下一组没有 pulse 时立即清空。 */
+  pulse: PanelPulse | null;
   /** 用户手动切 tab；切过之后不再被后续 focus patch 抢走焦点 */
   selectView: (key: string) => void;
 } {
   const [viewOverride, setViewOverride] = useState<string | null>(null);
 
-  const folded = useMemo(() => {
-    let base: SystemPanelSnapshot | null = null;
-    const patches: PanelPatch[] = [];
-    for (const message of messages) {
-      if (message.type !== "tool_use" && message.type !== "tool_result") continue;
-      const presentation = message.presentation;
-      if (!presentation) continue;
-      if (!base && presentation.panelBase) base = presentation.panelBase;
-      if (presentation.panel?.length) patches.push(...presentation.panel);
-    }
-    return base ? foldPanel(base, patches) : null;
-  }, [messages]);
+  const folded = useMemo(() => foldSystemPanelMessages(messages), [messages]);
 
   const snapshot = useMemo(() => {
-    if (!folded) return null;
-    if (!viewOverride || !folded.views.some((view) => view.key === viewOverride)) return folded;
-    return { ...folded, activeView: viewOverride };
-  }, [folded, viewOverride]);
+    if (!folded.snapshot) return null;
+    if (!viewOverride || !folded.snapshot.views.some((view) => view.key === viewOverride)) return folded.snapshot;
+    return { ...folded.snapshot, activeView: viewOverride };
+  }, [folded.snapshot, viewOverride]);
 
   const selectView = useCallback((key: string) => setViewOverride(key), []);
 
-  return { snapshot, selectView };
+  return { snapshot, pulse: folded.pulse, selectView };
 }
 
 const DISMISS_KEY_PREFIX = "system-panel-dismissed:";
@@ -54,11 +46,12 @@ const DISMISS_KEY_PREFIX = "system-panel-dismissed:";
  */
 export function useSystemPanelDock(messages: MessageItem[], sessionId?: string | null): {
   snapshot: SystemPanelSnapshot | null;
+  pulse: PanelPulse | null;
   open: boolean;
   selectView: (key: string) => void;
   dismiss: () => void;
 } {
-  const { snapshot, selectView } = useSystemPanel(messages);
+  const { snapshot, pulse, selectView } = useSystemPanel(messages);
   const [dismissed, setDismissed] = useState(false);
 
   // 切会话时重读该会话的关闭态；sessionStorage 让刷新后仍记得用户关过
@@ -84,5 +77,5 @@ export function useSystemPanelDock(messages: MessageItem[], sessionId?: string |
     }
   }, [sessionId]);
 
-  return { snapshot, open: !!snapshot && !dismissed, selectView, dismiss };
+  return { snapshot, pulse, open: !!snapshot && !dismissed, selectView, dismiss };
 }

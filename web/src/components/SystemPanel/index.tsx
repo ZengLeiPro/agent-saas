@@ -1,10 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { X } from "lucide-react";
 import type {
   PanelBadge,
   PanelCard,
   PanelEmpty,
   PanelFeedItem,
+  PanelPulse,
   PanelRow,
   PanelStat,
   PanelTableRow,
@@ -36,6 +37,19 @@ const TONE_MAP: Record<PanelTone, ActivityStatusTone> = {
   pending: "pending",
 };
 
+const DELTA_LABEL: Record<PanelPulse["kind"], string> = {
+  scan: "本步扫描",
+  hit: "本步命中",
+  new: "本步新增",
+};
+
+function deltaSurface(kind?: PanelPulse["kind"]): string | undefined {
+  if (kind === "scan") return "bg-primary/10 ring-1 ring-inset ring-primary/25";
+  if (kind === "hit") return "bg-warning/10 ring-1 ring-inset ring-warning/30";
+  if (kind === "new") return "bg-success/10 ring-1 ring-inset ring-success/25";
+  return undefined;
+}
+
 function Badge({ badge }: { badge: PanelBadge }) {
   return <span className={activityStatusBadgeClass(badge.tone ? TONE_MAP[badge.tone] : "neutral")}>{badge.text}</span>;
 }
@@ -49,13 +63,15 @@ function EmptyState({ empty }: { empty?: PanelEmpty }) {
   );
 }
 
-function RowItem({ row }: { row: PanelRow }) {
+function RowItem({ row, deltaKind }: { row: PanelRow; deltaKind?: PanelPulse["kind"] }) {
   return (
     <div
+      data-panel-delta={deltaKind}
       className={cn(
         "flex items-center gap-2 border-b border-border/60 px-3 py-2 last:border-b-0",
         row.state === "hit" && "bg-primary/5",
         row.state === "excluded" && "opacity-55",
+        deltaSurface(deltaKind),
       )}
     >
       <div className="min-w-0 flex-1">
@@ -70,9 +86,12 @@ function RowItem({ row }: { row: PanelRow }) {
   );
 }
 
-function CardItem({ card }: { card: PanelCard }) {
+function CardItem({ card, deltaKind }: { card: PanelCard; deltaKind?: PanelPulse["kind"] }) {
   return (
-    <div className={cn("rounded-md border border-border p-3", card.tone === "deny" && "border-destructive/40")}>
+    <div
+      data-panel-delta={deltaKind}
+      className={cn("rounded-md border border-border p-3", card.tone === "deny" && "border-destructive/40", deltaSurface(deltaKind))}
+    >
       <div className="flex items-start gap-2">
         <span className="min-w-0 flex-1 text-sm font-medium">{card.title}</span>
         {card.headBadge ? <Badge badge={card.headBadge} /> : null}
@@ -98,9 +117,9 @@ function CardItem({ card }: { card: PanelCard }) {
   );
 }
 
-function StatItem({ stat }: { stat: PanelStat }) {
+function StatItem({ stat, deltaKind }: { stat: PanelStat; deltaKind?: PanelPulse["kind"] }) {
   return (
-    <div className="rounded-md border border-border px-3 py-2">
+    <div data-panel-delta={deltaKind} className={cn("rounded-md border border-border px-3 py-2", deltaSurface(deltaKind))}>
       <div className="truncate text-xs text-muted-foreground">{stat.k}</div>
       <div className={cn("mt-0.5 truncate text-base font-semibold tabular-nums", stat.tone && activityStatusTextClass(TONE_MAP[stat.tone]))}>
         {stat.v}
@@ -109,10 +128,10 @@ function StatItem({ stat }: { stat: PanelStat }) {
   );
 }
 
-function FeedItemView({ item }: { item: PanelFeedItem }) {
+function FeedItemView({ item, deltaKind }: { item: PanelFeedItem; deltaKind?: PanelPulse["kind"] }) {
   const isAgent = item.from === "ai";
   return (
-    <div className="px-3 py-2">
+    <div data-panel-delta={deltaKind} className={cn("px-3 py-2", deltaSurface(deltaKind))}>
       <div className="flex items-baseline gap-2">
         <span className={cn("text-xs font-medium", isAgent ? "text-primary" : "text-muted-foreground")}>
           {isAgent ? "AI 同事" : item.from}
@@ -135,9 +154,20 @@ function FeedItemView({ item }: { item: PanelFeedItem }) {
   );
 }
 
-function TableRowView({ row, cols }: { row: PanelTableRow; cols: PanelView["widget"] extends { cols: infer C } ? C : never }) {
+function TableRowView({
+  row,
+  cols,
+  deltaKind,
+}: {
+  row: PanelTableRow;
+  cols: PanelView["widget"] extends { cols: infer C } ? C : never;
+  deltaKind?: PanelPulse["kind"];
+}) {
   return (
-    <tr className={cn("border-b border-border/60 last:border-b-0", row.tone === "deny" && "bg-destructive/5")}>
+    <tr
+      data-panel-delta={deltaKind}
+      className={cn("border-b border-border/60 last:border-b-0", row.tone === "deny" && "bg-destructive/5", deltaSurface(deltaKind))}
+    >
       {(cols as Array<{ key: string; align?: "left" | "right" }>).map((col) => {
         const flag = row.flags?.[col.key];
         return (
@@ -159,7 +189,10 @@ function TableRowView({ row, cols }: { row: PanelTableRow; cols: PanelView["widg
   );
 }
 
-function Widget({ widget }: { widget: PanelWidget }) {
+function Widget({ widget, pulse }: { widget: PanelWidget; pulse?: PanelPulse }) {
+  const deltaIds = new Set(pulse?.ids ?? []);
+  const deltaKindFor = (id: string) => deltaIds.has(id) ? pulse?.kind : undefined;
+
   switch (widget.kind) {
     case "rows":
       return (
@@ -180,7 +213,7 @@ function Widget({ widget }: { widget: PanelWidget }) {
             </div>
           ) : null}
           <div className="min-h-0 flex-1 overflow-auto">
-            {widget.rows.length ? widget.rows.map((row) => <RowItem key={row.id} row={row} />) : <EmptyState empty={widget.empty} />}
+            {widget.rows.length ? widget.rows.map((row) => <RowItem key={row.id} row={row} deltaKind={deltaKindFor(row.id)} />) : <EmptyState empty={widget.empty} />}
           </div>
         </div>
       );
@@ -188,7 +221,7 @@ function Widget({ widget }: { widget: PanelWidget }) {
       return (
         <div className="min-h-0 flex-1 overflow-auto p-3">
           {widget.cards.length
-            ? <div className="space-y-2">{widget.cards.map((card) => <CardItem key={card.id} card={card} />)}</div>
+            ? <div className="space-y-2">{widget.cards.map((card) => <CardItem key={card.id} card={card} deltaKind={deltaKindFor(card.id)} />)}</div>
             : <EmptyState empty={widget.empty} />}
         </div>
       );
@@ -211,7 +244,7 @@ function Widget({ widget }: { widget: PanelWidget }) {
                 </tr>
               </thead>
               <tbody>
-                {widget.rows.map((row) => <TableRowView key={row.id} row={row} cols={widget.cols as never} />)}
+                {widget.rows.map((row) => <TableRowView key={row.id} row={row} cols={widget.cols as never} deltaKind={deltaKindFor(row.id)} />)}
               </tbody>
             </table>
           ) : <EmptyState empty={widget.empty} />}
@@ -221,14 +254,14 @@ function Widget({ widget }: { widget: PanelWidget }) {
       return (
         <div className="min-h-0 flex-1 overflow-auto p-3">
           <div className={cn("grid gap-2", widget.cols === 4 ? "grid-cols-4" : widget.cols === 2 ? "grid-cols-2" : "grid-cols-3")}>
-            {widget.items.map((stat, i) => <StatItem key={i} stat={stat} />)}
+            {widget.items.map((stat, i) => <StatItem key={i} stat={stat} deltaKind={deltaKindFor(stat.k)} />)}
           </div>
         </div>
       );
     case "feed":
       return (
         <div className="min-h-0 flex-1 divide-y divide-border/60 overflow-auto">
-          {widget.items.length ? widget.items.map((item) => <FeedItemView key={item.id} item={item} />) : <EmptyState empty={widget.empty} />}
+          {widget.items.length ? widget.items.map((item) => <FeedItemView key={item.id} item={item} deltaKind={deltaKindFor(item.id)} />) : <EmptyState empty={widget.empty} />}
         </div>
       );
     case "custom":
@@ -249,26 +282,45 @@ function CustomFrame({ html }: { html: string }) {
   return <iframe title="系统视图" srcDoc={srcDoc} sandbox="allow-scripts" className="min-h-0 flex-1 border-0 bg-white" />;
 }
 
+const MAX_INLINE_VIEWS = 4;
+
+function visiblePanelViews(views: PanelView[], activeKey: string): { inline: PanelView[]; overflow: PanelView[] } {
+  if (views.length <= MAX_INLINE_VIEWS) return { inline: views, overflow: [] };
+  const leading = views.slice(0, MAX_INLINE_VIEWS);
+  const inline = leading.some((view) => view.key === activeKey)
+    ? leading
+    : [...views.slice(0, MAX_INLINE_VIEWS - 1), views.find((view) => view.key === activeKey)!];
+  const inlineKeys = new Set(inline.map((view) => view.key));
+  return { inline, overflow: views.filter((view) => !inlineKeys.has(view.key)) };
+}
+
 export function SystemPanel({
   snapshot,
+  pulse,
   onSelectView,
   onClose,
   className,
 }: {
   snapshot: SystemPanelSnapshot;
+  pulse?: PanelPulse | null;
   onSelectView?: (key: string) => void;
   /** 真实会话里提供关闭入口；关闭后本会话不再自动打开 */
   onClose?: () => void;
   className?: string;
 }) {
+  const overflowDetailsRef = useRef<HTMLDetailsElement>(null);
   const active = snapshot.views.find((view) => view.key === snapshot.activeView) ?? snapshot.views[0];
   if (!active) return null;
+  const activePulse = pulse?.view === active.key ? pulse : undefined;
+  const panelViews = visiblePanelViews(snapshot.views, active.key);
 
   return (
     <div className={cn("flex min-h-0 flex-col bg-background", className)}>
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
         {snapshot.live ? <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-success" /> : null}
-        <span className="min-w-0 truncate text-sm font-medium">{snapshot.title ?? "企业系统实况"}</span>
+        <span className="min-w-0 flex-1 break-words text-sm font-medium leading-5" title={snapshot.title ?? "企业系统实况"}>
+          {snapshot.title ?? "企业系统实况"}
+        </span>
         {onClose ? (
           <button
             type="button"
@@ -282,39 +334,90 @@ export function SystemPanel({
       </div>
 
       {snapshot.views.length > 1 ? (
-        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1.5">
-          {snapshot.views.map((view) => (
+        <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
+          {panelViews.inline.map((view) => (
             <button
               key={view.key}
               type="button"
+              aria-current={view.key === active.key ? "page" : undefined}
               onClick={() => onSelectView?.(view.key)}
               className={cn(
-                "shrink-0 rounded px-2 py-1 text-xs transition-colors",
+                "min-w-0 flex-1 truncate rounded px-2 py-1 text-xs transition-colors",
                 view.key === active.key ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:text-foreground",
               )}
+              title={view.label}
             >
               {view.label}
             </button>
           ))}
+          {panelViews.overflow.length ? (
+            <details ref={overflowDetailsRef} className="relative shrink-0">
+              <summary
+                role="button"
+                className="inline-flex cursor-pointer list-none items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground [&::-webkit-details-marker]:hidden"
+                aria-label={`更多系统视图，共 ${panelViews.overflow.length} 个`}
+              >
+                <span aria-hidden>···</span>
+                更多
+              </summary>
+              <div role="menu" className="absolute right-0 top-full z-50 mt-1 min-w-32 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
+                {panelViews.overflow.map((view) => (
+                  <button
+                    key={view.key}
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                    onClick={() => {
+                      onSelectView?.(view.key);
+                      if (overflowDetailsRef.current) overflowDetailsRef.current.open = false;
+                    }}
+                  >
+                    {view.label}
+                  </button>
+                ))}
+              </div>
+            </details>
+          ) : null}
         </div>
       ) : null}
 
       {/* 三个圆点＝「右侧不是聊天的一部分，是被打开的另一个系统」。
           客户演示稿里最有效的一招，成本一行，语义比任何说明文案都直接。 */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-3 py-1.5">
-        <span aria-hidden className="flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-start gap-2 border-b border-border bg-muted/30 px-3 py-2">
+        <span aria-hidden className="mt-1 flex shrink-0 items-center gap-1">
           <span className="size-1.5 rounded-full bg-muted-foreground/30" />
           <span className="size-1.5 rounded-full bg-muted-foreground/30" />
           <span className="size-1.5 rounded-full bg-muted-foreground/30" />
         </span>
-        <span className="min-w-0 truncate text-xs font-medium">{active.toolbar?.title ?? active.winTitle}</span>
-        {active.toolbar?.sub ? <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">{active.toolbar.sub}</span> : null}
+        <div className="min-w-0 flex-1">
+          <div className="break-words text-xs font-medium leading-4" title={active.toolbar?.title ?? active.winTitle}>
+            {active.toolbar?.title ?? active.winTitle}
+          </div>
+          {active.toolbar?.sub ? (
+            <div className="mt-0.5 break-words text-[11px] leading-4 text-muted-foreground" title={active.toolbar.sub}>
+              {active.toolbar.sub}
+            </div>
+          ) : null}
+          {activePulse?.ids.length ? (
+            <div
+              data-panel-delta-summary
+              role="status"
+              aria-live="polite"
+              aria-label={`${DELTA_LABEL[activePulse.kind]} ${activePulse.ids.length} 项`}
+              className="mt-1 text-[11px] font-medium text-primary"
+            >
+              {DELTA_LABEL[activePulse.kind]} {activePulse.ids.length} 项
+            </div>
+          ) : null}
+        </div>
       </div>
 
-      <Widget widget={active.widget} />
+      <Widget widget={active.widget} pulse={activePulse} />
 
       {snapshot.foot ? (
-        <div className="shrink-0 truncate border-t border-border px-3 py-1.5 text-xs text-muted-foreground">{snapshot.foot}</div>
+        <div className="shrink-0 break-words border-t border-border px-3 py-1.5 text-xs leading-4 text-muted-foreground" title={snapshot.foot}>
+          {snapshot.foot}
+        </div>
       ) : null}
     </div>
   );

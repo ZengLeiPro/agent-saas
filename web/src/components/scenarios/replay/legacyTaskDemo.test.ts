@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { ApiTranscriptBlock } from "@agent/shared";
+import {
+  foldPanel,
+  mapSessionDetailToMessages,
+  projectBusinessStepEvents,
+  type ApiSessionDetail,
+  type ApiTranscriptBlock,
+  type PanelPulse,
+} from "@agent/shared";
 import { buildLegacyReplayBlocks } from "./legacyTaskDemo";
+import { allReplayScripts, hookReplayScenarioIds, loadHookReplayScript } from "./registry";
 import type { ReplayScript, ReplayStep } from "./types";
 
 function toolBlock(id: string, title: string): ApiTranscriptBlock {
@@ -89,6 +97,82 @@ describe("legacy task demo", () => {
     const lastTodos = todoPayload(terminalSnapshots.at(-1)!).todos;
     expect(lastTodos.every((todo) => todo.status === "completed")).toBe(true);
     expect(lastTodos.every((todo) => typeof (todo.outcome as { text?: string }).text === "string")).toBe(true);
+  });
+
+  it("全部 hook legacy 演示在审批回复和后续 prompt 后仍只有一个计划实例", async () => {
+    for (const scenarioId of hookReplayScenarioIds()) {
+      const loaded = loadHookReplayScript(scenarioId);
+      if (!loaded) throw new Error(`未注册 legacy 剧本：${scenarioId}`);
+      const replay = await loaded;
+      const decisions = Object.fromEntries(
+        replay.steps.flatMap((item, index) => item.approval ? [[index, "approved" as const]] : []),
+      );
+      const blocks = buildLegacyReplayBlocks(replay, replay.steps.length, decisions);
+      const detail: ApiSessionDetail = {
+        sessionId: `legacy-${scenarioId}`,
+        stats: { lines: blocks.length, parsedLines: blocks.length, parseErrors: 0 },
+        blocks,
+      };
+      const projection = projectBusinessStepEvents(mapSessionDetailToMessages(detail), false);
+      expect(
+        projection.events.filter((event) => event.kind === "plan"),
+        `${scenarioId} 生成了重复计划`,
+      ).toHaveLength(1);
+    }
+  });
+
+  it("14 个正式剧本的每组业务面板写入都能自动形成当前可见 delta", async () => {
+    const hookScripts = await Promise.all(hookReplayScenarioIds().map(async (scenarioId) => {
+      const loaded = loadHookReplayScript(scenarioId);
+      if (!loaded) throw new Error(`未注册 legacy 剧本：${scenarioId}`);
+      return loaded;
+    }));
+    const scripts = [...allReplayScripts(), ...hookScripts];
+    const businessOps = new Set([
+      "rowInsert", "rowsSet", "rowUpdate", "rowsUpdate", "cardInsert", "cardUpdate",
+      "tableRowInsert", "tableRowUpdate", "cellFlag", "statsSet", "feedAppend",
+    ]);
+    const coveredScripts = new Set<string>();
+    let coveredSteps = 0;
+    let coveredGroups = 0;
+
+    for (const replay of scripts) {
+      let snapshot = null as ReturnType<typeof foldPanel> | null;
+      const decisions = Object.fromEntries(
+        replay.steps.flatMap((step, index) => step.approval ? [[index, "approved" as const]] : []),
+      );
+      const enrichedById = new Map(
+        buildLegacyReplayBlocks(replay, replay.steps.length, decisions).map((block) => [block.id, block]),
+      );
+      for (const step of replay.steps) {
+        let stepHasDelta = false;
+        const blocks = [...step.blocks, ...(step.approval?.approvedBlocks ?? [])];
+        for (const block of blocks) {
+          const presentation = enrichedById.get(block.id)?.presentation;
+          if (!presentation) continue;
+          if (!snapshot && presentation.panelBase) snapshot = presentation.panelBase;
+          if (presentation.panel === undefined) continue;
+          if (snapshot) snapshot = foldPanel(snapshot, presentation.panel);
+          if (!presentation.panel.some((patch) => businessOps.has(patch.op))) continue;
+
+          const pulse = presentation.panel.filter((patch): patch is PanelPulse => patch.op === "pulse").at(-1);
+          expect(pulse, `${replay.scenarioId}/${step.caption} 未投影 pulse`).toBeDefined();
+          expect(pulse?.ids.length, `${replay.scenarioId}/${step.caption} delta 无对象`).toBeGreaterThan(0);
+          if (snapshot) expect(pulse?.view).toBe(snapshot.activeView);
+          coveredGroups += 1;
+          stepHasDelta = true;
+        }
+        if (stepHasDelta) {
+          coveredScripts.add(replay.scenarioId);
+          coveredSteps += 1;
+        }
+      }
+    }
+
+    expect(scripts).toHaveLength(14);
+    expect(coveredScripts.size).toBe(14);
+    expect(coveredSteps).toBe(94);
+    expect(coveredGroups).toBe(102);
   });
 
   it("结构化结果后只保留短回复和文件卡，省略重复长文", () => {

@@ -690,7 +690,7 @@ export class WebChannel implements BaseChannel {
           type: 'block_start',
           blockType: 'tool_use',
           toolId: input.event.toolId,
-          toolName: input.event.toolName,
+          toolName: input.event.toolName, runId: input.runId,
         });
         break;
       case 'tool_input_delta':

@@ -52,7 +52,7 @@ describe('EventConsumer tool name resolver', () => {
     const onToolEnd = vi.fn();
 
     await consumer.consume(createEvents([
-      { type: 'tool_start', toolId: 'tool-2', toolName: 'mcp__github__create_issue' },
+      { type: 'tool_start', toolId: 'tool-2', toolName: 'mcp__github__create_issue', runId: 'run-2' },
       { type: 'tool_end', toolId: 'tool-2', toolName: 'mcp__github__create_issue' },
       { type: 'done' },
     ]), {
@@ -60,7 +60,7 @@ describe('EventConsumer tool name resolver', () => {
       onToolEnd,
     });
 
-    expect(onToolStart).toHaveBeenCalledWith('tool-2', 'MCP:github/create_issue', expect.anything());
+    expect(onToolStart).toHaveBeenCalledWith('tool-2', 'MCP:github/create_issue', expect.anything(), 'run-2');
     expect(onToolEnd).toHaveBeenCalledWith('tool-2', 'MCP:github/create_issue', '');
   });
 });

@@ -55,7 +55,7 @@ export interface EventHandler {
   onTextEnd?(blockText: string): void | Promise<void>;
   onDraftReset?(draftId: string, attempt?: number): void | Promise<void>;
   onDraftCommit?(draftId: string): void | Promise<void>;
-  onToolStart?(toolId: string, toolName: string, tracker: ToolTracker): void | Promise<void>;
+  onToolStart?(toolId: string, toolName: string, tracker: ToolTracker, runId?: string): void | Promise<void>;
   onToolInputDelta?(partialJson: string, toolId: string, toolName: string): void | Promise<void>;
   onToolEnd?(toolId: string, resolvedToolName: string, toolInput: string): void | Promise<void>;
   onToolResult?(toolId: string, toolName: string, result: string, isError?: boolean): void | Promise<void>;
@@ -201,7 +201,7 @@ export class EventConsumer implements ToolTracker {
               this._currentToolId = event.toolId;
               this._toolNameMap.set(event.toolId, resolvedToolName);
               this._currentToolInput = '';
-              await handler.onToolStart?.(event.toolId, resolvedToolName, this);
+              await handler.onToolStart?.(event.toolId, resolvedToolName, this, event.runId);
             }
             break;
 

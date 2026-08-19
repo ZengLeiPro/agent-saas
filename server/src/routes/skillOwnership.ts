@@ -69,7 +69,7 @@ export function createSkillOwnershipResolver(input: {
       resolveUserPersonalSkillIds: input.skillGovernanceStore?.listPersonalByOwner
         ? (tenantId, userId) => resolveUserPersonalSkillIds({ id: userId, tenantId }, input.skillGovernanceStore)
         : undefined,
-      resolveUserPersonalSkillOwnership: input.skillGovernanceStore?.resolveUserPersonalSkillOwnership,
+      resolveUserPersonalSkillOwnership: input.skillGovernanceStore?.resolveUserPersonalSkillOwnership?.bind(input.skillGovernanceStore),
     });
   }
 

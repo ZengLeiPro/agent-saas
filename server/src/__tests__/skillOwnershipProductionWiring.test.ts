@@ -60,8 +60,8 @@ describe('技能 ownership 生产链路', () => {
         },
       };
       const governanceStore = new PgSkillGovernanceStore({ pool: pool as never, tablePrefix: 'test' });
-      const resolveOwnership = (tenantId: string, userId: string, skillId: string) =>
-        governanceStore.resolveUserPersonalSkillOwnership(tenantId, userId, skillId);
+      const resolveOwnership = governanceStore.resolveUserPersonalSkillOwnership
+        .bind(governanceStore);
       const resolveHistoricalProvenance = async (tenantId: string) => new Map(
         tenantId === 'tenant-b' ? [['same-name', { digests: [], legacyDigests: ['foreign-v1'] }] as const] : [],
       );

@@ -7,8 +7,8 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(source).toContain("Boolean(activeOrgAgent) || personalAgentEnabled");
   });
 
-  it("首日引导保持挂载监听事件，但只在个人 Agent 完整回复后显示", () => {
+  it("首日引导保持挂载监听事件，但只在个人 Agent 成功终态后显示", () => {
     expect(source).toContain("&& !activeOrgAgent");
-    expect(source).toContain('visible={messages.some((message) => message.type === "text" && message.streaming !== true)}');
+    expect(source).toContain("visible={hasSuccessfulFinalOutput(messages)}");
   });
 });

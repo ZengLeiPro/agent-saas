@@ -417,6 +417,7 @@ export function ChatTabContent({
 
             {initialComposer && (
               <div
+                data-initial-suggestions={showInitialSuggestions ? "visible" : "hidden"}
                 aria-hidden={!showInitialSuggestions}
                 className={cn(
                   "grid transition-[grid-template-rows,opacity,transform] duration-200 ease-out",
@@ -425,7 +426,7 @@ export function ChatTabContent({
                     : "pointer-events-none grid-rows-[0fr] -translate-y-1 opacity-0",
                 )}
               >
-                <div className="overflow-hidden">{emptySlot}</div>
+                <div className="overflow-hidden">{showInitialSuggestions ? emptySlot : null}</div>
               </div>
             )}
           </div>

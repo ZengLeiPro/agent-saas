@@ -21,6 +21,7 @@ import { SystemPanel } from "@/components/SystemPanel";
 import { ResizablePanelDivider } from "@/components/ResizablePanelDivider";
 import { saveUserPreferences } from "@agent/shared";
 import type { LayoutProps } from "./types";
+import { hasSuccessfulFinalOutput } from "./firstDayGuideVisibility";
 import { useAuth } from "@/contexts/AuthContext";
 
 const GovernanceConsole = lazy(() => import("@/components/GovernanceConsole").then(m => ({ default: m.GovernanceConsole })));
@@ -821,7 +822,7 @@ export function DesktopLayout(props: LayoutProps) {
           && roleKitV2Enabled
           && roleKitConfig.firstDayGuideBar.enabled && (
           <FirstDayGuideBar
-            visible={messages.some((message) => message.type === "text" && message.streaming !== true)}
+            visible={hasSuccessfulFinalOutput(messages)}
             activeScenario={lastTriedScenario ?? undefined}
             activeWorkflow={activeWorkflow ?? undefined}
             onOpenCronWizard={handleOpenCronWizard}

@@ -1,5 +1,6 @@
 import { createRef, type ComponentProps, type ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { ChatTabContent } from "./ChatTabContent";
@@ -109,12 +110,32 @@ describe("ChatTabContent 初始会话", () => {
   it("草稿或附件出现后推荐退场，但仍保持初始 composer", () => {
     const view = render(<ChatTabContent {...makeProps({ input: "准备一份经营复盘" })} />);
 
-    expect(screen.getByText("推荐任务").closest("[aria-hidden]")?.getAttribute("aria-hidden")).toBe("true");
+    expect(screen.queryByText("推荐任务")).toBeNull();
+    expect(document.querySelector("[data-initial-suggestions='hidden']")?.getAttribute("aria-hidden")).toBe("true");
     expect(screen.getByTestId("chat-input").closest("[data-initial-conversation]")?.getAttribute("data-initial-conversation")).toBe("true");
 
     view.rerender(<ChatTabContent {...makeProps({ uploadedFiles: [{ originalName: "经营数据.xlsx" } as never] })} />);
     expect(screen.getByTestId("file-upload").getAttribute("data-file-count")).toBe("1");
-    expect(screen.getByText("推荐任务").closest("[aria-hidden]")?.getAttribute("aria-hidden")).toBe("true");
+    expect(screen.queryByText("推荐任务")).toBeNull();
+  });
+
+  it("推荐退场后从 DOM 与 Tab 顺序移除且无法用 Enter 触发", async () => {
+    const onTryRecommendation = vi.fn();
+    const user = userEvent.setup();
+    const emptySlot = <button type="button" onClick={onTryRecommendation}>隐藏推荐</button>;
+    const view = render(<ChatTabContent {...makeProps({ emptySlot })} />);
+    const textarea = screen.getByLabelText("composer");
+    const recommendation = screen.getByRole("button", { name: "隐藏推荐" });
+
+    view.rerender(<ChatTabContent {...makeProps({ input: "已有草稿", emptySlot })} />);
+
+    expect(screen.queryByRole("button", { name: "隐藏推荐" })).toBeNull();
+    expect(document.contains(recommendation)).toBe(false);
+    expect(screen.getByLabelText("composer")).toBe(textarea);
+    textarea.focus();
+    await user.tab();
+    await user.keyboard("{Enter}");
+    expect(onTryRecommendation).not.toHaveBeenCalled();
   });
 
   it("首条消息出现后丝滑切回消息流且不重挂载 textarea", () => {

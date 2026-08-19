@@ -18,8 +18,14 @@ describe("MobileLayout 管理模块接线", () => {
     expect(source).toContain("initialComposer={!isTrashPreview");
   });
 
-  it("首日引导保持挂载监听事件，但只在个人 Agent 完整回复后显示", () => {
+  it("首日引导保持挂载监听事件，但只在个人 Agent 成功终态后显示", () => {
     expect(source).toContain("&& !activeOrgAgent");
-    expect(source).toContain('visible={messages.some((message) => message.type === "text" && message.streaming !== true)}');
+    expect(source).toContain("visible={hasSuccessfulFinalOutput(messages)}");
+  });
+
+  it("legacy 场景保留 scenario 上下文供首日引导判断 oneshot", () => {
+    expect(source).toContain("(prompt: string, scenario?: ScenarioItem)");
+    expect(source).toContain("setLastTriedScenario(scenario ?? null)");
+    expect(source).toContain("activeScenario={lastTriedScenario ?? undefined}");
   });
 });

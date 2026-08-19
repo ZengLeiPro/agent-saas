@@ -23,6 +23,7 @@ import {
 } from "@/components/onboarding/workflowOnboarding";
 import { ExpertWelcome } from "@/components/experts/ExpertWelcome";
 import type { LayoutProps } from "./types";
+import { hasSuccessfulFinalOutput } from "./firstDayGuideVisibility";
 import type { ScenarioItem } from "@agent/shared";
 
 const GovernanceConsole = lazy(() => import("@/components/GovernanceConsole").then(m => ({ default: m.GovernanceConsole })));
@@ -97,6 +98,7 @@ export function MobileLayout(props: LayoutProps) {
     setActiveUsageCard((current) => open ? "billing" : current === "billing" ? null : current);
   }, []);
   const [activeWorkflow, setActiveWorkflow] = useState<WorkflowOnboardingContext | null>(null);
+  const [lastTriedScenario, setLastTriedScenario] = useState<ScenarioItem | null>(null);
   const [roleDetailId, setRoleDetailId] = useState<string | null>(null);
   const closeDrawer = useCallback(() => {
     setSheetOpen(false);
@@ -113,9 +115,10 @@ export function MobileLayout(props: LayoutProps) {
   }, [activeTab]);
 
   // 场景直达：消费 ?scenario=<id>（官网注册落地 / 销售场景链接），预填起手指令
-  const handleScenarioPrefill = useCallback((prompt: string) => {
+  const handleScenarioPrefill = useCallback((prompt: string, scenario?: ScenarioItem) => {
     if (!personalAgentEnabled || loading) return;
     setActiveWorkflow(null);
+    setLastTriedScenario(scenario ?? null);
     setInput(prompt);
   }, [loading, personalAgentEnabled, setInput]);
   useScenarioDeepLink(handleScenarioPrefill, () => {
@@ -484,8 +487,10 @@ export function MobileLayout(props: LayoutProps) {
                       startOrgAgentSession(expertId);
                       closeDrawer();
                     }}
-                    onTryScenario={(prompt: string, _scenario: ScenarioItem) => {
+                    onTryScenario={(prompt: string, scenario: ScenarioItem) => {
                       if (loading) return;
+                      setActiveWorkflow(null);
+                      setLastTriedScenario(scenario);
                       newPersonalSession();
                       setInput(prompt);
                       closeDrawer();
@@ -617,7 +622,8 @@ export function MobileLayout(props: LayoutProps) {
         && roleKitConfig.firstDayGuideBar.enabled
         && roleKitConfig.firstDayGuideBar.showOnMobile ? (
           <FirstDayGuideBar
-            visible={messages.some((message) => message.type === "text" && message.streaming !== true)}
+            visible={hasSuccessfulFinalOutput(messages)}
+            activeScenario={lastTriedScenario ?? undefined}
             activeWorkflow={activeWorkflow ?? undefined}
             onOpenCronWizard={() => { setActiveTab("cron"); setSheetOpen(true); }}
             onOpenExampleDemo={() => { setActiveTab("capabilities"); setSheetOpen(true); }}

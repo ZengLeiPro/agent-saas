@@ -1,7 +1,5 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-
-const source = readFileSync("src/layouts/MobileLayout.tsx", "utf8");
+import source from "./MobileLayout.tsx?raw";
 
 describe("MobileLayout 管理模块接线", () => {
   it("每个组织管理壳实例都接入组织智能体模块", () => {
@@ -10,5 +8,24 @@ describe("MobileLayout 管理模块接线", () => {
 
     expect(shellCount).toBeGreaterThan(0);
     expect(orgAgentRendererCount).toBe(shellCount);
+  });
+
+  it("个人 Agent 移动端接入统一初始会话 composer 与岗位详情", () => {
+    expect(source).toContain("const chatEmptySlot = useMemo");
+    expect(source).toContain("onOpenRoleDetail={handleOpenRoleDetail}");
+    expect(source).toContain("roleDetailId={roleDetailId}");
+    expect(source).toContain(": chatEmptySlot))}");
+    expect(source).toContain("initialComposer={!isTrashPreview");
+  });
+
+  it("首日引导保持挂载监听事件，但只在个人 Agent 成功终态后显示", () => {
+    expect(source).toContain("&& !activeOrgAgent");
+    expect(source).toContain("visible={hasSuccessfulFinalOutput(messages)}");
+  });
+
+  it("legacy 场景保留 scenario 上下文供首日引导判断 oneshot", () => {
+    expect(source).toContain("(prompt: string, scenario?: ScenarioItem)");
+    expect(source).toContain("setLastTriedScenario(scenario ?? null)");
+    expect(source).toContain("activeScenario={lastTriedScenario ?? undefined}");
   });
 });

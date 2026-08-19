@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ArrowRight, Clock3, Layers3 } from "lucide-react";
+import type { ReactNode } from "react";
+import { ArrowRight, ChevronRight, CirclePlay, Link2, Radar, Sparkles, Zap } from "lucide-react";
 import {
   buildScenarioPrompt,
   sanitizeScenario,
@@ -9,7 +9,6 @@ import {
 } from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER } from "@/components/CapabilityCenter/CatalogUi";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   matchRoleIdByPosition,
@@ -18,7 +17,6 @@ import {
   useScenarioLibrary,
 } from "./useScenarioLibrary";
 import { matchIndustry, useIndustryFilter } from "./useIndustryFilter";
-import { friendlyDataDependency } from "./friendlyMappings";
 import { hasReplayScript } from "./replay/availability";
 import { isHookScenario } from "./workflowUi";
 
@@ -36,43 +34,27 @@ const ahaScore: Record<NonNullable<ScenarioItem["firstAhaMode"]>, number> = {
   voice_then_result: 1,
 };
 
-const COMPACT_RECOMMENDATION_COUNT = 3;
-const EXPANDED_RECOMMENDATION_COUNT = 6;
-const TWO_ROW_RECOMMENDATION_MIN_HEIGHT = 820;
+const RECOMMENDATION_COUNT = 3;
+
+type SuggestionTone = "success" | "primary" | "warning" | "muted";
+
+const toneClass: Record<SuggestionTone, string> = {
+  success: "text-success-ink",
+  primary: "text-primary",
+  warning: "text-warning-ink",
+  muted: "text-muted-foreground",
+};
 
 function safeScenario(scenario: ScenarioItem): ScenarioItem {
   return sanitizeScenario({ ...scenario }).scenario as ScenarioItem;
 }
 
-function getRecommendationCount(): number {
-  if (typeof window === "undefined") return COMPACT_RECOMMENDATION_COUNT;
-  return window.innerHeight >= TWO_ROW_RECOMMENDATION_MIN_HEIGHT
-    ? EXPANDED_RECOMMENDATION_COUNT
-    : COMPACT_RECOMMENDATION_COUNT;
-}
-
-function useRecommendationCount(): number {
-  const [count, setCount] = useState(getRecommendationCount);
-
-  useEffect(() => {
-    const sync = () => setCount(getRecommendationCount());
-    sync();
-    window.addEventListener("resize", sync);
-    return () => window.removeEventListener("resize", sync);
-  }, []);
-
-  return count;
-}
-
 export function pickRoleTop3(
   scenarios: readonly ScenarioItem[],
   roleId: string | null,
-  count = COMPACT_RECOMMENDATION_COUNT,
+  count = RECOMMENDATION_COUNT,
 ): ScenarioItem[] {
-  const candidates = roleId
-    ? scenarios.filter((scenario) => scenario.role === roleId)
-    : scenarios;
-  const sorted = [...candidates].sort((a, b) => {
+  const sortCandidates = (candidates: readonly ScenarioItem[]) => [...candidates].sort((a, b) => {
     const ahaDelta = (ahaScore[b.firstAhaMode ?? "zero_input_example"] ?? 0) - (ahaScore[a.firstAhaMode ?? "zero_input_example"] ?? 0);
     if (ahaDelta !== 0) return ahaDelta;
     if (a.mode !== b.mode) return a.mode === "recurring" ? -1 : 1;
@@ -81,12 +63,94 @@ export function pickRoleTop3(
     if (depA !== depB) return depA - depB;
     return a.id.localeCompare(b.id);
   });
-  return sorted.slice(0, count);
+  if (!roleId) return sortCandidates(scenarios).slice(0, count);
+
+  const roleCandidates = sortCandidates(scenarios.filter((scenario) => scenario.role === roleId));
+  const fallbackCandidates = sortCandidates(scenarios.filter((scenario) => scenario.role !== roleId));
+  return [...roleCandidates, ...fallbackCandidates].slice(0, count);
 }
 
 function roleName(roles: ScenarioRole[], roleId: string | null): string {
-  if (!roleId) return "推荐";
-  return roles.find((role) => role.id === roleId)?.name ?? "推荐";
+  if (!roleId) return "为你推荐";
+  return roles.find((role) => role.id === roleId)?.name ?? "为你推荐";
+}
+
+function SuggestionCard({
+  title,
+  action,
+  tone,
+  icon,
+  onClick,
+}: {
+  title: string;
+  action: string;
+  tone: SuggestionTone;
+  icon: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="flex min-h-[56px] min-w-0 items-center gap-2.5 rounded-2xl border bg-card/70 px-3 py-2 text-left transition-[transform,border-color,background-color,box-shadow] hover:-translate-y-0.5 hover:border-brand-200 hover:bg-brand-50/35 hover:shadow-sm dark:hover:bg-brand-900/15"
+      onClick={onClick}
+    >
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/35">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-xs font-semibold text-foreground sm:text-sm">{title}</span>
+        <span className={cn("mt-0.5 block text-[11px] font-medium", toneClass[tone])}>{action}</span>
+      </span>
+      <ChevronRight className="size-4 shrink-0 text-muted-foreground/45" />
+    </button>
+  );
+}
+
+function SuggestionGrid({
+  label,
+  children,
+  onViewAll,
+  onOpenRoleDetail,
+}: {
+  label: string;
+  children: ReactNode;
+  onViewAll: () => void;
+  onOpenRoleDetail?: () => void;
+}) {
+  return (
+    <div className="content-container pt-4 sm:pt-5">
+      <div className="mb-2 text-left text-[11px] font-medium tracking-wide text-muted-foreground">{label}</div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">{children}</div>
+      <div className="mt-2 flex justify-center gap-1">
+        {onOpenRoleDetail && (
+          <Button type="button" variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground" onClick={onOpenRoleDetail}>
+            岗位详情
+          </Button>
+        )}
+        <Button type="button" variant="ghost" size="sm" className="h-8 gap-1 text-xs text-muted-foreground" onClick={onViewAll}>
+          查看全部能力
+          <ArrowRight className="size-3.5" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function workflowActionMeta(scenario: CatalogScenarioPublic, canReplay: boolean): {
+  label: string;
+  tone: SuggestionTone;
+  icon: ReactNode;
+} {
+  if (canReplay) {
+    return { label: "看回放", tone: "primary", icon: <CirclePlay className="size-4" /> };
+  }
+  if (scenario.launch.startMode === "chat" && scenario.readiness === "D0_CURRENT") {
+    return { label: "直接试", tone: "success", icon: <Zap className="size-4" /> };
+  }
+  if (scenario.launch.startMode === "connector" || scenario.readiness === "D1_CONNECTOR") {
+    return { label: "需接入", tone: "warning", icon: <Link2 className="size-4" /> };
+  }
+  return { label: "了解方案", tone: "muted", icon: <Sparkles className="size-4" /> };
 }
 
 export function EmptyChatRecommendCards({
@@ -98,32 +162,42 @@ export function EmptyChatRecommendCards({
   const { library, workflowLibrary, loading, error } = useScenarioLibrary();
   const { user } = useAuth();
   const { activeIndustry } = useIndustryFilter();
-  const recommendationCount = useRecommendationCount();
 
   if (loading || error) return null;
 
   if (workflowLibrary) {
-    const matchedRoleId = user?.preferences?.activeRoleId && workflowLibrary.roles.some((role) => role.id === user.preferences?.activeRoleId)
+    const matchedRoleId = user?.preferences?.activeRoleId && workflowLibrary.roles.some((role) => role.id === user?.preferences?.activeRoleId)
       ? user.preferences.activeRoleId
       : matchRoleIdByPosition(workflowLibrary.roles, user?.position);
+    const pickCards = (pool: readonly CatalogScenarioPublic[], count: number) => {
+      const hooks = pool.filter(isHookScenario);
+      const roleHooks = matchedRoleId
+        ? hooks.filter((scenario) => scenario.roleIds.includes(matchedRoleId))
+        : [];
+      const hookCards = [...roleHooks, ...hooks.filter((scenario) => !roleHooks.includes(scenario))]
+        .slice(0, count);
+      const fallbackCards = pickRecommendedWorkflowScenarios(
+        pool.filter((scenario) => !isHookScenario(scenario)),
+        count,
+        matchedRoleId,
+      );
+      return [...hookCards, ...fallbackCards].slice(0, count);
+    };
     const industryFiltered = activeIndustry === "all"
       ? workflowLibrary.scenarios
       : workflowLibrary.scenarios.filter((scenario) => scenario.industryTags.includes(activeIndustry));
-    const pool = industryFiltered.length > 0 ? industryFiltered : workflowLibrary.scenarios;
-    // 钩子场景（一句话入口）优先占位：先本岗位的钩子，再其他钩子，不够再用原推荐逻辑补齐
-    const hooks = pool.filter(isHookScenario);
-    const roleHooks = matchedRoleId
-      ? hooks.filter((scenario) => scenario.roleIds.includes(matchedRoleId))
+    const primaryPool = industryFiltered.length > 0 ? industryFiltered : workflowLibrary.scenarios;
+    const primaryCards = pickCards(primaryPool, RECOMMENDATION_COUNT);
+    const primaryIds = new Set(primaryCards.map((scenario) => scenario.id));
+    const fallbackCards = primaryCards.length < RECOMMENDATION_COUNT
+      ? pickCards(
+        workflowLibrary.scenarios.filter((scenario) => !primaryIds.has(scenario.id)),
+        RECOMMENDATION_COUNT - primaryCards.length,
+      )
       : [];
-    const hookCards = [...roleHooks, ...hooks.filter((scenario) => !roleHooks.includes(scenario))]
-      .slice(0, recommendationCount);
-    const fallbackCards = pickRecommendedWorkflowScenarios(
-      pool.filter((scenario) => !isHookScenario(scenario)),
-      recommendationCount,
-      matchedRoleId,
-    );
-    const cards = [...hookCards, ...fallbackCards].slice(0, recommendationCount);
-    const openCatalog = (scenario: CatalogScenarioPublic, intent: "view" | "run" | "connect" | "presentation") => {
+    const cards = [...primaryCards, ...fallbackCards];
+
+    const openCatalog = (scenario: CatalogScenarioPublic, intent: "view" | "connect" | "presentation") => {
       onViewAll();
       const params = new URLSearchParams(window.location.search);
       params.delete("scenario");
@@ -131,142 +205,72 @@ export function EmptyChatRecommendCards({
       params.set("intent", intent);
       window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
     };
+
     return (
-      <div className="mx-auto w-full max-w-3xl pt-[10vh]">
-        <div className="mb-4 flex items-end justify-between gap-3">
-          <div><div className="text-sm font-medium text-foreground">{roleName(workflowLibrary.roles, matchedRoleId)}工作流</div><div className="mt-1 text-sm text-muted-foreground">先看业务回放，理解 AI 同事如何把工作办完。</div></div>
-          <Button type="button" variant="ghost" size="sm" className="h-8 shrink-0 gap-1 text-xs" onClick={onViewAll}>查看目录<ArrowRight className="size-3.5" /></Button>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {cards.map((scenario) => {
-            const canReplay = hasReplayScript(scenario);
-            const openOperational = () => {
-              if (scenario.launch.startMode === "chat" && onStartWorkflow) onStartWorkflow(scenario.launch.starterMessage, scenario);
-              else openCatalog(scenario, scenario.launch.startMode === "connector" ? "connect" : "view");
-            };
-            return (
-              <div
-                key={scenario.id}
-                className={cn("flex min-h-[172px] flex-col p-4 text-left", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)}
-              >
-                <div className="text-[11px] font-medium text-muted-foreground">{isHookScenario(scenario) ? scenario.triggerBadge : `${scenario.primaryType === "CREATE" ? "产出成果" : scenario.primaryType === "WATCH" ? "持续巡检" : scenario.primaryType === "ACT" ? "会动系统" : "持续闭环"} · ${scenario.readiness === "D0_CURRENT" ? "当前即用" : scenario.readiness === "D1_CONNECTOR" ? "标准接入" : "项目集成"}`}</div>
-                <div className="mt-2 line-clamp-2 text-sm font-semibold leading-snug">{scenario.title}</div>
-                <p className="mt-2 line-clamp-3 text-sm leading-5 text-muted-foreground">{scenario.value}</p>
-                {/* 有回放的推荐卡只承担价值演示；真实试用与接入继续留在完整目录。 */}
-                <div className="mt-auto flex flex-wrap items-center justify-end gap-1.5 pt-3">
-                  {canReplay ? (
-                    <Button type="button" size="sm" className="h-7 px-2.5 text-xs" onClick={() => openCatalog(scenario, "presentation")}>
-                      看回放
-                    </Button>
-                  ) : (
-                    <Button type="button" size="sm" className="h-7 px-2.5 text-xs" onClick={openOperational}>
-                      {scenario.cta.primary}
-                    </Button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <SuggestionGrid
+        label={`${roleName(workflowLibrary.roles, matchedRoleId)}适合开始的 3 件事`}
+        onViewAll={onViewAll}
+        onOpenRoleDetail={matchedRoleId && onOpenRoleDetail ? () => onOpenRoleDetail(matchedRoleId) : undefined}
+      >
+        {cards.map((scenario) => {
+          const canReplay = hasReplayScript(scenario);
+          const meta = workflowActionMeta(scenario, canReplay);
+          const handleClick = () => {
+            if (canReplay) {
+              openCatalog(scenario, "presentation");
+              return;
+            }
+            if (scenario.launch.startMode === "chat" && onStartWorkflow) {
+              onStartWorkflow(scenario.launch.starterMessage, scenario);
+              return;
+            }
+            openCatalog(scenario, scenario.launch.startMode === "connector" ? "connect" : "view");
+          };
+          return (
+            <SuggestionCard
+              key={scenario.id}
+              title={scenario.title}
+              action={meta.label}
+              tone={meta.tone}
+              icon={meta.icon}
+              onClick={handleClick}
+            />
+          );
+        })}
+      </SuggestionGrid>
     );
   }
 
   if (!library || library.scenarios.length === 0) return null;
 
-  const industryFiltered = library.scenarios.filter((s) =>
-    matchIndustry(s.industryFocus, activeIndustry),
-  );
-  // 兜底：如果行业过滤后为空（客户选了冷门行业），fallback 回全量避免推荐位消失
+  const industryFiltered = library.scenarios.filter((scenario) =>
+    matchIndustry(scenario.industryFocus, activeIndustry));
   const pool = industryFiltered.length > 0 ? industryFiltered : library.scenarios;
-
-  const matchedRoleId =
-    user?.preferences?.activeRoleId && library.roles.some((role) => role.id === user.preferences?.activeRoleId)
-      ? user.preferences.activeRoleId
-      : matchRoleIdByPosition(library.roles, user?.position);
-  const roleTopScenarios = pickRoleTop3(pool, matchedRoleId, recommendationCount);
+  const matchedRoleId = user?.preferences?.activeRoleId && library.roles.some((role) => role.id === user?.preferences?.activeRoleId)
+    ? user.preferences.activeRoleId
+    : matchRoleIdByPosition(library.roles, user?.position);
+  const roleTopScenarios = pickRoleTop3(pool, matchedRoleId);
   const recommended = roleTopScenarios.length > 0
     ? roleTopScenarios
-    : pickRecommendedScenarios(pool, recommendationCount, matchedRoleId);
-  const cards = recommended.map(safeScenario);
+    : pickRecommendedScenarios(pool, RECOMMENDATION_COUNT, matchedRoleId);
+  const cards = recommended.slice(0, RECOMMENDATION_COUNT).map(safeScenario);
 
   return (
-    <div className="mx-auto w-full max-w-3xl pt-[10vh]">
-      <div className="mb-4 flex items-end justify-between gap-3">
-        <div>
-          <div className="text-sm font-medium text-foreground">
-            {roleName(library.roles, matchedRoleId)}开箱任务
-          </div>
-          <div className="mt-1 text-sm text-muted-foreground">
-            点一张卡片，把起手指令放进输入框。
-          </div>
-        </div>
-        {matchedRoleId && onOpenRoleDetail && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 shrink-0 gap-1 text-xs"
-            onClick={() => onOpenRoleDetail(matchedRoleId)}
-          >
-            岗位详情
-            <ArrowRight className="size-3.5" />
-          </Button>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {cards.map((scenario) => (
-          <button
-            key={scenario.id}
-            type="button"
-            className={cn(
-              "flex min-h-[172px] flex-col p-4 text-left",
-              CAPABILITY_SURFACE,
-              CAPABILITY_SURFACE_HOVER,
-            )}
-            onClick={() => onTryScenario(buildScenarioPrompt(scenario), scenario)}
-          >
-            <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-              {scenario.mode === "recurring" ? (
-                <>
-                  <Clock3 className="size-3.5" />
-                  常驻监测
-                </>
-              ) : (
-                <>
-                  <Layers3 className="size-3.5" />
-                  一次性任务
-                </>
-              )}
-            </div>
-            <div className="mt-2 line-clamp-2 text-sm font-semibold leading-snug">
-              {scenario.title}
-            </div>
-            <p className="mt-2 line-clamp-3 text-sm leading-5 text-muted-foreground">
-              {scenario.pitch}
-            </p>
-            <div className="mt-auto pt-3 text-xs text-muted-foreground">
-              {scenario.dataDependencyLevel
-                ? friendlyDataDependency[scenario.dataDependencyLevel]
-                : "可直接试跑"}
-            </div>
-          </button>
-        ))}
-      </div>
-
-      <div className="mt-3 flex justify-center">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-8 gap-1 text-sm"
-          onClick={onViewAll}
-        >
-          查看全部模板
-          <ArrowRight className="size-3.5" />
-        </Button>
-      </div>
-    </div>
+    <SuggestionGrid
+      label={`${roleName(library.roles, matchedRoleId)}适合开始的 3 件事`}
+      onViewAll={onViewAll}
+      onOpenRoleDetail={matchedRoleId && onOpenRoleDetail ? () => onOpenRoleDetail(matchedRoleId) : undefined}
+    >
+      {cards.map((scenario) => (
+        <SuggestionCard
+          key={scenario.id}
+          title={scenario.title}
+          action={scenario.dataDependencyLevel === "zero" || !scenario.dataDependencyLevel ? "直接试" : "预填任务"}
+          tone={scenario.dataDependencyLevel === "zero" || !scenario.dataDependencyLevel ? "success" : "muted"}
+          icon={scenario.mode === "recurring" ? <Radar className="size-4" /> : <Sparkles className="size-4" />}
+          onClick={() => onTryScenario(buildScenarioPrompt(scenario), scenario)}
+        />
+      ))}
+    </SuggestionGrid>
   );
 }

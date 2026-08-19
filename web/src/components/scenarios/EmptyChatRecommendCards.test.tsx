@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ScenarioItem, ScenarioLibraryResponse } from "@agent/shared";
 
@@ -57,24 +57,14 @@ const salesScenario: ScenarioItem = {
   role: "sales",
 };
 
-const DEFAULT_VIEWPORT_HEIGHT = 768;
-
-function setViewportHeight(height: number) {
-  Object.defineProperty(window, "innerHeight", {
-    configurable: true,
-    writable: true,
-    value: height,
-  });
-}
-
 afterEach(() => {
   mocked.library = null;
-  setViewportHeight(DEFAULT_VIEWPORT_HEIGHT);
 });
 
 describe("EmptyChatRecommendCards", () => {
   it("renders role-first recommendations and sanitizes customer-facing text", () => {
     const onTryScenario = vi.fn();
+    const onOpenRoleDetail = vi.fn();
     mocked.library = {
       roles: [
         { id: "boss", name: "老板/总经理", sort: 1 },
@@ -87,15 +77,18 @@ describe("EmptyChatRecommendCards", () => {
       <EmptyChatRecommendCards
         onTryScenario={onTryScenario}
         onViewAll={vi.fn()}
-        onOpenRoleDetail={vi.fn()}
+        onOpenRoleDetail={onOpenRoleDetail}
       />,
     );
 
-    expect(screen.getByText("老板/总经理开箱任务")).toBeTruthy();
+    expect(screen.getByText("老板/总经理适合开始的 3 件事")).toBeTruthy();
     expect(screen.getByText("AI 大脑 竞品晨报")).toBeTruthy();
 
-    fireEvent.click(screen.getByText("AI 大脑 竞品晨报"));
+    fireEvent.click(screen.getByRole("button", { name: /AI 大脑 竞品晨报/ }));
     expect(onTryScenario).toHaveBeenCalledWith("请跟进 同行A", expect.objectContaining({ id: "boss-1" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "岗位详情" }));
+    expect(onOpenRoleDetail).toHaveBeenCalledWith("boss");
   });
 
   it("picks top scenarios by first aha mode and recurring priority", () => {
@@ -111,8 +104,20 @@ describe("EmptyChatRecommendCards", () => {
     expect(picked.map((item) => item.id)).toEqual(["rec", "high", "low"]);
   });
 
-  it("shows two rows on tall screens and falls back to one row when height is tight", async () => {
-    setViewportHeight(900);
+  it("岗位场景不足时用其他高价值场景补齐 Top 3", () => {
+    const picked = pickRoleTop3(
+      [
+        bossScenario,
+        { ...bossScenario, id: "sales-fallback", role: "sales" },
+        { ...bossScenario, id: "finance-fallback", role: "finance" },
+      ],
+      "boss",
+    );
+
+    expect(picked.map((item) => item.id)).toEqual(["boss-1", "finance-fallback", "sales-fallback"]);
+  });
+
+  it("始终只展示 Top 3，不因高屏退化成两排卡墙", () => {
     mocked.library = {
       roles: [{ id: "boss", name: "老板/总经理", sort: 1 }],
       scenarios: Array.from({ length: 6 }, (_, index) => ({
@@ -130,13 +135,6 @@ describe("EmptyChatRecommendCards", () => {
       />,
     );
 
-    expect(screen.getAllByText(/^老板任务 /)).toHaveLength(6);
-
-    setViewportHeight(760);
-    fireEvent.resize(window);
-
-    await waitFor(() => {
-      expect(screen.getAllByText(/^老板任务 /)).toHaveLength(3);
-    });
+    expect(screen.getAllByText(/^老板任务 /)).toHaveLength(3);
   });
 });

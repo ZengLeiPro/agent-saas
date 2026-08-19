@@ -266,6 +266,22 @@ describe('Codex subscription Responses transport', () => {
 
     expect(first).toMatch(/^[a-f0-9]{32}$/);
     expect(otherSession).toBe(first);
+    const secondSystemKey = transport.computePromptCacheKey({
+      ...base,
+      messages: [
+        { role: 'system' as const, content: 'stable system' },
+        { role: 'system' as const, content: 'second system' },
+        { role: 'user' as const, content: 'first session message' },
+      ],
+    });
+    expect(transport.computePromptCacheKey({
+      ...base,
+      messages: [
+        { role: 'system' as const, content: 'stable system' },
+        { role: 'system' as const, content: 'changed second system' },
+        { role: 'user' as const, content: 'first session message' },
+      ],
+    })).not.toBe(secondSystemKey);
     expect(transport.computePromptCacheKey({ ...base, model: 'gpt-5.5' })).not.toBe(first);
     expect(transport.computePromptCacheKey({
       ...base,
@@ -275,6 +291,26 @@ describe('Codex subscription Responses transport', () => {
       ...base,
       tools: [{ ...tools[0]!, deferLoading: true }, tools[1]!],
     })).not.toBe(first);
+
+    const skillTool = {
+      id: 'Skill',
+      name: 'Skill',
+      description: '调用技能\n\n## 当前用户可用技能清单\n\n（当前会话未启用任何技能。）',
+      parameters: { type: 'object', properties: { skill: { type: 'string' } } },
+    };
+    const noSkillKey = transport.computePromptCacheKey({ ...base, tools: [skillTool] });
+    const enabledSkillKey = transport.computePromptCacheKey({
+      ...base,
+      tools: [{
+        ...skillTool,
+        description: '调用技能\n\n## 当前用户可用技能清单\n\n- `beitong-kitchen-bath-demo`: 北通厨卫演示技能',
+      }],
+    });
+    expect(enabledSkillKey).not.toBe(noSkillKey);
+    expect(transport.computePromptCacheKey({
+      ...base,
+      tools: [{ ...skillTool, parameters: { ...skillTool.parameters, required: ['skill'] } }],
+    })).not.toBe(noSkillKey);
   });
 
   it('HTTP/SSE 在不同平台 session 下发送相同的内容缓存域', async () => {

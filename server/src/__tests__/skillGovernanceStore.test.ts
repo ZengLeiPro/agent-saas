@@ -39,7 +39,9 @@ function buildPool() {
         && resource.tenant_id === params[0]
         && resource.owner_user_id === params[1]
       ));
-      const nonPersonal = matching.some(resource => resource.scope === 'tenant' || resource.scope === 'platform');
+      const nonPersonal = matching.some(resource => (
+        resource.scope === 'tenant' && resource.tenant_id === params[0]
+      ));
       return { rows: [{ personal, non_personal: nonPersonal }], rowCount: 1 };
     }
     if (sql.includes('FROM test_governed_skills') && /skill_id\s*=\s*\$1/.test(sql)) {
@@ -181,18 +183,30 @@ describe('Governed Skill + Candidate 发布链', () => {
     resources.set('tenant-foreign', resourceRow({
       skill_id: 'tenant-foreign', tenant_id: 'foreign', scope: 'tenant', status: 'published',
     }));
+    resources.set('tenant-owned', resourceRow({
+      skill_id: 'tenant-owned', tenant_id: 'acme', scope: 'tenant', status: 'published',
+    }));
+    resources.set('platform-owned', resourceRow({
+      skill_id: 'platform-owned', tenant_id: 'pantheon', scope: 'platform', status: 'published',
+    }));
     resources.set('personal-owned', resourceRow({
       skill_id: 'personal-owned', tenant_id: 'acme', scope: 'personal', owner_user_id: 'user-1',
       status: 'published',
     }));
     versions.push(
       { skill_id: 'tenant-foreign', definition_json: { legacySkillId: 'legacy-foreign' } },
+      { skill_id: 'tenant-owned', definition_json: { legacySkillId: 'legacy-tenant' } },
+      { skill_id: 'platform-owned', definition_json: { legacySkillId: 'legacy-platform' } },
       { skill_id: 'personal-owned', definition_json: { legacySkillId: 'legacy-personal' } },
     );
     const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
 
     await expect(store.resolveUserPersonalSkillOwnership('acme', 'user-1', 'legacy-foreign'))
+      .resolves.toBeUndefined();
+    await expect(store.resolveUserPersonalSkillOwnership('acme', 'user-1', 'legacy-tenant'))
       .resolves.toBe('not_personal');
+    await expect(store.resolveUserPersonalSkillOwnership('acme', 'user-1', 'legacy-platform'))
+      .resolves.toBeUndefined();
     await expect(store.resolveUserPersonalSkillOwnership('acme', 'user-1', 'legacy-personal'))
       .resolves.toBe('personal');
     await expect(store.resolveUserPersonalSkillOwnership('acme', 'user-1', 'legacy-unknown'))

@@ -131,12 +131,13 @@ export class PgSkillGovernanceStore {
     const result = await this.options.pool.query(`
       SELECT
         COALESCE(BOOL_OR(resource.scope='personal'
-          AND resource.tenant_id=$1
           AND resource.owner_user_id=$2), false) AS personal,
-        COALESCE(BOOL_OR(resource.scope IN ('tenant','platform')), false) AS non_personal
+        COALESCE(BOOL_OR(resource.scope='tenant'), false) AS non_personal
       FROM ${this.resourcesTable} resource
       JOIN ${this.versionsTable} version ON version.skill_id=resource.skill_id
-      WHERE version.definition_json->>'legacySkillId'=$3
+      WHERE resource.tenant_id=$1
+        AND resource.scope IN ('tenant','personal')
+        AND version.definition_json->>'legacySkillId'=$3
     `, [tenantId, ownerUserId, legacySkillId]);
     const row = result.rows[0] as { personal?: unknown; non_personal?: unknown } | undefined;
     const isTrue = (value: unknown): boolean => value === true || value === 'true';

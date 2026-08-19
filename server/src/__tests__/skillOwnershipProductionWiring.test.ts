@@ -56,7 +56,9 @@ describe('技能 ownership 生产链路', () => {
           if (!sql.includes("version.definition_json->>'legacySkillId'=$3")) {
             throw new Error(`unexpected governance query: ${sql}`);
           }
-          return { rows: [{ personal: false, non_personal: true }], rowCount: 1 };
+          expect(sql).toContain('resource.tenant_id=$1');
+          expect(sql).toContain("resource.scope IN ('tenant','personal')");
+          return { rows: [{ personal: false, non_personal: false }], rowCount: 1 };
         },
       };
       const governanceStore = new PgSkillGovernanceStore({ pool: pool as never, tablePrefix: 'test' });
@@ -79,11 +81,11 @@ describe('技能 ownership 生产链路', () => {
       });
 
       await dispatch.refresh(user.username);
-      expect(dispatch.getManagedTenantIds(user.username)).toContain('same-name');
+      expect(dispatch.getManagedTenantIds(user.username)).not.toContain('same-name');
 
       expect((await governanceStore.listTenantSkillHistoricalProvenance('tenant-b')).has('same-name')).toBe(true);
       await expect(governanceStore.resolveUserPersonalSkillOwnership('tenant-a', 'u-1', 'same-name'))
-        .resolves.toBe('not_personal');
+        .resolves.toBeUndefined();
 
       const materializer = new SkillWorkspaceMaterializer({
         sharedDir,
@@ -94,8 +96,10 @@ describe('技能 ownership 生产链路', () => {
       });
       const result = await materializer.materialize({ taskId: 'task-production-ownership', user, userCwd });
 
-      expect(result.removedSkills).toBe(1);
-      expect(existsSync(join(userCwd, '.ky-agent', 'skills', 'same-name'))).toBe(false);
+      expect(result.removedSkills).toBe(0);
+      expect(existsSync(join(userCwd, '.ky-agent', 'skills', 'same-name'))).toBe(true);
+      expect(readFileSync(join(userCwd, '.ky-agent', 'skills', 'same-name', 'SKILL.md'), 'utf-8'))
+        .toContain('personal');
       expect(readFileSync(join(sourceDir, 'same-name', 'SKILL.md'), 'utf-8')).toContain('foreign-v2');
     } finally {
       rmSync(root, { recursive: true, force: true });

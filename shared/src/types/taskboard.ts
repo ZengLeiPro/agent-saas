@@ -55,6 +55,23 @@ export const TASKBOARD_MERGE_OPERATION_STATES = [
   "reconciled",
 ] as const;
 
+export const TASKBOARD_INTEGRATION_WORKFLOW_VERSIONS = [2, 3] as const;
+export const TASKBOARD_INTEGRATION_CANDIDATE_STATES = [
+  "preparing",
+  "composing",
+  "waiting_checks",
+  "needs_work",
+  "working",
+  "in_review",
+  "approved",
+  "merging",
+  "merged",
+  "blocked",
+  "needs_human",
+  "canceled",
+] as const;
+export const TASKBOARD_INTEGRATION_CANDIDATE_DIGEST_VERSIONS = [1] as const;
+
 export const TASKBOARD_ALLOWED_ACTIONS = [
   "board.read",
   "board.update",
@@ -121,6 +138,11 @@ export type TaskBoardAllowedAction = (typeof TASKBOARD_ALLOWED_ACTIONS)[number];
 export type TaskBoardIntegrationTriggerMode = (typeof TASKBOARD_INTEGRATION_TRIGGER_MODES)[number];
 export type TaskBoardIntegrationSourceState = (typeof TASKBOARD_INTEGRATION_SOURCE_STATES)[number];
 export type TaskBoardMergeOperationState = (typeof TASKBOARD_MERGE_OPERATION_STATES)[number];
+export type TaskBoardIntegrationWorkflowVersion = (typeof TASKBOARD_INTEGRATION_WORKFLOW_VERSIONS)[number];
+export type TaskBoardIntegrationCandidateState = (typeof TASKBOARD_INTEGRATION_CANDIDATE_STATES)[number];
+export type TaskBoardIntegrationCandidateDigestVersion =
+  (typeof TASKBOARD_INTEGRATION_CANDIDATE_DIGEST_VERSIONS)[number];
+export type TaskBoardIntegrationMergeMethod = "merge" | "squash" | "rebase";
 
 export interface TaskBoardRepositoryConfig {
   provider: "github";
@@ -239,6 +261,8 @@ export interface TaskBoardTask {
   rootDeliveryTaskIdentifier?: string;
   rootDeliveryTaskTitle?: string;
   integrationState?: TaskBoardIntegrationSourceState;
+  /** Integration tasks created by the legacy engine are v2; v3 is fixed at batch creation. */
+  workflowVersion?: TaskBoardIntegrationWorkflowVersion;
   mergeEligibility?: "eligible" | "claimed" | "merged" | "not_applicable";
   workflowDisplayState?: string;
   resumeContext?: TaskBoardResumeContext;
@@ -348,6 +372,67 @@ export interface TaskBoardExecutionContextResponse {
   hasMore: boolean;
   contract: TaskBoardWorkflowContract;
   receipt: TaskBoardContextReceipt;
+}
+
+export interface TaskBoardIntegrationCandidate {
+  id: string;
+  integrationTaskId: string;
+  repositoryId: string;
+  baseBranch: string;
+  branch: string;
+  providerPullRequestId?: string;
+  state: TaskBoardIntegrationCandidateState;
+  currentRevision: number;
+  workRound: number;
+  version: number;
+  workflowEpoch: string;
+  laneEpoch: string;
+  policyRevision: string;
+  mergeMethod: TaskBoardIntegrationMergeMethod;
+  policySnapshot: Record<string, unknown>;
+  sourceSetDigest?: string;
+  approvedRevision?: number;
+  approvedReviewExecutionId?: string;
+  mergedCommitOid?: string;
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskBoardIntegrationCandidateRevision {
+  candidateId: string;
+  revision: number;
+  digestVersion: TaskBoardIntegrationCandidateDigestVersion;
+  baseOid: string;
+  headOid: string;
+  treeOid: string;
+  sourceSetDigest: string;
+  subjectDigest: string;
+  policySnapshotDigest: string;
+  policyRevision: string;
+  mergeMethod: TaskBoardIntegrationMergeMethod;
+  workRound: number;
+  workExecutionId?: string;
+  reviewExecutionId?: string;
+  createdAt: string;
+}
+
+export interface TaskBoardIntegrationCandidateSourceSnapshot {
+  candidateId: string;
+  revision: number;
+  order: number;
+  integrationSourceId: string;
+  deliveryTaskId: string;
+  deliveryTaskVersion: number;
+  repositoryId: string;
+  providerPullRequestId: string;
+  frozenHeadOid: string;
+  frozenBaseOid: string;
+  reviewedSubjectDigest: string;
+  reviewExecutionId: string;
+  reviewReceiptDigest: string;
+  requirementDigest: string;
+  createdAt: string;
 }
 
 export interface TaskBoardIntegrationSource {

@@ -92,7 +92,7 @@ export function decideResolution(
   if (purpose === 'work') {
     if (!['in_progress', 'todo'].includes(task.status)) invalidResolution(task, purpose, outcome);
     if (task.kind === 'advisory') {
-      if (outcome === 'completed') return { kind: 'apply', toStatus: 'done' };
+      if (outcome === 'completed') return { kind: 'apply', toStatus: 'todo' };
       if (outcome === 'blocked') return { kind: 'apply', toStatus: 'blocked' };
       invalidResolution(task, purpose, outcome);
     }

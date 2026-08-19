@@ -90,6 +90,23 @@ describe("projectBusinessStepEvents", () => {
     });
   });
 
+  it("keeps one plan instance and refreshes it to the latest step statuses", () => {
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("verify", "in_progress"), step("write", "pending")])),
+      todo("t2", todos([
+        step("verify", "completed", { outcome: { text: "核对完成" } }),
+        step("write", "in_progress"),
+      ])),
+    ], false);
+
+    const plans = result.events.filter((event) => event.kind === "plan");
+    expect(plans).toHaveLength(1);
+    expect(plans[0]?.todos).toMatchObject([
+      { id: "verify", status: "completed", outcome: { text: "核对完成" } },
+      { id: "write", status: "in_progress" },
+    ]);
+  });
+
   it("keeps legacy display readable while stripping gate/actions and ignoring extension type", () => {
     const result = projectBusinessStepEvents([
       todo("t1", todos([step("verify", "in_progress")])),

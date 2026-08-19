@@ -680,7 +680,18 @@ function applyPatch(snapshot: SystemPanelSnapshot, p: PanelPatch): SystemPanelSn
     case 'tableRowUpdate':
       return mapView(snapshot, p.view, (view) =>
         view.widget.kind === 'table'
-          ? { ...view, widget: { ...view.widget, rows: view.widget.rows.map((r) => (r.id === p.id ? { ...r, ...p.set } : r)) } }
+          ? {
+              ...view,
+              widget: {
+                ...view.widget,
+                rows: view.widget.rows.map((r) => r.id === p.id ? {
+                  ...r,
+                  ...p.set,
+                  ...(p.set.cells ? { cells: { ...r.cells, ...p.set.cells } } : {}),
+                  ...(p.set.flags ? { flags: { ...r.flags, ...p.set.flags } } : {}),
+                } : r),
+              },
+            }
           : view);
     case 'cellFlag':
       return mapView(snapshot, p.view, (view) =>

@@ -128,6 +128,33 @@ describe('ScenarioReplayView', () => {
     vi.useRealTimers();
   });
 
+  it('末步仍在流式生成时不提前声称演示完成', () => {
+    vi.useFakeTimers();
+    const script: ReplayScript = {
+      scenarioId: 'final-streaming-test',
+      title: '末步流式测试',
+      sources: [],
+      steps: [{
+        caption: '生成最终结果',
+        blocks: [
+          { id: 'final-user', kind: 'prompt', title: '用户', defaultOpen: false, content: '开始' },
+          { id: 'final-text', kind: 'text', title: '助手', defaultOpen: false, content: '最终结果' },
+        ],
+      }],
+    };
+
+    render(<ScenarioReplayView script={script} onExit={vi.fn()} typewriterIntervalMs={10} />);
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    expect(screen.getByRole('button', { name: '生成中' })).toHaveProperty('disabled', true);
+    expect(screen.queryByRole('button', { name: '演示完成' })).toBeNull();
+
+    for (let index = 0; index < 6; index += 1) {
+      act(() => vi.advanceTimersByTime(10));
+    }
+    expect(screen.getByRole('button', { name: '演示完成' })).toHaveProperty('disabled', true);
+    vi.useRealTimers();
+  });
+
   it('逐步推进，内容累加而非替换', () => {
     renderReplay();
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
@@ -166,10 +193,10 @@ describe('ScenarioReplayView', () => {
     expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
   });
 
-  it('走到末步时下一步禁用，重放回到仅有用户消息的初始态', () => {
+  it('走到末步时明确显示演示完成，重放回到仅有用户消息的初始态', () => {
     renderReplay();
     clickNext(knowledgeQaScript.steps.length);
-    expect(screen.getByRole('button', { name: /下一步/ })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: '演示完成' })).toHaveProperty('disabled', true);
     expect(screen.getByText('演示结束')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /重放/ }));
     expect(screen.getByText(`0 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
@@ -397,6 +424,39 @@ describe('人工审批门禁', () => {
     ],
   };
 
+  it('末步仍在等待审批时不提前声称演示完成', () => {
+    const finalApprovalScript: ReplayScript = {
+      scenarioId: 'final-approval-demo',
+      title: '末步审批演示',
+      sources: [],
+      steps: [{
+        caption: '等待最终审批',
+        blocks: [{
+          id: 'final-approval-prompt',
+          kind: 'prompt',
+          title: '用户消息',
+          defaultOpen: true,
+          content: '请完成最终审批。',
+        }],
+        approval: {
+          title: '确认最终写入',
+          description: '批准后才算闭环完成。',
+          facts: [{ label: '业务对象', value: 'SO-001' }],
+          approveLabel: '批准并完成',
+          approvedBlocks: [],
+        },
+      }],
+    };
+
+    render(<ScenarioReplayView script={finalApprovalScript} onExit={vi.fn()} typewriterIntervalMs={0} />);
+    clickNext(1);
+    expect(screen.getByRole('button', { name: '需先批准' })).toHaveProperty('disabled', true);
+    expect(screen.queryByRole('button', { name: '演示完成' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '批准并完成' }));
+    expect(screen.getByRole('button', { name: '演示完成' })).toHaveProperty('disabled', true);
+  });
+
   it('未批准时按钮和键盘都不能越过门禁，批准后自动继续并留痕', () => {
     render(<ScenarioReplayView script={approvalScript} onExit={vi.fn()} typewriterIntervalMs={0} />);
     expect(screen.getByText('0 / 2')).toBeTruthy();
@@ -411,6 +471,7 @@ describe('人工审批门禁', () => {
     expect(screen.getByText('2 / 2')).toBeTruthy();
     expect(screen.getByText('人工确认已记录。')).toBeTruthy();
     expect(screen.getByText('报价已经发送并取得送达回执。')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '演示完成' })).toHaveProperty('disabled', true);
   });
 
   it('退回时明确显示未写入系统，并允许重新提交审核', () => {

@@ -180,6 +180,7 @@ export function ScenarioReplayView({
   }, [streamedTextLengths, typewriterEnabled, visibleBlocks]);
   const isStreaming = activeTextBlock !== null;
   const gateBlocked = isStreaming || (!!currentApproval && currentDecision !== "approved");
+  const replayComplete = atEnd && !gateBlocked;
 
   useEffect(() => {
     if (!activeTextBlock) return;
@@ -431,8 +432,9 @@ export function ScenarioReplayView({
                       上一步
                     </Button>
                     <Button size="sm" onClick={next} disabled={atEnd || gateBlocked} className="gap-1">
-                      {isStreaming ? "生成中" : gateBlocked ? "需先批准" : "下一步"}
-                      <ChevronRight className="size-4" />
+                      {replayComplete ? <ApprovalSuccessIcon className="size-4" /> : null}
+                      {replayComplete ? "演示完成" : isStreaming ? "生成中" : gateBlocked ? "需先批准" : "下一步"}
+                      {!replayComplete ? <ChevronRight className="size-4" /> : null}
                     </Button>
                     <Button variant="ghost" size="sm" onClick={reset} disabled={stepIndex === 0 && Object.keys(decisions).length === 0} className="gap-1">
                       <RotateCcw className="size-4" />

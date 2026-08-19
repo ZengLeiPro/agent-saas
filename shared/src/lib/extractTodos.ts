@@ -374,6 +374,8 @@ export function projectBusinessStepEvents(
 
   let baseline: Map<string, TodoItem> | null = null;
   let latestActiveKey: string | null = null;
+  /** 当前 Turn 唯一的计划事件；后续快照原地刷新其步骤状态，不重复插入整份计划。 */
+  let currentPlanEvent: BusinessStepEventItem | null = null;
   /** 最后一个承载「当前进行中」语义的事件（plan 或 start），用于 isCurrent 标注。 */
   let lastProgressEvent: BusinessStepEventItem | null = null;
 
@@ -389,6 +391,7 @@ export function projectBusinessStepEvents(
     if (message.type === "user") {
       baseline = null;
       latestActiveKey = null;
+      currentPlanEvent = null;
       lastProgressEvent = null;
       continue;
     }
@@ -407,6 +410,7 @@ export function projectBusinessStepEvents(
       // 终态事件此前都已发出，这里静默清 baseline，不再追加噪音。
       baseline = null;
       latestActiveKey = null;
+      currentPlanEvent = null;
       lastProgressEvent = null;
       continue;
     }
@@ -425,6 +429,7 @@ export function projectBusinessStepEvents(
         todos: businessTodos,
         stepCount,
       };
+      currentPlanEvent = planEvent;
       const batch: BusinessStepEventItem[] = [planEvent];
       if (activeTodo) {
         const activeKey = todoItemKey(activeTodo);
@@ -445,6 +450,11 @@ export function projectBusinessStepEvents(
       pushEvents(message.id, batch);
       baseline = new Map(businessTodos.map((todo) => [todoItemKey(todo), todo]));
       continue;
+    }
+
+    if (currentPlanEvent) {
+      currentPlanEvent.todos = businessTodos;
+      currentPlanEvent.stepCount = stepCount;
     }
 
     const closings: BusinessStepEventItem[] = [];

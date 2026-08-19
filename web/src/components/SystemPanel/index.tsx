@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { X } from "lucide-react";
+import { MoreHorizontal, X } from "lucide-react";
 import type {
   PanelBadge,
   PanelCard,
@@ -16,6 +16,12 @@ import type {
 import { HTML_SANDBOX_CSP } from "@/components/HtmlPreviewPanel";
 import { cn } from "@/lib/utils";
 import { activityStatusBadgeClass, activityStatusTextClass, type ActivityStatusTone } from "@/components/activityStatusStyles";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 /**
  * 右侧企业系统面板。
@@ -249,6 +255,18 @@ function CustomFrame({ html }: { html: string }) {
   return <iframe title="系统视图" srcDoc={srcDoc} sandbox="allow-scripts" className="min-h-0 flex-1 border-0 bg-white" />;
 }
 
+const MAX_INLINE_VIEWS = 4;
+
+function visiblePanelViews(views: PanelView[], activeKey: string): { inline: PanelView[]; overflow: PanelView[] } {
+  if (views.length <= MAX_INLINE_VIEWS) return { inline: views, overflow: [] };
+  const leading = views.slice(0, MAX_INLINE_VIEWS);
+  const inline = leading.some((view) => view.key === activeKey)
+    ? leading
+    : [...views.slice(0, MAX_INLINE_VIEWS - 1), views.find((view) => view.key === activeKey)!];
+  const inlineKeys = new Set(inline.map((view) => view.key));
+  return { inline, overflow: views.filter((view) => !inlineKeys.has(view.key)) };
+}
+
 export function SystemPanel({
   snapshot,
   onSelectView,
@@ -263,12 +281,15 @@ export function SystemPanel({
 }) {
   const active = snapshot.views.find((view) => view.key === snapshot.activeView) ?? snapshot.views[0];
   if (!active) return null;
+  const panelViews = visiblePanelViews(snapshot.views, active.key);
 
   return (
     <div className={cn("flex min-h-0 flex-col bg-background", className)}>
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
         {snapshot.live ? <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-success" /> : null}
-        <span className="min-w-0 truncate text-sm font-medium">{snapshot.title ?? "企业系统实况"}</span>
+        <span className="min-w-0 flex-1 break-words text-sm font-medium leading-5" title={snapshot.title ?? "企业系统实况"}>
+          {snapshot.title ?? "企业系统实况"}
+        </span>
         {onClose ? (
           <button
             type="button"
@@ -282,39 +303,72 @@ export function SystemPanel({
       </div>
 
       {snapshot.views.length > 1 ? (
-        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1.5">
-          {snapshot.views.map((view) => (
+        <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
+          {panelViews.inline.map((view) => (
             <button
               key={view.key}
               type="button"
+              aria-current={view.key === active.key ? "page" : undefined}
               onClick={() => onSelectView?.(view.key)}
               className={cn(
-                "shrink-0 rounded px-2 py-1 text-xs transition-colors",
+                "min-w-0 flex-1 truncate rounded px-2 py-1 text-xs transition-colors",
                 view.key === active.key ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:text-foreground",
               )}
+              title={view.label}
             >
               {view.label}
             </button>
           ))}
+          {panelViews.overflow.length ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  aria-label={`更多系统视图，共 ${panelViews.overflow.length} 个`}
+                >
+                  <MoreHorizontal className="size-3.5" />
+                  更多
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {panelViews.overflow.map((view) => (
+                  <DropdownMenuItem key={view.key} onSelect={() => onSelectView?.(view.key)}>
+                    {view.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
         </div>
       ) : null}
 
       {/* 三个圆点＝「右侧不是聊天的一部分，是被打开的另一个系统」。
           客户演示稿里最有效的一招，成本一行，语义比任何说明文案都直接。 */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-3 py-1.5">
-        <span aria-hidden className="flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-start gap-2 border-b border-border bg-muted/30 px-3 py-2">
+        <span aria-hidden className="mt-1 flex shrink-0 items-center gap-1">
           <span className="size-1.5 rounded-full bg-muted-foreground/30" />
           <span className="size-1.5 rounded-full bg-muted-foreground/30" />
           <span className="size-1.5 rounded-full bg-muted-foreground/30" />
         </span>
-        <span className="min-w-0 truncate text-xs font-medium">{active.toolbar?.title ?? active.winTitle}</span>
-        {active.toolbar?.sub ? <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">{active.toolbar.sub}</span> : null}
+        <div className="min-w-0 flex-1">
+          <div className="break-words text-xs font-medium leading-4" title={active.toolbar?.title ?? active.winTitle}>
+            {active.toolbar?.title ?? active.winTitle}
+          </div>
+          {active.toolbar?.sub ? (
+            <div className="mt-0.5 break-words text-[11px] leading-4 text-muted-foreground" title={active.toolbar.sub}>
+              {active.toolbar.sub}
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <Widget widget={active.widget} />
 
       {snapshot.foot ? (
-        <div className="shrink-0 truncate border-t border-border px-3 py-1.5 text-xs text-muted-foreground">{snapshot.foot}</div>
+        <div className="shrink-0 break-words border-t border-border px-3 py-1.5 text-xs leading-4 text-muted-foreground" title={snapshot.foot}>
+          {snapshot.foot}
+        </div>
       ) : null}
     </div>
   );

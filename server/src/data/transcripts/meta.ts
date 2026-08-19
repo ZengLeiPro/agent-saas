@@ -64,7 +64,8 @@ export interface SessionMeta extends Partial<AgentProfileSessionBinding> {
    * 只读记忆、后台服务唯一写入；首次落库固定后不变。缺省 = v1。
    */
   memoryPolicyVersion?: 'v1' | 'v2';
-  sessionSource?: 'taskboard_execution';
+  /** 平台内部来源；memory_consolidation 会话保留审计数据但不对用户展示。 */
+  sessionSource?: 'taskboard_execution' | 'memory_consolidation';
   memoryAutomationEligible?: boolean;
 }
 

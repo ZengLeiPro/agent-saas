@@ -32,7 +32,7 @@ describePg('PgAgentRuntimeProfileStore contract', () => {
   it('seeds immutable system profiles, including Shell-first v2 upgrades, idempotently', async () => {
     const profiles = await store!.listProfiles();
     const bindings = await store!.listBindings();
-    expect(profiles.filter((profile) => profile.systemProfile)).toHaveLength(5);
+    expect(profiles.filter((profile) => profile.systemProfile)).toHaveLength(6);
     for (const profileKey of ['memory_poll', 'subagent_explore']) {
       const profile = profiles.find((item) => item.profileKey === profileKey)!;
       expect(profile.latestVersion?.versionNumber).toBe(2);
@@ -40,7 +40,7 @@ describePg('PgAgentRuntimeProfileStore contract', () => {
       expect(profile.draftConfig.tools.allowlist).toContain('Shell');
     }
     expect(bindings.map((binding) => binding.bindingKey)).toEqual([
-      'background_explore', 'background_general', 'main', 'memory_poll',
+      'background_explore', 'background_general', 'main', 'memory_consolidate', 'memory_poll',
       'org_agent', 'subagent_explore', 'subagent_general',
     ]);
     const before = bindings.find((binding) => binding.bindingKey === 'main');

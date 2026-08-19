@@ -61,6 +61,19 @@ export function hidesMemoryPollFrom(
   return !isPlatformAdminUser(reqUser);
 }
 
+/** L2 记忆整合是内部审计会话，不进入普通会话 API，平台管理员改从 Run Trace 查看。 */
+export function hidesSystemSessionFrom(
+  reqUser: { role: "admin" | "user"; tenantId?: string } | undefined,
+  meta: SessionMeta | null | undefined,
+): boolean {
+  if (meta?.sessionSource === "memory_consolidation"
+    || meta?.profileBindingKey === "memory_consolidate") return true;
+  // 独立 memory_consolidate Profile 上线前，L2 曾复用 memory_poll binding；
+  // 真正的 L3 cron 轮询有 cronSystemKind/cronJobName，可据此避免误伤平台管理员审计入口。
+  if (meta?.profileBindingKey === "memory_poll" && !isMemoryPollSessionMeta(meta)) return true;
+  return hidesMemoryPollFrom(reqUser, meta);
+}
+
 export function canExposeSessionToUser(
   reqUser: SessionAccessUser | undefined,
   meta: SessionMeta | null | undefined,
@@ -68,6 +81,6 @@ export function canExposeSessionToUser(
 ): boolean {
   if (!canAccessSession(reqUser, meta, userStore)) return false;
   if (meta?.deletedAt) return false;
-  if (hidesMemoryPollFrom(reqUser, meta)) return false;
+  if (hidesSystemSessionFrom(reqUser, meta)) return false;
   return true;
 }

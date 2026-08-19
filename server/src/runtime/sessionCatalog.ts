@@ -19,7 +19,7 @@ import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 
 export type RuntimeSessionStatus = 'running' | 'idle' | 'waiting_approval' | 'finished' | 'error';
 export type MemoryPolicyVersion = 'v1' | 'v2';
-export type RuntimeSessionSource = 'taskboard_execution';
+export type RuntimeSessionSource = 'taskboard_execution' | 'memory_consolidation';
 
 export interface OrgAgentSessionSnapshot {
   name: string;
@@ -229,7 +229,9 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(meta.memoryPolicyVersion === 'v1' || meta.memoryPolicyVersion === 'v2'
         ? { memoryPolicyVersion: meta.memoryPolicyVersion }
         : {}),
-      ...(meta.sessionSource === 'taskboard_execution' ? { sessionSource: meta.sessionSource } : {}),
+      ...(meta.sessionSource === 'taskboard_execution' || meta.sessionSource === 'memory_consolidation'
+        ? { sessionSource: meta.sessionSource }
+        : {}),
       ...(typeof meta.memoryAutomationEligible === 'boolean'
         ? { memoryAutomationEligible: meta.memoryAutomationEligible }
         : {}),
@@ -258,6 +260,7 @@ export function createRuntimeSessionRecord(args: {
   executionTarget?: ExecutionTargetKind;
   workspaceId?: string;
   status?: RuntimeSessionStatus;
+  toolProfile?: 'memory_poll' | 'memory_consolidate';
   kind?: 'subagent';
   executionRole?: 'dispatcher' | 'worker';
   orgAgentId?: string;
@@ -268,6 +271,11 @@ export function createRuntimeSessionRecord(args: {
   profileBinding?: AgentProfileSessionBinding;
 }): RuntimeSessionRecord {
   const now = new Date().toISOString();
+  const sessionSource = args.sessionSource
+    ?? (args.toolProfile === 'memory_consolidate' ? 'memory_consolidation' : undefined);
+  const memoryAutomationEligible = sessionSource === 'memory_consolidation'
+    ? false
+    : args.memoryAutomationEligible;
   return {
     sessionId: args.sessionId,
     userId: args.userId ?? '',
@@ -286,8 +294,8 @@ export function createRuntimeSessionRecord(args: {
     ...(args.orgAgentId ? { orgAgentId: args.orgAgentId } : {}),
     ...(args.orgAgentSnapshot ? { orgAgentSnapshot: args.orgAgentSnapshot } : {}),
     ...(args.memoryPolicyVersion ? { memoryPolicyVersion: args.memoryPolicyVersion } : {}),
-    ...(args.sessionSource ? { sessionSource: args.sessionSource } : {}),
-    ...(args.memoryAutomationEligible !== undefined ? { memoryAutomationEligible: args.memoryAutomationEligible } : {}),
+    ...(sessionSource ? { sessionSource } : {}),
+    ...(memoryAutomationEligible !== undefined ? { memoryAutomationEligible } : {}),
     ...(args.profileBinding ?? {}),
     createdAt: now,
     updatedAt: now,

@@ -233,6 +233,22 @@ describe('session memory policy persistence', () => {
     });
   });
 
+  it('persists the hidden memory consolidation source and no-automation flag', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'session-memory-consolidation-'));
+    policyCleanupDirs.add(cwd);
+    const sessionId = randomUUID();
+    const catalog = new FileSessionCatalog({ agentCwd: cwd });
+    const record = createRuntimeSessionRecord({
+      sessionId, userId: 'u1', username: 'alice', channel: 'web', cwd,
+      memoryPolicyVersion: 'v1', toolProfile: 'memory_consolidate',
+    });
+    policyCleanupDirs.add(dirname(record.transcriptPath));
+    await catalog.upsert(record);
+    await expect(catalog.get(sessionId)).resolves.toMatchObject({
+      memoryPolicyVersion: 'v1', sessionSource: 'memory_consolidation', memoryAutomationEligible: false,
+    });
+  });
+
   it('canonicalizes TaskBoard source to no-automation and read-only v2', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'session-policy-taskboard-'));
     policyCleanupDirs.add(cwd);

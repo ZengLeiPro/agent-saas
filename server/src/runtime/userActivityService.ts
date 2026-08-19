@@ -144,6 +144,8 @@ export class UserActivityService {
         // 记忆/心跳轮询与 TaskBoard Execution 不算个人记忆原料。sessionSource 是
         // 新真源；前缀只用于排除尚未补标记的历史任务会话。
         if (isMemoryPollSessionMeta(record.metaJson)
+          || record.metaJson.profileBindingKey === 'memory_poll'
+          || record.metaJson.profileBindingKey === 'memory_consolidate'
           || record.metaJson.sessionSource === 'taskboard_execution'
           || record.metaJson.memoryAutomationEligible === false
           || record.sessionId.startsWith('taskboard-')) continue;

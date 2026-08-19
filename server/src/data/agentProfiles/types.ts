@@ -132,6 +132,7 @@ export type AgentProfileBindingKey =
   | 'main'
   | 'org_agent'
   | 'memory_poll'
+  | 'memory_consolidate'
   | 'subagent_general'
   | 'subagent_explore'
   | 'background_general'
@@ -141,6 +142,7 @@ export const AGENT_PROFILE_BINDING_KEYS = [
   'main',
   'org_agent',
   'memory_poll',
+  'memory_consolidate',
   'subagent_general',
   'subagent_explore',
   'background_general',

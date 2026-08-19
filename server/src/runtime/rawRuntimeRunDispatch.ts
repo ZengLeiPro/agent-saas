@@ -1308,9 +1308,9 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       : orgAgent
         ? requestedModel ?? model
         : existingSession?.modelRef ?? options.modelRef ?? requestedModel ?? model;
-    // 记忆写入策略（2026-07-29 职责剥离批次）：新会话首次落库时按租户开关
-    // 定版并 pin 进 session meta；resume 读 pin；后台 profile run、专职 org Agent、非真实用户
-    // 通道（subagent/cron）固定 v1 语义。会话内不再变化（prompt prefix 稳定性）。
+    // 新会话首次落库时定版记忆策略，resume 只读既有 pin；
+    // 后台 profile、专职 org Agent 与非用户通道固定 v1，避免与 L2 双写。
+    // memory_consolidate 的隐藏来源由 createRuntimeSessionRecord 根据 toolProfile 固化。
     const isTaskboardExecution = existingSession?.sessionSource === 'taskboard_execution'
       || sessionId.startsWith('taskboard-');
     const memoryPolicyVersion: MemoryWritePolicyVersion = resolveSessionMemoryPolicy({
@@ -1341,7 +1341,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         cwd,
         modelRef: sessionModelRef,
         executionTarget,
-        status: 'running', executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined,
+        status: 'running', toolProfile, executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined,
         ...(orgAgentId ? { orgAgentId } : {}),
         ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
       })),

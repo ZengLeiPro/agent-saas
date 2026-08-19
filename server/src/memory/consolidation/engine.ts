@@ -71,17 +71,27 @@ interface EventStoreForConsolidation {
   }): Promise<Array<{ sessionSequence: number; event: Record<string, unknown> & { type: string; id: string } }>>;
 }
 
+interface ConsolidationProjection {
+  sessionId: string;
+  tenantId: string;
+  userId?: string;
+  username?: string;
+  channel?: string;
+  kind: 'user' | 'subagent';
+  workspaceId?: string;
+  metaJson: {
+    cronSystemKind?: string;
+    cronJobName?: string;
+    kind?: string;
+    memoryPolicyVersion?: string;
+    sessionSource?: string;
+    memoryAutomationEligible?: boolean;
+    profileBindingKey?: string;
+  };
+}
+
 interface ProjectionStoreForConsolidation {
-  get(sessionId: string, options?: { includeDeleted?: boolean }): Promise<{
-    sessionId: string;
-    tenantId: string;
-    userId?: string;
-    username?: string;
-    channel?: string;
-    kind: 'user' | 'subagent';
-    workspaceId?: string;
-    metaJson: { cronSystemKind?: string; cronJobName?: string; kind?: string; memoryPolicyVersion?: string; sessionSource?: string; memoryAutomationEligible?: boolean };
-  } | null>;
+  get(sessionId: string, options?: { includeDeleted?: boolean }): Promise<ConsolidationProjection | null>;
 }
 
 export interface MemoryConsolidationEngineOptions {
@@ -144,6 +154,22 @@ const MISSING_PROJECTION_WARN_INTERVAL_MS = 5 * 60_000;
 const MAX_EVENT_FUTURE_SKEW_MS = 5 * 60_000;
 /** L2/L3 自身与子 agent 会话绝不能再被提取（防自我喂养）。 */
 const EXCLUDED_CHANNELS = new Set(['cron']);
+
+function isEligibleProjection(projection: ConsolidationProjection, sessionId: string): boolean {
+  const meta = projection.metaJson ?? {};
+  return projection.kind === 'user'
+    && meta.cronSystemKind === undefined
+    && meta.memoryPolicyVersion === 'v2'
+    && meta.profileBindingKey !== 'memory_poll'
+    && meta.profileBindingKey !== 'memory_consolidate'
+    && meta.sessionSource !== 'taskboard_execution'
+    && meta.memoryAutomationEligible !== false
+    && (projection.channel === undefined || !EXCLUDED_CHANNELS.has(projection.channel))
+    && !sessionId.startsWith('memory-maint-')
+    && !sessionId.startsWith(CONSOLIDATION_CHAT_PREFIX)
+    && !sessionId.startsWith('taskboard-')
+    && Boolean(projection.userId);
+}
 
 export class MemoryConsolidationEngine {
   private scanTimer: ReturnType<typeof setInterval> | undefined;
@@ -296,17 +322,7 @@ export class MemoryConsolidationEngine {
     // 2026-07-29 P1 修复：只处理 memoryPolicyVersion=v2 的会话——存量 v1 会话仍由
     // 主 Agent 按 v1 提示语自主写记忆，L2 若同时提取会造成双写；缺 pin 的旧会话
     // 一律视为 v1，不隐式接管。
-    const meta = projection.metaJson ?? {};
-    const skip = projection.kind !== 'user'
-      || meta.cronSystemKind !== undefined
-      || meta.memoryPolicyVersion !== 'v2'
-      || meta.sessionSource === 'taskboard_execution'
-      || meta.memoryAutomationEligible === false
-      || (projection.channel !== undefined && EXCLUDED_CHANNELS.has(projection.channel))
-      || envelope.sessionId.startsWith('memory-maint-')
-      || envelope.sessionId.startsWith(CONSOLIDATION_CHAT_PREFIX)
-      || !projection.userId;
-    if (skip) return true;
+    if (!isEligibleProjection(projection, envelope.sessionId)) return true;
 
     const user = this.options.userStore.findById(projection.userId!);
     if (!user || user.disabled) return true;
@@ -377,6 +393,23 @@ export class MemoryConsolidationEngine {
           tenantId: state.tenantId, sessionId: state.sessionId, now,
           backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: 0, permanent: true,
         });
+        return;
+      }
+      // claim 后再次校验资格：会话可能在 pending 期间被补标为 TaskBoard/内部任务，
+      // 不能让历史 backlog 绕过 scanner 的新政策。
+      const projection = await this.options.projectionStore.get(state.sessionId);
+      if (!projection) {
+        await this.options.store.markFailed({
+          tenantId: state.tenantId, sessionId: state.sessionId, now,
+          backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: config.maxRetries,
+        });
+        return;
+      }
+      if (projection.tenantId !== state.tenantId
+        || projection.userId !== state.userId
+        || !isEligibleProjection(projection, state.sessionId)) {
+        await this.options.store.markIneligible({ tenantId: state.tenantId, sessionId: state.sessionId });
+        log?.info(`consolidation discarded ineligible backlog session=${state.sessionId}`);
         return;
       }
       // 单用户日配额熔断：保留 pending（throttled），不推进游标。
@@ -557,7 +590,6 @@ export class MemoryConsolidationEngine {
         channelContext,
         {
           maxTurns: config.maxTurns,
-          persistSession: false,
           cwd: effectiveCwd,
           toolProfile: 'memory_consolidate',
           approvalPolicy: { autoApproveTools: true },

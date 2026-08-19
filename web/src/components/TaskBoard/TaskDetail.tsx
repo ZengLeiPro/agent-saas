@@ -126,7 +126,7 @@ export function TaskDetail({
   const [branch, setBranch] = useState("");
   const [priority, setPriority] = useState<TaskBoardPriority>("none");
   const [stageModels, setStageModels] = useState<TaskBoardStageModels>({});
-  const [executionStarted, setExecutionStarted] = useState(false);
+  const [executionStartedTaskId, setExecutionStartedTaskId] = useState<string | null>(null);
   const [commentBody, setCommentBody] = useState("");
   const [continueAfterComment, setContinueAfterComment] = useState(false);
   const [pendingContinuationCommentId, setPendingContinuationCommentId] = useState<string | null>(null);
@@ -186,7 +186,7 @@ export function TaskDetail({
       detailRequestRef.current += 1;
       refreshedExecutionRef.current = null;
       setSelectedResumeSourceIds(new Set());
-      setExecutionStarted(false);
+      setExecutionStartedTaskId(null);
       setSaving(false);
     }
     if (!task) {
@@ -243,9 +243,10 @@ export function TaskDetail({
   const executionActive = latestExecution
     ? ACTIVE_EXECUTION_STATUSES.has(latestExecution.status) || latestExecution.continuationActive === true
     : false;
-  useEffect(() => {
-    if (executions.length > 0) setExecutionStarted(true);
-  }, [executions.length]);
+  const executionStarted = Boolean(
+    taskId
+    && (executionStartedTaskId === taskId || executions.some((item) => item.taskId === taskId)),
+  );
   useEffect(() => {
     if (latestExecution?.continuationActive) {
       refreshedExecutionRef.current = null;
@@ -504,7 +505,7 @@ export function TaskDetail({
     try {
       const result = await onExecute(operationTask, purpose);
       if (!isCurrentOperation(requestId, operationTask.id)) return;
-      setExecutionStarted(true);
+      setExecutionStartedTaskId(operationTask.id);
       setCurrentTask(result.task);
       mergeServerDraft(result.task);
       onTaskLoaded(result.task);

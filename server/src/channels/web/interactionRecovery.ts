@@ -1,5 +1,5 @@
 import type { AskUserQuestion } from '../../types/index.js';
-import type { PlatformEvent } from '../../runtime/types.js';
+import type { EventStore, PlatformEvent } from '../../runtime/types.js';
 
 /**
  * pending 交互的数据形态（与 interactionStore.getPendingInteractions 同构）。
@@ -46,16 +46,35 @@ export function notifyCrossProcessInteractionResume(
  * 会话。扫描是同步的，复用 EventBufferStore.getEventsAfter(sid, 0) 的快照，
  * 不引入新的权限面（调用点已完成用户归属校验）。
  *
- * 去重说明：`interaction_resolved` 事件走 emitUser（per-user）+ durable
- * eventStore，从不写入会话 EventBuffer，因此此处不做基于 buffer 的 resolved
- * 去重（buffer 内不存在该事件）。重复/已应答交互的去重由以下既有机制兜底：
- * interactionStore.getPendingInteractions（同进程内存态）与前端按 interactionId
- * 去重。跨进程已 resolved 交互的权威去重建议后续改用 durable 记录（review
- * 2026-08-17 非阻塞项）。
+ * 去重说明：`interaction_resolved` / `approval_resolved` 事件走 durable
+ * EventStore，不写入会话 EventBuffer；调用方必须先把 durable resolved ID 放进
+ * excluded 集合，再扫描 buffer。这样用户提交后，即使旧请求仍留在 buffer，也不会
+ * 在刷新或切换会话时再次弹出。`excluded` 同时承载 interactionStore 已知 ID，避免
+ * 同一交互重复恢复。
  */
+export async function loadResolvedInteractionIds(
+  store: EventStore | null,
+  sessionId: string,
+): Promise<Set<string>> {
+  const resolvedIds = new Set<string>();
+  if (!store) return resolvedIds;
+  try {
+    const events = await store.list(sessionId, {
+      includeTypes: ['interaction_resolved', 'approval_resolved'],
+    });
+    for (const event of events) {
+      if (event.type === 'interaction_resolved') resolvedIds.add(event.interactionId);
+      else if (event.type === 'approval_resolved') resolvedIds.add(event.approvalId);
+    }
+  } catch {
+    // durable 查询失败时保持既有 fail-open 恢复路径，避免阻塞当前会话。
+  }
+  return resolvedIds;
+}
+
 export function scanBufferForPendingInteractions(
   bufferedEvents: ReadonlyArray<{ data: string }> | undefined,
-  known: ReadonlySet<string>,
+  excluded: ReadonlySet<string>,
 ): PendingInteractionShape[] {
   const result: PendingInteractionShape[] = [];
   if (!bufferedEvents) return result;
@@ -66,7 +85,7 @@ export function scanBufferForPendingInteractions(
       if (
         (data.type === 'ask_user' || data.type === 'permission_request')
         && typeof data.interactionId === 'string'
-        && !known.has(data.interactionId)
+        && !excluded.has(data.interactionId)
       ) {
         result.push({
           interactionId: data.interactionId,

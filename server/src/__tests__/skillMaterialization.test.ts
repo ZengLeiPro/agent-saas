@@ -213,6 +213,9 @@ describe('技能异步增量物化', () => {
         ...(tenantId === 'tenant-b' ? [['legacy-foreign', [legacyDigest]] as const] : []),
       ]),
       resolveUserPersonalSkillIds: async () => new Set(['known-personal']),
+      resolveUserPersonalSkillOwnership: async (_user, skillId) => (
+        skillId === 'legacy-foreign' ? 'not_personal' : undefined
+      ),
     });
 
     const result = await materializer.materialize({ taskId: 'task-legacy-updated-source', user, userCwd });
@@ -281,6 +284,35 @@ describe('技能异步增量物化', () => {
       .toContain('personal');
   });
 
+  it('已有其他个人治理记录时仍不迁移未治理的同名旧个人 Skill', async () => {
+    createSkill(poolDir, 'alpha', 'alpha');
+    const sourceDir = join(sharedDir, 'tenants', 'tenant-b', 'skills');
+    createSkill(sourceDir, 'same-name', 'foreign-v1');
+    mkdirSync(join(sourceDir, 'same-name', 'node_modules'), { recursive: true });
+    writeFileSync(join(sourceDir, 'same-name', 'node_modules', 'ignored.js'), 'ignored-v1');
+    const userSkillDir = join(userCwd, '.ky-agent', 'skills');
+    createSkill(userSkillDir, 'same-name', 'personal');
+    const legacyDigest = legacyPackageFingerprint(join(sourceDir, 'same-name'));
+    writeFileSync(join(sourceDir, 'same-name', 'SKILL.md'), '---\nname: same-name\n---\nforeign-v2\n');
+    writeFileSync(join(userCwd, '.ky-agent', '.skills-version'), '1');
+    const config = fakeStore(['alpha']);
+    const materializer = new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      skillConfigStore: config.store,
+      resolveTenantSkillHistoricalProvenance: async (tenantId) => new Map([
+        ...(tenantId === 'tenant-b' ? [['same-name', [legacyDigest]] as const] : []),
+      ]),
+      resolveUserPersonalSkillIds: async () => new Set(['other-personal']),
+    });
+
+    const result = await materializer.materialize({ taskId: 'task-same-name-other-personal', user, userCwd });
+
+    expect(result.removedSkills).toBe(0);
+    expect(readFileSync(join(userSkillDir, 'same-name', 'SKILL.md'), 'utf-8'))
+      .toContain('personal');
+  });
+
   it('历史 provenance 查询异常时保留迁移状态并在下一轮重试', async () => {
     createSkill(poolDir, 'alpha', 'alpha');
     const sourceDir = join(sharedDir, 'tenants', 'tenant-b', 'skills');
@@ -308,6 +340,9 @@ describe('技能异步增量物化', () => {
         ]);
       },
       resolveUserPersonalSkillIds: async () => new Set(['known-personal']),
+      resolveUserPersonalSkillOwnership: async (_user, skillId) => (
+        skillId === 'legacy-retry' ? 'not_personal' : undefined
+      ),
     });
 
     const first = await materializer.materialize({ taskId: 'task-legacy-retry-1', user, userCwd });

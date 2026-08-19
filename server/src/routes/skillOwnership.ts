@@ -4,6 +4,7 @@ import { scanTenantOwnSkillIdsAsync } from '../data/skills/scanner.js';
 import { resolveTenantSkillsDir, resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import { agentSkillsDir } from '../workspace/namespace.js';
+import type { LegacySkillPersonalOwnership } from '../workspace/materialization/legacyProvenance.js';
 import {
   resolveManagedTenantSkillIds,
   resolveUserPersonalSkillIds,
@@ -13,7 +14,12 @@ import type { UserInfo } from '../data/users/types.js';
 export type SkillOwnershipUser = Pick<UserInfo, 'id' | 'username' | 'role' | 'tenantId'>;
 
 type SkillGovernanceStore = Pick<PgSkillGovernanceStore, 'getVersion'>
-  & Partial<Pick<PgSkillGovernanceStore, 'listTenantSkillHistoricalProvenance' | 'listPersonalByOwner'>>;
+  & Partial<Pick<PgSkillGovernanceStore, 'listTenantSkillHistoricalProvenance' | 'listPersonalByOwner'>>
+  & { resolveUserPersonalSkillOwnership?: (
+    tenantId: string,
+    userId: string,
+    skillId: string,
+  ) => Promise<LegacySkillPersonalOwnership | undefined> };
 
 export function createSkillOwnershipResolver(input: {
   agentCwd: string;
@@ -63,6 +69,7 @@ export function createSkillOwnershipResolver(input: {
       resolveUserPersonalSkillIds: input.skillGovernanceStore?.listPersonalByOwner
         ? (tenantId, userId) => resolveUserPersonalSkillIds({ id: userId, tenantId }, input.skillGovernanceStore)
         : undefined,
+      resolveUserPersonalSkillOwnership: input.skillGovernanceStore?.resolveUserPersonalSkillOwnership,
     });
   }
 

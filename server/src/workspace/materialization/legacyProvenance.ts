@@ -25,7 +25,15 @@ export interface LegacyTenantSkillDetectionInput {
     tenantId: string,
     userId: string,
   ) => Promise<ReadonlySet<string> | undefined>;
+  /** 只返回目标旧 Skill 的可靠 ownership 结论；undefined 表示无法证明。 */
+  resolveUserPersonalSkillOwnership?: (
+    tenantId: string,
+    userId: string,
+    skillId: string,
+  ) => Promise<LegacySkillPersonalOwnership | undefined>;
 }
+
+export type LegacySkillPersonalOwnership = 'personal' | 'not_personal';
 
 export interface LegacyTenantSkillDetectionResult {
   /** 可以确认属于外租户的旧目录；不包含个人所有权不确定的候选。 */
@@ -78,8 +86,8 @@ function normalizeHistoricalProvenance(
 /**
  * 迁移没有 skills-state.json 的旧 workspace 时，优先用当前源 fingerprint；源已更新或删除时，
  * 优先匹配治理历史摘要。旧上传摘要若包含已被物化过滤的文件，无法反推出新摘要，
- * 则使用带 tenant/legacySkillId 的治理历史作为一次性迁移凭据；已可靠读取的个人治理
- * provenance 优先保护同名个人目录，无法证明来源且没有旧治理凭据的目录仍保留为个人 Skill。
+ * 则仅在目标 legacySkillId 有明确的非个人 ownership 证据时使用治理历史作为一次性迁移凭据；
+ * 个人治理 provenance 优先保护同名个人目录，无法证明来源的目录仍保留为个人 Skill。
  */
 export async function detectLegacyTenantSkillIds(
   input: LegacyTenantSkillDetectionInput,
@@ -107,18 +115,12 @@ export async function detectLegacyTenantSkillIds(
   const userPackageDigests = new Map<string, string>();
   const managed = new Set<string>();
   let personalSkillIds = new Set<string>();
-  let personalOwnershipReliable = false;
   if (input.resolveUserPersonalSkillIds && input.currentTenantId && input.userId) {
     try {
       const resolved = await input.resolveUserPersonalSkillIds(input.currentTenantId, input.userId);
-      if (resolved && resolved.size > 0) {
-        personalSkillIds = new Set(resolved);
-        personalOwnershipReliable = true;
-      }
-      // 空集不是“没有个人 Skill”的证明：旧个人 Skill 可能从未进入治理表。
-      // 只有拿到非空的个人治理 provenance，才允许对未命中的 legacySkillId 使用宽松迁移。
+      if (resolved) personalSkillIds = new Set(resolved);
     } catch {
-      // 无法确认个人治理 provenance 时，禁止使用旧摘要的宽松迁移兜底。
+      // 无法确认个人治理 provenance 时，仍禁止使用宽松旧摘要迁移。
     }
   }
   let historicalProvenanceUnavailable = false;
@@ -159,6 +161,20 @@ export async function detectLegacyTenantSkillIds(
       const userDigest = userDigests.get(id);
       if (input.poolSkillIds.has(id) || !userDigest || personalSkillIds.has(id)) continue;
 
+      let personalOwnership: LegacySkillPersonalOwnership | undefined;
+      if (input.resolveUserPersonalSkillOwnership && input.currentTenantId && input.userId) {
+        try {
+          personalOwnership = await input.resolveUserPersonalSkillOwnership(
+            input.currentTenantId,
+            input.userId,
+            id,
+          );
+        } catch {
+          // 目标 ownership 查询失败时保持 unknown，禁止宽松迁移。
+        }
+      }
+      if (personalOwnership === 'personal') continue;
+
       // 当前源仍存在且副本完全一致时，可以直接确认组织 provenance。
       if (sourceIds.has(id)) {
         try {
@@ -190,9 +206,9 @@ export async function detectLegacyTenantSkillIds(
 
         // 旧版 contentDigest 把 node_modules/__pycache__/.DS_Store 也纳入哈希，
         // 而旧副本物化时已丢弃这些文件，无法从旧 SHA-256 反推出新的摘要。
-        // 治理历史中的 legacySkillId + 旧摘要只能在个人治理查询给出正向 provenance
-        // 且未占用该 legacySkillId 时作为一次性迁移凭据；空集或未配置都视为不确定。
-        if (provenance.legacyDigests.length > 0 && personalOwnershipReliable) {
+        // 旧摘要无法反推被过滤文件，只有目标 legacySkillId 得到明确的
+        // not_personal 结论时才能作为一次性迁移凭据；集合外或 unknown 都保留。
+        if (provenance.legacyDigests.length > 0 && personalOwnership === 'not_personal') {
           managed.add(id);
         }
       } catch {

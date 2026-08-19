@@ -320,6 +320,9 @@ export async function makeTestRig(): Promise<TestRig> {
           publishedBy: 'test',
         }
       : null,
+    resolveUserPersonalSkillOwnership: async (_tenantId: string, _userId: string, skillId: string) => (
+      skillId === 'legacy-foreign' ? 'not_personal' : undefined
+    ),
     listPersonalByOwner: async () => [{
       skillId: 'known-personal',
       tenantId: 'kaiyan',
@@ -351,6 +354,9 @@ export async function makeTestRig(): Promise<TestRig> {
     skillConfigStore,
     resolveTenantSkillHistoricalProvenance,
     resolveUserPersonalSkillIds: async () => new Set(['known-personal']),
+    resolveUserPersonalSkillOwnership: async (_user, skillId) => (
+      skillId === 'legacy-foreign' ? 'not_personal' : undefined
+    ),
   });
   const materializationStore = new InMemorySkillMaterializationStore();
   await materializationStore.init();

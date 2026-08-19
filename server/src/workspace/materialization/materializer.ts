@@ -34,7 +34,10 @@ import {
   type MaterializedSkillEntry,
   writeSkillManifest,
 } from './manifest.js';
-import { detectLegacyTenantSkillIds } from './legacyProvenance.js';
+import {
+  detectLegacyTenantSkillIds,
+  type LegacySkillPersonalOwnership,
+} from './legacyProvenance.js';
 import type { SkillMaterializationResult } from './types.js';
 
 interface DesiredSkill extends MaterializedSkillEntry {
@@ -54,6 +57,10 @@ export interface SkillMaterializerOptions {
   resolveUserPersonalSkillIds?: (
     user: WorkspaceUser,
   ) => Promise<ReadonlySet<string> | undefined>;
+  resolveUserPersonalSkillOwnership?: (
+    user: WorkspaceUser,
+    skillId: string,
+  ) => Promise<LegacySkillPersonalOwnership | undefined>;
 }
 
 export interface MaterializeWorkspaceInput {
@@ -228,6 +235,9 @@ export class SkillWorkspaceMaterializer {
           resolveTenantSkillHistoricalProvenance: this.options.resolveTenantSkillHistoricalProvenance,
           resolveUserPersonalSkillIds: this.options.resolveUserPersonalSkillIds
             ? () => this.options.resolveUserPersonalSkillIds!(user)
+            : undefined,
+          resolveUserPersonalSkillOwnership: this.options.resolveUserPersonalSkillOwnership
+            ? (_tenantId, _userId, skillId) => this.options.resolveUserPersonalSkillOwnership!(user, skillId)
             : undefined,
         })
       : { managedIds: new Set<string>(), retryable: false };

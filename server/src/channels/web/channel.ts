@@ -2304,7 +2304,7 @@ export class WebChannel implements BaseChannel {
   }
 
   private async pushPendingInteractions(client: WsClient, sessionId: string): Promise<void> {
-    const resolvedIds = await loadResolvedInteractionIds(await this.getRuntimeEventStoreForSession(sessionId), sessionId);
+    const resolvedIds = this.config.runtimeEventStoreFor ? await loadResolvedInteractionIds(await this.getRuntimeEventStoreForSession(sessionId), sessionId) : new Set<string>();
     const pending = interactionStore.getPendingInteractions(sessionId).filter((entry) => !resolvedIds.has(entry.interactionId));
     const excluded = new Set([...resolvedIds, ...pending.map((entry) => entry.interactionId)]);
 

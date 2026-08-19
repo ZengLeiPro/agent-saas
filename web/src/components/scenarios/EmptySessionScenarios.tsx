@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronRight, CirclePlay, Link2, Sparkles, Zap } from "lucide-react";
+import { ArrowRight, ChevronRight } from "lucide-react";
 import { buildScenarioPrompt } from "@agent/shared";
 import type { CatalogScenarioPublic, ScenarioItem } from "@agent/shared";
 import { Button } from "@/components/ui/button";
@@ -21,12 +21,10 @@ interface EmptySessionScenariosProps {
 function StarterRow({
   title,
   action,
-  icon,
   onClick,
 }: {
   title: string;
   action: string;
-  icon: React.ReactNode;
   onClick: () => void;
 }) {
   return (
@@ -35,7 +33,6 @@ function StarterRow({
       className="flex min-h-[56px] min-w-0 items-center gap-2.5 rounded-2xl border bg-card/70 px-3 py-2 text-left transition-[transform,border-color,background-color,box-shadow] hover:-translate-y-0.5 hover:border-brand-200 hover:bg-brand-50/35 hover:shadow-sm dark:hover:bg-brand-900/15"
       onClick={onClick}
     >
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/35">{icon}</span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-xs font-semibold sm:text-sm">{title}</span>
         <span className="mt-0.5 block text-[11px] font-medium text-muted-foreground">{action}</span>
@@ -48,7 +45,6 @@ function StarterRow({
 function StarterGrid({ children, onViewAll }: { children: React.ReactNode; onViewAll: () => void }) {
   return (
     <div className="content-container pt-4 sm:pt-5">
-      <div className="mb-2 text-left text-[11px] font-medium tracking-wide text-muted-foreground">为你推荐的 3 件事</div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">{children}</div>
       <div className="mt-2 flex justify-center">
         <Button type="button" variant="ghost" size="sm" className="h-8 gap-1 text-xs text-muted-foreground" onClick={onViewAll}>
@@ -93,19 +89,11 @@ export function EmptySessionScenarios({ onTryScenario, onStartWorkflow, onViewAl
           const isDirect = !canReplay && scenario.launch.startMode === "chat" && scenario.readiness === "D0_CURRENT";
           const needsConnector = !canReplay && (scenario.launch.startMode === "connector" || scenario.readiness === "D1_CONNECTOR");
           const action = canReplay ? "看回放" : isDirect ? "直接试" : needsConnector ? "需接入" : "了解方案";
-          const icon = canReplay
-            ? <CirclePlay className="size-4" />
-            : isDirect
-              ? <Zap className="size-4" />
-              : needsConnector
-                ? <Link2 className="size-4" />
-                : <Sparkles className="size-4" />;
           return (
             <StarterRow
               key={scenario.id}
               title={scenario.title}
               action={action}
-              icon={icon}
               onClick={() => {
                 if (canReplay) {
                   openCatalog(scenario, "presentation");
@@ -137,7 +125,6 @@ export function EmptySessionScenarios({ onTryScenario, onStartWorkflow, onViewAl
           key={scenario.id}
           title={scenario.title}
           action="预填任务"
-          icon={<Sparkles className="size-4" />}
           onClick={() => onTryScenario(buildScenarioPrompt(scenario), scenario)}
         />
       ))}

@@ -99,6 +99,7 @@ describe("ChatTabContent 初始会话", () => {
 
     expect(screen.getByText("麦迪文")).toBeTruthy();
     expect(screen.getByText("今天先推进哪件事？")).toBeTruthy();
+    expect(screen.queryByText("直接描述目标，或从一个开箱任务开始。")).toBeNull();
     expect(screen.getByPlaceholderText("说清目标，我来拆解并推进")).toBeTruthy();
     expect(screen.getByText("推荐任务").closest("[aria-hidden]")?.getAttribute("aria-hidden")).toBe("false");
     expect(screen.getByTestId("chat-input").closest("[data-initial-conversation]")?.getAttribute("data-initial-conversation")).toBe("true");

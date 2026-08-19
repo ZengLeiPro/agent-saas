@@ -56,6 +56,28 @@ describe('useSystemPanel', () => {
     expect(result.current.snapshot!.activeView).toBe('audit');
   });
 
+  it('只暴露最新一组 patch 的本步变化，下一组无 pulse 时清空旧高亮', () => {
+    const first = [
+      toolMessage('t1', { title: 'a', panelBase: BASE }),
+      toolMessage('t2', { title: 'b', panel: [
+        { op: 'rowUpdate', view: 'kb', id: 'r1', set: { state: 'hit' } },
+        { op: 'pulse', view: 'kb', ids: ['r1'], kind: 'hit' },
+      ] }),
+    ];
+    const { result, rerender } = renderHook(
+      ({ items }: { items: MessageItem[] }) => useSystemPanel(items),
+      { initialProps: { items: first } },
+    );
+
+    expect(result.current.pulse).toEqual({ op: 'pulse', view: 'kb', ids: ['r1'], kind: 'hit' });
+
+    rerender({ items: [
+      ...first,
+      toolMessage('t3', { title: 'c', panel: [{ op: 'toolbar', view: 'kb', sub: '下一步未修改行' }] }),
+    ] });
+    expect(result.current.pulse).toBeNull();
+  });
+
   it('用户切 tab 后不被后续 focus patch 抢走焦点', () => {
     const messages = [
       toolMessage('t1', { title: 'a', panelBase: BASE }),

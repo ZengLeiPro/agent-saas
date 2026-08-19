@@ -354,7 +354,7 @@ export function isTerminalStepEvent(event: BusinessStepEventItem): boolean {
  * 把 Business TodoWrite 快照序列差分成会话流内的业务步骤事件。
  *
  * 规则：
- * - 每个用户 Turn 内首个完整 business 快照 → `plan` 事件（计划亮相，不回放快照内已有状态）；
+ * - 每个业务 Run 内首个完整 business 快照 → `plan` 事件（计划亮相，不回放快照内已有状态）；
  *   若首快照已有 in_progress 项，紧跟一条 `start` 事件——保证每个步骤都有自己的节标题，
  *   章节化（groupMessages sectioning）才能把后续过程内容归进该步骤；
  * - 后续快照 vs 上一快照逐步骤 diff：
@@ -362,7 +362,8 @@ export function isTerminalStepEvent(event: BusinessStepEventItem): boolean {
  *   `→in_progress` → `start` 事件（首次开始与等待后继续同形）；
  * - 收尾事件排在开新事件之前（同一快照先结旧步、再开新步）；
  * - 仅结构增删且无任何状态转移时补一条轻量 `update`；
- * - Turn 边界（user 消息）重置 baseline：跨 Turn 首快照重新亮相为 plan，不重复回放已完成步骤。
+ * - user 消息默认开启新计划；若下一份 TodoWrite 与当前计划共享明确 runId，则视为同一次业务 Run 继续，
+ *   只刷新原计划。这样审批回复/后续 prompt 不会复制计划，真实新任务仍会重新亮相。
  */
 export function projectBusinessStepEvents(
   messages: MessageItem[],
@@ -374,8 +375,10 @@ export function projectBusinessStepEvents(
 
   let baseline: Map<string, TodoItem> | null = null;
   let latestActiveKey: string | null = null;
-  /** 当前 Turn 唯一的计划事件；后续快照原地刷新其步骤状态，不重复插入整份计划。 */
+  /** 当前业务 Run 唯一的计划事件；后续快照原地刷新其步骤状态，不重复插入整份计划。 */
   let currentPlanEvent: BusinessStepEventItem | null = null;
+  let currentPlanRunId: string | null = null;
+  let pendingUserBoundary = false;
   /** 最后一个承载「当前进行中」语义的事件（plan 或 start），用于 isCurrent 标注。 */
   let lastProgressEvent: BusinessStepEventItem | null = null;
 
@@ -389,10 +392,7 @@ export function projectBusinessStepEvents(
 
   for (const message of messages) {
     if (message.type === "user") {
-      baseline = null;
-      latestActiveKey = null;
-      currentPlanEvent = null;
-      lastProgressEvent = null;
+      pendingUserBoundary = true;
       continue;
     }
     if (message.type !== "tool_use" || message.toolName !== TODO_WRITE_TOOL_NAME) continue;
@@ -400,6 +400,17 @@ export function projectBusinessStepEvents(
     const todos = parseTodos(message.toolInput);
     // streaming 中的不完整入参：不隐藏、不发事件，等完整快照一次性处理。
     if (todos === undefined) continue;
+
+    const continuesCurrentRun = currentPlanRunId !== null && message.runId === currentPlanRunId;
+    const switchesRun = currentPlanRunId !== null && message.runId !== undefined && message.runId !== currentPlanRunId;
+    if ((pendingUserBoundary && !continuesCurrentRun) || switchesRun) {
+      baseline = null;
+      latestActiveKey = null;
+      currentPlanEvent = null;
+      currentPlanRunId = null;
+      lastProgressEvent = null;
+    }
+    pendingUserBoundary = false;
 
     hiddenMessageIds.add(message.id);
 
@@ -411,6 +422,7 @@ export function projectBusinessStepEvents(
       baseline = null;
       latestActiveKey = null;
       currentPlanEvent = null;
+      currentPlanRunId = null;
       lastProgressEvent = null;
       continue;
     }
@@ -430,6 +442,7 @@ export function projectBusinessStepEvents(
         stepCount,
       };
       currentPlanEvent = planEvent;
+      currentPlanRunId = message.runId ?? null;
       const batch: BusinessStepEventItem[] = [planEvent];
       if (activeTodo) {
         const activeKey = todoItemKey(activeTodo);

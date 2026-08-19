@@ -46,6 +46,8 @@ export type MessageItem =
       toolName: string;
       toolInput: string;
       toolId: string;
+      /** 所属 runtime run；用于把跨 user turn 的同一次业务执行保持为一个步骤计划。 */
+      runId?: string;
       streaming?: boolean;
       result?: string;
       resultReady?: boolean;

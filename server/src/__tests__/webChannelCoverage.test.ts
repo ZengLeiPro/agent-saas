@@ -1133,7 +1133,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         { type: 'thinking_start' },
         { type: 'thinking_delta', content: '思考中' },
         { type: 'thinking_end' },
-        { type: 'tool_start', toolId: 'r1', toolName: 'Read' },
+        { type: 'tool_start', toolId: 'r1', toolName: 'Read', runId: 'run-filter' },
         { type: 'tool_input_delta', toolId: 'r1', partialJson: '{"path":"a.txt"}' },
         { type: 'tool_end' },
         { type: 'tool_result', toolId: 'r1', toolResult: 'content-a' },
@@ -1146,7 +1146,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.ws.sent.map((m) => m.data.type)).toEqual([
         'chat_ack', 'stream_id', 'block_start', 'tool_input', 'block_end', 'tool_result', 'done',
       ]);
-      expect(rig.ws.sent[2].data).toEqual({ type: 'block_start', blockType: 'tool_use', toolName: 'Read', toolId: 'r1' });
+      expect(rig.ws.sent[2].data).toEqual({ type: 'block_start', blockType: 'tool_use', toolName: 'Read', toolId: 'r1', runId: 'run-filter' });
       expect(rig.ws.sent[3].data).toEqual({ type: 'tool_input', content: '{"path":"a.txt"}', toolName: 'Read', toolId: 'r1' });
       expect(rig.ws.sent[5].data).toEqual({ type: 'tool_result', toolId: 'r1', toolName: 'Read', result: 'content-a' });
     });

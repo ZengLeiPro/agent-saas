@@ -62,10 +62,11 @@ function compactNarrativeBlocks(
   });
 }
 
-function todoBlock(id: string, todos: DemoTodo[]): ApiTranscriptBlock {
+function todoBlock(id: string, todos: DemoTodo[], runId: string): ApiTranscriptBlock {
   return {
     id,
     kind: "tool_use",
+    runId,
     title: "TodoWrite",
     defaultOpen: false,
     toolName: "TodoWrite",
@@ -259,6 +260,7 @@ export function buildLegacyReplayBlocks(
   if (visibleStepCount === 0) return script.steps[0]?.blocks.slice(0, 1) ?? [];
 
   const visible: ApiTranscriptBlock[] = [];
+  const runId = `scenario-replay:${script.scenarioId}`;
   for (const [index, step] of script.steps.slice(0, visibleStepCount).entries()) {
     const leadingPrompts: ApiTranscriptBlock[] = [];
     const processBlocks = [...step.blocks];
@@ -269,6 +271,7 @@ export function buildLegacyReplayBlocks(
     visible.push(todoBlock(
       `demo-task-${index + 1}-start`,
       snapshotTodos(script, index, "start", decisions),
+      runId,
     ));
 
     // 工具过程收进步骤节；必要的短回复与产物卡留在终态快照之后，和真实 Agent
@@ -286,6 +289,7 @@ export function buildLegacyReplayBlocks(
     visible.push(todoBlock(
       `demo-task-${index + 1}-terminal-${decision ?? "default"}`,
       snapshotTodos(script, index, "terminal", decisions),
+      runId,
     ));
     const decisionNarrativeBlocks = decisionBlocks.filter((block) => block.kind === "text");
     const hasStructuredResult = [...processBlocks, ...decisionBlocks].some((block) => block.presentation);

@@ -5,6 +5,7 @@ import type {
   PanelCard,
   PanelEmpty,
   PanelFeedItem,
+  PanelPulse,
   PanelRow,
   PanelStat,
   PanelTableRow,
@@ -36,6 +37,19 @@ const TONE_MAP: Record<PanelTone, ActivityStatusTone> = {
   pending: "pending",
 };
 
+const DELTA_LABEL: Record<PanelPulse["kind"], string> = {
+  scan: "本步扫描",
+  hit: "本步命中",
+  new: "本步新增",
+};
+
+function deltaSurface(kind?: PanelPulse["kind"]): string | undefined {
+  if (kind === "scan") return "bg-primary/10 ring-1 ring-inset ring-primary/25";
+  if (kind === "hit") return "bg-warning/10 ring-1 ring-inset ring-warning/30";
+  if (kind === "new") return "bg-success/10 ring-1 ring-inset ring-success/25";
+  return undefined;
+}
+
 function Badge({ badge }: { badge: PanelBadge }) {
   return <span className={activityStatusBadgeClass(badge.tone ? TONE_MAP[badge.tone] : "neutral")}>{badge.text}</span>;
 }
@@ -49,13 +63,15 @@ function EmptyState({ empty }: { empty?: PanelEmpty }) {
   );
 }
 
-function RowItem({ row }: { row: PanelRow }) {
+function RowItem({ row, deltaKind }: { row: PanelRow; deltaKind?: PanelPulse["kind"] }) {
   return (
     <div
+      data-panel-delta={deltaKind}
       className={cn(
         "flex items-center gap-2 border-b border-border/60 px-3 py-2 last:border-b-0",
         row.state === "hit" && "bg-primary/5",
         row.state === "excluded" && "opacity-55",
+        deltaSurface(deltaKind),
       )}
     >
       <div className="min-w-0 flex-1">
@@ -70,9 +86,12 @@ function RowItem({ row }: { row: PanelRow }) {
   );
 }
 
-function CardItem({ card }: { card: PanelCard }) {
+function CardItem({ card, deltaKind }: { card: PanelCard; deltaKind?: PanelPulse["kind"] }) {
   return (
-    <div className={cn("rounded-md border border-border p-3", card.tone === "deny" && "border-destructive/40")}>
+    <div
+      data-panel-delta={deltaKind}
+      className={cn("rounded-md border border-border p-3", card.tone === "deny" && "border-destructive/40", deltaSurface(deltaKind))}
+    >
       <div className="flex items-start gap-2">
         <span className="min-w-0 flex-1 text-sm font-medium">{card.title}</span>
         {card.headBadge ? <Badge badge={card.headBadge} /> : null}
@@ -109,10 +128,10 @@ function StatItem({ stat }: { stat: PanelStat }) {
   );
 }
 
-function FeedItemView({ item }: { item: PanelFeedItem }) {
+function FeedItemView({ item, deltaKind }: { item: PanelFeedItem; deltaKind?: PanelPulse["kind"] }) {
   const isAgent = item.from === "ai";
   return (
-    <div className="px-3 py-2">
+    <div data-panel-delta={deltaKind} className={cn("px-3 py-2", deltaSurface(deltaKind))}>
       <div className="flex items-baseline gap-2">
         <span className={cn("text-xs font-medium", isAgent ? "text-primary" : "text-muted-foreground")}>
           {isAgent ? "AI 同事" : item.from}
@@ -135,9 +154,20 @@ function FeedItemView({ item }: { item: PanelFeedItem }) {
   );
 }
 
-function TableRowView({ row, cols }: { row: PanelTableRow; cols: PanelView["widget"] extends { cols: infer C } ? C : never }) {
+function TableRowView({
+  row,
+  cols,
+  deltaKind,
+}: {
+  row: PanelTableRow;
+  cols: PanelView["widget"] extends { cols: infer C } ? C : never;
+  deltaKind?: PanelPulse["kind"];
+}) {
   return (
-    <tr className={cn("border-b border-border/60 last:border-b-0", row.tone === "deny" && "bg-destructive/5")}>
+    <tr
+      data-panel-delta={deltaKind}
+      className={cn("border-b border-border/60 last:border-b-0", row.tone === "deny" && "bg-destructive/5", deltaSurface(deltaKind))}
+    >
       {(cols as Array<{ key: string; align?: "left" | "right" }>).map((col) => {
         const flag = row.flags?.[col.key];
         return (
@@ -159,7 +189,10 @@ function TableRowView({ row, cols }: { row: PanelTableRow; cols: PanelView["widg
   );
 }
 
-function Widget({ widget }: { widget: PanelWidget }) {
+function Widget({ widget, pulse }: { widget: PanelWidget; pulse?: PanelPulse }) {
+  const deltaIds = new Set(pulse?.ids ?? []);
+  const deltaKindFor = (id: string) => deltaIds.has(id) ? pulse?.kind : undefined;
+
   switch (widget.kind) {
     case "rows":
       return (
@@ -180,7 +213,7 @@ function Widget({ widget }: { widget: PanelWidget }) {
             </div>
           ) : null}
           <div className="min-h-0 flex-1 overflow-auto">
-            {widget.rows.length ? widget.rows.map((row) => <RowItem key={row.id} row={row} />) : <EmptyState empty={widget.empty} />}
+            {widget.rows.length ? widget.rows.map((row) => <RowItem key={row.id} row={row} deltaKind={deltaKindFor(row.id)} />) : <EmptyState empty={widget.empty} />}
           </div>
         </div>
       );
@@ -188,7 +221,7 @@ function Widget({ widget }: { widget: PanelWidget }) {
       return (
         <div className="min-h-0 flex-1 overflow-auto p-3">
           {widget.cards.length
-            ? <div className="space-y-2">{widget.cards.map((card) => <CardItem key={card.id} card={card} />)}</div>
+            ? <div className="space-y-2">{widget.cards.map((card) => <CardItem key={card.id} card={card} deltaKind={deltaKindFor(card.id)} />)}</div>
             : <EmptyState empty={widget.empty} />}
         </div>
       );
@@ -211,7 +244,7 @@ function Widget({ widget }: { widget: PanelWidget }) {
                 </tr>
               </thead>
               <tbody>
-                {widget.rows.map((row) => <TableRowView key={row.id} row={row} cols={widget.cols as never} />)}
+                {widget.rows.map((row) => <TableRowView key={row.id} row={row} cols={widget.cols as never} deltaKind={deltaKindFor(row.id)} />)}
               </tbody>
             </table>
           ) : <EmptyState empty={widget.empty} />}
@@ -228,7 +261,7 @@ function Widget({ widget }: { widget: PanelWidget }) {
     case "feed":
       return (
         <div className="min-h-0 flex-1 divide-y divide-border/60 overflow-auto">
-          {widget.items.length ? widget.items.map((item) => <FeedItemView key={item.id} item={item} />) : <EmptyState empty={widget.empty} />}
+          {widget.items.length ? widget.items.map((item) => <FeedItemView key={item.id} item={item} deltaKind={deltaKindFor(item.id)} />) : <EmptyState empty={widget.empty} />}
         </div>
       );
     case "custom":
@@ -263,11 +296,13 @@ function visiblePanelViews(views: PanelView[], activeKey: string): { inline: Pan
 
 export function SystemPanel({
   snapshot,
+  pulse,
   onSelectView,
   onClose,
   className,
 }: {
   snapshot: SystemPanelSnapshot;
+  pulse?: PanelPulse | null;
   onSelectView?: (key: string) => void;
   /** 真实会话里提供关闭入口；关闭后本会话不再自动打开 */
   onClose?: () => void;
@@ -276,6 +311,7 @@ export function SystemPanel({
   const overflowDetailsRef = useRef<HTMLDetailsElement>(null);
   const active = snapshot.views.find((view) => view.key === snapshot.activeView) ?? snapshot.views[0];
   if (!active) return null;
+  const activePulse = pulse?.view === active.key ? pulse : undefined;
   const panelViews = visiblePanelViews(snapshot.views, active.key);
 
   return (
@@ -362,10 +398,21 @@ export function SystemPanel({
               {active.toolbar.sub}
             </div>
           ) : null}
+          {activePulse?.ids.length ? (
+            <div
+              data-panel-delta-summary
+              role="status"
+              aria-live="polite"
+              aria-label={`${DELTA_LABEL[activePulse.kind]} ${activePulse.ids.length} 项`}
+              className="mt-1 text-[11px] font-medium text-primary"
+            >
+              {DELTA_LABEL[activePulse.kind]} {activePulse.ids.length} 项
+            </div>
+          ) : null}
         </div>
       </div>
 
-      <Widget widget={active.widget} />
+      <Widget widget={active.widget} pulse={activePulse} />
 
       {snapshot.foot ? (
         <div className="shrink-0 break-words border-t border-border px-3 py-1.5 text-xs leading-4 text-muted-foreground" title={snapshot.foot}>

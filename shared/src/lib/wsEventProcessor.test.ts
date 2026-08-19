@@ -490,8 +490,8 @@ describe('processWsEvent - 流式块（block/thinking/text/tool_input）', () =>
     const { ctx } = makeCtx(ctrl);
     const block = freshBlock();
 
-    dispatch({ type: 'block_start', blockType: 'tool_use', toolName: 'Bash', toolId: 'i1' }, ctx, block);
-    expect(ctrl.messages[0]).toMatchObject({ type: 'tool_use', toolName: 'Bash', toolId: 'i1', streaming: true });
+    dispatch({ type: 'block_start', blockType: 'tool_use', toolName: 'Bash', toolId: 'i1', runId: 'run-1' }, ctx, block);
+    expect(ctrl.messages[0]).toMatchObject({ type: 'tool_use', toolName: 'Bash', toolId: 'i1', runId: 'run-1', streaming: true });
 
     dispatch({ type: 'tool_input', content: '{"cmd":' }, ctx, block);
     dispatch({ type: 'tool_input', content: '"ls"}' }, ctx, block);

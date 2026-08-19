@@ -68,6 +68,54 @@ describe('ScenarioReplayView', () => {
     expect(screen.getByText('员工提问已完成并形成可回读结果')).toBeTruthy();
   });
 
+  it('右侧只高亮当前步骤 delta，推进到下一步后清除旧变化', () => {
+    const deltaScript: ReplayScript = {
+      scenarioId: 'panel-delta-test',
+      title: '面板变化测试',
+      sources: [],
+      steps: [
+        {
+          caption: '识别本步变化',
+          blocks: [{
+            id: 'delta-tool-1', kind: 'tool_use', title: '扫描订单', defaultOpen: true,
+            toolName: 'OrderScan', toolId: 'delta-1', content: '{}', executionStatus: 'completed',
+            presentation: {
+              title: '扫描订单',
+              panelBase: {
+                activeView: 'orders',
+                views: [{
+                  key: 'orders', label: '订单', winTitle: '订单中心',
+                  widget: { kind: 'table', cols: [{ key: 'name', label: '订单' }], rows: [{ id: 'r1', cells: { name: '订单 1' } }] },
+                }],
+              },
+              panel: [{ op: 'pulse', view: 'orders', ids: ['r1'], kind: 'hit' }],
+            },
+          }],
+        },
+        {
+          caption: '进入下一步',
+          blocks: [{
+            id: 'delta-tool-2', kind: 'tool_use', title: '核对下一项', defaultOpen: true,
+            toolName: 'OrderCheck', toolId: 'delta-2', content: '{}', executionStatus: 'completed',
+            presentation: {
+              title: '核对下一项',
+              panel: [{ op: 'toolbar', view: 'orders', sub: '本步未修改订单行' }],
+            },
+          }],
+        },
+      ],
+    };
+
+    render(<ScenarioReplayView script={deltaScript} onExit={vi.fn()} typewriterIntervalMs={0} />);
+    clickNext(1);
+    expect(screen.getByRole('status', { name: '本步命中 1 项' })).toBeTruthy();
+    expect(screen.getByText('订单 1').closest('tr')?.getAttribute('data-panel-delta')).toBe('hit');
+
+    clickNext(1);
+    expect(screen.queryByText('本步命中 1 项')).toBeNull();
+    expect(screen.getByText('订单 1').closest('tr')?.hasAttribute('data-panel-delta')).toBe(false);
+  });
+
   it('定时工作流首屏显示触发事件，推进后才展示执行动作', () => {
     render(<ScenarioReplayView script={deadlineWatchScript} onExit={vi.fn()} typewriterIntervalMs={0} />);
     expect(screen.getByText(/07:00 到期事项巡检/)).toBeTruthy();

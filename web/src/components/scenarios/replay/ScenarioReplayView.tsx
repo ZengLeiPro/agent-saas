@@ -233,13 +233,14 @@ export function ScenarioReplayView({
   }, [activeTextBlock?.id, streamedTextLengths, traceProjection, typewriterEnabled, visibleBlocks]);
 
   // Legacy 从 ToolPresentation fold；Trace V1 由同一语义事件前缀确定性生成完整快照。
-  const { snapshot: legacySnapshot, selectView: selectLegacyView } = useSystemPanel(messages);
+  const { snapshot: legacySnapshot, pulse: legacyPulse, selectView: selectLegacyView } = useSystemPanel(messages);
   const snapshot = useMemo(() => {
     const traceSnapshot = traceProjection?.panel;
     if (!traceSnapshot) return legacySnapshot;
     if (!traceViewOverride || !traceSnapshot.views.some((view) => view.key === traceViewOverride)) return traceSnapshot;
     return { ...traceSnapshot, activeView: traceViewOverride };
   }, [legacySnapshot, traceProjection?.panel, traceViewOverride]);
+  const pulse = traceMode ? null : legacyPulse;
   const selectView = useCallback((key: string) => {
     if (traceMode) setTraceViewOverride(key);
     else selectLegacyView(key);
@@ -479,7 +480,7 @@ export function ScenarioReplayView({
                 />
               ) : null}
               <div className={cn("flex min-h-0 flex-1 flex-col", artifactHtml && "hidden")}>
-                {snapshot ? <SystemPanel snapshot={snapshot} onSelectView={selectView} className="min-h-0 flex-1" /> : null}
+                {snapshot ? <SystemPanel snapshot={snapshot} pulse={pulse} onSelectView={selectView} className="min-h-0 flex-1" /> : null}
               </div>
             </div>
           </>

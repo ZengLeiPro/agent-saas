@@ -368,7 +368,7 @@ export async function handleWebChannelEvents(
         send({ type: 'draft_commit', draftId });
       },
 
-      onToolStart(toolId, toolName) {
+      onToolStart(toolId, toolName, _tracker, runId) {
         markRealContent();
         if (shouldSendWebBlock('tool_use', toolName, config)) {
           send({
@@ -376,6 +376,7 @@ export async function handleWebChannelEvents(
             blockType: 'tool_use',
             toolName,
             toolId,
+            ...(runId ? { runId } : {}),
           });
         }
       },

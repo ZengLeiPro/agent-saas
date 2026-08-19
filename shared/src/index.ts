@@ -619,6 +619,7 @@ export { normalizeSystemPanel, normalizePanelPatches, foldPanel } from "./lib/sy
 export type {
   SystemPanelSnapshot,
   PanelPatch,
+  PanelPulse,
   PanelView,
   PanelWidget,
   PanelRow,

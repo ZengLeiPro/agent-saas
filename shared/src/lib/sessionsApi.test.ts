@@ -145,6 +145,31 @@ describe('最终输出历史恢复', () => {
   });
 });
 
+describe('工具运行归属恢复', () => {
+  it('把 tool_use 的 runId 透传到消息投影', () => {
+    const messages = mapSessionDetailToMessages({
+      sessionId: 's-tool-run',
+      stats: { lines: 1, parsedLines: 1, parseErrors: 0 },
+      blocks: [{
+        id: 'todo-block',
+        kind: 'tool_use',
+        title: 'TodoWrite',
+        defaultOpen: false,
+        content: '{"todos":[]}',
+        toolName: 'TodoWrite',
+        toolId: 'todo-1',
+        runId: 'run-business-1',
+      }],
+    });
+
+    expect(messages).toEqual([expect.objectContaining({
+      type: 'tool_use',
+      toolName: 'TodoWrite',
+      runId: 'run-business-1',
+    })]);
+  });
+});
+
 describe('子 Agent 摘要', () => {
   function agentBlocks(subagent?: Record<string, unknown>) {
     return {

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { ApiTranscriptBlock } from "@agent/shared";
+import {
+  mapSessionDetailToMessages,
+  projectBusinessStepEvents,
+  type ApiSessionDetail,
+  type ApiTranscriptBlock,
+} from "@agent/shared";
 import { buildLegacyReplayBlocks } from "./legacyTaskDemo";
+import { hookReplayScenarioIds, loadHookReplayScript } from "./registry";
 import type { ReplayScript, ReplayStep } from "./types";
 
 function toolBlock(id: string, title: string): ApiTranscriptBlock {
@@ -89,6 +95,28 @@ describe("legacy task demo", () => {
     const lastTodos = todoPayload(terminalSnapshots.at(-1)!).todos;
     expect(lastTodos.every((todo) => todo.status === "completed")).toBe(true);
     expect(lastTodos.every((todo) => typeof (todo.outcome as { text?: string }).text === "string")).toBe(true);
+  });
+
+  it("全部 hook legacy 演示在审批回复和后续 prompt 后仍只有一个计划实例", async () => {
+    for (const scenarioId of hookReplayScenarioIds()) {
+      const loaded = loadHookReplayScript(scenarioId);
+      if (!loaded) throw new Error(`未注册 legacy 剧本：${scenarioId}`);
+      const replay = await loaded;
+      const decisions = Object.fromEntries(
+        replay.steps.flatMap((item, index) => item.approval ? [[index, "approved" as const]] : []),
+      );
+      const blocks = buildLegacyReplayBlocks(replay, replay.steps.length, decisions);
+      const detail: ApiSessionDetail = {
+        sessionId: `legacy-${scenarioId}`,
+        stats: { lines: blocks.length, parsedLines: blocks.length, parseErrors: 0 },
+        blocks,
+      };
+      const projection = projectBusinessStepEvents(mapSessionDetailToMessages(detail), false);
+      expect(
+        projection.events.filter((event) => event.kind === "plan"),
+        `${scenarioId} 生成了重复计划`,
+      ).toHaveLength(1);
+    }
   });
 
   it("结构化结果后只保留短回复和文件卡，省略重复长文", () => {

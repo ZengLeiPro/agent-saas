@@ -203,7 +203,11 @@ export function createPersonalSkillGovernanceUpload(deps: PersonalSkillGovernanc
       const userSkillsParent = userSkillsDir(deps, actor);
       if (existsSync(join(userSkillsParent, staged.skillId))) throw duplicateSkillError(staged.skillId);
       const installedDir = await moveStagedSkillIntoPlace(staged, userSkillsParent, true);
+      let selectionEnabled = false;
       try {
+        // 先写默认选择，再发布治理资源。这样选择存储故障不会留下已发布但不可重试的资源。
+        await setUserSkillSelected(deps.skillConfigStore, actor.username, staged.skillId, true);
+        selectionEnabled = true;
         const governed = await deps.skills.createAndPublishResource({
           skillId: resourceId,
           tenantId: input.tenantId,
@@ -226,9 +230,6 @@ export function createPersonalSkillGovernanceUpload(deps: PersonalSkillGovernanc
           },
           createdBy: actor.id,
         });
-        // 个人技能上传的成功语义包含“已默认启用”。选择偏好写入失败时直接失败，
-        // 不返回一个需要用户再手动开启的假成功结果。
-        await setUserSkillSelected(deps.skillConfigStore, actor.username, staged.skillId, true);
         return {
           ok: true,
           status: 'succeeded',
@@ -238,6 +239,14 @@ export function createPersonalSkillGovernanceUpload(deps: PersonalSkillGovernanc
           version: governed.version,
         };
       } catch (error) {
+        // 发布失败时回滚先写入的选择；失败本身不能把用户锁在脏偏好上。
+        if (selectionEnabled) {
+          try {
+            await setUserSkillSelected(deps.skillConfigStore, actor.username, staged.skillId, false);
+          } catch {
+            // 原始错误更重要；若选择存储本身不可用，下一次重试会重新校正状态。
+          }
+        }
         await rm(installedDir, { recursive: true, force: true });
         if (error instanceof SkillGovernanceInvariantError
           && error.code === 'SKILL_RESOURCE_VERSION_CONFLICT') {

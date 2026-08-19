@@ -359,40 +359,97 @@ export class UploadManager {
       }
       repairWorkspacePath(targetRoot, 0o775);
       const materialized: TaskBoardUploadAttachment[] = [];
-      for (const attachment of attachments) {
-        if (!ATTACHMENT_ID_RE.test(attachment.attachmentId)) {
-          throw new Error(`Invalid attachment id: ${attachment.attachmentId}`);
+      const createdPaths: string[] = [];
+      try {
+        for (const attachment of attachments) {
+          if (!ATTACHMENT_ID_RE.test(attachment.attachmentId)) {
+            throw new Error(`Invalid attachment id: ${attachment.attachmentId}`);
+          }
+          const sourcePath = resolve(sourceCwd, attachment.relativePath);
+          const sourceRealPath = await realpath(sourcePath);
+          if (!isWithin(sourceRealPath, sourceRoot)) {
+            throw new Error(`Attachment source escaped workspace: ${attachment.attachmentId}`);
+          }
+          const sourceStats = await stat(sourceRealPath);
+          if (!sourceStats.isFile() || sourceStats.size !== attachment.size) {
+            throw new Error(`Attachment source changed: ${attachment.attachmentId}`);
+          }
+          const targetName = taskAttachmentFilename(attachment);
+          let targetPath = join(targetRoot, targetName);
+          try {
+            await lstat(targetPath);
+            targetPath = join(
+              targetRoot,
+              `${attachment.attachmentId}-${randomUUID()}-${targetName.slice(attachment.attachmentId.length + 1)}`,
+            );
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          }
+          if (!isWithin(targetPath, targetRoot)) throw new Error('Task attachment path escaped scope');
+          const tempTargetPath = `${targetPath}.${process.pid}.${randomUUID()}.tmp`;
+          try {
+            await copyFile(sourceRealPath, tempTargetPath);
+            repairWorkspacePath(tempTargetPath, 0o664);
+            await rename(tempTargetPath, targetPath);
+            createdPaths.push(targetPath);
+          } finally {
+            await rm(tempTargetPath, { force: true }).catch(() => undefined);
+          }
+          const copiedRealPath = await realpath(targetPath);
+          if (!isWithin(copiedRealPath, targetRealRoot)) {
+            throw new Error('Task attachment path escaped scope');
+          }
+          repairWorkspacePath(targetPath, 0o664);
+          materialized.push({
+            ...attachment,
+            relativePath: relative(targetCwd, targetPath).split(sep).join('/'),
+          });
         }
-        const sourcePath = resolve(sourceCwd, attachment.relativePath);
-        const sourceRealPath = await realpath(sourcePath);
-        if (!isWithin(sourceRealPath, sourceRoot)) {
-          throw new Error(`Attachment source escaped workspace: ${attachment.attachmentId}`);
-        }
-        const sourceStats = await stat(sourceRealPath);
-        if (!sourceStats.isFile() || sourceStats.size !== attachment.size) {
-          throw new Error(`Attachment source changed: ${attachment.attachmentId}`);
-        }
-        const targetPath = join(targetRoot, taskAttachmentFilename(attachment));
-        if (!isWithin(targetPath, targetRoot)) throw new Error('Task attachment path escaped scope');
-        const tempTargetPath = `${targetPath}.${process.pid}.${randomUUID()}.tmp`;
-        try {
-          await copyFile(sourceRealPath, tempTargetPath);
-          repairWorkspacePath(tempTargetPath, 0o664);
-          await rename(tempTargetPath, targetPath);
-        } finally {
-          await rm(tempTargetPath, { force: true }).catch(() => undefined);
-        }
-        const copiedRealPath = await realpath(targetPath);
-        if (!isWithin(copiedRealPath, targetRealRoot)) {
-          throw new Error('Task attachment path escaped scope');
-        }
-        repairWorkspacePath(targetPath, 0o664);
-        materialized.push({
-          ...attachment,
-          relativePath: relative(targetCwd, targetPath).split(sep).join('/'),
-        });
+        return materialized;
+      } catch (error) {
+        await Promise.allSettled(createdPaths.map((path) => rm(path, { force: true })));
+        throw error;
       }
-      return materialized;
+    });
+  }
+
+  async cleanupTaskAttachments(
+    targetCwd: string,
+    taskId: string,
+    attachments: readonly Pick<TaskBoardAttachment, 'attachmentId' | 'relativePath'>[],
+  ): Promise<void> {
+    if (!isSafeTaskScopeSegment(taskId) || attachments.length === 0) return;
+    this.knownUserCwds.add(targetCwd);
+    await this.withUserMutation(targetCwd, async () => {
+      const targetRoot = join(targetCwd, 'taskboard', 'attachments', taskId);
+      let targetRealRoot: string;
+      try {
+        targetRealRoot = await realpath(targetRoot);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw error;
+      }
+      const workspaceRoot = await realpath(targetCwd);
+      if (!isWithin(targetRealRoot, workspaceRoot)) throw new Error('Task attachment scope escaped workspace');
+      for (const attachment of attachments) {
+        if (!attachment.attachmentId || !ATTACHMENT_ID_RE.test(attachment.attachmentId)) {
+          throw new Error('Invalid task attachment id');
+        }
+        const absolutePath = resolve(targetCwd, attachment.relativePath);
+        if (!isWithin(absolutePath, targetRoot)
+          || !basename(absolutePath).startsWith(`${attachment.attachmentId}-`)) {
+          throw new Error('Task attachment is not in its task scope');
+        }
+        let realPath: string;
+        try {
+          realPath = await realpath(absolutePath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          throw error;
+        }
+        if (!isWithin(realPath, targetRealRoot)) throw new Error('Task attachment escaped its scope');
+        await rm(realPath, { force: true });
+      }
     });
   }
 

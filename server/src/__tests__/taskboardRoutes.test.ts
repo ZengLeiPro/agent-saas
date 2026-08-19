@@ -476,6 +476,50 @@ describe('Taskboard routes', () => {
     expect(forbidden.status).toBe(403);
   });
 
+  it('HTTP 附件引用标记失败时不落库任务、更新或评论', async () => {
+    const service = makeService({ identities: [], taskFilters: [], createBoards: [] });
+    let created = 0;
+    let updated = 0;
+    let comments = 0;
+    service.createTask = async () => { created += 1; return TASK; };
+    service.updateTask = async () => { updated += 1; return TASK; };
+    service.createComment = async () => { comments += 1; return COMMENT; };
+    const attachmentId = '44444444-4444-4444-8444-444444444444';
+    const canonical = {
+      attachmentId,
+      originalName: '证据.txt',
+      relativePath: `uploads/${attachmentId}_证据.txt`,
+      size: 1,
+      mimeType: 'text/plain',
+      isImage: false,
+    };
+    const uploadManager = {
+      resolveAttachments: async () => [canonical],
+      materializeTaskAttachments: async (
+        _sourceCwd: string,
+        _targetCwd: string,
+        _taskId: string,
+        attachments: readonly (typeof canonical)[],
+      ) => attachments,
+      markReferenced: async () => { throw new Error('reference failed'); },
+    } as unknown as TaskboardRouterOptions['uploadManager'];
+    const rig = await makeRig(service, USER, undefined, undefined, undefined, {
+      agentCwd: '/agent', uploadManager,
+    });
+    const attachment = { ...canonical };
+
+    expect((await rig.request('/api/taskboard/boards/board-1/tasks', postJson({
+      title: '引用失败任务', attachments: [attachment],
+    }))).status).toBe(503);
+    expect((await rig.request('/api/taskboard/tasks/task-1', patchJson({
+      title: '引用失败更新', attachments: [attachment], expectedVersion: TASK.version,
+    }))).status).toBe(503);
+    expect((await rig.request('/api/taskboard/tasks/task-1/comments', postJson({
+      body: '', attachments: [attachment],
+    }))).status).toBe(503);
+    expect({ created, updated, comments }).toEqual({ created: 0, updated: 0, comments: 0 });
+  });
+
   it('创建任务的附件复制失败时回滚已创建任务', async () => {
     const service = makeService({ identities: [], taskFilters: [], createBoards: [] });
     let deletedTask: { id: string; version: number } | undefined;

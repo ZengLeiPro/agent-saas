@@ -524,6 +524,79 @@ describe('CronManage taskboard actions', () => {
     expect(markAttachmentsReferenced).toHaveBeenCalledTimes(3);
   });
 
+  it('附件引用标记失败时不落库任务、更新或评论', async () => {
+    const { service, options } = rig();
+    const attachmentId = '44444444-4444-4444-8444-444444444444';
+    const cleanupTaskAttachments = vi.fn(async () => undefined);
+    const attachmentOptions = {
+      ...options,
+      resolveAttachments: vi.fn(async () => [{
+        attachmentId,
+        originalName: '证据.txt',
+        relativePath: `uploads/${attachmentId}_证据.txt`,
+        size: 1,
+        mimeType: 'text/plain',
+        isImage: false,
+      }]),
+      materializeTaskAttachments: vi.fn(async (
+        _identity: TaskboardIdentity,
+        _taskId: string,
+        _ownerUserId: string,
+        attachments: readonly TaskBoardUploadAttachment[],
+      ) => [...attachments]),
+      cleanupTaskAttachments,
+      markAttachmentsReferenced: vi.fn(async () => { throw new Error('reference failed'); }),
+    };
+    const scope = { sessionId: 'session-reference-failure' };
+
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'task.create', boardId: board.id, title: '引用失败任务', attachments: [{ attachmentId }],
+    }, scope)).rejects.toThrow('reference failed');
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'task.update', taskId: task.id, expectedVersion: task.version, attachments: [{ attachmentId }],
+    }, scope)).rejects.toThrow('reference failed');
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'comment.create', taskId: task.id, attachments: [{ attachmentId }],
+    }, scope)).rejects.toThrow('reference failed');
+    expect(service.createTask).not.toHaveBeenCalled();
+    expect(service.updateTask).not.toHaveBeenCalled();
+    expect(service.createComment).not.toHaveBeenCalled();
+    expect(cleanupTaskAttachments).toHaveBeenCalledTimes(2);
+  });
+
+  it('任务或评论落库失败时清理已复制的任务作用域附件', async () => {
+    const { service, options } = rig();
+    const attachmentId = '55555555-5555-4555-8555-555555555555';
+    const source = {
+      attachmentId,
+      originalName: '证据.txt',
+      relativePath: `uploads/${attachmentId}_证据.txt`,
+      size: 1,
+      mimeType: 'text/plain',
+      isImage: false,
+    };
+    const scoped = { ...source, relativePath: `taskboard/attachments/${task.id}/${attachmentId}-证据.txt` };
+    const cleanupTaskAttachments = vi.fn(async () => undefined);
+    const attachmentOptions = {
+      ...options,
+      resolveAttachments: vi.fn(async () => [source]),
+      materializeTaskAttachments: vi.fn(async () => [scoped]),
+      markAttachmentsReferenced: vi.fn(async () => undefined),
+      cleanupTaskAttachments,
+    };
+    vi.mocked(service.updateTask).mockRejectedValueOnce(new Error('task write failed'));
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'task.update', taskId: task.id, expectedVersion: task.version,
+      attachments: [{ attachmentId }],
+    }, { sessionId: 'session-cleanup' })).rejects.toThrow('task write failed');
+    vi.mocked(service.createComment).mockRejectedValueOnce(new Error('comment write failed'));
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'comment.create', taskId: task.id, attachments: [{ attachmentId }],
+    }, { sessionId: 'session-cleanup' })).rejects.toThrow('comment write failed');
+    expect(cleanupTaskAttachments).toHaveBeenCalledTimes(2);
+    expect(cleanupTaskAttachments).toHaveBeenCalledWith(identity, task.id, identity.ownerUserId, [scoped]);
+  });
+
   it('附件写入缺少会话上下文时拒绝，不向 resolver 传空 scope', async () => {
     const { options } = rig();
     const resolveAttachments = vi.fn(async () => [] as TaskBoardUploadAttachment[]);
@@ -552,6 +625,7 @@ describe('CronManage taskboard actions', () => {
       materializeTaskAttachments: vi.fn(async () => {
         throw new Error('copy failed');
       }),
+      markAttachmentsReferenced: vi.fn(async () => undefined),
     };
 
     await expect(invokeTaskboardAction(attachmentOptions, identity, {

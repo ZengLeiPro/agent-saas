@@ -1,6 +1,6 @@
 import express from 'express';
 import { request as httpRequest, type Server } from 'node:http';
-import { mkdtemp, readFile, readdir, stat, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, stat, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -100,6 +100,31 @@ describe('attachment upload hardening', () => {
       completedRequests: 1,
       uploadedBytes: 11,
     });
+  });
+
+  it('多附件任务复制中途失败时清理本次已复制文件', async () => {
+    const root = await createRoot();
+    const manager = new UploadManager({ agentCwd: root });
+    const userCwd = join(root, USER.tenantId, USER.sub);
+    await mkdir(join(userCwd, 'uploads'), { recursive: true });
+    await writeFile(join(userCwd, 'uploads', 'first.txt'), 'a');
+    const first = {
+      attachmentId: '11111111-1111-4111-8111-111111111111',
+      originalName: 'first.txt', relativePath: 'uploads/first.txt', size: 1,
+      mimeType: 'text/plain', isImage: false,
+    } as const;
+    const second = { ...first, attachmentId: '22222222-2222-4222-8222-222222222222', relativePath: 'uploads/missing.txt' };
+
+    await expect(manager.materializeTaskAttachments(userCwd, userCwd, 'task-1', [first, second]))
+      .rejects.toThrow('ENOENT');
+    await expect(readdir(join(userCwd, 'taskboard', 'attachments', 'task-1'))).resolves.toEqual([]);
+    const materialized = await manager.materializeTaskAttachments(userCwd, userCwd, 'task-1', [first]);
+    const repeated = await manager.materializeTaskAttachments(userCwd, userCwd, 'task-1', [first]);
+    expect(repeated[0]!.relativePath).not.toBe(materialized[0]!.relativePath);
+    await manager.cleanupTaskAttachments(userCwd, 'task-1', repeated);
+    await expect(stat(join(userCwd, materialized[0]!.relativePath))).resolves.toBeTruthy();
+    await manager.cleanupTaskAttachments(userCwd, 'task-1', materialized);
+    await expect(readdir(join(userCwd, 'taskboard', 'attachments', 'task-1'))).resolves.toEqual([]);
   });
 
   it('rejects a 21-file request and removes its partial request directory', async () => {

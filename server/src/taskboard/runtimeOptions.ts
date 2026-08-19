@@ -56,6 +56,14 @@ export function createTaskboardAttachmentAccess(params: {
       taskId,
       attachments,
     ),
+    cleanupTaskAttachments: async (
+      identity: TaskboardIdentity,
+      taskId: string,
+      ownerUserId: string,
+      attachments: readonly TaskBoardUploadAttachment[],
+    ): Promise<void> => params.uploadManager.cleanupTaskAttachments(
+      ownerCwd(identity, ownerUserId), taskId, attachments,
+    ),
     markAttachmentsReferenced: async (
       identity: TaskboardIdentity,
       attachments: readonly TaskBoardUploadAttachment[],

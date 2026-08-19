@@ -11,6 +11,7 @@ import {
   TASKBOARD_TASK_KINDS,
   TASKBOARD_VISIBILITIES,
   type TaskBoardAttachment,
+  type TaskBoardComment,
   type TaskBoardTask,
   type TaskBoardUploadAttachment,
 } from '../../../shared/src/types/taskboard.js';
@@ -409,6 +410,7 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     const ownerUserId = attachments?.length
       ? (await options.service!.getBoard(identity, req.params.boardId)).ownerUserId
       : undefined;
+    await markRequestAttachments(options, req, attachments);
     const { dispatch } = input;
     const taskInput = { ...input };
     delete taskInput.dispatch;
@@ -417,8 +419,9 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       ...taskInput,
       ...(attachments !== undefined && attachments.length === 0 ? { attachments: [] } : {}),
     });
+    let scopedAttachments: TaskBoardUploadAttachment[] | undefined;
     try {
-      const scopedAttachments = await materializeRequestAttachments(options, req, identity, task.id, ownerUserId, attachments);
+      scopedAttachments = await materializeRequestAttachments(options, req, identity, task.id, ownerUserId, attachments);
       if (scopedAttachments) {
         task = await options.service!.updateTask(identity, task.id, {
           attachments: scopedAttachments,
@@ -426,9 +429,10 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
         });
       }
     } catch (error) {
-      await rollbackCreatedTask(options.service!, identity, task, error);
+      await rollbackCreatedTask(options.service!, identity, task, error, async () => {
+        await cleanupRequestAttachments(options, identity, task.id, ownerUserId, scopedAttachments);
+      });
     }
-    await markRequestAttachments(options, req, attachments);
     if (dispatch) {
       task = (await options.executionService!.startDirectExecution!(
         identityFrom(req),
@@ -509,11 +513,17 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     const taskInput = { ...input };
     delete taskInput.attachments;
     const scopedAttachments = await materializeRequestAttachments(options, req, identity, current.id, ownerUserId, attachments);
-    const task = await options.service!.updateTask(identity, req.params.id, {
-      ...taskInput,
-      ...(scopedAttachments !== undefined ? { attachments: scopedAttachments } : {}),
-    });
-    await markRequestAttachments(options, req, attachments);
+    let task: TaskBoardTask;
+    try {
+      await markRequestAttachments(options, req, attachments);
+      task = await options.service!.updateTask(identity, req.params.id, {
+        ...taskInput,
+        ...(scopedAttachments !== undefined ? { attachments: scopedAttachments } : {}),
+      });
+    } catch (error) {
+      await cleanupRequestAttachments(options, identity, current.id, ownerUserId, scopedAttachments, current.attachments);
+      throw error;
+    }
     res.json(task);
   }));
 
@@ -621,11 +631,17 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       ? (await options.service!.getBoard(identity, current.boardId)).ownerUserId
       : undefined;
     const scopedAttachments = await materializeRequestAttachments(options, req, identity, current.id, ownerUserId, attachments);
-    const comment = await options.service!.createComment(identity, req.params.id, {
-      body: input.body,
-      ...(scopedAttachments !== undefined ? { attachments: scopedAttachments } : {}),
-    });
-    await markRequestAttachments(options, req, attachments);
+    let comment: TaskBoardComment;
+    try {
+      await markRequestAttachments(options, req, attachments);
+      comment = await options.service!.createComment(identity, req.params.id, {
+        body: input.body,
+        ...(scopedAttachments !== undefined ? { attachments: scopedAttachments } : {}),
+      });
+    } catch (error) {
+      await cleanupRequestAttachments(options, identity, current.id, ownerUserId, scopedAttachments);
+      throw error;
+    }
     res.status(201).json(comment);
   }));
 
@@ -687,6 +703,24 @@ async function markRequestAttachments(
 ): Promise<void> {
   if (!attachments?.length) return;
   await options.uploadManager!.markReferenced(requestUserCwd(options, req), attachments, {});
+}
+
+async function cleanupRequestAttachments(
+  options: TaskboardRouterOptions,
+  identity: TaskboardIdentity,
+  taskId: string,
+  ownerUserId: string | undefined,
+  attachments: readonly TaskBoardUploadAttachment[] | undefined,
+  existing: readonly TaskBoardAttachment[] = [],
+): Promise<void> {
+  if (!attachments?.length || !ownerUserId || !options.uploadManager?.cleanupTaskAttachments) return;
+  const existingKeys = new Set(existing.map((attachment) => `${attachment.attachmentId}:${attachment.relativePath}`));
+  const created = attachments.filter((attachment) => !existingKeys.has(`${attachment.attachmentId}:${attachment.relativePath}`));
+  if (created.length) {
+    await options.uploadManager.cleanupTaskAttachments(
+      resolveTaskOwnerCwd(options, identity, ownerUserId), taskId, created,
+    );
+  }
 }
 
 function requestUserCwd(options: TaskboardRouterOptions, req: Request): string {
@@ -763,9 +797,11 @@ async function rollbackCreatedTask(
   identity: TaskboardIdentity,
   task: TaskBoardTask,
   error: unknown,
+  cleanup?: () => Promise<void>,
 ): Promise<never> {
   try {
     await service.deleteTask(identity, task.id, { expectedVersion: task.version });
+    await cleanup?.();
   } catch (cleanupError) {
     const originalMessage = error instanceof Error ? error.message : String(error);
     const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);

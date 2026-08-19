@@ -1,4 +1,4 @@
-import type { TaskBoardUploadAttachment } from '../../../shared/src/types/taskboard.js';
+import type { TaskBoardAttachment, TaskBoardUploadAttachment } from '../../../shared/src/types/taskboard.js';
 import { TaskboardValidationError } from '../taskboard/types.js';
 import type { TaskboardIdentity } from '../taskboard/types.js';
 import type {
@@ -72,4 +72,18 @@ export async function resolveTaskboardAttachments(
       'TASKBOARD_INVALID_ATTACHMENT',
     );
   }
+}
+
+export async function cleanupTaskboardAttachments(
+  options: TaskboardToolOptions,
+  identity: TaskboardIdentity,
+  taskId: string,
+  ownerUserId: string | undefined,
+  attachments: readonly TaskBoardUploadAttachment[] | undefined,
+  existing: readonly TaskBoardAttachment[] = [],
+): Promise<void> {
+  if (!attachments?.length || !ownerUserId || !options.cleanupTaskAttachments) return;
+  const existingKeys = new Set(existing.map((attachment) => `${attachment.attachmentId}:${attachment.relativePath}`));
+  const created = attachments.filter((attachment) => !existingKeys.has(`${attachment.attachmentId}:${attachment.relativePath}`));
+  if (created.length) await options.cleanupTaskAttachments(identity, taskId, ownerUserId, created);
 }

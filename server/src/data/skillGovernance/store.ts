@@ -4,8 +4,10 @@ import type { PoolClient } from 'pg';
 import { PgGovernanceMigrationRunner, governanceTablePrefix, type GovernancePgPool } from '../governance-schema/index.js';
 import {
   SkillGovernanceInvariantError,
+  MATERIALIZED_CONTENT_DIGEST_ALGORITHM,
   type GovernedSkillResource,
   type GovernedSkillVersion,
+  type SkillHistoricalProvenance,
   type SkillCandidate,
 } from './types.js';
 
@@ -121,6 +123,29 @@ export class PgSkillGovernanceStore {
     return result.rows.map(rowToResource);
   }
 
+  async resolveUserPersonalSkillOwnership(
+    tenantId: string,
+    ownerUserId: string,
+    legacySkillId: string,
+  ): Promise<'personal' | 'not_personal' | undefined> {
+    const result = await this.options.pool.query(`
+      SELECT
+        COALESCE(BOOL_OR(resource.scope='personal'
+          AND resource.owner_user_id=$2), false) AS personal,
+        COALESCE(BOOL_OR(resource.scope='tenant'), false) AS non_personal
+      FROM ${this.resourcesTable} resource
+      JOIN ${this.versionsTable} version ON version.skill_id=resource.skill_id
+      WHERE resource.tenant_id=$1
+        AND resource.scope IN ('tenant','personal')
+        AND version.definition_json->>'legacySkillId'=$3
+    `, [tenantId, ownerUserId, legacySkillId]);
+    const row = result.rows[0] as { personal?: unknown; non_personal?: unknown } | undefined;
+    const isTrue = (value: unknown): boolean => value === true || value === 'true';
+    if (isTrue(row?.personal)) return 'personal';
+    if (isTrue(row?.non_personal)) return 'not_personal';
+    return undefined;
+  }
+
   async transferPersonalOwnership(
     tenantId: string,
     skillId: string,
@@ -149,6 +174,59 @@ export class PgSkillGovernanceStore {
       `SELECT * FROM ${this.versionsTable} WHERE version_id=$1`, [versionId],
     );
     return result.rows[0] ? rowToVersion(result.rows[0]) : null;
+  }
+
+  async listVersions(skillId: string): Promise<GovernedSkillVersion[]> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.versionsTable} WHERE skill_id=$1 ORDER BY version_number`, [skillId],
+    );
+    return result.rows.map(rowToVersion);
+  }
+
+  async listTenantSkillHistoricalProvenance(
+    tenantId: string,
+  ): Promise<Map<string, SkillHistoricalProvenance>> {
+    const result = await this.options.pool.query(`
+      SELECT resource.skill_id, version.definition_json
+      FROM ${this.resourcesTable} resource
+      LEFT JOIN ${this.versionsTable} version ON version.skill_id=resource.skill_id
+      WHERE resource.tenant_id=$1 AND resource.scope='tenant'
+      ORDER BY resource.skill_id, version.version_number
+    `, [tenantId]);
+    const history = new Map<string, SkillHistoricalProvenance>();
+    for (const row of result.rows as Array<Record<string, unknown>>) {
+      let definition: Record<string, unknown> = {};
+      if (row.definition_json && typeof row.definition_json === 'object') {
+        definition = row.definition_json as Record<string, unknown>;
+      } else if (typeof row.definition_json === 'string') {
+        try {
+          const parsed = JSON.parse(row.definition_json);
+          if (parsed && typeof parsed === 'object') definition = parsed as Record<string, unknown>;
+        } catch {
+          // 损坏版本不提供 provenance 证据，但不影响其他历史版本。
+        }
+      }
+      const legacySkillId = typeof definition.legacySkillId === 'string'
+        ? definition.legacySkillId
+        : String(row.skill_id);
+      const previous = history.get(legacySkillId) ?? { digests: [], legacyDigests: [] };
+      const algorithm = definition.contentDigestAlgorithm;
+      const currentDigests = [...previous.digests];
+      const legacyDigests = [...previous.legacyDigests];
+      for (const key of ['materializedContentDigest', 'directoryFingerprint']) {
+        const digest = definition[key];
+        if (typeof digest === 'string' && !currentDigests.includes(digest)) currentDigests.push(digest);
+      }
+      const contentDigest = definition.contentDigest;
+      if (typeof contentDigest === 'string') {
+        const target = algorithm === MATERIALIZED_CONTENT_DIGEST_ALGORITHM
+          ? currentDigests
+          : legacyDigests;
+        if (!target.includes(contentDigest)) target.push(contentDigest);
+      }
+      history.set(legacySkillId, { digests: currentDigests, legacyDigests });
+    }
+    return history;
   }
 
   async getCandidate(tenantId: string, candidateId: string): Promise<SkillCandidate | null> {

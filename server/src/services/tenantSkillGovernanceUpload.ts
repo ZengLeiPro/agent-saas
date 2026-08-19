@@ -10,9 +10,9 @@ import { scanPoolSkillsAsync, scanTenantOwnSkillIdsAsync } from '../data/skills/
 import { resolveTenantSkillsDir, resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import type { UserStore } from '../data/users/store.js';
 import { setUserSkillSelected } from '../routes/skillSelection.js';
-import { serverLogger } from '../utils/logger.js';
 import { agentSkillsDir, resolveAgentPath } from '../workspace/namespace.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
+import { MATERIALIZED_CONTENT_DIGEST_ALGORITHM } from '../workspace/materialization/fingerprint.js';
 import {
   moveStagedSkillIntoPlace,
   SkillPackageUploadError,
@@ -115,6 +115,7 @@ export function createTenantSkillGovernanceUpload(deps: TenantSkillGovernanceUpl
             legacySkillId: staged.skillId,
             source: 'governance_upload',
             packageFormat: 'skill-package-v1',
+            contentDigestAlgorithm: MATERIALIZED_CONTENT_DIGEST_ALGORITHM,
             name: staged.name,
             description: staged.description,
             contentDigest: staged.contentDigest,
@@ -155,7 +156,7 @@ export function personalSkillResourceId(userId: string, legacySkillId: string): 
 export interface PersonalSkillGovernanceUploadResult {
   ok: true;
   status: 'succeeded';
-  selected: boolean;
+  selected: true;
   skill: { id: string; name: string; description: string };
   resource: Awaited<ReturnType<PgSkillGovernanceStore['createAndPublishResource']>>['resource'];
   version: Awaited<ReturnType<PgSkillGovernanceStore['createAndPublishResource']>>['version'];
@@ -204,7 +205,11 @@ export function createPersonalSkillGovernanceUpload(deps: PersonalSkillGovernanc
       const userSkillsParent = userSkillsDir(deps, actor);
       if (existsSync(join(userSkillsParent, staged.skillId))) throw duplicateSkillError(staged.skillId);
       const installedDir = await moveStagedSkillIntoPlace(staged, userSkillsParent, true);
+      let selectionEnabled = false;
       try {
+        // 先写默认选择，再发布治理资源。这样选择存储故障不会留下已发布但不可重试的资源。
+        await setUserSkillSelected(deps.skillConfigStore, actor.username, staged.skillId, true);
+        selectionEnabled = true;
         const governed = await deps.skills.createAndPublishResource({
           skillId: resourceId,
           tenantId: input.tenantId,
@@ -219,6 +224,7 @@ export function createPersonalSkillGovernanceUpload(deps: PersonalSkillGovernanc
             legacySkillId: staged.skillId,
             source: 'governance_upload',
             packageFormat: 'skill-package-v1',
+            contentDigestAlgorithm: MATERIALIZED_CONTENT_DIGEST_ALGORITHM,
             name: staged.name,
             description: staged.description,
             contentDigest: staged.contentDigest,
@@ -227,22 +233,23 @@ export function createPersonalSkillGovernanceUpload(deps: PersonalSkillGovernanc
           },
           createdBy: actor.id,
         });
-        let selected = true;
-        try {
-          await setUserSkillSelected(deps.skillConfigStore, actor.username, staged.skillId, true);
-        } catch (error) {
-          selected = false;
-          serverLogger.warn(`Personal Skill ${resourceId} published but selection update failed: ${error instanceof Error ? error.message : String(error)}`);
-        }
         return {
           ok: true,
           status: 'succeeded',
-          selected,
+          selected: true,
           skill: { id: staged.skillId, name: staged.name, description: staged.description },
           resource: governed.resource,
           version: governed.version,
         };
       } catch (error) {
+        // 发布失败时回滚先写入的选择；失败本身不能把用户锁在脏偏好上。
+        if (selectionEnabled) {
+          try {
+            await setUserSkillSelected(deps.skillConfigStore, actor.username, staged.skillId, false);
+          } catch {
+            // 原始错误更重要；若选择存储本身不可用，下一次重试会重新校正状态。
+          }
+        }
         await rm(installedDir, { recursive: true, force: true });
         if (error instanceof SkillGovernanceInvariantError
           && error.code === 'SKILL_RESOURCE_VERSION_CONFLICT') {

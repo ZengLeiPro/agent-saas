@@ -1,353 +1,17 @@
-/**
- * Skill 平台池、组织池与个人所有权边界测试。
- * 个人 Skill 内容和选择 self-only；直接提升到组织或平台在提交审批链建成前 fail closed。
- * 组织管理员仍可治理组织 Skill 与成员可用范围，但不能代读、代改成员个人 Skill。
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import express from 'express';
-import type { Server } from 'node:http';
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { createSkillsRouter } from '../routes/skills.js';
-import { requireAdmin } from '../auth/middleware.js';
-import type { UserStore } from '../data/users/store.js';
-import type { UserRecord } from '../data/users/types.js';
-import type { SkillConfigStore } from '../data/skills/store.js';
-import type { JwtPayload } from '../auth/types.js';
-import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
-import { SkillWorkspaceMaterializer } from '../workspace/materialization/materializer.js';
-import { SkillMaterializationService } from '../workspace/materialization/service.js';
-import { InMemorySkillMaterializationStore } from '../workspace/materialization/store.js';
-
-const PLATFORM_ADMIN: JwtPayload = { sub: 'u-platform', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID };
-const KAIYAN_USER: JwtPayload = { sub: 'u-ku', username: 'alice', role: 'user', tenantId: 'kaiyan' };
-const WAIN_ADMIN: JwtPayload = { sub: 'u-wa', username: 'wain_admin', role: 'admin', tenantId: 'wain' };
-const WAIN_USER: JwtPayload = { sub: 'u-wu', username: 'wain_user', role: 'user', tenantId: 'wain' };
-
-interface TestRig {
-  baseUrl: string;
-  agentCwd: string;
-  sharedDir: string;
-  tenantSkillsRootDir: string;
-  poolDir: string;
-  skillConfigStore: SkillConfigStore;
-  userSkillsDir(username: string): string;
-  waitSync(res: Response): Promise<{
-    total: number;
-    tenantIds: string[];
-    pruned?: number;
-  }>;
-  setCaller(caller: JwtPayload): void;
-  request(path: string, init?: RequestInit): Promise<Response>;
-  close(): Promise<void>;
-}
-
-function userRecord(id: string, username: string, role: 'admin' | 'user', tenantId: string): UserRecord {
-  return {
-    id, username, passwordHash: 'x', role, tenantId,
-    realName: username,
-    createdAt: '2026-06-23T00:00:00Z',
-    createdBy: 'system',
-    updatedAt: '2026-06-23T00:00:00Z',
-  };
-}
-
-function fakeUserStore(): UserStore {
-  const users: UserRecord[] = [
-    userRecord('u-platform', 'admin', 'admin', DEFAULT_TENANT_ID),
-    userRecord('u-ka', 'zengky', 'admin', 'kaiyan'),
-    userRecord('u-ku', 'alice', 'user', 'kaiyan'),
-    userRecord('u-wa', 'wain_admin', 'admin', 'wain'),
-    userRecord('u-wu', 'wain_user', 'user', 'wain'),
-  ];
-  return {
-    findByUsername: (name: string) => users.find(u => u.username === name),
-    listAll: () => users.map(({ passwordHash: _, ...rest }) => rest as never),
-  } as unknown as UserStore;
-}
-
-function fakeSkillConfigStore(): SkillConfigStore {
-  const visibility: Record<string, boolean> = {};
-  const platformConfig = new Map<string, { enabled: boolean; exposure: 'all' | 'allow_tenants' | 'deny_tenants'; tenantIds: string[] }>();
-  const tenantRules = new Map<string, Map<string, { enabled: boolean; exposure: 'all' | 'allow_users' | 'deny_users'; usernames: string[] }>>();
-  const tenantSelections = new Map<string, string[]>();
-  const userSelections = new Map<string, string[]>();
-  let configVersion = 1;
-  const getPlatformSkillConfig = (skillId: string) => platformConfig.get(skillId) ?? {
-    enabled: visibility[skillId] !== false,
-    exposure: 'all' as const,
-    tenantIds: [],
-  };
-  const isPoolSkillAvailableToTenant = (skillId: string, tenantId?: string) => {
-    const config = getPlatformSkillConfig(skillId);
-    if (!config.enabled) return false;
-    if (!tenantId) return true;
-    if (config.exposure === 'allow_tenants') return config.tenantIds.includes(tenantId);
-    if (config.exposure === 'deny_tenants') return !config.tenantIds.includes(tenantId);
-    return true;
-  };
-  const getTenantEnabledSkills = (tenantId?: string, visibleSkillIds?: string[]) => {
-    const fallback = visibleSkillIds ?? Object.entries(visibility)
-      .filter(([, visible]) => visible !== false)
-      .map(([id]) => id);
-    return (tenantId ? tenantSelections.get(tenantId) ?? fallback : fallback)
-      .filter(id => isPoolSkillAvailableToTenant(id, tenantId));
-  };
-  const getTenantSkillRule = (tenantId: string | undefined, skillId: string) => {
-    if (!tenantId) return { enabled: true, exposure: 'all' as const, usernames: [] };
-    const configured = tenantRules.get(tenantId)?.get(skillId);
-    if (configured) return configured;
-    return {
-      enabled: !tenantSelections.has(tenantId) || getTenantEnabledSkills(tenantId).includes(skillId),
-      exposure: 'all' as const,
-      usernames: [],
-    };
-  };
-  const isTenantSkillAvailableToUser = (skillId: string, tenantId?: string, username?: string) => {
-    if (!isPoolSkillAvailableToTenant(skillId, tenantId)) return false;
-    if (!tenantId) return true;
-    const rule = getTenantSkillRule(tenantId, skillId);
-    if (!rule.enabled) return false;
-    if (rule.exposure === 'allow_users') return !!username && rule.usernames.includes(username);
-    if (rule.exposure === 'deny_users') return !username || !rule.usernames.includes(username);
-    return true;
-  };
-  const tenantOwnRules = new Map<string, Map<string, { enabled: boolean; exposure: 'all' | 'allow_users' | 'deny_users'; usernames: string[] }>>();
-  const getTenantOwnSkillRule = (tenantId: string, skillId: string) =>
-    tenantOwnRules.get(tenantId)?.get(skillId) ?? { enabled: true, exposure: 'all' as const, usernames: [] };
-  const isTenantOwnSkillAvailableToUser = (tenantId: string, skillId: string, username?: string) => {
-    const rule = getTenantOwnSkillRule(tenantId, skillId);
-    if (!rule.enabled) return false;
-    if (rule.exposure === 'allow_users') return !!username && rule.usernames.includes(username);
-    if (rule.exposure === 'deny_users') return !username || !rule.usernames.includes(username);
-    return true;
-  };
-  return {
-    getTenantOwnSkillRule,
-    getTenantOwnSkillRules: (tenantId: string) => Object.fromEntries(tenantOwnRules.get(tenantId) ?? new Map()),
-    isTenantOwnSkillAvailableToUser,
-    getUserEffectiveTenantOwnSkills: (u: string, tenantId: string | undefined, availableOwnIds: Set<string>) => {
-      if (!tenantId) return [];
-      return (userSelections.get(u) ?? []).filter(id => availableOwnIds.has(id) && isTenantOwnSkillAvailableToUser(tenantId, id, u));
-    },
-    setTenantOwnSkillRules: async (tenantId: string, updates: Record<string, { enabled: boolean; exposure: 'all' | 'allow_users' | 'deny_users'; usernames: string[] }>) => {
-      const rules = tenantOwnRules.get(tenantId) ?? new Map();
-      for (const [id, rule] of Object.entries(updates)) rules.set(id, rule);
-      tenantOwnRules.set(tenantId, rules);
-      configVersion++;
-    },
-    getConfigVersion: () => configVersion,
-    getPoolVisibility: () => ({ ...visibility }),
-    getPlatformSkillConfig,
-    isPoolSkillAvailableToTenant,
-    setPoolVisibility: async (updates: Record<string, boolean>) => {
-      Object.assign(visibility, updates);
-      for (const [id, enabled] of Object.entries(updates)) {
-        platformConfig.set(id, { ...getPlatformSkillConfig(id), enabled });
-      }
-      configVersion++;
-    },
-    setPlatformSkillConfigs: async (updates: Record<string, { enabled: boolean; exposure: 'all' | 'allow_tenants' | 'deny_tenants'; tenantIds: string[] }>) => {
-      for (const [id, config] of Object.entries(updates)) {
-        platformConfig.set(id, config);
-        visibility[id] = config.enabled;
-      }
-      configVersion++;
-    },
-    getTenantEnabledSkills,
-    setTenantEnabledSkills: async (tenantId: string, skills: string[]) => { tenantSelections.set(tenantId, skills); configVersion++; },
-    getTenantSkillRule,
-    isTenantSkillAvailableToUser,
-    setTenantSkillRules: async (tenantId: string, updates: Record<string, { enabled: boolean; exposure: 'all' | 'allow_users' | 'deny_users'; usernames: string[] }>) => {
-      const rules = tenantRules.get(tenantId) ?? new Map();
-      for (const [id, rule] of Object.entries(updates)) rules.set(id, rule);
-      tenantRules.set(tenantId, rules);
-      configVersion++;
-    },
-    getUserSelectedSkills: (u: string) => userSelections.get(u) ?? [],
-    getAllUserConfigs: () => Object.fromEntries([...userSelections.entries()].map(([username, selectedSkills]) => [username, { selectedSkills }])),
-    getAllTenantConfigs: () => Object.fromEntries([...tenantSelections.entries()].map(([tenantId, enabledSkills]) => [tenantId, { enabledSkills }])),
-    setUserSelectedSkills: async (u: string, skills: string[]) => { userSelections.set(u, skills); configVersion++; },
-    removeSkillReferences: async (skillId: string) => {
-      let usersUpdated = 0;
-      let tenantsUpdated = 0;
-      delete visibility[skillId];
-      platformConfig.delete(skillId);
-      for (const [username, skills] of userSelections) {
-        const next = skills.filter(id => id !== skillId);
-        if (next.length !== skills.length) { userSelections.set(username, next); usersUpdated++; }
-      }
-      for (const [tenantId, skills] of tenantSelections) {
-        const next = skills.filter(id => id !== skillId);
-        if (next.length !== skills.length) { tenantSelections.set(tenantId, next); tenantsUpdated++; }
-      }
-      configVersion++;
-      return { usersUpdated, tenantsUpdated };
-    },
-    touchConfigVersion: async () => { configVersion++; },
-    // syncSkills() 调到的方法：返回该 username 实际应同步的 pool skill ids
-    getUserEffectivePoolSkills: (u: string, tenantId?: string) => {
-      return (userSelections.get(u) ?? []).filter(id => isTenantSkillAvailableToUser(id, tenantId, u));
-    },
-    getOrgAgentEffectivePoolSkills: () => [],
-    getOrgAgentEffectiveTenantOwnSkills: () => [],
-    syncWithPool: (currentPoolIds: Set<string>) => {
-      let added = 0;
-      for (const id of currentPoolIds) {
-        if (!(id in visibility)) {
-          visibility[id] = true;
-          added++;
-        }
-      }
-      if (added > 0) configVersion++;
-      return added;
-    },
-    pruneStaleSkills: (currentPoolIds: Set<string>) => {
-      let pruned = 0;
-      for (const id of Object.keys(visibility)) {
-        if (!currentPoolIds.has(id)) {
-          delete visibility[id];
-          pruned++;
-        }
-      }
-      for (const [username, skills] of userSelections) {
-        const next = skills.filter(id => currentPoolIds.has(id));
-        pruned += skills.length - next.length;
-        userSelections.set(username, next);
-      }
-      for (const [tenantId, skills] of tenantSelections) {
-        const next = skills.filter(id => currentPoolIds.has(id));
-        pruned += skills.length - next.length;
-        tenantSelections.set(tenantId, next);
-      }
-      if (pruned > 0) configVersion++;
-      return pruned;
-    },
-  } as unknown as SkillConfigStore;
-}
-
-async function makeTestRig(): Promise<TestRig> {
-  const tmpRoot = mkdtempSync(join(tmpdir(), 'skills-tenant-iso-'));
-  const agentCwd = join(tmpRoot, 'workspace');
-  const sharedDir = join(tmpRoot, 'shared');
-  const tenantSkillsRootDir = join(tmpRoot, 'tenant-skills');
-  const poolDir = join(sharedDir, '.ky-agent', 'skills-pool');
-  mkdirSync(agentCwd, { recursive: true });
-  mkdirSync(poolDir, { recursive: true });
-  // 种 pool skills
-  mkdirSync(join(poolDir, 'shared_skill'), { recursive: true });
-  writeFileSync(join(poolDir, 'shared_skill', 'SKILL.md'), '---\nname: shared_skill\ndescription: shared\n---\nhi');
-  mkdirSync(join(poolDir, 'hidden_skill'), { recursive: true });
-  writeFileSync(join(poolDir, 'hidden_skill', 'SKILL.md'), '---\nname: hidden_skill\ndescription: hidden\n---\nhi');
-  // 种用户自建 skill 在 tenant/userId 路径
-  for (const [tenant, username, userId] of [
-    ['kaiyan', 'alice', 'u-ku'],
-    ['wain', 'wain_user', 'u-wu'],
-  ] as const) {
-    const customDir = join(agentCwd, tenant, userId, '.ky-agent', 'skills', `${username}_custom`);
-    mkdirSync(customDir, { recursive: true });
-    writeFileSync(join(customDir, 'SKILL.md'), `---\nname: ${username}_custom\ndescription: c\n---\nx`);
-    // .ky-agent 目录（让 /sync 路径校验通过）
-    mkdirSync(join(agentCwd, tenant, userId, '.ky-agent'), { recursive: true });
-  }
-  const app = express();
-  app.use(express.json());
-  let currentCaller: JwtPayload = PLATFORM_ADMIN;
-  const skillConfigStore = fakeSkillConfigStore();
-  const userStore = fakeUserStore();
-  const materializer = new SkillWorkspaceMaterializer({
-    sharedDir,
-    sourceRevision: 'test-release',
-    tenantSkillsRootDir,
-    skillConfigStore,
-  });
-  const materializationStore = new InMemorySkillMaterializationStore();
-  await materializationStore.init();
-  const skillMaterialization = new SkillMaterializationService({
-    store: materializationStore,
-    materializer,
-    skillConfigStore,
-    sourceRevision: 'test-release',
-    pollIntervalMs: 10,
-    resolveTargetByUsername: (username) => {
-      const user = userStore.findByUsername(username);
-      if (!user) return undefined;
-      const workspaceUser = {
-        id: user.id,
-        username: user.username,
-        role: user.role as 'admin' | 'user',
-        tenantId: user.tenantId,
-      };
-      return {
-        user: workspaceUser,
-        userCwd: join(agentCwd, user.tenantId, user.id),
-      };
-    },
-  });
-  skillMaterialization.start();
-  app.use((req, _res, next) => { req.user = currentCaller; next(); });
-  app.use('/api/skills', createSkillsRouter({
-      skillConfigStore,
-      userStore,
-      agentCwd,
-      sharedDir,
-      tenantSkillsRootDir,
-      skillMaterialization,
-    }));
-  // 跑 requireAdmin error 路径需要中间件链；这里整链已挂
-  void requireAdmin;
-  const server: Server = await new Promise(resolve => {
-    const s = app.listen(0, '127.0.0.1', () => resolve(s));
-  });
-  const addr = server.address();
-  const baseUrl = typeof addr === 'object' && addr ? `http://127.0.0.1:${addr.port}` : '';
-  return {
-    baseUrl,
-    agentCwd,
-    sharedDir,
-    tenantSkillsRootDir,
-    poolDir,
-    skillConfigStore,
-    userSkillsDir(username) {
-      const user = userStore.findByUsername(username)!;
-      return join(agentCwd, user.tenantId, user.id, '.ky-agent', 'skills');
-    },
-    setCaller(c) { currentCaller = c; },
-    request: (path, init) => fetch(`${baseUrl}${path}`, init),
-    waitSync: async (res) => {
-      expect(res.status).toBe(202);
-      const started = await res.json() as {
-        id: string;
-        total: number;
-        tenantIds: string[];
-        pruned?: number;
-      };
-      for (;;) {
-        const progress = await fetch(`${baseUrl}/api/skills/sync-jobs/${started.id}`);
-        expect(progress.status).toBe(200);
-        const body = await progress.json() as {
-          status: string;
-          total: number;
-          tenantIds: string[];
-          error?: string;
-        };
-        if (body.status === 'succeeded') return { ...body, pruned: started.pruned };
-        if (body.status === 'partial' || body.status === 'failed') {
-          throw new Error(body.error || 'sync failed');
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-    },
-    close: async () => {
-      await skillMaterialization.stop();
-      await new Promise<void>(resolve => server.close(() => resolve()));
-      rmSync(tmpRoot, { recursive: true, force: true });
-    },
-  };
-}
+import { computeSkillPackageFingerprint } from '../workspace/materialization/fingerprint.js';
+import {
+  KAIYAN_USER,
+  PLATFORM_ADMIN,
+  WAIN_ADMIN,
+  WAIN_USER,
+  legacyPackageFingerprint,
+  makeTestRig,
+  type TestRig,
+} from './skillsRouterTenantIsolation.testHelpers.js';
 
 describe('skills 路由多组织隔离 (PR 9)', () => {
   let h: TestRig;
@@ -691,6 +355,198 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       expect(res.status).toBe(200);
       const body = await res.json() as { customSkills: { id: string }[] };
       expect(body.customSkills.map(s => s.id)).toContain('alice_custom');
+    });
+
+    it('其他组织的物化残留不进入个人列表、选择和文档接口', async () => {
+      const form = new FormData();
+      form.append('files', new Blob(['---\nname: wy-invoice\ndescription: 唯恩电气 T100 Vendor Portal\n---\nbody'], { type: 'text/markdown' }), 'SKILL.md');
+      h.setCaller(WAIN_ADMIN);
+      const uploaded = await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: form });
+      expect(uploaded.status).toBe(200);
+      h.setCaller(WAIN_USER);
+      const ownerView = await h.request('/api/skills/me');
+      expect((await ownerView.json() as { tenantSkills: { id: string }[] }).tenantSkills.map(s => s.id)).toContain('wy-invoice');
+
+      // 模拟历史错误物化：wain 组织技能残留在 kaiyan 用户 workspace。
+      const leakedDir = join(h.userSkillsDir('alice'), 'wy-invoice');
+      mkdirSync(leakedDir, { recursive: true });
+      writeFileSync(join(leakedDir, 'SKILL.md'), '---\nname: wy-invoice\ndescription: leaked\n---\nbody');
+      writeFileSync(join(h.userSkillsDir('alice'), '..', 'skills-state.json'), JSON.stringify({
+        version: 1,
+        desiredHash: 'previous',
+        configVersion: h.skillConfigStore.getConfigVersion(),
+        generatedAt: '2026-08-19T00:00:00.000Z',
+        skills: { 'wy-invoice': { digest: 'foreign', source: 'tenant', tenantId: 'wain' } },
+      }));
+
+      h.setCaller(KAIYAN_USER);
+      const listed = await h.request('/api/skills/me');
+      expect(listed.status).toBe(200);
+      const body = await listed.json() as { customSkills: { id: string }[]; tenantSkills: { id: string }[] };
+      expect(body.customSkills.map(s => s.id)).not.toContain('wy-invoice');
+      expect(body.tenantSkills.map(s => s.id)).not.toContain('wy-invoice');
+
+      const bulkSelection = await h.request('/api/skills/me/selections', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedSkills: ['wy-invoice'] }),
+      });
+      expect(bulkSelection.status).toBe(200);
+      expect(h.skillConfigStore.getUserSelectedSkills('alice')).not.toContain('wy-invoice');
+
+      const singleSelection = await h.request('/api/skills/me/skills/wy-invoice/selection', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: true, expectedVersion: 0 }),
+      });
+      expect(singleSelection.status).toBe(403);
+
+      const document = await h.request('/api/skills/me/skills/wy-invoice/document');
+      expect(document.status).toBe(400);
+    });
+
+    it('无 manifest 的旧 .skills-version 状态仍隔离可证明的外租户残留', async () => {
+      const sourceDir = join(h.tenantSkillsRootDir, 'wain', 'skills', 'legacy-foreign');
+      mkdirSync(sourceDir, { recursive: true });
+      const content = '---\nname: legacy-foreign\ndescription: foreign\n---\nforeign';
+      writeFileSync(join(sourceDir, 'SKILL.md'), content);
+
+      const leakedDir = join(h.userSkillsDir('alice'), 'legacy-foreign');
+      mkdirSync(leakedDir, { recursive: true });
+      writeFileSync(join(leakedDir, 'SKILL.md'), content);
+      writeFileSync(join(h.userSkillsDir('alice'), '..', '.skills-version'), '1');
+
+      h.setCaller(KAIYAN_USER);
+      const listed = await h.request('/api/skills/me');
+      expect(listed.status).toBe(200);
+      expect((await listed.json() as { customSkills: { id: string }[] }).customSkills.map(s => s.id))
+        .not.toContain('legacy-foreign');
+
+      const selected = await h.request('/api/skills/me/selections', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedSkills: ['legacy-foreign'] }),
+      });
+      expect(selected.status).toBe(200);
+      expect(h.skillConfigStore.getUserSelectedSkills('alice')).not.toContain('legacy-foreign');
+    });
+
+    it('残留外租户 Skill 的 v1、当前源已更新为 v2 时不可见、不可选、不可调用且可清理', async () => {
+      const sourceDir = join(h.tenantSkillsRootDir, 'wain', 'skills', 'legacy-foreign');
+      mkdirSync(sourceDir, { recursive: true });
+      writeFileSync(join(sourceDir, 'SKILL.md'), '---\nname: legacy-foreign\ndescription: foreign\n---\nforeign-v1');
+      mkdirSync(join(sourceDir, 'node_modules'), { recursive: true });
+      writeFileSync(join(sourceDir, 'node_modules', 'ignored.js'), 'ignored-v1');
+
+      const leakedDir = join(h.userSkillsDir('alice'), 'legacy-foreign');
+      mkdirSync(leakedDir, { recursive: true });
+      writeFileSync(join(leakedDir, 'SKILL.md'), '---\nname: legacy-foreign\ndescription: foreign\n---\nforeign-v1');
+      // 历史摘要来自完整 v1 包，而用户副本只含可物化文件。
+      const legacyDigest = legacyPackageFingerprint(sourceDir);
+      writeFileSync(join(sourceDir, 'SKILL.md'), '---\nname: legacy-foreign\ndescription: foreign\n---\nforeign-v2');
+      writeFileSync(join(h.userSkillsDir('alice'), '..', '.skills-version'), '1');
+      h.setTenantSkillHistoricalDigests('wain', 'legacy-foreign', [legacyDigest]);
+
+      h.setCaller(KAIYAN_USER);
+      const listed = await h.request('/api/skills/me');
+      expect(listed.status).toBe(200);
+      const body = await listed.json() as { customSkills: { id: string }[]; tenantSkills: { id: string }[] };
+      expect(body.customSkills.map(s => s.id)).not.toContain('legacy-foreign');
+      expect(body.tenantSkills.map(s => s.id)).not.toContain('legacy-foreign');
+
+      const selected = await h.request('/api/skills/me/selections', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedSkills: ['legacy-foreign'] }),
+      });
+      expect(selected.status).toBe(200);
+      expect(h.skillConfigStore.getUserSelectedSkills('alice')).not.toContain('legacy-foreign');
+
+      const singleSelection = await h.request('/api/skills/me/skills/legacy-foreign/selection', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: true, expectedVersion: 0 }),
+      });
+      expect(singleSelection.status).toBe(403);
+      expect((await h.request('/api/skills/me/skills/legacy-foreign/document')).status).toBe(400);
+
+      h.setCaller(PLATFORM_ADMIN);
+      await h.waitSync(await h.request('/api/skills/sync', { method: 'POST' }));
+      expect(existsSync(leakedDir)).toBe(false);
+    });
+
+    it('已删除归档的外租户 Skill 历史残留仍不可见、不可选、不可调用且可清理', async () => {
+      const sourceDir = join(h.tenantSkillsRootDir, 'wain', 'skills', 'legacy-deleted');
+      mkdirSync(sourceDir, { recursive: true });
+      writeFileSync(join(sourceDir, 'SKILL.md'), '---\nname: legacy-deleted\ndescription: foreign\n---\nforeign-v1');
+
+      const leakedDir = join(h.userSkillsDir('alice'), 'legacy-deleted');
+      mkdirSync(leakedDir, { recursive: true });
+      writeFileSync(join(leakedDir, 'SKILL.md'), '---\nname: legacy-deleted\ndescription: foreign\n---\nforeign-v1');
+      const legacyDigest = await computeSkillPackageFingerprint(leakedDir);
+      h.setTenantSkillHistoricalDigests('wain', 'legacy-deleted', [legacyDigest]);
+      rmSync(sourceDir, { recursive: true, force: true });
+      writeFileSync(join(h.userSkillsDir('alice'), '..', '.skills-version'), '1');
+
+      h.setCaller(KAIYAN_USER);
+      const listed = await h.request('/api/skills/me');
+      expect(listed.status).toBe(200);
+      const body = await listed.json() as { customSkills: { id: string }[]; tenantSkills: { id: string }[] };
+      expect(body.customSkills.map(s => s.id)).not.toContain('legacy-deleted');
+      expect(body.tenantSkills.map(s => s.id)).not.toContain('legacy-deleted');
+
+      const selected = await h.request('/api/skills/me/selections', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedSkills: ['legacy-deleted'] }),
+      });
+      expect(selected.status).toBe(200);
+      expect(h.skillConfigStore.getUserSelectedSkills('alice')).not.toContain('legacy-deleted');
+      expect((await h.request('/api/skills/me/skills/legacy-deleted/selection', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: true, expectedVersion: 0 }),
+      })).status).toBe(403);
+      expect((await h.request('/api/skills/me/skills/legacy-deleted/document')).status).toBe(400);
+
+      h.setCaller(PLATFORM_ADMIN);
+      await h.waitSync(await h.request('/api/skills/sync', { method: 'POST' }));
+      expect(existsSync(leakedDir)).toBe(false);
+    });
+
+    it('外租户后来创建同名组织 Skill 不影响既有个人 Skill', async () => {
+      h.setCaller(KAIYAN_USER);
+      const personalDir = join(h.userSkillsDir('alice'), 'same-name');
+      mkdirSync(personalDir, { recursive: true });
+      writeFileSync(join(personalDir, 'SKILL.md'), '---\nname: same-name\ndescription: personal\n---\npersonal');
+
+      h.setCaller(WAIN_ADMIN);
+      const form = new FormData();
+      form.append('files', new Blob(['---\nname: same-name\ndescription: d\n---\nbody'], { type: 'text/markdown' }), 'SKILL.md');
+      const uploaded = await h.request('/api/skills/tenants/wain/import', {
+        method: 'POST',
+        body: form,
+      });
+      expect(uploaded.status).toBe(200);
+
+      h.setCaller(PLATFORM_ADMIN);
+      const synced = await h.request('/api/skills/sync', { method: 'POST' });
+      expect(synced.status).toBe(202);
+      await h.waitSync(synced);
+
+      h.setCaller(KAIYAN_USER);
+      const listed = await h.request('/api/skills/me');
+      const body = await listed.json() as { customSkills: { id: string }[] };
+      expect(body.customSkills.map(s => s.id)).toContain('same-name');
+      expect(readFileSync(join(personalDir, 'SKILL.md'), 'utf8')).toContain('personal');
+
+      const selected = await h.request('/api/skills/me/selections', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedSkills: ['same-name'] }),
+      });
+      expect(selected.status).toBe(200);
+      expect(h.skillConfigStore.getUserSelectedSkills('alice')).toContain('same-name');
     });
   });
 

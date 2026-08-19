@@ -143,8 +143,14 @@ import { GroupStore } from '../data/groups/store.js';
 import { SkillConfigStore, migrateFromManifest } from '../data/skills/index.js';
 import { GoogleWorkspaceOAuthService } from '../connectors/googleWorkspace.js';
 import { connectNotionCredential } from '../connectors/notion.js';
-import { scanPoolSkills as scanPoolSkillsForDispatch, scanTenantOwnSkillIds, scanUserCustomSkills } from '../data/skills/scanner.js';
+import {
+  scanPoolSkills as scanPoolSkillsForDispatch,
+  scanTenantOwnSkillIds,
+  scanUserCustomSkills,
+} from '../data/skills/scanner.js';
 import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
+import { resolveUserPersonalSkillIds as resolvePersonalSkillIds } from '../workspace/materialization/managedTenantSkills.js';
+import { createSkillDispatchState } from './skillDispatchState.js';
 import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import { agentDir, resolveAgentPath } from '../workspace/namespace.js';
 import { CronLeadership } from '../runtime/cronLeadership.js';
@@ -1157,6 +1163,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const runtimeEventStoreFor: (transcriptPath: string) => EventStore = pgEventStore
     ? (_transcriptPath) => pgEventStore!  // PG backend：共享 pool，按 session_id 过滤
     : (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+  const resolveTenantSkillHistoricalProvenance = (tenantId: string) => skillGovernanceStore?.listTenantSkillHistoricalProvenance(tenantId) ?? Promise.resolve(new Map());
+  const resolveUserPersonalSkillIds = (user: { id: string; tenantId?: string }) => resolvePersonalSkillIds(user, skillGovernanceStore);
 
   if (skillConfigStore && userStore) {
     const materializationStore = pgEventStore
@@ -1182,6 +1190,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           ))
           .flatMap((agent) => agent.allowedSkills);
       },
+      resolveTenantSkillHistoricalProvenance,
+      resolveUserPersonalSkillIds, resolveUserPersonalSkillOwnership: skillGovernanceStore?.resolveUserPersonalSkillOwnership?.bind(skillGovernanceStore),
     });
     skillMaterializationService = new SkillMaterializationService({
       store: materializationStore,
@@ -1361,41 +1371,33 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
     await sessionLock.init();
   }
-
-  // Skills wiring：把 SkillConfigStore + sharedDir 缝成 raw runtime 的 SkillsDispatchConfig，
-  // 让 dispatch 不直接依赖 store 实现。
-  // δ: listForUser 加 configVersion-aware cache（pool 不变就复用扫描结果，避免
-  //    每次 dispatch readdirSync）；resolveSkillDir 加 safeName 防 path traversal。
   const skillsDispatchConfig: SkillsDispatchConfig | undefined = (() => {
     if (!skillConfigStore) return undefined;
     const store = skillConfigStore; // 闭包稳定捕获
     const poolDir = resolveAgentPath(sharedDir, 'skills-pool');
-    let cache: { version: number; entries: { id: string; name: string; description: string }[] } | null = null;
-    function getAllPoolEntries() {
-      const currentVersion = store.getConfigVersion();
-      if (cache && cache.version === currentVersion) return cache.entries;
-      const scanned = scanPoolSkillsForDispatch(poolDir).map((s) => ({
-        id: s.id,
-        // 保留 frontmatter name 字段（若无 fallback 到 id）
-        name: (s as { name?: string }).name || s.id,
-        description: s.description ?? '',
-      }));
-      cache = { version: currentVersion, entries: scanned };
-      return scanned;
-    }
+    const skillDispatchState = createSkillDispatchState({
+      findUser: (username) => userStore?.findByUsername(username),
+      agentCwd,
+      tenantsRootDir: tenantSkillsRootDir,
+      getConfigVersion: () => store.getConfigVersion(),
+      scanPoolSkills: () => scanPoolSkillsForDispatch(poolDir),
+      resolveTenantSkillHistoricalProvenance,
+      resolveUserPersonalSkillIds, resolveUserPersonalSkillOwnership: skillGovernanceStore?.resolveUserPersonalSkillOwnership?.bind(skillGovernanceStore),
+    });
     return {
-      ensureReady(username: string | undefined, requiredSkillIds: readonly string[] = []): Promise<void> {
+      async ensureReady(username: string | undefined, requiredSkillIds: readonly string[] = []): Promise<void> {
         // ws-only 负责 Skill/User 管理接口，runtime-worker 负责会话执行；两者各自持有
         // 文件 store 的内存副本。每次 dispatch 在物化与清单计算前重载共享配置，
         // 否则用户刚导入并启用的自建 skill 要等 runtime-worker 重启后才会生效。
         store.reload();
         userStore?.reload();
-        return skillMaterializationService?.ensureReady(username, requiredSkillIds, 'dispatch')
-          ?? Promise.resolve();
+        await (skillMaterializationService?.ensureReady(username, requiredSkillIds, 'dispatch')
+          ?? Promise.resolve());
+        await skillDispatchState.refresh(username);
       },
       listForUser(username: string | undefined, requiredSkillIds: readonly string[] = []): SkillEntry[] {
         if (!username) return [];
-        const all = getAllPoolEntries();
+        const all = skillDispatchState.getAllPoolEntries();
         const user = userStore?.findByUsername(username);
         const tenantId = user?.tenantId;
         const effective = new Set([
@@ -1404,10 +1406,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         ]);
         const poolResult = all.filter((s) => effective.has(s.id));
 
-        // 追加用户自建 skill：与前端 SkillSelector「自建」tab 同源。
-        // 早期 dispatch 只列 pool skill，自建 skill 上传后模型看不到、也调不到（invoke
-        // 前 allowed 校验会拒）；2026-07-03 起改为按 selection 暴露给模型，前端 Switch
-        // 可开关且真实生效。物理路径由 resolveSkillDir 优先命中 user workspace 副本。
+        // 按 selection 暴露用户自建 skill，路径由 resolveSkillDir 优先命中 workspace 副本。
         if (!user) return poolResult;
         try {
           const userCwd = resolveUserCwd(agentCwd, {
@@ -1420,6 +1419,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           const poolIds = new Set(all.map((s) => s.id));
           const tenantSkillsDir = user.tenantId ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, user.tenantId) : null;
           const tenantOwnIds = tenantSkillsDir ? scanTenantOwnSkillIds(tenantSkillsDir, poolIds) : new Set<string>();
+          const managedTenantIds = skillDispatchState.getManagedTenantIds(username);
           const effectiveTenantOwn = new Set(
             [
               ...store.getUserEffectiveTenantOwnSkills(username, user.tenantId, tenantOwnIds),
@@ -1436,7 +1436,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
               }))
             : [];
           const selected = new Set(store.getUserSelectedSkills(username));
-          const customExcluded = new Set([...poolIds, ...tenantOwnIds]);
+          const customExcluded = new Set([...poolIds, ...tenantOwnIds, ...managedTenantIds]);
           const customResult = scanUserCustomSkills(userSkillsDir, customExcluded)
             .filter((s) => selected.has(s.id))
             .map((s) => ({

@@ -1,9 +1,13 @@
+import { createHash } from 'node:crypto';
 import {
+  existsSync,
   lstatSync,
   mkdtempSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -26,6 +30,27 @@ function createSkill(root: string, id: string, body: string): void {
     join(dir, 'SKILL.md'),
     `---\nname: ${id}\ndescription: ${id}\n---\n${body}\n`,
   );
+}
+
+/** 复现旧 skillPackageUpload：故意不排除 node_modules 等目录。 */
+function legacyPackageFingerprint(root: string): string {
+  const files: string[] = [];
+  const visit = (current: string, prefix = ''): void => {
+    for (const name of readdirSync(current).sort((a, b) => a.localeCompare(b))) {
+      const relativePath = prefix ? `${prefix}/${name}` : name;
+      const path = join(current, name);
+      if (statSync(path).isDirectory()) visit(path, relativePath);
+      else files.push(relativePath);
+    }
+  };
+  visit(root);
+  const hash = createHash('sha256');
+  for (const relativePath of files) {
+    const path = join(root, relativePath);
+    const size = statSync(path).size;
+    hash.update(relativePath).update('\\0').update(String(size)).update('\\0').update(readFileSync(path));
+  }
+  return hash.digest('hex');
 }
 
 function fakeStore(selected: string[]) {
@@ -110,6 +135,227 @@ describe('技能异步增量物化', () => {
         beta: { source: 'pool' },
       },
     });
+  });
+
+  it('按 manifest provenance 将跨组织组织技能残留移入可恢复备份', async () => {
+    createSkill(poolDir, 'alpha', 'alpha');
+    createSkill(join(sharedDir, 'tenants', 'tenant-b', 'skills'), 'foreign-org-skill', 'foreign');
+    createSkill(join(userCwd, '.ky-agent', 'skills'), 'foreign-org-skill', 'stale-copy');
+    writeFileSync(
+      join(userCwd, '.ky-agent', 'skills-state.json'),
+      JSON.stringify({
+        version: 1,
+        desiredHash: 'previous',
+        configVersion: 1,
+        generatedAt: '2026-08-19T00:00:00.000Z',
+        skills: { 'foreign-org-skill': { digest: 'foreign', source: 'tenant', tenantId: 'tenant-b' } },
+      }),
+    );
+    const config = fakeStore(['alpha']);
+    const materializer = new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      skillConfigStore: config.store,
+    });
+
+    const result = await materializer.materialize({ taskId: 'task-cross-tenant', user, userCwd });
+
+    expect(result.removedSkills).toBe(1);
+    expect(() => readFileSync(join(userCwd, '.ky-agent', 'skills', 'foreign-org-skill', 'SKILL.md'), 'utf-8'))
+      .toThrow();
+    expect(readFileSync(join(sharedDir, 'tenants', 'tenant-b', 'skills', 'foreign-org-skill', 'SKILL.md'), 'utf-8'))
+      .toContain('foreign');
+  });
+
+  it('旧 .skills-version 状态按内容指纹清理外租户组织残留', async () => {
+    createSkill(poolDir, 'alpha', 'alpha');
+    createSkill(join(sharedDir, 'tenants', 'tenant-b', 'skills'), 'legacy-foreign', 'foreign');
+    createSkill(join(userCwd, '.ky-agent', 'skills'), 'legacy-foreign', 'foreign');
+    writeFileSync(join(userCwd, '.ky-agent', '.skills-version'), '1');
+    const config = fakeStore(['alpha']);
+    const materializer = new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      skillConfigStore: config.store,
+    });
+
+    const result = await materializer.materialize({ taskId: 'task-legacy-tenant', user, userCwd });
+
+    expect(result.removedSkills).toBe(1);
+    expect(() => readFileSync(join(userCwd, '.ky-agent', 'skills', 'legacy-foreign', 'SKILL.md'), 'utf-8'))
+      .toThrow();
+    expect(await readSkillManifest(userCwd)).toMatchObject({
+      skills: { alpha: { source: 'pool' } },
+    });
+  });
+
+  it('旧副本是外租户 Skill 的 v1、当前源已更新为 v2 时仍按治理历史清理', async () => {
+    createSkill(poolDir, 'alpha', 'alpha');
+    const sourceDir = join(sharedDir, 'tenants', 'tenant-b', 'skills');
+    const userSkillDir = join(userCwd, '.ky-agent', 'skills');
+    createSkill(sourceDir, 'legacy-foreign', 'foreign-v1');
+    mkdirSync(join(sourceDir, 'legacy-foreign', 'node_modules'), { recursive: true });
+    writeFileSync(join(sourceDir, 'legacy-foreign', 'node_modules', 'ignored.js'), 'ignored-v1');
+    createSkill(userSkillDir, 'legacy-foreign', 'foreign-v1');
+    // 历史 DB 中持久化的是旧上传算法对完整 v1 包的摘要；用户副本只含可物化文件。
+    const legacyDigest = legacyPackageFingerprint(join(sourceDir, 'legacy-foreign'));
+    writeFileSync(
+      join(sourceDir, 'legacy-foreign', 'SKILL.md'),
+      '---\nname: legacy-foreign\ndescription: legacy-foreign\n---\nforeign-v2\n',
+    );
+    writeFileSync(join(userCwd, '.ky-agent', '.skills-version'), '1');
+    const config = fakeStore(['alpha']);
+    const materializer = new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      skillConfigStore: config.store,
+      resolveTenantSkillHistoricalProvenance: async (tenantId) => new Map([
+        ...(tenantId === 'tenant-b' ? [['legacy-foreign', [legacyDigest]] as const] : []),
+      ]),
+      resolveUserPersonalSkillIds: async () => new Set(['known-personal']),
+      resolveUserPersonalSkillOwnership: async (_tenantId, _userId, skillId) => (
+        skillId === 'legacy-foreign' ? 'not_personal' : undefined
+      ),
+    });
+
+    const result = await materializer.materialize({ taskId: 'task-legacy-updated-source', user, userCwd });
+
+    expect(result.removedSkills).toBe(1);
+    expect(() => readFileSync(join(userSkillDir, 'legacy-foreign', 'SKILL.md'), 'utf-8'))
+      .toThrow();
+  });
+
+  it('旧 .skills-version 状态不按同名误伤既有个人 Skill', async () => {
+    createSkill(poolDir, 'alpha', 'alpha');
+    const foreignDir = join(sharedDir, 'tenants', 'tenant-b', 'skills', 'same-name');
+    createSkill(join(sharedDir, 'tenants', 'tenant-b', 'skills'), 'same-name', 'foreign');
+    mkdirSync(join(foreignDir, 'node_modules'), { recursive: true });
+    writeFileSync(join(foreignDir, 'node_modules', 'ignored.js'), 'ignored');
+    createSkill(join(userCwd, '.ky-agent', 'skills'), 'same-name', 'personal');
+    writeFileSync(join(userCwd, '.ky-agent', '.skills-version'), '1');
+    const legacyDigest = legacyPackageFingerprint(foreignDir);
+    const config = fakeStore(['alpha']);
+    const materializer = new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      skillConfigStore: config.store,
+      resolveTenantSkillHistoricalProvenance: async (tenantId) => new Map([
+        ...(tenantId === 'tenant-b' ? [['same-name', [legacyDigest]] as const] : []),
+      ]),
+      resolveUserPersonalSkillIds: async () => new Set(['same-name']),
+    });
+
+    const result = await materializer.materialize({ taskId: 'task-same-name', user, userCwd });
+
+    expect(result.removedSkills).toBe(0);
+    expect(readFileSync(join(userCwd, '.ky-agent', 'skills', 'same-name', 'SKILL.md'), 'utf-8'))
+      .toContain('personal');
+  });
+
+  it('个人治理查询为空时不按外租户旧摘要迁移同名旧个人 Skill', async () => {
+    createSkill(poolDir, 'alpha', 'alpha');
+    const sourceDir = join(sharedDir, 'tenants', 'tenant-b', 'skills');
+    createSkill(sourceDir, 'same-name', 'foreign-v1');
+    mkdirSync(join(sourceDir, 'same-name', 'node_modules'), { recursive: true });
+    writeFileSync(join(sourceDir, 'same-name', 'node_modules', 'ignored.js'), 'ignored-v1');
+    const userSkillDir = join(userCwd, '.ky-agent', 'skills');
+    createSkill(userSkillDir, 'same-name', 'personal');
+    const legacyDigest = legacyPackageFingerprint(join(sourceDir, 'same-name'));
+    writeFileSync(
+      join(sourceDir, 'same-name', 'SKILL.md'),
+      '---\nname: same-name\ndescription: same-name\n---\nforeign-v2\n',
+    );
+    writeFileSync(join(userCwd, '.ky-agent', '.skills-version'), '1');
+    const config = fakeStore(['alpha']);
+    const materializer = new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      skillConfigStore: config.store,
+      resolveTenantSkillHistoricalProvenance: async (tenantId) => new Map([
+        ...(tenantId === 'tenant-b' ? [['same-name', [legacyDigest]] as const] : []),
+      ]),
+      resolveUserPersonalSkillIds: async () => new Set(),
+    });
+
+    const result = await materializer.materialize({ taskId: 'task-same-name-empty-personal', user, userCwd });
+
+    expect(result.removedSkills).toBe(0);
+    expect(readFileSync(join(userSkillDir, 'same-name', 'SKILL.md'), 'utf-8'))
+      .toContain('personal');
+  });
+
+  it('已有其他个人治理记录时仍不迁移未治理的同名旧个人 Skill', async () => {
+    createSkill(poolDir, 'alpha', 'alpha');
+    const sourceDir = join(sharedDir, 'tenants', 'tenant-b', 'skills');
+    createSkill(sourceDir, 'same-name', 'foreign-v1');
+    mkdirSync(join(sourceDir, 'same-name', 'node_modules'), { recursive: true });
+    writeFileSync(join(sourceDir, 'same-name', 'node_modules', 'ignored.js'), 'ignored-v1');
+    const userSkillDir = join(userCwd, '.ky-agent', 'skills');
+    createSkill(userSkillDir, 'same-name', 'personal');
+    const legacyDigest = legacyPackageFingerprint(join(sourceDir, 'same-name'));
+    writeFileSync(join(sourceDir, 'same-name', 'SKILL.md'), '---\nname: same-name\n---\nforeign-v2\n');
+    writeFileSync(join(userCwd, '.ky-agent', '.skills-version'), '1');
+    const config = fakeStore(['alpha']);
+    const materializer = new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      skillConfigStore: config.store,
+      resolveTenantSkillHistoricalProvenance: async (tenantId) => new Map([
+        ...(tenantId === 'tenant-b' ? [['same-name', [legacyDigest]] as const] : []),
+      ]),
+      resolveUserPersonalSkillIds: async () => new Set(['other-personal']),
+    });
+
+    const result = await materializer.materialize({ taskId: 'task-same-name-other-personal', user, userCwd });
+
+    expect(result.removedSkills).toBe(0);
+    expect(readFileSync(join(userSkillDir, 'same-name', 'SKILL.md'), 'utf-8'))
+      .toContain('personal');
+  });
+
+  it('历史 provenance 查询异常时保留迁移状态并在下一轮重试', async () => {
+    createSkill(poolDir, 'alpha', 'alpha');
+    const sourceDir = join(sharedDir, 'tenants', 'tenant-b', 'skills');
+    createSkill(sourceDir, 'legacy-retry', 'foreign-v1');
+    mkdirSync(join(sourceDir, 'legacy-retry', 'node_modules'), { recursive: true });
+    writeFileSync(join(sourceDir, 'legacy-retry', 'node_modules', 'ignored.js'), 'ignored-v1');
+    const userSkillDir = join(userCwd, '.ky-agent', 'skills');
+    createSkill(userSkillDir, 'legacy-retry', 'foreign-v1');
+    const legacyDigest = legacyPackageFingerprint(join(sourceDir, 'legacy-retry'));
+    writeFileSync(
+      join(sourceDir, 'legacy-retry', 'SKILL.md'),
+      '---\nname: legacy-retry\ndescription: legacy-retry\n---\nforeign-v2\n',
+    );
+    writeFileSync(join(userCwd, '.ky-agent', '.skills-version'), '1');
+    let failHistory = true;
+    const config = fakeStore(['alpha']);
+    const materializer = new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      skillConfigStore: config.store,
+      resolveTenantSkillHistoricalProvenance: async (tenantId) => {
+        if (failHistory) throw new Error(`history unavailable: ${tenantId}`);
+        return new Map([
+          ...(tenantId === 'tenant-b' ? [['legacy-retry', [legacyDigest]] as const] : []),
+        ]);
+      },
+      resolveUserPersonalSkillIds: async () => new Set(['known-personal']),
+      resolveUserPersonalSkillOwnership: async (_tenantId, _userId, skillId) => (
+        skillId === 'legacy-retry' ? 'not_personal' : undefined
+      ),
+    });
+
+    const first = await materializer.materialize({ taskId: 'task-legacy-retry-1', user, userCwd });
+    expect(first.removedSkills).toBe(0);
+    expect(existsSync(join(userSkillDir, 'legacy-retry'))).toBe(true);
+    expect(await readSkillManifest(userCwd)).toMatchObject({ legacyMigrationPending: true });
+    expect(await materializer.isReadyForUser(user, userCwd)).toBe(false);
+
+    failHistory = false;
+    const second = await materializer.materialize({ taskId: 'task-legacy-retry-2', user, userCwd });
+    expect(second.removedSkills).toBe(1);
+    expect(existsSync(join(userSkillDir, 'legacy-retry'))).toBe(false);
+    expect((await readSkillManifest(userCwd))?.legacyMigrationPending).toBeUndefined();
   });
 
   it('撤销系统技能时移入可恢复备份，不碰同目录下的自建技能', async () => {

@@ -11,6 +11,7 @@ export interface IntegrationCandidateTableNames {
   revisionsTable: string;
   sourceSnapshotsTable: string;
   providerOperationsTable: string;
+  requestsOutboxTable: string;
 }
 
 export function integrationCandidateTableNames(integrationSourcesTable: string): IntegrationCandidateTableNames {
@@ -22,6 +23,7 @@ export function integrationCandidateTableNames(integrationSourcesTable: string):
     revisionsTable: `${root}_candidate_revisions`,
     sourceSnapshotsTable: `${root}_candidate_source_snapshots`,
     providerOperationsTable: `${root}_provider_operations_v3`,
+    requestsOutboxTable: `${root}_requests_outbox_v3`,
   };
 }
 
@@ -29,7 +31,7 @@ export async function runIntegrationCandidateSchema(
   options: IntegrationCandidateSchemaOptions,
   client: Pick<PoolClient, 'query'>,
 ): Promise<void> {
-  const { candidatesTable, revisionsTable, sourceSnapshotsTable, providerOperationsTable } = integrationCandidateTableNames(
+  const { candidatesTable, revisionsTable, sourceSnapshotsTable, providerOperationsTable, requestsOutboxTable } = integrationCandidateTableNames(
     options.integrationSourcesTable,
   );
 
@@ -165,6 +167,34 @@ export async function runIntegrationCandidateSchema(
     CREATE INDEX IF NOT EXISTS ${providerOperationsTable}_reconcile_idx
       ON ${providerOperationsTable}(updated_at)
       WHERE state IN ('executing','unknown')
+  `);
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${requestsOutboxTable} (
+      id TEXT PRIMARY KEY,
+      request_key TEXT NOT NULL UNIQUE,
+      kind TEXT NOT NULL CHECK (kind IN ('work','review','cleanup','workspace_sync')),
+      candidate_id TEXT NOT NULL REFERENCES ${candidatesTable}(id),
+      candidate_revision INTEGER NOT NULL CHECK (candidate_revision > 0),
+      work_round INTEGER NOT NULL DEFAULT 0 CHECK (work_round >= 0),
+      workflow_epoch BIGINT NOT NULL,
+      lane_epoch BIGINT NOT NULL,
+      payload JSONB NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','completed','failed')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      lease_id TEXT,
+      lease_expires_at TIMESTAMPTZ,
+      last_error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      FOREIGN KEY (candidate_id,candidate_revision)
+        REFERENCES ${revisionsTable}(candidate_id,revision)
+    )
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS ${requestsOutboxTable}_pending_idx
+      ON ${requestsOutboxTable}(available_at,created_at)
+      WHERE status IN ('pending','processing')
   `);
   for (const table of [revisionsTable, sourceSnapshotsTable]) {
     await client.query(`

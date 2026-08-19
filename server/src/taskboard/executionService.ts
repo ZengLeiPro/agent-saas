@@ -308,11 +308,15 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       : [];
     const executionId = options.executionId ?? randomUUID();
     const workSessionId = executions.find((execution) => execution.purpose === 'work')?.sessionId;
-    const sessionPrefix = purpose === 'review'
-      ? 'taskboard-review'
-      : purpose === 'merge'
-        ? 'taskboard-merge'
-        : 'taskboard';
+    const integrationAgentRuntime = launch.modelContext.taskKind === 'integration'
+      && (purpose === 'work' || purpose === 'review');
+    const sessionPrefix = integrationAgentRuntime
+      ? `taskboard-integration-${purpose}`
+      : purpose === 'review'
+        ? 'taskboard-review'
+        : purpose === 'merge'
+          ? 'taskboard-merge'
+          : 'taskboard';
     const sessionId = workSessionId ?? `${sessionPrefix}-${randomUUID()}`;
     const session = await reuseTaskboardSession({
       sessionCatalog: this.options.sessionCatalog,
@@ -337,6 +341,12 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         taskboardExecution: true,
         taskboardExecutionId: executionId,
         taskboardTaskId: taskId,
+        ...(integrationAgentRuntime ? {
+          taskboardIntegration: true,
+          taskboardIntegrationRole: purpose,
+          taskboardIntegrationTaskId: taskId,
+          taskboardWorkflowVersion: 3,
+        } : {}),
         outputTransactionMode: 'terminal_buffered',
         cwd: session.cwd,
         transcriptPath: session.transcriptPath,
@@ -350,6 +360,12 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
             taskboardExecution: true,
             taskboardExecutionId: executionId,
             taskboardTaskId: taskId,
+            ...(integrationAgentRuntime ? {
+              taskboardIntegration: true,
+              taskboardIntegrationRole: purpose,
+              taskboardIntegrationTaskId: taskId,
+              taskboardWorkflowVersion: 3,
+            } : {}),
           },
         },
       },

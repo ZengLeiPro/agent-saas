@@ -55,7 +55,47 @@ export function executionFieldMigrationSql(executionsTable: string): string {
     ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS reconcile_lease_id TEXT;
     ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS reconcile_lease_expires_at TIMESTAMPTZ;
     DROP INDEX IF EXISTS ${executionsTable}_session_uidx;
-    CREATE INDEX IF NOT EXISTS ${executionsTable}_session_idx ON ${executionsTable} (session_id, created_at DESC)
+    CREATE INDEX IF NOT EXISTS ${executionsTable}_session_idx ON ${executionsTable} (session_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS ${executionsTable}_integration_push_fences (
+      tenant_id TEXT NOT NULL,
+      repository_id TEXT NOT NULL,
+      integration_task_id TEXT NOT NULL,
+      candidate_id TEXT NOT NULL,
+      revision INTEGER NOT NULL CHECK (revision > 0),
+      lane_epoch BIGINT NOT NULL,
+      workflow_epoch BIGINT NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT false,
+      reason TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (tenant_id, repository_id, integration_task_id)
+    );
+    CREATE TABLE IF NOT EXISTS ${executionsTable}_integration_push_capabilities (
+      id TEXT PRIMARY KEY,
+      secret_hash TEXT NOT NULL CHECK (length(secret_hash) = 64),
+      tenant_id TEXT NOT NULL,
+      repository_id TEXT NOT NULL,
+      integration_task_id TEXT NOT NULL,
+      candidate_id TEXT NOT NULL,
+      revision INTEGER NOT NULL CHECK (revision > 0),
+      execution_id TEXT NOT NULL REFERENCES ${executionsTable}(id),
+      exact_ref TEXT NOT NULL,
+      expected_old_oid TEXT NOT NULL,
+      lane_epoch BIGINT NOT NULL,
+      workflow_epoch BIGINT NOT NULL,
+      issued_at TIMESTAMPTZ NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('active','consumed','revoked')),
+      consumed_at TIMESTAMPTZ,
+      revoked_at TIMESTAMPTZ,
+      revoke_reason TEXT,
+      CHECK (expires_at > issued_at),
+      CHECK ((status = 'consumed') = (consumed_at IS NOT NULL)),
+      CHECK ((status = 'revoked') = (revoked_at IS NOT NULL))
+    );
+    CREATE INDEX IF NOT EXISTS ${executionsTable}_integration_push_capabilities_active_idx
+      ON ${executionsTable}_integration_push_capabilities
+      (tenant_id, repository_id, integration_task_id, expires_at)
+      WHERE status = 'active'
   `;
 }
 

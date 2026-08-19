@@ -61,6 +61,11 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     ...(row.integration_state ? {
       integrationState: String(row.integration_state) as TaskBoardTask['integrationState'],
     } : {}),
+    ...(row.kind === 'integration'
+      ? { workflowVersion: row.workflow_version === null || row.workflow_version === undefined
+          ? 2 as const
+          : Number(row.workflow_version) as 2 | 3 }
+      : {}),
     mergeEligibility: taskMergeEligibility(row),
     workflowDisplayState: taskWorkflowDisplayState(row),
     ...taskResumeContext(row.resume_context),

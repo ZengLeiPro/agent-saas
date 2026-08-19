@@ -167,6 +167,7 @@ describe('integration candidate v3 schema', () => {
       revisionsTable: 'ky_taskboard_integration_candidate_revisions',
       sourceSnapshotsTable: 'ky_taskboard_integration_candidate_source_snapshots',
       providerOperationsTable: 'ky_taskboard_integration_provider_operations_v3',
+      requestsOutboxTable: 'ky_taskboard_integration_requests_outbox_v3',
     });
     expect(ddl.match(/ADD COLUMN IF NOT EXISTS workflow_version/g)).toHaveLength(2);
     expect(ddl).toContain('DEFAULT 2');
@@ -175,6 +176,7 @@ describe('integration candidate v3 schema', () => {
     expect(ddl).toContain('CREATE TABLE IF NOT EXISTS ky_taskboard_integration_candidate_revisions');
     expect(ddl).toContain('CREATE TABLE IF NOT EXISTS ky_taskboard_integration_candidate_source_snapshots');
     expect(ddl).toContain('CREATE TABLE IF NOT EXISTS ky_taskboard_integration_provider_operations_v3');
+    expect(ddl).toContain('CREATE TABLE IF NOT EXISTS ky_taskboard_integration_requests_outbox_v3');
     expect(ddl).toContain("WHERE state IN ('executing','unknown')");
     expect(ddl).toContain('TASKBOARD_CANDIDATE_SNAPSHOT_IMMUTABLE');
     expect(ddl).toContain('current_revision INTEGER NOT NULL DEFAULT 0');

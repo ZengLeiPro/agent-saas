@@ -63,7 +63,7 @@ function setup(state: TaskBoardIntegrationCandidate['state'], providerFacts = fa
   const engine = new IntegrationEngineV3({
     candidates, providerOperations: new IntegrationProviderOperationService(operations, { assertCurrent: async () => undefined }),
     provider: { readFacts: async () => structuredClone(currentFacts), merge, reconcileMerge },
-    features: { getFlags: async () => ({ enabled: true, composeEnabled: true, reviewEnabled: true, mergeEnabled: true, cleanupEnabled: true }) }, requests,
+    features: { getFlags: async () => ({ enabled: true, composeEnabled: true, reviewEnabled: true, mergeEnabled: true, cleanupEnabled: true, workspaceSyncEnabled: true }) }, requests,
     resolveRepository: async () => repository, credentialOwnerId: 'owner-1',
   });
   return { engine, candidates, operations, requests, merge, reconcileMerge, setFacts(value: IntegrationEngineV3ProviderFacts) { currentFacts = value; } };

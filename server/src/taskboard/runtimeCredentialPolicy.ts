@@ -36,7 +36,12 @@ export function isCredentialIsolatedTaskboardRuntime(
   sessionId: string,
   metadata?: TaskboardRuntimeCredentialMetadata,
 ): boolean {
-  if (sessionId.startsWith('taskboard-review-') || sessionId.startsWith('taskboard-merge-')) return true;
+  if (
+    sessionId.startsWith('taskboard-review-')
+    || sessionId.startsWith('taskboard-merge-')
+    || sessionId.startsWith('taskboard-integration-work-')
+    || sessionId.startsWith('taskboard-integration-review-')
+  ) return true;
   if (!metadata?.taskboardExecution) return false;
   const role = (metadata.taskboardIntegrationRole ?? metadata.taskboardPurpose ?? '').toLowerCase();
   const integrationMarked = metadata.taskboardIntegration === true
@@ -54,6 +59,12 @@ export function stripTaskboardWritableGitCredentials(
 ): void {
   if (!isCredentialIsolatedTaskboardRuntime(sessionId, metadata)) return;
   for (const key of TASKBOARD_WRITABLE_GIT_ENV_KEYS) delete env[key];
+  // Fail closed for connector/app credential aliases introduced after this policy. This is
+  // intentionally limited to isolated Integration runtimes, so ordinary tasks retain access.
+  for (const key of Object.keys(env)) {
+    if (/^(?:GH|GITHUB)_(?:.*TOKEN|.*PRIVATE_KEY|.*CLIENT_SECRET)$/.test(key)
+      || /^SSH_.*(?:PRIVATE_KEY|PASSWORD|PASSPHRASE|TOKEN)$/.test(key)) delete env[key];
+  }
   // Remove every inherited command-line git config entry. Merely resetting COUNT can
   // leave attacker-controlled KEY_n/VALUE_n pairs available to nested processes.
   for (const key of Object.keys(env)) {

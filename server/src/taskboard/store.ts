@@ -52,6 +52,7 @@ import {
   updateTaskBranchFromExecution as updateStoredTaskBranchFromExecution,
 } from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
+import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import { deleteStoredTask } from './storeTaskDelete.js';
 import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
 import {
@@ -1091,7 +1092,20 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           archive ? 'TASKBOARD_TASK_ARCHIVED' : 'TASKBOARD_TASK_NOT_ARCHIVED',
         );
       }
-      if (archive) await assertTaskHasNoActiveRuns(this, client, taskId);
+      if (archive) {
+        await assertTaskHasNoActiveRuns(this, client, taskId);
+        if (loaded.task.kind === 'integration' && (loaded.task.workflowVersion ?? 2) === 3) {
+          const { candidatesTable } = integrationCandidateTableNames(this.integrationSourcesTable);
+          const candidate = await client.query(
+            `SELECT state FROM ${candidatesTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId]);
+          if (!candidate.rows[0] || !['merged','canceled'].includes(String(candidate.rows[0].state))) {
+            throw new TaskboardValidationError(
+              'Workflow v3 integration must be canceled or merged before archive',
+              'TASKBOARD_V3_ARCHIVE_REQUIRES_TERMINAL_CANDIDATE',
+            );
+          }
+        }
+      }
       await client.query(
         `UPDATE ${this.tasksTable} t
             SET archived_at=${archive ? 'now()' : 'NULL'}, version=t.version+1, updated_at=now()

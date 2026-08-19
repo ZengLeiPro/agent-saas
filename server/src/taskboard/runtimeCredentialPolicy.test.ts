@@ -8,6 +8,8 @@ import {
 const writableGitEnv = {
   GH_TOKEN: 'gh',
   GITHUB_TOKEN: 'github',
+  GITHUB_APP_CLIENT_SECRET: 'app-secret',
+  GITHUB_FINE_GRAINED_TOKEN: 'fine-grained',
   GH_ENTERPRISE_TOKEN: 'enterprise',
   GIT_ASKPASS: '/askpass',
   GIT_TERMINAL_PROMPT: '1',
@@ -35,7 +37,12 @@ const isolatedEnv = {
 };
 
 describe('taskboard runtime credential policy', () => {
-  it.each(['taskboard-review-task-1', 'taskboard-merge-task-1'])(
+  it.each([
+    'taskboard-review-task-1',
+    'taskboard-merge-task-1',
+    'taskboard-integration-work-task-1',
+    'taskboard-integration-review-task-1',
+  ])(
     'removes writable Git credentials from %s sessions',
     (sessionId) => {
       const env = { ...writableGitEnv };

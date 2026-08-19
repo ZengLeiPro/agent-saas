@@ -81,6 +81,7 @@ export interface IntegrationEngineV3Flags {
   reviewEnabled: boolean;
   mergeEnabled: boolean;
   cleanupEnabled: boolean;
+  workspaceSyncEnabled?: boolean;
 }
 export interface IntegrationEngineV3FeatureHost { getFlags(repositoryId: string): Promise<IntegrationEngineV3Flags>; }
 
@@ -160,6 +161,7 @@ export class IntegrationEngineV3 {
       case 'observe_checks':
         return this.observeChecks(current, false);
       case 'request_work': {
+        assertFlag(flags.composeEnabled, 'work');
         const revision = requireRevision(current);
         const request = await this.options.requests.requestWork({ candidateId: current.candidate.id, revision: current.candidate.currentRevision, workRound: current.candidate.workRound + 1, subjectDigest: revision.subjectDigest });
         const candidate = await this.options.candidates.beginNextWorkRound(current.candidate.id, current.candidate.version, current.candidate.currentRevision);
@@ -195,6 +197,7 @@ export class IntegrationEngineV3 {
         return { candidate: current.candidate, status: 'requested', requestId: request.requestId };
       }
       case 'sync_main': {
+        assertFlag(flags.workspaceSyncEnabled === true, 'workspace sync');
         const revision = requireRevision(current);
         const request = await this.options.requests.requestWorkspaceSync({ candidateId: current.candidate.id, revision: revision.revision, baseBranch: current.candidate.baseBranch, expectedBaseOid: revision.baseOid });
         return { candidate: current.candidate, status: 'requested', requestId: request.requestId };

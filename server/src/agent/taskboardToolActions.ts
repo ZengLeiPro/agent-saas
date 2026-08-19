@@ -1,8 +1,5 @@
 import { createHash } from 'node:crypto';
-import {
-  materializeTaskboardAttachments,
-  resolveTaskboardAttachments,
-} from './taskboardAttachmentActions.js';
+import { materializeTaskboardAttachments, resolveTaskboardAttachments } from './taskboardAttachmentActions.js';
 
 import type {
   TaskBoardContextReceipt,
@@ -659,18 +656,11 @@ async function createTask(
 }
 
 async function rollbackCreatedTask(
-  service: TaskboardService,
-  identity: TaskboardIdentity,
-  task: TaskBoardTask,
-  error: unknown,
+  service: TaskboardService, identity: TaskboardIdentity, task: TaskBoardTask, error: unknown,
 ): Promise<never> {
-  try {
-    await service.deleteTask(identity, task.id, { expectedVersion: task.version });
-  } catch (cleanupError) {
-    const originalMessage = error instanceof Error ? error.message : String(error);
-    const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+  try { await service.deleteTask(identity, task.id, { expectedVersion: task.version }); } catch (cleanupError) {
     throw new TaskboardValidationError(
-      `Attachment write failed and created task cleanup failed: ${originalMessage}; ${cleanupMessage}`,
+      `Attachment write failed and created task cleanup failed: ${error instanceof Error ? error.message : String(error)}; ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
       'TASKBOARD_ATTACHMENT_CLEANUP_FAILED',
     );
   }

@@ -275,6 +275,26 @@ describe('Codex subscription Responses transport', () => {
       ...base,
       tools: [{ ...tools[0]!, deferLoading: true }, tools[1]!],
     })).not.toBe(first);
+
+    const skillTool = {
+      id: 'Skill',
+      name: 'Skill',
+      description: '调用技能\n\n## 当前用户可用技能清单\n\n（当前会话未启用任何技能。）',
+      parameters: { type: 'object', properties: { skill: { type: 'string' } } },
+    };
+    const noSkillKey = transport.computePromptCacheKey({ ...base, tools: [skillTool] });
+    const enabledSkillKey = transport.computePromptCacheKey({
+      ...base,
+      tools: [{
+        ...skillTool,
+        description: '调用技能\n\n## 当前用户可用技能清单\n\n- `beitong-kitchen-bath-demo`: 北通厨卫演示技能',
+      }],
+    });
+    expect(enabledSkillKey).not.toBe(noSkillKey);
+    expect(transport.computePromptCacheKey({
+      ...base,
+      tools: [{ ...skillTool, parameters: { ...skillTool.parameters, required: ['skill'] } }],
+    })).not.toBe(noSkillKey);
   });
 
   it('HTTP/SSE 在不同平台 session 下发送相同的内容缓存域', async () => {

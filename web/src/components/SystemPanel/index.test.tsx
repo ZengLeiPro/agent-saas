@@ -47,6 +47,24 @@ describe('SystemPanel', () => {
     expect(onSelectView).toHaveBeenCalledWith('view-4');
   });
 
+  it('stats 变化与其他业务对象共用 delta 高亮和摘要', () => {
+    const panel: SystemPanelSnapshot = {
+      activeView: 'stats',
+      views: [{
+        key: 'stats',
+        label: '指标',
+        winTitle: '业务指标',
+        widget: { kind: 'stats', items: [{ k: '风险订单', v: '3' }, { k: '正常订单', v: '12' }] },
+      }],
+    };
+    const { container } = render(<SystemPanel
+      snapshot={panel}
+      pulse={{ op: 'pulse', view: 'stats', ids: ['风险订单'], kind: 'scan' }}
+    />);
+    expect(screen.getByRole('status', { name: '本步扫描 1 项' })).toBeTruthy();
+    expect(container.querySelectorAll('[data-panel-delta="scan"]')).toHaveLength(1);
+  });
+
   it('面板标题、工具栏说明和来源脚注保留完整文本', () => {
     const panel = snapshot();
     panel.title = '企业系统实况 · 本次采购缺料闭环的完整标题';

@@ -1,3 +1,4 @@
+import { derivePanelPulse, foldPanel } from "@agent/shared";
 import type {
   ApiTranscriptBlock,
   DetailLine,
@@ -245,6 +246,31 @@ function snapshotTodos(script: ReplayScript, currentIndex: number, phase: "start
   });
 }
 
+function withDerivedPanelDeltas(blocks: ApiTranscriptBlock[]): ApiTranscriptBlock[] {
+  let snapshot: ReturnType<typeof foldPanel> | null = null;
+  return blocks.map((block) => {
+    const presentation = block.presentation;
+    if (!presentation) return block;
+    if (!snapshot && presentation.panelBase) snapshot = presentation.panelBase;
+    if (presentation.panel === undefined) return block;
+    if (snapshot) snapshot = foldPanel(snapshot, presentation.panel);
+
+    const pulse = derivePanelPulse(presentation.panel, snapshot?.activeView);
+    if (!pulse) return block;
+    const hasExplicitPulse = presentation.panel.some((patch) => patch.op === "pulse");
+    const needsFocus = !!snapshot && snapshot.activeView !== pulse.view;
+    if (!needsFocus && hasExplicitPulse) return block;
+
+    const panel = [...presentation.panel];
+    if (needsFocus) {
+      panel.push({ op: "focus", view: pulse.view });
+      snapshot = { ...snapshot!, activeView: pulse.view };
+    }
+    if (!hasExplicitPulse) panel.push(pulse);
+    return { ...block, presentation: { ...presentation, panel } };
+  });
+}
+
 /**
  * 给旧版回放剧本补上真实 TodoWrite 快照。
  *
@@ -298,5 +324,5 @@ export function buildLegacyReplayBlocks(
       hasStructuredResult,
     ));
   }
-  return visible;
+  return withDerivedPanelDeltas(visible);
 }

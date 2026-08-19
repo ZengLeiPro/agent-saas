@@ -253,7 +253,7 @@ function normalizeTodoItem(raw: unknown): TodoItem | null {
  * Returns undefined when the input is not a complete TodoWrite payload yet.
  * Returns null when a complete payload explicitly means "no todos".
  */
-function parseTodos(toolInput: string): TodoItem[] | null | undefined {
+export function parseTodos(toolInput: string): TodoItem[] | null | undefined {
   if (!toolInput.trim()) return undefined;
 
   try {

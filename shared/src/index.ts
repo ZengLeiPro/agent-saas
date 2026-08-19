@@ -390,6 +390,7 @@ export { mergeServerMessagesWithLocalTail, mergeSessionMessageDelta, mergeSessio
 export {
   isBusinessTodo,
   isTerminalStepEvent,
+  parseTodos,
   projectBusinessStepEvents,
   todoItemKey,
 } from "./lib/extractTodos";
@@ -616,6 +617,7 @@ export type {
 
 // Lib - 右侧企业系统面板（与 ToolPresentation 同源，无独立数据通道）
 export { normalizeSystemPanel, normalizePanelPatches, foldPanel } from "./lib/systemPanel";
+export { derivePanelPulse } from "./lib/panelDelta";
 export type {
   SystemPanelSnapshot,
   PanelPatch,

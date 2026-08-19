@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { foldPanel, type MessageItem, type PanelPatch, type PanelPulse, type SystemPanelSnapshot } from "@agent/shared";
+import { type MessageItem, type PanelPulse, type SystemPanelSnapshot } from "@agent/shared";
+import { foldSystemPanelMessages } from "./systemPanelMessages";
 
 /**
  * 从消息流里 fold 出右侧企业系统面板的当前快照。
@@ -19,26 +20,7 @@ export function useSystemPanel(messages: MessageItem[]): {
 } {
   const [viewOverride, setViewOverride] = useState<string | null>(null);
 
-  const folded = useMemo(() => {
-    let base: SystemPanelSnapshot | null = null;
-    let pulse: PanelPulse | null = null;
-    const patches: PanelPatch[] = [];
-    for (const message of messages) {
-      if (message.type !== "tool_use" && message.type !== "tool_result") continue;
-      const presentation = message.presentation;
-      if (!presentation) continue;
-      if (!base && presentation.panelBase) base = presentation.panelBase;
-      if (presentation.panel?.length) {
-        patches.push(...presentation.panel);
-        const messagePulses = presentation.panel.filter((patch): patch is PanelPulse => patch.op === "pulse");
-        pulse = messagePulses.at(-1) ?? null;
-      }
-    }
-    return {
-      snapshot: base ? foldPanel(base, patches) : null,
-      pulse,
-    };
-  }, [messages]);
+  const folded = useMemo(() => foldSystemPanelMessages(messages), [messages]);
 
   const snapshot = useMemo(() => {
     if (!folded.snapshot) return null;

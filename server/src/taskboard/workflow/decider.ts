@@ -1,22 +1,78 @@
 import type {
   TaskBoardExecutionPurpose,
+  TaskBoardIntegrationCandidateState,
   TaskBoardStatus,
   TaskBoardTask,
 } from '../../../../shared/src/types/taskboard.js';
 import { TaskboardValidationError } from '../types.js';
 
+export interface IntegrationV3ExecutionBinding {
+  candidateId: string;
+  candidateVersion: number;
+  candidateRevision: number;
+  candidateWorkRound: number;
+  candidateWorkflowEpoch: string;
+  candidateLaneEpoch: string;
+  candidateHeadOid: string;
+}
+
+export interface IntegrationV3Facts {
+  id: string;
+  state: TaskBoardIntegrationCandidateState;
+  version: number;
+  currentRevision: number;
+  workRound: number;
+  workflowEpoch: string;
+  laneEpoch: string;
+  headOid?: string;
+}
+
 export interface WorkflowFacts {
   hasMergeFact: boolean;
+  candidate?: IntegrationV3Facts;
+  executionBinding?: IntegrationV3ExecutionBinding;
 }
 
 export type ResolutionDecision =
-  | { kind: 'apply'; toStatus?: TaskBoardStatus }
+  | {
+    kind: 'apply';
+    toStatus?: TaskBoardStatus;
+    candidateState?: TaskBoardIntegrationCandidateState;
+    requestSystemReview?: boolean;
+  }
   | { kind: 'ignore'; reason: 'merged_terminal' | 'execution_superseded' };
 
 const TERMINAL_STATUSES = new Set<TaskBoardStatus>(['done', 'canceled']);
 
 export function isIrreversibleMerged(task: TaskBoardTask, facts?: WorkflowFacts): boolean {
-  return Boolean(task.mergedCommitOid) || facts?.hasMergeFact === true;
+  return Boolean(task.mergedCommitOid) || facts?.hasMergeFact === true || facts?.candidate?.state === 'merged';
+}
+
+/**
+ * Pure routing seam used by integrationTriggers. The trigger owns candidate
+ * locking/beginNextWorkRound; this function only determines whether an Agent is
+ * needed. Compose/check/merge states are deliberately system-owned.
+ */
+export function purposeForIntegrationV3Candidate(
+  state: TaskBoardIntegrationCandidateState,
+): 'work' | 'review' | undefined {
+  if (state === 'needs_work' || state === 'working') return 'work';
+  if (state === 'in_review') return 'review';
+  return undefined;
+}
+
+export function isCurrentIntegrationV3Execution(
+  candidate: IntegrationV3Facts,
+  binding: IntegrationV3ExecutionBinding | undefined,
+): boolean {
+  return Boolean(binding
+    && binding.candidateId === candidate.id
+    && binding.candidateVersion === candidate.version
+    && binding.candidateRevision === candidate.currentRevision
+    && binding.candidateWorkRound === candidate.workRound
+    && binding.candidateWorkflowEpoch === candidate.workflowEpoch
+    && binding.candidateLaneEpoch === candidate.laneEpoch
+    && (!candidate.headOid || binding.candidateHeadOid === candidate.headOid));
 }
 
 export function assertExecutionRequestAllowed(
@@ -31,6 +87,26 @@ export function assertExecutionRequestAllowed(
     );
   }
   if (task.kind === 'integration') {
+    if (task.workflowVersion === 3) {
+      const candidate = options.facts?.candidate;
+      if (!candidate) {
+        throw new TaskboardValidationError(
+          'Workflow v3 integration dispatch requires the current candidate',
+          'TASKBOARD_CANDIDATE_REQUIRED',
+        );
+      }
+      const expected = purposeForIntegrationV3Candidate(candidate.state);
+      if (!expected || purpose !== expected) {
+        throw new TaskboardValidationError(
+          purpose === 'merge'
+            ? 'Workflow v3 never dispatches an Agent merge execution'
+            : `Candidate ${candidate.state} is not dispatchable for ${purpose}`,
+          purpose === 'merge' ? 'TASKBOARD_V3_AGENT_MERGE_FORBIDDEN' : 'TASKBOARD_CANDIDATE_EXECUTION_STATE_INVALID',
+        );
+      }
+      return;
+    }
+    // Missing workflowVersion is legacy v2 by contract.
     if (purpose !== 'merge') {
       throw new TaskboardValidationError(
         'Integration tasks only accept merge execution',
@@ -88,6 +164,30 @@ export function decideResolution(
       'Terminal task cannot accept another resolution',
       'TASKBOARD_TERMINAL_RESOLUTION_FORBIDDEN',
     );
+  }
+  if (task.kind === 'integration' && task.workflowVersion === 3) {
+    const candidate = facts.candidate;
+    if (!candidate) {
+      throw new TaskboardValidationError('Workflow v3 resolution requires the current candidate', 'TASKBOARD_CANDIDATE_REQUIRED');
+    }
+    if (!isCurrentIntegrationV3Execution(candidate, facts.executionBinding)) {
+      return { kind: 'ignore', reason: 'execution_superseded' };
+    }
+    const expectedPurpose = purposeForIntegrationV3Candidate(candidate.state);
+    if (expectedPurpose !== purpose) invalidResolution(task, purpose, outcome);
+    if (purpose === 'work' && candidate.state !== 'working') invalidResolution(task, purpose, outcome);
+    if (purpose === 'work') {
+      if (outcome === 'ready_for_review') return { kind: 'apply', requestSystemReview: true };
+      if (outcome === 'blocked') return { kind: 'apply', toStatus: 'blocked', candidateState: 'blocked' };
+    }
+    if (purpose === 'review') {
+      if (outcome === 'approved') return { kind: 'apply', toStatus: 'ready_to_merge', candidateState: 'approved' };
+      if (outcome === 'changes_requested' || outcome === 'stale_subject') {
+        return { kind: 'apply', toStatus: 'todo', candidateState: 'needs_work' };
+      }
+      if (outcome === 'blocked') return { kind: 'apply', toStatus: 'blocked', candidateState: 'blocked' };
+    }
+    return invalidResolution(task, purpose, outcome);
   }
   if (purpose === 'work') {
     if (!['in_progress', 'todo'].includes(task.status)) invalidResolution(task, purpose, outcome);

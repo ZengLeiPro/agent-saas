@@ -60,6 +60,8 @@ export interface AppendCandidateRevisionInput {
   workExecutionId?: string;
   reviewExecutionId?: string;
   sources: CandidateSourceSnapshotInput[];
+  /** Optional atomic state convergence used by v3 engine after persisting the new subject. */
+  nextState?: 'waiting_checks' | 'in_review';
 }
 
 export interface TransitionCandidateInput {
@@ -190,6 +192,12 @@ export class IntegrationCandidateStore {
           'TASKBOARD_CANDIDATE_REVISION_STATE_INVALID',
         );
       }
+      if (input.nextState && !transitions[candidate.state].includes(input.nextState)) {
+        throw new TaskboardValidationError(
+          `Cannot append a revision and transition ${candidate.state} -> ${input.nextState}`,
+          'TASKBOARD_CANDIDATE_TRANSITION_INVALID',
+        );
+      }
       for (const source of input.sources) {
         if (source.repositoryId !== candidate.repositoryId) {
           throw new TaskboardValidationError(
@@ -241,11 +249,12 @@ export class IntegrationCandidateStore {
       }
       const updated = await client.query(
         `UPDATE ${this.candidatesTable}
-            SET current_revision=$4,source_set_digest=$5,approved_revision=NULL,
+            SET current_revision=$4,source_set_digest=$5,state=COALESCE($6,state),approved_revision=NULL,
                 approved_review_execution_id=NULL,version=version+1,updated_at=now()
-          WHERE id=$1 AND version=$2 AND current_revision=$3
+          WHERE id=$1 AND version=$2 AND current_revision=$3 AND state=$7
           RETURNING *`,
-        [candidate.id, input.expectedVersion, input.expectedCurrentRevision, revision, sourceSetDigest],
+        [candidate.id, input.expectedVersion, input.expectedCurrentRevision, revision, sourceSetDigest,
+          input.nextState ?? null, candidate.state],
       );
       if (!updated.rows[0]) throw staleCandidate();
       return rowToIntegrationCandidate(updated.rows[0]);

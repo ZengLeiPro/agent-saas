@@ -1,11 +1,14 @@
 import {
   TASKBOARD_EXECUTION_PURPOSES,
   type TaskBoardExecutionPurpose,
+  type TaskBoardIntegrationCandidateState,
+  type TaskBoardIntegrationWorkflowVersion,
   type TaskBoardStageModels,
   type TaskBoardStatus,
   type TaskBoardTaskKind,
 } from '../../../shared/src/types/taskboard.js';
 import { TaskboardValidationError } from './types.js';
+import { purposeForIntegrationV3Candidate } from './workflow/decider.js';
 
 export function taskFieldMigrationSql(tasksTable: string): string {
   return `
@@ -22,6 +25,23 @@ export function executionFieldMigrationSql(executionsTable: string): string {
     ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS trigger TEXT NOT NULL DEFAULT 'initial';
     ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS protocol_version INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS attempt_id TEXT;
+    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_id TEXT;
+    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_version INTEGER;
+    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_revision INTEGER;
+    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_work_round INTEGER;
+    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_workflow_epoch BIGINT;
+    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_lane_epoch BIGINT;
+    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_head_oid TEXT;
+    ALTER TABLE ${executionsTable} DROP CONSTRAINT IF EXISTS ${executionsTable}_candidate_binding_check;
+    ALTER TABLE ${executionsTable} ADD CONSTRAINT ${executionsTable}_candidate_binding_check CHECK (
+      (candidate_id IS NULL AND candidate_version IS NULL AND candidate_revision IS NULL
+        AND candidate_work_round IS NULL AND candidate_workflow_epoch IS NULL
+        AND candidate_lane_epoch IS NULL AND candidate_head_oid IS NULL)
+      OR
+      (candidate_id IS NOT NULL AND candidate_version > 0 AND candidate_revision > 0
+        AND candidate_work_round >= 0 AND candidate_workflow_epoch IS NOT NULL
+        AND candidate_lane_epoch IS NOT NULL AND candidate_head_oid IS NOT NULL)
+    );
     ALTER TABLE ${executionsTable} DROP CONSTRAINT IF EXISTS ${executionsTable}_trigger_check;
     ALTER TABLE ${executionsTable} ADD CONSTRAINT ${executionsTable}_trigger_check
       CHECK (trigger IN ('initial', 'comment', 'resume', 'retry'));
@@ -52,7 +72,26 @@ export function resolveExecutionPurpose(
   status: TaskBoardStatus,
   requested: TaskBoardExecutionPurpose | undefined,
   kind: TaskBoardTaskKind = 'delivery',
+  workflowVersion: TaskBoardIntegrationWorkflowVersion = 2,
+  candidateState?: TaskBoardIntegrationCandidateState,
 ): TaskBoardExecutionPurpose {
+  if (kind === 'integration' && workflowVersion === 3) {
+    const expected = candidateState && purposeForIntegrationV3Candidate(candidateState);
+    const purpose = requested ?? expected;
+    if (purpose === 'merge') {
+      throw new TaskboardValidationError(
+        'Workflow v3 never hands integration merge to an Agent',
+        'TASKBOARD_V3_AGENT_MERGE_FORBIDDEN',
+      );
+    }
+    if (!expected || purpose !== expected) {
+      throw new TaskboardValidationError(
+        'Candidate state is not dispatchable for the requested execution purpose',
+        'TASKBOARD_CANDIDATE_EXECUTION_STATE_INVALID',
+      );
+    }
+    return purpose;
+  }
   const purpose = requested ?? (kind === 'integration' ? 'merge' : 'work');
   if (purpose === 'merge') {
     if (kind === 'integration' && (status === 'todo' || status === 'in_progress' || status === 'blocked')) {

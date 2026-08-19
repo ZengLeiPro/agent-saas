@@ -10,6 +10,7 @@ export interface IntegrationCandidateTableNames {
   candidatesTable: string;
   revisionsTable: string;
   sourceSnapshotsTable: string;
+  providerOperationsTable: string;
 }
 
 export function integrationCandidateTableNames(integrationSourcesTable: string): IntegrationCandidateTableNames {
@@ -20,6 +21,7 @@ export function integrationCandidateTableNames(integrationSourcesTable: string):
     candidatesTable: `${root}_candidates`,
     revisionsTable: `${root}_candidate_revisions`,
     sourceSnapshotsTable: `${root}_candidate_source_snapshots`,
+    providerOperationsTable: `${root}_provider_operations_v3`,
   };
 }
 
@@ -27,7 +29,7 @@ export async function runIntegrationCandidateSchema(
   options: IntegrationCandidateSchemaOptions,
   client: Pick<PoolClient, 'query'>,
 ): Promise<void> {
-  const { candidatesTable, revisionsTable, sourceSnapshotsTable } = integrationCandidateTableNames(
+  const { candidatesTable, revisionsTable, sourceSnapshotsTable, providerOperationsTable } = integrationCandidateTableNames(
     options.integrationSourcesTable,
   );
 
@@ -134,6 +136,35 @@ export async function runIntegrationCandidateSchema(
       FOREIGN KEY (candidate_id, revision)
         REFERENCES ${revisionsTable}(candidate_id, revision) ON DELETE CASCADE
     )
+  `);
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${providerOperationsTable} (
+      id TEXT PRIMARY KEY,
+      operation_key TEXT NOT NULL UNIQUE,
+      intent_digest TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('create_branch','create_pull_request','update_ref','merge_pull_request','close_source_pull_request','comment_source_pull_request')),
+      repository_id TEXT NOT NULL,
+      candidate_id TEXT NOT NULL REFERENCES ${candidatesTable}(id),
+      candidate_revision INTEGER NOT NULL CHECK (candidate_revision > 0),
+      workflow_epoch BIGINT NOT NULL,
+      lane_epoch BIGINT NOT NULL,
+      execution_id TEXT NOT NULL,
+      expected JSONB NOT NULL,
+      command JSONB NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('prepared','executing','succeeded','unknown','failed','needs_human')),
+      attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+      receipt JSONB,
+      error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      FOREIGN KEY (candidate_id,candidate_revision)
+        REFERENCES ${revisionsTable}(candidate_id,revision)
+    )
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS ${providerOperationsTable}_reconcile_idx
+      ON ${providerOperationsTable}(updated_at)
+      WHERE state IN ('executing','unknown')
   `);
   for (const table of [revisionsTable, sourceSnapshotsTable]) {
     await client.query(`

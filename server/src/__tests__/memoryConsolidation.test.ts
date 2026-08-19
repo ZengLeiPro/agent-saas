@@ -170,20 +170,24 @@ describe('memory policy filter', () => {
     expect(names).toContain('Shell');
   });
 
-  it('v2：暴露 MemoryCommand、隐藏 MemoryCommit', () => {
+  it('v2：隐藏 MemoryCommand 与 MemoryCommit，只保留记忆查询能力', () => {
     const names = applyMainSessionToolFilter(fakeRuntime(), 'v2').list(toolContext()).map((d) => d.name);
-    expect(names).toContain('MemoryCommand');
+    expect(names).not.toContain('MemoryCommand');
     expect(names).not.toContain('MemoryCommit');
+    expect(names).toContain('Read');
   });
 
-  it('v2 deny guard：Write/Edit 命中记忆路径被拒并提示 MemoryCommand', async () => {
+  it('v2 deny guard：Write/Edit/Shell 命中记忆路径均被拒', async () => {
     const runtime = applyMainSessionToolFilter(fakeRuntime(), 'v2');
     await expect(
       runtime.invoke({ toolId: 'Write', input: { path: 'MEMORY.md', content: 'x' } } as never, toolContext()),
-    ).rejects.toThrow(/MemoryCommand/);
+    ).rejects.toThrow(/禁止/);
     await expect(
       runtime.invoke({ toolId: 'Edit', input: { file_path: 'memory/2026-07-29.md', old_string: 'a', new_string: 'b' } } as never, toolContext()),
-    ).rejects.toThrow(/MemoryCommand/);
+    ).rejects.toThrow(/禁止/);
+    await expect(
+      runtime.invoke({ toolId: 'Shell', input: { command: 'printf x >> memory/2026-07-29.md' } } as never, toolContext()),
+    ).rejects.toThrow(/禁止/);
   });
 
   it('v2 deny guard：普通文件写不受影响', async () => {

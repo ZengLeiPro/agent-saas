@@ -2694,6 +2694,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     executionConfig,
     runtimeEventStoreFor,
     runtimeEventStoreSupportsPathless: Boolean(pgEventStore),
+    memoryWriteDelegationEnabled: (tenantId) => tenantId
+      ? getTenantMemoryFeatureStatus(tenantId).memoryWriteDelegationEnabled.effective
+      : false,
     ...(runtimeScheduler && pgRunStore ? {
       enqueueRuntime: {
         scheduler: runtimeScheduler,

@@ -133,6 +133,7 @@ import { buildRuntimeReplayState, type RuntimeReplayState } from './replay.js';
 import {
   createOrgAgentSessionSnapshot,
   createRuntimeSessionRecord,
+  resolveSessionMemoryPolicy,
   FileSessionCatalog,
   type RuntimeSessionRecord,
   type SessionCatalog,
@@ -1339,18 +1340,19 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       : orgAgent
         ? requestedModel ?? model
         : existingSession?.modelRef ?? options.modelRef ?? requestedModel ?? model;
-    // 记忆写入策略（2026-07-29 职责剥离批次）：新会话按租户开关定版并 pin 进
-    // session meta；resume 读 pin；后台 profile run、专职 org Agent、非真实用户
+    // 记忆写入策略（2026-07-29 职责剥离批次）：新会话首次落库时按租户开关
+    // 定版并 pin 进 session meta；resume 读 pin；后台 profile run、专职 org Agent、非真实用户
     // 通道（subagent/cron）固定 v1 语义。会话内不再变化（prompt prefix 稳定性）。
-    const memoryPolicyVersion: MemoryWritePolicyVersion = (
-      toolProfile
-      || orgAgentId
-      || (context.channel !== 'web' && context.channel !== 'dingtalk')
-    )
-      ? 'v1'
-      : existingSession
-        ? (existingSession.memoryPolicyVersion === 'v2' ? 'v2' : 'v1')
-        : (config.memoryWriteDelegationEnabled?.(effectiveTenantId) === true ? 'v2' : 'v1');
+    const isTaskboardExecution = existingSession?.sessionSource === 'taskboard_execution'
+      || sessionId.startsWith('taskboard-');
+    const memoryPolicyVersion: MemoryWritePolicyVersion = resolveSessionMemoryPolicy({
+      existing: existingSession,
+      delegationEnabled: config.memoryWriteDelegationEnabled?.(effectiveTenantId) === true,
+      channel: context.channel,
+      ...(toolProfile ? { toolProfile } : {}),
+      ...(orgAgentId ? { orgAgentId } : {}),
+      ...(isTaskboardExecution ? { sessionSource: 'taskboard_execution' as const, memoryAutomationEligible: false } : {}),
+    });
     const workspaceId = deriveRuntimeWorkspaceId({
       existingSession,
       fallbackSessionId: sessionId,
@@ -1391,7 +1393,11 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       status: 'running', executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined,
       ...(orgAgentId ? { orgAgentId } : {}),
       ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
-      ...(memoryPolicyVersion === 'v2' ? { memoryPolicyVersion: 'v2' as const } : {}),
+      memoryPolicyVersion,
+      ...(isTaskboardExecution ? {
+        sessionSource: 'taskboard_execution' as const,
+        memoryAutomationEligible: false,
+      } : {}),
       updatedAt: new Date().toISOString(),
     };
     if (boundProfile && config.agentRuntimeProfileResolver) {
@@ -1553,7 +1559,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           isPlatformAdmin,
           memoryPolicyVersion,
           getSystemPrompt: config.getSystemPrompt,
-          taskboardExecution: sessionId.startsWith('taskboard-'), taskboardStagePrompt: options.taskboardStagePrompt,
+          taskboardExecution: isTaskboardExecution, taskboardStagePrompt: options.taskboardStagePrompt,
           ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
           ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
           ...(orgAgent ? { orgAgent } : {}),
@@ -2175,10 +2181,30 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         ? { runId: resumeRunId, sessionId: request.sessionId, userId: sessionRecord.userId }
         : undefined,
     );
-    // 记忆写入策略：resume 只读会话 pin（v2 pin 仅真实用户新会话写入）。
-    const memoryPolicyVersion: MemoryWritePolicyVersion = (resumeToolProfile || orgAgentId)
-      ? 'v1'
-      : (existingSession?.memoryPolicyVersion === 'v2' ? 'v2' : 'v1');
+    // 记忆写入策略：resume 只读会话 pin；TaskBoard 固定只读且不进入 L2。
+    const isTaskboardExecution = existingSession?.sessionSource === 'taskboard_execution'
+      || request.sessionId.startsWith('taskboard-');
+    const memoryPolicyVersion: MemoryWritePolicyVersion = resolveSessionMemoryPolicy({
+      existing: existingSession,
+      delegationEnabled: false,
+      channel: sessionRecord.channel,
+      ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}),
+      ...(orgAgentId ? { orgAgentId } : {}),
+      ...(isTaskboardExecution ? { sessionSource: 'taskboard_execution' as const, memoryAutomationEligible: false } : {}),
+    });
+    if (isTaskboardExecution && (
+      existingSession?.sessionSource !== 'taskboard_execution'
+      || existingSession?.memoryAutomationEligible !== false
+      || existingSession?.memoryPolicyVersion !== 'v2'
+    )) {
+      Object.assign(sessionRecord, {
+        sessionSource: 'taskboard_execution' as const,
+        memoryAutomationEligible: false,
+        memoryPolicyVersion: 'v2' as const,
+        updatedAt: new Date().toISOString(),
+      });
+      await sessionCatalog.upsert(sessionRecord);
+    }
     const instructions = buildInstructions({
       sharedDir: config.sharedDir,
       tenantId: sessionRecord.tenantId,
@@ -2191,7 +2217,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       isPlatformAdmin: resumeIsPlatformAdmin,
       memoryPolicyVersion,
       getSystemPrompt: config.getSystemPrompt,
-      taskboardExecution: request.sessionId.startsWith('taskboard-'), taskboardStagePrompt: request.taskboardStagePrompt,
+      taskboardExecution: isTaskboardExecution, taskboardStagePrompt: request.taskboardStagePrompt,
       ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
       ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
       ...(orgAgent ? { orgAgent } : {}),
@@ -2642,10 +2668,30 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         ? { runId: resumeRunId, sessionId: request.sessionId, userId: sessionRecord.userId }
         : undefined,
     );
-    // 记忆写入策略：resume 只读会话 pin（v2 pin 仅真实用户新会话写入）。
-    const memoryPolicyVersion: MemoryWritePolicyVersion = (resumeToolProfile || orgAgentId)
-      ? 'v1'
-      : (existingSession?.memoryPolicyVersion === 'v2' ? 'v2' : 'v1');
+    // 记忆写入策略：resume 只读会话 pin；TaskBoard 固定只读且不进入 L2。
+    const isTaskboardExecution = existingSession?.sessionSource === 'taskboard_execution'
+      || request.sessionId.startsWith('taskboard-');
+    const memoryPolicyVersion: MemoryWritePolicyVersion = resolveSessionMemoryPolicy({
+      existing: existingSession,
+      delegationEnabled: false,
+      channel: sessionRecord.channel,
+      ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}),
+      ...(orgAgentId ? { orgAgentId } : {}),
+      ...(isTaskboardExecution ? { sessionSource: 'taskboard_execution' as const, memoryAutomationEligible: false } : {}),
+    });
+    if (isTaskboardExecution && (
+      existingSession?.sessionSource !== 'taskboard_execution'
+      || existingSession?.memoryAutomationEligible !== false
+      || existingSession?.memoryPolicyVersion !== 'v2'
+    )) {
+      Object.assign(sessionRecord, {
+        sessionSource: 'taskboard_execution' as const,
+        memoryAutomationEligible: false,
+        memoryPolicyVersion: 'v2' as const,
+        updatedAt: new Date().toISOString(),
+      });
+      await sessionCatalog.upsert(sessionRecord);
+    }
     const instructions = buildInstructions({
       sharedDir: config.sharedDir,
       tenantId: sessionRecord.tenantId,
@@ -2658,7 +2704,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       isPlatformAdmin: resumeIsPlatformAdmin,
       memoryPolicyVersion,
       getSystemPrompt: config.getSystemPrompt,
-      taskboardExecution: request.sessionId.startsWith('taskboard-'), taskboardStagePrompt: request.taskboardStagePrompt,
+      taskboardExecution: isTaskboardExecution, taskboardStagePrompt: request.taskboardStagePrompt,
       ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
       ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
       ...(orgAgent ? { orgAgent } : {}),

@@ -83,7 +83,7 @@ import {
   DEFAULT_EXECUTION_CONFIG,
   resolveExecutionTarget,
 } from '../../runtime/executionConfig.js';
-import { createRuntimeSessionRecord } from '../../runtime/sessionCatalog.js';
+import { createRuntimeSessionRecord, resolveSessionMemoryPolicy } from '../../runtime/sessionCatalog.js';
 import { deriveStableWorkspaceId } from '../../runtime/workspaceIdentity.js';
 import type { RunRecord } from '../../runtime/runStore.js';
 import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
@@ -2991,9 +2991,10 @@ export class WebChannel implements BaseChannel {
       let durableAcceptedQueuedTargetRunId: string | undefined;
       try {
         const enqueueCwd = targetCwd || resolveUserCwd(this.config.agentCwd!, userIdentity);
-        const existingSessionRecord = validSessionId
-          ? await enqueueRuntime.sessionCatalog.get(enqueueSessionId)
-          : null;
+        const existingSessionRecord = await enqueueRuntime.sessionCatalog.get(enqueueSessionId);
+        // policy 必须在首条消息入队前 pin；先刷新共享配置，避免 Web 预建 Session
+        // 把刚开启 delegation 的新会话永久写成 v1。
+        this.config.refreshSharedConfig?.();
         const enqueueOwner = sessionOwner ?? userIdentity;
         titleOwnerId = enqueueOwner?.id;
         const enqueueWorkspaceId = existingSessionRecord?.workspaceId
@@ -3011,8 +3012,19 @@ export class WebChannel implements BaseChannel {
           workspaceId: enqueueWorkspaceId,
           status: 'running',
           ...(orgAgentId ? { orgAgentId } : {}),
+          memoryPolicyVersion: resolveSessionMemoryPolicy({
+            existing: existingSessionRecord,
+            delegationEnabled: this.config.memoryWriteDelegationEnabled?.(enqueueOwner?.tenantId) === true,
+            channel: 'web',
+            ...(orgAgentId ? { orgAgentId } : {}),
+          }),
         });
-        await enqueueRuntime.sessionCatalog.upsert(sessionRecord);
+        if (existingSessionRecord) {
+          await enqueueRuntime.sessionCatalog.upsert(sessionRecord);
+        } else {
+          // ensure 通过跨进程原子首写保证并发首投只能有一个 policy 胜出。
+          await enqueueRuntime.sessionCatalog.ensure(sessionRecord);
+        }
         sessionPersisted = true;
         // 门禁 uncertain/纯附件的 pass_flagged 落库：sessionId 到这里才确定
         flushPendingGuardrailEvent(enqueueSessionId);

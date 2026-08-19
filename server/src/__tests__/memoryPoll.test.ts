@@ -271,6 +271,38 @@ describe('UserActivityService', () => {
     expect(result.sessions.map((session) => session.sessionId)).toEqual(['s1']);
   });
 
+  it('排除 TaskBoard Execution，包含稳定标记与历史前缀回退', async () => {
+    const service = makeService(
+      [
+        sessionRecord(),
+        sessionRecord({
+          sessionId: 'taskboard-marked',
+          metaJson: {
+            userId: 'u1', username: 'u1', channel: 'web', createdAt: 'x',
+            sessionSource: 'taskboard_execution', memoryAutomationEligible: false,
+          },
+        }),
+        sessionRecord({ sessionId: 'taskboard-legacy' }),
+      ],
+      {
+        s1: [
+          makeEvent({ type: 'run_started', runId: 'r1', sessionId: 's1', model: 'm', channel: 'web' }),
+          makeEvent({ type: 'user_message', runId: 'r1', sessionId: 's1', content: '普通对话' }),
+        ],
+        'taskboard-marked': [
+          makeEvent({ type: 'run_started', runId: 'rt1', sessionId: 'taskboard-marked', model: 'm', channel: 'web' }),
+          makeEvent({ type: 'user_message', runId: 'rt1', sessionId: 'taskboard-marked', content: '任务执行内容' }),
+        ],
+        'taskboard-legacy': [
+          makeEvent({ type: 'run_started', runId: 'rt2', sessionId: 'taskboard-legacy', model: 'm', channel: 'web' }),
+          makeEvent({ type: 'user_message', runId: 'rt2', sessionId: 'taskboard-legacy', content: '历史任务内容' }),
+        ],
+      },
+    );
+    const result = await service.listActivity({ tenantId: 'kaiyan', userId: 'u1', sinceIso: '2026-07-13T00:00:00.000Z' });
+    expect(result.sessions.map((session) => session.sessionId)).toEqual(['s1']);
+  });
+
   it('时间窗过滤：窗口外的消息不计', async () => {
     const service = makeService([sessionRecord()], {
       s1: [
@@ -969,5 +1001,30 @@ describe('CronService system job guard', () => {
       toUpdate: [],
     });
     expect(await service.get('normal-1')).toBeUndefined();
+  });
+});
+
+describe('main session v2 memory consumer boundary', () => {
+  it('hides MemoryCommand/MemoryCommit while retaining MemorySearch and Read', () => {
+    const inner = fakeToolRuntime();
+    const runtime = applyToolProfile({
+      list: () => [...ALL_TOOLS, descriptor('MemoryCommand', 'workspace_write'), descriptor('MemoryCommit', 'workspace_write')],
+      invoke: inner.invoke,
+    }, undefined, 'v2');
+    const names = runtime.list(toolContext()).map(tool => tool.name);
+    expect(names).toContain('MemorySearch');
+    expect(names).toContain('Read');
+    expect(names).not.toContain('MemoryCommand');
+    expect(names).not.toContain('MemoryCommit');
+  });
+
+  it.each([
+    ['Write', { path: 'MEMORY.md', content: 'x' }],
+    ['Edit', { file_path: 'memory/topics/x.md', old_string: 'a', new_string: 'b' }],
+    ['Shell', { command: 'printf x >> MEMORY.md' }],
+    ['Shell', { command: 'rm -rf /ws/tenant/user/memory/topics' }],
+  ])('rejects %s access to memory write paths', async (toolId, input) => {
+    const runtime = applyToolProfile(fakeToolRuntime(), undefined, 'v2');
+    await expect(runtime.invoke({ toolId, input } as never, toolContext())).rejects.toThrow(/记忆写入职责已剥离/);
   });
 });

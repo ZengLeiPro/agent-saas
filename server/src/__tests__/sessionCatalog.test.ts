@@ -9,6 +9,7 @@ import {
   createOrgAgentSessionSnapshot,
   createRuntimeSessionRecord,
   FileSessionCatalog,
+  resolveSessionMemoryPolicy,
 } from '../runtime/sessionCatalog.js';
 
 describe('FileSessionCatalog', () => {
@@ -126,7 +127,7 @@ describe('FileSessionCatalog', () => {
     });
   });
 
-  it('ensure only creates the first session meta and never regresses a terminal status', async () => {
+  it('ensure only creates the first session meta and never regresses a terminal status or policy pin', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'session-catalog-ensure-'));
     cleanupDirs.add(cwd);
     const sessionId = randomUUID();
@@ -138,16 +139,98 @@ describe('FileSessionCatalog', () => {
       channel: 'web',
       cwd,
       status: 'running',
+      memoryPolicyVersion: 'v2',
     });
     cleanupDirs.add(dirname(record.transcriptPath));
 
     await Promise.all([catalog.ensure(record), catalog.ensure(record)]);
     await catalog.markStatus(sessionId, 'finished');
-    await catalog.ensure({ ...record, username: 'stale-worker', status: 'running' });
+    await catalog.ensure({
+      ...record,
+      username: 'stale-worker',
+      status: 'running',
+      memoryPolicyVersion: 'v1',
+    });
 
     await expect(catalog.get(sessionId)).resolves.toMatchObject({
       username: 'alice',
       status: 'finished',
+      memoryPolicyVersion: 'v2',
     });
+  });
+});
+
+const policyCleanupDirs = new Set<string>();
+afterEach(async () => {
+  for (const dir of policyCleanupDirs) await rm(dir, { recursive: true, force: true });
+  policyCleanupDirs.clear();
+});
+
+describe('session memory policy persistence', () => {
+  it.each(['v1', 'v2'] as const)('round-trips explicit %s pins', async (memoryPolicyVersion) => {
+    const cwd = await mkdtemp(join(tmpdir(), 'session-policy-'));
+    policyCleanupDirs.add(cwd);
+    const sessionId = randomUUID();
+    const catalog = new FileSessionCatalog({ agentCwd: cwd });
+    const record = createRuntimeSessionRecord({
+      sessionId, userId: 'u1', username: 'alice', channel: 'web', cwd, memoryPolicyVersion,
+    });
+    policyCleanupDirs.add(dirname(record.transcriptPath));
+    await catalog.upsert(record);
+    await expect(catalog.get(sessionId)).resolves.toMatchObject({ memoryPolicyVersion });
+  });
+
+  it('keeps legacy missing pins absent so policy resolution defaults them to v1', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'session-policy-legacy-'));
+    policyCleanupDirs.add(cwd);
+    const sessionId = randomUUID();
+    const catalog = new FileSessionCatalog({ agentCwd: cwd });
+    const record = createRuntimeSessionRecord({ sessionId, userId: 'u1', username: 'alice', channel: 'web', cwd });
+    policyCleanupDirs.add(dirname(record.transcriptPath));
+    await catalog.upsert(record);
+    const restored = await catalog.get(sessionId);
+    expect(restored?.memoryPolicyVersion).toBeUndefined();
+  });
+
+  it('round-trips TaskBoard source, no-automation flag and read-only v2 policy', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'session-policy-taskboard-'));
+    policyCleanupDirs.add(cwd);
+    const sessionId = `taskboard-${randomUUID()}`;
+    const catalog = new FileSessionCatalog({ agentCwd: cwd });
+    const record = createRuntimeSessionRecord({
+      sessionId, userId: 'u1', username: 'alice', channel: 'web', cwd,
+      memoryPolicyVersion: 'v2', sessionSource: 'taskboard_execution', memoryAutomationEligible: false,
+    });
+    policyCleanupDirs.add(dirname(record.transcriptPath));
+    await catalog.upsert(record);
+    await expect(catalog.get(sessionId)).resolves.toMatchObject({
+      memoryPolicyVersion: 'v2', sessionSource: 'taskboard_execution', memoryAutomationEligible: false,
+    });
+  });
+});
+
+describe('resolveSessionMemoryPolicy', () => {
+  it.each(['web', 'dingtalk'])('pins new direct %s sessions from the resolver', (channel) => {
+    expect(resolveSessionMemoryPolicy({ delegationEnabled: true, channel })).toBe('v2');
+    expect(resolveSessionMemoryPolicy({ delegationEnabled: false, channel })).toBe('v1');
+  });
+
+  it('never recomputes existing or legacy sessions', () => {
+    expect(resolveSessionMemoryPolicy({ existing: { memoryPolicyVersion: 'v1' }, delegationEnabled: true, channel: 'web' })).toBe('v1');
+    expect(resolveSessionMemoryPolicy({ existing: {}, delegationEnabled: true, channel: 'web' })).toBe('v1');
+  });
+
+  it('keeps TaskBoard read-only while disabling background automation', () => {
+    expect(resolveSessionMemoryPolicy({
+      delegationEnabled: true,
+      channel: 'web',
+      sessionSource: 'taskboard_execution',
+      memoryAutomationEligible: false,
+    })).toBe('v2');
+  });
+
+  it('keeps background profiles and Org Agents on v1', () => {
+    expect(resolveSessionMemoryPolicy({ delegationEnabled: true, channel: 'web', toolProfile: 'memory_poll' })).toBe('v1');
+    expect(resolveSessionMemoryPolicy({ delegationEnabled: true, channel: 'dingtalk', orgAgentId: 'org-1' })).toBe('v1');
   });
 });

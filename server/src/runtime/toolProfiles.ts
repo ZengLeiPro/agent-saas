@@ -100,9 +100,8 @@ export function applyToolProfile(
  * - v1（默认）：隐藏 MemoryCommand/MemoryCommit 两个记忆政策工具，
  *   外加主会话隐藏集（UserActivityList/MemoryList，2026-08-03 起）。
  * - v2（memoryPolicyVersion=v2，租户 memoryWriteDelegationEnabled 的新会话）：
- *   暴露 MemoryCommand、隐藏 MemoryCommit，并对 Write/Edit 加记忆路径 deny
- *   guard（授权级封锁）。注意这不是硬隔离（Shell 旁路仍存在，R8c，靠审计与
- *   完整性监控兜底）；v2 会话的工具面/系统提示语在首次 run 固定，之后不变。
+ *   隐藏 MemoryCommand/MemoryCommit，并对 Write/Edit/Shell 加记忆路径 deny guard。
+ *   主 Agent 只消费记忆；后台记忆服务是唯一写入者。
  *
  * 后台 profile run（memory_poll/memory_consolidate）不经此函数——白名单本身
  * 已决定可见工具集。
@@ -121,7 +120,7 @@ export type MemoryWritePolicyVersion = 'v1' | 'v2';
  */
 const MAIN_SESSION_HIDDEN_COMMON = ['UserActivityList', 'MemoryList'];
 const MAIN_SESSION_HIDDEN_TOOLS_V1: ReadonlySet<string> = new Set(['MemoryCommand', 'MemoryCommit', ...MAIN_SESSION_HIDDEN_COMMON]);
-const MAIN_SESSION_HIDDEN_TOOLS_V2: ReadonlySet<string> = new Set(['MemoryCommit', ...MAIN_SESSION_HIDDEN_COMMON]);
+const MAIN_SESSION_HIDDEN_TOOLS_V2: ReadonlySet<string> = new Set(['MemoryCommand', 'MemoryCommit', ...MAIN_SESSION_HIDDEN_COMMON]);
 
 export function applyMainSessionToolFilter(runtime: ToolRuntime, policy: MemoryWritePolicyVersion): ToolRuntime {
   if (policy === 'v1') {
@@ -135,20 +134,26 @@ export function applyMainSessionToolFilter(runtime: ToolRuntime, policy: MemoryW
     isAllowed: (descriptor) =>
       !MAIN_SESSION_HIDDEN_TOOLS_V2.has(descriptor.name) && !MAIN_SESSION_HIDDEN_TOOLS_V2.has(descriptor.id),
     guardInvoke: (call, context) => {
+      const input = call.input as Record<string, unknown> | undefined;
+      if (call.toolId === 'Shell') {
+        const command = typeof input?.command === 'string' ? input.command : '';
+        if (/(?:^|[\s"'=:/\\])MEMORY\.md(?:$|[\s"';|&<>])/u.test(command)
+          || /(?:^|[\s"'=:/\\])memory(?:[/\\]|$)/u.test(command)) {
+          throw new Error('记忆写入职责已剥离：V2 主 Agent 禁止通过 Shell 访问记忆写入路径。');
+        }
+        return;
+      }
       const paramName = WRITE_PATH_PARAM[call.toolId];
       if (!paramName) return;
-      const input = call.input as Record<string, unknown> | undefined;
       const rawPath = typeof input?.[paramName] === 'string' ? (input[paramName] as string).trim() : '';
       if (!rawPath) return;
       const root = resolve(context.workspace.root);
       const target = isAbsolute(rawPath) ? resolve(rawPath) : resolve(join(root, rawPath));
       const rel = relative(root, target).split('\\').join('/');
-      if (rel.startsWith('..') || isAbsolute(rel)) return; // 越界与否交由原有工具安全层处理
-      const isMemoryPath = rel === 'MEMORY.md' || (rel.startsWith('memory/') && rel.endsWith('.md'));
+      if (rel.startsWith('..') || isAbsolute(rel)) return;
+      const isMemoryPath = rel === 'MEMORY.md' || rel.startsWith('memory/');
       if (isMemoryPath) {
-        throw new Error(
-          `记忆写入职责已剥离：不要直接用 ${call.toolId} 修改 ${rel}。用户明确要求记住/忘记时改用 MemoryCommand 工具；其余记忆整理由平台后台自动进行。`,
-        );
+        throw new Error(`记忆写入职责已剥离：V2 主 Agent 禁止通过 ${call.toolId} 修改 ${rel}。`);
       }
     },
     profileLabel: 'main_session_v2',

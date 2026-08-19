@@ -279,3 +279,25 @@ describe('MemoryConsolidationEngine scanner', () => {
     expect(harness.advanceConsumerCursor).not.toHaveBeenCalled();
   });
 });
+
+
+describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
+  it.each([
+    { sessionSource: 'taskboard_execution', memoryAutomationEligible: true },
+    { memoryAutomationEligible: false },
+  ])('skips forged v2 projection with %j', async (marker) => {
+    const event = boundaryEvent({ globalSequence: 900 });
+    const harness = createHarness({
+      events: [event],
+      projection: async () => ({
+        sessionId: event.sessionId, tenantId: event.tenantId, userId: 'u1', username: 'alice',
+        channel: 'web', kind: 'user', workspaceId: 'ws1',
+        metaJson: { memoryPolicyVersion: 'v2', ...marker },
+      }),
+    });
+    await scanOnce(harness.engine);
+    expect(harness.applyRunStarted).not.toHaveBeenCalled();
+    expect(harness.applyRunFinished).not.toHaveBeenCalled();
+    expect(harness.getCursor()).toBe(900);
+  });
+});

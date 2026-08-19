@@ -57,7 +57,8 @@ export async function claimIntegrationDispatchCandidates(
         expectedBoardVersion: trigger.boardVersion,
       }, trigger.mode === 'scheduled' ? 'scheduled_policy' : 'on_ready_policy');
       await completeTrigger(host, trigger);
-      created.push({ identity, task, purpose: 'merge' });
+      // v3 is driven only by IntegrationEngineV3 system requests. Never dispatch a Merge Agent.
+      if ((task.workflowVersion ?? 2) === 2) created.push({ identity, task, purpose: 'merge' });
     } catch (error) {
       const code = error && typeof error === 'object' && 'code' in error
         ? String((error as { code: unknown }).code)
@@ -243,7 +244,7 @@ async function createAutomaticRemediationCandidates(
       WHERE (s.state='resolving_conflict'
              OR (s.state='waiting_retry' AND s.last_error LIKE 'Required checks failed%'))
         AND s.remediation_task_id IS NULL
-        AND i.kind='integration' AND i.status IN ('todo','in_progress')
+        AND i.kind='integration' AND COALESCE(i.workflow_version,2)=2 AND i.status IN ('todo','in_progress')
         AND NOT EXISTS (
           SELECT 1 FROM ${host.executionsTable} e
            WHERE e.task_id=i.id AND e.status IN ('queued','running','waiting_user','waiting_approval')
@@ -423,7 +424,8 @@ async function loadUnstartedIntegrationTasks(
          JOIN ${host.boardsTable} b ON b.id=t.board_id
          LEFT JOIN ${host.integrationLanesTable} l ON l.active_integration_task_id=t.id
         WHERE (
-            (t.kind='integration' AND t.status IN ('todo','in_progress') AND l.active_integration_task_id=t.id
+            (t.kind='integration' AND COALESCE(t.workflow_version,2)=2
+             AND t.status IN ('todo','in_progress') AND l.active_integration_task_id=t.id
              AND NOT EXISTS (
                SELECT 1 FROM ${host.integrationSourcesTable} blocked_source
                 WHERE blocked_source.integration_task_id=t.id

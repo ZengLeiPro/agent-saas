@@ -3,7 +3,7 @@ import { join, resolve } from 'path';
 import { parse as parseJsonc } from 'jsonc-parser';
 import { z } from 'zod';
 import { buildWebToolsSchemas } from './webToolsSchema.js';
-
+import { integrationV3ControlPlaneConfigSchema } from './integrationV3ControlPlaneConfig.js';
 import {
   DEFAULT_CODING_HAND_NETWORK_POLICY,
   NETWORK_POLICY_MODES,
@@ -1292,7 +1292,6 @@ export const egressConfigSchema = z.object({
   sandbox: egressSandboxProxyConfigSchema.default(DEFAULT_EGRESS_CONFIG.sandbox),
   packageMirrors: egressPackageMirrorsConfigSchema.default(DEFAULT_EGRESS_CONFIG.packageMirrors),
 });
-
 export const appConfigSchema = z.object({
   proxy: proxyConfigSchema.optional(),
   egress: egressConfigSchema.optional(),
@@ -1307,6 +1306,7 @@ export const appConfigSchema = z.object({
   stt: sttConfigSchema.optional(),
   messageDisplay: messageDisplayConfigSchema.optional(),
   dispatch: dispatchConfigSchema.optional(),
+  integrationV3ControlPlane: integrationV3ControlPlaneConfigSchema,
   observability: observabilityConfigSchema.optional(),
   systemMonitor: systemMonitorConfigSchema,
   alerting: alertingConfigSchema,

@@ -141,8 +141,12 @@ export class UserActivityService {
       });
       for (const record of page.items) {
         base.scannedSessions++;
-        // 记忆/心跳轮询等内部会话不算用户活动（否则轮询会互相喂养产生噪音）
-        if (isMemoryPollSessionMeta(record.metaJson)) continue;
+        // 记忆/心跳轮询与 TaskBoard Execution 不算个人记忆原料。sessionSource 是
+        // 新真源；前缀只用于排除尚未补标记的历史任务会话。
+        if (isMemoryPollSessionMeta(record.metaJson)
+          || record.metaJson.sessionSource === 'taskboard_execution'
+          || record.metaJson.memoryAutomationEligible === false
+          || record.sessionId.startsWith('taskboard-')) continue;
         candidates.push({
           sessionId: record.sessionId,
           ...(record.title ? { title: record.title } : {}),

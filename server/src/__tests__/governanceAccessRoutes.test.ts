@@ -240,21 +240,13 @@ async function createAssignmentPreview(
   change: Record<string, unknown>,
   query = '',
 ): Promise<Record<string, unknown>> {
-  const response = await test.request(
-    `/api/governance/access/assignments/skill/skill-1/preview${query}`,
-    json('POST', change),
-  );
+  const response = await test.request(`/api/governance/access/assignments/skill/skill-1/preview${query}`, json('POST', change));
   expect(response.status).toBe(200);
   return await response.json() as Record<string, unknown>;
 }
 
 function commitBody(change: Record<string, unknown>, preview: Record<string, unknown>): Record<string, unknown> {
-  return {
-    ...change,
-    previewId: preview.previewId,
-    baselineDigest: preview.baselineDigest,
-    expiresAt: preview.expiresAt,
-  };
+  return { ...change, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt };
 }
 
 describe('governance access routes', () => {
@@ -279,6 +271,14 @@ describe('governance access routes', () => {
     const denied = await test.request('/api/governance/access/memberships?tenantId=tenant-a', json('POST', { username: 'new-admin', password: 'secret123', role: 'admin' }));
     expect(denied.status).toBe(403);
     expect(createMember).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    [new MembershipInvariantError('MEMBERSHIP_ALREADY_EXISTS'), '该账号的组织成员关系已存在，请刷新成员列表；如果成员已停用，请在列表中点击“恢复”，无需重复创建。', 'MEMBERSHIP_ALREADY_EXISTS'],
+    [new Error('Username already exists'), '用户名已存在。请更换用户名；如果该账号已属于当前组织，请刷新成员列表，已停用成员请点击“恢复”，无需重复创建。', 'USERNAME_ALREADY_EXISTS'],
+  ])('成员创建重复错误返回处理指引', async (error, expectedError, code) => {
+    const test = await rig({ createMember: vi.fn().mockRejectedValue(error) });
+    const response = await test.request('/api/governance/access/memberships?tenantId=tenant-a', json('POST', { username: 'existing-member', password: 'secret123', role: 'user' }));
+    expect(response.status).toBe(409); await expect(response.json()).resolves.toMatchObject({ error: expectedError, code });
   });
   it('治理 API 创建成员时拒绝越权开启个人调试模式', async () => {
     const createMember = vi.fn(), validateMemberDebugMode = vi.fn().mockReturnValue('上级未开放调试模式，不能为成员开启'); const test = await rig({ createMember, validateMemberDebugMode });

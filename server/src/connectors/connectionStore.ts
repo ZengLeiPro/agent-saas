@@ -4,6 +4,11 @@ import { dirname } from 'node:path';
 
 export type ConnectorConnectionStatus = 'connected' | 'disconnected';
 
+export interface PendingRevokeRefOwner {
+  userId: string;
+  tenantId: string;
+}
+
 export interface ConnectorConnectionRecord {
   connectorId: string;
   username: string;
@@ -14,6 +19,8 @@ export interface ConnectorConnectionRecord {
   credentialRefs: Record<string, string>;
   /** 已脱离活动连接、等待从 Vault 撤销的 ref；不包含明文。 */
   pendingRevokeRefs?: string[];
+  /** 每个 pending ref 创建时的 Vault owner；防止同名账号重建后按新用户撤销旧凭据。 */
+  pendingRevokeRefOwners?: Record<string, PendingRevokeRefOwner>;
   capabilities: Record<string, boolean>;
   metadata?: Record<string, string>;
   createdAt: string;
@@ -32,6 +39,30 @@ const EMPTY_FILE: ConnectorConnectionFile = { version: 1, users: {}, runtimeEnab
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+function pendingRefOwner(record: ConnectorConnectionRecord): PendingRevokeRefOwner {
+  const ownerId = record.metadata?.credentialOwnerId;
+  return {
+    userId: typeof ownerId === 'string' && ownerId.length > 0
+      ? ownerId
+      : record.userId ?? record.username,
+    tenantId: record.tenantId,
+  };
+}
+
+function collectPendingRefOwners(
+  refs: string[],
+  current: ConnectorConnectionRecord | undefined,
+  retiredRefs: ReadonlySet<string>,
+): Record<string, PendingRevokeRefOwner> {
+  const owners: Record<string, PendingRevokeRefOwner> = {};
+  for (const ref of refs) {
+    const owner = current?.pendingRevokeRefOwners?.[ref]
+      ?? (current && retiredRefs.has(ref) ? pendingRefOwner(current) : undefined);
+    if (owner) owners[ref] = owner;
+  }
+  return owners;
 }
 
 /**
@@ -90,7 +121,10 @@ export class ConnectorConnectionStore {
         || (current.userId ? current.userId === input.userId : current.tenantId === input.tenantId);
       const nextRefs = new Set(Object.values(input.credentialRefs));
       const retiredRefs = Object.values(current?.credentialRefs ?? {}).filter(ref => !nextRefs.has(ref));
-      const pendingRevokeRefs = Array.from(new Set([...(current?.pendingRevokeRefs ?? []), ...retiredRefs]));
+      const retiredRefSet = new Set(retiredRefs);
+      const pendingRevokeRefs = Array.from(new Set([...(current?.pendingRevokeRefs ?? []), ...retiredRefs]))
+        .filter(ref => !nextRefs.has(ref));
+      const pendingRevokeRefOwners = collectPendingRefOwners(pendingRevokeRefs, current, retiredRefSet);
       result = {
         connectorId: input.connectorId,
         username: input.username,
@@ -99,6 +133,7 @@ export class ConnectorConnectionStore {
         status: 'connected',
         credentialRefs: { ...input.credentialRefs },
         ...(pendingRevokeRefs.length > 0 ? { pendingRevokeRefs } : {}),
+        ...(Object.keys(pendingRevokeRefOwners).length > 0 ? { pendingRevokeRefOwners } : {}),
         capabilities: { ...(sameOwner ? current?.capabilities ?? {} : {}), ...(input.capabilities ?? {}) },
         ...((input.metadata || (sameOwner && current?.metadata)) ? {
           metadata: { ...(sameOwner ? current?.metadata ?? {} : {}), ...(input.metadata ?? {}) },
@@ -144,10 +179,16 @@ export class ConnectorConnectionStore {
     await this.mutate(() => {
       const now = new Date().toISOString();
       const current = this.data.users[username]?.[connectorId];
+      const activeRefs = Object.values(current?.credentialRefs ?? {});
       const pendingRevokeRefs = Array.from(new Set([
         ...(current?.pendingRevokeRefs ?? []),
-        ...Object.values(current?.credentialRefs ?? {}),
+        ...activeRefs,
       ]));
+      const pendingRevokeRefOwners = collectPendingRefOwners(
+        pendingRevokeRefs,
+        current,
+        new Set(activeRefs),
+      );
       result = {
         connectorId,
         username,
@@ -156,6 +197,7 @@ export class ConnectorConnectionStore {
         status: 'disconnected',
         credentialRefs: {},
         ...(pendingRevokeRefs.length > 0 ? { pendingRevokeRefs } : {}),
+        ...(Object.keys(pendingRevokeRefOwners).length > 0 ? { pendingRevokeRefOwners } : {}),
         capabilities: { ...(current?.capabilities ?? {}), mcp: false },
         createdAt: current?.createdAt ?? now,
         updatedAt: now,
@@ -192,11 +234,16 @@ export class ConnectorConnectionStore {
       const current = this.data.users[username]?.[connectorId];
       if (!current?.pendingRevokeRefs?.includes(ref)) return;
       const pendingRevokeRefs = current.pendingRevokeRefs.filter(item => item !== ref);
+      const pendingRevokeRefOwners = { ...(current.pendingRevokeRefOwners ?? {}) };
+      delete pendingRevokeRefOwners[ref];
       this.data.users[username] = {
         ...this.data.users[username],
         [connectorId]: {
           ...current,
           ...(pendingRevokeRefs.length > 0 ? { pendingRevokeRefs } : { pendingRevokeRefs: undefined }),
+          ...(Object.keys(pendingRevokeRefOwners).length > 0
+            ? { pendingRevokeRefOwners }
+            : { pendingRevokeRefOwners: undefined }),
           updatedAt: new Date().toISOString(),
         },
       };

@@ -142,6 +142,20 @@ describe("OrganizationGovernancePage", () => {
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
 
+  it("成员关系重复时展示中文恢复指引而不是内部错误码", async () => {
+    mocks.listMemberships.mockResolvedValue({ memberships: [] });
+    const error = Object.assign(new Error("MEMBERSHIP_ALREADY_EXISTS"), { code: "MEMBERSHIP_ALREADY_EXISTS" });
+    mocks.createMembership.mockRejectedValue(error);
+    render(<OrganizationMembersPage tenantId="tenant-a" route={governanceRoute("organization.members.list", { orgId: "tenant-a" })} />);
+    fireEvent.click(await screen.findByRole("button", { name: /添加成员/ }));
+    fireEvent.change(screen.getByLabelText("用户名"), { target: { value: "existing-member" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "secret123" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    expect(await screen.findByText(/组织成员关系已存在/)).toBeTruthy();
+    expect(screen.getByText(/成员已停用.*恢复/)).toBeTruthy();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
   it("所有者身份变更严格执行预览→提交", async () => {
     mocks.listMemberships.mockResolvedValue({ memberships: [
       { userId: "owner-1", persona: "org_admin", isOwner: true, status: "active", version: 3, allowedActions: [] },

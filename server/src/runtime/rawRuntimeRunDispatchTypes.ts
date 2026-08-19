@@ -109,14 +109,14 @@ export interface RawRuntimeRunDispatchConfig {
   memoryIndexService?: MemoryIndexService | null;
   /**
    * 记忆写入职责剥离（2026-07-29 批次）：租户是否对**新会话**启用 v2 策略
-   * （MemoryCommand + 委托后台写入）。已固定 pin 的会话不受开关变化影响。
+   * （主 Agent 只读 + 后台唯一写入）。已固定 pin 的会话不受开关变化影响。
    * 缺省 = 全部 v1（历史行为，工具面零变化）。
    */
   memoryWriteDelegationEnabled?: (tenantId: string | undefined) => boolean;
   /**
    * 记忆控制工具 provider（MemoryCommand/MemoryCommit，2026-07-29 批次）。
    * 注册进所有 run 的 PlatformToolRuntime，但可见性由 profile 白名单与
-   * memoryPolicyVersion 过滤控制：v1 主会话两者都不可见。
+   * memoryPolicyVersion 过滤控制：普通主会话均不可见。
    */
   memoryControlProviders?: import('../agent/toolRuntime.js').ToolProvider[];
   agentStore?: AgentStore;
@@ -384,6 +384,8 @@ export interface RawApprovalResumeRequest {
   dispatcherCompletion?: boolean;
   /** run.metadata.taskboardStagePrompt 恢复：任务看板 Execution 按阶段配置的特定提示语。 */
   taskboardStagePrompt?: string;
+  /** Server-only persisted metadata for Integration Work/Review isolation re-attestation. */
+  runtimeIsolationMetadata?: Record<string, unknown>;
   hooks?: AgentRunHooks;
   abortController?: AbortController;
   maxTurns?: number;
@@ -408,6 +410,8 @@ export interface RawInteractionResumeRequest {
   dispatcherCompletion?: boolean;
   /** run.metadata.taskboardStagePrompt 恢复：任务看板 Execution 按阶段配置的特定提示语。 */
   taskboardStagePrompt?: string;
+  /** Server-only persisted metadata for Integration Work/Review isolation re-attestation. */
+  runtimeIsolationMetadata?: Record<string, unknown>;
   hooks?: AgentRunHooks;
   abortController?: AbortController;
   maxTurns?: number;

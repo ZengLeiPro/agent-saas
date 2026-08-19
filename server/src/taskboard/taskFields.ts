@@ -20,6 +20,7 @@ export function taskTableSql(tasksTable: string, boardsTable: string): string {
       sort_order DOUBLE PRECISION NOT NULL,
       due_at TIMESTAMPTZ,
       model TEXT,
+      stage_models JSONB NOT NULL DEFAULT '{}'::jsonb,
       creator_user_id TEXT,
       creator_name TEXT,
       provider_pull_request_id TEXT,
@@ -43,6 +44,7 @@ export function taskTableSql(tasksTable: string, boardsTable: string): string {
 export function taskFieldsMigrationSql(tasksTable: string): string {
   return `
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS model TEXT;
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS stage_models JSONB NOT NULL DEFAULT '{}'::jsonb;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS creator_user_id TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS creator_name TEXT;

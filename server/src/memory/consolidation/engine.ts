@@ -80,7 +80,7 @@ interface ProjectionStoreForConsolidation {
     channel?: string;
     kind: 'user' | 'subagent';
     workspaceId?: string;
-    metaJson: { cronSystemKind?: string; cronJobName?: string; kind?: string; memoryPolicyVersion?: string };
+    metaJson: { cronSystemKind?: string; cronJobName?: string; kind?: string; memoryPolicyVersion?: string; sessionSource?: string; memoryAutomationEligible?: boolean };
   } | null>;
 }
 
@@ -300,6 +300,8 @@ export class MemoryConsolidationEngine {
     const skip = projection.kind !== 'user'
       || meta.cronSystemKind !== undefined
       || meta.memoryPolicyVersion !== 'v2'
+      || meta.sessionSource === 'taskboard_execution'
+      || meta.memoryAutomationEligible === false
       || (projection.channel !== undefined && EXCLUDED_CHANNELS.has(projection.channel))
       || envelope.sessionId.startsWith('memory-maint-')
       || envelope.sessionId.startsWith(CONSOLIDATION_CHAT_PREFIX)

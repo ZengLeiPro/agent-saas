@@ -9,6 +9,7 @@ import type { JwtPayload } from '../auth/types.js';
 import { AliyunConnectorService, type AliyunValidateCredentials } from '../connectors/aliyun.js';
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import { resolveGithubRuntimeEnv } from '../connectors/github.js';
+import { resolveXRuntimeEnv } from '../connectors/x.js';
 import { createConnectorsRouter } from '../routes/connectors.js';
 import { InMemorySecretVault } from '../security/secretVault.js';
 
@@ -186,6 +187,47 @@ describe('native connectors routes', () => {
     expect(write.status).toBe(409);
     expect(await write.json()).toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
     expect(gate.assertLegacyWriteAllowed).toHaveBeenCalledWith({ actor: 'user', compatibilityProjection: false });
+  });
+
+  it('connects, pauses, resumes and disconnects X cookie credentials without returning secrets', async () => {
+    const rig = await createRig();
+    const connect = await rig.request('/api/connectors/x', json('POST', {
+      authToken: 'auth-route-test',
+      ct0: 'ct0-route-test',
+    }));
+    expect(connect.status).toBe(200);
+    const connected = await connect.json() as { connection: Record<string, unknown> };
+    expect(connected.connection).toMatchObject({ connectorId: 'x', status: 'connected', runtimeEnabled: true });
+    expect(JSON.stringify(connected)).not.toContain('auth-route-test');
+    expect(JSON.stringify(connected)).not.toContain('ct0-route-test');
+
+    await expect(resolveXRuntimeEnv(
+      { connectionStore: rig.connectionStore, vault: rig.secretVault },
+      { userId: 'user-1', username: 'alice', tenantId: 'tenant-a' },
+    )).resolves.toMatchObject({
+      AUTH_TOKEN: 'auth-route-test',
+      CT0: 'ct0-route-test',
+    });
+
+    const pause = await rig.request('/api/connectors/x/runtime', json('PATCH', { runtimeEnabled: false }));
+    expect(pause.status).toBe(200);
+    await expect(resolveXRuntimeEnv(
+      { connectionStore: rig.connectionStore, vault: rig.secretVault },
+      { userId: 'user-1', username: 'alice', tenantId: 'tenant-a' },
+    )).resolves.toEqual({});
+
+    expect((await rig.request('/api/connectors/x/runtime', json('PATCH', { runtimeEnabled: true }))).status).toBe(200);
+    expect((await rig.request('/api/connectors/x', { method: 'DELETE' })).status).toBe(200);
+    expect(rig.connectionStore.get('alice', 'x')).toMatchObject({ status: 'disconnected', credentialRefs: {} });
+    await expect(resolveXRuntimeEnv(
+      { connectionStore: rig.connectionStore, vault: rig.secretVault },
+      { userId: 'user-1', username: 'alice', tenantId: 'tenant-a' },
+    )).resolves.toEqual({});
+  });
+
+  it('rejects incomplete X cookie credentials', async () => {
+    const rig = await createRig();
+    expect((await rig.request('/api/connectors/x', json('POST', { authToken: 'auth-only', ct0: ' ' }))).status).toBe(400);
   });
 
   it('connects, reads and disconnects an Aliyun AccessKey without returning secrets', async () => {

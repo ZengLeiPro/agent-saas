@@ -31,6 +31,7 @@ import {
   reconcileTaskboardContinuation,
 } from './continuationCoordinator.js';
 import { reuseTaskboardSession } from './executionSession.js';
+import { taskboardExecutionSessionDescriptor } from './executionSessionMetadata.js';
 import {
   assertDispatchedRun,
   canonicalizeDispatchPayload,
@@ -308,12 +309,12 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       : [];
     const executionId = options.executionId ?? randomUUID();
     const workSessionId = executions.find((execution) => execution.purpose === 'work')?.sessionId;
-    const sessionPrefix = purpose === 'review'
-      ? 'taskboard-review'
-      : purpose === 'merge'
-        ? 'taskboard-merge'
-        : 'taskboard';
-    const sessionId = workSessionId ?? `${sessionPrefix}-${randomUUID()}`;
+    const sessionDescriptor = taskboardExecutionSessionDescriptor(
+      launch.modelContext.taskKind,
+      purpose,
+      taskId,
+    );
+    const sessionId = workSessionId ?? `${sessionDescriptor.sessionPrefix}-${randomUUID()}`;
     const session = await reuseTaskboardSession({
       sessionCatalog: this.options.sessionCatalog,
       agentCwd: this.options.agentCwd,
@@ -337,6 +338,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         taskboardExecution: true,
         taskboardExecutionId: executionId,
         taskboardTaskId: taskId,
+        ...sessionDescriptor.integrationMetadata,
         outputTransactionMode: 'terminal_buffered',
         cwd: session.cwd,
         transcriptPath: session.transcriptPath,
@@ -350,6 +352,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
             taskboardExecution: true,
             taskboardExecutionId: executionId,
             taskboardTaskId: taskId,
+            ...sessionDescriptor.integrationMetadata,
           },
         },
       },
@@ -392,6 +395,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       modelContext.boardStageModels,
       modelContext.boardModel,
       resolvedPurpose,
+      modelContext.taskStageModels,
     );
     const model = explicitModelRef
       ? this.options.resolveModel?.(explicitModelRef, executionIdentity.tenantId)

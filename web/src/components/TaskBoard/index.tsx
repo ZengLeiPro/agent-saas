@@ -5,11 +5,12 @@ import type {
   TaskBoardStatus,
   TaskBoardTask,
 } from "@agent/shared";
-import { ChevronDown, ChevronRight, Layers3, LoaderCircle, Plus, RefreshCw } from "lucide-react";
+import { Layers3, LoaderCircle, Plus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import * as api from "./api";
 import { TaskBoardConflictError } from "./api";
+import { ArchivedTasksSheet } from "./ArchivedTasksSheet";
 import { BoardDialog } from "./BoardDialog";
 import { BoardToolbar } from "./BoardToolbar";
 import { useBoardTasks, useTaskboardModelList, useTaskBoards } from "./hooks";
@@ -103,7 +104,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [selectedDeliveryTaskIds, setSelectedDeliveryTaskIds] = useState<Set<string>>(new Set());
   const [creatingIntegration, setCreatingIntegration] = useState(false);
-  const [archivedCollapsed, setArchivedCollapsed] = useState(true);
+  const [archivedTasksOpen, setArchivedTasksOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   const boardReadOnly = !!selectedBoard?.archivedAt;
@@ -323,6 +324,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
             search={search}
             desktopStatus={desktopStatus}
             priority={priority}
+            archivedCount={archivedTasks.length}
             message={notice || boardsError || tasksError}
             onBoardChange={setSelectedBoardId}
             onCreateBoard={() => setBoardDialogMode("create")}
@@ -341,6 +343,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
             onSearchChange={setSearch}
             onDesktopStatusChange={setDesktopStatus}
             onPriorityChange={setPriority}
+            onOpenArchivedTasks={() => setArchivedTasksOpen(true)}
           />
 
           <div className="relative flex min-h-0 flex-1 flex-col gap-3 md:flex-row">
@@ -348,6 +351,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
               <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">正在加载任务...</div>
             ) : (
               <TaskColumns
+                boardId={selectedBoard.id}
                 tasks={visibleTasks}
                 readOnly={boardReadOnly}
                 canCreateTask={canCreateTask}
@@ -382,71 +386,32 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
               />
             )}
 
-            {archivedTasks.length ? (
-              <details
-                data-testid="taskboard-archived-column"
-                role="region"
-                aria-label="已归档任务列"
-                open={!archivedCollapsed}
-                onToggle={(event) => setArchivedCollapsed(!event.currentTarget.open)}
-                className={archivedCollapsed
-                  ? "contents"
-                  : "order-last flex h-full min-h-0 w-full shrink-0 flex-col rounded-xl border bg-muted/30 md:w-72"}
-              >
-                <summary
-                  className={`list-none [&::-webkit-details-marker]:hidden ${archivedCollapsed
-                    ? "absolute right-0 top-12 z-10 flex cursor-pointer items-center gap-1 rounded-l-lg border border-r-0 bg-background/95 px-2 py-2 text-xs font-medium shadow-sm backdrop-blur"
-                    : "flex shrink-0 cursor-pointer items-center justify-between border-b px-3 py-2.5"}`}
-                  title={archivedCollapsed ? "展开已归档任务" : "折叠已归档任务"}
-                >
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    {archivedCollapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-                    <span>已归档任务（{archivedTasks.length}）</span>
-                  </span>
-                </summary>
-                <div className="min-h-24 flex-1 space-y-2 overflow-y-auto p-2 md:max-h-[calc(100vh-14rem)]">
-                  {archivedTasks.map((task) => (
-                    <div key={task.id} className="flex items-center gap-2 rounded-lg border bg-card p-3 text-sm shadow-sm">
-                      <button
-                        type="button"
-                        className="min-w-0 flex-1 truncate text-left hover:underline"
-                        onClick={() => {
-                          setSelectedTaskId(task.id);
-                          setDetailOpen(true);
-                        }}
-                      >
-                        {task.identifier} · {task.title}
-                      </button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={boardReadOnly || !canArchiveTask}
-                        onClick={() => {
-                          void setArchived(task, false).catch((caught) => {
-                            setNotice(caught instanceof Error ? caught.message : "恢复任务失败");
-                          });
-                        }}
-                      >恢复</Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="text-destructive hover:text-destructive"
-                        disabled={boardReadOnly || !canDeleteTask}
-                        onClick={() => {
-                          if (!window.confirm(`确认删除任务“${task.title}”吗？删除后任务将不再显示，且无法恢复。`)) return;
-                          void removeTask(task).catch((caught) => {
-                            setNotice(caught instanceof Error ? caught.message : "删除任务失败");
-                          });
-                        }}
-                      >删除</Button>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            ) : null}
           </div>
         </>
       ) : null}
+
+      <ArchivedTasksSheet
+        open={archivedTasksOpen}
+        tasks={archivedTasks}
+        readOnly={boardReadOnly}
+        canRestoreTask={canArchiveTask}
+        canDeleteTask={canDeleteTask}
+        onOpenChange={setArchivedTasksOpen}
+        onOpenTask={(task) => {
+          setSelectedTaskId(task.id);
+          setDetailOpen(true);
+        }}
+        onRestoreTask={(task) => {
+          void setArchived(task, false).catch((caught) => {
+            setNotice(caught instanceof Error ? caught.message : "恢复任务失败");
+          });
+        }}
+        onDeleteTask={(task) => {
+          void removeTask(task).catch((caught) => {
+            setNotice(caught instanceof Error ? caught.message : "删除任务失败");
+          });
+        }}
+      />
 
       <BoardDialog
         active={active}
@@ -478,6 +443,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         active={active}
         open={detailOpen}
         task={selectedTask}
+        board={selectedBoard}
         boardReadOnly={boardReadOnly}
         canUpdateTask={canUpdateTask}
         canTransitionTask={canTransitionTask}

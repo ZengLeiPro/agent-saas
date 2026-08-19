@@ -1,4 +1,5 @@
-import { readFile, writeFile, rename, mkdir, link, unlink } from 'node:fs/promises';
+import { readFile, writeFile, rename, mkdir, link, unlink, open, stat } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { isValidSessionId } from './projectKey.js';
@@ -60,9 +61,11 @@ export interface SessionMeta extends Partial<AgentProfileSessionBinding> {
   executionRole?: 'dispatcher' | 'worker';
   /**
    * 记忆写入策略版本（2026-07-29 记忆写入职责剥离批次）。'v2' = 该会话主 Agent
-   * 不自由写记忆、启用 MemoryCommand；首次 run 固定后不变。缺省 = v1。
+   * 只读记忆、后台服务唯一写入；首次落库固定后不变。缺省 = v1。
    */
-  memoryPolicyVersion?: 'v2';
+  memoryPolicyVersion?: 'v1' | 'v2';
+  sessionSource?: 'taskboard_execution';
+  memoryAutomationEligible?: boolean;
 }
 
 export function getMetaPath(transcriptPath: string): string {
@@ -126,15 +129,46 @@ export async function flushSessionMetaProjectionForTests(): Promise<void> {
   await Promise.all([...projectionOperations]);
 }
 
+const META_LOCK_STALE_MS = 120_000;
+const META_LOCK_TIMEOUT_MS = 10_000;
+
+async function acquireCrossProcessMetaLock(metaPath: string): Promise<() => Promise<void>> {
+  const lockPath = `${metaPath}.lock`;
+  await mkdir(dirname(metaPath), { recursive: true });
+  const deadline = Date.now() + META_LOCK_TIMEOUT_MS;
+  while (true) {
+    try {
+      const handle = await open(lockPath, 'wx');
+      await handle.writeFile(`${process.pid} ${Date.now()}\n`);
+      return async () => {
+        await handle.close().catch(() => undefined);
+        await unlink(lockPath).catch(() => undefined);
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      const lockStat = await stat(lockPath).catch(() => null);
+      if (lockStat && Date.now() - lockStat.mtimeMs > META_LOCK_STALE_MS) {
+        await unlink(lockPath).catch(() => undefined);
+        continue;
+      }
+      if (Date.now() >= deadline) throw new Error(`session meta lock timeout: ${metaPath}`);
+      await delay(10 + Math.floor(Math.random() * 20));
+    }
+  }
+}
+
 async function withMetaLock<T>(metaPath: string, fn: () => Promise<T>): Promise<T> {
   const prev = metaLocks.get(metaPath) ?? Promise.resolve();
   let release!: () => void;
   const next = new Promise<void>(resolve => { release = resolve; });
   metaLocks.set(metaPath, next);
+  let releaseCrossProcess: (() => Promise<void>) | undefined;
   try {
     await prev;
+    releaseCrossProcess = await acquireCrossProcessMetaLock(metaPath);
     return await fn();
   } finally {
+    await releaseCrossProcess?.();
     release();
     if (metaLocks.get(metaPath) === next) metaLocks.delete(metaPath);
   }
@@ -145,25 +179,39 @@ export async function writeSessionMeta(transcriptPath: string, meta: SessionMeta
   await withMetaLock(metaPath, () => persistSessionMeta(transcriptPath, meta));
 }
 
+/** 跨进程串行的 read-modify-write；用于必须基于最新 meta 保持单调不变量的 upsert。 */
+export async function transformSessionMeta(
+  transcriptPath: string,
+  transform: (existing: SessionMeta | null) => SessionMeta,
+): Promise<SessionMeta> {
+  const metaPath = getMetaPath(transcriptPath);
+  return withMetaLock(metaPath, async () => {
+    const next = transform(await readSessionMeta(transcriptPath));
+    await persistSessionMeta(transcriptPath, next);
+    return next;
+  });
+}
+
 /** 跨进程原子首写：完整临时文件通过 hard link 发布，已存在时绝不覆盖。 */
 export async function writeSessionMetaIfAbsent(
   transcriptPath: string,
   meta: SessionMeta,
 ): Promise<boolean> {
   const metaPath = getMetaPath(transcriptPath);
-  await mkdir(dirname(metaPath), { recursive: true });
-  const tmpPath = `${metaPath}.create.${randomBytes(4).toString('hex')}`;
-  await writeFile(tmpPath, JSON.stringify(meta, null, 2));
-  try {
-    await link(tmpPath, metaPath);
-    notifySessionMetaPersisted(transcriptPath, meta);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
-    throw error;
-  } finally {
-    await unlink(tmpPath).catch(() => undefined);
-  }
+  return withMetaLock(metaPath, async () => {
+    const tmpPath = `${metaPath}.create.${randomBytes(4).toString('hex')}`;
+    await writeFile(tmpPath, JSON.stringify(meta, null, 2));
+    try {
+      await link(tmpPath, metaPath);
+      notifySessionMetaPersisted(transcriptPath, meta);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
+      throw error;
+    } finally {
+      await unlink(tmpPath).catch(() => undefined);
+    }
+  });
 }
 
 /**

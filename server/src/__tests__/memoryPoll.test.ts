@@ -38,7 +38,6 @@ import {
 import type { CronJob } from '../cron/types.js';
 import type { ToolCallContext, ToolDescriptor, ToolRuntime } from '../agent/toolRuntime.js';
 import type { PlatformEvent } from '../runtime/types.js';
-
 // ============================================
 // helpers
 // ============================================
@@ -55,7 +54,6 @@ function descriptor(name: string, risk: 'safe' | 'workspace_write' | 'dangerous'
     auditCategory: 'test',
   };
 }
-
 const ALL_TOOLS = [
   descriptor('Read'),
   descriptor('MemorySearch'), descriptor('MemoryList'), descriptor('UserActivityList'),
@@ -64,7 +62,6 @@ const ALL_TOOLS = [
   descriptor('Shell', 'dangerous'), descriptor('CronManage', 'dangerous'),
   descriptor('Agent'), descriptor('WebSearch'), descriptor('Skill'), descriptor('CreateArtifact', 'workspace_write'),
 ];
-
 function fakeToolRuntime(invokeSpy = vi.fn(async () => ({ content: 'ok' }))): ToolRuntime {
   return {
     list: () => ALL_TOOLS,
@@ -78,11 +75,9 @@ function toolContext(root = '/ws/tenant/user'): ToolCallContext {
     workspace: { root, executionTarget: 'server-remote' },
   } as ToolCallContext;
 }
-
 // ============================================
 // toolProfiles
 // ============================================
-
 describe('memory_poll tool profile', () => {
   it('无 profile 时返回 v1 记忆策略包装：隐藏 MemoryCommand/MemoryCommit 与主会话隐藏集', () => {
     // 2026-07-29 记忆写入职责剥离批次：无 profile 的 run（主会话/子 agent）默认
@@ -113,14 +108,12 @@ describe('memory_poll tool profile', () => {
     expect(names).not.toContain('CronManage');
     expect(names).not.toContain('Agent');
   });
-
   it('invoke 拦截白名单外工具', async () => {
     const runtime = applyToolProfile(fakeToolRuntime(), 'memory_poll');
     await expect(
       runtime.invoke({ toolId: 'CronManage', input: {} } as never, toolContext()),
     ).rejects.toThrow(/不在 memory_poll profile/);
   });
-
   it('Shell 可用，但不会被 Write/Edit 路径 guard 误判为文件写入', async () => {
     const invokeSpy = vi.fn(async () => ({ content: 'ok' }));
     const runtime = applyToolProfile(fakeToolRuntime(invokeSpy), 'memory_poll');
@@ -139,7 +132,6 @@ describe('memory_poll tool profile', () => {
     await runtime.invoke({ toolId: 'Write', input: { path, content: 'x' } } as never, toolContext());
     expect(invokeSpy).toHaveBeenCalledTimes(1);
   });
-
   it.each([
     ['assets/20260714/report.md'],
     ['memory/notes.txt'],
@@ -153,7 +145,6 @@ describe('memory_poll tool profile', () => {
       runtime.invoke({ toolId: 'Write', input: { path, content: 'x' } } as never, toolContext()),
     ).rejects.toThrow(/memory_poll 工具约束/);
   });
-
   it('Edit 使用 file_path 参数并同样受路径 guard', async () => {
     const invokeSpy = vi.fn(async () => ({ content: 'ok' }));
     const runtime = applyToolProfile(fakeToolRuntime(invokeSpy), 'memory_poll');
@@ -177,11 +168,9 @@ describe('memory_poll tool profile', () => {
     expect(invokeSpy).toHaveBeenCalledTimes(1);
   });
 });
-
 // ============================================
 // UserActivityService
 // ============================================
-
 function makeEvent(partial: Partial<PlatformEvent> & { type: PlatformEvent['type'] }): PlatformEvent {
   return { id: `evt-${Math.random()}`, timestamp: '2026-07-14T02:00:00.000Z', ...partial } as PlatformEvent;
 }
@@ -196,7 +185,6 @@ describe('UserActivityService', () => {
     metaJson: { userId: 'u1', username: 'u1', channel: 'web', createdAt: '2026-07-14T00:00:00.000Z' },
     ...overrides,
   });
-
   function makeService(sessions: unknown[], eventsBySession: Record<string, PlatformEvent[]>) {
     const projection = {
       list: vi.fn(async () => ({ items: sessions })),
@@ -210,7 +198,6 @@ describe('UserActivityService', () => {
       eventStore: eventStore as never,
     });
   }
-
   it('只保留 web/dingtalk 发起 run 的 user_message（cron prompt 排除）', async () => {
     const service = makeService([sessionRecord()], {
       s1: [
@@ -246,7 +233,6 @@ describe('UserActivityService', () => {
     });
     expect(result.sessions).toEqual([]);
   });
-
   it('排除记忆轮询会话（cronSystemKind 真源）', async () => {
     const service = makeService(
       [
@@ -270,6 +256,37 @@ describe('UserActivityService', () => {
     const result = await service.listActivity({ tenantId: 'kaiyan', userId: 'u1', sinceIso: '2026-07-13T00:00:00.000Z' });
     expect(result.sessions.map((session) => session.sessionId)).toEqual(['s1']);
   });
+  it('排除 TaskBoard Execution，包含稳定标记与历史前缀回退', async () => {
+    const service = makeService(
+      [
+        sessionRecord(),
+        sessionRecord({
+          sessionId: 'taskboard-marked',
+          metaJson: {
+            userId: 'u1', username: 'u1', channel: 'web', createdAt: 'x',
+            sessionSource: 'taskboard_execution', memoryAutomationEligible: false,
+          },
+        }),
+        sessionRecord({ sessionId: 'taskboard-legacy' }),
+      ],
+      {
+        s1: [
+          makeEvent({ type: 'run_started', runId: 'r1', sessionId: 's1', model: 'm', channel: 'web' }),
+          makeEvent({ type: 'user_message', runId: 'r1', sessionId: 's1', content: '普通对话' }),
+        ],
+        'taskboard-marked': [
+          makeEvent({ type: 'run_started', runId: 'rt1', sessionId: 'taskboard-marked', model: 'm', channel: 'web' }),
+          makeEvent({ type: 'user_message', runId: 'rt1', sessionId: 'taskboard-marked', content: '任务执行内容' }),
+        ],
+        'taskboard-legacy': [
+          makeEvent({ type: 'run_started', runId: 'rt2', sessionId: 'taskboard-legacy', model: 'm', channel: 'web' }),
+          makeEvent({ type: 'user_message', runId: 'rt2', sessionId: 'taskboard-legacy', content: '历史任务内容' }),
+        ],
+      },
+    );
+    const result = await service.listActivity({ tenantId: 'kaiyan', userId: 'u1', sinceIso: '2026-07-13T00:00:00.000Z' });
+    expect(result.sessions.map((session) => session.sessionId)).toEqual(['s1']);
+  });
 
   it('时间窗过滤：窗口外的消息不计', async () => {
     const service = makeService([sessionRecord()], {
@@ -282,7 +299,6 @@ describe('UserActivityService', () => {
     const result = await service.listActivity({ tenantId: 'kaiyan', userId: 'u1', sinceIso: '2026-07-13T00:00:00.000Z' });
     expect(result.sessions[0]!.messages.map((message) => message.content)).toEqual(['新消息']);
   });
-
   it('hasActivity：有消息 true / 无消息 false / 数据源缺失 null', async () => {
     const withActivity = makeService([sessionRecord()], {
       s1: [
@@ -291,7 +307,6 @@ describe('UserActivityService', () => {
       ],
     });
     await expect(withActivity.hasActivity({ tenantId: 'kaiyan', userId: 'u1', sinceIso: '2026-07-13T00:00:00.000Z' })).resolves.toBe(true);
-
     const noActivity = makeService([sessionRecord()], { s1: [] });
     await expect(noActivity.hasActivity({ tenantId: 'kaiyan', userId: 'u1', sinceIso: '2026-07-13T00:00:00.000Z' })).resolves.toBe(false);
 
@@ -299,7 +314,6 @@ describe('UserActivityService', () => {
     expect(unavailable.available).toBe(false);
     await expect(unavailable.hasActivity({ tenantId: 'kaiyan', userId: 'u1', sinceIso: 'x' })).resolves.toBeNull();
   });
-
   it('projection 查询强制带调用方身份与 kind=user', async () => {
     const projection = { list: vi.fn(async () => ({ items: [] })) };
     const service = new UserActivityService({
@@ -315,7 +329,6 @@ describe('UserActivityService', () => {
     }));
   });
 });
-
 // ============================================
 // reconcile
 // ============================================
@@ -342,7 +355,6 @@ describe('reconcileMemoryPollJobs', () => {
     updatedAtMs: createdAtMs,
     state: {},
   });
-
   it('灰度租户缺任务 → 创建（默认 4h 窗口，按 userId 散列到 hour+minute）', () => {
     const plan = reconcileMemoryPollJobs({
       users: [user('u1'), user('u2', { tenantId: 'wain' })],
@@ -364,7 +376,6 @@ describe('reconcileMemoryPollJobs', () => {
     expect(slot.minute).toBeLessThan(60);
     expect(hashSlot('u1', 4)).toEqual(hashSlot('u1', 4)); // 稳定
   });
-
   it('hashSlot 均匀性：不同 userId 分布到不同槽', () => {
     const buckets = new Map<string, number>();
     for (let i = 0; i < 100; i++) {
@@ -404,7 +415,6 @@ describe('reconcileMemoryPollJobs', () => {
     expect(plan.toUpdate[0]!.schedule).toEqual(expected);
     expect(plan.toUpdate[0]!.enabled).toBe(true);
   });
-
   it('平台开关关闭 → 存量系统任务禁用、不创建新任务', () => {
     const plan = reconcileMemoryPollJobs({
       users: [user('u1'), user('u2')],
@@ -417,7 +427,6 @@ describe('reconcileMemoryPollJobs', () => {
     expect(plan.toUpdate).toHaveLength(1);
     expect(plan.toUpdate[0]!.enabled).toBe(false);
   });
-
   it('用户禁用 → 任务禁用；重新启用 → 任务恢复', () => {
     const disabledPlan = reconcileMemoryPollJobs({
       users: [user('u1', { disabled: true })],
@@ -437,7 +446,6 @@ describe('reconcileMemoryPollJobs', () => {
     });
     expect(enabledPlan.toUpdate[0]!.enabled).toBe(true);
   });
-
   it('同一用户多条系统任务 → 保留最早，其余禁用', () => {
     const plan = reconcileMemoryPollJobs({
       users: [user('u1')],
@@ -449,7 +457,6 @@ describe('reconcileMemoryPollJobs', () => {
     expect(plan.stats.duplicatesDisabled).toBe(1);
     expect(plan.toUpdate[0]!.createdAtMs).toBe(2_000); // 晚创建的被禁
   });
-
   it('owner 已不存在 → 任务禁用', () => {
     const plan = reconcileMemoryPollJobs({
       users: [],
@@ -474,11 +481,9 @@ describe('reconcileMemoryPollJobs', () => {
     expect(plan.toUpdate).toHaveLength(0);
   });
 });
-
 // ============================================
 // session meta 隐藏判断
 // ============================================
-
 describe('isMemoryPollSessionMeta / isMemoryPollJob', () => {
   it('cronSystemKind 是真源', () => {
     expect(isMemoryPollSessionMeta({ cronSystemKind: 'memory_poll', cronJobName: '随便什么名字' } as never)).toBe(true);
@@ -498,7 +503,6 @@ describe('isMemoryPollSessionMeta / isMemoryPollJob', () => {
 // ============================================
 // 记忆轮询会话可见性（B 方案：只 platform admin 能看，2026-07-14）
 // ============================================
-
 describe('memory poll visibility — platform admin only', () => {
   const memoryPollMeta = {
     userId: 'u1',
@@ -514,7 +518,6 @@ describe('memory poll visibility — platform admin only', () => {
     channel: 'web',
     createdAt: '2026-07-14T00:00:00.000Z',
   };
-
   const platformAdmin: SessionAccessUser = { sub: 'u1', username: 'u1', role: 'admin', tenantId: 'pantheon' };
   const orgAdmin: SessionAccessUser = { sub: 'u1', username: 'u1', role: 'admin', tenantId: 'kaiyan' };
   const orgUser: SessionAccessUser = { sub: 'u1', username: 'u1', role: 'user', tenantId: 'kaiyan' };
@@ -525,13 +528,11 @@ describe('memory poll visibility — platform admin only', () => {
     expect(isPlatformAdminUser(orgUser)).toBe(false);
     expect(isPlatformAdminUser(undefined)).toBe(false);
   });
-
   it('hidesMemoryPollFrom：普通会话对任何人都不隐藏', () => {
     expect(hidesMemoryPollFrom(platformAdmin, normalMeta as never)).toBe(false);
     expect(hidesMemoryPollFrom(orgAdmin, normalMeta as never)).toBe(false);
     expect(hidesMemoryPollFrom(orgUser, normalMeta as never)).toBe(false);
   });
-
   it('hidesMemoryPollFrom：记忆轮询会话只对 platform admin 不隐藏', () => {
     expect(hidesMemoryPollFrom(platformAdmin, memoryPollMeta as never)).toBe(false);
     expect(hidesMemoryPollFrom(orgAdmin, memoryPollMeta as never)).toBe(true);  // 关键：组织 admin 被隐藏
@@ -546,21 +547,18 @@ describe('memory poll visibility — platform admin only', () => {
     // 但组织 admin 看得到自己的普通会话（其他行为不变）
     expect(canExposeSessionToUser(orgAdmin, normalMeta as never)).toBe(true);
   });
-
   it('存量心跳轮询会话沿用同一收紧规则', () => {
     const heartbeat = { ...normalMeta, cronJobName: '心跳轮询' };
     expect(hidesMemoryPollFrom(orgAdmin, heartbeat as never)).toBe(true);
     expect(hidesMemoryPollFrom(platformAdmin, heartbeat as never)).toBe(false);
   });
 });
-
 // ============================================
 // executor memory_poll 分支
 // ============================================
 
 describe('executor memory_poll', () => {
   beforeEach(() => resetMemoryMaintenanceLocks());
-
   const memoryPollJob = (): CronJob => ({
     id: 'job-mp',
     name: MEMORY_POLL_JOB_NAME,
@@ -599,7 +597,6 @@ describe('executor memory_poll', () => {
       },
     },
   );
-
   it('48h 无活动 → skipped 且不起 run', async () => {
     const runAgent = vi.fn();
     const result = await executeMemoryPollForTest({
@@ -625,7 +622,6 @@ describe('executor memory_poll', () => {
     expect(result.status).toBe('skipped');
     expect(runAgent).not.toHaveBeenCalled();
   });
-
   it('执行前平台开关已关闭 → skipped', async () => {
     const runAgent = vi.fn();
     const result = await executeMemoryPollForTest({
@@ -639,7 +635,6 @@ describe('executor memory_poll', () => {
     expect(result).toMatchObject({ status: 'skipped', output: 'memory_poll 平台开关已关闭' });
     expect(runAgent).not.toHaveBeenCalled();
   });
-
   it('执行前组织开关已关闭 → skipped', async () => {
     const runAgent = vi.fn();
     const result = await executeJob(memoryPollJob(), {
@@ -666,7 +661,6 @@ describe('executor memory_poll', () => {
     const activityStarted = new Promise<void>((resolve) => { markActivityStarted = resolve; });
     const activityGate = new Promise<void>((resolve) => { resolveActivity = resolve; });
     const runAgent = vi.fn();
-
     const execution = executeMemoryPollForTest({
       runAgent: runAgent as never,
       agentCwd: '/tmp',
@@ -685,7 +679,6 @@ describe('executor memory_poll', () => {
         isExecutionEnabled: () => enabled,
       },
     });
-
     await activityStarted;
     enabled = false;
     resolveActivity();
@@ -710,7 +703,6 @@ describe('executor memory_poll', () => {
     expect(result.output).toMatch(/已有记忆维护任务/);
     expect(runAgent).not.toHaveBeenCalled();
   });
-
   it('有活动 → 以受限 options + 版本化提示语起 run，并写 cronSystemKind meta', async () => {
     let capturedOptions: Record<string, unknown> | undefined;
     let capturedMessage: { content: string } | undefined;
@@ -721,7 +713,6 @@ describe('executor memory_poll', () => {
       yield { type: 'text_delta', content: '本次无记忆增量' };
       yield { type: 'done' };
     })());
-
     const result = await executeMemoryPollForTest({
       runAgent: runAgent as never,
       agentCwd: '/tmp',
@@ -744,9 +735,7 @@ describe('executor memory_poll', () => {
       skipMemory: true,
     });
   });
-
   // ── L3 职责收敛（2026-07-29 P2-3 批次）─────────────────────────
-
   const okRunAgent = (capture?: { message?: { content: string } }) =>
     vi.fn((message: never) => (async function* () {
       if (capture) capture.message = message as never;
@@ -765,7 +754,6 @@ describe('executor memory_poll', () => {
     )),
     listForgottenSubjects: vi.fn(async () => overrides.forgotten ?? []),
   });
-
   it('租户开 L2 → prompt 走 v3 收敛分支（遗漏审计、不做主提取）', async () => {
     const capture: { message?: { content: string } } = {};
     const result = await executeMemoryPollForTest({
@@ -781,7 +769,6 @@ describe('executor memory_poll', () => {
     expect(capture.message!.content).toContain('遗漏审计');
     expect(capture.message!.content).toContain('不从用户消息重新提取每日事实');
   });
-
   it('租户未开 L2 → prompt 保持 legacy 分支（行为零漂移）', async () => {
     const capture: { message?: { content: string } } = {};
     const result = await executeMemoryPollForTest({
@@ -810,7 +797,6 @@ describe('executor memory_poll', () => {
     expect(capture.message!.content).toContain('已明确忘记');
     expect(capture.message!.content).toContain('健身教练课安排');
   });
-
   it('PG commit lock 拿不到 → skipped 且释放进程内锁', async () => {
     const runAgent = vi.fn();
     const result = await executeMemoryPollForTest({
@@ -827,7 +813,6 @@ describe('executor memory_poll', () => {
     // 进程内锁必须已释放，否则后续任务全部被卡
     expect(tryAcquireMemoryMaintenance('kaiyan', 'u1')).toBe(true);
   });
-
   it('run 结束后释放 PG commit lock', async () => {
     const release = vi.fn(async () => undefined);
     await executeMemoryPollForTest({
@@ -855,11 +840,9 @@ describe('executor memory_poll', () => {
     expect(tryAcquireMemoryMaintenance('kaiyan', 'u1')).toBe(true); // 锁已释放
   });
 });
-
 // ============================================
 // CronService 系统任务 guard
 // ============================================
-
 describe('CronService system job guard', () => {
   function makeService(initialJobs: CronJob[]) {
     let saved: CronJob[] = initialJobs;
@@ -890,14 +873,12 @@ describe('CronService system job guard', () => {
     await expect(service.update('sys-1', { enabled: false })).rejects.toThrow(/系统任务/);
     await expect(service.remove('sys-1')).rejects.toThrow(/系统任务/);
   });
-
   it('applySystemJobs：创建 + 启停 + 幂等', async () => {
     const { service } = makeService([]);
     await service.applySystemJobs({ toCreate: [{ ...sysJob, state: {} }], toUpdate: [] });
     const created = await service.get('sys-1');
     expect(created?.systemKind).toBe('memory_poll');
     expect(created?.state.nextRunAtMs).toBeGreaterThan(0);
-
     // 重复创建不生效
     await service.applySystemJobs({ toCreate: [{ ...sysJob, state: {} }], toUpdate: [] });
     expect((await service.list({ includeDisabled: true })).filter((job) => job.id === 'sys-1')).toHaveLength(1);
@@ -908,14 +889,12 @@ describe('CronService system job guard', () => {
     expect(disabled?.enabled).toBe(false);
     expect(disabled?.state.nextRunAtMs).toBeUndefined();
   });
-
   it('applySystemJobs 在 leadership fence 失效后不提交计划', async () => {
     const { service } = makeService([]);
     await service.applySystemJobs({
       toCreate: [{ ...sysJob, id: 'fenced-create', state: {} }],
       toUpdate: [],
     }, { fence: () => false });
-
     expect(await service.list({ includeDisabled: true })).toEqual([]);
   });
 
@@ -931,11 +910,9 @@ describe('CronService system job guard', () => {
         toUpdate: [],
       }),
     ]);
-
     const jobs = await service.list({ includeDisabled: true });
     expect(jobs.filter((job) => job.systemKind === 'memory_poll' && job.owner === 'u1')).toHaveLength(1);
   });
-
   it('applySystemJobs 不允许延迟到达的旧计划覆盖新计划', async () => {
     const { service } = makeService([{ ...sysJob, state: {} }]);
     await service.applySystemJobs({
@@ -961,7 +938,6 @@ describe('CronService system job guard', () => {
       tz: 'Asia/Shanghai',
     });
   });
-
   it('applySystemJobs 拒绝非系统任务混入', async () => {
     const { service } = makeService([]);
     await service.applySystemJobs({
@@ -969,5 +945,29 @@ describe('CronService system job guard', () => {
       toUpdate: [],
     });
     expect(await service.get('normal-1')).toBeUndefined();
+  });
+});
+describe('main session v2 memory consumer boundary', () => {
+  it('hides MemoryCommand/MemoryCommit while retaining MemorySearch and Read', () => {
+    const inner = fakeToolRuntime();
+    const runtime = applyToolProfile({
+      list: () => [...ALL_TOOLS, descriptor('MemoryCommand', 'workspace_write'), descriptor('MemoryCommit', 'workspace_write')],
+      invoke: inner.invoke,
+    }, undefined, 'v2');
+    const names = runtime.list(toolContext()).map(tool => tool.name);
+    expect(names).toContain('MemorySearch');
+    expect(names).toContain('Read');
+    expect(names).not.toContain('MemoryCommand');
+    expect(names).not.toContain('MemoryCommit');
+  });
+
+  it.each([
+    ['Write', { path: 'MEMORY.md', content: 'x' }],
+    ['Edit', { file_path: 'memory/topics/x.md', old_string: 'a', new_string: 'b' }],
+    ['Shell', { command: 'printf x >> MEMORY.md' }],
+    ['Shell', { command: 'rm -rf /ws/tenant/user/memory/topics' }],
+  ])('rejects %s access to memory write paths', async (toolId, input) => {
+    const runtime = applyToolProfile(fakeToolRuntime(), undefined, 'v2');
+    await expect(runtime.invoke({ toolId, input } as never, toolContext())).rejects.toThrow(/记忆写入职责已剥离/);
   });
 });

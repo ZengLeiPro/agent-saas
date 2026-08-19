@@ -172,6 +172,8 @@ export interface AgentRunOptions {
   runtimeRunId?: string;
   /** 内部入口：dispatcher 仅播报 durable Worker 终态，硬禁再次派发。 */
   dispatcherCompletion?: boolean;
+  /** Server-only persisted run metadata used to re-derive Integration isolation on wake/resume. */
+  runtimeIsolationMetadata?: Record<string, unknown>;
   /** RuntimeScheduler auto-wake 透传用户提交幂等键，写入 user_message 事件。 */
   runtimeClientMsgId?: string;
   /**

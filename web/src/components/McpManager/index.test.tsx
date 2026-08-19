@@ -1,11 +1,12 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { updateSelections, fetchMyMcp, diagnoseMyMcp, fetchAliyunConnection, dwsAuthFetch } = vi.hoisted(() => ({
+const { updateSelections, fetchMyMcp, diagnoseMyMcp, fetchAliyunConnection, fetchXConnection, dwsAuthFetch } = vi.hoisted(() => ({
   updateSelections: vi.fn(),
   fetchMyMcp: vi.fn(),
   diagnoseMyMcp: vi.fn(),
   fetchAliyunConnection: vi.fn(),
+  fetchXConnection: vi.fn(),
   dwsAuthFetch: vi.fn(),
 }));
 
@@ -38,6 +39,10 @@ vi.mock("@agent/shared", () => ({
   fetchAliyunConnection,
   connectAliyun: vi.fn(),
   disconnectAliyun: vi.fn(),
+  fetchXConnection,
+  connectX: vi.fn(),
+  disconnectX: vi.fn(),
+  setNativeConnectorRuntimeEnabled: vi.fn(),
   fetchMcpAdminServers: vi.fn(),
   fetchMcpTemplates: vi.fn(),
   fetchMyMcp,
@@ -59,6 +64,9 @@ describe("McpManager 连接器目录", () => {
     updateSelections.mockReset().mockResolvedValue(undefined);
     fetchAliyunConnection.mockReset().mockResolvedValue({
       connection: { connectorId: "aliyun", status: "disconnected" },
+    });
+    fetchXConnection.mockReset().mockResolvedValue({
+      connection: { connectorId: "x", status: "disconnected", runtimeEnabled: true },
     });
     diagnoseMyMcp.mockReset().mockResolvedValue({
       ok: true,
@@ -124,7 +132,7 @@ describe("McpManager 连接器目录", () => {
     expect(screen.getByRole("button", { name: "启用连接器" })).toBeTruthy();
   });
 
-  it("六个官方 CLI 原生连接器以卡片形式与自定义 MCP 同 grid 展示", async () => {
+  it("七个原生 CLI 连接器以卡片形式与自定义 MCP 同 grid 展示", async () => {
     render(<McpManager />);
 
     expect(await screen.findByText("钉钉")).toBeTruthy();
@@ -132,10 +140,11 @@ describe("McpManager 连接器目录", () => {
     expect(screen.getByText("Notion")).toBeTruthy();
     expect(screen.getByText("Google Workspace")).toBeTruthy();
     expect(screen.getByText("阿里云")).toBeTruthy();
-    // GitHub、钉钉、飞书、Notion、Google Workspace、阿里云六张原生连接卡。
-    expect(screen.getAllByText("未连接")).toHaveLength(6);
-    expect(within(screen.getByLabelText("能力来源筛选")).getByRole("tab", { name: /全部\s*9/ })).toBeTruthy();
-    expect(within(screen.getByLabelText("能力来源筛选")).getByRole("tab", { name: /平台提供\s*7/ })).toBeTruthy();
+    expect(screen.getByText("X")).toBeTruthy();
+    // GitHub、X、钉钉、飞书、Notion、Google Workspace、阿里云七张原生连接卡。
+    expect(screen.getAllByText("未连接")).toHaveLength(7);
+    expect(within(screen.getByLabelText("能力来源筛选")).getByRole("tab", { name: /全部\s*10/ })).toBeTruthy();
+    expect(within(screen.getByLabelText("能力来源筛选")).getByRole("tab", { name: /平台提供\s*8/ })).toBeTruthy();
     expect(dwsAuthFetch).toHaveBeenCalledWith("/api/dws/connections");
     expect(dwsAuthFetch).toHaveBeenCalledWith("/api/feishu/connections");
     expect(fetchAliyunConnection).toHaveBeenCalledTimes(1);

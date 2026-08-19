@@ -1,7 +1,7 @@
 import { getTranscriptPath, findTranscriptOrMetaPathBySessionId } from '../data/transcripts/store.js';
 import {
   readSessionMeta,
-  writeSessionMeta,
+  transformSessionMeta,
   writeSessionMetaIfAbsent,
   updateSessionMeta,
   backfillSessionIdentity,
@@ -18,6 +18,8 @@ import {
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 
 export type RuntimeSessionStatus = 'running' | 'idle' | 'waiting_approval' | 'finished' | 'error';
+export type MemoryPolicyVersion = 'v1' | 'v2';
+export type RuntimeSessionSource = 'taskboard_execution';
 
 export interface OrgAgentSessionSnapshot {
   name: string;
@@ -81,11 +83,15 @@ export interface RuntimeSessionRecord extends Partial<AgentProfileSessionBinding
   /** 当前 in-flight run 的组织 Agent 安全快照；resume 必须复用，不能读取更宽的新配置。 */
   orgAgentSnapshot?: OrgAgentSessionSnapshot;
   /**
-   * 记忆写入策略版本（2026-07-29 记忆写入职责剥离批次）。'v2' = 主 Agent 不再
-   * 自由写记忆、启用 MemoryCommand。会话首次 run 固定，之后不随租户开关变化
+   * 记忆写入策略版本（2026-07-29 记忆写入职责剥离批次）。'v2' = 主 Agent 只读
+   * 记忆、后台服务唯一写入。会话首次落库固定，之后不随租户开关变化
    * （prompt prefix 稳定性要求）。缺省 = v1（历史行为）。
    */
-  memoryPolicyVersion?: 'v2';
+  memoryPolicyVersion?: MemoryPolicyVersion;
+  /** 稳定会话来源；不能依赖 sessionId 命名约定判断。 */
+  sessionSource?: RuntimeSessionSource;
+  /** 是否允许后台自动记忆；false 永久 fail-closed。 */
+  memoryAutomationEligible?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -114,8 +120,7 @@ export class FileSessionCatalog implements SessionCatalog {
   constructor(private readonly options: FileSessionCatalogOptions) {}
 
   async upsert(record: RuntimeSessionRecord): Promise<void> {
-    const existing = await readSessionMeta(record.transcriptPath);
-    await writeSessionMeta(record.transcriptPath, this.toMeta(record, existing));
+    await transformSessionMeta(record.transcriptPath, existing => this.toMeta(record, existing));
   }
 
   async backfillIdentity(
@@ -154,6 +159,18 @@ export class FileSessionCatalog implements SessionCatalog {
   }
 
   private toMeta(record: RuntimeSessionRecord, existing: SessionMeta | null): SessionMeta {
+    const taskboardExecution = existing?.sessionSource === 'taskboard_execution'
+      || record.sessionSource === 'taskboard_execution';
+    // 会话 pin 一经落库不得被任意 dispatch 改写；TaskBoard 是唯一显式迁移例外，
+    // 必须升级为 v2 只读且自动记忆资格只能单调收紧为 false。
+    const memoryPolicyVersion = taskboardExecution
+      ? 'v2' as const
+      : existing?.memoryPolicyVersion ?? record.memoryPolicyVersion;
+    const memoryAutomationEligible = taskboardExecution
+      ? false
+      : existing?.memoryAutomationEligible === false || record.memoryAutomationEligible === false
+        ? false
+        : existing?.memoryAutomationEligible ?? record.memoryAutomationEligible;
     return {
       ...(existing ?? {}),
       userId: record.userId,
@@ -174,8 +191,9 @@ export class FileSessionCatalog implements SessionCatalog {
       // orgAgentId 缺省时保留 existing 值（resume 路径 record 可能不带），不清除既有绑定
       ...(record.orgAgentId ? { orgAgentId: record.orgAgentId } : {}),
       ...(record.orgAgentSnapshot ? { orgAgentSnapshot: record.orgAgentSnapshot } : {}),
-      // memoryPolicyVersion 同理：会话级 pin，缺省保留 existing，绝不清除
-      ...(record.memoryPolicyVersion ? { memoryPolicyVersion: record.memoryPolicyVersion } : {}),
+      ...(memoryPolicyVersion ? { memoryPolicyVersion } : {}),
+      ...(record.sessionSource ? { sessionSource: record.sessionSource } : {}),
+      ...(memoryAutomationEligible !== undefined ? { memoryAutomationEligible } : {}),
       ...(record.profileId ? { profileId: record.profileId } : {}),
       ...(record.profileKey ? { profileKey: record.profileKey } : {}),
       ...(record.profileVersionId ? { profileVersionId: record.profileVersionId } : {}),
@@ -208,7 +226,13 @@ export class FileSessionCatalog implements SessionCatalog {
         : {}),
       ...(meta.orgAgentId ? { orgAgentId: meta.orgAgentId } : {}),
       ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
-      ...(meta.memoryPolicyVersion === 'v2' ? { memoryPolicyVersion: 'v2' as const } : {}),
+      ...(meta.memoryPolicyVersion === 'v1' || meta.memoryPolicyVersion === 'v2'
+        ? { memoryPolicyVersion: meta.memoryPolicyVersion }
+        : {}),
+      ...(meta.sessionSource === 'taskboard_execution' ? { sessionSource: meta.sessionSource } : {}),
+      ...(typeof meta.memoryAutomationEligible === 'boolean'
+        ? { memoryAutomationEligible: meta.memoryAutomationEligible }
+        : {}),
       ...(meta.profileId ? { profileId: meta.profileId } : {}),
       ...(meta.profileKey ? { profileKey: meta.profileKey } : {}),
       ...(meta.profileVersionId ? { profileVersionId: meta.profileVersionId } : {}),
@@ -238,6 +262,9 @@ export function createRuntimeSessionRecord(args: {
   executionRole?: 'dispatcher' | 'worker';
   orgAgentId?: string;
   orgAgentSnapshot?: OrgAgentSessionSnapshot;
+  memoryPolicyVersion?: MemoryPolicyVersion;
+  sessionSource?: RuntimeSessionSource;
+  memoryAutomationEligible?: boolean;
   profileBinding?: AgentProfileSessionBinding;
 }): RuntimeSessionRecord {
   const now = new Date().toISOString();
@@ -258,6 +285,9 @@ export function createRuntimeSessionRecord(args: {
     ...(args.executionRole ? { executionRole: args.executionRole } : {}),
     ...(args.orgAgentId ? { orgAgentId: args.orgAgentId } : {}),
     ...(args.orgAgentSnapshot ? { orgAgentSnapshot: args.orgAgentSnapshot } : {}),
+    ...(args.memoryPolicyVersion ? { memoryPolicyVersion: args.memoryPolicyVersion } : {}),
+    ...(args.sessionSource ? { sessionSource: args.sessionSource } : {}),
+    ...(args.memoryAutomationEligible !== undefined ? { memoryAutomationEligible: args.memoryAutomationEligible } : {}),
     ...(args.profileBinding ?? {}),
     createdAt: now,
     updatedAt: now,
@@ -281,4 +311,23 @@ function isRuntimeSessionStatus(value: unknown): value is RuntimeSessionStatus {
     || value === 'waiting_approval'
     || value === 'finished'
     || value === 'error';
+}
+
+/** 新普通用户会话仅计算一次 policy；历史缺 pin 的会话始终按 v1。 */
+export function resolveSessionMemoryPolicy(input: {
+  existing?: Pick<RuntimeSessionRecord, 'memoryPolicyVersion' | 'sessionSource' | 'memoryAutomationEligible'> | null;
+  delegationEnabled: boolean;
+  channel: string;
+  toolProfile?: string;
+  orgAgentId?: string;
+  sessionSource?: RuntimeSessionSource;
+  memoryAutomationEligible?: boolean;
+}): MemoryPolicyVersion {
+  const sessionSource = input.existing?.sessionSource ?? input.sessionSource;
+  // access policy 与自动记忆资格解耦；TaskBoard 只是同时选择 v2 只读和 no-automation。
+  if (sessionSource === 'taskboard_execution') return 'v2';
+  // existing 优先级高于本次 dispatch 形态：续聊/profile/resume 均不得改写既有 pin。
+  if (input.existing) return input.existing.memoryPolicyVersion === 'v2' ? 'v2' : 'v1';
+  if (input.toolProfile || input.orgAgentId || (input.channel !== 'web' && input.channel !== 'dingtalk')) return 'v1';
+  return input.delegationEnabled ? 'v2' : 'v1';
 }

@@ -206,6 +206,11 @@ RUN pnpm install --frozen-lockfile \
 RUN npm install -g ntn@0.21.6 \
     && ntn --version
 
+# X 连接器依赖的 bird CLI；固定版本并在镜像构建期做可执行性 smoke。
+RUN npm install -g @steipete/bird@0.8.0 \
+    && command -v bird \
+    && bird --version
+
 # Google Workspace CLI 的 npm 包只是一层 postinstall 壳：它用 Node native fetch
 # 直连 GitHub Releases，既无重试，也不读取 HTTP_PROXY/HTTPS_PROXY。
 # 直接按官方推荐下载 immutable release，保留官方 SHA256 校验并显式重试。
@@ -346,6 +351,12 @@ RUN pnpm -F web build
 # ─────────────────────────────────────────────────────────────
 FROM deps AS server
 WORKDIR /app
+
+# Integration v3 performs server-owned mirror operations. Pin the supported Git
+# package instead of inheriting an unspecified host binary.
+ARG SERVER_GIT_PACKAGE_VERSION=2.49.1-r0
+RUN apk add --no-cache "git=${SERVER_GIT_PACKAGE_VERSION}" \
+    && git --version
 
 COPY shared ./shared
 COPY server ./server

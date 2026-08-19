@@ -275,11 +275,6 @@ export function DesktopLayout(props: LayoutProps) {
     pushActiveTab("capabilities");
   }, [pushActiveTab]);
 
-  const handleOpenRoleDetail = useCallback((roleId: string) => {
-    setRoleDetailId(roleId);
-    pushActiveTab("capabilities");
-  }, [pushActiveTab]);
-
   const handleOpenCronWizard = useCallback(() => {
     if (lastTriedScenario?.mode === "recurring") {
       setCronWizardScenario(lastTriedScenario);
@@ -297,7 +292,6 @@ export function DesktopLayout(props: LayoutProps) {
         onTryScenario={handlePrefillScenario}
         onStartWorkflow={handlePrefillWorkflow}
         onViewAll={handleViewAllScenarios}
-        onOpenRoleDetail={handleOpenRoleDetail}
       />
     ) : (
       <EmptySessionScenarios
@@ -306,7 +300,7 @@ export function DesktopLayout(props: LayoutProps) {
         onViewAll={handleViewAllScenarios}
       />
     )
-  ), [handleOpenRoleDetail, handlePrefillScenario, handlePrefillWorkflow, handleViewAllScenarios, roleKitV2Enabled]);
+  ), [handlePrefillScenario, handlePrefillWorkflow, handleViewAllScenarios, roleKitV2Enabled]);
 
   const expertEmptySlot = useMemo(() => activeOrgAgent ? (
     <ExpertWelcome expert={activeOrgAgent} onPrefill={setInput} />

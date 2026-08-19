@@ -65,6 +65,10 @@ describe('Feishu broker runtime env', () => {
     expect(applyNativeConnectorRuntimeState(store, { userId: 'user-a', username: 'alice' }, {
       GH_TOKEN: 'tenant-github',
       GITHUB_TOKEN: 'tenant-github',
+      AUTH_TOKEN: 'tenant-x-auth',
+      CT0: 'tenant-x-ct0',
+      TWITTER_AUTH_TOKEN: 'tenant-x-auth',
+      TWITTER_CT0: 'tenant-x-ct0',
       NOTION_API_TOKEN: 'tenant-notion',
       GOOGLE_WORKSPACE_CLI_TOKEN: 'tenant-google',
       ALIBABA_CLOUD_ACCESS_KEY_ID: 'tenant-ak',

@@ -1,8 +1,9 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 import type {
   TaskBoardChange,
+  TaskBoardComment,
   TaskBoardExecutionContextInput,
   TaskBoardExecutionContextResponse,
   TaskBoardIntegrationBatchCreateInput,
@@ -13,8 +14,17 @@ import type {
 } from '../../../shared/src/types/taskboard.js';
 import { rowToBoard } from './boardFields.js';
 import { rowToIntegrationSource } from './integrationSourceMapper.js';
+import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
+import {
+  canonicalJson,
+  computeIntegrationPolicySnapshotDigest,
+  computeIntegrationRequirementDigest,
+  computeIntegrationReviewReceiptDigest,
+  computeIntegrationSourceSetDigest,
+} from './integrationCandidateDigest.js';
 import { resolveWorkflowContract } from './workflowContract.js';
 import {
+  commentExecutionJoin,
   rowToComment,
   rowToExecution,
   rowToTask,
@@ -140,15 +150,26 @@ export async function createIntegrationBatch(
     if (Number(board.version) !== input.expectedBoardVersion) {
       throw new TaskboardConflictError(rowToBoard(board, identity.ownerUserId));
     }
-    const repository = jsonObject(board.repository) as { repositoryId?: string } | undefined;
+    const repository = jsonObject(board.repository) as { repositoryId?: string; baseBranch?: string } | undefined;
     const policy = jsonObject(board.integration_policy) as {
       enabled?: boolean;
       revision?: string;
+      workflowVersion?: 2 | 3;
+      featureFlags?: { engineV3?: boolean; compose?: boolean; review?: boolean; merge?: boolean; cleanup?: boolean; workspaceSync?: boolean };
       trigger?: { mode?: string; allowedRoles?: string[] };
       batch?: { maxTasks?: number };
+      execution?: { mergeMethod?: 'merge' | 'squash' | 'rebase' };
+      [key: string]: unknown;
     } | undefined;
     if (!repository?.repositoryId || !policy?.enabled || !policy.revision) {
       throw new TaskboardValidationError('Board integration policy is not enabled', 'TASKBOARD_INTEGRATION_DISABLED');
+    }
+    const workflowVersion = policy.workflowVersion ?? 2;
+    if (workflowVersion === 3 && policy.featureFlags?.engineV3 !== true) {
+      throw new TaskboardValidationError('Workflow v3 requires the engineV3 feature flag', 'TASKBOARD_INTEGRATION_V3_DISABLED');
+    }
+    if (workflowVersion === 3 && !repository.baseBranch) {
+      throw new TaskboardValidationError('Workflow v3 requires a repository base branch', 'TASKBOARD_REPOSITORY_REQUIRED');
     }
     if (source !== 'manual_batch' && policy.trigger?.mode !== (source === 'scheduled_policy' ? 'scheduled' : 'on_ready')) {
       throw new TaskboardValidationError('Integration trigger no longer matches board policy', 'TASKBOARD_POLICY_CHANGED');
@@ -177,9 +198,14 @@ export async function createIntegrationBatch(
       );
     }
     const sources = await client.query(
-      `SELECT t.*,
+      `SELECT t.*,review.id AS review_execution_id,
               (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', options.changesTable)}) AS comment_count
          FROM ${options.tasksTable} t
+         LEFT JOIN LATERAL (
+           SELECT e.id FROM ${options.executionsTable} e
+            WHERE e.task_id=t.id AND e.purpose='review' AND e.status='succeeded'
+            ORDER BY e.finished_at DESC NULLS LAST,e.created_at DESC LIMIT 1
+         ) review ON true
         WHERE t.board_id=$1 AND t.id=ANY($2::text[])
         ORDER BY
           CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
@@ -201,6 +227,12 @@ export async function createIntegrationBatch(
         throw new TaskboardValidationError(
           `Task ${String(row.identifier)} has no reviewed pull request subject`,
           'TASKBOARD_INTEGRATION_SOURCE_UNREVIEWED',
+        );
+      }
+      if (workflowVersion === 3 && (!row.head_oid || !row.base_oid || !row.review_execution_id)) {
+        throw new TaskboardValidationError(
+          `Task ${String(row.identifier)} lacks frozen v3 review evidence`,
+          'TASKBOARD_INTEGRATION_SOURCE_SNAPSHOT_INCOMPLETE',
         );
       }
     }
@@ -237,8 +269,8 @@ export async function createIntegrationBatch(
     await client.query(
       `INSERT INTO ${options.tasksTable}
          (id, board_id, identifier, kind, title, description, status, priority, labels,
-          sort_order, creator_user_id, creator_name, version)
-       VALUES ($1,$2,$3,'integration',$4,$5,'todo','high',ARRAY['integration']::text[],$6,$7,$8,1)`,
+          sort_order, creator_user_id, creator_name, workflow_version, version)
+       VALUES ($1,$2,$3,'integration',$4,$5,'todo','high',ARRAY['integration']::text[],$6,$7,$8,$9,1)`,
       [
         integrationTaskId,
         boardId,
@@ -248,23 +280,96 @@ export async function createIntegrationBatch(
         Number(tail.rows[0]?.max_sort_order ?? 0) + SORT_GAP,
         identity.ownerUserId,
         identity.displayName?.trim() || identity.username,
+        workflowVersion,
       ],
     );
+    const frozenSources: Array<{
+      order: number; integrationSourceId: string; deliveryTaskId: string; deliveryTaskVersion: number;
+      repositoryId: string; providerPullRequestId: string; frozenHeadOid: string; frozenBaseOid: string;
+      reviewedSubjectDigest: string; reviewExecutionId: string; reviewReceiptDigest: string; requirementDigest: string;
+    }> = [];
     for (const [index, row] of sources.rows.entries()) {
+      const integrationSourceId = randomUUID();
       await client.query(
         `INSERT INTO ${options.integrationSourcesTable}
            (id, integration_task_id, delivery_task_id, repository_id, provider_pull_request_id,
             reviewed_subject_digest, source_order)
          VALUES ($1,$2,$3,$4,$5,$6,$7)`,
         [
-          randomUUID(), integrationTaskId, row.id, repository.repositoryId,
+          integrationSourceId, integrationTaskId, row.id, repository.repositoryId,
           row.provider_pull_request_id, row.reviewed_subject_digest, index,
         ],
       );
+      if (workflowVersion === 3) {
+        frozenSources.push({
+          order: index,
+          integrationSourceId,
+          deliveryTaskId: String(row.id),
+          deliveryTaskVersion: Number(row.version),
+          repositoryId: repository.repositoryId,
+          providerPullRequestId: String(row.provider_pull_request_id),
+          frozenHeadOid: String(row.head_oid),
+          frozenBaseOid: String(row.base_oid),
+          reviewedSubjectDigest: String(row.reviewed_subject_digest),
+          reviewExecutionId: String(row.review_execution_id),
+          reviewReceiptDigest: computeIntegrationReviewReceiptDigest(
+            String(row.review_execution_id), String(row.reviewed_subject_digest),
+          ),
+          requirementDigest: computeIntegrationRequirementDigest(String(row.title), String(row.description ?? '')),
+        });
+      }
       await appendChange(options, client, String(row.id), 'integration.source_added', 'system', identity.ownerUserId, {
         integrationTaskId,
         order: index,
       });
+    }
+    if (workflowVersion === 3) {
+      const tables = integrationCandidateTableNames(options.integrationSourcesTable);
+      const candidateId = randomUUID();
+      const branch = `integration/${integrationTaskId}`;
+      const sourceSetDigest = computeIntegrationSourceSetDigest(frozenSources);
+      const policySnapshot = policy as Record<string, unknown>;
+      const policySnapshotDigest = computeIntegrationPolicySnapshotDigest(policySnapshot);
+      // Revision 1 is the immutable bootstrap subject. Provider-facing compose appends
+      // revision 2 before checks/review; it never treats this source-bound seed as a PR fact.
+      const bootstrapBaseOid = frozenSources[0]!.frozenBaseOid;
+      const bootstrapHeadOid = frozenSources[0]!.frozenHeadOid;
+      const subjectDigest = snapshotDigest('taskboard.integration-candidate-source-seed', {
+        repositoryId: repository.repositoryId,
+        baseBranch: repository.baseBranch!,
+        baseOid: bootstrapBaseOid,
+        headOid: bootstrapHeadOid,
+        sourceSetDigest,
+        mergeMethod: policy.execution?.mergeMethod ?? 'squash',
+        policyRevision: policy.revision,
+        policySnapshotDigest,
+      });
+      const laneEpoch = String(BigInt(String(lane.rows[0].epoch)) + 1n);
+      await client.query(
+        `INSERT INTO ${tables.candidatesTable}
+          (id,integration_task_id,repository_id,base_branch,branch,state,current_revision,workflow_epoch,lane_epoch,
+           policy_revision,merge_method,policy_snapshot,source_set_digest)
+         VALUES ($1,$2,$3,$4,$5,'preparing',1,0,$6::bigint,$7,$8,$9::jsonb,$10)`,
+        [candidateId, integrationTaskId, repository.repositoryId, repository.baseBranch, branch, laneEpoch,
+          policy.revision, policy.execution?.mergeMethod ?? 'squash', JSON.stringify(policySnapshot), sourceSetDigest]);
+      await client.query(
+        `INSERT INTO ${tables.revisionsTable}
+          (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,source_set_digest,subject_digest,
+           policy_snapshot_digest,policy_revision,merge_method,work_round)
+         VALUES ($1,1,1,$2,$3,'source_seed',NULL,$4,$5,$6,$7,$8,0)`,
+        [candidateId, bootstrapBaseOid, bootstrapHeadOid, sourceSetDigest, subjectDigest,
+          policySnapshotDigest, policy.revision, policy.execution?.mergeMethod ?? 'squash']);
+      for (const frozen of frozenSources) {
+        await client.query(
+          `INSERT INTO ${tables.sourceSnapshotsTable}
+            (candidate_id,revision,source_order,integration_source_id,delivery_task_id,delivery_task_version,
+             repository_id,provider_pull_request_id,frozen_head_oid,frozen_base_oid,reviewed_subject_digest,
+             review_execution_id,review_receipt_digest,requirement_digest)
+           VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          [candidateId, frozen.order, frozen.integrationSourceId, frozen.deliveryTaskId, frozen.deliveryTaskVersion,
+            frozen.repositoryId, frozen.providerPullRequestId, frozen.frozenHeadOid, frozen.frozenBaseOid,
+            frozen.reviewedSubjectDigest, frozen.reviewExecutionId, frozen.reviewReceiptDigest, frozen.requirementDigest]);
+      }
     }
     await client.query(
       `INSERT INTO ${options.mergeAuthorizationsTable}
@@ -314,6 +419,47 @@ export async function cancelIntegrationTask(
     );
     if (active.rows[0]) {
       throw new TaskboardValidationError('Stop the active merge execution before canceling');
+    }
+    if ((loaded.task.workflowVersion ?? 2) === 3) {
+      const tables = integrationCandidateTableNames(options.integrationSourcesTable);
+      const candidate = await client.query(
+        `SELECT * FROM ${tables.candidatesTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId]);
+      const row = candidate.rows[0];
+      if (!row || ['merging','merged','canceled'].includes(String(row.state))) {
+        throw new TaskboardValidationError(
+          String(row?.state) === 'merging' ? 'A merging candidate must be reconciled before cancellation' : 'Workflow v3 candidate is already terminal',
+          String(row?.state) === 'merging' ? 'TASKBOARD_PROVIDER_RESULT_UNKNOWN' : 'TASKBOARD_CANDIDATE_CANCEL_INVALID',
+        );
+      }
+      const uncertainV3 = await client.query(
+        `SELECT 1 FROM ${tables.providerOperationsTable}
+          WHERE candidate_id=$1 AND kind='merge_pull_request' AND state IN ('executing','unknown','succeeded') LIMIT 1`, [row.id]);
+      if (uncertainV3.rows[0]) throw new TaskboardValidationError(
+        'Provider result must be reconciled before cancellation', 'TASKBOARD_PROVIDER_RESULT_UNKNOWN');
+      const reason = input.reason?.trim() || 'Integration task canceled by user';
+      const changed = await client.query(
+        `UPDATE ${tables.candidatesTable}
+            SET state='canceled',approved_revision=NULL,approved_review_execution_id=NULL,last_error=$2,
+                workflow_epoch=workflow_epoch+1,version=version+1,updated_at=now()
+          WHERE id=$1 AND state NOT IN ('merged','canceled') RETURNING id`, [row.id, reason]);
+      if (!changed.rows[0]) throw new TaskboardValidationError('Workflow v3 candidate changed', 'TASKBOARD_CANDIDATE_CAS_MISMATCH');
+      await client.query(
+        `UPDATE ${options.tasksTable}
+            SET status='canceled',completed_at=NULL,workflow_epoch=workflow_epoch+1,next_action='none',
+                next_action_revision=next_action_revision+1,version=version+1,updated_at=now()
+          WHERE id=$1 AND workflow_version=3`, [taskId]);
+      await client.query(
+        `UPDATE ${options.integrationSourcesTable}
+            SET state='canceled',last_error=$2,updated_at=now()
+          WHERE integration_task_id=$1 AND state<>'merged' AND merged_commit_oid IS NULL`, [taskId, reason]);
+      await client.query(
+        `UPDATE ${options.integrationLanesTable}
+            SET active_integration_task_id=NULL,lease_id=NULL,epoch=epoch+1,updated_at=now()
+          WHERE repository_id=$1 AND active_integration_task_id=$2 AND epoch=$3::bigint`,
+        [String(row.repository_id), taskId, String(row.lane_epoch)]);
+      await appendChange(options, client, taskId, 'integration.canceled.v3', 'user', identity.ownerUserId,
+        { candidateId: String(row.id), reason }, true);
+      return loadTask(options, client, taskId);
     }
     const uncertain = await client.query(
       `SELECT 1
@@ -441,7 +587,10 @@ export async function getExecutionContextV2(
     const page = changeRows.rows.slice(0, limit);
     const comments = include.has('comments')
       ? await client.query(
-        `SELECT * FROM ${options.commentsTable} c
+        `SELECT c.*, comment_execution.comment_session_id, comment_execution.comment_execution_id,
+                comment_execution.comment_execution_purpose
+           FROM ${options.commentsTable} c
+          ${commentExecutionJoin(options.changesTable, options.executionsTable)}
           WHERE c.task_id=$1 AND ${visibleCommentPredicate('c', options.changesTable)}
           ORDER BY c.created_at,c.id`,
         [taskId],
@@ -524,7 +673,7 @@ export async function createExecutionCommentV2(
   if (!normalized) throw new TaskboardValidationError('Comment body is required');
   return withTransaction(options, async (client) => {
     const execution = await client.query(
-      `SELECT e.task_id
+      `SELECT e.task_id, e.id AS execution_id, e.session_id, e.purpose
          FROM ${options.executionsTable} e
          JOIN ${options.tasksTable} t ON t.id=e.task_id
          JOIN ${options.boardsTable} b ON b.id=t.board_id
@@ -546,7 +695,12 @@ export async function createExecutionCommentV2(
     await appendChange(options, client, taskId, 'execution.comment', 'agent', runId, {
       commentId: String(result.rows[0]!.id),
     });
-    return rowToComment(result.rows[0]!);
+    return {
+      ...rowToComment(result.rows[0]!),
+      executionId: String(execution.rows[0].execution_id),
+      sessionId: String(execution.rows[0].session_id),
+      executionPurpose: String(execution.rows[0].purpose) as TaskBoardComment['executionPurpose'],
+    };
   });
 }
 
@@ -793,6 +947,10 @@ function jsonObject(value: unknown): Record<string, unknown> | undefined {
   } catch {
     return undefined;
   }
+}
+
+function snapshotDigest(domain: string, payload: Record<string, unknown>): string {
+  return `sha256:${createHash('sha256').update(canonicalJson({ domain, version: 1, payload })).digest('hex')}`;
 }
 
 function roleRank(role: string): number {

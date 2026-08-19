@@ -44,9 +44,15 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
     tools: ModelToolDefinition[];
     context: RunContext;
   }): string {
-    const sessionId = input.context.sessionId.trim();
-    if (sessionId.length <= 64) return sessionId;
-    return createHash('sha256').update(sessionId).digest('hex');
+    const systemContent = input.messages.find((message) => message.role === 'system')?.content ?? '';
+    const toolSignature = input.tools
+      .map((tool) => `${tool.mcpServer?.namespace ?? '-'}:${tool.name}:${tool.deferLoading === true ? 'deferred' : 'eager'}`)
+      .sort()
+      .join(',');
+    return createHash('sha256')
+      .update(`${input.model}\n${systemContent}\n${toolSignature}`)
+      .digest('hex')
+      .slice(0, 32);
   }
 
   async getContinuationBinding() {
@@ -111,6 +117,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
           serializedBody: input.serializedBody,
           tenantId: input.context.tenantId ?? '__default__',
           sessionId: input.context.sessionId,
+          cacheAffinityId: input.promptCacheKey ?? input.context.sessionId,
           clientRequestId: input.clientRequestId,
           signal: input.signal,
         });
@@ -161,7 +168,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
         'openai-beta': 'responses=experimental',
         accept: 'text/event-stream',
         'content-type': 'application/json',
-        'session-id': input.context.sessionId,
+        'session-id': input.promptCacheKey ?? input.context.sessionId,
         'x-client-request-id': input.clientRequestId,
       },
       body: input.serializedBody,

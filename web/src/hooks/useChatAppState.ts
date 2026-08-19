@@ -331,7 +331,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // ---- Sub-hooks ----
   const msg = useMessages();
-  const fileUpload = useFileUpload(activeTab);
+  const uploadSessionIdRef = useRef<string | null>(urlState.sessionId); const getUploadSessionId = useCallback(() => uploadSessionIdRef.current, []);
+  const fileUpload = useFileUpload(activeTab, getUploadSessionId);
   const { connectionState, dispatchConnection } = useConnectionState();
 
   // ---- Refs for unstable values ----
@@ -826,9 +827,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     return () => { cancelled = true; };
   }, [session.sessionOwner, user?.username]);
 
-  sessionIdRef.current = session.sessionId;
-  refreshTokenUsageRef.current = session.refreshTokenUsage;
-  loadSessionDetailRef.current = session.loadSessionDetail;
+  sessionIdRef.current = session.sessionId; uploadSessionIdRef.current = immediateSessionIdRef.current ?? session.sessionId;
+  refreshTokenUsageRef.current = session.refreshTokenUsage; loadSessionDetailRef.current = session.loadSessionDetail;
 
   useEffect(() => {
     if (activeTab === 'chat' && session.sessionId && !trashPreviewSessionId) {

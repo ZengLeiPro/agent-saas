@@ -399,6 +399,20 @@ describe('Taskboard routes', () => {
         expect(ids).toEqual([attachmentId]);
         return [canonical];
       },
+      materializeTaskAttachments: async (
+        _sourceCwd: string,
+        _targetCwd: string,
+        taskId: string,
+        attachments: readonly (typeof canonical)[],
+      ) => attachments.map((attachment) => ({
+        ...attachment,
+        relativePath: `taskboard/attachments/${taskId}/${attachmentId}-现场图.png`,
+      })),
+      resolveTaskAttachment: async (_ownerCwd: string, taskId: string, attachment: typeof canonical) => {
+        expect(taskId).toBe(TASK.id);
+        expect(attachment.attachmentId).toBe(attachmentId);
+        return `${process.cwd()}/package.json`;
+      },
       markReferenced: async () => undefined,
     } as unknown as TaskboardRouterOptions['uploadManager'];
     const rig = await makeRig(service, USER, undefined, undefined, undefined, {
@@ -412,8 +426,38 @@ describe('Taskboard routes', () => {
     }));
 
     expect(response.status).toBe(201);
-    expect(received).toEqual({ body: '', attachments: [canonical] });
-    expect(await response.json()).toMatchObject({ attachments: [canonical] });
+    expect(received).toEqual({
+      body: '',
+      attachments: [expect.objectContaining({
+        attachmentId,
+        relativePath: `taskboard/attachments/${TASK.id}/${attachmentId}-现场图.png`,
+      })],
+    });
+    expect(await response.json()).toMatchObject({
+      attachments: [expect.objectContaining({ relativePath: `taskboard/attachments/${TASK.id}/${attachmentId}-现场图.png` })],
+    });
+
+    const taskWithAttachment = {
+      ...TASK,
+      attachments: [{ ...canonical, mimeType: 'application/json', isImage: false }],
+    };
+    service.getTask = async (identity, taskId) => {
+      if (identity.ownerUserId !== USER.sub) throw new TaskboardPermissionError();
+      expect(taskId).toBe(TASK.id);
+      return taskWithAttachment;
+    };
+    const download = await rig.request(
+      `/api/taskboard/tasks/${TASK.id}/attachments/${attachmentId}?download=1`,
+    );
+    expect(download.status).toBe(200);
+    expect(download.headers.get('content-type')).toContain('application/json');
+    expect(await download.text()).toContain('"name"');
+
+    rig.setCaller({ ...USER, sub: 'user-2', username: 'bob' });
+    const forbidden = await rig.request(
+      `/api/taskboard/tasks/${TASK.id}/attachments/${attachmentId}`,
+    );
+    expect(forbidden.status).toBe(403);
   });
 
   it('provides paged board/task search and comment update/delete endpoints', async () => {

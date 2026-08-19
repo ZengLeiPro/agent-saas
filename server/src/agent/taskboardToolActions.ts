@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto';
+import {
+  materializeTaskboardAttachments,
+  resolveTaskboardAttachments,
+} from './taskboardAttachmentActions.js';
 
 import type {
   TaskBoardContextReceipt,
@@ -140,6 +144,14 @@ export interface TaskboardToolOptions {
   resolveAttachments?: (
     identity: TaskboardIdentity,
     attachmentIds: readonly string[],
+    refs?: { sessionId?: string },
+  ) => Promise<TaskBoardUploadAttachment[]>;
+  /** 把上传附件复制到任务所属看板 owner 的任务作用域。 */
+  materializeTaskAttachments?: (
+    identity: TaskboardIdentity,
+    taskId: string,
+    ownerUserId: string,
+    attachments: readonly TaskBoardUploadAttachment[],
   ) => Promise<TaskBoardUploadAttachment[]>;
   /** 任务/评论持久化成功后，将已关联附件标记为 referenced。 */
   markAttachmentsReferenced?: (
@@ -228,8 +240,16 @@ export async function invokeTaskboardAction(
       return createTask(options, service, options.executionService?.(), identity, input, scope);
     case 'task.update': {
       const taskId = requireId(input, 'taskId');
-      const attachments = await resolveTaskboardAttachments(options, identity, input.attachments);
-      const patch = taskPatch(input, attachments);
+      const current = await service.getTask(identity, taskId);
+      const attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
+      const scopedAttachments = await materializeTaskboardAttachments(
+        options,
+        identity,
+        current.id,
+        (await service.getBoard(identity, current.boardId)).ownerUserId,
+        attachments,
+      );
+      const patch = taskPatch(input, scopedAttachments);
       const task = await service.updateTask(identity, taskId, {
         ...patch,
         expectedVersion: requireVersion(input),
@@ -266,10 +286,19 @@ export async function invokeTaskboardAction(
       };
     }
     case 'comment.create': {
-      const attachments = await resolveTaskboardAttachments(options, identity, input.attachments);
-      const comment = await service.createComment(identity, requireId(input, 'taskId'), {
+      const taskId = requireId(input, 'taskId');
+      const current = await service.getTask(identity, taskId);
+      const attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
+      const scopedAttachments = await materializeTaskboardAttachments(
+        options,
+        identity,
+        current.id,
+        (await service.getBoard(identity, current.boardId)).ownerUserId,
+        attachments,
+      );
+      const comment = await service.createComment(identity, taskId, {
         body: input.body?.trim() ?? '',
-        ...(attachments !== undefined ? { attachments } : {}),
+        ...(scopedAttachments !== undefined ? { attachments: scopedAttachments } : {}),
       });
       await markTaskboardAttachments(options, identity, attachments, scope);
       return { created: true, comment };
@@ -590,19 +619,35 @@ async function createTask(
   if (input.dispatch && input.status && input.status !== 'todo') {
     throw new Error('dispatch=true 只支持创建 todo 任务');
   }
-  const attachments = await resolveTaskboardAttachments(options, identity, input.attachments);
-  const task = await service.createTask(identity, boardId, {
+  const attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
+  const ownerUserId = attachments?.length
+    ? (await service.getBoard(identity, boardId)).ownerUserId
+    : undefined;
+  const createdTask = await service.createTask(identity, boardId, {
     title: requireField(input.title, 'title'),
     ...(input.kind ? { kind: input.kind } : {}),
     ...(input.description !== undefined ? { description: input.description } : {}),
     ...(typeof input.branch === 'string' ? { branch: input.branch } : {}),
-    ...(attachments !== undefined ? { attachments } : {}),
+    ...(attachments !== undefined && attachments.length === 0 ? { attachments: [] } : {}),
     status: input.dispatch ? 'todo' : input.status,
     ...(input.priority ? { priority: input.priority } : {}),
     ...(input.labels ? { labels: input.labels } : {}),
     ...(typeof input.dueAt === 'string' ? { dueAt: input.dueAt } : {}),
     ...(typeof input.model === 'string' ? { model: input.model } : {}),
   });
+  const scopedAttachments = await materializeTaskboardAttachments(
+    options,
+    identity,
+    createdTask.id,
+    ownerUserId,
+    attachments,
+  );
+  const task = scopedAttachments
+    ? await service.updateTask(identity, createdTask.id, {
+      attachments: scopedAttachments,
+      expectedVersion: createdTask.version,
+    })
+    : createdTask;
   await markTaskboardAttachments(options, identity, attachments, scope);
   if (!input.dispatch) return { created: true, task };
   return dispatchCreatedTask(dispatcher!, identity, task);
@@ -706,13 +751,18 @@ async function createExecutionTask(
     throw new Error('integration remediation 任务需要 sourceId');
   }
   const dispatcher = input.dispatch ? requireExecutionService(options.executionService?.()) : undefined;
-  const attachments = await resolveTaskboardAttachments(options, identity, input.attachments);
+  const service = options.service();
+  if (!service) throw new Error('任务看板服务未启用');
+  const attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
+  const ownerUserId = attachments?.length
+    ? (await service.getBoard(identity, execution.task.boardId)).ownerUserId
+    : undefined;
   let task = await executionStore.createTaskFromExecution(identity, execution.execution.runId, {
     title: requireField(input.title, 'title'),
     kind,
     ...(input.description !== undefined ? { description: input.description } : {}),
     ...(typeof input.branch === 'string' ? { branch: input.branch } : {}),
-    ...(attachments !== undefined ? { attachments } : {}),
+    ...(attachments !== undefined && attachments.length === 0 ? { attachments: [] } : {}),
     status: 'todo',
     ...(input.priority ? { priority: input.priority } : {}),
     ...(input.labels ? { labels: input.labels } : {}),
@@ -720,10 +770,22 @@ async function createExecutionTask(
     ...(typeof input.model === 'string' ? { model: input.model } : {}),
     clientRequestId: taskboardCreateRequestId(input, { execution }),
   });
+  const scopedAttachments = await materializeTaskboardAttachments(
+    options,
+    identity,
+    task.id,
+    ownerUserId,
+    attachments,
+  );
+  if (scopedAttachments) {
+    task = await service.updateTask(identity, task.id, {
+      attachments: scopedAttachments,
+      expectedVersion: task.version,
+    });
+  }
   await markTaskboardAttachments(options, identity, attachments, scope);
   if (kind === 'remediation' && input.sourceId) {
-    const service = options.service();
-    if (!service?.linkIntegrationRemediationV2) {
+    if (!service.linkIntegrationRemediationV2) {
       throw new Error('任务看板 remediation 关联服务未启用');
     }
     await service.linkIntegrationRemediationV2(
@@ -781,8 +843,15 @@ async function updateLegacyTask(
 ): Promise<Record<string, unknown>> {
   const taskId = requireField(input.id, 'id');
   const current = await service.getTask(identity, taskId);
-  const attachments = await resolveTaskboardAttachments(options, identity, input.attachments);
-  const patch = taskPatch(input, attachments);
+  const attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
+  const scopedAttachments = await materializeTaskboardAttachments(
+    options,
+    identity,
+    current.id,
+    (await service.getBoard(identity, current.boardId)).ownerUserId,
+    attachments,
+  );
+  const patch = taskPatch(input, scopedAttachments);
   const task = await service.updateTask(identity, taskId, { ...patch, expectedVersion: current.version });
   await markTaskboardAttachments(options, identity, attachments, scope);
   return { updated: true, task };
@@ -839,39 +908,6 @@ function taskPatch(
   if (input.model !== undefined) patch.model = input.model;
   if (Object.keys(patch).length === 0) throw new Error(`${input.action} 至少需要一个任务字段`);
   return patch;
-}
-
-async function resolveTaskboardAttachments(
-  options: TaskboardToolOptions,
-  identity: TaskboardIdentity,
-  attachments: TaskboardAttachmentInput[] | undefined,
-): Promise<TaskBoardUploadAttachment[] | undefined> {
-  if (attachments === undefined) return undefined;
-  if (attachments.length === 0) return [];
-  if (!options.resolveAttachments) {
-    throw new TaskboardValidationError(
-      'Taskboard attachment resolver is unavailable',
-      'TASKBOARD_ATTACHMENT_UNAVAILABLE',
-    );
-  }
-  try {
-    const resolved = await options.resolveAttachments(
-      identity,
-      attachments.map((attachment) => attachment.attachmentId),
-    );
-    if (resolved.length !== attachments.length || resolved.some(
-      (attachment, index) => attachment.attachmentId !== attachments[index]!.attachmentId,
-    )) {
-      throw new Error('Attachment resolver returned an unexpected attachment set');
-    }
-    return resolved;
-  } catch (error) {
-    if (error instanceof TaskboardValidationError) throw error;
-    throw new TaskboardValidationError(
-      error instanceof Error ? error.message : 'Invalid attachment',
-      'TASKBOARD_INVALID_ATTACHMENT',
-    );
-  }
 }
 
 async function markTaskboardAttachments(

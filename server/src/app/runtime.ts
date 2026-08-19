@@ -1698,7 +1698,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     orgAgentStore,
     tenantStore,
     environmentStore,
-    taskboard: { service: () => taskboardService, executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, ...createTaskboardAttachmentAccess({ agentCwd, uploadManager }) },
+    taskboard: { service: () => taskboardService, executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
       const effectiveAgentId = agentId
         ?? (await agentResourceStore?.findPersonalByOwner(tenantId, userId))?.agentId;
@@ -3021,7 +3021,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     sharedDir,
     tenantSkillsRootDir,
     uploadsDir,
-    uploadManager,
+    uploadManager, sessionCatalog,
     channelManager,
     dispatchMetricsStore,
     dingtalkDeps,

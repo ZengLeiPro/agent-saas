@@ -108,7 +108,7 @@ export function TaskDetailComments({
                     <time className="text-xs text-muted-foreground">{new Date(comment.createdAt).toLocaleString("zh-CN")}</time>
                   </div>
                   {comment.body ? <TaskCommentMarkdown body={comment.body} /> : null}
-                  <TaskAttachmentList attachments={comment.attachments ?? []} />
+                  <TaskAttachmentList taskId={currentTask.id} attachments={comment.attachments ?? []} />
                 </div>
               </article>
             );

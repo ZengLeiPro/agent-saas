@@ -650,6 +650,7 @@ export {
   MD_PATH_RE,
   HTML_PATH_RE,
   resolveImageSrc,
+  resolveTaskAttachmentSrc,
   getPreviewFileType,
 } from "./lib/fileUtils";
 export type {

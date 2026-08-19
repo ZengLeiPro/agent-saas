@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   MAX_UPLOAD_FILE_SIZE,
@@ -7,6 +7,7 @@ import {
 } from '../../../shared/src/lib/constants.js';
 
 import type { UploadedFileInfo } from '../types/index.js';
+import type { TaskBoardAttachment, TaskBoardUploadAttachment } from '../../../shared/src/types/taskboard.js';
 import { repairWorkspacePath } from '../workspace/permissions.js';
 import { uploadLogger } from '../utils/logger.js';
 
@@ -43,6 +44,11 @@ export interface UploadFinalizeFile {
   mimeType: string;
   isImage: boolean;
   isVoiceUpload: boolean;
+}
+
+export interface UploadReference {
+  sessionId?: string;
+  clientMessageId?: string;
 }
 
 export interface FinalizedUpload {
@@ -204,17 +210,22 @@ export class UploadManager {
     return partialDir;
   }
 
-  async completeRequest(requestId: string, files: UploadFinalizeFile[]): Promise<FinalizedUpload[]> {
+  async completeRequest(
+    requestId: string,
+    files: UploadFinalizeFile[],
+    refs: UploadReference = {},
+  ): Promise<FinalizedUpload[]> {
     const active = this.activeRequests.get(requestId);
     if (!active) throw new Error(`Upload request is no longer active: ${requestId}`);
 
-    return this.withUserMutation(active.userCwd, async () => this.completeRequestLocked(requestId, active, files));
+    return this.withUserMutation(active.userCwd, async () => this.completeRequestLocked(requestId, active, files, refs));
   }
 
   private async completeRequestLocked(
     requestId: string,
     active: ActiveUploadRequest,
     files: UploadFinalizeFile[],
+    refs: UploadReference,
   ): Promise<FinalizedUpload[]> {
     const uploadsDir = join(active.userCwd, 'uploads');
     const completed: Array<{ path: string; statePath: string }> = [];
@@ -243,6 +254,8 @@ export class UploadManager {
           mimeType: file.mimeType,
           status: 'staged',
           createdAt: new Date(this.now()).toISOString(),
+          ...(refs.sessionId ? { sessionIds: [refs.sessionId] } : {}),
+          ...(refs.clientMessageId ? { clientMessageIds: [refs.clientMessageId] } : {}),
         };
         const statePath = this.statePath(active.userCwd, file.attachmentId);
         completed.push({ path: finalPath, statePath });
@@ -287,6 +300,7 @@ export class UploadManager {
   async resolveAttachments(
     userCwd: string,
     attachmentIds: readonly string[],
+    refs: Pick<UploadReference, 'sessionId'> = {},
   ): Promise<UploadedFileInfo[]> {
     this.knownUserCwds.add(userCwd);
     return this.withUserMutation(userCwd, async () => {
@@ -306,6 +320,9 @@ export class UploadManager {
         if (state.attachmentId !== attachmentId || basename(state.filename) !== state.filename) {
           throw new Error(`Invalid attachment state: ${attachmentId}`);
         }
+        if (refs.sessionId && !state.sessionIds?.includes(refs.sessionId)) {
+          throw new Error(`Attachment does not belong to session: ${attachmentId}`);
+        }
         await stat(join(userCwd, state.relativePath));
         resolved.push({
           attachmentId,
@@ -318,6 +335,90 @@ export class UploadManager {
       }
       return resolved;
     });
+  }
+
+  async materializeTaskAttachments(
+    sourceCwd: string,
+    targetCwd: string,
+    taskId: string,
+    attachments: readonly TaskBoardUploadAttachment[],
+  ): Promise<TaskBoardUploadAttachment[]> {
+    if (!isSafeTaskScopeSegment(taskId)) throw new Error('Invalid task attachment scope');
+    if (attachments.length === 0) return [];
+    this.knownUserCwds.add(sourceCwd);
+    this.knownUserCwds.add(targetCwd);
+    return this.withUserMutation(sourceCwd, async () => {
+      const sourceRoot = await realpath(sourceCwd);
+      await mkdir(targetCwd, { recursive: true });
+      const targetWorkspaceRoot = await realpath(targetCwd);
+      const targetRoot = join(targetCwd, 'taskboard', 'attachments', taskId);
+      await mkdir(targetRoot, { recursive: true });
+      const targetRealRoot = await realpath(targetRoot);
+      if (!isWithin(targetRealRoot, targetWorkspaceRoot)) {
+        throw new Error('Task attachment scope escaped workspace');
+      }
+      repairWorkspacePath(targetRoot, 0o775);
+      const materialized: TaskBoardUploadAttachment[] = [];
+      for (const attachment of attachments) {
+        if (!ATTACHMENT_ID_RE.test(attachment.attachmentId)) {
+          throw new Error(`Invalid attachment id: ${attachment.attachmentId}`);
+        }
+        const sourcePath = resolve(sourceCwd, attachment.relativePath);
+        const sourceRealPath = await realpath(sourcePath);
+        if (!isWithin(sourceRealPath, sourceRoot)) {
+          throw new Error(`Attachment source escaped workspace: ${attachment.attachmentId}`);
+        }
+        const sourceStats = await stat(sourceRealPath);
+        if (!sourceStats.isFile() || sourceStats.size !== attachment.size) {
+          throw new Error(`Attachment source changed: ${attachment.attachmentId}`);
+        }
+        const targetPath = join(targetRoot, taskAttachmentFilename(attachment));
+        if (!isWithin(targetPath, targetRoot)) throw new Error('Task attachment path escaped scope');
+        const tempTargetPath = `${targetPath}.${process.pid}.${randomUUID()}.tmp`;
+        try {
+          await copyFile(sourceRealPath, tempTargetPath);
+          repairWorkspacePath(tempTargetPath, 0o664);
+          await rename(tempTargetPath, targetPath);
+        } finally {
+          await rm(tempTargetPath, { force: true }).catch(() => undefined);
+        }
+        const copiedRealPath = await realpath(targetPath);
+        if (!isWithin(copiedRealPath, targetRealRoot)) {
+          throw new Error('Task attachment path escaped scope');
+        }
+        repairWorkspacePath(targetPath, 0o664);
+        materialized.push({
+          ...attachment,
+          relativePath: relative(targetCwd, targetPath).split(sep).join('/'),
+        });
+      }
+      return materialized;
+    });
+  }
+
+  async resolveTaskAttachment(
+    userCwd: string,
+    taskId: string,
+    attachment: Pick<TaskBoardAttachment, 'attachmentId' | 'relativePath'>,
+  ): Promise<string> {
+    if (!attachment.attachmentId || !ATTACHMENT_ID_RE.test(attachment.attachmentId)) {
+      throw new Error('Invalid task attachment id');
+    }
+    if (!isSafeTaskScopeSegment(taskId)) throw new Error('Invalid task attachment scope');
+    const taskRoot = join(userCwd, 'taskboard', 'attachments', taskId);
+    const absolutePath = resolve(userCwd, attachment.relativePath);
+    if (!isWithin(absolutePath, taskRoot)
+      || !basename(absolutePath).startsWith(`${attachment.attachmentId}-`)) {
+      throw new Error('Task attachment is not in its task scope');
+    }
+    const workspaceRoot = await realpath(userCwd);
+    const realRoot = await realpath(taskRoot);
+    if (!isWithin(realRoot, workspaceRoot)) throw new Error('Task attachment scope escaped workspace');
+    const realPath = await realpath(absolutePath);
+    if (!isWithin(realPath, realRoot)) throw new Error('Task attachment escaped its scope');
+    const fileStats = await stat(realPath);
+    if (!fileStats.isFile()) throw new Error('Task attachment is not a file');
+    return realPath;
   }
 
   async markReferenced(
@@ -588,6 +689,16 @@ export class UploadManager {
 
 function appendUnique(values: string[] | undefined, value: string): string[] {
   return values?.includes(value) ? values : [...(values ?? []), value];
+}
+
+function isSafeTaskScopeSegment(value: string): boolean {
+  return /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
+function taskAttachmentFilename(attachment: TaskBoardUploadAttachment): string {
+  const sourceName = basename(attachment.originalName) || basename(attachment.relativePath) || 'attachment';
+  const safeName = sourceName.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || 'attachment';
+  return `${attachment.attachmentId}-${safeName}`;
 }
 
 function isSupportedImage(mimeType: string): boolean {

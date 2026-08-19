@@ -74,7 +74,7 @@ function rig() {
     listComments: vi.fn(async () => []),
     searchComments: vi.fn(async () => ({ items: [], page: 1, pageSize: 20, total: 0, hasMore: false })),
     createComment: vi.fn(async (_identity, taskId, input) => ({
-      id: 'comment-1', taskId, body: input.body, authorType: 'user' as const,
+      id: 'comment-1', taskId, body: input.body, attachments: input.attachments, authorType: 'user' as const,
       authorId: identity.ownerUserId, authorName: identity.username, version: 1,
       createdAt: board.createdAt, updatedAt: board.updatedAt,
     })),
@@ -100,6 +100,7 @@ function rig() {
     updateTask: vi.fn(async (_identity, _taskId, input) => ({
       ...task,
       ...(input.branch === null ? { branch: undefined } : input.branch ? { branch: input.branch } : {}),
+      ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
       version: task.version + 1,
     })),
     moveTask: vi.fn(async (_identity, _taskId, input) => ({
@@ -455,8 +456,13 @@ describe('CronManage taskboard actions', () => {
       mimeType: 'image/png',
       isImage: true,
     };
-    const resolveAttachments = vi.fn(async (_identity: TaskboardIdentity, ids: readonly string[]) => {
+    const resolveAttachments = vi.fn(async (
+      _identity: TaskboardIdentity,
+      ids: readonly string[],
+      refs?: { sessionId?: string },
+    ) => {
       expect(ids).toEqual([attachmentId]);
+      expect(refs).toEqual({ sessionId: 'session-attachment-test' });
       return [canonical];
     });
     const markAttachmentsReferenced = vi.fn(async (
@@ -467,9 +473,22 @@ describe('CronManage taskboard actions', () => {
       expect(attachments).toEqual([canonical]);
       expect(refs).toEqual({ sessionId: 'session-attachment-test' });
     });
+    const materializeTaskAttachments = vi.fn(async (
+      _identity: TaskboardIdentity,
+      taskId: string,
+      ownerUserId: string,
+      attachments: readonly TaskBoardUploadAttachment[],
+    ) => {
+      expect(ownerUserId).toBe(identity.ownerUserId);
+      return attachments.map((attachment) => ({
+        ...attachment,
+        relativePath: `taskboard/attachments/${taskId}/${attachment.attachmentId}-验收证据.png`,
+      }));
+    });
     const attachmentOptions = {
       ...options,
       resolveAttachments,
+      materializeTaskAttachments,
       markAttachmentsReferenced,
     };
     const scope = { sessionId: 'session-attachment-test' };
@@ -487,15 +506,20 @@ describe('CronManage taskboard actions', () => {
     }, scope);
 
     expect(service.createTask).toHaveBeenCalledWith(identity, board.id, expect.objectContaining({
+      title: '带证据任务',
+    }));
+    expect(service.createTask).toHaveBeenCalledWith(identity, board.id, expect.not.objectContaining({
       attachments: [canonical],
     }));
     expect(service.updateTask).toHaveBeenCalledWith(identity, task.id, expect.objectContaining({
-      attachments: [canonical], expectedVersion: task.version,
+      attachments: [expect.objectContaining({ relativePath: `taskboard/attachments/${task.id}/${attachmentId}-验收证据.png` })],
+      expectedVersion: task.version,
     }));
     expect(service.createComment).toHaveBeenCalledWith(identity, task.id, {
-      body: '', attachments: [canonical],
+      body: '', attachments: [expect.objectContaining({ relativePath: `taskboard/attachments/${task.id}/${attachmentId}-验收证据.png` })],
     });
     expect(resolveAttachments).toHaveBeenCalledTimes(3);
+    expect(materializeTaskAttachments).toHaveBeenCalledTimes(3);
     expect(markAttachmentsReferenced).toHaveBeenCalledTimes(3);
   });
 });

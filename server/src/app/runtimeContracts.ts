@@ -94,6 +94,7 @@ import type { SystemPromptRegistry } from '../runtime/systemPrompts.js';
 import type { AgentRuntimeProfileStore } from '../data/agentProfiles/types.js';
 import type { ConnectorDictionaryStore } from '../data/connectorDictionaryStore.js';
 import type { UploadManager } from '../uploads/manager.js';
+import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
 import type { BillingService } from '../data/billing/service.js';
 import type { WebPushService } from '../webPush/service.js';
@@ -154,6 +155,8 @@ export interface AppRuntime {
   dwsAuthFlowService?: DwsAuthFlowServiceLike;
   /** 组织 Agent 专属钉钉成员账号治理记录，不与真人用户 DWS connection 混用。 */
   agentDwsAccountStore?: AgentDwsAccountStore;
+  /** 会话目录：上传附件绑定 sessionId 时校验当前用户归属。 */
+  sessionCatalog?: Pick<SessionCatalog, 'get'>;
   /** Personal Stream durable inbox 与 conversation/session binding。 */
   agentDwsMessageStore?: AgentDwsMessageStore;
   /** durable inbox → 组织 Agent Session → current-user DWS 回复 worker。 */

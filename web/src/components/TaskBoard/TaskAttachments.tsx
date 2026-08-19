@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import type { TaskBoardAttachment, TaskBoardUploadAttachment } from "@agent/shared";
 import { Download, Paperclip } from "lucide-react";
-import { getFileTypeVisual, resolveImageSrc } from "@agent/shared";
+import { getFileTypeVisual, resolveImageSrc, resolveTaskAttachmentSrc } from "@agent/shared";
 import { FileUpload } from "@/components/FileUpload";
 import { Button } from "@/components/ui/button";
 import type { FileUploadState } from "@/hooks/useFileUpload";
@@ -62,11 +62,21 @@ export function TaskAttachmentField({ upload, disabled, className, onFilesChange
   );
 }
 
-export function TaskAttachmentList({ attachments }: { attachments: readonly TaskBoardAttachment[] }) {
+export function TaskAttachmentList({
+  attachments,
+  taskId,
+}: {
+  attachments: readonly TaskBoardAttachment[];
+  taskId?: string;
+}) {
   if (attachments.length === 0) return null;
 
   const download = async (attachment: TaskBoardAttachment) => {
-    const url = await resolveImageSrc(attachment.relativePath);
+    const isTaskScoped = taskId && attachment.attachmentId
+      && attachment.relativePath.startsWith(`taskboard/attachments/${taskId}/`);
+    const url = isTaskScoped
+      ? await resolveTaskAttachmentSrc(taskId, attachment.attachmentId!, true)
+      : await resolveImageSrc(attachment.relativePath);
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = attachment.originalName;

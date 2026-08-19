@@ -789,7 +789,7 @@ export function TaskDetail({
                     }}
                   />
                   {contentReadOnly ? (
-                    <TaskAttachmentList attachments={taskAttachments.uploadedFiles} />
+                    <TaskAttachmentList taskId={currentTask.id} attachments={taskAttachments.uploadedFiles} />
                   ) : (
                     <TaskAttachmentField
                       upload={taskAttachments}

@@ -124,6 +124,7 @@ export async function claimExecution(
         loaded.boardStageModels,
         loaded.boardModel,
         purpose,
+        loaded.task.stageModels,
       ),
       input.configuredModelRef,
       loaded.boardOwnerUserId,

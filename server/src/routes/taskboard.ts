@@ -146,6 +146,7 @@ const taskCreateSchema = z.object({
   labels: labelsSchema.optional(),
   dueAt: dueAtSchema.optional(),
   model: z.string().trim().min(1).max(256).optional(),
+  stageModels: boardStageModelsSchema.optional(),
   clientRequestId: z.string().trim().min(1).max(128).optional(),
   dispatch: z.boolean().optional(),
 }).strict().superRefine((input, context) => {
@@ -170,6 +171,7 @@ const taskPatchSchema = z.object({
   labels: labelsSchema.optional(),
   dueAt: dueAtSchema.nullable().optional(),
   model: z.string().trim().min(1).max(256).nullish(),
+  stageModels: boardStageModelsSchema.nullish(),
   expectedVersion: z.number().int().min(1),
 }).strict().refine(
   (input) => input.title !== undefined
@@ -180,7 +182,8 @@ const taskPatchSchema = z.object({
     || input.priority !== undefined
     || input.labels !== undefined
     || input.dueAt !== undefined
-    || input.model !== undefined,
+    || input.model !== undefined
+    || input.stageModels !== undefined,
   { message: 'At least one task field is required' },
 );
 

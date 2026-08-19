@@ -147,6 +147,69 @@ describe("TaskDetail 草稿隔离", () => {
     expect(link.getAttribute("rel")).toBe("noopener noreferrer");
   });
 
+  it("评论展示 Agent 阶段胶囊、关联会话，并用用户消息色区分用户评论", async () => {
+    mocks.comments = [
+      {
+        id: "comment-agent",
+        taskId: taskOne.id,
+        body: "Agent 已完成实施。",
+        authorType: "agent",
+        authorId: "run-work",
+        authorName: "旧显示名",
+        sessionId: "session-work",
+        executionId: "execution-work",
+        executionPurpose: "work",
+        version: 1,
+        createdAt: "2026-08-19T01:00:00.000Z",
+        updatedAt: "2026-08-19T01:00:00.000Z",
+      },
+      {
+        id: "comment-user",
+        taskId: taskOne.id,
+        body: "用户补充意见",
+        authorType: "user",
+        authorId: "user-1",
+        authorName: "曾磊",
+        sessionId: "session-work",
+        executionPurpose: "work",
+        version: 1,
+        createdAt: "2026-08-19T01:01:00.000Z",
+        updatedAt: "2026-08-19T01:01:00.000Z",
+      },
+    ];
+    const { container } = render(<TaskDetail {...props()} />);
+
+    expect(await screen.findAllByText("实施阶段")).toHaveLength(2);
+    expect(screen.getAllByRole("link", { name: "打开会话" })).toHaveLength(2);
+    expect(screen.getAllByRole("link", { name: "打开会话" })[0]?.getAttribute("href")).toBe("/chat/session-work");
+    expect(screen.queryByText("支持 Markdown 格式")).toBeNull();
+    expect(screen.getByText("用户补充意见").closest("[class*='bg-user-bubble']")).toBeTruthy();
+    expect(container.querySelector("[aria-label='任务评论'] .size-8")).toBeNull();
+  });
+
+  it("执行开始后锁定标题和正文，但保留评论入口", async () => {
+    const runningTask = { ...taskOne, status: "in_progress" as const };
+    const execution: TaskBoardExecution = {
+      id: "execution-lock",
+      taskId: runningTask.id,
+      runId: "run-lock",
+      sessionId: "session-lock",
+      status: "running",
+      purpose: "work",
+      requestedBy: "user-1",
+      createdAt: runningTask.createdAt,
+      updatedAt: runningTask.updatedAt,
+    };
+    mocks.executions = [execution];
+    mocks.fetchTask.mockResolvedValue(runningTask);
+    render(<TaskDetail {...props({ task: runningTask })} />);
+
+    expect((await screen.findByRole("textbox", { name: "标题" }) as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).disabled).toBe(true);
+    expect((screen.getByRole("textbox", { name: "发表评论" }) as HTMLTextAreaElement).disabled).toBe(false);
+    expect(screen.getByText("任务首次执行后，标题和正文已锁定；后续变更请通过评论补充。")).toBeTruthy();
+  });
+
   it("改变状态不会重置未保存字段，切换任务会清空评论草稿", async () => {
     const user = userEvent.setup();
     const initialProps = props();
@@ -230,22 +293,22 @@ describe("TaskDetail 草稿隔离", () => {
     expect(onUpdate.mock.calls[1]?.[1]).toEqual({ title: saved.title });
   });
 
-  it("任务详情可指定模型并保存任务级覆盖", async () => {
+  it("任务详情可按阶段指定模型并保存任务级覆盖", async () => {
     const user = userEvent.setup();
     const onUpdate = vi.fn(async (current: TaskBoardTask) => ({
       ...current,
-      model: "group-a/model-c",
+      stageModels: { work: "group-a/model-c" },
       version: current.version + 1,
     }));
     render(<TaskDetail {...props({ onUpdate })} modelList={modelList} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
-    await user.click(screen.getByRole("combobox", { name: "任务运行模型" }));
+    await user.click(screen.getByRole("combobox", { name: "实施阶段运行模型" }));
     await user.click(screen.getByRole("option", { name: "模型 C" }));
     await user.click(screen.getByRole("button", { name: "保存任务" }));
 
     await waitFor(() => expect(onUpdate).toHaveBeenCalledWith(taskOne, {
-      model: "group-a/model-c",
+      stageModels: { work: "group-a/model-c" },
     }));
   });
 
@@ -526,7 +589,7 @@ describe("TaskDetail 草稿隔离", () => {
     const manuallyReturnedToTodo = { ...todoTask, version: runningTask.version + 1 };
     rerender(<TaskDetail {...detailProps} task={manuallyReturnedToTodo} />);
     expect(screen.getByRole("button", { name: "排队中" }).hasAttribute("disabled")).toBe(true);
-    expect(screen.getByRole("link", { name: "打开执行会话" }).getAttribute("href"))
+    expect(screen.getByRole("link", { name: "打开当前执行会话" }).getAttribute("href"))
       .toBe("/chat/session-1");
   });
 

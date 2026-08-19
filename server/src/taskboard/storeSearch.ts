@@ -4,6 +4,7 @@ import type { TaskBoard, TaskBoardComment, TaskBoardTask } from '../../../shared
 import { rowToBoard } from './boardFields.js';
 import {
   applyCommentAuthorDisplayName,
+  commentExecutionJoin,
   normalizeLabels,
   rowToComment,
   rowToTask,
@@ -89,6 +90,7 @@ export interface TaskboardSearchStore {
   tasksTable: string;
   commentsTable: string;
   changesTable: string;
+  executionsTable: string;
   membersTable: string;
   integrationSourcesTable: string;
   remediationAttemptsTable: string;
@@ -288,6 +290,7 @@ export async function searchComments(
        FROM ${store.commentsTable} c
        JOIN ${store.tasksTable} t ON t.id=c.task_id
        JOIN ${store.boardsTable} b ON b.id=t.board_id
+       ${commentExecutionJoin(store.changesTable, store.executionsTable)}
       WHERE c.task_id=$1 AND b.tenant_id=$2
         AND (b.owner_user_id=$3 OR b.visibility='organization')
         AND ${visibleCommentPredicate('c', store.changesTable)}`,
@@ -298,6 +301,7 @@ export async function searchComments(
        FROM ${store.commentsTable} c
        JOIN ${store.tasksTable} t ON t.id=c.task_id
        JOIN ${store.boardsTable} b ON b.id=t.board_id
+       ${commentExecutionJoin(store.changesTable, store.executionsTable)}
       WHERE c.task_id=$1 AND b.tenant_id=$2
         AND (b.owner_user_id=$3 OR b.visibility='organization')
         AND ${visibleCommentPredicate('c', store.changesTable)}

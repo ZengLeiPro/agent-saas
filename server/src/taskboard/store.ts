@@ -90,6 +90,7 @@ import {
   assertExpectedVersion,
   assertWritableTask,
   applyCommentAuthorDisplayName,
+  commentExecutionJoin,
   mapActiveBoardNameError,
   normalizeAttachments,
   normalizeLabels,
@@ -100,7 +101,7 @@ import {
   sanitizeIdentifier,
   validateMoveNeighbors, visibleCommentPredicate,
 } from './storeHelpers.js';
-import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns } from './archiveGuard.js';
+import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns, assertTaskHasNoExecutionHistory } from './archiveGuard.js';
 import { deleteComment as deleteStoredComment, updateComment as updateStoredComment } from './storeComments.js';
 import {
   getExecutionContextBySessionId as getStoredExecutionContextBySessionId,
@@ -649,10 +650,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       await client.query(
         `INSERT INTO ${this.tasksTable}
            (id, board_id, identifier, kind, title, description, branch, attachments, status, priority, labels,
-            sort_order, due_at, model, provider_pull_request_id, pull_request_number,
+            sort_order, due_at, model, stage_models, provider_pull_request_id, pull_request_number,
             reviewed_subject_digest, creator_user_id, creator_name, completed_at, client_request_id, version)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-                 CASE WHEN $9='done' THEN now() END,$20,1)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20,
+                 CASE WHEN $9='done' THEN now() END,$21,1)`,
         [
           taskId,
           boardId,
@@ -668,6 +669,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           sortOrder,
           input.dueAt ?? null,
           normalizeModel(input.model),
+          stageModelsToJson(input.stageModels),
           optionalText(input.providerPullRequestId),
           input.pullRequestNumber ?? null,
           optionalText(input.reviewedSubjectDigest),
@@ -693,6 +695,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       assertBoardRole(loaded.boardRole, kindMutation.requiredRole);
       assertExpectedVersion(loaded.task, input.expectedVersion);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
+      if (input.title !== undefined || input.description !== undefined || input.attachments !== undefined) {
+        await assertTaskHasNoExecutionHistory(this, client, taskId);
+      }
       if (kindMutation.promoting) await assertTaskHasNoActiveRuns(this, client, taskId);
       if (loaded.task.kind === 'advisory' && !kindMutation.promoting && input.branch !== undefined) {
         throw new TaskboardValidationError(
@@ -713,7 +718,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (
         input.title === undefined && input.description === undefined && input.kind === undefined
         && input.branch === undefined && input.attachments === undefined && input.priority === undefined && input.labels === undefined
-        && input.dueAt === undefined && input.model === undefined
+        && input.dueAt === undefined && input.model === undefined && input.stageModels === undefined
       ) {
         throw new TaskboardValidationError('No task changes supplied');
       }
@@ -751,6 +756,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (input.model !== undefined) {
         params.push(normalizeModel(input.model));
         assignments.push(`model=$${params.length}`);
+      }
+      if (input.stageModels !== undefined) {
+        params.push(stageModelsToJson(input.stageModels));
+        assignments.push(`stage_models=$${params.length}::jsonb`);
       }
       await client.query(
         `UPDATE ${this.tasksTable} t
@@ -878,6 +887,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
          FROM ${this.commentsTable} c
          JOIN ${this.tasksTable} t ON t.id=c.task_id
          JOIN ${this.boardsTable} b ON b.id=t.board_id
+         ${commentExecutionJoin(this.changesTable, this.executionsTable)}
         WHERE c.task_id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization') AND ${visibleCommentPredicate('c', this.changesTable)}
         ORDER BY c.created_at, c.id`,
       [taskId, identity.tenantId, identity.ownerUserId],

@@ -3,7 +3,10 @@ import {
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
   type ModelList,
+  type TaskBoard,
+  type TaskBoardComment,
   type TaskBoardExecutionPurpose,
+  type TaskBoardStageModels,
   type TaskBoardExecutionStartResult,
   type TaskBoardPriority,
   type TaskBoardStatus,
@@ -47,14 +50,40 @@ import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from 
 import { TaskCommentMarkdown } from "./TaskCommentMarkdown";
 import { useTaskComments, useTaskExecutions } from "./hooks";
 
-type TaskDraftField = "title" | "description" | "branch" | "attachments" | "priority" | "model";
+type TaskDraftField = "title" | "description" | "branch" | "attachments" | "priority" | "stageModels";
 
+const EXECUTION_PURPOSE_LABELS: Record<TaskBoardExecutionPurpose, string> = {
+  work: "实施阶段",
+  review: "复核阶段",
+  merge: "集成阶段",
+};
+
+const EXECUTION_PURPOSE_CLASSES: Record<TaskBoardExecutionPurpose, string> = {
+  work: "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300",
+  review: "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300",
+  merge: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300",
+};
+
+const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review", "merge"];
 const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
+
+function taskStageModels(task: TaskBoardTask): TaskBoardStageModels {
+  if (task.stageModels && Object.keys(task.stageModels).length > 0) return task.stageModels;
+  return task.model
+    ? { work: task.model, review: task.model, merge: task.model }
+    : {};
+}
+
+function inheritedModelHint(board: TaskBoard | null, purpose: TaskBoardExecutionPurpose): string {
+  const model = board?.stageModels?.[purpose] ?? board?.model;
+  return model ? `看板默认：${model}` : "未指定时继承看板默认模型";
+}
 
 interface TaskDetailProps {
   open: boolean;
   active?: boolean;
   task: TaskBoardTask | null;
+  board?: TaskBoard | null;
   boardReadOnly: boolean;
   canUpdateTask?: boolean;
   canTransitionTask?: boolean;
@@ -85,6 +114,7 @@ export function TaskDetail({
   open,
   active = true,
   task,
+  board = null,
   boardReadOnly,
   canUpdateTask = true,
   canTransitionTask = true,
@@ -109,7 +139,8 @@ export function TaskDetail({
   const [description, setDescription] = useState("");
   const [branch, setBranch] = useState("");
   const [priority, setPriority] = useState<TaskBoardPriority>("none");
-  const [model, setModel] = useState<string | null>(null);
+  const [stageModels, setStageModels] = useState<TaskBoardStageModels>({});
+  const [executionStarted, setExecutionStarted] = useState(false);
   const [commentBody, setCommentBody] = useState("");
   const [continueAfterComment, setContinueAfterComment] = useState(false);
   const [pendingContinuationCommentId, setPendingContinuationCommentId] = useState<string | null>(null);
@@ -149,7 +180,7 @@ export function TaskDetail({
     setBranch(next.branch ?? "");
     taskAttachments.replaceFiles(next.attachments ?? []);
     setPriority(next.priority);
-    setModel(next.model ?? null);
+    setStageModels(taskStageModels(next));
   }, [taskAttachments.replaceFiles]);
 
   const mergeServerDraft = useCallback((next: TaskBoardTask) => {
@@ -159,7 +190,7 @@ export function TaskDetail({
     if (!dirty.has("branch")) setBranch(next.branch ?? "");
     if (!dirty.has("attachments")) taskAttachments.replaceFiles(next.attachments ?? []);
     if (!dirty.has("priority")) setPriority(next.priority);
-    if (!dirty.has("model")) setModel(next.model ?? null);
+    if (!dirty.has("stageModels")) setStageModels(taskStageModels(next));
   }, [taskAttachments.replaceFiles]);
 
   useEffect(() => {
@@ -169,6 +200,7 @@ export function TaskDetail({
       detailRequestRef.current += 1;
       refreshedExecutionRef.current = null;
       setSelectedResumeSourceIds(new Set());
+      setExecutionStarted(false);
       setSaving(false);
     }
     if (!task) {
@@ -226,6 +258,9 @@ export function TaskDetail({
     ? ACTIVE_EXECUTION_STATUSES.has(latestExecution.status) || latestExecution.continuationActive === true
     : false;
   useEffect(() => {
+    if (executions.length > 0) setExecutionStarted(true);
+  }, [executions.length]);
+  useEffect(() => {
     if (latestExecution?.continuationActive) {
       refreshedExecutionRef.current = null;
       return;
@@ -264,6 +299,7 @@ export function TaskDetail({
   const readOnly = boardReadOnly || archived;
   const taskKind = currentTask?.kind ?? "delivery";
   const editReadOnly = readOnly || !canUpdateTask || taskKind === "integration" || taskKind === "remediation";
+  const contentReadOnly = editReadOnly || executionStarted;
   const commentReadOnly = readOnly || !canComment;
   const canRunCurrentTask = !readOnly && canExecute
     && !currentTask?.mergedCommitOid
@@ -303,7 +339,7 @@ export function TaskDetail({
     if (dirty.has("branch")) input.branch = branch.trim() || null;
     if (dirty.has("attachments")) input.attachments = toTaskBoardAttachments(taskAttachments.uploadedFiles);
     if (dirty.has("priority")) input.priority = priority;
-    if (dirty.has("model")) input.model = model;
+    if (dirty.has("stageModels")) input.stageModels = stageModels;
 
     const operationTask = currentTask;
     const requestId = ++detailRequestRef.current;
@@ -477,6 +513,7 @@ export function TaskDetail({
     }
     const operationTask = currentTask;
     const requestId = ++detailRequestRef.current;
+    setExecutionStarted(true);
     setSaving(true);
     setError(null);
     try {
@@ -584,12 +621,58 @@ export function TaskDetail({
                   <Badge variant={taskKind === "integration" ? "default" : "secondary"} className={taskKind === "integration" ? "bg-violet-600 hover:bg-violet-600" : ""}>{TASK_KIND_LABELS[taskKind]}</Badge>
                   <Badge variant="outline">{STATUS_LABELS[currentTask.status]}</Badge>
                   {currentTask.integrationState ? <Badge variant="outline">{INTEGRATION_SOURCE_STATE_LABELS[currentTask.integrationState]}</Badge> : null}
+                  {executionActive && latestExecution?.sessionId ? (
+                    <a
+                      href={`/chat/${encodeURIComponent(latestExecution.sessionId)}`}
+                      className="inline-flex items-center gap-1 rounded-md border border-primary/30 px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/5"
+                      aria-label="打开当前执行会话"
+                      title="打开当前执行会话"
+                    >
+                      打开会话
+                      <ExternalLink className="size-3" />
+                    </a>
+                  ) : null}
                   {taskKind === "advisory" && canTransitionTask && canUpdateTask && !readOnly ? (
                     <Button type="button" size="sm" variant="outline" onClick={() => void promoteToDelivery()} disabled={saving || executionActive}>
                       升级为交付任务
                     </Button>
                   ) : null}
                 </div>
+                {latestExecution ? (
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                    <span>
+                      {latestExecution.purpose === "review" ? "独立复核" : latestExecution.purpose === "merge" ? "集成合并" : taskKind === "advisory" ? "分析/答复" : "实施"}
+                      ：{EXECUTION_STATUS_LABELS[latestExecution.status]}
+                    </span>
+                    <time>{new Date(latestExecution.updatedAt).toLocaleString("zh-CN")}</time>
+                  </div>
+                ) : null}
+                {executionsError ? <p role="alert" className="text-xs text-destructive">{executionsError}</p> : null}
+                {latestExecution?.error ? <p className="whitespace-pre-wrap text-xs text-destructive">{latestExecution.error}</p> : null}
+                {canRunCurrentTask && (
+                  (taskKind === "integration" && ["todo", "in_progress"].includes(currentTask.status))
+                  || (taskKind !== "integration" && currentTask.status === "todo")
+                  || (taskKind !== "integration" && currentTask.status === "in_review")
+                  || (taskKind !== "integration" && currentTask.status === "in_progress" && !executionActive)
+                ) ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void startAgentExecution(
+                      taskKind === "integration" ? "merge" : currentTask.status === "in_review" ? "review" : "work",
+                    )}
+                    disabled={saving || executionsLoading || executionActive}
+                  >
+                    {saving || executionActive ? <LoaderCircle className="animate-spin" /> : <Bot />}
+                    {executionActive && latestExecution
+                      ? EXECUTION_STATUS_LABELS[latestExecution.status]
+                      : taskKind === "integration" ? "继续集成"
+                        : currentTask.status === "in_review" ? "独立复核"
+                          : currentTask.status === "in_progress" ? "恢复实施"
+                          : taskKind === "advisory" ? "开始分析/答复"
+                          : "开始实施"}
+                  </Button>
+                ) : null}
                 {currentTask.providerPullRequestId ? <p>PR：<span className="font-mono">{currentTask.providerPullRequestId}</span>{currentTask.pullRequestNumber ? `（#${currentTask.pullRequestNumber}）` : ""}</p> : null}
                 {currentTask.reviewedSubjectDigest ? <p className="break-all text-xs text-muted-foreground">已复核对象：<span className="font-mono">{currentTask.reviewedSubjectDigest}</span></p> : null}
                 {currentTask.mergedCommitOid ? <p className="flex items-center gap-1 break-all text-xs text-emerald-700 dark:text-emerald-400"><GitCommitHorizontal className="size-3.5 shrink-0" />merged commit {currentTask.mergedCommitOid}</p> : null}
@@ -668,70 +751,6 @@ export function TaskDetail({
                 />
               ) : null}
 
-              <section aria-label="Agent 执行" className="mb-6 space-y-3 rounded-lg border bg-muted/20 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-semibold">最近运行（Execution）</h3>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      运行成功只表示已提交结构化结果，不等于业务流程已完成。
-                    </p>
-                  </div>
-                  {canRunCurrentTask && (
-                    (taskKind === "integration" && ["todo", "in_progress"].includes(currentTask.status))
-                    || (taskKind !== "integration" && currentTask.status === "todo")
-                    || (taskKind !== "integration" && currentTask.status === "in_review")
-                    || (taskKind !== "integration" && currentTask.status === "in_progress" && !executionActive)
-                  ) ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => void startAgentExecution(
-                        taskKind === "integration" ? "merge" : currentTask.status === "in_review" ? "review" : "work",
-                      )}
-                      disabled={saving || executionsLoading || executionActive}
-                    >
-                      {saving || executionActive ? <LoaderCircle className="animate-spin" /> : <Bot />}
-                      {executionActive && latestExecution
-                        ? EXECUTION_STATUS_LABELS[latestExecution.status]
-                        : taskKind === "integration" ? "继续集成"
-                          : currentTask.status === "in_review" ? "独立复核"
-                          : currentTask.status === "in_progress" ? "恢复实施"
-                          : taskKind === "advisory" ? "开始分析/答复"
-                          : "开始实施"}
-                    </Button>
-                  ) : null}
-                </div>
-                {executionsError ? <p role="alert" className="text-sm text-destructive">{executionsError}</p> : null}
-                {executionsLoading && executions.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">正在加载执行记录...</p>
-                ) : null}
-                {latestExecution ? (
-                  <div className="space-y-2 text-sm">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span>
-                        {latestExecution.purpose === "review" ? "独立复核 · " : latestExecution.purpose === "merge" ? "集成合并 · " : taskKind === "advisory" ? "分析/答复 · " : "实施 · "}
-                        {EXECUTION_STATUS_LABELS[latestExecution.status]}
-                      </span>
-                      <time className="text-xs text-muted-foreground">
-                        {new Date(latestExecution.updatedAt).toLocaleString("zh-CN")}
-                      </time>
-                    </div>
-                    {latestExecution.error ? (
-                      <p className="whitespace-pre-wrap text-xs text-destructive">{latestExecution.error}</p>
-                    ) : null}
-                    <a
-                      href={`/chat/${encodeURIComponent(latestExecution.sessionId)}`}
-                      className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                    >
-                      打开执行会话
-                      <ExternalLink className="size-3" />
-                    </a>
-                  </div>
-                ) : !executionsLoading ? (
-                  <p className="text-sm text-muted-foreground">尚未交给 Agent 执行</p>
-                ) : null}
-              </section>
-
               <section aria-label="业务结论" className="mb-6 space-y-2 rounded-lg border bg-muted/20 p-4 text-sm">
                 <h3 className="text-sm font-semibold">业务结论（Resolution）</h3>
                 {latestExecution?.resolutionOutcome ? (
@@ -763,7 +782,7 @@ export function TaskDetail({
                       dirtyFieldsRef.current.add("title");
                       setTitle(event.target.value);
                     }}
-                    disabled={editReadOnly || saving}
+                    disabled={contentReadOnly || saving}
                   />
                 </div>
                 <div className="space-y-2">
@@ -776,13 +795,13 @@ export function TaskDetail({
                       setDescription(event.target.value);
                     }}
                     rows={7}
-                    disabled={editReadOnly || saving}
+                    disabled={contentReadOnly || saving}
                     onPaste={(event) => {
                       if (event.clipboardData.files.length > 0) dirtyFieldsRef.current.add("attachments");
                       void taskAttachments.handlePaste(event);
                     }}
                   />
-                  {editReadOnly ? (
+                  {contentReadOnly ? (
                     <TaskAttachmentList attachments={taskAttachments.uploadedFiles} />
                   ) : (
                     <TaskAttachmentField
@@ -791,6 +810,9 @@ export function TaskDetail({
                       onFilesChanged={() => dirtyFieldsRef.current.add("attachments")}
                     />
                   )}
+                  {executionStarted && !editReadOnly ? (
+                    <p className="text-xs text-muted-foreground">任务首次执行后，标题和正文已锁定；后续变更请通过评论补充。</p>
+                  ) : null}
                 </div>
                 {taskKind === "delivery" ? (
                   <div className="space-y-2">
@@ -846,23 +868,33 @@ export function TaskDetail({
                     </Select>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>运行模型</Label>
-                  <ModelSelect
-                    modelList={modelList}
-                    value={model}
-                    onChange={(next) => {
-                      dirtyFieldsRef.current.add("model");
-                      setModel(next);
-                    }}
-                    inheritLabel="继承看板默认模型"
-                    ariaLabel="任务运行模型"
-                    disabled={editReadOnly || saving}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    交给 Agent 执行时使用的模型，未指定时继承看板默认模型。
-                  </p>
-                </div>
+                <section aria-label="分阶段运行模型" className="space-y-3 rounded-lg border bg-muted/20 p-3">
+                  <div>
+                    <h3 className="text-sm font-medium">运行模型</h3>
+                    <p className="text-xs text-muted-foreground">
+                      按实施、复核、集成阶段分别选择；留空则继承看板对应阶段的默认模型。
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {TASK_MODEL_PURPOSES.map((purpose) => (
+                      <div className="space-y-2" key={purpose}>
+                        <Label>{EXECUTION_PURPOSE_LABELS[purpose]}</Label>
+                        <ModelSelect
+                          modelList={modelList}
+                          value={stageModels[purpose] ?? null}
+                          onChange={(next) => {
+                            dirtyFieldsRef.current.add("stageModels");
+                            setStageModels((current) => ({ ...current, [purpose]: next ?? undefined }));
+                          }}
+                          inheritLabel="继承看板对应阶段模型"
+                          ariaLabel={`${EXECUTION_PURPOSE_LABELS[purpose]}运行模型`}
+                          disabled={editReadOnly || saving}
+                        />
+                        <p className="text-[11px] text-muted-foreground">{inheritedModelHint(board, purpose)}</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
                 {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
                 <div className="flex flex-wrap gap-2">
                   {!editReadOnly ? <Button type="submit" disabled={saving || taskAttachments.uploading}>保存任务</Button> : null}
@@ -910,31 +942,49 @@ export function TaskDetail({
                 <header className="flex items-center justify-between border-b bg-background px-4 py-3 sm:px-6">
                   <div>
                     <h3 className="text-sm font-semibold">评论（{comments.length}）</h3>
-                    <p className="mt-0.5 text-xs text-muted-foreground">支持 Markdown 格式</p>
                   </div>
                 </header>
                 <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
                   {commentsError ? <p role="alert" className="mb-4 text-sm text-destructive">{commentsError}</p> : null}
                   {commentsLoading ? <p className="text-sm text-muted-foreground">正在加载评论...</p> : null}
                   <div className="space-y-0">
-                    {comments.map((comment, index) => (
-                      <article key={comment.id} className="relative flex gap-3 pb-6 last:pb-0">
-                        {index < comments.length - 1 ? (
-                          <span aria-hidden="true" className="absolute bottom-0 left-4 top-9 w-px bg-border" />
-                        ) : null}
-                        <div className="relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border bg-background text-xs font-medium text-muted-foreground shadow-sm">
-                          {comment.authorType === "agent" ? <Bot className="size-4" /> : comment.authorName.slice(0, 1)}
-                        </div>
-                        <div className="min-w-0 flex-1 rounded-lg border bg-card p-3 shadow-sm">
-                          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-                            <span className="text-xs font-medium text-foreground">{comment.authorName}</span>
-                            <time className="text-xs text-muted-foreground">{new Date(comment.createdAt).toLocaleString("zh-CN")}</time>
+                    {comments.map((comment: TaskBoardComment) => {
+                      const purpose = comment.executionPurpose;
+                      const sessionHref = comment.sessionId
+                        ? `/chat/${encodeURIComponent(comment.sessionId)}`
+                        : null;
+                      return (
+                        <article key={comment.id} className="pb-6 last:pb-0">
+                          <div className={`min-w-0 rounded-lg border p-3 shadow-sm ${comment.authorType === "user" ? "rounded-2xl rounded-tr-md border-transparent bg-user-bubble text-foreground ring-1 ring-[rgba(232,132,58,0.22)] shadow-[0_1px_2px_rgba(232,132,58,0.10),0_4px_12px_-4px_rgba(232,132,58,0.20)]" : "bg-card"}`}>
+                            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                              <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs font-medium text-foreground">
+                                {comment.authorType === "agent" ? (
+                                  <span>
+                                    Agent{purpose ? "（" : ""}
+                                    {purpose ? <span className={`ml-0.5 inline-flex rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none ${EXECUTION_PURPOSE_CLASSES[purpose]}`}>{EXECUTION_PURPOSE_LABELS[purpose]}</span> : null}
+                                    {purpose ? "）" : ""}
+                                  </span>
+                                ) : comment.authorType === "system" ? "系统" : comment.authorName}
+                                {sessionHref ? (
+                                  <a
+                                    href={sessionHref}
+                                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/5"
+                                    aria-label="打开会话"
+                                    title="打开会话"
+                                  >
+                                    打开会话
+                                    <ExternalLink className="size-3" />
+                                  </a>
+                                ) : null}
+                              </div>
+                              <time className="text-xs text-muted-foreground">{new Date(comment.createdAt).toLocaleString("zh-CN")}</time>
+                            </div>
+                            {comment.body ? <TaskCommentMarkdown body={comment.body} /> : null}
+                            <TaskAttachmentList attachments={comment.attachments ?? []} />
                           </div>
-                          {comment.body ? <TaskCommentMarkdown body={comment.body} /> : null}
-                          <TaskAttachmentList attachments={comment.attachments ?? []} />
-                        </div>
-                      </article>
-                    ))}
+                        </article>
+                      );
+                    })}
                   </div>
                   {!commentsLoading && comments.length === 0 ? (
                     <div className="flex min-h-40 items-center justify-center rounded-lg border border-dashed bg-background text-sm text-muted-foreground">

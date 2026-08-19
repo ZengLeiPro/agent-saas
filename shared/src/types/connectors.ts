@@ -10,6 +10,23 @@ export interface GithubConnectionResponse {
   connection: GithubConnection;
 }
 
+export interface XConnection {
+  connectorId: 'x';
+  status: 'connected' | 'disconnected';
+  runtimeEnabled: boolean;
+  connectedAt?: string;
+  updatedAt?: string;
+}
+
+export interface XConnectionResponse {
+  connection: XConnection;
+}
+
+export interface XConnectInput {
+  authToken: string;
+  ct0: string;
+}
+
 export type ConnectorAuthSessionStatus =
   | 'starting'
   | 'awaiting_user'

@@ -2,6 +2,7 @@ import type { ConnectorConnectionStore } from './connectionStore.js';
 
 export const NATIVE_RUNTIME_CONNECTOR_IDS = [
   'github',
+  'x',
   'dws',
   'feishu',
   'notion',
@@ -54,6 +55,12 @@ export function applyNativeConnectorRuntimeState(
   if (!store.isRuntimeEnabled(identity.username, 'github')) {
     delete env.GH_TOKEN;
     delete env.GITHUB_TOKEN;
+  }
+  if (!store.isRuntimeEnabled(identity.username, 'x')) {
+    delete env.AUTH_TOKEN;
+    delete env.CT0;
+    delete env.TWITTER_AUTH_TOKEN;
+    delete env.TWITTER_CT0;
   }
   if (!store.isRuntimeEnabled(identity.username, 'notion')) delete env.NOTION_API_TOKEN;
   if (!store.isRuntimeEnabled(identity.username, 'google-workspace')) delete env.GOOGLE_WORKSPACE_CLI_TOKEN;

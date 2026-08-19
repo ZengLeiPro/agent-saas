@@ -3,6 +3,8 @@ import type {
   AliyunConnectInput,
   AliyunConnectionResponse,
   GithubConnectionResponse,
+  XConnectInput,
+  XConnectionResponse,
   GoogleWorkspaceConnectionResponse,
   GoogleWorkspaceOAuthStartResponse,
   NotionAuthSessionResponse,
@@ -18,7 +20,7 @@ async function jsonOrError<T>(res: Response, fallback: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export type NativeRuntimeConnectorId = 'github' | 'dws' | 'feishu' | 'notion' | 'google-workspace' | 'aliyun';
+export type NativeRuntimeConnectorId = 'github' | 'x' | 'dws' | 'feishu' | 'notion' | 'google-workspace' | 'aliyun';
 
 export async function setNativeConnectorRuntimeEnabled(
   connectorId: NativeRuntimeConnectorId,
@@ -49,6 +51,22 @@ export async function connectGithub(input: {
 export async function disconnectGithub(): Promise<GithubConnectionResponse> {
   const res = await authFetch('/api/connectors/github', { method: 'DELETE' });
   return jsonOrError(res, 'GitHub 断开失败');
+}
+
+export async function fetchXConnection(): Promise<XConnectionResponse> {
+  return jsonOrError(await authFetch('/api/connectors/x'), '读取 X 连接失败');
+}
+
+export async function connectX(input: XConnectInput): Promise<XConnectionResponse> {
+  return jsonOrError(await authFetch('/api/connectors/x', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  }), 'X 连接失败');
+}
+
+export async function disconnectX(): Promise<XConnectionResponse> {
+  return jsonOrError(await authFetch('/api/connectors/x', { method: 'DELETE' }), 'X 断开失败');
 }
 
 export async function fetchNotionConnection(): Promise<NotionConnectionResponse> {

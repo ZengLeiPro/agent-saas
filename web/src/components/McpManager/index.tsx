@@ -60,6 +60,7 @@ import {
   useFeishuConnections,
 } from "@/components/CapabilityCenter/FeishuConnector";
 import { GithubConnector } from "@/components/CapabilityCenter/GithubConnector";
+import { XConnector } from "@/components/CapabilityCenter/XConnector";
 import {
   NotionConnectorCard,
   NotionConnectorDrawer,
@@ -176,6 +177,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   const [pendingServerId, setPendingServerId] = useState<string | null>(null);
   // 原生连接器与 MCP 同 grid 展示，但账号和凭据数据流独立。
   const [githubConnected, setGithubConnected] = useState(false);
+  const [xConnected, setXConnected] = useState(false);
   const dws = useDwsConnections(mode === "personal");
   const feishu = useFeishuConnections(mode === "personal");
   const notion = useNotionConnector(mode === "personal");
@@ -492,23 +494,30 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
       return matchesFilter && matchesQuery;
     });
   }, [activeFilter, connectorServers, query]);
-  // 六个官方 CLI 原生连接器计入「全部 / 已启用 / 平台提供」的计数。
+  // 七个原生 CLI 连接器计入「全部 / 已启用 / 平台提供」的计数。
   const notionConnected = notion.connection?.status === "connected" && notion.connection.runtimeEnabled;
   const googleWorkspaceConnected = googleWorkspace.connection?.status === "connected" && googleWorkspace.connection.runtimeEnabled;
   const aliyunConnected = aliyun.connection.status === "connected" && aliyun.connection.runtimeEnabled;
   const connectorFilters = useMemo(() => [
-    { value: "all" as const, label: "全部", count: connectorServers.length + 6 },
-    { value: "enabled" as const, label: "已启用", count: enabledCount + (githubConnected ? 1 : 0) + (dws.hasConnected && dws.runtimeEnabled ? 1 : 0) + (feishu.hasConnected && feishu.runtimeEnabled ? 1 : 0) + (notionConnected ? 1 : 0) + (googleWorkspaceConnected ? 1 : 0) + (aliyunConnected ? 1 : 0) },
-    { value: "platform" as const, label: "平台提供", count: connectorServers.filter((server) => connectorSource(server) === "platform").length + 6 },
+    { value: "all" as const, label: "全部", count: connectorServers.length + 7 },
+    { value: "enabled" as const, label: "已启用", count: enabledCount + (githubConnected ? 1 : 0) + (xConnected ? 1 : 0) + (dws.hasConnected && dws.runtimeEnabled ? 1 : 0) + (feishu.hasConnected && feishu.runtimeEnabled ? 1 : 0) + (notionConnected ? 1 : 0) + (googleWorkspaceConnected ? 1 : 0) + (aliyunConnected ? 1 : 0) },
+    { value: "platform" as const, label: "平台提供", count: connectorServers.filter((server) => connectorSource(server) === "platform").length + 7 },
     { value: "organization" as const, label: "组织提供", count: connectorServers.filter((server) => connectorSource(server) === "organization").length },
     { value: "personal" as const, label: "我创建的", count: connectorServers.filter((server) => connectorSource(server) === "personal").length },
-  ], [aliyunConnected, connectorServers, dws.hasConnected, dws.runtimeEnabled, enabledCount, feishu.hasConnected, feishu.runtimeEnabled, githubConnected, googleWorkspaceConnected, notionConnected]);
+  ], [aliyunConnected, connectorServers, dws.hasConnected, dws.runtimeEnabled, enabledCount, feishu.hasConnected, feishu.runtimeEnabled, githubConnected, googleWorkspaceConnected, notionConnected, xConnected]);
   const githubMatchesQuery = !query.trim()
     || "github git gh sdk 仓库 issue pull request".includes(query.trim().toLocaleLowerCase());
   const showGithubCard = githubMatchesQuery && (
     activeFilter === "all"
     || activeFilter === "platform"
     || (activeFilter === "enabled" && githubConnected)
+  );
+  const xMatchesQuery = !query.trim()
+    || "x twitter bird x.com tweet search mentions bookmarks replies thread".includes(query.trim().toLocaleLowerCase());
+  const showXCard = xMatchesQuery && (
+    activeFilter === "all"
+    || activeFilter === "platform"
+    || (activeFilter === "enabled" && xConnected)
   );
   const showDingtalkCard = dingtalkMatchesCatalog(query, activeFilter, dws);
   const showFeishuCard = feishuMatchesCatalog(query, activeFilter, feishu);
@@ -576,7 +585,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
 
         <div className={cn("min-h-0 flex-1 pb-2", !embedded && "overflow-auto")}>
           {error ? <div className="mb-4 rounded-xl border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
-          {filteredServers.length === 0 && !showGithubCard && !showDingtalkCard && !showFeishuCard && !showNotionCard && !showGoogleWorkspaceCard && !showAliyunCard ? (
+          {filteredServers.length === 0 && !showGithubCard && !showXCard && !showDingtalkCard && !showFeishuCard && !showNotionCard && !showGoogleWorkspaceCard && !showAliyunCard ? (
             <div className={cn("px-6 py-12 text-center text-sm text-muted-foreground", CAPABILITY_EMPTY_SURFACE)}>
               没有找到匹配的连接器
             </div>
@@ -584,6 +593,9 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {showGithubCard ? (
                 <GithubConnector onConnectionChange={setGithubConnected} />
+              ) : null}
+              {showXCard ? (
+                <XConnector onConnectionChange={setXConnected} />
               ) : null}
               {showDingtalkCard ? (
                 <DingtalkConnectorCard dws={dws} onOpenDetail={() => setDingtalkDetailOpen(true)} />

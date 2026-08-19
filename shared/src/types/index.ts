@@ -58,6 +58,9 @@ export type { SessionGroup, SessionListEntry } from "./sessionGroup";
 export type {
   GithubConnection,
   GithubConnectionResponse,
+  XConnection,
+  XConnectionResponse,
+  XConnectInput,
   ConnectorAuthSessionStatus,
   ConnectorAuthSession,
   NotionConnectionStatus,

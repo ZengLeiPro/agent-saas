@@ -37,6 +37,7 @@ import { McpConfigStore } from '../data/mcpConfig.js';
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import { AliyunConnectorService, revokePendingAliyunCredentials } from '../connectors/aliyun.js';
 import { GITHUB_CONNECTOR_ID, resolveGithubRuntimeEnv, revokePendingGithubCredentials } from '../connectors/github.js';
+import { resolveXRuntimeEnv, revokePendingXCredentials } from '../connectors/x.js';
 import { applyNativeConnectorRuntimeState } from '../connectors/runtimeState.js';
 import { GoogleWorkspaceOAuthService, PgGoogleWorkspaceOAuthStateStore, resolveGoogleWorkspaceRuntimeEnv } from '../connectors/googleWorkspace.js';
 import { connectNotionCredential, disconnectNotion, getLiveNotionConnection, resolveNotionRuntimeEnv, type NotionConnectionView } from '../connectors/notion.js';
@@ -175,6 +176,11 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
     connectionStore: connectorConnectionStore,
     vault: secretVault,
     onError: error => serverLogger.warn(`Pending GitHub credential revoke skipped: ${error.message}`),
+  });
+  await revokePendingXCredentials({
+    connectionStore: connectorConnectionStore,
+    vault: secretVault,
+    onError: error => serverLogger.warn(`Pending X credential revoke skipped: ${error.message}`),
   });
   await revokePendingAliyunCredentials({
     connectionStore: connectorConnectionStore,
@@ -548,6 +554,7 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
   });
   const legacyNativeMcpIds = new Set([
     'github',
+    'x',
     'notion',
     'google_gmail',
     'google_drive',
@@ -836,12 +843,19 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       : (!userStore ? context : undefined);
     if (!ownedContext) return {};
 
-    const [githubEnv, notionEnv, googleWorkspaceEnv, aliyunEnv, dwsEnv, feishuEnv, mcpConnectorEnv] = await Promise.all([
+    const [githubEnv, xEnv, notionEnv, googleWorkspaceEnv, aliyunEnv, dwsEnv, feishuEnv, mcpConnectorEnv] = await Promise.all([
       resolveGithubRuntimeEnv({
         connectionStore: connectorConnectionStore,
         vault: secretVault,
         onError: error => serverLogger.warn(
           `Native connector runtime env skipped: connector=${GITHUB_CONNECTOR_ID} reason=${error.message}`,
+        ),
+      }, ownedContext),
+      resolveXRuntimeEnv({
+        connectionStore: connectorConnectionStore,
+        vault: secretVault,
+        onError: error => serverLogger.warn(
+          `Native connector runtime env skipped: connector=x reason=${error.message}`,
         ),
       }, ownedContext),
       resolveNotionRuntimeEnv({
@@ -885,6 +899,7 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       ...feishuEnv,
       ...googleWorkspaceEnv,
       ...notionEnv,
+      ...xEnv,
       ...githubEnv,
       ...(tenantRunEnvByTenant?.get(context.tenantId) ?? {}),
     });

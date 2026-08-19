@@ -31,6 +31,7 @@ interface BoardToolbarProps {
   search: string;
   desktopStatus: TaskBoardStatus | "all";
   priority: TaskBoardPriority | "all";
+  archivedCount: number;
   message?: string | null;
   onBoardChange: (id: string) => void;
   onCreateBoard: () => void;
@@ -40,6 +41,7 @@ interface BoardToolbarProps {
   onSearchChange: (value: string) => void;
   onDesktopStatusChange: (value: TaskBoardStatus | "all") => void;
   onPriorityChange: (value: TaskBoardPriority | "all") => void;
+  onOpenArchivedTasks: () => void;
 }
 
 export function BoardToolbar({
@@ -48,6 +50,7 @@ export function BoardToolbar({
   search,
   desktopStatus,
   priority,
+  archivedCount,
   message,
   onBoardChange,
   onCreateBoard,
@@ -57,6 +60,7 @@ export function BoardToolbar({
   onSearchChange,
   onDesktopStatusChange,
   onPriorityChange,
+  onOpenArchivedTasks,
 }: BoardToolbarProps) {
   const readOnly = !!board.archivedAt;
   const canOpenSettings = boardAllows(board, "board.update")
@@ -141,6 +145,18 @@ export function BoardToolbar({
             </SelectContent>
           </Select>
         </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="shrink-0"
+          aria-label={`查看已归档任务（${archivedCount}）`}
+          title="查看已归档任务"
+          onClick={onOpenArchivedTasks}
+        >
+          <Archive className="size-4" />
+          归档
+          <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{archivedCount}</span>
+        </Button>
       </div>
       {readOnly ? (
         <div role="status" className="rounded-lg border border-amber-300/50 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">

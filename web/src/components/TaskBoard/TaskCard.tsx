@@ -116,15 +116,6 @@ export function TaskCard({
             {task.reviewedSubjectDigest ? <span className="ml-2 text-emerald-700 dark:text-emerald-400">已复核</span> : <span className="ml-2 text-amber-700 dark:text-amber-300">待复核</span>}
           </div>
         ) : null}
-        {task.labels.length ? (
-          <div className="mt-2 flex flex-wrap gap-1">
-            {task.labels.slice(0, 4).map((label) => (
-              <Badge key={label} variant="secondary" className="max-w-24 truncate font-normal">
-                {label}
-              </Badge>
-            ))}
-          </div>
-        ) : null}
         {kind === "integration" ? (
           task.workflowVersion === 3
             ? <IntegrationCandidateCardSummary taskId={task.id} />

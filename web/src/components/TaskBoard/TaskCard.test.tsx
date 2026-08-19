@@ -56,6 +56,12 @@ describe("TaskCard", () => {
     expect(screen.queryByText("无")).toBeNull();
   });
 
+  it("不展示 Agent 写入的无用标签", () => {
+    renderCard(task({ labels: ["Agent 自动标签"] }));
+
+    expect(screen.queryByText("Agent 自动标签")).toBeNull();
+  });
+
   it("按 integration task workflowVersion 分流 v2/v3 卡片摘要", () => {
     renderCard(task({ kind: "integration", workflowVersion: 3 }));
     expect(screen.getByText("v3 Candidate summary")).toBeTruthy();

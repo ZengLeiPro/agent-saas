@@ -2,7 +2,9 @@ import { useEffect, useState, type FormEvent } from "react";
 import {
   TASKBOARD_PRIORITIES,
   type ModelList,
+  type TaskBoardExecutionPurpose,
   type TaskBoardPriority,
+  type TaskBoardStageModels,
   type TaskBoardStatus,
   type TaskBoardTaskCreateInput,
 } from "@agent/shared";
@@ -29,10 +31,12 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { PRIORITY_LABELS, STATUS_LABELS } from "./constants";
+import { EXECUTION_PURPOSE_LABELS } from "./TaskDetailComments";
 import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, toTaskBoardAttachments } from "./TaskAttachments";
 
 const CREATE_TASK_STATUSES = ["backlog", "todo", "in_progress"] as const satisfies readonly TaskBoardStatus[];
+const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review", "merge"];
 
 function createClientRequestId(): string {
   return `task-dialog-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -58,12 +62,11 @@ export function TaskDialog({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<Extract<TaskBoardTaskKind, "delivery" | "advisory">>("delivery");
-  const [branch, setBranch] = useState("");
   const [status, setStatus] = useState<TaskBoardStatus>("backlog");
   const [priority, setPriority] = useState<TaskBoardPriority>("none");
   const [dispatch, setDispatch] = useState(false);
   const [clientRequestId, setClientRequestId] = useState("");
-  const [model, setModel] = useState<string | null>(null);
+  const [stageModels, setStageModels] = useState<TaskBoardStageModels>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const attachments = useFileUpload("taskboard");
@@ -73,14 +76,13 @@ export function TaskDialog({
     setTitle("");
     setDescription("");
     setKind("delivery");
-    setBranch("");
     setStatus(CREATE_TASK_STATUSES.includes(initialStatus as (typeof CREATE_TASK_STATUSES)[number])
       ? initialStatus
       : "backlog");
     setPriority("none");
     setDispatch(false);
     setClientRequestId(createClientRequestId());
-    setModel(null);
+    setStageModels({});
     setError(null);
     attachments.clearFiles();
   }, [attachments.clearFiles, initialStatus, open]);
@@ -107,7 +109,6 @@ export function TaskDialog({
         title: normalizedTitle,
         description: description.trim(),
         kind,
-        ...(kind === "delivery" && branch.trim() ? { branch: branch.trim() } : {}),
         ...(attachments.uploadedFiles.length
           ? { attachments: toTaskBoardAttachments(attachments.uploadedFiles) }
           : {}),
@@ -115,7 +116,7 @@ export function TaskDialog({
         priority,
         ...(clientRequestId ? { clientRequestId } : {}),
         ...(status === "in_progress" && dispatch ? { dispatch: true } : {}),
-        ...(model ? { model } : {}),
+        ...(Object.keys(stageModels).length ? { stageModels } : {}),
       });
       onOpenChange(false);
     } catch (caught) {
@@ -144,9 +145,7 @@ export function TaskDialog({
             <Select
               value={kind}
               onValueChange={(value) => {
-                const nextKind = value as Extract<TaskBoardTaskKind, "delivery" | "advisory">;
-                setKind(nextKind);
-                if (nextKind === "advisory") setBranch("");
+                setKind(value as Extract<TaskBoardTaskKind, "delivery" | "advisory">);
               }}
               disabled={submitting}
             >
@@ -183,23 +182,6 @@ export function TaskDialog({
             />
             <TaskAttachmentField upload={attachments} disabled={submitting} />
           </div>
-          {kind === "delivery" ? (
-            <div className="space-y-2">
-              <Label htmlFor="taskboard-task-branch">工作分支</Label>
-              <Input
-                id="taskboard-task-branch"
-                value={branch}
-                onChange={(event) => setBranch(event.target.value)}
-                placeholder="例如 task/TASK-32-optimize-board"
-                disabled={submitting}
-              />
-              <p className="text-xs text-muted-foreground">可先留空，由 Agent 创建或确认分支后回写。</p>
-            </div>
-          ) : (
-            <p className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
-              答复与分析任务不会创建分支、PR、复核或集成。
-            </p>
-          )}
           {kind === "delivery" && /仅回答|不实施|无需修改/.test(description) ? (
             <p role="alert" className="text-xs text-amber-700">正文看起来要求不实施；请确认是否应选择“答复与分析”。</p>
           ) : null}
@@ -250,17 +232,31 @@ export function TaskDialog({
               </Select>
             </div>
           </div>
-          <div className="space-y-2">
-            <Label>运行模型</Label>
-            <ModelSelect
-              modelList={modelList}
-              value={model}
-              onChange={setModel}
-              inheritLabel="继承看板默认模型"
-              ariaLabel="任务运行模型"
-              disabled={submitting}
-            />
-          </div>
+          <section aria-label="分阶段运行模型" className="space-y-3 rounded-lg border bg-muted/20 p-3">
+            <h3 className="text-sm font-medium">运行模型</h3>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {TASK_MODEL_PURPOSES.map((purpose) => (
+                <div className="space-y-2" key={purpose}>
+                  <Label>{EXECUTION_PURPOSE_LABELS[purpose]}</Label>
+                  <ModelSelect
+                    modelList={modelList}
+                    value={stageModels[purpose] ?? null}
+                    onChange={(next) => {
+                      setStageModels((current) => {
+                        const updated = { ...current };
+                        if (next) updated[purpose] = next;
+                        else delete updated[purpose];
+                        return updated;
+                      });
+                    }}
+                    inheritLabel="继承看板对应阶段模型"
+                    ariaLabel={`${EXECUTION_PURPOSE_LABELS[purpose]}运行模型`}
+                    disabled={submitting}
+                  />
+                </div>
+              ))}
+            </div>
+          </section>
           {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
         </form>
         <DialogFooter>

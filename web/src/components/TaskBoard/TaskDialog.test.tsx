@@ -21,7 +21,7 @@ describe("TaskDialog 交互", () => {
     mocks.authFetch.mockReset();
   });
 
-  it("下拉选项浮在弹窗之上，连续选择状态与优先级后可提交", async () => {
+  it("下拉选项浮在弹窗之上，连续选择状态、优先级与三阶段模型后可提交", async () => {
     const user = userEvent.setup();
     const onCreate = vi.fn(async () => undefined);
     render(
@@ -34,22 +34,27 @@ describe("TaskDialog 交互", () => {
     );
 
     await user.type(screen.getByRole("textbox", { name: "标题" }), "修复任务看板交互");
-    await user.type(screen.getByRole("textbox", { name: "工作分支" }), "task/TASK-32-board");
+    expect(screen.queryByRole("textbox", { name: "工作分支" })).toBeNull();
     await user.click(screen.getByRole("combobox", { name: "新任务状态" }));
     expect(screen.getByRole("listbox").className).toContain("z-[110]");
     await user.click(screen.getByRole("option", { name: "待实施" }));
     await user.click(screen.getByRole("combobox", { name: "新任务优先级" }));
     await user.click(screen.getByRole("option", { name: "紧急" }));
-    await user.click(screen.getByRole("combobox", { name: "任务运行模型" }));
-    await user.click(screen.getByRole("option", { name: "模型 B" }));
+    for (const purpose of ["实施阶段", "复核阶段", "集成阶段"]) {
+      await user.click(screen.getByRole("combobox", { name: `${purpose}运行模型` }));
+      await user.click(screen.getByRole("option", { name: "模型 B" }));
+    }
     await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
       title: "修复任务看板交互",
-      branch: "task/TASK-32-board",
       status: "todo",
       priority: "urgent",
-      model: "group-a/model-b",
+      stageModels: {
+        work: "group-a/model-b",
+        review: "group-a/model-b",
+        merge: "group-a/model-b",
+      },
     })));
   });
 

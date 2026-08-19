@@ -2,7 +2,7 @@ import type { ComponentProps } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ModelList, TaskBoardExecution, TaskBoardTask } from "@agent/shared";
+import type { ModelList, TaskBoardComment, TaskBoardExecution, TaskBoardTask } from "@agent/shared";
 import { TaskBoardConflictError } from "./api";
 import { TaskDetail } from "./TaskDetail";
 
@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   fetchIntegrationSources: vi.fn(),
   addComment: vi.fn(),
   refreshComments: vi.fn(async () => undefined),
+  comments: [] as TaskBoardComment[],
   executions: [] as TaskBoardExecution[],
   refreshExecutions: vi.fn(async () => undefined),
   authFetch: vi.fn(),
@@ -33,7 +34,7 @@ vi.mock("./api", async (importOriginal) => {
 
 vi.mock("./hooks", () => ({
   useTaskComments: () => ({
-    comments: [],
+    comments: mocks.comments,
     loading: false,
     error: null,
     refresh: mocks.refreshComments,
@@ -107,10 +108,43 @@ function props(overrides: Partial<ComponentProps<typeof TaskDetail>> = {}) {
 describe("TaskDetail 草稿隔离", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.comments = [];
     mocks.executions = [];
     mocks.fetchTask.mockImplementation(async (id: string) => id === taskOne.id ? taskOne : taskTwo);
     mocks.fetchIntegrationSources.mockResolvedValue([]);
     mocks.addComment.mockResolvedValue(undefined);
+  });
+
+  it("桌面任务详情使用等宽双栏并保持两栏独立滚动", async () => {
+    render(<TaskDetail {...props()} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+
+    expect(screen.getByRole("dialog").className).toContain("sm:max-w-[95vw]");
+    expect(screen.getByTestId("task-detail-columns").className).toContain("lg:grid-cols-2");
+    expect(screen.getByTestId("task-detail-information").className).toContain("overflow-y-auto");
+    expect(screen.getByRole("region", { name: "任务评论" }).className).toContain("flex-col");
+  });
+
+  it("评论按 Markdown 渲染并安全打开外部链接", async () => {
+    mocks.comments = [{
+      id: "comment-markdown",
+      taskId: taskOne.id,
+      body: "## 进展\n\n已完成 **双栏布局**，详见 [说明](https://example.com/docs)。",
+      authorType: "agent",
+      authorId: "agent-1",
+      authorName: "麦迪文",
+      version: 1,
+      createdAt: "2026-08-19T00:30:00.000Z",
+      updatedAt: "2026-08-19T00:30:00.000Z",
+    }];
+
+    render(<TaskDetail {...props()} />);
+
+    expect(await screen.findByRole("heading", { name: "进展" })).toBeTruthy();
+    expect(screen.getByText("双栏布局").tagName).toBe("STRONG");
+    const link = screen.getByRole("link", { name: "说明" });
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toBe("noopener noreferrer");
   });
 
   it("改变状态不会重置未保存字段，切换任务会清空评论草稿", async () => {

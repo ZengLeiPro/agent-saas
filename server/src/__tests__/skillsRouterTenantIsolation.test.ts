@@ -19,6 +19,8 @@ import type { SkillConfigStore } from '../data/skills/store.js';
 import type { JwtPayload } from '../auth/types.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { SkillWorkspaceMaterializer } from '../workspace/materialization/materializer.js';
+import { computeSkillPackageFingerprint } from '../workspace/materialization/fingerprint.js';
+import { tenantSkillResourceId } from '../services/tenantSkillGovernanceUpload.js';
 import { SkillMaterializationService } from '../workspace/materialization/service.js';
 import { InMemorySkillMaterializationStore } from '../workspace/materialization/store.js';
 
@@ -35,6 +37,7 @@ interface TestRig {
   poolDir: string;
   skillConfigStore: SkillConfigStore;
   userSkillsDir(username: string): string;
+  setTenantSkillHistoricalDigests(tenantId: string, skillId: string, digests: string[]): void;
   waitSync(res: Response): Promise<{
     total: number;
     tenantIds: string[];
@@ -258,11 +261,43 @@ async function makeTestRig(): Promise<TestRig> {
   let currentCaller: JwtPayload = PLATFORM_ADMIN;
   const skillConfigStore = fakeSkillConfigStore();
   const userStore = fakeUserStore();
+  const tenantSkillHistory = new Map<string, { tenantId: string; skillId: string; digests: string[] }>();
+  const skillGovernanceStore = {
+    getResource: async (resourceId: string) => {
+      const entry = tenantSkillHistory.get(resourceId);
+      if (!entry) return null;
+      return {
+        skillId: resourceId,
+        tenantId: entry.tenantId,
+        scope: 'tenant' as const,
+        status: 'published' as const,
+        revision: 1,
+        createdAt: '2026-08-19T00:00:00.000Z',
+        createdBy: 'test',
+        updatedAt: '2026-08-19T00:00:00.000Z',
+        updatedBy: 'test',
+      };
+    },
+    getVersion: async () => null,
+    listVersions: async (resourceId: string) => (tenantSkillHistory.get(resourceId)?.digests ?? []).map((contentDigest, index) => ({
+      versionId: `${resourceId}-v${index + 1}`,
+      skillId: resourceId,
+      versionNumber: index + 1,
+      definition: { contentDigest },
+      digest: `digest-${index + 1}`,
+      publishedAt: '2026-08-19T00:00:00.000Z',
+      publishedBy: 'test',
+    })),
+  };
+  const resolveTenantSkillHistoricalDigests = async (tenantId: string, skillId: string) => (
+    tenantSkillHistory.get(tenantSkillResourceId(tenantId, skillId))?.digests ?? []
+  );
   const materializer = new SkillWorkspaceMaterializer({
     sharedDir,
     sourceRevision: 'test-release',
     tenantSkillsRootDir,
     skillConfigStore,
+    resolveTenantSkillHistoricalDigests,
   });
   const materializationStore = new InMemorySkillMaterializationStore();
   await materializationStore.init();
@@ -296,6 +331,7 @@ async function makeTestRig(): Promise<TestRig> {
       sharedDir,
       tenantSkillsRootDir,
       skillMaterialization,
+      skillGovernanceStore,
     }));
   // 跑 requireAdmin error 路径需要中间件链；这里整链已挂
   void requireAdmin;
@@ -314,6 +350,9 @@ async function makeTestRig(): Promise<TestRig> {
     userSkillsDir(username) {
       const user = userStore.findByUsername(username)!;
       return join(agentCwd, user.tenantId, user.id, '.ky-agent', 'skills');
+    },
+    setTenantSkillHistoricalDigests(tenantId, skillId, digests) {
+      tenantSkillHistory.set(tenantSkillResourceId(tenantId, skillId), { tenantId, skillId, digests });
     },
     setCaller(c) { currentCaller = c; },
     request: (path, init) => fetch(`${baseUrl}${path}`, init),
@@ -765,6 +804,47 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       });
       expect(selected.status).toBe(200);
       expect(h.skillConfigStore.getUserSelectedSkills('alice')).not.toContain('legacy-foreign');
+    });
+
+    it('残留外租户 Skill 的 v1、当前源已更新为 v2 时不可见、不可选、不可调用且可清理', async () => {
+      const sourceDir = join(h.tenantSkillsRootDir, 'wain', 'skills', 'legacy-foreign');
+      mkdirSync(sourceDir, { recursive: true });
+      writeFileSync(join(sourceDir, 'SKILL.md'), '---\nname: legacy-foreign\ndescription: foreign\n---\nforeign-v1');
+
+      const leakedDir = join(h.userSkillsDir('alice'), 'legacy-foreign');
+      mkdirSync(leakedDir, { recursive: true });
+      writeFileSync(join(leakedDir, 'SKILL.md'), '---\nname: legacy-foreign\ndescription: foreign\n---\nforeign-v1');
+      const legacyDigest = await computeSkillPackageFingerprint(leakedDir);
+      writeFileSync(join(sourceDir, 'SKILL.md'), '---\nname: legacy-foreign\ndescription: foreign\n---\nforeign-v2');
+      writeFileSync(join(h.userSkillsDir('alice'), '..', '.skills-version'), '1');
+      h.setTenantSkillHistoricalDigests('wain', 'legacy-foreign', [legacyDigest]);
+
+      h.setCaller(KAIYAN_USER);
+      const listed = await h.request('/api/skills/me');
+      expect(listed.status).toBe(200);
+      const body = await listed.json() as { customSkills: { id: string }[]; tenantSkills: { id: string }[] };
+      expect(body.customSkills.map(s => s.id)).not.toContain('legacy-foreign');
+      expect(body.tenantSkills.map(s => s.id)).not.toContain('legacy-foreign');
+
+      const selected = await h.request('/api/skills/me/selections', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedSkills: ['legacy-foreign'] }),
+      });
+      expect(selected.status).toBe(200);
+      expect(h.skillConfigStore.getUserSelectedSkills('alice')).not.toContain('legacy-foreign');
+
+      const singleSelection = await h.request('/api/skills/me/skills/legacy-foreign/selection', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: true, expectedVersion: 0 }),
+      });
+      expect(singleSelection.status).toBe(403);
+      expect((await h.request('/api/skills/me/skills/legacy-foreign/document')).status).toBe(400);
+
+      h.setCaller(PLATFORM_ADMIN);
+      await h.waitSync(await h.request('/api/skills/sync', { method: 'POST' }));
+      expect(existsSync(leakedDir)).toBe(false);
     });
 
     it('外租户后来创建同名组织 Skill 不影响既有个人 Skill', async () => {

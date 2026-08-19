@@ -151,6 +151,13 @@ export class PgSkillGovernanceStore {
     return result.rows[0] ? rowToVersion(result.rows[0]) : null;
   }
 
+  async listVersions(skillId: string): Promise<GovernedSkillVersion[]> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.versionsTable} WHERE skill_id=$1 ORDER BY version_number`, [skillId],
+    );
+    return result.rows.map(rowToVersion);
+  }
+
   async getCandidate(tenantId: string, candidateId: string): Promise<SkillCandidate | null> {
     const result = await this.options.pool.query(
       `SELECT * FROM ${this.candidatesTable} WHERE tenant_id=$1 AND candidate_id=$2`, [tenantId, candidateId],

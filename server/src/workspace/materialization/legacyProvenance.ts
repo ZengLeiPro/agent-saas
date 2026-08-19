@@ -3,7 +3,10 @@ import { join } from 'node:path';
 
 import { resolveTenantSkillsDirFromRoot } from '../../data/tenants/tenantSkillsPath.js';
 import { agentPath } from '../namespace.js';
-import { computeDirectoryFingerprint } from './fingerprint.js';
+import {
+  computeDirectoryFingerprint,
+  computeSkillPackageFingerprint,
+} from './fingerprint.js';
 
 export interface LegacyTenantSkillDetectionInput {
   userCwd: string;
@@ -11,6 +14,11 @@ export interface LegacyTenantSkillDetectionInput {
   tenantsRootDir: string;
   currentTenantId?: string;
   poolSkillIds: ReadonlySet<string>;
+  /** 返回该租户 Skill 的所有可靠历史 contentDigest/fingerprint。 */
+  resolveTenantSkillHistoricalDigests?: (
+    tenantId: string,
+    skillId: string,
+  ) => Promise<readonly string[]>;
 }
 
 async function listDirectoryIds(root: string): Promise<Set<string>> {
@@ -43,9 +51,9 @@ async function hasLegacySkillsVersion(userCwd: string): Promise<boolean> {
 }
 
 /**
- * 迁移没有 skills-state.json 的旧 workspace 时，只把“用户副本内容与外租户源
- * 完全一致”的 ID 视为组织残留。绝不按跨租户同名 ID 推断，无法证明来源的目录
- * 保留为个人 Skill，避免迁移过程误伤同名个人 Skill。
+ * 迁移没有 skills-state.json 的旧 workspace 时，优先用当前源 fingerprint；源已更新时，
+ * 只有治理历史中明确包含用户副本 digest 才认定为组织残留。绝不按跨租户同名 ID
+ * 推断，无法证明来源的目录保留为个人 Skill，避免迁移过程误伤同名个人 Skill。
  */
 export async function detectLegacyTenantSkillIds(
   input: LegacyTenantSkillDetectionInput,
@@ -68,6 +76,7 @@ export async function detectLegacyTenantSkillIds(
   }
   if (userDigests.size === 0) return new Set();
 
+  const userPackageDigests = new Map<string, string>();
   const managed = new Set<string>();
   let tenantEntries;
   try {
@@ -92,12 +101,29 @@ export async function detectLegacyTenantSkillIds(
     }
     const sourceIds = await listDirectoryIds(tenantSkillsDir);
     for (const id of sourceIds) {
-      if (input.poolSkillIds.has(id) || !userDigests.has(id)) continue;
+      const userDigest = userDigests.get(id);
+      if (input.poolSkillIds.has(id) || !userDigest) continue;
       try {
         const sourceDigest = await computeDirectoryFingerprint(join(tenantSkillsDir, id));
-        if (sourceDigest === userDigests.get(id)) managed.add(id);
+        if (sourceDigest === userDigest) {
+          managed.add(id);
+          continue;
+        }
+
+        // 当前源可能已从 v1 更新为 v2；只有治理历史中明确记录了用户副本
+        // 的 digest，才允许把不再等于当前源的旧副本认定为组织残留。
+        if (!input.resolveTenantSkillHistoricalDigests) continue;
+        let packageDigest = userPackageDigests.get(id);
+        if (!packageDigest) {
+          packageDigest = await computeSkillPackageFingerprint(join(input.userSkillsDir, id));
+          userPackageDigests.set(id, packageDigest);
+        }
+        const historicalDigests = await input.resolveTenantSkillHistoricalDigests(tenantEntry.name, id);
+        if (historicalDigests.includes(userDigest) || historicalDigests.includes(packageDigest)) {
+          managed.add(id);
+        }
       } catch {
-        // 源目录不完整或含软链接时不作 ownership 推断。
+        // 源目录不完整、含软链接或治理历史不可读时不作 ownership 推断。
       }
     }
   }

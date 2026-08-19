@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SkillConfigStore } from '../data/skills/store.js';
 import { resolveUserCwd, type WorkspaceUser } from '../workspace/resolver.js';
 import { SkillWorkspaceMaterializer } from '../workspace/materialization/materializer.js';
+import { computeSkillPackageFingerprint } from '../workspace/materialization/fingerprint.js';
 import { readSkillManifest } from '../workspace/materialization/manifest.js';
 import { SkillMaterializationService } from '../workspace/materialization/service.js';
 import { InMemorySkillMaterializationStore } from '../workspace/materialization/store.js';
@@ -162,6 +163,35 @@ describe('技能异步增量物化', () => {
     expect(await readSkillManifest(userCwd)).toMatchObject({
       skills: { alpha: { source: 'pool' } },
     });
+  });
+
+  it('旧副本是外租户 Skill 的 v1、当前源已更新为 v2 时仍按治理历史清理', async () => {
+    createSkill(poolDir, 'alpha', 'alpha');
+    const sourceDir = join(sharedDir, 'tenants', 'tenant-b', 'skills');
+    const userSkillDir = join(userCwd, '.ky-agent', 'skills');
+    createSkill(sourceDir, 'legacy-foreign', 'foreign-v1');
+    createSkill(userSkillDir, 'legacy-foreign', 'foreign-v1');
+    const legacyDigest = await computeSkillPackageFingerprint(join(userSkillDir, 'legacy-foreign'));
+    writeFileSync(
+      join(sourceDir, 'legacy-foreign', 'SKILL.md'),
+      '---\nname: legacy-foreign\ndescription: legacy-foreign\n---\nforeign-v2\n',
+    );
+    writeFileSync(join(userCwd, '.ky-agent', '.skills-version'), '1');
+    const config = fakeStore(['alpha']);
+    const materializer = new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      skillConfigStore: config.store,
+      resolveTenantSkillHistoricalDigests: async (tenantId, skillId) => (
+        tenantId === 'tenant-b' && skillId === 'legacy-foreign' ? [legacyDigest] : []
+      ),
+    });
+
+    const result = await materializer.materialize({ taskId: 'task-legacy-updated-source', user, userCwd });
+
+    expect(result.removedSkills).toBe(1);
+    expect(() => readFileSync(join(userSkillDir, 'legacy-foreign', 'SKILL.md'), 'utf-8'))
+      .toThrow();
   });
 
   it('旧 .skills-version 状态不按同名误伤既有个人 Skill', async () => {

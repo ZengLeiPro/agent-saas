@@ -73,6 +73,12 @@ function buildPool() {
       const row = versions.find(item => item.skill_id === params[0] && item.digest === params[1]);
       return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
     }
+    if (sql.includes('FROM test_governed_skill_versions') && sql.includes('ORDER BY version_number')) {
+      const rows = versions
+        .filter(item => item.skill_id === params[0])
+        .sort((a, b) => Number(a.version_number) - Number(b.version_number));
+      return { rows, rowCount: rows.length };
+    }
     if (sql.includes('MAX(version_number)')) {
       const max = versions.filter(item => item.skill_id === params[0]).reduce((n, item) => Math.max(n, Number(item.version_number)), 0);
       return { rows: [{ next_version: String(max + 1) }], rowCount: 1 };
@@ -160,6 +166,9 @@ describe('Governed Skill + Candidate 发布链', () => {
     });
     expect(resources.get('uploaded-skill')).toMatchObject({ status: 'published', current_version_id: expect.any(String) });
     expect(versions).toHaveLength(1);
+    await expect(store.listVersions('uploaded-skill')).resolves.toMatchObject([
+      { skillId: 'uploaded-skill', versionNumber: 1 },
+    ]);
     expect(queries.filter(query => query === 'BEGIN')).toHaveLength(1);
     expect(queries.filter(query => query === 'COMMIT')).toHaveLength(1);
   });

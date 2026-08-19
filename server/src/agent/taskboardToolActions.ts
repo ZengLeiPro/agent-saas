@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { cleanupTaskboardAttachments, materializeTaskboardAttachments, resolveTaskboardAttachments } from './taskboardAttachmentActions.js';
+import { appendTaskboardAttachments, cleanupTaskboardAttachments, materializeTaskboardAttachments, resolveTaskboardAttachments } from './taskboardAttachmentActions.js';
 
 import type {
   TaskBoardContextReceipt,
@@ -243,7 +243,7 @@ export async function invokeTaskboardAction(
       const scopedAttachments = await materializeTaskboardAttachments(
         options, identity, current.id, ownerUserId, attachments,
       );
-      const patch = taskPatch(input, scopedAttachments);
+      const patch = taskPatch(input, appendTaskboardAttachments(current.attachments, scopedAttachments));
       try {
         await markTaskboardAttachments(options, identity, attachments, scope);
         const task = await service.updateTask(identity, taskId, {
@@ -440,7 +440,9 @@ export async function invokeTaskboardAction(
       if (scope.execution) return createExecutionTask(options, identity, input, scope.execution, scope);
       return createLegacyTask(options, service, options.executionService?.(), identity, input, scope);
     case 'update':
-      if (scope.execution) return updateExecutionTask(options, identity, input, scope.execution);
+      if (scope.execution && input.attachments === undefined) {
+        return updateExecutionTask(options, identity, input, scope.execution);
+      }
       return updateLegacyTask(options, service, identity, input, scope);
     case 'move':
       return moveLegacyTask(service, options, identity, input, scope.execution);
@@ -511,11 +513,11 @@ function assertExecutionScope(
       }
       return;
     case 'update': {
-      const changed = ['title', 'description', 'attachments', 'priority', 'labels', 'dueAt', 'model']
+      const changed = ['title', 'description', 'priority', 'labels', 'dueAt', 'model']
         .some((field) => input[field as keyof TaskboardManageInput] !== undefined);
-      if (currentTask.kind === 'advisory'
-        || context.execution.purpose !== 'work' || input.id !== currentTask.id || input.branch === undefined || changed) {
-        throw new Error('看板 Agent 只能回写当前任务的 branch 字段，且须符合当前工作流能力');
+      if (currentTask.kind === 'advisory' || context.execution.purpose !== 'work'
+        || input.id !== currentTask.id || (input.branch === undefined && input.attachments === undefined) || changed) {
+        throw new Error('看板 Agent 只能回写当前任务的 branch 或追加附件，且须符合当前工作流能力');
       }
       return;
     }
@@ -773,6 +775,7 @@ async function createExecutionTask(
   const ownerUserId = attachments?.length
     ? (await service.getBoard(identity, execution.task.boardId)).ownerUserId
     : undefined;
+  await markTaskboardAttachments(options, identity, attachments, scope);
   let task = await executionStore.createTaskFromExecution(identity, execution.execution.runId, {
     title: requireField(input.title, 'title'),
     kind,
@@ -786,14 +789,9 @@ async function createExecutionTask(
     ...(typeof input.model === 'string' ? { model: input.model } : {}),
     clientRequestId: taskboardCreateRequestId(input, { execution }),
   });
+  let scopedAttachments: TaskBoardUploadAttachment[] | undefined;
   try {
-    const scopedAttachments = await materializeTaskboardAttachments(
-      options,
-      identity,
-      task.id,
-      ownerUserId,
-      attachments,
-    );
+    scopedAttachments = await materializeTaskboardAttachments(options, identity, task.id, ownerUserId, attachments);
     if (scopedAttachments) {
       task = await service.updateTask(identity, task.id, {
         attachments: scopedAttachments,
@@ -801,9 +799,8 @@ async function createExecutionTask(
       });
     }
   } catch (error) {
-    await rollbackCreatedTask(service, identity, task, error);
+    await rollbackCreatedTask(service, identity, task, error, () => cleanupTaskboardAttachments(options, identity, task.id, ownerUserId, scopedAttachments));
   }
-  await markTaskboardAttachments(options, identity, attachments, scope);
   if (kind === 'remediation' && input.sourceId) {
     if (!service.linkIntegrationRemediationV2) {
       throw new Error('任务看板 remediation 关联服务未启用');
@@ -864,17 +861,17 @@ async function updateLegacyTask(
   const taskId = requireField(input.id, 'id');
   const current = await service.getTask(identity, taskId);
   const attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
-  const scopedAttachments = await materializeTaskboardAttachments(
-    options,
-    identity,
-    current.id,
-    (await service.getBoard(identity, current.boardId)).ownerUserId,
-    attachments,
-  );
-  const patch = taskPatch(input, scopedAttachments);
-  const task = await service.updateTask(identity, taskId, { ...patch, expectedVersion: current.version });
-  await markTaskboardAttachments(options, identity, attachments, scope);
-  return { updated: true, task };
+  const ownerUserId = (await service.getBoard(identity, current.boardId)).ownerUserId;
+  const scopedAttachments = await materializeTaskboardAttachments(options, identity, current.id, ownerUserId, attachments);
+  try {
+    await markTaskboardAttachments(options, identity, attachments, scope);
+    const patch = taskPatch(input, appendTaskboardAttachments(current.attachments, scopedAttachments));
+    const task = await service.updateTask(identity, taskId, { ...patch, expectedVersion: current.version });
+    return { updated: true, task };
+  } catch (error) {
+    await cleanupTaskboardAttachments(options, identity, current.id, ownerUserId, scopedAttachments, current.attachments);
+    throw error;
+  }
 }
 
 async function moveLegacyTask(

@@ -110,7 +110,7 @@ const cronManageSchema = z.object({
   pageSize: z.number().int().min(1).max(100).optional(),
   attachments: z.array(z.object({
     attachmentId: z.string().uuid(),
-  }).strict()).max(50).optional().describe('taskboard 会话附件；只提交当前会话已上传附件的 attachmentId，不要提交 relativePath。'),
+  }).strict()).max(50).optional().describe('taskboard 会话附件；只提交当前会话已上传附件的 attachmentId，不要提交 relativePath；task.update/兼容 update 会追加到既有任务附件，不替换旧附件。'),
   dispatch: z.boolean().optional().describe('task.create 或兼容 create 时立即派发 work Agent。'),
   include: z.array(z.enum(['task', 'board', 'comments', 'executions', 'activity', 'integrationSources'] as const)).max(6).optional(),
   historyMode: z.enum(['auto', 'full', 'delta'] as const).optional(),

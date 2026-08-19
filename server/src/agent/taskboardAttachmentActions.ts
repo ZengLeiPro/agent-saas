@@ -7,6 +7,15 @@ import type {
   TaskboardToolOptions,
 } from './taskboardToolActions.js';
 
+/** task.update 的附件输入采用追加语义；兼容旧任务时保留其原始附件记录。 */
+export function appendTaskboardAttachments(
+  existing: readonly TaskBoardAttachment[] | undefined,
+  additions: readonly TaskBoardUploadAttachment[] | undefined,
+): TaskBoardUploadAttachment[] | undefined {
+  if (!additions?.length) return undefined;
+  return [...(existing ?? []), ...additions] as TaskBoardUploadAttachment[];
+}
+
 export async function materializeTaskboardAttachments(
   options: TaskboardToolOptions,
   identity: TaskboardIdentity,

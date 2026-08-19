@@ -524,6 +524,119 @@ describe('CronManage taskboard actions', () => {
     expect(markAttachmentsReferenced).toHaveBeenCalledTimes(3);
   });
 
+  it('task.update 携带附件时追加既有任务附件而不是替换', async () => {
+    const { service, options } = rig();
+    const attachmentId = '33333333-3333-4333-8333-333333333333';
+    const existing = {
+      attachmentId: 'old-attachment',
+      originalName: '已有证据.png',
+      relativePath: 'taskboard/attachments/task-1/old-attachment-已有证据.png',
+      size: 2,
+      mimeType: 'image/png',
+      isImage: true,
+    };
+    const source = {
+      attachmentId,
+      originalName: '新增证据.txt',
+      relativePath: `uploads/${attachmentId}_新增证据.txt`,
+      size: 1,
+      mimeType: 'text/plain',
+      isImage: false,
+    };
+    const scoped = {
+      ...source,
+      relativePath: `taskboard/attachments/${task.id}/${attachmentId}-新增证据.txt`,
+    };
+    vi.mocked(service.getTask).mockResolvedValueOnce({ ...task, attachments: [existing] });
+    const attachmentOptions = {
+      ...options,
+      resolveAttachments: vi.fn(async () => [source]),
+      materializeTaskAttachments: vi.fn(async () => [scoped]),
+      markAttachmentsReferenced: vi.fn(async () => undefined),
+    };
+
+    await invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'task.update', taskId: task.id, expectedVersion: task.version,
+      attachments: [{ attachmentId }],
+    }, { sessionId: 'session-append' });
+
+    expect(service.updateTask).toHaveBeenCalledWith(identity, task.id, {
+      attachments: [existing, scoped], expectedVersion: task.version,
+    });
+  });
+
+  it('兼容 create/update 携带附件时先标记，失败不落库', async () => {
+    const { service, executionStore, options } = rig();
+    const attachmentId = '66666666-6666-4666-8666-666666666666';
+    const source = {
+      attachmentId,
+      originalName: '兼容证据.txt',
+      relativePath: `uploads/${attachmentId}_兼容证据.txt`,
+      size: 1,
+      mimeType: 'text/plain',
+      isImage: false,
+    };
+    const materializeTaskAttachments = vi.fn(async () => [source]);
+    const attachmentOptions = {
+      ...options,
+      resolveAttachments: vi.fn(async () => [source]),
+      materializeTaskAttachments,
+      markAttachmentsReferenced: vi.fn(async () => { throw new Error('reference failed'); }),
+    };
+    const scope = { ...executionScope('work'), sessionId: 'session-legacy' };
+
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'create', boardId: board.id, title: '兼容创建', attachments: [{ attachmentId }],
+    }, scope)).rejects.toThrow('reference failed');
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'update', id: task.id, attachments: [{ attachmentId }],
+    }, scope)).rejects.toThrow('reference failed');
+
+    expect(executionStore.createTaskFromExecution).not.toHaveBeenCalled();
+    expect(service.updateTask).not.toHaveBeenCalled();
+    expect(materializeTaskAttachments).toHaveBeenCalledTimes(1);
+  });
+
+  it('兼容 create/update 落库失败时清理任务作用域附件', async () => {
+    const { service, executionStore, options } = rig();
+    const attachmentId = '77777777-7777-4777-8777-777777777777';
+    const source = {
+      attachmentId,
+      originalName: '兼容失败.txt',
+      relativePath: `uploads/${attachmentId}_兼容失败.txt`,
+      size: 1,
+      mimeType: 'text/plain',
+      isImage: false,
+    };
+    const scoped = {
+      ...source,
+      relativePath: `taskboard/attachments/${task.id}/${attachmentId}-兼容失败.txt`,
+    };
+    const cleanupTaskAttachments = vi.fn(async () => undefined);
+    const attachmentOptions = {
+      ...options,
+      resolveAttachments: vi.fn(async () => [source]),
+      materializeTaskAttachments: vi.fn(async () => [scoped]),
+      cleanupTaskAttachments,
+      markAttachmentsReferenced: vi.fn(async () => undefined),
+    };
+    vi.mocked(service.updateTask).mockRejectedValueOnce(new Error('legacy update failed'));
+    const scope = { ...executionScope('work'), sessionId: 'session-legacy-cleanup' };
+
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'update', id: task.id, attachments: [{ attachmentId }],
+    }, scope)).rejects.toThrow('legacy update failed');
+    expect(cleanupTaskAttachments).toHaveBeenCalledWith(identity, task.id, identity.ownerUserId, [scoped]);
+
+    vi.mocked(service.updateTask).mockRejectedValueOnce(new Error('execution create update failed'));
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'create', boardId: board.id, title: '兼容复制失败', attachments: [{ attachmentId }],
+    }, scope)).rejects.toThrow('execution create update failed');
+    expect(executionStore.createTaskFromExecution).toHaveBeenCalledTimes(1);
+    expect(service.deleteTask).toHaveBeenCalledWith(identity, 'task-new', { expectedVersion: 1 });
+    expect(cleanupTaskAttachments).toHaveBeenCalledWith(identity, 'task-new', identity.ownerUserId, [scoped]);
+  });
+
   it('附件引用标记失败时不落库任务、更新或评论', async () => {
     const { service, options } = rig();
     const attachmentId = '44444444-4444-4444-8444-444444444444';

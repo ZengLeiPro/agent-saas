@@ -513,12 +513,13 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     const taskInput = { ...input };
     delete taskInput.attachments;
     const scopedAttachments = await materializeRequestAttachments(options, req, identity, current.id, ownerUserId, attachments);
+    const appendedAttachments = appendTaskAttachments(current.attachments, scopedAttachments);
     let task: TaskBoardTask;
     try {
       await markRequestAttachments(options, req, attachments);
       task = await options.service!.updateTask(identity, req.params.id, {
         ...taskInput,
-        ...(scopedAttachments !== undefined ? { attachments: scopedAttachments } : {}),
+        ...(appendedAttachments !== undefined ? { attachments: appendedAttachments } : {}),
       });
     } catch (error) {
       await cleanupRequestAttachments(options, identity, current.id, ownerUserId, scopedAttachments, current.attachments);
@@ -703,6 +704,14 @@ async function markRequestAttachments(
 ): Promise<void> {
   if (!attachments?.length) return;
   await options.uploadManager!.markReferenced(requestUserCwd(options, req), attachments, {});
+}
+
+function appendTaskAttachments(
+  existing: readonly TaskBoardAttachment[] | undefined,
+  additions: readonly TaskBoardUploadAttachment[] | undefined,
+): TaskBoardUploadAttachment[] | undefined {
+  if (!additions?.length) return undefined;
+  return [...(existing ?? []), ...additions] as TaskBoardUploadAttachment[];
 }
 
 async function cleanupRequestAttachments(

@@ -103,6 +103,7 @@ function rig() {
       ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
       version: task.version + 1,
     })),
+    deleteTask: vi.fn(async () => ({ ...task, deletedAt: task.updatedAt, version: task.version + 1 })),
     moveTask: vi.fn(async (_identity, _taskId, input) => ({
       ...task,
       status: input.status,
@@ -521,5 +522,42 @@ describe('CronManage taskboard actions', () => {
     expect(resolveAttachments).toHaveBeenCalledTimes(3);
     expect(materializeTaskAttachments).toHaveBeenCalledTimes(3);
     expect(markAttachmentsReferenced).toHaveBeenCalledTimes(3);
+  });
+
+  it('附件写入缺少会话上下文时拒绝，不向 resolver 传空 scope', async () => {
+    const { options } = rig();
+    const resolveAttachments = vi.fn(async () => [] as TaskBoardUploadAttachment[]);
+    const attachmentOptions = { ...options, resolveAttachments };
+
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'comment.create', taskId: task.id,
+      attachments: [{ attachmentId: '11111111-1111-4111-8111-111111111111' }],
+    })).rejects.toMatchObject({ code: 'TASKBOARD_ATTACHMENT_SESSION_REQUIRED' });
+    expect(resolveAttachments).not.toHaveBeenCalled();
+  });
+
+  it('task.create 附件复制失败时删除已创建任务', async () => {
+    const { service, options } = rig();
+    const attachmentId = '22222222-2222-4222-8222-222222222222';
+    const attachmentOptions = {
+      ...options,
+      resolveAttachments: vi.fn(async () => [{
+        attachmentId,
+        originalName: '证据.txt',
+        relativePath: `uploads/${attachmentId}_证据.txt`,
+        size: 1,
+        mimeType: 'text/plain',
+        isImage: false,
+      }]),
+      materializeTaskAttachments: vi.fn(async () => {
+        throw new Error('copy failed');
+      }),
+    };
+
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'task.create', boardId: board.id, title: '复制失败任务',
+      attachments: [{ attachmentId }],
+    }, { sessionId: 'session-copy-failure' })).rejects.toThrow('copy failed');
+    expect(service.deleteTask).toHaveBeenCalledWith(identity, 'task-new', { expectedVersion: 1 });
   });
 });

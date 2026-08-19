@@ -41,6 +41,12 @@ export async function resolveTaskboardAttachments(
 ): Promise<TaskBoardUploadAttachment[] | undefined> {
   if (attachments === undefined) return undefined;
   if (attachments.length === 0) return [];
+  if (!scope.sessionId) {
+    throw new TaskboardValidationError(
+      'Taskboard attachment session context is required',
+      'TASKBOARD_ATTACHMENT_SESSION_REQUIRED',
+    );
+  }
   if (!options.resolveAttachments) {
     throw new TaskboardValidationError(
       'Taskboard attachment resolver is unavailable',
@@ -51,7 +57,7 @@ export async function resolveTaskboardAttachments(
     const resolved = await options.resolveAttachments(
       identity,
       attachments.map((attachment) => attachment.attachmentId),
-      scope.sessionId ? { sessionId: scope.sessionId } : {},
+      { sessionId: scope.sessionId },
     );
     if (resolved.length !== attachments.length || resolved.some(
       (attachment, index) => attachment.attachmentId !== attachments[index]!.attachmentId,

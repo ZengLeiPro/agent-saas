@@ -153,6 +153,12 @@ describe('attachment upload hardening', () => {
     await expect(manager.resolveTaskAttachment(targetCwd, 'task-1', scoped)).resolves.toBe(
       join(targetCwd, scoped.relativePath),
     );
+
+    await manager.markReferenced(sourceCwd, [sourceAttachment], { sessionId: 'session-a' });
+    await expect(manager.markReferenced(sourceCwd, [sourceAttachment], { sessionId: 'session-b' }))
+      .rejects.toThrow('already bound to another session');
+    const state = JSON.parse(await readFile(join(sourceCwd, 'uploads', '.state', `${attachmentId}.json`), 'utf8'));
+    expect(state.sessionIds).toEqual(['session-a']);
   });
 
   it('removes an aborted request from .partial and releases the drain counter', async () => {

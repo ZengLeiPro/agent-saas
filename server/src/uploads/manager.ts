@@ -428,6 +428,7 @@ export class UploadManager {
   ): Promise<void> {
     this.knownUserCwds.add(userCwd);
     await this.withUserMutation(userCwd, async () => {
+      const updates: Array<{ statePath: string; state: AttachmentState }> = [];
       for (const attachment of attachments) {
         const attachmentId = attachment.attachmentId;
         if (!attachmentId || !ATTACHMENT_ID_RE.test(attachmentId)) continue;
@@ -442,13 +443,17 @@ export class UploadManager {
         if (state.attachmentId !== attachmentId || basename(state.filename) !== state.filename) {
           throw new Error(`Invalid attachment state: ${attachmentId}`);
         }
+        if (refs.sessionId && state.sessionIds?.some((sessionId) => sessionId !== refs.sessionId)) {
+          throw new Error(`Attachment is already bound to another session: ${attachmentId}`);
+        }
         await stat(join(userCwd, state.relativePath));
         state.status = 'referenced';
         state.referencedAt ??= new Date(this.now()).toISOString();
         if (refs.sessionId) state.sessionIds = appendUnique(state.sessionIds, refs.sessionId);
         if (refs.clientMessageId) state.clientMessageIds = appendUnique(state.clientMessageIds, refs.clientMessageId);
-        await this.writeState(statePath, state);
+        updates.push({ statePath, state });
       }
+      for (const update of updates) await this.writeState(update.statePath, update.state);
     });
   }
 

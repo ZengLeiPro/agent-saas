@@ -11,6 +11,7 @@ import {
   TASKBOARD_TASK_KINDS,
   TASKBOARD_VISIBILITIES,
   type TaskBoardAttachment,
+  type TaskBoardTask,
   type TaskBoardUploadAttachment,
 } from '../../../shared/src/types/taskboard.js';
 import {
@@ -416,12 +417,16 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       ...taskInput,
       ...(attachments !== undefined && attachments.length === 0 ? { attachments: [] } : {}),
     });
-    const scopedAttachments = await materializeRequestAttachments(options, req, identity, task.id, ownerUserId, attachments);
-    if (scopedAttachments) {
-      task = await options.service!.updateTask(identity, task.id, {
-        attachments: scopedAttachments,
-        expectedVersion: task.version,
-      });
+    try {
+      const scopedAttachments = await materializeRequestAttachments(options, req, identity, task.id, ownerUserId, attachments);
+      if (scopedAttachments) {
+        task = await options.service!.updateTask(identity, task.id, {
+          attachments: scopedAttachments,
+          expectedVersion: task.version,
+        });
+      }
+    } catch (error) {
+      await rollbackCreatedTask(options.service!, identity, task, error);
     }
     await markRequestAttachments(options, req, attachments);
     if (dispatch) {
@@ -466,7 +471,13 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     if (!options.agentCwd || !options.uploadManager) throw new TaskboardExecutionUnavailableError();
     const identity = identityFrom(req);
     const task = await options.service!.getTask(identity, req.params.id);
-    const attachment = (task.attachments ?? []).find((item) => item.attachmentId === req.params.attachmentId);
+    let attachment = (task.attachments ?? []).find((item) => item.attachmentId === req.params.attachmentId);
+    if (!attachment) {
+      const comments = await options.service!.listComments(identity, task.id);
+      attachment = comments
+        .flatMap((comment) => comment.attachments ?? [])
+        .find((item) => item.attachmentId === req.params.attachmentId);
+    }
     if (!attachment?.attachmentId) throw new TaskboardNotFoundError('Task attachment not found');
     const board = await options.service!.getBoard(identity, task.boardId);
     const ownerCwd = resolveTaskOwnerCwd(options, identity, board.ownerUserId);
@@ -745,6 +756,25 @@ async function materializeRequestAttachments(
       'TASKBOARD_ATTACHMENT_MATERIALIZATION_FAILED',
     );
   }
+}
+
+async function rollbackCreatedTask(
+  service: TaskboardService,
+  identity: TaskboardIdentity,
+  task: TaskBoardTask,
+  error: unknown,
+): Promise<never> {
+  try {
+    await service.deleteTask(identity, task.id, { expectedVersion: task.version });
+  } catch (cleanupError) {
+    const originalMessage = error instanceof Error ? error.message : String(error);
+    const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+    throw new TaskboardValidationError(
+      `Attachment write failed and created task cleanup failed: ${originalMessage}; ${cleanupMessage}`,
+      'TASKBOARD_ATTACHMENT_CLEANUP_FAILED',
+    );
+  }
+  throw error;
 }
 
 function identityFactory(options: TaskboardRouterOptions): (req: Request) => TaskboardIdentity {

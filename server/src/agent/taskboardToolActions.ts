@@ -635,22 +635,46 @@ async function createTask(
     ...(typeof input.dueAt === 'string' ? { dueAt: input.dueAt } : {}),
     ...(typeof input.model === 'string' ? { model: input.model } : {}),
   });
-  const scopedAttachments = await materializeTaskboardAttachments(
-    options,
-    identity,
-    createdTask.id,
-    ownerUserId,
-    attachments,
-  );
-  const task = scopedAttachments
-    ? await service.updateTask(identity, createdTask.id, {
-      attachments: scopedAttachments,
-      expectedVersion: createdTask.version,
-    })
-    : createdTask;
+  let task: TaskBoardTask = createdTask;
+  try {
+    const scopedAttachments = await materializeTaskboardAttachments(
+      options,
+      identity,
+      createdTask.id,
+      ownerUserId,
+      attachments,
+    );
+    task = scopedAttachments
+      ? await service.updateTask(identity, createdTask.id, {
+        attachments: scopedAttachments,
+        expectedVersion: createdTask.version,
+      })
+      : createdTask;
+  } catch (error) {
+    await rollbackCreatedTask(service, identity, createdTask, error);
+  }
   await markTaskboardAttachments(options, identity, attachments, scope);
   if (!input.dispatch) return { created: true, task };
   return dispatchCreatedTask(dispatcher!, identity, task);
+}
+
+async function rollbackCreatedTask(
+  service: TaskboardService,
+  identity: TaskboardIdentity,
+  task: TaskBoardTask,
+  error: unknown,
+): Promise<never> {
+  try {
+    await service.deleteTask(identity, task.id, { expectedVersion: task.version });
+  } catch (cleanupError) {
+    const originalMessage = error instanceof Error ? error.message : String(error);
+    const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+    throw new TaskboardValidationError(
+      `Attachment write failed and created task cleanup failed: ${originalMessage}; ${cleanupMessage}`,
+      'TASKBOARD_ATTACHMENT_CLEANUP_FAILED',
+    );
+  }
+  throw error;
 }
 
 async function dispatchCreatedTask(
@@ -770,18 +794,22 @@ async function createExecutionTask(
     ...(typeof input.model === 'string' ? { model: input.model } : {}),
     clientRequestId: taskboardCreateRequestId(input, { execution }),
   });
-  const scopedAttachments = await materializeTaskboardAttachments(
-    options,
-    identity,
-    task.id,
-    ownerUserId,
-    attachments,
-  );
-  if (scopedAttachments) {
-    task = await service.updateTask(identity, task.id, {
-      attachments: scopedAttachments,
-      expectedVersion: task.version,
-    });
+  try {
+    const scopedAttachments = await materializeTaskboardAttachments(
+      options,
+      identity,
+      task.id,
+      ownerUserId,
+      attachments,
+    );
+    if (scopedAttachments) {
+      task = await service.updateTask(identity, task.id, {
+        attachments: scopedAttachments,
+        expectedVersion: task.version,
+      });
+    }
+  } catch (error) {
+    await rollbackCreatedTask(service, identity, task, error);
   }
   await markTaskboardAttachments(options, identity, attachments, scope);
   if (kind === 'remediation' && input.sourceId) {

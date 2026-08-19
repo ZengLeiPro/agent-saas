@@ -12,9 +12,9 @@ export async function resolveManagedTenantSkillIds(
     input.getCurrentTenantSkillIds?.() ?? Promise.resolve(new Set<string>()),
     readSkillManifest(input.userCwd),
   ]);
-  const legacyTenantIds = manifest
-    ? new Set<string>()
-    : await detectLegacyTenantSkillIds(input);
+  const legacyTenantIds = !manifest || manifest.legacyMigrationPending
+    ? (await detectLegacyTenantSkillIds(input)).managedIds
+    : new Set<string>();
   return new Set([
     ...currentTenantIds,
     ...manifestTenantSkillIds(manifest),
@@ -44,5 +44,6 @@ export async function resolveUserPersonalSkillIds(
     const legacySkillId = version?.definition.legacySkillId;
     if (typeof legacySkillId === 'string' && legacySkillId) ids.add(legacySkillId);
   }
-  return ids;
+  // 空集只说明当前治理表没有记录，不足以否定未迁移的旧个人目录。
+  return ids.size > 0 ? ids : undefined;
 }

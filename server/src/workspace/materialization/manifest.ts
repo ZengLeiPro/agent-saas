@@ -20,6 +20,8 @@ export interface SkillMaterializationManifest {
   sourceRevision?: string;
   generatedAt: string;
   skills: Record<string, MaterializedSkillEntry>;
+  /** 历史组织 provenance 查询失败时保留，下一轮继续旧 workspace 迁移。 */
+  legacyMigrationPending?: boolean;
   scriptsDigest?: string;
 }
 

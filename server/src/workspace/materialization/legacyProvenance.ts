@@ -27,6 +27,13 @@ export interface LegacyTenantSkillDetectionInput {
   ) => Promise<ReadonlySet<string> | undefined>;
 }
 
+export interface LegacyTenantSkillDetectionResult {
+  /** 可以确认属于外租户的旧目录；不包含个人所有权不确定的候选。 */
+  managedIds: Set<string>;
+  /** 历史治理查询失败，下一轮必须继续尝试旧目录迁移。 */
+  retryable: boolean;
+}
+
 async function listDirectoryIds(root: string): Promise<Set<string>> {
   try {
     const entries = await readdir(root, { withFileTypes: true });
@@ -76,12 +83,14 @@ function normalizeHistoricalProvenance(
  */
 export async function detectLegacyTenantSkillIds(
   input: LegacyTenantSkillDetectionInput,
-): Promise<Set<string>> {
-  if (!await hasLegacySkillsVersion(input.userCwd)) return new Set();
+): Promise<LegacyTenantSkillDetectionResult> {
+  if (!await hasLegacySkillsVersion(input.userCwd)) {
+    return { managedIds: new Set(), retryable: false };
+  }
 
   const userIds = await listDirectoryIds(input.userSkillsDir);
   for (const poolSkillId of input.poolSkillIds) userIds.delete(poolSkillId);
-  if (userIds.size === 0) return new Set();
+  if (userIds.size === 0) return { managedIds: new Set(), retryable: false };
 
   const userDigests = new Map<string, string>();
   for (const id of userIds) {
@@ -93,27 +102,31 @@ export async function detectLegacyTenantSkillIds(
       // 损坏目录或旧软链接没有可靠 provenance，交给既有 workspace 修复流程处理。
     }
   }
-  if (userDigests.size === 0) return new Set();
+  if (userDigests.size === 0) return { managedIds: new Set(), retryable: false };
 
   const userPackageDigests = new Map<string, string>();
   const managed = new Set<string>();
   let personalSkillIds = new Set<string>();
-  let personalOwnershipReliable = true;
+  let personalOwnershipReliable = false;
   if (input.resolveUserPersonalSkillIds && input.currentTenantId && input.userId) {
     try {
       const resolved = await input.resolveUserPersonalSkillIds(input.currentTenantId, input.userId);
-      if (!resolved) personalOwnershipReliable = false;
-      else personalSkillIds = new Set(resolved);
+      if (resolved && resolved.size > 0) {
+        personalSkillIds = new Set(resolved);
+        personalOwnershipReliable = true;
+      }
+      // 空集不是“没有个人 Skill”的证明：旧个人 Skill 可能从未进入治理表。
+      // 只有拿到非空的个人治理 provenance，才允许对未命中的 legacySkillId 使用宽松迁移。
     } catch {
       // 无法确认个人治理 provenance 时，禁止使用旧摘要的宽松迁移兜底。
-      personalOwnershipReliable = false;
     }
   }
+  let historicalProvenanceUnavailable = false;
   let tenantEntries;
   try {
     tenantEntries = await readdir(input.tenantsRootDir, { withFileTypes: true });
   } catch {
-    return managed;
+    return { managedIds: managed, retryable: false };
   }
 
   for (const tenantEntry of tenantEntries) {
@@ -133,8 +146,13 @@ export async function detectLegacyTenantSkillIds(
     const sourceIds = await listDirectoryIds(tenantSkillsDir);
     let historicalProvenance: ReadonlyMap<string, SkillHistoricalProvenance | readonly string[]> = new Map();
     if (input.resolveTenantSkillHistoricalProvenance) {
-      historicalProvenance = await input.resolveTenantSkillHistoricalProvenance(tenantEntry.name)
-        .catch(() => new Map<string, SkillHistoricalProvenance | readonly string[]>());
+      try {
+        historicalProvenance = await input.resolveTenantSkillHistoricalProvenance(tenantEntry.name);
+      } catch {
+        historicalProvenanceUnavailable = true;
+        // 不把查询失败伪装成空历史；本轮不做宽松迁移，并通过 retryable 让
+        // materializer 保留迁移状态，下一轮继续查询。
+      }
     }
     const candidateIds = new Set([...sourceIds, ...historicalProvenance.keys()]);
     for (const id of candidateIds) {
@@ -172,8 +190,8 @@ export async function detectLegacyTenantSkillIds(
 
         // 旧版 contentDigest 把 node_modules/__pycache__/.DS_Store 也纳入哈希，
         // 而旧副本物化时已丢弃这些文件，无法从旧 SHA-256 反推出新的摘要。
-        // 治理历史中的 legacySkillId + 旧摘要是可信的租户归属凭据，因此仅在
-        // 个人治理 provenance 已可靠读取且未占用该 legacySkillId 时做一次性迁移。
+        // 治理历史中的 legacySkillId + 旧摘要只能在个人治理查询给出正向 provenance
+        // 且未占用该 legacySkillId 时作为一次性迁移凭据；空集或未配置都视为不确定。
         if (provenance.legacyDigests.length > 0 && personalOwnershipReliable) {
           managed.add(id);
         }
@@ -183,5 +201,8 @@ export async function detectLegacyTenantSkillIds(
     }
   }
 
-  return managed;
+  return {
+    managedIds: managed,
+    retryable: historicalProvenanceUnavailable,
+  };
 }

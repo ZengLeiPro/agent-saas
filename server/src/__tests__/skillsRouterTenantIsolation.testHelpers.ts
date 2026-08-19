@@ -309,7 +309,30 @@ export async function makeTestRig(): Promise<TestRig> {
         updatedBy: 'test',
       };
     },
-    getVersion: async () => null,
+    getVersion: async (versionId: string) => versionId === 'test-personal'
+      ? {
+          versionId: 'test-personal',
+          skillId: 'known-personal',
+          versionNumber: 1,
+          definition: { legacySkillId: 'known-personal' },
+          digest: 'test-personal-digest',
+          publishedAt: '2026-08-19T00:00:00.000Z',
+          publishedBy: 'test',
+        }
+      : null,
+    listPersonalByOwner: async () => [{
+      skillId: 'known-personal',
+      tenantId: 'kaiyan',
+      scope: 'personal' as const,
+      ownerUserId: 'u-ku',
+      status: 'published' as const,
+      currentVersionId: 'test-personal',
+      revision: 1,
+      createdAt: '2026-08-19T00:00:00.000Z',
+      createdBy: 'test',
+      updatedAt: '2026-08-19T00:00:00.000Z',
+      updatedBy: 'test',
+    }],
     listTenantSkillHistoricalProvenance: async (tenantId: string) => new Map(
       [...tenantSkillHistory.values()]
         .filter((entry) => entry.tenantId === tenantId)
@@ -327,6 +350,7 @@ export async function makeTestRig(): Promise<TestRig> {
     tenantSkillsRootDir,
     skillConfigStore,
     resolveTenantSkillHistoricalProvenance,
+    resolveUserPersonalSkillIds: async () => new Set(['known-personal']),
   });
   const materializationStore = new InMemorySkillMaterializationStore();
   await materializationStore.init();

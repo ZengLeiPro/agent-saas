@@ -128,7 +128,7 @@ export class SkillWorkspaceMaterializer {
     requiredSkillIds: readonly string[] = [],
   ): Promise<boolean> {
     const manifest = await readSkillManifest(userCwd);
-    if (!manifest) return false;
+    if (!manifest || manifest.legacyMigrationPending) return false;
     const configVersion = this.options.skillConfigStore.getConfigVersion();
     // 蓝绿并存时旧 release 绝不能用旧源覆盖新 release 已完成的 workspace。
     if (manifest.configVersion > configVersion) return true;
@@ -149,7 +149,7 @@ export class SkillWorkspaceMaterializer {
     requiredSkillIds: readonly string[] = [],
   ): Promise<boolean> {
     const manifest = await readSkillManifest(userCwd);
-    if (!manifest) return false;
+    if (!manifest || manifest.legacyMigrationPending) return false;
     const configVersion = this.options.skillConfigStore.getConfigVersion();
     if (manifest.configVersion > configVersion) return true;
     if (!requiredSkillIds.every((id) => !!manifest.skills[id])) return false;
@@ -216,9 +216,9 @@ export class SkillWorkspaceMaterializer {
       }
     }
     const previousSkills = previous?.skills ?? {};
-    const legacyTenantSkillIds = previous
-      ? new Set<string>()
-      : await detectLegacyTenantSkillIds({
+    const shouldDetectLegacy = !previous || previous.legacyMigrationPending === true;
+    const legacyDetection = shouldDetectLegacy
+      ? await detectLegacyTenantSkillIds({
           userCwd,
           userSkillsDir: skillsDir,
           tenantsRootDir: this.options.tenantSkillsRootDir ?? join(this.options.sharedDir, 'tenants'),
@@ -229,7 +229,9 @@ export class SkillWorkspaceMaterializer {
           resolveUserPersonalSkillIds: this.options.resolveUserPersonalSkillIds
             ? () => this.options.resolveUserPersonalSkillIds!(user)
             : undefined,
-        });
+        })
+      : { managedIds: new Set<string>(), retryable: false };
+    const legacyTenantSkillIds = legacyDetection.managedIds;
     const nextSkills: Record<string, MaterializedSkillEntry> = {};
     let changedSkills = 0;
     let skippedSkills = 0;
@@ -299,6 +301,7 @@ export class SkillWorkspaceMaterializer {
       sourceRevision: this.options.sourceRevision,
       generatedAt: new Date().toISOString(),
       skills: nextSkills,
+      ...(legacyDetection.retryable ? { legacyMigrationPending: true } : {}),
       ...(scriptsDigest ? { scriptsDigest } : {}),
     });
     this.validatedConfigVersions.clear();

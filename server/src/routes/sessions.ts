@@ -1932,7 +1932,6 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       res.json({
         share: {
           ownerUsername: safeSnapshot.owner?.username ?? "用户",
-          // 公开投影已剥离原始 payload；该开关只启用安全工具摘要的同构渲染。
           debugMode: true,
           createdAt: record.createdAt,
           updatedAt: record.updatedAt,
@@ -2017,7 +2016,6 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         .map((file) => file.relativePath);
       const projected = projectSessionShareSnapshot(built.detail, { selectedFilePaths: inlineFilePaths });
       res.json({
-        // blockCount 继续表示用户/助手正文条数；工具活动不应改变确认文案里的正文计数。
         blockCount: projected.blocks.filter((block) => block.kind === "prompt" || block.kind === "text").length,
         files: candidates,
         defaultExpiresAt: new Date(Date.now() + DEFAULT_SESSION_SHARE_TTL_MS).toISOString(),
@@ -2111,7 +2109,6 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         ownerUserId: built.meta.userId,
         ownerUsername: built.meta.username,
         createdByUserId: req.user?.sub || built.meta.userId,
-        // 分享快照已移除原始 payload；true 只让同一套 MessageList 展示安全工具摘要。
         debugMode: true,
         snapshot: { ...projected, allowedFiles: frozenFiles },
         expiresAt,

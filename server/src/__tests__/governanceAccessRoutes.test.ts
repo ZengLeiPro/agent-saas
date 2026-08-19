@@ -240,21 +240,13 @@ async function createAssignmentPreview(
   change: Record<string, unknown>,
   query = '',
 ): Promise<Record<string, unknown>> {
-  const response = await test.request(
-    `/api/governance/access/assignments/skill/skill-1/preview${query}`,
-    json('POST', change),
-  );
+  const response = await test.request(`/api/governance/access/assignments/skill/skill-1/preview${query}`, json('POST', change));
   expect(response.status).toBe(200);
   return await response.json() as Record<string, unknown>;
 }
 
 function commitBody(change: Record<string, unknown>, preview: Record<string, unknown>): Record<string, unknown> {
-  return {
-    ...change,
-    previewId: preview.previewId,
-    baselineDigest: preview.baselineDigest,
-    expiresAt: preview.expiresAt,
-  };
+  return { ...change, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt };
 }
 
 describe('governance access routes', () => {
@@ -280,34 +272,14 @@ describe('governance access routes', () => {
     expect(denied.status).toBe(403);
     expect(createMember).toHaveBeenCalledTimes(1);
   });
-  it('成员关系重复时返回中文处理指引而不是内部错误码', async () => {
-    const createMember = vi.fn().mockRejectedValue(new MembershipInvariantError('MEMBERSHIP_ALREADY_EXISTS'));
-    const test = await rig({ createMember });
-    const response = await test.request(
-      '/api/governance/access/memberships?tenantId=tenant-a',
-      json('POST', { username: 'existing-member', password: 'secret123', role: 'user' }),
-    );
-    expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({
-      error: '该账号的组织成员关系已存在，请刷新成员列表；如果成员已停用，请在列表中点击“恢复”，无需重复创建。',
-      code: 'MEMBERSHIP_ALREADY_EXISTS',
-    });
+  it.each([
+    [new MembershipInvariantError('MEMBERSHIP_ALREADY_EXISTS'), '该账号的组织成员关系已存在，请刷新成员列表；如果成员已停用，请在列表中点击“恢复”，无需重复创建。', 'MEMBERSHIP_ALREADY_EXISTS'],
+    [new Error('Username already exists'), '用户名已存在。请更换用户名；如果该账号已属于当前组织，请刷新成员列表，已停用成员请点击“恢复”，无需重复创建。', 'USERNAME_ALREADY_EXISTS'],
+  ])('成员创建重复错误返回处理指引', async (error, expectedError, code) => {
+    const test = await rig({ createMember: vi.fn().mockRejectedValue(error) });
+    const response = await test.request('/api/governance/access/memberships?tenantId=tenant-a', json('POST', { username: 'existing-member', password: 'secret123', role: 'user' }));
+    expect(response.status).toBe(409); await expect(response.json()).resolves.toMatchObject({ error: expectedError, code });
   });
-
-  it('用户名重复时返回更换账号或恢复成员的处理指引', async () => {
-    const createMember = vi.fn().mockRejectedValue(new Error('Username already exists'));
-    const test = await rig({ createMember });
-    const response = await test.request(
-      '/api/governance/access/memberships?tenantId=tenant-a',
-      json('POST', { username: 'existing-member', password: 'secret123', role: 'user' }),
-    );
-    expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({
-      error: '用户名已存在。请更换用户名；如果该账号已属于当前组织，请刷新成员列表，已停用成员请点击“恢复”，无需重复创建。',
-      code: 'USERNAME_ALREADY_EXISTS',
-    });
-  });
-
   it('治理 API 创建成员时拒绝越权开启个人调试模式', async () => {
     const createMember = vi.fn(), validateMemberDebugMode = vi.fn().mockReturnValue('上级未开放调试模式，不能为成员开启'); const test = await rig({ createMember, validateMemberDebugMode });
     const response = await test.request('/api/governance/access/memberships?tenantId=tenant-a', json('POST', { username: 'debug-member', password: 'secret123', role: 'user', debugMode: true }));

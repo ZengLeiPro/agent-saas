@@ -465,21 +465,15 @@ export function createGovernanceAccessRouter(deps: {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message === 'Username already exists') {
-        return res.status(409).json({
-          error: '用户名已存在。请更换用户名；如果该账号已属于当前组织，请刷新成员列表，已停用成员请点击“恢复”，无需重复创建。',
-          code: 'USERNAME_ALREADY_EXISTS',
-        });
+        return res.status(409).json({ error: '用户名已存在。请更换用户名；如果该账号已属于当前组织，请刷新成员列表，已停用成员请点击“恢复”，无需重复创建。', code: 'USERNAME_ALREADY_EXISTS' });
       }
       if (message === 'Tenant not found' || message === 'Tenant disabled') {
         return res.status(400).json({ error: message === 'Tenant disabled' ? '目标组织已禁用' : '目标组织不存在' });
       }
-      const status = error instanceof MembershipInvariantError ? membershipErrorStatus(error) : 500;
-      const errorMessage = error instanceof MembershipInvariantError
-        && error.code === 'MEMBERSHIP_ALREADY_EXISTS'
-        ? '该账号的组织成员关系已存在，请刷新成员列表；如果成员已停用，请在列表中点击“恢复”，无需重复创建。'
-        : message;
-      return res.status(status).json({
-        error: errorMessage,
+      return res.status(error instanceof MembershipInvariantError ? membershipErrorStatus(error) : 500).json({
+        error: error instanceof MembershipInvariantError && error.code === 'MEMBERSHIP_ALREADY_EXISTS'
+          ? '该账号的组织成员关系已存在，请刷新成员列表；如果成员已停用，请在列表中点击“恢复”，无需重复创建。'
+          : message,
         ...(error instanceof MembershipInvariantError ? { code: error.code } : {}),
       });
     }

@@ -175,7 +175,8 @@ describe('buildTenantScopedEnv', () => {
     // 这些是 6/22 评审拍定的最小集；新增凭据时同时加 key 和测试 expect
     for (const required of [
       'AZEROTH_TOKEN', 'AZEROTH_API_URL',
-      'GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'NPM_TOKEN',
+      'GH_TOKEN', 'GITHUB_TOKEN', 'AUTH_TOKEN', 'CT0', 'TWITTER_AUTH_TOKEN', 'TWITTER_CT0',
+      'GITLAB_TOKEN', 'NPM_TOKEN',
       'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY',
       'DASHSCOPE_API_KEY', 'OSS_ACCESS_KEY_ID', 'OSS_ACCESS_KEY_SECRET',
       'AWS_SECRET_ACCESS_KEY',

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { CatalogHeader } from "./CatalogUi";
 import { GithubConnector } from "./GithubConnector";
+import { XConnector } from "./XConnector";
 import { DingtalkConnectorCard, DingtalkConnectorDrawer, useDwsConnections } from "./DingtalkConnector";
 import { FeishuConnectorCard, FeishuConnectorDrawer, useFeishuConnections } from "./FeishuConnector";
 import { NotionConnectorCard, NotionConnectorDrawer, useNotionConnector } from "./NotionConnector";
@@ -27,7 +28,7 @@ export function BuiltInConnectors() {
     <div className="space-y-5">
       <CatalogHeader
         title="连接器"
-        description="连接你的账号后，官方 CLI、Shell 和 SDK 会在当前用户的独立运行环境中直接可用。"
+        description="连接你的账号后，支持的 CLI、Shell 和 SDK 会在当前用户的独立运行环境中直接可用。"
       />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <DingtalkConnectorCard dws={dws} onOpenDetail={() => setDingtalkOpen(true)} />
@@ -36,6 +37,7 @@ export function BuiltInConnectors() {
         <GoogleWorkspaceConnectorCard state={google} onOpenDetail={() => setGoogleOpen(true)} />
         <AliyunConnectorCard state={aliyun} onOpenDetail={() => setAliyunOpen(true)} />
         <GithubConnector />
+        <XConnector />
       </div>
       <DingtalkConnectorDrawer open={dingtalkOpen} onOpenChange={setDingtalkOpen} dws={dws} />
       <FeishuConnectorDrawer open={feishuOpen} onOpenChange={setFeishuOpen} state={feishu} />

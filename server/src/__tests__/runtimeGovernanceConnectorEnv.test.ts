@@ -93,4 +93,82 @@ describe('runtime governance connector env', () => {
       await runtime.mcpClientShutdown();
     }
   });
+
+  it('preserves a custom MCP x runtime env when native X is paused', async () => {
+    const root = createRoot();
+    const vault = new InMemorySecretVault();
+    const runtime = await initializeRuntimeGovernanceConnectors({
+      processCwd: root,
+      agentCwd: join(root, 'agents'),
+      config: {} as AppConfig,
+      secretVault: vault,
+      resolveLegacySkillResourceId: (_user, skillId) => skillId,
+    });
+
+    try {
+      await runtime.mcpConfigStore.upsertServer({
+        id: 'x',
+        name: 'Personal X-compatible MCP',
+        ownerUsername: 'alice',
+        tenantId: 'tenant-a',
+        config: { type: 'streamable-http', url: 'https://mcp.example.test/x' },
+        secretRequirements: [
+          { key: 'auth', label: 'Auth', target: 'env', name: 'AUTH_TOKEN', scope: 'user' },
+          { key: 'ct0', label: 'CT0', target: 'env', name: 'CT0', scope: 'user' },
+        ],
+      });
+      await runtime.mcpConfigStore.setUserEnabledServers('alice', ['x'], 'tenant-a');
+      const mcpCaller = {
+        actor: 'mcp_proxy' as const,
+        userId: 'alice',
+        tenantId: 'tenant-a',
+        scopes: ['secret:mcp:write'],
+      };
+      const mcpAuth = await vault.putSecret('alice', 'mcp', 'mcp-auth', mcpCaller);
+      const mcpCt0 = await vault.putSecret('alice', 'mcp', 'mcp-ct0', mcpCaller);
+      await runtime.mcpConfigStore.setUserSecretRef('alice', 'x', 'auth', mcpAuth.id, 'tenant-a');
+      await runtime.mcpConfigStore.setUserSecretRef('alice', 'x', 'ct0', mcpCt0.id, 'tenant-a');
+
+      const xSecret = await vault.putSecret(
+        'user-1',
+        'connector',
+        JSON.stringify({ authToken: 'native-auth', ct0: 'native-ct0' }),
+        {
+          actor: 'connector_proxy',
+          userId: 'user-1',
+          tenantId: 'tenant-a',
+          scopes: ['secret:connector:write'],
+        },
+      );
+      await runtime.connectorConnectionStore.connect({
+        username: 'alice',
+        userId: 'user-1',
+        tenantId: 'tenant-a',
+        connectorId: 'x',
+        credentialRefs: { cookies: xSecret.id },
+        metadata: { credentialOwnerId: 'user-1' },
+      });
+
+      await expect(runtime.resolveRunScopedEnv({
+        userId: 'user-1',
+        username: 'alice',
+        tenantId: 'tenant-a',
+      })).resolves.toMatchObject({
+        AUTH_TOKEN: 'native-auth',
+        CT0: 'native-ct0',
+      });
+
+      await runtime.connectorConnectionStore.setRuntimeEnabled('alice', 'x', false);
+      await expect(runtime.resolveRunScopedEnv({
+        userId: 'user-1',
+        username: 'alice',
+        tenantId: 'tenant-a',
+      })).resolves.toMatchObject({
+        AUTH_TOKEN: 'mcp-auth',
+        CT0: 'mcp-ct0',
+      });
+    } finally {
+      await runtime.mcpClientShutdown();
+    }
+  });
 });

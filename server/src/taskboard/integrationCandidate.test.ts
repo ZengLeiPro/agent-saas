@@ -4,6 +4,8 @@ import type { TaskBoardIntegrationCandidate } from '../../../shared/src/types/ta
 import {
   canonicalJson,
   computeIntegrationCandidateSubjectDigest,
+  computeIntegrationRequirementDigest,
+  computeIntegrationReviewReceiptDigest,
   computeIntegrationSourceSetDigest,
 } from './integrationCandidateDigest.js';
 import {
@@ -163,6 +165,50 @@ describe('integration candidate v3 mapper and invariants', () => {
     })).rejects.toMatchObject({ code: 'TASKBOARD_CANDIDATE_SOURCE_OWNERSHIP_MISMATCH' });
   });
 
+  it.each([
+    ['cross-task review execution', { review_task_id: 'task-attacker' }, {}],
+    ['forged canonical review receipt', {}, { reviewReceiptDigest: 'sha256:forged' }],
+    ['forged requirement digest', {}, { requirementDigest: 'sha256:forged' }],
+  ])('rejects %s even when caller-provided snapshot identities otherwise match', async (_name, rowPatch, sourcePatch) => {
+    const candidateRow = {
+      id: candidate.id, integration_task_id: candidate.integrationTaskId, repository_id: candidate.repositoryId,
+      base_branch: candidate.baseBranch, branch: candidate.branch, state: 'composing', current_revision: 1,
+      work_round: 0, version: 4, workflow_epoch: 2, lane_epoch: 3, policy_revision: candidate.policyRevision,
+      merge_method: candidate.mergeMethod, policy_snapshot: candidate.policySnapshot,
+      created_at: candidate.createdAt, updated_at: candidate.updatedAt,
+    };
+    const title = 'Authoritative delivery';
+    const description = 'Authoritative requirement';
+    const authoritativeSource = {
+      ...source,
+      reviewReceiptDigest: computeIntegrationReviewReceiptDigest(source.reviewExecutionId, source.reviewedSubjectDigest),
+      requirementDigest: computeIntegrationRequirementDigest(title, description),
+      ...sourcePatch,
+    };
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('SELECT * FROM') && sql.includes('FOR UPDATE')) return { rows: [candidateRow] };
+      if (sql.includes('SELECT s.integration_task_id')) return { rows: [{
+        integration_task_id: candidate.integrationTaskId, delivery_task_id: source.deliveryTaskId,
+        repository_id: source.repositoryId, provider_pull_request_id: source.providerPullRequestId,
+        reviewed_subject_digest: source.reviewedSubjectDigest, delivery_task_version: source.deliveryTaskVersion,
+        board_id: 'board-1', integration_board_id: 'board-1', head_oid: source.frozenHeadOid,
+        base_oid: source.frozenBaseOid, title, description,
+        review_execution_id: source.reviewExecutionId, review_task_id: source.deliveryTaskId,
+        review_purpose: 'review', review_status: 'succeeded', ...rowPatch,
+      }] };
+      return { rows: [] };
+    });
+    const client = { query, release: vi.fn() };
+    const store = new IntegrationCandidateStore({
+      pool: { connect: vi.fn(async () => client) }, tasksTable: 'tasks', executionsTable: 'executions',
+      integrationSourcesTable: 'integration_sources',
+    } as never);
+    await expect(store.appendRevision(candidate.id, {
+      expectedVersion: 4, expectedCurrentRevision: 1, baseOid: 'base', headOid: 'head', treeOid: 'tree',
+      sources: [authoritativeSource],
+    })).rejects.toMatchObject({ code: 'TASKBOARD_CANDIDATE_SOURCE_OWNERSHIP_MISMATCH' });
+  });
+
   it('requires current revision approval before merging and a receipt before merged', () => {
     expect(() => assertCandidateTransition(candidate, {
       expectedVersion: 4, expectedRevision: 1, to: 'approved',
@@ -214,6 +260,9 @@ describe('integration candidate v3 schema', () => {
     expect(ddl).toContain('CREATE TABLE IF NOT EXISTS ky_taskboard_integration_requests_outbox_v3');
     expect(ddl).toContain("WHERE state IN ('executing','unknown')");
     expect(ddl).toContain('TASKBOARD_CANDIDATE_SNAPSHOT_IMMUTABLE');
+    expect(ddl).toContain('TASKBOARD_CANDIDATE_SOURCE_REVIEW_OWNERSHIP_INVALID');
+    expect(ddl).toContain("e.task_id=NEW.delivery_task_id");
+    expect(ddl).toContain("e.purpose='review' AND e.status='succeeded'");
     expect(ddl).toContain('current_revision INTEGER NOT NULL DEFAULT 0');
     expect(ddl).toContain('work_round INTEGER NOT NULL DEFAULT 0');
     expect(ddl).toContain("subject_kind TEXT NOT NULL DEFAULT 'provider_subject'");

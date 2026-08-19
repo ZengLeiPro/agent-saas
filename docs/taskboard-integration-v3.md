@@ -1,5 +1,7 @@
 # Taskboard Integration Workflow v3 — Candidate 正式规格
 
+> **部署前数据库演练（强制）**：v3 schema 使用版本化、事务化 expand migrations，但仓库测试不代表生产量级验证。每次部署前必须在最新生产副本上演练并记录锁等待、执行时长、表膨胀与回滚步骤；未完成副本演练不得在生产执行。本文档不声称已取得生产量级结果。
+
 ## 1. 版本路由
 
 `tasks.workflow_version` 是 integration task 的持久化、不可变单写者分流键。

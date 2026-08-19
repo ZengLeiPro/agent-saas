@@ -166,9 +166,11 @@ export function IntegrationCandidateDetails({
   state?: ReturnType<typeof useIntegrationCandidate>;
 }) {
   const internal = useIntegrationCandidate(taskId, !state);
-  const { details, loading, error } = state ?? internal;
+  const { details, loading, error, refresh } = state ?? internal;
   const [historyDetails, setHistoryDetails] = useState<TaskBoardIntegrationCandidateDetails | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [requeueing, setRequeueing] = useState(false);
+  const [requeueError, setRequeueError] = useState<string | null>(null);
   const displayed = historyDetails ?? details;
   const candidate = displayed?.candidate;
   const currentRevision = useMemo(() => displayed?.revisions.find(
@@ -179,6 +181,17 @@ export function IntegrationCandidateDetails({
     setHistoryLoading(true);
     try { setHistoryDetails(await api.fetchIntegrationCandidate(taskId, { includeHistory: true, page, pageSize: 10 })); }
     finally { setHistoryLoading(false); }
+  };
+  const requeue = async () => {
+    const reason = window.prompt("请输入重新排队原因（至少 3 个字符，将写入审计日志）")?.trim();
+    if (!reason) return;
+    if (reason.length < 3) { setRequeueError("重新排队原因至少需要 3 个字符"); return; }
+    if (!window.confirm(`确认重新排队该永久失败的 Candidate？\n原因：${reason}`)) return;
+    setRequeueing(true);
+    setRequeueError(null);
+    try { await api.requeueIntegrationCandidate(taskId, reason); await refresh(); }
+    catch (caught) { setRequeueError(caught instanceof Error ? caught.message : "重新排队失败"); }
+    finally { setRequeueing(false); }
   };
 
   return (
@@ -233,7 +246,11 @@ export function IntegrationCandidateDetails({
                   : "已合并 · cleanup 待处理"}
           </p> : null}
           <p className="text-xs text-muted-foreground">last refreshed：<time dateTime={details?.lastRefreshedAt}>{details?.lastRefreshedAt ? new Date(details.lastRefreshedAt).toLocaleString("zh-CN") : "未知"}</time></p>
-          {details?.worker?.error ? <p className="whitespace-pre-wrap text-xs text-destructive"><TriangleAlert className="mr-1 inline size-3.5" />worker_error：{details.worker.error}</p> : null}
+          {details?.worker?.error ? <div className="space-y-2">
+            <p className="whitespace-pre-wrap text-xs text-destructive"><TriangleAlert className="mr-1 inline size-3.5" />worker_error：{details.worker.error}</p>
+            {details.worker.status === "failed" ? <Button type="button" variant="destructive" size="sm" disabled={requeueing} onClick={() => void requeue()}>{requeueing ? "重新排队中..." : "Maintainer 重新排队"}</Button> : null}
+          </div> : null}
+          {requeueError ? <p role="alert" className="text-xs text-destructive">{requeueError}</p> : null}
           {candidate.lastError ? <p className="whitespace-pre-wrap text-xs text-destructive"><TriangleAlert className="mr-1 inline size-3.5" />{candidate.lastError}</p> : null}
         </>
       ) : !loading ? <p className="text-sm text-muted-foreground">尚无 Candidate 投影。</p> : null}

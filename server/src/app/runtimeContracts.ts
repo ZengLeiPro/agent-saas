@@ -401,9 +401,44 @@ export interface AppRuntime {
   beginRuntimeDrain: () => Promise<void>;
 }
 
+export interface RuntimeIsolationAttestationEvidence {
+  /** Stable identity of the runtime adapter which enforced the boundary. */
+  runtimeAdapterId: string;
+  /** Adapter-issued boundary identity; request/config booleans are not evidence. */
+  isolationBoundaryId: string;
+  issuedAt: string;
+}
+
+/** Trusted adapter boundary. Implementations must inspect the actual runtime
+ * sandbox/container; callers cannot supply an isolation boolean as proof. */
+export interface RuntimeIsolationAttestationProvider {
+  attest(input: {
+    admission: 'integration_v3_worker' | 'integration_v3_work';
+    tenantId?: string;
+    taskId?: string;
+  }): Promise<RuntimeIsolationAttestationEvidence | undefined>;
+}
+
+export interface GithubAppInstallationToken {
+  token: string;
+  repositoryId: number;
+  installationId: number;
+  expiresAt?: string;
+}
+
+/** Production v3 credential boundary, injected by the GitHub App adapter. */
+export interface GithubAppInstallationTokenProvider {
+  getInstallationToken(input: {
+    repositoryId: number;
+    installationId: number;
+  }): Promise<GithubAppInstallationToken | undefined>;
+}
+
 export interface CreateRuntimeOptions {
   processCwd?: string;
   processRole?: AppRuntimeProcessRole;
+  runtimeIsolationAttestationProvider?: RuntimeIsolationAttestationProvider;
+  githubAppInstallationTokenProvider?: GithubAppInstallationTokenProvider;
 }
 
 export type AppRuntimeProcessRole = 'all' | 'ws-only' | 'scheduler-only' | 'runtime-worker';

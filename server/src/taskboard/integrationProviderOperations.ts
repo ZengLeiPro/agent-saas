@@ -84,6 +84,10 @@ export class IntegrationProviderOperationService {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
+  async get(operationKey: string): Promise<IntegrationProviderOperationRecord | undefined> {
+    return this.storage.getByOperationKey(operationKey);
+  }
+
   async prepare(intent: IntegrationProviderOperationIntent): Promise<IntegrationProviderOperationRecord> {
     validateIntent(intent);
     const intentDigest = integrationProviderIntentDigest(intent);

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TaskBoardIntegrationCandidate, TaskBoardIntegrationCandidateRevision } from '../../../shared/src/types/taskboard.js';
 import type { IntegrationEngineV3, IntegrationEngineV3Command } from './integrationEngineV3.js';
 import { IntegrationV3Worker, type IntegrationV3RequestLease, type IntegrationV3WorkerHost } from './integrationV3Worker.js';
+import { executeIntegrationV3Cleanup } from './integrationV3WorkerPostgres.js';
 
 const revision: TaskBoardIntegrationCandidateRevision = {
   candidateId: 'candidate-1', revision: 1, digestVersion: 1, baseOid: 'base', headOid: 'head', treeOid: 'tree',
@@ -25,7 +26,7 @@ class MemoryHost implements IntegrationV3WorkerHost {
   errors: Array<string | undefined> = [];
   dispatched: IntegrationV3RequestLease[] = [];
   cleanupCalls: IntegrationV3RequestLease[] = [];
-  completedRequests: Array<{ request: IntegrationV3RequestLease; outcome?: string }> = [];
+  completedRequests: Array<{ request: IntegrationV3RequestLease; receipt?: import('./integrationV3Worker.js').IntegrationV3CleanupReceipt }> = [];
   operationKey?: string;
   async claimCandidate() {
     if (['merged', 'canceled'].includes(this.current.candidate.state) && this.checkpoints.at(-1)?.status === 'requested') return undefined;
@@ -37,8 +38,16 @@ class MemoryHost implements IntegrationV3WorkerHost {
   async claimRequest() { return this.requests.shift(); }
   async dispatchAgent(request: IntegrationV3RequestLease) { this.dispatched.push(request); }
   async syncWorkspace() {}
-  async cleanup(request: IntegrationV3RequestLease) { this.cleanupCalls.push(request); }
-  async completeRequest(request: IntegrationV3RequestLease, outcome?: 'completed' | 'skipped-by-policy' | 'disabled') { this.completedRequests.push({ request, ...(outcome ? { outcome } : {}) }); }
+  async cleanup(request: IntegrationV3RequestLease) {
+    this.cleanupCalls.push(request);
+    return { version: 1 as const, outcome: 'succeeded' as const, completedAt: new Date().toISOString(), actions: [
+      { action: 'revoke_capabilities' as const, status: 'succeeded' as const },
+      { action: 'fence_capabilities' as const, status: 'succeeded' as const },
+      { action: 'remove_candidate_worktree' as const, status: 'skipped' as const, reason: 'test has no server worktree' },
+      { action: 'source_pull_request' as const, status: 'skipped' as const, reason: 'policy disabled' },
+    ] };
+  }
+  async completeRequest(request: IntegrationV3RequestLease, receipt?: import('./integrationV3Worker.js').IntegrationV3CleanupReceipt) { this.completedRequests.push({ request, ...(receipt ? { receipt } : {}) }); }
   async releaseRequest() { throw new Error('unexpected request failure'); }
   async findRecoverableMergeOperation() { return this.operationKey; }
 }
@@ -86,7 +95,7 @@ describe('IntegrationV3Worker pure mock flow', () => {
 
     expect(commands).toEqual(['start_compose', 'compose_clean', 'request_review', 'merge_approved', 'reconcile_merge', 'cleanup']);
     expect(host.cleanupCalls).toHaveLength(1);
-    expect(host.completedRequests.at(-1)).toMatchObject({ request: { kind: 'cleanup' }, outcome: 'skipped-by-policy' });
+    expect(host.completedRequests.at(-1)).toMatchObject({ request: { kind: 'cleanup' }, receipt: { outcome: 'succeeded' } });
     expect(host.dispatched.every((item) => item.kind === 'work' || item.kind === 'review')).toBe(true);
     expect(host.errors.filter(Boolean)).toEqual(['Provider outcome awaits durable reconciliation']);
   });
@@ -120,5 +129,48 @@ describe('IntegrationV3Worker pure mock flow', () => {
     await worker.runOnce();
     expect(engine.execute).toHaveBeenCalledWith(expect.objectContaining({ type: 'reconcile_merge', operationKey: 'succeeded-merge-op' }));
     expect(host.errors.at(-1)).toBeUndefined();
+  });
+});
+
+
+describe('Integration v3 cleanup receipts', () => {
+  it('receipts capability fencing, clean server-owned worktree removal, and each source PR policy action', async () => {
+    const commands: readonly string[][] = [];
+    const mutableCommands = commands as string[][];
+    const receipt = await executeIntegrationV3Cleanup({
+      candidateId: 'candidate-1', repositoryPath: '/srv/repos/repo-1',
+      controlledWorktreeRoot: '/srv/worktrees', worktreePath: '/srv/worktrees/candidate-1', branch: 'integration/candidate-1',
+      sourcePullRequests: [{ id: 'pr-1', action: 'skip', policyReason: 'policy keeps source PRs open' }],
+      withRepositoryBranchLock: async (_lock, operation) => operation(),
+      runGit: async (command) => { mutableCommands.push([...command.args]); return { exitCode: 0, stdout: '', stderr: '' }; },
+      revokeCapabilities: async () => undefined,
+      fenceCapabilities: async () => undefined,
+      applySourcePullRequest: async () => undefined,
+    });
+    expect(receipt).toMatchObject({ outcome: 'succeeded', actions: [
+      { action: 'revoke_capabilities', status: 'succeeded' },
+      { action: 'fence_capabilities', status: 'succeeded' },
+      { action: 'remove_candidate_worktree', status: 'succeeded' },
+      { action: 'source_pull_request', status: 'skipped', target: 'pr-1', reason: 'policy keeps source PRs open' },
+    ] });
+    expect(commands).toEqual([
+      ['status', '--porcelain=v1', '--untracked-files=all'],
+      ['worktree', 'remove', '--', '/srv/worktrees/candidate-1'],
+    ]);
+  });
+
+  it('fails closed without removing an unsafe or dirty candidate worktree', async () => {
+    const runGit = vi.fn(async () => ({ exitCode: 0, stdout: ' M file.ts\n', stderr: '' }));
+    const receipt = await executeIntegrationV3Cleanup({
+      candidateId: 'candidate-1', repositoryPath: '/srv/repos/repo-1',
+      controlledWorktreeRoot: '/srv/worktrees', worktreePath: '/srv/worktrees/candidate-1', branch: 'integration/candidate-1',
+      sourcePullRequests: [], withRepositoryBranchLock: async (_lock, operation) => operation(), runGit,
+      revokeCapabilities: async () => undefined, fenceCapabilities: async () => undefined,
+      applySourcePullRequest: async () => undefined,
+    });
+    expect(receipt).toMatchObject({ outcome: 'failed', actions: expect.arrayContaining([
+      expect.objectContaining({ action: 'remove_candidate_worktree', status: 'failed', error: expect.stringContaining('dirty') }),
+    ]) });
+    expect(runGit).toHaveBeenCalledTimes(1);
   });
 });

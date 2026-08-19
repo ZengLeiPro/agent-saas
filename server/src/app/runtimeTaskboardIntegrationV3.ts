@@ -1,11 +1,8 @@
-import { execFile } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import type { TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
-import type { ConnectorConnectionStore } from '../connectors/connectionStore.js';
-import type { UserStore } from '../data/users/store.js';
-import type { SecretVault } from '../security/secretVault.js';
+import type { GithubAppInstallationTokenProvider, RuntimeIsolationAttestationProvider } from './runtimeContracts.js';
 import type { TaskboardExecutionCoordinator } from '../taskboard/executionService.js';
 import { integrationCandidateTableNames } from '../taskboard/integrationCandidateSchema.js';
 import { IntegrationEngineV3 } from '../taskboard/integrationEngineV3.js';
@@ -20,11 +17,12 @@ import { IntegrationProviderOperationService } from '../taskboard/integrationPro
 import { IntegrationPushCapabilityService } from '../taskboard/integrationPushCapability.js';
 import { PostgresIntegrationPushCapabilityHost } from '../taskboard/integrationPushCapabilityPostgres.js';
 import { IntegrationPushGateway, type IntegrationPushCredential } from '../taskboard/integrationPushGateway.js';
-import { ControlledTaskboardIntegrationPushService, createGithubIntegrationPushTokenResolver } from '../taskboard/integrationPushService.js';
+import { createGithubAppIntegrationPushTokenResolver } from '../taskboard/integrationPushService.js';
 import { DefaultIntegrationV3ComposeExecutor } from '../taskboard/integrationV3ComposeExecutor.js';
 import { IntegrationV3Worker } from '../taskboard/integrationV3Worker.js';
 import { PostgresIntegrationV3ComposeHost, PostgresIntegrationV3WorkerHost } from '../taskboard/integrationV3WorkerPostgres.js';
 import { canonicalGithubRepositoryUrl, isCanonicalGithubRepositoryRemote, type RepositoryProvider } from '../taskboard/repositoryProvider.js';
+import { runSafeServerGit, runSafeServerGitOrThrow } from '../taskboard/safeServerGitRunner.js';
 import { RepositoryProviderIntegrationEngineV3Adapter } from '../taskboard/repositoryRuntime.js';
 import type {
   RepositoryWorkspaceGitCommand,
@@ -35,6 +33,7 @@ import { serverLogger } from '../utils/logger.js';
 
 export interface RuntimeTaskboardIntegrationV3 {
   stop(): Promise<void>;
+  health(): Promise<{ enabled: true; healthy: boolean; workerActive: boolean; reason?: string }>;
 }
 
 interface StartRuntimeTaskboardIntegrationV3Options {
@@ -44,24 +43,33 @@ interface StartRuntimeTaskboardIntegrationV3Options {
   processCwd: string;
   agentCwd: string;
   controlledMirrorRoot?: string;
-  pushEnabled?: boolean;
-  runtimeIsolationEnforced?: boolean;
+  enabled: boolean;
+  githubAppInstallationId?: number;
+  runtimeIsolationAttestationProvider?: RuntimeIsolationAttestationProvider;
   resolveGithubToken?: (input: { tenantId: string; ownerUserId: string; repositoryId: string }) => Promise<IntegrationPushCredential | undefined>;
 }
 
 export function buildRuntimeTaskboardIntegrationV3Options(input: Omit<StartRuntimeTaskboardIntegrationV3Options,
-  'controlledMirrorRoot'|'pushEnabled'|'runtimeIsolationEnforced'|'resolveGithubToken'> & {
-  control?: { enabled: boolean; controlledMirrorRoot: string; runtimeIsolationEnforced: boolean; githubTokenMode: 'github_app'|'restricted_pat' };
-  connectionStore: ConnectorConnectionStore; vault: SecretVault; userStore?: Pick<UserStore, 'findById'>;
+  'controlledMirrorRoot'|'enabled'|'githubAppInstallationId'|'resolveGithubToken'> & {
+  control?: { enabled: boolean; controlledMirrorRoot: string; githubAppInstallationId: number; githubTokenMode: 'github_app' };
+  githubAppInstallationTokenProvider?: GithubAppInstallationTokenProvider;
 }): StartRuntimeTaskboardIntegrationV3Options {
-  const isolated = input.control?.runtimeIsolationEnforced === true;
-  const resolver = input.userStore && input.control ? createGithubIntegrationPushTokenResolver({
-    connectionStore: input.connectionStore, vault: input.vault, userStore: input.userStore, mode: input.control.githubTokenMode,
-    onError: (error) => serverLogger.warn(`Integration push credential resolve failed: ${error.message}`),
-  }) : undefined;
-  return { ...input, pushEnabled: input.control?.enabled === true && isolated && !!resolver,
-    runtimeIsolationEnforced: isolated, ...(input.control ? { controlledMirrorRoot: input.control.controlledMirrorRoot } : {}),
-    ...(resolver ? { resolveGithubToken: resolver } : {}) };
+  const resolver = input.control && input.githubAppInstallationTokenProvider
+    ? createGithubAppIntegrationPushTokenResolver({
+      provider: input.githubAppInstallationTokenProvider,
+      installationId: input.control.githubAppInstallationId,
+      onError: (error) => serverLogger.warn(`Integration App credential resolve failed: ${error.message}`),
+    })
+    : undefined;
+  return {
+    ...input,
+    enabled: input.control?.enabled === true,
+    ...(input.control ? {
+      controlledMirrorRoot: input.control.controlledMirrorRoot,
+      githubAppInstallationId: input.control.githubAppInstallationId,
+    } : {}),
+    ...(resolver ? { resolveGithubToken: resolver } : {}),
+  };
 }
 
 export function startRuntimeTaskboardIntegrationV3(
@@ -72,6 +80,7 @@ export function startRuntimeTaskboardIntegrationV3(
   const pgOptions = {
     pool: store.pool,
     tasksTable: store.tasksTable,
+    executionsTable: store.executionsTable,
     integrationSourcesTable: store.integrationSourcesTable,
     integrationLanesTable: store.integrationLanesTable,
     candidatesTable: tables.candidatesTable,
@@ -96,8 +105,12 @@ export function startRuntimeTaskboardIntegrationV3(
   });
   const capabilityService = new IntegrationPushCapabilityService(capabilityHost);
   const pushGateway = new IntegrationPushGateway({
-    enabled: options.pushEnabled === true && options.runtimeIsolationEnforced === true,
+    enabled: options.enabled === true
+      && !!options.runtimeIsolationAttestationProvider
+      && !!options.resolveGithubToken
+      && Number.isSafeInteger(options.githubAppInstallationId),
     allowedWorktreeRoots: options.controlledMirrorRoot ? [options.controlledMirrorRoot] : [],
+    githubAppInstallationId: options.githubAppInstallationId,
     capabilityService,
     resolveTarget: (input) => capabilityHost.resolveTarget(input),
     resolveRepository: async (input) => {
@@ -117,19 +130,19 @@ export function startRuntimeTaskboardIntegrationV3(
     resolveGithubToken: options.resolveGithubToken ?? (async () => undefined),
     operationService,
   });
-  // Instantiate the authenticated service in production even though compose uses the
-  // narrower trusted pushExact entry point; runtime tools/routes can share this exact gateway.
-  void new ControlledTaskboardIntegrationPushService(pushGateway);
-
   let composeHost: PostgresIntegrationV3ComposeHost;
   const workerHost = new PostgresIntegrationV3WorkerHost({
     ...pgOptions,
     sourceSnapshotsTable: tables.sourceSnapshotsTable,
     boardsTable: store.boardsTable,
     executionsTable: store.executionsTable,
-    dispatchAgent: ({ identity, taskId, expectedVersion, purpose }) => executionCoordinator
-      .startExecution(identity, taskId, { expectedVersion, purpose })
-      .then(() => undefined),
+    dispatchAgent: async ({ identity, taskId, expectedVersion, purpose }) => {
+      const attestation = await options.runtimeIsolationAttestationProvider?.attest({
+        admission: 'integration_v3_work', tenantId: identity.tenantId, taskId,
+      });
+      if (!validAttestation(attestation)) throw new Error('Integration v3 work admission requires runtime isolation attestation');
+      await executionCoordinator.startExecution(identity, taskId, { expectedVersion, purpose });
+    },
     syncWorkspace: async (request) => {
       const current = await workerHost.loadCurrent(request.candidateId);
       if (!current.revision) throw new Error('Workspace sync requires a current candidate revision');
@@ -160,6 +173,7 @@ export function startRuntimeTaskboardIntegrationV3(
       { processCwd, agentCwd, ...(options.controlledMirrorRoot ? { controlledMirrorRoot: options.controlledMirrorRoot } : {}) },
     ),
     runGit,
+    validateServerOwnedRepository: createServerOwnedRepositoryValidator(options.controlledMirrorRoot),
     pushIntegrationHead: async (input) => pushGateway.pushExact({
       tenantId: input.context.tenantId, ownerUserId: input.context.credentialOwnerId,
       repositoryId: input.context.repository.repositoryId, integrationTaskId: input.integrationTaskId,
@@ -194,16 +208,56 @@ export function startRuntimeTaskboardIntegrationV3(
     },
   });
   let stopped = false;
-  const activation = pushGateway.health().then((health) => {
-    if (!stopped && health.healthy) worker.start();
-    else serverLogger.warn(`Integration v3 worker disabled at configuration time: ${health.reason ?? 'stopped'}`);
-  }).catch((error) => serverLogger.warn(`Integration v3 worker disabled: ${error instanceof Error ? error.message : String(error)}`));
+  let workerActive = false;
+  let activationReason: string | undefined;
+  const activation = Promise.all([
+    pushGateway.health(),
+    options.runtimeIsolationAttestationProvider?.attest({ admission: 'integration_v3_worker' }),
+  ]).then(([health, attestation]) => {
+    if (stopped) activationReason = 'stopped';
+    else if (!health.healthy) activationReason = health.reason ?? 'gateway_unhealthy';
+    else if (!validAttestation(attestation)) activationReason = 'runtime_isolation_attestation_unavailable';
+    else { worker.start(); workerActive = true; }
+    if (activationReason) serverLogger.warn(`Integration v3 worker disabled: ${activationReason}`);
+  }).catch((error) => {
+    activationReason = 'worker_activation_failed';
+    serverLogger.warn(`Integration v3 worker disabled: ${error instanceof Error ? error.message : String(error)}`);
+  });
   return {
+    async health() {
+      await activation;
+      const gateway = await pushGateway.health();
+      const healthy = gateway.healthy && workerActive && !stopped;
+      return {
+        enabled: true as const,
+        healthy,
+        workerActive,
+        ...(!healthy ? { reason: activationReason ?? gateway.reason ?? 'worker_inactive' } : {}),
+      };
+    },
     async stop() {
       stopped = true;
       await activation;
       await worker.stop();
+      workerActive = false;
     },
+  };
+}
+
+function createServerOwnedRepositoryValidator(controlledMirrorRoot: string | undefined) {
+  return async (repositoryPath: string): Promise<void> => {
+    if (!controlledMirrorRoot) throw new Error('controlled mirror root is unavailable');
+    const root = realpathSync(controlledMirrorRoot);
+    const repository = realpathSync(repositoryPath);
+    if (repository !== root && !repository.startsWith(`${root}/`)) throw new Error('repository escapes controlled mirror root');
+    const commonDirOutput = await runSafeServerGitOrThrow(repository, ['rev-parse', '--git-common-dir']);
+    const commonDir = realpathSync(resolve(repository, commonDirOutput));
+    if (commonDir !== repository && !commonDir.startsWith(`${repository}/`)) throw new Error('Git common-dir escapes server mirror');
+    for (const path of [repository, commonDir]) {
+      const info = statSync(path);
+      if (typeof process.getuid === 'function' && info.uid !== process.getuid()) throw new Error('mirror owner mismatch');
+      if ((info.mode & 0o022) !== 0) throw new Error('mirror is group/world writable');
+    }
   };
 }
 
@@ -228,6 +282,7 @@ export async function resolveIntegrationV3RepositoryPaths(
     const repositoryStat = statSync(repositoryPath);
     if (typeof process.getuid === 'function' && repositoryStat.uid !== process.getuid()) return undefined;
     if ((repositoryStat.mode & 0o022) !== 0) return undefined;
+    await createServerOwnedRepositoryValidator(roots.controlledMirrorRoot)(repositoryPath);
     const remoteUrl = await execGit(repositoryPath, ['remote', 'get-url', 'origin']);
     if (!isCanonicalGithubRepositoryRemote(remoteUrl, repository)) return undefined;
     return {
@@ -238,40 +293,19 @@ export async function resolveIntegrationV3RepositoryPaths(
 }
 
 function execGit(cwd: string, args: string[]): Promise<string> {
-  return new Promise((resolveResult, reject) => execFile(
-    'git',
-    safeGitArgs(args),
-    { cwd, env: controlledGitEnvironment() },
-    (error, stdout) => error ? reject(error) : resolveResult(stdout.trim()),
-  ));
-}
-
-function controlledGitEnvironment(): NodeJS.ProcessEnv {
-  return {
-    PATH: process.env.PATH ?? '/usr/bin:/bin', LANG: 'C', HOME: '/nonexistent/integration-v3-control-plane',
-    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0',
-  };
-}
-
-function safeGitArgs(args: readonly string[]): string[] {
-  return [
-    '-c', 'core.hooksPath=/dev/null', '-c', 'credential.helper=',
-    '-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always',
-    '-c', 'protocol.file.allow=never', ...args,
-  ];
+  return runSafeServerGitOrThrow(cwd, args);
 }
 
 function runGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult> {
-  return new Promise((resolveResult) => execFile(
-    'git',
-    safeGitArgs(command.args),
-    { cwd: command.cwd, env: { ...controlledGitEnvironment(), ...command.env }, maxBuffer: 16 * 1024 * 1024 },
-    (error, stdout, stderr) => resolveResult({
-      exitCode: error && typeof error === 'object' && 'code' in error && typeof error.code === 'number'
-        ? error.code
-        : error ? 1 : 0,
-      stdout,
-      stderr,
-    }),
-  ));
+  return runSafeServerGit(command);
+}
+
+function validAttestation(value: unknown): value is {
+  runtimeAdapterId: string; isolationBoundaryId: string; issuedAt: string;
+} {
+  if (!value || typeof value !== 'object') return false;
+  const evidence = value as Record<string, unknown>;
+  return typeof evidence.runtimeAdapterId === 'string' && evidence.runtimeAdapterId.length > 0
+    && typeof evidence.isolationBoundaryId === 'string' && evidence.isolationBoundaryId.length > 0
+    && typeof evidence.issuedAt === 'string' && Number.isFinite(Date.parse(evidence.issuedAt));
 }

@@ -185,6 +185,19 @@ describe('health router', () => {
     expect(body).toMatchObject({ status: 'draining', draining: true });
   });
 
+  it.each(['not_configured', 'disabled'])('treats integration v3 %s as not applicable to site readiness', async () => {
+    const server = await startHealthServer({
+      getIntegrationV3Health: async () => ({ status: 'not_applicable', releaseReady: true, reasons: [] }),
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: 'ok', integrationV3: { status: 'not_applicable', releaseReady: true },
+    });
+  });
+
   it('fails the release readiness gate when integration v3 is degraded', async () => {
     const server = await startHealthServer({
       getIntegrationV3Health: async () => ({

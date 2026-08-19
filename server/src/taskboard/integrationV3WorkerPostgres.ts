@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isAbsolute, normalize, relative, resolve, sep } from 'node:path';
 import type { PoolClient } from 'pg';
 
 import type { TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
@@ -6,11 +7,66 @@ import { rowToIntegrationCandidate, rowToIntegrationCandidateRevision, rowToInte
 import type { IntegrationV3ComposeContext, IntegrationV3ComposeHost } from './integrationV3ComposeExecutor.js';
 import type {
   IntegrationV3CandidateLease,
+  IntegrationV3CleanupReceipt,
   IntegrationV3RequestLease,
   IntegrationV3WorkerCurrent,
   IntegrationV3WorkerHost,
 } from './integrationV3Worker.js';
 import type { RepositoryWorkspaceGitCommand, RepositoryWorkspaceGitResult, RepositoryWorkspaceSyncLock } from './repositoryWorkspaceSync.js';
+
+export interface IntegrationV3CleanupExecutorOptions {
+  candidateId: string;
+  repositoryPath: string;
+  worktreePath: string;
+  controlledWorktreeRoot: string;
+  branch: string;
+  sourcePullRequests: Array<{ id: string; action: 'close' | 'comment' | 'skip'; policyReason?: string }>;
+  withRepositoryBranchLock<T>(lock: RepositoryWorkspaceSyncLock, operation: () => Promise<T>): Promise<T>;
+  runGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult>;
+  revokeCapabilities(): Promise<void>;
+  fenceCapabilities(): Promise<void>;
+  applySourcePullRequest(input: { id: string; action: 'close' | 'comment' }): Promise<void>;
+}
+
+/** Fail-closed cleanup orchestration. Every attempted or policy-skipped action is receipted. */
+export async function executeIntegrationV3Cleanup(options: IntegrationV3CleanupExecutorOptions): Promise<IntegrationV3CleanupReceipt> {
+  const actions: IntegrationV3CleanupReceipt['actions'] = [];
+  const perform = async (action: IntegrationV3CleanupReceipt['actions'][number]['action'], operation: () => Promise<void>, target?: string) => {
+    try { await operation(); actions.push({ action, status: 'succeeded', ...(target ? { target } : {}) }); }
+    catch (error) { actions.push({ action, status: 'failed', error: error instanceof Error ? error.message : String(error), ...(target ? { target } : {}) }); }
+  };
+  await perform('revoke_capabilities', options.revokeCapabilities);
+  await perform('fence_capabilities', options.fenceCapabilities);
+  await perform('remove_candidate_worktree', async () => {
+    assertServerOwnedWorktree(options.controlledWorktreeRoot, options.worktreePath, options.candidateId);
+    await options.withRepositoryBranchLock({ repositoryPath: options.repositoryPath, branch: options.branch }, async () => {
+      const status = await options.runGit({ cwd: options.worktreePath, args: ['status', '--porcelain=v1', '--untracked-files=all'] });
+      if (status.exitCode !== 0) throw new Error(`Cannot inspect candidate worktree: ${status.stderr || status.stdout}`);
+      if (status.stdout.trim()) throw new Error('Candidate worktree is dirty; refusing cleanup');
+      const removed = await options.runGit({ cwd: options.repositoryPath, args: ['worktree', 'remove', '--', options.worktreePath] });
+      if (removed.exitCode !== 0) throw new Error(`Cannot remove candidate worktree: ${removed.stderr || removed.stdout}`);
+    });
+  }, options.worktreePath);
+  for (const source of options.sourcePullRequests) {
+    if (source.action === 'skip') {
+      actions.push({ action: 'source_pull_request', status: 'skipped', target: source.id, reason: source.policyReason ?? 'policy explicitly disabled source PR cleanup' });
+    } else {
+      const sourceAction = source.action;
+      await perform('source_pull_request', () => options.applySourcePullRequest({ id: source.id, action: sourceAction }), source.id);
+    }
+  }
+  return { version: 1, outcome: actions.some((action) => action.status === 'failed') ? 'failed' : 'succeeded', actions, completedAt: new Date().toISOString() };
+}
+
+function assertServerOwnedWorktree(root: string, worktreePath: string, candidateId: string): void {
+  if (![root, worktreePath].every(isAbsolute) || normalize(worktreePath) !== worktreePath) throw new Error('Candidate worktree path is not absolute and normalized');
+  const ownedRoot = resolve(root);
+  const candidatePath = resolve(worktreePath);
+  const child = relative(ownedRoot, candidatePath);
+  if (!child || child === '..' || child.startsWith(`..${sep}`) || child.split(sep).every((part) => part !== candidateId)) {
+    throw new Error('Candidate worktree is outside the server-owned candidate root');
+  }
+}
 
 export interface IntegrationV3WorkerPostgresOptions {
   pool: {
@@ -32,7 +88,7 @@ export interface IntegrationV3WorkerPostgresOptions {
     purpose: 'work' | 'review';
   }): Promise<void>;
   syncWorkspace(request: IntegrationV3RequestLease): Promise<void>;
-  cleanup(request: IntegrationV3RequestLease): Promise<'completed' | 'skipped-by-policy' | 'disabled' | void>;
+  cleanup(request: IntegrationV3RequestLease): Promise<IntegrationV3CleanupReceipt | void>;
   logger?: IntegrationV3WorkerHost['logger'];
 }
 
@@ -162,15 +218,17 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
   syncWorkspace(request: IntegrationV3RequestLease) { return this.options.syncWorkspace(request); }
   cleanup(request: IntegrationV3RequestLease) { return this.options.cleanup(request); }
 
-  async completeRequest(
-    request: IntegrationV3RequestLease,
-    outcome?: 'completed' | 'skipped-by-policy' | 'disabled',
-  ): Promise<void> {
+  async completeRequest(request: IntegrationV3RequestLease, receipt?: IntegrationV3CleanupReceipt): Promise<void> {
+    const failed = receipt?.outcome === 'failed';
+    const failure = failed
+      ? receipt.actions.filter((action) => action.status === 'failed').map((action) => `${action.action}: ${action.error}`).join('; ')
+      : null;
     await this.options.pool.query(
       `UPDATE ${this.options.requestsOutboxTable}
-          SET status='completed',lease_id=NULL,lease_expires_at=NULL,
-              last_error=CASE WHEN $3::text IS NULL OR $3='completed' THEN NULL ELSE $3 END,updated_at=now()
-        WHERE id=$1 AND lease_id=$2 AND status='processing'`, [request.id, request.leaseId, outcome ?? null]);
+          SET status=CASE WHEN $3::boolean THEN 'failed' ELSE 'completed' END,
+              receipt=$4::jsonb,lease_id=NULL,lease_expires_at=NULL,last_error=$5,updated_at=now()
+        WHERE id=$1 AND lease_id=$2 AND status='processing'`,
+      [request.id, request.leaseId, failed, receipt ? JSON.stringify(receipt) : null, failure]);
   }
 
   async releaseRequest(request: IntegrationV3RequestLease, error: string, retryable: boolean): Promise<void> {
@@ -212,6 +270,7 @@ export interface PostgresIntegrationV3ComposeHostOptions {
   executionsTable: string;
   resolvePaths(repository: TaskBoardRepositoryConfig, candidateId: string): Promise<{ repositoryPath: string; worktreePath: string } | undefined>;
   runGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult>;
+  validateServerOwnedRepository(repositoryPath: string): Promise<void>;
   pushIntegrationHead?: IntegrationV3ComposeHost['pushIntegrationHead'];
 }
 
@@ -259,6 +318,9 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
       await client.query('SELECT pg_advisory_unlock(hashtextextended($1,0))', [key]).catch(() => undefined);
       client.release();
     }
+  }
+  validateServerOwnedRepository(repositoryPath: string) {
+    return this.options.validateServerOwnedRepository(repositoryPath);
   }
   runGit(command: RepositoryWorkspaceGitCommand) { return this.options.runGit(command); }
 }

@@ -173,6 +173,14 @@ export async function fetchIntegrationCandidate(
   return parseEntity<TaskBoardIntegrationCandidateDetails>(response, "Integration v3 Candidate", "result");
 }
 
+export async function requeueIntegrationCandidate(taskId: string, reason: string): Promise<{ candidateId: string; taskId: string; previousError: string; status: "idle" }> {
+  const response = await authFetch(
+    `${API_BASE}/tasks/${encodeURIComponent(taskId)}/integration-candidate/requeue`,
+    jsonRequest("POST", { reason: reason.trim() }),
+  );
+  return parseEntity<{ candidateId: string; taskId: string; previousError: string; status: "idle" }>(response, "重新排队 Integration v3 Candidate", "result");
+}
+
 export async function fetchIntegrationSources(taskId: string): Promise<TaskBoardIntegrationSource[]> {
   const response = await authFetch(
     `${API_BASE}/tasks/${encodeURIComponent(taskId)}/integration-sources`,

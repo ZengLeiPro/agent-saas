@@ -11,6 +11,8 @@ import type {
 import {
   computeIntegrationCandidateSubjectDigest,
   computeIntegrationPolicySnapshotDigest,
+  computeIntegrationRequirementDigest,
+  computeIntegrationReviewReceiptDigest,
   computeIntegrationSourceSetDigest,
   INTEGRATION_CANDIDATE_DIGEST_VERSION,
 } from './integrationCandidateDigest.js';
@@ -29,6 +31,7 @@ interface CandidatePool {
 export interface IntegrationCandidateStoreOptions {
   pool: CandidatePool;
   tasksTable: string;
+  executionsTable: string;
   integrationSourcesTable: string;
 }
 
@@ -207,21 +210,36 @@ export class IntegrationCandidateStore {
         }
         const ownership = await client.query(
           `SELECT s.integration_task_id,s.delivery_task_id,s.repository_id,s.provider_pull_request_id,
-                  s.reviewed_subject_digest,d.version AS delivery_task_version,d.board_id,
-                  d.head_oid,d.base_oid,it.board_id AS integration_board_id
+                  s.reviewed_subject_digest,d.version AS delivery_task_version,d.board_id,d.title,d.description,
+                  d.head_oid,d.base_oid,it.board_id AS integration_board_id,
+                  re.id AS review_execution_id,re.task_id AS review_task_id,
+                  re.purpose AS review_purpose,re.status AS review_status
              FROM ${this.options.integrationSourcesTable} s
              JOIN ${this.options.tasksTable} d ON d.id=s.delivery_task_id
              JOIN ${this.options.tasksTable} it ON it.id=s.integration_task_id
-            WHERE s.id=$1 FOR UPDATE OF s,d`,
-          [source.integrationSourceId],
+             JOIN ${this.options.executionsTable} re ON re.id=$2
+            WHERE s.id=$1 FOR UPDATE OF s,d,re`,
+          [source.integrationSourceId, source.reviewExecutionId],
         );
         const row = ownership.rows[0];
+        const authoritativeReviewReceiptDigest = row
+          ? computeIntegrationReviewReceiptDigest(String(row.review_execution_id), String(row.reviewed_subject_digest))
+          : '';
+        const authoritativeRequirementDigest = row
+          ? computeIntegrationRequirementDigest(String(row.title), String(row.description ?? ''))
+          : '';
         if (!row
           || String(row.integration_task_id) !== candidate.integrationTaskId
           || String(row.delivery_task_id) !== source.deliveryTaskId
           || String(row.repository_id) !== candidate.repositoryId
           || String(row.provider_pull_request_id) !== source.providerPullRequestId
           || String(row.reviewed_subject_digest) !== source.reviewedSubjectDigest
+          || String(row.review_execution_id) !== source.reviewExecutionId
+          || String(row.review_task_id) !== source.deliveryTaskId
+          || String(row.review_purpose) !== 'review'
+          || String(row.review_status) !== 'succeeded'
+          || authoritativeReviewReceiptDigest !== source.reviewReceiptDigest
+          || authoritativeRequirementDigest !== source.requirementDigest
           || Number(row.delivery_task_version) !== source.deliveryTaskVersion
           || String(row.board_id) !== String(row.integration_board_id)
           || String(row.head_oid) !== source.frozenHeadOid

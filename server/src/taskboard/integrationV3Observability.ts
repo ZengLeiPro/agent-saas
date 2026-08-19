@@ -11,6 +11,7 @@ export interface IntegrationV3MetricsSnapshot {
   staleOutboxCount: number;
   oldestOutboxAgeMs: number | null;
   cleanupFailureCount: number;
+  activeFailedCandidateCount?: number;
   gatewayDisabled: boolean;
   gatewayHealthy: boolean;
   gatewayReason?: string;
@@ -29,15 +30,20 @@ export interface IntegrationV3HealthThresholds {
   maxStaleLaneCount: number;
   maxOutboxAgeMs: number;
   maxCleanupFailureCount: number;
+  maxActiveFailedCandidateCount: number;
   requireGateway: boolean;
 }
 
-export interface IntegrationV3HealthStatus {
+export type IntegrationV3HealthStatus = {
+  status: 'not_applicable';
+  releaseReady: true;
+  reasons: [];
+} | {
   status: 'ok' | 'degraded';
   releaseReady: boolean;
   reasons: string[];
   metrics: IntegrationV3MetricsSnapshot;
-}
+};
 
 export interface IntegrationV3GatewayHealth {
   enabled: boolean;
@@ -50,6 +56,7 @@ const DEFAULT_THRESHOLDS: IntegrationV3HealthThresholds = {
   maxStaleLaneCount: 0,
   maxOutboxAgeMs: 15 * 60_000,
   maxCleanupFailureCount: 0,
+  maxActiveFailedCandidateCount: 0,
   requireGateway: true,
 };
 
@@ -69,6 +76,26 @@ export function createIntegrationV3HealthProvider(store: {
     requestsOutbox: candidateTables.requestsOutboxTable,
   };
   return async () => evaluateIntegrationV3Health(await collectIntegrationV3Metrics(store.pool, tables, getGatewayHealth));
+}
+
+export function createRuntimeIntegrationV3HealthProvider(
+  enabled: boolean,
+  store: Parameters<typeof createIntegrationV3HealthProvider>[0] | undefined,
+  getRuntimeHealth: () => Promise<IntegrationV3GatewayHealth> | undefined,
+): () => Promise<IntegrationV3HealthStatus> {
+  if (!enabled) return async () => ({ status: 'not_applicable', releaseReady: true, reasons: [] });
+  if (!store) return async () => evaluateIntegrationV3Health(unavailableMetrics('runtime_store_unavailable'));
+  return createIntegrationV3HealthProvider(store, async () => await getRuntimeHealth()
+    ?? { enabled: true, healthy: false, reason: 'worker_or_required_adapter_unavailable' });
+}
+
+function unavailableMetrics(reason: string): IntegrationV3MetricsSnapshot {
+  return {
+    capturedAt: new Date().toISOString(), unknownOperationCount: 0, oldestUnknownOperationAgeMs: null,
+    staleLaneCount: 0, staleOutboxCount: 0, oldestOutboxAgeMs: null, cleanupFailureCount: 0,
+    gatewayDisabled: false, gatewayHealthy: false, gatewayReason: reason, activeV2Count: 0, activeV3Count: 0,
+    costBudgetUsed: null, costBudgetLimit: null, workRoundBudgetUsed: null, workRoundBudgetLimit: null,
+  };
 }
 
 export async function collectIntegrationV3Metrics(
@@ -93,6 +120,8 @@ export async function collectIntegrationV3Metrics(
             FROM ${tables.requestsOutbox} WHERE status IN ('pending','processing')) AS outbox_age_ms,
          (SELECT count(*)::int FROM ${tables.requestsOutbox}
            WHERE kind='cleanup' AND status='failed') AS cleanup_failure_count,
+         (SELECT count(*)::int FROM ${tables.candidates}
+           WHERE worker_status='failed' AND state NOT IN ('merged','canceled')) AS active_failed_candidate_count,
          (SELECT count(*)::int FROM ${tables.tasks}
            WHERE kind='integration' AND workflow_version=2 AND status NOT IN ('done','canceled')) AS active_v2_count,
          (SELECT count(*)::int FROM ${tables.candidates}
@@ -109,6 +138,7 @@ export async function collectIntegrationV3Metrics(
     staleOutboxCount: integer(row.stale_outbox_count),
     oldestOutboxAgeMs: nullableNumber(row.outbox_age_ms),
     cleanupFailureCount: integer(row.cleanup_failure_count),
+    activeFailedCandidateCount: integer(row.active_failed_candidate_count),
     gatewayDisabled: gateway.enabled !== true,
     gatewayHealthy: gateway.enabled === true && gateway.healthy === true,
     ...(gateway.reason ? { gatewayReason: gateway.reason } : {}),
@@ -132,6 +162,7 @@ export function evaluateIntegrationV3Health(
   if (metrics.staleLaneCount > limits.maxStaleLaneCount) reasons.push('stale_integration_lane');
   if (metrics.oldestOutboxAgeMs !== null && metrics.oldestOutboxAgeMs > limits.maxOutboxAgeMs) reasons.push('stale_request_outbox');
   if (metrics.cleanupFailureCount > limits.maxCleanupFailureCount) reasons.push('cleanup_failure');
+  if ((metrics.activeFailedCandidateCount ?? 0) > limits.maxActiveFailedCandidateCount) reasons.push('active_failed_candidate');
   if (limits.requireGateway && metrics.gatewayDisabled) reasons.push('gateway_disabled');
   else if (limits.requireGateway && !metrics.gatewayHealthy) reasons.push('gateway_unhealthy');
   return { status: reasons.length === 0 ? 'ok' : 'degraded', releaseReady: reasons.length === 0, reasons, metrics };

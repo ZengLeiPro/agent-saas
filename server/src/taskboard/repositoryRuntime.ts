@@ -1,3 +1,4 @@
+import type { GithubAppInstallationTokenProvider } from '../app/runtimeContracts.js';
 import { resolveGithubToken } from '../connectors/github.js';
 import type { UserStore } from '../data/users/store.js';
 import { GithubRepositoryProvider, type RepositoryProvider } from './repositoryProvider.js';
@@ -10,20 +11,14 @@ export function configureTaskboardGithubRepositoryProvider(
   store: Pick<PgTaskboardStore, 'setRepositoryProvider'> | undefined,
   userStore: Pick<UserStore, 'findById'> | undefined,
   githubContext: Parameters<typeof resolveGithubToken>[0],
-  tokenMode?: 'github_app' | 'restricted_pat',
 ): RepositoryProvider | undefined {
   if (!store) return undefined;
   const provider = new GithubRepositoryProvider({
     resolveToken: async (repository, credentialOwnerId) => {
       const user = userStore?.findById(credentialOwnerId);
       if (!user || user.disabled) return undefined;
-      const mode = tokenMode;
-      // v3 write credentials are repository-bound by deployment mode. App mode only
-      // accepts immutable numeric GitHub ids; PAT is an explicit compatibility mode.
-      if (mode === 'github_app' && !/^github-id:\d+$/.test(repository.repositoryId)) return undefined;
-      if (mode === 'restricted_pat'
-        && repository.repositoryId.toLowerCase() !== `github:${repository.owner}/${repository.name}`.toLowerCase()) return undefined;
-      if (mode !== 'github_app' && mode !== 'restricted_pat') return undefined;
+      // Legacy/v2 provider path remains connector-backed. Production v3 receives
+      // a separate GitHub App-only provider below and never reaches this resolver.
       return resolveGithubToken(githubContext, {
         userId: user.id,
         username: user.username,
@@ -33,6 +28,26 @@ export function configureTaskboardGithubRepositoryProvider(
   });
   store.setRepositoryProvider(provider);
   return provider;
+}
+
+export function createIntegrationV3GithubAppRepositoryProvider(input: {
+  tokenProvider: GithubAppInstallationTokenProvider;
+  installationId: number;
+}): RepositoryProvider {
+  return new GithubRepositoryProvider({
+    resolveToken: async (repository) => {
+      const match = /^github-id:(\d+)$/.exec(repository.repositoryId);
+      if (!match) return undefined;
+      const repositoryId = Number(match[1]);
+      const credential = await input.tokenProvider.getInstallationToken({
+        repositoryId,
+        installationId: input.installationId,
+      });
+      if (!credential || credential.repositoryId !== repositoryId
+        || credential.installationId !== input.installationId) return undefined;
+      return credential.token;
+    },
+  });
 }
 
 /** Adapts the existing GitHub provider to authoritative v3 facts and merge operations. */

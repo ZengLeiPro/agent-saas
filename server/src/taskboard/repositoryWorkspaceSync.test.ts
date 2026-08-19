@@ -39,6 +39,8 @@ class ScriptedHost implements RepositoryWorkspaceSyncHost {
     return operation();
   }
 
+  async validateServerOwnedRepository(_repositoryPath: string): Promise<void> {}
+
   async runGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult> {
     this.commands.push(command);
     const step = this.steps.shift();
@@ -175,6 +177,7 @@ describe('syncRepositoryWorkspace', () => {
           release();
         }
       },
+      validateServerOwnedRepository: vi.fn(async () => undefined),
       runGit: vi.fn(async ({ args }: RepositoryWorkspaceGitCommand) => {
         if (args[0] === 'rev-parse') return ok(`${REMOTE_OID}\n`);
         if (args[0] === '-c') return ok(`${mainRecord(REMOTE_OID)}\n${integrationRecord(REMOTE_OID)}`);

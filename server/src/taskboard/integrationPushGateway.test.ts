@@ -20,7 +20,7 @@ const B = 'b'.repeat(40);
 const TOKEN = 'github-secret-never-log';
 
 const binding: IntegrationPushCapabilityBinding = {
-  tenantId: 'tenant-1', repositoryId: 'github:org/repo', integrationTaskId: 'task-1',
+  tenantId: 'tenant-1', repositoryId: 'github-id:123', integrationTaskId: 'task-1',
   candidateId: 'candidate-1', revision: 2, executionId: 'execution-1',
   exactRef: 'refs/heads/integration/task-1', expectedOldOid: A, laneEpoch: 3, workflowEpoch: 4,
 };
@@ -61,7 +61,9 @@ class FakeGit implements IntegrationPushGitRunner {
   }
 }
 
-async function fixture() {
+async function fixture(credential: { token: string; mode: 'github_app'; repositoryId: number; installationId: number } | null = {
+  token: TOKEN, mode: 'github_app', repositoryId: 123, installationId: 456,
+}) {
   const root = await mkdtemp(`${tmpdir()}/integration-push-test-`);
   const host = new InMemoryIntegrationPushCapabilityHost();
   const capabilityService = new IntegrationPushCapabilityService(host);
@@ -77,7 +79,8 @@ async function fixture() {
       && input.executionId === binding.executionId && input.candidateId === binding.candidateId
       ? { binding, ownerUserId: 'owner-1' } : undefined,
     resolveRepository: async () => ({ worktreePath: root, remoteUrl: 'https://github.com/org/repo.git' }),
-    resolveGithubToken: async () => ({ token: TOKEN, mode: 'restricted_pat', repositoryId: binding.repositoryId }),
+    resolveGithubToken: async () => credential ?? undefined,
+    githubAppInstallationId: 456,
     operationService,
     runner: git,
   });
@@ -102,6 +105,19 @@ describe('IntegrationPushGateway', () => {
     await expect(gateway.health()).resolves.toEqual({ enabled: false, healthy: false, reason: 'disabled' });
     await expect(gateway.issue({ tenantId: 't', requesterUserId: 'u', executionId: 'e', candidateId: 'c' }))
       .rejects.toMatchObject({ code: 'disabled', retryable: false });
+  });
+
+  it('fails closed when the GitHub App token is missing or bound to another installation', async () => {
+    for (const credential of [
+      null,
+      { token: TOKEN, mode: 'github_app' as const, repositoryId: 123, installationId: 999 },
+    ]) {
+      const f = await fixture(credential);
+      try {
+        const issued = await f.issue();
+        await expect(f.push(issued.capabilityToken)).rejects.toMatchObject({ code: 'credential_unavailable' });
+      } finally { await rm(f.root, { recursive: true, force: true }); }
+    }
   });
 
   it('pushes only the trusted exact ref with lease and keeps credential out of argv', async () => {
@@ -182,6 +198,28 @@ describe('IntegrationPushGateway', () => {
       await expect(f.gateway.pushExact(input)).resolves.toBeUndefined();
       expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
       expect([...f.operationStorage.records.values()][0]?.state).toBe('succeeded');
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('verifies a succeeded ledger receipt and exact remote head on post-bind replay without constructing a new intent', async () => {
+    const f = await fixture();
+    const first = {
+      tenantId: binding.tenantId, ownerUserId: 'owner-1', repositoryId: binding.repositoryId,
+      integrationTaskId: binding.integrationTaskId, candidateId: binding.candidateId,
+      revision: binding.revision, exactRef: binding.exactRef, expectedOldOid: A, newOid: B,
+      fence: { workflowEpoch: binding.workflowEpoch, laneEpoch: binding.laneEpoch,
+        candidateId: binding.candidateId, candidateRevision: binding.revision, executionId: 'compose-1' },
+    };
+    try {
+      await f.gateway.pushExact(first);
+      f.git.remoteLine = `${B}\t${binding.exactRef}\n`;
+      await expect(f.gateway.pushExact({ ...first, expectedOldOid: B })).resolves.toBeUndefined();
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
+      expect(f.operationStorage.records.size).toBe(1);
+      expect([...f.operationStorage.records.values()][0]).toMatchObject({
+        state: 'succeeded', expected: { ref: binding.exactRef, oldOid: A, newOid: B },
+        receipt: { ref: binding.exactRef, oldOid: A, newOid: B },
+      });
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 

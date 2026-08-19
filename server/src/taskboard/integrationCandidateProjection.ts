@@ -1,6 +1,6 @@
 import pg from 'pg';
 
-import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
+import type { TaskBoardIntegrationCandidateDetails, TaskBoardTask } from '../../../shared/src/types/taskboard.js';
 import {
   rowToIntegrationCandidate,
   rowToIntegrationCandidateRevision,
@@ -83,7 +83,7 @@ export async function loadIntegrationCandidateProjection(
       )
       : Promise.resolve({ rows: [] }),
     store.pool.query(
-      `SELECT status,last_error,updated_at FROM ${tables.requestsOutboxTable}
+      `SELECT status,last_error,receipt,updated_at FROM ${tables.requestsOutboxTable}
         WHERE candidate_id=$1 AND kind='cleanup' AND candidate_revision=$2
         ORDER BY created_at DESC LIMIT 1`,
       [row.id, Number(row.current_revision)],
@@ -123,16 +123,21 @@ function cleanupProjection(row: Record<string, unknown> | undefined) {
   if (!row) return undefined;
   const status = String(row.status);
   const reason = row.last_error ? String(row.last_error) : undefined;
-  const normalized = reason?.toLowerCase() ?? '';
-  const outcome: 'pending' | 'completed' | 'failed' | 'skipped' = status === 'failed'
+  const receipt = row.receipt
+    ? (typeof row.receipt === 'string' ? JSON.parse(row.receipt) : row.receipt) as NonNullable<TaskBoardIntegrationCandidateDetails['cleanup']>['receipt']
+    : undefined;
+  const actions = Array.isArray(receipt?.actions) ? receipt.actions as Array<Record<string, unknown>> : [];
+  const allSkipped = actions.length > 0 && actions.every((action) => action.status === 'skipped');
+  const legacySkipped = !receipt && Boolean(reason && /skipped-by-policy|disabled/i.test(reason));
+  const outcome: 'pending' | 'completed' | 'failed' | 'skipped' = status === 'failed' || receipt?.outcome === 'failed'
     ? 'failed'
-    : status === 'completed' && (normalized.includes('skipped-by-policy') || normalized.includes('disabled'))
-      ? 'skipped'
-      : status === 'completed' ? 'completed' : 'pending';
+    : status === 'completed' && (allSkipped || legacySkipped) ? 'skipped'
+      : status === 'completed' && receipt?.outcome === 'succeeded' ? 'completed' : 'pending';
   return {
     outcome,
     requestStatus: status,
     ...(reason ? { reason } : {}),
+    ...(receipt ? { receipt } : {}),
     updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
   };
 }

@@ -106,6 +106,7 @@ function toIso(value: unknown): string { return value instanceof Date ? value.to
 export interface PostgresIntegrationEngineV3HostOptions {
   pool: { connect(): Promise<PoolClient>; query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> };
   tasksTable: string;
+  executionsTable: string;
   integrationSourcesTable: string;
   integrationLanesTable: string;
   candidatesTable: string;

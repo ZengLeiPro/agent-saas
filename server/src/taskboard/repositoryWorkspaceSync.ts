@@ -24,6 +24,8 @@ export interface RepositoryWorkspaceSyncLock {
  */
 export interface RepositoryWorkspaceSyncHost {
   withRepositoryBranchLock<T>(lock: RepositoryWorkspaceSyncLock, operation: () => Promise<T>): Promise<T>;
+  /** Must validate the real common-dir ownership/mode while the branch lock is held. */
+  validateServerOwnedRepository(repositoryPath: string): Promise<void>;
   runGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult>;
 }
 
@@ -49,6 +51,7 @@ export interface RepositoryWorkspaceSyncResult {
 export type RepositoryWorkspaceSyncErrorCode =
   | 'INVALID_PATH'
   | 'INVALID_REF'
+  | 'MIRROR_UNSAFE'
   | 'GIT_COMMAND_FAILED'
   | 'WORKTREE_UNKNOWN'
   | 'WORKTREE_DIRTY'
@@ -89,6 +92,14 @@ async function syncLocked(
   host: RepositoryWorkspaceSyncHost,
   input: RepositoryWorkspaceSyncInput,
 ): Promise<RepositoryWorkspaceSyncResult> {
+  try {
+    await host.validateServerOwnedRepository(input.repositoryPath);
+  } catch (error) {
+    throw new RepositoryWorkspaceSyncError(
+      `Server-owned mirror validation failed: ${error instanceof Error ? error.message : String(error)}`,
+      'MIRROR_UNSAFE',
+    );
+  }
   const remoteBaseRef = `refs/remotes/origin/${input.baseBranch}`;
   // Explicit URL/refspec avoids local remote.*.url, uploadpack and helper config.
   await git(host, input.repositoryPath, [

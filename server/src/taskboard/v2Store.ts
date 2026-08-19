@@ -17,6 +17,8 @@ import { integrationCandidateTableNames } from './integrationCandidateSchema.js'
 import {
   canonicalJson,
   computeIntegrationPolicySnapshotDigest,
+  computeIntegrationRequirementDigest,
+  computeIntegrationReviewReceiptDigest,
   computeIntegrationSourceSetDigest,
 } from './integrationCandidateDigest.js';
 import { resolveWorkflowContract } from './workflowContract.js';
@@ -308,12 +310,10 @@ export async function createIntegrationBatch(
           frozenBaseOid: String(row.base_oid),
           reviewedSubjectDigest: String(row.reviewed_subject_digest),
           reviewExecutionId: String(row.review_execution_id),
-          reviewReceiptDigest: snapshotDigest('taskboard.integration-review-receipt', {
-            executionId: String(row.review_execution_id), reviewedSubjectDigest: String(row.reviewed_subject_digest),
-          }),
-          requirementDigest: snapshotDigest('taskboard.integration-requirement', {
-            title: String(row.title), description: String(row.description ?? ''),
-          }),
+          reviewReceiptDigest: computeIntegrationReviewReceiptDigest(
+            String(row.review_execution_id), String(row.reviewed_subject_digest),
+          ),
+          requirementDigest: computeIntegrationRequirementDigest(String(row.title), String(row.description ?? '')),
         });
       }
       await appendChange(options, client, String(row.id), 'integration.source_added', 'system', identity.ownerUserId, {

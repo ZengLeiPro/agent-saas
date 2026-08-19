@@ -464,6 +464,18 @@ export interface TaskBoardIntegrationCandidateDetails {
     outcome: "pending" | "completed" | "failed" | "skipped";
     requestStatus: string;
     reason?: string;
+    receipt?: {
+      version: 1;
+      outcome: "succeeded" | "failed";
+      actions: Array<{
+        action: "revoke_capabilities" | "fence_capabilities" | "remove_candidate_worktree" | "source_pull_request";
+        status: "succeeded" | "skipped" | "failed";
+        target?: string;
+        reason?: string;
+        error?: string;
+      }>;
+      completedAt: string;
+    };
     updatedAt: string;
   };
   history?: { includeHistory: boolean; page: number; pageSize: number; total: number; hasMore: boolean };

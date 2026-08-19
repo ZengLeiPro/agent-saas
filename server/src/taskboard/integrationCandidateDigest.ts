@@ -46,6 +46,23 @@ export function computeIntegrationSourceSetDigest(
   })));
 }
 
+export function computeIntegrationReviewReceiptDigest(
+  executionId: string,
+  reviewedSubjectDigest: string,
+): string {
+  return versionedDigest('taskboard.integration-review-receipt', INTEGRATION_CANDIDATE_DIGEST_VERSION, {
+    executionId: required(executionId, 'executionId'),
+    reviewedSubjectDigest: required(reviewedSubjectDigest, 'reviewedSubjectDigest'),
+  });
+}
+
+export function computeIntegrationRequirementDigest(title: string, description: string): string {
+  return versionedDigest('taskboard.integration-requirement', INTEGRATION_CANDIDATE_DIGEST_VERSION, {
+    title: required(title, 'title'),
+    description,
+  });
+}
+
 export function computeIntegrationPolicySnapshotDigest(
   policySnapshot: Record<string, unknown>,
   digestVersion: TaskBoardIntegrationCandidateDigestVersion = INTEGRATION_CANDIDATE_DIGEST_VERSION,

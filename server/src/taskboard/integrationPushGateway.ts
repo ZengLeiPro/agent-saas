@@ -1,14 +1,12 @@
-import { execFile } from 'node:child_process';
 import { access, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, relative, resolve } from 'node:path';
-import { promisify } from 'node:util';
-
 import {
   IntegrationPushCapabilityService,
   type IntegrationPushCapabilityBinding,
 } from './integrationPushCapability.js';
 import type { AuthoritativeIntegrationPushTarget } from './integrationPushCapabilityPostgres.js';
+import { runSafeServerGit, safeServerGitEnvironment } from './safeServerGitRunner.js';
 import {
   IntegrationProviderOperationService,
   integrationProviderOperationKey,
@@ -16,7 +14,6 @@ import {
   type IntegrationProviderOperationRecord,
 } from './integrationProviderOperations.js';
 
-const execFileAsync = promisify(execFile);
 const OID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 export interface IntegrationPushRepositoryAccess {
@@ -41,12 +38,13 @@ export interface IntegrationPushGatewayOptions {
     ownerUserId: string;
     candidateId: string;
   }): Promise<IntegrationPushRepositoryAccess | undefined>;
-  /** Server-side connector read. The returned token is never copied to runtime metadata. */
+  /** GitHub App installation token read. The token is never copied to runtime metadata. */
   resolveGithubToken(input: {
     tenantId: string;
     ownerUserId: string;
     repositoryId: string;
   }): Promise<IntegrationPushCredential | undefined>;
+  githubAppInstallationId?: number;
   /** Required for every production write. Missing ledger keeps health fail-closed. */
   operationService?: IntegrationProviderOperationService;
   runner?: IntegrationPushGitRunner;
@@ -54,9 +52,10 @@ export interface IntegrationPushGatewayOptions {
 
 export interface IntegrationPushCredential {
   token: string;
-  mode: 'github_app' | 'restricted_pat';
-  /** Immutable GitHub numeric repository id for App mode; exact owner/name identity for PAT mode. */
-  repositoryId: string;
+  mode: 'github_app';
+  /** Immutable numeric identities returned by the trusted App provider. */
+  repositoryId: number;
+  installationId: number;
 }
 
 export interface IntegrationPushGitRunner {
@@ -183,7 +182,7 @@ export class IntegrationPushGateway {
       ownerUserId: target.ownerUserId,
       repositoryId: target.binding.repositoryId,
     });
-    if (!token || !credentialMatchesRepository(token, target.binding.repositoryId)) {
+    if (!token || !credentialMatchesRepository(token, target.binding.repositoryId, this.options.githubAppInstallationId)) {
       throw new IntegrationPushGatewayError('credential_unavailable', false);
     }
 
@@ -243,18 +242,31 @@ export class IntegrationPushGateway {
     if (!repository) throw new IntegrationPushGatewayError('worktree_unavailable', true);
     validateRemote(repository.remoteUrl);
     const cwd = await this.resolveControlledWorktree(repository.worktreePath);
-    await this.assertCommitGraph(cwd, input.expectedOldOid, input.newOid);
     const credential = await this.options.resolveGithubToken({
       tenantId: input.tenantId, ownerUserId: input.ownerUserId, repositoryId: input.repositoryId,
     });
-    if (!credential || !credentialMatchesRepository(credential, input.repositoryId)) {
+    if (!credential || !credentialMatchesRepository(credential, input.repositoryId, this.options.githubAppInstallationId)) {
       throw new IntegrationPushGatewayError('credential_unavailable', false);
     }
+    // The composed OID is part of the semantic key. A candidate revision can be reloaded
+    // after PR binding, but a different deterministic head must never collide with (or
+    // silently reuse) the ledger row for the first head.
     const operationKey = integrationProviderOperationKey({
       repositoryId: input.repositoryId, candidateId: input.candidateId,
-      candidateRevision: input.revision, kind: 'push_ref', target: input.exactRef,
+      candidateRevision: input.revision, kind: 'push_ref', target: `${input.exactRef}@${input.newOid}`,
     });
     const service = this.options.operationService!;
+    const prior = await service.get(operationKey);
+    if (prior && prior.state !== 'prepared') {
+      await this.withAskpass(credential.token, async (env) => {
+        await this.reconcileOrVerifyPriorPush(prior, input, cwd, repository.remoteUrl, env);
+      });
+      return;
+    }
+    // Equality is only legal on a post-bind/restart replay with a matching durable
+    // operation above. Never manufacture a no-op intent with a rewritten old OID.
+    if (input.expectedOldOid === input.newOid) throw new IntegrationPushGatewayError('remote_old_mismatch', false);
+    await this.assertCommitGraph(cwd, input.expectedOldOid, input.newOid);
     const operation = await service.prepare({
       operationKey, kind: 'push_ref', repositoryId: input.repositoryId, fence: input.fence,
       expected: { ref: input.exactRef, oldOid: input.expectedOldOid, newOid: input.newOid },
@@ -297,6 +309,41 @@ export class IntegrationPushGateway {
       workflowEpoch: target.binding.workflowEpoch,
       enabled: false,
     }, input.reason || 'integration execution cancelled');
+  }
+
+  private async reconcileOrVerifyPriorPush(
+    operation: IntegrationProviderOperationRecord,
+    input: {
+      repositoryId: string; candidateId: string; revision: number; exactRef: string; newOid: string;
+      fence: IntegrationProviderOperationFence;
+    },
+    cwd: string,
+    remoteUrl: string,
+    env: Record<string, string>,
+  ): Promise<void> {
+    const expectedRef = String(operation.expected.ref ?? '');
+    const expectedNew = String(operation.expected.newOid ?? '');
+    const fence = operation.fence;
+    if (operation.kind !== 'push_ref' || operation.repositoryId !== input.repositoryId
+      || expectedRef !== input.exactRef || expectedNew !== input.newOid
+      || fence.candidateId !== input.candidateId || fence.candidateRevision !== input.revision
+      || fence.workflowEpoch !== input.fence.workflowEpoch || fence.laneEpoch !== input.fence.laneEpoch) {
+      throw new IntegrationPushGatewayError('push_failed_unknown', false);
+    }
+    let durable = operation;
+    if (durable.state === 'unknown' || durable.state === 'executing') {
+      durable = await this.options.operationService!.reconcile(
+        durable.operationKey,
+        (record) => this.reconcileExactRef(record, cwd, remoteUrl, env),
+      );
+    }
+    if (durable.state !== 'succeeded'
+      || String(durable.receipt?.ref ?? '') !== input.exactRef
+      || String(durable.receipt?.newOid ?? '') !== input.newOid) {
+      throw new IntegrationPushGatewayError('push_failed_unknown', false);
+    }
+    const actual = await this.readExactRemoteRef(cwd, remoteUrl, input.exactRef, env);
+    if (actual !== input.newOid) throw new IntegrationPushGatewayError('remote_old_mismatch', false);
   }
 
   private async readExactRemoteRef(cwd: string, remoteUrl: string, exactRef: string, env: Record<string, string>): Promise<string | undefined> {
@@ -362,16 +409,12 @@ export class IntegrationPushGateway {
     try {
       await writeFile(askpass, '#!/bin/sh\ncase "$1" in *Username*) printf "%s\\n" "x-access-token";; *) printf "%s\\n" "$KY_GIT_PUSH_TOKEN";; esac\n', { mode: 0o700 });
       await access(askpass);
-      return await action({
-        PATH: process.env.PATH ?? '/usr/bin:/bin',
-        LANG: 'C',
+      return await action(safeServerGitEnvironment({
         HOME: dir,
+        XDG_CONFIG_HOME: dir,
         GIT_ASKPASS: askpass,
-        GIT_TERMINAL_PROMPT: '0',
-        GIT_CONFIG_NOSYSTEM: '1',
-        GIT_CONFIG_GLOBAL: '/dev/null',
         KY_GIT_PUSH_TOKEN: token,
-      });
+      }) as Record<string, string>);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -385,18 +428,12 @@ export class ExecFileIntegrationPushGitRunner implements IntegrationPushGitRunne
     env?: Record<string, string>;
     redactOutput?: boolean;
   }): Promise<{ stdout: string }> {
-    try {
-      const result = await execFileAsync('git', input.args, {
-        cwd: input.cwd,
-        env: input.env,
-        timeout: 30_000,
-        maxBuffer: 1024 * 1024,
-      });
-      return { stdout: result.stdout };
-    } catch {
+    const result = await runSafeServerGit({ cwd: input.cwd, args: input.args, ...(input.env ? { env: input.env } : {}) });
+    if (result.exitCode !== 0) {
       // Never surface child stderr/stdout: providers and helpers may echo credentials or URLs.
       throw new Error(input.redactOutput ? 'git command failed (redacted)' : 'git command failed');
     }
+    return { stdout: result.stdout };
   }
 }
 
@@ -418,12 +455,18 @@ function sameBinding(a: IntegrationPushCapabilityBinding, b: IntegrationPushCapa
     && a.workflowEpoch === b.workflowEpoch;
 }
 
-function credentialMatchesRepository(credential: IntegrationPushCredential, configuredRepositoryId: string): boolean {
-  if (!credential.token || !credential.repositoryId) return false;
-  if (credential.mode === 'github_app') return /^github-id:\d+$/.test(configuredRepositoryId)
-    && credential.repositoryId === configuredRepositoryId;
-  return credential.mode === 'restricted_pat' && /^github:[^/]+\/[^/]+$/.test(configuredRepositoryId)
-    && credential.repositoryId.toLowerCase() === configuredRepositoryId.toLowerCase();
+function credentialMatchesRepository(
+  credential: IntegrationPushCredential,
+  configuredRepositoryId: string,
+  configuredInstallationId: number | undefined,
+): boolean {
+  const match = /^github-id:(\d+)$/.exec(configuredRepositoryId);
+  return credential.mode === 'github_app'
+    && credential.token.length > 0
+    && !!match
+    && Number(match[1]) === credential.repositoryId
+    && Number.isSafeInteger(configuredInstallationId)
+    && configuredInstallationId === credential.installationId;
 }
 
 function validateRemote(value: string): void {

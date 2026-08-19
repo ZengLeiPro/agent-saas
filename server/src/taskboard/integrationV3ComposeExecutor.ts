@@ -42,6 +42,14 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
     if (!this.provider.ensureIntegrationBranch || !this.provider.ensureIntegrationPullRequest || !this.provider.getReference) {
       throw new IntegrationV3ComposeDisabledError('Repository provider does not support integration branch/PR composition');
     }
+    if (current.candidate.providerPullRequestId) {
+      // The first compose leaves the deterministic commit checked out. PR binding advances
+      // candidate CAS without appending the revision, so normalize the clean controlled
+      // worktree back to its durable base before the mandatory fetch/sync and recomposition.
+      const status = await git(this.host, context.worktreePath, ['status', '--porcelain=v1', '--untracked-files=all']);
+      if (status.stdout.length > 0) throw new Error('Integration worktree is dirty after pull request binding');
+      await git(this.host, context.worktreePath, ['reset', '--hard', current.revision.baseOid]);
+    }
     const sync = await syncRepositoryWorkspace(this.host, {
       repositoryPath: context.repositoryPath,
       worktreePath: context.worktreePath,

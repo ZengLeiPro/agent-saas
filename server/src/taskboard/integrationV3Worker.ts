@@ -23,6 +23,24 @@ export interface IntegrationV3WorkerCurrent {
   revision?: TaskBoardIntegrationCandidateRevision;
 }
 
+export type IntegrationV3CleanupActionStatus = 'succeeded' | 'skipped' | 'failed';
+
+export interface IntegrationV3CleanupActionReceipt {
+  action: 'revoke_capabilities' | 'fence_capabilities' | 'remove_candidate_worktree' | 'source_pull_request';
+  status: IntegrationV3CleanupActionStatus;
+  target?: string;
+  reason?: string;
+  error?: string;
+}
+
+/** Durable evidence for every cleanup side effect. Skips must name the policy reason. */
+export interface IntegrationV3CleanupReceipt {
+  version: 1;
+  outcome: 'succeeded' | 'failed';
+  actions: IntegrationV3CleanupActionReceipt[];
+  completedAt: string;
+}
+
 export interface IntegrationV3WorkerHost {
   claimCandidate(leaseMs: number): Promise<IntegrationV3CandidateLease | undefined>;
   loadCurrent(candidateId: string): Promise<IntegrationV3WorkerCurrent>;
@@ -31,8 +49,8 @@ export interface IntegrationV3WorkerHost {
   claimRequest(leaseMs: number): Promise<IntegrationV3RequestLease | undefined>;
   dispatchAgent(request: IntegrationV3RequestLease): Promise<void>;
   syncWorkspace(request: IntegrationV3RequestLease): Promise<void>;
-  cleanup(request: IntegrationV3RequestLease): Promise<'completed' | 'skipped-by-policy' | 'disabled' | void>;
-  completeRequest(request: IntegrationV3RequestLease, outcome?: 'completed' | 'skipped-by-policy' | 'disabled'): Promise<void>;
+  cleanup(request: IntegrationV3RequestLease): Promise<IntegrationV3CleanupReceipt | void>;
+  completeRequest(request: IntegrationV3RequestLease, receipt?: IntegrationV3CleanupReceipt): Promise<void>;
   releaseRequest(request: IntegrationV3RequestLease, error: string, retryable: boolean): Promise<void>;
   findRecoverableMergeOperation(candidateId: string, revision: number): Promise<string | undefined>;
   logger?: { info(message: string): void; warn(message: string): void };
@@ -106,11 +124,15 @@ export class IntegrationV3Worker {
 
   private async processRequest(request: IntegrationV3RequestLease): Promise<void> {
     try {
-      let cleanupOutcome: 'completed' | 'skipped-by-policy' | 'disabled' | undefined;
+      let cleanupReceipt: IntegrationV3CleanupReceipt | undefined;
       if (request.kind === 'work' || request.kind === 'review') await this.options.host.dispatchAgent(request);
       else if (request.kind === 'workspace_sync') await this.options.host.syncWorkspace(request);
-      else cleanupOutcome = await this.options.host.cleanup(request) ?? 'skipped-by-policy';
-      await this.options.host.completeRequest(request, cleanupOutcome);
+      else {
+        cleanupReceipt = await this.options.host.cleanup(request) || undefined;
+        if (!cleanupReceipt) throw new Error('Cleanup host returned no action receipt');
+        assertCleanupReceipt(cleanupReceipt);
+      }
+      await this.options.host.completeRequest(request, cleanupReceipt);
     } catch (error) {
       await this.options.host.releaseRequest(request, message(error), isRetryable(error));
     }
@@ -222,4 +244,17 @@ function isRetryable(error: unknown): boolean {
   ]);
   return !deterministic.has(code);
 }
+function assertCleanupReceipt(receipt: IntegrationV3CleanupReceipt): void {
+  const required = ['revoke_capabilities', 'fence_capabilities', 'remove_candidate_worktree'] as const;
+  for (const action of required) {
+    if (!receipt.actions.some((item) => item.action === action)) throw new Error(`Cleanup receipt missing action: ${action}`);
+  }
+  for (const item of receipt.actions) {
+    if (item.status === 'skipped' && !item.reason) throw new Error(`Cleanup skip missing policy reason: ${item.action}`);
+    if (item.status === 'failed' && !item.error) throw new Error(`Cleanup failure missing error: ${item.action}`);
+  }
+  const expected = receipt.actions.some((item) => item.status === 'failed') ? 'failed' : 'succeeded';
+  if (receipt.outcome !== expected) throw new Error('Cleanup receipt outcome does not match actions');
+}
+
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }

@@ -27,7 +27,7 @@ export function integrationCandidateTableNames(integrationSourcesTable: string):
   };
 }
 
-export async function runIntegrationCandidateSchema(
+async function installIntegrationCandidateSchemaV1(
   options: IntegrationCandidateSchemaOptions,
   client: Pick<PoolClient, 'query'>,
 ): Promise<void> {
@@ -195,6 +195,24 @@ export async function runIntegrationCandidateSchema(
     )
   `);
   await client.query(`
+    CREATE OR REPLACE FUNCTION ${sourceSnapshotsTable}_review_owner_fn()
+    RETURNS trigger LANGUAGE plpgsql AS $function$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM ${options.executionsTable} e
+         WHERE e.id=NEW.review_execution_id AND e.task_id=NEW.delivery_task_id
+           AND e.purpose='review' AND e.status='succeeded'
+      ) THEN
+        RAISE EXCEPTION 'TASKBOARD_CANDIDATE_SOURCE_REVIEW_OWNERSHIP_INVALID';
+      END IF;
+      RETURN NEW;
+    END
+    $function$;
+    DROP TRIGGER IF EXISTS ${sourceSnapshotsTable}_review_owner ON ${sourceSnapshotsTable};
+    CREATE TRIGGER ${sourceSnapshotsTable}_review_owner BEFORE INSERT ON ${sourceSnapshotsTable}
+      FOR EACH ROW EXECUTE FUNCTION ${sourceSnapshotsTable}_review_owner_fn()
+  `);
+  await client.query(`
     CREATE TABLE IF NOT EXISTS ${providerOperationsTable} (
       id TEXT PRIMARY KEY,
       operation_key TEXT NOT NULL UNIQUE,
@@ -273,5 +291,57 @@ export async function runIntegrationCandidateSchema(
       CREATE TRIGGER ${table}_immutable_delete BEFORE DELETE ON ${table}
         FOR EACH ROW EXECUTE FUNCTION ${table}_immutable_fn()
     `);
+  }
+}
+
+
+const INTEGRATION_CANDIDATE_SCHEMA_MIGRATIONS = [
+  { version: 1, name: 'candidate_v3_expand_base', run: installIntegrationCandidateSchemaV1 },
+  {
+    version: 2,
+    name: 'cleanup_action_receipt',
+    run: async (options: IntegrationCandidateSchemaOptions, client: Pick<PoolClient, 'query'>) => {
+      const { requestsOutboxTable } = integrationCandidateTableNames(options.integrationSourcesTable);
+      await client.query(`ALTER TABLE ${requestsOutboxTable} ADD COLUMN IF NOT EXISTS receipt JSONB`);
+    },
+  },
+] as const;
+
+/**
+ * Versioned, transactional expand installer. The advisory lock serializes replicas during rollout;
+ * timeouts keep startup from waiting indefinitely behind application traffic.
+ */
+export async function runIntegrationCandidateSchema(
+  options: IntegrationCandidateSchemaOptions,
+  client: Pick<PoolClient, 'query'>,
+): Promise<void> {
+  const root = options.integrationSourcesTable.endsWith('_sources')
+    ? options.integrationSourcesTable.slice(0, -'_sources'.length)
+    : options.integrationSourcesTable;
+  const migrationsTable = `${root}_candidate_schema_migrations_v3`;
+  await client.query(`CREATE TABLE IF NOT EXISTS ${migrationsTable} (
+    version INTEGER PRIMARY KEY CHECK (version > 0),
+    name TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  for (const migration of INTEGRATION_CANDIDATE_SCHEMA_MIGRATIONS) {
+    await client.query('BEGIN');
+    try {
+      await client.query(`SET LOCAL lock_timeout = '5s'`);
+      await client.query(`SET LOCAL statement_timeout = '60s'`);
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`${migrationsTable}:install`]);
+      const applied = await client.query(`SELECT version FROM ${migrationsTable} WHERE version=$1`, [migration.version]);
+      if (!applied.rows[0]) {
+        await migration.run(options, client);
+        await client.query(
+          `INSERT INTO ${migrationsTable}(version,name) VALUES ($1,$2) ON CONFLICT (version) DO NOTHING`,
+          [migration.version, migration.name],
+        );
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    }
   }
 }

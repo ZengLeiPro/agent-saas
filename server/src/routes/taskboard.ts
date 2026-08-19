@@ -809,7 +809,7 @@ async function rollbackCreatedTask(
   cleanup?: () => Promise<void>,
 ): Promise<never> {
   try {
-    await service.deleteTask(identity, task.id, { expectedVersion: task.version });
+    await service.rollbackTaskCreation(identity, task.id, { expectedVersion: task.version });
     await cleanup?.();
   } catch (cleanupError) {
     const originalMessage = error instanceof Error ? error.message : String(error);

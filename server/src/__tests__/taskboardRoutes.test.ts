@@ -522,9 +522,9 @@ describe('Taskboard routes', () => {
 
   it('创建任务的附件复制失败时回滚已创建任务', async () => {
     const service = makeService({ identities: [], taskFilters: [], createBoards: [] });
-    let deletedTask: { id: string; version: number } | undefined;
-    service.deleteTask = async (_identity, taskId, input) => {
-      deletedTask = { id: taskId, version: input.expectedVersion };
+    let rolledBackTask: { id: string; version: number } | undefined;
+    service.rollbackTaskCreation = async (_identity, taskId, input) => {
+      rolledBackTask = { id: taskId, version: input.expectedVersion };
       return { ...TASK, id: taskId, version: input.expectedVersion + 1, deletedAt: TASK.updatedAt };
     };
     const attachmentId = '33333333-3333-4333-8333-333333333333';
@@ -559,7 +559,7 @@ describe('Taskboard routes', () => {
     }));
 
     expect(response.status).toBe(400);
-    expect(deletedTask).toEqual({ id: TASK.id, version: TASK.version });
+    expect(rolledBackTask).toEqual({ id: TASK.id, version: TASK.version });
   });
 
   it('provides paged board/task search and comment update/delete endpoints', async () => {

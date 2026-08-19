@@ -44,6 +44,7 @@ import {
 import { IntegrationSourceDetails, useIntegrationSources } from "./IntegrationSources";
 import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from "./TaskAttachments";
+import { TaskCommentMarkdown } from "./TaskCommentMarkdown";
 import { useTaskComments, useTaskExecutions } from "./hooks";
 
 type TaskDraftField = "title" | "description" | "branch" | "attachments" | "priority" | "model";
@@ -566,7 +567,7 @@ export function TaskDetail({
         onOpenChange(nextOpen);
       }}
     >
-      <SheetContent side="right" className="w-full gap-0 overflow-hidden p-0 sm:max-w-xl">
+      <SheetContent side="right" className="w-full gap-0 overflow-hidden p-0 sm:max-w-[95vw] xl:max-w-[1400px]">
         {currentTask ? (
           <>
             <SheetHeader className="pr-12">
@@ -575,7 +576,8 @@ export function TaskDetail({
                 {boardReadOnly ? "归档看板只读" : archived ? "该任务已归档，可恢复后继续编辑" : "编辑任务并补充评论"}
               </SheetDescription>
             </SheetHeader>
-            <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+            <div data-testid="task-detail-columns" className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-2">
+              <div data-testid="task-detail-information" className="min-h-0 overflow-y-auto border-b p-4 sm:p-6 lg:border-b-0 lg:border-r">
               <section aria-label="流程状态" className="mb-6 space-y-2 rounded-lg border bg-muted/20 p-4 text-sm">
                 <h3 className="text-sm font-semibold">流程状态（Task）</h3>
                 <div className="flex flex-wrap items-center gap-2">
@@ -902,34 +904,51 @@ export function TaskDetail({
                   ) : null}
                 </div>
               </form>
+              </div>
 
-              <div className="my-6 border-t" />
-              <section aria-label="任务评论" className="space-y-3">
-                <h3 className="text-sm font-semibold">评论（{comments.length}）</h3>
-                {commentsError ? <p role="alert" className="text-sm text-destructive">{commentsError}</p> : null}
-                {commentsLoading ? <p className="text-sm text-muted-foreground">正在加载评论...</p> : null}
-                {comments.map((comment) => (
-                  <article key={comment.id} className="rounded-lg border bg-muted/20 p-3">
-                    <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                      <span>{comment.authorName}</span>
-                      <time>{new Date(comment.createdAt).toLocaleString("zh-CN")}</time>
+              <section aria-label="任务评论" className="flex min-h-0 flex-col bg-muted/10">
+                <header className="flex items-center justify-between border-b bg-background px-4 py-3 sm:px-6">
+                  <div>
+                    <h3 className="text-sm font-semibold">评论（{comments.length}）</h3>
+                    <p className="mt-0.5 text-xs text-muted-foreground">支持 Markdown 格式</p>
+                  </div>
+                </header>
+                <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+                  {commentsError ? <p role="alert" className="mb-4 text-sm text-destructive">{commentsError}</p> : null}
+                  {commentsLoading ? <p className="text-sm text-muted-foreground">正在加载评论...</p> : null}
+                  <div className="space-y-0">
+                    {comments.map((comment, index) => (
+                      <article key={comment.id} className="relative flex gap-3 pb-6 last:pb-0">
+                        {index < comments.length - 1 ? (
+                          <span aria-hidden="true" className="absolute bottom-0 left-4 top-9 w-px bg-border" />
+                        ) : null}
+                        <div className="relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border bg-background text-xs font-medium text-muted-foreground shadow-sm">
+                          {comment.authorType === "agent" ? <Bot className="size-4" /> : comment.authorName.slice(0, 1)}
+                        </div>
+                        <div className="min-w-0 flex-1 rounded-lg border bg-card p-3 shadow-sm">
+                          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                            <span className="text-xs font-medium text-foreground">{comment.authorName}</span>
+                            <time className="text-xs text-muted-foreground">{new Date(comment.createdAt).toLocaleString("zh-CN")}</time>
+                          </div>
+                          {comment.body ? <TaskCommentMarkdown body={comment.body} /> : null}
+                          <TaskAttachmentList attachments={comment.attachments ?? []} />
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                  {!commentsLoading && comments.length === 0 ? (
+                    <div className="flex min-h-40 items-center justify-center rounded-lg border border-dashed bg-background text-sm text-muted-foreground">
+                      暂无评论
                     </div>
-                    {comment.body ? (
-                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6">{comment.body}</p>
-                    ) : null}
-                    <TaskAttachmentList attachments={comment.attachments ?? []} />
-                  </article>
-                ))}
-                {!commentsLoading && comments.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">暂无评论</p>
-                ) : null}
-                <form className="space-y-2" onSubmit={submitComment}>
+                  ) : null}
+                </div>
+                <form className="space-y-2 border-t bg-background p-4 sm:px-6" onSubmit={submitComment}>
                   <Label htmlFor="task-comment-body">发表评论</Label>
                   <Textarea
                     id="task-comment-body"
                     value={commentBody}
                     onChange={(event) => setCommentBody(event.target.value)}
-                    placeholder={commentReadOnly ? "当前角色不可发表评论" : "补充进展、上下文或复核意见"}
+                    placeholder={commentReadOnly ? "当前角色不可发表评论" : "补充进展、上下文或复核意见（支持 Markdown）"}
                     rows={3}
                     disabled={commentReadOnly || saving}
                     onPaste={(event) => void commentAttachments.handlePaste(event)}
@@ -958,16 +977,18 @@ export function TaskDetail({
                       </Label>
                     </div>
                   ) : null}
-                  <Button
-                    type="submit"
-                    size="sm"
-                    disabled={commentReadOnly || saving || (!pendingContinuationCommentId && commentAttachments.uploading)
-                      || (!pendingContinuationCommentId && !commentBody.trim()
-                        && commentAttachments.uploadedFiles.length === 0)}
-                  >
-                    <Send />
-                    {pendingContinuationCommentId ? "重试继续执行" : "发表"}
-                  </Button>
+                  <div className="flex justify-end">
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={commentReadOnly || saving || (!pendingContinuationCommentId && commentAttachments.uploading)
+                        || (!pendingContinuationCommentId && !commentBody.trim()
+                          && commentAttachments.uploadedFiles.length === 0)}
+                    >
+                      <Send />
+                      {pendingContinuationCommentId ? "重试继续执行" : "发表"}
+                    </Button>
+                  </div>
                 </form>
               </section>
             </div>

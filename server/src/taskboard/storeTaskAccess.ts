@@ -5,7 +5,7 @@ import type {
   TaskBoardRepositoryConfig,
   TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
-import { boardRepositoryFragment, parseStageModels } from './boardFields.js';
+import { boardRepositoryFragment, parseStageModels, rowToBoard } from './boardFields.js';
 import { rowToTask, toIso, visibleCommentPredicate } from './storeHelpers.js';
 import { TaskboardNotFoundError, type TaskboardIdentity } from './types.js';
 
@@ -27,6 +27,29 @@ export interface TaskboardTaskAccessHost {
     forUpdate: boolean,
     ownerOnly?: boolean,
   ): Promise<TaskBoard>;
+}
+
+export async function loadBoard(
+  store: Pick<TaskboardTaskAccessHost, 'boardsTable' | 'membersTable'>,
+  db: PgPool | PoolClient,
+  identity: TaskboardIdentity,
+  boardId: string,
+  forUpdate: boolean,
+  ownerOnly: boolean,
+): Promise<TaskBoard> {
+  const result = await db.query(
+    `SELECT b.id, b.owner_user_id, b.name, b.description, b.visibility, b.prompt, b.model, b.stage_models, b.stage_prompts,
+            b.repository, b.integration_policy, b.version, b.archived_at, b.created_at, b.updated_at,
+            CASE WHEN b.owner_user_id=$3 THEN 'owner' ELSE COALESCE(m.role,'viewer') END AS board_role
+       FROM ${store.boardsTable} b
+       LEFT JOIN ${store.membersTable} m ON m.board_id=b.id AND m.user_id=$3
+      WHERE b.id=$1 AND b.tenant_id=$2
+        AND (b.owner_user_id=$3 OR ($4::boolean=false AND b.visibility='organization'))
+      ${forUpdate ? 'FOR UPDATE OF b' : ''}`,
+    [boardId, identity.tenantId, identity.ownerUserId, ownerOnly],
+  );
+  if (!result.rows[0]) throw new TaskboardNotFoundError('Board not found');
+  return rowToBoard(result.rows[0], identity.ownerUserId);
 }
 
 export async function requireTaskWithBoard(

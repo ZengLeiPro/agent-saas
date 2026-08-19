@@ -69,7 +69,8 @@ import {
   type RuntimeToolCallState,
 } from './replay.js';
 import type { ToolInvocationStore } from './toolInvocationStore.js';
-import { pickSoleReadyTenantHandId, type HandStore } from './handStore.js';
+import { selectRuntimeHandRoute, type HandStore } from './handStore.js';
+import type { RuntimeIsolationRequirement } from './runtimeIsolationEvidence.js';
 import type { RunStore } from './runStore.js';
 import { createLogger } from '../utils/logger.js';
 import { resolveRunTenantId, withDurableRunCancellation } from './runContextGovernance.js';
@@ -175,12 +176,9 @@ export interface RawAgentLoopOptions {
   toolPolicy?: ToolPolicy;
   contextPolicy?: ContextReconstructionPolicy;
   toolInvocationStore?: ToolInvocationStore;
-  /**
-   * B2: 让 RawAgentLoop 在记录 invocation start 时能查 session 内可用 hand。
-   * 当 session 内只有一个 ready tenant-remote hand 时，自动把该 handId 注入
-   * invocation metadata（cancel delivery / 审计可见）。普通工具入参不接受 handId。
-   */
+  /** Durable hand registry shared with tool transport routing. */
   handStore?: HandStore;
+  runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   /**
    * RFC v1 P0.4：跨 turn / 跨 run 持久化 Responses API session state（last_response_id 等）。
    * 不传则不做接力，所有请求都走全量 input（行为退化为不使用 Responses API 接力）。
@@ -236,6 +234,7 @@ export class RawAgentLoop implements AgentLoop {
   private readonly contextPolicy?: ContextReconstructionPolicy;
   private readonly toolInvocationStore?: ToolInvocationStore;
   private readonly handStore?: HandStore;
+  private readonly runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   private readonly runStore?: RunStore;
   private readonly mcpLoadingMode: EffectiveMcpLoadingMode;
   private readonly streamEventBatch: Required<StreamEventBatchOptions>;
@@ -261,6 +260,7 @@ export class RawAgentLoop implements AgentLoop {
     this.contextPolicy = options.contextPolicy;
     this.toolInvocationStore = options.toolInvocationStore;
     this.handStore = options.handStore;
+    this.runtimeIsolationRequirement = options.runtimeIsolationRequirement;
     this.runStore = options.runStore;
     this.mcpLoadingMode = options.mcpLoadingMode ?? 'eager';
     this.streamEventBatch = {
@@ -333,18 +333,18 @@ export class RawAgentLoop implements AgentLoop {
     };
   }
 
-  /**
-   * B2: 自动选择 session 内"唯一" ready 的 tenant-remote hand 写入 invocation
-   * metadata。HandStore 缺失 / 无 sessionId / list 异常时静默返回 undefined
-   * —— 自动路由是优化路径，绝不阻断主流程。判定规则由 pickSoleReadyTenantHandId
-   * 提供，确保与 WorkspaceToolProvider 的 transport 路由共用同一份决策。
-   */
-  private async autoSelectTenantHandId(sessionId?: string): Promise<string | undefined> {
-    if (!this.handStore || !sessionId) return undefined;
+  private async autoSelectTenantHandId(sessionId?: string, runId?: string): Promise<string | undefined> {
+    if (!this.handStore || !sessionId) {
+      if (this.runtimeIsolationRequirement) throw new Error('RUNTIME_ISOLATION_HAND_STORE_MISSING'); else return undefined;
+    }
     try {
       const hands = await this.handStore.listBySession(sessionId);
-      return pickSoleReadyTenantHandId(hands);
-    } catch {
+      const decision = selectRuntimeHandRoute(hands, {
+        runId, runtimeIsolationRequirement: this.runtimeIsolationRequirement,
+      });
+      if (decision.kind === 'blocked') throw new Error(decision.message);
+      return decision.kind === 'ready' ? decision.handId : undefined;
+    } catch (err) { if (this.runtimeIsolationRequirement) throw err;
       return undefined;
     }
   }
@@ -637,6 +637,7 @@ export class RawAgentLoop implements AgentLoop {
       env: context.env,
       sessionId: context.sessionId,
       runId: context.runId,
+      ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
       hooks: context.hooks,
       signal: context.signal,
     };
@@ -2464,7 +2465,7 @@ export class RawAgentLoop implements AgentLoop {
 
     const resumeContext: RunContext = {
       ...context,
-      runId: approval.runId,
+      runId: this.runtimeIsolationRequirement?.runId ?? approval.runId,
       sessionId: approval.sessionId,
     };
     const workspace = this.workspaceProvider.resolve(resumeContext.channelContext, {
@@ -2483,6 +2484,7 @@ export class RawAgentLoop implements AgentLoop {
       env: resumeContext.env,
       sessionId: resumeContext.sessionId,
       runId: resumeContext.runId,
+      ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
       hooks: resumeContext.hooks,
       signal: resumeContext.signal,
     };
@@ -2645,6 +2647,7 @@ export class RawAgentLoop implements AgentLoop {
       env: context.env,
       sessionId: context.sessionId,
       runId: context.runId,
+      ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
       hooks: context.hooks,
       signal: context.signal,
     };
@@ -3030,10 +3033,7 @@ export class RawAgentLoop implements AgentLoop {
         }
       },
     };
-    // B2: effective handId 只由 harness/session 状态决定。普通 workspace 工具
-    // 不接受模型传入的 handId；最终 effective handId 写入 invocation metadata
-    // 让 cancel delivery / 审计可见。
-    const autoHandId = await this.autoSelectTenantHandId(args.context.sessionId);
+    const autoHandId = await this.autoSelectTenantHandId(args.context.sessionId, args.context.runId);
     const effectiveHandId = autoHandId;
     const skillName = resolveInvokedSkillName(args.descriptor.id, args.input);
     const invocation = await this.toolInvocationStore?.start({

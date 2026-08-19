@@ -123,6 +123,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         : undefined,
       getIsDraining: () => channelManager.draining,
       getSkillsWarmupStatus: () => runtime.getSkillsWarmupStatus(),
+      getIntegrationV3Health: runtime.getIntegrationV3Health,
     }),
   );
   app.use('/api', activeOffboardingWriteFence(runtime));
@@ -445,6 +446,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       userStore: runtime.userStore,
       agentCwd,
       uploadManager: runtime.uploadManager,
+      requeueIntegrationV3Candidate: runtime.requeueIntegrationV3Candidate,
     }),
   );
 

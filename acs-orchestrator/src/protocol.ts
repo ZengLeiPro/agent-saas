@@ -30,8 +30,19 @@ export interface WireToolInvocationRequest {
   };
 }
 
+export interface RuntimeIsolationRequirement {
+  tenantId: string;
+  taskId: string;
+  runId: string;
+  sessionId: string;
+  workspaceId: string;
+  policyDigest: string;
+}
+
 export interface WorkspaceRecipe {
   workspaceId: string;
+  /** Trusted server-to-ACS admission binding; never copied into runner input/env. */
+  runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   sessionId?: string;
   sandboxScopeId?: string;
   mountSubPath?: string;
@@ -206,6 +217,24 @@ export function parseProvisionRecipe(body: unknown): { ok: true; value: Workspac
   if (Array.isArray(recipeRaw.setupCommands)) {
     const setupCommands = recipeRaw.setupCommands.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
     if (setupCommands.length) recipe.setupCommands = setupCommands;
+  }
+  const isolationRaw = recipeRaw.runtimeIsolationRequirement;
+  if (isolationRaw !== undefined) {
+    if (!isolationRaw || typeof isolationRaw !== 'object' || Array.isArray(isolationRaw)) {
+      return { ok: false, error: 'runtimeIsolationRequirement 必须是对象' };
+    }
+    const raw = isolationRaw as Record<string, unknown>;
+    const fields = ['tenantId', 'taskId', 'runId', 'sessionId', 'workspaceId', 'policyDigest'] as const;
+    if (fields.some((field) => typeof raw[field] !== 'string' || !(raw[field] as string).trim())) {
+      return { ok: false, error: 'runtimeIsolationRequirement 绑定字段必须为非空字符串' };
+    }
+    if (raw.workspaceId !== workspaceId || raw.sessionId !== sessionId
+      || !/^[a-f0-9]{64}$/.test(raw.policyDigest as string)) {
+      return { ok: false, error: 'runtimeIsolationRequirement recipe 绑定不匹配或 policyDigest 非法' };
+    }
+    recipe.runtimeIsolationRequirement = Object.fromEntries(
+      fields.map((field) => [field, (raw[field] as string).trim()]),
+    ) as unknown as NonNullable<WorkspaceRecipe['runtimeIsolationRequirement']>;
   }
   const resources = recipeRaw.resources;
   if (resources && typeof resources === 'object') {

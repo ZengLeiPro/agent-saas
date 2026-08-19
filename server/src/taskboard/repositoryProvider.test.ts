@@ -110,4 +110,108 @@ describe('GithubRepositoryProvider', () => {
     });
     expect(fetchImpl.mock.calls[0]?.[1]?.headers).toMatchObject({ 'Idempotency-Key': 'operation-1' });
   });
+
+  it('fails closed when an empty required-check response cannot be confirmed by rulesets', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        number: 42, state: 'open', merged: false, draft: false, mergeable: true,
+        head: { ref: 'feat/x', sha: 'head-oid', repo: { full_name: 'acme/app' } },
+        base: { ref: 'main', sha: 'base-oid', repo: { full_name: 'acme/app' } },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ statuses: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ contexts: [], checks: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'rulesets forbidden' }), { status: 403 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const snapshot = await provider.getPullRequest(repository, '42', 'owner-user');
+
+    expect(snapshot.requiredChecksKnown).toBe(false);
+    expect(snapshot.requiredChecks).toEqual([{ name: 'github:checks-unavailable', status: 'failure' }]);
+  });
+
+  it('reads required gate identities and merge-queue capability from protection and rulesets', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ checks: [{ context: 'test', app_id: 7 }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 99 }]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 99,
+        rules: [
+          { type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'lint', integration_id: 8 }] } },
+          { type: 'merge_queue' },
+        ],
+      }), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const capabilities = await provider.getRequiredGateCapabilities(repository, 'main', 'owner-user');
+
+    expect(capabilities).toEqual({
+      known: true,
+      requiredChecks: [{ name: 'lint', appId: 8 }, { name: 'test', appId: 7 }],
+      mergeQueueRequired: true,
+      unsupportedRules: [],
+    });
+  });
+
+  it('reconciles an already-created integration branch without creating it again', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'base-oid' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ tree: { sha: 'tree-oid' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'base-oid' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ tree: { sha: 'tree-oid' } }), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const receipt = await provider.ensureIntegrationBranch(repository, {
+      ref: 'integration/task-1', expectedBaseOid: 'base-oid', expectedBaseTreeOid: 'tree-oid', operationKey: 'branch:task-1:r1',
+    }, 'owner-user');
+
+    expect(receipt).toMatchObject({ created: false, ref: 'integration/task-1', oid: 'base-oid', treeOid: 'tree-oid' });
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(fetchImpl.mock.calls.some((call) => call[1]?.method === 'POST')).toBe(false);
+  });
+
+  it('rejects branch creation when the prepared base has drifted', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'new-base' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ tree: { sha: 'new-tree' } }), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    await expect(provider.ensureIntegrationBranch(repository, {
+      ref: 'integration/task-1', expectedBaseOid: 'old-base', expectedBaseTreeOid: 'old-tree', operationKey: 'branch:task-1:r1',
+    }, 'owner-user')).rejects.toThrow('base ref changed');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns the unique existing Integration PR instead of creating a duplicate', async () => {
+    const existing = {
+      number: 81,
+      head: { ref: 'integration/task-1', sha: 'candidate-oid' },
+      base: { ref: 'main', sha: 'base-oid' },
+    };
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'candidate-oid' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ tree: { sha: 'candidate-tree' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'base-oid' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ tree: { sha: 'base-tree' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([existing]), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const receipt = await provider.ensureIntegrationPullRequest(repository, {
+      headRef: 'integration/task-1', baseRef: 'main', expectedHeadOid: 'candidate-oid', title: 'Integration task 1', body: 'sources', operationKey: 'pr:task-1',
+    }, 'owner-user');
+
+    expect(receipt).toMatchObject({ created: false, providerPullRequestId: '81', headOid: 'candidate-oid' });
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+    expect(fetchImpl.mock.calls.some((call) => call[1]?.method === 'POST')).toBe(false);
+  });
+
+  it('fails closed when multiple Integration PRs exist for one branch', async () => {
+    const pulls = [81, 82].map((number) => ({ number, head: { ref: 'integration/task-1', sha: 'candidate-oid' }, base: { ref: 'main' } }));
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify(pulls), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    await expect(provider.findIntegrationPullRequest(repository, {
+      headRef: 'integration/task-1', baseRef: 'main', expectedHeadOid: 'candidate-oid',
+    }, 'owner-user')).rejects.toThrow('More than one Integration PR');
+  });
 });

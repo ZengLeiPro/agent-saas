@@ -24,7 +24,8 @@ import type {
   ExecutionTransport,
   ExecutionTransportRegistry,
 } from '../runtime/executionTransport.js';
-import { pickSoleReadyTenantHandId, type HandRecord, type HandStore } from '../runtime/handStore.js';
+import { selectRuntimeHandRoute, type HandRecord, type HandStore } from '../runtime/handStore.js';
+import type { RuntimeIsolationRequirement } from '../runtime/runtimeIsolationEvidence.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import {
   DefaultExecutionTransportRegistry,
@@ -150,6 +151,7 @@ export interface ToolCallContext {
   env?: Record<string, string>;
   sessionId?: string;
   runId?: string;
+  runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   toolCallId?: string;
   invocationId?: string;
   onStreamChunk?: (chunk: import('../runtime/handProtocol.js').ToolInvocationStreamChunk) => Promise<void> | void;
@@ -1137,17 +1139,12 @@ class WorkspaceToolProvider implements ToolProvider {
       throw new Error('CreateArtifact: artifact service is not configured.');
     }
 
-    // brain 侧授权 / 角色 gate（hand 端不感知）。Shell 的最终放行需要先
-    // 解析当前默认 hand，因为组织 agent 是否能执行 shell 取决于**执行环境是否隔离**，
-    // 而不是只取决于用户角色。
     if (descriptor.risk === 'workspace_write' && !call.authorization?.approved) {
       throw new Error(`Tool ${call.toolId} requires prior authorization.`);
     }
 
     // 解析入参用 hand 端公示的 schema（校验 + 应用 default）
     let parsedInput: unknown = parseToolInput(descriptor, call.input);
-    // 普通 workspace 工具不接受 handId 参数。当前 hand 由 harness/session 状态决定；
-    // 后续如果需要切换 hand，应通过专门的 hand-switch 工具改变会话默认值。
     const route = await this.resolveTenantHandRoute(context);
     if (route.kind === 'blocked') {
       throw new Error(route.message);
@@ -1383,27 +1380,18 @@ class WorkspaceToolProvider implements ToolProvider {
     });
   }
 
-  /**
-   * B2: 自动选择当前 session 内"唯一" ready 的 tenant remote hand。条件：
-   * HandStore 存在 + session 内仅 1 个 ready 状态、type=server-remote 且
-   * metadata.tenantRemoteHandId 存在的 hand。多于 1 个或 0 个时返回 undefined
-   *（保持原默认 transport 行为）。
-   *
-   * 如果当前 session 已经挂了 tenant remote hand 但尚未 ready，则 fail closed。
-   * 这避免 ACS/NAS 还在启动时误回退到 server-local/server-container 读写错执行面。
-   */
+  /** Resolve the shared run-bound route; pending legacy tenant hands remain fail closed. */
   private async resolveTenantHandRoute(context: ToolCallContext): Promise<
-    | { kind: 'none' }
-    | { kind: 'ready'; handId: string }
-    | { kind: 'blocked'; message: string }
+    { kind: 'none' } | { kind: 'ready'; handId: string } | { kind: 'blocked'; message: string }
   > {
     if (!this.handStore) return { kind: 'none' };
     const sessionId = context.sessionId ?? context.workspace.sessionId;
     if (!sessionId) return { kind: 'none' };
     try {
       const hands = await this.handStore.listBySession(sessionId);
-      const readyHandId = pickSoleReadyTenantHandId(hands);
-      if (readyHandId) return { kind: 'ready', handId: readyHandId };
+      const decision = selectRuntimeHandRoute(hands, { runId: context.runId, runtimeIsolationRequirement: context.runtimeIsolationRequirement });
+      if (decision.kind === 'ready') return { kind: 'ready', handId: decision.handId };
+      if (decision.kind === 'blocked') return decision;
       const tenantHands = hands.filter(isTenantRemoteHand);
       if (tenantHands.length === 0) return { kind: 'none' };
       const currentRuntime = selectCurrentTenantRemoteHand(tenantHands);
@@ -1454,9 +1442,9 @@ class WorkspaceToolProvider implements ToolProvider {
         });
       }
       const tenantHands = lastHands.filter(isTenantRemoteHand);
-      const readyHandId = pickSoleReadyTenantHandId(lastHands);
-      if (readyHandId) {
-        const hand = tenantHands.find((candidate) => candidate.handId === readyHandId);
+      const decision = selectRuntimeHandRoute(lastHands, { runId: context.runId, runtimeIsolationRequirement: context.runtimeIsolationRequirement });
+      if (decision.kind === 'ready') {
+        const hand = lastHands.find((candidate) => candidate.handId === decision.handId);
         return workspaceReadyStatusResponse({
           status: 'ready',
           workspaceId: hand?.workspaceId,
@@ -1464,6 +1452,9 @@ class WorkspaceToolProvider implements ToolProvider {
           message: 'Current workspace runtime is ready. Workspace tools can now be used.',
         });
       }
+      if (decision.kind === 'blocked' && context.runtimeIsolationRequirement) return workspaceReadyStatusResponse({
+        status: 'failed', executionTarget: context.workspace.executionTarget, message: decision.message,
+      });
       if (tenantHands.length === 0) {
         return workspaceReadyStatusResponse({
           status: 'unavailable',
@@ -1515,6 +1506,12 @@ class WorkspaceToolProvider implements ToolProvider {
       if (hand.status !== 'ready') {
         throw new Error(`hand is not ready: ${handId} (${hand.status})`);
       }
+      if (context.runtimeIsolationRequirement) {
+        const boundary = selectRuntimeHandRoute([hand], {
+          runId: context.runId, runtimeIsolationRequirement: context.runtimeIsolationRequirement,
+        });
+        if (boundary.kind !== 'ready' || boundary.handId !== handId) throw new Error('RUNTIME_ISOLATION_ROUTE_BINDING_MISMATCH');
+      }
       const currentSessionId = context.sessionId ?? context.workspace.sessionId;
       if (hand.sessionId && currentSessionId && hand.sessionId !== currentSessionId) {
         throw new Error('hand is not available in the current session');
@@ -1533,6 +1530,9 @@ class WorkspaceToolProvider implements ToolProvider {
         mountSubPath: handMountSubPath ?? context.workspace.mountSubPath,
         executionTarget: hand.type,
       };
+      if (hand.type === 'server-remote' && typeof hand.metadata?.tenantRemoteHandId !== 'string'
+        && this.executionTransportRegistry.has('server-remote'))
+        return { transport: this.executionTransportRegistry.get('server-remote'), workspace };
       if (hand.type === 'server-remote' && hand.endpoint) {
         const authToken = await this.resolveHandAuthToken?.(hand) ?? resolveRemoteHandAuthToken(hand.metadata);
         if (!authToken) {

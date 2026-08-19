@@ -10,6 +10,7 @@ import { finalizeExecutionForArchivedTask } from './archiveGuard.js';
 import { nextTaskColumnSortOrder } from './continuationStore.js';
 import { applyExecutionTaskCompletion, enqueueAutomaticReview } from './executionCompletion.js';
 import { resolveExecutionModelRef } from './executionFields.js';
+import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import { assertExecutionRequestAllowed, isIrreversibleMerged } from './workflow/decider.js';
 import { loadWorkflowFacts } from './workflow/commandService.js';
 import {
@@ -155,17 +156,39 @@ export async function claimExecution(
       );
 
     const attemptId = input.attemptId ?? randomUUID();
+    let candidateBinding: Record<string, unknown> | undefined;
+    if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3) {
+      const tables = integrationCandidateTableNames(store.integrationSourcesTable);
+      const bound = await client.query(
+        `SELECT c.id,c.version,c.current_revision,c.work_round,c.workflow_epoch,c.lane_epoch,r.head_oid
+           FROM ${tables.candidatesTable} c JOIN ${tables.revisionsTable} r
+             ON r.candidate_id=c.id AND r.revision=c.current_revision
+          WHERE c.integration_task_id=$1 FOR UPDATE OF c`, [taskId]);
+      candidateBinding = bound.rows[0];
+      if (!candidateBinding) {
+        throw new TaskboardValidationError(
+          'Workflow v3 execution requires a current candidate revision binding',
+          'TASKBOARD_CANDIDATE_EXECUTION_BINDING_REQUIRED',
+        );
+      }
+    }
     let execution: TaskBoardExecution;
     try {
       const inserted = await client.query(
         `INSERT INTO ${store.executionsTable}
-           (id, task_id, run_id, session_id, status, purpose, trigger, protocol_version, attempt_id, requested_by)
-         VALUES ($1,$2,$3,$4,'queued',$5,$6,$7,$8,$9)
+           (id, task_id, run_id, session_id, status, purpose, trigger, protocol_version, attempt_id, requested_by,
+            candidate_id,candidate_version,candidate_revision,candidate_work_round,candidate_workflow_epoch,
+            candidate_lane_epoch,candidate_head_oid)
+         VALUES ($1,$2,$3,$4,'queued',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::bigint,$15::bigint,$16)
          RETURNING *`,
         [
           input.executionId, taskId, input.runId, input.sessionId, purpose,
           input.trigger ?? 'initial', input.protocolVersion ?? 2, attemptId,
           identity.ownerUserId,
+          candidateBinding?.id ?? null, candidateBinding?.version ?? null,
+          candidateBinding?.current_revision ?? null, candidateBinding?.work_round ?? null,
+          candidateBinding?.workflow_epoch ?? null, candidateBinding?.lane_epoch ?? null,
+          candidateBinding?.head_oid ?? null,
         ],
       );
       await client.query(

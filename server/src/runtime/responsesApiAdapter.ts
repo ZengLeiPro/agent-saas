@@ -388,6 +388,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
           serializedBody,
           context,
           clientRequestId: attemptDiagnostics.clientRequestId,
+          ...(promptCacheKey ? { promptCacheKey } : {}),
           signal: requestSignal,
           ...(expectedContinuationBinding ? { expectedContinuationBinding } : {}),
         });

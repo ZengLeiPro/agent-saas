@@ -106,7 +106,7 @@ describe('Codex subscription Responses transport', () => {
     vi.useRealTimers();
   });
 
-  it('使用 OAuth 私有 endpoint、store=false、稳定 session cache key，并接受 response.done 缺少 canonical output', async () => {
+  it('使用 OAuth 私有 endpoint、store=false、稳定内容缓存域，并接受 response.done 缺少 canonical output', async () => {
     const { accountId, manager } = await createCredentialFixture();
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
       sse('response.output_item.done', {
@@ -172,22 +172,23 @@ describe('Codex subscription Responses transport', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://chatgpt.com/backend-api/codex/responses');
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(init.body));
+    expect(body.prompt_cache_key).toMatch(/^[a-f0-9]{32}$/);
+    expect(body.prompt_cache_key).not.toBe(context.sessionId);
     expect(init.headers).toMatchObject({
       authorization: expect.stringMatching(/^Bearer /),
       'chatgpt-account-id': accountId,
       originator: 'codex-tui',
       'openai-beta': 'responses=experimental',
-      'session-id': context.sessionId,
+      'session-id': body.prompt_cache_key,
       'x-client-request-id': expect.any(String),
     });
-    const body = JSON.parse(String(init.body));
     expect(body).toMatchObject({
       model: 'gpt-5.4',
       store: false,
       stream: true,
       include: ['reasoning.encrypted_content'],
       parallel_tool_calls: true,
-      prompt_cache_key: context.sessionId,
       tool_choice: 'auto',
       text: { verbosity: 'low' },
     });
@@ -233,6 +234,82 @@ describe('Codex subscription Responses transport', () => {
       lastModel: 'gpt-5.4',
       lastSuccessAt: expect.any(String),
     });
+  });
+
+  it('跨 session 复用相同内容指纹，模型、system 或工具签名变化时切换缓存域', async () => {
+    const { manager } = await createCredentialFixture();
+    const transport = new CodexSubscriptionResponsesTransport(manager);
+    const tools = [
+      { id: 'Shell', name: 'Shell', description: 'shell', parameters: {} },
+      { id: 'Read', name: 'Read', description: 'read', parameters: {} },
+    ];
+    const base = {
+      model: 'gpt-5.4',
+      messages: [
+        { role: 'system' as const, content: 'stable system' },
+        { role: 'user' as const, content: 'first session message' },
+      ],
+      tools,
+      context,
+    };
+
+    const first = transport.computePromptCacheKey(base);
+    const otherSession = transport.computePromptCacheKey({
+      ...base,
+      messages: [
+        { role: 'system' as const, content: 'stable system' },
+        { role: 'user' as const, content: 'different user message' },
+      ],
+      tools: [...tools].reverse(),
+      context: { ...context, sessionId: 'another-session' },
+    });
+
+    expect(first).toMatch(/^[a-f0-9]{32}$/);
+    expect(otherSession).toBe(first);
+    expect(transport.computePromptCacheKey({ ...base, model: 'gpt-5.5' })).not.toBe(first);
+    expect(transport.computePromptCacheKey({
+      ...base,
+      messages: [{ role: 'system', content: 'changed system' }],
+    })).not.toBe(first);
+    expect(transport.computePromptCacheKey({
+      ...base,
+      tools: [{ ...tools[0]!, deferLoading: true }, tools[1]!],
+    })).not.toBe(first);
+  });
+
+  it('HTTP/SSE 在不同平台 session 下发送相同的内容缓存域', async () => {
+    const { manager } = await createCredentialFixture();
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => terminalStream());
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: '', baseUrl: 'https://chatgpt.com/backend-api/codex' },
+      { protocol: 'responses', responsesTransport: 'codex_subscription' },
+      new CodexSubscriptionResponsesTransport(manager),
+    );
+    const request = {
+      model: 'gpt-5.4',
+      messages: [
+        { role: 'system' as const, content: 'shared system' },
+        { role: 'user' as const, content: 'hello' },
+      ],
+      tools: [],
+    };
+
+    await collect(adapter.stream(request, context));
+    await collect(adapter.stream({
+      ...request,
+      messages: [
+        { role: 'system' as const, content: 'shared system' },
+        { role: 'user' as const, content: 'different conversation' },
+      ],
+    }, { ...context, sessionId: 'another-platform-session', runId: 'another-run' }));
+
+    const firstInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const secondInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    const firstBody = JSON.parse(String(firstInit.body));
+    const secondBody = JSON.parse(String(secondInit.body));
+    expect(secondBody.prompt_cache_key).toBe(firstBody.prompt_cache_key);
+    expect((firstInit.headers as Record<string, string>)['session-id']).toBe(firstBody.prompt_cache_key);
+    expect((secondInit.headers as Record<string, string>)['session-id']).toBe(firstBody.prompt_cache_key);
   });
 
   it('只回放同 endpoint、同账号绑定的 encrypted reasoning，账号切换后自动丢弃', async () => {
@@ -419,11 +496,16 @@ describe('Codex subscription Responses transport', () => {
       wireMode: 'websocket_relay',
       wireRequestBodyBytes: 128,
     });
-    expect(websocketPool.execute).toHaveBeenCalledWith(expect.objectContaining({
+    const websocketInput = vi.mocked(websocketPool.execute).mock.calls[0]?.[0];
+    const websocketBody = JSON.parse(websocketInput?.serializedBody ?? '{}');
+    expect(websocketInput).toEqual(expect.objectContaining({
       serializedBody: expect.not.stringContaining('previous_response_id'),
       tenantId: 'kaiyan',
       sessionId: context.sessionId,
+      cacheAffinityId: websocketBody.prompt_cache_key,
     }));
+    expect(websocketInput?.cacheAffinityId).toMatch(/^[a-f0-9]{32}$/);
+    expect(websocketInput?.cacheAffinityId).not.toBe(context.sessionId);
     expect(manager.getRuntimeStatus().wireWindow).toMatchObject({
       sampleCount: 1,
       websocketRequestCount: 1,

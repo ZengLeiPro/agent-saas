@@ -83,7 +83,7 @@ function body(input: unknown[], overrides: Record<string, unknown> = {}): string
     parallel_tool_calls: true,
     store: false,
     stream: true,
-    prompt_cache_key: 'session-1',
+    prompt_cache_key: 'cache-affinity-1',
     ...overrides,
   });
 }
@@ -97,7 +97,8 @@ function request(serializedBody: string, signal?: AbortSignal) {
     originator: 'codex-tui',
     serializedBody,
     tenantId: 'kaiyan',
-    sessionId: 'session-1',
+    sessionId: 'platform-session-1',
+    cacheAffinityId: 'cache-affinity-1',
     clientRequestId: 'request-1',
     ...(signal ? { signal } : {}),
   };
@@ -164,6 +165,7 @@ describe('CodexResponsesWebSocketPool', () => {
     expect(connector).toHaveBeenCalledWith(expect.objectContaining({
       headers: expect.objectContaining({
         'openai-beta': 'responses_websockets=2026-02-06',
+        'session-id': 'cache-affinity-1',
       }),
     }));
 
@@ -190,6 +192,49 @@ describe('CodexResponsesWebSocketPool', () => {
     expect(result.wireMode).toBe('websocket_relay');
     expect(result.wireRequestBodyBytes).toBeLessThan(Buffer.byteLength(body(appended), 'utf8'));
     expect(connector).toHaveBeenCalledTimes(1);
+    pool.close();
+  });
+
+  it('缓存域可跨会话复用，但 WebSocket anchor 仍按平台 session 与缓存域双重隔离', async () => {
+    const firstSocket = new FakeWebSocket();
+    const secondSessionSocket = new FakeWebSocket();
+    const changedAffinitySocket = new FakeWebSocket();
+    const connector = connectorFor(firstSocket, secondSessionSocket, changedAffinitySocket);
+    const pool = new CodexResponsesWebSocketPool(connector);
+    const input = [{ type: 'message', role: 'user', content: 'same prefix' }];
+
+    await establish(pool, firstSocket, input, 'resp-first');
+
+    const secondSessionPending = pool.execute({
+      ...request(body(input)),
+      sessionId: 'platform-session-2',
+    });
+    await waitForSend(secondSessionSocket);
+    secondSessionSocket.emit({ type: 'response.created', response: { id: 'resp-second-session' } });
+    const secondSessionResult = await secondSessionPending;
+    complete(secondSessionSocket, 'resp-second-session');
+    await secondSessionResult.response.text();
+
+    const changedAffinityPending = pool.execute({
+      ...request(body(input, { prompt_cache_key: 'cache-affinity-2' })),
+      cacheAffinityId: 'cache-affinity-2',
+    });
+    await waitForSend(changedAffinitySocket);
+    changedAffinitySocket.emit({ type: 'response.created', response: { id: 'resp-changed-affinity' } });
+    const changedAffinityResult = await changedAffinityPending;
+    complete(changedAffinitySocket, 'resp-changed-affinity');
+    await changedAffinityResult.response.text();
+
+    expect(connector).toHaveBeenCalledTimes(3);
+    expect(connector.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({ 'session-id': 'cache-affinity-1' }),
+    }));
+    expect(connector.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({ 'session-id': 'cache-affinity-1' }),
+    }));
+    expect(connector.mock.calls[2]?.[0]).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({ 'session-id': 'cache-affinity-2' }),
+    }));
     pool.close();
   });
 

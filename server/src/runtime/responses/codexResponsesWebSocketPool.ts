@@ -23,7 +23,10 @@ export interface CodexWebSocketExecuteInput {
   originator: string;
   serializedBody: string;
   tenantId: string;
+  /** 平台会话标识：只用于本地连接池隔离，防止不同对话共享 WebSocket anchor。 */
   sessionId: string;
+  /** 发给上游 session-id 的稳定内容指纹，用于 Prompt Cache 路由亲和。 */
+  cacheAffinityId: string;
   clientRequestId: string;
   signal?: AbortSignal;
 }
@@ -623,6 +626,7 @@ function poolKey(input: CodexWebSocketExecuteInput): string {
   return sha256(JSON.stringify([
     input.tenantId,
     input.sessionId,
+    input.cacheAffinityId,
     input.endpoint,
     input.accountBindingHash,
   ]));
@@ -637,7 +641,7 @@ function codexHeaders(input: CodexWebSocketExecuteInput): Record<string, string>
     // Codex 私有 endpoint 的 WebSocket v2 握手值；HTTP/SSE 仍沿用 responses=experimental。
     // 该值与 openai/codex 当前 build_websocket_headers 保持一致。
     'openai-beta': 'responses_websockets=2026-02-06',
-    'session-id': input.sessionId,
+    'session-id': input.cacheAffinityId,
     'x-client-request-id': input.clientRequestId,
   };
 }

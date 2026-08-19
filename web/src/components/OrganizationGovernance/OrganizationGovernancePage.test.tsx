@@ -186,7 +186,7 @@ describe("OrganizationGovernancePage", () => {
   it("权威 API 失败时 fail closed", async () => {
     mocks.listMemberships.mockRejectedValue(new Error("503"));
     render(<OrganizationMembersPage tenantId="tenant-a" route={governanceRoute("organization.members.list", { orgId: "tenant-a" })} />);
-    expect(await screen.findByText("权威治理结论暂不可获得")).toBeTruthy();
+    expect(await screen.findByText("权限服务暂不可用")).toBeTruthy();
   });
 
   it("成员详情的身份与权限页可更新个人调试模式", async () => {

@@ -89,6 +89,6 @@ describe("GovernanceChangeAuditPage", () => {
   it("查询不可用时 fail closed", async () => {
     mocks.listAuditEvents.mockRejectedValue(new Error("503"));
     render(<GovernanceChangeAuditPage />);
-    expect(await screen.findByText("权威治理结论暂不可获得")).toBeTruthy();
+    expect(await screen.findByText("权限服务暂不可用")).toBeTruthy();
   });
 });

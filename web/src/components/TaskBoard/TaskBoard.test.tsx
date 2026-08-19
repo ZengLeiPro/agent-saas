@@ -173,6 +173,31 @@ describe("TaskBoardView", () => {
     expect(screen.queryByRole("button", { name: /TASK-2/ })).toBeNull();
   }, 15_000);
 
+  it("已完成列默认折叠，展开后与其他任务列一致", async () => {
+    const user = userEvent.setup();
+    const doneTask = {
+      ...taskOne,
+      id: "done-task",
+      identifier: "TASK-DONE",
+      status: "done" as const,
+    };
+    mocks.tasks = [doneTask];
+    render(<TaskBoardView />);
+
+    const doneColumn = await screen.findByTestId("taskboard-done-column");
+    expect(doneColumn.hasAttribute("open")).toBe(false);
+    expect(doneColumn.className).toContain("contents");
+
+    await user.click(screen.getByTitle("展开已完成列"));
+    await waitFor(() => expect(doneColumn.hasAttribute("open")).toBe(true));
+    expect(doneColumn.className).toContain("w-72");
+    expect(within(doneColumn).getByTestId("task-card-done-task")).toBeTruthy();
+
+    await user.click(screen.getByTitle("折叠已完成列"));
+    await waitFor(() => expect(doneColumn.hasAttribute("open")).toBe(false));
+    expect(doneColumn.className).toContain("contents");
+  });
+
   it("移动端状态 Select 只展示所选状态的单列任务", async () => {
     const user = userEvent.setup();
     render(<TaskBoardView />);
@@ -342,7 +367,8 @@ describe("TaskBoardView", () => {
     expect(mocks.refreshTasks).toHaveBeenCalled();
   });
 
-  it("归档任务位于任务区右侧且默认折叠", async () => {
+  it("归档任务位于任务区右侧，关闭时不占列宽且可展开", async () => {
+    const user = userEvent.setup();
     const archivedTask = {
       ...taskTwo,
       id: "archived-task",
@@ -352,12 +378,20 @@ describe("TaskBoardView", () => {
     mocks.tasks = [taskOne, archivedTask];
     render(<TaskBoardView />);
 
-    const summary = await screen.findByText("已归档任务（1）");
-    const archivedDetails = summary.closest("details");
-    expect(archivedDetails).not.toBeNull();
-    expect(archivedDetails?.hasAttribute("open")).toBe(false);
-    expect(archivedDetails?.className).toContain("md:w-72");
-    expect(archivedDetails?.parentElement?.lastElementChild).toBe(archivedDetails);
+    const archivedDetails = await screen.findByTestId("taskboard-archived-column");
+    expect(archivedDetails.hasAttribute("open")).toBe(false);
+    expect(archivedDetails.className).toContain("contents");
+    expect(archivedDetails.className).not.toContain("md:w-72");
+    expect(archivedDetails.parentElement?.lastElementChild).toBe(archivedDetails);
+
+    await user.click(screen.getByTitle("展开已归档任务"));
+    await waitFor(() => expect(archivedDetails.hasAttribute("open")).toBe(true));
+    expect(archivedDetails.className).toContain("md:w-72");
+    expect(within(archivedDetails).getByRole("button", { name: /TASK-ARCHIVED/ })).toBeTruthy();
+
+    await user.click(screen.getByTitle("折叠已归档任务"));
+    await waitFor(() => expect(archivedDetails.hasAttribute("open")).toBe(false));
+    expect(archivedDetails.className).toContain("contents");
   });
 
   it("allowedActions 将查看者的任务写按钮和拖拽全部门禁", async () => {

@@ -1480,6 +1480,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       parentSessionId: sessionId,
       logger,
     });
+    const runtimeIsolationRequirement = integrationRuntimeIsolationRequirement(options.runtimeIsolationMetadata ?? message.metadata, { tenantId: sessionRecord.tenantId, runId, sessionId, workspaceId: sessionRecord.workspaceId ?? sessionId });
     await ensureRuntimeHandRegistered({
       handStore: config.handStore,
       eventStore,
@@ -1489,9 +1490,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       runId,
       workspaceId: sessionRecord.workspaceId ?? sessionId,
       workspaceMountSubPath,
-      // 必须与上方 deriveSandboxScopeId 同源：hand recipe 里的 scope 在工具执行时
-      // 优先于 RunContext（toolRuntime.ts 命中 hand 后用 recipe 覆盖），漏传会让
-      // per-session 静默退化回 workspace 级共享。
       topLevelSessionId: sessionId,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
@@ -1508,7 +1506,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       userTenantId: config.resolveUserTenantId?.({
         userId: identitySource?.id ?? existingSession?.userId,
         username: identitySource?.username ?? existingSession?.username,
-      }), runtimeIsolationRequirement: integrationRuntimeIsolationRequirement(options.runtimeIsolationMetadata ?? message.metadata, { tenantId: sessionRecord.tenantId, runId, sessionId, workspaceId: sessionRecord.workspaceId ?? sessionId }),
+      }), runtimeIsolationRequirement,
       logger: config.logger,
     });
     const availableHands = config.handStore ? await config.handStore.listBySession(sessionId) : [];
@@ -1596,7 +1594,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
-      handStore: config.handStore,
+      handStore: config.handStore, runtimeIsolationRequirement,
       runStore: config.runStore,
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
@@ -2112,6 +2110,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       throw err;
     }
     await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'running');
+    const runtimeIsolationRequirement = integrationRuntimeIsolationRequirement(request.runtimeIsolationMetadata, { tenantId: sessionRecord.tenantId, runId: resumeRunId, sessionId: request.sessionId, workspaceId: sessionRecord.workspaceId ?? request.sessionId });
     await ensureRuntimeHandRegistered({
       handStore: config.handStore,
       eventStore,
@@ -2121,7 +2120,6 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       runId: resumeRunId,
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
       workspaceMountSubPath,
-      // 同上：resume 路径也必须与 deriveSandboxScopeId 同源，否则恢复后会换 pod。
       topLevelSessionId: request.sessionId,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
@@ -2138,7 +2136,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       userTenantId: config.resolveUserTenantId?.({
         userId: identitySource?.id ?? existingSession?.userId,
         username: identitySource?.username ?? existingSession?.username,
-      }), runtimeIsolationRequirement: integrationRuntimeIsolationRequirement(request.runtimeIsolationMetadata, { tenantId: sessionRecord.tenantId, runId: resumeRunId, sessionId: request.sessionId, workspaceId: sessionRecord.workspaceId ?? request.sessionId }),
+      }), runtimeIsolationRequirement,
       logger: config.logger,
     });
     const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId) : [];
@@ -2232,7 +2230,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
-      handStore: config.handStore,
+      handStore: config.handStore, runtimeIsolationRequirement,
       runStore: config.runStore,
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
@@ -2579,6 +2577,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       throw err;
     }
     await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'running');
+    const runtimeIsolationRequirement = integrationRuntimeIsolationRequirement(request.runtimeIsolationMetadata, { tenantId: sessionRecord.tenantId, runId: resumeRunId, sessionId: request.sessionId, workspaceId: sessionRecord.workspaceId ?? request.sessionId });
     await ensureRuntimeHandRegistered({
       handStore: config.handStore,
       eventStore,
@@ -2588,7 +2587,6 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       runId: resumeRunId,
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
       workspaceMountSubPath,
-      // 同上：resume 路径也必须与 deriveSandboxScopeId 同源，否则恢复后会换 pod。
       topLevelSessionId: request.sessionId,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
@@ -2605,7 +2603,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       userTenantId: config.resolveUserTenantId?.({
         userId: identitySource?.id ?? existingSession?.userId,
         username: identitySource?.username ?? existingSession?.username,
-      }), runtimeIsolationRequirement: integrationRuntimeIsolationRequirement(request.runtimeIsolationMetadata, { tenantId: sessionRecord.tenantId, runId: resumeRunId, sessionId: request.sessionId, workspaceId: sessionRecord.workspaceId ?? request.sessionId }),
+      }), runtimeIsolationRequirement,
       logger: config.logger,
     });
     const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId) : [];
@@ -2699,7 +2697,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
-      handStore: config.handStore,
+      handStore: config.handStore, runtimeIsolationRequirement,
       runStore: config.runStore,
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });

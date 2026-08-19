@@ -182,6 +182,17 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
     expect(provision).toHaveBeenCalledWith(expect.objectContaining({ runtimeIsolationRequirement: requirement }));
     expect(resolveForRegister).not.toHaveBeenCalled();
     expect(register).toHaveBeenCalledTimes(1);
+    expect(register).toHaveBeenCalledWith(expect.objectContaining({
+      handId: 'session-1:server-remote',
+      runId: 'run-1',
+      metadata: expect.objectContaining({
+        runtimeIsolationAttested: true,
+        runId: 'run-1',
+        policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST,
+        sandboxName: 'as-session-1',
+        sandboxScopeId: 'workspace-1',
+      }),
+    }));
   });
 
   it.each([

@@ -35,7 +35,7 @@ server/src/routes/platformObservability.ts	1276	production
 server/src/routes/sessions.ts	3359	production
 server/src/routes/skills.ts	1409	production
 server/src/runtime/rawAgentLoop.ts	4045	production
-server/src/runtime/rawRuntimeRunDispatch.ts	3259	production
+server/src/runtime/rawRuntimeRunDispatch.ts	3257	production
 server/src/runtime/responsesApiAdapter.ts	2013	production
 server/src/runtime/runStore.ts	1417	production
 server/src/runtime/types.ts	1131	production

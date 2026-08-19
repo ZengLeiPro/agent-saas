@@ -87,30 +87,75 @@ export interface HandRecord {
   metadata: Record<string, unknown>;
 }
 
+/** Actual workspace execution boundary selected by both the harness audit path and tool transport. */
+export type RuntimeHandRoute =
+  | { kind: 'none' }
+  | { kind: 'ready'; handId: string; attested: boolean }
+  | { kind: 'blocked'; message: string };
+
+export interface RuntimeHandRouteContext {
+  runId?: string;
+  runtimeIsolationRequirement?: import('./runtimeIsolationEvidence.js').RuntimeIsolationRequirement;
+}
+
+function isReadyAttestedDefaultHand(hand: HandRecord, context: RuntimeHandRouteContext): boolean {
+  const runId = context.runId;
+  if (!runId) return false;
+  const metadata = hand.metadata ?? {};
+  return hand.status === 'ready'
+    && hand.type === 'server-remote'
+    && typeof metadata.tenantRemoteHandId !== 'string'
+    && metadata.runtimeIsolationAttested === true
+    && hand.runId === runId
+    && metadata.runId === runId
+    && typeof metadata.policyDigest === 'string'
+    && (!context.runtimeIsolationRequirement
+      || metadata.policyDigest === context.runtimeIsolationRequirement.policyDigest)
+    && typeof metadata.sandboxName === 'string'
+    && metadata.sandboxName.length > 0
+    && typeof metadata.sandboxScopeId === 'string'
+    && metadata.sandboxScopeId.length > 0;
+}
+
 /**
- * B2: Pick the single ready tenant-remote hand from a session's hand records,
- * if and only if there is exactly one. Returns `undefined` for 0 or >1
- * candidates so callers fall back to the default executionTarget. Ordinary
- * workspace tools do not expose handId as a model-facing parameter.
+ * Select the sole usable hand for a tool call.
  *
- * Candidate filter:
- *   - status === 'ready'
- *   - type === 'server-remote'
- *   - metadata.tenantRemoteHandId is a non-empty string (i.e. tenant origin)
- *
- * Pure helper — kept here so both `WorkspaceToolProvider` (transport routing)
- * and `RawAgentLoop` (invocation metadata) share one decision rule.
+ * A ready default hand attested for the exact current run always wins and tenant-origin
+ * records are never considered beside it. If this run declares isolation attestation,
+ * absence or ambiguity of that exact binding is fail closed. Non-attested runs retain the
+ * legacy sole-ready-tenant routing rule.
  */
-export function pickSoleReadyTenantHandId(
+export function selectRuntimeHandRoute(
   hands: ReadonlyArray<HandRecord>,
-): string | undefined {
-  const candidates = hands.filter((h) =>
-    h.status === 'ready'
-    && h.type === 'server-remote'
-    && typeof h.metadata?.tenantRemoteHandId === 'string'
-    && (h.metadata.tenantRemoteHandId as string).length > 0,
+  context: RuntimeHandRouteContext = {},
+): RuntimeHandRoute {
+  if (context.runtimeIsolationRequirement && context.runId !== context.runtimeIsolationRequirement.runId) {
+    return { kind: 'blocked', message: 'RUNTIME_ISOLATION_RUN_CONTEXT_MISMATCH' };
+  }
+  const attested = hands.filter((hand) => isReadyAttestedDefaultHand(hand, context));
+  if (attested.length === 1) return { kind: 'ready', handId: attested[0]!.handId, attested: true };
+  if (attested.length > 1) {
+    return { kind: 'blocked', message: 'RUNTIME_ISOLATION_HAND_AMBIGUOUS' };
+  }
+  if (context.runtimeIsolationRequirement) {
+    return { kind: 'blocked', message: 'RUNTIME_ISOLATION_ATTESTED_HAND_MISSING' };
+  }
+
+  const tenantCandidates = hands.filter((hand) =>
+    hand.status === 'ready'
+    && hand.type === 'server-remote'
+    && typeof hand.metadata?.tenantRemoteHandId === 'string'
+    && (hand.metadata.tenantRemoteHandId as string).length > 0,
   );
-  return candidates.length === 1 ? candidates[0]!.handId : undefined;
+  return tenantCandidates.length === 1
+    ? { kind: 'ready', handId: tenantCandidates[0]!.handId, attested: false }
+    : { kind: 'none' };
+}
+
+/** @deprecated Prefer selectRuntimeHandRoute so attested runs can fail closed. */
+export function pickSoleReadyTenantHandId(hands: ReadonlyArray<HandRecord>): string | undefined {
+  const route = selectRuntimeHandRoute(hands);
+  return route.kind === 'ready' ? route.handId : undefined;
 }
 
 export interface RegisterHandInput {

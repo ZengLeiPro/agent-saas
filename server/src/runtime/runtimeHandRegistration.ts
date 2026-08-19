@@ -20,6 +20,7 @@ import type { RawRuntimeRunDispatchConfig, TenantRemoteHandDispatchConfig } from
 import {
   assertRuntimeIsolationEvidence,
   integrationRuntimeIsolationRequirement,
+  type RuntimeIsolationEvidence,
   type RuntimeIsolationRequirement,
 } from './runtimeIsolationEvidence.js';
 export { integrationRuntimeIsolationRequirement };
@@ -214,15 +215,19 @@ export async function ensureRuntimeHandRegistered(params: {
       });
     }
   }
+  let verifiedRuntimeIsolationEvidence: RuntimeIsolationEvidence | undefined;
   if (params.runtimeIsolationRequirement) {
     const provisionMetadata = isRecord(defaultProvisionMetadata?.metadata)
       ? defaultProvisionMetadata.metadata
       : defaultProvisionMetadata;
-    assertRuntimeIsolationEvidence({
+    const evidence = provisionMetadata?.runtimeIsolationEvidence;
+    const verification = {
       requirement: params.runtimeIsolationRequirement,
-      evidence: provisionMetadata?.runtimeIsolationEvidence,
+      evidence,
       sandboxScopeId: recipe.sandboxScopeId ?? recipe.workspaceId,
-    });
+    };
+    assertRuntimeIsolationEvidence(verification);
+    verifiedRuntimeIsolationEvidence = verification.evidence;
   }
   await manager.provision({
     handId: defaultHandId,
@@ -242,7 +247,16 @@ export async function ensureRuntimeHandRegistered(params: {
     ...(params.executionTarget === 'server-remote'
       ? { leaseExpiresAt: new Date(Date.now() + SERVER_REMOTE_HAND_LEASE_MS) }
       : {}),
-    metadata: { registeredBy: 'rawRuntimeRunDispatch' },
+    metadata: {
+      registeredBy: 'rawRuntimeRunDispatch',
+      ...(verifiedRuntimeIsolationEvidence ? {
+        runtimeIsolationAttested: true,
+        runId: verifiedRuntimeIsolationEvidence.runId,
+        policyDigest: verifiedRuntimeIsolationEvidence.policyDigest,
+        sandboxName: verifiedRuntimeIsolationEvidence.sandboxName,
+        sandboxScopeId: verifiedRuntimeIsolationEvidence.sandboxScopeId,
+      } : {}),
+    },
   });
   if (params.environmentStore && environmentVersion && params.userTenantId) {
     const version = environmentVersion;

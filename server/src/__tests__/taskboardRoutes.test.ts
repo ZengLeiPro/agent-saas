@@ -479,26 +479,9 @@ describe('Taskboard routes', () => {
   it('HTTP task.update 携带附件时追加既有任务附件', async () => {
     const service = makeService({ identities: [], taskFilters: [], createBoards: [] });
     const attachmentId = '88888888-8888-4888-8888-888888888888';
-    const existing = {
-      attachmentId: 'old-attachment',
-      originalName: '已有证据.png',
-      relativePath: 'taskboard/attachments/task-1/old-attachment-已有证据.png',
-      size: 2,
-      mimeType: 'image/png',
-      isImage: true,
-    };
-    const canonical = {
-      attachmentId,
-      originalName: '新增证据.txt',
-      relativePath: `uploads/${attachmentId}_新增证据.txt`,
-      size: 1,
-      mimeType: 'text/plain',
-      isImage: false,
-    };
-    const scoped = {
-      ...canonical,
-      relativePath: `taskboard/attachments/${TASK.id}/${attachmentId}-新增证据.txt`,
-    };
+    const existing = { attachmentId: 'old-attachment', originalName: '已有证据.png', relativePath: 'taskboard/attachments/task-1/old-attachment-已有证据.png', size: 2, mimeType: 'image/png', isImage: true };
+    const canonical = { attachmentId, originalName: '新增证据.txt', relativePath: `uploads/${attachmentId}_新增证据.txt`, size: 1, mimeType: 'text/plain', isImage: false };
+    const scoped = { ...canonical, relativePath: `taskboard/attachments/${TASK.id}/${attachmentId}-新增证据.txt` };
     let received: unknown;
     service.getTask = async () => ({ ...TASK, attachments: [existing] });
     service.updateTask = async (_identity, _taskId, input) => {

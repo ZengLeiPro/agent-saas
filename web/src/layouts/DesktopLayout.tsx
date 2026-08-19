@@ -628,6 +628,7 @@ export function DesktopLayout(props: LayoutProps) {
               agentProfile={orgAgentIdentityLoading ? null : agentProfile}
               sessionParticipants={sessionParticipants}
               emptySlot={activeOrgAgent ? expertEmptySlot : (orgAgentIdentityLoading ? identityLoadingEmptySlot : (personalAgentEnabled ? chatEmptySlot : unavailableEmptySlot))}
+              initialComposer={!isTrashPreview && !orgAgentIdentityLoading && !activeOrgAgentReadOnly && (Boolean(activeOrgAgent) || personalAgentEnabled)}
               orgAgent={isTrashPreview ? null : activeOrgAgent}
               onNewOrgAgentConversation={activeOrgAgent && !activeOrgAgentReadOnly && !loading
                 ? () => { startOrgAgentSession(activeOrgAgent.id); }
@@ -814,8 +815,13 @@ export function DesktopLayout(props: LayoutProps) {
             />
           </div>
         )}
-        {personalAgentEnabled && activeTab === "chat" && roleKitV2Enabled && roleKitConfig.firstDayGuideBar.enabled && (
+        {personalAgentEnabled
+          && !activeOrgAgent
+          && activeTab === "chat"
+          && roleKitV2Enabled
+          && roleKitConfig.firstDayGuideBar.enabled && (
           <FirstDayGuideBar
+            visible={messages.some((message) => message.type === "text" && message.streaming !== true)}
             activeScenario={lastTriedScenario ?? undefined}
             activeWorkflow={activeWorkflow ?? undefined}
             onOpenCronWizard={handleOpenCronWizard}

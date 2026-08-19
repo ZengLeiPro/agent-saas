@@ -97,6 +97,23 @@ describe("FirstDayGuideBar", () => {
     expect(screen.queryByText("今天再跑 3 个真实任务")).toBeNull();
   });
 
+  it("隐藏期间仍监听工作流事件，显示后承接正确阶段", () => {
+    const props = {
+      activeWorkflow: workflowContext("WATCH", "D1_CONNECTOR", true),
+      onOpenCronWizard: vi.fn(),
+      onOpenExampleDemo: vi.fn(),
+      onConnectWorkflow: vi.fn(),
+      onOpenWorkflowCron: vi.fn(),
+    };
+    const view = render(<FirstDayGuideBar {...props} visible={false} />);
+
+    expect(screen.queryByText("先看成果如何生成并核验")).toBeNull();
+    act(() => window.dispatchEvent(new CustomEvent("kaiyan:workflow-experience-opened")));
+
+    view.rerender(<FirstDayGuideBar {...props} visible />);
+    expect(screen.getByText("接入我的系统")).toBeTruthy();
+  });
+
   it("使用 v3 storage key，不继承旧版已关闭状态", () => {
     window.localStorage.setItem("kaiyan:firstDayGuide:v2", "closed");
     render(

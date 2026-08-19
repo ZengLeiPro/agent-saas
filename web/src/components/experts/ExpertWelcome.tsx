@@ -1,6 +1,5 @@
-import { MessageSquareText } from "lucide-react";
+import { ChevronRight, MessageSquareText } from "lucide-react";
 import type { OrgAgentSummary } from "@agent/shared";
-import { OrgAgentAvatarContent } from "@/components/OrgAgentAvatar";
 
 export function ExpertWelcome({
   expert,
@@ -9,30 +8,30 @@ export function ExpertWelcome({
   expert: OrgAgentSummary;
   onPrefill: (prompt: string) => void;
 }) {
-  const prompts = expert.starterPrompts.length > 0
+  const prompts = (expert.starterPrompts.length > 0
     ? expert.starterPrompts
-    : ["你能帮我做什么？"];
+    : ["你能帮我做什么？"]
+  ).slice(0, 3);
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col items-center px-4 py-10 text-center">
-      <div className="flex size-16 items-center justify-center overflow-hidden rounded-2xl bg-brand-50 text-3xl shadow-sm dark:bg-brand-900/35" aria-hidden="true">
-        <OrgAgentAvatarContent agent={expert} />
-      </div>
-      <h2 className="mt-4 text-xl font-semibold text-foreground">{expert.name}</h2>
-      <div className="mt-1 text-xs font-medium text-brand-600">企业专家</div>
-      <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
-        {expert.description || "这位企业专家由组织统一配置，可以在限定职责范围内协助你完成工作。"}
-      </p>
-      <div className="mt-6 grid w-full gap-2 sm:grid-cols-2">
+    <div className="content-container pt-4 sm:pt-5">
+      <div className="mb-2 text-left text-[11px] font-medium tracking-wide text-muted-foreground">常用起手任务</div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
         {prompts.map((prompt, index) => (
           <button
             key={`${index}:${prompt}`}
             type="button"
-            className="flex items-start gap-2 rounded-xl border bg-card px-3 py-3 text-left text-sm transition-colors hover:border-brand-200 hover:bg-brand-50/50 dark:hover:bg-brand-900/20"
+            className="flex min-h-[56px] min-w-0 items-center gap-2.5 rounded-2xl border bg-card/70 px-3 py-2 text-left transition-[transform,border-color,background-color,box-shadow] hover:-translate-y-0.5 hover:border-brand-200 hover:bg-brand-50/35 hover:shadow-sm dark:hover:bg-brand-900/15"
             onClick={() => onPrefill(prompt)}
           >
-            <MessageSquareText className="mt-0.5 size-4 shrink-0 text-brand-600" />
-            <span>{prompt}</span>
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/35">
+              <MessageSquareText className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="line-clamp-2 text-xs font-semibold leading-4 text-foreground sm:text-sm">{prompt}</span>
+              <span className="mt-0.5 block text-[11px] font-medium text-success-ink">直接试</span>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground/45" />
           </button>
         ))}
       </div>

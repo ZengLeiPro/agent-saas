@@ -112,10 +112,20 @@ describe('技能异步增量物化', () => {
     });
   });
 
-  it('跨组织组织技能残留移入可恢复备份，不再留在用户热目录', async () => {
+  it('按 manifest provenance 将跨组织组织技能残留移入可恢复备份', async () => {
     createSkill(poolDir, 'alpha', 'alpha');
     createSkill(join(sharedDir, 'tenants', 'tenant-b', 'skills'), 'foreign-org-skill', 'foreign');
     createSkill(join(userCwd, '.ky-agent', 'skills'), 'foreign-org-skill', 'stale-copy');
+    writeFileSync(
+      join(userCwd, '.ky-agent', 'skills-state.json'),
+      JSON.stringify({
+        version: 1,
+        desiredHash: 'previous',
+        configVersion: 1,
+        generatedAt: '2026-08-19T00:00:00.000Z',
+        skills: { 'foreign-org-skill': { digest: 'foreign', source: 'tenant', tenantId: 'tenant-b' } },
+      }),
+    );
     const config = fakeStore(['alpha']);
     const materializer = new SkillWorkspaceMaterializer({
       sharedDir,
@@ -130,6 +140,24 @@ describe('技能异步增量物化', () => {
       .toThrow();
     expect(readFileSync(join(sharedDir, 'tenants', 'tenant-b', 'skills', 'foreign-org-skill', 'SKILL.md'), 'utf-8'))
       .toContain('foreign');
+  });
+
+  it('外租户后来创建同名组织 Skill 不移除既有个人 Skill', async () => {
+    createSkill(poolDir, 'alpha', 'alpha');
+    createSkill(join(sharedDir, 'tenants', 'tenant-b', 'skills'), 'same-name', 'foreign');
+    createSkill(join(userCwd, '.ky-agent', 'skills'), 'same-name', 'personal');
+    const config = fakeStore(['alpha']);
+    const materializer = new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      skillConfigStore: config.store,
+    });
+
+    const result = await materializer.materialize({ taskId: 'task-same-name', user, userCwd });
+
+    expect(result.removedSkills).toBe(0);
+    expect(readFileSync(join(userCwd, '.ky-agent', 'skills', 'same-name', 'SKILL.md'), 'utf-8'))
+      .toContain('personal');
   });
 
   it('撤销系统技能时移入可恢复备份，不碰同目录下的自建技能', async () => {

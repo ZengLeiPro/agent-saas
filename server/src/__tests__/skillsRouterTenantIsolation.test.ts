@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -707,6 +707,13 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       const leakedDir = join(h.userSkillsDir('alice'), 'wy-invoice');
       mkdirSync(leakedDir, { recursive: true });
       writeFileSync(join(leakedDir, 'SKILL.md'), '---\nname: wy-invoice\ndescription: leaked\n---\nbody');
+      writeFileSync(join(h.userSkillsDir('alice'), '..', 'skills-state.json'), JSON.stringify({
+        version: 1,
+        desiredHash: 'previous',
+        configVersion: h.skillConfigStore.getConfigVersion(),
+        generatedAt: '2026-08-19T00:00:00.000Z',
+        skills: { 'wy-invoice': { digest: 'foreign', source: 'tenant', tenantId: 'wain' } },
+      }));
 
       h.setCaller(KAIYAN_USER);
       const listed = await h.request('/api/skills/me');
@@ -732,6 +739,41 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
 
       const document = await h.request('/api/skills/me/skills/wy-invoice/document');
       expect(document.status).toBe(400);
+    });
+
+    it('外租户后来创建同名组织 Skill 不影响既有个人 Skill', async () => {
+      h.setCaller(KAIYAN_USER);
+      const personalDir = join(h.userSkillsDir('alice'), 'same-name');
+      mkdirSync(personalDir, { recursive: true });
+      writeFileSync(join(personalDir, 'SKILL.md'), '---\nname: same-name\ndescription: personal\n---\npersonal');
+
+      h.setCaller(WAIN_ADMIN);
+      const form = new FormData();
+      form.append('files', new Blob(['---\nname: same-name\ndescription: d\n---\nbody'], { type: 'text/markdown' }), 'SKILL.md');
+      const uploaded = await h.request('/api/skills/tenants/wain/import', {
+        method: 'POST',
+        body: form,
+      });
+      expect(uploaded.status).toBe(200);
+
+      h.setCaller(PLATFORM_ADMIN);
+      const synced = await h.request('/api/skills/sync', { method: 'POST' });
+      expect(synced.status).toBe(202);
+      await h.waitSync(synced);
+
+      h.setCaller(KAIYAN_USER);
+      const listed = await h.request('/api/skills/me');
+      const body = await listed.json() as { customSkills: { id: string }[] };
+      expect(body.customSkills.map(s => s.id)).toContain('same-name');
+      expect(readFileSync(join(personalDir, 'SKILL.md'), 'utf8')).toContain('personal');
+
+      const selected = await h.request('/api/skills/me/selections', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedSkills: ['same-name'] }),
+      });
+      expect(selected.status).toBe(200);
+      expect(h.skillConfigStore.getUserSelectedSkills('alice')).toContain('same-name');
     });
   });
 

@@ -141,12 +141,12 @@ import { SkillConfigStore, migrateFromManifest } from '../data/skills/index.js';
 import { GoogleWorkspaceOAuthService } from '../connectors/googleWorkspace.js';
 import { connectNotionCredential } from '../connectors/notion.js';
 import {
-  scanAllTenantOwnSkillIds,
   scanPoolSkills as scanPoolSkillsForDispatch,
   scanTenantOwnSkillIds,
   scanUserCustomSkills,
 } from '../data/skills/scanner.js';
 import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
+import { manifestTenantSkillIds, readSkillManifest } from '../workspace/materialization/manifest.js';
 import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import { agentDir, resolveAgentPath } from '../workspace/namespace.js';
 import { CronLeadership } from '../runtime/cronLeadership.js';
@@ -1373,6 +1373,31 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     const store = skillConfigStore; // 闭包稳定捕获
     const poolDir = resolveAgentPath(sharedDir, 'skills-pool');
     let cache: { version: number; entries: { id: string; name: string; description: string }[] } | null = null;
+    const manifestTenantIdsByUser = new Map<string, Set<string>>();
+
+    function resolveRuntimeUserCwd(username: string): string | null {
+      const user = userStore?.findByUsername(username);
+      if (!user) return null;
+      return resolveUserCwd(agentCwd, {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        tenantId: user.tenantId,
+      });
+    }
+
+    async function refreshUserManifest(username: string | undefined): Promise<void> {
+      if (!username) return;
+      const userCwd = resolveRuntimeUserCwd(username);
+      if (!userCwd) return;
+      const manifest = await readSkillManifest(userCwd);
+      manifestTenantIdsByUser.set(username, manifestTenantSkillIds(manifest));
+    }
+
+    function getManifestTenantIds(username: string): Set<string> {
+      return manifestTenantIdsByUser.get(username) ?? new Set<string>();
+    }
+
     function getAllPoolEntries() {
       const currentVersion = store.getConfigVersion();
       if (cache && cache.version === currentVersion) return cache.entries;
@@ -1386,14 +1411,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       return scanned;
     }
     return {
-      ensureReady(username: string | undefined, requiredSkillIds: readonly string[] = []): Promise<void> {
+      async ensureReady(username: string | undefined, requiredSkillIds: readonly string[] = []): Promise<void> {
         // ws-only 负责 Skill/User 管理接口，runtime-worker 负责会话执行；两者各自持有
         // 文件 store 的内存副本。每次 dispatch 在物化与清单计算前重载共享配置，
         // 否则用户刚导入并启用的自建 skill 要等 runtime-worker 重启后才会生效。
         store.reload();
         userStore?.reload();
-        return skillMaterializationService?.ensureReady(username, requiredSkillIds, 'dispatch')
-          ?? Promise.resolve();
+        await (skillMaterializationService?.ensureReady(username, requiredSkillIds, 'dispatch')
+          ?? Promise.resolve());
+        // listForUser 是同步装配接口，provenance 在这里异步预载，避免请求路径重新引入同步 I/O。
+        await refreshUserManifest(username);
       },
       listForUser(username: string | undefined, requiredSkillIds: readonly string[] = []): SkillEntry[] {
         if (!username) return [];
@@ -1422,7 +1449,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           const poolIds = new Set(all.map((s) => s.id));
           const tenantSkillsDir = user.tenantId ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, user.tenantId) : null;
           const tenantOwnIds = tenantSkillsDir ? scanTenantOwnSkillIds(tenantSkillsDir, poolIds) : new Set<string>();
-          const allTenantOwnIds = scanAllTenantOwnSkillIds(tenantSkillsRootDir, poolIds);
+          const manifestTenantIds = getManifestTenantIds(username);
           const effectiveTenantOwn = new Set(
             [
               ...store.getUserEffectiveTenantOwnSkills(username, user.tenantId, tenantOwnIds),
@@ -1439,7 +1466,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
               }))
             : [];
           const selected = new Set(store.getUserSelectedSkills(username));
-          const customExcluded = new Set([...poolIds, ...allTenantOwnIds]);
+          const customExcluded = new Set([...poolIds, ...tenantOwnIds, ...manifestTenantIds]);
           const customResult = scanUserCustomSkills(userSkillsDir, customExcluded)
             .filter((s) => selected.has(s.id))
             .map((s) => ({

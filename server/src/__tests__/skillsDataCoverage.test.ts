@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   parseSkillFrontmatter,
-  scanAllTenantOwnSkillIds,
   scanPoolSkills,
   scanPoolSkillsAsync,
   scanTenantOwnSkillIds,
@@ -171,16 +170,6 @@ describe('异步 scanner 与历史同步语义一致', () => {
     ).toEqual(
       scanUserCustomSkills(user, new Set(['alpha'])),
     );
-  });
-
-  it('跨租户扫描汇总组织 skill，且不把 pool shadow 计入组织集合', () => {
-    const root = makeTmp();
-    const tenants = join(root, 'tenants');
-    mkdirSync(join(tenants, 'kaiyan', 'skills', 'kaiyan-tool'), { recursive: true });
-    mkdirSync(join(tenants, 'wain', 'skills', 'wy-invoice'), { recursive: true });
-    mkdirSync(join(tenants, 'wain', 'skills', 'shared'), { recursive: true });
-
-    expect(scanAllTenantOwnSkillIds(tenants, new Set(['shared']))).toEqual(new Set(['kaiyan-tool', 'wy-invoice']));
   });
 });
 

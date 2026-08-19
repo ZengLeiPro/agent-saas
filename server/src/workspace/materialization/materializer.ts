@@ -11,7 +11,6 @@ import {
 import { dirname, join } from 'node:path';
 
 import type { SkillConfigStore } from '../../data/skills/store.js';
-import { scanAllTenantOwnSkillIds } from '../../data/skills/scanner.js';
 import { resolveTenantSkillsDir, resolveTenantSkillsDirFromRoot } from '../../data/tenants/tenantSkillsPath.js';
 import { serverLogger } from '../../utils/logger.js';
 import {
@@ -246,7 +245,11 @@ export class SkillWorkspaceMaterializer {
         });
         changedSkills++;
       }
-      nextSkills[skill.id] = { digest: skill.digest, source: skill.source };
+      nextSkills[skill.id] = {
+        digest: skill.digest,
+        source: skill.source,
+        ...(skill.tenantId ? { tenantId: skill.tenantId } : {}),
+      };
     }
 
     const knownManagedIds = await this.resolveKnownManagedSkillIds(user, previousSkills);
@@ -326,6 +329,7 @@ export class SkillWorkspaceMaterializer {
         source,
         sourceDir,
         digest: await this.getSourceDigest(sourceDir),
+        ...(source === 'tenant' && user.tenantId ? { tenantId: user.tenantId } : {}),
       });
     }
     return desired;
@@ -338,13 +342,11 @@ export class SkillWorkspaceMaterializer {
     const known = new Set(Object.keys(previousSkills));
     for (const id of Object.keys(this.options.skillConfigStore.getPoolVisibility())) known.add(id);
     if (user.tenantId) {
+      // 只依据当前用户 manifest 中已记录的受管副本和本租户规则识别 managed，
+      // 不能用所有租户的 skillId 并集推断来源，否则会误伤合法同名个人 Skill。
       for (const id of Object.keys(this.options.skillConfigStore.getTenantOwnSkillRules(user.tenantId))) {
         known.add(id);
       }
-      // 物化残留可能来自其他租户；把所有组织目录纳入 managed 集合，warmup 时移出热目录。
-      const poolIds = await listDirectoryIds(resolveAgentPath(this.options.sharedDir, 'skills-pool'));
-      const tenantsRootDir = this.options.tenantSkillsRootDir ?? join(this.options.sharedDir, 'tenants');
-      for (const id of scanAllTenantOwnSkillIds(tenantsRootDir, poolIds)) known.add(id);
     }
     return known;
   }

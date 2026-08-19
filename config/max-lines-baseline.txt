@@ -15,7 +15,7 @@ server/src/__tests__/responsesApiAdapter.test.ts	2744	test
 server/src/__tests__/runtimeScheduler.test.ts	849	test
 server/src/__tests__/runtimeTraceRoutes.test.ts	1016	test
 server/src/__tests__/sessionsRoutesMetaOnly.test.ts	814	test
-server/src/__tests__/skillsRouterTenantIsolation.test.ts	977	test
+server/src/__tests__/skillsRouterTenantIsolation.test.ts	833	test
 server/src/__tests__/taskboardStore.pg.test.ts	821	test
 server/src/__tests__/toolRuntime.test.ts	1277	test
 server/src/__tests__/webChannelCoverage.test.ts	1679	test
@@ -33,7 +33,7 @@ server/src/data/transcripts/parse.ts	2042	production
 server/src/routes/auth.ts	1793	production
 server/src/routes/platformObservability.ts	1276	production
 server/src/routes/sessions.ts	3359	production
-server/src/routes/skills.ts	1409	production
+server/src/routes/skills.ts	1403	production
 server/src/runtime/rawAgentLoop.ts	4045	production
 server/src/runtime/rawRuntimeRunDispatch.ts	3259	production
 server/src/runtime/responsesApiAdapter.ts	2013	production

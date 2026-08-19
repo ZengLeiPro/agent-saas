@@ -1160,11 +1160,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const runtimeEventStoreFor: (transcriptPath: string) => EventStore = pgEventStore
     ? (_transcriptPath) => pgEventStore!  // PG backend：共享 pool，按 session_id 过滤
     : (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath));
-
-  const resolveTenantSkillHistoricalProvenance = (tenantId: string) =>
-    skillGovernanceStore?.listTenantSkillHistoricalProvenance(tenantId) ?? Promise.resolve(new Map());
-  const resolveUserPersonalSkillIds = (user: { id: string; tenantId?: string }) =>
-    resolvePersonalSkillIds(user, skillGovernanceStore);
+  const resolveTenantSkillHistoricalProvenance = (tenantId: string) => skillGovernanceStore?.listTenantSkillHistoricalProvenance(tenantId) ?? Promise.resolve(new Map());
+  const resolveUserPersonalSkillIds = (user: { id: string; tenantId?: string }) => resolvePersonalSkillIds(user, skillGovernanceStore);
 
   if (skillConfigStore && userStore) {
     const materializationStore = pgEventStore
@@ -1371,11 +1368,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
     await sessionLock.init();
   }
-
-  // Skills wiring：把 SkillConfigStore + sharedDir 缝成 raw runtime 的 SkillsDispatchConfig，
-  // 让 dispatch 不直接依赖 store 实现。
-  // δ: listForUser 加 configVersion-aware cache（pool 不变就复用扫描结果，避免
-  //    每次 dispatch readdirSync）；resolveSkillDir 加 safeName 防 path traversal。
   const skillsDispatchConfig: SkillsDispatchConfig | undefined = (() => {
     if (!skillConfigStore) return undefined;
     const store = skillConfigStore; // 闭包稳定捕获
@@ -1398,7 +1390,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         userStore?.reload();
         await (skillMaterializationService?.ensureReady(username, requiredSkillIds, 'dispatch')
           ?? Promise.resolve());
-        // listForUser 是同步装配接口，provenance 在这里异步预载，避免请求路径重新引入同步 I/O。
         await skillDispatchState.refresh(username);
       },
       listForUser(username: string | undefined, requiredSkillIds: readonly string[] = []): SkillEntry[] {
@@ -1412,10 +1403,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         ]);
         const poolResult = all.filter((s) => effective.has(s.id));
 
-        // 追加用户自建 skill：与前端 SkillSelector「自建」tab 同源。
-        // 早期 dispatch 只列 pool skill，自建 skill 上传后模型看不到、也调不到（invoke
-        // 前 allowed 校验会拒）；2026-07-03 起改为按 selection 暴露给模型，前端 Switch
-        // 可开关且真实生效。物理路径由 resolveSkillDir 优先命中 user workspace 副本。
+        // 按 selection 暴露用户自建 skill，路径由 resolveSkillDir 优先命中 workspace 副本。
         if (!user) return poolResult;
         try {
           const userCwd = resolveUserCwd(agentCwd, {

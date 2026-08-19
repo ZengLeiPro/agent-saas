@@ -58,7 +58,8 @@ export interface SkillMaterializerOptions {
     user: WorkspaceUser,
   ) => Promise<ReadonlySet<string> | undefined>;
   resolveUserPersonalSkillOwnership?: (
-    user: WorkspaceUser,
+    tenantId: string,
+    userId: string,
     skillId: string,
   ) => Promise<LegacySkillPersonalOwnership | undefined>;
 }
@@ -236,9 +237,7 @@ export class SkillWorkspaceMaterializer {
           resolveUserPersonalSkillIds: this.options.resolveUserPersonalSkillIds
             ? () => this.options.resolveUserPersonalSkillIds!(user)
             : undefined,
-          resolveUserPersonalSkillOwnership: this.options.resolveUserPersonalSkillOwnership
-            ? (_tenantId, _userId, skillId) => this.options.resolveUserPersonalSkillOwnership!(user, skillId)
-            : undefined,
+          resolveUserPersonalSkillOwnership: this.options.resolveUserPersonalSkillOwnership,
         })
       : { managedIds: new Set<string>(), retryable: false };
     const legacyTenantSkillIds = legacyDetection.managedIds;

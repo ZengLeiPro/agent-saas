@@ -123,6 +123,28 @@ export class PgSkillGovernanceStore {
     return result.rows.map(rowToResource);
   }
 
+  async resolveUserPersonalSkillOwnership(
+    tenantId: string,
+    ownerUserId: string,
+    legacySkillId: string,
+  ): Promise<'personal' | 'not_personal' | undefined> {
+    const result = await this.options.pool.query(`
+      SELECT
+        COALESCE(BOOL_OR(resource.scope='personal'
+          AND resource.tenant_id=$1
+          AND resource.owner_user_id=$2), false) AS personal,
+        COALESCE(BOOL_OR(resource.scope IN ('tenant','platform')), false) AS non_personal
+      FROM ${this.resourcesTable} resource
+      JOIN ${this.versionsTable} version ON version.skill_id=resource.skill_id
+      WHERE version.definition_json->>'legacySkillId'=$3
+    `, [tenantId, ownerUserId, legacySkillId]);
+    const row = result.rows[0] as { personal?: unknown; non_personal?: unknown } | undefined;
+    const isTrue = (value: unknown): boolean => value === true || value === 'true';
+    if (isTrue(row?.personal)) return 'personal';
+    if (isTrue(row?.non_personal)) return 'not_personal';
+    return undefined;
+  }
+
   async transferPersonalOwnership(
     tenantId: string,
     skillId: string,

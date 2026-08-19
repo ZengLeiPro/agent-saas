@@ -213,7 +213,7 @@ describe('技能异步增量物化', () => {
         ...(tenantId === 'tenant-b' ? [['legacy-foreign', [legacyDigest]] as const] : []),
       ]),
       resolveUserPersonalSkillIds: async () => new Set(['known-personal']),
-      resolveUserPersonalSkillOwnership: async (_user, skillId) => (
+      resolveUserPersonalSkillOwnership: async (_tenantId, _userId, skillId) => (
         skillId === 'legacy-foreign' ? 'not_personal' : undefined
       ),
     });
@@ -340,7 +340,7 @@ describe('技能异步增量物化', () => {
         ]);
       },
       resolveUserPersonalSkillIds: async () => new Set(['known-personal']),
-      resolveUserPersonalSkillOwnership: async (_user, skillId) => (
+      resolveUserPersonalSkillOwnership: async (_tenantId, _userId, skillId) => (
         skillId === 'legacy-retry' ? 'not_personal' : undefined
       ),
     });

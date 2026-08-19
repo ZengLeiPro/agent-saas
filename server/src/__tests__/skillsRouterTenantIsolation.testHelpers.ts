@@ -354,7 +354,7 @@ export async function makeTestRig(): Promise<TestRig> {
     skillConfigStore,
     resolveTenantSkillHistoricalProvenance,
     resolveUserPersonalSkillIds: async () => new Set(['known-personal']),
-    resolveUserPersonalSkillOwnership: async (_user, skillId) => (
+    resolveUserPersonalSkillOwnership: async (_tenantId, _userId, skillId) => (
       skillId === 'legacy-foreign' ? 'not_personal' : undefined
     ),
   });

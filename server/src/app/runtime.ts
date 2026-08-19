@@ -1188,7 +1188,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           .flatMap((agent) => agent.allowedSkills);
       },
       resolveTenantSkillHistoricalProvenance,
-      resolveUserPersonalSkillIds,
+      resolveUserPersonalSkillIds, resolveUserPersonalSkillOwnership: skillGovernanceStore?.resolveUserPersonalSkillOwnership,
     });
     skillMaterializationService = new SkillMaterializationService({
       store: materializationStore,
@@ -1379,7 +1379,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       getConfigVersion: () => store.getConfigVersion(),
       scanPoolSkills: () => scanPoolSkillsForDispatch(poolDir),
       resolveTenantSkillHistoricalProvenance,
-      resolveUserPersonalSkillIds,
+      resolveUserPersonalSkillIds, resolveUserPersonalSkillOwnership: skillGovernanceStore?.resolveUserPersonalSkillOwnership,
     });
     return {
       async ensureReady(username: string | undefined, requiredSkillIds: readonly string[] = []): Promise<void> {

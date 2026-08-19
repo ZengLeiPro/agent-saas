@@ -29,6 +29,19 @@ function buildPool() {
       resources.set(String(params[0]), row);
       return { rows: [row], rowCount: 1 };
     }
+    if (sql.includes("version.definition_json->>'legacySkillId'=$3")) {
+      const matching = versions
+        .filter(version => (version.definition_json as Record<string, unknown>)?.legacySkillId === params[2])
+        .map(version => resources.get(String(version.skill_id)))
+        .filter((resource): resource is Record<string, unknown> => Boolean(resource));
+      const personal = matching.some(resource => (
+        resource.scope === 'personal'
+        && resource.tenant_id === params[0]
+        && resource.owner_user_id === params[1]
+      ));
+      const nonPersonal = matching.some(resource => resource.scope === 'tenant' || resource.scope === 'platform');
+      return { rows: [{ personal, non_personal: nonPersonal }], rowCount: 1 };
+    }
     if (sql.includes('FROM test_governed_skills') && /skill_id\s*=\s*\$1/.test(sql)) {
       const row = resources.get(String(params[0]));
       const sameTenant = !sql.includes('tenant_id=$2') || row?.tenant_id === params[1];
@@ -161,6 +174,29 @@ describe('Governed Skill + Candidate 发布链', () => {
       skillId: 'sales-helper', tenantId: 'acme', scope: 'tenant', createdBy: 'admin',
     });
     expect(created).toMatchObject({ skillId: 'sales-helper', scope: 'tenant', status: 'draft', revision: 1 });
+  });
+
+  it('按目标 legacySkillId 返回完整的个人或非个人 ownership 结论', async () => {
+    const { pool, resources, versions } = buildPool();
+    resources.set('tenant-foreign', resourceRow({
+      skill_id: 'tenant-foreign', tenant_id: 'foreign', scope: 'tenant', status: 'published',
+    }));
+    resources.set('personal-owned', resourceRow({
+      skill_id: 'personal-owned', tenant_id: 'acme', scope: 'personal', owner_user_id: 'user-1',
+      status: 'published',
+    }));
+    versions.push(
+      { skill_id: 'tenant-foreign', definition_json: { legacySkillId: 'legacy-foreign' } },
+      { skill_id: 'personal-owned', definition_json: { legacySkillId: 'legacy-personal' } },
+    );
+    const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
+
+    await expect(store.resolveUserPersonalSkillOwnership('acme', 'user-1', 'legacy-foreign'))
+      .resolves.toBe('not_personal');
+    await expect(store.resolveUserPersonalSkillOwnership('acme', 'user-1', 'legacy-personal'))
+      .resolves.toBe('personal');
+    await expect(store.resolveUserPersonalSkillOwnership('acme', 'user-1', 'legacy-unknown'))
+      .resolves.toBeUndefined();
   });
 
   it('治理上传可在单一事务内创建 tenant Skill 并发布 immutable v1', async () => {

@@ -21,6 +21,7 @@ interface PoolSkill {
 type RuntimeUser = Pick<UserInfo, 'id' | 'username' | 'role' | 'tenantId'>;
 
 type PersonalSkillIdsResolver = (user: { id: string; tenantId?: string }) => Promise<ReadonlySet<string> | undefined>;
+type PersonalSkillOwnershipResolver = NonNullable<ManagedTenantSkillIdsInput['resolveUserPersonalSkillOwnership']>;
 
 type HistoricalProvenanceResolver = NonNullable<ManagedTenantSkillIdsInput['resolveTenantSkillHistoricalProvenance']>;
 
@@ -32,6 +33,7 @@ export function createSkillDispatchState(input: {
   scanPoolSkills: () => ScannedPoolSkill[];
   resolveTenantSkillHistoricalProvenance: HistoricalProvenanceResolver;
   resolveUserPersonalSkillIds: PersonalSkillIdsResolver;
+  resolveUserPersonalSkillOwnership?: PersonalSkillOwnershipResolver;
 }) {
   let poolCache: { version: number; entries: PoolSkill[] } | undefined;
   const managedTenantIdsByUser = new Map<string, Set<string>>();
@@ -63,6 +65,7 @@ export function createSkillDispatchState(input: {
       resolveTenantSkillHistoricalProvenance: input.resolveTenantSkillHistoricalProvenance,
       resolveUserPersonalSkillIds: (tenantId, userId) =>
         input.resolveUserPersonalSkillIds({ id: userId, tenantId }),
+      resolveUserPersonalSkillOwnership: input.resolveUserPersonalSkillOwnership,
     });
     managedTenantIdsByUser.set(username, managed);
   }

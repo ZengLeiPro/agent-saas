@@ -186,8 +186,10 @@ export interface TaskboardExecutionReconcileCandidate {
 
 export interface TaskboardExecutionModelContext {
   taskModel?: string;
+  /** 任务按执行阶段配置的模型覆盖；优先于旧版全阶段 taskModel。 */
+  taskStageModels?: TaskBoardStageModels;
   boardModel?: string;
-  /** 看板按执行阶段配置的默认模型；解析优先级：任务模型 > 阶段模型 > 看板模型。 */
+  /** 看板按执行阶段配置的默认模型；解析优先级：任务阶段模型 > 任务旧模型 > 看板阶段模型 > 看板模型。 */
   boardStageModels?: TaskBoardStageModels;
   taskKind?: 'delivery' | 'integration' | 'remediation';
   taskStatus?: TaskBoardStatus;

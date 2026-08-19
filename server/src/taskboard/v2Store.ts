@@ -3,6 +3,7 @@ import type { PoolClient } from 'pg';
 
 import type {
   TaskBoardChange,
+  TaskBoardComment,
   TaskBoardExecutionContextInput,
   TaskBoardExecutionContextResponse,
   TaskBoardIntegrationBatchCreateInput,
@@ -15,6 +16,7 @@ import { rowToBoard } from './boardFields.js';
 import { rowToIntegrationSource } from './integrationSourceMapper.js';
 import { resolveWorkflowContract } from './workflowContract.js';
 import {
+  commentExecutionJoin,
   rowToComment,
   rowToExecution,
   rowToTask,
@@ -441,7 +443,10 @@ export async function getExecutionContextV2(
     const page = changeRows.rows.slice(0, limit);
     const comments = include.has('comments')
       ? await client.query(
-        `SELECT * FROM ${options.commentsTable} c
+        `SELECT c.*, comment_execution.comment_session_id, comment_execution.comment_execution_id,
+                comment_execution.comment_execution_purpose
+           FROM ${options.commentsTable} c
+          ${commentExecutionJoin(options.changesTable, options.executionsTable)}
           WHERE c.task_id=$1 AND ${visibleCommentPredicate('c', options.changesTable)}
           ORDER BY c.created_at,c.id`,
         [taskId],
@@ -524,7 +529,7 @@ export async function createExecutionCommentV2(
   if (!normalized) throw new TaskboardValidationError('Comment body is required');
   return withTransaction(options, async (client) => {
     const execution = await client.query(
-      `SELECT e.task_id
+      `SELECT e.task_id, e.id AS execution_id, e.session_id, e.purpose
          FROM ${options.executionsTable} e
          JOIN ${options.tasksTable} t ON t.id=e.task_id
          JOIN ${options.boardsTable} b ON b.id=t.board_id
@@ -546,7 +551,12 @@ export async function createExecutionCommentV2(
     await appendChange(options, client, taskId, 'execution.comment', 'agent', runId, {
       commentId: String(result.rows[0]!.id),
     });
-    return rowToComment(result.rows[0]!);
+    return {
+      ...rowToComment(result.rows[0]!),
+      executionId: String(execution.rows[0].execution_id),
+      sessionId: String(execution.rows[0].session_id),
+      executionPurpose: String(execution.rows[0].purpose) as TaskBoardComment['executionPurpose'],
+    };
   });
 }
 

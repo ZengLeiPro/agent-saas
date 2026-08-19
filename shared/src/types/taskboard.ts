@@ -226,7 +226,10 @@ export interface TaskBoardTask {
   labels: string[];
   sortOrder: number;
   dueAt?: string;
+  /** 兼容旧任务的全阶段模型覆盖；新任务优先使用 stageModels。 */
   model?: string;
+  /** 任务按执行阶段的模型覆盖；未指定阶段继承看板对应阶段模型。 */
+  stageModels?: TaskBoardStageModels;
   providerPullRequestId?: string;
   pullRequestNumber?: number;
   reviewedSubjectDigest?: string;
@@ -261,6 +264,10 @@ export interface TaskBoardComment {
   authorType: "user" | "agent" | "system";
   authorId: string;
   authorName: string;
+  /** 评论关联的正式会话；普通未续跑的用户评论可能没有。 */
+  sessionId?: string;
+  executionId?: string;
+  executionPurpose?: TaskBoardExecutionPurpose;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -451,6 +458,7 @@ export interface TaskBoardTaskCreateInput {
   labels?: string[];
   dueAt?: string;
   model?: string;
+  stageModels?: TaskBoardStageModels;
   providerPullRequestId?: string;
   pullRequestNumber?: number;
   reviewedSubjectDigest?: string;
@@ -468,6 +476,7 @@ export interface TaskBoardTaskPatchInput {
   labels?: string[];
   dueAt?: string | null;
   model?: string | null;
+  stageModels?: TaskBoardStageModels | null;
   providerPullRequestId?: string | null;
   pullRequestNumber?: number | null;
   reviewedSubjectDigest?: string | null;

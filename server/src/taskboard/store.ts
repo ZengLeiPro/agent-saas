@@ -56,6 +56,7 @@ import { deleteStoredTask } from './storeTaskDelete.js';
 import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
 import {
   allowedActionsForRole,
+  appendModelAssignments,
   normalizeBoardPrompt,
   normalizeModel,
   normalizeRepositoryConfig,
@@ -89,7 +90,6 @@ import {
   assertActiveBoard,
   assertExpectedVersion,
   assertWritableTask,
-  applyCommentAuthorDisplayName,
   mapActiveBoardNameError,
   normalizeAttachments,
   normalizeLabels,
@@ -100,7 +100,7 @@ import {
   sanitizeIdentifier,
   validateMoveNeighbors, visibleCommentPredicate,
 } from './storeHelpers.js';
-import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns } from './archiveGuard.js';
+import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns, assertTaskHasNoExecutionHistory } from './archiveGuard.js';
 import { deleteComment as deleteStoredComment, updateComment as updateStoredComment } from './storeComments.js';
 import {
   getExecutionContextBySessionId as getStoredExecutionContextBySessionId,
@@ -108,6 +108,7 @@ import {
 } from './storeExecutions.js';
 import {
   listBoards as listStoredBoards,
+  listComments as listStoredComments,
   listTasks as listStoredTasks,
   searchBoards as searchStoredBoards,
   searchComments as searchStoredComments,
@@ -649,10 +650,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       await client.query(
         `INSERT INTO ${this.tasksTable}
            (id, board_id, identifier, kind, title, description, branch, attachments, status, priority, labels,
-            sort_order, due_at, model, provider_pull_request_id, pull_request_number,
+            sort_order, due_at, model, stage_models, provider_pull_request_id, pull_request_number,
             reviewed_subject_digest, creator_user_id, creator_name, completed_at, client_request_id, version)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-                 CASE WHEN $9='done' THEN now() END,$20,1)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20,
+                 CASE WHEN $9='done' THEN now() END,$21,1)`,
         [
           taskId,
           boardId,
@@ -667,7 +668,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           normalizeLabels(input.labels),
           sortOrder,
           input.dueAt ?? null,
-          normalizeModel(input.model),
+          normalizeModel(input.stageModels !== undefined ? undefined : input.model),
+          stageModelsToJson(input.stageModels),
           optionalText(input.providerPullRequestId),
           input.pullRequestNumber ?? null,
           optionalText(input.reviewedSubjectDigest),
@@ -693,6 +695,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       assertBoardRole(loaded.boardRole, kindMutation.requiredRole);
       assertExpectedVersion(loaded.task, input.expectedVersion);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
+      if (input.title !== undefined || input.description !== undefined || input.attachments !== undefined) {
+        await assertTaskHasNoExecutionHistory(this, client, taskId);
+      }
       if (kindMutation.promoting) await assertTaskHasNoActiveRuns(this, client, taskId);
       if (loaded.task.kind === 'advisory' && !kindMutation.promoting && input.branch !== undefined) {
         throw new TaskboardValidationError(
@@ -713,7 +718,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (
         input.title === undefined && input.description === undefined && input.kind === undefined
         && input.branch === undefined && input.attachments === undefined && input.priority === undefined && input.labels === undefined
-        && input.dueAt === undefined && input.model === undefined
+        && input.dueAt === undefined && input.model === undefined && input.stageModels === undefined
       ) {
         throw new TaskboardValidationError('No task changes supplied');
       }
@@ -748,10 +753,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         params.push(input.dueAt);
         assignments.push(`due_at=$${params.length}`);
       }
-      if (input.model !== undefined) {
-        params.push(normalizeModel(input.model));
-        assignments.push(`model=$${params.length}`);
-      }
+      appendModelAssignments(params, assignments, input.model, input.stageModels);
       await client.query(
         `UPDATE ${this.tasksTable} t
             SET ${assignments.join(', ')}
@@ -873,16 +875,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
 
   async listComments(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardComment[]> {
     await this.requireTask(this.pool, identity, taskId, false);
-    const result = await this.pool.query(
-      `SELECT c.*
-         FROM ${this.commentsTable} c
-         JOIN ${this.tasksTable} t ON t.id=c.task_id
-         JOIN ${this.boardsTable} b ON b.id=t.board_id
-        WHERE c.task_id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization') AND ${visibleCommentPredicate('c', this.changesTable)}
-        ORDER BY c.created_at, c.id`,
-      [taskId, identity.tenantId, identity.ownerUserId],
-    );
-    return result.rows.map((row) => applyCommentAuthorDisplayName(rowToComment(row), identity));
+    return listStoredComments(this, identity, taskId);
   }
 
   async searchComments(identity: TaskboardIdentity, taskId: string, filter: TaskboardPageFilter = {}): Promise<TaskboardPage<TaskBoardComment>> { return searchStoredComments(this, identity, taskId, filter); }

@@ -260,6 +260,20 @@ function OrganizationMemberDetails({ tenantId, userId, tab }: { tenantId: string
 }
 
 /** 成员与权限 · 成员页的“添加成员”入口；无权限时不渲染按钮，原因由 MemberAddPermissionNotice 说明。 */
+function memberCreationErrorMessage(error: unknown): string {
+  const code = error && typeof error === "object" && "code" in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
+  const message = error instanceof Error ? error.message : String(error);
+  if (code === "MEMBERSHIP_ALREADY_EXISTS" || message === "MEMBERSHIP_ALREADY_EXISTS") {
+    return "该账号的组织成员关系已存在，请刷新成员列表；如果成员已停用，请在列表中点击“恢复”，无需重复创建。";
+  }
+  if (code === "USERNAME_ALREADY_EXISTS" || message === "USERNAME_ALREADY_EXISTS") {
+    return "用户名已存在。请更换用户名；如果该账号已属于当前组织，请刷新成员列表，已停用成员请点击“恢复”，无需重复创建。";
+  }
+  return message || "添加成员失败，请稍后重试。";
+}
+
 function AddMemberEntry({ tenantId, onCreated }: { tenantId: string; onCreated: () => void }) {
   const { isAdmin } = useAuth();
   const [open, setOpen] = useState(false);
@@ -269,8 +283,12 @@ function AddMemberEntry({ tenantId, onCreated }: { tenantId: string; onCreated: 
     // 组织范围由治理 API 的 tenantId query 绑定；表单里的 tenantId 仅用于锁定展示。
     const command = { ...data };
     delete command.tenantId;
-    await governanceAccessApi.createMembership(command, tenantId);
-    onCreated();
+    try {
+      await governanceAccessApi.createMembership(command, tenantId);
+      onCreated();
+    } catch (error) {
+      throw new Error(memberCreationErrorMessage(error));
+    }
   };
 
   return <>

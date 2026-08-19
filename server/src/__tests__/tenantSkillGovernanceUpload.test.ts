@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SkillGovernanceInvariantError } from '../data/skillGovernance/index.js';
 import { createTenantSkillGovernanceUpload, tenantSkillResourceId } from '../services/tenantSkillGovernanceUpload.js';
+import { computeSkillPackageFingerprint } from '../workspace/materialization/fingerprint.js';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -187,6 +188,21 @@ describe('组织 Skill 治理上传服务', () => {
         packageFormat: 'skill-package-v1', contentDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
       }),
     }));
+  });
+
+  it('治理 contentDigest 与物化副本统一排除 node_modules 等非物化目录', async () => {
+    const test = rig();
+    const result = await test.upload({
+      tenantId: 'tenant-a',
+      actorUserId: 'platform-1',
+      files: [
+        uploadFile(validSkill('normalized-digest')),
+        uploadFile('ignored', 'node_modules/ignored.js'),
+        uploadFile('ignored', '__pycache__/ignored.pyc'),
+      ],
+    });
+    const expected = await computeSkillPackageFingerprint(test.installedDir('normalized-digest'));
+    expect(result.version.definition.contentDigest).toBe(expected);
   });
 
   it.each([

@@ -69,6 +69,20 @@ function buildPool() {
       candidates.set(String(params[1]), row);
       return { rows: [row], rowCount: 1 };
     }
+    if (sql.includes('LEFT JOIN test_governed_skill_versions')) {
+      const rows = [...resources.values()]
+        .filter(resource => resource.tenant_id === params[0] && resource.scope === 'tenant')
+        .flatMap(resource => {
+          const resourceVersions = versions.filter(version => version.skill_id === resource.skill_id);
+          return resourceVersions.length > 0
+            ? resourceVersions.map(version => ({
+                skill_id: resource.skill_id,
+                definition_json: version.definition_json,
+              }))
+            : [{ skill_id: resource.skill_id, definition_json: null }];
+        });
+      return { rows, rowCount: rows.length };
+    }
     if (sql.includes('FROM test_governed_skill_versions') && sql.includes('digest=$2')) {
       const row = versions.find(item => item.skill_id === params[0] && item.digest === params[1]);
       return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
@@ -121,6 +135,7 @@ function buildPool() {
 
 const definition = {
   name: '销售助手', description: '查询销售流程', contentRef: 'skill-content://sha256/abc',
+  legacySkillId: 'sales-helper', contentDigest: 'history-v1',
   entrypoint: 'SKILL.md', toolRequirements: ['WebSearch'],
 };
 
@@ -169,6 +184,8 @@ describe('Governed Skill + Candidate 发布链', () => {
     await expect(store.listVersions('uploaded-skill')).resolves.toMatchObject([
       { skillId: 'uploaded-skill', versionNumber: 1 },
     ]);
+    const history = await store.listTenantSkillHistoricalProvenance('acme');
+    expect(history.get('sales-helper')).toEqual(['history-v1']);
     expect(queries.filter(query => query === 'BEGIN')).toHaveLength(1);
     expect(queries.filter(query => query === 'COMMIT')).toHaveLength(1);
   });

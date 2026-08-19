@@ -158,6 +158,42 @@ export class PgSkillGovernanceStore {
     return result.rows.map(rowToVersion);
   }
 
+  async listTenantSkillHistoricalProvenance(
+    tenantId: string,
+  ): Promise<Map<string, readonly string[]>> {
+    const result = await this.options.pool.query(`
+      SELECT resource.skill_id, version.definition_json
+      FROM ${this.resourcesTable} resource
+      LEFT JOIN ${this.versionsTable} version ON version.skill_id=resource.skill_id
+      WHERE resource.tenant_id=$1 AND resource.scope='tenant'
+      ORDER BY resource.skill_id, version.version_number
+    `, [tenantId]);
+    const history = new Map<string, string[]>();
+    for (const row of result.rows as Array<Record<string, unknown>>) {
+      let definition: Record<string, unknown> = {};
+      if (row.definition_json && typeof row.definition_json === 'object') {
+        definition = row.definition_json as Record<string, unknown>;
+      } else if (typeof row.definition_json === 'string') {
+        try {
+          const parsed = JSON.parse(row.definition_json);
+          if (parsed && typeof parsed === 'object') definition = parsed as Record<string, unknown>;
+        } catch {
+          // 损坏版本不提供 provenance 证据，但不影响其他历史版本。
+        }
+      }
+      const legacySkillId = typeof definition.legacySkillId === 'string'
+        ? definition.legacySkillId
+        : String(row.skill_id);
+      const digests = history.get(legacySkillId) ?? [];
+      for (const key of ['contentDigest', 'materializedContentDigest', 'directoryFingerprint']) {
+        const digest = definition[key];
+        if (typeof digest === 'string' && !digests.includes(digest)) digests.push(digest);
+      }
+      history.set(legacySkillId, digests);
+    }
+    return history;
+  }
+
   async getCandidate(tenantId: string, candidateId: string): Promise<SkillCandidate | null> {
     const result = await this.options.pool.query(
       `SELECT * FROM ${this.candidatesTable} WHERE tenant_id=$1 AND candidate_id=$2`, [tenantId, candidateId],

@@ -170,6 +170,8 @@ describe('技能异步增量物化', () => {
     const sourceDir = join(sharedDir, 'tenants', 'tenant-b', 'skills');
     const userSkillDir = join(userCwd, '.ky-agent', 'skills');
     createSkill(sourceDir, 'legacy-foreign', 'foreign-v1');
+    mkdirSync(join(sourceDir, 'legacy-foreign', 'node_modules'), { recursive: true });
+    writeFileSync(join(sourceDir, 'legacy-foreign', 'node_modules', 'ignored.js'), 'ignored-v1');
     createSkill(userSkillDir, 'legacy-foreign', 'foreign-v1');
     const legacyDigest = await computeSkillPackageFingerprint(join(userSkillDir, 'legacy-foreign'));
     writeFileSync(
@@ -182,9 +184,9 @@ describe('技能异步增量物化', () => {
       sharedDir,
       sourceRevision: 'test-release',
       skillConfigStore: config.store,
-      resolveTenantSkillHistoricalDigests: async (tenantId, skillId) => (
-        tenantId === 'tenant-b' && skillId === 'legacy-foreign' ? [legacyDigest] : []
-      ),
+      resolveTenantSkillHistoricalProvenance: async (tenantId) => new Map([
+        ...(tenantId === 'tenant-b' ? [['legacy-foreign', [legacyDigest]] as const] : []),
+      ]),
     });
 
     const result = await materializer.materialize({ taskId: 'task-legacy-updated-source', user, userCwd });

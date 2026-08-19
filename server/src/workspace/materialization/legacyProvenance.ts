@@ -14,11 +14,10 @@ export interface LegacyTenantSkillDetectionInput {
   tenantsRootDir: string;
   currentTenantId?: string;
   poolSkillIds: ReadonlySet<string>;
-  /** 返回该租户 Skill 的所有可靠历史 contentDigest/fingerprint。 */
-  resolveTenantSkillHistoricalDigests?: (
+  /** 返回该租户所有历史组织 Skill 的 legacySkillId → digest 集合，包含已删除资源。 */
+  resolveTenantSkillHistoricalProvenance?: (
     tenantId: string,
-    skillId: string,
-  ) => Promise<readonly string[]>;
+  ) => Promise<ReadonlyMap<string, readonly string[]>>;
 }
 
 async function listDirectoryIds(root: string): Promise<Set<string>> {
@@ -51,7 +50,7 @@ async function hasLegacySkillsVersion(userCwd: string): Promise<boolean> {
 }
 
 /**
- * 迁移没有 skills-state.json 的旧 workspace 时，优先用当前源 fingerprint；源已更新时，
+ * 迁移没有 skills-state.json 的旧 workspace 时，优先用当前源 fingerprint；源已更新或删除时，
  * 只有治理历史中明确包含用户副本 digest 才认定为组织残留。绝不按跨租户同名 ID
  * 推断，无法证明来源的目录保留为个人 Skill，避免迁移过程误伤同名个人 Skill。
  */
@@ -100,30 +99,44 @@ export async function detectLegacyTenantSkillIds(
       continue;
     }
     const sourceIds = await listDirectoryIds(tenantSkillsDir);
-    for (const id of sourceIds) {
+    let historicalProvenance: ReadonlyMap<string, readonly string[]> = new Map();
+    if (input.resolveTenantSkillHistoricalProvenance) {
+      historicalProvenance = await input.resolveTenantSkillHistoricalProvenance(tenantEntry.name)
+        .catch(() => new Map<string, readonly string[]>());
+    }
+    const candidateIds = new Set([...sourceIds, ...historicalProvenance.keys()]);
+    for (const id of candidateIds) {
       const userDigest = userDigests.get(id);
       if (input.poolSkillIds.has(id) || !userDigest) continue;
-      try {
-        const sourceDigest = await computeDirectoryFingerprint(join(tenantSkillsDir, id));
-        if (sourceDigest === userDigest) {
-          managed.add(id);
-          continue;
-        }
 
-        // 当前源可能已从 v1 更新为 v2；只有治理历史中明确记录了用户副本
-        // 的 digest，才允许把不再等于当前源的旧副本认定为组织残留。
-        if (!input.resolveTenantSkillHistoricalDigests) continue;
+      // 当前源仍存在且副本完全一致时，可以直接确认组织 provenance。
+      if (sourceIds.has(id)) {
+        try {
+          const sourceDigest = await computeDirectoryFingerprint(join(tenantSkillsDir, id));
+          if (sourceDigest === userDigest) {
+            managed.add(id);
+            continue;
+          }
+        } catch {
+          // 当前源不完整或含软链接时，继续尝试治理历史证据。
+        }
+      }
+
+      // 当前源可能已从 v1 更新为 v2，或已经删除归档；只有治理历史中明确记录了
+      // 用户副本 digest，才允许认定为组织残留，不能按同名或历史 ID 猜测。
+      const historicalDigests = historicalProvenance.get(id);
+      if (!historicalDigests) continue;
+      try {
         let packageDigest = userPackageDigests.get(id);
         if (!packageDigest) {
           packageDigest = await computeSkillPackageFingerprint(join(input.userSkillsDir, id));
           userPackageDigests.set(id, packageDigest);
         }
-        const historicalDigests = await input.resolveTenantSkillHistoricalDigests(tenantEntry.name, id);
         if (historicalDigests.includes(userDigest) || historicalDigests.includes(packageDigest)) {
           managed.add(id);
         }
       } catch {
-        // 源目录不完整、含软链接或治理历史不可读时不作 ownership 推断。
+        // 用户副本含软链接或治理历史摘要无法比对时不作 ownership 推断。
       }
     }
   }

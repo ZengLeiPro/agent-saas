@@ -16,6 +16,7 @@ import type { Readable } from 'node:stream';
 import yauzl, { type Entry, type ZipFile } from 'yauzl';
 
 import { ensureWorkspaceDir, repairWorkspaceTreeAsync } from '../workspace/permissions.js';
+import { shouldIncludeMaterializedPath } from '../workspace/materialization/fingerprint.js';
 const MAX_SKILL_FILES = 300;
 const MAX_SKILL_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_SKILL_PACKAGE_BYTES = 100 * 1024 * 1024;
@@ -216,6 +217,8 @@ async function packageFingerprint(root: string): Promise<{
     if (totalBytes > MAX_SKILL_PACKAGE_BYTES) {
       throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', '技能包解压后大小超出限制', 413);
     }
+    // provenance digest 必须与物化副本同口径；node_modules 等目录虽可上传，物化时不落盘。
+    if (!file.path.split('/').every((part) => shouldIncludeMaterializedPath(part))) continue;
     digest.update(file.path).update('\0').update(String(file.size)).update('\0').update(data);
   }
   return { contentDigest: digest.digest('hex'), fileCount: files.length, totalBytes };

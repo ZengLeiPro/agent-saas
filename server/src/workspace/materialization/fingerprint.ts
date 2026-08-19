@@ -52,6 +52,7 @@ async function walkSkillPackage(
   hash: ReturnType<typeof createHash>,
 ): Promise<void> {
   const entries = (await readdir(current, { withFileTypes: true }))
+    .filter((entry) => shouldIncludeMaterializedPath(entry.name))
     .sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
     const path = join(current, entry.name);
@@ -70,7 +71,7 @@ async function walkSkillPackage(
   }
 }
 
-/** 与技能包上传时的 contentDigest 算法保持一致，用于校验治理历史版本。 */
+/** 与技能包上传及物化副本一致的 contentDigest 算法，用于校验治理历史版本。 */
 export async function computeSkillPackageFingerprint(root: string): Promise<string> {
   const hash = createHash('sha256');
   await walkSkillPackage(root, root, hash);

@@ -146,7 +146,6 @@ import {
   scanUserCustomSkills,
 } from '../data/skills/scanner.js';
 import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
-import { tenantSkillResourceId } from '../services/tenantSkillGovernanceUpload.js';
 import { detectLegacyTenantSkillIds } from '../workspace/materialization/legacyProvenance.js';
 import { manifestTenantSkillIds, readSkillManifest } from '../workspace/materialization/manifest.js';
 import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
@@ -1162,22 +1161,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ? (_transcriptPath) => pgEventStore!  // PG backend：共享 pool，按 session_id 过滤
     : (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath));
 
-  const resolveTenantSkillHistoricalDigests = async (
+  const resolveTenantSkillHistoricalProvenance = async (
     tenantId: string,
-    skillId: string,
-  ): Promise<readonly string[]> => {
-    if (!skillGovernanceStore) return [];
-    const resourceIds = [...new Set([tenantSkillResourceId(tenantId, skillId), skillId])];
-    for (const resourceId of resourceIds) {
-      const resource = await skillGovernanceStore.getResource(resourceId);
-      if (!resource || resource.tenantId !== tenantId || resource.scope !== 'tenant') continue;
-      const versions = await skillGovernanceStore.listVersions(resource.skillId);
-      return versions.flatMap((version) => {
-        const digest = version.definition.contentDigest;
-        return typeof digest === 'string' ? [digest] : [];
-      });
-    }
-    return [];
+  ): Promise<ReadonlyMap<string, readonly string[]>> => {
+    if (!skillGovernanceStore) return new Map();
+    return await skillGovernanceStore.listTenantSkillHistoricalProvenance(tenantId);
   };
 
   if (skillConfigStore && userStore) {
@@ -1204,7 +1192,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           ))
           .flatMap((agent) => agent.allowedSkills);
       },
-      resolveTenantSkillHistoricalDigests,
+      resolveTenantSkillHistoricalProvenance,
     });
     skillMaterializationService = new SkillMaterializationService({
       store: materializationStore,
@@ -1421,7 +1409,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
             tenantsRootDir: tenantSkillsRootDir,
             currentTenantId: user.tenantId,
             poolSkillIds: new Set(getAllPoolEntries().map((skill) => skill.id)),
-            resolveTenantSkillHistoricalDigests,
+            resolveTenantSkillHistoricalProvenance,
           });
       managedTenantIdsByUser.set(username, new Set([
         ...manifestTenantSkillIds(manifest),

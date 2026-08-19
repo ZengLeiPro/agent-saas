@@ -279,25 +279,23 @@ async function makeTestRig(): Promise<TestRig> {
       };
     },
     getVersion: async () => null,
-    listVersions: async (resourceId: string) => (tenantSkillHistory.get(resourceId)?.digests ?? []).map((contentDigest, index) => ({
-      versionId: `${resourceId}-v${index + 1}`,
-      skillId: resourceId,
-      versionNumber: index + 1,
-      definition: { contentDigest },
-      digest: `digest-${index + 1}`,
-      publishedAt: '2026-08-19T00:00:00.000Z',
-      publishedBy: 'test',
-    })),
+    listTenantSkillHistoricalProvenance: async (tenantId: string) => new Map(
+      [...tenantSkillHistory.values()]
+        .filter((entry) => entry.tenantId === tenantId)
+        .map((entry) => [entry.skillId, entry.digests] as const),
+    ),
   };
-  const resolveTenantSkillHistoricalDigests = async (tenantId: string, skillId: string) => (
-    tenantSkillHistory.get(tenantSkillResourceId(tenantId, skillId))?.digests ?? []
+  const resolveTenantSkillHistoricalProvenance = async (tenantId: string) => new Map(
+    [...tenantSkillHistory.values()]
+      .filter((entry) => entry.tenantId === tenantId)
+      .map((entry) => [entry.skillId, entry.digests] as const),
   );
   const materializer = new SkillWorkspaceMaterializer({
     sharedDir,
     sourceRevision: 'test-release',
     tenantSkillsRootDir,
     skillConfigStore,
-    resolveTenantSkillHistoricalDigests,
+    resolveTenantSkillHistoricalProvenance,
   });
   const materializationStore = new InMemorySkillMaterializationStore();
   await materializationStore.init();
@@ -841,6 +839,45 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       });
       expect(singleSelection.status).toBe(403);
       expect((await h.request('/api/skills/me/skills/legacy-foreign/document')).status).toBe(400);
+
+      h.setCaller(PLATFORM_ADMIN);
+      await h.waitSync(await h.request('/api/skills/sync', { method: 'POST' }));
+      expect(existsSync(leakedDir)).toBe(false);
+    });
+
+    it('已删除归档的外租户 Skill 历史残留仍不可见、不可选、不可调用且可清理', async () => {
+      const sourceDir = join(h.tenantSkillsRootDir, 'wain', 'skills', 'legacy-deleted');
+      mkdirSync(sourceDir, { recursive: true });
+      writeFileSync(join(sourceDir, 'SKILL.md'), '---\nname: legacy-deleted\ndescription: foreign\n---\nforeign-v1');
+
+      const leakedDir = join(h.userSkillsDir('alice'), 'legacy-deleted');
+      mkdirSync(leakedDir, { recursive: true });
+      writeFileSync(join(leakedDir, 'SKILL.md'), '---\nname: legacy-deleted\ndescription: foreign\n---\nforeign-v1');
+      const legacyDigest = await computeSkillPackageFingerprint(leakedDir);
+      h.setTenantSkillHistoricalDigests('wain', 'legacy-deleted', [legacyDigest]);
+      rmSync(sourceDir, { recursive: true, force: true });
+      writeFileSync(join(h.userSkillsDir('alice'), '..', '.skills-version'), '1');
+
+      h.setCaller(KAIYAN_USER);
+      const listed = await h.request('/api/skills/me');
+      expect(listed.status).toBe(200);
+      const body = await listed.json() as { customSkills: { id: string }[]; tenantSkills: { id: string }[] };
+      expect(body.customSkills.map(s => s.id)).not.toContain('legacy-deleted');
+      expect(body.tenantSkills.map(s => s.id)).not.toContain('legacy-deleted');
+
+      const selected = await h.request('/api/skills/me/selections', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedSkills: ['legacy-deleted'] }),
+      });
+      expect(selected.status).toBe(200);
+      expect(h.skillConfigStore.getUserSelectedSkills('alice')).not.toContain('legacy-deleted');
+      expect((await h.request('/api/skills/me/skills/legacy-deleted/selection', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: true, expectedVersion: 0 }),
+      })).status).toBe(403);
+      expect((await h.request('/api/skills/me/skills/legacy-deleted/document')).status).toBe(400);
 
       h.setCaller(PLATFORM_ADMIN);
       await h.waitSync(await h.request('/api/skills/sync', { method: 'POST' }));

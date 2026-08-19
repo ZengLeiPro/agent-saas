@@ -63,7 +63,7 @@ export interface SkillsRouterDeps {
   tenantSkillsRootDir?: string;
   skillMaterialization?: SkillMaterializationCoordinator;
   skillGovernanceStore?: Pick<PgSkillGovernanceStore, 'getResource' | 'getVersion'>
-    & Partial<Pick<PgSkillGovernanceStore, 'listVersions'>>;
+    & Partial<Pick<PgSkillGovernanceStore, 'listTenantSkillHistoricalProvenance'>>;
   legacyWriteGate?: {
     assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
   };
@@ -136,19 +136,11 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     };
   }
 
-  async function getTenantSkillHistoricalDigests(tenantId: string, skillId: string): Promise<readonly string[]> {
-    if (!skillGovernanceStore?.listVersions) return [];
-    const resourceIds = [...new Set([tenantSkillResourceId(tenantId, skillId), skillId])];
-    for (const resourceId of resourceIds) {
-      const resource = await skillGovernanceStore.getResource(resourceId);
-      if (!resource || resource.tenantId !== tenantId || resource.scope !== 'tenant') continue;
-      const versions = await skillGovernanceStore.listVersions(resource.skillId);
-      return versions.flatMap((version) => {
-        const digest = version.definition.contentDigest;
-        return typeof digest === 'string' ? [digest] : [];
-      });
-    }
-    return [];
+  async function getTenantSkillHistoricalProvenance(
+    tenantId: string,
+  ): Promise<ReadonlyMap<string, readonly string[]>> {
+    if (!skillGovernanceStore?.listTenantSkillHistoricalProvenance) return new Map();
+    return await skillGovernanceStore.listTenantSkillHistoricalProvenance(tenantId);
   }
 
   /**
@@ -186,7 +178,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
           tenantsRootDir: tenantSkillsRootDir ?? join(sharedDir, 'tenants'),
           currentTenantId: user.tenantId,
           poolSkillIds,
-          resolveTenantSkillHistoricalDigests: getTenantSkillHistoricalDigests,
+          resolveTenantSkillHistoricalProvenance: getTenantSkillHistoricalProvenance,
         });
     return new Set([
       ...currentTenantIds,

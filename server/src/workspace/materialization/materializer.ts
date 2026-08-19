@@ -47,10 +47,9 @@ export interface SkillMaterializerOptions {
   tenantSkillsRootDir?: string;
   skillConfigStore: SkillConfigStore;
   resolveAssignedOrgAgentSkillIds?: (user: WorkspaceUser) => readonly string[];
-  resolveTenantSkillHistoricalDigests?: (
+  resolveTenantSkillHistoricalProvenance?: (
     tenantId: string,
-    skillId: string,
-  ) => Promise<readonly string[]>;
+  ) => Promise<ReadonlyMap<string, readonly string[]>>;
 }
 
 export interface MaterializeWorkspaceInput {
@@ -221,7 +220,7 @@ export class SkillWorkspaceMaterializer {
           tenantsRootDir: this.options.tenantSkillsRootDir ?? join(this.options.sharedDir, 'tenants'),
           currentTenantId: user.tenantId,
           poolSkillIds: await listDirectoryIds(resolveAgentPath(this.options.sharedDir, 'skills-pool')),
-          resolveTenantSkillHistoricalDigests: this.options.resolveTenantSkillHistoricalDigests,
+          resolveTenantSkillHistoricalProvenance: this.options.resolveTenantSkillHistoricalProvenance,
         });
     const nextSkills: Record<string, MaterializedSkillEntry> = {};
     let changedSkills = 0;

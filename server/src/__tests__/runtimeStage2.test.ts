@@ -68,6 +68,32 @@ describe('runtime stage 2 primitives', () => {
     expect((await sessionCatalog.get(sessionId!))?.status).toBe('idle');
   });
 
+  it('direct DingTalk first run pins a new delegated session to v2', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'runtime-dingtalk-v2-pin-'));
+    cleanupDirs.add(cwd);
+    const sessionCatalog = new MemorySessionCatalog();
+    const abortController = new AbortController();
+    abortController.abort('test_complete_after_pin');
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new DOMException('aborted', 'AbortError'));
+    const dispatch = createRawRuntimeRunDispatch({
+      agentCwd: cwd,
+      sharedDir: SHARED_DIR,
+      sessionCatalog,
+      memory: { enabled: false },
+      memoryWriteDelegationEnabled: () => true,
+    });
+    let sessionId: string | undefined;
+    for await (const event of dispatch(
+      { channel: 'dingtalk', chatId: 'chat-dingtalk-v2', content: '首轮 pin' },
+      { channel: 'dingtalk', user: { id: 'user-1', username: 'alice', role: 'user', tenantId: 'kaiyan' } },
+      { abortController, modelConnection: { apiKey: 'sk-test' }, skipSystemPrompt: true, maxTurns: 1 },
+    )) {
+      if (event.type === 'session_init') sessionId = event.sessionId;
+    }
+    expect(sessionId).toBeTruthy();
+    await expect(sessionCatalog.get(sessionId!)).resolves.toMatchObject({ memoryPolicyVersion: 'v2' });
+  });
+
   it('direct runtime lease 竞争失败会延后执行，不把 winner 的 run 标成 failed', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'runtime-direct-lease-contended-'));
     cleanupDirs.add(cwd);

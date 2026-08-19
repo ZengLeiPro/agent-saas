@@ -6,6 +6,10 @@
  * PG store 的持久层合同见 memoryConsolidationStore.pg.test.ts（env-gated）。
  */
 
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ToolCallContext, ToolDescriptor, ToolRuntime } from '../agent/toolRuntime.js';
@@ -190,6 +194,39 @@ describe('memory policy filter', () => {
     ).rejects.toThrow(/禁止/);
   });
 
+  it('v2 Shell guard：不误拦项目源码中的嵌套 memory 目录', async () => {
+    const spy = vi.fn(async () => ({ content: 'ok' }));
+    const runtime = applyMainSessionToolFilter(fakeRuntime(spy), 'v2');
+    await runtime.invoke({
+      toolId: 'Shell',
+      input: { command: 'rg -n "candidate" server/src/memory/consolidation' },
+    } as never, toolContext());
+    expect(spy).toHaveBeenCalledOnce();
+  });
+
+  it('v2 deny guard：Write/Edit 不能经工作区符号链接写入记忆路径', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'memory-v2-symlink-'));
+    try {
+      await mkdir(join(root, 'memory'), { recursive: true });
+      await writeFile(join(root, 'memory', 'existing.md'), 'a');
+      await symlink('memory', join(root, 'alias'), 'dir');
+      await symlink('memory/new.md', join(root, 'dangling-alias'), 'file');
+      const runtime = applyMainSessionToolFilter(fakeRuntime(), 'v2');
+      const context = { ...toolContext(), workspace: { root, executionTarget: 'server-remote' } } as ToolCallContext;
+      await expect(
+        runtime.invoke({ toolId: 'Write', input: { path: 'alias/new.md', content: 'x' } } as never, context),
+      ).rejects.toThrow(/符号链接/);
+      await expect(
+        runtime.invoke({ toolId: 'Edit', input: { file_path: 'alias/existing.md', old_string: 'a', new_string: 'b' } } as never, context),
+      ).rejects.toThrow(/符号链接/);
+      await expect(
+        runtime.invoke({ toolId: 'Write', input: { path: 'dangling-alias', content: 'x' } } as never, context),
+      ).rejects.toThrow(/符号链接/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('v2 deny guard：普通文件写不受影响', async () => {
     const spy = vi.fn(async () => ({ content: 'ok' }));
     const runtime = applyMainSessionToolFilter(fakeRuntime(spy), 'v2');
@@ -221,6 +258,23 @@ describe('MemoryCommit', () => {
       toolContext({ user: { id: 'u-no-ctx', username: 'u', role: 'user', tenantId: 't1' } }),
     );
     expect(result?.content).toContain('rejected');
+  });
+
+  it('服务端拒绝把显式 forget 控制请求重新物化为正向记忆', () => {
+    const provider = new MemoryCommitToolProvider({ store: fakeStore() });
+    const validate = (provider as unknown as {
+      validateOperation: (op: unknown, execution: unknown, tombstones: unknown[]) => string | null;
+    }).validateOperation.bind(provider);
+    const operation = {
+      target: 'daily', action: 'upsert', memoryKey: 'location', text: '用户住在北京', attribution: 'user_statement',
+      evidence: [{ eventId: 'e-forget', sessionSequence: 7, sourceQuote: '请帮我忘记我住在北京' }],
+    };
+    const execution = {
+      evidenceIndex: new Map([['e-forget', {
+        sessionSequence: 7, role: 'user', text: '请帮我忘记我住在北京',
+      }]]),
+    };
+    expect(validate(operation, execution, [])).toBe('explicit_forget_control');
   });
 
   it('schema 不接受 tenant/user/path 等越权字段（strict 拒绝未知键由服务端派生保障）', () => {

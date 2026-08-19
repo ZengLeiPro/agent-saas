@@ -1,7 +1,7 @@
 import { getTranscriptPath, findTranscriptOrMetaPathBySessionId } from '../data/transcripts/store.js';
 import {
   readSessionMeta,
-  writeSessionMeta,
+  transformSessionMeta,
   writeSessionMetaIfAbsent,
   updateSessionMeta,
   backfillSessionIdentity,
@@ -120,8 +120,7 @@ export class FileSessionCatalog implements SessionCatalog {
   constructor(private readonly options: FileSessionCatalogOptions) {}
 
   async upsert(record: RuntimeSessionRecord): Promise<void> {
-    const existing = await readSessionMeta(record.transcriptPath);
-    await writeSessionMeta(record.transcriptPath, this.toMeta(record, existing));
+    await transformSessionMeta(record.transcriptPath, existing => this.toMeta(record, existing));
   }
 
   async backfillIdentity(
@@ -160,6 +159,18 @@ export class FileSessionCatalog implements SessionCatalog {
   }
 
   private toMeta(record: RuntimeSessionRecord, existing: SessionMeta | null): SessionMeta {
+    const taskboardExecution = existing?.sessionSource === 'taskboard_execution'
+      || record.sessionSource === 'taskboard_execution';
+    // 会话 pin 一经落库不得被任意 dispatch 改写；TaskBoard 是唯一显式迁移例外，
+    // 必须升级为 v2 只读且自动记忆资格只能单调收紧为 false。
+    const memoryPolicyVersion = taskboardExecution
+      ? 'v2' as const
+      : existing?.memoryPolicyVersion ?? record.memoryPolicyVersion;
+    const memoryAutomationEligible = taskboardExecution
+      ? false
+      : existing?.memoryAutomationEligible === false || record.memoryAutomationEligible === false
+        ? false
+        : existing?.memoryAutomationEligible ?? record.memoryAutomationEligible;
     return {
       ...(existing ?? {}),
       userId: record.userId,
@@ -180,10 +191,9 @@ export class FileSessionCatalog implements SessionCatalog {
       // orgAgentId 缺省时保留 existing 值（resume 路径 record 可能不带），不清除既有绑定
       ...(record.orgAgentId ? { orgAgentId: record.orgAgentId } : {}),
       ...(record.orgAgentSnapshot ? { orgAgentSnapshot: record.orgAgentSnapshot } : {}),
-      // memoryPolicyVersion 同理：会话级 pin，缺省保留 existing，绝不清除
-      ...(record.memoryPolicyVersion ? { memoryPolicyVersion: record.memoryPolicyVersion } : {}),
+      ...(memoryPolicyVersion ? { memoryPolicyVersion } : {}),
       ...(record.sessionSource ? { sessionSource: record.sessionSource } : {}),
-      ...(record.memoryAutomationEligible !== undefined ? { memoryAutomationEligible: record.memoryAutomationEligible } : {}),
+      ...(memoryAutomationEligible !== undefined ? { memoryAutomationEligible } : {}),
       ...(record.profileId ? { profileId: record.profileId } : {}),
       ...(record.profileKey ? { profileKey: record.profileKey } : {}),
       ...(record.profileVersionId ? { profileVersionId: record.profileVersionId } : {}),
@@ -316,7 +326,8 @@ export function resolveSessionMemoryPolicy(input: {
   const sessionSource = input.existing?.sessionSource ?? input.sessionSource;
   // access policy 与自动记忆资格解耦；TaskBoard 只是同时选择 v2 只读和 no-automation。
   if (sessionSource === 'taskboard_execution') return 'v2';
-  if (input.toolProfile || input.orgAgentId || (input.channel !== 'web' && input.channel !== 'dingtalk')) return 'v1';
+  // existing 优先级高于本次 dispatch 形态：续聊/profile/resume 均不得改写既有 pin。
   if (input.existing) return input.existing.memoryPolicyVersion === 'v2' ? 'v2' : 'v1';
+  if (input.toolProfile || input.orgAgentId || (input.channel !== 'web' && input.channel !== 'dingtalk')) return 'v1';
   return input.delegationEnabled ? 'v2' : 'v1';
 }

@@ -192,14 +192,55 @@ describe('session memory policy persistence', () => {
     expect(restored?.memoryPolicyVersion).toBeUndefined();
   });
 
-  it('round-trips TaskBoard source, no-automation flag and read-only v2 policy', async () => {
+  it('upsert cannot rewrite an existing policy pin or relax no-automation', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'session-policy-monotonic-'));
+    policyCleanupDirs.add(cwd);
+    const sessionId = randomUUID();
+    const catalog = new FileSessionCatalog({ agentCwd: cwd });
+    const record = createRuntimeSessionRecord({
+      sessionId, userId: 'u1', username: 'alice', channel: 'web', cwd,
+      memoryPolicyVersion: 'v2', memoryAutomationEligible: false,
+    });
+    policyCleanupDirs.add(dirname(record.transcriptPath));
+    await catalog.upsert(record);
+    await catalog.upsert({ ...record, memoryPolicyVersion: 'v1', memoryAutomationEligible: true });
+    await expect(catalog.get(sessionId)).resolves.toMatchObject({
+      memoryPolicyVersion: 'v2', memoryAutomationEligible: false,
+    });
+  });
+
+  it('concurrent ordinary and TaskBoard upserts cannot race a v2/no-automation migration backwards', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'session-policy-race-'));
+    policyCleanupDirs.add(cwd);
+    const sessionId = `taskboard-${randomUUID()}`;
+    const catalog = new FileSessionCatalog({ agentCwd: cwd });
+    const base = createRuntimeSessionRecord({
+      sessionId, userId: 'u1', username: 'alice', channel: 'web', cwd, memoryPolicyVersion: 'v1',
+    });
+    policyCleanupDirs.add(dirname(base.transcriptPath));
+    await catalog.upsert(base);
+    await Promise.all([
+      catalog.upsert({ ...base, memoryPolicyVersion: 'v1', memoryAutomationEligible: true }),
+      catalog.upsert({
+        ...base,
+        sessionSource: 'taskboard_execution',
+        memoryPolicyVersion: 'v2',
+        memoryAutomationEligible: false,
+      }),
+    ]);
+    await expect(catalog.get(sessionId)).resolves.toMatchObject({
+      sessionSource: 'taskboard_execution', memoryPolicyVersion: 'v2', memoryAutomationEligible: false,
+    });
+  });
+
+  it('canonicalizes TaskBoard source to no-automation and read-only v2', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'session-policy-taskboard-'));
     policyCleanupDirs.add(cwd);
     const sessionId = `taskboard-${randomUUID()}`;
     const catalog = new FileSessionCatalog({ agentCwd: cwd });
     const record = createRuntimeSessionRecord({
       sessionId, userId: 'u1', username: 'alice', channel: 'web', cwd,
-      memoryPolicyVersion: 'v2', sessionSource: 'taskboard_execution', memoryAutomationEligible: false,
+      memoryPolicyVersion: 'v1', sessionSource: 'taskboard_execution', memoryAutomationEligible: true,
     });
     policyCleanupDirs.add(dirname(record.transcriptPath));
     await catalog.upsert(record);
@@ -229,8 +270,14 @@ describe('resolveSessionMemoryPolicy', () => {
     })).toBe('v2');
   });
 
-  it('keeps background profiles and Org Agents on v1', () => {
+  it('keeps new background profiles and Org Agents on v1 without rewriting an existing v2 pin', () => {
     expect(resolveSessionMemoryPolicy({ delegationEnabled: true, channel: 'web', toolProfile: 'memory_poll' })).toBe('v1');
     expect(resolveSessionMemoryPolicy({ delegationEnabled: true, channel: 'dingtalk', orgAgentId: 'org-1' })).toBe('v1');
+    expect(resolveSessionMemoryPolicy({
+      existing: { memoryPolicyVersion: 'v2' }, delegationEnabled: false, channel: 'web', toolProfile: 'memory_poll',
+    })).toBe('v2');
+    expect(resolveSessionMemoryPolicy({
+      existing: { memoryPolicyVersion: 'v2' }, delegationEnabled: false, channel: 'dingtalk', orgAgentId: 'org-1',
+    })).toBe('v2');
   });
 });

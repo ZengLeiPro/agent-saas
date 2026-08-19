@@ -16,7 +16,8 @@
  * run.metadata 持久化；用户不能通过 API 指定。
  */
 
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { lstat, readlink, realpath } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import type {
   AuthorizedToolCall,
@@ -133,12 +134,17 @@ export function applyMainSessionToolFilter(runtime: ToolRuntime, policy: MemoryW
   return new ProfileFilteredToolRuntime(runtime, {
     isAllowed: (descriptor) =>
       !MAIN_SESSION_HIDDEN_TOOLS_V2.has(descriptor.name) && !MAIN_SESSION_HIDDEN_TOOLS_V2.has(descriptor.id),
-    guardInvoke: (call, context) => {
+    guardInvoke: async (call, context) => {
       const input = call.input as Record<string, unknown> | undefined;
       if (call.toolId === 'Shell') {
         const command = typeof input?.command === 'string' ? input.command : '';
-        if (/(?:^|[\s"'=:/\\])MEMORY\.md(?:$|[\s"';|&<>])/u.test(command)
-          || /(?:^|[\s"'=:/\\])memory(?:[/\\]|$)/u.test(command)) {
+        const root = resolve(context.workspace.root).split('\\').join('/');
+        const rootPattern = escapeRegExp(root);
+        const directMemoryPath = new RegExp(
+          `(?:^|[\\s"'=;|&<>(])(?:\\./)?(?:MEMORY\\.md(?:$|[\\s"';|&<>])|memory(?:[/\\\\]|$))|${rootPattern}/(?:MEMORY\\.md(?:$|[\\s"';|&<>])|memory(?:/|$))`,
+          'u',
+        );
+        if (directMemoryPath.test(command.split('\\').join('/'))) {
           throw new Error('记忆写入职责已剥离：V2 主 Agent 禁止通过 Shell 访问记忆写入路径。');
         }
         return;
@@ -151,13 +157,59 @@ export function applyMainSessionToolFilter(runtime: ToolRuntime, policy: MemoryW
       const target = isAbsolute(rawPath) ? resolve(rawPath) : resolve(join(root, rawPath));
       const rel = relative(root, target).split('\\').join('/');
       if (rel.startsWith('..') || isAbsolute(rel)) return;
-      const isMemoryPath = rel === 'MEMORY.md' || rel.startsWith('memory/');
-      if (isMemoryPath) {
+      if (isMemoryRelativePath(rel)) {
         throw new Error(`记忆写入职责已剥离：V2 主 Agent 禁止通过 ${call.toolId} 修改 ${rel}。`);
+      }
+      const [canonicalRoot, canonicalTarget] = await Promise.all([
+        resolveThroughExistingAncestors(root),
+        resolveThroughExistingAncestors(target),
+      ]);
+      const canonicalRel = relative(canonicalRoot, canonicalTarget).split('\\').join('/');
+      if (!canonicalRel.startsWith('..') && !isAbsolute(canonicalRel) && isMemoryRelativePath(canonicalRel)) {
+        throw new Error(`记忆写入职责已剥离：V2 主 Agent 禁止通过 ${call.toolId} 经符号链接修改 ${canonicalRel}。`);
       }
     },
     profileLabel: 'main_session_v2',
   });
+}
+
+function isMemoryRelativePath(path: string): boolean {
+  return path === 'MEMORY.md' || path.startsWith('memory/');
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 解析已存在的最近祖先，连同尚未创建的尾部路径一起还原，阻断目录符号链接旁路。 */
+async function resolveThroughExistingAncestors(target: string): Promise<string> {
+  let cursor = target;
+  const suffix: string[] = [];
+  while (true) {
+    try {
+      return resolve(await realpath(cursor), ...suffix);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
+      try {
+        const stat = await lstat(cursor);
+        if (stat.isSymbolicLink()) {
+          const linkTarget = await readlink(cursor);
+          const resolvedLink = isAbsolute(linkTarget)
+            ? resolve(linkTarget)
+            : resolve(dirname(cursor), linkTarget);
+          return resolveThroughExistingAncestors(resolve(resolvedLink, ...suffix));
+        }
+      } catch (linkError) {
+        const linkCode = (linkError as NodeJS.ErrnoException).code;
+        if (linkCode !== 'ENOENT' && linkCode !== 'ENOTDIR') throw linkError;
+      }
+      const parent = dirname(cursor);
+      if (parent === cursor) return resolve(target);
+      suffix.unshift(basename(cursor));
+      cursor = parent;
+    }
+  }
 }
 
 /**
@@ -194,7 +246,7 @@ class ProfileFilteredToolRuntime implements ToolRuntime {
     private readonly inner: ToolRuntime,
     private readonly options: {
       isAllowed: (descriptor: ToolDescriptor) => boolean;
-      guardInvoke?: (call: AuthorizedToolCall, context: ToolCallContext) => void;
+      guardInvoke?: (call: AuthorizedToolCall, context: ToolCallContext) => void | Promise<void>;
       profileLabel: string;
     },
   ) {}
@@ -210,7 +262,7 @@ class ProfileFilteredToolRuntime implements ToolRuntime {
     if (!descriptor || !this.options.isAllowed(descriptor)) {
       throw new Error(`工具 ${call.toolId} 不在 ${this.options.profileLabel} profile 可用工具集内`);
     }
-    this.options.guardInvoke?.(call as AuthorizedToolCall, context);
+    await this.options.guardInvoke?.(call as AuthorizedToolCall, context);
     return this.inner.invoke(call, context);
   }
 }

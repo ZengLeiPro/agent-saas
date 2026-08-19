@@ -153,7 +153,15 @@ describe('任务看板评论续跑', () => {
         sessionId: durablePayload.session.sessionId,
         tenantId: identity.tenantId,
         ownerUserId: identity.ownerUserId,
-        payload: durablePayload,
+        payload: {
+          ...durablePayload,
+          session: {
+            ...durablePayload.session,
+            memoryPolicyVersion: 'v1' as const,
+            sessionSource: undefined,
+            memoryAutomationEligible: true,
+          },
+        },
         attemptCount: 1,
         leaseId,
       }) : null),
@@ -165,6 +173,11 @@ describe('任务看板评论续跑', () => {
       store: rig.store,
       sessionId: activeExecution.sessionId,
       transcriptPath: '/agent/tenant-1/user-1/transcript.jsonl',
+    }));
+    expect(rig.sessionCatalog.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      sessionSource: 'taskboard_execution',
+      memoryAutomationEligible: false,
+      memoryPolicyVersion: 'v2',
     }));
     expect(rig.scheduler.enqueue).toHaveBeenCalledWith(expect.objectContaining({
       runId: `taskboard-comment-${comments[1]!.id}`,

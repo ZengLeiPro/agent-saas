@@ -661,7 +661,7 @@ async function createTask(
 
 async function rollbackCreatedTask(service: TaskboardService, identity: TaskboardIdentity, task: TaskBoardTask, error: unknown, cleanup?: () => Promise<void>): Promise<never> {
   try {
-    await service.deleteTask(identity, task.id, { expectedVersion: task.version }); await cleanup?.();
+    await service.rollbackTaskCreation(identity, task.id, { expectedVersion: task.version }); await cleanup?.();
   } catch (cleanupError) {
     throw new TaskboardValidationError(
       `Attachment write failed and created task cleanup failed: ${error instanceof Error ? error.message : String(error)}; ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,

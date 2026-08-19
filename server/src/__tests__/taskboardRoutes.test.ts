@@ -686,6 +686,7 @@ function makeService(captured: Captured): TaskboardService {
     async archiveTask(identity) { remember(identity); return { ...TASK, version: 2, archivedAt: TASK.updatedAt }; },
     async restoreTask(identity) { remember(identity); return { ...TASK, version: 2 }; },
     async deleteTask(identity) { remember(identity); return { ...TASK, version: 2, deletedAt: TASK.updatedAt }; },
+    async rollbackTaskCreation(identity) { remember(identity); return { ...TASK, version: 2, deletedAt: TASK.updatedAt }; },
     async listComments(identity) { remember(identity); return [COMMENT]; },
     async searchComments(identity, _taskId, filter = {}) {
       remember(identity);

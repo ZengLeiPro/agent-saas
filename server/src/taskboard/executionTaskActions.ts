@@ -85,7 +85,7 @@ export async function createTaskFromExecution(
         `SELECT t.*,
                 (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', options.changesTable)}) AS comment_count
            FROM ${options.tasksTable} t
-          WHERE t.board_id=$1 AND t.client_request_id=$2`,
+          WHERE t.board_id=$1 AND t.client_request_id=$2 AND t.deleted_at IS NULL`,
         [currentTask.boardId, input.clientRequestId],
       );
       if (existing.rows[0]) return rowToTask(existing.rows[0]);

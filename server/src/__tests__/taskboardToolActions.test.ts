@@ -104,6 +104,7 @@ function rig() {
       version: task.version + 1,
     })),
     deleteTask: vi.fn(async () => ({ ...task, deletedAt: task.updatedAt, version: task.version + 1 })),
+    rollbackTaskCreation: vi.fn(async () => ({ ...task, deletedAt: task.updatedAt, version: task.version + 1 })),
     moveTask: vi.fn(async (_identity, _taskId, input) => ({
       ...task,
       status: input.status,
@@ -633,7 +634,7 @@ describe('CronManage taskboard actions', () => {
       action: 'create', boardId: board.id, title: '兼容复制失败', attachments: [{ attachmentId }],
     }, scope)).rejects.toThrow('execution create update failed');
     expect(executionStore.createTaskFromExecution).toHaveBeenCalledTimes(1);
-    expect(service.deleteTask).toHaveBeenCalledWith(identity, 'task-new', { expectedVersion: 1 });
+    expect(service.rollbackTaskCreation).toHaveBeenCalledWith(identity, 'task-new', { expectedVersion: 1 });
     expect(cleanupTaskAttachments).toHaveBeenCalledWith(identity, 'task-new', identity.ownerUserId, [scoped]);
   });
 
@@ -745,6 +746,6 @@ describe('CronManage taskboard actions', () => {
       action: 'task.create', boardId: board.id, title: '复制失败任务',
       attachments: [{ attachmentId }],
     }, { sessionId: 'session-copy-failure' })).rejects.toThrow('copy failed');
-    expect(service.deleteTask).toHaveBeenCalledWith(identity, 'task-new', { expectedVersion: 1 });
+    expect(service.rollbackTaskCreation).toHaveBeenCalledWith(identity, 'task-new', { expectedVersion: 1 });
   });
 });

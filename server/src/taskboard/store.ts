@@ -52,7 +52,7 @@ import {
   updateTaskBranchFromExecution as updateStoredTaskBranchFromExecution,
 } from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
-import { deleteStoredTask } from './storeTaskDelete.js';
+import { deleteStoredTask, rollbackStoredTask } from './storeTaskDelete.js';
 import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
 import {
   allowedActionsForRole,
@@ -622,7 +622,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       }
       if (input.clientRequestId) {
         const existing = await client.query(
-          `SELECT t.*, (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', this.changesTable)}) AS comment_count FROM ${this.tasksTable} t WHERE t.board_id=$1 AND t.client_request_id=$2`,
+          `SELECT t.*, (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', this.changesTable)}) AS comment_count FROM ${this.tasksTable} t WHERE t.board_id=$1 AND t.client_request_id=$2 AND t.deleted_at IS NULL`,
           [boardId, input.clientRequestId],
         );
         if (existing.rows[0]) return rowToTask(existing.rows[0]);
@@ -872,7 +872,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async deleteTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask> {
     return this.withTransaction((client) => deleteStoredTask(this, client, identity, taskId, input.expectedVersion));
   }
-
+  async rollbackTaskCreation(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask> { return this.withTransaction((client) => rollbackStoredTask(this, client, identity, taskId, input.expectedVersion)); }
   async listComments(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardComment[]> {
     await this.requireTask(this.pool, identity, taskId, false);
     return listStoredComments(this, identity, taskId);

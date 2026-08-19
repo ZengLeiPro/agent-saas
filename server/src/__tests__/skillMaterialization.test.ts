@@ -142,10 +142,33 @@ describe('技能异步增量物化', () => {
       .toContain('foreign');
   });
 
-  it('外租户后来创建同名组织 Skill 不移除既有个人 Skill', async () => {
+  it('旧 .skills-version 状态按内容指纹清理外租户组织残留', async () => {
+    createSkill(poolDir, 'alpha', 'alpha');
+    createSkill(join(sharedDir, 'tenants', 'tenant-b', 'skills'), 'legacy-foreign', 'foreign');
+    createSkill(join(userCwd, '.ky-agent', 'skills'), 'legacy-foreign', 'foreign');
+    writeFileSync(join(userCwd, '.ky-agent', '.skills-version'), '1');
+    const config = fakeStore(['alpha']);
+    const materializer = new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      skillConfigStore: config.store,
+    });
+
+    const result = await materializer.materialize({ taskId: 'task-legacy-tenant', user, userCwd });
+
+    expect(result.removedSkills).toBe(1);
+    expect(() => readFileSync(join(userCwd, '.ky-agent', 'skills', 'legacy-foreign', 'SKILL.md'), 'utf-8'))
+      .toThrow();
+    expect(await readSkillManifest(userCwd)).toMatchObject({
+      skills: { alpha: { source: 'pool' } },
+    });
+  });
+
+  it('旧 .skills-version 状态不按同名误伤既有个人 Skill', async () => {
     createSkill(poolDir, 'alpha', 'alpha');
     createSkill(join(sharedDir, 'tenants', 'tenant-b', 'skills'), 'same-name', 'foreign');
     createSkill(join(userCwd, '.ky-agent', 'skills'), 'same-name', 'personal');
+    writeFileSync(join(userCwd, '.ky-agent', '.skills-version'), '1');
     const config = fakeStore(['alpha']);
     const materializer = new SkillWorkspaceMaterializer({
       sharedDir,

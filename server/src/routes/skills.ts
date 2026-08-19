@@ -34,6 +34,7 @@ import {
 } from '../data/skills/scanner.js';
 import { resolveTenantSkillsDir, resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
+import { detectLegacyTenantSkillIds } from '../workspace/materialization/legacyProvenance.js';
 import { manifestTenantSkillIds, readSkillManifest } from '../workspace/materialization/manifest.js';
 import { agentDir, agentPath, agentSkillsDir, resolveAgentPath } from '../workspace/namespace.js';
 import { ensureWorkspaceDir, repairWorkspacePath, repairWorkspaceTreeAsync } from '../workspace/permissions.js';
@@ -153,15 +154,27 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     return agentSkillsDir(getUserCwd(user));
   }
 
-  async function getManifestTenantSkillIdsForUser(user: SkillUser): Promise<Set<string>> {
-    return manifestTenantSkillIds(await readSkillManifest(getUserCwd(user)));
-  }
-
-  /** 当前租户目录 + 用户 manifest 中有明确 tenant provenance 的物化副本。 */
+  /** 当前租户目录 + manifest provenance + 可证明的旧状态组织副本。 */
   async function getManagedTenantSkillIdsForUser(user: SkillUser): Promise<Set<string>> {
+    const userCwd = getUserCwd(user);
+    const [currentTenantIds, manifest, poolSkillIds] = await Promise.all([
+      getTenantOwnSkillIds(user.tenantId),
+      readSkillManifest(userCwd),
+      getPoolSkillIds(),
+    ]);
+    const legacyTenantIds = manifest
+      ? new Set<string>()
+      : await detectLegacyTenantSkillIds({
+          userCwd,
+          userSkillsDir: getUserSkillsDir(user),
+          tenantsRootDir: tenantSkillsRootDir ?? join(sharedDir, 'tenants'),
+          currentTenantId: user.tenantId,
+          poolSkillIds,
+        });
     return new Set([
-      ...await getTenantOwnSkillIds(user.tenantId),
-      ...await getManifestTenantSkillIdsForUser(user),
+      ...currentTenantIds,
+      ...manifestTenantSkillIds(manifest),
+      ...legacyTenantIds,
     ]);
   }
 

@@ -33,6 +33,7 @@ import {
   type MaterializedSkillEntry,
   writeSkillManifest,
 } from './manifest.js';
+import { detectLegacyTenantSkillIds } from './legacyProvenance.js';
 import type { SkillMaterializationResult } from './types.js';
 
 interface DesiredSkill extends MaterializedSkillEntry {
@@ -208,6 +209,15 @@ export class SkillWorkspaceMaterializer {
       }
     }
     const previousSkills = previous?.skills ?? {};
+    const legacyTenantSkillIds = previous
+      ? new Set<string>()
+      : await detectLegacyTenantSkillIds({
+          userCwd,
+          userSkillsDir: skillsDir,
+          tenantsRootDir: this.options.tenantSkillsRootDir ?? join(this.options.sharedDir, 'tenants'),
+          currentTenantId: user.tenantId,
+          poolSkillIds: await listDirectoryIds(resolveAgentPath(this.options.sharedDir, 'skills-pool')),
+        });
     const nextSkills: Record<string, MaterializedSkillEntry> = {};
     let changedSkills = 0;
     let skippedSkills = 0;
@@ -253,6 +263,7 @@ export class SkillWorkspaceMaterializer {
     }
 
     const knownManagedIds = await this.resolveKnownManagedSkillIds(user, previousSkills);
+    for (const id of legacyTenantSkillIds) knownManagedIds.add(id);
     const desiredIds = new Set(desired.map((skill) => skill.id));
     for (const id of knownManagedIds) {
       if (desiredIds.has(id)) continue;
@@ -342,7 +353,7 @@ export class SkillWorkspaceMaterializer {
     const known = new Set(Object.keys(previousSkills));
     for (const id of Object.keys(this.options.skillConfigStore.getPoolVisibility())) known.add(id);
     if (user.tenantId) {
-      // 只依据当前用户 manifest 中已记录的受管副本和本租户规则识别 managed，
+      // 只依据当前用户 manifest、旧状态 fingerprint 迁移结果和本租户规则识别 managed，
       // 不能用所有租户的 skillId 并集推断来源，否则会误伤合法同名个人 Skill。
       for (const id of Object.keys(this.options.skillConfigStore.getTenantOwnSkillRules(user.tenantId))) {
         known.add(id);

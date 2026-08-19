@@ -146,6 +146,7 @@ import {
   scanUserCustomSkills,
 } from '../data/skills/scanner.js';
 import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
+import { detectLegacyTenantSkillIds } from '../workspace/materialization/legacyProvenance.js';
 import { manifestTenantSkillIds, readSkillManifest } from '../workspace/materialization/manifest.js';
 import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import { agentDir, resolveAgentPath } from '../workspace/namespace.js';
@@ -1373,7 +1374,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     const store = skillConfigStore; // 闭包稳定捕获
     const poolDir = resolveAgentPath(sharedDir, 'skills-pool');
     let cache: { version: number; entries: { id: string; name: string; description: string }[] } | null = null;
-    const manifestTenantIdsByUser = new Map<string, Set<string>>();
+    const managedTenantIdsByUser = new Map<string, Set<string>>();
 
     function resolveRuntimeUserCwd(username: string): string | null {
       const user = userStore?.findByUsername(username);
@@ -1388,14 +1389,27 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
 
     async function refreshUserManifest(username: string | undefined): Promise<void> {
       if (!username) return;
+      const user = userStore?.findByUsername(username);
       const userCwd = resolveRuntimeUserCwd(username);
-      if (!userCwd) return;
+      if (!user || !userCwd) return;
       const manifest = await readSkillManifest(userCwd);
-      manifestTenantIdsByUser.set(username, manifestTenantSkillIds(manifest));
+      const legacyTenantIds = manifest
+        ? new Set<string>()
+        : await detectLegacyTenantSkillIds({
+            userCwd,
+            userSkillsDir: resolveAgentPath(userCwd, 'skills'),
+            tenantsRootDir: tenantSkillsRootDir,
+            currentTenantId: user.tenantId,
+            poolSkillIds: new Set(getAllPoolEntries().map((skill) => skill.id)),
+          });
+      managedTenantIdsByUser.set(username, new Set([
+        ...manifestTenantSkillIds(manifest),
+        ...legacyTenantIds,
+      ]));
     }
 
-    function getManifestTenantIds(username: string): Set<string> {
-      return manifestTenantIdsByUser.get(username) ?? new Set<string>();
+    function getManagedTenantIds(username: string): Set<string> {
+      return managedTenantIdsByUser.get(username) ?? new Set<string>();
     }
 
     function getAllPoolEntries() {
@@ -1449,7 +1463,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           const poolIds = new Set(all.map((s) => s.id));
           const tenantSkillsDir = user.tenantId ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, user.tenantId) : null;
           const tenantOwnIds = tenantSkillsDir ? scanTenantOwnSkillIds(tenantSkillsDir, poolIds) : new Set<string>();
-          const manifestTenantIds = getManifestTenantIds(username);
+          const managedTenantIds = getManagedTenantIds(username);
           const effectiveTenantOwn = new Set(
             [
               ...store.getUserEffectiveTenantOwnSkills(username, user.tenantId, tenantOwnIds),
@@ -1466,7 +1480,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
               }))
             : [];
           const selected = new Set(store.getUserSelectedSkills(username));
-          const customExcluded = new Set([...poolIds, ...tenantOwnIds, ...manifestTenantIds]);
+          const customExcluded = new Set([...poolIds, ...tenantOwnIds, ...managedTenantIds]);
           const customResult = scanUserCustomSkills(userSkillsDir, customExcluded)
             .filter((s) => selected.has(s.id))
             .map((s) => ({

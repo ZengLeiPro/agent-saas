@@ -741,6 +741,32 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       expect(document.status).toBe(400);
     });
 
+    it('无 manifest 的旧 .skills-version 状态仍隔离可证明的外租户残留', async () => {
+      const sourceDir = join(h.tenantSkillsRootDir, 'wain', 'skills', 'legacy-foreign');
+      mkdirSync(sourceDir, { recursive: true });
+      const content = '---\nname: legacy-foreign\ndescription: foreign\n---\nforeign';
+      writeFileSync(join(sourceDir, 'SKILL.md'), content);
+
+      const leakedDir = join(h.userSkillsDir('alice'), 'legacy-foreign');
+      mkdirSync(leakedDir, { recursive: true });
+      writeFileSync(join(leakedDir, 'SKILL.md'), content);
+      writeFileSync(join(h.userSkillsDir('alice'), '..', '.skills-version'), '1');
+
+      h.setCaller(KAIYAN_USER);
+      const listed = await h.request('/api/skills/me');
+      expect(listed.status).toBe(200);
+      expect((await listed.json() as { customSkills: { id: string }[] }).customSkills.map(s => s.id))
+        .not.toContain('legacy-foreign');
+
+      const selected = await h.request('/api/skills/me/selections', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedSkills: ['legacy-foreign'] }),
+      });
+      expect(selected.status).toBe(200);
+      expect(h.skillConfigStore.getUserSelectedSkills('alice')).not.toContain('legacy-foreign');
+    });
+
     it('外租户后来创建同名组织 Skill 不影响既有个人 Skill', async () => {
       h.setCaller(KAIYAN_USER);
       const personalDir = join(h.userSkillsDir('alice'), 'same-name');

@@ -45,11 +45,19 @@ export class PgMembershipStore {
       throw new MembershipInvariantError('MEMBERSHIP_IDENTITY_INVALID');
     }
     return this.withTransaction(async client => {
+      // 用户落库会触发异步 legacy_projection；若影子投影先写入，治理创建应接管该行而不是误报重复。
       const created = await client.query(`
         INSERT INTO ${this.membershipsTable} (
           tenant_id, user_id, persona, is_owner, status, source, created_by, updated_by
         ) VALUES ($1, $2, $3, FALSE, 'active', 'governance', $4, $4)
-        ON CONFLICT DO NOTHING
+        ON CONFLICT (user_id) DO UPDATE SET
+          persona = EXCLUDED.persona,
+          status = EXCLUDED.status,
+          source = 'governance',
+          version = ${this.membershipsTable}.version + 1,
+          updated_at = NOW(),
+          updated_by = EXCLUDED.updated_by
+        WHERE ${this.membershipsTable}.source = 'legacy_projection'
         RETURNING *
       `, [input.tenantId, input.userId, input.persona, input.createdBy]);
       if (!created.rows[0]) throw new MembershipInvariantError('MEMBERSHIP_ALREADY_EXISTS');

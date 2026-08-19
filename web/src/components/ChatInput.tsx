@@ -40,6 +40,7 @@ interface ChatInputProps {
   onAutoApproveRunShellChange?: (checked: boolean) => void;
   onSendVoice?: (wavBlob: Blob, durationMs: number) => Promise<void>;
   disabled?: boolean;
+  placeholder?: string;
   disabledPlaceholder?: string;
   topSlot?: React.ReactNode;
   attachedTopSlot?: React.ReactNode;
@@ -84,6 +85,7 @@ export function ChatInput({
   onAutoApproveRunShellChange,
   onSendVoice,
   disabled,
+  placeholder = "输入消息...",
   disabledPlaceholder = "只读状态无法发送消息",
   topSlot,
   attachedTopSlot,
@@ -388,7 +390,7 @@ export function ChatInput({
                 onPaste={isDisabled ? undefined : onPaste}
                 onFocus={handleFocus}
                 enterKeyHint="send"
-                placeholder={isDisabled ? disabledPlaceholder : hasUploadedFiles ? "附件已添加，输入消息..." : "输入消息..."}
+                placeholder={isDisabled ? disabledPlaceholder : hasUploadedFiles ? "附件已添加，输入消息..." : placeholder}
                 rows={1}
                 disabled={isDisabled}
                 className={cn(

@@ -1,10 +1,10 @@
-import { useState, type DragEvent } from "react";
+import { useEffect, useState, type DragEvent } from "react";
 import {
   TASKBOARD_STATUSES,
   type TaskBoardStatus,
   type TaskBoardTask,
 } from "@agent/shared";
-import { ChevronDown, ChevronRight, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -17,6 +17,7 @@ import { TaskCard } from "./TaskCard";
 import { STATUS_LABELS } from "./constants";
 
 interface TaskColumnsProps {
+  boardId: string;
   tasks: TaskBoardTask[];
   readOnly: boolean;
   canCreateTask: boolean;
@@ -45,10 +46,25 @@ function sortedTasks(tasks: TaskBoardTask[], status: TaskBoardStatus): TaskBoard
     .sort((left, right) => left.sortOrder - right.sortOrder);
 }
 
+const desktopStatuses: TaskBoardStatus[] = [
+  ...TASKBOARD_STATUSES.filter((status) => status !== "done"),
+  "done",
+];
 const columnClassName = "flex h-full w-72 shrink-0 flex-col rounded-xl border bg-muted/30";
+const collapsedDoneClassName = "flex h-full w-10 shrink-0 flex-col rounded-xl border bg-muted/30";
 const summaryMarkerClassName = "list-none [&::-webkit-details-marker]:hidden";
 
+function doneCollapsedStorageKey(boardId: string): string {
+  return `taskboard:${boardId}:done-collapsed`;
+}
+
+function readDoneCollapsed(boardId: string): boolean {
+  if (typeof window === "undefined") return true;
+  return window.localStorage.getItem(doneCollapsedStorageKey(boardId)) !== "false";
+}
+
 export function TaskColumns({
+  boardId,
   tasks,
   readOnly,
   canCreateTask,
@@ -66,26 +82,32 @@ export function TaskColumns({
   onDeliverySelectedChange,
   onDrop,
 }: TaskColumnsProps) {
-  const [doneCollapsed, setDoneCollapsed] = useState(true);
+  const [doneCollapsed, setDoneCollapsed] = useState(() => readDoneCollapsed(boardId));
   const mobileTasks = sortedTasks(tasks, mobileStatus);
+
+  useEffect(() => {
+    setDoneCollapsed(readDoneCollapsed(boardId));
+  }, [boardId]);
   const dragEnabled = !readOnly && (canReorderTask || canTransitionTask);
 
   const renderStatusBody = (status: TaskBoardStatus, columnTasks: TaskBoardTask[]) => (
     <>
-      <div className="shrink-0 border-b p-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="w-full"
-          disabled={readOnly || !canCreateTask || !["backlog", "todo"].includes(status)}
-          aria-label={`在${STATUS_LABELS[status]}新建任务`}
-          onClick={() => onCreateTask(status)}
-        >
-          <Plus className="size-3.5" />
-          新建任务
-        </Button>
-      </div>
+      {["backlog", "todo"].includes(status) ? (
+        <div className="shrink-0 border-b p-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="w-full"
+            disabled={readOnly || !canCreateTask}
+            aria-label={`在${STATUS_LABELS[status]}新建任务`}
+            onClick={() => onCreateTask(status)}
+          >
+            <Plus className="size-3.5" />
+            新建任务
+          </Button>
+        </div>
+      ) : null}
       <div
         className="min-h-24 flex-1 space-y-2 overflow-y-auto p-2"
         onDragOver={(event) => {
@@ -130,18 +152,20 @@ export function TaskColumns({
             ))}
           </SelectContent>
         </Select>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="mt-2 w-full"
-          disabled={readOnly || !canCreateTask || !["backlog", "todo"].includes(mobileStatus)}
-          aria-label={`在${STATUS_LABELS[mobileStatus]}新建任务`}
-          onClick={() => onCreateTask(mobileStatus)}
-        >
-          <Plus className="size-3.5" />
-          新建任务
-        </Button>
+        {["backlog", "todo"].includes(mobileStatus) ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="mt-2 w-full"
+            disabled={readOnly || !canCreateTask}
+            aria-label={`在${STATUS_LABELS[mobileStatus]}新建任务`}
+            onClick={() => onCreateTask(mobileStatus)}
+          >
+            <Plus className="size-3.5" />
+            新建任务
+          </Button>
+        ) : null}
       </div>
 
       <div
@@ -149,7 +173,7 @@ export function TaskColumns({
         aria-label="八态任务看板"
         className="hidden h-full min-w-0 gap-3 overflow-x-auto pb-2 md:flex"
       >
-        {TASKBOARD_STATUSES.map((status) => {
+        {desktopStatuses.map((status) => {
           const columnTasks = desktopStatus === "all" || desktopStatus === status
             ? sortedTasks(tasks, status)
             : [];
@@ -163,19 +187,38 @@ export function TaskColumns({
                 role="region"
                 aria-label={`${STATUS_LABELS[status]}列`}
                 open={!doneCollapsed}
-                onToggle={(event) => setDoneCollapsed(!event.currentTarget.open)}
-                className={doneCollapsed ? "contents" : columnClassName}
+                onToggle={(event) => {
+                  const collapsed = !event.currentTarget.open;
+                  setDoneCollapsed(collapsed);
+                  window.localStorage.setItem(doneCollapsedStorageKey(boardId), String(collapsed));
+                }}
+                className={doneCollapsed ? collapsedDoneClassName : columnClassName}
               >
                 <summary
                   className={`${summaryMarkerClassName} ${doneCollapsed
-                    ? "absolute right-0 top-2 z-10 flex cursor-pointer items-center gap-1 rounded-l-lg border border-r-0 bg-background/95 px-2 py-2 text-xs font-medium shadow-sm backdrop-blur"
-                    : "flex shrink-0 cursor-pointer items-center justify-between border-b px-3 py-2.5"}`}
+                    ? "flex h-full min-h-56 cursor-pointer flex-col items-center gap-2 rounded-xl py-2 text-xs font-medium outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    : "flex shrink-0 cursor-pointer items-center justify-between border-b px-3 py-2.5 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"}`}
                   title={doneCollapsed ? "展开已完成列" : "折叠已完成列"}
                 >
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    {doneCollapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-                    <span>{STATUS_LABELS[status]}（{columnTasks.length}）</span>
-                  </span>
+                  {doneCollapsed ? (
+                    <>
+                      <ChevronRight className="size-3.5 shrink-0" />
+                      <span className="[writing-mode:vertical-rl]">{STATUS_LABELS[status]}</span>
+                      <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        {columnTasks.length}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="flex min-w-0 items-center gap-2">
+                        <ChevronLeft className="size-3.5 shrink-0" />
+                        <span className="text-sm font-semibold">{STATUS_LABELS[status]}</span>
+                      </span>
+                      <span className="rounded-full bg-background px-2 py-0.5 text-xs text-muted-foreground">
+                        {columnTasks.length}
+                      </span>
+                    </>
+                  )}
                 </summary>
                 {renderStatusBody(status, columnTasks)}
               </details>

@@ -67,7 +67,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     }
   }, 30_000);
 
-  it('TASK-84 advisory completes without repository and Resolution replay is idempotent', async () => {
+  it('TASK-84 advisory completes back in todo and Resolution replay is idempotent', async () => {
     const board = await store.createBoard(identity, { name: 'Advisory board' });
     const advisory = await store.createTask(identity, board.id, {
       title: 'Only answer', kind: 'advisory', status: 'in_progress',
@@ -86,9 +86,9 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       outcome: 'completed', summary: 'Answer delivered', evidence: ['answer'], receipt: context.receipt,
     };
     const resolved = await store.resolveExecutionV2(identity, runId, input);
-    expect(resolved).toMatchObject({ kind: 'advisory', status: 'done' });
+    expect(resolved).toMatchObject({ kind: 'advisory', status: 'todo' });
     expect(resolved).not.toHaveProperty('providerPullRequestId');
-    await expect(store.resolveExecutionV2(identity, runId, input)).resolves.toMatchObject({ status: 'done' });
+    await expect(store.resolveExecutionV2(identity, runId, input)).resolves.toMatchObject({ status: 'todo' });
     const resolutions = await pool.query(
       `SELECT count(*)::int AS count FROM ${store.resolutionsTable} WHERE execution_id=$1`,
       [executionId],

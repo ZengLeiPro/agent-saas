@@ -6,6 +6,7 @@ import { makeWorkflowLibrary, makeWorkflowScenario } from "./workflowTestFixture
 const d0 = makeWorkflowScenario("d0-current", { title: "当前可运行工作流" });
 const d1 = makeWorkflowScenario("d1-connector", {
   title: "需要标准接入工作流",
+  industryTags: ["retail"],
   readiness: "D1_CONNECTOR",
   launch: {
     sampleAvailable: false,
@@ -17,6 +18,7 @@ const d1 = makeWorkflowScenario("d1-connector", {
 });
 const demo = makeWorkflowScenario("demo-with-script", {
   title: "有剧本的工作流",
+  industryTags: ["retail"],
   cta: { primary: "接入这个流程", secondary: "查看工作流" },
   presentation: {
     version: 1,
@@ -58,11 +60,11 @@ describe("EmptyChatRecommendCards V3", () => {
     const onViewAll = vi.fn(() => window.history.pushState({}, "", "/capabilities"));
     render(<EmptyChatRecommendCards onTryScenario={vi.fn()} onStartWorkflow={onStartWorkflow} onViewAll={onViewAll} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "立即试一试" }));
+    fireEvent.click(screen.getByRole("button", { name: /当前可运行工作流/ }));
     expect(onStartWorkflow).toHaveBeenCalledWith(d0.launch.starterMessage, d0);
     expect(onViewAll).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "接入我的系统" }));
+    fireEvent.click(screen.getByRole("button", { name: /需要标准接入工作流/ }));
     expect(onViewAll).toHaveBeenCalledOnce();
     expect(onStartWorkflow).toHaveBeenCalledTimes(1);
     const params = new URLSearchParams(window.location.search);
@@ -75,16 +77,24 @@ describe("EmptyChatRecommendCards V3", () => {
     const onViewAll = vi.fn(() => window.history.pushState({}, "", "/capabilities"));
     render(<EmptyChatRecommendCards onTryScenario={vi.fn()} onStartWorkflow={onStartWorkflow} onViewAll={onViewAll} />);
 
-    // 只有带剧本的那张卡长出演示入口，另外两张不受影响
-    const replayButtons = screen.getAllByRole("button", { name: "看回放" });
-    expect(replayButtons).toHaveLength(1);
+    // 有剧本的推荐项只表达回放动作，不暴露接入 CTA。
+    expect(screen.getAllByText("看回放")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "接入这个流程" })).toBeNull();
 
-    fireEvent.click(replayButtons[0]);
+    fireEvent.click(screen.getByRole("button", { name: /有剧本的工作流/ }));
     expect(onViewAll).toHaveBeenCalledOnce();
     expect(onStartWorkflow).not.toHaveBeenCalled();
     const params = new URLSearchParams(window.location.search);
     expect(params.get("workflow")).toBe("demo-with-script");
     expect(params.get("intent")).toBe("presentation");
+  });
+
+  it("行业命中不足时从全量场景补齐 Top 3", () => {
+    localStorage.setItem("ky.scenarios.industry", "manufacturing");
+    render(<EmptyChatRecommendCards onTryScenario={vi.fn()} onViewAll={vi.fn()} />);
+
+    expect(screen.getByText("当前可运行工作流")).toBeTruthy();
+    expect(screen.getByText("需要标准接入工作流")).toBeTruthy();
+    expect(screen.getByText("有剧本的工作流")).toBeTruthy();
   });
 });

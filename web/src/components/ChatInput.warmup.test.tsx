@@ -26,9 +26,11 @@ vi.mock("@/hooks/useVoiceRecorder", () => ({
 function ControlledInput({
   sessionId,
   onSend = vi.fn(),
+  placeholder,
 }: {
   sessionId: string;
   onSend?: () => void;
+  placeholder?: string;
 }) {
   const [input, setInput] = useState("");
   return (
@@ -40,6 +42,7 @@ function ControlledInput({
       onInputChange={setInput}
       onSend={onSend}
       onFileSelect={vi.fn()}
+      placeholder={placeholder}
     />
   );
 }
@@ -50,6 +53,11 @@ beforeEach(() => {
 });
 
 describe("ChatInput Sandbox 预热", () => {
+  it("支持初始会话传入邀请式 placeholder", () => {
+    render(<ControlledInput sessionId="custom-placeholder" placeholder="说清目标，我来拆解并推进" />);
+    expect(screen.getByPlaceholderText("说清目标，我来拆解并推进")).toBeTruthy();
+  });
+
   it("聚焦、空白输入和光标移动都不触发", async () => {
     const user = userEvent.setup();
     render(<ControlledInput sessionId="warmup-focus" />);

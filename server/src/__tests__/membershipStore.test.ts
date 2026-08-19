@@ -195,7 +195,7 @@ describe('Membership/Owner 治理事实模型', () => {
     expect(queries.some(sql => sql.includes('UPDATE test_platform_admins'))).toBe(false);
   });
 
-  it('治理创建 Membership 使用 governance source，并在冲突时回滚', async () => {
+  it('治理创建 Membership 使用 governance source，并接管先到达的 legacy projection', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const query = async (sql: string, params?: unknown[]) => {
       queries.push({ sql, ...(params ? { params } : {}) });
@@ -209,8 +209,20 @@ describe('Membership/Owner 治理事实模型', () => {
 
     const created = await store.createMembership({ tenantId: 'acme', userId: 'user-new', persona: 'member', createdBy: 'admin-1' });
     expect(created).toMatchObject({ tenantId: 'acme', userId: 'user-new', source: 'governance', status: 'active' });
-    expect(queries.some(item => item.sql.includes('ON CONFLICT DO NOTHING') && item.params?.[2] === 'member')).toBe(true);
+    expect(queries.some(item => item.sql.includes('ON CONFLICT (user_id) DO UPDATE') && item.sql.includes("source = 'legacy_projection'") && item.params?.[2] === 'member')).toBe(true);
     expect(queries).toContainEqual({ sql: 'COMMIT' });
+  });
+
+  it('治理创建不会覆盖已经存在的 governance Membership', async () => {
+    const query = async (sql: string) => {
+      if (sql.includes('INSERT INTO test_tenant_memberships')) return { rows: [], rowCount: 0 };
+      return { rows: [], rowCount: 0 };
+    };
+    const pool = { query, connect: async () => ({ query, release: () => undefined }) };
+    const store = new PgMembershipStore({ pool: pool as never, tablePrefix: 'test' });
+
+    await expect(store.createMembership({ tenantId: 'acme', userId: 'user-existing', persona: 'member', createdBy: 'admin-1' }))
+      .rejects.toMatchObject({ code: 'MEMBERSHIP_ALREADY_EXISTS' });
   });
 
   it('有另一名有效 Owner 时允许降级，并用 expectedVersion 防并发覆盖', async () => {

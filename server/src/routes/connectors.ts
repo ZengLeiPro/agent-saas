@@ -11,10 +11,27 @@ import {
   revokePendingGithubCredentials,
   toGithubConnectionView,
 } from '../connectors/github.js';
+import {
+  connectXCredential,
+  disconnectXCredential,
+  getXConnection,
+} from '../connectors/x.js';
 
 const githubConnectSchema = z.object({
   token: z.string().min(1).max(20_000),
 }).strict();
+
+const xCookieSchema = z.string().min(1).max(20_000);
+const xConnectSchema = z.union([
+  z.object({
+    authToken: xCookieSchema,
+    ct0: xCookieSchema,
+  }).strict(),
+  z.object({
+    auth_token: xCookieSchema,
+    ct0: xCookieSchema,
+  }).strict().transform(({ auth_token, ct0 }) => ({ authToken: auth_token, ct0 })),
+]);
 
 const aliyunConnectSchema = z.object({
   accessKeyId: z.string().min(1).max(256),
@@ -165,6 +182,50 @@ export function createConnectorsRouter(deps: ConnectorsRouterDeps): Router {
       username: auth.username,
     });
     return res.json({ connection: toGithubConnectionView(connection) });
+  });
+
+  router.get('/x', (req, res) => {
+    const auth = authContext(req);
+    if (!auth) return res.status(401).json({ error: 'Authentication required' });
+    return res.json({ connection: getXConnection(deps.connectionStore, auth) });
+  });
+
+  const connectX = async (req: Request, res: Response) => {
+    const auth = authContext(req);
+    if (!auth) return res.status(401).json({ error: 'Authentication required' });
+    const parsed = xConnectSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() });
+    try {
+      const connection = await connectXCredential({
+        connectionStore: deps.connectionStore,
+        vault: deps.secretVault,
+        ...auth,
+        credentials: parsed.data,
+      });
+      return res.json({ connection });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'X 授权保存失败';
+      return res.status(400).json({ error: message });
+    }
+  };
+
+  router.post('/x', connectX);
+  router.put('/x', connectX);
+
+  router.delete('/x', async (req, res) => {
+    const auth = authContext(req);
+    if (!auth) return res.status(401).json({ error: 'Authentication required' });
+    try {
+      const connection = await disconnectXCredential({
+        connectionStore: deps.connectionStore,
+        vault: deps.secretVault,
+        ...auth,
+      });
+      return res.json({ connection });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'X 凭据断开失败';
+      return res.status(503).json({ error: message });
+    }
   });
 
   router.get('/aliyun', (req, res) => {

@@ -1,6 +1,8 @@
 import { type Ref, type MutableRefObject, useMemo } from "react";
 import { Plus, Trash2 } from "lucide-react";
+import { AgentAvatar } from "@/components/AgentAvatar";
 import { OrgAgentAvatarContent } from "@/components/OrgAgentAvatar";
+import { cn } from "@/lib/utils";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { TtsProps } from "@/components/MessageItem";
 import type { TtsState } from "@/hooks/useTtsPlayer";
@@ -56,8 +58,10 @@ interface ChatTabContentProps {
   debugModeOverride?: boolean;
   agentProfile?: AgentProfile | null;
   sessionParticipants?: SessionParticipants | null;
-  /** 空会话槽位（透传给 MessageList）：新会话空白态展示的内容，如场景推荐卡 */
+  /** 空会话推荐内容；初始 composer 模式下显示在输入框下方，否则透传给 MessageList。 */
   emptySlot?: React.ReactNode;
+  /** 是否启用居中的初始会话 composer；不可用/只读状态保持原布局。 */
+  initialComposer?: boolean;
   /** 当前企业专家（包含未发送草稿态）；缺省 = 个人通用 Agent。 */
   orgAgent?: OrgAgentSummary | null;
   /** 当前企业专家的新对话入口；只读/停用会话不提供。 */
@@ -115,6 +119,53 @@ export function OrgAgentComposerChip({
   );
 }
 
+function InitialConversationHeader({
+  agentProfile,
+  orgAgent,
+  compact,
+}: {
+  agentProfile?: AgentProfile | null;
+  orgAgent?: OrgAgentSummary | null;
+  compact: boolean;
+}) {
+  const agentName = orgAgent?.name || agentProfile?.name || "开沿 Agent";
+
+  return (
+    <div className="content-container flex flex-col items-center pb-2 text-center sm:pb-3">
+      <div className="mb-3 inline-flex items-center gap-2 rounded-full border bg-card px-2 py-1 text-xs font-medium text-muted-foreground sm:mb-4">
+        {orgAgent ? (
+          <span className="flex size-7 items-center justify-center overflow-hidden rounded-lg bg-brand-50 text-base dark:bg-brand-900/35" aria-hidden="true">
+            <OrgAgentAvatarContent agent={orgAgent} />
+          </span>
+        ) : (
+          <AgentAvatar
+            avatar={agentProfile?.avatar}
+            username={agentProfile?.username}
+            version={agentProfile?.avatarVersion}
+            size={28}
+            className="rounded-lg"
+          />
+        )}
+        <span className="text-foreground">{agentName}</span>
+        <span>{orgAgent ? "· 企业专家" : "· 个人 Agent"}</span>
+      </div>
+      <h1 className="text-[28px] font-semibold tracking-[-0.035em] text-foreground sm:text-4xl">
+        {orgAgent ? `要让${orgAgent.name}处理什么？` : "今天先推进哪件事？"}
+      </h1>
+      <div className={cn(
+        "grid transition-[grid-template-rows,opacity,margin] duration-200 ease-out",
+        compact ? "mt-0 grid-rows-[0fr] opacity-0" : "mt-2 grid-rows-[1fr] opacity-100 sm:mt-3",
+      )}>
+        <p className="max-w-2xl overflow-hidden text-sm leading-6 text-muted-foreground">
+          {orgAgent
+            ? orgAgent.description || "它会在组织配置的职责和数据权限内完成工作。"
+            : "直接描述目标，或从一个开箱任务开始。"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function ChatTabContent({
   messages,
   loading,
@@ -158,6 +209,7 @@ export function ChatTabContent({
   agentProfile,
   sessionParticipants,
   emptySlot,
+  initialComposer = false,
   orgAgent,
   onNewOrgAgentConversation,
   onSwitchOrgAgent,
@@ -200,32 +252,56 @@ export function ChatTabContent({
     return { ...sessionParticipants, agent: displayAgentProfile ?? null };
   }, [displayAgentProfile, orgAgent, sessionParticipants]);
 
+  const hasQueuedInterjections = Boolean(queuedInterjections?.length);
+  const hasComposerDraft = Boolean(input.trim())
+    || uploadedFiles.length > 0
+    || uploading
+    || Boolean(uploadError);
+  const isInitialConversation = initialComposer
+    && !readOnly
+    && !isLoadingMessages
+    && messages.length === 0
+    && !loading
+    && !activeAskUser
+    && !hasQueuedInterjections;
+  const showInitialSuggestions = isInitialConversation && !hasComposerDraft && Boolean(emptySlot);
+  const initialPlaceholder = orgAgent
+    ? `交代目标、范围和希望${orgAgent.name}交付的结果`
+    : "说清目标，我来拆解并推进";
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <MessageList
-        lastMessageRef={lastMessageRef}
-        scrollContainerRef={scrollContainerRef}
-        isNearBottomRef={isNearBottomRef}
-        messages={visibleMessages}
-        loading={activeAskUser ? false : loading}
-        isLoadingMessages={isLoadingMessages}
-        hasMoreHistory={hasMoreHistory}
-        isLoadingEarlier={isLoadingEarlier}
-        onLoadEarlier={onLoadEarlier}
-        onPermissionResponse={readOnly ? undefined : onPermissionResponse}
-        onAskUserResponse={readOnly ? undefined : onAskUserResponse}
-        onRetry={readOnly ? undefined : onRetry}
-        onFork={readOnly ? undefined : onFork}
-        tts={tts}
-        ttsStateMap={ttsStateMap}
-        agentProfile={displayAgentProfile}
-        sessionParticipants={displaySessionParticipants}
-        debugModeOverride={debugModeOverride}
-        emptySlot={readOnly ? undefined : emptySlot}
-      />
+      <div
+        className={cn(
+          "flex min-h-0 basis-0 overflow-hidden transition-[flex-grow,opacity] duration-300 ease-out",
+          isInitialConversation ? "pointer-events-none grow-0 opacity-0" : "grow opacity-100",
+        )}
+      >
+        <MessageList
+          lastMessageRef={lastMessageRef}
+          scrollContainerRef={scrollContainerRef}
+          isNearBottomRef={isNearBottomRef}
+          messages={visibleMessages}
+          loading={activeAskUser ? false : loading}
+          isLoadingMessages={isLoadingMessages}
+          hasMoreHistory={hasMoreHistory}
+          isLoadingEarlier={isLoadingEarlier}
+          onLoadEarlier={onLoadEarlier}
+          onPermissionResponse={readOnly ? undefined : onPermissionResponse}
+          onAskUserResponse={readOnly ? undefined : onAskUserResponse}
+          onRetry={readOnly ? undefined : onRetry}
+          onFork={readOnly ? undefined : onFork}
+          tts={tts}
+          ttsStateMap={ttsStateMap}
+          agentProfile={displayAgentProfile}
+          sessionParticipants={displaySessionParticipants}
+          debugModeOverride={debugModeOverride}
+          emptySlot={readOnly || initialComposer ? undefined : emptySlot}
+        />
+      </div>
 
-      <div className="shrink-0">
-        {readOnly && readOnlyInputPlaceholder ? (
+      {readOnly && readOnlyInputPlaceholder ? (
+        <div className="shrink-0">
           <ChatInput
             input=""
             loading={false}
@@ -246,13 +322,38 @@ export function ChatTabContent({
             disabled
             disabledPlaceholder={readOnlyInputPlaceholder}
           />
-        ) : readOnly ? (
-          <div className="flex items-center justify-center gap-2 border-t bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
-            <Trash2 className="size-4" />
-            正在预览已删除的会话（只读）
-          </div>
-        ) : (
-          <>
+        </div>
+      ) : readOnly ? (
+        <div className="flex shrink-0 items-center justify-center gap-2 border-t bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+          <Trash2 className="size-4" />
+          正在预览已删除的会话（只读）
+        </div>
+      ) : (
+        <div
+          data-initial-conversation={isInitialConversation ? "true" : "false"}
+          className={cn(
+            "flex min-h-0 flex-col justify-center transition-[flex-grow,padding] duration-300 ease-out",
+            isInitialConversation ? "grow overflow-y-auto overscroll-y-contain py-6 sm:py-10" : "shrink-0 grow-0",
+          )}
+        >
+          <div className="w-full">
+            {initialComposer && (
+              <div className={cn(
+                "grid transition-[grid-template-rows,opacity,transform] duration-300 ease-out",
+                isInitialConversation
+                  ? "grid-rows-[1fr] translate-y-0 opacity-100"
+                  : "grid-rows-[0fr] translate-y-2 opacity-0",
+              )}>
+                <div className="overflow-hidden">
+                  <InitialConversationHeader
+                    agentProfile={agentProfile}
+                    orgAgent={orgAgent}
+                    compact={hasComposerDraft}
+                  />
+                </div>
+              </div>
+            )}
+
             <FileUpload
               uploadedFiles={uploadedFiles}
               uploading={uploading}
@@ -282,9 +383,10 @@ export function ChatTabContent({
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={onAutoApproveRunShellChange}
               onSendVoice={onSendVoice}
-              topSlot={(orgAgent || activeAskUser || (queuedInterjections && queuedInterjections.length > 0)) ? (
+              placeholder={isInitialConversation ? initialPlaceholder : undefined}
+              topSlot={((orgAgent && !isInitialConversation) || activeAskUser || hasQueuedInterjections) ? (
                 <div className="space-y-2">
-                  {orgAgent && (
+                  {orgAgent && !isInitialConversation && (
                     <OrgAgentComposerChip
                       orgAgent={orgAgent}
                       onNewConversation={onNewOrgAgentConversation}
@@ -312,9 +414,24 @@ export function ChatTabContent({
                 </div>
               ) : undefined}
             />
-          </>
-        )}
-      </div>
+
+            {initialComposer && (
+              <div
+                data-initial-suggestions={showInitialSuggestions ? "visible" : "hidden"}
+                aria-hidden={!showInitialSuggestions}
+                className={cn(
+                  "grid transition-[grid-template-rows,opacity,transform] duration-200 ease-out",
+                  showInitialSuggestions
+                    ? "grid-rows-[1fr] translate-y-0 opacity-100"
+                    : "pointer-events-none grid-rows-[0fr] -translate-y-1 opacity-0",
+                )}
+              >
+                <div className="overflow-hidden">{showInitialSuggestions ? emptySlot : null}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

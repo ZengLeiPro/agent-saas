@@ -37,6 +37,7 @@ import { McpConfigStore } from '../data/mcpConfig.js';
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import { AliyunConnectorService, revokePendingAliyunCredentials } from '../connectors/aliyun.js';
 import { GITHUB_CONNECTOR_ID, resolveGithubRuntimeEnv, revokePendingGithubCredentials } from '../connectors/github.js';
+import { resolveXRuntimeEnv, revokePendingXCredentials } from '../connectors/x.js';
 import { applyNativeConnectorRuntimeState } from '../connectors/runtimeState.js';
 import { GoogleWorkspaceOAuthService, PgGoogleWorkspaceOAuthStateStore, resolveGoogleWorkspaceRuntimeEnv } from '../connectors/googleWorkspace.js';
 import { connectNotionCredential, disconnectNotion, getLiveNotionConnection, resolveNotionRuntimeEnv, type NotionConnectionView } from '../connectors/notion.js';
@@ -175,6 +176,11 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
     connectionStore: connectorConnectionStore,
     vault: secretVault,
     onError: error => serverLogger.warn(`Pending GitHub credential revoke skipped: ${error.message}`),
+  });
+  await revokePendingXCredentials({
+    connectionStore: connectorConnectionStore,
+    vault: secretVault,
+    onError: error => serverLogger.warn(`Pending X credential revoke skipped: ${error.message}`),
   });
   await revokePendingAliyunCredentials({
     connectionStore: connectorConnectionStore,
@@ -546,6 +552,9 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       await credentialStore?.bumpGenerationBySecretRef(secretRef, 'system:mcp-oauth-rotation');
     },
   });
+  // x 不是 legacy MCP adapter：bird 由原生连接器直接调用，因此保留同名个人 MCP ID。
+  // 下方 env 合并先保留自定义 MCP，再由已连接的 X 原生凭据覆盖同名 bird 变量；暂停 X
+  // 时不删除这些通用变量，避免误伤自定义 MCP 的 runtime env。
   const legacyNativeMcpIds = new Set([
     'github',
     'notion',
@@ -836,12 +845,19 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       : (!userStore ? context : undefined);
     if (!ownedContext) return {};
 
-    const [githubEnv, notionEnv, googleWorkspaceEnv, aliyunEnv, dwsEnv, feishuEnv, mcpConnectorEnv] = await Promise.all([
+    const [githubEnv, xEnv, notionEnv, googleWorkspaceEnv, aliyunEnv, dwsEnv, feishuEnv, mcpConnectorEnv] = await Promise.all([
       resolveGithubRuntimeEnv({
         connectionStore: connectorConnectionStore,
         vault: secretVault,
         onError: error => serverLogger.warn(
           `Native connector runtime env skipped: connector=${GITHUB_CONNECTOR_ID} reason=${error.message}`,
+        ),
+      }, ownedContext),
+      resolveXRuntimeEnv({
+        connectionStore: connectorConnectionStore,
+        vault: secretVault,
+        onError: error => serverLogger.warn(
+          `Native connector runtime env skipped: connector=x reason=${error.message}`,
         ),
       }, ownedContext),
       resolveNotionRuntimeEnv({
@@ -885,8 +901,12 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       ...feishuEnv,
       ...googleWorkspaceEnv,
       ...notionEnv,
+      ...xEnv,
       ...githubEnv,
       ...(tenantRunEnvByTenant?.get(context.tenantId) ?? {}),
+    }, {
+      // X 暂停时仍保留自定义 MCP 写入的同名变量；tenant env 仍按原有优先级参与合并。
+      preserveEnvKeys: new Set(Object.keys(mcpConnectorEnv)),
     });
   };
 

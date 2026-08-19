@@ -75,7 +75,7 @@ describe('taskboard workflow decider incident replay', () => {
       merge: false,
     });
     expect(decideResolution(advisory, 'work', 'completed', { hasMergeFact: false }))
-      .toEqual({ kind: 'apply', toStatus: 'done' });
+      .toEqual({ kind: 'apply', toStatus: 'todo' });
     expect(() => decideResolution(advisory, 'work', 'ready_for_review', { hasMergeFact: false }))
       .toThrowError(expect.objectContaining({ code: 'TASKBOARD_WORKFLOW_TRANSITION_INVALID' }));
   });

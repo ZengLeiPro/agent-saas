@@ -109,6 +109,19 @@ describe('parseProvisionRecipe', () => {
     });
   });
 
+  it('preserves a complete runtime isolation binding and rejects recipe identity mismatch', () => {
+    const requirement = {
+      tenantId: 'tenant-1', taskId: 'task-1', runId: 'run-1', sessionId: 's', workspaceId: 'ws',
+      policyDigest: 'a'.repeat(64),
+    };
+    expect(parseProvisionRecipe({
+      workspaceId: 'ws', recipe: { sessionId: 's', runtimeIsolationRequirement: requirement },
+    })).toMatchObject({ ok: true, value: { runtimeIsolationRequirement: requirement } });
+    expect(parseProvisionRecipe({
+      workspaceId: 'ws', recipe: { sessionId: 's', runtimeIsolationRequirement: { ...requirement, sessionId: 'other' } },
+    })).toMatchObject({ ok: false });
+  });
+
   it('rejects missing sessionId', () => {
     expect(parseProvisionRecipe({ workspaceId: 'ws' })).toMatchObject({ ok: false });
   });

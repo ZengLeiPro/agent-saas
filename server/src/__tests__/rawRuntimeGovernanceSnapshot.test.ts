@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { appendResolvedRunSnapshot, ensureRuntimeHandRegistered } from '../runtime/rawRuntimeRunDispatch.js';
+import { RUNTIME_ISOLATION_POLICY_DIGEST } from '../runtime/runtimeIsolationEvidence.js';
 
 function input(result: Record<string, unknown>, append = vi.fn().mockResolvedValue(undefined)) {
   const warn = vi.fn();
@@ -151,6 +152,75 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
       } as never,
     })).rejects.toThrow('ENVIRONMENT_TEMPLATE_ASSIGNMENT_REQUIRED');
     expect(provision).not.toHaveBeenCalled();
+  });
+
+  it('accepts fresh evidence only when it is bound to the exact provisioned recipe/run/sandbox scope', async () => {
+    const requirement = {
+      tenantId: 'tenant-a', taskId: 'task-1', runId: 'run-1', sessionId: 'session-1',
+      workspaceId: 'workspace-1', policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST,
+    };
+    const now = Date.now();
+    const provision = vi.fn().mockResolvedValue({
+      status: 'ok',
+      metadata: { metadata: { runtimeIsolationEvidence: {
+        ...requirement,
+        sandboxName: 'as-session-1', sandboxScopeId: 'workspace-1',
+        issuedAt: new Date(now).toISOString(), expiresAt: new Date(now + 30_000).toISOString(),
+      } } },
+    });
+    const register = vi.fn().mockImplementation(async record => record);
+    const resolveForRegister = vi.fn();
+    await expect(ensureRuntimeHandRegistered({
+      handStore: { register } as never,
+      eventStore: { append: vi.fn() } as never,
+      executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [], provision }) } as never,
+      executionTarget: 'server-remote', sessionId: 'session-1', runId: 'run-1', workspaceId: 'workspace-1',
+      runtimeIsolationRequirement: requirement,
+      tenantRemoteHands: [{ id: 'tenant-ecs', baseUrl: 'http://tenant-ecs-hand:3300', invokeTimeoutMs: 60_000 }],
+      tenantRemoteHandResolver: { resolveForRegister } as never,
+    })).resolves.toBeUndefined();
+    expect(provision).toHaveBeenCalledWith(expect.objectContaining({ runtimeIsolationRequirement: requirement }));
+    expect(resolveForRegister).not.toHaveBeenCalled();
+    expect(register).toHaveBeenCalledTimes(1);
+    expect(register).toHaveBeenCalledWith(expect.objectContaining({
+      handId: 'session-1:server-remote',
+      runId: 'run-1',
+      metadata: expect.objectContaining({
+        runtimeIsolationAttested: true,
+        runId: 'run-1',
+        policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST,
+        sandboxName: 'as-session-1',
+        sandboxScopeId: 'workspace-1',
+      }),
+    }));
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['wrong task', { taskId: 'task-other' }],
+    ['wrong scope', { sandboxScopeId: 'scope-other' }],
+    ['expired', { issuedAt: '2026-01-01T00:00:00.000Z', expiresAt: '2026-01-01T00:00:01.000Z' }],
+  ])('fails closed before Agent loop for %s actual-sandbox evidence', async (_case, mutation) => {
+    const requirement = {
+      tenantId: 'tenant-a', taskId: 'task-1', runId: 'run-1', sessionId: 'session-1',
+      workspaceId: 'workspace-1', policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST,
+    };
+    const now = Date.now();
+    const baseEvidence = {
+      ...requirement, sandboxName: 'as-session-1', sandboxScopeId: 'workspace-1',
+      issuedAt: new Date(now).toISOString(), expiresAt: new Date(now + 30_000).toISOString(),
+    };
+    const evidence = mutation === undefined ? undefined : { ...baseEvidence, ...mutation };
+    await expect(ensureRuntimeHandRegistered({
+      handStore: { register: vi.fn().mockImplementation(async record => record) } as never,
+      eventStore: { append: vi.fn() } as never,
+      executionTransportRegistry: {
+        has: () => true,
+        get: () => ({ listInternalTools: () => [], provision: vi.fn().mockResolvedValue({ status: 'ok', metadata: { metadata: { runtimeIsolationEvidence: evidence } } }) }),
+      } as never,
+      executionTarget: 'server-remote', sessionId: 'session-1', runId: 'run-1', workspaceId: 'workspace-1',
+      runtimeIsolationRequirement: requirement,
+    })).rejects.toThrow(/RUNTIME_ISOLATION_EVIDENCE_/);
   });
 
   it('shadow 模式 Snapshot 持久化失败只告警，不阻断运行', async () => {

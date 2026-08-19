@@ -461,6 +461,18 @@ export class PgMemoryConsolidationStore {
     );
   }
 
+  /** 会话已被政策排除：原子丢弃全部 backlog，后续新事件仍须重新通过 scanner 资格检查。 */
+  async markIneligible(input: { tenantId: string; sessionId: string }): Promise<void> {
+    await this.pool.query(
+      `UPDATE ${this.stateTable} SET
+         processed_session_sequence = target_session_sequence,
+         attempts = 0, next_attempt_at = NULL, lease_owner = NULL, lease_expires_at = NULL,
+         status = 'idle', due_at = NULL, first_pending_at = NULL, updated_at = NOW()
+       WHERE tenant_id = $1 AND session_id = $2`,
+      [input.tenantId, input.sessionId],
+    );
+  }
+
   /** 可重试失败：attempts+1，按退避序列排 next_attempt_at；超过 maxRetries 转 blocked。 */
   async markFailed(input: {
     tenantId: string; sessionId: string; now: string;

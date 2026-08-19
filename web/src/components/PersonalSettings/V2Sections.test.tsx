@@ -39,7 +39,7 @@ describe("我的权限 fail-closed", () => {
   it("503 时复用权威资源列表的不可用态，不泄露后端详情或本地推导允许", () => {
     render(<MyPermissionsSection />);
     const alert = screen.getByRole("alert");
-    expect(alert.textContent).toContain("不会降级为允许");
+    expect(alert.textContent).toContain("不代表当前账号缺少权限");
     expect(alert.textContent).toContain("服务状态：503");
     expect(alert.textContent).not.toContain("private backend detail");
   });

@@ -87,6 +87,9 @@ export function canonicalizeDispatchPayload(
     executionTarget,
     workspaceId: expectedWorkspaceId,
     status: 'running',
+    sessionSource: 'taskboard_execution',
+    memoryAutomationEligible: false,
+    memoryPolicyVersion: 'v2',
   });
   canonicalSession.createdAt = session.createdAt;
   canonicalSession.updatedAt = session.updatedAt;

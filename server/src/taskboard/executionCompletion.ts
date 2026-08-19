@@ -24,6 +24,12 @@ export async function applyExecutionTaskCompletion(
   executionCreatedAt: string | Date,
   input: TaskboardExecutionCompletionInput,
 ): Promise<boolean> {
+  // Candidate transitions are resolution-driven and epoch fenced. Legacy
+  // completion callbacks (including late callbacks) must never project a v3
+  // integration task status.
+  if (task.kind === 'integration' && task.workflowVersion === 3) {
+    return input.status === 'succeeded';
+  }
   if (execution.protocolVersion === 2) {
     return input.status === 'succeeded';
   }
@@ -69,6 +75,12 @@ export async function enqueueAutomaticReview(
   review: TaskboardExecutionCompletionInput['reviewExecution'],
 ): Promise<void> {
   if (!review) return;
+  if (task.kind === 'integration' && task.workflowVersion === 3) {
+    throw new TaskboardValidationError(
+      'Workflow v3 review must be requested by integrationTriggers after candidate reconciliation',
+      'TASKBOARD_V3_REVIEW_TRIGGER_REQUIRED',
+    );
+  }
   if (
     execution.purpose !== 'work'
     || !executionSucceeded

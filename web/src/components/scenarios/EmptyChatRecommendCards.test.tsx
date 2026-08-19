@@ -64,7 +64,6 @@ afterEach(() => {
 describe("EmptyChatRecommendCards", () => {
   it("renders role-first recommendations and sanitizes customer-facing text", () => {
     const onTryScenario = vi.fn();
-    const onOpenRoleDetail = vi.fn();
     mocked.library = {
       roles: [
         { id: "boss", name: "老板/总经理", sort: 1 },
@@ -77,18 +76,16 @@ describe("EmptyChatRecommendCards", () => {
       <EmptyChatRecommendCards
         onTryScenario={onTryScenario}
         onViewAll={vi.fn()}
-        onOpenRoleDetail={onOpenRoleDetail}
       />,
     );
 
-    expect(screen.getByText("老板/总经理适合开始的 3 件事")).toBeTruthy();
+    expect(screen.queryByText("老板/总经理适合开始的 3 件事")).toBeNull();
     expect(screen.getByText("AI 大脑 竞品晨报")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "岗位详情" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /AI 大脑 竞品晨报/ }));
     expect(onTryScenario).toHaveBeenCalledWith("请跟进 同行A", expect.objectContaining({ id: "boss-1" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "岗位详情" }));
-    expect(onOpenRoleDetail).toHaveBeenCalledWith("boss");
   });
 
   it("picks top scenarios by first aha mode and recurring priority", () => {
@@ -131,7 +128,6 @@ describe("EmptyChatRecommendCards", () => {
       <EmptyChatRecommendCards
         onTryScenario={vi.fn()}
         onViewAll={vi.fn()}
-        onOpenRoleDetail={vi.fn()}
       />,
     );
 

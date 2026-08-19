@@ -110,6 +110,9 @@ describe('canonicalizeDispatchPayload（review 独立 Session 首跑重建契约
       userRole: USER_ROLE,
       channel: 'web',
       modelRef: MODEL,
+      sessionSource: 'taskboard_execution',
+      memoryAutomationEligible: false,
+      memoryPolicyVersion: 'v2',
     });
   });
 

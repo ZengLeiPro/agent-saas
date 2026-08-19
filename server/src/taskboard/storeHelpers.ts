@@ -8,6 +8,7 @@ import {
 } from '../../../shared/src/types/taskboard.js';
 import {
   TaskboardConflictError,
+  TaskboardPermissionError,
   type TaskboardExecutionDispatch,
   type TaskboardExecutionModelContext,
   type TaskboardExecutionReconcileCandidate,
@@ -45,6 +46,9 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     ...(row.model !== null && row.model !== undefined && String(row.model).trim()
       ? { model: String(row.model) }
       : {}),
+    ...(Object.keys(parseStageModels(row.stage_models)).length
+      ? { stageModels: parseStageModels(row.stage_models) }
+      : {}),
     ...(row.provider_pull_request_id ? { providerPullRequestId: String(row.provider_pull_request_id) } : {}),
     ...(row.pull_request_number !== null && row.pull_request_number !== undefined
       ? { pullRequestNumber: Number(row.pull_request_number) }
@@ -61,6 +65,11 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     ...(row.integration_state ? {
       integrationState: String(row.integration_state) as TaskBoardTask['integrationState'],
     } : {}),
+    ...(row.kind === 'integration'
+      ? { workflowVersion: row.workflow_version === null || row.workflow_version === undefined
+          ? 2 as const
+          : Number(row.workflow_version) as 2 | 3 }
+      : {}),
     mergeEligibility: taskMergeEligibility(row),
     workflowDisplayState: taskWorkflowDisplayState(row),
     ...taskResumeContext(row.resume_context),
@@ -122,10 +131,35 @@ export function rowToComment(row: Record<string, unknown>): TaskBoardComment {
     authorType: String(row.author_type) as TaskBoardComment['authorType'],
     authorId: String(row.author_id),
     authorName: String(row.author_name),
+    ...(row.comment_session_id ? { sessionId: String(row.comment_session_id) } : {}),
+    ...(row.comment_execution_id ? { executionId: String(row.comment_execution_id) } : {}),
+    ...(row.comment_execution_purpose === 'review' || row.comment_execution_purpose === 'merge'
+      ? { executionPurpose: row.comment_execution_purpose }
+      : row.comment_execution_purpose === 'work' ? { executionPurpose: 'work' as const } : {}),
     version: Number(row.version),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
   };
+}
+
+export function commentExecutionJoin(
+  changesTable: string,
+  executionsTable: string,
+  commentAlias = 'c',
+): string {
+  return `LEFT JOIN LATERAL (
+    SELECT e.id AS comment_execution_id, e.session_id AS comment_session_id, e.purpose AS comment_execution_purpose
+      FROM ${executionsTable} e
+     WHERE e.run_id=${commentAlias}.continuation_run_id
+    UNION ALL
+    SELECT e.id AS comment_execution_id, e.session_id AS comment_session_id, e.purpose AS comment_execution_purpose
+      FROM ${changesTable} execution_comment
+      JOIN ${executionsTable} e ON e.run_id=execution_comment.actor_id
+     WHERE execution_comment.task_id=${commentAlias}.task_id
+       AND execution_comment.change_type='execution.comment'
+       AND execution_comment.payload->>'commentId'=${commentAlias}.id
+    LIMIT 1
+  ) comment_execution ON true`;
 }
 
 export function visibleCommentPredicate(commentAlias: string, changesTable: string): string {
@@ -214,6 +248,17 @@ export function isTerminalExecutionStatus(status: string): boolean {
 export function assertActiveBoard(board: TaskBoard): void {
   if (board.archivedAt) {
     throw new TaskboardValidationError('Archived boards are read-only', 'TASKBOARD_BOARD_ARCHIVED');
+  }
+}
+
+export function assertBoardRole(
+  role: TaskBoard['role'],
+  minimum: 'editor' | 'maintainer' | 'owner',
+): void {
+  const rank = role === 'owner' ? 4 : role === 'maintainer' ? 3 : role === 'editor' ? 2 : 1;
+  const required = minimum === 'owner' ? 4 : minimum === 'maintainer' ? 3 : 2;
+  if (rank < required) {
+    throw new TaskboardPermissionError('Taskboard role does not allow this operation');
   }
 }
 
@@ -371,6 +416,9 @@ export function rowToExecutionModelContext(
 ): TaskboardExecutionModelContext {
   return {
     ...(row.task_model ? { taskModel: String(row.task_model) } : {}),
+    ...(Object.keys(parseStageModels(row.task_stage_models)).length
+      ? { taskStageModels: parseStageModels(row.task_stage_models) }
+      : {}),
     ...(row.board_model ? { boardModel: String(row.board_model) } : {}),
     ...(Object.keys(parseStageModels(row.board_stage_models)).length
       ? { boardStageModels: parseStageModels(row.board_stage_models) }

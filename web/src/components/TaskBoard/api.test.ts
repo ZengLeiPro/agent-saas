@@ -8,6 +8,7 @@ import {
   deleteTask,
   executeTask,
   fetchBoardMembers,
+  fetchIntegrationCandidate,
   fetchIntegrationSources,
   patchTask,
   resumeTask,
@@ -172,6 +173,31 @@ describe("任务看板 API 错误对象", () => {
       method: "POST",
       body: JSON.stringify({ deliveryTaskIds: [task.id], expectedBoardVersion: 7 }),
     }));
+  });
+
+  it("按约定端点读取可复用的 v3 Candidate 投影", async () => {
+    const result = {
+      candidate: {
+        id: "candidate-1", integrationTaskId: task.id, repositoryId: "repo-1", baseBranch: "main",
+        branch: "integration/candidate-1", state: "waiting_checks", currentRevision: 2, workRound: 1,
+        version: 3, workflowEpoch: "workflow-1", laneEpoch: "lane-1", policyRevision: "policy-1",
+        mergeMethod: "squash", policySnapshot: {}, sourceSetDigest: "sha256:sources",
+        createdAt: task.createdAt, updatedAt: task.updatedAt,
+      },
+      revisions: [], sourceSnapshots: [], lastRefreshedAt: task.updatedAt,
+    };
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify({ result }), {
+      status: 200, headers: { "content-type": "application/json" },
+    }));
+
+    await expect(fetchIntegrationCandidate(task.id)).resolves.toEqual(result);
+    expect(authFetch).toHaveBeenCalledWith(`/api/taskboard/tasks/${task.id}/integration-candidate`);
+
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify({ result }), {
+      status: 200, headers: { "content-type": "application/json" },
+    }));
+    await expect(fetchIntegrationCandidate(task.id, { includeHistory: true, page: 2, pageSize: 10 })).resolves.toEqual(result);
+    expect(authFetch).toHaveBeenLastCalledWith(`/api/taskboard/tasks/${task.id}/integration-candidate?includeHistory=true&page=2&pageSize=10`);
   });
 
   it("删除任务使用 DELETE 并携带 CAS 版本", async () => {

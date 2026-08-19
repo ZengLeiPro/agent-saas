@@ -66,6 +66,8 @@ export interface WebChannelRuntimeConfig {
   runtimeEventStoreFor?: (transcriptPath: string) => EventStore;
   /** 仅共享 PG EventStore 可在缺少 transcriptPath 时按 sessionId 读取。 */
   runtimeEventStoreSupportsPathless?: boolean;
+  /** 新普通会话记忆写入职责 resolver；enqueue 首落库必须显式 pin。 */
+  memoryWriteDelegationEnabled?: (tenantId: string | undefined) => boolean;
   /** Web chat enqueue-only runtime。 */
   enqueueRuntime?: {
     scheduler: RuntimeScheduler;

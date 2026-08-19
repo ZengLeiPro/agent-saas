@@ -12,7 +12,7 @@ import {
   type MemoryConsolidationEngineOptions,
 } from '../memory/consolidation/engine.js';
 import type { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
-import { MEMORY_CONSOLIDATION_DEFAULTS } from '../memory/consolidation/types.js';
+import { MEMORY_CONSOLIDATION_DEFAULTS, type ConsolidationState } from '../memory/consolidation/types.js';
 
 type BoundaryEvent = {
   globalSequence: number;
@@ -25,6 +25,7 @@ type BoundaryEvent = {
 type TestableEngine = {
   stopped: boolean;
   scanOnce(): Promise<void>;
+  workOnce(): Promise<void>;
 };
 
 function boundaryEvent(input: {
@@ -53,6 +54,7 @@ function createHarness(input: {
   tenantEnabled?: (tenantId: string) => boolean;
   projection?: MemoryConsolidationEngineOptions['projectionStore']['get'];
   quarantineEnvelopeAndAdvanceCursor?: ReturnType<typeof vi.fn>;
+  claimedStates?: ConsolidationState[];
 } = {}) {
   let cursor = 0;
   const init = vi.fn(async () => undefined);
@@ -64,7 +66,8 @@ function createHarness(input: {
       cursor = Math.max(cursor, quarantineInput.globalSequence);
     },
   );
-  const claimDue = vi.fn(async () => []);
+  const claimDue = vi.fn(async () => input.claimedStates ?? []);
+  const markIneligible = vi.fn(async () => undefined);
   const reviveThrottled = vi.fn(async () => 0);
   const applyRunStarted = vi.fn(async () => undefined);
   const applyRunFinished = vi.fn(async () => undefined);
@@ -74,6 +77,7 @@ function createHarness(input: {
     advanceConsumerCursor,
     quarantineEnvelopeAndAdvanceCursor,
     claimDue,
+    markIneligible,
     reviveThrottled,
     applyRunStarted,
     applyRunFinished,
@@ -86,6 +90,7 @@ function createHarness(input: {
   const projectionGet = vi.fn(input.projection ?? (async () => null));
   const info = vi.fn();
   const warn = vi.fn();
+  const dispatch = vi.fn();
   const config = {
     ...MEMORY_CONSOLIDATION_DEFAULTS,
     enabled: input.configEnabled ?? true,
@@ -99,7 +104,7 @@ function createHarness(input: {
     projectionStore: { get: projectionGet },
     userStore: { findById: vi.fn((id: string) => ({ id, username: 'u1', role: 'user' })) },
     isTenantEnabled: input.tenantEnabled ?? (() => true),
-    dispatch: vi.fn() as never,
+    dispatch: dispatch as never,
     agentCwd: '/tmp',
     getConfig: () => config,
     logger: { info, warn },
@@ -113,11 +118,13 @@ function createHarness(input: {
     advanceConsumerCursor,
     quarantineEnvelopeAndAdvanceCursor,
     claimDue,
+    markIneligible,
     reviveThrottled,
     applyRunStarted,
     applyRunFinished,
     listGlobalPage,
     projectionGet,
+    dispatch,
     info,
     warn,
   };
@@ -127,6 +134,12 @@ async function scanOnce(engine: MemoryConsolidationEngine): Promise<void> {
   const testable = engine as unknown as TestableEngine;
   testable.stopped = false;
   await testable.scanOnce();
+}
+
+async function workOnce(engine: MemoryConsolidationEngine): Promise<void> {
+  const testable = engine as unknown as TestableEngine;
+  testable.stopped = false;
+  await testable.workOnce();
 }
 
 afterEach(() => {
@@ -277,5 +290,50 @@ describe('MemoryConsolidationEngine scanner', () => {
     expect(harness.projectionGet).toHaveBeenCalledOnce();
     expect(harness.getCursor()).toBe(0);
     expect(harness.advanceConsumerCursor).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
+  it.each([
+    { sessionSource: 'taskboard_execution', memoryAutomationEligible: true },
+    { memoryAutomationEligible: false },
+  ])('skips forged v2 projection with %j', async (marker) => {
+    const event = boundaryEvent({ globalSequence: 900 });
+    const harness = createHarness({
+      events: [event],
+      projection: async () => ({
+        sessionId: event.sessionId, tenantId: event.tenantId, userId: 'u1', username: 'alice',
+        channel: 'web', kind: 'user', workspaceId: 'ws1',
+        metaJson: { memoryPolicyVersion: 'v2', ...marker },
+      }),
+    });
+    await scanOnce(harness.engine);
+    expect(harness.applyRunStarted).not.toHaveBeenCalled();
+    expect(harness.applyRunFinished).not.toHaveBeenCalled();
+    expect(harness.getCursor()).toBe(900);
+  });
+
+  it('discards a previously queued TaskBoard backlog when the worker claims it', async () => {
+    const state: ConsolidationState = {
+      tenantId: 't-enabled', userId: 'u1', workspaceId: 'ws1', sessionId: 'taskboard-review-1',
+      processedSessionSequence: 0, targetSessionSequence: 42,
+      firstPendingAt: '2026-08-19T00:00:00.000Z', dueAt: '2026-08-19T00:10:00.000Z',
+      lastActivityAt: '2026-08-19T00:00:00.000Z', activeRunIds: [], status: 'running', attempts: 0,
+      nextAttemptAt: null, leaseOwner: 'worker-1', leaseExpiresAt: null, promptVersion: null,
+    };
+    const harness = createHarness({
+      claimedStates: [state],
+      projection: async () => ({
+        sessionId: state.sessionId, tenantId: state.tenantId, userId: state.userId, username: 'alice',
+        channel: 'web', kind: 'user', workspaceId: state.workspaceId,
+        metaJson: { memoryPolicyVersion: 'v2', sessionSource: 'taskboard_execution', memoryAutomationEligible: false },
+      }),
+    });
+
+    await workOnce(harness.engine);
+
+    expect(harness.markIneligible).toHaveBeenCalledWith({ tenantId: state.tenantId, sessionId: state.sessionId });
+    expect(harness.dispatch).not.toHaveBeenCalled();
   });
 });

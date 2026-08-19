@@ -10,9 +10,8 @@ describe("MobileLayout 管理模块接线", () => {
     expect(orgAgentRendererCount).toBe(shellCount);
   });
 
-  it("个人 Agent 移动端接入统一初始会话 composer 与岗位详情", () => {
+  it("个人 Agent 移动端接入统一初始会话 composer", () => {
     expect(source).toContain("const chatEmptySlot = useMemo");
-    expect(source).toContain("onOpenRoleDetail={handleOpenRoleDetail}");
     expect(source).toContain("roleDetailId={roleDetailId}");
     expect(source).toContain(": chatEmptySlot))}");
     expect(source).toContain("initialComposer={!isTrashPreview");

@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { AcsOrchestratorConfig } from './config.js';
 import type { Kubectl, KubectlResult } from './kubectl.js';
 import { Provisioner } from './provision.js';
+import { RUNTIME_ISOLATION_POLICY_DIGEST } from 'server/runtime/runtimeIsolationEvidence.js';
 import type { SandboxManager } from './sandboxManager.js';
 
 describe('Provisioner runtime bootstrap', () => {
@@ -73,6 +74,51 @@ describe('Provisioner runtime bootstrap', () => {
     expect(calls.find((call) => call.args.includes('/app/acs-orchestrator/src/sandboxRunner.ts'))).toBeTruthy();
   });
 
+  it('attests the exact SandboxRef returned by ensureRunning and binds every run identity field', async () => {
+    const calls: Array<{ args: string[]; input?: string }> = [];
+    const manager = sandboxManagerStub();
+    const probe = vi.spyOn(manager, 'probeNetworkPolicyForRef');
+    const provisioner = new Provisioner(baseConfig(), kubectlStub(calls), manager, () => new Set());
+    const requirement = {
+      tenantId: 'tenant-1', taskId: 'task-1', runId: 'run-1', sessionId: 'session-123',
+      workspaceId: 'ws_kaiyan__test', policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST,
+    };
+
+    const result = await provisioner.provision({
+      workspaceId: requirement.workspaceId,
+      sessionId: requirement.sessionId,
+      mountSubPath: 'workspaces/kaiyan/u-1',
+      runtimeIsolationRequirement: requirement,
+    });
+
+    expect(result.status).toBe('ok');
+    expect(probe).toHaveBeenCalledWith(expect.objectContaining({ name: 'as-session-123' }));
+    expect(result.metadata.runtimeIsolationEvidence).toMatchObject({
+      ...requirement,
+      sandboxName: 'as-session-123',
+      sandboxScopeId: 'ws_kaiyan__test',
+    });
+  });
+
+  it('fails closed when the actual runtime SandboxRef breaks an isolation condition', async () => {
+    const calls: Array<{ args: string[]; input?: string }> = [];
+    const manager = sandboxManagerStub();
+    vi.spyOn(manager, 'probeNetworkPolicyForRef').mockResolvedValueOnce(validPolicy({ metadataExitCode: 0 }));
+    const provisioner = new Provisioner(baseConfig(), kubectlStub(calls), manager, () => new Set());
+
+    const result = await provisioner.provision({
+      workspaceId: 'ws_kaiyan__test',
+      sessionId: 'session-123',
+      runtimeIsolationRequirement: {
+        tenantId: 'tenant-1', taskId: 'task-1', runId: 'run-1', sessionId: 'session-123',
+        workspaceId: 'ws_kaiyan__test', policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST,
+      },
+    });
+
+    expect(result).toMatchObject({ status: 'error', error: 'actual runtime sandbox isolation is not enforced' });
+    expect(result.metadata).not.toHaveProperty('runtimeIsolationEvidence');
+  });
+
   it('coalesces concurrent provisions for the same sandbox and recipe', async () => {
     const calls: Array<{ args: string[]; input?: string }> = [];
     let releaseBootstrap!: () => void;
@@ -133,7 +179,29 @@ function sandboxManagerStub(): SandboxManager {
         mountSubPath: 'workspaces/kaiyan/u-1',
       };
     },
+    async probeNetworkPolicyForRef() {
+      return validPolicy();
+    },
   } as unknown as SandboxManager;
+}
+
+function validPolicy(options: { metadataExitCode?: number } = {}) {
+  const blocked = { exitCode: 1, signal: null, stdout: '', stderr: 'blocked' };
+  return {
+    desiredPolicy: { mode: 'public-egress', denyPrivateNetworks: true },
+    effectivePolicy: {
+      enforcement: 'enforced', privateEgressBlocked: true, metadataBlocked: true,
+      dnsRebindingProtected: true,
+    },
+    probe: {
+      checks: {
+        publicRegistry: { exitCode: 0, signal: null, stdout: 'ok', stderr: '' },
+        metadata: { ...blocked, exitCode: options.metadataExitCode ?? 1 },
+        privateApi: blocked,
+        dnsRebinding: blocked,
+      },
+    },
+  } as any;
 }
 
 function kubectlStub(

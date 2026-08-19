@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { pickSoleReadyTenantHandId, type HandRecord } from '../runtime/handStore.js';
+import {
+  pickSoleReadyTenantHandId,
+  selectRuntimeHandRoute,
+  type HandRecord,
+} from '../runtime/handStore.js';
+import { RUNTIME_ISOLATION_POLICY_DIGEST } from '../runtime/runtimeIsolationEvidence.js';
 
 function makeHand(overrides: Partial<HandRecord>): HandRecord {
   return {
@@ -65,5 +70,64 @@ describe('pickSoleReadyTenantHandId (B2)', () => {
   it('treats empty tenantRemoteHandId string as not a candidate', () => {
     const blank = makeHand({ handId: 'session-1:blank', metadata: { tenantRemoteHandId: '' } });
     expect(pickSoleReadyTenantHandId([blank])).toBeUndefined();
+  });
+
+  it('routes an attested run only to its exact ready default hand even beside the sole ready tenant hand', () => {
+    const runId = 'run-attested';
+    const tenant = makeHand({ handId: 'session-1:tenant-legacy' });
+    const attested = makeHand({
+      handId: 'session-1:server-remote',
+      runId,
+      metadata: {
+        registeredBy: 'rawRuntimeRunDispatch',
+        runtimeIsolationAttested: true,
+        runId,
+        policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST,
+        sandboxName: 'as-attested-default',
+        sandboxScopeId: 'workspace-1::session-1',
+      },
+    });
+    const requirement = {
+      tenantId: 'tenant-1',
+      taskId: 'task-1',
+      runId,
+      sessionId: 'session-1',
+      workspaceId: 'workspace-1',
+      policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST,
+    };
+
+    expect(selectRuntimeHandRoute([tenant, attested], {
+      runId,
+      runtimeIsolationRequirement: requirement,
+    })).toEqual({ kind: 'ready', handId: attested.handId, attested: true });
+  });
+
+  it('fails closed when an attested run has no exact ready default hand', () => {
+    const runId = 'run-attested';
+    const requirement = {
+      tenantId: 'tenant-1',
+      taskId: 'task-1',
+      runId,
+      sessionId: 'session-1',
+      workspaceId: 'workspace-1',
+      policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST,
+    };
+    const tenant = makeHand({ handId: 'session-1:tenant-legacy' });
+    const staleDefault = makeHand({
+      handId: 'session-1:server-remote',
+      runId: 'run-old',
+      metadata: {
+        runtimeIsolationAttested: true,
+        runId: 'run-old',
+        policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST,
+        sandboxName: 'as-stale-default',
+        sandboxScopeId: 'workspace-1::session-1',
+      },
+    });
+
+    expect(selectRuntimeHandRoute([tenant], { runId, runtimeIsolationRequirement: requirement }))
+      .toEqual({ kind: 'blocked', message: 'RUNTIME_ISOLATION_ATTESTED_HAND_MISSING' });
+    expect(selectRuntimeHandRoute([tenant, staleDefault], { runId, runtimeIsolationRequirement: requirement }))
+      .toEqual({ kind: 'blocked', message: 'RUNTIME_ISOLATION_ATTESTED_HAND_MISSING' });
   });
 });

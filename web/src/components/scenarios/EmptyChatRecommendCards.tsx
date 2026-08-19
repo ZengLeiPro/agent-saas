@@ -1,11 +1,10 @@
 import type { ReactNode } from "react";
-import { ArrowRight, ChevronRight, CirclePlay, Link2, Radar, Sparkles, Zap } from "lucide-react";
+import { ArrowRight, ChevronRight } from "lucide-react";
 import {
   buildScenarioPrompt,
   sanitizeScenario,
   type CatalogScenarioPublic,
   type ScenarioItem,
-  type ScenarioRole,
 } from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -24,7 +23,6 @@ interface EmptyChatRecommendCardsProps {
   onTryScenario: (prompt: string, scenario: ScenarioItem) => void;
   onStartWorkflow?: (starterMessage: string, scenario: CatalogScenarioPublic) => void;
   onViewAll: () => void;
-  onOpenRoleDetail?: (roleId: string) => void;
 }
 
 const ahaScore: Record<NonNullable<ScenarioItem["firstAhaMode"]>, number> = {
@@ -70,22 +68,15 @@ export function pickRoleTop3(
   return [...roleCandidates, ...fallbackCandidates].slice(0, count);
 }
 
-function roleName(roles: ScenarioRole[], roleId: string | null): string {
-  if (!roleId) return "为你推荐";
-  return roles.find((role) => role.id === roleId)?.name ?? "为你推荐";
-}
-
 function SuggestionCard({
   title,
   action,
   tone,
-  icon,
   onClick,
 }: {
   title: string;
   action: string;
   tone: SuggestionTone;
-  icon: ReactNode;
   onClick: () => void;
 }) {
   return (
@@ -94,9 +85,6 @@ function SuggestionCard({
       className="flex min-h-[56px] min-w-0 items-center gap-2.5 rounded-2xl border bg-card/70 px-3 py-2 text-left transition-[transform,border-color,background-color,box-shadow] hover:-translate-y-0.5 hover:border-brand-200 hover:bg-brand-50/35 hover:shadow-sm dark:hover:bg-brand-900/15"
       onClick={onClick}
     >
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/35">
-        {icon}
-      </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-xs font-semibold text-foreground sm:text-sm">{title}</span>
         <span className={cn("mt-0.5 block text-[11px] font-medium", toneClass[tone])}>{action}</span>
@@ -107,26 +95,16 @@ function SuggestionCard({
 }
 
 function SuggestionGrid({
-  label,
   children,
   onViewAll,
-  onOpenRoleDetail,
 }: {
-  label: string;
   children: ReactNode;
   onViewAll: () => void;
-  onOpenRoleDetail?: () => void;
 }) {
   return (
     <div className="content-container pt-4 sm:pt-5">
-      <div className="mb-2 text-left text-[11px] font-medium tracking-wide text-muted-foreground">{label}</div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">{children}</div>
-      <div className="mt-2 flex justify-center gap-1">
-        {onOpenRoleDetail && (
-          <Button type="button" variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground" onClick={onOpenRoleDetail}>
-            岗位详情
-          </Button>
-        )}
+      <div className="mt-2 flex justify-center">
         <Button type="button" variant="ghost" size="sm" className="h-8 gap-1 text-xs text-muted-foreground" onClick={onViewAll}>
           查看全部能力
           <ArrowRight className="size-3.5" />
@@ -139,25 +117,23 @@ function SuggestionGrid({
 function workflowActionMeta(scenario: CatalogScenarioPublic, canReplay: boolean): {
   label: string;
   tone: SuggestionTone;
-  icon: ReactNode;
 } {
   if (canReplay) {
-    return { label: "看回放", tone: "primary", icon: <CirclePlay className="size-4" /> };
+    return { label: "看回放", tone: "primary" };
   }
   if (scenario.launch.startMode === "chat" && scenario.readiness === "D0_CURRENT") {
-    return { label: "直接试", tone: "success", icon: <Zap className="size-4" /> };
+    return { label: "直接试", tone: "success" };
   }
   if (scenario.launch.startMode === "connector" || scenario.readiness === "D1_CONNECTOR") {
-    return { label: "需接入", tone: "warning", icon: <Link2 className="size-4" /> };
+    return { label: "需接入", tone: "warning" };
   }
-  return { label: "了解方案", tone: "muted", icon: <Sparkles className="size-4" /> };
+  return { label: "了解方案", tone: "muted" };
 }
 
 export function EmptyChatRecommendCards({
   onTryScenario,
   onStartWorkflow,
   onViewAll,
-  onOpenRoleDetail,
 }: EmptyChatRecommendCardsProps) {
   const { library, workflowLibrary, loading, error } = useScenarioLibrary();
   const { user } = useAuth();
@@ -207,11 +183,7 @@ export function EmptyChatRecommendCards({
     };
 
     return (
-      <SuggestionGrid
-        label={`${roleName(workflowLibrary.roles, matchedRoleId)}适合开始的 3 件事`}
-        onViewAll={onViewAll}
-        onOpenRoleDetail={matchedRoleId && onOpenRoleDetail ? () => onOpenRoleDetail(matchedRoleId) : undefined}
-      >
+      <SuggestionGrid onViewAll={onViewAll}>
         {cards.map((scenario) => {
           const canReplay = hasReplayScript(scenario);
           const meta = workflowActionMeta(scenario, canReplay);
@@ -232,7 +204,6 @@ export function EmptyChatRecommendCards({
               title={scenario.title}
               action={meta.label}
               tone={meta.tone}
-              icon={meta.icon}
               onClick={handleClick}
             />
           );
@@ -256,18 +227,13 @@ export function EmptyChatRecommendCards({
   const cards = recommended.slice(0, RECOMMENDATION_COUNT).map(safeScenario);
 
   return (
-    <SuggestionGrid
-      label={`${roleName(library.roles, matchedRoleId)}适合开始的 3 件事`}
-      onViewAll={onViewAll}
-      onOpenRoleDetail={matchedRoleId && onOpenRoleDetail ? () => onOpenRoleDetail(matchedRoleId) : undefined}
-    >
+    <SuggestionGrid onViewAll={onViewAll}>
       {cards.map((scenario) => (
         <SuggestionCard
           key={scenario.id}
           title={scenario.title}
           action={scenario.dataDependencyLevel === "zero" || !scenario.dataDependencyLevel ? "直接试" : "预填任务"}
           tone={scenario.dataDependencyLevel === "zero" || !scenario.dataDependencyLevel ? "success" : "muted"}
-          icon={scenario.mode === "recurring" ? <Radar className="size-4" /> : <Sparkles className="size-4" />}
           onClick={() => onTryScenario(buildScenarioPrompt(scenario), scenario)}
         />
       ))}

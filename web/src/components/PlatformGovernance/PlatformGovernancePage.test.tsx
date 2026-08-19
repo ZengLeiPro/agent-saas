@@ -302,6 +302,6 @@ describe("PlatformOrganizationGovernance", () => {
   it("API 失败不回退旧 TenantSettings", async () => {
     mocks.getEntitlements.mockRejectedValue(new Error("unavailable"));
     render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "overview" })} />);
-    expect(await screen.findByText("权威治理结论暂不可获得")).toBeTruthy();
+    expect(await screen.findByText("权限服务暂不可用")).toBeTruthy();
   });
 });

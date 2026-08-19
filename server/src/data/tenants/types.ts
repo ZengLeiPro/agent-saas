@@ -78,8 +78,8 @@ export interface TenantSettings {
     memoryConsolidationEnabled?: boolean;
     /**
      * 记忆写入职责剥离 v2（2026-07-29 批次）。默认关闭；开启后该租户**新会话**
-     * 固定 memoryPolicyVersion=v2：主 Agent 不再自由写记忆文件、启用
-     * MemoryCommand，static 提示语用 v2 版。已有会话不受影响（会话级 pin）。
+     * 固定 memoryPolicyVersion=v2：主 Agent 仅消费记忆，后台记忆服务是唯一写入者，
+     * static 提示语用 v2 版。已有会话不受影响（会话级 pin）。
      */
     memoryWriteDelegationEnabled?: boolean;
     /**

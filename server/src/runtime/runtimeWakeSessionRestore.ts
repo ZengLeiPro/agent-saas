@@ -6,6 +6,7 @@ const PROFILE_BINDING_KEYS = new Set<AgentProfileBindingKey>([
   'main',
   'org_agent',
   'memory_poll',
+  'memory_consolidate',
   'subagent_general',
   'subagent_explore',
   'background_general',

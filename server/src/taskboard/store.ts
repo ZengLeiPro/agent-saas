@@ -52,10 +52,13 @@ import {
   updateTaskBranchFromExecution as updateStoredTaskBranchFromExecution,
 } from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
+import { loadIntegrationCandidateProjection } from './integrationCandidateProjection.js';
+import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import { deleteStoredTask } from './storeTaskDelete.js';
 import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
 import {
   allowedActionsForRole,
+  appendModelAssignments,
   normalizeBoardPrompt,
   normalizeModel,
   normalizeRepositoryConfig,
@@ -87,9 +90,9 @@ import { resolveExecutionV2 as resolveStoredExecutionV2 } from './workflow/resol
 import { resumeBlockedTask as resumeStoredBlockedTask } from './workflow/resumeService.js';
 import {
   assertActiveBoard,
+  assertBoardRole,
   assertExpectedVersion,
   assertWritableTask,
-  applyCommentAuthorDisplayName,
   mapActiveBoardNameError,
   normalizeAttachments,
   normalizeLabels,
@@ -100,7 +103,7 @@ import {
   sanitizeIdentifier,
   validateMoveNeighbors, visibleCommentPredicate,
 } from './storeHelpers.js';
-import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns } from './archiveGuard.js';
+import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns, assertTaskHasNoExecutionHistory } from './archiveGuard.js';
 import { deleteComment as deleteStoredComment, updateComment as updateStoredComment } from './storeComments.js';
 import {
   getExecutionContextBySessionId as getStoredExecutionContextBySessionId,
@@ -108,13 +111,17 @@ import {
 } from './storeExecutions.js';
 import {
   listBoards as listStoredBoards,
+  listComments as listStoredComments,
   listTasks as listStoredTasks,
   searchBoards as searchStoredBoards,
   searchComments as searchStoredComments,
   searchTasks as searchStoredTasks,
 } from './storeSearch.js';
 import { initializeTaskboardStore } from './storeSchema.js';
-import { requireTaskWithBoard as requireStoredTaskWithBoard } from './storeTaskAccess.js';
+import {
+  loadBoard as loadStoredBoard,
+  requireTaskWithBoard as requireStoredTaskWithBoard,
+} from './storeTaskAccess.js';
 import {
   claimWorkflowCancellations as claimStoredWorkflowCancellations,
   finishWorkflowCancellation as finishStoredWorkflowCancellation,
@@ -128,7 +135,6 @@ import {
 } from './storeExecutionLifecycle.js';
 import {
   TaskboardNotFoundError,
-  TaskboardPermissionError,
   TaskboardValidationError,
   type TaskboardBoardSearchFilter,
   type TaskboardContinuationContext,
@@ -251,6 +257,17 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return listStoredIntegrationSources(this, identity, integrationTaskId);
   }
 
+  /**
+   * Loads the durable v3 candidate projection after checking task visibility
+   * and workflow eligibility through the store's public task access path.
+   */
+  getIntegrationCandidate(
+    identity: TaskboardIdentity, integrationTaskId: string,
+    options?: { includeHistory?: boolean; page?: number; pageSize?: number },
+  ) {
+    return loadIntegrationCandidateProjection(this, identity, integrationTaskId, options);
+  }
+
   resumeBlockedTask(
     identity: TaskboardIdentity,
     taskId: string,
@@ -277,6 +294,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
 
   setRepositoryProvider(provider: RepositoryProvider): void {
     this.repositoryProvider = provider;
+  }
+
+  getRepositoryProvider(): RepositoryProvider | undefined {
+    return this.repositoryProvider;
   }
 
   attachExecutionPullRequestV2(
@@ -649,10 +670,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       await client.query(
         `INSERT INTO ${this.tasksTable}
            (id, board_id, identifier, kind, title, description, branch, attachments, status, priority, labels,
-            sort_order, due_at, model, provider_pull_request_id, pull_request_number,
+            sort_order, due_at, model, stage_models, provider_pull_request_id, pull_request_number,
             reviewed_subject_digest, creator_user_id, creator_name, completed_at, client_request_id, version)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-                 CASE WHEN $9='done' THEN now() END,$20,1)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20,
+                 CASE WHEN $9='done' THEN now() END,$21,1)`,
         [
           taskId,
           boardId,
@@ -667,7 +688,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           normalizeLabels(input.labels),
           sortOrder,
           input.dueAt ?? null,
-          normalizeModel(input.model),
+          normalizeModel(input.stageModels !== undefined ? undefined : input.model),
+          stageModelsToJson(input.stageModels),
           optionalText(input.providerPullRequestId),
           input.pullRequestNumber ?? null,
           optionalText(input.reviewedSubjectDigest),
@@ -693,6 +715,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       assertBoardRole(loaded.boardRole, kindMutation.requiredRole);
       assertExpectedVersion(loaded.task, input.expectedVersion);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
+      if (input.title !== undefined || input.description !== undefined || input.attachments !== undefined) {
+        await assertTaskHasNoExecutionHistory(this, client, taskId);
+      }
       if (kindMutation.promoting) await assertTaskHasNoActiveRuns(this, client, taskId);
       if (loaded.task.kind === 'advisory' && !kindMutation.promoting && input.branch !== undefined) {
         throw new TaskboardValidationError(
@@ -713,7 +738,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (
         input.title === undefined && input.description === undefined && input.kind === undefined
         && input.branch === undefined && input.attachments === undefined && input.priority === undefined && input.labels === undefined
-        && input.dueAt === undefined && input.model === undefined
+        && input.dueAt === undefined && input.model === undefined && input.stageModels === undefined
       ) {
         throw new TaskboardValidationError('No task changes supplied');
       }
@@ -748,10 +773,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         params.push(input.dueAt);
         assignments.push(`due_at=$${params.length}`);
       }
-      if (input.model !== undefined) {
-        params.push(normalizeModel(input.model));
-        assignments.push(`model=$${params.length}`);
-      }
+      appendModelAssignments(params, assignments, input.model, input.stageModels);
       await client.query(
         `UPDATE ${this.tasksTable} t
             SET ${assignments.join(', ')}
@@ -873,16 +895,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
 
   async listComments(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardComment[]> {
     await this.requireTask(this.pool, identity, taskId, false);
-    const result = await this.pool.query(
-      `SELECT c.*
-         FROM ${this.commentsTable} c
-         JOIN ${this.tasksTable} t ON t.id=c.task_id
-         JOIN ${this.boardsTable} b ON b.id=t.board_id
-        WHERE c.task_id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization') AND ${visibleCommentPredicate('c', this.changesTable)}
-        ORDER BY c.created_at, c.id`,
-      [taskId, identity.tenantId, identity.ownerUserId],
-    );
-    return result.rows.map((row) => applyCommentAuthorDisplayName(rowToComment(row), identity));
+    return listStoredComments(this, identity, taskId);
   }
 
   async searchComments(identity: TaskboardIdentity, taskId: string, filter: TaskboardPageFilter = {}): Promise<TaskboardPage<TaskBoardComment>> { return searchStoredComments(this, identity, taskId, filter); }
@@ -1091,7 +1104,20 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           archive ? 'TASKBOARD_TASK_ARCHIVED' : 'TASKBOARD_TASK_NOT_ARCHIVED',
         );
       }
-      if (archive) await assertTaskHasNoActiveRuns(this, client, taskId);
+      if (archive) {
+        await assertTaskHasNoActiveRuns(this, client, taskId);
+        if (loaded.task.kind === 'integration' && (loaded.task.workflowVersion ?? 2) === 3) {
+          const { candidatesTable } = integrationCandidateTableNames(this.integrationSourcesTable);
+          const candidate = await client.query(
+            `SELECT state FROM ${candidatesTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId]);
+          if (!candidate.rows[0] || !['merged','canceled'].includes(String(candidate.rows[0].state))) {
+            throw new TaskboardValidationError(
+              'Workflow v3 integration must be canceled or merged before archive',
+              'TASKBOARD_V3_ARCHIVE_REQUIRES_TERMINAL_CANDIDATE',
+            );
+          }
+        }
+      }
       await client.query(
         `UPDATE ${this.tasksTable} t
             SET archived_at=${archive ? 'now()' : 'NULL'}, version=t.version+1, updated_at=now()
@@ -1139,7 +1165,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     boardId: string,
     forUpdate: boolean,
   ): Promise<TaskBoard> {
-    return this.loadBoard(db, identity, boardId, forUpdate, false);
+    return loadStoredBoard(this, db, identity, boardId, forUpdate, false);
   }
 
   private requireOwnedBoard(
@@ -1148,29 +1174,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     boardId: string,
     forUpdate: boolean,
   ): Promise<TaskBoard> {
-    return this.loadBoard(db, identity, boardId, forUpdate, true);
-  }
-
-  private async loadBoard(
-    db: PgPool | PoolClient,
-    identity: TaskboardIdentity,
-    boardId: string,
-    forUpdate: boolean,
-    ownerOnly: boolean,
-  ): Promise<TaskBoard> {
-    const result = await db.query(
-      `SELECT b.id, b.owner_user_id, b.name, b.description, b.visibility, b.prompt, b.model, b.stage_models, b.stage_prompts,
-              b.repository, b.integration_policy, b.version, b.archived_at, b.created_at, b.updated_at,
-              CASE WHEN b.owner_user_id=$3 THEN 'owner' ELSE COALESCE(m.role,'viewer') END AS board_role
-         FROM ${this.boardsTable} b
-         LEFT JOIN ${this.membersTable} m ON m.board_id=b.id AND m.user_id=$3
-        WHERE b.id=$1 AND b.tenant_id=$2
-          AND (b.owner_user_id=$3 OR ($4::boolean=false AND b.visibility='organization'))
-        ${forUpdate ? 'FOR UPDATE OF b' : ''}`,
-      [boardId, identity.tenantId, identity.ownerUserId, ownerOnly],
-    );
-    if (!result.rows[0]) throw new TaskboardNotFoundError('Board not found');
-    return rowToBoard(result.rows[0], identity.ownerUserId);
+    return loadStoredBoard(this, db, identity, boardId, forUpdate, true);
   }
 
   async requireTask(
@@ -1204,16 +1208,5 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     } finally {
       client.release();
     }
-  }
-}
-
-function assertBoardRole(
-  role: TaskBoard['role'],
-  minimum: 'editor' | 'maintainer' | 'owner',
-): void {
-  const rank = role === 'owner' ? 4 : role === 'maintainer' ? 3 : role === 'editor' ? 2 : 1;
-  const required = minimum === 'owner' ? 4 : minimum === 'maintainer' ? 3 : 2;
-  if (rank < required) {
-    throw new TaskboardPermissionError('Taskboard role does not allow this operation');
   }
 }

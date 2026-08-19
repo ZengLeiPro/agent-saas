@@ -122,11 +122,9 @@ export function OrgAgentComposerChip({
 function InitialConversationHeader({
   agentProfile,
   orgAgent,
-  compact,
 }: {
   agentProfile?: AgentProfile | null;
   orgAgent?: OrgAgentSummary | null;
-  compact: boolean;
 }) {
   const agentName = orgAgent?.name || agentProfile?.name || "开沿 Agent";
 
@@ -152,16 +150,6 @@ function InitialConversationHeader({
       <h1 className="text-[28px] font-semibold tracking-[-0.035em] text-foreground sm:text-4xl">
         {orgAgent ? `要让${orgAgent.name}处理什么？` : "今天先推进哪件事？"}
       </h1>
-      <div className={cn(
-        "grid transition-[grid-template-rows,opacity,margin] duration-200 ease-out",
-        compact ? "mt-0 grid-rows-[0fr] opacity-0" : "mt-2 grid-rows-[1fr] opacity-100 sm:mt-3",
-      )}>
-        <p className="max-w-2xl overflow-hidden text-sm leading-6 text-muted-foreground">
-          {orgAgent
-            ? orgAgent.description || "它会在组织配置的职责和数据权限内完成工作。"
-            : "直接描述目标，或从一个开箱任务开始。"}
-        </p>
-      </div>
     </div>
   );
 }
@@ -333,7 +321,7 @@ export function ChatTabContent({
           data-initial-conversation={isInitialConversation ? "true" : "false"}
           className={cn(
             "flex min-h-0 flex-col justify-center transition-[flex-grow,padding] duration-300 ease-out",
-            isInitialConversation ? "grow overflow-y-auto overscroll-y-contain py-6 sm:py-10" : "shrink-0 grow-0",
+            isInitialConversation ? "initial-conversation-content grow overflow-y-auto overscroll-y-contain py-6 sm:py-10" : "shrink-0 grow-0",
           )}
         >
           <div className="w-full">
@@ -348,7 +336,6 @@ export function ChatTabContent({
                   <InitialConversationHeader
                     agentProfile={agentProfile}
                     orgAgent={orgAgent}
-                    compact={hasComposerDraft}
                   />
                 </div>
               </div>

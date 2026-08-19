@@ -170,11 +170,52 @@ describe('meta-only session list merging and projection', () => {
     }
   });
 
+  it('hides memory consolidation sessions from the file-backed list', async () => {
+    const normal = await writeRuntimeSession({ content: 'normal prompt' });
+    const hidden = await writeRuntimeSession({
+      content: 'memory digest',
+      metaPatch: { sessionSource: 'memory_consolidation', memoryAutomationEligible: false },
+    });
+    const legacyHidden = await writeRuntimeSession({
+      content: 'legacy memory digest',
+      metaPatch: { profileBindingKey: 'memory_poll' },
+    });
+
+    const { server, baseUrl } = await startServer(agentCwd);
+    try {
+      const response = await listSessions(baseUrl, '?fresh=1');
+      expect(response.sessions.map((session) => session.sessionId)).toContain(normal.sessionId);
+      expect(response.sessions.map((session) => session.sessionId)).not.toContain(hidden.sessionId);
+      expect(response.sessions.map((session) => session.sessionId)).not.toContain(legacyHidden.sessionId);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
   it('uses the runtime session projection instead of scanning every transcript', async () => {
     const sessionId = randomUUID();
     const updatedAt = '2026-07-21T00:30:00.000Z';
     const list = vi.fn(async () => ({
       items: [{
+        sessionId: randomUUID(),
+        tenantId: TEST_USER.tenantId,
+        userId: TEST_USER.id,
+        username: TEST_USER.username,
+        channel: 'web',
+        kind: 'user' as const,
+        createdAt: updatedAt,
+        updatedAt,
+        metaJson: {
+          userId: TEST_USER.id,
+          username: TEST_USER.username,
+          tenantId: TEST_USER.tenantId,
+          channel: 'web',
+          createdAt: updatedAt,
+          updatedAt,
+          sessionSource: 'memory_consolidation' as const,
+          memoryAutomationEligible: false,
+        },
+      }, {
         sessionId,
         tenantId: TEST_USER.tenantId,
         userId: TEST_USER.id,

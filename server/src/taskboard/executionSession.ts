@@ -49,6 +49,9 @@ export async function reuseTaskboardSession(input: {
     executionTarget,
     workspaceId: deriveStableWorkspaceId(workspaceUser, sessionId),
     status: 'running',
+    sessionSource: 'taskboard_execution',
+    memoryAutomationEligible: false,
+    memoryPolicyVersion: 'v2',
   });
   if (!existing) return fresh;
   return {
@@ -59,6 +62,9 @@ export async function reuseTaskboardSession(input: {
     executionTarget,
     workspaceId: existing.workspaceId ?? deriveStableWorkspaceId(workspaceUser, sessionId),
     status: 'running',
+    sessionSource: 'taskboard_execution',
+    memoryAutomationEligible: false,
+    memoryPolicyVersion: 'v2',
     updatedAt: new Date().toISOString(),
   };
 }

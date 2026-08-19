@@ -5,6 +5,11 @@ import type { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { Kubectl } from './kubectl.js';
 import type { ProvisioningLogEntry, SandboxRunnerFinalOutput, WorkspaceRecipe } from './protocol.js';
 import type { SandboxManager, SandboxResourceOverride } from './sandboxManager.js';
+import {
+  RUNTIME_ISOLATION_EVIDENCE_TTL_MS,
+  RUNTIME_ISOLATION_POLICY_DIGEST,
+  type RuntimeIsolationEvidence,
+} from 'server/runtime/runtimeIsolationEvidence.js';
 
 const SETUP_DEFAULT_TIMEOUT_MS = 60_000;
 const RUNTIME_BOOTSTRAP_TIMEOUT_MS = 360_000;
@@ -108,6 +113,32 @@ export class Provisioner {
         status: 'ok',
         note: `Sandbox ${ref.name} is running`,
       });
+      let runtimeIsolationEvidence: RuntimeIsolationEvidence | undefined;
+      if (recipe.runtimeIsolationRequirement) {
+        const requirement = recipe.runtimeIsolationRequirement;
+        if (requirement.policyDigest !== RUNTIME_ISOLATION_POLICY_DIGEST) {
+          logs.push({ step: 'runtime_isolation_attestation', status: 'error', stderr: 'unsupported policy digest' });
+          return this.error('runtime isolation policy digest mismatch', logs, recipeHash, 'runtime_isolation_attestation');
+        }
+        const policy = await this.sandboxManager.probeNetworkPolicyForRef(ref);
+        if (!validRuntimeIsolationPolicy(policy)) {
+          logs.push({ step: 'runtime_isolation_attestation', status: 'error', stderr: 'actual sandbox network isolation probe failed' });
+          return this.error('actual runtime sandbox isolation is not enforced', logs, recipeHash, 'runtime_isolation_attestation');
+        }
+        const issuedAtMs = Date.now();
+        runtimeIsolationEvidence = {
+          ...requirement,
+          sandboxName: ref.name,
+          sandboxScopeId: ref.sandboxScopeId ?? ref.workspaceId,
+          issuedAt: new Date(issuedAtMs).toISOString(),
+          expiresAt: new Date(issuedAtMs + RUNTIME_ISOLATION_EVIDENCE_TTL_MS).toISOString(),
+        };
+        logs.push({
+          step: 'runtime_isolation_attestation',
+          status: 'ok',
+          note: `actual SandboxRef ${ref.name} satisfies ${requirement.policyDigest}`,
+        });
+      }
       const timeoutMs = clampTimeoutMs(recipe.resources?.timeoutMs);
       const runtimeBootstrap = await this.runRuntimeBootstrap(ref.name, recipe, Math.max(timeoutMs, RUNTIME_BOOTSTRAP_TIMEOUT_MS));
       logs.push(runtimeBootstrap);
@@ -124,7 +155,13 @@ export class Provisioner {
           return {
             status: 'ok',
             logs,
-            metadata: { recipeVersion: 1, recipeHash, sandboxName: ref.name, provisionSkipped: true },
+            metadata: {
+              recipeVersion: 1,
+              recipeHash,
+              sandboxName: ref.name,
+              provisionSkipped: true,
+              ...(runtimeIsolationEvidence ? { runtimeIsolationEvidence } : {}),
+            },
           };
         }
       }
@@ -171,7 +208,12 @@ export class Provisioner {
       return {
         status: 'ok',
         logs,
-        metadata: { recipeVersion: 1, recipeHash, sandboxName: ref.name },
+        metadata: {
+          recipeVersion: 1,
+          recipeHash,
+          sandboxName: ref.name,
+          ...(runtimeIsolationEvidence ? { runtimeIsolationEvidence } : {}),
+        },
       };
     } finally {
       releaseActive?.();
@@ -450,4 +492,29 @@ function parseMemoryToMib(value: string | undefined): number | undefined {
     case 'M': return (n * 1_000_000) / (1024 * 1024);
     default: return n;
   }
+}
+
+function validRuntimeIsolationPolicy(value: unknown): boolean {
+  if (!isRecord(value) || !isRecord(value.effectivePolicy) || !isRecord(value.probe)) return false;
+  const effective = value.effectivePolicy;
+  const checks = isRecord(value.probe.checks) ? value.probe.checks : undefined;
+  return effective.enforcement === 'enforced'
+    && effective.privateEgressBlocked === true
+    && effective.metadataBlocked === true
+    && effective.dnsRebindingProtected === true
+    && !!checks
+    && blockedProbe(checks.privateApi)
+    && blockedProbe(checks.metadata)
+    && blockedProbe(checks.dnsRebinding);
+}
+
+function blockedProbe(value: unknown): boolean {
+  return isRecord(value) && (
+    (typeof value.exitCode === 'number' && Number.isInteger(value.exitCode) && value.exitCode !== 0)
+    || (value.exitCode === null && typeof value.signal === 'string' && value.signal.length > 0)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
 }

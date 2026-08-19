@@ -68,6 +68,9 @@ describe('taskboard V2 contracts', () => {
     expect(resolveExecutionModelRef(undefined, stageModels, 'board/default', 'work')).toBe('stage/work');
     expect(resolveExecutionModelRef('task/override', stageModels, 'board/default', 'review')).toBe('task/override');
     expect(resolveExecutionModelRef(undefined, stageModels, 'board/default', 'merge')).toBe('board/default');
+    expect(resolveExecutionModelRef('task/legacy', stageModels, 'board/default', 'review', {
+      review: 'task/review',
+    })).toBe('task/review');
   });
 
   it('derives work, review and merge duties from one structured workflow contract', () => {

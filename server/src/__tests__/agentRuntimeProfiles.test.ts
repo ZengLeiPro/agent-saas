@@ -31,6 +31,7 @@ import {
   AgentRuntimeProfileResolver,
   applyAgentRuntimeProfile,
   filterAgentProfileSkills,
+  resolveAgentProfileBindingKey,
 } from '../runtime/agentProfiles.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
@@ -170,6 +171,34 @@ describe('Agent Runtime Profile schema and runtime intersection', () => {
         key === 'memory_poll' ? ['List', 'Glob', 'Grep'] : ['Glob', 'Grep'],
       ));
     }
+  });
+
+  it('keeps MemoryCommit after composing memory_consolidate tool and Agent profiles', () => {
+    expect(resolveAgentProfileBindingKey({ toolProfile: 'memory_consolidate' })).toBe('memory_consolidate');
+    const consolidate = getBuiltinProfileByBinding('memory_consolidate');
+    const narrowedConfig = structuredClone(consolidate.version.config);
+    narrowedConfig.tools.allowlist = ['MemorySearch', 'WaitForWorkspaceReady'];
+    const bound = {
+      profile: consolidate.profile,
+      version: { ...consolidate.version, config: narrowedConfig },
+      binding: {
+        profileId: consolidate.profile.profileId,
+        profileKey: consolidate.profile.profileKey,
+        profileVersionId: consolidate.version.profileVersionId,
+        profileVersionNumber: consolidate.version.versionNumber,
+        profileConfigDigest: consolidate.version.configDigest,
+        profileBindingKey: 'memory_consolidate' as const,
+        profileResolution: 'builtin' as const,
+      },
+    };
+    const inner = new StaticToolRuntime([
+      'MemorySearch', 'MemoryList', 'MemoryCommit', 'WaitForWorkspaceReady', 'Shell',
+    ].map((name) => toolDescriptor(name)));
+    const runtime = applyAgentRuntimeProfile(applyToolProfile(inner, 'memory_consolidate'), bound);
+
+    expect(runtime.list().map((tool) => tool.name)).toEqual([
+      'MemorySearch', 'MemoryList', 'MemoryCommit', 'WaitForWorkspaceReady',
+    ]);
   });
 
   it('normalizes config and keeps digest stable across key order', () => {

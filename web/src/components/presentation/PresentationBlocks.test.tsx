@@ -72,14 +72,17 @@ describe('callout', () => {
 });
 
 describe('records', () => {
-  it('rows 布局使用可横向滚动的稳定列宽，并保留品牌色标题栏与清晰卡片边界', () => {
+  it('rows 布局按内容收缩边框、共享自然列宽，并保留横向滚动兜底', () => {
     const { container } = render(<PresentationBlocks blocks={[{
       kind: 'records', layout: 'rows', title: '核对清单',
-      items: [{ label: '发票抬头', value: '一致', tag: { tone: 'success', text: '通过' } }],
-      footer: '共 1 项',
+      items: [
+        { label: '发票抬头', value: '一致', tag: { tone: 'success', text: '通过' } },
+        { label: '较长字段名称', value: '另一项值' },
+      ],
+      footer: '共 2 项',
     }]} />);
     const records = container.querySelector('[data-records-block]');
-    expect(records?.className).toContain('w-fit');
+    expect(records?.className).toContain('inline-block');
     expect(records?.className).toContain('max-w-full');
     expect(records?.className).toContain('overflow-x-auto');
     expect(records?.className).toContain('rounded-xl');
@@ -87,7 +90,14 @@ describe('records', () => {
     expect(records?.className).not.toMatch(/\bm[by]-/);
     expect(records?.getAttribute('tabindex')).toBe('0');
     expect(records?.getAttribute('aria-label')).toBe('核对清单，可横向滚动');
-    expect(records?.firstElementChild?.className).toContain('min-w-[32rem]');
+    expect(records?.firstElementChild?.className).toContain('w-max');
+    expect(records?.firstElementChild?.className).not.toContain('min-w-[32rem]');
+
+    const table = container.querySelector('[data-records-table]');
+    expect(table?.className).toContain('w-max');
+    expect(table?.className).toContain('gap-x-4');
+    expect(table?.className).toContain('grid-cols-[minmax(0,max-content)_minmax(0,max-content)_auto_auto]');
+    expect(table?.className).not.toContain('1fr');
 
     const title = container.querySelector('[data-records-title]');
     expect(title?.className).toContain('bg-primary/5');
@@ -95,16 +105,39 @@ describe('records', () => {
     expect(title?.querySelector('svg')).toBeNull();
     expect(screen.getByText('核对清单')).toBeTruthy();
     const label = screen.getByText('发票抬头');
+    expect(label.className).toContain('max-w-80');
     expect(label.className).toContain('text-muted-foreground');
+    expect(label.closest('div')?.className).toContain('grid-cols-[subgrid]');
     expect(label.closest('div')?.className).toContain('border-b');
     const row = label.closest('button');
-    expect(row?.className).toContain('grid');
-    expect(row?.className).toContain('grid-cols-[minmax(10rem,1fr)_minmax(16rem,2fr)_auto_auto]');
+    expect(row?.className).toContain('grid-cols-[subgrid]');
+    expect(row?.className).not.toContain('w-full');
     const value = screen.getByText('一致');
+    expect(value.className).toContain('max-w-[min(48rem,70vw)]');
     expect(value.className).toContain('text-foreground');
     expect(value.className).toContain('text-left');
     expect(screen.getByText('通过')).toBeTruthy();
-    expect(screen.getByText('共 1 项')).toBeTruthy();
+    expect(screen.getByText('共 2 项')).toBeTruthy();
+  });
+
+  it('grid 布局使用 max-content 轨道，不把短 facts 平均撑满容器', () => {
+    const { container } = render(<PresentationBlocks blocks={[{
+      kind: 'records', layout: 'grid', title: '订单字段',
+      items: [
+        { label: '订单', value: 'SO-1001' },
+        { label: '客户', value: '开沿科技' },
+        { label: '阶段', value: '已核验' },
+      ],
+    }]} />);
+
+    const records = container.querySelector('[data-records-block]');
+    const grid = container.querySelector('[data-records-grid]');
+    expect(records?.getAttribute('tabindex')).toBeNull();
+    expect(grid?.className).toContain('inline-grid');
+    expect(grid?.className).toContain('grid-cols-[repeat(2,minmax(0,max-content))]');
+    expect(grid?.className).toContain('sm:grid-cols-[repeat(3,minmax(0,max-content))]');
+    expect(grid?.className).toContain('gap-x-8');
+    expect(grid?.className).not.toMatch(/\bgrid-cols-[23]\b/);
   });
 
   it('checklist 使用品牌色标题栏并按 tone 显示判定图标', () => {

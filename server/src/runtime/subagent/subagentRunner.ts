@@ -53,7 +53,8 @@ import {
   visibleWorkspaceCwd,
   type RawRuntimeRunDispatchConfig,
 } from '../rawRuntimeRunDispatch.js';
-import { createRuntimeSessionRecord, type RuntimeSessionRecord } from '../sessionCatalog.js';
+import { createRuntimeSessionRecord, type MemoryPolicyVersion, type RuntimeSessionRecord } from '../sessionCatalog.js';
+import { applyMainSessionToolFilter } from '../toolProfiles.js';
 import { SessionContextService, SessionToolProvider } from '../sessionContext.js';
 import type { TenantRemoteHandAuthTokenResolver } from '../tenantRemoteHandResolver.js';
 import type { RunContext } from '../types.js';
@@ -276,6 +277,8 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       executionTarget,
       status: 'running',
       kind: 'subagent',
+      memoryPolicyVersion: parentSession?.memoryPolicyVersion ?? 'v1',
+      memoryAutomationEligible: false,
     });
     if (boundProfile && config.agentRuntimeProfileResolver) {
       childRecord = config.agentRuntimeProfileResolver.bindSessionRecord(childRecord, boundProfile);
@@ -375,6 +378,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       childEventStore: eventStore,
       agentType,
       boundProfile,
+      memoryPolicyVersion: childRecord.memoryPolicyVersion ?? 'v1',
     });
 
     const instructions = buildSubagentInstructions({
@@ -383,6 +387,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       executionTarget,
       systemPrompt: config.getSystemPrompt?.(`subagent.${agentType.id}`),
       profileSystemInstructions: boundProfile?.version.config.context.systemInstructions,
+      memoryReadOnly: childRecord.memoryPolicyVersion === 'v2',
       ...(parentSession?.orgAgentSnapshot ? {
         orgAgentName: parentSession.orgAgentSnapshot.name,
         orgAgentInstructions: parentSession.orgAgentSnapshot.instructions,
@@ -603,6 +608,7 @@ function buildSubagentToolRuntime(args: {
   childEventStore: import('../types.js').EventStore;
   agentType: SubagentTypeDefinition;
   boundProfile?: BoundAgentRuntimeProfile;
+  memoryPolicyVersion: MemoryPolicyVersion;
 }): ToolRuntime {
   const profileSkillConfig = args.boundProfile?.version.config;
   const parentProviders = profileSkillConfig
@@ -631,7 +637,12 @@ function buildSubagentToolRuntime(args: {
     return true;
   };
   const sceneFiltered = new FilteredToolRuntime(inner, isAllowed);
-  return args.boundProfile ? applyAgentRuntimeProfile(sceneFiltered, args.boundProfile) : sceneFiltered;
+  const profileFiltered = args.boundProfile
+    ? applyAgentRuntimeProfile(sceneFiltered, args.boundProfile)
+    : sceneFiltered;
+  return args.memoryPolicyVersion === 'v2'
+    ? applyMainSessionToolFilter(profileFiltered, 'v2')
+    : profileFiltered;
 }
 
 /**
@@ -674,6 +685,7 @@ function buildSubagentInstructions(args: {
   profileSystemInstructions?: string;
   orgAgentName?: string;
   orgAgentInstructions?: string;
+  memoryReadOnly?: boolean;
 }): string {
   const sections: string[] = [args.systemPrompt ?? args.agentType.systemPrompt];
   if (args.profileSystemInstructions?.trim()) {
@@ -693,6 +705,9 @@ function buildSubagentInstructions(args: {
     `工作目录: ${args.cwd}（与主 agent 共享同一 workspace，文件读写彼此可见）`,
     `执行环境: ${args.executionTarget}`,
     'Shell 在子 agent 中仅允许 foreground；不要使用 mode="background"。',
+    ...(args.memoryReadOnly
+      ? ['记忆空间只读：只能用 MemorySearch/Read 查询，不得通过 Write/Edit/Shell 修改 MEMORY.md 或 memory/**。']
+      : []),
     `当前时间: ${new Date().toISOString()}`,
     '</env>',
   ].join('\n'));

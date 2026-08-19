@@ -443,6 +443,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         active={active}
         open={detailOpen}
         task={selectedTask}
+        board={selectedBoard}
         boardReadOnly={boardReadOnly}
         canUpdateTask={canUpdateTask}
         canTransitionTask={canTransitionTask}

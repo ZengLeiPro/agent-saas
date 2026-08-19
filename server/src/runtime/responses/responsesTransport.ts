@@ -55,6 +55,8 @@ export interface ResponsesTransportExecuteInput {
   serializedBody: string;
   context: RunContext;
   clientRequestId: string;
+  /** Provider 用于 Prompt Cache 路由亲和的稳定内容指纹。 */
+  promptCacheKey?: string;
   signal?: AbortSignal;
   /** Binding used while selecting opaque replay items; transport re-checks it before sending. */
   expectedContinuationBinding?: ProviderContinuationBinding;

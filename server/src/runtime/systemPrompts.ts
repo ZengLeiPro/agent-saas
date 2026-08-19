@@ -48,7 +48,7 @@ const DEFINITIONS_META: ReadonlyArray<Omit<SystemPromptDefinition, 'defaultConte
     id: 'main.staticV2',
     category: 'main',
     label: '主 Agent · 平台静态规则（记忆剥离 v2）',
-    description: '记忆写入职责剥离后的静态规则：仅记忆节与 main.static 不同（MemoryCommand + 后台写入）。修改非记忆节时必须与 main.static 同步维护。',
+    description: '记忆写入职责剥离后的静态规则：仅记忆节与 main.static 不同（主 Agent 纯消费 + 后台唯一写入）。修改非记忆节时必须与 main.static 同步维护。',
     variables: [],
   },
   {

@@ -145,6 +145,24 @@ export function stageModelsToJson(value: TaskBoardStageModels | null | undefined
   return JSON.stringify(normalizeStageModels(value));
 }
 
+export function appendModelAssignments(
+  params: unknown[],
+  assignments: string[],
+  model: string | null | undefined,
+  stageModels: TaskBoardStageModels | null | undefined,
+): void {
+  if (stageModels !== undefined) {
+    params.push(null, stageModelsToJson(stageModels));
+    assignments.push(
+      `model=$${params.length - 1}`,
+      `stage_models=$${params.length}::jsonb`,
+    );
+  } else if (model !== undefined) {
+    params.push(normalizeModel(model));
+    assignments.push(`model=$${params.length}`);
+  }
+}
+
 export function parseStageModels(value: unknown): TaskBoardStageModels {
   const parsed = parseJsonObject<Record<string, unknown>>(value);
   if (!parsed) return {};

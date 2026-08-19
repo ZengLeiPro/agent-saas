@@ -1,6 +1,12 @@
 # agent-saas 后端 API 独立域名（由 ci.yml 部署脚本安装）
 # 链路：https://api.agent.kaiyan.net -> nginx -> agent_saas_backend
 # limit zone 与 $connection_upgrade map 定义在 recovery Web 站点配置中。
+# 由 nginx 统一输出生产 API 的 CORS 响应头，使其生成的 502/503 也能被
+# Web 前端读取真实状态；空值不会输出响应头，其他 Origin 仍保持拒绝。
+map $http_origin $agent_api_cors_origin {
+    default "";
+    "https://agent.kaiyan.net" $http_origin;
+}
 
 server {
     listen 80;
@@ -32,6 +38,14 @@ server {
 
     limit_req zone=agent_req_limit burst=200 nodelay;
     limit_req_status 444;
+
+    # 覆盖 Express 的同名响应头，避免重复值；always 确保 nginx 自己生成的
+    # 网关错误也携带 CORS，前端可区分 403 权限拒绝与 5xx 服务故障。
+    proxy_hide_header Access-Control-Allow-Origin;
+    proxy_hide_header Access-Control-Expose-Headers;
+    add_header Access-Control-Allow-Origin $agent_api_cors_origin always;
+    add_header Access-Control-Expose-Headers X-Refresh-Token always;
+    add_header Vary Origin always;
 
     location ~* \.(php|asp|aspx|jsp|cgi|env|git|svn|bak|sql|log|ini|conf|htaccess|htpasswd|DS_Store)$ {
         access_log off;

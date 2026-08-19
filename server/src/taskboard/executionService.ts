@@ -53,7 +53,7 @@ import {
   TaskboardPermissionError,
   TaskboardValidationError,
 } from './types.js';
-export { createTaskboardRuntimeOptions } from './runtimeOptions.js';
+export { createTaskboardAttachmentAccess, createTaskboardRuntimeOptions } from './runtimeOptions.js';
 import type {
   TaskboardExecutionClaimInput,
   TaskboardExecutionContext,

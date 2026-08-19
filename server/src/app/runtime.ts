@@ -33,7 +33,7 @@ import { PgTerminalEventOutboxRunStore, startTerminalEventOutboxDispatcher } fro
 import { PgHandStore } from '../runtime/handStore.js';
 import { PgSessionProjectionStore } from '../runtime/sessionProjectionStore.js';
 import { MemoryConsolidationEngine } from '../memory/consolidation/engine.js';
-import { TaskboardExecutionCoordinator, createTaskboardRuntimeOptions } from '../taskboard/executionService.js';
+import { TaskboardExecutionCoordinator, createTaskboardAttachmentAccess, createTaskboardRuntimeOptions } from '../taskboard/executionService.js';
 import { RetryableTaskboardService } from '../taskboard/retryableService.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import { configureTaskboardGithubRepositoryProvider } from '../taskboard/repositoryRuntime.js';
@@ -1698,33 +1698,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     orgAgentStore,
     tenantStore,
     environmentStore,
-    taskboard: {
-      service: () => taskboardService,
-      executionService: () => taskboardExecutionCoordinator,
-      executionStore: () => taskboardStoreService,
-      resolveAttachments: async (identity, attachmentIds) => {
-        const userCwd = resolveUserCwd(agentCwd, {
-          id: identity.ownerUserId,
-          username: identity.username,
-          role: identity.userRole ?? 'user',
-          tenantId: identity.tenantId,
-        });
-        const resolved = await uploadManager.resolveAttachments(userCwd, attachmentIds);
-        return resolved.map((attachment, index) => ({
-          ...attachment,
-          attachmentId: attachment.attachmentId ?? attachmentIds[index]!,
-        }));
-      },
-      markAttachmentsReferenced: async (identity, attachments, refs) => {
-        const userCwd = resolveUserCwd(agentCwd, {
-          id: identity.ownerUserId,
-          username: identity.username,
-          role: identity.userRole ?? 'user',
-          tenantId: identity.tenantId,
-        });
-        await uploadManager.markReferenced(userCwd, attachments, refs);
-      },
-    },
+    taskboard: { service: () => taskboardService, executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, ...createTaskboardAttachmentAccess({ agentCwd, uploadManager }) },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
       const effectiveAgentId = agentId
         ?? (await agentResourceStore?.findPersonalByOwner(tenantId, userId))?.agentId;

@@ -1,9 +1,44 @@
+import type { TaskBoardUploadAttachment } from '../../../shared/src/types/taskboard.js';
 import type { UserStore } from '../data/users/store.js';
 import type { EventStore } from '../runtime/types.js';
+import type { UploadManager } from '../uploads/manager.js';
+import { resolveUserCwd } from '../workspace/resolver.js';
+import type { TaskboardIdentity } from './types.js';
 import type { TaskboardSessionGroupingOptions } from './sessionGrouping.js';
 
 type ModelResolver = (ref: string, tenantId?: string) => unknown | null;
 type SessionGroupedEvent = Parameters<NonNullable<TaskboardSessionGroupingOptions['onSessionGrouped']>>[0];
+
+export function createTaskboardAttachmentAccess(params: {
+  agentCwd: string;
+  uploadManager: UploadManager;
+}) {
+  const userCwd = (identity: TaskboardIdentity) => resolveUserCwd(params.agentCwd, {
+    id: identity.ownerUserId,
+    username: identity.username,
+    role: identity.userRole ?? 'user',
+    tenantId: identity.tenantId,
+  });
+  return {
+    resolveAttachments: async (
+      identity: TaskboardIdentity,
+      attachmentIds: readonly string[],
+    ): Promise<TaskBoardUploadAttachment[]> => {
+      const resolved = await params.uploadManager.resolveAttachments(userCwd(identity), attachmentIds);
+      return resolved.map((attachment, index) => ({
+        ...attachment,
+        attachmentId: attachment.attachmentId ?? attachmentIds[index]!,
+      }));
+    },
+    markAttachmentsReferenced: async (
+      identity: TaskboardIdentity,
+      attachments: readonly TaskBoardUploadAttachment[],
+      refs: { sessionId?: string },
+    ): Promise<void> => {
+      await params.uploadManager.markReferenced(userCwd(identity), attachments, refs);
+    },
+  };
+}
 
 export function createTaskboardRuntimeOptions(params: {
   modelResolver?: ModelResolver;

@@ -119,10 +119,11 @@ export async function revokePendingXCredentials(input: {
   );
   for (const record of records) {
     for (const ref of record.pendingRevokeRefs ?? []) {
+      const pendingOwner = record.pendingRevokeRefOwners?.[ref];
       try {
         await input.vault.revokeSecret(ref, vaultCaller(
-          credentialOwnerId(record),
-          record.tenantId,
+          pendingOwner?.userId ?? credentialOwnerId(record),
+          pendingOwner?.tenantId ?? record.tenantId,
           'revoke',
         ));
         await input.connectionStore.markCredentialRevoked(record.username, X_CONNECTOR_ID, ref);

@@ -116,4 +116,55 @@ describe('X native connector', () => {
     await expect(revokePendingXCredentials({ connectionStore: store, vault })).resolves.toBe(1);
     expect(store.get('alice', 'x')?.pendingRevokeRefs).toBeUndefined();
   });
+
+  it('keeps the original owner and tenant for same-username replacement revocation', async () => {
+    const root = createRoot();
+    const store = new ConnectorConnectionStore(join(root, 'connections.json'));
+    const vault = new InMemorySecretVault();
+    const oldCaller = {
+      actor: 'connector_proxy' as const,
+      userId: 'old-user',
+      tenantId: 'old-tenant',
+      scopes: ['secret:connector:write'],
+    };
+    const newCaller = {
+      actor: 'connector_proxy' as const,
+      userId: 'new-user',
+      tenantId: 'new-tenant',
+      scopes: ['secret:connector:write'],
+    };
+    const oldSecret = await vault.putSecret(
+      'old-user',
+      'connector',
+      cookieCredential('old-auth', 'old-ct0'),
+      oldCaller,
+    );
+    const newSecret = await vault.putSecret(
+      'new-user',
+      'connector',
+      cookieCredential('new-auth', 'new-ct0'),
+      newCaller,
+    );
+    await store.connect({
+      username: 'alice', userId: 'old-user', tenantId: 'old-tenant', connectorId: 'x',
+      credentialRefs: { cookies: oldSecret.id },
+      metadata: { credentialOwnerId: 'old-user' },
+    });
+    await store.connect({
+      username: 'alice', userId: 'new-user', tenantId: 'new-tenant', connectorId: 'x',
+      credentialRefs: { cookies: newSecret.id },
+      metadata: { credentialOwnerId: 'new-user' },
+    });
+
+    expect(store.get('alice', 'x')?.pendingRevokeRefOwners?.[oldSecret.id]).toEqual({
+      userId: 'old-user',
+      tenantId: 'old-tenant',
+    });
+    const revoke = vi.spyOn(vault, 'revokeSecret');
+    await expect(revokePendingXCredentials({ connectionStore: store, vault })).resolves.toBe(1);
+    expect(revoke).toHaveBeenCalledWith(oldSecret.id, expect.objectContaining({
+      userId: 'old-user',
+      tenantId: 'old-tenant',
+    }));
+  });
 });

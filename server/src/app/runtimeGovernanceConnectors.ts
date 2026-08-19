@@ -552,9 +552,11 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       await credentialStore?.bumpGenerationBySecretRef(secretRef, 'system:mcp-oauth-rotation');
     },
   });
+  // x 不是 legacy MCP adapter：bird 由原生连接器直接调用，因此保留同名个人 MCP ID。
+  // 下方 env 合并先保留自定义 MCP，再由已连接的 X 原生凭据覆盖同名 bird 变量；暂停 X
+  // 时不删除这些通用变量，避免误伤自定义 MCP 的 runtime env。
   const legacyNativeMcpIds = new Set([
     'github',
-    'x',
     'notion',
     'google_gmail',
     'google_drive',
@@ -902,6 +904,9 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       ...xEnv,
       ...githubEnv,
       ...(tenantRunEnvByTenant?.get(context.tenantId) ?? {}),
+    }, {
+      // X 暂停时仍保留自定义 MCP 写入的同名变量；tenant env 仍按原有优先级参与合并。
+      preserveEnvKeys: new Set(Object.keys(mcpConnectorEnv)),
     });
   };
 

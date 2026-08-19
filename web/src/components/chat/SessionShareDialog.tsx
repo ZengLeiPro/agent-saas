@@ -124,7 +124,7 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
         <DialogHeader>
           <DialogTitle>分享会话</DialogTitle>
           <DialogDescription>
-            生成当前会话的只读分享链接。公开页只保留对话正文和显式分享的成果文件。
+            生成当前会话的只读分享链接。公开页展示对话正文、安全的工具活动摘要和显式分享的成果文件；原始入参与结果不会公开。
           </DialogDescription>
         </DialogHeader>
 
@@ -168,7 +168,7 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
                 onCheckedChange={(checked) => setConfirmedPublicText(checked === true)}
               />
               <span>
-                我确认公开当前会话的 {preview?.blockCount ?? 0} 条用户/助手正文；系统会阻断凭据、手机号、邮箱和身份证号。
+                我确认公开当前会话的 {preview?.blockCount ?? 0} 条用户/助手正文及工具活动摘要；原始工具入参和结果不会公开，系统会对正文中的凭据脱敏。
               </span>
             </label>
             {(preview?.files.length ?? 0) > 0 ? (

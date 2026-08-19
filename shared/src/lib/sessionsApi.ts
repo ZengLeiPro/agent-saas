@@ -331,13 +331,13 @@ function mapBlock(
       const presentation = normalizeToolPresentation(block.presentation);
       // 结构化执行事实同一条通道、同一条不可信边界规则
       const toolMetadata = normalizeToolResultMetadata(block.toolMetadata);
-      if (block.toolName === "AskUserQuestion") {
+      if (block.toolName === "AskUserQuestion" && !block.publicActivityOnly) {
         return tryConvertAskUser(block, resultText);
       }
-      if (block.toolName === "EnterPlanMode" || block.toolName === "ExitPlanMode") {
+      if ((block.toolName === "EnterPlanMode" || block.toolName === "ExitPlanMode") && !block.publicActivityOnly) {
         return tryConvertPlanMode(block, resultText);
       }
-      if (block.toolName === "Agent") {
+      if (block.toolName === "Agent" && !block.publicActivityOnly) {
         const terminal = resultText !== undefined
           || block.executionStatus === "completed"
           || block.executionStatus === "failed"

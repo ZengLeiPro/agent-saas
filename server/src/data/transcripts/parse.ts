@@ -92,11 +92,11 @@ export interface TranscriptBlock {
   presentation?: unknown;
   /**
    * tool_use block：工具执行的结构化事实（exitCode / 字节数 / 耗时 …）。
-   *
    * 与 presentation 同一条落盘与嫁接通道，类型同样刻意是 `unknown`——本文件是
-   * 不可信边界，权威校验器是 shared 的 `normalizeToolResultMetadata`。
+   * 不可信边界，权威校验器是 shared 的 `normalizeToolResultMetadata`；公开分享安全活动以 `publicActivityOnly` 标记。
    */
   toolMetadata?: unknown;
+  publicActivityOnly?: boolean;
 }
 
 export interface ParsedTranscript {

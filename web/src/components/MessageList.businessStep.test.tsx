@@ -169,6 +169,32 @@ describe("MessageList first Agent row spacing", () => {
   });
 });
 
+describe("MessageList public share activity", () => {
+  it("uses the normal MessageList renderer for safe tool summaries without raw payload", () => {
+    render(
+      <MessageList
+        messages={[
+          { id: "user-1", type: "user", content: "开始" },
+          {
+            id: "tool-1",
+            type: "tool_use",
+            toolName: "Shell",
+            toolId: "shared-tool-1",
+            toolInput: "",
+            executionStatus: "completed",
+            presentation: { title: "执行只读检查" },
+          },
+        ]}
+        loading={false}
+        debugModeOverride
+      />,
+    );
+
+    expect(screen.getByText("执行只读检查")).toBeTruthy();
+    expect(screen.queryByText("secret-token")).toBeNull();
+  });
+});
+
 describe("MessageList business step sections", () => {
   it("uses smart folding: completed sections collapse while the current section stays open", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);

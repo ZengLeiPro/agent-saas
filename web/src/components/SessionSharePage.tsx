@@ -157,7 +157,7 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <div className="hidden text-xs text-muted-foreground sm:block">
-              仅展示对话正文
+              展示正文与安全工具摘要，原始入参和结果已隐藏
             </div>
             {useSamePath && (
               <Button

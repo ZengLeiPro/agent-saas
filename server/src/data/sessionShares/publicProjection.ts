@@ -1,5 +1,7 @@
 import path from 'node:path';
 
+import { normalizeToolPresentation } from '../../../../shared/src/lib/toolPresentation.js';
+import { normalizeToolResultMetadata } from '../../../../shared/src/lib/toolResultMetadata.js';
 import { splitByMessageMarkers } from '../../../../shared/src/lib/markers.js';
 import type { TranscriptBlock } from '../transcripts/parse.js';
 import type { SessionShareSnapshot } from './store.js';
@@ -144,7 +146,133 @@ function filterFileMarkers(content: string, selectedPaths: ReadonlySet<string>):
   });
 }
 
-function publicBlock(block: TranscriptBlock, selectedPaths: ReadonlySet<string>): TranscriptBlock | null {
+const PUBLIC_EXECUTION_STATUSES = new Set<NonNullable<TranscriptBlock['executionStatus']>>([
+  'pending',
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+
+function clampPublicText(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = redactPublicShareText(value.trim());
+  return text ? text.slice(0, maxLength) : undefined;
+}
+
+/** 只在已白名单化的摘要/metadata 上递归脱敏，绝不把原始工具 payload 带出分享快照。 */
+function redactStructuredValue(value: unknown): unknown {
+  if (typeof value === 'string') return redactPublicShareText(value);
+  if (Array.isArray(value)) return value.map(redactStructuredValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => [key, redactStructuredValue(item)]),
+  );
+}
+
+function publicExecutionStatus(value: unknown): TranscriptBlock['executionStatus'] | undefined {
+  if (typeof value !== 'string' || !PUBLIC_EXECUTION_STATUSES.has(value as NonNullable<TranscriptBlock['executionStatus']>)) {
+    return undefined;
+  }
+  return value as NonNullable<TranscriptBlock['executionStatus']>;
+}
+
+function publicDurationMs(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
+  return Math.min(Math.floor(value), 24 * 60 * 60 * 1000);
+}
+
+function publicToolPresentation(block: TranscriptBlock): unknown {
+  const normalized = normalizeToolPresentation(block.presentation);
+  if (normalized) return redactStructuredValue(normalized);
+
+  // 没有业务摘要的旧工具记录仍需在分享页留下可见的安全活动行；只用工具标题，
+  // 不把 tool input/raw 作为 fallback。
+  const title = clampPublicText(block.title, 160)
+    ?? `工具调用: ${clampPublicText(block.toolName, 96) ?? 'unknown'}`;
+  return { title };
+}
+
+function publicToolMetadata(block: TranscriptBlock): unknown {
+  const normalized = normalizeToolResultMetadata(block.toolMetadata);
+  return normalized ? redactStructuredValue(normalized) : undefined;
+}
+
+function publicToolResultContent(block: TranscriptBlock): string {
+  // 这些固定前缀只用于让 shared mapper 恢复同一套历史 UI；不携带原始审批方案。
+  if (block.isError) return 'Tool interaction failed.';
+  if (block.toolName === 'EnterPlanMode') {
+    return block.content.trim().startsWith('Entered plan mode')
+      ? 'Entered plan mode.'
+      : 'User denied entering plan mode.';
+  }
+  if (block.toolName === 'ExitPlanMode') {
+    return block.content.trim().startsWith('User has approved')
+      ? 'User has approved your plan.'
+      : 'User denied the plan.';
+  }
+  return '';
+}
+
+function publicToolBlock(
+  block: TranscriptBlock,
+  publicToolId: string | undefined,
+  toolResult: TranscriptBlock | undefined,
+): TranscriptBlock {
+  const toolName = clampPublicText(block.toolName, 128) ?? 'unknown';
+  const executionStatus = toolResult
+    ? toolResult.isError ? 'failed' : 'completed'
+    : publicExecutionStatus(block.executionStatus);
+  const durationMs = publicDurationMs(block.durationMs);
+  const presentation = publicToolPresentation(block);
+  const toolMetadata = publicToolMetadata(block);
+  return {
+    id: block.id,
+    ...(block.tsMs !== undefined ? { tsMs: block.tsMs } : {}),
+    kind: 'tool_use',
+    title: clampPublicText(block.title, 160) ?? `工具调用: ${toolName}`,
+    defaultOpen: false,
+    // 公开页只显示安全摘要；原始入参、raw、runId 和结果正文全部不出快照。
+    content: '',
+    publicActivityOnly: true,
+    ...(block.isError || toolResult?.isError ? { isError: true } : {}),
+    ...(toolName ? { toolName } : {}),
+    ...(publicToolId ? { toolId: publicToolId } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(executionStatus ? { executionStatus } : {}),
+    ...(presentation ? { presentation } : {}),
+    ...(toolMetadata ? { toolMetadata } : {}),
+  };
+}
+
+function publicToolResultBlock(block: TranscriptBlock, publicToolId: string): TranscriptBlock {
+  const toolName = clampPublicText(block.toolName, 128) ?? 'unknown';
+  return {
+    id: block.id,
+    ...(block.tsMs !== undefined ? { tsMs: block.tsMs } : {}),
+    kind: 'tool_result',
+    title: '工具结果',
+    defaultOpen: false,
+    content: publicToolResultContent(block),
+    publicActivityOnly: true,
+    ...(block.isError ? { isError: true } : {}),
+    ...(toolName ? { toolName } : {}),
+    toolId: publicToolId,
+  };
+}
+
+function publicBlock(
+  block: TranscriptBlock,
+  selectedPaths: ReadonlySet<string>,
+  options: { publicToolId?: string; toolResult?: TranscriptBlock } = {},
+): TranscriptBlock | null {
+  if (block.kind === 'tool_use') {
+    return publicToolBlock(block, options.publicToolId, options.toolResult);
+  }
+  if (block.kind === 'tool_result') {
+    return options.publicToolId ? publicToolResultBlock(block, options.publicToolId) : null;
+  }
   if (block.kind !== 'prompt' && block.kind !== 'text') return null;
   const attachments = block.attachments
     ?.map((attachment) => {
@@ -208,8 +336,9 @@ export function collectSessionShareCandidateFiles(blocks: TranscriptBlock[]): Se
 }
 
 /**
- * 旧分享与新建分享统一走安全投影：只保留用户/助手正文，彻底移除 thinking、
- * tool_use、tool_result、raw、runId 与原始账号标识；附件只留下快照显式 allowlist。
+ * 旧分享与新建分享统一走安全投影：保留用户/助手正文，以及不含原始 payload 的
+ * 工具活动摘要；thinking、原始 tool input/result、raw、runId 与原始账号标识全部移除。
+ * 附件只留下快照显式 allowlist。
  */
 export function projectSessionShareSnapshot(
   snapshot: SessionShareSnapshot,
@@ -219,8 +348,31 @@ export function projectSessionShareSnapshot(
     options.selectedFilePaths
       ?? (snapshot.allowedFiles ?? []).map((file) => file.relativePath),
   );
+  // 工具结果只用于在 shared mapper 中恢复「已完成/失败」状态；对外改成快照内的
+  // 不透明关联 ID，并把结果正文替换为固定占位，不泄露原始 tool input/result。
+  const publicToolIds = new Map<string, string>();
+  let toolSequence = 0;
+  for (const block of snapshot.blocks) {
+    if (block.kind !== 'tool_use' || !block.toolId || publicToolIds.has(block.toolId)) continue;
+    toolSequence += 1;
+    publicToolIds.set(block.toolId, `shared-tool-${toolSequence}`);
+  }
+  const toolResults = new Map<string, TranscriptBlock>();
+  for (const block of snapshot.blocks) {
+    if (block.kind === 'tool_result' && block.toolId && !toolResults.has(block.toolId)) {
+      toolResults.set(block.toolId, block);
+    }
+  }
+
   const blocks = snapshot.blocks
-    .map((block) => publicBlock(block, selectedPaths))
+    .map((block) => publicBlock(block, selectedPaths, {
+      ...(block.toolId && publicToolIds.has(block.toolId)
+        ? { publicToolId: publicToolIds.get(block.toolId) }
+        : {}),
+      ...(block.kind === 'tool_use' && block.toolId && toolResults.has(block.toolId)
+        ? { toolResult: toolResults.get(block.toolId) }
+        : {}),
+    }))
     .filter((block): block is TranscriptBlock => block !== null);
   const allowedFiles = (snapshot.allowedFiles ?? collectSessionShareCandidateFiles(snapshot.blocks))
     .filter((file) => selectedPaths.has(file.relativePath))

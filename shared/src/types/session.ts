@@ -316,6 +316,8 @@ export interface ApiTranscriptBlock {
    * 类型为 unknown——同样来自不可信来源，权威校验器是 normalizeToolResultMetadata。
    */
   toolMetadata?: unknown;
+  /** 公开分享安全活动摘要：跳过 AskUser/Plan/Agent 的交互历史恢复，不读取原始 payload。 */
+  publicActivityOnly?: boolean;
   /**
    * text block：附加呈现块。类型为 unknown——本字段来自不可信来源
    * （transcript 文件 / 演示剧本 / 工具产出），权威校验器是 normalizeDisplay。

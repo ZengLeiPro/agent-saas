@@ -1932,7 +1932,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       res.json({
         share: {
           ownerUsername: safeSnapshot.owner?.username ?? "用户",
-          debugMode: false,
+          debugMode: true,
           createdAt: record.createdAt,
           updatedAt: record.updatedAt,
           expiresAt: record.expiresAt,
@@ -2016,7 +2016,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         .map((file) => file.relativePath);
       const projected = projectSessionShareSnapshot(built.detail, { selectedFilePaths: inlineFilePaths });
       res.json({
-        blockCount: projected.blocks.length,
+        blockCount: projected.blocks.filter((block) => block.kind === "prompt" || block.kind === "text").length,
         files: candidates,
         defaultExpiresAt: new Date(Date.now() + DEFAULT_SESSION_SHARE_TTL_MS).toISOString(),
       });
@@ -2109,7 +2109,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         ownerUserId: built.meta.userId,
         ownerUsername: built.meta.username,
         createdByUserId: req.user?.sub || built.meta.userId,
-        debugMode: false,
+        debugMode: true,
         snapshot: { ...projected, allowedFiles: frozenFiles },
         expiresAt,
       });

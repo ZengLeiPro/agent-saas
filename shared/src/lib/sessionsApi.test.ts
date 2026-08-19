@@ -80,6 +80,46 @@ describe('AskUserQuestion history restore', () => {
   });
 });
 
+describe('公开工具活动摘要恢复', () => {
+  it('publicActivityOnly 跳过交互工具的历史恢复，保留为普通安全工具行', () => {
+    const messages = mapSessionDetailToMessages({
+      sessionId: 's-public-tool',
+      stats: { lines: 2, parsedLines: 2, parseErrors: 0 },
+      blocks: [
+        {
+          id: 'tool-call',
+          kind: 'tool_use',
+          title: '工具调用: AskUserQuestion',
+          defaultOpen: false,
+          content: '',
+          toolName: 'AskUserQuestion',
+          toolId: 'shared-tool-1',
+          publicActivityOnly: true,
+          presentation: { title: '工具调用: AskUserQuestion' },
+        },
+        {
+          id: 'tool-result',
+          kind: 'tool_result',
+          title: '工具结果',
+          defaultOpen: false,
+          content: '',
+          toolName: 'AskUserQuestion',
+          toolId: 'shared-tool-1',
+          publicActivityOnly: true,
+        },
+      ],
+    });
+
+    expect(messages).toEqual([expect.objectContaining({
+      type: 'tool_use',
+      toolName: 'AskUserQuestion',
+      toolInput: '',
+      result: '',
+      resultReady: true,
+    })]);
+  });
+});
+
 describe('最终输出历史恢复', () => {
   it('把 Session API 的 runId/finalOutput 透传到 text 消息', () => {
     const messages = mapSessionDetailToMessages({

@@ -248,7 +248,7 @@ describe("TaskBoardView", () => {
     }];
     render(<TaskBoardView />);
 
-    expect(await screen.findByText(/组织看板 · 当前角色：编辑者/)).toBeTruthy();
+    expect(screen.queryByText(/组织看板 · 当前角色：编辑者/)).toBeNull();
     expect((screen.getByRole("button", { name: "新建任务" }) as HTMLButtonElement).disabled).toBe(true);
     await user.click(screen.getByRole("button", { name: "看板管理" }));
     expect(screen.getByRole("menuitem", { name: "看板设置与成员" }).getAttribute("data-disabled")).not.toBeNull();
@@ -322,6 +322,13 @@ describe("TaskBoardView", () => {
     });
     render(<TaskBoardView />);
 
+    const integrationButton = await screen.findByRole("button", { name: /创建集成批次/ });
+    const newTaskButton = screen.getByRole("button", { name: "新建任务" });
+    expect(integrationButton.parentElement).toBe(newTaskButton.parentElement);
+    expect(integrationButton.compareDocumentPosition(newTaskButton) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(integrationButton.className).toContain("bg-emerald-600");
+    expect(screen.queryByText(/在“待合并”列勾选已复核且已绑定 PR 的交付任务/)).toBeNull();
+
     const choices = await screen.findAllByRole("checkbox", { name: "选择 TASK-1 加入人工集成批次" });
     await user.click(choices[0]);
     await user.click(screen.getByRole("button", { name: "创建集成批次（1）" }));
@@ -333,6 +340,24 @@ describe("TaskBoardView", () => {
     expect(mocks.syncTask).toHaveBeenCalledWith(integrationTask);
     expect(mocks.refreshBoards).toHaveBeenCalled();
     expect(mocks.refreshTasks).toHaveBeenCalled();
+  });
+
+  it("归档任务位于任务区右侧且默认折叠", async () => {
+    const archivedTask = {
+      ...taskTwo,
+      id: "archived-task",
+      identifier: "TASK-ARCHIVED",
+      archivedAt: "2026-08-18T00:00:00.000Z",
+    };
+    mocks.tasks = [taskOne, archivedTask];
+    render(<TaskBoardView />);
+
+    const summary = await screen.findByText("已归档任务（1）");
+    const archivedDetails = summary.closest("details");
+    expect(archivedDetails).not.toBeNull();
+    expect(archivedDetails?.hasAttribute("open")).toBe(false);
+    expect(archivedDetails?.className).toContain("md:w-72");
+    expect(archivedDetails?.parentElement?.lastElementChild).toBe(archivedDetails);
   });
 
   it("allowedActions 将查看者的任务写按钮和拖拽全部门禁", async () => {

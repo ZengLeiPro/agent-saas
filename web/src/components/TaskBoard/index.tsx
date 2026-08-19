@@ -268,6 +268,18 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         <RefreshCw className="size-3.5" />
         刷新
       </Button>
+      {canCreateIntegration ? (
+        <Button
+          type="button"
+          size="sm"
+          className="bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+          disabled={selectedDeliveryTaskIds.size === 0 || creatingIntegration}
+          onClick={() => void createManualIntegration()}
+        >
+          {creatingIntegration ? <LoaderCircle className="animate-spin" /> : <Layers3 />}
+          创建集成批次（{selectedDeliveryTaskIds.size}）
+        </Button>
+      ) : null}
       <Button
         size="sm"
         onClick={() => openTaskDialog("backlog")}
@@ -330,104 +342,89 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
             onPriorityChange={setPriority}
           />
 
-          {canCreateIntegration ? (
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-300/50 bg-emerald-50/60 px-3 py-2 dark:bg-emerald-950/20">
-              <p className="text-sm text-emerald-900 dark:text-emerald-100">
-                在“待合并”列勾选已复核且已绑定 PR 的交付任务，创建一次人工集成批次。
-              </p>
-              <Button
-                type="button"
-                size="sm"
-                disabled={selectedDeliveryTaskIds.size === 0 || creatingIntegration}
-                onClick={() => void createManualIntegration()}
-              >
-                {creatingIntegration ? <LoaderCircle className="animate-spin" /> : <Layers3 />}
-                创建集成批次（{selectedDeliveryTaskIds.size}）
-              </Button>
-            </div>
-          ) : null}
+          <div className="flex min-h-0 flex-1 flex-col gap-3 md:flex-row">
+            {tasksLoading && tasks.length === 0 ? (
+              <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">正在加载任务...</div>
+            ) : (
+              <TaskColumns
+                tasks={visibleTasks}
+                readOnly={boardReadOnly}
+                canCreateTask={canCreateTask}
+                canReorderTask={canReorderTask}
+                canTransitionTask={canTransitionTask}
+                canCreateIntegration={canCreateIntegration}
+                selectedDeliveryTaskIds={selectedDeliveryTaskIds}
+                desktopStatus={desktopStatus}
+                mobileStatus={mobileStatus}
+                onMobileStatusChange={setMobileStatus}
+                onCreateTask={openTaskDialog}
+                onOpenTask={(task) => {
+                  setSelectedTaskId(task.id);
+                  setDetailOpen(true);
+                }}
+                onDragStart={setDraggedTaskId}
+                onDragEnd={() => setDraggedTaskId(null)}
+                onDeliverySelectedChange={(taskId, selected) => {
+                  const maxTasks = selectedBoard?.integrationPolicy?.batch.maxTasks ?? 100;
+                  if (selected && !selectedDeliveryTaskIds.has(taskId) && selectedDeliveryTaskIds.size >= maxTasks) {
+                    setNotice(`每个集成批次最多选择 ${maxTasks} 个任务。`);
+                    return;
+                  }
+                  setSelectedDeliveryTaskIds((current) => {
+                    const next = new Set(current);
+                    if (selected) next.add(taskId);
+                    else next.delete(taskId);
+                    return next;
+                  });
+                }}
+                onDrop={handleDrop}
+              />
+            )}
 
-          {tasksLoading && tasks.length === 0 ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">正在加载任务...</div>
-          ) : (
-            <TaskColumns
-              tasks={visibleTasks}
-              readOnly={boardReadOnly}
-              canCreateTask={canCreateTask}
-              canReorderTask={canReorderTask}
-              canTransitionTask={canTransitionTask}
-              canCreateIntegration={canCreateIntegration}
-              selectedDeliveryTaskIds={selectedDeliveryTaskIds}
-              desktopStatus={desktopStatus}
-              mobileStatus={mobileStatus}
-              onMobileStatusChange={setMobileStatus}
-              onCreateTask={openTaskDialog}
-              onOpenTask={(task) => {
-                setSelectedTaskId(task.id);
-                setDetailOpen(true);
-              }}
-              onDragStart={setDraggedTaskId}
-              onDragEnd={() => setDraggedTaskId(null)}
-              onDeliverySelectedChange={(taskId, selected) => {
-                const maxTasks = selectedBoard?.integrationPolicy?.batch.maxTasks ?? 100;
-                if (selected && !selectedDeliveryTaskIds.has(taskId) && selectedDeliveryTaskIds.size >= maxTasks) {
-                  setNotice(`每个集成批次最多选择 ${maxTasks} 个任务。`);
-                  return;
-                }
-                setSelectedDeliveryTaskIds((current) => {
-                  const next = new Set(current);
-                  if (selected) next.add(taskId);
-                  else next.delete(taskId);
-                  return next;
-                });
-              }}
-              onDrop={handleDrop}
-            />
-          )}
-
-          {archivedTasks.length ? (
-            <details className="mt-3 shrink-0 rounded-lg border bg-muted/20 px-3 py-2">
-              <summary className="cursor-pointer text-sm font-medium">已归档任务（{archivedTasks.length}）</summary>
-              <div className="mt-2 max-h-32 space-y-2 overflow-y-auto">
-                {archivedTasks.map((task) => (
-                  <div key={task.id} className="flex items-center gap-2 rounded-md bg-card px-3 py-2 text-sm">
-                    <button
-                      type="button"
-                      className="min-w-0 flex-1 truncate text-left hover:underline"
-                      onClick={() => {
-                        setSelectedTaskId(task.id);
-                        setDetailOpen(true);
-                      }}
-                    >
-                      {task.identifier} · {task.title}
-                    </button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={boardReadOnly || !canArchiveTask}
-                      onClick={() => {
-                        void setArchived(task, false).catch((caught) => {
-                          setNotice(caught instanceof Error ? caught.message : "恢复任务失败");
-                        });
-                      }}
-                    >恢复</Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-destructive hover:text-destructive"
-                      disabled={boardReadOnly || !canDeleteTask}
-                      onClick={() => {
-                        if (!window.confirm(`确认删除任务“${task.title}”吗？删除后任务将不再显示，且无法恢复。`)) return;
-                        void removeTask(task).catch((caught) => {
-                          setNotice(caught instanceof Error ? caught.message : "删除任务失败");
-                        });
-                      }}
-                    >删除</Button>
-                  </div>
-                ))}
-              </div>
-            </details>
-          ) : null}
+            {archivedTasks.length ? (
+              <details className="order-last shrink-0 rounded-lg border bg-muted/20 px-3 py-2 md:w-72">
+                <summary className="cursor-pointer text-sm font-medium">已归档任务（{archivedTasks.length}）</summary>
+                <div className="mt-2 max-h-64 space-y-2 overflow-y-auto md:max-h-[calc(100vh-14rem)]">
+                  {archivedTasks.map((task) => (
+                    <div key={task.id} className="flex items-center gap-2 rounded-md bg-card px-3 py-2 text-sm">
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 truncate text-left hover:underline"
+                        onClick={() => {
+                          setSelectedTaskId(task.id);
+                          setDetailOpen(true);
+                        }}
+                      >
+                        {task.identifier} · {task.title}
+                      </button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={boardReadOnly || !canArchiveTask}
+                        onClick={() => {
+                          void setArchived(task, false).catch((caught) => {
+                            setNotice(caught instanceof Error ? caught.message : "恢复任务失败");
+                          });
+                        }}
+                      >恢复</Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-destructive hover:text-destructive"
+                        disabled={boardReadOnly || !canDeleteTask}
+                        onClick={() => {
+                          if (!window.confirm(`确认删除任务“${task.title}”吗？删除后任务将不再显示，且无法恢复。`)) return;
+                          void removeTask(task).catch((caught) => {
+                            setNotice(caught instanceof Error ? caught.message : "删除任务失败");
+                          });
+                        }}
+                      >删除</Button>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ) : null}
+          </div>
         </>
       ) : null}
 

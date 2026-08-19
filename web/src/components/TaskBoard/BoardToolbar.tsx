@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { boardAllows, MEMBER_ROLE_LABELS, PRIORITY_LABELS, STATUS_LABELS } from "./constants";
+import { boardAllows, PRIORITY_LABELS, STATUS_LABELS } from "./constants";
 
 interface BoardToolbarProps {
   boards: TaskBoard[];
@@ -142,13 +142,6 @@ export function BoardToolbar({
           </Select>
         </div>
       </div>
-      <p className="truncate text-xs text-muted-foreground">
-        {board.visibility === "organization" ? "组织看板" : "个人看板"}
-        {` · 当前角色：${MEMBER_ROLE_LABELS[board.role ?? (board.canManage ? "owner" : "editor")]}`}
-        {board.repository ? ` · GitHub ${board.repository.owner}/${board.repository.name}:${board.repository.baseBranch}` : ""}
-        {board.integrationPolicy ? ` · 集成${board.integrationPolicy.enabled ? "已启用" : "已停用"}（${board.integrationPolicy.trigger.mode}）` : ""}
-        {board.description ? ` · ${board.description}` : ""}
-      </p>
       {readOnly ? (
         <div role="status" className="rounded-lg border border-amber-300/50 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
           此看板已归档，当前只读；恢复后才能新建、编辑、移动任务或发表评论。

@@ -75,7 +75,8 @@ describe('safe server Git runner', () => {
     expect(first.exitCode).toBe(0);
     expect(second.stdout).toBe(first.stdout);
     const dates = await runSafeServerGit({ cwd: root, args: ['show', '-s', '--format=%aI%n%cI', first.stdout.trim()] });
-    expect(dates.stdout.trim().split('\n')).toEqual(['2026-08-20T15:52:39+00:00', '2026-08-20T15:52:39+00:00']);
+    expect(dates.stdout.trim().split('\n').map((value) => new Date(value).toISOString()))
+      .toEqual(['2026-08-20T15:52:39.000Z', '2026-08-20T15:52:39.000Z']);
   });
 
   it('pins network policy and does not depend on GIT_CONFIG_LOCAL', () => {

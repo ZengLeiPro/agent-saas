@@ -1,4 +1,5 @@
 import type { SecretVault } from '../security/secretVault.js';
+import type { GovernanceCredential } from '../data/credentials/types.js';
 import type { ConnectorConnectionRecord, ConnectorConnectionStore } from './connectionStore.js';
 
 export const X_CONNECTOR_ID = 'x';
@@ -13,8 +14,14 @@ export interface XConnectionView {
   connectorId: typeof X_CONNECTOR_ID;
   status: 'connected' | 'disconnected';
   runtimeEnabled: boolean;
+  credentialId?: string;
+  credentialVersion?: number;
   connectedAt?: string;
   updatedAt?: string;
+}
+
+export interface XGovernanceCredentialReader {
+  listForOwner(tenantId: string, ownerUserId: string): Promise<GovernanceCredential[]>;
 }
 
 interface XCookieCredential {
@@ -67,13 +74,21 @@ export function normalizeXConnectInput(input: XConnectInput): XConnectInput {
 export function toXConnectionView(
   record?: ConnectorConnectionRecord,
   runtimeEnabled = true,
+  credential?: GovernanceCredential,
 ): XConnectionView {
   return {
     connectorId: X_CONNECTOR_ID,
-    status: record?.status ?? 'disconnected',
+    status: credential ? 'connected' : (record?.status ?? 'disconnected'),
     runtimeEnabled,
-    connectedAt: record?.connectedAt,
-    updatedAt: record?.updatedAt,
+    ...(credential ? {
+      credentialId: credential.credentialId,
+      credentialVersion: credential.version,
+      connectedAt: credential.createdAt,
+      updatedAt: credential.updatedAt,
+    } : {
+      connectedAt: record?.connectedAt,
+      updatedAt: record?.updatedAt,
+    }),
   };
 }
 
@@ -95,6 +110,32 @@ function parseCookieCredential(value: string): XCookieCredential {
   });
 }
 
+function isXGovernanceCredential(credential: GovernanceCredential, context: { userId: string; tenantId: string }): boolean {
+  return credential.tenantId === context.tenantId
+    && credential.ownerUserId === context.userId
+    && credential.connectorId === X_CONNECTOR_ID
+    && credential.kind === 'personal_grant';
+}
+
+function isUsableXGovernanceCredential(credential: GovernanceCredential): boolean {
+  if (!['active', 'rotation_due'].includes(credential.status)) return false;
+  if (!credential.expiresAt) return true;
+  const expiresAt = Date.parse(credential.expiresAt);
+  return Number.isFinite(expiresAt) && expiresAt > Date.now();
+}
+
+async function listXGovernanceCredentials(
+  reader: XGovernanceCredentialReader,
+  context: { userId: string; tenantId: string },
+): Promise<GovernanceCredential[]> {
+  return (await reader.listForOwner(context.tenantId, context.userId))
+    .filter(credential => isXGovernanceCredential(credential, context))
+    .sort((left, right) => {
+      const updatedDelta = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+      return updatedDelta || right.credentialId.localeCompare(left.credentialId);
+    });
+}
+
 export function getXConnection(
   connectionStore: ConnectorConnectionStore,
   context: { userId: string; username: string; tenantId: string },
@@ -106,10 +147,26 @@ export function getXConnection(
   );
 }
 
+export async function getXConnectionWithGovernance(input: {
+  connectionStore: ConnectorConnectionStore;
+  governanceCredentialStore?: XGovernanceCredentialReader;
+  context: { userId: string; username: string; tenantId: string };
+}): Promise<XConnectionView> {
+  const runtimeEnabled = input.connectionStore.isRuntimeEnabled(input.context.username, X_CONNECTOR_ID);
+  if (input.governanceCredentialStore) {
+    const governanceCredentials = await listXGovernanceCredentials(input.governanceCredentialStore, input.context);
+    const credential = governanceCredentials.find(isUsableXGovernanceCredential);
+    if (credential) return toXConnectionView(undefined, runtimeEnabled, credential);
+    if (governanceCredentials.length > 0) return toXConnectionView(undefined, runtimeEnabled);
+  }
+  return toXConnectionView(ownedRecord(input.connectionStore, input.context), runtimeEnabled);
+}
+
 export async function revokePendingXCredentials(input: {
   connectionStore: ConnectorConnectionStore;
   vault: SecretVault;
   username?: string;
+  excludeRefs?: ReadonlySet<string>;
   onError?: (error: Error, ref: string) => void;
 }): Promise<number> {
   let revoked = 0;
@@ -121,11 +178,13 @@ export async function revokePendingXCredentials(input: {
     for (const ref of record.pendingRevokeRefs ?? []) {
       const pendingOwner = record.pendingRevokeRefOwners?.[ref];
       try {
-        await input.vault.revokeSecret(ref, vaultCaller(
-          pendingOwner?.userId ?? credentialOwnerId(record),
-          pendingOwner?.tenantId ?? record.tenantId,
-          'revoke',
-        ));
+        if (!input.excludeRefs?.has(ref)) {
+          await input.vault.revokeSecret(ref, vaultCaller(
+            pendingOwner?.userId ?? credentialOwnerId(record),
+            pendingOwner?.tenantId ?? record.tenantId,
+            'revoke',
+          ));
+        }
         await input.connectionStore.markCredentialRevoked(record.username, X_CONNECTOR_ID, ref);
         revoked++;
       } catch (error) {
@@ -137,21 +196,42 @@ export async function revokePendingXCredentials(input: {
 }
 
 export async function resolveXRuntimeEnv(
-  deps: { connectionStore: ConnectorConnectionStore; vault: SecretVault; onError?: (error: Error) => void },
+  deps: {
+    connectionStore: ConnectorConnectionStore;
+    vault: SecretVault;
+    governanceCredentialStore?: XGovernanceCredentialReader;
+    onError?: (error: Error) => void;
+  },
   context: { userId: string; username: string; tenantId: string },
 ): Promise<Record<string, string>> {
-  const connection = ownedRecord(deps.connectionStore, context);
-  if (
-    !connection
-    || connection.status !== 'connected'
-    || !deps.connectionStore.isRuntimeEnabled(context.username, X_CONNECTOR_ID)
-  ) return {};
-  const credentialRef = connection.credentialRefs[X_COOKIE_CREDENTIAL_KEY];
+  if (!deps.connectionStore.isRuntimeEnabled(context.username, X_CONNECTOR_ID)) return {};
+
+  let governanceCredential: GovernanceCredential | undefined;
+  let hasGovernanceCredential = false;
+  if (deps.governanceCredentialStore) {
+    try {
+      const governanceCredentials = await listXGovernanceCredentials(deps.governanceCredentialStore, context);
+      hasGovernanceCredential = governanceCredentials.length > 0;
+      governanceCredential = governanceCredentials.find(isUsableXGovernanceCredential);
+    } catch (error) {
+      deps.onError?.(error instanceof Error ? error : new Error(String(error)));
+      return {};
+    }
+  }
+
+  const connection = governanceCredential || hasGovernanceCredential ? undefined : ownedRecord(deps.connectionStore, context);
+  if (!governanceCredential && (
+    hasGovernanceCredential || !connection || connection.status !== 'connected'
+  )) return {};
+
+  const credentialRef = governanceCredential?.secretRef
+    ?? connection?.credentialRefs[X_COOKIE_CREDENTIAL_KEY];
   if (!credentialRef) return {};
+  const ownerId = governanceCredential?.ownerUserId ?? (connection ? credentialOwnerId(connection) : context.userId);
   try {
     const value = await deps.vault.getSecret(
       credentialRef,
-      vaultCaller(credentialOwnerId(connection), context.tenantId, 'read'),
+      vaultCaller(ownerId, context.tenantId, 'read'),
     );
     const credential = parseCookieCredential(value);
     return {

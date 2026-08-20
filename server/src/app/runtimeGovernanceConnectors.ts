@@ -856,6 +856,7 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       resolveXRuntimeEnv({
         connectionStore: connectorConnectionStore,
         vault: secretVault,
+        governanceCredentialStore: credentialStore,
         onError: error => serverLogger.warn(
           `Native connector runtime env skipped: connector=x reason=${error.message}`,
         ),

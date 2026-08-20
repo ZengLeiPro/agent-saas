@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import type { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
 import type { PgCredentialStore } from '../data/credentials/index.js';
+import type { GovernanceCredential } from '../data/credentials/types.js';
 import { governanceDigest } from '../data/governance-audit/index.js';
 import type { PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import type { PgMembershipStore } from '../data/memberships/index.js';
@@ -26,6 +27,10 @@ const credentialCommitToken = {
 const boundCreateCommitSchema = credentialCreatePreviewSchema.extend(credentialCommitToken).strict();
 const boundRotateCommitSchema = credentialRotatePreviewSchema.extend(credentialCommitToken).strict();
 const boundTransferCommitSchema = credentialTransferPreviewSchema.extend(credentialCommitToken).strict();
+const credentialRevokePreviewSchema = z.object({
+  expectedVersion: z.number().int().positive(), reason: z.string().min(3).max(500),
+}).strict();
+const boundRevokeCommitSchema = credentialRevokePreviewSchema.extend(credentialCommitToken).strict();
 
 function previewBinding(previewId: string): { idempotencyKey: string; nonce: string } {
   const [, idempotencyKey, nonce] = previewId.split('.');
@@ -85,6 +90,7 @@ export function registerGovernanceCredentialRoutes(options: {
   canManageOrganization: (req: Request) => boolean;
   resourceTenantFor: (req: Request, requested?: string) => string | null;
   credentialHealthCheck?: (connectorId: string, secret: string) => Promise<{ healthy: boolean; code: string }>;
+  onPersonalCredentialRevoked?: (input: { credential: GovernanceCredential; actorUserId: string }) => Promise<void>;
 }): void {
   const { router } = options;
   const hasActiveOffboarding = async (tenantId: string, userId: string): Promise<boolean> => Boolean(
@@ -450,8 +456,125 @@ export function registerGovernanceCredentialRoutes(options: {
     return credential?.tenantId === tenantId && credential.kind === 'org_shared' ? { tenantId, credential } : null;
   };
 
+  const credentialForRotation = async (req: Request, credentialId: string) => {
+    const tenantId = options.resourceTenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
+    if (!tenantId) return null;
+    const credential = await options.credentials.get(credentialId);
+    if (!credential || credential.tenantId !== tenantId) return null;
+    const isOrganizationCredential = credential.kind === 'org_shared' && options.canManageOrganization(req);
+    const isPersonalCredential = credential.kind === 'personal_grant' && credential.ownerUserId === req.user!.sub;
+    return isOrganizationCredential || isPersonalCredential ? { tenantId, credential } : null;
+  };
+
+  const credentialForPersonalOwner = async (req: Request, credentialId: string) => {
+    const tenantId = options.resourceTenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
+    if (!tenantId) return null;
+    const credential = await options.credentials.get(credentialId);
+    return credential?.tenantId === tenantId
+      && credential.kind === 'personal_grant'
+      && credential.ownerUserId === req.user!.sub
+      ? { tenantId, credential }
+      : null;
+  };
+
+  router.post('/credentials/:credentialId/revoke/preview', async (req, res) => {
+    const target = await credentialForPersonalOwner(req, req.params.credentialId);
+    if (!target) return res.status(404).json({ error: 'Credential not found' });
+    const parsed = credentialRevokePreviewSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
+    if (target.credential.version !== parsed.data.expectedVersion || target.credential.status === 'revoked') {
+      return res.status(409).json({ error: 'Credential baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
+    }
+    const baselineDigest = governanceDigest(credentialView(target.credential));
+    const expiresAt = new Date(options.now().getTime() + 5 * 60_000).toISOString();
+    const idempotencyKey = randomUUID();
+    const nonce = randomUUID();
+    const previewId = signedPreviewId(options.previewSecret, {
+      version: 2, kind: 'credential_revoke', actorUserId: req.user!.sub, tenantId: target.tenantId,
+      credentialId: target.credential.credentialId,
+      baselineDigest, expiresAt, changeDigest: governanceDigest(parsed.data),
+    }, { idempotencyKey, nonce });
+    return res.json({
+      previewId, baselineDigest, expiresAt,
+      impact: {
+        connectorId: target.credential.connectorId ?? null,
+        immediatelyUnavailable: true,
+        secretWillBeRevoked: true,
+        currentVersion: target.credential.version,
+        nextVersion: target.credential.version + 1,
+      },
+      changeId: res.locals.governanceChangeId,
+    });
+  });
+
+  router.post('/credentials/:credentialId/revoke', async (req, res) => {
+    const target = await credentialForPersonalOwner(req, req.params.credentialId);
+    if (!target) return res.status(404).json({ error: 'Credential not found' });
+    const parsed = boundRevokeCommitSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
+    const { previewId, baselineDigest, expiresAt, ...mutation } = parsed.data;
+    if (Date.parse(expiresAt) <= options.now().getTime()) {
+      return res.status(409).json({ error: 'Governance preview expired', code: 'GOVERNANCE_PREVIEW_EXPIRED' });
+    }
+    const { idempotencyKey, nonce } = previewBinding(previewId);
+    const expected = signedPreviewId(options.previewSecret, {
+      version: 2, kind: 'credential_revoke', actorUserId: req.user!.sub, tenantId: target.tenantId,
+      credentialId: target.credential.credentialId,
+      baselineDigest, expiresAt, changeDigest: governanceDigest(mutation),
+    }, { idempotencyKey, nonce });
+    if (!previewMatches(previewId, expected)) {
+      return res.status(409).json({ error: 'Governance preview invalid or baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
+    }
+    if (target.credential.version !== mutation.expectedVersion
+      || governanceDigest(credentialView(target.credential)) !== baselineDigest
+      || target.credential.status === 'revoked') {
+      return res.status(409).json({ error: 'Governance preview invalid or baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
+    }
+    let credential: Awaited<ReturnType<PgCredentialStore['updateStatus']>>;
+    try {
+      credential = await options.credentials.updateStatus(target.credential.credentialId, {
+        status: 'revoked', expectedVersion: mutation.expectedVersion,
+        updatedBy: req.user!.sub, updateReason: mutation.reason,
+      });
+    } catch (error) {
+      return res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+    try {
+      await options.vault.revokeSecret(target.credential.secretRef, {
+        actor: 'connector_proxy', userId: target.credential.ownerUserId ?? req.user!.sub,
+        tenantId: target.tenantId, scopes: ['secret:connector:revoke'],
+      });
+    } catch (error) {
+      console.error('credential vault revoke failed after governance status update', {
+        credentialId: target.credential.credentialId,
+        tenantId: target.tenantId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return res.status(503).json({
+        error: 'Credential 已撤销，但 SecretVault 清理失败，请稍后重试',
+        code: 'CREDENTIAL_VAULT_REVOKE_FAILED', changed: true, credential: credentialView(credential),
+      });
+    }
+    if (options.onPersonalCredentialRevoked) {
+      try {
+        await options.onPersonalCredentialRevoked({ credential: target.credential, actorUserId: req.user!.sub });
+      } catch (error) {
+        console.error('legacy personal credential cleanup failed after governance revoke', {
+          credentialId: target.credential.credentialId,
+          tenantId: target.tenantId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return res.status(503).json({
+          error: 'Credential 已撤销，但旧连接器凭据清理失败，请稍后重试',
+          code: 'CREDENTIAL_LEGACY_CLEANUP_FAILED', changed: true, credential: credentialView(credential),
+        });
+      }
+    }
+    return res.json({ ...credentialView(credential), changeId: res.locals.governanceChangeId, effectiveAt: credential.updatedAt });
+  });
+
   router.post('/credentials/:credentialId/rotate/preview', async (req, res) => {
-    const target = await credentialForOrganizationAdmin(req, req.params.credentialId);
+    const target = await credentialForRotation(req, req.params.credentialId);
     if (!target) return res.status(404).json({ error: 'Credential not found' });
     const parsed = credentialRotatePreviewSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
@@ -473,7 +596,7 @@ export function registerGovernanceCredentialRoutes(options: {
   });
 
   router.post('/credentials/:credentialId/rotate', async (req, res) => {
-    const target = await credentialForOrganizationAdmin(req, req.params.credentialId);
+    const target = await credentialForRotation(req, req.params.credentialId);
     if (!target) return res.status(404).json({ error: 'Credential not found' });
     const parsed = boundRotateCommitSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
@@ -535,7 +658,12 @@ export function registerGovernanceCredentialRoutes(options: {
       return res.status(409).json({ error: 'Governance preview invalid or baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
     }
 
-    const caller = { actor: 'connector_proxy' as const, userId: target.credential.custodianUserId ?? req.user!.sub, tenantId: target.tenantId, scopes: ['secret:connector:read', 'secret:connector:rotate'] };
+    const caller = {
+      actor: 'connector_proxy' as const,
+      userId: target.credential.ownerUserId ?? target.credential.custodianUserId ?? req.user!.sub,
+      tenantId: target.tenantId,
+      scopes: ['secret:connector:read', 'secret:connector:rotate'],
+    };
     let previousSecret: string;
     let vaultRotated = false;
     try {

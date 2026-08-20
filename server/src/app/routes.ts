@@ -872,6 +872,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         createConnectorsRouter({
           connectionStore: runtime.connectorConnectionStore,
           secretVault: runtime.secretVault,
+          governanceCredentialStore: runtime.credentialStore,
           aliyunService: runtime.aliyunConnectorService,
           legacyWriteGate,
         }),

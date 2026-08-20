@@ -80,10 +80,10 @@ function workspace(root = '/tmp/workspace'): WorkspaceRef {
 }
 
 describe('PlatformToolRuntime', () => {
-  it('allows shell execution up to ten minutes and rejects longer requests', () => {
-    expect(DEFAULT_SHELL_TIMEOUT_MS).toBe(600_000);
+  it('allows shell execution up to thirty minutes and rejects longer requests', () => {
+    expect(DEFAULT_SHELL_TIMEOUT_MS).toBe(1_800_000);
     expect(runShellToolDescriptor.schema.parse({ command: 'sleep 1', timeoutMs: MAX_SHELL_TIMEOUT_MS }))
-      .toEqual({ command: 'sleep 1', timeoutMs: 600_000 });
+      .toEqual({ command: 'sleep 1', timeoutMs: 1_800_000 });
     expect(() => runShellToolDescriptor.schema.parse({ command: 'sleep 1', timeoutMs: MAX_SHELL_TIMEOUT_MS + 1 }))
       .toThrow();
     expect(runShellToolDescriptor.schema.parse({
@@ -225,6 +225,30 @@ describe('PlatformToolRuntime', () => {
         expect(match?.[1]).toBeTruthy();
         const saved = await readFile(join(root, match![1]!), 'utf-8');
         expect(saved).toHaveLength(70 * 1024);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('waits for shell close and persists captured output on timeout', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'agent-shell-timeout-'));
+    try {
+      const provider = new ServerLocalExecutionProvider();
+      const response = await provider.execute({
+        toolName: 'Shell',
+        input: { command: "printf 'before-timeout'; sleep 10", timeoutMs: 100 },
+        context: { workspace: workspace(root), invocationId: 'local-timeout-test' },
+      });
+
+      expect(response.status).toBe('error');
+      if (response.status === 'error') {
+        expect(response.error).toContain('Shell timed out after 100ms');
+        expect(response.error).toContain('before-timeout');
+        expect(response.metadata).toMatchObject({ timedOut: true, stdoutBytes: 14 });
+        const outputFiles = response.metadata?.outputFiles as Array<{ path: string }> | undefined;
+        expect(outputFiles).toHaveLength(1);
+        expect(await readFile(join(root, outputFiles![0]!.path), 'utf-8')).toBe('before-timeout');
       }
     } finally {
       await rm(root, { recursive: true, force: true });

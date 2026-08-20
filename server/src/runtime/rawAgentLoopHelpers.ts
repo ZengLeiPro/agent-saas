@@ -219,10 +219,11 @@ export function buildModelUsage(model: string, usage: ModelUsage | undefined) {
 }
 
 
-export const DEFAULT_ZOMBIE_TOOL_CALL_TIMEOUT_MS = 600_000;
+export const DEFAULT_ZOMBIE_TOOL_CALL_TIMEOUT_MS = 35 * 60_000;
 
 /**
- * 优先级：constructor option > env > 默认 600s。仅接受 >=0 的有限数字，否则回退默认。
+ * 优先级：constructor option > env > 默认 35 分钟。仅接受 >=0 的有限数字，否则回退默认。
+ * 预留给前台 Shell 30 分钟上限及远端收尾宽限，避免长命令在会话恢复时被过早判成 zombie。
  * 06-24 引入：与 describeBlockingToolCall 的 zombie 判定配合，应对 SIGKILL 残留。
  */
 export function resolveZombieToolCallTimeoutMs(optionValue?: number): number {

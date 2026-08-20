@@ -565,6 +565,58 @@ describe('HttpTransport.invokeStream', () => {
     expect(seen).toEqual([{ type: 'completed', response: { status: 'success', content: 'tail' } }]);
   });
 
+  it('recovers the remote final result after the transport stream timeout', async () => {
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const target = String(url);
+      urls.push(target);
+      if (target.endsWith('/execute-stream')) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        });
+      }
+      if (target.endsWith('/invocations/run-1%3Acall-timeout')) {
+        if (init?.method === 'GET') {
+          return new Response(JSON.stringify({
+            status: 'ok',
+            invocationId: 'run-1:call-timeout',
+            completed: true,
+            response: { status: 'error', error: 'Shell timed out after 100ms', metadata: { timedOut: true } },
+          }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ status: 'ok', cancelled: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ status: 'error', error: 'unexpected URL' }), { status: 500 });
+    }) as unknown as typeof fetch;
+    const transport = new HttpTransport({
+      baseUrl: 'http://h',
+      authToken: 'secret-token-12345',
+      fetchImpl,
+      invokeTimeoutMs: 20,
+      streamCleanupGraceMs: 0,
+      invocationResultPollTimeoutMs: 100,
+      invocationResultPollIntervalMs: 1,
+    });
+
+    const seen = [];
+    for await (const chunk of transport.invokeStream(buildRequest({
+      toolName: 'Shell',
+      input: { command: 'sleep 1', timeoutMs: 1 },
+      context: { workspace: SAMPLE_WORKSPACE, invocationId: 'run-1:call-timeout' },
+    }))) seen.push(chunk);
+
+    expect(seen.at(-1)).toMatchObject({
+      type: 'completed',
+      response: {
+        status: 'error',
+        error: 'Shell timed out after 100ms',
+        metadata: { timedOut: true, remoteResultRecovered: true },
+      },
+    });
+    expect(urls).toContain('http://h/invocations/run-1%3Acall-timeout');
+    expect(urls.filter((url) => url.endsWith('/invocations/run-1%3Acall-timeout'))).toHaveLength(2);
+  });
+
   it('sends DELETE /invocations/:id when upstream aborts a streaming invocation', async () => {
     const controller = new AbortController();
     const urls: string[] = [];

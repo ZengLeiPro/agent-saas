@@ -629,8 +629,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
         }
         case 'Shell': {
           const args = input as { command: string; timeoutMs?: number };
-          const content = await this._runShell(workspace, args.command, args.timeoutMs, signal, context.invocationId, context.env);
-          return { status: 'success', content };
+          return await this._runShellStreaming(workspace, args.command, args.timeoutMs, signal, undefined, context.invocationId, context.env);
         }
         case 'Edit': {
           const result = await runWorkspaceEdit(input as Parameters<typeof runWorkspaceEdit>[0], workspace, (fullPath) => assertSandboxReadAllowed(workspace, fullPath));
@@ -743,19 +742,6 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
     return relativeWorkspacePath(workspace.root, fullPath);
   }
 
-  private async _runShell(
-    workspace: WorkspaceRef,
-    command: string,
-    timeoutMs: number | undefined,
-    signal: AbortSignal | undefined,
-    invocationId?: string,
-    runtimeEnv?: Record<string, string>,
-  ): Promise<string> {
-    const response = await this._runShellStreaming(workspace, command, timeoutMs, signal, undefined, invocationId, runtimeEnv);
-    if (response.status === 'error') throw new Error(response.error);
-    return response.content;
-  }
-
   private async _runShellStreaming(
     workspace: WorkspaceRef,
     command: string,
@@ -797,18 +783,25 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
       let stderrBytes = 0;
       let streamedBytes = 0;
       let streamSuppressed = false;
+      let timedOut = false;
+      let aborted = false;
       let outputExceeded = false;
+      let spawnError: Error | undefined;
       const startedAt = Date.now();
+      const timeoutValue = timeoutMs ?? DEFAULT_SHELL_TIMEOUT_MS;
       let settled = false;
+      let finalizing = false;
       let sigkillTimer: ReturnType<typeof setTimeout> | undefined;
+      let hardFinalizeTimer: ReturnType<typeof setTimeout> | undefined;
       let killStarted = false;
       const finish = (response: ToolInvocationResponse) => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          if (sigkillTimer) clearTimeout(sigkillTimer);
-          resolvePromise(response);
-        }
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (sigkillTimer) clearTimeout(sigkillTimer);
+        if (hardFinalizeTimer) clearTimeout(hardFinalizeTimer);
+        signal?.removeEventListener('abort', onAbort);
+        resolvePromise(response);
       };
       const killWithSignal = (signalName: NodeJS.Signals) => {
         if (child.pid && process.platform !== 'win32') {
@@ -817,17 +810,28 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
         if (!child.killed) child.kill(signalName);
       };
       const kill = () => {
-        if (killStarted) return;
+        if (killStarted || settled) return;
         killStarted = true;
         killWithSignal('SIGTERM');
         sigkillTimer = setTimeout(() => {
-          if (!settled) killWithSignal('SIGKILL');
+          if (settled) return;
+          killWithSignal('SIGKILL');
+          hardFinalizeTimer = setTimeout(() => {
+            void finalize(null, 'SIGKILL');
+          }, 2_000);
+          hardFinalizeTimer.unref?.();
         }, 2_000);
-        sigkillTimer.unref();
+        sigkillTimer.unref?.();
       };
-      const onAbort = () => { kill(); finish({ status: 'error', error: 'Shell aborted', metadata: { aborted: true } }); };
+      const onAbort = () => {
+        aborted = true;
+        kill();
+      };
       signal?.addEventListener('abort', onAbort, { once: true });
-      const timer = setTimeout(() => { kill(); finish({ status: 'error', error: `Shell timed out after ${timeoutMs ?? DEFAULT_SHELL_TIMEOUT_MS}ms`, metadata: { timedOut: true } }); }, timeoutMs ?? DEFAULT_SHELL_TIMEOUT_MS);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        kill();
+      }, timeoutValue);
       timer.unref?.();
       const emitStreamChunk = (channel: 'stdout' | 'stderr', text: string, chunkBytes: number) => {
         if (!onChunk || streamSuppressed) return;
@@ -848,7 +852,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
         void onChunk({ type: 'progress', message: `Shell stream output truncated after ${MAX_SHELL_STREAM_BYTES} bytes; final result keeps a head/tail summary.` });
       };
       const emit = (channel: 'stdout' | 'stderr', chunk: Buffer) => {
-        if (settled || outputExceeded) return;
+        if (settled || finalizing || outputExceeded) return;
         const text = chunk.toString('utf-8');
         if (channel === 'stdout') { stdoutBytes += chunk.length; stdout += text; } else { stderrBytes += chunk.length; stderr += text; }
         if (stdoutBytes + stderrBytes > MAX_SHELL_CAPTURE_BYTES) {
@@ -859,11 +863,9 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
         }
         emitStreamChunk(channel, text, chunk.length);
       };
-      child.stdout?.on('data', (chunk: Buffer) => emit('stdout', chunk));
-      child.stderr?.on('data', (chunk: Buffer) => emit('stderr', chunk));
-      child.on('error', (err: Error) => finish({ status: 'error', error: err.message }));
-      child.on('close', async (code: number | null, sig: NodeJS.Signals | null) => {
-        signal?.removeEventListener('abort', onAbort);
+      const finalize = async (code: number | null, sig: NodeJS.Signals | null) => {
+        if (settled || finalizing) return;
+        finalizing = true;
         const durationMs = Date.now() - startedAt;
         let outputFiles: import('./toolOutput.js').ShellOutputFileRef[] = [];
         let outputFileError: string | undefined;
@@ -873,6 +875,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
             invocationId,
             stdout,
             stderr,
+            force: timedOut || aborted || outputExceeded,
           });
         } catch (err) {
           outputFileError = err instanceof Error ? err.message : String(err);
@@ -885,6 +888,8 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
           exitCode: code,
           signal: sig,
           durationMs,
+          timedOut,
+          aborted,
           captureLimitExceeded: outputExceeded,
           outputFiles,
           outputFileError,
@@ -895,6 +900,8 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
           stdoutBytes,
           stderrBytes,
           durationMs,
+          ...(timedOut ? { timedOut: true } : {}),
+          ...(aborted ? { aborted: true } : {}),
           ...(outputFiles.length > 0 ? { outputFiles } : {}),
           ...(outputFileError ? { outputFileError } : {}),
           ...(outputExceeded ? { outputExceeded: true } : {}),
@@ -903,10 +910,32 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
           finish({ status: 'error', error: `Shell output exceeded hard capture limit ${MAX_SHELL_CAPTURE_BYTES} bytes\n\n${content}`, metadata });
           return;
         }
+        if (timedOut) {
+          finish({ status: 'error', error: `Shell timed out after ${timeoutValue}ms\n\n${content}`, metadata });
+          return;
+        }
+        if (aborted) {
+          finish({ status: 'error', error: `Shell aborted\n\n${content}`, metadata });
+          return;
+        }
+        if (spawnError) {
+          finish({ status: 'error', error: `${spawnError.message}\n\n${content}`, metadata });
+          return;
+        }
         finish(code === 0
           ? { status: 'success', content, metadata }
           : { status: 'error', error: `command exited ${code ?? sig}\n\n${content}`, metadata });
+      };
+      child.stdout?.on('data', (chunk: Buffer) => emit('stdout', chunk));
+      child.stderr?.on('data', (chunk: Buffer) => emit('stderr', chunk));
+      child.on('error', (err: Error) => {
+        spawnError = err;
+        void finalize(null, null);
       });
+      child.on('close', (code: number | null, sig: NodeJS.Signals | null) => {
+        void finalize(code, sig);
+      });
+      if (signal?.aborted) onAbort();
     });
   }
 }

@@ -193,7 +193,7 @@ export interface RawAgentLoopOptions {
    * 后续事件时，replay 视为 SIGKILL/crash 残留，让 recoverUnclosedToolCalls 的
    * 合成 tool_result 默认分支收尾，避免会话被永久卡在「请稍后重试」。
    *
-   * 默认 600_000（10 分钟），可通过 env `AGENT_SAAS_ZOMBIE_TOOL_CALL_TIMEOUT_MS` 覆盖。
+   * 默认 35 分钟，可通过 env `AGENT_SAAS_ZOMBIE_TOOL_CALL_TIMEOUT_MS` 覆盖。
    * 设 0 表示「任意 invocationStarted 都立刻视为 zombie」（仅测试用）。
    */
   zombieToolCallTimeoutMs?: number;

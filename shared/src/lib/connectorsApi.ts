@@ -122,7 +122,7 @@ export async function disconnectX(): Promise<XConnectionResponse> {
   const current = await governanceResourcesApi.listCredentials<{ credentials: XGovernanceCredentialSummary[] }>();
   const credentials = current.credentials.filter(credential => credential.connectorId === 'x'
     && credential.kind === 'personal_grant'
-    && ['active', 'rotation_due', 'expired', 'suspended', 'validation_failed'].includes(credential.status));
+    && ['active', 'rotation_due', 'expired', 'suspended', 'revoked', 'validation_failed'].includes(credential.status));
   for (const credential of credentials) {
     const command = { expectedVersion: credential.version, reason: '用户主动断开 X' };
     const preview = await governanceResourcesApi.previewCredentialRevoke<{

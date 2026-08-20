@@ -304,14 +304,16 @@ export class PgCredentialStore {
     credentialId: string,
     expectedVersion: number,
     updatedBy: string,
+    clearExpiredAt = false,
   ): Promise<GovernanceCredential> {
     const result = await this.options.pool.query(
       `UPDATE ${this.credentialsTable}
        SET generation=generation+1,status='active',last_validated_at=NULL,source='governance',
+           expires_at=CASE WHEN $5 THEN NULL ELSE expires_at END,
            version=version+1,updated_at=NOW(),updated_by=$4
        WHERE tenant_id=$1 AND credential_id=$2 AND version=$3 AND kind IN ('org_shared','personal_grant') AND status<>'revoked'
        RETURNING *`,
-      [tenantId, credentialId, expectedVersion, updatedBy],
+      [tenantId, credentialId, expectedVersion, updatedBy, clearExpiredAt],
     );
     if (!result.rows[0]) throw new CredentialInvariantError('CREDENTIAL_VERSION_CONFLICT');
     return rowToCredential(result.rows[0]);

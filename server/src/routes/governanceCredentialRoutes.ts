@@ -482,7 +482,7 @@ export function registerGovernanceCredentialRoutes(options: {
     if (!target) return res.status(404).json({ error: 'Credential not found' });
     const parsed = credentialRevokePreviewSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-    if (target.credential.version !== parsed.data.expectedVersion || target.credential.status === 'revoked') {
+    if (target.credential.version !== parsed.data.expectedVersion) {
       return res.status(409).json({ error: 'Credential baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
     }
     const baselineDigest = governanceDigest(credentialView(target.credential));
@@ -500,8 +500,9 @@ export function registerGovernanceCredentialRoutes(options: {
         connectorId: target.credential.connectorId ?? null,
         immediatelyUnavailable: true,
         secretWillBeRevoked: true,
+        cleanupRetry: target.credential.status === 'revoked',
         currentVersion: target.credential.version,
-        nextVersion: target.credential.version + 1,
+        nextVersion: target.credential.status === 'revoked' ? target.credential.version : target.credential.version + 1,
       },
       changeId: res.locals.governanceChangeId,
     });
@@ -526,47 +527,64 @@ export function registerGovernanceCredentialRoutes(options: {
       return res.status(409).json({ error: 'Governance preview invalid or baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
     }
     if (target.credential.version !== mutation.expectedVersion
-      || governanceDigest(credentialView(target.credential)) !== baselineDigest
-      || target.credential.status === 'revoked') {
+      || governanceDigest(credentialView(target.credential)) !== baselineDigest) {
       return res.status(409).json({ error: 'Governance preview invalid or baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
     }
-    let credential: Awaited<ReturnType<PgCredentialStore['updateStatus']>>;
-    try {
-      credential = await options.credentials.updateStatus(target.credential.credentialId, {
-        status: 'revoked', expectedVersion: mutation.expectedVersion,
-        updatedBy: req.user!.sub, updateReason: mutation.reason,
-      });
-    } catch (error) {
-      return res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
-    }
+
+    const alreadyRevoked = target.credential.status === 'revoked';
+    let vaultRevoked = false;
     try {
       await options.vault.revokeSecret(target.credential.secretRef, {
         actor: 'connector_proxy', userId: target.credential.ownerUserId ?? req.user!.sub,
         tenantId: target.tenantId, scopes: ['secret:connector:revoke'],
       });
+      vaultRevoked = true;
     } catch (error) {
-      console.error('credential vault revoke failed after governance status update', {
+      console.error('credential vault revoke failed before governance status update', {
         credentialId: target.credential.credentialId,
         tenantId: target.tenantId,
         error: error instanceof Error ? error.message : String(error),
       });
       return res.status(503).json({
-        error: 'Credential 已撤销，但 SecretVault 清理失败，请稍后重试',
-        code: 'CREDENTIAL_VAULT_REVOKE_FAILED', changed: true, credential: credentialView(credential),
+        error: 'SecretVault 清理失败，Credential 状态保持可重试',
+        code: 'CREDENTIAL_VAULT_REVOKE_FAILED', changed: false, retryable: true,
+        credential: credentialView(target.credential),
       });
     }
     if (options.onPersonalCredentialRevoked) {
       try {
         await options.onPersonalCredentialRevoked({ credential: target.credential, actorUserId: req.user!.sub });
       } catch (error) {
-        console.error('legacy personal credential cleanup failed after governance revoke', {
+        console.error('legacy personal credential cleanup failed before governance status update', {
           credentialId: target.credential.credentialId,
           tenantId: target.tenantId,
           error: error instanceof Error ? error.message : String(error),
         });
         return res.status(503).json({
-          error: 'Credential 已撤销，但旧连接器凭据清理失败，请稍后重试',
-          code: 'CREDENTIAL_LEGACY_CLEANUP_FAILED', changed: true, credential: credentialView(credential),
+          error: '旧连接器凭据清理失败，Credential 状态保持可重试',
+          code: 'CREDENTIAL_LEGACY_CLEANUP_FAILED', changed: vaultRevoked, retryable: true,
+          credential: credentialView(target.credential),
+        });
+      }
+    }
+
+    let credential: Awaited<ReturnType<PgCredentialStore['updateStatus']>> = target.credential;
+    if (!alreadyRevoked) {
+      try {
+        credential = await options.credentials.updateStatus(target.credential.credentialId, {
+          status: 'revoked', expectedVersion: mutation.expectedVersion,
+          updatedBy: req.user!.sub, updateReason: mutation.reason,
+        });
+      } catch (error) {
+        console.error('credential revoke status persistence failed after cleanup', {
+          credentialId: target.credential.credentialId,
+          tenantId: target.tenantId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return res.status(503).json({
+          error: 'Credential 清理完成但状态写入失败，请稍后重试',
+          code: 'CREDENTIAL_REVOKE_PERSIST_FAILED', changed: true, retryable: true,
+          credential: credentialView(target.credential),
         });
       }
     }
@@ -710,7 +728,12 @@ export function registerGovernanceCredentialRoutes(options: {
 
     let credential: Awaited<ReturnType<PgCredentialStore['completeRotation']>>;
     try {
-      credential = await options.credentials.completeRotation(target.tenantId, target.credential.credentialId, mutation.expectedVersion, req.user!.sub);
+      const shouldClearExpiredAt = Boolean(
+        target.credential.expiresAt && Date.parse(target.credential.expiresAt) <= options.now().getTime(),
+      );
+      credential = await options.credentials.completeRotation(
+        target.tenantId, target.credential.credentialId, mutation.expectedVersion, req.user!.sub, shouldClearExpiredAt,
+      );
     } catch {
       try {
         await options.vault.rotateSecret(target.credential.secretRef, previousSecret, caller);

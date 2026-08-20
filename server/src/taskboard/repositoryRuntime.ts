@@ -6,6 +6,7 @@ import type { IntegrationEngineV3ProviderFacts, IntegrationEngineV3ProviderHost 
 import type { IntegrationProviderOperationRecord, IntegrationProviderReconcileResult } from './integrationProviderOperations.js';
 import type { TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
 import type { PgTaskboardStore } from './store.js';
+import { githubAppRepositoryTarget, resolveGithubAppRepositoryToken } from './githubAppRepositoryBinding.js';
 
 export function configureTaskboardGithubRepositoryProvider(
   store: Pick<PgTaskboardStore, 'setRepositoryProvider'> | undefined,
@@ -36,16 +37,9 @@ export function createIntegrationV3GithubAppRepositoryProvider(input: {
 }): RepositoryProvider {
   return new GithubRepositoryProvider({
     resolveToken: async (repository) => {
-      const match = /^github-id:(\d+)$/.exec(repository.repositoryId);
-      if (!match) return undefined;
-      const repositoryId = Number(match[1]);
-      const credential = await input.tokenProvider.getInstallationToken({
-        repositoryId,
-        installationId: input.installationId,
-      });
-      if (!credential || credential.repositoryId !== repositoryId
-        || credential.installationId !== input.installationId) return undefined;
-      return credential.token;
+      const target = githubAppRepositoryTarget(repository);
+      if (!target) return undefined;
+      return (await resolveGithubAppRepositoryToken(input.tokenProvider, input.installationId, target))?.token;
     },
   });
 }

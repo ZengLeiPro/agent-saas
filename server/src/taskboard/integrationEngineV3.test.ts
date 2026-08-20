@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { TaskBoardIntegrationCandidate, TaskBoardIntegrationCandidateRevision, TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
-import { IntegrationEngineV3, type IntegrationEngineV3CandidateHost, type IntegrationEngineV3ExpectedSubject, type IntegrationEngineV3ProviderFacts } from './integrationEngineV3.js';
+import { IntegrationEngineV3, type IntegrationEngineV3CandidateHost, type IntegrationEngineV3ExpectedSubject, type IntegrationEngineV3ProviderFacts, type IntegrationEngineV3RequestHost } from './integrationEngineV3.js';
 import { IntegrationProviderOperationService, type IntegrationProviderOperationRecord, type IntegrationProviderOperationState, type IntegrationProviderOperationStorageHost } from './integrationProviderOperations.js';
 
 const repository: TaskBoardRepositoryConfig = { provider: 'github', repositoryId: 'github:acme/app', owner: 'acme', name: 'app', baseBranch: 'main', allowForkPullRequest: false };
@@ -56,7 +56,12 @@ class MemoryOperations implements IntegrationProviderOperationStorageHost {
 function setup(state: TaskBoardIntegrationCandidate['state'], providerFacts = facts()) {
   const candidates = new MemoryCandidateHost(candidate(state));
   const operations = new MemoryOperations();
-  const requests = { requestWork: vi.fn(async () => ({ requestId: 'work-request' })), requestReview: vi.fn(async () => ({ requestId: 'review-request' })), requestWorkspaceSync: vi.fn(async () => ({ requestId: 'sync-request' })), requestCleanup: vi.fn(async () => ({ requestId: 'cleanup-request' })) };
+  const requests = {
+    requestWork: vi.fn<IntegrationEngineV3RequestHost['requestWork']>(async () => ({ requestId: 'work-request' })),
+    requestReview: vi.fn<IntegrationEngineV3RequestHost['requestReview']>(async () => ({ requestId: 'review-request' })),
+    requestWorkspaceSync: vi.fn(async () => ({ requestId: 'sync-request' })),
+    requestCleanup: vi.fn(async () => ({ requestId: 'cleanup-request' })),
+  };
   let currentFacts = providerFacts;
   const merge = vi.fn(async () => ({ providerRequestId: 'merge-request' }));
   const reconcileMerge = vi.fn(async () => ({ status: 'succeeded' as const, receipt: { providerPullRequestId: '42', mergedCommitOid: 'commit-1', mergedTreeOid: 'tree-1' } }));
@@ -112,6 +117,34 @@ describe('IntegrationEngineV3', () => {
     expect(reconciled.candidate).toMatchObject({ state: 'merged', mergedCommitOid: 'commit-1' });
     expect(context.reconcileMerge).toHaveBeenCalledTimes(1);
     expect(context.merge).toHaveBeenCalledTimes(1);
+  });
+
+  it('reconciles request rows from their target candidate states without advancing twice', async () => {
+    const working = setup('working');
+    const workValue = working.candidates.value;
+    const work = await working.engine.execute({ type: 'request_work', candidateId: workValue.id, expected: expected(workValue) });
+    expect(work.candidate).toMatchObject({ state: 'working', workRound: 0, version: 7 });
+    expect(working.requests.requestWork).toHaveBeenCalledWith(expect.objectContaining({ workRound: 0, subjectDigest: revision.subjectDigest }));
+
+    const reviewing = setup('in_review');
+    const reviewValue = reviewing.candidates.value;
+    const review = await reviewing.engine.execute({ type: 'request_review', candidateId: reviewValue.id, expected: expected(reviewValue) });
+    expect(review.candidate).toMatchObject({ state: 'in_review', version: 7 });
+    expect(reviewing.requests.requestReview).toHaveBeenCalledWith(expect.objectContaining({ subjectDigest: revision.subjectDigest, sourceSetDigest: revision.sourceSetDigest }));
+  });
+
+  it('turns an exhausted work/review request into explicit operator recovery instead of auto-reviving it', async () => {
+    const working = setup('working');
+    working.requests.requestWork.mockResolvedValue({ requestId: 'work-request', status: 'failed' });
+    await expect(working.engine.execute({
+      type: 'request_work', candidateId: 'candidate-1', expected: expected(working.candidates.value),
+    })).rejects.toMatchObject({ code: 'TASKBOARD_CANDIDATE_REQUEST_FAILED' });
+
+    const reviewing = setup('in_review');
+    reviewing.requests.requestReview.mockResolvedValue({ requestId: 'review-request', status: 'failed' });
+    await expect(reviewing.engine.execute({
+      type: 'request_review', candidateId: 'candidate-1', expected: expected(reviewing.candidates.value),
+    })).rejects.toMatchObject({ code: 'TASKBOARD_CANDIDATE_REQUEST_FAILED' });
   });
 
   it('emits main synchronization as a deterministic workspace request', async () => {

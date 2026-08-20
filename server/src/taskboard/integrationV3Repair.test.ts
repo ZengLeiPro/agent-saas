@@ -58,20 +58,63 @@ describe('integration v3 invariant repair', () => {
     expect(db.query.mock.calls[0]![0]).not.toContain("state='prepared'");
   });
 
-  it('requeues only a permanently failed candidate and writes the operator audit payload', async () => {
-    const db = dbWithRows([{ id: 'candidate-1', integration_task_id: 'task-1', previous_error: 'provider denied' }], []);
+  it('requeues only a permanently failed nonterminal worker and writes the operator audit payload', async () => {
+    const db = dbWithRows([{
+      id: 'candidate-1', integration_task_id: 'task-1', previous_error: 'provider denied',
+      recovery_kind: 'worker', outbox_id: 'work-request-1', status: 'idle',
+    }], []);
 
-    await expect(requeueFailedIntegrationV3Candidate(db, { candidates: 'candidates', changes: 'changes' }, {
+    await expect(requeueFailedIntegrationV3Candidate(db, {
+      candidates: 'candidates', requestsOutbox: 'outbox', changes: 'changes',
+    }, {
       taskId: 'task-1', actorId: 'maintainer-1', reason: 'credentials repaired',
     })).resolves.toEqual({
-      candidateId: 'candidate-1', taskId: 'task-1', previousError: 'provider denied', status: 'idle',
+      candidateId: 'candidate-1', taskId: 'task-1', previousError: 'provider denied', recoveryKind: 'worker',
+      outboxId: 'work-request-1', status: 'idle',
     });
 
-    expect(db.query).toHaveBeenNthCalledWith(1, expect.stringContaining("worker_status='failed'"), [
-      'task-1', 'maintainer-1', 'credentials repaired',
-    ]);
+    const recoverySql = String(db.query.mock.calls[0]![0]);
+    expect(recoverySql).toContain("current.worker_status='failed'");
+    expect(recoverySql).toContain("current.state NOT IN ('merged','canceled')");
+    expect(recoverySql).toContain("o.status='failed' AND o.lease_id IS NULL");
+    expect(recoverySql).toContain("o.kind='work' AND c.state='working'");
+    expect(recoverySql).toContain("o.kind='review' AND c.state='in_review'");
     expect(db.query).toHaveBeenNthCalledWith(2, expect.stringContaining('integration.v3.worker_requeued'), [
-      'task-1', 'maintainer-1', JSON.stringify({ candidateId: 'candidate-1', reason: 'credentials repaired', previousError: 'provider denied' }),
+      'task-1', 'maintainer-1', JSON.stringify({
+        candidateId: 'candidate-1', reason: 'credentials repaired', previousError: 'provider denied', recoveryKind: 'worker',
+        outboxId: 'work-request-1',
+      }),
+    ]);
+  });
+
+  it('requeues only the current failed cleanup for a terminal candidate without touching provider operations', async () => {
+    const db = dbWithRows([{
+      candidate_id: 'candidate-terminal', integration_task_id: 'task-1', previous_error: 'dirty worktree',
+      recovery_kind: 'cleanup', outbox_id: 'cleanup-1', status: 'idle',
+    }], []);
+
+    await expect(requeueFailedIntegrationV3Candidate(db, {
+      candidates: 'candidates', requestsOutbox: 'outbox', changes: 'changes',
+    }, {
+      taskId: 'task-1', actorId: 'maintainer-1', reason: 'worktree repaired',
+    })).resolves.toEqual({
+      candidateId: 'candidate-terminal', taskId: 'task-1', previousError: 'dirty worktree',
+      recoveryKind: 'cleanup', outboxId: 'cleanup-1', status: 'idle',
+    });
+
+    const recoverySql = String(db.query.mock.calls[0]![0]);
+    expect(recoverySql).toContain("c.state IN ('merged','canceled')");
+    expect(recoverySql).toContain("o.kind='cleanup' AND o.status='failed'");
+    expect(recoverySql).toContain('o.candidate_revision=c.current_revision');
+    expect(recoverySql).toContain('o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch');
+    expect(recoverySql).toContain("SET status='pending',attempts=0");
+    expect(recoverySql).not.toContain('provider_operations');
+    expect(recoverySql).not.toContain('merge_pull_request');
+    expect(db.query).toHaveBeenNthCalledWith(2, expect.stringContaining('integration.v3.worker_requeued'), [
+      'task-1', 'maintainer-1', JSON.stringify({
+        candidateId: 'candidate-terminal', reason: 'worktree repaired', previousError: 'dirty worktree',
+        recoveryKind: 'cleanup', outboxId: 'cleanup-1',
+      }),
     ]);
   });
 

@@ -85,7 +85,29 @@ export function createRuntimeIntegrationV3HealthProvider(
   getRuntimeHealth: () => Promise<IntegrationV3GatewayHealth> | undefined,
   processRole: 'all' | 'ws-only' | 'scheduler-only' | 'runtime-worker' = 'all',
 ): () => Promise<IntegrationV3HealthStatus> {
-  if (!enabled) return async () => ({ status: 'not_applicable', releaseReady: true, reasons: [] });
+  if (!enabled) {
+    if (!store) return async () => ({ status: 'not_applicable', releaseReady: true, reasons: [] });
+    const tables = integrationCandidateTableNames(store.integrationSourcesTable);
+    return async () => {
+      const active = await store.pool.query(
+        `SELECT ((SELECT count(*) FROM ${tables.candidatesTable} WHERE state NOT IN ('merged','canceled'))
+          +(SELECT count(*) FROM ${tables.requestsOutboxTable} WHERE status IN ('pending','processing','failed'))
+          +(SELECT count(*) FROM ${tables.providerOperationsTable} WHERE state IN ('executing','unknown')))::int AS count`,
+      );
+      if (Number(active.rows[0]?.count ?? 0) === 0) {
+        return { status: 'not_applicable', releaseReady: true, reasons: [] };
+      }
+      const metrics = await collectIntegrationV3Metrics(store.pool, {
+        tasks: store.tasksTable, executions: store.executionsTable, lanes: store.integrationLanesTable,
+        candidates: tables.candidatesTable, providerOperations: tables.providerOperationsTable,
+        requestsOutbox: tables.requestsOutboxTable,
+      });
+      return {
+        status: 'degraded', releaseReady: false,
+        reasons: ['control_plane_disabled_with_durable_v3_work'], metrics,
+      };
+    };
+  }
   if (!store) return async () => evaluateIntegrationV3Health(unavailableMetrics('runtime_store_unavailable'));
   const tables = integrationCandidateTableNames(store.integrationSourcesTable);
   const activationStore = new PostgresIntegrationV3ActivationStore(store.pool, tables.activationHeartbeatsTable);

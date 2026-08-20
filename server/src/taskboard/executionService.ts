@@ -147,11 +147,12 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     return this.startExecutionInternal(identity, taskId, input);
   }
 
-  startDirectExecution(
-    identity: TaskboardIdentity,
-    taskId: string,
-    expectedVersion: number,
-  ): Promise<TaskBoardExecutionStartResult> {
+  startIntegrationV3Execution(identity: TaskboardIdentity, taskId: string, input: TaskBoardExecutionStartInput,
+    executionId: string): Promise<TaskBoardExecutionStartResult> {
+    return this.startExecutionInternal(identity, taskId, input, { executionId, trigger: 'initial' });
+  }
+
+  startDirectExecution(identity: TaskboardIdentity, taskId: string, expectedVersion: number): Promise<TaskBoardExecutionStartResult> {
     return this.startExecutionInternal(identity, taskId, { expectedVersion, purpose: 'work' }, {
       executionId: `direct-${taskId}`,
       trigger: 'initial',

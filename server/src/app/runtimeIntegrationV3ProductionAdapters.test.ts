@@ -83,6 +83,23 @@ describe('production integration v3 adapters', () => {
     expect(fetchImpl).toHaveBeenCalledWith('https://api.github.com/app/installations/456/access_tokens', expect.anything());
   });
 
+  it('binds a legacy canonical repository name to the one numeric repository returned by GitHub', async () => {
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(init?.body).toBe(JSON.stringify({ repositories: ['agent-saas'] }));
+      return new Response(JSON.stringify({
+        token: 'ghs_abcdefghijklmnopqrstuvwxyz', expires_at: new Date(NOW + 60 * 60_000).toISOString(),
+        repository_selection: 'selected', repositories: [{ id: 123, full_name: 'ZengLeiPro/agent-saas' }],
+      }), { status: 201 });
+    }) as unknown as typeof fetch;
+    const provider = createGithubAppInstallationTokenProvider({
+      appId: 42, privateKey: async () => privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(), fetchImpl, now: () => NOW,
+    });
+    await expect(provider.getInstallationToken({
+      repositoryOwner: 'ZengLeiPro', repositoryName: 'agent-saas', installationId: 456,
+    })).resolves.toMatchObject({ repositoryId: 123, installationId: 456 });
+  });
+
   it('rejects a token response that is not exclusively bound to the requested immutable repository', async () => {
     const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({

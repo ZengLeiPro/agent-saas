@@ -15,6 +15,7 @@ import type {
 import { rowToBoard } from './boardFields.js';
 import { rowToIntegrationSource } from './integrationSourceMapper.js';
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
+import { assertIntegrationV3RuntimeAvailable } from './integrationV3ActivationStore.js';
 import {
   canonicalJson,
   computeIntegrationPolicySnapshotDigest,
@@ -168,6 +169,7 @@ export async function createIntegrationBatch(
     if (workflowVersion === 3 && policy.featureFlags?.engineV3 !== true) {
       throw new TaskboardValidationError('Workflow v3 requires the engineV3 feature flag', 'TASKBOARD_INTEGRATION_V3_DISABLED');
     }
+    if (workflowVersion === 3) await assertIntegrationV3RuntimeAvailable(client, options.integrationSourcesTable);
     if (workflowVersion === 3 && !repository.baseBranch) {
       throw new TaskboardValidationError('Workflow v3 requires a repository base branch', 'TASKBOARD_REPOSITORY_REQUIRED');
     }

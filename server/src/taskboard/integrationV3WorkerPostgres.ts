@@ -112,7 +112,8 @@ export interface IntegrationV3WorkerPostgresOptions {
     taskId: string;
     expectedVersion: number;
     purpose: 'work' | 'review';
-  }): Promise<void>;
+    executionId: string;
+  }): Promise<{ executionId: string }>;
   syncWorkspace(request: IntegrationV3RequestLease): Promise<void>;
   cleanup(request: IntegrationV3RequestLease): Promise<IntegrationV3CleanupReceipt | void>;
   logger?: IntegrationV3WorkerHost['logger'];
@@ -127,12 +128,9 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
     const result = await this.options.pool.query(
       `WITH claim AS (
          SELECT c.id FROM ${this.options.candidatesTable} c
-         JOIN ${this.options.tasksTable} t ON t.id=c.integration_task_id
-         JOIN ${this.options.boardsTable} b ON b.id=t.board_id
           WHERE COALESCE(NULLIF(current_setting('agent_saas.integration_v3_enabled',true),'')::boolean,true)
-            AND COALESCE((b.integration_policy->>'enabled')::boolean,false)
-            AND COALESCE((b.integration_policy->>'workflowVersion')::int,2)=3
-            AND COALESCE((b.integration_policy->'featureFlags'->>'engineV3')::boolean,false)
+            AND COALESCE((c.policy_snapshot->>'workflowVersion')::int,2)=3
+            AND COALESCE((c.policy_snapshot->'featureFlags'->>'engineV3')::boolean,false)
             AND c.worker_status<>'failed' AND c.worker_available_at<=now()
             AND (c.worker_status='idle' OR c.worker_lease_expires_at<now())
             AND (c.state NOT IN ('merged','canceled') OR c.worker_checkpoint->>'status' IS DISTINCT FROM 'requested')
@@ -210,7 +208,15 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
           AND (o.status='pending' OR o.lease_expires_at<now())
           AND o.candidate_revision=c.current_revision
           AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch
-          AND ((o.kind='work' AND c.state='working') OR (o.kind='review' AND c.state='in_review')
+          AND COALESCE(o.payload->>'candidateId','')=c.id
+          AND (o.kind='cleanup' OR COALESCE(o.payload->>'revision','')=c.current_revision::text)
+          AND ((o.kind='work' AND c.state='working'
+                AND o.work_round=c.work_round
+                AND COALESCE(o.payload->>'workRound','')=c.work_round::text
+                AND COALESCE(o.payload->>'subjectDigest','')=COALESCE(c.subject_digest,''))
+            OR (o.kind='review' AND c.state='in_review'
+                AND COALESCE(o.payload->>'subjectDigest','')=COALESCE(c.subject_digest,'')
+                AND COALESCE(o.payload->>'sourceSetDigest','')=COALESCE(c.source_set_digest,''))
             OR o.kind='workspace_sync' OR (o.kind='cleanup' AND c.state IN ('merged','canceled')))
         ORDER BY o.created_at,o.id FOR UPDATE OF o SKIP LOCKED LIMIT 1
        )
@@ -229,6 +235,7 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
   }
 
   async dispatchAgent(request: IntegrationV3RequestLease): Promise<void> {
+    if (typeof request.payload.executionId === 'string' && request.payload.executionId) return;
     const result = await this.options.pool.query(
       `SELECT t.id,t.version,b.tenant_id,b.owner_user_id
          FROM ${this.options.candidatesTable} c JOIN ${this.options.tasksTable} t ON t.id=c.integration_task_id
@@ -236,10 +243,18 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
         WHERE c.id=$1 AND c.current_revision=$2`, [request.candidateId, request.candidateRevision]);
     const row = result.rows[0];
     if (!row) throw new Error('Candidate execution dispatch fence is stale');
+    const executionId = `integration-v3-request-${request.id}`;
     await this.options.dispatchAgent({
       identity: { tenantId: String(row.tenant_id), ownerUserId: String(row.owner_user_id), username: 'board-owner' },
-      taskId: String(row.id), expectedVersion: Number(row.version), purpose: request.kind as 'work'|'review',
+      taskId: String(row.id), expectedVersion: Number(row.version), purpose: request.kind as 'work'|'review', executionId,
     });
+    const bound = await this.options.pool.query(
+      `UPDATE ${this.options.requestsOutboxTable}
+          SET payload=payload||jsonb_build_object('executionId',$3::text),updated_at=now()
+        WHERE id=$1 AND lease_id=$2 AND status='processing' RETURNING id`,
+      [request.id, request.leaseId, executionId],
+    );
+    if (!bound.rows[0]) throw new Error('Candidate execution request lease changed before binding');
   }
   syncWorkspace(request: IntegrationV3RequestLease) { return this.options.syncWorkspace(request); }
   cleanup(request: IntegrationV3RequestLease) { return this.options.cleanup(request); }
@@ -295,6 +310,8 @@ export interface PostgresIntegrationV3ComposeHostOptions {
   tasksTable: string;
   boardsTable: string;
   executionsTable: string;
+  resolutionsTable: string;
+  requestsOutboxTable: string;
   resolvePaths(repository: TaskBoardRepositoryConfig, candidateId: string): Promise<{ repositoryPath: string; worktreePath: string } | undefined>;
   runGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult>;
   validateServerOwnedRepository(repositoryPath: string): Promise<void>;
@@ -308,10 +325,24 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
   async resolveContext(current: Required<IntegrationV3WorkerCurrent>): Promise<IntegrationV3ComposeContext> {
     const result = await this.options.pool.query(
       `SELECT b.repository,b.owner_user_id,b.tenant_id,
-              (SELECT e.id FROM ${this.options.executionsTable} e WHERE e.task_id=c.integration_task_id
-                AND e.purpose='work' AND e.status='succeeded' ORDER BY e.finished_at DESC NULLS LAST LIMIT 1) AS work_execution_id
+              work.execution_id AS work_execution_id
          FROM ${this.options.candidatesTable} c JOIN ${this.options.tasksTable} t ON t.id=c.integration_task_id
-         JOIN ${this.options.boardsTable} b ON b.id=t.board_id WHERE c.id=$1`, [current.candidate.id]);
+         JOIN ${this.options.boardsTable} b ON b.id=t.board_id
+         LEFT JOIN LATERAL (
+           SELECT e.id AS execution_id
+             FROM ${this.options.requestsOutboxTable} o
+             JOIN ${this.options.executionsTable} e ON e.id=o.payload->>'executionId'
+             JOIN ${this.options.resolutionsTable} r ON r.execution_id=e.id
+            WHERE o.candidate_id=c.id AND o.candidate_revision=c.current_revision
+              AND o.kind='work' AND o.work_round=c.work_round
+              AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch
+              AND COALESCE(o.payload->>'subjectDigest','')=COALESCE(c.subject_digest,'')
+              AND e.task_id=c.integration_task_id AND e.purpose='work'
+              AND e.status='succeeded' AND r.outcome='ready_for_review'
+              AND r.historical=false AND r.applied=true
+            ORDER BY r.resolved_at DESC,o.updated_at DESC LIMIT 1
+         ) work ON true
+        WHERE c.id=$1`, [current.candidate.id]);
     const row = result.rows[0];
     const repository = record(row?.repository) as unknown as TaskBoardRepositoryConfig;
     if (!row || repository.provider !== 'github' || repository.repositoryId !== current.candidate.repositoryId) throw new Error('Repository provider is unsupported or unknown');

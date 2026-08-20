@@ -168,11 +168,17 @@ export class IntegrationV3Worker {
           result = await engine.execute({ type: 'request_work', candidateId: lease.candidateId, expected });
           break;
         case 'working': {
+          // Reconcile the durable request before inspecting work output. This repairs the
+          // non-atomic outbox/candidate transition and revives a bounded-failure row.
+          result = await engine.execute({ type: 'request_work', candidateId: lease.candidateId, expected });
           const revision = requireRevision(current);
           const refreshed = await this.options.composer.refreshAfterWork({ candidate: current.candidate, revision });
           if (refreshed) result = await engine.execute({ type: 'subject_refreshed', candidateId: lease.candidateId, expected, revision: refreshed });
           break;
         }
+        case 'in_review':
+          result = await engine.execute({ type: 'request_review', candidateId: lease.candidateId, expected });
+          break;
         case 'approved':
           result = await engine.execute({ type: 'merge_approved', candidateId: lease.candidateId, expected, executionId: `integration-v3-worker:${lease.candidateId}:r${current.candidate.currentRevision}` });
           break;

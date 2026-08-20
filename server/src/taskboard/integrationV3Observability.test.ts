@@ -34,6 +34,32 @@ describe('integration v3 observability and release gate', () => {
     });
   });
 
+  it('fails readiness when the control plane is disabled while durable v3 work remains', async () => {
+    const db = { query: vi.fn(async (sql: string) => sql.includes('AS count')
+      ? { rows: [{ count: 1 }] }
+      : { rows: [{ unknown_count: 0, stale_lane_count: 0, stale_outbox_count: 0,
+          cleanup_failure_count: 0, active_failed_candidate_count: 0, active_v2_count: 0, active_v3_count: 1 }] }) } as any;
+    const health = createRuntimeIntegrationV3HealthProvider(false, {
+      pool: db, tasksTable: 'tasks', executionsTable: 'execs', integrationLanesTable: 'lanes',
+      integrationSourcesTable: 'integration_sources',
+    }, () => undefined);
+    await expect(health()).resolves.toMatchObject({
+      status: 'degraded', releaseReady: false,
+      reasons: ['control_plane_disabled_with_durable_v3_work'],
+    });
+    expect(String(db.query.mock.calls[0]![0])).toContain("status IN ('pending','processing','failed')");
+    expect(String(db.query.mock.calls[0]![0])).toContain("state IN ('executing','unknown')");
+  });
+
+  it('keeps disabled v3 not applicable when no active candidate exists', async () => {
+    const db = { query: vi.fn(async () => ({ rows: [{ count: 0 }] })) } as any;
+    const health = createRuntimeIntegrationV3HealthProvider(false, {
+      pool: db, tasksTable: 'tasks', executionsTable: 'execs', integrationLanesTable: 'lanes',
+      integrationSourcesTable: 'integration_sources',
+    }, () => undefined);
+    await expect(health()).resolves.toEqual({ status: 'not_applicable', releaseReady: true, reasons: [] });
+  });
+
   it('makes ws-only ready when a fresh compatible independent worker is healthy and metrics pass', async () => {
     const db = { query: vi.fn(async (sql: string) => sql.includes('ORDER BY ((status=\'healthy\')')
       ? { rows: [{ status: 'healthy', compatible: true, fresh: true }] }

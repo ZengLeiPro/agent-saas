@@ -97,7 +97,7 @@ describe('IntegrationV3Worker pure mock flow', () => {
     await worker.runOnce(); // enqueue cleanup
     await worker.runOnce(); // consume cleanup
 
-    expect(commands).toEqual(['start_compose', 'compose_clean', 'request_review', 'merge_approved', 'reconcile_merge', 'cleanup']);
+    expect(commands).toEqual(['start_compose', 'compose_clean', 'request_review', 'request_review', 'merge_approved', 'reconcile_merge', 'cleanup']);
     expect(host.cleanupCalls).toHaveLength(1);
     expect(host.completedRequests.at(-1)).toMatchObject({ request: { kind: 'cleanup' }, receipt: { outcome: 'succeeded' } });
     expect(host.dispatched.every((item) => item.kind === 'work' || item.kind === 'review')).toBe(true);

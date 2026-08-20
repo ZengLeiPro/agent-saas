@@ -77,6 +77,16 @@ describe("Integration v3 Candidate UI", () => {
     expect(await screen.findByText(expected)).toBeTruthy();
   });
 
+  it("cleanup 永久失败时提供人工重排入口", async () => {
+    fetchIntegrationCandidate.mockResolvedValue({
+      ...details,
+      candidate: { ...details.candidate, state: "merged" },
+      cleanup: { outcome: "failed", requestStatus: "failed", reason: "branch deletion failed", updatedAt: details.lastRefreshedAt },
+    });
+    render(<IntegrationCandidateDetails taskId="task-v3" />);
+    expect(await screen.findByRole("button", { name: "Maintainer 重新排队 cleanup" })).toBeTruthy();
+  });
+
   it("明确展示永久 worker_error", async () => {
     fetchIntegrationCandidate.mockResolvedValue({
       ...details,

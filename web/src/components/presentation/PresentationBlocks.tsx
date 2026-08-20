@@ -239,15 +239,15 @@ function ComparisonRow({ item }: { item: RecordItem }) {
         <span className="min-w-0 break-words text-sm font-medium text-foreground">{item.label}</span>
         <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
           <span className="text-xs text-muted-foreground sm:hidden">基准/之前</span>
-          <span className="max-w-64 break-words text-foreground">{item.baseline ?? "—"}</span>
+          <span className="block max-w-64 break-words text-foreground">{item.baseline ?? "—"}</span>
         </span>
         <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
           <span className="text-xs text-muted-foreground sm:hidden">当前/实际</span>
-          <span className="max-w-64 break-words text-foreground">{item.current ?? "—"}</span>
+          <span className="block max-w-64 break-words text-foreground">{item.current ?? "—"}</span>
         </span>
         <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
           <span className="text-xs text-muted-foreground sm:hidden">差异</span>
-          <span className={cn("max-w-64 break-words font-medium", item.tone ? activityStatusTextClass(tone) : "text-foreground")}>
+          <span className={cn("block max-w-64 break-words font-medium", item.tone ? activityStatusTextClass(tone) : "text-foreground")}>
             {item.delta ?? "—"}
           </span>
         </span>

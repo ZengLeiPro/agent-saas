@@ -613,7 +613,8 @@ describe('AgentToolProvider', () => {
     expect(SUBAGENT_TYPES.explore.maxTurns).toBe(SUBAGENT_MAX_TURNS);
     expect(SUBAGENT_PER_RUN_MAX_CONCURRENCY).toBe(6);
     expect(SUBAGENT_GLOBAL_MAX_CONCURRENCY).toBe(30);
-    expect(SUBAGENT_MAX_TURNS).toBe(200);
+    expect(SUBAGENT_MAX_TURNS).toBe(500);
+    expect(SUBAGENT_HARD_TIMEOUT_MS).toBe(120 * 60 * 1000);
   });
 
   it('dispatcher Agent schema 只能表达 background，且不能覆盖 Worker 模型', async () => {

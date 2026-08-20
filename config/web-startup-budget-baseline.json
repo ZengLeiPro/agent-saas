@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 302669,
-    "startupCssGzipBytes": 32233,
-    "startupJsBrotliBytes": 241432,
-    "startupCssBrotliBytes": 25753,
-    "largestJsGzipBytes": 302669,
-    "largestCssGzipBytes": 32233,
-    "largestJsBrotliBytes": 241432,
-    "largestCssBrotliBytes": 25753,
-    "largestJs": "assets/index-CNSj61v9.js",
-    "largestCss": "assets/index-BIsVGANp.css"
+    "startupJsGzipBytes": 304119,
+    "startupCssGzipBytes": 32881,
+    "startupJsBrotliBytes": 242580,
+    "startupCssBrotliBytes": 26236,
+    "largestJsGzipBytes": 304119,
+    "largestCssGzipBytes": 32881,
+    "largestJsBrotliBytes": 242580,
+    "largestCssBrotliBytes": 26236,
+    "largestJs": "assets/index-BDG0cvbe.js",
+    "largestCss": "assets/index-6iyioGYH.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "插话重连新增 requestId 与 binding generation 关联，阻止迟到 active_stream 响应拆除新 Run；生产构建启动 JS 增加 1238 B gzip，仍远低于 450000 B 单包绝对上限",
-  "updatedAt": "2026-08-17"
+  "reason": "业务步骤展示新增 comparison/list/checklist 语义渲染与状态样式；生产构建启动 JS 增加 1450 B gzip、1148 B brotli，仍低于 450000 B 单包绝对上限",
+  "updatedAt": "2026-08-20"
 }

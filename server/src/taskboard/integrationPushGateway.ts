@@ -20,6 +20,9 @@ export interface IntegrationPushRepositoryAccess {
   worktreePath: string;
   /** Trusted canonical HTTPS clone URL. It must not contain userinfo or fragments. */
   remoteUrl: string;
+  /** Board-configured identity resolved from the same authoritative row as the remote. */
+  repositoryOwner: string;
+  repositoryName: string;
 }
 
 export interface IntegrationPushGatewayOptions {
@@ -43,6 +46,8 @@ export interface IntegrationPushGatewayOptions {
     tenantId: string;
     ownerUserId: string;
     repositoryId: string;
+    repositoryOwner: string;
+    repositoryName: string;
   }): Promise<IntegrationPushCredential | undefined>;
   githubAppInstallationId?: number;
   /** Required for every production write. Missing ledger keeps health fail-closed. */
@@ -52,10 +57,13 @@ export interface IntegrationPushGatewayOptions {
 
 export interface IntegrationPushCredential {
   token: string;
-  mode: 'github_app';
-  /** Immutable numeric identities returned by the trusted App provider. */
+  mode: 'github_app' | 'personal_access_token';
+  /** Numeric repository identity returned by GitHub for the exact configured repository. */
   repositoryId: number;
-  installationId: number;
+  configuredRepositoryId: string;
+  configuredRepositoryOwner: string;
+  configuredRepositoryName: string;
+  installationId?: number;
 }
 
 export interface IntegrationPushGitRunner {
@@ -181,8 +189,14 @@ export class IntegrationPushGateway {
       tenantId: target.binding.tenantId,
       ownerUserId: target.ownerUserId,
       repositoryId: target.binding.repositoryId,
+      repositoryOwner: repository.repositoryOwner,
+      repositoryName: repository.repositoryName,
     });
-    if (!token || !credentialMatchesRepository(token, target.binding.repositoryId, this.options.githubAppInstallationId)) {
+    if (!token || !credentialMatchesRepository(token, {
+      repositoryId: target.binding.repositoryId,
+      repositoryOwner: repository.repositoryOwner,
+      repositoryName: repository.repositoryName,
+    }, this.options.githubAppInstallationId)) {
       throw new IntegrationPushGatewayError('credential_unavailable', false);
     }
 
@@ -244,8 +258,13 @@ export class IntegrationPushGateway {
     const cwd = await this.resolveControlledWorktree(repository.worktreePath);
     const credential = await this.options.resolveGithubToken({
       tenantId: input.tenantId, ownerUserId: input.ownerUserId, repositoryId: input.repositoryId,
+      repositoryOwner: repository.repositoryOwner, repositoryName: repository.repositoryName,
     });
-    if (!credential || !credentialMatchesRepository(credential, input.repositoryId, this.options.githubAppInstallationId)) {
+    if (!credential || !credentialMatchesRepository(credential, {
+      repositoryId: input.repositoryId,
+      repositoryOwner: repository.repositoryOwner,
+      repositoryName: repository.repositoryName,
+    }, this.options.githubAppInstallationId)) {
       throw new IntegrationPushGatewayError('credential_unavailable', false);
     }
     // The composed OID is part of the semantic key. A candidate revision can be reloaded
@@ -452,16 +471,18 @@ function sameBinding(a: IntegrationPushCapabilityBinding, b: IntegrationPushCapa
 
 function credentialMatchesRepository(
   credential: IntegrationPushCredential,
-  configuredRepositoryId: string,
+  configured: { repositoryId: string; repositoryOwner: string; repositoryName: string },
   configuredInstallationId: number | undefined,
 ): boolean {
-  const match = /^github-id:(\d+)$/.exec(configuredRepositoryId);
-  return credential.mode === 'github_app'
-    && credential.token.length > 0
-    && !!match
-    && Number(match[1]) === credential.repositoryId
-    && Number.isSafeInteger(configuredInstallationId)
-    && configuredInstallationId === credential.installationId;
+  const match = /^github-id:(\d+)$/.exec(configured.repositoryId);
+  if (credential.token.length === 0
+    || credential.configuredRepositoryId !== configured.repositoryId
+    || credential.configuredRepositoryOwner.toLowerCase() !== configured.repositoryOwner.toLowerCase()
+    || credential.configuredRepositoryName.toLowerCase() !== configured.repositoryName.toLowerCase()) return false;
+  if (match && Number(match[1]) !== credential.repositoryId) return false;
+  return credential.mode === 'personal_access_token'
+    || (credential.mode === 'github_app' && Number.isSafeInteger(configuredInstallationId)
+      && configuredInstallationId === credential.installationId);
 }
 
 function validateRemote(value: string): void {

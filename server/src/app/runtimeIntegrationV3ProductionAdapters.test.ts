@@ -112,6 +112,16 @@ describe('production integration v3 adapters', () => {
     await expect(provider.getInstallationToken({ repositoryId: 123, installationId: 456 })).resolves.toBeUndefined();
   });
 
+  it('PAT mode requires no App installation and assembles only the ACS isolation adapter', () => {
+    const config = parseAppConfig({ agent: {}, server: {}, integrationV3ControlPlane: {
+      enabled: true, controlledMirrorRoot: '/mirrors', githubTokenMode: 'personal_access_token',
+    } });
+    expect(config.integrationV3ControlPlane).toMatchObject({ enabled: true, githubTokenMode: 'personal_access_token' });
+    expect(config.integrationV3ControlPlane).not.toHaveProperty('githubAppInstallationId');
+    expect(resolveProductionIntegrationV3Adapters({ config, secretVault: { getSecret: vi.fn() } as any }))
+      .toEqual({ runtimeIsolationAttestationProvider: expect.any(Object), githubAppInstallationTokenProvider: undefined });
+  });
+
   it('production assembly preserves explicit injections and otherwise leaves missing GitHub config unavailable', () => {
     const config = parseAppConfig({ agent: {}, server: {}, integrationV3ControlPlane: {
       enabled: true, controlledMirrorRoot: '/mirrors', githubAppInstallationId: 456,

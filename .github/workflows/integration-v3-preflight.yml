@@ -62,11 +62,19 @@ jobs:
               mode = stat.S_IMODE(os.stat(root).st_mode)
               root_ok = mode & 0o022 == 0
           check('controlled_mirror_root', root_ok, 'safe_directory' if root_ok else 'missing_or_unsafe')
-          check('github_installation_id', isinstance(control.get('githubAppInstallationId'), int) and control.get('githubAppInstallationId') > 0, 'configured' if isinstance(control.get('githubAppInstallationId'), int) and control.get('githubAppInstallationId') > 0 else 'missing')
-          app = control.get('githubApp')
-          app_ok = isinstance(app, dict)
-          check('github_app_id', app_ok and isinstance(app.get('appId'), int) and app.get('appId') > 0, 'configured' if app_ok and isinstance(app.get('appId'), int) and app.get('appId') > 0 else 'missing')
-          check('github_private_key_ref', app_ok and isinstance(app.get('privateKeyRef'), str) and bool(app.get('privateKeyRef').strip()), 'configured' if app_ok and isinstance(app.get('privateKeyRef'), str) and bool(app.get('privateKeyRef').strip()) else 'missing')
+          token_mode = control.get('githubTokenMode')
+          check('github_token_mode', token_mode in ('github_app', 'personal_access_token'), token_mode if token_mode in ('github_app', 'personal_access_token') else 'missing_or_invalid')
+          if token_mode == 'github_app':
+              check('github_installation_id', isinstance(control.get('githubAppInstallationId'), int) and control.get('githubAppInstallationId') > 0, 'configured' if isinstance(control.get('githubAppInstallationId'), int) and control.get('githubAppInstallationId') > 0 else 'missing')
+              app = control.get('githubApp')
+              app_ok = isinstance(app, dict)
+              check('github_app_id', app_ok and isinstance(app.get('appId'), int) and app.get('appId') > 0, 'configured' if app_ok and isinstance(app.get('appId'), int) and app.get('appId') > 0 else 'missing')
+              check('github_private_key_ref', app_ok and isinstance(app.get('privateKeyRef'), str) and bool(app.get('privateKeyRef').strip()), 'configured' if app_ok and isinstance(app.get('privateKeyRef'), str) and bool(app.get('privateKeyRef').strip()) else 'missing')
+          elif token_mode == 'personal_access_token':
+              checks['existing_pat_runtime_probe'] = {
+                  'status': 'deferred', 'gating': False,
+                  'detail': 'runtime_owner_tenant_repository_probe',
+              }
 
           vault = config.get('secretVault') if isinstance(config, dict) else None
           backend = vault.get('backend') if isinstance(vault, dict) else None
@@ -80,7 +88,7 @@ jobs:
               check('unit_' + unit.split('@')[1].split('.')[0], result.returncode == 0 and result.stdout.strip() == 'loaded', 'loaded' if result.returncode == 0 and result.stdout.strip() == 'loaded' else 'missing')
 
           print(json.dumps(checks, ensure_ascii=False, sort_keys=True))
-          failed = [name for name, value in checks.items() if not value['passed']]
+          failed = [name for name, value in checks.items() if value.get('gating', True) and not value.get('passed', False)]
           if failed:
               print('FAILED_CHECKS=' + ','.join(failed))
               raise SystemExit(1)

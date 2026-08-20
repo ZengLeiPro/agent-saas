@@ -36,8 +36,10 @@ import { MemoryConsolidationEngine } from '../memory/consolidation/engine.js';
 import { TaskboardExecutionCoordinator, createTaskboardRuntimeOptions } from '../taskboard/executionService.js';
 import { RetryableTaskboardService } from '../taskboard/retryableService.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
-import { configureTaskboardGithubRepositoryProvider, createIntegrationV3GithubAppRepositoryProvider } from '../taskboard/repositoryRuntime.js';
-import { buildRuntimeTaskboardIntegrationV3Options, startRuntimeTaskboardIntegrationV3, type RuntimeTaskboardIntegrationV3 } from './runtimeTaskboardIntegrationV3.js';
+import { configureTaskboardGithubRepositoryProvider } from '../taskboard/repositoryRuntime.js';
+import type { RepositoryProvider } from '../taskboard/repositoryProvider.js';
+import { resolveGithubToken } from '../connectors/github.js';
+import { buildRuntimeTaskboardIntegrationV3Options, configureRuntimeIntegrationV3RepositoryAccess, startRuntimeTaskboardIntegrationV3, type RuntimeTaskboardIntegrationV3 } from './runtimeTaskboardIntegrationV3.js';
 import { createRuntimeIntegrationV3HealthProvider } from '../taskboard/integrationV3Observability.js';
 import { createIntegrationV3RequeueHandler } from '../taskboard/integrationV3Repair.js';
 import type { TaskboardService } from '../taskboard/types.js';
@@ -597,13 +599,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         }
       },
     });
-
     } // end of safety-checked startup sync block
   } else {
     // 无 userStore（auth 关闭的开发形态）：没有多用户物化需求
     skillsWarmup.state = 'done';
   }
-
   const memoryEnabled = config.memory?.enabled !== false;
   const sessionCatalog = new FileSessionCatalog({ agentCwd });
   let runtimeEventStoreShutdown: (() => Promise<void>) | undefined;
@@ -622,7 +622,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let appealStore: PgAppealStore | undefined;
   let taskboardService: TaskboardService | undefined;
   let taskboardStoreService: RetryableTaskboardService | undefined;
-  let rawTaskboardStore: PgTaskboardStore | undefined, taskboardExecutionCoordinator: TaskboardExecutionCoordinator | undefined, integrationV3Runtime: RuntimeTaskboardIntegrationV3 | undefined, taskboardRepositoryProvider: ReturnType<typeof configureTaskboardGithubRepositoryProvider>, integrationV3RepositoryProvider: ReturnType<typeof createIntegrationV3GithubAppRepositoryProvider> | undefined;
+  let rawTaskboardStore: PgTaskboardStore | undefined, taskboardExecutionCoordinator: TaskboardExecutionCoordinator | undefined, integrationV3Runtime: RuntimeTaskboardIntegrationV3 | undefined, taskboardRepositoryProvider: ReturnType<typeof configureTaskboardGithubRepositoryProvider>, integrationV3RepositoryProvider: RepositoryProvider | undefined;
   let pgArtifactStore: PgArtifactStore | undefined;
   let systemMetricsStore: PgSystemMetricsStore | undefined;
   let systemMetricsCollector: SystemMetricsCollector | undefined;
@@ -1156,7 +1156,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     heartbeatScanIntervalMs: config.clientDaemon?.heartbeatScanIntervalMs,
     logger: serverLogger.child('ClientDaemonGateway'),
   });
-
   // 任何"按 sessionId 读事件流"的读路径都应通过这个 factory 拿 store，
   // 避免硬编码 FileEventStore 导致 PG backend 读到空 jsonl。
   // 注入到 WebChannel.runtimeEventStoreFor + createSessionsRouter.runtimeEventStoreFor。
@@ -1165,7 +1164,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     : (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath));
   const resolveTenantSkillHistoricalProvenance = (tenantId: string) => skillGovernanceStore?.listTenantSkillHistoricalProvenance(tenantId) ?? Promise.resolve(new Map());
   const resolveUserPersonalSkillIds = (user: { id: string; tenantId?: string }) => resolvePersonalSkillIds(user, skillGovernanceStore);
-
   if (skillConfigStore && userStore) {
     const materializationStore = pgEventStore
       ? new PgSkillMaterializationStore({
@@ -1229,14 +1227,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       },
     });
   }
-
   if (!sessionReadStateStore) {
     sessionReadStateStore = new FileSessionReadStateStore(
       resolve(processCwd, './data/session-read-states.json'),
     );
     await sessionReadStateStore.init();
   }
-
   sessionShareStore ??= new InMemorySessionShareStore();
   if (!agentRuntimeProfileStore) {
     agentRuntimeProfileStore = new InMemoryAgentRuntimeProfileStore();
@@ -1346,7 +1342,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       clearInterval(artifactGcTimer);
     };
   }
-
   // Runtime-level execution config（A+C）：
   // - 已认证用户（含 platform admin）默认 server-container，作为本机 Docker 隔离 fallback；
   // - 匿名/内部调用默认 server-local，避免 cron/maintenance 路径被这次切换顺手改道；
@@ -1518,7 +1513,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     vault: secretVault,
     onError: (error) => serverLogger.warn(`Taskboard GitHub credential resolve failed: ${error.message}`),
   });
-  if (config.integrationV3ControlPlane?.enabled === true && integrationV3Adapters.githubAppInstallationTokenProvider) integrationV3RepositoryProvider = createIntegrationV3GithubAppRepositoryProvider({ tokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, installationId: config.integrationV3ControlPlane.githubAppInstallationId });
+  const configuredIntegrationV3Access = configureRuntimeIntegrationV3RepositoryAccess({ store: rawTaskboardStore, taskboardRepositoryProvider, control: config.integrationV3ControlPlane, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, resolvePersonalAccessToken: async ({ tenantId, ownerUserId }) => {
+    const user = userStore?.findById(ownerUserId); if (!user || user.disabled || user.tenantId !== tenantId) return undefined;
+    return resolveGithubToken({ connectionStore: connectorConnectionStore, vault: secretVault, onError: (error) => serverLogger.warn(`Integration PAT resolve failed: ${error.message}`) }, { userId: user.id, username: user.username, tenantId });
+  } });
+  integrationV3RepositoryProvider = configuredIntegrationV3Access.repositoryProvider;
+  const integrationV3PersonalAccessTokenResolver = configuredIntegrationV3Access.personalAccessTokenResolver;
   const initialMemoryIndexService = createMemoryIndexService(
     processCwd,
     config.memory?.index,
@@ -2073,7 +2073,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         logger: serverLogger.child('TaskboardExecution') });
     }
     if (enableSingletonWorkers && rawTaskboardStore && taskboardExecutionCoordinator && config.integrationV3ControlPlane?.enabled === true && integrationV3RepositoryProvider)
-      integrationV3Runtime = startRuntimeTaskboardIntegrationV3(buildRuntimeTaskboardIntegrationV3Options({ store: rawTaskboardStore, executionCoordinator: taskboardExecutionCoordinator, repositoryProvider: integrationV3RepositoryProvider, processCwd, agentCwd, processRole: processRole === 'all' ? 'all' : 'runtime-worker', releaseIdentity: skillSourceRevision, runtimeIsolationAttestationProvider: integrationV3Adapters.runtimeIsolationAttestationProvider, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, control: config.integrationV3ControlPlane }));
+      integrationV3Runtime = startRuntimeTaskboardIntegrationV3(buildRuntimeTaskboardIntegrationV3Options({ store: rawTaskboardStore, executionCoordinator: taskboardExecutionCoordinator, repositoryProvider: integrationV3RepositoryProvider, processCwd, agentCwd, processRole: processRole === 'all' ? 'all' : 'runtime-worker', releaseIdentity: skillSourceRevision, runtimeIsolationAttestationProvider: integrationV3Adapters.runtimeIsolationAttestationProvider, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, personalAccessTokenResolver: integrationV3PersonalAccessTokenResolver, control: config.integrationV3ControlPlane }));
     const getRuntimeSchedulerCapacitySnapshot = async () => {
       const persisted = await runtimeSchedulerConfigStore!.get();
       const effective = effectiveMaxConcurrentRuns(

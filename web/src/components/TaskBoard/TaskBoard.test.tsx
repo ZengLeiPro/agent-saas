@@ -295,7 +295,7 @@ describe("TaskBoardView", () => {
     expect(mocks.optimisticMove.mock.calls[0]?.[1]).toEqual({
       status: "canceled",
       previousTaskId: undefined,
-      nextTaskId: reverseCanceledTask.id,
+      nextTaskId: undefined,
     });
 
     reverseView.unmount();

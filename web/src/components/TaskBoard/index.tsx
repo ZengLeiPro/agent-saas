@@ -248,18 +248,28 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
       setNotice("该任务状态由工作流推进，当前不能通过拖拽变更。");
       return;
     }
-    const target = sortedInStatus(tasks, status, moved.id);
-    const nextIndex = nextTaskId ? target.findIndex((task) => task.id === nextTaskId) : -1;
+    const supportsManualOrdering = taskStatusSupportsManualOrdering(status);
+    const target = supportsManualOrdering ? sortedInStatus(tasks, status, moved.id) : [];
+    const nextIndex = supportsManualOrdering && nextTaskId
+      ? target.findIndex((task) => task.id === nextTaskId)
+      : -1;
     const previousTaskId = nextIndex > 0
       ? target[nextIndex - 1]?.id
       : nextIndex === 0
         ? undefined
         : target.at(-1)?.id;
-    void moveTaskTo(moved, status, previousTaskId, nextTaskId).catch(() => undefined);
+    void moveTaskTo(
+      moved,
+      status,
+      supportsManualOrdering ? previousTaskId : undefined,
+      supportsManualOrdering ? nextTaskId : undefined,
+    ).catch(() => undefined);
   };
 
   const moveFromDetail = useCallback(async (task: TaskBoardTask, status: TaskBoardStatus) => {
-    const previousTaskId = sortedInStatus(tasks, status, task.id).at(-1)?.id;
+    const previousTaskId = taskStatusSupportsManualOrdering(status)
+      ? sortedInStatus(tasks, status, task.id).at(-1)?.id
+      : undefined;
     return moveTaskTo(task, status, previousTaskId, undefined);
   }, [moveTaskTo, tasks]);
 

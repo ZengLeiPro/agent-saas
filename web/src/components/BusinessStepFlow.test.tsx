@@ -332,6 +332,52 @@ describe("BusinessStepFlow", () => {
     expect(container.querySelector("[data-records-block]")?.className).toContain("border-primary/20");
   });
 
+  it("forces TodoWrite facts and list blocks onto separate rows", () => {
+    const { container } = render(
+      <BusinessStepFlow
+        open
+        event={event({
+          kind: "complete",
+          todo: {
+            id: "a",
+            kind: "business",
+            content: "整理客户资料",
+            status: "completed",
+            outcome: { text: "资料整理完成", tone: "ok" },
+            display: [
+              {
+                kind: "records",
+                layout: "grid",
+                title: "关键事实",
+                items: [
+                  { label: "客户", value: "开沿科技" },
+                  { label: "资料数", value: "3" },
+                  { label: "状态", value: "已核验" },
+                ],
+              },
+              {
+                kind: "records",
+                layout: "rows",
+                title: "处理清单",
+                items: [{ label: "归档", value: "已完成" }],
+              },
+            ],
+          },
+        })}
+      />,
+    );
+
+    const records = container.querySelectorAll("[data-records-block]");
+    expect(records).toHaveLength(2);
+    const summary = records[0]?.parentElement;
+    expect(summary).toBe(records[1]?.parentElement);
+    expect(summary?.className).toContain("flex-col");
+    expect(summary?.className).toContain("gap-3");
+    expect(summary?.children).toHaveLength(2);
+    expect(summary?.children[0]).toBe(records[0]);
+    expect(summary?.children[1]).toBe(records[1]);
+  });
+
   it("colors verdict chips green/red and keeps counting chips neutral", () => {
     render(
       <BusinessStepFlow

@@ -32,7 +32,7 @@ export interface GroupMessagesOptions {
 }
 
 /** 全局叙事边界：这些消息不属于任何业务步骤节，出现时先封当前节。 */
-const SECTION_BREAKING_TYPES = new Set(['user', 'user-voice', 'system_event', 'system-error', 'compaction']);
+const SECTION_BREAKING_TYPES = new Set(['user', 'user-voice', 'system_event', 'system-error']);
 
 function sameStepKey(a: BusinessStepEventItem, b: BusinessStepEventItem): boolean {
   return !!a.todo && !!b.todo && todoItemKey(a.todo) === todoItemKey(b.todo);
@@ -222,6 +222,12 @@ export function groupMessages(
       // 排队气泡独立渲染但不 closeSection：当前步骤继续保持进行中。
       flushGroup(false);
       sink().push(msg);
+    } else if ((msg.type as string) === 'compaction') {
+      flushGroup(false);
+      // 压缩发生在步骤中途时，不切断 start → terminal 的业务语义。
+      // 当前节尚未写入 result，因此先放分界线、稍后再落整节，视觉上等价于
+      // 把分界线归位到最近步骤上方，同时保留步骤内压缩前后的完整过程。
+      result.push(msg);
     } else if (SECTION_BREAKING_TYPES.has(msg.type)) {
       flushGroup(false);
       closeSection();

@@ -1,5 +1,6 @@
 import type { SecretVault } from '../security/secretVault.js';
 import type { GovernanceCredential } from '../data/credentials/types.js';
+import type { GovernanceCredentialReader } from './governanceCredential.js';
 import type { ConnectorConnectionRecord, ConnectorConnectionStore } from './connectionStore.js';
 
 export const X_CONNECTOR_ID = 'x';
@@ -20,9 +21,7 @@ export interface XConnectionView {
   updatedAt?: string;
 }
 
-export interface XGovernanceCredentialReader {
-  listForOwner(tenantId: string, ownerUserId: string): Promise<GovernanceCredential[]>;
-}
+export type XGovernanceCredentialReader = GovernanceCredentialReader;
 
 interface XCookieCredential {
   authToken: string;

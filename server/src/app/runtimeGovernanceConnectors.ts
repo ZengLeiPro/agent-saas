@@ -505,6 +505,7 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
   const aliyunConnectorService = new AliyunConnectorService({
     connectionStore: connectorConnectionStore,
     vault: secretVault,
+    governanceCredentialStore: credentialStore,
     onError: error => serverLogger.warn(`Aliyun connector runtime env skipped: ${error.message}`),
   });
   const authorizeOAuthSubject = async (userId: string, tenantId: string): Promise<boolean> => {
@@ -849,6 +850,7 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       resolveGithubRuntimeEnv({
         connectionStore: connectorConnectionStore,
         vault: secretVault,
+        governanceCredentialStore: credentialStore,
         onError: error => serverLogger.warn(
           `Native connector runtime env skipped: connector=${GITHUB_CONNECTOR_ID} reason=${error.message}`,
         ),

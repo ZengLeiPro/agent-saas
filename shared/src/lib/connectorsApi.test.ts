@@ -22,7 +22,14 @@ vi.mock('./governanceApi', () => ({
   },
 }));
 
-import { connectX, disconnectX } from './connectorsApi';
+import {
+  connectAliyun,
+  connectGithub,
+  connectX,
+  disconnectAliyun,
+  disconnectGithub,
+  disconnectX,
+} from './connectorsApi';
 
 function jsonResponse(body: unknown): Response {
   return { ok: true, json: async () => body } as Response;
@@ -139,6 +146,59 @@ describe('X governance connector API', () => {
     expect(api.revokeCredential).toHaveBeenCalledWith('credential-retry', expect.objectContaining({
       expectedVersion: 6, reason: '用户主动断开 X',
     }));
+  });
+
+  it('GitHub 连接和断开只操作 personal_grant 治理凭据', async () => {
+    api.authFetch.mockResolvedValueOnce(jsonResponse({
+      connection: { connectorId: 'github', status: 'connected', runtimeEnabled: true, credentialId: 'credential-github' },
+    }));
+    await expect(connectGithub({ token: ' github_pat_test ' })).resolves.toMatchObject({
+      connection: { connectorId: 'github', status: 'connected' },
+    });
+    expect(api.createCredential).toHaveBeenCalledWith({
+      connectorId: 'github', kind: 'personal_grant', purpose: 'GitHub CLI 用户凭据',
+      scopeSummary: { scopes: ['github:*'] }, secret: 'github_pat_test',
+    });
+    expect(api.authFetch).not.toHaveBeenCalledWith('/api/connectors/github', expect.objectContaining({ method: 'POST' }));
+
+    api.listCredentials.mockResolvedValueOnce({ credentials: [
+      { credentialId: 'credential-github', connectorId: 'github', kind: 'personal_grant', status: 'active', version: 2 },
+    ] });
+    api.authFetch.mockResolvedValueOnce(jsonResponse({
+      connection: { connectorId: 'github', status: 'disconnected', runtimeEnabled: true },
+    }));
+    await expect(disconnectGithub()).resolves.toMatchObject({
+      connection: { connectorId: 'github', status: 'disconnected' },
+    });
+    expect(api.authFetch).not.toHaveBeenCalledWith('/api/connectors/github', { method: 'DELETE' });
+  });
+
+  it('阿里云连接把 AccessKey 写入治理凭据并保留地域元数据', async () => {
+    api.authFetch.mockResolvedValueOnce(jsonResponse({
+      connection: { connectorId: 'aliyun', status: 'connected', runtimeEnabled: true, regionId: 'cn-shenzhen' },
+    }));
+    await expect(connectAliyun({
+      accessKeyId: ' LTAI-test ', accessKeySecret: ' secret-test ', regionId: ' cn-shenzhen ',
+    })).resolves.toMatchObject({
+      connection: { connectorId: 'aliyun', status: 'connected' },
+    });
+    expect(api.createCredential).toHaveBeenCalledWith({
+      connectorId: 'aliyun', kind: 'personal_grant', purpose: '阿里云 CLI 用户凭据',
+      scopeSummary: { regionId: 'cn-shenzhen', scopes: ['aliyun:*'] },
+      secret: JSON.stringify({ accessKeyId: 'LTAI-test', accessKeySecret: 'secret-test', regionId: 'cn-shenzhen' }),
+    });
+    expect(api.authFetch).not.toHaveBeenCalledWith('/api/connectors/aliyun', expect.objectContaining({ method: 'POST' }));
+
+    api.listCredentials.mockResolvedValueOnce({ credentials: [
+      { credentialId: 'credential-aliyun', connectorId: 'aliyun', kind: 'personal_grant', status: 'active', version: 1 },
+    ] });
+    api.authFetch.mockResolvedValueOnce(jsonResponse({
+      connection: { connectorId: 'aliyun', status: 'disconnected', runtimeEnabled: true },
+    }));
+    await expect(disconnectAliyun()).resolves.toMatchObject({
+      connection: { connectorId: 'aliyun', status: 'disconnected' },
+    });
+    expect(api.authFetch).not.toHaveBeenCalledWith('/api/connectors/aliyun', { method: 'DELETE' });
   });
 
   it('拒绝空白 X Cookie，不创建无效治理凭据', async () => {

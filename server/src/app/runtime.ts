@@ -1515,7 +1515,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   });
   const configuredIntegrationV3Access = configureRuntimeIntegrationV3RepositoryAccess({ store: rawTaskboardStore, taskboardRepositoryProvider, control: config.integrationV3ControlPlane, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, resolvePersonalAccessToken: async ({ tenantId, ownerUserId }) => {
     const user = userStore?.findById(ownerUserId); if (!user || user.disabled || user.tenantId !== tenantId) return undefined;
-    return resolveGithubToken({ connectionStore: connectorConnectionStore, vault: secretVault, onError: (error) => serverLogger.warn(`Integration PAT resolve failed: ${error.message}`) }, { userId: user.id, username: user.username, tenantId });
+    return resolveGithubToken({ connectionStore: connectorConnectionStore, vault: secretVault, governanceCredentialStore: credentialStore, onError: (error) => serverLogger.warn(`Integration PAT resolve failed: ${error.message}`) }, { userId: user.id, username: user.username, tenantId });
   } });
   integrationV3RepositoryProvider = configuredIntegrationV3Access.repositoryProvider;
   const integrationV3PersonalAccessTokenResolver = configuredIntegrationV3Access.personalAccessTokenResolver;

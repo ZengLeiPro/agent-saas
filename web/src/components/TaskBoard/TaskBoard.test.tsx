@@ -229,7 +229,7 @@ describe("TaskBoardView", () => {
     render(<TaskBoardView />);
 
     expect(screen.getByTestId("task-card-older-done").getAttribute("draggable")).toBe("false");
-    expect(screen.getByTestId("task-card-older-canceled").getAttribute("draggable")).toBe("false");
+    expect(screen.getByTestId("task-card-older-canceled").getAttribute("draggable")).toBe("true");
 
     const doneColumn = await screen.findByTestId("taskboard-done-column");
     await user.click(screen.getByTitle("展开已完成列"));
@@ -243,6 +243,80 @@ describe("TaskBoardView", () => {
       expect.stringContaining("TASK-NEWER-CANCELED"),
       expect.stringContaining("TASK-OLDER-CANCELED"),
     ]);
+  });
+
+  it("自动排序列允许跨阶段拖拽，但禁止同列重排", async () => {
+    const canceledTask = {
+      ...taskOne,
+      id: "canceled-task",
+      identifier: "TASK-CANCELED",
+      status: "canceled" as const,
+      updatedAt: "2026-08-19T10:00:00.000Z",
+    };
+    const backlogTask = {
+      ...taskTwo,
+      id: "backlog-task",
+      identifier: "TASK-BACKLOG",
+      status: "backlog" as const,
+    };
+    mocks.tasks = [canceledTask, backlogTask];
+    const firstView = render(<TaskBoardView />);
+
+    const source = screen.getByTestId("task-card-canceled-task");
+    const target = screen.getAllByTestId("task-card-backlog-task")[0];
+    expect(source.getAttribute("draggable")).toBe("true");
+    fireEvent.dragStart(source, {
+      dataTransfer: { effectAllowed: "move", setData: vi.fn(), getData: vi.fn(() => source.dataset.testid) },
+    });
+    fireEvent.drop(target, {
+      dataTransfer: { getData: vi.fn(() => canceledTask.id) },
+    });
+
+    await waitFor(() => expect(mocks.optimisticMove).toHaveBeenCalled());
+    expect(mocks.optimisticMove.mock.calls[0]?.[1]).toEqual({
+      status: "backlog",
+      previousTaskId: undefined,
+      nextTaskId: backlogTask.id,
+    });
+
+    firstView.unmount();
+    mocks.optimisticMove.mockClear();
+    const reverseBacklogTask = { ...backlogTask, id: "reverse-backlog-task", identifier: "TASK-REVERSE-BACKLOG" };
+    const reverseCanceledTask = { ...canceledTask, id: "reverse-canceled-task", identifier: "TASK-REVERSE-CANCELED" };
+    mocks.tasks = [reverseBacklogTask, reverseCanceledTask];
+    const reverseView = render(<TaskBoardView />);
+    fireEvent.dragStart(screen.getAllByTestId("task-card-reverse-backlog-task")[0], {
+      dataTransfer: { effectAllowed: "move", setData: vi.fn(), getData: vi.fn(() => reverseBacklogTask.id) },
+    });
+    fireEvent.drop(screen.getByTestId("task-card-reverse-canceled-task"), {
+      dataTransfer: { getData: vi.fn(() => reverseBacklogTask.id) },
+    });
+    await waitFor(() => expect(mocks.optimisticMove).toHaveBeenCalled());
+    expect(mocks.optimisticMove.mock.calls[0]?.[1]).toEqual({
+      status: "canceled",
+      previousTaskId: undefined,
+      nextTaskId: reverseCanceledTask.id,
+    });
+
+    reverseView.unmount();
+    mocks.optimisticMove.mockClear();
+    const secondCanceledTask = {
+      ...canceledTask,
+      id: "canceled-task-2",
+      identifier: "TASK-CANCELED-2",
+      updatedAt: "2026-08-18T10:00:00.000Z",
+    };
+    mocks.tasks = [canceledTask, secondCanceledTask];
+    render(<TaskBoardView />);
+    fireEvent.dragStart(screen.getByTestId("task-card-canceled-task"), {
+      dataTransfer: { effectAllowed: "move", setData: vi.fn(), getData: vi.fn(() => canceledTask.id) },
+    });
+    fireEvent.drop(screen.getByTestId("task-card-canceled-task-2"), {
+      dataTransfer: { getData: vi.fn(() => canceledTask.id) },
+    });
+
+    expect(mocks.optimisticMove).not.toHaveBeenCalled();
+    expect((await screen.findByRole("alert")).textContent).toContain("按更新时间排序，不能手动重排");
   });
 
   it("已完成列默认显示为竖排窄轨，展开状态按看板记忆", async () => {

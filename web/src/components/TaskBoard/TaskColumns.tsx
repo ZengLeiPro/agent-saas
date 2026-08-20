@@ -85,10 +85,12 @@ export function TaskColumns({
     setDoneCollapsed(readDoneCollapsed(boardId));
   }, [boardId]);
   const dragEnabled = !readOnly && (canReorderTask || canTransitionTask);
-  const canDragStatus = (status: TaskBoardStatus) => dragEnabled && taskStatusSupportsManualOrdering(status);
+  const canDragFromStatus = (status: TaskBoardStatus) => (
+    dragEnabled && (taskStatusSupportsManualOrdering(status) || status === "canceled")
+  );
 
   const renderStatusBody = (status: TaskBoardStatus, columnTasks: TaskBoardTask[]) => {
-    const statusDragEnabled = canDragStatus(status);
+    const statusDragEnabled = canDragFromStatus(status);
     return (
     <>
       {["backlog", "todo"].includes(status) ? (
@@ -110,10 +112,10 @@ export function TaskColumns({
       <div
         className="min-h-24 flex-1 space-y-2 overflow-y-auto p-2"
         onDragOver={(event) => {
-          if (statusDragEnabled) event.preventDefault();
+          if (dragEnabled) event.preventDefault();
         }}
         onDrop={(event) => {
-          if (statusDragEnabled) onDrop(status, undefined, event);
+          if (dragEnabled) onDrop(status, undefined, event);
         }}
       >
         {columnTasks.map((task) => (
@@ -230,10 +232,10 @@ export function TaskColumns({
               aria-label={`${STATUS_LABELS[status]}列`}
               className={columnClassName}
               onDragOver={(event) => {
-                if (canDragStatus(status)) event.preventDefault();
+                if (dragEnabled) event.preventDefault();
               }}
               onDrop={(event) => {
-                if (canDragStatus(status)) onDrop(status, undefined, event);
+                if (dragEnabled) onDrop(status, undefined, event);
               }}
             >
               <header className="flex shrink-0 items-center justify-between border-b px-3 py-2.5">

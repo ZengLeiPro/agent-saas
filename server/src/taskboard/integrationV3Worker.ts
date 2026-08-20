@@ -76,6 +76,8 @@ export class IntegrationV3Worker {
   private timer?: ReturnType<typeof setTimeout>;
   private stopped = true;
   private running?: Promise<void>;
+  private lastSuccessfulTickAt?: number;
+  private lastTickError?: string;
   private readonly intervalMs: number;
   private readonly leaseMs: number;
   private readonly maxRequestsPerTick: number;
@@ -100,13 +102,29 @@ export class IntegrationV3Worker {
   }
 
   async runOnce(): Promise<void> {
-    for (let index = 0; index < this.maxRequestsPerTick; index += 1) {
-      const request = await this.options.host.claimRequest(this.leaseMs);
-      if (!request) break;
-      await this.processRequest(request);
+    try {
+      for (let index = 0; index < this.maxRequestsPerTick; index += 1) {
+        const request = await this.options.host.claimRequest(this.leaseMs);
+        if (!request) break;
+        await this.processRequest(request);
+      }
+      const lease = await this.options.host.claimCandidate(this.leaseMs);
+      if (lease) await this.processCandidate(lease);
+      this.lastSuccessfulTickAt = Date.now();
+      this.lastTickError = undefined;
+    } catch (error) {
+      this.lastTickError = message(error);
+      throw error;
     }
-    const lease = await this.options.host.claimCandidate(this.leaseMs);
-    if (lease) await this.processCandidate(lease);
+  }
+
+  health(now = Date.now()): { healthy: boolean; reason?: string } {
+    if (this.lastTickError) return { healthy: false, reason: 'worker_tick_failed' };
+    if (this.lastSuccessfulTickAt === undefined) return { healthy: false, reason: 'worker_tick_pending' };
+    if (now - this.lastSuccessfulTickAt > Math.max(this.intervalMs * 3, 10_000)) {
+      return { healthy: false, reason: 'worker_tick_stale' };
+    }
+    return { healthy: true };
   }
 
   private schedule(delay: number): void {

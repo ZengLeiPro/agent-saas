@@ -423,10 +423,11 @@ export function startRuntimeTaskboardIntegrationV3(
   let activationReason: string | undefined;
   const runtimeHealth = async () => {
     const gateway = await pushGateway.health();
-    const healthy = gateway.healthy && workerActive && !stopped;
+    const workerTick = worker.health();
+    const healthy = gateway.healthy && workerActive && !stopped && workerTick.healthy;
     return {
       healthy,
-      ...(!healthy ? { reason: activationReason ?? gateway.reason ?? 'worker_inactive' } : {}),
+      ...(!healthy ? { reason: activationReason ?? gateway.reason ?? workerTick.reason ?? 'worker_inactive' } : {}),
     };
   };
   const activationHeartbeat = createIntegrationV3ActivationHeartbeat({

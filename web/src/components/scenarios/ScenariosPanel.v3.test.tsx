@@ -45,7 +45,7 @@ beforeEach(() => {
 });
 
 describe("ScenariosPanel V3", () => {
-  it("有引导演示时默认只展示精选工作现场，完整目录按需展开", async () => {
+  it("有引导演示时仍直接展示完整工作流目录", async () => {
     const guided = makeWorkflowScenario("guided", {
       featured: true,
       featuredOrder: 1,
@@ -80,9 +80,9 @@ describe("ScenariosPanel V3", () => {
     const onReplayOpenChange = vi.fn();
     render(<ScenariosPanel onTryScenario={vi.fn()} onReplayOpenChange={onReplayOpenChange} />);
     expect(onReplayOpenChange).toHaveBeenLastCalledWith(false);
-    expect(screen.getByTestId("guided-presentations").children).toHaveLength(1);
-    expect(screen.queryByTestId("workflow-catalog")).toBeNull();
-    expect(screen.queryByRole("button", { name: guided.cta.primary })).toBeNull();
+    expect(screen.queryByTestId("guided-presentations")).toBeNull();
+    expect(screen.getByTestId("workflow-catalog").children).toHaveLength(2);
+    expect(screen.getByRole("button", { name: guided.cta.primary })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "看演示" }));
     expect(await screen.findByRole("heading", { name: guided.title }, { timeout: 5_000 })).toBeTruthy();
@@ -98,8 +98,6 @@ describe("ScenariosPanel V3", () => {
     expect(screen.getAllByText("业务步骤 1").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "返回" }));
     expect(onReplayOpenChange).toHaveBeenLastCalledWith(false);
-
-    fireEvent.click(screen.getByRole("button", { name: "浏览全部 2 个工作场景" }));
     expect(screen.getByTestId("workflow-catalog").children).toHaveLength(2);
   });
 

@@ -10,7 +10,6 @@ import {
   type WorkflowLibraryPublicV3,
 } from "@agent/shared";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { CapabilityFilterTabs, CAPABILITY_EMPTY_SURFACE } from "@/components/CapabilityCenter/CatalogUi";
 import { cn } from "@/lib/utils";
 import {
@@ -28,10 +27,8 @@ import {
   ScenarioRequireBadges,
   WorkflowScenarioCard,
 } from "./ScenarioCard";
-import { WorkflowPresentationCard } from "./WorkflowPresentationCard";
 import {
   getReplayScript,
-  hasReplayScript,
   loadHookReplayScript,
   type ReplayScript,
 } from "./replay";
@@ -92,7 +89,6 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
     roleId?: string;
   } | null>(null);
   const [replay, setReplay] = useState<ReplayScript | null>(null);
-  const [catalogExpanded, setCatalogExpanded] = useState(false);
   const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
   const [deferredNotice, setDeferredNotice] = useState<WorkflowLibraryPublicV3["deferredObjects"][number] | null>(null);
   const deepLinkConsumed = useRef(false);
@@ -265,16 +261,6 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
     || filters.activeVertical !== VERTICAL_ALL
     || filters.activeBusinessModel !== BUSINESS_MODEL_ALL
     || filters.activeMaturity !== MATURITY_ALL;
-  // 钩子区按目录声明顺序展示；闭环演示区维持 featuredOrder 优先
-  const hookScenarios = workflowLibrary.scenarios.filter(isHookScenario);
-  const presentationScenarios = workflowLibrary.scenarios
-    .filter((scenario) => hasReplayScript(scenario) && !isHookScenario(scenario))
-    .sort((left, right) => (left.featuredOrder ?? Number.MAX_SAFE_INTEGER) - (right.featuredOrder ?? Number.MAX_SAFE_INTEGER));
-  const hasRecommendedSections = hookScenarios.length > 0 || presentationScenarios.length > 0;
-  const showFullCatalog = !hasRecommendedSections
-    || catalogExpanded
-    || hasFilters
-    || !!roleDetailName;
   const secondaryFiltersActive = filters.activeIndustry !== INDUSTRY_ALL
     || filters.activeVertical !== VERTICAL_ALL
     || filters.activeBusinessModel !== BUSINESS_MODEL_ALL
@@ -301,56 +287,12 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
         <div>
           <h1 className="text-xl font-semibold">{roleDetailName ? `${roleDetailName} AI 同事工作流` : "AI 同事能帮你完成什么"}</h1>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            {hasRecommendedSections && !roleDetailName
-              ? "从一句话或业务事件开始，看回放如何读系统、给判断、经你确认后动手。"
-              : `从业务事件到系统终态，不只生成报告。默认目录共 ${scenarios.length} 个唯一工作流。`}
+            从业务事件到系统终态，不只生成报告。默认目录共 {scenarios.length} 个唯一工作流。
           </p>
         </div>
         {roleDetailName && props.onCloseRoleDetail ? <Button variant="outline" size="sm" onClick={props.onCloseRoleDetail}>返回目录</Button> : null}
       </div>
 
-      {hookScenarios.length > 0 && !roleDetailName ? (
-        <section aria-labelledby="hook-presentations-title" className="mb-8">
-          <div className="mb-3 flex items-end justify-between gap-3">
-            <div>
-              <h2 id="hook-presentations-title" className="font-semibold">从一句话或业务事件开始</h2>
-              <p className="mt-1 text-xs text-muted-foreground">演示数据 · 模拟完整工作过程 · 不会修改真实系统。</p>
-            </div>
-            <Badge variant="secondary">{hookScenarios.length} 个</Badge>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" data-testid="hook-presentations">
-            {hookScenarios.map((scenario) => (
-              <WorkflowPresentationCard key={scenario.id} scenario={scenario} onPrimaryAction={handleWorkflowAction} />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {presentationScenarios.length > 0 && !roleDetailName ? (
-        <section aria-labelledby="guided-presentations-title">
-          <div className="mb-3 flex items-end justify-between gap-3">
-            <div>
-              <h2 id="guided-presentations-title" className="font-semibold">完整业务闭环演示</h2>
-              <p className="mt-1 text-xs text-muted-foreground">演示数据均为示例；每一步由你推进，不会修改真实系统。</p>
-            </div>
-            <Badge variant="secondary">{presentationScenarios.length} 个</Badge>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" data-testid="guided-presentations">
-            {presentationScenarios.map((scenario) => (
-              <WorkflowPresentationCard key={scenario.id} scenario={scenario} onPrimaryAction={handleWorkflowAction} />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {showFullCatalog ? <>
-      {hasRecommendedSections && !roleDetailName ? (
-        <div className="mb-5 mt-8 flex items-center gap-3">
-          <span className="h-px flex-1 bg-border" />
-          <span className="text-xs font-medium text-muted-foreground">全部工作场景</span>
-          <span className="h-px flex-1 bg-border" />
-        </div>
-      ) : null}
       <div className="mb-2 text-xs font-medium text-muted-foreground">我要解决什么</div>
       <CapabilityFilterTabs
         ariaLabel="按业务结果筛选"
@@ -441,13 +383,6 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
               onPrimaryAction={handleWorkflowAction}
             />
           ))}
-        </div>
-      )}
-      </> : (
-        <div className="mt-6 flex justify-center">
-          <Button type="button" variant="outline" onClick={() => setCatalogExpanded(true)}>
-            浏览全部 {workflowLibrary.scenarios.length - hookScenarios.length} 个工作场景
-          </Button>
         </div>
       )}
 

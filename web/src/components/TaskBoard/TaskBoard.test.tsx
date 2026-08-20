@@ -228,6 +228,9 @@ describe("TaskBoardView", () => {
     mocks.tasks = [olderDone, newerDone, olderCanceled, newerCanceled];
     render(<TaskBoardView />);
 
+    expect(screen.getByTestId("task-card-older-done").getAttribute("draggable")).toBe("false");
+    expect(screen.getByTestId("task-card-older-canceled").getAttribute("draggable")).toBe("false");
+
     const doneColumn = await screen.findByTestId("taskboard-done-column");
     await user.click(screen.getByTitle("展开已完成列"));
     expect(within(doneColumn).getAllByRole("button", { name: /打开任务/ }).map((button) => button.textContent)).toEqual([

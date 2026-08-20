@@ -145,6 +145,7 @@ export function TaskCard({
               <UserAvatar
                 userId={task.creatorUserId}
                 avatar={task.creatorUserId}
+                version={task.creatorAvatarVersion}
                 size={20}
               />
               <span className="truncate">{creatorName}</span>

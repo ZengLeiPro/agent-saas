@@ -14,7 +14,12 @@ import { ArchivedTasksSheet } from "./ArchivedTasksSheet";
 import { BoardDialog } from "./BoardDialog";
 import { BoardToolbar } from "./BoardToolbar";
 import { useBoardTasks, useTaskboardModelList, useTaskBoards } from "./hooks";
-import { boardAllows, canUserTransitionTask, sortTaskBoardTasks } from "./constants";
+import {
+  boardAllows,
+  canUserTransitionTask,
+  sortTaskBoardTasks,
+  taskStatusSupportsManualOrdering,
+} from "./constants";
 import { TaskColumns } from "./TaskColumns";
 import { TaskDetail } from "./TaskDetail";
 import { TaskDialog } from "./TaskDialog";
@@ -233,7 +238,12 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     setDraggedTaskId(null);
     const moved = tasks.find((task) => task.id === taskId);
     if (!moved || moved.archivedAt || boardReadOnly || nextTaskId === moved.id) return;
-    if (status === moved.status && !canReorderTask) return;
+    if (status === moved.status && (!canReorderTask || !taskStatusSupportsManualOrdering(status))) {
+      if (!taskStatusSupportsManualOrdering(status)) {
+        setNotice("该状态按更新时间排序，不能手动重排。");
+      }
+      return;
+    }
     if (status !== moved.status && (!canTransitionTask || !canUserTransitionTask(moved.kind, moved.status, status))) {
       setNotice("该任务状态由工作流推进，当前不能通过拖拽变更。");
       return;

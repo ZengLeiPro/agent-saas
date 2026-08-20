@@ -294,6 +294,8 @@ export interface TaskBoardTask {
   version: number;
   creatorUserId?: string;
   creatorName?: string;
+  /** 提交人的头像版本，用于避免头像替换后继续命中旧缓存。 */
+  creatorAvatarVersion?: number;
   completedAt?: string;
   archivedAt?: string;
   deletedAt?: string;

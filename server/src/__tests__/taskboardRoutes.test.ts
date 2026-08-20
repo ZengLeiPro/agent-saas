@@ -188,6 +188,25 @@ describe('Taskboard routes', () => {
     });
   });
 
+  it('adds the current creator avatar version to task payloads', async () => {
+    const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
+    const task = { ...TASK, creatorUserId: USER.sub };
+    const service = {
+      ...makeService(captured),
+      async listTasks() { return [task]; },
+    } as TaskboardService;
+    const userStore = {
+      findById: (id: string) => id === USER.sub
+        ? { id, tenantId: USER.tenantId, avatarVersion: 7 }
+        : undefined,
+    } as unknown as UserStore;
+    const rig = await makeRig(service, USER, captured, undefined, userStore);
+
+    const response = await rig.request('/api/taskboard/boards/board-1/tasks');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([{ ...task, creatorAvatarVersion: 7 }]);
+  });
+
   it('uses tenantId/sub/username from req.user and rejects ownership fields through strict schemas', async () => {
     const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
     const rig = await makeRig(makeService(captured), USER, captured);

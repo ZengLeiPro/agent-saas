@@ -14,7 +14,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TaskCard } from "./TaskCard";
-import { sortTaskBoardTasks, STATUS_LABELS } from "./constants";
+import {
+  sortTaskBoardTasks,
+  STATUS_LABELS,
+  taskStatusSupportsManualOrdering,
+} from "./constants";
 
 interface TaskColumnsProps {
   boardId: string;
@@ -81,8 +85,11 @@ export function TaskColumns({
     setDoneCollapsed(readDoneCollapsed(boardId));
   }, [boardId]);
   const dragEnabled = !readOnly && (canReorderTask || canTransitionTask);
+  const canDragStatus = (status: TaskBoardStatus) => dragEnabled && taskStatusSupportsManualOrdering(status);
 
-  const renderStatusBody = (status: TaskBoardStatus, columnTasks: TaskBoardTask[]) => (
+  const renderStatusBody = (status: TaskBoardStatus, columnTasks: TaskBoardTask[]) => {
+    const statusDragEnabled = canDragStatus(status);
+    return (
     <>
       {["backlog", "todo"].includes(status) ? (
         <div className="shrink-0 border-b p-2">
@@ -103,10 +110,10 @@ export function TaskColumns({
       <div
         className="min-h-24 flex-1 space-y-2 overflow-y-auto p-2"
         onDragOver={(event) => {
-          if (dragEnabled) event.preventDefault();
+          if (statusDragEnabled) event.preventDefault();
         }}
         onDrop={(event) => {
-          if (dragEnabled) onDrop(status, undefined, event);
+          if (statusDragEnabled) onDrop(status, undefined, event);
         }}
       >
         {columnTasks.map((task) => (
@@ -114,7 +121,7 @@ export function TaskColumns({
             key={task.id}
             task={task}
             readOnly={readOnly}
-            allowDrag={dragEnabled}
+            allowDrag={statusDragEnabled}
             selectable={canCreateIntegration && task.mergeEligibility === "eligible"}
             selected={selectedDeliveryTaskIds.has(task.id)}
             onSelectedChange={onDeliverySelectedChange}
@@ -131,7 +138,8 @@ export function TaskColumns({
         ) : null}
       </div>
     </>
-  );
+    );
+  };
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -222,10 +230,10 @@ export function TaskColumns({
               aria-label={`${STATUS_LABELS[status]}列`}
               className={columnClassName}
               onDragOver={(event) => {
-                if (dragEnabled) event.preventDefault();
+                if (canDragStatus(status)) event.preventDefault();
               }}
               onDrop={(event) => {
-                if (dragEnabled) onDrop(status, undefined, event);
+                if (canDragStatus(status)) onDrop(status, undefined, event);
               }}
             >
               <header className="flex shrink-0 items-center justify-between border-b px-3 py-2.5">

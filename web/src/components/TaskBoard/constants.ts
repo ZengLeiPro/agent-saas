@@ -67,11 +67,19 @@ function timestamp(value: string | undefined): number {
 }
 
 /** 需求池与待实施保留手动顺序，其余状态按最近更新时间倒序展示。 */
+export function taskStatusUsesUpdatedTime(status: TaskBoardStatus): boolean {
+  return UPDATED_TIME_SORT_STATUSES.has(status);
+}
+
+export function taskStatusSupportsManualOrdering(status: TaskBoardStatus): boolean {
+  return !taskStatusUsesUpdatedTime(status);
+}
+
 export function sortTaskBoardTasks(tasks: TaskBoardTask[], status: TaskBoardStatus): TaskBoardTask[] {
   return tasks
     .filter((task) => task.status === status && !task.archivedAt)
     .sort((left, right) => {
-      if (UPDATED_TIME_SORT_STATUSES.has(status)) {
+      if (taskStatusUsesUpdatedTime(status)) {
         return timestamp(right.updatedAt) - timestamp(left.updatedAt)
           || right.sortOrder - left.sortOrder
           || right.identifier.localeCompare(left.identifier);

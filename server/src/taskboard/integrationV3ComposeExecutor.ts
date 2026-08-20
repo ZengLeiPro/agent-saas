@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { stat } from 'node:fs/promises';
 
 import type { TaskBoardIntegrationCandidateSourceSnapshot, TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
 import { canonicalGithubRepositoryUrl, type RepositoryProvider } from './repositoryProvider.js';
@@ -42,12 +43,12 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
     if (!this.provider.ensureIntegrationBranch || !this.provider.ensureIntegrationPullRequest || !this.provider.getReference) {
       throw new IntegrationV3ComposeDisabledError('Repository provider does not support integration branch/PR composition');
     }
-    if (current.candidate.providerPullRequestId) {
-      // The first compose leaves the deterministic commit checked out. PR binding advances
-      // candidate CAS without appending the revision, so normalize the clean controlled
-      // worktree back to its durable base before the mandatory fetch/sync and recomposition.
+    if (await directoryExists(context.worktreePath)) {
+      // Any failure after the deterministic commit is checked out can leave the branch ahead
+      // while the candidate revision is still unchanged. Normalize only a clean controlled
+      // worktree to the durable revision base before mandatory fetch/sync and recomposition.
       const status = await git(this.host, context.worktreePath, ['status', '--porcelain=v1', '--untracked-files=all']);
-      if (status.stdout.length > 0) throw new Error('Integration worktree is dirty after pull request binding');
+      if (status.stdout.length > 0) throw new Error('Integration worktree is dirty before recomposition');
       await git(this.host, context.worktreePath, ['reset', '--hard', current.revision.baseOid]);
     }
     const sync = await syncRepositoryWorkspace(this.host, {
@@ -159,6 +160,14 @@ export class IntegrationV3CandidateReloadRequiredError extends Error { readonly 
 function stripSnapshotIdentity(source: TaskBoardIntegrationCandidateSourceSnapshot) {
   const { candidateId: _candidateId, revision: _revision, createdAt: _createdAt, ...input } = source;
   return input;
+}
+async function directoryExists(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
 }
 async function git(host: RepositoryWorkspaceSyncHost, cwd: string, args: readonly string[]) {
   const result = await host.runGit({ cwd, args });
